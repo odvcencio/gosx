@@ -1,0 +1,99 @@
+package hydrate
+
+import (
+	"encoding/json"
+	"testing"
+)
+
+func TestManifestCreation(t *testing.T) {
+	m := NewManifest()
+	if m.Version != "0.1.0" {
+		t.Errorf("expected version 0.1.0, got %s", m.Version)
+	}
+	if len(m.Islands) != 0 {
+		t.Errorf("expected 0 islands, got %d", len(m.Islands))
+	}
+}
+
+func TestManifestAddIsland(t *testing.T) {
+	m := NewManifest()
+	m.Bundles["main"] = BundleRef{Path: "/app.wasm"}
+
+	type props struct {
+		Count int `json:"count"`
+	}
+
+	id, err := m.AddIsland("Counter", "main", props{Count: 42})
+	if err != nil {
+		t.Fatalf("AddIsland failed: %v", err)
+	}
+	if id != "gosx-island-0" {
+		t.Errorf("expected gosx-island-0, got %s", id)
+	}
+	if len(m.Islands) != 1 {
+		t.Fatalf("expected 1 island, got %d", len(m.Islands))
+	}
+
+	entry := m.Islands[0]
+	if entry.Component != "Counter" {
+		t.Errorf("expected Counter, got %s", entry.Component)
+	}
+	if entry.BundleID != "main" {
+		t.Errorf("expected main, got %s", entry.BundleID)
+	}
+
+	var p props
+	if err := json.Unmarshal(entry.Props, &p); err != nil {
+		t.Fatalf("unmarshal props: %v", err)
+	}
+	if p.Count != 42 {
+		t.Errorf("expected count 42, got %d", p.Count)
+	}
+}
+
+func TestManifestMarshal(t *testing.T) {
+	m := NewManifest()
+	m.Bundles["main"] = BundleRef{Path: "/app.wasm", Hash: "abc123"}
+	m.AddIsland("Counter", "main", map[string]int{"initial": 0})
+
+	data, err := m.Marshal()
+	if err != nil {
+		t.Fatalf("Marshal failed: %v", err)
+	}
+
+	m2, err := Unmarshal(data)
+	if err != nil {
+		t.Fatalf("Unmarshal failed: %v", err)
+	}
+	if m2.Version != "0.1.0" {
+		t.Errorf("expected version 0.1.0, got %s", m2.Version)
+	}
+	if len(m2.Islands) != 1 {
+		t.Errorf("expected 1 island, got %d", len(m2.Islands))
+	}
+	if m2.Bundles["main"].Hash != "abc123" {
+		t.Errorf("expected hash abc123, got %s", m2.Bundles["main"].Hash)
+	}
+}
+
+func TestMultipleIslands(t *testing.T) {
+	m := NewManifest()
+	m.Bundles["main"] = BundleRef{Path: "/app.wasm"}
+
+	m.AddIsland("Counter", "main", nil)
+	m.AddIsland("FilterBar", "main", nil)
+	m.AddIsland("Chart", "main", nil)
+
+	if len(m.Islands) != 3 {
+		t.Fatalf("expected 3 islands, got %d", len(m.Islands))
+	}
+	if m.Islands[0].ID != "gosx-island-0" {
+		t.Errorf("expected gosx-island-0, got %s", m.Islands[0].ID)
+	}
+	if m.Islands[1].ID != "gosx-island-1" {
+		t.Errorf("expected gosx-island-1, got %s", m.Islands[1].ID)
+	}
+	if m.Islands[2].ID != "gosx-island-2" {
+		t.Errorf("expected gosx-island-2, got %s", m.Islands[2].ID)
+	}
+}
