@@ -658,7 +658,6 @@ func main() {
 					gosx.Attr("autocomplete", "off"),
 					gosx.Attr("autocorrect", "off"),
 					gosx.Attr("autocapitalize", "off"),
-					gosx.Attr("data-gosx-handler", "onInput"),
 				), gosx.Text(sampleCode)),
 			),
 		),
@@ -666,7 +665,6 @@ func main() {
 	editorIsland := islands.RenderIslandWithEvents("Editor",
 		nil,
 		[]hydrate.EventSlot{
-			{SlotID: "inp", EventType: "input", HandlerName: "onInput"},
 			{SlotID: "clr", EventType: "click", HandlerName: "clear"},
 		},
 		editorContent,
@@ -703,6 +701,18 @@ func main() {
     }
 
     ta.addEventListener('input', update);
+
+    // Clear button
+    var clearBtn = document.querySelector('.editor-btn');
+    if (clearBtn) {
+      clearBtn.addEventListener('click', function(e) {
+        e.stopPropagation();
+        ta.value = '';
+        update();
+        ta.focus();
+      });
+    }
+
     ta.addEventListener('scroll', function() {
       hl.scrollTop = ta.scrollTop;
       hl.scrollLeft = ta.scrollLeft;
