@@ -216,6 +216,12 @@ func main() {
 
 // Layout wraps all pages with shared navigation and structure.
 func Layout(title string, islands *island.Renderer, content gosx.Node) gosx.Node {
+	// Preload hints go in <head> — browser starts WASM download during HTML parse
+	preloadHTML := ""
+	if islands != nil {
+		preloadHTML = gosx.RenderHTML(islands.PreloadHints())
+	}
+
 	return gosx.RawHTML(fmt.Sprintf(`<!DOCTYPE html>
 <html>
 <head>
@@ -223,9 +229,9 @@ func Layout(title string, islands *island.Renderer, content gosx.Node) gosx.Node
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>%s</title>
 <link rel="stylesheet" href="/static/styles.css">
-</head>
+%s</head>
 <body>
-`, title) + gosx.RenderHTML(
+`, title, preloadHTML) + gosx.RenderHTML(
 		gosx.El("div", gosx.Attrs(gosx.Attr("class", "layout")),
 			Sidebar(),
 			gosx.El("main", gosx.Attrs(gosx.Attr("class", "main")),

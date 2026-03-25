@@ -163,7 +163,37 @@ func (r *Renderer) BootstrapScript() gosx.Node {
 	return gosx.RawHTML(b.String())
 }
 
+// PreloadHints returns <link rel="preload"> tags for the HTML <head>.
+// These tell the browser to start downloading WASM and island programs
+// during HTML parsing, BEFORE the scripts execute — eliminating the
+// serial dependency of HTML → JS → fetch WASM.
+func (r *Renderer) PreloadHints() gosx.Node {
+	if len(r.manifest.Islands) == 0 {
+		return gosx.Text("")
+	}
+
+	var b strings.Builder
+
+	// Preload the WASM runtime — this is the biggest asset and biggest win.
+	// "as=fetch" with crossorigin lets the browser start the download immediately.
+	if r.manifest.Runtime.Path != "" {
+		b.WriteString(fmt.Sprintf(`<link rel="preload" href="%s" as="fetch" type="application/wasm" crossorigin>`, r.manifest.Runtime.Path))
+		b.WriteByte('\n')
+	}
+
+	// Prefetch island programs — downloaded during WASM compile.
+	for _, island := range r.manifest.Islands {
+		if island.ProgramRef != "" {
+			b.WriteString(fmt.Sprintf(`<link rel="prefetch" href="%s">`, island.ProgramRef))
+			b.WriteByte('\n')
+		}
+	}
+
+	return gosx.RawHTML(b.String())
+}
+
 // PageHead returns all head elements needed for islands on this page.
+// Includes preload hints (for <head>) and scripts (for end of <body>).
 func (r *Renderer) PageHead() gosx.Node {
 	if len(r.manifest.Islands) == 0 {
 		return gosx.Text("")
