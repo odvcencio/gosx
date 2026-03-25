@@ -14,6 +14,21 @@ type Manifest struct {
 
 	// Bundles maps bundle IDs to WASM asset paths.
 	Bundles map[string]BundleRef `json:"bundles"`
+
+	// Runtime points to the shared WASM runtime.
+	Runtime RuntimeRef `json:"runtime"`
+}
+
+// RuntimeRef points to the shared WASM runtime.
+type RuntimeRef struct {
+	// Path to the shared runtime .wasm file.
+	Path string `json:"path"`
+
+	// Hash for cache busting.
+	Hash string `json:"hash,omitempty"`
+
+	// Size in bytes (compressed).
+	Size int64 `json:"size,omitempty"`
 }
 
 // IslandEntry describes a single island instance in the rendered HTML.
@@ -38,6 +53,15 @@ type IslandEntry struct {
 
 	// Checksum is a hash of the component source for cache invalidation.
 	Checksum string `json:"checksum,omitempty"`
+
+	// ProgramRef is the URL path to the IslandProgram asset.
+	ProgramRef string `json:"programRef,omitempty"`
+
+	// ProgramFormat is "json" (dev) or "bin" (prod).
+	ProgramFormat string `json:"programFormat,omitempty"`
+
+	// ProgramHash is a content hash for cache busting.
+	ProgramHash string `json:"programHash,omitempty"`
 }
 
 // BundleRef points to a compiled WASM bundle.

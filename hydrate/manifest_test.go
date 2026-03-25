@@ -97,3 +97,67 @@ func TestMultipleIslands(t *testing.T) {
 		t.Errorf("expected gosx-island-2, got %s", m.Islands[2].ID)
 	}
 }
+
+func TestManifestRuntimeRef(t *testing.T) {
+	m := NewManifest()
+	m.Runtime = RuntimeRef{
+		Path: "/gosx/runtime.wasm",
+		Hash: "abc123",
+		Size: 2500000,
+	}
+	data, err := m.Marshal()
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	decoded, err := Unmarshal(data)
+	if err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if decoded.Runtime.Path != "/gosx/runtime.wasm" {
+		t.Fatalf("runtime path: expected /gosx/runtime.wasm, got %s", decoded.Runtime.Path)
+	}
+	if decoded.Runtime.Hash != "abc123" {
+		t.Fatalf("runtime hash: expected abc123, got %s", decoded.Runtime.Hash)
+	}
+	if decoded.Runtime.Size != 2500000 {
+		t.Fatalf("runtime size: expected 2500000, got %d", decoded.Runtime.Size)
+	}
+}
+
+func TestIslandProgramRef(t *testing.T) {
+	m := NewManifest()
+	m.Bundles["main"] = BundleRef{Path: "/gosx/runtime.wasm"}
+	id, err := m.AddIsland("Counter", "main", map[string]int{"initial": 0})
+	if err != nil {
+		t.Fatalf("add island: %v", err)
+	}
+	// Set program ref on the island
+	for i := range m.Islands {
+		if m.Islands[i].ID == id {
+			m.Islands[i].ProgramRef = "/gosx/islands/Counter.json"
+			m.Islands[i].ProgramFormat = "json"
+			m.Islands[i].ProgramHash = "def456"
+		}
+	}
+	data, err := m.Marshal()
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	decoded, err := Unmarshal(data)
+	if err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(decoded.Islands) != 1 {
+		t.Fatalf("expected 1 island, got %d", len(decoded.Islands))
+	}
+	island := decoded.Islands[0]
+	if island.ProgramRef != "/gosx/islands/Counter.json" {
+		t.Fatalf("program ref: expected /gosx/islands/Counter.json, got %s", island.ProgramRef)
+	}
+	if island.ProgramFormat != "json" {
+		t.Fatalf("format: expected json, got %s", island.ProgramFormat)
+	}
+	if island.ProgramHash != "def456" {
+		t.Fatalf("hash: expected def456, got %s", island.ProgramHash)
+	}
+}
