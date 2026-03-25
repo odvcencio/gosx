@@ -33,6 +33,11 @@ type Options struct {
 
 	// DebugComments adds HTML comments marking component boundaries.
 	DebugComments bool
+
+	// CompactIsland suppresses all indentation and inter-element whitespace
+	// for island content. This ensures server-rendered HTML matches the
+	// client's tree structure for path-based patching.
+	CompactIsland bool
 }
 
 // HTML renders an IR program's component to an HTML string.
@@ -186,7 +191,7 @@ func (r *htmlRenderer) renderExpr(b *strings.Builder, node *ir.Node) {
 
 func (r *htmlRenderer) renderFragment(b *strings.Builder, node *ir.Node, depth int) {
 	for i, childID := range node.Children {
-		if i > 0 && r.opts.Indent != "" {
+		if i > 0 && !r.opts.CompactIsland && r.opts.Indent != "" {
 			b.WriteByte('\n')
 		}
 		r.renderNode(b, childID, depth)
@@ -212,7 +217,7 @@ func (r *htmlRenderer) renderAttrs(b *strings.Builder, attrs []ir.Attr) {
 }
 
 func (r *htmlRenderer) writeIndent(b *strings.Builder, depth int) {
-	if r.opts.Indent == "" {
+	if r.opts.CompactIsland || r.opts.Indent == "" {
 		return
 	}
 	for i := 0; i < depth; i++ {
@@ -221,7 +226,7 @@ func (r *htmlRenderer) writeIndent(b *strings.Builder, depth int) {
 }
 
 func (r *htmlRenderer) hasBlockChildren(node *ir.Node) bool {
-	if r.opts.Indent == "" {
+	if r.opts.CompactIsland || r.opts.Indent == "" {
 		return false
 	}
 	for _, childID := range node.Children {
