@@ -63,15 +63,44 @@ func (l *lowerer) span(n *gotreesitter.Node) Span {
 // contains a //gosx:island comment directive. Scans backwards from the function
 // start position through preceding whitespace and comment lines.
 func (l *lowerer) hasIslandDirective(n *gotreesitter.Node) bool {
+	return strings.Contains(l.precedingText(n), "//gosx:island")
+}
+
+// parseEngineDirective checks for //gosx:engine and extracts the kind.
+// Returns ("worker"|"surface", true) or ("", false).
+func (l *lowerer) parseEngineDirective(n *gotreesitter.Node) (string, bool) {
+	preceding := l.precedingText(n)
+	if idx := strings.Index(preceding, "//gosx:engine "); idx >= 0 {
+		rest := preceding[idx+len("//gosx:engine "):]
+		kind := strings.Fields(rest)[0]
+		if kind == "worker" || kind == "surface" {
+			return kind, true
+		}
+	}
+	if strings.Contains(preceding, "//gosx:engine") {
+		return "worker", true // default to worker
+	}
+	return "", false
+}
+
+// parseCapabilities extracts //gosx:capabilities from preceding comments.
+func (l *lowerer) parseCapabilities(n *gotreesitter.Node) []string {
+	preceding := l.precedingText(n)
+	if idx := strings.Index(preceding, "//gosx:capabilities "); idx >= 0 {
+		rest := preceding[idx+len("//gosx:capabilities "):]
+		line := strings.Split(rest, "\n")[0]
+		return strings.Fields(line)
+	}
+	return nil
+}
+
+func (l *lowerer) precedingText(n *gotreesitter.Node) string {
 	start := int(n.StartByte())
-	// Scan backwards from the function declaration looking for the directive
-	// in the preceding source text (comments, blank lines)
-	searchStart := start - 200 // look up to 200 bytes back
+	searchStart := start - 300
 	if searchStart < 0 {
 		searchStart = 0
 	}
-	preceding := string(l.src[searchStart:start])
-	return strings.Contains(preceding, "//gosx:island")
+	return string(l.src[searchStart:start])
 }
 
 // analyzeBody walks a function body CST node and extracts signal declarations,
@@ -450,6 +479,14 @@ func (l *lowerer) lowerFunctionDecl(n *gotreesitter.Node) {
 		Scope:     scope,
 		Span:      l.span(n),
 	}
+
+	// Check for engine directive
+	if engineKind, isEngine := l.parseEngineDirective(n); isEngine {
+		comp.IsEngine = true
+		comp.EngineKind = engineKind
+		comp.EngineCapabilities = l.parseCapabilities(n)
+	}
+
 	l.prog.Components = append(l.prog.Components, comp)
 }
 

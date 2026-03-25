@@ -4,7 +4,7 @@ package hydrate
 
 import "encoding/json"
 
-// Manifest describes all islands on a page and how to hydrate them.
+// Manifest describes all islands and engines on a page.
 type Manifest struct {
 	// Version of the manifest format.
 	Version string `json:"version"`
@@ -12,11 +12,36 @@ type Manifest struct {
 	// Islands lists every island instance on the page.
 	Islands []IslandEntry `json:"islands"`
 
+	// Engines lists every engine instance on the page.
+	Engines []EngineEntry `json:"engines,omitempty"`
+
 	// Bundles maps bundle IDs to WASM asset paths.
 	Bundles map[string]BundleRef `json:"bundles"`
 
-	// Runtime points to the shared WASM runtime.
+	// Runtime points to the shared island WASM runtime.
 	Runtime RuntimeRef `json:"runtime"`
+}
+
+// EngineEntry describes a single engine instance.
+// Engines are arbitrary client compute modules — separate from islands.
+type EngineEntry struct {
+	// ID is the DOM anchor ID (e.g., "gosx-engine-0").
+	ID string `json:"id"`
+
+	// Component is the engine function name.
+	Component string `json:"component"`
+
+	// Kind is "worker" (background compute) or "surface" (owns a DOM mount point).
+	Kind string `json:"kind"`
+
+	// ProgramRef is the URL path to the engine's WASM bundle.
+	ProgramRef string `json:"programRef"`
+
+	// Props is the JSON-serialized props snapshot.
+	Props json.RawMessage `json:"props"`
+
+	// Capabilities declares what browser APIs the engine needs.
+	Capabilities []string `json:"capabilities,omitempty"`
 }
 
 // RuntimeRef points to the shared WASM runtime.
@@ -131,6 +156,29 @@ func (m *Manifest) AddIsland(component string, bundleID string, props any) (stri
 	}
 	m.Islands = append(m.Islands, entry)
 	return id, nil
+}
+
+// AddEngine adds an engine entry and returns the assigned ID.
+func (m *Manifest) AddEngine(component, kind, programRef string, props any, capabilities []string) (string, error) {
+	propsJSON, err := json.Marshal(props)
+	if err != nil {
+		return "", err
+	}
+	id := engineID(len(m.Engines))
+	entry := EngineEntry{
+		ID:           id,
+		Component:    component,
+		Kind:         kind,
+		ProgramRef:   programRef,
+		Props:        propsJSON,
+		Capabilities: capabilities,
+	}
+	m.Engines = append(m.Engines, entry)
+	return id, nil
+}
+
+func engineID(n int) string {
+	return "gosx-engine-" + itoa(n)
 }
 
 func islandID(n int) string {
