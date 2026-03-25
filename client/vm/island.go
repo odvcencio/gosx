@@ -19,6 +19,51 @@ type Island struct {
 	// PatchCallback is called when shared signals trigger a re-render.
 	// Set by the bridge to push patches to JS.
 	PatchCallback func(patches []PatchOp)
+
+	// HydrationMismatches records differences detected between the server-rendered
+	// HTML and the client's initial evaluation. Non-empty means the server and
+	// client produced different output — a potential bug in props or timing.
+	HydrationMismatches []string
+}
+
+// CheckHydration compares the initial client-side tree against what the server
+// would have rendered (represented as the DOM's current state). Returns
+// mismatches if any. Call this after hydration to detect SSR/client divergence.
+func (island *Island) CheckHydration(serverTree *ResolvedTree) []string {
+	if serverTree == nil || island.prev == nil {
+		return nil
+	}
+	var mismatches []string
+	checkNode := func(idx int) {
+		if idx >= len(serverTree.Nodes) || idx >= len(island.prev.Nodes) {
+			return
+		}
+		sn := &serverTree.Nodes[idx]
+		cn := &island.prev.Nodes[idx]
+
+		if sn.Tag != cn.Tag {
+			mismatches = append(mismatches, fmt.Sprintf("node %d: server tag=%q, client tag=%q", idx, sn.Tag, cn.Tag))
+		}
+		if sn.Text != cn.Text {
+			mismatches = append(mismatches, fmt.Sprintf("node %d: server text=%q, client text=%q", idx, sn.Text, cn.Text))
+		}
+	}
+
+	maxLen := len(serverTree.Nodes)
+	if len(island.prev.Nodes) < maxLen {
+		maxLen = len(island.prev.Nodes)
+	}
+	for i := 0; i < maxLen; i++ {
+		checkNode(i)
+	}
+
+	if len(serverTree.Nodes) != len(island.prev.Nodes) {
+		mismatches = append(mismatches, fmt.Sprintf("tree size: server=%d nodes, client=%d nodes",
+			len(serverTree.Nodes), len(island.prev.Nodes)))
+	}
+
+	island.HydrationMismatches = mismatches
+	return mismatches
 }
 
 // SetSharedSignal replaces an island-local signal with a shared one from the store.
