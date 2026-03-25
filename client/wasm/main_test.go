@@ -160,3 +160,23 @@ func Toggle() Node {
 		t.Fatalf("expected disposed island error, got %q", actionRet.String())
 	}
 }
+
+func TestRuntimeSetSharedSignalExport(t *testing.T) {
+	setGlobalValue(t, "__gosx_runtime_ready", js.Undefined())
+
+	b := bridge.New()
+	registerRuntime(b)
+
+	ret := js.Global().Get("__gosx_set_shared_signal").Invoke("$presence", `{"count":3}`)
+	if !ret.IsNull() {
+		t.Fatalf("expected null result, got %q", ret.String())
+	}
+
+	val, ok := b.GetStore().Get("$presence")
+	if !ok {
+		t.Fatal("expected shared signal to be set")
+	}
+	if val.Fields["count"].Num != 3 {
+		t.Fatalf("expected count 3, got %v", val.Fields["count"].Num)
+	}
+}

@@ -163,6 +163,9 @@ func (vm *VM) Eval(id program.ExprID) Value {
 
 	// Collection
 	case program.OpIndex:
+		if len(e.Operands) >= 2 {
+			return vm.Eval(e.Operands[0]).IndexVal(vm.Eval(e.Operands[1]))
+		}
 		return ZeroValue(program.TypeAny)
 	case program.OpLen:
 		if len(e.Operands) > 0 {
@@ -319,12 +322,20 @@ func (vm *VM) Eval(id program.ExprID) Value {
 		return StringVal("")
 	case program.OpSplit:
 		if len(e.Operands) > 0 {
-			return vm.Eval(e.Operands[0]).SplitVal(e.Value)
+			sep := e.Value
+			if len(e.Operands) >= 2 {
+				sep = vm.Eval(e.Operands[1]).String()
+			}
+			return vm.Eval(e.Operands[0]).SplitVal(sep)
 		}
 		return ArrayVal(nil)
 	case program.OpJoin:
 		if len(e.Operands) > 0 {
-			return vm.Eval(e.Operands[0]).JoinVal(e.Value)
+			sep := e.Value
+			if len(e.Operands) >= 2 {
+				sep = vm.Eval(e.Operands[1]).String()
+			}
+			return vm.Eval(e.Operands[0]).JoinVal(sep)
 		}
 		return StringVal("")
 	case program.OpReplace:

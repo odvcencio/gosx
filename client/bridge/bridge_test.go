@@ -113,3 +113,25 @@ func TestDecodeProgram(t *testing.T) {
 		t.Fatal("wrong name")
 	}
 }
+
+func TestSetSharedSignalJSON(t *testing.T) {
+	b := New()
+
+	if err := b.SetSharedSignalJSON("$presence", `{"count":2,"members":["a","b"]}`); err != nil {
+		t.Fatalf("set shared signal json: %v", err)
+	}
+
+	val, ok := b.GetStore().Get("$presence")
+	if !ok {
+		t.Fatal("expected shared signal value")
+	}
+	if val.Type != program.TypeAny {
+		t.Fatalf("expected any type, got %d", val.Type)
+	}
+	if got := val.Fields["count"].Num; got != 2 {
+		t.Fatalf("expected count=2, got %v", got)
+	}
+	if got := val.Fields["members"].Items[1].Str; got != "b" {
+		t.Fatalf("expected member b, got %q", got)
+	}
+}

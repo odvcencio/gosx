@@ -1,9 +1,10 @@
 GO ?= go
 GOFMT ?= gofmt
 GO_WASM_EXEC ?= $(shell $(GO) env GOROOT)/lib/wasm/go_js_wasm_exec
+NODE ?= node
 GOFILES := $(shell find . -name '*.go' -not -path './dist/*' -not -path './build/*')
 
-.PHONY: fmt fmt-check test test-race test-wasm build-cli build-runtime ci
+.PHONY: fmt fmt-check test test-race test-js test-wasm build-cli build-runtime ci
 
 fmt:
 	$(GOFMT) -w $(GOFILES)
@@ -22,6 +23,9 @@ test:
 test-race:
 	$(GO) test -race ./...
 
+test-js:
+	$(NODE) --test ./client/js/*.test.js
+
 test-wasm:
 	GOOS=js GOARCH=wasm $(GO) test -exec="$(GO_WASM_EXEC)" ./client/wasm
 
@@ -32,4 +36,4 @@ build-runtime:
 	mkdir -p build
 	GOOS=js GOARCH=wasm $(GO) build -o build/gosx-runtime.wasm ./client/wasm
 
-ci: fmt-check test test-race test-wasm build-cli build-runtime
+ci: fmt-check test test-race test-js test-wasm build-cli build-runtime

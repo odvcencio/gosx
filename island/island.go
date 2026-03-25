@@ -18,6 +18,8 @@ import (
 
 	"github.com/odvcencio/gosx"
 	"github.com/odvcencio/gosx/buildmanifest"
+	"github.com/odvcencio/gosx/client/vm"
+	"github.com/odvcencio/gosx/engine"
 	"github.com/odvcencio/gosx/hydrate"
 	"github.com/odvcencio/gosx/island/program"
 )
@@ -211,17 +213,88 @@ func (r *Renderer) ManifestScript() gosx.Node {
 
 // BootstrapScript returns the script tags needed for island hydration.
 func (r *Renderer) BootstrapScript() gosx.Node {
-	if len(r.manifest.Islands) == 0 {
-		return gosx.Text("") // No islands, no client runtime needed
+	if !r.needsClientBootstrap() {
+		return gosx.Text("")
 	}
 
 	var b strings.Builder
-	b.WriteString(fmt.Sprintf(`<script src="%s"></script>`, html.EscapeString(r.wasmExecPath)))
-	b.WriteByte('\n')
-	b.WriteString(fmt.Sprintf(`<script src="%s"></script>`, html.EscapeString(r.patchPath)))
-	b.WriteByte('\n')
+	if (len(r.manifest.Islands) > 0 || len(r.manifest.Hubs) > 0 || r.hasWASMEngines()) && r.wasmExecPath != "" {
+		b.WriteString(fmt.Sprintf(`<script src="%s"></script>`, html.EscapeString(r.wasmExecPath)))
+		b.WriteByte('\n')
+	}
+	if len(r.manifest.Islands) > 0 && r.patchPath != "" {
+		b.WriteString(fmt.Sprintf(`<script src="%s"></script>`, html.EscapeString(r.patchPath)))
+		b.WriteByte('\n')
+	}
 	b.WriteString(fmt.Sprintf(`<script src="%s"></script>`, html.EscapeString(r.bootstrapPath)))
 	return gosx.RawHTML(b.String())
+}
+
+// RenderEngine registers an engine instance in the hydration manifest and,
+// for surface engines, emits a mount element the client runtime can attach to.
+// The optional JS runtime metadata is escape-hatch only; built-in engines can
+// rely on factories registered directly on the shared bootstrap runtime.
+func (r *Renderer) RenderEngine(cfg engine.Config, fallback gosx.Node) gosx.Node {
+	if cfg.Name == "" {
+		return renderEngineError(fmt.Errorf("name required"))
+	}
+	if cfg.Kind == "" {
+		return renderEngineError(fmt.Errorf("kind required"))
+	}
+	if err := engine.ValidateCapabilities(cfg.Capabilities); err != nil {
+		return renderEngineError(err)
+	}
+
+	props, err := engineProps(cfg.Props)
+	if err != nil {
+		return renderEngineError(err)
+	}
+
+	mountID := cfg.MountID
+	if cfg.Kind == engine.KindSurface && mountID == "" {
+		mountID = fmt.Sprintf("gosx-engine-mount-%d", len(r.manifest.Engines))
+	}
+
+	id, err := r.manifest.AddEngineWithRuntime(
+		cfg.Name,
+		string(cfg.Kind),
+		cfg.WASMPath,
+		mountID,
+		cfg.JSPath,
+		cfg.JSExport,
+		props,
+		engineCapabilities(cfg.Capabilities),
+	)
+	if err != nil {
+		return renderEngineError(err)
+	}
+
+	if cfg.Kind == engine.KindWorker {
+		return gosx.Text("")
+	}
+
+	attrs := []any{
+		gosx.Attr("id", mountID),
+		gosx.Attr("data-gosx-engine", cfg.Name),
+		gosx.Attr("data-gosx-engine-id", id),
+		gosx.Attr("data-gosx-engine-kind", string(cfg.Kind)),
+	}
+	if len(cfg.Capabilities) > 0 {
+		attrs = append(attrs, gosx.Attr("data-gosx-engine-capabilities", strings.Join(engineCapabilities(cfg.Capabilities), " ")))
+	}
+
+	args := []any{gosx.Attrs(attrs...)}
+	if !fallback.IsZero() {
+		args = append(args, fallback)
+	}
+
+	return gosx.El("div", args...)
+}
+
+// BindHub registers a realtime hub connection that can update shared island
+// signals on the client runtime.
+func (r *Renderer) BindHub(name, path string, bindings []hydrate.HubBinding) string {
+	return r.manifest.AddHub(name, path, bindings)
 }
 
 // RenderIslandFromProgram renders an island entirely from its compiled IslandProgram.
@@ -234,9 +307,8 @@ func (r *Renderer) RenderIslandFromProgram(prog *program.Program, props any) gos
 	// Extract event slots from the program's node tree
 	events := extractEventSlots(prog)
 
-	// Generate server-rendered HTML from the program's node tree
-	// with data-gosx-handler attributes on event-bound elements
-	content := renderProgramHTML(prog)
+	// Generate server-rendered HTML from the program's evaluated initial tree.
+	content := renderProgramHTML(prog, props)
 
 	// Register in manifest
 	id, err := r.manifest.AddIsland(prog.Name, r.bundleID, props)
@@ -324,17 +396,35 @@ func eventNameToType(name string) string {
 	}
 }
 
-// renderProgramHTML renders an IslandProgram's node tree to server HTML.
-// Event attributes are rendered as data-gosx-on-* for delegated dispatch.
-func renderProgramHTML(prog *program.Program) gosx.Node {
-	if len(prog.Nodes) == 0 {
-		return gosx.Text("")
-	}
-	html := renderProgramNode(prog, prog.Root, "0")
+func renderProgramHTMLWithProps(prog *program.Program, propsJSON json.RawMessage) gosx.Node {
+	resolved := vm.ResolveInitialTree(prog, string(propsJSON))
+	html := RenderResolvedHTML(prog, resolved)
 	return gosx.RawHTML(html)
 }
 
-func renderProgramNode(prog *program.Program, nodeID program.NodeID, path string) string {
+// renderProgramHTML renders an IslandProgram's node tree to server HTML.
+// Event attributes are rendered as data-gosx-on-* for delegated dispatch.
+func renderProgramHTML(prog *program.Program, props any) gosx.Node {
+	if len(prog.Nodes) == 0 {
+		return gosx.Text("")
+	}
+	propsJSON, err := SerializeProps(props)
+	if err != nil {
+		return gosx.Text("")
+	}
+	return renderProgramHTMLWithProps(prog, propsJSON)
+}
+
+// RenderResolvedHTML renders a program tree from an already-resolved VM tree.
+// This is used by the island test harness to assert post-dispatch DOM output.
+func RenderResolvedHTML(prog *program.Program, resolved *vm.ResolvedTree) string {
+	if prog == nil || len(prog.Nodes) == 0 {
+		return ""
+	}
+	return renderProgramNode(prog, resolved, prog.Root, "0")
+}
+
+func renderProgramNode(prog *program.Program, resolved *vm.ResolvedTree, nodeID program.NodeID, path string) string {
 	if int(nodeID) >= len(prog.Nodes) {
 		return ""
 	}
@@ -344,13 +434,14 @@ func renderProgramNode(prog *program.Program, nodeID program.NodeID, path string
 	case program.NodeText:
 		return html.EscapeString(node.Text)
 	case program.NodeExpr:
-		// Server-side: evaluate init values for display
-		// For now, render empty (the VM fills it on hydration)
-		return ""
+		if resolved == nil || int(nodeID) >= len(resolved.Nodes) {
+			return ""
+		}
+		return html.EscapeString(resolved.Nodes[nodeID].Text)
 	case program.NodeFragment:
 		var b strings.Builder
 		for idx, child := range node.Children {
-			b.WriteString(renderProgramNode(prog, child, childProgramPath(path, idx)))
+			b.WriteString(renderProgramNode(prog, resolved, child, childProgramPath(path, idx)))
 		}
 		return b.String()
 	case program.NodeElement:
@@ -358,6 +449,14 @@ func renderProgramNode(prog *program.Program, nodeID program.NodeID, path string
 		safeTag := html.EscapeString(node.Tag)
 		b.WriteString("<")
 		b.WriteString(safeTag)
+
+		var resolvedAttrs map[string]string
+		if resolved != nil && int(nodeID) < len(resolved.Nodes) {
+			resolvedAttrs = make(map[string]string, len(resolved.Nodes[nodeID].Attrs))
+			for _, attr := range resolved.Nodes[nodeID].Attrs {
+				resolvedAttrs[attr.Name] = attr.Value
+			}
+		}
 
 		// Render attributes
 		hasEventBinding := false
@@ -377,7 +476,12 @@ func renderProgramNode(prog *program.Program, nodeID program.NodeID, path string
 				}
 				hasEventBinding = true
 			case program.AttrExpr:
-				// Dynamic attrs — skip for server render
+				if resolvedAttrs == nil {
+					continue
+				}
+				if value, ok := resolvedAttrs[attr.Name]; ok {
+					b.WriteString(fmt.Sprintf(` %s="%s"`, safeName, html.EscapeString(value)))
+				}
 			}
 		}
 		if hasEventBinding {
@@ -388,7 +492,7 @@ func renderProgramNode(prog *program.Program, nodeID program.NodeID, path string
 
 		// Render children
 		for idx, child := range node.Children {
-			b.WriteString(renderProgramNode(prog, child, childProgramPath(path, idx)))
+			b.WriteString(renderProgramNode(prog, resolved, child, childProgramPath(path, idx)))
 		}
 
 		b.WriteString(fmt.Sprintf("</%s>", safeTag))
@@ -430,7 +534,7 @@ func childProgramPath(parent string, idx int) string {
 // during HTML parsing, BEFORE the scripts execute — eliminating the
 // serial dependency of HTML → JS → fetch WASM.
 func (r *Renderer) PreloadHints() gosx.Node {
-	if len(r.manifest.Islands) == 0 {
+	if !r.needsClientBootstrap() {
 		return gosx.Text("")
 	}
 
@@ -438,7 +542,7 @@ func (r *Renderer) PreloadHints() gosx.Node {
 
 	// Preload the WASM runtime — this is the biggest asset and biggest win.
 	// "as=fetch" with crossorigin lets the browser start the download immediately.
-	if r.manifest.Runtime.Path != "" {
+	if (len(r.manifest.Islands) > 0 || len(r.manifest.Hubs) > 0) && r.manifest.Runtime.Path != "" {
 		b.WriteString(fmt.Sprintf(`<link rel="preload" href="%s" as="fetch" type="application/wasm" crossorigin>`, r.manifest.Runtime.Path))
 		b.WriteByte('\n')
 	}
@@ -451,13 +555,28 @@ func (r *Renderer) PreloadHints() gosx.Node {
 		}
 	}
 
+	for _, entry := range r.manifest.Engines {
+		if entry.ProgramRef != "" {
+			if strings.HasSuffix(entry.ProgramRef, ".wasm") {
+				b.WriteString(fmt.Sprintf(`<link rel="preload" href="%s" as="fetch" type="application/wasm" crossorigin>`, entry.ProgramRef))
+			} else {
+				b.WriteString(fmt.Sprintf(`<link rel="prefetch" href="%s">`, entry.ProgramRef))
+			}
+			b.WriteByte('\n')
+		}
+		if entry.JSRef != "" {
+			b.WriteString(fmt.Sprintf(`<link rel="prefetch" href="%s" as="script">`, entry.JSRef))
+			b.WriteByte('\n')
+		}
+	}
+
 	return gosx.RawHTML(b.String())
 }
 
 // PageHead returns all head elements needed for islands on this page.
 // Includes preload hints (for <head>) and scripts (for end of <body>).
 func (r *Renderer) PageHead() gosx.Node {
-	if len(r.manifest.Islands) == 0 {
+	if !r.needsClientBootstrap() {
 		return gosx.Text("")
 	}
 	return gosx.Fragment(
@@ -479,4 +598,48 @@ func SerializeProps(props any) (json.RawMessage, error) {
 		return nil, fmt.Errorf("props not serializable: %w", err)
 	}
 	return data, nil
+}
+
+func (r *Renderer) needsClientBootstrap() bool {
+	return len(r.manifest.Islands) > 0 || len(r.manifest.Engines) > 0 || len(r.manifest.Hubs) > 0
+}
+
+func (r *Renderer) hasWASMEngines() bool {
+	for _, entry := range r.manifest.Engines {
+		if entry.ProgramRef != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func engineProps(raw json.RawMessage) (any, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+
+	var props any
+	if err := json.Unmarshal(raw, &props); err != nil {
+		return nil, fmt.Errorf("invalid engine props JSON: %w", err)
+	}
+	return props, nil
+}
+
+func engineCapabilities(caps []engine.Capability) []string {
+	if len(caps) == 0 {
+		return nil
+	}
+
+	out := make([]string, len(caps))
+	for i := range caps {
+		out[i] = string(caps[i])
+	}
+	return out
+}
+
+func renderEngineError(err error) gosx.Node {
+	return gosx.El("div",
+		gosx.Attrs(gosx.Attr("class", "gosx-error")),
+		gosx.Text(fmt.Sprintf("engine error: %v", err)),
+	)
 }

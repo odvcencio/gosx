@@ -8,6 +8,7 @@
 //	gosx check <file.gsx>        Parse and validate without emitting
 //	gosx render <file.gsx>       Render component HTML to stdout
 //	gosx fmt <file.gsx|dir>      Format GoSX source files
+//	gosx lsp                     Start the GoSX language server over stdio
 package main
 
 import (
@@ -42,6 +43,8 @@ func main() {
 		cmdRender()
 	case "fmt", "format":
 		cmdFmt()
+	case "lsp":
+		cmdLSP()
 	case "version":
 		fmt.Println("gosx v0.1.0")
 	case "help", "-h", "--help":
@@ -64,6 +67,7 @@ Commands:
   check <file>         Parse and validate
   render <file> [comp] Render component to HTML
   fmt <path>           Format GoSX source files
+  lsp                  Start the GoSX language server
   version              Print version
 
 `)
@@ -94,16 +98,10 @@ func cmdBuild() {
 
 func cmdDev() {
 	dir := argOrDefault(2, ".")
-	fmt.Fprintf(os.Stderr, "gosx: starting dev server for %s\n", dir)
-	fmt.Fprintf(os.Stderr, "gosx: use 'gosx dev' in your app with the dev package\n")
-	fmt.Fprintf(os.Stderr, "gosx: see examples/dashboard for a working example\n")
-
-	// The dev server is meant to be used programmatically via the dev package.
-	// The CLI just provides a convenience entry point.
-	fmt.Fprintf(os.Stderr, "\nTo use the dev server, add to your main.go:\n\n")
-	fmt.Fprintf(os.Stderr, "  import \"github.com/odvcencio/gosx/dev\"\n\n")
-	fmt.Fprintf(os.Stderr, "  devServer := dev.New(\".\", appHandler)\n")
-	fmt.Fprintf(os.Stderr, "  devServer.ListenAndServe()\n")
+	if err := RunDev(dir); err != nil {
+		fmt.Fprintf(os.Stderr, "gosx dev: %v\n", err)
+		os.Exit(1)
+	}
 }
 
 func cmdCompile() {

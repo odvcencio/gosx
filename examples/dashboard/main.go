@@ -35,13 +35,26 @@ func main() {
 	// Action registry for server-callable actions
 	actions := action.NewRegistry()
 	actions.Register("createUser", func(ctx *action.Context) error {
-		name := ctx.FormData["name"]
-		email := ctx.FormData["email"]
+		name := strings.TrimSpace(ctx.FormData["name"])
+		email := strings.TrimSpace(ctx.FormData["email"])
+		fieldErrors := map[string]string{}
+		if name == "" {
+			fieldErrors["name"] = "Name is required."
+		}
+		if email == "" {
+			fieldErrors["email"] = "Email is required."
+		}
+		if len(fieldErrors) > 0 {
+			ctx.ValidationFailure("Please correct the highlighted fields.", fieldErrors)
+			return nil
+		}
 		log.Printf("Creating user: %s <%s>", name, email)
+		ctx.Redirect("/users")
 		return nil
 	})
 	actions.Register("deleteUser", func(ctx *action.Context) error {
 		log.Printf("Deleting user from request")
+		ctx.Redirect("/users")
 		return nil
 	})
 
@@ -509,54 +522,13 @@ func CounterPage(count int, islands *island.Renderer) gosx.Node {
 // KitchenSinkPage renders all island patterns on a single page.
 func KitchenSinkPage(islands *island.Renderer) gosx.Node {
 	// === COUNTER ===
-	counterContent := gosx.El("div", gosx.Attrs(gosx.Attr("class", "counter")),
-		gosx.El("button", gosx.Attrs(gosx.Attr("data-gosx-handler", "decrement")), gosx.Text("-")),
-		gosx.El("span", gosx.Attrs(gosx.Attr("class", "count")), gosx.Text("0")),
-		gosx.El("button", gosx.Attrs(gosx.Attr("data-gosx-handler", "increment")), gosx.Text("+")),
-	)
-	counterIsland := islands.RenderIslandWithEvents("Counter",
-		map[string]int{"initial": 0},
-		[]hydrate.EventSlot{
-			{SlotID: "dec", EventType: "click", HandlerName: "decrement"},
-			{SlotID: "inc", EventType: "click", HandlerName: "increment"},
-		},
-		counterContent,
-	)
+	counterIsland := islands.RenderIslandFromProgram(program.CounterProgram(), map[string]int{"initial": 0})
 
 	// === TABS (with dynamic CSS class toggling) ===
-	tabsContent := gosx.El("div", gosx.Attrs(gosx.Attr("class", "tabs")),
-		gosx.El("div", gosx.Attrs(gosx.Attr("class", "tab-buttons")),
-			gosx.El("button", gosx.Attrs(gosx.Attr("class", "tab-btn active"), gosx.Attr("data-gosx-handler", "showAbout")), gosx.Text("About")),
-			gosx.El("button", gosx.Attrs(gosx.Attr("class", "tab-btn"), gosx.Attr("data-gosx-handler", "showFeatures")), gosx.Text("Features")),
-			gosx.El("button", gosx.Attrs(gosx.Attr("class", "tab-btn"), gosx.Attr("data-gosx-handler", "showContact")), gosx.Text("Contact")),
-		),
-		gosx.El("div", gosx.Attrs(gosx.Attr("class", "tab-content")),
-			gosx.El("p", gosx.Text("About: GoSX is a Go-native web platform.")),
-		),
-	)
-	tabsIsland := islands.RenderIslandWithEvents("Tabs",
-		nil,
-		[]hydrate.EventSlot{
-			{SlotID: "t0", EventType: "click", HandlerName: "showAbout"},
-			{SlotID: "t1", EventType: "click", HandlerName: "showFeatures"},
-			{SlotID: "t2", EventType: "click", HandlerName: "showContact"},
-		},
-		tabsContent,
-	)
+	tabsIsland := islands.RenderIslandFromProgram(program.TabsProgram(), nil)
 
 	// === TOGGLE (click + keyboard handler) ===
-	toggleContent := gosx.El("div", gosx.Attrs(gosx.Attr("class", "toggle")),
-		gosx.El("button", gosx.Attrs(gosx.Attr("data-gosx-handler", "toggle")), gosx.Text("Toggle Content")),
-		gosx.El("p", gosx.Text("")),
-	)
-	toggleIsland := islands.RenderIslandWithEvents("Toggle",
-		nil,
-		[]hydrate.EventSlot{
-			{SlotID: "tog", EventType: "click", HandlerName: "toggle"},
-			{SlotID: "togk", EventType: "keydown", HandlerName: "toggleKey"},
-		},
-		toggleContent,
-	)
+	toggleIsland := islands.RenderIslandFromProgram(program.ToggleProgram(), nil)
 
 	// === TODO ===
 	todoContent := gosx.El("div", gosx.Attrs(gosx.Attr("class", "todo")),
@@ -604,35 +576,7 @@ func KitchenSinkPage(islands *island.Renderer) gosx.Node {
 	)
 
 	// === DERIVED / PRICE CALCULATOR ===
-	derivedContent := gosx.El("div", gosx.Attrs(gosx.Attr("class", "derived")),
-		gosx.El("h3", gosx.Text("Price Calculator")),
-		gosx.El("div", gosx.Attrs(gosx.Attr("class", "row")),
-			gosx.Text("Price: $"),
-			gosx.El("span", gosx.Text("100")),
-		),
-		gosx.El("div", gosx.Attrs(gosx.Attr("class", "row")),
-			gosx.Text("Qty: "),
-			gosx.El("span", gosx.Text("1")),
-			gosx.El("button", gosx.Attrs(gosx.Attr("data-gosx-handler", "incQuantity")), gosx.Text("+")),
-		),
-		gosx.El("div", gosx.Attrs(gosx.Attr("class", "row")),
-			gosx.Text("Discount: $"),
-			gosx.El("span", gosx.Text("0")),
-			gosx.El("button", gosx.Attrs(gosx.Attr("data-gosx-handler", "toggleDiscount")), gosx.Text("Toggle $10 off")),
-		),
-		gosx.El("div", gosx.Attrs(gosx.Attr("class", "total")),
-			gosx.Text("Total: $"),
-			gosx.El("span", gosx.Text("100")),
-		),
-	)
-	derivedIsland := islands.RenderIslandWithEvents("Derived",
-		nil,
-		[]hydrate.EventSlot{
-			{SlotID: "iq", EventType: "click", HandlerName: "incQuantity"},
-			{SlotID: "td", EventType: "click", HandlerName: "toggleDiscount"},
-		},
-		derivedContent,
-	)
+	derivedIsland := islands.RenderIslandFromProgram(program.DerivedProgram(), nil)
 
 	// === LIST (dynamic list rendering) ===
 	listContent := gosx.El("div", gosx.Attrs(gosx.Attr("class", "list-demo")),

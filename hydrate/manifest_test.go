@@ -161,3 +161,21 @@ func TestIslandProgramRef(t *testing.T) {
 		t.Fatalf("hash: expected def456, got %s", island.ProgramHash)
 	}
 }
+
+func TestManifestAddHub(t *testing.T) {
+	m := NewManifest()
+	id := m.AddHub("presence", "/gosx/hub/presence", []HubBinding{
+		{Event: "snapshot", Signal: "$presence"},
+		{Event: "memberJoined", Signal: "$presence"},
+	})
+
+	if id != "gosx-hub-0" {
+		t.Fatalf("expected gosx-hub-0, got %s", id)
+	}
+	if len(m.Hubs) != 1 {
+		t.Fatalf("expected 1 hub, got %d", len(m.Hubs))
+	}
+	if m.Hubs[0].Bindings[0].Signal != "$presence" {
+		t.Fatalf("unexpected binding %#v", m.Hubs[0].Bindings[0])
+	}
+}

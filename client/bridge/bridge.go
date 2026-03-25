@@ -161,6 +161,25 @@ func (b *Bridge) DispatchAction(islandID, handlerName, eventDataJSON string) ([]
 	return patches, nil
 }
 
+// SetSharedSignalJSON updates a shared signal from a JSON payload.
+// This is used by hub/websocket clients to drive island state from realtime events.
+func (b *Bridge) SetSharedSignalJSON(name, valueJSON string) error {
+	if name == "" {
+		return fmt.Errorf("shared signal name required")
+	}
+	if valueJSON == "" {
+		valueJSON = "null"
+	}
+
+	value, err := vm.ValueFromJSON(valueJSON)
+	if err != nil {
+		return fmt.Errorf("decode shared signal %q: %w", name, err)
+	}
+
+	b.store.Set(name, value)
+	return nil
+}
+
 // MarshalPatches serializes patch ops to JSON for the JS patch applier.
 func MarshalPatches(patches []vm.PatchOp) (string, error) {
 	data, err := json.Marshal(patches)

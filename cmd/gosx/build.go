@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -330,11 +331,22 @@ func RunBuild(dir string, dev bool) error {
 		return fmt.Errorf("write manifest: %w", err)
 	}
 
+	// Build the application binary when the target directory is a runnable app.
+	builtServer, err := buildServerBinaryIfPresent(dir, filepath.Join(distDir, "server", "app"))
+	if err != nil {
+		return fmt.Errorf("build server binary: %w", err)
+	}
+
 	// ── Summary ─────────────────────────────────────────────────────────
 
 	fmt.Println("\n─────────────────────────────────")
 	fmt.Printf("Build complete: %s\n\n", distDir)
 	fmt.Printf("  Tier 1 (server):  deploy Go binary, mutable\n")
+	if builtServer {
+		fmt.Printf("  Server binary: %s\n", filepath.Join(distDir, "server", "app"))
+	} else {
+		fmt.Printf("  Server binary: skipped (target is not a main package)\n")
+	}
 	fmt.Printf("  Tier 2 (runtime): %d assets, immutable CDN\n", countNonEmpty(
 		manifest.Runtime.WASM.File,
 		manifest.Runtime.WASMExec.File,
@@ -391,4 +403,28 @@ func getGOROOT() string {
 		return "/usr/local/go"
 	}
 	return strings.TrimSpace(string(out))
+}
+
+func buildServerBinaryIfPresent(dir, outputPath string) (bool, error) {
+	cmd := exec.Command("go", "list", "-f", "{{.Name}}", ".")
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	if err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			return false, nil
+		}
+		return false, err
+	}
+	if strings.TrimSpace(string(out)) != "main" {
+		return false, nil
+	}
+
+	buildCmd := exec.Command("go", "build", "-o", outputPath, ".")
+	buildCmd.Dir = dir
+	buildCmd.Stderr = os.Stderr
+	if err := buildCmd.Run(); err != nil {
+		return false, err
+	}
+	return true, nil
 }

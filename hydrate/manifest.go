@@ -15,6 +15,9 @@ type Manifest struct {
 	// Engines lists every engine instance on the page.
 	Engines []EngineEntry `json:"engines,omitempty"`
 
+	// Hubs lists realtime hub connections the client should establish.
+	Hubs []HubEntry `json:"hubs,omitempty"`
+
 	// Bundles maps bundle IDs to WASM asset paths.
 	Bundles map[string]BundleRef `json:"bundles"`
 
@@ -37,11 +40,42 @@ type EngineEntry struct {
 	// ProgramRef is the URL path to the engine's WASM bundle.
 	ProgramRef string `json:"programRef"`
 
+	// MountID is the DOM element ID the engine should attach to.
+	MountID string `json:"mountId,omitempty"`
+
+	// JSRef is an optional client-side JS entrypoint for engines that opt into
+	// the escape-hatch runtime.
+	JSRef string `json:"jsRef,omitempty"`
+
+	// JSExport is the factory name looked up in window.__gosx_engine_factories.
+	JSExport string `json:"jsExport,omitempty"`
+
 	// Props is the JSON-serialized props snapshot.
 	Props json.RawMessage `json:"props"`
 
 	// Capabilities declares what browser APIs the engine needs.
 	Capabilities []string `json:"capabilities,omitempty"`
+}
+
+// HubEntry describes a realtime hub connection for the page.
+type HubEntry struct {
+	// ID is the stable manifest identifier for this connection.
+	ID string `json:"id"`
+
+	// Name is the hub name.
+	Name string `json:"name"`
+
+	// Path is the WebSocket endpoint path or absolute ws/wss URL.
+	Path string `json:"path"`
+
+	// Bindings map hub events to shared island signals.
+	Bindings []HubBinding `json:"bindings,omitempty"`
+}
+
+// HubBinding maps a hub event to a shared signal name.
+type HubBinding struct {
+	Event  string `json:"event"`
+	Signal string `json:"signal"`
 }
 
 // RuntimeRef points to the shared WASM runtime.
@@ -160,6 +194,11 @@ func (m *Manifest) AddIsland(component string, bundleID string, props any) (stri
 
 // AddEngine adds an engine entry and returns the assigned ID.
 func (m *Manifest) AddEngine(component, kind, programRef string, props any, capabilities []string) (string, error) {
+	return m.AddEngineWithRuntime(component, kind, programRef, "", "", "", props, capabilities)
+}
+
+// AddEngineWithRuntime adds an engine entry with optional DOM mount and JS runtime metadata.
+func (m *Manifest) AddEngineWithRuntime(component, kind, programRef, mountID, jsRef, jsExport string, props any, capabilities []string) (string, error) {
 	propsJSON, err := json.Marshal(props)
 	if err != nil {
 		return "", err
@@ -170,6 +209,9 @@ func (m *Manifest) AddEngine(component, kind, programRef string, props any, capa
 		Component:    component,
 		Kind:         kind,
 		ProgramRef:   programRef,
+		MountID:      mountID,
+		JSRef:        jsRef,
+		JSExport:     jsExport,
 		Props:        propsJSON,
 		Capabilities: capabilities,
 	}
@@ -177,8 +219,24 @@ func (m *Manifest) AddEngine(component, kind, programRef string, props any, capa
 	return id, nil
 }
 
+// AddHub registers a realtime hub connection and returns the assigned ID.
+func (m *Manifest) AddHub(name, path string, bindings []HubBinding) string {
+	id := hubID(len(m.Hubs))
+	m.Hubs = append(m.Hubs, HubEntry{
+		ID:       id,
+		Name:     name,
+		Path:     path,
+		Bindings: bindings,
+	})
+	return id
+}
+
 func engineID(n int) string {
 	return "gosx-engine-" + itoa(n)
+}
+
+func hubID(n int) string {
+	return "gosx-hub-" + itoa(n)
 }
 
 func islandID(n int) string {

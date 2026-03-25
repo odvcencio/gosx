@@ -31,7 +31,7 @@ func Transpile(source []byte, opts Options) (string, error) {
 
 	root := tree.RootNode()
 	if root.HasError() {
-		return "", fmt.Errorf("parse errors in source")
+		return "", gosx.DescribeParseError(root, source, lang)
 	}
 
 	t := &transpiler{

@@ -1,6 +1,7 @@
 package island
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -8,7 +9,9 @@ import (
 
 	"github.com/odvcencio/gosx"
 	"github.com/odvcencio/gosx/buildmanifest"
+	"github.com/odvcencio/gosx/engine"
 	"github.com/odvcencio/gosx/hydrate"
+	"github.com/odvcencio/gosx/island/program"
 )
 
 func TestRendererBasic(t *testing.T) {
@@ -87,6 +90,121 @@ func TestPageHeadWithIslands(t *testing.T) {
 	}
 	if !strings.Contains(html, "bootstrap.js") {
 		t.Fatal("missing bootstrap script in PageHead")
+	}
+}
+
+func TestPageHeadWithEnginesOnly(t *testing.T) {
+	r := NewRenderer("main")
+	r.SetClientAssetPaths("/gosx/wasm_exec.js", "/gosx/patch.js", "/gosx/bootstrap.js")
+
+	node := r.RenderEngine(engine.Config{
+		Name:     "Whiteboard",
+		Kind:     engine.KindSurface,
+		WASMPath: "/gosx/engines/Whiteboard.wasm",
+	}, gosx.Text("loading"))
+	html := gosx.RenderHTML(node)
+	if !strings.Contains(html, `data-gosx-engine="Whiteboard"`) {
+		t.Fatalf("expected engine mount shell, got %s", html)
+	}
+
+	head := gosx.RenderHTML(r.PageHead())
+	if !strings.Contains(head, "gosx-manifest") {
+		t.Fatal("missing manifest for engine page")
+	}
+	if !strings.Contains(head, "bootstrap.js") {
+		t.Fatal("missing bootstrap script for engine page")
+	}
+	if !strings.Contains(head, "wasm_exec.js") {
+		t.Fatal("missing wasm_exec for wasm-backed engine page")
+	}
+	if strings.Contains(head, "patch.js") {
+		t.Fatal("engine-only page should not load patch.js")
+	}
+}
+
+func TestRenderEngineRegistersManifestEntryAndMount(t *testing.T) {
+	r := NewRenderer("main")
+	props := json.RawMessage(`{"room":"abc","stroke":2}`)
+
+	node := r.RenderEngine(engine.Config{
+		Name:         "Whiteboard",
+		Kind:         engine.KindSurface,
+		WASMPath:     "/gosx/engines/Whiteboard.wasm",
+		JSPath:       "/gosx/engines/Whiteboard.js",
+		JSExport:     "WhiteboardEngine",
+		Capabilities: []engine.Capability{engine.CapCanvas, engine.CapAnimation},
+		Props:        props,
+	}, gosx.Text("loading"))
+
+	html := gosx.RenderHTML(node)
+	if !strings.Contains(html, `data-gosx-engine="Whiteboard"`) {
+		t.Fatalf("expected engine mount markup, got %s", html)
+	}
+	if !strings.Contains(html, `loading`) {
+		t.Fatalf("expected fallback content, got %s", html)
+	}
+
+	if len(r.Manifest().Engines) != 1 {
+		t.Fatalf("expected one engine entry, got %d", len(r.Manifest().Engines))
+	}
+
+	entry := r.Manifest().Engines[0]
+	if entry.Component != "Whiteboard" {
+		t.Fatalf("unexpected component: %s", entry.Component)
+	}
+	if entry.MountID == "" {
+		t.Fatal("expected mount id")
+	}
+	if entry.JSRef != "/gosx/engines/Whiteboard.js" {
+		t.Fatalf("unexpected js ref: %s", entry.JSRef)
+	}
+	if entry.JSExport != "WhiteboardEngine" {
+		t.Fatalf("unexpected js export: %s", entry.JSExport)
+	}
+	if string(entry.Props) != `{"room":"abc","stroke":2}` {
+		t.Fatalf("unexpected props: %s", entry.Props)
+	}
+}
+
+func TestRenderWorkerEngineRegistersWithoutDOMShell(t *testing.T) {
+	r := NewRenderer("main")
+
+	node := r.RenderEngine(engine.Config{
+		Name:     "SearchIndexer",
+		Kind:     engine.KindWorker,
+		WASMPath: "/gosx/engines/SearchIndexer.wasm",
+	}, gosx.Node{})
+
+	if html := gosx.RenderHTML(node); html != "" {
+		t.Fatalf("worker engine should not emit DOM shell, got %q", html)
+	}
+	if len(r.Manifest().Engines) != 1 {
+		t.Fatalf("expected one worker engine entry, got %d", len(r.Manifest().Engines))
+	}
+	if r.Manifest().Engines[0].MountID != "" {
+		t.Fatalf("worker engine should not have mount id, got %q", r.Manifest().Engines[0].MountID)
+	}
+}
+
+func TestBindHubAddsManifestEntryAndBootstrapsPage(t *testing.T) {
+	r := NewRenderer("main")
+	r.BindHub("presence", "/gosx/hub/presence", []hydrate.HubBinding{
+		{Event: "snapshot", Signal: "$presence"},
+	})
+
+	if len(r.Manifest().Hubs) != 1 {
+		t.Fatalf("expected one hub entry, got %d", len(r.Manifest().Hubs))
+	}
+	if r.Manifest().Hubs[0].Path != "/gosx/hub/presence" {
+		t.Fatalf("unexpected hub path %q", r.Manifest().Hubs[0].Path)
+	}
+
+	head := gosx.RenderHTML(r.PageHead())
+	if !strings.Contains(head, "gosx-manifest") {
+		t.Fatal("missing manifest for hub page")
+	}
+	if !strings.Contains(head, "bootstrap.js") {
+		t.Fatal("missing bootstrap for hub page")
 	}
 }
 
@@ -227,5 +345,37 @@ func TestLoadBuildManifestFromDisk(t *testing.T) {
 	entry := r.Manifest().Islands[0]
 	if entry.ProgramRef != "/static/assets/islands/Counter.eeeeffff.json" {
 		t.Fatalf("unexpected program ref: %s", entry.ProgramRef)
+	}
+}
+
+func TestRenderIslandFromProgramRendersInitialExpressions(t *testing.T) {
+	r := NewRenderer("main")
+	r.SetBundle("main", "/gosx/runtime.wasm")
+	r.SetProgramDir("/gosx/islands")
+
+	node := r.RenderIslandFromProgram(program.CounterProgram(), nil)
+	html := gosx.RenderHTML(node)
+
+	if !strings.Contains(html, `data-gosx-island="Counter"`) {
+		t.Fatal("missing island wrapper")
+	}
+	if !strings.Contains(html, ">0<") {
+		t.Fatalf("expected initial count render, got %s", html)
+	}
+}
+
+func TestRenderIslandFromProgramRendersDynamicAttrs(t *testing.T) {
+	r := NewRenderer("main")
+	r.SetBundle("main", "/gosx/runtime.wasm")
+	r.SetProgramDir("/gosx/islands")
+
+	node := r.RenderIslandFromProgram(program.TabsProgram(), nil)
+	html := gosx.RenderHTML(node)
+
+	if !strings.Contains(html, `class="tab-btn active"`) {
+		t.Fatalf("expected active tab class, got %s", html)
+	}
+	if !strings.Contains(html, `About: GoSX is a Go-native web platform.`) {
+		t.Fatalf("expected initial tab content, got %s", html)
 	}
 }

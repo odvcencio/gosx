@@ -14,9 +14,22 @@
   const GOSX_VERSION = "0.2.0";
 
   // --- GoSX runtime namespace ---
+  const engineFactories = window.__gosx_engine_factories || Object.create(null);
+  const loadedEngineScripts = new Map();
+  window.__gosx_engine_factories = engineFactories;
+  window.__gosx_register_engine_factory = function(name, factory) {
+    if (!name || typeof factory !== "function") {
+      console.error("[gosx] invalid engine factory registration");
+      return;
+    }
+    engineFactories[name] = factory;
+  };
+
   window.__gosx = {
     version: GOSX_VERSION,
     islands: new Map(),   // islandID -> { component, listeners, root }
+    engines: new Map(),   // engineID -> { component, kind, mount, handle }
+    hubs: new Map(),      // hubID -> { entry, socket, reconnectTimer }
     ready: false,
   };
 
@@ -118,6 +131,30 @@
     return "json";
   }
 
+  async function loadEngineScript(jsRef) {
+    if (!jsRef) return;
+    if (loadedEngineScripts.has(jsRef)) {
+      return loadedEngineScripts.get(jsRef);
+    }
+
+    const promise = (async function() {
+      try {
+        const resp = await fetch(jsRef);
+        if (!resp.ok) {
+          throw new Error("engine script fetch failed with status " + resp.status);
+        }
+
+        const source = await resp.text();
+        (0, eval)(String(source) + "\n//# sourceURL=" + jsRef);
+      } catch (e) {
+        console.error(`[gosx] failed to load engine script ${jsRef}:`, e);
+      }
+    })();
+
+    loadedEngineScripts.set(jsRef, promise);
+    return promise;
+  }
+
   // --------------------------------------------------------------------------
   // Event delegation
   // --------------------------------------------------------------------------
@@ -217,6 +254,196 @@
   }
 
   // --------------------------------------------------------------------------
+  // Engine mounting
+  // --------------------------------------------------------------------------
+
+  function resolveEngineFactory(entry) {
+    const exportName = entry.jsExport || entry.component;
+    if (!exportName) return null;
+    return engineFactories[exportName] || null;
+  }
+
+  function normalizeEngineHandle(result) {
+    if (typeof result === "function") {
+      return { dispose: result };
+    }
+    if (result && typeof result === "object") {
+      return result;
+    }
+    return {};
+  }
+
+  function createEngineContext(entry, mount) {
+    return {
+      id: entry.id,
+      kind: entry.kind,
+      component: entry.component,
+      mount: mount,
+      props: entry.props || {},
+      capabilities: entry.capabilities || [],
+      programRef: entry.programRef || "",
+      jsRef: entry.jsRef || "",
+      jsExport: entry.jsExport || "",
+      emit: function(name, detail) {
+        if (typeof document.dispatchEvent === "function" && typeof CustomEvent === "function") {
+          document.dispatchEvent(new CustomEvent("gosx:engine:" + name, {
+            detail: {
+              engineID: entry.id,
+              component: entry.component,
+              detail: detail,
+            },
+          }));
+        }
+      },
+    };
+  }
+
+  async function mountEngine(entry) {
+    const existing = window.__gosx.engines.get(entry.id);
+    if (existing) {
+      window.__gosx_dispose_engine(entry.id);
+    }
+
+    let mount = null;
+    if (entry.kind === "surface") {
+      const mountID = entry.mountId || entry.id;
+      mount = document.getElementById(mountID);
+      if (!mount) {
+        console.warn(`[gosx] engine mount #${mountID} not found for ${entry.id}`);
+        return;
+      }
+    }
+
+    let factory = resolveEngineFactory(entry);
+    if (!factory && entry.jsRef) {
+      await loadEngineScript(entry.jsRef);
+      factory = resolveEngineFactory(entry);
+    }
+
+    if (typeof factory !== "function") {
+      console.warn(`[gosx] no engine factory registered for ${entry.component}`);
+      return;
+    }
+
+    try {
+      let result = factory(createEngineContext(entry, mount));
+      if (result && typeof result.then === "function") {
+        result = await result;
+      }
+      window.__gosx.engines.set(entry.id, {
+        component: entry.component,
+        kind: entry.kind,
+        mount: mount,
+        handle: normalizeEngineHandle(result),
+      });
+    } catch (e) {
+      console.error(`[gosx] failed to mount engine ${entry.id}:`, e);
+    }
+  }
+
+  async function mountAllEngines(manifest) {
+    if (!manifest.engines || manifest.engines.length === 0) return;
+
+    const promises = manifest.engines.map(function(entry) {
+      return mountEngine(entry).catch(function(e) {
+        console.error(`[gosx] unexpected error mounting engine ${entry.id}:`, e);
+      });
+    });
+
+    await Promise.all(promises);
+  }
+
+  // --------------------------------------------------------------------------
+  // Hub connections
+  // --------------------------------------------------------------------------
+
+  function hubURL(path) {
+    if (!path) return "";
+    if (path.startsWith("ws://") || path.startsWith("wss://")) {
+      return path;
+    }
+    const proto = window.location && window.location.protocol === "https:" ? "wss://" : "ws://";
+    const host = window.location && window.location.host ? window.location.host : "";
+    if (path.startsWith("/")) {
+      return proto + host + path;
+    }
+    return proto + host + "/" + path;
+  }
+
+  function applyHubBindings(entry, message) {
+    if (!entry.bindings || entry.bindings.length === 0) return;
+    const setSharedSignal = window.__gosx_set_shared_signal;
+    if (typeof setSharedSignal !== "function") return;
+
+    for (const binding of entry.bindings) {
+      if (!binding || binding.event !== message.event || !binding.signal) continue;
+      try {
+        const result = setSharedSignal(binding.signal, JSON.stringify(message.data));
+        if (typeof result === "string" && result !== "") {
+          console.error(`[gosx] hub binding error (${entry.id}/${binding.signal}):`, result);
+        }
+      } catch (e) {
+        console.error(`[gosx] hub binding error (${entry.id}/${binding.signal}):`, e);
+      }
+    }
+  }
+
+  function connectHub(entry) {
+    if (!entry || !entry.id || !entry.path || typeof WebSocket !== "function") return;
+
+    window.__gosx_disconnect_hub(entry.id);
+
+    const socket = new WebSocket(hubURL(entry.path));
+    const record = {
+      entry: entry,
+      socket: socket,
+      reconnectTimer: null,
+    };
+    window.__gosx.hubs.set(entry.id, record);
+
+    socket.onmessage = function(evt) {
+      let message;
+      try {
+        message = JSON.parse(evt.data);
+      } catch (e) {
+        console.error(`[gosx] failed to decode hub message for ${entry.id}:`, e);
+        return;
+      }
+
+      applyHubBindings(entry, message);
+      if (typeof document.dispatchEvent === "function" && typeof CustomEvent === "function") {
+        document.dispatchEvent(new CustomEvent("gosx:hub:event", {
+          detail: {
+            hubID: entry.id,
+            hubName: entry.name,
+            event: message.event,
+            data: message.data,
+          },
+        }));
+      }
+    };
+
+    socket.onclose = function() {
+      const current = window.__gosx.hubs.get(entry.id);
+      if (!current || current.socket !== socket) return;
+      current.reconnectTimer = setTimeout(function() {
+        connectHub(entry);
+      }, 1000);
+    };
+
+    socket.onerror = function(e) {
+      console.error(`[gosx] hub connection error for ${entry.id}:`, e);
+    };
+  }
+
+  async function connectAllHubs(manifest) {
+    if (!manifest.hubs || manifest.hubs.length === 0) return;
+    for (const entry of manifest.hubs) {
+      connectHub(entry);
+    }
+  }
+
+  // --------------------------------------------------------------------------
   // Island disposal
   // --------------------------------------------------------------------------
 
@@ -243,6 +470,40 @@
     }
 
     window.__gosx.islands.delete(islandID);
+  };
+
+  window.__gosx_dispose_engine = function(engineID) {
+    const record = window.__gosx.engines.get(engineID);
+    if (!record) return;
+
+    if (record.handle && typeof record.handle.dispose === "function") {
+      try {
+        record.handle.dispose();
+      } catch (e) {
+        console.error(`[gosx] dispose error for engine ${engineID}:`, e);
+      }
+    }
+
+    window.__gosx.engines.delete(engineID);
+  };
+
+  window.__gosx_disconnect_hub = function(hubID) {
+    const record = window.__gosx.hubs.get(hubID);
+    if (!record) return;
+
+    if (record.reconnectTimer) {
+      clearTimeout(record.reconnectTimer);
+      record.reconnectTimer = null;
+    }
+    if (record.socket && typeof record.socket.close === "function") {
+      try {
+        record.socket.close();
+      } catch (e) {
+        console.error(`[gosx] disconnect error for hub ${hubID}:`, e);
+      }
+    }
+
+    window.__gosx.hubs.delete(hubID);
   };
 
   // --------------------------------------------------------------------------
@@ -339,11 +600,15 @@
       return;
     }
 
-    hydrateAllIslands(pendingManifest).then(function() {
+    Promise.all([
+      hydrateAllIslands(pendingManifest),
+      mountAllEngines(pendingManifest),
+      connectAllHubs(pendingManifest),
+    ]).then(function() {
       window.__gosx.ready = true;
       document.dispatchEvent(new CustomEvent("gosx:ready"));
     }).catch(function(e) {
-      console.error("[gosx] hydration failed:", e);
+      console.error("[gosx] bootstrap failed:", e);
       window.__gosx.ready = true;
     });
   };
@@ -366,11 +631,13 @@
     // Load the shared WASM runtime. The runtime will call
     // __gosx_runtime_ready() when it is initialized, which triggers
     // island hydration.
-    if (manifest.runtime && manifest.runtime.path) {
+    if ((manifest.islands && manifest.islands.length > 0 || manifest.hubs && manifest.hubs.length > 0) && manifest.runtime && manifest.runtime.path) {
       await loadRuntime(manifest.runtime);
     } else {
-      // No runtime specified — mark ready immediately (static-only page).
-      window.__gosx.ready = true;
+      if ((manifest.islands && manifest.islands.length > 0) || (manifest.hubs && manifest.hubs.length > 0)) {
+        console.error("[gosx] islands and hub bindings require manifest.runtime.path");
+      }
+      window.__gosx_runtime_ready();
     }
   }
 

@@ -203,6 +203,105 @@ func TestRegistryHTTPFormData(t *testing.T) {
 	}
 }
 
+func TestRegistryHTTPStructuredValidationError(t *testing.T) {
+	r := NewRegistry()
+	r.Register("submit", func(ctx *Context) error {
+		return Validation("name is required", map[string]string{"name": "required"}, ctx.FormData)
+	})
+
+	req := httptest.NewRequest("POST", "/gosx/action/submit", strings.NewReader("name="))
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.SetPathValue("name", "submit")
+	w := httptest.NewRecorder()
+
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("expected 422, got %d", w.Code)
+	}
+
+	var result Result
+	if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
+		t.Fatalf("decode result: %v", err)
+	}
+	if result.OK {
+		t.Fatal("expected failed result")
+	}
+	if result.FieldErrors["name"] != "required" {
+		t.Fatalf("expected field error, got %#v", result.FieldErrors)
+	}
+}
+
+func TestRegistryHTTPContextRedirect(t *testing.T) {
+	r := NewRegistry()
+	r.Register("submit", func(ctx *Context) error {
+		ctx.Redirect("/users")
+		return nil
+	})
+
+	req := httptest.NewRequest("POST", "/gosx/action/submit", strings.NewReader("name=Ada"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.SetPathValue("name", "submit")
+	w := httptest.NewRecorder()
+
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("expected 303, got %d", w.Code)
+	}
+	if got := w.Header().Get("Location"); got != "/users" {
+		t.Fatalf("expected redirect to /users, got %q", got)
+	}
+}
+
+func TestRegistryHTTPFormRedirectsBackOnSuccess(t *testing.T) {
+	r := NewRegistry()
+	r.Register("submit", func(ctx *Context) error {
+		return nil
+	})
+
+	req := httptest.NewRequest("POST", "/gosx/action/submit", strings.NewReader("name=Ada"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Referer", "/users/new")
+	req.SetPathValue("name", "submit")
+	w := httptest.NewRecorder()
+
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("expected 303, got %d", w.Code)
+	}
+	if got := w.Header().Get("Location"); got != "/users/new" {
+		t.Fatalf("expected redirect back to referer, got %q", got)
+	}
+}
+
+func TestRegistryHTTPSuccessResultJSON(t *testing.T) {
+	r := NewRegistry()
+	r.Register("submit", func(ctx *Context) error {
+		return ctx.Success("saved", map[string]any{"id": 7})
+	})
+
+	req := httptest.NewRequest("POST", "/gosx/action/submit", strings.NewReader(`{}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.SetPathValue("name", "submit")
+	w := httptest.NewRecorder()
+
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+
+	var result Result
+	if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
+		t.Fatalf("decode result: %v", err)
+	}
+	if !result.OK || result.Message != "saved" {
+		t.Fatalf("unexpected result %#v", result)
+	}
+	if string(result.Data) != `{"id":7}` {
+		t.Fatalf("unexpected data %s", result.Data)
+	}
+}
+
 func TestFormValues(t *testing.T) {
 	fv := NewFormValues(map[string]string{"key": "val"})
 

@@ -36,6 +36,9 @@ jobs:
       - name: Race tests
         run: make test-race
 
+      - name: JavaScript runtime contract tests
+        run: make test-js
+
       - name: WASM runtime tests
         run: make test-wasm
 

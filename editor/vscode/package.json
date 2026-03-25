@@ -1,0 +1,60 @@
+{
+  "name": "gosx",
+  "displayName": "GoSX",
+  "description": "Syntax highlighting and language-server support for .gsx files.",
+  "version": "0.1.0",
+  "publisher": "gosx",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "activationEvents": [
+    "onLanguage:gosx"
+  ],
+  "main": "./extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "gosx",
+        "aliases": [
+          "GoSX",
+          "gosx"
+        ],
+        "extensions": [
+          ".gsx"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "gosx",
+        "scopeName": "source.gosx",
+        "path": "./syntaxes/gosx.tmLanguage.json"
+      }
+    ],
+    "configuration": {
+      "title": "GoSX",
+      "properties": {
+        "gosx.languageServer.path": {
+          "type": "string",
+          "default": "gosx",
+          "description": "Path to the gosx executable used for the language server."
+        },
+        "gosx.languageServer.args": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "description": "Additional arguments passed to `gosx lsp`."
+        }
+      }
+    }
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  }
+}

@@ -10,6 +10,8 @@ func TestEngineConfig(t *testing.T) {
 		Name:         "Whiteboard",
 		Kind:         KindSurface,
 		WASMPath:     "/assets/engines/Whiteboard.abc123.wasm",
+		JSPath:       "/assets/engines/Whiteboard.js",
+		JSExport:     "Whiteboard",
 		MountID:      "canvas-root",
 		Capabilities: []Capability{CapCanvas, CapAnimation},
 	}
@@ -26,6 +28,12 @@ func TestEngineConfig(t *testing.T) {
 	}
 	if decoded.Kind != KindSurface {
 		t.Fatal("wrong kind")
+	}
+	if decoded.JSPath != "/assets/engines/Whiteboard.js" {
+		t.Fatal("wrong js path")
+	}
+	if decoded.JSExport != "Whiteboard" {
+		t.Fatal("wrong js export")
 	}
 	if len(decoded.Capabilities) != 2 {
 		t.Fatal("wrong capabilities count")

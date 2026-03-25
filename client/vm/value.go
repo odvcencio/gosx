@@ -3,6 +3,7 @@ package vm
 import (
 	"fmt"
 	"math"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -11,16 +12,22 @@ import (
 
 // Value is the runtime representation of all values in the island expression VM.
 type Value struct {
-	Type  program.ExprType
-	Str   string
-	Num   float64
-	Bool  bool
-	Items []Value // for array/slice operations
+	Type   program.ExprType
+	Str    string
+	Num    float64
+	Bool   bool
+	Items  []Value
+	Fields map[string]Value
 }
 
 // ArrayVal creates an array Value from a slice of Values.
 func ArrayVal(items []Value) Value {
 	return Value{Type: program.TypeAny, Items: items}
+}
+
+// ObjectVal creates an object Value.
+func ObjectVal(fields map[string]Value) Value {
+	return Value{Type: program.TypeAny, Fields: fields}
 }
 
 // StringVal creates a string Value.
@@ -131,6 +138,18 @@ func (v Value) Eq(b Value) Value {
 		}
 		return BoolVal(true)
 	}
+	if v.Fields != nil || b.Fields != nil {
+		if len(v.Fields) != len(b.Fields) {
+			return BoolVal(false)
+		}
+		for key, val := range v.Fields {
+			other, ok := b.Fields[key]
+			if !ok || !val.Eq(other).Bool {
+				return BoolVal(false)
+			}
+		}
+		return BoolVal(true)
+	}
 	if v.Type == program.TypeString || b.Type == program.TypeString {
 		return BoolVal(v.Str == b.Str)
 	}
@@ -196,6 +215,9 @@ func (v Value) Len() int {
 	if v.Items != nil {
 		return len(v.Items)
 	}
+	if v.Fields != nil {
+		return len(v.Fields)
+	}
 	return len(v.Str)
 }
 
@@ -207,6 +229,18 @@ func (v Value) String() string {
 			parts[i] = item.String()
 		}
 		return "[" + strings.Join(parts, ", ") + "]"
+	}
+	if v.Fields != nil {
+		keys := make([]string, 0, len(v.Fields))
+		for key := range v.Fields {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		parts := make([]string, 0, len(keys))
+		for _, key := range keys {
+			parts = append(parts, fmt.Sprintf("%s:%s", key, v.Fields[key].String()))
+		}
+		return "{" + strings.Join(parts, ", ") + "}"
 	}
 	switch v.Type {
 	case program.TypeString:
@@ -223,6 +257,31 @@ func (v Value) String() string {
 	default:
 		return fmt.Sprintf("%v", v.Num)
 	}
+}
+
+// IndexVal returns an indexed element from an array, object, or string.
+func (v Value) IndexVal(index Value) Value {
+	if v.Items != nil {
+		idx := int(index.Num)
+		if idx < 0 || idx >= len(v.Items) {
+			return ZeroValue(program.TypeAny)
+		}
+		return v.Items[idx]
+	}
+	if v.Fields != nil {
+		if field, ok := v.Fields[index.String()]; ok {
+			return field
+		}
+		return ZeroValue(program.TypeAny)
+	}
+	if v.Type == program.TypeString {
+		idx := int(index.Num)
+		if idx < 0 || idx >= len(v.Str) {
+			return ZeroValue(program.TypeString)
+		}
+		return StringVal(v.Str[idx : idx+1])
+	}
+	return ZeroValue(program.TypeAny)
 }
 
 // --- Array methods ---

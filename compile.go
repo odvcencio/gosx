@@ -49,7 +49,7 @@ func Compile(source []byte) (*ir.Program, error) {
 
 	root := tree.RootNode()
 	if root.HasError() {
-		return nil, fmt.Errorf("parse errors in source")
+		return nil, DescribeParseError(root, source, lang)
 	}
 
 	prog, err := ir.Lower(root, source, lang)

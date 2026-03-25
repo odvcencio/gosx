@@ -88,3 +88,73 @@ func TestAppMultipleRoutes(t *testing.T) {
 		t.Fatalf("expected 'bar-page', got %q", w2.Body.String())
 	}
 }
+
+func TestAppSetsRequestIDAndSecurityHeaders(t *testing.T) {
+	app := New()
+	app.Route("/", func(r *http.Request) gosx.Node {
+		id := RequestID(r)
+		return gosx.Text("request:" + id)
+	})
+
+	handler := app.Build()
+	req := httptest.NewRequest("GET", "/", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	requestID := w.Header().Get("X-Request-ID")
+	if requestID == "" {
+		t.Fatal("expected request id header")
+	}
+	if got := w.Header().Get("X-Content-Type-Options"); got != "nosniff" {
+		t.Fatalf("expected nosniff header, got %q", got)
+	}
+	if got := w.Header().Get("Referrer-Policy"); got != "strict-origin-when-cross-origin" {
+		t.Fatalf("unexpected referrer policy: %q", got)
+	}
+	if !strings.Contains(w.Body.String(), requestID) {
+		t.Fatalf("expected handler to see request id %q, got %q", requestID, w.Body.String())
+	}
+}
+
+func TestAppHealthAndReadinessEndpoints(t *testing.T) {
+	app := New()
+	handler := app.Build()
+
+	for _, path := range []string{"/healthz", "/readyz"} {
+		req := httptest.NewRequest("GET", path, nil)
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("%s: expected 200, got %d", path, w.Code)
+		}
+		if got := w.Header().Get("Content-Type"); !strings.Contains(got, "application/json") {
+			t.Fatalf("%s: expected json content type, got %q", path, got)
+		}
+		if body := strings.TrimSpace(w.Body.String()); body != `{"ok":true}` {
+			t.Fatalf("%s: unexpected body %q", path, body)
+		}
+	}
+}
+
+func TestAppRecoversFromPanics(t *testing.T) {
+	app := New()
+	app.Route("/panic", func(r *http.Request) gosx.Node {
+		panic("boom")
+	})
+
+	handler := app.Build()
+	req := httptest.NewRequest("GET", "/panic", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d", w.Code)
+	}
+	if strings.TrimSpace(w.Body.String()) != http.StatusText(http.StatusInternalServerError) {
+		t.Fatalf("unexpected recovery body %q", w.Body.String())
+	}
+	if w.Header().Get("X-Request-ID") == "" {
+		t.Fatal("expected request id header on recovered response")
+	}
+}

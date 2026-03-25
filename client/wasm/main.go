@@ -84,6 +84,17 @@ func registerRuntime(b *bridge.Bridge) {
 		highlighted := highlight.Go(source)
 		return js.ValueOf(highlighted)
 	}))
+
+	// Export shared-signal setter for hub/websocket integrations.
+	js.Global().Set("__gosx_set_shared_signal", js.FuncOf(func(this js.Value, args []js.Value) any {
+		if len(args) < 2 {
+			return js.ValueOf("error: need 2 args (signalName, valueJSON)")
+		}
+		if err := b.SetSharedSignalJSON(args[0].String(), args[1].String()); err != nil {
+			return js.ValueOf("error: " + err.Error())
+		}
+		return js.Null()
+	}))
 }
 
 func notifyRuntimeReady() {

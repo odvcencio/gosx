@@ -15,30 +15,34 @@ type ExprScope struct {
 	Handlers map[string]bool // handler names
 }
 
-// ParseExpr parses a Go expression source string into island opcodes.
-// Returns the expression list and the root ExprID, or an error if the
-// expression uses features outside the island subset.
+// ParseExpr parses a GoSX island expression into VM opcodes.
 func ParseExpr(source string, scope *ExprScope) ([]program.Expr, program.ExprID, error) {
 	source = strings.TrimSpace(source)
 	if source == "" {
 		return nil, 0, fmt.Errorf("empty expression")
 	}
-
-	// Reject disallowed patterns early.
 	if err := rejectDisallowed(source); err != nil {
+		return nil, 0, err
+	}
+
+	tokens, err := lexExpr(source)
+	if err != nil {
 		return nil, 0, err
 	}
 
 	p := &exprParser{
 		source: source,
 		scope:  scope,
+		tokens: tokens,
 	}
 
-	rootID, err := p.parseExpr(source)
+	rootID, err := p.parseConditional()
 	if err != nil {
 		return nil, 0, err
 	}
-
+	if p.peek().kind != tokenEOF {
+		return nil, 0, fmt.Errorf("unexpected token %q", p.peek().text)
+	}
 	return p.exprs, rootID, nil
 }
 
@@ -46,6 +50,8 @@ type exprParser struct {
 	source string
 	scope  *ExprScope
 	exprs  []program.Expr
+	tokens []exprToken
+	pos    int
 }
 
 func (p *exprParser) addExpr(e program.Expr) program.ExprID {
@@ -54,110 +60,193 @@ func (p *exprParser) addExpr(e program.Expr) program.ExprID {
 	return id
 }
 
-// rejectDisallowed rejects expressions that are outside the island subset.
-func rejectDisallowed(source string) error {
-	if strings.HasPrefix(source, "go ") {
-		return fmt.Errorf("goroutine launch is not allowed in island expressions: %q", source)
+func (p *exprParser) parseConditional() (program.ExprID, error) {
+	condID, err := p.parseOr()
+	if err != nil {
+		return 0, err
 	}
-	if strings.HasPrefix(source, "<-") {
-		return fmt.Errorf("channel receive is not allowed in island expressions: %q", source)
+	if !p.match(tokenQuestion) {
+		return condID, nil
 	}
-	return nil
+
+	trueID, err := p.parseConditional()
+	if err != nil {
+		return 0, err
+	}
+	if _, err := p.expect(tokenColon); err != nil {
+		return 0, err
+	}
+	falseID, err := p.parseConditional()
+	if err != nil {
+		return 0, err
+	}
+
+	return p.addExpr(program.Expr{
+		Op:       program.OpCond,
+		Operands: []program.ExprID{condID, trueID, falseID},
+		Type:     program.TypeAny,
+	}), nil
 }
 
-// parseExpr is the entry point for recursive-descent parsing.
-// It handles operator precedence from lowest to highest.
-func (p *exprParser) parseExpr(s string) (program.ExprID, error) {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return 0, fmt.Errorf("empty expression")
+func (p *exprParser) parseOr() (program.ExprID, error) {
+	leftID, err := p.parseAnd()
+	if err != nil {
+		return 0, err
 	}
-
-	// Precedence levels (lowest to highest):
-	// 1. || (logical or)
-	// 2. && (logical and)
-	// 3. ==, != (equality)
-	// 4. <, >, <=, >= (comparison)
-	// 5. +, - (additive)
-	// 6. *, /, % (multiplicative)
-	// 7. unary (!, -)
-	// 8. atoms (literals, identifiers, method calls, function calls)
-
-	return p.parseOr(s)
+	for p.match(tokenOrOr) {
+		rightID, err := p.parseAnd()
+		if err != nil {
+			return 0, err
+		}
+		leftID = p.addExpr(program.Expr{
+			Op:       program.OpOr,
+			Operands: []program.ExprID{leftID, rightID},
+			Type:     program.TypeBool,
+		})
+	}
+	return leftID, nil
 }
 
-func (p *exprParser) parseOr(s string) (program.ExprID, error) {
-	return p.parseBinary(s, "||", program.OpOr, p.parseAnd)
+func (p *exprParser) parseAnd() (program.ExprID, error) {
+	leftID, err := p.parseEquality()
+	if err != nil {
+		return 0, err
+	}
+	for p.match(tokenAndAnd) {
+		rightID, err := p.parseEquality()
+		if err != nil {
+			return 0, err
+		}
+		leftID = p.addExpr(program.Expr{
+			Op:       program.OpAnd,
+			Operands: []program.ExprID{leftID, rightID},
+			Type:     program.TypeBool,
+		})
+	}
+	return leftID, nil
 }
 
-func (p *exprParser) parseAnd(s string) (program.ExprID, error) {
-	return p.parseBinary(s, "&&", program.OpAnd, p.parseEquality)
+func (p *exprParser) parseEquality() (program.ExprID, error) {
+	leftID, err := p.parseComparison()
+	if err != nil {
+		return 0, err
+	}
+	for {
+		var op program.OpCode
+		switch {
+		case p.match(tokenEqEq):
+			op = program.OpEq
+		case p.match(tokenNotEq):
+			op = program.OpNeq
+		default:
+			return leftID, nil
+		}
+
+		rightID, err := p.parseComparison()
+		if err != nil {
+			return 0, err
+		}
+		leftID = p.addExpr(program.Expr{
+			Op:       op,
+			Operands: []program.ExprID{leftID, rightID},
+			Type:     program.TypeBool,
+		})
+	}
 }
 
-func (p *exprParser) parseEquality(s string) (program.ExprID, error) {
-	// Try != before == to avoid matching the = in != first.
-	if left, right, ok := splitBinaryOp(s, "!="); ok {
-		return p.buildBinary(left, right, program.OpNeq, p.parseComparison)
+func (p *exprParser) parseComparison() (program.ExprID, error) {
+	leftID, err := p.parseAdditive()
+	if err != nil {
+		return 0, err
 	}
-	if left, right, ok := splitBinaryOp(s, "=="); ok {
-		return p.buildBinary(left, right, program.OpEq, p.parseComparison)
+	for {
+		var op program.OpCode
+		switch {
+		case p.match(tokenLt):
+			op = program.OpLt
+		case p.match(tokenGt):
+			op = program.OpGt
+		case p.match(tokenLte):
+			op = program.OpLte
+		case p.match(tokenGte):
+			op = program.OpGte
+		default:
+			return leftID, nil
+		}
+
+		rightID, err := p.parseAdditive()
+		if err != nil {
+			return 0, err
+		}
+		leftID = p.addExpr(program.Expr{
+			Op:       op,
+			Operands: []program.ExprID{leftID, rightID},
+			Type:     program.TypeBool,
+		})
 	}
-	return p.parseComparison(s)
 }
 
-func (p *exprParser) parseComparison(s string) (program.ExprID, error) {
-	// Try two-char operators first.
-	if left, right, ok := splitBinaryOp(s, "<="); ok {
-		return p.buildBinary(left, right, program.OpLte, p.parseAdditive)
+func (p *exprParser) parseAdditive() (program.ExprID, error) {
+	leftID, err := p.parseMultiplicative()
+	if err != nil {
+		return 0, err
 	}
-	if left, right, ok := splitBinaryOp(s, ">="); ok {
-		return p.buildBinary(left, right, program.OpGte, p.parseAdditive)
+	for {
+		var op program.OpCode
+		switch {
+		case p.match(tokenPlus):
+			op = program.OpAdd
+		case p.match(tokenMinus):
+			op = program.OpSub
+		default:
+			return leftID, nil
+		}
+
+		rightID, err := p.parseMultiplicative()
+		if err != nil {
+			return 0, err
+		}
+		leftID = p.addExpr(program.Expr{
+			Op:       op,
+			Operands: []program.ExprID{leftID, rightID},
+			Type:     program.TypeAny,
+		})
 	}
-	// Single-char comparison operators. Must not match <= or >=.
-	if left, right, ok := splitBinaryOpSingle(s, '<'); ok {
-		return p.buildBinary(left, right, program.OpLt, p.parseAdditive)
-	}
-	if left, right, ok := splitBinaryOpSingle(s, '>'); ok {
-		return p.buildBinary(left, right, program.OpGt, p.parseAdditive)
-	}
-	return p.parseAdditive(s)
 }
 
-func (p *exprParser) parseAdditive(s string) (program.ExprID, error) {
-	// Split on + or - at the top level (rightmost to get left-associativity).
-	// We need to be careful: - can be a unary minus.
-	if left, right, ok := splitAdditiveOp(s, '+'); ok {
-		return p.buildBinary(left, right, program.OpAdd, p.parseMultiplicative)
+func (p *exprParser) parseMultiplicative() (program.ExprID, error) {
+	leftID, err := p.parseUnary()
+	if err != nil {
+		return 0, err
 	}
-	if left, right, ok := splitAdditiveOp(s, '-'); ok {
-		return p.buildBinary(left, right, program.OpSub, p.parseMultiplicative)
+	for {
+		var op program.OpCode
+		switch {
+		case p.match(tokenStar):
+			op = program.OpMul
+		case p.match(tokenSlash):
+			op = program.OpDiv
+		case p.match(tokenPercent):
+			op = program.OpMod
+		default:
+			return leftID, nil
+		}
+
+		rightID, err := p.parseUnary()
+		if err != nil {
+			return 0, err
+		}
+		leftID = p.addExpr(program.Expr{
+			Op:       op,
+			Operands: []program.ExprID{leftID, rightID},
+			Type:     program.TypeAny,
+		})
 	}
-	return p.parseMultiplicative(s)
 }
 
-func (p *exprParser) parseMultiplicative(s string) (program.ExprID, error) {
-	if left, right, ok := splitBinaryOpSingle(s, '*'); ok {
-		return p.buildBinary(left, right, program.OpMul, p.parseUnary)
-	}
-	if left, right, ok := splitBinaryOpSingle(s, '/'); ok {
-		return p.buildBinary(left, right, program.OpDiv, p.parseUnary)
-	}
-	if left, right, ok := splitBinaryOpSingle(s, '%'); ok {
-		return p.buildBinary(left, right, program.OpMod, p.parseUnary)
-	}
-	return p.parseUnary(s)
-}
-
-func (p *exprParser) parseUnary(s string) (program.ExprID, error) {
-	s = strings.TrimSpace(s)
-	if len(s) == 0 {
-		return 0, fmt.Errorf("empty expression")
-	}
-
-	// Logical not.
-	if s[0] == '!' {
-		inner := strings.TrimSpace(s[1:])
-		operandID, err := p.parseUnary(inner)
+func (p *exprParser) parseUnary() (program.ExprID, error) {
+	if p.match(tokenBang) {
+		operandID, err := p.parseUnary()
 		if err != nil {
 			return 0, err
 		}
@@ -168,173 +257,389 @@ func (p *exprParser) parseUnary(s string) (program.ExprID, error) {
 		}), nil
 	}
 
-	// Unary minus — but only if it's not a negative number literal.
-	// If it starts with - and the rest is NOT a pure number, treat as unary neg.
-	if s[0] == '-' {
-		rest := strings.TrimSpace(s[1:])
-		if rest == "" {
-			return 0, fmt.Errorf("incomplete unary minus expression")
+	if p.match(tokenMinus) {
+		if p.peek().kind == tokenNumber {
+			tok := p.next()
+			return p.literalNumber("-" + tok.text)
 		}
-		// If the rest looks like a non-numeric expression (identifier, etc.), it's unary neg.
-		if !isNumericLiteral(rest) {
-			operandID, err := p.parseUnary(rest)
+
+		operandID, err := p.parseUnary()
+		if err != nil {
+			return 0, err
+		}
+		return p.addExpr(program.Expr{
+			Op:       program.OpNeg,
+			Operands: []program.ExprID{operandID},
+			Type:     program.TypeAny,
+		}), nil
+	}
+
+	return p.parsePostfix()
+}
+
+func (p *exprParser) parsePostfix() (program.ExprID, error) {
+	baseID, err := p.parsePrimary()
+	if err != nil {
+		return 0, err
+	}
+
+	for {
+		switch {
+		case p.match(tokenDot):
+			nameTok, err := p.expect(tokenIdent)
 			if err != nil {
 				return 0, err
 			}
-			return p.addExpr(program.Expr{
-				Op:       program.OpNeg,
-				Operands: []program.ExprID{operandID},
-				Type:     program.TypeAny,
-			}), nil
-		}
-		// Otherwise fall through to atom parsing (negative number literal).
-	}
+			if p.match(tokenLParen) {
+				args, err := p.parseArgs()
+				if err != nil {
+					return 0, err
+				}
+				baseID, err = p.buildMethodCall(baseID, nameTok.text, args)
+				if err != nil {
+					return 0, err
+				}
+				continue
+			}
 
-	return p.parseAtom(s)
+			baseID, err = p.buildFieldAccess(baseID, nameTok.text)
+			if err != nil {
+				return 0, err
+			}
+
+		case p.match(tokenLBracket):
+			indexID, err := p.parseConditional()
+			if err != nil {
+				return 0, err
+			}
+			if _, err := p.expect(tokenRBracket); err != nil {
+				return 0, err
+			}
+			baseID = p.addExpr(program.Expr{
+				Op:       program.OpIndex,
+				Operands: []program.ExprID{baseID, indexID},
+				Type:     program.TypeAny,
+			})
+
+		default:
+			return baseID, nil
+		}
+	}
 }
 
-func (p *exprParser) parseAtom(s string) (program.ExprID, error) {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return 0, fmt.Errorf("empty expression")
-	}
-
-	// Parenthesized expression.
-	if s[0] == '(' && findMatchingParen(s, 0) == len(s)-1 {
-		inner := strings.TrimSpace(s[1 : len(s)-1])
-		return p.parseExpr(inner)
-	}
-
-	// String literal.
-	if len(s) >= 2 && s[0] == '"' && s[len(s)-1] == '"' {
-		val, err := strconv.Unquote(s)
+func (p *exprParser) parsePrimary() (program.ExprID, error) {
+	switch tok := p.peek(); tok.kind {
+	case tokenLParen:
+		p.next()
+		exprID, err := p.parseConditional()
 		if err != nil {
-			return 0, fmt.Errorf("invalid string literal: %s", s)
+			return 0, err
+		}
+		if _, err := p.expect(tokenRParen); err != nil {
+			return 0, err
+		}
+		return exprID, nil
+
+	case tokenString:
+		p.next()
+		val, err := strconv.Unquote(tok.text)
+		if err != nil {
+			return 0, fmt.Errorf("invalid string literal: %s", tok.text)
 		}
 		return p.addExpr(program.Expr{
 			Op:    program.OpLitString,
 			Value: val,
 			Type:  program.TypeString,
 		}), nil
-	}
 
-	// Boolean literals.
-	if s == "true" || s == "false" {
-		return p.addExpr(program.Expr{
-			Op:    program.OpLitBool,
-			Value: s,
-			Type:  program.TypeBool,
-		}), nil
-	}
+	case tokenNumber:
+		p.next()
+		return p.literalNumber(tok.text)
 
-	// Numeric literals (int or float), including negatives like "-3".
-	if isNumericLiteral(s) {
-		if strings.Contains(s, ".") {
+	case tokenIdent:
+		p.next()
+		switch tok.text {
+		case "true", "false":
 			return p.addExpr(program.Expr{
-				Op:    program.OpLitFloat,
-				Value: s,
-				Type:  program.TypeFloat,
+				Op:    program.OpLitBool,
+				Value: tok.text,
+				Type:  program.TypeBool,
 			}), nil
 		}
-		return p.addExpr(program.Expr{
-			Op:    program.OpLitInt,
-			Value: s,
-			Type:  program.TypeInt,
-		}), nil
-	}
 
-	// Method call: ident.Method(args)
-	if dotIdx := strings.Index(s, "."); dotIdx > 0 {
-		receiver := s[:dotIdx]
-		remainder := s[dotIdx+1:]
-		if isIdent(receiver) {
-			return p.parseMethodCall(receiver, remainder)
+		if p.match(tokenLParen) {
+			args, err := p.parseArgs()
+			if err != nil {
+				return 0, err
+			}
+			return p.buildFunctionCall(tok.text, args)
 		}
+		return p.resolveIdent(tok.text)
 	}
 
-	// Function call: ident(args)
-	if parenIdx := strings.Index(s, "("); parenIdx > 0 {
-		name := strings.TrimSpace(s[:parenIdx])
-		if isIdent(name) && s[len(s)-1] == ')' {
-			return p.parseFunctionCall(name, s[parenIdx+1:len(s)-1])
-		}
-	}
-
-	// Bare identifier.
-	if isIdent(s) {
-		return p.resolveIdent(s)
-	}
-
-	return 0, fmt.Errorf("cannot parse expression: %q", s)
+	return 0, fmt.Errorf("cannot parse expression: %q", p.source)
 }
 
-// parseMethodCall handles receiver.Method(args) patterns.
-func (p *exprParser) parseMethodCall(receiver, remainder string) (program.ExprID, error) {
-	// remainder is like "Get()" or "Set(expr)" or "Update(handler)"
-	parenIdx := strings.Index(remainder, "(")
-	if parenIdx < 0 || remainder[len(remainder)-1] != ')' {
-		return 0, fmt.Errorf("invalid method call on %q: %q", receiver, remainder)
+func (p *exprParser) parseArgs() ([]program.ExprID, error) {
+	var args []program.ExprID
+	if p.match(tokenRParen) {
+		return args, nil
+	}
+	for {
+		argID, err := p.parseConditional()
+		if err != nil {
+			return nil, err
+		}
+		args = append(args, argID)
+
+		if p.match(tokenRParen) {
+			return args, nil
+		}
+		if _, err := p.expect(tokenComma); err != nil {
+			return nil, err
+		}
+	}
+}
+
+func (p *exprParser) buildFieldAccess(receiverID program.ExprID, field string) (program.ExprID, error) {
+	if strings.EqualFold(field, "length") || strings.EqualFold(field, "len") {
+		return p.addExpr(program.Expr{
+			Op:       program.OpLen,
+			Operands: []program.ExprID{receiverID},
+			Type:     program.TypeInt,
+		}), nil
 	}
 
-	method := remainder[:parenIdx]
-	argsStr := strings.TrimSpace(remainder[parenIdx+1 : len(remainder)-1])
+	fieldID := p.addExpr(program.Expr{
+		Op:    program.OpLitString,
+		Value: field,
+		Type:  program.TypeString,
+	})
+	return p.addExpr(program.Expr{
+		Op:       program.OpIndex,
+		Operands: []program.ExprID{receiverID, fieldID},
+		Type:     program.TypeAny,
+	}), nil
+}
 
-	// Check if receiver is a known signal.
-	if p.scope != nil && p.scope.Signals != nil && p.scope.Signals[receiver] {
-		switch method {
-		case "Get":
+func (p *exprParser) buildMethodCall(receiverID program.ExprID, method string, args []program.ExprID) (program.ExprID, error) {
+	if signalName, ok := p.signalReceiver(receiverID); ok {
+		switch strings.ToLower(method) {
+		case "get":
+			if len(args) != 0 {
+				return 0, fmt.Errorf("signal Get takes no arguments")
+			}
 			return p.addExpr(program.Expr{
 				Op:    program.OpSignalGet,
-				Value: receiver,
+				Value: signalName,
 				Type:  program.TypeAny,
 			}), nil
-
-		case "Set":
-			if argsStr == "" {
-				return 0, fmt.Errorf("signal Set requires an argument")
-			}
-			argID, err := p.parseExpr(argsStr)
-			if err != nil {
-				return 0, fmt.Errorf("parsing Set argument: %w", err)
+		case "set":
+			if len(args) != 1 {
+				return 0, fmt.Errorf("signal Set requires exactly one argument")
 			}
 			return p.addExpr(program.Expr{
 				Op:       program.OpSignalSet,
-				Operands: []program.ExprID{argID},
-				Value:    receiver,
+				Operands: []program.ExprID{args[0]},
+				Value:    signalName,
 				Type:     program.TypeAny,
 			}), nil
-
-		case "Update":
-			if argsStr == "" {
-				return 0, fmt.Errorf("signal Update requires a handler argument")
+		case "update":
+			if len(args) != 1 {
+				return 0, fmt.Errorf("signal Update requires exactly one argument")
 			}
 			return p.addExpr(program.Expr{
-				Op:    program.OpSignalUpdate,
-				Value: receiver,
-				Type:  program.TypeAny,
+				Op:       program.OpSignalUpdate,
+				Operands: []program.ExprID{args[0]},
+				Value:    signalName,
+				Type:     program.TypeAny,
 			}), nil
-
-		default:
-			return 0, fmt.Errorf("unknown method %q on signal %q", method, receiver)
 		}
 	}
 
-	return 0, fmt.Errorf("unknown receiver %q in method call", receiver)
+	switch strings.ToLower(method) {
+	case "length", "len":
+		if len(args) != 0 {
+			return 0, fmt.Errorf("%s takes no arguments", method)
+		}
+		return p.addExpr(program.Expr{
+			Op:       program.OpLen,
+			Operands: []program.ExprID{receiverID},
+			Type:     program.TypeInt,
+		}), nil
+
+	case "toupper":
+		return p.buildUnaryMethod(receiverID, args, method, program.OpToUpper, program.TypeString)
+	case "tolower":
+		return p.buildUnaryMethod(receiverID, args, method, program.OpToLower, program.TypeString)
+	case "trim":
+		return p.buildUnaryMethod(receiverID, args, method, program.OpTrim, program.TypeString)
+	case "tostring":
+		return p.buildUnaryMethod(receiverID, args, method, program.OpToString, program.TypeString)
+	case "toint":
+		return p.buildUnaryMethod(receiverID, args, method, program.OpToInt, program.TypeInt)
+	case "tofloat":
+		return p.buildUnaryMethod(receiverID, args, method, program.OpToFloat, program.TypeFloat)
+
+	case "split":
+		if len(args) != 1 {
+			return 0, fmt.Errorf("Split requires exactly one argument")
+		}
+		expr := program.Expr{
+			Op:       program.OpSplit,
+			Operands: []program.ExprID{receiverID},
+			Type:     program.TypeAny,
+		}
+		if literal, ok := p.stringLiteralValue(args[0]); ok {
+			expr.Value = literal
+		} else {
+			expr.Operands = append(expr.Operands, args[0])
+		}
+		return p.addExpr(expr), nil
+
+	case "join":
+		if len(args) != 1 {
+			return 0, fmt.Errorf("Join requires exactly one argument")
+		}
+		expr := program.Expr{
+			Op:       program.OpJoin,
+			Operands: []program.ExprID{receiverID},
+			Type:     program.TypeString,
+		}
+		if literal, ok := p.stringLiteralValue(args[0]); ok {
+			expr.Value = literal
+		} else {
+			expr.Operands = append(expr.Operands, args[0])
+		}
+		return p.addExpr(expr), nil
+
+	case "replace":
+		if len(args) != 2 {
+			return 0, fmt.Errorf("Replace requires exactly two arguments")
+		}
+		return p.addExpr(program.Expr{
+			Op:       program.OpReplace,
+			Operands: []program.ExprID{receiverID, args[0], args[1]},
+			Type:     program.TypeString,
+		}), nil
+
+	case "substring":
+		if len(args) != 2 {
+			return 0, fmt.Errorf("Substring requires exactly two arguments")
+		}
+		return p.addExpr(program.Expr{
+			Op:       program.OpSubstring,
+			Operands: []program.ExprID{receiverID, args[0], args[1]},
+			Type:     program.TypeString,
+		}), nil
+
+	case "startswith":
+		if len(args) != 1 {
+			return 0, fmt.Errorf("StartsWith requires exactly one argument")
+		}
+		return p.addExpr(program.Expr{
+			Op:       program.OpStartsWith,
+			Operands: []program.ExprID{receiverID, args[0]},
+			Type:     program.TypeBool,
+		}), nil
+
+	case "endswith":
+		if len(args) != 1 {
+			return 0, fmt.Errorf("EndsWith requires exactly one argument")
+		}
+		return p.addExpr(program.Expr{
+			Op:       program.OpEndsWith,
+			Operands: []program.ExprID{receiverID, args[0]},
+			Type:     program.TypeBool,
+		}), nil
+
+	case "contains":
+		if len(args) != 1 {
+			return 0, fmt.Errorf("Contains requires exactly one argument")
+		}
+		return p.addExpr(program.Expr{
+			Op:       program.OpContains,
+			Operands: []program.ExprID{receiverID, args[0]},
+			Type:     program.TypeBool,
+		}), nil
+
+	case "append":
+		if len(args) != 1 {
+			return 0, fmt.Errorf("Append requires exactly one argument")
+		}
+		return p.addExpr(program.Expr{
+			Op:       program.OpAppend,
+			Operands: []program.ExprID{receiverID, args[0]},
+			Type:     program.TypeAny,
+		}), nil
+
+	case "slice":
+		if len(args) != 2 {
+			return 0, fmt.Errorf("Slice requires exactly two arguments")
+		}
+		return p.addExpr(program.Expr{
+			Op:       program.OpSlice,
+			Operands: []program.ExprID{receiverID, args[0], args[1]},
+			Type:     program.TypeAny,
+		}), nil
+
+	case "map":
+		if len(args) != 1 {
+			return 0, fmt.Errorf("map requires exactly one argument")
+		}
+		return p.addExpr(program.Expr{
+			Op:       program.OpMap,
+			Operands: []program.ExprID{receiverID, args[0]},
+			Type:     program.TypeAny,
+		}), nil
+
+	case "filter":
+		if len(args) != 1 {
+			return 0, fmt.Errorf("filter requires exactly one argument")
+		}
+		return p.addExpr(program.Expr{
+			Op:       program.OpFilter,
+			Operands: []program.ExprID{receiverID, args[0]},
+			Type:     program.TypeAny,
+		}), nil
+
+	case "find":
+		if len(args) != 1 {
+			return 0, fmt.Errorf("find requires exactly one argument")
+		}
+		return p.addExpr(program.Expr{
+			Op:       program.OpFind,
+			Operands: []program.ExprID{receiverID, args[0]},
+			Type:     program.TypeAny,
+		}), nil
+	}
+
+	return 0, fmt.Errorf("unknown method %q", method)
 }
 
-// parseFunctionCall handles ident(args) patterns.
-func (p *exprParser) parseFunctionCall(name, argsStr string) (program.ExprID, error) {
+func (p *exprParser) buildUnaryMethod(receiverID program.ExprID, args []program.ExprID, method string, op program.OpCode, typ program.ExprType) (program.ExprID, error) {
+	if len(args) != 0 {
+		return 0, fmt.Errorf("%s takes no arguments", method)
+	}
+	return p.addExpr(program.Expr{
+		Op:       op,
+		Operands: []program.ExprID{receiverID},
+		Type:     typ,
+	}), nil
+}
+
+func (p *exprParser) buildFunctionCall(name string, args []program.ExprID) (program.ExprID, error) {
 	if p.scope != nil && p.scope.Handlers != nil && p.scope.Handlers[name] {
 		return p.addExpr(program.Expr{
-			Op:    program.OpCall,
-			Value: name,
-			Type:  program.TypeAny,
+			Op:       program.OpCall,
+			Operands: args,
+			Value:    name,
+			Type:     program.TypeAny,
 		}), nil
 	}
 	return 0, fmt.Errorf("unknown function %q", name)
 }
 
-// resolveIdent maps a bare identifier to the appropriate opcode.
 func (p *exprParser) resolveIdent(name string) (program.ExprID, error) {
 	if p.scope != nil && p.scope.Signals != nil && p.scope.Signals[name] {
 		return p.addExpr(program.Expr{
@@ -350,9 +655,6 @@ func (p *exprParser) resolveIdent(name string) (program.ExprID, error) {
 			Type:  program.TypeAny,
 		}), nil
 	}
-	// Default: treat unknown identifiers as prop access. Full scope analysis
-	// requires type checking which isn't available yet. The identifier will be
-	// resolved at runtime by the VM.
 	return p.addExpr(program.Expr{
 		Op:    program.OpPropGet,
 		Value: name,
@@ -360,287 +662,329 @@ func (p *exprParser) resolveIdent(name string) (program.ExprID, error) {
 	}), nil
 }
 
-// parseBinary is a generic binary-op parser for multi-char operators.
-// It looks for the rightmost top-level occurrence of the operator.
-func (p *exprParser) parseBinary(s, op string, opCode program.OpCode, next func(string) (program.ExprID, error)) (program.ExprID, error) {
-	if left, right, ok := splitBinaryOp(s, op); ok {
-		return p.buildBinary(left, right, opCode, next)
-	}
-	return next(s)
-}
-
-// buildBinary parses left and right operands and emits a binary operation.
-func (p *exprParser) buildBinary(left, right string, opCode program.OpCode, next func(string) (program.ExprID, error)) (program.ExprID, error) {
-	leftID, err := p.parseExpr(left)
-	if err != nil {
-		return 0, err
-	}
-	rightID, err := next(right)
-	if err != nil {
-		return 0, err
+func (p *exprParser) literalNumber(text string) (program.ExprID, error) {
+	if strings.Contains(text, ".") {
+		return p.addExpr(program.Expr{
+			Op:    program.OpLitFloat,
+			Value: text,
+			Type:  program.TypeFloat,
+		}), nil
 	}
 	return p.addExpr(program.Expr{
-		Op:       opCode,
-		Operands: []program.ExprID{leftID, rightID},
-		Type:     program.TypeAny,
+		Op:    program.OpLitInt,
+		Value: text,
+		Type:  program.TypeInt,
 	}), nil
 }
 
-// splitBinaryOp finds the rightmost top-level occurrence of a multi-char operator.
-// Returns left, right parts and true if found, or zero values and false otherwise.
-func splitBinaryOp(s, op string) (string, string, bool) {
-	depth := 0
-	opLen := len(op)
-	inString := false
-
-	// Scan from right to left to get left-associativity.
-	for i := len(s) - opLen; i >= 0; i-- {
-		ch := s[i]
-
-		// Handle string literals.
-		if ch == '"' && (i == 0 || s[i-1] != '\\') {
-			inString = !inString
-			continue
-		}
-		if inString {
-			continue
-		}
-
-		if ch == ')' {
-			depth++
-		} else if ch == '(' {
-			depth--
-		}
-
-		if depth != 0 {
-			continue
-		}
-
-		if s[i:i+opLen] == op {
-			left := strings.TrimSpace(s[:i])
-			right := strings.TrimSpace(s[i+opLen:])
-			if left != "" && right != "" {
-				return left, right, true
-			}
-		}
+func (p *exprParser) signalReceiver(id program.ExprID) (string, bool) {
+	if int(id) >= len(p.exprs) {
+		return "", false
 	}
-	return "", "", false
+	expr := p.exprs[id]
+	if expr.Op != program.OpSignalGet || expr.Value == "" {
+		return "", false
+	}
+	return expr.Value, true
 }
 
-// splitBinaryOpSingle finds the rightmost top-level occurrence of a single-char operator.
-// It avoids matching the operator when it's part of a two-char operator.
-func splitBinaryOpSingle(s string, op byte) (string, string, bool) {
-	depth := 0
-	inString := false
-
-	for i := len(s) - 1; i >= 0; i-- {
-		ch := s[i]
-
-		if ch == '"' && (i == 0 || s[i-1] != '\\') {
-			inString = !inString
-			continue
-		}
-		if inString {
-			continue
-		}
-
-		if ch == ')' {
-			depth++
-		} else if ch == '(' {
-			depth--
-		}
-
-		if depth != 0 {
-			continue
-		}
-
-		if ch == op {
-			// Avoid matching two-char operators.
-			// Check the char before and after for operator characters.
-			if isPartOfMultiCharOp(s, i, op) {
-				continue
-			}
-
-			left := strings.TrimSpace(s[:i])
-			right := strings.TrimSpace(s[i+1:])
-			if left != "" && right != "" {
-				return left, right, true
-			}
-		}
+func (p *exprParser) stringLiteralValue(id program.ExprID) (string, bool) {
+	if int(id) >= len(p.exprs) {
+		return "", false
 	}
-	return "", "", false
+	expr := p.exprs[id]
+	if expr.Op != program.OpLitString {
+		return "", false
+	}
+	return expr.Value, true
 }
 
-// splitAdditiveOp splits on + or - but only when the operator is a binary operator
-// (i.e., the left side is non-empty and the operator isn't part of a multi-char op).
-func splitAdditiveOp(s string, op byte) (string, string, bool) {
-	depth := 0
-	inString := false
-
-	for i := len(s) - 1; i >= 0; i-- {
-		ch := s[i]
-
-		if ch == '"' && (i == 0 || s[i-1] != '\\') {
-			inString = !inString
-			continue
-		}
-		if inString {
-			continue
-		}
-
-		if ch == ')' {
-			depth++
-		} else if ch == '(' {
-			depth--
-		}
-
-		if depth != 0 {
-			continue
-		}
-
-		if ch == op {
-			if isPartOfMultiCharOp(s, i, op) {
-				continue
-			}
-
-			left := strings.TrimSpace(s[:i])
-			right := strings.TrimSpace(s[i+1:])
-			// Must have non-empty left to be a binary op (otherwise it's unary).
-			if left != "" && right != "" {
-				return left, right, true
-			}
-		}
+func (p *exprParser) peek() exprToken {
+	if p.pos >= len(p.tokens) {
+		return exprToken{kind: tokenEOF}
 	}
-	return "", "", false
+	return p.tokens[p.pos]
 }
 
-// isPartOfMultiCharOp checks whether the character at position i is part of a
-// multi-character operator (like ==, !=, <=, >=, &&, ||).
-func isPartOfMultiCharOp(s string, i int, op byte) bool {
-	// Check if this is part of ==, !=, <=, >=
-	if op == '=' {
-		if i > 0 && (s[i-1] == '=' || s[i-1] == '!' || s[i-1] == '<' || s[i-1] == '>') {
-			return true
-		}
-		if i+1 < len(s) && s[i+1] == '=' {
-			return true
-		}
+func (p *exprParser) next() exprToken {
+	tok := p.peek()
+	if p.pos < len(p.tokens) {
+		p.pos++
 	}
-	if op == '<' {
-		if i+1 < len(s) && s[i+1] == '=' {
-			return true
-		}
-		// <-  channel receive (already rejected, but be safe)
-		if i+1 < len(s) && s[i+1] == '-' {
-			return true
-		}
-	}
-	if op == '>' {
-		if i+1 < len(s) && s[i+1] == '=' {
-			return true
-		}
-	}
-	if op == '&' {
-		if i+1 < len(s) && s[i+1] == '&' {
-			return true
-		}
-		if i > 0 && s[i-1] == '&' {
-			return true
-		}
-	}
-	if op == '|' {
-		if i+1 < len(s) && s[i+1] == '|' {
-			return true
-		}
-		if i > 0 && s[i-1] == '|' {
-			return true
-		}
-	}
-	if op == '!' {
-		if i+1 < len(s) && s[i+1] == '=' {
-			return true
-		}
-	}
-	return false
+	return tok
 }
 
-// isNumericLiteral checks whether s is a valid integer or float literal.
-func isNumericLiteral(s string) bool {
-	if s == "" {
+func (p *exprParser) match(kind exprTokenKind) bool {
+	if p.peek().kind != kind {
 		return false
 	}
-	start := 0
-	if s[0] == '-' {
-		if len(s) == 1 {
-			return false
-		}
-		start = 1
-	}
-	hasDot := false
-	for i := start; i < len(s); i++ {
-		if s[i] == '.' {
-			if hasDot {
-				return false
-			}
-			hasDot = true
-			continue
-		}
-		if s[i] < '0' || s[i] > '9' {
-			return false
-		}
-	}
+	p.pos++
 	return true
 }
 
-// isIdent checks whether s is a valid Go identifier.
-func isIdent(s string) bool {
-	if s == "" {
-		return false
+func (p *exprParser) expect(kind exprTokenKind) (exprToken, error) {
+	tok := p.peek()
+	if tok.kind != kind {
+		return exprToken{}, fmt.Errorf("expected %s, found %q", kind, tok.text)
 	}
-	for i, ch := range s {
-		if i == 0 {
-			if !isLetter(ch) && ch != '_' {
-				return false
+	p.pos++
+	return tok, nil
+}
+
+// rejectDisallowed rejects expressions that are outside the island subset.
+func rejectDisallowed(source string) error {
+	if strings.HasPrefix(source, "go ") {
+		return fmt.Errorf("goroutine launch is not allowed in island expressions: %q", source)
+	}
+	if strings.HasPrefix(source, "<-") {
+		return fmt.Errorf("channel receive is not allowed in island expressions: %q", source)
+	}
+	return nil
+}
+
+type exprTokenKind uint8
+
+const (
+	tokenEOF exprTokenKind = iota
+	tokenIdent
+	tokenNumber
+	tokenString
+	tokenLParen
+	tokenRParen
+	tokenLBracket
+	tokenRBracket
+	tokenDot
+	tokenComma
+	tokenQuestion
+	tokenColon
+	tokenPlus
+	tokenMinus
+	tokenStar
+	tokenSlash
+	tokenPercent
+	tokenBang
+	tokenAndAnd
+	tokenOrOr
+	tokenEqEq
+	tokenNotEq
+	tokenLt
+	tokenGt
+	tokenLte
+	tokenGte
+)
+
+func (k exprTokenKind) String() string {
+	switch k {
+	case tokenEOF:
+		return "end of expression"
+	case tokenIdent:
+		return "identifier"
+	case tokenNumber:
+		return "number"
+	case tokenString:
+		return "string"
+	case tokenLParen:
+		return "("
+	case tokenRParen:
+		return ")"
+	case tokenLBracket:
+		return "["
+	case tokenRBracket:
+		return "]"
+	case tokenDot:
+		return "."
+	case tokenComma:
+		return ","
+	case tokenQuestion:
+		return "?"
+	case tokenColon:
+		return ":"
+	case tokenPlus:
+		return "+"
+	case tokenMinus:
+		return "-"
+	case tokenStar:
+		return "*"
+	case tokenSlash:
+		return "/"
+	case tokenPercent:
+		return "%"
+	case tokenBang:
+		return "!"
+	case tokenAndAnd:
+		return "&&"
+	case tokenOrOr:
+		return "||"
+	case tokenEqEq:
+		return "=="
+	case tokenNotEq:
+		return "!="
+	case tokenLt:
+		return "<"
+	case tokenGt:
+		return ">"
+	case tokenLte:
+		return "<="
+	case tokenGte:
+		return ">="
+	default:
+		return "token"
+	}
+}
+
+type exprToken struct {
+	kind exprTokenKind
+	text string
+}
+
+func lexExpr(source string) ([]exprToken, error) {
+	var tokens []exprToken
+
+	for i := 0; i < len(source); {
+		ch := source[i]
+
+		if isSpace(ch) {
+			i++
+			continue
+		}
+
+		if ch == '"' {
+			start := i
+			i++
+			for i < len(source) {
+				if source[i] == '\\' {
+					i += 2
+					continue
+				}
+				if source[i] == '"' {
+					i++
+					tokens = append(tokens, exprToken{kind: tokenString, text: source[start:i]})
+					goto nextToken
+				}
+				i++
 			}
-		} else {
-			if !isLetter(ch) && !isDigit(ch) && ch != '_' {
-				return false
+			return nil, fmt.Errorf("unterminated string literal")
+		}
+
+		if isDigit(ch) {
+			start := i
+			hasDot := false
+			for i < len(source) {
+				switch {
+				case isDigit(source[i]):
+					i++
+				case source[i] == '.' && !hasDot:
+					hasDot = true
+					i++
+				default:
+					tokens = append(tokens, exprToken{kind: tokenNumber, text: source[start:i]})
+					goto nextToken
+				}
+			}
+			tokens = append(tokens, exprToken{kind: tokenNumber, text: source[start:i]})
+			goto nextToken
+		}
+
+		if isIdentStart(ch) {
+			start := i
+			i++
+			for i < len(source) && isIdentPart(source[i]) {
+				i++
+			}
+			tokens = append(tokens, exprToken{kind: tokenIdent, text: source[start:i]})
+			goto nextToken
+		}
+
+		if i+1 < len(source) {
+			switch source[i : i+2] {
+			case "&&":
+				tokens = append(tokens, exprToken{kind: tokenAndAnd, text: "&&"})
+				i += 2
+				goto nextToken
+			case "||":
+				tokens = append(tokens, exprToken{kind: tokenOrOr, text: "||"})
+				i += 2
+				goto nextToken
+			case "==":
+				tokens = append(tokens, exprToken{kind: tokenEqEq, text: "=="})
+				i += 2
+				goto nextToken
+			case "!=":
+				tokens = append(tokens, exprToken{kind: tokenNotEq, text: "!="})
+				i += 2
+				goto nextToken
+			case "<=":
+				tokens = append(tokens, exprToken{kind: tokenLte, text: "<="})
+				i += 2
+				goto nextToken
+			case ">=":
+				tokens = append(tokens, exprToken{kind: tokenGte, text: ">="})
+				i += 2
+				goto nextToken
 			}
 		}
+
+		switch ch {
+		case '(':
+			tokens = append(tokens, exprToken{kind: tokenLParen, text: string(ch)})
+		case ')':
+			tokens = append(tokens, exprToken{kind: tokenRParen, text: string(ch)})
+		case '[':
+			tokens = append(tokens, exprToken{kind: tokenLBracket, text: string(ch)})
+		case ']':
+			tokens = append(tokens, exprToken{kind: tokenRBracket, text: string(ch)})
+		case '.':
+			tokens = append(tokens, exprToken{kind: tokenDot, text: string(ch)})
+		case ',':
+			tokens = append(tokens, exprToken{kind: tokenComma, text: string(ch)})
+		case '?':
+			tokens = append(tokens, exprToken{kind: tokenQuestion, text: string(ch)})
+		case ':':
+			tokens = append(tokens, exprToken{kind: tokenColon, text: string(ch)})
+		case '+':
+			tokens = append(tokens, exprToken{kind: tokenPlus, text: string(ch)})
+		case '-':
+			tokens = append(tokens, exprToken{kind: tokenMinus, text: string(ch)})
+		case '*':
+			tokens = append(tokens, exprToken{kind: tokenStar, text: string(ch)})
+		case '/':
+			tokens = append(tokens, exprToken{kind: tokenSlash, text: string(ch)})
+		case '%':
+			tokens = append(tokens, exprToken{kind: tokenPercent, text: string(ch)})
+		case '!':
+			tokens = append(tokens, exprToken{kind: tokenBang, text: string(ch)})
+		case '<':
+			tokens = append(tokens, exprToken{kind: tokenLt, text: string(ch)})
+		case '>':
+			tokens = append(tokens, exprToken{kind: tokenGt, text: string(ch)})
+		default:
+			return nil, fmt.Errorf("unexpected character %q", ch)
+		}
+		i++
+
+	nextToken:
 	}
-	return true
+
+	tokens = append(tokens, exprToken{kind: tokenEOF})
+	return tokens, nil
 }
 
-func isLetter(ch rune) bool {
-	return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z')
+func isSpace(ch byte) bool {
+	return ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r'
 }
 
-func isDigit(ch rune) bool {
+func isDigit(ch byte) bool {
 	return ch >= '0' && ch <= '9'
 }
 
-// findMatchingParen returns the index of the closing paren matching the
-// opening paren at position start, or -1 if not found.
-func findMatchingParen(s string, start int) int {
-	depth := 0
-	inString := false
-	for i := start; i < len(s); i++ {
-		ch := s[i]
-		if ch == '"' && (i == 0 || s[i-1] != '\\') {
-			inString = !inString
-			continue
-		}
-		if inString {
-			continue
-		}
-		if ch == '(' {
-			depth++
-		} else if ch == ')' {
-			depth--
-			if depth == 0 {
-				return i
-			}
-		}
-	}
-	return -1
+func isLetter(ch byte) bool {
+	return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z')
+}
+
+func isIdentStart(ch byte) bool {
+	return isLetter(ch) || ch == '_' || ch == '$'
+}
+
+func isIdentPart(ch byte) bool {
+	return isLetter(ch) || isDigit(ch) || ch == '_' || ch == '$'
 }

@@ -311,6 +311,89 @@ func TestParseUnknownIdentifierDefaultsToProp(t *testing.T) {
 	}
 }
 
+func TestParseTernary(t *testing.T) {
+	scope := &ExprScope{Signals: map[string]bool{"count": true}}
+	exprs, rootID, err := ParseExpr(`count > 0 ? "yes" : "no"`, scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if exprs[rootID].Op != program.OpCond {
+		t.Fatalf("expected OpCond, got %d", exprs[rootID].Op)
+	}
+	if len(exprs[rootID].Operands) != 3 {
+		t.Fatalf("expected 3 operands, got %d", len(exprs[rootID].Operands))
+	}
+}
+
+func TestParseFieldAccess(t *testing.T) {
+	scope := &ExprScope{Props: map[string]bool{"user": true}}
+	exprs, rootID, err := ParseExpr("user.Name", scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if exprs[rootID].Op != program.OpIndex {
+		t.Fatalf("expected OpIndex, got %d", exprs[rootID].Op)
+	}
+}
+
+func TestParseLengthField(t *testing.T) {
+	scope := &ExprScope{Props: map[string]bool{"items": true}}
+	exprs, rootID, err := ParseExpr("items.length", scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if exprs[rootID].Op != program.OpLen {
+		t.Fatalf("expected OpLen, got %d", exprs[rootID].Op)
+	}
+}
+
+func TestParseIndexAccess(t *testing.T) {
+	scope := &ExprScope{Props: map[string]bool{"items": true}}
+	exprs, rootID, err := ParseExpr("items[0]", scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if exprs[rootID].Op != program.OpIndex {
+		t.Fatalf("expected OpIndex, got %d", exprs[rootID].Op)
+	}
+}
+
+func TestParseStringMethodChain(t *testing.T) {
+	scope := &ExprScope{Props: map[string]bool{"title": true}}
+	exprs, rootID, err := ParseExpr(`title.Trim().ToUpper()`, scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if exprs[rootID].Op != program.OpToUpper {
+		t.Fatalf("expected OpToUpper, got %d", exprs[rootID].Op)
+	}
+}
+
+func TestParseCollectionMethod(t *testing.T) {
+	scope := &ExprScope{Props: map[string]bool{"items": true}}
+	exprs, rootID, err := ParseExpr("items.map(_item * 2)", scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if exprs[rootID].Op != program.OpMap {
+		t.Fatalf("expected OpMap, got %d", exprs[rootID].Op)
+	}
+}
+
+func TestParseHandlerCallWithArgs(t *testing.T) {
+	scope := &ExprScope{Handlers: map[string]bool{"submit": true}}
+	exprs, rootID, err := ParseExpr(`submit("ok", 2)`, scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if exprs[rootID].Op != program.OpCall {
+		t.Fatalf("expected OpCall, got %d", exprs[rootID].Op)
+	}
+	if len(exprs[rootID].Operands) != 2 {
+		t.Fatalf("expected 2 call args, got %d", len(exprs[rootID].Operands))
+	}
+}
+
 func TestParseGoroutineRejected(t *testing.T) {
 	_, _, err := ParseExpr("go func(){}", &ExprScope{})
 	if err == nil {

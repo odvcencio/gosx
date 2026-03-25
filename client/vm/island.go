@@ -3,6 +3,7 @@ package vm
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 
 	"github.com/odvcencio/gosx/island/program"
 	"github.com/odvcencio/gosx/signal"
@@ -79,6 +80,24 @@ func (island *Island) EvalExpr(id program.ExprID) Value {
 	return island.vm.Eval(id)
 }
 
+// HasHandler reports whether the island exposes a named handler.
+func (island *Island) HasHandler(name string) bool {
+	if island == nil {
+		return false
+	}
+	_, ok := island.handlers[name]
+	return ok
+}
+
+// CurrentTree returns the most recently reconciled tree for inspection.
+// Callers should treat the returned tree as read-only.
+func (island *Island) CurrentTree() *ResolvedTree {
+	if island == nil {
+		return nil
+	}
+	return island.prev
+}
+
 // NewIsland creates a live island from a program and initial props JSON.
 func NewIsland(prog *program.Program, propsJSON string) *Island {
 	// Parse props
@@ -120,6 +139,16 @@ func NewIsland(prog *program.Program, propsJSON string) *Island {
 	island.prev = vm.EvalTree()
 
 	return island
+}
+
+// ResolveInitialTree evaluates a program with its initial props and signal
+// state, returning the tree the browser VM will see before any events fire.
+func ResolveInitialTree(prog *program.Program, propsJSON string) *ResolvedTree {
+	island := NewIsland(prog, propsJSON)
+	if island == nil {
+		return &ResolvedTree{}
+	}
+	return island.prev
 }
 
 // Dispatch executes a named handler and returns the resulting patch ops.
@@ -196,6 +225,40 @@ func parseJSONValue(raw json.RawMessage, typ program.ExprType) Value {
 		json.Unmarshal(raw, &b)
 		return BoolVal(b)
 	default:
-		return ZeroValue(typ)
+		var value any
+		if err := json.Unmarshal(raw, &value); err != nil {
+			return ZeroValue(typ)
+		}
+		return parseAnyValue(value)
+	}
+}
+
+func parseAnyValue(value any) Value {
+	switch v := value.(type) {
+	case nil:
+		return ZeroValue(program.TypeAny)
+	case string:
+		return StringVal(v)
+	case bool:
+		return BoolVal(v)
+	case float64:
+		if math.Trunc(v) == v {
+			return IntVal(int(v))
+		}
+		return FloatVal(v)
+	case []any:
+		items := make([]Value, len(v))
+		for i := range v {
+			items[i] = parseAnyValue(v[i])
+		}
+		return ArrayVal(items)
+	case map[string]any:
+		fields := make(map[string]Value, len(v))
+		for key, field := range v {
+			fields[key] = parseAnyValue(field)
+		}
+		return ObjectVal(fields)
+	default:
+		return StringVal(fmt.Sprintf("%v", v))
 	}
 }

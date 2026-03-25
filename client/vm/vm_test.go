@@ -643,6 +643,38 @@ func TestVMOpToUpper(t *testing.T) {
 	}
 }
 
+func TestVMOpIndexObjectField(t *testing.T) {
+	prog := progFromExprs([]program.Expr{
+		{Op: program.OpPropGet, Value: "user", Type: program.TypeAny},                  // 0
+		{Op: program.OpLitString, Value: "Name", Type: program.TypeString},             // 1
+		{Op: program.OpIndex, Operands: []program.ExprID{0, 1}, Type: program.TypeAny}, // 2
+	})
+	vm := NewVM(prog, map[string]Value{
+		"user": ObjectVal(map[string]Value{"Name": StringVal("Ada")}),
+	})
+
+	v := vm.Eval(2)
+	if v.Str != "Ada" {
+		t.Fatalf("expected Ada, got %q", v.Str)
+	}
+}
+
+func TestVMOpIndexArray(t *testing.T) {
+	prog := progFromExprs([]program.Expr{
+		{Op: program.OpPropGet, Value: "items", Type: program.TypeAny},                 // 0
+		{Op: program.OpLitInt, Value: "1", Type: program.TypeInt},                      // 1
+		{Op: program.OpIndex, Operands: []program.ExprID{0, 1}, Type: program.TypeAny}, // 2
+	})
+	vm := NewVM(prog, map[string]Value{
+		"items": ArrayVal([]Value{StringVal("a"), StringVal("b")}),
+	})
+
+	v := vm.Eval(2)
+	if v.Str != "b" {
+		t.Fatalf("expected b, got %q", v.Str)
+	}
+}
+
 // --- OpSplit / OpJoin round-trip ---
 
 func TestVMOpSplitJoinRoundTrip(t *testing.T) {
@@ -663,6 +695,24 @@ func TestVMOpSplitJoinRoundTrip(t *testing.T) {
 	joined := vm.Eval(2)
 	if joined.Str != "a,b,c" {
 		t.Fatalf("expected 'a,b,c' after round-trip, got %q", joined.Str)
+	}
+}
+
+func TestVMOpSplitJoinDynamicSeparator(t *testing.T) {
+	prog := progFromExprs([]program.Expr{
+		{Op: program.OpLitString, Value: "a|b|c", Type: program.TypeString},              // 0
+		{Op: program.OpLitString, Value: "|", Type: program.TypeString},                  // 1
+		{Op: program.OpSplit, Operands: []program.ExprID{0, 1}, Type: program.TypeAny},   // 2
+		{Op: program.OpLitString, Value: "::", Type: program.TypeString},                 // 3
+		{Op: program.OpJoin, Operands: []program.ExprID{2, 3}, Type: program.TypeString}, // 4
+	})
+	vm := NewVM(prog, nil)
+
+	if split := vm.Eval(2); len(split.Items) != 3 {
+		t.Fatalf("expected 3 items from split, got %d", len(split.Items))
+	}
+	if joined := vm.Eval(4); joined.Str != "a::b::c" {
+		t.Fatalf("expected a::b::c, got %q", joined.Str)
 	}
 }
 

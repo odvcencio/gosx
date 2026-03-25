@@ -51,6 +51,13 @@ type Config struct {
 	// WASMPath is the URL to the engine's WASM binary.
 	WASMPath string `json:"wasmPath"`
 
+	// JSPath is an optional JS entrypoint for engines that opt into the
+	// unrestricted client runtime.
+	JSPath string `json:"jsPath,omitempty"`
+
+	// JSExport is the factory name published in window.__gosx_engine_factories.
+	JSExport string `json:"jsExport,omitempty"`
+
 	// MountID is the DOM element ID for surface engines (ignored for workers).
 	MountID string `json:"mountId,omitempty"`
 

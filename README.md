@@ -23,6 +23,7 @@ GoSX is in active development. The compiler pipeline, server rendering, and isla
 - Hub primitive: WebSocket presence, fanout, shared state
 - Engine primitive: worker/surface model with capability declarations
 - Cross-island shared state via `$`-prefixed signals
+- `.gsx` editor support via `gosx lsp` plus a bundled VS Code extension scaffold in `editor/vscode`
 
 **What exists but is not yet browser-validated:**
 
@@ -194,10 +195,13 @@ make test
 # Data-race pass across the repo
 make test-race
 
+# Run shipped bootstrap.js and patch.js against a minimal Node DOM harness
+make test-js
+
 # Run js/wasm tests against the shipped client/wasm entrypoint
 make test-wasm
 
-# CI-grade verification: format check, tests, race tests, CLI build, WASM build
+# CI-grade verification: format check, tests, race tests, JS contract tests, WASM tests, CLI build, WASM build
 make ci
 ```
 
@@ -205,10 +209,16 @@ Key checks:
 
 - `make test` runs `go test ./...` across the compiler, runtime, routing, server, actions, hubs, and end-to-end pipeline tests.
 - `make test-race` runs the same suite with the Go race detector enabled.
+- `make test-js` runs the shipped `client/js/bootstrap.js` and `client/js/patch.js` files under Node's built-in test runner with a minimal DOM harness, covering hydration orchestration, delegated events, disposal, and patch application.
 - `make test-wasm` runs `GOOS=js GOARCH=wasm go test ./client/wasm` so client correctness is exercised through the actual exported WASM runtime functions.
 - `make build-cli` ensures `cmd/gosx` continues to compile.
 - `make build-runtime` builds the shared WASM runtime from `client/wasm`.
 - `.github/workflows/ci.yml` runs the same contract on every push and pull request.
+
+Editor tooling:
+
+- `gosx lsp` starts a stdio language server for `.gsx` diagnostics and formatting.
+- `editor/vscode` contains a VS Code extension scaffold that wires `.gsx` syntax highlighting to `gosx lsp`.
 
 Action-specific hardening is covered by regression tests for:
 
@@ -221,6 +231,7 @@ Action-specific hardening is covered by regression tests for:
 Client correctness is covered at three layers:
 
 - pure Go VM and bridge tests in `client/vm` and `client/bridge`
+- shipped JS runtime contract tests in `client/js/runtime.test.js`
 - end-to-end compiler-to-bridge tests in `test/frontend_pipeline_test.go`
 - js/wasm runtime tests in `client/wasm/main_test.go` that compile `.gsx` islands, hydrate through `__gosx_hydrate`, dispatch through `__gosx_action`, and assert the emitted patch stream
 

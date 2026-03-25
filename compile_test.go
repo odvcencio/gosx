@@ -1,6 +1,7 @@
 package gosx
 
 import (
+	"errors"
 	"strings"
 	"testing"
 )
@@ -153,6 +154,36 @@ func Footer() Node {
 
 	if len(prog.Components) != 2 {
 		t.Fatalf("expected 2 components, got %d", len(prog.Components))
+	}
+}
+
+func TestCompileParseErrorIncludesLocationAndSnippet(t *testing.T) {
+	source := []byte(`package main
+
+func Broken() Node {
+	return <div>{</div>
+}
+`)
+
+	_, err := Compile(source)
+	if err == nil {
+		t.Fatal("expected parse error")
+	}
+
+	var parseErr *ParseError
+	if !errors.As(err, &parseErr) {
+		t.Fatalf("expected ParseError, got %T: %v", err, err)
+	}
+	if parseErr.Line == 0 || parseErr.Column == 0 {
+		t.Fatalf("expected line/column, got %d:%d", parseErr.Line, parseErr.Column)
+	}
+	if !strings.Contains(parseErr.Snippet, "return <div>{</div>") {
+		t.Fatalf("expected source snippet, got %q", parseErr.Snippet)
+	}
+
+	msg := err.Error()
+	if !strings.Contains(msg, "^") {
+		t.Fatalf("expected caret marker in error, got %q", msg)
 	}
 }
 

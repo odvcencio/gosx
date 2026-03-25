@@ -25,6 +25,91 @@ func isBodyTooLarge(err error) bool {
 // Handler is a server-side action handler.
 type Handler func(ctx *Context) error
 
+// Result is the structured response contract for actions.
+type Result struct {
+	OK          bool              `json:"ok"`
+	Message     string            `json:"message,omitempty"`
+	Data        json.RawMessage   `json:"data,omitempty"`
+	FieldErrors map[string]string `json:"fieldErrors,omitempty"`
+	Values      map[string]string `json:"values,omitempty"`
+	Redirect    string            `json:"redirect,omitempty"`
+}
+
+// ResultError is a structured action error with an explicit HTTP status code.
+type ResultError struct {
+	Status int
+	Result Result
+}
+
+func (e *ResultError) Error() string {
+	if e == nil {
+		return ""
+	}
+	if e.Result.Message != "" {
+		return e.Result.Message
+	}
+	return "action failed"
+}
+
+func (e *ResultError) StatusCode() int {
+	if e == nil || e.Status == 0 {
+		if len(e.Result.FieldErrors) > 0 {
+			return http.StatusUnprocessableEntity
+		}
+		return http.StatusBadRequest
+	}
+	return e.Status
+}
+
+func (e *ResultError) ActionResult() Result {
+	if e == nil {
+		return Result{OK: false}
+	}
+	res := e.Result
+	res.OK = false
+	return res
+}
+
+// Error constructs a structured action error.
+func Error(status int, message string) *ResultError {
+	return &ResultError{
+		Status: status,
+		Result: Result{
+			OK:      false,
+			Message: message,
+		},
+	}
+}
+
+// Validation constructs a structured validation failure.
+func Validation(message string, fieldErrors map[string]string, values map[string]string) *ResultError {
+	return &ResultError{
+		Status: http.StatusUnprocessableEntity,
+		Result: Result{
+			OK:          false,
+			Message:     message,
+			FieldErrors: cloneStrings(fieldErrors),
+			Values:      cloneStrings(values),
+		},
+	}
+}
+
+// Redirect constructs a successful redirect result.
+func Redirect(url string) *ResultError {
+	return &ResultError{
+		Status: http.StatusSeeOther,
+		Result: Result{
+			OK:       true,
+			Redirect: url,
+		},
+	}
+}
+
+type resultProvider interface {
+	ActionResult() Result
+	StatusCode() int
+}
+
 // Context provides action execution context.
 type Context struct {
 	// Request is the originating HTTP request (for server actions).
@@ -35,6 +120,66 @@ type Context struct {
 
 	// Payload is the JSON request body (for client-invoked actions).
 	Payload json.RawMessage
+
+	status int
+	result *Result
+}
+
+// SetResult replaces the structured action result.
+func (c *Context) SetResult(result Result) {
+	if result.Values == nil && len(c.FormData) > 0 {
+		result.Values = cloneStrings(c.FormData)
+	}
+	c.result = &result
+}
+
+// SetStatus overrides the HTTP status for the eventual response.
+func (c *Context) SetStatus(status int) {
+	c.status = status
+}
+
+// Success stores a structured successful result with optional message/data.
+func (c *Context) Success(message string, data any) error {
+	res := Result{
+		OK:      true,
+		Message: message,
+		Values:  cloneStrings(c.FormData),
+	}
+	if data != nil {
+		raw, err := json.Marshal(data)
+		if err != nil {
+			return err
+		}
+		res.Data = raw
+	}
+	c.result = &res
+	if c.status == 0 {
+		c.status = http.StatusOK
+	}
+	return nil
+}
+
+// Redirect sends a browser-friendly redirect after a successful action.
+func (c *Context) Redirect(url string) {
+	c.result = &Result{
+		OK:       true,
+		Redirect: url,
+		Values:   cloneStrings(c.FormData),
+	}
+	if c.status == 0 {
+		c.status = http.StatusSeeOther
+	}
+}
+
+// ValidationFailure records field-level validation errors for the response.
+func (c *Context) ValidationFailure(message string, fieldErrors map[string]string) {
+	c.result = &Result{
+		OK:          false,
+		Message:     message,
+		FieldErrors: cloneStrings(fieldErrors),
+		Values:      cloneStrings(c.FormData),
+	}
+	c.status = http.StatusUnprocessableEntity
 }
 
 // Registry maps action names to handlers.
@@ -156,12 +301,13 @@ func (r *Registry) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 
 	if err := r.Invoke(name, ctx); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		result, status := resultFromError(err)
+		writeResponse(w, req, status, result)
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.Write([]byte(`{"ok":true}`))
+	result, status := resultFromContext(ctx)
+	writeResponse(w, req, status, result)
 }
 
 // FormValues extracts typed form values from a request.
@@ -192,4 +338,103 @@ func (f FormValues) All() map[string]string {
 		cp[k] = v
 	}
 	return cp
+}
+
+func resultFromError(err error) (Result, int) {
+	var structured resultProvider
+	if errors.As(err, &structured) {
+		return structured.ActionResult(), structured.StatusCode()
+	}
+	return Result{
+		OK:      false,
+		Message: err.Error(),
+	}, http.StatusInternalServerError
+}
+
+func resultFromContext(ctx *Context) (Result, int) {
+	if ctx == nil || ctx.result == nil {
+		return Result{OK: true}, http.StatusOK
+	}
+
+	result := *ctx.result
+	if result.Values == nil && len(ctx.FormData) > 0 {
+		result.Values = cloneStrings(ctx.FormData)
+	}
+	if ctx.status != 0 {
+		return result, ctx.status
+	}
+	if !result.OK {
+		if hasFieldErrors(result.FieldErrors) {
+			return result, http.StatusUnprocessableEntity
+		}
+		return result, http.StatusBadRequest
+	}
+	if result.Redirect != "" {
+		return result, http.StatusSeeOther
+	}
+	return result, http.StatusOK
+}
+
+func writeResponse(w http.ResponseWriter, req *http.Request, status int, result Result) {
+	if status == 0 {
+		status = http.StatusOK
+	}
+
+	if shouldRedirect(req, status, result) {
+		http.Redirect(w, req, redirectTarget(req, result), http.StatusSeeOther)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(result)
+}
+
+func shouldRedirect(req *http.Request, status int, result Result) bool {
+	if wantsJSON(req) {
+		return false
+	}
+	if result.Redirect != "" {
+		return true
+	}
+	if status >= 200 && status < 300 && req != nil && req.Method == http.MethodPost && redirectTarget(req, result) != "" {
+		return true
+	}
+	return false
+}
+
+func redirectTarget(req *http.Request, result Result) string {
+	if result.Redirect != "" {
+		return result.Redirect
+	}
+	if req == nil {
+		return ""
+	}
+	return req.Header.Get("Referer")
+}
+
+func wantsJSON(req *http.Request) bool {
+	if req == nil {
+		return true
+	}
+	contentType := req.Header.Get("Content-Type")
+	accept := req.Header.Get("Accept")
+	return strings.HasPrefix(contentType, "application/json") ||
+		strings.Contains(accept, "application/json") ||
+		req.Header.Get("X-Requested-With") == "XMLHttpRequest"
+}
+
+func hasFieldErrors(fieldErrors map[string]string) bool {
+	return len(fieldErrors) > 0
+}
+
+func cloneStrings(src map[string]string) map[string]string {
+	if len(src) == 0 {
+		return nil
+	}
+	dst := make(map[string]string, len(src))
+	for k, v := range src {
+		dst[k] = v
+	}
+	return dst
 }
