@@ -67,6 +67,35 @@ func RunBuild(dir string, dev bool) error {
 		}
 	}
 
+	// Sidecar CSS: for each .gsx file, check for matching .css
+	var cssFiles []struct {
+		source    string
+		component string
+		hash      string
+	}
+
+	for _, gsxFile := range gsxFiles {
+		cssFile := strings.TrimSuffix(gsxFile, ".gsx") + ".css"
+		if data, err := os.ReadFile(cssFile); err == nil {
+			h := sha256.Sum256(data)
+			hash := hex.EncodeToString(h[:4])
+			component := strings.TrimSuffix(filepath.Base(gsxFile), ".gsx")
+
+			// Copy to build/css/ with hashed name
+			outName := fmt.Sprintf("%s.%s.css", component, hash)
+			outPath := filepath.Join(buildDir, "css", outName)
+			os.WriteFile(outPath, data, 0644)
+
+			cssFiles = append(cssFiles, struct {
+				source    string
+				component string
+				hash      string
+			}{cssFile, component, hash})
+
+			fmt.Printf("  CSS: %s → %s (%d bytes)\n", filepath.Base(cssFile), outName, len(data))
+		}
+	}
+
 	// 5. Serialize island programs
 	format := "json"
 	ext := ".json"
@@ -144,6 +173,7 @@ func RunBuild(dir string, dev bool) error {
 	fmt.Printf("\nBuild complete: %s\n", buildDir)
 	fmt.Printf("  Islands: %d\n", len(islandProgs))
 	fmt.Printf("  Format: %s\n", format)
+	fmt.Printf("  CSS files: %d\n", len(cssFiles))
 
 	return nil
 }
