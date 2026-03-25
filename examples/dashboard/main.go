@@ -579,7 +579,7 @@ func KitchenSinkPage(islands *island.Renderer) gosx.Node {
 		gosx.El("h3", gosx.Text("Form Validation")),
 		gosx.El("div", gosx.Attrs(gosx.Attr("class", "form-field")),
 			gosx.El("label", gosx.Text("Name")),
-			gosx.RawHTML(`<input type="text" placeholder="Enter name..." data-gosx-handler="updateName" />`),
+			gosx.RawHTML(`<input type="text" placeholder="Enter name..." data-gosx-on-input="updateName" />`),
 			gosx.El("button", gosx.Attrs(gosx.Attr("data-gosx-handler", "fillName")), gosx.Text("Fill Name")),
 			gosx.El("span", gosx.Attrs(gosx.Attr("class", "field-value")), gosx.Text("")),
 		),
@@ -632,7 +632,7 @@ func KitchenSinkPage(islands *island.Renderer) gosx.Node {
 	// === LIST (dynamic list rendering) ===
 	listContent := gosx.El("div", gosx.Attrs(gosx.Attr("class", "list-demo")),
 		gosx.El("div", gosx.Attrs(gosx.Attr("class", "list-input")),
-			gosx.RawHTML(`<input type="text" placeholder="Add item..." data-gosx-handler="addItem" />`),
+			gosx.RawHTML(`<input type="text" placeholder="Add item..." data-gosx-on-input="addItem" />`),
 			gosx.El("button", gosx.Attrs(gosx.Attr("data-gosx-handler", "addItem")), gosx.Text("Add")),
 		),
 		gosx.El("div", gosx.Attrs(gosx.Attr("class", "list-display")),

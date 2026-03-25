@@ -131,45 +131,49 @@
     return data;
   }
 
-  // Walk up the DOM from `target` to `root` (inclusive) looking for the
-  // nearest element with a `data-gosx-handler` attribute. Returns the
-  // attribute value or null.
-  function findHandler(target, root) {
-    let el = target;
-    while (el && el !== root.parentNode) {
-      if (el.hasAttribute && el.hasAttribute("data-gosx-handler")) {
-        return el.getAttribute("data-gosx-handler");
-      }
-      el = el.parentNode;
-    }
-    return null;
-  }
-
   // Attach ONE delegated listener per event type on `islandRoot`. Each
   // listener walks the ancestor chain from event.target to the root looking
   // for a `data-gosx-handler` attribute. If found, it calls the WASM-side
   // __gosx_action(islandID, handlerName, eventDataJSON).
   //
   // Returns an array of { type, listener } objects so callers can remove them.
+  // Handler attribute pattern: data-gosx-on-{eventType}="handlerName"
+  // Examples: data-gosx-on-click="increment", data-gosx-on-input="updateName"
+  // Falls back to data-gosx-handler for click-only (legacy/shorthand).
+  function findHandlerForEvent(target, root, eventType) {
+    const specificAttr = "data-gosx-on-" + eventType;
+    const genericAttr = "data-gosx-handler"; // legacy: treated as click-only
+
+    let el = target;
+    while (el && el !== root.parentNode) {
+      if (el.hasAttribute && el.hasAttribute(specificAttr)) {
+        return el.getAttribute(specificAttr);
+      }
+      // data-gosx-handler is shorthand for click only
+      if (eventType === "click" && el.hasAttribute && el.hasAttribute(genericAttr)) {
+        return el.getAttribute(genericAttr);
+      }
+      el = el.parentNode;
+    }
+    return null;
+  }
+
   function setupEventDelegation(islandRoot, islandID) {
     const entries = [];
 
     for (const eventType of DELEGATED_EVENTS) {
       const listener = function(e) {
-        // Skip if this event was already handled by an inner island
+        // Skip if already handled by an inner island
         if (e.__gosx_handled) return;
 
-        const handlerName = findHandler(e.target, islandRoot);
-        if (!handlerName) return; // No handler on ancestor chain — ignore.
+        const handlerName = findHandlerForEvent(e.target, islandRoot, eventType);
+        if (!handlerName) return;
 
-        // Mark as handled to prevent duplicate dispatch from parent islands
+        // Mark handled
         e.__gosx_handled = true;
 
         const actionFn = window.__gosx_action;
-        if (typeof actionFn !== "function") {
-          console.error("[gosx] __gosx_action not available — WASM may not be ready");
-          return;
-        }
+        if (typeof actionFn !== "function") return;
 
         const eventData = extractEventData(e);
         try {
@@ -179,7 +183,6 @@
         }
       };
 
-      // Use capture for focus/blur since they don't bubble.
       const useCapture = (eventType === "focus" || eventType === "blur");
       islandRoot.addEventListener(eventType, listener, useCapture);
       entries.push({ type: eventType, listener, capture: useCapture });
