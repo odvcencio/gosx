@@ -221,40 +221,89 @@ func RunBuild(dir string, dev bool) error {
 
 	fmt.Println("\n  Runtime:")
 
-	// Build WASM
+	// Build WASM — try TinyGo first (smaller binary), fall back to standard Go
 	wasmTmp := filepath.Join(distDir, "gosx-runtime.wasm.tmp")
-	cmd := exec.Command("go", "build", "-o", wasmTmp, "./client/wasm/")
-	cmd.Env = append(os.Environ(), "GOOS=js", "GOARCH=wasm")
-	cmd.Dir = findModuleRoot(dir)
-	cmd.Stderr = os.Stderr
+	moduleRoot := findModuleRoot(dir)
+	usedTinyGo := false
 
-	if err := cmd.Run(); err != nil {
-		fmt.Printf("    WASM build failed: %v\n", err)
-		fmt.Println("    Run manually: GOOS=js GOARCH=wasm go build -o dist/assets/runtime/gosx-runtime.wasm ./client/wasm/")
-	} else {
-		wasmData, _ := os.ReadFile(wasmTmp)
+	tinygoPath, tinygoErr := exec.LookPath("tinygo")
+	if tinygoErr == nil && !dev {
+		// TinyGo available and prod mode — use it for smaller WASM
+		fmt.Println("    Using TinyGo for smaller WASM binary...")
+		cmd := exec.Command(tinygoPath, "build", "-target", "wasm", "-o", wasmTmp, "./client/wasm/")
+		cmd.Dir = moduleRoot
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err == nil {
+			usedTinyGo = true
+			// Try wasm-opt if available
+			woptPath, woptErr := exec.LookPath("wasm-opt")
+			if woptErr == nil {
+				optTmp := wasmTmp + ".opt"
+				optCmd := exec.Command(woptPath, "-Oz", wasmTmp, "-o", optTmp)
+				if optCmd.Run() == nil {
+					os.Rename(optTmp, wasmTmp)
+					fmt.Println("    Applied wasm-opt -Oz")
+				}
+			}
+		} else {
+			fmt.Printf("    TinyGo build failed, falling back to standard Go: %v\n", err)
+		}
+	}
+
+	if !usedTinyGo {
+		cmd := exec.Command("go", "build", "-o", wasmTmp, "./client/wasm/")
+		cmd.Env = append(os.Environ(), "GOOS=js", "GOARCH=wasm")
+		cmd.Dir = moduleRoot
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			fmt.Printf("    WASM build failed: %v\n", err)
+		}
+	}
+
+	if wasmData, err := os.ReadFile(wasmTmp); err == nil {
 		asset, _ := writeHashed(runtimeDir, "gosx-runtime", ".wasm", wasmData)
 		manifest.Runtime.WASM = asset
 		os.Remove(wasmTmp)
-		fmt.Printf("    %s (%d bytes, %.0fKB gzipped est.)\n", asset.File, asset.Size, float64(asset.Size)*0.29/1024)
+		compiler := "Go"
+		if usedTinyGo {
+			compiler = "TinyGo"
+		}
+		gzEst := gzip_c_len(wasmData)
+		fmt.Printf("    %s (%d bytes, %dKB gz, built with %s)\n", asset.File, asset.Size, gzEst/1024, compiler)
 	}
 
-	// wasm_exec.js
-	goroot := getGOROOT()
-	for _, tryPath := range []string{
-		filepath.Join(goroot, "lib", "wasm", "wasm_exec.js"),
-		filepath.Join(goroot, "misc", "wasm", "wasm_exec.js"),
-	} {
-		if data, err := os.ReadFile(tryPath); err == nil {
-			asset, _ := writeHashed(runtimeDir, "wasm_exec", ".js", data)
-			manifest.Runtime.WASMExec = asset
-			fmt.Printf("    %s (%d bytes)\n", asset.File, asset.Size)
-			break
+	// wasm_exec.js — use TinyGo's version if we built with TinyGo
+	wasmExecFound := false
+	if usedTinyGo {
+		// TinyGo has its own wasm_exec.js
+		out, err := exec.Command(tinygoPath, "env", "TINYGOROOT").Output()
+		if err == nil {
+			tinygoRoot := strings.TrimSpace(string(out))
+			tryPath := filepath.Join(tinygoRoot, "targets", "wasm_exec.js")
+			if data, err := os.ReadFile(tryPath); err == nil {
+				asset, _ := writeHashed(runtimeDir, "wasm_exec", ".js", data)
+				manifest.Runtime.WASMExec = asset
+				fmt.Printf("    %s (%d bytes, TinyGo)\n", asset.File, asset.Size)
+				wasmExecFound = true
+			}
+		}
+	}
+	if !wasmExecFound {
+		goroot := getGOROOT()
+		for _, tryPath := range []string{
+			filepath.Join(goroot, "lib", "wasm", "wasm_exec.js"),
+			filepath.Join(goroot, "misc", "wasm", "wasm_exec.js"),
+		} {
+			if data, err := os.ReadFile(tryPath); err == nil {
+				asset, _ := writeHashed(runtimeDir, "wasm_exec", ".js", data)
+				manifest.Runtime.WASMExec = asset
+				fmt.Printf("    %s (%d bytes)\n", asset.File, asset.Size)
+				break
+			}
 		}
 	}
 
 	// bootstrap.js and patch.js
-	moduleRoot := findModuleRoot(dir)
 	for _, js := range []struct {
 		name string
 		path string
@@ -300,6 +349,11 @@ func RunBuild(dir string, dev bool) error {
 	fmt.Println("  • Manifest tells the server which hashed URLs to reference")
 
 	return nil
+}
+
+// gzip_c_len estimates gzipped size.
+func gzip_c_len(data []byte) int {
+	return int(float64(len(data)) * 0.35)
 }
 
 func countNonEmpty(strs ...string) int {
