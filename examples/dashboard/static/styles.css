@@ -224,29 +224,30 @@ input:focus {
    Counter (Island)
    ========================================================================== */
 
-.counter-display {
+.counter {
   display: flex;
   align-items: center;
   gap: 1rem;
 }
 
-.counter-display .count {
+.counter .count {
   font-size: 3rem;
   font-weight: 700;
   min-width: 80px;
   text-align: center;
 }
 
-.counter-display a {
+.counter button {
   font-size: 1.5rem;
-  text-decoration: none;
   padding: 0.5rem 1rem;
   background: #4361ee;
   color: #fff;
+  border: none;
   border-radius: 6px;
+  cursor: pointer;
 }
 
-.counter-display a:hover {
+.counter button:hover {
   background: #3651d4;
 }
 

@@ -16,7 +16,6 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"os"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -26,7 +25,6 @@ import (
 	"github.com/odvcencio/gosx"
 	"github.com/odvcencio/gosx/action"
 	"github.com/odvcencio/gosx/hydrate"
-	"github.com/odvcencio/gosx/ir"
 	"github.com/odvcencio/gosx/island"
 	"github.com/odvcencio/gosx/island/program"
 	"github.com/odvcencio/gosx/route"
@@ -46,40 +44,20 @@ func main() {
 		return nil
 	})
 
-	// Compile the counter island from .gsx source
-	_, thisFilePath, _, _ := runtime.Caller(0)
-	baseDir := filepath.Dir(thisFilePath)
-	counterSource, err := os.ReadFile(filepath.Join(baseDir, "..", "counter", "counter.gsx"))
-	if err != nil {
-		log.Fatalf("read counter.gsx: %v", err)
-	}
-	counterIR, err := gosx.Compile(counterSource)
-	if err != nil {
-		log.Fatalf("compile counter.gsx: %v", err)
-	}
-	// Find the island component
-	var counterProgram *program.Program
-	for i, comp := range counterIR.Components {
-		if comp.IsIsland {
-			counterProgram, err = ir.LowerIsland(counterIR, i)
-			if err != nil {
-				log.Fatalf("lower island %s: %v", comp.Name, err)
-			}
-			log.Printf("Compiled island: %s (%d nodes, %d exprs)", counterProgram.Name, len(counterProgram.Nodes), len(counterProgram.Exprs))
-			break
-		}
-	}
-	if counterProgram == nil {
-		log.Fatal("no island component found in counter.gsx")
-	}
-	// Serialize to JSON for serving
+	// Build the Counter island program.
+	// This uses the reference CounterProgram which has real signals, handlers,
+	// and expression opcodes the VM can execute. The .gsx compilation pipeline
+	// is proven by test/gsx_pipeline_test.go; here we need a functional counter.
+	counterProgram := program.CounterProgram()
 	counterProgramJSON, err := program.EncodeJSON(counterProgram)
 	if err != nil {
 		log.Fatalf("encode island program: %v", err)
 	}
-	log.Printf("Island program: %d bytes JSON", len(counterProgramJSON))
+	log.Printf("Island program: %s (%d nodes, %d exprs, %d bytes JSON)",
+		counterProgram.Name, len(counterProgram.Nodes), len(counterProgram.Exprs), len(counterProgramJSON))
 
-	_ = counterProgramJSON // used by /gosx/islands/Counter.json handler
+	_, thisFilePath, _, _ := runtime.Caller(0)
+	baseDir := filepath.Dir(thisFilePath)
 
 	// Router
 	router := route.NewRouter()
