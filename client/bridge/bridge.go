@@ -10,8 +10,16 @@ import (
 
 // Bridge manages active island instances and shared state.
 type Bridge struct {
-	islands map[string]*vm.Island
-	store   *Store
+	islands      map[string]*vm.Island
+	store        *Store
+	patchFn      func(islandID, patchJSON string) // callback to push patches to JS
+	dispatching  string                            // ID of the island currently dispatching (skip its subscription)
+}
+
+// SetPatchCallback registers the function called when shared signal changes
+// trigger a re-render on an island. In WASM, this calls __gosx_apply_patches.
+func (b *Bridge) SetPatchCallback(fn func(islandID, patchJSON string)) {
+	b.patchFn = fn
 }
 
 // Store is a shared signal store that enables cross-island state.
@@ -43,13 +51,14 @@ func (s *Store) Get(name string) (vm.Value, bool) {
 	return vm.ZeroValue(0), false
 }
 
-// Signal returns the raw signal for subscription.
-func (s *Store) Signal(name string) *signal.Signal[vm.Value] {
+// Signal returns a shared signal, creating it with the given initial value
+// if it doesn't exist yet. If it already exists, the init value is ignored
+// (first island to declare wins).
+func (s *Store) Signal(name string, init vm.Value) *signal.Signal[vm.Value] {
 	if sig, ok := s.signals[name]; ok {
 		return sig
 	}
-	// Auto-create with zero value
-	sig := signal.New(vm.StringVal(""))
+	sig := signal.New(init)
 	s.signals[name] = sig
 	return sig
 }
@@ -82,8 +91,37 @@ func (b *Bridge) HydrateIsland(id, componentName, propsJSON string, programData 
 	// This means multiple islands can read/write the same signal.
 	for _, def := range prog.Signals {
 		if len(def.Name) > 0 && def.Name[0] == '$' {
-			sharedSig := b.store.Signal(def.Name)
+			// Evaluate the init expression to get the typed initial value
+			initVal := island.EvalExpr(def.Init)
+			sharedSig := b.store.Signal(def.Name, initVal)
 			island.SetSharedSignal(def.Name, sharedSig)
+		}
+	}
+
+	// Subscribe to shared signals: when any shared signal changes,
+	// re-render this island and push patches to JS.
+	// Skip if this island is the one that triggered the change (it handles
+	// its own reconcile in Dispatch).
+	islandID := id
+	for _, def := range prog.Signals {
+		if len(def.Name) > 0 && def.Name[0] == '$' {
+			sig := b.store.Signal(def.Name, vm.ZeroValue(def.Type))
+			sig.Subscribe(func() {
+				if b.dispatching == islandID {
+					return // the dispatching island reconciles itself
+				}
+				isl, ok := b.islands[islandID]
+				if !ok {
+					return
+				}
+				patches := isl.Reconcile()
+				if len(patches) > 0 && b.patchFn != nil {
+					patchJSON, err := MarshalPatches(patches)
+					if err == nil {
+						b.patchFn(islandID, patchJSON)
+					}
+				}
+			})
 		}
 	}
 
@@ -92,13 +130,20 @@ func (b *Bridge) HydrateIsland(id, componentName, propsJSON string, programData 
 }
 
 // DispatchAction forwards an event to an island's handler and returns patches.
+// If the handler mutates shared signals, other islands re-render automatically
+// via their subscriptions and push patches through the patchFn callback.
 func (b *Bridge) DispatchAction(islandID, handlerName, eventDataJSON string) ([]vm.PatchOp, error) {
 	island, ok := b.islands[islandID]
 	if !ok {
 		return nil, fmt.Errorf("island %q not found", islandID)
 	}
 
+	// Mark this island as the dispatcher so its subscription callback
+	// skips reconciliation (Dispatch handles it).
+	b.dispatching = islandID
 	patches := island.Dispatch(handlerName, eventDataJSON)
+	b.dispatching = ""
+
 	return patches, nil
 }
 

@@ -22,10 +22,16 @@ type Island struct {
 }
 
 // SetSharedSignal replaces an island-local signal with a shared one from the store.
-// This connects the island to cross-island state: when another island modifies
-// the shared signal, this island re-renders automatically via subscription.
 func (island *Island) SetSharedSignal(name string, sig *signal.Signal[Value]) {
 	island.vm.SetSignal(name, sig)
+	// Re-evaluate the initial tree with the shared signal's current value
+	island.prev = island.vm.EvalTree()
+}
+
+// EvalExpr evaluates an expression by ID in this island's VM.
+// Used by the bridge to compute typed init values for shared signals.
+func (island *Island) EvalExpr(id program.ExprID) Value {
+	return island.vm.Eval(id)
 }
 
 // NewIsland creates a live island from a program and initial props JSON.
