@@ -90,6 +90,7 @@ func main() {
 
 	mux := http.NewServeMux()
 	mux.Handle("POST /gosx/action/{name}", actions)
+	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir("static"))))
 	mux.Handle("/", router.Build())
 
 	addr := ":3000"
@@ -105,47 +106,7 @@ func Layout(title string, islands *island.Renderer, content gosx.Node) gosx.Node
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>%s</title>
-<style>
-* { box-sizing: border-box; margin: 0; padding: 0; }
-body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; color: #1a1a2e; background: #f8f9fa; }
-.layout { display: flex; min-height: 100vh; }
-.sidebar { width: 240px; background: #1a1a2e; color: #e0e0e0; padding: 1.5rem 0; }
-.sidebar h2 { padding: 0 1.5rem; margin-bottom: 1.5rem; color: #fff; font-size: 1.1rem; }
-.sidebar nav a { display: block; padding: 0.6rem 1.5rem; color: #b0b0c0; text-decoration: none; font-size: 0.9rem; }
-.sidebar nav a:hover { background: rgba(255,255,255,0.08); color: #fff; }
-.main { flex: 1; padding: 2rem; }
-.main h1 { margin-bottom: 1.5rem; font-size: 1.5rem; }
-.card { background: #fff; border-radius: 8px; padding: 1.5rem; margin-bottom: 1rem; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
-.card h3 { margin-bottom: 0.75rem; font-size: 1rem; color: #555; }
-.stat { font-size: 2rem; font-weight: 700; color: #1a1a2e; }
-.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; margin-bottom: 1.5rem; }
-table { width: 100%%; border-collapse: collapse; }
-th, td { padding: 0.75rem 1rem; text-align: left; border-bottom: 1px solid #eee; }
-th { font-weight: 600; color: #555; font-size: 0.85rem; text-transform: uppercase; }
-tr:hover { background: #f8f9fa; }
-.btn { display: inline-block; padding: 0.5rem 1rem; border-radius: 6px; border: none; cursor: pointer; font-size: 0.9rem; text-decoration: none; }
-.btn-primary { background: #4361ee; color: #fff; }
-.btn-primary:hover { background: #3651d4; }
-.btn-danger { background: #e63946; color: #fff; }
-.btn-sm { padding: 0.3rem 0.6rem; font-size: 0.8rem; }
-input, select { padding: 0.5rem; border: 1px solid #ddd; border-radius: 6px; font-size: 0.9rem; }
-input:focus { outline: none; border-color: #4361ee; }
-.form-group { margin-bottom: 1rem; }
-.form-group label { display: block; margin-bottom: 0.3rem; font-weight: 600; font-size: 0.85rem; color: #555; }
-.form-group input { width: 100%%; }
-.search-bar { margin-bottom: 1rem; display: flex; gap: 0.5rem; }
-.search-bar input { flex: 1; }
-.counter-display { display: flex; align-items: center; gap: 1rem; }
-.counter-display .count { font-size: 3rem; font-weight: 700; min-width: 80px; text-align: center; }
-.counter-display a { font-size: 1.5rem; text-decoration: none; padding: 0.5rem 1rem; background: #4361ee; color: #fff; border-radius: 6px; }
-.counter-display a:hover { background: #3651d4; }
-.island-marker { border: 2px dashed #4361ee; border-radius: 8px; padding: 0.5rem; position: relative; }
-.island-marker::before { content: "island"; position: absolute; top: -10px; left: 10px; background: #4361ee; color: #fff; font-size: 0.65rem; padding: 0 6px; border-radius: 3px; }
-.badge { display: inline-block; padding: 0.15rem 0.5rem; border-radius: 10px; font-size: 0.75rem; font-weight: 600; }
-.badge-active { background: #d4edda; color: #155724; }
-.badge-inactive { background: #f8d7da; color: #721c24; }
-.footer { margin-top: 2rem; padding-top: 1rem; border-top: 1px solid #eee; color: #999; font-size: 0.8rem; }
-</style>
+<link rel="stylesheet" href="/static/styles.css">
 </head>
 <body>
 `, title) + gosx.RenderHTML(
@@ -282,8 +243,8 @@ func UsersPage(query string) gosx.Node {
 	return gosx.Fragment(
 		gosx.El("h1", gosx.Text("Users")),
 		gosx.El("div", gosx.Attrs(gosx.Attr("class", "search-bar")),
-			gosx.RawHTML(fmt.Sprintf(`<form method="get" action="/users" style="display:flex;gap:0.5rem;flex:1">
-				<input type="text" name="q" placeholder="Search users..." value="%s" style="flex:1" />
+			gosx.RawHTML(fmt.Sprintf(`<form method="get" action="/users" class="search-form">
+				<input type="text" name="q" placeholder="Search users..." value="%s" />
 				<button type="submit" class="btn btn-primary">Search</button>
 			</form>`, query)),
 			gosx.El("a", gosx.Attrs(gosx.Attr("href", "/users/new"), gosx.Attr("class", "btn btn-primary")), gosx.Text("+ New User")),
@@ -325,7 +286,7 @@ func UsersPage(query string) gosx.Node {
 				),
 			),
 			gosx.Show(len(users) == 0,
-				gosx.El("p", gosx.Attrs(gosx.Attr("style", "padding: 2rem; text-align: center; color: #999")),
+				gosx.El("p", gosx.Attrs(gosx.Attr("class", "empty-state")),
 					gosx.Text("No users found matching your search.")),
 			),
 		),
@@ -355,7 +316,7 @@ func NewUserPage() gosx.Node {
 					</select>
 				</div>
 				<button type="submit" class="btn btn-primary">Create User</button>
-				<a href="/users" class="btn" style="margin-left: 0.5rem">Cancel</a>
+				<a href="/users" class="btn btn-cancel">Cancel</a>
 			</form>`),
 		),
 	)
