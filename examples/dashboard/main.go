@@ -16,6 +16,8 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -90,7 +92,10 @@ func main() {
 
 	mux := http.NewServeMux()
 	mux.Handle("POST /gosx/action/{name}", actions)
-	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir("static"))))
+	// Resolve static dir relative to this source file so it works from any working directory
+	_, thisFile, _, _ := runtime.Caller(0)
+	staticDir := filepath.Join(filepath.Dir(thisFile), "static")
+	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir(staticDir))))
 	mux.Handle("/", router.Build())
 
 	addr := ":3000"
