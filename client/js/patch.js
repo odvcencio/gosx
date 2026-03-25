@@ -55,13 +55,17 @@
    * @param {string} patchOpsJSON - JSON-encoded array of PatchOp objects.
    */
   window.__gosx_apply_patches = function (islandID, patchOpsJSON) {
-    var root = document.getElementById(islandID);
-    if (!root) {
+    var islandWrapper = document.getElementById(islandID);
+    if (!islandWrapper) {
       if (typeof console !== "undefined") {
         console.warn("[gosx/patch] island root #" + islandID + " not found");
       }
       return;
     }
+    // The island wrapper (id="gosx-island-N") contains the component root
+    // as its first element child. Patch paths are relative to the component
+    // root, not the wrapper.
+    var root = islandWrapper.firstElementChild || islandWrapper;
 
     var ops;
     try {
