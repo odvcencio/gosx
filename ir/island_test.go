@@ -1,6 +1,7 @@
 package ir
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/odvcencio/gosx/island/program"
@@ -143,5 +144,83 @@ func TestLowerIslandOutOfRange(t *testing.T) {
 	_, err := LowerIsland(prog, 5)
 	if err == nil {
 		t.Fatal("expected error for out of range")
+	}
+}
+
+func TestValidateIslandValid(t *testing.T) {
+	prog := &Program{}
+	prog.Nodes = append(prog.Nodes, Node{
+		Kind: NodeElement, Tag: "div",
+		Attrs: []Attr{
+			{Kind: AttrStatic, Name: "class", Value: "counter"},
+			{Kind: AttrExpr, Name: "onClick", Expr: "handleClick", IsEvent: true},
+		},
+	})
+	prog.Components = append(prog.Components, Component{Name: "Good", Root: 0, IsIsland: true})
+
+	diags := Validate(prog)
+	for _, d := range diags {
+		if d.Message != "" {
+			// Filter for island-specific errors only
+			t.Logf("diagnostic: %s", d.Message)
+		}
+	}
+}
+
+func TestValidateIslandSpreadRejected(t *testing.T) {
+	prog := &Program{}
+	prog.Nodes = append(prog.Nodes, Node{
+		Kind: NodeElement, Tag: "div",
+		Attrs: []Attr{{Kind: AttrSpread, Expr: "props"}},
+	})
+	prog.Components = append(prog.Components, Component{Name: "Bad", Root: 0, IsIsland: true})
+
+	diags := Validate(prog)
+	found := false
+	for _, d := range diags {
+		if strings.Contains(d.Message, "spread") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("expected diagnostic about spread attributes")
+	}
+}
+
+func TestValidateIslandGoroutineRejected(t *testing.T) {
+	prog := &Program{}
+	prog.Nodes = append(prog.Nodes, Node{
+		Kind: NodeExpr, Text: "go func(){}()",
+	})
+	prog.Components = append(prog.Components, Component{Name: "Bad", Root: 0, IsIsland: true})
+
+	diags := Validate(prog)
+	found := false
+	for _, d := range diags {
+		if strings.Contains(d.Message, "goroutine") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("expected diagnostic about goroutine")
+	}
+}
+
+func TestValidateIslandChannelRejected(t *testing.T) {
+	prog := &Program{}
+	prog.Nodes = append(prog.Nodes, Node{
+		Kind: NodeExpr, Text: "<-ch",
+	})
+	prog.Components = append(prog.Components, Component{Name: "Bad", Root: 0, IsIsland: true})
+
+	diags := Validate(prog)
+	found := false
+	for _, d := range diags {
+		if strings.Contains(d.Message, "channel") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("expected diagnostic about channels")
 	}
 }

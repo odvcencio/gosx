@@ -63,6 +63,11 @@ func (v *validator) validateComponent(comp *Component) {
 	if int(comp.Root) >= len(v.prog.Nodes) {
 		v.errorf(comp.Span, "component %q references invalid root node", comp.Name)
 	}
+
+	// For island components, validate expression subset
+	if comp.IsIsland {
+		v.diags = append(v.diags, validateIslandExprs(v.prog, comp)...)
+	}
 }
 
 func (v *validator) validateNode(node *Node) {
@@ -124,6 +129,144 @@ func (v *validator) validateAttr(node *Node, attr *Attr) {
 			v.errorf(node.Span, "spread attribute has empty expression")
 		}
 	}
+}
+
+// validateIslandExprs validates that all expressions in an island component
+// are within the allowed island expression subset.
+func validateIslandExprs(prog *Program, comp *Component) []Diagnostic {
+	var diags []Diagnostic
+
+	if int(comp.Root) >= len(prog.Nodes) {
+		return diags
+	}
+
+	// Collect all node IDs reachable from the component root.
+	var nodeIDs []NodeID
+	var collect func(id NodeID)
+	collect = func(id NodeID) {
+		if int(id) >= len(prog.Nodes) {
+			return
+		}
+		nodeIDs = append(nodeIDs, id)
+		for _, child := range prog.Nodes[id].Children {
+			collect(child)
+		}
+	}
+	collect(comp.Root)
+
+	// Validation scope — empty, since we just want to check parsability and
+	// rejected patterns, not resolve identifiers.
+	scope := &ExprScope{
+		Signals:  map[string]bool{},
+		Props:    map[string]bool{},
+		Handlers: map[string]bool{},
+	}
+
+	for _, id := range nodeIDs {
+		node := &prog.Nodes[id]
+
+		// Check node-level expression text (NodeExpr).
+		if node.Kind == NodeExpr && strings.TrimSpace(node.Text) != "" {
+			text := strings.TrimSpace(node.Text)
+
+			// Check for rejected patterns in expression text.
+			if idx := strings.Index(text, "go "); idx >= 0 && strings.Contains(text[idx:], "func") {
+				diags = append(diags, Diagnostic{
+					Span:    node.Span,
+					Message: fmt.Sprintf("goroutine launch not allowed in island components: %q", text),
+				})
+				continue
+			}
+			if strings.Contains(text, "<-") {
+				diags = append(diags, Diagnostic{
+					Span:    node.Span,
+					Message: fmt.Sprintf("channel operations not allowed in island components: %q", text),
+				})
+				continue
+			}
+			if strings.Contains(text, "make(chan") {
+				diags = append(diags, Diagnostic{
+					Span:    node.Span,
+					Message: fmt.Sprintf("channel creation not allowed in island components: %q", text),
+				})
+				continue
+			}
+
+			// Try parsing the expression to validate it.
+			_, _, err := ParseExpr(text, scope)
+			if err != nil {
+				diags = append(diags, Diagnostic{
+					Span:    node.Span,
+					Message: fmt.Sprintf("island expression error: %v", err),
+				})
+			}
+		}
+
+		// Check attributes on element/component nodes.
+		for _, attr := range node.Attrs {
+			// Reject spread attributes in islands.
+			if attr.Kind == AttrSpread {
+				diags = append(diags, Diagnostic{
+					Span:    node.Span,
+					Message: "spread attributes not allowed in island components",
+				})
+				continue
+			}
+
+			// Check expression attributes.
+			if attr.Kind == AttrExpr {
+				// Event handlers must have a non-empty handler name.
+				if attr.IsEvent {
+					if strings.TrimSpace(attr.Expr) == "" {
+						diags = append(diags, Diagnostic{
+							Span:    node.Span,
+							Message: fmt.Sprintf("event handler %q has empty handler name in island component", attr.Name),
+						})
+					}
+					continue
+				}
+
+				// Non-event expression attributes — check for rejected patterns.
+				text := strings.TrimSpace(attr.Expr)
+				if text == "" {
+					continue
+				}
+
+				if idx := strings.Index(text, "go "); idx >= 0 && strings.Contains(text[idx:], "func") {
+					diags = append(diags, Diagnostic{
+						Span:    node.Span,
+						Message: fmt.Sprintf("goroutine launch not allowed in island components: %q", text),
+					})
+					continue
+				}
+				if strings.Contains(text, "<-") {
+					diags = append(diags, Diagnostic{
+						Span:    node.Span,
+						Message: fmt.Sprintf("channel operations not allowed in island components: %q", text),
+					})
+					continue
+				}
+				if strings.Contains(text, "make(chan") {
+					diags = append(diags, Diagnostic{
+						Span:    node.Span,
+						Message: fmt.Sprintf("channel creation not allowed in island components: %q", text),
+					})
+					continue
+				}
+
+				// Try parsing the expression.
+				_, _, err := ParseExpr(text, scope)
+				if err != nil {
+					diags = append(diags, Diagnostic{
+						Span:    node.Span,
+						Message: fmt.Sprintf("island expression error: %v", err),
+					})
+				}
+			}
+		}
+	}
+
+	return diags
 }
 
 // VoidElements are HTML elements that cannot have children.
