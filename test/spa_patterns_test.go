@@ -52,13 +52,40 @@ func TestSPATabsSwitching(t *testing.T) {
 	}
 }
 
+func TestSPATabsCSSClassToggling(t *testing.T) {
+	prog := program.TabsProgram()
+	data, _ := program.EncodeJSON(prog)
+	b := bridge.New()
+	b.HydrateIsland("test-0", "Tabs", `{}`, data, "json")
+
+	// Initially activeTab=0, so switching to Features should produce class patches
+	patches, _ := b.DispatchAction("test-0", "showFeatures", "{}")
+	if len(patches) == 0 {
+		t.Fatal("expected patches including class changes when switching tabs")
+	}
+	patchJSON, _ := bridge.MarshalPatches(patches)
+	patchStr := string(patchJSON)
+	t.Logf("CSS class toggle patches: %s", patchStr)
+
+	// Verify that SetAttr patches are present (class changes on buttons)
+	foundSetAttr := false
+	for _, p := range patches {
+		if p.Kind == 1 { // PatchSetAttr
+			foundSetAttr = true
+		}
+	}
+	if !foundSetAttr {
+		t.Error("expected PatchSetAttr patches for CSS class toggling")
+	}
+}
+
 func TestSPAToggle(t *testing.T) {
 	prog := program.ToggleProgram()
 	data, _ := program.EncodeJSON(prog)
 	b := bridge.New()
 	b.HydrateIsland("test-0", "Toggle", `{}`, data, "json")
 
-	// Toggle on
+	// Toggle on via click
 	patches, _ := b.DispatchAction("test-0", "toggle", "{}")
 	if len(patches) == 0 {
 		t.Fatal("expected patches when toggling on")
@@ -66,10 +93,31 @@ func TestSPAToggle(t *testing.T) {
 	json, _ := bridge.MarshalPatches(patches)
 	t.Logf("Toggle on patches: %s", json)
 
-	// Toggle off
+	// Toggle off via click
 	patches, _ = b.DispatchAction("test-0", "toggle", "{}")
 	if len(patches) == 0 {
 		t.Fatal("expected patches when toggling off")
+	}
+}
+
+func TestSPAToggleKeyboard(t *testing.T) {
+	prog := program.ToggleProgram()
+	data, _ := program.EncodeJSON(prog)
+	b := bridge.New()
+	b.HydrateIsland("test-0", "Toggle", `{}`, data, "json")
+
+	// Toggle on via keyboard handler
+	patches, _ := b.DispatchAction("test-0", "toggleKey", `{"key":"Enter"}`)
+	if len(patches) == 0 {
+		t.Fatal("expected patches when toggling via keyboard")
+	}
+	patchJSON, _ := bridge.MarshalPatches(patches)
+	t.Logf("Toggle keyboard patches: %s", patchJSON)
+
+	// Toggle off via keyboard handler
+	patches, _ = b.DispatchAction("test-0", "toggleKey", `{"key":"Enter"}`)
+	if len(patches) == 0 {
+		t.Fatal("expected patches when toggling off via keyboard")
 	}
 }
 
@@ -100,19 +148,43 @@ func TestSPAForm(t *testing.T) {
 	b := bridge.New()
 	b.HydrateIsland("test-0", "Form", `{}`, data, "json")
 
-	// Fill name
-	patches, _ := b.DispatchAction("test-0", "updateName", "{}")
+	// Fill name via button toggle
+	patches, _ := b.DispatchAction("test-0", "fillName", "{}")
 	if len(patches) == 0 {
-		t.Fatal("expected patches when updating name")
+		t.Fatal("expected patches when filling name via button")
 	}
 	json, _ := bridge.MarshalPatches(patches)
-	t.Logf("Update name patches: %s", json)
+	t.Logf("Fill name patches: %s", json)
 
 	// Validate
 	patches, _ = b.DispatchAction("test-0", "validateForm", "{}")
 	if len(patches) == 0 {
 		t.Fatal("expected patches when validating")
 	}
+}
+
+func TestSPAFormTwoWayBinding(t *testing.T) {
+	prog := program.FormProgram()
+	data, _ := program.EncodeJSON(prog)
+	b := bridge.New()
+	b.HydrateIsland("test-0", "Form", `{}`, data, "json")
+
+	// Simulate typing in the input — dispatch with event data containing value
+	patches, _ := b.DispatchAction("test-0", "updateName", `{"value":"Bob"}`)
+	if len(patches) == 0 {
+		t.Fatal("expected patches when updating name via two-way binding")
+	}
+	patchJSON, _ := bridge.MarshalPatches(patches)
+	patchStr := string(patchJSON)
+	t.Logf("Two-way binding patches: %s", patchStr)
+
+	// The name signal should now be "Bob" — validate should set valid=true
+	patches, _ = b.DispatchAction("test-0", "validateForm", "{}")
+	if len(patches) == 0 {
+		t.Fatal("expected patches when validating after two-way binding")
+	}
+	patchJSON2, _ := bridge.MarshalPatches(patches)
+	t.Logf("Validate after binding: %s", patchJSON2)
 }
 
 func TestSPADerived(t *testing.T) {
@@ -136,4 +208,54 @@ func TestSPADerived(t *testing.T) {
 	}
 	json2, _ := bridge.MarshalPatches(patches)
 	t.Logf("Toggle discount patches: %s", json2)
+}
+
+func TestSPAListAddItem(t *testing.T) {
+	prog := program.ListProgram()
+	data, _ := program.EncodeJSON(prog)
+	b := bridge.New()
+	b.HydrateIsland("test-0", "List", `{}`, data, "json")
+
+	// Add item with event data
+	patches, _ := b.DispatchAction("test-0", "addItem", `{"value":"apple"}`)
+	if len(patches) == 0 {
+		t.Fatal("expected patches when adding item")
+	}
+	patchJSON, _ := bridge.MarshalPatches(patches)
+	t.Logf("Add item patches: %s", patchJSON)
+
+	// Add another item
+	patches, _ = b.DispatchAction("test-0", "addItem", `{"value":"banana"}`)
+	if len(patches) == 0 {
+		t.Fatal("expected patches when adding second item")
+	}
+	patchJSON2, _ := bridge.MarshalPatches(patches)
+	t.Logf("Add second item patches: %s", patchJSON2)
+}
+
+func TestSPAListRemoveAndClear(t *testing.T) {
+	prog := program.ListProgram()
+	data, _ := program.EncodeJSON(prog)
+	b := bridge.New()
+	b.HydrateIsland("test-0", "List", `{}`, data, "json")
+
+	// Add items first
+	b.DispatchAction("test-0", "addItem", `{"value":"x"}`)
+	b.DispatchAction("test-0", "addItem", `{"value":"y"}`)
+
+	// Remove last item (decrements count)
+	patches, _ := b.DispatchAction("test-0", "removeLastItem", "{}")
+	if len(patches) == 0 {
+		t.Fatal("expected patches when removing last item")
+	}
+	patchJSON, _ := bridge.MarshalPatches(patches)
+	t.Logf("Remove last patches: %s", patchJSON)
+
+	// Clear all
+	patches, _ = b.DispatchAction("test-0", "clearItems", "{}")
+	if len(patches) == 0 {
+		t.Fatal("expected patches when clearing items")
+	}
+	patchJSON2, _ := bridge.MarshalPatches(patches)
+	t.Logf("Clear all patches: %s", patchJSON2)
 }

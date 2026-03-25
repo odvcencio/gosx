@@ -410,15 +410,30 @@ func TestTabsProgram(t *testing.T) {
 	if len(p.StaticMask) != len(p.Nodes) {
 		t.Errorf("StaticMask length %d != Nodes length %d", len(p.StaticMask), len(p.Nodes))
 	}
-	// Verify nested cond expression exists
+	// Verify nested cond expression exists (content conds + 3 class conds = 5+)
 	foundCond := 0
 	for _, e := range p.Exprs {
 		if e.Op == OpCond {
 			foundCond++
 		}
 	}
-	if foundCond < 2 {
-		t.Errorf("expected at least 2 OpCond exprs (nested), got %d", foundCond)
+	if foundCond < 5 {
+		t.Errorf("expected at least 5 OpCond exprs (2 content + 3 class), got %d", foundCond)
+	}
+
+	// Verify CSS class toggling: each tab button has an AttrExpr for class
+	attrExprCount := 0
+	for _, n := range p.Nodes {
+		if n.Kind == NodeElement && n.Tag == "button" {
+			for _, a := range n.Attrs {
+				if a.Kind == AttrExpr && a.Name == "class" {
+					attrExprCount++
+				}
+			}
+		}
+	}
+	if attrExprCount != 3 {
+		t.Errorf("expected 3 AttrExpr class attrs on tab buttons, got %d", attrExprCount)
 	}
 
 	// JSON round-trip
@@ -452,27 +467,47 @@ func TestToggleProgram(t *testing.T) {
 	if p.Signals[0].Type != TypeBool {
 		t.Errorf("Signals[0].Type = %d, want TypeBool", p.Signals[0].Type)
 	}
-	if len(p.Handlers) != 1 {
-		t.Fatalf("expected 1 handler, got %d", len(p.Handlers))
+	if len(p.Handlers) != 2 {
+		t.Fatalf("expected 2 handlers (toggle + toggleKey), got %d", len(p.Handlers))
 	}
-	if p.Handlers[0].Name != "toggle" {
-		t.Errorf("Handlers[0].Name = %q, want %q", p.Handlers[0].Name, "toggle")
+	handlerNames := map[string]bool{}
+	for _, h := range p.Handlers {
+		handlerNames[h.Name] = true
 	}
-	if len(p.Nodes) != 4 {
-		t.Errorf("len(Nodes) = %d, want 4", len(p.Nodes))
+	for _, name := range []string{"toggle", "toggleKey"} {
+		if !handlerNames[name] {
+			t.Errorf("missing handler %q", name)
+		}
+	}
+	if len(p.Nodes) != 5 {
+		t.Errorf("len(Nodes) = %d, want 5", len(p.Nodes))
 	}
 	if len(p.StaticMask) != len(p.Nodes) {
 		t.Errorf("StaticMask length %d != Nodes length %d", len(p.StaticMask), len(p.Nodes))
 	}
-	// Verify OpNot is used for toggle
-	foundNot := false
+	// Verify OpNot is used for toggle (should appear twice: click + keydown)
+	notCount := 0
 	for _, e := range p.Exprs {
 		if e.Op == OpNot {
-			foundNot = true
+			notCount++
 		}
 	}
-	if !foundNot {
-		t.Error("expected OpNot expression for toggle handler")
+	if notCount < 2 {
+		t.Errorf("expected at least 2 OpNot expressions (click + keydown), got %d", notCount)
+	}
+	// Verify button has keydown event attr
+	foundKeydown := false
+	for _, n := range p.Nodes {
+		if n.Kind == NodeElement && n.Tag == "button" {
+			for _, a := range n.Attrs {
+				if a.Kind == AttrEvent && a.Name == "keydown" {
+					foundKeydown = true
+				}
+			}
+		}
+	}
+	if !foundKeydown {
+		t.Error("expected keydown event attr on button")
 	}
 
 	// JSON round-trip
@@ -565,20 +600,30 @@ func TestFormProgram(t *testing.T) {
 			t.Errorf("missing signal %q", name)
 		}
 	}
-	if len(p.Handlers) != 2 {
-		t.Fatalf("expected 2 handlers, got %d", len(p.Handlers))
+	if len(p.Handlers) != 3 {
+		t.Fatalf("expected 3 handlers (updateName, fillName, validateForm), got %d", len(p.Handlers))
 	}
 	handlerNames := map[string]bool{}
 	for _, h := range p.Handlers {
 		handlerNames[h.Name] = true
 	}
-	for _, name := range []string{"updateName", "validateForm"} {
+	for _, name := range []string{"updateName", "fillName", "validateForm"} {
 		if !handlerNames[name] {
 			t.Errorf("missing handler %q", name)
 		}
 	}
 	if len(p.StaticMask) != len(p.Nodes) {
 		t.Errorf("StaticMask length %d != Nodes length %d", len(p.StaticMask), len(p.Nodes))
+	}
+	// Verify OpEventGet is used for two-way input binding
+	foundEventGet := false
+	for _, e := range p.Exprs {
+		if e.Op == OpEventGet {
+			foundEventGet = true
+		}
+	}
+	if !foundEventGet {
+		t.Error("expected OpEventGet expression for two-way input binding")
 	}
 	// Verify conditional expression for validation display
 	foundCond := false
@@ -589,6 +634,20 @@ func TestFormProgram(t *testing.T) {
 	}
 	if !foundCond {
 		t.Error("expected OpCond expression for validation display")
+	}
+	// Verify input element exists with input event
+	foundInput := false
+	for _, n := range p.Nodes {
+		if n.Kind == NodeElement && n.Tag == "input" {
+			for _, a := range n.Attrs {
+				if a.Kind == AttrEvent && a.Name == "input" && a.Event == "updateName" {
+					foundInput = true
+				}
+			}
+		}
+	}
+	if !foundInput {
+		t.Error("expected input element with input event -> updateName")
 	}
 
 	// JSON round-trip
@@ -799,5 +858,97 @@ func TestJSONEmptyProgram(t *testing.T) {
 	}
 	if decoded.Name != "Empty" {
 		t.Fatalf("expected Empty, got %s", decoded.Name)
+	}
+}
+
+func TestListProgram(t *testing.T) {
+	p := ListProgram()
+	if p == nil {
+		t.Fatal("ListProgram() returned nil")
+	}
+	if p.Name != "List" {
+		t.Fatalf("Name = %q, want %q", p.Name, "List")
+	}
+	if len(p.Signals) != 3 {
+		t.Fatalf("expected 3 signals (items, input, count), got %d", len(p.Signals))
+	}
+	sigNames := map[string]bool{}
+	for _, s := range p.Signals {
+		sigNames[s.Name] = true
+	}
+	for _, name := range []string{"items", "input", "count"} {
+		if !sigNames[name] {
+			t.Errorf("missing signal %q", name)
+		}
+	}
+	if len(p.Handlers) != 3 {
+		t.Fatalf("expected 3 handlers, got %d", len(p.Handlers))
+	}
+	handlerNames := map[string]bool{}
+	for _, h := range p.Handlers {
+		handlerNames[h.Name] = true
+	}
+	for _, name := range []string{"addItem", "removeLastItem", "clearItems"} {
+		if !handlerNames[name] {
+			t.Errorf("missing handler %q", name)
+		}
+	}
+	// addItem handler should have 2 body exprs (set items, set count)
+	for _, h := range p.Handlers {
+		if h.Name == "addItem" && len(h.Body) != 2 {
+			t.Errorf("addItem handler body length = %d, want 2", len(h.Body))
+		}
+	}
+	// clearItems handler should have 2 body exprs (set items, set count)
+	for _, h := range p.Handlers {
+		if h.Name == "clearItems" && len(h.Body) != 2 {
+			t.Errorf("clearItems handler body length = %d, want 2", len(h.Body))
+		}
+	}
+	if len(p.StaticMask) != len(p.Nodes) {
+		t.Errorf("StaticMask length %d != Nodes length %d", len(p.StaticMask), len(p.Nodes))
+	}
+	// Verify OpEventGet is used for reading input value
+	foundEventGet := false
+	for _, e := range p.Exprs {
+		if e.Op == OpEventGet {
+			foundEventGet = true
+		}
+	}
+	if !foundEventGet {
+		t.Error("expected OpEventGet expression in addItem handler")
+	}
+	// Verify OpConcat is used for item concatenation in addItem
+	concatCount := 0
+	for _, e := range p.Exprs {
+		if e.Op == OpConcat {
+			concatCount++
+		}
+	}
+	if concatCount < 2 {
+		t.Errorf("expected at least 2 OpConcat exprs for item building, got %d", concatCount)
+	}
+	// Verify count is displayed via a separate expr node (not concat)
+	if len(p.Nodes) != 16 {
+		t.Errorf("len(Nodes) = %d, want 16", len(p.Nodes))
+	}
+
+	// JSON round-trip
+	data, err := json.Marshal(p)
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+	var p2 Program
+	if err := json.Unmarshal(data, &p2); err != nil {
+		t.Fatalf("json.Unmarshal: %v", err)
+	}
+	if p2.Name != p.Name {
+		t.Error("round-trip Name mismatch")
+	}
+	if len(p2.Nodes) != len(p.Nodes) {
+		t.Errorf("round-trip Nodes length mismatch: %d != %d", len(p2.Nodes), len(p.Nodes))
+	}
+	if len(p2.Exprs) != len(p.Exprs) {
+		t.Errorf("round-trip Exprs length mismatch: %d != %d", len(p2.Exprs), len(p.Exprs))
 	}
 }
