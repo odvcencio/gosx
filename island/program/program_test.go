@@ -374,3 +374,60 @@ func TestCounterProgram(t *testing.T) {
 		t.Errorf("round-trip Exprs length mismatch")
 	}
 }
+
+func TestJSONRoundTrip(t *testing.T) {
+	original := CounterProgram()
+	data, err := EncodeJSON(original)
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	if len(data) == 0 {
+		t.Fatal("empty output")
+	}
+	if data[0] != '{' {
+		t.Fatal("expected JSON object")
+	}
+	decoded, err := DecodeJSON(data)
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if decoded.Name != original.Name {
+		t.Fatalf("name: expected %s, got %s", original.Name, decoded.Name)
+	}
+	if len(decoded.Nodes) != len(original.Nodes) {
+		t.Fatalf("nodes: expected %d, got %d", len(original.Nodes), len(decoded.Nodes))
+	}
+	if len(decoded.Exprs) != len(original.Exprs) {
+		t.Fatalf("exprs: expected %d, got %d", len(original.Exprs), len(decoded.Exprs))
+	}
+	if decoded.Exprs[0].Op != OpSignalGet {
+		t.Fatalf("expr[0] op: expected SignalGet, got %d", decoded.Exprs[0].Op)
+	}
+	if decoded.Exprs[0].Value != "count" {
+		t.Fatalf("expr[0] value: expected count, got %s", decoded.Exprs[0].Value)
+	}
+	if len(decoded.Signals) != 1 {
+		t.Fatal("expected 1 signal")
+	}
+	if len(decoded.Handlers) != 2 {
+		t.Fatal("expected 2 handlers")
+	}
+	if len(decoded.StaticMask) != len(original.StaticMask) {
+		t.Fatal("static mask length mismatch")
+	}
+}
+
+func TestJSONEmptyProgram(t *testing.T) {
+	p := &Program{Name: "Empty", Root: 0}
+	data, err := EncodeJSON(p)
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	decoded, err := DecodeJSON(data)
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if decoded.Name != "Empty" {
+		t.Fatalf("expected Empty, got %s", decoded.Name)
+	}
+}
