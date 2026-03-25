@@ -297,10 +297,17 @@ func TestParseUnaryMinus(t *testing.T) {
 	}
 }
 
-func TestParseUnknownIdentifier(t *testing.T) {
-	_, _, err := ParseExpr("unknown", &ExprScope{})
-	if err == nil {
-		t.Fatal("expected error for unknown identifier")
+func TestParseUnknownIdentifierDefaultsToProp(t *testing.T) {
+	// Unknown identifiers default to OpPropGet (permissive for incomplete scope)
+	exprs, rootID, err := ParseExpr("unknown", &ExprScope{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if exprs[rootID].Op != program.OpPropGet {
+		t.Fatalf("expected OpPropGet, got %d", exprs[rootID].Op)
+	}
+	if exprs[rootID].Value != "unknown" {
+		t.Fatalf("expected 'unknown', got %s", exprs[rootID].Value)
 	}
 }
 

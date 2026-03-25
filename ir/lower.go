@@ -59,6 +59,21 @@ func (l *lowerer) span(n *gotreesitter.Node) Span {
 	}
 }
 
+// hasIslandDirective checks if the source text preceding a function declaration
+// contains a //gosx:island comment directive. Scans backwards from the function
+// start position through preceding whitespace and comment lines.
+func (l *lowerer) hasIslandDirective(n *gotreesitter.Node) bool {
+	start := int(n.StartByte())
+	// Scan backwards from the function declaration looking for the directive
+	// in the preceding source text (comments, blank lines)
+	searchStart := start - 200 // look up to 200 bytes back
+	if searchStart < 0 {
+		searchStart = 0
+	}
+	preceding := string(l.src[searchStart:start])
+	return strings.Contains(preceding, "//gosx:island")
+}
+
 // lowerSourceFile processes the root source_file node.
 func (l *lowerer) lowerSourceFile(root *gotreesitter.Node) {
 	for i := 0; i < int(root.NamedChildCount()); i++ {
@@ -146,6 +161,7 @@ func (l *lowerer) lowerFunctionDecl(n *gotreesitter.Node) {
 		Name:      name,
 		PropsType: propsType,
 		Root:      rootID,
+		IsIsland:  l.hasIslandDirective(n),
 		Span:      l.span(n),
 	}
 	l.prog.Components = append(l.prog.Components, comp)

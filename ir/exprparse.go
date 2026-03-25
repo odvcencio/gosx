@@ -350,7 +350,14 @@ func (p *exprParser) resolveIdent(name string) (program.ExprID, error) {
 			Type:  program.TypeAny,
 		}), nil
 	}
-	return 0, fmt.Errorf("unknown identifier %q (not in signals or props)", name)
+	// Default: treat unknown identifiers as prop access. Full scope analysis
+	// requires type checking which isn't available yet. The identifier will be
+	// resolved at runtime by the VM.
+	return p.addExpr(program.Expr{
+		Op:    program.OpPropGet,
+		Value: name,
+		Type:  program.TypeAny,
+	}), nil
 }
 
 // parseBinary is a generic binary-op parser for multi-char operators.

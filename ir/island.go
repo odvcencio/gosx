@@ -17,10 +17,14 @@ func LowerIsland(prog *Program, compIdx int) (*program.Program, error) {
 		return nil, fmt.Errorf("component %q is not an island", comp.Name)
 	}
 
+	// Build expression scope from the component's node tree
+	scope := buildIslandScope(prog, comp)
+
 	l := &islandLowerer{
 		src:     prog,
 		dst:     &program.Program{Name: comp.Name},
 		nodeMap: make(map[NodeID]program.NodeID),
+		scope:   scope,
 	}
 
 	// Lower the node tree
@@ -41,11 +45,46 @@ func LowerIsland(prog *Program, compIdx int) (*program.Program, error) {
 	return l.dst, nil
 }
 
+// buildIslandScope extracts signal, prop, and handler names from the component's
+// node tree to build the expression scope needed for parsing island expressions.
+func buildIslandScope(prog *Program, comp Component) *ExprScope {
+	scope := &ExprScope{
+		Signals:  make(map[string]bool),
+		Props:    make(map[string]bool),
+		Handlers: make(map[string]bool),
+	}
+
+	// Scan the component's nodes for event handler references
+	var walkNodes func(id NodeID)
+	walkNodes = func(id NodeID) {
+		if int(id) >= len(prog.Nodes) {
+			return
+		}
+		node := prog.Nodes[id]
+		for _, attr := range node.Attrs {
+			if attr.IsEvent {
+				scope.Handlers[attr.Expr] = true
+			}
+		}
+		for _, child := range node.Children {
+			walkNodes(child)
+		}
+	}
+	walkNodes(comp.Root)
+
+	// Expression text that appears as identifiers could be signals or props.
+	// Without full type analysis, we treat all expression identifiers as props
+	// by default — the expression parser will resolve them against scope.
+
+	return scope
+}
+
 type islandLowerer struct {
 	src     *Program
 	dst     *program.Program
 	nodeMap map[NodeID]program.NodeID
 	srcIDs  []NodeID // tracks source node ID for each dst node
+	scope   *ExprScope
 }
 
 func (l *islandLowerer) lowerNode(srcID NodeID) (program.NodeID, error) {
@@ -152,16 +191,36 @@ func (l *islandLowerer) lowerAttr(attr Attr) (program.Attr, error) {
 	}
 }
 
-// addExpr adds a placeholder expression. Full parsing comes in Task 10.
-// For now, treat expressions as simple signal/prop references.
+// addExpr parses a Go expression source string into typed opcodes and appends
+// them to the island program's expression table. Returns the root ExprID.
 func (l *islandLowerer) addExpr(source string) program.ExprID {
-	id := program.ExprID(len(l.dst.Exprs))
-	// Simple heuristic: if it looks like a signal or prop, create appropriate opcode
-	// Full parsing in Task 10 (ir/exprparse.go)
-	l.dst.Exprs = append(l.dst.Exprs, program.Expr{
-		Op:    program.OpPropGet,
-		Value: source,
-		Type:  program.TypeAny,
-	})
-	return id
+	baseID := program.ExprID(len(l.dst.Exprs))
+
+	exprs, rootID, err := ParseExpr(source, l.scope)
+	if err != nil {
+		// If parsing fails, fall back to a simple prop/signal reference
+		id := program.ExprID(len(l.dst.Exprs))
+		l.dst.Exprs = append(l.dst.Exprs, program.Expr{
+			Op:    program.OpPropGet,
+			Value: source,
+			Type:  program.TypeAny,
+		})
+		return id
+	}
+
+	// Append all parsed expressions, adjusting IDs by the base offset
+	for _, e := range exprs {
+		adjusted := e
+		// Offset operand references by baseID
+		if len(adjusted.Operands) > 0 {
+			ops := make([]program.ExprID, len(adjusted.Operands))
+			for i, op := range adjusted.Operands {
+				ops[i] = op + baseID
+			}
+			adjusted.Operands = ops
+		}
+		l.dst.Exprs = append(l.dst.Exprs, adjusted)
+	}
+
+	return rootID + baseID
 }
