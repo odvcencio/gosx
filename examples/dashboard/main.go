@@ -635,7 +635,7 @@ func KitchenSinkPage(islands *island.Renderer) gosx.Node {
 		gosx.El("div", gosx.Attrs(gosx.Attr("class", "editor-header")),
 			gosx.Text("Code Editor"),
 			gosx.El("span", gosx.Attrs(gosx.Attr("class", "char-count")),
-				gosx.Text("0"),
+				gosx.El("span", gosx.Text("0")),
 				gosx.Text(" chars"),
 			),
 		),
@@ -650,7 +650,7 @@ func KitchenSinkPage(islands *island.Renderer) gosx.Node {
 		),
 		gosx.El("div", gosx.Attrs(gosx.Attr("class", "editor-preview")),
 			gosx.El("pre", gosx.Attrs(gosx.Attr("class", "code-output")),
-				gosx.Text(""),
+				gosx.El("code", gosx.Text("\u200b")),
 			),
 		),
 	)
