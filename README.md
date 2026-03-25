@@ -11,14 +11,17 @@ GoSX is in active development. The compiler pipeline, server rendering, and isla
 - `.gsx` file parsing with JSX-like syntax (elements, fragments, attributes, expressions, spreads)
 - `//gosx:island` directive detection on components
 - Compiler pipeline: parse → flat-array IR → validate → lower to IslandProgram → serialize
+- Body analyzer: compiler extracts signals, computeds, and handlers from `.gsx` source (proven by TestCompilerE2E_CounterFromSource)
 - Server-side HTML rendering via the `Node` API
 - Signal system with `Signal[T]`, `Computed[T]`, `Effect`, and `Batch`
-- Expression VM evaluating typed opcodes (30 operations)
+- Expression VM evaluating typed opcodes (40+ operations)
 - Tree reconciler with static subtree skipping and patch op generation
 - Island programs in JSON (dev, inspectable) and binary (prod, compact — ~14% of JSON size)
 - WASM bridge managing island lifecycle (hydrate, dispatch, dispose)
-- Shared WASM runtime compiles to 3.3MB (~800KB gzipped)
-- Full end-to-end test: `.gsx` source → parse → IR → island → serialize → hydrate → dispatch → patches
+- WASM runtime compiles to 1.2MB with TinyGo (~452KB gzipped first load)
+- Hub primitive: WebSocket presence, fanout, shared state
+- Engine primitive: worker/surface model with capability declarations
+- Cross-island shared state via `$`-prefixed signals
 
 **What exists but is not yet browser-validated:**
 
@@ -81,6 +84,7 @@ The `//gosx:island` directive marks a component for client-side hydration. Islan
   → parse (gotreesitter + Go grammar extension)
   → lower to compiler IR (flat-array, index-based)
   → validate (including island subset enforcement)
+  → body analyzer extracts signals, computeds, and handlers from Go source
   → server components: transpile to Go
   → island components: lower to IslandProgram → serialize (JSON dev / binary prod)
   → shared WASM runtime (loaded once, browser-cached)
@@ -117,10 +121,6 @@ When one island mutates a `$`-signal, all other islands that reference it automa
 
 **Init order:** The first island to declare a `$`-signal sets its type and initial value. Subsequent islands receive the existing signal. This means hydration order matters for shared state initialization — document shared signals explicitly in your manifest or ensure a consistent load order.
 
-### What's not yet in the compiler
-
-The runtime and VM are complete: signals, handlers, shared state, reconciliation, and DOM patching all work. The missing piece is **compiler extraction**: the `.gsx` compiler does not yet analyze Go function bodies to automatically detect signal declarations (`signal.New(...)`) or handler functions. Island programs must currently be constructed as typed fixtures. This is a compiler milestone, not an architecture gap — the runtime will not change when the compiler catches up.
-
 ### Styling Model
 
 Classes and external CSS are the primary styling path. GoSX does not include CSS-in-JS.
@@ -129,6 +129,14 @@ Classes and external CSS are the primary styling path. GoSX does not include CSS
 - External `.css` files linked in page `<head>`
 - Sidecar CSS: `component.gsx` + `component.css` pairs are detected and bundled by the build pipeline
 - Inline `style=` only for truly dynamic values (computed dimensions, transforms)
+
+### Deploy Strategy
+
+GoSX supports a three-tier deploy strategy:
+
+1. **Static** — pre-rendered HTML, no server needed
+2. **Server** — Go binary serving routes, SSR, actions, hubs
+3. **Edge** — WASM islands hydrate at the edge, server handles actions/hubs
 
 ## Packages
 
@@ -147,7 +155,10 @@ Classes and external CSS are the primary styling path. GoSX does not include CSS
 | `route` | Declarative routing with layouts and data loaders |
 | `action` | Named server action handlers |
 | `island` | Island renderer and manifest generation |
+| `hub` | WebSocket presence, fanout, shared realtime state |
+| `engine` | Worker/surface model with capability declarations |
 | `hydrate` | Hydration manifest types |
+| `highlight` | Syntax highlighting for Go source code |
 | `format` | Source code formatter for .gsx files |
 | `dev` | Development server with file watching |
 | `cmd/gosx` | CLI tool (compile, check, render, fmt, build, dev) |
@@ -162,11 +173,14 @@ One: [gotreesitter](https://github.com/odvcencio/gotreesitter) — a clean-room 
 go test ./...
 ```
 
-13 packages, 220+ tests. The end-to-end pipeline test at `test/gsx_pipeline_test.go` proves the full flow from `.gsx` source through to island hydration.
+14 packages, 287 tests. The end-to-end pipeline test at `test/gsx_pipeline_test.go` proves the full flow from `.gsx` source through to island hydration.
 
 ```bash
-# Build the WASM runtime
+# Build the WASM runtime (standard Go)
 GOOS=js GOARCH=wasm go build -o build/gosx-runtime.wasm ./client/wasm/
+
+# Build with TinyGo for smaller output (1.2MB, ~452KB gz)
+tinygo build -o build/gosx-runtime.wasm -target wasm ./client/wasm/
 
 # Run the build pipeline
 go run ./cmd/gosx build --dev examples/counter/

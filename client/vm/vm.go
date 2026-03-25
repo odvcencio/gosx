@@ -185,14 +185,28 @@ func (vm *VM) Eval(id program.ExprID) Value {
 	case program.OpMap:
 		if len(e.Operands) >= 2 {
 			coll := vm.Eval(e.Operands[0])
+			// Save previous iteration context for nested iteration safety
+			prevItem, hadItem := vm.props["_item"]
+			prevIndex, hadIndex := vm.props["_index"]
+
 			result := make([]Value, len(coll.Items))
 			for i, item := range coll.Items {
 				vm.props["_item"] = item
 				vm.props["_index"] = IntVal(i)
 				result[i] = vm.Eval(e.Operands[1])
 			}
-			delete(vm.props, "_item")
-			delete(vm.props, "_index")
+
+			// Restore previous context
+			if hadItem {
+				vm.props["_item"] = prevItem
+			} else {
+				delete(vm.props, "_item")
+			}
+			if hadIndex {
+				vm.props["_index"] = prevIndex
+			} else {
+				delete(vm.props, "_index")
+			}
 			return ArrayVal(result)
 		}
 		return ArrayVal(nil)
@@ -200,6 +214,10 @@ func (vm *VM) Eval(id program.ExprID) Value {
 	case program.OpFilter:
 		if len(e.Operands) >= 2 {
 			coll := vm.Eval(e.Operands[0])
+			// Save previous iteration context for nested iteration safety
+			prevItem, hadItem := vm.props["_item"]
+			prevIndex, hadIndex := vm.props["_index"]
+
 			var result []Value
 			for i, item := range coll.Items {
 				vm.props["_item"] = item
@@ -208,8 +226,18 @@ func (vm *VM) Eval(id program.ExprID) Value {
 					result = append(result, item)
 				}
 			}
-			delete(vm.props, "_item")
-			delete(vm.props, "_index")
+
+			// Restore previous context
+			if hadItem {
+				vm.props["_item"] = prevItem
+			} else {
+				delete(vm.props, "_item")
+			}
+			if hadIndex {
+				vm.props["_index"] = prevIndex
+			} else {
+				delete(vm.props, "_index")
+			}
 			return ArrayVal(result)
 		}
 		return ArrayVal(nil)
@@ -217,17 +245,37 @@ func (vm *VM) Eval(id program.ExprID) Value {
 	case program.OpFind:
 		if len(e.Operands) >= 2 {
 			coll := vm.Eval(e.Operands[0])
+			// Save previous iteration context for nested iteration safety
+			prevItem, hadItem := vm.props["_item"]
+			prevIndex, hadIndex := vm.props["_index"]
+
+			var found Value
+			foundAny := false
 			for i, item := range coll.Items {
 				vm.props["_item"] = item
 				vm.props["_index"] = IntVal(i)
 				if vm.Eval(e.Operands[1]).Bool {
-					delete(vm.props, "_item")
-					delete(vm.props, "_index")
-					return item
+					found = item
+					foundAny = true
+					break
 				}
 			}
-			delete(vm.props, "_item")
-			delete(vm.props, "_index")
+
+			// Restore previous context
+			if hadItem {
+				vm.props["_item"] = prevItem
+			} else {
+				delete(vm.props, "_item")
+			}
+			if hadIndex {
+				vm.props["_index"] = prevIndex
+			} else {
+				delete(vm.props, "_index")
+			}
+
+			if foundAny {
+				return found
+			}
 		}
 		return ZeroValue(program.TypeAny)
 

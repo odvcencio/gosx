@@ -11,8 +11,9 @@
 package hub
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
-	"fmt"
 	"log"
 	"net/http"
 	"sync"
@@ -31,11 +32,14 @@ type Hub struct {
 	handlers map[string]HandlerFunc
 
 	// Shared state
-	state map[string]any
+	state   map[string]any
 	stateMu sync.RWMutex
 
 	// Presence tracking
 	presence *Presence
+
+	// MaxClients limits the number of concurrent connections. 0 = unlimited.
+	MaxClients int
 }
 
 // Client represents a connected WebSocket client.
@@ -78,7 +82,24 @@ type Message struct {
 }
 
 var upgrader = websocket.Upgrader{
-	CheckOrigin: func(r *http.Request) bool { return true }, // Allow all origins in dev
+	// CheckOrigin: reject cross-origin requests by default.
+	// Use SetCheckOrigin to override for development or trusted origins.
+	CheckOrigin: func(r *http.Request) bool {
+		origin := r.Header.Get("Origin")
+		return origin == "" || origin == "http://"+r.Host || origin == "https://"+r.Host
+	},
+}
+
+// SetCheckOrigin overrides the default origin check for WebSocket upgrades.
+func SetCheckOrigin(fn func(*http.Request) bool) {
+	upgrader.CheckOrigin = fn
+}
+
+// generateClientID produces a cryptographically random client ID.
+func generateClientID(hubName string) string {
+	b := make([]byte, 8)
+	rand.Read(b)
+	return hubName + "-" + hex.EncodeToString(b)
 }
 
 // New creates a new hub instance.
@@ -178,13 +199,18 @@ func (h *Hub) Name() string {
 // ServeHTTP handles WebSocket upgrade requests.
 // Mount at: mux.Handle("/gosx/hub/{name}", hub)
 func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if h.MaxClients > 0 && h.ClientCount() >= h.MaxClients {
+		http.Error(w, "hub full", http.StatusServiceUnavailable)
+		return
+	}
+
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		log.Printf("[hub/%s] upgrade error: %v", h.name, err)
 		return
 	}
 
-	clientID := fmt.Sprintf("%s-%d", h.name, time.Now().UnixNano())
+	clientID := generateClientID(h.name)
 	client := &Client{
 		ID:   clientID,
 		Hub:  h,

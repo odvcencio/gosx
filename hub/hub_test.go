@@ -121,6 +121,47 @@ func TestHubWebSocket(t *testing.T) {
 	t.Logf("Hub test passed: 2 clients, message sent and received")
 }
 
+func TestHubOriginCheck(t *testing.T) {
+	h := New("secure")
+	server := httptest.NewServer(h)
+	defer server.Close()
+
+	// Cross-origin request should be rejected (default check)
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http")
+	header := http.Header{"Origin": []string{"http://evil.com"}}
+	_, _, err := websocket.DefaultDialer.Dial(wsURL, header)
+	if err == nil {
+		t.Fatal("expected cross-origin rejection")
+	}
+}
+
+func TestHubMaxClients(t *testing.T) {
+	h := New("limited")
+	h.MaxClients = 2
+	server := httptest.NewServer(h)
+	defer server.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http")
+	c1, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial c1: %v", err)
+	}
+	defer c1.Close()
+	c2, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial c2: %v", err)
+	}
+	defer c2.Close()
+
+	time.Sleep(100 * time.Millisecond)
+
+	// Third connection should fail
+	_, _, err = websocket.DefaultDialer.Dial(wsURL, nil)
+	if err == nil {
+		t.Fatal("expected rejection when hub is full")
+	}
+}
+
 func TestHubBroadcast(t *testing.T) {
 	h := New("broadcast")
 
