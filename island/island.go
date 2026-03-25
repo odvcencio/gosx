@@ -21,16 +21,38 @@ import (
 
 // Renderer handles island-aware rendering of GoSX component trees.
 type Renderer struct {
-	manifest  *hydrate.Manifest
-	counter   int
-	bundleID  string
+	manifest      *hydrate.Manifest
+	counter       int
+	bundleID      string
+	programDir    string // directory where island programs are stored
+	programFormat string // "json" or "bin"
 }
 
 // NewRenderer creates an island renderer.
 func NewRenderer(bundleID string) *Renderer {
 	return &Renderer{
-		manifest: hydrate.NewManifest(),
-		bundleID: bundleID,
+		manifest:      hydrate.NewManifest(),
+		bundleID:      bundleID,
+		programFormat: "json", // default to dev mode
+	}
+}
+
+// SetProgramDir sets the directory where island programs are stored.
+func (r *Renderer) SetProgramDir(dir string) {
+	r.programDir = dir
+}
+
+// SetProgramFormat sets the program format ("json" or "bin").
+func (r *Renderer) SetProgramFormat(format string) {
+	r.programFormat = format
+}
+
+// SetRuntime registers the shared WASM runtime in the manifest.
+func (r *Renderer) SetRuntime(path string, hash string, size int64) {
+	r.manifest.Runtime = hydrate.RuntimeRef{
+		Path: path,
+		Hash: hash,
+		Size: size,
 	}
 }
 
@@ -48,6 +70,16 @@ func (r *Renderer) RenderIsland(componentName string, props any, content gosx.No
 			gosx.Text(fmt.Sprintf("island error: %v", err)),
 		)
 	}
+
+	// Set program ref fields on the new entry
+	lastIdx := len(r.manifest.Islands) - 1
+	ext := ".json"
+	if r.programFormat == "bin" {
+		ext = ".bin"
+	}
+	r.manifest.Islands[lastIdx].ProgramRef = r.programDir + "/" + componentName + ext
+	r.manifest.Islands[lastIdx].ProgramFormat = r.programFormat
+
 	r.counter++
 
 	// Wrap content in an island root div
@@ -116,6 +148,8 @@ func (r *Renderer) BootstrapScript() gosx.Node {
 
 	var b strings.Builder
 	b.WriteString(`<script src="/gosx/wasm_exec.js"></script>`)
+	b.WriteByte('\n')
+	b.WriteString(`<script src="/gosx/patch.js"></script>`)
 	b.WriteByte('\n')
 	b.WriteString(`<script src="/gosx/bootstrap.js"></script>`)
 	return gosx.RawHTML(b.String())
