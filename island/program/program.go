@@ -169,6 +169,785 @@ type PropDef struct {
 	Type ExprType `json:"type"`
 }
 
+// TabsProgram returns a reference Program for a tab-switching component.
+//
+// Three tabs (About, Features, Contact) with conditional rendering via OpCond.
+// One signal "activeTab" (TypeInt, init 0), three handlers that each set
+// activeTab to 0, 1, or 2. The tab content is a nested conditional expression.
+func TabsProgram() *Program {
+	// Expressions:
+	//   0: LitInt "0"                          — initial value for activeTab
+	//   1: SignalGet "activeTab"                — read activeTab (for display expr)
+	//   2: LitInt "0"                          — literal 0 (comparison)
+	//   3: OpEq [1, 2]                         — activeTab == 0
+	//   4: LitString "About: GoSX..."          — about text
+	//   5: SignalGet "activeTab"                — read activeTab (for inner cond)
+	//   6: LitInt "1"                          — literal 1 (comparison)
+	//   7: OpEq [5, 6]                         — activeTab == 1
+	//   8: LitString "Features: Server-first..." — features text
+	//   9: LitString "Contact: github.com..."  — contact text
+	//  10: OpCond [7, 8, 9]                    — inner cond: activeTab==1 ? features : contact
+	//  11: OpCond [3, 4, 10]                   — outer cond: activeTab==0 ? about : inner
+	//  12: SignalSet "activeTab" <- [13]        — set activeTab = 0
+	//  13: LitInt "0"                          — literal 0 (for set)
+	//  14: SignalSet "activeTab" <- [15]        — set activeTab = 1
+	//  15: LitInt "1"                          — literal 1 (for set)
+	//  16: SignalSet "activeTab" <- [17]        — set activeTab = 2
+	//  17: LitInt "2"                          — literal 2 (for set)
+	exprs := []Expr{
+		{Op: OpLitInt, Value: "0", Type: TypeInt},                                                  // 0
+		{Op: OpSignalGet, Value: "activeTab", Type: TypeInt},                                       // 1
+		{Op: OpLitInt, Value: "0", Type: TypeInt},                                                  // 2
+		{Op: OpEq, Operands: []ExprID{1, 2}, Type: TypeBool},                                      // 3
+		{Op: OpLitString, Value: "About: GoSX is a Go-native web platform.", Type: TypeString},     // 4
+		{Op: OpSignalGet, Value: "activeTab", Type: TypeInt},                                       // 5
+		{Op: OpLitInt, Value: "1", Type: TypeInt},                                                  // 6
+		{Op: OpEq, Operands: []ExprID{5, 6}, Type: TypeBool},                                      // 7
+		{Op: OpLitString, Value: "Features: Server-first rendering, island hydration, signals.", Type: TypeString}, // 8
+		{Op: OpLitString, Value: "Contact: github.com/odvcencio/gosx", Type: TypeString},           // 9
+		{Op: OpCond, Operands: []ExprID{7, 8, 9}, Type: TypeString},                               // 10
+		{Op: OpCond, Operands: []ExprID{3, 4, 10}, Type: TypeString},                              // 11
+		{Op: OpSignalSet, Operands: []ExprID{13}, Value: "activeTab", Type: TypeInt},               // 12
+		{Op: OpLitInt, Value: "0", Type: TypeInt},                                                  // 13
+		{Op: OpSignalSet, Operands: []ExprID{15}, Value: "activeTab", Type: TypeInt},               // 14
+		{Op: OpLitInt, Value: "1", Type: TypeInt},                                                  // 15
+		{Op: OpSignalSet, Operands: []ExprID{17}, Value: "activeTab", Type: TypeInt},               // 16
+		{Op: OpLitInt, Value: "2", Type: TypeInt},                                                  // 17
+	}
+
+	// Nodes:
+	//   0: div.tabs (root)
+	//   1: div.tab-buttons
+	//   2: button "About" [click -> showAbout]
+	//   3: button "Features" [click -> showFeatures]
+	//   4: button "Contact" [click -> showContact]
+	//   5: div.tab-content
+	//   6: expr node (nested cond, expr[11])
+	//   7: text "About"
+	//   8: text "Features"
+	//   9: text "Contact"
+	nodes := []Node{
+		{ // 0: div.tabs root
+			Kind: NodeElement,
+			Tag:  "div",
+			Attrs: []Attr{
+				{Kind: AttrStatic, Name: "class", Value: "tabs"},
+			},
+			Children: []NodeID{1, 5},
+		},
+		{ // 1: div.tab-buttons
+			Kind: NodeElement,
+			Tag:  "div",
+			Attrs: []Attr{
+				{Kind: AttrStatic, Name: "class", Value: "tab-buttons"},
+			},
+			Children: []NodeID{2, 3, 4},
+		},
+		{ // 2: button "About"
+			Kind: NodeElement,
+			Tag:  "button",
+			Attrs: []Attr{
+				{Kind: AttrEvent, Name: "click", Event: "showAbout"},
+			},
+			Children: []NodeID{7},
+		},
+		{ // 3: button "Features"
+			Kind: NodeElement,
+			Tag:  "button",
+			Attrs: []Attr{
+				{Kind: AttrEvent, Name: "click", Event: "showFeatures"},
+			},
+			Children: []NodeID{8},
+		},
+		{ // 4: button "Contact"
+			Kind: NodeElement,
+			Tag:  "button",
+			Attrs: []Attr{
+				{Kind: AttrEvent, Name: "click", Event: "showContact"},
+			},
+			Children: []NodeID{9},
+		},
+		{ // 5: div.tab-content
+			Kind: NodeElement,
+			Tag:  "div",
+			Attrs: []Attr{
+				{Kind: AttrStatic, Name: "class", Value: "tab-content"},
+			},
+			Children: []NodeID{6},
+		},
+		{ // 6: expr node — nested conditional
+			Kind: NodeExpr,
+			Expr: ExprID(11),
+		},
+		{ // 7: text "About"
+			Kind: NodeText,
+			Text: "About",
+		},
+		{ // 8: text "Features"
+			Kind: NodeText,
+			Text: "Features",
+		},
+		{ // 9: text "Contact"
+			Kind: NodeText,
+			Text: "Contact",
+		},
+	}
+
+	return &Program{
+		Name:  "Tabs",
+		Nodes: nodes,
+		Root:  0,
+		Exprs: exprs,
+		Signals: []SignalDef{
+			{Name: "activeTab", Type: TypeInt, Init: ExprID(0)},
+		},
+		Handlers: []Handler{
+			{Name: "showAbout", Body: []ExprID{12}},
+			{Name: "showFeatures", Body: []ExprID{14}},
+			{Name: "showContact", Body: []ExprID{16}},
+		},
+		StaticMask: []bool{
+			false, // 0: div.tabs (contains dynamic subtree)
+			true,  // 1: div.tab-buttons (static structure)
+			true,  // 2: button "About"
+			true,  // 3: button "Features"
+			true,  // 4: button "Contact"
+			false, // 5: div.tab-content (contains expr)
+			false, // 6: expr node
+			true,  // 7: text "About"
+			true,  // 8: text "Features"
+			true,  // 9: text "Contact"
+		},
+	}
+}
+
+// ToggleProgram returns a reference Program for a show/hide toggle component.
+//
+// One signal "visible" (TypeBool, init false). One handler "toggle" that
+// negates the signal via OpNot. Display uses OpCond to show or hide content.
+func ToggleProgram() *Program {
+	// Expressions:
+	//   0: LitBool "false"                     — initial value for visible
+	//   1: SignalGet "visible"                  — read visible (for display)
+	//   2: LitString "This content is now visible!" — shown when visible
+	//   3: LitString ""                         — shown when hidden
+	//   4: OpCond [1, 2, 3]                     — if visible: text, else: ""
+	//   5: SignalSet "visible" <- [7]            — set visible = !visible
+	//   6: SignalGet "visible"                   — read visible (for not)
+	//   7: OpNot [6]                             — !visible
+	exprs := []Expr{
+		{Op: OpLitBool, Value: "false", Type: TypeBool},                               // 0
+		{Op: OpSignalGet, Value: "visible", Type: TypeBool},                           // 1
+		{Op: OpLitString, Value: "This content is now visible!", Type: TypeString},     // 2
+		{Op: OpLitString, Value: "", Type: TypeString},                                // 3
+		{Op: OpCond, Operands: []ExprID{1, 2, 3}, Type: TypeString},                  // 4
+		{Op: OpSignalSet, Operands: []ExprID{7}, Value: "visible", Type: TypeBool},    // 5
+		{Op: OpSignalGet, Value: "visible", Type: TypeBool},                           // 6
+		{Op: OpNot, Operands: []ExprID{6}, Type: TypeBool},                            // 7
+	}
+
+	// Nodes:
+	//   0: div.toggle (root)
+	//   1: button "Toggle Content" [click -> toggle]
+	//   2: expr node (cond, expr[4])
+	//   3: text "Toggle Content"
+	nodes := []Node{
+		{ // 0: div.toggle root
+			Kind: NodeElement,
+			Tag:  "div",
+			Attrs: []Attr{
+				{Kind: AttrStatic, Name: "class", Value: "toggle"},
+			},
+			Children: []NodeID{1, 2},
+		},
+		{ // 1: button "Toggle Content"
+			Kind: NodeElement,
+			Tag:  "button",
+			Attrs: []Attr{
+				{Kind: AttrEvent, Name: "click", Event: "toggle"},
+			},
+			Children: []NodeID{3},
+		},
+		{ // 2: expr node — conditional content
+			Kind: NodeExpr,
+			Expr: ExprID(4),
+		},
+		{ // 3: text "Toggle Content"
+			Kind: NodeText,
+			Text: "Toggle Content",
+		},
+	}
+
+	return &Program{
+		Name:  "Toggle",
+		Nodes: nodes,
+		Root:  0,
+		Exprs: exprs,
+		Signals: []SignalDef{
+			{Name: "visible", Type: TypeBool, Init: ExprID(0)},
+		},
+		Handlers: []Handler{
+			{Name: "toggle", Body: []ExprID{5}},
+		},
+		StaticMask: []bool{
+			false, // 0: div.toggle (contains dynamic subtree)
+			true,  // 1: button
+			false, // 2: expr node
+			true,  // 3: text "Toggle Content"
+		},
+	}
+}
+
+// TodoProgram returns a reference Program for a simplified todo list component.
+//
+// Two signals: "items" (TypeString, comma-separated list), "input" (TypeString).
+// Three handlers: updateInput (appends "a"), addItem (concatenates input to
+// items), clearAll (resets items to "").
+func TodoProgram() *Program {
+	// Expressions:
+	//   0: LitString ""                        — initial value for items
+	//   1: LitString ""                        — initial value for input
+	//   2: SignalGet "input"                    — read input (for display)
+	//   3: SignalGet "items"                    — read items (for display)
+	//   4: SignalSet "input" <- [6]             — updateInput: input = input + "a"
+	//   5: SignalGet "input"                    — read input (for concat)
+	//   6: OpConcat [5, 7]                      — input + "a"
+	//   7: LitString "a"                        — literal "a"
+	//   8: SignalSet "items" <- [12]            — addItem: items = concat(items, ",", input)
+	//   9: SignalSet "input" <- [10]            — addItem: input = ""
+	//  10: LitString ""                         — literal ""
+	//  11: SignalGet "items"                    — read items (for concat)
+	//  12: OpConcat [11, 13, 14]                — items + "," + input
+	//  13: LitString ","                        — literal ","
+	//  14: SignalGet "input"                    — read input (for concat)
+	//  15: SignalSet "items" <- [16]            — clearAll: items = ""
+	//  16: LitString ""                         — literal ""
+	exprs := []Expr{
+		{Op: OpLitString, Value: "", Type: TypeString},                                   // 0
+		{Op: OpLitString, Value: "", Type: TypeString},                                   // 1
+		{Op: OpSignalGet, Value: "input", Type: TypeString},                              // 2
+		{Op: OpSignalGet, Value: "items", Type: TypeString},                              // 3
+		{Op: OpSignalSet, Operands: []ExprID{6}, Value: "input", Type: TypeString},       // 4
+		{Op: OpSignalGet, Value: "input", Type: TypeString},                              // 5
+		{Op: OpConcat, Operands: []ExprID{5, 7}, Type: TypeString},                      // 6
+		{Op: OpLitString, Value: "a", Type: TypeString},                                  // 7
+		{Op: OpSignalSet, Operands: []ExprID{12}, Value: "items", Type: TypeString},      // 8
+		{Op: OpSignalSet, Operands: []ExprID{10}, Value: "input", Type: TypeString},      // 9
+		{Op: OpLitString, Value: "", Type: TypeString},                                   // 10
+		{Op: OpSignalGet, Value: "items", Type: TypeString},                              // 11
+		{Op: OpConcat, Operands: []ExprID{11, 13, 14}, Type: TypeString},                // 12
+		{Op: OpLitString, Value: ",", Type: TypeString},                                  // 13
+		{Op: OpSignalGet, Value: "input", Type: TypeString},                              // 14
+		{Op: OpSignalSet, Operands: []ExprID{16}, Value: "items", Type: TypeString},      // 15
+		{Op: OpLitString, Value: "", Type: TypeString},                                   // 16
+	}
+
+	// Nodes:
+	//   0: div.todo (root)
+	//   1: h3 "Todo List"
+	//   2: div.todo-input
+	//   3: span (expr showing input)
+	//   4: button "Add" [click -> addItem]
+	//   5: div.todo-items
+	//   6: expr node (items display, expr[3])
+	//   7: button "Clear All" [click -> clearAll]
+	//   8: text "Todo List"
+	//   9: text "Add"
+	//  10: text "Clear All"
+	nodes := []Node{
+		{ // 0: div.todo root
+			Kind: NodeElement,
+			Tag:  "div",
+			Attrs: []Attr{
+				{Kind: AttrStatic, Name: "class", Value: "todo"},
+			},
+			Children: []NodeID{1, 2, 5, 7},
+		},
+		{ // 1: h3 "Todo List"
+			Kind:     NodeElement,
+			Tag:      "h3",
+			Children: []NodeID{8},
+		},
+		{ // 2: div.todo-input
+			Kind: NodeElement,
+			Tag:  "div",
+			Attrs: []Attr{
+				{Kind: AttrStatic, Name: "class", Value: "todo-input"},
+			},
+			Children: []NodeID{3, 4},
+		},
+		{ // 3: span showing input expr
+			Kind: NodeExpr,
+			Expr: ExprID(2),
+		},
+		{ // 4: button "Add"
+			Kind: NodeElement,
+			Tag:  "button",
+			Attrs: []Attr{
+				{Kind: AttrEvent, Name: "click", Event: "addItem"},
+			},
+			Children: []NodeID{9},
+		},
+		{ // 5: div.todo-items
+			Kind: NodeElement,
+			Tag:  "div",
+			Attrs: []Attr{
+				{Kind: AttrStatic, Name: "class", Value: "todo-items"},
+			},
+			Children: []NodeID{6},
+		},
+		{ // 6: expr node — items display
+			Kind: NodeExpr,
+			Expr: ExprID(3),
+		},
+		{ // 7: button "Clear All"
+			Kind: NodeElement,
+			Tag:  "button",
+			Attrs: []Attr{
+				{Kind: AttrEvent, Name: "click", Event: "clearAll"},
+			},
+			Children: []NodeID{10},
+		},
+		{ // 8: text "Todo List"
+			Kind: NodeText,
+			Text: "Todo List",
+		},
+		{ // 9: text "Add"
+			Kind: NodeText,
+			Text: "Add",
+		},
+		{ // 10: text "Clear All"
+			Kind: NodeText,
+			Text: "Clear All",
+		},
+	}
+
+	return &Program{
+		Name:  "Todo",
+		Nodes: nodes,
+		Root:  0,
+		Exprs: exprs,
+		Signals: []SignalDef{
+			{Name: "items", Type: TypeString, Init: ExprID(0)},
+			{Name: "input", Type: TypeString, Init: ExprID(1)},
+		},
+		Handlers: []Handler{
+			{Name: "updateInput", Body: []ExprID{4}},
+			{Name: "addItem", Body: []ExprID{8, 9}},
+			{Name: "clearAll", Body: []ExprID{15}},
+		},
+		StaticMask: []bool{
+			false, // 0: div.todo (contains dynamic subtree)
+			true,  // 1: h3
+			false, // 2: div.todo-input (contains expr)
+			false, // 3: expr node (input display)
+			true,  // 4: button "Add"
+			false, // 5: div.todo-items (contains expr)
+			false, // 6: expr node (items display)
+			true,  // 7: button "Clear All"
+			true,  // 8: text "Todo List"
+			true,  // 9: text "Add"
+			true,  // 10: text "Clear All"
+		},
+	}
+}
+
+// FormProgram returns a reference Program for a form validation component.
+//
+// Two signals: "name" (TypeString, init ""), "valid" (TypeBool, init false).
+// Two handlers: updateName (toggles between "" and "Alice"), validateForm
+// (sets valid to name != "").
+func FormProgram() *Program {
+	// Expressions:
+	//   0: LitString ""                        — initial value for name
+	//   1: LitBool "false"                     — initial value for valid
+	//   2: SignalGet "name"                     — read name (for display)
+	//   3: SignalGet "valid"                    — read valid (for cond)
+	//   4: LitString "Form is valid ✓"         — shown when valid
+	//   5: LitString "Please fill in name"     — shown when invalid
+	//   6: OpCond [3, 4, 5]                     — if valid: "Form is valid" else: "Please fill in"
+	//   7: SignalSet "name" <- [11]             — updateName: name = cond(name=="" , "Alice", "")
+	//   8: SignalGet "name"                     — read name (for comparison)
+	//   9: LitString ""                         — literal ""
+	//  10: OpEq [8, 9]                          — name == ""
+	//  11: OpCond [10, 12, 13]                  — name=="" ? "Alice" : ""
+	//  12: LitString "Alice"                    — literal "Alice"
+	//  13: LitString ""                         — literal ""
+	//  14: SignalSet "valid" <- [17]            — validateForm: valid = name != ""
+	//  15: SignalGet "name"                     — read name (for neq)
+	//  16: LitString ""                         — literal ""
+	//  17: OpNeq [15, 16]                       — name != ""
+	exprs := []Expr{
+		{Op: OpLitString, Value: "", Type: TypeString},                                     // 0
+		{Op: OpLitBool, Value: "false", Type: TypeBool},                                    // 1
+		{Op: OpSignalGet, Value: "name", Type: TypeString},                                 // 2
+		{Op: OpSignalGet, Value: "valid", Type: TypeBool},                                  // 3
+		{Op: OpLitString, Value: "Form is valid \u2713", Type: TypeString},                 // 4
+		{Op: OpLitString, Value: "Please fill in name", Type: TypeString},                  // 5
+		{Op: OpCond, Operands: []ExprID{3, 4, 5}, Type: TypeString},                       // 6
+		{Op: OpSignalSet, Operands: []ExprID{11}, Value: "name", Type: TypeString},         // 7
+		{Op: OpSignalGet, Value: "name", Type: TypeString},                                 // 8
+		{Op: OpLitString, Value: "", Type: TypeString},                                     // 9
+		{Op: OpEq, Operands: []ExprID{8, 9}, Type: TypeBool},                              // 10
+		{Op: OpCond, Operands: []ExprID{10, 12, 13}, Type: TypeString},                    // 11
+		{Op: OpLitString, Value: "Alice", Type: TypeString},                                // 12
+		{Op: OpLitString, Value: "", Type: TypeString},                                     // 13
+		{Op: OpSignalSet, Operands: []ExprID{17}, Value: "valid", Type: TypeBool},          // 14
+		{Op: OpSignalGet, Value: "name", Type: TypeString},                                 // 15
+		{Op: OpLitString, Value: "", Type: TypeString},                                     // 16
+		{Op: OpNeq, Operands: []ExprID{15, 16}, Type: TypeBool},                           // 17
+	}
+
+	// Nodes:
+	//   0: div.form-demo (root)
+	//   1: h3 "Form Validation"
+	//   2: div.form-field
+	//   3: label "Name"
+	//   4: button "Fill Name" [click -> updateName]
+	//   5: span.field-value (expr showing name)
+	//   6: div.form-status
+	//   7: expr node (valid cond, expr[6])
+	//   8: button "Validate" [click -> validateForm]
+	//   9: text "Form Validation"
+	//  10: text "Name"
+	//  11: text "Fill Name"
+	//  12: text "Validate"
+	nodes := []Node{
+		{ // 0: div.form-demo root
+			Kind: NodeElement,
+			Tag:  "div",
+			Attrs: []Attr{
+				{Kind: AttrStatic, Name: "class", Value: "form-demo"},
+			},
+			Children: []NodeID{1, 2, 6, 8},
+		},
+		{ // 1: h3 "Form Validation"
+			Kind:     NodeElement,
+			Tag:      "h3",
+			Children: []NodeID{9},
+		},
+		{ // 2: div.form-field
+			Kind: NodeElement,
+			Tag:  "div",
+			Attrs: []Attr{
+				{Kind: AttrStatic, Name: "class", Value: "form-field"},
+			},
+			Children: []NodeID{3, 4, 5},
+		},
+		{ // 3: label "Name"
+			Kind:     NodeElement,
+			Tag:      "label",
+			Children: []NodeID{10},
+		},
+		{ // 4: button "Fill Name"
+			Kind: NodeElement,
+			Tag:  "button",
+			Attrs: []Attr{
+				{Kind: AttrEvent, Name: "click", Event: "updateName"},
+			},
+			Children: []NodeID{11},
+		},
+		{ // 5: span.field-value (expr showing name)
+			Kind: NodeElement,
+			Tag:  "span",
+			Attrs: []Attr{
+				{Kind: AttrStatic, Name: "class", Value: "field-value"},
+			},
+			Children: []NodeID{13},
+		},
+		{ // 6: div.form-status
+			Kind: NodeElement,
+			Tag:  "div",
+			Attrs: []Attr{
+				{Kind: AttrStatic, Name: "class", Value: "form-status"},
+			},
+			Children: []NodeID{7},
+		},
+		{ // 7: expr node — valid conditional
+			Kind: NodeExpr,
+			Expr: ExprID(6),
+		},
+		{ // 8: button "Validate"
+			Kind: NodeElement,
+			Tag:  "button",
+			Attrs: []Attr{
+				{Kind: AttrEvent, Name: "click", Event: "validateForm"},
+			},
+			Children: []NodeID{12},
+		},
+		{ // 9: text "Form Validation"
+			Kind: NodeText,
+			Text: "Form Validation",
+		},
+		{ // 10: text "Name"
+			Kind: NodeText,
+			Text: "Name",
+		},
+		{ // 11: text "Fill Name"
+			Kind: NodeText,
+			Text: "Fill Name",
+		},
+		{ // 12: text "Validate"
+			Kind: NodeText,
+			Text: "Validate",
+		},
+		{ // 13: expr node — name display (inline in span)
+			Kind: NodeExpr,
+			Expr: ExprID(2),
+		},
+	}
+
+	return &Program{
+		Name:  "Form",
+		Nodes: nodes,
+		Root:  0,
+		Exprs: exprs,
+		Signals: []SignalDef{
+			{Name: "name", Type: TypeString, Init: ExprID(0)},
+			{Name: "valid", Type: TypeBool, Init: ExprID(1)},
+		},
+		Handlers: []Handler{
+			{Name: "updateName", Body: []ExprID{7}},
+			{Name: "validateForm", Body: []ExprID{14}},
+		},
+		StaticMask: []bool{
+			false, // 0: div.form-demo (contains dynamic subtree)
+			true,  // 1: h3
+			false, // 2: div.form-field (contains expr)
+			true,  // 3: label
+			true,  // 4: button "Fill Name"
+			false, // 5: span.field-value (contains expr)
+			false, // 6: div.form-status (contains expr)
+			false, // 7: expr node (valid cond)
+			true,  // 8: button "Validate"
+			true,  // 9: text "Form Validation"
+			true,  // 10: text "Name"
+			true,  // 11: text "Fill Name"
+			true,  // 12: text "Validate"
+			false, // 13: expr node (name display)
+		},
+	}
+}
+
+// DerivedProgram returns a reference Program for a multi-signal price calculator.
+//
+// Three signals: "price" (TypeInt, init 100), "quantity" (TypeInt, init 1),
+// "discount" (TypeInt, init 0). Two handlers: incQuantity (quantity + 1),
+// toggleDiscount (discount == 0 ? 10 : 0). Displays a computed total:
+// price * quantity - discount.
+func DerivedProgram() *Program {
+	// Expressions:
+	//   0: LitInt "100"                         — initial value for price
+	//   1: LitInt "1"                           — initial value for quantity
+	//   2: LitInt "0"                           — initial value for discount
+	//   3: SignalGet "price"                     — read price (for display)
+	//   4: SignalGet "quantity"                  — read quantity (for display)
+	//   5: SignalGet "discount"                  — read discount (for display)
+	//   6: SignalGet "price"                     — read price (for total)
+	//   7: SignalGet "quantity"                  — read quantity (for total)
+	//   8: OpMul [6, 7]                         — price * quantity
+	//   9: SignalGet "discount"                  — read discount (for total)
+	//  10: OpSub [8, 9]                         — (price * quantity) - discount
+	//  11: SignalSet "quantity" <- [14]          — incQuantity: quantity = quantity + 1
+	//  12: SignalGet "quantity"                  — read quantity (for add)
+	//  13: LitInt "1"                           — literal 1
+	//  14: OpAdd [12, 13]                       — quantity + 1
+	//  15: SignalSet "discount" <- [20]         — toggleDiscount: discount = cond(discount==0, 10, 0)
+	//  16: SignalGet "discount"                  — read discount (for comparison)
+	//  17: LitInt "0"                           — literal 0
+	//  18: OpEq [16, 17]                        — discount == 0
+	//  19: LitInt "10"                          — literal 10
+	//  20: OpCond [18, 19, 17]                  — discount==0 ? 10 : 0 (reuses expr[17])
+	exprs := []Expr{
+		{Op: OpLitInt, Value: "100", Type: TypeInt},                                     // 0
+		{Op: OpLitInt, Value: "1", Type: TypeInt},                                       // 1
+		{Op: OpLitInt, Value: "0", Type: TypeInt},                                       // 2
+		{Op: OpSignalGet, Value: "price", Type: TypeInt},                                // 3
+		{Op: OpSignalGet, Value: "quantity", Type: TypeInt},                             // 4
+		{Op: OpSignalGet, Value: "discount", Type: TypeInt},                             // 5
+		{Op: OpSignalGet, Value: "price", Type: TypeInt},                                // 6
+		{Op: OpSignalGet, Value: "quantity", Type: TypeInt},                             // 7
+		{Op: OpMul, Operands: []ExprID{6, 7}, Type: TypeInt},                           // 8
+		{Op: OpSignalGet, Value: "discount", Type: TypeInt},                             // 9
+		{Op: OpSub, Operands: []ExprID{8, 9}, Type: TypeInt},                           // 10
+		{Op: OpSignalSet, Operands: []ExprID{14}, Value: "quantity", Type: TypeInt},     // 11
+		{Op: OpSignalGet, Value: "quantity", Type: TypeInt},                             // 12
+		{Op: OpLitInt, Value: "1", Type: TypeInt},                                       // 13
+		{Op: OpAdd, Operands: []ExprID{12, 13}, Type: TypeInt},                         // 14
+		{Op: OpSignalSet, Operands: []ExprID{20}, Value: "discount", Type: TypeInt},     // 15
+		{Op: OpSignalGet, Value: "discount", Type: TypeInt},                             // 16
+		{Op: OpLitInt, Value: "0", Type: TypeInt},                                       // 17
+		{Op: OpEq, Operands: []ExprID{16, 17}, Type: TypeBool},                         // 18
+		{Op: OpLitInt, Value: "10", Type: TypeInt},                                      // 19
+		{Op: OpCond, Operands: []ExprID{18, 19, 17}, Type: TypeInt},                    // 20
+	}
+
+	// Nodes:
+	//   0: div.derived (root)
+	//   1: h3 "Price Calculator"
+	//   2: div.row — "Price: $" + expr(price)
+	//   3: text "Price: $"
+	//   4: expr node (price, expr[3])
+	//   5: div.row — "Qty: " + expr(quantity) + button "+"
+	//   6: text "Qty: "
+	//   7: expr node (quantity, expr[4])
+	//   8: button "+" [click -> incQuantity]
+	//   9: div.row — "Discount: $" + expr(discount) + button "Toggle 10% off"
+	//  10: text "Discount: $"
+	//  11: expr node (discount, expr[5])
+	//  12: button "Toggle 10% off" [click -> toggleDiscount]
+	//  13: div.total — "Total: $" + expr(total)
+	//  14: text "Total: $"
+	//  15: expr node (total, expr[10])
+	//  16: text "Price Calculator"
+	//  17: text "+"
+	//  18: text "Toggle 10% off"
+	nodes := []Node{
+		{ // 0: div.derived root
+			Kind: NodeElement,
+			Tag:  "div",
+			Attrs: []Attr{
+				{Kind: AttrStatic, Name: "class", Value: "derived"},
+			},
+			Children: []NodeID{1, 2, 5, 9, 13},
+		},
+		{ // 1: h3 "Price Calculator"
+			Kind:     NodeElement,
+			Tag:      "h3",
+			Children: []NodeID{16},
+		},
+		{ // 2: div.row (price)
+			Kind: NodeElement,
+			Tag:  "div",
+			Attrs: []Attr{
+				{Kind: AttrStatic, Name: "class", Value: "row"},
+			},
+			Children: []NodeID{3, 4},
+		},
+		{ // 3: text "Price: $"
+			Kind: NodeText,
+			Text: "Price: $",
+		},
+		{ // 4: expr node — price display
+			Kind: NodeExpr,
+			Expr: ExprID(3),
+		},
+		{ // 5: div.row (quantity)
+			Kind: NodeElement,
+			Tag:  "div",
+			Attrs: []Attr{
+				{Kind: AttrStatic, Name: "class", Value: "row"},
+			},
+			Children: []NodeID{6, 7, 8},
+		},
+		{ // 6: text "Qty: "
+			Kind: NodeText,
+			Text: "Qty: ",
+		},
+		{ // 7: expr node — quantity display
+			Kind: NodeExpr,
+			Expr: ExprID(4),
+		},
+		{ // 8: button "+"
+			Kind: NodeElement,
+			Tag:  "button",
+			Attrs: []Attr{
+				{Kind: AttrEvent, Name: "click", Event: "incQuantity"},
+			},
+			Children: []NodeID{17},
+		},
+		{ // 9: div.row (discount)
+			Kind: NodeElement,
+			Tag:  "div",
+			Attrs: []Attr{
+				{Kind: AttrStatic, Name: "class", Value: "row"},
+			},
+			Children: []NodeID{10, 11, 12},
+		},
+		{ // 10: text "Discount: $"
+			Kind: NodeText,
+			Text: "Discount: $",
+		},
+		{ // 11: expr node — discount display
+			Kind: NodeExpr,
+			Expr: ExprID(5),
+		},
+		{ // 12: button "Toggle 10% off"
+			Kind: NodeElement,
+			Tag:  "button",
+			Attrs: []Attr{
+				{Kind: AttrEvent, Name: "click", Event: "toggleDiscount"},
+			},
+			Children: []NodeID{18},
+		},
+		{ // 13: div.total
+			Kind: NodeElement,
+			Tag:  "div",
+			Attrs: []Attr{
+				{Kind: AttrStatic, Name: "class", Value: "total"},
+			},
+			Children: []NodeID{14, 15},
+		},
+		{ // 14: text "Total: $"
+			Kind: NodeText,
+			Text: "Total: $",
+		},
+		{ // 15: expr node — total display
+			Kind: NodeExpr,
+			Expr: ExprID(10),
+		},
+		{ // 16: text "Price Calculator"
+			Kind: NodeText,
+			Text: "Price Calculator",
+		},
+		{ // 17: text "+"
+			Kind: NodeText,
+			Text: "+",
+		},
+		{ // 18: text "Toggle 10% off"
+			Kind: NodeText,
+			Text: "Toggle 10% off",
+		},
+	}
+
+	return &Program{
+		Name:  "Derived",
+		Nodes: nodes,
+		Root:  0,
+		Exprs: exprs,
+		Signals: []SignalDef{
+			{Name: "price", Type: TypeInt, Init: ExprID(0)},
+			{Name: "quantity", Type: TypeInt, Init: ExprID(1)},
+			{Name: "discount", Type: TypeInt, Init: ExprID(2)},
+		},
+		Handlers: []Handler{
+			{Name: "incQuantity", Body: []ExprID{11}},
+			{Name: "toggleDiscount", Body: []ExprID{15}},
+		},
+		StaticMask: []bool{
+			false, // 0: div.derived (contains dynamic subtree)
+			true,  // 1: h3
+			false, // 2: div.row (price, contains expr)
+			true,  // 3: text "Price: $"
+			false, // 4: expr node (price)
+			false, // 5: div.row (quantity, contains expr)
+			true,  // 6: text "Qty: "
+			false, // 7: expr node (quantity)
+			true,  // 8: button "+"
+			false, // 9: div.row (discount, contains expr)
+			true,  // 10: text "Discount: $"
+			false, // 11: expr node (discount)
+			true,  // 12: button "Toggle 10% off"
+			false, // 13: div.total (contains expr)
+			true,  // 14: text "Total: $"
+			false, // 15: expr node (total)
+			true,  // 16: text "Price Calculator"
+			true,  // 17: text "+"
+			true,  // 18: text "Toggle 10% off"
+		},
+	}
+}
+
 // CounterProgram returns a reference Program for a Counter component.
 //
 // The counter has a single "count" signal, two buttons (decrement/increment),

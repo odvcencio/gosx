@@ -375,6 +375,302 @@ func TestCounterProgram(t *testing.T) {
 	}
 }
 
+func TestTabsProgram(t *testing.T) {
+	p := TabsProgram()
+	if p == nil {
+		t.Fatal("TabsProgram() returned nil")
+	}
+	if p.Name != "Tabs" {
+		t.Fatalf("Name = %q, want %q", p.Name, "Tabs")
+	}
+	if len(p.Signals) != 1 {
+		t.Fatalf("expected 1 signal, got %d", len(p.Signals))
+	}
+	if p.Signals[0].Name != "activeTab" {
+		t.Errorf("Signals[0].Name = %q, want %q", p.Signals[0].Name, "activeTab")
+	}
+	if p.Signals[0].Type != TypeInt {
+		t.Errorf("Signals[0].Type = %d, want TypeInt", p.Signals[0].Type)
+	}
+	if len(p.Handlers) != 3 {
+		t.Fatalf("expected 3 handlers, got %d", len(p.Handlers))
+	}
+	handlerNames := map[string]bool{}
+	for _, h := range p.Handlers {
+		handlerNames[h.Name] = true
+	}
+	for _, name := range []string{"showAbout", "showFeatures", "showContact"} {
+		if !handlerNames[name] {
+			t.Errorf("missing handler %q", name)
+		}
+	}
+	if len(p.Nodes) != 10 {
+		t.Errorf("len(Nodes) = %d, want 10", len(p.Nodes))
+	}
+	if len(p.StaticMask) != len(p.Nodes) {
+		t.Errorf("StaticMask length %d != Nodes length %d", len(p.StaticMask), len(p.Nodes))
+	}
+	// Verify nested cond expression exists
+	foundCond := 0
+	for _, e := range p.Exprs {
+		if e.Op == OpCond {
+			foundCond++
+		}
+	}
+	if foundCond < 2 {
+		t.Errorf("expected at least 2 OpCond exprs (nested), got %d", foundCond)
+	}
+
+	// JSON round-trip
+	data, err := json.Marshal(p)
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+	var p2 Program
+	if err := json.Unmarshal(data, &p2); err != nil {
+		t.Fatalf("json.Unmarshal: %v", err)
+	}
+	if p2.Name != p.Name {
+		t.Error("round-trip Name mismatch")
+	}
+}
+
+func TestToggleProgram(t *testing.T) {
+	p := ToggleProgram()
+	if p == nil {
+		t.Fatal("ToggleProgram() returned nil")
+	}
+	if p.Name != "Toggle" {
+		t.Fatalf("Name = %q, want %q", p.Name, "Toggle")
+	}
+	if len(p.Signals) != 1 {
+		t.Fatalf("expected 1 signal, got %d", len(p.Signals))
+	}
+	if p.Signals[0].Name != "visible" {
+		t.Errorf("Signals[0].Name = %q, want %q", p.Signals[0].Name, "visible")
+	}
+	if p.Signals[0].Type != TypeBool {
+		t.Errorf("Signals[0].Type = %d, want TypeBool", p.Signals[0].Type)
+	}
+	if len(p.Handlers) != 1 {
+		t.Fatalf("expected 1 handler, got %d", len(p.Handlers))
+	}
+	if p.Handlers[0].Name != "toggle" {
+		t.Errorf("Handlers[0].Name = %q, want %q", p.Handlers[0].Name, "toggle")
+	}
+	if len(p.Nodes) != 4 {
+		t.Errorf("len(Nodes) = %d, want 4", len(p.Nodes))
+	}
+	if len(p.StaticMask) != len(p.Nodes) {
+		t.Errorf("StaticMask length %d != Nodes length %d", len(p.StaticMask), len(p.Nodes))
+	}
+	// Verify OpNot is used for toggle
+	foundNot := false
+	for _, e := range p.Exprs {
+		if e.Op == OpNot {
+			foundNot = true
+		}
+	}
+	if !foundNot {
+		t.Error("expected OpNot expression for toggle handler")
+	}
+
+	// JSON round-trip
+	data, err := json.Marshal(p)
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+	var p2 Program
+	if err := json.Unmarshal(data, &p2); err != nil {
+		t.Fatalf("json.Unmarshal: %v", err)
+	}
+	if p2.Name != p.Name {
+		t.Error("round-trip Name mismatch")
+	}
+}
+
+func TestTodoProgram(t *testing.T) {
+	p := TodoProgram()
+	if p == nil {
+		t.Fatal("TodoProgram() returned nil")
+	}
+	if p.Name != "Todo" {
+		t.Fatalf("Name = %q, want %q", p.Name, "Todo")
+	}
+	if len(p.Signals) != 2 {
+		t.Fatalf("expected 2 signals, got %d", len(p.Signals))
+	}
+	sigNames := map[string]bool{}
+	for _, s := range p.Signals {
+		sigNames[s.Name] = true
+	}
+	for _, name := range []string{"items", "input"} {
+		if !sigNames[name] {
+			t.Errorf("missing signal %q", name)
+		}
+	}
+	if len(p.Handlers) != 3 {
+		t.Fatalf("expected 3 handlers, got %d", len(p.Handlers))
+	}
+	handlerNames := map[string]bool{}
+	for _, h := range p.Handlers {
+		handlerNames[h.Name] = true
+	}
+	for _, name := range []string{"updateInput", "addItem", "clearAll"} {
+		if !handlerNames[name] {
+			t.Errorf("missing handler %q", name)
+		}
+	}
+	// addItem handler should have 2 body exprs (set items, set input)
+	for _, h := range p.Handlers {
+		if h.Name == "addItem" && len(h.Body) != 2 {
+			t.Errorf("addItem handler body length = %d, want 2", len(h.Body))
+		}
+	}
+	if len(p.StaticMask) != len(p.Nodes) {
+		t.Errorf("StaticMask length %d != Nodes length %d", len(p.StaticMask), len(p.Nodes))
+	}
+
+	// JSON round-trip
+	data, err := json.Marshal(p)
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+	var p2 Program
+	if err := json.Unmarshal(data, &p2); err != nil {
+		t.Fatalf("json.Unmarshal: %v", err)
+	}
+	if p2.Name != p.Name {
+		t.Error("round-trip Name mismatch")
+	}
+}
+
+func TestFormProgram(t *testing.T) {
+	p := FormProgram()
+	if p == nil {
+		t.Fatal("FormProgram() returned nil")
+	}
+	if p.Name != "Form" {
+		t.Fatalf("Name = %q, want %q", p.Name, "Form")
+	}
+	if len(p.Signals) != 2 {
+		t.Fatalf("expected 2 signals, got %d", len(p.Signals))
+	}
+	sigNames := map[string]bool{}
+	for _, s := range p.Signals {
+		sigNames[s.Name] = true
+	}
+	for _, name := range []string{"name", "valid"} {
+		if !sigNames[name] {
+			t.Errorf("missing signal %q", name)
+		}
+	}
+	if len(p.Handlers) != 2 {
+		t.Fatalf("expected 2 handlers, got %d", len(p.Handlers))
+	}
+	handlerNames := map[string]bool{}
+	for _, h := range p.Handlers {
+		handlerNames[h.Name] = true
+	}
+	for _, name := range []string{"updateName", "validateForm"} {
+		if !handlerNames[name] {
+			t.Errorf("missing handler %q", name)
+		}
+	}
+	if len(p.StaticMask) != len(p.Nodes) {
+		t.Errorf("StaticMask length %d != Nodes length %d", len(p.StaticMask), len(p.Nodes))
+	}
+	// Verify conditional expression for validation display
+	foundCond := false
+	for _, e := range p.Exprs {
+		if e.Op == OpCond {
+			foundCond = true
+		}
+	}
+	if !foundCond {
+		t.Error("expected OpCond expression for validation display")
+	}
+
+	// JSON round-trip
+	data, err := json.Marshal(p)
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+	var p2 Program
+	if err := json.Unmarshal(data, &p2); err != nil {
+		t.Fatalf("json.Unmarshal: %v", err)
+	}
+	if p2.Name != p.Name {
+		t.Error("round-trip Name mismatch")
+	}
+}
+
+func TestDerivedProgram(t *testing.T) {
+	p := DerivedProgram()
+	if p == nil {
+		t.Fatal("DerivedProgram() returned nil")
+	}
+	if p.Name != "Derived" {
+		t.Fatalf("Name = %q, want %q", p.Name, "Derived")
+	}
+	if len(p.Signals) != 3 {
+		t.Fatalf("expected 3 signals, got %d", len(p.Signals))
+	}
+	sigNames := map[string]bool{}
+	for _, s := range p.Signals {
+		sigNames[s.Name] = true
+	}
+	for _, name := range []string{"price", "quantity", "discount"} {
+		if !sigNames[name] {
+			t.Errorf("missing signal %q", name)
+		}
+	}
+	if len(p.Handlers) != 2 {
+		t.Fatalf("expected 2 handlers, got %d", len(p.Handlers))
+	}
+	handlerNames := map[string]bool{}
+	for _, h := range p.Handlers {
+		handlerNames[h.Name] = true
+	}
+	for _, name := range []string{"incQuantity", "toggleDiscount"} {
+		if !handlerNames[name] {
+			t.Errorf("missing handler %q", name)
+		}
+	}
+	if len(p.StaticMask) != len(p.Nodes) {
+		t.Errorf("StaticMask length %d != Nodes length %d", len(p.StaticMask), len(p.Nodes))
+	}
+	// Verify total computation uses OpMul and OpSub
+	foundMul, foundSub := false, false
+	for _, e := range p.Exprs {
+		if e.Op == OpMul {
+			foundMul = true
+		}
+		if e.Op == OpSub {
+			foundSub = true
+		}
+	}
+	if !foundMul {
+		t.Error("expected OpMul for price * quantity")
+	}
+	if !foundSub {
+		t.Error("expected OpSub for total - discount")
+	}
+
+	// JSON round-trip
+	data, err := json.Marshal(p)
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+	var p2 Program
+	if err := json.Unmarshal(data, &p2); err != nil {
+		t.Fatalf("json.Unmarshal: %v", err)
+	}
+	if p2.Name != p.Name {
+		t.Error("round-trip Name mismatch")
+	}
+}
+
 func TestJSONRoundTrip(t *testing.T) {
 	original := CounterProgram()
 	data, err := EncodeJSON(original)
