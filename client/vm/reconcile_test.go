@@ -292,3 +292,128 @@ func TestReconcileInputNonValueAttr(t *testing.T) {
 		t.Fatal("expected PatchSetAttr for non-value attr on input")
 	}
 }
+
+// === Keyed Reconciliation Tests ===
+
+func TestReconcileKeyedReorder(t *testing.T) {
+	// Prev: A, B, C  →  Next: C, A, B
+	prev := &ResolvedTree{Nodes: []ResolvedNode{
+		{Tag: "ul", Children: []int{1, 2, 3}},
+		{Tag: "li", Key: "a", Text: "Apple"},
+		{Tag: "li", Key: "b", Text: "Banana"},
+		{Tag: "li", Key: "c", Text: "Cherry"},
+	}}
+	next := &ResolvedTree{Nodes: []ResolvedNode{
+		{Tag: "ul", Children: []int{1, 2, 3}},
+		{Tag: "li", Key: "c", Text: "Cherry"},
+		{Tag: "li", Key: "a", Text: "Apple"},
+		{Tag: "li", Key: "b", Text: "Banana"},
+	}}
+	ops := ReconcileTrees(prev, next, []bool{false, false, false, false})
+
+	// Should emit Reorder, NOT 3 SetText ops
+	foundReorder := false
+	for _, op := range ops {
+		if op.Kind == PatchReorder {
+			foundReorder = true
+		}
+	}
+	if !foundReorder {
+		t.Fatalf("expected Reorder op for keyed reorder, got %d ops: %+v", len(ops), ops)
+	}
+}
+
+func TestReconcileKeyedInsert(t *testing.T) {
+	// Prev: A, B  →  Next: A, X, B (insert in middle)
+	prev := &ResolvedTree{Nodes: []ResolvedNode{
+		{Tag: "ul", Children: []int{1, 2}},
+		{Tag: "li", Key: "a", Text: "A"},
+		{Tag: "li", Key: "b", Text: "B"},
+	}}
+	next := &ResolvedTree{Nodes: []ResolvedNode{
+		{Tag: "ul", Children: []int{1, 2, 3}},
+		{Tag: "li", Key: "a", Text: "A"},
+		{Tag: "li", Key: "x", Text: "X"},
+		{Tag: "li", Key: "b", Text: "B"},
+	}}
+	ops := ReconcileTrees(prev, next, []bool{false, false, false, false})
+
+	foundCreate := false
+	for _, op := range ops {
+		if op.Kind == PatchCreateElement {
+			foundCreate = true
+			if op.Tag != "li" {
+				t.Fatalf("expected li create, got %s", op.Tag)
+			}
+		}
+	}
+	if !foundCreate {
+		t.Fatal("expected CreateElement for new keyed item")
+	}
+}
+
+func TestReconcileKeyedRemove(t *testing.T) {
+	// Prev: A, B, C  →  Next: A, C (B removed)
+	prev := &ResolvedTree{Nodes: []ResolvedNode{
+		{Tag: "ul", Children: []int{1, 2, 3}},
+		{Tag: "li", Key: "a", Text: "A"},
+		{Tag: "li", Key: "b", Text: "B"},
+		{Tag: "li", Key: "c", Text: "C"},
+	}}
+	next := &ResolvedTree{Nodes: []ResolvedNode{
+		{Tag: "ul", Children: []int{1, 2}},
+		{Tag: "li", Key: "a", Text: "A"},
+		{Tag: "li", Key: "c", Text: "C"},
+	}}
+	ops := ReconcileTrees(prev, next, []bool{false, false, false, false})
+
+	foundRemove := false
+	for _, op := range ops {
+		if op.Kind == PatchRemoveElement {
+			foundRemove = true
+		}
+	}
+	if !foundRemove {
+		t.Fatal("expected RemoveElement for removed keyed item")
+	}
+}
+
+func TestReconcileKeyedStableUpdate(t *testing.T) {
+	// Same keys, text changes — should emit SetText, NOT recreate
+	prev := &ResolvedTree{Nodes: []ResolvedNode{
+		{Tag: "ul", Children: []int{1, 2}},
+		{Tag: "li", Key: "a", Text: "old-a"},
+		{Tag: "li", Key: "b", Text: "old-b"},
+	}}
+	next := &ResolvedTree{Nodes: []ResolvedNode{
+		{Tag: "ul", Children: []int{1, 2}},
+		{Tag: "li", Key: "a", Text: "new-a"},
+		{Tag: "li", Key: "b", Text: "new-b"},
+	}}
+	ops := ReconcileTrees(prev, next, []bool{false, false, false})
+
+	if len(ops) != 2 {
+		t.Fatalf("expected 2 SetText ops, got %d: %+v", len(ops), ops)
+	}
+	for _, op := range ops {
+		if op.Kind != PatchSetText {
+			t.Fatalf("expected SetText, got kind %d", op.Kind)
+		}
+	}
+}
+
+func TestReconcileNoKeysUnchanged(t *testing.T) {
+	// Positional (no keys) — existing behavior should be preserved
+	prev := &ResolvedTree{Nodes: []ResolvedNode{
+		{Tag: "div", Children: []int{1}},
+		{Tag: "span", Text: "same"},
+	}}
+	next := &ResolvedTree{Nodes: []ResolvedNode{
+		{Tag: "div", Children: []int{1}},
+		{Tag: "span", Text: "same"},
+	}}
+	ops := ReconcileTrees(prev, next, []bool{false, false})
+	if len(ops) != 0 {
+		t.Fatalf("expected 0 ops for unchanged tree, got %d", len(ops))
+	}
+}

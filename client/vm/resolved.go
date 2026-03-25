@@ -10,6 +10,7 @@ type ResolvedTree struct {
 type ResolvedNode struct {
 	Tag      string
 	Text     string
+	Key      string // stable identity for list diffing (from "key" attr)
 	Attrs    []ResolvedAttr
 	Children []int
 }

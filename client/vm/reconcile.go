@@ -77,8 +77,144 @@ func reconcileNode(ops *[]PatchOp, prev, next *ResolvedTree, nodeIdx int, path s
 
 	reconcileAttrs(ops, pn, nn, path)
 
-	// Walk children. Every child gets a DOM index (elemIdx) because in the DOM,
-	// both element children and text nodes are addressable via childNodes[].
+	// Check if children are keyed (any child has a Key).
+	hasKeys := childrenHaveKeys(prev, next, pn, nn)
+
+	if hasKeys {
+		reconcileKeyedChildren(ops, prev, next, pn, nn, path, staticMask)
+	} else {
+		reconcilePositionalChildren(ops, prev, next, pn, nn, path, staticMask)
+	}
+}
+
+// childrenHaveKeys returns true if any child in either list has a key.
+func childrenHaveKeys(prev, next *ResolvedTree, pn, nn *ResolvedNode) bool {
+	for _, idx := range nn.Children {
+		if idx < len(next.Nodes) && next.Nodes[idx].Key != "" {
+			return true
+		}
+	}
+	for _, idx := range pn.Children {
+		if idx < len(prev.Nodes) && prev.Nodes[idx].Key != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// reconcileKeyedChildren diffs children using stable keys.
+// Items with the same key are matched regardless of position, producing
+// minimal move/insert/remove operations instead of rewriting everything.
+func reconcileKeyedChildren(ops *[]PatchOp, prev, next *ResolvedTree, pn, nn *ResolvedNode, path string, staticMask []bool) {
+	// Build key → position map for prev children
+	prevByKey := make(map[string]int)      // key → prev child index
+	prevByKeyNode := make(map[string]int)  // key → node index in prev.Nodes
+	for i, childIdx := range pn.Children {
+		if childIdx < len(prev.Nodes) && prev.Nodes[childIdx].Key != "" {
+			prevByKey[prev.Nodes[childIdx].Key] = i
+			prevByKeyNode[prev.Nodes[childIdx].Key] = childIdx
+		}
+	}
+
+	// Walk next children:
+	// - If key exists in prev: recurse (matched node, possibly moved)
+	// - If key is new: emit CreateElement
+	// After: remove any prev keys not in next
+	nextKeys := make(map[string]bool)
+	reorderNeeded := false
+	lastPrevIdx := -1
+
+	for elemIdx, childIdx := range nn.Children {
+		if childIdx >= len(next.Nodes) {
+			continue
+		}
+		nextChild := &next.Nodes[childIdx]
+		key := nextChild.Key
+
+		if key == "" {
+			// Unkeyed child in a keyed list — treat positionally
+			cp := childPath(path, elemIdx)
+			if elemIdx < len(pn.Children) {
+				prevChildIdx := pn.Children[elemIdx]
+				if prevChildIdx < len(prev.Nodes) {
+					prevChild := &prev.Nodes[prevChildIdx]
+					if nextChild.Tag != "" {
+						reconcileNode(ops, prev, next, childIdx, cp, staticMask)
+					} else if prevChild.Text != nextChild.Text {
+						*ops = append(*ops, PatchOp{Kind: PatchSetText, Path: cp, Text: nextChild.Text})
+					}
+				}
+			} else {
+				// New unkeyed child
+				if nextChild.Tag != "" {
+					*ops = append(*ops, PatchOp{Kind: PatchCreateElement, Path: path, Tag: nextChild.Tag, Text: nextChild.Text})
+				}
+			}
+			continue
+		}
+
+		nextKeys[key] = true
+
+		if prevIdx, ok := prevByKey[key]; ok {
+			// Key exists in prev — matched. Recurse to diff content.
+			prevNodeIdx := prevByKeyNode[key]
+			cp := childPath(path, elemIdx)
+			reconcileNodePair(ops, prev, next, prevNodeIdx, childIdx, cp, staticMask)
+
+			// Check if order changed
+			if prevIdx < lastPrevIdx {
+				reorderNeeded = true
+			}
+			lastPrevIdx = prevIdx
+		} else {
+			// New key — insert
+			*ops = append(*ops, PatchOp{
+				Kind: PatchCreateElement,
+				Path: path,
+				Tag:  nextChild.Tag,
+				Text: nextChild.Text,
+			})
+		}
+	}
+
+	// Remove prev children whose keys are gone
+	// Walk backwards to keep indices stable
+	for i := len(pn.Children) - 1; i >= 0; i-- {
+		childIdx := pn.Children[i]
+		if childIdx < len(prev.Nodes) {
+			key := prev.Nodes[childIdx].Key
+			if key != "" && !nextKeys[key] {
+				*ops = append(*ops, PatchOp{Kind: PatchRemoveElement, Path: childPath(path, i)})
+			}
+		}
+	}
+
+	// If order changed, emit a Reorder op with the new child order
+	if reorderNeeded {
+		order := make([]int, len(nn.Children))
+		for i := range order {
+			order[i] = i
+		}
+		*ops = append(*ops, PatchOp{Kind: PatchReorder, Path: path, Children: order})
+	}
+}
+
+// reconcileNodePair diffs two nodes at arbitrary positions.
+func reconcileNodePair(ops *[]PatchOp, prev, next *ResolvedTree, prevIdx, nextIdx int, path string, staticMask []bool) {
+	if prevIdx >= len(prev.Nodes) || nextIdx >= len(next.Nodes) {
+		return
+	}
+	pn := &prev.Nodes[prevIdx]
+	nn := &next.Nodes[nextIdx]
+
+	if pn.Text != nn.Text && nn.Text != "" {
+		*ops = append(*ops, PatchOp{Kind: PatchSetText, Path: path, Text: nn.Text})
+	}
+	reconcileAttrs(ops, pn, nn, path)
+}
+
+// reconcilePositionalChildren diffs children by position index (no keys).
+func reconcilePositionalChildren(ops *[]PatchOp, prev, next *ResolvedTree, pn, nn *ResolvedNode, path string, staticMask []bool) {
 	elemIdx := 0
 	prevLen := len(pn.Children)
 	nextLen := len(nn.Children)
@@ -98,12 +234,7 @@ func reconcileNode(ops *[]PatchOp, prev, next *ResolvedTree, nodeIdx int, path s
 			if childIdx < len(next.Nodes) {
 				cn := &next.Nodes[childIdx]
 				if cn.Tag != "" {
-					*ops = append(*ops, PatchOp{
-						Kind: PatchCreateElement,
-						Path: path,
-						Tag:  cn.Tag,
-						Text: cn.Text,
-					})
+					*ops = append(*ops, PatchOp{Kind: PatchCreateElement, Path: path, Tag: cn.Tag, Text: cn.Text})
 				}
 			}
 			elemIdx++
@@ -122,17 +253,11 @@ func reconcileNode(ops *[]PatchOp, prev, next *ResolvedTree, nodeIdx int, path s
 		prevChild := &prev.Nodes[prevChildIdx]
 
 		if nextChild.Tag != "" {
-			// Element child — recurse
 			cp := childPath(path, elemIdx)
 			reconcileNode(ops, prev, next, nextChildIdx, cp, staticMask)
 		} else {
-			// Text/Expr child — compare and emit SetText at this child's DOM index
 			if prevChild.Text != nextChild.Text {
-				*ops = append(*ops, PatchOp{
-					Kind: PatchSetText,
-					Path: childPath(path, elemIdx),
-					Text: nextChild.Text,
-				})
+				*ops = append(*ops, PatchOp{Kind: PatchSetText, Path: childPath(path, elemIdx), Text: nextChild.Text})
 			}
 		}
 		elemIdx++

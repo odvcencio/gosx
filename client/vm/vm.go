@@ -404,9 +404,18 @@ func (vm *VM) resolveNode(node program.Node) ResolvedNode {
 		for _, attr := range node.Attrs {
 			switch attr.Kind {
 			case program.AttrStatic:
+				if attr.Name == "key" {
+					rn.Key = attr.Value // extract key for list diffing
+					continue            // don't emit key as a DOM attribute
+				}
 				rn.Attrs = append(rn.Attrs, ResolvedAttr{Name: attr.Name, Value: attr.Value})
 			case program.AttrExpr:
-				rn.Attrs = append(rn.Attrs, ResolvedAttr{Name: attr.Name, Value: vm.Eval(attr.Expr).String()})
+				val := vm.Eval(attr.Expr).String()
+				if attr.Name == "key" {
+					rn.Key = val
+					continue
+				}
+				rn.Attrs = append(rn.Attrs, ResolvedAttr{Name: attr.Name, Value: val})
 			case program.AttrBool:
 				rn.Attrs = append(rn.Attrs, ResolvedAttr{Name: attr.Name, Value: ""})
 			case program.AttrEvent:
