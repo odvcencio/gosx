@@ -51,6 +51,43 @@ type Component struct {
 
 	// Span tracks source location for diagnostics.
 	Span Span
+
+	// Scope holds extracted signals, computeds, and handlers from the
+	// component's function body. Populated by the body analyzer when
+	// the source is a .gsx file with a full component body.
+	Scope *ComponentScope
+}
+
+// ComponentScope holds declarations extracted from a component function body
+// via CST pattern matching. This is the bridge between Go source analysis
+// and IslandProgram generation.
+type ComponentScope struct {
+	Signals   []SignalInfo
+	Computeds []ComputedInfo
+	Handlers  []HandlerInfo
+	Locals    map[string]string // variable name → kind ("signal", "computed", "handler")
+}
+
+// SignalInfo describes a signal declaration found in the component body.
+// Pattern: name := signal.New(initExpr)
+type SignalInfo struct {
+	Name     string // variable name (e.g., "count")
+	InitExpr string // source text of the init expression (e.g., "0")
+	TypeHint string // inferred type from init value (e.g., "int", "string")
+}
+
+// ComputedInfo describes a computed/derived signal declaration.
+// Pattern: name := signal.Derive(func() T { return expr })
+type ComputedInfo struct {
+	Name     string // variable name
+	BodyExpr string // source text of the return expression
+}
+
+// HandlerInfo describes a handler function declaration.
+// Pattern: name := func() { ...statements... }
+type HandlerInfo struct {
+	Name       string   // variable name (e.g., "increment")
+	Statements []string // source text of each statement in the body
 }
 
 // NodeKind discriminates the kind of IR node.

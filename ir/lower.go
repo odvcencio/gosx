@@ -74,6 +74,287 @@ func (l *lowerer) hasIslandDirective(n *gotreesitter.Node) bool {
 	return strings.Contains(preceding, "//gosx:island")
 }
 
+// analyzeBody walks a function body CST node and extracts signal declarations,
+// computed values, and handler functions by pattern matching on the syntax tree.
+//
+// Recognized patterns:
+//   count := signal.New(0)          → SignalInfo{Name: "count", InitExpr: "0"}
+//   doubled := signal.Derive(...)   → ComputedInfo{Name: "doubled", BodyExpr: "..."}
+//   increment := func() { ... }    → HandlerInfo{Name: "increment", Statements: [...]}
+func (l *lowerer) analyzeBody(bodyNode *gotreesitter.Node) *ComponentScope {
+	scope := &ComponentScope{
+		Locals: make(map[string]string),
+	}
+
+	// The function body is a block: { statement_list }
+	// Find the statement_list and walk its children.
+	stmtList := bodyNode
+	for i := 0; i < int(bodyNode.NamedChildCount()); i++ {
+		child := bodyNode.NamedChild(i)
+		if l.nodeType(child) == "statement_list" {
+			stmtList = child
+			break
+		}
+	}
+
+	// Walk all children of the statement list looking for short_var_declaration
+	for i := 0; i < int(stmtList.ChildCount()); i++ {
+		child := stmtList.Child(i)
+		if child == nil {
+			continue
+		}
+		typ := l.nodeType(child)
+		if typ == "short_var_declaration" {
+			l.analyzeShortVarDecl(child, scope)
+		}
+	}
+
+	// Only return scope if we found anything
+	if len(scope.Signals) == 0 && len(scope.Computeds) == 0 && len(scope.Handlers) == 0 {
+		return nil
+	}
+	return scope
+}
+
+// analyzeShortVarDecl checks if a short variable declaration matches
+// a signal, computed, or handler pattern.
+func (l *lowerer) analyzeShortVarDecl(n *gotreesitter.Node, scope *ComponentScope) {
+	// short_var_declaration has "left" (expression_list) and "right" (expression_list)
+	leftNode := l.childByField(n, "left")
+	rightNode := l.childByField(n, "right")
+	if leftNode == nil || rightNode == nil {
+		return
+	}
+
+	// Get the variable name (first identifier in left side)
+	varName := ""
+	for j := 0; j < int(leftNode.NamedChildCount()); j++ {
+		id := leftNode.NamedChild(j)
+		if l.nodeType(id) == "identifier" {
+			varName = l.text(id)
+			break
+		}
+	}
+	// If left is itself an identifier (single var)
+	if varName == "" && l.nodeType(leftNode) == "identifier" {
+		varName = l.text(leftNode)
+	}
+	// Try expression_list → first child
+	if varName == "" {
+		varName = l.text(leftNode)
+		// Clean up if it grabbed too much
+		if strings.Contains(varName, ",") {
+			varName = strings.TrimSpace(strings.Split(varName, ",")[0])
+		}
+	}
+	if varName == "" {
+		return
+	}
+
+	// Get the right-side expression
+	// It might be inside an expression_list wrapper
+	rightExpr := rightNode
+	if l.nodeType(rightExpr) == "expression_list" && rightExpr.NamedChildCount() > 0 {
+		rightExpr = rightExpr.NamedChild(0)
+	}
+
+	rightType := l.nodeType(rightExpr)
+
+	// Pattern: name := signal.New(initExpr)
+	if rightType == "call_expression" {
+		funcNode := l.childByField(rightExpr, "function")
+		if funcNode != nil {
+			funcText := l.text(funcNode)
+			argsNode := l.childByField(rightExpr, "arguments")
+
+			// signal.New(...)
+			if funcText == "signal.New" && argsNode != nil {
+				initExpr := l.extractFirstArg(argsNode)
+				typeHint := l.inferTypeHint(initExpr)
+				scope.Signals = append(scope.Signals, SignalInfo{
+					Name:     varName,
+					InitExpr: initExpr,
+					TypeHint: typeHint,
+				})
+				scope.Locals[varName] = "signal"
+				return
+			}
+
+			// signal.Derive(func() T { return expr })
+			if funcText == "signal.Derive" && argsNode != nil {
+				bodyExpr := l.extractDeriveBody(argsNode)
+				scope.Computeds = append(scope.Computeds, ComputedInfo{
+					Name:     varName,
+					BodyExpr: bodyExpr,
+				})
+				scope.Locals[varName] = "computed"
+				return
+			}
+		}
+	}
+
+	// Pattern: name := func() { ...statements... }
+	if rightType == "func_literal" {
+		body := l.childByField(rightExpr, "body")
+		if body != nil {
+			stmts := l.extractStatements(body)
+			scope.Handlers = append(scope.Handlers, HandlerInfo{
+				Name:       varName,
+				Statements: stmts,
+			})
+			scope.Locals[varName] = "handler"
+			return
+		}
+	}
+}
+
+// extractFirstArg gets the source text of the first argument in an argument_list.
+func (l *lowerer) extractFirstArg(argsNode *gotreesitter.Node) string {
+	for i := 0; i < int(argsNode.NamedChildCount()); i++ {
+		child := argsNode.NamedChild(i)
+		return l.text(child)
+	}
+	return ""
+}
+
+// extractDeriveBody extracts the return expression from a signal.Derive(func() T { return expr }) call.
+func (l *lowerer) extractDeriveBody(argsNode *gotreesitter.Node) string {
+	// Walk all children (named and unnamed) looking for func_literal
+	for i := 0; i < int(argsNode.ChildCount()); i++ {
+		child := argsNode.Child(i)
+		if child == nil {
+			continue
+		}
+		if l.nodeType(child) == "func_literal" {
+			return l.extractReturnExpr(child)
+		}
+	}
+	return ""
+}
+
+// extractReturnExpr finds the return statement inside a func_literal and extracts its expression.
+func (l *lowerer) extractReturnExpr(funcLit *gotreesitter.Node) string {
+	// func_literal → body (block) → statement_list → return_statement → expression
+	body := l.childByField(funcLit, "body")
+	if body == nil {
+		// Try unnamed child approach
+		for i := 0; i < int(funcLit.ChildCount()); i++ {
+			child := funcLit.Child(i)
+			if child != nil && l.nodeType(child) == "block" {
+				body = child
+				break
+			}
+		}
+	}
+	if body == nil {
+		return ""
+	}
+
+	// Find statement_list inside the block
+	var stmtList *gotreesitter.Node
+	for i := 0; i < int(body.ChildCount()); i++ {
+		child := body.Child(i)
+		if child != nil && l.nodeType(child) == "statement_list" {
+			stmtList = child
+			break
+		}
+	}
+	if stmtList == nil {
+		stmtList = body // try body directly
+	}
+
+	// Find return_statement
+	for i := 0; i < int(stmtList.ChildCount()); i++ {
+		child := stmtList.Child(i)
+		if child == nil {
+			continue
+		}
+		if l.nodeType(child) == "return_statement" {
+			// Extract the expression(s) after "return"
+			// Try named children first
+			for j := 0; j < int(child.NamedChildCount()); j++ {
+				expr := child.NamedChild(j)
+				text := strings.TrimSpace(l.text(expr))
+				if text != "" {
+					return text
+				}
+			}
+			// Try all children, skip the "return" keyword
+			for j := 0; j < int(child.ChildCount()); j++ {
+				expr := child.Child(j)
+				if expr == nil {
+					continue
+				}
+				text := strings.TrimSpace(l.text(expr))
+				if text != "" && text != "return" {
+					return text
+				}
+			}
+		}
+	}
+	return ""
+}
+
+// extractStatements gets the source text of each statement in a block.
+func (l *lowerer) extractStatements(bodyNode *gotreesitter.Node) []string {
+	var stmts []string
+	for i := 0; i < int(bodyNode.NamedChildCount()); i++ {
+		child := bodyNode.NamedChild(i)
+		stmts = append(stmts, l.text(child))
+	}
+	return stmts
+}
+
+// inferTypeHint guesses the type from a literal expression.
+func (l *lowerer) inferTypeHint(expr string) string {
+	expr = strings.TrimSpace(expr)
+	if expr == "" {
+		return ""
+	}
+	if expr == "true" || expr == "false" {
+		return "bool"
+	}
+	if len(expr) > 0 && expr[0] == '"' {
+		return "string"
+	}
+	if len(expr) > 0 && expr[0] == '\'' {
+		return "string"
+	}
+	// Check for float (contains '.')
+	if strings.Contains(expr, ".") {
+		allDigitsAndDot := true
+		for _, c := range expr {
+			if (c < '0' || c > '9') && c != '.' && c != '-' {
+				allDigitsAndDot = false
+				break
+			}
+		}
+		if allDigitsAndDot {
+			return "float"
+		}
+	}
+	// Check for int
+	allDigits := true
+	start := 0
+	if len(expr) > 0 && expr[0] == '-' {
+		start = 1
+	}
+	for _, c := range expr[start:] {
+		if c < '0' || c > '9' {
+			allDigits = false
+			break
+		}
+	}
+	if allDigits && len(expr) > start {
+		return "int"
+	}
+	// Arrays/slices
+	if strings.HasPrefix(expr, "[]") || strings.HasPrefix(expr, "make([]") {
+		return "array"
+	}
+	return ""
+}
+
 // lowerSourceFile processes the root source_file node.
 func (l *lowerer) lowerSourceFile(root *gotreesitter.Node) {
 	for i := 0; i < int(root.NamedChildCount()); i++ {
@@ -157,11 +438,16 @@ func (l *lowerer) lowerFunctionDecl(n *gotreesitter.Node) {
 	// Lower the JSX tree
 	rootID := l.lowerJSXNode(jsxRoot)
 
+	// Analyze the function body for signal/computed/handler declarations.
+	// This extracts the component scope needed for island lowering.
+	scope := l.analyzeBody(bodyNode)
+
 	comp := Component{
 		Name:      name,
 		PropsType: propsType,
 		Root:      rootID,
 		IsIsland:  l.hasIslandDirective(n),
+		Scope:     scope,
 		Span:      l.span(n),
 	}
 	l.prog.Components = append(l.prog.Components, comp)
