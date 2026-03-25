@@ -14,7 +14,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/odvcencio/gosx"
 	"github.com/odvcencio/gosx/format"
@@ -71,45 +70,26 @@ Commands:
 }
 
 func cmdBuild() {
-	dir := argOrDefault(2, ".")
-
-	// Walk and compile all .gsx files
-	count := 0
-	err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return nil
-		}
-		if info.IsDir() && (strings.HasPrefix(info.Name(), ".") || info.Name() == "build") {
-			return filepath.SkipDir
-		}
-		ext := filepath.Ext(path)
-		if ext != ".gsx" {
-			return nil
-		}
-
-		source, err := os.ReadFile(path)
-		if err != nil {
-			return fmt.Errorf("read %s: %w", path, err)
-		}
-
-		output, err := transpile.Transpile(source, transpile.Options{SourceFile: path})
-		if err != nil {
-			return fmt.Errorf("compile %s: %w", path, err)
-		}
-
-		outPath := strings.TrimSuffix(path, ext) + ".go"
-		if err := os.WriteFile(outPath, []byte(output), 0644); err != nil {
-			return fmt.Errorf("write %s: %w", outPath, err)
-		}
-
-		count++
-		return nil
-	})
-
-	if err != nil {
-		fatal("build: %v", err)
+	if len(os.Args) < 3 {
+		fmt.Fprintln(os.Stderr, "Usage: gosx build [--dev|--prod] <dir>")
+		os.Exit(1)
 	}
-	fmt.Fprintf(os.Stderr, "gosx: compiled %d files\n", count)
+	dev := true
+	dir := os.Args[2]
+	for _, arg := range os.Args[2:] {
+		switch arg {
+		case "--dev":
+			dev = true
+		case "--prod":
+			dev = false
+		default:
+			dir = arg
+		}
+	}
+	if err := RunBuild(dir, dev); err != nil {
+		fmt.Fprintf(os.Stderr, "build error: %v\n", err)
+		os.Exit(1)
+	}
 }
 
 func cmdDev() {
