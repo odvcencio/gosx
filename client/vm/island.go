@@ -15,6 +15,17 @@ type Island struct {
 	id       string
 	prev     *ResolvedTree // previous tree for reconciliation
 	handlers map[string]*program.Handler
+
+	// PatchCallback is called when shared signals trigger a re-render.
+	// Set by the bridge to push patches to JS.
+	PatchCallback func(patches []PatchOp)
+}
+
+// SetSharedSignal replaces an island-local signal with a shared one from the store.
+// This connects the island to cross-island state: when another island modifies
+// the shared signal, this island re-renders automatically via subscription.
+func (island *Island) SetSharedSignal(name string, sig *signal.Signal[Value]) {
+	island.vm.SetSignal(name, sig)
 }
 
 // NewIsland creates a live island from a program and initial props JSON.
