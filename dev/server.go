@@ -73,8 +73,29 @@ func (s *Server) ListenAndServe() error {
 		mux.Handle("/gosx/assets/", http.StripPrefix("/gosx/assets/", http.FileServer(http.Dir(s.BuildDir))))
 	}
 
-	// Client bootstrap JS
-	mux.HandleFunc("GET /gosx/bootstrap.js", s.handleBootstrapJS)
+	// Serve WASM runtime from build output
+	mux.HandleFunc("GET /gosx/runtime.wasm", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/wasm")
+		http.ServeFile(w, r, filepath.Join(s.BuildDir, "gosx-runtime.wasm"))
+	})
+
+	// Serve wasm_exec.js support file from build output
+	mux.HandleFunc("GET /gosx/wasm_exec.js", func(w http.ResponseWriter, r *http.Request) {
+		http.ServeFile(w, r, filepath.Join(s.BuildDir, "wasm_exec.js"))
+	})
+
+	// Client JS assets served from source for dev hot-reload
+	mux.HandleFunc("GET /gosx/bootstrap.js", func(w http.ResponseWriter, r *http.Request) {
+		http.ServeFile(w, r, filepath.Join(s.Dir, "client", "js", "bootstrap.js"))
+	})
+
+	mux.HandleFunc("GET /gosx/patch.js", func(w http.ResponseWriter, r *http.Request) {
+		http.ServeFile(w, r, filepath.Join(s.Dir, "client", "js", "patch.js"))
+	})
+
+	// Serve compiled island programs from build output
+	mux.Handle("GET /gosx/islands/", http.StripPrefix("/gosx/islands/",
+		http.FileServer(http.Dir(filepath.Join(s.BuildDir, "islands")))))
 
 	// Application routes (wrapped with dev injection)
 	mux.Handle("/", s.devMiddleware(s.AppHandler))
@@ -129,12 +150,6 @@ func (s *Server) handleSSE(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleInfo(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	fmt.Fprintf(w, `{"version":"0.1.0","dir":%q,"lastBuild":%q}`, s.Dir, s.lastBuild.Format(time.RFC3339))
-}
-
-// handleBootstrapJS serves the client bootstrap script.
-func (s *Server) handleBootstrapJS(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/javascript")
-	w.Write(bootstrapJS)
 }
 
 // devMiddleware injects the hot-reload script into HTML responses.
@@ -243,8 +258,3 @@ func (r *responseRecorder) Write(b []byte) (int, error) {
 func (r *responseRecorder) WriteHeader(code int) {
 	r.statusCode = code
 }
-
-// Embedded bootstrap JS (minimal version for dev).
-var bootstrapJS = []byte(`// GoSX Bootstrap (dev mode)
-console.log("[gosx] bootstrap loaded");
-`)
