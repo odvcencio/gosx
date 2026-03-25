@@ -83,7 +83,7 @@ func cmdBuild() {
 			return filepath.SkipDir
 		}
 		ext := filepath.Ext(path)
-		if ext != ".gsx" && ext != ".gosx" {
+		if ext != ".gsx" {
 			return nil
 		}
 
@@ -204,7 +204,7 @@ func cmdFmt() {
 				return nil
 			}
 			ext := filepath.Ext(fi.Name())
-			if ext == ".gsx" || ext == ".gosx" {
+			if ext == ".gsx" {
 				if err := formatFile(p); err != nil {
 					fmt.Fprintf(os.Stderr, "gosx fmt: %s: %v\n", p, err)
 				} else {

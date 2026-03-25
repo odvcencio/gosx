@@ -1,7 +1,7 @@
 package gosx
 
 // GosxGrammar returns a grammar extending Go with JSX-like component syntax.
-// File extension: .gosx
+// File extension: .gsx
 //
 // Supported syntax:
 //

@@ -222,7 +222,7 @@ func (s *Server) walkFiles(fn func(string, os.FileInfo)) {
 			return filepath.SkipDir
 		}
 		ext := filepath.Ext(name)
-		if ext == ".go" || ext == ".gsx" || ext == ".gosx" || ext == ".html" || ext == ".css" || ext == ".js" {
+		if ext == ".go" || ext == ".gsx" || ext == ".html" || ext == ".css" || ext == ".js" {
 			fn(path, info)
 		}
 		return nil

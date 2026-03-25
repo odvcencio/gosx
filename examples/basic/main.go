@@ -1,6 +1,6 @@
 // Example basic demonstrates a simple GoSX server application.
 //
-// This example uses the runtime Node API directly (rather than .gosx source files)
+// This example uses the runtime Node API directly (rather than .gsx source files)
 // to build and render components on the server.
 //
 // Run: go run ./examples/basic
