@@ -45,7 +45,8 @@ func main() {
 
 	// Island renderer for hydration manifest
 	islands := island.NewRenderer("dashboard")
-	islands.SetBundle("dashboard", "/gosx/assets/dashboard.wasm")
+	islands.SetBundle("dashboard", "/gosx/runtime.wasm")
+	islands.SetRuntime("/gosx/runtime.wasm", "", 0)
 
 	// Router
 	router := route.NewRouter()
@@ -92,10 +93,31 @@ func main() {
 
 	mux := http.NewServeMux()
 	mux.Handle("POST /gosx/action/{name}", actions)
-	// Resolve static dir relative to this source file so it works from any working directory
+
+	// Resolve paths relative to this source file so it works from any working directory
 	_, thisFile, _, _ := runtime.Caller(0)
-	staticDir := filepath.Join(filepath.Dir(thisFile), "static")
-	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir(staticDir))))
+	exampleDir := filepath.Dir(thisFile)
+	moduleDir := filepath.Join(exampleDir, "..", "..")
+
+	// Static CSS
+	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir(filepath.Join(exampleDir, "static")))))
+
+	// GoSX client assets
+	buildDir := filepath.Join(exampleDir, "build")
+	mux.HandleFunc("GET /gosx/runtime.wasm", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/wasm")
+		http.ServeFile(w, r, filepath.Join(buildDir, "gosx-runtime.wasm"))
+	})
+	mux.HandleFunc("GET /gosx/wasm_exec.js", func(w http.ResponseWriter, r *http.Request) {
+		http.ServeFile(w, r, filepath.Join(buildDir, "wasm_exec.js"))
+	})
+	mux.HandleFunc("GET /gosx/bootstrap.js", func(w http.ResponseWriter, r *http.Request) {
+		http.ServeFile(w, r, filepath.Join(moduleDir, "client", "js", "bootstrap.js"))
+	})
+	mux.HandleFunc("GET /gosx/patch.js", func(w http.ResponseWriter, r *http.Request) {
+		http.ServeFile(w, r, filepath.Join(moduleDir, "client", "js", "patch.js"))
+	})
+
 	mux.Handle("/", router.Build())
 
 	addr := ":3000"
