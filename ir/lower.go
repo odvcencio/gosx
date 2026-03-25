@@ -107,9 +107,10 @@ func (l *lowerer) precedingText(n *gotreesitter.Node) string {
 // computed values, and handler functions by pattern matching on the syntax tree.
 //
 // Recognized patterns:
-//   count := signal.New(0)          → SignalInfo{Name: "count", InitExpr: "0"}
-//   doubled := signal.Derive(...)   → ComputedInfo{Name: "doubled", BodyExpr: "..."}
-//   increment := func() { ... }    → HandlerInfo{Name: "increment", Statements: [...]}
+//
+//	count := signal.New(0)          → SignalInfo{Name: "count", InitExpr: "0"}
+//	doubled := signal.Derive(...)   → ComputedInfo{Name: "doubled", BodyExpr: "..."}
+//	increment := func() { ... }    → HandlerInfo{Name: "increment", Statements: [...]}
 func (l *lowerer) analyzeBody(bodyNode *gotreesitter.Node) *ComponentScope {
 	scope := &ComponentScope{
 		Locals: make(map[string]string),

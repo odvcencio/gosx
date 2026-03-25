@@ -71,10 +71,10 @@ func (ctx *RouteContext) ParentData(key string) any {
 
 // Router builds an http.Handler from a route tree.
 type Router struct {
-	routes       []Route
+	routes        []Route
 	defaultLayout LayoutFunc
-	notFound     PageHandler
-	mux          *http.ServeMux
+	notFound      PageHandler
+	mux           *http.ServeMux
 }
 
 // NewRouter creates a new router.

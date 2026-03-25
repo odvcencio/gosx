@@ -58,10 +58,24 @@
     const go = new Go();
 
     try {
-      const result = await WebAssembly.instantiateStreaming(
-        fetch(runtimeRef.path),
-        go.importObject
-      );
+      const response = await fetch(runtimeRef.path);
+      if (!response.ok) {
+        throw new Error("runtime fetch failed with status " + response.status);
+      }
+
+      let result;
+      if (typeof WebAssembly.instantiateStreaming === "function") {
+        try {
+          result = await WebAssembly.instantiateStreaming(response.clone(), go.importObject);
+        } catch (streamErr) {
+          const bytes = await response.arrayBuffer();
+          result = await WebAssembly.instantiate(bytes, go.importObject);
+        }
+      } else {
+        const bytes = await response.arrayBuffer();
+        result = await WebAssembly.instantiate(bytes, go.importObject);
+      }
+
       // go.run is intentionally not awaited — it resolves when the Go main()
       // exits, but the runtime stays alive via syscall/js callbacks.
       go.run(result.instance);
@@ -85,8 +99,8 @@
         return null;
       }
 
-      if (programFormat === "wasm") {
-        return await resp.arrayBuffer();
+      if (programFormat === "wasm" || programFormat === "bin") {
+        return new Uint8Array(await resp.arrayBuffer());
       }
       // Default: return as text (covers json, msgpack-base64, etc.)
       return await resp.text();
@@ -94,6 +108,14 @@
       console.error(`[gosx] error fetching program ${programRef}:`, e);
       return null;
     }
+  }
+
+  function inferProgramFormat(entry) {
+    if (entry.programFormat) return entry.programFormat;
+    if (typeof entry.programRef === "string" && entry.programRef.endsWith(".gxi")) {
+      return "bin";
+    }
+    return "json";
   }
 
   // --------------------------------------------------------------------------
@@ -177,7 +199,10 @@
 
         const eventData = extractEventData(e);
         try {
-          actionFn(islandID, handlerName, JSON.stringify(eventData));
+          const result = actionFn(islandID, handlerName, JSON.stringify(eventData));
+          if (typeof result === "string" && result !== "") {
+            console.error(`[gosx] action error (${islandID}/${handlerName}):`, result);
+          }
         } catch (err) {
           console.error(`[gosx] action error (${islandID}/${handlerName}):`, err);
         }
@@ -236,17 +261,19 @@
     // Skip purely static islands (no client interactivity).
     if (entry.static) return;
 
-    // Determine program format (default to "wasm").
-    const programFormat = entry.programFormat || "wasm";
+    // Determine program format (default to JSON in development).
+    const programFormat = inferProgramFormat(entry);
 
     // Fetch the island's program data.
-    let programData = null;
-    if (entry.programRef) {
-      programData = await fetchProgram(entry.programRef, programFormat);
-      if (programData === null) {
-        console.error(`[gosx] skipping island ${entry.id} — program fetch failed`);
-        return;
-      }
+    if (!entry.programRef) {
+      console.error(`[gosx] skipping island ${entry.id} — missing programRef`);
+      return;
+    }
+
+    const programData = await fetchProgram(entry.programRef, programFormat);
+    if (programData === null) {
+      console.error(`[gosx] skipping island ${entry.id} — program fetch failed`);
+      return;
     }
 
     // Call the WASM-exported hydrate function.
@@ -257,13 +284,17 @@
     }
 
     try {
-      hydrateFn(
+      const result = hydrateFn(
         entry.id,                           // islandID
         entry.component,                    // componentName
         JSON.stringify(entry.props || {}),  // propsJSON
         programData,                        // program data (ArrayBuffer or string)
         programFormat                       // program format identifier
       );
+      if (typeof result === "string" && result !== "") {
+        console.error(`[gosx] failed to hydrate island ${entry.id}: ${result}`);
+        return;
+      }
     } catch (e) {
       console.error(`[gosx] failed to hydrate island ${entry.id}:`, e);
       return;

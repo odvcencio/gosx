@@ -42,11 +42,11 @@ var (
 
 // Helper function aliases
 var (
-	AppendChoice           = grammargen.AppendChoice
-	AddConflict            = grammargen.AddConflict
-	Generate               = grammargen.Generate
-	GenerateLanguage       = grammargen.GenerateLanguage
+	AppendChoice            = grammargen.AppendChoice
+	AddConflict             = grammargen.AddConflict
+	Generate                = grammargen.Generate
+	GenerateLanguage        = grammargen.GenerateLanguage
 	GenerateLanguageAndBlob = grammargen.GenerateLanguageAndBlob
-	LoadLanguageBlob       = gotreesitter.LoadLanguage
-	GoGrammar              = grammargen.GoGrammar
+	LoadLanguageBlob        = gotreesitter.LoadLanguage
+	GoGrammar               = grammargen.GoGrammar
 )

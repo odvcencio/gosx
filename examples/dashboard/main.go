@@ -165,7 +165,6 @@ func main() {
 	// Static CSS
 	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir(filepath.Join(exampleDir, "static")))))
 
-
 	// noCacheFile serves assets that change frequently (JS, island programs during dev).
 	noCacheFile := func(contentType, path string) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
@@ -275,7 +274,7 @@ func Sidebar() gosx.Node {
 // Footer renders the page footer.
 func Footer() gosx.Node {
 	return gosx.El("div", gosx.Attrs(gosx.Attr("class", "footer")),
-		gosx.Text(fmt.Sprintf("GoSX v0.1.0 — Server rendered at %s", time.Now().Format("15:04:05"))),
+		gosx.Text(fmt.Sprintf("GoSX v%s — Server rendered at %s", gosx.Version, time.Now().Format("15:04:05"))),
 	)
 }
 

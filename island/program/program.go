@@ -90,12 +90,12 @@ const (
 	OpEventGet                   // Read field from current event data (Value = field name)
 
 	// Array/slice operations
-	OpMap        // Operands[0] = collection, Operands[1] = body template expr
-	OpFilter     // Operands[0] = collection, Operands[1] = predicate expr
-	OpFind       // Operands[0] = collection, Operands[1] = predicate expr
-	OpSlice      // Operands[0] = collection, Operands[1] = start, Operands[2] = end
-	OpAppend     // Operands[0] = collection, Operands[1] = element
-	OpContains   // Operands[0] = collection/string, Operands[1] = element/substring
+	OpMap      // Operands[0] = collection, Operands[1] = body template expr
+	OpFilter   // Operands[0] = collection, Operands[1] = predicate expr
+	OpFind     // Operands[0] = collection, Operands[1] = predicate expr
+	OpSlice    // Operands[0] = collection, Operands[1] = start, Operands[2] = end
+	OpAppend   // Operands[0] = collection, Operands[1] = element
+	OpContains // Operands[0] = collection/string, Operands[1] = element/substring
 
 	// String methods
 	OpToUpper    // Operands[0] = string
@@ -109,9 +109,9 @@ const (
 	OpEndsWith   // Operands[0] = string, Operands[1] = suffix
 
 	// Type conversion
-	OpToString   // Operands[0] = any → string
-	OpToInt      // Operands[0] = string/float → int
-	OpToFloat    // Operands[0] = string/int → float
+	OpToString // Operands[0] = any → string
+	OpToInt    // Operands[0] = string/float → int
+	OpToFloat  // Operands[0] = string/int → float
 )
 
 // ExprType describes the type of an expression result.

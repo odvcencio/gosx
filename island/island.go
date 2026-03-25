@@ -13,9 +13,11 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"html"
 	"strings"
 
 	"github.com/odvcencio/gosx"
+	"github.com/odvcencio/gosx/buildmanifest"
 	"github.com/odvcencio/gosx/hydrate"
 	"github.com/odvcencio/gosx/island/program"
 )
@@ -27,6 +29,16 @@ type Renderer struct {
 	bundleID      string
 	programDir    string // directory where island programs are stored
 	programFormat string // "json" or "bin"
+	programAssets map[string]programAsset
+	wasmExecPath  string
+	patchPath     string
+	bootstrapPath string
+}
+
+type programAsset struct {
+	path   string
+	format string
+	hash   string
 }
 
 // NewRenderer creates an island renderer.
@@ -35,6 +47,10 @@ func NewRenderer(bundleID string) *Renderer {
 		manifest:      hydrate.NewManifest(),
 		bundleID:      bundleID,
 		programFormat: "json", // default to dev mode
+		programAssets: make(map[string]programAsset),
+		wasmExecPath:  "/gosx/wasm_exec.js",
+		patchPath:     "/gosx/patch.js",
+		bootstrapPath: "/gosx/bootstrap.js",
 	}
 }
 
@@ -46,6 +62,19 @@ func (r *Renderer) SetProgramDir(dir string) {
 // SetProgramFormat sets the program format ("json" or "bin").
 func (r *Renderer) SetProgramFormat(format string) {
 	r.programFormat = format
+}
+
+// SetProgramAsset registers an exact program asset for a component.
+// Use this when build output is content-hashed and can't be inferred from name.
+func (r *Renderer) SetProgramAsset(componentName, path, format, hash string) {
+	if format == "" {
+		format = r.programFormat
+	}
+	r.programAssets[componentName] = programAsset{
+		path:   path,
+		format: format,
+		hash:   hash,
+	}
 }
 
 // SetRuntime registers the shared WASM runtime in the manifest.
@@ -62,6 +91,49 @@ func (r *Renderer) SetBundle(id string, path string) {
 	r.manifest.Bundles[id] = hydrate.BundleRef{Path: path}
 }
 
+// SetClientAssetPaths overrides the default runtime script URLs used in PageHead.
+func (r *Renderer) SetClientAssetPaths(wasmExecPath, patchPath, bootstrapPath string) {
+	if wasmExecPath != "" {
+		r.wasmExecPath = wasmExecPath
+	}
+	if patchPath != "" {
+		r.patchPath = patchPath
+	}
+	if bootstrapPath != "" {
+		r.bootstrapPath = bootstrapPath
+	}
+}
+
+// ApplyBuildManifest wires hashed runtime and island asset URLs into the renderer.
+// assetBaseURL should be the public URL prefix that serves dist/assets.
+func (r *Renderer) ApplyBuildManifest(manifest *buildmanifest.Manifest, assetBaseURL string) error {
+	if manifest == nil {
+		return fmt.Errorf("build manifest is nil")
+	}
+
+	runtime := manifest.RuntimeURLs(assetBaseURL)
+	if runtime.WASM != "" {
+		r.SetRuntime(runtime.WASM, manifest.Runtime.WASM.Hash, manifest.Runtime.WASM.Size)
+		r.SetBundle(r.bundleID, runtime.WASM)
+	}
+	r.SetClientAssetPaths(runtime.WASMExec, runtime.Patch, runtime.Bootstrap)
+
+	for _, asset := range manifest.Islands {
+		r.SetProgramAsset(asset.Name, manifest.IslandURL(assetBaseURL, asset), asset.Format, asset.Hash)
+	}
+
+	return nil
+}
+
+// LoadBuildManifest reads a build manifest from disk and applies its asset URLs.
+func (r *Renderer) LoadBuildManifest(path, assetBaseURL string) error {
+	manifest, err := buildmanifest.Load(path)
+	if err != nil {
+		return err
+	}
+	return r.ApplyBuildManifest(manifest, assetBaseURL)
+}
+
 // RenderIsland wraps a component in an island container and registers it in the manifest.
 func (r *Renderer) RenderIsland(componentName string, props any, content gosx.Node) gosx.Node {
 	id, err := r.manifest.AddIsland(componentName, r.bundleID, props)
@@ -74,12 +146,7 @@ func (r *Renderer) RenderIsland(componentName string, props any, content gosx.No
 
 	// Set program ref fields on the new entry
 	lastIdx := len(r.manifest.Islands) - 1
-	ext := ".json"
-	if r.programFormat == "bin" {
-		ext = ".bin"
-	}
-	r.manifest.Islands[lastIdx].ProgramRef = r.programDir + "/" + componentName + ext
-	r.manifest.Islands[lastIdx].ProgramFormat = r.programFormat
+	r.applyProgramRef(&r.manifest.Islands[lastIdx], componentName)
 
 	r.counter++
 
@@ -103,14 +170,7 @@ func (r *Renderer) RenderIslandWithEvents(componentName string, props any, event
 	// Add events and program ref to the last island entry
 	lastIdx := len(r.manifest.Islands) - 1
 	r.manifest.Islands[lastIdx].Events = events
-	ext := ".json"
-	if r.programFormat == "bin" {
-		ext = ".bin"
-	}
-	if r.programDir != "" {
-		r.manifest.Islands[lastIdx].ProgramRef = r.programDir + "/" + componentName + ext
-		r.manifest.Islands[lastIdx].ProgramFormat = r.programFormat
-	}
+	r.applyProgramRef(&r.manifest.Islands[lastIdx], componentName)
 
 	r.counter++
 
@@ -145,7 +205,7 @@ func (r *Renderer) ManifestScript() gosx.Node {
 	}
 	return gosx.RawHTML(fmt.Sprintf(
 		`<script id="gosx-manifest" type="application/json">%s</script>`,
-		string(data),
+		html.EscapeString(string(data)),
 	))
 }
 
@@ -156,17 +216,18 @@ func (r *Renderer) BootstrapScript() gosx.Node {
 	}
 
 	var b strings.Builder
-	b.WriteString(`<script src="/gosx/wasm_exec.js"></script>`)
+	b.WriteString(fmt.Sprintf(`<script src="%s"></script>`, html.EscapeString(r.wasmExecPath)))
 	b.WriteByte('\n')
-	b.WriteString(`<script src="/gosx/patch.js"></script>`)
+	b.WriteString(fmt.Sprintf(`<script src="%s"></script>`, html.EscapeString(r.patchPath)))
 	b.WriteByte('\n')
-	b.WriteString(`<script src="/gosx/bootstrap.js"></script>`)
+	b.WriteString(fmt.Sprintf(`<script src="%s"></script>`, html.EscapeString(r.bootstrapPath)))
 	return gosx.RawHTML(b.String())
 }
 
 // RenderIslandFromProgram renders an island entirely from its compiled IslandProgram.
 // No manual event wiring needed — events are extracted from the program's node tree.
-// Server HTML is generated with data-gosx-handler attributes.
+// Server HTML is generated with data-gosx-on-* attributes plus the legacy
+// click shorthand data-gosx-handler for compatibility.
 //
 // This is the fully automatic path: write .gsx → compile → call this → done.
 func (r *Renderer) RenderIslandFromProgram(prog *program.Program, props any) gosx.Node {
@@ -185,14 +246,7 @@ func (r *Renderer) RenderIslandFromProgram(prog *program.Program, props any) gos
 
 	lastIdx := len(r.manifest.Islands) - 1
 	r.manifest.Islands[lastIdx].Events = events
-	ext := ".json"
-	if r.programFormat == "bin" {
-		ext = ".bin"
-	}
-	if r.programDir != "" {
-		r.manifest.Islands[lastIdx].ProgramRef = r.programDir + "/" + prog.Name + ext
-		r.manifest.Islands[lastIdx].ProgramFormat = r.programFormat
-	}
+	r.applyProgramRef(&r.manifest.Islands[lastIdx], prog.Name)
 
 	r.counter++
 
@@ -206,21 +260,39 @@ func (r *Renderer) RenderIslandFromProgram(prog *program.Program, props any) gos
 }
 
 // extractEventSlots walks the program's node tree and extracts event bindings.
+// Each slot gets a stable path-derived ID and selector relative to the island root.
 func extractEventSlots(prog *program.Program) []hydrate.EventSlot {
+	if len(prog.Nodes) == 0 {
+		return nil
+	}
+
 	var slots []hydrate.EventSlot
-	for _, node := range prog.Nodes {
+
+	var walk func(nodeID program.NodeID, path string)
+	walk = func(nodeID program.NodeID, path string) {
+		if int(nodeID) >= len(prog.Nodes) {
+			return
+		}
+
+		node := prog.Nodes[nodeID]
 		for _, attr := range node.Attrs {
 			if attr.Kind == program.AttrEvent {
-				// Map onClick → click, onInput → input, etc.
 				eventType := eventNameToType(attr.Name)
 				slots = append(slots, hydrate.EventSlot{
-					SlotID:      fmt.Sprintf("auto_%s_%s", attr.Event, eventType),
-					EventType:   eventType,
-					HandlerName: attr.Event,
+					SlotID:         fmt.Sprintf("%s:%s:%s", path, eventType, attr.Event),
+					EventType:      eventType,
+					TargetSelector: fmt.Sprintf(`[data-gosx-path="%s"]`, path),
+					HandlerName:    attr.Event,
 				})
 			}
 		}
+
+		for idx, child := range node.Children {
+			walk(child, childProgramPath(path, idx))
+		}
 	}
+
+	walk(prog.Root, "0")
 	return slots
 }
 
@@ -253,16 +325,16 @@ func eventNameToType(name string) string {
 }
 
 // renderProgramHTML renders an IslandProgram's node tree to server HTML.
-// Event attributes are rendered as data-gosx-handler for event delegation.
+// Event attributes are rendered as data-gosx-on-* for delegated dispatch.
 func renderProgramHTML(prog *program.Program) gosx.Node {
 	if len(prog.Nodes) == 0 {
 		return gosx.Text("")
 	}
-	html := renderProgramNode(prog, prog.Root)
+	html := renderProgramNode(prog, prog.Root, "0")
 	return gosx.RawHTML(html)
 }
 
-func renderProgramNode(prog *program.Program, nodeID program.NodeID) string {
+func renderProgramNode(prog *program.Program, nodeID program.NodeID, path string) string {
 	if int(nodeID) >= len(prog.Nodes) {
 		return ""
 	}
@@ -270,49 +342,87 @@ func renderProgramNode(prog *program.Program, nodeID program.NodeID) string {
 
 	switch node.Kind {
 	case program.NodeText:
-		return node.Text
+		return html.EscapeString(node.Text)
 	case program.NodeExpr:
 		// Server-side: evaluate init values for display
 		// For now, render empty (the VM fills it on hydration)
 		return ""
 	case program.NodeFragment:
 		var b strings.Builder
-		for _, child := range node.Children {
-			b.WriteString(renderProgramNode(prog, child))
+		for idx, child := range node.Children {
+			b.WriteString(renderProgramNode(prog, child, childProgramPath(path, idx)))
 		}
 		return b.String()
 	case program.NodeElement:
 		var b strings.Builder
+		safeTag := html.EscapeString(node.Tag)
 		b.WriteString("<")
-		b.WriteString(node.Tag)
+		b.WriteString(safeTag)
 
 		// Render attributes
+		hasEventBinding := false
 		for _, attr := range node.Attrs {
+			safeName := html.EscapeString(attr.Name)
+			safeEvent := html.EscapeString(attr.Event)
 			switch attr.Kind {
 			case program.AttrStatic:
-				b.WriteString(fmt.Sprintf(` %s="%s"`, attr.Name, attr.Value))
+				b.WriteString(fmt.Sprintf(` %s="%s"`, safeName, html.EscapeString(attr.Value)))
 			case program.AttrBool:
-				b.WriteString(" " + attr.Name)
+				b.WriteString(" " + safeName)
 			case program.AttrEvent:
-				// Render as data-gosx-handler for event delegation
-				b.WriteString(fmt.Sprintf(` data-gosx-handler="%s"`, attr.Event))
+				eventType := html.EscapeString(eventNameToType(attr.Name))
+				b.WriteString(fmt.Sprintf(` data-gosx-on-%s="%s"`, eventType, safeEvent))
+				if eventType == "click" {
+					b.WriteString(fmt.Sprintf(` data-gosx-handler="%s"`, safeEvent))
+				}
+				hasEventBinding = true
 			case program.AttrExpr:
 				// Dynamic attrs — skip for server render
 			}
+		}
+		if hasEventBinding {
+			b.WriteString(fmt.Sprintf(` data-gosx-path="%s"`, html.EscapeString(path)))
 		}
 
 		b.WriteString(">")
 
 		// Render children
-		for _, child := range node.Children {
-			b.WriteString(renderProgramNode(prog, child))
+		for idx, child := range node.Children {
+			b.WriteString(renderProgramNode(prog, child, childProgramPath(path, idx)))
 		}
 
-		b.WriteString(fmt.Sprintf("</%s>", node.Tag))
+		b.WriteString(fmt.Sprintf("</%s>", safeTag))
 		return b.String()
 	default:
 		return ""
 	}
+}
+
+func (r *Renderer) applyProgramRef(entry *hydrate.IslandEntry, componentName string) {
+	if asset, ok := r.programAssets[componentName]; ok {
+		entry.ProgramRef = asset.path
+		entry.ProgramFormat = asset.format
+		entry.ProgramHash = asset.hash
+		return
+	}
+
+	if r.programDir == "" {
+		return
+	}
+
+	entry.ProgramFormat = r.programFormat
+	entry.ProgramRef = r.programDir + "/" + componentName + programFileExt(r.programFormat)
+}
+
+func programFileExt(format string) string {
+	if format == "bin" {
+		return ".gxi"
+	}
+	return ".json"
+}
+
+func childProgramPath(parent string, idx int) string {
+	return fmt.Sprintf("%s/%d", parent, idx)
 }
 
 // PreloadHints returns <link rel="preload"> tags for the HTML <head>.

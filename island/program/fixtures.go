@@ -46,39 +46,39 @@ func TabsProgram() *Program {
 	//  30: OpEq [28, 29]                       — activeTab == 2
 	//  31: OpCond [30, 21, 22]                 — button 2 class expr
 	exprs := []Expr{
-		{Op: OpLitInt, Value: "0", Type: TypeInt},                                                  // 0
-		{Op: OpSignalGet, Value: "activeTab", Type: TypeInt},                                       // 1
-		{Op: OpLitInt, Value: "0", Type: TypeInt},                                                  // 2
-		{Op: OpEq, Operands: []ExprID{1, 2}, Type: TypeBool},                                      // 3
-		{Op: OpLitString, Value: "About: GoSX is a Go-native web platform.", Type: TypeString},     // 4
-		{Op: OpSignalGet, Value: "activeTab", Type: TypeInt},                                       // 5
-		{Op: OpLitInt, Value: "1", Type: TypeInt},                                                  // 6
-		{Op: OpEq, Operands: []ExprID{5, 6}, Type: TypeBool},                                      // 7
+		{Op: OpLitInt, Value: "0", Type: TypeInt},                                                                  // 0
+		{Op: OpSignalGet, Value: "activeTab", Type: TypeInt},                                                       // 1
+		{Op: OpLitInt, Value: "0", Type: TypeInt},                                                                  // 2
+		{Op: OpEq, Operands: []ExprID{1, 2}, Type: TypeBool},                                                       // 3
+		{Op: OpLitString, Value: "About: GoSX is a Go-native web platform.", Type: TypeString},                     // 4
+		{Op: OpSignalGet, Value: "activeTab", Type: TypeInt},                                                       // 5
+		{Op: OpLitInt, Value: "1", Type: TypeInt},                                                                  // 6
+		{Op: OpEq, Operands: []ExprID{5, 6}, Type: TypeBool},                                                       // 7
 		{Op: OpLitString, Value: "Features: Server-first rendering, island hydration, signals.", Type: TypeString}, // 8
-		{Op: OpLitString, Value: "Contact: github.com/odvcencio/gosx", Type: TypeString},           // 9
-		{Op: OpCond, Operands: []ExprID{7, 8, 9}, Type: TypeString},                               // 10
-		{Op: OpCond, Operands: []ExprID{3, 4, 10}, Type: TypeString},                              // 11
-		{Op: OpSignalSet, Operands: []ExprID{13}, Value: "activeTab", Type: TypeInt},               // 12
-		{Op: OpLitInt, Value: "0", Type: TypeInt},                                                  // 13
-		{Op: OpSignalSet, Operands: []ExprID{15}, Value: "activeTab", Type: TypeInt},               // 14
-		{Op: OpLitInt, Value: "1", Type: TypeInt},                                                  // 15
-		{Op: OpSignalSet, Operands: []ExprID{17}, Value: "activeTab", Type: TypeInt},               // 16
-		{Op: OpLitInt, Value: "2", Type: TypeInt},                                                  // 17
+		{Op: OpLitString, Value: "Contact: github.com/odvcencio/gosx", Type: TypeString},                           // 9
+		{Op: OpCond, Operands: []ExprID{7, 8, 9}, Type: TypeString},                                                // 10
+		{Op: OpCond, Operands: []ExprID{3, 4, 10}, Type: TypeString},                                               // 11
+		{Op: OpSignalSet, Operands: []ExprID{13}, Value: "activeTab", Type: TypeInt},                               // 12
+		{Op: OpLitInt, Value: "0", Type: TypeInt},                                                                  // 13
+		{Op: OpSignalSet, Operands: []ExprID{15}, Value: "activeTab", Type: TypeInt},                               // 14
+		{Op: OpLitInt, Value: "1", Type: TypeInt},                                                                  // 15
+		{Op: OpSignalSet, Operands: []ExprID{17}, Value: "activeTab", Type: TypeInt},                               // 16
+		{Op: OpLitInt, Value: "2", Type: TypeInt},                                                                  // 17
 		// CSS class toggling — dynamic "tab-btn active" / "tab-btn" per button
-		{Op: OpSignalGet, Value: "activeTab", Type: TypeInt},                                       // 18
-		{Op: OpLitInt, Value: "0", Type: TypeInt},                                                  // 19
-		{Op: OpEq, Operands: []ExprID{18, 19}, Type: TypeBool},                                    // 20
-		{Op: OpLitString, Value: "tab-btn active", Type: TypeString},                               // 21
-		{Op: OpLitString, Value: "tab-btn", Type: TypeString},                                      // 22
-		{Op: OpCond, Operands: []ExprID{20, 21, 22}, Type: TypeString},                            // 23
-		{Op: OpSignalGet, Value: "activeTab", Type: TypeInt},                                       // 24
-		{Op: OpLitInt, Value: "1", Type: TypeInt},                                                  // 25
-		{Op: OpEq, Operands: []ExprID{24, 25}, Type: TypeBool},                                    // 26
-		{Op: OpCond, Operands: []ExprID{26, 21, 22}, Type: TypeString},                            // 27
-		{Op: OpSignalGet, Value: "activeTab", Type: TypeInt},                                       // 28
-		{Op: OpLitInt, Value: "2", Type: TypeInt},                                                  // 29
-		{Op: OpEq, Operands: []ExprID{28, 29}, Type: TypeBool},                                    // 30
-		{Op: OpCond, Operands: []ExprID{30, 21, 22}, Type: TypeString},                            // 31
+		{Op: OpSignalGet, Value: "activeTab", Type: TypeInt},           // 18
+		{Op: OpLitInt, Value: "0", Type: TypeInt},                      // 19
+		{Op: OpEq, Operands: []ExprID{18, 19}, Type: TypeBool},         // 20
+		{Op: OpLitString, Value: "tab-btn active", Type: TypeString},   // 21
+		{Op: OpLitString, Value: "tab-btn", Type: TypeString},          // 22
+		{Op: OpCond, Operands: []ExprID{20, 21, 22}, Type: TypeString}, // 23
+		{Op: OpSignalGet, Value: "activeTab", Type: TypeInt},           // 24
+		{Op: OpLitInt, Value: "1", Type: TypeInt},                      // 25
+		{Op: OpEq, Operands: []ExprID{24, 25}, Type: TypeBool},         // 26
+		{Op: OpCond, Operands: []ExprID{26, 21, 22}, Type: TypeString}, // 27
+		{Op: OpSignalGet, Value: "activeTab", Type: TypeInt},           // 28
+		{Op: OpLitInt, Value: "2", Type: TypeInt},                      // 29
+		{Op: OpEq, Operands: []ExprID{28, 29}, Type: TypeBool},         // 30
+		{Op: OpCond, Operands: []ExprID{30, 21, 22}, Type: TypeString}, // 31
 	}
 
 	// Nodes:
@@ -210,17 +210,17 @@ func ToggleProgram() *Program {
 	//   9: SignalGet "visible"                   — read visible (for not, keydown)
 	//  10: OpNot [9]                             — !visible (keydown)
 	exprs := []Expr{
-		{Op: OpLitBool, Value: "false", Type: TypeBool},                               // 0
-		{Op: OpSignalGet, Value: "visible", Type: TypeBool},                           // 1
-		{Op: OpLitString, Value: "This content is now visible!", Type: TypeString},     // 2
-		{Op: OpLitString, Value: "", Type: TypeString},                                // 3
-		{Op: OpCond, Operands: []ExprID{1, 2, 3}, Type: TypeString},                  // 4
-		{Op: OpSignalSet, Operands: []ExprID{7}, Value: "visible", Type: TypeBool},    // 5
-		{Op: OpSignalGet, Value: "visible", Type: TypeBool},                           // 6
-		{Op: OpNot, Operands: []ExprID{6}, Type: TypeBool},                            // 7
-		{Op: OpSignalSet, Operands: []ExprID{10}, Value: "visible", Type: TypeBool},   // 8
-		{Op: OpSignalGet, Value: "visible", Type: TypeBool},                           // 9
-		{Op: OpNot, Operands: []ExprID{9}, Type: TypeBool},                            // 10
+		{Op: OpLitBool, Value: "false", Type: TypeBool},                             // 0
+		{Op: OpSignalGet, Value: "visible", Type: TypeBool},                         // 1
+		{Op: OpLitString, Value: "This content is now visible!", Type: TypeString},  // 2
+		{Op: OpLitString, Value: "", Type: TypeString},                              // 3
+		{Op: OpCond, Operands: []ExprID{1, 2, 3}, Type: TypeString},                 // 4
+		{Op: OpSignalSet, Operands: []ExprID{7}, Value: "visible", Type: TypeBool},  // 5
+		{Op: OpSignalGet, Value: "visible", Type: TypeBool},                         // 6
+		{Op: OpNot, Operands: []ExprID{6}, Type: TypeBool},                          // 7
+		{Op: OpSignalSet, Operands: []ExprID{10}, Value: "visible", Type: TypeBool}, // 8
+		{Op: OpSignalGet, Value: "visible", Type: TypeBool},                         // 9
+		{Op: OpNot, Operands: []ExprID{9}, Type: TypeBool},                          // 10
 	}
 
 	// Nodes:
@@ -248,8 +248,8 @@ func ToggleProgram() *Program {
 			Children: []NodeID{4},
 		},
 		{ // 2: p wrapper for conditional content
-			Kind: NodeElement,
-			Tag:  "p",
+			Kind:     NodeElement,
+			Tag:      "p",
 			Children: []NodeID{3},
 		},
 		{ // 3: expr node — conditional content
@@ -309,23 +309,23 @@ func TodoProgram() *Program {
 	//  15: SignalSet "items" <- [16]            — clearAll: items = ""
 	//  16: LitString ""                         — literal ""
 	exprs := []Expr{
-		{Op: OpLitString, Value: "", Type: TypeString},                                   // 0
-		{Op: OpLitString, Value: "", Type: TypeString},                                   // 1
-		{Op: OpSignalGet, Value: "input", Type: TypeString},                              // 2
-		{Op: OpSignalGet, Value: "items", Type: TypeString},                              // 3
-		{Op: OpSignalSet, Operands: []ExprID{6}, Value: "input", Type: TypeString},       // 4
-		{Op: OpSignalGet, Value: "input", Type: TypeString},                              // 5
-		{Op: OpConcat, Operands: []ExprID{5, 7}, Type: TypeString},                      // 6
-		{Op: OpLitString, Value: "a", Type: TypeString},                                  // 7
-		{Op: OpSignalSet, Operands: []ExprID{12}, Value: "items", Type: TypeString},      // 8
-		{Op: OpSignalSet, Operands: []ExprID{10}, Value: "input", Type: TypeString},      // 9
-		{Op: OpLitString, Value: "", Type: TypeString},                                   // 10
-		{Op: OpSignalGet, Value: "items", Type: TypeString},                              // 11
-		{Op: OpConcat, Operands: []ExprID{11, 13, 14}, Type: TypeString},                // 12
-		{Op: OpLitString, Value: ",", Type: TypeString},                                  // 13
-		{Op: OpSignalGet, Value: "input", Type: TypeString},                              // 14
-		{Op: OpSignalSet, Operands: []ExprID{16}, Value: "items", Type: TypeString},      // 15
-		{Op: OpLitString, Value: "", Type: TypeString},                                   // 16
+		{Op: OpLitString, Value: "", Type: TypeString},                              // 0
+		{Op: OpLitString, Value: "", Type: TypeString},                              // 1
+		{Op: OpSignalGet, Value: "input", Type: TypeString},                         // 2
+		{Op: OpSignalGet, Value: "items", Type: TypeString},                         // 3
+		{Op: OpSignalSet, Operands: []ExprID{6}, Value: "input", Type: TypeString},  // 4
+		{Op: OpSignalGet, Value: "input", Type: TypeString},                         // 5
+		{Op: OpConcat, Operands: []ExprID{5, 7}, Type: TypeString},                  // 6
+		{Op: OpLitString, Value: "a", Type: TypeString},                             // 7
+		{Op: OpSignalSet, Operands: []ExprID{12}, Value: "items", Type: TypeString}, // 8
+		{Op: OpSignalSet, Operands: []ExprID{10}, Value: "input", Type: TypeString}, // 9
+		{Op: OpLitString, Value: "", Type: TypeString},                              // 10
+		{Op: OpSignalGet, Value: "items", Type: TypeString},                         // 11
+		{Op: OpConcat, Operands: []ExprID{11, 13, 14}, Type: TypeString},            // 12
+		{Op: OpLitString, Value: ",", Type: TypeString},                             // 13
+		{Op: OpSignalGet, Value: "input", Type: TypeString},                         // 14
+		{Op: OpSignalSet, Operands: []ExprID{16}, Value: "items", Type: TypeString}, // 15
+		{Op: OpLitString, Value: "", Type: TypeString},                              // 16
 	}
 
 	// Nodes:
@@ -467,26 +467,26 @@ func FormProgram() *Program {
 	//  18: LitString ""                         — literal ""
 	//  19: OpNeq [17, 18]                       — name != ""
 	exprs := []Expr{
-		{Op: OpLitString, Value: "", Type: TypeString},                                     // 0
-		{Op: OpLitBool, Value: "false", Type: TypeBool},                                    // 1
-		{Op: OpSignalGet, Value: "name", Type: TypeString},                                 // 2
-		{Op: OpSignalGet, Value: "valid", Type: TypeBool},                                  // 3
-		{Op: OpLitString, Value: "Form is valid \u2713", Type: TypeString},                 // 4
-		{Op: OpLitString, Value: "Please fill in name", Type: TypeString},                  // 5
-		{Op: OpCond, Operands: []ExprID{3, 4, 5}, Type: TypeString},                       // 6
-		{Op: OpEventGet, Value: "value", Type: TypeString},                                 // 7
-		{Op: OpSignalSet, Operands: []ExprID{7}, Value: "name", Type: TypeString},          // 8
-		{Op: OpSignalSet, Operands: []ExprID{13}, Value: "name", Type: TypeString},         // 9
-		{Op: OpSignalGet, Value: "name", Type: TypeString},                                 // 10
-		{Op: OpLitString, Value: "", Type: TypeString},                                     // 11
-		{Op: OpEq, Operands: []ExprID{10, 11}, Type: TypeBool},                            // 12
-		{Op: OpCond, Operands: []ExprID{12, 14, 15}, Type: TypeString},                    // 13
-		{Op: OpLitString, Value: "Alice", Type: TypeString},                                // 14
-		{Op: OpLitString, Value: "", Type: TypeString},                                     // 15
-		{Op: OpSignalSet, Operands: []ExprID{19}, Value: "valid", Type: TypeBool},          // 16
-		{Op: OpSignalGet, Value: "name", Type: TypeString},                                 // 17
-		{Op: OpLitString, Value: "", Type: TypeString},                                     // 18
-		{Op: OpNeq, Operands: []ExprID{17, 18}, Type: TypeBool},                           // 19
+		{Op: OpLitString, Value: "", Type: TypeString},                             // 0
+		{Op: OpLitBool, Value: "false", Type: TypeBool},                            // 1
+		{Op: OpSignalGet, Value: "name", Type: TypeString},                         // 2
+		{Op: OpSignalGet, Value: "valid", Type: TypeBool},                          // 3
+		{Op: OpLitString, Value: "Form is valid \u2713", Type: TypeString},         // 4
+		{Op: OpLitString, Value: "Please fill in name", Type: TypeString},          // 5
+		{Op: OpCond, Operands: []ExprID{3, 4, 5}, Type: TypeString},                // 6
+		{Op: OpEventGet, Value: "value", Type: TypeString},                         // 7
+		{Op: OpSignalSet, Operands: []ExprID{7}, Value: "name", Type: TypeString},  // 8
+		{Op: OpSignalSet, Operands: []ExprID{13}, Value: "name", Type: TypeString}, // 9
+		{Op: OpSignalGet, Value: "name", Type: TypeString},                         // 10
+		{Op: OpLitString, Value: "", Type: TypeString},                             // 11
+		{Op: OpEq, Operands: []ExprID{10, 11}, Type: TypeBool},                     // 12
+		{Op: OpCond, Operands: []ExprID{12, 14, 15}, Type: TypeString},             // 13
+		{Op: OpLitString, Value: "Alice", Type: TypeString},                        // 14
+		{Op: OpLitString, Value: "", Type: TypeString},                             // 15
+		{Op: OpSignalSet, Operands: []ExprID{19}, Value: "valid", Type: TypeBool},  // 16
+		{Op: OpSignalGet, Value: "name", Type: TypeString},                         // 17
+		{Op: OpLitString, Value: "", Type: TypeString},                             // 18
+		{Op: OpNeq, Operands: []ExprID{17, 18}, Type: TypeBool},                    // 19
 	}
 
 	// Nodes:
@@ -663,27 +663,27 @@ func DerivedProgram() *Program {
 	//  19: LitInt "10"                          — literal 10
 	//  20: OpCond [18, 19, 17]                  — discount==0 ? 10 : 0 (reuses expr[17])
 	exprs := []Expr{
-		{Op: OpLitInt, Value: "100", Type: TypeInt},                                     // 0
-		{Op: OpLitInt, Value: "1", Type: TypeInt},                                       // 1
-		{Op: OpLitInt, Value: "0", Type: TypeInt},                                       // 2
-		{Op: OpSignalGet, Value: "price", Type: TypeInt},                                // 3
-		{Op: OpSignalGet, Value: "quantity", Type: TypeInt},                             // 4
-		{Op: OpSignalGet, Value: "discount", Type: TypeInt},                             // 5
-		{Op: OpSignalGet, Value: "price", Type: TypeInt},                                // 6
-		{Op: OpSignalGet, Value: "quantity", Type: TypeInt},                             // 7
-		{Op: OpMul, Operands: []ExprID{6, 7}, Type: TypeInt},                           // 8
-		{Op: OpSignalGet, Value: "discount", Type: TypeInt},                             // 9
-		{Op: OpSub, Operands: []ExprID{8, 9}, Type: TypeInt},                           // 10
-		{Op: OpSignalSet, Operands: []ExprID{14}, Value: "quantity", Type: TypeInt},     // 11
-		{Op: OpSignalGet, Value: "quantity", Type: TypeInt},                             // 12
-		{Op: OpLitInt, Value: "1", Type: TypeInt},                                       // 13
-		{Op: OpAdd, Operands: []ExprID{12, 13}, Type: TypeInt},                         // 14
-		{Op: OpSignalSet, Operands: []ExprID{20}, Value: "discount", Type: TypeInt},     // 15
-		{Op: OpSignalGet, Value: "discount", Type: TypeInt},                             // 16
-		{Op: OpLitInt, Value: "0", Type: TypeInt},                                       // 17
-		{Op: OpEq, Operands: []ExprID{16, 17}, Type: TypeBool},                         // 18
-		{Op: OpLitInt, Value: "10", Type: TypeInt},                                      // 19
-		{Op: OpCond, Operands: []ExprID{18, 19, 17}, Type: TypeInt},                    // 20
+		{Op: OpLitInt, Value: "100", Type: TypeInt},                                 // 0
+		{Op: OpLitInt, Value: "1", Type: TypeInt},                                   // 1
+		{Op: OpLitInt, Value: "0", Type: TypeInt},                                   // 2
+		{Op: OpSignalGet, Value: "price", Type: TypeInt},                            // 3
+		{Op: OpSignalGet, Value: "quantity", Type: TypeInt},                         // 4
+		{Op: OpSignalGet, Value: "discount", Type: TypeInt},                         // 5
+		{Op: OpSignalGet, Value: "price", Type: TypeInt},                            // 6
+		{Op: OpSignalGet, Value: "quantity", Type: TypeInt},                         // 7
+		{Op: OpMul, Operands: []ExprID{6, 7}, Type: TypeInt},                        // 8
+		{Op: OpSignalGet, Value: "discount", Type: TypeInt},                         // 9
+		{Op: OpSub, Operands: []ExprID{8, 9}, Type: TypeInt},                        // 10
+		{Op: OpSignalSet, Operands: []ExprID{14}, Value: "quantity", Type: TypeInt}, // 11
+		{Op: OpSignalGet, Value: "quantity", Type: TypeInt},                         // 12
+		{Op: OpLitInt, Value: "1", Type: TypeInt},                                   // 13
+		{Op: OpAdd, Operands: []ExprID{12, 13}, Type: TypeInt},                      // 14
+		{Op: OpSignalSet, Operands: []ExprID{20}, Value: "discount", Type: TypeInt}, // 15
+		{Op: OpSignalGet, Value: "discount", Type: TypeInt},                         // 16
+		{Op: OpLitInt, Value: "0", Type: TypeInt},                                   // 17
+		{Op: OpEq, Operands: []ExprID{16, 17}, Type: TypeBool},                      // 18
+		{Op: OpLitInt, Value: "10", Type: TypeInt},                                  // 19
+		{Op: OpCond, Operands: []ExprID{18, 19, 17}, Type: TypeInt},                 // 20
 	}
 
 	// Nodes:
@@ -870,16 +870,16 @@ func CounterProgram() *Program {
 	//   8: SignalGet "count"       — reads count (for add)
 	//   9: LitInt "1"              — literal 1 (for add)
 	exprs := []Expr{
-		{Op: OpSignalGet, Value: "count", Type: TypeInt},                          // 0
-		{Op: OpLitInt, Value: "0", Type: TypeInt},                                 // 1
-		{Op: OpSignalSet, Operands: []ExprID{4}, Value: "count", Type: TypeInt},   // 2
-		{Op: OpSignalSet, Operands: []ExprID{5}, Value: "count", Type: TypeInt},   // 3
-		{Op: OpSub, Operands: []ExprID{6, 7}, Type: TypeInt},                     // 4
-		{Op: OpAdd, Operands: []ExprID{8, 9}, Type: TypeInt},                     // 5
-		{Op: OpSignalGet, Value: "count", Type: TypeInt},                          // 6
-		{Op: OpLitInt, Value: "1", Type: TypeInt},                                 // 7
-		{Op: OpSignalGet, Value: "count", Type: TypeInt},                          // 8
-		{Op: OpLitInt, Value: "1", Type: TypeInt},                                 // 9
+		{Op: OpSignalGet, Value: "count", Type: TypeInt},                        // 0
+		{Op: OpLitInt, Value: "0", Type: TypeInt},                               // 1
+		{Op: OpSignalSet, Operands: []ExprID{4}, Value: "count", Type: TypeInt}, // 2
+		{Op: OpSignalSet, Operands: []ExprID{5}, Value: "count", Type: TypeInt}, // 3
+		{Op: OpSub, Operands: []ExprID{6, 7}, Type: TypeInt},                    // 4
+		{Op: OpAdd, Operands: []ExprID{8, 9}, Type: TypeInt},                    // 5
+		{Op: OpSignalGet, Value: "count", Type: TypeInt},                        // 6
+		{Op: OpLitInt, Value: "1", Type: TypeInt},                               // 7
+		{Op: OpSignalGet, Value: "count", Type: TypeInt},                        // 8
+		{Op: OpLitInt, Value: "1", Type: TypeInt},                               // 9
 	}
 
 	// Nodes:
@@ -1115,32 +1115,32 @@ func ListProgram() *Program {
 	//  21: LitInt "0"                          — literal 0
 	//  22: SignalSet "count" <- [21]           — count = 0
 	exprs := []Expr{
-		{Op: OpLitString, Value: "", Type: TypeString},                                    // 0
-		{Op: OpLitString, Value: "", Type: TypeString},                                    // 1
-		{Op: OpLitInt, Value: "0", Type: TypeInt},                                         // 2
-		{Op: OpSignalGet, Value: "items", Type: TypeString},                               // 3
-		{Op: OpSignalGet, Value: "count", Type: TypeInt},                                  // 4
+		{Op: OpLitString, Value: "", Type: TypeString},      // 0
+		{Op: OpLitString, Value: "", Type: TypeString},      // 1
+		{Op: OpLitInt, Value: "0", Type: TypeInt},           // 2
+		{Op: OpSignalGet, Value: "items", Type: TypeString}, // 3
+		{Op: OpSignalGet, Value: "count", Type: TypeInt},    // 4
 		// addItem handler
-		{Op: OpEventGet, Value: "value", Type: TypeString},                                // 5
-		{Op: OpSignalGet, Value: "items", Type: TypeString},                               // 6
-		{Op: OpLitString, Value: ",", Type: TypeString},                                   // 7
-		{Op: OpConcat, Operands: []ExprID{6, 7}, Type: TypeString},                       // 8
-		{Op: OpConcat, Operands: []ExprID{8, 5}, Type: TypeString},                       // 9
-		{Op: OpSignalSet, Operands: []ExprID{9}, Value: "items", Type: TypeString},        // 10
-		{Op: OpSignalGet, Value: "count", Type: TypeInt},                                  // 11
-		{Op: OpLitInt, Value: "1", Type: TypeInt},                                         // 12
-		{Op: OpAdd, Operands: []ExprID{11, 12}, Type: TypeInt},                           // 13
-		{Op: OpSignalSet, Operands: []ExprID{13}, Value: "count", Type: TypeInt},          // 14
+		{Op: OpEventGet, Value: "value", Type: TypeString},                         // 5
+		{Op: OpSignalGet, Value: "items", Type: TypeString},                        // 6
+		{Op: OpLitString, Value: ",", Type: TypeString},                            // 7
+		{Op: OpConcat, Operands: []ExprID{6, 7}, Type: TypeString},                 // 8
+		{Op: OpConcat, Operands: []ExprID{8, 5}, Type: TypeString},                 // 9
+		{Op: OpSignalSet, Operands: []ExprID{9}, Value: "items", Type: TypeString}, // 10
+		{Op: OpSignalGet, Value: "count", Type: TypeInt},                           // 11
+		{Op: OpLitInt, Value: "1", Type: TypeInt},                                  // 12
+		{Op: OpAdd, Operands: []ExprID{11, 12}, Type: TypeInt},                     // 13
+		{Op: OpSignalSet, Operands: []ExprID{13}, Value: "count", Type: TypeInt},   // 14
 		// removeLastItem handler
-		{Op: OpSignalGet, Value: "count", Type: TypeInt},                                  // 15
-		{Op: OpLitInt, Value: "1", Type: TypeInt},                                         // 16
-		{Op: OpSub, Operands: []ExprID{15, 16}, Type: TypeInt},                           // 17
-		{Op: OpSignalSet, Operands: []ExprID{17}, Value: "count", Type: TypeInt},          // 18
+		{Op: OpSignalGet, Value: "count", Type: TypeInt},                         // 15
+		{Op: OpLitInt, Value: "1", Type: TypeInt},                                // 16
+		{Op: OpSub, Operands: []ExprID{15, 16}, Type: TypeInt},                   // 17
+		{Op: OpSignalSet, Operands: []ExprID{17}, Value: "count", Type: TypeInt}, // 18
 		// clearItems handler
-		{Op: OpLitString, Value: "", Type: TypeString},                                    // 19
-		{Op: OpSignalSet, Operands: []ExprID{19}, Value: "items", Type: TypeString},       // 20
-		{Op: OpLitInt, Value: "0", Type: TypeInt},                                         // 21
-		{Op: OpSignalSet, Operands: []ExprID{21}, Value: "count", Type: TypeInt},          // 22
+		{Op: OpLitString, Value: "", Type: TypeString},                              // 19
+		{Op: OpSignalSet, Operands: []ExprID{19}, Value: "items", Type: TypeString}, // 20
+		{Op: OpLitInt, Value: "0", Type: TypeInt},                                   // 21
+		{Op: OpSignalSet, Operands: []ExprID{21}, Value: "count", Type: TypeInt},    // 22
 	}
 
 	// Nodes:

@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/odvcencio/gosx"
+	"github.com/odvcencio/gosx/buildmanifest"
 	"github.com/odvcencio/gosx/ir"
 	"github.com/odvcencio/gosx/island/program"
 )
@@ -18,40 +19,11 @@ import (
 // BuildManifest describes all build outputs for deployment.
 // The server reads this at startup to generate page manifests with
 // correct content-hashed asset URLs.
-type BuildManifest struct {
-	// Runtime assets (Tier 2: immutable, CDN-cached)
-	Runtime RuntimeAssets `json:"runtime"`
-
-	// Island programs (Tier 3: immutable, CDN-cached, per-island)
-	Islands []IslandAsset `json:"islands"`
-
-	// CSS assets (Tier 3: immutable, CDN-cached)
-	CSS []CSSAsset `json:"css"`
-}
-
-type RuntimeAssets struct {
-	WASM      HashedAsset `json:"wasm"`
-	WASMExec  HashedAsset `json:"wasmExec"`
-	Bootstrap HashedAsset `json:"bootstrap"`
-	Patch     HashedAsset `json:"patch"`
-}
-
-type IslandAsset struct {
-	Name   string `json:"name"`
-	Format string `json:"format"` // "json" or "bin"
-	HashedAsset
-}
-
-type CSSAsset struct {
-	Component string `json:"component"`
-	HashedAsset
-}
-
-type HashedAsset struct {
-	File string `json:"file"` // content-hashed filename
-	Hash string `json:"hash"` // sha256 short hash
-	Size int64  `json:"size"` // bytes
-}
+type BuildManifest = buildmanifest.Manifest
+type RuntimeAssets = buildmanifest.RuntimeAssets
+type IslandAsset = buildmanifest.IslandAsset
+type CSSAsset = buildmanifest.CSSAsset
+type HashedAsset = buildmanifest.HashedAsset
 
 // contentHash returns the first 8 hex chars of sha256.
 func contentHash(data []byte) string {
@@ -102,7 +74,9 @@ func RunBuild(dir string, dev bool) error {
 	cssDir := filepath.Join(distDir, "assets", "css")
 
 	for _, d := range []string{runtimeDir, islandDir, cssDir, filepath.Join(distDir, "server")} {
-		os.MkdirAll(d, 0755)
+		if err := os.MkdirAll(d, 0755); err != nil {
+			return fmt.Errorf("create output directory %s: %w", d, err)
+		}
 	}
 
 	manifest := BuildManifest{}
@@ -117,9 +91,9 @@ func RunBuild(dir string, dev bool) error {
 	// ── Tier 1: Compile .gsx files ──────────────────────────────────────
 
 	var gsxFiles []string
-	filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+	if err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
-			return nil
+			return err
 		}
 		// Skip dist/ and build/ directories
 		if info.IsDir() && (info.Name() == "dist" || info.Name() == "build") {
@@ -129,7 +103,9 @@ func RunBuild(dir string, dev bool) error {
 			gsxFiles = append(gsxFiles, path)
 		}
 		return nil
-	})
+	}); err != nil {
+		return fmt.Errorf("walk source tree: %w", err)
+	}
 
 	fmt.Printf("  Sources: %d .gsx files\n", len(gsxFiles))
 
@@ -241,7 +217,9 @@ func RunBuild(dir string, dev bool) error {
 				optTmp := wasmTmp + ".opt"
 				optCmd := exec.Command(woptPath, "-Oz", wasmTmp, "-o", optTmp)
 				if optCmd.Run() == nil {
-					os.Rename(optTmp, wasmTmp)
+					if err := os.Rename(optTmp, wasmTmp); err != nil {
+						return fmt.Errorf("rename optimized wasm: %w", err)
+					}
 					fmt.Println("    Applied wasm-opt -Oz")
 				}
 			}
@@ -256,20 +234,27 @@ func RunBuild(dir string, dev bool) error {
 		cmd.Dir = moduleRoot
 		cmd.Stderr = os.Stderr
 		if err := cmd.Run(); err != nil {
-			fmt.Printf("    WASM build failed: %v\n", err)
+			return fmt.Errorf("go wasm build failed: %w", err)
 		}
 	}
 
-	if wasmData, err := os.ReadFile(wasmTmp); err == nil {
-		asset, _ := writeHashed(runtimeDir, "gosx-runtime", ".wasm", wasmData)
-		manifest.Runtime.WASM = asset
-		os.Remove(wasmTmp)
-		compiler := "Go"
-		if usedTinyGo {
-			compiler = "TinyGo"
-		}
-		gzEst := gzip_c_len(wasmData)
-		fmt.Printf("    %s (%d bytes, %dKB gz, built with %s)\n", asset.File, asset.Size, gzEst/1024, compiler)
+	wasmData, err := os.ReadFile(wasmTmp)
+	if err != nil {
+		return fmt.Errorf("read compiled WASM: %w", err)
+	}
+	asset, err := writeHashed(runtimeDir, "gosx-runtime", ".wasm", wasmData)
+	if err != nil {
+		return fmt.Errorf("write wasm asset: %w", err)
+	}
+	manifest.Runtime.WASM = asset
+	compiler := "Go"
+	if usedTinyGo {
+		compiler = "TinyGo"
+	}
+	gzEst := gzip_c_len(wasmData)
+	fmt.Printf("    %s (%d bytes, %dKB gz, built with %s)\n", asset.File, asset.Size, gzEst/1024, compiler)
+	if err := os.Remove(wasmTmp); err != nil {
+		return fmt.Errorf("remove temporary WASM artifact: %w", err)
 	}
 
 	// wasm_exec.js — use TinyGo's version if we built with TinyGo
@@ -281,7 +266,10 @@ func RunBuild(dir string, dev bool) error {
 			tinygoRoot := strings.TrimSpace(string(out))
 			tryPath := filepath.Join(tinygoRoot, "targets", "wasm_exec.js")
 			if data, err := os.ReadFile(tryPath); err == nil {
-				asset, _ := writeHashed(runtimeDir, "wasm_exec", ".js", data)
+				asset, err := writeHashed(runtimeDir, "wasm_exec", ".js", data)
+				if err != nil {
+					return fmt.Errorf("write wasm_exec.js: %w", err)
+				}
 				manifest.Runtime.WASMExec = asset
 				fmt.Printf("    %s (%d bytes, TinyGo)\n", asset.File, asset.Size)
 				wasmExecFound = true
@@ -295,12 +283,19 @@ func RunBuild(dir string, dev bool) error {
 			filepath.Join(goroot, "misc", "wasm", "wasm_exec.js"),
 		} {
 			if data, err := os.ReadFile(tryPath); err == nil {
-				asset, _ := writeHashed(runtimeDir, "wasm_exec", ".js", data)
+				asset, err := writeHashed(runtimeDir, "wasm_exec", ".js", data)
+				if err != nil {
+					return fmt.Errorf("write wasm_exec.js: %w", err)
+				}
 				manifest.Runtime.WASMExec = asset
 				fmt.Printf("    %s (%d bytes)\n", asset.File, asset.Size)
+				wasmExecFound = true
 				break
 			}
 		}
+	}
+	if !wasmExecFound {
+		return fmt.Errorf("unable to locate wasm_exec.js")
 	}
 
 	// bootstrap.js and patch.js
@@ -314,19 +309,26 @@ func RunBuild(dir string, dev bool) error {
 	} {
 		data, err := os.ReadFile(js.path)
 		if err != nil {
-			fmt.Printf("    Warning: %s not found at %s\n", js.name, js.path)
-			continue
+			return fmt.Errorf("read %s: %w", js.path, err)
 		}
-		asset, _ := writeHashed(runtimeDir, js.name, ".js", data)
+		asset, err := writeHashed(runtimeDir, js.name, ".js", data)
+		if err != nil {
+			return fmt.Errorf("write %s: %w", js.name, err)
+		}
 		*js.dest = asset
 		fmt.Printf("    %s (%d bytes)\n", asset.File, asset.Size)
 	}
 
 	// ── Build manifest ──────────────────────────────────────────────────
 
-	manifestJSON, _ := json.MarshalIndent(manifest, "", "  ")
+	manifestJSON, err := json.MarshalIndent(manifest, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal manifest: %w", err)
+	}
 	manifestPath := filepath.Join(distDir, "build.json")
-	os.WriteFile(manifestPath, manifestJSON, 0644)
+	if err := os.WriteFile(manifestPath, manifestJSON, 0644); err != nil {
+		return fmt.Errorf("write manifest: %w", err)
+	}
 
 	// ── Summary ─────────────────────────────────────────────────────────
 

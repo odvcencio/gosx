@@ -3,7 +3,7 @@ package vm
 // PatchOp describes a single DOM patch operation produced by the diff engine.
 type PatchOp struct {
 	Kind     PatchKind `json:"kind"`
-	Path     string    `json:"path"`               // e.g. "0/2/1"
+	Path     string    `json:"path"` // e.g. "0/2/1"
 	Tag      string    `json:"tag,omitempty"`
 	Text     string    `json:"text,omitempty"`
 	AttrName string    `json:"attrName,omitempty"`

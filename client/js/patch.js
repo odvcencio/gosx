@@ -229,7 +229,7 @@
         break;
 
       case PATCH_SET_HTML:
-        target.innerHTML = op.text;
+        applySetHTML(target, op);
         break;
 
       default:
@@ -373,6 +373,14 @@
    */
   function applySetValue(target, op) {
     setInputValue(target, op.text);
+  }
+
+  /**
+   * Kind 8 — SetHTML:
+   * assign as text content to avoid HTML injection from malformed patch data.
+   */
+  function applySetHTML(target, op) {
+    target.textContent = op.text == null ? "" : String(op.text);
   }
 
   // ---------------------------------------------------------------------------

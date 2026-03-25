@@ -15,11 +15,11 @@ func TestProgramBasicFields(t *testing.T) {
 			{Kind: NodeElement, Tag: "div"},
 			{Kind: NodeText, Text: "hello"},
 		},
-		Root:   0,
-		Exprs:  []Expr{{Op: OpLitString, Value: "hello", Type: TypeString}},
-		Signals: []SignalDef{{Name: "count", Type: TypeInt, Init: 0}},
-		Computeds: []ComputedDef{{Name: "double", Type: TypeInt, Expr: 0}},
-		Handlers: []Handler{{Name: "click", Body: []ExprID{0}}},
+		Root:       0,
+		Exprs:      []Expr{{Op: OpLitString, Value: "hello", Type: TypeString}},
+		Signals:    []SignalDef{{Name: "count", Type: TypeInt, Init: 0}},
+		Computeds:  []ComputedDef{{Name: "double", Type: TypeInt, Expr: 0}},
+		Handlers:   []Handler{{Name: "click", Body: []ExprID{0}}},
 		StaticMask: []bool{true, false},
 	}
 

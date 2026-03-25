@@ -22,6 +22,13 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+const (
+	maxMessageSize = 64 * 1024
+	readWait       = 60 * time.Second
+	writeWait      = 10 * time.Second
+	pingPeriod     = (readWait * 9) / 10
+)
+
 // Hub is a long-lived server-side coordinator for realtime state.
 type Hub struct {
 	name    string
@@ -56,10 +63,10 @@ type HandlerFunc func(ctx *Context)
 
 // Context is passed to hub event handlers.
 type Context struct {
-	Client  *Client
-	Hub     *Hub
-	Event   string
-	Data    json.RawMessage
+	Client *Client
+	Hub    *Hub
+	Event  string
+	Data   json.RawMessage
 }
 
 // Presence tracks connected clients.
@@ -70,9 +77,9 @@ type Presence struct {
 
 // ClientInfo describes a connected client.
 type ClientInfo struct {
-	ID        string    `json:"id"`
-	JoinedAt  time.Time `json:"joinedAt"`
-	Meta      map[string]string `json:"meta,omitempty"`
+	ID       string            `json:"id"`
+	JoinedAt time.Time         `json:"joinedAt"`
+	Meta     map[string]string `json:"meta,omitempty"`
 }
 
 // Message is the WebSocket wire format.
@@ -209,6 +216,15 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		log.Printf("[hub/%s] upgrade error: %v", h.name, err)
 		return
 	}
+	conn.SetReadLimit(maxMessageSize)
+	if err := conn.SetReadDeadline(time.Now().Add(readWait)); err != nil {
+		log.Printf("[hub/%s] set read deadline error: %v", h.name, err)
+		conn.Close()
+		return
+	}
+	conn.SetPongHandler(func(string) error {
+		return conn.SetReadDeadline(time.Now().Add(readWait))
+	})
 
 	clientID := generateClientID(h.name)
 	client := &Client{
@@ -256,8 +272,14 @@ func (c *Client) readPump() {
 	}()
 
 	for {
+		if err := c.conn.SetReadDeadline(time.Now().Add(readWait)); err != nil {
+			break
+		}
 		_, data, err := c.conn.ReadMessage()
 		if err != nil {
+			if !websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure, websocket.CloseNormalClosure) {
+				log.Printf("[hub/%s] read error: %v", c.Hub.name, err)
+			}
 			break
 		}
 
@@ -282,14 +304,37 @@ func (c *Client) readPump() {
 }
 
 func (c *Client) writePump() {
-	defer c.conn.Close()
+	ticker := time.NewTicker(pingPeriod)
+	defer func() {
+		ticker.Stop()
+		c.conn.Close()
+	}()
 
-	for msg := range c.send {
-		c.mu.Lock()
-		err := c.conn.WriteMessage(websocket.TextMessage, msg)
-		c.mu.Unlock()
-		if err != nil {
-			break
+	for {
+		select {
+		case msg, ok := <-c.send:
+			c.conn.SetWriteDeadline(time.Now().Add(writeWait))
+			c.mu.Lock()
+			if !ok {
+				// The send channel was closed.
+				_ = c.conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
+				c.mu.Unlock()
+				return
+			}
+
+			err := c.conn.WriteMessage(websocket.TextMessage, msg)
+			c.mu.Unlock()
+			if err != nil {
+				return
+			}
+		case <-ticker.C:
+			c.conn.SetWriteDeadline(time.Now().Add(writeWait))
+			c.mu.Lock()
+			err := c.conn.WriteMessage(websocket.PingMessage, nil)
+			c.mu.Unlock()
+			if err != nil {
+				return
+			}
 		}
 	}
 }

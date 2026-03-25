@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/odvcencio/gosx"
 )
@@ -64,7 +65,15 @@ func (a *App) Build() http.Handler {
 // ListenAndServe starts the HTTP server.
 func (a *App) ListenAndServe(addr string) error {
 	handler := a.Build()
-	return http.ListenAndServe(addr, handler)
+	srv := &http.Server{
+		Addr:              addr,
+		Handler:           handler,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      45 * time.Second,
+		IdleTimeout:       120 * time.Second,
+	}
+	return srv.ListenAndServe()
 }
 
 // HTMLDocument wraps content in a full HTML5 document.

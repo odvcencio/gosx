@@ -161,14 +161,14 @@ func TestReconcileSelectValueChange(t *testing.T) {
 func TestReconcileChildPath(t *testing.T) {
 	// Root div with two children: a span (text "old"->"new") and a static span
 	prev := &ResolvedTree{Nodes: []ResolvedNode{
-		{Tag: "div", Children: []int{1, 2}},    // node 0: root
-		{Tag: "span", Text: "old"},               // node 1: dynamic child
-		{Tag: "span", Text: "static"},             // node 2: static child
+		{Tag: "div", Children: []int{1, 2}}, // node 0: root
+		{Tag: "span", Text: "old"},          // node 1: dynamic child
+		{Tag: "span", Text: "static"},       // node 2: static child
 	}}
 	next := &ResolvedTree{Nodes: []ResolvedNode{
-		{Tag: "div", Children: []int{1, 2}},    // node 0: root
-		{Tag: "span", Text: "new"},               // node 1: changed
-		{Tag: "span", Text: "static"},             // node 2: unchanged
+		{Tag: "div", Children: []int{1, 2}}, // node 0: root
+		{Tag: "span", Text: "new"},          // node 1: changed
+		{Tag: "span", Text: "static"},       // node 2: unchanged
 	}}
 	ops := ReconcileTrees(prev, next, []bool{false, false, true})
 	if len(ops) != 1 {
@@ -188,14 +188,14 @@ func TestReconcileChildPath(t *testing.T) {
 func TestReconcileNestedPath(t *testing.T) {
 	// Root -> child0 -> grandchild0 (text change)
 	prev := &ResolvedTree{Nodes: []ResolvedNode{
-		{Tag: "div", Children: []int{1}},      // node 0: root
-		{Tag: "div", Children: []int{2}},      // node 1: child
-		{Tag: "span", Text: "old"},             // node 2: grandchild
+		{Tag: "div", Children: []int{1}}, // node 0: root
+		{Tag: "div", Children: []int{2}}, // node 1: child
+		{Tag: "span", Text: "old"},       // node 2: grandchild
 	}}
 	next := &ResolvedTree{Nodes: []ResolvedNode{
-		{Tag: "div", Children: []int{1}},      // node 0: root
-		{Tag: "div", Children: []int{2}},      // node 1: child
-		{Tag: "span", Text: "new"},             // node 2: grandchild
+		{Tag: "div", Children: []int{1}}, // node 0: root
+		{Tag: "div", Children: []int{2}}, // node 1: child
+		{Tag: "span", Text: "new"},       // node 2: grandchild
 	}}
 	ops := ReconcileTrees(prev, next, []bool{false, false, false})
 	if len(ops) != 1 {

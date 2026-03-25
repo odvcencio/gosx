@@ -104,8 +104,9 @@ func (r *htmlRenderer) renderNode(b *strings.Builder, nodeID ir.NodeID, depth in
 
 func (r *htmlRenderer) renderElement(b *strings.Builder, node *ir.Node, depth int) {
 	r.writeIndent(b, depth)
+	safeTag := html.EscapeString(node.Tag)
 	b.WriteByte('<')
-	b.WriteString(node.Tag)
+	b.WriteString(safeTag)
 
 	// Render attributes
 	r.renderAttrs(b, node.Attrs)
@@ -133,7 +134,7 @@ func (r *htmlRenderer) renderElement(b *strings.Builder, node *ir.Node, depth in
 	}
 
 	b.WriteString("</")
-	b.WriteString(node.Tag)
+	b.WriteString(safeTag)
 	b.WriteByte('>')
 }
 
@@ -200,16 +201,17 @@ func (r *htmlRenderer) renderFragment(b *strings.Builder, node *ir.Node, depth i
 
 func (r *htmlRenderer) renderAttrs(b *strings.Builder, attrs []ir.Attr) {
 	for _, attr := range attrs {
+		safeName := html.EscapeString(attr.Name)
 		switch attr.Kind {
 		case ir.AttrStatic:
-			fmt.Fprintf(b, ` %s="%s"`, attr.Name, html.EscapeString(attr.Value))
+			fmt.Fprintf(b, ` %s="%s"`, safeName, html.EscapeString(attr.Value))
 		case ir.AttrExpr:
 			if r.opts.Eval != nil {
 				val := r.opts.Eval(attr.Expr)
-				fmt.Fprintf(b, ` %s="%s"`, attr.Name, html.EscapeString(val))
+				fmt.Fprintf(b, ` %s="%s"`, safeName, html.EscapeString(val))
 			}
 		case ir.AttrBool:
-			fmt.Fprintf(b, " %s", attr.Name)
+			fmt.Fprintf(b, " %s", safeName)
 		case ir.AttrSpread:
 			// Spread attributes need runtime evaluation - skip in static render
 		}

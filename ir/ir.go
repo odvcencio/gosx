@@ -103,7 +103,7 @@ type HandlerInfo struct {
 type NodeKind uint8
 
 const (
-	NodeElement    NodeKind = iota // HTML element (<div>, <span>, etc.)
+	NodeElement   NodeKind = iota // HTML element (<div>, <span>, etc.)
 	NodeComponent                 // GoSX component (<Counter />, etc.)
 	NodeText                      // Static text content
 	NodeExpr                      // Go expression hole {expr}
@@ -143,10 +143,10 @@ type Node struct {
 type AttrKind uint8
 
 const (
-	AttrStatic  AttrKind = iota // Static string value: class="counter"
-	AttrExpr                    // Expression value: onClick={handler}
-	AttrBool                    // Boolean attribute: disabled
-	AttrSpread                  // Spread: {...props}
+	AttrStatic AttrKind = iota // Static string value: class="counter"
+	AttrExpr                   // Expression value: onClick={handler}
+	AttrBool                   // Boolean attribute: disabled
+	AttrSpread                 // Spread: {...props}
 )
 
 // Attr represents a single attribute on an element or component.

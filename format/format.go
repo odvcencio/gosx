@@ -7,8 +7,8 @@ package format
 import (
 	"strings"
 
-	gotreesitter "github.com/odvcencio/gotreesitter"
 	"github.com/odvcencio/gosx"
+	gotreesitter "github.com/odvcencio/gotreesitter"
 )
 
 // Source formats a GoSX source file.
@@ -36,9 +36,9 @@ type Options struct {
 }
 
 type formatter struct {
-	src    []byte
-	lang   *gotreesitter.Language
-	indent string
+	src      []byte
+	lang     *gotreesitter.Language
+	indent   string
 	maxWidth int
 }
 

@@ -12,6 +12,7 @@ GoSX is in active development. The compiler pipeline, server rendering, and isla
 - `//gosx:island` directive detection on components
 - Compiler pipeline: parse → flat-array IR → validate → lower to IslandProgram → serialize
 - Body analyzer: compiler extracts signals, computeds, and handlers from `.gsx` source (proven by TestCompilerE2E_CounterFromSource)
+- Zero-manual-wiring islands: `.gsx` island → `LowerIsland` → `RenderIslandFromProgram` → auto `EventSlot`s and server-rendered `data-gosx-on-*` attributes
 - Server-side HTML rendering via the `Node` API
 - Signal system with `Signal[T]`, `Computed[T]`, `Effect`, and `Batch`
 - Expression VM evaluating typed opcodes (40+ operations)
@@ -38,6 +39,8 @@ GoSX is in active development. The compiler pipeline, server rendering, and isla
 package main
 
 import (
+    "net/http"
+
     "github.com/odvcencio/gosx"
     "github.com/odvcencio/gosx/server"
 )
@@ -76,6 +79,19 @@ func Counter(props CounterProps) Node {
 ```
 
 The `//gosx:island` directive marks a component for client-side hydration. Island components are compiled to IslandPrograms — compact, VM-oriented representations with typed expression opcodes. Server components render to static HTML with zero client-side JavaScript.
+
+The fully automatic path is now:
+
+```go
+irProg, _ := gosx.Compile(source)
+islandProg, _ := ir.LowerIsland(irProg, 0)
+
+renderer := island.NewRenderer("main")
+renderer.SetProgramDir("/gosx/islands")
+node := renderer.RenderIslandFromProgram(islandProg, nil)
+```
+
+That emits server HTML with delegated event attributes such as `data-gosx-on-click="increment"` and auto-populates manifest `EventSlot`s and `ProgramRef`.
 
 ## Architecture
 
@@ -167,13 +183,48 @@ GoSX supports a three-tier deploy strategy:
 
 One: [gotreesitter](https://github.com/odvcencio/gotreesitter) — a clean-room reimplementation of tree-sitter in Go.
 
-## Testing
+## Testing and Tooling
+
+The repo now exposes a repeatable local/CI surface through `make`:
 
 ```bash
-go test ./...
+# Full package test pass
+make test
+
+# Data-race pass across the repo
+make test-race
+
+# Run js/wasm tests against the shipped client/wasm entrypoint
+make test-wasm
+
+# CI-grade verification: format check, tests, race tests, CLI build, WASM build
+make ci
 ```
 
-14 packages, 287 tests. The end-to-end pipeline test at `test/gsx_pipeline_test.go` proves the full flow from `.gsx` source through to island hydration.
+Key checks:
+
+- `make test` runs `go test ./...` across the compiler, runtime, routing, server, actions, hubs, and end-to-end pipeline tests.
+- `make test-race` runs the same suite with the Go race detector enabled.
+- `make test-wasm` runs `GOOS=js GOARCH=wasm go test ./client/wasm` so client correctness is exercised through the actual exported WASM runtime functions.
+- `make build-cli` ensures `cmd/gosx` continues to compile.
+- `make build-runtime` builds the shared WASM runtime from `client/wasm`.
+- `.github/workflows/ci.yml` runs the same contract on every push and pull request.
+
+Action-specific hardening is covered by regression tests for:
+
+- JSON bodies with `application/json; charset=utf-8`
+- invalid JSON requests
+- oversized JSON requests
+- oversized form submissions
+- path fallback when router `PathValue` support is not present
+
+Client correctness is covered at three layers:
+
+- pure Go VM and bridge tests in `client/vm` and `client/bridge`
+- end-to-end compiler-to-bridge tests in `test/frontend_pipeline_test.go`
+- js/wasm runtime tests in `client/wasm/main_test.go` that compile `.gsx` islands, hydrate through `__gosx_hydrate`, dispatch through `__gosx_action`, and assert the emitted patch stream
+
+Additional manual commands:
 
 ```bash
 # Build the WASM runtime (standard Go)

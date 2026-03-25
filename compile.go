@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"sync"
 
-	gotreesitter "github.com/odvcencio/gotreesitter"
 	"github.com/odvcencio/gosx/ir"
+	gotreesitter "github.com/odvcencio/gotreesitter"
 )
 
 // Cached language to avoid regenerating on every compilation.

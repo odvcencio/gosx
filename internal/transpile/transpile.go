@@ -12,8 +12,8 @@ import (
 	"fmt"
 	"strings"
 
-	gotreesitter "github.com/odvcencio/gotreesitter"
 	"github.com/odvcencio/gosx"
+	gotreesitter "github.com/odvcencio/gotreesitter"
 )
 
 // Options controls transpiler behavior.

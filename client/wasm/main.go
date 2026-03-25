@@ -9,10 +9,7 @@ import (
 	"github.com/odvcencio/gosx/highlight"
 )
 
-func main() {
-	b := bridge.New()
-
-	// Export hydrate function
+func registerRuntime(b *bridge.Bridge) {
 	js.Global().Set("__gosx_hydrate", js.FuncOf(func(this js.Value, args []js.Value) any {
 		if len(args) < 5 {
 			return js.ValueOf("error: need 5 args (islandID, componentName, propsJSON, programData, format)")
@@ -27,10 +24,13 @@ func main() {
 		if args[3].Type() == js.TypeString {
 			programData = []byte(args[3].String())
 		} else {
-			// Uint8Array
-			length := args[3].Get("length").Int()
+			uint8Array := args[3]
+			if args[3].InstanceOf(js.Global().Get("ArrayBuffer")) {
+				uint8Array = js.Global().Get("Uint8Array").New(args[3])
+			}
+			length := uint8Array.Get("length").Int()
 			programData = make([]byte, length)
-			js.CopyBytesToGo(programData, args[3])
+			js.CopyBytesToGo(programData, uint8Array)
 		}
 
 		err := b.HydrateIsland(islandID, componentName, propsJSON, programData, format)
@@ -52,7 +52,7 @@ func main() {
 		patches, err := b.DispatchAction(islandID, handlerName, eventDataJSON)
 		if err != nil {
 			js.Global().Get("console").Call("error", "[gosx/wasm] dispatch error:", err.Error())
-			return js.Null()
+			return js.ValueOf("error: " + err.Error())
 		}
 
 		if len(patches) > 0 {
@@ -84,12 +84,19 @@ func main() {
 		highlighted := highlight.Go(source)
 		return js.ValueOf(highlighted)
 	}))
+}
 
-	// Signal that runtime is ready
+func notifyRuntimeReady() {
 	readyFn := js.Global().Get("__gosx_runtime_ready")
 	if readyFn.Truthy() {
 		readyFn.Invoke()
 	}
+}
+
+func main() {
+	b := bridge.New()
+	registerRuntime(b)
+	notifyRuntimeReady()
 
 	// Block forever — WASM must not exit
 	select {}

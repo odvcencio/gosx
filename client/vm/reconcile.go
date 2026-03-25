@@ -107,8 +107,8 @@ func childrenHaveKeys(prev, next *ResolvedTree, pn, nn *ResolvedNode) bool {
 // minimal move/insert/remove operations instead of rewriting everything.
 func reconcileKeyedChildren(ops *[]PatchOp, prev, next *ResolvedTree, pn, nn *ResolvedNode, path string, staticMask []bool) {
 	// Build key → position map for prev children
-	prevByKey := make(map[string]int)      // key → prev child index
-	prevByKeyNode := make(map[string]int)  // key → node index in prev.Nodes
+	prevByKey := make(map[string]int)     // key → prev child index
+	prevByKeyNode := make(map[string]int) // key → node index in prev.Nodes
 	for i, childIdx := range pn.Children {
 		if childIdx < len(prev.Nodes) && prev.Nodes[childIdx].Key != "" {
 			prevByKey[prev.Nodes[childIdx].Key] = i

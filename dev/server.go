@@ -17,6 +17,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/odvcencio/gosx"
 )
 
 // Server is the GoSX development server.
@@ -119,7 +121,15 @@ func (s *Server) ListenAndServe() error {
 
 	addr := s.Addr
 	log.Printf("[gosx dev] starting at http://localhost%s", addr)
-	return http.ListenAndServe(addr, mux)
+	srv := &http.Server{
+		Addr:              addr,
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      45 * time.Second,
+		IdleTimeout:       120 * time.Second,
+	}
+	return srv.ListenAndServe()
 }
 
 // handleSSE sends server-sent events for hot reload.
@@ -146,7 +156,7 @@ func (s *Server) handleSSE(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	// Send initial connected event
-	fmt.Fprintf(w, "event: connected\ndata: {\"version\":\"0.1.0\"}\n\n")
+	fmt.Fprintf(w, "event: connected\ndata: {\"version\":%q}\n\n", gosx.Version)
 	flusher.Flush()
 
 	for {
@@ -163,7 +173,7 @@ func (s *Server) handleSSE(w http.ResponseWriter, r *http.Request) {
 // handleInfo returns dev server information.
 func (s *Server) handleInfo(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprintf(w, `{"version":"0.1.0","dir":%q,"lastBuild":%q}`, s.Dir, s.lastBuild.Format(time.RFC3339))
+	fmt.Fprintf(w, `{"version":%q,"dir":%q,"lastBuild":%q}`, gosx.Version, s.Dir, s.lastBuild.Format(time.RFC3339))
 }
 
 // devMiddleware injects the hot-reload script into HTML responses.
@@ -176,8 +186,17 @@ func (s *Server) devMiddleware(next http.Handler) http.Handler {
 		next.ServeHTTP(rec, r)
 
 		body := rec.body.String()
+
+		if rec.statusCode == 0 {
+			rec.statusCode = http.StatusOK
+		}
+
+		contentType := rec.Header().Get("Content-Type")
+		shouldInject := rec.statusCode < 400 && (contentType == "" || strings.Contains(contentType, "text/html"))
+
 		// Inject dev script before </body> or at the end
-		devScript := `<script>
+		if shouldInject {
+			devScript := `<script>
 (function(){
   const es = new EventSource("/gosx/dev/events");
   es.addEventListener("reload", function() { location.reload(); });
@@ -188,13 +207,15 @@ func (s *Server) devMiddleware(next http.Handler) http.Handler {
 })();
 </script>`
 
-		if idx := strings.LastIndex(body, "</body>"); idx >= 0 {
-			body = body[:idx] + devScript + "\n" + body[idx:]
-		} else {
-			body += devScript
+			if idx := strings.LastIndex(body, "</body>"); idx >= 0 {
+				body = body[:idx] + devScript + "\n" + body[idx:]
+			} else {
+				body += devScript
+			}
 		}
 
 		w.Header().Set("Content-Length", fmt.Sprintf("%d", len(body)))
+		w.WriteHeader(rec.statusCode)
 		w.Write([]byte(body))
 	})
 }
@@ -266,6 +287,9 @@ type responseRecorder struct {
 }
 
 func (r *responseRecorder) Write(b []byte) (int, error) {
+	if r.statusCode == 0 {
+		r.statusCode = http.StatusOK
+	}
 	return r.body.Write(b)
 }
 

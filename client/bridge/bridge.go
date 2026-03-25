@@ -10,11 +10,11 @@ import (
 
 // Bridge manages active island instances and shared state.
 type Bridge struct {
-	islands      map[string]*vm.Island
-	store        *Store
-	patchFn      func(islandID, patchJSON string) // callback to push patches to JS
-	dispatching  string                            // ID of the island currently dispatching
-	unsubs       map[string][]func()               // per-island unsubscribe handles for shared signals
+	islands     map[string]*vm.Island
+	store       *Store
+	patchFn     func(islandID, patchJSON string) // callback to push patches to JS
+	dispatching string                           // ID of the island currently dispatching
+	unsubs      map[string][]func()              // per-island unsubscribe handles for shared signals
 }
 
 // SetPatchCallback registers the function called when shared signal changes
@@ -84,6 +84,15 @@ func (b *Bridge) HydrateIsland(id, componentName, propsJSON string, programData 
 	prog, err := DecodeProgram(programData, format)
 	if err != nil {
 		return fmt.Errorf("decode program %q: %w", componentName, err)
+	}
+	if propsJSON == "" {
+		propsJSON = "{}"
+	}
+	if !json.Valid([]byte(propsJSON)) {
+		return fmt.Errorf("invalid props JSON for %q", componentName)
+	}
+	if _, exists := b.islands[id]; exists {
+		b.DisposeIsland(id)
 	}
 
 	island := vm.NewIsland(prog, propsJSON)

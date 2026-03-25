@@ -569,9 +569,9 @@ func TestVMSignalSetMissing(t *testing.T) {
 func TestVMOpMap(t *testing.T) {
 	// Build an array [1, 2, 3] via props, then map: _item * 2
 	prog := progFromExprs([]program.Expr{
-		{Op: program.OpPropGet, Value: "nums", Type: program.TypeAny},      // 0: the array
-		{Op: program.OpPropGet, Value: "_item", Type: program.TypeInt},     // 1: current item
-		{Op: program.OpLitInt, Value: "2", Type: program.TypeInt},          // 2: literal 2
+		{Op: program.OpPropGet, Value: "nums", Type: program.TypeAny},                // 0: the array
+		{Op: program.OpPropGet, Value: "_item", Type: program.TypeInt},               // 1: current item
+		{Op: program.OpLitInt, Value: "2", Type: program.TypeInt},                    // 2: literal 2
 		{Op: program.OpMul, Operands: []program.ExprID{1, 2}, Type: program.TypeInt}, // 3: _item * 2
 		{Op: program.OpMap, Operands: []program.ExprID{0, 3}, Type: program.TypeAny}, // 4: map(nums, _item*2)
 	})
@@ -593,12 +593,12 @@ func TestVMOpMap(t *testing.T) {
 func TestVMOpFilter(t *testing.T) {
 	// Filter [1, 2, 3, 4] keeping even: _item % 2 == 0
 	prog := progFromExprs([]program.Expr{
-		{Op: program.OpPropGet, Value: "nums", Type: program.TypeAny},       // 0: array
-		{Op: program.OpPropGet, Value: "_item", Type: program.TypeInt},      // 1: _item
-		{Op: program.OpLitInt, Value: "2", Type: program.TypeInt},           // 2: literal 2
-		{Op: program.OpMod, Operands: []program.ExprID{1, 2}, Type: program.TypeInt},  // 3: _item % 2
-		{Op: program.OpLitInt, Value: "0", Type: program.TypeInt},           // 4: literal 0
-		{Op: program.OpEq, Operands: []program.ExprID{3, 4}, Type: program.TypeBool},  // 5: _item%2 == 0
+		{Op: program.OpPropGet, Value: "nums", Type: program.TypeAny},                   // 0: array
+		{Op: program.OpPropGet, Value: "_item", Type: program.TypeInt},                  // 1: _item
+		{Op: program.OpLitInt, Value: "2", Type: program.TypeInt},                       // 2: literal 2
+		{Op: program.OpMod, Operands: []program.ExprID{1, 2}, Type: program.TypeInt},    // 3: _item % 2
+		{Op: program.OpLitInt, Value: "0", Type: program.TypeInt},                       // 4: literal 0
+		{Op: program.OpEq, Operands: []program.ExprID{3, 4}, Type: program.TypeBool},    // 5: _item%2 == 0
 		{Op: program.OpFilter, Operands: []program.ExprID{0, 5}, Type: program.TypeAny}, // 6: filter
 	})
 	props := map[string]Value{
@@ -618,8 +618,8 @@ func TestVMOpFilter(t *testing.T) {
 
 func TestVMOpContainsString(t *testing.T) {
 	prog := progFromExprs([]program.Expr{
-		{Op: program.OpLitString, Value: "hello world", Type: program.TypeString}, // 0
-		{Op: program.OpLitString, Value: "world", Type: program.TypeString},       // 1
+		{Op: program.OpLitString, Value: "hello world", Type: program.TypeString},          // 0
+		{Op: program.OpLitString, Value: "world", Type: program.TypeString},                // 1
 		{Op: program.OpContains, Operands: []program.ExprID{0, 1}, Type: program.TypeBool}, // 2
 	})
 	vm := NewVM(prog, nil)
@@ -633,7 +633,7 @@ func TestVMOpContainsString(t *testing.T) {
 
 func TestVMOpToUpper(t *testing.T) {
 	prog := progFromExprs([]program.Expr{
-		{Op: program.OpLitString, Value: "hello", Type: program.TypeString}, // 0
+		{Op: program.OpLitString, Value: "hello", Type: program.TypeString},              // 0
 		{Op: program.OpToUpper, Operands: []program.ExprID{0}, Type: program.TypeString}, // 1
 	})
 	vm := NewVM(prog, nil)
@@ -647,8 +647,8 @@ func TestVMOpToUpper(t *testing.T) {
 
 func TestVMOpSplitJoinRoundTrip(t *testing.T) {
 	prog := progFromExprs([]program.Expr{
-		{Op: program.OpLitString, Value: "a,b,c", Type: program.TypeString},              // 0
-		{Op: program.OpSplit, Operands: []program.ExprID{0}, Value: ",", Type: program.TypeAny}, // 1: split by ","
+		{Op: program.OpLitString, Value: "a,b,c", Type: program.TypeString},                       // 0
+		{Op: program.OpSplit, Operands: []program.ExprID{0}, Value: ",", Type: program.TypeAny},   // 1: split by ","
 		{Op: program.OpJoin, Operands: []program.ExprID{1}, Value: ",", Type: program.TypeString}, // 2: join by ","
 	})
 	vm := NewVM(prog, nil)

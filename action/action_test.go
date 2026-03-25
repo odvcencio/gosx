@@ -1,6 +1,7 @@
 package action
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -41,10 +42,35 @@ func TestRegistryList(t *testing.T) {
 
 func TestRegistryHTTP(t *testing.T) {
 	r := NewRegistry()
-	r.Register("greet", func(ctx *Context) error { return nil })
+	r.Register("greet", func(ctx *Context) error {
+		if string(ctx.Payload) != `{}` {
+			t.Fatalf("expected payload to be decoded, got %s", string(ctx.Payload))
+		}
+		return nil
+	})
 
 	req := httptest.NewRequest("POST", "/gosx/action/greet", strings.NewReader(`{}`))
 	req.Header.Set("Content-Type", "application/json")
+	req.SetPathValue("name", "greet")
+	w := httptest.NewRecorder()
+
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+}
+
+func TestRegistryHTTPContentTypeCharset(t *testing.T) {
+	r := NewRegistry()
+	r.Register("greet", func(ctx *Context) error {
+		if string(ctx.Payload) != `{"message":"hi"}` {
+			t.Fatalf("expected payload to be decoded, got %s", string(ctx.Payload))
+		}
+		return nil
+	})
+
+	req := httptest.NewRequest("POST", "/gosx/action/greet", strings.NewReader(`{"message":"hi"}`))
+	req.Header.Set("Content-Type", "application/json; charset=utf-8")
 	req.SetPathValue("name", "greet")
 	w := httptest.NewRecorder()
 
@@ -87,6 +113,93 @@ func TestRegistryHTTPMethodNotAllowed(t *testing.T) {
 	r.ServeHTTP(w, req)
 	if w.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("expected 405, got %d", w.Code)
+	}
+}
+
+func TestRegistryHTTPFallbackPathExtraction(t *testing.T) {
+	r := NewRegistry()
+	r.Register("greet", func(ctx *Context) error { return nil })
+
+	req := httptest.NewRequest("POST", "/gosx/action/greet", strings.NewReader(`{}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+}
+
+func TestRegistryHTTPInvalidJSON(t *testing.T) {
+	r := NewRegistry()
+	r.Register("greet", func(ctx *Context) error { return nil })
+
+	req := httptest.NewRequest("POST", "/gosx/action/greet", strings.NewReader(`{"broken"`))
+	req.Header.Set("Content-Type", "application/json")
+	req.SetPathValue("name", "greet")
+	w := httptest.NewRecorder()
+
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", w.Code)
+	}
+}
+
+func TestRegistryHTTPOversizedJSON(t *testing.T) {
+	r := NewRegistry()
+	r.Register("greet", func(ctx *Context) error { return nil })
+
+	body, err := json.Marshal(map[string]string{
+		"payload": strings.Repeat("a", maxActionBodyBytes),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest("POST", "/gosx/action/greet", strings.NewReader(string(body)))
+	req.Header.Set("Content-Type", "application/json")
+	req.SetPathValue("name", "greet")
+	w := httptest.NewRecorder()
+
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("expected 413, got %d", w.Code)
+	}
+}
+
+func TestRegistryHTTPOversizedForm(t *testing.T) {
+	r := NewRegistry()
+	r.Register("submit", func(ctx *Context) error { return nil })
+
+	form := "name=" + strings.Repeat("a", maxActionBodyBytes+1)
+	req := httptest.NewRequest("POST", "/gosx/action/submit", strings.NewReader(form))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.SetPathValue("name", "submit")
+	w := httptest.NewRecorder()
+
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("expected 413, got %d", w.Code)
+	}
+}
+
+func TestRegistryHTTPFormData(t *testing.T) {
+	r := NewRegistry()
+	r.Register("submit", func(ctx *Context) error {
+		if got := ctx.FormData["name"]; got != "Ada" {
+			t.Fatalf("expected form value Ada, got %q", got)
+		}
+		return nil
+	})
+
+	req := httptest.NewRequest("POST", "/gosx/action/submit", strings.NewReader("name=Ada"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.SetPathValue("name", "submit")
+	w := httptest.NewRecorder()
+
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
 	}
 }
 

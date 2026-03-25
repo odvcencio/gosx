@@ -95,7 +95,7 @@ func LowerIsland(prog *Program, compIdx int) (*program.Program, error) {
 			for _, stmtSource := range handler.Statements {
 				stmtExprs, stmtID, err := ParseExpr(stmtSource, scope)
 				if err != nil {
-					continue // skip unparseable statements
+					return nil, fmt.Errorf("parse handler %s statement %q: %w", handler.Name, stmtSource, err)
 				}
 				stmtID = l.appendExprs(stmtExprs, stmtID)
 				h.Body = append(h.Body, stmtID)

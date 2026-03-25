@@ -7,10 +7,20 @@ package action
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
+	"strings"
 	"sync"
 )
+
+const maxActionBodyBytes = 1024 * 1024
+
+func isBodyTooLarge(err error) bool {
+	var maxErr *http.MaxBytesError
+	return errors.As(err, &maxErr)
+}
 
 // Handler is a server-side action handler.
 type Handler func(ctx *Context) error
@@ -88,14 +98,26 @@ func (r *Registry) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 	name := req.PathValue("name")
 	if name == "" {
-		// Fallback: extract from URL path
-		name = req.URL.Path[len("/gosx/action/"):]
+		// Fallback: extract from URL path (for routers without PathValue support).
+		const prefix = "/gosx/action/"
+		if !strings.HasPrefix(req.URL.Path, prefix) {
+			http.Error(w, "invalid action path", http.StatusBadRequest)
+			return
+		}
+		name = strings.TrimPrefix(req.URL.Path, prefix)
+		if name == "" {
+			http.Error(w, "action name required", http.StatusBadRequest)
+			return
+		}
 	}
 
 	if !r.Has(name) {
 		http.Error(w, fmt.Sprintf("action %q not found", name), http.StatusNotFound)
 		return
 	}
+
+	req.Body = http.MaxBytesReader(w, req.Body, maxActionBodyBytes)
+	defer req.Body.Close()
 
 	ctx := &Context{
 		Request:  req,
@@ -104,17 +126,31 @@ func (r *Registry) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 	// Parse form data or JSON body
 	contentType := req.Header.Get("Content-Type")
-	if contentType == "application/json" {
+	if strings.HasPrefix(contentType, "application/json") {
 		var payload json.RawMessage
-		if err := json.NewDecoder(req.Body).Decode(&payload); err == nil {
-			ctx.Payload = payload
+		decoder := json.NewDecoder(req.Body)
+		if err := decoder.Decode(&payload); err != nil && !errors.Is(err, io.EOF) {
+			if isBodyTooLarge(err) {
+				http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
+				return
+			}
+			http.Error(w, "invalid json body", http.StatusBadRequest)
+			return
 		}
+		ctx.Payload = payload
 	} else {
-		if err := req.ParseForm(); err == nil {
-			for k, v := range req.Form {
-				if len(v) > 0 {
-					ctx.FormData[k] = v[0]
-				}
+		if err := req.ParseForm(); err != nil {
+			if isBodyTooLarge(err) {
+				http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
+				return
+			}
+			http.Error(w, "invalid form body", http.StatusBadRequest)
+			return
+		}
+
+		for k, v := range req.Form {
+			if len(v) > 0 {
+				ctx.FormData[k] = v[0]
 			}
 		}
 	}

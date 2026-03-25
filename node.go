@@ -19,7 +19,7 @@ type Node struct {
 type nodeKind uint8
 
 const (
-	kindElement  nodeKind = iota
+	kindElement nodeKind = iota
 	kindText
 	kindExpr
 	kindFragment
@@ -117,8 +117,9 @@ func RenderHTML(n Node) string {
 func renderNodeHTML(b *strings.Builder, n Node) {
 	switch n.kind {
 	case kindElement:
+		safeTag := html.EscapeString(n.tag)
 		b.WriteByte('<')
-		b.WriteString(n.tag)
+		b.WriteString(safeTag)
 		for _, attr := range n.attrs {
 			renderAttrHTML(b, attr)
 		}
@@ -131,7 +132,7 @@ func renderNodeHTML(b *strings.Builder, n Node) {
 			renderNodeHTML(b, child)
 		}
 		b.WriteString("</")
-		b.WriteString(n.tag)
+		b.WriteString(safeTag)
 		b.WriteByte('>')
 
 	case kindText:
@@ -151,16 +152,17 @@ func renderNodeHTML(b *strings.Builder, n Node) {
 }
 
 func renderAttrHTML(b *strings.Builder, attr nodeAttr) {
+	safeName := html.EscapeString(attr.name)
 	switch v := attr.value.(type) {
 	case bool:
 		if v {
 			b.WriteByte(' ')
-			b.WriteString(attr.name)
+			b.WriteString(safeName)
 		}
 	case string:
-		fmt.Fprintf(b, ` %s="%s"`, attr.name, html.EscapeString(v))
+		fmt.Fprintf(b, ` %s="%s"`, safeName, html.EscapeString(v))
 	default:
-		fmt.Fprintf(b, ` %s="%s"`, attr.name, html.EscapeString(fmt.Sprint(v)))
+		fmt.Fprintf(b, ` %s="%s"`, safeName, html.EscapeString(fmt.Sprint(v)))
 	}
 }
 
