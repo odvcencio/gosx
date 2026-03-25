@@ -1,6 +1,10 @@
 package vm
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/odvcencio/gosx/island/program"
+)
 
 func TestReconcileTextChange(t *testing.T) {
 	prev := &ResolvedTree{Nodes: []ResolvedNode{
@@ -399,6 +403,75 @@ func TestReconcileKeyedStableUpdate(t *testing.T) {
 		if op.Kind != PatchSetText {
 			t.Fatalf("expected SetText, got kind %d", op.Kind)
 		}
+	}
+}
+
+func TestReconcileAutoKeysFromIteration(t *testing.T) {
+	// When items are rendered inside an iteration (_index set),
+	// they should get auto-generated keys even without explicit key= attr.
+	prog := &program.Program{
+		Name: "AutoKey",
+		Nodes: []program.Node{
+			{Kind: program.NodeElement, Tag: "ul", Children: []program.NodeID{1, 2, 3}},
+			{Kind: program.NodeElement, Tag: "li", Children: []program.NodeID{4}},
+			{Kind: program.NodeElement, Tag: "li", Children: []program.NodeID{5}},
+			{Kind: program.NodeElement, Tag: "li", Children: []program.NodeID{6}},
+			{Kind: program.NodeText, Text: "A"},
+			{Kind: program.NodeText, Text: "B"},
+			{Kind: program.NodeText, Text: "C"},
+		},
+		Root:       0,
+		Exprs:      []program.Expr{},
+		StaticMask: []bool{false, false, false, false, true, true, true},
+	}
+
+	vm := NewVM(prog, nil)
+
+	// Simulate iteration context — set _index like OpMap does
+	vm.props["_index"] = IntVal(0)
+	tree1 := vm.resolveNode(prog.Nodes[1]) // first li
+	vm.props["_index"] = IntVal(1)
+	tree2 := vm.resolveNode(prog.Nodes[2]) // second li
+
+	// Both should have auto-generated keys
+	if tree1.Key == "" {
+		t.Fatal("expected auto-key for li[0] inside iteration")
+	}
+	if tree2.Key == "" {
+		t.Fatal("expected auto-key for li[1] inside iteration")
+	}
+	if tree1.Key == tree2.Key {
+		t.Fatalf("auto-keys should be unique: got %q and %q", tree1.Key, tree2.Key)
+	}
+	t.Logf("Auto-keys: li[0]=%q, li[1]=%q", tree1.Key, tree2.Key)
+
+	// Without iteration context — no auto-key
+	delete(vm.props, "_index")
+	tree3 := vm.resolveNode(prog.Nodes[1])
+	if tree3.Key != "" {
+		t.Fatalf("expected no auto-key outside iteration, got %q", tree3.Key)
+	}
+}
+
+func TestReconcileExplicitKeyOverridesAuto(t *testing.T) {
+	prog := &program.Program{
+		Name: "ExplicitKey",
+		Nodes: []program.Node{
+			{Kind: program.NodeElement, Tag: "li", Attrs: []program.Attr{
+				{Kind: program.AttrStatic, Name: "key", Value: "my-key"},
+			}},
+		},
+		Root:       0,
+		Exprs:      []program.Expr{},
+		StaticMask: []bool{false},
+	}
+
+	vm := NewVM(prog, nil)
+	vm.props["_index"] = IntVal(5) // inside iteration
+
+	node := vm.resolveNode(prog.Nodes[0])
+	if node.Key != "my-key" {
+		t.Fatalf("explicit key should override auto-key, got %q", node.Key)
 	}
 }
 

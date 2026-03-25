@@ -1,6 +1,7 @@
 package vm
 
 import (
+	"fmt"
 	"strconv"
 
 	"github.com/odvcencio/gosx/island/program"
@@ -401,18 +402,21 @@ func (vm *VM) resolveNode(node program.Node) ResolvedNode {
 		rn.Text = vm.Eval(node.Expr).String()
 	case program.NodeElement:
 		rn.Attrs = make([]ResolvedAttr, 0, len(node.Attrs))
+		hasExplicitKey := false
 		for _, attr := range node.Attrs {
 			switch attr.Kind {
 			case program.AttrStatic:
 				if attr.Name == "key" {
-					rn.Key = attr.Value // extract key for list diffing
-					continue            // don't emit key as a DOM attribute
+					rn.Key = attr.Value
+					hasExplicitKey = true
+					continue
 				}
 				rn.Attrs = append(rn.Attrs, ResolvedAttr{Name: attr.Name, Value: attr.Value})
 			case program.AttrExpr:
 				val := vm.Eval(attr.Expr).String()
 				if attr.Name == "key" {
 					rn.Key = val
+					hasExplicitKey = true
 					continue
 				}
 				rn.Attrs = append(rn.Attrs, ResolvedAttr{Name: attr.Name, Value: val})
@@ -420,6 +424,22 @@ func (vm *VM) resolveNode(node program.Node) ResolvedNode {
 				rn.Attrs = append(rn.Attrs, ResolvedAttr{Name: attr.Name, Value: ""})
 			case program.AttrEvent:
 				// Events are handled by delegation, not resolved into attrs.
+			}
+		}
+
+		// Auto-key: if we're inside an iteration context (_index is set)
+		// and no explicit key was provided, generate one from the index
+		// and a content hash. This gives list items stable identity
+		// without requiring the developer to set key= on every element.
+		if !hasExplicitKey {
+			if idxVal, inLoop := vm.props["_index"]; inLoop {
+				idx := int(idxVal.Num)
+				// Use index + tag + first attr value as a content fingerprint
+				fingerprint := fmt.Sprintf("_auto_%d_%s", idx, node.Tag)
+				if len(rn.Attrs) > 0 {
+					fingerprint += "_" + rn.Attrs[0].Value
+				}
+				rn.Key = fingerprint
 			}
 		}
 	}
