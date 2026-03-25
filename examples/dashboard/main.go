@@ -56,6 +56,26 @@ func main() {
 	log.Printf("Island program: %s (%d nodes, %d exprs, %d bytes JSON)",
 		counterProgram.Name, len(counterProgram.Nodes), len(counterProgram.Exprs), len(counterProgramJSON))
 
+	tabsProg := program.TabsProgram()
+	tabsJSON, _ := program.EncodeJSON(tabsProg)
+	log.Printf("Island: %s (%d nodes, %d bytes)", tabsProg.Name, len(tabsProg.Nodes), len(tabsJSON))
+
+	toggleProg := program.ToggleProgram()
+	toggleJSON, _ := program.EncodeJSON(toggleProg)
+	log.Printf("Island: %s (%d nodes, %d bytes)", toggleProg.Name, len(toggleProg.Nodes), len(toggleJSON))
+
+	todoProg := program.TodoProgram()
+	todoJSON, _ := program.EncodeJSON(todoProg)
+	log.Printf("Island: %s (%d nodes, %d bytes)", todoProg.Name, len(todoProg.Nodes), len(todoJSON))
+
+	formProg := program.FormProgram()
+	formJSON, _ := program.EncodeJSON(formProg)
+	log.Printf("Island: %s (%d nodes, %d bytes)", formProg.Name, len(formProg.Nodes), len(formJSON))
+
+	derivedProg := program.DerivedProgram()
+	derivedJSON, _ := program.EncodeJSON(derivedProg)
+	log.Printf("Island: %s (%d nodes, %d bytes)", derivedProg.Name, len(derivedProg.Nodes), len(derivedJSON))
+
 	_, thisFilePath, _, _ := runtime.Caller(0)
 	baseDir := filepath.Dir(thisFilePath)
 
@@ -114,6 +134,16 @@ func main() {
 				return gosx.Text("") // content built in layout
 			},
 		},
+		route.Route{
+			Pattern: "/kitchen-sink",
+			Layout: func(ctx *route.RouteContext, content gosx.Node) gosx.Node {
+				isl := newIslands()
+				return Layout("Dashboard", isl, KitchenSinkPage(isl))
+			},
+			Handler: func(ctx *route.RouteContext) gosx.Node {
+				return gosx.Text("")
+			},
+		},
 	)
 
 	mux := http.NewServeMux()
@@ -145,6 +175,26 @@ func main() {
 	mux.HandleFunc("GET /gosx/islands/Counter.json", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Write(counterProgramJSON)
+	})
+	mux.HandleFunc("GET /gosx/islands/Tabs.json", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(tabsJSON)
+	})
+	mux.HandleFunc("GET /gosx/islands/Toggle.json", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(toggleJSON)
+	})
+	mux.HandleFunc("GET /gosx/islands/Todo.json", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(todoJSON)
+	})
+	mux.HandleFunc("GET /gosx/islands/Form.json", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(formJSON)
+	})
+	mux.HandleFunc("GET /gosx/islands/Derived.json", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(derivedJSON)
 	})
 
 	mux.Handle("/", router.Build())
@@ -192,6 +242,7 @@ func Sidebar() gosx.Node {
 		{"/users", "Users"},
 		{"/users/new", "New User"},
 		{"/counter", "Counter"},
+		{"/kitchen-sink", "Kitchen Sink"},
 		{"/settings", "Settings"},
 	}
 
@@ -436,6 +487,173 @@ func CounterPage(count int, islands *island.Renderer) gosx.Node {
 			gosx.El("p", gosx.Text("3. Bootstrap loads the shared WASM runtime and fetches the IslandProgram")),
 			gosx.El("p", gosx.Text("4. Event delegation catches clicks and dispatches to the VM")),
 			gosx.El("p", gosx.Text("5. Signal updates trigger reconciliation and DOM patching")),
+		),
+	)
+}
+
+// KitchenSinkPage renders all island patterns on a single page.
+func KitchenSinkPage(islands *island.Renderer) gosx.Node {
+	// === COUNTER ===
+	counterContent := gosx.El("div", gosx.Attrs(gosx.Attr("class", "counter")),
+		gosx.El("button", gosx.Attrs(gosx.Attr("data-gosx-handler", "decrement")), gosx.Text("-")),
+		gosx.El("span", gosx.Attrs(gosx.Attr("class", "count")), gosx.Text("0")),
+		gosx.El("button", gosx.Attrs(gosx.Attr("data-gosx-handler", "increment")), gosx.Text("+")),
+	)
+	counterIsland := islands.RenderIslandWithEvents("Counter",
+		map[string]int{"initial": 0},
+		[]hydrate.EventSlot{
+			{SlotID: "dec", EventType: "click", HandlerName: "decrement"},
+			{SlotID: "inc", EventType: "click", HandlerName: "increment"},
+		},
+		counterContent,
+	)
+
+	// === TABS ===
+	tabsContent := gosx.El("div", gosx.Attrs(gosx.Attr("class", "tabs")),
+		gosx.El("div", gosx.Attrs(gosx.Attr("class", "tab-buttons")),
+			gosx.El("button", gosx.Attrs(gosx.Attr("data-gosx-handler", "showAbout")), gosx.Text("About")),
+			gosx.El("button", gosx.Attrs(gosx.Attr("data-gosx-handler", "showFeatures")), gosx.Text("Features")),
+			gosx.El("button", gosx.Attrs(gosx.Attr("data-gosx-handler", "showContact")), gosx.Text("Contact")),
+		),
+		gosx.El("div", gosx.Attrs(gosx.Attr("class", "tab-content")),
+			gosx.El("p", gosx.Text("About: GoSX is a Go-native web platform.")),
+		),
+	)
+	tabsIsland := islands.RenderIslandWithEvents("Tabs",
+		nil,
+		[]hydrate.EventSlot{
+			{SlotID: "t0", EventType: "click", HandlerName: "showAbout"},
+			{SlotID: "t1", EventType: "click", HandlerName: "showFeatures"},
+			{SlotID: "t2", EventType: "click", HandlerName: "showContact"},
+		},
+		tabsContent,
+	)
+
+	// === TOGGLE ===
+	toggleContent := gosx.El("div", gosx.Attrs(gosx.Attr("class", "toggle")),
+		gosx.El("button", gosx.Attrs(gosx.Attr("data-gosx-handler", "toggle")), gosx.Text("Toggle Content")),
+		gosx.El("p", gosx.Text("")),
+	)
+	toggleIsland := islands.RenderIslandWithEvents("Toggle",
+		nil,
+		[]hydrate.EventSlot{
+			{SlotID: "tog", EventType: "click", HandlerName: "toggle"},
+		},
+		toggleContent,
+	)
+
+	// === TODO ===
+	todoContent := gosx.El("div", gosx.Attrs(gosx.Attr("class", "todo")),
+		gosx.El("h3", gosx.Text("Todo List")),
+		gosx.El("div", gosx.Attrs(gosx.Attr("class", "todo-input")),
+			gosx.El("span", gosx.Text("")),
+			gosx.El("button", gosx.Attrs(gosx.Attr("data-gosx-handler", "addItem")), gosx.Text("Add")),
+		),
+		gosx.El("div", gosx.Attrs(gosx.Attr("class", "todo-items")),
+			gosx.El("p", gosx.Text("")),
+		),
+		gosx.El("button", gosx.Attrs(gosx.Attr("data-gosx-handler", "clearAll")), gosx.Text("Clear All")),
+	)
+	todoIsland := islands.RenderIslandWithEvents("Todo",
+		nil,
+		[]hydrate.EventSlot{
+			{SlotID: "add", EventType: "click", HandlerName: "addItem"},
+			{SlotID: "clr", EventType: "click", HandlerName: "clearAll"},
+		},
+		todoContent,
+	)
+
+	// === FORM ===
+	formContent := gosx.El("div", gosx.Attrs(gosx.Attr("class", "form-demo")),
+		gosx.El("h3", gosx.Text("Form Validation")),
+		gosx.El("div", gosx.Attrs(gosx.Attr("class", "form-field")),
+			gosx.El("label", gosx.Text("Name")),
+			gosx.El("button", gosx.Attrs(gosx.Attr("data-gosx-handler", "updateName")), gosx.Text("Fill Name")),
+			gosx.El("span", gosx.Attrs(gosx.Attr("class", "field-value")), gosx.Text("")),
+		),
+		gosx.El("div", gosx.Attrs(gosx.Attr("class", "form-status")),
+			gosx.El("p", gosx.Text("Please fill in name")),
+		),
+		gosx.El("button", gosx.Attrs(gosx.Attr("data-gosx-handler", "validateForm")), gosx.Text("Validate")),
+	)
+	formIsland := islands.RenderIslandWithEvents("Form",
+		nil,
+		[]hydrate.EventSlot{
+			{SlotID: "fn", EventType: "click", HandlerName: "updateName"},
+			{SlotID: "fv", EventType: "click", HandlerName: "validateForm"},
+		},
+		formContent,
+	)
+
+	// === DERIVED / PRICE CALCULATOR ===
+	derivedContent := gosx.El("div", gosx.Attrs(gosx.Attr("class", "derived")),
+		gosx.El("h3", gosx.Text("Price Calculator")),
+		gosx.El("div", gosx.Attrs(gosx.Attr("class", "row")),
+			gosx.Text("Price: $"),
+			gosx.El("span", gosx.Text("100")),
+		),
+		gosx.El("div", gosx.Attrs(gosx.Attr("class", "row")),
+			gosx.Text("Qty: "),
+			gosx.El("span", gosx.Text("1")),
+			gosx.El("button", gosx.Attrs(gosx.Attr("data-gosx-handler", "incQuantity")), gosx.Text("+")),
+		),
+		gosx.El("div", gosx.Attrs(gosx.Attr("class", "row")),
+			gosx.Text("Discount: $"),
+			gosx.El("span", gosx.Text("0")),
+			gosx.El("button", gosx.Attrs(gosx.Attr("data-gosx-handler", "toggleDiscount")), gosx.Text("Toggle $10 off")),
+		),
+		gosx.El("div", gosx.Attrs(gosx.Attr("class", "total")),
+			gosx.Text("Total: $"),
+			gosx.El("span", gosx.Text("100")),
+		),
+	)
+	derivedIsland := islands.RenderIslandWithEvents("Derived",
+		nil,
+		[]hydrate.EventSlot{
+			{SlotID: "iq", EventType: "click", HandlerName: "incQuantity"},
+			{SlotID: "td", EventType: "click", HandlerName: "toggleDiscount"},
+		},
+		derivedContent,
+	)
+
+	return gosx.Fragment(
+		gosx.El("h1", gosx.Text("Kitchen Sink — SPA Patterns")),
+		gosx.El("p", gosx.Text("Every pattern below is a GoSX island: server-rendered HTML hydrated with a shared WASM runtime. Click to interact — no page reloads.")),
+
+		gosx.El("div", gosx.Attrs(gosx.Attr("class", "card")),
+			gosx.El("h2", gosx.Text("Counter")),
+			gosx.El("p", gosx.Text("Signal-driven increment/decrement.")),
+			counterIsland,
+		),
+
+		gosx.El("div", gosx.Attrs(gosx.Attr("class", "card")),
+			gosx.El("h2", gosx.Text("Tabs")),
+			gosx.El("p", gosx.Text("Conditional rendering via OpCond.")),
+			tabsIsland,
+		),
+
+		gosx.El("div", gosx.Attrs(gosx.Attr("class", "card")),
+			gosx.El("h2", gosx.Text("Toggle")),
+			gosx.El("p", gosx.Text("Boolean signal with show/hide.")),
+			toggleIsland,
+		),
+
+		gosx.El("div", gosx.Attrs(gosx.Attr("class", "card")),
+			gosx.El("h2", gosx.Text("Todo List")),
+			gosx.El("p", gosx.Text("String concatenation for list items.")),
+			todoIsland,
+		),
+
+		gosx.El("div", gosx.Attrs(gosx.Attr("class", "card")),
+			gosx.El("h2", gosx.Text("Form Validation")),
+			gosx.El("p", gosx.Text("Multi-signal form with validation feedback.")),
+			formIsland,
+		),
+
+		gosx.El("div", gosx.Attrs(gosx.Attr("class", "card")),
+			gosx.El("h2", gosx.Text("Price Calculator")),
+			gosx.El("p", gosx.Text("Derived values: total = price x qty - discount.")),
+			derivedIsland,
 		),
 	)
 }
