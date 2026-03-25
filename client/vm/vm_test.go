@@ -563,3 +563,145 @@ func TestVMSignalSetMissing(t *testing.T) {
 		t.Fatalf("expected TypeAny zero value, got type %d", v.Type)
 	}
 }
+
+// --- OpMap ---
+
+func TestVMOpMap(t *testing.T) {
+	// Build an array [1, 2, 3] via props, then map: _item * 2
+	prog := progFromExprs([]program.Expr{
+		{Op: program.OpPropGet, Value: "nums", Type: program.TypeAny},      // 0: the array
+		{Op: program.OpPropGet, Value: "_item", Type: program.TypeInt},     // 1: current item
+		{Op: program.OpLitInt, Value: "2", Type: program.TypeInt},          // 2: literal 2
+		{Op: program.OpMul, Operands: []program.ExprID{1, 2}, Type: program.TypeInt}, // 3: _item * 2
+		{Op: program.OpMap, Operands: []program.ExprID{0, 3}, Type: program.TypeAny}, // 4: map(nums, _item*2)
+	})
+	props := map[string]Value{
+		"nums": ArrayVal([]Value{IntVal(1), IntVal(2), IntVal(3)}),
+	}
+	vm := NewVM(prog, props)
+	v := vm.Eval(4)
+	if len(v.Items) != 3 {
+		t.Fatalf("expected 3 items, got %d", len(v.Items))
+	}
+	if v.Items[0].Num != 2 || v.Items[1].Num != 4 || v.Items[2].Num != 6 {
+		t.Fatalf("expected [2, 4, 6], got [%f, %f, %f]", v.Items[0].Num, v.Items[1].Num, v.Items[2].Num)
+	}
+}
+
+// --- OpFilter ---
+
+func TestVMOpFilter(t *testing.T) {
+	// Filter [1, 2, 3, 4] keeping even: _item % 2 == 0
+	prog := progFromExprs([]program.Expr{
+		{Op: program.OpPropGet, Value: "nums", Type: program.TypeAny},       // 0: array
+		{Op: program.OpPropGet, Value: "_item", Type: program.TypeInt},      // 1: _item
+		{Op: program.OpLitInt, Value: "2", Type: program.TypeInt},           // 2: literal 2
+		{Op: program.OpMod, Operands: []program.ExprID{1, 2}, Type: program.TypeInt},  // 3: _item % 2
+		{Op: program.OpLitInt, Value: "0", Type: program.TypeInt},           // 4: literal 0
+		{Op: program.OpEq, Operands: []program.ExprID{3, 4}, Type: program.TypeBool},  // 5: _item%2 == 0
+		{Op: program.OpFilter, Operands: []program.ExprID{0, 5}, Type: program.TypeAny}, // 6: filter
+	})
+	props := map[string]Value{
+		"nums": ArrayVal([]Value{IntVal(1), IntVal(2), IntVal(3), IntVal(4)}),
+	}
+	vm := NewVM(prog, props)
+	v := vm.Eval(6)
+	if len(v.Items) != 2 {
+		t.Fatalf("expected 2 items, got %d", len(v.Items))
+	}
+	if v.Items[0].Num != 2 || v.Items[1].Num != 4 {
+		t.Fatalf("expected [2, 4], got [%f, %f]", v.Items[0].Num, v.Items[1].Num)
+	}
+}
+
+// --- OpContains (string) ---
+
+func TestVMOpContainsString(t *testing.T) {
+	prog := progFromExprs([]program.Expr{
+		{Op: program.OpLitString, Value: "hello world", Type: program.TypeString}, // 0
+		{Op: program.OpLitString, Value: "world", Type: program.TypeString},       // 1
+		{Op: program.OpContains, Operands: []program.ExprID{0, 1}, Type: program.TypeBool}, // 2
+	})
+	vm := NewVM(prog, nil)
+	v := vm.Eval(2)
+	if !v.Bool {
+		t.Fatal("expected 'hello world' to contain 'world'")
+	}
+}
+
+// --- OpToUpper ---
+
+func TestVMOpToUpper(t *testing.T) {
+	prog := progFromExprs([]program.Expr{
+		{Op: program.OpLitString, Value: "hello", Type: program.TypeString}, // 0
+		{Op: program.OpToUpper, Operands: []program.ExprID{0}, Type: program.TypeString}, // 1
+	})
+	vm := NewVM(prog, nil)
+	v := vm.Eval(1)
+	if v.Str != "HELLO" {
+		t.Fatalf("expected 'HELLO', got %q", v.Str)
+	}
+}
+
+// --- OpSplit / OpJoin round-trip ---
+
+func TestVMOpSplitJoinRoundTrip(t *testing.T) {
+	prog := progFromExprs([]program.Expr{
+		{Op: program.OpLitString, Value: "a,b,c", Type: program.TypeString},              // 0
+		{Op: program.OpSplit, Operands: []program.ExprID{0}, Value: ",", Type: program.TypeAny}, // 1: split by ","
+		{Op: program.OpJoin, Operands: []program.ExprID{1}, Value: ",", Type: program.TypeString}, // 2: join by ","
+	})
+	vm := NewVM(prog, nil)
+
+	// Check split
+	split := vm.Eval(1)
+	if len(split.Items) != 3 {
+		t.Fatalf("expected 3 items from split, got %d", len(split.Items))
+	}
+
+	// Check round-trip
+	joined := vm.Eval(2)
+	if joined.Str != "a,b,c" {
+		t.Fatalf("expected 'a,b,c' after round-trip, got %q", joined.Str)
+	}
+}
+
+// --- OpToString on int ---
+
+func TestVMOpToStringInt(t *testing.T) {
+	prog := progFromExprs([]program.Expr{
+		{Op: program.OpLitInt, Value: "42", Type: program.TypeInt},                        // 0
+		{Op: program.OpToString, Operands: []program.ExprID{0}, Type: program.TypeString}, // 1
+	})
+	vm := NewVM(prog, nil)
+	v := vm.Eval(1)
+	if v.Type != program.TypeString {
+		t.Fatalf("expected TypeString, got %d", v.Type)
+	}
+	if v.Str != "42" {
+		t.Fatalf("expected '42', got %q", v.Str)
+	}
+}
+
+// --- Missing operand resilience for new opcodes ---
+
+func TestVMNewOpcodesMissingOperands(t *testing.T) {
+	// All new opcodes should return zero values when operands are missing.
+	ops := []program.OpCode{
+		program.OpMap, program.OpFilter, program.OpFind, program.OpSlice,
+		program.OpAppend, program.OpContains,
+		program.OpToUpper, program.OpToLower, program.OpTrim,
+		program.OpSplit, program.OpJoin,
+		program.OpReplace, program.OpSubstring,
+		program.OpStartsWith, program.OpEndsWith,
+		program.OpToString, program.OpToInt, program.OpToFloat,
+	}
+	for _, op := range ops {
+		prog := progFromExprs([]program.Expr{
+			{Op: op, Operands: nil, Type: program.TypeAny},
+		})
+		vm := NewVM(prog, nil)
+		// Should not panic
+		vm.Eval(0)
+	}
+}

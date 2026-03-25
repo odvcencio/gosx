@@ -166,7 +166,7 @@ func (vm *VM) Eval(id program.ExprID) Value {
 	case program.OpLen:
 		if len(e.Operands) > 0 {
 			v := vm.Eval(e.Operands[0])
-			return IntVal(len(v.Str))
+			return IntVal(v.Len())
 		}
 		return IntVal(0)
 	case program.OpRange:
@@ -180,6 +180,141 @@ func (vm *VM) Eval(id program.ExprID) Value {
 			}
 		}
 		return StringVal("")
+
+	// Array/slice operations
+	case program.OpMap:
+		if len(e.Operands) >= 2 {
+			coll := vm.Eval(e.Operands[0])
+			result := make([]Value, len(coll.Items))
+			for i, item := range coll.Items {
+				vm.props["_item"] = item
+				vm.props["_index"] = IntVal(i)
+				result[i] = vm.Eval(e.Operands[1])
+			}
+			delete(vm.props, "_item")
+			delete(vm.props, "_index")
+			return ArrayVal(result)
+		}
+		return ArrayVal(nil)
+
+	case program.OpFilter:
+		if len(e.Operands) >= 2 {
+			coll := vm.Eval(e.Operands[0])
+			var result []Value
+			for i, item := range coll.Items {
+				vm.props["_item"] = item
+				vm.props["_index"] = IntVal(i)
+				if vm.Eval(e.Operands[1]).Bool {
+					result = append(result, item)
+				}
+			}
+			delete(vm.props, "_item")
+			delete(vm.props, "_index")
+			return ArrayVal(result)
+		}
+		return ArrayVal(nil)
+
+	case program.OpFind:
+		if len(e.Operands) >= 2 {
+			coll := vm.Eval(e.Operands[0])
+			for i, item := range coll.Items {
+				vm.props["_item"] = item
+				vm.props["_index"] = IntVal(i)
+				if vm.Eval(e.Operands[1]).Bool {
+					delete(vm.props, "_item")
+					delete(vm.props, "_index")
+					return item
+				}
+			}
+			delete(vm.props, "_item")
+			delete(vm.props, "_index")
+		}
+		return ZeroValue(program.TypeAny)
+
+	case program.OpSlice:
+		if len(e.Operands) >= 3 {
+			coll := vm.Eval(e.Operands[0])
+			start := int(vm.Eval(e.Operands[1]).Num)
+			end := int(vm.Eval(e.Operands[2]).Num)
+			return coll.SliceVal(start, end)
+		}
+		return ArrayVal(nil)
+
+	case program.OpAppend:
+		if len(e.Operands) >= 2 {
+			return vm.Eval(e.Operands[0]).AppendVal(vm.Eval(e.Operands[1]))
+		}
+		return ArrayVal(nil)
+
+	case program.OpContains:
+		if len(e.Operands) >= 2 {
+			return vm.Eval(e.Operands[0]).ContainsVal(vm.Eval(e.Operands[1]))
+		}
+		return BoolVal(false)
+
+	// String methods
+	case program.OpToUpper:
+		if len(e.Operands) > 0 {
+			return vm.Eval(e.Operands[0]).ToUpper()
+		}
+		return StringVal("")
+	case program.OpToLower:
+		if len(e.Operands) > 0 {
+			return vm.Eval(e.Operands[0]).ToLower()
+		}
+		return StringVal("")
+	case program.OpTrim:
+		if len(e.Operands) > 0 {
+			return vm.Eval(e.Operands[0]).TrimVal()
+		}
+		return StringVal("")
+	case program.OpSplit:
+		if len(e.Operands) > 0 {
+			return vm.Eval(e.Operands[0]).SplitVal(e.Value)
+		}
+		return ArrayVal(nil)
+	case program.OpJoin:
+		if len(e.Operands) > 0 {
+			return vm.Eval(e.Operands[0]).JoinVal(e.Value)
+		}
+		return StringVal("")
+	case program.OpReplace:
+		if len(e.Operands) >= 3 {
+			return vm.Eval(e.Operands[0]).ReplaceVal(vm.Eval(e.Operands[1]).Str, vm.Eval(e.Operands[2]).Str)
+		}
+		return StringVal("")
+	case program.OpSubstring:
+		if len(e.Operands) >= 3 {
+			return vm.Eval(e.Operands[0]).SubstringVal(int(vm.Eval(e.Operands[1]).Num), int(vm.Eval(e.Operands[2]).Num))
+		}
+		return StringVal("")
+	case program.OpStartsWith:
+		if len(e.Operands) >= 2 {
+			return vm.Eval(e.Operands[0]).StartsWithVal(vm.Eval(e.Operands[1]))
+		}
+		return BoolVal(false)
+	case program.OpEndsWith:
+		if len(e.Operands) >= 2 {
+			return vm.Eval(e.Operands[0]).EndsWithVal(vm.Eval(e.Operands[1]))
+		}
+		return BoolVal(false)
+
+	// Type conversions
+	case program.OpToString:
+		if len(e.Operands) > 0 {
+			return vm.Eval(e.Operands[0]).ToStringVal()
+		}
+		return StringVal("")
+	case program.OpToInt:
+		if len(e.Operands) > 0 {
+			return vm.Eval(e.Operands[0]).ToIntVal()
+		}
+		return IntVal(0)
+	case program.OpToFloat:
+		if len(e.Operands) > 0 {
+			return vm.Eval(e.Operands[0]).ToFloatVal()
+		}
+		return FloatVal(0)
 
 	default:
 		return ZeroValue(program.TypeAny)

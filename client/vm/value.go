@@ -3,16 +3,24 @@ package vm
 import (
 	"fmt"
 	"math"
+	"strconv"
+	"strings"
 
 	"github.com/odvcencio/gosx/island/program"
 )
 
 // Value is the runtime representation of all values in the island expression VM.
 type Value struct {
-	Type program.ExprType
-	Str  string
-	Num  float64
-	Bool bool
+	Type  program.ExprType
+	Str   string
+	Num   float64
+	Bool  bool
+	Items []Value // for array/slice operations
+}
+
+// ArrayVal creates an array Value from a slice of Values.
+func ArrayVal(items []Value) Value {
+	return Value{Type: program.TypeAny, Items: items}
 }
 
 // StringVal creates a string Value.
@@ -111,6 +119,18 @@ func (v Value) Neg() Value {
 
 // Eq returns whether v == b.
 func (v Value) Eq(b Value) Value {
+	// Array comparison
+	if v.Items != nil || b.Items != nil {
+		if len(v.Items) != len(b.Items) {
+			return BoolVal(false)
+		}
+		for i := range v.Items {
+			if !v.Items[i].Eq(b.Items[i]).Bool {
+				return BoolVal(false)
+			}
+		}
+		return BoolVal(true)
+	}
 	if v.Type == program.TypeString || b.Type == program.TypeString {
 		return BoolVal(v.Str == b.Str)
 	}
@@ -171,8 +191,23 @@ func (v Value) Concat(b Value) Value {
 	return StringVal(v.Str + b.Str)
 }
 
+// Len returns the length of a string or array Value as an int.
+func (v Value) Len() int {
+	if v.Items != nil {
+		return len(v.Items)
+	}
+	return len(v.Str)
+}
+
 // String converts any Value to its string representation.
 func (v Value) String() string {
+	if v.Items != nil {
+		parts := make([]string, len(v.Items))
+		for i, item := range v.Items {
+			parts[i] = item.String()
+		}
+		return "[" + strings.Join(parts, ", ") + "]"
+	}
 	switch v.Type {
 	case program.TypeString:
 		return v.Str
@@ -187,5 +222,199 @@ func (v Value) String() string {
 		return "false"
 	default:
 		return fmt.Sprintf("%v", v.Num)
+	}
+}
+
+// --- Array methods ---
+
+// AppendVal returns a new Value with elem appended to Items.
+func (v Value) AppendVal(elem Value) Value {
+	newItems := make([]Value, len(v.Items), len(v.Items)+1)
+	copy(newItems, v.Items)
+	newItems = append(newItems, elem)
+	return ArrayVal(newItems)
+}
+
+// FilterFunc returns a new array Value containing only items for which pred returns true.
+func (v Value) FilterFunc(pred func(Value) bool) Value {
+	var result []Value
+	for _, item := range v.Items {
+		if pred(item) {
+			result = append(result, item)
+		}
+	}
+	return ArrayVal(result)
+}
+
+// MapFunc returns a new array Value with fn applied to each item.
+func (v Value) MapFunc(fn func(Value, int) Value) Value {
+	result := make([]Value, len(v.Items))
+	for i, item := range v.Items {
+		result[i] = fn(item, i)
+	}
+	return ArrayVal(result)
+}
+
+// FindFunc returns the first item for which pred returns true, or ZeroValue.
+func (v Value) FindFunc(pred func(Value) bool) Value {
+	for _, item := range v.Items {
+		if pred(item) {
+			return item
+		}
+	}
+	return ZeroValue(program.TypeAny)
+}
+
+// SliceVal returns Items[start:end] with bounds clamping.
+func (v Value) SliceVal(start, end int) Value {
+	n := len(v.Items)
+	if start < 0 {
+		start = 0
+	}
+	if end > n {
+		end = n
+	}
+	if start > end {
+		start = end
+	}
+	newItems := make([]Value, end-start)
+	copy(newItems, v.Items[start:end])
+	return ArrayVal(newItems)
+}
+
+// ContainsVal checks if elem is in Items (array) or if elem.Str is a substring of v.Str (string).
+func (v Value) ContainsVal(elem Value) Value {
+	if v.Items != nil {
+		for _, item := range v.Items {
+			if item.Eq(elem).Bool {
+				return BoolVal(true)
+			}
+		}
+		return BoolVal(false)
+	}
+	return BoolVal(strings.Contains(v.Str, elem.Str))
+}
+
+// JoinVal joins Items as strings with the given separator.
+func (v Value) JoinVal(sep string) Value {
+	parts := make([]string, len(v.Items))
+	for i, item := range v.Items {
+		parts[i] = item.String()
+	}
+	return StringVal(strings.Join(parts, sep))
+}
+
+// --- String methods ---
+
+// ToUpper returns a new Value with v.Str uppercased.
+func (v Value) ToUpper() Value {
+	return StringVal(strings.ToUpper(v.Str))
+}
+
+// ToLower returns a new Value with v.Str lowercased.
+func (v Value) ToLower() Value {
+	return StringVal(strings.ToLower(v.Str))
+}
+
+// TrimVal returns a new Value with whitespace trimmed from v.Str.
+func (v Value) TrimVal() Value {
+	return StringVal(strings.TrimSpace(v.Str))
+}
+
+// SplitVal splits v.Str by sep and returns an ArrayVal of StringVals.
+func (v Value) SplitVal(sep string) Value {
+	parts := strings.Split(v.Str, sep)
+	items := make([]Value, len(parts))
+	for i, p := range parts {
+		items[i] = StringVal(p)
+	}
+	return ArrayVal(items)
+}
+
+// ReplaceVal returns a new Value with all occurrences of old replaced by new in v.Str.
+func (v Value) ReplaceVal(old, new string) Value {
+	return StringVal(strings.ReplaceAll(v.Str, old, new))
+}
+
+// SubstringVal returns v.Str[start:end] with bounds clamping.
+func (v Value) SubstringVal(start, end int) Value {
+	n := len(v.Str)
+	if start < 0 {
+		start = 0
+	}
+	if end > n {
+		end = n
+	}
+	if start > end {
+		start = end
+	}
+	return StringVal(v.Str[start:end])
+}
+
+// StartsWithVal returns BoolVal indicating whether v.Str starts with prefix.Str.
+func (v Value) StartsWithVal(prefix Value) Value {
+	return BoolVal(strings.HasPrefix(v.Str, prefix.Str))
+}
+
+// EndsWithVal returns BoolVal indicating whether v.Str ends with suffix.Str.
+func (v Value) EndsWithVal(suffix Value) Value {
+	return BoolVal(strings.HasSuffix(v.Str, suffix.Str))
+}
+
+// --- Type conversions ---
+
+// ToStringVal converts any Value to a StringVal.
+func (v Value) ToStringVal() Value {
+	return StringVal(v.String())
+}
+
+// ToIntVal converts a Value to an IntVal. Parses strings, truncates floats.
+func (v Value) ToIntVal() Value {
+	switch v.Type {
+	case program.TypeInt:
+		return v
+	case program.TypeFloat:
+		return IntVal(int(v.Num))
+	case program.TypeString:
+		n, err := strconv.ParseInt(v.Str, 10, 64)
+		if err != nil {
+			// Try parsing as float then truncating
+			f, err2 := strconv.ParseFloat(v.Str, 64)
+			if err2 != nil {
+				return IntVal(0)
+			}
+			return IntVal(int(f))
+		}
+		return IntVal(int(n))
+	case program.TypeBool:
+		if v.Bool {
+			return IntVal(1)
+		}
+		return IntVal(0)
+	default:
+		return IntVal(0)
+	}
+}
+
+// ToFloatVal converts a Value to a FloatVal. Parses strings, promotes ints.
+func (v Value) ToFloatVal() Value {
+	switch v.Type {
+	case program.TypeFloat:
+		return v
+	case program.TypeInt:
+		return FloatVal(v.Num)
+	case program.TypeString:
+		f, err := strconv.ParseFloat(v.Str, 64)
+		if err != nil {
+			return FloatVal(0)
+		}
+		return FloatVal(f)
+	case program.TypeBool:
+		if v.Bool {
+			return FloatVal(1)
+		}
+		return FloatVal(0)
+	default:
+		return FloatVal(0)
 	}
 }
