@@ -2,7 +2,6 @@ package vm
 
 import (
 	"encoding/json"
-	"fmt"
 
 	"github.com/odvcencio/gosx/island/program"
 	"github.com/odvcencio/gosx/signal"
@@ -92,37 +91,6 @@ func (island *Island) Dispose() {
 	// Signal cleanup is handled by GC since we don't have persistent subscriptions
 	// in this version. The bridge removes the island from its map.
 	island.prev = nil
-}
-
-// ReconcileTrees diffs two resolved trees and returns patch ops.
-// Stub — full implementation in Task 7 (reconcile.go).
-func ReconcileTrees(prev, next *ResolvedTree, staticMask []bool) []PatchOp {
-	if prev == nil || next == nil {
-		return nil
-	}
-	var ops []PatchOp
-	for i := range next.Nodes {
-		if i >= len(prev.Nodes) {
-			continue
-		}
-		if i < len(staticMask) && staticMask[i] {
-			continue // skip static subtrees
-		}
-		// Simple text diff for now
-		if prev.Nodes[i].Text != next.Nodes[i].Text {
-			ops = append(ops, PatchOp{
-				Kind: PatchSetText,
-				Path: nodePath(i),
-				Text: next.Nodes[i].Text,
-			})
-		}
-	}
-	return ops
-}
-
-func nodePath(idx int) string {
-	// Simple path — will be replaced by proper tree-walking in Task 7
-	return fmt.Sprintf("%d", idx)
 }
 
 // parseJSONValue converts a JSON value to a VM Value based on expected type.
