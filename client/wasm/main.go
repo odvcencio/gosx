@@ -6,6 +6,7 @@ import (
 	"syscall/js"
 
 	"github.com/odvcencio/gosx/client/bridge"
+	"github.com/odvcencio/gosx/highlight"
 )
 
 func main() {
@@ -72,6 +73,16 @@ func main() {
 		}
 		b.DisposeIsland(args[0].String())
 		return js.Null()
+	}))
+
+	// Export syntax highlighting function — called by JS for live code highlighting
+	js.Global().Set("__gosx_highlight", js.FuncOf(func(this js.Value, args []js.Value) any {
+		if len(args) < 1 {
+			return js.ValueOf("")
+		}
+		source := args[0].String()
+		highlighted := highlight.Go(source)
+		return js.ValueOf(highlighted)
 	}))
 
 	// Signal that runtime is ready

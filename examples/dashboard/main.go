@@ -24,6 +24,7 @@ import (
 
 	"github.com/odvcencio/gosx"
 	"github.com/odvcencio/gosx/action"
+	"github.com/odvcencio/gosx/highlight"
 	"github.com/odvcencio/gosx/hydrate"
 	"github.com/odvcencio/gosx/island"
 	"github.com/odvcencio/gosx/island/program"
@@ -160,17 +161,6 @@ func main() {
 	// Static CSS
 	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir(filepath.Join(exampleDir, "static")))))
 
-	// immutableFile serves stable assets (WASM runtime, wasm_exec.js) with long cache.
-	// These only change on rebuild — the manifest can use hash-based URLs to bust cache.
-	immutableFile := func(contentType, path string) http.HandlerFunc {
-		return func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
-			if contentType != "" {
-				w.Header().Set("Content-Type", contentType)
-			}
-			http.ServeFile(w, r, path)
-		}
-	}
 
 	// noCacheFile serves assets that change frequently (JS, island programs during dev).
 	noCacheFile := func(contentType, path string) http.HandlerFunc {
@@ -188,9 +178,10 @@ func main() {
 	// GoSX client assets
 	buildDir := filepath.Join(exampleDir, "build")
 
-	// Heavy machinery: cache forever (3.3MB WASM + 17KB wasm_exec.js — load once, cache across pages)
-	mux.HandleFunc("GET /gosx/runtime.wasm", immutableFile("application/wasm", filepath.Join(buildDir, "gosx-runtime.wasm")))
-	mux.HandleFunc("GET /gosx/wasm_exec.js", immutableFile("", filepath.Join(buildDir, "wasm_exec.js")))
+	// During development: no-cache on WASM to pick up rebuilds.
+	// In production, use content-hash URLs with immutable caching.
+	mux.HandleFunc("GET /gosx/runtime.wasm", noCacheFile("application/wasm", filepath.Join(buildDir, "gosx-runtime.wasm")))
+	mux.HandleFunc("GET /gosx/wasm_exec.js", noCacheFile("", filepath.Join(buildDir, "wasm_exec.js")))
 	mux.HandleFunc("GET /gosx/bootstrap.js", noCacheFile("", filepath.Join(moduleDir, "client", "js", "bootstrap.js")))
 	mux.HandleFunc("GET /gosx/patch.js", noCacheFile("", filepath.Join(moduleDir, "client", "js", "patch.js")))
 	// Serve compiled island programs — all no-cache for reliable iteration
@@ -631,26 +622,44 @@ func KitchenSinkPage(islands *island.Renderer) gosx.Node {
 	)
 
 	// === CODE EDITOR ===
+	// The editor uses an overlay pattern: a transparent textarea for input
+	// (native cursor, selection, undo) with a highlighted <pre> layer behind it.
+	// The WASM runtime's __gosx_highlight function provides syntax coloring.
+	sampleCode := `package main
+
+import "fmt"
+
+func main() {
+	// GoSX code editor with syntax highlighting
+	name := "world"
+	fmt.Println("Hello, " + name + "!")
+}`
 	editorContent := gosx.El("div", gosx.Attrs(gosx.Attr("class", "editor")),
-		gosx.El("div", gosx.Attrs(gosx.Attr("class", "editor-header")),
-			gosx.Text("Code Editor"),
+		gosx.El("div", gosx.Attrs(gosx.Attr("class", "editor-toolbar")),
+			gosx.El("span", gosx.Attrs(gosx.Attr("class", "editor-title")), gosx.Text("editor.go")),
+			gosx.El("span", gosx.Attrs(gosx.Attr("class", "editor-lang")), gosx.Text("Go")),
 			gosx.El("span", gosx.Attrs(gosx.Attr("class", "char-count")),
-				gosx.El("span", gosx.Text("0")),
+				gosx.El("span", gosx.Text(fmt.Sprintf("%d", len(sampleCode)))),
 				gosx.Text(" chars"),
 			),
+			gosx.El("button", gosx.Attrs(gosx.Attr("data-gosx-handler", "clear"), gosx.Attr("class", "editor-btn")), gosx.Text("Clear")),
 		),
-		gosx.El("textarea", gosx.Attrs(
-			gosx.Attr("class", "editor-textarea"),
-			gosx.Attr("rows", "12"),
-			gosx.Attr("placeholder", "Type or paste code here..."),
-			gosx.Attr("data-gosx-handler", "onInput"),
-		)),
-		gosx.El("div", gosx.Attrs(gosx.Attr("class", "editor-actions")),
-			gosx.El("button", gosx.Attrs(gosx.Attr("data-gosx-handler", "clear")), gosx.Text("Clear")),
-		),
-		gosx.El("div", gosx.Attrs(gosx.Attr("class", "editor-preview")),
-			gosx.El("pre", gosx.Attrs(gosx.Attr("class", "code-output")),
-				gosx.El("code", gosx.Text("\u200b")),
+		gosx.El("div", gosx.Attrs(gosx.Attr("class", "editor-body")),
+			gosx.El("div", gosx.Attrs(gosx.Attr("class", "line-numbers"), gosx.Attr("id", "editor-lines")),
+				gosx.RawHTML(lineNumbersHTML(strings.Count(sampleCode, "\n")+1)),
+			),
+			gosx.El("div", gosx.Attrs(gosx.Attr("class", "editor-area")),
+				gosx.El("pre", gosx.Attrs(gosx.Attr("class", "code-highlight"), gosx.Attr("id", "editor-highlight")),
+					gosx.RawHTML(serverHighlight(sampleCode)),
+				),
+				gosx.El("textarea", gosx.Attrs(
+					gosx.Attr("class", "editor-textarea"),
+					gosx.Attr("spellcheck", "false"),
+					gosx.Attr("autocomplete", "off"),
+					gosx.Attr("autocorrect", "off"),
+					gosx.Attr("autocapitalize", "off"),
+					gosx.Attr("data-gosx-handler", "onInput"),
+				), gosx.Text(sampleCode)),
 			),
 		),
 	)
@@ -662,6 +671,60 @@ func KitchenSinkPage(islands *island.Renderer) gosx.Node {
 		},
 		editorContent,
 	)
+
+	// Inline script for editor-specific behavior:
+	// - Syncs textarea scroll with highlight layer
+	// - Calls __gosx_highlight for live syntax highlighting
+	// - Updates line numbers
+	editorScript := gosx.RawHTML(`<script>
+(function() {
+  function setupEditor() {
+    var ta = document.querySelector('.editor-textarea');
+    var hl = document.getElementById('editor-highlight');
+    var ln = document.getElementById('editor-lines');
+    if (!ta || !hl) return;
+
+    function update() {
+      var code = ta.value;
+      // Syntax highlight via WASM
+      if (typeof window.__gosx_highlight === 'function') {
+        hl.innerHTML = window.__gosx_highlight(code) + '\n';
+      } else {
+        hl.textContent = code + '\n';
+      }
+      // Update line numbers
+      var lines = (code.match(/\n/g) || []).length + 1;
+      var nums = [];
+      for (var i = 1; i <= lines; i++) nums.push(i);
+      if (ln) ln.textContent = nums.join('\n');
+      // Update char count
+      var cc = document.querySelector('.char-count span');
+      if (cc) cc.textContent = code.length;
+    }
+
+    ta.addEventListener('input', update);
+    ta.addEventListener('scroll', function() {
+      hl.scrollTop = ta.scrollTop;
+      hl.scrollLeft = ta.scrollLeft;
+      if (ln) ln.scrollTop = ta.scrollTop;
+    });
+
+    // Initial highlight after WASM loads
+    if (window.__gosx && window.__gosx.ready) {
+      update();
+    } else {
+      document.addEventListener('gosx:ready', update);
+      // Also try after a delay in case the event already fired
+      setTimeout(update, 3000);
+    }
+  }
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', setupEditor);
+  } else {
+    setupEditor();
+  }
+})();
+</script>`)
 
 	return gosx.Fragment(
 		gosx.El("h1", gosx.Text("Kitchen Sink — SPA Patterns")),
@@ -705,10 +768,28 @@ func KitchenSinkPage(islands *island.Renderer) gosx.Node {
 
 		gosx.El("div", gosx.Attrs(gosx.Attr("class", "card")),
 			gosx.El("h2", gosx.Text("Code Editor")),
-			gosx.El("p", gosx.Text("Two-way input binding with live character count and preview.")),
+			gosx.El("p", gosx.Text("Overlay editor with WASM-powered Go syntax highlighting, line numbers, and live char count.")),
 			editorIsland,
+			editorScript,
 		),
 	)
+}
+
+// serverHighlight produces syntax-highlighted HTML on the server.
+// This is the initial render — the client updates it live via __gosx_highlight.
+func serverHighlight(source string) string {
+	return highlight.Go(source)
+}
+
+func lineNumbersHTML(count int) string {
+	var b strings.Builder
+	for i := 1; i <= count; i++ {
+		if i > 1 {
+			b.WriteByte('\n')
+		}
+		fmt.Fprintf(&b, "%d", i)
+	}
+	return b.String()
 }
 
 // SettingsPage renders application settings.

@@ -25,6 +25,7 @@
   var PATCH_REPLACE_ELEMENT = 5;
   var PATCH_REORDER         = 6;
   var PATCH_SET_VALUE       = 7;
+  var PATCH_SET_HTML        = 8;
 
   // Elements that browsers may insert implicitly (e.g. <tbody> inside <table>).
   // When walking a path we need to skip through these so that the path indices
@@ -225,6 +226,10 @@
 
       case PATCH_SET_VALUE:
         applySetValue(target, op);
+        break;
+
+      case PATCH_SET_HTML:
+        target.innerHTML = op.text;
         break;
 
       default:

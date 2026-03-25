@@ -22,4 +22,5 @@ const (
 	PatchReplaceElement                  // Replace an element node.
 	PatchReorder                         // Reorder children of a node.
 	PatchSetValue                        // Set the value property of a node.
+	PatchSetHTML                         // Set innerHTML (for highlighted content).
 )
