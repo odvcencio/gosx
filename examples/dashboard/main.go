@@ -405,13 +405,24 @@ func NewUserPage() gosx.Node {
 	)
 }
 
-// CounterPage demonstrates an interactive island.
+// CounterPage demonstrates an interactive island compiled from counter.gsx.
+//
+// The server-rendered HTML uses buttons with data-gosx-handler attributes that
+// match the handler names in the compiled IslandProgram. The event delegation
+// system picks these up and dispatches to the WASM VM.
+//
+// For browsers without WASM/JS, a <noscript> fallback provides link-based navigation.
 func CounterPage(count int, islands *island.Renderer) gosx.Node {
-	// The counter is an island — server-rendered with hydration metadata
-	counterContent := gosx.El("div", gosx.Attrs(gosx.Attr("class", "counter-display")),
-		gosx.El("a", gosx.Attrs(gosx.Attr("href", fmt.Sprintf("/counter?count=%d", count-1))), gosx.Text("-")),
+	// Server-render the counter matching the .gsx island structure:
+	//   <div class="counter">
+	//     <button data-gosx-handler="decrement">-</button>
+	//     <span class="count">{count}</span>
+	//     <button data-gosx-handler="increment">+</button>
+	//   </div>
+	counterContent := gosx.El("div", gosx.Attrs(gosx.Attr("class", "counter")),
+		gosx.El("button", gosx.Attrs(gosx.Attr("data-gosx-handler", "decrement")), gosx.Text("-")),
 		gosx.El("span", gosx.Attrs(gosx.Attr("class", "count")), gosx.Expr(count)),
-		gosx.El("a", gosx.Attrs(gosx.Attr("href", fmt.Sprintf("/counter?count=%d", count+1))), gosx.Text("+")),
+		gosx.El("button", gosx.Attrs(gosx.Attr("data-gosx-handler", "increment")), gosx.Text("+")),
 	)
 
 	type counterProps struct {
@@ -422,27 +433,31 @@ func CounterPage(count int, islands *island.Renderer) gosx.Node {
 		"Counter",
 		counterProps{Initial: count},
 		[]hydrate.EventSlot{
-			{SlotID: "dec", EventType: "click", TargetSelector: "a:first-child", HandlerName: "counterDec"},
-			{SlotID: "inc", EventType: "click", TargetSelector: "a:last-child", HandlerName: "counterInc"},
+			{SlotID: "dec", EventType: "click", HandlerName: "decrement"},
+			{SlotID: "inc", EventType: "click", HandlerName: "increment"},
 		},
 		counterContent,
 	)
+
+	// Fallback for no-JS: link-based counter
+	noscriptFallback := gosx.RawHTML(fmt.Sprintf(`<noscript><div class="counter-display"><a href="/counter?count=%d">-</a> <span>%d</span> <a href="/counter?count=%d">+</a></div></noscript>`, count-1, count, count+1))
 
 	return gosx.Fragment(
 		gosx.El("h1", gosx.Text("Counter (Island Demo)")),
 		gosx.El("div", gosx.Attrs(gosx.Attr("class", "card")),
 			gosx.El("h3", gosx.Text("Interactive Island")),
-			gosx.El("p", gosx.Text("This counter is server-rendered but marked as an island for client hydration.")),
-			gosx.El("p", gosx.Text("Without WASM loaded, it falls back to server navigation (links).")),
+			gosx.El("p", gosx.Text("This counter is compiled from counter.gsx and hydrated via WASM.")),
 			gosx.El("br"),
 			islandNode,
+			noscriptFallback,
 		),
 		gosx.El("div", gosx.Attrs(gosx.Attr("class", "card")),
 			gosx.El("h3", gosx.Text("How It Works")),
-			gosx.El("p", gosx.Text("1. Server renders the counter HTML with the current count")),
-			gosx.El("p", gosx.Text("2. Hydration manifest identifies this as an interactive island")),
-			gosx.El("p", gosx.Text("3. Client loads only the counter's WASM bundle (not the whole page)")),
-			gosx.El("p", gosx.Text("4. Signal[int] drives local reactive updates inside the island")),
+			gosx.El("p", gosx.Text("1. counter.gsx is compiled to an IslandProgram at server startup")),
+			gosx.El("p", gosx.Text("2. Server renders the counter HTML with data-gosx-handler attributes")),
+			gosx.El("p", gosx.Text("3. Bootstrap loads the shared WASM runtime and fetches the IslandProgram")),
+			gosx.El("p", gosx.Text("4. Event delegation catches clicks and dispatches to the VM")),
+			gosx.El("p", gosx.Text("5. Signal updates trigger reconciliation and DOM patching")),
 		),
 	)
 }
