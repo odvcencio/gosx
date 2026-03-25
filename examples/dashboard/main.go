@@ -195,7 +195,12 @@ func Layout(title string, islands *island.Renderer, content gosx.Node) gosx.Node
 				Footer(),
 			),
 		),
-	) + "\n" + gosx.RenderHTML(islands.PageHead()) + "\n</body>\n</html>")
+	) + "\n" + func() string {
+		if islands != nil {
+			return gosx.RenderHTML(islands.PageHead())
+		}
+		return ""
+	}() + "\n</body>\n</html>")
 }
 
 // Sidebar renders the navigation sidebar.
