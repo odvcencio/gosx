@@ -121,6 +121,52 @@ func TestCrossIslandReRender(t *testing.T) {
 	t.Logf("After 2 increments: $count=%v, B received %d patch sets", val2.Num, len(bPatches2))
 }
 
+// TestDisposeUnsubscribes proves that disposing an island unsubscribes
+// from shared signals — no leaked subscriptions, no patches to dead islands.
+func TestDisposeUnsubscribes(t *testing.T) {
+	b := bridge.New()
+
+	var mu sync.Mutex
+	patchLog := make(map[string]int)
+
+	b.SetPatchCallback(func(islandID, patchJSON string) {
+		mu.Lock()
+		patchLog[islandID]++
+		mu.Unlock()
+	})
+
+	progA := sharedCounterProgram("A")
+	progB := sharedCounterProgram("B")
+	dataA, _ := program.EncodeJSON(progA)
+	dataB, _ := program.EncodeJSON(progB)
+
+	b.HydrateIsland("island-a", "A", `{}`, dataA, "json")
+	b.HydrateIsland("island-b", "B", `{}`, dataB, "json")
+
+	// Increment — B should get a patch
+	b.DispatchAction("island-a", "increment", "{}")
+	mu.Lock()
+	bBefore := patchLog["island-b"]
+	mu.Unlock()
+	if bBefore == 0 {
+		t.Fatal("B should have received a patch before dispose")
+	}
+
+	// Dispose B
+	b.DisposeIsland("island-b")
+
+	// Increment again — B should NOT get a patch (disposed)
+	b.DispatchAction("island-a", "increment", "{}")
+	mu.Lock()
+	bAfter := patchLog["island-b"]
+	mu.Unlock()
+
+	if bAfter != bBefore {
+		t.Fatalf("disposed island B received %d patches after dispose (expected %d)", bAfter, bBefore)
+	}
+	t.Logf("Dispose verified: B received %d patches before dispose, 0 after", bBefore)
+}
+
 // sharedCounterProgram creates a counter that uses the shared "$count" signal.
 func sharedCounterProgram(name string) *program.Program {
 	exprs := []program.Expr{

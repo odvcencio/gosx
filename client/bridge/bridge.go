@@ -13,7 +13,8 @@ type Bridge struct {
 	islands      map[string]*vm.Island
 	store        *Store
 	patchFn      func(islandID, patchJSON string) // callback to push patches to JS
-	dispatching  string                            // ID of the island currently dispatching (skip its subscription)
+	dispatching  string                            // ID of the island currently dispatching
+	unsubs       map[string][]func()               // per-island unsubscribe handles for shared signals
 }
 
 // SetPatchCallback registers the function called when shared signal changes
@@ -68,6 +69,7 @@ func New() *Bridge {
 	return &Bridge{
 		islands: make(map[string]*vm.Island),
 		store:   NewStore(),
+		unsubs:  make(map[string][]func()),
 	}
 }
 
@@ -103,10 +105,11 @@ func (b *Bridge) HydrateIsland(id, componentName, propsJSON string, programData 
 	// Skip if this island is the one that triggered the change (it handles
 	// its own reconcile in Dispatch).
 	islandID := id
+	var unsubs []func()
 	for _, def := range prog.Signals {
 		if len(def.Name) > 0 && def.Name[0] == '$' {
 			sig := b.store.Signal(def.Name, vm.ZeroValue(def.Type))
-			sig.Subscribe(func() {
+			unsub := sig.Subscribe(func() {
 				if b.dispatching == islandID {
 					return // the dispatching island reconciles itself
 				}
@@ -122,8 +125,10 @@ func (b *Bridge) HydrateIsland(id, componentName, propsJSON string, programData 
 					}
 				}
 			})
+			unsubs = append(unsubs, unsub)
 		}
 	}
+	b.unsubs[id] = unsubs
 
 	b.islands[id] = island
 	return nil
@@ -156,8 +161,17 @@ func MarshalPatches(patches []vm.PatchOp) (string, error) {
 	return string(data), nil
 }
 
-// DisposeIsland cleans up an island.
+// DisposeIsland cleans up an island and unsubscribes from all shared signals.
 func (b *Bridge) DisposeIsland(id string) {
+	// Unsubscribe from shared signals first — prevents the subscription
+	// callback from firing on a disposed island.
+	if unsubs, ok := b.unsubs[id]; ok {
+		for _, unsub := range unsubs {
+			unsub()
+		}
+		delete(b.unsubs, id)
+	}
+
 	if island, ok := b.islands[id]; ok {
 		island.Dispose()
 		delete(b.islands, id)

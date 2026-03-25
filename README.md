@@ -102,6 +102,25 @@ Island expressions are constrained to what the client-side VM can evaluate:
 
 Goroutines, channels, and arbitrary Go are compile-time errors in islands.
 
+### Cross-Island Shared State
+
+Signals with names starting with `$` are shared across all islands on the page:
+
+```
+$count   — shared counter, any island can read/write
+$theme   — shared theme, all islands react to changes
+$user    — shared auth state
+count    — local to the declaring island
+```
+
+When one island mutates a `$`-signal, all other islands that reference it automatically re-render. No Redux, no context providers, no boilerplate. The bridge manages the shared store and subscription lifecycle — disposed islands are automatically unsubscribed.
+
+**Init order:** The first island to declare a `$`-signal sets its type and initial value. Subsequent islands receive the existing signal. This means hydration order matters for shared state initialization — document shared signals explicitly in your manifest or ensure a consistent load order.
+
+### What's not yet in the compiler
+
+The runtime and VM are complete: signals, handlers, shared state, reconciliation, and DOM patching all work. The missing piece is **compiler extraction**: the `.gsx` compiler does not yet analyze Go function bodies to automatically detect signal declarations (`signal.New(...)`) or handler functions. Island programs must currently be constructed as typed fixtures. This is a compiler milestone, not an architecture gap — the runtime will not change when the compiler catches up.
+
 ### Styling Model
 
 Classes and external CSS are the primary styling path. GoSX does not include CSS-in-JS.
