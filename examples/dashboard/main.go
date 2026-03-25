@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -25,7 +26,9 @@ import (
 	"github.com/odvcencio/gosx"
 	"github.com/odvcencio/gosx/action"
 	"github.com/odvcencio/gosx/hydrate"
+	"github.com/odvcencio/gosx/ir"
 	"github.com/odvcencio/gosx/island"
+	"github.com/odvcencio/gosx/island/program"
 	"github.com/odvcencio/gosx/route"
 )
 
@@ -43,16 +46,56 @@ func main() {
 		return nil
 	})
 
-	// Island renderer for hydration manifest
-	islands := island.NewRenderer("dashboard")
-	islands.SetBundle("dashboard", "/gosx/runtime.wasm")
-	islands.SetRuntime("/gosx/runtime.wasm", "", 0)
+	// Compile the counter island from .gsx source
+	_, thisFilePath, _, _ := runtime.Caller(0)
+	baseDir := filepath.Dir(thisFilePath)
+	counterSource, err := os.ReadFile(filepath.Join(baseDir, "..", "counter", "counter.gsx"))
+	if err != nil {
+		log.Fatalf("read counter.gsx: %v", err)
+	}
+	counterIR, err := gosx.Compile(counterSource)
+	if err != nil {
+		log.Fatalf("compile counter.gsx: %v", err)
+	}
+	// Find the island component
+	var counterProgram *program.Program
+	for i, comp := range counterIR.Components {
+		if comp.IsIsland {
+			counterProgram, err = ir.LowerIsland(counterIR, i)
+			if err != nil {
+				log.Fatalf("lower island %s: %v", comp.Name, err)
+			}
+			log.Printf("Compiled island: %s (%d nodes, %d exprs)", counterProgram.Name, len(counterProgram.Nodes), len(counterProgram.Exprs))
+			break
+		}
+	}
+	if counterProgram == nil {
+		log.Fatal("no island component found in counter.gsx")
+	}
+	// Serialize to JSON for serving
+	counterProgramJSON, err := program.EncodeJSON(counterProgram)
+	if err != nil {
+		log.Fatalf("encode island program: %v", err)
+	}
+	log.Printf("Island program: %d bytes JSON", len(counterProgramJSON))
+
+	_ = counterProgramJSON // used by /gosx/islands/Counter.json handler
 
 	// Router
 	router := route.NewRouter()
 
+	// newIslands creates a fresh island renderer per request to avoid manifest accumulation
+	newIslands := func() *island.Renderer {
+		r := island.NewRenderer("dashboard")
+		r.SetBundle("dashboard", "/gosx/runtime.wasm")
+		r.SetRuntime("/gosx/runtime.wasm", "", 0)
+		r.SetProgramDir("/gosx/islands")
+		r.SetProgramFormat("json")
+		return r
+	}
+
 	router.SetLayout(func(ctx *route.RouteContext, content gosx.Node) gosx.Node {
-		return Layout("Dashboard", islands, content)
+		return Layout("Dashboard", nil, content)
 	})
 
 	router.Add(
@@ -83,10 +126,14 @@ func main() {
 		},
 		route.Route{
 			Pattern: "/counter",
-			Handler: func(ctx *route.RouteContext) gosx.Node {
+			Layout: func(ctx *route.RouteContext, content gosx.Node) gosx.Node {
+				isl := newIslands()
 				countStr := ctx.Query("count")
 				count, _ := strconv.Atoi(countStr)
-				return CounterPage(count, islands)
+				return Layout("Dashboard", isl, CounterPage(count, isl))
+			},
+			Handler: func(ctx *route.RouteContext) gosx.Node {
+				return gosx.Text("") // content built in layout
 			},
 		},
 	)
@@ -95,8 +142,7 @@ func main() {
 	mux.Handle("POST /gosx/action/{name}", actions)
 
 	// Resolve paths relative to this source file so it works from any working directory
-	_, thisFile, _, _ := runtime.Caller(0)
-	exampleDir := filepath.Dir(thisFile)
+	exampleDir := baseDir
 	moduleDir := filepath.Join(exampleDir, "..", "..")
 
 	// Static CSS
@@ -116,6 +162,11 @@ func main() {
 	})
 	mux.HandleFunc("GET /gosx/patch.js", func(w http.ResponseWriter, r *http.Request) {
 		http.ServeFile(w, r, filepath.Join(moduleDir, "client", "js", "patch.js"))
+	})
+	// Serve compiled island programs
+	mux.HandleFunc("GET /gosx/islands/Counter.json", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(counterProgramJSON)
 	})
 
 	mux.Handle("/", router.Build())

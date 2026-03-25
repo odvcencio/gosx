@@ -99,9 +99,17 @@ func (r *Renderer) RenderIslandWithEvents(componentName string, props any, event
 		return gosx.El("div", gosx.Text(fmt.Sprintf("island error: %v", err)))
 	}
 
-	// Add events to the last island entry
+	// Add events and program ref to the last island entry
 	lastIdx := len(r.manifest.Islands) - 1
 	r.manifest.Islands[lastIdx].Events = events
+	ext := ".json"
+	if r.programFormat == "bin" {
+		ext = ".bin"
+	}
+	if r.programDir != "" {
+		r.manifest.Islands[lastIdx].ProgramRef = r.programDir + "/" + componentName + ext
+		r.manifest.Islands[lastIdx].ProgramFormat = r.programFormat
+	}
 
 	r.counter++
 
