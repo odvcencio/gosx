@@ -17,8 +17,21 @@ func LowerIsland(prog *Program, compIdx int) (*program.Program, error) {
 		return nil, fmt.Errorf("component %q is not an island", comp.Name)
 	}
 
-	// Build expression scope from the component's node tree
+	// Build expression scope from the component's node tree AND the body analyzer.
+	// If the component has a Scope (from body analysis), merge it into the
+	// expression scope so identifiers resolve correctly.
 	scope := buildIslandScope(prog, comp)
+	if comp.Scope != nil {
+		for _, sig := range comp.Scope.Signals {
+			scope.Signals[sig.Name] = true
+		}
+		for _, c := range comp.Scope.Computeds {
+			scope.Signals[c.Name] = true // computeds read like signals
+		}
+		for _, h := range comp.Scope.Handlers {
+			scope.Handlers[h.Name] = true
+		}
+	}
 
 	l := &islandLowerer{
 		src:     prog,
@@ -33,6 +46,63 @@ func LowerIsland(prog *Program, compIdx int) (*program.Program, error) {
 		return nil, fmt.Errorf("lower %s: %w", comp.Name, err)
 	}
 	l.dst.Root = rootID
+
+	// Generate SignalDef, ComputedDef, Handler entries from the body analyzer.
+	if comp.Scope != nil {
+		for _, sig := range comp.Scope.Signals {
+			// Parse the init expression into opcodes
+			initExprs, initID, err := ParseExpr(sig.InitExpr, scope)
+			if err != nil {
+				// Fallback: literal init
+				initID = l.addExprDirect(program.Expr{
+					Op:    program.OpLitString,
+					Value: sig.InitExpr,
+					Type:  program.TypeAny,
+				})
+			} else {
+				initID = l.appendExprs(initExprs, initID)
+			}
+
+			exprType := typeHintToExprType(sig.TypeHint)
+			l.dst.Signals = append(l.dst.Signals, program.SignalDef{
+				Name: sig.Name,
+				Type: exprType,
+				Init: initID,
+			})
+		}
+
+		for _, comp := range comp.Scope.Computeds {
+			bodyExprs, bodyID, err := ParseExpr(comp.BodyExpr, scope)
+			if err != nil {
+				bodyID = l.addExprDirect(program.Expr{
+					Op:    program.OpPropGet,
+					Value: comp.BodyExpr,
+					Type:  program.TypeAny,
+				})
+			} else {
+				bodyID = l.appendExprs(bodyExprs, bodyID)
+			}
+
+			l.dst.Computeds = append(l.dst.Computeds, program.ComputedDef{
+				Name: comp.Name,
+				Type: program.TypeAny,
+				Expr: bodyID,
+			})
+		}
+
+		for _, handler := range comp.Scope.Handlers {
+			h := program.Handler{Name: handler.Name}
+			for _, stmtSource := range handler.Statements {
+				stmtExprs, stmtID, err := ParseExpr(stmtSource, scope)
+				if err != nil {
+					continue // skip unparseable statements
+				}
+				stmtID = l.appendExprs(stmtExprs, stmtID)
+				h.Body = append(h.Body, stmtID)
+			}
+			l.dst.Handlers = append(l.dst.Handlers, h)
+		}
+	}
 
 	// Compute static mask
 	l.dst.StaticMask = make([]bool, len(l.dst.Nodes))
@@ -223,4 +293,47 @@ func (l *islandLowerer) addExpr(source string) program.ExprID {
 	}
 
 	return rootID + baseID
+}
+
+// addExprDirect appends a single expression to the program and returns its ID.
+func (l *islandLowerer) addExprDirect(e program.Expr) program.ExprID {
+	id := program.ExprID(len(l.dst.Exprs))
+	l.dst.Exprs = append(l.dst.Exprs, e)
+	return id
+}
+
+// appendExprs appends parsed expressions to the program, offsetting operand
+// references, and returns the adjusted root ID.
+func (l *islandLowerer) appendExprs(exprs []program.Expr, rootID program.ExprID) program.ExprID {
+	baseID := program.ExprID(len(l.dst.Exprs))
+
+	for _, e := range exprs {
+		adjusted := e
+		if len(adjusted.Operands) > 0 {
+			ops := make([]program.ExprID, len(adjusted.Operands))
+			for i, op := range adjusted.Operands {
+				ops[i] = op + baseID
+			}
+			adjusted.Operands = ops
+		}
+		l.dst.Exprs = append(l.dst.Exprs, adjusted)
+	}
+
+	return rootID + baseID
+}
+
+// typeHintToExprType converts a type hint string to an ExprType.
+func typeHintToExprType(hint string) program.ExprType {
+	switch hint {
+	case "int":
+		return program.TypeInt
+	case "float":
+		return program.TypeFloat
+	case "string":
+		return program.TypeString
+	case "bool":
+		return program.TypeBool
+	default:
+		return program.TypeAny
+	}
 }

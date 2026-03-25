@@ -154,12 +154,23 @@ func validateIslandExprs(prog *Program, comp *Component) []Diagnostic {
 	}
 	collect(comp.Root)
 
-	// Validation scope — empty, since we just want to check parsability and
-	// rejected patterns, not resolve identifiers.
+	// Build validation scope from the component's body analysis.
+	// This lets the expression parser resolve signal/handler identifiers.
 	scope := &ExprScope{
 		Signals:  map[string]bool{},
 		Props:    map[string]bool{},
 		Handlers: map[string]bool{},
+	}
+	if comp.Scope != nil {
+		for _, sig := range comp.Scope.Signals {
+			scope.Signals[sig.Name] = true
+		}
+		for _, c := range comp.Scope.Computeds {
+			scope.Signals[c.Name] = true
+		}
+		for _, h := range comp.Scope.Handlers {
+			scope.Handlers[h.Name] = true
+		}
 	}
 
 	for _, id := range nodeIDs {
