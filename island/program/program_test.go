@@ -417,6 +417,80 @@ func TestJSONRoundTrip(t *testing.T) {
 	}
 }
 
+func TestBinaryRoundTrip(t *testing.T) {
+	original := CounterProgram()
+	data, err := EncodeBinary(original)
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	// Verify magic header
+	if string(data[:3]) != "GSX" {
+		t.Fatalf("expected GSX magic, got %q", string(data[:3]))
+	}
+	if data[3] != 0x00 {
+		t.Fatal("expected null terminator after magic")
+	}
+	decoded, err := DecodeBinary(data)
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	// Verify all fields survive round-trip
+	if decoded.Name != original.Name {
+		t.Fatalf("name mismatch")
+	}
+	if len(decoded.Nodes) != len(original.Nodes) {
+		t.Fatalf("nodes mismatch")
+	}
+	if len(decoded.Exprs) != len(original.Exprs) {
+		t.Fatalf("exprs mismatch")
+	}
+	if decoded.Exprs[2].Op != OpSignalSet {
+		t.Fatalf("expr[2] op mismatch")
+	}
+	if decoded.Exprs[2].Value != "count" {
+		t.Fatalf("expr[2] value mismatch")
+	}
+	if len(decoded.Signals) != len(original.Signals) {
+		t.Fatal("signals mismatch")
+	}
+	if len(decoded.Handlers) != len(original.Handlers) {
+		t.Fatal("handlers mismatch")
+	}
+	if len(decoded.StaticMask) != len(original.StaticMask) {
+		t.Fatal("mask mismatch")
+	}
+	// Verify children survived
+	if len(decoded.Nodes[0].Children) != 3 {
+		t.Fatal("root children mismatch")
+	}
+	// Verify attrs survived
+	if len(decoded.Nodes[0].Attrs) != 1 {
+		t.Fatal("root attrs mismatch")
+	}
+	if decoded.Nodes[0].Attrs[0].Value != "counter" {
+		t.Fatal("class attr mismatch")
+	}
+}
+
+func TestBinarySmallerThanJSON(t *testing.T) {
+	p := CounterProgram()
+	jsonData, _ := EncodeJSON(p)
+	binData, _ := EncodeBinary(p)
+	if len(binData) >= len(jsonData) {
+		t.Errorf("binary (%d bytes) should be smaller than JSON (%d bytes)", len(binData), len(jsonData))
+	}
+}
+
+func TestBinaryTruncatedInput(t *testing.T) {
+	p := CounterProgram()
+	data, _ := EncodeBinary(p)
+	// Truncate to just the header
+	_, err := DecodeBinary(data[:6])
+	if err == nil {
+		t.Fatal("expected error on truncated input")
+	}
+}
+
 func TestJSONEmptyProgram(t *testing.T) {
 	p := &Program{Name: "Empty", Root: 0}
 	data, err := EncodeJSON(p)
