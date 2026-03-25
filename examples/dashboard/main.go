@@ -76,6 +76,10 @@ func main() {
 	derivedJSON, _ := program.EncodeJSON(derivedProg)
 	log.Printf("Island: %s (%d nodes, %d bytes)", derivedProg.Name, len(derivedProg.Nodes), len(derivedJSON))
 
+	editorProg := program.EditorProgram()
+	editorJSON, _ := program.EncodeJSON(editorProg)
+	log.Printf("Island: %s (%d nodes, %d bytes)", editorProg.Name, len(editorProg.Nodes), len(editorJSON))
+
 	_, thisFilePath, _, _ := runtime.Caller(0)
 	baseDir := filepath.Dir(thisFilePath)
 
@@ -156,46 +160,56 @@ func main() {
 	// Static CSS
 	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir(filepath.Join(exampleDir, "static")))))
 
+	// immutableFile serves stable assets (WASM runtime, wasm_exec.js) with long cache.
+	// These only change on rebuild — the manifest can use hash-based URLs to bust cache.
+	immutableFile := func(contentType, path string) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+			if contentType != "" {
+				w.Header().Set("Content-Type", contentType)
+			}
+			http.ServeFile(w, r, path)
+		}
+	}
+
+	// noCacheFile serves assets that change frequently (JS, island programs during dev).
+	noCacheFile := func(contentType, path string) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+			w.Header().Set("Pragma", "no-cache")
+			w.Header().Set("Expires", "0")
+			if contentType != "" {
+				w.Header().Set("Content-Type", contentType)
+			}
+			http.ServeFile(w, r, path)
+		}
+	}
+
 	// GoSX client assets
 	buildDir := filepath.Join(exampleDir, "build")
-	mux.HandleFunc("GET /gosx/runtime.wasm", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/wasm")
-		http.ServeFile(w, r, filepath.Join(buildDir, "gosx-runtime.wasm"))
-	})
-	mux.HandleFunc("GET /gosx/wasm_exec.js", func(w http.ResponseWriter, r *http.Request) {
-		http.ServeFile(w, r, filepath.Join(buildDir, "wasm_exec.js"))
-	})
-	mux.HandleFunc("GET /gosx/bootstrap.js", func(w http.ResponseWriter, r *http.Request) {
-		http.ServeFile(w, r, filepath.Join(moduleDir, "client", "js", "bootstrap.js"))
-	})
-	mux.HandleFunc("GET /gosx/patch.js", func(w http.ResponseWriter, r *http.Request) {
-		http.ServeFile(w, r, filepath.Join(moduleDir, "client", "js", "patch.js"))
-	})
-	// Serve compiled island programs
-	mux.HandleFunc("GET /gosx/islands/Counter.json", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.Write(counterProgramJSON)
-	})
-	mux.HandleFunc("GET /gosx/islands/Tabs.json", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.Write(tabsJSON)
-	})
-	mux.HandleFunc("GET /gosx/islands/Toggle.json", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.Write(toggleJSON)
-	})
-	mux.HandleFunc("GET /gosx/islands/Todo.json", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.Write(todoJSON)
-	})
-	mux.HandleFunc("GET /gosx/islands/Form.json", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.Write(formJSON)
-	})
-	mux.HandleFunc("GET /gosx/islands/Derived.json", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.Write(derivedJSON)
-	})
+
+	// Heavy machinery: cache forever (3.3MB WASM + 17KB wasm_exec.js — load once, cache across pages)
+	mux.HandleFunc("GET /gosx/runtime.wasm", immutableFile("application/wasm", filepath.Join(buildDir, "gosx-runtime.wasm")))
+	mux.HandleFunc("GET /gosx/wasm_exec.js", immutableFile("", filepath.Join(buildDir, "wasm_exec.js")))
+	mux.HandleFunc("GET /gosx/bootstrap.js", noCacheFile("", filepath.Join(moduleDir, "client", "js", "bootstrap.js")))
+	mux.HandleFunc("GET /gosx/patch.js", noCacheFile("", filepath.Join(moduleDir, "client", "js", "patch.js")))
+	// Serve compiled island programs — all no-cache for reliable iteration
+	noCacheJSON := func(data []byte) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+			w.Header().Set("Pragma", "no-cache")
+			w.Header().Set("Expires", "0")
+			w.Write(data)
+		}
+	}
+	mux.HandleFunc("GET /gosx/islands/Counter.json", noCacheJSON(counterProgramJSON))
+	mux.HandleFunc("GET /gosx/islands/Tabs.json", noCacheJSON(tabsJSON))
+	mux.HandleFunc("GET /gosx/islands/Toggle.json", noCacheJSON(toggleJSON))
+	mux.HandleFunc("GET /gosx/islands/Todo.json", noCacheJSON(todoJSON))
+	mux.HandleFunc("GET /gosx/islands/Form.json", noCacheJSON(formJSON))
+	mux.HandleFunc("GET /gosx/islands/Derived.json", noCacheJSON(derivedJSON))
+	mux.HandleFunc("GET /gosx/islands/Editor.json", noCacheJSON(editorJSON))
 
 	mux.Handle("/", router.Build())
 
@@ -616,6 +630,39 @@ func KitchenSinkPage(islands *island.Renderer) gosx.Node {
 		derivedContent,
 	)
 
+	// === CODE EDITOR ===
+	editorContent := gosx.El("div", gosx.Attrs(gosx.Attr("class", "editor")),
+		gosx.El("div", gosx.Attrs(gosx.Attr("class", "editor-header")),
+			gosx.Text("Code Editor"),
+			gosx.El("span", gosx.Attrs(gosx.Attr("class", "char-count")),
+				gosx.Text("0"),
+				gosx.Text(" chars"),
+			),
+		),
+		gosx.El("textarea", gosx.Attrs(
+			gosx.Attr("class", "editor-textarea"),
+			gosx.Attr("rows", "12"),
+			gosx.Attr("placeholder", "Type or paste code here..."),
+			gosx.Attr("data-gosx-handler", "onInput"),
+		)),
+		gosx.El("div", gosx.Attrs(gosx.Attr("class", "editor-actions")),
+			gosx.El("button", gosx.Attrs(gosx.Attr("data-gosx-handler", "clear")), gosx.Text("Clear")),
+		),
+		gosx.El("div", gosx.Attrs(gosx.Attr("class", "editor-preview")),
+			gosx.El("pre", gosx.Attrs(gosx.Attr("class", "code-output")),
+				gosx.Text(""),
+			),
+		),
+	)
+	editorIsland := islands.RenderIslandWithEvents("Editor",
+		nil,
+		[]hydrate.EventSlot{
+			{SlotID: "inp", EventType: "input", HandlerName: "onInput"},
+			{SlotID: "clr", EventType: "click", HandlerName: "clear"},
+		},
+		editorContent,
+	)
+
 	return gosx.Fragment(
 		gosx.El("h1", gosx.Text("Kitchen Sink — SPA Patterns")),
 		gosx.El("p", gosx.Text("Every pattern below is a GoSX island: server-rendered HTML hydrated with a shared WASM runtime. Click to interact — no page reloads.")),
@@ -654,6 +701,12 @@ func KitchenSinkPage(islands *island.Renderer) gosx.Node {
 			gosx.El("h2", gosx.Text("Price Calculator")),
 			gosx.El("p", gosx.Text("Derived values: total = price x qty - discount.")),
 			derivedIsland,
+		),
+
+		gosx.El("div", gosx.Attrs(gosx.Attr("class", "card")),
+			gosx.El("h2", gosx.Text("Code Editor")),
+			gosx.El("p", gosx.Text("Two-way input binding with live character count and preview.")),
+			editorIsland,
 		),
 	)
 }

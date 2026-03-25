@@ -87,6 +87,7 @@ const (
 	OpIndex                      // Index into collection
 	OpLen                        // Length of collection
 	OpRange                      // Range expression
+	OpEventGet                   // Read field from current event data (Value = field name)
 )
 
 // ExprType describes the type of an expression result.
@@ -1037,5 +1038,134 @@ func CounterProgram() *Program {
 			{Name: "increment", Body: []ExprID{3}},
 		},
 		StaticMask: []bool{false, true, false, true, true, true},
+	}
+}
+
+// EditorProgram returns a code editor island program.
+//
+// The editor has a textarea for input, a live character count, and a clear button.
+// On every input event, the code signal is set to the textarea value via OpEventGet.
+func EditorProgram() *Program {
+	// Expressions:
+	//   0: SignalGet "code"          — current code content (for display/binding)
+	//   1: LitString ""              — initial empty code
+	//   2: EventGet "value"          — reads textarea value from input event
+	//   3: SignalSet "code" <- [2]   — set code to event value (onInput handler)
+	//   4: LitString ""              — empty string for clear
+	//   5: SignalSet "code" <- [4]   — clear code (clear handler)
+	//   6: OpLen [7]                 — character count
+	//   7: SignalGet "code"          — code for len()
+	exprs := []Expr{
+		{Op: OpSignalGet, Value: "code", Type: TypeString},                        // 0
+		{Op: OpLitString, Value: "", Type: TypeString},                            // 1
+		{Op: OpEventGet, Value: "value", Type: TypeString},                        // 2
+		{Op: OpSignalSet, Operands: []ExprID{2}, Value: "code", Type: TypeString}, // 3
+		{Op: OpLitString, Value: "", Type: TypeString},                            // 4
+		{Op: OpSignalSet, Operands: []ExprID{4}, Value: "code", Type: TypeString}, // 5
+		{Op: OpLen, Operands: []ExprID{7}, Type: TypeInt},                         // 6
+		{Op: OpSignalGet, Value: "code", Type: TypeString},                        // 7
+	}
+
+	// Nodes:
+	//   0: div.editor (root)
+	//   1: div.editor-header
+	//   2: h3 "Code Editor"
+	//   3: span.char-count — displays character count
+	//   4: expr: char count (expr[6])
+	//   5: text " chars"
+	//   6: textarea (with input event -> onInput)
+	//   7: div.editor-actions
+	//   8: button "Clear" (click -> clear)
+	//   9: div.editor-preview
+	//   10: pre — displays code content
+	//   11: expr: code content (expr[0])
+	nodes := []Node{
+		{ // 0: root
+			Kind: NodeElement, Tag: "div",
+			Attrs:    []Attr{{Kind: AttrStatic, Name: "class", Value: "editor"}},
+			Children: []NodeID{1, 6, 7, 9},
+		},
+		{ // 1: header
+			Kind: NodeElement, Tag: "div",
+			Attrs:    []Attr{{Kind: AttrStatic, Name: "class", Value: "editor-header"}},
+			Children: []NodeID{2, 3},
+		},
+		{ // 2: title
+			Kind: NodeText, Text: "Code Editor",
+		},
+		{ // 3: char count span
+			Kind: NodeElement, Tag: "span",
+			Attrs:    []Attr{{Kind: AttrStatic, Name: "class", Value: "char-count"}},
+			Children: []NodeID{4, 5},
+		},
+		{ // 4: char count value (expr)
+			Kind: NodeExpr, Expr: ExprID(6),
+		},
+		{ // 5: " chars" label
+			Kind: NodeText, Text: " chars",
+		},
+		{ // 6: textarea
+			Kind: NodeElement, Tag: "textarea",
+			Attrs: []Attr{
+				{Kind: AttrStatic, Name: "class", Value: "editor-textarea"},
+				{Kind: AttrStatic, Name: "rows", Value: "12"},
+				{Kind: AttrStatic, Name: "placeholder", Value: "Type or paste code here..."},
+				{Kind: AttrEvent, Name: "input", Event: "onInput"},
+			},
+			Children: []NodeID{},
+		},
+		{ // 7: actions
+			Kind: NodeElement, Tag: "div",
+			Attrs:    []Attr{{Kind: AttrStatic, Name: "class", Value: "editor-actions"}},
+			Children: []NodeID{8},
+		},
+		{ // 8: clear button
+			Kind: NodeElement, Tag: "button",
+			Attrs: []Attr{
+				{Kind: AttrEvent, Name: "click", Event: "clear"},
+			},
+			Children: []NodeID{},
+		},
+		{ // 9: preview section
+			Kind: NodeElement, Tag: "div",
+			Attrs:    []Attr{{Kind: AttrStatic, Name: "class", Value: "editor-preview"}},
+			Children: []NodeID{10},
+		},
+		{ // 10: pre element for code display
+			Kind: NodeElement, Tag: "pre",
+			Attrs:    []Attr{{Kind: AttrStatic, Name: "class", Value: "code-output"}},
+			Children: []NodeID{11},
+		},
+		{ // 11: code content (expr)
+			Kind: NodeExpr, Expr: ExprID(0),
+		},
+	}
+
+	return &Program{
+		Name:  "Editor",
+		Nodes: nodes,
+		Root:  0,
+		Exprs: exprs,
+		Signals: []SignalDef{
+			{Name: "code", Type: TypeString, Init: ExprID(1)},
+		},
+		Handlers: []Handler{
+			{Name: "onInput", Body: []ExprID{3}},
+			{Name: "clear", Body: []ExprID{5}},
+		},
+		StaticMask: []bool{
+			false, // 0: root (contains dynamic children)
+			false, // 1: header (contains char count)
+			true,  // 2: title text
+			false, // 3: char count span
+			false, // 4: char count expr
+			true,  // 5: " chars" text
+			true,  // 6: textarea (static element, value handled by events)
+			true,  // 7: actions div
+			true,  // 8: clear button
+			false, // 9: preview
+			false, // 10: pre
+			false, // 11: code expr
+		},
 	}
 }

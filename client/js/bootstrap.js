@@ -156,8 +156,14 @@
 
     for (const eventType of DELEGATED_EVENTS) {
       const listener = function(e) {
+        // Skip if this event was already handled by an inner island
+        if (e.__gosx_handled) return;
+
         const handlerName = findHandler(e.target, islandRoot);
         if (!handlerName) return; // No handler on ancestor chain — ignore.
+
+        // Mark as handled to prevent duplicate dispatch from parent islands
+        e.__gosx_handled = true;
 
         const actionFn = window.__gosx_action;
         if (typeof actionFn !== "function") {

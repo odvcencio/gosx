@@ -2,6 +2,7 @@ package vm
 
 import (
 	"encoding/json"
+	"fmt"
 
 	"github.com/odvcencio/gosx/island/program"
 	"github.com/odvcencio/gosx/signal"
@@ -67,12 +68,32 @@ func (island *Island) Dispatch(handlerName string, eventDataJSON string) []Patch
 		return nil
 	}
 
+	// Parse event data and set on VM for OpEventGet.
+	// Always try to parse — even "{}" produces a valid (empty) map.
+	var eventData map[string]string
+	if eventDataJSON != "" {
+		// Try map[string]string first, fall back to map[string]any for mixed types
+		if err := json.Unmarshal([]byte(eventDataJSON), &eventData); err != nil {
+			var mixed map[string]any
+			if err2 := json.Unmarshal([]byte(eventDataJSON), &mixed); err2 == nil {
+				eventData = make(map[string]string)
+				for k, v := range mixed {
+					eventData[k] = fmt.Sprintf("%v", v)
+				}
+			}
+		}
+	}
+	island.vm.SetEventData(eventData) // always set, even if nil (clears previous)
+
 	// Batch all signal mutations
 	signal.Batch(func() {
 		for _, exprID := range handler.Body {
 			island.vm.Eval(exprID)
 		}
 	})
+
+	// Clear event context
+	island.vm.ClearEventData()
 
 	// Reconcile
 	return island.Reconcile()

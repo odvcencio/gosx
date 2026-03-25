@@ -9,10 +9,21 @@ import (
 
 // VM evaluates island expressions against props and signal state.
 type VM struct {
-	program *program.Program
-	props   map[string]Value
-	signals map[string]*signal.Signal[Value]
-	exprs   []program.Expr
+	program   *program.Program
+	props     map[string]Value
+	signals   map[string]*signal.Signal[Value]
+	exprs     []program.Expr
+	eventData map[string]string // current event data (set during handler dispatch)
+}
+
+// SetEventData sets the current event context for OpEventGet evaluation.
+func (vm *VM) SetEventData(data map[string]string) {
+	vm.eventData = data
+}
+
+// ClearEventData clears the event context after handler dispatch.
+func (vm *VM) ClearEventData() {
+	vm.eventData = nil
 }
 
 // NewVM creates a VM for an island program with the given props.
@@ -153,9 +164,22 @@ func (vm *VM) Eval(id program.ExprID) Value {
 	case program.OpIndex:
 		return ZeroValue(program.TypeAny)
 	case program.OpLen:
-		return ZeroValue(program.TypeInt)
+		if len(e.Operands) > 0 {
+			v := vm.Eval(e.Operands[0])
+			return IntVal(len(v.Str))
+		}
+		return IntVal(0)
 	case program.OpRange:
 		return ZeroValue(program.TypeAny)
+
+	case program.OpEventGet:
+		// Read a field from the current event data
+		if vm.eventData != nil {
+			if v, ok := vm.eventData[e.Value]; ok {
+				return StringVal(v)
+			}
+		}
+		return StringVal("")
 
 	default:
 		return ZeroValue(program.TypeAny)

@@ -73,29 +73,43 @@ func (s *Server) ListenAndServe() error {
 		mux.Handle("/gosx/assets/", http.StripPrefix("/gosx/assets/", http.FileServer(http.Dir(s.BuildDir))))
 	}
 
-	// Serve WASM runtime from build output
-	mux.HandleFunc("GET /gosx/runtime.wasm", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/wasm")
-		http.ServeFile(w, r, filepath.Join(s.BuildDir, "gosx-runtime.wasm"))
-	})
+	// Stable machinery: WASM runtime and wasm_exec.js are large and don't change
+	// between hot-reloads. Cache them aggressively.
+	cacheServe := func(contentType, path string) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+			if contentType != "" {
+				w.Header().Set("Content-Type", contentType)
+			}
+			http.ServeFile(w, r, path)
+		}
+	}
+	mux.HandleFunc("GET /gosx/runtime.wasm", cacheServe("application/wasm", filepath.Join(s.BuildDir, "gosx-runtime.wasm")))
+	mux.HandleFunc("GET /gosx/wasm_exec.js", cacheServe("", filepath.Join(s.BuildDir, "wasm_exec.js")))
 
-	// Serve wasm_exec.js support file from build output
-	mux.HandleFunc("GET /gosx/wasm_exec.js", func(w http.ResponseWriter, r *http.Request) {
-		http.ServeFile(w, r, filepath.Join(s.BuildDir, "wasm_exec.js"))
-	})
+	// Dev assets: JS and island programs change during development. No-cache.
+	noCacheServe := func(contentType, path string) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+			w.Header().Set("Pragma", "no-cache")
+			w.Header().Set("Expires", "0")
+			if contentType != "" {
+				w.Header().Set("Content-Type", contentType)
+			}
+			http.ServeFile(w, r, path)
+		}
+	}
+	mux.HandleFunc("GET /gosx/bootstrap.js", noCacheServe("", filepath.Join(s.Dir, "client", "js", "bootstrap.js")))
+	mux.HandleFunc("GET /gosx/patch.js", noCacheServe("", filepath.Join(s.Dir, "client", "js", "patch.js")))
 
-	// Client JS assets served from source for dev hot-reload
-	mux.HandleFunc("GET /gosx/bootstrap.js", func(w http.ResponseWriter, r *http.Request) {
-		http.ServeFile(w, r, filepath.Join(s.Dir, "client", "js", "bootstrap.js"))
-	})
-
-	mux.HandleFunc("GET /gosx/patch.js", func(w http.ResponseWriter, r *http.Request) {
-		http.ServeFile(w, r, filepath.Join(s.Dir, "client", "js", "patch.js"))
-	})
-
-	// Serve compiled island programs from build output
-	mux.Handle("GET /gosx/islands/", http.StripPrefix("/gosx/islands/",
-		http.FileServer(http.Dir(filepath.Join(s.BuildDir, "islands")))))
+	// Island programs — no-cache (change when components change)
+	islandDir := http.Dir(filepath.Join(s.BuildDir, "islands"))
+	mux.Handle("GET /gosx/islands/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+		w.Header().Set("Pragma", "no-cache")
+		w.Header().Set("Expires", "0")
+		http.StripPrefix("/gosx/islands/", http.FileServer(islandDir)).ServeHTTP(w, r)
+	}))
 
 	// Application routes (wrapped with dev injection)
 	mux.Handle("/", s.devMiddleware(s.AppHandler))

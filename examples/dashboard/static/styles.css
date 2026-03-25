@@ -305,6 +305,18 @@ input:focus {
 .derived .row button { padding: 0.25rem 0.75rem; background: #4361ee; color: #fff; border: none; border-radius: 4px; cursor: pointer; }
 .derived .total { font-size: 1.25rem; font-weight: bold; margin-top: 0.5rem; padding: 0.5rem; background: #e8f5e9; border-radius: 4px; }
 
+.editor { margin: 1rem 0; }
+.editor-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem; font-weight: bold; }
+.char-count { font-size: 0.85rem; color: #666; font-weight: normal; }
+.editor-textarea { width: 100%; font-family: 'Fira Code', 'Cascadia Code', 'JetBrains Mono', monospace; font-size: 0.9rem; padding: 1rem; border: 2px solid #e0e0e0; border-radius: 6px; resize: vertical; background: #1e1e2e; color: #cdd6f4; line-height: 1.6; }
+.editor-textarea:focus { border-color: #4361ee; outline: none; }
+.editor-textarea::placeholder { color: #585b70; }
+.editor-actions { margin: 0.5rem 0; }
+.editor-actions button { padding: 0.4rem 1rem; background: #4361ee; color: #fff; border: none; border-radius: 4px; cursor: pointer; }
+.editor-actions button:hover { background: #3651d4; }
+.editor-preview { margin-top: 0.5rem; }
+.code-output { font-family: 'Fira Code', 'Cascadia Code', monospace; font-size: 0.85rem; padding: 1rem; background: #f5f5f5; border-radius: 6px; overflow-x: auto; min-height: 2rem; white-space: pre-wrap; word-break: break-all; }
+
 /* ==========================================================================
    Badges
    ========================================================================== */

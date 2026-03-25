@@ -50,18 +50,19 @@ func main() {
 
 		patches, err := b.DispatchAction(islandID, handlerName, eventDataJSON)
 		if err != nil {
+			js.Global().Get("console").Call("error", "[gosx/wasm] dispatch error:", err.Error())
 			return js.Null()
 		}
 
 		if len(patches) > 0 {
 			patchJSON, err := bridge.MarshalPatches(patches)
 			if err != nil {
-				return js.Null()
+				return js.ValueOf("marshal:" + err.Error())
 			}
-			// Call JS patch applier
 			js.Global().Call("__gosx_apply_patches", islandID, patchJSON)
+			return js.ValueOf(len(patches))
 		}
-		return js.Null()
+		return js.ValueOf(0)
 	}))
 
 	// Export dispose function
