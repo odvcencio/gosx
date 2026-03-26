@@ -172,16 +172,8 @@ func (r *fileProgramRenderer) renderEach(node *ir.Node, env fileRenderEnv) strin
 func (r *fileProgramRenderer) renderLink(node *ir.Node, env fileRenderEnv) string {
 	var b strings.Builder
 	b.WriteString("<a")
-	hasNavAttr := false
-	for _, attr := range node.Attrs {
-		if attr.Kind == ir.AttrSpread {
-			continue
-		}
-		if attr.Name == "data-gosx-link" {
-			hasNavAttr = true
-		}
-		renderFileAttr(&b, attr, env)
-	}
+	hasNavAttr := attrValue(node.Attrs, env, "data-gosx-link") != nil
+	r.renderAttrs(&b, node.Attrs, env)
 	if !hasNavAttr {
 		b.WriteString(" data-gosx-link")
 	}
@@ -409,7 +401,17 @@ func renderFileAttr(b *strings.Builder, attr ir.Attr, env fileRenderEnv) {
 	case ir.AttrBool:
 		fmt.Fprintf(b, " %s", name)
 	case ir.AttrSpread:
-		return
+		renderFileSpreadAttrs(b, evalFileExpr(attr.Expr, env))
+	}
+}
+
+func renderFileSpreadAttrs(b *strings.Builder, value any) {
+	for key, value := range spreadProps(value) {
+		normalized := normalizeFileAttrName(key)
+		if normalized == "" {
+			continue
+		}
+		renderFileEvaluatedAttr(b, html.EscapeString(normalized), value)
 	}
 }
 
@@ -606,6 +608,18 @@ func setComponentProp(props map[string]any, name string, value any) {
 	}
 	if alt := unexportedPropAlias(name); alt != "" {
 		props[alt] = value
+	}
+}
+
+func normalizeFileAttrName(name string) string {
+	name = strings.TrimSpace(name)
+	switch name {
+	case "":
+		return ""
+	case "className":
+		return "class"
+	default:
+		return name
 	}
 }
 
