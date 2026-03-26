@@ -267,7 +267,7 @@ func (r *fileProgramRenderer) renderScene3D(node *ir.Node, env fileRenderEnv) st
 func (r *fileProgramRenderer) renderEngineComponent(node *ir.Node, env fileRenderEnv, kind engine.Kind, defaults fileEngineDefaults) string {
 	cfg, fallback := r.engineComponentConfig(node, env, kind, defaults)
 	if kind == engine.KindSurface && cfg.Name == "GoSXScene3D" {
-		cfg.Props = defaultScene3DProps(cfg.Props)
+		cfg.Props = defaultScene3DProps(cfg.Props, cfg.WASMPath)
 	}
 	return gosx.RenderHTML(env.engine(cfg, fallback))
 }
@@ -885,7 +885,7 @@ func engineCapabilitiesValue(value any, fallback []engine.Capability) []engine.C
 	return normalized
 }
 
-func defaultScene3DProps(raw json.RawMessage) json.RawMessage {
+func defaultScene3DProps(raw json.RawMessage, programRef string) json.RawMessage {
 	props := map[string]any{}
 	if len(raw) > 0 {
 		_ = json.Unmarshal(raw, &props)
@@ -911,7 +911,7 @@ func defaultScene3DProps(raw json.RawMessage) json.RawMessage {
 			"fov": 75,
 		}
 	}
-	if _, ok := lookupTemplatePropValue(props, "scene"); !ok {
+	if _, ok := lookupTemplatePropValue(props, "scene"); !ok && strings.TrimSpace(programRef) == "" {
 		props["scene"] = map[string]any{
 			"objects": []map[string]any{
 				{
