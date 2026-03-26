@@ -371,17 +371,17 @@ func TestRuntimeRenderBundleResolvesMaterialPresets(t *testing.T) {
 	}
 
 	ghost := bundle.Materials[0]
-	if ghost.Kind != "ghost" || ghost.BlendMode != "alpha" || ghost.Opacity >= 1 || ghost.Emissive <= 0 {
+	if ghost.Kind != "ghost" || ghost.BlendMode != "alpha" || ghost.RenderPass != "alpha" || ghost.Opacity >= 1 || ghost.Emissive <= 0 || ghost.Key == "" {
 		t.Fatalf("expected ghost preset material, got %#v", ghost)
 	}
 
 	flat := bundle.Materials[1]
-	if flat.Kind != "flat" || flat.BlendMode != "alpha" || flat.Opacity != 0.6 || flat.Emissive != 0.35 {
+	if flat.Kind != "flat" || flat.BlendMode != "alpha" || flat.RenderPass != "alpha" || flat.Opacity != 0.6 || flat.Emissive != 0.35 || flat.Key == "" {
 		t.Fatalf("expected explicit flat material overrides, got %#v", flat)
 	}
 
 	glow := bundle.Materials[2]
-	if glow.Kind != "glow" || glow.BlendMode != "additive" || glow.Opacity <= 0.5 || glow.Emissive <= 0 {
+	if glow.Kind != "glow" || glow.BlendMode != "additive" || glow.RenderPass != "additive" || glow.Opacity <= 0.5 || glow.Emissive <= 0 || glow.Key == "" {
 		t.Fatalf("expected glow preset material, got %#v", glow)
 	}
 }

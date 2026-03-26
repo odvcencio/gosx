@@ -1653,6 +1653,10 @@
     if (!material || typeof material !== "object") {
       return "opaque";
     }
+    const renderPass = String(material.renderPass || "").toLowerCase();
+    if (renderPass === "opaque" || renderPass === "alpha" || renderPass === "additive") {
+      return renderPass;
+    }
     const blendMode = String(material.blendMode || "").toLowerCase();
     if (blendMode === "additive") {
       return "additive";
@@ -1752,6 +1756,10 @@
   }
 
   function sceneHashMaterialProfile(hash, material) {
+    const key = material && material.key;
+    if (key) {
+      return sceneHashString(hash, key);
+    }
     hash = sceneHashFieldStrings(hash, material, sceneMaterialStringFields);
     hash = sceneHashFieldNumbers(hash, material, sceneMaterialNumberFields);
     return sceneHashFieldFlags(hash, material, sceneMaterialFlagFields);

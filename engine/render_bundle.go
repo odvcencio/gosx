@@ -26,12 +26,14 @@ type RenderCamera struct {
 
 // RenderMaterial is a resolved material profile for a draw bundle.
 type RenderMaterial struct {
-	Kind      string  `json:"kind,omitempty"`
-	Color     string  `json:"color,omitempty"`
-	Opacity   float64 `json:"opacity,omitempty"`
-	Wireframe bool    `json:"wireframe,omitempty"`
-	BlendMode string  `json:"blendMode,omitempty"`
-	Emissive  float64 `json:"emissive,omitempty"`
+	Key        string  `json:"key,omitempty"`
+	Kind       string  `json:"kind,omitempty"`
+	Color      string  `json:"color,omitempty"`
+	Opacity    float64 `json:"opacity,omitempty"`
+	Wireframe  bool    `json:"wireframe,omitempty"`
+	BlendMode  string  `json:"blendMode,omitempty"`
+	RenderPass string  `json:"renderPass,omitempty"`
+	Emissive   float64 `json:"emissive,omitempty"`
 }
 
 // RenderBounds is a world-space axis-aligned bounds record for a render object.
