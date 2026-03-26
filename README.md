@@ -14,8 +14,9 @@ GoSX is in active development. The compiler pipeline, server rendering, island a
 - `gosx dev` fronts a runnable app with a stable dev proxy, staged `/gosx/*` runtime assets, file watching, and SSE reload notifications
 - `gosx export` prerenders static file-routed pages into `dist/static`, carries over `/public`, stages `/gosx/*` runtime assets, and writes `dist/export.json`
 - opt-in client-side page navigation via `app.EnableNavigation()` plus `server.Link(...)`, with managed head swaps and intent-prefetching
-- file-based routing via `route.Router.AddDir(...)`, including `layout.gsx`, `page.gsx`, `index.gsx`, `not-found.gsx`, `error.gsx`, route groups like `(marketing)`, and `[slug]` segment conventions
+- file-based routing via `route.Router.AddDir(...)`, including `layout.gsx`, `page.gsx`, `index.gsx`, `not-found.gsx`, `error.gsx`, route groups like `(marketing)`, `[slug]` segment conventions, inherited `route.config.json`, and directory-scoped modules
 - file-route server modules via sibling `page.server.go` files and `route.MustRegisterFileModuleHere(...)`, with per-page `Load`, `Metadata`, `Render`, and relative `__actions/<name>` endpoints
+- directory-scoped middleware and request hooks via `route.MustRegisterDirModuleHere(...)`, plus inheritable `route.config.json` cache/header/prerender settings
 - file-routed `.gsx` pages can now render local page-scoped components plus built-in `If`, `Each`, `Link`, and `Image` helpers through the file renderer, including mixed and repeated expression-valued attrs plus nested-brace attr expressions
 - file-routed pages and layouts can now own sibling `page.css` / `layout.css` sidecars, which are injected into the document head automatically during routed rendering
 - file-routed pages and layouts can now own sibling `page.meta.json` / `layout.meta.json` sidecars for static title, description, canonical, meta, and link data without manual server-module wiring
@@ -71,8 +72,10 @@ The generated project includes:
 - root-level static assets from `public/`
 - `.env`, `.env.local`, and `.env.<mode>` loading via `env.LoadDir`
 - file-routed `.gsx` pages under `app/` by default, with automatic nested `layout.gsx` discovery, scoped `not-found.gsx` resolution, and `app.API(...)` for colocated JSON endpoints
+- inheritable `route.config.json` support for subtree cache, headers, and prerender defaults
 - a blank import of `your/module/modules` so sibling and nested `page.server.go` module registrations execute at startup
 - sibling `page.server.go` examples that register file-route `Load`, `Metadata`, and `Actions` hooks through `route.MustRegisterFileModuleHere(...)`
+- optional directory-scoped route modules through `route.MustRegisterDirModuleHere(...)` when a subtree needs middleware or request setup
 - session middleware plus CSRF protection for browser forms
 - HTTP caching helpers plus automatic ETags for page and API responses
 - opt-in page transitions via `app.EnableNavigation()` and `server.Link(...)`
@@ -87,6 +90,7 @@ The docs template additionally includes:
 - a mounted docs router, `/public`-served stylesheet, `/api/meta`, and guarded `/api/me`
 - session-backed forms, auth actions, and a protected route under `/labs/secret`
 - automatic ETags on `/api/meta` plus static docs-page cache examples that can be invalidated by path or tag
+- a docs subtree `route.config.json` that carries cache defaults through file-routed pages and static export
 - a sample raster asset plus image optimization examples under `/docs/images`
 
 ```go

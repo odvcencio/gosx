@@ -782,6 +782,167 @@ func Page() Node {
 	}
 }
 
+func TestRouterAddDirAppliesInheritedDirectoryRouteConfig(t *testing.T) {
+	root := t.TempDir()
+	writeRouteFile(t, root, "route.config.json", `{"headers":{"X-App-Scope":"root"}}`)
+	writeRouteFile(t, root, "docs/route.config.json", `{
+  "cache": {
+    "public": true,
+    "maxAge": "45s",
+    "staleWhileRevalidate": "5m"
+  },
+  "cacheTags": ["docs-pages"],
+  "headers": {
+    "X-Docs-Scope": "docs"
+  }
+}`)
+	writeRouteFile(t, root, "docs/page.gsx", `package docs
+
+func Page() Node {
+	return <main>Docs</main>
+}
+`)
+
+	router := NewRouter()
+	if err := router.AddDir(root, FileRoutesOptions{}); err != nil {
+		t.Fatal(err)
+	}
+
+	handler := router.Build()
+
+	req := httptest.NewRequest(http.MethodGet, "/docs", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if got := w.Header().Get("X-App-Scope"); got != "root" {
+		t.Fatalf("expected root header, got %q", got)
+	}
+	if got := w.Header().Get("X-Docs-Scope"); got != "docs" {
+		t.Fatalf("expected docs header, got %q", got)
+	}
+	if got := w.Header().Get("Cache-Control"); got != "public, max-age=45, stale-while-revalidate=300" {
+		t.Fatalf("unexpected cache-control %q", got)
+	}
+	etag := w.Header().Get("ETag")
+	if etag == "" {
+		t.Fatalf("expected etag in %v", w.Header())
+	}
+
+	notModifiedReq := httptest.NewRequest(http.MethodGet, "/docs", nil)
+	notModifiedReq.Header.Set("If-None-Match", etag)
+	notModifiedRes := httptest.NewRecorder()
+	handler.ServeHTTP(notModifiedRes, notModifiedReq)
+	if notModifiedRes.Code != http.StatusNotModified {
+		t.Fatalf("expected 304, got %d: %s", notModifiedRes.Code, notModifiedRes.Body.String())
+	}
+
+	router.RevalidateTag("docs-pages")
+
+	updatedReq := httptest.NewRequest(http.MethodGet, "/docs", nil)
+	updatedReq.Header.Set("If-None-Match", etag)
+	updatedRes := httptest.NewRecorder()
+	handler.ServeHTTP(updatedRes, updatedReq)
+	if updatedRes.Code != http.StatusOK {
+		t.Fatalf("expected 200 after revalidate, got %d: %s", updatedRes.Code, updatedRes.Body.String())
+	}
+}
+
+func TestRouterAddDirAppliesDirectoryModulesToPagesAndActions(t *testing.T) {
+	root := t.TempDir()
+	writeRouteFile(t, root, "docs/page.gsx", `package docs
+
+func Page() Node {
+	return <main>Docs</main>
+}
+`)
+
+	modules := NewFileModuleRegistry()
+	if err := modules.Register(FileModuleFor("docs/page.gsx", FileModuleOptions{
+		Actions: FileActions{
+			"save": func(ctx *action.Context) error {
+				return ctx.Success("saved", nil)
+			},
+		},
+	})); err != nil {
+		t.Fatal(err)
+	}
+
+	dirModules := NewDirModuleRegistry()
+	if err := dirModules.Register(DirModuleFor(root, DirModuleOptions{
+		Middleware: []Middleware{
+			func(next http.Handler) http.Handler {
+				return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					w.Header().Set("X-App-Middleware", "root")
+					next.ServeHTTP(w, r)
+				})
+			},
+		},
+	})); err != nil {
+		t.Fatal(err)
+	}
+	if err := dirModules.Register(DirModuleFor("docs", DirModuleOptions{
+		Middleware: []Middleware{
+			func(next http.Handler) http.Handler {
+				return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					w.Header().Set("X-Docs-Middleware", "docs")
+					next.ServeHTTP(w, r)
+				})
+			},
+		},
+		Configure: func(ctx *RouteContext, page FilePage) error {
+			ctx.Header().Set("X-Docs-Configured", page.Source)
+			return nil
+		},
+	})); err != nil {
+		t.Fatal(err)
+	}
+
+	router := NewRouter()
+	if err := router.AddDir(root, FileRoutesOptions{
+		Modules:    modules,
+		DirModules: dirModules,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	handler := router.Build()
+
+	pageReq := httptest.NewRequest(http.MethodGet, "/docs", nil)
+	pageRes := httptest.NewRecorder()
+	handler.ServeHTTP(pageRes, pageReq)
+	if pageRes.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", pageRes.Code, pageRes.Body.String())
+	}
+	if got := pageRes.Header().Get("X-App-Middleware"); got != "root" {
+		t.Fatalf("expected root middleware header, got %q", got)
+	}
+	if got := pageRes.Header().Get("X-Docs-Middleware"); got != "docs" {
+		t.Fatalf("expected docs middleware header, got %q", got)
+	}
+	if got := pageRes.Header().Get("X-Docs-Configured"); got != "docs/page.gsx" {
+		t.Fatalf("expected docs configure header, got %q", got)
+	}
+
+	actionReq := httptest.NewRequest(http.MethodPost, "/docs/__actions/save", nil)
+	actionReq.Header.Set("Accept", "application/json")
+	actionRes := httptest.NewRecorder()
+	handler.ServeHTTP(actionRes, actionReq)
+	if actionRes.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", actionRes.Code, actionRes.Body.String())
+	}
+	if got := actionRes.Header().Get("X-App-Middleware"); got != "root" {
+		t.Fatalf("expected root middleware header on action, got %q", got)
+	}
+	if got := actionRes.Header().Get("X-Docs-Middleware"); got != "docs" {
+		t.Fatalf("expected docs middleware header on action, got %q", got)
+	}
+	if got := actionRes.Header().Get("X-Docs-Configured"); got != "" {
+		t.Fatalf("expected no configure header on action, got %q", got)
+	}
+}
+
 func TestRouterAddDirRegistersFileModuleActions(t *testing.T) {
 	root := t.TempDir()
 	writeRouteFile(t, root, "blog/[slug]/page.gsx", `package docs

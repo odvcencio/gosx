@@ -23,7 +23,7 @@ This is the working framework punchlist for driving GoSX from "credible core" to
 
 - [x] Nested filesystem layouts discovered automatically
 - [x] Route groups
-- [ ] Directory-scoped middleware/config
+- [x] Directory-scoped middleware/config
 - [x] Directory-scoped `not-found` and `error` composition
 - [x] File-based metadata conventions beyond manual registration
 
