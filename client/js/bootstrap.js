@@ -2056,71 +2056,94 @@
   function createEngineRuntime(entry) {
     let programPromise = null;
 
-    function engineProgramFormat() {
-      return inferProgramFormat(entry);
-    }
-
     async function loadProgram() {
       if (!entry.programRef) {
         return null;
       }
       if (!programPromise) {
-        programPromise = fetchProgram(entry.programRef, engineProgramFormat()).then(function(data) {
-          return data == null ? null : { data, format: engineProgramFormat() };
+        const format = inferProgramFormat(entry);
+        programPromise = fetchProgram(entry.programRef, format).then(function(data) {
+          return data == null ? null : { data, format };
         });
       }
       return programPromise;
     }
 
-    function hydrateProgramData(program) {
-      const hydrate = window.__gosx_hydrate_engine;
-      if (typeof hydrate !== "function" || !program) {
-        return [];
-      }
-      return decodeEngineCommands(hydrate(
-        entry.id,
-        entry.component,
-        JSON.stringify(entry.props || {}),
-        program.data,
-        program.format || "json",
-      ));
-    }
-
     return {
       mode: entry.runtime || "",
       available() {
-        return engineUsesSharedRuntime(entry)
-          && typeof window.__gosx_hydrate_engine === "function"
-          && typeof window.__gosx_tick_engine === "function"
-          && typeof window.__gosx_render_engine === "function"
-          && typeof window.__gosx_engine_dispose === "function";
+        return sharedEngineRuntimeAvailable(entry);
       },
       async hydrateFromProgramRef() {
-        if (!engineUsesSharedRuntime(entry)) {
-          return [];
-        }
         const program = await loadProgram();
-        return hydrateProgramData(program);
+        return hydrateSharedEngineProgram(entry, program);
       },
       tick() {
-        if (!this.available()) {
-          return [];
-        }
-        return decodeEngineCommands(window.__gosx_tick_engine(entry.id));
+        return tickSharedEngineRuntime(entry);
       },
       renderFrame(timeSeconds, width, height) {
-        if (!engineUsesSharedRuntime(entry) || typeof window.__gosx_render_engine !== "function") {
-          return null;
-        }
-        return decodeEngineRenderBundle(window.__gosx_render_engine(entry.id, timeSeconds, width, height));
+        return renderSharedEngineFrame(entry, timeSeconds, width, height);
       },
       dispose() {
-        if (!engineUsesSharedRuntime(entry) || typeof window.__gosx_engine_dispose !== "function") {
-          return;
-        }
-        window.__gosx_engine_dispose(entry.id);
+        disposeSharedEngineRuntime(entry);
       },
     };
+  }
+
+  function sharedEngineRuntimeBridge() {
+    return {
+      hydrate: window.__gosx_hydrate_engine,
+      tick: window.__gosx_tick_engine,
+      render: window.__gosx_render_engine,
+      dispose: window.__gosx_engine_dispose,
+    };
+  }
+
+  function sharedEngineRuntimeAvailable(entry) {
+    const bridge = sharedEngineRuntimeBridge();
+    return engineUsesSharedRuntime(entry)
+      && typeof bridge.hydrate === "function"
+      && typeof bridge.tick === "function"
+      && typeof bridge.render === "function"
+      && typeof bridge.dispose === "function";
+  }
+
+  function hydrateSharedEngineProgram(entry, program) {
+    const bridge = sharedEngineRuntimeBridge();
+    if (!engineUsesSharedRuntime(entry) || typeof bridge.hydrate !== "function" || !program) {
+      return [];
+    }
+    return decodeEngineCommands(bridge.hydrate(
+      entry.id,
+      entry.component,
+      JSON.stringify(entry.props || {}),
+      program.data,
+      program.format || "json",
+    ));
+  }
+
+  function tickSharedEngineRuntime(entry) {
+    const bridge = sharedEngineRuntimeBridge();
+    if (!engineUsesSharedRuntime(entry) || typeof bridge.tick !== "function") {
+      return [];
+    }
+    return decodeEngineCommands(bridge.tick(entry.id));
+  }
+
+  function renderSharedEngineFrame(entry, timeSeconds, width, height) {
+    const bridge = sharedEngineRuntimeBridge();
+    if (!engineUsesSharedRuntime(entry) || typeof bridge.render !== "function") {
+      return null;
+    }
+    return decodeEngineRenderBundle(bridge.render(entry.id, timeSeconds, width, height));
+  }
+
+  function disposeSharedEngineRuntime(entry) {
+    const bridge = sharedEngineRuntimeBridge();
+    if (!engineUsesSharedRuntime(entry) || typeof bridge.dispose !== "function") {
+      return;
+    }
+    bridge.dispose(entry.id);
   }
 
   function decodeEngineCommands(result) {
