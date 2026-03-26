@@ -5,6 +5,7 @@
 package route
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"path"
@@ -56,6 +57,36 @@ type DataLoader func(ctx *RouteContext) (any, error)
 
 // ErrorHandler renders a route error page.
 type ErrorHandler func(ctx *RouteContext, err error) gosx.Node
+
+// ErrNotFound marks a loader failure that should render the router's 404 flow
+// instead of the route error handler.
+var ErrNotFound = errors.New("route not found")
+
+type notFoundError struct {
+	message string
+}
+
+func (err notFoundError) Error() string {
+	if strings.TrimSpace(err.message) == "" {
+		return ErrNotFound.Error()
+	}
+	return err.message
+}
+
+func (err notFoundError) Unwrap() error {
+	return ErrNotFound
+}
+
+// NotFound returns an error that instructs the router to render the not-found
+// page for the current request path.
+func NotFound(message string) error {
+	return notFoundError{message: message}
+}
+
+// IsNotFound reports whether err should be treated as a route-level 404.
+func IsNotFound(err error) bool {
+	return errors.Is(err, ErrNotFound)
+}
 
 // RouteContext provides request context to handlers.
 type RouteContext struct {
@@ -500,6 +531,10 @@ func (r *Router) buildHandler(pattern string, route Route, layouts []LayoutFunc,
 		if route.DataLoader != nil {
 			data, err := route.DataLoader(ctx)
 			if err != nil {
+				if IsNotFound(err) {
+					r.renderNotFound(w, req)
+					return
+				}
 				r.renderError(w, ctx, layouts, errorHandler, errorLayout, err, pattern)
 				return
 			}
