@@ -1363,6 +1363,65 @@ test("bootstrap invalidates static opaque Scene3D buffers when camera clip state
   assert.equal(gl.ops.filter((entry) => entry[0] === "bufferData" && entry[2] === 4).length, 2);
 });
 
+test("bootstrap reuses opaque Scene3D WebGL state transitions within a frame", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-opaque-state-root";
+
+  const env = createContext({
+    elements: [mount],
+    enableWebGL: true,
+    disableCanvas2D: true,
+    fetchRoutes: {
+      "/runtime.wasm": { bytes: [0, 97, 115, 109] },
+      "/scene-opaque-state-program.json": { text: '{"name":"OpaqueState"}' },
+    },
+    manifest: {
+      runtime: { path: "/runtime.wasm" },
+      engines: [
+        {
+          id: "gosx-engine-opaque-state",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-opaque-state-root",
+          runtime: "shared",
+          props: { width: 640, height: 360, background: "#08151f" },
+          programRef: "/scene-opaque-state-program.json",
+        },
+      ],
+    },
+    onHydrateEngine: () => "[]",
+    onRenderEngine: () => JSON.stringify({
+      background: "#08151f",
+      camera: { x: 0, y: 0, z: 6, fov: 72 },
+      positions: [],
+      colors: [],
+      vertexCount: 0,
+      worldPositions: [
+        -2, 0, 0, 2, 0, 0,
+      ],
+      worldColors: [
+        0.4, 0.5, 0.6, 1, 0.4, 0.5, 0.6, 1,
+      ],
+      worldVertexCount: 2,
+      materials: [
+        { kind: "flat", color: "#35556a", opacity: 1, wireframe: true, blendMode: "opaque", emissive: 0 },
+      ],
+      objects: [
+        { id: "floor", kind: "plane", materialIndex: 0, vertexOffset: 0, vertexCount: 2, static: true, depthCenter: 6, viewCulled: false },
+      ],
+      objectCount: 1,
+    }),
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const gl = mount.children[0].getContext("webgl");
+  assert.equal(gl.ops.filter((entry) => entry[0] === "disable" && entry[1] === gl.BLEND).length, 1);
+  assert.equal(gl.ops.filter((entry) => entry[0] === "enable" && entry[1] === gl.DEPTH_TEST).length, 1);
+  assert.equal(gl.ops.filter((entry) => entry[0] === "depthMask" && entry[1] === true).length, 1);
+});
+
 test("bootstrap depth-sorts alpha Scene3D objects before upload", async () => {
   const mount = new FakeElement("div", null);
   mount.id = "scene-alpha-root";

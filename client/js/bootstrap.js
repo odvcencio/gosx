@@ -996,8 +996,8 @@
         gl.useProgram(program);
         applySceneWebGLUniforms(gl, bundle, canvas, geometry.usePerspective, resources);
         if (geometry.usePerspective && renderSceneWebGLWorldBundle(gl, bundle, resources)) {
-          applySceneWebGLBlend(gl, "opaque");
-          applySceneWebGLDepth(gl, "opaque");
+          applySceneWebGLBlend(gl, "opaque", resources.stateCache);
+          applySceneWebGLDepth(gl, "opaque", resources.stateCache);
           return;
         }
         renderSceneWebGLFallbackBundle(gl, geometry, resources);
@@ -1036,6 +1036,10 @@
           key: "",
           vertexCount: 0,
         },
+      },
+      stateCache: {
+        blendMode: "",
+        depthMode: "",
       },
     };
   }
@@ -1089,13 +1093,13 @@
       staticDraw: resources.staticDraw,
       dynamicDraw: resources.dynamicDraw,
     });
-    drawSceneWebGLPasses(gl, resources.arrayBuffer, resources.floatType, resources.linesMode, resources.positionLocation, resources.colorLocation, resources.materialLocation, worldPasses, resources.passCache);
+    drawSceneWebGLPasses(gl, resources.arrayBuffer, resources.floatType, resources.linesMode, resources.positionLocation, resources.colorLocation, resources.materialLocation, worldPasses, resources.passCache, resources.stateCache);
     return true;
   }
 
   function renderSceneWebGLFallbackBundle(gl, geometry, resources) {
-    applySceneWebGLDepth(gl, "disabled");
-    applySceneWebGLBlend(gl, "opaque");
+    applySceneWebGLDepth(gl, "disabled", resources.stateCache);
+    applySceneWebGLBlend(gl, "opaque", resources.stateCache);
     uploadSceneWebGLBuffers(
       gl,
       resources.arrayBuffer,
@@ -1208,14 +1212,14 @@
     return passes;
   }
 
-  function drawSceneWebGLPasses(gl, arrayBuffer, floatType, linesMode, positionLocation, colorLocation, materialLocation, passes, cache) {
+  function drawSceneWebGLPasses(gl, arrayBuffer, floatType, linesMode, positionLocation, colorLocation, materialLocation, passes, cache, stateCache) {
     for (const pass of passes) {
       const vertexCount = uploadSceneWebGLPass(gl, arrayBuffer, pass, cache);
       if (!vertexCount) {
         continue;
       }
-      applySceneWebGLDepth(gl, pass.depth);
-      applySceneWebGLBlend(gl, pass.blend);
+      applySceneWebGLDepth(gl, pass.depth, stateCache);
+      applySceneWebGLBlend(gl, pass.blend, stateCache);
       drawSceneWebGLLines(gl, arrayBuffer, floatType, linesMode, positionLocation, colorLocation, materialLocation, pass.buffers.position, pass.buffers.color, pass.buffers.material, vertexCount, 3);
     }
   }
@@ -1268,11 +1272,17 @@
     gl.drawArrays(linesMode, 0, vertexCount);
   }
 
-  function applySceneWebGLBlend(gl, mode) {
+  function applySceneWebGLBlend(gl, mode, stateCache) {
+    if (stateCache && stateCache.blendMode === mode) {
+      return;
+    }
     const blendConst = typeof gl.BLEND === "number" ? gl.BLEND : 0x0BE2;
     const one = typeof gl.ONE === "number" ? gl.ONE : 1;
     const srcAlpha = typeof gl.SRC_ALPHA === "number" ? gl.SRC_ALPHA : 0x0302;
     const oneMinusSrcAlpha = typeof gl.ONE_MINUS_SRC_ALPHA === "number" ? gl.ONE_MINUS_SRC_ALPHA : 0x0303;
+    if (stateCache) {
+      stateCache.blendMode = mode;
+    }
     switch (mode) {
     case "alpha":
       if (typeof gl.enable === "function") {
@@ -1297,9 +1307,15 @@
     }
   }
 
-  function applySceneWebGLDepth(gl, mode) {
+  function applySceneWebGLDepth(gl, mode, stateCache) {
+    if (stateCache && stateCache.depthMode === mode) {
+      return;
+    }
     const depthTest = typeof gl.DEPTH_TEST === "number" ? gl.DEPTH_TEST : 0x0B71;
     const lequal = typeof gl.LEQUAL === "number" ? gl.LEQUAL : 0x0203;
+    if (stateCache) {
+      stateCache.depthMode = mode;
+    }
     if (mode === "disabled") {
       if (typeof gl.disable === "function") {
         gl.disable(depthTest);
