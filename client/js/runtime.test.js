@@ -164,7 +164,10 @@ class FakeWebGLContext {
 
   getAttribLocation(_program, name) {
     this.ops.push(["getAttribLocation", name]);
-    return name === "a_position" ? 0 : 1;
+    if (name === "a_position") return 0;
+    if (name === "a_color") return 1;
+    if (name === "a_material") return 2;
+    return -1;
   }
 
   getUniformLocation(_program, name) {
@@ -1141,6 +1144,7 @@ test("bootstrap hydrates shared-runtime Scene3D programs", async () => {
   const gl = mount.children[0].getContext("webgl");
   assert.ok(gl.ops.some((entry) => entry[0] === "uniform4f" && entry[1] === "u_camera"));
   assert.ok(gl.ops.some((entry) => entry[0] === "vertexAttribPointer" && entry[2] === 3));
+  assert.ok(gl.ops.some((entry) => entry[0] === "vertexAttribPointer" && entry[1] === 2 && entry[2] === 3));
   assert.ok(gl.ops.filter((entry) => entry[0] === "drawArrays").length >= 2);
   assert.ok(gl.ops.some((entry) => entry[0] === "enable" && entry[1] === gl.BLEND));
   assert.ok(gl.ops.some((entry) => entry[0] === "blendFunc" && entry[1] === gl.SRC_ALPHA && entry[2] === gl.ONE_MINUS_SRC_ALPHA));

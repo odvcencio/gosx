@@ -986,20 +986,28 @@
 
     const positionBuffer = gl.createBuffer();
     const colorBuffer = gl.createBuffer();
+    const materialBuffer = gl.createBuffer();
     const staticOpaquePositionBuffer = gl.createBuffer();
     const staticOpaqueColorBuffer = gl.createBuffer();
+    const staticOpaqueMaterialBuffer = gl.createBuffer();
     const staticAlphaPositionBuffer = gl.createBuffer();
     const staticAlphaColorBuffer = gl.createBuffer();
+    const staticAlphaMaterialBuffer = gl.createBuffer();
     const staticAdditivePositionBuffer = gl.createBuffer();
     const staticAdditiveColorBuffer = gl.createBuffer();
+    const staticAdditiveMaterialBuffer = gl.createBuffer();
     const dynamicOpaquePositionBuffer = gl.createBuffer();
     const dynamicOpaqueColorBuffer = gl.createBuffer();
+    const dynamicOpaqueMaterialBuffer = gl.createBuffer();
     const dynamicAlphaPositionBuffer = gl.createBuffer();
     const dynamicAlphaColorBuffer = gl.createBuffer();
+    const dynamicAlphaMaterialBuffer = gl.createBuffer();
     const dynamicAdditivePositionBuffer = gl.createBuffer();
     const dynamicAdditiveColorBuffer = gl.createBuffer();
+    const dynamicAdditiveMaterialBuffer = gl.createBuffer();
     const positionLocation = gl.getAttribLocation(program, "a_position");
     const colorLocation = gl.getAttribLocation(program, "a_color");
+    const materialLocation = gl.getAttribLocation(program, "a_material");
     const cameraLocation = gl.getUniformLocation(program, "u_camera");
     const aspectLocation = gl.getUniformLocation(program, "u_aspect");
     const perspectiveLocation = gl.getUniformLocation(program, "u_use_perspective");
@@ -1051,37 +1059,37 @@
           const drawPlan = buildSceneWorldDrawPlan(bundle);
           if (drawPlan) {
             if (drawPlan.staticOpaqueKey !== staticOpaqueKey) {
-              uploadSceneWebGLBuffers(gl, arrayBuffer, dynamicDraw, staticOpaquePositionBuffer, staticOpaqueColorBuffer, drawPlan.staticOpaquePositions, drawPlan.staticOpaqueColors);
+              uploadSceneWebGLBuffers(gl, arrayBuffer, dynamicDraw, staticOpaquePositionBuffer, staticOpaqueColorBuffer, staticOpaqueMaterialBuffer, drawPlan.staticOpaquePositions, drawPlan.staticOpaqueColors, drawPlan.staticOpaqueMaterials);
               staticOpaqueKey = drawPlan.staticOpaqueKey;
               staticOpaqueVertexCount = drawPlan.staticOpaqueVertexCount;
             }
             if (drawPlan.staticAlphaKey !== staticAlphaKey) {
-              uploadSceneWebGLBuffers(gl, arrayBuffer, dynamicDraw, staticAlphaPositionBuffer, staticAlphaColorBuffer, drawPlan.staticAlphaPositions, drawPlan.staticAlphaColors);
+              uploadSceneWebGLBuffers(gl, arrayBuffer, dynamicDraw, staticAlphaPositionBuffer, staticAlphaColorBuffer, staticAlphaMaterialBuffer, drawPlan.staticAlphaPositions, drawPlan.staticAlphaColors, drawPlan.staticAlphaMaterials);
               staticAlphaKey = drawPlan.staticAlphaKey;
               staticAlphaVertexCount = drawPlan.staticAlphaVertexCount;
             }
             if (drawPlan.staticAdditiveKey !== staticAdditiveKey) {
-              uploadSceneWebGLBuffers(gl, arrayBuffer, dynamicDraw, staticAdditivePositionBuffer, staticAdditiveColorBuffer, drawPlan.staticAdditivePositions, drawPlan.staticAdditiveColors);
+              uploadSceneWebGLBuffers(gl, arrayBuffer, dynamicDraw, staticAdditivePositionBuffer, staticAdditiveColorBuffer, staticAdditiveMaterialBuffer, drawPlan.staticAdditivePositions, drawPlan.staticAdditiveColors, drawPlan.staticAdditiveMaterials);
               staticAdditiveKey = drawPlan.staticAdditiveKey;
               staticAdditiveVertexCount = drawPlan.staticAdditiveVertexCount;
             }
 
             applySceneWebGLBlend(gl, "opaque");
-            drawSceneWebGLLines(gl, arrayBuffer, floatType, linesMode, positionLocation, colorLocation, staticOpaquePositionBuffer, staticOpaqueColorBuffer, staticOpaqueVertexCount, 3);
-            uploadSceneWebGLBuffers(gl, arrayBuffer, dynamicDraw, dynamicOpaquePositionBuffer, dynamicOpaqueColorBuffer, drawPlan.dynamicOpaquePositions, drawPlan.dynamicOpaqueColors);
-            drawSceneWebGLLines(gl, arrayBuffer, floatType, linesMode, positionLocation, colorLocation, dynamicOpaquePositionBuffer, dynamicOpaqueColorBuffer, drawPlan.dynamicOpaqueVertexCount, 3);
+            drawSceneWebGLLines(gl, arrayBuffer, floatType, linesMode, positionLocation, colorLocation, materialLocation, staticOpaquePositionBuffer, staticOpaqueColorBuffer, staticOpaqueMaterialBuffer, staticOpaqueVertexCount, 3);
+            uploadSceneWebGLBuffers(gl, arrayBuffer, dynamicDraw, dynamicOpaquePositionBuffer, dynamicOpaqueColorBuffer, dynamicOpaqueMaterialBuffer, drawPlan.dynamicOpaquePositions, drawPlan.dynamicOpaqueColors, drawPlan.dynamicOpaqueMaterials);
+            drawSceneWebGLLines(gl, arrayBuffer, floatType, linesMode, positionLocation, colorLocation, materialLocation, dynamicOpaquePositionBuffer, dynamicOpaqueColorBuffer, dynamicOpaqueMaterialBuffer, drawPlan.dynamicOpaqueVertexCount, 3);
 
             if (drawPlan.hasAlphaPass) {
               applySceneWebGLBlend(gl, "alpha");
-              drawSceneWebGLLines(gl, arrayBuffer, floatType, linesMode, positionLocation, colorLocation, staticAlphaPositionBuffer, staticAlphaColorBuffer, staticAlphaVertexCount, 3);
-              uploadSceneWebGLBuffers(gl, arrayBuffer, dynamicDraw, dynamicAlphaPositionBuffer, dynamicAlphaColorBuffer, drawPlan.dynamicAlphaPositions, drawPlan.dynamicAlphaColors);
-              drawSceneWebGLLines(gl, arrayBuffer, floatType, linesMode, positionLocation, colorLocation, dynamicAlphaPositionBuffer, dynamicAlphaColorBuffer, drawPlan.dynamicAlphaVertexCount, 3);
+              drawSceneWebGLLines(gl, arrayBuffer, floatType, linesMode, positionLocation, colorLocation, materialLocation, staticAlphaPositionBuffer, staticAlphaColorBuffer, staticAlphaMaterialBuffer, staticAlphaVertexCount, 3);
+              uploadSceneWebGLBuffers(gl, arrayBuffer, dynamicDraw, dynamicAlphaPositionBuffer, dynamicAlphaColorBuffer, dynamicAlphaMaterialBuffer, drawPlan.dynamicAlphaPositions, drawPlan.dynamicAlphaColors, drawPlan.dynamicAlphaMaterials);
+              drawSceneWebGLLines(gl, arrayBuffer, floatType, linesMode, positionLocation, colorLocation, materialLocation, dynamicAlphaPositionBuffer, dynamicAlphaColorBuffer, dynamicAlphaMaterialBuffer, drawPlan.dynamicAlphaVertexCount, 3);
             }
             if (drawPlan.hasAdditivePass) {
               applySceneWebGLBlend(gl, "additive");
-              drawSceneWebGLLines(gl, arrayBuffer, floatType, linesMode, positionLocation, colorLocation, staticAdditivePositionBuffer, staticAdditiveColorBuffer, staticAdditiveVertexCount, 3);
-              uploadSceneWebGLBuffers(gl, arrayBuffer, dynamicDraw, dynamicAdditivePositionBuffer, dynamicAdditiveColorBuffer, drawPlan.dynamicAdditivePositions, drawPlan.dynamicAdditiveColors);
-              drawSceneWebGLLines(gl, arrayBuffer, floatType, linesMode, positionLocation, colorLocation, dynamicAdditivePositionBuffer, dynamicAdditiveColorBuffer, drawPlan.dynamicAdditiveVertexCount, 3);
+              drawSceneWebGLLines(gl, arrayBuffer, floatType, linesMode, positionLocation, colorLocation, materialLocation, staticAdditivePositionBuffer, staticAdditiveColorBuffer, staticAdditiveMaterialBuffer, staticAdditiveVertexCount, 3);
+              uploadSceneWebGLBuffers(gl, arrayBuffer, dynamicDraw, dynamicAdditivePositionBuffer, dynamicAdditiveColorBuffer, dynamicAdditiveMaterialBuffer, drawPlan.dynamicAdditivePositions, drawPlan.dynamicAdditiveColors, drawPlan.dynamicAdditiveMaterials);
+              drawSceneWebGLLines(gl, arrayBuffer, floatType, linesMode, positionLocation, colorLocation, materialLocation, dynamicAdditivePositionBuffer, dynamicAdditiveColorBuffer, dynamicAdditiveMaterialBuffer, drawPlan.dynamicAdditiveVertexCount, 3);
             }
             applySceneWebGLBlend(gl, "opaque");
             return;
@@ -1089,25 +1097,32 @@
         }
 
         applySceneWebGLBlend(gl, "opaque");
-        uploadSceneWebGLBuffers(gl, arrayBuffer, dynamicDraw, positionBuffer, colorBuffer, positions, colors);
-        drawSceneWebGLLines(gl, arrayBuffer, floatType, linesMode, positionLocation, colorLocation, positionBuffer, colorBuffer, vertexCount, usePerspective ? 3 : 2);
+        uploadSceneWebGLBuffers(gl, arrayBuffer, dynamicDraw, positionBuffer, colorBuffer, materialBuffer, positions, colors, sceneFallbackMaterialData(vertexCount));
+        drawSceneWebGLLines(gl, arrayBuffer, floatType, linesMode, positionLocation, colorLocation, materialLocation, positionBuffer, colorBuffer, materialBuffer, vertexCount, usePerspective ? 3 : 2);
       },
       dispose() {
         if (typeof gl.deleteBuffer === "function") {
           gl.deleteBuffer(positionBuffer);
           gl.deleteBuffer(colorBuffer);
+          gl.deleteBuffer(materialBuffer);
           gl.deleteBuffer(staticOpaquePositionBuffer);
           gl.deleteBuffer(staticOpaqueColorBuffer);
+          gl.deleteBuffer(staticOpaqueMaterialBuffer);
           gl.deleteBuffer(staticAlphaPositionBuffer);
           gl.deleteBuffer(staticAlphaColorBuffer);
+          gl.deleteBuffer(staticAlphaMaterialBuffer);
           gl.deleteBuffer(staticAdditivePositionBuffer);
           gl.deleteBuffer(staticAdditiveColorBuffer);
+          gl.deleteBuffer(staticAdditiveMaterialBuffer);
           gl.deleteBuffer(dynamicOpaquePositionBuffer);
           gl.deleteBuffer(dynamicOpaqueColorBuffer);
+          gl.deleteBuffer(dynamicOpaqueMaterialBuffer);
           gl.deleteBuffer(dynamicAlphaPositionBuffer);
           gl.deleteBuffer(dynamicAlphaColorBuffer);
+          gl.deleteBuffer(dynamicAlphaMaterialBuffer);
           gl.deleteBuffer(dynamicAdditivePositionBuffer);
           gl.deleteBuffer(dynamicAdditiveColorBuffer);
+          gl.deleteBuffer(dynamicAdditiveMaterialBuffer);
         }
         if (typeof gl.deleteProgram === "function") {
           gl.deleteProgram(program);
@@ -1116,14 +1131,16 @@
     };
   }
 
-  function uploadSceneWebGLBuffers(gl, arrayBuffer, usage, positionBuffer, colorBuffer, positions, colors) {
+  function uploadSceneWebGLBuffers(gl, arrayBuffer, usage, positionBuffer, colorBuffer, materialBuffer, positions, colors, materials) {
     gl.bindBuffer(arrayBuffer, positionBuffer);
     gl.bufferData(arrayBuffer, positions, usage);
     gl.bindBuffer(arrayBuffer, colorBuffer);
     gl.bufferData(arrayBuffer, colors, usage);
+    gl.bindBuffer(arrayBuffer, materialBuffer);
+    gl.bufferData(arrayBuffer, materials, usage);
   }
 
-  function drawSceneWebGLLines(gl, arrayBuffer, floatType, linesMode, positionLocation, colorLocation, positionBuffer, colorBuffer, vertexCount, positionSize) {
+  function drawSceneWebGLLines(gl, arrayBuffer, floatType, linesMode, positionLocation, colorLocation, materialLocation, positionBuffer, colorBuffer, materialBuffer, vertexCount, positionSize) {
     if (!vertexCount) {
       return;
     }
@@ -1134,6 +1151,10 @@
     gl.bindBuffer(arrayBuffer, colorBuffer);
     gl.enableVertexAttribArray(colorLocation);
     gl.vertexAttribPointer(colorLocation, 4, floatType, false, 0, 0);
+
+    gl.bindBuffer(arrayBuffer, materialBuffer);
+    gl.enableVertexAttribArray(materialLocation);
+    gl.vertexAttribPointer(materialLocation, 3, floatType, false, 0, 0);
 
     gl.drawArrays(linesMode, 0, vertexCount);
   }
@@ -1176,22 +1197,28 @@
 
     const staticOpaquePositions = [];
     const staticOpaqueColors = [];
+    const staticOpaqueMaterials = [];
     const staticAlphaPositions = [];
     const staticAlphaColors = [];
+    const staticAlphaMaterials = [];
     const staticAdditivePositions = [];
     const staticAdditiveColors = [];
+    const staticAdditiveMaterials = [];
     const dynamicOpaquePositions = [];
     const dynamicOpaqueColors = [];
+    const dynamicOpaqueMaterials = [];
     const dynamicAlphaPositions = [];
     const dynamicAlphaColors = [];
+    const dynamicAlphaMaterials = [];
     const dynamicAdditivePositions = [];
     const dynamicAdditiveColors = [];
+    const dynamicAdditiveMaterials = [];
     const staticOpaqueObjects = [];
-    const staticOpaqueMaterials = [];
+    const staticOpaqueMaterialProfiles = [];
     const staticAlphaObjects = [];
-    const staticAlphaMaterials = [];
+    const staticAlphaMaterialProfiles = [];
     const staticAdditiveObjects = [];
-    const staticAdditiveMaterials = [];
+    const staticAdditiveMaterialProfiles = [];
 
     for (const object of objects) {
       if (!object || !Number.isFinite(object.vertexOffset) || !Number.isFinite(object.vertexCount) || object.vertexCount <= 0) {
@@ -1201,66 +1228,78 @@
       const renderPass = sceneMaterialRenderPass(material);
       if (object.static && renderPass === "additive") {
         staticAdditiveObjects.push(object);
-        staticAdditiveMaterials.push(material);
-        appendSceneWorldObjectSlice(staticAdditivePositions, staticAdditiveColors, bundle.worldPositions, bundle.worldColors, object, material);
+        staticAdditiveMaterialProfiles.push(material);
+        appendSceneWorldObjectSlice(staticAdditivePositions, staticAdditiveColors, staticAdditiveMaterials, bundle.worldPositions, bundle.worldColors, object, material);
       } else if (object.static && renderPass === "alpha") {
         staticAlphaObjects.push(object);
-        staticAlphaMaterials.push(material);
-        appendSceneWorldObjectSlice(staticAlphaPositions, staticAlphaColors, bundle.worldPositions, bundle.worldColors, object, material);
+        staticAlphaMaterialProfiles.push(material);
+        appendSceneWorldObjectSlice(staticAlphaPositions, staticAlphaColors, staticAlphaMaterials, bundle.worldPositions, bundle.worldColors, object, material);
       } else if (object.static) {
         staticOpaqueObjects.push(object);
-        staticOpaqueMaterials.push(material);
-        appendSceneWorldObjectSlice(staticOpaquePositions, staticOpaqueColors, bundle.worldPositions, bundle.worldColors, object, material);
+        staticOpaqueMaterialProfiles.push(material);
+        appendSceneWorldObjectSlice(staticOpaquePositions, staticOpaqueColors, staticOpaqueMaterials, bundle.worldPositions, bundle.worldColors, object, material);
       } else if (renderPass === "additive") {
-        appendSceneWorldObjectSlice(dynamicAdditivePositions, dynamicAdditiveColors, bundle.worldPositions, bundle.worldColors, object, material);
+        appendSceneWorldObjectSlice(dynamicAdditivePositions, dynamicAdditiveColors, dynamicAdditiveMaterials, bundle.worldPositions, bundle.worldColors, object, material);
       } else if (renderPass === "alpha") {
-        appendSceneWorldObjectSlice(dynamicAlphaPositions, dynamicAlphaColors, bundle.worldPositions, bundle.worldColors, object, material);
+        appendSceneWorldObjectSlice(dynamicAlphaPositions, dynamicAlphaColors, dynamicAlphaMaterials, bundle.worldPositions, bundle.worldColors, object, material);
       } else {
-        appendSceneWorldObjectSlice(dynamicOpaquePositions, dynamicOpaqueColors, bundle.worldPositions, bundle.worldColors, object, material);
+        appendSceneWorldObjectSlice(dynamicOpaquePositions, dynamicOpaqueColors, dynamicOpaqueMaterials, bundle.worldPositions, bundle.worldColors, object, material);
       }
     }
 
     const typedStaticOpaquePositions = sceneFloatArray(staticOpaquePositions);
     const typedStaticOpaqueColors = sceneFloatArray(staticOpaqueColors);
+    const typedStaticOpaqueMaterialData = sceneFloatArray(staticOpaqueMaterials);
     const typedStaticAlphaPositions = sceneFloatArray(staticAlphaPositions);
     const typedStaticAlphaColors = sceneFloatArray(staticAlphaColors);
+    const typedStaticAlphaMaterialData = sceneFloatArray(staticAlphaMaterials);
     const typedStaticAdditivePositions = sceneFloatArray(staticAdditivePositions);
     const typedStaticAdditiveColors = sceneFloatArray(staticAdditiveColors);
+    const typedStaticAdditiveMaterialData = sceneFloatArray(staticAdditiveMaterials);
     const typedDynamicOpaquePositions = sceneFloatArray(dynamicOpaquePositions);
     const typedDynamicOpaqueColors = sceneFloatArray(dynamicOpaqueColors);
+    const typedDynamicOpaqueMaterialData = sceneFloatArray(dynamicOpaqueMaterials);
     const typedDynamicAlphaPositions = sceneFloatArray(dynamicAlphaPositions);
     const typedDynamicAlphaColors = sceneFloatArray(dynamicAlphaColors);
+    const typedDynamicAlphaMaterialData = sceneFloatArray(dynamicAlphaMaterials);
     const typedDynamicAdditivePositions = sceneFloatArray(dynamicAdditivePositions);
     const typedDynamicAdditiveColors = sceneFloatArray(dynamicAdditiveColors);
+    const typedDynamicAdditiveMaterialData = sceneFloatArray(dynamicAdditiveMaterials);
 
     return {
-      staticOpaqueKey: sceneStaticDrawKey(staticOpaqueObjects, staticOpaqueMaterials, typedStaticOpaquePositions, typedStaticOpaqueColors),
+      staticOpaqueKey: sceneStaticDrawKey(staticOpaqueObjects, staticOpaqueMaterialProfiles, typedStaticOpaquePositions, typedStaticOpaqueColors, typedStaticOpaqueMaterialData),
       staticOpaquePositions: typedStaticOpaquePositions,
       staticOpaqueColors: typedStaticOpaqueColors,
+      staticOpaqueMaterials: typedStaticOpaqueMaterialData,
       staticOpaqueVertexCount: typedStaticOpaquePositions.length / 3,
-      staticAlphaKey: sceneStaticDrawKey(staticAlphaObjects, staticAlphaMaterials, typedStaticAlphaPositions, typedStaticAlphaColors),
+      staticAlphaKey: sceneStaticDrawKey(staticAlphaObjects, staticAlphaMaterialProfiles, typedStaticAlphaPositions, typedStaticAlphaColors, typedStaticAlphaMaterialData),
       staticAlphaPositions: typedStaticAlphaPositions,
       staticAlphaColors: typedStaticAlphaColors,
+      staticAlphaMaterials: typedStaticAlphaMaterialData,
       staticAlphaVertexCount: typedStaticAlphaPositions.length / 3,
-      staticAdditiveKey: sceneStaticDrawKey(staticAdditiveObjects, staticAdditiveMaterials, typedStaticAdditivePositions, typedStaticAdditiveColors),
+      staticAdditiveKey: sceneStaticDrawKey(staticAdditiveObjects, staticAdditiveMaterialProfiles, typedStaticAdditivePositions, typedStaticAdditiveColors, typedStaticAdditiveMaterialData),
       staticAdditivePositions: typedStaticAdditivePositions,
       staticAdditiveColors: typedStaticAdditiveColors,
+      staticAdditiveMaterials: typedStaticAdditiveMaterialData,
       staticAdditiveVertexCount: typedStaticAdditivePositions.length / 3,
       dynamicOpaquePositions: typedDynamicOpaquePositions,
       dynamicOpaqueColors: typedDynamicOpaqueColors,
+      dynamicOpaqueMaterials: typedDynamicOpaqueMaterialData,
       dynamicOpaqueVertexCount: typedDynamicOpaquePositions.length / 3,
       dynamicAlphaPositions: typedDynamicAlphaPositions,
       dynamicAlphaColors: typedDynamicAlphaColors,
+      dynamicAlphaMaterials: typedDynamicAlphaMaterialData,
       dynamicAlphaVertexCount: typedDynamicAlphaPositions.length / 3,
       dynamicAdditivePositions: typedDynamicAdditivePositions,
       dynamicAdditiveColors: typedDynamicAdditiveColors,
+      dynamicAdditiveMaterials: typedDynamicAdditiveMaterialData,
       dynamicAdditiveVertexCount: typedDynamicAdditivePositions.length / 3,
       hasAlphaPass: typedStaticAlphaPositions.length > 0 || typedDynamicAlphaPositions.length > 0,
       hasAdditivePass: typedStaticAdditivePositions.length > 0 || typedDynamicAdditivePositions.length > 0,
     };
   }
 
-  function appendSceneWorldObjectSlice(targetPositions, targetColors, sourcePositions, sourceColors, object, material) {
+  function appendSceneWorldObjectSlice(targetPositions, targetColors, targetMaterials, sourcePositions, sourceColors, object, material) {
     const vertexOffset = Math.max(0, Math.floor(sceneNumber(object.vertexOffset, 0)));
     const vertexCount = Math.max(0, Math.floor(sceneNumber(object.vertexCount, 0)));
     const startPosition = vertexOffset * 3;
@@ -1268,16 +1307,17 @@
     const startColor = vertexOffset * 4;
     const endColor = startColor + vertexCount * 4;
     const opacity = sceneMaterialOpacity(material);
-    const emissiveBoost = 1 + sceneMaterialEmissive(material);
+    const materialData = sceneMaterialShaderData(material);
 
     for (let i = startPosition; i < endPosition; i += 1) {
       targetPositions.push(sourcePositions[i] || 0);
     }
     for (let i = startColor; i < endColor; i += 4) {
-      targetColors.push(clamp01((sourceColors[i] || 0) * emissiveBoost));
-      targetColors.push(clamp01((sourceColors[i + 1] || 0) * emissiveBoost));
-      targetColors.push(clamp01((sourceColors[i + 2] || 0) * emissiveBoost));
+      targetColors.push(sourceColors[i] || 0);
+      targetColors.push(sourceColors[i + 1] || 0);
+      targetColors.push(sourceColors[i + 2] || 0);
       targetColors.push((sourceColors[i + 3] == null ? 1 : sourceColors[i + 3]) * opacity);
+      targetMaterials.push(materialData[0], materialData[1], materialData[2]);
     }
   }
 
@@ -1313,11 +1353,38 @@
     return "opaque";
   }
 
+  function sceneMaterialShaderData(material) {
+    if (!material || typeof material !== "object") {
+      return [0, 0, 1];
+    }
+    const kind = String(material.kind || "").toLowerCase();
+    switch (kind) {
+    case "ghost":
+      return [1, sceneMaterialEmissive(material), 0.3];
+    case "glass":
+      return [2, sceneMaterialEmissive(material), 0.7];
+    case "glow":
+      return [3, sceneMaterialEmissive(material), 1];
+    case "matte":
+      return [4, sceneMaterialEmissive(material), 0.78];
+    default:
+      return [0, sceneMaterialEmissive(material), 1];
+    }
+  }
+
+  function sceneFallbackMaterialData(vertexCount) {
+    const values = new Float32Array(vertexCount * 3);
+    for (let i = 0; i < vertexCount; i += 1) {
+      values[i * 3 + 2] = 1;
+    }
+    return values;
+  }
+
   function clamp01(value) {
     return Math.max(0, Math.min(1, value));
   }
 
-  function sceneStaticDrawKey(objects, materials, positions, colors) {
+  function sceneStaticDrawKey(objects, materials, positions, colors, materialData) {
     let hash = 2166136261 >>> 0;
     for (const object of objects) {
       hash = sceneHashString(hash, object.id || "");
@@ -1341,7 +1408,10 @@
     for (let i = 0; i < colors.length; i += 1) {
       hash = sceneHashNumber(hash, colors[i]);
     }
-    return String(hash) + ":" + positions.length + ":" + colors.length;
+    for (let i = 0; i < materialData.length; i += 1) {
+      hash = sceneHashNumber(hash, materialData[i]);
+    }
+    return String(hash) + ":" + positions.length + ":" + colors.length + ":" + materialData.length;
   }
 
   function sceneHashNumber(hash, value) {
@@ -1363,10 +1433,12 @@
     const vertexSource = [
       "attribute vec3 a_position;",
       "attribute vec4 a_color;",
+      "attribute vec3 a_material;",
       "uniform vec4 u_camera;",
       "uniform float u_aspect;",
       "uniform float u_use_perspective;",
       "varying vec4 v_color;",
+      "varying vec3 v_material;",
       "void main() {",
       "  vec4 clip = vec4(a_position.xy, 0.0, 1.0);",
       "  if (u_use_perspective > 0.5) {",
@@ -1382,13 +1454,32 @@
       "  }",
       "  gl_Position = clip;",
       "  v_color = a_color;",
+      "  v_material = a_material;",
       "}",
     ].join("\n");
     const fragmentSource = [
       "precision mediump float;",
       "varying vec4 v_color;",
+      "varying vec3 v_material;",
       "void main() {",
-      "  gl_FragColor = v_color;",
+      "  vec4 color = v_color;",
+      "  float kind = floor(v_material.x + 0.5);",
+      "  float emissive = max(v_material.y, 0.0);",
+      "  float tone = clamp(v_material.z, 0.0, 1.0);",
+      "  if (kind > 3.5) {",
+      "    color.rgb *= mix(0.78, 1.0, tone);",
+      "  } else if (kind > 2.5) {",
+      "    color.rgb *= 1.0 + emissive * 0.75;",
+      "  } else if (kind > 1.5) {",
+      "    color.rgb = mix(color.rgb, vec3(0.92, 0.98, 1.0), 0.28 + tone * 0.16);",
+      "    color.a *= 0.84;",
+      "  } else if (kind > 0.5) {",
+      "    color.rgb = mix(color.rgb, vec3(0.84, 0.94, 1.0), 0.18 + tone * 0.12);",
+      "    color.a *= 0.9;",
+      "  } else {",
+      "    color.rgb *= mix(0.9, 1.0, tone);",
+      "  }",
+      "  gl_FragColor = vec4(clamp(color.rgb, 0.0, 1.0), clamp(color.a, 0.0, 1.0));",
       "}",
     ].join("\n");
 
