@@ -1240,7 +1240,7 @@
     const typedAlphaPlan = createSceneWorldPassPlan(bundle.worldPositions, bundle.worldColors, alphaEntries, drawScratch.alphaPlan);
     const typedAdditivePlan = createSceneWorldPassPlan(bundle.worldPositions, bundle.worldColors, additiveEntries, drawScratch.additivePlan);
     const plan = drawScratch.plan;
-    plan.staticOpaqueKey = sceneStaticDrawKey(staticOpaqueObjects, staticOpaqueMaterialProfiles, typedStaticOpaquePositions, typedStaticOpaqueColors, typedStaticOpaqueMaterialData);
+    plan.staticOpaqueKey = sceneStaticDrawKey(staticOpaqueObjects, staticOpaqueMaterialProfiles, bundle.camera);
     plan.staticOpaquePositions = typedStaticOpaquePositions;
     plan.staticOpaqueColors = typedStaticOpaqueColors;
     plan.staticOpaqueMaterials = typedStaticOpaqueMaterialData;
@@ -1487,8 +1487,14 @@
     return Math.max(0, Math.min(1, value));
   }
 
-  function sceneStaticDrawKey(objects, materials, positions, colors, materialData) {
+  function sceneStaticDrawKey(objects, materials, camera) {
     let hash = 2166136261 >>> 0;
+    hash = sceneHashNumber(hash, sceneNumber(camera && camera.x, 0));
+    hash = sceneHashNumber(hash, sceneNumber(camera && camera.y, 0));
+    hash = sceneHashNumber(hash, sceneNumber(camera && camera.z, 6));
+    hash = sceneHashNumber(hash, sceneNumber(camera && camera.fov, 75));
+    hash = sceneHashNumber(hash, sceneNumber(camera && camera.near, 0.05));
+    hash = sceneHashNumber(hash, sceneNumber(camera && camera.far, 128));
     for (const object of objects) {
       hash = sceneHashString(hash, object.id || "");
       hash = sceneHashString(hash, object.kind || "");
@@ -1496,6 +1502,16 @@
       hash = sceneHashNumber(hash, sceneNumber(object.vertexOffset, 0));
       hash = sceneHashNumber(hash, sceneNumber(object.vertexCount, 0));
       hash = sceneHashNumber(hash, object.static ? 1 : 0);
+      hash = sceneHashNumber(hash, object.viewCulled ? 1 : 0);
+      hash = sceneHashNumber(hash, sceneNumber(object.depthNear, 0));
+      hash = sceneHashNumber(hash, sceneNumber(object.depthFar, 0));
+      hash = sceneHashNumber(hash, sceneNumber(object.depthCenter, 0));
+      hash = sceneHashNumber(hash, sceneNumber(object.bounds && object.bounds.minX, 0));
+      hash = sceneHashNumber(hash, sceneNumber(object.bounds && object.bounds.minY, 0));
+      hash = sceneHashNumber(hash, sceneNumber(object.bounds && object.bounds.minZ, 0));
+      hash = sceneHashNumber(hash, sceneNumber(object.bounds && object.bounds.maxX, 0));
+      hash = sceneHashNumber(hash, sceneNumber(object.bounds && object.bounds.maxY, 0));
+      hash = sceneHashNumber(hash, sceneNumber(object.bounds && object.bounds.maxZ, 0));
     }
     for (const material of materials) {
       hash = sceneHashString(hash, material && material.kind || "");
@@ -1505,16 +1521,7 @@
       hash = sceneHashString(hash, material && material.blendMode || "");
       hash = sceneHashNumber(hash, sceneNumber(material && material.emissive, 0));
     }
-    for (let i = 0; i < positions.length; i += 1) {
-      hash = sceneHashNumber(hash, positions[i]);
-    }
-    for (let i = 0; i < colors.length; i += 1) {
-      hash = sceneHashNumber(hash, colors[i]);
-    }
-    for (let i = 0; i < materialData.length; i += 1) {
-      hash = sceneHashNumber(hash, materialData[i]);
-    }
-    return String(hash) + ":" + positions.length + ":" + colors.length + ":" + materialData.length;
+    return String(hash) + ":" + objects.length + ":" + materials.length;
   }
 
   function sceneHashNumber(hash, value) {
