@@ -984,21 +984,11 @@
       return null;
     }
 
-    const positionBuffer = gl.createBuffer();
-    const colorBuffer = gl.createBuffer();
-    const materialBuffer = gl.createBuffer();
-    const staticOpaquePositionBuffer = gl.createBuffer();
-    const staticOpaqueColorBuffer = gl.createBuffer();
-    const staticOpaqueMaterialBuffer = gl.createBuffer();
-    const alphaPositionBuffer = gl.createBuffer();
-    const alphaColorBuffer = gl.createBuffer();
-    const alphaMaterialBuffer = gl.createBuffer();
-    const additivePositionBuffer = gl.createBuffer();
-    const additiveColorBuffer = gl.createBuffer();
-    const additiveMaterialBuffer = gl.createBuffer();
-    const dynamicOpaquePositionBuffer = gl.createBuffer();
-    const dynamicOpaqueColorBuffer = gl.createBuffer();
-    const dynamicOpaqueMaterialBuffer = gl.createBuffer();
+    const fallbackBuffers = createSceneWebGLBufferSet(gl);
+    const staticOpaqueBuffers = createSceneWebGLBufferSet(gl);
+    const alphaBuffers = createSceneWebGLBufferSet(gl);
+    const additiveBuffers = createSceneWebGLBufferSet(gl);
+    const dynamicOpaqueBuffers = createSceneWebGLBufferSet(gl);
     const drawScratch = createSceneWorldDrawScratch();
     const positionLocation = gl.getAttribLocation(program, "a_position");
     const colorLocation = gl.getAttribLocation(program, "a_color");
@@ -1013,8 +1003,12 @@
     const colorBufferBit = typeof gl.COLOR_BUFFER_BIT === "number" ? gl.COLOR_BUFFER_BIT : 0x4000;
     const depthBufferBit = typeof gl.DEPTH_BUFFER_BIT === "number" ? gl.DEPTH_BUFFER_BIT : 0x0100;
     const linesMode = typeof gl.LINES === "number" ? gl.LINES : 0x0001;
-    let staticOpaqueKey = "";
-    let staticOpaqueVertexCount = 0;
+    const passCache = {
+      staticOpaque: {
+        key: "",
+        vertexCount: 0,
+      },
+    };
     return {
       kind: "webgl",
       render(bundle) {
@@ -1054,29 +1048,16 @@
         if (usePerspective) {
           const drawPlan = buildSceneWorldDrawPlan(bundle, drawScratch);
           if (drawPlan) {
-            if (drawPlan.staticOpaqueKey !== staticOpaqueKey) {
-              uploadSceneWebGLBuffers(gl, arrayBuffer, staticDraw, staticOpaquePositionBuffer, staticOpaqueColorBuffer, staticOpaqueMaterialBuffer, drawPlan.staticOpaquePositions, drawPlan.staticOpaqueColors, drawPlan.staticOpaqueMaterials);
-              staticOpaqueKey = drawPlan.staticOpaqueKey;
-              staticOpaqueVertexCount = drawPlan.staticOpaqueVertexCount;
-            }
-            applySceneWebGLDepth(gl, "opaque");
-            applySceneWebGLBlend(gl, "opaque");
-            drawSceneWebGLLines(gl, arrayBuffer, floatType, linesMode, positionLocation, colorLocation, materialLocation, staticOpaquePositionBuffer, staticOpaqueColorBuffer, staticOpaqueMaterialBuffer, staticOpaqueVertexCount, 3);
-            uploadSceneWebGLBuffers(gl, arrayBuffer, dynamicDraw, dynamicOpaquePositionBuffer, dynamicOpaqueColorBuffer, dynamicOpaqueMaterialBuffer, drawPlan.dynamicOpaquePositions, drawPlan.dynamicOpaqueColors, drawPlan.dynamicOpaqueMaterials);
-            drawSceneWebGLLines(gl, arrayBuffer, floatType, linesMode, positionLocation, colorLocation, materialLocation, dynamicOpaquePositionBuffer, dynamicOpaqueColorBuffer, dynamicOpaqueMaterialBuffer, drawPlan.dynamicOpaqueVertexCount, 3);
-
-            if (drawPlan.hasAlphaPass) {
-              applySceneWebGLDepth(gl, "translucent");
-              applySceneWebGLBlend(gl, "alpha");
-              uploadSceneWebGLBuffers(gl, arrayBuffer, dynamicDraw, alphaPositionBuffer, alphaColorBuffer, alphaMaterialBuffer, drawPlan.alphaPositions, drawPlan.alphaColors, drawPlan.alphaMaterials);
-              drawSceneWebGLLines(gl, arrayBuffer, floatType, linesMode, positionLocation, colorLocation, materialLocation, alphaPositionBuffer, alphaColorBuffer, alphaMaterialBuffer, drawPlan.alphaVertexCount, 3);
-            }
-            if (drawPlan.hasAdditivePass) {
-              applySceneWebGLDepth(gl, "translucent");
-              applySceneWebGLBlend(gl, "additive");
-              uploadSceneWebGLBuffers(gl, arrayBuffer, dynamicDraw, additivePositionBuffer, additiveColorBuffer, additiveMaterialBuffer, drawPlan.additivePositions, drawPlan.additiveColors, drawPlan.additiveMaterials);
-              drawSceneWebGLLines(gl, arrayBuffer, floatType, linesMode, positionLocation, colorLocation, materialLocation, additivePositionBuffer, additiveColorBuffer, additiveMaterialBuffer, drawPlan.additiveVertexCount, 3);
-            }
+            const worldPasses = createSceneWorldWebGLPasses(drawPlan, {
+              staticOpaque: staticOpaqueBuffers,
+              dynamicOpaque: dynamicOpaqueBuffers,
+              alpha: alphaBuffers,
+              additive: additiveBuffers,
+            }, {
+              staticDraw,
+              dynamicDraw,
+            });
+            drawSceneWebGLPasses(gl, arrayBuffer, floatType, linesMode, positionLocation, colorLocation, materialLocation, worldPasses, passCache);
             applySceneWebGLBlend(gl, "opaque");
             applySceneWebGLDepth(gl, "opaque");
             return;
@@ -1085,32 +1066,126 @@
 
         applySceneWebGLDepth(gl, "disabled");
         applySceneWebGLBlend(gl, "opaque");
-        uploadSceneWebGLBuffers(gl, arrayBuffer, dynamicDraw, positionBuffer, colorBuffer, materialBuffer, positions, colors, sceneFallbackMaterialData(vertexCount));
-        drawSceneWebGLLines(gl, arrayBuffer, floatType, linesMode, positionLocation, colorLocation, materialLocation, positionBuffer, colorBuffer, materialBuffer, vertexCount, usePerspective ? 3 : 2);
+        uploadSceneWebGLBuffers(gl, arrayBuffer, dynamicDraw, fallbackBuffers.position, fallbackBuffers.color, fallbackBuffers.material, positions, colors, sceneFallbackMaterialData(vertexCount));
+        drawSceneWebGLLines(gl, arrayBuffer, floatType, linesMode, positionLocation, colorLocation, materialLocation, fallbackBuffers.position, fallbackBuffers.color, fallbackBuffers.material, vertexCount, usePerspective ? 3 : 2);
       },
       dispose() {
         if (typeof gl.deleteBuffer === "function") {
-          gl.deleteBuffer(positionBuffer);
-          gl.deleteBuffer(colorBuffer);
-          gl.deleteBuffer(materialBuffer);
-          gl.deleteBuffer(staticOpaquePositionBuffer);
-          gl.deleteBuffer(staticOpaqueColorBuffer);
-          gl.deleteBuffer(staticOpaqueMaterialBuffer);
-          gl.deleteBuffer(alphaPositionBuffer);
-          gl.deleteBuffer(alphaColorBuffer);
-          gl.deleteBuffer(alphaMaterialBuffer);
-          gl.deleteBuffer(additivePositionBuffer);
-          gl.deleteBuffer(additiveColorBuffer);
-          gl.deleteBuffer(additiveMaterialBuffer);
-          gl.deleteBuffer(dynamicOpaquePositionBuffer);
-          gl.deleteBuffer(dynamicOpaqueColorBuffer);
-          gl.deleteBuffer(dynamicOpaqueMaterialBuffer);
+          deleteSceneWebGLBufferSet(gl, fallbackBuffers);
+          deleteSceneWebGLBufferSet(gl, staticOpaqueBuffers);
+          deleteSceneWebGLBufferSet(gl, alphaBuffers);
+          deleteSceneWebGLBufferSet(gl, additiveBuffers);
+          deleteSceneWebGLBufferSet(gl, dynamicOpaqueBuffers);
         }
         if (typeof gl.deleteProgram === "function") {
           gl.deleteProgram(program);
         }
       },
     };
+  }
+
+  function createSceneWebGLBufferSet(gl) {
+    return {
+      position: gl.createBuffer(),
+      color: gl.createBuffer(),
+      material: gl.createBuffer(),
+    };
+  }
+
+  function deleteSceneWebGLBufferSet(gl, buffers) {
+    if (!buffers) {
+      return;
+    }
+    gl.deleteBuffer(buffers.position);
+    gl.deleteBuffer(buffers.color);
+    gl.deleteBuffer(buffers.material);
+  }
+
+  function createSceneWorldWebGLPasses(drawPlan, buffers, usages) {
+    const passes = [];
+    passes.push({
+      name: "staticOpaque",
+      blend: "opaque",
+      depth: "opaque",
+      usage: usages.staticDraw,
+      cacheSlot: "staticOpaque",
+      cacheKey: drawPlan.staticOpaqueKey,
+      buffers: buffers.staticOpaque,
+      positions: drawPlan.staticOpaquePositions,
+      colors: drawPlan.staticOpaqueColors,
+      materials: drawPlan.staticOpaqueMaterials,
+      vertexCount: drawPlan.staticOpaqueVertexCount,
+    });
+    passes.push({
+      name: "dynamicOpaque",
+      blend: "opaque",
+      depth: "opaque",
+      usage: usages.dynamicDraw,
+      buffers: buffers.dynamicOpaque,
+      positions: drawPlan.dynamicOpaquePositions,
+      colors: drawPlan.dynamicOpaqueColors,
+      materials: drawPlan.dynamicOpaqueMaterials,
+      vertexCount: drawPlan.dynamicOpaqueVertexCount,
+    });
+    if (drawPlan.hasAlphaPass) {
+      passes.push({
+        name: "alpha",
+        blend: "alpha",
+        depth: "translucent",
+        usage: usages.dynamicDraw,
+        buffers: buffers.alpha,
+        positions: drawPlan.alphaPositions,
+        colors: drawPlan.alphaColors,
+        materials: drawPlan.alphaMaterials,
+        vertexCount: drawPlan.alphaVertexCount,
+      });
+    }
+    if (drawPlan.hasAdditivePass) {
+      passes.push({
+        name: "additive",
+        blend: "additive",
+        depth: "translucent",
+        usage: usages.dynamicDraw,
+        buffers: buffers.additive,
+        positions: drawPlan.additivePositions,
+        colors: drawPlan.additiveColors,
+        materials: drawPlan.additiveMaterials,
+        vertexCount: drawPlan.additiveVertexCount,
+      });
+    }
+    return passes;
+  }
+
+  function drawSceneWebGLPasses(gl, arrayBuffer, floatType, linesMode, positionLocation, colorLocation, materialLocation, passes, cache) {
+    for (const pass of passes) {
+      const vertexCount = uploadSceneWebGLPass(gl, arrayBuffer, pass, cache);
+      if (!vertexCount) {
+        continue;
+      }
+      applySceneWebGLDepth(gl, pass.depth);
+      applySceneWebGLBlend(gl, pass.blend);
+      drawSceneWebGLLines(gl, arrayBuffer, floatType, linesMode, positionLocation, colorLocation, materialLocation, pass.buffers.position, pass.buffers.color, pass.buffers.material, vertexCount, 3);
+    }
+  }
+
+  function uploadSceneWebGLPass(gl, arrayBuffer, pass, cache) {
+    if (!pass || !pass.buffers) {
+      return 0;
+    }
+    if (pass.cacheSlot) {
+      const record = cache[pass.cacheSlot] || (cache[pass.cacheSlot] = { key: "", vertexCount: 0 });
+      if (record.key !== pass.cacheKey) {
+        uploadSceneWebGLBuffers(gl, arrayBuffer, pass.usage, pass.buffers.position, pass.buffers.color, pass.buffers.material, pass.positions, pass.colors, pass.materials);
+        record.key = pass.cacheKey;
+        record.vertexCount = pass.vertexCount;
+      }
+      return record.vertexCount;
+    }
+    if (!pass.vertexCount) {
+      return 0;
+    }
+    uploadSceneWebGLBuffers(gl, arrayBuffer, pass.usage, pass.buffers.position, pass.buffers.color, pass.buffers.material, pass.positions, pass.colors, pass.materials);
+    return pass.vertexCount;
   }
 
   function uploadSceneWebGLBuffers(gl, arrayBuffer, usage, positionBuffer, colorBuffer, materialBuffer, positions, colors, materials) {
