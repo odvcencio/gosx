@@ -90,6 +90,20 @@ func TestBridgeUnknownFormat(t *testing.T) {
 	}
 }
 
+func TestBridgeRejectsInvalidPropsJSON(t *testing.T) {
+	b := New()
+	prog := program.CounterProgram()
+	data, err := program.EncodeJSON(prog)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = b.HydrateIsland("island-0", "Counter", `{`, data, "json")
+	if err == nil {
+		t.Fatal("expected invalid props JSON error")
+	}
+}
+
 func TestDecodeProgram(t *testing.T) {
 	prog := program.CounterProgram()
 
