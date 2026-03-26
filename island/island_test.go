@@ -65,6 +65,12 @@ func TestManifestScript(t *testing.T) {
 	if !strings.Contains(html, "gosx-manifest") {
 		t.Fatal("missing manifest script tag")
 	}
+	if strings.Contains(html, "&#34;") {
+		t.Fatalf("manifest script should contain raw JSON, got %q", html)
+	}
+	if !strings.Contains(html, `"component": "Counter"`) {
+		t.Fatalf("expected raw manifest JSON in script tag, got %q", html)
+	}
 }
 
 func TestPageHeadEmpty(t *testing.T) {

@@ -87,6 +87,10 @@ test("gosx dev serves the docs app with working nav, scoped 404s, forms, and aut
       `expected a client navigation fetch for /docs/routing\n\nLogs:\n${logs}`,
     );
 
+    await page.goto(`${baseURL}/docs/runtime`, { waitUntil: "domcontentloaded" });
+    await page.getByText("Move across the surface to steer the camera and pull the geometry off center.").waitFor();
+    await page.locator('[data-gosx-engine="GoSXScene3D"] canvas').waitFor();
+
     await page.goto(`${baseURL}/docs/missing`, { waitUntil: "domcontentloaded" });
     await page.getByRole("heading", {
       name: "The docs subtree could not resolve this page.",

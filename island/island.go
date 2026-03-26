@@ -207,7 +207,7 @@ func (r *Renderer) ManifestScript() gosx.Node {
 	}
 	return gosx.RawHTML(fmt.Sprintf(
 		`<script id="gosx-manifest" type="application/json">%s</script>`,
-		html.EscapeString(string(data)),
+		string(data),
 	))
 }
 

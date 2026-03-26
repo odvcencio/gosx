@@ -8,6 +8,51 @@
 	margin-top: 0.35rem;
 }
 
+.scene-controls {
+	display: grid;
+	gap: 0.85rem;
+	margin-top: 1.25rem;
+}
+
+.scene-control {
+	display: grid;
+	grid-template-columns: auto 1fr;
+	gap: 0.5rem 0.75rem;
+	align-items: start;
+	padding: 0.8rem 0.95rem;
+	border: 1px solid rgba(141, 225, 255, 0.16);
+	border-radius: 1rem;
+	background: rgba(9, 23, 34, 0.54);
+}
+
+.scene-control p {
+	margin: 0;
+	color: rgba(230, 245, 252, 0.84);
+}
+
+.scene-keyset {
+	display: inline-flex;
+	gap: 0.4rem;
+	flex-wrap: wrap;
+}
+
+.scene-control kbd {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	min-width: 2.1rem;
+	padding: 0.2rem 0.5rem;
+	border: 1px solid rgba(255, 255, 255, 0.18);
+	border-bottom-width: 2px;
+	border-radius: 999px;
+	background: rgba(255, 255, 255, 0.08);
+	color: rgba(244, 250, 255, 0.96);
+	font-size: 0.75rem;
+	font-weight: 700;
+	letter-spacing: 0.08em;
+	text-transform: uppercase;
+}
+
 .scene-shell {
 	min-height: 20rem;
 	padding: 0.75rem;
