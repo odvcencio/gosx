@@ -33,7 +33,7 @@ func Page() Node {
 		<section class="scene-callout">
 			<div class="scene-copy">
 				<span class="eyebrow">Native Scene3D</span>
-				<h2>.gsx can now mount engine-backed surfaces without dropping down to bare Go nodes.</h2>
+				<h2>.gsx can now mount engine-backed surfaces and feed live runtime signals without dropping down to bare Go nodes.</h2>
 				<p>
 					The scene below is declared in
 					<span class="inline-code">page.gsx</span>
@@ -42,6 +42,23 @@ func Page() Node {
 					points it at a real shared-runtime engine program served by the app.
 					That keeps the authoring path server-first while making the browser runtime explicit instead of ad hoc.
 				</p>
+				<div class="scene-controls">
+					<div class="scene-control">
+						<kbd>Pointer</kbd>
+						<p>Move across the surface to steer the camera and pull the geometry off center.</p>
+					</div>
+					<div class="scene-control">
+						<div class="scene-keyset">
+							<kbd>Left</kbd>
+							<kbd>Right</kbd>
+						</div>
+						<p>Bias the spin direction and shift the secondary mesh tint through shared keyboard signals.</p>
+					</div>
+					<div class="scene-control">
+						<kbd>Up</kbd>
+						<p>Warm the palette and tighten the camera to prove the runtime is ticking, not just hydrating once.</p>
+					</div>
+				</div>
 			</div>
 			<Scene3D class="scene-shell" {...data.sceneDemo}>
 				<div class="scene-fallback">Preparing the scene runtime...</div>
