@@ -356,6 +356,179 @@ func TestAppServesCompatRuntimeAssetsFromBuildManifest(t *testing.T) {
 	}
 }
 
+func TestAppEnableISRServesStaticExportedPages(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "static"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "static", "index.html"), []byte("<!DOCTYPE html><html><body>static home</body></html>"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	writeISRManifest(t, root, isrManifest{
+		Pages: []string{"/"},
+		Routes: []isrRoute{
+			{Path: "/", File: "index.html"},
+		},
+	})
+
+	app := New()
+	app.SetRuntimeRoot(root)
+	app.EnableISR()
+
+	dynamicCalls := 0
+	app.Page("GET /", func(ctx *Context) gosx.Node {
+		dynamicCalls++
+		return gosx.Text("dynamic home")
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("Accept", "text/html")
+	w := httptest.NewRecorder()
+	app.Build().ServeHTTP(w, req)
+
+	if body := w.Body.String(); !strings.Contains(body, "static home") {
+		t.Fatalf("expected static export body, got %q", body)
+	}
+	if got := w.Header().Get("X-GoSX-ISR"); got != "HIT" {
+		t.Fatalf("expected ISR hit header, got %q", got)
+	}
+	if dynamicCalls != 0 {
+		t.Fatalf("expected static page to avoid dynamic handler, got %d calls", dynamicCalls)
+	}
+}
+
+func TestAppEnableISRRefreshesStalePagesInBackground(t *testing.T) {
+	root := t.TempDir()
+	staticDir := filepath.Join(root, "static")
+	if err := os.MkdirAll(staticDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(staticDir, "index.html")
+	if err := os.WriteFile(target, []byte("<!DOCTYPE html><html><body>stale home</body></html>"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	staleAt := time.Now().Add(-3 * time.Minute)
+	if err := os.Chtimes(target, staleAt, staleAt); err != nil {
+		t.Fatal(err)
+	}
+	writeISRManifest(t, root, isrManifest{
+		Pages: []string{"/"},
+		Routes: []isrRoute{
+			{Path: "/", File: "index.html", RevalidateSeconds: 1},
+		},
+	})
+
+	app := New()
+	app.SetRuntimeRoot(root)
+	app.EnableISR()
+
+	dynamicCalls := 0
+	app.Page("GET /", func(ctx *Context) gosx.Node {
+		dynamicCalls++
+		return gosx.Text("fresh home")
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("Accept", "text/html")
+	w := httptest.NewRecorder()
+	app.Build().ServeHTTP(w, req)
+
+	if body := w.Body.String(); !strings.Contains(body, "stale home") {
+		t.Fatalf("expected stale page to be served first, got %q", body)
+	}
+	if got := w.Header().Get("X-GoSX-ISR"); got != "STALE" {
+		t.Fatalf("expected ISR stale header, got %q", got)
+	}
+
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		if data, err := os.ReadFile(target); err == nil && strings.Contains(string(data), "fresh home") && dynamicCalls > 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for ISR refresh; file=%q calls=%d", readFileMaybe(target), dynamicCalls)
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+}
+
+func TestAppEnableISRRespectsOnDemandTagInvalidation(t *testing.T) {
+	root := t.TempDir()
+	staticDir := filepath.Join(root, "static", "docs")
+	if err := os.MkdirAll(staticDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(staticDir, "index.html")
+	if err := os.WriteFile(target, []byte("<!DOCTYPE html><html><body>cached docs</body></html>"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	writeISRManifest(t, root, isrManifest{
+		Pages: []string{"/docs"},
+		Routes: []isrRoute{
+			{Path: "/docs", File: filepath.Join("docs", "index.html"), Tags: []string{"docs-pages"}},
+		},
+	})
+
+	app := New()
+	app.SetRuntimeRoot(root)
+	app.EnableISR()
+
+	dynamicCalls := 0
+	app.Page("GET /docs", func(ctx *Context) gosx.Node {
+		dynamicCalls++
+		return gosx.Text("fresh docs")
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/docs", nil)
+	req.Header.Set("Accept", "text/html")
+	w := httptest.NewRecorder()
+	handler := app.Build()
+	handler.ServeHTTP(w, req)
+	if got := w.Header().Get("X-GoSX-ISR"); got != "HIT" {
+		t.Fatalf("expected first ISR hit, got %q", got)
+	}
+
+	app.RevalidateTag("docs-pages")
+
+	staleReq := httptest.NewRequest(http.MethodGet, "/docs", nil)
+	staleReq.Header.Set("Accept", "text/html")
+	staleRes := httptest.NewRecorder()
+	handler.ServeHTTP(staleRes, staleReq)
+	if got := staleRes.Header().Get("X-GoSX-ISR"); got != "STALE" {
+		t.Fatalf("expected stale response after tag invalidation, got %q", got)
+	}
+
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		if data, err := os.ReadFile(target); err == nil && strings.Contains(string(data), "fresh docs") && dynamicCalls > 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for tag-driven ISR refresh; file=%q calls=%d", readFileMaybe(target), dynamicCalls)
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+}
+
+func writeISRManifest(t *testing.T, root string, manifest isrManifest) {
+	t.Helper()
+	data, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "export.json"), data, 0644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func readFileMaybe(path string) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	return string(data)
+}
+
 func TestAppServesPublicFilesAtRoot(t *testing.T) {
 	dir := t.TempDir()
 	publicDir := filepath.Join(dir, "public")

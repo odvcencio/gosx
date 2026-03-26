@@ -10,7 +10,7 @@ GoSX is in active development. The compiler pipeline, server rendering, island a
 
 - `gosx init` scaffolds a runnable app with `/public` assets, `.env` loading, metadata hooks, session-backed form actions, CSRF protection, JSON API routes, custom 404/500 pages, and a file-backed `app/layout.gsx`
 - `gosx init --template docs` scaffolds a dogfooded docs site with nested file layouts, scoped docs 404s, page-scoped server modules, sessions, auth, redirects/rewrites, public assets, and colocated JSON endpoints
-- `gosx build --prod` emits a deployable `dist/` bundle with hashed assets, a server binary when present, copied `app/` + `public/`, a `run.sh` launcher, and prerendered `dist/static/` output for static-safe file routes
+- `gosx build --prod` emits a deployable `dist/` bundle with hashed assets, a server binary when present, copied `app/` + `public/`, a `run.sh` launcher, prerendered `dist/static/` output for static-safe file routes, and `export.json` metadata for ISR-aware runtime serving
 - `gosx dev` fronts a runnable app with a stable dev proxy, staged `/gosx/*` runtime assets, file watching, SSE reload notifications, and auto-generated `modules/modules.go` imports for discovered `*.server.go` packages
 - `gosx export` prerenders static file-routed pages into `dist/static`, carries over `/public`, stages `/gosx/*` runtime assets, rewrites exported URLs for portable static output, and writes `dist/export.json`
 - opt-in client-side page navigation via `app.EnableNavigation()` plus `server.Link(...)`, with managed head swaps and intent-prefetching
@@ -27,6 +27,7 @@ GoSX is in active development. The compiler pipeline, server rendering, island a
 - auth middleware via `auth.New(...)`, `authn.Middleware`, `authn.Require`, and pluggable `auth.Provider` backends, with request-scoped `user` context available to routed `.gsx` pages
 - declarative redirects and rewrites via `app.Redirect(...)` and `app.Rewrite(...)`
 - semantic page/data cache helpers via `ctx.CacheDynamic()`, `ctx.CacheRevalidate(...)`, `ctx.CacheData(...)`, `ctx.CachePrivateData(...)`, plus automatic ETags and `app.RevalidatePath(...)` / `app.RevalidateTag(...)`
+- `app.EnableISR()` can now serve prerendered HTML from `dist/static`, mark hits vs stale responses, and refresh exported pages in the background using the same path/tag revalidation surface
 - supported extension surfaces for observability and media/build integration via `app.UseObserver(...)`, `router.UseObserver(...)`, `server.RegisterImageResolver(...)`, and `gosx.config.json` build hooks
 - app testing helpers via `apptest.Request(...)`, `apptest.App(...)`, `apptest.Router(...)`, `apptest.FormRequest(...)`, and stateful `apptest.NewAppClient(...)` / `apptest.NewRouterClient(...)`
 - deferred page regions via `ctx.Defer(...)`, with fallback-first HTML and streamed replacements
@@ -80,6 +81,7 @@ The generated project includes:
 - optional directory-scoped route modules through `route.MustRegisterDirModuleHere(...)` when a subtree needs middleware or request setup
 - session middleware plus CSRF protection for browser forms
 - semantic cache helpers plus automatic ETags for page and API responses
+- built-in ISR on deployed bundles via `app.EnableISR()`, using `dist/export.json` plus `dist/static/` when present
 - public asset helpers via `server.AssetURL(...)`, `server.Stylesheet(...)`, and file-routed `.gsx` `asset(...)`
 - opt-in page transitions via `app.EnableNavigation()` and `server.Link(...)`
 - `server.Metadata` plus arbitrary head node injection

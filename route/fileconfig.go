@@ -252,6 +252,11 @@ func (c FileRouteConfig) cachePolicy() (server.CachePolicy, bool, error) {
 	return policy, true, nil
 }
 
+// CachePolicy exposes the resolved cache policy for a file-route config.
+func (c FileRouteConfig) CachePolicy() (server.CachePolicy, bool, error) {
+	return c.cachePolicy()
+}
+
 func (c *FileRouteCacheConfig) hasValues() bool {
 	if c == nil {
 		return false
