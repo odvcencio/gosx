@@ -1,6 +1,7 @@
 package enginevm
 
 import (
+	"math"
 	"testing"
 
 	"github.com/odvcencio/gosx/client/vm"
@@ -421,5 +422,40 @@ func TestRuntimeRenderBundleMarksOffscreenObjectsCulled(t *testing.T) {
 	}
 	if !bundle.Objects[0].ViewCulled {
 		t.Fatalf("expected far offscreen object to be marked culled, got %#v", bundle.Objects[0])
+	}
+	if bundle.Objects[0].VertexCount != 0 {
+		t.Fatalf("expected culled object to contribute no world vertices, got %#v", bundle.Objects[0])
+	}
+}
+
+func TestClipWorldSegmentForCameraClipsNearPlane(t *testing.T) {
+	camera := sceneCamera{Z: 6, FOV: 72, Near: 0.05, Far: 128}
+	from, to, ok := clipWorldSegmentForCamera(
+		point3{X: -2, Y: 0, Z: -7},
+		point3{X: 2, Y: 0, Z: 1},
+		camera,
+		640.0/360.0,
+	)
+	if !ok {
+		t.Fatal("expected segment crossing near plane to stay visible")
+	}
+	if math.Abs(from.X+1.475) > 0.001 || math.Abs(from.Y) > 0.001 || math.Abs(from.Z+5.95) > 0.001 {
+		t.Fatalf("expected clipped near-plane point, got %#v", from)
+	}
+	if to != (point3{X: 2, Y: 0, Z: 1}) {
+		t.Fatalf("expected far endpoint to stay intact, got %#v", to)
+	}
+}
+
+func TestClipWorldSegmentForCameraCullsOffscreenSegment(t *testing.T) {
+	camera := sceneCamera{Z: 6, FOV: 72, Near: 0.05, Far: 128}
+	_, _, ok := clipWorldSegmentForCamera(
+		point3{X: 100, Y: 0, Z: 1},
+		point3{X: 120, Y: 0, Z: 1},
+		camera,
+		640.0/360.0,
+	)
+	if ok {
+		t.Fatal("expected fully offscreen segment to be culled")
 	}
 }

@@ -1227,8 +1227,8 @@ test("bootstrap depth-sorts alpha Scene3D objects before upload", async () => {
         { kind: "glass", color: "#c7f0ff", opacity: 0.45, wireframe: true, blendMode: "alpha", emissive: 0.05 },
       ],
       objects: [
-        { id: "near-static", kind: "plane", materialIndex: 0, vertexOffset: 0, vertexCount: 2, static: true },
-        { id: "far-dynamic", kind: "plane", materialIndex: 0, vertexOffset: 2, vertexCount: 2, static: false },
+        { id: "near-static", kind: "plane", materialIndex: 0, vertexOffset: 0, vertexCount: 2, static: true, depthCenter: 4 },
+        { id: "far-dynamic", kind: "plane", materialIndex: 0, vertexOffset: 2, vertexCount: 2, static: false, depthCenter: 8 },
       ],
       objectCount: 2,
     }),
@@ -1246,7 +1246,7 @@ test("bootstrap depth-sorts alpha Scene3D objects before upload", async () => {
   assert.ok(gl.ops.some((entry) => entry[0] === "drawArrays" && entry[3] === 4));
 });
 
-test("bootstrap clips Scene3D segments against the near plane before upload", async () => {
+test("bootstrap uploads engine-clipped Scene3D segments directly", async () => {
   const mount = new FakeElement("div", null);
   mount.id = "scene-clip-root";
 
@@ -1280,19 +1280,17 @@ test("bootstrap clips Scene3D segments against the near plane before upload", as
       colors: [],
       vertexCount: 0,
       worldPositions: [
-        -2, 0, -7, 2, 0, 1,
-        -1, 1, -7.5, 1, 1, -7.2,
+        -1.475, 0, -5.95, 2, 0, 1,
       ],
       worldColors: [
         0.7, 0.9, 1, 1, 0.7, 0.9, 1, 1,
-        0.2, 0.3, 0.4, 1, 0.2, 0.3, 0.4, 1,
       ],
-      worldVertexCount: 4,
+      worldVertexCount: 2,
       materials: [
         { kind: "flat", color: "#8de1ff", opacity: 1, wireframe: true, blendMode: "opaque", emissive: 0 },
       ],
       objects: [
-        { id: "clip-line", kind: "line", materialIndex: 0, vertexOffset: 0, vertexCount: 4, static: true },
+        { id: "clip-line", kind: "line", materialIndex: 0, vertexOffset: 0, vertexCount: 2, static: true, depthCenter: 3.5 },
       ],
       objectCount: 1,
     }),
@@ -1309,64 +1307,6 @@ test("bootstrap clips Scene3D segments against the near plane before upload", as
   assert.ok(Math.abs(clipped[2] + 5.95) < 0.001);
   assert.deepEqual(clipped.slice(3), [2, 0, 1]);
   assert.ok(gl.ops.some((entry) => entry[0] === "drawArrays" && entry[3] === 2));
-});
-
-test("bootstrap culls Scene3D segments fully outside the frustum before upload", async () => {
-  const mount = new FakeElement("div", null);
-  mount.id = "scene-cull-root";
-
-  const env = createContext({
-    elements: [mount],
-    enableWebGL: true,
-    disableCanvas2D: true,
-    fetchRoutes: {
-      "/runtime.wasm": { bytes: [0, 97, 115, 109] },
-      "/scene-cull-program.json": { text: '{"name":"FrustumCull"}' },
-    },
-    manifest: {
-      runtime: { path: "/runtime.wasm" },
-      engines: [
-        {
-          id: "gosx-engine-cull",
-          component: "GoSXScene3D",
-          kind: "surface",
-          mountId: "scene-cull-root",
-          runtime: "shared",
-          props: { width: 640, height: 360, background: "#08151f" },
-          programRef: "/scene-cull-program.json",
-        },
-      ],
-    },
-    onHydrateEngine: () => "[]",
-    onRenderEngine: () => JSON.stringify({
-      background: "#08151f",
-      camera: { x: 0, y: 0, z: 6, fov: 72 },
-      positions: [],
-      colors: [],
-      vertexCount: 0,
-      worldPositions: [
-        100, 0, 1, 120, 0, 1,
-      ],
-      worldColors: [
-        0.7, 0.9, 1, 1, 0.7, 0.9, 1, 1,
-      ],
-      worldVertexCount: 2,
-      materials: [
-        { kind: "flat", color: "#8de1ff", opacity: 1, wireframe: true, blendMode: "opaque", emissive: 0 },
-      ],
-      objects: [
-        { id: "offscreen-line", kind: "line", materialIndex: 0, vertexOffset: 0, vertexCount: 2, static: true },
-      ],
-      objectCount: 1,
-    }),
-  });
-
-  runScript(bootstrapSource, env.context, "bootstrap.js");
-  await flushAsyncWork();
-
-  const gl = mount.children[0].getContext("webgl");
-  assert.deepEqual(gl.bufferUploads.get(4), []);
-  assert.equal(gl.ops.some((entry) => entry[0] === "drawArrays"), false);
 });
 
 test("bootstrap honors engine-side Scene3D view-cull metadata", async () => {
