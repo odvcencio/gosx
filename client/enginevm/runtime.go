@@ -293,6 +293,7 @@ func buildRenderBundle(props map[string]any, nodes []resolvedNode, width, height
 				ID:            object.ID,
 				Kind:          object.Kind,
 				MaterialIndex: materialIndex,
+				RenderPass:    bundle.Materials[materialIndex].RenderPass,
 				VertexOffset:  vertexOffset,
 				VertexCount:   vertexCount,
 				Static:        object.Static,
@@ -430,12 +431,34 @@ func appendWorldSceneLine(bundle *rootengine.RenderBundle, from, to point3, rgba
 func ensureRenderMaterial(bundle *rootengine.RenderBundle, object sceneObject) int {
 	profile := resolveRenderMaterial(object)
 	for index, existing := range bundle.Materials {
-		if existing == profile {
+		if renderMaterialEqual(existing, profile) {
 			return index
 		}
 	}
 	bundle.Materials = append(bundle.Materials, profile)
 	return len(bundle.Materials) - 1
+}
+
+func renderMaterialEqual(left, right rootengine.RenderMaterial) bool {
+	if left.Key != right.Key ||
+		left.Kind != right.Kind ||
+		left.Color != right.Color ||
+		left.Opacity != right.Opacity ||
+		left.Wireframe != right.Wireframe ||
+		left.BlendMode != right.BlendMode ||
+		left.RenderPass != right.RenderPass ||
+		left.Emissive != right.Emissive {
+		return false
+	}
+	if len(left.ShaderData) != len(right.ShaderData) {
+		return false
+	}
+	for i := range left.ShaderData {
+		if left.ShaderData[i] != right.ShaderData[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func resolveRenderMaterial(object sceneObject) rootengine.RenderMaterial {
@@ -483,6 +506,7 @@ func resolveRenderMaterial(object sceneObject) rootengine.RenderMaterial {
 	}
 	profile.RenderPass = renderPassFromMaterialProfile(profile)
 	profile.Key = renderMaterialKey(profile)
+	profile.ShaderData = renderMaterialShaderData(profile)
 	return profile
 }
 
@@ -510,6 +534,23 @@ func renderMaterialKey(profile rootengine.RenderMaterial) string {
 		profile.RenderPass,
 		profile.Emissive,
 	)
+}
+
+func renderMaterialShaderData(profile rootengine.RenderMaterial) []float64 {
+	kind := strings.ToLower(strings.TrimSpace(profile.Kind))
+	emissive := profile.Emissive
+	switch kind {
+	case "ghost":
+		return []float64{1, emissive, 0.3}
+	case "glass":
+		return []float64{2, emissive, 0.7}
+	case "glow":
+		return []float64{3, emissive, 1}
+	case "matte":
+		return []float64{4, emissive, 0.2}
+	default:
+		return []float64{0, emissive, 1}
+	}
 }
 
 func appendSceneLine(bundle *rootengine.RenderBundle, width, height int, from, to rootengine.RenderPoint, color string, lineWidth float64) {

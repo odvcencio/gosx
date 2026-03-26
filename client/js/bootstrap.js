@@ -1389,7 +1389,7 @@
       return;
     }
     const material = materials[object.materialIndex] || null;
-    const renderPass = sceneMaterialRenderPass(material);
+    const renderPass = sceneWorldObjectRenderPass(object, material);
     if (renderPass === "additive" || renderPass === "alpha") {
       collectSceneWorldTranslucentObject(drawScratch, bundle, object, material, renderPass, order);
       return;
@@ -1668,6 +1668,13 @@
   }
 
   function sceneMaterialShaderData(material) {
+    if (material && Array.isArray(material.shaderData) && material.shaderData.length >= 3) {
+      return [
+        sceneNumber(material.shaderData[0], 0),
+        sceneNumber(material.shaderData[1], 0),
+        sceneNumber(material.shaderData[2], 1),
+      ];
+    }
     if (!material || typeof material !== "object") {
       return [0, 0, 1];
     }
@@ -1684,6 +1691,14 @@
     default:
       return [0, sceneMaterialEmissive(material), 1];
     }
+  }
+
+  function sceneWorldObjectRenderPass(object, material) {
+    const renderPass = String(object && object.renderPass || "").toLowerCase();
+    if (renderPass === "opaque" || renderPass === "alpha" || renderPass === "additive") {
+      return renderPass;
+    }
+    return sceneMaterialRenderPass(material);
   }
 
   function sceneFallbackMaterialData(vertexCount) {
