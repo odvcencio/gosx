@@ -234,6 +234,12 @@ type projectedLine struct {
 	To   rootengine.RenderPoint
 }
 
+type sceneAppendResult struct {
+	Bounds     rootengine.RenderBounds
+	HasBounds  bool
+	ViewCulled bool
+}
+
 func buildRenderBundle(props map[string]any, nodes []resolvedNode, width, height int, timeSeconds float64) rootengine.RenderBundle {
 	if width <= 0 {
 		width = 720
@@ -275,10 +281,13 @@ func buildRenderBundle(props map[string]any, nodes []resolvedNode, width, height
 	for _, object := range objects {
 		vertexOffset := len(bundle.WorldPositions) / 3
 		materialIndex := ensureRenderMaterial(&bundle, object)
-		appendSceneObject(&bundle, camera, width, height, object, timeSeconds)
+		appendResult := appendSceneObject(&bundle, camera, width, height, object, timeSeconds)
 		vertexCount := (len(bundle.WorldPositions) / 3) - vertexOffset
-		if vertexCount > 0 {
-			bounds := renderObjectBounds(bundle.WorldPositions, vertexOffset, vertexCount)
+		if vertexCount > 0 || appendResult.ViewCulled {
+			bounds := appendResult.Bounds
+			if !appendResult.HasBounds && vertexCount > 0 {
+				bounds = renderObjectBounds(bundle.WorldPositions, vertexOffset, vertexCount)
+			}
 			bundle.Objects = append(bundle.Objects, rootengine.RenderObject{
 				ID:            object.ID,
 				Kind:          object.Kind,
@@ -290,7 +299,7 @@ func buildRenderBundle(props map[string]any, nodes []resolvedNode, width, height
 				DepthNear:     bounds.MinZ + camera.Z,
 				DepthFar:      bounds.MaxZ + camera.Z,
 				DepthCenter:   ((bounds.MinZ + camera.Z) + (bounds.MaxZ + camera.Z)) / 2,
-				ViewCulled:    renderBoundsOutsideFrustum(bounds, camera, width, height),
+				ViewCulled:    appendResult.ViewCulled,
 			})
 		}
 	}
@@ -379,22 +388,34 @@ func appendSceneGrid(bundle *rootengine.RenderBundle, width, height int) {
 	}
 }
 
-func appendSceneObject(bundle *rootengine.RenderBundle, camera sceneCamera, width, height int, object sceneObject, timeSeconds float64) {
+func appendSceneObject(bundle *rootengine.RenderBundle, camera sceneCamera, width, height int, object sceneObject, timeSeconds float64) sceneAppendResult {
+	aspect := math.Max(0.0001, float64(width)/math.Max(1, float64(height)))
+	rgba := sceneColorRGBA(object.Color, [4]float64{0.55, 0.88, 1, 1})
+	result := sceneAppendResult{}
 	for _, segment := range sceneObjectSegments(object) {
 		worldFrom := translatePoint(segment[0], object, timeSeconds)
 		worldTo := translatePoint(segment[1], object, timeSeconds)
-		appendWorldSceneLine(bundle, worldFrom, worldTo, object.Color)
-		from := projectPoint(worldFrom, camera, width, height)
-		to := projectPoint(worldTo, camera, width, height)
+		result.Bounds, result.HasBounds = expandRenderBounds(result.Bounds, result.HasBounds, worldFrom)
+		result.Bounds, result.HasBounds = expandRenderBounds(result.Bounds, result.HasBounds, worldTo)
+		clippedFrom, clippedTo, ok := clipWorldSegmentForCamera(worldFrom, worldTo, camera, aspect)
+		if !ok {
+			continue
+		}
+		appendWorldSceneLine(bundle, clippedFrom, clippedTo, rgba)
+		from := projectPoint(clippedFrom, camera, width, height)
+		to := projectPoint(clippedTo, camera, width, height)
 		if from == nil || to == nil {
 			continue
 		}
 		appendSceneLine(bundle, width, height, *from, *to, object.Color, 1.8)
 	}
+	if result.HasBounds {
+		result.ViewCulled = renderBoundsOutsideFrustum(result.Bounds, camera, width, height)
+	}
+	return result
 }
 
-func appendWorldSceneLine(bundle *rootengine.RenderBundle, from, to point3, color string) {
-	rgba := sceneColorRGBA(color, [4]float64{0.55, 0.88, 1, 1})
+func appendWorldSceneLine(bundle *rootengine.RenderBundle, from, to point3, rgba [4]float64) {
 	bundle.WorldPositions = append(bundle.WorldPositions,
 		from.X, from.Y, from.Z,
 		to.X, to.Y, to.Z,
@@ -634,6 +655,30 @@ func projectPoint(point point3, camera sceneCamera, width, height int) *rootengi
 	}
 }
 
+func clipWorldSegmentForCamera(from, to point3, camera sceneCamera, aspect float64) (point3, point3, bool) {
+	depthFrom := from.Z + camera.Z
+	depthTo := to.Z + camera.Z
+	if depthFrom <= camera.Near && depthTo <= camera.Near {
+		return point3{}, point3{}, false
+	}
+	clippedFrom := from
+	clippedTo := to
+	if depthFrom <= camera.Near || depthTo <= camera.Near {
+		t := (camera.Near - depthFrom) / math.Max(0.000001, depthTo-depthFrom)
+		if depthFrom <= camera.Near {
+			clippedFrom = lerpPoint3(from, to, t)
+		} else {
+			clippedTo = lerpPoint3(from, to, t)
+		}
+	}
+	depthFrom = clippedFrom.Z + camera.Z
+	depthTo = clippedTo.Z + camera.Z
+	if worldSegmentOutsideFrustum(clippedFrom, depthFrom, clippedTo, depthTo, camera, aspect) {
+		return point3{}, point3{}, false
+	}
+	return clippedFrom, clippedTo, true
+}
+
 func renderObjectBounds(worldPositions []float64, vertexOffset, vertexCount int) rootengine.RenderBounds {
 	if vertexCount <= 0 {
 		return rootengine.RenderBounds{}
@@ -687,6 +732,26 @@ func renderBoundsOutsideFrustum(bounds rootengine.RenderBounds, camera sceneCame
 	return allLeft || allRight || allBottom || allTop
 }
 
+func expandRenderBounds(bounds rootengine.RenderBounds, hasBounds bool, point point3) (rootengine.RenderBounds, bool) {
+	if !hasBounds {
+		return rootengine.RenderBounds{
+			MinX: point.X,
+			MinY: point.Y,
+			MinZ: point.Z,
+			MaxX: point.X,
+			MaxY: point.Y,
+			MaxZ: point.Z,
+		}, true
+	}
+	bounds.MinX = math.Min(bounds.MinX, point.X)
+	bounds.MinY = math.Min(bounds.MinY, point.Y)
+	bounds.MinZ = math.Min(bounds.MinZ, point.Z)
+	bounds.MaxX = math.Max(bounds.MaxX, point.X)
+	bounds.MaxY = math.Max(bounds.MaxY, point.Y)
+	bounds.MaxZ = math.Max(bounds.MaxZ, point.Z)
+	return bounds, true
+}
+
 func renderBoundsCorners(bounds rootengine.RenderBounds) []point3 {
 	return []point3{
 		{X: bounds.MinX, Y: bounds.MinY, Z: bounds.MinZ},
@@ -706,6 +771,27 @@ func projectWorldClipPoint(point point3, camera sceneCamera, aspect float64) (fl
 	x := ((point.X - camera.X) * focal / math.Max(depth, 0.0001)) / math.Max(aspect, 0.0001)
 	y := (point.Y - camera.Y) * focal / math.Max(depth, 0.0001)
 	return x, y
+}
+
+func worldSegmentOutsideFrustum(from point3, depthFrom float64, to point3, depthTo float64, camera sceneCamera, aspect float64) bool {
+	if depthFrom >= camera.Far && depthTo >= camera.Far {
+		return true
+	}
+	clipFromX, clipFromY := projectWorldClipPoint(from, camera, aspect)
+	clipToX, clipToY := projectWorldClipPoint(to, camera, aspect)
+	return (clipFromX < -1 && clipToX < -1) ||
+		(clipFromX > 1 && clipToX > 1) ||
+		(clipFromY < -1 && clipToY < -1) ||
+		(clipFromY > 1 && clipToY > 1)
+}
+
+func lerpPoint3(from, to point3, t float64) point3 {
+	t = clamp(t, 0, 1)
+	return point3{
+		X: from.X + (to.X-from.X)*t,
+		Y: from.Y + (to.Y-from.Y)*t,
+		Z: from.Z + (to.Z-from.Z)*t,
+	}
 }
 
 func normalizeSceneKind(value string) string {

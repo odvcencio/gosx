@@ -1052,7 +1052,7 @@
         }
 
         if (usePerspective) {
-          const drawPlan = buildSceneWorldDrawPlan(bundle, drawScratch, aspect);
+          const drawPlan = buildSceneWorldDrawPlan(bundle, drawScratch);
           if (drawPlan) {
             if (drawPlan.staticOpaqueKey !== staticOpaqueKey) {
               uploadSceneWebGLBuffers(gl, arrayBuffer, staticDraw, staticOpaquePositionBuffer, staticOpaqueColorBuffer, staticOpaqueMaterialBuffer, drawPlan.staticOpaquePositions, drawPlan.staticOpaqueColors, drawPlan.staticOpaqueMaterials);
@@ -1190,7 +1190,7 @@
     }
   }
 
-  function buildSceneWorldDrawPlan(bundle, scratch, aspect) {
+  function buildSceneWorldDrawPlan(bundle, scratch) {
     const objects = Array.isArray(bundle.objects) ? bundle.objects : [];
     const materials = Array.isArray(bundle.materials) ? bundle.materials : [];
     if (!objects.length || !materials.length) {
@@ -1221,13 +1221,13 @@
       if (object.static && renderPass === "opaque") {
         staticOpaqueObjects.push(object);
         staticOpaqueMaterialProfiles.push(material);
-        appendSceneWorldObjectSlice(staticOpaquePositions, staticOpaqueColors, staticOpaqueMaterials, bundle.worldPositions, bundle.worldColors, object, material, bundle.camera, aspect);
+        appendSceneWorldObjectSlice(staticOpaquePositions, staticOpaqueColors, staticOpaqueMaterials, bundle.worldPositions, bundle.worldColors, object, material);
       } else if (renderPass === "additive") {
         additiveEntries.push(createSceneWorldPassEntry(object, material, bundle.worldPositions, bundle.camera, index));
       } else if (renderPass === "alpha") {
         alphaEntries.push(createSceneWorldPassEntry(object, material, bundle.worldPositions, bundle.camera, index));
       } else {
-        appendSceneWorldObjectSlice(dynamicOpaquePositions, dynamicOpaqueColors, dynamicOpaqueMaterials, bundle.worldPositions, bundle.worldColors, object, material, bundle.camera, aspect);
+        appendSceneWorldObjectSlice(dynamicOpaquePositions, dynamicOpaqueColors, dynamicOpaqueMaterials, bundle.worldPositions, bundle.worldColors, object, material);
       }
     }
 
@@ -1237,8 +1237,8 @@
     const typedDynamicOpaquePositions = sceneWriteFloatArray(drawScratch, "typedDynamicOpaquePositions", dynamicOpaquePositions);
     const typedDynamicOpaqueColors = sceneWriteFloatArray(drawScratch, "typedDynamicOpaqueColors", dynamicOpaqueColors);
     const typedDynamicOpaqueMaterialData = sceneWriteFloatArray(drawScratch, "typedDynamicOpaqueMaterials", dynamicOpaqueMaterials);
-    const typedAlphaPlan = createSceneWorldPassPlan(bundle.worldPositions, bundle.worldColors, bundle.camera, aspect, alphaEntries, drawScratch.alphaPlan);
-    const typedAdditivePlan = createSceneWorldPassPlan(bundle.worldPositions, bundle.worldColors, bundle.camera, aspect, additiveEntries, drawScratch.additivePlan);
+    const typedAlphaPlan = createSceneWorldPassPlan(bundle.worldPositions, bundle.worldColors, alphaEntries, drawScratch.alphaPlan);
+    const typedAdditivePlan = createSceneWorldPassPlan(bundle.worldPositions, bundle.worldColors, additiveEntries, drawScratch.additivePlan);
     const plan = drawScratch.plan;
     plan.staticOpaqueKey = sceneStaticDrawKey(staticOpaqueObjects, staticOpaqueMaterialProfiles, typedStaticOpaquePositions, typedStaticOpaqueColors, typedStaticOpaqueMaterialData);
     plan.staticOpaquePositions = typedStaticOpaquePositions;
@@ -1271,7 +1271,7 @@
     };
   }
 
-  function createSceneWorldPassPlan(sourcePositions, sourceColors, camera, aspect, entries, scratch) {
+  function createSceneWorldPassPlan(sourcePositions, sourceColors, entries, scratch) {
     const passScratch = resetSceneWorldPassScratch(scratch || createSceneWorldPassScratch());
     if (!entries.length) {
       passScratch.typedPositions = sceneWriteFloatArray(passScratch, "typedPositions", passScratch.positions);
@@ -1285,7 +1285,7 @@
     const materials = passScratch.materials;
     entries.sort(compareSceneWorldPassEntries);
     for (const entry of entries) {
-      appendSceneWorldObjectSlice(positions, colors, materials, sourcePositions, sourceColors, entry.object, entry.material, camera, aspect);
+      appendSceneWorldObjectSlice(positions, colors, materials, sourcePositions, sourceColors, entry.object, entry.material);
     }
     passScratch.typedPositions = sceneWriteFloatArray(passScratch, "typedPositions", positions);
     passScratch.typedColors = sceneWriteFloatArray(passScratch, "typedColors", colors);
@@ -1325,62 +1325,26 @@
     return Boolean(object && object.viewCulled);
   }
 
-  function appendSceneWorldObjectSlice(targetPositions, targetColors, targetMaterials, sourcePositions, sourceColors, object, material, camera, aspect) {
+  function appendSceneWorldObjectSlice(targetPositions, targetColors, targetMaterials, sourcePositions, sourceColors, object, material) {
     const vertexOffset = Math.max(0, Math.floor(sceneNumber(object.vertexOffset, 0)));
     const vertexCount = Math.max(0, Math.floor(sceneNumber(object.vertexCount, 0)));
     const opacity = sceneMaterialOpacity(material);
     const materialData = sceneMaterialShaderData(material);
-    const nearDepth = sceneWorldNearDepth(camera);
-    for (let offset = 0; offset + 1 < vertexCount; offset += 2) {
-      const startVertex = vertexOffset + offset;
-      const endVertex = startVertex + 1;
-      let ax = sceneNumber(sourcePositions[startVertex * 3], 0);
-      let ay = sceneNumber(sourcePositions[startVertex * 3 + 1], 0);
-      let az = sceneNumber(sourcePositions[startVertex * 3 + 2], 0);
-      let bx = sceneNumber(sourcePositions[endVertex * 3], 0);
-      let by = sceneNumber(sourcePositions[endVertex * 3 + 1], 0);
-      let bz = sceneNumber(sourcePositions[endVertex * 3 + 2], 0);
-      let ar = sceneNumber(sourceColors[startVertex * 4], 0);
-      let ag = sceneNumber(sourceColors[startVertex * 4 + 1], 0);
-      let ab = sceneNumber(sourceColors[startVertex * 4 + 2], 0);
-      let aa = sceneNumber(sourceColors[startVertex * 4 + 3], 1) * opacity;
-      let br = sceneNumber(sourceColors[endVertex * 4], 0);
-      let bg = sceneNumber(sourceColors[endVertex * 4 + 1], 0);
-      let bb = sceneNumber(sourceColors[endVertex * 4 + 2], 0);
-      let ba = sceneNumber(sourceColors[endVertex * 4 + 3], 1) * opacity;
-      let depthA = sceneWorldPointDepth(az, camera);
-      let depthB = sceneWorldPointDepth(bz, camera);
-      if (depthA <= nearDepth && depthB <= nearDepth) {
-        continue;
-      }
-      if (depthA <= nearDepth || depthB <= nearDepth) {
-        const t = (nearDepth - depthA) / Math.max(0.000001, depthB - depthA);
-        if (depthA <= nearDepth) {
-          ax = sceneLerp(ax, bx, t);
-          ay = sceneLerp(ay, by, t);
-          az = sceneLerp(az, bz, t);
-          ar = sceneLerp(ar, br, t);
-          ag = sceneLerp(ag, bg, t);
-          ab = sceneLerp(ab, bb, t);
-          aa = sceneLerp(aa, ba, t);
-        } else {
-          bx = sceneLerp(ax, bx, t);
-          by = sceneLerp(ay, by, t);
-          bz = sceneLerp(az, bz, t);
-          br = sceneLerp(ar, br, t);
-          bg = sceneLerp(ag, bg, t);
-          bb = sceneLerp(ab, bb, t);
-          ba = sceneLerp(aa, ba, t);
-        }
-      }
-      depthA = sceneWorldPointDepth(az, camera);
-      depthB = sceneWorldPointDepth(bz, camera);
-      if (sceneWorldSegmentOutsideFrustum(ax, ay, depthA, bx, by, depthB, camera, aspect)) {
-        continue;
-      }
-      targetPositions.push(ax, ay, az, bx, by, bz);
-      targetColors.push(ar, ag, ab, aa, br, bg, bb, ba);
-      targetMaterials.push(materialData[0], materialData[1], materialData[2], materialData[0], materialData[1], materialData[2]);
+    const startPosition = vertexOffset * 3;
+    const endPosition = startPosition + vertexCount * 3;
+    const startColor = vertexOffset * 4;
+    const endColor = startColor + vertexCount * 4;
+    for (let i = startPosition; i < endPosition; i += 1) {
+      targetPositions.push(sceneNumber(sourcePositions[i], 0));
+    }
+    for (let i = startColor; i < endColor; i += 4) {
+      targetColors.push(
+        sceneNumber(sourceColors[i], 0),
+        sceneNumber(sourceColors[i + 1], 0),
+        sceneNumber(sourceColors[i + 2], 0),
+        sceneNumber(sourceColors[i + 3], 1) * opacity,
+      );
+      targetMaterials.push(materialData[0], materialData[1], materialData[2]);
     }
   }
 
@@ -1456,47 +1420,8 @@
     return buffer;
   }
 
-  function sceneWorldNearDepth(camera) {
-    return sceneNumber(camera && camera.near, 0.05);
-  }
-
-  function sceneWorldFarDepth(camera) {
-    return sceneNumber(camera && camera.far, 128);
-  }
-
   function sceneWorldPointDepth(z, camera) {
     return sceneNumber(z, 0) + sceneNumber(camera && camera.z, 6);
-  }
-
-  function sceneWorldFocal(camera) {
-    return 1 / Math.max(0.0001, Math.tan((Math.PI / 180) * sceneNumber(camera && camera.fov, 75) * 0.5));
-  }
-
-  function sceneWorldProjectClipX(x, depth, camera, aspect) {
-    return ((sceneNumber(x, 0) - sceneNumber(camera && camera.x, 0)) * sceneWorldFocal(camera) / Math.max(depth, 0.0001)) / Math.max(sceneNumber(aspect, 1), 0.0001);
-  }
-
-  function sceneWorldProjectClipY(y, depth, camera) {
-    return (sceneNumber(y, 0) - sceneNumber(camera && camera.y, 0)) * sceneWorldFocal(camera) / Math.max(depth, 0.0001);
-  }
-
-  function sceneWorldSegmentOutsideFrustum(ax, ay, depthA, bx, by, depthB, camera, aspect) {
-    const farDepth = sceneWorldFarDepth(camera);
-    if (depthA > farDepth && depthB > farDepth) {
-      return true;
-    }
-    const clipAX = sceneWorldProjectClipX(ax, depthA, camera, aspect);
-    const clipAY = sceneWorldProjectClipY(ay, depthA, camera);
-    const clipBX = sceneWorldProjectClipX(bx, depthB, camera, aspect);
-    const clipBY = sceneWorldProjectClipY(by, depthB, camera);
-    return (clipAX < -1 && clipBX < -1)
-      || (clipAX > 1 && clipBX > 1)
-      || (clipAY < -1 && clipBY < -1)
-      || (clipAY > 1 && clipBY > 1);
-  }
-
-  function sceneLerp(from, to, t) {
-    return from + (to - from) * clamp01(t);
   }
 
   function sceneMaterialOpacity(material) {
