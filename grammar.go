@@ -42,6 +42,8 @@ func GosxGrammar() *Grammar {
 		// Attributes
 		// ---------------------------------------------------------------
 
+		g.Externals = append(g.Externals, Sym("jsx_attribute_expression"))
+
 		// String attribute value: "hello"
 		g.Define("jsx_string_literal",
 			Token(Seq(
@@ -63,15 +65,20 @@ func GosxGrammar() *Grammar {
 
 		// Attribute: name="value" or name={expr} or name (boolean)
 		g.Define("jsx_attribute",
-			Seq(
-				Field("name", Sym("jsx_attr_name")),
-				Optional(Seq(
+			Choice(
+				Seq(
+					Field("name", Sym("jsx_attr_name")),
 					Str("="),
-					Field("value", Choice(
-						Sym("jsx_string_literal"),
-						Sym("jsx_expression_container"),
-					)),
-				)),
+					Field("value", Sym("jsx_attribute_expression")),
+				),
+				Seq(
+					Field("name", Sym("jsx_attr_name")),
+					Str("="),
+					Field("value", Sym("jsx_string_literal")),
+				),
+				Seq(
+					Field("name", Sym("jsx_attr_name")),
+				),
 			))
 
 		// Spread attribute: {...expr}

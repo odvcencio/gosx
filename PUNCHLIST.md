@@ -87,4 +87,4 @@ This is the working framework punchlist for driving GoSX from "credible core" to
 - [ ] File-routed `.gsx` rendering still evaluates IR directly instead of executing arbitrary Go component bodies, so loops, conditionals, and store-driven composition in complex pages remain blocked behind `gosx.El(...)`
 - [x] Add a built-in file-route component/runtime seam so framework-native components like `Link`, `Image`, and future 3D scene primitives can render from `.gsx` without collapsing to placeholder `<div data-gosx-component=...>`
 - [ ] Make nested `page.server.go` registration fully automatic so real `.gsx` apps do not need manual side-effect import buckets once they outgrow the scaffolded `modules` package
-- [ ] Remove the current parser limitation that makes tags with multiple expression-valued attributes brittle, so `.gsx` authoring does not have to lean on spread-attr workarounds
+- [x] Remove the current parser limitation that makes tags with multiple expression-valued attributes brittle, so `.gsx` authoring does not have to lean on spread-attr workarounds
