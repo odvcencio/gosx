@@ -8,13 +8,17 @@ import (
 
 	"github.com/odvcencio/gosx/client/bridge"
 	"github.com/odvcencio/gosx/client/vm"
+	rootengine "github.com/odvcencio/gosx/engine"
 	"github.com/odvcencio/gosx/highlight"
 )
 
 func registerRuntime(b *bridge.Bridge) {
 	setRuntimeFunc("__gosx_hydrate", hydrateRuntimeFunc(b))
+	setRuntimeFunc("__gosx_hydrate_engine", hydrateEngineRuntimeFunc(b))
 	setRuntimeFunc("__gosx_action", actionRuntimeFunc(b))
 	setRuntimeFunc("__gosx_dispose", disposeRuntimeFunc(b))
+	setRuntimeFunc("__gosx_tick_engine", tickEngineRuntimeFunc(b))
+	setRuntimeFunc("__gosx_engine_dispose", disposeEngineRuntimeFunc(b))
 	setRuntimeFunc("__gosx_highlight", highlightRuntimeFunc())
 	setRuntimeFunc("__gosx_set_shared_signal", sharedSignalRuntimeFunc(b))
 	setRuntimeFunc("__gosx_set_input_batch", inputBatchRuntimeFunc(b))
@@ -51,12 +55,49 @@ func actionRuntimeFunc(b *bridge.Bridge) js.Func {
 	})
 }
 
+func hydrateEngineRuntimeFunc(b *bridge.Bridge) js.Func {
+	return js.FuncOf(func(this js.Value, args []js.Value) any {
+		call, err := parseHydrateCall(args)
+		if err != nil {
+			return jsError(err)
+		}
+		commands, err := b.HydrateEngine(call.islandID, call.componentName, call.propsJSON, call.programData, call.format)
+		if err != nil {
+			return jsError(err)
+		}
+		return marshalEngineCommandResult(commands)
+	})
+}
+
 func disposeRuntimeFunc(b *bridge.Bridge) js.Func {
 	return js.FuncOf(func(this js.Value, args []js.Value) any {
 		if len(args) < 1 {
 			return js.Null()
 		}
 		b.DisposeIsland(args[0].String())
+		return js.Null()
+	})
+}
+
+func tickEngineRuntimeFunc(b *bridge.Bridge) js.Func {
+	return js.FuncOf(func(this js.Value, args []js.Value) any {
+		if len(args) < 1 {
+			return jsErrorf("need 1 arg (engineID)")
+		}
+		commands, err := b.TickEngine(args[0].String())
+		if err != nil {
+			return jsError(err)
+		}
+		return marshalEngineCommandResult(commands)
+	})
+}
+
+func disposeEngineRuntimeFunc(b *bridge.Bridge) js.Func {
+	return js.FuncOf(func(this js.Value, args []js.Value) any {
+		if len(args) < 1 {
+			return js.Null()
+		}
+		b.DisposeEngine(args[0].String())
 		return js.Null()
 	})
 }
@@ -173,6 +214,17 @@ func applyPatchedResult(islandID string, patches []vm.PatchOp) any {
 	}
 	js.Global().Call("__gosx_apply_patches", islandID, patchJSON)
 	return js.ValueOf(len(patches))
+}
+
+func marshalEngineCommandResult(commands []rootengine.Command) any {
+	if len(commands) == 0 {
+		return js.ValueOf("[]")
+	}
+	commandJSON, err := bridge.MarshalEngineCommands(commands)
+	if err != nil {
+		return js.ValueOf("marshal:" + err.Error())
+	}
+	return js.ValueOf(commandJSON)
 }
 
 func logRuntimeError(prefix string, err error) {

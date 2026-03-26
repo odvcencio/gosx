@@ -50,6 +50,9 @@ type EngineEntry struct {
 	// JSExport is the factory name looked up in window.__gosx_engine_factories.
 	JSExport string `json:"jsExport,omitempty"`
 
+	// Runtime selects an optional shared GoSX client runtime for this engine.
+	Runtime string `json:"runtime,omitempty"`
+
 	// Props is the JSON-serialized props snapshot.
 	Props json.RawMessage `json:"props"`
 
@@ -194,11 +197,11 @@ func (m *Manifest) AddIsland(component string, bundleID string, props any) (stri
 
 // AddEngine adds an engine entry and returns the assigned ID.
 func (m *Manifest) AddEngine(component, kind, programRef string, props any, capabilities []string) (string, error) {
-	return m.AddEngineWithRuntime(component, kind, programRef, "", "", "", props, capabilities)
+	return m.AddEngineWithRuntime(component, kind, programRef, "", "", "", "", props, capabilities)
 }
 
 // AddEngineWithRuntime adds an engine entry with optional DOM mount and JS runtime metadata.
-func (m *Manifest) AddEngineWithRuntime(component, kind, programRef, mountID, jsRef, jsExport string, props any, capabilities []string) (string, error) {
+func (m *Manifest) AddEngineWithRuntime(component, kind, programRef, mountID, jsRef, jsExport, runtime string, props any, capabilities []string) (string, error) {
 	propsJSON, err := json.Marshal(props)
 	if err != nil {
 		return "", err
@@ -212,6 +215,7 @@ func (m *Manifest) AddEngineWithRuntime(component, kind, programRef, mountID, js
 		MountID:      mountID,
 		JSRef:        jsRef,
 		JSExport:     jsExport,
+		Runtime:      runtime,
 		Props:        propsJSON,
 		Capabilities: capabilities,
 	}

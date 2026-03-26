@@ -3,6 +3,7 @@ package bridge
 import (
 	"testing"
 
+	rootengine "github.com/odvcencio/gosx/engine"
 	"github.com/odvcencio/gosx/island/program"
 )
 
@@ -189,5 +190,73 @@ func TestSetSharedSignalBatchJSONRejectsInvalidPayloadWithoutApplying(t *testing
 	}
 	if _, ok := b.GetStore().Get("$input.pointer"); ok {
 		t.Fatal("expected no values applied on invalid batch payload")
+	}
+}
+
+func TestBridgeHydrateTickAndDisposeEngine(t *testing.T) {
+	b := New()
+
+	prog := &rootengine.Program{
+		Name: "GeometryZoo",
+		Nodes: []rootengine.Node{
+			{
+				Kind:     "mesh",
+				Geometry: "box",
+				Material: "flat",
+				Props: map[string]program.ExprID{
+					"x":     0,
+					"color": 1,
+				},
+			},
+		},
+		Exprs: []program.Expr{
+			{Op: program.OpSignalGet, Value: "$scene.x", Type: program.TypeFloat},
+			{Op: program.OpSignalGet, Value: "$scene.color", Type: program.TypeString},
+			{Op: program.OpLitFloat, Value: "0", Type: program.TypeFloat},
+			{Op: program.OpLitString, Value: "#8de1ff", Type: program.TypeString},
+		},
+		Signals: []program.SignalDef{
+			{Name: "$scene.x", Type: program.TypeFloat, Init: 2},
+			{Name: "$scene.color", Type: program.TypeString, Init: 3},
+		},
+	}
+
+	data, err := rootengine.EncodeProgramJSON(prog)
+	if err != nil {
+		t.Fatalf("encode engine program: %v", err)
+	}
+
+	initial, err := b.HydrateEngine("engine-0", prog.Name, `{}`, data, "json")
+	if err != nil {
+		t.Fatalf("hydrate engine: %v", err)
+	}
+	if len(initial) != 1 || initial[0].Kind != rootengine.CommandCreateObject {
+		t.Fatalf("expected initial create command, got %#v", initial)
+	}
+	if b.EngineCount() != 1 {
+		t.Fatalf("expected 1 engine, got %d", b.EngineCount())
+	}
+
+	if err := b.SetSharedSignalBatchJSON(`{"$scene.x":2.5,"$scene.color":"#ff8f6b"}`); err != nil {
+		t.Fatalf("set shared signal batch: %v", err)
+	}
+
+	commands, err := b.TickEngine("engine-0")
+	if err != nil {
+		t.Fatalf("tick engine: %v", err)
+	}
+	if len(commands) != 2 {
+		t.Fatalf("expected transform + material commands, got %#v", commands)
+	}
+	if commands[0].Kind != rootengine.CommandSetTransform {
+		t.Fatalf("expected transform command, got %v", commands[0].Kind)
+	}
+	if commands[1].Kind != rootengine.CommandSetMaterial {
+		t.Fatalf("expected material command, got %v", commands[1].Kind)
+	}
+
+	b.DisposeEngine("engine-0")
+	if b.EngineCount() != 0 {
+		t.Fatalf("expected 0 engines after dispose, got %d", b.EngineCount())
 	}
 }

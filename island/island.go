@@ -262,6 +262,7 @@ func (r *Renderer) RenderEngine(cfg engine.Config, fallback gosx.Node) gosx.Node
 		mountID,
 		cfg.JSPath,
 		cfg.JSExport,
+		string(cfg.Runtime),
 		props,
 		engineCapabilities(cfg.Capabilities),
 	)

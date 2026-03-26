@@ -15,6 +15,7 @@ import (
 	"github.com/odvcencio/gosx/auth"
 	"github.com/odvcencio/gosx/env"
 	docsapp "github.com/odvcencio/gosx/examples/gosx-docs/app"
+	runtimedocs "github.com/odvcencio/gosx/examples/gosx-docs/app/docs/runtime"
 	_ "github.com/odvcencio/gosx/examples/gosx-docs/modules"
 	"github.com/odvcencio/gosx/route"
 	"github.com/odvcencio/gosx/server"
@@ -175,6 +176,13 @@ func main() {
 			"version": gosx.Version,
 			"pages":   pages,
 		}, nil
+	})
+	app.API("GET /api/runtime/scene-program", func(ctx *server.Context) (any, error) {
+		ctx.Cache(server.CachePolicy{
+			Public: true,
+			MaxAge: 5 * time.Minute,
+		})
+		return runtimedocs.SceneDemoProgram(), nil
 	})
 	app.HandleAPI(server.APIRoute{
 		Pattern:    "GET /api/me",
