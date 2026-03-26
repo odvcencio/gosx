@@ -2,12 +2,22 @@ package server
 
 import (
 	"net/http"
+	"os"
 	"path"
 	"path/filepath"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/odvcencio/gosx/buildmanifest"
 )
+
+type runtimeManifestCache struct {
+	mu       sync.Mutex
+	root     string
+	modTime  time.Time
+	manifest *buildmanifest.Manifest
+}
 
 // SetRuntimeRoot overrides the filesystem root used to resolve `/gosx/*`
 // compatibility assets for engines and future page runtimes.
@@ -67,7 +77,7 @@ func (a *App) serveRuntimeAsset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if fsPath, ok := runtimeCompatBuiltPath(root, name); ok {
+	if fsPath, ok := a.runtimeCompatBuiltPath(root, name); ok {
 		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 		MarkObservedRequest(r, "runtime", "/gosx/"+name)
 		http.ServeFile(w, r, fsPath)
@@ -97,9 +107,9 @@ func runtimeCompatSourcePath(root, name string) (string, bool) {
 	return "", false
 }
 
-func runtimeCompatBuiltPath(root, name string) (string, bool) {
-	manifest, err := buildmanifest.Load(filepath.Join(root, "build.json"))
-	if err != nil {
+func (a *App) runtimeCompatBuiltPath(root, name string) (string, bool) {
+	manifest, ok := a.runtimeBuildManifest(root)
+	if !ok {
 		return "", false
 	}
 	assetsDir := filepath.Join(root, "assets")
@@ -136,9 +146,41 @@ func runtimeManifestAssetPath(assetsDir, bucket, file string) (string, bool) {
 	if strings.TrimSpace(file) == "" {
 		return "", false
 	}
-	target := filepath.Join(assetsDir, bucket, file)
-	if !isFile(target) {
+	target, ok := safeArtifactPath(assetsDir, filepath.Join(bucket, file))
+	if !ok || !isFile(target) {
 		return "", false
 	}
 	return target, true
+}
+
+func (a *App) runtimeBuildManifest(root string) (*buildmanifest.Manifest, bool) {
+	if a == nil {
+		return nil, false
+	}
+	manifestPath := filepath.Join(root, "build.json")
+	info, err := os.Stat(manifestPath)
+	if err != nil || info.IsDir() {
+		return nil, false
+	}
+	if a.runtimeMeta == nil {
+		a.runtimeMeta = &runtimeManifestCache{}
+	}
+
+	cache := a.runtimeMeta
+	modTime := info.ModTime().UTC()
+
+	cache.mu.Lock()
+	defer cache.mu.Unlock()
+	if cache.manifest != nil && cache.root == root && cache.modTime.Equal(modTime) {
+		return cache.manifest, true
+	}
+
+	manifest, err := buildmanifest.Load(manifestPath)
+	if err != nil {
+		return nil, false
+	}
+	cache.root = root
+	cache.modTime = modTime
+	cache.manifest = manifest
+	return manifest, true
 }

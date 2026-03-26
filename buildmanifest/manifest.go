@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -112,4 +113,14 @@ func AssetURL(assetBaseURL, bucket, file string) string {
 		return "/" + suffix
 	}
 	return base + "/" + suffix
+}
+
+// ExportFilePath returns the stable static-export file path for a route.
+func ExportFilePath(routePath string) string {
+	routePath = strings.TrimSpace(routePath)
+	if routePath == "" || routePath == "/" {
+		return "index.html"
+	}
+	clean := strings.Trim(routePath, "/")
+	return filepath.Join(filepath.FromSlash(clean), "index.html")
 }

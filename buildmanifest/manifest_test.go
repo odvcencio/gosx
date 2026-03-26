@@ -58,3 +58,18 @@ func TestLoadAndURLs(t *testing.T) {
 		t.Fatalf("unexpected css asset file: %s", cssAsset.File)
 	}
 }
+
+func TestExportFilePath(t *testing.T) {
+	cases := map[string]string{
+		"/":              "index.html",
+		"":               "index.html",
+		"/docs":          filepath.Join("docs", "index.html"),
+		"/docs/runtime/": filepath.Join("docs", "runtime", "index.html"),
+		"docs/runtime":   filepath.Join("docs", "runtime", "index.html"),
+	}
+	for input, want := range cases {
+		if got := ExportFilePath(input); got != want {
+			t.Fatalf("ExportFilePath(%q) = %q, want %q", input, got, want)
+		}
+	}
+}
