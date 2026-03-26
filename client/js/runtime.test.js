@@ -103,6 +103,7 @@ class FakeWebGLContext {
     this._nextBufferID = 1;
     this._boundArrayBuffer = null;
     this.ARRAY_BUFFER = 0x8892;
+    this.STATIC_DRAW = 0x88E4;
     this.DYNAMIC_DRAW = 0x88E8;
     this.FLOAT = 0x1406;
     this.LINES = 0x0001;
@@ -1171,6 +1172,8 @@ test("bootstrap hydrates shared-runtime Scene3D programs", async () => {
   assert.ok(gl.ops.some((entry) => entry[0] === "clear" && entry[1] === (gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)));
   assert.ok(gl.ops.some((entry) => entry[0] === "depthMask" && entry[1] === true));
   assert.ok(gl.ops.some((entry) => entry[0] === "depthMask" && entry[1] === false));
+  assert.ok(gl.ops.some((entry) => entry[0] === "bufferData" && entry[4] === gl.STATIC_DRAW));
+  assert.ok(gl.ops.some((entry) => entry[0] === "bufferData" && entry[4] === gl.DYNAMIC_DRAW));
   assert.ok(gl.ops.some((entry) => entry[0] === "blendFunc" && entry[1] === gl.SRC_ALPHA && entry[2] === gl.ONE_MINUS_SRC_ALPHA));
   assert.ok(gl.ops.some((entry) => entry[0] === "blendFunc" && entry[1] === gl.SRC_ALPHA && entry[2] === gl.ONE));
 
