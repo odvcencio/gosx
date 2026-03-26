@@ -376,6 +376,9 @@ func RunBuild(dir string, dev bool) error {
 		if err := writeExportManifest(filepath.Join(distDir, "export.json"), exportManifest); err != nil {
 			return err
 		}
+		if err := writeEdgeBundle(distDir, exportManifest, builtServer); err != nil {
+			return fmt.Errorf("write edge bundle: %w", err)
+		}
 	}
 
 	// ── Summary ─────────────────────────────────────────────────────────
@@ -407,6 +410,10 @@ func RunBuild(dir string, dev bool) error {
 	fmt.Println("  • Island programs cached forever, invalidated by hash (Tier 3)")
 	fmt.Println("  • Manifest tells the server which hashed URLs to reference")
 	fmt.Println("  • dist/ includes app/ and public/ for file-routed runtime deployment")
+	if !dev && builtServer {
+		fmt.Println("  • dist/edge/worker.js can serve prerendered HTML at the edge and proxy dynamic requests to origin")
+		fmt.Println("  • dist/platform/ contains deployment metadata and cache headers for hosted platforms")
+	}
 
 	if err := runBuildHookCommands(dir, "post-build", cfg.Build.Hooks.Post); err != nil {
 		return err
@@ -643,6 +650,8 @@ func writeBuildReadme(path string, builtServer bool) error {
 		"- `app/` contains runtime file-routed page sources used by `route.AddDir(...)`.",
 		"- `public/` contains root-served static assets when present.",
 		"- `build.json` maps hashed asset names for runtime/island loading.",
+		"- `edge/worker.js` can serve prerendered routes at the edge and proxy misses/actions to origin.",
+		"- `platform/` contains deployment metadata for hosted/static-edge setups.",
 	}
 	if builtServer {
 		lines = append(lines,
