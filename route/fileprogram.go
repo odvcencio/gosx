@@ -109,6 +109,8 @@ func (r *fileProgramRenderer) renderBuiltinComponent(node *ir.Node, env fileRend
 		return true, r.renderLink(node, env)
 	case "Image":
 		return true, r.renderImage(node, env)
+	case "Stylesheet":
+		return true, r.renderStylesheet(node, env)
 	default:
 		return false, ""
 	}
@@ -198,6 +200,32 @@ func (r *fileProgramRenderer) renderImage(node *ir.Node, env fileRenderEnv) stri
 		args = append(args, gosx.Attrs(extra...))
 	}
 	return gosx.RenderHTML(server.Image(props, args...))
+}
+
+func (r *fileProgramRenderer) renderStylesheet(node *ir.Node, env fileRenderEnv) string {
+	href := stringValue(attrValue(node.Attrs, env, "href", "src"))
+	extra := []any{}
+	for _, attr := range node.Attrs {
+		if attr.Kind == ir.AttrSpread {
+			continue
+		}
+		if attr.Name == "href" || attr.Name == "src" || attr.Name == "rel" {
+			continue
+		}
+		switch attr.Kind {
+		case ir.AttrStatic:
+			extra = append(extra, gosx.Attr(attr.Name, attr.Value))
+		case ir.AttrExpr:
+			value := evalFileExpr(attr.Expr, env)
+			if value == nil {
+				continue
+			}
+			extra = append(extra, gosx.Attr(attr.Name, fmt.Sprint(value)))
+		case ir.AttrBool:
+			extra = append(extra, gosx.BoolAttr(attr.Name))
+		}
+	}
+	return gosx.RenderHTML(server.Stylesheet(href, extra...))
 }
 
 func (r *fileProgramRenderer) renderLocalComponent(comp *ir.Component, node *ir.Node, env fileRenderEnv) string {

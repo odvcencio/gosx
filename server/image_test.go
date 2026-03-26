@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"fmt"
 	"image"
 	"image/color"
 	"image/png"
@@ -57,6 +58,43 @@ func TestImageHelperBypassesOptimizerForSVG(t *testing.T) {
 	}
 	if !strings.Contains(html, `src="/mark.svg"`) {
 		t.Fatalf("expected raw svg src, got %q", html)
+	}
+}
+
+func TestImageHelperNormalizesRelativePublicPaths(t *testing.T) {
+	html := gosx.RenderHTML(Image(ImageProps{
+		Src: "images/hero.png",
+		Alt: "Hero",
+	}))
+
+	if !strings.Contains(html, `src="/images/hero.png"`) {
+		t.Fatalf("expected normalized public asset path, got %q", html)
+	}
+}
+
+func TestImageHelperSupportsCustomResolver(t *testing.T) {
+	resolverName := "test-resolver-" + strings.ReplaceAll(t.Name(), "/", "-")
+	if err := RegisterImageResolver(resolverName, ImageResolverFunc(func(src string, transform ImageTransform) (string, bool) {
+		return fmt.Sprintf("https://img.example.com%s?w=%d", src, transform.Width), true
+	})); err != nil {
+		t.Fatal(err)
+	}
+
+	html := gosx.RenderHTML(Image(ImageProps{
+		Src:      "/hero.png",
+		Alt:      "Hero",
+		Width:    640,
+		Widths:   []int{320, 640},
+		Resolver: resolverName,
+	}))
+
+	for _, snippet := range []string{
+		`src="https://img.example.com/hero.png?w=640"`,
+		`srcset="https://img.example.com/hero.png?w=320 320w, https://img.example.com/hero.png?w=640 640w"`,
+	} {
+		if !strings.Contains(html, snippet) {
+			t.Fatalf("expected %q in %q", snippet, html)
+		}
 	}
 }
 

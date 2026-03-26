@@ -380,6 +380,31 @@ func TestAppPageCacheHeadersAndRevalidation(t *testing.T) {
 	}
 }
 
+func TestAppCacheProfileHelpers(t *testing.T) {
+	app := New()
+	app.Page("GET /profile", func(ctx *Context) gosx.Node {
+		ctx.CacheRevalidate(20*time.Second, 2*time.Minute, "profile-pages")
+		return gosx.Text("profile")
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/profile", nil)
+	w := httptest.NewRecorder()
+	app.Build().ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	cacheControl := w.Header().Get("Cache-Control")
+	for _, snippet := range []string{"public", "max-age=20", "stale-while-revalidate=120"} {
+		if !strings.Contains(cacheControl, snippet) {
+			t.Fatalf("expected %q in cache-control %q", snippet, cacheControl)
+		}
+	}
+	if w.Header().Get("ETag") == "" {
+		t.Fatalf("expected etag in %v", w.Header())
+	}
+}
+
 func TestAppAPICacheHeadersRespectPathRevalidation(t *testing.T) {
 	app := New()
 	app.API("GET /api/meta", func(ctx *Context) (any, error) {
@@ -421,6 +446,38 @@ func TestAppAPICacheHeadersRespectPathRevalidation(t *testing.T) {
 	handler.ServeHTTP(updatedRes, updatedReq)
 	if updatedRes.Code != http.StatusOK {
 		t.Fatalf("expected 200 after path revalidate, got %d: %s", updatedRes.Code, updatedRes.Body.String())
+	}
+}
+
+func TestAppObserverCapturesRouteMetadata(t *testing.T) {
+	app := New()
+	var events []RequestEvent
+	app.UseObserver(RequestObserverFunc(func(event RequestEvent) {
+		events = append(events, event)
+	}))
+	app.Page("GET /docs/{slug}", func(ctx *Context) gosx.Node {
+		return gosx.Text("docs")
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/docs/intro", nil)
+	w := httptest.NewRecorder()
+	app.Build().ServeHTTP(w, req)
+
+	if len(events) != 1 {
+		t.Fatalf("expected one event, got %#v", events)
+	}
+	event := events[0]
+	if event.Kind != "page" {
+		t.Fatalf("expected page kind, got %#v", event)
+	}
+	if event.Pattern != "GET /docs/{slug}" {
+		t.Fatalf("expected route pattern, got %#v", event)
+	}
+	if event.Path != "/docs/intro" || event.Status != http.StatusOK {
+		t.Fatalf("unexpected event %#v", event)
+	}
+	if event.ID == "" {
+		t.Fatalf("expected request id in %#v", event)
 	}
 }
 

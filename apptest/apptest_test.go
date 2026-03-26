@@ -66,3 +66,31 @@ func TestRequestOptionsAttachHeadersAndCookies(t *testing.T) {
 		t.Fatalf("expected cookie value abc, got %q", cookie.Value)
 	}
 }
+
+func TestClientPersistsCookiesAndFollowsRedirects(t *testing.T) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/login":
+			http.SetCookie(w, &http.Cookie{Name: "session", Value: "abc123", Path: "/"})
+			http.Redirect(w, r, "/me", http.StatusSeeOther)
+		case "/me":
+			cookie, err := r.Cookie("session")
+			if err != nil || cookie.Value != "abc123" {
+				http.Error(w, "missing session", http.StatusUnauthorized)
+				return
+			}
+			_, _ = w.Write([]byte("welcome"))
+		default:
+			http.NotFound(w, r)
+		}
+	})
+
+	client := NewClient(handler)
+	res := client.FollowRedirect(t, Request(http.MethodPost, "/login", nil), 5)
+
+	res.AssertStatus(t, http.StatusOK)
+	res.AssertContains(t, "welcome")
+	if len(client.Cookies()) != 1 || client.Cookies()[0].Value != "abc123" {
+		t.Fatalf("expected persisted session cookie, got %#v", client.Cookies())
+	}
+}

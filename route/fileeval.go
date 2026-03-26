@@ -14,6 +14,7 @@ import (
 	"github.com/odvcencio/gosx"
 	"github.com/odvcencio/gosx/action"
 	"github.com/odvcencio/gosx/auth"
+	"github.com/odvcencio/gosx/server"
 	"github.com/odvcencio/gosx/session"
 )
 
@@ -78,9 +79,9 @@ func newFileRenderEnv(ctx *RouteContext, page FilePage) fileRenderEnv {
 
 	env := fileRenderEnv{
 		values: map[string]any{
-			"data":   nil,
-			"params": map[string]string{},
-			"query":  query,
+			"data":    nil,
+			"params":  map[string]string{},
+			"query":   query,
 			"session": sessionValues,
 			"flash":   flash,
 			"flashes": flashes,
@@ -111,6 +112,10 @@ func newFileRenderEnv(ctx *RouteContext, page FilePage) fileRenderEnv {
 		}
 	}
 	env.funcs["len"] = fileEvalLen
+	env.funcs["asset"] = server.AssetURL
+	env.funcs["stylesheet"] = func(href string) gosx.Node {
+		return server.Stylesheet(href)
+	}
 	env.funcs["flashValue"] = func(name string) any {
 		return flash[name]
 	}

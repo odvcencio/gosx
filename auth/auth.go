@@ -23,10 +23,27 @@ type User struct {
 	Meta  map[string]any `json:"meta,omitempty"`
 }
 
+// Provider resolves the current user for a request.
+type Provider interface {
+	Current(*http.Request) (User, bool)
+}
+
+// ProviderFunc adapts a function into an auth provider.
+type ProviderFunc func(*http.Request) (User, bool)
+
+// Current resolves the current user for a request.
+func (fn ProviderFunc) Current(r *http.Request) (User, bool) {
+	if fn == nil {
+		return User{}, false
+	}
+	return fn(r)
+}
+
 // Options configures a session-backed auth manager.
 type Options struct {
 	SessionKey string
 	LoginPath  string
+	Provider   Provider
 }
 
 // Manager loads and guards the current user from the session store.
@@ -34,6 +51,7 @@ type Manager struct {
 	sessions   *session.Manager
 	sessionKey string
 	loginPath  string
+	provider   Provider
 }
 
 // New creates a session-backed auth manager.
@@ -48,6 +66,7 @@ func New(sessions *session.Manager, opts Options) *Manager {
 		sessions:   sessions,
 		sessionKey: opts.SessionKey,
 		loginPath:  opts.LoginPath,
+		provider:   providerOrDefault(sessions, opts),
 	}
 }
 
@@ -82,18 +101,13 @@ func (m *Manager) Current(r *http.Request) (User, bool) {
 	if user, ok := Current(r); ok {
 		return user, true
 	}
-	if m == nil || m.sessions == nil {
+	if m == nil {
 		return User{}, false
 	}
-	store := m.sessions.Get(r)
-	if store == nil {
-		return User{}, false
+	if m.provider != nil {
+		return m.provider.Current(r)
 	}
-	var user User
-	if !store.Decode(m.sessionKey, &user) {
-		return User{}, false
-	}
-	return user, user.ID != ""
+	return User{}, false
 }
 
 // SignIn stores the authenticated user in the session.
@@ -191,4 +205,34 @@ func requestWantsJSON(r *http.Request) bool {
 	accept := r.Header.Get("Accept")
 	contentType := r.Header.Get("Content-Type")
 	return strings.Contains(accept, "application/json") || strings.HasPrefix(contentType, "application/json")
+}
+
+type sessionProvider struct {
+	sessions   *session.Manager
+	sessionKey string
+}
+
+func (p sessionProvider) Current(r *http.Request) (User, bool) {
+	if p.sessions == nil {
+		return User{}, false
+	}
+	store := p.sessions.Get(r)
+	if store == nil {
+		return User{}, false
+	}
+	var user User
+	if !store.Decode(p.sessionKey, &user) {
+		return User{}, false
+	}
+	return user, user.ID != ""
+}
+
+func providerOrDefault(sessions *session.Manager, opts Options) Provider {
+	if opts.Provider != nil {
+		return opts.Provider
+	}
+	return sessionProvider{
+		sessions:   sessions,
+		sessionKey: opts.SessionKey,
+	}
 }

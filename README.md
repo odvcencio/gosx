@@ -20,11 +20,13 @@ GoSX is in active development. The compiler pipeline, server rendering, island a
 - file-routed `.gsx` pages can now render local page-scoped components plus built-in `If`, `Each`, `Link`, and `Image` helpers through the file renderer, including mixed and repeated expression-valued attrs plus nested-brace attr expressions
 - file-routed pages and layouts can now own sibling `page.css` / `layout.css` sidecars, which are injected into the document head automatically during routed rendering
 - file-routed pages and layouts can now own sibling `page.meta.json` / `layout.meta.json` sidecars for static title, description, canonical, meta, and link data without manual server-module wiring
+- public asset helpers via `server.AssetURL(...)`, `server.Stylesheet(...)`, and file-routed `.gsx` `asset(...)` / `<Stylesheet ... />` helpers for root-served assets
 - session-backed browser form flows via `action` + `session`, including flashed validation state, redirect-safe success messages, and built-in CSRF protection
-- auth middleware via `auth.New(...)`, `authn.Middleware`, and `authn.Require`, with request-scoped `user` context available to routed `.gsx` pages
+- auth middleware via `auth.New(...)`, `authn.Middleware`, `authn.Require`, and pluggable `auth.Provider` backends, with request-scoped `user` context available to routed `.gsx` pages
 - declarative redirects and rewrites via `app.Redirect(...)` and `app.Rewrite(...)`
-- HTTP caching and revalidation via `ctx.Cache(...)`, automatic ETags, and `app.RevalidatePath(...)` / `app.RevalidateTag(...)`
-- app testing helpers via `apptest.Request(...)`, `apptest.App(...)`, `apptest.Router(...)`, and `apptest.FormRequest(...)`
+- semantic page/data cache helpers via `ctx.CacheDynamic()`, `ctx.CacheRevalidate(...)`, `ctx.CacheData(...)`, `ctx.CachePrivateData(...)`, plus automatic ETags and `app.RevalidatePath(...)` / `app.RevalidateTag(...)`
+- supported extension surfaces for observability and media/build integration via `app.UseObserver(...)`, `router.UseObserver(...)`, `server.RegisterImageResolver(...)`, and `gosx.config.json` build hooks
+- app testing helpers via `apptest.Request(...)`, `apptest.App(...)`, `apptest.Router(...)`, `apptest.FormRequest(...)`, and stateful `apptest.NewAppClient(...)` / `apptest.NewRouterClient(...)`
 - deferred page regions via `ctx.Defer(...)`, with fallback-first HTML and streamed replacements
 - local image optimization via `server.Image(...)` and `/_gosx/image` for responsive raster variants
 - `.gsx` file parsing with JSX-like syntax (elements, fragments, hyphenated attributes, expressions, spreads, custom-element tags)
@@ -49,7 +51,6 @@ GoSX is in active development. The compiler pipeline, server rendering, island a
 - a unified hybrid SSR + prerender story in the main build pipeline
 - a fully automatic nested `page.server.go` discovery story beyond scaffolded side-effect import buckets
 - `.gsx`-first engine surfaces for advanced runtimes like 3D
-- deeper styling and asset ownership ergonomics
 
 ## Quick Start
 
@@ -77,7 +78,8 @@ The generated project includes:
 - sibling `page.server.go` examples that register file-route `Load`, `Metadata`, and `Actions` hooks through `route.MustRegisterFileModuleHere(...)`
 - optional directory-scoped route modules through `route.MustRegisterDirModuleHere(...)` when a subtree needs middleware or request setup
 - session middleware plus CSRF protection for browser forms
-- HTTP caching helpers plus automatic ETags for page and API responses
+- semantic cache helpers plus automatic ETags for page and API responses
+- public asset helpers via `server.AssetURL(...)`, `server.Stylesheet(...)`, and file-routed `.gsx` `asset(...)`
 - opt-in page transitions via `app.EnableNavigation()` and `server.Link(...)`
 - `server.Metadata` plus arbitrary head node injection
 - customizable 404 and 500 pages
@@ -91,6 +93,7 @@ The docs template additionally includes:
 - session-backed forms, auth actions, and a protected route under `/labs/secret`
 - automatic ETags on `/api/meta` plus static docs-page cache examples that can be invalidated by path or tag
 - a docs subtree `route.config.json` that carries cache defaults through file-routed pages and static export
+- `server.Stylesheet("docs.css")` in the document shell and public-asset helpers for routed `.gsx` content
 - a sample raster asset plus image optimization examples under `/docs/images`
 
 ```go

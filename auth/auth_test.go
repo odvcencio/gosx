@@ -54,3 +54,26 @@ func TestRequireRedirectsAndLoadsCurrentUser(t *testing.T) {
 		t.Fatalf("expected 200, got %d", authRes.Code)
 	}
 }
+
+func TestManagerSupportsCustomProvider(t *testing.T) {
+	authn := New(nil, Options{
+		Provider: ProviderFunc(func(r *http.Request) (User, bool) {
+			return User{ID: "provider-user", Name: "Lin"}, true
+		}),
+	})
+
+	handler := authn.Middleware(authn.Require(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		user, ok := Current(r)
+		if !ok || user.Name != "Lin" {
+			t.Fatalf("expected provider-backed current user, got %#v ok=%v", user, ok)
+		}
+		w.WriteHeader(http.StatusOK)
+	})))
+
+	req := httptest.NewRequest(http.MethodGet, "/settings", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+}
