@@ -191,28 +191,34 @@ type sceneCamera struct {
 }
 
 type sceneObject struct {
-	ID        string
-	Kind      string
-	Material  string
-	Size      float64
-	Width     float64
-	Height    float64
-	Depth     float64
-	Radius    float64
-	Segments  int
-	X         float64
-	Y         float64
-	Z         float64
-	Color     string
-	RotationX float64
-	RotationY float64
-	RotationZ float64
-	SpinX     float64
-	SpinY     float64
-	SpinZ     float64
-	Opacity   float64
-	Wireframe bool
-	Static    bool
+	ID           string
+	Kind         string
+	Material     string
+	Size         float64
+	Width        float64
+	Height       float64
+	Depth        float64
+	Radius       float64
+	Segments     int
+	X            float64
+	Y            float64
+	Z            float64
+	Color        string
+	RotationX    float64
+	RotationY    float64
+	RotationZ    float64
+	SpinX        float64
+	SpinY        float64
+	SpinZ        float64
+	Opacity      float64
+	Wireframe    bool
+	BlendMode    string
+	Emissive     float64
+	HasOpacity   bool
+	HasWireframe bool
+	HasBlendMode bool
+	HasEmissive  bool
+	Static       bool
 }
 
 type point3 struct {
@@ -313,29 +319,42 @@ func normalizeSceneCameraMap(raw map[string]any, fallback sceneCamera) sceneCame
 
 func sceneObjectFromResolvedNode(index int, node resolvedNode) sceneObject {
 	size := numberFromAny(propValue(node.Props, "size"), 1.2)
+	rawOpacity := propValue(node.Props, "opacity")
+	rawWireframe := propValue(node.Props, "wireframe")
+	rawBlendMode := propValue(node.Props, "blendMode")
+	if rawBlendMode == nil {
+		rawBlendMode = propValue(node.Props, "blend")
+	}
+	rawEmissive := propValue(node.Props, "emissive")
 	return sceneObject{
-		ID:        stringFromAny(propValue(node.Props, "id"), "scene-object-"+strconv.Itoa(index)),
-		Kind:      normalizeSceneKind(stringFromAny(propValue(node.Props, "kind"), node.Geometry)),
-		Material:  stringFromAny(node.Material, "flat"),
-		Size:      size,
-		Width:     numberFromAny(propValue(node.Props, "width"), size),
-		Height:    numberFromAny(propValue(node.Props, "height"), size),
-		Depth:     numberFromAny(propValue(node.Props, "depth"), size),
-		Radius:    numberFromAny(propValue(node.Props, "radius"), size/2),
-		Segments:  sceneSegmentResolution(propValue(node.Props, "segments")),
-		X:         numberFromAny(propValue(node.Props, "x"), 0),
-		Y:         numberFromAny(propValue(node.Props, "y"), 0),
-		Z:         numberFromAny(propValue(node.Props, "z"), 0),
-		Color:     stringFromAny(propValue(node.Props, "color"), "#8de1ff"),
-		RotationX: numberFromAny(propValue(node.Props, "rotationX"), 0),
-		RotationY: numberFromAny(propValue(node.Props, "rotationY"), 0),
-		RotationZ: numberFromAny(propValue(node.Props, "rotationZ"), 0),
-		SpinX:     numberFromAny(propValue(node.Props, "spinX"), 0),
-		SpinY:     numberFromAny(propValue(node.Props, "spinY"), 0),
-		SpinZ:     numberFromAny(propValue(node.Props, "spinZ"), 0),
-		Opacity:   clamp(numberFromAny(propValue(node.Props, "opacity"), 1), 0, 1),
-		Wireframe: boolFromAny(propValue(node.Props, "wireframe"), true),
-		Static:    node.Static,
+		ID:           stringFromAny(propValue(node.Props, "id"), "scene-object-"+strconv.Itoa(index)),
+		Kind:         normalizeSceneKind(stringFromAny(propValue(node.Props, "kind"), node.Geometry)),
+		Material:     stringFromAny(node.Material, "flat"),
+		Size:         size,
+		Width:        numberFromAny(propValue(node.Props, "width"), size),
+		Height:       numberFromAny(propValue(node.Props, "height"), size),
+		Depth:        numberFromAny(propValue(node.Props, "depth"), size),
+		Radius:       numberFromAny(propValue(node.Props, "radius"), size/2),
+		Segments:     sceneSegmentResolution(propValue(node.Props, "segments")),
+		X:            numberFromAny(propValue(node.Props, "x"), 0),
+		Y:            numberFromAny(propValue(node.Props, "y"), 0),
+		Z:            numberFromAny(propValue(node.Props, "z"), 0),
+		Color:        stringFromAny(propValue(node.Props, "color"), "#8de1ff"),
+		RotationX:    numberFromAny(propValue(node.Props, "rotationX"), 0),
+		RotationY:    numberFromAny(propValue(node.Props, "rotationY"), 0),
+		RotationZ:    numberFromAny(propValue(node.Props, "rotationZ"), 0),
+		SpinX:        numberFromAny(propValue(node.Props, "spinX"), 0),
+		SpinY:        numberFromAny(propValue(node.Props, "spinY"), 0),
+		SpinZ:        numberFromAny(propValue(node.Props, "spinZ"), 0),
+		Opacity:      clamp(numberFromAny(rawOpacity, 1), 0, 1),
+		Wireframe:    boolFromAny(rawWireframe, true),
+		BlendMode:    normalizeBlendMode(stringFromAny(rawBlendMode, "")),
+		Emissive:     clamp(numberFromAny(rawEmissive, 0), 0, 1),
+		HasOpacity:   rawOpacity != nil,
+		HasWireframe: rawWireframe != nil,
+		HasBlendMode: rawBlendMode != nil,
+		HasEmissive:  rawEmissive != nil,
+		Static:       node.Static,
 	}
 }
 
@@ -375,12 +394,7 @@ func appendWorldSceneLine(bundle *rootengine.RenderBundle, from, to point3, colo
 }
 
 func ensureRenderMaterial(bundle *rootengine.RenderBundle, object sceneObject) int {
-	profile := rootengine.RenderMaterial{
-		Kind:      stringFromAny(object.Material, "flat"),
-		Color:     object.Color,
-		Opacity:   object.Opacity,
-		Wireframe: object.Wireframe,
-	}
+	profile := resolveRenderMaterial(object)
 	for index, existing := range bundle.Materials {
 		if existing == profile {
 			return index
@@ -388,6 +402,52 @@ func ensureRenderMaterial(bundle *rootengine.RenderBundle, object sceneObject) i
 	}
 	bundle.Materials = append(bundle.Materials, profile)
 	return len(bundle.Materials) - 1
+}
+
+func resolveRenderMaterial(object sceneObject) rootengine.RenderMaterial {
+	profile := rootengine.RenderMaterial{
+		Kind:      stringFromAny(object.Material, "flat"),
+		Color:     object.Color,
+		Opacity:   1,
+		Wireframe: true,
+		BlendMode: "opaque",
+		Emissive:  0,
+	}
+
+	switch strings.ToLower(strings.TrimSpace(profile.Kind)) {
+	case "ghost":
+		profile.Opacity = 0.42
+		profile.BlendMode = "alpha"
+		profile.Emissive = 0.12
+	case "glass":
+		profile.Opacity = 0.28
+		profile.BlendMode = "alpha"
+		profile.Emissive = 0.08
+	case "glow":
+		profile.Opacity = 0.92
+		profile.BlendMode = "alpha"
+		profile.Emissive = 0.42
+	case "matte":
+		profile.Wireframe = true
+	case "flat":
+	}
+
+	if object.HasOpacity {
+		profile.Opacity = object.Opacity
+	}
+	if object.HasWireframe {
+		profile.Wireframe = object.Wireframe
+	}
+	if object.HasBlendMode && object.BlendMode != "" {
+		profile.BlendMode = object.BlendMode
+	}
+	if object.HasEmissive {
+		profile.Emissive = object.Emissive
+	}
+	if profile.Opacity < 0.999 && profile.BlendMode == "opaque" {
+		profile.BlendMode = "alpha"
+	}
+	return profile
 }
 
 func appendSceneLine(bundle *rootengine.RenderBundle, width, height int, from, to rootengine.RenderPoint, color string, lineWidth float64) {
@@ -669,6 +729,17 @@ func stringFromAny(value any, fallback string) string {
 		return typed
 	}
 	return fallback
+}
+
+func normalizeBlendMode(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "alpha", "blend", "transparent":
+		return "alpha"
+	case "opaque":
+		return "opaque"
+	default:
+		return ""
+	}
 }
 
 func boolFromAny(value any, fallback bool) bool {

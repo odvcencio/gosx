@@ -28,6 +28,8 @@ type RenderMaterial struct {
 	Color     string  `json:"color,omitempty"`
 	Opacity   float64 `json:"opacity,omitempty"`
 	Wireframe bool    `json:"wireframe,omitempty"`
+	BlendMode string  `json:"blendMode,omitempty"`
+	Emissive  float64 `json:"emissive,omitempty"`
 }
 
 // RenderObject maps a resolved scene object onto a slice of the world-space

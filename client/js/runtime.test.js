@@ -106,6 +106,9 @@ class FakeWebGLContext {
     this.FLOAT = 0x1406;
     this.LINES = 0x0001;
     this.COLOR_BUFFER_BIT = 0x4000;
+    this.BLEND = 0x0BE2;
+    this.SRC_ALPHA = 0x0302;
+    this.ONE_MINUS_SRC_ALPHA = 0x0303;
     this.VERTEX_SHADER = 0x8B31;
     this.FRAGMENT_SHADER = 0x8B30;
     this.COMPILE_STATUS = 0x8B81;
@@ -213,6 +216,18 @@ class FakeWebGLContext {
 
   uniform1f(location, value) {
     this.ops.push(["uniform1f", location && location.name, value]);
+  }
+
+  enable(capability) {
+    this.ops.push(["enable", capability]);
+  }
+
+  disable(capability) {
+    this.ops.push(["disable", capability]);
+  }
+
+  blendFunc(src, dst) {
+    this.ops.push(["blendFunc", src, dst]);
   }
 
   deleteBuffer(_buffer) {
@@ -1090,8 +1105,8 @@ test("bootstrap hydrates shared-runtime Scene3D programs", async () => {
       ],
       worldVertexCount: 4,
       materials: [
-        { kind: "flat", color: "#35556a", opacity: 1, wireframe: true },
-        { kind: "flat", color: "#8de1ff", opacity: 0.7, wireframe: true },
+        { kind: "flat", color: "#35556a", opacity: 1, wireframe: true, blendMode: "opaque", emissive: 0 },
+        { kind: "glow", color: "#8de1ff", opacity: 0.7, wireframe: true, blendMode: "alpha", emissive: 0.4 },
       ],
       objects: [
         { id: "floor", kind: "plane", materialIndex: 0, vertexOffset: 0, vertexCount: 2, static: true },
@@ -1122,6 +1137,8 @@ test("bootstrap hydrates shared-runtime Scene3D programs", async () => {
   assert.ok(gl.ops.some((entry) => entry[0] === "uniform4f" && entry[1] === "u_camera"));
   assert.ok(gl.ops.some((entry) => entry[0] === "vertexAttribPointer" && entry[2] === 3));
   assert.ok(gl.ops.filter((entry) => entry[0] === "drawArrays").length >= 2);
+  assert.ok(gl.ops.some((entry) => entry[0] === "enable" && entry[1] === gl.BLEND));
+  assert.ok(gl.ops.some((entry) => entry[0] === "blendFunc" && entry[1] === gl.SRC_ALPHA && entry[2] === gl.ONE_MINUS_SRC_ALPHA));
 
   env.context.__gosx_dispose_engine("gosx-engine-rt");
   assert.deepEqual(env.engineDisposeCalls, [["gosx-engine-rt"]]);
