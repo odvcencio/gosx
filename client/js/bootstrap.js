@@ -823,30 +823,77 @@
     ctx2d.stroke();
   }
 
-  function drawScene3D(ctx2d, width, height, background, camera, objects, timeSeconds) {
-    ctx2d.clearRect(0, 0, width, height);
-    ctx2d.fillStyle = background;
-    ctx2d.fillRect(0, 0, width, height);
-    drawSceneGrid(ctx2d, width, height);
+  function sceneColorRGBA(value, fallback) {
+    const base = Array.isArray(fallback) && fallback.length === 4 ? fallback.slice() : [0.55, 0.88, 1, 1];
+    if (typeof value !== "string") {
+      return base;
+    }
+
+    const trimmed = value.trim();
+    const shortHex = trimmed.match(/^#([0-9a-f]{3})$/i);
+    if (shortHex) {
+      return [
+        parseInt(shortHex[1][0] + shortHex[1][0], 16) / 255,
+        parseInt(shortHex[1][1] + shortHex[1][1], 16) / 255,
+        parseInt(shortHex[1][2] + shortHex[1][2], 16) / 255,
+        1,
+      ];
+    }
+
+    const fullHex = trimmed.match(/^#([0-9a-f]{6})$/i);
+    if (fullHex) {
+      return [
+        parseInt(fullHex[1].slice(0, 2), 16) / 255,
+        parseInt(fullHex[1].slice(2, 4), 16) / 255,
+        parseInt(fullHex[1].slice(4, 6), 16) / 255,
+        1,
+      ];
+    }
+
+    const rgba = trimmed.match(/^rgba?\(([^)]+)\)$/i);
+    if (rgba) {
+      const parts = rgba[1].split(",").map(function(part) {
+        return Number(part.trim());
+      });
+      if (parts.length >= 3 && parts.every(function(part, index) {
+        return Number.isFinite(part) && (index < 3 || index === 3);
+      })) {
+        return [
+          Math.max(0, Math.min(255, parts[0])) / 255,
+          Math.max(0, Math.min(255, parts[1])) / 255,
+          Math.max(0, Math.min(255, parts[2])) / 255,
+          parts.length > 3 ? Math.max(0, Math.min(1, parts[3])) : 1,
+        ];
+      }
+    }
+
+    return base;
+  }
+
+  function sceneClipPoint(point, width, height) {
+    return {
+      x: (point.x / width) * 2 - 1,
+      y: 1 - (point.y / height) * 2,
+    };
+  }
+
+  function createSceneRenderBundle(width, height, background, camera, objects, timeSeconds) {
+    const bundle = {
+      background: background,
+      lines: [],
+      positions: [],
+      colors: [],
+      vertexCount: 0,
+      objectCount: objects.length,
+    };
+    appendSceneGridToBundle(bundle, width, height);
     for (const object of objects) {
-      drawSceneObject(ctx2d, camera, width, height, object, timeSeconds);
+      appendSceneObjectToBundle(bundle, camera, width, height, object, timeSeconds);
     }
-  }
-
-  function drawSceneGrid(ctx2d, width, height) {
-    ctx2d.strokeStyle = "rgba(141, 225, 255, 0.14)";
-    ctx2d.lineWidth = 1;
-    for (let x = 0; x <= width; x += 48) {
-      strokeLine(ctx2d, { x, y: 0 }, { x, y: height });
-    }
-    for (let y = 0; y <= height; y += 48) {
-      strokeLine(ctx2d, { x: 0, y }, { x: width, y });
-    }
-  }
-
-  function drawSceneObject(ctx2d, camera, width, height, object, timeSeconds) {
-    const projected = projectSceneObject(object, camera, width, height, timeSeconds);
-    drawProjectedSegments(ctx2d, projected, object.color);
+    bundle.positions = new Float32Array(bundle.positions);
+    bundle.colors = new Float32Array(bundle.colors);
+    bundle.vertexCount = bundle.positions.length / 2;
+    return bundle;
   }
 
   function projectSceneObject(object, camera, width, height, timeSeconds) {
@@ -872,15 +919,175 @@
     };
   }
 
-  function drawProjectedSegments(ctx2d, projected, color) {
-    ctx2d.strokeStyle = color;
-    ctx2d.lineWidth = 1.8;
+  function appendSceneGridToBundle(bundle, width, height) {
+    for (let x = 0; x <= width; x += 48) {
+      appendSceneLine(bundle, width, height, { x: x, y: 0 }, { x: x, y: height }, "rgba(141, 225, 255, 0.14)", 1);
+    }
+    for (let y = 0; y <= height; y += 48) {
+      appendSceneLine(bundle, width, height, { x: 0, y: y }, { x: width, y: y }, "rgba(141, 225, 255, 0.14)", 1);
+    }
+  }
+
+  function appendSceneObjectToBundle(bundle, camera, width, height, object, timeSeconds) {
+    const projected = projectSceneObject(object, camera, width, height, timeSeconds);
     for (const segment of projected) {
       const from = segment[0];
       const to = segment[1];
       if (!from || !to) continue;
-      strokeLine(ctx2d, from, to);
+      appendSceneLine(bundle, width, height, from, to, object.color, 1.8);
     }
+  }
+
+  function appendSceneLine(bundle, width, height, from, to, color, lineWidth) {
+    if (!from || !to) return;
+    const rgba = sceneColorRGBA(color, [0.55, 0.88, 1, 1]);
+    const fromClip = sceneClipPoint(from, width, height);
+    const toClip = sceneClipPoint(to, width, height);
+    bundle.lines.push({
+      from: from,
+      to: to,
+      color: color,
+      lineWidth: lineWidth,
+    });
+    bundle.positions.push(fromClip.x, fromClip.y, toClip.x, toClip.y);
+    bundle.colors.push(rgba[0], rgba[1], rgba[2], rgba[3], rgba[0], rgba[1], rgba[2], rgba[3]);
+  }
+
+  function createSceneCanvasRenderer(ctx2d, canvas) {
+    return {
+      kind: "canvas",
+      render(bundle) {
+        ctx2d.clearRect(0, 0, canvas.width, canvas.height);
+        ctx2d.fillStyle = bundle.background;
+        ctx2d.fillRect(0, 0, canvas.width, canvas.height);
+        for (const line of bundle.lines) {
+          ctx2d.strokeStyle = line.color;
+          ctx2d.lineWidth = line.lineWidth;
+          strokeLine(ctx2d, line.from, line.to);
+        }
+      },
+      dispose() {},
+    };
+  }
+
+  function createSceneWebGLRenderer(canvas) {
+    if (!canvas || typeof canvas.getContext !== "function") {
+      return null;
+    }
+    const gl = canvas.getContext("webgl", { antialias: true, alpha: false }) || canvas.getContext("experimental-webgl", { antialias: true, alpha: false });
+    if (!gl) {
+      return null;
+    }
+
+    const program = createSceneWebGLProgram(gl);
+    if (!program) {
+      return null;
+    }
+
+    const positionBuffer = gl.createBuffer();
+    const colorBuffer = gl.createBuffer();
+    const positionLocation = gl.getAttribLocation(program, "a_position");
+    const colorLocation = gl.getAttribLocation(program, "a_color");
+    const floatType = typeof gl.FLOAT === "number" ? gl.FLOAT : 0x1406;
+    const arrayBuffer = typeof gl.ARRAY_BUFFER === "number" ? gl.ARRAY_BUFFER : 0x8892;
+    const dynamicDraw = typeof gl.DYNAMIC_DRAW === "number" ? gl.DYNAMIC_DRAW : 0x88E8;
+    const colorBufferBit = typeof gl.COLOR_BUFFER_BIT === "number" ? gl.COLOR_BUFFER_BIT : 0x4000;
+    const linesMode = typeof gl.LINES === "number" ? gl.LINES : 0x0001;
+
+    return {
+      kind: "webgl",
+      render(bundle) {
+        const background = sceneColorRGBA(bundle.background, [0.03, 0.08, 0.12, 1]);
+        gl.viewport(0, 0, canvas.width, canvas.height);
+        gl.clearColor(background[0], background[1], background[2], background[3]);
+        gl.clear(colorBufferBit);
+        if (!bundle || bundle.vertexCount === 0) {
+          return;
+        }
+        gl.useProgram(program);
+
+        gl.bindBuffer(arrayBuffer, positionBuffer);
+        gl.bufferData(arrayBuffer, bundle.positions, dynamicDraw);
+        gl.enableVertexAttribArray(positionLocation);
+        gl.vertexAttribPointer(positionLocation, 2, floatType, false, 0, 0);
+
+        gl.bindBuffer(arrayBuffer, colorBuffer);
+        gl.bufferData(arrayBuffer, bundle.colors, dynamicDraw);
+        gl.enableVertexAttribArray(colorLocation);
+        gl.vertexAttribPointer(colorLocation, 4, floatType, false, 0, 0);
+
+        gl.drawArrays(linesMode, 0, bundle.vertexCount);
+      },
+      dispose() {
+        if (typeof gl.deleteBuffer === "function") {
+          gl.deleteBuffer(positionBuffer);
+          gl.deleteBuffer(colorBuffer);
+        }
+        if (typeof gl.deleteProgram === "function") {
+          gl.deleteProgram(program);
+        }
+      },
+    };
+  }
+
+  function createSceneWebGLProgram(gl) {
+    const vertexSource = [
+      "attribute vec2 a_position;",
+      "attribute vec4 a_color;",
+      "varying vec4 v_color;",
+      "void main() {",
+      "  gl_Position = vec4(a_position, 0.0, 1.0);",
+      "  v_color = a_color;",
+      "}",
+    ].join("\n");
+    const fragmentSource = [
+      "precision mediump float;",
+      "varying vec4 v_color;",
+      "void main() {",
+      "  gl_FragColor = v_color;",
+      "}",
+    ].join("\n");
+
+    const vertexShader = createSceneShader(gl, gl.VERTEX_SHADER, vertexSource);
+    const fragmentShader = createSceneShader(gl, gl.FRAGMENT_SHADER, fragmentSource);
+    if (!vertexShader || !fragmentShader) {
+      return null;
+    }
+
+    const program = gl.createProgram();
+    gl.attachShader(program, vertexShader);
+    gl.attachShader(program, fragmentShader);
+    gl.linkProgram(program);
+    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+      console.warn("[gosx] Scene3D WebGL link failed");
+      return null;
+    }
+    return program;
+  }
+
+  function createSceneShader(gl, type, source) {
+    const shader = gl.createShader(type);
+    gl.shaderSource(shader, source);
+    gl.compileShader(shader);
+    if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+      console.warn("[gosx] Scene3D WebGL shader compile failed");
+      return null;
+    }
+    return shader;
+  }
+
+  function createSceneRenderer(canvas, props) {
+    if (sceneBool(props.preferWebGL, true)) {
+      const webglRenderer = createSceneWebGLRenderer(canvas);
+      if (webglRenderer) {
+        return webglRenderer;
+      }
+    }
+    const ctx2d = typeof canvas.getContext === "function" ? canvas.getContext("2d") : null;
+    if (!ctx2d) {
+      return null;
+    }
+    return createSceneCanvasRenderer(ctx2d, canvas);
   }
 
   window.__gosx_register_engine_factory("GoSXScene3D", async function(ctx) {
@@ -913,9 +1120,9 @@
     canvas.height = height;
     ctx.mount.appendChild(canvas);
 
-    const ctx2d = typeof canvas.getContext === "function" ? canvas.getContext("2d") : null;
-    if (!ctx2d) {
-      console.warn("[gosx] Scene3D could not acquire a 2D canvas context");
+    const renderer = createSceneRenderer(canvas, props);
+    if (!renderer) {
+      console.warn("[gosx] Scene3D could not acquire a renderer");
       return {
         dispose() {
           if (canvas.parentNode === ctx.mount) {
@@ -924,6 +1131,7 @@
         },
       };
     }
+    ctx.mount.setAttribute("data-gosx-scene3d-renderer", renderer.kind);
 
     let frameHandle = null;
     let disposed = false;
@@ -941,7 +1149,7 @@
       if (runtimeScene && ctx.runtime) {
         applySceneCommands(sceneState, ctx.runtime.tick());
       }
-      drawScene3D(ctx2d, width, height, sceneState.background, sceneState.camera, sceneStateObjects(sceneState), now / 1000);
+      renderer.render(createSceneRenderBundle(width, height, sceneState.background, sceneState.camera, sceneStateObjects(sceneState), now / 1000));
       if (shouldAnimate) {
         frameHandle = engineFrame(renderFrame);
       }
@@ -961,6 +1169,7 @@
       },
       dispose() {
         disposed = true;
+        renderer.dispose();
         if (frameHandle != null) {
           cancelEngineFrame(frameHandle);
         }
