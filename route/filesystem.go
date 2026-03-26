@@ -85,115 +85,161 @@ type fileRouteRegistrar struct {
 	layoutCache       map[string]LayoutFunc
 }
 
+type fileRouteScanner struct {
+	root  string
+	dirs  map[string]*fileRouteDir
+	pages []FilePage
+}
+
 // ScanDir discovers file-based routes from a directory tree.
 func ScanDir(root string) (FileRoutes, error) {
 	root, err := filepath.Abs(root)
 	if err != nil {
 		return FileRoutes{}, fmt.Errorf("resolve %s: %w", root, err)
 	}
-
-	dirs := map[string]*fileRouteDir{
-		"": {Rel: ""},
-	}
-	pages := []FilePage{}
+	scanner := newFileRouteScanner(root)
 	err = filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
-		if info.IsDir() {
-			if path != root && strings.HasPrefix(info.Name(), ".") {
-				return filepath.SkipDir
-			}
-			rel, err := filepath.Rel(root, path)
-			if err != nil {
-				return fmt.Errorf("relative path %s: %w", path, err)
-			}
-			ensureFileRouteDir(dirs, normalizeFileRouteDir(rel))
-			return nil
-		}
-		if info.Name() == "route.config.json" {
-			rel, err := filepath.Rel(root, path)
-			if err != nil {
-				return fmt.Errorf("relative path %s: %w", path, err)
-			}
-			dirEntry := ensureFileRouteDir(dirs, normalizeFileRouteDir(filepath.Dir(filepath.ToSlash(rel))))
-			config, err := readFileRouteConfig(path)
-			if err != nil {
-				return err
-			}
-			dirEntry.Config = config
-			dirEntry.HasConfig = true
-			return nil
-		}
-		kind, ok := routeFileKind(info.Name())
-		if !ok {
-			return nil
-		}
-
-		page, _, err := filePageFromPath(root, path)
-		if err != nil {
-			return err
-		}
-		dirEntry := ensureFileRouteDir(dirs, page.Dir)
-
-		switch kind {
-		case "page":
-			pages = append(pages, page)
-		case "layout":
-			if dirEntry.Layout != "" {
-				return fmt.Errorf("multiple layout files in %s: %s and %s", dirEntry.Rel, filepath.Base(dirEntry.Layout), filepath.Base(path))
-			}
-			dirEntry.Layout = path
-		case "not_found":
-			if dirEntry.NotFound != nil {
-				return fmt.Errorf("multiple not-found files in %s: %s and %s", dirEntry.Rel, filepath.Base(dirEntry.NotFound.FilePath), filepath.Base(path))
-			}
-			dirEntry.NotFound = cloneFilePage(page)
-		case "error":
-			if dirEntry.Error != nil {
-				return fmt.Errorf("multiple error files in %s: %s and %s", dirEntry.Rel, filepath.Base(dirEntry.Error.FilePath), filepath.Base(path))
-			}
-			dirEntry.Error = cloneFilePage(page)
-		}
-		return nil
+		return scanner.visit(path, info)
 	})
 	if err != nil {
 		return FileRoutes{}, err
 	}
+	return scanner.build()
+}
 
+func newFileRouteScanner(root string) *fileRouteScanner {
+	return &fileRouteScanner{
+		root: root,
+		dirs: map[string]*fileRouteDir{
+			"": {Rel: ""},
+		},
+	}
+}
+
+func (s *fileRouteScanner) visit(path string, info os.FileInfo) error {
+	if info.IsDir() {
+		return s.visitDir(path, info)
+	}
+	if info.Name() == "route.config.json" {
+		return s.visitConfig(path)
+	}
+	return s.visitRouteFile(path, info.Name())
+}
+
+func (s *fileRouteScanner) visitDir(path string, info os.FileInfo) error {
+	if path != s.root && strings.HasPrefix(info.Name(), ".") {
+		return filepath.SkipDir
+	}
+	rel, err := s.relativePath(path)
+	if err != nil {
+		return err
+	}
+	ensureFileRouteDir(s.dirs, normalizeFileRouteDir(rel))
+	return nil
+}
+
+func (s *fileRouteScanner) visitConfig(path string) error {
+	rel, err := s.relativePath(path)
+	if err != nil {
+		return err
+	}
+	dirEntry := ensureFileRouteDir(s.dirs, normalizeFileRouteDir(filepath.Dir(filepath.ToSlash(rel))))
+	config, err := readFileRouteConfig(path)
+	if err != nil {
+		return err
+	}
+	dirEntry.Config = config
+	dirEntry.HasConfig = true
+	return nil
+}
+
+func (s *fileRouteScanner) visitRouteFile(path, name string) error {
+	kind, ok := routeFileKind(name)
+	if !ok {
+		return nil
+	}
+	page, _, err := filePageFromPath(s.root, path)
+	if err != nil {
+		return err
+	}
+	dirEntry := ensureFileRouteDir(s.dirs, page.Dir)
+	switch kind {
+	case "page":
+		s.pages = append(s.pages, page)
+	case "layout":
+		if dirEntry.Layout != "" {
+			return fmt.Errorf("multiple layout files in %s: %s and %s", dirEntry.Rel, filepath.Base(dirEntry.Layout), filepath.Base(path))
+		}
+		dirEntry.Layout = path
+	case "not_found":
+		if dirEntry.NotFound != nil {
+			return fmt.Errorf("multiple not-found files in %s: %s and %s", dirEntry.Rel, filepath.Base(dirEntry.NotFound.FilePath), filepath.Base(path))
+		}
+		dirEntry.NotFound = cloneFilePage(page)
+	case "error":
+		if dirEntry.Error != nil {
+			return fmt.Errorf("multiple error files in %s: %s and %s", dirEntry.Rel, filepath.Base(dirEntry.Error.FilePath), filepath.Base(path))
+		}
+		dirEntry.Error = cloneFilePage(page)
+	}
+	return nil
+}
+
+func (s *fileRouteScanner) relativePath(path string) (string, error) {
+	rel, err := filepath.Rel(s.root, path)
+	if err != nil {
+		return "", fmt.Errorf("relative path %s: %w", path, err)
+	}
+	return rel, nil
+}
+
+func (s *fileRouteScanner) build() (FileRoutes, error) {
 	result := FileRoutes{
-		Pages: make([]FilePage, 0, len(pages)),
+		Pages: make([]FilePage, 0, len(s.pages)),
 	}
-	for _, page := range pages {
-		page.Layouts = collectFileLayouts(page.Dir, dirs)
-		page.Config = collectFileRouteConfig(page.Dir, dirs)
-		page.ErrorPage = nearestFileErrorPage(page.Dir, dirs)
-		result.Pages = append(result.Pages, page)
+	for _, page := range s.pages {
+		result.Pages = append(result.Pages, s.decoratePage(page))
 	}
+	s.applyRootSpecialPages(&result)
+	if err := s.appendScopedNotFoundPages(&result); err != nil {
+		return FileRoutes{}, err
+	}
+	sortFileRouteResults(&result)
+	return result, nil
+}
 
-	if rootDir := dirs[""]; rootDir != nil {
-		if rootDir.NotFound != nil {
-			page := cloneFilePageValue(*rootDir.NotFound)
-			page.Layouts = collectFileLayouts(page.Dir, dirs)
-			page.Config = collectFileRouteConfig(page.Dir, dirs)
-			result.NotFound = &page
-		}
-		if rootDir.Error != nil {
-			page := cloneFilePageValue(*rootDir.Error)
-			page.Layouts = collectFileLayouts(page.Dir, dirs)
-			page.Config = collectFileRouteConfig(page.Dir, dirs)
-			result.Error = &page
-		}
-	}
+func (s *fileRouteScanner) decoratePage(page FilePage) FilePage {
+	page.Layouts = collectFileLayouts(page.Dir, s.dirs)
+	page.Config = collectFileRouteConfig(page.Dir, s.dirs)
+	page.ErrorPage = nearestFileErrorPage(page.Dir, s.dirs)
+	return page
+}
 
+func (s *fileRouteScanner) applyRootSpecialPages(result *FileRoutes) {
+	rootDir := s.dirs[""]
+	if rootDir == nil {
+		return
+	}
+	if rootDir.NotFound != nil {
+		page := s.decoratePage(cloneFilePageValue(*rootDir.NotFound))
+		result.NotFound = &page
+	}
+	if rootDir.Error != nil {
+		page := s.decoratePage(cloneFilePageValue(*rootDir.Error))
+		result.Error = &page
+	}
+}
+
+func (s *fileRouteScanner) appendScopedNotFoundPages(result *FileRoutes) error {
 	scopePatterns := make(map[string]string)
-	for _, dir := range sortFileRouteDirs(dirs) {
+	for _, dir := range sortFileRouteDirs(s.dirs) {
 		if dir.Rel == "" || dir.NotFound == nil {
 			continue
 		}
-		page := cloneFilePageValue(*dir.NotFound)
-		page.Layouts = collectFileLayouts(page.Dir, dirs)
-		page.Config = collectFileRouteConfig(page.Dir, dirs)
+		page := s.decoratePage(cloneFilePageValue(*dir.NotFound))
 		scope := FileRouteScope{
 			Dir:       dir.Rel,
 			RoutePath: page.RoutePath,
@@ -202,12 +248,15 @@ func ScanDir(root string) (FileRoutes, error) {
 			Page:      page,
 		}
 		if other, ok := scopePatterns[scope.Pattern]; ok {
-			return FileRoutes{}, fmt.Errorf("ambiguous scoped not-found pages for %s: %s and %s", scope.Pattern, other, scope.Page.Source)
+			return fmt.Errorf("ambiguous scoped not-found pages for %s: %s and %s", scope.Pattern, other, scope.Page.Source)
 		}
 		scopePatterns[scope.Pattern] = scope.Page.Source
 		result.NotFoundScopes = append(result.NotFoundScopes, scope)
 	}
+	return nil
+}
 
+func sortFileRouteResults(result *FileRoutes) {
 	sort.Slice(result.Pages, func(i, j int) bool {
 		if result.Pages[i].Pattern == result.Pages[j].Pattern {
 			return result.Pages[i].Source < result.Pages[j].Source
@@ -222,7 +271,6 @@ func ScanDir(root string) (FileRoutes, error) {
 		}
 		return left > right
 	})
-	return result, nil
 }
 
 // AddDir scans a directory tree and registers its file-based routes.
