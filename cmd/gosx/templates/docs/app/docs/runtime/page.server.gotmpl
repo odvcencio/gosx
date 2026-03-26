@@ -1,0 +1,14 @@
+package docs
+
+import (
+	docsapp "__MODULE__/app"
+	"github.com/odvcencio/gosx/route"
+)
+
+func init() {
+	docsapp.RegisterStaticDocsPage(
+		"Runtime",
+		"Hydration bootstrap, page disposal, and streamed regions cooperate during client-side transitions.",
+		route.FileModuleOptions{},
+	)
+}

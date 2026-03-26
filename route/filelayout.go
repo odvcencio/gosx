@@ -9,7 +9,6 @@ import (
 	"strings"
 
 	"github.com/odvcencio/gosx"
-	"github.com/odvcencio/gosx/render"
 )
 
 var defaultLayoutSlotComponents = []string{"Slot", "Outlet"}
@@ -101,23 +100,7 @@ func renderGSXFile(path string, data []byte, opts fileRenderOptions) (gosx.Node,
 		component = prog.Components[0].Name
 	}
 
-	replaced := false
-	htmlOut, err := render.HTML(prog, component, render.Options{
-		Indent: "  ",
-		Eval: func(expr string) any {
-			return evalFileExpr(expr, opts.EvalEnv)
-		},
-		RenderComponent: func(tag string, attrs map[string]any, childrenHTML string) string {
-			if replacement, ok := opts.ComponentReplacements[tag]; ok {
-				replaced = true
-				if replacement != "" {
-					return replacement
-				}
-				return childrenHTML
-			}
-			return defaultRenderedComponent(tag, attrs, childrenHTML)
-		},
-	})
+	htmlOut, replaced, err := renderFileProgramHTML(prog, component, opts)
 	if err != nil {
 		return gosx.Node{}, fmt.Errorf("render %s: %w", path, err)
 	}

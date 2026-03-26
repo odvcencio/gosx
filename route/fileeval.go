@@ -22,6 +22,29 @@ type fileRenderEnv struct {
 	funcs  map[string]any
 }
 
+func (env fileRenderEnv) clone() fileRenderEnv {
+	next := fileRenderEnv{
+		values: make(map[string]any, len(env.values)),
+		funcs:  make(map[string]any, len(env.funcs)),
+	}
+	for key, value := range env.values {
+		next.values[key] = value
+	}
+	for key, value := range env.funcs {
+		next.funcs[key] = value
+	}
+	return next
+}
+
+func (env fileRenderEnv) withValue(name string, value any) fileRenderEnv {
+	next := env.clone()
+	if next.values == nil {
+		next.values = make(map[string]any)
+	}
+	next.values[name] = value
+	return next
+}
+
 func newFileRenderEnv(ctx *RouteContext, page FilePage) fileRenderEnv {
 	requestPath := ""
 	method := ""
