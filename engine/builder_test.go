@@ -1,0 +1,62 @@
+package engine
+
+import (
+	"testing"
+
+	islandprogram "github.com/odvcencio/gosx/island/program"
+)
+
+func TestBuilderDeclaresViewportInputSignals(t *testing.T) {
+	builder := NewBuilder("demo")
+	width := builder.Prop("width", islandprogram.TypeFloat)
+	height := builder.Prop("height", islandprogram.TypeFloat)
+
+	input := builder.DeclareViewportInputSignals(width, height)
+	prog := builder.Build()
+
+	if len(prog.Signals) != 5 {
+		t.Fatalf("expected five input signals, got %d", len(prog.Signals))
+	}
+	if input.CenterX < 0 || input.CenterY < 0 {
+		t.Fatalf("expected center expressions to be initialized, got %#v", input)
+	}
+	if input.PointerX < 0 || input.PointerY < 0 {
+		t.Fatalf("expected pointer signals to be usable expressions, got %#v", input)
+	}
+}
+
+func TestBuilderIncludeRemapsExprsAndChildren(t *testing.T) {
+	child := NewBuilder("child")
+	mesh := child.Mesh("box", "flat", map[string]islandprogram.ExprID{
+		"x": child.Add(child.Float(1), child.Float(2)),
+	}, MeshOptions{})
+	child.AddNode(Node{
+		Kind:     "group",
+		Children: []int{int(mesh)},
+	})
+	childProgram := child.Build()
+
+	parent := NewBuilder("parent")
+	camera := parent.Camera(map[string]islandprogram.ExprID{
+		"z": parent.Float(6),
+	})
+	included := parent.Include(childProgram)
+	prog := parent.Build()
+
+	if camera != 0 {
+		t.Fatalf("expected first parent handle to be 0, got %d", camera)
+	}
+	if len(included) != 2 {
+		t.Fatalf("expected two included handles, got %d", len(included))
+	}
+
+	includedMesh := prog.Nodes[included[0]]
+	if includedMesh.Props["x"] < 1 {
+		t.Fatalf("expected included expression ids to be remapped, got %d", includedMesh.Props["x"])
+	}
+
+	includedGroup := prog.Nodes[included[1]]
+	if len(includedGroup.Children) != 1 || includedGroup.Children[0] != int(included[0]) {
+		t.Fatalf("expected included child handle to be remapped, got %#v", includedGroup.Children)
+	}
+}
