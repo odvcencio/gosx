@@ -204,6 +204,15 @@ func (b *Bridge) TickEngine(id string) ([]rootengine.Command, error) {
 	return runtime.Reconcile(), nil
 }
 
+// RenderEngine builds a renderer-facing frame bundle for a live engine runtime.
+func (b *Bridge) RenderEngine(id string, width, height int, timeSeconds float64) (rootengine.RenderBundle, error) {
+	runtime, ok := b.engines[id]
+	if !ok {
+		return rootengine.RenderBundle{}, fmt.Errorf("engine %q not found", id)
+	}
+	return runtime.RenderBundle(width, height, timeSeconds), nil
+}
+
 // MarshalPatches serializes patch ops to JSON for the JS patch applier.
 func MarshalPatches(patches []vm.PatchOp) (string, error) {
 	data, err := json.Marshal(patches)
@@ -358,6 +367,15 @@ func DecodeEngineProgram(data []byte, format string) (*rootengine.Program, error
 // MarshalEngineCommands serializes engine commands to JSON.
 func MarshalEngineCommands(commands []rootengine.Command) (string, error) {
 	data, err := json.Marshal(commands)
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
+}
+
+// MarshalEngineRenderBundle serializes a render bundle to JSON.
+func MarshalEngineRenderBundle(bundle rootengine.RenderBundle) (string, error) {
+	data, err := json.Marshal(bundle)
 	if err != nil {
 		return "", err
 	}

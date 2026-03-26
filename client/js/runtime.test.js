@@ -535,6 +535,7 @@ function createContext(options) {
   const actionCalls = [];
   const disposeCalls = [];
   const engineHydrateCalls = [];
+  const engineRenderCalls = [];
   const engineTickCalls = [];
   const engineDisposeCalls = [];
   const engineMounts = [];
@@ -631,6 +632,13 @@ function createContext(options) {
             return options.onTickEngine(...args);
           }
           return "[]";
+        };
+        context.__gosx_render_engine = (...args) => {
+          engineRenderCalls.push(args);
+          if (typeof options.onRenderEngine === "function") {
+            return options.onRenderEngine(...args);
+          }
+          return "";
         };
         context.__gosx_engine_dispose = (...args) => {
           engineDisposeCalls.push(args);
@@ -733,6 +741,7 @@ function createContext(options) {
     engineDisposeCalls,
     engineDisposals,
     engineHydrateCalls,
+    engineRenderCalls,
     engineMounts,
     engineTickCalls,
     fetchCalls,
@@ -1037,7 +1046,21 @@ test("bootstrap hydrates shared-runtime Scene3D programs", async () => {
         },
       },
     ]),
-    onTickEngine: () => "[]",
+    onRenderEngine: () => JSON.stringify({
+      background: "#08151f",
+      lines: [
+        {
+          from: { x: 10, y: 12 },
+          to: { x: 120, y: 96 },
+          color: "#8de1ff",
+          lineWidth: 1.8,
+        },
+      ],
+      positions: [-0.9, 0.93, -0.2, 0.47],
+      colors: [0.55, 0.88, 1, 1, 0.55, 0.88, 1, 1],
+      vertexCount: 2,
+      objectCount: 1,
+    }),
   });
 
   runScript(bootstrapSource, env.context, "bootstrap.js");
@@ -1054,6 +1077,8 @@ test("bootstrap hydrates shared-runtime Scene3D programs", async () => {
     true,
   );
   assert.equal(mount.children[0].tagName, "CANVAS");
+  assert.equal(env.engineRenderCalls.length > 0, true);
+  assert.equal(env.engineTickCalls.length, 0);
 
   env.context.__gosx_dispose_engine("gosx-engine-rt");
   assert.deepEqual(env.engineDisposeCalls, [["gosx-engine-rt"]]);
