@@ -1324,58 +1324,72 @@
       return null;
     }
     const drawScratch = resetSceneWorldDrawScratch(scratch || createSceneWorldDrawScratch());
-    const staticOpaquePositions = drawScratch.staticOpaquePositions;
-    const staticOpaqueColors = drawScratch.staticOpaqueColors;
-    const staticOpaqueMaterials = drawScratch.staticOpaqueMaterials;
-    const dynamicOpaquePositions = drawScratch.dynamicOpaquePositions;
-    const dynamicOpaqueColors = drawScratch.dynamicOpaqueColors;
-    const dynamicOpaqueMaterials = drawScratch.dynamicOpaqueMaterials;
-    const staticOpaqueObjects = drawScratch.staticOpaqueObjects;
-    const staticOpaqueMaterialProfiles = drawScratch.staticOpaqueMaterialProfiles;
-    const alphaEntries = drawScratch.alphaEntries;
-    const additiveEntries = drawScratch.additiveEntries;
-
     for (let index = 0; index < objects.length; index += 1) {
-      const object = objects[index];
-      if (!object || !Number.isFinite(object.vertexOffset) || !Number.isFinite(object.vertexCount) || object.vertexCount <= 0) {
-        continue;
-      }
-      if (sceneWorldObjectCulled(object)) {
-        continue;
-      }
-      const material = materials[object.materialIndex] || null;
-      const renderPass = sceneMaterialRenderPass(material);
-      if (object.static && renderPass === "opaque") {
-        staticOpaqueObjects.push(object);
-        staticOpaqueMaterialProfiles.push(material);
-        appendSceneWorldObjectSlice(staticOpaquePositions, staticOpaqueColors, staticOpaqueMaterials, bundle.worldPositions, bundle.worldColors, object, material);
-      } else if (renderPass === "additive") {
-        additiveEntries.push(createSceneWorldPassEntry(object, material, bundle.worldPositions, bundle.camera, index));
-      } else if (renderPass === "alpha") {
-        alphaEntries.push(createSceneWorldPassEntry(object, material, bundle.worldPositions, bundle.camera, index));
-      } else {
-        appendSceneWorldObjectSlice(dynamicOpaquePositions, dynamicOpaqueColors, dynamicOpaqueMaterials, bundle.worldPositions, bundle.worldColors, object, material);
-      }
+      collectSceneWorldDrawObject(drawScratch, bundle, materials, objects[index], index);
     }
+    return finalizeSceneWorldDrawPlan(bundle, drawScratch);
+  }
 
-    const typedStaticOpaquePositions = sceneWriteFloatArray(drawScratch, "typedStaticOpaquePositions", staticOpaquePositions);
-    const typedStaticOpaqueColors = sceneWriteFloatArray(drawScratch, "typedStaticOpaqueColors", staticOpaqueColors);
-    const typedStaticOpaqueMaterialData = sceneWriteFloatArray(drawScratch, "typedStaticOpaqueMaterials", staticOpaqueMaterials);
-    const typedDynamicOpaquePositions = sceneWriteFloatArray(drawScratch, "typedDynamicOpaquePositions", dynamicOpaquePositions);
-    const typedDynamicOpaqueColors = sceneWriteFloatArray(drawScratch, "typedDynamicOpaqueColors", dynamicOpaqueColors);
-    const typedDynamicOpaqueMaterialData = sceneWriteFloatArray(drawScratch, "typedDynamicOpaqueMaterials", dynamicOpaqueMaterials);
-    const typedAlphaPlan = createSceneWorldPassPlan(bundle.worldPositions, bundle.worldColors, alphaEntries, drawScratch.alphaPlan);
-    const typedAdditivePlan = createSceneWorldPassPlan(bundle.worldPositions, bundle.worldColors, additiveEntries, drawScratch.additivePlan);
+  function collectSceneWorldDrawObject(drawScratch, bundle, materials, object, order) {
+    if (!sceneWorldObjectRenderable(object)) {
+      return;
+    }
+    const material = materials[object.materialIndex] || null;
+    const renderPass = sceneMaterialRenderPass(material);
+    if (renderPass === "additive" || renderPass === "alpha") {
+      collectSceneWorldTranslucentObject(drawScratch, bundle, object, material, renderPass, order);
+      return;
+    }
+    collectSceneWorldOpaqueObject(drawScratch, bundle, object, material);
+  }
+
+  function sceneWorldObjectRenderable(object) {
+    return Boolean(
+      object &&
+      Number.isFinite(object.vertexOffset) &&
+      Number.isFinite(object.vertexCount) &&
+      object.vertexCount > 0 &&
+      !sceneWorldObjectCulled(object)
+    );
+  }
+
+  function collectSceneWorldOpaqueObject(drawScratch, bundle, object, material) {
+    const target = object.static ? {
+      positions: drawScratch.staticOpaquePositions,
+      colors: drawScratch.staticOpaqueColors,
+      materials: drawScratch.staticOpaqueMaterials,
+    } : {
+      positions: drawScratch.dynamicOpaquePositions,
+      colors: drawScratch.dynamicOpaqueColors,
+      materials: drawScratch.dynamicOpaqueMaterials,
+    };
+    if (object.static) {
+      drawScratch.staticOpaqueObjects.push(object);
+      drawScratch.staticOpaqueMaterialProfiles.push(material);
+    }
+    appendSceneWorldObjectSlice(target.positions, target.colors, target.materials, bundle.worldPositions, bundle.worldColors, object, material);
+  }
+
+  function collectSceneWorldTranslucentObject(drawScratch, bundle, object, material, renderPass, order) {
+    const targetEntries = renderPass === "additive" ? drawScratch.additiveEntries : drawScratch.alphaEntries;
+    targetEntries.push(createSceneWorldPassEntry(object, material, bundle.worldPositions, bundle.camera, order));
+  }
+
+  function finalizeSceneWorldDrawPlan(bundle, drawScratch) {
+    const typedStaticOpaque = createSceneWorldOpaqueBuffers(drawScratch, "typedStaticOpaque", drawScratch.staticOpaquePositions, drawScratch.staticOpaqueColors, drawScratch.staticOpaqueMaterials);
+    const typedDynamicOpaque = createSceneWorldOpaqueBuffers(drawScratch, "typedDynamicOpaque", drawScratch.dynamicOpaquePositions, drawScratch.dynamicOpaqueColors, drawScratch.dynamicOpaqueMaterials);
+    const typedAlphaPlan = createSceneWorldPassPlan(bundle.worldPositions, bundle.worldColors, drawScratch.alphaEntries, drawScratch.alphaPlan);
+    const typedAdditivePlan = createSceneWorldPassPlan(bundle.worldPositions, bundle.worldColors, drawScratch.additiveEntries, drawScratch.additivePlan);
     const plan = drawScratch.plan;
-    plan.staticOpaqueKey = sceneStaticDrawKey(staticOpaqueObjects, staticOpaqueMaterialProfiles, bundle.camera);
-    plan.staticOpaquePositions = typedStaticOpaquePositions;
-    plan.staticOpaqueColors = typedStaticOpaqueColors;
-    plan.staticOpaqueMaterials = typedStaticOpaqueMaterialData;
-    plan.staticOpaqueVertexCount = typedStaticOpaquePositions.length / 3;
-    plan.dynamicOpaquePositions = typedDynamicOpaquePositions;
-    plan.dynamicOpaqueColors = typedDynamicOpaqueColors;
-    plan.dynamicOpaqueMaterials = typedDynamicOpaqueMaterialData;
-    plan.dynamicOpaqueVertexCount = typedDynamicOpaquePositions.length / 3;
+    plan.staticOpaqueKey = sceneStaticDrawKey(drawScratch.staticOpaqueObjects, drawScratch.staticOpaqueMaterialProfiles, bundle.camera);
+    plan.staticOpaquePositions = typedStaticOpaque.positions;
+    plan.staticOpaqueColors = typedStaticOpaque.colors;
+    plan.staticOpaqueMaterials = typedStaticOpaque.materials;
+    plan.staticOpaqueVertexCount = typedStaticOpaque.vertexCount;
+    plan.dynamicOpaquePositions = typedDynamicOpaque.positions;
+    plan.dynamicOpaqueColors = typedDynamicOpaque.colors;
+    plan.dynamicOpaqueMaterials = typedDynamicOpaque.materials;
+    plan.dynamicOpaqueVertexCount = typedDynamicOpaque.vertexCount;
     plan.alphaPositions = typedAlphaPlan.positions;
     plan.alphaColors = typedAlphaPlan.colors;
     plan.alphaMaterials = typedAlphaPlan.materials;
@@ -1387,6 +1401,18 @@
     plan.hasAlphaPass = typedAlphaPlan.vertexCount > 0;
     plan.hasAdditivePass = typedAdditivePlan.vertexCount > 0;
     return plan;
+  }
+
+  function createSceneWorldOpaqueBuffers(drawScratch, keyPrefix, positions, colors, materials) {
+    const typedPositions = sceneWriteFloatArray(drawScratch, keyPrefix + "Positions", positions);
+    const typedColors = sceneWriteFloatArray(drawScratch, keyPrefix + "Colors", colors);
+    const typedMaterials = sceneWriteFloatArray(drawScratch, keyPrefix + "Materials", materials);
+    return {
+      positions: typedPositions,
+      colors: typedColors,
+      materials: typedMaterials,
+      vertexCount: typedPositions.length / 3,
+    };
   }
 
   function createSceneWorldPassEntry(object, material, sourcePositions, camera, order) {
