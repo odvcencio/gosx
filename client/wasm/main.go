@@ -3,98 +3,155 @@
 package main
 
 import (
+	"fmt"
 	"syscall/js"
 
 	"github.com/odvcencio/gosx/client/bridge"
+	"github.com/odvcencio/gosx/client/vm"
 	"github.com/odvcencio/gosx/highlight"
 )
 
 func registerRuntime(b *bridge.Bridge) {
-	js.Global().Set("__gosx_hydrate", js.FuncOf(func(this js.Value, args []js.Value) any {
-		if len(args) < 5 {
-			return js.ValueOf("error: need 5 args (islandID, componentName, propsJSON, programData, format)")
-		}
-		islandID := args[0].String()
-		componentName := args[1].String()
-		propsJSON := args[2].String()
-		format := args[4].String()
+	setRuntimeFunc("__gosx_hydrate", hydrateRuntimeFunc(b))
+	setRuntimeFunc("__gosx_action", actionRuntimeFunc(b))
+	setRuntimeFunc("__gosx_dispose", disposeRuntimeFunc(b))
+	setRuntimeFunc("__gosx_highlight", highlightRuntimeFunc())
+	setRuntimeFunc("__gosx_set_shared_signal", sharedSignalRuntimeFunc(b))
+}
 
-		// Convert programData (Uint8Array or string) to []byte
-		var programData []byte
-		if args[3].Type() == js.TypeString {
-			programData = []byte(args[3].String())
-		} else {
-			uint8Array := args[3]
-			if args[3].InstanceOf(js.Global().Get("ArrayBuffer")) {
-				uint8Array = js.Global().Get("Uint8Array").New(args[3])
-			}
-			length := uint8Array.Get("length").Int()
-			programData = make([]byte, length)
-			js.CopyBytesToGo(programData, uint8Array)
-		}
+func setRuntimeFunc(name string, fn js.Func) {
+	js.Global().Set(name, fn)
+}
 
-		err := b.HydrateIsland(islandID, componentName, propsJSON, programData, format)
+func hydrateRuntimeFunc(b *bridge.Bridge) js.Func {
+	return js.FuncOf(func(this js.Value, args []js.Value) any {
+		call, err := parseHydrateCall(args)
 		if err != nil {
-			return js.ValueOf("error: " + err.Error())
+			return jsError(err)
+		}
+		if err := b.HydrateIsland(call.islandID, call.componentName, call.propsJSON, call.programData, call.format); err != nil {
+			return jsError(err)
 		}
 		return js.Null()
-	}))
+	})
+}
 
-	// Export action dispatch function
-	js.Global().Set("__gosx_action", js.FuncOf(func(this js.Value, args []js.Value) any {
+func actionRuntimeFunc(b *bridge.Bridge) js.Func {
+	return js.FuncOf(func(this js.Value, args []js.Value) any {
 		if len(args) < 3 {
 			return js.Null()
 		}
-		islandID := args[0].String()
-		handlerName := args[1].String()
-		eventDataJSON := args[2].String()
-
-		patches, err := b.DispatchAction(islandID, handlerName, eventDataJSON)
+		patches, err := b.DispatchAction(args[0].String(), args[1].String(), args[2].String())
 		if err != nil {
-			js.Global().Get("console").Call("error", "[gosx/wasm] dispatch error:", err.Error())
-			return js.ValueOf("error: " + err.Error())
+			logRuntimeError("dispatch error", err)
+			return jsError(err)
 		}
+		return applyPatchedResult(args[0].String(), patches)
+	})
+}
 
-		if len(patches) > 0 {
-			patchJSON, err := bridge.MarshalPatches(patches)
-			if err != nil {
-				return js.ValueOf("marshal:" + err.Error())
-			}
-			js.Global().Call("__gosx_apply_patches", islandID, patchJSON)
-			return js.ValueOf(len(patches))
-		}
-		return js.ValueOf(0)
-	}))
-
-	// Export dispose function
-	js.Global().Set("__gosx_dispose", js.FuncOf(func(this js.Value, args []js.Value) any {
+func disposeRuntimeFunc(b *bridge.Bridge) js.Func {
+	return js.FuncOf(func(this js.Value, args []js.Value) any {
 		if len(args) < 1 {
 			return js.Null()
 		}
 		b.DisposeIsland(args[0].String())
 		return js.Null()
-	}))
+	})
+}
 
-	// Export syntax highlighting function — called by JS for live code highlighting
-	js.Global().Set("__gosx_highlight", js.FuncOf(func(this js.Value, args []js.Value) any {
+func highlightRuntimeFunc() js.Func {
+	return js.FuncOf(func(this js.Value, args []js.Value) any {
 		if len(args) < 1 {
 			return js.ValueOf("")
 		}
-		source := args[0].String()
-		highlighted := highlight.Go(source)
-		return js.ValueOf(highlighted)
-	}))
+		return js.ValueOf(highlight.Go(args[0].String()))
+	})
+}
 
-	// Export shared-signal setter for hub/websocket integrations.
-	js.Global().Set("__gosx_set_shared_signal", js.FuncOf(func(this js.Value, args []js.Value) any {
+func sharedSignalRuntimeFunc(b *bridge.Bridge) js.Func {
+	return js.FuncOf(func(this js.Value, args []js.Value) any {
 		if len(args) < 2 {
-			return js.ValueOf("error: need 2 args (signalName, valueJSON)")
+			return jsErrorf("need 2 args (signalName, valueJSON)")
 		}
 		if err := b.SetSharedSignalJSON(args[0].String(), args[1].String()); err != nil {
-			return js.ValueOf("error: " + err.Error())
+			return jsError(err)
 		}
 		return js.Null()
-	}))
+	})
+}
+
+type hydrateCall struct {
+	islandID      string
+	componentName string
+	propsJSON     string
+	programData   []byte
+	format        string
+}
+
+func parseHydrateCall(args []js.Value) (hydrateCall, error) {
+	if len(args) < 5 {
+		return hydrateCall{}, fmt.Errorf("need 5 args (islandID, componentName, propsJSON, programData, format)")
+	}
+	programData, err := decodeProgramData(args[3])
+	if err != nil {
+		return hydrateCall{}, err
+	}
+	return hydrateCall{
+		islandID:      args[0].String(),
+		componentName: args[1].String(),
+		propsJSON:     args[2].String(),
+		programData:   programData,
+		format:        args[4].String(),
+	}, nil
+}
+
+func decodeProgramData(value js.Value) ([]byte, error) {
+	if value.Type() == js.TypeString {
+		return []byte(value.String()), nil
+	}
+	uint8Array := normalizeUint8Array(value)
+	if uint8Array.IsUndefined() || uint8Array.IsNull() {
+		return nil, fmt.Errorf("programData must be a string, Uint8Array, or ArrayBuffer")
+	}
+	length := uint8Array.Get("length").Int()
+	programData := make([]byte, length)
+	js.CopyBytesToGo(programData, uint8Array)
+	return programData, nil
+}
+
+func normalizeUint8Array(value js.Value) js.Value {
+	if value.InstanceOf(js.Global().Get("ArrayBuffer")) {
+		return js.Global().Get("Uint8Array").New(value)
+	}
+	return value
+}
+
+func applyPatchedResult(islandID string, patches []vm.PatchOp) any {
+	if len(patches) == 0 {
+		return js.ValueOf(0)
+	}
+	patchJSON, err := bridge.MarshalPatches(patches)
+	if err != nil {
+		return js.ValueOf("marshal:" + err.Error())
+	}
+	js.Global().Call("__gosx_apply_patches", islandID, patchJSON)
+	return js.ValueOf(len(patches))
+}
+
+func logRuntimeError(prefix string, err error) {
+	js.Global().Get("console").Call("error", "[gosx/wasm] "+prefix+":", err.Error())
+}
+
+func jsError(err error) js.Value {
+	if err == nil {
+		return js.Null()
+	}
+	return js.ValueOf("error: " + err.Error())
+}
+
+func jsErrorf(format string, args ...any) js.Value {
+	return js.ValueOf("error: " + fmt.Sprintf(format, args...))
 }
 
 func notifyRuntimeReady() {

@@ -33,6 +33,11 @@ func ReconcileTrees(prev, next *ResolvedTree, staticMask []bool) []PatchOp {
 	return ops
 }
 
+type keyedChildIndex struct {
+	position int
+	nodeIdx  int
+}
+
 // reconcileNode recursively diffs a single node and its subtree.
 //
 // Key design: paths only address Element nodes (things the DOM has as elements).
@@ -106,20 +111,7 @@ func childrenHaveKeys(prev, next *ResolvedTree, pn, nn *ResolvedNode) bool {
 // Items with the same key are matched regardless of position, producing
 // minimal move/insert/remove operations instead of rewriting everything.
 func reconcileKeyedChildren(ops *[]PatchOp, prev, next *ResolvedTree, pn, nn *ResolvedNode, path string, staticMask []bool) {
-	// Build key → position map for prev children
-	prevByKey := make(map[string]int)     // key → prev child index
-	prevByKeyNode := make(map[string]int) // key → node index in prev.Nodes
-	for i, childIdx := range pn.Children {
-		if childIdx < len(prev.Nodes) && prev.Nodes[childIdx].Key != "" {
-			prevByKey[prev.Nodes[childIdx].Key] = i
-			prevByKeyNode[prev.Nodes[childIdx].Key] = childIdx
-		}
-	}
-
-	// Walk next children:
-	// - If key exists in prev: recurse (matched node, possibly moved)
-	// - If key is new: emit CreateElement
-	// After: remove any prev keys not in next
+	prevByKey := buildPrevKeyIndex(prev, pn)
 	nextKeys := make(map[string]bool)
 	reorderNeeded := false
 	lastPrevIdx := -1
@@ -132,71 +124,25 @@ func reconcileKeyedChildren(ops *[]PatchOp, prev, next *ResolvedTree, pn, nn *Re
 		key := nextChild.Key
 
 		if key == "" {
-			// Unkeyed child in a keyed list — treat positionally
-			cp := childPath(path, elemIdx)
-			if elemIdx < len(pn.Children) {
-				prevChildIdx := pn.Children[elemIdx]
-				if prevChildIdx < len(prev.Nodes) {
-					prevChild := &prev.Nodes[prevChildIdx]
-					if nextChild.Tag != "" {
-						reconcileNode(ops, prev, next, childIdx, cp, staticMask)
-					} else if prevChild.Text != nextChild.Text {
-						*ops = append(*ops, PatchOp{Kind: PatchSetText, Path: cp, Text: nextChild.Text})
-					}
-				}
-			} else {
-				// New unkeyed child
-				if nextChild.Tag != "" {
-					*ops = append(*ops, PatchOp{Kind: PatchCreateElement, Path: path, Tag: nextChild.Tag, Text: nextChild.Text})
-				}
-			}
+			reconcileUnkeyedKeyedChild(ops, prev, next, pn, nextChild, childIdx, elemIdx, path, staticMask)
 			continue
 		}
 
 		nextKeys[key] = true
 
-		if prevIdx, ok := prevByKey[key]; ok {
-			// Key exists in prev — matched. Recurse to diff content.
-			prevNodeIdx := prevByKeyNode[key]
-			cp := childPath(path, elemIdx)
-			reconcileNodePair(ops, prev, next, prevNodeIdx, childIdx, cp, staticMask)
-
-			// Check if order changed
-			if prevIdx < lastPrevIdx {
+		if prevChild, ok := prevByKey[key]; ok {
+			reconcileMatchedKeyedChild(ops, prev, next, prevChild, childIdx, elemIdx, path, staticMask)
+			if prevChild.position < lastPrevIdx {
 				reorderNeeded = true
 			}
-			lastPrevIdx = prevIdx
+			lastPrevIdx = prevChild.position
 		} else {
-			// New key — insert
-			*ops = append(*ops, PatchOp{
-				Kind: PatchCreateElement,
-				Path: path,
-				Tag:  nextChild.Tag,
-				Text: nextChild.Text,
-			})
+			appendCreateChild(ops, path, nextChild)
 		}
 	}
 
-	// Remove prev children whose keys are gone
-	// Walk backwards to keep indices stable
-	for i := len(pn.Children) - 1; i >= 0; i-- {
-		childIdx := pn.Children[i]
-		if childIdx < len(prev.Nodes) {
-			key := prev.Nodes[childIdx].Key
-			if key != "" && !nextKeys[key] {
-				*ops = append(*ops, PatchOp{Kind: PatchRemoveElement, Path: childPath(path, i)})
-			}
-		}
-	}
-
-	// If order changed, emit a Reorder op with the new child order
-	if reorderNeeded {
-		order := make([]int, len(nn.Children))
-		for i := range order {
-			order[i] = i
-		}
-		*ops = append(*ops, PatchOp{Kind: PatchReorder, Path: path, Children: order})
-	}
+	removeMissingKeyedChildren(ops, prev, pn, nextKeys, path)
+	appendReorderOp(ops, nn, path, reorderNeeded)
 }
 
 // reconcileNodePair diffs two nodes at arbitrary positions.
@@ -225,17 +171,14 @@ func reconcilePositionalChildren(ops *[]PatchOp, prev, next *ResolvedTree, pn, n
 
 	for i := 0; i < maxLen; i++ {
 		if i >= nextLen {
-			*ops = append(*ops, PatchOp{Kind: PatchRemoveElement, Path: childPath(path, elemIdx)})
+			appendRemoveChild(ops, childPath(path, elemIdx))
 			elemIdx++
 			continue
 		}
 		if i >= prevLen {
 			childIdx := nn.Children[i]
 			if childIdx < len(next.Nodes) {
-				cn := &next.Nodes[childIdx]
-				if cn.Tag != "" {
-					*ops = append(*ops, PatchOp{Kind: PatchCreateElement, Path: path, Tag: cn.Tag, Text: cn.Text})
-				}
+				appendCreateChild(ops, path, &next.Nodes[childIdx])
 			}
 			elemIdx++
 			continue
@@ -249,17 +192,7 @@ func reconcilePositionalChildren(ops *[]PatchOp, prev, next *ResolvedTree, pn, n
 			continue
 		}
 
-		nextChild := &next.Nodes[nextChildIdx]
-		prevChild := &prev.Nodes[prevChildIdx]
-
-		if nextChild.Tag != "" {
-			cp := childPath(path, elemIdx)
-			reconcileNode(ops, prev, next, nextChildIdx, cp, staticMask)
-		} else {
-			if prevChild.Text != nextChild.Text {
-				*ops = append(*ops, PatchOp{Kind: PatchSetText, Path: childPath(path, elemIdx), Text: nextChild.Text})
-			}
-		}
+		reconcilePositionalChild(ops, prev, next, prevChildIdx, nextChildIdx, elemIdx, path, staticMask)
 		elemIdx++
 	}
 }
@@ -267,27 +200,125 @@ func reconcilePositionalChildren(ops *[]PatchOp, prev, next *ResolvedTree, pn, n
 // reconcileAttrs diffs the attributes between a prev and next node.
 func reconcileAttrs(ops *[]PatchOp, pn, nn *ResolvedNode, path string) {
 	valueElem := isValueElement(nn.Tag)
+	prevAttrs := attrValueMap(pn.Attrs)
+	nextAttrs := attrPresenceMap(nn.Attrs)
+	appendAttrSetOps(ops, nn.Attrs, prevAttrs, valueElem, path)
+	appendAttrRemoveOps(ops, pn.Attrs, nextAttrs, path)
+}
 
-	prevAttrs := make(map[string]string, len(pn.Attrs))
-	for _, a := range pn.Attrs {
-		prevAttrs[a.Name] = a.Value
-	}
-
-	nextAttrs := make(map[string]struct{}, len(nn.Attrs))
-	for _, a := range nn.Attrs {
-		nextAttrs[a.Name] = struct{}{}
-		prevVal, existed := prevAttrs[a.Name]
-		if existed && prevVal == a.Value {
+func buildPrevKeyIndex(prev *ResolvedTree, node *ResolvedNode) map[string]keyedChildIndex {
+	byKey := make(map[string]keyedChildIndex)
+	for i, childIdx := range node.Children {
+		if childIdx >= len(prev.Nodes) {
 			continue
 		}
-		if valueElem && a.Name == "value" {
-			if existed && prevVal == a.Value {
-				continue
-			}
+		key := prev.Nodes[childIdx].Key
+		if key == "" {
+			continue
+		}
+		byKey[key] = keyedChildIndex{position: i, nodeIdx: childIdx}
+	}
+	return byKey
+}
+
+func reconcileUnkeyedKeyedChild(ops *[]PatchOp, prev, next *ResolvedTree, pn *ResolvedNode, nextChild *ResolvedNode, childIdx, elemIdx int, path string, staticMask []bool) {
+	cp := childPath(path, elemIdx)
+	if elemIdx >= len(pn.Children) {
+		appendCreateChild(ops, path, nextChild)
+		return
+	}
+	prevChildIdx := pn.Children[elemIdx]
+	if prevChildIdx >= len(prev.Nodes) {
+		return
+	}
+	if nextChild.Tag != "" {
+		reconcileNode(ops, prev, next, childIdx, cp, staticMask)
+		return
+	}
+	if prev.Nodes[prevChildIdx].Text != nextChild.Text {
+		*ops = append(*ops, PatchOp{Kind: PatchSetText, Path: cp, Text: nextChild.Text})
+	}
+}
+
+func reconcileMatchedKeyedChild(ops *[]PatchOp, prev, next *ResolvedTree, prevChild keyedChildIndex, nextChildIdx, elemIdx int, path string, staticMask []bool) {
+	reconcileNodePair(ops, prev, next, prevChild.nodeIdx, nextChildIdx, childPath(path, elemIdx), staticMask)
+}
+
+func removeMissingKeyedChildren(ops *[]PatchOp, prev *ResolvedTree, node *ResolvedNode, nextKeys map[string]bool, path string) {
+	for i := len(node.Children) - 1; i >= 0; i-- {
+		childIdx := node.Children[i]
+		if childIdx >= len(prev.Nodes) {
+			continue
+		}
+		key := prev.Nodes[childIdx].Key
+		if key != "" && !nextKeys[key] {
+			appendRemoveChild(ops, childPath(path, i))
+		}
+	}
+}
+
+func appendReorderOp(ops *[]PatchOp, node *ResolvedNode, path string, reorderNeeded bool) {
+	if !reorderNeeded {
+		return
+	}
+	order := make([]int, len(node.Children))
+	for i := range order {
+		order[i] = i
+	}
+	*ops = append(*ops, PatchOp{Kind: PatchReorder, Path: path, Children: order})
+}
+
+func reconcilePositionalChild(ops *[]PatchOp, prev, next *ResolvedTree, prevChildIdx, nextChildIdx, elemIdx int, path string, staticMask []bool) {
+	nextChild := &next.Nodes[nextChildIdx]
+	prevChild := &prev.Nodes[prevChildIdx]
+	cp := childPath(path, elemIdx)
+	if nextChild.Tag != "" {
+		reconcileNode(ops, prev, next, nextChildIdx, cp, staticMask)
+		return
+	}
+	if prevChild.Text != nextChild.Text {
+		*ops = append(*ops, PatchOp{Kind: PatchSetText, Path: cp, Text: nextChild.Text})
+	}
+}
+
+func appendCreateChild(ops *[]PatchOp, path string, child *ResolvedNode) {
+	if child == nil || child.Tag == "" {
+		return
+	}
+	*ops = append(*ops, PatchOp{Kind: PatchCreateElement, Path: path, Tag: child.Tag, Text: child.Text})
+}
+
+func appendRemoveChild(ops *[]PatchOp, path string) {
+	*ops = append(*ops, PatchOp{Kind: PatchRemoveElement, Path: path})
+}
+
+func attrValueMap(attrs []ResolvedAttr) map[string]string {
+	values := make(map[string]string, len(attrs))
+	for _, attr := range attrs {
+		values[attr.Name] = attr.Value
+	}
+	return values
+}
+
+func attrPresenceMap(attrs []ResolvedAttr) map[string]struct{} {
+	values := make(map[string]struct{}, len(attrs))
+	for _, attr := range attrs {
+		values[attr.Name] = struct{}{}
+	}
+	return values
+}
+
+func appendAttrSetOps(ops *[]PatchOp, attrs []ResolvedAttr, prevAttrs map[string]string, valueElem bool, path string) {
+	for _, attr := range attrs {
+		prevVal, existed := prevAttrs[attr.Name]
+		if existed && prevVal == attr.Value {
+			continue
+		}
+		if valueElem && attr.Name == "value" {
 			*ops = append(*ops, PatchOp{
 				Kind:     PatchSetValue,
 				Path:     path,
-				Text:     a.Value,
+				Text:     attr.Value,
 				AttrName: "value",
 			})
 			continue
@@ -295,18 +326,21 @@ func reconcileAttrs(ops *[]PatchOp, pn, nn *ResolvedNode, path string) {
 		*ops = append(*ops, PatchOp{
 			Kind:     PatchSetAttr,
 			Path:     path,
-			AttrName: a.Name,
-			Text:     a.Value,
+			AttrName: attr.Name,
+			Text:     attr.Value,
 		})
 	}
+}
 
-	for _, a := range pn.Attrs {
-		if _, ok := nextAttrs[a.Name]; !ok {
-			*ops = append(*ops, PatchOp{
-				Kind:     PatchRemoveAttr,
-				Path:     path,
-				AttrName: a.Name,
-			})
+func appendAttrRemoveOps(ops *[]PatchOp, prevAttrs []ResolvedAttr, nextAttrs map[string]struct{}, path string) {
+	for _, attr := range prevAttrs {
+		if _, ok := nextAttrs[attr.Name]; ok {
+			continue
 		}
+		*ops = append(*ops, PatchOp{
+			Kind:     PatchRemoveAttr,
+			Path:     path,
+			AttrName: attr.Name,
+		})
 	}
 }
