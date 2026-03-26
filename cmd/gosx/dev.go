@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -325,6 +326,7 @@ func (r *devRunner) start(port string) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Stdin = os.Stdin
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Env = append(os.Environ(),
 		"GOSX_DEV=1",
 		"GOSX_APP_ROOT="+r.dir,
@@ -387,14 +389,37 @@ func (r *devRunner) stop() error {
 	r.stopping = true
 	r.mu.Unlock()
 
-	_ = cmd.Process.Signal(os.Interrupt)
+	_ = signalProcessTree(cmd.Process.Pid, syscall.SIGINT)
 	select {
 	case <-done:
 	case <-time.After(5 * time.Second):
-		_ = cmd.Process.Kill()
+		_ = killProcessTree(cmd.Process.Pid)
 		<-done
 	}
 	return nil
+}
+
+func signalProcessTree(pid int, sig syscall.Signal) error {
+	if pid <= 0 {
+		return nil
+	}
+	if pgid, err := syscall.Getpgid(pid); err == nil && pgid > 0 {
+		if err := syscall.Kill(-pgid, sig); err == nil || errors.Is(err, syscall.ESRCH) {
+			return nil
+		}
+	}
+	proc, err := os.FindProcess(pid)
+	if err != nil {
+		return err
+	}
+	if err := proc.Signal(sig); err != nil && !errors.Is(err, os.ErrProcessDone) {
+		return err
+	}
+	return nil
+}
+
+func killProcessTree(pid int) error {
+	return signalProcessTree(pid, syscall.SIGKILL)
 }
 
 func pickFreePort() (string, error) {
