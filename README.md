@@ -26,6 +26,7 @@ GoSX is in active development. The compiler pipeline, server rendering, island a
 - public asset helpers via `server.AssetURL(...)`, `server.Stylesheet(...)`, and file-routed `.gsx` `asset(...)` / `<Stylesheet ... />` helpers for root-served assets
 - session-backed browser form flows via `action` + `session`, including flashed validation state, redirect-safe success messages, and built-in CSRF protection
 - auth middleware via `auth.New(...)`, `authn.Middleware`, `authn.Require`, and pluggable `auth.Provider` backends, with request-scoped `user` context available to routed `.gsx` pages
+- built-in passwordless auth helpers via `authn.MagicLinks(...)`, `authn.WebAuthn(...)`, and `authn.OAuth(...)`, including session-backed magic-link callbacks, WebAuthn begin/finish verification, Google/GitHub OAuth provider presets, and the browser helper returned by `auth.WebAuthnScript()`
 - declarative redirects and rewrites via `app.Redirect(...)` and `app.Rewrite(...)`
 - semantic page/data cache helpers via `ctx.CacheDynamic()`, `ctx.CacheRevalidate(...)`, `ctx.CacheData(...)`, `ctx.CachePrivateData(...)`, plus automatic ETags and `app.RevalidatePath(...)` / `app.RevalidateTag(...)`
 - `app.EnableISR()` can now serve prerendered HTML from `dist/static`, mark hits vs stale responses, and refresh exported pages in the background using the same path/tag revalidation surface
@@ -81,6 +82,7 @@ The generated project includes:
 - native `.gsx` engine helpers via `<Surface />`, `<Worker />`, and `<Scene3D />` for worker/canvas/surface experiences without hand-written `gosx.El(...)` shells
 - optional directory-scoped route modules through `route.MustRegisterDirModuleHere(...)` when a subtree needs middleware or request setup
 - session middleware plus CSRF protection for browser forms
+- passwordless auth primitives for magic links, passkeys, and OAuth callbacks when the app wants a batteries-included sign-in surface without shipping password flows by default
 - semantic cache helpers plus automatic ETags for page and API responses
 - built-in ISR on deployed bundles via `app.EnableISR()`, using `dist/export.json` plus `dist/static/` when present
 - public asset helpers via `server.AssetURL(...)`, `server.Stylesheet(...)`, and file-routed `.gsx` `asset(...)`
