@@ -326,14 +326,8 @@ func selectValue(target any, name string) any {
 		return method.Interface()
 	}
 
-	rv := reflect.ValueOf(target)
-	for rv.IsValid() && rv.Kind() == reflect.Pointer {
-		if rv.IsNil() {
-			return nil
-		}
-		rv = rv.Elem()
-	}
-	if !rv.IsValid() {
+	rv, ok := indirectValueOf(target)
+	if !ok {
 		return nil
 	}
 	if rv.Kind() == reflect.Struct {
@@ -351,14 +345,8 @@ func indexValue(target any, index any) any {
 		return nil
 	}
 
-	rv := reflect.ValueOf(target)
-	for rv.IsValid() && rv.Kind() == reflect.Pointer {
-		if rv.IsNil() {
-			return nil
-		}
-		rv = rv.Elem()
-	}
-	if !rv.IsValid() {
+	rv, ok := indirectValueOf(target)
+	if !ok {
 		return nil
 	}
 
@@ -403,41 +391,69 @@ func tryCallValue(fn any, args []any) (any, bool) {
 		return nil, false
 	}
 
-	typ := rv.Type()
-	callArgs := make([]reflect.Value, 0, len(args))
-	if typ.IsVariadic() {
-		if len(args) < typ.NumIn()-1 {
-			return nil, false
-		}
-		for i := 0; i < typ.NumIn()-1; i++ {
-			value, ok := reflectValue(args[i], typ.In(i))
-			if !ok {
-				return nil, false
-			}
-			callArgs = append(callArgs, value)
-		}
-		variadicType := typ.In(typ.NumIn() - 1).Elem()
-		for i := typ.NumIn() - 1; i < len(args); i++ {
-			value, ok := reflectValue(args[i], variadicType)
-			if !ok {
-				return nil, false
-			}
-			callArgs = append(callArgs, value)
-		}
-	} else {
-		if len(args) != typ.NumIn() {
-			return nil, false
-		}
-		for i := 0; i < typ.NumIn(); i++ {
-			value, ok := reflectValue(args[i], typ.In(i))
-			if !ok {
-				return nil, false
-			}
-			callArgs = append(callArgs, value)
-		}
+	callArgs, ok := buildCallArgs(rv.Type(), args)
+	if !ok {
+		return nil, false
 	}
-
 	results := rv.Call(callArgs)
+	return unwrapCallResults(results)
+}
+
+func buildCallArgs(typ reflect.Type, args []any) ([]reflect.Value, bool) {
+	if typ.IsVariadic() {
+		return buildVariadicCallArgs(typ, args)
+	}
+	return buildFixedCallArgs(typ, args)
+}
+
+func buildFixedCallArgs(typ reflect.Type, args []any) ([]reflect.Value, bool) {
+	if len(args) != typ.NumIn() {
+		return nil, false
+	}
+	callArgs := make([]reflect.Value, 0, len(args))
+	for i, arg := range args {
+		value, ok := reflectValue(arg, typ.In(i))
+		if !ok {
+			return nil, false
+		}
+		callArgs = append(callArgs, value)
+	}
+	return callArgs, true
+}
+
+func buildVariadicCallArgs(typ reflect.Type, args []any) ([]reflect.Value, bool) {
+	requiredArgs := typ.NumIn() - 1
+	if len(args) < requiredArgs {
+		return nil, false
+	}
+	callArgs, ok := buildFixedCallArgsPrefix(typ, args[:requiredArgs], requiredArgs)
+	if !ok {
+		return nil, false
+	}
+	variadicType := typ.In(typ.NumIn() - 1).Elem()
+	for _, arg := range args[requiredArgs:] {
+		value, ok := reflectValue(arg, variadicType)
+		if !ok {
+			return nil, false
+		}
+		callArgs = append(callArgs, value)
+	}
+	return callArgs, true
+}
+
+func buildFixedCallArgsPrefix(typ reflect.Type, args []any, count int) ([]reflect.Value, bool) {
+	callArgs := make([]reflect.Value, 0, len(args))
+	for i := 0; i < count; i++ {
+		value, ok := reflectValue(args[i], typ.In(i))
+		if !ok {
+			return nil, false
+		}
+		callArgs = append(callArgs, value)
+	}
+	return callArgs, true
+}
+
+func unwrapCallResults(results []reflect.Value) (any, bool) {
 	switch len(results) {
 	case 0:
 		return nil, true
@@ -499,14 +515,8 @@ func mapLookup(target any, key string) (any, bool) {
 		return value, ok
 	}
 
-	rv := reflect.ValueOf(target)
-	for rv.IsValid() && rv.Kind() == reflect.Pointer {
-		if rv.IsNil() {
-			return nil, false
-		}
-		rv = rv.Elem()
-	}
-	if !rv.IsValid() || rv.Kind() != reflect.Map || rv.Type().Key().Kind() != reflect.String {
+	rv, ok := indirectValueOf(target)
+	if !ok || rv.Kind() != reflect.Map || rv.Type().Key().Kind() != reflect.String {
 		return nil, false
 	}
 	value := rv.MapIndex(reflect.ValueOf(key).Convert(rv.Type().Key()))
@@ -567,6 +577,23 @@ func reflectValue(value any, target reflect.Type) (reflect.Value, bool) {
 	return reflect.Value{}, false
 }
 
+func indirectValueOf(value any) (reflect.Value, bool) {
+	return indirectReflectValue(reflect.ValueOf(value))
+}
+
+func indirectReflectValue(rv reflect.Value) (reflect.Value, bool) {
+	for rv.IsValid() && rv.Kind() == reflect.Pointer {
+		if rv.IsNil() {
+			return reflect.Value{}, false
+		}
+		rv = rv.Elem()
+	}
+	if !rv.IsValid() {
+		return reflect.Value{}, false
+	}
+	return rv, true
+}
+
 func reflectStructValue(value any, target reflect.Type) (reflect.Value, bool) {
 	props := spreadProps(value)
 	if len(props) == 0 {
@@ -622,14 +649,9 @@ func truthy(value any) bool {
 	}
 
 	rv := reflect.ValueOf(value)
-	if !rv.IsValid() {
+	rv, ok := indirectReflectValue(rv)
+	if !ok {
 		return false
-	}
-	for rv.Kind() == reflect.Pointer {
-		if rv.IsNil() {
-			return false
-		}
-		rv = rv.Elem()
 	}
 	switch rv.Kind() {
 	case reflect.Bool:
@@ -691,15 +713,9 @@ func numericValue(value any) float64 {
 		return 0
 	}
 
-	rv := reflect.ValueOf(value)
-	if !rv.IsValid() {
+	rv, ok := indirectValueOf(value)
+	if !ok {
 		return 0
-	}
-	for rv.Kind() == reflect.Pointer {
-		if rv.IsNil() {
-			return 0
-		}
-		rv = rv.Elem()
 	}
 	switch rv.Kind() {
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
@@ -739,14 +755,8 @@ func isStringLike(value any) bool {
 	case string, fmt.Stringer:
 		return true
 	}
-	rv := reflect.ValueOf(value)
-	for rv.IsValid() && rv.Kind() == reflect.Pointer {
-		if rv.IsNil() {
-			return false
-		}
-		rv = rv.Elem()
-	}
-	return rv.IsValid() && rv.Kind() == reflect.String
+	rv, ok := indirectValueOf(value)
+	return ok && rv.Kind() == reflect.String
 }
 
 func equalValues(left, right any) bool {
@@ -780,15 +790,9 @@ func isNumeric(value any) bool {
 	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64:
 		return true
 	}
-	rv := reflect.ValueOf(value)
-	if !rv.IsValid() {
+	rv, ok := indirectValueOf(value)
+	if !ok {
 		return false
-	}
-	for rv.Kind() == reflect.Pointer {
-		if rv.IsNil() {
-			return false
-		}
-		rv = rv.Elem()
 	}
 	switch rv.Kind() {
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64, reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Float32, reflect.Float64:
@@ -823,14 +827,8 @@ func cloneStringMap(src map[string]string) map[string]string {
 }
 
 func fileEvalLen(value any) int {
-	rv := reflect.ValueOf(value)
-	for rv.IsValid() && rv.Kind() == reflect.Pointer {
-		if rv.IsNil() {
-			return 0
-		}
-		rv = rv.Elem()
-	}
-	if !rv.IsValid() {
+	rv, ok := indirectValueOf(value)
+	if !ok {
 		return 0
 	}
 	switch rv.Kind() {

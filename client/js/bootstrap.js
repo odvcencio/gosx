@@ -195,10 +195,8 @@
     return fallback;
   }
 
-  function sceneObjects(props) {
-    const scene = props && props.scene && typeof props.scene === "object" ? props.scene : null;
-    const raw = Array.isArray(scene && scene.objects) ? scene.objects : (Array.isArray(props && props.objects) ? props.objects : null);
-    const objects = raw && raw.length > 0 ? raw : [
+  function defaultSceneObjects() {
+    return [
       {
         kind: "cube",
         size: 1.8,
@@ -222,24 +220,36 @@
         spinZ: 0.12,
       },
     ];
+  }
 
-    return objects.map(function(object, index) {
-      const item = object && typeof object === "object" ? object : {};
-      return {
-        id: item.id || ("scene-object-" + index),
-        kind: item.kind || "cube",
-        size: sceneNumber(item.size, 1.2),
-        x: sceneNumber(item.x, 0),
-        y: sceneNumber(item.y, 0),
-        z: sceneNumber(item.z, 0),
-        color: typeof item.color === "string" && item.color ? item.color : "#8de1ff",
-        rotationX: sceneNumber(item.rotationX, 0),
-        rotationY: sceneNumber(item.rotationY, 0),
-        rotationZ: sceneNumber(item.rotationZ, 0),
-        spinX: sceneNumber(item.spinX, 0),
-        spinY: sceneNumber(item.spinY, 0),
-        spinZ: sceneNumber(item.spinZ, 0),
-      };
+  function rawSceneObjects(props) {
+    const scene = props && props.scene && typeof props.scene === "object" ? props.scene : null;
+    const raw = Array.isArray(scene && scene.objects) ? scene.objects : (Array.isArray(props && props.objects) ? props.objects : null);
+    return raw && raw.length > 0 ? raw : defaultSceneObjects();
+  }
+
+  function normalizeSceneObject(object, index) {
+    const item = object && typeof object === "object" ? object : {};
+    return {
+      id: item.id || ("scene-object-" + index),
+      kind: item.kind || "cube",
+      size: sceneNumber(item.size, 1.2),
+      x: sceneNumber(item.x, 0),
+      y: sceneNumber(item.y, 0),
+      z: sceneNumber(item.z, 0),
+      color: typeof item.color === "string" && item.color ? item.color : "#8de1ff",
+      rotationX: sceneNumber(item.rotationX, 0),
+      rotationY: sceneNumber(item.rotationY, 0),
+      rotationZ: sceneNumber(item.rotationZ, 0),
+      spinX: sceneNumber(item.spinX, 0),
+      spinY: sceneNumber(item.spinY, 0),
+      spinZ: sceneNumber(item.spinZ, 0),
+    };
+  }
+
+  function sceneObjects(props) {
+    return rawSceneObjects(props).map(function(object, index) {
+      return normalizeSceneObject(object, index);
     });
   }
 
@@ -510,36 +520,43 @@
     const entries = [];
 
     for (const eventType of DELEGATED_EVENTS) {
-      const listener = function(e) {
-        // Skip if already handled by an inner island
-        if (e.__gosx_handled) return;
-
-        const handlerName = findHandlerForEvent(e.target, islandRoot, eventType);
-        if (!handlerName) return;
-
-        // Mark handled
-        e.__gosx_handled = true;
-
-        const actionFn = window.__gosx_action;
-        if (typeof actionFn !== "function") return;
-
-        const eventData = extractEventData(e);
-        try {
-          const result = actionFn(islandID, handlerName, JSON.stringify(eventData));
-          if (typeof result === "string" && result !== "") {
-            console.error(`[gosx] action error (${islandID}/${handlerName}):`, result);
-          }
-        } catch (err) {
-          console.error(`[gosx] action error (${islandID}/${handlerName}):`, err);
-        }
-      };
-
-      const useCapture = (eventType === "focus" || eventType === "blur");
+      const listener = createDelegatedListener(islandRoot, islandID, eventType);
+      const useCapture = delegatedEventCapture(eventType);
       islandRoot.addEventListener(eventType, listener, useCapture);
       entries.push({ type: eventType, listener, capture: useCapture });
     }
 
     return entries;
+  }
+
+  function delegatedEventCapture(eventType) {
+    return eventType === "focus" || eventType === "blur";
+  }
+
+  function createDelegatedListener(islandRoot, islandID, eventType) {
+    return function(e) {
+      if (e.__gosx_handled) return;
+
+      const handlerName = findHandlerForEvent(e.target, islandRoot, eventType);
+      if (!handlerName) return;
+
+      e.__gosx_handled = true;
+      dispatchIslandAction(islandID, handlerName, extractEventData(e));
+    };
+  }
+
+  function dispatchIslandAction(islandID, handlerName, eventData) {
+    const actionFn = window.__gosx_action;
+    if (typeof actionFn !== "function") return;
+
+    try {
+      const result = actionFn(islandID, handlerName, JSON.stringify(eventData));
+      if (typeof result === "string" && result !== "") {
+        console.error(`[gosx] action error (${islandID}/${handlerName}):`, result);
+      }
+    } catch (err) {
+      console.error(`[gosx] action error (${islandID}/${handlerName}):`, err);
+    }
   }
 
   // --------------------------------------------------------------------------
@@ -593,41 +610,60 @@
       window.__gosx_dispose_engine(entry.id);
     }
 
-    let mount = null;
-    if (entry.kind === "surface") {
-      const mountID = entry.mountId || entry.id;
-      mount = document.getElementById(mountID);
-      if (!mount) {
-        console.warn(`[gosx] engine mount #${mountID} not found for ${entry.id}`);
-        return;
-      }
-    }
+    const mount = resolveEngineMount(entry);
+    if (entry.kind === "surface" && !mount) return;
 
-    let factory = resolveEngineFactory(entry);
-    if (!factory && entry.jsRef) {
-      await loadEngineScript(entry.jsRef);
-      factory = resolveEngineFactory(entry);
-    }
-
+    const factory = await resolveMountedEngineFactory(entry);
     if (typeof factory !== "function") {
       console.warn(`[gosx] no engine factory registered for ${entry.component}`);
       return;
     }
 
     try {
-      let result = factory(createEngineContext(entry, mount));
-      if (result && typeof result.then === "function") {
-        result = await result;
-      }
-      window.__gosx.engines.set(entry.id, {
-        component: entry.component,
-        kind: entry.kind,
-        mount: mount,
-        handle: normalizeEngineHandle(result),
-      });
+      const handle = await runEngineFactory(factory, entry, mount);
+      rememberMountedEngine(entry, mount, handle);
     } catch (e) {
       console.error(`[gosx] failed to mount engine ${entry.id}:`, e);
     }
+  }
+
+  function resolveEngineMount(entry) {
+    if (entry.kind !== "surface") {
+      return null;
+    }
+    const mountID = entry.mountId || entry.id;
+    const mount = document.getElementById(mountID);
+    if (!mount) {
+      console.warn(`[gosx] engine mount #${mountID} not found for ${entry.id}`);
+      return null;
+    }
+    return mount;
+  }
+
+  async function resolveMountedEngineFactory(entry) {
+    let factory = resolveEngineFactory(entry);
+    if (!factory && entry.jsRef) {
+      await loadEngineScript(entry.jsRef);
+      factory = resolveEngineFactory(entry);
+    }
+    return factory;
+  }
+
+  async function runEngineFactory(factory, entry, mount) {
+    let result = factory(createEngineContext(entry, mount));
+    if (result && typeof result.then === "function") {
+      result = await result;
+    }
+    return normalizeEngineHandle(result);
+  }
+
+  function rememberMountedEngine(entry, mount, handle) {
+    window.__gosx.engines.set(entry.id, {
+      component: entry.component,
+      kind: entry.kind,
+      mount: mount,
+      handle: handle,
+    });
   }
 
   async function mountAllEngines(manifest) {
@@ -665,15 +701,19 @@
     if (typeof setSharedSignal !== "function") return;
 
     for (const binding of entry.bindings) {
-      if (!binding || binding.event !== message.event || !binding.signal) continue;
-      try {
-        const result = setSharedSignal(binding.signal, JSON.stringify(message.data));
-        if (typeof result === "string" && result !== "") {
-          console.error(`[gosx] hub binding error (${entry.id}/${binding.signal}):`, result);
-        }
-      } catch (e) {
-        console.error(`[gosx] hub binding error (${entry.id}/${binding.signal}):`, e);
+      applyHubBinding(entry, binding, message, setSharedSignal);
+    }
+  }
+
+  function applyHubBinding(entry, binding, message, setSharedSignal) {
+    if (!binding || binding.event !== message.event || !binding.signal) return;
+    try {
+      const result = setSharedSignal(binding.signal, JSON.stringify(message.data));
+      if (typeof result === "string" && result !== "") {
+        console.error(`[gosx] hub binding error (${entry.id}/${binding.signal}):`, result);
       }
+    } catch (e) {
+      console.error(`[gosx] hub binding error (${entry.id}/${binding.signal}):`, e);
     }
   }
 
@@ -682,47 +722,66 @@
 
     window.__gosx_disconnect_hub(entry.id);
 
-    const socket = new WebSocket(hubURL(entry.path));
     const record = {
       entry: entry,
-      socket: socket,
+      socket: new WebSocket(hubURL(entry.path)),
       reconnectTimer: null,
     };
     window.__gosx.hubs.set(entry.id, record);
+    attachHubSocketHandlers(record);
+  }
 
+  function attachHubSocketHandlers(record) {
+    const entry = record.entry;
+    const socket = record.socket;
     socket.onmessage = function(evt) {
-      let message;
-      try {
-        message = JSON.parse(evt.data);
-      } catch (e) {
-        console.error(`[gosx] failed to decode hub message for ${entry.id}:`, e);
-        return;
-      }
+      const message = decodeHubMessage(entry, evt.data);
+      if (!message) return;
 
       applyHubBindings(entry, message);
-      if (typeof document.dispatchEvent === "function" && typeof CustomEvent === "function") {
-        document.dispatchEvent(new CustomEvent("gosx:hub:event", {
-          detail: {
-            hubID: entry.id,
-            hubName: entry.name,
-            event: message.event,
-            data: message.data,
-          },
-        }));
-      }
+      emitHubEvent(entry, message);
     };
 
     socket.onclose = function() {
-      const current = window.__gosx.hubs.get(entry.id);
-      if (!current || current.socket !== socket) return;
-      current.reconnectTimer = setTimeout(function() {
-        connectHub(entry);
-      }, 1000);
+      scheduleHubReconnect(record);
     };
 
     socket.onerror = function(e) {
       console.error(`[gosx] hub connection error for ${entry.id}:`, e);
     };
+  }
+
+  function decodeHubMessage(entry, raw) {
+    try {
+      return JSON.parse(raw);
+    } catch (e) {
+      console.error(`[gosx] failed to decode hub message for ${entry.id}:`, e);
+      return null;
+    }
+  }
+
+  function emitHubEvent(entry, message) {
+    if (typeof document.dispatchEvent !== "function" || typeof CustomEvent !== "function") {
+      return;
+    }
+    document.dispatchEvent(new CustomEvent("gosx:hub:event", {
+      detail: {
+        hubID: entry.id,
+        hubName: entry.name,
+        event: message.event,
+        data: message.data,
+      },
+    }));
+  }
+
+  function scheduleHubReconnect(record) {
+    const entry = record.entry;
+    const socket = record.socket;
+    const current = window.__gosx.hubs.get(entry.id);
+    if (!current || current.socket !== socket) return;
+    current.reconnectTimer = setTimeout(function() {
+      connectHub(entry);
+    }, 1000);
   }
 
   async function connectAllHubs(manifest) {
@@ -816,58 +875,68 @@
   // Hydrate a single island: fetch its program data, call __gosx_hydrate,
   // and set up event delegation on the island root element.
   async function hydrateIsland(entry) {
+    const root = islandRoot(entry);
+    if (!root) return;
+    if (entry.static) return;
+
+    const program = await loadIslandProgram(entry);
+    if (!program) return;
+    if (!runIslandHydration(entry, program)) return;
+    const listeners = setupEventDelegation(root, entry.id);
+    rememberHydratedIsland(entry, root, listeners);
+  }
+
+  function islandRoot(entry) {
     const root = document.getElementById(entry.id);
     if (!root) {
       console.warn(`[gosx] island root #${entry.id} not found in DOM`);
-      return;
+      return null;
     }
+    return root;
+  }
 
-    // Skip purely static islands (no client interactivity).
-    if (entry.static) return;
-
-    // Determine program format (default to JSON in development).
+  async function loadIslandProgram(entry) {
     const programFormat = inferProgramFormat(entry);
-
-    // Fetch the island's program data.
     if (!entry.programRef) {
       console.error(`[gosx] skipping island ${entry.id} — missing programRef`);
-      return;
+      return null;
     }
 
     const programData = await fetchProgram(entry.programRef, programFormat);
     if (programData === null) {
       console.error(`[gosx] skipping island ${entry.id} — program fetch failed`);
-      return;
+      return null;
     }
+    return { data: programData, format: programFormat };
+  }
 
-    // Call the WASM-exported hydrate function.
+  function runIslandHydration(entry, program) {
     const hydrateFn = window.__gosx_hydrate;
     if (typeof hydrateFn !== "function") {
       console.error("[gosx] __gosx_hydrate not available — cannot hydrate island", entry.id);
-      return;
+      return false;
     }
 
     try {
       const result = hydrateFn(
-        entry.id,                           // islandID
-        entry.component,                    // componentName
-        JSON.stringify(entry.props || {}),  // propsJSON
-        programData,                        // program data (ArrayBuffer or string)
-        programFormat                       // program format identifier
+        entry.id,
+        entry.component,
+        JSON.stringify(entry.props || {}),
+        program.data,
+        program.format
       );
       if (typeof result === "string" && result !== "") {
         console.error(`[gosx] failed to hydrate island ${entry.id}: ${result}`);
-        return;
+        return false;
       }
+      return true;
     } catch (e) {
       console.error(`[gosx] failed to hydrate island ${entry.id}:`, e);
-      return;
+      return false;
     }
+  }
 
-    // Set up delegated event listeners on the island root.
-    const listeners = setupEventDelegation(root, entry.id);
-
-    // Track the island.
+  function rememberHydratedIsland(entry, root, listeners) {
     window.__gosx.islands.set(entry.id, {
       component: entry.component,
       root: root,
@@ -933,21 +1002,29 @@
     pendingManifest = manifest;
     window.__gosx.ready = false;
 
-    // Load the shared WASM runtime. The runtime will call
-    // __gosx_runtime_ready() when it is initialized, which triggers
-    // island hydration.
-    if ((manifest.islands && manifest.islands.length > 0 || manifest.hubs && manifest.hubs.length > 0) && manifest.runtime && manifest.runtime.path) {
+    if (manifestNeedsRuntime(manifest)) {
       if (runtimeReady()) {
         window.__gosx_runtime_ready();
       } else {
         await loadRuntime(manifest.runtime);
       }
     } else {
-      if ((manifest.islands && manifest.islands.length > 0) || (manifest.hubs && manifest.hubs.length > 0)) {
+      if (manifestNeedsRuntimeBridge(manifest)) {
         console.error("[gosx] islands and hub bindings require manifest.runtime.path");
       }
       window.__gosx_runtime_ready();
     }
+  }
+
+  function manifestNeedsRuntimeBridge(manifest) {
+    return Boolean(
+      (manifest.islands && manifest.islands.length > 0) ||
+      (manifest.hubs && manifest.hubs.length > 0)
+    );
+  }
+
+  function manifestNeedsRuntime(manifest) {
+    return Boolean(manifestNeedsRuntimeBridge(manifest) && manifest.runtime && manifest.runtime.path);
   }
 
   window.__gosx_bootstrap_page = bootstrapPage;
