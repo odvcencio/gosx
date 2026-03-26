@@ -30,6 +30,11 @@
     islands: new Map(),   // islandID -> { component, listeners, root }
     engines: new Map(),   // engineID -> { component, kind, mount, handle }
     hubs: new Map(),      // hubID -> { entry, socket, reconnectTimer }
+    input: {
+      pending: null,
+      frameHandle: 0,
+      providers: Object.create(null),
+    },
     ready: false,
   };
 
@@ -194,6 +199,251 @@
       return;
     }
     clearTimeout(handle);
+  }
+
+  function gosxInputState() {
+    if (!window.__gosx.input) {
+      window.__gosx.input = {
+        pending: null,
+        frameHandle: 0,
+        providers: Object.create(null),
+      };
+    }
+    return window.__gosx.input;
+  }
+
+  function queueInputSignal(name, value) {
+    if (!name) return;
+    const state = gosxInputState();
+    if (!state.pending) {
+      state.pending = Object.create(null);
+    }
+    state.pending[name] = value;
+    scheduleInputFlush();
+  }
+
+  function scheduleInputFlush() {
+    const state = gosxInputState();
+    if (state.frameHandle) return;
+    state.frameHandle = engineFrame(function() {
+      state.frameHandle = 0;
+      flushInputSignals();
+    });
+  }
+
+  function flushInputSignals() {
+    const state = gosxInputState();
+    const payload = state.pending;
+    state.pending = null;
+    if (!payload) return;
+
+    const setInputBatch = window.__gosx_set_input_batch;
+    if (typeof setInputBatch !== "function") return;
+
+    try {
+      const result = setInputBatch(JSON.stringify(payload));
+      if (typeof result === "string" && result !== "") {
+        console.error("[gosx] input batch error:", result);
+      }
+    } catch (e) {
+      console.error("[gosx] input batch error:", e);
+    }
+  }
+
+  function capabilityList(entry) {
+    return Array.isArray(entry && entry.capabilities) ? entry.capabilities : [];
+  }
+
+  function activateInputProviders(entry) {
+    for (const capability of capabilityList(entry)) {
+      activateInputProvider(capability);
+    }
+  }
+
+  function activateInputProvider(capability) {
+    const state = gosxInputState();
+    const current = state.providers[capability];
+    if (current) {
+      current.refCount += 1;
+      return;
+    }
+
+    const provider = createInputProvider(capability);
+    if (!provider) {
+      return;
+    }
+
+    provider.refCount = 1;
+    state.providers[capability] = provider;
+  }
+
+  function releaseInputProviders(record) {
+    for (const capability of capabilityList(record)) {
+      releaseInputProvider(capability);
+    }
+  }
+
+  function releaseInputProvider(capability) {
+    const state = gosxInputState();
+    const provider = state.providers[capability];
+    if (!provider) return;
+
+    provider.refCount -= 1;
+    if (provider.refCount > 0) {
+      return;
+    }
+
+    if (typeof provider.dispose === "function") {
+      provider.dispose();
+    }
+    delete state.providers[capability];
+  }
+
+  function createInputProvider(capability) {
+    switch (capability) {
+      case "keyboard":
+        return createKeyboardInputProvider();
+      case "pointer":
+        return createPointerInputProvider();
+      case "gamepad":
+        return createGamepadInputProvider();
+      default:
+        return null;
+    }
+  }
+
+  function createKeyboardInputProvider() {
+    const pressed = new Set();
+
+    function normalizeKeyName(event) {
+      const raw = event && (event.key || event.code);
+      if (!raw) return "";
+      return String(raw).trim().toLowerCase();
+    }
+
+    function onKey(event) {
+      const key = normalizeKeyName(event);
+      if (!key) return;
+      const active = event.type === "keydown";
+      if (active) {
+        pressed.add(key);
+      } else {
+        pressed.delete(key);
+      }
+      queueInputSignal("$input.key." + key, active);
+    }
+
+    function onBlur() {
+      for (const key of Array.from(pressed)) {
+        queueInputSignal("$input.key." + key, false);
+      }
+      pressed.clear();
+    }
+
+    document.addEventListener("keydown", onKey);
+    document.addEventListener("keyup", onKey);
+    window.addEventListener("blur", onBlur);
+
+    return {
+      dispose() {
+        document.removeEventListener("keydown", onKey);
+        document.removeEventListener("keyup", onKey);
+        window.removeEventListener("blur", onBlur);
+      },
+    };
+  }
+
+  function createPointerInputProvider() {
+    let lastX = null;
+    let lastY = null;
+
+    function pointerNumber(value, fallback) {
+      const num = Number(value);
+      return Number.isFinite(num) ? num : fallback;
+    }
+
+    function publishPointer(event) {
+      const x = pointerNumber(event && event.clientX, lastX == null ? 0 : lastX);
+      const y = pointerNumber(event && event.clientY, lastY == null ? 0 : lastY);
+      const deltaX = pointerNumber(event && event.movementX, lastX == null ? 0 : x - lastX);
+      const deltaY = pointerNumber(event && event.movementY, lastY == null ? 0 : y - lastY);
+      lastX = x;
+      lastY = y;
+
+      queueInputSignal("$input.pointer.x", x);
+      queueInputSignal("$input.pointer.y", y);
+      queueInputSignal("$input.pointer.deltaX", deltaX);
+      queueInputSignal("$input.pointer.deltaY", deltaY);
+      if (event && typeof event.buttons !== "undefined") {
+        queueInputSignal("$input.pointer.buttons", pointerNumber(event.buttons, 0));
+      }
+      if (event && typeof event.button === "number") {
+        queueInputSignal("$input.pointer.button" + event.button, event.type !== "pointerup");
+      }
+    }
+
+    function onBlur() {
+      queueInputSignal("$input.pointer.deltaX", 0);
+      queueInputSignal("$input.pointer.deltaY", 0);
+      queueInputSignal("$input.pointer.buttons", 0);
+    }
+
+    document.addEventListener("pointermove", publishPointer);
+    document.addEventListener("pointerdown", publishPointer);
+    document.addEventListener("pointerup", publishPointer);
+    window.addEventListener("blur", onBlur);
+
+    return {
+      dispose() {
+        document.removeEventListener("pointermove", publishPointer);
+        document.removeEventListener("pointerdown", publishPointer);
+        document.removeEventListener("pointerup", publishPointer);
+        window.removeEventListener("blur", onBlur);
+      },
+    };
+  }
+
+  function createGamepadInputProvider() {
+    let active = true;
+    let frameHandle = 0;
+
+    function readButton(pad, index) {
+      return Boolean(pad && pad.buttons && pad.buttons[index] && pad.buttons[index].pressed);
+    }
+
+    function pollGamepad() {
+      if (!active) return;
+      const navigatorRef = window.navigator;
+      if (navigatorRef && typeof navigatorRef.getGamepads === "function") {
+        const pads = navigatorRef.getGamepads() || [];
+        const pad = pads[0];
+        if (pad) {
+          const axes = Array.isArray(pad.axes) ? pad.axes : [];
+          queueInputSignal("$input.gamepad0.connected", true);
+          queueInputSignal("$input.gamepad0.leftX", sceneNumber(axes[0], 0));
+          queueInputSignal("$input.gamepad0.leftY", sceneNumber(axes[1], 0));
+          queueInputSignal("$input.gamepad0.rightX", sceneNumber(axes[2], 0));
+          queueInputSignal("$input.gamepad0.rightY", sceneNumber(axes[3], 0));
+          queueInputSignal("$input.gamepad0.buttonA", readButton(pad, 0));
+          queueInputSignal("$input.gamepad0.buttonB", readButton(pad, 1));
+        } else {
+          queueInputSignal("$input.gamepad0.connected", false);
+        }
+      }
+      frameHandle = engineFrame(pollGamepad);
+    }
+
+    frameHandle = engineFrame(pollGamepad);
+
+    return {
+      dispose() {
+        active = false;
+        if (frameHandle) {
+          cancelEngineFrame(frameHandle);
+          frameHandle = 0;
+        }
+      },
+    };
   }
 
   function sceneNumber(value, fallback) {
@@ -822,9 +1072,11 @@
   }
 
   function rememberMountedEngine(entry, mount, handle) {
+    activateInputProviders(entry);
     window.__gosx.engines.set(entry.id, {
       component: entry.component,
       kind: entry.kind,
+      capabilities: capabilityList(entry),
       mount: mount,
       handle: handle,
     });
@@ -1009,6 +1261,8 @@
   window.__gosx_dispose_engine = function(engineID) {
     const record = window.__gosx.engines.get(engineID);
     if (!record) return;
+
+    releaseInputProviders(record);
 
     if (record.handle && typeof record.handle.dispose === "function") {
       try {
@@ -1203,11 +1457,21 @@
   }
 
   function manifestNeedsRuntimeBridge(manifest) {
-    return manifestHasEntries(manifest, "islands") || manifestHasEntries(manifest, "hubs");
+    return manifestHasEntries(manifest, "islands") || manifestHasEntries(manifest, "hubs") || manifestNeedsEngineInputBridge(manifest);
   }
 
   function manifestNeedsRuntime(manifest) {
     return Boolean(manifestNeedsRuntimeBridge(manifest) && manifest.runtime && manifest.runtime.path);
+  }
+
+  function manifestNeedsEngineInputBridge(manifest) {
+    if (!manifestHasEntries(manifest, "engines")) {
+      return false;
+    }
+    return manifest.engines.some(function(entry) {
+      const capabilities = capabilityList(entry);
+      return capabilities.includes("keyboard") || capabilities.includes("pointer") || capabilities.includes("gamepad");
+    });
   }
 
   function manifestHasEntries(manifest, key) {
