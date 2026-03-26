@@ -42,11 +42,15 @@ func TestRunExportWritesStaticBundleForStarterApp(t *testing.T) {
 	for _, snippet := range []string{
 		"<title>My GoSX App</title>",
 		"GoSX Starter",
-		`href="/styles.css"`,
+		`href="styles.css"`,
 	} {
 		if !strings.Contains(indexHTML, snippet) {
 			t.Fatalf("expected %q in exported index.html", snippet)
 		}
+	}
+	stackHTML := readFile(t, filepath.Join(dir, "dist", "static", "stack", "index.html"))
+	if !strings.Contains(stackHTML, `href="../styles.css"`) {
+		t.Fatalf("expected relative stylesheet url in nested export page, got %q", stackHTML)
 	}
 
 	notFoundHTML := readFile(t, filepath.Join(dir, "dist", "static", "404.html"))
@@ -60,6 +64,25 @@ func TestRunExportWritesStaticBundleForStarterApp(t *testing.T) {
 	}
 	if len(manifest.Pages) != 2 || manifest.Pages[0] != "/" || manifest.Pages[1] != "/stack" {
 		t.Fatalf("unexpected export pages: %#v", manifest.Pages)
+	}
+}
+
+func TestRewriteStaticExportHTMLRewritesRootAssetsAndImageOptimizerURLs(t *testing.T) {
+	input := `<!DOCTYPE html><html><head><link rel="stylesheet" href="/styles.css"><meta property="og:image" content="/_gosx/image?src=%2Fcover.png&w=640"></head><body><a href="/docs/getting-started">Docs</a><img src="/_gosx/image?src=%2Fpaper-card.png&w=960"><img srcset="/_gosx/image?src=%2Fpaper-card.png&w=320 320w, /_gosx/image?src=%2Fpaper-card.png&w=640 640w"></body></html>`
+	output, err := rewriteStaticExportHTML("/docs/routing", input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, snippet := range []string{
+		`href="../../styles.css"`,
+		`content="../../cover.png"`,
+		`href="../getting-started"`,
+		`src="../../paper-card.png"`,
+		`srcset="../../paper-card.png 320w, ../../paper-card.png 640w"`,
+	} {
+		if !strings.Contains(output, snippet) {
+			t.Fatalf("expected %q in rewritten html %q", snippet, output)
+		}
 	}
 }
 

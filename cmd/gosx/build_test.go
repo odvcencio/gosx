@@ -110,6 +110,38 @@ func TestProjectBuildHooksLoadAndRun(t *testing.T) {
 	}
 }
 
+func TestRunBuildProdWritesHybridStaticBundleForStarterApp(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "build-app")
+	if err := RunInit(dir, "example.com/build-app", ""); err != nil {
+		t.Fatal(err)
+	}
+	addLocalGoSXReplace(t, dir)
+	tidyModule(t, dir)
+
+	if err := RunBuild(dir, false); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, rel := range []string{
+		"dist/build.json",
+		"dist/export.json",
+		"dist/server/app",
+		"dist/static/index.html",
+		"dist/static/stack/index.html",
+		"dist/static/assets/runtime",
+		"dist/static/gosx/runtime.wasm",
+	} {
+		if _, err := os.Stat(filepath.Join(dir, rel)); err != nil {
+			t.Fatalf("expected build artifact %s: %v", rel, err)
+		}
+	}
+
+	stackHTML := readFile(t, filepath.Join(dir, "dist", "static", "stack", "index.html"))
+	if !strings.Contains(stackHTML, `href="../styles.css"`) {
+		t.Fatalf("expected export-safe nested asset url in %q", stackHTML)
+	}
+}
+
 func mustWriteFile(t *testing.T, path string, contents string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {

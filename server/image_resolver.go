@@ -3,6 +3,7 @@ package server
 import (
 	"fmt"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -78,6 +79,9 @@ func imageResolverNamed(name string) ImageResolver {
 }
 
 func resolveLocalImageURL(src string, transform ImageTransform) (string, bool) {
+	if strings.TrimSpace(os.Getenv("GOSX_STATIC_EXPORT")) != "" {
+		return src, true
+	}
 	if !shouldOptimizeImageSource(src) || transform == (ImageTransform{}) {
 		return src, true
 	}
