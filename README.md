@@ -12,6 +12,7 @@ GoSX is in active development. The compiler pipeline, server rendering, island a
 - `gosx init --template docs` scaffolds a dogfooded docs site with nested file layouts, scoped docs 404s, page-scoped server modules, sessions, auth, redirects/rewrites, public assets, and colocated JSON endpoints
 - `gosx build --prod` emits a deployable `dist/` bundle with hashed assets, a server binary when present, copied `app/` + `public/`, and a `run.sh` launcher
 - `gosx dev` fronts a runnable app with a stable dev proxy, staged `/gosx/*` runtime assets, file watching, and SSE reload notifications
+- `gosx export` prerenders static file-routed pages into `dist/static`, carries over `/public`, stages `/gosx/*` runtime assets, and writes `dist/export.json`
 - opt-in client-side page navigation via `app.EnableNavigation()` plus `server.Link(...)`, with managed head swaps and intent-prefetching
 - file-based routing via `route.Router.AddDir(...)`, including `layout.gsx`, `page.gsx`, `index.gsx`, `not-found.gsx`, `error.gsx`, route groups like `(marketing)`, and `[slug]` segment conventions
 - file-route server modules via sibling `page.server.go` files and `route.MustRegisterFileModuleHere(...)`, with per-page `Load`, `Metadata`, `Render`, and relative `__actions/<name>` endpoints
@@ -41,7 +42,7 @@ GoSX is in active development. The compiler pipeline, server rendering, island a
 
 **What still needs deeper framework passes:**
 
-- SSG / static export for file-routed `.gsx` apps
+- a unified hybrid SSR + prerender story in the main build pipeline
 - a fully automatic nested `page.server.go` discovery story beyond scaffolded side-effect import buckets
 - `.gsx`-first engine surfaces for advanced runtimes like 3D
 - deeper styling and asset ownership ergonomics
@@ -230,7 +231,7 @@ GoSX supports a three-tier deploy strategy:
 | `highlight` | Syntax highlighting for Go source code |
 | `format` | Source code formatter for .gsx files |
 | `dev` | Development server with file watching |
-| `cmd/gosx` | CLI tool (compile, check, render, fmt, build, dev) |
+| `cmd/gosx` | CLI tool (compile, check, render, fmt, build, dev, export) |
 
 ## Dependencies
 
@@ -304,6 +305,9 @@ go run ./cmd/gosx build --dev examples/counter/
 # Run the dev proxy against the dogfooded docs app
 go run ./cmd/gosx dev ./examples/gosx-docs
 
+# Pre-render static output for a file-routed app
+go run ./cmd/gosx export ./examples/gosx-docs
+
 # Run the browser E2E harness
 npm run test:e2e
 ```
@@ -311,7 +315,9 @@ npm run test:e2e
 Build output and deployment:
 
 - `gosx build --prod my-app` writes `dist/build.json`, `dist/assets/`, `dist/app/`, `dist/public/`, and when the target is runnable, `dist/server/app` plus `dist/run.sh`
+- `gosx export my-app` writes `dist/static/` plus `dist/export.json` for pre-rendered file-routed pages and copied `/public` assets
 - file-routed apps stay deployable because the runtime bundle now carries `app/` alongside the binary instead of assuming source-tree access
+- `gosx dev`, `gosx build`, and `gosx export` resolve the shared runtime from the app's Go module graph, so scaffolded apps work outside the GoSX repo instead of assuming repo-local `client/` sources
 - scaffolded apps and the docs template resolve their runtime root through `server.ResolveAppRoot(thisFile)`, so they can run from source, from `dist/`, or with `GOSX_APP_ROOT` set explicitly
 - `dist/README.md` describes the bundle contract and launch model
 

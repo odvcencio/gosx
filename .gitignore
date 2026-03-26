@@ -1,5 +1,5 @@
 /dashboard
 build/
 docs/
-gosx
+/gosx
 node_modules/
