@@ -16,10 +16,12 @@ type RenderLine struct {
 
 // RenderCamera describes the camera used for world-space rendering.
 type RenderCamera struct {
-	X   float64 `json:"x,omitempty"`
-	Y   float64 `json:"y,omitempty"`
-	Z   float64 `json:"z,omitempty"`
-	FOV float64 `json:"fov,omitempty"`
+	X    float64 `json:"x,omitempty"`
+	Y    float64 `json:"y,omitempty"`
+	Z    float64 `json:"z,omitempty"`
+	FOV  float64 `json:"fov,omitempty"`
+	Near float64 `json:"near,omitempty"`
+	Far  float64 `json:"far,omitempty"`
 }
 
 // RenderMaterial is a resolved material profile for a draw bundle.
@@ -32,15 +34,30 @@ type RenderMaterial struct {
 	Emissive  float64 `json:"emissive,omitempty"`
 }
 
+// RenderBounds is a world-space axis-aligned bounds record for a render object.
+type RenderBounds struct {
+	MinX float64 `json:"minX,omitempty"`
+	MinY float64 `json:"minY,omitempty"`
+	MinZ float64 `json:"minZ,omitempty"`
+	MaxX float64 `json:"maxX,omitempty"`
+	MaxY float64 `json:"maxY,omitempty"`
+	MaxZ float64 `json:"maxZ,omitempty"`
+}
+
 // RenderObject maps a resolved scene object onto a slice of the world-space
 // vertex buffers.
 type RenderObject struct {
-	ID            string `json:"id,omitempty"`
-	Kind          string `json:"kind,omitempty"`
-	MaterialIndex int    `json:"materialIndex,omitempty"`
-	VertexOffset  int    `json:"vertexOffset,omitempty"`
-	VertexCount   int    `json:"vertexCount,omitempty"`
-	Static        bool   `json:"static,omitempty"`
+	ID            string       `json:"id,omitempty"`
+	Kind          string       `json:"kind,omitempty"`
+	MaterialIndex int          `json:"materialIndex,omitempty"`
+	VertexOffset  int          `json:"vertexOffset,omitempty"`
+	VertexCount   int          `json:"vertexCount,omitempty"`
+	Static        bool         `json:"static,omitempty"`
+	Bounds        RenderBounds `json:"bounds,omitempty"`
+	DepthNear     float64      `json:"depthNear,omitempty"`
+	DepthFar      float64      `json:"depthFar,omitempty"`
+	DepthCenter   float64      `json:"depthCenter,omitempty"`
+	ViewCulled    bool         `json:"viewCulled,omitempty"`
 }
 
 // RenderBundle is the renderer-facing scene payload emitted by the shared
