@@ -984,104 +984,156 @@
       return null;
     }
 
-    const fallbackBuffers = createSceneWebGLBufferSet(gl);
-    const staticOpaqueBuffers = createSceneWebGLBufferSet(gl);
-    const alphaBuffers = createSceneWebGLBufferSet(gl);
-    const additiveBuffers = createSceneWebGLBufferSet(gl);
-    const dynamicOpaqueBuffers = createSceneWebGLBufferSet(gl);
-    const drawScratch = createSceneWorldDrawScratch();
-    const positionLocation = gl.getAttribLocation(program, "a_position");
-    const colorLocation = gl.getAttribLocation(program, "a_color");
-    const materialLocation = gl.getAttribLocation(program, "a_material");
-    const cameraLocation = gl.getUniformLocation(program, "u_camera");
-    const aspectLocation = gl.getUniformLocation(program, "u_aspect");
-    const perspectiveLocation = gl.getUniformLocation(program, "u_use_perspective");
-    const floatType = typeof gl.FLOAT === "number" ? gl.FLOAT : 0x1406;
-    const arrayBuffer = typeof gl.ARRAY_BUFFER === "number" ? gl.ARRAY_BUFFER : 0x8892;
-    const staticDraw = typeof gl.STATIC_DRAW === "number" ? gl.STATIC_DRAW : 0x88E4;
-    const dynamicDraw = typeof gl.DYNAMIC_DRAW === "number" ? gl.DYNAMIC_DRAW : 0x88E8;
-    const colorBufferBit = typeof gl.COLOR_BUFFER_BIT === "number" ? gl.COLOR_BUFFER_BIT : 0x4000;
-    const depthBufferBit = typeof gl.DEPTH_BUFFER_BIT === "number" ? gl.DEPTH_BUFFER_BIT : 0x0100;
-    const linesMode = typeof gl.LINES === "number" ? gl.LINES : 0x0001;
-    const passCache = {
-      staticOpaque: {
-        key: "",
-        vertexCount: 0,
-      },
-    };
+    const resources = createSceneWebGLResources(gl, program);
     return {
       kind: "webgl",
       render(bundle) {
-        const usePerspective = Boolean(bundle && bundle.worldVertexCount > 0 && bundle.worldPositions && bundle.worldColors);
-        const aspect = Math.max(0.0001, canvas.width / Math.max(1, canvas.height));
-        const background = sceneColorRGBA(bundle.background, [0.03, 0.08, 0.12, 1]);
-        gl.viewport(0, 0, canvas.width, canvas.height);
-        gl.clearColor(background[0], background[1], background[2], background[3]);
-        if (usePerspective && typeof gl.clearDepth === "function") {
-          gl.clearDepth(1);
-        }
-        gl.clear(usePerspective ? colorBufferBit | depthBufferBit : colorBufferBit);
-        const positions = usePerspective ? bundle.worldPositions : bundle.positions;
-        const colors = usePerspective ? bundle.worldColors : bundle.colors;
-        const vertexCount = usePerspective ? bundle.worldVertexCount : bundle.vertexCount;
-        if (!bundle || vertexCount === 0 || !positions || !colors) {
+        const geometry = sceneWebGLBundleGeometry(bundle);
+        prepareSceneWebGLFrame(gl, canvas, bundle, geometry.usePerspective, resources);
+        if (!bundle || geometry.vertexCount === 0 || !geometry.positions || !geometry.colors) {
           return;
         }
         gl.useProgram(program);
-        if (typeof gl.uniform4f === "function" && cameraLocation) {
-          const camera = bundle.camera || {};
-          gl.uniform4f(
-            cameraLocation,
-            sceneNumber(camera.x, 0),
-            sceneNumber(camera.y, 0),
-            sceneNumber(camera.z, 6),
-            sceneNumber(camera.fov, 75),
-          );
+        applySceneWebGLUniforms(gl, bundle, canvas, geometry.usePerspective, resources);
+        if (geometry.usePerspective && renderSceneWebGLWorldBundle(gl, bundle, resources)) {
+          applySceneWebGLBlend(gl, "opaque");
+          applySceneWebGLDepth(gl, "opaque");
+          return;
         }
-        if (typeof gl.uniform1f === "function" && aspectLocation) {
-          gl.uniform1f(aspectLocation, aspect);
-        }
-        if (typeof gl.uniform1f === "function" && perspectiveLocation) {
-          gl.uniform1f(perspectiveLocation, usePerspective ? 1 : 0);
-        }
-
-        if (usePerspective) {
-          const drawPlan = buildSceneWorldDrawPlan(bundle, drawScratch);
-          if (drawPlan) {
-            const worldPasses = createSceneWorldWebGLPasses(drawPlan, {
-              staticOpaque: staticOpaqueBuffers,
-              dynamicOpaque: dynamicOpaqueBuffers,
-              alpha: alphaBuffers,
-              additive: additiveBuffers,
-            }, {
-              staticDraw,
-              dynamicDraw,
-            });
-            drawSceneWebGLPasses(gl, arrayBuffer, floatType, linesMode, positionLocation, colorLocation, materialLocation, worldPasses, passCache);
-            applySceneWebGLBlend(gl, "opaque");
-            applySceneWebGLDepth(gl, "opaque");
-            return;
-          }
-        }
-
-        applySceneWebGLDepth(gl, "disabled");
-        applySceneWebGLBlend(gl, "opaque");
-        uploadSceneWebGLBuffers(gl, arrayBuffer, dynamicDraw, fallbackBuffers.position, fallbackBuffers.color, fallbackBuffers.material, positions, colors, sceneFallbackMaterialData(vertexCount));
-        drawSceneWebGLLines(gl, arrayBuffer, floatType, linesMode, positionLocation, colorLocation, materialLocation, fallbackBuffers.position, fallbackBuffers.color, fallbackBuffers.material, vertexCount, usePerspective ? 3 : 2);
+        renderSceneWebGLFallbackBundle(gl, geometry, resources);
       },
       dispose() {
-        if (typeof gl.deleteBuffer === "function") {
-          deleteSceneWebGLBufferSet(gl, fallbackBuffers);
-          deleteSceneWebGLBufferSet(gl, staticOpaqueBuffers);
-          deleteSceneWebGLBufferSet(gl, alphaBuffers);
-          deleteSceneWebGLBufferSet(gl, additiveBuffers);
-          deleteSceneWebGLBufferSet(gl, dynamicOpaqueBuffers);
-        }
-        if (typeof gl.deleteProgram === "function") {
-          gl.deleteProgram(program);
-        }
+        disposeSceneWebGLRenderer(gl, program, resources);
       },
     };
+  }
+
+  function createSceneWebGLResources(gl, program) {
+    return {
+      fallbackBuffers: createSceneWebGLBufferSet(gl),
+      passBuffers: {
+        staticOpaque: createSceneWebGLBufferSet(gl),
+        alpha: createSceneWebGLBufferSet(gl),
+        additive: createSceneWebGLBufferSet(gl),
+        dynamicOpaque: createSceneWebGLBufferSet(gl),
+      },
+      drawScratch: createSceneWorldDrawScratch(),
+      positionLocation: gl.getAttribLocation(program, "a_position"),
+      colorLocation: gl.getAttribLocation(program, "a_color"),
+      materialLocation: gl.getAttribLocation(program, "a_material"),
+      cameraLocation: gl.getUniformLocation(program, "u_camera"),
+      aspectLocation: gl.getUniformLocation(program, "u_aspect"),
+      perspectiveLocation: gl.getUniformLocation(program, "u_use_perspective"),
+      floatType: typeof gl.FLOAT === "number" ? gl.FLOAT : 0x1406,
+      arrayBuffer: typeof gl.ARRAY_BUFFER === "number" ? gl.ARRAY_BUFFER : 0x8892,
+      staticDraw: typeof gl.STATIC_DRAW === "number" ? gl.STATIC_DRAW : 0x88E4,
+      dynamicDraw: typeof gl.DYNAMIC_DRAW === "number" ? gl.DYNAMIC_DRAW : 0x88E8,
+      colorBufferBit: typeof gl.COLOR_BUFFER_BIT === "number" ? gl.COLOR_BUFFER_BIT : 0x4000,
+      depthBufferBit: typeof gl.DEPTH_BUFFER_BIT === "number" ? gl.DEPTH_BUFFER_BIT : 0x0100,
+      linesMode: typeof gl.LINES === "number" ? gl.LINES : 0x0001,
+      passCache: {
+        staticOpaque: {
+          key: "",
+          vertexCount: 0,
+        },
+      },
+    };
+  }
+
+  function sceneWebGLBundleGeometry(bundle) {
+    const usePerspective = Boolean(bundle && bundle.worldVertexCount > 0 && bundle.worldPositions && bundle.worldColors);
+    return {
+      usePerspective,
+      positions: usePerspective ? bundle.worldPositions : bundle && bundle.positions,
+      colors: usePerspective ? bundle.worldColors : bundle && bundle.colors,
+      vertexCount: usePerspective ? bundle && bundle.worldVertexCount : bundle && bundle.vertexCount,
+    };
+  }
+
+  function prepareSceneWebGLFrame(gl, canvas, bundle, usePerspective, resources) {
+    const background = sceneColorRGBA(bundle && bundle.background, [0.03, 0.08, 0.12, 1]);
+    gl.viewport(0, 0, canvas.width, canvas.height);
+    gl.clearColor(background[0], background[1], background[2], background[3]);
+    if (usePerspective && typeof gl.clearDepth === "function") {
+      gl.clearDepth(1);
+    }
+    gl.clear(usePerspective ? resources.colorBufferBit | resources.depthBufferBit : resources.colorBufferBit);
+  }
+
+  function applySceneWebGLUniforms(gl, bundle, canvas, usePerspective, resources) {
+    const aspect = Math.max(0.0001, canvas.width / Math.max(1, canvas.height));
+    if (typeof gl.uniform4f === "function" && resources.cameraLocation) {
+      const camera = bundle.camera || {};
+      gl.uniform4f(
+        resources.cameraLocation,
+        sceneNumber(camera.x, 0),
+        sceneNumber(camera.y, 0),
+        sceneNumber(camera.z, 6),
+        sceneNumber(camera.fov, 75),
+      );
+    }
+    if (typeof gl.uniform1f === "function" && resources.aspectLocation) {
+      gl.uniform1f(resources.aspectLocation, aspect);
+    }
+    if (typeof gl.uniform1f === "function" && resources.perspectiveLocation) {
+      gl.uniform1f(resources.perspectiveLocation, usePerspective ? 1 : 0);
+    }
+  }
+
+  function renderSceneWebGLWorldBundle(gl, bundle, resources) {
+    const drawPlan = buildSceneWorldDrawPlan(bundle, resources.drawScratch);
+    if (!drawPlan) {
+      return false;
+    }
+    const worldPasses = createSceneWorldWebGLPasses(drawPlan, resources.passBuffers, {
+      staticDraw: resources.staticDraw,
+      dynamicDraw: resources.dynamicDraw,
+    });
+    drawSceneWebGLPasses(gl, resources.arrayBuffer, resources.floatType, resources.linesMode, resources.positionLocation, resources.colorLocation, resources.materialLocation, worldPasses, resources.passCache);
+    return true;
+  }
+
+  function renderSceneWebGLFallbackBundle(gl, geometry, resources) {
+    applySceneWebGLDepth(gl, "disabled");
+    applySceneWebGLBlend(gl, "opaque");
+    uploadSceneWebGLBuffers(
+      gl,
+      resources.arrayBuffer,
+      resources.dynamicDraw,
+      resources.fallbackBuffers.position,
+      resources.fallbackBuffers.color,
+      resources.fallbackBuffers.material,
+      geometry.positions,
+      geometry.colors,
+      sceneFallbackMaterialData(geometry.vertexCount),
+    );
+    drawSceneWebGLLines(
+      gl,
+      resources.arrayBuffer,
+      resources.floatType,
+      resources.linesMode,
+      resources.positionLocation,
+      resources.colorLocation,
+      resources.materialLocation,
+      resources.fallbackBuffers.position,
+      resources.fallbackBuffers.color,
+      resources.fallbackBuffers.material,
+      geometry.vertexCount,
+      geometry.usePerspective ? 3 : 2,
+    );
+  }
+
+  function disposeSceneWebGLRenderer(gl, program, resources) {
+    if (typeof gl.deleteBuffer === "function") {
+      deleteSceneWebGLBufferSet(gl, resources.fallbackBuffers);
+      deleteSceneWebGLBufferSet(gl, resources.passBuffers.staticOpaque);
+      deleteSceneWebGLBufferSet(gl, resources.passBuffers.alpha);
+      deleteSceneWebGLBufferSet(gl, resources.passBuffers.additive);
+      deleteSceneWebGLBufferSet(gl, resources.passBuffers.dynamicOpaque);
+    }
+    if (typeof gl.deleteProgram === "function") {
+      gl.deleteProgram(program);
+    }
   }
 
   function createSceneWebGLBufferSet(gl) {
@@ -1564,39 +1616,55 @@
 
   function sceneStaticDrawKey(objects, materials, camera) {
     let hash = 2166136261 >>> 0;
+    hash = sceneHashCamera(hash, camera);
+    for (const object of objects) {
+      hash = sceneHashStaticObject(hash, object);
+    }
+    for (const material of materials) {
+      hash = sceneHashMaterialProfile(hash, material);
+    }
+    return String(hash) + ":" + objects.length + ":" + materials.length;
+  }
+
+  function sceneHashCamera(hash, camera) {
     hash = sceneHashNumber(hash, sceneNumber(camera && camera.x, 0));
     hash = sceneHashNumber(hash, sceneNumber(camera && camera.y, 0));
     hash = sceneHashNumber(hash, sceneNumber(camera && camera.z, 6));
     hash = sceneHashNumber(hash, sceneNumber(camera && camera.fov, 75));
     hash = sceneHashNumber(hash, sceneNumber(camera && camera.near, 0.05));
-    hash = sceneHashNumber(hash, sceneNumber(camera && camera.far, 128));
-    for (const object of objects) {
-      hash = sceneHashString(hash, object.id || "");
-      hash = sceneHashString(hash, object.kind || "");
-      hash = sceneHashNumber(hash, sceneNumber(object.materialIndex, 0));
-      hash = sceneHashNumber(hash, sceneNumber(object.vertexOffset, 0));
-      hash = sceneHashNumber(hash, sceneNumber(object.vertexCount, 0));
-      hash = sceneHashNumber(hash, object.static ? 1 : 0);
-      hash = sceneHashNumber(hash, object.viewCulled ? 1 : 0);
-      hash = sceneHashNumber(hash, sceneNumber(object.depthNear, 0));
-      hash = sceneHashNumber(hash, sceneNumber(object.depthFar, 0));
-      hash = sceneHashNumber(hash, sceneNumber(object.depthCenter, 0));
-      hash = sceneHashNumber(hash, sceneNumber(object.bounds && object.bounds.minX, 0));
-      hash = sceneHashNumber(hash, sceneNumber(object.bounds && object.bounds.minY, 0));
-      hash = sceneHashNumber(hash, sceneNumber(object.bounds && object.bounds.minZ, 0));
-      hash = sceneHashNumber(hash, sceneNumber(object.bounds && object.bounds.maxX, 0));
-      hash = sceneHashNumber(hash, sceneNumber(object.bounds && object.bounds.maxY, 0));
-      hash = sceneHashNumber(hash, sceneNumber(object.bounds && object.bounds.maxZ, 0));
-    }
-    for (const material of materials) {
-      hash = sceneHashString(hash, material && material.kind || "");
-      hash = sceneHashString(hash, material && material.color || "");
-      hash = sceneHashNumber(hash, sceneNumber(material && material.opacity, 1));
-      hash = sceneHashNumber(hash, material && material.wireframe ? 1 : 0);
-      hash = sceneHashString(hash, material && material.blendMode || "");
-      hash = sceneHashNumber(hash, sceneNumber(material && material.emissive, 0));
-    }
-    return String(hash) + ":" + objects.length + ":" + materials.length;
+    return sceneHashNumber(hash, sceneNumber(camera && camera.far, 128));
+  }
+
+  function sceneHashStaticObject(hash, object) {
+    hash = sceneHashString(hash, object && object.id || "");
+    hash = sceneHashString(hash, object && object.kind || "");
+    hash = sceneHashNumber(hash, sceneNumber(object && object.materialIndex, 0));
+    hash = sceneHashNumber(hash, sceneNumber(object && object.vertexOffset, 0));
+    hash = sceneHashNumber(hash, sceneNumber(object && object.vertexCount, 0));
+    hash = sceneHashNumber(hash, object && object.static ? 1 : 0);
+    hash = sceneHashNumber(hash, object && object.viewCulled ? 1 : 0);
+    hash = sceneHashNumber(hash, sceneNumber(object && object.depthNear, 0));
+    hash = sceneHashNumber(hash, sceneNumber(object && object.depthFar, 0));
+    hash = sceneHashNumber(hash, sceneNumber(object && object.depthCenter, 0));
+    return sceneHashBounds(hash, object && object.bounds);
+  }
+
+  function sceneHashBounds(hash, bounds) {
+    hash = sceneHashNumber(hash, sceneNumber(bounds && bounds.minX, 0));
+    hash = sceneHashNumber(hash, sceneNumber(bounds && bounds.minY, 0));
+    hash = sceneHashNumber(hash, sceneNumber(bounds && bounds.minZ, 0));
+    hash = sceneHashNumber(hash, sceneNumber(bounds && bounds.maxX, 0));
+    hash = sceneHashNumber(hash, sceneNumber(bounds && bounds.maxY, 0));
+    return sceneHashNumber(hash, sceneNumber(bounds && bounds.maxZ, 0));
+  }
+
+  function sceneHashMaterialProfile(hash, material) {
+    hash = sceneHashString(hash, material && material.kind || "");
+    hash = sceneHashString(hash, material && material.color || "");
+    hash = sceneHashNumber(hash, sceneNumber(material && material.opacity, 1));
+    hash = sceneHashNumber(hash, material && material.wireframe ? 1 : 0);
+    hash = sceneHashString(hash, material && material.blendMode || "");
+    return sceneHashNumber(hash, sceneNumber(material && material.emissive, 0));
   }
 
   function sceneHashNumber(hash, value) {
