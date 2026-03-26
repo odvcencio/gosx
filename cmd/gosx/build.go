@@ -200,15 +200,18 @@ func RunBuild(dir string, dev bool) error {
 
 	// Build WASM — try TinyGo first (smaller binary), fall back to standard Go
 	wasmTmp := filepath.Join(distDir, "gosx-runtime.wasm.tmp")
-	moduleRoot := findModuleRoot(dir)
+	gosxRoot, err := resolveGoSXModuleRoot(dir)
+	if err != nil {
+		return err
+	}
 	usedTinyGo := false
 
 	tinygoPath, tinygoErr := exec.LookPath("tinygo")
 	if tinygoErr == nil && !dev {
 		// TinyGo available and prod mode — use it for smaller WASM
 		fmt.Println("    Using TinyGo for smaller WASM binary...")
-		cmd := exec.Command(tinygoPath, "build", "-target", "wasm", "-o", wasmTmp, "./client/wasm/")
-		cmd.Dir = moduleRoot
+		cmd := exec.Command(tinygoPath, "build", "-target", "wasm", "-o", wasmTmp, gosxModuleImportPath+"/client/wasm")
+		cmd.Dir = dir
 		cmd.Stderr = os.Stderr
 		if err := cmd.Run(); err == nil {
 			usedTinyGo = true
@@ -230,9 +233,9 @@ func RunBuild(dir string, dev bool) error {
 	}
 
 	if !usedTinyGo {
-		cmd := exec.Command("go", "build", "-o", wasmTmp, "./client/wasm/")
+		cmd := exec.Command("go", "build", "-o", wasmTmp, gosxModuleImportPath+"/client/wasm")
 		cmd.Env = append(os.Environ(), "GOOS=js", "GOARCH=wasm")
-		cmd.Dir = moduleRoot
+		cmd.Dir = dir
 		cmd.Stderr = os.Stderr
 		if err := cmd.Run(); err != nil {
 			return fmt.Errorf("go wasm build failed: %w", err)
@@ -305,8 +308,8 @@ func RunBuild(dir string, dev bool) error {
 		path string
 		dest *HashedAsset
 	}{
-		{"bootstrap", filepath.Join(moduleRoot, "client", "js", "bootstrap.js"), &manifest.Runtime.Bootstrap},
-		{"patch", filepath.Join(moduleRoot, "client", "js", "patch.js"), &manifest.Runtime.Patch},
+		{"bootstrap", filepath.Join(gosxRoot, "client", "js", "bootstrap.js"), &manifest.Runtime.Bootstrap},
+		{"patch", filepath.Join(gosxRoot, "client", "js", "patch.js"), &manifest.Runtime.Patch},
 	} {
 		data, err := os.ReadFile(js.path)
 		if err != nil {
@@ -384,20 +387,6 @@ func countNonEmpty(strs ...string) int {
 		}
 	}
 	return n
-}
-
-func findModuleRoot(dir string) string {
-	d, _ := filepath.Abs(dir)
-	for {
-		if _, err := os.Stat(filepath.Join(d, "go.mod")); err == nil {
-			return d
-		}
-		parent := filepath.Dir(d)
-		if parent == d {
-			return dir
-		}
-		d = parent
-	}
 }
 
 func getGOROOT() string {

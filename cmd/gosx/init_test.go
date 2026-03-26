@@ -1,0 +1,224 @@
+package main
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/odvcencio/gosx"
+)
+
+func TestRunInitCreatesStarterProject(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "starter")
+
+	if err := RunInit(dir, "example.com/starter", ""); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, rel := range []string{
+		"go.mod",
+		"main.go",
+		".env",
+		".gitignore",
+		"app/layout.gsx",
+		"app/page.server.go",
+		"app/page.gsx",
+		"app/stack/page.server.go",
+		"app/stack/page.gsx",
+		"app/not-found.gsx",
+		"app/error.gsx",
+		"modules/modules.go",
+		"public/styles.css",
+	} {
+		if _, err := os.Stat(filepath.Join(dir, rel)); err != nil {
+			t.Fatalf("expected %s: %v", rel, err)
+		}
+	}
+
+	goMod := readFile(t, filepath.Join(dir, "go.mod"))
+	if !strings.Contains(goMod, "module example.com/starter") {
+		t.Fatalf("unexpected go.mod: %s", goMod)
+	}
+
+	mainGo := readFile(t, filepath.Join(dir, "main.go"))
+	for _, snippet := range []string{
+		`_ "example.com/starter/modules"`,
+		`_, thisFile, _, _ := runtime.Caller(0)`,
+		`root := server.ResolveAppRoot(thisFile)`,
+		`env.LoadDir(root, "")`,
+		`session.MustNew(getenv("SESSION_SECRET", "gosx-app-session-secret"), session.Options{})`,
+		`router.AddDir(filepath.Join(root, "app"), route.FileRoutesOptions{})`,
+		`app.EnableNavigation()`,
+		`app.Use(sessions.Middleware)`,
+		`app.Use(sessions.Protect)`,
+		`app.SetPublicDir(filepath.Join(root, "public"))`,
+		`app.API("GET /api/health"`,
+		`app.Mount("/", router.Build())`,
+		`server.HTMLDocument(ctx.Title(appName), ctx.Head(), body)`,
+	} {
+		if !strings.Contains(mainGo, snippet) {
+			t.Fatalf("expected scaffold to contain %q", snippet)
+		}
+	}
+
+	modulesGo := readFile(t, filepath.Join(dir, "modules", "modules.go"))
+	for _, snippet := range []string{
+		`_ "example.com/starter/app"`,
+		`_ "example.com/starter/app/stack"`,
+	} {
+		if !strings.Contains(modulesGo, snippet) {
+			t.Fatalf("expected scaffold module imports in modules/modules.go to contain %q", snippet)
+		}
+	}
+
+	assertAllGSXCompile(t, dir)
+}
+
+func TestRunInitDerivesModuleNameFromDirectory(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "My Demo App")
+
+	if err := RunInit(dir, "", ""); err != nil {
+		t.Fatal(err)
+	}
+
+	goMod := readFile(t, filepath.Join(dir, "go.mod"))
+	if !strings.Contains(goMod, "module my-demo-app") {
+		t.Fatalf("unexpected derived module: %s", goMod)
+	}
+}
+
+func TestRunInitFailsWhenFileAlreadyExists(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := RunInit(dir, "example.com/existing", ""); err == nil {
+		t.Fatal("expected init to fail when scaffold file already exists")
+	}
+}
+
+func TestRunInitCreatesDocsTemplate(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "docs")
+
+	if err := RunInit(dir, "example.com/docs", "docs"); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, rel := range []string{
+		"go.mod",
+		".env",
+		".gitignore",
+		"main.go",
+		"app/layout.gsx",
+		"app/modules.go",
+		"app/page.server.go",
+		"app/page.gsx",
+		"modules/modules.go",
+		"app/not-found.gsx",
+		"app/error.gsx",
+		"app/docs/layout.gsx",
+		"app/docs/not-found.gsx",
+		"app/docs/forms/page.gsx",
+		"app/docs/forms/page.server.go",
+		"app/docs/auth/page.gsx",
+		"app/docs/auth/page.server.go",
+		"app/docs/getting-started/page.gsx",
+		"app/docs/getting-started/page.server.go",
+		"app/docs/images/page.gsx",
+		"app/docs/images/page.server.go",
+		"app/docs/routing/page.gsx",
+		"app/docs/routing/page.server.go",
+		"app/docs/runtime/page.gsx",
+		"app/docs/runtime/page.server.go",
+		"public/docs.css",
+	} {
+		if _, err := os.Stat(filepath.Join(dir, rel)); err != nil {
+			t.Fatalf("expected %s: %v", rel, err)
+		}
+	}
+
+	mainGo := readFile(t, filepath.Join(dir, "main.go"))
+	for _, snippet := range []string{
+		`docsapp "example.com/docs/app"`,
+		`_ "example.com/docs/modules"`,
+		`_, thisFile, _, _ := runtime.Caller(0)`,
+		`root := server.ResolveAppRoot(thisFile)`,
+		`session.MustNew(getenv("SESSION_SECRET", "gosx-docs-session-secret"), session.Options{})`,
+		`docsapp.BindAuth(authn)`,
+		`route.FileLayout(filepath.Join(root, "app", "layout.gsx"))`,
+		`return server.HTMLDocument(ctx.Title("GoSX Docs"), ctx.Head(), body)`,
+		`router.AddDir(filepath.Join(root, "app"), route.FileRoutesOptions{})`,
+		`app.Use(sessions.Middleware)`,
+		`app.Use(authn.Middleware)`,
+		`app.Use(sessions.Protect)`,
+		`app.SetPublicDir(filepath.Join(root, "public"))`,
+		`app.Redirect("GET /docs", "/docs/getting-started", http.StatusTemporaryRedirect)`,
+		`app.Rewrite("GET /runtime", "/docs/runtime")`,
+		`app.API("GET /api/meta"`,
+		`app.HandleAPI(server.APIRoute{`,
+		`app.Mount("/", router.Build())`,
+		`ensureDocsSampleAssets(root)`,
+	} {
+		if !strings.Contains(mainGo, snippet) {
+			t.Fatalf("expected docs scaffold to contain %q", snippet)
+		}
+	}
+
+	assertAllGSXCompile(t, dir)
+
+	modulesGo := readFile(t, filepath.Join(dir, "modules", "modules.go"))
+	for _, snippet := range []string{
+		`_ "example.com/docs/app"`,
+		`_ "example.com/docs/app/docs/auth"`,
+		`_ "example.com/docs/app/docs/forms"`,
+		`_ "example.com/docs/app/docs/getting-started"`,
+		`_ "example.com/docs/app/docs/images"`,
+		`_ "example.com/docs/app/docs/routing"`,
+		`_ "example.com/docs/app/docs/runtime"`,
+	} {
+		if !strings.Contains(modulesGo, snippet) {
+			t.Fatalf("expected docs module imports in modules/modules.go to contain %q", snippet)
+		}
+	}
+}
+
+func TestRunInitRejectsUnknownTemplate(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "unknown")
+	if err := RunInit(dir, "example.com/unknown", "wat"); err == nil {
+		t.Fatal("expected unknown template error")
+	}
+}
+
+func readFile(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	return string(data)
+}
+
+func assertAllGSXCompile(t *testing.T, root string) {
+	t.Helper()
+	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() || filepath.Ext(path) != ".gsx" {
+			return nil
+		}
+		source, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		if _, err := gosx.Compile(source); err != nil {
+			t.Fatalf("compile %s: %v", path, err)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk %s: %v", root, err)
+	}
+}

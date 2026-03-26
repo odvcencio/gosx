@@ -1,0 +1,97 @@
+package main
+
+import (
+	"encoding/json"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"testing"
+)
+
+func TestRunExportWritesStaticBundleForStarterApp(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "export-app")
+	if err := RunInit(dir, "example.com/export-app", ""); err != nil {
+		t.Fatal(err)
+	}
+	addLocalGoSXReplace(t, dir)
+	tidyModule(t, dir)
+
+	if err := RunExport(dir); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, rel := range []string{
+		"dist/static/index.html",
+		"dist/static/stack/index.html",
+		"dist/static/404.html",
+		"dist/static/styles.css",
+		"dist/static/gosx/runtime.wasm",
+		"dist/static/gosx/wasm_exec.js",
+		"dist/static/gosx/bootstrap.js",
+		"dist/static/gosx/patch.js",
+		"dist/export.json",
+	} {
+		if _, err := os.Stat(filepath.Join(dir, rel)); err != nil {
+			t.Fatalf("expected export artifact %s: %v", rel, err)
+		}
+	}
+
+	indexHTML := readFile(t, filepath.Join(dir, "dist", "static", "index.html"))
+	for _, snippet := range []string{
+		"<title>My GoSX App</title>",
+		"GoSX Starter",
+		`href="/styles.css"`,
+	} {
+		if !strings.Contains(indexHTML, snippet) {
+			t.Fatalf("expected %q in exported index.html", snippet)
+		}
+	}
+
+	notFoundHTML := readFile(t, filepath.Join(dir, "dist", "static", "404.html"))
+	if !strings.Contains(notFoundHTML, "Page not found") {
+		t.Fatalf("expected exported 404 page, got %q", notFoundHTML)
+	}
+
+	var manifest exportManifest
+	if err := json.Unmarshal([]byte(readFile(t, filepath.Join(dir, "dist", "export.json"))), &manifest); err != nil {
+		t.Fatalf("decode export manifest: %v", err)
+	}
+	if len(manifest.Pages) != 2 || manifest.Pages[0] != "/" || manifest.Pages[1] != "/stack" {
+		t.Fatalf("unexpected export pages: %#v", manifest.Pages)
+	}
+}
+
+func addLocalGoSXReplace(t *testing.T, dir string) {
+	t.Helper()
+	goModPath := filepath.Join(dir, "go.mod")
+	goMod := readFile(t, goModPath)
+	repoRoot := testRepoRoot(t)
+	replaceLine := "\nreplace github.com/odvcencio/gosx => " + repoRoot + "\n"
+	if strings.Contains(goMod, replaceLine) {
+		return
+	}
+	if err := os.WriteFile(goModPath, []byte(goMod+replaceLine), 0644); err != nil {
+		t.Fatalf("write %s: %v", goModPath, err)
+	}
+}
+
+func testRepoRoot(t *testing.T) string {
+	t.Helper()
+	_, file, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("resolve repo root caller")
+	}
+	return filepath.Clean(filepath.Join(filepath.Dir(file), "..", ".."))
+}
+
+func tidyModule(t *testing.T, dir string) {
+	t.Helper()
+	cmd := exec.Command("go", "mod", "tidy")
+	cmd.Dir = dir
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("go mod tidy: %v", err)
+	}
+}

@@ -4,6 +4,7 @@
 //
 //	gosx build <dir>             Build GoSX application
 //	gosx dev <dir>               Start development server with hot reload
+//	gosx export <dir>            Pre-render static GoSX pages
 //	gosx init [dir]              Scaffold a GoSX application or docs site
 //	gosx compile <file.gsx>      Compile GoSX to Go
 //	gosx check <file.gsx>        Parse and validate without emitting
@@ -36,6 +37,8 @@ func main() {
 		cmdBuild()
 	case "dev":
 		cmdDev()
+	case "export":
+		cmdExport()
 	case "init":
 		cmdInit()
 	case "compile":
@@ -66,6 +69,7 @@ Usage:
 Commands:
   build <dir>          Build GoSX application
   dev <dir>            Start development server with hot reload
+  export <dir>         Pre-render static GoSX pages
   init [dir]           Scaffold a GoSX application or docs site
   compile <file>       Compile .gsx file to Go
   check <file>         Parse and validate
@@ -108,6 +112,14 @@ func cmdDev() {
 	dir := argOrDefault(2, ".")
 	if err := RunDev(dir); err != nil {
 		fmt.Fprintf(os.Stderr, "gosx dev: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+func cmdExport() {
+	dir := argOrDefault(2, ".")
+	if err := RunExport(dir); err != nil {
+		fmt.Fprintf(os.Stderr, "gosx export: %v\n", err)
 		os.Exit(1)
 	}
 }
