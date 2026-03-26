@@ -2,6 +2,7 @@ package enginevm
 
 import (
 	"encoding/json"
+	"fmt"
 	"math"
 	"reflect"
 	"sort"
@@ -480,7 +481,35 @@ func resolveRenderMaterial(object sceneObject) rootengine.RenderMaterial {
 	if profile.Opacity < 0.999 && profile.BlendMode == "opaque" {
 		profile.BlendMode = "alpha"
 	}
+	profile.RenderPass = renderPassFromMaterialProfile(profile)
+	profile.Key = renderMaterialKey(profile)
 	return profile
+}
+
+func renderPassFromMaterialProfile(profile rootengine.RenderMaterial) string {
+	switch strings.ToLower(strings.TrimSpace(profile.BlendMode)) {
+	case "additive":
+		return "additive"
+	case "alpha":
+		return "alpha"
+	}
+	if profile.Opacity < 0.999 {
+		return "alpha"
+	}
+	return "opaque"
+}
+
+func renderMaterialKey(profile rootengine.RenderMaterial) string {
+	return fmt.Sprintf(
+		"%s|%s|%.3f|%t|%s|%s|%.3f",
+		strings.ToLower(strings.TrimSpace(profile.Kind)),
+		strings.TrimSpace(profile.Color),
+		profile.Opacity,
+		profile.Wireframe,
+		strings.ToLower(strings.TrimSpace(profile.BlendMode)),
+		profile.RenderPass,
+		profile.Emissive,
+	)
 }
 
 func appendSceneLine(bundle *rootengine.RenderBundle, width, height int, from, to rootengine.RenderPoint, color string, lineWidth float64) {
