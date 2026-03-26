@@ -1273,63 +1273,83 @@
   }
 
   function applySceneWebGLBlend(gl, mode, stateCache) {
-    if (stateCache && stateCache.blendMode === mode) {
+    if (sceneWebGLStateUnchanged(stateCache, "blendMode", mode)) {
       return;
     }
     const blendConst = typeof gl.BLEND === "number" ? gl.BLEND : 0x0BE2;
     const one = typeof gl.ONE === "number" ? gl.ONE : 1;
     const srcAlpha = typeof gl.SRC_ALPHA === "number" ? gl.SRC_ALPHA : 0x0302;
     const oneMinusSrcAlpha = typeof gl.ONE_MINUS_SRC_ALPHA === "number" ? gl.ONE_MINUS_SRC_ALPHA : 0x0303;
-    if (stateCache) {
-      stateCache.blendMode = mode;
-    }
-    switch (mode) {
-    case "alpha":
-      if (typeof gl.enable === "function") {
-        gl.enable(blendConst);
-      }
-      if (typeof gl.blendFunc === "function") {
-        gl.blendFunc(srcAlpha, oneMinusSrcAlpha);
-      }
-      return;
-    case "additive":
-      if (typeof gl.enable === "function") {
-        gl.enable(blendConst);
-      }
-      if (typeof gl.blendFunc === "function") {
-        gl.blendFunc(srcAlpha, one);
-      }
-      return;
-    default:
-      if (typeof gl.disable === "function") {
-        gl.disable(blendConst);
-      }
+    const config = sceneWebGLBlendConfig(mode, srcAlpha, oneMinusSrcAlpha, one);
+    rememberSceneWebGLState(stateCache, "blendMode", mode);
+    setSceneWebGLCapability(gl, blendConst, config.enabled);
+    if (config.enabled && typeof gl.blendFunc === "function") {
+      gl.blendFunc(config.src, config.dst);
     }
   }
 
   function applySceneWebGLDepth(gl, mode, stateCache) {
-    if (stateCache && stateCache.depthMode === mode) {
+    if (sceneWebGLStateUnchanged(stateCache, "depthMode", mode)) {
       return;
     }
     const depthTest = typeof gl.DEPTH_TEST === "number" ? gl.DEPTH_TEST : 0x0B71;
     const lequal = typeof gl.LEQUAL === "number" ? gl.LEQUAL : 0x0203;
-    if (stateCache) {
-      stateCache.depthMode = mode;
-    }
-    if (mode === "disabled") {
-      if (typeof gl.disable === "function") {
-        gl.disable(depthTest);
-      }
+    const config = sceneWebGLDepthConfig(mode);
+    rememberSceneWebGLState(stateCache, "depthMode", mode);
+    setSceneWebGLCapability(gl, depthTest, config.enabled);
+    if (!config.enabled) {
       return;
-    }
-    if (typeof gl.enable === "function") {
-      gl.enable(depthTest);
     }
     if (typeof gl.depthFunc === "function") {
       gl.depthFunc(lequal);
     }
     if (typeof gl.depthMask === "function") {
-      gl.depthMask(mode === "opaque");
+      gl.depthMask(config.mask);
+    }
+  }
+
+  function sceneWebGLStateUnchanged(stateCache, key, mode) {
+    return Boolean(stateCache && stateCache[key] === mode);
+  }
+
+  function rememberSceneWebGLState(stateCache, key, mode) {
+    if (!stateCache) {
+      return;
+    }
+    stateCache[key] = mode;
+  }
+
+  function setSceneWebGLCapability(gl, capability, enabled) {
+    if (enabled) {
+      if (typeof gl.enable === "function") {
+        gl.enable(capability);
+      }
+      return;
+    }
+    if (typeof gl.disable === "function") {
+      gl.disable(capability);
+    }
+  }
+
+  function sceneWebGLBlendConfig(mode, srcAlpha, oneMinusSrcAlpha, one) {
+    switch (mode) {
+    case "alpha":
+      return { enabled: true, src: srcAlpha, dst: oneMinusSrcAlpha };
+    case "additive":
+      return { enabled: true, src: srcAlpha, dst: one };
+    default:
+      return { enabled: false };
+    }
+  }
+
+  function sceneWebGLDepthConfig(mode) {
+    switch (mode) {
+    case "opaque":
+      return { enabled: true, mask: true };
+    case "translucent":
+      return { enabled: true, mask: false };
+    default:
+      return { enabled: false, mask: false };
     }
   }
 
