@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/odvcencio/gosx/client/vm"
+	"github.com/odvcencio/gosx/island/program"
 	"github.com/odvcencio/gosx/signal"
 )
 
@@ -85,59 +86,18 @@ func (b *Bridge) HydrateIsland(id, componentName, propsJSON string, programData 
 	if err != nil {
 		return fmt.Errorf("decode program %q: %w", componentName, err)
 	}
-	if propsJSON == "" {
-		propsJSON = "{}"
-	}
-	if !json.Valid([]byte(propsJSON)) {
-		return fmt.Errorf("invalid props JSON for %q", componentName)
+	propsJSON, err = normalizePropsJSON(componentName, propsJSON)
+	if err != nil {
+		return err
 	}
 	if _, exists := b.islands[id]; exists {
 		b.DisposeIsland(id)
 	}
 
 	island := vm.NewIsland(prog, propsJSON)
-
-	// Connect shared signals: any signal whose name starts with "$" is
-	// stored in the bridge's shared store, not the island's local state.
-	// This means multiple islands can read/write the same signal.
-	for _, def := range prog.Signals {
-		if len(def.Name) > 0 && def.Name[0] == '$' {
-			// Evaluate the init expression to get the typed initial value
-			initVal := island.EvalExpr(def.Init)
-			sharedSig := b.store.Signal(def.Name, initVal)
-			island.SetSharedSignal(def.Name, sharedSig)
-		}
-	}
-
-	// Subscribe to shared signals: when any shared signal changes,
-	// re-render this island and push patches to JS.
-	// Skip if this island is the one that triggered the change (it handles
-	// its own reconcile in Dispatch).
-	islandID := id
-	var unsubs []func()
-	for _, def := range prog.Signals {
-		if len(def.Name) > 0 && def.Name[0] == '$' {
-			sig := b.store.Signal(def.Name, vm.ZeroValue(def.Type))
-			unsub := sig.Subscribe(func() {
-				if b.dispatching == islandID {
-					return // the dispatching island reconciles itself
-				}
-				isl, ok := b.islands[islandID]
-				if !ok {
-					return
-				}
-				patches := isl.Reconcile()
-				if len(patches) > 0 && b.patchFn != nil {
-					patchJSON, err := MarshalPatches(patches)
-					if err == nil {
-						b.patchFn(islandID, patchJSON)
-					}
-				}
-			})
-			unsubs = append(unsubs, unsub)
-		}
-	}
-	b.unsubs[id] = unsubs
+	defs := sharedSignalDefs(prog)
+	b.connectSharedSignals(island, defs)
+	b.unsubs[id] = b.subscribeSharedSignals(id, defs)
 
 	b.islands[id] = island
 	return nil
@@ -152,13 +112,14 @@ func (b *Bridge) DispatchAction(islandID, handlerName, eventDataJSON string) ([]
 		return nil, fmt.Errorf("island %q not found", islandID)
 	}
 
-	// Mark this island as the dispatcher so its subscription callback
-	// skips reconciliation (Dispatch handles it).
 	b.dispatching = islandID
-	patches := island.Dispatch(handlerName, eventDataJSON)
-	b.dispatching = ""
+	defer func() {
+		if b.dispatching == islandID {
+			b.dispatching = ""
+		}
+	}()
 
-	return patches, nil
+	return island.Dispatch(handlerName, eventDataJSON), nil
 }
 
 // SetSharedSignalJSON updates a shared signal from a JSON payload.
@@ -209,4 +170,75 @@ func (b *Bridge) DisposeIsland(id string) {
 // IslandCount returns the number of active islands.
 func (b *Bridge) IslandCount() int {
 	return len(b.islands)
+}
+
+func normalizePropsJSON(componentName, propsJSON string) (string, error) {
+	if propsJSON == "" {
+		propsJSON = "{}"
+	}
+	if !json.Valid([]byte(propsJSON)) {
+		return "", fmt.Errorf("invalid props JSON for %q", componentName)
+	}
+	return propsJSON, nil
+}
+
+func sharedSignalDefs(prog *program.Program) []program.SignalDef {
+	if prog == nil || len(prog.Signals) == 0 {
+		return nil
+	}
+	defs := make([]program.SignalDef, 0, len(prog.Signals))
+	for _, def := range prog.Signals {
+		if isSharedSignal(def.Name) {
+			defs = append(defs, def)
+		}
+	}
+	return defs
+}
+
+func isSharedSignal(name string) bool {
+	return len(name) > 0 && name[0] == '$'
+}
+
+func (b *Bridge) connectSharedSignals(island *vm.Island, defs []program.SignalDef) {
+	for _, def := range defs {
+		initVal := island.EvalExpr(def.Init)
+		sharedSig := b.store.Signal(def.Name, initVal)
+		island.SetSharedSignal(def.Name, sharedSig)
+	}
+}
+
+func (b *Bridge) subscribeSharedSignals(islandID string, defs []program.SignalDef) []func() {
+	unsubs := make([]func(), 0, len(defs))
+	for _, def := range defs {
+		unsubs = append(unsubs, b.subscribeSharedSignal(islandID, def))
+	}
+	return unsubs
+}
+
+func (b *Bridge) subscribeSharedSignal(islandID string, def program.SignalDef) func() {
+	sig := b.store.Signal(def.Name, vm.ZeroValue(def.Type))
+	return sig.Subscribe(func() {
+		b.reconcileSharedIsland(islandID)
+	})
+}
+
+func (b *Bridge) reconcileSharedIsland(islandID string) {
+	if b.dispatching == islandID {
+		return
+	}
+	island, ok := b.islands[islandID]
+	if !ok {
+		return
+	}
+	b.pushPatches(islandID, island.Reconcile())
+}
+
+func (b *Bridge) pushPatches(islandID string, patches []vm.PatchOp) {
+	if len(patches) == 0 || b.patchFn == nil {
+		return
+	}
+	patchJSON, err := MarshalPatches(patches)
+	if err == nil {
+		b.patchFn(islandID, patchJSON)
+	}
 }
