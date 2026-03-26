@@ -161,6 +161,11 @@ class FakeWebGLContext {
     return name === "a_position" ? 0 : 1;
   }
 
+  getUniformLocation(_program, name) {
+    this.ops.push(["getUniformLocation", name]);
+    return { name };
+  }
+
   viewport(x, y, width, height) {
     this.ops.push(["viewport", x, y, width, height]);
   }
@@ -195,6 +200,14 @@ class FakeWebGLContext {
 
   drawArrays(mode, first, count) {
     this.ops.push(["drawArrays", mode, first, count]);
+  }
+
+  uniform4f(location, x, y, z, w) {
+    this.ops.push(["uniform4f", location && location.name, x, y, z, w]);
+  }
+
+  uniform1f(location, value) {
+    this.ops.push(["uniform1f", location && location.name, value]);
   }
 
   deleteBuffer(_buffer) {
@@ -1015,6 +1028,8 @@ test("bootstrap hydrates shared-runtime Scene3D programs", async () => {
 
   const env = createContext({
     elements: [mount],
+    enableWebGL: true,
+    disableCanvas2D: true,
     fetchRoutes: {
       "/runtime.wasm": { bytes: [0, 97, 115, 109] },
       "/scene-program.json": { text: '{"name":"GeometryZoo"}' },
@@ -1048,6 +1063,7 @@ test("bootstrap hydrates shared-runtime Scene3D programs", async () => {
     ]),
     onRenderEngine: () => JSON.stringify({
       background: "#08151f",
+      camera: { x: 0.1, y: -0.05, z: 6.2, fov: 72 },
       lines: [
         {
           from: { x: 10, y: 12 },
@@ -1059,6 +1075,9 @@ test("bootstrap hydrates shared-runtime Scene3D programs", async () => {
       positions: [-0.9, 0.93, -0.2, 0.47],
       colors: [0.55, 0.88, 1, 1, 0.55, 0.88, 1, 1],
       vertexCount: 2,
+      worldPositions: [-1.2, -0.4, 0.2, 1.1, 0.6, 1.4],
+      worldColors: [0.55, 0.88, 1, 1, 0.55, 0.88, 1, 1],
+      worldVertexCount: 2,
       objectCount: 1,
     }),
   });
@@ -1077,8 +1096,12 @@ test("bootstrap hydrates shared-runtime Scene3D programs", async () => {
     true,
   );
   assert.equal(mount.children[0].tagName, "CANVAS");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "webgl");
   assert.equal(env.engineRenderCalls.length > 0, true);
   assert.equal(env.engineTickCalls.length, 0);
+  const gl = mount.children[0].getContext("webgl");
+  assert.ok(gl.ops.some((entry) => entry[0] === "uniform4f" && entry[1] === "u_camera"));
+  assert.ok(gl.ops.some((entry) => entry[0] === "vertexAttribPointer" && entry[2] === 3));
 
   env.context.__gosx_dispose_engine("gosx-engine-rt");
   assert.deepEqual(env.engineDisposeCalls, [["gosx-engine-rt"]]);

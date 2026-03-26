@@ -231,10 +231,12 @@ func buildRenderBundle(props map[string]any, nodes []resolvedNode, width, height
 	}
 
 	bundle := rootengine.RenderBundle{
-		Background: sceneBackground(props),
-		Lines:      []rootengine.RenderLine{},
-		Positions:  []float64{},
-		Colors:     []float64{},
+		Background:     sceneBackground(props),
+		Lines:          []rootengine.RenderLine{},
+		Positions:      []float64{},
+		Colors:         []float64{},
+		WorldPositions: []float64{},
+		WorldColors:    []float64{},
 	}
 
 	camera := sceneCameraFromProps(props)
@@ -247,12 +249,19 @@ func buildRenderBundle(props map[string]any, nodes []resolvedNode, width, height
 			objects = append(objects, sceneObjectFromResolvedNode(index, node))
 		}
 	}
+	bundle.Camera = rootengine.RenderCamera{
+		X:   camera.X,
+		Y:   camera.Y,
+		Z:   camera.Z,
+		FOV: camera.FOV,
+	}
 	bundle.ObjectCount = len(objects)
 	appendSceneGrid(&bundle, width, height)
 	for _, object := range objects {
 		appendSceneObject(&bundle, camera, width, height, object, timeSeconds)
 	}
 	bundle.VertexCount = len(bundle.Positions) / 2
+	bundle.WorldVertexCount = len(bundle.WorldPositions) / 3
 	return bundle
 }
 
@@ -318,13 +327,28 @@ func appendSceneGrid(bundle *rootengine.RenderBundle, width, height int) {
 
 func appendSceneObject(bundle *rootengine.RenderBundle, camera sceneCamera, width, height int, object sceneObject, timeSeconds float64) {
 	for _, segment := range sceneObjectSegments(object) {
-		from := projectPoint(translatePoint(segment[0], object, timeSeconds), camera, width, height)
-		to := projectPoint(translatePoint(segment[1], object, timeSeconds), camera, width, height)
+		worldFrom := translatePoint(segment[0], object, timeSeconds)
+		worldTo := translatePoint(segment[1], object, timeSeconds)
+		appendWorldSceneLine(bundle, worldFrom, worldTo, object.Color)
+		from := projectPoint(worldFrom, camera, width, height)
+		to := projectPoint(worldTo, camera, width, height)
 		if from == nil || to == nil {
 			continue
 		}
 		appendSceneLine(bundle, width, height, *from, *to, object.Color, 1.8)
 	}
+}
+
+func appendWorldSceneLine(bundle *rootengine.RenderBundle, from, to point3, color string) {
+	rgba := sceneColorRGBA(color, [4]float64{0.55, 0.88, 1, 1})
+	bundle.WorldPositions = append(bundle.WorldPositions,
+		from.X, from.Y, from.Z,
+		to.X, to.Y, to.Z,
+	)
+	bundle.WorldColors = append(bundle.WorldColors,
+		rgba[0], rgba[1], rgba[2], rgba[3],
+		rgba[0], rgba[1], rgba[2], rgba[3],
+	)
 }
 
 func appendSceneLine(bundle *rootengine.RenderBundle, width, height int, from, to rootengine.RenderPoint, color string, lineWidth float64) {
