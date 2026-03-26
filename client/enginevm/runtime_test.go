@@ -264,6 +264,15 @@ func TestRuntimeRenderBundleSyncsDirtyNodes(t *testing.T) {
 	if bundle.ObjectCount != 1 {
 		t.Fatalf("expected 1 object, got %d", bundle.ObjectCount)
 	}
+	if len(bundle.Materials) != 1 {
+		t.Fatalf("expected one resolved material, got %#v", bundle.Materials)
+	}
+	if len(bundle.Objects) != 1 {
+		t.Fatalf("expected one render object, got %#v", bundle.Objects)
+	}
+	if bundle.Objects[0].MaterialIndex != 0 {
+		t.Fatalf("expected render object to reference first material, got %#v", bundle.Objects[0])
+	}
 	if bundle.VertexCount == 0 {
 		t.Fatal("expected projected vertices in render bundle")
 	}

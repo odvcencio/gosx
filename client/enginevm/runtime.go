@@ -193,6 +193,7 @@ type sceneCamera struct {
 type sceneObject struct {
 	ID        string
 	Kind      string
+	Material  string
 	Size      float64
 	Width     float64
 	Height    float64
@@ -209,6 +210,9 @@ type sceneObject struct {
 	SpinX     float64
 	SpinY     float64
 	SpinZ     float64
+	Opacity   float64
+	Wireframe bool
+	Static    bool
 }
 
 type point3 struct {
@@ -232,6 +236,8 @@ func buildRenderBundle(props map[string]any, nodes []resolvedNode, width, height
 
 	bundle := rootengine.RenderBundle{
 		Background:     sceneBackground(props),
+		Materials:      []rootengine.RenderMaterial{},
+		Objects:        []rootengine.RenderObject{},
 		Lines:          []rootengine.RenderLine{},
 		Positions:      []float64{},
 		Colors:         []float64{},
@@ -255,11 +261,24 @@ func buildRenderBundle(props map[string]any, nodes []resolvedNode, width, height
 		Z:   camera.Z,
 		FOV: camera.FOV,
 	}
-	bundle.ObjectCount = len(objects)
 	appendSceneGrid(&bundle, width, height)
 	for _, object := range objects {
+		vertexOffset := len(bundle.WorldPositions) / 3
+		materialIndex := ensureRenderMaterial(&bundle, object)
 		appendSceneObject(&bundle, camera, width, height, object, timeSeconds)
+		vertexCount := (len(bundle.WorldPositions) / 3) - vertexOffset
+		if vertexCount > 0 {
+			bundle.Objects = append(bundle.Objects, rootengine.RenderObject{
+				ID:            object.ID,
+				Kind:          object.Kind,
+				MaterialIndex: materialIndex,
+				VertexOffset:  vertexOffset,
+				VertexCount:   vertexCount,
+				Static:        object.Static,
+			})
+		}
 	}
+	bundle.ObjectCount = len(bundle.Objects)
 	bundle.VertexCount = len(bundle.Positions) / 2
 	bundle.WorldVertexCount = len(bundle.WorldPositions) / 3
 	return bundle
@@ -297,6 +316,7 @@ func sceneObjectFromResolvedNode(index int, node resolvedNode) sceneObject {
 	return sceneObject{
 		ID:        stringFromAny(propValue(node.Props, "id"), "scene-object-"+strconv.Itoa(index)),
 		Kind:      normalizeSceneKind(stringFromAny(propValue(node.Props, "kind"), node.Geometry)),
+		Material:  stringFromAny(node.Material, "flat"),
 		Size:      size,
 		Width:     numberFromAny(propValue(node.Props, "width"), size),
 		Height:    numberFromAny(propValue(node.Props, "height"), size),
@@ -313,6 +333,9 @@ func sceneObjectFromResolvedNode(index int, node resolvedNode) sceneObject {
 		SpinX:     numberFromAny(propValue(node.Props, "spinX"), 0),
 		SpinY:     numberFromAny(propValue(node.Props, "spinY"), 0),
 		SpinZ:     numberFromAny(propValue(node.Props, "spinZ"), 0),
+		Opacity:   clamp(numberFromAny(propValue(node.Props, "opacity"), 1), 0, 1),
+		Wireframe: boolFromAny(propValue(node.Props, "wireframe"), true),
+		Static:    node.Static,
 	}
 }
 
@@ -349,6 +372,22 @@ func appendWorldSceneLine(bundle *rootengine.RenderBundle, from, to point3, colo
 		rgba[0], rgba[1], rgba[2], rgba[3],
 		rgba[0], rgba[1], rgba[2], rgba[3],
 	)
+}
+
+func ensureRenderMaterial(bundle *rootengine.RenderBundle, object sceneObject) int {
+	profile := rootengine.RenderMaterial{
+		Kind:      stringFromAny(object.Material, "flat"),
+		Color:     object.Color,
+		Opacity:   object.Opacity,
+		Wireframe: object.Wireframe,
+	}
+	for index, existing := range bundle.Materials {
+		if existing == profile {
+			return index
+		}
+	}
+	bundle.Materials = append(bundle.Materials, profile)
+	return len(bundle.Materials) - 1
 }
 
 func appendSceneLine(bundle *rootengine.RenderBundle, width, height int, from, to rootengine.RenderPoint, color string, lineWidth float64) {
@@ -628,6 +667,21 @@ func numberFromAny(value any, fallback float64) float64 {
 func stringFromAny(value any, fallback string) string {
 	if typed, ok := value.(string); ok && strings.TrimSpace(typed) != "" {
 		return typed
+	}
+	return fallback
+}
+
+func boolFromAny(value any, fallback bool) bool {
+	switch typed := value.(type) {
+	case bool:
+		return typed
+	case string:
+		switch strings.ToLower(strings.TrimSpace(typed)) {
+		case "true", "1", "yes", "on":
+			return true
+		case "false", "0", "no", "off":
+			return false
+		}
 	}
 	return fallback
 }
