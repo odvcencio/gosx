@@ -101,9 +101,29 @@ func TestStageSidecarCSSCopiesFiles(t *testing.T) {
 	}
 }
 
+func TestStageSidecarCSSPreservesRelativePaths(t *testing.T) {
+	dir := t.TempDir()
+	out := filepath.Join(dir, "build", "css")
+	writeTempFile(t, dir, "app/page.css", ".page { color: red; }\n")
+	writeTempFile(t, dir, "app/docs/page.css", ".docs-page { color: blue; }\n")
+
+	if err := stageSidecarCSS(dir, out); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, rel := range []string{"app/page.css", "app/docs/page.css"} {
+		if _, err := os.Stat(filepath.Join(out, rel)); err != nil {
+			t.Fatalf("expected preserved css path %s: %v", rel, err)
+		}
+	}
+}
+
 func writeTempFile(t *testing.T, dir, name, contents string) {
 	t.Helper()
 	path := filepath.Join(dir, name)
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatalf("mkdir %s: %v", filepath.Dir(path), err)
+	}
 	if err := os.WriteFile(path, []byte(contents), 0644); err != nil {
 		t.Fatalf("write %s: %v", path, err)
 	}

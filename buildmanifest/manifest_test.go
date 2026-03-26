@@ -20,7 +20,7 @@ func TestLoadAndURLs(t *testing.T) {
     {"name": "Counter", "format": "bin", "file": "Counter.55555555.gxi", "hash": "55555555", "size": 50}
   ],
   "css": [
-    {"component": "Counter", "file": "counter.66666666.css", "hash": "66666666", "size": 60}
+    {"component": "Counter", "source": "app/counter.css", "file": "app_counter.66666666.css", "hash": "66666666", "size": 60}
   ]
 }`)
 	if err := os.WriteFile(path, data, 0644); err != nil {
@@ -47,7 +47,14 @@ func TestLoadAndURLs(t *testing.T) {
 	if got := manifest.IslandURL("/gosx/assets", islandAsset); got != "/gosx/assets/islands/Counter.55555555.gxi" {
 		t.Fatalf("unexpected island url: %s", got)
 	}
-	if got := manifest.CSSURL("/gosx/assets", manifest.CSS[0]); got != "/gosx/assets/css/counter.66666666.css" {
+	if got := manifest.CSSURL("/gosx/assets", manifest.CSS[0]); got != "/gosx/assets/css/app_counter.66666666.css" {
 		t.Fatalf("unexpected css url: %s", got)
+	}
+	cssAsset, ok := manifest.CSSAssetBySource("app/counter.css")
+	if !ok {
+		t.Fatal("expected css asset by source")
+	}
+	if cssAsset.File != "app_counter.66666666.css" {
+		t.Fatalf("unexpected css asset file: %s", cssAsset.File)
 	}
 }

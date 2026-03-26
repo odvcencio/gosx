@@ -403,6 +403,59 @@ func Layout() Node {
 	}
 }
 
+func TestRouterAddDirAutomaticallyIncludesSidecarCSSForLayoutsAndPages(t *testing.T) {
+	root := t.TempDir()
+	writeRouteFile(t, root, "layout.gsx", `package docs
+
+func Layout() Node {
+	return <div class="root"><Slot /></div>
+}
+`)
+	writeRouteFile(t, root, "layout.css", `.root { background: linen; }`)
+	writeRouteFile(t, root, "docs/layout.gsx", `package docs
+
+func Layout() Node {
+	return <section class="docs-shell"><Slot /></section>
+}
+`)
+	writeRouteFile(t, root, "docs/layout.css", `.docs-shell { border: 1px solid tan; }`)
+	writeRouteFile(t, root, "docs/page.gsx", `package docs
+
+func Page() Node {
+	return <main class="page">Styled docs page</main>
+}
+`)
+	writeRouteFile(t, root, "docs/page.css", `.page { color: sienna; }`)
+
+	router := NewRouter()
+	router.SetLayout(func(ctx *RouteContext, body gosx.Node) gosx.Node {
+		return server.HTMLDocument("Docs", ctx.Head(), body)
+	})
+	if err := router.AddDir(root, FileRoutesOptions{}); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/docs", nil)
+	w := httptest.NewRecorder()
+	router.Build().ServeHTTP(w, req)
+
+	body := w.Body.String()
+	for _, snippet := range []string{
+		`data-gosx-file-css="layout.css"`,
+		`.root { background: linen; }`,
+		`.docs-shell { border: 1px solid tan; }`,
+		`.page { color: sienna; }`,
+	} {
+		if !strings.Contains(body, snippet) {
+			t.Fatalf("expected %q in %q", snippet, body)
+		}
+	}
+	if !(strings.Index(body, `.root { background: linen; }`) < strings.Index(body, `.docs-shell { border: 1px solid tan; }`) &&
+		strings.Index(body, `.docs-shell { border: 1px solid tan; }`) < strings.Index(body, `.page { color: sienna; }`)) {
+		t.Fatalf("expected outer layout CSS before nested layout CSS before page CSS in %q", body)
+	}
+}
+
 func TestRouterAddDirSupportsDynamicSegments(t *testing.T) {
 	root := t.TempDir()
 	writeRouteFile(t, root, "blog/[slug]/page.html", `<main>Dynamic</main>`)
