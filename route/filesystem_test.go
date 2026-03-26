@@ -496,11 +496,13 @@ func Page() Node {
 	for _, snippet := range []string{
 		`<title>Sidecar Metadata Title</title>`,
 		`name="description" content="Nested docs description"`,
-		`rel="canonical" href="https://gosx.dev/docs"`,
 	} {
 		if !strings.Contains(body, snippet) {
 			t.Fatalf("expected %q in %q", snippet, body)
 		}
+	}
+	if !strings.Contains(body, `rel="canonical"`) || !strings.Contains(body, `href="https://gosx.dev/docs"`) {
+		t.Fatalf("expected canonical link in %q", body)
 	}
 }
 
