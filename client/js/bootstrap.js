@@ -986,6 +986,10 @@
 
     const positionBuffer = gl.createBuffer();
     const colorBuffer = gl.createBuffer();
+    const staticPositionBuffer = gl.createBuffer();
+    const staticColorBuffer = gl.createBuffer();
+    const dynamicPositionBuffer = gl.createBuffer();
+    const dynamicColorBuffer = gl.createBuffer();
     const positionLocation = gl.getAttribLocation(program, "a_position");
     const colorLocation = gl.getAttribLocation(program, "a_color");
     const cameraLocation = gl.getUniformLocation(program, "u_camera");
@@ -996,6 +1000,8 @@
     const dynamicDraw = typeof gl.DYNAMIC_DRAW === "number" ? gl.DYNAMIC_DRAW : 0x88E8;
     const colorBufferBit = typeof gl.COLOR_BUFFER_BIT === "number" ? gl.COLOR_BUFFER_BIT : 0x4000;
     const linesMode = typeof gl.LINES === "number" ? gl.LINES : 0x0001;
+    let staticDrawKey = "";
+    let staticVertexCount = 0;
 
     return {
       kind: "webgl",
@@ -1029,28 +1035,175 @@
           gl.uniform1f(perspectiveLocation, usePerspective ? 1 : 0);
         }
 
-        gl.bindBuffer(arrayBuffer, positionBuffer);
-        gl.bufferData(arrayBuffer, positions, dynamicDraw);
-        gl.enableVertexAttribArray(positionLocation);
-        gl.vertexAttribPointer(positionLocation, usePerspective ? 3 : 2, floatType, false, 0, 0);
+        if (usePerspective) {
+          const drawPlan = buildSceneWorldDrawPlan(bundle);
+          if (drawPlan) {
+            if (drawPlan.staticKey !== staticDrawKey) {
+              uploadSceneWebGLBuffers(gl, arrayBuffer, dynamicDraw, staticPositionBuffer, staticColorBuffer, drawPlan.staticPositions, drawPlan.staticColors);
+              staticDrawKey = drawPlan.staticKey;
+              staticVertexCount = drawPlan.staticVertexCount;
+            }
+            drawSceneWebGLLines(gl, arrayBuffer, floatType, linesMode, positionLocation, colorLocation, staticPositionBuffer, staticColorBuffer, staticVertexCount, 3);
+            uploadSceneWebGLBuffers(gl, arrayBuffer, dynamicDraw, dynamicPositionBuffer, dynamicColorBuffer, drawPlan.dynamicPositions, drawPlan.dynamicColors);
+            drawSceneWebGLLines(gl, arrayBuffer, floatType, linesMode, positionLocation, colorLocation, dynamicPositionBuffer, dynamicColorBuffer, drawPlan.dynamicVertexCount, 3);
+            return;
+          }
+        }
 
-        gl.bindBuffer(arrayBuffer, colorBuffer);
-        gl.bufferData(arrayBuffer, colors, dynamicDraw);
-        gl.enableVertexAttribArray(colorLocation);
-        gl.vertexAttribPointer(colorLocation, 4, floatType, false, 0, 0);
-
-        gl.drawArrays(linesMode, 0, vertexCount);
+        uploadSceneWebGLBuffers(gl, arrayBuffer, dynamicDraw, positionBuffer, colorBuffer, positions, colors);
+        drawSceneWebGLLines(gl, arrayBuffer, floatType, linesMode, positionLocation, colorLocation, positionBuffer, colorBuffer, vertexCount, usePerspective ? 3 : 2);
       },
       dispose() {
         if (typeof gl.deleteBuffer === "function") {
           gl.deleteBuffer(positionBuffer);
           gl.deleteBuffer(colorBuffer);
+          gl.deleteBuffer(staticPositionBuffer);
+          gl.deleteBuffer(staticColorBuffer);
+          gl.deleteBuffer(dynamicPositionBuffer);
+          gl.deleteBuffer(dynamicColorBuffer);
         }
         if (typeof gl.deleteProgram === "function") {
           gl.deleteProgram(program);
         }
       },
     };
+  }
+
+  function uploadSceneWebGLBuffers(gl, arrayBuffer, usage, positionBuffer, colorBuffer, positions, colors) {
+    gl.bindBuffer(arrayBuffer, positionBuffer);
+    gl.bufferData(arrayBuffer, positions, usage);
+    gl.bindBuffer(arrayBuffer, colorBuffer);
+    gl.bufferData(arrayBuffer, colors, usage);
+  }
+
+  function drawSceneWebGLLines(gl, arrayBuffer, floatType, linesMode, positionLocation, colorLocation, positionBuffer, colorBuffer, vertexCount, positionSize) {
+    if (!vertexCount) {
+      return;
+    }
+    gl.bindBuffer(arrayBuffer, positionBuffer);
+    gl.enableVertexAttribArray(positionLocation);
+    gl.vertexAttribPointer(positionLocation, positionSize, floatType, false, 0, 0);
+
+    gl.bindBuffer(arrayBuffer, colorBuffer);
+    gl.enableVertexAttribArray(colorLocation);
+    gl.vertexAttribPointer(colorLocation, 4, floatType, false, 0, 0);
+
+    gl.drawArrays(linesMode, 0, vertexCount);
+  }
+
+  function buildSceneWorldDrawPlan(bundle) {
+    const objects = Array.isArray(bundle.objects) ? bundle.objects : [];
+    const materials = Array.isArray(bundle.materials) ? bundle.materials : [];
+    if (!objects.length || !materials.length) {
+      return null;
+    }
+
+    const staticPositions = [];
+    const staticColors = [];
+    const dynamicPositions = [];
+    const dynamicColors = [];
+    const staticObjects = [];
+    const staticMaterials = [];
+
+    for (const object of objects) {
+      if (!object || !Number.isFinite(object.vertexOffset) || !Number.isFinite(object.vertexCount) || object.vertexCount <= 0) {
+        continue;
+      }
+      const material = materials[object.materialIndex] || null;
+      if (object.static) {
+        staticObjects.push(object);
+        staticMaterials.push(material);
+        appendSceneWorldObjectSlice(staticPositions, staticColors, bundle.worldPositions, bundle.worldColors, object, material);
+      } else {
+        appendSceneWorldObjectSlice(dynamicPositions, dynamicColors, bundle.worldPositions, bundle.worldColors, object, material);
+      }
+    }
+
+    const typedStaticPositions = sceneFloatArray(staticPositions);
+    const typedStaticColors = sceneFloatArray(staticColors);
+    const typedDynamicPositions = sceneFloatArray(dynamicPositions);
+    const typedDynamicColors = sceneFloatArray(dynamicColors);
+
+    return {
+      staticKey: sceneStaticDrawKey(staticObjects, staticMaterials, typedStaticPositions, typedStaticColors),
+      staticPositions: typedStaticPositions,
+      staticColors: typedStaticColors,
+      staticVertexCount: typedStaticPositions.length / 3,
+      dynamicPositions: typedDynamicPositions,
+      dynamicColors: typedDynamicColors,
+      dynamicVertexCount: typedDynamicPositions.length / 3,
+    };
+  }
+
+  function appendSceneWorldObjectSlice(targetPositions, targetColors, sourcePositions, sourceColors, object, material) {
+    const vertexOffset = Math.max(0, Math.floor(sceneNumber(object.vertexOffset, 0)));
+    const vertexCount = Math.max(0, Math.floor(sceneNumber(object.vertexCount, 0)));
+    const startPosition = vertexOffset * 3;
+    const endPosition = startPosition + vertexCount * 3;
+    const startColor = vertexOffset * 4;
+    const endColor = startColor + vertexCount * 4;
+    const opacity = sceneMaterialOpacity(material);
+
+    for (let i = startPosition; i < endPosition; i += 1) {
+      targetPositions.push(sourcePositions[i] || 0);
+    }
+    for (let i = startColor; i < endColor; i += 4) {
+      targetColors.push(sourceColors[i] || 0);
+      targetColors.push(sourceColors[i + 1] || 0);
+      targetColors.push(sourceColors[i + 2] || 0);
+      targetColors.push((sourceColors[i + 3] == null ? 1 : sourceColors[i + 3]) * opacity);
+    }
+  }
+
+  function sceneMaterialOpacity(material) {
+    if (!material || typeof material !== "object") {
+      return 1;
+    }
+    return clamp01(sceneNumber(material.opacity, 1));
+  }
+
+  function clamp01(value) {
+    return Math.max(0, Math.min(1, value));
+  }
+
+  function sceneStaticDrawKey(objects, materials, positions, colors) {
+    let hash = 2166136261 >>> 0;
+    for (const object of objects) {
+      hash = sceneHashString(hash, object.id || "");
+      hash = sceneHashString(hash, object.kind || "");
+      hash = sceneHashNumber(hash, sceneNumber(object.materialIndex, 0));
+      hash = sceneHashNumber(hash, sceneNumber(object.vertexOffset, 0));
+      hash = sceneHashNumber(hash, sceneNumber(object.vertexCount, 0));
+      hash = sceneHashNumber(hash, object.static ? 1 : 0);
+    }
+    for (const material of materials) {
+      hash = sceneHashString(hash, material && material.kind || "");
+      hash = sceneHashString(hash, material && material.color || "");
+      hash = sceneHashNumber(hash, sceneNumber(material && material.opacity, 1));
+      hash = sceneHashNumber(hash, material && material.wireframe ? 1 : 0);
+    }
+    for (let i = 0; i < positions.length; i += 1) {
+      hash = sceneHashNumber(hash, positions[i]);
+    }
+    for (let i = 0; i < colors.length; i += 1) {
+      hash = sceneHashNumber(hash, colors[i]);
+    }
+    return String(hash) + ":" + positions.length + ":" + colors.length;
+  }
+
+  function sceneHashNumber(hash, value) {
+    const scaled = Math.round(sceneNumber(value, 0) * 1000);
+    hash ^= scaled;
+    return Math.imul(hash, 16777619) >>> 0;
+  }
+
+  function sceneHashString(hash, value) {
+    const text = String(value || "");
+    for (let i = 0; i < text.length; i += 1) {
+      hash ^= text.charCodeAt(i);
+      hash = Math.imul(hash, 16777619) >>> 0;
+    }
+    return hash;
   }
 
   function createSceneWebGLProgram(gl) {
