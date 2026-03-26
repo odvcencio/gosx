@@ -425,7 +425,7 @@ func resolveRenderMaterial(object sceneObject) rootengine.RenderMaterial {
 		profile.Emissive = 0.08
 	case "glow":
 		profile.Opacity = 0.92
-		profile.BlendMode = "alpha"
+		profile.BlendMode = "additive"
 		profile.Emissive = 0.42
 	case "matte":
 		profile.Wireframe = true
@@ -735,6 +735,8 @@ func normalizeBlendMode(value string) string {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "alpha", "blend", "transparent":
 		return "alpha"
+	case "add", "additive", "glow", "emissive":
+		return "additive"
 	case "opaque":
 		return "opaque"
 	default:

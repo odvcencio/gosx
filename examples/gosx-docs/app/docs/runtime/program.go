@@ -35,7 +35,7 @@ func SceneDemoProgram() *rootengine.Program {
 		"spinZ":     builder.Float(0.14),
 	}, rootengine.MeshOptions{})
 
-	builder.Mesh("sphere", "flat", map[string]islandprogram.ExprID{
+	builder.Mesh("sphere", "glow", map[string]islandprogram.ExprID{
 		"x":         builder.Add(builder.Float(1.7), builder.Mul(normX, builder.Float(-0.9))),
 		"y":         builder.Add(builder.Float(-0.8), builder.Mul(normY, builder.Float(0.55))),
 		"z":         builder.Float(1.45),
