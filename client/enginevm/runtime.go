@@ -184,10 +184,12 @@ func (rt *Runtime) resolveNode(index int) resolvedNode {
 }
 
 type sceneCamera struct {
-	X   float64
-	Y   float64
-	Z   float64
-	FOV float64
+	X    float64
+	Y    float64
+	Z    float64
+	FOV  float64
+	Near float64
+	Far  float64
 }
 
 type sceneObject struct {
@@ -262,10 +264,12 @@ func buildRenderBundle(props map[string]any, nodes []resolvedNode, width, height
 		}
 	}
 	bundle.Camera = rootengine.RenderCamera{
-		X:   camera.X,
-		Y:   camera.Y,
-		Z:   camera.Z,
-		FOV: camera.FOV,
+		X:    camera.X,
+		Y:    camera.Y,
+		Z:    camera.Z,
+		FOV:  camera.FOV,
+		Near: camera.Near,
+		Far:  camera.Far,
 	}
 	appendSceneGrid(&bundle, width, height)
 	for _, object := range objects {
@@ -274,6 +278,7 @@ func buildRenderBundle(props map[string]any, nodes []resolvedNode, width, height
 		appendSceneObject(&bundle, camera, width, height, object, timeSeconds)
 		vertexCount := (len(bundle.WorldPositions) / 3) - vertexOffset
 		if vertexCount > 0 {
+			bounds := renderObjectBounds(bundle.WorldPositions, vertexOffset, vertexCount)
 			bundle.Objects = append(bundle.Objects, rootengine.RenderObject{
 				ID:            object.ID,
 				Kind:          object.Kind,
@@ -281,6 +286,11 @@ func buildRenderBundle(props map[string]any, nodes []resolvedNode, width, height
 				VertexOffset:  vertexOffset,
 				VertexCount:   vertexCount,
 				Static:        object.Static,
+				Bounds:        bounds,
+				DepthNear:     bounds.MinZ + camera.Z,
+				DepthFar:      bounds.MaxZ + camera.Z,
+				DepthCenter:   ((bounds.MinZ + camera.Z) + (bounds.MaxZ + camera.Z)) / 2,
+				ViewCulled:    renderBoundsOutsideFrustum(bounds, camera, width, height),
 			})
 		}
 	}
@@ -300,7 +310,7 @@ func sceneBackground(props map[string]any) string {
 }
 
 func sceneCameraFromProps(props map[string]any) sceneCamera {
-	camera := sceneCamera{Z: 6, FOV: 75}
+	camera := sceneCamera{Z: 6, FOV: 75, Near: 0.05, Far: 128}
 	if props == nil {
 		return camera
 	}
@@ -310,10 +320,12 @@ func sceneCameraFromProps(props map[string]any) sceneCamera {
 
 func normalizeSceneCameraMap(raw map[string]any, fallback sceneCamera) sceneCamera {
 	return sceneCamera{
-		X:   numberFromAny(rawValue(raw, "x"), fallback.X),
-		Y:   numberFromAny(rawValue(raw, "y"), fallback.Y),
-		Z:   numberFromAny(rawValue(raw, "z"), fallback.Z),
-		FOV: numberFromAny(rawValue(raw, "fov"), fallback.FOV),
+		X:    numberFromAny(rawValue(raw, "x"), fallback.X),
+		Y:    numberFromAny(rawValue(raw, "y"), fallback.Y),
+		Z:    numberFromAny(rawValue(raw, "z"), fallback.Z),
+		FOV:  numberFromAny(rawValue(raw, "fov"), fallback.FOV),
+		Near: numberFromAny(rawValue(raw, "near"), fallback.Near),
+		Far:  numberFromAny(rawValue(raw, "far"), fallback.Far),
 	}
 }
 
@@ -612,7 +624,7 @@ func rotatePoint(point point3, rotationX, rotationY, rotationZ float64) point3 {
 
 func projectPoint(point point3, camera sceneCamera, width, height int) *rootengine.RenderPoint {
 	depth := point.Z + camera.Z
-	if depth <= 0.15 {
+	if depth <= camera.Near || depth >= camera.Far {
 		return nil
 	}
 	focal := (math.Min(float64(width), float64(height)) / 2) / math.Tan((camera.FOV*math.Pi)/360)
@@ -620,6 +632,80 @@ func projectPoint(point point3, camera sceneCamera, width, height int) *rootengi
 		X: float64(width)/2 + ((point.X-camera.X)*focal)/depth,
 		Y: float64(height)/2 - ((point.Y-camera.Y)*focal)/depth,
 	}
+}
+
+func renderObjectBounds(worldPositions []float64, vertexOffset, vertexCount int) rootengine.RenderBounds {
+	if vertexCount <= 0 {
+		return rootengine.RenderBounds{}
+	}
+	start := vertexOffset * 3
+	bounds := rootengine.RenderBounds{
+		MinX: worldPositions[start],
+		MinY: worldPositions[start+1],
+		MinZ: worldPositions[start+2],
+		MaxX: worldPositions[start],
+		MaxY: worldPositions[start+1],
+		MaxZ: worldPositions[start+2],
+	}
+	for i := start + 3; i < start+vertexCount*3; i += 3 {
+		x := worldPositions[i]
+		y := worldPositions[i+1]
+		z := worldPositions[i+2]
+		bounds.MinX = math.Min(bounds.MinX, x)
+		bounds.MinY = math.Min(bounds.MinY, y)
+		bounds.MinZ = math.Min(bounds.MinZ, z)
+		bounds.MaxX = math.Max(bounds.MaxX, x)
+		bounds.MaxY = math.Max(bounds.MaxY, y)
+		bounds.MaxZ = math.Max(bounds.MaxZ, z)
+	}
+	return bounds
+}
+
+func renderBoundsOutsideFrustum(bounds rootengine.RenderBounds, camera sceneCamera, width, height int) bool {
+	minDepth := bounds.MinZ + camera.Z
+	maxDepth := bounds.MaxZ + camera.Z
+	if maxDepth <= camera.Near || minDepth >= camera.Far {
+		return true
+	}
+	if minDepth <= camera.Near {
+		return false
+	}
+	aspect := math.Max(0.0001, float64(width)/math.Max(1, float64(height)))
+	corners := renderBoundsCorners(bounds)
+	allLeft, allRight, allBottom, allTop := true, true, true, true
+	for _, corner := range corners {
+		depth := corner.Z + camera.Z
+		if depth <= camera.Near || depth >= camera.Far {
+			return false
+		}
+		clipX, clipY := projectWorldClipPoint(corner, camera, aspect)
+		allLeft = allLeft && clipX < -1
+		allRight = allRight && clipX > 1
+		allBottom = allBottom && clipY < -1
+		allTop = allTop && clipY > 1
+	}
+	return allLeft || allRight || allBottom || allTop
+}
+
+func renderBoundsCorners(bounds rootengine.RenderBounds) []point3 {
+	return []point3{
+		{X: bounds.MinX, Y: bounds.MinY, Z: bounds.MinZ},
+		{X: bounds.MinX, Y: bounds.MinY, Z: bounds.MaxZ},
+		{X: bounds.MinX, Y: bounds.MaxY, Z: bounds.MinZ},
+		{X: bounds.MinX, Y: bounds.MaxY, Z: bounds.MaxZ},
+		{X: bounds.MaxX, Y: bounds.MinY, Z: bounds.MinZ},
+		{X: bounds.MaxX, Y: bounds.MinY, Z: bounds.MaxZ},
+		{X: bounds.MaxX, Y: bounds.MaxY, Z: bounds.MinZ},
+		{X: bounds.MaxX, Y: bounds.MaxY, Z: bounds.MaxZ},
+	}
+}
+
+func projectWorldClipPoint(point point3, camera sceneCamera, aspect float64) (float64, float64) {
+	depth := point.Z + camera.Z
+	focal := 1 / math.Max(0.0001, math.Tan((camera.FOV*math.Pi)/360))
+	x := ((point.X - camera.X) * focal / math.Max(depth, 0.0001)) / math.Max(aspect, 0.0001)
+	y := (point.Y - camera.Y) * focal / math.Max(depth, 0.0001)
+	return x, y
 }
 
 func normalizeSceneKind(value string) string {
