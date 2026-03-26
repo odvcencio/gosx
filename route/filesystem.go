@@ -68,6 +68,23 @@ type fileRouteDir struct {
 	Error     *FilePage
 }
 
+type resolvedFilePage struct {
+	page       FilePage
+	module     FileModule
+	dirModules []DirModule
+	layout     LayoutFunc
+}
+
+type fileRouteRegistrar struct {
+	router            *Router
+	root              string
+	opts              FileRoutesOptions
+	renderFn          FileRenderFunc
+	moduleRegistry    *FileModuleRegistry
+	dirModuleRegistry *DirModuleRegistry
+	layoutCache       map[string]LayoutFunc
+}
+
 // ScanDir discovers file-based routes from a directory tree.
 func ScanDir(root string) (FileRoutes, error) {
 	root, err := filepath.Abs(root)
@@ -214,65 +231,18 @@ func (r *Router) AddDir(root string, opts FileRoutesOptions) error {
 	if err != nil {
 		return err
 	}
-
-	renderFn := opts.Render
-	moduleRegistry := opts.Modules
-	if moduleRegistry == nil {
-		moduleRegistry = DefaultFileModuleRegistry()
-	}
-	dirModuleRegistry := opts.DirModules
-	if dirModuleRegistry == nil {
-		dirModuleRegistry = DefaultDirModuleRegistry()
-	}
-	layoutCache := make(map[string]LayoutFunc)
+	registrar := newFileRouteRegistrar(r, root, opts)
 
 	if bundle.NotFound != nil {
-		page := *bundle.NotFound
-		module, _ := resolveFileModule(moduleRegistry, root, page)
-		dirModules := resolveDirModules(dirModuleRegistry, root, page.Dir)
-		layout, err := loadFileLayoutChain(layoutCache, page.Layouts, opts.Layout)
-		if err != nil {
+		if err := registrar.setNotFound(*bundle.NotFound); err != nil {
 			return err
 		}
-		r.SetNotFound(func(ctx *RouteContext) gosx.Node {
-			if err := prepareFileRouteContext(ctx, page, module, dirModules); err != nil {
-				ctx.SetStatus(500)
-				return defaultFileRouteError(err)
-			}
-			node, err := renderFilePage(ctx, page, module, renderFn)
-			if err != nil {
-				ctx.SetStatus(500)
-				return defaultFileRouteError(err)
-			}
-			return node
-		})
-		r.notFoundLayout = layout
 	}
 
 	for _, scope := range bundle.NotFoundScopes {
-		scope := scope
-		module, _ := resolveFileModule(moduleRegistry, root, scope.Page)
-		dirModules := resolveDirModules(dirModuleRegistry, root, scope.Page.Dir)
-		layout, err := loadFileLayoutChain(layoutCache, scope.Page.Layouts, opts.Layout)
-		if err != nil {
+		if err := registrar.addScopedNotFound(scope); err != nil {
 			return err
 		}
-		r.notFoundScopes = append(r.notFoundScopes, scopedNotFound{
-			pattern: scope.Pattern,
-			layout:  layout,
-			handler: func(ctx *RouteContext) gosx.Node {
-				if err := prepareFileRouteContext(ctx, scope.Page, module, dirModules); err != nil {
-					ctx.SetStatus(500)
-					return defaultFileRouteError(err)
-				}
-				node, err := renderFilePage(ctx, scope.Page, module, renderFn)
-				if err != nil {
-					ctx.SetStatus(500)
-					return defaultFileRouteError(err)
-				}
-				return node
-			},
-		})
 	}
 	sort.Slice(r.notFoundScopes, func(i, j int) bool {
 		left := patternDepth(r.notFoundScopes[i].pattern)
@@ -284,77 +254,169 @@ func (r *Router) AddDir(root string, opts FileRoutesOptions) error {
 	})
 
 	if bundle.Error != nil {
-		page := *bundle.Error
-		module, _ := resolveFileModule(moduleRegistry, root, page)
-		dirModules := resolveDirModules(dirModuleRegistry, root, page.Dir)
-		layout, err := loadFileLayoutChain(layoutCache, page.Layouts, opts.Layout)
-		if err != nil {
+		if err := registrar.setError(*bundle.Error); err != nil {
 			return err
 		}
-		r.SetError(func(ctx *RouteContext, routeErr error) gosx.Node {
-			if err := prepareFileRouteContext(ctx, page, module, dirModules); err != nil {
-				ctx.SetStatus(500)
-				return defaultFileRouteError(err)
-			}
-			node, err := renderFilePage(ctx, page, module, renderFn)
-			if err != nil {
-				return defaultFileRouteError(err)
-			}
-			return node
-		})
-		r.errorLayout = layout
 	}
 
 	routes := make([]Route, 0, len(bundle.Pages))
 	for _, page := range bundle.Pages {
-		page := page
-		module, _ := resolveFileModule(moduleRegistry, root, page)
-		dirModules := resolveDirModules(dirModuleRegistry, root, page.Dir)
-		routeMiddleware := append([]Middleware(nil), opts.Middleware...)
-		routeMiddleware = append(routeMiddleware, collectDirMiddleware(dirModules)...)
-		layout, err := loadFileLayoutChain(layoutCache, page.Layouts, opts.Layout)
+		route, err := registrar.buildRoute(page)
 		if err != nil {
 			return err
 		}
-		routeLayout := wrapWithDefaultLayout(r, layout)
-		errorHandler := opts.ErrorHandler
-		if page.ErrorPage != nil {
-			errorPage := cloneFilePageValue(*page.ErrorPage)
-			errorModule, _ := resolveFileModule(moduleRegistry, root, errorPage)
-			errorDirModules := resolveDirModules(dirModuleRegistry, root, errorPage.Dir)
-			errorHandler = func(ctx *RouteContext, routeErr error) gosx.Node {
-				if err := prepareFileRouteContext(ctx, errorPage, errorModule, errorDirModules); err != nil {
-					ctx.SetStatus(500)
-					return defaultFileRouteError(err)
-				}
-				node, err := renderFilePage(ctx, errorPage, errorModule, renderFn)
-				if err != nil {
-					return defaultFileRouteError(err)
-				}
-				return node
-			}
-		}
-		if len(module.Actions) > 0 {
-			r.Handle(filePageActionPattern(page.Pattern), buildFileActionHandler(page, module.Actions), routeMiddleware...)
-		}
-		routes = append(routes, Route{
-			Pattern:      page.Pattern,
-			Layout:       routeLayout,
-			Middleware:   routeMiddleware,
-			ErrorHandler: errorHandler,
-			DataLoader:   filePageDataLoader(page, module, dirModules),
-			Handler: func(ctx *RouteContext) gosx.Node {
-				node, err := renderFilePage(ctx, page, module, renderFn)
-				if err != nil {
-					panic(err)
-				}
-				return node
-			},
-		})
+		routes = append(routes, route)
 	}
 
 	r.Add(routes...)
 	return nil
+}
+
+func newFileRouteRegistrar(router *Router, root string, opts FileRoutesOptions) *fileRouteRegistrar {
+	moduleRegistry := opts.Modules
+	if moduleRegistry == nil {
+		moduleRegistry = DefaultFileModuleRegistry()
+	}
+	dirModuleRegistry := opts.DirModules
+	if dirModuleRegistry == nil {
+		dirModuleRegistry = DefaultDirModuleRegistry()
+	}
+	return &fileRouteRegistrar{
+		router:            router,
+		root:              root,
+		opts:              opts,
+		renderFn:          opts.Render,
+		moduleRegistry:    moduleRegistry,
+		dirModuleRegistry: dirModuleRegistry,
+		layoutCache:       make(map[string]LayoutFunc),
+	}
+}
+
+func (r *fileRouteRegistrar) resolve(page FilePage) (resolvedFilePage, error) {
+	module, _ := resolveFileModule(r.moduleRegistry, r.root, page)
+	dirModules := resolveDirModules(r.dirModuleRegistry, r.root, page.Dir)
+	layout, err := loadFileLayoutChain(r.layoutCache, page.Layouts, r.opts.Layout)
+	if err != nil {
+		return resolvedFilePage{}, err
+	}
+	return resolvedFilePage{
+		page:       page,
+		module:     module,
+		dirModules: dirModules,
+		layout:     layout,
+	}, nil
+}
+
+func (r *fileRouteRegistrar) setNotFound(page FilePage) error {
+	resolved, err := r.resolve(page)
+	if err != nil {
+		return err
+	}
+	r.router.SetNotFound(func(ctx *RouteContext) gosx.Node {
+		node, err := r.renderPrepared(ctx, resolved)
+		if err != nil {
+			ctx.SetStatus(500)
+			return defaultFileRouteError(err)
+		}
+		return node
+	})
+	r.router.notFoundLayout = resolved.layout
+	return nil
+}
+
+func (r *fileRouteRegistrar) addScopedNotFound(scope FileRouteScope) error {
+	resolved, err := r.resolve(scope.Page)
+	if err != nil {
+		return err
+	}
+	r.router.notFoundScopes = append(r.router.notFoundScopes, scopedNotFound{
+		pattern: scope.Pattern,
+		layout:  resolved.layout,
+		handler: func(ctx *RouteContext) gosx.Node {
+			node, err := r.renderPrepared(ctx, resolved)
+			if err != nil {
+				ctx.SetStatus(500)
+				return defaultFileRouteError(err)
+			}
+			return node
+		},
+	})
+	return nil
+}
+
+func (r *fileRouteRegistrar) setError(page FilePage) error {
+	resolved, err := r.resolve(page)
+	if err != nil {
+		return err
+	}
+	r.router.SetError(func(ctx *RouteContext, routeErr error) gosx.Node {
+		if err := prepareFileRouteContext(ctx, resolved.page, resolved.module, resolved.dirModules); err != nil {
+			if ctx != nil {
+				ctx.SetStatus(500)
+			}
+			return defaultFileRouteError(err)
+		}
+		node, err := renderFilePage(ctx, resolved.page, resolved.module, r.renderFn)
+		if err != nil {
+			return defaultFileRouteError(err)
+		}
+		return node
+	})
+	r.router.errorLayout = resolved.layout
+	return nil
+}
+
+func (r *fileRouteRegistrar) buildRoute(page FilePage) (Route, error) {
+	resolved, err := r.resolve(page)
+	if err != nil {
+		return Route{}, err
+	}
+	routeMiddleware := append([]Middleware(nil), r.opts.Middleware...)
+	routeMiddleware = append(routeMiddleware, collectDirMiddleware(resolved.dirModules)...)
+	errorHandler := r.opts.ErrorHandler
+	if resolved.page.ErrorPage != nil {
+		errorPage, err := r.resolve(cloneFilePageValue(*resolved.page.ErrorPage))
+		if err != nil {
+			return Route{}, err
+		}
+		errorHandler = func(ctx *RouteContext, routeErr error) gosx.Node {
+			if err := prepareFileRouteContext(ctx, errorPage.page, errorPage.module, errorPage.dirModules); err != nil {
+				if ctx != nil {
+					ctx.SetStatus(500)
+				}
+				return defaultFileRouteError(err)
+			}
+			node, err := renderFilePage(ctx, errorPage.page, errorPage.module, r.renderFn)
+			if err != nil {
+				return defaultFileRouteError(err)
+			}
+			return node
+		}
+	}
+	if len(resolved.module.Actions) > 0 {
+		r.router.Handle(filePageActionPattern(resolved.page.Pattern), buildFileActionHandler(resolved.page, resolved.module.Actions), routeMiddleware...)
+	}
+	return Route{
+		Pattern:      resolved.page.Pattern,
+		Layout:       wrapWithDefaultLayout(r.router, resolved.layout),
+		Middleware:   routeMiddleware,
+		ErrorHandler: errorHandler,
+		DataLoader:   filePageDataLoader(resolved.page, resolved.module, resolved.dirModules),
+		Handler: func(ctx *RouteContext) gosx.Node {
+			node, err := renderFilePage(ctx, resolved.page, resolved.module, r.renderFn)
+			if err != nil {
+				panic(err)
+			}
+			return node
+		},
+	}, nil
+}
+
+func (r *fileRouteRegistrar) renderPrepared(ctx *RouteContext, resolved resolvedFilePage) (gosx.Node, error) {
+	if err := prepareFileRouteContext(ctx, resolved.page, resolved.module, resolved.dirModules); err != nil {
+		return gosx.Node{}, err
+	}
+	return renderFilePage(ctx, resolved.page, resolved.module, r.renderFn)
 }
 
 // DefaultFileRenderer renders `.gsx` and `.html` page files directly.

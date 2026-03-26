@@ -304,6 +304,27 @@ func (a *App) Build() http.Handler {
 	redirectMux := http.NewServeMux()
 	rewriteMux := http.NewServeMux()
 	mountMux := http.NewServeMux()
+	a.registerBuiltinRoutes(mux)
+	a.registerPageRoutes(mux)
+	a.registerAPIRoutes(mux)
+	a.registerRedirectRoutes(redirectMux)
+	a.registerMountRoutes(mountMux)
+
+	var dispatch func(w http.ResponseWriter, r *http.Request, allowRewrite bool)
+
+	a.mux = mux
+	dispatch = a.buildDispatcher(mux, redirectMux, rewriteMux, mountMux)
+	a.registerRewriteRoutes(rewriteMux, dispatch)
+
+	return a.wrap(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if a.maybeServeISR(w, r, dispatch) {
+			return
+		}
+		dispatch(w, r, true)
+	}))
+}
+
+func (a *App) registerBuiltinRoutes(mux *http.ServeMux) {
 	if !a.hasRoute("/healthz") {
 		mux.HandleFunc("/healthz", healthHandler)
 	}
@@ -316,85 +337,96 @@ func (a *App) Build() http.Handler {
 	if imageDir := a.effectiveImageDir(); imageDir != "" && !a.hasRoute(defaultImageEndpoint) {
 		mux.Handle("GET "+defaultImageEndpoint, ImageHandler(imageDir))
 	}
+}
 
+func (a *App) registerPageRoutes(mux *http.ServeMux) {
 	for matchPattern, route := range a.pageRoutes {
-		pattern := route.pattern
-		handler := route.handler
-		pageHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			MarkObservedRequest(r, "page", pattern)
-			defer func() {
-				if recovered := recover(); recovered != nil {
-					a.renderError(w, r, panicError(recovered))
-				}
-			}()
-			ctx := newContext(r)
-			ctx.cache = NewCacheState()
-			node := handler(ctx)
-			a.renderPage(w, ctx, pattern, node, "GoSX")
-		})
-		mux.Handle(matchPattern, chainMiddleware(pageHandler, route.middleware))
+		mux.Handle(matchPattern, chainMiddleware(a.pageRouteHandler(route), route.middleware))
 	}
+}
 
+func (a *App) pageRouteHandler(route registeredPageRoute) http.Handler {
+	pattern := route.pattern
+	handler := route.handler
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		MarkObservedRequest(r, "page", pattern)
+		defer func() {
+			if recovered := recover(); recovered != nil {
+				a.renderError(w, r, panicError(recovered))
+			}
+		}()
+		ctx := newContext(r)
+		ctx.cache = NewCacheState()
+		node := handler(ctx)
+		a.renderPage(w, ctx, pattern, node, "GoSX")
+	})
+}
+
+func (a *App) registerAPIRoutes(mux *http.ServeMux) {
 	for matchPattern, route := range a.apiRoutes {
-		pattern := route.pattern
-		handler := route.handler
-		apiHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			MarkObservedRequest(r, "api", pattern)
-			defer func() {
-				if recovered := recover(); recovered != nil {
-					writeJSONError(w, http.StatusInternalServerError, panicError(recovered), nil)
-				}
-			}()
-			ctx := newContext(r)
-			ctx.cache = NewCacheState()
-			payload, err := handler(ctx)
-			if err != nil {
-				writeJSONError(w, errorStatus(err, ctx.status, http.StatusInternalServerError), err, ctx.headers)
-				return
-			}
-			status := statusWithDefault(ctx.status, payload)
-			if ApplyCacheHeaders(r, ctx.headers, status, ctx.cache, a.Revalidator()) {
-				WriteNotModified(w, ctx.headers)
-				return
-			}
-			writeJSON(w, status, payload, ctx.headers)
-		})
-		mux.Handle(matchPattern, chainMiddleware(apiHandler, route.middleware))
+		mux.Handle(matchPattern, chainMiddleware(a.apiRouteHandler(route), route.middleware))
 	}
+}
 
+func (a *App) apiRouteHandler(route registeredAPIRoute) http.Handler {
+	pattern := route.pattern
+	handler := route.handler
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		MarkObservedRequest(r, "api", pattern)
+		defer func() {
+			if recovered := recover(); recovered != nil {
+				writeJSONError(w, http.StatusInternalServerError, panicError(recovered), nil)
+			}
+		}()
+		ctx := newContext(r)
+		ctx.cache = NewCacheState()
+		payload, err := handler(ctx)
+		if err != nil {
+			writeJSONError(w, errorStatus(err, ctx.status, http.StatusInternalServerError), err, ctx.headers)
+			return
+		}
+		status := statusWithDefault(ctx.status, payload)
+		if ApplyCacheHeaders(r, ctx.headers, status, ctx.cache, a.Revalidator()) {
+			WriteNotModified(w, ctx.headers)
+			return
+		}
+		writeJSON(w, status, payload, ctx.headers)
+	})
+}
+
+func (a *App) registerRedirectRoutes(mux *http.ServeMux) {
 	for matchPattern, route := range a.redirects {
 		pattern := route.pattern
 		destination := route.destination
 		status := route.status
-		redirectMux.HandleFunc(matchPattern, func(w http.ResponseWriter, r *http.Request) {
+		mux.HandleFunc(matchPattern, func(w http.ResponseWriter, r *http.Request) {
 			MarkObservedRequest(r, "redirect", pattern)
 			http.Redirect(w, r, expandPatternValues(r, destination), status)
 		})
 	}
+}
 
+func (a *App) registerMountRoutes(mux *http.ServeMux) {
 	for _, route := range a.mounts {
 		pattern := route.pattern
 		handler := route.handler
-		mountMux.Handle(pattern, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mux.Handle(pattern, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			MarkObservedRequest(r, "mount", pattern)
 			handler.ServeHTTP(w, r)
 		}))
 	}
+}
 
-	var dispatch func(w http.ResponseWriter, r *http.Request, allowRewrite bool)
-
-	a.mux = mux
-	dispatch = func(w http.ResponseWriter, r *http.Request, allowRewrite bool) {
+func (a *App) buildDispatcher(mux, redirectMux, rewriteMux, mountMux *http.ServeMux) func(http.ResponseWriter, *http.Request, bool) {
+	return func(w http.ResponseWriter, r *http.Request, allowRewrite bool) {
 		if redirectHandled(redirectMux, w, r) {
 			return
 		}
 		if routeHandled(mux, w, r) {
 			return
 		}
-		if allowRewrite && len(a.rewrites) > 0 {
-			if rewriteHandled(rewriteMux, w, r) {
-				return
-			}
+		if allowRewrite && len(a.rewrites) > 0 && rewriteHandled(rewriteMux, w, r) {
+			return
 		}
 		if a.servePublic(w, r) {
 			return
@@ -404,22 +436,17 @@ func (a *App) Build() http.Handler {
 		}
 		a.renderNotFound(w, r)
 	}
+}
 
+func (a *App) registerRewriteRoutes(mux *http.ServeMux, dispatch func(http.ResponseWriter, *http.Request, bool)) {
 	for matchPattern, route := range a.rewrites {
 		pattern := route.pattern
 		destination := route.destination
-		rewriteMux.HandleFunc(matchPattern, func(w http.ResponseWriter, r *http.Request) {
+		mux.HandleFunc(matchPattern, func(w http.ResponseWriter, r *http.Request) {
 			MarkObservedRequest(r, "rewrite", pattern)
 			dispatch(w, rewriteRequest(r, expandPatternValues(r, destination)), false)
 		})
 	}
-
-	return a.wrap(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if a.maybeServeISR(w, r, dispatch) {
-			return
-		}
-		dispatch(w, r, true)
-	}))
 }
 
 // ListenAndServe starts the HTTP server.
