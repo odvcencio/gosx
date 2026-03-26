@@ -280,42 +280,13 @@ func (r *Router) AddDir(root string, opts FileRoutesOptions) error {
 		return err
 	}
 	registrar := newFileRouteRegistrar(r, root, opts)
-
-	if bundle.NotFound != nil {
-		if err := registrar.setNotFound(*bundle.NotFound); err != nil {
-			return err
-		}
+	if err := registrar.registerSpecialPages(bundle); err != nil {
+		return err
 	}
-
-	for _, scope := range bundle.NotFoundScopes {
-		if err := registrar.addScopedNotFound(scope); err != nil {
-			return err
-		}
+	routes, err := registrar.buildRoutes(bundle.Pages)
+	if err != nil {
+		return err
 	}
-	sort.Slice(r.notFoundScopes, func(i, j int) bool {
-		left := patternDepth(r.notFoundScopes[i].pattern)
-		right := patternDepth(r.notFoundScopes[j].pattern)
-		if left == right {
-			return r.notFoundScopes[i].pattern > r.notFoundScopes[j].pattern
-		}
-		return left > right
-	})
-
-	if bundle.Error != nil {
-		if err := registrar.setError(*bundle.Error); err != nil {
-			return err
-		}
-	}
-
-	routes := make([]Route, 0, len(bundle.Pages))
-	for _, page := range bundle.Pages {
-		route, err := registrar.buildRoute(page)
-		if err != nil {
-			return err
-		}
-		routes = append(routes, route)
-	}
-
 	r.Add(routes...)
 	return nil
 }
@@ -372,6 +343,46 @@ func (r *fileRouteRegistrar) setNotFound(page FilePage) error {
 	return nil
 }
 
+func (r *fileRouteRegistrar) registerSpecialPages(bundle FileRoutes) error {
+	if err := r.registerNotFound(bundle); err != nil {
+		return err
+	}
+	return r.registerError(bundle)
+}
+
+func (r *fileRouteRegistrar) registerNotFound(bundle FileRoutes) error {
+	if bundle.NotFound != nil {
+		if err := r.setNotFound(*bundle.NotFound); err != nil {
+			return err
+		}
+	}
+	for _, scope := range bundle.NotFoundScopes {
+		if err := r.addScopedNotFound(scope); err != nil {
+			return err
+		}
+	}
+	sortScopedNotFounds(r.router.notFoundScopes)
+	return nil
+}
+
+func (r *fileRouteRegistrar) registerError(bundle FileRoutes) error {
+	if bundle.Error == nil {
+		return nil
+	}
+	return r.setError(*bundle.Error)
+}
+
+func sortScopedNotFounds(scopes []scopedNotFound) {
+	sort.Slice(scopes, func(i, j int) bool {
+		left := patternDepth(scopes[i].pattern)
+		right := patternDepth(scopes[j].pattern)
+		if left == right {
+			return scopes[i].pattern > scopes[j].pattern
+		}
+		return left > right
+	})
+}
+
 func (r *fileRouteRegistrar) addScopedNotFound(scope FileRouteScope) error {
 	resolved, err := r.resolve(scope.Page)
 	if err != nil {
@@ -390,6 +401,18 @@ func (r *fileRouteRegistrar) addScopedNotFound(scope FileRouteScope) error {
 		},
 	})
 	return nil
+}
+
+func (r *fileRouteRegistrar) buildRoutes(pages []FilePage) ([]Route, error) {
+	routes := make([]Route, 0, len(pages))
+	for _, page := range pages {
+		route, err := r.buildRoute(page)
+		if err != nil {
+			return nil, err
+		}
+		routes = append(routes, route)
+	}
+	return routes, nil
 }
 
 func (r *fileRouteRegistrar) setError(page FilePage) error {
@@ -620,24 +643,14 @@ func buildFileRoute(parts []string) (string, string, []string) {
 	routeSegments := make([]string, 0, len(parts))
 	params := make([]string, 0, len(parts))
 	for _, part := range parts {
-		if part == "" {
+		segment, param, include := fileRouteSegment(part)
+		if !include {
 			continue
 		}
-		if isRouteGroupSegment(part) {
-			continue
+		if param != "" {
+			params = append(params, param)
 		}
-		switch {
-		case strings.HasPrefix(part, "[...") && strings.HasSuffix(part, "]"):
-			name := strings.TrimSuffix(strings.TrimPrefix(part, "[..."), "]")
-			params = append(params, name)
-			routeSegments = append(routeSegments, "{"+name+"...}")
-		case strings.HasPrefix(part, "[") && strings.HasSuffix(part, "]"):
-			name := strings.TrimSuffix(strings.TrimPrefix(part, "["), "]")
-			params = append(params, name)
-			routeSegments = append(routeSegments, "{"+name+"}")
-		default:
-			routeSegments = append(routeSegments, part)
-		}
+		routeSegments = append(routeSegments, segment)
 	}
 
 	if len(routeSegments) == 0 {
@@ -645,6 +658,22 @@ func buildFileRoute(parts []string) (string, string, []string) {
 	}
 	pattern := "/" + strings.Join(routeSegments, "/")
 	return pattern, pattern, params
+}
+
+func fileRouteSegment(part string) (segment string, param string, include bool) {
+	if part == "" || isRouteGroupSegment(part) {
+		return "", "", false
+	}
+	switch {
+	case strings.HasPrefix(part, "[...") && strings.HasSuffix(part, "]"):
+		name := strings.TrimSuffix(strings.TrimPrefix(part, "[..."), "]")
+		return "{" + name + "...}", name, true
+	case strings.HasPrefix(part, "[") && strings.HasSuffix(part, "]"):
+		name := strings.TrimSuffix(strings.TrimPrefix(part, "["), "]")
+		return "{" + name + "}", name, true
+	default:
+		return part, "", true
+	}
 }
 
 func isRouteFile(name string) bool {

@@ -344,26 +344,15 @@ func selectValue(target any, name string) any {
 	if target == nil {
 		return nil
 	}
-
-	if value, ok := mapLookup(target, name); ok {
+	if value, ok := selectMappedValue(target, name); ok {
 		return value
 	}
-
-	if method, ok := methodValue(target, name); ok {
-		return method.Interface()
+	if value, ok := selectMethodValue(target, name); ok {
+		return value
 	}
-
-	rv, ok := indirectValueOf(target)
-	if !ok {
-		return nil
+	if value, ok := selectStructValue(target, name); ok {
+		return value
 	}
-	if rv.Kind() == reflect.Struct {
-		field := rv.FieldByName(name)
-		if field.IsValid() && field.CanInterface() {
-			return field.Interface()
-		}
-	}
-
 	return nil
 }
 
@@ -379,28 +368,60 @@ func indexValue(target any, index any) any {
 
 	switch rv.Kind() {
 	case reflect.Map:
-		key, ok := reflectValue(index, rv.Type().Key())
-		if !ok {
-			return nil
-		}
-		value := rv.MapIndex(key)
-		if !value.IsValid() || !value.CanInterface() {
-			return nil
-		}
-		return value.Interface()
+		return indexMapValue(rv, index)
 	case reflect.Array, reflect.Slice, reflect.String:
-		i := int(numericValue(index))
-		if i < 0 || i >= rv.Len() {
-			return nil
-		}
-		value := rv.Index(i)
-		if !value.IsValid() || !value.CanInterface() {
-			return nil
-		}
-		return value.Interface()
+		return indexSequentialValue(rv, index)
 	default:
 		return nil
 	}
+}
+
+func selectMappedValue(target any, name string) (any, bool) {
+	return mapLookup(target, name)
+}
+
+func selectMethodValue(target any, name string) (any, bool) {
+	method, ok := methodValue(target, name)
+	if !ok {
+		return nil, false
+	}
+	return method.Interface(), true
+}
+
+func selectStructValue(target any, name string) (any, bool) {
+	rv, ok := indirectValueOf(target)
+	if !ok || rv.Kind() != reflect.Struct {
+		return nil, false
+	}
+	field := rv.FieldByName(name)
+	if !field.IsValid() || !field.CanInterface() {
+		return nil, false
+	}
+	return field.Interface(), true
+}
+
+func indexMapValue(rv reflect.Value, index any) any {
+	key, ok := reflectValue(index, rv.Type().Key())
+	if !ok {
+		return nil
+	}
+	value := rv.MapIndex(key)
+	if !value.IsValid() || !value.CanInterface() {
+		return nil
+	}
+	return value.Interface()
+}
+
+func indexSequentialValue(rv reflect.Value, index any) any {
+	i := int(numericValue(index))
+	if i < 0 || i >= rv.Len() {
+		return nil
+	}
+	value := rv.Index(i)
+	if !value.IsValid() || !value.CanInterface() {
+		return nil
+	}
+	return value.Interface()
 }
 
 func callValue(fn any, args []any) any {
