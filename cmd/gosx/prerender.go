@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/odvcencio/gosx/buildmanifest"
 	"github.com/odvcencio/gosx/route"
 	"golang.org/x/net/html"
 )
@@ -170,7 +171,7 @@ func staticExportRoutes(appDir string) ([]exportRoute, error) {
 		}
 		routes = append(routes, exportRoute{
 			Path:              page.RoutePath,
-			File:              exportFilePath(page.RoutePath),
+			File:              buildmanifest.ExportFilePath(page.RoutePath),
 			RevalidateSeconds: exportRouteRevalidateSeconds(page.Config),
 			Tags:              append([]string(nil), page.Config.CacheTags...),
 		})
@@ -274,7 +275,7 @@ func fetchExportPageWithStatus(client *http.Client, url string) (string, int, er
 }
 
 func writeExportPage(outputDir, routePath, html string) error {
-	target := filepath.Join(outputDir, exportFilePath(routePath))
+	target := filepath.Join(outputDir, buildmanifest.ExportFilePath(routePath))
 	if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
 		return fmt.Errorf("create export dir for %s: %w", routePath, err)
 	}
@@ -282,15 +283,6 @@ func writeExportPage(outputDir, routePath, html string) error {
 		return fmt.Errorf("write %s: %w", target, err)
 	}
 	return nil
-}
-
-func exportFilePath(routePath string) string {
-	routePath = strings.TrimSpace(routePath)
-	if routePath == "" || routePath == "/" {
-		return "index.html"
-	}
-	clean := strings.Trim(routePath, "/")
-	return filepath.Join(filepath.FromSlash(clean), "index.html")
 }
 
 func rewriteStaticExportHTML(routePath, input string) (string, error) {
@@ -393,7 +385,7 @@ func rewriteStaticExportURL(routePath, raw string) string {
 
 func relativeStaticExportPath(routePath, targetPath string) string {
 	targetPath = path.Clean("/" + strings.TrimSpace(targetPath))
-	currentDir := filepath.ToSlash(filepath.Dir(exportFilePath(routePath)))
+	currentDir := filepath.ToSlash(filepath.Dir(buildmanifest.ExportFilePath(routePath)))
 	if currentDir == "." {
 		currentDir = ""
 	}

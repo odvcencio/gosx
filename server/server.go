@@ -78,6 +78,7 @@ type App struct {
 	publicDir   string
 	imageDir    string
 	runtimeRoot string
+	runtimeMeta *runtimeManifestCache
 	isr         *isrConfig
 	navigation  bool
 	observers   []RequestObserver

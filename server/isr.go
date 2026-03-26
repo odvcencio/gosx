@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/odvcencio/gosx/buildmanifest"
 )
 
 const isrBypassHeader = "X-GoSX-ISR-Revalidate"
@@ -77,7 +79,10 @@ func (a *App) maybeServeISR(w http.ResponseWriter, r *http.Request, dispatch fun
 		return false
 	}
 
-	filePath := filepath.Join(a.isr.staticDir, filepath.FromSlash(page.File))
+	filePath, ok := safeArtifactPath(a.isr.staticDir, page.File)
+	if !ok {
+		return false
+	}
 	info, err := os.Stat(filePath)
 	if err != nil {
 		if !os.IsNotExist(err) {
@@ -149,7 +154,7 @@ func (c *isrConfig) load(root string) bool {
 		for _, pagePath := range manifest.Pages {
 			manifest.Routes = append(manifest.Routes, isrRoute{
 				Path: pagePath,
-				File: exportFilePath(pagePath),
+				File: buildmanifest.ExportFilePath(pagePath),
 			})
 		}
 	}
@@ -161,7 +166,7 @@ func (c *isrConfig) load(root string) bool {
 			continue
 		}
 		if strings.TrimSpace(route.File) == "" {
-			route.File = exportFilePath(normalized)
+			route.File = buildmanifest.ExportFilePath(normalized)
 		}
 		route.Path = normalized
 		route.Tags = compactStrings(route.Tags)
@@ -285,7 +290,10 @@ func (c *isrConfig) regenerate(page isrRoute, revalidator *Revalidator, dispatch
 		return fmt.Errorf("isr regenerate %s: unexpected status %d", page.Path, result.StatusCode)
 	}
 
-	target := filepath.Join(c.staticDir, filepath.FromSlash(page.File))
+	target, ok := safeArtifactPath(c.staticDir, page.File)
+	if !ok {
+		return fmt.Errorf("isr regenerate %s: invalid file path %q", page.Path, page.File)
+	}
 	if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
 		return err
 	}
@@ -386,11 +394,20 @@ func compactStrings(values []string) []string {
 	return out
 }
 
-func exportFilePath(routePath string) string {
-	routePath = normalizeISRPath(routePath)
-	if routePath == "/" {
-		return "index.html"
+func safeArtifactPath(root, rel string) (string, bool) {
+	root = strings.TrimSpace(root)
+	rel = filepath.Clean(filepath.FromSlash(strings.TrimSpace(rel)))
+	if root == "" || rel == "" || rel == "." {
+		return "", false
 	}
-	clean := strings.Trim(routePath, "/")
-	return filepath.Join(filepath.FromSlash(clean), "index.html")
+	if filepath.IsAbs(rel) || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", false
+	}
+	target := filepath.Join(root, rel)
+	cleanRoot := filepath.Clean(root)
+	cleanTarget := filepath.Clean(target)
+	if cleanTarget != cleanRoot && !strings.HasPrefix(cleanTarget, cleanRoot+string(filepath.Separator)) {
+		return "", false
+	}
+	return cleanTarget, true
 }

@@ -356,6 +356,71 @@ func TestAppServesCompatRuntimeAssetsFromBuildManifest(t *testing.T) {
 	}
 }
 
+func TestAppRuntimeManifestCacheReloadsWhenBuildManifestChanges(t *testing.T) {
+	root := t.TempDir()
+	assetsDir := filepath.Join(root, "assets", "runtime")
+	if err := os.MkdirAll(assetsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(assetsDir, "bootstrap.v1.js"), []byte("console.log('v1');"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	writeRuntimeManifest(t, root, "bootstrap.v1.js")
+
+	app := New()
+	app.SetRuntimeRoot(root)
+	handler := app.Build()
+
+	req := httptest.NewRequest(http.MethodGet, "/gosx/bootstrap.js", nil)
+	first := httptest.NewRecorder()
+	handler.ServeHTTP(first, req)
+	if body := first.Body.String(); !strings.Contains(body, "v1") {
+		t.Fatalf("expected first build manifest asset, got %q", body)
+	}
+
+	time.Sleep(20 * time.Millisecond)
+	if err := os.WriteFile(filepath.Join(assetsDir, "bootstrap.v2.js"), []byte("console.log('v2');"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	writeRuntimeManifest(t, root, "bootstrap.v2.js")
+
+	second := httptest.NewRecorder()
+	handler.ServeHTTP(second, httptest.NewRequest(http.MethodGet, "/gosx/bootstrap.js", nil))
+	if body := second.Body.String(); !strings.Contains(body, "v2") {
+		t.Fatalf("expected refreshed build manifest asset, got %q", body)
+	}
+}
+
+func TestAppServesCompatRuntimeAssetsRejectsEscapingManifestFiles(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "secret.js"), []byte("nope"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "assets", "runtime"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	manifest := buildmanifest.Manifest{
+		Runtime: buildmanifest.RuntimeAssets{
+			Bootstrap: buildmanifest.HashedAsset{File: "../secret.js"},
+		},
+	}
+	data, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "build.json"), data, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	app := New()
+	app.SetRuntimeRoot(root)
+	w := httptest.NewRecorder()
+	app.Build().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/gosx/bootstrap.js", nil))
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 for escaping compat asset, got %d body=%q", w.Code, w.Body.String())
+	}
+}
+
 func TestAppEnableISRServesStaticExportedPages(t *testing.T) {
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, "static"), 0755); err != nil {
@@ -510,6 +575,40 @@ func TestAppEnableISRRespectsOnDemandTagInvalidation(t *testing.T) {
 	}
 }
 
+func TestAppEnableISRRejectsEscapingStaticFiles(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "static"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "secret.html"), []byte("secret"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	writeISRManifest(t, root, isrManifest{
+		Pages: []string{"/"},
+		Routes: []isrRoute{
+			{Path: "/", File: "../secret.html"},
+		},
+	})
+
+	app := New()
+	app.SetRuntimeRoot(root)
+	app.EnableISR()
+	app.Page("GET /", func(ctx *Context) gosx.Node {
+		return gosx.Text("dynamic fallback")
+	})
+
+	res := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("Accept", "text/html")
+	app.Build().ServeHTTP(res, req)
+	if body := res.Body.String(); !strings.Contains(body, "dynamic fallback") {
+		t.Fatalf("expected dynamic fallback after rejecting escaping ISR file, got %q", body)
+	}
+	if got := res.Header().Get("X-GoSX-ISR"); got != "" {
+		t.Fatalf("did not expect ISR header after escape rejection, got %q", got)
+	}
+}
+
 func writeISRManifest(t *testing.T, root string, manifest isrManifest) {
 	t.Helper()
 	data, err := json.Marshal(manifest)
@@ -527,6 +626,26 @@ func readFileMaybe(path string) string {
 		return ""
 	}
 	return string(data)
+}
+
+func writeRuntimeManifest(t *testing.T, root string, bootstrapFile string) {
+	t.Helper()
+	manifest := buildmanifest.Manifest{
+		Runtime: buildmanifest.RuntimeAssets{
+			Bootstrap: buildmanifest.HashedAsset{
+				File: bootstrapFile,
+				Hash: bootstrapFile,
+				Size: 1,
+			},
+		},
+	}
+	data, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "build.json"), data, 0644); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestAppServesPublicFilesAtRoot(t *testing.T) {
