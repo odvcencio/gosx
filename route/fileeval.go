@@ -430,21 +430,30 @@ func callValue(fn any, args []any) any {
 }
 
 func tryCallValue(fn any, args []any) (any, bool) {
-	if fn == nil {
+	rv, ok := callableValue(fn)
+	if !ok {
 		return nil, false
 	}
-
-	rv := reflect.ValueOf(fn)
-	if !rv.IsValid() || rv.Kind() != reflect.Func {
-		return nil, false
-	}
-
 	callArgs, ok := buildCallArgs(rv.Type(), args)
 	if !ok {
 		return nil, false
 	}
-	results := rv.Call(callArgs)
-	return unwrapCallResults(results)
+	return callWithArgs(rv, callArgs)
+}
+
+func callableValue(fn any) (reflect.Value, bool) {
+	if fn == nil {
+		return reflect.Value{}, false
+	}
+	rv := reflect.ValueOf(fn)
+	if !rv.IsValid() || rv.Kind() != reflect.Func {
+		return reflect.Value{}, false
+	}
+	return rv, true
+}
+
+func callWithArgs(fn reflect.Value, callArgs []reflect.Value) (any, bool) {
+	return unwrapCallResults(fn.Call(callArgs))
 }
 
 func buildCallArgs(typ reflect.Type, args []any) ([]reflect.Value, bool) {
@@ -548,6 +557,13 @@ func methodValue(target any, name string) (reflect.Value, bool) {
 }
 
 func mapLookup(target any, key string) (any, bool) {
+	if value, ok := fastStringMapLookup(target, key); ok {
+		return value, true
+	}
+	return reflectedStringMapLookup(target, key)
+}
+
+func fastStringMapLookup(target any, key string) (any, bool) {
 	switch m := target.(type) {
 	case map[string]any:
 		value, ok := m[key]
@@ -561,13 +577,18 @@ func mapLookup(target any, key string) (any, bool) {
 	case map[string]bool:
 		value, ok := m[key]
 		return value, ok
+	default:
+		return nil, false
 	}
+}
 
+func reflectedStringMapLookup(target any, key string) (any, bool) {
 	rv, ok := indirectValueOf(target)
 	if !ok || rv.Kind() != reflect.Map || rv.Type().Key().Kind() != reflect.String {
 		return nil, false
 	}
-	value := rv.MapIndex(reflect.ValueOf(key).Convert(rv.Type().Key()))
+	keyValue := reflect.ValueOf(key).Convert(rv.Type().Key())
+	value := rv.MapIndex(keyValue)
 	if !value.IsValid() || !value.CanInterface() {
 		return nil, false
 	}

@@ -718,17 +718,24 @@
   }
 
   function connectHub(entry) {
-    if (!entry || !entry.id || !entry.path || typeof WebSocket !== "function") return;
+    if (!canConnectHub(entry)) return;
 
     window.__gosx_disconnect_hub(entry.id);
+    const record = createHubRecord(entry);
+    window.__gosx.hubs.set(entry.id, record);
+    attachHubSocketHandlers(record);
+  }
 
-    const record = {
+  function canConnectHub(entry) {
+    return Boolean(entry && entry.id && entry.path && typeof WebSocket === "function");
+  }
+
+  function createHubRecord(entry) {
+    return {
       entry: entry,
       socket: new WebSocket(hubURL(entry.path)),
       reconnectTimer: null,
     };
-    window.__gosx.hubs.set(entry.id, record);
-    attachHubSocketHandlers(record);
   }
 
   function attachHubSocketHandlers(record) {
