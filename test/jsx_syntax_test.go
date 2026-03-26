@@ -575,7 +575,6 @@ func App() Node {
 }
 
 func TestJSXComponentWithProps(t *testing.T) {
-	// Note: in the current grammar, static attrs must precede expression attrs.
 	prog := mustCompile(t, `package main
 
 func App() Node {
@@ -615,6 +614,79 @@ func App() Node {
 	}
 	if !foundStatic {
 		t.Error("expected static attr 'label'")
+	}
+}
+
+func TestJSXMultipleExpressionAttributes(t *testing.T) {
+	prog := mustCompile(t, `package main
+
+func App() Node {
+	return <div a={x} b={y}></div>
+}`)
+
+	root := prog.NodeAt(prog.Components[0].Root)
+	if root.Kind != ir.NodeElement {
+		t.Fatalf("expected NodeElement, got %d", root.Kind)
+	}
+	if len(root.Attrs) != 2 {
+		t.Fatalf("expected 2 attrs, got %d", len(root.Attrs))
+	}
+	if root.Attrs[0].Kind != ir.AttrExpr || root.Attrs[0].Name != "a" || root.Attrs[0].Expr != "x" {
+		t.Fatalf("attr 0: expected expr a={x}, got %+v", root.Attrs[0])
+	}
+	if root.Attrs[1].Kind != ir.AttrExpr || root.Attrs[1].Name != "b" || root.Attrs[1].Expr != "y" {
+		t.Fatalf("attr 1: expected expr b={y}, got %+v", root.Attrs[1])
+	}
+}
+
+func TestJSXMixedAttributeOrdering(t *testing.T) {
+	prog := mustCompile(t, `package main
+
+func App() Node {
+	return <Card count={value} label="clicks" tone={theme} />
+}`)
+
+	root := prog.NodeAt(prog.Components[0].Root)
+	if root.Kind != ir.NodeComponent {
+		t.Fatalf("expected NodeComponent, got %d", root.Kind)
+	}
+	if root.Tag != "Card" {
+		t.Fatalf("expected Card, got %q", root.Tag)
+	}
+	if len(root.Attrs) != 3 {
+		t.Fatalf("expected 3 attrs, got %d", len(root.Attrs))
+	}
+
+	if root.Attrs[0].Kind != ir.AttrExpr || root.Attrs[0].Name != "count" || root.Attrs[0].Expr != "value" {
+		t.Fatalf("attr 0: expected expr count={value}, got %+v", root.Attrs[0])
+	}
+	if root.Attrs[1].Kind != ir.AttrStatic || root.Attrs[1].Name != "label" || root.Attrs[1].Value != "clicks" {
+		t.Fatalf("attr 1: expected static label=\"clicks\", got %+v", root.Attrs[1])
+	}
+	if root.Attrs[2].Kind != ir.AttrExpr || root.Attrs[2].Name != "tone" || root.Attrs[2].Expr != "theme" {
+		t.Fatalf("attr 2: expected expr tone={theme}, got %+v", root.Attrs[2])
+	}
+}
+
+func TestJSXAttributeExpressionsSupportNestedBraces(t *testing.T) {
+	prog := mustCompile(t, `package main
+
+func App() Node {
+	return <Button onClick={func() { update() }} config={Config{Value: 1}} />
+}`)
+
+	root := prog.NodeAt(prog.Components[0].Root)
+	if root.Kind != ir.NodeComponent {
+		t.Fatalf("expected NodeComponent, got %d", root.Kind)
+	}
+	if len(root.Attrs) != 2 {
+		t.Fatalf("expected 2 attrs, got %d", len(root.Attrs))
+	}
+	if root.Attrs[0].Kind != ir.AttrExpr || root.Attrs[0].Expr != "func() { update() }" {
+		t.Fatalf("attr 0: expected nested func literal expr, got %+v", root.Attrs[0])
+	}
+	if root.Attrs[1].Kind != ir.AttrExpr || root.Attrs[1].Expr != "Config{Value: 1}" {
+		t.Fatalf("attr 1: expected composite literal expr, got %+v", root.Attrs[1])
 	}
 }
 

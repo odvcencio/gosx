@@ -708,6 +708,11 @@ func (l *lowerer) lowerAttr(n *gotreesitter.Node) Attr {
 		}
 		return Attr{Kind: AttrStatic, Name: name, Value: val}
 
+	case "jsx_attribute_expression":
+		expr := stripJSXAttributeExpressionText(l.text(valueNode))
+		isEvent := strings.HasPrefix(name, "on") && len(name) > 2 && name[2] >= 'A' && name[2] <= 'Z'
+		return Attr{Kind: AttrExpr, Name: name, Expr: expr, IsEvent: isEvent}
+
 	case "jsx_expression_container":
 		exprNode := l.childByField(valueNode, "expression")
 		expr := ""
@@ -728,6 +733,13 @@ func (l *lowerer) lowerSpreadAttr(n *gotreesitter.Node) Attr {
 		expr = l.text(exprNode)
 	}
 	return Attr{Kind: AttrSpread, Expr: expr}
+}
+
+func stripJSXAttributeExpressionText(text string) string {
+	if len(text) >= 2 && text[0] == '{' && text[len(text)-1] == '}' {
+		return text[1 : len(text)-1]
+	}
+	return text
 }
 
 func (l *lowerer) extractChildren(n *gotreesitter.Node) []NodeID {

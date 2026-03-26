@@ -16,7 +16,7 @@ GoSX is in active development. The compiler pipeline, server rendering, island a
 - opt-in client-side page navigation via `app.EnableNavigation()` plus `server.Link(...)`, with managed head swaps and intent-prefetching
 - file-based routing via `route.Router.AddDir(...)`, including `layout.gsx`, `page.gsx`, `index.gsx`, `not-found.gsx`, `error.gsx`, route groups like `(marketing)`, and `[slug]` segment conventions
 - file-route server modules via sibling `page.server.go` files and `route.MustRegisterFileModuleHere(...)`, with per-page `Load`, `Metadata`, `Render`, and relative `__actions/<name>` endpoints
-- file-routed `.gsx` pages can now render local page-scoped components plus built-in `If`, `Each`, `Link`, and `Image` helpers through the file renderer, with spread-based props for richer loader-fed page composition
+- file-routed `.gsx` pages can now render local page-scoped components plus built-in `If`, `Each`, `Link`, and `Image` helpers through the file renderer, including mixed and repeated expression-valued attrs plus nested-brace attr expressions
 - file-routed pages and layouts can now own sibling `page.css` / `layout.css` sidecars, which are injected into the document head automatically during routed rendering
 - file-routed pages and layouts can now own sibling `page.meta.json` / `layout.meta.json` sidecars for static title, description, canonical, meta, and link data without manual server-module wiring
 - session-backed browser form flows via `action` + `session`, including flashed validation state, redirect-safe success messages, and built-in CSRF protection
@@ -48,7 +48,6 @@ GoSX is in active development. The compiler pipeline, server rendering, island a
 - a unified hybrid SSR + prerender story in the main build pipeline
 - a fully automatic nested `page.server.go` discovery story beyond scaffolded side-effect import buckets
 - `.gsx`-first engine surfaces for advanced runtimes like 3D
-- a grammar pass that removes the current multi-expression-attribute brittleness in `.gsx` tags instead of relying on spread-based workarounds in file-routed pages
 - deeper styling and asset ownership ergonomics
 
 ## Quick Start

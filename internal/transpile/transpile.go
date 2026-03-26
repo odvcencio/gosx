@@ -287,6 +287,8 @@ func (t *transpiler) emitAttr(n *gotreesitter.Node) string {
 	case "jsx_string_literal":
 		val := t.text(valueNode)
 		return fmt.Sprintf("gosx.Attr(%q, %s)", name, val) // already quoted
+	case "jsx_attribute_expression":
+		return fmt.Sprintf("gosx.Attr(%q, %s)", name, stripJSXAttributeExpressionText(t.text(valueNode)))
 	case "jsx_expression_container":
 		exprNode := t.childByField(valueNode, "expression")
 		if exprNode != nil {
@@ -327,4 +329,11 @@ func (t *transpiler) extractTagName(n *gotreesitter.Node) string {
 
 func isComponent(tag string) bool {
 	return len(tag) > 0 && tag[0] >= 'A' && tag[0] <= 'Z'
+}
+
+func stripJSXAttributeExpressionText(text string) string {
+	if len(text) >= 2 && text[0] == '{' && text[len(text)-1] == '}' {
+		return text[1 : len(text)-1]
+	}
+	return text
 }
