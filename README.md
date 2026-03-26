@@ -17,6 +17,7 @@ GoSX is in active development. The compiler pipeline, server rendering, island a
 - file-based routing via `route.Router.AddDir(...)`, including `layout.gsx`, `page.gsx`, `index.gsx`, `not-found.gsx`, `error.gsx`, route groups like `(marketing)`, and `[slug]` segment conventions
 - file-route server modules via sibling `page.server.go` files and `route.MustRegisterFileModuleHere(...)`, with per-page `Load`, `Metadata`, `Render`, and relative `__actions/<name>` endpoints
 - file-routed `.gsx` pages can now render local page-scoped components plus built-in `If`, `Each`, `Link`, and `Image` helpers through the file renderer, with spread-based props for richer loader-fed page composition
+- file-routed pages and layouts can now own sibling `page.css` / `layout.css` sidecars, which are injected into the document head automatically during routed rendering
 - session-backed browser form flows via `action` + `session`, including flashed validation state, redirect-safe success messages, and built-in CSRF protection
 - auth middleware via `auth.New(...)`, `authn.Middleware`, and `authn.Require`, with request-scoped `user` context available to routed `.gsx` pages
 - declarative redirects and rewrites via `app.Redirect(...)` and `app.Rewrite(...)`

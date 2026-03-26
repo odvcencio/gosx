@@ -63,6 +63,19 @@ func TestWriteBuildReadmeWithoutServerBinary(t *testing.T) {
 	}
 }
 
+func TestCSSAssetBaseNameUsesRelativePath(t *testing.T) {
+	cases := map[string]string{
+		"app/page.css":             "app_page",
+		"app/docs/page.css":        "app_docs_page",
+		"components/hero-banner.css": "components_hero_banner",
+	}
+	for input, want := range cases {
+		if got := cssAssetBaseName(input); got != want {
+			t.Fatalf("%s: expected %q, got %q", input, want, got)
+		}
+	}
+}
+
 func mustWriteFile(t *testing.T, path string, contents string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {

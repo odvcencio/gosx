@@ -29,6 +29,7 @@ type IslandAsset struct {
 
 type CSSAsset struct {
 	Component string `json:"component"`
+	Source    string `json:"source,omitempty"`
 	HashedAsset
 }
 
@@ -87,6 +88,16 @@ func (m *Manifest) IslandURL(assetBaseURL string, asset IslandAsset) string {
 // CSSURL returns the public URL for a CSS asset.
 func (m *Manifest) CSSURL(assetBaseURL string, asset CSSAsset) string {
 	return AssetURL(assetBaseURL, "css", asset.File)
+}
+
+// CSSAssetBySource returns the hashed CSS asset for a source-relative path, if any.
+func (m *Manifest) CSSAssetBySource(source string) (CSSAsset, bool) {
+	for _, asset := range m.CSS {
+		if asset.Source == source {
+			return asset, true
+		}
+	}
+	return CSSAsset{}, false
 }
 
 // AssetURL joins the mounted public asset root with a build output file.

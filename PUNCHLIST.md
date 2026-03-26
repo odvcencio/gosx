@@ -45,7 +45,7 @@ This is the working framework punchlist for driving GoSX from "credible core" to
 ## Phase 6
 
 - [ ] Styling and asset conventions that feel batteries-included
-- [ ] Route/component-owned CSS and head inclusion ergonomics
+- [x] Route/component-owned CSS and head inclusion ergonomics
 - [ ] Better public asset and image ownership story
 
 ## Phase 7

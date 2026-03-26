@@ -181,13 +181,18 @@ func RunBuild(dir string, dev bool) error {
 		}
 
 		component := strings.TrimSuffix(filepath.Base(gsxFile), ".gsx")
-		asset, err := writeHashed(cssDir, component, ".css", data)
+		relCSS, err := filepath.Rel(dir, cssFile)
+		if err != nil {
+			return fmt.Errorf("relative css path %s: %w", cssFile, err)
+		}
+		asset, err := writeHashed(cssDir, cssAssetBaseName(relCSS), ".css", data)
 		if err != nil {
 			return fmt.Errorf("write CSS %s: %w", component, err)
 		}
 
 		manifest.CSS = append(manifest.CSS, CSSAsset{
 			Component:   component,
+			Source:      filepath.ToSlash(relCSS),
 			HashedAsset: asset,
 		})
 
@@ -387,6 +392,21 @@ func countNonEmpty(strs ...string) int {
 		}
 	}
 	return n
+}
+
+func cssAssetBaseName(relPath string) string {
+	relPath = filepath.ToSlash(strings.TrimSpace(relPath))
+	relPath = strings.TrimSuffix(relPath, filepath.Ext(relPath))
+	if relPath == "" {
+		return "style"
+	}
+	replacer := strings.NewReplacer("/", "_", "\\", "_", " ", "_", ".", "_", "-", "_")
+	name := replacer.Replace(relPath)
+	name = strings.Trim(name, "_")
+	if name == "" {
+		return "style"
+	}
+	return name
 }
 
 func getGOROOT() string {

@@ -250,7 +250,11 @@ func stageSidecarCSS(dir, cssDir string) error {
 		if !strings.HasSuffix(path, ".css") || strings.HasPrefix(filepath.Base(path), ".") {
 			return nil
 		}
-		dst := filepath.Join(cssDir, filepath.Base(path))
+		rel, err := filepath.Rel(dir, path)
+		if err != nil {
+			return fmt.Errorf("relative css path %s: %w", path, err)
+		}
+		dst := filepath.Join(cssDir, rel)
 		return copyFile(dst, path)
 	})
 }

@@ -319,6 +319,8 @@ func DefaultFileRenderer(ctx *RouteContext, page FilePage) (gosx.Node, error) {
 }
 
 func renderFilePage(ctx *RouteContext, page FilePage, module FileModule, renderFn FileRenderFunc) (gosx.Node, error) {
+	addFileCSSHead(ctx, page.Layouts...)
+	addFileCSSHead(ctx, page.FilePath)
 	if module.Metadata != nil {
 		meta, err := module.Metadata(ctx, page, ctx.Data)
 		if err != nil {
