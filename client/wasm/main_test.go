@@ -11,6 +11,7 @@ import (
 	"github.com/odvcencio/gosx"
 	"github.com/odvcencio/gosx/client/bridge"
 	"github.com/odvcencio/gosx/client/vm"
+	rootengine "github.com/odvcencio/gosx/engine"
 	"github.com/odvcencio/gosx/ir"
 	"github.com/odvcencio/gosx/island/program"
 )
@@ -213,5 +214,69 @@ func TestRuntimeSetInputBatchExport(t *testing.T) {
 	}
 	if !keyboard.Fields["space"].Bool {
 		t.Fatalf("expected space=true, got %#v", keyboard.Fields["space"])
+	}
+}
+
+func TestRuntimeHydrateTickAndDisposeEngine(t *testing.T) {
+	setGlobalValue(t, "__gosx_runtime_ready", js.Undefined())
+
+	b := bridge.New()
+	registerRuntime(b)
+
+	prog := &rootengine.Program{
+		Name: "GeometryZoo",
+		Nodes: []rootengine.Node{
+			{
+				Kind:     "mesh",
+				Geometry: "box",
+				Material: "flat",
+				Props: map[string]program.ExprID{
+					"x":     0,
+					"color": 1,
+				},
+			},
+		},
+		Exprs: []program.Expr{
+			{Op: program.OpSignalGet, Value: "$scene.x", Type: program.TypeFloat},
+			{Op: program.OpSignalGet, Value: "$scene.color", Type: program.TypeString},
+			{Op: program.OpLitFloat, Value: "0", Type: program.TypeFloat},
+			{Op: program.OpLitString, Value: "#8de1ff", Type: program.TypeString},
+		},
+		Signals: []program.SignalDef{
+			{Name: "$scene.x", Type: program.TypeFloat, Init: 2},
+			{Name: "$scene.color", Type: program.TypeString, Init: 3},
+		},
+	}
+
+	data, err := rootengine.EncodeProgramJSON(prog)
+	if err != nil {
+		t.Fatalf("encode engine program: %v", err)
+	}
+
+	hydrateRet := js.Global().Get("__gosx_hydrate_engine").Invoke("engine-0", prog.Name, `{}`, string(data), "json")
+	if got := hydrateRet.String(); !strings.Contains(got, `"kind":0`) {
+		t.Fatalf("expected create-object command result, got %q", got)
+	}
+	if b.EngineCount() != 1 {
+		t.Fatalf("expected 1 engine after hydrate, got %d", b.EngineCount())
+	}
+
+	batchRet := js.Global().Get("__gosx_set_input_batch").Invoke(`{"$scene.x":4.5,"$scene.color":"#ff8f6b"}`)
+	if !batchRet.IsNull() {
+		t.Fatalf("expected null input batch result, got %q", batchRet.String())
+	}
+
+	tickRet := js.Global().Get("__gosx_tick_engine").Invoke("engine-0")
+	got := tickRet.String()
+	if !strings.Contains(got, `"kind":2`) || !strings.Contains(got, `"kind":3`) {
+		t.Fatalf("expected transform and material commands, got %q", got)
+	}
+
+	disposeRet := js.Global().Get("__gosx_engine_dispose").Invoke("engine-0")
+	if !disposeRet.IsNull() {
+		t.Fatalf("expected null dispose result, got %q", disposeRet.String())
+	}
+	if b.EngineCount() != 0 {
+		t.Fatalf("expected 0 engines after dispose, got %d", b.EngineCount())
 	}
 }

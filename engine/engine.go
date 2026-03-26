@@ -43,6 +43,14 @@ const (
 	CapPointer   Capability = "pointer"
 )
 
+// Runtime identifies how an engine instance is driven on the client.
+type Runtime string
+
+const (
+	RuntimeNone   Runtime = ""
+	RuntimeShared Runtime = "shared"
+)
+
 // Config describes an engine instance for mounting.
 type Config struct {
 	// Name is the engine component name.
@@ -73,6 +81,10 @@ type Config struct {
 
 	// Capabilities lists required browser APIs.
 	Capabilities []Capability `json:"capabilities,omitempty"`
+
+	// Runtime selects an optional shared GoSX client runtime for program-driven
+	// engines. Empty means the engine is mounted entirely by its JS factory.
+	Runtime Runtime `json:"runtime,omitempty"`
 }
 
 // Port is a typed message channel between an engine and the host.

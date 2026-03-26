@@ -238,6 +238,7 @@ type fileEngineDefaults struct {
 	JSPath       string
 	WASMPath     string
 	Capabilities []engine.Capability
+	Runtime      engine.Runtime
 	MountAttrs   map[string]any
 }
 
@@ -306,6 +307,10 @@ func (r *fileProgramRenderer) engineComponentConfig(node *ir.Node, env fileRende
 		MountAttrs:   mountAttrs,
 		Props:        marshalEngineProps(props),
 		Capabilities: engineCapabilitiesValue(attrValue(node.Attrs, env, "capabilities"), defaults.Capabilities),
+		Runtime:      engine.Runtime(firstNonEmptyString(stringValue(attrValue(node.Attrs, env, "runtime")), string(defaults.Runtime))),
+	}
+	if cfg.Runtime == engine.RuntimeNone && kind == engine.KindSurface && cfg.Name == "GoSXScene3D" && cfg.WASMPath != "" {
+		cfg.Runtime = engine.RuntimeShared
 	}
 
 	var fallback gosx.Node
@@ -786,7 +791,7 @@ func mergeEngineProps(dst map[string]any, value any) {
 
 func isEngineReservedAttr(name string) bool {
 	switch strings.TrimSpace(name) {
-	case "name", "component", "kind", "wasmPath", "wasm", "programRef", "program", "jsPath", "js", "script", "jsExport", "export", "factory", "mountId", "capabilities", "props", "id":
+	case "name", "component", "kind", "wasmPath", "wasm", "programRef", "program", "jsPath", "js", "script", "jsExport", "export", "factory", "mountId", "capabilities", "runtime", "props", "id":
 		return true
 	default:
 		return false

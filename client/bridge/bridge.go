@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/odvcencio/gosx/client/enginevm"
 	"github.com/odvcencio/gosx/client/vm"
+	rootengine "github.com/odvcencio/gosx/engine"
 	"github.com/odvcencio/gosx/island/program"
 	"github.com/odvcencio/gosx/signal"
 )
@@ -12,6 +14,7 @@ import (
 // Bridge manages active island instances and shared state.
 type Bridge struct {
 	islands     map[string]*vm.Island
+	engines     map[string]*enginevm.Runtime
 	store       *Store
 	patchFn     func(islandID, patchJSON string) // callback to push patches to JS
 	dispatching string                           // ID of the island currently dispatching
@@ -81,6 +84,7 @@ func (s *Store) Signal(name string, init vm.Value) *signal.Signal[vm.Value] {
 func New() *Bridge {
 	return &Bridge{
 		islands: make(map[string]*vm.Island),
+		engines: make(map[string]*enginevm.Runtime),
 		store:   NewStore(),
 		unsubs:  make(map[string][]func()),
 	}
@@ -113,6 +117,27 @@ func (b *Bridge) HydrateIsland(id, componentName, propsJSON string, programData 
 
 	b.islands[id] = island
 	return nil
+}
+
+// HydrateEngine creates and registers an engine runtime from a program and props.
+func (b *Bridge) HydrateEngine(id, componentName, propsJSON string, programData []byte, format string) ([]rootengine.Command, error) {
+	prog, err := DecodeEngineProgram(programData, format)
+	if err != nil {
+		return nil, fmt.Errorf("decode engine program %q: %w", componentName, err)
+	}
+	propsJSON, err = normalizePropsJSON(componentName, propsJSON)
+	if err != nil {
+		return nil, err
+	}
+	if _, exists := b.engines[id]; exists {
+		b.DisposeEngine(id)
+	}
+
+	runtime := enginevm.New(prog, propsJSON)
+	connectSharedEngineSignals(runtime, b.store, prog.Signals)
+	b.engines[id] = runtime
+
+	return runtime.Reconcile(), nil
 }
 
 // DispatchAction forwards an event to an island's handler and returns patches.
@@ -170,6 +195,15 @@ func (b *Bridge) SetSharedSignalBatchJSON(batchJSON string) error {
 	return nil
 }
 
+// TickEngine reconciles a live engine runtime and returns pending commands.
+func (b *Bridge) TickEngine(id string) ([]rootengine.Command, error) {
+	runtime, ok := b.engines[id]
+	if !ok {
+		return nil, fmt.Errorf("engine %q not found", id)
+	}
+	return runtime.Reconcile(), nil
+}
+
 // MarshalPatches serializes patch ops to JSON for the JS patch applier.
 func MarshalPatches(patches []vm.PatchOp) (string, error) {
 	data, err := json.Marshal(patches)
@@ -196,9 +230,22 @@ func (b *Bridge) DisposeIsland(id string) {
 	}
 }
 
+// DisposeEngine removes a live engine runtime from the bridge.
+func (b *Bridge) DisposeEngine(id string) {
+	if runtime, ok := b.engines[id]; ok {
+		runtime.Dispose()
+		delete(b.engines, id)
+	}
+}
+
 // IslandCount returns the number of active islands.
 func (b *Bridge) IslandCount() int {
 	return len(b.islands)
+}
+
+// EngineCount returns the number of active engine runtimes.
+func (b *Bridge) EngineCount() int {
+	return len(b.engines)
 }
 
 func normalizePropsJSON(componentName, propsJSON string) (string, error) {
@@ -237,6 +284,17 @@ func sharedSignalDefs(prog *program.Program) []program.SignalDef {
 		}
 	}
 	return defs
+}
+
+func connectSharedEngineSignals(runtime *enginevm.Runtime, store *Store, defs []program.SignalDef) {
+	for _, def := range defs {
+		if !isSharedSignal(def.Name) {
+			continue
+		}
+		initVal := runtime.EvalExpr(def.Init)
+		sharedSig := store.Signal(def.Name, initVal)
+		runtime.SetSharedSignal(def.Name, sharedSig)
+	}
 }
 
 func isSharedSignal(name string) bool {
@@ -285,4 +343,23 @@ func (b *Bridge) pushPatches(islandID string, patches []vm.PatchOp) {
 	if err == nil {
 		b.patchFn(islandID, patchJSON)
 	}
+}
+
+// DecodeEngineProgram decodes a runtime engine program.
+func DecodeEngineProgram(data []byte, format string) (*rootengine.Program, error) {
+	switch format {
+	case "", "json":
+		return rootengine.DecodeProgramJSON(data)
+	default:
+		return nil, fmt.Errorf("unknown engine program format %q", format)
+	}
+}
+
+// MarshalEngineCommands serializes engine commands to JSON.
+func MarshalEngineCommands(commands []rootengine.Command) (string, error) {
+	data, err := json.Marshal(commands)
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
 }

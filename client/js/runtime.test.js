@@ -403,6 +403,9 @@ function createContext(options) {
   const hydrateCalls = [];
   const actionCalls = [];
   const disposeCalls = [];
+  const engineHydrateCalls = [];
+  const engineTickCalls = [];
+  const engineDisposeCalls = [];
   const engineMounts = [];
   const engineDisposals = [];
   const sharedSignalCalls = [];
@@ -481,6 +484,27 @@ function createContext(options) {
           disposeCalls.push(args);
           if (typeof options.onDispose === "function") {
             return options.onDispose(...args);
+          }
+          return null;
+        };
+        context.__gosx_hydrate_engine = (...args) => {
+          engineHydrateCalls.push(args);
+          if (typeof options.onHydrateEngine === "function") {
+            return options.onHydrateEngine(...args);
+          }
+          return "[]";
+        };
+        context.__gosx_tick_engine = (...args) => {
+          engineTickCalls.push(args);
+          if (typeof options.onTickEngine === "function") {
+            return options.onTickEngine(...args);
+          }
+          return "[]";
+        };
+        context.__gosx_engine_dispose = (...args) => {
+          engineDisposeCalls.push(args);
+          if (typeof options.onDisposeEngine === "function") {
+            return options.onDisposeEngine(...args);
           }
           return null;
         };
@@ -575,8 +599,11 @@ function createContext(options) {
     context,
     disposeCalls,
     document,
+    engineDisposeCalls,
     engineDisposals,
+    engineHydrateCalls,
     engineMounts,
+    engineTickCalls,
     fetchCalls,
     hydrateCalls,
     inputBatchCalls,
@@ -840,6 +867,65 @@ test("bootstrap batches keyboard and pointer input for capable engines", async (
   env.context.__gosx_dispose_engine("gosx-engine-input");
   assert.equal(env.document.eventListeners.get("keydown").length, 0);
   assert.equal(env.document.eventListeners.get("pointermove").length, 0);
+});
+
+test("bootstrap hydrates shared-runtime Scene3D programs", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-runtime-root";
+
+  const env = createContext({
+    elements: [mount],
+    fetchRoutes: {
+      "/runtime.wasm": { bytes: [0, 97, 115, 109] },
+      "/scene-program.json": { text: '{"name":"GeometryZoo"}' },
+    },
+    manifest: {
+      runtime: { path: "/runtime.wasm" },
+      engines: [
+        {
+          id: "gosx-engine-rt",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-runtime-root",
+          runtime: "shared",
+          props: { width: 640, height: 360, background: "#08151f" },
+          programRef: "/scene-program.json",
+        },
+      ],
+    },
+    onHydrateEngine: () => JSON.stringify([
+      { kind: 5, objectId: 0, data: { x: 0, y: 0, z: 6, fov: 75 } },
+      {
+        kind: 0,
+        objectId: 1,
+        data: {
+          kind: "mesh",
+          geometry: "sphere",
+          material: "flat",
+          props: { x: 0, y: 0, z: 0, radius: 1.2, color: "#8de1ff", spinY: 0.35 },
+        },
+      },
+    ]),
+    onTickEngine: () => "[]",
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  assert.equal(env.engineHydrateCalls.length, 1);
+  assert.deepEqual(env.engineHydrateCalls[0].slice(0, 3), [
+    "gosx-engine-rt",
+    "GoSXScene3D",
+    '{"width":640,"height":360,"background":"#08151f"}',
+  ]);
+  assert.equal(
+    env.fetchCalls.some((call) => call.url === "/scene-program.json"),
+    true,
+  );
+  assert.equal(mount.children[0].tagName, "CANVAS");
+
+  env.context.__gosx_dispose_engine("gosx-engine-rt");
+  assert.deepEqual(env.engineDisposeCalls, [["gosx-engine-rt"]]);
 });
 
 test("bootstrap mounts native Scene3D engines without extra scripts", async () => {
