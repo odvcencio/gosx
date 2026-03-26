@@ -107,6 +107,7 @@ class FakeWebGLContext {
     this.LINES = 0x0001;
     this.COLOR_BUFFER_BIT = 0x4000;
     this.BLEND = 0x0BE2;
+    this.ONE = 1;
     this.SRC_ALPHA = 0x0302;
     this.ONE_MINUS_SRC_ALPHA = 0x0303;
     this.VERTEX_SHADER = 0x8B31;
@@ -1097,22 +1098,26 @@ test("bootstrap hydrates shared-runtime Scene3D programs", async () => {
       vertexCount: 2,
       worldPositions: [
         -2.4, -1.5, 0.1, 2.4, -1.5, 0.1,
+        -0.8, 0.2, 0.5, 0.7, 0.9, 1.1,
         -1.2, -0.4, 0.2, 1.1, 0.6, 1.4,
       ],
       worldColors: [
         0.25, 0.33, 0.41, 1, 0.25, 0.33, 0.41, 1,
+        0.78, 0.92, 1, 1, 0.78, 0.92, 1, 1,
         0.55, 0.88, 1, 1, 0.55, 0.88, 1, 1,
       ],
-      worldVertexCount: 4,
+      worldVertexCount: 6,
       materials: [
         { kind: "flat", color: "#35556a", opacity: 1, wireframe: true, blendMode: "opaque", emissive: 0 },
-        { kind: "glow", color: "#8de1ff", opacity: 0.7, wireframe: true, blendMode: "alpha", emissive: 0.4 },
+        { kind: "glass", color: "#c7f0ff", opacity: 0.45, wireframe: true, blendMode: "alpha", emissive: 0.05 },
+        { kind: "glow", color: "#8de1ff", opacity: 0.7, wireframe: true, blendMode: "additive", emissive: 0.4 },
       ],
       objects: [
         { id: "floor", kind: "plane", materialIndex: 0, vertexOffset: 0, vertexCount: 2, static: true },
-        { id: "orb", kind: "sphere", materialIndex: 1, vertexOffset: 2, vertexCount: 2, static: false },
+        { id: "shield", kind: "box", materialIndex: 1, vertexOffset: 2, vertexCount: 2, static: false },
+        { id: "orb", kind: "sphere", materialIndex: 2, vertexOffset: 4, vertexCount: 2, static: false },
       ],
-      objectCount: 2,
+      objectCount: 3,
     }),
   });
 
@@ -1139,6 +1144,7 @@ test("bootstrap hydrates shared-runtime Scene3D programs", async () => {
   assert.ok(gl.ops.filter((entry) => entry[0] === "drawArrays").length >= 2);
   assert.ok(gl.ops.some((entry) => entry[0] === "enable" && entry[1] === gl.BLEND));
   assert.ok(gl.ops.some((entry) => entry[0] === "blendFunc" && entry[1] === gl.SRC_ALPHA && entry[2] === gl.ONE_MINUS_SRC_ALPHA));
+  assert.ok(gl.ops.some((entry) => entry[0] === "blendFunc" && entry[1] === gl.SRC_ALPHA && entry[2] === gl.ONE));
 
   env.context.__gosx_dispose_engine("gosx-engine-rt");
   assert.deepEqual(env.engineDisposeCalls, [["gosx-engine-rt"]]);
