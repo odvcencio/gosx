@@ -37,9 +37,10 @@ func Page() Node {
 				<p>
 					The scene below is declared in
 					<span class="inline-code">page.gsx</span>
-					and its object graph comes from
-					<span class="inline-code">page.server.go</span>.
-					That keeps the authoring path server-first while still letting the browser own a live surface.
+					while
+					<span class="inline-code">page.server.go</span>
+					points it at a real shared-runtime engine program served by the app.
+					That keeps the authoring path server-first while making the browser runtime explicit instead of ad hoc.
 				</p>
 			</div>
 			<Scene3D class="scene-shell" {...data.sceneDemo}>
@@ -50,7 +51,7 @@ func Page() Node {
 window.__gosx_bootstrap_page()
 window.__gosx_page_nav.navigate("/docs/routing")`}</pre>
 		<pre class="code-block">{`func Page() Node {
-    return <Scene3D class="scene-shell" {...data.sceneDemo}>
+    return <Scene3D class="scene-shell" programRef="/api/runtime/scene-program" {...data.sceneDemo}>
         <div class="scene-fallback">Preparing the scene runtime...</div>
     </Scene3D>
 }`}</pre>

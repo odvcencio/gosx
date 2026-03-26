@@ -552,12 +552,119 @@
 
   function sceneCamera(props) {
     const raw = props && props.camera && typeof props.camera === "object" ? props.camera : {};
+    return normalizeSceneCamera(raw, {
+      x: 0,
+      y: 0,
+      z: 6,
+      fov: 75,
+    });
+  }
+
+  function normalizeSceneCamera(raw, fallback) {
+    const base = fallback || {};
     return {
-      x: sceneNumber(raw.x, 0),
-      y: sceneNumber(raw.y, 0),
-      z: sceneNumber(raw.z, 6),
-      fov: sceneNumber(raw.fov, 75),
+      x: sceneNumber(raw.x, sceneNumber(base.x, 0)),
+      y: sceneNumber(raw.y, sceneNumber(base.y, 0)),
+      z: sceneNumber(raw.z, sceneNumber(base.z, 6)),
+      fov: sceneNumber(raw.fov, sceneNumber(base.fov, 75)),
     };
+  }
+
+  function createSceneState(props) {
+    const state = {
+      background: typeof props.background === "string" && props.background ? props.background : "#08151f",
+      camera: sceneCamera(props),
+      objects: new Map(),
+    };
+    for (const object of sceneObjects(props)) {
+      state.objects.set(object.id, object);
+    }
+    return state;
+  }
+
+  function sceneStateObjects(state) {
+    return Array.from(state.objects.values());
+  }
+
+  const SCENE_CMD_CREATE_OBJECT = 0;
+  const SCENE_CMD_REMOVE_OBJECT = 1;
+  const SCENE_CMD_SET_TRANSFORM = 2;
+  const SCENE_CMD_SET_MATERIAL = 3;
+  const SCENE_CMD_SET_LIGHT = 4;
+  const SCENE_CMD_SET_CAMERA = 5;
+  const SCENE_CMD_SET_PARTICLES = 6;
+
+  function applySceneCommands(state, commands) {
+    if (!state || !Array.isArray(commands) || commands.length === 0) return;
+    for (const command of commands) {
+      applySceneCommand(state, command);
+    }
+  }
+
+  function applySceneCommand(state, command) {
+    if (!command || typeof command !== "object") return;
+    switch (command.kind) {
+      case SCENE_CMD_CREATE_OBJECT:
+        applySceneCreateCommand(state, command.objectId, command.data);
+        return;
+      case SCENE_CMD_REMOVE_OBJECT:
+        state.objects.delete(sceneObjectKey(command.objectId));
+        return;
+      case SCENE_CMD_SET_TRANSFORM:
+      case SCENE_CMD_SET_MATERIAL:
+        applySceneObjectPatch(state, command.objectId, command.data);
+        return;
+      case SCENE_CMD_SET_CAMERA:
+        state.camera = normalizeSceneCamera(command.data || {}, state.camera);
+        return;
+      case SCENE_CMD_SET_LIGHT:
+      case SCENE_CMD_SET_PARTICLES:
+      default:
+        return;
+    }
+  }
+
+  function applySceneCreateCommand(state, objectID, payload) {
+    if (!payload || typeof payload !== "object") return;
+    if (payload.kind === "camera") {
+      state.camera = normalizeSceneCamera(payload.props || {}, state.camera);
+      return;
+    }
+    if (payload.kind === "light" || payload.kind === "particles") {
+      return;
+    }
+    const key = sceneObjectKey(objectID);
+    const next = sceneObjectFromPayload(objectID, payload, state.objects.get(key));
+    if (next) {
+      state.objects.set(key, next);
+    }
+  }
+
+  function applySceneObjectPatch(state, objectID, patch) {
+    const key = sceneObjectKey(objectID);
+    const current = state.objects.get(key);
+    if (!current) return;
+    const next = sceneObjectFromPayload(objectID, {
+      geometry: current.kind,
+      props: Object.assign({}, current, patch || {}),
+    }, current);
+    if (next) {
+      state.objects.set(key, next);
+    }
+  }
+
+  function sceneObjectKey(objectID) {
+    return String(objectID);
+  }
+
+  function sceneObjectFromPayload(objectID, payload, fallback) {
+    const current = fallback && typeof fallback === "object" ? fallback : {};
+    const props = payload && payload.props && typeof payload.props === "object" ? payload.props : {};
+    const geometry = payload && typeof payload.geometry === "string" && payload.geometry ? payload.geometry : current.kind;
+    const merged = Object.assign({}, current, props);
+    merged.id = current.id || merged.id || ("scene-object-" + objectID);
+    merged.kind = normalizeSceneKind(merged.kind || geometry);
+    return normalizeSceneObject(merged, objectID);
   }
 
   function clearChildren(node) {
@@ -776,7 +883,7 @@
     }
   }
 
-  window.__gosx_register_engine_factory("GoSXScene3D", function(ctx) {
+  window.__gosx_register_engine_factory("GoSXScene3D", async function(ctx) {
     if (!ctx.mount || typeof document.createElement !== "function") {
       console.warn("[gosx] Scene3D requires a mount element");
       return {};
@@ -785,10 +892,10 @@
     const props = ctx.props || {};
     const width = Math.max(240, sceneNumber(props.width, 720));
     const height = Math.max(180, sceneNumber(props.height, 420));
-    const background = typeof props.background === "string" && props.background ? props.background : "#08151f";
-    const camera = sceneCamera(props);
-    const objects = sceneObjects(props);
-    const shouldAnimate = sceneBool(props.autoRotate, true) || objects.some(function(object) {
+    const sceneState = createSceneState(props);
+    const runtimeScene = ctx.runtimeMode === "shared" && Boolean(ctx.programRef);
+    const objects = sceneStateObjects(sceneState);
+    const shouldAnimate = runtimeScene || sceneBool(props.autoRotate, true) || objects.some(function(object) {
       return object.spinX !== 0 || object.spinY !== 0 || object.spinZ !== 0;
     });
 
@@ -821,9 +928,20 @@
     let frameHandle = null;
     let disposed = false;
 
+    if (runtimeScene) {
+      if (ctx.runtime && ctx.runtime.available()) {
+        applySceneCommands(sceneState, await ctx.runtime.hydrateFromProgramRef());
+      } else {
+        console.warn("[gosx] Scene3D runtime requested but shared engine runtime is unavailable");
+      }
+    }
+
     function renderFrame(now) {
       if (disposed) return;
-      drawScene3D(ctx2d, width, height, background, camera, objects, now / 1000);
+      if (runtimeScene && ctx.runtime) {
+        applySceneCommands(sceneState, ctx.runtime.tick());
+      }
+      drawScene3D(ctx2d, width, height, sceneState.background, sceneState.camera, sceneStateObjects(sceneState), now / 1000);
       if (shouldAnimate) {
         frameHandle = engineFrame(renderFrame);
       }
@@ -838,6 +956,9 @@
     });
 
     return {
+      applyCommands(commands) {
+        applySceneCommands(sceneState, commands);
+      },
       dispose() {
         disposed = true;
         if (frameHandle != null) {
@@ -993,6 +1114,96 @@
     return {};
   }
 
+  function engineUsesSharedRuntime(entry) {
+    return entry && entry.runtime === "shared";
+  }
+
+  function createEngineRuntime(entry) {
+    let programPromise = null;
+
+    function engineProgramFormat() {
+      return inferProgramFormat(entry);
+    }
+
+    async function loadProgram() {
+      if (!entry.programRef) {
+        return null;
+      }
+      if (!programPromise) {
+        programPromise = fetchProgram(entry.programRef, engineProgramFormat()).then(function(data) {
+          return data == null ? null : { data, format: engineProgramFormat() };
+        });
+      }
+      return programPromise;
+    }
+
+    function hydrateProgramData(program) {
+      const hydrate = window.__gosx_hydrate_engine;
+      if (typeof hydrate !== "function" || !program) {
+        return [];
+      }
+      return decodeEngineCommands(hydrate(
+        entry.id,
+        entry.component,
+        JSON.stringify(entry.props || {}),
+        program.data,
+        program.format || "json",
+      ));
+    }
+
+    return {
+      mode: entry.runtime || "",
+      available() {
+        return engineUsesSharedRuntime(entry)
+          && typeof window.__gosx_hydrate_engine === "function"
+          && typeof window.__gosx_tick_engine === "function"
+          && typeof window.__gosx_engine_dispose === "function";
+      },
+      async hydrateFromProgramRef() {
+        if (!engineUsesSharedRuntime(entry)) {
+          return [];
+        }
+        const program = await loadProgram();
+        return hydrateProgramData(program);
+      },
+      tick() {
+        if (!this.available()) {
+          return [];
+        }
+        return decodeEngineCommands(window.__gosx_tick_engine(entry.id));
+      },
+      dispose() {
+        if (!engineUsesSharedRuntime(entry) || typeof window.__gosx_engine_dispose !== "function") {
+          return;
+        }
+        window.__gosx_engine_dispose(entry.id);
+      },
+    };
+  }
+
+  function decodeEngineCommands(result) {
+    if (result == null) {
+      return [];
+    }
+    if (typeof result !== "string") {
+      return [];
+    }
+    if (result === "" || result === "[]") {
+      return [];
+    }
+    if (result.startsWith("error:") || result.startsWith("marshal:")) {
+      console.error("[gosx] engine runtime error:", result);
+      return [];
+    }
+    try {
+      const commands = JSON.parse(result);
+      return Array.isArray(commands) ? commands : [];
+    } catch (e) {
+      console.error("[gosx] failed to decode engine commands:", e);
+      return [];
+    }
+  }
+
   function createEngineContext(entry, mount) {
     return {
       id: entry.id,
@@ -1002,8 +1213,10 @@
       props: entry.props || {},
       capabilities: entry.capabilities || [],
       programRef: entry.programRef || "",
+      runtimeMode: entry.runtime || "",
       jsRef: entry.jsRef || "",
       jsExport: entry.jsExport || "",
+      runtime: createEngineRuntime(entry),
       emit: function(name, detail) {
         if (typeof document.dispatchEvent === "function" && typeof CustomEvent === "function") {
           document.dispatchEvent(new CustomEvent("gosx:engine:" + name, {
@@ -1034,8 +1247,8 @@
     }
 
     try {
-      const handle = await runEngineFactory(factory, entry, mount);
-      rememberMountedEngine(entry, mount, handle);
+      const mounted = await runEngineFactory(factory, entry, mount);
+      rememberMountedEngine(entry, mount, mounted.context, mounted.handle);
     } catch (e) {
       console.error(`[gosx] failed to mount engine ${entry.id}:`, e);
     }
@@ -1064,19 +1277,24 @@
   }
 
   async function runEngineFactory(factory, entry, mount) {
-    let result = factory(createEngineContext(entry, mount));
+    const ctx = createEngineContext(entry, mount);
+    let result = factory(ctx);
     if (result && typeof result.then === "function") {
       result = await result;
     }
-    return normalizeEngineHandle(result);
+    return {
+      context: ctx,
+      handle: normalizeEngineHandle(result),
+    };
   }
 
-  function rememberMountedEngine(entry, mount, handle) {
+  function rememberMountedEngine(entry, mount, context, handle) {
     activateInputProviders(entry);
     window.__gosx.engines.set(entry.id, {
       component: entry.component,
       kind: entry.kind,
       capabilities: capabilityList(entry),
+      runtime: context.runtime,
       mount: mount,
       handle: handle,
     });
@@ -1263,6 +1481,14 @@
     if (!record) return;
 
     releaseInputProviders(record);
+
+    if (record.runtime && typeof record.runtime.dispose === "function") {
+      try {
+        record.runtime.dispose();
+      } catch (e) {
+        console.error(`[gosx] runtime dispose error for engine ${engineID}:`, e);
+      }
+    }
 
     if (record.handle && typeof record.handle.dispose === "function") {
       try {
@@ -1457,7 +1683,10 @@
   }
 
   function manifestNeedsRuntimeBridge(manifest) {
-    return manifestHasEntries(manifest, "islands") || manifestHasEntries(manifest, "hubs") || manifestNeedsEngineInputBridge(manifest);
+    return manifestHasEntries(manifest, "islands")
+      || manifestHasEntries(manifest, "hubs")
+      || manifestNeedsEngineInputBridge(manifest)
+      || manifestNeedsSharedEngineRuntime(manifest);
   }
 
   function manifestNeedsRuntime(manifest) {
@@ -1471,6 +1700,15 @@
     return manifest.engines.some(function(entry) {
       const capabilities = capabilityList(entry);
       return capabilities.includes("keyboard") || capabilities.includes("pointer") || capabilities.includes("gamepad");
+    });
+  }
+
+  function manifestNeedsSharedEngineRuntime(manifest) {
+    if (!manifestHasEntries(manifest, "engines")) {
+      return false;
+    }
+    return manifest.engines.some(function(entry) {
+      return engineUsesSharedRuntime(entry);
     });
   }
 
