@@ -1007,6 +1007,7 @@
     const perspectiveLocation = gl.getUniformLocation(program, "u_use_perspective");
     const floatType = typeof gl.FLOAT === "number" ? gl.FLOAT : 0x1406;
     const arrayBuffer = typeof gl.ARRAY_BUFFER === "number" ? gl.ARRAY_BUFFER : 0x8892;
+    const staticDraw = typeof gl.STATIC_DRAW === "number" ? gl.STATIC_DRAW : 0x88E4;
     const dynamicDraw = typeof gl.DYNAMIC_DRAW === "number" ? gl.DYNAMIC_DRAW : 0x88E8;
     const colorBufferBit = typeof gl.COLOR_BUFFER_BIT === "number" ? gl.COLOR_BUFFER_BIT : 0x4000;
     const depthBufferBit = typeof gl.DEPTH_BUFFER_BIT === "number" ? gl.DEPTH_BUFFER_BIT : 0x0100;
@@ -1052,7 +1053,7 @@
           const drawPlan = buildSceneWorldDrawPlan(bundle);
           if (drawPlan) {
             if (drawPlan.staticOpaqueKey !== staticOpaqueKey) {
-              uploadSceneWebGLBuffers(gl, arrayBuffer, dynamicDraw, staticOpaquePositionBuffer, staticOpaqueColorBuffer, staticOpaqueMaterialBuffer, drawPlan.staticOpaquePositions, drawPlan.staticOpaqueColors, drawPlan.staticOpaqueMaterials);
+              uploadSceneWebGLBuffers(gl, arrayBuffer, staticDraw, staticOpaquePositionBuffer, staticOpaqueColorBuffer, staticOpaqueMaterialBuffer, drawPlan.staticOpaquePositions, drawPlan.staticOpaqueColors, drawPlan.staticOpaqueMaterials);
               staticOpaqueKey = drawPlan.staticOpaqueKey;
               staticOpaqueVertexCount = drawPlan.staticOpaqueVertexCount;
             }
