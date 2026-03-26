@@ -337,3 +337,35 @@ func TestRouterCacheHeadersAndRevalidateTag(t *testing.T) {
 		t.Fatalf("expected new etag after revalidate, got %q", nextETag)
 	}
 }
+
+func TestRouterObserverCapturesRouteMetadata(t *testing.T) {
+	router := NewRouter()
+	router.SetLayout(func(ctx *RouteContext, body gosx.Node) gosx.Node {
+		return body
+	})
+	var events []server.RequestEvent
+	router.UseObserver(server.RequestObserverFunc(func(event server.RequestEvent) {
+		events = append(events, event)
+	}))
+	router.Add(Route{
+		Pattern: "/docs/{slug}",
+		Handler: func(ctx *RouteContext) gosx.Node {
+			return gosx.Text("docs")
+		},
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/docs/intro", nil)
+	w := httptest.NewRecorder()
+	router.Build().ServeHTTP(w, req)
+
+	if len(events) != 1 {
+		t.Fatalf("expected one event, got %#v", events)
+	}
+	event := events[0]
+	if event.Kind != "page" || event.Pattern != "/docs/{slug}" {
+		t.Fatalf("unexpected event %#v", event)
+	}
+	if event.Path != "/docs/intro" || event.Status != http.StatusOK {
+		t.Fatalf("unexpected event %#v", event)
+	}
+}

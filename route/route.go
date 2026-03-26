@@ -144,6 +144,11 @@ func (ctx *RouteContext) Cache(policy server.CachePolicy) {
 	ctx.cache.SetPolicy(policy)
 }
 
+// ApplyCacheProfile applies a higher-level cache profile to the response.
+func (ctx *RouteContext) ApplyCacheProfile(profile server.CacheProfile) {
+	server.ApplyCacheProfile(ctx, profile)
+}
+
 // CachePublic marks the response as publicly cacheable for the provided duration.
 func (ctx *RouteContext) CachePublic(maxAge time.Duration) {
 	ctx.Cache(server.PublicCache(maxAge))
@@ -157,6 +162,31 @@ func (ctx *RouteContext) CachePrivate(maxAge time.Duration) {
 // NoStore disables response storage by caches.
 func (ctx *RouteContext) NoStore() {
 	ctx.Cache(server.NoStoreCache())
+}
+
+// CacheDynamic disables storage for fully dynamic responses.
+func (ctx *RouteContext) CacheDynamic() {
+	ctx.ApplyCacheProfile(server.DynamicPage())
+}
+
+// CacheStatic marks the response as immutable and publicly cacheable.
+func (ctx *RouteContext) CacheStatic(tags ...string) {
+	ctx.ApplyCacheProfile(server.StaticPage(tags...))
+}
+
+// CacheRevalidate marks a page as publicly cacheable with revalidation.
+func (ctx *RouteContext) CacheRevalidate(maxAge, staleWhileRevalidate time.Duration, tags ...string) {
+	ctx.ApplyCacheProfile(server.RevalidatePage(maxAge, staleWhileRevalidate, tags...))
+}
+
+// CacheData marks shared data as publicly cacheable.
+func (ctx *RouteContext) CacheData(maxAge time.Duration, tags ...string) {
+	ctx.ApplyCacheProfile(server.PublicData(maxAge, tags...))
+}
+
+// CachePrivateData marks user-scoped data as privately cacheable.
+func (ctx *RouteContext) CachePrivateData(maxAge time.Duration, tags ...string) {
+	ctx.ApplyCacheProfile(server.PrivateData(maxAge, tags...))
 }
 
 // CacheTag associates one or more revalidation tags with the response.
@@ -265,6 +295,7 @@ type Router struct {
 	errorHandler   ErrorHandler
 	errorLayout    LayoutFunc
 	revalidator    *server.Revalidator
+	observers      []server.RequestObserver
 }
 
 type handlerRoute struct {
@@ -311,6 +342,14 @@ func (r *Router) RevalidateTag(tag string) uint64 {
 	return r.Revalidator().RevalidateTag(tag)
 }
 
+// UseObserver appends a request observer to the supported router extension surface.
+func (r *Router) UseObserver(observer server.RequestObserver) {
+	if observer == nil {
+		return
+	}
+	r.observers = append(r.observers, observer)
+}
+
 // SetLayout sets the default layout for all routes.
 func (r *Router) SetLayout(layout LayoutFunc) {
 	r.defaultLayout = layout
@@ -354,13 +393,18 @@ func (r *Router) Build() http.Handler {
 			}
 			h = extra.middleware[i](h)
 		}
-		mux.Handle(normalizePattern(extra.pattern), h)
+		pattern := extra.pattern
+		handler := h
+		mux.Handle(normalizePattern(extra.pattern), http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			server.MarkObservedRequest(req, "mount", pattern)
+			handler.ServeHTTP(w, req)
+		}))
 	}
 	for _, route := range r.routes {
 		r.registerRoute(mux, "", route, nil, nil, r.errorHandler, r.errorLayout)
 	}
 
-	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+	root := http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		if _, pattern := mux.Handler(req); pattern != "" {
 			mux.ServeHTTP(w, req)
 			return
@@ -375,6 +419,10 @@ func (r *Router) Build() http.Handler {
 
 		r.renderNotFound(w, req)
 	})
+	if len(r.observers) > 0 {
+		return server.ObserveHandler(root, append([]server.RequestObserver(nil), r.observers...))
+	}
+	return root
 }
 
 func (r *Router) registerRoute(mux *http.ServeMux, prefix string, route Route, parentLayouts []LayoutFunc, parentMiddleware []Middleware, parentError ErrorHandler, parentErrorLayout LayoutFunc) {
@@ -418,6 +466,7 @@ func (r *Router) registerRoute(mux *http.ServeMux, prefix string, route Route, p
 
 func (r *Router) buildHandler(pattern string, route Route, layouts []LayoutFunc, errorHandler ErrorHandler, errorLayout LayoutFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
+		server.MarkObservedRequest(req, "page", pattern)
 		ctx := newRouteContext(req)
 		ctx.Params = extractParams(req, pattern)
 
@@ -464,6 +513,7 @@ func (r *Router) renderPage(w http.ResponseWriter, ctx *RouteContext, layouts []
 }
 
 func (r *Router) renderNotFound(w http.ResponseWriter, req *http.Request) {
+	server.MarkObservedRequest(req, "not_found", "")
 	ctx := newRouteContext(req)
 	ctx.SetStatus(http.StatusNotFound)
 
@@ -504,6 +554,7 @@ func (r *Router) renderError(w http.ResponseWriter, ctx *RouteContext, layouts [
 	if ctx == nil {
 		ctx = newRouteContext(nil)
 	}
+	server.MarkObservedRequest(ctx.Request, "error", pattern)
 	if ctx.status == 0 {
 		ctx.status = http.StatusInternalServerError
 	}

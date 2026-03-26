@@ -30,7 +30,7 @@ This is the working framework punchlist for driving GoSX from "credible core" to
 ## Phase 4
 
 - [x] Cache and revalidation primitives
-- [ ] Page/data cache semantics
+- [x] Page/data cache semantics
 - [x] Conditional requests and validator support where appropriate
 - [x] Explicit invalidation and revalidation APIs
 
@@ -44,19 +44,19 @@ This is the working framework punchlist for driving GoSX from "credible core" to
 
 ## Phase 6
 
-- [ ] Styling and asset conventions that feel batteries-included
+- [x] Styling and asset conventions that feel batteries-included
 - [x] Route/component-owned CSS and head inclusion ergonomics
-- [ ] Better public asset and image ownership story
+- [x] Better public asset and image ownership story
 
 ## Phase 7
 
-- [ ] Stable extensibility model
-- [ ] Framework hooks/plugins for auth, image backends, observability, and build steps
-- [ ] Clear boundaries between framework internals and supported extension APIs
+- [x] Stable extensibility model
+- [x] Framework hooks/plugins for auth, image backends, observability, and build steps
+- [x] Clear boundaries between framework internals and supported extension APIs
 
 ## Phase 8
 
-- [ ] App-level testing batteries
+- [x] App-level testing batteries
 - [x] Route rendering test helpers
 - [x] Action/form test helpers
 - [x] Browser/E2E harness guidance and fixtures

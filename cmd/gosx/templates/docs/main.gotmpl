@@ -62,11 +62,7 @@ func main() {
 
 	router := route.NewRouter()
 	router.SetLayout(func(ctx *route.RouteContext, body gosx.Node) gosx.Node {
-		ctx.SetMetadata(server.Metadata{
-			Links: []server.LinkTag{
-				{Rel: "stylesheet", Href: "/docs.css"},
-			},
-		})
+		ctx.AddHead(server.Stylesheet("docs.css"))
 		ctx.AddHead(server.NavigationScript())
 		return server.HTMLDocument(ctx.Title("GoSX Docs"), ctx.Head(), body)
 	})

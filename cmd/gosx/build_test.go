@@ -65,14 +65,48 @@ func TestWriteBuildReadmeWithoutServerBinary(t *testing.T) {
 
 func TestCSSAssetBaseNameUsesRelativePath(t *testing.T) {
 	cases := map[string]string{
-		"app/page.css":             "app_page",
-		"app/docs/page.css":        "app_docs_page",
+		"app/page.css":               "app_page",
+		"app/docs/page.css":          "app_docs_page",
 		"components/hero-banner.css": "components_hero_banner",
 	}
 	for input, want := range cases {
 		if got := cssAssetBaseName(input); got != want {
 			t.Fatalf("%s: expected %q, got %q", input, want, got)
 		}
+	}
+}
+
+func TestProjectBuildHooksLoadAndRun(t *testing.T) {
+	dir := t.TempDir()
+	mustWriteFile(t, filepath.Join(dir, "gosx.config.json"), `{
+  "build": {
+    "hooks": {
+      "pre": ["printf pre > pre.txt"],
+      "post": ["printf post > post.txt"]
+    }
+  }
+}`)
+
+	cfg, err := loadProjectConfig(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Build.Hooks.Pre) != 1 || len(cfg.Build.Hooks.Post) != 1 {
+		t.Fatalf("unexpected build hooks config %#v", cfg)
+	}
+
+	if err := runBuildHookCommands(dir, "pre-build", cfg.Build.Hooks.Pre); err != nil {
+		t.Fatal(err)
+	}
+	if err := runBuildHookCommands(dir, "post-build", cfg.Build.Hooks.Post); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := readFile(t, filepath.Join(dir, "pre.txt")); got != "pre" {
+		t.Fatalf("expected pre hook output, got %q", got)
+	}
+	if got := readFile(t, filepath.Join(dir, "post.txt")); got != "post" {
+		t.Fatalf("expected post hook output, got %q", got)
 	}
 }
 

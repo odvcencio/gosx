@@ -45,49 +45,33 @@ type ImageProps struct {
 	FetchPriority string
 	Quality       int
 	Format        string
+	Resolver      string
 }
 
 // ImageURL builds an optimizer URL for a local public image source.
 func ImageURL(src string, transform ImageTransform) string {
-	if !shouldOptimizeImageSource(src) || transform == (ImageTransform{}) {
-		return src
-	}
-
-	values := neturl.Values{}
-	values.Set("src", src)
-	if transform.Width > 0 {
-		values.Set("w", strconv.Itoa(transform.Width))
-	}
-	if transform.Height > 0 {
-		values.Set("h", strconv.Itoa(transform.Height))
-	}
-	if transform.Quality > 0 {
-		values.Set("q", strconv.Itoa(transform.Quality))
-	}
-	if format := normalizeImageFormat(transform.Format); format != "" {
-		values.Set("fmt", format)
-	}
-	return defaultImageEndpoint + "?" + values.Encode()
+	return ImageURLWithResolver("local", src, transform)
 }
 
 // Image renders an optimized image tag for local public assets and falls back
 // to a plain <img> for unsupported sources such as remote URLs or SVGs.
 func Image(props ImageProps, args ...any) gosx.Node {
+	props.Src = AssetURL(props.Src)
 	src := props.Src
 	widths := normalizeResponsiveWidths(props.Widths)
-	shouldOptimize := shouldOptimizeImageSource(src)
+	shouldOptimize := shouldOptimizeImageSource(src) || strings.TrimSpace(props.Resolver) != ""
 
 	if shouldOptimize {
 		switch {
 		case len(widths) > 0:
-			src = ImageURL(src, ImageTransform{
+			src = ImageURLWithResolver(props.Resolver, src, ImageTransform{
 				Width:   widths[len(widths)-1],
 				Height:  props.Height,
 				Quality: props.Quality,
 				Format:  props.Format,
 			})
 		case props.Width > 0 || props.Height > 0 || props.Quality > 0 || strings.TrimSpace(props.Format) != "":
-			src = ImageURL(src, ImageTransform{
+			src = ImageURLWithResolver(props.Resolver, src, ImageTransform{
 				Width:   props.Width,
 				Height:  props.Height,
 				Quality: props.Quality,
@@ -106,7 +90,7 @@ func Image(props ImageProps, args ...any) gosx.Node {
 	if len(widths) > 0 && shouldOptimize {
 		srcset := make([]string, 0, len(widths))
 		for _, width := range widths {
-			srcset = append(srcset, fmt.Sprintf("%s %dw", ImageURL(props.Src, ImageTransform{
+			srcset = append(srcset, fmt.Sprintf("%s %dw", ImageURLWithResolver(props.Resolver, props.Src, ImageTransform{
 				Width:   width,
 				Height:  props.Height,
 				Quality: props.Quality,

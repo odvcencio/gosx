@@ -69,6 +69,14 @@ func writeHashed(dir, name, ext string, data []byte) (HashedAsset, error) {
 // Deploy: server binary rolls often. Runtime/island/CSS assets are
 // content-hashed and CDN-cached with Cache-Control: immutable.
 func RunBuild(dir string, dev bool) error {
+	cfg, err := loadProjectConfig(dir)
+	if err != nil {
+		return err
+	}
+	if err := runBuildHookCommands(dir, "pre-build", cfg.Build.Hooks.Pre); err != nil {
+		return err
+	}
+
 	distDir := filepath.Join(dir, "dist")
 	runtimeDir := filepath.Join(distDir, "assets", "runtime")
 	islandDir := filepath.Join(distDir, "assets", "islands")
@@ -375,6 +383,10 @@ func RunBuild(dir string, dev bool) error {
 	fmt.Println("  • Island programs cached forever, invalidated by hash (Tier 3)")
 	fmt.Println("  • Manifest tells the server which hashed URLs to reference")
 	fmt.Println("  • dist/ includes app/ and public/ for file-routed runtime deployment")
+
+	if err := runBuildHookCommands(dir, "post-build", cfg.Build.Hooks.Post); err != nil {
+		return err
+	}
 
 	return nil
 }

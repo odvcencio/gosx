@@ -125,6 +125,11 @@ func (c *Context) Cache(policy CachePolicy) {
 	c.cache.SetPolicy(policy)
 }
 
+// ApplyCacheProfile applies a higher-level cache profile to the response.
+func (c *Context) ApplyCacheProfile(profile CacheProfile) {
+	ApplyCacheProfile(c, profile)
+}
+
 // CachePublic marks the response as publicly cacheable for the provided duration.
 func (c *Context) CachePublic(maxAge time.Duration) {
 	c.Cache(PublicCache(maxAge))
@@ -138,6 +143,31 @@ func (c *Context) CachePrivate(maxAge time.Duration) {
 // NoStore disables response storage by caches.
 func (c *Context) NoStore() {
 	c.Cache(NoStoreCache())
+}
+
+// CacheDynamic disables storage for fully dynamic responses.
+func (c *Context) CacheDynamic() {
+	c.ApplyCacheProfile(DynamicPage())
+}
+
+// CacheStatic marks the response as immutable and publicly cacheable.
+func (c *Context) CacheStatic(tags ...string) {
+	c.ApplyCacheProfile(StaticPage(tags...))
+}
+
+// CacheRevalidate marks a page as publicly cacheable with revalidation.
+func (c *Context) CacheRevalidate(maxAge, staleWhileRevalidate time.Duration, tags ...string) {
+	c.ApplyCacheProfile(RevalidatePage(maxAge, staleWhileRevalidate, tags...))
+}
+
+// CacheData marks shared data as publicly cacheable.
+func (c *Context) CacheData(maxAge time.Duration, tags ...string) {
+	c.ApplyCacheProfile(PublicData(maxAge, tags...))
+}
+
+// CachePrivateData marks user-scoped data as privately cacheable.
+func (c *Context) CachePrivateData(maxAge time.Duration, tags ...string) {
+	c.ApplyCacheProfile(PrivateData(maxAge, tags...))
 }
 
 // CacheTag associates one or more revalidation tags with the response.

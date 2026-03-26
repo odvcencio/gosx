@@ -78,6 +78,7 @@ type App struct {
 	publicDir   string
 	imageDir    string
 	navigation  bool
+	observers   []RequestObserver
 	redirects   map[string]registeredRedirectRoute
 	rewrites    map[string]registeredRewriteRoute
 	mounts      map[string]registeredMountedRoute
@@ -286,6 +287,14 @@ func (a *App) Use(mw Middleware) {
 	a.middleware = append(a.middleware, mw)
 }
 
+// UseObserver appends a request observer to the supported app extension surface.
+func (a *App) UseObserver(observer RequestObserver) {
+	if observer == nil {
+		return
+	}
+	a.observers = append(a.observers, observer)
+}
+
 // Build finalizes routes and returns an http.Handler.
 func (a *App) Build() http.Handler {
 	mux := http.NewServeMux()
@@ -306,6 +315,7 @@ func (a *App) Build() http.Handler {
 		pattern := route.pattern
 		handler := route.handler
 		pageHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			MarkObservedRequest(r, "page", pattern)
 			defer func() {
 				if recovered := recover(); recovered != nil {
 					a.renderError(w, r, panicError(recovered))
@@ -320,8 +330,10 @@ func (a *App) Build() http.Handler {
 	}
 
 	for matchPattern, route := range a.apiRoutes {
+		pattern := route.pattern
 		handler := route.handler
 		apiHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			MarkObservedRequest(r, "api", pattern)
 			defer func() {
 				if recovered := recover(); recovered != nil {
 					writeJSONError(w, http.StatusInternalServerError, panicError(recovered), nil)
@@ -345,15 +357,22 @@ func (a *App) Build() http.Handler {
 	}
 
 	for matchPattern, route := range a.redirects {
+		pattern := route.pattern
 		destination := route.destination
 		status := route.status
 		redirectMux.HandleFunc(matchPattern, func(w http.ResponseWriter, r *http.Request) {
+			MarkObservedRequest(r, "redirect", pattern)
 			http.Redirect(w, r, expandPatternValues(r, destination), status)
 		})
 	}
 
 	for _, route := range a.mounts {
-		mountMux.Handle(route.pattern, route.handler)
+		pattern := route.pattern
+		handler := route.handler
+		mountMux.Handle(pattern, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			MarkObservedRequest(r, "mount", pattern)
+			handler.ServeHTTP(w, r)
+		}))
 	}
 
 	var dispatch func(w http.ResponseWriter, r *http.Request, allowRewrite bool)
@@ -381,8 +400,10 @@ func (a *App) Build() http.Handler {
 	}
 
 	for matchPattern, route := range a.rewrites {
+		pattern := route.pattern
 		destination := route.destination
 		rewriteMux.HandleFunc(matchPattern, func(w http.ResponseWriter, r *http.Request) {
+			MarkObservedRequest(r, "rewrite", pattern)
 			dispatch(w, rewriteRequest(r, expandPatternValues(r, destination)), false)
 		})
 	}
@@ -470,6 +491,9 @@ func (a *App) wrap(handler http.Handler) http.Handler {
 	for i := len(a.middleware) - 1; i >= 0; i-- {
 		wrapped = a.middleware[i](wrapped)
 	}
+	if len(a.observers) > 0 {
+		wrapped = ObserveHandler(wrapped, append([]RequestObserver(nil), a.observers...))
+	}
 	return wrapped
 }
 
@@ -514,6 +538,7 @@ func (a *App) renderPage(w http.ResponseWriter, ctx *Context, pattern string, bo
 }
 
 func (a *App) renderNotFound(w http.ResponseWriter, r *http.Request) {
+	MarkObservedRequest(r, "not_found", "")
 	if wantsJSON(r) {
 		writeJSONError(w, http.StatusNotFound, fmt.Errorf("not found"), nil)
 		return
@@ -533,6 +558,7 @@ func (a *App) renderNotFound(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) renderError(w http.ResponseWriter, r *http.Request, err error) {
+	MarkObservedRequest(r, "error", "")
 	if wantsJSON(r) {
 		writeJSONError(w, errorStatus(err, 0, http.StatusInternalServerError), err, nil)
 		return
@@ -575,6 +601,7 @@ func (a *App) servePublic(w http.ResponseWriter, r *http.Request) bool {
 		return false
 	}
 
+	MarkObservedRequest(r, "public", cleanPath)
 	http.ServeFile(w, r, fsPath)
 	return true
 }
