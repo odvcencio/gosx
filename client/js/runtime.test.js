@@ -79,20 +79,21 @@ class FakeCanvasContext2D {
     this.fillStyle = "";
     this.strokeStyle = "";
     this.lineWidth = 1;
+    this.ops = [];
   }
 
-  beginPath() {}
-  clearRect() {}
-  closePath() {}
-  fill() {}
-  fillRect() {}
-  lineTo() {}
-  moveTo() {}
-  restore() {}
-  save() {}
-  scale() {}
-  stroke() {}
-  translate() {}
+  beginPath() { this.ops.push(["beginPath"]); }
+  clearRect(x, y, width, height) { this.ops.push(["clearRect", x, y, width, height]); }
+  closePath() { this.ops.push(["closePath"]); }
+  fill() { this.ops.push(["fill"]); }
+  fillRect(x, y, width, height) { this.ops.push(["fillRect", x, y, width, height]); }
+  lineTo(x, y) { this.ops.push(["lineTo", x, y]); }
+  moveTo(x, y) { this.ops.push(["moveTo", x, y]); }
+  restore() { this.ops.push(["restore"]); }
+  save() { this.ops.push(["save"]); }
+  scale(x, y) { this.ops.push(["scale", x, y]); }
+  stroke() { this.ops.push(["stroke"]); }
+  translate(x, y) { this.ops.push(["translate", x, y]); }
 }
 
 class FakeElement {
@@ -797,6 +798,57 @@ test("bootstrap mounts native Scene3D engines without extra scripts", async () =
   env.context.__gosx_dispose_engine("gosx-engine-2");
   assert.equal(env.context.__gosx.engines.size, 0);
   assert.equal(mount.children.length, 0);
+  assert.equal(env.consoleLogs.warn.length, 0);
+  assert.equal(env.consoleLogs.error.length, 0);
+});
+
+test("bootstrap renders mixed native Scene3D primitives", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-primitives";
+
+  const env = createContext({
+    elements: [mount],
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-3",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-primitives",
+          jsExport: "GoSXScene3D",
+          props: {
+            width: 520,
+            height: 320,
+            autoRotate: false,
+            scene: {
+              objects: [
+                { kind: "box", width: 1.8, height: 1.2, depth: 1.1, x: -1.6, y: 0.1, z: -0.2, color: "#8de1ff" },
+                { kind: "sphere", radius: 0.8, x: 0.2, y: 0.15, z: 0.6, color: "#ffd48f", segments: 10 },
+                { kind: "pyramid", width: 1.4, height: 1.8, depth: 1.4, x: 1.9, y: -0.2, z: 0.4, color: "#b8ffb0" },
+                { kind: "plane", width: 5.2, depth: 3.8, y: -1.6, z: 0.3, color: "#35556a" },
+              ],
+            },
+          },
+          capabilities: ["canvas", "animation"],
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  assert.equal(env.context.__gosx.ready, true);
+  assert.equal(mount.children.length, 1);
+  const canvas = mount.firstElementChild;
+  assert.equal(canvas.tagName, "CANVAS");
+
+  const ctx2d = canvas.getContext("2d");
+  const strokeCount = ctx2d.ops.filter((entry) => entry[0] === "stroke").length;
+  assert.equal(canvas.getAttribute("width"), "520");
+  assert.equal(canvas.getAttribute("height"), "320");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-mounted"), "true");
+  assert.ok(strokeCount >= 12);
   assert.equal(env.consoleLogs.warn.length, 0);
   assert.equal(env.consoleLogs.error.length, 0);
 });

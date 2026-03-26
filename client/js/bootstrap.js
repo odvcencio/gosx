@@ -253,10 +253,16 @@
 
   function normalizeSceneObject(object, index) {
     const item = object && typeof object === "object" ? object : {};
+    const size = sceneNumber(item.size, 1.2);
     return {
       id: item.id || ("scene-object-" + index),
-      kind: item.kind || "cube",
-      size: sceneNumber(item.size, 1.2),
+      kind: normalizeSceneKind(item.kind),
+      size,
+      width: sceneNumber(item.width, size),
+      height: sceneNumber(item.height, size),
+      depth: sceneNumber(item.depth, size),
+      radius: sceneNumber(item.radius, size / 2),
+      segments: sceneSegmentResolution(item.segments),
       x: sceneNumber(item.x, 0),
       y: sceneNumber(item.y, 0),
       z: sceneNumber(item.z, 0),
@@ -268,6 +274,24 @@
       spinY: sceneNumber(item.spinY, 0),
       spinZ: sceneNumber(item.spinZ, 0),
     };
+  }
+
+  function normalizeSceneKind(value) {
+    const kind = typeof value === "string" ? value.trim().toLowerCase() : "";
+    switch (kind) {
+      case "box":
+      case "plane":
+      case "pyramid":
+      case "sphere":
+        return kind;
+      default:
+        return "cube";
+    }
+  }
+
+  function sceneSegmentResolution(value) {
+    const segments = Math.round(sceneNumber(value, 12));
+    return Math.max(6, Math.min(24, segments));
   }
 
   function sceneObjects(props) {
@@ -292,25 +316,110 @@
     }
   }
 
-  function cubeVertices(size) {
-    const half = size / 2;
+  function boxVertices(width, height, depth) {
+    const halfWidth = width / 2;
+    const halfHeight = height / 2;
+    const halfDepth = depth / 2;
     return [
-      { x: -half, y: -half, z: -half },
-      { x: half, y: -half, z: -half },
-      { x: half, y: half, z: -half },
-      { x: -half, y: half, z: -half },
-      { x: -half, y: -half, z: half },
-      { x: half, y: -half, z: half },
-      { x: half, y: half, z: half },
-      { x: -half, y: half, z: half },
+      { x: -halfWidth, y: -halfHeight, z: -halfDepth },
+      { x: halfWidth, y: -halfHeight, z: -halfDepth },
+      { x: halfWidth, y: halfHeight, z: -halfDepth },
+      { x: -halfWidth, y: halfHeight, z: -halfDepth },
+      { x: -halfWidth, y: -halfHeight, z: halfDepth },
+      { x: halfWidth, y: -halfHeight, z: halfDepth },
+      { x: halfWidth, y: halfHeight, z: halfDepth },
+      { x: -halfWidth, y: halfHeight, z: halfDepth },
     ];
   }
 
-  const cubeEdgePairs = [
+  const boxEdgePairs = [
     [0, 1], [1, 2], [2, 3], [3, 0],
     [4, 5], [5, 6], [6, 7], [7, 4],
     [0, 4], [1, 5], [2, 6], [3, 7],
   ];
+
+  function indexSegments(points, edgePairs) {
+    return edgePairs.map(function(edge) {
+      return [points[edge[0]], points[edge[1]]];
+    });
+  }
+
+  function boxSegments(object) {
+    return indexSegments(boxVertices(object.width, object.height, object.depth), boxEdgePairs);
+  }
+
+  function planeSegments(object) {
+    const vertices = boxVertices(object.width, 0, object.depth);
+    return indexSegments(vertices.slice(0, 4), [
+      [0, 1], [1, 2], [2, 3], [3, 0],
+    ]);
+  }
+
+  function pyramidSegments(object) {
+    const halfWidth = object.width / 2;
+    const halfDepth = object.depth / 2;
+    const halfHeight = object.height / 2;
+    const vertices = [
+      { x: -halfWidth, y: -halfHeight, z: -halfDepth },
+      { x: halfWidth, y: -halfHeight, z: -halfDepth },
+      { x: halfWidth, y: -halfHeight, z: halfDepth },
+      { x: -halfWidth, y: -halfHeight, z: halfDepth },
+      { x: 0, y: halfHeight, z: 0 },
+    ];
+    return indexSegments(vertices, [
+      [0, 1], [1, 2], [2, 3], [3, 0],
+      [0, 4], [1, 4], [2, 4], [3, 4],
+    ]);
+  }
+
+  function circleSegments(radius, axis, segments) {
+    const points = [];
+    for (let i = 0; i < segments; i += 1) {
+      const angle = (Math.PI * 2 * i) / segments;
+      points.push(circlePoint(radius, axis, angle));
+    }
+    const out = [];
+    for (let i = 0; i < points.length; i += 1) {
+      out.push([points[i], points[(i + 1) % points.length]]);
+    }
+    return out;
+  }
+
+  function circlePoint(radius, axis, angle) {
+    const sin = Math.sin(angle) * radius;
+    const cos = Math.cos(angle) * radius;
+    switch (axis) {
+      case "xy":
+        return { x: cos, y: sin, z: 0 };
+      case "yz":
+        return { x: 0, y: cos, z: sin };
+      default:
+        return { x: cos, y: 0, z: sin };
+    }
+  }
+
+  function sphereSegments(object) {
+    return []
+      .concat(circleSegments(object.radius, "xy", object.segments))
+      .concat(circleSegments(object.radius, "xz", object.segments))
+      .concat(circleSegments(object.radius, "yz", object.segments));
+  }
+
+  function sceneObjectSegments(object) {
+    switch (object.kind) {
+      case "box":
+      case "cube":
+        return boxSegments(object);
+      case "plane":
+        return planeSegments(object);
+      case "pyramid":
+        return pyramidSegments(object);
+      case "sphere":
+        return sphereSegments(object);
+      default:
+        return boxSegments(object);
+    }
+  }
 
   function rotatePoint(point, rotationX, rotationY, rotationZ) {
     let x = point.x;
@@ -379,22 +488,22 @@
   }
 
   function drawSceneObject(ctx2d, camera, width, height, object, timeSeconds) {
-    if (object.kind !== "cube") {
-      return;
-    }
-    const projected = projectSceneCube(object, camera, width, height, timeSeconds);
-    drawProjectedCube(ctx2d, projected, object.color);
+    const projected = projectSceneObject(object, camera, width, height, timeSeconds);
+    drawProjectedSegments(ctx2d, projected, object.color);
   }
 
-  function projectSceneCube(object, camera, width, height, timeSeconds) {
-    return cubeVertices(object.size).map(function(vertex) {
-      return projectPoint(translateSceneVertex(vertex, object, timeSeconds), camera, width, height);
+  function projectSceneObject(object, camera, width, height, timeSeconds) {
+    return sceneObjectSegments(object).map(function(segment) {
+      return [
+        projectPoint(translateScenePoint(segment[0], object, timeSeconds), camera, width, height),
+        projectPoint(translateScenePoint(segment[1], object, timeSeconds), camera, width, height),
+      ];
     });
   }
 
-  function translateSceneVertex(vertex, object, timeSeconds) {
+  function translateScenePoint(point, object, timeSeconds) {
     const rotated = rotatePoint(
-      vertex,
+      point,
       object.rotationX + object.spinX * timeSeconds,
       object.rotationY + object.spinY * timeSeconds,
       object.rotationZ + object.spinZ * timeSeconds,
@@ -406,12 +515,12 @@
     };
   }
 
-  function drawProjectedCube(ctx2d, projected, color) {
+  function drawProjectedSegments(ctx2d, projected, color) {
     ctx2d.strokeStyle = color;
     ctx2d.lineWidth = 1.8;
-    for (const edge of cubeEdgePairs) {
-      const from = projected[edge[0]];
-      const to = projected[edge[1]];
+    for (const segment of projected) {
+      const from = segment[0];
+      const to = segment[1];
       if (!from || !to) continue;
       strokeLine(ctx2d, from, to);
     }
