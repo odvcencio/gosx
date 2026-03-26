@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"image"
 	"image/color"
 	"image/png"
@@ -9,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/odvcencio/gosx"
@@ -49,9 +51,63 @@ func main() {
 		log.Fatal(err)
 	}
 	port := getenv("PORT", "8080")
+	publicBase := strings.TrimRight(getenv("PUBLIC_URL", "http://localhost:"+port), "/")
 	sessions := session.MustNew(getenv("SESSION_SECRET", "gosx-docs-session-secret"), session.Options{})
 	authn := auth.New(sessions, auth.Options{LoginPath: "/docs/auth"})
 	docsapp.BindAuth(authn)
+	magicLinks := authn.MagicLinks(auth.MagicLinkOptions{
+		Path:        "/auth/magic-link",
+		SuccessPath: "/docs/auth",
+		FailurePath: "/docs/auth",
+		FlashKey:    "magicLink",
+		Resolver: auth.MagicLinkResolverFunc(func(_ context.Context, email string) (auth.User, error) {
+			return docsDemoUser(email), nil
+		}),
+	})
+	docsapp.BindMagicLinks(magicLinks)
+	webauthn := authn.WebAuthn(auth.WebAuthnOptions{
+		RPName:      "GoSX Docs",
+		Origin:      publicBase,
+		SuccessPath: "/docs/auth",
+		FailurePath: "/docs/auth",
+		FlashKey:    "passkey",
+		Resolver: auth.WebAuthnResolverFunc(func(_ context.Context, login string) (auth.User, error) {
+			return docsDemoUser(login), nil
+		}),
+	})
+	docsapp.BindWebAuthn(webauthn)
+	var oauthManager *auth.OAuth
+	var oauthProviders []map[string]string
+	var providerConfigs []auth.OAuthProvider
+	hasGoogleOAuth := false
+	hasGitHubOAuth := false
+	if clientID, clientSecret := getenv("GOOGLE_CLIENT_ID", ""), getenv("GOOGLE_CLIENT_SECRET", ""); clientID != "" && clientSecret != "" {
+		providerConfigs = append(providerConfigs, auth.GoogleProvider(clientID, clientSecret, publicBase+"/auth/oauth/google/callback"))
+		oauthProviders = append(oauthProviders, map[string]string{
+			"Name":  "google",
+			"Label": "Google",
+			"Href":  "/auth/oauth/google?next=/docs/auth",
+		})
+		hasGoogleOAuth = true
+	}
+	if clientID, clientSecret := getenv("GITHUB_CLIENT_ID", ""), getenv("GITHUB_CLIENT_SECRET", ""); clientID != "" && clientSecret != "" {
+		providerConfigs = append(providerConfigs, auth.GitHubProvider(clientID, clientSecret, publicBase+"/auth/oauth/github/callback"))
+		oauthProviders = append(oauthProviders, map[string]string{
+			"Name":  "github",
+			"Label": "GitHub",
+			"Href":  "/auth/oauth/github?next=/docs/auth",
+		})
+		hasGitHubOAuth = true
+	}
+	if len(providerConfigs) > 0 {
+		oauthManager = authn.OAuth(auth.OAuthOptions{
+			Providers:   providerConfigs,
+			SuccessPath: "/docs/auth",
+			FailurePath: "/docs/auth",
+			FlashKey:    "oauth",
+		})
+	}
+	docsapp.BindOAuth(oauthManager, oauthProviders)
 
 	siteLayout, err := route.FileLayout(filepath.Join(root, "app", "layout.gsx"))
 	if err != nil {
@@ -65,6 +121,9 @@ func main() {
 	router.SetLayout(func(ctx *route.RouteContext, body gosx.Node) gosx.Node {
 		ctx.AddHead(server.Stylesheet("docs.css"))
 		ctx.AddHead(server.NavigationScript())
+		if ctx != nil && ctx.Request != nil && ctx.Request.URL != nil && ctx.Request.URL.Path == "/docs/auth" {
+			ctx.AddHead(auth.WebAuthnScript())
+		}
 		return server.HTMLDocument(ctx.Title("GoSX Docs"), ctx.Head(), body)
 	})
 	router.Add(route.Route{
@@ -153,6 +212,20 @@ func main() {
 	app.Use(authn.Middleware)
 	app.Use(sessions.Protect)
 	app.SetPublicDir(filepath.Join(root, "public"))
+	app.Mount("/auth/magic-link/request", magicLinks.RequestHandler())
+	app.Mount("/auth/magic-link", magicLinks.CallbackHandler())
+	app.Mount("/auth/webauthn/register/options", webauthn.RegisterOptionsHandler())
+	app.Mount("/auth/webauthn/register", webauthn.RegisterHandler())
+	app.Mount("/auth/webauthn/login/options", webauthn.LoginOptionsHandler())
+	app.Mount("/auth/webauthn/login", webauthn.LoginHandler())
+	if oauthManager != nil && hasGoogleOAuth {
+		app.Mount("/auth/oauth/google", oauthManager.BeginHandler("google"))
+		app.Mount("/auth/oauth/google/callback", oauthManager.CallbackHandler("google"))
+	}
+	if oauthManager != nil && hasGitHubOAuth {
+		app.Mount("/auth/oauth/github", oauthManager.BeginHandler("github"))
+		app.Mount("/auth/oauth/github/callback", oauthManager.CallbackHandler("github"))
+	}
 	app.Redirect("GET /docs", "/docs/getting-started", http.StatusTemporaryRedirect)
 	app.Redirect("GET /legacy/runtime", "/docs/runtime", http.StatusMovedPermanently)
 	app.Rewrite("GET /runtime", "/docs/runtime")
@@ -206,6 +279,32 @@ func getenv(key, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+func docsDemoUser(value string) auth.User {
+	value = strings.TrimSpace(strings.ToLower(value))
+	if value == "" {
+		value = "guest@gosx.dev"
+	}
+	local := value
+	if at := strings.Index(local, "@"); at >= 0 {
+		local = local[:at]
+	}
+	name := strings.ReplaceAll(local, ".", " ")
+	name = strings.ReplaceAll(name, "-", " ")
+	name = strings.TrimSpace(name)
+	if name == "" {
+		name = "GoSX User"
+	}
+	return auth.User{
+		ID:    value,
+		Email: value,
+		Name:  strings.Title(name),
+		Roles: []string{"docs"},
+		Meta: map[string]any{
+			"provider": "docs-demo",
+		},
+	}
 }
 
 func ensureDocsSampleAssets(root string) error {

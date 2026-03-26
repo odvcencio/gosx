@@ -109,11 +109,11 @@ test("gosx dev serves the docs app with working nav, scoped 404s, forms, and aut
     await page.goto(`${baseURL}/labs/secret`, { waitUntil: "domcontentloaded" });
     await page.waitForURL(/\/docs\/auth(?:\?|$)/);
     await page.getByRole("heading", {
-      name: "Auth in GoSX is a session concern, not a separate framework bolted on later.",
+      name: "Auth in GoSX is a session concern, not a bolt-on password stack.",
     }).waitFor();
 
     await page.getByLabel("Name").fill("Ada Lovelace");
-    await page.getByRole("button", { name: "Sign in to the docs demo" }).click();
+    await page.getByRole("button", { name: "Run custom sign-in action" }).click();
     await page.getByText("Signed in as Ada Lovelace.").waitFor();
     await page.getByText("Ada Lovelace").first().waitFor();
 
