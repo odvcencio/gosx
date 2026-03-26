@@ -185,6 +185,54 @@ func Page() Node {
 	}
 }
 
+func TestDefaultFileRendererSupportsSpreadAttrsOnElementsAndLinks(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "page.gsx")
+	source := `package docs
+
+func Page() Node {
+	return <main>
+		<a {...data.anchor}>Open scene</a>
+		<Link {...data.link}>Docs</Link>
+	</main>
+}
+`
+	if err := os.WriteFile(path, []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := &RouteContext{
+		Data: map[string]any{
+			"anchor": map[string]any{
+				"href":      "/demo/3d/geometry-zoo",
+				"className": "hero-link",
+			},
+			"link": map[string]any{
+				"href":  "/docs",
+				"title": "Docs home",
+			},
+		},
+	}
+
+	node, err := DefaultFileRenderer(ctx, FilePage{FilePath: path, Pattern: "/"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	html := gosx.RenderHTML(node)
+	for _, snippet := range []string{
+		`href="/demo/3d/geometry-zoo"`,
+		`class="hero-link"`,
+		`href="/docs"`,
+		`title="Docs home"`,
+		`data-gosx-link`,
+	} {
+		if !strings.Contains(html, snippet) {
+			t.Fatalf("expected %q in rendered spread html %q", snippet, html)
+		}
+	}
+}
+
 func TestDefaultFileRendererSupportsImageBuiltin(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "page.gsx")
