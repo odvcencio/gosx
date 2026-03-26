@@ -78,6 +78,7 @@ type App struct {
 	publicDir   string
 	imageDir    string
 	runtimeRoot string
+	isr         *isrConfig
 	navigation  bool
 	observers   []RequestObserver
 	redirects   map[string]registeredRedirectRoute
@@ -413,6 +414,9 @@ func (a *App) Build() http.Handler {
 	}
 
 	return a.wrap(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if a.maybeServeISR(w, r, dispatch) {
+			return
+		}
 		dispatch(w, r, true)
 	}))
 }

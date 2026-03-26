@@ -146,6 +146,7 @@ func main() {
 
 	app := server.New()
 	router.SetRevalidator(app.Revalidator())
+	app.EnableISR()
 	app.EnableNavigation()
 	app.Use(sessions.Middleware)
 	app.Use(authn.Middleware)

@@ -160,6 +160,7 @@ func main() {
 	}
 
 	app := server.New()
+	app.EnableISR()
 	app.EnableNavigation()
 	app.Use(sessions.Middleware)
 	app.Use(sessions.Protect)

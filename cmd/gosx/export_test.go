@@ -65,6 +65,12 @@ func TestRunExportWritesStaticBundleForStarterApp(t *testing.T) {
 	if len(manifest.Pages) != 2 || manifest.Pages[0] != "/" || manifest.Pages[1] != "/stack" {
 		t.Fatalf("unexpected export pages: %#v", manifest.Pages)
 	}
+	if len(manifest.Routes) != 2 {
+		t.Fatalf("expected route metadata in export manifest, got %#v", manifest.Routes)
+	}
+	if manifest.Routes[0].Path != "/" || manifest.Routes[0].File != "index.html" {
+		t.Fatalf("unexpected root export route %#v", manifest.Routes[0])
+	}
 }
 
 func TestRewriteStaticExportHTMLRewritesRootAssetsAndImageOptimizerURLs(t *testing.T) {
@@ -114,6 +120,63 @@ func Page() Node { return <main>Admin</main> }
 	}
 	if len(pages) != 1 || pages[0] != "/" {
 		t.Fatalf("unexpected export pages: %#v", pages)
+	}
+}
+
+func TestStaticExportRoutesCarryISRMetadataFromRouteConfig(t *testing.T) {
+	root := t.TempDir()
+	appDir := filepath.Join(root, "app")
+	if err := os.MkdirAll(filepath.Join(appDir, "docs"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(appDir, "page.gsx"), []byte(`package main
+
+func Page() Node { return <main>Home</main> }
+`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(appDir, "docs", "page.gsx"), []byte(`package main
+
+func Page() Node { return <main>Docs</main> }
+`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(appDir, "docs", "route.config.json"), []byte(`{
+  "cache": {
+    "public": true,
+    "maxAge": "45s",
+    "staleWhileRevalidate": "5m"
+  },
+  "cacheTags": ["docs-pages", "marketing"]
+}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	routes, err := staticExportRoutes(appDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(routes) != 2 {
+		t.Fatalf("expected 2 export routes, got %#v", routes)
+	}
+
+	var docs exportRoute
+	for _, route := range routes {
+		if route.Path == "/docs" {
+			docs = route
+		}
+	}
+	if docs.Path != "/docs" {
+		t.Fatalf("docs route missing from %#v", routes)
+	}
+	if docs.File != filepath.Join("docs", "index.html") {
+		t.Fatalf("unexpected docs export file %q", docs.File)
+	}
+	if docs.RevalidateSeconds != 45 {
+		t.Fatalf("expected ISR revalidate metadata, got %#v", docs)
+	}
+	if len(docs.Tags) != 2 || docs.Tags[0] != "docs-pages" || docs.Tags[1] != "marketing" {
+		t.Fatalf("unexpected docs cache tags %#v", docs.Tags)
 	}
 }
 

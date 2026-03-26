@@ -19,7 +19,15 @@ import (
 )
 
 type exportManifest struct {
-	Pages []string `json:"pages"`
+	Pages  []string      `json:"pages"`
+	Routes []exportRoute `json:"routes,omitempty"`
+}
+
+type exportRoute struct {
+	Path              string   `json:"path"`
+	File              string   `json:"file"`
+	RevalidateSeconds int64    `json:"revalidateSeconds,omitempty"`
+	Tags              []string `json:"tags,omitempty"`
 }
 
 type staticExportOptions struct {
@@ -42,9 +50,13 @@ func prerenderStaticBundle(opts staticExportOptions) (exportManifest, error) {
 		return exportManifest{}, fmt.Errorf("static export binary path is required")
 	}
 
-	pages, err := staticExportPages(filepath.Join(appRoot, "app"))
+	routes, err := staticExportRoutes(filepath.Join(appRoot, "app"))
 	if err != nil {
 		return exportManifest{}, err
+	}
+	pages := make([]string, 0, len(routes))
+	for _, entry := range routes {
+		pages = append(pages, entry.Path)
 	}
 
 	internalPort, err := pickFreePort()
@@ -92,16 +104,16 @@ func prerenderStaticBundle(opts staticExportOptions) (exportManifest, error) {
 	}
 
 	client := &http.Client{Timeout: 10 * time.Second}
-	for _, pagePath := range pages {
-		pageHTML, err := fetchExportPage(client, baseURL+pagePath)
+	for _, entry := range routes {
+		pageHTML, err := fetchExportPage(client, baseURL+entry.Path)
 		if err != nil {
-			return exportManifest{}, fmt.Errorf("export %s: %w", pagePath, err)
+			return exportManifest{}, fmt.Errorf("export %s: %w", entry.Path, err)
 		}
-		pageHTML, err = rewriteStaticExportHTML(pagePath, pageHTML)
+		pageHTML, err = rewriteStaticExportHTML(entry.Path, pageHTML)
 		if err != nil {
-			return exportManifest{}, fmt.Errorf("rewrite %s: %w", pagePath, err)
+			return exportManifest{}, fmt.Errorf("rewrite %s: %w", entry.Path, err)
 		}
-		if err := writeExportPage(outputDir, pagePath, pageHTML); err != nil {
+		if err := writeExportPage(outputDir, entry.Path, pageHTML); err != nil {
 			return exportManifest{}, err
 		}
 	}
@@ -116,7 +128,7 @@ func prerenderStaticBundle(opts staticExportOptions) (exportManifest, error) {
 		}
 	}
 
-	return exportManifest{Pages: pages}, nil
+	return exportManifest{Pages: pages, Routes: routes}, nil
 }
 
 func writeExportManifest(path string, manifest exportManifest) error {
@@ -131,12 +143,24 @@ func writeExportManifest(path string, manifest exportManifest) error {
 }
 
 func staticExportPages(appDir string) ([]string, error) {
+	routes, err := staticExportRoutes(appDir)
+	if err != nil {
+		return nil, err
+	}
+	paths := make([]string, 0, len(routes))
+	for _, route := range routes {
+		paths = append(paths, route.Path)
+	}
+	return compactPaths(paths), nil
+}
+
+func staticExportRoutes(appDir string) ([]exportRoute, error) {
 	bundle, err := route.ScanDir(appDir)
 	if err != nil {
 		return nil, fmt.Errorf("scan file routes: %w", err)
 	}
 
-	paths := []string{}
+	routes := []exportRoute{}
 	for _, page := range bundle.Pages {
 		if len(page.Params) > 0 {
 			continue
@@ -144,10 +168,20 @@ func staticExportPages(appDir string) ([]string, error) {
 		if !page.Config.PrerenderEnabled(true) {
 			continue
 		}
-		paths = append(paths, page.RoutePath)
+		routes = append(routes, exportRoute{
+			Path:              page.RoutePath,
+			File:              exportFilePath(page.RoutePath),
+			RevalidateSeconds: exportRouteRevalidateSeconds(page.Config),
+			Tags:              append([]string(nil), page.Config.CacheTags...),
+		})
 	}
-	sort.Strings(paths)
-	return compactPaths(paths), nil
+	sort.Slice(routes, func(i, j int) bool {
+		if routes[i].Path == routes[j].Path {
+			return routes[i].File < routes[j].File
+		}
+		return routes[i].Path < routes[j].Path
+	})
+	return compactExportRoutes(routes), nil
 }
 
 func compactPaths(paths []string) []string {
@@ -167,6 +201,46 @@ func compactPaths(paths []string) []string {
 		last = path
 	}
 	return out
+}
+
+func compactExportRoutes(routes []exportRoute) []exportRoute {
+	if len(routes) == 0 {
+		return nil
+	}
+	out := make([]exportRoute, 0, len(routes))
+	last := ""
+	for _, route := range routes {
+		if route.Path == "" {
+			route.Path = "/"
+		}
+		if route.Path == last {
+			continue
+		}
+		last = route.Path
+		if len(route.Tags) == 0 {
+			route.Tags = nil
+		}
+		out = append(out, route)
+	}
+	return out
+}
+
+func exportRouteRevalidateSeconds(config route.FileRouteConfig) int64 {
+	policy, ok, err := config.CachePolicy()
+	if err != nil || !ok {
+		return 0
+	}
+	if policy.NoStore || policy.Immutable || policy.Private {
+		return 0
+	}
+	ttl := policy.SMaxAge
+	if ttl <= 0 {
+		ttl = policy.MaxAge
+	}
+	if ttl <= 0 {
+		return 0
+	}
+	return int64(ttl / time.Second)
 }
 
 func fetchExportPage(client *http.Client, url string) (string, error) {
