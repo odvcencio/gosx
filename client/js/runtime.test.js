@@ -1246,6 +1246,71 @@ test("bootstrap depth-sorts alpha Scene3D objects before upload", async () => {
   assert.ok(gl.ops.some((entry) => entry[0] === "drawArrays" && entry[3] === 4));
 });
 
+test("bootstrap clips Scene3D segments against the near plane before upload", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-clip-root";
+
+  const env = createContext({
+    elements: [mount],
+    enableWebGL: true,
+    disableCanvas2D: true,
+    fetchRoutes: {
+      "/runtime.wasm": { bytes: [0, 97, 115, 109] },
+      "/scene-clip-program.json": { text: '{"name":"NearClip"}' },
+    },
+    manifest: {
+      runtime: { path: "/runtime.wasm" },
+      engines: [
+        {
+          id: "gosx-engine-clip",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-clip-root",
+          runtime: "shared",
+          props: { width: 640, height: 360, background: "#08151f" },
+          programRef: "/scene-clip-program.json",
+        },
+      ],
+    },
+    onHydrateEngine: () => "[]",
+    onRenderEngine: () => JSON.stringify({
+      background: "#08151f",
+      camera: { x: 0, y: 0, z: 6, fov: 72 },
+      positions: [],
+      colors: [],
+      vertexCount: 0,
+      worldPositions: [
+        -2, 0, -7, 2, 0, 1,
+        -1, 1, -7.5, 1, 1, -7.2,
+      ],
+      worldColors: [
+        0.7, 0.9, 1, 1, 0.7, 0.9, 1, 1,
+        0.2, 0.3, 0.4, 1, 0.2, 0.3, 0.4, 1,
+      ],
+      worldVertexCount: 4,
+      materials: [
+        { kind: "flat", color: "#8de1ff", opacity: 1, wireframe: true, blendMode: "opaque", emissive: 0 },
+      ],
+      objects: [
+        { id: "clip-line", kind: "line", materialIndex: 0, vertexOffset: 0, vertexCount: 4, static: true },
+      ],
+      objectCount: 1,
+    }),
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const gl = mount.children[0].getContext("webgl");
+  const clipped = gl.bufferUploads.get(4);
+  assert.equal(clipped.length, 6);
+  assert.ok(Math.abs(clipped[0] + 1.475) < 0.001);
+  assert.ok(Math.abs(clipped[1]) < 0.001);
+  assert.ok(Math.abs(clipped[2] + 5.95) < 0.001);
+  assert.deepEqual(clipped.slice(3), [2, 0, 1]);
+  assert.ok(gl.ops.some((entry) => entry[0] === "drawArrays" && entry[3] === 2));
+});
+
 test("bootstrap mounts native Scene3D engines without extra scripts", async () => {
   const mount = new FakeElement("div", null);
   mount.id = "scene-root";
