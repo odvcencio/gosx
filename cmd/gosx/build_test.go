@@ -125,6 +125,9 @@ func TestRunBuildProdWritesHybridStaticBundleForStarterApp(t *testing.T) {
 	for _, rel := range []string{
 		"dist/build.json",
 		"dist/export.json",
+		"dist/edge/worker.js",
+		"dist/platform/deployment.json",
+		"dist/platform/vercel.json",
 		"dist/server/app",
 		"dist/static/index.html",
 		"dist/static/stack/index.html",
@@ -139,6 +142,17 @@ func TestRunBuildProdWritesHybridStaticBundleForStarterApp(t *testing.T) {
 	stackHTML := readFile(t, filepath.Join(dir, "dist", "static", "stack", "index.html"))
 	if !strings.Contains(stackHTML, `href="../styles.css"`) {
 		t.Fatalf("expected export-safe nested asset url in %q", stackHTML)
+	}
+
+	edgeWorker := readFile(t, filepath.Join(dir, "dist", "edge", "worker.js"))
+	for _, snippet := range []string{
+		`GOSX_STATIC_ROUTES`,
+		`Missing GOSX_ORIGIN`,
+		`stack/index.html`,
+	} {
+		if !strings.Contains(edgeWorker, snippet) {
+			t.Fatalf("expected %q in edge worker bundle %q", snippet, edgeWorker)
+		}
 	}
 }
 

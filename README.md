@@ -11,6 +11,7 @@ GoSX is in active development. The compiler pipeline, server rendering, island a
 - `gosx init` scaffolds a runnable app with `/public` assets, `.env` loading, metadata hooks, session-backed form actions, CSRF protection, JSON API routes, custom 404/500 pages, and a file-backed `app/layout.gsx`
 - `gosx init --template docs` scaffolds a dogfooded docs site with nested file layouts, scoped docs 404s, page-scoped server modules, sessions, auth, redirects/rewrites, public assets, and colocated JSON endpoints
 - `gosx build --prod` emits a deployable `dist/` bundle with hashed assets, a server binary when present, copied `app/` + `public/`, a `run.sh` launcher, prerendered `dist/static/` output for static-safe file routes, and `export.json` metadata for ISR-aware runtime serving
+- `gosx build --prod` also writes `dist/edge/worker.js` plus `dist/platform/deployment.json` / `vercel.json` so prerendered routes can be served at the edge while dynamic requests fall back to origin
 - `gosx dev` fronts a runnable app with a stable dev proxy, staged `/gosx/*` runtime assets, file watching, SSE reload notifications, and auto-generated `modules/modules.go` imports for discovered `*.server.go` packages
 - `gosx export` prerenders static file-routed pages into `dist/static`, carries over `/public`, stages `/gosx/*` runtime assets, rewrites exported URLs for portable static output, and writes `dist/export.json`
 - opt-in client-side page navigation via `app.EnableNavigation()` plus `server.Link(...)`, with managed head swaps and intent-prefetching
@@ -51,7 +52,7 @@ GoSX is in active development. The compiler pipeline, server rendering, island a
 
 **What still needs deeper framework passes:**
 
-- ISR, edge-runtime, and hosted deployment layers on top of the current SSR + static bundle story
+- hosted deployment/control-plane layers on top of the current SSR + static bundle story
 
 ## Quick Start
 

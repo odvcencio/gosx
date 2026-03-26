@@ -77,7 +77,7 @@ This is the working framework punchlist for driving GoSX from "credible core" to
 ## Phase 11
 
 - [x] ISR / incremental static regeneration on top of cache revalidation and static export
-- [ ] Edge runtime target for routing, rendering, and actions
+- [x] Edge runtime target for routing, rendering, and actions
 - [ ] Vercel-tier deployment platform / hosted distribution story for GoSX apps
 
 ## Tracked Migration Blockers
