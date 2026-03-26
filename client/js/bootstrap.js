@@ -1103,6 +1103,14 @@
   }
 
   function renderSceneWebGLWorldBundle(gl, bundle, resources) {
+    const bundledPasses = createSceneWorldWebGLPassesFromBundle(bundle, resources.passBuffers, {
+      staticDraw: resources.staticDraw,
+      dynamicDraw: resources.dynamicDraw,
+    });
+    if (bundledPasses.length > 0) {
+      drawSceneWebGLPasses(gl, resources.arrayBuffer, resources.floatType, resources.linesMode, resources.positionLocation, resources.colorLocation, resources.materialLocation, bundledPasses, resources.passCache, resources.stateCache);
+      return true;
+    }
     const drawPlan = buildSceneWorldDrawPlan(bundle, resources.drawScratch);
     if (!drawPlan) {
       return false;
@@ -1230,6 +1238,37 @@
     return passes;
   }
 
+  function createSceneWorldWebGLPassesFromBundle(bundle, buffers, usages) {
+    const sourcePasses = Array.isArray(bundle && bundle.passes) ? bundle.passes : [];
+    const passes = [];
+    for (const source of sourcePasses) {
+      const name = String(source && source.name || "");
+      const targetBuffers = buffers[name];
+      if (!targetBuffers) {
+        continue;
+      }
+      const isStatic = Boolean(source && source.static);
+      const positions = sceneTypedFloatArray(source && source.positions);
+      const colors = sceneTypedFloatArray(source && source.colors);
+      const materials = sceneTypedFloatArray(source && source.materials);
+      const vertexCount = Number.isFinite(source && source.vertexCount) ? source.vertexCount : positions.length / 3;
+      passes.push({
+        name,
+        blend: String(source && source.blend || "opaque"),
+        depth: String(source && source.depth || "opaque"),
+        usage: isStatic ? usages.staticDraw : usages.dynamicDraw,
+        cacheSlot: isStatic ? "staticOpaque" : "",
+        cacheKey: String(source && source.cacheKey || ""),
+        buffers: targetBuffers,
+        positions,
+        colors,
+        materials,
+        vertexCount,
+      });
+    }
+    return passes;
+  }
+
   function drawSceneWebGLPasses(gl, arrayBuffer, floatType, linesMode, positionLocation, colorLocation, materialLocation, passes, cache, stateCache) {
     for (const pass of passes) {
       const vertexCount = uploadSceneWebGLPass(gl, arrayBuffer, pass, cache);
@@ -1288,6 +1327,18 @@
     gl.vertexAttribPointer(materialLocation, 3, floatType, false, 0, 0);
 
     gl.drawArrays(linesMode, 0, vertexCount);
+  }
+
+  function sceneTypedFloatArray(values) {
+    if (values instanceof Float32Array) {
+      return values;
+    }
+    const list = Array.isArray(values) ? values : [];
+    const typed = new Float32Array(list.length);
+    for (let i = 0; i < list.length; i += 1) {
+      typed[i] = sceneNumber(list[i], 0);
+    }
+    return typed;
   }
 
   function applySceneWebGLBlend(gl, mode, stateCache) {

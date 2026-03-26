@@ -3,6 +3,7 @@ package enginevm
 import (
 	"encoding/json"
 	"fmt"
+	"hash/fnv"
 	"math"
 	"reflect"
 	"sort"
@@ -308,6 +309,7 @@ func buildRenderBundle(props map[string]any, nodes []resolvedNode, width, height
 	bundle.ObjectCount = len(bundle.Objects)
 	bundle.VertexCount = len(bundle.Positions) / 2
 	bundle.WorldVertexCount = len(bundle.WorldPositions) / 3
+	bundle.Passes = buildRenderPassBundles(bundle)
 	return bundle
 }
 
@@ -551,6 +553,213 @@ func renderMaterialShaderData(profile rootengine.RenderMaterial) []float64 {
 	default:
 		return []float64{0, emissive, 1}
 	}
+}
+
+func buildRenderPassBundles(bundle rootengine.RenderBundle) []rootengine.RenderPassBundle {
+	passes := map[string]*rootengine.RenderPassBundle{
+		"staticOpaque": {
+			Name:      "staticOpaque",
+			Blend:     "opaque",
+			Depth:     "opaque",
+			Static:    true,
+			CacheKey:  renderStaticPassKey(bundle.Camera, bundle.Objects, bundle.Materials),
+			Positions: []float64{},
+			Colors:    []float64{},
+			Materials: []float64{},
+		},
+		"dynamicOpaque": {
+			Name:      "dynamicOpaque",
+			Blend:     "opaque",
+			Depth:     "opaque",
+			Positions: []float64{},
+			Colors:    []float64{},
+			Materials: []float64{},
+		},
+		"alpha": {
+			Name:      "alpha",
+			Blend:     "alpha",
+			Depth:     "translucent",
+			Positions: []float64{},
+			Colors:    []float64{},
+			Materials: []float64{},
+		},
+		"additive": {
+			Name:      "additive",
+			Blend:     "additive",
+			Depth:     "translucent",
+			Positions: []float64{},
+			Colors:    []float64{},
+			Materials: []float64{},
+		},
+	}
+	opaqueObjects := []rootengine.RenderObject{}
+	alphaObjects := []rootengine.RenderObject{}
+	additiveObjects := []rootengine.RenderObject{}
+
+	for _, object := range bundle.Objects {
+		switch renderPassBucketName(object) {
+		case "alpha":
+			alphaObjects = append(alphaObjects, object)
+		case "additive":
+			additiveObjects = append(additiveObjects, object)
+		default:
+			opaqueObjects = append(opaqueObjects, object)
+		}
+	}
+
+	sort.SliceStable(alphaObjects, func(i, j int) bool {
+		if alphaObjects[i].DepthCenter != alphaObjects[j].DepthCenter {
+			return alphaObjects[i].DepthCenter > alphaObjects[j].DepthCenter
+		}
+		return alphaObjects[i].VertexOffset < alphaObjects[j].VertexOffset
+	})
+	sort.SliceStable(additiveObjects, func(i, j int) bool {
+		if additiveObjects[i].DepthCenter != additiveObjects[j].DepthCenter {
+			return additiveObjects[i].DepthCenter > additiveObjects[j].DepthCenter
+		}
+		return additiveObjects[i].VertexOffset < additiveObjects[j].VertexOffset
+	})
+
+	for _, object := range opaqueObjects {
+		appendRenderPassObject(passes, bundle, object)
+	}
+	for _, object := range alphaObjects {
+		appendRenderPassObject(passes, bundle, object)
+	}
+	for _, object := range additiveObjects {
+		appendRenderPassObject(passes, bundle, object)
+	}
+
+	ordered := []rootengine.RenderPassBundle{
+		finalizeRenderPassBundle(passes["staticOpaque"]),
+		finalizeRenderPassBundle(passes["dynamicOpaque"]),
+	}
+	if passes["alpha"].VertexCount > 0 {
+		ordered = append(ordered, finalizeRenderPassBundle(passes["alpha"]))
+	}
+	if passes["additive"].VertexCount > 0 {
+		ordered = append(ordered, finalizeRenderPassBundle(passes["additive"]))
+	}
+	return ordered
+}
+
+func appendRenderPassObject(passes map[string]*rootengine.RenderPassBundle, bundle rootengine.RenderBundle, object rootengine.RenderObject) {
+	if object.ViewCulled || object.VertexCount <= 0 {
+		return
+	}
+	passName := renderPassBucketName(object)
+	pass := passes[passName]
+	if pass == nil {
+		return
+	}
+	material := bundle.Materials[object.MaterialIndex]
+	pass.Positions = appendPassSlice(pass.Positions, bundle.WorldPositions, object.VertexOffset*3, object.VertexCount*3)
+	appendPassColors(pass, bundle.WorldColors, object, material)
+	appendPassMaterials(pass, material, object.VertexCount)
+}
+
+func appendPassSlice(target []float64, source []float64, start, length int) []float64 {
+	end := start + length
+	if start < 0 || end > len(source) || start > end {
+		return target
+	}
+	return append(target, source[start:end]...)
+}
+
+func appendPassColors(pass *rootengine.RenderPassBundle, source []float64, object rootengine.RenderObject, material rootengine.RenderMaterial) {
+	start := object.VertexOffset * 4
+	end := start + object.VertexCount*4
+	if start < 0 || end > len(source) || start > end {
+		return
+	}
+	opacity := material.Opacity
+	for i := start; i < end; i += 4 {
+		pass.Colors = append(pass.Colors,
+			source[i],
+			source[i+1],
+			source[i+2],
+			source[i+3]*opacity,
+		)
+	}
+}
+
+func appendPassMaterials(pass *rootengine.RenderPassBundle, material rootengine.RenderMaterial, vertexCount int) {
+	if len(material.ShaderData) < 3 || vertexCount <= 0 {
+		return
+	}
+	for i := 0; i < vertexCount; i++ {
+		pass.Materials = append(pass.Materials, material.ShaderData[0], material.ShaderData[1], material.ShaderData[2])
+	}
+}
+
+func finalizeRenderPassBundle(pass *rootengine.RenderPassBundle) rootengine.RenderPassBundle {
+	if pass == nil {
+		return rootengine.RenderPassBundle{}
+	}
+	pass.VertexCount = len(pass.Positions) / 3
+	return *pass
+}
+
+func renderPassBucketName(object rootengine.RenderObject) string {
+	switch object.RenderPass {
+	case "additive":
+		return "additive"
+	case "alpha":
+		return "alpha"
+	case "opaque":
+		if object.Static {
+			return "staticOpaque"
+		}
+		return "dynamicOpaque"
+	default:
+		if object.Static {
+			return "staticOpaque"
+		}
+		return "dynamicOpaque"
+	}
+}
+
+func renderStaticPassKey(camera rootengine.RenderCamera, objects []rootengine.RenderObject, materials []rootengine.RenderMaterial) string {
+	hasher := fnv.New64a()
+	writeStaticPassFloat := func(value float64) {
+		_, _ = hasher.Write([]byte(strconv.FormatFloat(value, 'f', 3, 64)))
+		_, _ = hasher.Write([]byte{'|'})
+	}
+	writeStaticPassString := func(value string) {
+		_, _ = hasher.Write([]byte(value))
+		_, _ = hasher.Write([]byte{'|'})
+	}
+
+	writeStaticPassFloat(camera.X)
+	writeStaticPassFloat(camera.Y)
+	writeStaticPassFloat(camera.Z)
+	writeStaticPassFloat(camera.FOV)
+	writeStaticPassFloat(camera.Near)
+	writeStaticPassFloat(camera.Far)
+
+	for _, object := range objects {
+		if object.ViewCulled || object.VertexCount <= 0 || object.RenderPass != "opaque" || !object.Static {
+			continue
+		}
+		writeStaticPassString(object.ID)
+		writeStaticPassString(object.Kind)
+		writeStaticPassFloat(float64(object.MaterialIndex))
+		writeStaticPassFloat(float64(object.VertexOffset))
+		writeStaticPassFloat(float64(object.VertexCount))
+		writeStaticPassFloat(object.DepthNear)
+		writeStaticPassFloat(object.DepthFar)
+		writeStaticPassFloat(object.DepthCenter)
+		writeStaticPassFloat(object.Bounds.MinX)
+		writeStaticPassFloat(object.Bounds.MinY)
+		writeStaticPassFloat(object.Bounds.MinZ)
+		writeStaticPassFloat(object.Bounds.MaxX)
+		writeStaticPassFloat(object.Bounds.MaxY)
+		writeStaticPassFloat(object.Bounds.MaxZ)
+		if object.MaterialIndex >= 0 && object.MaterialIndex < len(materials) {
+			writeStaticPassString(materials[object.MaterialIndex].Key)
+		}
+	}
+	return strconv.FormatUint(hasher.Sum64(), 16)
 }
 
 func appendSceneLine(bundle *rootengine.RenderBundle, width, height int, from, to rootengine.RenderPoint, color string, lineWidth float64) {
