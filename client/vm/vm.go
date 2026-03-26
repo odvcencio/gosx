@@ -561,7 +561,7 @@ func (vm *VM) EvalTree() *ResolvedTree {
 func (vm *VM) resolveNode(node program.Node) ResolvedNode {
 	rn := ResolvedNode{
 		Tag:      node.Tag,
-		Children: make([]int, len(node.Children)),
+		Children: vm.resolveChildren(node.Children),
 	}
 
 	switch node.Kind {
@@ -570,52 +570,64 @@ func (vm *VM) resolveNode(node program.Node) ResolvedNode {
 	case program.NodeExpr:
 		rn.Text = vm.Eval(node.Expr).String()
 	case program.NodeElement:
-		rn.Attrs = make([]ResolvedAttr, 0, len(node.Attrs))
-		hasExplicitKey := false
-		for _, attr := range node.Attrs {
-			switch attr.Kind {
-			case program.AttrStatic:
-				if attr.Name == "key" {
-					rn.Key = attr.Value
-					hasExplicitKey = true
-					continue
-				}
-				rn.Attrs = append(rn.Attrs, ResolvedAttr{Name: attr.Name, Value: attr.Value})
-			case program.AttrExpr:
-				val := vm.Eval(attr.Expr).String()
-				if attr.Name == "key" {
-					rn.Key = val
-					hasExplicitKey = true
-					continue
-				}
-				rn.Attrs = append(rn.Attrs, ResolvedAttr{Name: attr.Name, Value: val})
-			case program.AttrBool:
-				rn.Attrs = append(rn.Attrs, ResolvedAttr{Name: attr.Name, Value: ""})
-			case program.AttrEvent:
-				// Events are handled by delegation, not resolved into attrs.
-			}
-		}
-
-		// Auto-key: if we're inside an iteration context (_index is set)
-		// and no explicit key was provided, generate one from the index
-		// and a content hash. This gives list items stable identity
-		// without requiring the developer to set key= on every element.
-		if !hasExplicitKey {
-			if idxVal, inLoop := vm.props["_index"]; inLoop {
-				idx := int(idxVal.Num)
-				// Use index + tag + first attr value as a content fingerprint
-				fingerprint := fmt.Sprintf("_auto_%d_%s", idx, node.Tag)
-				if len(rn.Attrs) > 0 {
-					fingerprint += "_" + rn.Attrs[0].Value
-				}
-				rn.Key = fingerprint
-			}
-		}
-	}
-
-	for i, childID := range node.Children {
-		rn.Children[i] = int(childID)
+		vm.resolveElementNode(&rn, node)
 	}
 
 	return rn
+}
+
+func (vm *VM) resolveChildren(children []program.NodeID) []int {
+	resolved := make([]int, len(children))
+	for i, childID := range children {
+		resolved[i] = int(childID)
+	}
+	return resolved
+}
+
+func (vm *VM) resolveElementNode(rn *ResolvedNode, node program.Node) {
+	attrs, key, explicitKey := vm.resolveElementAttrs(node.Attrs)
+	rn.Attrs = attrs
+	rn.Key = key
+	if explicitKey {
+		return
+	}
+	if autoKey, ok := vm.autoKey(node.Tag, attrs); ok {
+		rn.Key = autoKey
+	}
+}
+
+func (vm *VM) resolveElementAttrs(attrs []program.Attr) ([]ResolvedAttr, string, bool) {
+	resolved := make([]ResolvedAttr, 0, len(attrs))
+	for _, attr := range attrs {
+		switch attr.Kind {
+		case program.AttrStatic:
+			if attr.Name == "key" {
+				return resolved, attr.Value, true
+			}
+			resolved = append(resolved, ResolvedAttr{Name: attr.Name, Value: attr.Value})
+		case program.AttrExpr:
+			value := vm.Eval(attr.Expr).String()
+			if attr.Name == "key" {
+				return resolved, value, true
+			}
+			resolved = append(resolved, ResolvedAttr{Name: attr.Name, Value: value})
+		case program.AttrBool:
+			resolved = append(resolved, ResolvedAttr{Name: attr.Name, Value: ""})
+		case program.AttrEvent:
+			// Events are handled by delegation, not resolved into attrs.
+		}
+	}
+	return resolved, "", false
+}
+
+func (vm *VM) autoKey(tag string, attrs []ResolvedAttr) (string, bool) {
+	idxVal, inLoop := vm.props["_index"]
+	if !inLoop {
+		return "", false
+	}
+	fingerprint := fmt.Sprintf("_auto_%d_%s", int(idxVal.Num), tag)
+	if len(attrs) > 0 {
+		fingerprint += "_" + attrs[0].Value
+	}
+	return fingerprint, true
 }

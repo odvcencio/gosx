@@ -35,27 +35,9 @@ func (island *Island) CheckHydration(serverTree *ResolvedTree) []string {
 		return nil
 	}
 	var mismatches []string
-	checkNode := func(idx int) {
-		if idx >= len(serverTree.Nodes) || idx >= len(island.prev.Nodes) {
-			return
-		}
-		sn := &serverTree.Nodes[idx]
-		cn := &island.prev.Nodes[idx]
-
-		if sn.Tag != cn.Tag {
-			mismatches = append(mismatches, fmt.Sprintf("node %d: server tag=%q, client tag=%q", idx, sn.Tag, cn.Tag))
-		}
-		if sn.Text != cn.Text {
-			mismatches = append(mismatches, fmt.Sprintf("node %d: server text=%q, client text=%q", idx, sn.Text, cn.Text))
-		}
-	}
-
-	maxLen := len(serverTree.Nodes)
-	if len(island.prev.Nodes) < maxLen {
-		maxLen = len(island.prev.Nodes)
-	}
+	maxLen := minNodeCount(serverTree, island.prev)
 	for i := 0; i < maxLen; i++ {
-		checkNode(i)
+		mismatches = append(mismatches, compareHydrationNode(i, &serverTree.Nodes[i], &island.prev.Nodes[i])...)
 	}
 
 	if len(serverTree.Nodes) != len(island.prev.Nodes) {
@@ -100,44 +82,16 @@ func (island *Island) CurrentTree() *ResolvedTree {
 
 // NewIsland creates a live island from a program and initial props JSON.
 func NewIsland(prog *program.Program, propsJSON string) *Island {
-	// Parse props
-	var rawProps map[string]json.RawMessage
-	json.Unmarshal([]byte(propsJSON), &rawProps)
-
-	// Convert to Value map
-	props := make(map[string]Value)
-	for _, def := range prog.Props {
-		if raw, ok := rawProps[def.Name]; ok {
-			props[def.Name] = parseJSONValue(raw, def.Type)
-		} else {
-			props[def.Name] = ZeroValue(def.Type)
-		}
-	}
-
-	vm := NewVM(prog, props)
-
-	// Initialize signals
-	for _, def := range prog.Signals {
-		initVal := vm.Eval(def.Init)
-		sig := signal.New(initVal)
-		vm.SetSignal(def.Name, sig)
-	}
-
-	// Build handler map
-	handlers := make(map[string]*program.Handler)
-	for i := range prog.Handlers {
-		handlers[prog.Handlers[i].Name] = &prog.Handlers[i]
-	}
+	vm := NewVM(prog, parseProps(prog, propsJSON))
+	initSignals(vm, prog)
 
 	island := &Island{
 		vm:       vm,
 		program:  prog,
-		handlers: handlers,
+		handlers: handlerMap(prog),
 	}
 
-	// Evaluate initial tree
 	island.prev = vm.EvalTree()
-
 	return island
 }
 
@@ -159,34 +113,11 @@ func (island *Island) Dispatch(handlerName string, eventDataJSON string) []Patch
 		return nil
 	}
 
-	// Parse event data and set on VM for OpEventGet.
-	// Always try to parse — even "{}" produces a valid (empty) map.
-	var eventData map[string]string
-	if eventDataJSON != "" {
-		// Try map[string]string first, fall back to map[string]any for mixed types
-		if err := json.Unmarshal([]byte(eventDataJSON), &eventData); err != nil {
-			var mixed map[string]any
-			if err2 := json.Unmarshal([]byte(eventDataJSON), &mixed); err2 == nil {
-				eventData = make(map[string]string)
-				for k, v := range mixed {
-					eventData[k] = fmt.Sprintf("%v", v)
-				}
-			}
-		}
-	}
-	island.vm.SetEventData(eventData) // always set, even if nil (clears previous)
-
-	// Batch all signal mutations
+	island.vm.SetEventData(parseEventData(eventDataJSON))
 	signal.Batch(func() {
-		for _, exprID := range handler.Body {
-			island.vm.Eval(exprID)
-		}
+		island.evalHandlerBody(handler)
 	})
-
-	// Clear event context
 	island.vm.ClearEventData()
-
-	// Reconcile
 	return island.Reconcile()
 }
 
@@ -203,6 +134,87 @@ func (island *Island) Dispose() {
 	// Signal cleanup is handled by GC since we don't have persistent subscriptions
 	// in this version. The bridge removes the island from its map.
 	island.prev = nil
+}
+
+func minNodeCount(left, right *ResolvedTree) int {
+	maxLen := len(left.Nodes)
+	if len(right.Nodes) < maxLen {
+		maxLen = len(right.Nodes)
+	}
+	return maxLen
+}
+
+func compareHydrationNode(idx int, serverNode, clientNode *ResolvedNode) []string {
+	if serverNode == nil || clientNode == nil {
+		return nil
+	}
+	var mismatches []string
+	if serverNode.Tag != clientNode.Tag {
+		mismatches = append(mismatches, fmt.Sprintf("node %d: server tag=%q, client tag=%q", idx, serverNode.Tag, clientNode.Tag))
+	}
+	if serverNode.Text != clientNode.Text {
+		mismatches = append(mismatches, fmt.Sprintf("node %d: server text=%q, client text=%q", idx, serverNode.Text, clientNode.Text))
+	}
+	return mismatches
+}
+
+func parseProps(prog *program.Program, propsJSON string) map[string]Value {
+	var rawProps map[string]json.RawMessage
+	_ = json.Unmarshal([]byte(propsJSON), &rawProps)
+
+	props := make(map[string]Value, len(prog.Props))
+	for _, def := range prog.Props {
+		if raw, ok := rawProps[def.Name]; ok {
+			props[def.Name] = parseJSONValue(raw, def.Type)
+		} else {
+			props[def.Name] = ZeroValue(def.Type)
+		}
+	}
+	return props
+}
+
+func initSignals(vm *VM, prog *program.Program) {
+	for _, def := range prog.Signals {
+		initVal := vm.Eval(def.Init)
+		vm.SetSignal(def.Name, signal.New(initVal))
+	}
+}
+
+func handlerMap(prog *program.Program) map[string]*program.Handler {
+	handlers := make(map[string]*program.Handler, len(prog.Handlers))
+	for i := range prog.Handlers {
+		handlers[prog.Handlers[i].Name] = &prog.Handlers[i]
+	}
+	return handlers
+}
+
+func parseEventData(eventDataJSON string) map[string]string {
+	if eventDataJSON == "" {
+		return nil
+	}
+	var eventData map[string]string
+	if err := json.Unmarshal([]byte(eventDataJSON), &eventData); err == nil {
+		return eventData
+	}
+	return parseMixedEventData(eventDataJSON)
+}
+
+func parseMixedEventData(eventDataJSON string) map[string]string {
+	var mixed map[string]any
+	if err := json.Unmarshal([]byte(eventDataJSON), &mixed); err != nil {
+		return nil
+	}
+	eventData := make(map[string]string, len(mixed))
+	for key, value := range mixed {
+		eventData[key] = fmt.Sprintf("%v", value)
+	}
+	return eventData
+}
+
+func (island *Island) evalHandlerBody(handler *program.Handler) {
+	for _, exprID := range handler.Body {
+		island.vm.Eval(exprID)
+	}
 }
 
 // parseJSONValue converts a JSON value to a VM Value based on expected type.
