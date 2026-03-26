@@ -1363,6 +1363,75 @@ test("bootstrap invalidates static opaque Scene3D buffers when camera clip state
   assert.equal(gl.ops.filter((entry) => entry[0] === "bufferData" && entry[2] === 4).length, 2);
 });
 
+test("bootstrap prefers engine-batched Scene3D pass payloads when present", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-pass-bundle-root";
+
+  const env = createContext({
+    elements: [mount],
+    enableWebGL: true,
+    disableCanvas2D: true,
+    fetchRoutes: {
+      "/runtime.wasm": { bytes: [0, 97, 115, 109] },
+      "/scene-pass-bundle-program.json": { text: '{"name":"PassBundle"}' },
+    },
+    manifest: {
+      runtime: { path: "/runtime.wasm" },
+      engines: [
+        {
+          id: "gosx-engine-pass-bundle",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-pass-bundle-root",
+          runtime: "shared",
+          props: { width: 640, height: 360, background: "#08151f" },
+          programRef: "/scene-pass-bundle-program.json",
+        },
+      ],
+    },
+    onHydrateEngine: () => "[]",
+    onRenderEngine: () => JSON.stringify({
+      background: "#08151f",
+      camera: { x: 0, y: 0, z: 6, fov: 72 },
+      positions: [],
+      colors: [],
+      vertexCount: 0,
+      worldPositions: [
+        -9, 0, 0, -8, 0, 0,
+      ],
+      worldColors: [
+        1, 0, 0, 1, 1, 0, 0, 1,
+      ],
+      worldVertexCount: 2,
+      materials: [
+        { key: "flat|#35556a|1.000|true|opaque|opaque|0.000", kind: "flat", color: "#35556a", opacity: 1, wireframe: true, blendMode: "opaque", renderPass: "opaque", emissive: 0, shaderData: [0, 0, 1] },
+      ],
+      objects: [
+        { id: "floor", kind: "plane", materialIndex: 0, renderPass: "opaque", vertexOffset: 0, vertexCount: 2, static: true, depthCenter: 6, viewCulled: false },
+      ],
+      passes: [
+        {
+          name: "staticOpaque",
+          blend: "opaque",
+          depth: "opaque",
+          static: true,
+          cacheKey: "engine-pass-key",
+          positions: [1, 0, 0, 2, 0, 0],
+          colors: [0.3, 0.4, 0.5, 1, 0.3, 0.4, 0.5, 1],
+          materials: [0, 0, 1, 0, 0, 1],
+          vertexCount: 2,
+        },
+      ],
+    }),
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const gl = mount.children[0].getContext("webgl");
+  assert.deepEqual(gl.bufferUploads.get(4), [1, 0, 0, 2, 0, 0]);
+});
+
 test("bootstrap reuses opaque Scene3D WebGL state transitions within a frame", async () => {
   const mount = new FakeElement("div", null);
   mount.id = "scene-opaque-state-root";

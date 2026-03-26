@@ -64,19 +64,33 @@ type RenderObject struct {
 	ViewCulled    bool         `json:"viewCulled,omitempty"`
 }
 
+// RenderPassBundle is a prebatched GPU upload payload for a single render pass.
+type RenderPassBundle struct {
+	Name        string    `json:"name,omitempty"`
+	Blend       string    `json:"blend,omitempty"`
+	Depth       string    `json:"depth,omitempty"`
+	Static      bool      `json:"static,omitempty"`
+	CacheKey    string    `json:"cacheKey,omitempty"`
+	Positions   []float64 `json:"positions,omitempty"`
+	Colors      []float64 `json:"colors,omitempty"`
+	Materials   []float64 `json:"materials,omitempty"`
+	VertexCount int       `json:"vertexCount,omitempty"`
+}
+
 // RenderBundle is the renderer-facing scene payload emitted by the shared
 // engine runtime for a single frame.
 type RenderBundle struct {
-	Background       string           `json:"background,omitempty"`
-	Camera           RenderCamera     `json:"camera,omitempty"`
-	Materials        []RenderMaterial `json:"materials,omitempty"`
-	Objects          []RenderObject   `json:"objects,omitempty"`
-	Lines            []RenderLine     `json:"lines,omitempty"`
-	Positions        []float64        `json:"positions,omitempty"`
-	Colors           []float64        `json:"colors,omitempty"`
-	VertexCount      int              `json:"vertexCount,omitempty"`
-	WorldPositions   []float64        `json:"worldPositions,omitempty"`
-	WorldColors      []float64        `json:"worldColors,omitempty"`
-	WorldVertexCount int              `json:"worldVertexCount,omitempty"`
-	ObjectCount      int              `json:"objectCount,omitempty"`
+	Background       string             `json:"background,omitempty"`
+	Camera           RenderCamera       `json:"camera,omitempty"`
+	Materials        []RenderMaterial   `json:"materials,omitempty"`
+	Objects          []RenderObject     `json:"objects,omitempty"`
+	Passes           []RenderPassBundle `json:"passes,omitempty"`
+	Lines            []RenderLine       `json:"lines,omitempty"`
+	Positions        []float64          `json:"positions,omitempty"`
+	Colors           []float64          `json:"colors,omitempty"`
+	VertexCount      int                `json:"vertexCount,omitempty"`
+	WorldPositions   []float64          `json:"worldPositions,omitempty"`
+	WorldColors      []float64          `json:"worldColors,omitempty"`
+	WorldVertexCount int                `json:"worldVertexCount,omitempty"`
+	ObjectCount      int                `json:"objectCount,omitempty"`
 }

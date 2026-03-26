@@ -271,6 +271,9 @@ func TestRuntimeRenderBundleSyncsDirtyNodes(t *testing.T) {
 	if len(bundle.Materials) != 1 {
 		t.Fatalf("expected one resolved material, got %#v", bundle.Materials)
 	}
+	if len(bundle.Passes) < 2 {
+		t.Fatalf("expected prebatched render passes, got %#v", bundle.Passes)
+	}
 	if len(bundle.Objects) != 1 {
 		t.Fatalf("expected one render object, got %#v", bundle.Objects)
 	}
@@ -309,6 +312,9 @@ func TestRuntimeRenderBundleSyncsDirtyNodes(t *testing.T) {
 	}
 	if rt.dirty[1] {
 		t.Fatal("expected render bundle generation to sync dirty node snapshot")
+	}
+	if bundle.Passes[0].Name != "staticOpaque" || bundle.Passes[0].CacheKey == "" {
+		t.Fatalf("expected static opaque pass with cache key, got %#v", bundle.Passes[0])
 	}
 }
 
