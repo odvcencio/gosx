@@ -295,3 +295,64 @@ func TestRuntimeRenderBundleSyncsDirtyNodes(t *testing.T) {
 		t.Fatal("expected render bundle generation to sync dirty node snapshot")
 	}
 }
+
+func TestRuntimeRenderBundleResolvesMaterialPresets(t *testing.T) {
+	prog := &rootengine.Program{
+		Name: "MaterialProfiles",
+		Nodes: []rootengine.Node{
+			{
+				Kind: "camera",
+				Props: map[string]islandprogram.ExprID{
+					"z": 0,
+				},
+			},
+			{
+				Kind:     "mesh",
+				Geometry: "box",
+				Material: "ghost",
+				Props: map[string]islandprogram.ExprID{
+					"size":  1,
+					"color": 2,
+				},
+			},
+			{
+				Kind:     "mesh",
+				Geometry: "sphere",
+				Material: "flat",
+				Props: map[string]islandprogram.ExprID{
+					"radius":    3,
+					"color":     4,
+					"opacity":   5,
+					"blendMode": 6,
+					"emissive":  7,
+				},
+			},
+		},
+		Exprs: []islandprogram.Expr{
+			{Op: islandprogram.OpLitFloat, Value: "6", Type: islandprogram.TypeFloat},
+			{Op: islandprogram.OpLitFloat, Value: "1.2", Type: islandprogram.TypeFloat},
+			{Op: islandprogram.OpLitString, Value: "#8de1ff", Type: islandprogram.TypeString},
+			{Op: islandprogram.OpLitFloat, Value: "0.9", Type: islandprogram.TypeFloat},
+			{Op: islandprogram.OpLitString, Value: "#ffd48f", Type: islandprogram.TypeString},
+			{Op: islandprogram.OpLitFloat, Value: "0.6", Type: islandprogram.TypeFloat},
+			{Op: islandprogram.OpLitString, Value: "opaque", Type: islandprogram.TypeString},
+			{Op: islandprogram.OpLitFloat, Value: "0.35", Type: islandprogram.TypeFloat},
+		},
+	}
+
+	rt := New(prog, "")
+	bundle := rt.RenderBundle(640, 360, 0)
+	if len(bundle.Materials) != 2 {
+		t.Fatalf("expected two materials, got %#v", bundle.Materials)
+	}
+
+	ghost := bundle.Materials[0]
+	if ghost.Kind != "ghost" || ghost.BlendMode != "alpha" || ghost.Opacity >= 1 || ghost.Emissive <= 0 {
+		t.Fatalf("expected ghost preset material, got %#v", ghost)
+	}
+
+	flat := bundle.Materials[1]
+	if flat.Kind != "flat" || flat.BlendMode != "alpha" || flat.Opacity != 0.6 || flat.Emissive != 0.35 {
+		t.Fatalf("expected explicit flat material overrides, got %#v", flat)
+	}
+}
