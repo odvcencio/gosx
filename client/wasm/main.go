@@ -17,6 +17,7 @@ func registerRuntime(b *bridge.Bridge) {
 	setRuntimeFunc("__gosx_dispose", disposeRuntimeFunc(b))
 	setRuntimeFunc("__gosx_highlight", highlightRuntimeFunc())
 	setRuntimeFunc("__gosx_set_shared_signal", sharedSignalRuntimeFunc(b))
+	setRuntimeFunc("__gosx_set_input_batch", inputBatchRuntimeFunc(b))
 }
 
 func setRuntimeFunc(name string, fn js.Func) {
@@ -81,6 +82,22 @@ func sharedSignalRuntimeFunc(b *bridge.Bridge) js.Func {
 	})
 }
 
+func inputBatchRuntimeFunc(b *bridge.Bridge) js.Func {
+	return js.FuncOf(func(this js.Value, args []js.Value) any {
+		if len(args) < 1 {
+			return jsErrorf("need 1 arg (batchJSON)")
+		}
+		batchJSON, err := normalizeJSONArg(args[0], "{}")
+		if err != nil {
+			return jsError(err)
+		}
+		if err := b.SetSharedSignalBatchJSON(batchJSON); err != nil {
+			return jsError(err)
+		}
+		return js.Null()
+	})
+}
+
 type hydrateCall struct {
 	islandID      string
 	componentName string
@@ -125,6 +142,25 @@ func normalizeUint8Array(value js.Value) js.Value {
 		return js.Global().Get("Uint8Array").New(value)
 	}
 	return value
+}
+
+func normalizeJSONArg(value js.Value, fallback string) (string, error) {
+	switch value.Type() {
+	case js.TypeUndefined, js.TypeNull:
+		return fallback, nil
+	case js.TypeString:
+		return value.String(), nil
+	default:
+		jsonGlobal := js.Global().Get("JSON")
+		if !jsonGlobal.Truthy() {
+			return "", fmt.Errorf("JSON global not available")
+		}
+		out := jsonGlobal.Call("stringify", value)
+		if out.Type() != js.TypeString {
+			return "", fmt.Errorf("argument must be JSON-serializable")
+		}
+		return out.String(), nil
+	}
 }
 
 func applyPatchedResult(islandID string, patches []vm.PatchOp) any {

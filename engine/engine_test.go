@@ -84,7 +84,7 @@ func TestMessageBusMultipleHandlers(t *testing.T) {
 
 func TestValidateCapabilities(t *testing.T) {
 	// Valid
-	err := ValidateCapabilities([]Capability{CapCanvas, CapWebGL})
+	err := ValidateCapabilities([]Capability{CapCanvas, CapWebGL, CapPointer, CapKeyboard, CapGamepad})
 	if err != nil {
 		t.Fatal(err)
 	}

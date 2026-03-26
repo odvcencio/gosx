@@ -180,3 +180,38 @@ func TestRuntimeSetSharedSignalExport(t *testing.T) {
 		t.Fatalf("expected count 3, got %v", val.Fields["count"].Num)
 	}
 }
+
+func TestRuntimeSetInputBatchExport(t *testing.T) {
+	setGlobalValue(t, "__gosx_runtime_ready", js.Undefined())
+
+	b := bridge.New()
+	registerRuntime(b)
+
+	payload := js.Global().Get("JSON").Call("parse", `{
+		"$input.pointer": {"x": 18, "y": -4.5},
+		"$input.key": {"space": true}
+	}`)
+	ret := js.Global().Get("__gosx_set_input_batch").Invoke(payload)
+	if !ret.IsNull() {
+		t.Fatalf("expected null result, got %q", ret.String())
+	}
+
+	pointer, ok := b.GetStore().Get("$input.pointer")
+	if !ok {
+		t.Fatal("expected pointer signal to be set")
+	}
+	if got := pointer.Fields["x"].Num; got != 18 {
+		t.Fatalf("expected x 18, got %v", got)
+	}
+	if got := pointer.Fields["y"].Num; got != -4.5 {
+		t.Fatalf("expected y -4.5, got %v", got)
+	}
+
+	keyboard, ok := b.GetStore().Get("$input.key")
+	if !ok {
+		t.Fatal("expected key signal to be set")
+	}
+	if !keyboard.Fields["space"].Bool {
+		t.Fatalf("expected space=true, got %#v", keyboard.Fields["space"])
+	}
+}
