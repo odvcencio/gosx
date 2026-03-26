@@ -356,6 +356,24 @@ func RunBuild(dir string, dev bool) error {
 	if err := stageDeploymentBundle(dir, distDir, builtServer, serverBinaryPath); err != nil {
 		return fmt.Errorf("stage deployment bundle: %w", err)
 	}
+	staticPages := 0
+	if !dev && builtServer {
+		exportManifest, err := prerenderStaticBundle(staticExportOptions{
+			AppRoot:    distDir,
+			OutputDir:  filepath.Join(distDir, "static"),
+			BinaryPath: serverBinaryPath,
+			StageAssets: func(outputDir string) error {
+				return stageStaticBuildAssets(distDir, &manifest, outputDir)
+			},
+		})
+		if err != nil {
+			return fmt.Errorf("prerender static bundle: %w", err)
+		}
+		staticPages = len(exportManifest.Pages)
+		if err := writeExportManifest(filepath.Join(distDir, "export.json"), exportManifest); err != nil {
+			return err
+		}
+	}
 
 	// ── Summary ─────────────────────────────────────────────────────────
 
@@ -365,6 +383,9 @@ func RunBuild(dir string, dev bool) error {
 	if builtServer {
 		fmt.Printf("  Server binary: %s\n", serverBinaryPath)
 		fmt.Printf("  Launch script: %s\n", filepath.Join(distDir, "run.sh"))
+		if !dev && staticPages > 0 {
+			fmt.Printf("  Static export: %s (%d prerendered pages)\n", filepath.Join(distDir, "static"), staticPages)
+		}
 	} else {
 		fmt.Printf("  Server binary: skipped (target is not a main package)\n")
 	}
@@ -475,6 +496,78 @@ func stageDeploymentBundle(projectDir, distDir string, builtServer bool, serverB
 		}
 	}
 	return nil
+}
+
+func stageStaticBuildAssets(distDir string, manifest *BuildManifest, outputDir string) error {
+	if err := copyDirIfPresent(filepath.Join(distDir, "assets"), filepath.Join(outputDir, "assets")); err != nil {
+		return err
+	}
+	if manifest == nil {
+		return nil
+	}
+	return stageManifestCompatibilityRuntime(distDir, manifest, outputDir)
+}
+
+func stageManifestCompatibilityRuntime(distDir string, manifest *BuildManifest, outputDir string) error {
+	gosxDir := filepath.Join(outputDir, "gosx")
+	runtimeDir := filepath.Join(distDir, "assets", "runtime")
+	islandDir := filepath.Join(distDir, "assets", "islands")
+	cssDir := filepath.Join(distDir, "assets", "css")
+	if err := os.MkdirAll(filepath.Join(gosxDir, "islands"), 0755); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Join(gosxDir, "css"), 0755); err != nil {
+		return err
+	}
+
+	for _, asset := range []struct {
+		file string
+		dst  string
+	}{
+		{file: manifest.Runtime.WASM.File, dst: filepath.Join(gosxDir, "runtime.wasm")},
+		{file: manifest.Runtime.WASMExec.File, dst: filepath.Join(gosxDir, "wasm_exec.js")},
+		{file: manifest.Runtime.Bootstrap.File, dst: filepath.Join(gosxDir, "bootstrap.js")},
+		{file: manifest.Runtime.Patch.File, dst: filepath.Join(gosxDir, "patch.js")},
+	} {
+		if strings.TrimSpace(asset.file) == "" {
+			continue
+		}
+		if err := copyFile(asset.dst, filepath.Join(runtimeDir, asset.file)); err != nil {
+			return err
+		}
+	}
+
+	for _, asset := range manifest.Islands {
+		ext := ".gxi"
+		if asset.Format == "json" {
+			ext = ".json"
+		}
+		if err := copyFile(filepath.Join(gosxDir, "islands", asset.Name+ext), filepath.Join(islandDir, asset.File)); err != nil {
+			return err
+		}
+	}
+
+	for _, asset := range manifest.CSS {
+		name := cssCompatFilename(asset)
+		if name == "" {
+			continue
+		}
+		if err := copyFile(filepath.Join(gosxDir, "css", name), filepath.Join(cssDir, asset.File)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func cssCompatFilename(asset CSSAsset) string {
+	if source := strings.TrimSpace(asset.Source); source != "" {
+		return filepath.Base(source)
+	}
+	name := strings.TrimSpace(asset.Component)
+	if name == "" {
+		return ""
+	}
+	return name + ".css"
 }
 
 func copyDirIfPresent(src, dst string) error {

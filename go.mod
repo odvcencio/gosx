@@ -7,4 +7,5 @@ require github.com/odvcencio/gotreesitter v0.10.1
 require (
 	github.com/gorilla/websocket v1.5.3 // indirect
 	golang.org/x/image v0.38.0 // indirect
+	golang.org/x/net v0.52.0 // indirect
 )

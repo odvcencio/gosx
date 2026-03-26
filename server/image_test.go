@@ -98,6 +98,26 @@ func TestImageHelperSupportsCustomResolver(t *testing.T) {
 	}
 }
 
+func TestImageHelperBypassesOptimizerDuringStaticExport(t *testing.T) {
+	if err := os.Setenv("GOSX_STATIC_EXPORT", "1"); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Unsetenv("GOSX_STATIC_EXPORT")
+
+	html := gosx.RenderHTML(Image(ImageProps{
+		Src:    "/hero.png",
+		Alt:    "Hero",
+		Width:  640,
+		Height: 360,
+	}))
+	if strings.Contains(html, defaultImageEndpoint) {
+		t.Fatalf("expected static export image markup to bypass optimizer, got %q", html)
+	}
+	if !strings.Contains(html, `src="/hero.png"`) {
+		t.Fatalf("expected raw image src during static export, got %q", html)
+	}
+}
+
 func TestAppServesOptimizedPNGVariant(t *testing.T) {
 	dir := t.TempDir()
 	publicDir := filepath.Join(dir, "public")
