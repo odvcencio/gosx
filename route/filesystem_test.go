@@ -493,9 +493,12 @@ func Page() Node {
 	router.Build().ServeHTTP(w, req)
 
 	body := w.Body.String()
+	if !strings.Contains(body, `<title>Sidecar Metadata Title</title>`) {
+		t.Fatalf("expected sidecar title in %q", body)
+	}
 	for _, snippet := range []string{
-		`<title>Sidecar Metadata Title</title>`,
-		`name="description" content="Nested docs description"`,
+		`name="description"`,
+		`content="Nested docs description"`,
 	} {
 		if !strings.Contains(body, snippet) {
 			t.Fatalf("expected %q in %q", snippet, body)
@@ -646,6 +649,81 @@ func Page() Node {
 		"<title>draco | platform</title>",
 		`content="crew/[team]/[member]/page.gsx"`,
 		"platform:draco:crew/[team]/[member]/page.gsx",
+	} {
+		if !strings.Contains(body, snippet) {
+			t.Fatalf("expected %q in %q", snippet, body)
+		}
+	}
+}
+
+func TestRouterAddDirAppliesFileModuleTemplateBindings(t *testing.T) {
+	root := t.TempDir()
+	writeRouteFile(t, root, "crew/page.gsx", `package docs
+
+func Page() Node {
+	return <main class="crew-page" data-brand={brand}>
+		<Hero title={data.title} />
+		<MemberCard team={data.team} member={data.member} />
+		{Lead(data.member)}
+	</main>
+}
+`)
+
+	modules := NewFileModuleRegistry()
+	if err := modules.Register(FileModuleFor("crew/page.gsx", FileModuleOptions{
+		Load: func(ctx *RouteContext, page FilePage) (any, error) {
+			return map[string]string{
+				"title":  "Platform Crew",
+				"team":   "platform",
+				"member": "draco",
+			}, nil
+		},
+		Bindings: func(ctx *RouteContext, page FilePage, data any) FileTemplateBindings {
+			return FileTemplateBindings{
+				Values: map[string]any{
+					"brand": "GoSX Crew",
+				},
+				Funcs: map[string]any{
+					"Lead": func(name string) gosx.Node {
+						return gosx.El("p", gosx.Attrs(gosx.Attr("class", "lead")), gosx.Text("Hello "+strings.ToUpper(name)))
+					},
+				},
+				Components: map[string]any{
+					"Hero": func(props struct{ Title string }) gosx.Node {
+						return gosx.El("section", gosx.Attrs(gosx.Attr("class", "hero")),
+							gosx.El("h1", gosx.Text(props.Title)),
+						)
+					},
+					"MemberCard": func(team string, member string) gosx.Node {
+						return gosx.El("article", gosx.Attrs(gosx.Attr("class", "member-card")),
+							gosx.Text(team+":"+member),
+						)
+					},
+				},
+			}
+		},
+	})); err != nil {
+		t.Fatal(err)
+	}
+
+	router := NewRouter()
+	router.SetLayout(func(ctx *RouteContext, body gosx.Node) gosx.Node {
+		return server.HTMLDocument("Crew", ctx.Head(), body)
+	})
+	if err := router.AddDir(root, FileRoutesOptions{Modules: modules}); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/crew", nil)
+	w := httptest.NewRecorder()
+	router.Build().ServeHTTP(w, req)
+
+	body := w.Body.String()
+	for _, snippet := range []string{
+		`class="crew-page" data-brand="GoSX Crew"`,
+		`<section class="hero"><h1>Platform Crew</h1></section>`,
+		`<article class="member-card">platform:draco</article>`,
+		`<p class="lead">Hello DRACO</p>`,
 	} {
 		if !strings.Contains(body, snippet) {
 			t.Fatalf("expected %q in %q", snippet, body)

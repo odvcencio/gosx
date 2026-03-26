@@ -69,6 +69,9 @@ func writeHashed(dir, name, ext string, data []byte) (HashedAsset, error) {
 // Deploy: server binary rolls often. Runtime/island/CSS assets are
 // content-hashed and CDN-cached with Cache-Control: immutable.
 func RunBuild(dir string, dev bool) error {
+	if err := syncModulesPackage(dir); err != nil {
+		return err
+	}
 	cfg, err := loadProjectConfig(dir)
 	if err != nil {
 		return err

@@ -19,20 +19,25 @@ import (
 )
 
 type fileRenderEnv struct {
-	values map[string]any
-	funcs  map[string]any
+	values     map[string]any
+	funcs      map[string]any
+	components map[string]any
 }
 
 func (env fileRenderEnv) clone() fileRenderEnv {
 	next := fileRenderEnv{
-		values: make(map[string]any, len(env.values)),
-		funcs:  make(map[string]any, len(env.funcs)),
+		values:     make(map[string]any, len(env.values)),
+		funcs:      make(map[string]any, len(env.funcs)),
+		components: make(map[string]any, len(env.components)),
 	}
 	for key, value := range env.values {
 		next.values[key] = value
 	}
 	for key, value := range env.funcs {
 		next.funcs[key] = value
+	}
+	for key, value := range env.components {
+		next.components[key] = value
 	}
 	return next
 }
@@ -44,6 +49,37 @@ func (env fileRenderEnv) withValue(name string, value any) fileRenderEnv {
 	}
 	next.values[name] = value
 	return next
+}
+
+func (env fileRenderEnv) withBindings(bindings FileTemplateBindings) fileRenderEnv {
+	next := env.clone()
+	if next.values == nil {
+		next.values = make(map[string]any)
+	}
+	if next.funcs == nil {
+		next.funcs = make(map[string]any)
+	}
+	if next.components == nil {
+		next.components = make(map[string]any)
+	}
+	for key, value := range bindings.Values {
+		next.values[key] = value
+	}
+	for key, value := range bindings.Funcs {
+		next.funcs[key] = value
+	}
+	for key, value := range bindings.Components {
+		next.components[key] = value
+	}
+	return next
+}
+
+func (env fileRenderEnv) component(name string) (any, bool) {
+	if env.components == nil {
+		return nil, false
+	}
+	value, ok := env.components[name]
+	return value, ok
 }
 
 func newFileRenderEnv(ctx *RouteContext, page FilePage) fileRenderEnv {
@@ -101,7 +137,8 @@ func newFileRenderEnv(ctx *RouteContext, page FilePage) fileRenderEnv {
 				"path":   requestPath,
 			},
 		},
-		funcs: map[string]any{},
+		funcs:      map[string]any{},
+		components: map[string]any{},
 	}
 
 	if ctx != nil {
@@ -341,25 +378,30 @@ func indexValue(target any, index any) any {
 }
 
 func callValue(fn any, args []any) any {
+	value, _ := tryCallValue(fn, args)
+	return value
+}
+
+func tryCallValue(fn any, args []any) (any, bool) {
 	if fn == nil {
-		return nil
+		return nil, false
 	}
 
 	rv := reflect.ValueOf(fn)
 	if !rv.IsValid() || rv.Kind() != reflect.Func {
-		return nil
+		return nil, false
 	}
 
 	typ := rv.Type()
 	callArgs := make([]reflect.Value, 0, len(args))
 	if typ.IsVariadic() {
 		if len(args) < typ.NumIn()-1 {
-			return nil
+			return nil, false
 		}
 		for i := 0; i < typ.NumIn()-1; i++ {
 			value, ok := reflectValue(args[i], typ.In(i))
 			if !ok {
-				return nil
+				return nil, false
 			}
 			callArgs = append(callArgs, value)
 		}
@@ -367,18 +409,18 @@ func callValue(fn any, args []any) any {
 		for i := typ.NumIn() - 1; i < len(args); i++ {
 			value, ok := reflectValue(args[i], variadicType)
 			if !ok {
-				return nil
+				return nil, false
 			}
 			callArgs = append(callArgs, value)
 		}
 	} else {
 		if len(args) != typ.NumIn() {
-			return nil
+			return nil, false
 		}
 		for i := 0; i < typ.NumIn(); i++ {
 			value, ok := reflectValue(args[i], typ.In(i))
 			if !ok {
-				return nil
+				return nil, false
 			}
 			callArgs = append(callArgs, value)
 		}
@@ -387,20 +429,20 @@ func callValue(fn any, args []any) any {
 	results := rv.Call(callArgs)
 	switch len(results) {
 	case 0:
-		return nil
+		return nil, true
 	case 1:
 		if results[0].CanInterface() {
-			return results[0].Interface()
+			return results[0].Interface(), true
 		}
-		return nil
+		return nil, true
 	case 2:
 		if err, ok := results[1].Interface().(error); ok && err != nil {
-			return nil
+			return nil, false
 		}
 		if results[0].CanInterface() {
-			return results[0].Interface()
+			return results[0].Interface(), true
 		}
-		return nil
+		return nil, true
 	default:
 		values := make([]any, 0, len(results))
 		for _, result := range results {
@@ -408,7 +450,7 @@ func callValue(fn any, args []any) any {
 				values = append(values, result.Interface())
 			}
 		}
-		return values
+		return values, true
 	}
 }
 
@@ -470,6 +512,15 @@ func reflectValue(value any, target reflect.Type) (reflect.Value, bool) {
 	if value == nil {
 		return reflect.Zero(target), true
 	}
+	if target.Kind() == reflect.Pointer {
+		inner, ok := reflectValue(value, target.Elem())
+		if !ok {
+			return reflect.Value{}, false
+		}
+		out := reflect.New(target.Elem())
+		out.Elem().Set(inner)
+		return out, true
+	}
 	rv := reflect.ValueOf(value)
 	if rv.Type().AssignableTo(target) {
 		return rv, true
@@ -495,12 +546,56 @@ func reflectValue(value any, target reflect.Type) (reflect.Value, bool) {
 		out := reflect.New(target).Elem()
 		out.SetFloat(numericValue(value))
 		return out, true
+	case reflect.Struct:
+		return reflectStructValue(value, target)
 	case reflect.Interface:
 		if rv.IsValid() {
 			return rv, true
 		}
 	}
 	return reflect.Value{}, false
+}
+
+func reflectStructValue(value any, target reflect.Type) (reflect.Value, bool) {
+	props := spreadProps(value)
+	if len(props) == 0 {
+		return reflect.Value{}, false
+	}
+
+	out := reflect.New(target).Elem()
+	assigned := false
+	for i := 0; i < target.NumField(); i++ {
+		field := target.Field(i)
+		if !field.IsExported() {
+			continue
+		}
+		fieldValue, ok := lookupTemplatePropValue(props, field.Name)
+		if !ok {
+			continue
+		}
+		converted, ok := reflectValue(fieldValue, field.Type)
+		if !ok {
+			continue
+		}
+		out.Field(i).Set(converted)
+		assigned = true
+	}
+	return out, assigned
+}
+
+func lookupTemplatePropValue(props map[string]any, name string) (any, bool) {
+	if props == nil {
+		return nil, false
+	}
+	for _, candidate := range []string{name, exportedPropAlias(name), unexportedPropAlias(name), strings.ToLower(name)} {
+		if candidate == "" {
+			continue
+		}
+		if value, ok := props[candidate]; ok {
+			return value, true
+		}
+	}
+	return nil, false
 }
 
 func truthy(value any) bool {

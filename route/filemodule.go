@@ -25,6 +25,17 @@ type FileRenderDataFunc func(ctx *RouteContext, page FilePage, data any) (gosx.N
 // FileActions maps action names to handlers for a file-routed page.
 type FileActions map[string]action.Handler
 
+// FileTemplateBindings exposes request-scoped values, helpers, and renderable
+// Go component functions to a file-routed `.gsx` page.
+type FileTemplateBindings struct {
+	Values     map[string]any
+	Funcs      map[string]any
+	Components map[string]any
+}
+
+// FileBindingsFunc returns request-scoped bindings for the default file renderer.
+type FileBindingsFunc func(ctx *RouteContext, page FilePage, data any) FileTemplateBindings
+
 // FileModule wires server-side hooks to a file-routed page source file.
 type FileModule struct {
 	Source   string
@@ -32,6 +43,7 @@ type FileModule struct {
 	Metadata FileMetadataFunc
 	Render   FileRenderDataFunc
 	Actions  FileActions
+	Bindings FileBindingsFunc
 }
 
 // FileModuleOptions configures a file-routed server module.
@@ -40,6 +52,7 @@ type FileModuleOptions struct {
 	Metadata FileMetadataFunc
 	Render   FileRenderDataFunc
 	Actions  FileActions
+	Bindings FileBindingsFunc
 }
 
 // FileModuleFor builds a file-routed server module definition.
@@ -50,6 +63,7 @@ func FileModuleFor(source string, opts FileModuleOptions) FileModule {
 		Metadata: opts.Metadata,
 		Render:   opts.Render,
 		Actions:  cloneFileActions(opts.Actions),
+		Bindings: opts.Bindings,
 	}
 }
 

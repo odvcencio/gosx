@@ -216,9 +216,6 @@ func (r *Router) AddDir(root string, opts FileRoutesOptions) error {
 	}
 
 	renderFn := opts.Render
-	if renderFn == nil {
-		renderFn = DefaultFileRenderer
-	}
 	moduleRegistry := opts.Modules
 	if moduleRegistry == nil {
 		moduleRegistry = DefaultFileModuleRegistry()
@@ -367,6 +364,14 @@ func DefaultFileRenderer(ctx *RouteContext, page FilePage) (gosx.Node, error) {
 	})
 }
 
+func filePageRenderEnv(ctx *RouteContext, page FilePage, module FileModule) fileRenderEnv {
+	env := newFileRenderEnv(ctx, page)
+	if module.Bindings == nil {
+		return env
+	}
+	return env.withBindings(module.Bindings(ctx, page, ctx.Data))
+}
+
 func prepareFileRouteContext(ctx *RouteContext, page FilePage, module FileModule, dirModules []DirModule) error {
 	if err := applyFileRouteConfig(ctx, page.Config); err != nil {
 		return err
@@ -398,6 +403,11 @@ func renderFilePage(ctx *RouteContext, page FilePage, module FileModule, renderF
 	}
 	if module.Render != nil {
 		return module.Render(ctx, page, ctx.Data)
+	}
+	if renderFn == nil {
+		return renderFileNode(page.FilePath, fileRenderOptions{
+			EvalEnv: filePageRenderEnv(ctx, page, module),
+		})
 	}
 	return renderFn(ctx, page)
 }

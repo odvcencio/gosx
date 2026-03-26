@@ -68,6 +68,9 @@ func RunInit(dir string, module string, template string) error {
 			return err
 		}
 	}
+	if err := syncModulesPackage(absDir); err != nil {
+		return err
+	}
 
 	fmt.Fprintf(os.Stderr, "gosx init: created %s template in %s\n", template, absDir)
 	return nil
