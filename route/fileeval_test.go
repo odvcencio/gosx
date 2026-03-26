@@ -56,3 +56,22 @@ func TestIndirectValueHelpersSupportPointerCollections(t *testing.T) {
 		t.Fatalf("mapLookup returned (%#v, %v)", got, ok)
 	}
 }
+
+func TestReflectValueSupportsPointerAndNilTargets(t *testing.T) {
+	ptrValue, ok := reflectValue("7", reflect.TypeOf((*int)(nil)))
+	if !ok {
+		t.Fatal("expected pointer target conversion to succeed")
+	}
+	ptr, ok := ptrValue.Interface().(*int)
+	if !ok || ptr == nil || *ptr != 7 {
+		t.Fatalf("unexpected pointer conversion: %#v", ptrValue.Interface())
+	}
+
+	nilValue, ok := reflectValue(nil, reflect.TypeOf((*int)(nil)))
+	if !ok {
+		t.Fatal("expected nil pointer conversion to succeed")
+	}
+	if !nilValue.IsNil() {
+		t.Fatalf("expected nil pointer, got %#v", nilValue.Interface())
+	}
+}

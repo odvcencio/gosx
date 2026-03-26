@@ -596,16 +596,31 @@ func reflectedStringMapLookup(target any, key string) (any, bool) {
 }
 
 func reflectValue(value any, target reflect.Type) (reflect.Value, bool) {
+	if out, ok := reflectNilValue(value, target); ok {
+		return out, true
+	}
+	return reflectNonNilValue(value, target)
+}
+
+func reflectNilValue(value any, target reflect.Type) (reflect.Value, bool) {
 	if target == nil {
 		return reflect.Value{}, false
 	}
 	if value == nil {
 		return reflect.Zero(target), true
 	}
+	return reflect.Value{}, false
+}
+
+func reflectNonNilValue(value any, target reflect.Type) (reflect.Value, bool) {
 	if out, ok := reflectPointerTargetValue(value, target); ok {
 		return out, true
 	}
 	rv := reflect.ValueOf(value)
+	return reflectDynamicValue(value, rv, target)
+}
+
+func reflectDynamicValue(value any, rv reflect.Value, target reflect.Type) (reflect.Value, bool) {
 	if out, ok := reflectDirectValue(rv, target); ok {
 		return out, true
 	}
