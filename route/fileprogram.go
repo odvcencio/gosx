@@ -96,6 +96,10 @@ func (r *fileProgramRenderer) renderComponent(node *ir.Node, env fileRenderEnv) 
 		return r.renderLocalComponent(comp, node, env)
 	}
 
+	if handled, out := r.renderBoundComponent(node, env); handled {
+		return out
+	}
+
 	return defaultRenderedComponent(node.Tag, r.componentAttrMap(node.Attrs, env), r.renderChildren(node.Children, env))
 }
 
@@ -226,6 +230,39 @@ func (r *fileProgramRenderer) renderStylesheet(node *ir.Node, env fileRenderEnv)
 		}
 	}
 	return gosx.RenderHTML(server.Stylesheet(href, extra...))
+}
+
+func (r *fileProgramRenderer) renderBoundComponent(node *ir.Node, env fileRenderEnv) (bool, string) {
+	component, ok := env.component(node.Tag)
+	if !ok {
+		return false, ""
+	}
+
+	childrenHTML := r.renderChildren(node.Children, env)
+	childrenNode := gosx.RawHTML(childrenHTML)
+	props := componentProps(node.Attrs, env, childrenNode)
+	candidates := [][]any{
+		componentCallArgs(node.Attrs, env),
+		{props},
+	}
+	if single, ok := singleComponentPropValue(props); ok {
+		candidates = append(candidates, []any{single})
+	}
+	if !childrenNode.IsZero() {
+		explicitArgs := componentCallArgs(node.Attrs, env)
+		candidates = append(candidates,
+			append(append([]any(nil), explicitArgs...), childrenNode),
+			[]any{props, childrenNode},
+		)
+		if single, ok := singleComponentPropValue(props); ok {
+			candidates = append(candidates, []any{single, childrenNode})
+		}
+	}
+
+	if rendered, ok := renderBoundComponentValue(component, candidates); ok {
+		return true, rendered
+	}
+	return true, defaultRenderedComponent(node.Tag, r.componentAttrMap(node.Attrs, env), childrenHTML)
 }
 
 func (r *fileProgramRenderer) renderLocalComponent(comp *ir.Component, node *ir.Node, env fileRenderEnv) string {
@@ -399,6 +436,70 @@ func componentProps(attrs []ir.Attr, env fileRenderEnv, children gosx.Node) map[
 		setComponentProp(props, "Children", children)
 	}
 	return props
+}
+
+func componentCallArgs(attrs []ir.Attr, env fileRenderEnv) []any {
+	args := make([]any, 0, len(attrs))
+	for _, attr := range attrs {
+		switch attr.Kind {
+		case ir.AttrStatic:
+			args = append(args, attr.Value)
+		case ir.AttrExpr:
+			args = append(args, evalFileExpr(attr.Expr, env))
+		case ir.AttrBool:
+			args = append(args, true)
+		}
+	}
+	return args
+}
+
+func singleComponentPropValue(props map[string]any) (any, bool) {
+	canonical := make(map[string]any)
+	for key, value := range props {
+		if key == "children" || key == "Children" {
+			continue
+		}
+		name := strings.ToLower(strings.TrimSpace(key))
+		if name == "" {
+			continue
+		}
+		if _, exists := canonical[name]; exists {
+			continue
+		}
+		canonical[name] = value
+	}
+	if len(canonical) != 1 {
+		return nil, false
+	}
+	for _, value := range canonical {
+		return value, true
+	}
+	return nil, false
+}
+
+func renderBoundComponentValue(component any, candidates [][]any) (string, bool) {
+	switch component.(type) {
+	case gosx.Node, *gosx.Node, []gosx.Node, string, fmt.Stringer:
+		return renderFileEvaluatedExpr(component), true
+	}
+
+	rv := reflect.ValueOf(component)
+	if !rv.IsValid() || rv.Kind() != reflect.Func {
+		return "", false
+	}
+
+	seen := make(map[string]struct{}, len(candidates))
+	for _, candidate := range candidates {
+		key := fmt.Sprintf("%#v", candidate)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		if value, ok := tryCallValue(component, candidate); ok {
+			return renderFileEvaluatedExpr(value), true
+		}
+	}
+	return "", false
 }
 
 func setComponentProp(props map[string]any, name string, value any) {

@@ -22,6 +22,9 @@ func RunExport(dir string) error {
 	if !isMain {
 		return fmt.Errorf("gosx export requires a runnable app directory (package main): %s", absDir)
 	}
+	if err := syncModulesPackage(absDir); err != nil {
+		return err
+	}
 
 	if err := env.LoadDir(absDir, ""); err != nil {
 		return fmt.Errorf("load env: %w", err)

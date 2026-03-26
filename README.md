@@ -10,12 +10,13 @@ GoSX is in active development. The compiler pipeline, server rendering, island a
 
 - `gosx init` scaffolds a runnable app with `/public` assets, `.env` loading, metadata hooks, session-backed form actions, CSRF protection, JSON API routes, custom 404/500 pages, and a file-backed `app/layout.gsx`
 - `gosx init --template docs` scaffolds a dogfooded docs site with nested file layouts, scoped docs 404s, page-scoped server modules, sessions, auth, redirects/rewrites, public assets, and colocated JSON endpoints
-- `gosx build --prod` emits a deployable `dist/` bundle with hashed assets, a server binary when present, copied `app/` + `public/`, and a `run.sh` launcher
-- `gosx dev` fronts a runnable app with a stable dev proxy, staged `/gosx/*` runtime assets, file watching, and SSE reload notifications
-- `gosx export` prerenders static file-routed pages into `dist/static`, carries over `/public`, stages `/gosx/*` runtime assets, and writes `dist/export.json`
+- `gosx build --prod` emits a deployable `dist/` bundle with hashed assets, a server binary when present, copied `app/` + `public/`, a `run.sh` launcher, and prerendered `dist/static/` output for static-safe file routes
+- `gosx dev` fronts a runnable app with a stable dev proxy, staged `/gosx/*` runtime assets, file watching, SSE reload notifications, and auto-generated `modules/modules.go` imports for discovered `*.server.go` packages
+- `gosx export` prerenders static file-routed pages into `dist/static`, carries over `/public`, stages `/gosx/*` runtime assets, rewrites exported URLs for portable static output, and writes `dist/export.json`
 - opt-in client-side page navigation via `app.EnableNavigation()` plus `server.Link(...)`, with managed head swaps and intent-prefetching
 - file-based routing via `route.Router.AddDir(...)`, including `layout.gsx`, `page.gsx`, `index.gsx`, `not-found.gsx`, `error.gsx`, route groups like `(marketing)`, `[slug]` segment conventions, inherited `route.config.json`, and directory-scoped modules
 - file-route server modules via sibling `page.server.go` files and `route.MustRegisterFileModuleHere(...)`, with per-page `Load`, `Metadata`, `Render`, and relative `__actions/<name>` endpoints
+- file-route template bindings via `route.FileTemplateBindings`, so `page.server.go` modules can expose request-scoped values, helpers, and renderable Go components directly to `.gsx` pages
 - directory-scoped middleware and request hooks via `route.MustRegisterDirModuleHere(...)`, plus inheritable `route.config.json` cache/header/prerender settings
 - file-routed `.gsx` pages can now render local page-scoped components plus built-in `If`, `Each`, `Link`, and `Image` helpers through the file renderer, including mixed and repeated expression-valued attrs plus nested-brace attr expressions
 - file-routed pages and layouts can now own sibling `page.css` / `layout.css` sidecars, which are injected into the document head automatically during routed rendering
@@ -48,9 +49,8 @@ GoSX is in active development. The compiler pipeline, server rendering, island a
 
 **What still needs deeper framework passes:**
 
-- a unified hybrid SSR + prerender story in the main build pipeline
-- a fully automatic nested `page.server.go` discovery story beyond scaffolded side-effect import buckets
 - `.gsx`-first engine surfaces for advanced runtimes like 3D
+- ISR, edge-runtime, and hosted deployment layers on top of the current SSR + static bundle story
 
 ## Quick Start
 
@@ -74,7 +74,7 @@ The generated project includes:
 - `.env`, `.env.local`, and `.env.<mode>` loading via `env.LoadDir`
 - file-routed `.gsx` pages under `app/` by default, with automatic nested `layout.gsx` discovery, scoped `not-found.gsx` resolution, and `app.API(...)` for colocated JSON endpoints
 - inheritable `route.config.json` support for subtree cache, headers, and prerender defaults
-- a blank import of `your/module/modules` so sibling and nested `page.server.go` module registrations execute at startup
+- a blank import of `your/module/modules`, with `modules/modules.go` auto-generated from discovered `*.server.go` packages during `gosx init`, `gosx dev`, `gosx build`, and `gosx export`
 - sibling `page.server.go` examples that register file-route `Load`, `Metadata`, and `Actions` hooks through `route.MustRegisterFileModuleHere(...)`
 - optional directory-scoped route modules through `route.MustRegisterDirModuleHere(...)` when a subtree needs middleware or request setup
 - session middleware plus CSRF protection for browser forms
@@ -324,9 +324,10 @@ npm run test:e2e
 
 Build output and deployment:
 
-- `gosx build --prod my-app` writes `dist/build.json`, `dist/assets/`, `dist/app/`, `dist/public/`, and when the target is runnable, `dist/server/app` plus `dist/run.sh`
-- `gosx export my-app` writes `dist/static/` plus `dist/export.json` for pre-rendered file-routed pages and copied `/public` assets
+- `gosx build --prod my-app` writes `dist/build.json`, `dist/assets/`, `dist/app/`, `dist/public/`, `dist/static/`, and when the target is runnable, `dist/server/app`, `dist/run.sh`, and `dist/export.json`
+- `gosx export my-app` writes `dist/static/` plus `dist/export.json` for pre-rendered file-routed pages, copied `/public` assets, and static-safe rewritten HTML
 - file-routed apps stay deployable because the runtime bundle now carries `app/` alongside the binary instead of assuming source-tree access
+- `dist/static/` also carries hashed `assets/` plus compatibility `/gosx/*` runtime copies so the prerendered bundle stays aligned with the main build output
 - `gosx dev`, `gosx build`, and `gosx export` resolve the shared runtime from the app's Go module graph, so scaffolded apps work outside the GoSX repo instead of assuming repo-local `client/` sources
 - scaffolded apps and the docs template resolve their runtime root through `server.ResolveAppRoot(thisFile)`, so they can run from source, from `dist/`, or with `GOSX_APP_ROOT` set explicitly
 - `dist/README.md` describes the bundle contract and launch model
