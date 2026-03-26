@@ -74,10 +74,17 @@ This is the working framework punchlist for driving GoSX from "credible core" to
 - [ ] First-class 3D scene/component model in `.gsx`, analogous to a native GoSX answer to Three.js-style authoring
 - [ ] Engine/runtime APIs that let `.gsx` drive worker, canvas, and surface-backed experiences without bespoke imperative glue
 
+## Phase 11
+
+- [ ] ISR / incremental static regeneration on top of cache revalidation and static export
+- [ ] Edge runtime target for routing, rendering, and actions
+- [ ] Vercel-tier deployment platform / hosted distribution story for GoSX apps
+
 ## Tracked Migration Blockers
 
 - [ ] Replace remaining app-facing `gosx.El(...)` trees in `blog.go`, `dashboard.go`, `editor.go`, and `pages.go` once file-routed `.gsx` pages can consume arbitrary loader-provided app data
 - [ ] Extend the file-module / file-eval environment so `page.server.go` loaders can pass complex store-backed data and helpers through to `.gsx` templates without falling back to programmatic Go nodes
 - [ ] File-routed `.gsx` rendering still evaluates IR directly instead of executing arbitrary Go component bodies, so loops, conditionals, and store-driven composition in complex pages remain blocked behind `gosx.El(...)`
-- [ ] Add a built-in file-route component/runtime seam so framework-native components like `Link`, `Image`, and future 3D scene primitives can render from `.gsx` without collapsing to placeholder `<div data-gosx-component=...>`
+- [x] Add a built-in file-route component/runtime seam so framework-native components like `Link`, `Image`, and future 3D scene primitives can render from `.gsx` without collapsing to placeholder `<div data-gosx-component=...>`
 - [ ] Make nested `page.server.go` registration fully automatic so real `.gsx` apps do not need manual side-effect import buckets once they outgrow the scaffolded `modules` package
+- [ ] Remove the current parser limitation that makes tags with multiple expression-valued attributes brittle, so `.gsx` authoring does not have to lean on spread-attr workarounds

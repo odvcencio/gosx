@@ -97,6 +97,144 @@ func TestDefaultFileRendererRendersLiteralExpressionText(t *testing.T) {
 	}
 }
 
+func TestDefaultFileRendererRendersLocalComponents(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "page.gsx")
+	source := `package docs
+
+func Card(props any) Node {
+	return <section class="card">
+		<h2>{props.Title}</h2>
+		{children}
+	</section>
+}
+
+func Page() Node {
+	return <Card Title="Hello">
+		<p>World</p>
+	</Card>
+}
+`
+	if err := os.WriteFile(path, []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	node, err := DefaultFileRenderer(nil, FilePage{FilePath: path, Pattern: "/"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	html := gosx.RenderHTML(node)
+	for _, snippet := range []string{
+		`<section class="card">`,
+		`<h2>Hello</h2>`,
+		`<p>World</p>`,
+	} {
+		if !strings.Contains(html, snippet) {
+			t.Fatalf("expected %q in rendered local component html %q", snippet, html)
+		}
+	}
+}
+
+func TestDefaultFileRendererSupportsIfEachAndLinkBuiltins(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "page.gsx")
+	source := `package docs
+
+func Page() Node {
+	return <main>
+		<If when={data.show}>
+			<span>{data.label}</span>
+		</If>
+		<ul>
+			<Each as="item" index="i" of={data.items}>
+				<li data-index={i}>{item}</li>
+			</Each>
+		</ul>
+		<Link href="/docs">Docs</Link>
+	</main>
+}
+`
+	if err := os.WriteFile(path, []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := &RouteContext{
+		Data: map[string]any{
+			"show":  true,
+			"label": "Visible",
+			"items": []string{"alpha", "beta"},
+		},
+	}
+	node, err := DefaultFileRenderer(ctx, FilePage{FilePath: path, Pattern: "/"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	html := gosx.RenderHTML(node)
+	for _, snippet := range []string{
+		`<span>Visible</span>`,
+		`<li data-index="0">alpha</li>`,
+		`<li data-index="1">beta</li>`,
+		`href="/docs"`,
+		`data-gosx-link`,
+	} {
+		if !strings.Contains(html, snippet) {
+			t.Fatalf("expected %q in rendered builtin html %q", snippet, html)
+		}
+	}
+}
+
+func TestDefaultFileRendererSupportsImageBuiltin(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "page.gsx")
+	source := `package docs
+
+func Page() Node {
+	return <main>
+		<Image
+			alt="Sample artwork"
+			sizes="100vw"
+			class="demo-image"
+			{...data.image}
+		/>
+	</main>
+}
+`
+	if err := os.WriteFile(path, []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := &RouteContext{
+		Data: map[string]any{
+			"image": map[string]any{
+				"src":    "/paper-card.png",
+				"widths": []int{320, 640, 960},
+				"width":  960,
+				"height": 624,
+			},
+		},
+	}
+	node, err := DefaultFileRenderer(ctx, FilePage{FilePath: path, Pattern: "/"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	html := gosx.RenderHTML(node)
+	for _, snippet := range []string{
+		`class="demo-image"`,
+		`src="/_gosx/image?h=624&amp;src=%2Fpaper-card.png&amp;w=960"`,
+		`srcset="/_gosx/image?h=624&amp;src=%2Fpaper-card.png&amp;w=320 320w, /_gosx/image?h=624&amp;src=%2Fpaper-card.png&amp;w=640 640w, /_gosx/image?h=624&amp;src=%2Fpaper-card.png&amp;w=960 960w"`,
+		`width="960"`,
+		`height="624"`,
+		`alt="Sample artwork"`,
+	} {
+		if !strings.Contains(html, snippet) {
+			t.Fatalf("expected %q in rendered image html %q", snippet, html)
+		}
+	}
+}
+
 func TestScanDirBuildsNestedLayoutsGroupsAndNearestErrorPages(t *testing.T) {
 	root := t.TempDir()
 	writeRouteFile(t, root, "layout.gsx", `package docs
