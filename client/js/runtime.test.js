@@ -99,6 +99,8 @@ class FakeCanvasContext2D {
 class FakeWebGLContext {
   constructor() {
     this.ops = [];
+    this._nextBufferID = 1;
+    this._boundArrayBuffer = null;
     this.ARRAY_BUFFER = 0x8892;
     this.DYNAMIC_DRAW = 0x88E8;
     this.FLOAT = 0x1406;
@@ -151,8 +153,8 @@ class FakeWebGLContext {
   }
 
   createBuffer() {
-    const buffer = {};
-    this.ops.push(["createBuffer"]);
+    const buffer = { id: this._nextBufferID++ };
+    this.ops.push(["createBuffer", buffer.id]);
     return buffer;
   }
 
@@ -182,12 +184,15 @@ class FakeWebGLContext {
     this.ops.push(["useProgram"]);
   }
 
-  bindBuffer(target, _buffer) {
-    this.ops.push(["bindBuffer", target]);
+  bindBuffer(target, buffer) {
+    if (target === this.ARRAY_BUFFER) {
+      this._boundArrayBuffer = buffer || null;
+    }
+    this.ops.push(["bindBuffer", target, buffer && buffer.id]);
   }
 
   bufferData(target, data, usage) {
-    this.ops.push(["bufferData", target, data.length, usage]);
+    this.ops.push(["bufferData", target, this._boundArrayBuffer && this._boundArrayBuffer.id, data.length, usage]);
   }
 
   enableVertexAttribArray(location) {
@@ -1075,10 +1080,24 @@ test("bootstrap hydrates shared-runtime Scene3D programs", async () => {
       positions: [-0.9, 0.93, -0.2, 0.47],
       colors: [0.55, 0.88, 1, 1, 0.55, 0.88, 1, 1],
       vertexCount: 2,
-      worldPositions: [-1.2, -0.4, 0.2, 1.1, 0.6, 1.4],
-      worldColors: [0.55, 0.88, 1, 1, 0.55, 0.88, 1, 1],
-      worldVertexCount: 2,
-      objectCount: 1,
+      worldPositions: [
+        -2.4, -1.5, 0.1, 2.4, -1.5, 0.1,
+        -1.2, -0.4, 0.2, 1.1, 0.6, 1.4,
+      ],
+      worldColors: [
+        0.25, 0.33, 0.41, 1, 0.25, 0.33, 0.41, 1,
+        0.55, 0.88, 1, 1, 0.55, 0.88, 1, 1,
+      ],
+      worldVertexCount: 4,
+      materials: [
+        { kind: "flat", color: "#35556a", opacity: 1, wireframe: true },
+        { kind: "flat", color: "#8de1ff", opacity: 0.7, wireframe: true },
+      ],
+      objects: [
+        { id: "floor", kind: "plane", materialIndex: 0, vertexOffset: 0, vertexCount: 2, static: true },
+        { id: "orb", kind: "sphere", materialIndex: 1, vertexOffset: 2, vertexCount: 2, static: false },
+      ],
+      objectCount: 2,
     }),
   });
 
@@ -1102,6 +1121,7 @@ test("bootstrap hydrates shared-runtime Scene3D programs", async () => {
   const gl = mount.children[0].getContext("webgl");
   assert.ok(gl.ops.some((entry) => entry[0] === "uniform4f" && entry[1] === "u_camera"));
   assert.ok(gl.ops.some((entry) => entry[0] === "vertexAttribPointer" && entry[2] === 3));
+  assert.ok(gl.ops.filter((entry) => entry[0] === "drawArrays").length >= 2);
 
   env.context.__gosx_dispose_engine("gosx-engine-rt");
   assert.deepEqual(env.engineDisposeCalls, [["gosx-engine-rt"]]);
@@ -1247,7 +1267,7 @@ test("bootstrap prefers WebGL Scene3D rendering when available", async () => {
   assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "webgl");
 
   const gl = canvas.getContext("webgl");
-  assert.ok(gl.ops.some((entry) => entry[0] === "bufferData" && entry[2] > 0));
+  assert.ok(gl.ops.some((entry) => entry[0] === "bufferData" && entry[3] > 0));
   assert.ok(gl.ops.some((entry) => entry[0] === "drawArrays" && entry[3] > 0));
   assert.equal(env.consoleLogs.warn.length, 0);
   assert.equal(env.consoleLogs.error.length, 0);
