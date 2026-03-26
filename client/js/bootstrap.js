@@ -1661,36 +1661,67 @@
     return sceneHashNumber(hash, sceneNumber(camera && camera.far, 128));
   }
 
+  const sceneStaticObjectStringFields = ["id", "kind"];
+  const sceneStaticObjectNumberFields = [
+    ["materialIndex", 0],
+    ["vertexOffset", 0],
+    ["vertexCount", 0],
+    ["depthNear", 0],
+    ["depthFar", 0],
+    ["depthCenter", 0],
+  ];
+  const sceneStaticObjectFlagFields = ["static", "viewCulled"];
+  const sceneBoundsNumberFields = [
+    ["minX", 0],
+    ["minY", 0],
+    ["minZ", 0],
+    ["maxX", 0],
+    ["maxY", 0],
+    ["maxZ", 0],
+  ];
+  const sceneMaterialStringFields = ["kind", "color", "blendMode"];
+  const sceneMaterialNumberFields = [
+    ["opacity", 1],
+    ["emissive", 0],
+  ];
+  const sceneMaterialFlagFields = ["wireframe"];
+
   function sceneHashStaticObject(hash, object) {
-    hash = sceneHashString(hash, object && object.id || "");
-    hash = sceneHashString(hash, object && object.kind || "");
-    hash = sceneHashNumber(hash, sceneNumber(object && object.materialIndex, 0));
-    hash = sceneHashNumber(hash, sceneNumber(object && object.vertexOffset, 0));
-    hash = sceneHashNumber(hash, sceneNumber(object && object.vertexCount, 0));
-    hash = sceneHashNumber(hash, object && object.static ? 1 : 0);
-    hash = sceneHashNumber(hash, object && object.viewCulled ? 1 : 0);
-    hash = sceneHashNumber(hash, sceneNumber(object && object.depthNear, 0));
-    hash = sceneHashNumber(hash, sceneNumber(object && object.depthFar, 0));
-    hash = sceneHashNumber(hash, sceneNumber(object && object.depthCenter, 0));
+    hash = sceneHashFieldStrings(hash, object, sceneStaticObjectStringFields);
+    hash = sceneHashFieldNumbers(hash, object, sceneStaticObjectNumberFields);
+    hash = sceneHashFieldFlags(hash, object, sceneStaticObjectFlagFields);
     return sceneHashBounds(hash, object && object.bounds);
   }
 
   function sceneHashBounds(hash, bounds) {
-    hash = sceneHashNumber(hash, sceneNumber(bounds && bounds.minX, 0));
-    hash = sceneHashNumber(hash, sceneNumber(bounds && bounds.minY, 0));
-    hash = sceneHashNumber(hash, sceneNumber(bounds && bounds.minZ, 0));
-    hash = sceneHashNumber(hash, sceneNumber(bounds && bounds.maxX, 0));
-    hash = sceneHashNumber(hash, sceneNumber(bounds && bounds.maxY, 0));
-    return sceneHashNumber(hash, sceneNumber(bounds && bounds.maxZ, 0));
+    return sceneHashFieldNumbers(hash, bounds, sceneBoundsNumberFields);
   }
 
   function sceneHashMaterialProfile(hash, material) {
-    hash = sceneHashString(hash, material && material.kind || "");
-    hash = sceneHashString(hash, material && material.color || "");
-    hash = sceneHashNumber(hash, sceneNumber(material && material.opacity, 1));
-    hash = sceneHashNumber(hash, material && material.wireframe ? 1 : 0);
-    hash = sceneHashString(hash, material && material.blendMode || "");
-    return sceneHashNumber(hash, sceneNumber(material && material.emissive, 0));
+    hash = sceneHashFieldStrings(hash, material, sceneMaterialStringFields);
+    hash = sceneHashFieldNumbers(hash, material, sceneMaterialNumberFields);
+    return sceneHashFieldFlags(hash, material, sceneMaterialFlagFields);
+  }
+
+  function sceneHashFieldStrings(hash, source, fields) {
+    for (const field of fields) {
+      hash = sceneHashString(hash, source && source[field] || "");
+    }
+    return hash;
+  }
+
+  function sceneHashFieldNumbers(hash, source, fields) {
+    for (const field of fields) {
+      hash = sceneHashNumber(hash, sceneNumber(source && source[field[0]], field[1]));
+    }
+    return hash;
+  }
+
+  function sceneHashFieldFlags(hash, source, fields) {
+    for (const field of fields) {
+      hash = sceneHashNumber(hash, source && source[field] ? 1 : 0);
+    }
+    return hash;
   }
 
   function sceneHashNumber(hash, value) {
