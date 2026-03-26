@@ -38,6 +38,9 @@ const (
 	CapFetch     Capability = "fetch"
 	CapAudio     Capability = "audio"
 	CapWorker    Capability = "worker"
+	CapGamepad   Capability = "gamepad"
+	CapKeyboard  Capability = "keyboard"
+	CapPointer   Capability = "pointer"
 )
 
 // Config describes an engine instance for mounting.
@@ -117,6 +120,7 @@ func ValidateCapabilities(requested []Capability) error {
 	supported := map[Capability]bool{
 		CapCanvas: true, CapWebGL: true, CapAnimation: true,
 		CapStorage: true, CapFetch: true, CapAudio: true, CapWorker: true,
+		CapGamepad: true, CapKeyboard: true, CapPointer: true,
 	}
 	for _, cap := range requested {
 		if !supported[cap] {

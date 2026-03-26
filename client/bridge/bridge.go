@@ -45,6 +45,18 @@ func (s *Store) Set(name string, val vm.Value) {
 	}
 }
 
+// SetBatch creates or updates multiple shared signals in one notification pass.
+func (s *Store) SetBatch(values map[string]vm.Value) {
+	if len(values) == 0 {
+		return
+	}
+	signal.Batch(func() {
+		for name, value := range values {
+			s.Set(name, value)
+		}
+	})
+}
+
 // Get reads a shared signal value.
 func (s *Store) Get(name string) (vm.Value, bool) {
 	if sig, ok := s.signals[name]; ok {
@@ -125,19 +137,36 @@ func (b *Bridge) DispatchAction(islandID, handlerName, eventDataJSON string) ([]
 // SetSharedSignalJSON updates a shared signal from a JSON payload.
 // This is used by hub/websocket clients to drive island state from realtime events.
 func (b *Bridge) SetSharedSignalJSON(name, valueJSON string) error {
-	if name == "" {
-		return fmt.Errorf("shared signal name required")
-	}
-	if valueJSON == "" {
-		valueJSON = "null"
-	}
-
-	value, err := vm.ValueFromJSON(valueJSON)
+	value, err := decodeSharedSignalValue(name, []byte(valueJSON))
 	if err != nil {
-		return fmt.Errorf("decode shared signal %q: %w", name, err)
+		return err
+	}
+	b.store.Set(name, value)
+	return nil
+}
+
+// SetSharedSignalBatchJSON updates multiple shared signals from a JSON object.
+// The payload shape is {"$signal.name": <json value>, ...}.
+func (b *Bridge) SetSharedSignalBatchJSON(batchJSON string) error {
+	if batchJSON == "" {
+		batchJSON = "{}"
 	}
 
-	b.store.Set(name, value)
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(batchJSON), &payload); err != nil {
+		return fmt.Errorf("decode shared signal batch: %w", err)
+	}
+
+	values := make(map[string]vm.Value, len(payload))
+	for name, raw := range payload {
+		value, err := decodeSharedSignalValue(name, raw)
+		if err != nil {
+			return err
+		}
+		values[name] = value
+	}
+
+	b.store.SetBatch(values)
 	return nil
 }
 
@@ -180,6 +209,21 @@ func normalizePropsJSON(componentName, propsJSON string) (string, error) {
 		return "", fmt.Errorf("invalid props JSON for %q", componentName)
 	}
 	return propsJSON, nil
+}
+
+func decodeSharedSignalValue(name string, raw []byte) (vm.Value, error) {
+	if name == "" {
+		return vm.Value{}, fmt.Errorf("shared signal name required")
+	}
+	if len(raw) == 0 {
+		raw = []byte("null")
+	}
+
+	value, err := vm.ValueFromJSON(string(raw))
+	if err != nil {
+		return vm.Value{}, fmt.Errorf("decode shared signal %q: %w", name, err)
+	}
+	return value, nil
 }
 
 func sharedSignalDefs(prog *program.Program) []program.SignalDef {
