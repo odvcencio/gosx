@@ -456,6 +456,54 @@ func Page() Node {
 	}
 }
 
+func TestRouterAddDirAppliesSidecarMetadataFromLayoutsAndPages(t *testing.T) {
+	root := t.TempDir()
+	writeRouteFile(t, root, "layout.gsx", `package docs
+
+func Layout() Node {
+	return <div class="root"><Slot /></div>
+}
+`)
+	writeRouteFile(t, root, "layout.meta.json", `{"canonical":"https://gosx.dev/docs"}`)
+	writeRouteFile(t, root, "docs/layout.gsx", `package docs
+
+func Layout() Node {
+	return <section class="docs-shell"><Slot /></section>
+}
+`)
+	writeRouteFile(t, root, "docs/layout.meta.json", `{"description":"Nested docs description"}`)
+	writeRouteFile(t, root, "docs/page.gsx", `package docs
+
+func Page() Node {
+	return <main class="page">Metadata docs page</main>
+}
+`)
+	writeRouteFile(t, root, "docs/page.meta.json", `{"title":"Sidecar Metadata Title"}`)
+
+	router := NewRouter()
+	router.SetLayout(func(ctx *RouteContext, body gosx.Node) gosx.Node {
+		return server.HTMLDocument(ctx.Title("Fallback"), ctx.Head(), body)
+	})
+	if err := router.AddDir(root, FileRoutesOptions{}); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/docs", nil)
+	w := httptest.NewRecorder()
+	router.Build().ServeHTTP(w, req)
+
+	body := w.Body.String()
+	for _, snippet := range []string{
+		`<title>Sidecar Metadata Title</title>`,
+		`name="description" content="Nested docs description"`,
+		`rel="canonical" href="https://gosx.dev/docs"`,
+	} {
+		if !strings.Contains(body, snippet) {
+			t.Fatalf("expected %q in %q", snippet, body)
+		}
+	}
+}
+
 func TestRouterAddDirSupportsDynamicSegments(t *testing.T) {
 	root := t.TempDir()
 	writeRouteFile(t, root, "blog/[slug]/page.html", `<main>Dynamic</main>`)
