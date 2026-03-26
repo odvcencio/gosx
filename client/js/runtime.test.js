@@ -327,6 +327,14 @@ class FakeDocument {
     this.eventListeners.get(type).push(listener);
   }
 
+  removeEventListener(type, listener) {
+    const current = this.eventListeners.get(type) || [];
+    this.eventListeners.set(
+      type,
+      current.filter((entry) => entry !== listener),
+    );
+  }
+
   dispatchEvent(event) {
     this.dispatchedEvents.push(event);
     const listeners = this.eventListeners.get(event.type) || [];
@@ -398,6 +406,7 @@ function createContext(options) {
   const engineMounts = [];
   const engineDisposals = [];
   const sharedSignalCalls = [];
+  const inputBatchCalls = [];
   const sockets = [];
   const fetchCalls = [];
   const windowListeners = new Map();
@@ -482,6 +491,13 @@ function createContext(options) {
           }
           return null;
         };
+        context.__gosx_set_input_batch = (...args) => {
+          inputBatchCalls.push(args);
+          if (typeof options.onSetInputBatch === "function") {
+            return options.onSetInputBatch(...args);
+          }
+          return null;
+        };
         if (typeof context.__gosx_runtime_ready === "function") {
           context.__gosx_runtime_ready();
         }
@@ -497,6 +513,13 @@ function createContext(options) {
         windowListeners.set(type, []);
       }
       windowListeners.get(type).push(listener);
+    },
+    removeEventListener(type, listener) {
+      const current = windowListeners.get(type) || [];
+      windowListeners.set(
+        type,
+        current.filter((entry) => entry !== listener),
+      );
     },
     dispatchEvent(event) {
       const listeners = windowListeners.get(event.type) || [];
@@ -556,6 +579,7 @@ function createContext(options) {
     engineMounts,
     fetchCalls,
     hydrateCalls,
+    inputBatchCalls,
     sharedSignalCalls,
     sockets,
     windowListeners,
@@ -752,6 +776,70 @@ test("bootstrap mounts registered surface engines without escape-hatch scripts",
   assert.equal(env.context.__gosx.engines.size, 0);
   assert.deepEqual(env.engineDisposals, ["gosx-engine-0"]);
   assert.equal(env.consoleLogs.warn.length, 0);
+});
+
+test("bootstrap batches keyboard and pointer input for capable engines", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "input-root";
+
+  const env = createContext({
+    elements: [mount],
+    engineFactories: {
+      InputSurface() {
+        return {};
+      },
+    },
+    fetchRoutes: {
+      "/runtime.wasm": { bytes: [0, 97, 115, 109] },
+    },
+    manifest: {
+      runtime: { path: "/runtime.wasm" },
+      engines: [
+        {
+          id: "gosx-engine-input",
+          component: "InputSurface",
+          kind: "surface",
+          mountId: "input-root",
+          props: {},
+          capabilities: ["pointer", "keyboard"],
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  env.document.dispatchEvent({ type: "keydown", key: "W" });
+  env.document.dispatchEvent({
+    type: "pointermove",
+    clientX: 40,
+    clientY: 25,
+    movementX: 3,
+    movementY: -2,
+    buttons: 1,
+  });
+  await flushAsyncWork();
+
+  assert.equal(env.inputBatchCalls.length > 0, true);
+  const firstBatch = JSON.parse(env.inputBatchCalls[0][0]);
+  assert.equal(firstBatch["$input.key.w"], true);
+  assert.equal(firstBatch["$input.pointer.x"], 40);
+  assert.equal(firstBatch["$input.pointer.y"], 25);
+  assert.equal(firstBatch["$input.pointer.deltaX"], 3);
+  assert.equal(firstBatch["$input.pointer.deltaY"], -2);
+  assert.equal(firstBatch["$input.pointer.buttons"], 1);
+
+  env.context.dispatchEvent({ type: "blur" });
+  await flushAsyncWork();
+
+  const lastBatch = JSON.parse(env.inputBatchCalls[env.inputBatchCalls.length - 1][0]);
+  assert.equal(lastBatch["$input.key.w"], false);
+  assert.equal(lastBatch["$input.pointer.buttons"], 0);
+
+  env.context.__gosx_dispose_engine("gosx-engine-input");
+  assert.equal(env.document.eventListeners.get("keydown").length, 0);
+  assert.equal(env.document.eventListeners.get("pointermove").length, 0);
 });
 
 test("bootstrap mounts native Scene3D engines without extra scripts", async () => {
