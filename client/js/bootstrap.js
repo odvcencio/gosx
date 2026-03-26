@@ -315,12 +315,6 @@
   function createKeyboardInputProvider() {
     const pressed = new Set();
 
-    function normalizeKeyName(event) {
-      const raw = event && (event.key || event.code);
-      if (!raw) return "";
-      return String(raw).trim().toLowerCase();
-    }
-
     function onKey(event) {
       const key = normalizeKeyName(event);
       if (!key) return;
@@ -340,76 +334,35 @@
       pressed.clear();
     }
 
-    document.addEventListener("keydown", onKey);
-    document.addEventListener("keyup", onKey);
-    window.addEventListener("blur", onBlur);
-
-    return {
-      dispose() {
-        document.removeEventListener("keydown", onKey);
-        document.removeEventListener("keyup", onKey);
-        window.removeEventListener("blur", onBlur);
-      },
-    };
+    return bindInputProviderListeners([
+      [document, "keydown", onKey],
+      [document, "keyup", onKey],
+      [window, "blur", onBlur],
+    ]);
   }
 
   function createPointerInputProvider() {
-    let lastX = null;
-    let lastY = null;
-
-    function pointerNumber(value, fallback) {
-      const num = Number(value);
-      return Number.isFinite(num) ? num : fallback;
-    }
+    const state = { lastX: null, lastY: null };
 
     function publishPointer(event) {
-      const x = pointerNumber(event && event.clientX, lastX == null ? 0 : lastX);
-      const y = pointerNumber(event && event.clientY, lastY == null ? 0 : lastY);
-      const deltaX = pointerNumber(event && event.movementX, lastX == null ? 0 : x - lastX);
-      const deltaY = pointerNumber(event && event.movementY, lastY == null ? 0 : y - lastY);
-      lastX = x;
-      lastY = y;
-
-      queueInputSignal("$input.pointer.x", x);
-      queueInputSignal("$input.pointer.y", y);
-      queueInputSignal("$input.pointer.deltaX", deltaX);
-      queueInputSignal("$input.pointer.deltaY", deltaY);
-      if (event && typeof event.buttons !== "undefined") {
-        queueInputSignal("$input.pointer.buttons", pointerNumber(event.buttons, 0));
-      }
-      if (event && typeof event.button === "number") {
-        queueInputSignal("$input.pointer.button" + event.button, event.type !== "pointerup");
-      }
+      publishPointerSignals(resolvePointerSample(event, state), event);
     }
 
     function onBlur() {
-      queueInputSignal("$input.pointer.deltaX", 0);
-      queueInputSignal("$input.pointer.deltaY", 0);
-      queueInputSignal("$input.pointer.buttons", 0);
+      resetPointerSignals();
     }
 
-    document.addEventListener("pointermove", publishPointer);
-    document.addEventListener("pointerdown", publishPointer);
-    document.addEventListener("pointerup", publishPointer);
-    window.addEventListener("blur", onBlur);
-
-    return {
-      dispose() {
-        document.removeEventListener("pointermove", publishPointer);
-        document.removeEventListener("pointerdown", publishPointer);
-        document.removeEventListener("pointerup", publishPointer);
-        window.removeEventListener("blur", onBlur);
-      },
-    };
+    return bindInputProviderListeners([
+      [document, "pointermove", publishPointer],
+      [document, "pointerdown", publishPointer],
+      [document, "pointerup", publishPointer],
+      [window, "blur", onBlur],
+    ]);
   }
 
   function createGamepadInputProvider() {
     let active = true;
     let frameHandle = 0;
-
-    function readButton(pad, index) {
-      return Boolean(pad && pad.buttons && pad.buttons[index] && pad.buttons[index].pressed);
-    }
 
     function pollGamepad() {
       if (!active) return;
@@ -418,14 +371,7 @@
         const pads = navigatorRef.getGamepads() || [];
         const pad = pads[0];
         if (pad) {
-          const axes = Array.isArray(pad.axes) ? pad.axes : [];
-          queueInputSignal("$input.gamepad0.connected", true);
-          queueInputSignal("$input.gamepad0.leftX", sceneNumber(axes[0], 0));
-          queueInputSignal("$input.gamepad0.leftY", sceneNumber(axes[1], 0));
-          queueInputSignal("$input.gamepad0.rightX", sceneNumber(axes[2], 0));
-          queueInputSignal("$input.gamepad0.rightY", sceneNumber(axes[3], 0));
-          queueInputSignal("$input.gamepad0.buttonA", readButton(pad, 0));
-          queueInputSignal("$input.gamepad0.buttonB", readButton(pad, 1));
+          publishGamepadSignals(pad);
         } else {
           queueInputSignal("$input.gamepad0.connected", false);
         }
@@ -444,6 +390,78 @@
         }
       },
     };
+  }
+
+  function bindInputProviderListeners(bindings) {
+    for (const binding of bindings) {
+      binding[0].addEventListener(binding[1], binding[2]);
+    }
+    return {
+      dispose() {
+        for (const binding of bindings) {
+          binding[0].removeEventListener(binding[1], binding[2]);
+        }
+      },
+    };
+  }
+
+  function normalizeKeyName(event) {
+    const raw = event && (event.key || event.code);
+    if (!raw) return "";
+    return String(raw).trim().toLowerCase();
+  }
+
+  function resolvePointerSample(event, state) {
+    const previousX = state.lastX == null ? 0 : state.lastX;
+    const previousY = state.lastY == null ? 0 : state.lastY;
+    const x = sceneNumber(event && event.clientX, previousX);
+    const y = sceneNumber(event && event.clientY, previousY);
+    const sample = {
+      x,
+      y,
+      deltaX: sceneNumber(event && event.movementX, state.lastX == null ? 0 : x - previousX),
+      deltaY: sceneNumber(event && event.movementY, state.lastY == null ? 0 : y - previousY),
+      buttons: event && typeof event.buttons !== "undefined" ? sceneNumber(event.buttons, 0) : null,
+      button: event && typeof event.button === "number" ? event.button : null,
+      active: event ? event.type !== "pointerup" : false,
+    };
+    state.lastX = x;
+    state.lastY = y;
+    return sample;
+  }
+
+  function publishPointerSignals(sample, event) {
+    queueInputSignal("$input.pointer.x", sample.x);
+    queueInputSignal("$input.pointer.y", sample.y);
+    queueInputSignal("$input.pointer.deltaX", sample.deltaX);
+    queueInputSignal("$input.pointer.deltaY", sample.deltaY);
+    if (sample.buttons != null) {
+      queueInputSignal("$input.pointer.buttons", sample.buttons);
+    }
+    if (sample.button != null) {
+      queueInputSignal("$input.pointer.button" + sample.button, sample.active);
+    }
+  }
+
+  function resetPointerSignals() {
+    queueInputSignal("$input.pointer.deltaX", 0);
+    queueInputSignal("$input.pointer.deltaY", 0);
+    queueInputSignal("$input.pointer.buttons", 0);
+  }
+
+  function publishGamepadSignals(pad) {
+    const axes = Array.isArray(pad.axes) ? pad.axes : [];
+    queueInputSignal("$input.gamepad0.connected", true);
+    queueInputSignal("$input.gamepad0.leftX", sceneNumber(axes[0], 0));
+    queueInputSignal("$input.gamepad0.leftY", sceneNumber(axes[1], 0));
+    queueInputSignal("$input.gamepad0.rightX", sceneNumber(axes[2], 0));
+    queueInputSignal("$input.gamepad0.rightY", sceneNumber(axes[3], 0));
+    queueInputSignal("$input.gamepad0.buttonA", gamepadButtonPressed(pad, 0));
+    queueInputSignal("$input.gamepad0.buttonB", gamepadButtonPressed(pad, 1));
+  }
+
+  function gamepadButtonPressed(pad, index) {
+    return Boolean(pad && pad.buttons && pad.buttons[index] && pad.buttons[index].pressed);
   }
 
   function sceneNumber(value, fallback) {
