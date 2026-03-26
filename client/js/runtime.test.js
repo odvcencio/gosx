@@ -99,6 +99,7 @@ class FakeCanvasContext2D {
 class FakeWebGLContext {
   constructor() {
     this.ops = [];
+    this.bufferUploads = new Map();
     this._nextBufferID = 1;
     this._boundArrayBuffer = null;
     this.ARRAY_BUFFER = 0x8892;
@@ -199,7 +200,11 @@ class FakeWebGLContext {
   }
 
   bufferData(target, data, usage) {
-    this.ops.push(["bufferData", target, this._boundArrayBuffer && this._boundArrayBuffer.id, data.length, usage]);
+    const bufferID = this._boundArrayBuffer && this._boundArrayBuffer.id;
+    if (bufferID != null) {
+      this.bufferUploads.set(bufferID, Array.from(data || []));
+    }
+    this.ops.push(["bufferData", target, bufferID, data.length, usage]);
   }
 
   enableVertexAttribArray(location) {
@@ -1152,6 +1157,71 @@ test("bootstrap hydrates shared-runtime Scene3D programs", async () => {
 
   env.context.__gosx_dispose_engine("gosx-engine-rt");
   assert.deepEqual(env.engineDisposeCalls, [["gosx-engine-rt"]]);
+});
+
+test("bootstrap depth-sorts alpha Scene3D objects before upload", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-alpha-root";
+
+  const env = createContext({
+    elements: [mount],
+    enableWebGL: true,
+    disableCanvas2D: true,
+    fetchRoutes: {
+      "/runtime.wasm": { bytes: [0, 97, 115, 109] },
+      "/scene-alpha-program.json": { text: '{"name":"AlphaDepth"}' },
+    },
+    manifest: {
+      runtime: { path: "/runtime.wasm" },
+      engines: [
+        {
+          id: "gosx-engine-alpha",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-alpha-root",
+          runtime: "shared",
+          props: { width: 640, height: 360, background: "#08151f" },
+          programRef: "/scene-alpha-program.json",
+        },
+      ],
+    },
+    onHydrateEngine: () => "[]",
+    onRenderEngine: () => JSON.stringify({
+      background: "#08151f",
+      camera: { x: 0, y: 0, z: 6, fov: 72 },
+      positions: [],
+      colors: [],
+      vertexCount: 0,
+      worldPositions: [
+        4, 0, -2, 3, 0, -2,
+        -4, 0, 2, -3, 0, 2,
+      ],
+      worldColors: [
+        0.3, 0.6, 0.9, 1, 0.3, 0.6, 0.9, 1,
+        0.9, 0.8, 0.5, 1, 0.9, 0.8, 0.5, 1,
+      ],
+      worldVertexCount: 4,
+      materials: [
+        { kind: "glass", color: "#c7f0ff", opacity: 0.45, wireframe: true, blendMode: "alpha", emissive: 0.05 },
+      ],
+      objects: [
+        { id: "near-static", kind: "plane", materialIndex: 0, vertexOffset: 0, vertexCount: 2, static: true },
+        { id: "far-dynamic", kind: "plane", materialIndex: 0, vertexOffset: 2, vertexCount: 2, static: false },
+      ],
+      objectCount: 2,
+    }),
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const gl = mount.children[0].getContext("webgl");
+  assert.deepEqual(gl.bufferUploads.get(7), [
+    -4, 0, 2, -3, 0, 2,
+    4, 0, -2, 3, 0, -2,
+  ]);
+  assert.ok(gl.ops.some((entry) => entry[0] === "blendFunc" && entry[1] === gl.SRC_ALPHA && entry[2] === gl.ONE_MINUS_SRC_ALPHA));
+  assert.ok(gl.ops.some((entry) => entry[0] === "drawArrays" && entry[3] === 4));
 });
 
 test("bootstrap mounts native Scene3D engines without extra scripts", async () => {
