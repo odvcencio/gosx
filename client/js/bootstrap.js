@@ -79,30 +79,46 @@
     const go = new Go();
 
     try {
-      const response = await fetch(runtimeRef.path);
-      if (!response.ok) {
-        throw new Error("runtime fetch failed with status " + response.status);
-      }
-
-      let result;
-      if (typeof WebAssembly.instantiateStreaming === "function") {
-        try {
-          result = await WebAssembly.instantiateStreaming(response.clone(), go.importObject);
-        } catch (streamErr) {
-          const bytes = await response.arrayBuffer();
-          result = await WebAssembly.instantiate(bytes, go.importObject);
-        }
-      } else {
-        const bytes = await response.arrayBuffer();
-        result = await WebAssembly.instantiate(bytes, go.importObject);
-      }
-
+      const response = await fetchRuntimeResponse(runtimeRef);
+      const result = await instantiateRuntimeModule(response, go.importObject);
       // go.run is intentionally not awaited — it resolves when the Go main()
       // exits, but the runtime stays alive via syscall/js callbacks.
       go.run(result.instance);
     } catch (e) {
       console.error("[gosx] failed to load WASM runtime:", e);
     }
+  }
+
+  async function fetchRuntimeResponse(runtimeRef) {
+    const response = await fetch(runtimeRef.path);
+    if (!response.ok) {
+      throw new Error("runtime fetch failed with status " + response.status);
+    }
+    return response;
+  }
+
+  async function instantiateRuntimeModule(response, importObject) {
+    if (supportsInstantiateStreaming()) {
+      return instantiateRuntimeStreaming(response, importObject);
+    }
+    return instantiateRuntimeBytes(response, importObject);
+  }
+
+  function supportsInstantiateStreaming() {
+    return typeof WebAssembly.instantiateStreaming === "function";
+  }
+
+  async function instantiateRuntimeStreaming(response, importObject) {
+    try {
+      return await WebAssembly.instantiateStreaming(response.clone(), importObject);
+    } catch (streamErr) {
+      return instantiateRuntimeBytes(response, importObject);
+    }
+  }
+
+  async function instantiateRuntimeBytes(response, importObject) {
+    const bytes = await response.arrayBuffer();
+    return WebAssembly.instantiate(bytes, importObject);
   }
 
   // --------------------------------------------------------------------------
@@ -223,9 +239,16 @@
   }
 
   function rawSceneObjects(props) {
-    const scene = props && props.scene && typeof props.scene === "object" ? props.scene : null;
-    const raw = Array.isArray(scene && scene.objects) ? scene.objects : (Array.isArray(props && props.objects) ? props.objects : null);
-    return raw && raw.length > 0 ? raw : defaultSceneObjects();
+    const scene = sceneProps(props);
+    return sceneObjectList(scene && scene.objects) || sceneObjectList(props && props.objects) || defaultSceneObjects();
+  }
+
+  function sceneProps(props) {
+    return props && props.scene && typeof props.scene === "object" ? props.scene : null;
+  }
+
+  function sceneObjectList(value) {
+    return Array.isArray(value) && value.length > 0 ? value : null;
   }
 
   function normalizeSceneObject(object, index) {
@@ -338,7 +361,13 @@
     ctx2d.clearRect(0, 0, width, height);
     ctx2d.fillStyle = background;
     ctx2d.fillRect(0, 0, width, height);
+    drawSceneGrid(ctx2d, width, height);
+    for (const object of objects) {
+      drawSceneObject(ctx2d, camera, width, height, object, timeSeconds);
+    }
+  }
 
+  function drawSceneGrid(ctx2d, width, height) {
     ctx2d.strokeStyle = "rgba(141, 225, 255, 0.14)";
     ctx2d.lineWidth = 1;
     for (let x = 0; x <= width; x += 48) {
@@ -347,36 +376,44 @@
     for (let y = 0; y <= height; y += 48) {
       strokeLine(ctx2d, { x: 0, y }, { x: width, y });
     }
+  }
 
-    for (const object of objects) {
-      if (object.kind !== "cube") continue;
+  function drawSceneObject(ctx2d, camera, width, height, object, timeSeconds) {
+    if (object.kind !== "cube") {
+      return;
+    }
+    const projected = projectSceneCube(object, camera, width, height, timeSeconds);
+    drawProjectedCube(ctx2d, projected, object.color);
+  }
 
-      const vertices = cubeVertices(object.size).map(function(vertex) {
-        const rotated = rotatePoint(
-          vertex,
-          object.rotationX + object.spinX * timeSeconds,
-          object.rotationY + object.spinY * timeSeconds,
-          object.rotationZ + object.spinZ * timeSeconds,
-        );
-        return {
-          x: rotated.x + object.x,
-          y: rotated.y + object.y,
-          z: rotated.z + object.z,
-        };
-      });
+  function projectSceneCube(object, camera, width, height, timeSeconds) {
+    return cubeVertices(object.size).map(function(vertex) {
+      return projectPoint(translateSceneVertex(vertex, object, timeSeconds), camera, width, height);
+    });
+  }
 
-      const projected = vertices.map(function(vertex) {
-        return projectPoint(vertex, camera, width, height);
-      });
+  function translateSceneVertex(vertex, object, timeSeconds) {
+    const rotated = rotatePoint(
+      vertex,
+      object.rotationX + object.spinX * timeSeconds,
+      object.rotationY + object.spinY * timeSeconds,
+      object.rotationZ + object.spinZ * timeSeconds,
+    );
+    return {
+      x: rotated.x + object.x,
+      y: rotated.y + object.y,
+      z: rotated.z + object.z,
+    };
+  }
 
-      ctx2d.strokeStyle = object.color;
-      ctx2d.lineWidth = 1.8;
-      for (const edge of cubeEdgePairs) {
-        const from = projected[edge[0]];
-        const to = projected[edge[1]];
-        if (!from || !to) continue;
-        strokeLine(ctx2d, from, to);
-      }
+  function drawProjectedCube(ctx2d, projected, color) {
+    ctx2d.strokeStyle = color;
+    ctx2d.lineWidth = 1.8;
+    for (const edge of cubeEdgePairs) {
+      const from = projected[edge[0]];
+      const to = projected[edge[1]];
+      if (!from || !to) continue;
+      strokeLine(ctx2d, from, to);
     }
   }
 
@@ -499,21 +536,35 @@
   // Examples: data-gosx-on-click="increment", data-gosx-on-input="updateName"
   // Falls back to data-gosx-handler for click-only (legacy/shorthand).
   function findHandlerForEvent(target, root, eventType) {
-    const specificAttr = "data-gosx-on-" + eventType;
-    const genericAttr = "data-gosx-handler"; // legacy: treated as click-only
+    const specificAttr = handlerAttrName(eventType);
 
     let el = target;
     while (el && el !== root.parentNode) {
-      if (el.hasAttribute && el.hasAttribute(specificAttr)) {
-        return el.getAttribute(specificAttr);
-      }
-      // data-gosx-handler is shorthand for click only
-      if (eventType === "click" && el.hasAttribute && el.hasAttribute(genericAttr)) {
-        return el.getAttribute(genericAttr);
+      const handlerName = elementHandlerName(el, eventType, specificAttr);
+      if (handlerName) {
+        return handlerName;
       }
       el = el.parentNode;
     }
     return null;
+  }
+
+  function handlerAttrName(eventType) {
+    return "data-gosx-on-" + eventType;
+  }
+
+  function elementHandlerName(el, eventType, specificAttr) {
+    if (hasAttributeName(el, specificAttr)) {
+      return el.getAttribute(specificAttr);
+    }
+    if (eventType === "click" && hasAttributeName(el, "data-gosx-handler")) {
+      return el.getAttribute("data-gosx-handler");
+    }
+    return null;
+  }
+
+  function hasAttributeName(el, attr) {
+    return Boolean(el && el.hasAttribute && el.hasAttribute(attr));
   }
 
   function setupEventDelegation(islandRoot, islandID) {
@@ -564,9 +615,13 @@
   // --------------------------------------------------------------------------
 
   function resolveEngineFactory(entry) {
-    const exportName = entry.jsExport || entry.component;
+    const exportName = engineExportName(entry);
     if (!exportName) return null;
     return engineFactories[exportName] || null;
+  }
+
+  function engineExportName(entry) {
+    return entry.jsExport || entry.component;
   }
 
   function normalizeEngineHandle(result) {
@@ -684,15 +739,30 @@
 
   function hubURL(path) {
     if (!path) return "";
-    if (path.startsWith("ws://") || path.startsWith("wss://")) {
+    if (isAbsoluteHubURL(path)) {
       return path;
     }
-    const proto = window.location && window.location.protocol === "https:" ? "wss://" : "ws://";
-    const host = window.location && window.location.host ? window.location.host : "";
-    if (path.startsWith("/")) {
-      return proto + host + path;
-    }
-    return proto + host + "/" + path;
+    return hubOrigin() + normalizeHubPath(path);
+  }
+
+  function isAbsoluteHubURL(path) {
+    return path.startsWith("ws://") || path.startsWith("wss://");
+  }
+
+  function hubOrigin() {
+    return hubScheme() + hubHost();
+  }
+
+  function hubScheme() {
+    return window.location && window.location.protocol === "https:" ? "wss://" : "ws://";
+  }
+
+  function hubHost() {
+    return window.location && window.location.host ? window.location.host : "";
+  }
+
+  function normalizeHubPath(path) {
+    return path.startsWith("/") ? path : "/" + path;
   }
 
   function applyHubBindings(entry, message) {
@@ -1024,14 +1094,15 @@
   }
 
   function manifestNeedsRuntimeBridge(manifest) {
-    return Boolean(
-      (manifest.islands && manifest.islands.length > 0) ||
-      (manifest.hubs && manifest.hubs.length > 0)
-    );
+    return manifestHasEntries(manifest, "islands") || manifestHasEntries(manifest, "hubs");
   }
 
   function manifestNeedsRuntime(manifest) {
     return Boolean(manifestNeedsRuntimeBridge(manifest) && manifest.runtime && manifest.runtime.path);
+  }
+
+  function manifestHasEntries(manifest, key) {
+    return Boolean(manifest && manifest[key] && manifest[key].length > 0);
   }
 
   window.__gosx_bootstrap_page = bootstrapPage;
