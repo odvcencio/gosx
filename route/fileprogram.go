@@ -256,6 +256,7 @@ func (r *fileProgramRenderer) renderScene3D(node *ir.Node, env fileRenderEnv) st
 		JSExport: "GoSXScene3D",
 		Capabilities: []engine.Capability{
 			engine.CapCanvas,
+			engine.CapWebGL,
 			engine.CapAnimation,
 		},
 		MountAttrs: map[string]any{

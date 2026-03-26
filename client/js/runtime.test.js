@@ -96,6 +96,116 @@ class FakeCanvasContext2D {
   translate(x, y) { this.ops.push(["translate", x, y]); }
 }
 
+class FakeWebGLContext {
+  constructor() {
+    this.ops = [];
+    this.ARRAY_BUFFER = 0x8892;
+    this.DYNAMIC_DRAW = 0x88E8;
+    this.FLOAT = 0x1406;
+    this.LINES = 0x0001;
+    this.COLOR_BUFFER_BIT = 0x4000;
+    this.VERTEX_SHADER = 0x8B31;
+    this.FRAGMENT_SHADER = 0x8B30;
+    this.COMPILE_STATUS = 0x8B81;
+    this.LINK_STATUS = 0x8B82;
+  }
+
+  createShader(type) {
+    const shader = { type };
+    this.ops.push(["createShader", type]);
+    return shader;
+  }
+
+  shaderSource(shader, source) {
+    shader.source = source;
+    this.ops.push(["shaderSource", shader.type, source.length]);
+  }
+
+  compileShader(shader) {
+    shader.compiled = true;
+    this.ops.push(["compileShader", shader.type]);
+  }
+
+  getShaderParameter(_shader, param) {
+    return param === this.COMPILE_STATUS;
+  }
+
+  createProgram() {
+    const program = { attached: [] };
+    this.ops.push(["createProgram"]);
+    return program;
+  }
+
+  attachShader(program, shader) {
+    program.attached.push(shader);
+    this.ops.push(["attachShader", shader.type]);
+  }
+
+  linkProgram(program) {
+    program.linked = true;
+    this.ops.push(["linkProgram", program.attached.length]);
+  }
+
+  getProgramParameter(_program, param) {
+    return param === this.LINK_STATUS;
+  }
+
+  createBuffer() {
+    const buffer = {};
+    this.ops.push(["createBuffer"]);
+    return buffer;
+  }
+
+  getAttribLocation(_program, name) {
+    this.ops.push(["getAttribLocation", name]);
+    return name === "a_position" ? 0 : 1;
+  }
+
+  viewport(x, y, width, height) {
+    this.ops.push(["viewport", x, y, width, height]);
+  }
+
+  clearColor(r, g, b, a) {
+    this.ops.push(["clearColor", r, g, b, a]);
+  }
+
+  clear(mask) {
+    this.ops.push(["clear", mask]);
+  }
+
+  useProgram(_program) {
+    this.ops.push(["useProgram"]);
+  }
+
+  bindBuffer(target, _buffer) {
+    this.ops.push(["bindBuffer", target]);
+  }
+
+  bufferData(target, data, usage) {
+    this.ops.push(["bufferData", target, data.length, usage]);
+  }
+
+  enableVertexAttribArray(location) {
+    this.ops.push(["enableVertexAttribArray", location]);
+  }
+
+  vertexAttribPointer(location, size, type, normalized, stride, offset) {
+    this.ops.push(["vertexAttribPointer", location, size, type, normalized, stride, offset]);
+  }
+
+  drawArrays(mode, first, count) {
+    this.ops.push(["drawArrays", mode, first, count]);
+  }
+
+  deleteBuffer(_buffer) {
+    this.ops.push(["deleteBuffer"]);
+  }
+
+  deleteProgram(_program) {
+    this.ops.push(["deleteProgram"]);
+  }
+}
+
 class FakeElement {
   constructor(tagName, ownerDocument) {
     this.nodeType = ELEMENT_NODE;
@@ -111,6 +221,7 @@ class FakeElement {
     this.width = 0;
     this.height = 0;
     this._canvasContext = null;
+    this._webglContext = null;
   }
 
   get id() {
@@ -254,13 +365,25 @@ class FakeElement {
   }
 
   getContext(kind) {
-    if (this.tagName !== "CANVAS" || kind !== "2d") {
+    if (this.tagName !== "CANVAS") {
       return null;
     }
-    if (!this._canvasContext) {
-      this._canvasContext = new FakeCanvasContext2D();
+    if (kind === "2d") {
+      if (this.ownerDocument && this.ownerDocument.disableCanvas2D) {
+        return null;
+      }
+      if (!this._canvasContext) {
+        this._canvasContext = new FakeCanvasContext2D();
+      }
+      return this._canvasContext;
     }
-    return this._canvasContext;
+    if ((kind === "webgl" || kind === "experimental-webgl") && this.ownerDocument && typeof this.ownerDocument.createWebGLContext === "function") {
+      if (!this._webglContext) {
+        this._webglContext = this.ownerDocument.createWebGLContext();
+      }
+      return this._webglContext;
+    }
+    return null;
   }
 
   cloneNode(deep) {
@@ -302,6 +425,8 @@ class FakeDocument {
     this.documentElement.appendChild(this.body);
     this.activeElement = this.body;
     this.title = "";
+    this.disableCanvas2D = false;
+    this.createWebGLContext = null;
   }
 
   createElement(tagName) {
@@ -399,6 +524,12 @@ function createConsoleSpy() {
 
 function createContext(options) {
   const document = new FakeDocument();
+  document.disableCanvas2D = Boolean(options.disableCanvas2D);
+  if (typeof options.createWebGLContext === "function") {
+    document.createWebGLContext = options.createWebGLContext;
+  } else if (options.enableWebGL) {
+    document.createWebGLContext = () => new FakeWebGLContext();
+  }
   const consoleSpy = createConsoleSpy();
   const hydrateCalls = [];
   const actionCalls = [];
@@ -1023,6 +1154,53 @@ test("bootstrap renders mixed native Scene3D primitives", async () => {
   assert.equal(canvas.getAttribute("height"), "320");
   assert.equal(mount.getAttribute("data-gosx-scene3d-mounted"), "true");
   assert.ok(strokeCount >= 12);
+  assert.equal(env.consoleLogs.warn.length, 0);
+  assert.equal(env.consoleLogs.error.length, 0);
+});
+
+test("bootstrap prefers WebGL Scene3D rendering when available", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-webgl";
+
+  const env = createContext({
+    elements: [mount],
+    enableWebGL: true,
+    disableCanvas2D: true,
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-webgl",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-webgl",
+          jsExport: "GoSXScene3D",
+          props: {
+            width: 480,
+            height: 300,
+            autoRotate: false,
+            scene: {
+              objects: [
+                { kind: "box", width: 1.4, height: 1.1, depth: 1.2, x: -0.8, y: 0, z: 0, color: "#8de1ff" },
+                { kind: "sphere", radius: 0.7, x: 1.1, y: 0.2, z: 0.8, color: "#ffd48f" },
+              ],
+            },
+          },
+          capabilities: ["canvas", "webgl", "animation"],
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const canvas = mount.firstElementChild;
+  assert.equal(canvas.tagName, "CANVAS");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "webgl");
+
+  const gl = canvas.getContext("webgl");
+  assert.ok(gl.ops.some((entry) => entry[0] === "bufferData" && entry[2] > 0));
+  assert.ok(gl.ops.some((entry) => entry[0] === "drawArrays" && entry[3] > 0));
   assert.equal(env.consoleLogs.warn.length, 0);
   assert.equal(env.consoleLogs.error.length, 0);
 });
