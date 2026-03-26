@@ -203,3 +203,74 @@ func TestRuntimeClearsDirtyFlagsAfterReconcile(t *testing.T) {
 		t.Fatal("expected dirty flag to clear after reconcile")
 	}
 }
+
+func TestRuntimeRenderBundleSyncsDirtyNodes(t *testing.T) {
+	prog := &rootengine.Program{
+		Name: "RenderBundle",
+		Nodes: []rootengine.Node{
+			{
+				Kind: "camera",
+				Props: map[string]islandprogram.ExprID{
+					"z":   0,
+					"fov": 1,
+				},
+			},
+			{
+				Kind:     "mesh",
+				Geometry: "box",
+				Material: "flat",
+				Props: map[string]islandprogram.ExprID{
+					"x":     2,
+					"color": 3,
+					"size":  4,
+				},
+			},
+		},
+		Exprs: []islandprogram.Expr{
+			{Op: islandprogram.OpLitFloat, Value: "6", Type: islandprogram.TypeFloat},
+			{Op: islandprogram.OpLitFloat, Value: "75", Type: islandprogram.TypeFloat},
+			{Op: islandprogram.OpSignalGet, Value: "$scene.x", Type: islandprogram.TypeFloat},
+			{Op: islandprogram.OpSignalGet, Value: "$scene.color", Type: islandprogram.TypeString},
+			{Op: islandprogram.OpLitFloat, Value: "1.4", Type: islandprogram.TypeFloat},
+			{Op: islandprogram.OpLitFloat, Value: "0", Type: islandprogram.TypeFloat},
+			{Op: islandprogram.OpLitString, Value: "#8de1ff", Type: islandprogram.TypeString},
+		},
+		Signals: []islandprogram.SignalDef{
+			{Name: "$scene.x", Type: islandprogram.TypeFloat, Init: 5},
+			{Name: "$scene.color", Type: islandprogram.TypeString, Init: 6},
+		},
+	}
+
+	rt := New(prog, `{"background":"#102030"}`)
+	xSig := signal.New(vm.FloatVal(0))
+	colorSig := signal.New(vm.StringVal("#8de1ff"))
+	rt.SetSharedSignal("$scene.x", xSig)
+	rt.SetSharedSignal("$scene.color", colorSig)
+	rt.Reconcile()
+
+	xSig.Set(vm.FloatVal(2.25))
+	colorSig.Set(vm.StringVal("#ff8f6b"))
+	if !rt.dirty[1] {
+		t.Fatal("expected mesh node to be dirty before render bundle generation")
+	}
+
+	bundle := rt.RenderBundle(640, 360, 1.5)
+	if bundle.Background != "#102030" {
+		t.Fatalf("expected background from props, got %q", bundle.Background)
+	}
+	if bundle.ObjectCount != 1 {
+		t.Fatalf("expected 1 object, got %d", bundle.ObjectCount)
+	}
+	if bundle.VertexCount == 0 {
+		t.Fatal("expected projected vertices in render bundle")
+	}
+	if len(bundle.Positions) != bundle.VertexCount*2 {
+		t.Fatalf("expected positions sized to vertex count, got %d for %d vertices", len(bundle.Positions), bundle.VertexCount)
+	}
+	if len(bundle.Colors) != bundle.VertexCount*4 {
+		t.Fatalf("expected colors sized to vertex count, got %d for %d vertices", len(bundle.Colors), bundle.VertexCount)
+	}
+	if rt.dirty[1] {
+		t.Fatal("expected render bundle generation to sync dirty node snapshot")
+	}
+}
