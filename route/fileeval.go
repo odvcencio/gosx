@@ -26,6 +26,20 @@ type fileRenderEnv struct {
 	renderEngine func(engine.Config, gosx.Node) gosx.Node
 }
 
+type fileRequestBindings struct {
+	requestPath   string
+	method        string
+	requestID     string
+	query         map[string]string
+	sessionValues map[string]any
+	flashes       map[string][]any
+	flash         map[string]any
+	actions       map[string]any
+	currentAction map[string]any
+	user          any
+	csrf          map[string]any
+}
+
 func (env fileRenderEnv) clone() fileRenderEnv {
 	next := fileRenderEnv{
 		values:     make(map[string]any, len(env.values)),
@@ -93,60 +107,10 @@ func (env fileRenderEnv) engine(cfg engine.Config, fallback gosx.Node) gosx.Node
 }
 
 func newFileRenderEnv(ctx *RouteContext, page FilePage) fileRenderEnv {
-	requestPath := ""
-	method := ""
-	requestID := ""
-	query := map[string]string{}
-	sessionValues := map[string]any{}
-	flashes := map[string][]any{}
-	flash := map[string]any{}
-	actions := map[string]any{}
-	currentAction := map[string]any{}
-	var user any
-	csrf := map[string]any{}
-	if ctx != nil && ctx.Request != nil {
-		requestPath = ctx.Request.URL.Path
-		method = ctx.Request.Method
-		requestID = serverRequestID(ctx.Request)
-		query = flattenQueryValues(ctx.Request.URL.Query())
-		sessionValues = session.Values(ctx.Request)
-		flashes = session.FlashValues(ctx.Request)
-		flash = firstFlashValues(flashes)
-		actions = templateActionStates(action.States(ctx.Request))
-		currentAction = preferredActionState(actions)
-		if resolvedUser, ok := auth.Current(ctx.Request); ok {
-			user = templateUser(resolvedUser)
-		}
-		if token := session.Token(ctx.Request); token != "" {
-			csrf["token"] = token
-			csrf["field"] = defaultCSRFFieldName()
-		}
-	}
+	bindings := buildFileRequestBindings(ctx)
 
 	env := fileRenderEnv{
-		values: map[string]any{
-			"data":    nil,
-			"params":  map[string]string{},
-			"query":   query,
-			"session": sessionValues,
-			"flash":   flash,
-			"flashes": flashes,
-			"actions": actions,
-			"action":  currentAction,
-			"csrf":    csrf,
-			"user":    user,
-			"page": map[string]any{
-				"pattern": page.Pattern,
-				"route":   page.RoutePath,
-				"source":  page.Source,
-				"path":    requestPath,
-			},
-			"request": map[string]any{
-				"id":     requestID,
-				"method": method,
-				"path":   requestPath,
-			},
-		},
+		values:     baseFileRenderValues(page, bindings),
 		funcs:      map[string]any{},
 		components: map[string]any{},
 	}
@@ -159,15 +123,78 @@ func newFileRenderEnv(ctx *RouteContext, page FilePage) fileRenderEnv {
 			return ctx.ActionPath(name)
 		}
 	}
+	registerBaseFileFuncs(&env, bindings)
+	return env
+}
+
+func buildFileRequestBindings(ctx *RouteContext) fileRequestBindings {
+	bindings := fileRequestBindings{
+		query:         map[string]string{},
+		sessionValues: map[string]any{},
+		flashes:       map[string][]any{},
+		flash:         map[string]any{},
+		actions:       map[string]any{},
+		currentAction: map[string]any{},
+		csrf:          map[string]any{},
+	}
+	if ctx == nil || ctx.Request == nil {
+		return bindings
+	}
+
+	bindings.requestPath = ctx.Request.URL.Path
+	bindings.method = ctx.Request.Method
+	bindings.requestID = serverRequestID(ctx.Request)
+	bindings.query = flattenQueryValues(ctx.Request.URL.Query())
+	bindings.sessionValues = session.Values(ctx.Request)
+	bindings.flashes = session.FlashValues(ctx.Request)
+	bindings.flash = firstFlashValues(bindings.flashes)
+	bindings.actions = templateActionStates(action.States(ctx.Request))
+	bindings.currentAction = preferredActionState(bindings.actions)
+	if resolvedUser, ok := auth.Current(ctx.Request); ok {
+		bindings.user = templateUser(resolvedUser)
+	}
+	if token := session.Token(ctx.Request); token != "" {
+		bindings.csrf["token"] = token
+		bindings.csrf["field"] = defaultCSRFFieldName()
+	}
+	return bindings
+}
+
+func baseFileRenderValues(page FilePage, bindings fileRequestBindings) map[string]any {
+	return map[string]any{
+		"data":    nil,
+		"params":  map[string]string{},
+		"query":   bindings.query,
+		"session": bindings.sessionValues,
+		"flash":   bindings.flash,
+		"flashes": bindings.flashes,
+		"actions": bindings.actions,
+		"action":  bindings.currentAction,
+		"csrf":    bindings.csrf,
+		"user":    bindings.user,
+		"page": map[string]any{
+			"pattern": page.Pattern,
+			"route":   page.RoutePath,
+			"source":  page.Source,
+			"path":    bindings.requestPath,
+		},
+		"request": map[string]any{
+			"id":     bindings.requestID,
+			"method": bindings.method,
+			"path":   bindings.requestPath,
+		},
+	}
+}
+
+func registerBaseFileFuncs(env *fileRenderEnv, bindings fileRequestBindings) {
 	env.funcs["len"] = fileEvalLen
 	env.funcs["asset"] = server.AssetURL
 	env.funcs["stylesheet"] = func(href string) gosx.Node {
 		return server.Stylesheet(href)
 	}
 	env.funcs["flashValue"] = func(name string) any {
-		return flash[name]
+		return bindings.flash[name]
 	}
-	return env
 }
 
 func evalStaticFileExpr(expr string) any {
@@ -550,31 +577,51 @@ func reflectValue(value any, target reflect.Type) (reflect.Value, bool) {
 		return rv.Convert(target), true
 	}
 
+	if out, ok := reflectPrimitiveValue(value, rv, target); ok {
+		return out, true
+	}
+	if target.Kind() == reflect.Struct {
+		return reflectStructValue(value, target)
+	}
+	return reflect.Value{}, false
+}
+
+func reflectPrimitiveValue(value any, rv reflect.Value, target reflect.Type) (reflect.Value, bool) {
 	switch target.Kind() {
 	case reflect.String:
 		return reflect.ValueOf(stringifyValue(value)).Convert(target), true
 	case reflect.Bool:
 		return reflect.ValueOf(truthy(value)).Convert(target), true
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-		out := reflect.New(target).Elem()
-		out.SetInt(int64(numericValue(value)))
-		return out, true
+		return reflectSignedValue(value, target), true
 	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-		out := reflect.New(target).Elem()
-		out.SetUint(uint64(numericValue(value)))
-		return out, true
+		return reflectUnsignedValue(value, target), true
 	case reflect.Float32, reflect.Float64:
-		out := reflect.New(target).Elem()
-		out.SetFloat(numericValue(value))
-		return out, true
-	case reflect.Struct:
-		return reflectStructValue(value, target)
+		return reflectFloatValue(value, target), true
 	case reflect.Interface:
 		if rv.IsValid() {
 			return rv, true
 		}
 	}
 	return reflect.Value{}, false
+}
+
+func reflectSignedValue(value any, target reflect.Type) reflect.Value {
+	out := reflect.New(target).Elem()
+	out.SetInt(int64(numericValue(value)))
+	return out
+}
+
+func reflectUnsignedValue(value any, target reflect.Type) reflect.Value {
+	out := reflect.New(target).Elem()
+	out.SetUint(uint64(numericValue(value)))
+	return out
+}
+
+func reflectFloatValue(value any, target reflect.Type) reflect.Value {
+	out := reflect.New(target).Elem()
+	out.SetFloat(numericValue(value))
+	return out
 }
 
 func indirectValueOf(value any) (reflect.Value, bool) {
