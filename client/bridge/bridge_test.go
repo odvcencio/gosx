@@ -260,3 +260,66 @@ func TestBridgeHydrateTickAndDisposeEngine(t *testing.T) {
 		t.Fatalf("expected 0 engines after dispose, got %d", b.EngineCount())
 	}
 }
+
+func TestBridgeRenderEngineBundle(t *testing.T) {
+	b := New()
+
+	prog := &rootengine.Program{
+		Name: "RenderBundle",
+		Nodes: []rootengine.Node{
+			{
+				Kind: "camera",
+				Props: map[string]program.ExprID{
+					"z":   0,
+					"fov": 1,
+				},
+			},
+			{
+				Kind:     "mesh",
+				Geometry: "sphere",
+				Material: "flat",
+				Props: map[string]program.ExprID{
+					"x":      2,
+					"radius": 3,
+					"color":  4,
+				},
+			},
+		},
+		Exprs: []program.Expr{
+			{Op: program.OpLitFloat, Value: "6", Type: program.TypeFloat},
+			{Op: program.OpLitFloat, Value: "75", Type: program.TypeFloat},
+			{Op: program.OpSignalGet, Value: "$scene.x", Type: program.TypeFloat},
+			{Op: program.OpLitFloat, Value: "0.9", Type: program.TypeFloat},
+			{Op: program.OpLitString, Value: "#8de1ff", Type: program.TypeString},
+			{Op: program.OpLitFloat, Value: "0", Type: program.TypeFloat},
+		},
+		Signals: []program.SignalDef{
+			{Name: "$scene.x", Type: program.TypeFloat, Init: 5},
+		},
+	}
+
+	data, err := rootengine.EncodeProgramJSON(prog)
+	if err != nil {
+		t.Fatalf("encode engine program: %v", err)
+	}
+	if _, err := b.HydrateEngine("engine-render", prog.Name, `{"background":"#08151f"}`, data, "json"); err != nil {
+		t.Fatalf("hydrate engine: %v", err)
+	}
+	if err := b.SetSharedSignalBatchJSON(`{"$scene.x":1.75}`); err != nil {
+		t.Fatalf("set shared signal batch: %v", err)
+	}
+
+	bundle, err := b.RenderEngine("engine-render", 640, 360, 1.25)
+	if err != nil {
+		t.Fatalf("render engine: %v", err)
+	}
+	if bundle.ObjectCount != 1 {
+		t.Fatalf("expected objectCount=1, got %d", bundle.ObjectCount)
+	}
+	if bundle.VertexCount == 0 {
+		t.Fatal("expected non-empty render bundle")
+	}
+	if bundle.Background != "#08151f" {
+		t.Fatalf("expected background passthrough, got %q", bundle.Background)
+	}
+}

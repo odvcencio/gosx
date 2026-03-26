@@ -1146,10 +1146,21 @@
 
     function renderFrame(now) {
       if (disposed) return;
+      const timeSeconds = now / 1000;
+      if (runtimeScene && ctx.runtime && typeof ctx.runtime.renderFrame === "function") {
+        const runtimeBundle = ctx.runtime.renderFrame(timeSeconds, width, height);
+        if (runtimeBundle) {
+          renderer.render(runtimeBundle);
+          if (shouldAnimate) {
+            frameHandle = engineFrame(renderFrame);
+          }
+          return;
+        }
+      }
       if (runtimeScene && ctx.runtime) {
         applySceneCommands(sceneState, ctx.runtime.tick());
       }
-      renderer.render(createSceneRenderBundle(width, height, sceneState.background, sceneState.camera, sceneStateObjects(sceneState), now / 1000));
+      renderer.render(createSceneRenderBundle(width, height, sceneState.background, sceneState.camera, sceneStateObjects(sceneState), timeSeconds));
       if (shouldAnimate) {
         frameHandle = engineFrame(renderFrame);
       }
@@ -1366,6 +1377,7 @@
         return engineUsesSharedRuntime(entry)
           && typeof window.__gosx_hydrate_engine === "function"
           && typeof window.__gosx_tick_engine === "function"
+          && typeof window.__gosx_render_engine === "function"
           && typeof window.__gosx_engine_dispose === "function";
       },
       async hydrateFromProgramRef() {
@@ -1380,6 +1392,12 @@
           return [];
         }
         return decodeEngineCommands(window.__gosx_tick_engine(entry.id));
+      },
+      renderFrame(timeSeconds, width, height) {
+        if (!engineUsesSharedRuntime(entry) || typeof window.__gosx_render_engine !== "function") {
+          return null;
+        }
+        return decodeEngineRenderBundle(window.__gosx_render_engine(entry.id, timeSeconds, width, height));
       },
       dispose() {
         if (!engineUsesSharedRuntime(entry) || typeof window.__gosx_engine_dispose !== "function") {
@@ -1410,6 +1428,23 @@
     } catch (e) {
       console.error("[gosx] failed to decode engine commands:", e);
       return [];
+    }
+  }
+
+  function decodeEngineRenderBundle(result) {
+    if (result == null || typeof result !== "string" || result === "") {
+      return null;
+    }
+    if (result.startsWith("error:") || result.startsWith("marshal:")) {
+      console.error("[gosx] engine runtime error:", result);
+      return null;
+    }
+    try {
+      const bundle = JSON.parse(result);
+      return bundle && typeof bundle === "object" ? bundle : null;
+    } catch (e) {
+      console.error("[gosx] failed to decode engine render bundle:", e);
+      return null;
     }
   }
 

@@ -18,6 +18,7 @@ func registerRuntime(b *bridge.Bridge) {
 	setRuntimeFunc("__gosx_action", actionRuntimeFunc(b))
 	setRuntimeFunc("__gosx_dispose", disposeRuntimeFunc(b))
 	setRuntimeFunc("__gosx_tick_engine", tickEngineRuntimeFunc(b))
+	setRuntimeFunc("__gosx_render_engine", renderEngineRuntimeFunc(b))
 	setRuntimeFunc("__gosx_engine_dispose", disposeEngineRuntimeFunc(b))
 	setRuntimeFunc("__gosx_highlight", highlightRuntimeFunc())
 	setRuntimeFunc("__gosx_set_shared_signal", sharedSignalRuntimeFunc(b))
@@ -89,6 +90,28 @@ func tickEngineRuntimeFunc(b *bridge.Bridge) js.Func {
 			return jsError(err)
 		}
 		return marshalEngineCommandResult(commands)
+	})
+}
+
+func renderEngineRuntimeFunc(b *bridge.Bridge) js.Func {
+	return js.FuncOf(func(this js.Value, args []js.Value) any {
+		if len(args) < 4 {
+			return jsErrorf("need 4 args (engineID, timeSeconds, width, height)")
+		}
+		bundle, err := b.RenderEngine(
+			args[0].String(),
+			args[2].Int(),
+			args[3].Int(),
+			args[1].Float(),
+		)
+		if err != nil {
+			return jsError(err)
+		}
+		bundleJSON, err := bridge.MarshalEngineRenderBundle(bundle)
+		if err != nil {
+			return jsError(err)
+		}
+		return js.ValueOf(bundleJSON)
 	})
 }
 

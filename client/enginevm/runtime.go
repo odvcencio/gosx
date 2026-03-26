@@ -2,8 +2,11 @@ package enginevm
 
 import (
 	"encoding/json"
+	"math"
 	"reflect"
 	"sort"
+	"strconv"
+	"strings"
 
 	"github.com/odvcencio/gosx/client/vm"
 	rootengine "github.com/odvcencio/gosx/engine"
@@ -23,6 +26,7 @@ type resolvedNode struct {
 // Runtime is a live engine-program instance backed by the shared expression VM.
 type Runtime struct {
 	program    *rootengine.Program
+	props      map[string]any
 	vm         *vm.VM
 	prev       []resolvedNode
 	dirty      []bool
@@ -35,12 +39,14 @@ func New(prog *rootengine.Program, propsJSON string) *Runtime {
 	if prog == nil {
 		prog = &rootengine.Program{}
 	}
+	rawProps := parseRawProps(propsJSON)
 	vmProg := &islandprogram.Program{
 		Exprs: prog.Exprs,
 	}
 	rt := &Runtime{
 		program:    prog,
-		vm:         vm.NewVM(vmProg, parseProps(propsJSON)),
+		props:      rawProps,
+		vm:         vm.NewVM(vmProg, vmProps(rawProps)),
 		dirty:      make([]bool, len(prog.Nodes)),
 		signalDeps: buildSignalDeps(prog),
 		unsubs:     make(map[string]func()),
@@ -83,18 +89,7 @@ func (rt *Runtime) Reconcile() []rootengine.Command {
 		clearDirty(rt.dirty)
 		return createCommands(rt.prev)
 	}
-
-	var commands []rootengine.Command
-	for i := range rt.program.Nodes {
-		if !rt.dirty[i] {
-			continue
-		}
-		next := rt.resolveNode(i)
-		commands = append(commands, diffNode(i, rt.prev[i], next)...)
-		rt.prev[i] = next
-		rt.dirty[i] = false
-	}
-	return commands
+	return rt.syncDirty()
 }
 
 // Dispose releases the retained scene snapshot.
@@ -106,14 +101,27 @@ func (rt *Runtime) Dispose() {
 	rt.prev = nil
 }
 
-func parseProps(propsJSON string) map[string]vm.Value {
+// RenderBundle builds a renderer-facing frame bundle from the current scene.
+func (rt *Runtime) RenderBundle(width, height int, timeSeconds float64) rootengine.RenderBundle {
+	nodes := rt.snapshot()
+	return buildRenderBundle(rt.props, nodes, width, height, timeSeconds)
+}
+
+func parseRawProps(propsJSON string) map[string]any {
 	if propsJSON == "" {
-		return map[string]vm.Value{}
+		return map[string]any{}
 	}
 	var raw map[string]any
 	if err := json.Unmarshal([]byte(propsJSON), &raw); err != nil {
-		return map[string]vm.Value{}
+		return map[string]any{}
 	}
+	if raw == nil {
+		return map[string]any{}
+	}
+	return raw
+}
+
+func vmProps(raw map[string]any) map[string]vm.Value {
 	props := make(map[string]vm.Value, len(raw))
 	for key, value := range raw {
 		props[key] = vm.ValueFromAny(value)
@@ -136,6 +144,33 @@ func (rt *Runtime) resolveAll() []resolvedNode {
 	return out
 }
 
+func (rt *Runtime) snapshot() []resolvedNode {
+	if rt == nil || len(rt.program.Nodes) == 0 {
+		return nil
+	}
+	if len(rt.prev) == 0 {
+		rt.prev = rt.resolveAll()
+		clearDirty(rt.dirty)
+		return rt.prev
+	}
+	rt.syncDirty()
+	return rt.prev
+}
+
+func (rt *Runtime) syncDirty() []rootengine.Command {
+	var commands []rootengine.Command
+	for i := range rt.program.Nodes {
+		if !rt.dirty[i] {
+			continue
+		}
+		next := rt.resolveNode(i)
+		commands = append(commands, diffNode(i, rt.prev[i], next)...)
+		rt.prev[i] = next
+		rt.dirty[i] = false
+	}
+	return commands
+}
+
 func (rt *Runtime) resolveNode(index int) resolvedNode {
 	node := rt.program.Nodes[index]
 	return resolvedNode{
@@ -146,6 +181,457 @@ func (rt *Runtime) resolveNode(index int) resolvedNode {
 		Children: append([]int(nil), node.Children...),
 		Static:   node.Static,
 	}
+}
+
+type sceneCamera struct {
+	X   float64
+	Y   float64
+	Z   float64
+	FOV float64
+}
+
+type sceneObject struct {
+	ID        string
+	Kind      string
+	Size      float64
+	Width     float64
+	Height    float64
+	Depth     float64
+	Radius    float64
+	Segments  int
+	X         float64
+	Y         float64
+	Z         float64
+	Color     string
+	RotationX float64
+	RotationY float64
+	RotationZ float64
+	SpinX     float64
+	SpinY     float64
+	SpinZ     float64
+}
+
+type point3 struct {
+	X float64
+	Y float64
+	Z float64
+}
+
+type projectedLine struct {
+	From rootengine.RenderPoint
+	To   rootengine.RenderPoint
+}
+
+func buildRenderBundle(props map[string]any, nodes []resolvedNode, width, height int, timeSeconds float64) rootengine.RenderBundle {
+	if width <= 0 {
+		width = 720
+	}
+	if height <= 0 {
+		height = 420
+	}
+
+	bundle := rootengine.RenderBundle{
+		Background: sceneBackground(props),
+		Lines:      []rootengine.RenderLine{},
+		Positions:  []float64{},
+		Colors:     []float64{},
+	}
+
+	camera := sceneCameraFromProps(props)
+	objects := make([]sceneObject, 0, len(nodes))
+	for index, node := range nodes {
+		switch strings.TrimSpace(strings.ToLower(node.Kind)) {
+		case "camera":
+			camera = normalizeSceneCameraMap(node.Props, camera)
+		case "mesh":
+			objects = append(objects, sceneObjectFromResolvedNode(index, node))
+		}
+	}
+	bundle.ObjectCount = len(objects)
+	appendSceneGrid(&bundle, width, height)
+	for _, object := range objects {
+		appendSceneObject(&bundle, camera, width, height, object, timeSeconds)
+	}
+	bundle.VertexCount = len(bundle.Positions) / 2
+	return bundle
+}
+
+func sceneBackground(props map[string]any) string {
+	if props != nil {
+		if value, ok := props["background"].(string); ok && strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return "#08151f"
+}
+
+func sceneCameraFromProps(props map[string]any) sceneCamera {
+	camera := sceneCamera{Z: 6, FOV: 75}
+	if props == nil {
+		return camera
+	}
+	raw, _ := props["camera"].(map[string]any)
+	return normalizeSceneCameraMap(raw, camera)
+}
+
+func normalizeSceneCameraMap(raw map[string]any, fallback sceneCamera) sceneCamera {
+	return sceneCamera{
+		X:   numberFromAny(rawValue(raw, "x"), fallback.X),
+		Y:   numberFromAny(rawValue(raw, "y"), fallback.Y),
+		Z:   numberFromAny(rawValue(raw, "z"), fallback.Z),
+		FOV: numberFromAny(rawValue(raw, "fov"), fallback.FOV),
+	}
+}
+
+func sceneObjectFromResolvedNode(index int, node resolvedNode) sceneObject {
+	size := numberFromAny(propValue(node.Props, "size"), 1.2)
+	return sceneObject{
+		ID:        stringFromAny(propValue(node.Props, "id"), "scene-object-"+strconv.Itoa(index)),
+		Kind:      normalizeSceneKind(stringFromAny(propValue(node.Props, "kind"), node.Geometry)),
+		Size:      size,
+		Width:     numberFromAny(propValue(node.Props, "width"), size),
+		Height:    numberFromAny(propValue(node.Props, "height"), size),
+		Depth:     numberFromAny(propValue(node.Props, "depth"), size),
+		Radius:    numberFromAny(propValue(node.Props, "radius"), size/2),
+		Segments:  sceneSegmentResolution(propValue(node.Props, "segments")),
+		X:         numberFromAny(propValue(node.Props, "x"), 0),
+		Y:         numberFromAny(propValue(node.Props, "y"), 0),
+		Z:         numberFromAny(propValue(node.Props, "z"), 0),
+		Color:     stringFromAny(propValue(node.Props, "color"), "#8de1ff"),
+		RotationX: numberFromAny(propValue(node.Props, "rotationX"), 0),
+		RotationY: numberFromAny(propValue(node.Props, "rotationY"), 0),
+		RotationZ: numberFromAny(propValue(node.Props, "rotationZ"), 0),
+		SpinX:     numberFromAny(propValue(node.Props, "spinX"), 0),
+		SpinY:     numberFromAny(propValue(node.Props, "spinY"), 0),
+		SpinZ:     numberFromAny(propValue(node.Props, "spinZ"), 0),
+	}
+}
+
+func appendSceneGrid(bundle *rootengine.RenderBundle, width, height int) {
+	for x := 0; x <= width; x += 48 {
+		appendSceneLine(bundle, width, height, rootengine.RenderPoint{X: float64(x), Y: 0}, rootengine.RenderPoint{X: float64(x), Y: float64(height)}, "rgba(141, 225, 255, 0.14)", 1)
+	}
+	for y := 0; y <= height; y += 48 {
+		appendSceneLine(bundle, width, height, rootengine.RenderPoint{X: 0, Y: float64(y)}, rootengine.RenderPoint{X: float64(width), Y: float64(y)}, "rgba(141, 225, 255, 0.14)", 1)
+	}
+}
+
+func appendSceneObject(bundle *rootengine.RenderBundle, camera sceneCamera, width, height int, object sceneObject, timeSeconds float64) {
+	for _, segment := range sceneObjectSegments(object) {
+		from := projectPoint(translatePoint(segment[0], object, timeSeconds), camera, width, height)
+		to := projectPoint(translatePoint(segment[1], object, timeSeconds), camera, width, height)
+		if from == nil || to == nil {
+			continue
+		}
+		appendSceneLine(bundle, width, height, *from, *to, object.Color, 1.8)
+	}
+}
+
+func appendSceneLine(bundle *rootengine.RenderBundle, width, height int, from, to rootengine.RenderPoint, color string, lineWidth float64) {
+	rgba := sceneColorRGBA(color, [4]float64{0.55, 0.88, 1, 1})
+	bundle.Lines = append(bundle.Lines, rootengine.RenderLine{
+		From:      from,
+		To:        to,
+		Color:     color,
+		LineWidth: lineWidth,
+	})
+	fromX, fromY := sceneClipPoint(from, width, height)
+	toX, toY := sceneClipPoint(to, width, height)
+	bundle.Positions = append(bundle.Positions, fromX, fromY, toX, toY)
+	bundle.Colors = append(bundle.Colors,
+		rgba[0], rgba[1], rgba[2], rgba[3],
+		rgba[0], rgba[1], rgba[2], rgba[3],
+	)
+}
+
+func sceneClipPoint(point rootengine.RenderPoint, width, height int) (float64, float64) {
+	return (point.X/float64(width))*2 - 1, 1 - (point.Y/float64(height))*2
+}
+
+func sceneObjectSegments(object sceneObject) [][2]point3 {
+	switch object.Kind {
+	case "box", "cube":
+		return boxSegments(object)
+	case "plane":
+		return planeSegments(object)
+	case "pyramid":
+		return pyramidSegments(object)
+	case "sphere":
+		return sphereSegments(object)
+	default:
+		return boxSegments(object)
+	}
+}
+
+func boxSegments(object sceneObject) [][2]point3 {
+	return indexSegments(boxVertices(object.Width, object.Height, object.Depth), [][2]int{
+		{0, 1}, {1, 2}, {2, 3}, {3, 0},
+		{4, 5}, {5, 6}, {6, 7}, {7, 4},
+		{0, 4}, {1, 5}, {2, 6}, {3, 7},
+	})
+}
+
+func planeSegments(object sceneObject) [][2]point3 {
+	vertices := boxVertices(object.Width, 0, object.Depth)
+	return indexSegments(vertices[:4], [][2]int{
+		{0, 1}, {1, 2}, {2, 3}, {3, 0},
+	})
+}
+
+func pyramidSegments(object sceneObject) [][2]point3 {
+	halfWidth := object.Width / 2
+	halfDepth := object.Depth / 2
+	halfHeight := object.Height / 2
+	vertices := []point3{
+		{X: -halfWidth, Y: -halfHeight, Z: -halfDepth},
+		{X: halfWidth, Y: -halfHeight, Z: -halfDepth},
+		{X: halfWidth, Y: -halfHeight, Z: halfDepth},
+		{X: -halfWidth, Y: -halfHeight, Z: halfDepth},
+		{X: 0, Y: halfHeight, Z: 0},
+	}
+	return indexSegments(vertices, [][2]int{
+		{0, 1}, {1, 2}, {2, 3}, {3, 0},
+		{0, 4}, {1, 4}, {2, 4}, {3, 4},
+	})
+}
+
+func sphereSegments(object sceneObject) [][2]point3 {
+	out := circleSegments(object.Radius, "xy", object.Segments)
+	out = append(out, circleSegments(object.Radius, "xz", object.Segments)...)
+	out = append(out, circleSegments(object.Radius, "yz", object.Segments)...)
+	return out
+}
+
+func boxVertices(width, height, depth float64) []point3 {
+	halfWidth := width / 2
+	halfHeight := height / 2
+	halfDepth := depth / 2
+	return []point3{
+		{X: -halfWidth, Y: -halfHeight, Z: -halfDepth},
+		{X: halfWidth, Y: -halfHeight, Z: -halfDepth},
+		{X: halfWidth, Y: halfHeight, Z: -halfDepth},
+		{X: -halfWidth, Y: halfHeight, Z: -halfDepth},
+		{X: -halfWidth, Y: -halfHeight, Z: halfDepth},
+		{X: halfWidth, Y: -halfHeight, Z: halfDepth},
+		{X: halfWidth, Y: halfHeight, Z: halfDepth},
+		{X: -halfWidth, Y: halfHeight, Z: halfDepth},
+	}
+}
+
+func indexSegments(points []point3, edgePairs [][2]int) [][2]point3 {
+	out := make([][2]point3, 0, len(edgePairs))
+	for _, edge := range edgePairs {
+		out = append(out, [2]point3{points[edge[0]], points[edge[1]]})
+	}
+	return out
+}
+
+func circleSegments(radius float64, axis string, segments int) [][2]point3 {
+	points := make([]point3, 0, segments)
+	for i := 0; i < segments; i++ {
+		angle := (math.Pi * 2 * float64(i)) / float64(segments)
+		points = append(points, circlePoint(radius, axis, angle))
+	}
+	out := make([][2]point3, 0, len(points))
+	for i := range points {
+		out = append(out, [2]point3{points[i], points[(i+1)%len(points)]})
+	}
+	return out
+}
+
+func circlePoint(radius float64, axis string, angle float64) point3 {
+	sin := math.Sin(angle) * radius
+	cos := math.Cos(angle) * radius
+	switch axis {
+	case "xy":
+		return point3{X: cos, Y: sin, Z: 0}
+	case "yz":
+		return point3{X: 0, Y: cos, Z: sin}
+	default:
+		return point3{X: cos, Y: 0, Z: sin}
+	}
+}
+
+func translatePoint(point point3, object sceneObject, timeSeconds float64) point3 {
+	rotated := rotatePoint(point,
+		object.RotationX+object.SpinX*timeSeconds,
+		object.RotationY+object.SpinY*timeSeconds,
+		object.RotationZ+object.SpinZ*timeSeconds,
+	)
+	return point3{
+		X: rotated.X + object.X,
+		Y: rotated.Y + object.Y,
+		Z: rotated.Z + object.Z,
+	}
+}
+
+func rotatePoint(point point3, rotationX, rotationY, rotationZ float64) point3 {
+	x := point.X
+	y := point.Y
+	z := point.Z
+
+	sinX, cosX := math.Sin(rotationX), math.Cos(rotationX)
+	nextY := y*cosX - z*sinX
+	nextZ := y*sinX + z*cosX
+	y, z = nextY, nextZ
+
+	sinY, cosY := math.Sin(rotationY), math.Cos(rotationY)
+	nextX := x*cosY + z*sinY
+	nextZ = -x*sinY + z*cosY
+	x, z = nextX, nextZ
+
+	sinZ, cosZ := math.Sin(rotationZ), math.Cos(rotationZ)
+	nextX = x*cosZ - y*sinZ
+	nextY = x*sinZ + y*cosZ
+
+	return point3{X: nextX, Y: nextY, Z: z}
+}
+
+func projectPoint(point point3, camera sceneCamera, width, height int) *rootengine.RenderPoint {
+	depth := point.Z + camera.Z
+	if depth <= 0.15 {
+		return nil
+	}
+	focal := (math.Min(float64(width), float64(height)) / 2) / math.Tan((camera.FOV*math.Pi)/360)
+	return &rootengine.RenderPoint{
+		X: float64(width)/2 + ((point.X-camera.X)*focal)/depth,
+		Y: float64(height)/2 - ((point.Y-camera.Y)*focal)/depth,
+	}
+}
+
+func normalizeSceneKind(value string) string {
+	switch strings.TrimSpace(strings.ToLower(value)) {
+	case "box", "plane", "pyramid", "sphere":
+		return strings.TrimSpace(strings.ToLower(value))
+	default:
+		return "cube"
+	}
+}
+
+func sceneSegmentResolution(value any) int {
+	segments := int(math.Round(numberFromAny(value, 12)))
+	if segments < 6 {
+		return 6
+	}
+	if segments > 24 {
+		return 24
+	}
+	return segments
+}
+
+func sceneColorRGBA(value string, fallback [4]float64) [4]float64 {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return fallback
+	}
+	if strings.HasPrefix(trimmed, "#") {
+		hex := strings.TrimPrefix(trimmed, "#")
+		if len(hex) == 3 {
+			return [4]float64{
+				float64(parseHexByte(string([]byte{hex[0], hex[0]}))) / 255,
+				float64(parseHexByte(string([]byte{hex[1], hex[1]}))) / 255,
+				float64(parseHexByte(string([]byte{hex[2], hex[2]}))) / 255,
+				1,
+			}
+		}
+		if len(hex) == 6 {
+			return [4]float64{
+				float64(parseHexByte(hex[0:2])) / 255,
+				float64(parseHexByte(hex[2:4])) / 255,
+				float64(parseHexByte(hex[4:6])) / 255,
+				1,
+			}
+		}
+	}
+	if strings.HasPrefix(strings.ToLower(trimmed), "rgb(") || strings.HasPrefix(strings.ToLower(trimmed), "rgba(") {
+		start := strings.Index(trimmed, "(")
+		end := strings.LastIndex(trimmed, ")")
+		if start >= 0 && end > start {
+			parts := strings.Split(trimmed[start+1:end], ",")
+			if len(parts) >= 3 {
+				rgba := fallback
+				rgba[0] = clamp(numberFromAny(strings.TrimSpace(parts[0]), fallback[0]*255), 0, 255) / 255
+				rgba[1] = clamp(numberFromAny(strings.TrimSpace(parts[1]), fallback[1]*255), 0, 255) / 255
+				rgba[2] = clamp(numberFromAny(strings.TrimSpace(parts[2]), fallback[2]*255), 0, 255) / 255
+				if len(parts) > 3 {
+					rgba[3] = clamp(numberFromAny(strings.TrimSpace(parts[3]), fallback[3]), 0, 1)
+				}
+				return rgba
+			}
+		}
+	}
+	return fallback
+}
+
+func rawValue(values map[string]any, key string) any {
+	if values == nil {
+		return nil
+	}
+	return values[key]
+}
+
+func propValue(values map[string]any, key string) any {
+	return rawValue(values, key)
+}
+
+func numberFromAny(value any, fallback float64) float64 {
+	switch typed := value.(type) {
+	case float64:
+		return typed
+	case float32:
+		return float64(typed)
+	case int:
+		return float64(typed)
+	case int64:
+		return float64(typed)
+	case int32:
+		return float64(typed)
+	case json.Number:
+		if parsed, err := typed.Float64(); err == nil {
+			return parsed
+		}
+	case string:
+		if strings.TrimSpace(typed) == "" {
+			return fallback
+		}
+		if parsed, err := json.Number(strings.TrimSpace(typed)).Float64(); err == nil {
+			return parsed
+		}
+	}
+	return fallback
+}
+
+func stringFromAny(value any, fallback string) string {
+	if typed, ok := value.(string); ok && strings.TrimSpace(typed) != "" {
+		return typed
+	}
+	return fallback
+}
+
+func clamp(value, min, max float64) float64 {
+	if value < min {
+		return min
+	}
+	if value > max {
+		return max
+	}
+	return value
+}
+
+func parseHexByte(value string) uint64 {
+	var parsed uint64
+	for _, ch := range value {
+		parsed <<= 4
+		switch {
+		case ch >= '0' && ch <= '9':
+			parsed += uint64(ch - '0')
+		case ch >= 'a' && ch <= 'f':
+			parsed += uint64(ch-'a') + 10
+		case ch >= 'A' && ch <= 'F':
+			parsed += uint64(ch-'A') + 10
+		}
+	}
+	return parsed
 }
 
 func (rt *Runtime) markSignalDirty(name string) {
