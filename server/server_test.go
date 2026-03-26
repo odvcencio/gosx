@@ -66,6 +66,55 @@ func TestHTMLDocument(t *testing.T) {
 	}
 }
 
+func TestResolveListenAddrUsesPortEnv(t *testing.T) {
+	prev := os.Getenv("PORT")
+	t.Cleanup(func() {
+		if prev == "" {
+			_ = os.Unsetenv("PORT")
+			return
+		}
+		_ = os.Setenv("PORT", prev)
+	})
+
+	if err := os.Setenv("PORT", "38177"); err != nil {
+		t.Fatal(err)
+	}
+
+	cases := map[string]string{
+		":3000":          ":38177",
+		"127.0.0.1:3000": "127.0.0.1:38177",
+		"localhost:3000": "localhost:38177",
+		"0.0.0.0:3000":   "0.0.0.0:38177",
+		"":               ":38177",
+		"localhost":      "localhost:38177",
+	}
+
+	for input, want := range cases {
+		if got := resolveListenAddr(input); got != want {
+			t.Fatalf("resolveListenAddr(%q) = %q, want %q", input, got, want)
+		}
+	}
+}
+
+func TestResolveListenAddrPrefersExplicitPortAddrEnv(t *testing.T) {
+	prev := os.Getenv("PORT")
+	t.Cleanup(func() {
+		if prev == "" {
+			_ = os.Unsetenv("PORT")
+			return
+		}
+		_ = os.Setenv("PORT", prev)
+	})
+
+	if err := os.Setenv("PORT", "127.0.0.1:38177"); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := resolveListenAddr(":3000"); got != "127.0.0.1:38177" {
+		t.Fatalf("resolveListenAddr(:3000) = %q, want %q", got, "127.0.0.1:38177")
+	}
+}
+
 func TestAppMultipleRoutes(t *testing.T) {
 	app := New()
 	app.Route("/foo", func(r *http.Request) gosx.Node {

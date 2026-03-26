@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -395,7 +396,7 @@ func (a *App) Build() http.Handler {
 func (a *App) ListenAndServe(addr string) error {
 	handler := a.Build()
 	srv := &http.Server{
-		Addr:              addr,
+		Addr:              resolveListenAddr(addr),
 		Handler:           handler,
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       30 * time.Second,
@@ -403,6 +404,34 @@ func (a *App) ListenAndServe(addr string) error {
 		IdleTimeout:       120 * time.Second,
 	}
 	return srv.ListenAndServe()
+}
+
+func resolveListenAddr(addr string) string {
+	port := strings.TrimSpace(os.Getenv("PORT"))
+	if port == "" {
+		return addr
+	}
+
+	if host, parsedPort, err := net.SplitHostPort(port); err == nil && parsedPort != "" {
+		return net.JoinHostPort(host, parsedPort)
+	}
+	if strings.HasPrefix(port, ":") {
+		port = strings.TrimPrefix(port, ":")
+	}
+	if port == "" {
+		return addr
+	}
+
+	if host, _, err := net.SplitHostPort(addr); err == nil {
+		return net.JoinHostPort(host, port)
+	}
+	if strings.TrimSpace(addr) == "" {
+		return ":" + port
+	}
+	if !strings.Contains(addr, ":") {
+		return net.JoinHostPort(addr, port)
+	}
+	return ":" + port
 }
 
 // HTMLDocument wraps content in a full HTML5 document.
