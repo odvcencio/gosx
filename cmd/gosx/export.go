@@ -145,6 +145,9 @@ func staticExportPages(appDir string) ([]string, error) {
 		if len(page.Params) > 0 {
 			continue
 		}
+		if !page.Config.PrerenderEnabled(true) {
+			continue
+		}
 		paths = append(paths, page.RoutePath)
 	}
 	sort.Strings(paths)

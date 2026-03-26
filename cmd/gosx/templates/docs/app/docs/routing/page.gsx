@@ -20,11 +20,28 @@ func Page() Node {
 		</p>
 		<pre class="code-block">{`router := route.NewRouter()
 router.AddDir("./app", route.FileRoutesOptions{})`}</pre>
+		<pre class="code-block">{`{
+  "cache": {
+    "public": true,
+    "maxAge": "45s",
+    "staleWhileRevalidate": "5m"
+  },
+  "cacheTags": ["docs-pages"]
+}`}</pre>
 		<pre class="code-block">{`func init() {
   route.MustRegisterFileModuleHere(route.FileModuleOptions{
     Load:     ...,
     Metadata: ...,
     Actions:  ...,
+  })
+}`}</pre>
+		<pre class="code-block">{`func init() {
+  route.MustRegisterDirModuleHere(route.DirModuleOptions{
+    Middleware: []route.Middleware{...},
+    Configure: func(ctx *route.RouteContext, page route.FilePage) error {
+      ctx.Header().Set("X-Docs-Section", "true")
+      return nil
+    },
   })
 }`}</pre>
 		<section class="note-grid">
@@ -58,6 +75,22 @@ router.AddDir("./app", route.FileRoutesOptions{})`}</pre>
 					A sibling
 					<span class="inline-code">page.server.go</span>
 					file can attach loader, metadata, and action behavior without hard-coding the source path string.
+				</p>
+			</div>
+			<div class="note">
+				<strong>Directory config</strong>
+				<p>
+					A
+					<span class="inline-code">route.config.json</span>
+					file can set inherited cache, headers, and prerender defaults for an entire subtree.
+				</p>
+			</div>
+			<div class="note">
+				<strong>Scoped middleware</strong>
+				<p>
+					A nearby Go file can register
+					<span class="inline-code">route.DirModuleOptions</span>
+					when a subtree needs middleware or request setup that JSON cannot express.
 				</p>
 			</div>
 		</section>

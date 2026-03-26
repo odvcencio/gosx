@@ -15,3 +15,15 @@ func helperMustRegisterFileModuleViaWrapper() {
 func helperRegisterModuleWrapper() {
 	MustRegisterFileModuleCaller(1, FileModuleOptions{})
 }
+
+func helperDirModuleHereSource() string {
+	return DirModuleHere(DirModuleOptions{}).Source
+}
+
+func helperMustRegisterDirModuleViaWrapper() {
+	helperRegisterDirModuleWrapper()
+}
+
+func helperRegisterDirModuleWrapper() {
+	MustRegisterDirModuleCaller(1, DirModuleOptions{})
+}

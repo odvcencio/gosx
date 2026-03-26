@@ -63,6 +63,37 @@ func TestRunExportWritesStaticBundleForStarterApp(t *testing.T) {
 	}
 }
 
+func TestStaticExportPagesSkipsPrerenderDisabledScopes(t *testing.T) {
+	root := t.TempDir()
+	appDir := filepath.Join(root, "app")
+	if err := os.MkdirAll(filepath.Join(appDir, "admin"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(appDir, "page.gsx"), []byte(`package main
+
+func Page() Node { return <main>Home</main> }
+`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(appDir, "admin", "page.gsx"), []byte(`package main
+
+func Page() Node { return <main>Admin</main> }
+`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(appDir, "admin", "route.config.json"), []byte(`{"prerender": false}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	pages, err := staticExportPages(appDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pages) != 1 || pages[0] != "/" {
+		t.Fatalf("unexpected export pages: %#v", pages)
+	}
+}
+
 func addLocalGoSXReplace(t *testing.T, dir string) {
 	t.Helper()
 	goModPath := filepath.Join(dir, "go.mod")

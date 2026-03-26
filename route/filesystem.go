@@ -23,6 +23,7 @@ type FilePage struct {
 	Pattern   string
 	Params    []string
 	Layouts   []string
+	Config    FileRouteConfig
 	ErrorPage *FilePage
 }
 
@@ -47,6 +48,7 @@ type FileRouteScope struct {
 type FileRoutesOptions struct {
 	Render       FileRenderFunc
 	Modules      *FileModuleRegistry
+	DirModules   *DirModuleRegistry
 	Middleware   []Middleware
 	Layout       LayoutFunc
 	ErrorHandler ErrorHandler
@@ -58,10 +60,12 @@ type FileRenderFunc func(ctx *RouteContext, page FilePage) (gosx.Node, error)
 var defaultFileExtensions = []string{".gsx", ".html"}
 
 type fileRouteDir struct {
-	Rel      string
-	Layout   string
-	NotFound *FilePage
-	Error    *FilePage
+	Rel       string
+	Layout    string
+	Config    FileRouteConfig
+	HasConfig bool
+	NotFound  *FilePage
+	Error     *FilePage
 }
 
 // ScanDir discovers file-based routes from a directory tree.
@@ -88,6 +92,20 @@ func ScanDir(root string) (FileRoutes, error) {
 				return fmt.Errorf("relative path %s: %w", path, err)
 			}
 			ensureFileRouteDir(dirs, normalizeFileRouteDir(rel))
+			return nil
+		}
+		if info.Name() == "route.config.json" {
+			rel, err := filepath.Rel(root, path)
+			if err != nil {
+				return fmt.Errorf("relative path %s: %w", path, err)
+			}
+			dirEntry := ensureFileRouteDir(dirs, normalizeFileRouteDir(filepath.Dir(filepath.ToSlash(rel))))
+			config, err := readFileRouteConfig(path)
+			if err != nil {
+				return err
+			}
+			dirEntry.Config = config
+			dirEntry.HasConfig = true
 			return nil
 		}
 		kind, ok := routeFileKind(info.Name())
@@ -131,6 +149,7 @@ func ScanDir(root string) (FileRoutes, error) {
 	}
 	for _, page := range pages {
 		page.Layouts = collectFileLayouts(page.Dir, dirs)
+		page.Config = collectFileRouteConfig(page.Dir, dirs)
 		page.ErrorPage = nearestFileErrorPage(page.Dir, dirs)
 		result.Pages = append(result.Pages, page)
 	}
@@ -139,11 +158,13 @@ func ScanDir(root string) (FileRoutes, error) {
 		if rootDir.NotFound != nil {
 			page := cloneFilePageValue(*rootDir.NotFound)
 			page.Layouts = collectFileLayouts(page.Dir, dirs)
+			page.Config = collectFileRouteConfig(page.Dir, dirs)
 			result.NotFound = &page
 		}
 		if rootDir.Error != nil {
 			page := cloneFilePageValue(*rootDir.Error)
 			page.Layouts = collectFileLayouts(page.Dir, dirs)
+			page.Config = collectFileRouteConfig(page.Dir, dirs)
 			result.Error = &page
 		}
 	}
@@ -155,6 +176,7 @@ func ScanDir(root string) (FileRoutes, error) {
 		}
 		page := cloneFilePageValue(*dir.NotFound)
 		page.Layouts = collectFileLayouts(page.Dir, dirs)
+		page.Config = collectFileRouteConfig(page.Dir, dirs)
 		scope := FileRouteScope{
 			Dir:       dir.Rel,
 			RoutePath: page.RoutePath,
@@ -201,16 +223,25 @@ func (r *Router) AddDir(root string, opts FileRoutesOptions) error {
 	if moduleRegistry == nil {
 		moduleRegistry = DefaultFileModuleRegistry()
 	}
+	dirModuleRegistry := opts.DirModules
+	if dirModuleRegistry == nil {
+		dirModuleRegistry = DefaultDirModuleRegistry()
+	}
 	layoutCache := make(map[string]LayoutFunc)
 
 	if bundle.NotFound != nil {
 		page := *bundle.NotFound
 		module, _ := resolveFileModule(moduleRegistry, root, page)
+		dirModules := resolveDirModules(dirModuleRegistry, root, page.Dir)
 		layout, err := loadFileLayoutChain(layoutCache, page.Layouts, opts.Layout)
 		if err != nil {
 			return err
 		}
 		r.SetNotFound(func(ctx *RouteContext) gosx.Node {
+			if err := prepareFileRouteContext(ctx, page, module, dirModules); err != nil {
+				ctx.SetStatus(500)
+				return defaultFileRouteError(err)
+			}
 			node, err := renderFilePage(ctx, page, module, renderFn)
 			if err != nil {
 				ctx.SetStatus(500)
@@ -224,6 +255,7 @@ func (r *Router) AddDir(root string, opts FileRoutesOptions) error {
 	for _, scope := range bundle.NotFoundScopes {
 		scope := scope
 		module, _ := resolveFileModule(moduleRegistry, root, scope.Page)
+		dirModules := resolveDirModules(dirModuleRegistry, root, scope.Page.Dir)
 		layout, err := loadFileLayoutChain(layoutCache, scope.Page.Layouts, opts.Layout)
 		if err != nil {
 			return err
@@ -232,6 +264,10 @@ func (r *Router) AddDir(root string, opts FileRoutesOptions) error {
 			pattern: scope.Pattern,
 			layout:  layout,
 			handler: func(ctx *RouteContext) gosx.Node {
+				if err := prepareFileRouteContext(ctx, scope.Page, module, dirModules); err != nil {
+					ctx.SetStatus(500)
+					return defaultFileRouteError(err)
+				}
 				node, err := renderFilePage(ctx, scope.Page, module, renderFn)
 				if err != nil {
 					ctx.SetStatus(500)
@@ -253,11 +289,16 @@ func (r *Router) AddDir(root string, opts FileRoutesOptions) error {
 	if bundle.Error != nil {
 		page := *bundle.Error
 		module, _ := resolveFileModule(moduleRegistry, root, page)
+		dirModules := resolveDirModules(dirModuleRegistry, root, page.Dir)
 		layout, err := loadFileLayoutChain(layoutCache, page.Layouts, opts.Layout)
 		if err != nil {
 			return err
 		}
 		r.SetError(func(ctx *RouteContext, routeErr error) gosx.Node {
+			if err := prepareFileRouteContext(ctx, page, module, dirModules); err != nil {
+				ctx.SetStatus(500)
+				return defaultFileRouteError(err)
+			}
 			node, err := renderFilePage(ctx, page, module, renderFn)
 			if err != nil {
 				return defaultFileRouteError(err)
@@ -271,6 +312,9 @@ func (r *Router) AddDir(root string, opts FileRoutesOptions) error {
 	for _, page := range bundle.Pages {
 		page := page
 		module, _ := resolveFileModule(moduleRegistry, root, page)
+		dirModules := resolveDirModules(dirModuleRegistry, root, page.Dir)
+		routeMiddleware := append([]Middleware(nil), opts.Middleware...)
+		routeMiddleware = append(routeMiddleware, collectDirMiddleware(dirModules)...)
 		layout, err := loadFileLayoutChain(layoutCache, page.Layouts, opts.Layout)
 		if err != nil {
 			return err
@@ -280,7 +324,12 @@ func (r *Router) AddDir(root string, opts FileRoutesOptions) error {
 		if page.ErrorPage != nil {
 			errorPage := cloneFilePageValue(*page.ErrorPage)
 			errorModule, _ := resolveFileModule(moduleRegistry, root, errorPage)
+			errorDirModules := resolveDirModules(dirModuleRegistry, root, errorPage.Dir)
 			errorHandler = func(ctx *RouteContext, routeErr error) gosx.Node {
+				if err := prepareFileRouteContext(ctx, errorPage, errorModule, errorDirModules); err != nil {
+					ctx.SetStatus(500)
+					return defaultFileRouteError(err)
+				}
 				node, err := renderFilePage(ctx, errorPage, errorModule, renderFn)
 				if err != nil {
 					return defaultFileRouteError(err)
@@ -289,14 +338,14 @@ func (r *Router) AddDir(root string, opts FileRoutesOptions) error {
 			}
 		}
 		if len(module.Actions) > 0 {
-			r.Handle(filePageActionPattern(page.Pattern), buildFileActionHandler(page, module.Actions), opts.Middleware...)
+			r.Handle(filePageActionPattern(page.Pattern), buildFileActionHandler(page, module.Actions), routeMiddleware...)
 		}
 		routes = append(routes, Route{
 			Pattern:      page.Pattern,
 			Layout:       routeLayout,
-			Middleware:   append([]Middleware(nil), opts.Middleware...),
+			Middleware:   routeMiddleware,
 			ErrorHandler: errorHandler,
-			DataLoader:   filePageDataLoader(page, module),
+			DataLoader:   filePageDataLoader(page, module, dirModules),
 			Handler: func(ctx *RouteContext) gosx.Node {
 				node, err := renderFilePage(ctx, page, module, renderFn)
 				if err != nil {
@@ -318,6 +367,23 @@ func DefaultFileRenderer(ctx *RouteContext, page FilePage) (gosx.Node, error) {
 	})
 }
 
+func prepareFileRouteContext(ctx *RouteContext, page FilePage, module FileModule, dirModules []DirModule) error {
+	if err := applyFileRouteConfig(ctx, page.Config); err != nil {
+		return err
+	}
+	if err := applyDirModules(ctx, page, dirModules); err != nil {
+		return err
+	}
+	if module.Load != nil {
+		data, err := module.Load(ctx, page)
+		if err != nil {
+			return err
+		}
+		ctx.Data = data
+	}
+	return nil
+}
+
 func renderFilePage(ctx *RouteContext, page FilePage, module FileModule, renderFn FileRenderFunc) (gosx.Node, error) {
 	addFileCSSHead(ctx, page.Layouts...)
 	addFileCSSHead(ctx, page.FilePath)
@@ -336,12 +402,12 @@ func renderFilePage(ctx *RouteContext, page FilePage, module FileModule, renderF
 	return renderFn(ctx, page)
 }
 
-func filePageDataLoader(page FilePage, module FileModule) DataLoader {
-	if module.Load == nil {
-		return nil
-	}
+func filePageDataLoader(page FilePage, module FileModule, dirModules []DirModule) DataLoader {
 	return func(ctx *RouteContext) (any, error) {
-		return module.Load(ctx, page)
+		if err := prepareFileRouteContext(ctx, page, module, dirModules); err != nil {
+			return nil, err
+		}
+		return ctx.Data, nil
 	}
 }
 
@@ -549,6 +615,7 @@ func nearestFileErrorPage(dir string, dirs map[string]*fileRouteDir) *FilePage {
 		}
 		page := cloneFilePageValue(*entry.Error)
 		page.Layouts = collectFileLayouts(page.Dir, dirs)
+		page.Config = collectFileRouteConfig(page.Dir, dirs)
 		return &page
 	}
 	return nil
@@ -602,6 +669,7 @@ func cloneFilePage(page FilePage) *FilePage {
 func cloneFilePageValue(page FilePage) FilePage {
 	page.Params = append([]string(nil), page.Params...)
 	page.Layouts = append([]string(nil), page.Layouts...)
+	page.Config = cloneFileRouteConfig(page.Config)
 	if page.ErrorPage != nil {
 		clone := cloneFilePageValue(*page.ErrorPage)
 		page.ErrorPage = &clone
