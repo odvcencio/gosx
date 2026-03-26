@@ -76,6 +76,43 @@ func TestRouterDataLoader(t *testing.T) {
 	}
 }
 
+func TestRouterDataLoaderNotFoundUsesNotFoundPage(t *testing.T) {
+	router := NewRouter()
+	router.SetLayout(func(ctx *RouteContext, body gosx.Node) gosx.Node {
+		return body
+	})
+	router.SetNotFound(func(ctx *RouteContext) gosx.Node {
+		return gosx.Text("missing-page")
+	})
+
+	called := false
+	router.Add(Route{
+		Pattern: "/posts/{slug}",
+		DataLoader: func(ctx *RouteContext) (any, error) {
+			return nil, NotFound("post missing")
+		},
+		Handler: func(ctx *RouteContext) gosx.Node {
+			called = true
+			return gosx.Text("post")
+		},
+	})
+
+	handler := router.Build()
+	req := httptest.NewRequest("GET", "/posts/ghost", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if called {
+		t.Fatal("handler should not be called after not-found loader result")
+	}
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "missing-page") {
+		t.Fatalf("expected not-found page, got %q", w.Body.String())
+	}
+}
+
 func TestRouteContextParam(t *testing.T) {
 	ctx := &RouteContext{
 		Params: map[string]string{"id": "42"},
