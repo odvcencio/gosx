@@ -1,5 +1,10 @@
 /dashboard
 build/
-/docs/
+/docs/*
+!/docs/superpowers/
+/docs/superpowers/*
+!/docs/superpowers/specs/
+/docs/superpowers/specs/*
+!/docs/superpowers/specs/*.md
 /gosx
 node_modules/
