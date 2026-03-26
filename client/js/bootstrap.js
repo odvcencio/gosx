@@ -1009,17 +1009,21 @@
     const arrayBuffer = typeof gl.ARRAY_BUFFER === "number" ? gl.ARRAY_BUFFER : 0x8892;
     const dynamicDraw = typeof gl.DYNAMIC_DRAW === "number" ? gl.DYNAMIC_DRAW : 0x88E8;
     const colorBufferBit = typeof gl.COLOR_BUFFER_BIT === "number" ? gl.COLOR_BUFFER_BIT : 0x4000;
+    const depthBufferBit = typeof gl.DEPTH_BUFFER_BIT === "number" ? gl.DEPTH_BUFFER_BIT : 0x0100;
     const linesMode = typeof gl.LINES === "number" ? gl.LINES : 0x0001;
     let staticOpaqueKey = "";
     let staticOpaqueVertexCount = 0;
     return {
       kind: "webgl",
       render(bundle) {
+        const usePerspective = Boolean(bundle && bundle.worldVertexCount > 0 && bundle.worldPositions && bundle.worldColors);
         const background = sceneColorRGBA(bundle.background, [0.03, 0.08, 0.12, 1]);
         gl.viewport(0, 0, canvas.width, canvas.height);
         gl.clearColor(background[0], background[1], background[2], background[3]);
-        gl.clear(colorBufferBit);
-        const usePerspective = Boolean(bundle && bundle.worldVertexCount > 0 && bundle.worldPositions && bundle.worldColors);
+        if (usePerspective && typeof gl.clearDepth === "function") {
+          gl.clearDepth(1);
+        }
+        gl.clear(usePerspective ? colorBufferBit | depthBufferBit : colorBufferBit);
         const positions = usePerspective ? bundle.worldPositions : bundle.positions;
         const colors = usePerspective ? bundle.worldColors : bundle.colors;
         const vertexCount = usePerspective ? bundle.worldVertexCount : bundle.vertexCount;
@@ -1052,26 +1056,31 @@
               staticOpaqueKey = drawPlan.staticOpaqueKey;
               staticOpaqueVertexCount = drawPlan.staticOpaqueVertexCount;
             }
+            applySceneWebGLDepth(gl, "opaque");
             applySceneWebGLBlend(gl, "opaque");
             drawSceneWebGLLines(gl, arrayBuffer, floatType, linesMode, positionLocation, colorLocation, materialLocation, staticOpaquePositionBuffer, staticOpaqueColorBuffer, staticOpaqueMaterialBuffer, staticOpaqueVertexCount, 3);
             uploadSceneWebGLBuffers(gl, arrayBuffer, dynamicDraw, dynamicOpaquePositionBuffer, dynamicOpaqueColorBuffer, dynamicOpaqueMaterialBuffer, drawPlan.dynamicOpaquePositions, drawPlan.dynamicOpaqueColors, drawPlan.dynamicOpaqueMaterials);
             drawSceneWebGLLines(gl, arrayBuffer, floatType, linesMode, positionLocation, colorLocation, materialLocation, dynamicOpaquePositionBuffer, dynamicOpaqueColorBuffer, dynamicOpaqueMaterialBuffer, drawPlan.dynamicOpaqueVertexCount, 3);
 
             if (drawPlan.hasAlphaPass) {
+              applySceneWebGLDepth(gl, "translucent");
               applySceneWebGLBlend(gl, "alpha");
               uploadSceneWebGLBuffers(gl, arrayBuffer, dynamicDraw, alphaPositionBuffer, alphaColorBuffer, alphaMaterialBuffer, drawPlan.alphaPositions, drawPlan.alphaColors, drawPlan.alphaMaterials);
               drawSceneWebGLLines(gl, arrayBuffer, floatType, linesMode, positionLocation, colorLocation, materialLocation, alphaPositionBuffer, alphaColorBuffer, alphaMaterialBuffer, drawPlan.alphaVertexCount, 3);
             }
             if (drawPlan.hasAdditivePass) {
+              applySceneWebGLDepth(gl, "translucent");
               applySceneWebGLBlend(gl, "additive");
               uploadSceneWebGLBuffers(gl, arrayBuffer, dynamicDraw, additivePositionBuffer, additiveColorBuffer, additiveMaterialBuffer, drawPlan.additivePositions, drawPlan.additiveColors, drawPlan.additiveMaterials);
               drawSceneWebGLLines(gl, arrayBuffer, floatType, linesMode, positionLocation, colorLocation, materialLocation, additivePositionBuffer, additiveColorBuffer, additiveMaterialBuffer, drawPlan.additiveVertexCount, 3);
             }
             applySceneWebGLBlend(gl, "opaque");
+            applySceneWebGLDepth(gl, "opaque");
             return;
           }
         }
 
+        applySceneWebGLDepth(gl, "disabled");
         applySceneWebGLBlend(gl, "opaque");
         uploadSceneWebGLBuffers(gl, arrayBuffer, dynamicDraw, positionBuffer, colorBuffer, materialBuffer, positions, colors, sceneFallbackMaterialData(vertexCount));
         drawSceneWebGLLines(gl, arrayBuffer, floatType, linesMode, positionLocation, colorLocation, materialLocation, positionBuffer, colorBuffer, materialBuffer, vertexCount, usePerspective ? 3 : 2);
@@ -1155,6 +1164,26 @@
       if (typeof gl.disable === "function") {
         gl.disable(blendConst);
       }
+    }
+  }
+
+  function applySceneWebGLDepth(gl, mode) {
+    const depthTest = typeof gl.DEPTH_TEST === "number" ? gl.DEPTH_TEST : 0x0B71;
+    const lequal = typeof gl.LEQUAL === "number" ? gl.LEQUAL : 0x0203;
+    if (mode === "disabled") {
+      if (typeof gl.disable === "function") {
+        gl.disable(depthTest);
+      }
+      return;
+    }
+    if (typeof gl.enable === "function") {
+      gl.enable(depthTest);
+    }
+    if (typeof gl.depthFunc === "function") {
+      gl.depthFunc(lequal);
+    }
+    if (typeof gl.depthMask === "function") {
+      gl.depthMask(mode === "opaque");
     }
   }
 
@@ -1436,7 +1465,8 @@
       "      float focal = 1.0 / tan(radians(u_camera.w) * 0.5);",
       "      vec2 projected = vec2((a_position.x - u_camera.x) * focal / depth, (a_position.y - u_camera.y) * focal / depth);",
       "      projected.x /= max(u_aspect, 0.0001);",
-      "      clip = vec4(projected, 0.0, 1.0);",
+      "      float clipDepth = clamp(depth / 128.0, 0.0, 1.0) * 2.0 - 1.0;",
+      "      clip = vec4(projected, clipDepth, 1.0);",
       "    }",
       "  }",
       "  gl_Position = clip;",
