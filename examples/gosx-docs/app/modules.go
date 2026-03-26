@@ -7,6 +7,10 @@ import (
 )
 
 var docsAuth *auth.Manager
+var docsMagicLinks *auth.MagicLinks
+var docsWebAuthn *auth.WebAuthn
+var docsOAuth *auth.OAuth
+var docsOAuthProviders []map[string]string
 
 func BindAuth(manager *auth.Manager) {
 	docsAuth = manager
@@ -14,6 +18,35 @@ func BindAuth(manager *auth.Manager) {
 
 func AuthManager() *auth.Manager {
 	return docsAuth
+}
+
+func BindMagicLinks(manager *auth.MagicLinks) {
+	docsMagicLinks = manager
+}
+
+func MagicLinks() *auth.MagicLinks {
+	return docsMagicLinks
+}
+
+func BindWebAuthn(manager *auth.WebAuthn) {
+	docsWebAuthn = manager
+}
+
+func WebAuthnManager() *auth.WebAuthn {
+	return docsWebAuthn
+}
+
+func BindOAuth(manager *auth.OAuth, providers []map[string]string) {
+	docsOAuth = manager
+	docsOAuthProviders = append([]map[string]string(nil), providers...)
+}
+
+func OAuthManager() *auth.OAuth {
+	return docsOAuth
+}
+
+func OAuthProviders() []map[string]string {
+	return append([]map[string]string(nil), docsOAuthProviders...)
 }
 
 func RegisterDocsPage(title, description string, opts route.FileModuleOptions) {

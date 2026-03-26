@@ -22,9 +22,12 @@ type resolvedNode struct {
 
 // Runtime is a live engine-program instance backed by the shared expression VM.
 type Runtime struct {
-	program *rootengine.Program
-	vm      *vm.VM
-	prev    []resolvedNode
+	program    *rootengine.Program
+	vm         *vm.VM
+	prev       []resolvedNode
+	dirty      []bool
+	signalDeps map[string][]int
+	unsubs     map[string]func()
 }
 
 // New constructs a live engine runtime with props decoded from JSON.
@@ -36,16 +39,33 @@ func New(prog *rootengine.Program, propsJSON string) *Runtime {
 		Exprs: prog.Exprs,
 	}
 	rt := &Runtime{
-		program: prog,
-		vm:      vm.NewVM(vmProg, parseProps(propsJSON)),
+		program:    prog,
+		vm:         vm.NewVM(vmProg, parseProps(propsJSON)),
+		dirty:      make([]bool, len(prog.Nodes)),
+		signalDeps: buildSignalDeps(prog),
+		unsubs:     make(map[string]func()),
 	}
+	markAllDirty(rt.dirty)
 	initSignals(rt.vm, prog)
 	return rt
 }
 
 // SetSharedSignal replaces a runtime-local signal with a shared signal store entry.
 func (rt *Runtime) SetSharedSignal(name string, sig *signal.Signal[vm.Value]) {
+	if rt == nil {
+		return
+	}
+	if unsub, ok := rt.unsubs[name]; ok {
+		unsub()
+		delete(rt.unsubs, name)
+	}
 	rt.vm.SetSignal(name, sig)
+	if sig != nil {
+		rt.unsubs[name] = sig.Subscribe(func() {
+			rt.markSignalDirty(name)
+		})
+	}
+	rt.markSignalDirty(name)
 }
 
 // EvalExpr evaluates an expression in the engine runtime's VM.
@@ -55,14 +75,34 @@ func (rt *Runtime) EvalExpr(id islandprogram.ExprID) vm.Value {
 
 // Reconcile evaluates the current scene and produces incremental commands.
 func (rt *Runtime) Reconcile() []rootengine.Command {
-	next := rt.resolve()
-	commands := reconcileScene(rt.prev, next)
-	rt.prev = next
+	if rt == nil || len(rt.program.Nodes) == 0 {
+		return nil
+	}
+	if len(rt.prev) == 0 {
+		rt.prev = rt.resolveAll()
+		clearDirty(rt.dirty)
+		return createCommands(rt.prev)
+	}
+
+	var commands []rootengine.Command
+	for i := range rt.program.Nodes {
+		if !rt.dirty[i] {
+			continue
+		}
+		next := rt.resolveNode(i)
+		commands = append(commands, diffNode(i, rt.prev[i], next)...)
+		rt.prev[i] = next
+		rt.dirty[i] = false
+	}
 	return commands
 }
 
 // Dispose releases the retained scene snapshot.
 func (rt *Runtime) Dispose() {
+	for name, unsub := range rt.unsubs {
+		unsub()
+		delete(rt.unsubs, name)
+	}
 	rt.prev = nil
 }
 
@@ -88,22 +128,33 @@ func initSignals(machine *vm.VM, prog *rootengine.Program) {
 	}
 }
 
-func (rt *Runtime) resolve() []resolvedNode {
-	if len(rt.program.Nodes) == 0 {
-		return nil
-	}
+func (rt *Runtime) resolveAll() []resolvedNode {
 	out := make([]resolvedNode, len(rt.program.Nodes))
-	for i, node := range rt.program.Nodes {
-		out[i] = resolvedNode{
-			Kind:     node.Kind,
-			Geometry: node.Geometry,
-			Material: node.Material,
-			Props:    resolveProps(rt.vm, node.Props),
-			Children: append([]int(nil), node.Children...),
-			Static:   node.Static,
-		}
+	for i := range rt.program.Nodes {
+		out[i] = rt.resolveNode(i)
 	}
 	return out
+}
+
+func (rt *Runtime) resolveNode(index int) resolvedNode {
+	node := rt.program.Nodes[index]
+	return resolvedNode{
+		Kind:     node.Kind,
+		Geometry: node.Geometry,
+		Material: node.Material,
+		Props:    resolveProps(rt.vm, node.Props),
+		Children: append([]int(nil), node.Children...),
+		Static:   node.Static,
+	}
+}
+
+func (rt *Runtime) markSignalDirty(name string) {
+	for _, index := range rt.signalDeps[name] {
+		if index < 0 || index >= len(rt.dirty) {
+			continue
+		}
+		rt.dirty[index] = true
+	}
 }
 
 func resolveProps(machine *vm.VM, props map[string]islandprogram.ExprID) map[string]any {
@@ -163,25 +214,11 @@ func valueToAny(value vm.Value) any {
 	}
 }
 
-func reconcileScene(prev, next []resolvedNode) []rootengine.Command {
-	commands := make([]rootengine.Command, 0, len(next)+len(prev))
-
-	maxLen := len(prev)
-	if len(next) > maxLen {
-		maxLen = len(next)
+func createCommands(nodes []resolvedNode) []rootengine.Command {
+	commands := make([]rootengine.Command, 0, len(nodes))
+	for i, node := range nodes {
+		commands = append(commands, createObjectCommand(i, node))
 	}
-
-	for i := 0; i < maxLen; i++ {
-		switch {
-		case i >= len(next):
-			commands = append(commands, rootengine.Command{Kind: rootengine.CommandRemoveObject, ObjectID: i})
-		case i >= len(prev):
-			commands = append(commands, createObjectCommand(i, next[i]))
-		default:
-			commands = append(commands, diffNode(i, prev[i], next[i])...)
-		}
-	}
-
 	return commands
 }
 
@@ -302,4 +339,77 @@ func isCategorizedKey(key string) bool {
 		return true
 	}
 	return false
+}
+
+func markAllDirty(flags []bool) {
+	for i := range flags {
+		flags[i] = true
+	}
+}
+
+func clearDirty(flags []bool) {
+	for i := range flags {
+		flags[i] = false
+	}
+}
+
+func buildSignalDeps(prog *rootengine.Program) map[string][]int {
+	if prog == nil || len(prog.Nodes) == 0 || len(prog.Exprs) == 0 {
+		return map[string][]int{}
+	}
+	deps := make(map[string][]int)
+	memo := make(map[islandprogram.ExprID]map[string]struct{}, len(prog.Exprs))
+	visiting := make(map[islandprogram.ExprID]bool, len(prog.Exprs))
+
+	for index, node := range prog.Nodes {
+		if node.Static {
+			continue
+		}
+		nodeSignals := make(map[string]struct{})
+		for _, exprID := range node.Props {
+			for name := range collectExprSignals(prog.Exprs, exprID, memo, visiting) {
+				nodeSignals[name] = struct{}{}
+			}
+		}
+		for name := range nodeSignals {
+			deps[name] = append(deps[name], index)
+		}
+	}
+
+	return deps
+}
+
+func collectExprSignals(
+	exprs []islandprogram.Expr,
+	id islandprogram.ExprID,
+	memo map[islandprogram.ExprID]map[string]struct{},
+	visiting map[islandprogram.ExprID]bool,
+) map[string]struct{} {
+	if deps, ok := memo[id]; ok {
+		return deps
+	}
+	if int(id) < 0 || int(id) >= len(exprs) {
+		return nil
+	}
+	if visiting[id] {
+		return nil
+	}
+	visiting[id] = true
+	defer delete(visiting, id)
+
+	expr := exprs[id]
+	deps := make(map[string]struct{})
+	switch expr.Op {
+	case islandprogram.OpSignalGet, islandprogram.OpSignalSet, islandprogram.OpSignalUpdate:
+		if expr.Value != "" {
+			deps[expr.Value] = struct{}{}
+		}
+	}
+	for _, operand := range expr.Operands {
+		for name := range collectExprSignals(exprs, operand, memo, visiting) {
+			deps[name] = struct{}{}
+		}
+	}
+	memo[id] = deps
+	return deps
 }

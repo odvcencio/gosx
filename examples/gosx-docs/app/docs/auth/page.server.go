@@ -3,9 +3,9 @@ package docs
 import (
 	"strings"
 
-	docsapp "github.com/odvcencio/gosx/examples/gosx-docs/app"
 	"github.com/odvcencio/gosx/action"
 	"github.com/odvcencio/gosx/auth"
+	docsapp "github.com/odvcencio/gosx/examples/gosx-docs/app"
 	"github.com/odvcencio/gosx/route"
 	"github.com/odvcencio/gosx/session"
 )
@@ -44,6 +44,22 @@ func init() {
 					session.AddFlash(ctx.Request, "notice", "Signed out.")
 					return ctx.Success("The session-backed auth state has been cleared.", nil)
 				},
+			},
+			Bindings: func(ctx *route.RouteContext, page route.FilePage, data any) route.FileTemplateBindings {
+				return route.FileTemplateBindings{
+					Values: map[string]any{
+						"authFlows": map[string]any{
+							"magicLinkEnabled":        docsapp.MagicLinks() != nil,
+							"magicLinkRequestPath":    "/auth/magic-link/request",
+							"webauthnEnabled":         docsapp.WebAuthnManager() != nil,
+							"webauthnRegisterOptions": "/auth/webauthn/register/options",
+							"webauthnRegisterPath":    "/auth/webauthn/register",
+							"webauthnLoginOptions":    "/auth/webauthn/login/options",
+							"webauthnLoginPath":       "/auth/webauthn/login",
+							"oauthProviders":          docsapp.OAuthProviders(),
+						},
+					},
+				}
 			},
 		},
 	)
