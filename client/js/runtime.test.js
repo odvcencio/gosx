@@ -1181,6 +1181,188 @@ test("bootstrap hydrates shared-runtime Scene3D programs", async () => {
   assert.deepEqual(env.engineDisposeCalls, [["gosx-engine-rt"]]);
 });
 
+test("bootstrap reuses static opaque Scene3D buffers across dynamic-only runtime updates", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-static-cache-root";
+  let renderIndex = 0;
+
+  const env = createContext({
+    elements: [mount],
+    enableWebGL: true,
+    disableCanvas2D: true,
+    fetchRoutes: {
+      "/runtime.wasm": { bytes: [0, 97, 115, 109] },
+      "/scene-static-cache-program.json": { text: '{"name":"StaticCache"}' },
+    },
+    manifest: {
+      runtime: { path: "/runtime.wasm" },
+      engines: [
+        {
+          id: "gosx-engine-static-cache",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-static-cache-root",
+          runtime: "shared",
+          props: { width: 640, height: 360, background: "#08151f" },
+          programRef: "/scene-static-cache-program.json",
+        },
+      ],
+    },
+    onHydrateEngine: () => "[]",
+    onRenderEngine: () => {
+      renderIndex += 1;
+      const shieldZ = renderIndex === 1 ? 1 : 1.5;
+      return JSON.stringify({
+        background: "#08151f",
+        camera: { x: 0, y: 0, z: 6, fov: 72, near: 0.05, far: 128 },
+        positions: [],
+        colors: [],
+        vertexCount: 0,
+        worldPositions: [
+          -2, 0, 0, 2, 0, 0,
+          -1, 0.5, shieldZ, 1, 0.5, shieldZ,
+        ],
+        worldColors: [
+          0.3, 0.4, 0.5, 1, 0.3, 0.4, 0.5, 1,
+          0.8, 0.95, 1, 1, 0.8, 0.95, 1, 1,
+        ],
+        worldVertexCount: 4,
+        materials: [
+          { kind: "flat", color: "#35556a", opacity: 1, wireframe: true, blendMode: "opaque", emissive: 0 },
+          { kind: "glass", color: "#c7f0ff", opacity: 0.45, wireframe: true, blendMode: "alpha", emissive: 0.05 },
+        ],
+        objects: [
+          {
+            id: "floor",
+            kind: "plane",
+            materialIndex: 0,
+            vertexOffset: 0,
+            vertexCount: 2,
+            static: true,
+            bounds: { minX: -2, minY: 0, minZ: 0, maxX: 2, maxY: 0, maxZ: 0 },
+            depthNear: 6,
+            depthFar: 6,
+            depthCenter: 6,
+            viewCulled: false,
+          },
+          {
+            id: "shield",
+            kind: "plane",
+            materialIndex: 1,
+            vertexOffset: 2,
+            vertexCount: 2,
+            static: false,
+            bounds: { minX: -1, minY: 0.5, minZ: shieldZ, maxX: 1, maxY: 0.5, maxZ: shieldZ },
+            depthNear: 6 + shieldZ,
+            depthFar: 6 + shieldZ,
+            depthCenter: 6 + shieldZ,
+            viewCulled: false,
+          },
+        ],
+        objectCount: 2,
+      });
+    },
+  });
+
+  let rafCount = 0;
+  env.context.requestAnimationFrame = (callback) => {
+    if (rafCount >= 1) return 0;
+    rafCount += 1;
+    return setTimeout(() => callback(rafCount * 16), 0);
+  };
+  env.context.cancelAnimationFrame = (handle) => clearTimeout(handle);
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const gl = mount.children[0].getContext("webgl");
+  assert.ok(env.engineRenderCalls.length >= 2);
+  assert.equal(gl.ops.filter((entry) => entry[0] === "bufferData" && entry[2] === 4).length, 1);
+});
+
+test("bootstrap invalidates static opaque Scene3D buffers when camera clip state changes", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-static-camera-root";
+  let renderIndex = 0;
+
+  const env = createContext({
+    elements: [mount],
+    enableWebGL: true,
+    disableCanvas2D: true,
+    fetchRoutes: {
+      "/runtime.wasm": { bytes: [0, 97, 115, 109] },
+      "/scene-static-camera-program.json": { text: '{"name":"StaticCamera"}' },
+    },
+    manifest: {
+      runtime: { path: "/runtime.wasm" },
+      engines: [
+        {
+          id: "gosx-engine-static-camera",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-static-camera-root",
+          runtime: "shared",
+          props: { width: 640, height: 360, background: "#08151f" },
+          programRef: "/scene-static-camera-program.json",
+        },
+      ],
+    },
+    onHydrateEngine: () => "[]",
+    onRenderEngine: () => {
+      renderIndex += 1;
+      const cameraZ = renderIndex === 1 ? 6 : 5.5;
+      return JSON.stringify({
+        background: "#08151f",
+        camera: { x: 0, y: 0, z: cameraZ, fov: 72, near: 0.05, far: 128 },
+        positions: [],
+        colors: [],
+        vertexCount: 0,
+        worldPositions: [
+          -2, 0, 0, 2, 0, 0,
+        ],
+        worldColors: [
+          0.3, 0.4, 0.5, 1, 0.3, 0.4, 0.5, 1,
+        ],
+        worldVertexCount: 2,
+        materials: [
+          { kind: "flat", color: "#35556a", opacity: 1, wireframe: true, blendMode: "opaque", emissive: 0 },
+        ],
+        objects: [
+          {
+            id: "floor",
+            kind: "plane",
+            materialIndex: 0,
+            vertexOffset: 0,
+            vertexCount: 2,
+            static: true,
+            bounds: { minX: -2, minY: 0, minZ: 0, maxX: 2, maxY: 0, maxZ: 0 },
+            depthNear: cameraZ,
+            depthFar: cameraZ,
+            depthCenter: cameraZ,
+            viewCulled: false,
+          },
+        ],
+        objectCount: 1,
+      });
+    },
+  });
+
+  let rafCount = 0;
+  env.context.requestAnimationFrame = (callback) => {
+    if (rafCount >= 1) return 0;
+    rafCount += 1;
+    return setTimeout(() => callback(rafCount * 16), 0);
+  };
+  env.context.cancelAnimationFrame = (handle) => clearTimeout(handle);
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const gl = mount.children[0].getContext("webgl");
+  assert.ok(env.engineRenderCalls.length >= 2);
+  assert.equal(gl.ops.filter((entry) => entry[0] === "bufferData" && entry[2] === 4).length, 2);
+});
+
 test("bootstrap depth-sorts alpha Scene3D objects before upload", async () => {
   const mount = new FakeElement("div", null);
   mount.id = "scene-alpha-root";
