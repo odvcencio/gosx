@@ -327,6 +327,15 @@ func TestRuntimeRenderBundleResolvesMaterialPresets(t *testing.T) {
 					"emissive":  7,
 				},
 			},
+			{
+				Kind:     "mesh",
+				Geometry: "pyramid",
+				Material: "glow",
+				Props: map[string]islandprogram.ExprID{
+					"size":  8,
+					"color": 9,
+				},
+			},
 		},
 		Exprs: []islandprogram.Expr{
 			{Op: islandprogram.OpLitFloat, Value: "6", Type: islandprogram.TypeFloat},
@@ -337,13 +346,15 @@ func TestRuntimeRenderBundleResolvesMaterialPresets(t *testing.T) {
 			{Op: islandprogram.OpLitFloat, Value: "0.6", Type: islandprogram.TypeFloat},
 			{Op: islandprogram.OpLitString, Value: "opaque", Type: islandprogram.TypeString},
 			{Op: islandprogram.OpLitFloat, Value: "0.35", Type: islandprogram.TypeFloat},
+			{Op: islandprogram.OpLitFloat, Value: "1.1", Type: islandprogram.TypeFloat},
+			{Op: islandprogram.OpLitString, Value: "#ff9cff", Type: islandprogram.TypeString},
 		},
 	}
 
 	rt := New(prog, "")
 	bundle := rt.RenderBundle(640, 360, 0)
-	if len(bundle.Materials) != 2 {
-		t.Fatalf("expected two materials, got %#v", bundle.Materials)
+	if len(bundle.Materials) != 3 {
+		t.Fatalf("expected three materials, got %#v", bundle.Materials)
 	}
 
 	ghost := bundle.Materials[0]
@@ -354,5 +365,10 @@ func TestRuntimeRenderBundleResolvesMaterialPresets(t *testing.T) {
 	flat := bundle.Materials[1]
 	if flat.Kind != "flat" || flat.BlendMode != "alpha" || flat.Opacity != 0.6 || flat.Emissive != 0.35 {
 		t.Fatalf("expected explicit flat material overrides, got %#v", flat)
+	}
+
+	glow := bundle.Materials[2]
+	if glow.Kind != "glow" || glow.BlendMode != "additive" || glow.Opacity <= 0.5 || glow.Emissive <= 0 {
+		t.Fatalf("expected glow preset material, got %#v", glow)
 	}
 }

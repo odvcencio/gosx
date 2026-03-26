@@ -990,10 +990,14 @@
     const staticOpaqueColorBuffer = gl.createBuffer();
     const staticAlphaPositionBuffer = gl.createBuffer();
     const staticAlphaColorBuffer = gl.createBuffer();
+    const staticAdditivePositionBuffer = gl.createBuffer();
+    const staticAdditiveColorBuffer = gl.createBuffer();
     const dynamicOpaquePositionBuffer = gl.createBuffer();
     const dynamicOpaqueColorBuffer = gl.createBuffer();
     const dynamicAlphaPositionBuffer = gl.createBuffer();
     const dynamicAlphaColorBuffer = gl.createBuffer();
+    const dynamicAdditivePositionBuffer = gl.createBuffer();
+    const dynamicAdditiveColorBuffer = gl.createBuffer();
     const positionLocation = gl.getAttribLocation(program, "a_position");
     const colorLocation = gl.getAttribLocation(program, "a_color");
     const cameraLocation = gl.getUniformLocation(program, "u_camera");
@@ -1008,6 +1012,8 @@
     let staticOpaqueVertexCount = 0;
     let staticAlphaKey = "";
     let staticAlphaVertexCount = 0;
+    let staticAdditiveKey = "";
+    let staticAdditiveVertexCount = 0;
 
     return {
       kind: "webgl",
@@ -1054,24 +1060,35 @@
               staticAlphaKey = drawPlan.staticAlphaKey;
               staticAlphaVertexCount = drawPlan.staticAlphaVertexCount;
             }
+            if (drawPlan.staticAdditiveKey !== staticAdditiveKey) {
+              uploadSceneWebGLBuffers(gl, arrayBuffer, dynamicDraw, staticAdditivePositionBuffer, staticAdditiveColorBuffer, drawPlan.staticAdditivePositions, drawPlan.staticAdditiveColors);
+              staticAdditiveKey = drawPlan.staticAdditiveKey;
+              staticAdditiveVertexCount = drawPlan.staticAdditiveVertexCount;
+            }
 
-            applySceneWebGLBlend(gl, false);
+            applySceneWebGLBlend(gl, "opaque");
             drawSceneWebGLLines(gl, arrayBuffer, floatType, linesMode, positionLocation, colorLocation, staticOpaquePositionBuffer, staticOpaqueColorBuffer, staticOpaqueVertexCount, 3);
             uploadSceneWebGLBuffers(gl, arrayBuffer, dynamicDraw, dynamicOpaquePositionBuffer, dynamicOpaqueColorBuffer, drawPlan.dynamicOpaquePositions, drawPlan.dynamicOpaqueColors);
             drawSceneWebGLLines(gl, arrayBuffer, floatType, linesMode, positionLocation, colorLocation, dynamicOpaquePositionBuffer, dynamicOpaqueColorBuffer, drawPlan.dynamicOpaqueVertexCount, 3);
 
             if (drawPlan.hasAlphaPass) {
-              applySceneWebGLBlend(gl, true);
+              applySceneWebGLBlend(gl, "alpha");
               drawSceneWebGLLines(gl, arrayBuffer, floatType, linesMode, positionLocation, colorLocation, staticAlphaPositionBuffer, staticAlphaColorBuffer, staticAlphaVertexCount, 3);
               uploadSceneWebGLBuffers(gl, arrayBuffer, dynamicDraw, dynamicAlphaPositionBuffer, dynamicAlphaColorBuffer, drawPlan.dynamicAlphaPositions, drawPlan.dynamicAlphaColors);
               drawSceneWebGLLines(gl, arrayBuffer, floatType, linesMode, positionLocation, colorLocation, dynamicAlphaPositionBuffer, dynamicAlphaColorBuffer, drawPlan.dynamicAlphaVertexCount, 3);
-              applySceneWebGLBlend(gl, false);
             }
+            if (drawPlan.hasAdditivePass) {
+              applySceneWebGLBlend(gl, "additive");
+              drawSceneWebGLLines(gl, arrayBuffer, floatType, linesMode, positionLocation, colorLocation, staticAdditivePositionBuffer, staticAdditiveColorBuffer, staticAdditiveVertexCount, 3);
+              uploadSceneWebGLBuffers(gl, arrayBuffer, dynamicDraw, dynamicAdditivePositionBuffer, dynamicAdditiveColorBuffer, drawPlan.dynamicAdditivePositions, drawPlan.dynamicAdditiveColors);
+              drawSceneWebGLLines(gl, arrayBuffer, floatType, linesMode, positionLocation, colorLocation, dynamicAdditivePositionBuffer, dynamicAdditiveColorBuffer, drawPlan.dynamicAdditiveVertexCount, 3);
+            }
+            applySceneWebGLBlend(gl, "opaque");
             return;
           }
         }
 
-        applySceneWebGLBlend(gl, false);
+        applySceneWebGLBlend(gl, "opaque");
         uploadSceneWebGLBuffers(gl, arrayBuffer, dynamicDraw, positionBuffer, colorBuffer, positions, colors);
         drawSceneWebGLLines(gl, arrayBuffer, floatType, linesMode, positionLocation, colorLocation, positionBuffer, colorBuffer, vertexCount, usePerspective ? 3 : 2);
       },
@@ -1083,10 +1100,14 @@
           gl.deleteBuffer(staticOpaqueColorBuffer);
           gl.deleteBuffer(staticAlphaPositionBuffer);
           gl.deleteBuffer(staticAlphaColorBuffer);
+          gl.deleteBuffer(staticAdditivePositionBuffer);
+          gl.deleteBuffer(staticAdditiveColorBuffer);
           gl.deleteBuffer(dynamicOpaquePositionBuffer);
           gl.deleteBuffer(dynamicOpaqueColorBuffer);
           gl.deleteBuffer(dynamicAlphaPositionBuffer);
           gl.deleteBuffer(dynamicAlphaColorBuffer);
+          gl.deleteBuffer(dynamicAdditivePositionBuffer);
+          gl.deleteBuffer(dynamicAdditiveColorBuffer);
         }
         if (typeof gl.deleteProgram === "function") {
           gl.deleteProgram(program);
@@ -1117,11 +1138,13 @@
     gl.drawArrays(linesMode, 0, vertexCount);
   }
 
-  function applySceneWebGLBlend(gl, enabled) {
+  function applySceneWebGLBlend(gl, mode) {
     const blendConst = typeof gl.BLEND === "number" ? gl.BLEND : 0x0BE2;
+    const one = typeof gl.ONE === "number" ? gl.ONE : 1;
     const srcAlpha = typeof gl.SRC_ALPHA === "number" ? gl.SRC_ALPHA : 0x0302;
     const oneMinusSrcAlpha = typeof gl.ONE_MINUS_SRC_ALPHA === "number" ? gl.ONE_MINUS_SRC_ALPHA : 0x0303;
-    if (enabled) {
+    switch (mode) {
+    case "alpha":
       if (typeof gl.enable === "function") {
         gl.enable(blendConst);
       }
@@ -1129,9 +1152,18 @@
         gl.blendFunc(srcAlpha, oneMinusSrcAlpha);
       }
       return;
-    }
-    if (typeof gl.disable === "function") {
-      gl.disable(blendConst);
+    case "additive":
+      if (typeof gl.enable === "function") {
+        gl.enable(blendConst);
+      }
+      if (typeof gl.blendFunc === "function") {
+        gl.blendFunc(srcAlpha, one);
+      }
+      return;
+    default:
+      if (typeof gl.disable === "function") {
+        gl.disable(blendConst);
+      }
     }
   }
 
@@ -1146,22 +1178,32 @@
     const staticOpaqueColors = [];
     const staticAlphaPositions = [];
     const staticAlphaColors = [];
+    const staticAdditivePositions = [];
+    const staticAdditiveColors = [];
     const dynamicOpaquePositions = [];
     const dynamicOpaqueColors = [];
     const dynamicAlphaPositions = [];
     const dynamicAlphaColors = [];
+    const dynamicAdditivePositions = [];
+    const dynamicAdditiveColors = [];
     const staticOpaqueObjects = [];
     const staticOpaqueMaterials = [];
     const staticAlphaObjects = [];
     const staticAlphaMaterials = [];
+    const staticAdditiveObjects = [];
+    const staticAdditiveMaterials = [];
 
     for (const object of objects) {
       if (!object || !Number.isFinite(object.vertexOffset) || !Number.isFinite(object.vertexCount) || object.vertexCount <= 0) {
         continue;
       }
       const material = materials[object.materialIndex] || null;
-      const alphaPass = sceneMaterialUsesAlpha(material);
-      if (object.static && alphaPass) {
+      const renderPass = sceneMaterialRenderPass(material);
+      if (object.static && renderPass === "additive") {
+        staticAdditiveObjects.push(object);
+        staticAdditiveMaterials.push(material);
+        appendSceneWorldObjectSlice(staticAdditivePositions, staticAdditiveColors, bundle.worldPositions, bundle.worldColors, object, material);
+      } else if (object.static && renderPass === "alpha") {
         staticAlphaObjects.push(object);
         staticAlphaMaterials.push(material);
         appendSceneWorldObjectSlice(staticAlphaPositions, staticAlphaColors, bundle.worldPositions, bundle.worldColors, object, material);
@@ -1169,7 +1211,9 @@
         staticOpaqueObjects.push(object);
         staticOpaqueMaterials.push(material);
         appendSceneWorldObjectSlice(staticOpaquePositions, staticOpaqueColors, bundle.worldPositions, bundle.worldColors, object, material);
-      } else if (alphaPass) {
+      } else if (renderPass === "additive") {
+        appendSceneWorldObjectSlice(dynamicAdditivePositions, dynamicAdditiveColors, bundle.worldPositions, bundle.worldColors, object, material);
+      } else if (renderPass === "alpha") {
         appendSceneWorldObjectSlice(dynamicAlphaPositions, dynamicAlphaColors, bundle.worldPositions, bundle.worldColors, object, material);
       } else {
         appendSceneWorldObjectSlice(dynamicOpaquePositions, dynamicOpaqueColors, bundle.worldPositions, bundle.worldColors, object, material);
@@ -1180,10 +1224,14 @@
     const typedStaticOpaqueColors = sceneFloatArray(staticOpaqueColors);
     const typedStaticAlphaPositions = sceneFloatArray(staticAlphaPositions);
     const typedStaticAlphaColors = sceneFloatArray(staticAlphaColors);
+    const typedStaticAdditivePositions = sceneFloatArray(staticAdditivePositions);
+    const typedStaticAdditiveColors = sceneFloatArray(staticAdditiveColors);
     const typedDynamicOpaquePositions = sceneFloatArray(dynamicOpaquePositions);
     const typedDynamicOpaqueColors = sceneFloatArray(dynamicOpaqueColors);
     const typedDynamicAlphaPositions = sceneFloatArray(dynamicAlphaPositions);
     const typedDynamicAlphaColors = sceneFloatArray(dynamicAlphaColors);
+    const typedDynamicAdditivePositions = sceneFloatArray(dynamicAdditivePositions);
+    const typedDynamicAdditiveColors = sceneFloatArray(dynamicAdditiveColors);
 
     return {
       staticOpaqueKey: sceneStaticDrawKey(staticOpaqueObjects, staticOpaqueMaterials, typedStaticOpaquePositions, typedStaticOpaqueColors),
@@ -1194,13 +1242,21 @@
       staticAlphaPositions: typedStaticAlphaPositions,
       staticAlphaColors: typedStaticAlphaColors,
       staticAlphaVertexCount: typedStaticAlphaPositions.length / 3,
+      staticAdditiveKey: sceneStaticDrawKey(staticAdditiveObjects, staticAdditiveMaterials, typedStaticAdditivePositions, typedStaticAdditiveColors),
+      staticAdditivePositions: typedStaticAdditivePositions,
+      staticAdditiveColors: typedStaticAdditiveColors,
+      staticAdditiveVertexCount: typedStaticAdditivePositions.length / 3,
       dynamicOpaquePositions: typedDynamicOpaquePositions,
       dynamicOpaqueColors: typedDynamicOpaqueColors,
       dynamicOpaqueVertexCount: typedDynamicOpaquePositions.length / 3,
       dynamicAlphaPositions: typedDynamicAlphaPositions,
       dynamicAlphaColors: typedDynamicAlphaColors,
       dynamicAlphaVertexCount: typedDynamicAlphaPositions.length / 3,
+      dynamicAdditivePositions: typedDynamicAdditivePositions,
+      dynamicAdditiveColors: typedDynamicAdditiveColors,
+      dynamicAdditiveVertexCount: typedDynamicAdditivePositions.length / 3,
       hasAlphaPass: typedStaticAlphaPositions.length > 0 || typedDynamicAlphaPositions.length > 0,
+      hasAdditivePass: typedStaticAdditivePositions.length > 0 || typedDynamicAdditivePositions.length > 0,
     };
   }
 
@@ -1240,11 +1296,21 @@
   }
 
   function sceneMaterialUsesAlpha(material) {
+    return sceneMaterialRenderPass(material) !== "opaque";
+  }
+
+  function sceneMaterialRenderPass(material) {
     if (!material || typeof material !== "object") {
-      return false;
+      return "opaque";
     }
     const blendMode = String(material.blendMode || "").toLowerCase();
-    return blendMode === "alpha" || sceneMaterialOpacity(material) < 0.999;
+    if (blendMode === "additive") {
+      return "additive";
+    }
+    if (blendMode === "alpha" || sceneMaterialOpacity(material) < 0.999) {
+      return "alpha";
+    }
+    return "opaque";
   }
 
   function clamp01(value) {
