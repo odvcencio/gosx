@@ -279,6 +279,17 @@ func (r *Renderer) RenderEngine(cfg engine.Config, fallback gosx.Node) gosx.Node
 		gosx.Attr("data-gosx-engine-id", id),
 		gosx.Attr("data-gosx-engine-kind", string(cfg.Kind)),
 	}
+	for name, value := range cfg.MountAttrs {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		switch name {
+		case "id", "data-gosx-engine", "data-gosx-engine-id", "data-gosx-engine-kind", "data-gosx-engine-capabilities":
+			continue
+		}
+		attrs = append(attrs, gosx.Attr(name, value))
+	}
 	if len(cfg.Capabilities) > 0 {
 		attrs = append(attrs, gosx.Attr("data-gosx-engine-capabilities", strings.Join(engineCapabilities(cfg.Capabilities), " ")))
 	}

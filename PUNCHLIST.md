@@ -70,9 +70,9 @@ This is the working framework punchlist for driving GoSX from "credible core" to
 
 ## Phase 10
 
-- [ ] `.gsx`-first engine surfaces so apps stop dropping to bare `gosx.El(...)` for advanced client runtimes
-- [ ] First-class 3D scene/component model in `.gsx`, analogous to a native GoSX answer to Three.js-style authoring
-- [ ] Engine/runtime APIs that let `.gsx` drive worker, canvas, and surface-backed experiences without bespoke imperative glue
+- [x] `.gsx`-first engine surfaces so apps stop dropping to bare `gosx.El(...)` for advanced client runtimes
+- [x] First-class 3D scene/component model in `.gsx`, analogous to a native GoSX answer to Three.js-style authoring
+- [x] Engine/runtime APIs that let `.gsx` drive worker, canvas, and surface-backed experiences without bespoke imperative glue
 
 ## Phase 11
 

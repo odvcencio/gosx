@@ -74,6 +74,27 @@ class FakeDocumentFragment {
   }
 }
 
+class FakeCanvasContext2D {
+  constructor() {
+    this.fillStyle = "";
+    this.strokeStyle = "";
+    this.lineWidth = 1;
+  }
+
+  beginPath() {}
+  clearRect() {}
+  closePath() {}
+  fill() {}
+  fillRect() {}
+  lineTo() {}
+  moveTo() {}
+  restore() {}
+  save() {}
+  scale() {}
+  stroke() {}
+  translate() {}
+}
+
 class FakeElement {
   constructor(tagName, ownerDocument) {
     this.nodeType = ELEMENT_NODE;
@@ -86,6 +107,9 @@ class FakeElement {
     this.value = "";
     this.selectionStart = 0;
     this.selectionEnd = 0;
+    this.width = 0;
+    this.height = 0;
+    this._canvasContext = null;
   }
 
   get id() {
@@ -226,6 +250,16 @@ class FakeElement {
 
   focus() {
     this.ownerDocument.activeElement = this;
+  }
+
+  getContext(kind) {
+    if (this.tagName !== "CANVAS" || kind !== "2d") {
+      return null;
+    }
+    if (!this._canvasContext) {
+      this._canvasContext = new FakeCanvasContext2D();
+    }
+    return this._canvasContext;
   }
 
   cloneNode(deep) {
@@ -409,6 +443,12 @@ function createContext(options) {
       replaceState(_state, _title, url) {
         context.location.href = String(url);
       },
+    },
+    requestAnimationFrame(callback) {
+      return setTimeout(() => callback(Date.now()), 0);
+    },
+    cancelAnimationFrame(handle) {
+      clearTimeout(handle);
     },
     Go: function Go() {
       this.importObject = {};
@@ -711,6 +751,54 @@ test("bootstrap mounts registered surface engines without escape-hatch scripts",
   assert.equal(env.context.__gosx.engines.size, 0);
   assert.deepEqual(env.engineDisposals, ["gosx-engine-0"]);
   assert.equal(env.consoleLogs.warn.length, 0);
+});
+
+test("bootstrap mounts native Scene3D engines without extra scripts", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-root";
+  mount.appendChild(new FakeElement("p", null));
+
+  const env = createContext({
+    elements: [mount],
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-2",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-root",
+          jsExport: "GoSXScene3D",
+          props: {
+            width: 640,
+            height: 360,
+            autoRotate: false,
+            scene: {
+              objects: [
+                { kind: "cube", size: 1.5, x: 0, y: 0, z: 0, color: "#8de1ff" },
+              ],
+            },
+          },
+          capabilities: ["canvas", "animation"],
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  assert.equal(env.context.__gosx.ready, true);
+  assert.equal(env.context.__gosx.engines.size, 1);
+  assert.equal(mount.children.length, 1);
+  assert.equal(mount.firstElementChild.tagName, "CANVAS");
+  assert.equal(mount.firstElementChild.getAttribute("width"), "640");
+  assert.equal(mount.firstElementChild.getAttribute("height"), "360");
+
+  env.context.__gosx_dispose_engine("gosx-engine-2");
+  assert.equal(env.context.__gosx.engines.size, 0);
+  assert.equal(mount.children.length, 0);
+  assert.equal(env.consoleLogs.warn.length, 0);
+  assert.equal(env.consoleLogs.error.length, 0);
 });
 
 test("bootstrap loads explicit JS escape-hatch engines only when configured", async () => {

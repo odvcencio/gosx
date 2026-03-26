@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/odvcencio/gosx"
+	"github.com/odvcencio/gosx/engine"
 )
 
 // PageHandler renders an HTML page for a given request context.
@@ -90,6 +91,7 @@ type Context struct {
 	head     []gosx.Node
 	deferred *DeferredRegistry
 	cache    *CacheState
+	runtime  *PageRuntime
 }
 
 func newContext(r *http.Request) *Context {
@@ -227,6 +229,25 @@ func (c *Context) AddHead(nodes ...gosx.Node) {
 		}
 		c.head = append(c.head, node)
 	}
+}
+
+// Runtime returns the page-scoped runtime registry for client engines.
+func (c *Context) Runtime() *PageRuntime {
+	if c == nil {
+		return nil
+	}
+	if c.runtime == nil {
+		c.runtime = NewPageRuntime()
+	}
+	return c.runtime
+}
+
+// Engine registers a client engine for this page and returns its mount shell.
+func (c *Context) Engine(cfg engine.Config, fallback gosx.Node) gosx.Node {
+	if c == nil {
+		return fallback
+	}
+	return c.Runtime().Engine(cfg, fallback)
 }
 
 // Defer renders fallback content immediately, then streams the resolved node

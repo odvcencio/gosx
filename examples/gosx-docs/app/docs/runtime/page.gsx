@@ -30,16 +30,37 @@ func Page() Node {
 				<p>Hover and focus prefetch the next HTML payload so the click path is shorter.</p>
 			</div>
 		</section>
+		<section class="scene-callout">
+			<div class="scene-copy">
+				<span class="eyebrow">Native Scene3D</span>
+				<h2>.gsx can now mount engine-backed surfaces without dropping down to bare Go nodes.</h2>
+				<p>
+					The scene below is declared in
+					<span class="inline-code">page.gsx</span>
+					and its object graph comes from
+					<span class="inline-code">page.server.go</span>.
+					That keeps the authoring path server-first while still letting the browser own a live surface.
+				</p>
+			</div>
+			<Scene3D class="scene-shell" {...data.sceneDemo}>
+				<div class="scene-fallback">Preparing the scene runtime...</div>
+			</Scene3D>
+		</section>
 		<pre class="code-block">{`window.__gosx_dispose_page()
 window.__gosx_bootstrap_page()
 window.__gosx_page_nav.navigate("/docs/routing")`}</pre>
+		<pre class="code-block">{`func Page() Node {
+    return <Scene3D class="scene-shell" {...data.sceneDemo}>
+        <div class="scene-fallback">Preparing the scene runtime...</div>
+    </Scene3D>
+}`}</pre>
 		<section class="callout">
 			<strong>Constraint</strong>
-			<p>This is still HTML-first. The client runtime is there to preserve continuity, not to replace the server as the source of truth.</p>
+			<p>This is still HTML-first. Engines extend the page with owned browser surfaces, but the server still shapes the route, data, and outer document.</p>
 		</section>
 		<div class="hero-actions">
-			<a href="/docs/routing" data-gosx-link class="cta-link">Back to routing</a>
-			<a href="/" data-gosx-link class="cta-link primary">Back to overview</a>
+			<Link class="cta-link" href="/docs/routing">Back to routing</Link>
+			<Link class="cta-link primary" href="/">Back to overview</Link>
 		</div>
 	</article>
 }

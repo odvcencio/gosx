@@ -1,6 +1,7 @@
 package server
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -10,6 +11,8 @@ import (
 	"time"
 
 	"github.com/odvcencio/gosx"
+	"github.com/odvcencio/gosx/buildmanifest"
+	"github.com/odvcencio/gosx/engine"
 )
 
 func TestAppBasic(t *testing.T) {
@@ -248,6 +251,108 @@ func TestAppDefaultDocumentRendersMetadataAndHead(t *testing.T) {
 		if !strings.Contains(body, snippet) {
 			t.Fatalf("expected %q in %q", snippet, body)
 		}
+	}
+}
+
+func TestAppInjectsRuntimeHeadForEnginePages(t *testing.T) {
+	app := New()
+	app.Page("GET /", func(ctx *Context) gosx.Node {
+		return ctx.Engine(engine.Config{
+			Name:     "GoSXScene3D",
+			Kind:     engine.KindSurface,
+			JSExport: "GoSXScene3D",
+			Props:    json.RawMessage(`{"width":640,"height":360}`),
+		}, gosx.El("p", gosx.Text("Loading scene")))
+	})
+
+	handler := app.Build()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	body := w.Body.String()
+	for _, snippet := range []string{
+		`data-gosx-engine="GoSXScene3D"`,
+		`gosx-manifest`,
+		`/gosx/bootstrap.js`,
+	} {
+		if !strings.Contains(body, snippet) {
+			t.Fatalf("expected %q in runtime page body %q", snippet, body)
+		}
+	}
+}
+
+func TestAppServesCompatRuntimeAssetsFromSourceBuild(t *testing.T) {
+	root := t.TempDir()
+	buildDir := filepath.Join(root, "build")
+	if err := os.MkdirAll(buildDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(buildDir, "bootstrap.js"), []byte("console.log('bootstrap');"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	app := New()
+	app.SetRuntimeRoot(root)
+	handler := app.Build()
+
+	req := httptest.NewRequest(http.MethodGet, "/gosx/bootstrap.js", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	if got := w.Header().Get("Cache-Control"); !strings.Contains(got, "no-cache") {
+		t.Fatalf("expected source compat asset to disable caching, got %q", got)
+	}
+	if body := w.Body.String(); !strings.Contains(body, "bootstrap") {
+		t.Fatalf("unexpected compat asset body %q", body)
+	}
+}
+
+func TestAppServesCompatRuntimeAssetsFromBuildManifest(t *testing.T) {
+	root := t.TempDir()
+	assetsDir := filepath.Join(root, "assets", "runtime")
+	if err := os.MkdirAll(assetsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(assetsDir, "bootstrap.3333.js"), []byte("console.log('hashed bootstrap');"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	manifest := buildmanifest.Manifest{
+		Runtime: buildmanifest.RuntimeAssets{
+			Bootstrap: buildmanifest.HashedAsset{
+				File: "bootstrap.3333.js",
+				Hash: "3333",
+				Size: 24,
+			},
+		},
+	}
+	data, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "build.json"), data, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	app := New()
+	app.SetRuntimeRoot(root)
+	handler := app.Build()
+
+	req := httptest.NewRequest(http.MethodGet, "/gosx/bootstrap.js", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	if got := w.Header().Get("Cache-Control"); !strings.Contains(got, "immutable") {
+		t.Fatalf("expected built compat asset to be immutable, got %q", got)
+	}
+	if body := w.Body.String(); !strings.Contains(body, "hashed bootstrap") {
+		t.Fatalf("unexpected built compat asset body %q", body)
 	}
 }
 

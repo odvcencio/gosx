@@ -13,6 +13,7 @@ import (
 
 	"github.com/odvcencio/gosx"
 	"github.com/odvcencio/gosx/action"
+	"github.com/odvcencio/gosx/engine"
 	"github.com/odvcencio/gosx/server"
 )
 
@@ -68,6 +69,7 @@ type RouteContext struct {
 	head       []gosx.Node
 	deferred   *server.DeferredRegistry
 	cache      *server.CacheState
+	runtime    *server.PageRuntime
 }
 
 // Param returns a URL path parameter.
@@ -246,6 +248,25 @@ func (ctx *RouteContext) AddHead(nodes ...gosx.Node) {
 		}
 		ctx.head = append(ctx.head, node)
 	}
+}
+
+// Runtime returns the page-scoped runtime registry for client engines.
+func (ctx *RouteContext) Runtime() *server.PageRuntime {
+	if ctx == nil {
+		return nil
+	}
+	if ctx.runtime == nil {
+		ctx.runtime = server.NewPageRuntime()
+	}
+	return ctx.runtime
+}
+
+// Engine registers a client engine for this page and returns its mount shell.
+func (ctx *RouteContext) Engine(cfg engine.Config, fallback gosx.Node) gosx.Node {
+	if ctx == nil {
+		return fallback
+	}
+	return ctx.Runtime().Engine(cfg, fallback)
 }
 
 // Defer renders fallback content immediately, then streams the resolved node
@@ -493,6 +514,9 @@ func (r *Router) buildHandler(pattern string, route Route, layouts []LayoutFunc,
 func (r *Router) renderPage(w http.ResponseWriter, ctx *RouteContext, layouts []LayoutFunc, node gosx.Node, defaultStatus int) {
 	if ctx.status == 0 {
 		ctx.status = defaultStatus
+	}
+	if ctx.runtime != nil {
+		ctx.AddHead(ctx.runtime.Head())
 	}
 
 	for i := len(layouts) - 1; i >= 0; i-- {

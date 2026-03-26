@@ -163,6 +163,287 @@
     return promise;
   }
 
+  function engineFrame(callback) {
+    if (typeof window.requestAnimationFrame === "function") {
+      return window.requestAnimationFrame(callback);
+    }
+    return setTimeout(function() {
+      callback(Date.now());
+    }, 16);
+  }
+
+  function cancelEngineFrame(handle) {
+    if (typeof window.cancelAnimationFrame === "function") {
+      window.cancelAnimationFrame(handle);
+      return;
+    }
+    clearTimeout(handle);
+  }
+
+  function sceneNumber(value, fallback) {
+    const num = Number(value);
+    return Number.isFinite(num) ? num : fallback;
+  }
+
+  function sceneBool(value, fallback) {
+    if (typeof value === "boolean") return value;
+    if (typeof value === "string") {
+      const lowered = value.trim().toLowerCase();
+      if (lowered === "true") return true;
+      if (lowered === "false") return false;
+    }
+    return fallback;
+  }
+
+  function sceneObjects(props) {
+    const scene = props && props.scene && typeof props.scene === "object" ? props.scene : null;
+    const raw = Array.isArray(scene && scene.objects) ? scene.objects : (Array.isArray(props && props.objects) ? props.objects : null);
+    const objects = raw && raw.length > 0 ? raw : [
+      {
+        kind: "cube",
+        size: 1.8,
+        x: -1.1,
+        y: 0.3,
+        z: 0,
+        color: "#8de1ff",
+        spinX: 0.42,
+        spinY: 0.74,
+        spinZ: 0.16,
+      },
+      {
+        kind: "cube",
+        size: 1.1,
+        x: 1.6,
+        y: -0.7,
+        z: 1.4,
+        color: "#ffd48f",
+        spinX: -0.24,
+        spinY: 0.48,
+        spinZ: 0.12,
+      },
+    ];
+
+    return objects.map(function(object, index) {
+      const item = object && typeof object === "object" ? object : {};
+      return {
+        id: item.id || ("scene-object-" + index),
+        kind: item.kind || "cube",
+        size: sceneNumber(item.size, 1.2),
+        x: sceneNumber(item.x, 0),
+        y: sceneNumber(item.y, 0),
+        z: sceneNumber(item.z, 0),
+        color: typeof item.color === "string" && item.color ? item.color : "#8de1ff",
+        rotationX: sceneNumber(item.rotationX, 0),
+        rotationY: sceneNumber(item.rotationY, 0),
+        rotationZ: sceneNumber(item.rotationZ, 0),
+        spinX: sceneNumber(item.spinX, 0),
+        spinY: sceneNumber(item.spinY, 0),
+        spinZ: sceneNumber(item.spinZ, 0),
+      };
+    });
+  }
+
+  function sceneCamera(props) {
+    const raw = props && props.camera && typeof props.camera === "object" ? props.camera : {};
+    return {
+      x: sceneNumber(raw.x, 0),
+      y: sceneNumber(raw.y, 0),
+      z: sceneNumber(raw.z, 6),
+      fov: sceneNumber(raw.fov, 75),
+    };
+  }
+
+  function clearChildren(node) {
+    while (node && node.firstChild) {
+      node.removeChild(node.firstChild);
+    }
+  }
+
+  function cubeVertices(size) {
+    const half = size / 2;
+    return [
+      { x: -half, y: -half, z: -half },
+      { x: half, y: -half, z: -half },
+      { x: half, y: half, z: -half },
+      { x: -half, y: half, z: -half },
+      { x: -half, y: -half, z: half },
+      { x: half, y: -half, z: half },
+      { x: half, y: half, z: half },
+      { x: -half, y: half, z: half },
+    ];
+  }
+
+  const cubeEdgePairs = [
+    [0, 1], [1, 2], [2, 3], [3, 0],
+    [4, 5], [5, 6], [6, 7], [7, 4],
+    [0, 4], [1, 5], [2, 6], [3, 7],
+  ];
+
+  function rotatePoint(point, rotationX, rotationY, rotationZ) {
+    let x = point.x;
+    let y = point.y;
+    let z = point.z;
+
+    const sinX = Math.sin(rotationX);
+    const cosX = Math.cos(rotationX);
+    let nextY = y * cosX - z * sinX;
+    let nextZ = y * sinX + z * cosX;
+    y = nextY;
+    z = nextZ;
+
+    const sinY = Math.sin(rotationY);
+    const cosY = Math.cos(rotationY);
+    let nextX = x * cosY + z * sinY;
+    nextZ = -x * sinY + z * cosY;
+    x = nextX;
+    z = nextZ;
+
+    const sinZ = Math.sin(rotationZ);
+    const cosZ = Math.cos(rotationZ);
+    nextX = x * cosZ - y * sinZ;
+    nextY = x * sinZ + y * cosZ;
+
+    return { x: nextX, y: nextY, z: z };
+  }
+
+  function projectPoint(point, camera, width, height) {
+    const depth = point.z + camera.z;
+    if (depth <= 0.15) return null;
+    const focal = (Math.min(width, height) / 2) / Math.tan((camera.fov * Math.PI) / 360);
+    return {
+      x: width / 2 + ((point.x - camera.x) * focal) / depth,
+      y: height / 2 - ((point.y - camera.y) * focal) / depth,
+      depth,
+    };
+  }
+
+  function strokeLine(ctx2d, from, to) {
+    ctx2d.beginPath();
+    ctx2d.moveTo(from.x, from.y);
+    ctx2d.lineTo(to.x, to.y);
+    ctx2d.stroke();
+  }
+
+  function drawScene3D(ctx2d, width, height, background, camera, objects, timeSeconds) {
+    ctx2d.clearRect(0, 0, width, height);
+    ctx2d.fillStyle = background;
+    ctx2d.fillRect(0, 0, width, height);
+
+    ctx2d.strokeStyle = "rgba(141, 225, 255, 0.14)";
+    ctx2d.lineWidth = 1;
+    for (let x = 0; x <= width; x += 48) {
+      strokeLine(ctx2d, { x, y: 0 }, { x, y: height });
+    }
+    for (let y = 0; y <= height; y += 48) {
+      strokeLine(ctx2d, { x: 0, y }, { x: width, y });
+    }
+
+    for (const object of objects) {
+      if (object.kind !== "cube") continue;
+
+      const vertices = cubeVertices(object.size).map(function(vertex) {
+        const rotated = rotatePoint(
+          vertex,
+          object.rotationX + object.spinX * timeSeconds,
+          object.rotationY + object.spinY * timeSeconds,
+          object.rotationZ + object.spinZ * timeSeconds,
+        );
+        return {
+          x: rotated.x + object.x,
+          y: rotated.y + object.y,
+          z: rotated.z + object.z,
+        };
+      });
+
+      const projected = vertices.map(function(vertex) {
+        return projectPoint(vertex, camera, width, height);
+      });
+
+      ctx2d.strokeStyle = object.color;
+      ctx2d.lineWidth = 1.8;
+      for (const edge of cubeEdgePairs) {
+        const from = projected[edge[0]];
+        const to = projected[edge[1]];
+        if (!from || !to) continue;
+        strokeLine(ctx2d, from, to);
+      }
+    }
+  }
+
+  window.__gosx_register_engine_factory("GoSXScene3D", function(ctx) {
+    if (!ctx.mount || typeof document.createElement !== "function") {
+      console.warn("[gosx] Scene3D requires a mount element");
+      return {};
+    }
+
+    const props = ctx.props || {};
+    const width = Math.max(240, sceneNumber(props.width, 720));
+    const height = Math.max(180, sceneNumber(props.height, 420));
+    const background = typeof props.background === "string" && props.background ? props.background : "#08151f";
+    const camera = sceneCamera(props);
+    const objects = sceneObjects(props);
+    const shouldAnimate = sceneBool(props.autoRotate, true) || objects.some(function(object) {
+      return object.spinX !== 0 || object.spinY !== 0 || object.spinZ !== 0;
+    });
+
+    clearChildren(ctx.mount);
+    ctx.mount.setAttribute("data-gosx-scene3d-mounted", "true");
+    ctx.mount.setAttribute("aria-label", props.ariaLabel || props.label || "Interactive GoSX 3D scene");
+
+    const canvas = document.createElement("canvas");
+    canvas.setAttribute("width", String(width));
+    canvas.setAttribute("height", String(height));
+    canvas.setAttribute("role", "img");
+    canvas.setAttribute("aria-label", props.label || "Interactive GoSX 3D scene");
+    canvas.setAttribute("style", "display:block;width:100%;height:auto;border-radius:22px;");
+    canvas.width = width;
+    canvas.height = height;
+    ctx.mount.appendChild(canvas);
+
+    const ctx2d = typeof canvas.getContext === "function" ? canvas.getContext("2d") : null;
+    if (!ctx2d) {
+      console.warn("[gosx] Scene3D could not acquire a 2D canvas context");
+      return {
+        dispose() {
+          if (canvas.parentNode === ctx.mount) {
+            ctx.mount.removeChild(canvas);
+          }
+        },
+      };
+    }
+
+    let frameHandle = null;
+    let disposed = false;
+
+    function renderFrame(now) {
+      if (disposed) return;
+      drawScene3D(ctx2d, width, height, background, camera, objects, now / 1000);
+      if (shouldAnimate) {
+        frameHandle = engineFrame(renderFrame);
+      }
+    }
+
+    renderFrame(0);
+
+    ctx.emit("mounted", {
+      width,
+      height,
+      objects: objects.length,
+    });
+
+    return {
+      dispose() {
+        disposed = true;
+        if (frameHandle != null) {
+          cancelEngineFrame(frameHandle);
+        }
+        if (canvas.parentNode === ctx.mount) {
+          ctx.mount.removeChild(canvas);
+        }
+      },
+    };
+  });
+
   // --------------------------------------------------------------------------
   // Event delegation
   // --------------------------------------------------------------------------

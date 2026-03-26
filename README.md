@@ -19,6 +19,7 @@ GoSX is in active development. The compiler pipeline, server rendering, island a
 - file-route template bindings via `route.FileTemplateBindings`, so `page.server.go` modules can expose request-scoped values, helpers, and renderable Go components directly to `.gsx` pages
 - directory-scoped middleware and request hooks via `route.MustRegisterDirModuleHere(...)`, plus inheritable `route.config.json` cache/header/prerender settings
 - file-routed `.gsx` pages can now render local page-scoped components plus built-in `If`, `Each`, `Link`, and `Image` helpers through the file renderer, including mixed and repeated expression-valued attrs plus nested-brace attr expressions
+- file-routed `.gsx` pages can now render built-in `<Surface />`, `<Worker />`, and `<Scene3D />` engine helpers, with loader-provided props, server-rendered mount shells, and a native bootstrap-side 3D factory
 - file-routed pages and layouts can now own sibling `page.css` / `layout.css` sidecars, which are injected into the document head automatically during routed rendering
 - file-routed pages and layouts can now own sibling `page.meta.json` / `layout.meta.json` sidecars for static title, description, canonical, meta, and link data without manual server-module wiring
 - public asset helpers via `server.AssetURL(...)`, `server.Stylesheet(...)`, and file-routed `.gsx` `asset(...)` / `<Stylesheet ... />` helpers for root-served assets
@@ -49,7 +50,6 @@ GoSX is in active development. The compiler pipeline, server rendering, island a
 
 **What still needs deeper framework passes:**
 
-- `.gsx`-first engine surfaces for advanced runtimes like 3D
 - ISR, edge-runtime, and hosted deployment layers on top of the current SSR + static bundle story
 
 ## Quick Start
@@ -76,6 +76,7 @@ The generated project includes:
 - inheritable `route.config.json` support for subtree cache, headers, and prerender defaults
 - a blank import of `your/module/modules`, with `modules/modules.go` auto-generated from discovered `*.server.go` packages during `gosx init`, `gosx dev`, `gosx build`, and `gosx export`
 - sibling `page.server.go` examples that register file-route `Load`, `Metadata`, and `Actions` hooks through `route.MustRegisterFileModuleHere(...)`
+- native `.gsx` engine helpers via `<Surface />`, `<Worker />`, and `<Scene3D />` for worker/canvas/surface experiences without hand-written `gosx.El(...)` shells
 - optional directory-scoped route modules through `route.MustRegisterDirModuleHere(...)` when a subtree needs middleware or request setup
 - session middleware plus CSRF protection for browser forms
 - semantic cache helpers plus automatic ETags for page and API responses
