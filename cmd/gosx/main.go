@@ -4,6 +4,7 @@
 //
 //	gosx build <dir>             Build GoSX application
 //	gosx dev <dir>               Start development server with hot reload
+//	gosx init [dir]              Scaffold a GoSX application or docs site
 //	gosx compile <file.gsx>      Compile GoSX to Go
 //	gosx check <file.gsx>        Parse and validate without emitting
 //	gosx render <file.gsx>       Render component HTML to stdout
@@ -35,6 +36,8 @@ func main() {
 		cmdBuild()
 	case "dev":
 		cmdDev()
+	case "init":
+		cmdInit()
 	case "compile":
 		cmdCompile()
 	case "check":
@@ -63,12 +66,17 @@ Usage:
 Commands:
   build <dir>          Build GoSX application
   dev <dir>            Start development server with hot reload
+  init [dir]           Scaffold a GoSX application or docs site
   compile <file>       Compile .gsx file to Go
   check <file>         Parse and validate
   render <file> [comp] Render component to HTML
   fmt <path>           Format GoSX source files
   lsp                  Start the GoSX language server
   version              Print version
+
+Init templates:
+  gosx init my-app
+  gosx init my-docs --template docs
 
 `)
 }

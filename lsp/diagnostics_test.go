@@ -58,6 +58,24 @@ func Page() Node {
 	}
 }
 
+func TestFormatSourcePreservesHyphenatedAttributes(t *testing.T) {
+	formatted, err := FormatSource([]byte(`package main
+
+func Page() Node {
+	return <a data-gosx-link aria-label="Docs">Hi</a>
+}
+`))
+	if err != nil {
+		t.Fatalf("format source: %v", err)
+	}
+	if !strings.Contains(string(formatted), "data-gosx-link") {
+		t.Fatalf("expected hyphenated bool attr in formatted output %q", string(formatted))
+	}
+	if !strings.Contains(string(formatted), `aria-label="Docs"`) {
+		t.Fatalf("expected hyphenated static attr in formatted output %q", string(formatted))
+	}
+}
+
 func TestServerPublishesDiagnosticsAndFormatting(t *testing.T) {
 	input := bytes.NewBuffer(nil)
 	output := bytes.NewBuffer(nil)

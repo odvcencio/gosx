@@ -13,9 +13,13 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+
+	"github.com/odvcencio/gosx/session"
 )
 
 const maxActionBodyBytes = 1024 * 1024
+
+const actionFlashKey = "__gosx_action_state"
 
 func isBodyTooLarge(err error) bool {
 	var maxErr *http.MaxBytesError
@@ -123,6 +127,49 @@ type Context struct {
 
 	status int
 	result *Result
+}
+
+// View is the browser-facing action state surfaced back to HTML pages after a
+// redirect-backed form submission.
+type View struct {
+	Name   string `json:"name"`
+	Status int    `json:"status"`
+	Result Result `json:"result"`
+}
+
+// Submitted reports whether this action has a flashed result for the request.
+func (v View) Submitted() bool {
+	return v.Name != ""
+}
+
+// OK reports whether the action completed successfully.
+func (v View) OK() bool {
+	return v.Result.OK
+}
+
+// Message returns the action message.
+func (v View) Message() string {
+	return v.Result.Message
+}
+
+// Value returns a submitted form value by key.
+func (v View) Value(name string) string {
+	return v.Result.Values[name]
+}
+
+// Error returns a field-level error by key.
+func (v View) Error(name string) string {
+	return v.Result.FieldErrors[name]
+}
+
+// HasError reports whether the named field has a validation error.
+func (v View) HasError(name string) bool {
+	return v.Error(name) != ""
+}
+
+// Redirect returns the redirect target carried by the action result.
+func (v View) Redirect() string {
+	return v.Result.Redirect
 }
 
 // SetResult replaces the structured action result.
@@ -256,8 +303,22 @@ func (r *Registry) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		}
 	}
 
-	if !r.Has(name) {
+	r.mu.RLock()
+	handler, ok := r.handlers[name]
+	r.mu.RUnlock()
+	if !ok {
 		http.Error(w, fmt.Sprintf("action %q not found", name), http.StatusNotFound)
+		return
+	}
+
+	ServeHandler(w, req, handler)
+}
+
+// ServeHandler handles a single action handler over HTTP using the same form,
+// JSON, redirect, and validation semantics as Registry.ServeHTTP.
+func ServeHandler(w http.ResponseWriter, req *http.Request, handler Handler) {
+	if handler == nil {
+		http.Error(w, "action handler required", http.StatusNotFound)
 		return
 	}
 
@@ -300,7 +361,7 @@ func (r *Registry) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		}
 	}
 
-	if err := r.Invoke(name, ctx); err != nil {
+	if err := handler(ctx); err != nil {
 		result, status := resultFromError(err)
 		writeResponse(w, req, status, result)
 		return
@@ -380,6 +441,14 @@ func writeResponse(w http.ResponseWriter, req *http.Request, status int, result 
 		status = http.StatusOK
 	}
 
+	if shouldFlashRedirect(req) {
+		if target := redirectTarget(req, result); target != "" {
+			flashActionResult(req, requestActionName(req), status, result)
+			http.Redirect(w, req, target, http.StatusSeeOther)
+			return
+		}
+	}
+
 	if shouldRedirect(req, status, result) {
 		http.Redirect(w, req, redirectTarget(req, result), http.StatusSeeOther)
 		return
@@ -403,12 +472,22 @@ func shouldRedirect(req *http.Request, status int, result Result) bool {
 	return false
 }
 
+func shouldFlashRedirect(req *http.Request) bool {
+	return !wantsJSON(req) && session.Current(req) != nil
+}
+
 func redirectTarget(req *http.Request, result Result) string {
 	if result.Redirect != "" {
 		return result.Redirect
 	}
 	if req == nil {
 		return ""
+	}
+	if target := strings.TrimSpace(req.Header.Get("Referer")); target != "" {
+		return target
+	}
+	if actionTarget := stripActionPath(req.URL.Path); actionTarget != "" {
+		return actionTarget
 	}
 	return req.Header.Get("Referer")
 }
@@ -437,4 +516,78 @@ func cloneStrings(src map[string]string) map[string]string {
 		dst[k] = v
 	}
 	return dst
+}
+
+// State returns the flashed action state for the given action name.
+func State(req *http.Request, name string) (View, bool) {
+	states := States(req)
+	view, ok := states[name]
+	return view, ok
+}
+
+// States returns all flashed action states for the current request.
+func States(req *http.Request) map[string]View {
+	values := session.FlashValues(req)
+	rawViews, ok := values[actionFlashKey]
+	if !ok || len(rawViews) == 0 {
+		return map[string]View{}
+	}
+
+	states := make(map[string]View, len(rawViews))
+	for _, raw := range rawViews {
+		var view View
+		data, err := json.Marshal(raw)
+		if err != nil {
+			continue
+		}
+		if err := json.Unmarshal(data, &view); err != nil || view.Name == "" {
+			continue
+		}
+		states[view.Name] = view
+	}
+	return states
+}
+
+func flashActionResult(req *http.Request, name string, status int, result Result) {
+	if name == "" || req == nil {
+		return
+	}
+	session.AddFlash(req, actionFlashKey, View{
+		Name:   name,
+		Status: status,
+		Result: result,
+	})
+}
+
+func requestActionName(req *http.Request) string {
+	if req == nil {
+		return ""
+	}
+	for _, key := range []string{"__gosx_action", "name"} {
+		if value := req.PathValue(key); value != "" {
+			return value
+		}
+	}
+	path := strings.Trim(req.URL.Path, "/")
+	if path == "" {
+		return ""
+	}
+	parts := strings.Split(path, "/")
+	return parts[len(parts)-1]
+}
+
+func stripActionPath(path string) string {
+	if path == "" {
+		return ""
+	}
+	switch {
+	case strings.Contains(path, "/__actions/"):
+		base := path[:strings.Index(path, "/__actions/")]
+		if base == "" {
+			return "/"
+		}
+		return base
+	default:
+		return ""
+	}
 }

@@ -10,6 +10,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
+	"os"
+	"path"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -27,22 +32,68 @@ const requestIDContextKey contextKey = "gosx.request_id"
 
 var requestSeq uint64
 
-// App is the GoSX server application.
-type App struct {
-	routes     map[string]RouteHandler
-	layout     func(title string, body gosx.Node) gosx.Node
-	mux        *http.ServeMux
+type registeredPageRoute struct {
+	pattern    string
+	handler    PageHandler
 	middleware []Middleware
 }
 
-// RouteHandler renders a page for a given request.
-type RouteHandler func(r *http.Request) gosx.Node
+type registeredAPIRoute struct {
+	pattern    string
+	handler    APIHandler
+	middleware []Middleware
+}
+
+type registeredRedirectRoute struct {
+	pattern     string
+	destination string
+	status      int
+}
+
+type registeredRewriteRoute struct {
+	pattern     string
+	destination string
+}
+
+type registeredMountedRoute struct {
+	pattern string
+	handler http.Handler
+}
+
+type statusCoder interface {
+	StatusCode() int
+}
+
+// App is the GoSX server application.
+type App struct {
+	pageRoutes  map[string]registeredPageRoute
+	apiRoutes   map[string]registeredAPIRoute
+	layout      func(title string, body gosx.Node) gosx.Node
+	document    DocumentFunc
+	mux         *http.ServeMux
+	middleware  []Middleware
+	notFound    PageHandler
+	errorPage   ErrorHandler
+	publicDir   string
+	imageDir    string
+	navigation  bool
+	redirects   map[string]registeredRedirectRoute
+	rewrites    map[string]registeredRewriteRoute
+	mounts      map[string]registeredMountedRoute
+	revalidator *Revalidator
+}
 
 // New creates a new GoSX server app.
 func New() *App {
 	app := &App{
-		routes: make(map[string]RouteHandler),
-		mux:    http.NewServeMux(),
+		pageRoutes:  make(map[string]registeredPageRoute),
+		apiRoutes:   make(map[string]registeredAPIRoute),
+		redirects:   make(map[string]registeredRedirectRoute),
+		rewrites:    make(map[string]registeredRewriteRoute),
+		mounts:      make(map[string]registeredMountedRoute),
+		mux:         http.NewServeMux(),
+		publicDir:   "public",
+		revalidator: NewRevalidator(),
 	}
 	app.middleware = []Middleware{
 		requestIDMiddleware(),
@@ -52,14 +103,178 @@ func New() *App {
 	return app
 }
 
-// SetLayout sets a layout wrapper that receives the page title and body.
+// SetLayout sets a legacy layout wrapper that receives the page title and body.
+// If SetDocument is also configured, the document renderer takes precedence.
 func (a *App) SetLayout(layout func(title string, body gosx.Node) gosx.Node) {
 	a.layout = layout
 }
 
-// Route registers a route handler.
-func (a *App) Route(pattern string, handler RouteHandler) {
-	a.routes[pattern] = handler
+// SetDocument sets a full-document renderer for page responses.
+func (a *App) SetDocument(document DocumentFunc) {
+	a.document = document
+}
+
+// SetNotFound sets the 404 page handler.
+func (a *App) SetNotFound(handler PageHandler) {
+	a.notFound = handler
+}
+
+// SetErrorPage sets the 500 page handler.
+func (a *App) SetErrorPage(handler ErrorHandler) {
+	a.errorPage = handler
+}
+
+// SetPublicDir sets the public asset directory served at the site root.
+// An empty directory disables automatic public asset serving.
+func (a *App) SetPublicDir(dir string) {
+	a.publicDir = dir
+}
+
+// SetRevalidator replaces the app-wide in-memory revalidator used for
+// automatic ETags and explicit path/tag invalidation.
+func (a *App) SetRevalidator(revalidator *Revalidator) {
+	if revalidator == nil {
+		revalidator = NewRevalidator()
+	}
+	a.revalidator = revalidator
+}
+
+// Revalidator returns the app-wide in-memory revalidator.
+func (a *App) Revalidator() *Revalidator {
+	if a.revalidator == nil {
+		a.revalidator = NewRevalidator()
+	}
+	return a.revalidator
+}
+
+// RevalidatePath invalidates cache validators for the provided path prefix.
+func (a *App) RevalidatePath(target string) uint64 {
+	return a.Revalidator().RevalidatePath(target)
+}
+
+// RevalidateTag invalidates cache validators for the provided tag.
+func (a *App) RevalidateTag(tag string) uint64 {
+	return a.Revalidator().RevalidateTag(tag)
+}
+
+// SetImageDir sets the source directory used by the built-in image optimizer.
+// If unset, the optimizer reads from the configured public directory.
+func (a *App) SetImageDir(dir string) {
+	a.imageDir = dir
+}
+
+// Route registers a page route using the legacy request-only handler signature.
+func (a *App) Route(pattern string, handler func(r *http.Request) gosx.Node) {
+	a.Page(pattern, func(ctx *Context) gosx.Node {
+		return handler(ctx.Request)
+	})
+}
+
+// Page registers an HTML page route.
+func (a *App) Page(pattern string, handler PageHandler) {
+	a.HandlePage(PageRoute{
+		Pattern: pattern,
+		Handler: handler,
+	})
+}
+
+// HandlePage registers an HTML page route with optional route middleware.
+func (a *App) HandlePage(route PageRoute) {
+	if route.Handler == nil {
+		return
+	}
+	matchPattern := normalizePattern(route.Pattern)
+	a.pageRoutes[matchPattern] = registeredPageRoute{
+		pattern:    route.Pattern,
+		handler:    route.Handler,
+		middleware: append([]Middleware(nil), route.Middleware...),
+	}
+}
+
+// API registers a JSON API route.
+func (a *App) API(pattern string, handler APIHandler) {
+	a.HandleAPI(APIRoute{
+		Pattern: pattern,
+		Handler: handler,
+	})
+}
+
+// HandleAPI registers a JSON API route with optional route middleware.
+func (a *App) HandleAPI(route APIRoute) {
+	if route.Handler == nil {
+		return
+	}
+	matchPattern := normalizePattern(route.Pattern)
+	a.apiRoutes[matchPattern] = registeredAPIRoute{
+		pattern:    route.Pattern,
+		handler:    route.Handler,
+		middleware: append([]Middleware(nil), route.Middleware...),
+	}
+}
+
+// EnableNavigation injects the built-in client-side page navigation runtime
+// into document/head-aware responses.
+func (a *App) EnableNavigation() {
+	a.navigation = true
+}
+
+// Redirect registers a redirect rule. The pattern uses the same syntax as page
+// routes, and path values such as `{slug}` may be referenced in the destination.
+func (a *App) Redirect(pattern, destination string, status int) {
+	a.HandleRedirect(RedirectRoute{
+		Pattern:     pattern,
+		Destination: destination,
+		Status:      status,
+	})
+}
+
+// HandleRedirect registers a redirect rule.
+func (a *App) HandleRedirect(route RedirectRoute) {
+	if strings.TrimSpace(route.Pattern) == "" || strings.TrimSpace(route.Destination) == "" {
+		return
+	}
+	if route.Status == 0 {
+		route.Status = http.StatusTemporaryRedirect
+	}
+	matchPattern := normalizePattern(route.Pattern)
+	a.redirects[matchPattern] = registeredRedirectRoute{
+		pattern:     route.Pattern,
+		destination: route.Destination,
+		status:      route.Status,
+	}
+}
+
+// Rewrite registers an internal rewrite rule. The destination may reference
+// path values such as `{slug}` captured from the pattern.
+func (a *App) Rewrite(pattern, destination string) {
+	a.HandleRewrite(RewriteRoute{
+		Pattern:     pattern,
+		Destination: destination,
+	})
+}
+
+// HandleRewrite registers an internal rewrite rule.
+func (a *App) HandleRewrite(route RewriteRoute) {
+	if strings.TrimSpace(route.Pattern) == "" || strings.TrimSpace(route.Destination) == "" {
+		return
+	}
+	matchPattern := normalizePattern(route.Pattern)
+	a.rewrites[matchPattern] = registeredRewriteRoute{
+		pattern:     route.Pattern,
+		destination: route.Destination,
+	}
+}
+
+// Mount registers an arbitrary HTTP handler under the given pattern.
+func (a *App) Mount(pattern string, handler http.Handler) {
+	pattern = strings.TrimSpace(pattern)
+	if pattern == "" || handler == nil {
+		return
+	}
+	a.mounts[pattern] = registeredMountedRoute{
+		pattern: pattern,
+		handler: handler,
+	}
 }
 
 // Use appends middleware to the handler chain.
@@ -73,30 +288,107 @@ func (a *App) Use(mw Middleware) {
 // Build finalizes routes and returns an http.Handler.
 func (a *App) Build() http.Handler {
 	mux := http.NewServeMux()
-	if _, exists := a.routes["/healthz"]; !exists {
+	redirectMux := http.NewServeMux()
+	rewriteMux := http.NewServeMux()
+	mountMux := http.NewServeMux()
+	if !a.hasRoute("/healthz") {
 		mux.HandleFunc("/healthz", healthHandler)
 	}
-	if _, exists := a.routes["/readyz"]; !exists {
+	if !a.hasRoute("/readyz") {
 		mux.HandleFunc("/readyz", healthHandler)
 	}
+	if imageDir := a.effectiveImageDir(); imageDir != "" && !a.hasRoute(defaultImageEndpoint) {
+		mux.Handle("GET "+defaultImageEndpoint, ImageHandler(imageDir))
+	}
 
-	for pattern, handler := range a.routes {
-		h := handler // capture
-		mux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
-			node := h(r)
+	for matchPattern, route := range a.pageRoutes {
+		pattern := route.pattern
+		handler := route.handler
+		pageHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			defer func() {
+				if recovered := recover(); recovered != nil {
+					a.renderError(w, r, panicError(recovered))
+				}
+			}()
+			ctx := newContext(r)
+			ctx.cache = NewCacheState()
+			node := handler(ctx)
+			a.renderPage(w, ctx, pattern, node, "GoSX")
+		})
+		mux.Handle(matchPattern, chainMiddleware(pageHandler, route.middleware))
+	}
 
-			if a.layout != nil {
-				node = a.layout(pattern, node)
+	for matchPattern, route := range a.apiRoutes {
+		handler := route.handler
+		apiHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			defer func() {
+				if recovered := recover(); recovered != nil {
+					writeJSONError(w, http.StatusInternalServerError, panicError(recovered), nil)
+				}
+			}()
+			ctx := newContext(r)
+			ctx.cache = NewCacheState()
+			payload, err := handler(ctx)
+			if err != nil {
+				writeJSONError(w, errorStatus(err, ctx.status, http.StatusInternalServerError), err, ctx.headers)
+				return
 			}
+			status := statusWithDefault(ctx.status, payload)
+			if ApplyCacheHeaders(r, ctx.headers, status, ctx.cache, a.Revalidator()) {
+				WriteNotModified(w, ctx.headers)
+				return
+			}
+			writeJSON(w, status, payload, ctx.headers)
+		})
+		mux.Handle(matchPattern, chainMiddleware(apiHandler, route.middleware))
+	}
 
-			html := gosx.RenderHTML(node)
-
-			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			fmt.Fprint(w, html)
+	for matchPattern, route := range a.redirects {
+		destination := route.destination
+		status := route.status
+		redirectMux.HandleFunc(matchPattern, func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, expandPatternValues(r, destination), status)
 		})
 	}
+
+	for _, route := range a.mounts {
+		mountMux.Handle(route.pattern, route.handler)
+	}
+
+	var dispatch func(w http.ResponseWriter, r *http.Request, allowRewrite bool)
+
 	a.mux = mux
-	return a.wrap(mux)
+	dispatch = func(w http.ResponseWriter, r *http.Request, allowRewrite bool) {
+		if redirectHandled(redirectMux, w, r) {
+			return
+		}
+		if routeHandled(mux, w, r) {
+			return
+		}
+		if allowRewrite && len(a.rewrites) > 0 {
+			if rewriteHandled(rewriteMux, w, r) {
+				return
+			}
+		}
+		if a.servePublic(w, r) {
+			return
+		}
+		if mountHandled(mountMux, w, r) {
+			return
+		}
+		a.renderNotFound(w, r)
+	}
+
+	for matchPattern, route := range a.rewrites {
+		destination := route.destination
+		rewriteMux.HandleFunc(matchPattern, func(w http.ResponseWriter, r *http.Request) {
+			dispatch(w, rewriteRequest(r, expandPatternValues(r, destination)), false)
+		})
+	}
+
+	return a.wrap(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		dispatch(w, r, true)
+	}))
 }
 
 // ListenAndServe starts the HTTP server.
@@ -124,11 +416,11 @@ func renderDocument(title string, head gosx.Node, body gosx.Node) string {
 	b.WriteString("<meta charset=\"utf-8\">\n")
 	b.WriteString("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n")
 	fmt.Fprintf(&b, "<title>%s</title>\n", title)
-	if !head.IsZero() {
-		b.WriteString(gosx.RenderHTML(head))
-	}
+	b.WriteString(gosx.RenderHTML(HeadOutlet(head)))
 	b.WriteString("\n</head>\n<body>\n")
 	b.WriteString(gosx.RenderHTML(body))
+	b.WriteString("\n")
+	b.WriteString(streamTailMarker)
 	b.WriteString("\n</body>\n</html>")
 	return b.String()
 }
@@ -150,6 +442,128 @@ func (a *App) wrap(handler http.Handler) http.Handler {
 		wrapped = a.middleware[i](wrapped)
 	}
 	return wrapped
+}
+
+func (a *App) renderPage(w http.ResponseWriter, ctx *Context, pattern string, body gosx.Node, defaultTitle string) {
+	if ctx == nil {
+		ctx = newContext(nil)
+	}
+	if ctx.status == 0 {
+		ctx.status = http.StatusOK
+	}
+	if a.navigation {
+		ctx.AddHead(NavigationScript())
+	}
+
+	var node gosx.Node
+	switch {
+	case a.document != nil:
+		doc := ctx.documentContext(pattern, defaultTitle, body)
+		node = a.document(doc)
+	case a.layout != nil:
+		title := ctx.metadata.Title
+		if title == "" {
+			title = fallbackTitle(pattern, defaultTitle)
+		}
+		node = a.layout(title, body)
+	default:
+		doc := ctx.documentContext(pattern, defaultTitle, body)
+		node = HTMLDocument(doc.Title, doc.Head, doc.Body)
+	}
+
+	if ApplyCacheHeaders(ctx.Request, ctx.headers, ctx.status, ctx.cache, a.Revalidator()) {
+		WriteNotModified(w, ctx.headers)
+		return
+	}
+
+	WriteHTML(w, HTMLResponse{
+		Status:   ctx.status,
+		Headers:  ctx.headers,
+		Node:     node,
+		Deferred: ctx.deferred,
+	})
+}
+
+func (a *App) renderNotFound(w http.ResponseWriter, r *http.Request) {
+	if wantsJSON(r) {
+		writeJSONError(w, http.StatusNotFound, fmt.Errorf("not found"), nil)
+		return
+	}
+
+	ctx := newContext(r)
+	ctx.SetStatus(http.StatusNotFound)
+
+	var node gosx.Node
+	if a.notFound != nil {
+		node = a.notFound(ctx)
+	} else {
+		ctx.SetMetadata(Metadata{Title: "Not Found"})
+		node = defaultStatusBody("Page not found", "The requested page could not be found.")
+	}
+	a.renderPage(w, ctx, "", node, "Not Found")
+}
+
+func (a *App) renderError(w http.ResponseWriter, r *http.Request, err error) {
+	if wantsJSON(r) {
+		writeJSONError(w, errorStatus(err, 0, http.StatusInternalServerError), err, nil)
+		return
+	}
+
+	ctx := newContext(r)
+	ctx.SetStatus(errorStatus(err, 0, http.StatusInternalServerError))
+
+	var node gosx.Node
+	if a.errorPage != nil {
+		node = a.errorPage(ctx, err)
+	} else {
+		title := http.StatusText(ctx.status)
+		if title == "" {
+			title = "Server Error"
+		}
+		ctx.SetMetadata(Metadata{Title: title})
+		node = defaultStatusBody(title, defaultErrorMessage(err, r))
+	}
+	a.renderPage(w, ctx, "", node, http.StatusText(ctx.status))
+}
+
+func (a *App) servePublic(w http.ResponseWriter, r *http.Request) bool {
+	if a.publicDir == "" {
+		return false
+	}
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		return false
+	}
+
+	cleanPath := path.Clean("/" + r.URL.Path)
+	if cleanPath == "/" {
+		return false
+	}
+
+	name := strings.TrimPrefix(cleanPath, "/")
+	fsPath := filepath.Join(a.publicDir, filepath.FromSlash(name))
+	info, err := os.Stat(fsPath)
+	if err != nil || info.IsDir() {
+		return false
+	}
+
+	http.ServeFile(w, r, fsPath)
+	return true
+}
+
+func (a *App) hasRoute(pattern string) bool {
+	matchPattern := normalizePattern(pattern)
+	if _, ok := a.pageRoutes[matchPattern]; ok {
+		return true
+	}
+	_, ok := a.apiRoutes[matchPattern]
+	return ok
+}
+
+func (a *App) effectiveImageDir() string {
+	if strings.TrimSpace(a.imageDir) != "" {
+		return a.imageDir
+	}
+	return a.publicDir
 }
 
 func healthHandler(w http.ResponseWriter, _ *http.Request) {
@@ -185,11 +599,9 @@ func recoveryMiddleware() Middleware {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			defer func() {
-				if recover() == nil {
-					return
+				if recovered := recover(); recovered != nil {
+					writePanic(w, r, recovered)
 				}
-				w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-				http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 			}()
 			next.ServeHTTP(w, r)
 		})
@@ -199,4 +611,276 @@ func recoveryMiddleware() Middleware {
 func nextRequestID() string {
 	seq := atomic.AddUint64(&requestSeq, 1)
 	return fmt.Sprintf("gosx-%d-%d", time.Now().UnixNano(), seq)
+}
+
+func statusWithDefault(status int, payload any) int {
+	if status != 0 {
+		return status
+	}
+	if payload == nil {
+		return http.StatusNoContent
+	}
+	return http.StatusOK
+}
+
+func errorStatus(err error, fallback int, defaultStatus int) int {
+	if err == nil {
+		if fallback != 0 {
+			return fallback
+		}
+		return defaultStatus
+	}
+	if sc, ok := err.(statusCoder); ok && sc.StatusCode() != 0 {
+		return sc.StatusCode()
+	}
+	if fallback != 0 {
+		return fallback
+	}
+	return defaultStatus
+}
+
+func writeJSON(w http.ResponseWriter, status int, payload any, headers http.Header) {
+	copyHeaders(w.Header(), headers)
+	if payload == nil {
+		w.WriteHeader(status)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(payload)
+}
+
+func writeJSONError(w http.ResponseWriter, status int, err error, headers http.Header) {
+	message := http.StatusText(status)
+	if err != nil && err.Error() != "" {
+		message = err.Error()
+	}
+	writeJSON(w, status, map[string]any{
+		"error": message,
+	}, headers)
+}
+
+func writePanic(w http.ResponseWriter, r *http.Request, recovered any) {
+	message := http.StatusText(http.StatusInternalServerError)
+	if wantsJSON(r) {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": message}, nil)
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	http.Error(w, message, http.StatusInternalServerError)
+}
+
+func wantsJSON(r *http.Request) bool {
+	if r == nil {
+		return false
+	}
+	if strings.HasPrefix(r.URL.Path, "/api/") {
+		return true
+	}
+	accept := r.Header.Get("Accept")
+	if accept == "" {
+		return false
+	}
+	return strings.Contains(accept, "application/json") && !strings.Contains(accept, "text/html")
+}
+
+func defaultStatusBody(title string, message string) gosx.Node {
+	return gosx.El("main", gosx.Attrs(gosx.Attr("style", "font-family: sans-serif; max-width: 40rem; margin: 4rem auto; padding: 0 1.5rem; line-height: 1.5")),
+		gosx.El("h1", gosx.Text(title)),
+		gosx.El("p", gosx.Text(message)),
+	)
+}
+
+func defaultErrorMessage(err error, r *http.Request) string {
+	requestID := RequestID(r)
+	if requestID == "" {
+		return "The server encountered an unexpected error."
+	}
+	return fmt.Sprintf("The server encountered an unexpected error. Request ID: %s", requestID)
+}
+
+func panicError(recovered any) error {
+	if err, ok := recovered.(error); ok {
+		return err
+	}
+	return fmt.Errorf("%v", recovered)
+}
+
+func fallbackTitle(pattern, defaultTitle string) string {
+	if title := displayPattern(pattern); title != "" {
+		return title
+	}
+	return defaultTitle
+}
+
+func normalizePattern(pattern string) string {
+	fields := strings.Fields(pattern)
+	if len(fields) == 1 && fields[0] == "/" {
+		return "/{$}"
+	}
+	if len(fields) == 2 && fields[1] == "/" {
+		return fields[0] + " /{$}"
+	}
+	return strings.TrimSpace(pattern)
+}
+
+var pathParamPattern = regexp.MustCompile(`\{([a-zA-Z0-9_]+)\}`)
+
+func expandPatternValues(r *http.Request, target string) string {
+	if r == nil || target == "" {
+		return target
+	}
+	return pathParamPattern.ReplaceAllStringFunc(target, func(match string) string {
+		submatch := pathParamPattern.FindStringSubmatch(match)
+		if len(submatch) != 2 {
+			return match
+		}
+		value := r.PathValue(submatch[1])
+		if value == "" {
+			return match
+		}
+		return value
+	})
+}
+
+func rewriteRequest(r *http.Request, destination string) *http.Request {
+	if r == nil {
+		return nil
+	}
+	clone := r.Clone(r.Context())
+	if destination == "" {
+		return clone
+	}
+	parsed, err := url.Parse(destination)
+	if err != nil {
+		clone.URL.Path = destination
+		clone.URL.RawPath = destination
+		clone.RequestURI = destination
+		return clone
+	}
+	if parsed.Path != "" {
+		clone.URL.Path = parsed.Path
+		clone.URL.RawPath = parsed.EscapedPath()
+	}
+	clone.URL.RawQuery = parsed.RawQuery
+	if parsed.Fragment != "" {
+		clone.URL.Fragment = parsed.Fragment
+	}
+	requestURI := clone.URL.Path
+	if clone.URL.RawQuery != "" {
+		requestURI += "?" + clone.URL.RawQuery
+	}
+	clone.RequestURI = requestURI
+	return clone
+}
+
+func displayPattern(pattern string) string {
+	fields := strings.Fields(pattern)
+	switch len(fields) {
+	case 0:
+		return ""
+	case 1:
+		return strings.ReplaceAll(fields[0], "{$}", "")
+	default:
+		return strings.ReplaceAll(fields[len(fields)-1], "{$}", "")
+	}
+}
+
+func copyHeaders(dst, src http.Header) {
+	for key, values := range src {
+		for _, value := range values {
+			dst.Add(key, value)
+		}
+	}
+}
+
+func chainMiddleware(handler http.Handler, middleware []Middleware) http.Handler {
+	wrapped := handler
+	for i := len(middleware) - 1; i >= 0; i-- {
+		if middleware[i] == nil {
+			continue
+		}
+		wrapped = middleware[i](wrapped)
+	}
+	return wrapped
+}
+
+func routeHandled(mux *http.ServeMux, w http.ResponseWriter, r *http.Request) bool {
+	rec := &interceptResponseWriter{header: make(http.Header)}
+	mux.ServeHTTP(rec, r)
+	switch rec.statusCode {
+	case 0, http.StatusNotFound:
+		return false
+	default:
+		rec.commit(w)
+		return true
+	}
+}
+
+func mountHandled(mux *http.ServeMux, w http.ResponseWriter, r *http.Request) bool {
+	handler, pattern := mux.Handler(r)
+	if pattern == "" || handler == nil {
+		return false
+	}
+	rec := &interceptResponseWriter{header: make(http.Header)}
+	handler.ServeHTTP(rec, r)
+	rec.commit(w)
+	return true
+}
+
+func redirectHandled(mux *http.ServeMux, w http.ResponseWriter, r *http.Request) bool {
+	rec := &interceptResponseWriter{header: make(http.Header)}
+	mux.ServeHTTP(rec, r)
+	switch {
+	case rec.statusCode >= 300 && rec.statusCode < 400:
+		rec.commit(w)
+		return true
+	default:
+		return false
+	}
+}
+
+func rewriteHandled(mux *http.ServeMux, w http.ResponseWriter, r *http.Request) bool {
+	rec := &interceptResponseWriter{header: make(http.Header)}
+	mux.ServeHTTP(rec, r)
+	switch rec.statusCode {
+	case 0, http.StatusNotFound, http.StatusMethodNotAllowed:
+		return false
+	default:
+		rec.commit(w)
+		return true
+	}
+}
+
+type interceptResponseWriter struct {
+	header     http.Header
+	body       strings.Builder
+	statusCode int
+}
+
+func (w *interceptResponseWriter) Header() http.Header {
+	if w.header == nil {
+		w.header = make(http.Header)
+	}
+	return w.header
+}
+
+func (w *interceptResponseWriter) Write(data []byte) (int, error) {
+	if w.statusCode == 0 {
+		w.statusCode = http.StatusOK
+	}
+	return w.body.Write(data)
+}
+
+func (w *interceptResponseWriter) WriteHeader(status int) {
+	w.statusCode = status
+}
+
+func (w *interceptResponseWriter) commit(dst http.ResponseWriter) {
+	copyHeaders(dst.Header(), w.header)
+	if w.statusCode == 0 {
+		w.statusCode = http.StatusOK
+	}
+	dst.WriteHeader(w.statusCode)
+	_, _ = dst.Write([]byte(w.body.String()))
 }

@@ -238,6 +238,29 @@ func App() Node {
 	}
 }
 
+func TestJSXHyphenatedAttributes(t *testing.T) {
+	prog := mustCompile(t, `package main
+
+func App() Node {
+	return <a data-gosx-link aria-label="Docs" hx-get="/docs">Docs</a>
+}`)
+
+	root := prog.NodeAt(prog.Components[0].Root)
+	if len(root.Attrs) != 3 {
+		t.Fatalf("expected 3 attrs, got %d", len(root.Attrs))
+	}
+
+	if root.Attrs[0].Kind != ir.AttrBool || root.Attrs[0].Name != "data-gosx-link" {
+		t.Fatalf("attr 0: expected bool data-gosx-link, got %s kind=%d", root.Attrs[0].Name, root.Attrs[0].Kind)
+	}
+	if root.Attrs[1].Kind != ir.AttrStatic || root.Attrs[1].Name != "aria-label" || root.Attrs[1].Value != "Docs" {
+		t.Fatalf("attr 1: expected aria-label='Docs', got %s=%q kind=%d", root.Attrs[1].Name, root.Attrs[1].Value, root.Attrs[1].Kind)
+	}
+	if root.Attrs[2].Kind != ir.AttrStatic || root.Attrs[2].Name != "hx-get" || root.Attrs[2].Value != "/docs" {
+		t.Fatalf("attr 2: expected hx-get='/docs', got %s=%q kind=%d", root.Attrs[2].Name, root.Attrs[2].Value, root.Attrs[2].Kind)
+	}
+}
+
 func TestJSXBooleanAttribute(t *testing.T) {
 	prog := mustCompile(t, `package main
 
@@ -322,6 +345,25 @@ func App() Node {
 	}
 	if root.Attrs[3].Name != "disabled" || root.Attrs[3].Kind != ir.AttrBool {
 		t.Errorf("attr 3: expected disabled (bool), got %s kind=%d", root.Attrs[3].Name, root.Attrs[3].Kind)
+	}
+}
+
+func TestJSXCustomElementTag(t *testing.T) {
+	prog := mustCompile(t, `package main
+
+func App() Node {
+	return <paper-card data-state="ready" />
+}`)
+
+	root := prog.NodeAt(prog.Components[0].Root)
+	if root.Kind != ir.NodeElement {
+		t.Fatalf("expected NodeElement, got %d", root.Kind)
+	}
+	if root.Tag != "paper-card" {
+		t.Fatalf("expected custom element tag 'paper-card', got %q", root.Tag)
+	}
+	if len(root.Attrs) != 1 || root.Attrs[0].Name != "data-state" || root.Attrs[0].Value != "ready" {
+		t.Fatalf("unexpected attrs %+v", root.Attrs)
 	}
 }
 

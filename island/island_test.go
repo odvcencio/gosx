@@ -91,6 +91,9 @@ func TestPageHeadWithIslands(t *testing.T) {
 	if !strings.Contains(html, "bootstrap.js") {
 		t.Fatal("missing bootstrap script in PageHead")
 	}
+	if !strings.Contains(html, `data-gosx-script="bootstrap"`) {
+		t.Fatal("missing bootstrap script role marker")
+	}
 }
 
 func TestPageHeadWithEnginesOnly(t *testing.T) {
@@ -116,6 +119,9 @@ func TestPageHeadWithEnginesOnly(t *testing.T) {
 	}
 	if !strings.Contains(head, "wasm_exec.js") {
 		t.Fatal("missing wasm_exec for wasm-backed engine page")
+	}
+	if !strings.Contains(head, `data-gosx-script="wasm-exec"`) {
+		t.Fatal("missing wasm_exec role marker")
 	}
 	if strings.Contains(head, "patch.js") {
 		t.Fatal("engine-only page should not load patch.js")

@@ -17,9 +17,12 @@ func GosxGrammar() *Grammar {
 		// JSX element: <tag attr="val" attr={expr}>children</tag>
 		// ---------------------------------------------------------------
 
-		// Tag names: identifiers or dotted paths (pkg.Component)
+		// Tag names: identifiers, custom elements, or dotted paths (pkg.Component)
 		g.Define("jsx_identifier",
 			Pat(`[a-zA-Z_][a-zA-Z0-9_]*`))
+
+		g.Define("jsx_html_tag_name",
+			Pat(`[a-z][a-zA-Z0-9_-]*`))
 
 		g.Define("jsx_dotted_name",
 			Seq(
@@ -31,6 +34,7 @@ func GosxGrammar() *Grammar {
 		g.Define("jsx_tag_name",
 			Choice(
 				Sym("jsx_dotted_name"),
+				Sym("jsx_html_tag_name"),
 				Sym("jsx_identifier"),
 			))
 
@@ -54,10 +58,13 @@ func GosxGrammar() *Grammar {
 				Str("}"),
 			))
 
+		g.Define("jsx_attr_name",
+			Pat(`[a-zA-Z_][a-zA-Z0-9_:-]*`))
+
 		// Attribute: name="value" or name={expr} or name (boolean)
 		g.Define("jsx_attribute",
 			Seq(
-				Field("name", Sym("jsx_identifier")),
+				Field("name", Sym("jsx_attr_name")),
 				Optional(Seq(
 					Str("="),
 					Field("value", Choice(

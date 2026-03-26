@@ -2,3 +2,4 @@
 build/
 docs/
 gosx
+node_modules/
