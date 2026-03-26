@@ -613,6 +613,16 @@ func TestRouterAddDirSupportsDynamicSegments(t *testing.T) {
 	}
 }
 
+func TestBuildFileRouteSkipsGroupsAndCapturesCatchAll(t *testing.T) {
+	routePath, pattern, params := buildFileRoute([]string{"(marketing)", "docs", "[...slug]"})
+	if routePath != "/docs/{slug...}" || pattern != "/docs/{slug...}" {
+		t.Fatalf("unexpected route values: path=%q pattern=%q", routePath, pattern)
+	}
+	if len(params) != 1 || params[0] != "slug" {
+		t.Fatalf("unexpected params: %#v", params)
+	}
+}
+
 func TestRouterAddDirUsesScopedNotFoundWithDynamicParams(t *testing.T) {
 	root := t.TempDir()
 	writeRouteFile(t, root, "layout.gsx", `package docs
