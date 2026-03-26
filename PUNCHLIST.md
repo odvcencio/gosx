@@ -25,7 +25,7 @@ This is the working framework punchlist for driving GoSX from "credible core" to
 - [x] Route groups
 - [ ] Directory-scoped middleware/config
 - [x] Directory-scoped `not-found` and `error` composition
-- [ ] File-based metadata conventions beyond manual registration
+- [x] File-based metadata conventions beyond manual registration
 
 ## Phase 4
 
