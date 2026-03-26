@@ -258,6 +258,9 @@ func TestRuntimeRenderBundleSyncsDirtyNodes(t *testing.T) {
 	if bundle.Background != "#102030" {
 		t.Fatalf("expected background from props, got %q", bundle.Background)
 	}
+	if bundle.Camera.Z != 6 {
+		t.Fatalf("expected default camera to flow into bundle, got %#v", bundle.Camera)
+	}
 	if bundle.ObjectCount != 1 {
 		t.Fatalf("expected 1 object, got %d", bundle.ObjectCount)
 	}
@@ -269,6 +272,15 @@ func TestRuntimeRenderBundleSyncsDirtyNodes(t *testing.T) {
 	}
 	if len(bundle.Colors) != bundle.VertexCount*4 {
 		t.Fatalf("expected colors sized to vertex count, got %d for %d vertices", len(bundle.Colors), bundle.VertexCount)
+	}
+	if bundle.WorldVertexCount == 0 {
+		t.Fatal("expected world vertices in render bundle")
+	}
+	if len(bundle.WorldPositions) != bundle.WorldVertexCount*3 {
+		t.Fatalf("expected world positions sized to world vertex count, got %d for %d vertices", len(bundle.WorldPositions), bundle.WorldVertexCount)
+	}
+	if len(bundle.WorldColors) != bundle.WorldVertexCount*4 {
+		t.Fatalf("expected world colors sized to world vertex count, got %d for %d vertices", len(bundle.WorldColors), bundle.WorldVertexCount)
 	}
 	if rt.dirty[1] {
 		t.Fatal("expected render bundle generation to sync dirty node snapshot")

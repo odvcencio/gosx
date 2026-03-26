@@ -988,6 +988,9 @@
     const colorBuffer = gl.createBuffer();
     const positionLocation = gl.getAttribLocation(program, "a_position");
     const colorLocation = gl.getAttribLocation(program, "a_color");
+    const cameraLocation = gl.getUniformLocation(program, "u_camera");
+    const aspectLocation = gl.getUniformLocation(program, "u_aspect");
+    const perspectiveLocation = gl.getUniformLocation(program, "u_use_perspective");
     const floatType = typeof gl.FLOAT === "number" ? gl.FLOAT : 0x1406;
     const arrayBuffer = typeof gl.ARRAY_BUFFER === "number" ? gl.ARRAY_BUFFER : 0x8892;
     const dynamicDraw = typeof gl.DYNAMIC_DRAW === "number" ? gl.DYNAMIC_DRAW : 0x88E8;
@@ -1001,22 +1004,42 @@
         gl.viewport(0, 0, canvas.width, canvas.height);
         gl.clearColor(background[0], background[1], background[2], background[3]);
         gl.clear(colorBufferBit);
-        if (!bundle || bundle.vertexCount === 0) {
+        const usePerspective = Boolean(bundle && bundle.worldVertexCount > 0 && bundle.worldPositions && bundle.worldColors);
+        const positions = usePerspective ? bundle.worldPositions : bundle.positions;
+        const colors = usePerspective ? bundle.worldColors : bundle.colors;
+        const vertexCount = usePerspective ? bundle.worldVertexCount : bundle.vertexCount;
+        if (!bundle || vertexCount === 0 || !positions || !colors) {
           return;
         }
         gl.useProgram(program);
+        if (typeof gl.uniform4f === "function" && cameraLocation) {
+          const camera = bundle.camera || {};
+          gl.uniform4f(
+            cameraLocation,
+            sceneNumber(camera.x, 0),
+            sceneNumber(camera.y, 0),
+            sceneNumber(camera.z, 6),
+            sceneNumber(camera.fov, 75),
+          );
+        }
+        if (typeof gl.uniform1f === "function" && aspectLocation) {
+          gl.uniform1f(aspectLocation, Math.max(0.0001, canvas.width / Math.max(1, canvas.height)));
+        }
+        if (typeof gl.uniform1f === "function" && perspectiveLocation) {
+          gl.uniform1f(perspectiveLocation, usePerspective ? 1 : 0);
+        }
 
         gl.bindBuffer(arrayBuffer, positionBuffer);
-        gl.bufferData(arrayBuffer, bundle.positions, dynamicDraw);
+        gl.bufferData(arrayBuffer, positions, dynamicDraw);
         gl.enableVertexAttribArray(positionLocation);
-        gl.vertexAttribPointer(positionLocation, 2, floatType, false, 0, 0);
+        gl.vertexAttribPointer(positionLocation, usePerspective ? 3 : 2, floatType, false, 0, 0);
 
         gl.bindBuffer(arrayBuffer, colorBuffer);
-        gl.bufferData(arrayBuffer, bundle.colors, dynamicDraw);
+        gl.bufferData(arrayBuffer, colors, dynamicDraw);
         gl.enableVertexAttribArray(colorLocation);
         gl.vertexAttribPointer(colorLocation, 4, floatType, false, 0, 0);
 
-        gl.drawArrays(linesMode, 0, bundle.vertexCount);
+        gl.drawArrays(linesMode, 0, vertexCount);
       },
       dispose() {
         if (typeof gl.deleteBuffer === "function") {
@@ -1032,11 +1055,26 @@
 
   function createSceneWebGLProgram(gl) {
     const vertexSource = [
-      "attribute vec2 a_position;",
+      "attribute vec3 a_position;",
       "attribute vec4 a_color;",
+      "uniform vec4 u_camera;",
+      "uniform float u_aspect;",
+      "uniform float u_use_perspective;",
       "varying vec4 v_color;",
       "void main() {",
-      "  gl_Position = vec4(a_position, 0.0, 1.0);",
+      "  vec4 clip = vec4(a_position.xy, 0.0, 1.0);",
+      "  if (u_use_perspective > 0.5) {",
+      "    float depth = a_position.z + u_camera.z;",
+      "    if (depth <= 0.001) {",
+      "      clip = vec4(2.0, 2.0, 0.0, 1.0);",
+      "    } else {",
+      "      float focal = 1.0 / tan(radians(u_camera.w) * 0.5);",
+      "      vec2 projected = vec2((a_position.x - u_camera.x) * focal / depth, (a_position.y - u_camera.y) * focal / depth);",
+      "      projected.x /= max(u_aspect, 0.0001);",
+      "      clip = vec4(projected, 0.0, 1.0);",
+      "    }",
+      "  }",
+      "  gl_Position = clip;",
       "  v_color = a_color;",
       "}",
     ].join("\n");
@@ -1441,11 +1479,32 @@
     }
     try {
       const bundle = JSON.parse(result);
-      return bundle && typeof bundle === "object" ? bundle : null;
+      return normalizeEngineRenderBundle(bundle);
     } catch (e) {
       console.error("[gosx] failed to decode engine render bundle:", e);
       return null;
     }
+  }
+
+  function normalizeEngineRenderBundle(bundle) {
+    if (!bundle || typeof bundle !== "object") {
+      return null;
+    }
+    bundle.positions = sceneFloatArray(bundle.positions);
+    bundle.colors = sceneFloatArray(bundle.colors);
+    bundle.worldPositions = sceneFloatArray(bundle.worldPositions);
+    bundle.worldColors = sceneFloatArray(bundle.worldColors);
+    return bundle;
+  }
+
+  function sceneFloatArray(values) {
+    if (values instanceof Float32Array) {
+      return values;
+    }
+    if (Array.isArray(values)) {
+      return new Float32Array(values);
+    }
+    return new Float32Array(0);
   }
 
   function createEngineContext(entry, mount) {
