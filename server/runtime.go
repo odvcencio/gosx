@@ -17,8 +17,10 @@ type PageRuntime struct {
 
 // NewPageRuntime creates an empty runtime registry for a page response.
 func NewPageRuntime() *PageRuntime {
+	renderer := island.NewRenderer("gosx-page")
+	renderer.SetRuntime("/gosx/runtime.wasm", "", 0)
 	return &PageRuntime{
-		renderer: island.NewRenderer("gosx-page"),
+		renderer: renderer,
 	}
 }
 

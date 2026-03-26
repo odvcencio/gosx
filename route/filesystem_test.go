@@ -364,6 +364,44 @@ func Page() Node {
 	}
 }
 
+func TestDefaultFileRendererDoesNotInjectDefaultSceneObjectsForProgramRef(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "page.gsx")
+	source := `package docs
+
+func Page() Node {
+	return <Scene3D class="scene-shell" programRef="/api/runtime/scene-program">
+		<div>Scene fallback</div>
+	</Scene3D>
+}
+`
+	if err := os.WriteFile(path, []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := &RouteContext{}
+	node, err := DefaultFileRenderer(ctx, FilePage{FilePath: path, Pattern: "/"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	html := gosx.RenderHTML(node)
+	if !strings.Contains(html, `data-gosx-engine="GoSXScene3D"`) {
+		t.Fatalf("expected Scene3D mount shell in %q", html)
+	}
+
+	head := gosx.RenderHTML(ctx.Runtime().Head())
+	if !strings.Contains(head, `/api/runtime/scene-program`) {
+		t.Fatalf("expected programRef in runtime head %q", head)
+	}
+	if !strings.Contains(head, `/gosx/runtime.wasm`) {
+		t.Fatalf("expected runtime wasm path in runtime head %q", head)
+	}
+	if strings.Contains(head, `"objects"`) || strings.Contains(head, `"kind":"cube"`) {
+		t.Fatalf("expected runtime Scene3D manifest without injected default objects, got %q", head)
+	}
+}
+
 func TestScanDirBuildsNestedLayoutsGroupsAndNearestErrorPages(t *testing.T) {
 	root := t.TempDir()
 	writeRouteFile(t, root, "layout.gsx", `package docs

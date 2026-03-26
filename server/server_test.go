@@ -274,6 +274,7 @@ func TestAppInjectsRuntimeHeadForEnginePages(t *testing.T) {
 	for _, snippet := range []string{
 		`data-gosx-engine="GoSXScene3D"`,
 		`gosx-manifest`,
+		`/gosx/runtime.wasm`,
 		`/gosx/bootstrap.js`,
 	} {
 		if !strings.Contains(body, snippet) {
