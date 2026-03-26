@@ -77,6 +77,7 @@ type App struct {
 	errorPage   ErrorHandler
 	publicDir   string
 	imageDir    string
+	runtimeRoot string
 	navigation  bool
 	observers   []RequestObserver
 	redirects   map[string]registeredRedirectRoute
@@ -307,6 +308,9 @@ func (a *App) Build() http.Handler {
 	if !a.hasRoute("/readyz") {
 		mux.HandleFunc("/readyz", healthHandler)
 	}
+	if a.hasCompatRuntimeAssets() && !a.hasRoute("GET /gosx/") {
+		mux.Handle("GET /gosx/", http.HandlerFunc(a.serveRuntimeAsset))
+	}
 	if imageDir := a.effectiveImageDir(); imageDir != "" && !a.hasRoute(defaultImageEndpoint) {
 		mux.Handle("GET "+defaultImageEndpoint, ImageHandler(imageDir))
 	}
@@ -503,6 +507,9 @@ func (a *App) renderPage(w http.ResponseWriter, ctx *Context, pattern string, bo
 	}
 	if ctx.status == 0 {
 		ctx.status = http.StatusOK
+	}
+	if ctx.runtime != nil {
+		ctx.AddHead(ctx.runtime.Head())
 	}
 	if a.navigation {
 		ctx.AddHead(NavigationScript())

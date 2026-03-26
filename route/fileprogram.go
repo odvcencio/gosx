@@ -1,6 +1,7 @@
 package route
 
 import (
+	"encoding/json"
 	"fmt"
 	"html"
 	"reflect"
@@ -8,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/odvcencio/gosx"
+	"github.com/odvcencio/gosx/engine"
 	"github.com/odvcencio/gosx/ir"
 	"github.com/odvcencio/gosx/server"
 )
@@ -115,6 +117,12 @@ func (r *fileProgramRenderer) renderBuiltinComponent(node *ir.Node, env fileRend
 		return true, r.renderImage(node, env)
 	case "Stylesheet":
 		return true, r.renderStylesheet(node, env)
+	case "Surface":
+		return true, r.renderSurface(node, env)
+	case "Worker":
+		return true, r.renderWorker(node, env)
+	case "Scene3D":
+		return true, r.renderScene3D(node, env)
 	default:
 		return false, ""
 	}
@@ -230,6 +238,92 @@ func (r *fileProgramRenderer) renderStylesheet(node *ir.Node, env fileRenderEnv)
 		}
 	}
 	return gosx.RenderHTML(server.Stylesheet(href, extra...))
+}
+
+type fileEngineDefaults struct {
+	Name         string
+	JSExport     string
+	JSPath       string
+	WASMPath     string
+	Capabilities []engine.Capability
+	MountAttrs   map[string]any
+}
+
+func (r *fileProgramRenderer) renderSurface(node *ir.Node, env fileRenderEnv) string {
+	return r.renderEngineComponent(node, env, engine.KindSurface, fileEngineDefaults{})
+}
+
+func (r *fileProgramRenderer) renderWorker(node *ir.Node, env fileRenderEnv) string {
+	return r.renderEngineComponent(node, env, engine.KindWorker, fileEngineDefaults{})
+}
+
+func (r *fileProgramRenderer) renderScene3D(node *ir.Node, env fileRenderEnv) string {
+	return r.renderEngineComponent(node, env, engine.KindSurface, fileEngineDefaults{
+		Name:     "GoSXScene3D",
+		JSExport: "GoSXScene3D",
+		Capabilities: []engine.Capability{
+			engine.CapCanvas,
+			engine.CapAnimation,
+		},
+		MountAttrs: map[string]any{
+			"data-gosx-scene3d": true,
+		},
+	})
+}
+
+func (r *fileProgramRenderer) renderEngineComponent(node *ir.Node, env fileRenderEnv, kind engine.Kind, defaults fileEngineDefaults) string {
+	cfg, fallback := r.engineComponentConfig(node, env, kind, defaults)
+	if kind == engine.KindSurface && cfg.Name == "GoSXScene3D" {
+		cfg.Props = defaultScene3DProps(cfg.Props)
+	}
+	return gosx.RenderHTML(env.engine(cfg, fallback))
+}
+
+func (r *fileProgramRenderer) engineComponentConfig(node *ir.Node, env fileRenderEnv, kind engine.Kind, defaults fileEngineDefaults) (engine.Config, gosx.Node) {
+	props, mountAttrs := engineComponentProps(node.Attrs, env, kind == engine.KindSurface)
+	name := firstNonEmptyString(
+		stringValue(attrValue(node.Attrs, env, "name", "component")),
+		defaults.Name,
+	)
+	jsExport := firstNonEmptyString(
+		stringValue(attrValue(node.Attrs, env, "jsExport", "export", "factory")),
+		defaults.JSExport,
+		name,
+	)
+	if name == "" {
+		name = jsExport
+	}
+
+	mountID := strings.TrimSpace(stringValue(attrValue(node.Attrs, env, "mountId", "id")))
+	if kind == engine.KindSurface {
+		for key, value := range defaults.MountAttrs {
+			if _, exists := mountAttrs[key]; exists {
+				continue
+			}
+			mountAttrs[key] = value
+		}
+	}
+
+	cfg := engine.Config{
+		Name:         name,
+		Kind:         kind,
+		WASMPath:     firstNonEmptyString(stringValue(attrValue(node.Attrs, env, "wasmPath", "wasm", "programRef", "program")), defaults.WASMPath),
+		JSPath:       firstNonEmptyString(stringValue(attrValue(node.Attrs, env, "jsPath", "js", "script")), defaults.JSPath),
+		JSExport:     jsExport,
+		MountID:      mountID,
+		MountAttrs:   mountAttrs,
+		Props:        marshalEngineProps(props),
+		Capabilities: engineCapabilitiesValue(attrValue(node.Attrs, env, "capabilities"), defaults.Capabilities),
+	}
+
+	var fallback gosx.Node
+	if kind == engine.KindSurface {
+		childrenHTML := strings.TrimSpace(r.renderChildren(node.Children, env))
+		if childrenHTML != "" {
+			fallback = gosx.RawHTML(childrenHTML)
+		}
+	}
+	return cfg, fallback
 }
 
 func (r *fileProgramRenderer) renderBoundComponent(node *ir.Node, env fileRenderEnv) (bool, string) {
@@ -623,6 +717,210 @@ func imageExtraAttrs(attrs []ir.Attr, env fileRenderEnv) []any {
 		}
 	}
 	return out
+}
+
+func engineComponentProps(attrs []ir.Attr, env fileRenderEnv, surface bool) (map[string]any, map[string]any) {
+	props := map[string]any{}
+	mountAttrs := map[string]any{}
+	propsAttr := attrValue(attrs, env, "props")
+	mergeEngineProps(props, propsAttr)
+
+	for _, attr := range attrs {
+		if attr.Kind == ir.AttrSpread {
+			for key, value := range spreadProps(evalFileExpr(attr.Expr, env)) {
+				normalized := normalizeSurfaceMountAttr(key)
+				if surface && normalized != "" {
+					mountAttrs[normalized] = value
+					continue
+				}
+				if isEngineReservedAttr(key) {
+					continue
+				}
+				setComponentProp(props, key, value)
+			}
+			continue
+		}
+
+		if isEngineReservedAttr(attr.Name) {
+			continue
+		}
+
+		value := attrValue([]ir.Attr{attr}, env, attr.Name)
+		if surface {
+			if normalized := normalizeSurfaceMountAttr(attr.Name); normalized != "" {
+				mountAttrs[normalized] = value
+				continue
+			}
+		}
+		setComponentProp(props, attr.Name, value)
+	}
+
+	if len(props) == 0 {
+		props = nil
+	}
+	if len(mountAttrs) == 0 {
+		mountAttrs = nil
+	}
+	return props, mountAttrs
+}
+
+func mergeEngineProps(dst map[string]any, value any) {
+	for key, item := range spreadProps(value) {
+		setComponentProp(dst, key, item)
+	}
+}
+
+func isEngineReservedAttr(name string) bool {
+	switch strings.TrimSpace(name) {
+	case "name", "component", "kind", "wasmPath", "wasm", "programRef", "program", "jsPath", "js", "script", "jsExport", "export", "factory", "mountId", "capabilities", "props", "id":
+		return true
+	default:
+		return false
+	}
+}
+
+func normalizeSurfaceMountAttr(name string) string {
+	name = strings.TrimSpace(name)
+	switch name {
+	case "className":
+		return "class"
+	case "class", "style", "role", "title":
+		return name
+	}
+	if strings.HasPrefix(name, "data-") || strings.HasPrefix(name, "aria-") {
+		return name
+	}
+	return ""
+}
+
+func firstNonEmptyString(values ...string) string {
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func marshalEngineProps(props map[string]any) json.RawMessage {
+	if len(props) == 0 {
+		return nil
+	}
+	data, err := json.Marshal(props)
+	if err != nil {
+		return nil
+	}
+	return data
+}
+
+func engineCapabilitiesValue(value any, fallback []engine.Capability) []engine.Capability {
+	if value == nil {
+		if len(fallback) == 0 {
+			return nil
+		}
+		return append([]engine.Capability(nil), fallback...)
+	}
+
+	normalized := []engine.Capability{}
+	appendCapability := func(raw string) {
+		raw = strings.TrimSpace(raw)
+		if raw == "" {
+			return
+		}
+		normalized = append(normalized, engine.Capability(raw))
+	}
+
+	switch v := value.(type) {
+	case string:
+		for _, part := range strings.Fields(strings.NewReplacer(",", " ", "|", " ").Replace(v)) {
+			appendCapability(part)
+		}
+	case []string:
+		for _, item := range v {
+			appendCapability(item)
+		}
+	case []engine.Capability:
+		if len(v) == 0 {
+			return nil
+		}
+		return append([]engine.Capability(nil), v...)
+	default:
+		rv := reflect.ValueOf(value)
+		for rv.IsValid() && rv.Kind() == reflect.Pointer {
+			if rv.IsNil() {
+				return nil
+			}
+			rv = rv.Elem()
+		}
+		if rv.IsValid() && (rv.Kind() == reflect.Array || rv.Kind() == reflect.Slice) {
+			for i := 0; i < rv.Len(); i++ {
+				appendCapability(fmt.Sprint(rv.Index(i).Interface()))
+			}
+		}
+	}
+
+	if len(normalized) == 0 {
+		return nil
+	}
+	return normalized
+}
+
+func defaultScene3DProps(raw json.RawMessage) json.RawMessage {
+	props := map[string]any{}
+	if len(raw) > 0 {
+		_ = json.Unmarshal(raw, &props)
+	}
+	if props == nil {
+		props = map[string]any{}
+	}
+	if _, ok := lookupTemplatePropValue(props, "width"); !ok {
+		props["width"] = 720
+	}
+	if _, ok := lookupTemplatePropValue(props, "height"); !ok {
+		props["height"] = 420
+	}
+	if _, ok := lookupTemplatePropValue(props, "background"); !ok {
+		props["background"] = "#08151f"
+	}
+	if _, ok := lookupTemplatePropValue(props, "autoRotate"); !ok {
+		props["autoRotate"] = true
+	}
+	if _, ok := lookupTemplatePropValue(props, "camera"); !ok {
+		props["camera"] = map[string]any{
+			"z":   6,
+			"fov": 75,
+		}
+	}
+	if _, ok := lookupTemplatePropValue(props, "scene"); !ok {
+		props["scene"] = map[string]any{
+			"objects": []map[string]any{
+				{
+					"kind":  "cube",
+					"size":  1.8,
+					"x":     -1.2,
+					"y":     0.2,
+					"z":     0,
+					"color": "#8de1ff",
+					"spinX": 0.42,
+					"spinY": 0.74,
+					"spinZ": 0.18,
+				},
+				{
+					"kind":  "cube",
+					"size":  1.1,
+					"x":     1.7,
+					"y":     -0.8,
+					"z":     1.4,
+					"color": "#ffd48f",
+					"spinX": -0.22,
+					"spinY": 0.46,
+					"spinZ": 0.12,
+				},
+			},
+		}
+	}
+	return marshalEngineProps(props)
 }
 
 func spreadValue(value any, name string) (any, bool) {

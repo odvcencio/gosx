@@ -235,6 +235,87 @@ func Page() Node {
 	}
 }
 
+func TestDefaultFileRendererSupportsEngineBuiltins(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "page.gsx")
+	source := `package docs
+
+func Page() Node {
+	return <main>
+		<Surface name="Whiteboard" jsExport="Whiteboard" class="board" props={data.board}>
+			<div>Board fallback</div>
+		</Surface>
+		<Worker name="SearchIndexer" jsExport="SearchIndexer" props={data.job} />
+		<Scene3D class="scene-shell" {...data.scene}>
+			<div>Scene fallback</div>
+		</Scene3D>
+	</main>
+}
+`
+	if err := os.WriteFile(path, []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := &RouteContext{
+		Data: map[string]any{
+			"board": map[string]any{
+				"room": "alpha",
+			},
+			"job": map[string]any{
+				"index": "posts",
+			},
+			"scene": map[string]any{
+				"width":  640,
+				"height": 360,
+				"scene": map[string]any{
+					"objects": []map[string]any{
+						{
+							"kind":  "cube",
+							"size":  1.6,
+							"x":     0,
+							"y":     0,
+							"z":     0,
+							"color": "#8de1ff",
+						},
+					},
+				},
+			},
+		},
+	}
+	node, err := DefaultFileRenderer(ctx, FilePage{FilePath: path, Pattern: "/"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	html := gosx.RenderHTML(node)
+	for _, snippet := range []string{
+		`class="board"`,
+		`data-gosx-engine="Whiteboard"`,
+		`data-gosx-engine-kind="surface"`,
+		`class="scene-shell"`,
+		`data-gosx-engine="GoSXScene3D"`,
+		`data-gosx-scene3d`,
+		`Scene fallback`,
+	} {
+		if !strings.Contains(html, snippet) {
+			t.Fatalf("expected %q in rendered engine html %q", snippet, html)
+		}
+	}
+
+	head := gosx.RenderHTML(ctx.Runtime().Head())
+	for _, snippet := range []string{
+		`gosx-manifest`,
+		`Whiteboard`,
+		`SearchIndexer`,
+		`GoSXScene3D`,
+		`bootstrap.js`,
+	} {
+		if !strings.Contains(head, snippet) {
+			t.Fatalf("expected %q in engine runtime head %q", snippet, head)
+		}
+	}
+}
+
 func TestScanDirBuildsNestedLayoutsGroupsAndNearestErrorPages(t *testing.T) {
 	root := t.TempDir()
 	writeRouteFile(t, root, "layout.gsx", `package docs

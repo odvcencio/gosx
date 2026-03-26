@@ -1,0 +1,31 @@
+.scene-callout {
+	display: grid;
+	gap: 1.5rem;
+	margin: 2.25rem 0;
+}
+
+.scene-copy h2 {
+	margin-top: 0.35rem;
+}
+
+.scene-shell {
+	min-height: 20rem;
+	padding: 0.75rem;
+	border-radius: 1.75rem;
+	border: 1px solid rgba(141, 225, 255, 0.24);
+	background:
+		radial-gradient(circle at top, rgba(141, 225, 255, 0.12), transparent 42%),
+		linear-gradient(160deg, rgba(8, 21, 31, 0.98), rgba(13, 33, 47, 0.92));
+	box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+.scene-fallback {
+	display: grid;
+	place-items: center;
+	min-height: 18rem;
+	border-radius: 1.25rem;
+	color: rgba(230, 245, 252, 0.86);
+	background: rgba(7, 17, 26, 0.58);
+	font-weight: 600;
+	letter-spacing: 0.02em;
+}

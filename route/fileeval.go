@@ -14,14 +14,16 @@ import (
 	"github.com/odvcencio/gosx"
 	"github.com/odvcencio/gosx/action"
 	"github.com/odvcencio/gosx/auth"
+	"github.com/odvcencio/gosx/engine"
 	"github.com/odvcencio/gosx/server"
 	"github.com/odvcencio/gosx/session"
 )
 
 type fileRenderEnv struct {
-	values     map[string]any
-	funcs      map[string]any
-	components map[string]any
+	values       map[string]any
+	funcs        map[string]any
+	components   map[string]any
+	renderEngine func(engine.Config, gosx.Node) gosx.Node
 }
 
 func (env fileRenderEnv) clone() fileRenderEnv {
@@ -39,6 +41,7 @@ func (env fileRenderEnv) clone() fileRenderEnv {
 	for key, value := range env.components {
 		next.components[key] = value
 	}
+	next.renderEngine = env.renderEngine
 	return next
 }
 
@@ -80,6 +83,13 @@ func (env fileRenderEnv) component(name string) (any, bool) {
 	}
 	value, ok := env.components[name]
 	return value, ok
+}
+
+func (env fileRenderEnv) engine(cfg engine.Config, fallback gosx.Node) gosx.Node {
+	if env.renderEngine == nil {
+		return fallback
+	}
+	return env.renderEngine(cfg, fallback)
 }
 
 func newFileRenderEnv(ctx *RouteContext, page FilePage) fileRenderEnv {
@@ -144,6 +154,7 @@ func newFileRenderEnv(ctx *RouteContext, page FilePage) fileRenderEnv {
 	if ctx != nil {
 		env.values["data"] = ctx.Data
 		env.values["params"] = cloneStringMap(ctx.Params)
+		env.renderEngine = ctx.Engine
 		env.funcs["actionPath"] = func(name string) string {
 			return ctx.ActionPath(name)
 		}

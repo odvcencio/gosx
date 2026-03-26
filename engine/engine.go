@@ -61,6 +61,10 @@ type Config struct {
 	// MountID is the DOM element ID for surface engines (ignored for workers).
 	MountID string `json:"mountId,omitempty"`
 
+	// MountAttrs are applied to the server-rendered mount element for surface
+	// engines. They are runtime-only and are not serialized into manifests.
+	MountAttrs map[string]any `json:"-"`
+
 	// Props is the initial props for the engine.
 	Props json.RawMessage `json:"props,omitempty"`
 

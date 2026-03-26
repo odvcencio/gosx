@@ -9,6 +9,43 @@ func init() {
 	docsapp.RegisterStaticDocsPage(
 		"Runtime",
 		"Hydration bootstrap, page disposal, and streamed regions cooperate during client-side transitions.",
-		route.FileModuleOptions{},
+		route.FileModuleOptions{
+			Load: func(ctx *route.RouteContext, page route.FilePage) (any, error) {
+				return map[string]any{
+					"sceneDemo": map[string]any{
+						"width":      720,
+						"height":     420,
+						"label":      "GoSX Scene3D demo",
+						"background": "#08151f",
+						"scene": map[string]any{
+							"objects": []map[string]any{
+								{
+									"kind":  "cube",
+									"size":  1.9,
+									"x":     -1.1,
+									"y":     0.4,
+									"z":     0,
+									"color": "#8de1ff",
+									"spinX": 0.46,
+									"spinY": 0.72,
+									"spinZ": 0.14,
+								},
+								{
+									"kind":  "cube",
+									"size":  1.15,
+									"x":     1.75,
+									"y":     -0.85,
+									"z":     1.45,
+									"color": "#ffd48f",
+									"spinX": -0.24,
+									"spinY": 0.44,
+									"spinZ": 0.11,
+								},
+							},
+						},
+					},
+				}, nil
+			},
+		},
 	)
 }
