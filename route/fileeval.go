@@ -581,26 +581,46 @@ func reflectValue(value any, target reflect.Type) (reflect.Value, bool) {
 	if value == nil {
 		return reflect.Zero(target), true
 	}
-	if target.Kind() == reflect.Pointer {
-		inner, ok := reflectValue(value, target.Elem())
-		if !ok {
-			return reflect.Value{}, false
-		}
-		out := reflect.New(target.Elem())
-		out.Elem().Set(inner)
+	if out, ok := reflectPointerTargetValue(value, target); ok {
 		return out, true
 	}
 	rv := reflect.ValueOf(value)
+	if out, ok := reflectDirectValue(rv, target); ok {
+		return out, true
+	}
+	if out, ok := reflectPrimitiveValue(value, rv, target); ok {
+		return out, true
+	}
+	return reflectStructuredValue(value, target)
+}
+
+func reflectPointerTargetValue(value any, target reflect.Type) (reflect.Value, bool) {
+	if target.Kind() != reflect.Pointer {
+		return reflect.Value{}, false
+	}
+	inner, ok := reflectValue(value, target.Elem())
+	if !ok {
+		return reflect.Value{}, false
+	}
+	out := reflect.New(target.Elem())
+	out.Elem().Set(inner)
+	return out, true
+}
+
+func reflectDirectValue(rv reflect.Value, target reflect.Type) (reflect.Value, bool) {
+	if !rv.IsValid() {
+		return reflect.Value{}, false
+	}
 	if rv.Type().AssignableTo(target) {
 		return rv, true
 	}
 	if rv.Type().ConvertibleTo(target) {
 		return rv.Convert(target), true
 	}
+	return reflect.Value{}, false
+}
 
-	if out, ok := reflectPrimitiveValue(value, rv, target); ok {
-		return out, true
-	}
+func reflectStructuredValue(value any, target reflect.Type) (reflect.Value, bool) {
 	if target.Kind() == reflect.Struct {
 		return reflectStructValue(value, target)
 	}

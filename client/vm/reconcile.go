@@ -46,50 +46,61 @@ type keyedChildIndex struct {
 // This avoids the fragile text-node-indexing problem where empty text nodes
 // vanish from the DOM and shift child indices.
 func reconcileNode(ops *[]PatchOp, prev, next *ResolvedTree, nodeIdx int, path string, staticMask []bool) {
-	if nodeIdx >= len(prev.Nodes) || nodeIdx >= len(next.Nodes) {
+	if !reconcileNodePresent(prev, next, nodeIdx) {
 		return
 	}
-
-	if nodeIdx < len(staticMask) && staticMask[nodeIdx] {
+	if isStaticNode(nodeIdx, staticMask) {
 		return
 	}
 
 	pn := &prev.Nodes[nodeIdx]
 	nn := &next.Nodes[nodeIdx]
-
-	// Text/Expr nodes (no tag) — if they changed, emit SetText at current path.
-	if nn.Tag == "" {
-		if pn.Text != nn.Text {
-			*ops = append(*ops, PatchOp{
-				Kind: PatchSetText,
-				Path: path,
-				Text: nn.Text,
-			})
-		}
+	if reconcileTextLikeNode(ops, pn, nn, path) {
 		return
 	}
-
-	// Element node — diff text (if set directly), attributes, then recurse children.
-	// Text on elements handles the case where an element's direct textContent changes
-	// (e.g., <span>old</span> → <span>new</span> with no child nodes).
-	if pn.Text != nn.Text && nn.Text != "" {
-		*ops = append(*ops, PatchOp{
-			Kind: PatchSetText,
-			Path: path,
-			Text: nn.Text,
-		})
-	}
-
+	appendElementTextPatch(ops, pn, nn, path)
 	reconcileAttrs(ops, pn, nn, path)
+	reconcileNodeChildren(ops, prev, next, pn, nn, path, staticMask)
+}
 
-	// Check if children are keyed (any child has a Key).
-	hasKeys := childrenHaveKeys(prev, next, pn, nn)
+func reconcileNodePresent(prev, next *ResolvedTree, nodeIdx int) bool {
+	return nodeIdx < len(prev.Nodes) && nodeIdx < len(next.Nodes)
+}
 
-	if hasKeys {
-		reconcileKeyedChildren(ops, prev, next, pn, nn, path, staticMask)
-	} else {
-		reconcilePositionalChildren(ops, prev, next, pn, nn, path, staticMask)
+func isStaticNode(nodeIdx int, staticMask []bool) bool {
+	return nodeIdx < len(staticMask) && staticMask[nodeIdx]
+}
+
+func reconcileTextLikeNode(ops *[]PatchOp, prevNode, nextNode *ResolvedNode, path string) bool {
+	if nextNode.Tag != "" {
+		return false
 	}
+	if prevNode.Text != nextNode.Text {
+		appendTextPatch(ops, path, nextNode.Text)
+	}
+	return true
+}
+
+func appendElementTextPatch(ops *[]PatchOp, prevNode, nextNode *ResolvedNode, path string) {
+	if prevNode.Text != nextNode.Text && nextNode.Text != "" {
+		appendTextPatch(ops, path, nextNode.Text)
+	}
+}
+
+func appendTextPatch(ops *[]PatchOp, path, text string) {
+	*ops = append(*ops, PatchOp{
+		Kind: PatchSetText,
+		Path: path,
+		Text: text,
+	})
+}
+
+func reconcileNodeChildren(ops *[]PatchOp, prev, next *ResolvedTree, prevNode, nextNode *ResolvedNode, path string, staticMask []bool) {
+	if childrenHaveKeys(prev, next, prevNode, nextNode) {
+		reconcileKeyedChildren(ops, prev, next, prevNode, nextNode, path, staticMask)
+		return
+	}
+	reconcilePositionalChildren(ops, prev, next, prevNode, nextNode, path, staticMask)
 }
 
 // childrenHaveKeys returns true if any child in either list has a key.
@@ -153,9 +164,7 @@ func reconcileNodePair(ops *[]PatchOp, prev, next *ResolvedTree, prevIdx, nextId
 	pn := &prev.Nodes[prevIdx]
 	nn := &next.Nodes[nextIdx]
 
-	if pn.Text != nn.Text && nn.Text != "" {
-		*ops = append(*ops, PatchOp{Kind: PatchSetText, Path: path, Text: nn.Text})
-	}
+	appendElementTextPatch(ops, pn, nn, path)
 	reconcileAttrs(ops, pn, nn, path)
 }
 
@@ -277,7 +286,7 @@ func reconcilePositionalChild(ops *[]PatchOp, prev, next *ResolvedTree, prevChil
 		return
 	}
 	if prevChild.Text != nextChild.Text {
-		*ops = append(*ops, PatchOp{Kind: PatchSetText, Path: cp, Text: nextChild.Text})
+		appendTextPatch(ops, cp, nextChild.Text)
 	}
 }
 
