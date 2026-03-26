@@ -26,14 +26,15 @@ type RenderCamera struct {
 
 // RenderMaterial is a resolved material profile for a draw bundle.
 type RenderMaterial struct {
-	Key        string  `json:"key,omitempty"`
-	Kind       string  `json:"kind,omitempty"`
-	Color      string  `json:"color,omitempty"`
-	Opacity    float64 `json:"opacity,omitempty"`
-	Wireframe  bool    `json:"wireframe,omitempty"`
-	BlendMode  string  `json:"blendMode,omitempty"`
-	RenderPass string  `json:"renderPass,omitempty"`
-	Emissive   float64 `json:"emissive,omitempty"`
+	Key        string    `json:"key,omitempty"`
+	Kind       string    `json:"kind,omitempty"`
+	Color      string    `json:"color,omitempty"`
+	Opacity    float64   `json:"opacity,omitempty"`
+	Wireframe  bool      `json:"wireframe,omitempty"`
+	BlendMode  string    `json:"blendMode,omitempty"`
+	RenderPass string    `json:"renderPass,omitempty"`
+	ShaderData []float64 `json:"shaderData,omitempty"`
+	Emissive   float64   `json:"emissive,omitempty"`
 }
 
 // RenderBounds is a world-space axis-aligned bounds record for a render object.
@@ -52,6 +53,7 @@ type RenderObject struct {
 	ID            string       `json:"id,omitempty"`
 	Kind          string       `json:"kind,omitempty"`
 	MaterialIndex int          `json:"materialIndex,omitempty"`
+	RenderPass    string       `json:"renderPass,omitempty"`
 	VertexOffset  int          `json:"vertexOffset,omitempty"`
 	VertexCount   int          `json:"vertexCount,omitempty"`
 	Static        bool         `json:"static,omitempty"`

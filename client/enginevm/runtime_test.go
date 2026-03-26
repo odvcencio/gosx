@@ -277,6 +277,9 @@ func TestRuntimeRenderBundleSyncsDirtyNodes(t *testing.T) {
 	if bundle.Objects[0].MaterialIndex != 0 {
 		t.Fatalf("expected render object to reference first material, got %#v", bundle.Objects[0])
 	}
+	if bundle.Objects[0].RenderPass != "opaque" {
+		t.Fatalf("expected render object to carry resolved render pass, got %#v", bundle.Objects[0])
+	}
 	if bundle.Objects[0].DepthNear <= 0 || bundle.Objects[0].DepthFar <= bundle.Objects[0].DepthNear {
 		t.Fatalf("expected render object depth metadata, got %#v", bundle.Objects[0])
 	}
@@ -371,17 +374,17 @@ func TestRuntimeRenderBundleResolvesMaterialPresets(t *testing.T) {
 	}
 
 	ghost := bundle.Materials[0]
-	if ghost.Kind != "ghost" || ghost.BlendMode != "alpha" || ghost.RenderPass != "alpha" || ghost.Opacity >= 1 || ghost.Emissive <= 0 || ghost.Key == "" {
+	if ghost.Kind != "ghost" || ghost.BlendMode != "alpha" || ghost.RenderPass != "alpha" || ghost.Opacity >= 1 || ghost.Emissive <= 0 || ghost.Key == "" || len(ghost.ShaderData) != 3 || ghost.ShaderData[0] != 1 {
 		t.Fatalf("expected ghost preset material, got %#v", ghost)
 	}
 
 	flat := bundle.Materials[1]
-	if flat.Kind != "flat" || flat.BlendMode != "alpha" || flat.RenderPass != "alpha" || flat.Opacity != 0.6 || flat.Emissive != 0.35 || flat.Key == "" {
+	if flat.Kind != "flat" || flat.BlendMode != "alpha" || flat.RenderPass != "alpha" || flat.Opacity != 0.6 || flat.Emissive != 0.35 || flat.Key == "" || len(flat.ShaderData) != 3 || flat.ShaderData[0] != 0 {
 		t.Fatalf("expected explicit flat material overrides, got %#v", flat)
 	}
 
 	glow := bundle.Materials[2]
-	if glow.Kind != "glow" || glow.BlendMode != "additive" || glow.RenderPass != "additive" || glow.Opacity <= 0.5 || glow.Emissive <= 0 || glow.Key == "" {
+	if glow.Kind != "glow" || glow.BlendMode != "additive" || glow.RenderPass != "additive" || glow.Opacity <= 0.5 || glow.Emissive <= 0 || glow.Key == "" || len(glow.ShaderData) != 3 || glow.ShaderData[0] != 3 {
 		t.Fatalf("expected glow preset material, got %#v", glow)
 	}
 }

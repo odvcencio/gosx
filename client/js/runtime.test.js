@@ -1465,11 +1465,11 @@ test("bootstrap depth-sorts alpha Scene3D objects before upload", async () => {
       ],
       worldVertexCount: 4,
       materials: [
-        { key: "glass|#c7f0ff|0.450|true|alpha|alpha|0.050", kind: "glass", color: "#c7f0ff", opacity: 0.45, wireframe: true, blendMode: "opaque", renderPass: "alpha", emissive: 0.05 },
+        { key: "glass|#c7f0ff|0.450|true|alpha|alpha|0.050", kind: "glass", color: "#c7f0ff", opacity: 0.45, wireframe: true, blendMode: "opaque", emissive: 0.05, shaderData: [2, 0.05, 0.7] },
       ],
       objects: [
-        { id: "near-static", kind: "plane", materialIndex: 0, vertexOffset: 0, vertexCount: 2, static: true, depthCenter: 4 },
-        { id: "far-dynamic", kind: "plane", materialIndex: 0, vertexOffset: 2, vertexCount: 2, static: false, depthCenter: 8 },
+        { id: "near-static", kind: "plane", materialIndex: 0, renderPass: "alpha", vertexOffset: 0, vertexCount: 2, static: true, depthCenter: 4 },
+        { id: "far-dynamic", kind: "plane", materialIndex: 0, renderPass: "alpha", vertexOffset: 2, vertexCount: 2, static: false, depthCenter: 8 },
       ],
       objectCount: 2,
     }),
