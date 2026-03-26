@@ -261,6 +261,9 @@ func TestRuntimeRenderBundleSyncsDirtyNodes(t *testing.T) {
 	if bundle.Camera.Z != 6 {
 		t.Fatalf("expected default camera to flow into bundle, got %#v", bundle.Camera)
 	}
+	if bundle.Camera.Near != 0.05 || bundle.Camera.Far != 128 {
+		t.Fatalf("expected default clip planes in render bundle camera, got %#v", bundle.Camera)
+	}
 	if bundle.ObjectCount != 1 {
 		t.Fatalf("expected 1 object, got %d", bundle.ObjectCount)
 	}
@@ -272,6 +275,15 @@ func TestRuntimeRenderBundleSyncsDirtyNodes(t *testing.T) {
 	}
 	if bundle.Objects[0].MaterialIndex != 0 {
 		t.Fatalf("expected render object to reference first material, got %#v", bundle.Objects[0])
+	}
+	if bundle.Objects[0].DepthNear <= 0 || bundle.Objects[0].DepthFar <= bundle.Objects[0].DepthNear {
+		t.Fatalf("expected render object depth metadata, got %#v", bundle.Objects[0])
+	}
+	if bundle.Objects[0].Bounds.MaxX <= bundle.Objects[0].Bounds.MinX || bundle.Objects[0].Bounds.MaxZ <= bundle.Objects[0].Bounds.MinZ {
+		t.Fatalf("expected render object bounds metadata, got %#v", bundle.Objects[0])
+	}
+	if bundle.Objects[0].ViewCulled {
+		t.Fatalf("expected visible object to stay in-bounds, got %#v", bundle.Objects[0])
 	}
 	if bundle.VertexCount == 0 {
 		t.Fatal("expected projected vertices in render bundle")
@@ -370,5 +382,44 @@ func TestRuntimeRenderBundleResolvesMaterialPresets(t *testing.T) {
 	glow := bundle.Materials[2]
 	if glow.Kind != "glow" || glow.BlendMode != "additive" || glow.Opacity <= 0.5 || glow.Emissive <= 0 {
 		t.Fatalf("expected glow preset material, got %#v", glow)
+	}
+}
+
+func TestRuntimeRenderBundleMarksOffscreenObjectsCulled(t *testing.T) {
+	prog := &rootengine.Program{
+		Name: "FrustumCull",
+		Nodes: []rootengine.Node{
+			{
+				Kind: "camera",
+				Props: map[string]islandprogram.ExprID{
+					"z":   0,
+					"fov": 1,
+				},
+			},
+			{
+				Kind:     "mesh",
+				Geometry: "box",
+				Material: "flat",
+				Props: map[string]islandprogram.ExprID{
+					"x":    2,
+					"size": 3,
+				},
+			},
+		},
+		Exprs: []islandprogram.Expr{
+			{Op: islandprogram.OpLitFloat, Value: "6", Type: islandprogram.TypeFloat},
+			{Op: islandprogram.OpLitFloat, Value: "75", Type: islandprogram.TypeFloat},
+			{Op: islandprogram.OpLitFloat, Value: "120", Type: islandprogram.TypeFloat},
+			{Op: islandprogram.OpLitFloat, Value: "1.2", Type: islandprogram.TypeFloat},
+		},
+	}
+
+	rt := New(prog, "")
+	bundle := rt.RenderBundle(640, 360, 0)
+	if len(bundle.Objects) != 1 {
+		t.Fatalf("expected one render object, got %#v", bundle.Objects)
+	}
+	if !bundle.Objects[0].ViewCulled {
+		t.Fatalf("expected far offscreen object to be marked culled, got %#v", bundle.Objects[0])
 	}
 }

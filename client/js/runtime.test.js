@@ -1369,6 +1369,64 @@ test("bootstrap culls Scene3D segments fully outside the frustum before upload",
   assert.equal(gl.ops.some((entry) => entry[0] === "drawArrays"), false);
 });
 
+test("bootstrap honors engine-side Scene3D view-cull metadata", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-metadata-cull-root";
+
+  const env = createContext({
+    elements: [mount],
+    enableWebGL: true,
+    disableCanvas2D: true,
+    fetchRoutes: {
+      "/runtime.wasm": { bytes: [0, 97, 115, 109] },
+      "/scene-metadata-cull-program.json": { text: '{"name":"MetadataCull"}' },
+    },
+    manifest: {
+      runtime: { path: "/runtime.wasm" },
+      engines: [
+        {
+          id: "gosx-engine-metadata-cull",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-metadata-cull-root",
+          runtime: "shared",
+          props: { width: 640, height: 360, background: "#08151f" },
+          programRef: "/scene-metadata-cull-program.json",
+        },
+      ],
+    },
+    onHydrateEngine: () => "[]",
+    onRenderEngine: () => JSON.stringify({
+      background: "#08151f",
+      camera: { x: 0, y: 0, z: 6, fov: 72, near: 0.05, far: 128 },
+      positions: [],
+      colors: [],
+      vertexCount: 0,
+      worldPositions: [
+        -1, 0, 0.5, 1, 0, 0.5,
+      ],
+      worldColors: [
+        0.7, 0.9, 1, 1, 0.7, 0.9, 1, 1,
+      ],
+      worldVertexCount: 2,
+      materials: [
+        { kind: "flat", color: "#8de1ff", opacity: 1, wireframe: true, blendMode: "opaque", emissive: 0 },
+      ],
+      objects: [
+        { id: "metadata-hidden", kind: "line", materialIndex: 0, vertexOffset: 0, vertexCount: 2, static: true, viewCulled: true, depthCenter: 6.5 },
+      ],
+      objectCount: 1,
+    }),
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const gl = mount.children[0].getContext("webgl");
+  assert.deepEqual(gl.bufferUploads.get(4), []);
+  assert.equal(gl.ops.some((entry) => entry[0] === "drawArrays"), false);
+});
+
 test("bootstrap mounts native Scene3D engines without extra scripts", async () => {
   const mount = new FakeElement("div", null);
   mount.id = "scene-root";

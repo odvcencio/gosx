@@ -1213,6 +1213,9 @@
       if (!object || !Number.isFinite(object.vertexOffset) || !Number.isFinite(object.vertexCount) || object.vertexCount <= 0) {
         continue;
       }
+      if (sceneWorldObjectCulled(object)) {
+        continue;
+      }
       const material = materials[object.materialIndex] || null;
       const renderPass = sceneMaterialRenderPass(material);
       if (object.static && renderPass === "opaque") {
@@ -1299,10 +1302,13 @@
   }
 
   function sceneWorldObjectDepth(sourcePositions, object, camera) {
+    if (object && Number.isFinite(object.depthCenter)) {
+      return sceneNumber(object.depthCenter, sceneWorldPointDepth(0, camera));
+    }
     const vertexOffset = Math.max(0, Math.floor(sceneNumber(object && object.vertexOffset, 0)));
     const vertexCount = Math.max(0, Math.floor(sceneNumber(object && object.vertexCount, 0)));
     if (!vertexCount) {
-      return sceneNumber(camera && camera.z, 6);
+      return sceneWorldPointDepth(0, camera);
     }
     const start = vertexOffset * 3 + 2;
     const end = start + vertexCount * 3;
@@ -1313,6 +1319,10 @@
       count += 1;
     }
     return depth / Math.max(1, count) + sceneWorldPointDepth(0, camera);
+  }
+
+  function sceneWorldObjectCulled(object) {
+    return Boolean(object && object.viewCulled);
   }
 
   function appendSceneWorldObjectSlice(targetPositions, targetColors, targetMaterials, sourcePositions, sourceColors, object, material, camera, aspect) {
