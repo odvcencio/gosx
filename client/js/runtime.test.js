@@ -107,7 +107,10 @@ class FakeWebGLContext {
     this.FLOAT = 0x1406;
     this.LINES = 0x0001;
     this.COLOR_BUFFER_BIT = 0x4000;
+    this.DEPTH_BUFFER_BIT = 0x0100;
     this.BLEND = 0x0BE2;
+    this.DEPTH_TEST = 0x0B71;
+    this.LEQUAL = 0x0203;
     this.ONE = 1;
     this.SRC_ALPHA = 0x0302;
     this.ONE_MINUS_SRC_ALPHA = 0x0303;
@@ -188,6 +191,10 @@ class FakeWebGLContext {
     this.ops.push(["clear", mask]);
   }
 
+  clearDepth(value) {
+    this.ops.push(["clearDepth", value]);
+  }
+
   useProgram(_program) {
     this.ops.push(["useProgram"]);
   }
@@ -237,6 +244,14 @@ class FakeWebGLContext {
 
   blendFunc(src, dst) {
     this.ops.push(["blendFunc", src, dst]);
+  }
+
+  depthFunc(mode) {
+    this.ops.push(["depthFunc", mode]);
+  }
+
+  depthMask(flag) {
+    this.ops.push(["depthMask", flag]);
   }
 
   deleteBuffer(_buffer) {
@@ -1152,6 +1167,10 @@ test("bootstrap hydrates shared-runtime Scene3D programs", async () => {
   assert.ok(gl.ops.some((entry) => entry[0] === "vertexAttribPointer" && entry[1] === 2 && entry[2] === 3));
   assert.ok(gl.ops.filter((entry) => entry[0] === "drawArrays").length >= 2);
   assert.ok(gl.ops.some((entry) => entry[0] === "enable" && entry[1] === gl.BLEND));
+  assert.ok(gl.ops.some((entry) => entry[0] === "enable" && entry[1] === gl.DEPTH_TEST));
+  assert.ok(gl.ops.some((entry) => entry[0] === "clear" && entry[1] === (gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)));
+  assert.ok(gl.ops.some((entry) => entry[0] === "depthMask" && entry[1] === true));
+  assert.ok(gl.ops.some((entry) => entry[0] === "depthMask" && entry[1] === false));
   assert.ok(gl.ops.some((entry) => entry[0] === "blendFunc" && entry[1] === gl.SRC_ALPHA && entry[2] === gl.ONE_MINUS_SRC_ALPHA));
   assert.ok(gl.ops.some((entry) => entry[0] === "blendFunc" && entry[1] === gl.SRC_ALPHA && entry[2] === gl.ONE));
 
