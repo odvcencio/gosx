@@ -3,8 +3,11 @@ package server
 import (
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/odvcencio/gosx"
 )
@@ -139,6 +142,10 @@ func TestAppHealthAndReadinessEndpoints(t *testing.T) {
 
 func TestAppRecoversFromPanics(t *testing.T) {
 	app := New()
+	app.SetErrorPage(func(ctx *Context, err error) gosx.Node {
+		ctx.SetMetadata(Metadata{Title: "Broken"})
+		return gosx.Text("custom-error:" + err.Error())
+	})
 	app.Route("/panic", func(r *http.Request) gosx.Node {
 		panic("boom")
 	})
@@ -151,10 +158,439 @@ func TestAppRecoversFromPanics(t *testing.T) {
 	if w.Code != http.StatusInternalServerError {
 		t.Fatalf("expected 500, got %d", w.Code)
 	}
-	if strings.TrimSpace(w.Body.String()) != http.StatusText(http.StatusInternalServerError) {
+	if !strings.Contains(w.Body.String(), "custom-error:boom") {
 		t.Fatalf("unexpected recovery body %q", w.Body.String())
 	}
 	if w.Header().Get("X-Request-ID") == "" {
 		t.Fatal("expected request id header on recovered response")
+	}
+}
+
+func TestAppDefaultDocumentRendersMetadataAndHead(t *testing.T) {
+	app := New()
+	app.Page("GET /", func(ctx *Context) gosx.Node {
+		ctx.SetMetadata(Metadata{
+			Title:       "Welcome",
+			Description: "Server metadata",
+			Links: []LinkTag{
+				{Rel: "stylesheet", Href: "/styles.css"},
+			},
+		})
+		ctx.AddHead(gosx.El("meta", gosx.Attrs(gosx.Attr("property", "og:title"), gosx.Attr("content", "Welcome"))))
+		return gosx.Text("body")
+	})
+
+	handler := app.Build()
+	req := httptest.NewRequest("GET", "/", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	body := w.Body.String()
+	for _, snippet := range []string{
+		"<!DOCTYPE html>",
+		"<title>Welcome</title>",
+		`name="description"`,
+		`content="Server metadata"`,
+		`href="/styles.css"`,
+		`rel="stylesheet"`,
+		`property="og:title" content="Welcome"`,
+		"body",
+	} {
+		if !strings.Contains(body, snippet) {
+			t.Fatalf("expected %q in %q", snippet, body)
+		}
+	}
+}
+
+func TestAppServesPublicFilesAtRoot(t *testing.T) {
+	dir := t.TempDir()
+	publicDir := filepath.Join(dir, "public")
+	if err := os.MkdirAll(publicDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(publicDir, "robots.txt"), []byte("User-agent: *\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	app := New()
+	app.SetPublicDir(publicDir)
+
+	handler := app.Build()
+	req := httptest.NewRequest("GET", "/robots.txt", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "User-agent") {
+		t.Fatalf("unexpected public file body %q", w.Body.String())
+	}
+}
+
+func TestAppCustomNotFoundWinsOverRootRouteCatchall(t *testing.T) {
+	app := New()
+	app.Route("/", func(r *http.Request) gosx.Node {
+		return gosx.Text("home")
+	})
+	app.SetNotFound(func(ctx *Context) gosx.Node {
+		ctx.SetMetadata(Metadata{Title: "Missing"})
+		return gosx.Text("missing")
+	})
+
+	handler := app.Build()
+	req := httptest.NewRequest("GET", "/missing", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "missing") {
+		t.Fatalf("expected custom not found page, got %q", w.Body.String())
+	}
+	if strings.Contains(w.Body.String(), "home") {
+		t.Fatalf("expected root route to stay exact, got %q", w.Body.String())
+	}
+}
+
+func TestAppAPIProducesJSON(t *testing.T) {
+	app := New()
+	app.API("GET /api/status", func(ctx *Context) (any, error) {
+		ctx.SetStatus(http.StatusAccepted)
+		return map[string]any{"ok": true}, nil
+	})
+
+	handler := app.Build()
+	req := httptest.NewRequest("GET", "/api/status", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d", w.Code)
+	}
+	if got := w.Header().Get("Content-Type"); !strings.Contains(got, "application/json") {
+		t.Fatalf("expected json content type, got %q", got)
+	}
+	if body := strings.TrimSpace(w.Body.String()); body != `{"ok":true}` {
+		t.Fatalf("unexpected api body %q", body)
+	}
+}
+
+func TestAppPageCacheHeadersAndRevalidation(t *testing.T) {
+	app := New()
+	app.Page("GET /cached", func(ctx *Context) gosx.Node {
+		ctx.Cache(CachePolicy{
+			Public:               true,
+			MaxAge:               30 * time.Second,
+			StaleWhileRevalidate: 2 * time.Minute,
+		})
+		ctx.CacheTag("docs-pages")
+		return gosx.Text("cached")
+	})
+
+	handler := app.Build()
+
+	req := httptest.NewRequest(http.MethodGet, "/cached", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	cacheControl := w.Header().Get("Cache-Control")
+	for _, snippet := range []string{"public", "max-age=30", "stale-while-revalidate=120"} {
+		if !strings.Contains(cacheControl, snippet) {
+			t.Fatalf("expected %q in cache-control %q", snippet, cacheControl)
+		}
+	}
+	etag := w.Header().Get("ETag")
+	if etag == "" {
+		t.Fatalf("expected etag in %v", w.Header())
+	}
+
+	revalidateReq := httptest.NewRequest(http.MethodGet, "/cached", nil)
+	revalidateReq.Header.Set("If-None-Match", etag)
+	revalidateRes := httptest.NewRecorder()
+	handler.ServeHTTP(revalidateRes, revalidateReq)
+	if revalidateRes.Code != http.StatusNotModified {
+		t.Fatalf("expected 304, got %d: %s", revalidateRes.Code, revalidateRes.Body.String())
+	}
+
+	app.RevalidateTag("docs-pages")
+
+	invalidatedReq := httptest.NewRequest(http.MethodGet, "/cached", nil)
+	invalidatedReq.Header.Set("If-None-Match", etag)
+	invalidatedRes := httptest.NewRecorder()
+	handler.ServeHTTP(invalidatedRes, invalidatedReq)
+	if invalidatedRes.Code != http.StatusOK {
+		t.Fatalf("expected 200 after revalidate, got %d: %s", invalidatedRes.Code, invalidatedRes.Body.String())
+	}
+	if nextETag := invalidatedRes.Header().Get("ETag"); nextETag == "" || nextETag == etag {
+		t.Fatalf("expected new etag after revalidate, got %q", nextETag)
+	}
+}
+
+func TestAppAPICacheHeadersRespectPathRevalidation(t *testing.T) {
+	app := New()
+	app.API("GET /api/meta", func(ctx *Context) (any, error) {
+		ctx.CachePublic(time.Minute)
+		ctx.CacheTag("meta")
+		return map[string]any{"ok": true}, nil
+	})
+
+	handler := app.Build()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/meta", nil)
+	req.Header.Set("Accept", "application/json")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	etag := w.Header().Get("ETag")
+	if etag == "" {
+		t.Fatalf("expected etag in %v", w.Header())
+	}
+
+	notModifiedReq := httptest.NewRequest(http.MethodGet, "/api/meta", nil)
+	notModifiedReq.Header.Set("Accept", "application/json")
+	notModifiedReq.Header.Set("If-None-Match", etag)
+	notModifiedRes := httptest.NewRecorder()
+	handler.ServeHTTP(notModifiedRes, notModifiedReq)
+	if notModifiedRes.Code != http.StatusNotModified {
+		t.Fatalf("expected 304, got %d: %s", notModifiedRes.Code, notModifiedRes.Body.String())
+	}
+
+	app.RevalidatePath("/api/meta")
+
+	updatedReq := httptest.NewRequest(http.MethodGet, "/api/meta", nil)
+	updatedReq.Header.Set("Accept", "application/json")
+	updatedReq.Header.Set("If-None-Match", etag)
+	updatedRes := httptest.NewRecorder()
+	handler.ServeHTTP(updatedRes, updatedReq)
+	if updatedRes.Code != http.StatusOK {
+		t.Fatalf("expected 200 after path revalidate, got %d: %s", updatedRes.Code, updatedRes.Body.String())
+	}
+}
+
+func TestHandlePageAppliesRouteMiddleware(t *testing.T) {
+	app := New()
+	app.HandlePage(PageRoute{
+		Pattern: "GET /secure",
+		Middleware: []Middleware{
+			func(next http.Handler) http.Handler {
+				return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					w.Header().Set("X-Route", "page")
+					next.ServeHTTP(w, r)
+				})
+			},
+		},
+		Handler: func(ctx *Context) gosx.Node {
+			return gosx.Text("secure")
+		},
+	})
+
+	handler := app.Build()
+	req := httptest.NewRequest("GET", "/secure", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if got := w.Header().Get("X-Route"); got != "page" {
+		t.Fatalf("expected page middleware header, got %q", got)
+	}
+}
+
+func TestHandleAPIAppliesRouteMiddleware(t *testing.T) {
+	app := New()
+	app.HandleAPI(APIRoute{
+		Pattern: "GET /api/secure",
+		Middleware: []Middleware{
+			func(next http.Handler) http.Handler {
+				return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					w.Header().Set("X-Route", "api")
+					next.ServeHTTP(w, r)
+				})
+			},
+		},
+		Handler: func(ctx *Context) (any, error) {
+			return map[string]bool{"ok": true}, nil
+		},
+	})
+
+	handler := app.Build()
+	req := httptest.NewRequest("GET", "/api/secure", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if got := w.Header().Get("X-Route"); got != "api" {
+		t.Fatalf("expected api middleware header, got %q", got)
+	}
+}
+
+func TestEnableNavigationInjectsRuntimeIntoDefaultDocument(t *testing.T) {
+	app := New()
+	app.EnableNavigation()
+	app.Page("GET /", func(ctx *Context) gosx.Node {
+		return Link("/docs", gosx.Text("Docs"))
+	})
+
+	handler := app.Build()
+	req := httptest.NewRequest("GET", "/", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	body := w.Body.String()
+	if !strings.Contains(body, "data-gosx-navigation") {
+		t.Fatalf("expected navigation runtime in page, got %q", body)
+	}
+	if !strings.Contains(body, "data-gosx-link") {
+		t.Fatalf("expected Link helper marker, got %q", body)
+	}
+	if !strings.Contains(body, "gosx-head-start") || !strings.Contains(body, "gosx-head-end") {
+		t.Fatalf("expected managed head markers, got %q", body)
+	}
+}
+
+func TestAppDeferredRegionStreamsIntoHTMLDocument(t *testing.T) {
+	app := New()
+	app.Page("GET /", func(ctx *Context) gosx.Node {
+		return gosx.El("main",
+			ctx.Defer(
+				gosx.El("p", gosx.Text("loading")),
+				func() (gosx.Node, error) {
+					return gosx.El("section", gosx.Text("resolved")), nil
+				},
+			),
+		)
+	})
+
+	handler := app.Build()
+	req := httptest.NewRequest("GET", "/", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	body := w.Body.String()
+	for _, snippet := range []string{
+		"loading",
+		"resolved",
+		`data-gosx-deferred`,
+		`data-gosx-stream-template`,
+	} {
+		if !strings.Contains(body, snippet) {
+			t.Fatalf("expected %q in %q", snippet, body)
+		}
+	}
+	if strings.Contains(body, streamTailMarker) {
+		t.Fatalf("expected stream tail marker to be removed, got %q", body)
+	}
+}
+
+func TestAppRedirectInterpolatesPathValues(t *testing.T) {
+	app := New()
+	app.Redirect("GET /legacy/{slug}", "/docs/{slug}", http.StatusMovedPermanently)
+
+	handler := app.Build()
+	req := httptest.NewRequest("GET", "/legacy/getting-started", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusMovedPermanently {
+		t.Fatalf("expected 301, got %d", w.Code)
+	}
+	if got := w.Header().Get("Location"); got != "/docs/getting-started" {
+		t.Fatalf("unexpected location %q", got)
+	}
+}
+
+func TestAppRewriteInternallyDispatchesTargetRoute(t *testing.T) {
+	app := New()
+	app.Rewrite("GET /latest", "/docs/getting-started")
+	app.Page("GET /docs/getting-started", func(ctx *Context) gosx.Node {
+		return gosx.Text("docs-home")
+	})
+
+	handler := app.Build()
+	req := httptest.NewRequest("GET", "/latest", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	if body := w.Body.String(); !strings.Contains(body, "docs-home") {
+		t.Fatalf("unexpected rewrite body %q", body)
+	}
+}
+
+func TestAppMethodMismatchStillReturns405(t *testing.T) {
+	app := New()
+	app.Page("GET /only-get", func(ctx *Context) gosx.Node {
+		return gosx.Text("ok")
+	})
+
+	handler := app.Build()
+	req := httptest.NewRequest("POST", "/only-get", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("expected 405, got %d", w.Code)
+	}
+}
+
+func TestAppRewriteCanTargetMountedHandler(t *testing.T) {
+	app := New()
+	app.Rewrite("GET /latest", "/docs/getting-started")
+
+	router := http.NewServeMux()
+	router.HandleFunc("GET /docs/getting-started", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("docs-home"))
+	})
+	router.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "mounted-missing", http.StatusNotFound)
+	})
+	app.Mount("/", router)
+
+	handler := app.Build()
+	req := httptest.NewRequest("GET", "/latest", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	if body := w.Body.String(); !strings.Contains(body, "docs-home") {
+		t.Fatalf("unexpected rewrite body %q", body)
+	}
+}
+
+func TestAppPublicFilesBeatMountedCatchall(t *testing.T) {
+	dir := t.TempDir()
+	publicDir := filepath.Join(dir, "public")
+	if err := os.MkdirAll(publicDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(publicDir, "docs.css"), []byte("body{}"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	app := New()
+	app.SetPublicDir(publicDir)
+	app.Mount("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "mounted-catchall", http.StatusNotFound)
+	}))
+
+	handler := app.Build()
+	req := httptest.NewRequest("GET", "/docs.css", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	if body := w.Body.String(); strings.Contains(body, "mounted-catchall") || !strings.Contains(body, "body{}") {
+		t.Fatalf("unexpected public asset body %q", body)
 	}
 }

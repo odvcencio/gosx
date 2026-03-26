@@ -332,9 +332,13 @@ func RunBuild(dir string, dev bool) error {
 	}
 
 	// Build the application binary when the target directory is a runnable app.
-	builtServer, err := buildServerBinaryIfPresent(dir, filepath.Join(distDir, "server", "app"))
+	serverBinaryPath := filepath.Join(distDir, "server", "app")
+	builtServer, err := buildServerBinaryIfPresent(dir, serverBinaryPath)
 	if err != nil {
 		return fmt.Errorf("build server binary: %w", err)
+	}
+	if err := stageDeploymentBundle(dir, distDir, builtServer, serverBinaryPath); err != nil {
+		return fmt.Errorf("stage deployment bundle: %w", err)
 	}
 
 	// ── Summary ─────────────────────────────────────────────────────────
@@ -343,7 +347,8 @@ func RunBuild(dir string, dev bool) error {
 	fmt.Printf("Build complete: %s\n\n", distDir)
 	fmt.Printf("  Tier 1 (server):  deploy Go binary, mutable\n")
 	if builtServer {
-		fmt.Printf("  Server binary: %s\n", filepath.Join(distDir, "server", "app"))
+		fmt.Printf("  Server binary: %s\n", serverBinaryPath)
+		fmt.Printf("  Launch script: %s\n", filepath.Join(distDir, "run.sh"))
 	} else {
 		fmt.Printf("  Server binary: skipped (target is not a main package)\n")
 	}
@@ -361,6 +366,7 @@ func RunBuild(dir string, dev bool) error {
 	fmt.Println("  • Runtime assets cached forever with content hashes (Tier 2)")
 	fmt.Println("  • Island programs cached forever, invalidated by hash (Tier 3)")
 	fmt.Println("  • Manifest tells the server which hashed URLs to reference")
+	fmt.Println("  • dist/ includes app/ and public/ for file-routed runtime deployment")
 
 	return nil
 }
@@ -427,4 +433,122 @@ func buildServerBinaryIfPresent(dir, outputPath string) (bool, error) {
 		return false, err
 	}
 	return true, nil
+}
+
+func stageDeploymentBundle(projectDir, distDir string, builtServer bool, serverBinaryPath string) error {
+	if err := copyDirIfPresent(filepath.Join(projectDir, "app"), filepath.Join(distDir, "app")); err != nil {
+		return err
+	}
+	if err := copyDirIfPresent(filepath.Join(projectDir, "public"), filepath.Join(distDir, "public")); err != nil {
+		return err
+	}
+	if err := copyFileIfPresent(filepath.Join(projectDir, ".env.example"), filepath.Join(distDir, ".env.example")); err != nil {
+		return err
+	}
+	if err := writeBuildReadme(filepath.Join(distDir, "README.md"), builtServer); err != nil {
+		return err
+	}
+	if builtServer {
+		if err := writeRunScript(filepath.Join(distDir, "run.sh"), serverBinaryPath); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func copyDirIfPresent(src, dst string) error {
+	info, err := os.Stat(src)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	if !info.IsDir() {
+		return nil
+	}
+	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(src, path)
+		if err != nil {
+			return err
+		}
+		target := filepath.Join(dst, rel)
+		if info.IsDir() {
+			return os.MkdirAll(target, 0755)
+		}
+		return copyFile(target, path)
+	})
+}
+
+func copyFileIfPresent(src, dst string) error {
+	info, err := os.Stat(src)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	if info.IsDir() {
+		return nil
+	}
+	return copyFile(dst, src)
+}
+
+func writeRunScript(path string, serverBinaryPath string) error {
+	relBinary, err := filepath.Rel(filepath.Dir(path), serverBinaryPath)
+	if err != nil {
+		return err
+	}
+	script := `#!/usr/bin/env sh
+set -eu
+
+DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+export GOSX_APP_ROOT="${GOSX_APP_ROOT:-$DIR}"
+exec "$DIR/` + filepath.ToSlash(relBinary) + `" "$@"
+`
+	if err := os.WriteFile(path, []byte(script), 0755); err != nil {
+		return err
+	}
+	return nil
+}
+
+func writeBuildReadme(path string, builtServer bool) error {
+	lines := []string{
+		"# GoSX Build Output",
+		"",
+		"This directory is a deployable GoSX bundle.",
+		"",
+		"Contents:",
+		"- `assets/` contains immutable hashed runtime, island, and CSS assets.",
+		"- `app/` contains runtime file-routed page sources used by `route.AddDir(...)`.",
+		"- `public/` contains root-served static assets when present.",
+		"- `build.json` maps hashed asset names for runtime/island loading.",
+	}
+	if builtServer {
+		lines = append(lines,
+			"- `server/app` is the compiled Go server binary.",
+			"- `run.sh` launches the bundle with `GOSX_APP_ROOT` pointing at this directory.",
+			"",
+			"Run locally:",
+			"```sh",
+			"./run.sh",
+			"```",
+			"",
+			"Direct binary run:",
+			"```sh",
+			"GOSX_APP_ROOT=$(pwd) ./server/app",
+			"```",
+		)
+	}
+	lines = append(lines,
+		"",
+		"Deployment notes:",
+		"- Keep `assets/` on immutable caching because filenames are content-hashed.",
+		"- Roll the server binary independently from hashed assets.",
+		"- Provide runtime env vars externally; `.env.example` is copied only when present.",
+	)
+	return os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0644)
 }

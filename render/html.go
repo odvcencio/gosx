@@ -9,12 +9,13 @@ import (
 	"html"
 	"strings"
 
+	"github.com/odvcencio/gosx"
 	"github.com/odvcencio/gosx/ir"
 )
 
 // ExprEvaluator is called to evaluate Go expression holes during rendering.
-// It receives the expression source text and returns the string representation.
-type ExprEvaluator func(expr string) string
+// It receives the expression source text and returns the rendered value.
+type ExprEvaluator func(expr string) any
 
 // ComponentRenderer is called to render component references.
 // It receives the component tag name, resolved attributes, and children HTML.
@@ -185,8 +186,7 @@ func (r *htmlRenderer) renderText(b *strings.Builder, node *ir.Node) {
 
 func (r *htmlRenderer) renderExpr(b *strings.Builder, node *ir.Node) {
 	if r.opts.Eval != nil {
-		result := r.opts.Eval(node.Text)
-		b.WriteString(html.EscapeString(result))
+		b.WriteString(renderEvaluatedExpr(r.opts.Eval(node.Text)))
 	}
 }
 
@@ -207,8 +207,7 @@ func (r *htmlRenderer) renderAttrs(b *strings.Builder, attrs []ir.Attr) {
 			fmt.Fprintf(b, ` %s="%s"`, safeName, html.EscapeString(attr.Value))
 		case ir.AttrExpr:
 			if r.opts.Eval != nil {
-				val := r.opts.Eval(attr.Expr)
-				fmt.Fprintf(b, ` %s="%s"`, safeName, html.EscapeString(val))
+				renderEvaluatedAttr(b, safeName, r.opts.Eval(attr.Expr))
 			}
 		case ir.AttrBool:
 			fmt.Fprintf(b, " %s", safeName)
@@ -238,4 +237,45 @@ func (r *htmlRenderer) hasBlockChildren(node *ir.Node) bool {
 		}
 	}
 	return false
+}
+
+func renderEvaluatedExpr(value any) string {
+	switch v := value.(type) {
+	case nil:
+		return ""
+	case gosx.Node:
+		return gosx.RenderHTML(v)
+	case *gosx.Node:
+		if v == nil {
+			return ""
+		}
+		return gosx.RenderHTML(*v)
+	case []gosx.Node:
+		var b strings.Builder
+		for _, node := range v {
+			b.WriteString(gosx.RenderHTML(node))
+		}
+		return b.String()
+	case []string:
+		return html.EscapeString(strings.Join(v, ""))
+	case fmt.Stringer:
+		return html.EscapeString(v.String())
+	default:
+		return html.EscapeString(fmt.Sprint(v))
+	}
+}
+
+func renderEvaluatedAttr(b *strings.Builder, name string, value any) {
+	switch v := value.(type) {
+	case nil:
+		return
+	case bool:
+		if v {
+			fmt.Fprintf(b, " %s", name)
+		}
+	case fmt.Stringer:
+		fmt.Fprintf(b, ` %s="%s"`, name, html.EscapeString(v.String()))
+	default:
+		fmt.Fprintf(b, ` %s="%s"`, name, html.EscapeString(fmt.Sprint(v)))
+	}
 }

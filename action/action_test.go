@@ -6,6 +6,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/odvcencio/gosx/session"
 )
 
 func TestRegistryRegisterAndInvoke(t *testing.T) {
@@ -229,6 +231,49 @@ func TestRegistryHTTPStructuredValidationError(t *testing.T) {
 	}
 	if result.FieldErrors["name"] != "required" {
 		t.Fatalf("expected field error, got %#v", result.FieldErrors)
+	}
+}
+
+func TestServeHandlerFlashesBrowserFormStateWhenSessionPresent(t *testing.T) {
+	sessions := session.MustNew("action-session-test-secret", session.Options{})
+	handler := sessions.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			ServeHandler(w, r, func(ctx *Context) error {
+				return Validation("email is required", map[string]string{
+					"email": "required",
+				}, ctx.FormData)
+			})
+			return
+		}
+
+		view, ok := State(r, "save")
+		if !ok {
+			t.Fatal("expected flashed action state")
+		}
+		if !view.HasError("email") || view.Value("name") != "Ada" {
+			t.Fatalf("unexpected flashed view %#v", view)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
+	postReq := httptest.NewRequest(http.MethodPost, "/account/__actions/save", strings.NewReader("name=Ada&email="))
+	postReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	postRes := httptest.NewRecorder()
+	handler.ServeHTTP(postRes, postReq)
+	if postRes.Code != http.StatusSeeOther {
+		t.Fatalf("expected 303, got %d", postRes.Code)
+	}
+	if location := postRes.Header().Get("Location"); location != "/account" {
+		t.Fatalf("expected redirect to page path, got %q", location)
+	}
+	cookie := postRes.Result().Cookies()[0]
+
+	getReq := httptest.NewRequest(http.MethodGet, "/account", nil)
+	getReq.AddCookie(cookie)
+	getRes := httptest.NewRecorder()
+	handler.ServeHTTP(getRes, getReq)
+	if getRes.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d", getRes.Code)
 	}
 }
 

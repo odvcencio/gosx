@@ -6,6 +6,7 @@ const vm = require("node:vm");
 
 const bootstrapSource = fs.readFileSync(path.join(__dirname, "bootstrap.js"), "utf8");
 const patchSource = fs.readFileSync(path.join(__dirname, "patch.js"), "utf8");
+const navigationSource = fs.readFileSync(path.join(__dirname, "..", "..", "server", "navigation_runtime.js"), "utf8");
 
 const ELEMENT_NODE = 1;
 const TEXT_NODE = 3;
@@ -25,6 +26,10 @@ class FakeTextNode {
 
   set textContent(value) {
     this._text = String(value == null ? "" : value);
+  }
+
+  cloneNode() {
+    return new FakeTextNode(this._text, this.ownerDocument);
   }
 }
 
@@ -56,6 +61,16 @@ class FakeDocumentFragment {
       node.parentNode = null;
     }
     return node;
+  }
+
+  cloneNode(deep) {
+    const clone = new FakeDocumentFragment(this.ownerDocument);
+    if (deep) {
+      for (const child of this.childNodes) {
+        clone.appendChild(child.cloneNode(true));
+      }
+    }
+    return clone;
   }
 }
 
@@ -138,6 +153,28 @@ class FakeElement {
     return node;
   }
 
+  insertBefore(node, before) {
+    if (!before) {
+      return this.appendChild(node);
+    }
+    if (node.parentNode) {
+      node.parentNode.removeChild(node);
+    }
+    const idx = this.childNodes.indexOf(before);
+    if (idx < 0) {
+      return this.appendChild(node);
+    }
+    node.parentNode = this;
+    if (this.ownerDocument) {
+      adoptNode(node, this.ownerDocument);
+    }
+    this.childNodes.splice(idx, 0, node);
+    if (node.nodeType === ELEMENT_NODE && this.ownerDocument) {
+      this.ownerDocument.indexNode(node);
+    }
+    return node;
+  }
+
   setAttribute(name, value) {
     this.attributes.set(name, String(value));
     if (name === "id" && this.ownerDocument) {
@@ -190,6 +227,22 @@ class FakeElement {
   focus() {
     this.ownerDocument.activeElement = this;
   }
+
+  cloneNode(deep) {
+    const clone = new FakeElement(this.tagName.toLowerCase(), this.ownerDocument);
+    for (const [name, value] of this.attributes.entries()) {
+      clone.setAttribute(name, value);
+    }
+    clone.value = this.value;
+    clone.selectionStart = this.selectionStart;
+    clone.selectionEnd = this.selectionEnd;
+    if (deep) {
+      for (const child of this.childNodes) {
+        clone.appendChild(child.cloneNode(true));
+      }
+    }
+    return clone;
+  }
 }
 
 function adoptNode(node, ownerDocument) {
@@ -208,9 +261,12 @@ class FakeDocument {
     this.eventListeners = new Map();
     this.dispatchedEvents = [];
     this.documentElement = new FakeElement("html", this);
+    this.head = new FakeElement("head", this);
     this.body = new FakeElement("body", this);
+    this.documentElement.appendChild(this.head);
     this.documentElement.appendChild(this.body);
     this.activeElement = this.body;
+    this.title = "";
   }
 
   createElement(tagName) {
@@ -264,6 +320,7 @@ class FakeResponse {
     this.status = options.status || 200;
     this._text = options.text || "";
     this._bytes = options.bytes || [];
+    this.url = options.url || "";
   }
 
   clone() {
@@ -272,6 +329,7 @@ class FakeResponse {
       status: this.status,
       text: this._text,
       bytes: this._bytes.slice(),
+      url: this.url,
     });
   }
 
@@ -306,6 +364,8 @@ function createContext(options) {
   const engineDisposals = [];
   const sharedSignalCalls = [];
   const sockets = [];
+  const fetchCalls = [];
+  const windowListeners = new Map();
 
   const routes = new Map();
   for (const [url, response] of Object.entries(options.fetchRoutes || {})) {
@@ -329,7 +389,8 @@ function createContext(options) {
       }
     },
     document,
-    fetch: async (url) => {
+    fetch: async (url, init = {}) => {
+      fetchCalls.push({ url, init });
       if (!routes.has(url)) {
         throw new Error("unexpected fetch: " + url);
       }
@@ -339,6 +400,15 @@ function createContext(options) {
       protocol: "http:",
       host: "localhost:3000",
       href: "http://localhost:3000/",
+      origin: "http://localhost:3000",
+    },
+    history: {
+      pushState(_state, _title, url) {
+        context.location.href = String(url);
+      },
+      replaceState(_state, _title, url) {
+        context.location.href = String(url);
+      },
     },
     Go: function Go() {
       this.importObject = {};
@@ -380,12 +450,35 @@ function createContext(options) {
       ELEMENT_NODE,
       TEXT_NODE,
     },
+    URL,
+    addEventListener(type, listener) {
+      if (!windowListeners.has(type)) {
+        windowListeners.set(type, []);
+      }
+      windowListeners.get(type).push(listener);
+    },
+    dispatchEvent(event) {
+      const listeners = windowListeners.get(event.type) || [];
+      for (const listener of listeners) {
+        listener(event);
+      }
+      return true;
+    },
+    scrollTo() {},
     setTimeout,
     WebAssembly: {
       instantiate: async () => ({ instance: {} }),
       instantiateStreaming: async () => ({ instance: {} }),
     },
   };
+
+  if (typeof options.parseHTML === "function") {
+    context.DOMParser = class DOMParser {
+      parseFromString(html) {
+        return options.parseHTML(html);
+      }
+    };
+  }
 
   if (typeof options.createWebSocket === "function") {
     context.WebSocket = function WebSocket(url) {
@@ -420,9 +513,11 @@ function createContext(options) {
     document,
     engineDisposals,
     engineMounts,
+    fetchCalls,
     hydrateCalls,
     sharedSignalCalls,
     sockets,
+    windowListeners,
   };
 }
 
@@ -433,6 +528,30 @@ function runScript(source, context, filename) {
 async function flushAsyncWork() {
   await new Promise((resolve) => setTimeout(resolve, 0));
   await new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+function appendManagedHead(document, nodes) {
+  const start = document.createElement("meta");
+  start.setAttribute("name", "gosx-head-start");
+  start.setAttribute("content", "");
+  const end = document.createElement("meta");
+  end.setAttribute("name", "gosx-head-end");
+  end.setAttribute("content", "");
+  document.head.appendChild(start);
+  for (const node of nodes) {
+    document.head.appendChild(node);
+  }
+  document.head.appendChild(end);
+}
+
+function buildNavigatedDocument(options) {
+  const doc = new FakeDocument();
+  doc.title = options.title || "";
+  appendManagedHead(doc, options.headNodes || []);
+  for (const node of options.bodyNodes || []) {
+    doc.body.appendChild(node);
+  }
+  return doc;
 }
 
 test("bootstrap hydrates, delegates click events, and disposes islands", async () => {
@@ -732,4 +851,181 @@ test("patch applier updates text nodes and treats setHTML as text", async () => 
   assert.equal(counter.textContent, "1");
   assert.equal(htmlSink.textContent, "<strong>safe</strong>");
   assert.equal(htmlSink.children.length, 0);
+});
+
+test("bootstrap exposes page lifecycle hooks and can re-bootstrap after disposal", async () => {
+  const wrapper = new FakeElement("div", null);
+  const componentRoot = new FakeElement("div", null);
+
+  wrapper.id = "gosx-island-2";
+  componentRoot.appendChild(new FakeElement("span", null));
+  wrapper.appendChild(componentRoot);
+
+  const env = createContext({
+    elements: [wrapper],
+    fetchRoutes: {
+      "/runtime.wasm": { bytes: [0, 97, 115, 109] },
+      "/counter.json": { text: '{"name":"Counter"}' },
+    },
+    manifest: {
+      runtime: { path: "/runtime.wasm" },
+      islands: [
+        {
+          id: "gosx-island-2",
+          component: "Counter",
+          props: {},
+          programRef: "/counter.json",
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  assert.equal(typeof env.context.__gosx_bootstrap_page, "function");
+  assert.equal(typeof env.context.__gosx_dispose_page, "function");
+  assert.equal(env.context.__gosx.islands.size, 1);
+
+  await env.context.__gosx_dispose_page();
+  assert.equal(env.context.__gosx.islands.size, 0);
+
+  await env.context.__gosx_bootstrap_page();
+  await flushAsyncWork();
+  assert.equal(env.hydrateCalls.length, 2);
+  assert.equal(env.context.__gosx.islands.size, 1);
+});
+
+test("navigation runtime swaps managed head/body and calls page lifecycle hooks", async () => {
+  const oldMeta = new FakeElement("meta", null);
+  oldMeta.setAttribute("name", "description");
+  oldMeta.setAttribute("content", "old");
+
+  const link = new FakeElement("a", null);
+  link.setAttribute("href", "/docs");
+  link.setAttribute("data-gosx-link", "");
+  link.textContent = "Docs";
+
+  const oldBody = new FakeElement("div", null);
+  oldBody.id = "old-page";
+  oldBody.textContent = "old-page";
+
+  const disposeCalls = [];
+  const bootstrapCalls = [];
+  const parsedDocs = new Map();
+
+  const env = createContext({
+    elements: [link, oldBody],
+    fetchRoutes: {
+      "http://localhost:3000/docs": {
+        text: "__PAGE_DOC__",
+        url: "http://localhost:3000/docs",
+      },
+    },
+    parseHTML(html) {
+      return parsedDocs.get(html);
+    },
+  });
+
+  env.document.title = "Old";
+  appendManagedHead(env.document, [oldMeta]);
+  env.context.__gosx_dispose_page = async function() {
+    disposeCalls.push("dispose");
+  };
+  env.context.__gosx_bootstrap_page = async function() {
+    bootstrapCalls.push("bootstrap");
+  };
+
+  const nextMeta = new FakeElement("meta", null);
+  nextMeta.setAttribute("name", "description");
+  nextMeta.setAttribute("content", "new");
+  const nextBody = new FakeElement("div", null);
+  nextBody.id = "new-page";
+  nextBody.textContent = "new-page";
+
+  parsedDocs.set("__PAGE_DOC__", buildNavigatedDocument({
+    title: "Docs",
+    headNodes: [nextMeta],
+    bodyNodes: [nextBody],
+  }));
+
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  const clickListener = env.document.eventListeners.get("click")[0];
+  let prevented = false;
+  clickListener({
+    type: "click",
+    button: 0,
+    target: link,
+    defaultPrevented: false,
+    metaKey: false,
+    ctrlKey: false,
+    shiftKey: false,
+    altKey: false,
+    preventDefault() {
+      prevented = true;
+      this.defaultPrevented = true;
+    },
+  });
+  await flushAsyncWork();
+
+  assert.equal(prevented, true);
+  assert.deepEqual(disposeCalls, ["dispose"]);
+  assert.deepEqual(bootstrapCalls, ["bootstrap"]);
+  assert.equal(env.document.title, "Docs");
+  assert.equal(env.context.location.href, "http://localhost:3000/docs");
+  assert.equal(env.document.body.textContent, "new-page");
+  assert.equal(env.document.getElementById("new-page").textContent, "new-page");
+  assert.equal(env.document.head.childNodes[1].getAttribute("content"), "new");
+  assert.equal(env.fetchCalls[0].init.headers["X-GoSX-Navigation"], "1");
+  assert.equal(env.document.dispatchedEvents.at(-1).type, "gosx:navigate");
+});
+
+test("navigation runtime prefetches marked links and reuses cached HTML", async () => {
+  const link = new FakeElement("a", null);
+  link.setAttribute("href", "/prefetch");
+  link.setAttribute("data-gosx-link", "");
+  link.textContent = "Prefetch";
+
+  const parsedDocs = new Map();
+  const env = createContext({
+    elements: [link],
+    fetchRoutes: {
+      "http://localhost:3000/prefetch": {
+        text: "__PREFETCH_DOC__",
+        url: "http://localhost:3000/prefetch",
+      },
+    },
+    parseHTML(html) {
+      return parsedDocs.get(html);
+    },
+  });
+
+  parsedDocs.set("__PREFETCH_DOC__", buildNavigatedDocument({
+    title: "Prefetched",
+    bodyNodes: [new FakeElement("div", null)],
+  }));
+
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+
+  const overListener = env.document.eventListeners.get("mouseover")[0];
+  overListener({ type: "mouseover", target: link });
+  await flushAsyncWork();
+  assert.equal(env.fetchCalls.length, 1);
+
+  const clickListener = env.document.eventListeners.get("click")[0];
+  clickListener({
+    type: "click",
+    button: 0,
+    target: link,
+    defaultPrevented: false,
+    metaKey: false,
+    ctrlKey: false,
+    shiftKey: false,
+    altKey: false,
+    preventDefault() {},
+  });
+  await flushAsyncWork();
+
+  assert.equal(env.fetchCalls.length, 1);
+  assert.equal(env.document.title, "Prefetched");
 });

@@ -36,6 +36,14 @@
   // Pending manifest reference, set during init, consumed when runtime is ready.
   let pendingManifest = null;
 
+  function runtimeReady() {
+    return (
+      typeof window.__gosx_hydrate === "function" ||
+      typeof window.__gosx_action === "function" ||
+      typeof window.__gosx_set_shared_signal === "function"
+    );
+  }
+
   // --------------------------------------------------------------------------
   // Manifest loading
   // --------------------------------------------------------------------------
@@ -506,6 +514,20 @@
     window.__gosx.hubs.delete(hubID);
   };
 
+  async function disposePage() {
+    for (const islandID of Array.from(window.__gosx.islands.keys())) {
+      window.__gosx_dispose_island(islandID);
+    }
+    for (const engineID of Array.from(window.__gosx.engines.keys())) {
+      window.__gosx_dispose_engine(engineID);
+    }
+    for (const hubID of Array.from(window.__gosx.hubs.keys())) {
+      window.__gosx_disconnect_hub(hubID);
+    }
+    pendingManifest = null;
+    window.__gosx.ready = false;
+  }
+
   // --------------------------------------------------------------------------
   // Hydration
   // --------------------------------------------------------------------------
@@ -617,22 +639,28 @@
   // Main initialization
   // --------------------------------------------------------------------------
 
-  async function init() {
+  async function bootstrapPage() {
     const manifest = loadManifest();
     if (!manifest) {
       // No manifest — pure server-rendered page, no islands to hydrate.
+      pendingManifest = null;
       window.__gosx.ready = true;
       return;
     }
 
     // Stash manifest for use when WASM signals readiness.
     pendingManifest = manifest;
+    window.__gosx.ready = false;
 
     // Load the shared WASM runtime. The runtime will call
     // __gosx_runtime_ready() when it is initialized, which triggers
     // island hydration.
     if ((manifest.islands && manifest.islands.length > 0 || manifest.hubs && manifest.hubs.length > 0) && manifest.runtime && manifest.runtime.path) {
-      await loadRuntime(manifest.runtime);
+      if (runtimeReady()) {
+        window.__gosx_runtime_ready();
+      } else {
+        await loadRuntime(manifest.runtime);
+      }
     } else {
       if ((manifest.islands && manifest.islands.length > 0) || (manifest.hubs && manifest.hubs.length > 0)) {
         console.error("[gosx] islands and hub bindings require manifest.runtime.path");
@@ -641,10 +669,13 @@
     }
   }
 
+  window.__gosx_bootstrap_page = bootstrapPage;
+  window.__gosx_dispose_page = disposePage;
+
   // Start when DOM is ready.
   if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", init);
+    document.addEventListener("DOMContentLoaded", bootstrapPage);
   } else {
-    init();
+    bootstrapPage();
   }
 })();

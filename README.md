@@ -4,11 +4,25 @@ A Go-native server-first web platform. Author components in Go with JSX-like syn
 
 ## Status
 
-GoSX is in active development. The compiler pipeline, server rendering, and island architecture are implemented and tested. Browser-side hydration is structurally complete but not yet validated in a live browser environment.
+GoSX is in active development. The compiler pipeline, server rendering, island architecture, and browser runtime are implemented and exercised through unit, integration, and live-browser checks.
 
 **What works today (tested):**
 
-- `.gsx` file parsing with JSX-like syntax (elements, fragments, attributes, expressions, spreads)
+- `gosx init` scaffolds a runnable app with `/public` assets, `.env` loading, metadata hooks, session-backed form actions, CSRF protection, JSON API routes, custom 404/500 pages, and a file-backed `app/layout.gsx`
+- `gosx init --template docs` scaffolds a dogfooded docs site with nested file layouts, scoped docs 404s, page-scoped server modules, sessions, auth, redirects/rewrites, public assets, and colocated JSON endpoints
+- `gosx build --prod` emits a deployable `dist/` bundle with hashed assets, a server binary when present, copied `app/` + `public/`, and a `run.sh` launcher
+- `gosx dev` fronts a runnable app with a stable dev proxy, staged `/gosx/*` runtime assets, file watching, and SSE reload notifications
+- opt-in client-side page navigation via `app.EnableNavigation()` plus `server.Link(...)`, with managed head swaps and intent-prefetching
+- file-based routing via `route.Router.AddDir(...)`, including `layout.gsx`, `page.gsx`, `index.gsx`, `not-found.gsx`, `error.gsx`, route groups like `(marketing)`, and `[slug]` segment conventions
+- file-route server modules via sibling `page.server.go` files and `route.MustRegisterFileModuleHere(...)`, with per-page `Load`, `Metadata`, `Render`, and relative `__actions/<name>` endpoints
+- session-backed browser form flows via `action` + `session`, including flashed validation state, redirect-safe success messages, and built-in CSRF protection
+- auth middleware via `auth.New(...)`, `authn.Middleware`, and `authn.Require`, with request-scoped `user` context available to routed `.gsx` pages
+- declarative redirects and rewrites via `app.Redirect(...)` and `app.Rewrite(...)`
+- HTTP caching and revalidation via `ctx.Cache(...)`, automatic ETags, and `app.RevalidatePath(...)` / `app.RevalidateTag(...)`
+- app testing helpers via `apptest.Request(...)`, `apptest.App(...)`, `apptest.Router(...)`, and `apptest.FormRequest(...)`
+- deferred page regions via `ctx.Defer(...)`, with fallback-first HTML and streamed replacements
+- local image optimization via `server.Image(...)` and `/_gosx/image` for responsive raster variants
+- `.gsx` file parsing with JSX-like syntax (elements, fragments, hyphenated attributes, expressions, spreads, custom-element tags)
 - `//gosx:island` directive detection on components
 - Compiler pipeline: parse → flat-array IR → validate → lower to IslandProgram → serialize
 - Body analyzer: compiler extracts signals, computeds, and handlers from `.gsx` source (proven by TestCompilerE2E_CounterFromSource)
@@ -25,16 +39,51 @@ GoSX is in active development. The compiler pipeline, server rendering, and isla
 - Cross-island shared state via `$`-prefixed signals
 - `.gsx` editor support via `gosx lsp` plus a bundled VS Code extension scaffold in `editor/vscode`
 
-**What exists but is not yet browser-validated:**
+**What still needs deeper framework passes:**
 
-- JS bootstrap with event delegation and program loading (343 lines)
-- JS patch applier with focus/cursor preservation (594 lines)
-- WASM entry point exporting `__gosx_hydrate`, `__gosx_action`, `__gosx_dispose`
-- Dev server with file watching and SSE hot-reload notifications
-- Build orchestrator (`gosx build --dev/--prod`)
-- Sidecar CSS support (component.gsx + component.css → hashed output)
+- SSG / static export for file-routed `.gsx` apps
+- a fully automatic nested `page.server.go` discovery story beyond scaffolded side-effect import buckets
+- `.gsx`-first engine surfaces for advanced runtimes like 3D
+- deeper styling and asset ownership ergonomics
 
 ## Quick Start
+
+```bash
+gosx init my-app
+cd my-app
+go run .
+```
+
+Or scaffold the dogfooded docs surface:
+
+```bash
+gosx init my-docs --template docs
+cd my-docs
+go run .
+```
+
+The generated project includes:
+
+- root-level static assets from `public/`
+- `.env`, `.env.local`, and `.env.<mode>` loading via `env.LoadDir`
+- file-routed `.gsx` pages under `app/` by default, with automatic nested `layout.gsx` discovery, scoped `not-found.gsx` resolution, and `app.API(...)` for colocated JSON endpoints
+- a blank import of `your/module/modules` so sibling and nested `page.server.go` module registrations execute at startup
+- sibling `page.server.go` examples that register file-route `Load`, `Metadata`, and `Actions` hooks through `route.MustRegisterFileModuleHere(...)`
+- session middleware plus CSRF protection for browser forms
+- HTTP caching helpers plus automatic ETags for page and API responses
+- opt-in page transitions via `app.EnableNavigation()` and `server.Link(...)`
+- `server.Metadata` plus arbitrary head node injection
+- customizable 404 and 500 pages
+- streamed fallback regions via `ctx.Defer(...)` in page or route handlers
+
+The docs template additionally includes:
+
+- `route.Router.AddDir("./app", ...)` plus automatic `app/layout.gsx` / `app/docs/layout.gsx` composition for file-based page discovery and shell rendering
+- `app.Redirect(...)` and `app.Rewrite(...)` examples wired through `server.App`
+- a mounted docs router, `/public`-served stylesheet, `/api/meta`, and guarded `/api/me`
+- session-backed forms, auth actions, and a protected route under `/labs/secret`
+- automatic ETags on `/api/meta` plus static docs-page cache examples that can be invalidated by path or tag
+- a sample raster asset plus image optimization examples under `/docs/images`
 
 ```go
 package main
@@ -171,6 +220,9 @@ GoSX supports a three-tier deploy strategy:
 | `server` | Simple HTTP server with routing |
 | `route` | Declarative routing with layouts and data loaders |
 | `action` | Named server action handlers |
+| `session` | Signed cookie sessions, flash state, and CSRF protection |
+| `auth` | Session-backed auth middleware and guards |
+| `apptest` | Route/app testing helpers for pages, APIs, and form posts |
 | `island` | Island renderer and manifest generation |
 | `hub` | WebSocket presence, fanout, shared realtime state |
 | `engine` | Worker/surface model with capability declarations |
@@ -214,6 +266,7 @@ Key checks:
 - `make build-cli` ensures `cmd/gosx` continues to compile.
 - `make build-runtime` builds the shared WASM runtime from `client/wasm`.
 - `.github/workflows/ci.yml` runs the same contract on every push and pull request.
+- `npm run test:e2e` launches the real `gosx dev ./examples/gosx-docs` path behind Playwright and verifies client navigation, scoped 404s, forms, auth redirects, and the protected route.
 
 Editor tooling:
 
@@ -234,6 +287,7 @@ Client correctness is covered at three layers:
 - shipped JS runtime contract tests in `client/js/runtime.test.js`
 - end-to-end compiler-to-bridge tests in `test/frontend_pipeline_test.go`
 - js/wasm runtime tests in `client/wasm/main_test.go` that compile `.gsx` islands, hydrate through `__gosx_hydrate`, dispatch through `__gosx_action`, and assert the emitted patch stream
+- live-browser verification in `e2e/gosx_docs_e2e.test.mjs`, which boots `gosx dev`, drives Chromium through the docs app, and checks the real browser/runtime contract
 
 Additional manual commands:
 
@@ -246,7 +300,20 @@ tinygo build -o build/gosx-runtime.wasm -target wasm ./client/wasm/
 
 # Run the build pipeline
 go run ./cmd/gosx build --dev examples/counter/
+
+# Run the dev proxy against the dogfooded docs app
+go run ./cmd/gosx dev ./examples/gosx-docs
+
+# Run the browser E2E harness
+npm run test:e2e
 ```
+
+Build output and deployment:
+
+- `gosx build --prod my-app` writes `dist/build.json`, `dist/assets/`, `dist/app/`, `dist/public/`, and when the target is runnable, `dist/server/app` plus `dist/run.sh`
+- file-routed apps stay deployable because the runtime bundle now carries `app/` alongside the binary instead of assuming source-tree access
+- scaffolded apps and the docs template resolve their runtime root through `server.ResolveAppRoot(thisFile)`, so they can run from source, from `dist/`, or with `GOSX_APP_ROOT` set explicitly
+- `dist/README.md` describes the bundle contract and launch model
 
 ## License
 

@@ -219,14 +219,14 @@ func (r *Renderer) BootstrapScript() gosx.Node {
 
 	var b strings.Builder
 	if (len(r.manifest.Islands) > 0 || len(r.manifest.Hubs) > 0 || r.hasWASMEngines()) && r.wasmExecPath != "" {
-		b.WriteString(fmt.Sprintf(`<script src="%s"></script>`, html.EscapeString(r.wasmExecPath)))
+		b.WriteString(fmt.Sprintf(`<script data-gosx-script="wasm-exec" src="%s"></script>`, html.EscapeString(r.wasmExecPath)))
 		b.WriteByte('\n')
 	}
 	if len(r.manifest.Islands) > 0 && r.patchPath != "" {
-		b.WriteString(fmt.Sprintf(`<script src="%s"></script>`, html.EscapeString(r.patchPath)))
+		b.WriteString(fmt.Sprintf(`<script data-gosx-script="patch" src="%s"></script>`, html.EscapeString(r.patchPath)))
 		b.WriteByte('\n')
 	}
-	b.WriteString(fmt.Sprintf(`<script src="%s"></script>`, html.EscapeString(r.bootstrapPath)))
+	b.WriteString(fmt.Sprintf(`<script data-gosx-script="bootstrap" src="%s"></script>`, html.EscapeString(r.bootstrapPath)))
 	return gosx.RawHTML(b.String())
 }
 
