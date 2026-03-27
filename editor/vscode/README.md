@@ -2,7 +2,7 @@
 
 This extension provides:
 
-- `.gsx` language registration
+- native GSX language registration for `.gsx` files
 - TextMate syntax highlighting
 - `gosx lsp` language-server integration for diagnostics and formatting
 

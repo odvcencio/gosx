@@ -4,7 +4,7 @@
 // with Danmuji and Ferrous Wheel:
 //
 //  1. Parse GoSX source using the extended grammar.
-//  2. Walk the CST, emitting standard Go code. JSX expressions are
+//  2. Walk the CST, emitting standard Go code. GSX expressions are
 //     converted into gosx.Node-building function calls.
 package transpile
 
@@ -81,7 +81,7 @@ func (t *transpiler) emit(n *gotreesitter.Node) string {
 	case "source_file":
 		return t.emitSourceFile(n)
 	case "jsx_element":
-		return t.emitJSXElement(n)
+		return t.emitGSXElement(n)
 	case "jsx_self_closing_element":
 		return t.emitSelfClosing(n)
 	case "jsx_fragment":
@@ -89,7 +89,7 @@ func (t *transpiler) emit(n *gotreesitter.Node) string {
 	case "jsx_expression_container":
 		return t.emitExprContainer(n)
 	case "jsx_text":
-		return t.emitJSXText(n)
+		return t.emitGSXText(n)
 	default:
 		return t.emitDefault(n)
 	}
@@ -107,8 +107,8 @@ func (t *transpiler) emitSourceFile(n *gotreesitter.Node) string {
 	return b.String()
 }
 
-// emitDefault passes through non-JSX nodes by re-emitting their source,
-// but recursively processes any JSX children within.
+// emitDefault passes through non-GSX nodes by re-emitting their source,
+// but recursively processes any GSX children within.
 func (t *transpiler) emitDefault(n *gotreesitter.Node) string {
 	if n.NamedChildCount() == 0 {
 		return t.text(n)
@@ -143,7 +143,7 @@ func (t *transpiler) emitDefault(n *gotreesitter.Node) string {
 	return b.String()
 }
 
-func (t *transpiler) emitJSXElement(n *gotreesitter.Node) string {
+func (t *transpiler) emitGSXElement(n *gotreesitter.Node) string {
 	openNode := t.childByField(n, "open")
 	if openNode == nil {
 		t.errorf(n, "element missing opening tag")
@@ -190,7 +190,7 @@ func (t *transpiler) emitExprContainer(n *gotreesitter.Node) string {
 		return ""
 	}
 
-	// If the expression contains JSX, transpile it
+	// If the expression contains GSX, transpile it
 	exprType := t.nodeType(exprNode)
 	if exprType == "jsx_element" || exprType == "jsx_self_closing_element" || exprType == "jsx_fragment" {
 		return t.emit(exprNode)
@@ -199,7 +199,7 @@ func (t *transpiler) emitExprContainer(n *gotreesitter.Node) string {
 	return fmt.Sprintf("gosx.Expr(%s)", t.text(exprNode))
 }
 
-func (t *transpiler) emitJSXText(n *gotreesitter.Node) string {
+func (t *transpiler) emitGSXText(n *gotreesitter.Node) string {
 	text := t.text(n)
 	trimmed := strings.TrimSpace(text)
 	if trimmed == "" {
@@ -288,7 +288,7 @@ func (t *transpiler) emitAttr(n *gotreesitter.Node) string {
 		val := t.text(valueNode)
 		return fmt.Sprintf("gosx.Attr(%q, %s)", name, val) // already quoted
 	case "jsx_attribute_expression":
-		return fmt.Sprintf("gosx.Attr(%q, %s)", name, stripJSXAttributeExpressionText(t.text(valueNode)))
+		return fmt.Sprintf("gosx.Attr(%q, %s)", name, stripGSXAttributeExpressionText(t.text(valueNode)))
 	case "jsx_expression_container":
 		exprNode := t.childByField(valueNode, "expression")
 		if exprNode != nil {
@@ -331,7 +331,7 @@ func isComponent(tag string) bool {
 	return len(tag) > 0 && tag[0] >= 'A' && tag[0] <= 'Z'
 }
 
-func stripJSXAttributeExpressionText(text string) string {
+func stripGSXAttributeExpressionText(text string) string {
 	if len(text) >= 2 && text[0] == '{' && text[len(text)-1] == '}' {
 		return text[1 : len(text)-1]
 	}

@@ -1,7 +1,7 @@
 {
   "name": "gosx",
   "displayName": "GoSX",
-  "description": "Syntax highlighting and language-server support for .gsx files.",
+  "description": "Language support for GoSX's native GSX files.",
   "version": "0.1.0",
   "publisher": "gosx",
   "engines": {
@@ -19,6 +19,7 @@
       {
         "id": "gosx",
         "aliases": [
+          "GSX",
           "GoSX",
           "gosx"
         ],

@@ -1,6 +1,6 @@
 package gosx
 
-// GosxGrammar returns a grammar extending Go with JSX-like component syntax.
+// GosxGrammar returns a grammar extending Go with native GSX component syntax.
 // File extension: .gsx
 //
 // Supported syntax:
@@ -13,8 +13,12 @@ package gosx
 func GosxGrammar() *Grammar {
 	return ExtendGrammar("gosx", GoGrammar(), func(g *Grammar) {
 
+		// The generated CST keeps `jsx_*` node names for compatibility with the
+		// existing lowering, formatting, and transpile pipeline. The language
+		// surface, editor tooling, and public docs should still treat this as GSX.
+
 		// ---------------------------------------------------------------
-		// JSX element: <tag attr="val" attr={expr}>children</tag>
+		// GSX element: <tag attr="val" attr={expr}>children</tag>
 		// ---------------------------------------------------------------
 
 		// Tag names: identifiers, custom elements, or dotted paths (pkg.Component)
@@ -178,7 +182,7 @@ func GosxGrammar() *Grammar {
 		// Hook into Go grammar
 		// ---------------------------------------------------------------
 
-		// JSX expressions are valid Go expressions
+		// GSX tags are valid Go expressions
 		AppendChoice(g, "_expression", Choice(
 			PrecDynamic(5, Sym("jsx_element")),
 			PrecDynamic(5, Sym("jsx_self_closing_element")),

@@ -1,6 +1,6 @@
 # GoSX
 
-A Go-native server-first web platform. Author components in Go with JSX-like syntax, render on the server by default, hydrate interactive islands with WebAssembly.
+A Go-native server-first web platform. Author components in native GSX syntax, render on the server by default, hydrate interactive islands with WebAssembly.
 
 ## Status
 
@@ -34,7 +34,7 @@ GoSX is in active development. The compiler pipeline, server rendering, island a
 - app testing helpers via `apptest.Request(...)`, `apptest.App(...)`, `apptest.Router(...)`, `apptest.FormRequest(...)`, and stateful `apptest.NewAppClient(...)` / `apptest.NewRouterClient(...)`
 - deferred page regions via `ctx.Defer(...)`, with fallback-first HTML and streamed replacements
 - local image optimization via `server.Image(...)` and `/_gosx/image` for responsive raster variants
-- `.gsx` file parsing with JSX-like syntax (elements, fragments, hyphenated attributes, expressions, spreads, custom-element tags)
+- `.gsx` file parsing with native GSX syntax (elements, fragments, hyphenated attributes, expressions, spreads, custom-element tags)
 - `//gosx:island` directive detection on components
 - Compiler pipeline: parse → flat-array IR → validate → lower to IslandProgram → serialize
 - Body analyzer: compiler extracts signals, computeds, and handlers from `.gsx` source (proven by TestCompilerE2E_CounterFromSource)
@@ -121,9 +121,9 @@ func main() {
 }
 ```
 
-## .gsx Syntax
+## GSX Language
 
-GoSX extends Go with JSX-like markup in `.gsx` files:
+GoSX extends Go with native GSX markup in `.gsx` files:
 
 ```go
 package app
