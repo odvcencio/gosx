@@ -1,7 +1,7 @@
 // Package format provides a canonical formatter for GoSX source files.
 //
 // The formatter preserves normal Go formatting expectations while adding
-// consistent formatting for JSX-like element/attribute/children syntax.
+// consistent formatting for GSX element/attribute/children syntax.
 package format
 
 import (

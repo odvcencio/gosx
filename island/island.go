@@ -380,7 +380,7 @@ func extractEventSlots(prog *program.Program) []hydrate.EventSlot {
 	return slots
 }
 
-// eventNameToType converts JSX event names to DOM event types.
+// eventNameToType converts GSX event attributes to DOM event types.
 func eventNameToType(name string) string {
 	switch name {
 	case "onClick":

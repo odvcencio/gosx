@@ -2,19 +2,24 @@ package gosx
 
 import gotreesitter "github.com/odvcencio/gotreesitter"
 
-type jsxAttributeScanner struct {
+// gsxAttributeScanner lexes attribute expressions inside GSX tags.
+//
+// The CST still exposes the external symbol as `jsx_attribute_expression` for
+// compatibility with the current generated grammar, but the language surface is
+// GSX-first.
+type gsxAttributeScanner struct {
 	lang *gotreesitter.Language
 }
 
-func (s *jsxAttributeScanner) Create() any { return nil }
+func (s *gsxAttributeScanner) Create() any { return nil }
 
-func (s *jsxAttributeScanner) Destroy(payload any) {}
+func (s *gsxAttributeScanner) Destroy(payload any) {}
 
-func (s *jsxAttributeScanner) Serialize(payload any, buf []byte) int { return 0 }
+func (s *gsxAttributeScanner) Serialize(payload any, buf []byte) int { return 0 }
 
-func (s *jsxAttributeScanner) Deserialize(payload any, buf []byte) {}
+func (s *gsxAttributeScanner) Deserialize(payload any, buf []byte) {}
 
-func (s *jsxAttributeScanner) Scan(payload any, lexer *gotreesitter.ExternalLexer, validSymbols []bool) bool {
+func (s *gsxAttributeScanner) Scan(payload any, lexer *gotreesitter.ExternalLexer, validSymbols []bool) bool {
 	if len(validSymbols) == 0 || !validSymbols[0] || s == nil || s.lang == nil {
 		return false
 	}
@@ -122,7 +127,7 @@ func scanGoBlockComment(lexer *gotreesitter.ExternalLexer) bool {
 	}
 }
 
-func stripJSXAttributeExpression(text string) string {
+func stripGSXAttributeExpression(text string) string {
 	if len(text) >= 2 && text[0] == '{' && text[len(text)-1] == '}' {
 		return text[1 : len(text)-1]
 	}

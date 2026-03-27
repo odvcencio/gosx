@@ -441,7 +441,7 @@ func (l *lowerer) lowerImportSpec(n *gotreesitter.Node) {
 	l.prog.Imports = append(l.prog.Imports, imp)
 }
 
-// lowerFunctionDecl checks if a function returns Node and contains JSX,
+// lowerFunctionDecl checks if a function returns Node and contains GSX,
 // making it a GoSX component.
 func (l *lowerer) lowerFunctionDecl(n *gotreesitter.Node) {
 	nameNode := l.childByField(n, "name")
@@ -450,23 +450,23 @@ func (l *lowerer) lowerFunctionDecl(n *gotreesitter.Node) {
 	}
 	name := l.text(nameNode)
 
-	// Check if this function contains JSX by scanning for jsx_ nodes in the body
+	// Check if this function contains GSX by scanning for tag nodes in the body
 	bodyNode := l.childByField(n, "body")
 	if bodyNode == nil {
 		return
 	}
 
-	// Find the return statement with JSX
-	jsxRoot := l.findJSXReturn(bodyNode)
-	if jsxRoot == nil {
+	// Find the return statement with GSX
+	gsxRoot := l.findGSXReturn(bodyNode)
+	if gsxRoot == nil {
 		return // Not a GoSX component
 	}
 
 	// Extract props type from parameters
 	propsType := l.extractPropsType(n)
 
-	// Lower the JSX tree
-	rootID := l.lowerJSXNode(jsxRoot)
+	// Lower the GSX tree
+	rootID := l.lowerGSXNode(gsxRoot)
 
 	// Analyze the function body for signal/computed/handler declarations.
 	// This extracts the component scope needed for island lowering.
@@ -491,24 +491,24 @@ func (l *lowerer) lowerFunctionDecl(n *gotreesitter.Node) {
 	l.prog.Components = append(l.prog.Components, comp)
 }
 
-// findJSXReturn searches a function body for a return statement containing JSX.
-func (l *lowerer) findJSXReturn(n *gotreesitter.Node) *gotreesitter.Node {
+// findGSXReturn searches a function body for a return statement containing GSX.
+func (l *lowerer) findGSXReturn(n *gotreesitter.Node) *gotreesitter.Node {
 	for i := 0; i < int(n.NamedChildCount()); i++ {
 		child := n.NamedChild(i)
 		typ := l.nodeType(child)
 
 		if typ == "return_statement" {
-			// Check expression list for JSX
+			// Check expression list for GSX
 			for j := 0; j < int(child.NamedChildCount()); j++ {
 				expr := child.NamedChild(j)
-				if l.isJSXNode(expr) {
+				if l.isGSXNode(expr) {
 					return expr
 				}
 				// Check inside expression_list
 				if l.nodeType(expr) == "expression_list" {
 					for k := 0; k < int(expr.NamedChildCount()); k++ {
 						inner := expr.NamedChild(k)
-						if l.isJSXNode(inner) {
+						if l.isGSXNode(inner) {
 							return inner
 						}
 					}
@@ -517,14 +517,14 @@ func (l *lowerer) findJSXReturn(n *gotreesitter.Node) *gotreesitter.Node {
 		}
 
 		// Recurse into blocks
-		if found := l.findJSXReturn(child); found != nil {
+		if found := l.findGSXReturn(child); found != nil {
 			return found
 		}
 	}
 	return nil
 }
 
-func (l *lowerer) isJSXNode(n *gotreesitter.Node) bool {
+func (l *lowerer) isGSXNode(n *gotreesitter.Node) bool {
 	typ := l.nodeType(n)
 	return typ == "jsx_element" || typ == "jsx_self_closing_element" || typ == "jsx_fragment"
 }
@@ -546,11 +546,11 @@ func (l *lowerer) extractPropsType(funcDecl *gotreesitter.Node) string {
 	return ""
 }
 
-// lowerJSXNode converts a JSX CST node into IR nodes.
-func (l *lowerer) lowerJSXNode(n *gotreesitter.Node) NodeID {
+// lowerGSXNode converts a GSX CST node into IR nodes.
+func (l *lowerer) lowerGSXNode(n *gotreesitter.Node) NodeID {
 	switch l.nodeType(n) {
 	case "jsx_element":
-		return l.lowerJSXElement(n)
+		return l.lowerGSXElement(n)
 	case "jsx_self_closing_element":
 		return l.lowerSelfClosing(n)
 	case "jsx_fragment":
@@ -569,7 +569,7 @@ func (l *lowerer) lowerJSXNode(n *gotreesitter.Node) NodeID {
 	}
 }
 
-func (l *lowerer) lowerJSXElement(n *gotreesitter.Node) NodeID {
+func (l *lowerer) lowerGSXElement(n *gotreesitter.Node) NodeID {
 	openNode := l.childByField(n, "open")
 	if openNode == nil {
 		l.errorf(n, "element missing opening tag")
@@ -632,9 +632,9 @@ func (l *lowerer) lowerExprContainer(n *gotreesitter.Node) NodeID {
 		return l.prog.AddNode(Node{Kind: NodeText, Text: ""})
 	}
 
-	// Check if the expression itself is JSX
-	if l.isJSXNode(exprNode) {
-		return l.lowerJSXNode(exprNode)
+	// Check if the expression itself is GSX
+	if l.isGSXNode(exprNode) {
+		return l.lowerGSXNode(exprNode)
 	}
 
 	return l.prog.AddNode(Node{
@@ -709,7 +709,7 @@ func (l *lowerer) lowerAttr(n *gotreesitter.Node) Attr {
 		return Attr{Kind: AttrStatic, Name: name, Value: val}
 
 	case "jsx_attribute_expression":
-		expr := stripJSXAttributeExpressionText(l.text(valueNode))
+		expr := stripGSXAttributeExpressionText(l.text(valueNode))
 		isEvent := strings.HasPrefix(name, "on") && len(name) > 2 && name[2] >= 'A' && name[2] <= 'Z'
 		return Attr{Kind: AttrExpr, Name: name, Expr: expr, IsEvent: isEvent}
 
@@ -735,7 +735,7 @@ func (l *lowerer) lowerSpreadAttr(n *gotreesitter.Node) Attr {
 	return Attr{Kind: AttrSpread, Expr: expr}
 }
 
-func stripJSXAttributeExpressionText(text string) string {
+func stripGSXAttributeExpressionText(text string) string {
 	if len(text) >= 2 && text[0] == '{' && text[len(text)-1] == '}' {
 		return text[1 : len(text)-1]
 	}
@@ -754,7 +754,7 @@ func (l *lowerer) extractChildren(n *gotreesitter.Node) []NodeID {
 		if typ == "jsx_element" || typ == "jsx_self_closing_element" ||
 			typ == "jsx_expression_container" || typ == "jsx_fragment" ||
 			typ == "jsx_text" {
-			children = append(children, l.lowerJSXNode(child))
+			children = append(children, l.lowerGSXNode(child))
 		}
 	}
 	return children

@@ -21,7 +21,7 @@ func Language() (*gotreesitter.Language, error) {
 		g := GosxGrammar()
 		gosxLangCached, _, gosxLangErr = GenerateLanguageAndBlob(g)
 		if gosxLangErr == nil && gosxLangCached != nil {
-			gosxLangCached.ExternalScanner = &jsxAttributeScanner{lang: gosxLangCached}
+			gosxLangCached.ExternalScanner = &gsxAttributeScanner{lang: gosxLangCached}
 		}
 	})
 	return gosxLangCached, gosxLangErr
