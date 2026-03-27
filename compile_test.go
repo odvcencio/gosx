@@ -113,6 +113,115 @@ func Counter(props Props) Node {
 	}
 }
 
+func TestParseComponentSiblingsAfterSelfClosing(t *testing.T) {
+	source := []byte(`package main
+
+func Page() Node {
+	return <article>
+		<div class="editor-layout">
+			<div class="editor-canvas">
+				<EditorBlocks />
+				<EditorEmptyState />
+				<EditorPalette />
+			</div>
+			<div class="editor-sidebar">
+				<EditorPreview />
+			</div>
+		</div>
+	</article>
+}
+`)
+	tree, _, err := Parse(source)
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+	root := tree.RootNode()
+	if root.HasError() {
+		t.Error("Parse tree has errors for sibling self-closing components")
+	}
+}
+
+func TestParseAttributesAfterExpressionAttribute(t *testing.T) {
+	source := []byte(`package main
+
+func Page(item Item) Node {
+	return <div>
+		<Link href={item.EditHref} class="btn btn-sm">Edit</Link>
+		<Link href={item.ViewHref} class="btn btn-sm">View</Link>
+	</div>
+}
+`)
+	tree, _, err := Parse(source)
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+	root := tree.RootNode()
+	if root.HasError() {
+		t.Error("Parse tree has errors for attributes after expression attributes")
+	}
+}
+
+func TestCompileAttributesAfterExpressionAttribute(t *testing.T) {
+	source := []byte(`package main
+
+func Page(item Item) Node {
+	return <div>
+		<Link href={item.EditHref} class="btn btn-sm">Edit</Link>
+		<Link href={item.ViewHref} class="btn btn-sm">View</Link>
+	</div>
+}
+`)
+	if _, err := Compile(source); err != nil {
+		t.Fatalf("Compile failed: %v", err)
+	}
+}
+
+func TestCompileSelfClosingComponentWithExpressionAttribute(t *testing.T) {
+	source := []byte(`package main
+
+func Page(foo Foo) Node {
+	return <Avatar userId={foo.CreatorID} />
+}
+`)
+	if _, err := Compile(source); err != nil {
+		t.Fatalf("Compile failed: %v", err)
+	}
+}
+
+func TestCompileMultipleAttributesAfterExpressionAttribute(t *testing.T) {
+	source := []byte(`package main
+
+func Page() Node {
+	return <Foo bar="string" baz={2} data-i8n="dialogs.welcome.heading" bam />
+}
+`)
+	if _, err := Compile(source); err != nil {
+		t.Fatalf("Compile failed: %v", err)
+	}
+}
+
+func TestParseIfSiblingBoundary(t *testing.T) {
+	source := []byte(`package main
+
+func Page(ok bool) Node {
+	return <div>
+		<If when={ok}>
+			<div class="empty">Ready</div>
+		</If>
+		<div class="next">Next</div>
+	</div>
+}
+`)
+	tree, _, err := Parse(source)
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+	root := tree.RootNode()
+	if root.HasError() {
+		t.Error("Parse tree has errors for siblings after If blocks")
+	}
+}
+
 func TestCompileComponent(t *testing.T) {
 	source := []byte(`package main
 

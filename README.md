@@ -123,7 +123,7 @@ func main() {
 
 ## GSX Language
 
-GoSX extends Go with native GSX markup in `.gsx` files:
+GSX is GoSX's own client language surface. It is Go-native, Go-first, and built to accept ordinary Go expressions directly inside modern markup without forcing a JavaScript mental model:
 
 ```go
 package app
