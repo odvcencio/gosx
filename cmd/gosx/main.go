@@ -15,6 +15,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 
@@ -140,23 +141,30 @@ func cmdCompile() {
 
 func cmdCheck() {
 	file := requireArg(2, "check")
+	if err := runCheck(file, os.Stderr); err != nil {
+		fatal("check: %v", err)
+	}
+}
+
+func runCheck(file string, stderr io.Writer) error {
 	source, err := os.ReadFile(file)
 	if err != nil {
-		fatal("read %s: %v", file, err)
+		return fmt.Errorf("read %s: %w", file, err)
 	}
 
 	prog, err := gosx.Compile(source)
 	if err != nil {
-		fatal("check: %v", err)
+		return err
 	}
-	fmt.Fprintf(os.Stderr, "ok: %d components\n", len(prog.Components))
+	fmt.Fprintf(stderr, "ok: %d components\n", len(prog.Components))
 	for _, c := range prog.Components {
-		fmt.Fprintf(os.Stderr, "  %s", c.Name)
+		fmt.Fprintf(stderr, "  %s", c.Name)
 		if c.PropsType != "" {
-			fmt.Fprintf(os.Stderr, "(%s)", c.PropsType)
+			fmt.Fprintf(stderr, "(%s)", c.PropsType)
 		}
-		fmt.Fprintln(os.Stderr)
+		fmt.Fprintln(stderr)
 	}
+	return nil
 }
 
 func cmdRender() {
