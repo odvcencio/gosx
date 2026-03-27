@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -53,5 +54,38 @@ func TestRunCheckReportsReadError(t *testing.T) {
 	}
 	if stderr.Len() != 0 {
 		t.Fatalf("expected no stderr output on failure, got %q", stderr.String())
+	}
+}
+
+func TestRunCheckAcceptsDocsAppPages(t *testing.T) {
+	root, err := filepath.Abs(filepath.Join("..", "..", "examples", "gosx-docs", "app"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var checked int
+	err = filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info.IsDir() || filepath.Ext(path) != ".gsx" {
+			return nil
+		}
+
+		var stderr bytes.Buffer
+		if err := runCheck(path, &stderr); err != nil {
+			t.Fatalf("runCheck(%s) failed: %v", path, err)
+		}
+		if !strings.Contains(stderr.String(), "ok: ") {
+			t.Fatalf("unexpected check output for %s: %q", path, stderr.String())
+		}
+		checked++
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if checked == 0 {
+		t.Fatal("expected to check docs app GSX files")
 	}
 }
