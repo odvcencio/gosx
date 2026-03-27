@@ -5,6 +5,8 @@
 // following the same pattern as Arbiter's flat-array IR.
 package ir
 
+import "strings"
+
 // NodeID is an index into Program.Nodes.
 type NodeID uint32
 
@@ -189,11 +191,28 @@ func (p *Program) NodeAt(id NodeID) *Node {
 	return &p.Nodes[id]
 }
 
-// IsComponent returns true if the tag name starts with an uppercase letter,
-// indicating it's a GoSX component rather than an HTML element.
+// IsComponent returns true if the tag name resolves to an exported GoSX
+// component symbol rather than an HTML element.
+//
+// Plain component tags start with an uppercase letter:
+//
+//	<Card />
+//
+// Dotted component tags are also supported and are treated as components when
+// the final segment is exported:
+//
+//	<cms.Card />
+//	<design.Hero />
 func IsComponent(tag string) bool {
 	if len(tag) == 0 {
 		return false
 	}
-	return tag[0] >= 'A' && tag[0] <= 'Z'
+	segment := tag
+	if idx := strings.LastIndex(segment, "."); idx >= 0 && idx < len(segment)-1 {
+		segment = segment[idx+1:]
+	}
+	if len(segment) == 0 {
+		return false
+	}
+	return segment[0] >= 'A' && segment[0] <= 'Z'
 }
