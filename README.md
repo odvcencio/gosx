@@ -249,6 +249,25 @@ GoSX supports a three-tier deploy strategy:
 | `dev` | Development server with file watching |
 | `cmd/gosx` | CLI tool (compile, check, render, fmt, build, dev, export) |
 
+## API Stability
+
+Supported surfaces for ordinary web apps:
+
+- `server.App`, `route.Router`, file-based routing, `layout.gsx` / `page.gsx`, sibling `page.server.go`, `action`, `session`, `auth`, `server.Metadata`, `ctx.Cache*`, `app.Revalidate*`, `server.AssetURL(...)`, `server.Stylesheet(...)`, `server.Image(...)`, and `apptest`
+- opt-in pieces such as `app.EnableNavigation()`, directory-scoped modules, redirects/rewrites, and passwordless auth helpers are part of the supported app path
+
+Experimental surfaces:
+
+- native engine/runtime helpers such as `<Surface />`, `<Worker />`, and `<Scene3D />`
+- ISR/edge bundle behavior that depends on generated `dist/export.json`, `dist/static/`, and `dist/edge/worker.js`
+- build-hook and observer integration seams intended for advanced adopters
+
+Internal surfaces and formats that may change without notice:
+
+- `client/js/*`, `client/enginevm/*`, `client/vm/*`, `hydrate/*`, and manifest/program wire formats
+- generated `modules/modules.go` contents and the exact import-bucket shape used by CLI automation
+- browser bootstrap implementation details, patch protocol details, and internal route/file-eval plumbing
+
 ## Dependencies
 
 One: [gotreesitter](https://github.com/odvcencio/gotreesitter) — a clean-room reimplementation of tree-sitter in Go.
@@ -270,7 +289,10 @@ make test-js
 # Run js/wasm tests against the shipped client/wasm entrypoint
 make test-wasm
 
-# CI-grade verification: format check, tests, race tests, JS contract tests, WASM tests, CLI build, WASM build
+# Run the real docs/browser gate against gosx dev
+make test-e2e
+
+# CI-grade verification: format check, tests, race tests, JS contract tests, WASM tests, browser docs E2E, CLI build, WASM build
 make ci
 ```
 
@@ -280,10 +302,12 @@ Key checks:
 - `make test-race` runs the same suite with the Go race detector enabled.
 - `make test-js` runs the shipped `client/js/bootstrap.js` and `client/js/patch.js` files under Node's built-in test runner with a minimal DOM harness, covering hydration orchestration, delegated events, disposal, and patch application.
 - `make test-wasm` runs `GOOS=js GOARCH=wasm go test ./client/wasm` so client correctness is exercised through the actual exported WASM runtime functions.
+- `make test-e2e` launches the real `gosx dev ./examples/gosx-docs` path behind Playwright and verifies client navigation, scoped 404s, forms, auth redirects, and the protected route.
 - `make build-cli` ensures `cmd/gosx` continues to compile.
 - `make build-runtime` builds the shared WASM runtime from `client/wasm`.
-- `.github/workflows/ci.yml` runs the same contract on every push and pull request.
-- `npm run test:e2e` launches the real `gosx dev ./examples/gosx-docs` path behind Playwright and verifies client navigation, scoped 404s, forms, auth redirects, and the protected route.
+- `.github/workflows/ci.yml` runs the same contract on every push and pull request, including the docs browser E2E gate.
+- `cmd/gosx/init_test.go` verifies that freshly scaffolded starter and docs apps still build against the current repo, so `gosx init` remains a release gate instead of only a file-emission check.
+- `npm run test:e2e` is the direct Node entrypoint used by `make test-e2e`.
 
 Editor tooling:
 

@@ -1,6 +1,6 @@
 {
   "name": "gosx",
-  "version": "1.0.0",
+  "version": "0.1.0",
   "description": "A Go-native server-first web platform. Author components in Go with JSX-like syntax, render on the server by default, hydrate interactive islands with WebAssembly.",
   "main": "index.js",
   "directories": {
@@ -10,7 +10,7 @@
   },
   "scripts": {
     "test": "npm run test:js",
-    "test:js": "node --test client/js/runtime.test.js",
+    "test:js": "node --test --test-force-exit client/js/runtime.test.js",
     "test:e2e": "node --test e2e/gosx_docs_e2e.test.mjs"
   },
   "repository": {
@@ -19,7 +19,7 @@
   },
   "keywords": [],
   "author": "",
-  "license": "ISC",
+  "license": "MIT",
   "type": "commonjs",
   "bugs": {
     "url": "https://github.com/odvcencio/gosx/issues"

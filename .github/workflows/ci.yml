@@ -27,6 +27,13 @@ jobs:
         with:
           node-version: '22'
 
+      - name: Set up Chrome
+        id: chrome
+        uses: browser-actions/setup-chrome@v1
+
+      - name: Install Node dependencies
+        run: npm ci
+
       - name: Format check
         run: make fmt-check
 
@@ -41,6 +48,11 @@ jobs:
 
       - name: WASM runtime tests
         run: make test-wasm
+
+      - name: Browser docs E2E gate
+        env:
+          PLAYWRIGHT_CHROMIUM_EXECUTABLE: ${{ steps.chrome.outputs.chrome-path }}
+        run: make test-e2e
 
       - name: Build CLI
         run: make build-cli
