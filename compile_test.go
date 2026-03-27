@@ -200,6 +200,30 @@ func Page() Node {
 	}
 }
 
+func TestCompileTextWithGoishEqualsContent(t *testing.T) {
+	source := []byte(`package main
+
+func Page() Node {
+	return <pre>foo=bar</pre>
+}
+`)
+	if _, err := Compile(source); err != nil {
+		t.Fatalf("Compile failed: %v", err)
+	}
+}
+
+func TestCompileTextWithAmpersandContent(t *testing.T) {
+	source := []byte(`package main
+
+func Page() Node {
+	return <p>alpha & beta</p>
+}
+`)
+	if _, err := Compile(source); err != nil {
+		t.Fatalf("Compile failed: %v", err)
+	}
+}
+
 func TestParseIfSiblingBoundary(t *testing.T) {
 	source := []byte(`package main
 

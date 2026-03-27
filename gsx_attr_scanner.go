@@ -2,31 +2,34 @@ package gosx
 
 import gotreesitter "github.com/odvcencio/gotreesitter"
 
-// gsxAttributeScanner lexes attribute expressions inside GSX tags.
-//
-// The CST still exposes the external symbol as `jsx_attribute_expression` for
-// compatibility with the current generated grammar, but the language surface is
-// GSX-first.
-type gsxAttributeScanner struct {
+// gsxScanner lexes GSX externals. The CST still exposes `jsx_*` token names
+// for compatibility with the generated grammar, but the scanner behavior is
+// GSX-specific and Go-native.
+type gsxScanner struct {
 	lang *gotreesitter.Language
 }
 
-func (s *gsxAttributeScanner) Create() any { return nil }
+func (s *gsxScanner) Create() any { return nil }
 
-func (s *gsxAttributeScanner) Destroy(payload any) {}
+func (s *gsxScanner) Destroy(payload any) {}
 
-func (s *gsxAttributeScanner) Serialize(payload any, buf []byte) int { return 0 }
+func (s *gsxScanner) Serialize(payload any, buf []byte) int { return 0 }
 
-func (s *gsxAttributeScanner) Deserialize(payload any, buf []byte) {}
+func (s *gsxScanner) Deserialize(payload any, buf []byte) {}
 
-func (s *gsxAttributeScanner) Scan(payload any, lexer *gotreesitter.ExternalLexer, validSymbols []bool) bool {
-	if len(validSymbols) == 0 || !validSymbols[0] || s == nil || s.lang == nil {
+func (s *gsxScanner) SupportsIncrementalReuse() bool { return true }
+
+func (s *gsxScanner) Scan(payload any, lexer *gotreesitter.ExternalLexer, validSymbols []bool) bool {
+	if s == nil || s.lang == nil {
 		return false
 	}
-	if lexer.Lookahead() != '{' {
-		return false
+	if gsxValid(validSymbols, 0) && lexer.Lookahead() == '{' {
+		return s.scanAttributeExpression(lexer)
 	}
+	return false
+}
 
+func (s *gsxScanner) scanAttributeExpression(lexer *gotreesitter.ExternalLexer) bool {
 	depth := 0
 	for {
 		ch := lexer.Lookahead()
@@ -66,6 +69,8 @@ func (s *gsxAttributeScanner) Scan(payload any, lexer *gotreesitter.ExternalLexe
 		}
 	}
 }
+
+func gsxValid(vs []bool, idx int) bool { return idx < len(vs) && vs[idx] }
 
 func scanQuotedGoLiteral(lexer *gotreesitter.ExternalLexer, quote rune) {
 	lexer.Advance(false)
