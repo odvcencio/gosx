@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -73,6 +74,18 @@ func TestRunInitCreatesStarterProject(t *testing.T) {
 	}
 
 	assertAllGSXCompile(t, dir)
+}
+
+func TestRunInitStarterProjectBuilds(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "starter-build")
+
+	if err := RunInit(dir, "example.com/starter-build", ""); err != nil {
+		t.Fatal(err)
+	}
+
+	addLocalGoSXReplace(t, dir)
+	tidyModule(t, dir)
+	goTestModule(t, dir)
 }
 
 func TestRunInitDerivesModuleNameFromDirectory(t *testing.T) {
@@ -184,6 +197,18 @@ func TestRunInitCreatesDocsTemplate(t *testing.T) {
 	}
 }
 
+func TestRunInitDocsTemplateBuilds(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "docs-build")
+
+	if err := RunInit(dir, "example.com/docs-build", "docs"); err != nil {
+		t.Fatal(err)
+	}
+
+	addLocalGoSXReplace(t, dir)
+	tidyModule(t, dir)
+	goTestModule(t, dir)
+}
+
 func TestRunInitRejectsUnknownTemplate(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "unknown")
 	if err := RunInit(dir, "example.com/unknown", "wat"); err == nil {
@@ -261,6 +286,17 @@ func readFile(t *testing.T, path string) string {
 		t.Fatalf("read %s: %v", path, err)
 	}
 	return string(data)
+}
+
+func goTestModule(t *testing.T, dir string) {
+	t.Helper()
+	cmd := exec.Command("go", "test", "./...")
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "GOWORK=off")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("go test ./... in %s: %v\n%s", dir, err, output)
+	}
 }
 
 func assertAllGSXCompile(t *testing.T, root string) {

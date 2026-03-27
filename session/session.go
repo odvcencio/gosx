@@ -19,10 +19,10 @@ import (
 type contextKey string
 
 const (
-	storeContextKey contextKey = "gosx.session.store"
-	defaultFlashKey            = "__gosx_flash"
-	defaultCSRFKey             = "__gosx_csrf"
-	defaultCSRFField           = "csrf_token"
+	storeContextKey  contextKey = "gosx.session.store"
+	defaultFlashKey             = "__gosx_flash"
+	defaultCSRFKey              = "__gosx_csrf"
+	defaultCSRFField            = "csrf_token"
 )
 
 // Options configures a cookie-backed session manager.
@@ -43,8 +43,8 @@ type Manager struct {
 }
 
 type sessionEnvelope struct {
-	Values  map[string]any     `json:"values,omitempty"`
-	Flashes map[string][]any   `json:"flashes,omitempty"`
+	Values  map[string]any   `json:"values,omitempty"`
+	Flashes map[string][]any `json:"flashes,omitempty"`
 }
 
 // Store holds request-scoped session state.

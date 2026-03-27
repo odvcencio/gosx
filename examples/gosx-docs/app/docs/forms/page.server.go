@@ -3,8 +3,8 @@ package docs
 import (
 	"strings"
 
-	docsapp "github.com/odvcencio/gosx/examples/gosx-docs/app"
 	"github.com/odvcencio/gosx/action"
+	docsapp "github.com/odvcencio/gosx/examples/gosx-docs/app"
 	"github.com/odvcencio/gosx/route"
 	"github.com/odvcencio/gosx/session"
 )
