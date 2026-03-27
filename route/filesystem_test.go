@@ -908,6 +908,78 @@ func Page() Node {
 	}
 }
 
+func TestRouterAddDirAutoResolvesGoComponentsFromFuncsAndValues(t *testing.T) {
+	root := t.TempDir()
+	writeRouteFile(t, root, "crew/page.gsx", `package docs
+
+func Page() Node {
+	return <main class="crew-page">
+		<Hero title={data.title} />
+		<cms.MemberCard team={data.team} member={data.member} />
+	</main>
+}
+`)
+
+	modules := NewFileModuleRegistry()
+	if err := modules.Register(FileModuleFor("crew/page.gsx", FileModuleOptions{
+		Load: func(ctx *RouteContext, page FilePage) (any, error) {
+			return map[string]string{
+				"title":  "Platform Crew",
+				"team":   "platform",
+				"member": "draco",
+			}, nil
+		},
+		Bindings: func(ctx *RouteContext, page FilePage, data any) FileTemplateBindings {
+			return FileTemplateBindings{
+				Values: map[string]any{
+					"cms": map[string]any{
+						"MemberCard": func(props struct {
+							Team   string
+							Member string
+						}) gosx.Node {
+							return gosx.El("article", gosx.Attrs(gosx.Attr("class", "member-card")),
+								gosx.Text(props.Team+":"+props.Member),
+							)
+						},
+					},
+				},
+				Funcs: map[string]any{
+					"Hero": func(props struct{ Title string }) gosx.Node {
+						return gosx.El("section", gosx.Attrs(gosx.Attr("class", "hero")),
+							gosx.El("h1", gosx.Text(props.Title)),
+						)
+					},
+				},
+			}
+		},
+	})); err != nil {
+		t.Fatal(err)
+	}
+
+	router := NewRouter()
+	router.SetLayout(func(ctx *RouteContext, body gosx.Node) gosx.Node {
+		return server.HTMLDocument("Crew", ctx.Head(), body)
+	})
+	if err := router.AddDir(root, FileRoutesOptions{Modules: modules}); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/crew", nil)
+	w := httptest.NewRecorder()
+	router.Build().ServeHTTP(w, req)
+
+	body := w.Body.String()
+	for _, snippet := range []string{
+		`class="crew-page"`,
+		`<section class="hero"><h1>Platform Crew</h1></section>`,
+		`<article class="member-card">platform:draco</article>`,
+	} {
+		if !strings.Contains(body, snippet) {
+			t.Fatalf("expected %q in %q", snippet, body)
+		}
+	}
+}
+
 func TestRouterAddDirUsesNearestDirectoryErrorPage(t *testing.T) {
 	root := t.TempDir()
 	writeRouteFile(t, root, "layout.gsx", `package docs

@@ -92,11 +92,30 @@ func (env fileRenderEnv) withBindings(bindings FileTemplateBindings) fileRenderE
 }
 
 func (env fileRenderEnv) component(name string) (any, bool) {
-	if env.components == nil {
+	if name = strings.TrimSpace(name); name == "" {
 		return nil, false
 	}
-	value, ok := env.components[name]
-	return value, ok
+	if env.components != nil {
+		if value, ok := env.components[name]; ok {
+			return value, true
+		}
+	}
+	if env.funcs != nil {
+		if value, ok := env.funcs[name]; ok {
+			return value, true
+		}
+	}
+	if env.values != nil {
+		if value, ok := env.values[name]; ok {
+			return value, true
+		}
+	}
+	if strings.Contains(name, ".") {
+		if value := evalFileExpr(name, env); value != nil {
+			return value, true
+		}
+	}
+	return nil, false
 }
 
 func (env fileRenderEnv) engine(cfg engine.Config, fallback gosx.Node) gosx.Node {

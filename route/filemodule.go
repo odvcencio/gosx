@@ -27,6 +27,10 @@ type FileActions map[string]action.Handler
 
 // FileTemplateBindings exposes request-scoped values, helpers, and renderable
 // Go component functions to a file-routed `.gsx` page.
+//
+// `Components` remains available for explicit component binding, but exported
+// Go component functions exposed through `Funcs` or `Values` are also resolved
+// automatically by the file renderer.
 type FileTemplateBindings struct {
 	Values     map[string]any
 	Funcs      map[string]any
