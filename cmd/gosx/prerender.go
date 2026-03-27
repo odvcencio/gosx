@@ -50,6 +50,10 @@ func prerenderStaticBundle(opts staticExportOptions) (exportManifest, error) {
 	if strings.TrimSpace(opts.BinaryPath) == "" {
 		return exportManifest{}, fmt.Errorf("static export binary path is required")
 	}
+	binaryPath, err := filepath.Abs(opts.BinaryPath)
+	if err != nil {
+		return exportManifest{}, fmt.Errorf("resolve binary path %s: %w", opts.BinaryPath, err)
+	}
 
 	routes, err := staticExportRoutes(filepath.Join(appRoot, "app"))
 	if err != nil {
@@ -66,7 +70,7 @@ func prerenderStaticBundle(opts staticExportOptions) (exportManifest, error) {
 	}
 	baseURL := fmt.Sprintf("http://127.0.0.1:%s", internalPort)
 
-	cmd := exec.Command(opts.BinaryPath)
+	cmd := exec.Command(binaryPath)
 	cmd.Dir = appRoot
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr

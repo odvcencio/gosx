@@ -53,3 +53,26 @@ func TestMustRegisterFileModuleCallerSkipsWrapperFrames(t *testing.T) {
 		t.Fatalf("expected wrapped module registration for %q", source)
 	}
 }
+
+func TestResolveFileModuleMatchesBuildRootShift(t *testing.T) {
+	sourceRoot := filepath.Join(t.TempDir(), "src", "app")
+	distRoot := filepath.Join(t.TempDir(), "dist", "app")
+	source := filepath.Join(sourceRoot, "demo", "verify", "page.gsx")
+
+	registry := NewFileModuleRegistry()
+	if err := registry.Register(FileModuleFor(source, FileModuleOptions{})); err != nil {
+		t.Fatal(err)
+	}
+
+	page := FilePage{
+		Source:   "demo/verify/page.gsx",
+		FilePath: filepath.Join(distRoot, "demo", "verify", "page.gsx"),
+	}
+	module, ok := resolveFileModule(registry, distRoot, page)
+	if !ok {
+		t.Fatalf("expected moved build root lookup to resolve %q", source)
+	}
+	if module.Source != normalizeFileModuleSource(source) {
+		t.Fatalf("expected module source %q, got %q", normalizeFileModuleSource(source), module.Source)
+	}
+}

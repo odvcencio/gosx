@@ -182,6 +182,111 @@ func TestRuntimeSetSharedSignalExport(t *testing.T) {
 	}
 }
 
+func TestRuntimeSharedSignalsPatchOtherHydratedIslands(t *testing.T) {
+	setGlobalValue(t, "__gosx_runtime_ready", js.Undefined())
+
+	type patchCall struct {
+		islandID string
+		patches  []vm.PatchOp
+	}
+
+	var calls []patchCall
+	setGlobalFunc(t, "__gosx_apply_patches", func(this js.Value, args []js.Value) any {
+		var patches []vm.PatchOp
+		if err := json.Unmarshal([]byte(args[1].String()), &patches); err != nil {
+			t.Fatalf("unmarshal patches: %v", err)
+		}
+		calls = append(calls, patchCall{
+			islandID: args[0].String(),
+			patches:  patches,
+		})
+		return nil
+	})
+
+	registerRuntime(bridge.New())
+
+	writer := &program.Program{
+		Name: "ThemeWriter",
+		Nodes: []program.Node{
+			{Kind: program.NodeElement, Tag: "div", Children: []program.NodeID{1}},
+			{Kind: program.NodeElement, Tag: "button", Attrs: []program.Attr{{Kind: program.AttrEvent, Name: "click", Event: "switchTheme"}}, Children: []program.NodeID{2}},
+			{Kind: program.NodeText, Text: "Switch"},
+		},
+		Root: 0,
+		Exprs: []program.Expr{
+			{Op: program.OpLitInt, Value: "0", Type: program.TypeInt},
+			{Op: program.OpLitInt, Value: "1", Type: program.TypeInt},
+			{Op: program.OpSignalSet, Operands: []program.ExprID{1}, Value: "$theme", Type: program.TypeInt},
+		},
+		Signals: []program.SignalDef{
+			{Name: "$theme", Type: program.TypeInt, Init: 0},
+		},
+		Handlers: []program.Handler{
+			{Name: "switchTheme", Body: []program.ExprID{2}},
+		},
+		StaticMask: []bool{false, false, true},
+	}
+
+	reader := &program.Program{
+		Name: "ThemeReader",
+		Nodes: []program.Node{
+			{Kind: program.NodeElement, Tag: "div", Children: []program.NodeID{1}},
+			{Kind: program.NodeExpr, Expr: 5},
+		},
+		Root: 0,
+		Exprs: []program.Expr{
+			{Op: program.OpLitInt, Value: "0", Type: program.TypeInt},
+			{Op: program.OpSignalGet, Value: "$theme", Type: program.TypeInt},
+			{Op: program.OpEq, Operands: []program.ExprID{1, 0}, Type: program.TypeBool},
+			{Op: program.OpLitString, Value: "LiveJournal", Type: program.TypeString},
+			{Op: program.OpLitString, Value: "Xanga", Type: program.TypeString},
+			{Op: program.OpCond, Operands: []program.ExprID{2, 3, 4}, Type: program.TypeString},
+		},
+		Signals: []program.SignalDef{
+			{Name: "$theme", Type: program.TypeInt, Init: 0},
+		},
+		StaticMask: []bool{false, false},
+	}
+
+	writerJSON, err := program.EncodeJSON(writer)
+	if err != nil {
+		t.Fatalf("encode writer: %v", err)
+	}
+	readerJSON, err := program.EncodeJSON(reader)
+	if err != nil {
+		t.Fatalf("encode reader: %v", err)
+	}
+
+	if ret := js.Global().Get("__gosx_hydrate").Invoke("writer-0", writer.Name, `{}`, string(writerJSON), "json"); !ret.IsNull() {
+		t.Fatalf("hydrate writer: %q", ret.String())
+	}
+	if ret := js.Global().Get("__gosx_hydrate").Invoke("reader-0", reader.Name, `{}`, string(readerJSON), "json"); !ret.IsNull() {
+		t.Fatalf("hydrate reader: %q", ret.String())
+	}
+
+	calls = nil
+	ret := js.Global().Get("__gosx_action").Invoke("writer-0", "switchTheme", `{}`)
+	if got := ret.String(); strings.HasPrefix(got, "error:") {
+		t.Fatalf("dispatch returned error: %q", got)
+	}
+
+	var foundReader bool
+	for _, call := range calls {
+		if call.islandID != "reader-0" {
+			continue
+		}
+		for _, patch := range call.patches {
+			if patch.Kind == vm.PatchSetText && patch.Text == "Xanga" {
+				foundReader = true
+				break
+			}
+		}
+	}
+	if !foundReader {
+		t.Fatalf("expected cross-island patch for reader-0, got %#v", calls)
+	}
+}
+
 func TestRuntimeSetInputBatchExport(t *testing.T) {
 	setGlobalValue(t, "__gosx_runtime_ready", js.Undefined())
 

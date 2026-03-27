@@ -641,6 +641,7 @@ func (a *App) servePublic(w http.ResponseWriter, r *http.Request) bool {
 	}
 
 	MarkObservedRequest(r, "public", cleanPath)
+	w.Header().Set("Cache-Control", "public, max-age=0, must-revalidate")
 	http.ServeFile(w, r, fsPath)
 	return true
 }

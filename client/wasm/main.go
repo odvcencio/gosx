@@ -13,6 +13,9 @@ import (
 )
 
 func registerRuntime(b *bridge.Bridge) {
+	b.SetPatchCallback(func(islandID, patchJSON string) {
+		js.Global().Call("__gosx_apply_patches", islandID, patchJSON)
+	})
 	setRuntimeFunc("__gosx_hydrate", hydrateRuntimeFunc(b))
 	setRuntimeFunc("__gosx_hydrate_engine", hydrateEngineRuntimeFunc(b))
 	setRuntimeFunc("__gosx_action", actionRuntimeFunc(b))

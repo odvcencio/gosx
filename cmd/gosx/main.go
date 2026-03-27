@@ -196,38 +196,65 @@ func cmdRender() {
 }
 
 func cmdFmt() {
-	path := requireArg(2, "fmt")
+	if len(os.Args) < 3 {
+		fmtUsage(os.Stderr)
+		os.Exit(1)
+	}
+	path := os.Args[2]
+	if path == "help" || path == "-h" || path == "--help" {
+		fmtUsage(os.Stdout)
+		return
+	}
 
+	if _, err := RunFmt(path, os.Stderr); err != nil {
+		fatal("fmt: %v", err)
+	}
+}
+
+func RunFmt(path string, stderr io.Writer) (int, error) {
 	info, err := os.Stat(path)
 	if err != nil {
-		fatal("stat %s: %v", path, err)
+		return 0, fmt.Errorf("stat %s: %w", path, err)
 	}
 
-	if info.IsDir() {
-		count := 0
-		err := filepath.Walk(path, func(p string, fi os.FileInfo, err error) error {
-			if err != nil {
-				return nil
-			}
-			ext := filepath.Ext(fi.Name())
-			if ext == ".gsx" {
-				if err := formatFile(p); err != nil {
-					fmt.Fprintf(os.Stderr, "gosx fmt: %s: %v\n", p, err)
-				} else {
-					count++
-				}
-			}
-			return nil
-		})
-		if err != nil {
-			fatal("fmt: %v", err)
-		}
-		fmt.Fprintf(os.Stderr, "gosx: formatted %d files\n", count)
-	} else {
+	if !info.IsDir() {
 		if err := formatFile(path); err != nil {
-			fatal("fmt: %v", err)
+			return 0, err
 		}
+		return 1, nil
 	}
+
+	count := 0
+	var firstErr error
+	err = filepath.Walk(path, func(p string, fi os.FileInfo, walkErr error) error {
+		if walkErr != nil {
+			if firstErr == nil {
+				firstErr = walkErr
+			}
+			fmt.Fprintf(stderr, "gosx fmt: %s: %v\n", p, walkErr)
+			return nil
+		}
+		if fi.IsDir() || filepath.Ext(fi.Name()) != ".gsx" {
+			return nil
+		}
+		if err := formatFile(p); err != nil {
+			if firstErr == nil {
+				firstErr = fmt.Errorf("%s: %w", p, err)
+			}
+			fmt.Fprintf(stderr, "gosx fmt: %s: %v\n", p, err)
+			return nil
+		}
+		count++
+		return nil
+	})
+	if err != nil {
+		return count, err
+	}
+	if firstErr != nil {
+		return count, firstErr
+	}
+	fmt.Fprintf(stderr, "gosx: formatted %d files\n", count)
+	return count, nil
 }
 
 func formatFile(path string) error {
@@ -240,6 +267,19 @@ func formatFile(path string) error {
 		return err
 	}
 	return os.WriteFile(path, formatted, 0644)
+}
+
+func fmtUsage(w io.Writer) {
+	fmt.Fprintf(w, `gosx fmt - Format GoSX source files
+
+Usage:
+  gosx fmt <file.gsx|dir>
+
+Examples:
+  gosx fmt app/layout.gsx
+  gosx fmt ./app
+
+`)
 }
 
 func requireArg(idx int, cmd string) string {

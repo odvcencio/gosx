@@ -205,6 +205,65 @@ func TestRuntimeClearsDirtyFlagsAfterReconcile(t *testing.T) {
 	}
 }
 
+func TestRuntimeRenderBundleAppliesSceneMotionOffsets(t *testing.T) {
+	prog := &rootengine.Program{
+		Name: "MotionOffsets",
+		Nodes: []rootengine.Node{
+			{
+				Kind:     "mesh",
+				Geometry: "box",
+				Material: "flat",
+				Props: map[string]islandprogram.ExprID{
+					"x":          0,
+					"y":          1,
+					"z":          2,
+					"shiftX":     3,
+					"shiftY":     4,
+					"shiftZ":     5,
+					"driftSpeed": 6,
+					"driftPhase": 7,
+				},
+			},
+		},
+		Exprs: []islandprogram.Expr{
+			{Op: islandprogram.OpLitFloat, Value: "0", Type: islandprogram.TypeFloat},
+			{Op: islandprogram.OpLitFloat, Value: "0", Type: islandprogram.TypeFloat},
+			{Op: islandprogram.OpLitFloat, Value: "0", Type: islandprogram.TypeFloat},
+			{Op: islandprogram.OpLitFloat, Value: "1.4", Type: islandprogram.TypeFloat},
+			{Op: islandprogram.OpLitFloat, Value: "0.55", Type: islandprogram.TypeFloat},
+			{Op: islandprogram.OpLitFloat, Value: "0.9", Type: islandprogram.TypeFloat},
+			{Op: islandprogram.OpLitFloat, Value: "0.8", Type: islandprogram.TypeFloat},
+			{Op: islandprogram.OpLitFloat, Value: "0.25", Type: islandprogram.TypeFloat},
+		},
+	}
+
+	rt := New(prog, `{}`)
+	start := rt.RenderBundle(640, 360, 0)
+	later := rt.RenderBundle(640, 360, 1.8)
+	if len(start.Objects) != 1 || len(later.Objects) != 1 {
+		t.Fatalf("expected one render object in each bundle, got %#v and %#v", start.Objects, later.Objects)
+	}
+
+	startBounds := start.Objects[0].Bounds
+	laterBounds := later.Objects[0].Bounds
+	startCenterX := (startBounds.MinX + startBounds.MaxX) / 2
+	startCenterY := (startBounds.MinY + startBounds.MaxY) / 2
+	startCenterZ := (startBounds.MinZ + startBounds.MaxZ) / 2
+	laterCenterX := (laterBounds.MinX + laterBounds.MaxX) / 2
+	laterCenterY := (laterBounds.MinY + laterBounds.MaxY) / 2
+	laterCenterZ := (laterBounds.MinZ + laterBounds.MaxZ) / 2
+
+	if math.Abs(startCenterX-laterCenterX) < 0.001 {
+		t.Fatalf("expected X center to drift, got start=%f later=%f", startCenterX, laterCenterX)
+	}
+	if math.Abs(startCenterY-laterCenterY) < 0.001 {
+		t.Fatalf("expected Y center to drift, got start=%f later=%f", startCenterY, laterCenterY)
+	}
+	if math.Abs(startCenterZ-laterCenterZ) < 0.001 {
+		t.Fatalf("expected Z center to drift, got start=%f later=%f", startCenterZ, laterCenterZ)
+	}
+}
+
 func TestRuntimeRenderBundleSyncsDirtyNodes(t *testing.T) {
 	prog := &rootengine.Program{
 		Name: "RenderBundle",

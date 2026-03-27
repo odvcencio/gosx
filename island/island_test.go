@@ -329,6 +329,44 @@ func TestApplyBuildManifestUsesHashedRuntimeAndIslandAssets(t *testing.T) {
 	}
 }
 
+func TestRendererVersionsCompatRuntimeURLsFromBuildManifest(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("GOSX_APP_ROOT", root)
+
+	data := []byte(`{
+  "runtime": {
+    "wasm": {"file": "gosx-runtime.aaaabbbb.wasm", "hash": "aaaabbbb", "size": 10},
+    "wasmExec": {"file": "wasm_exec.bbbbcccc.js", "hash": "bbbbcccc", "size": 20},
+    "bootstrap": {"file": "bootstrap.ccccdddd.js", "hash": "ccccdddd", "size": 30},
+    "patch": {"file": "patch.ddddeeee.js", "hash": "ddddeeee", "size": 40}
+  },
+  "islands": [],
+  "css": []
+}`)
+	if err := os.WriteFile(filepath.Join(root, "build.json"), data, 0644); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+
+	r := NewRenderer("main")
+	r.SetRuntime("/gosx/runtime.wasm", "", 0)
+	r.RenderIsland("Counter", nil, gosx.Text("0"))
+
+	headHTML := gosx.RenderHTML(r.PageHead())
+	for _, snippet := range []string{
+		`/gosx/runtime.wasm?v=aaaabbbb`,
+		`/gosx/wasm_exec.js?v=bbbbcccc`,
+		`/gosx/patch.js?v=ddddeeee`,
+		`/gosx/bootstrap.js?v=ccccdddd`,
+	} {
+		if !strings.Contains(headHTML, snippet) {
+			t.Fatalf("expected %q in versioned compat head %s", snippet, headHTML)
+		}
+	}
+	if got := r.Manifest().Runtime.Path; got != "/gosx/runtime.wasm?v=aaaabbbb" {
+		t.Fatalf("unexpected versioned runtime path %q", got)
+	}
+}
+
 func TestLoadBuildManifestFromDisk(t *testing.T) {
 	dir := t.TempDir()
 	manifestPath := filepath.Join(dir, "build.json")

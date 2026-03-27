@@ -14,6 +14,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"html"
+	neturl "net/url"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/odvcencio/gosx"
@@ -35,6 +38,7 @@ type Renderer struct {
 	wasmExecPath  string
 	patchPath     string
 	bootstrapPath string
+	runtimeAssets buildmanifest.RuntimeAssets
 }
 
 type programAsset struct {
@@ -45,15 +49,34 @@ type programAsset struct {
 
 // NewRenderer creates an island renderer.
 func NewRenderer(bundleID string) *Renderer {
-	return &Renderer{
+	runtimeAssets := loadDefaultRuntimeAssets()
+	renderer := &Renderer{
 		manifest:      hydrate.NewManifest(),
 		bundleID:      bundleID,
 		programFormat: "json", // default to dev mode
 		programAssets: make(map[string]programAsset),
-		wasmExecPath:  "/gosx/wasm_exec.js",
-		patchPath:     "/gosx/patch.js",
-		bootstrapPath: "/gosx/bootstrap.js",
+		runtimeAssets: runtimeAssets,
 	}
+	renderer.wasmExecPath = renderer.versionCompatRuntimePath("/gosx/wasm_exec.js", strings.TrimSpace(runtimeAssets.WASMExec.Hash))
+	renderer.patchPath = renderer.versionCompatRuntimePath("/gosx/patch.js", strings.TrimSpace(runtimeAssets.Patch.Hash))
+	renderer.bootstrapPath = renderer.versionCompatRuntimePath("/gosx/bootstrap.js", strings.TrimSpace(runtimeAssets.Bootstrap.Hash))
+	return renderer
+}
+
+func loadDefaultRuntimeAssets() buildmanifest.RuntimeAssets {
+	root := strings.TrimSpace(os.Getenv("GOSX_APP_ROOT"))
+	if root == "" {
+		wd, err := os.Getwd()
+		if err != nil {
+			return buildmanifest.RuntimeAssets{}
+		}
+		root = wd
+	}
+	manifest, err := buildmanifest.Load(filepath.Join(root, "build.json"))
+	if err != nil || manifest == nil {
+		return buildmanifest.RuntimeAssets{}
+	}
+	return manifest.Runtime
 }
 
 // SetProgramDir sets the directory where island programs are stored.
@@ -81,6 +104,10 @@ func (r *Renderer) SetProgramAsset(componentName, path, format, hash string) {
 
 // SetRuntime registers the shared WASM runtime in the manifest.
 func (r *Renderer) SetRuntime(path string, hash string, size int64) {
+	if hash == "" {
+		hash = r.compatRuntimeHash(path)
+	}
+	path = r.versionCompatRuntimePath(path, hash)
 	r.manifest.Runtime = hydrate.RuntimeRef{
 		Path: path,
 		Hash: hash,
@@ -96,14 +123,59 @@ func (r *Renderer) SetBundle(id string, path string) {
 // SetClientAssetPaths overrides the default runtime script URLs used in PageHead.
 func (r *Renderer) SetClientAssetPaths(wasmExecPath, patchPath, bootstrapPath string) {
 	if wasmExecPath != "" {
-		r.wasmExecPath = wasmExecPath
+		r.wasmExecPath = r.versionCompatRuntimePath(wasmExecPath, r.compatRuntimeHash(wasmExecPath))
 	}
 	if patchPath != "" {
-		r.patchPath = patchPath
+		r.patchPath = r.versionCompatRuntimePath(patchPath, r.compatRuntimeHash(patchPath))
 	}
 	if bootstrapPath != "" {
-		r.bootstrapPath = bootstrapPath
+		r.bootstrapPath = r.versionCompatRuntimePath(bootstrapPath, r.compatRuntimeHash(bootstrapPath))
 	}
+}
+
+func (r *Renderer) compatRuntimeHash(path string) string {
+	switch compatRuntimePath(path) {
+	case "/gosx/runtime.wasm":
+		return strings.TrimSpace(r.runtimeAssets.WASM.Hash)
+	case "/gosx/wasm_exec.js":
+		return strings.TrimSpace(r.runtimeAssets.WASMExec.Hash)
+	case "/gosx/bootstrap.js":
+		return strings.TrimSpace(r.runtimeAssets.Bootstrap.Hash)
+	case "/gosx/patch.js":
+		return strings.TrimSpace(r.runtimeAssets.Patch.Hash)
+	default:
+		return ""
+	}
+}
+
+func (r *Renderer) versionCompatRuntimePath(path, hash string) string {
+	hash = strings.TrimSpace(hash)
+	if hash == "" {
+		return path
+	}
+	parsed, err := neturl.Parse(path)
+	if err != nil || parsed == nil || parsed.Scheme != "" || parsed.Host != "" {
+		return path
+	}
+	switch compatRuntimePath(path) {
+	case "/gosx/runtime.wasm", "/gosx/wasm_exec.js", "/gosx/bootstrap.js", "/gosx/patch.js":
+		query := parsed.Query()
+		if query.Get("v") == "" {
+			query.Set("v", hash)
+			parsed.RawQuery = query.Encode()
+		}
+		return parsed.String()
+	default:
+		return path
+	}
+}
+
+func compatRuntimePath(path string) string {
+	parsed, err := neturl.Parse(path)
+	if err != nil || parsed == nil {
+		return strings.TrimSpace(path)
+	}
+	return strings.TrimSpace(parsed.Path)
 }
 
 // ApplyBuildManifest wires hashed runtime and island asset URLs into the renderer.

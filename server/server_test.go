@@ -357,6 +357,59 @@ func TestAppServesCompatRuntimeAssetsFromBuildManifest(t *testing.T) {
 	}
 }
 
+func TestAppServesVersionedCompatRuntimeAssetsFromBuildManifestEvenWhenSourceBuildExists(t *testing.T) {
+	root := t.TempDir()
+	buildDir := filepath.Join(root, "build")
+	if err := os.MkdirAll(buildDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(buildDir, "bootstrap.js"), []byte("console.log('source bootstrap');"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	assetsDir := filepath.Join(root, "assets", "runtime")
+	if err := os.MkdirAll(assetsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(assetsDir, "bootstrap.3333.js"), []byte("console.log('hashed bootstrap');"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	manifest := buildmanifest.Manifest{
+		Runtime: buildmanifest.RuntimeAssets{
+			Bootstrap: buildmanifest.HashedAsset{
+				File: "bootstrap.3333.js",
+				Hash: "3333",
+				Size: 24,
+			},
+		},
+	}
+	data, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "build.json"), data, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	app := New()
+	app.SetRuntimeRoot(root)
+	handler := app.Build()
+
+	req := httptest.NewRequest(http.MethodGet, "/gosx/bootstrap.js?v=3333", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	if got := w.Header().Get("Cache-Control"); !strings.Contains(got, "immutable") {
+		t.Fatalf("expected versioned compat asset to be immutable, got %q", got)
+	}
+	if body := w.Body.String(); !strings.Contains(body, "hashed bootstrap") {
+		t.Fatalf("expected versioned compat asset to serve hashed build output, got %q", body)
+	}
+}
+
 func TestAppRuntimeManifestCacheReloadsWhenBuildManifestChanges(t *testing.T) {
 	root := t.TempDir()
 	assetsDir := filepath.Join(root, "assets", "runtime")
@@ -672,6 +725,9 @@ func TestAppServesPublicFilesAtRoot(t *testing.T) {
 	}
 	if !strings.Contains(w.Body.String(), "User-agent") {
 		t.Fatalf("unexpected public file body %q", w.Body.String())
+	}
+	if got := w.Header().Get("Cache-Control"); got != "public, max-age=0, must-revalidate" {
+		t.Fatalf("unexpected public asset cache-control %q", got)
 	}
 }
 
