@@ -1,0 +1,21 @@
+FROM debian:bookworm-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN useradd -m -u 10001 app
+
+WORKDIR /opt/gosx-docs
+COPY dist/ ./
+
+RUN chmod +x ./run.sh ./server/app && chown -R app:app /opt/gosx-docs
+
+ENV PORT=8080
+ENV GOSX_APP_ROOT=/opt/gosx-docs
+
+USER app
+
+EXPOSE 8080
+
+CMD ["./run.sh"]

@@ -278,8 +278,10 @@ class FakeElement {
     this.selectionEnd = 0;
     this.width = 0;
     this.height = 0;
+    this.style = {};
     this._canvasContext = null;
     this._webglContext = null;
+    this._capturedPointerID = null;
   }
 
   get id() {
@@ -422,6 +424,17 @@ class FakeElement {
     this.ownerDocument.activeElement = this;
   }
 
+  getBoundingClientRect() {
+    return {
+      left: 0,
+      top: 0,
+      width: this.width,
+      height: this.height,
+      right: this.width,
+      bottom: this.height,
+    };
+  }
+
   getContext(kind) {
     if (this.tagName !== "CANVAS") {
       return null;
@@ -442,6 +455,24 @@ class FakeElement {
       return this._webglContext;
     }
     return null;
+  }
+
+  setPointerCapture(pointerID) {
+    this._capturedPointerID = pointerID;
+  }
+
+  releasePointerCapture(pointerID) {
+    if (this._capturedPointerID === pointerID) {
+      this._capturedPointerID = null;
+    }
+  }
+
+  dispatchEvent(event) {
+    const listeners = this.listeners.get(event.type) || [];
+    for (const entry of listeners) {
+      entry.listener(event);
+    }
+    return true;
   }
 
   cloneNode(deep) {
@@ -1179,6 +1210,153 @@ test("bootstrap hydrates shared-runtime Scene3D programs", async () => {
 
   env.context.__gosx_dispose_engine("gosx-engine-rt");
   assert.deepEqual(env.engineDisposeCalls, [["gosx-engine-rt"]]);
+});
+
+test("Scene3D drag only starts when the pointer lands on a shape in shared runtime mode", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-fallback-root";
+
+  const env = createContext({
+    elements: [mount],
+    fetchRoutes: {
+      "/runtime.wasm": { bytes: [0, 97, 115, 109] },
+      "/scene-drag-program.json": { text: '{"name":"SceneDrag"}' },
+    },
+    manifest: {
+      runtime: { path: "/runtime.wasm" },
+      engines: [
+        {
+          id: "gosx-engine-fallback",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-fallback-root",
+          runtime: "shared",
+          programRef: "/scene-drag-program.json",
+          props: {
+            width: 640,
+            height: 360,
+            background: "#08151f",
+            autoRotate: false,
+            dragToRotate: true,
+            dragSignalNamespace: "$scene.test.drag",
+            camera: { x: 0, y: 0, z: 6, fov: 72 },
+          },
+        },
+      ],
+    },
+    onHydrateEngine: () => "[]",
+    onRenderEngine: () => JSON.stringify({
+      background: "#08151f",
+      camera: { z: 6, fov: 72 },
+      positions: [],
+      colors: [],
+      vertexCount: 0,
+      worldPositions: [
+        -2.4, -1.5, 0.1, 2.4, -1.5, 0.1,
+        -0.8, 0.2, 0.5, 0.7, 0.9, 1.1,
+      ],
+      worldColors: [
+        0.25, 0.33, 0.41, 1, 0.25, 0.33, 0.41, 1,
+        0.78, 0.92, 1, 1, 0.78, 0.92, 1, 1,
+      ],
+      worldVertexCount: 4,
+      materials: [
+        { kind: "flat", color: "#35556a", opacity: 1, wireframe: true, blendMode: "opaque", emissive: 0 },
+        { kind: "flat", color: "#8de1ff", opacity: 1, wireframe: true, blendMode: "opaque", emissive: 0 },
+      ],
+      objects: [
+        {
+          id: "floor",
+          kind: "plane",
+          materialIndex: 0,
+          vertexOffset: 0,
+          vertexCount: 2,
+          static: true,
+          bounds: { minX: -2.4, minY: -1.5, minZ: 0.1, maxX: 2.4, maxY: -1.5, maxZ: 0.1 },
+        },
+        {
+          id: "shape",
+          kind: "box",
+          materialIndex: 1,
+          vertexOffset: 2,
+          vertexCount: 2,
+          static: false,
+          bounds: { minX: -0.8, minY: 0.2, minZ: 0.5, maxX: 0.7, maxY: 0.9, maxZ: 1.1 },
+        },
+      ],
+      objectCount: 2,
+    }),
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const canvas = mount.children[0];
+  assert.equal(canvas.tagName, "CANVAS");
+  assert.equal(canvas.style.cursor, "grab");
+
+  canvas.dispatchEvent({
+    type: "pointerdown",
+    button: 0,
+    pointerId: 1,
+    clientX: 56,
+    clientY: 320,
+    preventDefault() {},
+    stopPropagation() {},
+  });
+  await flushAsyncWork();
+  assert.equal(canvas.style.cursor, "grab");
+  assert.equal(canvas._capturedPointerID, null);
+  assert.equal(env.inputBatchCalls.length, 0);
+
+  canvas.dispatchEvent({
+    type: "pointerdown",
+    button: 0,
+    pointerId: 2,
+    clientX: 320,
+    clientY: 160,
+    preventDefault() {},
+    stopPropagation() {},
+  });
+  await flushAsyncWork();
+
+  assert.equal(canvas.style.cursor, "grabbing");
+  assert.equal(canvas._capturedPointerID, 2);
+
+  canvas.dispatchEvent({
+    type: "pointermove",
+    button: 0,
+    buttons: 1,
+    pointerId: 2,
+    clientX: 360,
+    clientY: 130,
+    preventDefault() {},
+    stopPropagation() {},
+  });
+  await flushAsyncWork();
+
+  assert.equal(env.inputBatchCalls.length > 0, true);
+  const dragBatch = JSON.parse(env.inputBatchCalls[env.inputBatchCalls.length - 1][0]);
+  assert.equal(dragBatch["$scene.test.drag.active"], true);
+  assert.equal(dragBatch["$scene.test.drag.x"] > 0, true);
+  assert.equal(dragBatch["$scene.test.drag.y"] > 0, true);
+  assert.equal(dragBatch["$scene.test.drag.targetIndex"], 1);
+
+  canvas.dispatchEvent({
+    type: "pointerup",
+    button: 0,
+    pointerId: 2,
+    clientX: 360,
+    clientY: 130,
+    preventDefault() {},
+    stopPropagation() {},
+  });
+  await flushAsyncWork();
+  assert.equal(canvas.style.cursor, "grab");
+  assert.equal(canvas._capturedPointerID, null);
+  const releaseBatch = JSON.parse(env.inputBatchCalls[env.inputBatchCalls.length - 1][0]);
+  assert.equal(releaseBatch["$scene.test.drag.active"], false);
+  assert.equal(releaseBatch["$scene.test.drag.targetIndex"], -1);
 });
 
 test("bootstrap reuses static opaque Scene3D buffers across dynamic-only runtime updates", async () => {

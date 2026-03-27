@@ -214,6 +214,11 @@ type sceneObject struct {
 	SpinX        float64
 	SpinY        float64
 	SpinZ        float64
+	ShiftX       float64
+	ShiftY       float64
+	ShiftZ       float64
+	DriftSpeed   float64
+	DriftPhase   float64
 	Opacity      float64
 	Wireframe    bool
 	BlendMode    string
@@ -371,6 +376,11 @@ func sceneObjectFromResolvedNode(index int, node resolvedNode) sceneObject {
 		SpinX:        numberFromAny(propValue(node.Props, "spinX"), 0),
 		SpinY:        numberFromAny(propValue(node.Props, "spinY"), 0),
 		SpinZ:        numberFromAny(propValue(node.Props, "spinZ"), 0),
+		ShiftX:       numberFromAny(propValue(node.Props, "shiftX"), 0),
+		ShiftY:       numberFromAny(propValue(node.Props, "shiftY"), 0),
+		ShiftZ:       numberFromAny(propValue(node.Props, "shiftZ"), 0),
+		DriftSpeed:   numberFromAny(propValue(node.Props, "driftSpeed"), 0),
+		DriftPhase:   numberFromAny(propValue(node.Props, "driftPhase"), 0),
 		Opacity:      clamp(numberFromAny(rawOpacity, 1), 0, 1),
 		Wireframe:    boolFromAny(rawWireframe, true),
 		BlendMode:    normalizeBlendMode(stringFromAny(rawBlendMode, "")),
@@ -893,10 +903,23 @@ func translatePoint(point point3, object sceneObject, timeSeconds float64) point
 		object.RotationY+object.SpinY*timeSeconds,
 		object.RotationZ+object.SpinZ*timeSeconds,
 	)
+	offset := sceneMotionOffset(object, timeSeconds)
 	return point3{
-		X: rotated.X + object.X,
-		Y: rotated.Y + object.Y,
-		Z: rotated.Z + object.Z,
+		X: rotated.X + object.X + offset.X,
+		Y: rotated.Y + object.Y + offset.Y,
+		Z: rotated.Z + object.Z + offset.Z,
+	}
+}
+
+func sceneMotionOffset(object sceneObject, timeSeconds float64) point3 {
+	if object.ShiftX == 0 && object.ShiftY == 0 && object.ShiftZ == 0 {
+		return point3{}
+	}
+	angle := object.DriftPhase + timeSeconds*object.DriftSpeed
+	return point3{
+		X: math.Cos(angle) * object.ShiftX,
+		Y: math.Sin(angle*0.82+object.DriftPhase*0.35) * object.ShiftY,
+		Z: math.Sin(angle) * object.ShiftZ,
 	}
 }
 

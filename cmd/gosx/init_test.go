@@ -279,6 +279,46 @@ func TestSyncModulesPackageUsesContainingModuleRoot(t *testing.T) {
 	}
 }
 
+func TestSyncModulesPackageHandlesRelativeProjectDirUnderContainingModule(t *testing.T) {
+	root := t.TempDir()
+	projectDir := filepath.Join(root, "examples", "docs")
+	if err := os.MkdirAll(projectDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/root\n\ngo 1.25.1\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	serverFile := filepath.Join(projectDir, "app", "guides", "page.server.go")
+	if err := os.MkdirAll(filepath.Dir(serverFile), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(serverFile, []byte("package app\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if chdirErr := os.Chdir(wd); chdirErr != nil {
+			t.Fatalf("restore cwd: %v", chdirErr)
+		}
+	}()
+	if err := os.Chdir(root); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := syncModulesPackage(filepath.Join("examples", "docs")); err != nil {
+		t.Fatal(err)
+	}
+
+	modulesGo := readFile(t, filepath.Join(projectDir, "modules", "modules.go"))
+	if !strings.Contains(modulesGo, `_ "example.com/root/examples/docs/app/guides"`) {
+		t.Fatalf("expected nested module import in %q", modulesGo)
+	}
+}
+
 func readFile(t *testing.T, path string) string {
 	t.Helper()
 	data, err := os.ReadFile(path)

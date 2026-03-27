@@ -1,0 +1,82 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gosx-demo
+  namespace: draco-quest
+  labels:
+    app: gosx-demo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: gosx-demo
+  template:
+    metadata:
+      labels:
+        app: gosx-demo
+    spec:
+      containers:
+        - name: gosx-demo
+          image: harbor.draco.quest/library/gosx-cms-demo:20260327-161537
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 3000
+              name: http
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gosx-demo
+  namespace: draco-quest
+spec:
+  selector:
+    app: gosx-demo
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: gosx-demo
+  namespace: draco-quest
+  annotations:
+    cert-manager.io/cluster-issuer: cloudflare-issuer
+    traefik.ingress.kubernetes.io/router.priority: "20"
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: gosx-demo.m31labs.dev
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: gosx-demo
+                port:
+                  name: http
+  tls:
+    - hosts:
+        - gosx-demo.m31labs.dev
+      secretName: gosx-demo-tls

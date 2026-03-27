@@ -5,41 +5,40 @@ import "github.com/odvcencio/gosx/route"
 func init() {
 	RegisterStaticDocsPage(
 		"Overview",
-		"A paper-and-ink docs surface that exists to prove GoSX can route files, swap pages, validate forms, and stay coherent.",
+		"GoSX is a Go-native web framework with routing, layouts, forms, auth, APIs, and selective runtime in one product.",
 		route.FileModuleOptions{
 			Load: func(ctx *route.RouteContext, page route.FilePage) (any, error) {
 				return map[string]any{
-					"showRouteTree": true,
 					"features": []map[string]string{
 						{
-							"kicker": "Tier 1",
-							"title":  "App scaffolding, metadata, APIs, 404 and 500 pages, public assets, and env loading.",
-							"body":   "The basics for building and booting a real server-first app now exist in the framework, not just in examples.",
+							"kicker": "Platform",
+							"title":  "One framework for routes, pages, APIs, forms, sessions, auth, and assets.",
+							"body":   "Start from a coherent app shape instead of wiring together a custom stack before product work can even begin.",
 							"href":   "/docs/getting-started",
 						},
 						{
-							"kicker": "Tier 2",
-							"title":  "Client navigation and per-route middleware without spinning up a second framework.",
-							"body":   "Page-to-page transitions can stay inside the same GoSX runtime and preserve a server-first mental model.",
-							"href":   "/docs/runtime",
-						},
-						{
-							"kicker": "Tier 3",
-							"title":  "File-based pages, route groups, nested layouts, scoped 404s, redirects, and rewrites.",
-							"body":   "The route tree is now visible from the filesystem instead of being hidden inside a setup function.",
+							"kicker": "Routing",
+							"title":  "Routing stays obvious as the app grows.",
+							"body":   "Pages, nested layouts, not-found boundaries, redirects, and rewrites all live in one route model that stays easy to inspect.",
 							"href":   "/docs/routing",
 						},
 						{
-							"kicker": "Phase 2",
-							"title":  "Sessions, CSRF, flashed form state, and auth now ride inside the same routed app model.",
-							"body":   "Forms and guards are part of the framework plane rather than bespoke app middleware.",
+							"kicker": "Actions",
+							"title":  "Writes and identity stay inside the framework.",
+							"body":   "Forms, validation, flashed state, sessions, CSRF, and auth work together without getting split across extra subsystems.",
 							"href":   "/docs/forms",
 						},
 						{
-							"kicker": "Why this matters",
-							"title":  "The docs tree itself is the route map. You can see the information architecture from the filesystem.",
-							"body":   "This site exists to prove that GoSX features compose inside one dogfooded app instead of as disconnected demos.",
-							"href":   "/docs/auth",
+							"kicker": "Runtime",
+							"title":  "Add runtime only where it earns its keep.",
+							"body":   "Client navigation, islands, streaming, and richer surfaces extend the app without forcing the whole product into a client-first architecture.",
+							"href":   "/docs/runtime",
+						},
+						{
+							"kicker": "Delivery",
+							"title":  "Builds are meant to ship, not sit in a demo folder.",
+							"body":   "GoSX produces real deployable output, so the same product model can move from local work to production without a rewrite.",
+							"href":   "/docs/getting-started",
 						},
 					},
 				}, nil

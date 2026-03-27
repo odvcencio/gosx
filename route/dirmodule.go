@@ -117,19 +117,40 @@ func (r *DirModuleRegistry) Lookup(source string) (DirModule, bool) {
 	if r == nil {
 		return DirModule{}, false
 	}
-	key := normalizeDirModuleSource(source)
-	if key == "" {
+	keys := dirModuleLookupKeys(source)
+	if len(keys) == 0 {
 		return DirModule{}, false
 	}
+	keySet := moduleLookupKeySet(keys)
 
 	r.mu.RLock()
-	module, ok := r.modules[key]
+	for _, key := range keys {
+		if module, ok := r.modules[key]; ok {
+			r.mu.RUnlock()
+			module.Middleware = append([]Middleware(nil), module.Middleware...)
+			return module, true
+		}
+	}
+
+	var match DirModule
+	matched := false
+	for _, module := range r.modules {
+		if !moduleLookupKeysOverlap(dirModuleLookupKeys(module.Source), keySet) {
+			continue
+		}
+		if matched && match.Source != module.Source {
+			r.mu.RUnlock()
+			return DirModule{}, false
+		}
+		match = module
+		matched = true
+	}
 	r.mu.RUnlock()
-	if !ok {
+	if !matched {
 		return DirModule{}, false
 	}
-	module.Middleware = append([]Middleware(nil), module.Middleware...)
-	return module, true
+	match.Middleware = append([]Middleware(nil), match.Middleware...)
+	return match, true
 }
 
 func resolveDirModules(registry *DirModuleRegistry, root string, dir string) []DirModule {
@@ -208,13 +229,7 @@ func dirModuleCandidates(root string, dir string) []string {
 }
 
 func normalizeDirModuleSource(source string) string {
-	source = strings.TrimSpace(source)
-	if source == "" {
-		return ""
-	}
-	source = filepath.ToSlash(filepath.Clean(source))
-	source = strings.TrimPrefix(source, "./")
-	return source
+	return normalizeRouteModuleSource(source)
 }
 
 func dirModuleSourceHere(skip int) string {

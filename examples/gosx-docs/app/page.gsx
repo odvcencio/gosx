@@ -6,7 +6,7 @@ func FeatureCard(props any) Node {
 		<h3>{props.Title}</h3>
 		<p>{props.Body}</p>
 		<div class="hero-actions">
-			<Link class="hero-link" href={props.Href}>Open section</Link>
+			<Link class="hero-link" href={props.Href}>Read guide</Link>
 		</div>
 		{props.Children}
 	</section>
@@ -15,68 +15,46 @@ func FeatureCard(props any) Node {
 func Page() Node {
 	return <article class="prose">
 		<div class="page-topper">
-			<span class="eyebrow">Overview</span>
+			<span class="eyebrow">Product</span>
 			<p class="lede">
-				A paper-and-ink docs surface that exists to prove GoSX can route files, swap pages, and stay coherent.
+				GoSX is a Go-native web framework for shipping modern web apps without hand-assembling half a stack first.
 			</p>
 		</div>
-		<h1>GoSX now has a docs site that actually runs through its own pipeline.</h1>
+		<h1>Build the app in Go. Keep it server-first. Add interactivity where it matters.</h1>
 		<p>
-			The point of this app is blunt: prove that GoSX can map a directory tree to routes, render real pages from
-			<span class="inline-code">.gsx</span>
-			source, and move between them without full reloads.
+			GoSX brings routing, layouts, server data loading, forms, auth, sessions, APIs, assets, and selective runtime into one product. Start from simple
+			server-rendered pages, then layer in navigation, islands, streaming, or richer browser surfaces only when the experience calls for them.
 		</p>
 		<div class="hero-actions">
-			<Link class="hero-link primary" href="/docs/getting-started">Open the quickstart path</Link>
-			<Link class="hero-link" href="/docs/routing">See file routing conventions</Link>
+			<Link class="hero-link primary" href="/docs/getting-started">Start with the quickstart</Link>
+			<Link class="hero-link" href="/docs/routing">See routing and layouts</Link>
 			<Link class="hero-link" href="/docs/forms">See forms and actions</Link>
-			<Link class="hero-link" href="/docs/auth">See auth flow</Link>
+			<Link class="hero-link" href="/docs/runtime">See runtime and interactivity</Link>
 		</div>
 		<div class="hero-grid">
 			<Each as="feature" of={data.features}>
 				<FeatureCard {...feature}></FeatureCard>
 			</Each>
 		</div>
-		<If when={data.showRouteTree}>
-			<section class="callout">
-				<strong>Route Tree</strong>
-				<pre class="code-block">{`app/
-  layout.gsx
-  page.server.go
-  page.gsx
-  not-found.gsx
-  docs/
-    layout.gsx
-    not-found.gsx
-    forms/
-      page.server.go
-      page.gsx
-    getting-started/
-      page.server.go
-      page.gsx
-    images/
-      page.server.go
-      page.gsx
-    routing/
-      page.server.go
-      page.gsx
-    runtime/
-      page.server.go
-      page.gsx`}</pre>
-			</section>
-		</If>
+		<section class="callout">
+			<strong>What ships in the box</strong>
+			<p>
+				One framework for pages, layouts, APIs, mutations, sessions, auth, assets, navigation, and deployable output. The goal is a single app model you can
+				grow with, not a pile of unrelated tools taped together.
+			</p>
+		</section>
 		<section class="note-grid">
 			<div class="note">
-				<strong>Navigation</strong>
-				<p>Marked links fetch HTML, replace managed head and body regions, then re-enter the GoSX runtime lifecycle.</p>
+				<strong>Server-first by default</strong>
+				<p>Most pages can stay simple, fast, and easy to reason about. You do not need to turn the whole product into a client app to get a modern UX.</p>
 			</div>
 			<div class="note">
-				<strong>Rendering</strong>
-				<p>
-					The pages in this docs app are file-routed
-					<span class="inline-code">.gsx</span>
-					files with nested layout composition.
-				</p>
+				<strong>Selective runtime</strong>
+				<p>When the UI needs more, GoSX layers in navigation, islands, streaming regions, and richer browser-owned surfaces without replacing the core app model.</p>
+			</div>
+			<div class="note">
+				<strong>Built for real apps</strong>
+				<p>Routes, writes, auth, and deployment all sit in the same system, so the path from prototype to production stays coherent.</p>
 			</div>
 		</section>
 	</article>

@@ -449,6 +449,444 @@
     queueInputSignal("$input.pointer.buttons", 0);
   }
 
+  function sceneClamp(value, min, max) {
+    return Math.max(min, Math.min(max, value));
+  }
+
+  function sceneLocalPointerPoint(event, canvas, width, height) {
+    const rect = canvas.getBoundingClientRect();
+    const safeWidth = Math.max(rect.width || 0, 1);
+    const safeHeight = Math.max(rect.height || 0, 1);
+    return {
+      x: sceneClamp(((sceneNumber(event && event.clientX, rect.left) - rect.left) / safeWidth) * width, 0, width),
+      y: sceneClamp(((sceneNumber(event && event.clientY, rect.top) - rect.top) / safeHeight) * height, 0, height),
+    };
+  }
+
+  function sceneLocalPointerSample(event, canvas, width, height, state, phase) {
+    const previousX = state.lastX == null ? width / 2 : state.lastX;
+    const previousY = state.lastY == null ? height / 2 : state.lastY;
+    const hasPointerPosition = Number.isFinite(sceneNumber(event && event.clientX, NaN)) && Number.isFinite(sceneNumber(event && event.clientY, NaN));
+    const point = hasPointerPosition ? sceneLocalPointerPoint(event, canvas, width, height) : { x: previousX, y: previousY };
+    const sample = {
+      x: point.x,
+      y: point.y,
+      deltaX: point.x - previousX,
+      deltaY: point.y - previousY,
+      buttons: phase === "end" ? 0 : 1,
+      button: phase === "start" || phase === "end" ? 0 : null,
+      active: phase !== "end",
+    };
+    state.lastX = point.x;
+    state.lastY = point.y;
+    return sample;
+  }
+
+  function resetScenePointerSample(width, height, state) {
+    state.lastX = width / 2;
+    state.lastY = height / 2;
+    publishPointerSignals({
+      x: state.lastX,
+      y: state.lastY,
+      deltaX: 0,
+      deltaY: 0,
+      buttons: 0,
+      button: 0,
+      active: false,
+    });
+  }
+
+  function sceneDragSignalNamespace(props) {
+    const value = props && props.dragSignalNamespace;
+    return typeof value === "string" ? value.trim() : "";
+  }
+
+  function publishSceneDragSignals(namespace, state, active) {
+    if (!namespace) {
+      return;
+    }
+    queueInputSignal(namespace + ".x", sceneNumber(state.orbitX, 0));
+    queueInputSignal(namespace + ".y", sceneNumber(state.orbitY, 0));
+    queueInputSignal(namespace + ".targetIndex", Math.max(-1, Math.floor(sceneNumber(state.targetIndex, -1))));
+    queueInputSignal(namespace + ".active", Boolean(active));
+  }
+
+  function sceneBoundsSize(bounds) {
+    if (!bounds || typeof bounds !== "object") return [0, 0, 0];
+    return [
+      Math.abs(sceneNumber(bounds.maxX, 0) - sceneNumber(bounds.minX, 0)),
+      Math.abs(sceneNumber(bounds.maxY, 0) - sceneNumber(bounds.minY, 0)),
+      Math.abs(sceneNumber(bounds.maxZ, 0) - sceneNumber(bounds.minZ, 0)),
+    ].sort(function(a, b) { return b - a; });
+  }
+
+  function sceneObjectAllowsPointerDrag(object) {
+    if (!object || object.kind === "plane" || object.viewCulled) {
+      return false;
+    }
+    const extents = sceneBoundsSize(object.bounds);
+    return extents[0] > 0.6 && extents[1] > 0.35;
+  }
+
+  function sceneWorldPointAt(source, vertexIndex) {
+    if (!source || typeof source.length !== "number") {
+      return null;
+    }
+    const offset = Math.max(0, vertexIndex * 3);
+    if (offset + 2 >= source.length) {
+      return null;
+    }
+    return {
+      x: sceneNumber(source[offset], 0),
+      y: sceneNumber(source[offset + 1], 0),
+      z: sceneNumber(source[offset + 2], 0),
+    };
+  }
+
+  function sceneProjectedObjectSegments(bundle, object, width, height) {
+    if (!bundle || !bundle.camera || !object) {
+      return [];
+    }
+    const vertexOffset = Math.max(0, Math.floor(sceneNumber(object.vertexOffset, 0)));
+    const vertexCount = Math.max(0, Math.floor(sceneNumber(object.vertexCount, 0)));
+    if (vertexCount < 2) {
+      return [];
+    }
+    const source = bundle.worldPositions;
+    if (!source || typeof source.length !== "number") {
+      return [];
+    }
+    const segments = [];
+    for (let i = 0; i + 1 < vertexCount; i += 2) {
+      const fromWorld = sceneWorldPointAt(source, vertexOffset + i);
+      const toWorld = sceneWorldPointAt(source, vertexOffset + i + 1);
+      if (!fromWorld || !toWorld) {
+        continue;
+      }
+      const from = projectPoint(fromWorld, bundle.camera, width, height);
+      const to = projectPoint(toWorld, bundle.camera, width, height);
+      if (!from || !to) {
+        continue;
+      }
+      segments.push([from, to]);
+    }
+    return segments;
+  }
+
+  function sceneProjectedSegmentsBounds(segments) {
+    if (!Array.isArray(segments) || !segments.length) {
+      return null;
+    }
+    let minX = segments[0][0].x;
+    let maxX = segments[0][0].x;
+    let minY = segments[0][0].y;
+    let maxY = segments[0][0].y;
+    for (const segment of segments) {
+      for (const point of segment) {
+        minX = Math.min(minX, point.x);
+        maxX = Math.max(maxX, point.x);
+        minY = Math.min(minY, point.y);
+        maxY = Math.max(maxY, point.y);
+      }
+    }
+    return { minX, maxX, minY, maxY };
+  }
+
+  function scenePointerPadding(bounds) {
+    if (!bounds) {
+      return 12;
+    }
+    const span = Math.max(bounds.maxX - bounds.minX, bounds.maxY - bounds.minY);
+    return sceneClamp(span * 0.08, 12, 22);
+  }
+
+  function sceneDistanceToSegment(point, from, to) {
+    const deltaX = to.x - from.x;
+    const deltaY = to.y - from.y;
+    const lengthSquared = deltaX * deltaX + deltaY * deltaY;
+    if (lengthSquared <= 0.0001) {
+      return Math.hypot(point.x - from.x, point.y - from.y);
+    }
+    const t = sceneClamp(((point.x - from.x) * deltaX + (point.y - from.y) * deltaY) / lengthSquared, 0, 1);
+    const closestX = from.x + deltaX * t;
+    const closestY = from.y + deltaY * t;
+    return Math.hypot(point.x - closestX, point.y - closestY);
+  }
+
+  function sceneProjectedObjectHull(segments) {
+    const points = [];
+    const seen = new Set();
+    for (const segment of segments) {
+      for (const point of segment) {
+        const key = point.x.toFixed(3) + ":" + point.y.toFixed(3);
+        if (seen.has(key)) {
+          continue;
+        }
+        seen.add(key);
+        points.push({ x: point.x, y: point.y });
+      }
+    }
+    if (points.length < 3) {
+      return points;
+    }
+    points.sort(function(a, b) {
+      return a.x === b.x ? a.y - b.y : a.x - b.x;
+    });
+    const lower = [];
+    for (const point of points) {
+      while (lower.length >= 2 && sceneTurnDirection(lower[lower.length - 2], lower[lower.length - 1], point) <= 0) {
+        lower.pop();
+      }
+      lower.push(point);
+    }
+    const upper = [];
+    for (let i = points.length - 1; i >= 0; i -= 1) {
+      const point = points[i];
+      while (upper.length >= 2 && sceneTurnDirection(upper[upper.length - 2], upper[upper.length - 1], point) <= 0) {
+        upper.pop();
+      }
+      upper.push(point);
+    }
+    lower.pop();
+    upper.pop();
+    return lower.concat(upper);
+  }
+
+  function sceneTurnDirection(a, b, c) {
+    return (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
+  }
+
+  function scenePointInPolygon(point, polygon) {
+    if (!Array.isArray(polygon) || polygon.length < 3) {
+      return false;
+    }
+    let inside = false;
+    for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i, i += 1) {
+      const xi = polygon[i].x;
+      const yi = polygon[i].y;
+      const xj = polygon[j].x;
+      const yj = polygon[j].y;
+      const intersects = ((yi > point.y) !== (yj > point.y)) &&
+        (point.x < ((xj - xi) * (point.y - yi)) / ((yj - yi) || 0.000001) + xi);
+      if (intersects) {
+        inside = !inside;
+      }
+    }
+    return inside;
+  }
+
+  function sceneObjectDepthCenter(object, camera) {
+    const bounds = object && object.bounds;
+    if (!bounds) {
+      return sceneNumber(camera && camera.z, 6);
+    }
+    const minZ = sceneNumber(bounds.minZ, 0);
+    const maxZ = sceneNumber(bounds.maxZ, minZ);
+    return ((minZ + maxZ) / 2) + sceneNumber(camera && camera.z, 6);
+  }
+
+  function sceneObjectPointerCapture(bundle, object, point, width, height) {
+    const segments = sceneProjectedObjectSegments(bundle, object, width, height);
+    if (!segments.length) {
+      return null;
+    }
+    const bounds = sceneProjectedSegmentsBounds(segments);
+    if (!bounds) {
+      return null;
+    }
+    const padding = scenePointerPadding(bounds);
+    if (
+      point.x < bounds.minX - padding ||
+      point.x > bounds.maxX + padding ||
+      point.y < bounds.minY - padding ||
+      point.y > bounds.maxY + padding
+    ) {
+      return null;
+    }
+    let minDistance = Number.POSITIVE_INFINITY;
+    for (const segment of segments) {
+      minDistance = Math.min(minDistance, sceneDistanceToSegment(point, segment[0], segment[1]));
+    }
+    const inside = scenePointInPolygon(point, sceneProjectedObjectHull(segments));
+    if (!inside && minDistance > padding) {
+      return null;
+    }
+    return {
+      inside,
+      distance: inside ? 0 : minDistance,
+      depth: sceneObjectDepthCenter(object, bundle.camera),
+      area: Math.max(1, (bounds.maxX - bounds.minX) * (bounds.maxY - bounds.minY)),
+    };
+  }
+
+  function scenePointerCaptureIsBetter(candidate, current) {
+    if (!current) {
+      return true;
+    }
+    if (candidate.inside !== current.inside) {
+      return candidate.inside;
+    }
+    if (Math.abs(candidate.distance - current.distance) > 0.5) {
+      return candidate.distance < current.distance;
+    }
+    if (Math.abs(candidate.depth - current.depth) > 0.01) {
+      return candidate.depth < current.depth;
+    }
+    return candidate.area < current.area;
+  }
+
+  function sceneBundlePointerDragTarget(bundle, point, width, height) {
+    if (!bundle || !bundle.camera || !Array.isArray(bundle.objects) || !bundle.objects.length) {
+      return null;
+    }
+    let best = null;
+    for (let index = 0; index < bundle.objects.length; index += 1) {
+      const object = bundle.objects[index];
+      if (!sceneObjectAllowsPointerDrag(object)) {
+        continue;
+      }
+      const capture = sceneObjectPointerCapture(bundle, object, point, width, height);
+      if (!capture) {
+        continue;
+      }
+      const candidate = {
+        index,
+        object,
+        inside: capture.inside,
+        distance: capture.distance,
+        depth: capture.depth,
+        area: capture.area,
+      };
+      if (scenePointerCaptureIsBetter(candidate, best)) {
+        best = candidate;
+      }
+    }
+    return best;
+  }
+
+  function setupSceneDragInteractions(canvas, props, width, height, readSceneBundle) {
+    if (!canvas || !sceneBool(props.dragToRotate, false)) {
+      return { dispose() {} };
+    }
+
+    const dragNamespace = sceneDragSignalNamespace(props);
+    const state = {
+      active: false,
+      orbitX: 0,
+      orbitY: 0,
+      pointerId: null,
+      targetIndex: -1,
+      lastX: width / 2,
+      lastY: height / 2,
+    };
+
+    canvas.style.cursor = "grab";
+    canvas.style.touchAction = "none";
+
+    function publish(event, phase) {
+      const sample = sceneLocalPointerSample(event, canvas, width, height, state, phase);
+      if (!dragNamespace) {
+        publishPointerSignals(sample);
+        return;
+      }
+      if (phase === "move") {
+        state.orbitX = sceneClamp(state.orbitX + sample.deltaX / Math.max(width / 2, 1), -1.35, 1.35);
+        state.orbitY = sceneClamp(state.orbitY - sample.deltaY / Math.max(height / 2, 1), -1.1, 1.1);
+      }
+      publishSceneDragSignals(dragNamespace, state, phase !== "end");
+    }
+
+    function pointerMatchesActiveDrag(event) {
+      if (!state.active || state.pointerId == null) {
+        return state.active;
+      }
+      if (!event || event.type === "lostpointercapture") {
+        return true;
+      }
+      if (event.pointerId == null) {
+        return true;
+      }
+      return event.pointerId === state.pointerId;
+    }
+
+    function onPointerDown(event) {
+      if (event.button !== 0) {
+        return;
+      }
+      const pointer = sceneLocalPointerPoint(event, canvas, width, height);
+      const target = sceneBundlePointerDragTarget(readSceneBundle && readSceneBundle(), pointer, width, height);
+      if (!target) {
+        return;
+      }
+      state.active = true;
+      state.pointerId = event.pointerId;
+      state.targetIndex = target.index;
+      canvas.style.cursor = "grabbing";
+      if (typeof canvas.setPointerCapture === "function") {
+        canvas.setPointerCapture(event.pointerId);
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      publish(event, "start");
+    }
+
+    function onPointerMove(event) {
+      if (!pointerMatchesActiveDrag(event)) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      publish(event, "move");
+    }
+
+    function finishDrag(event) {
+      if (!pointerMatchesActiveDrag(event)) {
+        return;
+      }
+      state.active = false;
+      canvas.style.cursor = "grab";
+      event.preventDefault();
+      event.stopPropagation();
+      if (state.pointerId != null && typeof canvas.releasePointerCapture === "function") {
+        try {
+          canvas.releasePointerCapture(state.pointerId);
+        } catch (_) {}
+      }
+      state.pointerId = null;
+      state.targetIndex = -1;
+      if (dragNamespace) {
+        publish(event, "end");
+      } else {
+        resetScenePointerSample(width, height, state);
+      }
+    }
+
+    canvas.addEventListener("pointerdown", onPointerDown);
+    canvas.addEventListener("pointermove", onPointerMove);
+    canvas.addEventListener("pointerup", finishDrag);
+    canvas.addEventListener("pointercancel", finishDrag);
+    canvas.addEventListener("lostpointercapture", finishDrag);
+    document.addEventListener("pointermove", onPointerMove);
+    document.addEventListener("pointerup", finishDrag);
+    document.addEventListener("pointercancel", finishDrag);
+
+    return {
+      dispose() {
+        canvas.removeEventListener("pointerdown", onPointerDown);
+        canvas.removeEventListener("pointermove", onPointerMove);
+        canvas.removeEventListener("pointerup", finishDrag);
+        canvas.removeEventListener("pointercancel", finishDrag);
+        canvas.removeEventListener("lostpointercapture", finishDrag);
+        document.removeEventListener("pointermove", onPointerMove);
+        document.removeEventListener("pointerup", finishDrag);
+        document.removeEventListener("pointercancel", finishDrag);
+        canvas.style.cursor = "";
+        canvas.style.touchAction = "";
+        resetScenePointerSample(width, height, state);
+      },
+    };
+  }
+
   function publishGamepadSignals(pad) {
     const axes = Array.isArray(pad.axes) ? pad.axes : [];
     queueInputSignal("$input.gamepad0.connected", true);
@@ -541,6 +979,11 @@
       spinX: sceneNumber(item.spinX, 0),
       spinY: sceneNumber(item.spinY, 0),
       spinZ: sceneNumber(item.spinZ, 0),
+      shiftX: sceneNumber(item.shiftX, 0),
+      shiftY: sceneNumber(item.shiftY, 0),
+      shiftZ: sceneNumber(item.shiftZ, 0),
+      driftSpeed: sceneNumber(item.driftSpeed, 0),
+      driftPhase: sceneNumber(item.driftPhase, 0),
     };
   }
 
@@ -824,12 +1267,13 @@
   }
 
   function projectPoint(point, camera, width, height) {
-    const depth = point.z + camera.z;
-    if (depth <= 0.15) return null;
-    const focal = (Math.min(width, height) / 2) / Math.tan((camera.fov * Math.PI) / 360);
+    const normalizedCamera = sceneRenderCamera(camera);
+    const depth = sceneNumber(point && point.z, 0) + normalizedCamera.z;
+    if (depth <= normalizedCamera.near || depth >= normalizedCamera.far) return null;
+    const focal = (Math.min(width, height) / 2) / Math.tan((normalizedCamera.fov * Math.PI) / 360);
     return {
-      x: width / 2 + ((point.x - camera.x) * focal) / depth,
-      y: height / 2 - ((point.y - camera.y) * focal) / depth,
+      x: width / 2 + ((sceneNumber(point && point.x, 0) - normalizedCamera.x) * focal) / depth,
+      y: height / 2 - ((sceneNumber(point && point.y, 0) - normalizedCamera.y) * focal) / depth,
       depth,
     };
   }
@@ -895,14 +1339,30 @@
     };
   }
 
+  function sceneRenderCamera(camera) {
+    return {
+      x: sceneNumber(camera && camera.x, 0),
+      y: sceneNumber(camera && camera.y, 0),
+      z: sceneNumber(camera && camera.z, 6),
+      fov: sceneNumber(camera && camera.fov, 75),
+      near: sceneNumber(camera && camera.near, 0.05),
+      far: sceneNumber(camera && camera.far, 128),
+    };
+  }
+
   function createSceneRenderBundle(width, height, background, camera, objects, timeSeconds) {
     const bundle = {
       background: background,
+      camera: sceneRenderCamera(camera),
+      objects: [],
       lines: [],
       positions: [],
       colors: [],
+      worldPositions: [],
+      worldColors: [],
       vertexCount: 0,
-      objectCount: objects.length,
+      worldVertexCount: 0,
+      objectCount: 0,
     };
     appendSceneGridToBundle(bundle, width, height);
     for (const object of objects) {
@@ -911,6 +1371,10 @@
     bundle.positions = new Float32Array(bundle.positions);
     bundle.colors = new Float32Array(bundle.colors);
     bundle.vertexCount = bundle.positions.length / 2;
+    bundle.worldPositions = new Float32Array(bundle.worldPositions);
+    bundle.worldColors = new Float32Array(bundle.worldColors);
+    bundle.worldVertexCount = bundle.worldPositions.length / 3;
+    bundle.objectCount = bundle.objects.length;
     return bundle;
   }
 
@@ -930,10 +1394,23 @@
       object.rotationY + object.spinY * timeSeconds,
       object.rotationZ + object.spinZ * timeSeconds,
     );
+    const motion = sceneMotionOffset(object, timeSeconds);
     return {
-      x: rotated.x + object.x,
-      y: rotated.y + object.y,
-      z: rotated.z + object.z,
+      x: rotated.x + object.x + motion.x,
+      y: rotated.y + object.y + motion.y,
+      z: rotated.z + object.z + motion.z,
+    };
+  }
+
+  function sceneMotionOffset(object, timeSeconds) {
+    if (!object || (!object.shiftX && !object.shiftY && !object.shiftZ)) {
+      return { x: 0, y: 0, z: 0 };
+    }
+    const angle = sceneNumber(object.driftPhase, 0) + timeSeconds * sceneNumber(object.driftSpeed, 0);
+    return {
+      x: Math.cos(angle) * sceneNumber(object.shiftX, 0),
+      y: Math.sin(angle * 0.82 + sceneNumber(object.driftPhase, 0) * 0.35) * sceneNumber(object.shiftY, 0),
+      z: Math.sin(angle) * sceneNumber(object.shiftZ, 0),
     };
   }
 
@@ -947,13 +1424,67 @@
   }
 
   function appendSceneObjectToBundle(bundle, camera, width, height, object, timeSeconds) {
-    const projected = projectSceneObject(object, camera, width, height, timeSeconds);
-    for (const segment of projected) {
-      const from = segment[0];
-      const to = segment[1];
+    const worldSegments = sceneWorldObjectSegments(object, timeSeconds);
+    const vertexOffset = bundle.worldPositions.length / 3;
+    const rgba = sceneColorRGBA(object.color, [0.55, 0.88, 1, 1]);
+    let bounds = null;
+    let vertexCount = 0;
+    for (const segment of worldSegments) {
+      const fromWorld = segment[0];
+      const toWorld = segment[1];
+      bundle.worldPositions.push(fromWorld.x, fromWorld.y, fromWorld.z, toWorld.x, toWorld.y, toWorld.z);
+      bundle.worldColors.push(rgba[0], rgba[1], rgba[2], rgba[3], rgba[0], rgba[1], rgba[2], rgba[3]);
+      bounds = sceneExpandWorldBounds(bounds, fromWorld);
+      bounds = sceneExpandWorldBounds(bounds, toWorld);
+      vertexCount += 2;
+      const from = projectPoint(fromWorld, camera, width, height);
+      const to = projectPoint(toWorld, camera, width, height);
       if (!from || !to) continue;
       appendSceneLine(bundle, width, height, from, to, object.color, 1.8);
     }
+    if (vertexCount > 0) {
+      bundle.objects.push({
+        id: object.id,
+        kind: object.kind,
+        vertexOffset: vertexOffset,
+        vertexCount: vertexCount,
+        bounds: bounds || {
+          minX: 0,
+          minY: 0,
+          minZ: 0,
+          maxX: 0,
+          maxY: 0,
+          maxZ: 0,
+        },
+      });
+    }
+  }
+
+  function sceneWorldObjectSegments(object, timeSeconds) {
+    return sceneObjectSegments(object).map(function(segment) {
+      return [
+        translateScenePoint(segment[0], object, timeSeconds),
+        translateScenePoint(segment[1], object, timeSeconds),
+      ];
+    });
+  }
+
+  function sceneExpandWorldBounds(bounds, point) {
+    const next = bounds || {
+      minX: point.x,
+      minY: point.y,
+      minZ: point.z,
+      maxX: point.x,
+      maxY: point.y,
+      maxZ: point.z,
+    };
+    next.minX = Math.min(next.minX, point.x);
+    next.minY = Math.min(next.minY, point.y);
+    next.minZ = Math.min(next.minZ, point.z);
+    next.maxX = Math.max(next.maxX, point.x);
+    next.maxY = Math.max(next.maxY, point.y);
+    next.maxZ = Math.max(next.maxZ, point.z);
+    return next;
   }
 
   function appendSceneLine(bundle, width, height, from, to, color, lineWidth) {
@@ -2006,6 +2537,10 @@
       };
     }
     ctx.mount.setAttribute("data-gosx-scene3d-renderer", renderer.kind);
+    let latestBundle = null;
+    const dragHandle = setupSceneDragInteractions(canvas, props, width, height, function() {
+      return latestBundle;
+    });
 
     let frameHandle = null;
     let disposed = false;
@@ -2024,6 +2559,7 @@
       if (runtimeScene && ctx.runtime && typeof ctx.runtime.renderFrame === "function") {
         const runtimeBundle = ctx.runtime.renderFrame(timeSeconds, width, height);
         if (runtimeBundle) {
+          latestBundle = runtimeBundle;
           renderer.render(runtimeBundle);
           if (shouldAnimate) {
             frameHandle = engineFrame(renderFrame);
@@ -2034,7 +2570,8 @@
       if (runtimeScene && ctx.runtime) {
         applySceneCommands(sceneState, ctx.runtime.tick());
       }
-      renderer.render(createSceneRenderBundle(width, height, sceneState.background, sceneState.camera, sceneStateObjects(sceneState), timeSeconds));
+      latestBundle = createSceneRenderBundle(width, height, sceneState.background, sceneState.camera, sceneStateObjects(sceneState), timeSeconds);
+      renderer.render(latestBundle);
       if (shouldAnimate) {
         frameHandle = engineFrame(renderFrame);
       }
@@ -2054,6 +2591,7 @@
       },
       dispose() {
         disposed = true;
+        dragHandle.dispose();
         renderer.dispose();
         if (frameHandle != null) {
           cancelEngineFrame(frameHandle);
@@ -2349,6 +2887,7 @@
     if (!bundle || typeof bundle !== "object") {
       return null;
     }
+    bundle.camera = sceneRenderCamera(bundle.camera);
     bundle.positions = sceneFloatArray(bundle.positions);
     bundle.colors = sceneFloatArray(bundle.colors);
     bundle.worldPositions = sceneFloatArray(bundle.worldPositions);

@@ -11,6 +11,12 @@ import (
 )
 
 func syncModulesPackage(projectDir string) error {
+	absProjectDir, err := filepath.Abs(projectDir)
+	if err != nil {
+		return fmt.Errorf("resolve project dir: %w", err)
+	}
+	projectDir = absProjectDir
+
 	moduleRoot, modulePath, err := moduleInfo(projectDir)
 	if err != nil {
 		return err

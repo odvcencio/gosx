@@ -156,6 +156,108 @@ func TestRunBuildProdWritesHybridStaticBundleForStarterApp(t *testing.T) {
 	}
 }
 
+func TestRunBuildProdHandlesRelativeProjectDir(t *testing.T) {
+	root := t.TempDir()
+	projectDir := filepath.Join(root, "build-app")
+	if err := RunInit(projectDir, "example.com/build-app", ""); err != nil {
+		t.Fatal(err)
+	}
+	addLocalGoSXReplace(t, projectDir)
+	tidyModule(t, projectDir)
+
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if chdirErr := os.Chdir(wd); chdirErr != nil {
+			t.Fatalf("restore cwd: %v", chdirErr)
+		}
+	}()
+	if err := os.Chdir(root); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := RunBuild("build-app", false); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, rel := range []string{
+		"dist/server/app",
+		"dist/static/index.html",
+		"dist/export.json",
+	} {
+		if _, err := os.Stat(filepath.Join(projectDir, rel)); err != nil {
+			t.Fatalf("expected build artifact %s: %v", rel, err)
+		}
+	}
+}
+
+func TestRunBuildProdPreservesFileModuleHooksInStaticExport(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "build-app")
+	if err := RunInit(dir, "example.com/build-app", ""); err != nil {
+		t.Fatal(err)
+	}
+	addLocalGoSXReplace(t, dir)
+
+	mustWriteFile(t, filepath.Join(dir, "app", "verify", "page.gsx"), `package app
+
+func Page() Node {
+	return <main class="verify" data-name={data.name}>
+		<Badge label={data.name} />
+	</main>
+}
+`)
+	mustWriteFile(t, filepath.Join(dir, "app", "verify", "page.server.go"), `package app
+
+import (
+	"github.com/odvcencio/gosx"
+	"github.com/odvcencio/gosx/route"
+	"github.com/odvcencio/gosx/server"
+)
+
+func init() {
+	route.MustRegisterFileModuleHere(route.FileModuleOptions{
+		Load: func(ctx *route.RouteContext, page route.FilePage) (any, error) {
+			return map[string]string{
+				"name": "Build Verified",
+			}, nil
+		},
+		Metadata: func(ctx *route.RouteContext, page route.FilePage, data any) (server.Metadata, error) {
+			return server.Metadata{
+				Title: "Verify Export",
+			}, nil
+		},
+		Bindings: func(ctx *route.RouteContext, page route.FilePage, data any) route.FileTemplateBindings {
+			return route.FileTemplateBindings{
+				Funcs: map[string]any{
+					"Badge": func(props struct{ Label string }) gosx.Node {
+						return gosx.El("span", gosx.Attrs(gosx.Attr("class", "badge")), gosx.Text(props.Label))
+					},
+				},
+			}
+		},
+	})
+}
+`)
+	tidyModule(t, dir)
+
+	if err := RunBuild(dir, false); err != nil {
+		t.Fatal(err)
+	}
+
+	verifyHTML := readFile(t, filepath.Join(dir, "dist", "static", "verify", "index.html"))
+	for _, snippet := range []string{
+		"<title>Verify Export</title>",
+		`class="verify" data-name="Build Verified"`,
+		`<span class="badge">Build Verified</span>`,
+	} {
+		if !strings.Contains(verifyHTML, snippet) {
+			t.Fatalf("expected %q in exported verify page %q", snippet, verifyHTML)
+		}
+	}
+}
+
 func mustWriteFile(t *testing.T, path string, contents string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {

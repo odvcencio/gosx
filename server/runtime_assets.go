@@ -70,6 +70,15 @@ func (a *App) serveRuntimeAsset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if version := strings.TrimSpace(r.URL.Query().Get("v")); version != "" {
+		if fsPath, ok := a.runtimeCompatBuiltPath(root, name); ok {
+			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+			MarkObservedRequest(r, "runtime", "/gosx/"+name)
+			http.ServeFile(w, r, fsPath)
+			return
+		}
+	}
+
 	if fsPath, ok := runtimeCompatSourcePath(root, name); ok {
 		w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
 		MarkObservedRequest(r, "runtime", "/gosx/"+name)

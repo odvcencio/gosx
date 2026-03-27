@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/odvcencio/gosx"
+	"github.com/odvcencio/gosx/ir"
 )
 
 var defaultLayoutSlotComponents = []string{"Slot", "Outlet"}
@@ -92,12 +93,9 @@ func renderGSXFile(path string, data []byte, opts fileRenderOptions) (gosx.Node,
 		return gosx.Node{}, fmt.Errorf("compile %s: %w", path, err)
 	}
 
-	component := "Page"
-	if !hasComponent(prog, component) {
-		if len(prog.Components) == 0 {
-			return gosx.Node{}, fmt.Errorf("no components found in %s", path)
-		}
-		component = prog.Components[0].Name
+	component, err := preferredGSXRenderComponent(path, prog)
+	if err != nil {
+		return gosx.Node{}, err
 	}
 
 	htmlOut, replaced, err := renderFileProgramHTML(prog, component, opts)
@@ -108,6 +106,24 @@ func renderGSXFile(path string, data []byte, opts fileRenderOptions) (gosx.Node,
 		return gosx.Node{}, fmt.Errorf("layout %s is missing a <Slot /> or <Outlet /> component", path)
 	}
 	return gosx.RawHTML(htmlOut), nil
+}
+
+func preferredGSXRenderComponent(path string, prog *ir.Program) (string, error) {
+	if len(prog.Components) == 0 {
+		return "", fmt.Errorf("no components found in %s", path)
+	}
+
+	preferred := []string{"Page"}
+	if strings.EqualFold(strings.TrimSuffix(filepath.Base(path), filepath.Ext(path)), "layout") {
+		preferred = []string{"Layout", "Page"}
+	}
+
+	for _, name := range preferred {
+		if hasComponent(prog, name) {
+			return name, nil
+		}
+	}
+	return prog.Components[0].Name, nil
 }
 
 func slotComponentReplacements(slotHTML string, opts FileLayoutOptions) map[string]string {

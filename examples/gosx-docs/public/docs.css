@@ -114,7 +114,27 @@ a {
 .doc-nav {
   display: flex;
   flex-direction: column;
+  gap: var(--space-md);
+}
+
+.nav-group {
+  display: flex;
+  flex-direction: column;
   gap: var(--space-xs);
+}
+
+.nav-group-title {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+
+.nav-group-links {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
 }
 
 .nav-link,
@@ -160,6 +180,12 @@ a {
 
 .sidebar-foot {
   display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.shortcut-grid {
+  display: flex;
   flex-wrap: wrap;
   gap: var(--space-xs);
 }
@@ -175,6 +201,40 @@ a {
 
 .main {
   padding: var(--space-2xl) clamp(1.25rem, 5vw, 4rem);
+}
+
+.mobile-nav {
+  display: none;
+  width: 100%;
+}
+
+.mobile-nav-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  padding: 0.82rem 0.95rem;
+  border: 1px solid var(--color-line);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.62);
+  font-family: var(--font-mono);
+  font-size: 0.74rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--color-ink);
+  cursor: pointer;
+  list-style: none;
+}
+
+.mobile-nav-toggle::-webkit-details-marker {
+  display: none;
+}
+
+.mobile-nav-frame {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  padding-top: var(--space-sm);
 }
 
 .page-topper {
@@ -414,17 +474,18 @@ a {
 
   .mobile-bar {
     display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: var(--space-md) var(--space-md) 0;
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--space-sm);
+    padding: var(--space-md);
   }
 
   .sidebar {
-    padding: 0 var(--space-md) var(--space-md);
+    display: none;
   }
 
-  .sidebar-frame {
-    position: static;
+  .mobile-nav {
+    display: block;
   }
 
   .main {

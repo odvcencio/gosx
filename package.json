@@ -27,5 +27,8 @@
   "homepage": "https://github.com/odvcencio/gosx#readme",
   "devDependencies": {
     "playwright-core": "^1.58.2"
+  },
+  "dependencies": {
+    "playwright": "^1.58.2"
   }
 }

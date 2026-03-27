@@ -156,15 +156,35 @@ func (r *FileModuleRegistry) Lookup(source string) (FileModule, bool) {
 	if r == nil {
 		return FileModule{}, false
 	}
-	key := normalizeFileModuleSource(source)
-	if key == "" {
+	keys := fileModuleLookupKeys(source)
+	if len(keys) == 0 {
 		return FileModule{}, false
 	}
+	keySet := moduleLookupKeySet(keys)
 
 	r.mu.RLock()
-	module, ok := r.modules[key]
+	for _, key := range keys {
+		if module, ok := r.modules[key]; ok {
+			r.mu.RUnlock()
+			return module, true
+		}
+	}
+
+	var match FileModule
+	matched := false
+	for _, module := range r.modules {
+		if !moduleLookupKeysOverlap(fileModuleLookupKeys(module.Source), keySet) {
+			continue
+		}
+		if matched && match.Source != module.Source {
+			r.mu.RUnlock()
+			return FileModule{}, false
+		}
+		match = module
+		matched = true
+	}
 	r.mu.RUnlock()
-	return module, ok
+	return match, matched
 }
 
 func fileModuleCandidates(root string, page FilePage) []string {
@@ -185,13 +205,7 @@ func resolveFileModule(registry *FileModuleRegistry, root string, page FilePage)
 }
 
 func normalizeFileModuleSource(source string) string {
-	source = strings.TrimSpace(source)
-	if source == "" {
-		return ""
-	}
-	source = filepath.ToSlash(filepath.Clean(source))
-	source = strings.TrimPrefix(source, "./")
-	return source
+	return normalizeRouteModuleSource(source)
 }
 
 func cloneFileActions(src FileActions) FileActions {

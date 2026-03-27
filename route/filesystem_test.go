@@ -1359,6 +1359,45 @@ func Layout() Node {
 	}
 }
 
+func TestFileLayoutPrefersLayoutComponentOverHelpers(t *testing.T) {
+	root := t.TempDir()
+	writeRouteFile(t, root, "layout.gsx", `package docs
+
+func NavButton(props any) Node {
+	return <button>{props.Label}</button>
+}
+
+func Layout() Node {
+	return <div class="shell"><Slot /></div>
+}
+`)
+
+	layout, err := FileLayout(filepath.Join(root, "layout.gsx"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	router := NewRouter()
+	router.SetLayout(layout)
+	router.Add(Route{
+		Pattern: "/",
+		Handler: func(ctx *RouteContext) gosx.Node {
+			return gosx.El("main", gosx.Text("Home"))
+		},
+	})
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	router.Build().ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), `<div class="shell">`) || !strings.Contains(w.Body.String(), `<main>Home</main>`) {
+		t.Fatalf("unexpected helper-wrapped body %q", w.Body.String())
+	}
+}
+
 func TestFileLayoutSupportsHTMLPlaceholder(t *testing.T) {
 	root := t.TempDir()
 	writeRouteFile(t, root, "layout.html", `<div class="shell">{{slot}}</div>`)

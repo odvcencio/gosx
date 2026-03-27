@@ -74,10 +74,10 @@ test("gosx dev serves the docs app with working nav, scoped 404s, forms, and aut
   try {
     await page.goto(baseURL, { waitUntil: "domcontentloaded" });
     await page.getByRole("heading", {
-      name: "GoSX now has a docs site that actually runs through its own pipeline.",
+      name: "Build Go-first web apps with routed GSX pages, server modules, and selective runtime surfaces.",
     }).waitFor();
 
-    await page.getByRole("link", { name: "See file routing conventions" }).click();
+    await page.getByRole("link", { name: "Study file routing" }).click();
     await page.waitForURL(/\/docs\/routing$/);
     await page.getByRole("heading", {
       name: "Routes can come from code or from the directory tree. Both are first-class now.",
