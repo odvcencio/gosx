@@ -224,3 +224,67 @@ func TestValidateIslandChannelRejected(t *testing.T) {
 		t.Fatal("expected diagnostic about channels")
 	}
 }
+
+func TestValidateIslandComponentRefRejected(t *testing.T) {
+	prog := &Program{}
+	prog.Nodes = append(prog.Nodes, Node{
+		Kind: NodeComponent,
+		Tag:  "If",
+	})
+	prog.Components = append(prog.Components, Component{Name: "Bad", Root: 0, IsIsland: true})
+
+	diags := Validate(prog)
+	found := false
+	for _, d := range diags {
+		if strings.Contains(d.Message, "not supported inside island components") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("expected diagnostic about component refs inside islands")
+	}
+}
+
+func TestLowerIslandEachComponent(t *testing.T) {
+	prog := &Program{}
+	prog.Nodes = append(prog.Nodes,
+		Node{
+			Kind:     NodeComponent,
+			Tag:      "Each",
+			Attrs:    []Attr{{Kind: AttrExpr, Name: "of", Expr: "items"}, {Kind: AttrStatic, Name: "as", Value: "item"}, {Kind: AttrStatic, Name: "index", Value: "i"}},
+			Children: []NodeID{1},
+		},
+		Node{
+			Kind:     NodeElement,
+			Tag:      "li",
+			Children: []NodeID{2, 3, 4},
+		},
+		Node{Kind: NodeExpr, Text: "i"},
+		Node{Kind: NodeText, Text: ":"},
+		Node{Kind: NodeExpr, Text: "item"},
+	)
+	prog.Components = append(prog.Components, Component{Name: "List", Root: 0, IsIsland: true})
+
+	island, err := LowerIsland(prog, 0)
+	if err != nil {
+		t.Fatalf("lower: %v", err)
+	}
+	if len(island.Nodes) != 5 {
+		t.Fatalf("expected 5 lowered nodes, got %d", len(island.Nodes))
+	}
+	if island.Nodes[0].Kind != program.NodeForEach {
+		t.Fatalf("expected NodeForEach, got %s", island.Nodes[0].Kind)
+	}
+	if got := forEachStaticAttr(island.Nodes[0].Attrs, "as"); got != "item" {
+		t.Fatalf("expected each alias item, got %q", got)
+	}
+	if got := forEachStaticAttr(island.Nodes[0].Attrs, "index"); got != "i" {
+		t.Fatalf("expected each index alias i, got %q", got)
+	}
+	if island.Nodes[1].Kind != program.NodeElement || island.Nodes[1].Tag != "li" {
+		t.Fatalf("expected li child element, got %+v", island.Nodes[1])
+	}
+	if island.Nodes[2].Kind != program.NodeExpr || island.Nodes[3].Kind != program.NodeText || island.Nodes[4].Kind != program.NodeExpr {
+		t.Fatalf("expected li children to lower through each scope, got %+v %+v %+v", island.Nodes[2], island.Nodes[3], island.Nodes[4])
+	}
+}

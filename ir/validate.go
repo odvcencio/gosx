@@ -180,6 +180,15 @@ func validateIslandExprs(prog *Program, comp *Component) []Diagnostic {
 	for _, id := range nodeIDs {
 		node := &prog.Nodes[id]
 
+		if node.Kind == NodeComponent && isUnsupportedIslandComponentRef(node.Tag) {
+			diags = append(diags, Diagnostic{
+				Span:    node.Span,
+				Message: fmt.Sprintf("component <%s> is not supported inside island components yet", node.Tag),
+				Hint:    "Use plain elements inside the island or move the component outside the hydrated subtree.",
+			})
+			continue
+		}
+
 		// Check node-level expression text (NodeExpr).
 		if node.Kind == NodeExpr && strings.TrimSpace(node.Text) != "" {
 			text := strings.TrimSpace(node.Text)
@@ -282,6 +291,15 @@ func validateIslandExprs(prog *Program, comp *Component) []Diagnostic {
 	}
 
 	return diags
+}
+
+func isUnsupportedIslandComponentRef(tag string) bool {
+	switch strings.TrimSpace(tag) {
+	case "If", "Show", "When", "Link", "Image", "TextBlock", "Stylesheet", "Surface", "Worker", "Scene3D":
+		return true
+	default:
+		return false
+	}
 }
 
 // VoidElements are HTML elements that cannot have children.

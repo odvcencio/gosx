@@ -2,6 +2,7 @@ package vm
 
 import (
 	"fmt"
+	"sort"
 	"strconv"
 
 	"github.com/odvcencio/gosx/island/program"
@@ -18,10 +19,8 @@ type VM struct {
 }
 
 type iterationContext struct {
-	item     Value
-	index    Value
-	hasItem  bool
-	hasIndex bool
+	values  map[string]Value
+	present map[string]bool
 }
 
 // SetEventData sets the current event context for OpEventGet evaluation.
@@ -466,77 +465,41 @@ func (vm *VM) endsWithValue(e program.Expr) Value {
 
 func (vm *VM) mapItems(items []Value, exprID program.ExprID) []Value {
 	result := make([]Value, len(items))
-	vm.withIterationScope(func() {
-		for i, item := range items {
-			vm.setIterationContext(i, item)
-			result[i] = vm.Eval(exprID)
-		}
-	})
+	restore := vm.captureProps([]string{"_item", "_index"})
+	defer vm.restoreProps(restore)
+	for i, item := range items {
+		vm.props["_item"] = item
+		vm.props["_index"] = IntVal(i)
+		result[i] = vm.Eval(exprID)
+	}
 	return result
 }
 
 func (vm *VM) filterItems(items []Value, exprID program.ExprID) []Value {
 	var result []Value
-	vm.withIterationScope(func() {
-		for i, item := range items {
-			vm.setIterationContext(i, item)
-			if vm.Eval(exprID).Bool {
-				result = append(result, item)
-			}
+	restore := vm.captureProps([]string{"_item", "_index"})
+	defer vm.restoreProps(restore)
+	for i, item := range items {
+		vm.props["_item"] = item
+		vm.props["_index"] = IntVal(i)
+		if vm.Eval(exprID).Bool {
+			result = append(result, item)
 		}
-	})
+	}
 	return result
 }
 
 func (vm *VM) findItem(items []Value, exprID program.ExprID) (Value, bool) {
-	var found Value
-	var ok bool
-	vm.withIterationScope(func() {
-		for i, item := range items {
-			vm.setIterationContext(i, item)
-			if vm.Eval(exprID).Bool {
-				found = item
-				ok = true
-				return
-			}
+	restore := vm.captureProps([]string{"_item", "_index"})
+	defer vm.restoreProps(restore)
+	for i, item := range items {
+		vm.props["_item"] = item
+		vm.props["_index"] = IntVal(i)
+		if vm.Eval(exprID).Bool {
+			return item, true
 		}
-	})
-	return found, ok
-}
-
-func (vm *VM) withIterationScope(fn func()) {
-	ctx := vm.currentIterationContext()
-	defer vm.restoreIterationContext(ctx)
-	fn()
-}
-
-func (vm *VM) currentIterationContext() iterationContext {
-	item, hasItem := vm.props["_item"]
-	index, hasIndex := vm.props["_index"]
-	return iterationContext{
-		item:     item,
-		index:    index,
-		hasItem:  hasItem,
-		hasIndex: hasIndex,
 	}
-}
-
-func (vm *VM) restoreIterationContext(ctx iterationContext) {
-	if ctx.hasItem {
-		vm.props["_item"] = ctx.item
-	} else {
-		delete(vm.props, "_item")
-	}
-	if ctx.hasIndex {
-		vm.props["_index"] = ctx.index
-	} else {
-		delete(vm.props, "_index")
-	}
-}
-
-func (vm *VM) setIterationContext(index int, item Value) {
-	vm.props["_item"] = item
-	vm.props["_index"] = IntVal(index)
+	return Value{}, false
 }
 
 func (vm *VM) evalBinary(e program.Expr, fn func(Value, Value) Value) Value {
@@ -549,19 +512,14 @@ func (vm *VM) evalBinary(e program.Expr, fn func(Value, Value) Value) Value {
 // EvalTree walks the island's node tree, evaluating all dynamic expressions,
 // and returns a resolved node tree for reconciliation.
 func (vm *VM) EvalTree() *ResolvedTree {
-	tree := &ResolvedTree{
-		Nodes: make([]ResolvedNode, len(vm.program.Nodes)),
-	}
-	for i, node := range vm.program.Nodes {
-		tree.Nodes[i] = vm.resolveNode(node)
-	}
+	tree := &ResolvedTree{}
+	vm.resolveNodeRefs(tree, vm.program.Root)
 	return tree
 }
 
 func (vm *VM) resolveNode(node program.Node) ResolvedNode {
 	rn := ResolvedNode{
-		Tag:      node.Tag,
-		Children: vm.resolveChildren(node.Children),
+		Tag: node.Tag,
 	}
 
 	switch node.Kind {
@@ -576,18 +534,56 @@ func (vm *VM) resolveNode(node program.Node) ResolvedNode {
 	return rn
 }
 
-func (vm *VM) resolveChildren(children []program.NodeID) []int {
-	resolved := make([]int, len(children))
-	for i, childID := range children {
-		resolved[i] = int(childID)
+func (vm *VM) resolveNodeRefs(tree *ResolvedTree, nodeID program.NodeID) []int {
+	if int(nodeID) >= len(vm.program.Nodes) {
+		return nil
+	}
+	node := vm.program.Nodes[nodeID]
+	switch node.Kind {
+	case program.NodeFragment:
+		return vm.resolveChildren(tree, node.Children)
+	case program.NodeForEach:
+		return vm.resolveForEach(tree, int(nodeID), node)
+	default:
+		idx := vm.appendResolvedNode(tree, int(nodeID), node)
+		return []int{idx}
+	}
+}
+
+func (vm *VM) appendResolvedNode(tree *ResolvedTree, source int, node program.Node) int {
+	idx := len(tree.Nodes)
+	tree.Nodes = append(tree.Nodes, ResolvedNode{
+		Source:    source,
+		HasSource: true,
+		Tag:       node.Tag,
+	})
+
+	switch node.Kind {
+	case program.NodeText:
+		tree.Nodes[idx].Text = node.Text
+	case program.NodeExpr:
+		tree.Nodes[idx].Text = vm.Eval(node.Expr).String()
+	case program.NodeElement:
+		vm.resolveElementNode(&tree.Nodes[idx], node)
+		tree.Nodes[idx].Children = vm.resolveChildren(tree, node.Children)
+	}
+
+	return idx
+}
+
+func (vm *VM) resolveChildren(tree *ResolvedTree, children []program.NodeID) []int {
+	var resolved []int
+	for _, childID := range children {
+		resolved = append(resolved, vm.resolveNodeRefs(tree, childID)...)
 	}
 	return resolved
 }
 
 func (vm *VM) resolveElementNode(rn *ResolvedNode, node program.Node) {
-	attrs, key, explicitKey := vm.resolveElementAttrs(node.Attrs)
+	attrs, key, explicitKey, events := vm.resolveElementAttrs(node.Attrs)
 	rn.Attrs = attrs
 	rn.Key = key
+	rn.Events = events
 	if explicitKey {
 		return
 	}
@@ -596,33 +592,48 @@ func (vm *VM) resolveElementNode(rn *ResolvedNode, node program.Node) {
 	}
 }
 
-func (vm *VM) resolveElementAttrs(attrs []program.Attr) ([]ResolvedAttr, string, bool) {
+func (vm *VM) resolveElementAttrs(attrs []program.Attr) ([]ResolvedAttr, string, bool, []ResolvedEvent) {
 	resolved := make([]ResolvedAttr, 0, len(attrs))
+	events := make([]ResolvedEvent, 0, len(attrs))
+	key := ""
+	explicitKey := false
 	for _, attr := range attrs {
 		switch attr.Kind {
 		case program.AttrStatic:
 			if attr.Name == "key" {
-				return resolved, attr.Value, true
+				key = attr.Value
+				explicitKey = true
+				continue
 			}
 			resolved = append(resolved, ResolvedAttr{Name: attr.Name, Value: attr.Value})
 		case program.AttrExpr:
 			value := vm.Eval(attr.Expr).String()
 			if attr.Name == "key" {
-				return resolved, value, true
+				key = value
+				explicitKey = true
+				continue
 			}
 			resolved = append(resolved, ResolvedAttr{Name: attr.Name, Value: value})
 		case program.AttrBool:
-			resolved = append(resolved, ResolvedAttr{Name: attr.Name, Value: ""})
+			resolved = append(resolved, ResolvedAttr{Name: attr.Name, Bool: true})
 		case program.AttrEvent:
-			// Events are handled by delegation, not resolved into attrs.
+			events = append(events, ResolvedEvent{Name: attr.Name, Handler: attr.Event})
 		}
 	}
-	return resolved, "", false
+	return resolved, key, explicitKey, events
 }
 
 func (vm *VM) autoKey(tag string, attrs []ResolvedAttr) (string, bool) {
-	idxVal, inLoop := vm.props["_index"]
-	if !inLoop {
+	keyVal, hasKey := vm.props["_key"]
+	if hasKey {
+		fingerprint := fmt.Sprintf("_auto_%s_%s", keyVal.String(), tag)
+		if len(attrs) > 0 {
+			fingerprint += "_" + attrs[0].Value
+		}
+		return fingerprint, true
+	}
+	idxVal, hasIndex := vm.props["_index"]
+	if !hasIndex {
 		return "", false
 	}
 	fingerprint := fmt.Sprintf("_auto_%d_%s", int(idxVal.Num), tag)
@@ -630,4 +641,141 @@ func (vm *VM) autoKey(tag string, attrs []ResolvedAttr) (string, bool) {
 		fingerprint += "_" + attrs[0].Value
 	}
 	return fingerprint, true
+}
+
+type eachEntry struct {
+	Index  int
+	Key    Value
+	Item   Value
+	HasKey bool
+}
+
+func (vm *VM) resolveForEach(tree *ResolvedTree, source int, node program.Node) []int {
+	entries := valueEachEntries(vm.Eval(node.Expr))
+	if len(entries) == 0 {
+		if fallbackID, ok := forEachFallbackExpr(node.Attrs); ok {
+			text := vm.Eval(fallbackID).String()
+			if text == "" {
+				return nil
+			}
+			idx := len(tree.Nodes)
+			tree.Nodes = append(tree.Nodes, ResolvedNode{
+				Source:    source,
+				HasSource: true,
+				Text:      text,
+			})
+			return []int{idx}
+		}
+		return nil
+	}
+
+	itemName := forEachStaticAttr(node.Attrs, "as")
+	if itemName == "" {
+		itemName = "item"
+	}
+	indexName := forEachStaticAttr(node.Attrs, "index")
+	keyName := itemName + "Key"
+
+	names := []string{"_item", "_index", "_key", itemName, keyName}
+	if indexName != "" {
+		names = append(names, indexName)
+	}
+	restore := vm.captureProps(names)
+	defer vm.restoreProps(restore)
+
+	var out []int
+	for _, entry := range entries {
+		vm.props["_item"] = entry.Item
+		vm.props["_index"] = IntVal(entry.Index)
+		vm.props[itemName] = entry.Item
+		if indexName != "" {
+			vm.props[indexName] = IntVal(entry.Index)
+		}
+		if entry.HasKey {
+			vm.props["_key"] = entry.Key
+			vm.props[keyName] = entry.Key
+		} else {
+			delete(vm.props, "_key")
+			delete(vm.props, keyName)
+		}
+		for _, child := range node.Children {
+			out = append(out, vm.resolveNodeRefs(tree, child)...)
+		}
+	}
+	return out
+}
+
+func valueEachEntries(value Value) []eachEntry {
+	if value.Items != nil {
+		out := make([]eachEntry, 0, len(value.Items))
+		for i, item := range value.Items {
+			out = append(out, eachEntry{
+				Index:  i,
+				Key:    IntVal(i),
+				Item:   item,
+				HasKey: true,
+			})
+		}
+		return out
+	}
+	if value.Fields != nil {
+		keys := make([]string, 0, len(value.Fields))
+		for key := range value.Fields {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		out := make([]eachEntry, 0, len(keys))
+		for i, key := range keys {
+			out = append(out, eachEntry{
+				Index:  i,
+				Key:    StringVal(key),
+				Item:   value.Fields[key],
+				HasKey: true,
+			})
+		}
+		return out
+	}
+	return nil
+}
+
+func (vm *VM) captureProps(names []string) iterationContext {
+	ctx := iterationContext{
+		values:  make(map[string]Value, len(names)),
+		present: make(map[string]bool, len(names)),
+	}
+	for _, name := range names {
+		if value, ok := vm.props[name]; ok {
+			ctx.values[name] = value
+			ctx.present[name] = true
+		}
+	}
+	return ctx
+}
+
+func (vm *VM) restoreProps(ctx iterationContext) {
+	for name := range ctx.present {
+		if ctx.present[name] {
+			vm.props[name] = ctx.values[name]
+			continue
+		}
+		delete(vm.props, name)
+	}
+}
+
+func forEachStaticAttr(attrs []program.Attr, name string) string {
+	for _, attr := range attrs {
+		if attr.Kind == program.AttrStatic && attr.Name == name {
+			return attr.Value
+		}
+	}
+	return ""
+}
+
+func forEachFallbackExpr(attrs []program.Attr) (program.ExprID, bool) {
+	for _, attr := range attrs {
+		if attr.Kind == program.AttrExpr && attr.Name == "fallback" {
+			return attr.Expr, true
+		}
+	}
+	return 0, false
 }

@@ -2,6 +2,7 @@ package ir
 
 import (
 	"fmt"
+	"strconv"
 
 	"github.com/odvcencio/gosx/island/program"
 )
@@ -240,9 +241,15 @@ func (l *islandLowerer) lowerNode(srcID NodeID) (program.NodeID, error) {
 			node.Attrs = append(node.Attrs, dstAttr)
 		}
 	case NodeComponent:
-		// Components in islands are rendered as elements
-		node.Kind = program.NodeElement
-		node.Tag = "div"
+		if isEachComponent(srcNode.Tag) {
+			var err error
+			node, err = l.lowerEachNode(srcNode)
+			if err != nil {
+				return 0, err
+			}
+			break
+		}
+		return 0, fmt.Errorf("component <%s> is not supported inside island components yet", srcNode.Tag)
 	case NodeText:
 		node.Kind = program.NodeText
 		node.Text = srcNode.Text
@@ -260,8 +267,12 @@ func (l *islandLowerer) lowerNode(srcID NodeID) (program.NodeID, error) {
 	}
 
 	// Lower children
+	childScope := l.scope
+	if node.Kind == program.NodeForEach {
+		childScope = l.scopeForEach(node)
+	}
 	for _, childSrcID := range srcNode.Children {
-		childDstID, err := l.lowerNode(childSrcID)
+		childDstID, err := l.lowerNodeWithScope(childSrcID, childScope)
 		if err != nil {
 			return 0, err
 		}
@@ -270,6 +281,75 @@ func (l *islandLowerer) lowerNode(srcID NodeID) (program.NodeID, error) {
 
 	l.dst.Nodes[dstID] = node
 	return dstID, nil
+}
+
+func (l *islandLowerer) lowerNodeWithScope(srcID NodeID, scope *ExprScope) (program.NodeID, error) {
+	prev := l.scope
+	l.scope = scope
+	defer func() {
+		l.scope = prev
+	}()
+	return l.lowerNode(srcID)
+}
+
+func (l *islandLowerer) lowerEachNode(srcNode *Node) (program.Node, error) {
+	collectionExpr := eachAttrSource(srcNode.Attrs, "of", "each", "items")
+	if collectionExpr == "" {
+		return program.Node{}, fmt.Errorf("%s requires an of/each/items attribute", srcNode.Tag)
+	}
+
+	exprID := l.addExpr(collectionExpr)
+	node := program.Node{
+		Kind: program.NodeForEach,
+		Expr: exprID,
+	}
+
+	itemName := eachStaticAttrValue(srcNode.Attrs, "as", "item")
+	if itemName == "" {
+		itemName = "item"
+	}
+	node.Attrs = append(node.Attrs, program.Attr{
+		Kind:  program.AttrStatic,
+		Name:  "as",
+		Value: itemName,
+	})
+
+	if indexName := eachStaticAttrValue(srcNode.Attrs, "index"); indexName != "" {
+		node.Attrs = append(node.Attrs, program.Attr{
+			Kind:  program.AttrStatic,
+			Name:  "index",
+			Value: indexName,
+		})
+	}
+
+	if fallbackSource := eachAttrSource(srcNode.Attrs, "fallback", "empty"); fallbackSource != "" {
+		node.Attrs = append(node.Attrs, program.Attr{
+			Kind: program.AttrExpr,
+			Name: "fallback",
+			Expr: l.addExpr(fallbackSource),
+		})
+	}
+
+	return node, nil
+}
+
+func (l *islandLowerer) scopeForEach(node program.Node) *ExprScope {
+	scope := cloneExprScope(l.scope)
+	itemName := forEachStaticAttr(node.Attrs, "as")
+	if itemName == "" {
+		itemName = "item"
+	}
+	scope.Props[itemName] = true
+	scope.Props["_item"] = true
+	scope.Props[itemName+"Key"] = true
+	scope.Props["_key"] = true
+
+	indexName := forEachStaticAttr(node.Attrs, "index")
+	if indexName != "" {
+		scope.Props[indexName] = true
+	}
+	scope.Props["_index"] = true
+	return scope
 }
 
 func (l *islandLowerer) lowerAttr(attr Attr) (program.Attr, error) {
@@ -305,6 +385,54 @@ func (l *islandLowerer) lowerAttr(attr Attr) (program.Attr, error) {
 	default:
 		return program.Attr{}, fmt.Errorf("unknown attr kind: %d", attr.Kind)
 	}
+}
+
+func isEachComponent(tag string) bool {
+	switch tag {
+	case "Each", "For":
+		return true
+	default:
+		return false
+	}
+}
+
+func eachAttrSource(attrs []Attr, names ...string) string {
+	for _, name := range names {
+		for _, attr := range attrs {
+			if attr.Name != name {
+				continue
+			}
+			switch attr.Kind {
+			case AttrExpr, AttrSpread:
+				return attr.Expr
+			case AttrStatic:
+				if attr.Value != "" {
+					return strconv.Quote(attr.Value)
+				}
+			}
+		}
+	}
+	return ""
+}
+
+func eachStaticAttrValue(attrs []Attr, names ...string) string {
+	for _, name := range names {
+		for _, attr := range attrs {
+			if attr.Name == name && attr.Kind == AttrStatic {
+				return attr.Value
+			}
+		}
+	}
+	return ""
+}
+
+func forEachStaticAttr(attrs []program.Attr, name string) string {
+	for _, attr := range attrs {
+		if attr.Kind == program.AttrStatic && attr.Name == name {
+			return attr.Value
+		}
+	}
+	return ""
 }
 
 // addExpr parses a Go expression source string into typed opcodes and appends

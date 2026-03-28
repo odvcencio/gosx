@@ -37,17 +37,21 @@ func FileLayoutWithOptions(file string, opts FileLayoutOptions) (LayoutFunc, err
 		return nil, fmt.Errorf("stat %s: %w", abs, err)
 	}
 
+	return buildFileLayout(abs, layoutFilePage("", abs), resolveLayoutModule(DefaultFileModuleRegistry(), "", abs), opts), nil
+}
+
+func buildFileLayout(file string, page FilePage, module FileModule, opts FileLayoutOptions) LayoutFunc {
 	return func(ctx *RouteContext, content gosx.Node) gosx.Node {
-		node, err := renderFileLayout(abs, ctx, content, opts)
+		node, err := renderFileLayout(file, ctx, content, page, module, opts)
 		if err != nil {
 			ctx.SetStatus(http.StatusInternalServerError)
 			return defaultFileRouteError(err)
 		}
 		return node
-	}, nil
+	}
 }
 
-func renderFileLayout(file string, ctx *RouteContext, content gosx.Node, opts FileLayoutOptions) (gosx.Node, error) {
+func renderFileLayout(file string, ctx *RouteContext, content gosx.Node, page FilePage, module FileModule, opts FileLayoutOptions) (gosx.Node, error) {
 	slotHTML := ""
 	if !content.IsZero() {
 		slotHTML = gosx.RenderHTML(content)
@@ -55,9 +59,39 @@ func renderFileLayout(file string, ctx *RouteContext, content gosx.Node, opts Fi
 	return renderFileNode(file, fileRenderOptions{
 		ComponentReplacements: slotComponentReplacements(slotHTML, opts),
 		HTMLPlaceholders:      htmlSlotPlaceholders(opts),
-		EvalEnv:               newFileRenderEnv(ctx, FilePage{}),
+		EvalEnv:               filePageRenderEnv(ctx, page, module),
 		RequireReplacement:    true,
 	})
+}
+
+func resolveLayoutModule(registry *FileModuleRegistry, root, file string) FileModule {
+	if registry == nil {
+		return FileModule{}
+	}
+	page := layoutFilePage(root, file)
+	module, _ := resolveFileModule(registry, root, page)
+	return module
+}
+
+func layoutFilePage(root, file string) FilePage {
+	file = filepath.Clean(file)
+	source := file
+	if root != "" {
+		root = filepath.Clean(root)
+		if rel, err := filepath.Rel(root, file); err == nil && rel != "" && rel != "." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && rel != ".." {
+			source = rel
+		}
+	}
+	source = filepath.ToSlash(source)
+	dir := filepath.ToSlash(filepath.Dir(source))
+	if dir == "." {
+		dir = ""
+	}
+	return FilePage{
+		FilePath: file,
+		Source:   source,
+		Dir:      dir,
+	}
 }
 
 type fileRenderOptions struct {

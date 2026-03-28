@@ -503,88 +503,75 @@ func renderProgramHTML(prog *program.Program, props any) gosx.Node {
 // RenderResolvedHTML renders a program tree from an already-resolved VM tree.
 // This is used by the island test harness to assert post-dispatch DOM output.
 func RenderResolvedHTML(prog *program.Program, resolved *vm.ResolvedTree) string {
-	if prog == nil || len(prog.Nodes) == 0 {
+	if resolved == nil || len(resolved.Nodes) == 0 {
 		return ""
 	}
-	return renderProgramNode(prog, resolved, prog.Root, "0")
+	return renderResolvedNode(resolved, 0, "0")
 }
 
-func renderProgramNode(prog *program.Program, resolved *vm.ResolvedTree, nodeID program.NodeID, path string) string {
-	if int(nodeID) >= len(prog.Nodes) {
+func renderResolvedNode(resolved *vm.ResolvedTree, nodeIdx int, path string) string {
+	if resolved == nil || nodeIdx < 0 || nodeIdx >= len(resolved.Nodes) {
 		return ""
 	}
-	node := prog.Nodes[nodeID]
+	node := resolved.Nodes[nodeIdx]
 
-	switch node.Kind {
-	case program.NodeText:
+	if node.Tag == "" {
 		return html.EscapeString(node.Text)
-	case program.NodeExpr:
-		if resolved == nil || int(nodeID) >= len(resolved.Nodes) {
-			return ""
-		}
-		return html.EscapeString(resolved.Nodes[nodeID].Text)
-	case program.NodeFragment:
-		var b strings.Builder
-		for idx, child := range node.Children {
-			b.WriteString(renderProgramNode(prog, resolved, child, childProgramPath(path, idx)))
-		}
-		return b.String()
-	case program.NodeElement:
-		var b strings.Builder
-		safeTag := html.EscapeString(node.Tag)
-		b.WriteString("<")
-		b.WriteString(safeTag)
-
-		var resolvedAttrs map[string]string
-		if resolved != nil && int(nodeID) < len(resolved.Nodes) {
-			resolvedAttrs = make(map[string]string, len(resolved.Nodes[nodeID].Attrs))
-			for _, attr := range resolved.Nodes[nodeID].Attrs {
-				resolvedAttrs[attr.Name] = attr.Value
-			}
-		}
-
-		// Render attributes
-		hasEventBinding := false
-		for _, attr := range node.Attrs {
-			safeName := html.EscapeString(attr.Name)
-			safeEvent := html.EscapeString(attr.Event)
-			switch attr.Kind {
-			case program.AttrStatic:
-				b.WriteString(fmt.Sprintf(` %s="%s"`, safeName, html.EscapeString(attr.Value)))
-			case program.AttrBool:
-				b.WriteString(" " + safeName)
-			case program.AttrEvent:
-				eventType := html.EscapeString(eventNameToType(attr.Name))
-				b.WriteString(fmt.Sprintf(` data-gosx-on-%s="%s"`, eventType, safeEvent))
-				if eventType == "click" {
-					b.WriteString(fmt.Sprintf(` data-gosx-handler="%s"`, safeEvent))
-				}
-				hasEventBinding = true
-			case program.AttrExpr:
-				if resolvedAttrs == nil {
-					continue
-				}
-				if value, ok := resolvedAttrs[attr.Name]; ok {
-					b.WriteString(fmt.Sprintf(` %s="%s"`, safeName, html.EscapeString(value)))
-				}
-			}
-		}
-		if hasEventBinding {
-			b.WriteString(fmt.Sprintf(` data-gosx-path="%s"`, html.EscapeString(path)))
-		}
-
-		b.WriteString(">")
-
-		// Render children
-		for idx, child := range node.Children {
-			b.WriteString(renderProgramNode(prog, resolved, child, childProgramPath(path, idx)))
-		}
-
-		b.WriteString(fmt.Sprintf("</%s>", safeTag))
-		return b.String()
-	default:
-		return ""
 	}
+
+	var b strings.Builder
+	safeTag := html.EscapeString(node.Tag)
+	b.WriteString("<")
+	b.WriteString(safeTag)
+
+	for _, attr := range renderResolvedAttrs(&node, path) {
+		safeName := html.EscapeString(attr.Name)
+		if attr.Bool {
+			b.WriteString(" ")
+			b.WriteString(safeName)
+			continue
+		}
+		b.WriteString(fmt.Sprintf(` %s="%s"`, safeName, html.EscapeString(attr.Value)))
+	}
+
+	b.WriteString(">")
+	if node.Text != "" {
+		b.WriteString(html.EscapeString(node.Text))
+	}
+	for idx, childIdx := range node.Children {
+		b.WriteString(renderResolvedNode(resolved, childIdx, childProgramPath(path, idx)))
+	}
+	b.WriteString(fmt.Sprintf("</%s>", safeTag))
+	return b.String()
+}
+
+func renderResolvedAttrs(node *vm.ResolvedNode, path string) []vm.ResolvedAttr {
+	if node == nil {
+		return nil
+	}
+
+	attrs := make([]vm.ResolvedAttr, 0, len(node.Attrs)+(len(node.Events)*2)+1)
+	attrs = append(attrs, node.Attrs...)
+	for _, event := range node.Events {
+		eventType := eventNameToType(event.Name)
+		attrs = append(attrs, vm.ResolvedAttr{
+			Name:  "data-gosx-on-" + eventType,
+			Value: event.Handler,
+		})
+		if eventType == "click" {
+			attrs = append(attrs, vm.ResolvedAttr{
+				Name:  "data-gosx-handler",
+				Value: event.Handler,
+			})
+		}
+	}
+	if len(node.Events) > 0 {
+		attrs = append(attrs, vm.ResolvedAttr{
+			Name:  "data-gosx-path",
+			Value: path,
+		})
+	}
+	return attrs
 }
 
 func (r *Renderer) applyProgramRef(entry *hydrate.IslandEntry, componentName string) {

@@ -3362,7 +3362,7 @@ test("patch applier updates text nodes and treats setHTML as text", async () => 
     "gosx-island-patch",
     JSON.stringify([
       { kind: 0, path: "0", text: "1" },
-      { kind: 8, path: "1", text: "<strong>safe</strong>" },
+      { kind: 9, path: "1", text: "<strong>safe</strong>" },
     ]),
   );
 

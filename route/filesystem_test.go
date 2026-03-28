@@ -1529,6 +1529,58 @@ func TestFileLayoutSupportsHTMLPlaceholder(t *testing.T) {
 	}
 }
 
+func TestRouterAddDirAppliesLayoutFileBindings(t *testing.T) {
+	root := t.TempDir()
+	writeRouteFile(t, root, "layout.gsx", `package docs
+
+func Layout() Node {
+	return <div class="shell">
+		<strong class="layout-title">{layoutTitle}</strong>
+		<Slot />
+	</div>
+}
+`)
+	writeRouteFile(t, root, "page.gsx", `package docs
+
+func Page() Node {
+	return <main>Home</main>
+}
+`)
+
+	modules := NewFileModuleRegistry()
+	if err := modules.Register(FileModuleFor(filepath.Join(root, "layout.gsx"), FileModuleOptions{
+		Bindings: func(ctx *RouteContext, page FilePage, data any) FileTemplateBindings {
+			return FileTemplateBindings{
+				Values: map[string]any{
+					"layoutTitle": "Cloud Shell",
+				},
+			}
+		},
+	})); err != nil {
+		t.Fatal(err)
+	}
+
+	router := NewRouter()
+	router.SetLayout(func(ctx *RouteContext, body gosx.Node) gosx.Node {
+		return server.HTMLDocument("Demo", ctx.Head(), body)
+	})
+	if err := router.AddDir(root, FileRoutesOptions{Modules: modules}); err != nil {
+		t.Fatal(err)
+	}
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	router.Build().ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, "Cloud Shell") || !strings.Contains(body, "<main>Home</main>") {
+		t.Fatalf("unexpected layout body %q", body)
+	}
+}
+
 func TestRouterFilePagesSupportRequestDataActionsAndCSRF(t *testing.T) {
 	root := t.TempDir()
 	writeRouteFile(t, root, "account/[slug]/page.gsx", `package docs
