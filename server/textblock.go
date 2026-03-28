@@ -35,7 +35,17 @@ type TextBlockAttr struct {
 // TextBlockAttrs returns the HTML attributes required for a managed text block.
 func TextBlockAttrs(props TextBlockProps) []TextBlockAttr {
 	props = normalizeTextBlockProps(props, "")
-	attrs := []TextBlockAttr{{Name: textBlockAttr, Bool: true}}
+	state := "pending"
+	if props.HeightHint > 0 || props.LineCountHint > 0 {
+		state = "hint"
+	}
+	attrs := []TextBlockAttr{
+		{Name: textBlockAttr, Bool: true},
+		{Name: "data-gosx-text-layout-role", Value: "block"},
+		{Name: "data-gosx-text-layout-surface", Value: "dom"},
+		{Name: "data-gosx-text-layout-state", Value: state},
+		{Name: "data-gosx-text-layout-ready", Value: "false"},
+	}
 
 	if font := strings.TrimSpace(props.Font); font != "" {
 		attrs = append(attrs, TextBlockAttr{Name: "data-gosx-text-layout-font", Value: font})

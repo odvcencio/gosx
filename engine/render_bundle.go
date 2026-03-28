@@ -18,8 +18,10 @@ type RenderLine struct {
 type RenderLabel struct {
 	ID          string      `json:"id,omitempty"`
 	Text        string      `json:"text,omitempty"`
+	ClassName   string      `json:"className,omitempty"`
 	Position    RenderPoint `json:"position"`
 	Depth       float64     `json:"depth,omitempty"`
+	Priority    float64     `json:"priority,omitempty"`
 	MaxWidth    float64     `json:"maxWidth,omitempty"`
 	Font        string      `json:"font,omitempty"`
 	LineHeight  float64     `json:"lineHeight,omitempty"`
@@ -30,6 +32,8 @@ type RenderLabel struct {
 	OffsetY     float64     `json:"offsetY,omitempty"`
 	AnchorX     float64     `json:"anchorX,omitempty"`
 	AnchorY     float64     `json:"anchorY,omitempty"`
+	Collision   string      `json:"collision,omitempty"`
+	Occlude     bool        `json:"occlude,omitempty"`
 	WhiteSpace  string      `json:"whiteSpace,omitempty"`
 	TextAlign   string      `json:"textAlign,omitempty"`
 }

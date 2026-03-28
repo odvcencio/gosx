@@ -233,9 +233,11 @@ type sceneObject struct {
 type sceneLabel struct {
 	ID          string
 	Text        string
+	ClassName   string
 	X           float64
 	Y           float64
 	Z           float64
+	Priority    float64
 	ShiftX      float64
 	ShiftY      float64
 	ShiftZ      float64
@@ -251,6 +253,8 @@ type sceneLabel struct {
 	OffsetY     float64
 	AnchorX     float64
 	AnchorY     float64
+	Collision   string
+	Occlude     bool
 	WhiteSpace  string
 	TextAlign   string
 }
@@ -435,9 +439,11 @@ func sceneLabelFromResolvedNode(index int, node resolvedNode) (sceneLabel, bool)
 	return sceneLabel{
 		ID:          stringFromAny(propValue(node.Props, "id"), "scene-label-"+strconv.Itoa(index)),
 		Text:        text,
+		ClassName:   sceneLabelClassName(node.Props),
 		X:           numberFromAny(propValue(node.Props, "x"), 0),
 		Y:           numberFromAny(propValue(node.Props, "y"), 0),
 		Z:           numberFromAny(propValue(node.Props, "z"), 0),
+		Priority:    numberFromAny(propValue(node.Props, "priority"), 0),
 		ShiftX:      numberFromAny(propValue(node.Props, "shiftX"), 0),
 		ShiftY:      numberFromAny(propValue(node.Props, "shiftY"), 0),
 		ShiftZ:      numberFromAny(propValue(node.Props, "shiftZ"), 0),
@@ -453,6 +459,8 @@ func sceneLabelFromResolvedNode(index int, node resolvedNode) (sceneLabel, bool)
 		OffsetY:     numberFromAny(propValue(node.Props, "offsetY"), -14),
 		AnchorX:     clamp(numberFromAny(propValue(node.Props, "anchorX"), 0.5), 0, 1),
 		AnchorY:     clamp(numberFromAny(propValue(node.Props, "anchorY"), 1), 0, 1),
+		Collision:   normalizeSceneLabelCollision(stringFromAny(propValue(node.Props, "collision"), "avoid")),
+		Occlude:     boolFromAny(propValue(node.Props, "occlude"), false),
 		WhiteSpace:  normalizeSceneLabelWhiteSpace(stringFromAny(propValue(node.Props, "whiteSpace"), "normal")),
 		TextAlign:   normalizeSceneLabelAlign(stringFromAny(propValue(node.Props, "textAlign"), "center")),
 	}, true
@@ -508,8 +516,10 @@ func appendSceneLabel(bundle *rootengine.RenderBundle, camera sceneCamera, width
 	bundle.Labels = append(bundle.Labels, rootengine.RenderLabel{
 		ID:          label.ID,
 		Text:        label.Text,
+		ClassName:   label.ClassName,
 		Position:    *position,
 		Depth:       world.Z + camera.Z,
+		Priority:    label.Priority,
 		MaxWidth:    label.MaxWidth,
 		Font:        label.Font,
 		LineHeight:  label.LineHeight,
@@ -520,9 +530,19 @@ func appendSceneLabel(bundle *rootengine.RenderBundle, camera sceneCamera, width
 		OffsetY:     label.OffsetY,
 		AnchorX:     label.AnchorX,
 		AnchorY:     label.AnchorY,
+		Collision:   label.Collision,
+		Occlude:     label.Occlude,
 		WhiteSpace:  label.WhiteSpace,
 		TextAlign:   label.TextAlign,
 	})
+}
+
+func sceneLabelClassName(props map[string]any) string {
+	className := strings.TrimSpace(stringFromAny(propValue(props, "className"), ""))
+	if className != "" {
+		return className
+	}
+	return strings.TrimSpace(stringFromAny(propValue(props, "class"), ""))
 }
 
 func appendWorldSceneLine(bundle *rootengine.RenderBundle, from, to point3, rgba [4]float64) {
@@ -1354,6 +1374,15 @@ func normalizeSceneLabelAlign(value string) string {
 		return "right"
 	default:
 		return "center"
+	}
+}
+
+func normalizeSceneLabelCollision(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "allow", "none", "overlap":
+		return "allow"
+	default:
+		return "avoid"
 	}
 }
 
