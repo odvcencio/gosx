@@ -14,6 +14,26 @@ type RenderLine struct {
 	LineWidth float64     `json:"lineWidth,omitempty"`
 }
 
+// RenderLabel is a screen-space text overlay anchored to a scene position.
+type RenderLabel struct {
+	ID          string      `json:"id,omitempty"`
+	Text        string      `json:"text,omitempty"`
+	Position    RenderPoint `json:"position"`
+	Depth       float64     `json:"depth,omitempty"`
+	MaxWidth    float64     `json:"maxWidth,omitempty"`
+	Font        string      `json:"font,omitempty"`
+	LineHeight  float64     `json:"lineHeight,omitempty"`
+	Color       string      `json:"color,omitempty"`
+	Background  string      `json:"background,omitempty"`
+	BorderColor string      `json:"borderColor,omitempty"`
+	OffsetX     float64     `json:"offsetX,omitempty"`
+	OffsetY     float64     `json:"offsetY,omitempty"`
+	AnchorX     float64     `json:"anchorX,omitempty"`
+	AnchorY     float64     `json:"anchorY,omitempty"`
+	WhiteSpace  string      `json:"whiteSpace,omitempty"`
+	TextAlign   string      `json:"textAlign,omitempty"`
+}
+
 // RenderCamera describes the camera used for world-space rendering.
 type RenderCamera struct {
 	X    float64 `json:"x,omitempty"`
@@ -86,6 +106,7 @@ type RenderBundle struct {
 	Objects          []RenderObject     `json:"objects,omitempty"`
 	Passes           []RenderPassBundle `json:"passes,omitempty"`
 	Lines            []RenderLine       `json:"lines,omitempty"`
+	Labels           []RenderLabel      `json:"labels,omitempty"`
 	Positions        []float64          `json:"positions,omitempty"`
 	Colors           []float64          `json:"colors,omitempty"`
 	VertexCount      int                `json:"vertexCount,omitempty"`

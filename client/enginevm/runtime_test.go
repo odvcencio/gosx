@@ -377,6 +377,77 @@ func TestRuntimeRenderBundleSyncsDirtyNodes(t *testing.T) {
 	}
 }
 
+func TestRuntimeRenderBundleProjectsSceneLabels(t *testing.T) {
+	prog := &rootengine.Program{
+		Name: "SceneLabels",
+		Nodes: []rootengine.Node{
+			{
+				Kind: "camera",
+				Props: map[string]islandprogram.ExprID{
+					"z":   0,
+					"fov": 1,
+				},
+			},
+			{
+				Kind: "label",
+				Props: map[string]islandprogram.ExprID{
+					"text":       2,
+					"x":          3,
+					"y":          4,
+					"z":          5,
+					"maxWidth":   6,
+					"lineHeight": 7,
+					"textAlign":  8,
+					"anchorX":    9,
+					"anchorY":    10,
+				},
+			},
+		},
+		Exprs: []islandprogram.Expr{
+			{Op: islandprogram.OpLitFloat, Value: "6", Type: islandprogram.TypeFloat},
+			{Op: islandprogram.OpLitFloat, Value: "72", Type: islandprogram.TypeFloat},
+			{Op: islandprogram.OpLitString, Value: "Scene labels make overlays first-class.", Type: islandprogram.TypeString},
+			{Op: islandprogram.OpLitFloat, Value: "0", Type: islandprogram.TypeFloat},
+			{Op: islandprogram.OpLitFloat, Value: "1.2", Type: islandprogram.TypeFloat},
+			{Op: islandprogram.OpLitFloat, Value: "0.4", Type: islandprogram.TypeFloat},
+			{Op: islandprogram.OpLitFloat, Value: "184", Type: islandprogram.TypeFloat},
+			{Op: islandprogram.OpLitFloat, Value: "18", Type: islandprogram.TypeFloat},
+			{Op: islandprogram.OpLitString, Value: "center", Type: islandprogram.TypeString},
+			{Op: islandprogram.OpLitFloat, Value: "0.5", Type: islandprogram.TypeFloat},
+			{Op: islandprogram.OpLitFloat, Value: "1", Type: islandprogram.TypeFloat},
+		},
+	}
+
+	rt := New(prog, `{}`)
+	bundle := rt.RenderBundle(640, 360, 0)
+	if len(bundle.Labels) != 1 {
+		t.Fatalf("expected one projected label, got %#v", bundle.Labels)
+	}
+
+	label := bundle.Labels[0]
+	if label.Text != "Scene labels make overlays first-class." {
+		t.Fatalf("unexpected label text: %q", label.Text)
+	}
+	if label.Position.X < 250 || label.Position.X > 390 {
+		t.Fatalf("expected projected X near center, got %#v", label.Position)
+	}
+	if label.Position.Y >= 180 {
+		t.Fatalf("expected label above center point, got %#v", label.Position)
+	}
+	if label.MaxWidth != 184 {
+		t.Fatalf("expected max width to flow into bundle, got %#v", label)
+	}
+	if label.LineHeight != 18 {
+		t.Fatalf("expected line height to flow into bundle, got %#v", label)
+	}
+	if label.TextAlign != "center" {
+		t.Fatalf("expected text alignment to flow into bundle, got %#v", label)
+	}
+	if label.AnchorX != 0.5 || label.AnchorY != 1 {
+		t.Fatalf("expected anchor metadata in bundle, got %#v", label)
+	}
+}
+
 func TestRuntimeRenderBundleResolvesMaterialPresets(t *testing.T) {
 	prog := &rootengine.Program{
 		Name: "MaterialProfiles",

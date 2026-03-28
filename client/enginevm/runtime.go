@@ -230,6 +230,31 @@ type sceneObject struct {
 	Static       bool
 }
 
+type sceneLabel struct {
+	ID          string
+	Text        string
+	X           float64
+	Y           float64
+	Z           float64
+	ShiftX      float64
+	ShiftY      float64
+	ShiftZ      float64
+	DriftSpeed  float64
+	DriftPhase  float64
+	MaxWidth    float64
+	Font        string
+	LineHeight  float64
+	Color       string
+	Background  string
+	BorderColor string
+	OffsetX     float64
+	OffsetY     float64
+	AnchorX     float64
+	AnchorY     float64
+	WhiteSpace  string
+	TextAlign   string
+}
+
 type point3 struct {
 	X float64
 	Y float64
@@ -260,6 +285,7 @@ func buildRenderBundle(props map[string]any, nodes []resolvedNode, width, height
 		Materials:      []rootengine.RenderMaterial{},
 		Objects:        []rootengine.RenderObject{},
 		Lines:          []rootengine.RenderLine{},
+		Labels:         []rootengine.RenderLabel{},
 		Positions:      []float64{},
 		Colors:         []float64{},
 		WorldPositions: []float64{},
@@ -268,12 +294,17 @@ func buildRenderBundle(props map[string]any, nodes []resolvedNode, width, height
 
 	camera := sceneCameraFromProps(props)
 	objects := make([]sceneObject, 0, len(nodes))
+	labels := make([]sceneLabel, 0, len(nodes))
 	for index, node := range nodes {
 		switch strings.TrimSpace(strings.ToLower(node.Kind)) {
 		case "camera":
 			camera = normalizeSceneCameraMap(node.Props, camera)
 		case "mesh":
 			objects = append(objects, sceneObjectFromResolvedNode(index, node))
+		case "label":
+			if label, ok := sceneLabelFromResolvedNode(index, node); ok {
+				labels = append(labels, label)
+			}
 		}
 	}
 	bundle.Camera = rootengine.RenderCamera{
@@ -310,6 +341,9 @@ func buildRenderBundle(props map[string]any, nodes []resolvedNode, width, height
 				ViewCulled:    appendResult.ViewCulled,
 			})
 		}
+	}
+	for _, label := range labels {
+		appendSceneLabel(&bundle, camera, width, height, label, timeSeconds)
 	}
 	bundle.ObjectCount = len(bundle.Objects)
 	bundle.VertexCount = len(bundle.Positions) / 2
@@ -393,6 +427,37 @@ func sceneObjectFromResolvedNode(index int, node resolvedNode) sceneObject {
 	}
 }
 
+func sceneLabelFromResolvedNode(index int, node resolvedNode) (sceneLabel, bool) {
+	text := stringFromAny(propValue(node.Props, "text"), "")
+	if strings.TrimSpace(text) == "" {
+		return sceneLabel{}, false
+	}
+	return sceneLabel{
+		ID:          stringFromAny(propValue(node.Props, "id"), "scene-label-"+strconv.Itoa(index)),
+		Text:        text,
+		X:           numberFromAny(propValue(node.Props, "x"), 0),
+		Y:           numberFromAny(propValue(node.Props, "y"), 0),
+		Z:           numberFromAny(propValue(node.Props, "z"), 0),
+		ShiftX:      numberFromAny(propValue(node.Props, "shiftX"), 0),
+		ShiftY:      numberFromAny(propValue(node.Props, "shiftY"), 0),
+		ShiftZ:      numberFromAny(propValue(node.Props, "shiftZ"), 0),
+		DriftSpeed:  numberFromAny(propValue(node.Props, "driftSpeed"), 0),
+		DriftPhase:  numberFromAny(propValue(node.Props, "driftPhase"), 0),
+		MaxWidth:    math.Max(48, numberFromAny(propValue(node.Props, "maxWidth"), 180)),
+		Font:        stringFromAny(propValue(node.Props, "font"), `600 13px "IBM Plex Sans", "Segoe UI", sans-serif`),
+		LineHeight:  math.Max(12, numberFromAny(propValue(node.Props, "lineHeight"), 18)),
+		Color:       stringFromAny(propValue(node.Props, "color"), "#ecf7ff"),
+		Background:  stringFromAny(propValue(node.Props, "background"), "rgba(8, 21, 31, 0.82)"),
+		BorderColor: stringFromAny(propValue(node.Props, "borderColor"), "rgba(141, 225, 255, 0.24)"),
+		OffsetX:     numberFromAny(propValue(node.Props, "offsetX"), 0),
+		OffsetY:     numberFromAny(propValue(node.Props, "offsetY"), -14),
+		AnchorX:     clamp(numberFromAny(propValue(node.Props, "anchorX"), 0.5), 0, 1),
+		AnchorY:     clamp(numberFromAny(propValue(node.Props, "anchorY"), 1), 0, 1),
+		WhiteSpace:  normalizeSceneLabelWhiteSpace(stringFromAny(propValue(node.Props, "whiteSpace"), "normal")),
+		TextAlign:   normalizeSceneLabelAlign(stringFromAny(propValue(node.Props, "textAlign"), "center")),
+	}, true
+}
+
 func appendSceneGrid(bundle *rootengine.RenderBundle, width, height int) {
 	for x := 0; x <= width; x += 48 {
 		appendSceneLine(bundle, width, height, rootengine.RenderPoint{X: float64(x), Y: 0}, rootengine.RenderPoint{X: float64(x), Y: float64(height)}, "rgba(141, 225, 255, 0.14)", 1)
@@ -429,6 +494,37 @@ func appendSceneObject(bundle *rootengine.RenderBundle, camera sceneCamera, widt
 	return result
 }
 
+func appendSceneLabel(bundle *rootengine.RenderBundle, camera sceneCamera, width, height int, label sceneLabel, timeSeconds float64) {
+	world := sceneLabelPoint(label, timeSeconds)
+	position := projectPoint(world, camera, width, height)
+	if position == nil {
+		return
+	}
+	marginX := math.Max(24, label.MaxWidth)
+	marginY := math.Max(24, label.LineHeight*2)
+	if position.X < -marginX || position.X > float64(width)+marginX || position.Y < -marginY || position.Y > float64(height)+marginY {
+		return
+	}
+	bundle.Labels = append(bundle.Labels, rootengine.RenderLabel{
+		ID:          label.ID,
+		Text:        label.Text,
+		Position:    *position,
+		Depth:       world.Z + camera.Z,
+		MaxWidth:    label.MaxWidth,
+		Font:        label.Font,
+		LineHeight:  label.LineHeight,
+		Color:       label.Color,
+		Background:  label.Background,
+		BorderColor: label.BorderColor,
+		OffsetX:     label.OffsetX,
+		OffsetY:     label.OffsetY,
+		AnchorX:     label.AnchorX,
+		AnchorY:     label.AnchorY,
+		WhiteSpace:  label.WhiteSpace,
+		TextAlign:   label.TextAlign,
+	})
+}
+
 func appendWorldSceneLine(bundle *rootengine.RenderBundle, from, to point3, rgba [4]float64) {
 	bundle.WorldPositions = append(bundle.WorldPositions,
 		from.X, from.Y, from.Z,
@@ -438,6 +534,27 @@ func appendWorldSceneLine(bundle *rootengine.RenderBundle, from, to point3, rgba
 		rgba[0], rgba[1], rgba[2], rgba[3],
 		rgba[0], rgba[1], rgba[2], rgba[3],
 	)
+}
+
+func sceneLabelPoint(label sceneLabel, timeSeconds float64) point3 {
+	offset := sceneLabelOffset(label, timeSeconds)
+	return point3{
+		X: label.X + offset.X,
+		Y: label.Y + offset.Y,
+		Z: label.Z + offset.Z,
+	}
+}
+
+func sceneLabelOffset(label sceneLabel, timeSeconds float64) point3 {
+	if label.ShiftX == 0 && label.ShiftY == 0 && label.ShiftZ == 0 {
+		return point3{}
+	}
+	angle := label.DriftPhase + timeSeconds*label.DriftSpeed
+	return point3{
+		X: math.Cos(angle) * label.ShiftX,
+		Y: math.Sin(angle*0.82+label.DriftPhase*0.35) * label.ShiftY,
+		Z: math.Sin(angle) * label.ShiftZ,
+	}
 }
 
 func ensureRenderMaterial(bundle *rootengine.RenderBundle, object sceneObject) int {
@@ -1215,6 +1332,28 @@ func normalizeBlendMode(value string) string {
 		return "opaque"
 	default:
 		return ""
+	}
+}
+
+func normalizeSceneLabelWhiteSpace(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "pre-wrap":
+		return "pre-wrap"
+	case "pre":
+		return "pre"
+	default:
+		return "normal"
+	}
+}
+
+func normalizeSceneLabelAlign(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "left", "start":
+		return "left"
+	case "right", "end":
+		return "right"
+	default:
+		return "center"
 	}
 }
 

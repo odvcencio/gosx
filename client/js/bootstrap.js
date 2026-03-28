@@ -1010,6 +1010,14 @@
     return sceneObjectList(scene && scene.objects) || sceneObjectList(props && props.objects) || defaultSceneObjects();
   }
 
+  function rawSceneLabels(props) {
+    const scene = sceneProps(props);
+    if (scene && Array.isArray(scene.labels)) {
+      return scene.labels;
+    }
+    return props && Array.isArray(props.labels) ? props.labels : [];
+  }
+
   function sceneProps(props) {
     return props && props.scene && typeof props.scene === "object" ? props.scene : null;
   }
@@ -1048,6 +1056,34 @@
     };
   }
 
+  function normalizeSceneLabel(label, index) {
+    const item = label && typeof label === "object" ? label : {};
+    return {
+      id: item.id || ("scene-label-" + index),
+      text: typeof item.text === "string" ? item.text : "",
+      x: sceneNumber(item.x, 0),
+      y: sceneNumber(item.y, 0),
+      z: sceneNumber(item.z, 0),
+      shiftX: sceneNumber(item.shiftX, 0),
+      shiftY: sceneNumber(item.shiftY, 0),
+      shiftZ: sceneNumber(item.shiftZ, 0),
+      driftSpeed: sceneNumber(item.driftSpeed, 0),
+      driftPhase: sceneNumber(item.driftPhase, 0),
+      maxWidth: Math.max(48, sceneNumber(item.maxWidth, 180)),
+      font: typeof item.font === "string" && item.font ? item.font : '600 13px "IBM Plex Sans", "Segoe UI", sans-serif',
+      lineHeight: Math.max(12, sceneNumber(item.lineHeight, 18)),
+      color: typeof item.color === "string" && item.color ? item.color : "#ecf7ff",
+      background: typeof item.background === "string" && item.background ? item.background : "rgba(8, 21, 31, 0.82)",
+      borderColor: typeof item.borderColor === "string" && item.borderColor ? item.borderColor : "rgba(141, 225, 255, 0.24)",
+      offsetX: sceneNumber(item.offsetX, 0),
+      offsetY: sceneNumber(item.offsetY, -14),
+      anchorX: Math.max(0, Math.min(1, sceneNumber(item.anchorX, 0.5))),
+      anchorY: Math.max(0, Math.min(1, sceneNumber(item.anchorY, 1))),
+      whiteSpace: normalizeSceneLabelWhiteSpace(item.whiteSpace),
+      textAlign: normalizeSceneLabelAlign(item.textAlign),
+    };
+  }
+
   function normalizeSceneKind(value) {
     const kind = typeof value === "string" ? value.trim().toLowerCase() : "";
     switch (kind) {
@@ -1070,6 +1106,43 @@
     return rawSceneObjects(props).map(function(object, index) {
       return normalizeSceneObject(object, index);
     });
+  }
+
+  function normalizeSceneLabelWhiteSpace(value) {
+    const mode = typeof value === "string" ? value.trim().toLowerCase() : "";
+    switch (mode) {
+      case "pre-wrap":
+        return "pre-wrap";
+      case "pre":
+        return "pre";
+      default:
+        return "normal";
+    }
+  }
+
+  function normalizeSceneLabelAlign(value) {
+    const align = typeof value === "string" ? value.trim().toLowerCase() : "";
+    switch (align) {
+      case "left":
+      case "start":
+        return "left";
+      case "right":
+      case "end":
+        return "right";
+      default:
+        return "center";
+    }
+  }
+
+  function sceneLabels(props) {
+    const raw = rawSceneLabels(props);
+    return raw
+      .map(function(label, index) {
+        return normalizeSceneLabel(label, index);
+      })
+      .filter(function(label) {
+        return label.text.trim() !== "";
+      });
   }
 
   function sceneCamera(props) {
@@ -1097,15 +1170,46 @@
       background: typeof props.background === "string" && props.background ? props.background : "#08151f",
       camera: sceneCamera(props),
       objects: new Map(),
+      labels: new Map(),
     };
     for (const object of sceneObjects(props)) {
       state.objects.set(object.id, object);
+    }
+    for (const label of sceneLabels(props)) {
+      state.labels.set(label.id, label);
     }
     return state;
   }
 
   function sceneStateObjects(state) {
     return Array.from(state.objects.values());
+  }
+
+  function sceneStateLabels(state) {
+    return Array.from(state.labels.values());
+  }
+
+  function sceneObjectAnimated(object) {
+    if (!object || typeof object !== "object") {
+      return false;
+    }
+    if (sceneNumber(object.spinX, 0) !== 0 || sceneNumber(object.spinY, 0) !== 0 || sceneNumber(object.spinZ, 0) !== 0) {
+      return true;
+    }
+    if (sceneNumber(object.driftSpeed, 0) === 0) {
+      return false;
+    }
+    return sceneNumber(object.shiftX, 0) !== 0 || sceneNumber(object.shiftY, 0) !== 0 || sceneNumber(object.shiftZ, 0) !== 0;
+  }
+
+  function sceneLabelAnimated(label) {
+    if (!label || typeof label !== "object") {
+      return false;
+    }
+    if (sceneNumber(label.driftSpeed, 0) === 0) {
+      return false;
+    }
+    return sceneNumber(label.shiftX, 0) !== 0 || sceneNumber(label.shiftY, 0) !== 0 || sceneNumber(label.shiftZ, 0) !== 0;
   }
 
   const SCENE_CMD_CREATE_OBJECT = 0;
@@ -1131,6 +1235,7 @@
         return;
       case SCENE_CMD_REMOVE_OBJECT:
         state.objects.delete(sceneObjectKey(command.objectId));
+        state.labels.delete(sceneObjectKey(command.objectId));
         return;
       case SCENE_CMD_SET_TRANSFORM:
       case SCENE_CMD_SET_MATERIAL:
@@ -1155,6 +1260,13 @@
     if (payload.kind === "light" || payload.kind === "particles") {
       return;
     }
+    if (payload.kind === "label") {
+      const label = sceneLabelFromPayload(objectID, payload, state.labels.get(sceneObjectKey(objectID)));
+      if (label) {
+        state.labels.set(sceneObjectKey(objectID), label);
+      }
+      return;
+    }
     const key = sceneObjectKey(objectID);
     const next = sceneObjectFromPayload(objectID, payload, state.objects.get(key));
     if (next) {
@@ -1165,13 +1277,23 @@
   function applySceneObjectPatch(state, objectID, patch) {
     const key = sceneObjectKey(objectID);
     const current = state.objects.get(key);
-    if (!current) return;
-    const next = sceneObjectFromPayload(objectID, {
-      geometry: current.kind,
-      props: Object.assign({}, current, patch || {}),
-    }, current);
-    if (next) {
-      state.objects.set(key, next);
+    if (current) {
+      const next = sceneObjectFromPayload(objectID, {
+        geometry: current.kind,
+        props: Object.assign({}, current, patch || {}),
+      }, current);
+      if (next) {
+        state.objects.set(key, next);
+      }
+      return;
+    }
+    const currentLabel = state.labels.get(key);
+    if (!currentLabel) return;
+    const nextLabel = sceneLabelFromPayload(objectID, {
+      props: Object.assign({}, currentLabel, patch || {}),
+    }, currentLabel);
+    if (nextLabel) {
+      state.labels.set(key, nextLabel);
     }
   }
 
@@ -1187,6 +1309,18 @@
     merged.id = current.id || merged.id || ("scene-object-" + objectID);
     merged.kind = normalizeSceneKind(merged.kind || geometry);
     return normalizeSceneObject(merged, objectID);
+  }
+
+  function sceneLabelFromPayload(objectID, payload, fallback) {
+    const current = fallback && typeof fallback === "object" ? fallback : {};
+    const props = payload && payload.props && typeof payload.props === "object" ? payload.props : {};
+    const merged = Object.assign({}, current, props);
+    merged.id = current.id || merged.id || ("scene-label-" + objectID);
+    const label = normalizeSceneLabel(merged, objectID);
+    if (!label.text.trim()) {
+      return null;
+    }
+    return label;
   }
 
   function clearChildren(node) {
@@ -1411,11 +1545,12 @@
     };
   }
 
-  function createSceneRenderBundle(width, height, background, camera, objects, timeSeconds) {
+  function createSceneRenderBundle(width, height, background, camera, objects, labels, timeSeconds) {
     const bundle = {
       background: background,
       camera: sceneRenderCamera(camera),
       objects: [],
+      labels: [],
       lines: [],
       positions: [],
       colors: [],
@@ -1428,6 +1563,9 @@
     appendSceneGridToBundle(bundle, width, height);
     for (const object of objects) {
       appendSceneObjectToBundle(bundle, camera, width, height, object, timeSeconds);
+    }
+    for (const label of labels || []) {
+      appendSceneLabelToBundle(bundle, camera, width, height, label, timeSeconds);
     }
     bundle.positions = new Float32Array(bundle.positions);
     bundle.colors = new Float32Array(bundle.colors);
@@ -1519,6 +1657,60 @@
         },
       });
     }
+  }
+
+  function sceneLabelPoint(label, timeSeconds) {
+    const offset = sceneLabelOffset(label, timeSeconds);
+    return {
+      x: label.x + offset.x,
+      y: label.y + offset.y,
+      z: label.z + offset.z,
+    };
+  }
+
+  function sceneLabelOffset(label, timeSeconds) {
+    if (!label || (!label.shiftX && !label.shiftY && !label.shiftZ)) {
+      return { x: 0, y: 0, z: 0 };
+    }
+    const angle = sceneNumber(label.driftPhase, 0) + timeSeconds * sceneNumber(label.driftSpeed, 0);
+    return {
+      x: Math.cos(angle) * sceneNumber(label.shiftX, 0),
+      y: Math.sin(angle * 0.82 + sceneNumber(label.driftPhase, 0) * 0.35) * sceneNumber(label.shiftY, 0),
+      z: Math.sin(angle) * sceneNumber(label.shiftZ, 0),
+    };
+  }
+
+  function appendSceneLabelToBundle(bundle, camera, width, height, label, timeSeconds) {
+    const point = sceneLabelPoint(label, timeSeconds);
+    const projected = projectPoint(point, camera, width, height);
+    if (!projected) {
+      return;
+    }
+
+    const marginX = Math.max(24, sceneNumber(label.maxWidth, 180));
+    const marginY = Math.max(24, sceneNumber(label.lineHeight, 18) * 2);
+    if (projected.x < -marginX || projected.x > width + marginX || projected.y < -marginY || projected.y > height + marginY) {
+      return;
+    }
+
+    bundle.labels.push({
+      id: label.id,
+      text: label.text,
+      position: { x: projected.x, y: projected.y },
+      depth: projected.depth,
+      maxWidth: sceneNumber(label.maxWidth, 180),
+      font: label.font,
+      lineHeight: sceneNumber(label.lineHeight, 18),
+      color: label.color,
+      background: label.background,
+      borderColor: label.borderColor,
+      offsetX: sceneNumber(label.offsetX, 0),
+      offsetY: sceneNumber(label.offsetY, -14),
+      anchorX: sceneNumber(label.anchorX, 0.5),
+      anchorY: sceneNumber(label.anchorY, 1),
+      whiteSpace: normalizeSceneLabelWhiteSpace(label.whiteSpace),
+      textAlign: normalizeSceneLabelAlign(label.textAlign),
+    });
   }
 
   function sceneWorldObjectSegments(object, timeSeconds) {
@@ -2556,6 +2748,154 @@
     return createSceneCanvasRenderer(ctx2d, canvas);
   }
 
+  function sceneLabelLayoutKey(label) {
+    return [
+      label.text,
+      label.font,
+      sceneNumber(label.maxWidth, 180),
+      normalizeSceneLabelWhiteSpace(label.whiteSpace),
+      sceneNumber(label.lineHeight, 18),
+      normalizeSceneLabelAlign(label.textAlign),
+    ].join("\n");
+  }
+
+  function sceneMeasureTextWidth(font, text) {
+    if (typeof window.__gosx_measure_text_batch !== "function") {
+      return String(text || "").length * 8;
+    }
+    try {
+      const raw = window.__gosx_measure_text_batch(font, JSON.stringify([String(text || "")]));
+      const widths = typeof raw === "string" ? JSON.parse(raw) : raw;
+      return Array.isArray(widths) && widths.length > 0 ? sceneNumber(widths[0], String(text || "").length * 8) : String(text || "").length * 8;
+    } catch (_error) {
+      return String(text || "").length * 8;
+    }
+  }
+
+  function fallbackSceneLabelLayout(label) {
+    const text = String(label.text || "");
+    const width = Math.min(sceneNumber(label.maxWidth, 180), Math.max(1, sceneMeasureTextWidth(label.font, text)));
+    return {
+      lines: [{ text: text }],
+      lineCount: 1,
+      height: sceneNumber(label.lineHeight, 18),
+      maxLineWidth: width,
+    };
+  }
+
+  function layoutSceneLabel(label, layoutCache) {
+    const cacheKey = sceneLabelLayoutKey(label);
+    if (layoutCache.has(cacheKey)) {
+      return {
+        key: cacheKey,
+        value: layoutCache.get(cacheKey),
+      };
+    }
+
+    let layout = null;
+    if (typeof window.__gosx_text_layout === "function") {
+      try {
+        layout = window.__gosx_text_layout(
+          label.text,
+          label.font,
+          sceneNumber(label.maxWidth, 180),
+          normalizeSceneLabelWhiteSpace(label.whiteSpace),
+          sceneNumber(label.lineHeight, 18),
+        );
+      } catch (error) {
+        console.error("[gosx] scene label layout failed:", error);
+      }
+    }
+
+    if (!layout || !Array.isArray(layout.lines)) {
+      layout = fallbackSceneLabelLayout(label);
+    }
+    layoutCache.set(cacheKey, layout);
+    return {
+      key: cacheKey,
+      value: layout,
+    };
+  }
+
+  function renderSceneLabelElement(element, label, layoutKey, layout) {
+    const width = Math.max(1, Math.min(sceneNumber(label.maxWidth, 180), Math.max(1, Math.ceil(sceneNumber(layout.maxLineWidth, 0) || sceneMeasureTextWidth(label.font, label.text)))));
+    element.setAttribute("data-gosx-scene-label", label.id || "");
+    element.style.position = "absolute";
+    element.style.left = (sceneNumber(label.position && label.position.x, 0) + sceneNumber(label.offsetX, 0)) + "px";
+    element.style.top = (sceneNumber(label.position && label.position.y, 0) + sceneNumber(label.offsetY, 0)) + "px";
+    element.style.transform = "translate(" + (-sceneNumber(label.anchorX, 0.5) * 100) + "%, " + (-sceneNumber(label.anchorY, 1) * 100) + "%)";
+    element.style.width = width + "px";
+    element.style.maxWidth = sceneNumber(label.maxWidth, 180) + "px";
+    element.style.pointerEvents = "none";
+    element.style.boxSizing = "border-box";
+    element.style.padding = "8px 10px";
+    element.style.borderRadius = "12px";
+    element.style.border = "1px solid " + (label.borderColor || "rgba(141, 225, 255, 0.24)");
+    element.style.background = label.background || "rgba(8, 21, 31, 0.82)";
+    element.style.color = label.color || "#ecf7ff";
+    element.style.font = label.font || '600 13px "IBM Plex Sans", "Segoe UI", sans-serif';
+    element.style.lineHeight = sceneNumber(label.lineHeight, 18) + "px";
+    element.style.textAlign = normalizeSceneLabelAlign(label.textAlign);
+    element.style.whiteSpace = normalizeSceneLabelWhiteSpace(label.whiteSpace) === "normal" ? "normal" : normalizeSceneLabelWhiteSpace(label.whiteSpace);
+    element.style.boxShadow = "0 14px 32px rgba(3, 10, 16, 0.28)";
+    element.style.backdropFilter = "blur(10px)";
+    element.style.webkitBackdropFilter = "blur(10px)";
+    element.style.willChange = "left, top, transform";
+    element.style.zIndex = String(Math.max(1, 1000 - Math.round(sceneNumber(label.depth, 0) * 10)));
+
+    if (element.__gosxLayoutKey === layoutKey) {
+      return;
+    }
+
+    clearChildren(element);
+    const lines = Array.isArray(layout.lines) && layout.lines.length > 0 ? layout.lines : [{ text: label.text }];
+    for (const line of lines) {
+      const lineElement = document.createElement("div");
+      lineElement.setAttribute("data-gosx-scene-label-line", "");
+      lineElement.textContent = line && typeof line.text === "string" && line.text !== "" ? line.text : "\u00a0";
+      if (normalizeSceneLabelWhiteSpace(label.whiteSpace) !== "normal") {
+        lineElement.style.whiteSpace = normalizeSceneLabelWhiteSpace(label.whiteSpace);
+      }
+      element.appendChild(lineElement);
+    }
+    element.__gosxLayoutKey = layoutKey;
+  }
+
+  function renderSceneLabels(layer, bundle, layoutCache, elements) {
+    if (!layer) {
+      return;
+    }
+
+    const labels = bundle && Array.isArray(bundle.labels) ? bundle.labels : [];
+    const active = new Set();
+
+    for (const label of labels) {
+      if (!label || typeof label.text !== "string" || label.text.trim() === "") {
+        continue;
+      }
+      const id = label.id || ("scene-label-" + active.size);
+      active.add(id);
+      let element = elements.get(id);
+      if (!element) {
+        element = document.createElement("div");
+        layer.appendChild(element);
+        elements.set(id, element);
+      }
+      const layout = layoutSceneLabel(label, layoutCache);
+      renderSceneLabelElement(element, label, layout.key, layout.value);
+    }
+
+    for (const [id, element] of elements.entries()) {
+      if (active.has(id)) {
+        continue;
+      }
+      if (element.parentNode === layer) {
+        layer.removeChild(element);
+      }
+      elements.delete(id);
+    }
+  }
+
   window.__gosx_register_engine_factory("GoSXScene3D", async function(ctx) {
     if (!ctx.mount || typeof document.createElement !== "function") {
       console.warn("[gosx] Scene3D requires a mount element");
@@ -2568,13 +2908,20 @@
     const sceneState = createSceneState(props);
     const runtimeScene = ctx.runtimeMode === "shared" && Boolean(ctx.programRef);
     const objects = sceneStateObjects(sceneState);
-    const shouldAnimate = runtimeScene || sceneBool(props.autoRotate, true) || objects.some(function(object) {
-      return object.spinX !== 0 || object.spinY !== 0 || object.spinZ !== 0;
-    });
+
+    function sceneShouldAnimate() {
+      if (runtimeScene || sceneBool(props.autoRotate, true)) {
+        return true;
+      }
+      return sceneStateObjects(sceneState).some(sceneObjectAnimated) || sceneStateLabels(sceneState).some(sceneLabelAnimated);
+    }
 
     clearChildren(ctx.mount);
     ctx.mount.setAttribute("data-gosx-scene3d-mounted", "true");
     ctx.mount.setAttribute("aria-label", props.ariaLabel || props.label || "Interactive GoSX 3D scene");
+    if (!ctx.mount.style.position) {
+      ctx.mount.style.position = "relative";
+    }
 
     const canvas = document.createElement("canvas");
     canvas.setAttribute("width", String(width));
@@ -2586,6 +2933,15 @@
     canvas.height = height;
     ctx.mount.appendChild(canvas);
 
+    const labelLayer = document.createElement("div");
+    labelLayer.setAttribute("data-gosx-scene3d-label-layer", "true");
+    labelLayer.setAttribute("aria-hidden", "true");
+    labelLayer.style.position = "absolute";
+    labelLayer.style.inset = "0";
+    labelLayer.style.pointerEvents = "none";
+    labelLayer.style.overflow = "hidden";
+    ctx.mount.appendChild(labelLayer);
+
     const renderer = createSceneRenderer(canvas, props);
     if (!renderer) {
       console.warn("[gosx] Scene3D could not acquire a renderer");
@@ -2594,11 +2950,16 @@
           if (canvas.parentNode === ctx.mount) {
             ctx.mount.removeChild(canvas);
           }
+          if (labelLayer.parentNode === ctx.mount) {
+            ctx.mount.removeChild(labelLayer);
+          }
         },
       };
     }
     ctx.mount.setAttribute("data-gosx-scene3d-renderer", renderer.kind);
     let latestBundle = null;
+    const labelLayoutCache = new Map();
+    const labelElements = new Map();
     const dragHandle = setupSceneDragInteractions(canvas, props, width, height, function() {
       return latestBundle;
     });
@@ -2622,7 +2983,8 @@
         if (runtimeBundle) {
           latestBundle = runtimeBundle;
           renderer.render(runtimeBundle);
-          if (shouldAnimate) {
+          renderSceneLabels(labelLayer, runtimeBundle, labelLayoutCache, labelElements);
+          if (sceneShouldAnimate()) {
             frameHandle = engineFrame(renderFrame);
           }
           return;
@@ -2631,9 +2993,10 @@
       if (runtimeScene && ctx.runtime) {
         applySceneCommands(sceneState, ctx.runtime.tick());
       }
-      latestBundle = createSceneRenderBundle(width, height, sceneState.background, sceneState.camera, sceneStateObjects(sceneState), timeSeconds);
+      latestBundle = createSceneRenderBundle(width, height, sceneState.background, sceneState.camera, sceneStateObjects(sceneState), sceneStateLabels(sceneState), timeSeconds);
       renderer.render(latestBundle);
-      if (shouldAnimate) {
+      renderSceneLabels(labelLayer, latestBundle, labelLayoutCache, labelElements);
+      if (sceneShouldAnimate()) {
         frameHandle = engineFrame(renderFrame);
       }
     }
@@ -2644,6 +3007,7 @@
       width,
       height,
       objects: objects.length,
+      labels: sceneStateLabels(sceneState).length,
     });
 
     return {
@@ -2659,6 +3023,9 @@
         }
         if (canvas.parentNode === ctx.mount) {
           ctx.mount.removeChild(canvas);
+        }
+        if (labelLayer.parentNode === ctx.mount) {
+          ctx.mount.removeChild(labelLayer);
         }
       },
     };
@@ -2949,6 +3316,32 @@
       return null;
     }
     bundle.camera = sceneRenderCamera(bundle.camera);
+    bundle.labels = Array.isArray(bundle.labels) ? bundle.labels.map(function(label, index) {
+      const item = label && typeof label === "object" ? label : {};
+      return {
+        id: item.id || ("scene-label-" + index),
+        text: typeof item.text === "string" ? item.text : "",
+        position: {
+          x: sceneNumber(item.position && item.position.x, 0),
+          y: sceneNumber(item.position && item.position.y, 0),
+        },
+        depth: sceneNumber(item.depth, 0),
+        maxWidth: Math.max(48, sceneNumber(item.maxWidth, 180)),
+        font: typeof item.font === "string" && item.font ? item.font : '600 13px "IBM Plex Sans", "Segoe UI", sans-serif',
+        lineHeight: Math.max(12, sceneNumber(item.lineHeight, 18)),
+        color: typeof item.color === "string" && item.color ? item.color : "#ecf7ff",
+        background: typeof item.background === "string" && item.background ? item.background : "rgba(8, 21, 31, 0.82)",
+        borderColor: typeof item.borderColor === "string" && item.borderColor ? item.borderColor : "rgba(141, 225, 255, 0.24)",
+        offsetX: sceneNumber(item.offsetX, 0),
+        offsetY: sceneNumber(item.offsetY, -14),
+        anchorX: Math.max(0, Math.min(1, sceneNumber(item.anchorX, 0.5))),
+        anchorY: Math.max(0, Math.min(1, sceneNumber(item.anchorY, 1))),
+        whiteSpace: normalizeSceneLabelWhiteSpace(item.whiteSpace),
+        textAlign: normalizeSceneLabelAlign(item.textAlign),
+      };
+    }).filter(function(label) {
+      return label.text.trim() !== "";
+    }) : [];
     bundle.positions = sceneFloatArray(bundle.positions);
     bundle.colors = sceneFloatArray(bundle.colors);
     bundle.worldPositions = sceneFloatArray(bundle.worldPositions);

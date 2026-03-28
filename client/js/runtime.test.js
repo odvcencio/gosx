@@ -1209,9 +1209,32 @@ test("bootstrap hydrates shared-runtime Scene3D programs", async () => {
         { id: "shield", kind: "box", materialIndex: 1, vertexOffset: 2, vertexCount: 2, static: false },
         { id: "orb", kind: "sphere", materialIndex: 2, vertexOffset: 4, vertexCount: 2, static: false },
       ],
+      labels: [
+        {
+          id: "orb-label",
+          text: "Orbit node\nShared runtime",
+          position: { x: 318, y: 132 },
+          depth: 7.2,
+          maxWidth: 188,
+          font: '600 13px "IBM Plex Sans", "Segoe UI", sans-serif',
+          lineHeight: 18,
+          whiteSpace: "pre-wrap",
+          textAlign: "center",
+        },
+      ],
       objectCount: 3,
     }),
   });
+  const textLayoutCalls = [];
+  env.context.__gosx_text_layout = (...args) => {
+    textLayoutCalls.push(args);
+    return {
+      lines: [{ text: "Orbit node" }, { text: "Shared runtime" }],
+      lineCount: 2,
+      height: 36,
+      maxLineWidth: 94,
+    };
+  };
 
   runScript(bootstrapSource, env.context, "bootstrap.js");
   await flushAsyncWork();
@@ -1244,6 +1267,17 @@ test("bootstrap hydrates shared-runtime Scene3D programs", async () => {
   assert.ok(gl.ops.some((entry) => entry[0] === "bufferData" && entry[4] === gl.DYNAMIC_DRAW));
   assert.ok(gl.ops.some((entry) => entry[0] === "blendFunc" && entry[1] === gl.SRC_ALPHA && entry[2] === gl.ONE_MINUS_SRC_ALPHA));
   assert.ok(gl.ops.some((entry) => entry[0] === "blendFunc" && entry[1] === gl.SRC_ALPHA && entry[2] === gl.ONE));
+  assert.equal(mount.children.length, 2);
+  assert.equal(mount.children[1].getAttribute("data-gosx-scene3d-label-layer"), "true");
+  assert.equal(mount.children[1].children.length, 1);
+  assert.equal(mount.children[1].children[0].textContent, "Orbit nodeShared runtime");
+  assert.deepEqual(textLayoutCalls, [[
+    "Orbit node\nShared runtime",
+    '600 13px "IBM Plex Sans", "Segoe UI", sans-serif',
+    188,
+    "pre-wrap",
+    18,
+  ]]);
 
   env.context.__gosx_dispose_engine("gosx-engine-rt");
   assert.deepEqual(env.engineDisposeCalls, [["gosx-engine-rt"]]);
@@ -1928,10 +1962,12 @@ test("bootstrap mounts native Scene3D engines without extra scripts", async () =
 
   assert.equal(env.context.__gosx.ready, true);
   assert.equal(env.context.__gosx.engines.size, 1);
-  assert.equal(mount.children.length, 1);
+  assert.equal(mount.children.length, 2);
   assert.equal(mount.firstElementChild.tagName, "CANVAS");
   assert.equal(mount.firstElementChild.getAttribute("width"), "640");
   assert.equal(mount.firstElementChild.getAttribute("height"), "360");
+  assert.equal(mount.children[1].getAttribute("data-gosx-scene3d-label-layer"), "true");
+  assert.equal(mount.children[1].children.length, 0);
 
   env.context.__gosx_dispose_engine("gosx-engine-2");
   assert.equal(env.context.__gosx.engines.size, 0);
@@ -1965,6 +2001,9 @@ test("bootstrap renders mixed native Scene3D primitives", async () => {
                 { kind: "pyramid", width: 1.4, height: 1.8, depth: 1.4, x: 1.9, y: -0.2, z: 0.4, color: "#b8ffb0" },
                 { kind: "plane", width: 5.2, depth: 3.8, y: -1.6, z: 0.3, color: "#35556a" },
               ],
+              labels: [
+                { id: "zoo-label", text: "Geometry zoo", x: 0.2, y: 1.4, z: 0.9, maxWidth: 164 },
+              ],
             },
           },
           capabilities: ["canvas", "animation"],
@@ -1972,20 +2011,35 @@ test("bootstrap renders mixed native Scene3D primitives", async () => {
       ],
     },
   });
+  const textLayoutCalls = [];
+  env.context.__gosx_text_layout = (...args) => {
+    textLayoutCalls.push(args);
+    return {
+      lines: [{ text: "Geometry zoo" }],
+      lineCount: 1,
+      height: 18,
+      maxLineWidth: 92,
+    };
+  };
 
   runScript(bootstrapSource, env.context, "bootstrap.js");
   await flushAsyncWork();
 
   assert.equal(env.context.__gosx.ready, true);
-  assert.equal(mount.children.length, 1);
+  assert.equal(mount.children.length, 2);
   const canvas = mount.firstElementChild;
   assert.equal(canvas.tagName, "CANVAS");
 
   const ctx2d = canvas.getContext("2d");
   const strokeCount = ctx2d.ops.filter((entry) => entry[0] === "stroke").length;
+  const labelLayer = mount.children[1];
   assert.equal(canvas.getAttribute("width"), "520");
   assert.equal(canvas.getAttribute("height"), "320");
   assert.equal(mount.getAttribute("data-gosx-scene3d-mounted"), "true");
+  assert.equal(labelLayer.getAttribute("data-gosx-scene3d-label-layer"), "true");
+  assert.equal(labelLayer.children.length, 1);
+  assert.equal(labelLayer.children[0].textContent, "Geometry zoo");
+  assert.equal(textLayoutCalls.length, 1);
   assert.ok(strokeCount >= 12);
   assert.equal(env.consoleLogs.warn.length, 0);
   assert.equal(env.consoleLogs.error.length, 0);

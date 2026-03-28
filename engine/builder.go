@@ -180,6 +180,14 @@ func (b *Builder) Mesh(geometry, material string, props map[string]islandprogram
 	})
 }
 
+// Label appends a screen-overlay label node anchored in world space.
+func (b *Builder) Label(props map[string]islandprogram.ExprID) Handle {
+	return b.AddNode(Node{
+		Kind:  "label",
+		Props: cloneNodeProps(props),
+	})
+}
+
 // Node returns a mutable pointer to an existing node.
 func (b *Builder) Node(handle Handle) *Node {
 	index := int(handle)
