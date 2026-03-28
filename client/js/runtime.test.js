@@ -1427,6 +1427,8 @@ test("bootstrap mounts declarative text layout clamp options on managed blocks",
   block.setAttribute("data-gosx-text-layout", "");
   block.setAttribute("data-gosx-text-layout-font", "600 16px serif");
   block.setAttribute("data-gosx-text-layout-line-height", "20");
+  block.setAttribute("data-gosx-text-layout-white-space", "pre-wrap");
+  block.setAttribute("data-gosx-text-layout-align", "center");
   block.setAttribute("data-gosx-text-layout-max-lines", "1");
   block.setAttribute("data-gosx-text-layout-overflow", "ellipsis");
   block.textContent = "hello world from gosx";
@@ -1440,9 +1442,38 @@ test("bootstrap mounts declarative text layout clamp options on managed blocks",
 
   assert.equal(block.getAttribute("data-gosx-text-layout-max-lines"), "1");
   assert.equal(block.getAttribute("data-gosx-text-layout-overflow"), "ellipsis");
+  assert.equal(block.getAttribute("data-gosx-text-layout-state"), "truncated");
   assert.equal(block.getAttribute("data-gosx-text-layout-truncated"), "true");
+  assert.equal(block.style["--gosx-text-layout-white-space-mode"], "pre-wrap");
+  assert.equal(block.style["--gosx-text-layout-align"], "center");
   assert.equal(block.style["--gosx-text-layout-max-lines"], "1");
   assert.equal(env.context.__gosx.textLayout.read(block).truncated, true);
+});
+
+test("bootstrap installs a stronger CSS contract for managed text layout blocks", async () => {
+  const block = new FakeElement("div", null);
+  block.width = 88;
+  block.setAttribute("data-gosx-text-layout", "");
+  block.setAttribute("data-gosx-text-layout-font", "600 16px serif");
+  block.setAttribute("data-gosx-text-layout-line-height", "20");
+  block.setAttribute("data-gosx-text-layout-max-width", "88");
+  block.setAttribute("align", "right");
+  block.textContent = "hello world from gosx";
+
+  const env = createContext({
+    elements: [block],
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const styleTag = env.document.head.children[0];
+  assert.equal(styleTag.tagName, "STYLE");
+  assert.ok(styleTag.textContent.includes('white-space: var(--gosx-text-layout-white-space-mode, normal);'));
+  assert.ok(styleTag.textContent.includes('[data-gosx-text-layout-role="block"][data-gosx-text-layout-max-width]'));
+  assert.equal(block.style["--gosx-text-layout-align"], "right");
+  assert.equal(block.style["--gosx-text-layout-max-width"], "88px");
+  assert.equal(block.getAttribute("data-gosx-text-layout-state"), "ready");
 });
 
 test("bootstrap refreshes managed text layout blocks after font metric invalidation", async () => {
