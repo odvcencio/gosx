@@ -8,11 +8,13 @@ import (
 
 	"github.com/odvcencio/gosx/client/bridge"
 	"github.com/odvcencio/gosx/client/vm"
+	"github.com/odvcencio/gosx/crdt"
 	rootengine "github.com/odvcencio/gosx/engine"
 	"github.com/odvcencio/gosx/highlight"
 )
 
 func registerRuntime(b *bridge.Bridge) {
+	crdtBridge := bridge.NewCRDTBridge()
 	b.SetPatchCallback(func(islandID, patchJSON string) {
 		js.Global().Call("__gosx_apply_patches", islandID, patchJSON)
 	})
@@ -26,6 +28,10 @@ func registerRuntime(b *bridge.Bridge) {
 	setRuntimeFunc("__gosx_highlight", highlightRuntimeFunc())
 	setRuntimeFunc("__gosx_set_shared_signal", sharedSignalRuntimeFunc(b))
 	setRuntimeFunc("__gosx_set_input_batch", inputBatchRuntimeFunc(b))
+	setRuntimeFunc("__gosx_crdt_init", crdtInitRuntimeFunc(crdtBridge))
+	setRuntimeFunc("__gosx_crdt_sync", crdtSyncRuntimeFunc(crdtBridge))
+	setRuntimeFunc("__gosx_crdt_put", crdtPutRuntimeFunc(crdtBridge))
+	setRuntimeFunc("__gosx_crdt_get", crdtGetRuntimeFunc(crdtBridge))
 }
 
 func setRuntimeFunc(name string, fn js.Func) {
@@ -169,6 +175,74 @@ func inputBatchRuntimeFunc(b *bridge.Bridge) js.Func {
 	})
 }
 
+func crdtInitRuntimeFunc(b *bridge.CRDTBridge) js.Func {
+	return js.FuncOf(func(this js.Value, args []js.Value) any {
+		if len(args) == 0 || args[0].Type() == js.TypeUndefined || args[0].Type() == js.TypeNull {
+			if err := b.InitDoc(nil); err != nil {
+				return jsError(err)
+			}
+			return js.Null()
+		}
+		data, err := decodeProgramData(args[0])
+		if err != nil {
+			return jsError(err)
+		}
+		if err := b.InitDoc(data); err != nil {
+			return jsError(err)
+		}
+		return js.Null()
+	})
+}
+
+func crdtSyncRuntimeFunc(b *bridge.CRDTBridge) js.Func {
+	return js.FuncOf(func(this js.Value, args []js.Value) any {
+		if len(args) < 1 {
+			return jsErrorf("need 1 arg (syncMsg)")
+		}
+		msg, err := decodeProgramData(args[0])
+		if err != nil {
+			return jsError(err)
+		}
+		reply, err := b.Sync(msg)
+		if err != nil {
+			return jsError(err)
+		}
+		if len(reply) == 0 {
+			return js.Null()
+		}
+		return bytesToJS(reply)
+	})
+}
+
+func crdtPutRuntimeFunc(b *bridge.CRDTBridge) js.Func {
+	return js.FuncOf(func(this js.Value, args []js.Value) any {
+		if len(args) < 3 {
+			return jsErrorf("need 3 args (obj, prop, value)")
+		}
+		valueJSON, err := normalizeJSONArg(args[2], "null")
+		if err != nil {
+			return jsError(err)
+		}
+		if err := b.Put(crdt.ObjID(args[0].String()), crdt.Prop(args[1].String()), valueJSON); err != nil {
+			return jsError(err)
+		}
+		return js.Null()
+	})
+}
+
+func crdtGetRuntimeFunc(b *bridge.CRDTBridge) js.Func {
+	return js.FuncOf(func(this js.Value, args []js.Value) any {
+		if len(args) < 2 {
+			return jsErrorf("need 2 args (obj, prop)")
+		}
+		valueJSON, err := b.Get(crdt.ObjID(args[0].String()), crdt.Prop(args[1].String()))
+		if err != nil {
+			return jsError(err)
+		}
+		return js.Global().Get("JSON").Call("parse", valueJSON)
+	})
+}
+
 type hydrateCall struct {
 	islandID      string
 	componentName string
@@ -206,6 +280,12 @@ func decodeProgramData(value js.Value) ([]byte, error) {
 	programData := make([]byte, length)
 	js.CopyBytesToGo(programData, uint8Array)
 	return programData, nil
+}
+
+func bytesToJS(data []byte) js.Value {
+	arr := js.Global().Get("Uint8Array").New(len(data))
+	js.CopyBytesToJS(arr, data)
+	return arr
 }
 
 func normalizeUint8Array(value js.Value) js.Value {
