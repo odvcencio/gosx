@@ -30,6 +30,7 @@
     islands: new Map(),   // islandID -> { component, listeners, root }
     engines: new Map(),   // engineID -> { component, kind, mount, handle }
     hubs: new Map(),      // hubID -> { entry, socket, reconnectTimer }
+    textLayouts: new Map(), // textLayoutID -> { element, result, config }
     input: {
       pending: null,
       frameHandle: 0,
@@ -47,10 +48,14 @@
   const textLayoutMetricsCacheLimit = 1024;
   const textLayoutRangesCache = new Map();
   const textLayoutRangesCacheLimit = 1024;
+  const TEXT_LAYOUT_ATTR = "data-gosx-text-layout";
+  const TEXT_LAYOUT_ID_ATTR = "data-gosx-text-layout-id";
   const textLayoutInvalidationListeners = new Set();
+  const textLayoutRecordsByElement = new Map();
   let textMeasureContext = null;
   let textLayoutRevision = 0;
   let textLayoutFontObserverInstalled = false;
+  let nextManagedTextLayoutID = 0;
   let textLayoutExternalImpl = typeof window.__gosx_text_layout === "function" ? window.__gosx_text_layout : null;
   let textLayoutMetricsExternalImpl = typeof window.__gosx_text_layout_metrics === "function" ? window.__gosx_text_layout_metrics : null;
   let textLayoutRangesExternalImpl = typeof window.__gosx_text_layout_ranges === "function" ? window.__gosx_text_layout_ranges : null;
@@ -1507,6 +1512,396 @@
   window.__gosx_text_layout_metrics = gosxTextLayoutMetrics;
   window.__gosx_text_layout_ranges = gosxTextLayoutRanges;
   installTextLayoutFontObserver();
+
+  function textLayoutNumberValue(value, fallback) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : fallback;
+  }
+
+  function setStyleValue(style, name, value) {
+    if (!style || typeof name !== "string") {
+      return;
+    }
+    if (typeof style.setProperty === "function") {
+      style.setProperty(name, String(value));
+      return;
+    }
+    style[name] = String(value);
+  }
+
+  function textLayoutElementID(element) {
+    if (!element || typeof element.getAttribute !== "function") {
+      return "";
+    }
+    const existing = element.getAttribute(TEXT_LAYOUT_ID_ATTR);
+    if (existing) {
+      return existing;
+    }
+    const derived = element.id ? ("gosx-text-layout:" + element.id) : ("gosx-text-layout-" + (++nextManagedTextLayoutID));
+    if (typeof element.setAttribute === "function") {
+      element.setAttribute(TEXT_LAYOUT_ID_ATTR, derived);
+    }
+    return derived;
+  }
+
+  function walkElementTree(root, visit) {
+    if (!root) {
+      return;
+    }
+    if (root.nodeType === 1) {
+      visit(root);
+    }
+    const children = root.children || root.childNodes || [];
+    for (const child of children) {
+      if (child && child.nodeType === 1) {
+        walkElementTree(child, visit);
+      }
+    }
+  }
+
+  function collectManagedTextLayoutElements(root) {
+    const elements = [];
+    walkElementTree(root, function(element) {
+      if (hasAttributeName(element, TEXT_LAYOUT_ATTR)) {
+        elements.push(element);
+      }
+    });
+    return elements;
+  }
+
+  function normalizeManagedTextLayoutConfig(element, options) {
+    const config = options && typeof options === "object" ? options : {};
+    const hasOwn = Object.prototype.hasOwnProperty;
+    const font = hasOwn.call(config, "font")
+      ? String(config.font == null ? "" : config.font)
+      : String((element.getAttribute && element.getAttribute("data-gosx-text-layout-font")) || "");
+    const whiteSpace = normalizeTextLayoutWhiteSpace(
+      hasOwn.call(config, "whiteSpace") ? config.whiteSpace : (element.getAttribute && element.getAttribute("data-gosx-text-layout-white-space"))
+    );
+    const lineHeight = Math.max(1, textLayoutNumberValue(
+      hasOwn.call(config, "lineHeight") ? config.lineHeight : (element.getAttribute && element.getAttribute("data-gosx-text-layout-line-height")),
+      16
+    ));
+    let maxWidth = textLayoutNumberValue(
+      hasOwn.call(config, "maxWidth") ? config.maxWidth : (element.getAttribute && element.getAttribute("data-gosx-text-layout-max-width")),
+      0
+    );
+    if (!(maxWidth > 0) && element && typeof element.getBoundingClientRect === "function") {
+      const rect = element.getBoundingClientRect();
+      maxWidth = textLayoutNumberValue(rect && rect.width, 0);
+    }
+    if (!(maxWidth > 0) && element) {
+      maxWidth = textLayoutNumberValue(element.clientWidth || element.offsetWidth || element.width, 0);
+    }
+    if (!(maxWidth > 0)) {
+      maxWidth = Number.MAX_SAFE_INTEGER;
+    }
+    const observe = hasOwn.call(config, "observe")
+      ? Boolean(config.observe)
+      : String((element.getAttribute && element.getAttribute("data-gosx-text-layout-observe")) || "true").toLowerCase() !== "false";
+    const sourceText = hasOwn.call(config, "text")
+      ? String(config.text == null ? "" : config.text)
+      : String((element.getAttribute && element.getAttribute("data-gosx-text-layout-source")) || element.textContent || "");
+
+    return {
+      font,
+      whiteSpace,
+      lineHeight,
+      maxWidth,
+      observe,
+      text: sourceText,
+      heightHint: Math.max(0, textLayoutNumberValue(element.getAttribute && element.getAttribute("data-gosx-text-layout-height-hint"), 0)),
+      lineCountHint: Math.max(0, Math.floor(textLayoutNumberValue(element.getAttribute && element.getAttribute("data-gosx-text-layout-line-count-hint"), 0))),
+    };
+  }
+
+  function applyManagedTextLayoutHint(element, config) {
+    if (!element) {
+      return;
+    }
+    if (config.heightHint > 0) {
+      setStyleValue(element.style, "--gosx-text-layout-height", config.heightHint + "px");
+      if (typeof element.setAttribute === "function") {
+        element.setAttribute("data-gosx-text-layout-height-hint", String(config.heightHint));
+      }
+    }
+    if (config.lineCountHint > 0) {
+      setStyleValue(element.style, "--gosx-text-layout-line-count", String(config.lineCountHint));
+      if (typeof element.setAttribute === "function") {
+        element.setAttribute("data-gosx-text-layout-line-count-hint", String(config.lineCountHint));
+      }
+    }
+    if (typeof element.setAttribute === "function") {
+      element.setAttribute("data-gosx-text-layout-ready", "false");
+    }
+  }
+
+  function dispatchManagedTextLayoutEvent(record, reason) {
+    if (!record || typeof CustomEvent !== "function") {
+      return;
+    }
+    const detail = {
+      id: record.id,
+      element: record.element,
+      reason: reason || "refresh",
+      revision: gosxTextLayoutRevision(),
+      config: record.config,
+      result: record.result,
+    };
+    const event = new CustomEvent("gosx:textlayout", { detail });
+    if (record.element && typeof record.element.dispatchEvent === "function") {
+      record.element.dispatchEvent(event);
+    }
+    if (typeof document.dispatchEvent === "function") {
+      document.dispatchEvent(new CustomEvent("gosx:textlayout", { detail }));
+    }
+  }
+
+  function applyManagedTextLayoutResult(record, config, result, reason) {
+    const element = record.element;
+    record.config = config;
+    record.result = result;
+    if (!element) {
+      return result;
+    }
+
+    setStyleValue(element.style, "--gosx-text-layout-height", result.height + "px");
+    setStyleValue(element.style, "--gosx-text-layout-line-count", String(result.lineCount));
+    setStyleValue(element.style, "--gosx-text-layout-max-line-width", result.maxLineWidth + "px");
+    if (config.maxWidth > 0 && config.maxWidth < Number.MAX_SAFE_INTEGER) {
+      setStyleValue(element.style, "--gosx-text-layout-width", config.maxWidth + "px");
+    }
+
+    if (typeof element.setAttribute === "function") {
+      element.setAttribute("data-gosx-text-layout-ready", "true");
+      element.setAttribute("data-gosx-text-layout-line-count", String(result.lineCount));
+      element.setAttribute("data-gosx-text-layout-height", String(result.height));
+      element.setAttribute("data-gosx-text-layout-max-line-width", String(result.maxLineWidth));
+      element.setAttribute("data-gosx-text-layout-revision", String(gosxTextLayoutRevision()));
+    }
+    element.__gosxTextLayout = result;
+
+    if (typeof record.onUpdate === "function") {
+      try {
+        record.onUpdate(result, config);
+      } catch (error) {
+        console.error("[gosx] text layout onUpdate failed:", error);
+      }
+    }
+
+    window.__gosx.textLayouts.set(record.id, {
+      element,
+      config,
+      result,
+    });
+    dispatchManagedTextLayoutEvent(record, reason);
+    return result;
+  }
+
+  function refreshManagedTextLayoutRecord(record, reason) {
+    if (!record || !record.element) {
+      return null;
+    }
+    const config = normalizeManagedTextLayoutConfig(record.element, record.options);
+    const layoutKey = [
+      gosxTextLayoutRevision(),
+      config.text,
+      config.font,
+      config.whiteSpace,
+      config.lineHeight,
+      config.maxWidth,
+    ].join("\n");
+    if (layoutKey === record.layoutKey && record.result) {
+      return record.result;
+    }
+    record.layoutKey = layoutKey;
+    const result = gosxTextLayoutRanges(config.text, config.font, config.maxWidth, config.whiteSpace, config.lineHeight);
+    return applyManagedTextLayoutResult(record, config, result, reason);
+  }
+
+  function disconnectManagedTextLayoutObservers(record) {
+    if (!record) {
+      return;
+    }
+    if (record.resizeObserver && typeof record.resizeObserver.disconnect === "function") {
+      record.resizeObserver.disconnect();
+      record.resizeObserver = null;
+    }
+    if (record.mutationObserver && typeof record.mutationObserver.disconnect === "function") {
+      record.mutationObserver.disconnect();
+      record.mutationObserver = null;
+    }
+    if (record.windowResizeListener && typeof window.removeEventListener === "function") {
+      window.removeEventListener("resize", record.windowResizeListener);
+      record.windowResizeListener = null;
+    }
+    if (typeof record.stopInvalidation === "function") {
+      record.stopInvalidation();
+      record.stopInvalidation = null;
+    }
+  }
+
+  function disposeManagedTextLayout(target) {
+    let record = null;
+    if (typeof target === "string") {
+      const current = window.__gosx.textLayouts.get(target);
+      if (current && current.element) {
+        record = textLayoutRecordsByElement.get(current.element) || null;
+      }
+    } else if (target) {
+      record = textLayoutRecordsByElement.get(target) || null;
+    }
+    if (!record) {
+      return;
+    }
+    disconnectManagedTextLayoutObservers(record);
+    if (record.element) {
+      textLayoutRecordsByElement.delete(record.element);
+      record.element.__gosxTextLayout = null;
+    }
+    window.__gosx.textLayouts.delete(record.id);
+  }
+
+  function observeManagedTextLayout(element, options) {
+    if (!element || typeof element !== "object") {
+      return { refresh: function() { return null; }, dispose: function() {} };
+    }
+
+    const existing = textLayoutRecordsByElement.get(element);
+    if (existing) {
+      if (options && typeof options === "object") {
+        disposeManagedTextLayout(element);
+      } else {
+        refreshManagedTextLayoutRecord(existing, "observe");
+        return {
+          id: existing.id,
+          element: existing.element,
+          refresh: function(reason) {
+            return refreshManagedTextLayoutRecord(existing, reason || "manual");
+          },
+          read: function() {
+            return existing.result;
+          },
+          dispose: function() {
+            disposeManagedTextLayout(existing.element);
+          },
+        };
+      }
+    }
+
+    const record = {
+      id: textLayoutElementID(element),
+      element,
+      options: options && typeof options === "object" ? Object.assign({}, options) : {},
+      result: null,
+      config: null,
+      layoutKey: "",
+      onUpdate: options && typeof options.onUpdate === "function" ? options.onUpdate : null,
+      resizeObserver: null,
+      mutationObserver: null,
+      windowResizeListener: null,
+      stopInvalidation: null,
+    };
+
+    textLayoutRecordsByElement.set(element, record);
+    applyManagedTextLayoutHint(element, normalizeManagedTextLayoutConfig(element, record.options));
+    refreshManagedTextLayoutRecord(record, "mount");
+
+    if (record.config && record.config.observe) {
+      record.stopInvalidation = onTextLayoutInvalidated(function() {
+        refreshManagedTextLayoutRecord(record, "invalidate");
+      });
+
+      if (typeof ResizeObserver === "function") {
+        record.resizeObserver = new ResizeObserver(function() {
+          refreshManagedTextLayoutRecord(record, "resize");
+        });
+        if (typeof record.resizeObserver.observe === "function") {
+          record.resizeObserver.observe(element);
+        }
+      } else if (typeof window.addEventListener === "function") {
+        record.windowResizeListener = function() {
+          refreshManagedTextLayoutRecord(record, "resize");
+        };
+        window.addEventListener("resize", record.windowResizeListener);
+      }
+
+      if (typeof MutationObserver === "function") {
+        record.mutationObserver = new MutationObserver(function() {
+          refreshManagedTextLayoutRecord(record, "mutation");
+        });
+        if (typeof record.mutationObserver.observe === "function") {
+          record.mutationObserver.observe(element, {
+            subtree: true,
+            childList: true,
+            characterData: true,
+            attributes: true,
+          });
+        }
+      }
+    }
+
+    return {
+      id: record.id,
+      element,
+      refresh: function(reason) {
+        return refreshManagedTextLayoutRecord(record, reason || "manual");
+      },
+      read: function() {
+        return record.result;
+      },
+      dispose: function() {
+        disposeManagedTextLayout(element);
+      },
+    };
+  }
+
+  function mountManagedTextLayouts(root) {
+    const targetRoot = root || document.body || document.documentElement;
+    const elements = collectManagedTextLayoutElements(targetRoot);
+    for (const element of elements) {
+      observeManagedTextLayout(element);
+    }
+  }
+
+  function refreshManagedTextLayouts() {
+    for (const snapshot of Array.from(window.__gosx.textLayouts.values())) {
+      if (snapshot && snapshot.element) {
+        const record = textLayoutRecordsByElement.get(snapshot.element);
+        if (record) {
+          refreshManagedTextLayoutRecord(record, "refresh");
+        }
+      }
+    }
+  }
+
+  function disposeManagedTextLayouts() {
+    for (const id of Array.from(window.__gosx.textLayouts.keys())) {
+      disposeManagedTextLayout(id);
+    }
+  }
+
+  window.__gosx.textLayout = {
+    layout: gosxTextLayout,
+    metrics: gosxTextLayoutMetrics,
+    ranges: gosxTextLayoutRanges,
+    revision: gosxTextLayoutRevision,
+    observe: observeManagedTextLayout,
+    mountAll: mountManagedTextLayouts,
+    refresh(target) {
+      if (target) {
+        const handle = observeManagedTextLayout(target);
+        return handle.refresh("manual");
+      }
+      refreshManagedTextLayouts();
+      return null;
+    },
+    read(element) {
+      const record = element ? textLayoutRecordsByElement.get(element) : null;
+      return record ? record.result : null;
+    },
+    dispose: disposeManagedTextLayout,
+  };
 
   // Pending manifest reference, set during init, consumed when runtime is ready.
   let pendingManifest = null;
@@ -5126,6 +5521,7 @@
     for (const hubID of Array.from(window.__gosx.hubs.keys())) {
       window.__gosx_disconnect_hub(hubID);
     }
+    disposeManagedTextLayouts();
     pendingManifest = null;
     window.__gosx.ready = false;
   }
@@ -5241,6 +5637,7 @@
       adoptTextLayoutRangesImpl(window.__gosx_text_layout_ranges);
       window.__gosx_text_layout_ranges = gosxTextLayoutRanges;
     }
+    refreshManagedTextLayouts();
     if (!pendingManifest) {
       window.__gosx.ready = true;
       return;
@@ -5264,6 +5661,8 @@
   // --------------------------------------------------------------------------
 
   async function bootstrapPage() {
+    mountManagedTextLayouts(document.body || document.documentElement);
+
     const manifest = loadManifest();
     if (!manifest) {
       // No manifest — pure server-rendered page, no islands to hydrate.

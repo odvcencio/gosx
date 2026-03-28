@@ -13,15 +13,16 @@ import (
 	"github.com/odvcencio/gosx/ir"
 	islandprogram "github.com/odvcencio/gosx/island/program"
 	"github.com/odvcencio/gosx/server"
+	"github.com/odvcencio/gosx/textlayout"
 )
 
 type fileProgramRenderer struct {
-	prog            *ir.Program
-	components      map[string]*ir.Component
-	componentIndex  map[string]int
-	islandPrograms  map[string]*islandprogram.Program
-	opts            fileRenderOptions
-	replaced        bool
+	prog           *ir.Program
+	components     map[string]*ir.Component
+	componentIndex map[string]int
+	islandPrograms map[string]*islandprogram.Program
+	opts           fileRenderOptions
+	replaced       bool
 }
 
 func renderFileProgramHTML(prog *ir.Program, component string, opts fileRenderOptions) (string, bool, error) {
@@ -127,6 +128,8 @@ func (r *fileProgramRenderer) renderBuiltinComponent(node *ir.Node, env fileRend
 		return true, r.renderLink(node, env)
 	case "Image":
 		return true, r.renderImage(node, env)
+	case "TextBlock":
+		return true, r.renderTextBlock(node, env)
 	case "Stylesheet":
 		return true, r.renderStylesheet(node, env)
 	case "Surface":
@@ -216,6 +219,45 @@ func (r *fileProgramRenderer) renderImage(node *ir.Node, env fileRenderEnv) stri
 		args = append(args, gosx.Attrs(extra...))
 	}
 	return gosx.RenderHTML(server.Image(props, args...))
+}
+
+func (r *fileProgramRenderer) renderTextBlock(node *ir.Node, env fileRenderEnv) string {
+	if env.enableBootstrap != nil {
+		env.enableBootstrap()
+	}
+
+	props := server.TextBlockProps{
+		Tag:           firstNonEmptyString(stringValue(attrValue(node.Attrs, env, "as", "tag")), "div"),
+		Font:          stringValue(attrValue(node.Attrs, env, "font")),
+		WhiteSpace:    textlayout.WhiteSpace(stringValue(attrValue(node.Attrs, env, "whiteSpace", "whitespace"))),
+		LineHeight:    numericValue(attrValue(node.Attrs, env, "lineHeight")),
+		MaxWidth:      numericValue(attrValue(node.Attrs, env, "maxWidth")),
+		HeightHint:    numericValue(attrValue(node.Attrs, env, "heightHint")),
+		LineCountHint: int(numericValue(attrValue(node.Attrs, env, "lineCountHint"))),
+		Static:        truthy(attrValue(node.Attrs, env, "static")),
+		Source:        stringValue(attrValue(node.Attrs, env, "source")),
+	}
+
+	var b strings.Builder
+	tag := html.EscapeString(firstNonEmptyString(props.Tag, "div"))
+	b.WriteByte('<')
+	b.WriteString(tag)
+	for _, attr := range server.TextBlockAttrs(props) {
+		safeName := html.EscapeString(attr.Name)
+		if attr.Bool {
+			b.WriteByte(' ')
+			b.WriteString(safeName)
+			continue
+		}
+		fmt.Fprintf(&b, ` %s="%s"`, safeName, html.EscapeString(attr.Value))
+	}
+	r.renderTextBlockExtraAttrs(&b, node.Attrs, env)
+	b.WriteByte('>')
+	b.WriteString(r.renderChildren(node.Children, env))
+	b.WriteString("</")
+	b.WriteString(tag)
+	b.WriteByte('>')
+	return b.String()
 }
 
 func (r *fileProgramRenderer) renderStylesheet(node *ir.Node, env fileRenderEnv) string {
@@ -840,6 +882,32 @@ func mergeEngineProps(dst map[string]any, value any) {
 func isEngineReservedAttr(name string) bool {
 	switch strings.TrimSpace(name) {
 	case "name", "component", "kind", "wasmPath", "wasm", "programRef", "program", "jsPath", "js", "script", "jsExport", "export", "factory", "mountId", "capabilities", "runtime", "props", "id":
+		return true
+	default:
+		return false
+	}
+}
+
+func (r *fileProgramRenderer) renderTextBlockExtraAttrs(b *strings.Builder, attrs []ir.Attr, env fileRenderEnv) {
+	for _, attr := range attrs {
+		if isTextBlockReservedAttr(attr.Name) || attr.Kind == ir.AttrSpread {
+			continue
+		}
+		switch attr.Kind {
+		case ir.AttrStatic:
+			fmt.Fprintf(b, ` %s="%s"`, html.EscapeString(attr.Name), html.EscapeString(attr.Value))
+		case ir.AttrExpr:
+			value := evalFileExpr(attr.Expr, env)
+			renderFileEvaluatedAttr(b, html.EscapeString(attr.Name), value)
+		case ir.AttrBool:
+			fmt.Fprintf(b, " %s", html.EscapeString(attr.Name))
+		}
+	}
+}
+
+func isTextBlockReservedAttr(name string) bool {
+	switch strings.TrimSpace(name) {
+	case "as", "tag", "font", "whiteSpace", "whitespace", "lineHeight", "maxWidth", "heightHint", "lineCountHint", "source", "static":
 		return true
 	default:
 		return false

@@ -26,6 +26,18 @@ func NewPageRuntime() *PageRuntime {
 	}
 }
 
+// EnableBootstrap opts the current page into the shared bootstrap runtime even
+// when it does not need the WASM bridge.
+func (r *PageRuntime) EnableBootstrap() {
+	if r == nil {
+		return
+	}
+	r.active = true
+	if r.renderer != nil {
+		r.renderer.EnableBootstrap()
+	}
+}
+
 // Engine registers a client engine and returns its server-rendered mount shell.
 func (r *PageRuntime) Engine(cfg engine.Config, fallback gosx.Node) gosx.Node {
 	if r == nil {
@@ -51,6 +63,15 @@ func (r *PageRuntime) BindHub(name, path string, bindings []hydrate.HubBinding) 
 	}
 	r.active = true
 	return r.renderer.BindHub(name, path, bindings)
+}
+
+// TextBlock renders a managed text-layout node and ensures the shared
+// bootstrap runtime is present for client-side refinement.
+func (r *PageRuntime) TextBlock(props TextBlockProps, args ...any) gosx.Node {
+	if r != nil {
+		r.EnableBootstrap()
+	}
+	return TextBlock(props, args...)
 }
 
 // Head renders the preload, manifest, and bootstrap tags required by the page runtime.

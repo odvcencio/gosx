@@ -250,6 +250,14 @@ func (c *Context) Engine(cfg engine.Config, fallback gosx.Node) gosx.Node {
 	return c.Runtime().Engine(cfg, fallback)
 }
 
+// TextBlock renders a managed text-layout node for the current page.
+func (c *Context) TextBlock(props TextBlockProps, args ...any) gosx.Node {
+	if c == nil {
+		return TextBlock(props, args...)
+	}
+	return c.Runtime().TextBlock(props, args...)
+}
+
 // Defer renders fallback content immediately, then streams the resolved node
 // into place once the resolver finishes.
 func (c *Context) Defer(fallback gosx.Node, resolve DeferredResolver) gosx.Node {

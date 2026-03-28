@@ -39,6 +39,7 @@ type Renderer struct {
 	patchPath     string
 	bootstrapPath string
 	runtimeAssets buildmanifest.RuntimeAssets
+	bootstrapOnly bool
 }
 
 type programAsset struct {
@@ -669,6 +670,15 @@ func (r *Renderer) PageHead() gosx.Node {
 	)
 }
 
+// EnableBootstrap marks the page as needing the shared bootstrap runtime even
+// when it does not mount islands, engines, or hubs.
+func (r *Renderer) EnableBootstrap() {
+	if r == nil {
+		return
+	}
+	r.bootstrapOnly = true
+}
+
 // Checksum computes a content hash for cache invalidation.
 func Checksum(data []byte) string {
 	h := sha256.Sum256(data)
@@ -685,7 +695,7 @@ func SerializeProps(props any) (json.RawMessage, error) {
 }
 
 func (r *Renderer) needsClientBootstrap() bool {
-	return len(r.manifest.Islands) > 0 || len(r.manifest.Engines) > 0 || len(r.manifest.Hubs) > 0
+	return r.bootstrapOnly || len(r.manifest.Islands) > 0 || len(r.manifest.Engines) > 0 || len(r.manifest.Hubs) > 0
 }
 
 func (r *Renderer) hasWASMEngines() bool {

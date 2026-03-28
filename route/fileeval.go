@@ -26,6 +26,7 @@ type fileRenderEnv struct {
 	components   map[string]any
 	renderEngine func(engine.Config, gosx.Node) gosx.Node
 	renderIsland func(*islandprogram.Program, any) gosx.Node
+	enableBootstrap func()
 }
 
 type fileRequestBindings struct {
@@ -59,6 +60,7 @@ func (env fileRenderEnv) clone() fileRenderEnv {
 	}
 	next.renderEngine = env.renderEngine
 	next.renderIsland = env.renderIsland
+	next.enableBootstrap = env.enableBootstrap
 	return next
 }
 
@@ -149,6 +151,7 @@ func newFileRenderEnv(ctx *RouteContext, page FilePage) fileRenderEnv {
 		env.values["params"] = cloneStringMap(ctx.Params)
 		env.renderEngine = ctx.Engine
 		env.renderIsland = ctx.Runtime().Island
+		env.enableBootstrap = ctx.Runtime().EnableBootstrap
 		env.funcs["actionPath"] = func(name string) string {
 			return ctx.ActionPath(name)
 		}
