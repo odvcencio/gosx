@@ -171,6 +171,82 @@
     };
   }
 
+  function initialSceneLifecycleState() {
+    const visibilityState = String(document && document.visibilityState || "visible").toLowerCase();
+    return {
+      pageVisible: visibilityState !== "hidden",
+      inViewport: true,
+    };
+  }
+
+  function applySceneLifecycleState(mount, lifecycle) {
+    if (!mount || !lifecycle) {
+      return;
+    }
+    setAttrValue(mount, "data-gosx-scene3d-page-visible", lifecycle.pageVisible ? "true" : "false");
+    setAttrValue(mount, "data-gosx-scene3d-in-viewport", lifecycle.inViewport ? "true" : "false");
+    setAttrValue(mount, "data-gosx-scene3d-active", lifecycle.pageVisible && lifecycle.inViewport ? "true" : "false");
+  }
+
+  function observeSceneLifecycle(mount, lifecycle, onChange) {
+    if (!mount || !lifecycle || typeof onChange !== "function") {
+      return function() {};
+    }
+
+    let stopIntersection = null;
+    let visibilityListener = null;
+
+    function updatePageVisibility() {
+      const next = String(document && document.visibilityState || "visible").toLowerCase() !== "hidden";
+      if (lifecycle.pageVisible === next) {
+        return;
+      }
+      lifecycle.pageVisible = next;
+      applySceneLifecycleState(mount, lifecycle);
+      onChange("visibility");
+    }
+
+    if (document && typeof document.addEventListener === "function") {
+      visibilityListener = updatePageVisibility;
+      document.addEventListener("visibilitychange", visibilityListener);
+    }
+
+    if (typeof IntersectionObserver === "function") {
+      const observer = new IntersectionObserver(function(entries) {
+        for (const entry of entries || []) {
+          if (!entry || entry.target !== mount) {
+            continue;
+          }
+          const next = entry.isIntersecting !== false && sceneNumber(entry.intersectionRatio, 1) > 0;
+          if (lifecycle.inViewport === next) {
+            continue;
+          }
+          lifecycle.inViewport = next;
+          applySceneLifecycleState(mount, lifecycle);
+          onChange("intersection");
+        }
+      }, { threshold: [0, 0.01, 0.25] });
+      if (typeof observer.observe === "function") {
+        observer.observe(mount);
+      }
+      stopIntersection = function() {
+        if (typeof observer.disconnect === "function") {
+          observer.disconnect();
+        }
+      };
+    }
+
+    applySceneLifecycleState(mount, lifecycle);
+    return function() {
+      if (stopIntersection) {
+        stopIntersection();
+      }
+      if (visibilityListener && document && typeof document.removeEventListener === "function") {
+        document.removeEventListener("visibilitychange", visibilityListener);
+      }
+    };
+  }
+
   function sceneLabelLayoutKey(label) {
     return [
       gosxTextLayoutRevision(),
@@ -553,6 +629,7 @@
     const sceneState = createSceneState(props);
     const runtimeScene = ctx.runtimeMode === "shared" && Boolean(ctx.programRef);
     const objects = sceneStateObjects(sceneState);
+    const lifecycle = initialSceneLifecycleState();
 
     function sceneShouldAnimate() {
       if (runtimeScene || sceneBool(props.autoRotate, true)) {
@@ -611,7 +688,7 @@
       return latestBundle;
     });
     const releaseTextLayoutListener = onTextLayoutInvalidated(function() {
-      if (disposed || !latestBundle) {
+      if (disposed || !latestBundle || !sceneCanRender()) {
         return;
       }
       if (labelRefreshHandle != null) {
@@ -630,6 +707,21 @@
     let scheduledRenderHandle = null;
     let disposed = false;
 
+    function sceneCanRender() {
+      return lifecycle.pageVisible && lifecycle.inViewport;
+    }
+
+    function sceneWantsAnimation() {
+      return sceneShouldAnimate() && sceneCanRender();
+    }
+
+    function cancelFrame() {
+      if (frameHandle != null) {
+        cancelEngineFrame(frameHandle);
+        frameHandle = null;
+      }
+    }
+
     function cancelScheduledRender() {
       if (scheduledRenderHandle != null) {
         cancelEngineFrame(scheduledRenderHandle);
@@ -645,6 +737,11 @@
       if (sceneViewportChanged(viewport, nextViewport)) {
         viewport = applySceneViewport(ctx.mount, canvas, labelLayer, nextViewport, viewportBase);
       }
+      if (!sceneCanRender()) {
+        cancelFrame();
+        cancelScheduledRender();
+        return;
+      }
       if (scheduledRenderHandle != null) {
         return;
       }
@@ -655,6 +752,18 @@
     }
 
     const releaseViewportObserver = observeSceneViewport(ctx.mount, scheduleRender);
+    const releaseLifecycleObserver = observeSceneLifecycle(ctx.mount, lifecycle, function(reason) {
+      if (!sceneCanRender()) {
+        cancelFrame();
+        cancelScheduledRender();
+        if (labelRefreshHandle != null) {
+          cancelEngineFrame(labelRefreshHandle);
+          labelRefreshHandle = null;
+        }
+        return;
+      }
+      scheduleRender(reason || "lifecycle");
+    });
 
     if (runtimeScene) {
       if (ctx.runtime && ctx.runtime.available()) {
@@ -667,6 +776,10 @@
     function renderFrame(now) {
       if (disposed) return;
       viewport = applySceneViewport(ctx.mount, canvas, labelLayer, sceneViewportFromMount(ctx.mount, props, viewportBase, canvas), viewportBase);
+      if (!sceneCanRender()) {
+        cancelFrame();
+        return;
+      }
       const timeSeconds = now / 1000;
       if (runtimeScene && ctx.runtime && typeof ctx.runtime.renderFrame === "function") {
         const runtimeBundle = ctx.runtime.renderFrame(timeSeconds, viewport.cssWidth, viewport.cssHeight);
@@ -674,7 +787,7 @@
           latestBundle = runtimeBundle;
           renderer.render(runtimeBundle, viewport);
           renderSceneLabels(labelLayer, runtimeBundle, labelLayoutCache, labelElements, viewport.cssWidth, viewport.cssHeight);
-          if (sceneShouldAnimate()) {
+          if (sceneWantsAnimation()) {
             frameHandle = engineFrame(renderFrame);
           }
           return;
@@ -694,7 +807,7 @@
       );
       renderer.render(latestBundle, viewport);
       renderSceneLabels(labelLayer, latestBundle, labelLayoutCache, labelElements, viewport.cssWidth, viewport.cssHeight);
-      if (sceneShouldAnimate()) {
+      if (sceneWantsAnimation()) {
         frameHandle = engineFrame(renderFrame);
       }
     }
@@ -711,16 +824,16 @@
     return {
       applyCommands(commands) {
         applySceneCommands(sceneState, commands);
+        scheduleRender("commands");
       },
       dispose() {
         disposed = true;
         releaseViewportObserver();
+        releaseLifecycleObserver();
         releaseTextLayoutListener();
         dragHandle.dispose();
         renderer.dispose();
-        if (frameHandle != null) {
-          cancelEngineFrame(frameHandle);
-        }
+        cancelFrame();
         cancelScheduledRender();
         if (labelRefreshHandle != null) {
           cancelEngineFrame(labelRefreshHandle);
