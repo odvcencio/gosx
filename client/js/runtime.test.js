@@ -521,6 +521,7 @@ function adoptNode(node, ownerDocument) {
 class FakeDocument {
   constructor() {
     this.readyState = "complete";
+    this.visibilityState = "visible";
     this.byID = new Map();
     this.eventListeners = new Map();
     this.dispatchedEvents = [];
@@ -634,6 +635,40 @@ class FakeResizeObserver {
   }
 }
 
+class FakeIntersectionObserver {
+  constructor(callback, options = {}) {
+    this.callback = callback;
+    this.options = options;
+    this.targets = new Set();
+  }
+
+  observe(target) {
+    this.targets.add(target);
+  }
+
+  disconnect() {
+    this.targets.clear();
+  }
+
+  trigger(entries) {
+    let list = entries;
+    if (!Array.isArray(list) || list.length === 0) {
+      list = Array.from(this.targets).map((target) => ({
+        target,
+        isIntersecting: true,
+        intersectionRatio: 1,
+      }));
+    } else if (list[0] && !Object.prototype.hasOwnProperty.call(list[0], "target")) {
+      list = list.map((target) => ({
+        target,
+        isIntersecting: true,
+        intersectionRatio: 1,
+      }));
+    }
+    this.callback(list);
+  }
+}
+
 class FakeResponse {
   constructor(options) {
     this.ok = options.ok !== false;
@@ -715,6 +750,9 @@ function numberOr(value, fallback) {
 
 function createContext(options) {
   const document = new FakeDocument();
+  if (options.visibilityState) {
+    document.visibilityState = String(options.visibilityState);
+  }
   document.disableCanvas2D = Boolean(options.disableCanvas2D);
   if (typeof options.measureText === "function") {
     document.measureText = options.measureText;
@@ -744,6 +782,7 @@ function createContext(options) {
   const scrollCalls = [];
   const windowListeners = new Map();
   const resizeObservers = [];
+  const intersectionObservers = [];
 
   const routes = new Map();
   for (const [url, response] of Object.entries(options.fetchRoutes || {})) {
@@ -801,6 +840,12 @@ function createContext(options) {
       constructor(callback) {
         super(callback);
         resizeObservers.push(this);
+      }
+    },
+    IntersectionObserver: class IntersectionObserver extends FakeIntersectionObserver {
+      constructor(callback, observerOptions) {
+        super(callback, observerOptions);
+        intersectionObservers.push(this);
       }
     },
     Go: function Go() {
@@ -957,11 +1002,37 @@ function createContext(options) {
     fetchCalls,
     hydrateCalls,
     inputBatchCalls,
+    intersectionObservers,
     resizeObservers,
     sharedSignalCalls,
     scrollCalls,
     sockets,
     windowListeners,
+  };
+}
+
+function installManualRAF(context) {
+  let nextHandle = 1;
+  const callbacks = new Map();
+  context.requestAnimationFrame = (callback) => {
+    const handle = nextHandle++;
+    callbacks.set(handle, callback);
+    return handle;
+  };
+  context.cancelAnimationFrame = (handle) => {
+    callbacks.delete(handle);
+  };
+  return {
+    count() {
+      return callbacks.size;
+    },
+    flush(time) {
+      const entries = Array.from(callbacks.entries());
+      callbacks.clear();
+      for (const [, callback] of entries) {
+        callback(typeof time === "number" ? time : 16);
+      }
+    },
   };
 }
 
@@ -2976,6 +3047,153 @@ test("bootstrap rerenders shared-runtime Scene3D with responsive viewport dimens
 
   mount.width = 320;
   env.resizeObservers[0].trigger([mount]);
+  await flushAsyncWork();
+
+  const last = renderArgs[renderArgs.length - 1];
+  assert.deepEqual(last.slice(2, 4), [320, 180]);
+});
+
+test("bootstrap pauses animated Scene3D when the page is hidden and resumes on visibilitychange", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-page-visibility";
+
+  const env = createContext({
+    elements: [mount],
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-page-visibility",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-page-visibility",
+          jsExport: "GoSXScene3D",
+          props: {
+            width: 480,
+            height: 300,
+            autoRotate: true,
+            scene: {
+              objects: [
+                { kind: "box", width: 1.6, height: 1.2, depth: 1.2, x: 0, y: 0, z: 0, color: "#8de1ff" },
+              ],
+            },
+          },
+          capabilities: ["canvas", "animation"],
+        },
+      ],
+    },
+  });
+  const raf = installManualRAF(env.context);
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  assert.equal(mount.getAttribute("data-gosx-scene3d-page-visible"), "true");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-active"), "true");
+  assert.equal(raf.count(), 1);
+
+  env.document.visibilityState = "hidden";
+  env.document.dispatchEvent({ type: "visibilitychange" });
+  await flushAsyncWork();
+
+  assert.equal(mount.getAttribute("data-gosx-scene3d-page-visible"), "false");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-active"), "false");
+  assert.equal(raf.count(), 0);
+
+  env.document.visibilityState = "visible";
+  env.document.dispatchEvent({ type: "visibilitychange" });
+  await flushAsyncWork();
+
+  assert.equal(mount.getAttribute("data-gosx-scene3d-page-visible"), "true");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-active"), "true");
+  assert.equal(raf.count(), 1);
+
+  raf.flush(16);
+  assert.equal(raf.count(), 1);
+});
+
+test("bootstrap defers offscreen shared-runtime Scene3D rerenders until the mount re-enters the viewport", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-intersection-runtime";
+  mount.width = 640;
+  const renderArgs = [];
+
+  const env = createContext({
+    elements: [mount],
+    fetchRoutes: {
+      "/runtime.wasm": { bytes: [0, 97, 115, 109] },
+      "/scene-intersection-runtime.json": { text: '{"name":"IntersectionScene"}' },
+    },
+    manifest: {
+      runtime: { path: "/runtime.wasm" },
+      engines: [
+        {
+          id: "gosx-engine-intersection-runtime",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-intersection-runtime",
+          runtime: "shared",
+          programRef: "/scene-intersection-runtime.json",
+          props: {
+            width: 640,
+            height: 360,
+            autoRotate: false,
+            background: "#08151f",
+          },
+        },
+      ],
+    },
+    onHydrateEngine: () => "[]",
+    onRenderEngine: (...args) => {
+      renderArgs.push(args);
+      return JSON.stringify({
+        background: "#08151f",
+        camera: { x: 0, y: 0, z: 6, fov: 72 },
+        positions: [],
+        colors: [],
+        vertexCount: 0,
+        worldPositions: [],
+        worldColors: [],
+        worldVertexCount: 0,
+        objects: [],
+        labels: [],
+      });
+    },
+  });
+  const raf = installManualRAF(env.context);
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  assert.equal(renderArgs.length, 1);
+  assert.equal(env.intersectionObservers.length, 1);
+  assert.equal(mount.getAttribute("data-gosx-scene3d-in-viewport"), "true");
+  assert.equal(raf.count(), 1);
+
+  env.intersectionObservers[0].trigger([
+    { target: mount, isIntersecting: false, intersectionRatio: 0 },
+  ]);
+  await flushAsyncWork();
+
+  assert.equal(mount.getAttribute("data-gosx-scene3d-in-viewport"), "false");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-active"), "false");
+  assert.equal(raf.count(), 0);
+
+  mount.width = 320;
+  env.resizeObservers[0].trigger([mount]);
+  await flushAsyncWork();
+
+  assert.equal(renderArgs.length, 1);
+
+  env.intersectionObservers[0].trigger([
+    { target: mount, isIntersecting: true, intersectionRatio: 1 },
+  ]);
+  await flushAsyncWork();
+
+  assert.equal(mount.getAttribute("data-gosx-scene3d-in-viewport"), "true");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-active"), "true");
+  assert.equal(raf.count(), 1);
+
+  raf.flush(16);
   await flushAsyncWork();
 
   const last = renderArgs[renderArgs.length - 1];
