@@ -3,6 +3,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"syscall/js"
 
@@ -11,6 +12,7 @@ import (
 	"github.com/odvcencio/gosx/crdt"
 	rootengine "github.com/odvcencio/gosx/engine"
 	"github.com/odvcencio/gosx/highlight"
+	"github.com/odvcencio/gosx/textlayout"
 )
 
 func registerRuntime(b *bridge.Bridge) {
@@ -28,6 +30,7 @@ func registerRuntime(b *bridge.Bridge) {
 	setRuntimeFunc("__gosx_highlight", highlightRuntimeFunc())
 	setRuntimeFunc("__gosx_set_shared_signal", sharedSignalRuntimeFunc(b))
 	setRuntimeFunc("__gosx_set_input_batch", inputBatchRuntimeFunc(b))
+	setRuntimeFunc("__gosx_text_layout", textLayoutRuntimeFunc())
 	setRuntimeFunc("__gosx_crdt_init", crdtInitRuntimeFunc(crdtBridge))
 	setRuntimeFunc("__gosx_crdt_sync", crdtSyncRuntimeFunc(crdtBridge))
 	setRuntimeFunc("__gosx_crdt_put", crdtPutRuntimeFunc(crdtBridge))
@@ -172,6 +175,49 @@ func inputBatchRuntimeFunc(b *bridge.Bridge) js.Func {
 			return jsError(err)
 		}
 		return js.Null()
+	})
+}
+
+func textLayoutRuntimeFunc() js.Func {
+	return js.FuncOf(func(this js.Value, args []js.Value) any {
+		if len(args) < 3 {
+			return jsErrorf("need 3 args (text, font, maxWidth)")
+		}
+
+		ws := textlayout.WhiteSpaceNormal
+		if len(args) > 3 && args[3].Type() == js.TypeString && args[3].String() != "" {
+			ws = textlayout.WhiteSpace(args[3].String())
+		}
+
+		lineHeight := 1.0
+		if len(args) > 4 && args[4].Type() == js.TypeNumber {
+			lineHeight = args[4].Float()
+		}
+
+		measurer, err := textlayout.NewBrowserMeasurer()
+		if err != nil {
+			return jsError(err)
+		}
+
+		result, err := textlayout.LayoutText(
+			args[0].String(),
+			measurer,
+			args[1].String(),
+			textlayout.PrepareOptions{WhiteSpace: ws},
+			textlayout.LayoutOptions{
+				MaxWidth:   args[2].Float(),
+				LineHeight: lineHeight,
+			},
+		)
+		if err != nil {
+			return jsError(err)
+		}
+
+		resultJSON, err := json.Marshal(result)
+		if err != nil {
+			return jsError(err)
+		}
+		return js.Global().Get("JSON").Call("parse", string(resultJSON))
 	})
 }
 

@@ -182,6 +182,73 @@ func TestRuntimeSetSharedSignalExport(t *testing.T) {
 	}
 }
 
+func TestRuntimeTextLayoutExport(t *testing.T) {
+	setGlobalValue(t, "__gosx_runtime_ready", js.Undefined())
+	setGlobalFunc(t, "__gosx_measure_text_batch", func(this js.Value, args []js.Value) any {
+		if len(args) < 2 {
+			t.Fatalf("expected 2 args, got %d", len(args))
+		}
+
+		var texts []string
+		if err := json.Unmarshal([]byte(args[1].String()), &texts); err != nil {
+			t.Fatalf("unmarshal texts: %v", err)
+		}
+
+		widths := make([]float64, len(texts))
+		for i, text := range texts {
+			widths[i] = float64(len([]rune(text)))
+		}
+
+		data, err := json.Marshal(widths)
+		if err != nil {
+			t.Fatalf("marshal widths: %v", err)
+		}
+		return js.ValueOf(string(data))
+	})
+
+	registerRuntime(bridge.New())
+
+	ret := js.Global().Get("__gosx_text_layout").Invoke("hello world from gosx", "16px serif", 11, "normal", 2)
+	if ret.Type() != js.TypeObject {
+		t.Fatalf("expected object result, got %v", ret.Type())
+	}
+	if ret.Get("lineCount").Int() != 2 {
+		t.Fatalf("expected 2 lines, got %d", ret.Get("lineCount").Int())
+	}
+	if ret.Get("height").Float() != 4 {
+		t.Fatalf("expected height 4, got %v", ret.Get("height").Float())
+	}
+	if ret.Get("byteLen").Int() != len("hello world from gosx") {
+		t.Fatalf("expected byteLen %d, got %d", len("hello world from gosx"), ret.Get("byteLen").Int())
+	}
+	if ret.Get("runeCount").Int() != len([]rune("hello world from gosx")) {
+		t.Fatalf("expected runeCount %d, got %d", len([]rune("hello world from gosx")), ret.Get("runeCount").Int())
+	}
+
+	lines := ret.Get("lines")
+	if lines.Length() != 2 {
+		t.Fatalf("expected 2 line entries, got %d", lines.Length())
+	}
+	if got := lines.Index(0).Get("text").String(); got != "hello world" {
+		t.Fatalf("line 0 text: got %q", got)
+	}
+	if got := lines.Index(1).Get("text").String(); got != "from gosx" {
+		t.Fatalf("line 1 text: got %q", got)
+	}
+	if got := lines.Index(0).Get("runeStart").Int(); got != 0 {
+		t.Fatalf("line 0 runeStart: got %d", got)
+	}
+	if got := lines.Index(0).Get("runeEnd").Int(); got != 11 {
+		t.Fatalf("line 0 runeEnd: got %d", got)
+	}
+	if got := lines.Index(1).Get("runeStart").Int(); got != 12 {
+		t.Fatalf("line 1 runeStart: got %d", got)
+	}
+	if got := lines.Index(1).Get("runeEnd").Int(); got != 21 {
+		t.Fatalf("line 1 runeEnd: got %d", got)
+	}
+}
+
 func TestRuntimeSharedSignalsPatchOtherHydratedIslands(t *testing.T) {
 	setGlobalValue(t, "__gosx_runtime_ready", js.Undefined())
 
