@@ -1104,6 +1104,32 @@ test("bootstrap browser text layout breaks at zero-width spaces", () => {
   assert.deepEqual(Array.from(layout.lines, (line) => line.text), ["foo", "bar"]);
 });
 
+test("bootstrap browser text layout prefers word boundaries inside punctuation-heavy runs", () => {
+  const env = createContext({
+    measureText(text) {
+      return Array.from(String(text)).length;
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+
+  const layout = env.context.__gosx_text_layout("hello,world", "600 16px serif", 7, "normal", 12);
+  assert.deepEqual(Array.from(layout.lines, (line) => line.text), ["hello,", "world"]);
+});
+
+test("bootstrap browser text layout uses Intl word boundaries for Thai runs", () => {
+  const env = createContext({
+    measureText(text) {
+      return Array.from(String(text)).length;
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+
+  const layout = env.context.__gosx_text_layout("สวัสดีครับโลก", "600 16px serif", 6, "normal", 12);
+  assert.deepEqual(Array.from(layout.lines, (line) => line.text), ["สวัสดี", "ครับ", "โลก"]);
+});
+
 test("bootstrap browser text layout keeps CJK closing punctuation off line starts", () => {
   const env = createContext({
     measureText(text) {
@@ -1115,6 +1141,20 @@ test("bootstrap browser text layout keeps CJK closing punctuation off line start
 
   const layout = env.context.__gosx_text_layout("あ。い", "600 16px serif", 1, "normal", 12);
   assert.deepEqual(Array.from(layout.lines, (line) => line.text), ["あ。", "い"]);
+  assert.equal(layout.lines[0].width, 2);
+});
+
+test("bootstrap browser text layout keeps opening punctuation with following glyphs", () => {
+  const env = createContext({
+    measureText(text) {
+      return Array.from(String(text)).length;
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+
+  const layout = env.context.__gosx_text_layout("(a", "600 16px serif", 1, "normal", 12);
+  assert.deepEqual(Array.from(layout.lines, (line) => line.text), ["(a"]);
   assert.equal(layout.lines[0].width, 2);
 });
 

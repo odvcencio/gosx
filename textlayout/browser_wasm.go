@@ -63,3 +63,32 @@ func (m *BrowserMeasurer) MeasureBatch(font string, texts []string) ([]float64, 
 
 	return nil, fmt.Errorf("textlayout: unsupported browser measurer return type %v", raw.Type())
 }
+
+func segmentWordRunStrings(text string) []string {
+	fn := js.Global().Get("__gosx_segment_words")
+	if !fn.Truthy() {
+		return segmentWordRunStringsFallback(text)
+	}
+
+	raw := fn.Invoke(text)
+	if raw.Type() == js.TypeString {
+		var segments []string
+		if err := json.Unmarshal([]byte(raw.String()), &segments); err == nil && len(segments) > 0 {
+			return segments
+		}
+		return segmentWordRunStringsFallback(text)
+	}
+
+	arrayCtor := js.Global().Get("Array")
+	if arrayCtor.Truthy() && raw.InstanceOf(arrayCtor) {
+		segments := make([]string, raw.Length())
+		for i := range segments {
+			segments[i] = raw.Index(i).String()
+		}
+		if len(segments) > 0 {
+			return segments
+		}
+	}
+
+	return segmentWordRunStringsFallback(text)
+}

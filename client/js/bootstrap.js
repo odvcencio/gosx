@@ -158,6 +158,10 @@
     return JSON.stringify(widths);
   };
 
+  window.__gosx_segment_words = function(text) {
+    return JSON.stringify(segmentBrowserWordRun(text));
+  };
+
   function normalizeTextLayoutWhiteSpace(value) {
     const mode = typeof value === "string" ? value.trim().toLowerCase() : "";
     switch (mode) {
@@ -196,6 +200,7 @@
   }
 
   let textLayoutGraphemeSegmenter = null;
+  let textLayoutWordSegmenter = null;
 
   function gosxTextLayoutGraphemeSegmenter() {
     if (textLayoutGraphemeSegmenter !== null) {
@@ -207,6 +212,165 @@
     }
     textLayoutGraphemeSegmenter = false;
     return null;
+  }
+
+  function gosxTextLayoutWordSegmenter() {
+    if (textLayoutWordSegmenter !== null) {
+      return textLayoutWordSegmenter;
+    }
+    if (typeof Intl === "object" && Intl && typeof Intl.Segmenter === "function") {
+      textLayoutWordSegmenter = new Intl.Segmenter(undefined, { granularity: "word" });
+      return textLayoutWordSegmenter;
+    }
+    textLayoutWordSegmenter = false;
+    return null;
+  }
+
+  function textLayoutRuneCount(text) {
+    return Array.from(String(text || "")).length;
+  }
+
+  function textLayoutByteLength(text) {
+    let total = 0;
+    for (const char of Array.from(String(text || ""))) {
+      total += textLayoutCodePointByteLength(char.codePointAt(0));
+    }
+    return total;
+  }
+
+  function textLayoutLineEndProhibited(text) {
+    const value = String(text || "");
+    if (value === "") {
+      return false;
+    }
+    for (const char of value) {
+      switch (char) {
+        case "\"":
+        case "“":
+        case "‘":
+        case "«":
+        case "‹":
+        case "(":
+        case "[":
+        case "{":
+        case "（":
+        case "【":
+        case "「":
+        case "『":
+        case "《":
+        case "〈":
+        case "〔":
+        case "〖":
+        case "〘":
+        case "〚":
+          break;
+        default:
+          return false;
+      }
+    }
+    return true;
+  }
+
+  function segmentBrowserWordRun(text) {
+    const value = String(text || "");
+    if (value === "") {
+      return [];
+    }
+    const segmenter = gosxTextLayoutWordSegmenter();
+    if (segmenter) {
+      const segments = [];
+      for (const entry of segmenter.segment(value)) {
+        segments.push(entry.segment);
+      }
+      if (segments.length > 0) {
+        return segments;
+      }
+    }
+    return Array.from(value);
+  }
+
+  function appendPreparedWordRun(tokens, text, byteStart, runeStart) {
+    const value = String(text || "");
+    if (value === "") {
+      return;
+    }
+
+    const segments = segmentBrowserWordRun(value);
+    let byteOffset = byteStart;
+    let runeOffset = runeStart;
+    let pending = null;
+    let emitted = false;
+
+    function emit(token, breakBefore) {
+      if (breakBefore && emitted) {
+        tokens.push({
+          kind: "break",
+          text: "",
+          byteStart: token.byteStart,
+          byteEnd: token.byteStart,
+          runeStart: token.runeStart,
+          runeEnd: token.runeStart,
+        });
+      }
+      tokens.push(token);
+      emitted = true;
+    }
+
+    function appendPending(token) {
+      if (!pending) {
+        pending = token;
+        return;
+      }
+      pending.text += token.text;
+      pending.byteEnd = token.byteEnd;
+      pending.runeEnd = token.runeEnd;
+    }
+
+    for (const segment of segments) {
+      const token = {
+        kind: "word",
+        text: segment,
+        byteStart: byteOffset,
+        byteEnd: byteOffset + textLayoutByteLength(segment),
+        runeStart: runeOffset,
+        runeEnd: runeOffset + textLayoutRuneCount(segment),
+      };
+      byteOffset = token.byteEnd;
+      runeOffset = token.runeEnd;
+
+      if (textLayoutLineEndProhibited(token.text)) {
+        appendPending(token);
+        continue;
+      }
+      if (browserTextLayoutLineStartProhibited(token.text)) {
+        const previous = tokens.length > 0 ? tokens[tokens.length - 1] : null;
+        if (previous && previous.kind === "word") {
+          previous.text += token.text;
+          previous.byteEnd = token.byteEnd;
+          previous.runeEnd = token.runeEnd;
+          emitted = true;
+          continue;
+        }
+        if (pending) {
+          appendPending(token);
+          continue;
+        }
+        emit(token, emitted);
+        continue;
+      }
+
+      if (pending) {
+        token.text = pending.text + token.text;
+        token.byteStart = pending.byteStart;
+        token.runeStart = pending.runeStart;
+        pending = null;
+      }
+      emit(token, emitted);
+    }
+
+    if (pending) {
+      emit(pending, emitted);
+    }
   }
 
   function splitPreparedTextLayoutToken(token) {
@@ -272,14 +436,7 @@
       if (!word) {
         return;
       }
-      tokens.push({
-        kind: "word",
-        text: word,
-        byteStart: wordByteStart,
-        byteEnd: wordByteEnd,
-        runeStart: wordRuneStart,
-        runeEnd: wordRuneEnd,
-      });
+      appendPreparedWordRun(tokens, word, wordByteStart, wordRuneStart);
       word = "";
       wordByteStart = -1;
       wordByteEnd = 0;
@@ -403,25 +560,13 @@
         }
       } else {
         flushSpaces();
-        if (textLayoutIsCJK(codePoint)) {
-          flushWord();
-          tokens.push({
-            kind: "word",
-            text: char,
-            byteStart,
-            byteEnd,
-            runeStart,
-            runeEnd,
-          });
-        } else {
-          if (wordByteStart < 0) {
-            wordByteStart = byteStart;
-            wordRuneStart = runeStart;
-          }
-          wordByteEnd = byteEnd;
-          wordRuneEnd = runeEnd;
-          word += char;
+        if (wordByteStart < 0) {
+          wordByteStart = byteStart;
+          wordRuneStart = runeStart;
         }
+        wordByteEnd = byteEnd;
+        wordRuneEnd = runeEnd;
+        word += char;
       }
 
       runeIndex += 1;
@@ -798,6 +943,12 @@
           return [
             buildBrowserTextLayoutLine(measured, start, lastBreak, false, lastBreakSoft, lastBreakWidth),
             normalizeBrowserTextLayoutNextStart(measured, lastBreak),
+          ];
+        }
+        if (i > start && textLayoutLineEndProhibited(tokens[i - 1].text)) {
+          return [
+            buildBrowserTextLayoutLine(measured, start, i + 1, false, false),
+            normalizeBrowserTextLayoutNextStart(measured, i + 1),
           ];
         }
         if (lineWidth > 0 && browserTextLayoutLineStartProhibited(token.text)) {
