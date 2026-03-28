@@ -404,6 +404,8 @@ func TestRuntimeRenderBundleProjectsSceneLabels(t *testing.T) {
 					"priority":   12,
 					"collision":  13,
 					"occlude":    14,
+					"maxLines":   15,
+					"overflow":   16,
 				},
 			},
 		},
@@ -423,6 +425,8 @@ func TestRuntimeRenderBundleProjectsSceneLabels(t *testing.T) {
 			{Op: islandprogram.OpLitFloat, Value: "4", Type: islandprogram.TypeFloat},
 			{Op: islandprogram.OpLitString, Value: "avoid", Type: islandprogram.TypeString},
 			{Op: islandprogram.OpLitBool, Value: "true", Type: islandprogram.TypeBool},
+			{Op: islandprogram.OpLitFloat, Value: "2", Type: islandprogram.TypeFloat},
+			{Op: islandprogram.OpLitString, Value: "ellipsis", Type: islandprogram.TypeString},
 		},
 	}
 
@@ -459,6 +463,9 @@ func TestRuntimeRenderBundleProjectsSceneLabels(t *testing.T) {
 	}
 	if label.Priority != 4 || label.Collision != "avoid" || !label.Occlude {
 		t.Fatalf("expected placement metadata in bundle, got %#v", label)
+	}
+	if label.MaxLines != 2 || label.Overflow != "ellipsis" {
+		t.Fatalf("expected overflow metadata in bundle, got %#v", label)
 	}
 }
 

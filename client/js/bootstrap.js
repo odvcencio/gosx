@@ -616,6 +616,7 @@
       tabSize: Math.max(1, Math.floor(sceneNumber(prepared.tabSize, 8))),
       spaceWidth: 0,
       hyphenWidth: 0,
+      ellipsisWidth: 0,
       font: typeof font === "string" ? font : "",
       tokens: expandedTokens.map(function(token) {
         return Object.assign({ width: 0 }, token);
@@ -626,6 +627,7 @@
     const indexes = [];
     let needSpaceWidth = false;
     let needHyphenWidth = false;
+    let needEllipsisWidth = true;
     for (let i = 0; i < measured.tokens.length; i += 1) {
       if (measured.tokens[i].kind === "newline" || measured.tokens[i].kind === "tab" || measured.tokens[i].kind === "soft-hyphen" || measured.tokens[i].kind === "break") {
         if (measured.tokens[i].kind === "tab") {
@@ -641,6 +643,7 @@
     }
     let spaceIndex = -1;
     let hyphenIndex = -1;
+    let ellipsisIndex = -1;
     if (needSpaceWidth) {
       spaceIndex = texts.length;
       texts.push(" ");
@@ -648,6 +651,10 @@
     if (needHyphenWidth) {
       hyphenIndex = texts.length;
       texts.push("-");
+    }
+    if (needEllipsisWidth) {
+      ellipsisIndex = texts.length;
+      texts.push("…");
     }
 
     if (texts.length === 0) {
@@ -680,6 +687,9 @@
     }
     if (hyphenIndex >= 0 && hyphenIndex < widths.length) {
       measured.hyphenWidth = sceneNumber(widths[hyphenIndex], 0);
+    }
+    if (ellipsisIndex >= 0 && ellipsisIndex < widths.length) {
+      measured.ellipsisWidth = sceneNumber(widths[ellipsisIndex], 0);
     }
 
     return measured;
@@ -907,6 +917,76 @@
     };
   }
 
+  function browserTextLayoutEllipsisAdvance(measured) {
+    return Math.max(0, sceneNumber(measured && measured.ellipsisWidth, 1)) || 1;
+  }
+
+  function trimBrowserTextLayoutDisplayEnd(measured, start, end) {
+    if (normalizeTextLayoutWhiteSpace(measured.whiteSpace) !== "normal") {
+      return end;
+    }
+    while (end > start && measured.tokens[end - 1].kind === "space") {
+      end -= 1;
+    }
+    return end;
+  }
+
+  function hasMoreBrowserTextLayoutContent(measured, next) {
+    if (next < measured.tokens.length) {
+      return true;
+    }
+    return measured.tokens.length > 0 && measured.tokens[measured.tokens.length - 1].kind === "newline";
+  }
+
+  function clampBrowserTextLayoutLine(line, measured, maxWidth, overflow, includeText) {
+    const clamped = Object.assign({}, line, {
+      truncated: true,
+      ellipsis: false,
+      hardBreak: false,
+      softBreak: false,
+    });
+    if (normalizeTextLayoutOverflow(overflow) !== "ellipsis") {
+      return clamped;
+    }
+
+    const ellipsisWidth = browserTextLayoutEllipsisAdvance(measured);
+    if (!(maxWidth > 0)) {
+      clamped.ellipsis = true;
+      clamped.width += ellipsisWidth;
+      if (includeText) {
+        clamped.text = String(clamped.text || "") + "…";
+      }
+      return clamped;
+    }
+
+    const allowedWidth = maxWidth - ellipsisWidth;
+    let end = trimBrowserTextLayoutDisplayEnd(measured, clamped.start, clamped.end);
+    while (end > clamped.start && browserTextLayoutRangeWidth(measured, clamped.start, end, false) > allowedWidth) {
+      end -= 1;
+      end = trimBrowserTextLayoutDisplayEnd(measured, clamped.start, end);
+    }
+
+    clamped.end = end;
+    clamped.ellipsis = true;
+    if (end > clamped.start) {
+      clamped.byteEnd = measured.tokens[end - 1].byteEnd;
+      clamped.runeEnd = measured.tokens[end - 1].runeEnd;
+      clamped.width = Math.min(maxWidth, browserTextLayoutRangeWidth(measured, clamped.start, end, false) + ellipsisWidth);
+      if (includeText) {
+        clamped.text = browserTextLayoutLineText(measured, clamped.start, end, false) + "…";
+      }
+      return clamped;
+    }
+
+    clamped.byteEnd = clamped.byteStart;
+    clamped.runeEnd = clamped.runeStart;
+    clamped.width = Math.min(maxWidth, ellipsisWidth);
+    if (includeText) {
+      clamped.text = "…";
+    }
+    return clamped;
+  }
+
   function normalizeBrowserTextLayoutLineStart(measured, start) {
     const whiteSpace = normalizeTextLayoutWhiteSpace(measured.whiteSpace);
     while (start < measured.tokens.length) {
@@ -1132,10 +1212,11 @@
     return layoutBrowserWrappedLineRange(measured, lineStart, whiteSpace, Math.max(0, sceneNumber(maxWidth, 0)));
   }
 
-  function layoutBrowserText(text, font, maxWidth, whiteSpace, lineHeight) {
+  function layoutBrowserText(text, font, maxWidth, whiteSpace, lineHeight, options) {
     const prepared = prepareBrowserTextLayout(text, whiteSpace, 8);
     const measured = measurePreparedBrowserTextLayout(prepared, font);
     const resolvedLineHeight = Math.max(1, sceneNumber(lineHeight, 1));
+    const normalizedOptions = normalizeTextLayoutRunOptions(options);
 
     if (measured.tokens.length === 0) {
       return {
@@ -1155,17 +1236,28 @@
         maxLineWidth: 0,
         byteLen: measured.byteLen,
         runeCount: measured.runeCount,
+        truncated: false,
       };
     }
 
     const lines = [];
+    let truncated = false;
+    let count = 0;
     for (let start = 0; start < measured.tokens.length;) {
       const nextLine = layoutBrowserTextNextLine(measured, start, maxWidth);
-      lines.push(nextLine[0]);
+      let line = nextLine[0];
+      count += 1;
+      if (normalizedOptions.maxLines > 0 && count === normalizedOptions.maxLines && hasMoreBrowserTextLayoutContent(measured, nextLine[1])) {
+        line = clampBrowserTextLayoutLine(line, measured, Math.max(0, sceneNumber(maxWidth, 0)), normalizedOptions.overflow, true);
+        truncated = true;
+        lines.push(line);
+        break;
+      }
+      lines.push(line);
       start = nextLine[1] > start ? nextLine[1] : start + 1;
     }
 
-    if (measured.tokens[measured.tokens.length - 1].kind === "newline") {
+    if (!truncated && measured.tokens[measured.tokens.length - 1].kind === "newline" && !(normalizedOptions.maxLines > 0 && lines.length >= normalizedOptions.maxLines)) {
       lines.push(emptyBrowserTextLayoutLineAtEnd(measured));
     }
 
@@ -1183,13 +1275,15 @@
       maxLineWidth,
       byteLen: measured.byteLen,
       runeCount: measured.runeCount,
+      truncated,
     };
   }
 
-  function layoutBrowserTextRanges(text, font, maxWidth, whiteSpace, lineHeight) {
+  function layoutBrowserTextRanges(text, font, maxWidth, whiteSpace, lineHeight, options) {
     const prepared = prepareBrowserTextLayout(text, whiteSpace, 8);
     const measured = measurePreparedBrowserTextLayout(prepared, font);
     const resolvedLineHeight = Math.max(1, sceneNumber(lineHeight, 1));
+    const normalizedOptions = normalizeTextLayoutRunOptions(options);
 
     if (measured.tokens.length === 0) {
       return {
@@ -1209,17 +1303,28 @@
         maxLineWidth: 0,
         byteLen: measured.byteLen,
         runeCount: measured.runeCount,
+        truncated: false,
       };
     }
 
     const lines = [];
+    let truncated = false;
+    let count = 0;
     for (let start = 0; start < measured.tokens.length;) {
       const nextLine = layoutBrowserTextNextRange(measured, start, maxWidth);
-      lines.push(nextLine[0]);
+      let line = nextLine[0];
+      count += 1;
+      if (normalizedOptions.maxLines > 0 && count === normalizedOptions.maxLines && hasMoreBrowserTextLayoutContent(measured, nextLine[1])) {
+        line = clampBrowserTextLayoutLine(line, measured, Math.max(0, sceneNumber(maxWidth, 0)), normalizedOptions.overflow, false);
+        truncated = true;
+        lines.push(line);
+        break;
+      }
+      lines.push(line);
       start = nextLine[1] > start ? nextLine[1] : start + 1;
     }
 
-    if (measured.tokens[measured.tokens.length - 1].kind === "newline") {
+    if (!truncated && measured.tokens[measured.tokens.length - 1].kind === "newline" && !(normalizedOptions.maxLines > 0 && lines.length >= normalizedOptions.maxLines)) {
       lines.push(emptyBrowserTextLayoutLineAtEnd(measured));
     }
 
@@ -1237,6 +1342,7 @@
       maxLineWidth,
       byteLen: measured.byteLen,
       runeCount: measured.runeCount,
+      truncated,
     };
   }
 
@@ -1277,7 +1383,21 @@
     return typeof textLayoutExternalImpl === "function" ? textLayoutExternalImpl : null;
   }
 
-  function textLayoutCacheKey(text, font, maxWidth, whiteSpace, lineHeight) {
+  function normalizeTextLayoutOverflow(value) {
+    const mode = typeof value === "string" ? value.trim().toLowerCase() : "";
+    return mode === "ellipsis" ? "ellipsis" : "clip";
+  }
+
+  function normalizeTextLayoutRunOptions(options) {
+    const input = options && typeof options === "object" ? options : {};
+    return {
+      maxLines: Math.max(0, Math.floor(sceneNumber(input.maxLines, 0))),
+      overflow: normalizeTextLayoutOverflow(input.overflow),
+    };
+  }
+
+  function textLayoutCacheKey(text, font, maxWidth, whiteSpace, lineHeight, options) {
+    const normalized = normalizeTextLayoutRunOptions(options);
     return [
       gosxTextLayoutRevision(),
       String(text == null ? "" : text),
@@ -1285,11 +1405,14 @@
       sceneNumber(maxWidth, 0),
       normalizeTextLayoutWhiteSpace(whiteSpace),
       sceneNumber(lineHeight, 1),
+      normalized.maxLines,
+      normalized.overflow,
       currentTextLayoutImpl() ? "external" : "browser",
     ].join("\n");
   }
 
-  function textLayoutMetricsCacheKey(text, font, maxWidth, whiteSpace, lineHeight) {
+  function textLayoutMetricsCacheKey(text, font, maxWidth, whiteSpace, lineHeight, options) {
+    const normalized = normalizeTextLayoutRunOptions(options);
     return [
       gosxTextLayoutRevision(),
       String(text == null ? "" : text),
@@ -1297,11 +1420,14 @@
       sceneNumber(maxWidth, 0),
       normalizeTextLayoutWhiteSpace(whiteSpace),
       sceneNumber(lineHeight, 1),
+      normalized.maxLines,
+      normalized.overflow,
       textLayoutMetricsExternalImpl ? "external" : "derived",
     ].join("\n");
   }
 
-  function textLayoutRangesCacheKey(text, font, maxWidth, whiteSpace, lineHeight) {
+  function textLayoutRangesCacheKey(text, font, maxWidth, whiteSpace, lineHeight, options) {
+    const normalized = normalizeTextLayoutRunOptions(options);
     return [
       gosxTextLayoutRevision(),
       String(text == null ? "" : text),
@@ -1309,6 +1435,8 @@
       sceneNumber(maxWidth, 0),
       normalizeTextLayoutWhiteSpace(whiteSpace),
       sceneNumber(lineHeight, 1),
+      normalized.maxLines,
+      normalized.overflow,
       textLayoutRangesExternalImpl ? "external" : "browser",
     ].join("\n");
   }
@@ -1332,6 +1460,8 @@
       text: typeof item.text === "string" ? item.text : "",
       hardBreak: Boolean(item.hardBreak),
       softBreak: Boolean(item.softBreak),
+      truncated: Boolean(item.truncated),
+      ellipsis: Boolean(item.ellipsis),
     };
   }
 
@@ -1353,6 +1483,8 @@
       width: Math.max(0, sceneNumber(item.width, 0)),
       hardBreak: Boolean(item.hardBreak),
       softBreak: Boolean(item.softBreak),
+      truncated: Boolean(item.truncated),
+      ellipsis: Boolean(item.ellipsis),
     };
   }
 
@@ -1376,6 +1508,7 @@
       maxLineWidth: Math.max(0, sceneNumber(result && result.maxLineWidth, 0)),
       byteLen: Math.max(0, Math.min(byteLen, Math.floor(sceneNumber(result && result.byteLen, byteLen)))),
       runeCount: Math.max(0, Math.min(runeCount, Math.floor(sceneNumber(result && result.runeCount, runeCount)))),
+      truncated: Boolean(result && result.truncated) || lines.some(function(line) { return line.truncated; }),
     };
   }
 
@@ -1399,11 +1532,13 @@
       maxLineWidth: Math.max(0, sceneNumber(result && result.maxLineWidth, 0)),
       byteLen: Math.max(0, Math.min(byteLen, Math.floor(sceneNumber(result && result.byteLen, byteLen)))),
       runeCount: Math.max(0, Math.min(runeCount, Math.floor(sceneNumber(result && result.runeCount, runeCount)))),
+      truncated: Boolean(result && result.truncated) || lines.some(function(line) { return line.truncated; }),
     };
   }
 
-  function gosxTextLayout(text, font, maxWidth, whiteSpace, lineHeight) {
-    const cacheKey = textLayoutCacheKey(text, font, maxWidth, whiteSpace, lineHeight);
+  function gosxTextLayout(text, font, maxWidth, whiteSpace, lineHeight, options) {
+    const normalizedOptions = normalizeTextLayoutRunOptions(options);
+    const cacheKey = textLayoutCacheKey(text, font, maxWidth, whiteSpace, lineHeight, normalizedOptions);
     if (textLayoutCache.has(cacheKey)) {
       return textLayoutCache.get(cacheKey);
     }
@@ -1412,13 +1547,13 @@
     let result = null;
     if (impl) {
       try {
-        result = impl(text, font, maxWidth, whiteSpace, lineHeight);
+        result = impl(text, font, maxWidth, whiteSpace, lineHeight, normalizedOptions);
       } catch (error) {
         console.error("[gosx] text layout implementation failed:", error);
       }
     }
     if (!result || !Array.isArray(result.lines)) {
-      result = layoutBrowserText(text, font, maxWidth, whiteSpace, lineHeight);
+      result = layoutBrowserText(text, font, maxWidth, whiteSpace, lineHeight, normalizedOptions);
     }
     result = normalizeTextLayoutResult(result, text, lineHeight);
 
@@ -1432,8 +1567,9 @@
     return result;
   }
 
-  function gosxTextLayoutMetrics(text, font, maxWidth, whiteSpace, lineHeight) {
-    const cacheKey = textLayoutMetricsCacheKey(text, font, maxWidth, whiteSpace, lineHeight);
+  function gosxTextLayoutMetrics(text, font, maxWidth, whiteSpace, lineHeight, options) {
+    const normalizedOptions = normalizeTextLayoutRunOptions(options);
+    const cacheKey = textLayoutMetricsCacheKey(text, font, maxWidth, whiteSpace, lineHeight, normalizedOptions);
     if (textLayoutMetricsCache.has(cacheKey)) {
       return textLayoutMetricsCache.get(cacheKey);
     }
@@ -1441,19 +1577,20 @@
     let result = null;
     if (typeof textLayoutMetricsExternalImpl === "function") {
       try {
-        result = textLayoutMetricsExternalImpl(text, font, maxWidth, whiteSpace, lineHeight);
+        result = textLayoutMetricsExternalImpl(text, font, maxWidth, whiteSpace, lineHeight, normalizedOptions);
       } catch (error) {
         console.error("[gosx] text layout metrics implementation failed:", error);
       }
     }
     if (!result || typeof result !== "object") {
-      const ranges = gosxTextLayoutRanges(text, font, maxWidth, whiteSpace, lineHeight);
+      const ranges = gosxTextLayoutRanges(text, font, maxWidth, whiteSpace, lineHeight, normalizedOptions);
       result = {
         lineCount: ranges.lineCount,
         height: ranges.height,
         maxLineWidth: ranges.maxLineWidth,
         byteLen: ranges.byteLen,
         runeCount: ranges.runeCount,
+        truncated: ranges.truncated,
       };
     } else {
       const normalized = normalizeTextLayoutResult({
@@ -1462,6 +1599,7 @@
         maxLineWidth: result.maxLineWidth,
         byteLen: result.byteLen,
         runeCount: result.runeCount,
+        truncated: result.truncated,
         lines: [],
       }, text, lineHeight);
       result = {
@@ -1470,6 +1608,7 @@
         maxLineWidth: normalized.maxLineWidth,
         byteLen: normalized.byteLen,
         runeCount: normalized.runeCount,
+        truncated: normalized.truncated,
       };
     }
 
@@ -1483,8 +1622,9 @@
     return result;
   }
 
-  function gosxTextLayoutRanges(text, font, maxWidth, whiteSpace, lineHeight) {
-    const cacheKey = textLayoutRangesCacheKey(text, font, maxWidth, whiteSpace, lineHeight);
+  function gosxTextLayoutRanges(text, font, maxWidth, whiteSpace, lineHeight, options) {
+    const normalizedOptions = normalizeTextLayoutRunOptions(options);
+    const cacheKey = textLayoutRangesCacheKey(text, font, maxWidth, whiteSpace, lineHeight, normalizedOptions);
     if (textLayoutRangesCache.has(cacheKey)) {
       return textLayoutRangesCache.get(cacheKey);
     }
@@ -1492,13 +1632,13 @@
     let result = null;
     if (typeof textLayoutRangesExternalImpl === "function") {
       try {
-        result = textLayoutRangesExternalImpl(text, font, maxWidth, whiteSpace, lineHeight);
+        result = textLayoutRangesExternalImpl(text, font, maxWidth, whiteSpace, lineHeight, normalizedOptions);
       } catch (error) {
         console.error("[gosx] text layout ranges implementation failed:", error);
       }
     }
     if (!result || !Array.isArray(result.lines)) {
-      result = layoutBrowserTextRanges(text, font, maxWidth, whiteSpace, lineHeight);
+      result = layoutBrowserTextRanges(text, font, maxWidth, whiteSpace, lineHeight, normalizedOptions);
     }
     result = normalizeTextLayoutRangeResult(result, text, lineHeight);
 
@@ -1575,6 +1715,17 @@
       '[data-gosx-text-layout-role="block"] {',
       '  min-block-size: var(--gosx-text-layout-height, auto);',
       '}',
+      '[data-gosx-text-layout-role="block"][data-gosx-text-layout-max-lines] {',
+      '  overflow: hidden;',
+      '}',
+      '[data-gosx-text-layout-role="block"][data-gosx-text-layout-max-lines][data-gosx-text-layout-overflow="clip"] {',
+      '  max-block-size: var(--gosx-text-layout-max-height, none);',
+      '}',
+      '[data-gosx-text-layout-role="block"][data-gosx-text-layout-max-lines][data-gosx-text-layout-overflow="ellipsis"] {',
+      '  display: -webkit-box;',
+      '  -webkit-box-orient: vertical;',
+      '  -webkit-line-clamp: var(--gosx-text-layout-max-lines);',
+      '}',
       '[data-gosx-scene3d-label-layer="true"] {',
       '  position: absolute;',
       '  inset: 0;',
@@ -1637,6 +1788,8 @@
     const font = config && typeof config.font === "string" ? config.font : "";
     const whiteSpace = normalizeTextLayoutWhiteSpace(config && config.whiteSpace);
     const lineHeight = Math.max(1, textLayoutNumberValue(config && config.lineHeight, 16));
+    const maxLines = Math.max(0, Math.floor(textLayoutNumberValue(config && config.maxLines, 0)));
+    const overflow = normalizeTextLayoutOverflow(config && config.overflow);
     const maxWidth = textLayoutNumberValue(config && config.maxWidth, 0);
     const ready = Boolean(result);
 
@@ -1648,10 +1801,20 @@
     setAttrValue(element, "data-gosx-text-layout-white-space", whiteSpace === "normal" ? "" : whiteSpace);
     setAttrValue(element, "data-gosx-text-layout-align", align);
     setAttrValue(element, "data-gosx-text-layout-line-height", lineHeight > 0 ? lineHeight : "");
+    setAttrValue(element, "data-gosx-text-layout-max-lines", maxLines > 0 ? maxLines : "");
+    setAttrValue(element, "data-gosx-text-layout-overflow", maxLines > 0 ? overflow : "");
     setAttrValue(element, "data-gosx-text-layout-revision", revision);
 
     setStyleValue(element.style, "--gosx-text-layout-ready", ready ? "1" : "0");
     setStyleValue(element.style, "--gosx-text-layout-line-height", lineHeight + "px");
+    if (maxLines > 0) {
+      setStyleValue(element.style, "--gosx-text-layout-max-lines", String(maxLines));
+      setStyleValue(element.style, "--gosx-text-layout-max-height", (lineHeight * maxLines) + "px");
+    } else {
+      clearStyleValue(element.style, "--gosx-text-layout-max-lines");
+      clearStyleValue(element.style, "--gosx-text-layout-max-height");
+    }
+    setStyleValue(element.style, "--gosx-text-layout-overflow", overflow);
     if (maxWidth > 0 && maxWidth < Number.MAX_SAFE_INTEGER) {
       setAttrValue(element, "data-gosx-text-layout-max-width", maxWidth);
       setStyleValue(element.style, "--gosx-text-layout-width", maxWidth + "px");
@@ -1663,6 +1826,8 @@
     }
 
     if (!result || typeof result !== "object") {
+      setAttrValue(element, "data-gosx-text-layout-truncated", "");
+      clearStyleValue(element.style, "--gosx-text-layout-truncated");
       return;
     }
 
@@ -1671,12 +1836,14 @@
     setAttrValue(element, "data-gosx-text-layout-max-line-width", result.maxLineWidth);
     setAttrValue(element, "data-gosx-text-layout-byte-length", result.byteLen);
     setAttrValue(element, "data-gosx-text-layout-rune-count", result.runeCount);
+    setAttrValue(element, "data-gosx-text-layout-truncated", result.truncated ? "true" : "false");
 
     setStyleValue(element.style, "--gosx-text-layout-height", result.height + "px");
     setStyleValue(element.style, "--gosx-text-layout-line-count", String(result.lineCount));
     setStyleValue(element.style, "--gosx-text-layout-max-line-width", result.maxLineWidth + "px");
     setStyleValue(element.style, "--gosx-text-layout-byte-length", String(result.byteLen));
     setStyleValue(element.style, "--gosx-text-layout-rune-count", String(result.runeCount));
+    setStyleValue(element.style, "--gosx-text-layout-truncated", result.truncated ? "1" : "0");
   }
 
   function textLayoutElementID(element) {
@@ -1732,6 +1899,10 @@
       hasOwn.call(config, "lineHeight") ? config.lineHeight : (element.getAttribute && element.getAttribute("data-gosx-text-layout-line-height")),
       16
     ));
+    const maxLines = Math.max(0, Math.floor(textLayoutNumberValue(
+      hasOwn.call(config, "maxLines") ? config.maxLines : (element.getAttribute && element.getAttribute("data-gosx-text-layout-max-lines")),
+      0
+    )));
     let maxWidth = textLayoutNumberValue(
       hasOwn.call(config, "maxWidth") ? config.maxWidth : (element.getAttribute && element.getAttribute("data-gosx-text-layout-max-width")),
       0
@@ -1757,6 +1928,10 @@
       font,
       whiteSpace,
       lineHeight,
+      maxLines,
+      overflow: normalizeTextLayoutOverflow(
+        hasOwn.call(config, "overflow") ? config.overflow : (element.getAttribute && element.getAttribute("data-gosx-text-layout-overflow"))
+      ),
       maxWidth,
       observe,
       text: sourceText,
@@ -1851,13 +2026,18 @@
       config.font,
       config.whiteSpace,
       config.lineHeight,
+      config.maxLines,
+      config.overflow,
       config.maxWidth,
     ].join("\n");
     if (layoutKey === record.layoutKey && record.result) {
       return record.result;
     }
     record.layoutKey = layoutKey;
-    const result = gosxTextLayoutRanges(config.text, config.font, config.maxWidth, config.whiteSpace, config.lineHeight);
+    const result = gosxTextLayoutRanges(config.text, config.font, config.maxWidth, config.whiteSpace, config.lineHeight, {
+      maxLines: config.maxLines,
+      overflow: config.overflow,
+    });
     return applyManagedTextLayoutResult(record, config, result, reason);
   }
 
@@ -3021,6 +3201,8 @@
       driftSpeed: sceneNumber(item.driftSpeed, 0),
       driftPhase: sceneNumber(item.driftPhase, 0),
       maxWidth: Math.max(48, sceneNumber(item.maxWidth, 180)),
+      maxLines: Math.max(0, Math.floor(sceneNumber(item.maxLines, 0))),
+      overflow: normalizeTextLayoutOverflow(item.overflow),
       font: typeof item.font === "string" && item.font ? item.font : '600 13px "IBM Plex Sans", "Segoe UI", sans-serif',
       lineHeight: Math.max(12, sceneNumber(item.lineHeight, 18)),
       color: typeof item.color === "string" && item.color ? item.color : "#ecf7ff",
@@ -3679,6 +3861,8 @@
       depth: projected.depth,
       priority: sceneNumber(label.priority, 0),
       maxWidth: sceneNumber(label.maxWidth, 180),
+      maxLines: Math.max(0, Math.floor(sceneNumber(label.maxLines, 0))),
+      overflow: normalizeTextLayoutOverflow(label.overflow),
       font: label.font,
       lineHeight: sceneNumber(label.lineHeight, 18),
       color: label.color,
@@ -4736,6 +4920,8 @@
       label.text,
       label.font,
       sceneNumber(label.maxWidth, 180),
+      Math.max(0, Math.floor(sceneNumber(label.maxLines, 0))),
+      normalizeTextLayoutOverflow(label.overflow),
       normalizeSceneLabelWhiteSpace(label.whiteSpace),
       sceneNumber(label.lineHeight, 18),
       normalizeSceneLabelAlign(label.textAlign),
@@ -4756,27 +4942,17 @@
   }
 
   function fallbackSceneLabelLayout(label) {
-    const text = String(label.text || "");
-    const width = Math.min(sceneNumber(label.maxWidth, 180), Math.max(1, sceneMeasureTextWidth(label.font, text)));
-    const byteLen = textLayoutByteLength(text);
-    const runeCount = textLayoutRuneCount(text);
-    return {
-      lines: [{
-        text: text,
-        width: width,
-        byteStart: 0,
-        byteEnd: byteLen,
-        runeStart: 0,
-        runeEnd: runeCount,
-        hardBreak: false,
-        softBreak: false,
-      }],
-      lineCount: 1,
-      height: sceneNumber(label.lineHeight, 18),
-      maxLineWidth: width,
-      byteLen: byteLen,
-      runeCount: runeCount,
-    };
+    return layoutBrowserText(
+      String(label.text || ""),
+      label.font,
+      sceneNumber(label.maxWidth, 180),
+      normalizeSceneLabelWhiteSpace(label.whiteSpace),
+      sceneNumber(label.lineHeight, 18),
+      {
+        maxLines: Math.max(0, Math.floor(sceneNumber(label.maxLines, 0))),
+        overflow: normalizeTextLayoutOverflow(label.overflow),
+      },
+    );
   }
 
   function layoutSceneLabel(label, layoutCache) {
@@ -4802,6 +4978,10 @@
           sceneNumber(label.maxWidth, 180),
           normalizeSceneLabelWhiteSpace(label.whiteSpace),
           sceneNumber(label.lineHeight, 18),
+          {
+            maxLines: Math.max(0, Math.floor(sceneNumber(label.maxLines, 0))),
+            overflow: normalizeTextLayoutOverflow(label.overflow),
+          },
         );
       } catch (error) {
         console.error("[gosx] scene label layout failed:", error);
@@ -5021,11 +5201,14 @@
     setAttrValue(element, "data-gosx-scene-label-visibility", hidden ? "hidden" : "visible");
     setAttrValue(element, "data-gosx-scene-label-priority", sceneNumber(label.priority, 0));
     setAttrValue(element, "data-gosx-scene-label-depth", sceneNumber(label.depth, 0));
+    setAttrValue(element, "data-gosx-scene-label-truncated", layout && layout.truncated ? "true" : "false");
 
     applyTextLayoutPresentation(element, {
       font: label.font,
       whiteSpace: whiteSpace,
       lineHeight: sceneNumber(label.lineHeight, 18),
+      maxLines: Math.max(0, Math.floor(sceneNumber(label.maxLines, 0))),
+      overflow: normalizeTextLayoutOverflow(label.overflow),
       maxWidth: sceneNumber(label.maxWidth, 180),
     }, layout, {
       role: "label",
@@ -5552,10 +5735,12 @@
           x: sceneNumber(item.position && item.position.x, 0),
           y: sceneNumber(item.position && item.position.y, 0),
         },
-        depth: sceneNumber(item.depth, 0),
-        priority: sceneNumber(item.priority, 0),
-        maxWidth: Math.max(48, sceneNumber(item.maxWidth, 180)),
-        font: typeof item.font === "string" && item.font ? item.font : '600 13px "IBM Plex Sans", "Segoe UI", sans-serif',
+      depth: sceneNumber(item.depth, 0),
+      priority: sceneNumber(item.priority, 0),
+      maxWidth: Math.max(48, sceneNumber(item.maxWidth, 180)),
+      maxLines: Math.max(0, Math.floor(sceneNumber(item.maxLines, 0))),
+      overflow: normalizeTextLayoutOverflow(item.overflow),
+      font: typeof item.font === "string" && item.font ? item.font : '600 13px "IBM Plex Sans", "Segoe UI", sans-serif',
         lineHeight: Math.max(12, sceneNumber(item.lineHeight, 18)),
         color: typeof item.color === "string" && item.color ? item.color : "#ecf7ff",
         background: typeof item.background === "string" && item.background ? item.background : "rgba(8, 21, 31, 0.82)",

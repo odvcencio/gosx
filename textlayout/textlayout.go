@@ -19,6 +19,14 @@ const (
 	WhiteSpacePre     WhiteSpace = "pre"
 )
 
+// OverflowMode controls how hidden lines are represented when MaxLines clamps output.
+type OverflowMode string
+
+const (
+	OverflowClip     OverflowMode = "clip"
+	OverflowEllipsis OverflowMode = "ellipsis"
+)
+
 // TokenKind identifies the layout role of a prepared token.
 type TokenKind string
 
@@ -41,6 +49,8 @@ type PrepareOptions struct {
 type LayoutOptions struct {
 	MaxWidth   float64 `json:"maxWidth"`
 	LineHeight float64 `json:"lineHeight"`
+	MaxLines   int     `json:"maxLines,omitempty"`
+	Overflow   OverflowMode `json:"overflow,omitempty"`
 }
 
 // Token is a prepared layout token.
@@ -83,6 +93,7 @@ type Measured struct {
 	TabSize     int             `json:"tabSize"`
 	SpaceWidth  float64         `json:"spaceWidth"`
 	HyphenWidth float64         `json:"hyphenWidth"`
+	EllipsisWidth float64       `json:"ellipsisWidth"`
 	Font        string          `json:"font,omitempty"`
 	Tokens      []MeasuredToken `json:"tokens"`
 }
@@ -99,6 +110,8 @@ type Line struct {
 	Text      string  `json:"text"`
 	HardBreak bool    `json:"hardBreak"`
 	SoftBreak bool    `json:"softBreak"`
+	Truncated bool    `json:"truncated,omitempty"`
+	Ellipsis  bool    `json:"ellipsis,omitempty"`
 }
 
 // LineRange describes one laid-out line without materializing text.
@@ -112,6 +125,8 @@ type LineRange struct {
 	Width     float64 `json:"width"`
 	HardBreak bool    `json:"hardBreak"`
 	SoftBreak bool    `json:"softBreak"`
+	Truncated bool    `json:"truncated,omitempty"`
+	Ellipsis  bool    `json:"ellipsis,omitempty"`
 }
 
 // Metrics contains aggregate layout geometry for a measured text block.
@@ -121,6 +136,7 @@ type Metrics struct {
 	MaxLineWidth float64 `json:"maxLineWidth"`
 	ByteLen      int     `json:"byteLen"`
 	RuneCount    int     `json:"runeCount"`
+	Truncated    bool    `json:"truncated,omitempty"`
 }
 
 // RangeResult contains laid-out line geometry without materialized text.
@@ -404,6 +420,7 @@ func Measure(prepared Prepared, measurer BatchMeasurer, font string) (Measured, 
 	}
 	needSpaceWidth := false
 	needHyphenWidth := false
+	needEllipsisWidth := true
 
 	for i, token := range expanded {
 		measured.Tokens[i].Token = token
@@ -422,6 +439,7 @@ func Measure(prepared Prepared, measurer BatchMeasurer, font string) (Measured, 
 	}
 	spaceIndex := -1
 	hyphenIndex := -1
+	ellipsisIndex := -1
 	if needSpaceWidth {
 		spaceIndex = len(texts)
 		texts = append(texts, " ")
@@ -429,6 +447,10 @@ func Measure(prepared Prepared, measurer BatchMeasurer, font string) (Measured, 
 	if needHyphenWidth {
 		hyphenIndex = len(texts)
 		texts = append(texts, "-")
+	}
+	if needEllipsisWidth {
+		ellipsisIndex = len(texts)
+		texts = append(texts, "…")
 	}
 
 	widths, err := measurer.MeasureBatch(font, texts)
@@ -449,6 +471,9 @@ func Measure(prepared Prepared, measurer BatchMeasurer, font string) (Measured, 
 	}
 	if hyphenIndex >= 0 && hyphenIndex < len(widths) {
 		measured.HyphenWidth = widths[hyphenIndex]
+	}
+	if ellipsisIndex >= 0 && ellipsisIndex < len(widths) {
+		measured.EllipsisWidth = widths[ellipsisIndex]
 	}
 
 	return measured, nil
@@ -646,28 +671,17 @@ func Layout(measured Measured, opts LayoutOptions) Result {
 		ByteLen:   measured.ByteLen,
 		RuneCount: measured.RuneCount,
 	}
-	for start := 0; start < len(measured.Tokens); {
-		lineRange, next := LayoutNextLineRange(measured, start, opts)
+	WalkLineRanges(measured, opts, func(lineRange LineRange) bool {
 		lines = append(lines, lineFromRange(measured, lineRange))
 		metrics.LineCount++
 		if lineRange.Width > metrics.MaxLineWidth {
 			metrics.MaxLineWidth = lineRange.Width
 		}
-		if next <= start {
-			next = start + 1
+		if lineRange.Truncated {
+			metrics.Truncated = true
 		}
-		start = next
-	}
-
-	if measured.Tokens[len(measured.Tokens)-1].Kind == TokenNewline {
-		lineRange := emptyLineAtEndRange(measured)
-		lines = append(lines, lineFromRange(measured, lineRange))
-		metrics.LineCount++
-		if lineRange.Width > metrics.MaxLineWidth {
-			metrics.MaxLineWidth = lineRange.Width
-		}
-	}
-
+		return true
+	})
 	metrics.Height = float64(metrics.LineCount) * lineHeight
 
 	return Result{
@@ -719,6 +733,9 @@ func LayoutRanges(measured Measured, opts LayoutOptions) RangeResult {
 		if line.Width > result.MaxLineWidth {
 			result.MaxLineWidth = line.Width
 		}
+		if line.Truncated {
+			result.Truncated = true
+		}
 		return true
 	})
 	result.Height = float64(result.LineCount) * lineHeight
@@ -758,8 +775,16 @@ func WalkLineRanges(measured Measured, opts LayoutOptions, fn func(LineRange) bo
 		})
 		return
 	}
+	maxLines := opts.MaxLines
+	lineCount := 0
 	for start := 0; start < len(measured.Tokens); {
 		line, next := LayoutNextLineRange(measured, start, opts)
+		lineCount++
+		if maxLines > 0 && lineCount == maxLines && hasMoreLineContent(measured, next) {
+			line = clampLineRange(measured, line, opts)
+			fn(line)
+			return
+		}
 		if !fn(line) {
 			return
 		}
@@ -769,6 +794,9 @@ func WalkLineRanges(measured Measured, opts LayoutOptions, fn func(LineRange) bo
 		start = next
 	}
 	if measured.Tokens[len(measured.Tokens)-1].Kind == TokenNewline {
+		if maxLines > 0 && lineCount >= maxLines {
+			return
+		}
 		fn(emptyLineAtEndRange(measured))
 	}
 }
@@ -895,6 +923,10 @@ func buildLineRangeWithWidth(measured Measured, start, end int, hardBreak, softB
 }
 
 func lineFromRange(measured Measured, line LineRange) Line {
+	text := lineText(measured, line.Start, line.End, line.SoftBreak)
+	if line.Ellipsis {
+		text += "…"
+	}
 	return Line{
 		Start:     line.Start,
 		End:       line.End,
@@ -903,10 +935,76 @@ func lineFromRange(measured Measured, line LineRange) Line {
 		RuneStart: line.RuneStart,
 		RuneEnd:   line.RuneEnd,
 		Width:     line.Width,
-		Text:      lineText(measured, line.Start, line.End, line.SoftBreak),
+		Text:      text,
 		HardBreak: line.HardBreak,
 		SoftBreak: line.SoftBreak,
+		Truncated: line.Truncated,
+		Ellipsis:  line.Ellipsis,
 	}
+}
+
+func hasMoreLineContent(measured Measured, next int) bool {
+	if next < len(measured.Tokens) {
+		return true
+	}
+	return len(measured.Tokens) > 0 && measured.Tokens[len(measured.Tokens)-1].Kind == TokenNewline
+}
+
+func clampLineRange(measured Measured, line LineRange, opts LayoutOptions) LineRange {
+	line.Truncated = true
+	line.HardBreak = false
+	line.SoftBreak = false
+
+	if normalizeOverflow(opts.Overflow) != OverflowEllipsis {
+		return line
+	}
+
+	ellipsisWidth := ellipsisAdvance(measured)
+	if opts.MaxWidth <= 0 {
+		line.Ellipsis = true
+		line.Width += ellipsisWidth
+		return line
+	}
+
+	allowedWidth := opts.MaxWidth - ellipsisWidth
+	end := trimDisplayLineEnd(measured, line.Start, line.End)
+	for end > line.Start && lineDisplayWidth(measured, line.Start, end, false) > allowedWidth {
+		end--
+		end = trimDisplayLineEnd(measured, line.Start, end)
+	}
+
+	if end <= line.Start {
+		line.End = line.Start
+		line.ByteEnd = line.ByteStart
+		line.RuneEnd = line.RuneStart
+		line.Width = minPositiveWidth(opts.MaxWidth, ellipsisWidth)
+		line.Ellipsis = true
+		return line
+	}
+
+	line.End = end
+	line.ByteEnd = measured.Tokens[end-1].ByteEnd
+	line.RuneEnd = measured.Tokens[end-1].RuneEnd
+	line.Width = minPositiveWidth(opts.MaxWidth, lineDisplayWidth(measured, line.Start, end, false)+ellipsisWidth)
+	line.Ellipsis = true
+	return line
+}
+
+func trimDisplayLineEnd(measured Measured, start, end int) int {
+	if normalizeWhiteSpace(measured.WhiteSpace) != WhiteSpaceNormal {
+		return end
+	}
+	for end > start && measured.Tokens[end-1].Kind == TokenSpace {
+		end--
+	}
+	return end
+}
+
+func minPositiveWidth(maxWidth, actual float64) float64 {
+	if maxWidth > 0 && actual > maxWidth {
+		return maxWidth
+	}
+	return actual
 }
 
 func emptyLineAtIndexRange(tokens []MeasuredToken, index int, hardBreak bool) LineRange {
@@ -941,6 +1039,9 @@ func emptyLineAtEndRange(measured Measured) LineRange {
 
 func lineText(measured Measured, start, end int, softBreak bool) string {
 	if start >= end {
+		if softBreak {
+			return "-"
+		}
 		return ""
 	}
 	tokens := measured.Tokens
@@ -1057,6 +1158,13 @@ func hyphenAdvance(measured Measured) float64 {
 	return 1
 }
 
+func ellipsisAdvance(measured Measured) float64 {
+	if measured.EllipsisWidth > 0 {
+		return measured.EllipsisWidth
+	}
+	return 1
+}
+
 func canBreakAfter(kind TokenKind) bool {
 	switch kind {
 	case TokenSpace, TokenTab, TokenSoftHyphen, TokenBreak:
@@ -1168,6 +1276,15 @@ func normalizeWhiteSpace(ws WhiteSpace) WhiteSpace {
 		return ws
 	default:
 		return WhiteSpaceNormal
+	}
+}
+
+func normalizeOverflow(mode OverflowMode) OverflowMode {
+	switch mode {
+	case OverflowEllipsis:
+		return OverflowEllipsis
+	default:
+		return OverflowClip
 	}
 }
 

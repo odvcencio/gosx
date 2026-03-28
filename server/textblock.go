@@ -19,6 +19,8 @@ type TextBlockProps struct {
 	WhiteSpace    textlayout.WhiteSpace
 	LineHeight    float64
 	MaxWidth      float64
+	MaxLines      int
+	Overflow      textlayout.OverflowMode
 	HeightHint    float64
 	LineCountHint int
 	Static        bool
@@ -58,6 +60,10 @@ func TextBlockAttrs(props TextBlockProps) []TextBlockAttr {
 	}
 	if props.MaxWidth > 0 {
 		attrs = append(attrs, TextBlockAttr{Name: "data-gosx-text-layout-max-width", Value: formatTextBlockFloat(props.MaxWidth)})
+	}
+	if props.MaxLines > 0 {
+		attrs = append(attrs, TextBlockAttr{Name: "data-gosx-text-layout-max-lines", Value: strconv.Itoa(props.MaxLines)})
+		attrs = append(attrs, TextBlockAttr{Name: "data-gosx-text-layout-overflow", Value: normalizeTextBlockOverflow(props.Overflow)})
 	}
 	if props.HeightHint > 0 {
 		attrs = append(attrs, TextBlockAttr{Name: "data-gosx-text-layout-height-hint", Value: formatTextBlockFloat(props.HeightHint)})
@@ -120,6 +126,8 @@ func EstimateTextBlockMetrics(props TextBlockProps) (textlayout.Metrics, bool) {
 		textlayout.LayoutOptions{
 			MaxWidth:   props.MaxWidth,
 			LineHeight: lineHeight,
+			MaxLines:   props.MaxLines,
+			Overflow:   normalizeTextBlockOverflowMode(props.Overflow),
 		},
 	)
 	if err != nil || metrics.LineCount <= 0 {
@@ -138,6 +146,19 @@ func normalizeTextBlockWhiteSpace(ws textlayout.WhiteSpace) string {
 		return string(textlayout.WhiteSpaceNormal)
 	default:
 		return strings.TrimSpace(string(ws))
+	}
+}
+
+func normalizeTextBlockOverflow(mode textlayout.OverflowMode) string {
+	return string(normalizeTextBlockOverflowMode(mode))
+}
+
+func normalizeTextBlockOverflowMode(mode textlayout.OverflowMode) textlayout.OverflowMode {
+	switch mode {
+	case textlayout.OverflowEllipsis:
+		return textlayout.OverflowEllipsis
+	default:
+		return textlayout.OverflowClip
 	}
 }
 

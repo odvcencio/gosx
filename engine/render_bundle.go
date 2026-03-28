@@ -23,6 +23,8 @@ type RenderLabel struct {
 	Depth       float64     `json:"depth,omitempty"`
 	Priority    float64     `json:"priority,omitempty"`
 	MaxWidth    float64     `json:"maxWidth,omitempty"`
+	MaxLines    int         `json:"maxLines,omitempty"`
+	Overflow    string      `json:"overflow,omitempty"`
 	Font        string      `json:"font,omitempty"`
 	LineHeight  float64     `json:"lineHeight,omitempty"`
 	Color       string      `json:"color,omitempty"`

@@ -206,10 +206,7 @@ func textLayoutRuntimeFunc() js.Func {
 			measurer,
 			args[1].String(),
 			textlayout.PrepareOptions{WhiteSpace: ws},
-			textlayout.LayoutOptions{
-				MaxWidth:   args[2].Float(),
-				LineHeight: lineHeight,
-			},
+			parseTextLayoutLayoutOptions(args, lineHeight),
 		)
 		if err != nil {
 			return jsError(err)
@@ -249,10 +246,7 @@ func textLayoutMetricsRuntimeFunc() js.Func {
 			measurer,
 			args[1].String(),
 			textlayout.PrepareOptions{WhiteSpace: ws},
-			textlayout.LayoutOptions{
-				MaxWidth:   args[2].Float(),
-				LineHeight: lineHeight,
-			},
+			parseTextLayoutLayoutOptions(args, lineHeight),
 		)
 		if err != nil {
 			return jsError(err)
@@ -292,10 +286,7 @@ func textLayoutRangesRuntimeFunc() js.Func {
 			measurer,
 			args[1].String(),
 			textlayout.PrepareOptions{WhiteSpace: ws},
-			textlayout.LayoutOptions{
-				MaxWidth:   args[2].Float(),
-				LineHeight: lineHeight,
-			},
+			parseTextLayoutLayoutOptions(args, lineHeight),
 		)
 		if err != nil {
 			return jsError(err)
@@ -307,6 +298,24 @@ func textLayoutRangesRuntimeFunc() js.Func {
 		}
 		return js.Global().Get("JSON").Call("parse", string(resultJSON))
 	})
+}
+
+func parseTextLayoutLayoutOptions(args []js.Value, lineHeight float64) textlayout.LayoutOptions {
+	opts := textlayout.LayoutOptions{
+		MaxWidth:   args[2].Float(),
+		LineHeight: lineHeight,
+	}
+	if len(args) <= 5 || args[5].Type() != js.TypeObject {
+		return opts
+	}
+	options := args[5]
+	if maxLines := options.Get("maxLines"); maxLines.Type() == js.TypeNumber {
+		opts.MaxLines = maxLines.Int()
+	}
+	if overflow := options.Get("overflow"); overflow.Type() == js.TypeString && overflow.String() != "" {
+		opts.Overflow = textlayout.OverflowMode(overflow.String())
+	}
+	return opts
 }
 
 func crdtInitRuntimeFunc(b *bridge.CRDTBridge) js.Func {

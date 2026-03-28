@@ -1237,6 +1237,26 @@ test("bootstrap browser text layout keeps emoji grapheme clusters intact", () =>
   assert.equal(layout.lineCount, 2);
 });
 
+test("bootstrap browser text layout supports max-lines ellipsis clamp", () => {
+  const env = createContext({
+    measureText(text) {
+      return Array.from(String(text)).length;
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+
+  const layout = env.context.__gosx_text_layout("hello world from gosx", "600 16px serif", 11, "normal", 12, {
+    maxLines: 1,
+    overflow: "ellipsis",
+  });
+  assert.equal(layout.lineCount, 1);
+  assert.equal(layout.truncated, true);
+  assert.equal(layout.lines[0].truncated, true);
+  assert.equal(layout.lines[0].ellipsis, true);
+  assert.equal(layout.lines[0].text, "hello worl…");
+});
+
 test("bootstrap browser text layout invalidates cached widths after font loading events", () => {
   let scale = 1;
   const fonts = new FakeFontSet();
@@ -1289,6 +1309,30 @@ test("bootstrap mounts declarative text layout blocks as managed runtime state",
   assert.equal(result.lineCount, 2);
   assert.equal(result.maxLineWidth, 88);
   assert.equal(env.document.dispatchedEvents.at(-1).type, "gosx:textlayout");
+});
+
+test("bootstrap mounts declarative text layout clamp options on managed blocks", async () => {
+  const block = new FakeElement("div", null);
+  block.width = 88;
+  block.setAttribute("data-gosx-text-layout", "");
+  block.setAttribute("data-gosx-text-layout-font", "600 16px serif");
+  block.setAttribute("data-gosx-text-layout-line-height", "20");
+  block.setAttribute("data-gosx-text-layout-max-lines", "1");
+  block.setAttribute("data-gosx-text-layout-overflow", "ellipsis");
+  block.textContent = "hello world from gosx";
+
+  const env = createContext({
+    elements: [block],
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  assert.equal(block.getAttribute("data-gosx-text-layout-max-lines"), "1");
+  assert.equal(block.getAttribute("data-gosx-text-layout-overflow"), "ellipsis");
+  assert.equal(block.getAttribute("data-gosx-text-layout-truncated"), "true");
+  assert.equal(block.style["--gosx-text-layout-max-lines"], "1");
+  assert.equal(env.context.__gosx.textLayout.read(block).truncated, true);
 });
 
 test("bootstrap refreshes managed text layout blocks after font metric invalidation", async () => {
@@ -1784,13 +1828,14 @@ test("bootstrap hydrates shared-runtime Scene3D programs", async () => {
   assert.equal(mount.children[1].getAttribute("data-gosx-scene3d-label-layer"), "true");
   assert.equal(mount.children[1].children.length, 1);
   assert.equal(mount.children[1].children[0].textContent, "Orbit nodeShared runtime");
-  assert.deepEqual(textLayoutCalls, [[
-    "Orbit node\nShared runtime",
-    '600 13px "IBM Plex Sans", "Segoe UI", sans-serif',
-    188,
-    "pre-wrap",
-    18,
-  ]]);
+  assert.equal(textLayoutCalls.length, 1);
+  assert.equal(textLayoutCalls[0][0], "Orbit node\nShared runtime");
+  assert.equal(textLayoutCalls[0][1], '600 13px "IBM Plex Sans", "Segoe UI", sans-serif');
+  assert.equal(textLayoutCalls[0][2], 188);
+  assert.equal(textLayoutCalls[0][3], "pre-wrap");
+  assert.equal(textLayoutCalls[0][4], 18);
+  assert.equal(textLayoutCalls[0][5].maxLines, 0);
+  assert.equal(textLayoutCalls[0][5].overflow, "clip");
 
   env.context.__gosx_dispose_engine("gosx-engine-rt");
   assert.deepEqual(env.engineDisposeCalls, [["gosx-engine-rt"]]);
@@ -2584,11 +2629,13 @@ test("bootstrap gives Scene3D labels a shared text-layout CSS contract and custo
                 {
                   id: "hero-chip",
                   className: "hero-chip tone-accent",
-                  text: "Shared label contract",
+                  text: "supercalifragilisticgosx",
                   x: 0,
                   y: 0.8,
                   z: 0.2,
-                  maxWidth: 140,
+                  maxWidth: 72,
+                  maxLines: 1,
+                  overflow: "ellipsis",
                   priority: 3,
                 },
               ],
@@ -2610,6 +2657,7 @@ test("bootstrap gives Scene3D labels a shared text-layout CSS contract and custo
   assert.equal(label.getAttribute("data-gosx-scene-label-priority"), "3");
   assert.equal(label.getAttribute("data-gosx-scene-label-collision"), "avoid");
   assert.equal(label.getAttribute("data-gosx-scene-label-visibility"), "visible");
+  assert.equal(label.getAttribute("data-gosx-text-layout-overflow"), "ellipsis");
   assert.equal(typeof env.context.__gosx.textLayout.read(label).lineCount, "number");
 });
 

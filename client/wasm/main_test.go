@@ -257,6 +257,24 @@ func TestRuntimeTextLayoutExport(t *testing.T) {
 		t.Fatalf("line 1 runeEnd: got %d", got)
 	}
 
+	clampedRet := js.Global().Get("__gosx_text_layout").Invoke(
+		"hello world from gosx",
+		"16px serif",
+		11,
+		"normal",
+		2,
+		js.ValueOf(map[string]any{"maxLines": 1, "overflow": "ellipsis"}),
+	)
+	if clampedRet.Get("lineCount").Int() != 1 {
+		t.Fatalf("expected clamped lineCount 1, got %d", clampedRet.Get("lineCount").Int())
+	}
+	if !clampedRet.Get("truncated").Bool() {
+		t.Fatal("expected clamped layout to be truncated")
+	}
+	if got := clampedRet.Get("lines").Index(0).Get("text").String(); got != "hello worl…" {
+		t.Fatalf("expected ellipsis clamp text, got %q", got)
+	}
+
 	emojiRet := js.Global().Get("__gosx_text_layout").Invoke("👨‍👩‍👧‍👦a", "16px serif", 1, "normal", 1)
 	emojiLines := emojiRet.Get("lines")
 	if emojiLines.Length() != 2 {
