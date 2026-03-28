@@ -1,6 +1,7 @@
 package docs
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/odvcencio/gosx/client/enginevm"
@@ -21,9 +22,10 @@ func TestSceneDemoProgramRespondsToSharedInputSignals(t *testing.T) {
 	}
 
 	commands := rt.Reconcile()
-	if len(commands) != 4 {
-		t.Fatalf("expected initial create commands for camera + 3 meshes, got %d", len(commands))
+	if len(commands) != 6 {
+		t.Fatalf("expected initial create commands for camera + 3 meshes + 2 labels, got %d", len(commands))
 	}
+	assertCreateNodeKindCount(t, commands, "label", 2)
 
 	signals["$input.pointer.x"].Set(vm.FloatVal(660))
 	signals["$input.pointer.y"].Set(vm.FloatVal(120))
@@ -44,4 +46,27 @@ func assertHasCommandKind(t *testing.T, commands []rootengine.Command, want root
 		}
 	}
 	t.Fatalf("expected command %v in %#v", want, commands)
+}
+
+func assertCreateNodeKindCount(t *testing.T, commands []rootengine.Command, kind string, want int) {
+	t.Helper()
+
+	var got int
+	for _, command := range commands {
+		if command.Kind != rootengine.CommandCreateObject {
+			continue
+		}
+		var payload struct {
+			Kind string `json:"kind"`
+		}
+		if err := json.Unmarshal(command.Data, &payload); err != nil {
+			t.Fatalf("decode create command: %v", err)
+		}
+		if payload.Kind == kind {
+			got++
+		}
+	}
+	if got != want {
+		t.Fatalf("expected %d %q create commands, got %d", want, kind, got)
+	}
 }
