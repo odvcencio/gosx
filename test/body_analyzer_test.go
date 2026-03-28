@@ -54,6 +54,41 @@ func Counter() Node {
 	t.Logf("Signals extracted: %+v", sigs)
 }
 
+func TestBodyAnalyzerSharedSignals(t *testing.T) {
+	source := []byte(`package main
+
+//gosx:island
+func Dashboard() Node {
+	state := signal.NewShared("dashboard.state", props.State)
+	view := signal.NewShared("$dashboard.view", "overview")
+
+	return <div>{view.Get()}</div>
+}
+`)
+	prog, err := compileGSX(t, source)
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+
+	comp := prog.Components[0]
+	if comp.Scope == nil {
+		t.Fatal("expected component scope from body analysis")
+	}
+	if len(comp.Scope.Signals) != 2 {
+		t.Fatalf("expected 2 signals, got %d", len(comp.Scope.Signals))
+	}
+
+	if comp.Scope.Signals[0].Name != "$dashboard.state" {
+		t.Fatalf("expected first shared signal to be $dashboard.state, got %q", comp.Scope.Signals[0].Name)
+	}
+	if comp.Scope.Signals[1].Name != "$dashboard.view" {
+		t.Fatalf("expected second shared signal to be $dashboard.view, got %q", comp.Scope.Signals[1].Name)
+	}
+	if comp.Scope.Locals["state"] != "signal" || comp.Scope.Locals["view"] != "signal" {
+		t.Fatalf("expected shared signal locals to register as signal, got %#v", comp.Scope.Locals)
+	}
+}
+
 // TestBodyAnalyzerHandlers verifies that func literal assignments
 // are extracted as handlers.
 func TestBodyAnalyzerHandlers(t *testing.T) {
