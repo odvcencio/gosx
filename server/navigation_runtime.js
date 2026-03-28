@@ -613,6 +613,13 @@
     return formData;
   }
 
+  function formCSRFToken(formData) {
+    if (!formData || typeof formData.get !== "function") return "";
+    const token = formData.get("csrf_token");
+    if (token == null) return "";
+    return String(token);
+  }
+
   async function submitForm(form, submitter) {
     if (!form) return;
 
@@ -624,11 +631,13 @@
     form.setAttribute("data-gosx-pending", "true");
 
     try {
+      const csrfToken = formCSRFToken(formData);
       const response = await fetch(url.href, {
         method: "POST",
         headers: {
           Accept: "application/json",
           "X-Requested-With": "XMLHttpRequest",
+          ...(csrfToken ? { "X-CSRF-Token": csrfToken } : {}),
         },
         body: formData,
         redirect: "follow",
