@@ -92,6 +92,22 @@ func TestVMAdd(t *testing.T) {
 	}
 }
 
+func TestVMAddConcatsStrings(t *testing.T) {
+	prog := progFromExprs([]program.Expr{
+		{Op: program.OpLitString, Value: "badge ", Type: program.TypeString},
+		{Op: program.OpLitString, Value: "tone-success", Type: program.TypeString},
+		{Op: program.OpAdd, Operands: []program.ExprID{0, 1}, Type: program.TypeAny},
+	})
+	vm := NewVM(prog, nil)
+	v := vm.Eval(2)
+	if v.Type != program.TypeString {
+		t.Fatalf("expected TypeString, got %d", v.Type)
+	}
+	if v.Str != "badge tone-success" {
+		t.Fatalf("expected concatenated string, got %q", v.Str)
+	}
+}
+
 func TestVMSub(t *testing.T) {
 	prog := progFromExprs([]program.Expr{
 		{Op: program.OpLitInt, Value: "10", Type: program.TypeInt},
