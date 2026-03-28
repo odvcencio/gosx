@@ -918,9 +918,7 @@ func mountHandled(mux *http.ServeMux, w http.ResponseWriter, r *http.Request) bo
 	if pattern == "" || handler == nil {
 		return false
 	}
-	rec := &interceptResponseWriter{header: make(http.Header)}
-	handler.ServeHTTP(rec, r)
-	rec.commit(w)
+	handler.ServeHTTP(w, r)
 	return true
 }
 
