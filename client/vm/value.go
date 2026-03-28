@@ -70,6 +70,9 @@ func resultType(a, b Value) program.ExprType {
 
 // Add returns a + b. Uses integer semantics when both operands are TypeInt.
 func (v Value) Add(b Value) Value {
+	if v.Type == program.TypeString || b.Type == program.TypeString {
+		return StringVal(v.String() + b.String())
+	}
 	if isInt(v, b) {
 		return Value{Type: program.TypeInt, Num: float64(int64(v.Num) + int64(b.Num))}
 	}
