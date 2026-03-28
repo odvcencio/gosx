@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 
 	"github.com/odvcencio/gosx"
@@ -109,12 +110,39 @@ func writeScaffoldFile(root string, rel string, contents string) error {
 }
 
 func goModTemplate(module string) string {
-	return fmt.Sprintf(`module %s
+	template := fmt.Sprintf(`module %s
 
 go 1.25.1
 
 require github.com/odvcencio/gosx v%s
 `, module, gosx.Version)
+	if replacePath := localGoSXReplacePath(); replacePath != "" {
+		template += fmt.Sprintf("\nreplace github.com/odvcencio/gosx => %s\n", replacePath)
+	}
+	return template
+}
+
+func localGoSXReplacePath() string {
+	_, file, _, ok := runtime.Caller(0)
+	if !ok {
+		return ""
+	}
+	repoRoot := filepath.Clean(filepath.Join(filepath.Dir(file), "..", ".."))
+	goModPath := filepath.Join(repoRoot, "go.mod")
+	data, err := os.ReadFile(goModPath)
+	if err != nil {
+		return ""
+	}
+	if !strings.Contains(string(data), "module github.com/odvcencio/gosx") {
+		return ""
+	}
+	for _, dir := range []string{"env", "session"} {
+		info, err := os.Stat(filepath.Join(repoRoot, dir))
+		if err != nil || !info.IsDir() {
+			return ""
+		}
+	}
+	return filepath.ToSlash(repoRoot)
 }
 
 func mainTemplate(module string) string {

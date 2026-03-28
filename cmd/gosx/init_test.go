@@ -101,6 +101,20 @@ func TestRunInitDerivesModuleNameFromDirectory(t *testing.T) {
 	}
 }
 
+func TestRunInitAddsLocalGoSXReplaceWhenRepoRootIsAvailable(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "starter-local-replace")
+
+	if err := RunInit(dir, "example.com/starter-local-replace", ""); err != nil {
+		t.Fatal(err)
+	}
+
+	goMod := readFile(t, filepath.Join(dir, "go.mod"))
+	replaceLine := "replace github.com/odvcencio/gosx => " + filepath.ToSlash(testRepoRoot(t))
+	if !strings.Contains(goMod, replaceLine) {
+		t.Fatalf("expected go.mod to contain %q, got:\n%s", replaceLine, goMod)
+	}
+}
+
 func TestRunInitFailsWhenFileAlreadyExists(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\n"), 0644); err != nil {

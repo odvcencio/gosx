@@ -213,7 +213,8 @@ func (f *formatter) formatDefault(n *gotreesitter.Node, depth int) string {
 
 		childType := f.nodeType(child)
 		if childType == "jsx_element" || childType == "jsx_self_closing_element" || childType == "jsx_fragment" {
-			b.WriteString(f.format(child, depth))
+			childStr := f.format(child, depth)
+			b.WriteString(f.indentEmbedded(childStr, f.lineLeadingWhitespace(child.StartByte())))
 		} else {
 			b.WriteString(f.formatDefault(child, depth))
 		}
@@ -226,6 +227,36 @@ func (f *formatter) formatDefault(n *gotreesitter.Node, depth int) string {
 	}
 
 	return b.String()
+}
+
+func (f *formatter) indentEmbedded(text string, prefix string) string {
+	if prefix == "" || !strings.Contains(text, "\n") {
+		return text
+	}
+	return strings.ReplaceAll(text, "\n", "\n"+prefix)
+}
+
+func (f *formatter) lineLeadingWhitespace(pos uint32) string {
+	if pos == 0 || len(f.src) == 0 {
+		return ""
+	}
+	idx := int(pos)
+	if idx > len(f.src) {
+		idx = len(f.src)
+	}
+	lineStart := idx - 1
+	for lineStart >= 0 && f.src[lineStart] != '\n' {
+		lineStart--
+	}
+	lineStart++
+	lineEnd := lineStart
+	for lineEnd < idx {
+		if f.src[lineEnd] != ' ' && f.src[lineEnd] != '\t' {
+			break
+		}
+		lineEnd++
+	}
+	return string(f.src[lineStart:lineEnd])
 }
 
 func (f *formatter) formatAttrs(attrs []*gotreesitter.Node, depth int) string {
