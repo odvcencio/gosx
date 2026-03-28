@@ -5,11 +5,13 @@ import (
 
 	"github.com/odvcencio/gosx"
 	"github.com/odvcencio/gosx/engine"
+	"github.com/odvcencio/gosx/hydrate"
 	"github.com/odvcencio/gosx/island"
+	islandprogram "github.com/odvcencio/gosx/island/program"
 )
 
-// PageRuntime tracks page-scoped engines and the bootstrap assets needed to
-// mount them on the client.
+// PageRuntime tracks page-scoped islands, engines, and hubs plus the bootstrap
+// assets needed to mount them on the client.
 type PageRuntime struct {
 	renderer *island.Renderer
 	active   bool
@@ -31,6 +33,24 @@ func (r *PageRuntime) Engine(cfg engine.Config, fallback gosx.Node) gosx.Node {
 	}
 	r.active = true
 	return r.renderer.RenderEngine(cfg, fallback)
+}
+
+// Island registers a compiled island program and returns its server-rendered shell.
+func (r *PageRuntime) Island(prog *islandprogram.Program, props any) gosx.Node {
+	if r == nil || prog == nil {
+		return gosx.Text("")
+	}
+	r.active = true
+	return r.renderer.RenderIslandFromProgram(prog, props)
+}
+
+// BindHub registers a realtime hub connection for the current page.
+func (r *PageRuntime) BindHub(name, path string, bindings []hydrate.HubBinding) string {
+	if r == nil || strings.TrimSpace(name) == "" || strings.TrimSpace(path) == "" {
+		return ""
+	}
+	r.active = true
+	return r.renderer.BindHub(name, path, bindings)
 }
 
 // Head renders the preload, manifest, and bootstrap tags required by the page runtime.
