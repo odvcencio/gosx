@@ -14,6 +14,7 @@ import (
 	rootengine "github.com/odvcencio/gosx/engine"
 	"github.com/odvcencio/gosx/ir"
 	"github.com/odvcencio/gosx/island/program"
+	"github.com/rivo/uniseg"
 )
 
 func compileIslandProgram(t *testing.T, source string) *program.Program {
@@ -196,7 +197,10 @@ func TestRuntimeTextLayoutExport(t *testing.T) {
 
 		widths := make([]float64, len(texts))
 		for i, text := range texts {
-			widths[i] = float64(len([]rune(text)))
+			graphemes := uniseg.NewGraphemes(text)
+			for graphemes.Next() {
+				widths[i]++
+			}
 		}
 
 		data, err := json.Marshal(widths)
@@ -246,6 +250,15 @@ func TestRuntimeTextLayoutExport(t *testing.T) {
 	}
 	if got := lines.Index(1).Get("runeEnd").Int(); got != 21 {
 		t.Fatalf("line 1 runeEnd: got %d", got)
+	}
+
+	emojiRet := js.Global().Get("__gosx_text_layout").Invoke("👨‍👩‍👧‍👦a", "16px serif", 1, "normal", 1)
+	emojiLines := emojiRet.Get("lines")
+	if emojiLines.Length() != 2 {
+		t.Fatalf("expected 2 emoji line entries, got %d", emojiLines.Length())
+	}
+	if got := emojiLines.Index(0).Get("text").String(); got != "👨‍👩‍👧‍👦" {
+		t.Fatalf("expected intact emoji grapheme, got %q", got)
 	}
 }
 
