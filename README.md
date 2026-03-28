@@ -46,7 +46,7 @@ GoSX is in active development. The compiler pipeline, server rendering, island a
 - Island programs in JSON (dev, inspectable) and binary (prod, compact — ~14% of JSON size)
 - WASM bridge managing island lifecycle (hydrate, dispatch, dispose)
 - browser-backed `textlayout` primitives via `Prepare`, `Measure`, `Layout`, `LayoutNextLine`, and the shared-runtime `__gosx_text_layout(...)` export, including source spans for line-aware overlays/editors
-- framework-level text layout via `server.TextBlock`, `ctx.TextBlock(...)`, `.gsx` `<TextBlock>`, and `window.__gosx.textLayout.observe(...)` for reactive DOM metrics/ranges without requiring islands
+- framework-level text layout via `server.TextBlock`, `ctx.TextBlock(...)`, `.gsx` `<TextBlock>`, and `window.__gosx.textLayout.observe(...)`, including server-side sizing hints before browser refinement and reactive DOM metrics/ranges without requiring islands
 - WASM runtime compiles to 1.2MB with TinyGo (~452KB gzipped first load)
 - Hub primitive: WebSocket presence, fanout, shared state
 - Engine primitive: worker/surface model with capability declarations

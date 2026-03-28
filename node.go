@@ -114,6 +114,14 @@ func RenderHTML(n Node) string {
 	return b.String()
 }
 
+// PlainText walks a node tree and returns the concatenated text content.
+// RawHTML nodes are ignored because their text may include markup.
+func PlainText(n Node) string {
+	var b strings.Builder
+	writePlainText(&b, n)
+	return b.String()
+}
+
 func renderNodeHTML(b *strings.Builder, n Node) {
 	switch n.kind {
 	case kindElement:
@@ -163,6 +171,17 @@ func renderAttrHTML(b *strings.Builder, attr nodeAttr) {
 		fmt.Fprintf(b, ` %s="%s"`, safeName, html.EscapeString(v))
 	default:
 		fmt.Fprintf(b, ` %s="%s"`, safeName, html.EscapeString(fmt.Sprint(v)))
+	}
+}
+
+func writePlainText(b *strings.Builder, n Node) {
+	switch n.kind {
+	case kindText, kindExpr:
+		b.WriteString(n.text)
+	case kindElement, kindFragment:
+		for _, child := range n.children {
+			writePlainText(b, child)
+		}
 	}
 }
 

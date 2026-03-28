@@ -303,6 +303,9 @@ func TestAppInjectsBootstrapHeadForTextBlockPages(t *testing.T) {
 		`data-gosx-text-layout`,
 		`data-gosx-text-layout-font="600 16px serif"`,
 		`data-gosx-text-layout-line-height="20"`,
+		`data-gosx-text-layout-source="hello world from gosx"`,
+		`data-gosx-text-layout-line-count-hint="`,
+		`data-gosx-text-layout-height-hint="`,
 		`gosx-manifest`,
 		`/gosx/bootstrap.js`,
 	} {
