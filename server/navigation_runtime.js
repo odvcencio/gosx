@@ -9,6 +9,7 @@
   const HEAD_END = "gosx-head-end";
   const SCRIPT_ROLE = "data-gosx-script";
   const LINK_ATTR = "data-gosx-link";
+  const FORM_ATTR = "data-gosx-form";
   const PREFETCH_ATTR = "data-gosx-prefetch";
   const MAIN_ATTR = "data-gosx-main";
   const ANNOUNCE_ATTR = "data-gosx-announce";
@@ -589,6 +590,88 @@
     return null;
   }
 
+  function shouldHandleForm(form, event) {
+    if (!form || !form.hasAttribute || !form.hasAttribute(FORM_ATTR)) return false;
+    if (event.defaultPrevented) return false;
+    if (form.getAttribute("target")) return false;
+
+    const method = String(form.getAttribute("method") || "GET").toUpperCase();
+    if (method !== "POST") return false;
+
+    const action = form.getAttribute("action") || window.location.href;
+    const url = new URL(action, window.location.href);
+    return url.origin === window.location.origin;
+  }
+
+  function serializeForm(form, submitter) {
+    const formData = new FormData(form);
+    const submitterName = submitter && (submitter.name || (typeof submitter.getAttribute === "function" ? submitter.getAttribute("name") : ""));
+    const submitterValue = submitter && (submitter.value || (typeof submitter.getAttribute === "function" ? submitter.getAttribute("value") : "") || "");
+    if (submitterName && !formData.has(submitterName)) {
+      formData.append(submitterName, submitterValue);
+    }
+    return formData;
+  }
+
+  async function submitForm(form, submitter) {
+    if (!form) return;
+
+    const action = form.getAttribute("action") || window.location.href;
+    const url = new URL(action, window.location.href);
+    const formData = serializeForm(form, submitter);
+    const previousPending = form.getAttribute("data-gosx-pending");
+
+    form.setAttribute("data-gosx-pending", "true");
+
+    try {
+      const response = await fetch(url.href, {
+        method: "POST",
+        headers: {
+          Accept: "application/json",
+          "X-Requested-With": "XMLHttpRequest",
+        },
+        body: formData,
+        redirect: "follow",
+      });
+
+      let result = null;
+      try {
+        result = await response.json();
+      } catch (_) {
+        result = null;
+      }
+
+      if (result && result.data && typeof window.__gosx_set_input_batch === "function") {
+        window.__gosx_set_input_batch(JSON.stringify(result.data));
+      }
+
+      if (result && result.redirect) {
+        await navigate(new URL(result.redirect, window.location.href).href, { replace: false });
+      }
+
+      if (typeof document.dispatchEvent === "function" && typeof CustomEvent === "function") {
+        document.dispatchEvent(new CustomEvent("gosx:form:result", {
+          detail: {
+            action: url.href,
+            ok: response.ok,
+            status: response.status,
+            result: result,
+          },
+        }));
+      }
+    } catch (err) {
+      console.error("[gosx] form action failed:", err);
+      form.submit();
+      return;
+    } finally {
+      if (previousPending == null) {
+        form.removeAttribute("data-gosx-pending");
+      } else {
+        form.setAttribute("data-gosx-pending", previousPending);
+      }
+    }
+  }
+
   function parseDocument(html) {
     if (typeof DOMParser === "undefined") {
       throw new Error("DOMParser is not available");
@@ -689,6 +772,16 @@
     prefetchLink(anchor);
   }
 
+  function onSubmit(event) {
+    const form = event.target;
+    if (!shouldHandleForm(form, event)) return;
+    event.preventDefault();
+    submitForm(form, event.submitter || null).catch(function(err) {
+      console.error("[gosx] form submit failed:", err);
+      form.submit();
+    });
+  }
+
   function onFocusIn(event) {
     const anchor = closestLink(event.target);
     if (!anchor || !anchor.hasAttribute || !anchor.hasAttribute(LINK_ATTR)) return;
@@ -704,6 +797,7 @@
   document.addEventListener("click", onClick);
   document.addEventListener("mouseover", onMouseOver);
   document.addEventListener("focusin", onFocusIn);
+  document.addEventListener("submit", onSubmit);
   if (typeof window.addEventListener === "function") {
     window.addEventListener("popstate", onPopState);
   }

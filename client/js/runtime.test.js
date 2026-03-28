@@ -632,8 +632,42 @@ class FakeResponse {
     return this._text;
   }
 
+  async json() {
+    return JSON.parse(this._text || "null");
+  }
+
   async arrayBuffer() {
     return Uint8Array.from(this._bytes).buffer;
+  }
+}
+
+class FakeFormData {
+  constructor(form) {
+    this.values = [];
+    if (form) {
+      this._collect(form);
+    }
+  }
+
+  append(name, value) {
+    this.values.push([String(name), String(value == null ? "" : value)]);
+  }
+
+  has(name) {
+    return this.values.some((entry) => entry[0] === name);
+  }
+
+  _collect(node) {
+    if (!node || node.nodeType !== ELEMENT_NODE) {
+      return;
+    }
+    const tag = node.tagName;
+    if ((tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") && node.hasAttribute("name")) {
+      this.append(node.getAttribute("name"), node.value || node.getAttribute("value") || "");
+    }
+    for (const child of node.children) {
+      this._collect(child);
+    }
   }
 }
 
@@ -703,6 +737,7 @@ function createContext(options) {
       }
     },
     document,
+    FormData: FakeFormData,
     fetch: async (url, init = {}) => {
       fetchCalls.push({ url, init });
       if (!routes.has(url)) {
@@ -2939,4 +2974,82 @@ test("navigation runtime honors explicit a11y markers and hash targets", async (
   assert.equal(env.document.body.childNodes.at(-1).textContent, "Accessibility docs");
   assert.equal(env.document.dispatchedEvents.at(-1).detail.announcement, "Accessibility docs");
   assert.equal(env.document.dispatchedEvents.at(-1).detail.focusTargetId, "details");
+});
+
+test("navigation runtime intercepts managed form submissions and forwards action data", async () => {
+  const form = new FakeElement("form", null);
+  form.setAttribute("action", "/save");
+  form.setAttribute("method", "post");
+  form.setAttribute("data-gosx-form", "");
+
+  const input = new FakeElement("input", null);
+  input.setAttribute("name", "title");
+  input.value = "hello";
+  form.appendChild(input);
+
+  const submitter = new FakeElement("button", null);
+  submitter.setAttribute("name", "intent");
+  submitter.setAttribute("value", "publish");
+  form.appendChild(submitter);
+
+  const inputBatchCalls = [];
+  const parsedDocs = new Map();
+  const env = createContext({
+    elements: [form],
+    fetchRoutes: {
+      "http://localhost:3000/save": {
+        text: '{"data":{"$draft.title":"hello"},"redirect":"/done"}',
+        url: "http://localhost:3000/save",
+      },
+      "http://localhost:3000/done": {
+        text: "__DONE_DOC__",
+        url: "http://localhost:3000/done",
+      },
+    },
+    parseHTML(html) {
+      return parsedDocs.get(html);
+    },
+  });
+  env.context.__gosx_set_input_batch = function(payload) {
+    inputBatchCalls.push(payload);
+    return null;
+  };
+  env.context.__gosx_dispose_page = async function() {};
+  env.context.__gosx_bootstrap_page = async function() {};
+
+  const doneBody = new FakeElement("main", null);
+  doneBody.id = "done";
+  doneBody.textContent = "done";
+  parsedDocs.set("__DONE_DOC__", buildNavigatedDocument({
+    title: "Done",
+    bodyNodes: [doneBody],
+  }));
+
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+
+  const submitListener = env.document.eventListeners.get("submit")[0];
+  let prevented = false;
+  submitListener({
+    type: "submit",
+    target: form,
+    submitter,
+    defaultPrevented: false,
+    preventDefault() {
+      prevented = true;
+      this.defaultPrevented = true;
+    },
+  });
+  await flushAsyncWork();
+
+  assert.equal(prevented, true);
+  assert.equal(env.fetchCalls[0].url, "http://localhost:3000/save");
+  assert.equal(env.fetchCalls[0].init.method, "POST");
+  assert.equal(env.fetchCalls[0].init.headers.Accept, "application/json");
+  assert.equal(env.fetchCalls[0].init.body instanceof FakeFormData, true);
+  assert.equal(env.fetchCalls[0].init.body.has("title"), true);
+  assert.equal(env.fetchCalls[0].init.body.has("intent"), true);
+  assert.deepEqual(inputBatchCalls, ['{"$draft.title":"hello"}']);
+  assert.equal(env.context.location.href, "http://localhost:3000/done");
+  assert.equal(env.document.dispatchedEvents.at(-1).type, "gosx:form:result");
+  assert.equal(form.getAttribute("data-gosx-pending"), null);
 });
