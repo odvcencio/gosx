@@ -38,6 +38,67 @@
     ready: false,
   };
 
+  const textMeasureCache = new Map();
+  const textMeasureCacheLimit = 4096;
+  let textMeasureContext = null;
+
+  function gosxTextMeasureContext() {
+    if (textMeasureContext) {
+      return textMeasureContext;
+    }
+    const canvas = document.createElement("canvas");
+    if (!canvas || typeof canvas.getContext !== "function") {
+      return null;
+    }
+    textMeasureContext = canvas.getContext("2d");
+    return textMeasureContext;
+  }
+
+  window.__gosx_measure_text_batch = function(font, textsJSON) {
+    let texts = textsJSON;
+    if (typeof textsJSON === "string") {
+      try {
+        texts = JSON.parse(textsJSON);
+      } catch (e) {
+        console.error("[gosx] invalid text measurement payload:", e);
+        return JSON.stringify([]);
+      }
+    }
+    if (!Array.isArray(texts)) {
+      return JSON.stringify([]);
+    }
+
+    const ctx = gosxTextMeasureContext();
+    if (!ctx || typeof ctx.measureText !== "function") {
+      return JSON.stringify(texts.map(function(value) {
+        const text = value == null ? "" : String(value);
+        return text.length;
+      }));
+    }
+
+    if (font) {
+      ctx.font = String(font);
+    }
+
+    const fontKey = font ? String(font) : "";
+    const widths = texts.map(function(value) {
+      const text = value == null ? "" : String(value);
+      const cacheKey = fontKey + "\n" + text;
+      if (textMeasureCache.has(cacheKey)) {
+        return textMeasureCache.get(cacheKey);
+      }
+      const metrics = ctx.measureText(text);
+      const width = metrics && typeof metrics.width === "number" ? metrics.width : 0;
+      if (textMeasureCache.size >= textMeasureCacheLimit) {
+        textMeasureCache.clear();
+      }
+      textMeasureCache.set(cacheKey, width);
+      return width;
+    });
+
+    return JSON.stringify(widths);
+  };
+
   // Pending manifest reference, set during init, consumed when runtime is ready.
   let pendingManifest = null;
 

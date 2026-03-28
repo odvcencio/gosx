@@ -45,6 +45,7 @@ GoSX is in active development. The compiler pipeline, server rendering, island a
 - Tree reconciler with static subtree skipping and patch op generation
 - Island programs in JSON (dev, inspectable) and binary (prod, compact — ~14% of JSON size)
 - WASM bridge managing island lifecycle (hydrate, dispatch, dispose)
+- browser-backed `textlayout` primitives via `Prepare`, `Measure`, `Layout`, `LayoutNextLine`, and the shared-runtime `__gosx_text_layout(...)` export, including source spans for line-aware overlays/editors
 - WASM runtime compiles to 1.2MB with TinyGo (~452KB gzipped first load)
 - Hub primitive: WebSocket presence, fanout, shared state
 - Engine primitive: worker/surface model with capability declarations

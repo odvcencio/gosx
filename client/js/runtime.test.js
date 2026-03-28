@@ -76,6 +76,7 @@ class FakeDocumentFragment {
 
 class FakeCanvasContext2D {
   constructor() {
+    this.font = "10px sans-serif";
     this.fillStyle = "";
     this.strokeStyle = "";
     this.lineWidth = 1;
@@ -94,6 +95,11 @@ class FakeCanvasContext2D {
   scale(x, y) { this.ops.push(["scale", x, y]); }
   stroke() { this.ops.push(["stroke"]); }
   translate(x, y) { this.ops.push(["translate", x, y]); }
+  measureText(text) {
+    const value = String(text == null ? "" : text);
+    this.ops.push(["measureText", this.font, value]);
+    return { width: value.length * 8 };
+  }
 }
 
 class FakeWebGLContext {
@@ -949,6 +955,25 @@ test("bootstrap hydrates, delegates click events, and disposes islands", async (
   assert.equal(wrapper.listenerCount("click"), 0);
   assert.deepEqual(env.disposeCalls, [["gosx-island-1"]]);
   assert.equal(env.consoleLogs.error.length, 0);
+});
+
+test("bootstrap exposes a browser text measurement helper", () => {
+  const env = createContext({});
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+
+  const raw = env.context.__gosx_measure_text_batch("600 16px serif", JSON.stringify(["hi", "there"]));
+  assert.deepEqual(JSON.parse(raw), [16, 40]);
+});
+
+test("bootstrap text measurement helper handles invalid payloads defensively", () => {
+  const env = createContext({});
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+
+  const raw = env.context.__gosx_measure_text_batch("600 16px serif", "{");
+  assert.deepEqual(JSON.parse(raw), []);
+  assert.equal(env.consoleLogs.error.length > 0, true);
 });
 
 test("bootstrap infers binary island programs from .gxi refs", async () => {
