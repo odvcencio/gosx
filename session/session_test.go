@@ -99,4 +99,14 @@ func TestProtectRejectsMissingOrInvalidToken(t *testing.T) {
 	if validRes.Code != http.StatusNoContent {
 		t.Fatalf("expected 204, got %d", validRes.Code)
 	}
+
+	jsonReq := httptest.NewRequest(http.MethodPost, "/form", strings.NewReader("name=Ada"))
+	jsonReq.Header.Set("Accept", "application/json")
+	jsonReq.Header.Set("X-CSRF-Token", token)
+	jsonReq.AddCookie(cookie)
+	jsonRes := httptest.NewRecorder()
+	handler.ServeHTTP(jsonRes, jsonReq)
+	if jsonRes.Code != http.StatusNoContent {
+		t.Fatalf("expected 204 for json csrf header, got %d", jsonRes.Code)
+	}
 }
