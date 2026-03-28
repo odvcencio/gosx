@@ -976,6 +976,36 @@ test("bootstrap text measurement helper handles invalid payloads defensively", (
   assert.equal(env.consoleLogs.error.length > 0, true);
 });
 
+test("bootstrap exposes a browser text layout helper without wasm runtime", () => {
+  const env = createContext({});
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+
+  const layout = env.context.__gosx_text_layout("hello world from gosx", "600 16px serif", 88, "normal", 20);
+  assert.deepEqual(Array.from(layout.lines, (line) => line.text), ["hello world", "from gosx"]);
+  assert.equal(layout.lineCount, 2);
+  assert.equal(layout.height, 40);
+  assert.equal(layout.maxLineWidth, 88);
+  assert.equal(layout.byteLen, 21);
+  assert.equal(layout.runeCount, 21);
+  assert.equal(layout.lines[0].byteStart, 0);
+  assert.equal(layout.lines[0].byteEnd, 11);
+});
+
+test("bootstrap browser text layout helper preserves pre-wrap hard breaks", () => {
+  const env = createContext({});
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+
+  const layout = env.context.__gosx_text_layout("hi\n", "600 16px serif", 200, "pre-wrap", 18);
+  assert.deepEqual(Array.from(layout.lines, (line) => line.text), ["hi", ""]);
+  assert.equal(layout.lineCount, 2);
+  assert.equal(layout.height, 36);
+  assert.equal(layout.lines[0].hardBreak, true);
+  assert.equal(layout.lines[1].byteStart, 3);
+  assert.equal(layout.lines[1].byteEnd, 3);
+});
+
 test("bootstrap infers binary island programs from .gxi refs", async () => {
   const wrapper = new FakeElement("div", null);
   const componentRoot = new FakeElement("div", null);
@@ -2002,7 +2032,15 @@ test("bootstrap renders mixed native Scene3D primitives", async () => {
                 { kind: "plane", width: 5.2, depth: 3.8, y: -1.6, z: 0.3, color: "#35556a" },
               ],
               labels: [
-                { id: "zoo-label", text: "Geometry zoo", x: 0.2, y: 1.4, z: 0.9, maxWidth: 164 },
+                {
+                  id: "zoo-label",
+                  text: "Geometry zoo\nBrowser-measured overlay copy",
+                  x: 0.2,
+                  y: 1.4,
+                  z: 0.9,
+                  maxWidth: 120,
+                  whiteSpace: "pre-wrap",
+                },
               ],
             },
           },
@@ -2011,16 +2049,6 @@ test("bootstrap renders mixed native Scene3D primitives", async () => {
       ],
     },
   });
-  const textLayoutCalls = [];
-  env.context.__gosx_text_layout = (...args) => {
-    textLayoutCalls.push(args);
-    return {
-      lines: [{ text: "Geometry zoo" }],
-      lineCount: 1,
-      height: 18,
-      maxLineWidth: 92,
-    };
-  };
 
   runScript(bootstrapSource, env.context, "bootstrap.js");
   await flushAsyncWork();
@@ -2038,8 +2066,8 @@ test("bootstrap renders mixed native Scene3D primitives", async () => {
   assert.equal(mount.getAttribute("data-gosx-scene3d-mounted"), "true");
   assert.equal(labelLayer.getAttribute("data-gosx-scene3d-label-layer"), "true");
   assert.equal(labelLayer.children.length, 1);
-  assert.equal(labelLayer.children[0].textContent, "Geometry zoo");
-  assert.equal(textLayoutCalls.length, 1);
+  assert.equal(labelLayer.children[0].children.length >= 2, true);
+  assert.equal(labelLayer.children[0].textContent, "Geometry zooBrowser-measured overlay copy");
   assert.ok(strokeCount >= 12);
   assert.equal(env.consoleLogs.warn.length, 0);
   assert.equal(env.consoleLogs.error.length, 0);
