@@ -98,16 +98,35 @@ type Line struct {
 	Width     float64 `json:"width"`
 	Text      string  `json:"text"`
 	HardBreak bool    `json:"hardBreak"`
+	SoftBreak bool    `json:"softBreak"`
 }
 
-// Result contains the full line layout for a measured text block.
-type Result struct {
-	Lines        []Line  `json:"lines"`
+// LineRange describes one laid-out line without materializing text.
+type LineRange struct {
+	Start     int     `json:"start"`
+	End       int     `json:"end"`
+	ByteStart int     `json:"byteStart"`
+	ByteEnd   int     `json:"byteEnd"`
+	RuneStart int     `json:"runeStart"`
+	RuneEnd   int     `json:"runeEnd"`
+	Width     float64 `json:"width"`
+	HardBreak bool    `json:"hardBreak"`
+	SoftBreak bool    `json:"softBreak"`
+}
+
+// Metrics contains aggregate layout geometry for a measured text block.
+type Metrics struct {
 	LineCount    int     `json:"lineCount"`
 	Height       float64 `json:"height"`
 	MaxLineWidth float64 `json:"maxLineWidth"`
 	ByteLen      int     `json:"byteLen"`
 	RuneCount    int     `json:"runeCount"`
+}
+
+// Result contains the full line layout for a measured text block.
+type Result struct {
+	Lines []Line `json:"lines"`
+	Metrics
 }
 
 // MonospaceMeasurer is a small fallback/test measurer.
@@ -571,6 +590,16 @@ func LayoutText(text string, measurer BatchMeasurer, font string, prepare Prepar
 	return Layout(measured, layout), nil
 }
 
+// LayoutTextMetrics is a convenience wrapper for Prepare + Measure + LayoutMetrics.
+func LayoutTextMetrics(text string, measurer BatchMeasurer, font string, prepare PrepareOptions, layout LayoutOptions) (Metrics, error) {
+	prepared := Prepare(text, prepare)
+	measured, err := Measure(prepared, measurer, font)
+	if err != nil {
+		return Metrics{}, err
+	}
+	return LayoutMetrics(measured, layout), nil
+}
+
 // Layout walks the measured text and returns every line.
 func Layout(measured Measured, opts LayoutOptions) Result {
 	lineHeight := opts.LineHeight
@@ -586,6 +615,60 @@ func Layout(measured Measured, opts LayoutOptions) Result {
 				RuneStart: measured.RuneCount,
 				RuneEnd:   measured.RuneCount,
 			}},
+			Metrics: Metrics{
+				LineCount:    1,
+				Height:       lineHeight,
+				MaxLineWidth: 0,
+				ByteLen:      measured.ByteLen,
+				RuneCount:    measured.RuneCount,
+			},
+		}
+	}
+
+	lines := make([]Line, 0, 8)
+	metrics := Metrics{
+		ByteLen:   measured.ByteLen,
+		RuneCount: measured.RuneCount,
+	}
+	for start := 0; start < len(measured.Tokens); {
+		lineRange, next := LayoutNextLineRange(measured, start, opts)
+		lines = append(lines, lineFromRange(measured, lineRange))
+		metrics.LineCount++
+		if lineRange.Width > metrics.MaxLineWidth {
+			metrics.MaxLineWidth = lineRange.Width
+		}
+		if next <= start {
+			next = start + 1
+		}
+		start = next
+	}
+
+	if measured.Tokens[len(measured.Tokens)-1].Kind == TokenNewline {
+		lineRange := emptyLineAtEndRange(measured)
+		lines = append(lines, lineFromRange(measured, lineRange))
+		metrics.LineCount++
+		if lineRange.Width > metrics.MaxLineWidth {
+			metrics.MaxLineWidth = lineRange.Width
+		}
+	}
+
+	metrics.Height = float64(metrics.LineCount) * lineHeight
+
+	return Result{
+		Lines:   lines,
+		Metrics: metrics,
+	}
+}
+
+// LayoutMetrics computes aggregate layout geometry without materializing line text.
+func LayoutMetrics(measured Measured, opts LayoutOptions) Metrics {
+	lineHeight := opts.LineHeight
+	if lineHeight <= 0 {
+		lineHeight = 1
+	}
+
+	if len(measured.Tokens) == 0 {
+		return Metrics{
 			LineCount:    1,
 			Height:       lineHeight,
 			MaxLineWidth: 0,
@@ -594,35 +677,19 @@ func Layout(measured Measured, opts LayoutOptions) Result {
 		}
 	}
 
-	lines := make([]Line, 0, 8)
-	for start := 0; start < len(measured.Tokens); {
-		line, next := LayoutNextLine(measured, start, opts)
-		lines = append(lines, line)
-		if next <= start {
-			next = start + 1
+	metrics := Metrics{
+		ByteLen:   measured.ByteLen,
+		RuneCount: measured.RuneCount,
+	}
+	WalkLineRanges(measured, opts, func(line LineRange) bool {
+		metrics.LineCount++
+		if line.Width > metrics.MaxLineWidth {
+			metrics.MaxLineWidth = line.Width
 		}
-		start = next
-	}
-
-	if measured.Tokens[len(measured.Tokens)-1].Kind == TokenNewline {
-		lines = append(lines, emptyLineAtEnd(measured))
-	}
-
-	var maxLineWidth float64
-	for _, line := range lines {
-		if line.Width > maxLineWidth {
-			maxLineWidth = line.Width
-		}
-	}
-
-	return Result{
-		Lines:        lines,
-		LineCount:    len(lines),
-		Height:       float64(len(lines)) * lineHeight,
-		MaxLineWidth: maxLineWidth,
-		ByteLen:      measured.ByteLen,
-		RuneCount:    measured.RuneCount,
-	}
+		return true
+	})
+	metrics.Height = float64(metrics.LineCount) * lineHeight
+	return metrics
 }
 
 // WalkLines iterates until the callback returns false or the text is exhausted.
@@ -639,8 +706,27 @@ func WalkLines(measured Measured, opts LayoutOptions, fn func(Line) bool) {
 		})
 		return
 	}
+	WalkLineRanges(measured, opts, func(line LineRange) bool {
+		return fn(lineFromRange(measured, line))
+	})
+}
+
+// WalkLineRanges iterates over laid-out line geometry without materializing line text.
+func WalkLineRanges(measured Measured, opts LayoutOptions, fn func(LineRange) bool) {
+	if fn == nil {
+		return
+	}
+	if len(measured.Tokens) == 0 {
+		fn(LineRange{
+			ByteStart: measured.ByteLen,
+			ByteEnd:   measured.ByteLen,
+			RuneStart: measured.RuneCount,
+			RuneEnd:   measured.RuneCount,
+		})
+		return
+	}
 	for start := 0; start < len(measured.Tokens); {
-		line, next := LayoutNextLine(measured, start, opts)
+		line, next := LayoutNextLineRange(measured, start, opts)
 		if !fn(line) {
 			return
 		}
@@ -650,50 +736,56 @@ func WalkLines(measured Measured, opts LayoutOptions, fn func(Line) bool) {
 		start = next
 	}
 	if measured.Tokens[len(measured.Tokens)-1].Kind == TokenNewline {
-		fn(emptyLineAtEnd(measured))
+		fn(emptyLineAtEndRange(measured))
 	}
 }
 
 // LayoutNextLine returns one line plus the next token index to continue from.
 func LayoutNextLine(measured Measured, start int, opts LayoutOptions) (Line, int) {
+	line, next := LayoutNextLineRange(measured, start, opts)
+	return lineFromRange(measured, line), next
+}
+
+// LayoutNextLineRange returns one line range plus the next token index to continue from.
+func LayoutNextLineRange(measured Measured, start int, opts LayoutOptions) (LineRange, int) {
 	tokens := measured.Tokens
 	if start < 0 {
 		start = 0
 	}
 	if start >= len(tokens) {
-		return emptyLineAtEnd(measured), len(tokens)
+		return emptyLineAtEndRange(measured), len(tokens)
 	}
 
 	ws := normalizeWhiteSpace(measured.WhiteSpace)
 	lineStart := normalizeWrappedLineStart(tokens, start, ws)
 	if lineStart >= len(tokens) {
-		return emptyLineAtEnd(measured), len(tokens)
+		return emptyLineAtEndRange(measured), len(tokens)
 	}
 
 	if tokens[lineStart].Kind == TokenNewline {
-		return emptyLineAtIndex(tokens, lineStart, true), lineStart + 1
+		return emptyLineAtIndexRange(tokens, lineStart, true), lineStart + 1
 	}
 
 	if ws == WhiteSpacePre {
-		return layoutPreLine(measured, lineStart)
+		return layoutPreLineRange(measured, lineStart)
 	}
-	return layoutWrappedLine(measured, lineStart, ws, opts.MaxWidth)
+	return layoutWrappedLineRange(measured, lineStart, ws, opts.MaxWidth)
 }
 
-func layoutPreLine(measured Measured, start int) (Line, int) {
+func layoutPreLineRange(measured Measured, start int) (LineRange, int) {
 	tokens := measured.Tokens
 	for i := start; i < len(tokens); i++ {
 		if tokens[i].Kind != TokenNewline {
 			continue
 		}
-		line := buildLine(measured, start, i, true, false)
+		line := buildLineRange(measured, start, i, true, false)
 		return line, i + 1
 	}
-	line := buildLine(measured, start, len(tokens), false, false)
+	line := buildLineRange(measured, start, len(tokens), false, false)
 	return line, len(tokens)
 }
 
-func layoutWrappedLine(measured Measured, start int, ws WhiteSpace, maxWidth float64) (Line, int) {
+func layoutWrappedLineRange(measured Measured, start int, ws WhiteSpace, maxWidth float64) (LineRange, int) {
 	tokens := measured.Tokens
 	lineWidth := 0.0
 	lastBreak := -1
@@ -703,7 +795,7 @@ func layoutWrappedLine(measured Measured, start int, ws WhiteSpace, maxWidth flo
 	for i := start; i < len(tokens); i++ {
 		token := tokens[i]
 		if token.Kind == TokenNewline {
-			return buildLine(measured, start, i, true, false), i + 1
+			return buildLineRange(measured, start, i, true, false), i + 1
 		}
 
 		tokenWidth := tokenProgressWidth(measured, lineWidth, token)
@@ -719,46 +811,46 @@ func layoutWrappedLine(measured Measured, start int, ws WhiteSpace, maxWidth flo
 		candidateWidth := lineWidth + tokenWidth
 		if maxWidth > 0 && candidateWidth > maxWidth {
 			if canBreakAfter(token.Kind) && lineWidth+fitAdvance <= maxWidth {
-				line := buildLine(measured, start, i+1, false, token.Kind == TokenSoftHyphen)
+				line := buildLineRange(measured, start, i+1, false, token.Kind == TokenSoftHyphen)
 				return line, normalizeWrappedLineNext(tokens, i+1, ws)
 			}
 			if lastBreak > start {
-				line := buildLineWithWidth(measured, start, lastBreak, false, lastBreakSoft, lastBreakWidth)
+				line := buildLineRangeWithWidth(measured, start, lastBreak, false, lastBreakSoft, lastBreakWidth)
 				return line, normalizeWrappedLineNext(tokens, lastBreak, ws)
 			}
 			if i > start && lineEndProhibited(tokens[i-1].Text) {
-				line := buildLine(measured, start, i+1, false, false)
+				line := buildLineRange(measured, start, i+1, false, false)
 				return line, normalizeWrappedLineNext(tokens, i+1, ws)
 			}
 			if lineWidth > 0 && lineStartProhibited(token.Text) {
-				line := buildLine(measured, start, i+1, false, false)
+				line := buildLineRange(measured, start, i+1, false, false)
 				return line, normalizeWrappedLineNext(tokens, i+1, ws)
 			}
 			if lineWidth == 0 {
-				line := buildLine(measured, start, i+1, false, false)
+				line := buildLineRange(measured, start, i+1, false, false)
 				return line, normalizeWrappedLineNext(tokens, i+1, ws)
 			}
-			line := buildLine(measured, start, i, false, false)
+			line := buildLineRange(measured, start, i, false, false)
 			return line, normalizeWrappedLineNext(tokens, i, ws)
 		}
 		lineWidth = candidateWidth
 	}
 
-	return buildLine(measured, start, len(tokens), false, false), len(tokens)
+	return buildLineRange(measured, start, len(tokens), false, false), len(tokens)
 }
 
-func buildLine(measured Measured, start, end int, hardBreak, softBreak bool) Line {
-	return buildLineWithWidth(measured, start, end, hardBreak, softBreak, lineDisplayWidth(measured, start, end, softBreak))
+func buildLineRange(measured Measured, start, end int, hardBreak, softBreak bool) LineRange {
+	return buildLineRangeWithWidth(measured, start, end, hardBreak, softBreak, lineDisplayWidth(measured, start, end, softBreak))
 }
 
-func buildLineWithWidth(measured Measured, start, end int, hardBreak, softBreak bool, width float64) Line {
+func buildLineRangeWithWidth(measured Measured, start, end int, hardBreak, softBreak bool, width float64) LineRange {
 	tokens := measured.Tokens
-	line := Line{
+	line := LineRange{
 		Start:     start,
 		End:       end,
 		Width:     width,
-		Text:      lineText(measured, start, end, softBreak),
 		HardBreak: hardBreak,
+		SoftBreak: softBreak,
 	}
 	if start < end {
 		line.ByteStart = tokens[start].ByteStart
@@ -769,8 +861,23 @@ func buildLineWithWidth(measured Measured, start, end int, hardBreak, softBreak 
 	return line
 }
 
-func emptyLineAtIndex(tokens []MeasuredToken, index int, hardBreak bool) Line {
-	line := Line{
+func lineFromRange(measured Measured, line LineRange) Line {
+	return Line{
+		Start:     line.Start,
+		End:       line.End,
+		ByteStart: line.ByteStart,
+		ByteEnd:   line.ByteEnd,
+		RuneStart: line.RuneStart,
+		RuneEnd:   line.RuneEnd,
+		Width:     line.Width,
+		Text:      lineText(measured, line.Start, line.End, line.SoftBreak),
+		HardBreak: line.HardBreak,
+		SoftBreak: line.SoftBreak,
+	}
+}
+
+func emptyLineAtIndexRange(tokens []MeasuredToken, index int, hardBreak bool) LineRange {
+	line := LineRange{
 		Start:     index,
 		End:       index,
 		HardBreak: hardBreak,
@@ -784,8 +891,8 @@ func emptyLineAtIndex(tokens []MeasuredToken, index int, hardBreak bool) Line {
 	return line
 }
 
-func emptyLineAtEnd(measured Measured) Line {
-	line := Line{
+func emptyLineAtEndRange(measured Measured) LineRange {
+	line := LineRange{
 		Start: len(measured.Tokens),
 		End:   len(measured.Tokens),
 	}

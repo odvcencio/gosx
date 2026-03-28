@@ -1024,6 +1024,19 @@ test("bootstrap exposes a browser text layout helper without wasm runtime", () =
   assert.equal(layout.lines[0].byteEnd, 12);
 });
 
+test("bootstrap exposes a text layout metrics helper without wasm runtime", () => {
+  const env = createContext({});
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+
+  const metrics = env.context.__gosx_text_layout_metrics("hello world from gosx", "600 16px serif", 88, "normal", 20);
+  assert.equal(metrics.lineCount, 2);
+  assert.equal(metrics.height, 40);
+  assert.equal(metrics.maxLineWidth, 88);
+  assert.equal(metrics.byteLen, 21);
+  assert.equal(metrics.runeCount, 21);
+});
+
 test("bootstrap browser text layout helper preserves pre-wrap hard breaks", () => {
   const env = createContext({});
 
@@ -1229,6 +1242,35 @@ test("bootstrap adopts and caches runtime-provided text layout implementations",
   assert.equal(second.lineCount, 1);
   assert.equal(first.height, 18);
   assert.equal(second.maxLineWidth, 24);
+});
+
+test("bootstrap adopts and caches runtime-provided text layout metrics implementations", () => {
+  const env = createContext({});
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+
+  let calls = 0;
+  env.context.__gosx_text_layout_metrics = function(text, font, maxWidth, whiteSpace, lineHeight) {
+    calls += 1;
+    return {
+      lineCount: 3,
+      height: Number(lineHeight) * 3,
+      maxLineWidth: Math.min(Number(maxWidth) || 0, 42),
+      byteLen: String(text).length,
+      runeCount: String(text).length,
+      font,
+      whiteSpace,
+    };
+  };
+
+  env.context.__gosx_runtime_ready();
+
+  const first = env.context.__gosx_text_layout_metrics("hi", "600 16px serif", 80, "normal", 18);
+  const second = env.context.__gosx_text_layout_metrics("hi", "600 16px serif", 80, "normal", 18);
+  assert.equal(calls, 1);
+  assert.equal(first.lineCount, 3);
+  assert.equal(second.height, 54);
+  assert.equal(second.maxLineWidth, 42);
 });
 
 test("bootstrap falls back to browser layout when runtime text layout fails", () => {
