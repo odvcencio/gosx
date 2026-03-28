@@ -306,6 +306,20 @@ func TestRuntimeTextLayoutExport(t *testing.T) {
 	if got := openLines.Index(0).Get("text").String(); got != "(a" {
 		t.Fatalf("expected opening punctuation to stay with following glyph, got %q", got)
 	}
+
+	metricsRet := js.Global().Get("__gosx_text_layout_metrics").Invoke("hello world from gosx", "16px serif", 11, "normal", 2)
+	if metricsRet.Type() != js.TypeObject {
+		t.Fatalf("expected metrics object result, got %v", metricsRet.Type())
+	}
+	if got := metricsRet.Get("lineCount").Int(); got != 2 {
+		t.Fatalf("metrics lineCount: got %d", got)
+	}
+	if got := metricsRet.Get("height").Float(); got != 4 {
+		t.Fatalf("metrics height: got %v", got)
+	}
+	if got := metricsRet.Get("maxLineWidth").Float(); got != 11 {
+		t.Fatalf("metrics maxLineWidth: got %v", got)
+	}
 }
 
 func TestRuntimeSharedSignalsPatchOtherHydratedIslands(t *testing.T) {

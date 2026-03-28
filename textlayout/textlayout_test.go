@@ -151,6 +151,34 @@ func TestWalkLinesMatchesLayout(t *testing.T) {
 	}
 }
 
+func TestWalkLineRangesAndMetricsMatchLayout(t *testing.T) {
+	prepared := Prepare("hello,world from gosx", PrepareOptions{WhiteSpace: WhiteSpaceNormal})
+	measured, err := Measure(prepared, MonospaceMeasurer{Advance: 1}, "mono")
+	if err != nil {
+		t.Fatalf("measure: %v", err)
+	}
+
+	result := Layout(measured, LayoutOptions{MaxWidth: 11, LineHeight: 2})
+	metrics := LayoutMetrics(measured, LayoutOptions{MaxWidth: 11, LineHeight: 2})
+	if metrics.LineCount != result.LineCount || metrics.Height != result.Height || metrics.MaxLineWidth != result.MaxLineWidth {
+		t.Fatalf("metrics mismatch: got %+v want count=%d height=%v width=%v", metrics, result.LineCount, result.Height, result.MaxLineWidth)
+	}
+
+	var ranges []LineRange
+	WalkLineRanges(measured, LayoutOptions{MaxWidth: 11, LineHeight: 2}, func(line LineRange) bool {
+		ranges = append(ranges, line)
+		return true
+	})
+	if len(ranges) != len(result.Lines) {
+		t.Fatalf("range count: got %d want %d", len(ranges), len(result.Lines))
+	}
+	for i := range ranges {
+		if ranges[i].Width != result.Lines[i].Width || ranges[i].ByteStart != result.Lines[i].ByteStart || ranges[i].ByteEnd != result.Lines[i].ByteEnd {
+			t.Fatalf("range %d mismatch: got %+v want %+v", i, ranges[i], result.Lines[i])
+		}
+	}
+}
+
 func TestLayoutConsecutiveNewlinesKeepsEmptyLinePosition(t *testing.T) {
 	result, err := LayoutText(
 		"a\n\nb",

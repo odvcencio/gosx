@@ -43,11 +43,14 @@
   const sceneLabelLayoutCacheLimit = 512;
   const textLayoutCache = new Map();
   const textLayoutCacheLimit = 1024;
+  const textLayoutMetricsCache = new Map();
+  const textLayoutMetricsCacheLimit = 1024;
   const textLayoutInvalidationListeners = new Set();
   let textMeasureContext = null;
   let textLayoutRevision = 0;
   let textLayoutFontObserverInstalled = false;
   let textLayoutExternalImpl = typeof window.__gosx_text_layout === "function" ? window.__gosx_text_layout : null;
+  let textLayoutMetricsExternalImpl = typeof window.__gosx_text_layout_metrics === "function" ? window.__gosx_text_layout_metrics : null;
 
   function gosxTextMeasureContext() {
     if (textMeasureContext) {
@@ -69,6 +72,7 @@
     textLayoutRevision += 1;
     textMeasureCache.clear();
     textLayoutCache.clear();
+    textLayoutMetricsCache.clear();
     for (const listener of Array.from(textLayoutInvalidationListeners)) {
       try {
         listener(textLayoutRevision);
@@ -1065,6 +1069,17 @@
     invalidateTextLayoutCaches();
   }
 
+  function adoptTextLayoutMetricsImpl(candidate) {
+    if (typeof candidate !== "function" || candidate === gosxTextLayoutMetrics) {
+      return;
+    }
+    if (textLayoutMetricsExternalImpl === candidate) {
+      return;
+    }
+    textLayoutMetricsExternalImpl = candidate;
+    invalidateTextLayoutCaches();
+  }
+
   function currentTextLayoutImpl() {
     return typeof textLayoutExternalImpl === "function" ? textLayoutExternalImpl : null;
   }
@@ -1078,6 +1093,18 @@
       normalizeTextLayoutWhiteSpace(whiteSpace),
       sceneNumber(lineHeight, 1),
       currentTextLayoutImpl() ? "external" : "browser",
+    ].join("\n");
+  }
+
+  function textLayoutMetricsCacheKey(text, font, maxWidth, whiteSpace, lineHeight) {
+    return [
+      gosxTextLayoutRevision(),
+      String(text == null ? "" : text),
+      String(font == null ? "" : font),
+      sceneNumber(maxWidth, 0),
+      normalizeTextLayoutWhiteSpace(whiteSpace),
+      sceneNumber(lineHeight, 1),
+      textLayoutMetricsExternalImpl ? "external" : "derived",
     ].join("\n");
   }
 
@@ -1155,7 +1182,59 @@
     return result;
   }
 
+  function gosxTextLayoutMetrics(text, font, maxWidth, whiteSpace, lineHeight) {
+    const cacheKey = textLayoutMetricsCacheKey(text, font, maxWidth, whiteSpace, lineHeight);
+    if (textLayoutMetricsCache.has(cacheKey)) {
+      return textLayoutMetricsCache.get(cacheKey);
+    }
+
+    let result = null;
+    if (typeof textLayoutMetricsExternalImpl === "function") {
+      try {
+        result = textLayoutMetricsExternalImpl(text, font, maxWidth, whiteSpace, lineHeight);
+      } catch (error) {
+        console.error("[gosx] text layout metrics implementation failed:", error);
+      }
+    }
+    if (!result || typeof result !== "object") {
+      const layout = gosxTextLayout(text, font, maxWidth, whiteSpace, lineHeight);
+      result = {
+        lineCount: layout.lineCount,
+        height: layout.height,
+        maxLineWidth: layout.maxLineWidth,
+        byteLen: layout.byteLen,
+        runeCount: layout.runeCount,
+      };
+    } else {
+      const normalized = normalizeTextLayoutResult({
+        lineCount: result.lineCount,
+        height: result.height,
+        maxLineWidth: result.maxLineWidth,
+        byteLen: result.byteLen,
+        runeCount: result.runeCount,
+        lines: [],
+      }, text, lineHeight);
+      result = {
+        lineCount: normalized.lineCount,
+        height: normalized.height,
+        maxLineWidth: normalized.maxLineWidth,
+        byteLen: normalized.byteLen,
+        runeCount: normalized.runeCount,
+      };
+    }
+
+    if (textLayoutMetricsCache.size >= textLayoutMetricsCacheLimit) {
+      const oldest = textLayoutMetricsCache.keys().next();
+      if (!oldest.done) {
+        textLayoutMetricsCache.delete(oldest.value);
+      }
+    }
+    textLayoutMetricsCache.set(cacheKey, result);
+    return result;
+  }
+
   window.__gosx_text_layout = gosxTextLayout;
+  window.__gosx_text_layout_metrics = gosxTextLayoutMetrics;
   installTextLayoutFontObserver();
 
   // Pending manifest reference, set during init, consumed when runtime is ready.
@@ -4882,6 +4961,10 @@
     if (typeof window.__gosx_text_layout === "function" && window.__gosx_text_layout !== gosxTextLayout) {
       adoptTextLayoutImpl(window.__gosx_text_layout);
       window.__gosx_text_layout = gosxTextLayout;
+    }
+    if (typeof window.__gosx_text_layout_metrics === "function" && window.__gosx_text_layout_metrics !== gosxTextLayoutMetrics) {
+      adoptTextLayoutMetricsImpl(window.__gosx_text_layout_metrics);
+      window.__gosx_text_layout_metrics = gosxTextLayoutMetrics;
     }
     if (!pendingManifest) {
       window.__gosx.ready = true;
