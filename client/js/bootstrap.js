@@ -191,6 +191,21 @@
     }
   }
 
+  function normalizeTextLayoutAlign(value) {
+    const mode = typeof value === "string" ? value.trim().toLowerCase() : "";
+    switch (mode) {
+      case "left":
+      case "right":
+      case "center":
+      case "justify":
+      case "start":
+      case "end":
+        return mode;
+      default:
+        return "";
+    }
+  }
+
   function normalizeTextLayoutNewlines(text) {
     return String(text == null ? "" : text).replace(/\r\n/g, "\n").replace(/\r/g, "\n");
   }
@@ -1731,7 +1746,19 @@
       '  border-radius: inherit;',
       '}',
       '[data-gosx-text-layout-role="block"] {',
+      '  box-sizing: border-box;',
       '  min-block-size: var(--gosx-text-layout-height, auto);',
+      '  white-space: var(--gosx-text-layout-white-space-mode, normal);',
+      '  text-align: var(--gosx-text-layout-align, start);',
+      '}',
+      '[data-gosx-text-layout-role="block"][data-gosx-text-layout-max-width] {',
+      '  max-inline-size: min(100%, var(--gosx-text-layout-max-width, 100%));',
+      '}',
+      '[data-gosx-text-layout-role="block"][data-gosx-text-layout-state="hint"] {',
+      '  min-block-size: var(--gosx-text-layout-height-hint, var(--gosx-text-layout-height, auto));',
+      '}',
+      '[data-gosx-text-layout-role="block"][data-gosx-text-layout-state="truncated"] {',
+      '  --gosx-text-layout-is-truncated: 1;',
       '}',
       '[data-gosx-text-layout-role="block"][data-gosx-text-layout-max-lines] {',
       '  overflow: hidden;',
@@ -1805,7 +1832,7 @@
     const role = typeof options.role === "string" && options.role ? options.role : "block";
     const surface = typeof options.surface === "string" && options.surface ? options.surface : "dom";
     const state = typeof options.state === "string" && options.state ? options.state : (result ? "ready" : "pending");
-    const align = typeof options.align === "string" && options.align ? options.align : "";
+    const align = normalizeTextLayoutAlign(options.align || (config && config.align));
     const revision = Number.isFinite(options.revision) ? options.revision : gosxTextLayoutRevision();
     const font = config && typeof config.font === "string" ? config.font : "";
     const whiteSpace = normalizeTextLayoutWhiteSpace(config && config.whiteSpace);
@@ -1814,10 +1841,11 @@
     const overflow = normalizeTextLayoutOverflow(config && config.overflow);
     const maxWidth = textLayoutNumberValue(config && config.maxWidth, 0);
     const ready = Boolean(result);
+    const effectiveState = ready && result && result.truncated ? "truncated" : state;
 
     setAttrValue(element, TEXT_LAYOUT_ROLE_ATTR, role);
     setAttrValue(element, TEXT_LAYOUT_SURFACE_ATTR, surface);
-    setAttrValue(element, TEXT_LAYOUT_STATE_ATTR, state);
+    setAttrValue(element, TEXT_LAYOUT_STATE_ATTR, effectiveState);
     setAttrValue(element, "data-gosx-text-layout-ready", ready ? "true" : "false");
     setAttrValue(element, "data-gosx-text-layout-font", font);
     setAttrValue(element, "data-gosx-text-layout-white-space", whiteSpace === "normal" ? "" : whiteSpace);
@@ -1829,6 +1857,12 @@
 
     setStyleValue(element.style, "--gosx-text-layout-ready", ready ? "1" : "0");
     setStyleValue(element.style, "--gosx-text-layout-line-height", lineHeight + "px");
+    setStyleValue(element.style, "--gosx-text-layout-white-space-mode", whiteSpace);
+    if (align) {
+      setStyleValue(element.style, "--gosx-text-layout-align", align);
+    } else {
+      clearStyleValue(element.style, "--gosx-text-layout-align");
+    }
     if (maxLines > 0) {
       setStyleValue(element.style, "--gosx-text-layout-max-lines", String(maxLines));
       setStyleValue(element.style, "--gosx-text-layout-max-height", (lineHeight * maxLines) + "px");
@@ -1914,6 +1948,14 @@
     const font = hasOwn.call(config, "font")
       ? String(config.font == null ? "" : config.font)
       : String((element.getAttribute && element.getAttribute("data-gosx-text-layout-font")) || "");
+    const align = normalizeTextLayoutAlign(
+      hasOwn.call(config, "align")
+        ? config.align
+        : (
+          (element.getAttribute && element.getAttribute("data-gosx-text-layout-align"))
+          || (element.getAttribute && element.getAttribute("align"))
+        )
+    );
     const whiteSpace = normalizeTextLayoutWhiteSpace(
       hasOwn.call(config, "whiteSpace") ? config.whiteSpace : (element.getAttribute && element.getAttribute("data-gosx-text-layout-white-space"))
     );
@@ -1949,6 +1991,7 @@
     return {
       font,
       whiteSpace,
+      align,
       lineHeight,
       maxLines,
       overflow: normalizeTextLayoutOverflow(
