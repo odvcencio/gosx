@@ -283,6 +283,43 @@ func TestAppInjectsRuntimeHeadForEnginePages(t *testing.T) {
 	}
 }
 
+func TestAppInjectsBootstrapHeadForTextBlockPages(t *testing.T) {
+	app := New()
+	app.Page("GET /", func(ctx *Context) gosx.Node {
+		return ctx.TextBlock(TextBlockProps{
+			Font:       "600 16px serif",
+			LineHeight: 20,
+			MaxWidth:   240,
+		}, gosx.Text("hello world from gosx"))
+	})
+
+	handler := app.Build()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	body := w.Body.String()
+	for _, snippet := range []string{
+		`data-gosx-text-layout`,
+		`data-gosx-text-layout-font="600 16px serif"`,
+		`data-gosx-text-layout-line-height="20"`,
+		`gosx-manifest`,
+		`/gosx/bootstrap.js`,
+	} {
+		if !strings.Contains(body, snippet) {
+			t.Fatalf("expected %q in text layout page body %q", snippet, body)
+		}
+	}
+	for _, snippet := range []string{
+		`data-gosx-script="wasm-exec"`,
+		`/gosx/patch.js`,
+	} {
+		if strings.Contains(body, snippet) {
+			t.Fatalf("did not expect %q in bootstrap-only text layout page body %q", snippet, body)
+		}
+	}
+}
+
 func TestAppServesCompatRuntimeAssetsFromSourceBuild(t *testing.T) {
 	root := t.TempDir()
 	buildDir := filepath.Join(root, "build")

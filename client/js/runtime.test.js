@@ -1260,6 +1260,65 @@ test("bootstrap browser text layout invalidates cached widths after font loading
   assert.equal(after.lineCount, 4);
 });
 
+test("bootstrap mounts declarative text layout blocks as managed runtime state", async () => {
+  const block = new FakeElement("div", null);
+  block.width = 88;
+  block.setAttribute("data-gosx-text-layout", "");
+  block.setAttribute("data-gosx-text-layout-font", "600 16px serif");
+  block.setAttribute("data-gosx-text-layout-line-height", "20");
+  block.textContent = "hello world from gosx";
+
+  const env = createContext({
+    elements: [block],
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  assert.equal(block.getAttribute("data-gosx-text-layout-ready"), "true");
+  assert.equal(block.getAttribute("data-gosx-text-layout-line-count"), "2");
+  assert.equal(block.getAttribute("data-gosx-text-layout-height"), "40");
+  assert.equal(block.style["--gosx-text-layout-height"], "40px");
+  assert.equal(env.context.__gosx.textLayouts.size, 1);
+
+  const result = env.context.__gosx.textLayout.read(block);
+  assert.equal(result.lineCount, 2);
+  assert.equal(result.maxLineWidth, 88);
+  assert.equal(env.document.dispatchedEvents.at(-1).type, "gosx:textlayout");
+});
+
+test("bootstrap refreshes managed text layout blocks after font metric invalidation", async () => {
+  let scale = 1;
+  const fonts = new FakeFontSet();
+  const block = new FakeElement("div", null);
+  block.width = 88;
+  block.setAttribute("data-gosx-text-layout", "");
+  block.setAttribute("data-gosx-text-layout-font", "600 16px serif");
+  block.setAttribute("data-gosx-text-layout-line-height", "20");
+  block.textContent = "hello world from gosx";
+
+  const env = createContext({
+    elements: [block],
+    fonts,
+    measureText(text) {
+      return String(text).length * 8 * scale;
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  assert.equal(block.getAttribute("data-gosx-text-layout-line-count"), "2");
+
+  scale = 2;
+  fonts.dispatch("loadingdone");
+  await flushAsyncWork();
+
+  assert.equal(block.getAttribute("data-gosx-text-layout-line-count"), "4");
+  assert.equal(block.getAttribute("data-gosx-text-layout-revision"), "1");
+  assert.equal(env.context.__gosx.textLayout.read(block).lineCount, 4);
+});
+
 test("bootstrap adopts and caches runtime-provided text layout implementations", () => {
   const env = createContext({});
 

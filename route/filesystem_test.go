@@ -402,6 +402,55 @@ func Page() Node {
 	}
 }
 
+func TestDefaultFileRendererRendersTextBlockPrimitive(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "page.gsx")
+	source := `package docs
+
+func Page() Node {
+	return <TextBlock class="copy" font="600 16px serif" lineHeight={20} maxWidth={240}>
+		hello world from gosx
+	</TextBlock>
+}
+`
+	if err := os.WriteFile(path, []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := &RouteContext{}
+	node, err := DefaultFileRenderer(ctx, FilePage{FilePath: path, Pattern: "/"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	html := gosx.RenderHTML(node)
+	for _, snippet := range []string{
+		`class="copy"`,
+		`data-gosx-text-layout`,
+		`data-gosx-text-layout-font="600 16px serif"`,
+		`data-gosx-text-layout-line-height="20"`,
+		`data-gosx-text-layout-max-width="240"`,
+		`hello world from gosx`,
+	} {
+		if !strings.Contains(html, snippet) {
+			t.Fatalf("expected %q in rendered text block html %q", snippet, html)
+		}
+	}
+
+	head := gosx.RenderHTML(ctx.Runtime().Head())
+	for _, snippet := range []string{
+		`gosx-manifest`,
+		`bootstrap.js`,
+	} {
+		if !strings.Contains(head, snippet) {
+			t.Fatalf("expected %q in text layout runtime head %q", snippet, head)
+		}
+	}
+	if strings.Contains(head, `data-gosx-script="wasm-exec"`) {
+		t.Fatalf("did not expect wasm_exec on text layout-only file pages, got %q", head)
+	}
+}
+
 func TestScanDirBuildsNestedLayoutsGroupsAndNearestErrorPages(t *testing.T) {
 	root := t.TempDir()
 	writeRouteFile(t, root, "layout.gsx", `package docs
@@ -946,6 +995,7 @@ func Page() Node {
 		`class="demo-page"`,
 		`data-gosx-island="Counter"`,
 		`data-gosx-on-click="increment"`,
+		`<span>2</span>`,
 		`<script id="gosx-manifest" type="application/json">`,
 		`data-gosx-script="bootstrap"`,
 	} {

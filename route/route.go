@@ -300,6 +300,14 @@ func (ctx *RouteContext) Engine(cfg engine.Config, fallback gosx.Node) gosx.Node
 	return ctx.Runtime().Engine(cfg, fallback)
 }
 
+// TextBlock renders a managed text-layout node for the current route.
+func (ctx *RouteContext) TextBlock(props server.TextBlockProps, args ...any) gosx.Node {
+	if ctx == nil {
+		return server.TextBlock(props, args...)
+	}
+	return ctx.Runtime().TextBlock(props, args...)
+}
+
 // Defer renders fallback content immediately, then streams the resolved node
 // into place once the resolver finishes.
 func (ctx *RouteContext) Defer(fallback gosx.Node, resolve server.DeferredResolver) gosx.Node {
