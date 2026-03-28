@@ -479,6 +479,25 @@ func TestCachingMeasurerReusesWidths(t *testing.T) {
 	}
 }
 
+func TestApproximateMeasurerProducesStableServerHints(t *testing.T) {
+	result, err := LayoutText(
+		"hello world from gosx",
+		ApproximateMeasurer{},
+		"600 16px serif",
+		PrepareOptions{WhiteSpace: WhiteSpaceNormal},
+		LayoutOptions{MaxWidth: 88, LineHeight: 20},
+	)
+	if err != nil {
+		t.Fatalf("layout text: %v", err)
+	}
+	if result.LineCount < 2 {
+		t.Fatalf("expected wrapped estimate, got %+v", result)
+	}
+	if result.Height != float64(result.LineCount)*20 {
+		t.Fatalf("expected height to match line count, got %+v", result)
+	}
+}
+
 type spyMeasurer struct {
 	calls     int
 	lastTexts []string

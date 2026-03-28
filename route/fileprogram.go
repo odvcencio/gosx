@@ -228,6 +228,7 @@ func (r *fileProgramRenderer) renderTextBlock(node *ir.Node, env fileRenderEnv) 
 
 	props := server.TextBlockProps{
 		Tag:           firstNonEmptyString(stringValue(attrValue(node.Attrs, env, "as", "tag")), "div"),
+		Text:          stringValue(attrValue(node.Attrs, env, "text")),
 		Font:          stringValue(attrValue(node.Attrs, env, "font")),
 		WhiteSpace:    textlayout.WhiteSpace(stringValue(attrValue(node.Attrs, env, "whiteSpace", "whitespace"))),
 		LineHeight:    numericValue(attrValue(node.Attrs, env, "lineHeight")),
@@ -235,7 +236,11 @@ func (r *fileProgramRenderer) renderTextBlock(node *ir.Node, env fileRenderEnv) 
 		HeightHint:    numericValue(attrValue(node.Attrs, env, "heightHint")),
 		LineCountHint: int(numericValue(attrValue(node.Attrs, env, "lineCountHint"))),
 		Static:        truthy(attrValue(node.Attrs, env, "static")),
-		Source:        stringValue(attrValue(node.Attrs, env, "source")),
+		Source:        firstNonEmptyString(stringValue(attrValue(node.Attrs, env, "source")), r.textContentChildren(node.Children, env)),
+	}
+	childrenHTML := r.renderChildren(node.Children, env)
+	if strings.TrimSpace(childrenHTML) == "" && props.Text != "" {
+		childrenHTML = html.EscapeString(props.Text)
 	}
 
 	var b strings.Builder
@@ -253,7 +258,7 @@ func (r *fileProgramRenderer) renderTextBlock(node *ir.Node, env fileRenderEnv) 
 	}
 	r.renderTextBlockExtraAttrs(&b, node.Attrs, env)
 	b.WriteByte('>')
-	b.WriteString(r.renderChildren(node.Children, env))
+	b.WriteString(childrenHTML)
 	b.WriteString("</")
 	b.WriteString(tag)
 	b.WriteByte('>')
@@ -907,10 +912,43 @@ func (r *fileProgramRenderer) renderTextBlockExtraAttrs(b *strings.Builder, attr
 
 func isTextBlockReservedAttr(name string) bool {
 	switch strings.TrimSpace(name) {
-	case "as", "tag", "font", "whiteSpace", "whitespace", "lineHeight", "maxWidth", "heightHint", "lineCountHint", "source", "static":
+	case "as", "tag", "text", "font", "whiteSpace", "whitespace", "lineHeight", "maxWidth", "heightHint", "lineCountHint", "source", "static":
 		return true
 	default:
 		return false
+	}
+}
+
+func (r *fileProgramRenderer) textContentChildren(children []ir.NodeID, env fileRenderEnv) string {
+	var b strings.Builder
+	for _, child := range children {
+		b.WriteString(r.textContentNode(child, env))
+	}
+	return b.String()
+}
+
+func (r *fileProgramRenderer) textContentNode(nodeID ir.NodeID, env fileRenderEnv) string {
+	node := r.prog.NodeAt(nodeID)
+	switch node.Kind {
+	case ir.NodeText:
+		return node.Text
+	case ir.NodeExpr:
+		return fmt.Sprint(evalFileExpr(node.Text, env))
+	case ir.NodeFragment, ir.NodeElement:
+		return r.textContentChildren(node.Children, env)
+	case ir.NodeComponent:
+		comp, ok := r.components[node.Tag]
+		if !ok || comp.IsIsland || comp.IsEngine {
+			return ""
+		}
+		childrenHTML := r.renderChildren(node.Children, env)
+		childrenNode := gosx.RawHTML(childrenHTML)
+		props := componentProps(node.Attrs, env, childrenNode)
+		scope := env.withValue("props", props)
+		scope = scope.withValue("children", childrenNode)
+		return r.textContentNode(comp.Root, scope)
+	default:
+		return ""
 	}
 }
 

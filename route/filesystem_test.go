@@ -430,6 +430,9 @@ func Page() Node {
 		`data-gosx-text-layout-font="600 16px serif"`,
 		`data-gosx-text-layout-line-height="20"`,
 		`data-gosx-text-layout-max-width="240"`,
+		`data-gosx-text-layout-source="hello world from gosx"`,
+		`data-gosx-text-layout-line-count-hint="`,
+		`data-gosx-text-layout-height-hint="`,
 		`hello world from gosx`,
 	} {
 		if !strings.Contains(html, snippet) {

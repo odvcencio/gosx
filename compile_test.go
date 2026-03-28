@@ -411,6 +411,19 @@ func TestNodeRenderEscaping(t *testing.T) {
 	}
 }
 
+func TestPlainTextWalksNodeContent(t *testing.T) {
+	node := El("div",
+		Text("Hello "),
+		El("strong", Text("world")),
+		Expr("!"),
+		RawHTML("<span>ignored</span>"),
+	)
+
+	if got := PlainText(node); got != "Hello world!" {
+		t.Fatalf("expected plain text content, got %q", got)
+	}
+}
+
 func TestNodeRenderBoolAttr(t *testing.T) {
 	node := El("input", Attrs(BoolAttr("disabled"), Attr("type", "text")))
 	html := RenderHTML(node)
