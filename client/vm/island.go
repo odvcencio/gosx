@@ -162,11 +162,23 @@ func parseProps(prog *program.Program, propsJSON string) map[string]Value {
 	var rawProps map[string]json.RawMessage
 	_ = json.Unmarshal([]byte(propsJSON), &rawProps)
 
-	props := make(map[string]Value, len(prog.Props))
+	props := make(map[string]Value, len(rawProps)+len(prog.Props)+1)
+	propsObject := make(map[string]any, len(rawProps))
+	for name, raw := range rawProps {
+		var decoded any
+		if err := json.Unmarshal(raw, &decoded); err != nil {
+			props[name] = ZeroValue(program.TypeAny)
+			continue
+		}
+		props[name] = parseAnyValue(decoded)
+		propsObject[name] = decoded
+	}
+	props["props"] = parseAnyValue(propsObject)
+
 	for _, def := range prog.Props {
 		if raw, ok := rawProps[def.Name]; ok {
 			props[def.Name] = parseJSONValue(raw, def.Type)
-		} else {
+		} else if _, ok := props[def.Name]; !ok {
 			props[def.Name] = ZeroValue(def.Type)
 		}
 	}
