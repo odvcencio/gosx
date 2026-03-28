@@ -1154,3 +1154,48 @@ func TestAppPublicFilesBeatMountedCatchall(t *testing.T) {
 		t.Fatalf("unexpected public asset body %q", body)
 	}
 }
+
+func TestMountedHandlerPreservesFlushUnderObservers(t *testing.T) {
+	app := New()
+	observed := make(chan RequestEvent, 1)
+	app.UseObserver(RequestObserverFunc(func(event RequestEvent) {
+		observed <- event
+	}))
+	app.Mount("/events", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			t.Fatalf("mounted handler response writer does not implement http.Flusher")
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("event: ping\n"))
+		flusher.Flush()
+		_, _ = w.Write([]byte("data: ok\n\n"))
+	}))
+
+	handler := app.Build()
+	req := httptest.NewRequest(http.MethodGet, "/events", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if !w.Flushed {
+		t.Fatal("expected recorder to be flushed")
+	}
+	if body := w.Body.String(); !strings.Contains(body, "event: ping") || !strings.Contains(body, "data: ok") {
+		t.Fatalf("unexpected SSE body %q", body)
+	}
+
+	select {
+	case event := <-observed:
+		if event.Kind != "mount" {
+			t.Fatalf("expected observed kind mount, got %q", event.Kind)
+		}
+		if event.Pattern != "/events" {
+			t.Fatalf("expected observed pattern /events, got %q", event.Pattern)
+		}
+		if event.Status != http.StatusOK {
+			t.Fatalf("expected observed status 200, got %d", event.Status)
+		}
+	default:
+		t.Fatal("expected observer to receive mounted request event")
+	}
+}

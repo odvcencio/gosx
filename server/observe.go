@@ -1,7 +1,10 @@
 package server
 
 import (
+	"bufio"
 	"context"
+	"fmt"
+	"net"
 	"net/http"
 	"time"
 )
@@ -104,6 +107,37 @@ func (w *observedResponseWriter) Write(data []byte) (int, error) {
 		w.status = http.StatusOK
 	}
 	return w.ResponseWriter.Write(data)
+}
+
+func (w *observedResponseWriter) Flush() {
+	flusher, ok := w.ResponseWriter.(http.Flusher)
+	if !ok {
+		return
+	}
+	if w.status == 0 {
+		w.status = http.StatusOK
+	}
+	flusher.Flush()
+}
+
+func (w *observedResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	hijacker, ok := w.ResponseWriter.(http.Hijacker)
+	if !ok {
+		return nil, nil, fmt.Errorf("response writer does not support hijacking")
+	}
+	return hijacker.Hijack()
+}
+
+func (w *observedResponseWriter) Push(target string, opts *http.PushOptions) error {
+	pusher, ok := w.ResponseWriter.(http.Pusher)
+	if !ok {
+		return http.ErrNotSupported
+	}
+	return pusher.Push(target, opts)
+}
+
+func (w *observedResponseWriter) Unwrap() http.ResponseWriter {
+	return w.ResponseWriter
 }
 
 func requestPath(r *http.Request) string {
