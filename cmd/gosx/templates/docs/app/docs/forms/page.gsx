@@ -8,7 +8,9 @@ func Page() Node {
 				HTML form posts now flow through relative actions, CSRF protection, session-backed validation state, and redirect-safe success messages.
 			</p>
 		</div>
-		<h1>GoSX forms can stay boring HTML and still feel like a framework feature.</h1>
+		<h1>
+			GoSX forms can stay boring HTML and still feel like a framework feature.
+		</h1>
 		<p>
 			This page is not using a client router trick or a bespoke fetch layer. It posts to a colocated
 			<span class="inline-code">__actions</span>

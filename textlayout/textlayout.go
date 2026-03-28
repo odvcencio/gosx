@@ -47,9 +47,9 @@ type PrepareOptions struct {
 
 // LayoutOptions controls line breaking.
 type LayoutOptions struct {
-	MaxWidth   float64 `json:"maxWidth"`
-	LineHeight float64 `json:"lineHeight"`
-	MaxLines   int     `json:"maxLines,omitempty"`
+	MaxWidth   float64      `json:"maxWidth"`
+	LineHeight float64      `json:"lineHeight"`
+	MaxLines   int          `json:"maxLines,omitempty"`
 	Overflow   OverflowMode `json:"overflow,omitempty"`
 }
 
@@ -86,16 +86,16 @@ type MeasuredToken struct {
 
 // Measured is the measured representation used by Layout and LayoutNextLine.
 type Measured struct {
-	Source      string          `json:"source"`
-	ByteLen     int             `json:"byteLen"`
-	RuneCount   int             `json:"runeCount"`
-	WhiteSpace  WhiteSpace      `json:"whiteSpace"`
-	TabSize     int             `json:"tabSize"`
-	SpaceWidth  float64         `json:"spaceWidth"`
-	HyphenWidth float64         `json:"hyphenWidth"`
-	EllipsisWidth float64       `json:"ellipsisWidth"`
-	Font        string          `json:"font,omitempty"`
-	Tokens      []MeasuredToken `json:"tokens"`
+	Source        string          `json:"source"`
+	ByteLen       int             `json:"byteLen"`
+	RuneCount     int             `json:"runeCount"`
+	WhiteSpace    WhiteSpace      `json:"whiteSpace"`
+	TabSize       int             `json:"tabSize"`
+	SpaceWidth    float64         `json:"spaceWidth"`
+	HyphenWidth   float64         `json:"hyphenWidth"`
+	EllipsisWidth float64         `json:"ellipsisWidth"`
+	Font          string          `json:"font,omitempty"`
+	Tokens        []MeasuredToken `json:"tokens"`
 }
 
 // Line describes one laid-out line.

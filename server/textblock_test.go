@@ -92,3 +92,23 @@ func TestTextBlockRendersClampAttrs(t *testing.T) {
 		}
 	}
 }
+
+func TestTextBlockRendersAlignmentAttrs(t *testing.T) {
+	node := TextBlock(TextBlockProps{
+		Text:       "aligned copy",
+		Font:       "600 16px serif",
+		Align:      "center",
+		LineHeight: 20,
+		MaxWidth:   180,
+	})
+	html := gosx.RenderHTML(node)
+
+	for _, snippet := range []string{
+		`data-gosx-text-layout-align="center"`,
+		`align="center"`,
+	} {
+		if !strings.Contains(html, snippet) {
+			t.Fatalf("expected %q in text block html %q", snippet, html)
+		}
+	}
+}

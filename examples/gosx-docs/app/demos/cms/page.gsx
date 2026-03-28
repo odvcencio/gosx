@@ -22,8 +22,13 @@ func CMSEditorBlock(props any) Node {
 	return <article class={"cms-block cms-block--" + props.Type} data-cms-block data-block-id={props.Id}>
 		<div class="cms-block__head">
 			<div class="cms-block__meta">
-				<span class="eyebrow">{props.Type} block</span>
-				<p>Drag to reorder. Edits sync into the preview immediately.</p>
+				<span class="eyebrow">
+					{props.Type}
+					block
+				</span>
+				<p>
+					Drag to reorder. Edits sync into the preview immediately.
+				</p>
 			</div>
 			<div class="cms-block__actions">
 				<button type="button" class="chip" data-cms-move={props.Id} data-cms-direction="up">Up</button>
@@ -77,7 +82,12 @@ func CMSEditorBlock(props any) Node {
 					</label>
 					<label class="field">
 						<span>Attribution</span>
-						<input type="text" value={props.Attribution} placeholder="Editorial desk" data-cms-field="attribution" />
+						<input
+							type="text"
+							value={props.Attribution}
+							placeholder="Editorial desk"
+							data-cms-field="attribution"
+						 />
 					</label>
 				</>
 			</If>
@@ -123,10 +133,11 @@ func Page() Node {
 		</section>
 		<section class="cms-hero">
 			<div class="cms-hero__copy">
-				<h1>The CMS flow stays document-shaped. Compose once, publish once.</h1>
+				<h1>
+					The CMS flow stays document-shaped. Compose once, publish once.
+				</h1>
 				<p>
-					This route is not a detached admin app. The editor, preview, form action, flashed result, and final product shell all live inside the same GoSX
-					application model.
+					This route is not a detached admin app. The editor, preview, form action, flashed result, and final product shell all live inside the same GoSX application model.
 				</p>
 				<div class="hero-actions">
 					<Link class="hero-link primary" href="/docs/forms">Inspect the action model</Link>
@@ -191,13 +202,17 @@ func Page() Node {
 					<div class="cms-panel__head">
 						<span class="eyebrow">Composer</span>
 						<h2>Live draft</h2>
-						<p>The editor writes the whole document payload, not isolated widget state.</p>
+						<p>
+							The editor writes the whole document payload, not isolated widget state.
+						</p>
 					</div>
 					<div class="cms-block-list" data-cms-block-list>
 						<If when={len(data.document.blocks) == 0}>
 							<div class="cms-empty">
 								<strong>No blocks yet.</strong>
-								<p>Drag one from the palette to start the page.</p>
+								<p>
+									Drag one from the palette to start the page.
+								</p>
 							</div>
 						</If>
 						<If when={len(data.document.blocks) > 0}>
@@ -211,13 +226,17 @@ func Page() Node {
 					<div class="cms-panel__head">
 						<span class="eyebrow">Preview</span>
 						<h2>Published surface</h2>
-						<p>The right rail is the document the publish action will receive.</p>
+						<p>
+							The right rail is the document the publish action will receive.
+						</p>
 					</div>
 					<div class="cms-preview-canvas" data-cms-preview>
 						<If when={len(data.document.blocks) == 0}>
 							<div class="cms-empty">
 								<strong>The preview is waiting.</strong>
-								<p>Add a block to populate the published page.</p>
+								<p>
+									Add a block to populate the published page.
+								</p>
 							</div>
 						</If>
 						<If when={len(data.document.blocks) > 0}>
@@ -232,8 +251,7 @@ func Page() Node {
 		<section class="callout">
 			<strong>What this demo is proving</strong>
 			<p>
-				The authoring layer can be rich and immediate without abandoning boring browser forms. The draft is just JSON in a hidden input, and publish is still a
-				colocated server action.
+				The authoring layer can be rich and immediate without abandoning boring browser forms. The draft is just JSON in a hidden input, and publish is still a colocated server action.
 			</p>
 		</section>
 	</article>

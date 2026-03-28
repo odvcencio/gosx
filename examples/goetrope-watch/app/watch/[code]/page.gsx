@@ -29,7 +29,10 @@ func Page() Node {
 					<span>{data.current_item.year}</span>
 					<span>{data.current_item.runtime}</span>
 					<span>{data.stream.latency}</span>
-					<span>{data.room.viewer_count} viewers</span>
+					<span>
+						{data.room.viewer_count}
+						viewers
+					</span>
 				</div>
 			</div>
 			<div class="watch-hero__rail">
@@ -40,7 +43,13 @@ func Page() Node {
 				</div>
 				<div class="rail-card">
 					<span class="eyebrow">Stream</span>
-					<p>{data.stream.status} · {data.stream.quality} · {data.stream.buffer}</p>
+					<p>
+						{data.stream.status}
+						·
+						{data.stream.quality}
+						·
+						{data.stream.buffer}
+					</p>
 				</div>
 			</div>
 		</section>
@@ -51,7 +60,9 @@ func Page() Node {
 						<span class="eyebrow">{data.subtitle_state.label}</span>
 						<span class="mono">{data.subtitle_state.mode}</span>
 					</div>
-					<h2>Server-renders the room first. Transport stays narrow.</h2>
+					<h2>
+						Server-renders the room first. Transport stays narrow.
+					</h2>
 					<p>{data.subtitle_state.detail}</p>
 					<TransportShell {...data.player}></TransportShell>
 				</div>

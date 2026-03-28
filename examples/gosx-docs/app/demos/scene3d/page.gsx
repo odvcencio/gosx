@@ -18,10 +18,11 @@ func Page() Node {
 		</section>
 		<section class="zoo-hero">
 			<div class="zoo-hero__copy">
-				<h1>Geometry Zoo is a native 3D route, not a detached client app.</h1>
+				<h1>
+					Geometry Zoo is a native 3D route, not a detached client app.
+				</h1>
 				<p>
-					The page shell still belongs to the server, but the canvas is genuinely interactive. Move across the surface, then use the arrow keys to bend camera
-					depth, wireframes, and palette bias in real time.
+					The page shell still belongs to the server, but the canvas is genuinely interactive. Move across the surface, then use the arrow keys to bend camera depth, wireframes, and palette bias in real time.
 				</p>
 				<div class="hero-actions">
 					<Link class="hero-link primary" href="/docs/runtime">Read the runtime docs</Link>
@@ -35,7 +36,9 @@ func Page() Node {
 				<div class="zoo-legend">
 					<div class="zoo-control">
 						<kbd>Pointer</kbd>
-						<p>Steer the camera and offset the forms directly on the canvas.</p>
+						<p>
+							Steer the camera and offset the forms directly on the canvas.
+						</p>
 					</div>
 					<div class="zoo-control">
 						<div class="scene-keyset">
@@ -43,7 +46,9 @@ func Page() Node {
 							<kbd>Right</kbd>
 							<kbd>Up</kbd>
 						</div>
-						<p>Shift palette, enable wireframe, and tighten the lens without leaving the route.</p>
+						<p>
+							Shift palette, enable wireframe, and tighten the lens without leaving the route.
+						</p>
 					</div>
 				</div>
 			</div>
@@ -56,8 +61,7 @@ func Page() Node {
 		<section class="callout">
 			<strong>Why this route matters</strong>
 			<p>
-				The Scene3D canvas uses the same file routing, metadata, navigation, and export pipeline as the docs pages. Interactivity is not a carve-out from the app
-				model.
+				The Scene3D canvas uses the same file routing, metadata, navigation, and export pipeline as the docs pages. Interactivity is not a carve-out from the app model.
 			</p>
 		</section>
 	</article>

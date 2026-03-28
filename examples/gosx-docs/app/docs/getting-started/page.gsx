@@ -8,15 +8,17 @@ func Page() Node {
 				The first-use path: init a project, route real pages, and adopt the server metadata, public asset, and API surface.
 			</p>
 		</div>
-		<h1>Start with one command, then keep the mental model server-first.</h1>
+		<h1>
+			Start with one command, then keep the mental model server-first.
+		</h1>
 		<p>
 			The short path is now
-			<span class="inline-code">gosx init my-app</span>.
-			That scaffold gives you a runnable app with metadata, APIs, 404 and 500 pages, root-level public assets, and the navigation runtime already wired in.
+			<span class="inline-code">gosx init my-app</span>
+			. That scaffold gives you a runnable app with metadata, APIs, 404 and 500 pages, root-level public assets, and the navigation runtime already wired in.
 		</p>
 		{DocsCodeBlock("bash", `gosx init my-app
-cd my-app
-go run .`)}
+		cd my-app
+		go run .`)}
 		<section class="callout">
 			<strong>Server modules</strong>
 			<p>
@@ -29,15 +31,18 @@ go run .`)}
 				once so those init-time registrations execute.
 			</p>
 			{DocsCodeBlock("go", `import (
-  _ "your/module/app"
-)
-
-route.MustRegisterFileModuleHere(route.FileModuleOptions{ ... })`)}
+		  _ "your/module/app"
+		)
+		
+		route.MustRegisterFileModuleHere(route.FileModuleOptions{ ... })`)}
 		</section>
 		<div class="feature-grid">
 			<section class="card">
 				<strong>Project entry</strong>
-				<p><span class="inline-code">main.go</span> still owns your app. GoSX removes wiring, not control.</p>
+				<p>
+					<span class="inline-code">main.go</span>
+					still owns your app. GoSX removes wiring, not control.
+				</p>
 			</section>
 			<section class="card">
 				<strong>HTML pages</strong>
@@ -50,7 +55,10 @@ route.MustRegisterFileModuleHere(route.FileModuleOptions{ ... })`)}
 			</section>
 			<section class="card">
 				<strong>JSON endpoints</strong>
-				<p><span class="inline-code">app.API(...)</span> colocates plain backend routes with pages when you need them.</p>
+				<p>
+					<span class="inline-code">app.API(...)</span>
+					colocates plain backend routes with pages when you need them.
+				</p>
 			</section>
 			<section class="card">
 				<strong>Assets</strong>
@@ -65,10 +73,12 @@ route.MustRegisterFileModuleHere(route.FileModuleOptions{ ... })`)}
 			<strong>Environment convention</strong>
 			<p>
 				GoSX now loads
-				<span class="inline-code">.env</span>,
-				<span class="inline-code">.env.local</span>,
-				and mode-specific variants through
-				<span class="inline-code">env.LoadDir</span>.
+				<span class="inline-code">.env</span>
+				,
+				<span class="inline-code">.env.local</span>
+				, and mode-specific variants through
+				<span class="inline-code">env.LoadDir</span>
+				.
 			</p>
 		</section>
 		<section class="callout">

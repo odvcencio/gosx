@@ -408,7 +408,7 @@ func TestDefaultFileRendererRendersTextBlockPrimitive(t *testing.T) {
 	source := `package docs
 
 func Page() Node {
-	return <TextBlock class="copy" font="600 16px serif" lineHeight={20} maxWidth={240}>
+	return <TextBlock class="copy" font="600 16px serif" textAlign="center" lineHeight={20} maxWidth={240}>
 		hello world from gosx
 	</TextBlock>
 }
@@ -432,6 +432,8 @@ func Page() Node {
 		`data-gosx-text-layout-state="hint"`,
 		`data-gosx-text-layout-ready="false"`,
 		`data-gosx-text-layout-font="600 16px serif"`,
+		`data-gosx-text-layout-align="center"`,
+		`align="center"`,
 		`data-gosx-text-layout-line-height="20"`,
 		`data-gosx-text-layout-max-width="240"`,
 		`data-gosx-text-layout-source="hello world from gosx"`,

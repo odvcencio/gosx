@@ -8,7 +8,9 @@ func Page() Node {
 				GoSX ships passwordless auth primitives by default: session-backed magic links, passkeys, and provider OAuth on the same routed request pipeline.
 			</p>
 		</div>
-		<h1>Auth in GoSX is a session concern, not a bolt-on password stack.</h1>
+		<h1>
+			Auth in GoSX is a session concern, not a bolt-on password stack.
+		</h1>
 		<p>
 			The auth middleware resolves the current user once, stores it on the request context, and exposes it to file-routed
 			<span class="inline-code">.gsx</span>
@@ -32,12 +34,16 @@ func Page() Node {
 		</div>
 		<section class="callout">
 			<strong>Default stance</strong>
-			<p>Password flows are not shipped by default. If an app wants username-and-password auth, it owns that logic.</p>
+			<p>
+				Password flows are not shipped by default. If an app wants username-and-password auth, it owns that logic.
+			</p>
 		</section>
 		<If when={authFlows.magicLinkEnabled}>
 			<section class="callout">
 				<strong>Magic link</strong>
-				<p>Post an email address to the built-in handler and GoSX will issue a signed-in session callback without requiring a separate auth subsystem.</p>
+				<p>
+					Post an email address to the built-in handler and GoSX will issue a signed-in session callback without requiring a separate auth subsystem.
+				</p>
 				<form class="docs-form" method="post" action={authFlows.magicLinkRequestPath}>
 					<input type="hidden" name="csrf_token" value={csrf.token}></input>
 					<input type="hidden" name="next" value="/docs/auth"></input>
@@ -70,16 +76,16 @@ func Page() Node {
 					GoSX ships begin/finish handlers plus a browser helper so apps do not have to hand-roll base64 decoding, credential serialization, or signature verification.
 				</p>
 				{DocsCodeBlock("javascript", `await GoSXWebAuthn.register(
-  "/auth/webauthn/register/options",
-  "/auth/webauthn/register",
-  { csrfToken: "${csrf.token}" }
-)
-
-await GoSXWebAuthn.authenticate(
-  "/auth/webauthn/login/options",
-  "/auth/webauthn/login",
-  { csrfToken: "${csrf.token}", next: "/docs/auth" }
-)`)}
+		  "/auth/webauthn/register/options",
+		  "/auth/webauthn/register",
+		  { csrfToken: "${csrf.token}" }
+		)
+		
+		await GoSXWebAuthn.authenticate(
+		  "/auth/webauthn/login/options",
+		  "/auth/webauthn/login",
+		  { csrfToken: "${csrf.token}", next: "/docs/auth" }
+		)`)}
 				<If when={flash.passkey}>
 					<p class="form-status">{flash.passkey.status}</p>
 				</If>
@@ -88,7 +94,9 @@ await GoSXWebAuthn.authenticate(
 		<If when={len(authFlows.oauthProviders) > 0}>
 			<section class="callout">
 				<strong>OAuth providers</strong>
-				<p>Provider OAuth rides the same session-backed callback path. When provider credentials are configured, the docs app exposes direct sign-in links.</p>
+				<p>
+					Provider OAuth rides the same session-backed callback path. When provider credentials are configured, the docs app exposes direct sign-in links.
+				</p>
 				<div class="hero-actions">
 					<Each as="provider" of={authFlows.oauthProviders}>
 						<a class="cta-link" href={provider.Href}>{provider.Label}</a>
@@ -101,7 +109,9 @@ await GoSXWebAuthn.authenticate(
 		</If>
 		<section class="callout">
 			<strong>Custom app auth logic</strong>
-			<p>The framework defaults are passwordless, but apps can still write their own session actions when they need a custom identity model.</p>
+			<p>
+				The framework defaults are passwordless, but apps can still write their own session actions when they need a custom identity model.
+			</p>
 		</section>
 		<form class="docs-form" method="post" action={actionPath("signIn")}>
 			<input type="hidden" name="csrf_token" value={csrf.token}></input>

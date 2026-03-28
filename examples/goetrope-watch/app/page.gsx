@@ -35,7 +35,9 @@ func Page() Node {
 			<aside class="hero__aside">
 				<div class="status-card">
 					<span class="eyebrow">Architecture</span>
-					<p>Server renders the room, queue, and subtitle facts before the browser touches playback.</p>
+					<p>
+						Server renders the room, queue, and subtitle facts before the browser touches playback.
+					</p>
 					<div class="status-card__meta">
 						<span>Document-first</span>
 						<span>Transport-later</span>
@@ -52,7 +54,9 @@ func Page() Node {
 		<section class="room-grid" id="rooms">
 			<div class="room-grid__intro">
 				<span class="eyebrow">Queued rooms</span>
-				<h2>Render the queue with titles the server already normalized.</h2>
+				<h2>
+					Render the queue with titles the server already normalized.
+				</h2>
 			</div>
 			<div class="room-grid__list">
 				<Each as="room" of={data.rooms}>

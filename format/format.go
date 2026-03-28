@@ -66,6 +66,8 @@ func (f *formatter) format(n *gotreesitter.Node, depth int) string {
 		return f.formatExprContainer(n)
 	case "jsx_text":
 		return f.formatText(n)
+	case "raw_string_literal", "interpreted_string_literal":
+		return f.text(n)
 	default:
 		return f.formatDefault(n, depth)
 	}
@@ -184,16 +186,20 @@ func (f *formatter) formatExprContainer(n *gotreesitter.Node) string {
 	if exprNode == nil {
 		return "{}"
 	}
-	return "{" + f.text(exprNode) + "}"
+	expr := f.text(exprNode)
+	if strings.Contains(expr, "\n") && f.containsStringLiteral(exprNode) {
+		expr = f.normalizeMultilineExpr(expr)
+	}
+	return "{" + expr + "}"
 }
 
 func (f *formatter) formatText(n *gotreesitter.Node) string {
 	text := f.text(n)
-	trimmed := strings.TrimSpace(text)
-	if trimmed == "" {
+	fields := strings.Fields(text)
+	if len(fields) == 0 {
 		return ""
 	}
-	return trimmed
+	return strings.Join(fields, " ")
 }
 
 func (f *formatter) formatDefault(n *gotreesitter.Node, depth int) string {
@@ -257,6 +263,42 @@ func (f *formatter) lineLeadingWhitespace(pos uint32) string {
 		lineEnd++
 	}
 	return string(f.src[lineStart:lineEnd])
+}
+
+func (f *formatter) normalizeMultilineExpr(expr string) string {
+	lines := strings.Split(expr, "\n")
+	if len(lines) < 2 {
+		return expr
+	}
+
+	changed := false
+	for i := 1; i < len(lines); i++ {
+		line := lines[i]
+		if line == "" {
+			continue
+		}
+		if strings.HasPrefix(line, f.indent) {
+			lines[i] = strings.TrimPrefix(line, f.indent)
+			changed = true
+		}
+	}
+	if !changed {
+		return expr
+	}
+	return strings.Join(lines, "\n")
+}
+
+func (f *formatter) containsStringLiteral(n *gotreesitter.Node) bool {
+	switch f.nodeType(n) {
+	case "raw_string_literal", "interpreted_string_literal":
+		return true
+	}
+	for i := 0; i < int(n.NamedChildCount()); i++ {
+		if f.containsStringLiteral(n.NamedChild(i)) {
+			return true
+		}
+	}
+	return false
 }
 
 func (f *formatter) formatAttrs(attrs []*gotreesitter.Node, depth int) string {

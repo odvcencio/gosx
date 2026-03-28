@@ -8,49 +8,52 @@ func Page() Node {
 				File pages, redirects, rewrites, and navigation all live in the same mental model now.
 			</p>
 		</div>
-		<h1>Routes can come from code or from the directory tree. Both are first-class now.</h1>
+		<h1>
+			Routes can come from code or from the directory tree. Both are first-class now.
+		</h1>
 		<p>
 			File-based routing lives in
-			<span class="inline-code">route.Router</span>.
-			The conventions are intentionally obvious: a directory becomes a URL segment,
+			<span class="inline-code">route.Router</span>
+			. The conventions are intentionally obvious: a directory becomes a URL segment,
 			<span class="inline-code">page.gsx</span>
 			becomes the page in that segment, and
 			<span class="inline-code">[slug]</span>
 			becomes a path parameter.
 		</p>
 		{DocsCodeBlock("go", `router := route.NewRouter()
-router.AddDir("./app", route.FileRoutesOptions{})`)}
+		router.AddDir("./app", route.FileRoutesOptions{})`)}
 		{DocsCodeBlock("json", `{
-  "cache": {
-    "public": true,
-    "maxAge": "45s",
-    "staleWhileRevalidate": "5m"
-  },
-  "cacheTags": ["docs-pages"]
-}`)}
+		  "cache": {
+		    "public": true,
+		    "maxAge": "45s",
+		    "staleWhileRevalidate": "5m"
+		  },
+		  "cacheTags": ["docs-pages"]
+		}`)}
 		{DocsCodeBlock("go", `func init() {
-  route.MustRegisterFileModuleHere(route.FileModuleOptions{
-    Load:     ...,
-    Metadata: ...,
-    Actions:  ...,
-  })
-}`)}
+		  route.MustRegisterFileModuleHere(route.FileModuleOptions{
+		    Load:     ...,
+		    Metadata: ...,
+		    Actions:  ...,
+		  })
+		}`)}
 		{DocsCodeBlock("go", `func init() {
-  route.MustRegisterDirModuleHere(route.DirModuleOptions{
-    Middleware: []route.Middleware{...},
-    Configure: func(ctx *route.RouteContext, page route.FilePage) error {
-      ctx.Header().Set("X-Docs-Section", "true")
-      return nil
-    },
-  })
-}`)}
+		  route.MustRegisterDirModuleHere(route.DirModuleOptions{
+		    Middleware: []route.Middleware{...},
+		    Configure: func(ctx *route.RouteContext, page route.FilePage) error {
+		      ctx.Header().Set("X-Docs-Section", "true")
+		      return nil
+		    },
+		  })
+		}`)}
 		<section class="note-grid">
 			<div class="note">
 				<strong>Static pages</strong>
 				<p>
 					<span class="inline-code">app/about/page.gsx</span>
 					maps to
-					<span class="inline-code">/about</span>.
+					<span class="inline-code">/about</span>
+					.
 				</p>
 			</div>
 			<div class="note">
@@ -58,16 +61,23 @@ router.AddDir("./app", route.FileRoutesOptions{})`)}
 				<p>
 					<span class="inline-code">app/blog/[slug]/page.html</span>
 					maps to
-					<span class="inline-code">{`/blog/{slug}`}</span>.
+					<span class="inline-code">{`/blog/{slug}`}</span>
+					.
 				</p>
 			</div>
 			<div class="note">
 				<strong>404 page</strong>
-				<p><span class="inline-code">app/not-found.gsx</span> becomes the router-level not-found page automatically.</p>
+				<p>
+					<span class="inline-code">app/not-found.gsx</span>
+					becomes the router-level not-found page automatically.
+				</p>
 			</div>
 			<div class="note">
 				<strong>500 page</strong>
-				<p><span class="inline-code">app/error.gsx</span> becomes the router-level error fallback automatically.</p>
+				<p>
+					<span class="inline-code">app/error.gsx</span>
+					becomes the router-level error fallback automatically.
+				</p>
 			</div>
 			<div class="note">
 				<strong>Server hooks</strong>

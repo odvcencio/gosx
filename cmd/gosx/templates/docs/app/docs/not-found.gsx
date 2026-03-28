@@ -5,10 +5,14 @@ func Page() Node {
 		<div class="page-topper">
 			<span class="eyebrow">Docs Missing</span>
 			<p class="lede">
-				This is the <span class="inline-code">/docs</span> scoped not-found page, not the site-wide fallback.
+				This is the
+				<span class="inline-code">/docs</span>
+				scoped not-found page, not the site-wide fallback.
 			</p>
 		</div>
-		<h1>The docs subtree could not resolve this page.</h1>
+		<h1>
+			The docs subtree could not resolve this page.
+		</h1>
 		<p>
 			The request matched the docs section, so the router resolved the nearest directory-scoped
 			<span class="inline-code">not-found.gsx</span>

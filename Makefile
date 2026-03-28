@@ -4,10 +4,11 @@ GO_WASM_EXEC ?= $(shell $(GO) env GOROOT)/lib/wasm/go_js_wasm_exec
 NODE ?= node
 GOFILES := $(shell find . -name '*.go' -not -path './dist/*' -not -path './build/*')
 
-.PHONY: fmt fmt-check test test-race test-js test-wasm test-e2e build-cli build-runtime ci
+.PHONY: fmt fmt-check verify-fmt test test-race test-js test-wasm test-e2e build-cli build-runtime ci
 
 fmt:
 	$(GOFMT) -w $(GOFILES)
+	$(GO) run ./cmd/gosx fmt .
 
 fmt-check:
 	@unformatted="$$( $(GOFMT) -l $(GOFILES) )"; \
@@ -16,6 +17,9 @@ fmt-check:
 		echo "$$unformatted"; \
 		exit 1; \
 	fi
+	@$(GO) run ./cmd/gosx fmt --check .
+
+verify-fmt: fmt-check
 
 test:
 	$(GO) test ./...

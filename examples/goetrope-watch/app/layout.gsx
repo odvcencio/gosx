@@ -17,8 +17,7 @@ func Layout() Node {
 			<Slot />
 		</main>
 		<footer class="watch-app__foot">
-			The page shell, queue summary, and subtitle state are rendered on the server. Only the future transport
-			islands should stay client-side.
+			The page shell, queue summary, and subtitle state are rendered on the server. Only the future transport islands should stay client-side.
 		</footer>
 	</div>
 }
