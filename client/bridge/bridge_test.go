@@ -3,6 +3,7 @@ package bridge
 import (
 	"testing"
 
+	"github.com/odvcencio/gosx/crdt"
 	rootengine "github.com/odvcencio/gosx/engine"
 	"github.com/odvcencio/gosx/island/program"
 )
@@ -258,6 +259,34 @@ func TestBridgeHydrateTickAndDisposeEngine(t *testing.T) {
 	b.DisposeEngine("engine-0")
 	if b.EngineCount() != 0 {
 		t.Fatalf("expected 0 engines after dispose, got %d", b.EngineCount())
+	}
+}
+
+func TestCRDTBridgeInitPutAndGet(t *testing.T) {
+	b := NewCRDTBridge()
+	if err := b.Put(crdt.Root, "title", `"hello"`); err != nil {
+		t.Fatalf("put crdt title: %v", err)
+	}
+
+	got, err := b.Get(crdt.Root, "title")
+	if err != nil {
+		t.Fatalf("get crdt title: %v", err)
+	}
+	if got != `"hello"` {
+		t.Fatalf("expected JSON string hello, got %s", got)
+	}
+
+	saved := b.Doc().Save()
+	other := NewCRDTBridge()
+	if err := other.InitDoc(saved); err != nil {
+		t.Fatalf("init saved crdt doc: %v", err)
+	}
+	got, err = other.Get(crdt.Root, "title")
+	if err != nil {
+		t.Fatalf("get restored crdt title: %v", err)
+	}
+	if got != `"hello"` {
+		t.Fatalf("expected restored JSON string hello, got %s", got)
 	}
 }
 

@@ -45,17 +45,24 @@ type Hub struct {
 	// Presence tracking
 	presence *Presence
 
+	syncMu      sync.RWMutex
+	syncDocs    map[byte]*syncedDoc
+	syncDocName map[string]byte
+	nextSyncDoc byte
+
 	// MaxClients limits the number of concurrent connections. 0 = unlimited.
 	MaxClients int
 }
 
 // Client represents a connected WebSocket client.
 type Client struct {
-	ID   string
-	Hub  *Hub
-	conn *websocket.Conn
-	send chan []byte
-	mu   sync.Mutex
+	ID         string
+	Hub        *Hub
+	conn       *websocket.Conn
+	send       chan []byte
+	binarySend chan []byte
+	syncStates *peerSyncState
+	mu         sync.Mutex
 }
 
 // HandlerFunc handles an event from a client.
@@ -112,11 +119,13 @@ func generateClientID(hubName string) string {
 // New creates a new hub instance.
 func New(name string) *Hub {
 	return &Hub{
-		name:     name,
-		clients:  make(map[string]*Client),
-		handlers: make(map[string]HandlerFunc),
-		state:    make(map[string]any),
-		presence: &Presence{members: make(map[string]*ClientInfo)},
+		name:        name,
+		clients:     make(map[string]*Client),
+		handlers:    make(map[string]HandlerFunc),
+		state:       make(map[string]any),
+		presence:    &Presence{members: make(map[string]*ClientInfo)},
+		syncDocs:    make(map[byte]*syncedDoc),
+		syncDocName: make(map[string]byte),
 	}
 }
 
@@ -216,7 +225,11 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		log.Printf("[hub/%s] upgrade error: %v", h.name, err)
 		return
 	}
-	conn.SetReadLimit(maxMessageSize)
+	readLimit := int64(maxMessageSize)
+	if h.hasSyncDocs() {
+		readLimit = 16 * 1024 * 1024
+	}
+	conn.SetReadLimit(readLimit)
 	if err := conn.SetReadDeadline(time.Now().Add(readWait)); err != nil {
 		log.Printf("[hub/%s] set read deadline error: %v", h.name, err)
 		conn.Close()
@@ -228,10 +241,12 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	clientID := generateClientID(h.name)
 	client := &Client{
-		ID:   clientID,
-		Hub:  h,
-		conn: conn,
-		send: make(chan []byte, 256),
+		ID:         clientID,
+		Hub:        h,
+		conn:       conn,
+		send:       make(chan []byte, 256),
+		binarySend: make(chan []byte, 256),
+		syncStates: newPeerSyncState(),
 	}
 
 	// Register client
@@ -248,6 +263,7 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		Data:  mustMarshal(map[string]string{"clientId": clientID}),
 	})
 	client.send <- welcome
+	h.initClientSync(client)
 
 	// Fire join handler (may broadcast to all clients including this one)
 	if handler, ok := h.handlers["join"]; ok {
@@ -275,12 +291,17 @@ func (c *Client) readPump() {
 		if err := c.conn.SetReadDeadline(time.Now().Add(readWait)); err != nil {
 			break
 		}
-		_, data, err := c.conn.ReadMessage()
+		msgType, data, err := c.conn.ReadMessage()
 		if err != nil {
 			if !websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure, websocket.CloseNormalClosure) {
 				log.Printf("[hub/%s] read error: %v", c.Hub.name, err)
 			}
 			break
+		}
+
+		if msgType == websocket.BinaryMessage {
+			c.Hub.handleBinaryMessage(c, data)
+			continue
 		}
 
 		var msg Message
@@ -327,6 +348,20 @@ func (c *Client) writePump() {
 			if err != nil {
 				return
 			}
+		case msg, ok := <-c.binarySend:
+			c.conn.SetWriteDeadline(time.Now().Add(writeWait))
+			c.mu.Lock()
+			if !ok {
+				_ = c.conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
+				c.mu.Unlock()
+				return
+			}
+
+			err := c.conn.WriteMessage(websocket.BinaryMessage, msg)
+			c.mu.Unlock()
+			if err != nil {
+				return
+			}
 		case <-ticker.C:
 			c.conn.SetWriteDeadline(time.Now().Add(writeWait))
 			c.mu.Lock()
@@ -346,6 +381,7 @@ func (h *Hub) removeClient(c *Client) {
 
 	h.presence.remove(c.ID)
 	close(c.send)
+	close(c.binarySend)
 
 	// Fire leave handler
 	if handler, ok := h.handlers["leave"]; ok {
