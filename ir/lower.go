@@ -64,44 +64,81 @@ func (l *lowerer) span(n *gotreesitter.Node) Span {
 // contains a //gosx:island comment directive. Scans backwards from the function
 // start position through preceding whitespace and comment lines.
 func (l *lowerer) hasIslandDirective(n *gotreesitter.Node) bool {
-	return strings.Contains(l.precedingText(n), "//gosx:island")
+	for _, line := range l.precedingCommentLines(n) {
+		if strings.TrimSpace(line) == "//gosx:island" {
+			return true
+		}
+	}
+	return false
 }
 
 // parseEngineDirective checks for //gosx:engine and extracts the kind.
 // Returns ("worker"|"surface", true) or ("", false).
 func (l *lowerer) parseEngineDirective(n *gotreesitter.Node) (string, bool) {
-	preceding := l.precedingText(n)
-	if idx := strings.Index(preceding, "//gosx:engine "); idx >= 0 {
-		rest := preceding[idx+len("//gosx:engine "):]
-		kind := strings.Fields(rest)[0]
-		if kind == "worker" || kind == "surface" {
-			return kind, true
+	for _, line := range l.precedingCommentLines(n) {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "//gosx:engine ") {
+			rest := strings.TrimSpace(strings.TrimPrefix(trimmed, "//gosx:engine "))
+			fields := strings.Fields(rest)
+			if len(fields) == 0 {
+				return "worker", true
+			}
+			if kind := fields[0]; kind == "worker" || kind == "surface" {
+				return kind, true
+			}
+			continue
 		}
-	}
-	if strings.Contains(preceding, "//gosx:engine") {
-		return "worker", true // default to worker
+		if trimmed == "//gosx:engine" {
+			return "worker", true // default to worker
+		}
 	}
 	return "", false
 }
 
 // parseCapabilities extracts //gosx:capabilities from preceding comments.
 func (l *lowerer) parseCapabilities(n *gotreesitter.Node) []string {
-	preceding := l.precedingText(n)
-	if idx := strings.Index(preceding, "//gosx:capabilities "); idx >= 0 {
-		rest := preceding[idx+len("//gosx:capabilities "):]
-		line := strings.Split(rest, "\n")[0]
-		return strings.Fields(line)
+	for _, line := range l.precedingCommentLines(n) {
+		trimmed := strings.TrimSpace(line)
+		if !strings.HasPrefix(trimmed, "//gosx:capabilities ") {
+			continue
+		}
+		rest := strings.TrimSpace(strings.TrimPrefix(trimmed, "//gosx:capabilities "))
+		if rest == "" {
+			return nil
+		}
+		return strings.Fields(rest)
 	}
 	return nil
 }
 
-func (l *lowerer) precedingText(n *gotreesitter.Node) string {
+func (l *lowerer) precedingCommentLines(n *gotreesitter.Node) []string {
 	start := int(n.StartByte())
-	searchStart := start - 300
-	if searchStart < 0 {
-		searchStart = 0
+	if start <= 0 {
+		return nil
 	}
-	return string(l.src[searchStart:start])
+	lines := strings.Split(string(l.src[:start]), "\n")
+	if len(lines) == 0 {
+		return nil
+	}
+
+	var block []string
+	collecting := false
+	for i := len(lines) - 1; i >= 0; i-- {
+		trimmed := strings.TrimSpace(lines[i])
+		if trimmed == "" {
+			if collecting {
+				break
+			}
+			continue
+		}
+		if strings.HasPrefix(trimmed, "//") {
+			collecting = true
+			block = append([]string{trimmed}, block...)
+			continue
+		}
+		break
+	}
+	return block
 }
 
 // analyzeBody walks a function body CST node and extracts signal declarations,

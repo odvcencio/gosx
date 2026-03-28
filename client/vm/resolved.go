@@ -8,15 +8,25 @@ type ResolvedTree struct {
 
 // ResolvedNode is a single node in the resolved tree.
 type ResolvedNode struct {
-	Tag      string
-	Text     string
-	Key      string // stable identity for list diffing (from "key" attr)
-	Attrs    []ResolvedAttr
-	Children []int
+	Source    int
+	HasSource bool
+	Tag       string
+	Text      string
+	Key       string // stable identity for list diffing (from "key" attr)
+	Attrs     []ResolvedAttr
+	Events    []ResolvedEvent
+	Children  []int
 }
 
 // ResolvedAttr is a resolved attribute with a concrete string value.
 type ResolvedAttr struct {
 	Name  string
 	Value string
+	Bool  bool
+}
+
+// ResolvedEvent is a delegated DOM event binding attached to a concrete node.
+type ResolvedEvent struct {
+	Name    string
+	Handler string
 }

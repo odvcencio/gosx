@@ -459,31 +459,32 @@ func TestVMEvalTree(t *testing.T) {
 		t.Fatalf("node 0 children: expected 3, got %d", len(n0.Children))
 	}
 
-	// Node 1: button (decrement) — event attrs should be excluded
-	n1 := tree.Nodes[1]
+	// First child: button (decrement) — event attrs should be excluded
+	n1 := tree.Nodes[n0.Children[0]]
 	if n1.Tag != "button" {
-		t.Fatalf("node 1 tag: expected 'button', got %q", n1.Tag)
+		t.Fatalf("first child tag: expected 'button', got %q", n1.Tag)
 	}
 	if len(n1.Attrs) != 0 {
-		t.Fatalf("node 1 attrs: expected 0 (event attrs excluded), got %d", len(n1.Attrs))
+		t.Fatalf("first child attrs: expected 0 (event attrs excluded), got %d", len(n1.Attrs))
 	}
 
-	// Node 2: expr node showing count — should resolve to "7"
-	n2 := tree.Nodes[2]
+	// Middle child: expr node showing count — should resolve to "7"
+	n2 := tree.Nodes[n0.Children[1]]
 	if n2.Text != "7" {
-		t.Fatalf("node 2 text: expected '7', got %q", n2.Text)
+		t.Fatalf("middle child text: expected '7', got %q", n2.Text)
 	}
 
-	// Node 4: text "-"
-	n4 := tree.Nodes[4]
+	// First button child: text "-"
+	n4 := tree.Nodes[n1.Children[0]]
 	if n4.Text != "-" {
-		t.Fatalf("node 4 text: expected '-', got %q", n4.Text)
+		t.Fatalf("first button text: expected '-', got %q", n4.Text)
 	}
 
-	// Node 5: text "+"
-	n5 := tree.Nodes[5]
+	// Second button child: text "+"
+	n3 := tree.Nodes[n0.Children[2]]
+	n5 := tree.Nodes[n3.Children[0]]
 	if n5.Text != "+" {
-		t.Fatalf("node 5 text: expected '+', got %q", n5.Text)
+		t.Fatalf("second button text: expected '+', got %q", n5.Text)
 	}
 }
 

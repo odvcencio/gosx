@@ -18,6 +18,7 @@ const (
 	PatchSetAttr                         // Set an attribute on a node.
 	PatchRemoveAttr                      // Remove an attribute from a node.
 	PatchCreateElement                   // Create a new element node.
+	PatchCreateText                      // Create a new text node.
 	PatchRemoveElement                   // Remove an element node.
 	PatchReplaceElement                  // Replace an element node.
 	PatchReorder                         // Reorder children of a node.

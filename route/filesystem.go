@@ -314,7 +314,7 @@ func newFileRouteRegistrar(router *Router, root string, opts FileRoutesOptions) 
 func (r *fileRouteRegistrar) resolve(page FilePage) (resolvedFilePage, error) {
 	module, _ := resolveFileModule(r.moduleRegistry, r.root, page)
 	dirModules := resolveDirModules(r.dirModuleRegistry, r.root, page.Dir)
-	layout, err := loadFileLayoutChain(r.layoutCache, page.Layouts, r.opts.Layout)
+	layout, err := loadFileLayoutChain(r.layoutCache, page.Layouts, r.opts.Layout, r.root, r.moduleRegistry)
 	if err != nil {
 		return resolvedFilePage{}, err
 	}
@@ -826,7 +826,7 @@ func cloneFilePageValue(page FilePage) FilePage {
 	return page
 }
 
-func loadFileLayoutChain(cache map[string]LayoutFunc, files []string, extra LayoutFunc) (LayoutFunc, error) {
+func loadFileLayoutChain(cache map[string]LayoutFunc, files []string, extra LayoutFunc, root string, registry *FileModuleRegistry) (LayoutFunc, error) {
 	layouts := []LayoutFunc{}
 	if extra != nil {
 		layouts = append(layouts, extra)
@@ -834,7 +834,7 @@ func loadFileLayoutChain(cache map[string]LayoutFunc, files []string, extra Layo
 	for _, file := range files {
 		layout, ok := cache[file]
 		if !ok {
-			loaded, err := FileLayout(file)
+			loaded, err := loadBoundFileLayout(file, root, registry)
 			if err != nil {
 				return nil, err
 			}
@@ -844,6 +844,19 @@ func loadFileLayoutChain(cache map[string]LayoutFunc, files []string, extra Layo
 		layouts = append(layouts, layout)
 	}
 	return composeLayoutFuncs(layouts), nil
+}
+
+func loadBoundFileLayout(file, root string, registry *FileModuleRegistry) (LayoutFunc, error) {
+	abs, err := filepath.Abs(file)
+	if err != nil {
+		return nil, fmt.Errorf("resolve %s: %w", file, err)
+	}
+	if _, err := os.Stat(abs); err != nil {
+		return nil, fmt.Errorf("stat %s: %w", abs, err)
+	}
+	page := layoutFilePage(root, abs)
+	module := resolveLayoutModule(registry, root, abs)
+	return buildFileLayout(abs, page, module, FileLayoutOptions{}), nil
 }
 
 func composeLayoutFuncs(layouts []LayoutFunc) LayoutFunc {

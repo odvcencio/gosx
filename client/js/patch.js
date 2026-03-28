@@ -4,10 +4,11 @@
 // module only executes the resulting operations.
 //
 // Patch operations match the Go PatchKind enum in vm/ops.go:
-//   0 = SetText        4 = RemoveElement
-//   1 = SetAttr        5 = ReplaceElement
-//   2 = RemoveAttr     6 = Reorder
-//   3 = CreateElement  7 = SetValue
+//   0 = SetText        5 = RemoveElement
+//   1 = SetAttr        6 = ReplaceElement
+//   2 = RemoveAttr     7 = Reorder
+//   3 = CreateElement  8 = SetValue
+//   4 = CreateText     9 = SetHTML
 
 (function () {
   "use strict";
@@ -21,11 +22,12 @@
   var PATCH_SET_ATTR        = 1;
   var PATCH_REMOVE_ATTR     = 2;
   var PATCH_CREATE_ELEMENT  = 3;
-  var PATCH_REMOVE_ELEMENT  = 4;
-  var PATCH_REPLACE_ELEMENT = 5;
-  var PATCH_REORDER         = 6;
-  var PATCH_SET_VALUE       = 7;
-  var PATCH_SET_HTML        = 8;
+  var PATCH_CREATE_TEXT     = 4;
+  var PATCH_REMOVE_ELEMENT  = 5;
+  var PATCH_REPLACE_ELEMENT = 6;
+  var PATCH_REORDER         = 7;
+  var PATCH_SET_VALUE       = 8;
+  var PATCH_SET_HTML        = 9;
 
   // Elements that browsers may insert implicitly (e.g. <tbody> inside <table>).
   // When walking a path we need to skip through these so that the path indices
@@ -212,6 +214,10 @@
         applyCreateElement(target, op);
         break;
 
+      case PATCH_CREATE_TEXT:
+        applyCreateText(target, op);
+        break;
+
       case PATCH_REMOVE_ELEMENT:
         applyRemoveElement(target);
         break;
@@ -309,7 +315,26 @@
   }
 
   /**
-   * Kind 4 — RemoveElement: remove the target node from its parent.
+   * Kind 4 — CreateText: create a new text node and insert it as a child of
+   * the target (the path points to the *parent*).
+   */
+  function applyCreateText(target, op) {
+    var text = document.createTextNode(op.text == null ? "" : String(op.text));
+
+    var insertIdx =
+      op.children && op.children.length > 0
+        ? op.children[0]
+        : target.childNodes.length;
+
+    if (insertIdx < target.childNodes.length) {
+      target.insertBefore(text, target.childNodes[insertIdx]);
+    } else {
+      target.appendChild(text);
+    }
+  }
+
+  /**
+   * Kind 5 — RemoveElement: remove the target node from its parent.
    */
   function applyRemoveElement(target) {
     if (target.parentNode) {
@@ -318,7 +343,7 @@
   }
 
   /**
-   * Kind 5 — ReplaceElement: replace the target node with a new element.
+   * Kind 6 — ReplaceElement: replace the target node with a new element.
    *
    * op.tag  — tag name for the replacement element.
    * op.text — optional text content for the replacement.
@@ -336,7 +361,7 @@
   }
 
   /**
-   * Kind 6 — Reorder: reorder the children of the target element according to
+   * Kind 7 — Reorder: reorder the children of the target element according to
    * the index list in op.children.
    *
    * op.children — array of original child indices in the desired new order.
@@ -367,7 +392,7 @@
   }
 
   /**
-   * Kind 7 — SetValue: set an input's value while preserving cursor position.
+   * Kind 8 — SetValue: set an input's value while preserving cursor position.
    * This is separate from SetAttr because it needs special cursor handling to
    * avoid disrupting the user while they type.
    */
@@ -376,7 +401,7 @@
   }
 
   /**
-   * Kind 8 — SetHTML:
+   * Kind 9 — SetHTML:
    * assign as text content to avoid HTML injection from malformed patch data.
    */
   function applySetHTML(target, op) {

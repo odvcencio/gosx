@@ -723,6 +723,29 @@ func Counter() Node {
 	}
 }
 
+func TestJSXIslandDirectiveDoesNotLeakToNextComponent(t *testing.T) {
+	prog := mustCompile(t, `package main
+
+//gosx:island
+func Counter() Node {
+	return <div>0</div>
+}
+
+func Page() Node {
+	return <Counter />
+}`)
+
+	if len(prog.Components) != 2 {
+		t.Fatalf("expected 2 components, got %d", len(prog.Components))
+	}
+	if !prog.Components[0].IsIsland {
+		t.Fatal("expected Counter to be marked as island")
+	}
+	if prog.Components[1].IsIsland {
+		t.Fatal("expected Page to remain server-rendered")
+	}
+}
+
 func TestJSXEngineDirective(t *testing.T) {
 	prog := mustCompile(t, `package main
 

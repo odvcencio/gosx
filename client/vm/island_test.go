@@ -7,6 +7,21 @@ import (
 	"github.com/odvcencio/gosx/signal"
 )
 
+func counterDisplayText(tree *ResolvedTree) string {
+	if tree == nil || len(tree.Nodes) == 0 {
+		return ""
+	}
+	root := tree.Nodes[0]
+	if len(root.Children) < 2 {
+		return ""
+	}
+	displayIdx := root.Children[1]
+	if displayIdx < 0 || displayIdx >= len(tree.Nodes) {
+		return ""
+	}
+	return tree.Nodes[displayIdx].Text
+}
+
 func TestIslandCreation(t *testing.T) {
 	prog := program.CounterProgram()
 	island := NewIsland(prog, `{"initial": 5}`)
@@ -28,8 +43,7 @@ func TestIslandSignalInit(t *testing.T) {
 
 	// The count signal should be initialized to 0 (LitInt "0" at expr[1])
 	tree := island.vm.EvalTree()
-	// Node 2 is the expr node displaying count
-	countDisplay := tree.Nodes[2].Text
+	countDisplay := counterDisplayText(tree)
 	if countDisplay != "0" {
 		t.Fatalf("expected count display '0', got %q", countDisplay)
 	}
@@ -44,7 +58,7 @@ func TestIslandDispatchIncrement(t *testing.T) {
 
 	// Count should now be 1
 	tree := island.vm.EvalTree()
-	countDisplay := tree.Nodes[2].Text
+	countDisplay := counterDisplayText(tree)
 	if countDisplay != "1" {
 		t.Fatalf("after increment: expected '1', got %q", countDisplay)
 	}
@@ -64,7 +78,7 @@ func TestIslandDispatchDecrement(t *testing.T) {
 
 	// Count should be -1
 	tree := island.vm.EvalTree()
-	countDisplay := tree.Nodes[2].Text
+	countDisplay := counterDisplayText(tree)
 	if countDisplay != "-1" {
 		t.Fatalf("after decrement: expected '-1', got %q", countDisplay)
 	}
@@ -80,7 +94,7 @@ func TestIslandBatching(t *testing.T) {
 	island.Dispatch("increment", "{}")
 
 	tree := island.vm.EvalTree()
-	countDisplay := tree.Nodes[2].Text
+	countDisplay := counterDisplayText(tree)
 	if countDisplay != "3" {
 		t.Fatalf("after 3 increments: expected '3', got %q", countDisplay)
 	}
