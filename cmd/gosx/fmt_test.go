@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/odvcencio/gosx"
 )
 
 func TestRunFmtFormatsSingleGSXFile(t *testing.T) {
@@ -67,6 +69,37 @@ func Loader() string { return "ok" }
 	goFile := readFile(t, filepath.Join(dir, "app", "page.server.go"))
 	if !strings.Contains(goFile, `func Loader() string { return "ok" }`) {
 		t.Fatalf("expected non-GSX file to remain unchanged, got %q", goFile)
+	}
+}
+
+func TestRunFmtPreservesFragmentIndentationInsideReturnStatements(t *testing.T) {
+	dir := t.TempDir()
+	writeTempFile(t, dir, "nav.gsx", `package main
+
+func NavLink(props any) Node {
+	return <>
+		<If when={props.Active}>
+			<a href={props.Href}>{props.Label}</a>
+		</If>
+		<If when={props.Active == false}>
+			<a href={props.Href}>{props.Label}</a>
+		</If>
+	</>
+}
+`)
+	path := filepath.Join(dir, "nav.gsx")
+
+	var stderr bytes.Buffer
+	if _, err := RunFmt(path, &stderr); err != nil {
+		t.Fatalf("RunFmt(%s): %v", path, err)
+	}
+
+	formatted := readFile(t, path)
+	if strings.Contains(formatted, "return <>\n\t<If") {
+		t.Fatalf("expected fragment children to stay nested under return indentation, got:\n%s", formatted)
+	}
+	if _, err := gosx.Compile([]byte(formatted)); err != nil {
+		t.Fatalf("formatted source should compile, got %v\n%s", err, formatted)
 	}
 }
 
