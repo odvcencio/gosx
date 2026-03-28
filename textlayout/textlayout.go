@@ -123,6 +123,12 @@ type Metrics struct {
 	RuneCount    int     `json:"runeCount"`
 }
 
+// RangeResult contains laid-out line geometry without materialized text.
+type RangeResult struct {
+	Lines []LineRange `json:"lines"`
+	Metrics
+}
+
 // Result contains the full line layout for a measured text block.
 type Result struct {
 	Lines []Line `json:"lines"`
@@ -600,6 +606,16 @@ func LayoutTextMetrics(text string, measurer BatchMeasurer, font string, prepare
 	return LayoutMetrics(measured, layout), nil
 }
 
+// LayoutTextRanges is a convenience wrapper for Prepare + Measure + LayoutRanges.
+func LayoutTextRanges(text string, measurer BatchMeasurer, font string, prepare PrepareOptions, layout LayoutOptions) (RangeResult, error) {
+	prepared := Prepare(text, prepare)
+	measured, err := Measure(prepared, measurer, font)
+	if err != nil {
+		return RangeResult{}, err
+	}
+	return LayoutRanges(measured, layout), nil
+}
+
 // Layout walks the measured text and returns every line.
 func Layout(measured Measured, opts LayoutOptions) Result {
 	lineHeight := opts.LineHeight
@@ -662,34 +678,51 @@ func Layout(measured Measured, opts LayoutOptions) Result {
 
 // LayoutMetrics computes aggregate layout geometry without materializing line text.
 func LayoutMetrics(measured Measured, opts LayoutOptions) Metrics {
+	return LayoutRanges(measured, opts).Metrics
+}
+
+// LayoutRanges computes laid-out line geometry without materializing line text.
+func LayoutRanges(measured Measured, opts LayoutOptions) RangeResult {
 	lineHeight := opts.LineHeight
 	if lineHeight <= 0 {
 		lineHeight = 1
 	}
 
 	if len(measured.Tokens) == 0 {
-		return Metrics{
-			LineCount:    1,
-			Height:       lineHeight,
-			MaxLineWidth: 0,
-			ByteLen:      measured.ByteLen,
-			RuneCount:    measured.RuneCount,
+		return RangeResult{
+			Lines: []LineRange{{
+				ByteStart: measured.ByteLen,
+				ByteEnd:   measured.ByteLen,
+				RuneStart: measured.RuneCount,
+				RuneEnd:   measured.RuneCount,
+			}},
+			Metrics: Metrics{
+				LineCount:    1,
+				Height:       lineHeight,
+				MaxLineWidth: 0,
+				ByteLen:      measured.ByteLen,
+				RuneCount:    measured.RuneCount,
+			},
 		}
 	}
 
-	metrics := Metrics{
-		ByteLen:   measured.ByteLen,
-		RuneCount: measured.RuneCount,
+	result := RangeResult{
+		Lines: make([]LineRange, 0, 8),
+		Metrics: Metrics{
+			ByteLen:   measured.ByteLen,
+			RuneCount: measured.RuneCount,
+		},
 	}
 	WalkLineRanges(measured, opts, func(line LineRange) bool {
-		metrics.LineCount++
-		if line.Width > metrics.MaxLineWidth {
-			metrics.MaxLineWidth = line.Width
+		result.Lines = append(result.Lines, line)
+		result.LineCount++
+		if line.Width > result.MaxLineWidth {
+			result.MaxLineWidth = line.Width
 		}
 		return true
 	})
-	metrics.Height = float64(metrics.LineCount) * lineHeight
-	return metrics
+	result.Height = float64(result.LineCount) * lineHeight
+	return result
 }
 
 // WalkLines iterates until the callback returns false or the text is exhausted.

@@ -1037,6 +1037,18 @@ test("bootstrap exposes a text layout metrics helper without wasm runtime", () =
   assert.equal(metrics.runeCount, 21);
 });
 
+test("bootstrap exposes a text layout ranges helper without wasm runtime", () => {
+  const env = createContext({});
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+
+  const result = env.context.__gosx_text_layout_ranges("ab\u00adcd", "600 16px serif", 80, "normal", 20);
+  assert.equal(result.lineCount, 1);
+  assert.equal(result.lines.length, 1);
+  assert.equal(result.lines[0].softBreak, false);
+  assert.equal(result.lines[0].hardBreak, false);
+});
+
 test("bootstrap browser text layout helper preserves pre-wrap hard breaks", () => {
   const env = createContext({});
 
@@ -1271,6 +1283,33 @@ test("bootstrap adopts and caches runtime-provided text layout metrics implement
   assert.equal(first.lineCount, 3);
   assert.equal(second.height, 54);
   assert.equal(second.maxLineWidth, 42);
+});
+
+test("bootstrap adopts and caches runtime-provided text layout ranges implementations", () => {
+  const env = createContext({});
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+
+  let calls = 0;
+  env.context.__gosx_text_layout_ranges = function(text) {
+    calls += 1;
+    return {
+      lines: [{ start: 0, end: 1, byteStart: 0, byteEnd: 1, runeStart: 0, runeEnd: 1, width: 7, hardBreak: false, softBreak: true }],
+      lineCount: 1,
+      height: 18,
+      maxLineWidth: 7,
+      byteLen: String(text).length,
+      runeCount: String(text).length,
+    };
+  };
+
+  env.context.__gosx_runtime_ready();
+
+  const first = env.context.__gosx_text_layout_ranges("x", "600 16px serif", 80, "normal", 18);
+  const second = env.context.__gosx_text_layout_ranges("x", "600 16px serif", 80, "normal", 18);
+  assert.equal(calls, 1);
+  assert.equal(first.lines[0].softBreak, true);
+  assert.equal(second.maxLineWidth, 7);
 });
 
 test("bootstrap falls back to browser layout when runtime text layout fails", () => {

@@ -177,6 +177,14 @@ func TestWalkLineRangesAndMetricsMatchLayout(t *testing.T) {
 			t.Fatalf("range %d mismatch: got %+v want %+v", i, ranges[i], result.Lines[i])
 		}
 	}
+
+	rangeResult, err := LayoutTextRanges("hello,world from gosx", MonospaceMeasurer{Advance: 1}, "mono", PrepareOptions{WhiteSpace: WhiteSpaceNormal}, LayoutOptions{MaxWidth: 11, LineHeight: 2})
+	if err != nil {
+		t.Fatalf("layout text ranges: %v", err)
+	}
+	if len(rangeResult.Lines) != len(result.Lines) || rangeResult.LineCount != result.LineCount {
+		t.Fatalf("range result mismatch: got %+v want %+v", rangeResult, result)
+	}
 }
 
 func TestLayoutConsecutiveNewlinesKeepsEmptyLinePosition(t *testing.T) {
