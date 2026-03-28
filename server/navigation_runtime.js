@@ -10,6 +10,7 @@
   const SCRIPT_ROLE = "data-gosx-script";
   const LINK_ATTR = "data-gosx-link";
   const PREFETCH_ATTR = "data-gosx-prefetch";
+  const URL_ATTRS = ["href", "src", "action", "poster"];
   const scriptCache = window.__gosx_loaded_scripts || new Map();
   const pageCache = window.__gosx_page_cache || new Map();
   window.__gosx_loaded_scripts = scriptCache;
@@ -32,9 +33,57 @@
     return children.indexOf(child);
   }
 
-  function cloneIntoDocument(node) {
+  function absolutizeURL(value, baseURL) {
+    if (!value) return value;
+    const trimmed = String(value).trim();
+    if (!trimmed || trimmed[0] === "#" || trimmed.startsWith("data:") || trimmed.startsWith("javascript:")) {
+      return value;
+    }
+    try {
+      return new URL(trimmed, baseURL || window.location.href).toString();
+    } catch (_) {
+      return value;
+    }
+  }
+
+  function absolutizeSrcset(value, baseURL) {
+    if (!value) return value;
+    return String(value).split(",").map(function(candidate) {
+      const trimmed = candidate.trim();
+      if (!trimmed) return trimmed;
+
+      const parts = trimmed.split(/\s+/);
+      if (parts.length === 0) return trimmed;
+      parts[0] = absolutizeURL(parts[0], baseURL);
+      return parts.join(" ");
+    }).join(", ");
+  }
+
+  function normalizeNodeURLs(node, baseURL) {
+    if (!node || node.nodeType !== 1) {
+      return;
+    }
+
+    for (const attr of URL_ATTRS) {
+      if (node.hasAttribute && node.hasAttribute(attr)) {
+        node.setAttribute(attr, absolutizeURL(node.getAttribute(attr), baseURL));
+      }
+    }
+    if (node.hasAttribute && node.hasAttribute("srcset")) {
+      node.setAttribute("srcset", absolutizeSrcset(node.getAttribute("srcset"), baseURL));
+    }
+
+    if (!node.childNodes) return;
+    for (const child of toArray(node.childNodes)) {
+      normalizeNodeURLs(child, baseURL);
+    }
+  }
+
+  function cloneIntoDocument(node, baseURL) {
     if (node && typeof node.cloneNode === "function") {
-      return node.cloneNode(true);
+      const clone = node.cloneNode(true);
+      normalizeNodeURLs(clone, baseURL);
+      return clone;
     }
     return node;
   }
@@ -77,24 +126,144 @@
     return children.slice(startIdx + 1, endIdx);
   }
 
-  function replaceManagedHead(nextDoc) {
+  function serializeNodeSignature(node) {
+    if (!node) return "";
+    if (node.nodeType !== 1) {
+      return String(node.nodeType) + ":" + String(node.textContent || "");
+    }
+
+    const tagName = String(node.tagName || node.nodeName || "").toLowerCase();
+    const attrs = attributeEntries(node)
+      .map(function(entry) {
+        return [String(entry.name), String(entry.value)];
+      })
+      .sort(function(a, b) {
+        if (a[0] === b[0]) {
+          return a[1] < b[1] ? -1 : a[1] > b[1] ? 1 : 0;
+        }
+        return a[0] < b[0] ? -1 : 1;
+      })
+      .map(function(entry) {
+        return entry[0] + "=" + JSON.stringify(entry[1]);
+      })
+      .join(" ");
+
+    let content = "";
+    for (const child of toArray(node.childNodes)) {
+      content += serializeNodeSignature(child);
+    }
+    if (!content) {
+      content = String(node.textContent || "");
+    }
+
+    return "<" + tagName + (attrs ? " " + attrs : "") + ">" + content + "</" + tagName + ">";
+  }
+
+  function headNodeSignature(node, baseURL) {
+    if (!node) return "";
+    if (node.nodeType !== 1) {
+      return String(node.nodeType) + ":" + String(node.textContent || "");
+    }
+    const clone = cloneIntoDocument(node, baseURL);
+    if (clone && typeof clone.outerHTML === "string") {
+      return clone.outerHTML;
+    }
+    return serializeNodeSignature(clone || node);
+  }
+
+  function isStylesheetLink(node) {
+    return isElement(node, "LINK")
+      && /\bstylesheet\b/i.test(String(node.getAttribute("rel") || ""))
+      && !!node.getAttribute("href");
+  }
+
+  function waitForStylesheet(node) {
+    if (!isStylesheetLink(node)) {
+      return Promise.resolve();
+    }
+    if (node.sheet) {
+      return Promise.resolve();
+    }
+
+    return new Promise(function(resolve, reject) {
+      let settled = false;
+      const cleanup = function() {
+        if (settled) return;
+        settled = true;
+        node.removeEventListener("load", onLoad);
+        node.removeEventListener("error", onError);
+      };
+      const onLoad = function() {
+        cleanup();
+        resolve();
+      };
+      const onError = function() {
+        cleanup();
+        reject(new Error("stylesheet failed to load: " + (node.getAttribute("href") || "")));
+      };
+
+      node.addEventListener("load", onLoad);
+      node.addEventListener("error", onError);
+
+      const finalizeIfReady = function() {
+        if (settled || !node.sheet) return;
+        cleanup();
+        resolve();
+      };
+
+      if (typeof requestAnimationFrame === "function") {
+        requestAnimationFrame(finalizeIfReady);
+      } else {
+        setTimeout(finalizeIfReady, 16);
+      }
+    });
+  }
+
+  async function replaceManagedHead(nextDoc, baseURL) {
     document.title = nextDoc.title || "";
 
     const currentMarkers = ensureHeadMarkers();
     const head = document.head;
-    let children = toArray(head.childNodes);
-    let startIdx = children.indexOf(currentMarkers.start);
-    let endIdx = children.indexOf(currentMarkers.end);
-
-    while (endIdx > startIdx + 1) {
-      head.removeChild(children[startIdx + 1]);
-      children = toArray(head.childNodes);
-      endIdx = children.indexOf(currentMarkers.end);
+    const currentNodes = collectManagedHeadNodes(head);
+    const currentBuckets = new Map();
+    for (const node of currentNodes) {
+      const signature = headNodeSignature(node, window.location.href);
+      if (!currentBuckets.has(signature)) {
+        currentBuckets.set(signature, []);
+      }
+      currentBuckets.get(signature).push(node);
     }
 
     const nextNodes = collectManagedHeadNodes(nextDoc.head);
+    const orderedNodes = [];
+    const insertedNodes = [];
     for (const node of nextNodes) {
-      head.insertBefore(cloneIntoDocument(node), currentMarkers.end);
+      const signature = headNodeSignature(node, baseURL);
+      const bucket = currentBuckets.get(signature);
+      if (bucket && bucket.length > 0) {
+        orderedNodes.push(bucket.shift());
+        continue;
+      }
+
+      const clone = cloneIntoDocument(node, baseURL);
+      head.insertBefore(clone, currentMarkers.end);
+      orderedNodes.push(clone);
+      insertedNodes.push(clone);
+    }
+
+    await Promise.all(insertedNodes.map(waitForStylesheet));
+
+    const retained = new Set(orderedNodes);
+    for (const node of currentNodes) {
+      if (!retained.has(node) && node.parentNode === head) {
+        head.removeChild(node);
+      }
+    }
+
+    for (const node of orderedNodes) {
+      if (node.parentNode === head) {
+        head.insertBefore(node, currentMarkers.end);
+      }
     }
   }
 
@@ -106,7 +275,7 @@
     return Array.from(element.attributes).map((attr) => ({ name: attr.name, value: attr.value }));
   }
 
-  function replaceBody(nextDoc) {
+  function replaceBody(nextDoc, baseURL) {
     const body = document.body;
     const nextBody = nextDoc.body;
     const existingAttrs = attributeEntries(body);
@@ -126,11 +295,11 @@
       if (isElement(child, "SCRIPT") && child.hasAttribute(SCRIPT_ROLE) && child.getAttribute("src")) {
         continue;
       }
-      body.appendChild(cloneIntoDocument(child));
+      body.appendChild(cloneIntoDocument(child, baseURL));
     }
   }
 
-  function collectManagedScripts(root) {
+  function collectManagedScripts(root, baseURL) {
     const found = [];
     function walk(node) {
       if (!node || !node.childNodes) return;
@@ -138,7 +307,7 @@
         if (isElement(child, "SCRIPT") && child.hasAttribute(SCRIPT_ROLE) && child.getAttribute("src")) {
           found.push({
             role: child.getAttribute(SCRIPT_ROLE),
-            src: child.getAttribute("src"),
+            src: absolutizeURL(child.getAttribute("src"), baseURL),
           });
         }
         walk(child);
@@ -172,8 +341,8 @@
     return role === "bootstrap";
   }
 
-  async function ensureManagedScripts(nextDoc) {
-    const scripts = collectManagedScripts(nextDoc.head).concat(collectManagedScripts(nextDoc.body));
+  async function ensureManagedScripts(nextDoc, baseURL) {
+    const scripts = collectManagedScripts(nextDoc.head, baseURL).concat(collectManagedScripts(nextDoc.body, baseURL));
     scripts.sort(function(a, b) {
       const order = { "wasm-exec": 0, patch: 1, bootstrap: 2 };
       const left = Object.prototype.hasOwnProperty.call(order, a.role) ? order[a.role] : 99;
@@ -291,11 +460,11 @@
     const nextDoc = parseDocument(html);
 
     await disposeCurrentPage();
-    replaceManagedHead(nextDoc);
-    replaceBody(nextDoc);
+    await replaceManagedHead(nextDoc, nextURL);
+    replaceBody(nextDoc, nextURL);
     updateHistory(nextURL, !!opts.replace);
 
-    const bootstrapLoadedNow = await ensureManagedScripts(nextDoc);
+    const bootstrapLoadedNow = await ensureManagedScripts(nextDoc, nextURL);
     await bootstrapCurrentPage(bootstrapLoadedNow);
 
     if (!opts.preserveScroll && typeof window.scrollTo === "function") {

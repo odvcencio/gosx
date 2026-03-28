@@ -2317,3 +2317,67 @@ test("navigation runtime prefetches marked links and reuses cached HTML", async 
   assert.equal(env.fetchCalls.length, 1);
   assert.equal(env.document.title, "Prefetched");
 });
+
+test("navigation runtime absolutizes managed asset URLs during navigation", async () => {
+  const parsedDocs = new Map();
+  const env = createContext({
+    fetchRoutes: {
+      "http://localhost:3000/docs/runtime/index.html": {
+        text: "__ASSET_DOC__",
+        url: "http://localhost:3000/docs/runtime/index.html",
+      },
+      "http://localhost:3000/docs/runtime/runtime.js": {
+        text: "window.__navScriptLoaded = (window.__navScriptLoaded || 0) + 1;",
+        url: "http://localhost:3000/docs/runtime/runtime.js",
+      },
+    },
+    parseHTML(html) {
+      return parsedDocs.get(html);
+    },
+  });
+
+  env.context.location.href = "http://localhost:3000/docs/";
+  env.context.__gosx_dispose_page = async function() {};
+  env.context.__gosx_bootstrap_page = async function() {};
+
+  const favicon = new FakeElement("link", null);
+  favicon.setAttribute("rel", "icon");
+  favicon.setAttribute("href", "./favicon.svg");
+
+  const patchScript = new FakeElement("script", null);
+  patchScript.setAttribute("data-gosx-script", "patch");
+  patchScript.setAttribute("src", "./runtime.js");
+
+  const image = new FakeElement("img", null);
+  image.id = "hero";
+  image.setAttribute("src", "./hero.png");
+  image.setAttribute("srcset", "./hero.png 1x, ./hero@2x.png 2x");
+
+  const form = new FakeElement("form", null);
+  form.id = "signup";
+  form.setAttribute("action", "./signup");
+
+  const video = new FakeElement("video", null);
+  video.id = "promo";
+  video.setAttribute("poster", "./poster.jpg");
+
+  parsedDocs.set("__ASSET_DOC__", buildNavigatedDocument({
+    title: "Assets",
+    headNodes: [favicon, patchScript],
+    bodyNodes: [image, form, video],
+  }));
+
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  await env.context.__gosx_page_nav.navigate("http://localhost:3000/docs/runtime/index.html");
+
+  assert.equal(env.document.head.childNodes[1].getAttribute("href"), "http://localhost:3000/docs/runtime/favicon.svg");
+  assert.equal(env.document.getElementById("hero").getAttribute("src"), "http://localhost:3000/docs/runtime/hero.png");
+  assert.equal(
+    env.document.getElementById("hero").getAttribute("srcset"),
+    "http://localhost:3000/docs/runtime/hero.png 1x, http://localhost:3000/docs/runtime/hero@2x.png 2x",
+  );
+  assert.equal(env.document.getElementById("signup").getAttribute("action"), "http://localhost:3000/docs/runtime/signup");
+  assert.equal(env.document.getElementById("promo").getAttribute("poster"), "http://localhost:3000/docs/runtime/poster.jpg");
+  assert.equal(env.fetchCalls[1].url, "http://localhost:3000/docs/runtime/runtime.js");
+  assert.equal(env.context.__navScriptLoaded, 1);
+});

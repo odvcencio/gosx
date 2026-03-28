@@ -133,7 +133,11 @@ func highlightRuntimeFunc() js.Func {
 		if len(args) < 1 {
 			return js.ValueOf("")
 		}
-		return js.ValueOf(highlight.Go(args[0].String()))
+		lang := highlight.LangGo
+		if len(args) > 1 && args[1].Type() == js.TypeString && args[1].String() != "" {
+			lang = args[1].String()
+		}
+		return js.ValueOf(highlight.HTML(lang, args[0].String()))
 	})
 }
 
