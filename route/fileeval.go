@@ -15,6 +15,7 @@ import (
 	"github.com/odvcencio/gosx/action"
 	"github.com/odvcencio/gosx/auth"
 	"github.com/odvcencio/gosx/engine"
+	islandprogram "github.com/odvcencio/gosx/island/program"
 	"github.com/odvcencio/gosx/server"
 	"github.com/odvcencio/gosx/session"
 )
@@ -24,6 +25,7 @@ type fileRenderEnv struct {
 	funcs        map[string]any
 	components   map[string]any
 	renderEngine func(engine.Config, gosx.Node) gosx.Node
+	renderIsland func(*islandprogram.Program, any) gosx.Node
 }
 
 type fileRequestBindings struct {
@@ -56,6 +58,7 @@ func (env fileRenderEnv) clone() fileRenderEnv {
 		next.components[key] = value
 	}
 	next.renderEngine = env.renderEngine
+	next.renderIsland = env.renderIsland
 	return next
 }
 
@@ -125,6 +128,13 @@ func (env fileRenderEnv) engine(cfg engine.Config, fallback gosx.Node) gosx.Node
 	return env.renderEngine(cfg, fallback)
 }
 
+func (env fileRenderEnv) island(prog *islandprogram.Program, props any) gosx.Node {
+	if env.renderIsland == nil || prog == nil {
+		return gosx.Text("")
+	}
+	return env.renderIsland(prog, props)
+}
+
 func newFileRenderEnv(ctx *RouteContext, page FilePage) fileRenderEnv {
 	bindings := buildFileRequestBindings(ctx)
 
@@ -138,6 +148,7 @@ func newFileRenderEnv(ctx *RouteContext, page FilePage) fileRenderEnv {
 		env.values["data"] = ctx.Data
 		env.values["params"] = cloneStringMap(ctx.Params)
 		env.renderEngine = ctx.Engine
+		env.renderIsland = ctx.Runtime().Island
 		env.funcs["actionPath"] = func(name string) string {
 			return ctx.ActionPath(name)
 		}

@@ -11,14 +11,17 @@ import (
 	"github.com/odvcencio/gosx"
 	"github.com/odvcencio/gosx/engine"
 	"github.com/odvcencio/gosx/ir"
+	islandprogram "github.com/odvcencio/gosx/island/program"
 	"github.com/odvcencio/gosx/server"
 )
 
 type fileProgramRenderer struct {
-	prog       *ir.Program
-	components map[string]*ir.Component
-	opts       fileRenderOptions
-	replaced   bool
+	prog            *ir.Program
+	components      map[string]*ir.Component
+	componentIndex  map[string]int
+	islandPrograms  map[string]*islandprogram.Program
+	opts            fileRenderOptions
+	replaced        bool
 }
 
 func renderFileProgramHTML(prog *ir.Program, component string, opts fileRenderOptions) (string, bool, error) {
@@ -33,13 +36,17 @@ func renderFileProgramHTML(prog *ir.Program, component string, opts fileRenderOp
 
 func newFileProgramRenderer(prog *ir.Program, opts fileRenderOptions) *fileProgramRenderer {
 	components := make(map[string]*ir.Component, len(prog.Components))
+	componentIndex := make(map[string]int, len(prog.Components))
 	for i := range prog.Components {
 		components[prog.Components[i].Name] = &prog.Components[i]
+		componentIndex[prog.Components[i].Name] = i
 	}
 	return &fileProgramRenderer{
-		prog:       prog,
-		components: components,
-		opts:       opts,
+		prog:           prog,
+		components:     components,
+		componentIndex: componentIndex,
+		islandPrograms: make(map[string]*islandprogram.Program),
+		opts:           opts,
 	}
 }
 
@@ -94,8 +101,13 @@ func (r *fileProgramRenderer) renderComponent(node *ir.Node, env fileRenderEnv) 
 		return out
 	}
 
-	if comp, ok := r.components[node.Tag]; ok && !comp.IsIsland && !comp.IsEngine {
-		return r.renderLocalComponent(comp, node, env)
+	if comp, ok := r.components[node.Tag]; ok {
+		switch {
+		case comp.IsIsland:
+			return r.renderLocalIsland(node.Tag, node, env)
+		case !comp.IsEngine:
+			return r.renderLocalComponent(comp, node, env)
+		}
 	}
 
 	if handled, out := r.renderBoundComponent(node, env); handled {
@@ -364,6 +376,41 @@ func (r *fileProgramRenderer) renderLocalComponent(comp *ir.Component, node *ir.
 	scope := env.withValue("props", props)
 	scope = scope.withValue("children", childrenNode)
 	return r.renderNode(comp.Root, scope)
+}
+
+func (r *fileProgramRenderer) renderLocalIsland(name string, node *ir.Node, env fileRenderEnv) string {
+	if env.renderIsland == nil {
+		return defaultRenderedComponent(node.Tag, r.componentAttrMap(node.Attrs, env), r.renderChildren(node.Children, env))
+	}
+
+	prog, err := r.islandProgram(name)
+	if err != nil {
+		return gosx.RenderHTML(gosx.El("div",
+			gosx.Attrs(gosx.Attr("class", "gosx-error")),
+			gosx.Text(fmt.Sprintf("island error: %v", err)),
+		))
+	}
+
+	props := r.componentAttrMap(node.Attrs, env)
+	return gosx.RenderHTML(env.island(prog, props))
+}
+
+func (r *fileProgramRenderer) islandProgram(name string) (*islandprogram.Program, error) {
+	if prog, ok := r.islandPrograms[name]; ok {
+		return prog, nil
+	}
+
+	idx, ok := r.componentIndex[name]
+	if !ok {
+		return nil, fmt.Errorf("component %q not found", name)
+	}
+
+	prog, err := ir.LowerIsland(r.prog, idx)
+	if err != nil {
+		return nil, err
+	}
+	r.islandPrograms[name] = prog
+	return prog, nil
 }
 
 func (r *fileProgramRenderer) renderChildren(children []ir.NodeID, env fileRenderEnv) string {
