@@ -242,7 +242,7 @@ func TestRuntimeTextLayoutExport(t *testing.T) {
 	if got := lines.Index(0).Get("runeStart").Int(); got != 0 {
 		t.Fatalf("line 0 runeStart: got %d", got)
 	}
-	if got := lines.Index(0).Get("runeEnd").Int(); got != 11 {
+	if got := lines.Index(0).Get("runeEnd").Int(); got != 12 {
 		t.Fatalf("line 0 runeEnd: got %d", got)
 	}
 	if got := lines.Index(1).Get("runeStart").Int(); got != 12 {
@@ -259,6 +259,20 @@ func TestRuntimeTextLayoutExport(t *testing.T) {
 	}
 	if got := emojiLines.Index(0).Get("text").String(); got != "👨‍👩‍👧‍👦" {
 		t.Fatalf("expected intact emoji grapheme, got %q", got)
+	}
+
+	softRet := js.Global().Get("__gosx_text_layout").Invoke("ab\u00adcd", "16px serif", 3, "normal", 1)
+	softLines := softRet.Get("lines")
+	if softLines.Length() != 2 {
+		t.Fatalf("expected 2 soft-hyphen line entries, got %d", softLines.Length())
+	}
+	if got := softLines.Index(0).Get("text").String(); got != "ab-" {
+		t.Fatalf("expected discretionary hyphen line, got %q", got)
+	}
+
+	tabRet := js.Global().Get("__gosx_text_layout").Invoke("a\tb", "16px serif", 99, "pre-wrap", 1)
+	if got := tabRet.Get("maxLineWidth").Float(); got != 9 {
+		t.Fatalf("expected tab-stop width 9, got %v", got)
 	}
 }
 
