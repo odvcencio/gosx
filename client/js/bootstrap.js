@@ -210,7 +210,7 @@
   }
 
   function splitPreparedTextLayoutToken(token) {
-    if (!token || token.kind === "newline" || !token.text) {
+    if (!token || token.kind === "newline" || token.kind === "tab" || token.kind === "soft-hyphen" || token.kind === "break" || !token.text) {
       return [token];
     }
 
@@ -255,7 +255,7 @@
     const source = normalizeTextLayoutNewlines(text);
     const ws = normalizeTextLayoutWhiteSpace(whiteSpace);
     const tokens = [];
-    const tabWidth = Math.max(1, Math.floor(sceneNumber(tabSize, 4)));
+    const resolvedTabSize = Math.max(1, Math.floor(sceneNumber(tabSize, 8)));
 
     let word = "";
     let spaces = "";
@@ -356,14 +356,38 @@
           appendCollapsedSpace(byteStart, byteEnd, runeStart, runeEnd);
         } else {
           flushWord();
-          if (spaceByteStart < 0) {
-            spaceByteStart = byteStart;
-            spaceRuneStart = runeStart;
-          }
-          spaceByteEnd = byteEnd;
-          spaceRuneEnd = runeEnd;
-          spaces += " ".repeat(tabWidth);
+          flushSpaces();
+          tokens.push({
+            kind: "tab",
+            text: "\t",
+            byteStart,
+            byteEnd,
+            runeStart,
+            runeEnd,
+          });
         }
+      } else if (char === "\u00ad") {
+        flushWord();
+        flushSpaces();
+        tokens.push({
+          kind: "soft-hyphen",
+          text: "\u00ad",
+          byteStart,
+          byteEnd,
+          runeStart,
+          runeEnd,
+        });
+      } else if (char === "\u200b") {
+        flushWord();
+        flushSpaces();
+        tokens.push({
+          kind: "break",
+          text: "\u200b",
+          byteStart,
+          byteEnd,
+          runeStart,
+          runeEnd,
+        });
       } else if (textLayoutIsWhitespace(char)) {
         if (ws === "normal") {
           appendCollapsedSpace(byteStart, byteEnd, runeStart, runeEnd);
@@ -412,6 +436,7 @@
       byteLen: byteOffset,
       runeCount: runeIndex,
       whiteSpace: ws,
+      tabSize: resolvedTabSize,
       tokens,
     };
   }
@@ -426,6 +451,9 @@
       byteLen: prepared.byteLen,
       runeCount: prepared.runeCount,
       whiteSpace: prepared.whiteSpace,
+      tabSize: Math.max(1, Math.floor(sceneNumber(prepared.tabSize, 8))),
+      spaceWidth: 0,
+      hyphenWidth: 0,
       font: typeof font === "string" ? font : "",
       tokens: expandedTokens.map(function(token) {
         return Object.assign({ width: 0 }, token);
@@ -434,12 +462,30 @@
 
     const texts = [];
     const indexes = [];
+    let needSpaceWidth = false;
+    let needHyphenWidth = false;
     for (let i = 0; i < measured.tokens.length; i += 1) {
-      if (measured.tokens[i].kind === "newline") {
+      if (measured.tokens[i].kind === "newline" || measured.tokens[i].kind === "tab" || measured.tokens[i].kind === "soft-hyphen" || measured.tokens[i].kind === "break") {
+        if (measured.tokens[i].kind === "tab") {
+          needSpaceWidth = true;
+        }
+        if (measured.tokens[i].kind === "soft-hyphen") {
+          needHyphenWidth = true;
+        }
         continue;
       }
       texts.push(measured.tokens[i].text);
       indexes.push(i);
+    }
+    let spaceIndex = -1;
+    let hyphenIndex = -1;
+    if (needSpaceWidth) {
+      spaceIndex = texts.length;
+      texts.push(" ");
+    }
+    if (needHyphenWidth) {
+      hyphenIndex = texts.length;
+      texts.push("-");
     }
 
     if (texts.length === 0) {
@@ -463,29 +509,174 @@
     }
 
     for (let i = 0; i < widths.length; i += 1) {
-      measured.tokens[indexes[i]].width = sceneNumber(widths[i], 0);
+      if (i < indexes.length) {
+        measured.tokens[indexes[i]].width = sceneNumber(widths[i], 0);
+      }
+    }
+    if (spaceIndex >= 0 && spaceIndex < widths.length) {
+      measured.spaceWidth = sceneNumber(widths[spaceIndex], 0);
+    }
+    if (hyphenIndex >= 0 && hyphenIndex < widths.length) {
+      measured.hyphenWidth = sceneNumber(widths[hyphenIndex], 0);
     }
 
     return measured;
   }
 
-  function browserTextLayoutTokensWidth(tokens, start, end) {
-    let width = 0;
-    for (let i = start; i < end && i < tokens.length; i += 1) {
-      width += sceneNumber(tokens[i].width, 0);
+  function browserTextLayoutLineText(measured, start, end, softBreak) {
+    const tokens = measured.tokens;
+    let textEnd = end;
+    if (normalizeTextLayoutWhiteSpace(measured.whiteSpace) === "normal") {
+      while (textEnd > start && tokens[textEnd - 1].kind === "space") {
+        textEnd -= 1;
+      }
     }
-    return width;
-  }
-
-  function browserTextLayoutTokensText(tokens, start, end) {
     let text = "";
-    for (let i = start; i < end && i < tokens.length; i += 1) {
+    for (let i = start; i < textEnd && i < tokens.length; i += 1) {
+      if (tokens[i].kind === "newline" || tokens[i].kind === "soft-hyphen" || tokens[i].kind === "break") {
+        continue;
+      }
       text += tokens[i].text;
+    }
+    if (softBreak) {
+      text += "-";
     }
     return text;
   }
 
-  function buildBrowserTextLayoutLine(tokens, start, end, hardBreak) {
+  function browserTextLayoutTabAdvance(measured, lineWidth) {
+    const tabSize = Math.max(1, Math.floor(sceneNumber(measured.tabSize, 8)));
+    const spaceWidth = Math.max(1, sceneNumber(measured.spaceWidth, 1));
+    const tabStop = tabSize * spaceWidth;
+    const remainder = lineWidth % tabStop;
+    if (Math.abs(remainder) <= 1e-6) {
+      return tabStop;
+    }
+    return tabStop - remainder;
+  }
+
+  function browserTextLayoutHyphenAdvance(measured) {
+    return Math.max(1, sceneNumber(measured.hyphenWidth, 1));
+  }
+
+  function browserTextLayoutTokenProgressWidth(measured, lineWidth, token) {
+    switch (token.kind) {
+      case "tab":
+        return browserTextLayoutTabAdvance(measured, lineWidth);
+      case "soft-hyphen":
+      case "break":
+      case "newline":
+        return 0;
+      default:
+        return sceneNumber(token.width, 0);
+    }
+  }
+
+  function browserTextLayoutTokenFitAdvance(measured, lineWidth, token) {
+    switch (token.kind) {
+      case "space":
+        return normalizeTextLayoutWhiteSpace(measured.whiteSpace) === "normal" ? 0 : sceneNumber(token.width, 0);
+      case "tab":
+        return 0;
+      case "soft-hyphen":
+        return browserTextLayoutHyphenAdvance(measured);
+      case "break":
+      case "newline":
+        return 0;
+      default:
+        return sceneNumber(token.width, 0);
+    }
+  }
+
+  function browserTextLayoutTokenPaintAdvance(measured, lineWidth, token, softBreak) {
+    switch (token.kind) {
+      case "space":
+        return normalizeTextLayoutWhiteSpace(measured.whiteSpace) === "normal" ? 0 : sceneNumber(token.width, 0);
+      case "tab":
+        return browserTextLayoutTabAdvance(measured, lineWidth);
+      case "soft-hyphen":
+        return softBreak ? browserTextLayoutHyphenAdvance(measured) : 0;
+      case "break":
+      case "newline":
+        return 0;
+      default:
+        return sceneNumber(token.width, 0);
+    }
+  }
+
+  function browserTextLayoutCanBreakAfter(token) {
+    return token.kind === "space" || token.kind === "tab" || token.kind === "soft-hyphen" || token.kind === "break";
+  }
+
+  function browserTextLayoutLineStartProhibited(text) {
+    const value = String(text || "");
+    if (value === "") {
+      return false;
+    }
+    for (const char of value) {
+      switch (char) {
+        case ".":
+        case ",":
+        case "!":
+        case "?":
+        case ":":
+        case ";":
+        case ")":
+        case "]":
+        case "}":
+        case "%":
+        case "\"":
+        case "”":
+        case "’":
+        case "»":
+        case "›":
+        case "…":
+        case "、":
+        case "。":
+        case "，":
+        case "．":
+        case "！":
+        case "？":
+        case "：":
+        case "；":
+        case "）":
+        case "】":
+        case "」":
+        case "』":
+        case "》":
+        case "〉":
+        case "〕":
+        case "〗":
+        case "〙":
+        case "〛":
+        case "ー":
+        case "々":
+        case "ゝ":
+        case "ゞ":
+        case "ヽ":
+        case "ヾ":
+          break;
+        default:
+          return false;
+      }
+    }
+    return true;
+  }
+
+  function browserTextLayoutRangeWidth(measured, start, end, softBreak) {
+    let progress = 0;
+    let display = 0;
+    for (let i = start; i < end && i < measured.tokens.length; i += 1) {
+      const token = measured.tokens[i];
+      const before = progress;
+      progress += browserTextLayoutTokenProgressWidth(measured, progress, token);
+      display = before + browserTextLayoutTokenPaintAdvance(measured, before, token, softBreak && i === end - 1 && token.kind === "soft-hyphen");
+    }
+    return display;
+  }
+
+  function buildBrowserTextLayoutLine(measured, start, end, hardBreak, softBreak, width) {
+    const tokens = measured.tokens;
     const line = {
       start,
       end,
@@ -493,8 +684,8 @@
       byteEnd: 0,
       runeStart: 0,
       runeEnd: 0,
-      width: browserTextLayoutTokensWidth(tokens, start, end),
-      text: browserTextLayoutTokensText(tokens, start, end),
+      width: width == null ? browserTextLayoutRangeWidth(measured, start, end, softBreak) : width,
+      text: browserTextLayoutLineText(measured, start, end, softBreak),
       hardBreak: Boolean(hardBreak),
     };
     if (start < end && start < tokens.length) {
@@ -541,52 +732,96 @@
     };
   }
 
-  function layoutBrowserPreLine(tokens, start) {
-    for (let i = start; i < tokens.length; i += 1) {
-      if (tokens[i].kind === "newline") {
-        return [buildBrowserTextLayoutLine(tokens, start, i, true), i + 1];
+  function normalizeBrowserTextLayoutLineStart(measured, start) {
+    const whiteSpace = normalizeTextLayoutWhiteSpace(measured.whiteSpace);
+    while (start < measured.tokens.length) {
+      const kind = measured.tokens[start].kind;
+      if (kind === "soft-hyphen" || kind === "break") {
+        start += 1;
+        continue;
       }
+      if (kind === "space" && whiteSpace === "normal") {
+        start += 1;
+        continue;
+      }
+      break;
     }
-    return [buildBrowserTextLayoutLine(tokens, start, tokens.length, false), tokens.length];
+    return start;
   }
 
-  function layoutBrowserWrappedLine(tokens, start, whiteSpace, maxWidth) {
+  function normalizeBrowserTextLayoutNextStart(measured, start) {
+    return normalizeBrowserTextLayoutLineStart(measured, start);
+  }
+
+  function layoutBrowserPreLine(measured, start) {
+    const tokens = measured.tokens;
+    for (let i = start; i < tokens.length; i += 1) {
+      if (tokens[i].kind === "newline") {
+        return [buildBrowserTextLayoutLine(measured, start, i, true, false), i + 1];
+      }
+    }
+    return [buildBrowserTextLayoutLine(measured, start, tokens.length, false, false), tokens.length];
+  }
+
+  function layoutBrowserWrappedLine(measured, start, whiteSpace, maxWidth) {
+    const tokens = measured.tokens;
     let lineWidth = 0;
     let lastBreak = -1;
+    let lastBreakWidth = 0;
+    let lastBreakSoft = false;
 
     for (let i = start; i < tokens.length; i += 1) {
       const token = tokens[i];
       if (token.kind === "newline") {
-        return [buildBrowserTextLayoutLine(tokens, start, i, true), i + 1];
+        return [buildBrowserTextLayoutLine(measured, start, i, true, false), i + 1];
       }
 
-      let breakAt = lastBreak;
-      if (token.kind === "space") {
-        breakAt = whiteSpace === "normal" ? i : i + 1;
+      const tokenWidth = browserTextLayoutTokenProgressWidth(measured, lineWidth, token);
+      const fitAdvance = browserTextLayoutTokenFitAdvance(measured, lineWidth, token);
+      const paintAdvance = browserTextLayoutTokenPaintAdvance(measured, lineWidth, token, token.kind === "soft-hyphen");
+
+      if (browserTextLayoutCanBreakAfter(token)) {
+        lastBreak = i + 1;
+        lastBreakWidth = lineWidth + paintAdvance;
+        lastBreakSoft = token.kind === "soft-hyphen";
       }
 
-      const candidateWidth = lineWidth + sceneNumber(token.width, 0);
-      if (maxWidth > 0 && lineWidth === 0 && candidateWidth > maxWidth) {
-        return [buildBrowserTextLayoutLine(tokens, start, i + 1, false), i + 1];
-      }
-      if (maxWidth > 0 && lineWidth > 0 && candidateWidth > maxWidth) {
-        if (breakAt > start) {
-          let next = breakAt;
-          if (whiteSpace === "normal") {
-            while (next < tokens.length && tokens[next].kind === "space") {
-              next += 1;
-            }
-          }
-          return [buildBrowserTextLayoutLine(tokens, start, breakAt, false), next];
+      const candidateWidth = lineWidth + tokenWidth;
+      if (maxWidth > 0 && candidateWidth > maxWidth) {
+        if (browserTextLayoutCanBreakAfter(token) && lineWidth + fitAdvance <= maxWidth) {
+          return [
+            buildBrowserTextLayoutLine(measured, start, i + 1, false, token.kind === "soft-hyphen"),
+            normalizeBrowserTextLayoutNextStart(measured, i + 1),
+          ];
         }
-        return [buildBrowserTextLayoutLine(tokens, start, i, false), i];
+        if (lastBreak > start) {
+          return [
+            buildBrowserTextLayoutLine(measured, start, lastBreak, false, lastBreakSoft, lastBreakWidth),
+            normalizeBrowserTextLayoutNextStart(measured, lastBreak),
+          ];
+        }
+        if (lineWidth > 0 && browserTextLayoutLineStartProhibited(token.text)) {
+          return [
+            buildBrowserTextLayoutLine(measured, start, i + 1, false, false),
+            normalizeBrowserTextLayoutNextStart(measured, i + 1),
+          ];
+        }
+        if (lineWidth === 0) {
+          return [
+            buildBrowserTextLayoutLine(measured, start, i + 1, false, false),
+            normalizeBrowserTextLayoutNextStart(measured, i + 1),
+          ];
+        }
+        return [
+          buildBrowserTextLayoutLine(measured, start, i, false, false),
+          normalizeBrowserTextLayoutNextStart(measured, i),
+        ];
       }
 
       lineWidth = candidateWidth;
-      lastBreak = breakAt;
     }
 
-    return [buildBrowserTextLayoutLine(tokens, start, tokens.length, false), tokens.length];
+    return [buildBrowserTextLayoutLine(measured, start, tokens.length, false, false), tokens.length];
   }
 
   function layoutBrowserTextNextLine(measured, start, maxWidth) {
@@ -599,14 +834,9 @@
     }
 
     const whiteSpace = normalizeTextLayoutWhiteSpace(measured.whiteSpace);
-    let lineStart = start;
-    if (whiteSpace === "normal") {
-      while (lineStart < tokens.length && tokens[lineStart].kind === "space") {
-        lineStart += 1;
-      }
-      if (lineStart >= tokens.length) {
-        return [emptyBrowserTextLayoutLineAtEnd(measured), tokens.length];
-      }
+    let lineStart = normalizeBrowserTextLayoutLineStart(measured, start);
+    if (lineStart >= tokens.length) {
+      return [emptyBrowserTextLayoutLineAtEnd(measured), tokens.length];
     }
 
     if (tokens[lineStart].kind === "newline") {
@@ -614,13 +844,13 @@
     }
 
     if (whiteSpace === "pre") {
-      return layoutBrowserPreLine(tokens, lineStart);
+      return layoutBrowserPreLine(measured, lineStart);
     }
-    return layoutBrowserWrappedLine(tokens, lineStart, whiteSpace, Math.max(0, sceneNumber(maxWidth, 0)));
+    return layoutBrowserWrappedLine(measured, lineStart, whiteSpace, Math.max(0, sceneNumber(maxWidth, 0)));
   }
 
   function layoutBrowserText(text, font, maxWidth, whiteSpace, lineHeight) {
-    const prepared = prepareBrowserTextLayout(text, whiteSpace, 4);
+    const prepared = prepareBrowserTextLayout(text, whiteSpace, 8);
     const measured = measurePreparedBrowserTextLayout(prepared, font);
     const resolvedLineHeight = Math.max(1, sceneNumber(lineHeight, 1));
 

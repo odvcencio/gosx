@@ -41,15 +41,18 @@ func TestPreparePreWrapPreservesBreaksAndTabs(t *testing.T) {
 	})
 
 	kinds := tokenKinds(prepared.Tokens)
-	wantKinds := []TokenKind{TokenWord, TokenSpace, TokenWord, TokenNewline, TokenWord}
+	wantKinds := []TokenKind{TokenWord, TokenTab, TokenWord, TokenNewline, TokenWord}
 	if !slices.Equal(kinds, wantKinds) {
 		t.Fatalf("token kinds: expected %v, got %v", wantKinds, kinds)
 	}
 
 	got := tokenTexts(prepared.Tokens)
-	want := []string{"hi", "  ", "there", "\n", "friend"}
+	want := []string{"hi", "\t", "there", "\n", "friend"}
 	if !slices.Equal(got, want) {
 		t.Fatalf("token texts: expected %v, got %v", want, got)
+	}
+	if prepared.TabSize != 2 {
+		t.Fatalf("tabSize: expected 2, got %d", prepared.TabSize)
 	}
 }
 
@@ -250,6 +253,112 @@ func TestLayoutBreaksLongWordsAtGraphemeBoundaries(t *testing.T) {
 	}
 	if result.MaxLineWidth != 4 {
 		t.Fatalf("maxLineWidth: expected 4, got %v", result.MaxLineWidth)
+	}
+}
+
+func TestLayoutNormalTrailingSpacesHangWithoutInflatingWidth(t *testing.T) {
+	result, err := LayoutText(
+		"hello ",
+		MonospaceMeasurer{Advance: 1},
+		"mono",
+		PrepareOptions{WhiteSpace: WhiteSpaceNormal},
+		LayoutOptions{MaxWidth: 99, LineHeight: 1},
+	)
+	if err != nil {
+		t.Fatalf("layout text: %v", err)
+	}
+
+	if result.MaxLineWidth != 5 {
+		t.Fatalf("maxLineWidth: expected 5, got %v", result.MaxLineWidth)
+	}
+	if result.Lines[0].Text != "hello" {
+		t.Fatalf("line text: expected collapsed trailing space to disappear, got %q", result.Lines[0].Text)
+	}
+}
+
+func TestLayoutPreWrapUsesTabStops(t *testing.T) {
+	result, err := LayoutText(
+		"a\tb",
+		MonospaceMeasurer{Advance: 1},
+		"mono",
+		PrepareOptions{WhiteSpace: WhiteSpacePreWrap},
+		LayoutOptions{MaxWidth: 99, LineHeight: 1},
+	)
+	if err != nil {
+		t.Fatalf("layout text: %v", err)
+	}
+
+	if result.LineCount != 1 {
+		t.Fatalf("lineCount: expected 1, got %d", result.LineCount)
+	}
+	if result.MaxLineWidth != 9 {
+		t.Fatalf("maxLineWidth: expected 9, got %v", result.MaxLineWidth)
+	}
+	if result.Lines[0].Text != "a\tb" {
+		t.Fatalf("line text: got %q", result.Lines[0].Text)
+	}
+}
+
+func TestLayoutBreaksAtSoftHyphen(t *testing.T) {
+	result, err := LayoutText(
+		"ab\u00adcd",
+		MonospaceMeasurer{Advance: 1},
+		"mono",
+		PrepareOptions{WhiteSpace: WhiteSpaceNormal},
+		LayoutOptions{MaxWidth: 3, LineHeight: 1},
+	)
+	if err != nil {
+		t.Fatalf("layout text: %v", err)
+	}
+
+	lines := lineTexts(result.Lines)
+	want := []string{"ab-", "cd"}
+	if !slices.Equal(lines, want) {
+		t.Fatalf("line texts: expected %v, got %v", want, lines)
+	}
+	if result.Lines[0].Width != 3 {
+		t.Fatalf("line 0 width: expected 3, got %v", result.Lines[0].Width)
+	}
+}
+
+func TestLayoutBreaksAtZeroWidthBreak(t *testing.T) {
+	result, err := LayoutText(
+		"foo\u200bbar",
+		MonospaceMeasurer{Advance: 1},
+		"mono",
+		PrepareOptions{WhiteSpace: WhiteSpaceNormal},
+		LayoutOptions{MaxWidth: 3, LineHeight: 1},
+	)
+	if err != nil {
+		t.Fatalf("layout text: %v", err)
+	}
+
+	lines := lineTexts(result.Lines)
+	want := []string{"foo", "bar"}
+	if !slices.Equal(lines, want) {
+		t.Fatalf("line texts: expected %v, got %v", want, lines)
+	}
+}
+
+func TestLayoutKeepsCJKClosingPunctuationOffLineStart(t *testing.T) {
+	result, err := LayoutText(
+		"あ。い",
+		MonospaceMeasurer{Advance: 1},
+		"mono",
+		PrepareOptions{WhiteSpace: WhiteSpaceNormal},
+		LayoutOptions{MaxWidth: 1, LineHeight: 1},
+	)
+	if err != nil {
+		t.Fatalf("layout text: %v", err)
+	}
+
+	lines := lineTexts(result.Lines)
+	want := []string{"あ。", "い"}
+	if !slices.Equal(lines, want) {
+		t.Fatalf("line texts: expected %v, got %v", want, lines)
+	}
+	if result.Lines[0].Width != 2 {
+		t.Fatalf("line 0 width: expected 2, got %v", result.Lines[0].Width)
 	}
 }
 

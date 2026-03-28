@@ -23,9 +23,12 @@ const (
 type TokenKind string
 
 const (
-	TokenWord    TokenKind = "word"
-	TokenSpace   TokenKind = "space"
-	TokenNewline TokenKind = "newline"
+	TokenWord       TokenKind = "word"
+	TokenSpace      TokenKind = "space"
+	TokenTab        TokenKind = "tab"
+	TokenNewline    TokenKind = "newline"
+	TokenSoftHyphen TokenKind = "soft-hyphen"
+	TokenBreak      TokenKind = "break"
 )
 
 // PrepareOptions configures text normalization and tokenization.
@@ -56,6 +59,7 @@ type Prepared struct {
 	ByteLen    int        `json:"byteLen"`
 	RuneCount  int        `json:"runeCount"`
 	WhiteSpace WhiteSpace `json:"whiteSpace"`
+	TabSize    int        `json:"tabSize"`
 	Tokens     []Token    `json:"tokens"`
 }
 
@@ -72,12 +76,15 @@ type MeasuredToken struct {
 
 // Measured is the measured representation used by Layout and LayoutNextLine.
 type Measured struct {
-	Source     string          `json:"source"`
-	ByteLen    int             `json:"byteLen"`
-	RuneCount  int             `json:"runeCount"`
-	WhiteSpace WhiteSpace      `json:"whiteSpace"`
-	Font       string          `json:"font,omitempty"`
-	Tokens     []MeasuredToken `json:"tokens"`
+	Source      string          `json:"source"`
+	ByteLen     int             `json:"byteLen"`
+	RuneCount   int             `json:"runeCount"`
+	WhiteSpace  WhiteSpace      `json:"whiteSpace"`
+	TabSize     int             `json:"tabSize"`
+	SpaceWidth  float64         `json:"spaceWidth"`
+	HyphenWidth float64         `json:"hyphenWidth"`
+	Font        string          `json:"font,omitempty"`
+	Tokens      []MeasuredToken `json:"tokens"`
 }
 
 // Line describes one laid-out line.
@@ -196,7 +203,7 @@ func Prepare(text string, opts PrepareOptions) Prepared {
 	ws := normalizeWhiteSpace(opts.WhiteSpace)
 	tabSize := opts.TabSize
 	if tabSize <= 0 {
-		tabSize = 4
+		tabSize = 8
 	}
 
 	text = normalizeNewlines(text)
@@ -290,13 +297,37 @@ func Prepare(text string, opts PrepareOptions) Prepared {
 				continue
 			}
 			flushWord()
-			if spaceByteStart < 0 {
-				spaceByteStart = byteStart
-				spaceRuneStart = runeStart
-			}
-			spaceByteEnd = byteEnd
-			spaceRuneEnd = runeEnd
-			spaces.WriteString(strings.Repeat(" ", tabSize))
+			flushSpaces()
+			tokens = append(tokens, Token{
+				Kind:      TokenTab,
+				Text:      "\t",
+				ByteStart: byteStart,
+				ByteEnd:   byteEnd,
+				RuneStart: runeStart,
+				RuneEnd:   runeEnd,
+			})
+		case r == '\u00ad':
+			flushWord()
+			flushSpaces()
+			tokens = append(tokens, Token{
+				Kind:      TokenSoftHyphen,
+				Text:      "\u00ad",
+				ByteStart: byteStart,
+				ByteEnd:   byteEnd,
+				RuneStart: runeStart,
+				RuneEnd:   runeEnd,
+			})
+		case r == '\u200b':
+			flushWord()
+			flushSpaces()
+			tokens = append(tokens, Token{
+				Kind:      TokenBreak,
+				Text:      "\u200b",
+				ByteStart: byteStart,
+				ByteEnd:   byteEnd,
+				RuneStart: runeStart,
+				RuneEnd:   runeEnd,
+			})
 		case unicode.IsSpace(r):
 			if ws == WhiteSpaceNormal {
 				appendCollapsedSpace(byteStart, byteEnd, runeStart, runeEnd)
@@ -347,6 +378,7 @@ func Prepare(text string, opts PrepareOptions) Prepared {
 		ByteLen:    len(text),
 		RuneCount:  runeIndex,
 		WhiteSpace: ws,
+		TabSize:    tabSize,
 		Tokens:     tokens,
 	}
 }
@@ -365,17 +397,37 @@ func Measure(prepared Prepared, measurer BatchMeasurer, font string) (Measured, 
 		ByteLen:    prepared.ByteLen,
 		RuneCount:  prepared.RuneCount,
 		WhiteSpace: normalizeWhiteSpace(prepared.WhiteSpace),
+		TabSize:    prepared.TabSize,
 		Font:       font,
 		Tokens:     make([]MeasuredToken, len(expanded)),
 	}
+	needSpaceWidth := false
+	needHyphenWidth := false
 
 	for i, token := range expanded {
 		measured.Tokens[i].Token = token
-		if token.Kind == TokenNewline {
+		switch token.Kind {
+		case TokenNewline, TokenTab, TokenSoftHyphen, TokenBreak:
+			if token.Kind == TokenTab {
+				needSpaceWidth = true
+			}
+			if token.Kind == TokenSoftHyphen {
+				needHyphenWidth = true
+			}
 			continue
 		}
 		texts = append(texts, token.Text)
 		indexes = append(indexes, i)
+	}
+	spaceIndex := -1
+	hyphenIndex := -1
+	if needSpaceWidth {
+		spaceIndex = len(texts)
+		texts = append(texts, " ")
+	}
+	if needHyphenWidth {
+		hyphenIndex = len(texts)
+		texts = append(texts, "-")
 	}
 
 	widths, err := measurer.MeasureBatch(font, texts)
@@ -387,7 +439,15 @@ func Measure(prepared Prepared, measurer BatchMeasurer, font string) (Measured, 
 	}
 
 	for i, width := range widths {
-		measured.Tokens[indexes[i]].Width = width
+		if i < len(indexes) {
+			measured.Tokens[indexes[i]].Width = width
+		}
+	}
+	if spaceIndex >= 0 && spaceIndex < len(widths) {
+		measured.SpaceWidth = widths[spaceIndex]
+	}
+	if hyphenIndex >= 0 && hyphenIndex < len(widths) {
+		measured.HyphenWidth = widths[hyphenIndex]
 	}
 
 	return measured, nil
@@ -405,7 +465,7 @@ func expandPreparedTokens(tokens []Token) []Token {
 }
 
 func expandPreparedToken(token Token) []Token {
-	if token.Kind == TokenNewline || token.Text == "" {
+	if token.Kind == TokenNewline || token.Kind == TokenTab || token.Kind == TokenSoftHyphen || token.Kind == TokenBreak || token.Text == "" {
 		return []Token{token}
 	}
 	if utf8.RuneCountInString(token.Text) <= 1 {
@@ -541,14 +601,9 @@ func LayoutNextLine(measured Measured, start int, opts LayoutOptions) (Line, int
 	}
 
 	ws := normalizeWhiteSpace(measured.WhiteSpace)
-	lineStart := start
-	if ws == WhiteSpaceNormal {
-		for lineStart < len(tokens) && tokens[lineStart].Kind == TokenSpace {
-			lineStart++
-		}
-		if lineStart >= len(tokens) {
-			return emptyLineAtEnd(measured), len(tokens)
-		}
+	lineStart := normalizeWrappedLineStart(tokens, start, ws)
+	if lineStart >= len(tokens) {
+		return emptyLineAtEnd(measured), len(tokens)
 	}
 
 	if tokens[lineStart].Kind == TokenNewline {
@@ -556,70 +611,85 @@ func LayoutNextLine(measured Measured, start int, opts LayoutOptions) (Line, int
 	}
 
 	if ws == WhiteSpacePre {
-		return layoutPreLine(tokens, lineStart)
+		return layoutPreLine(measured, lineStart)
 	}
-	return layoutWrappedLine(tokens, lineStart, ws, opts.MaxWidth)
+	return layoutWrappedLine(measured, lineStart, ws, opts.MaxWidth)
 }
 
-func layoutPreLine(tokens []MeasuredToken, start int) (Line, int) {
+func layoutPreLine(measured Measured, start int) (Line, int) {
+	tokens := measured.Tokens
 	for i := start; i < len(tokens); i++ {
 		if tokens[i].Kind != TokenNewline {
 			continue
 		}
-		return buildLine(tokens, start, i, true), i + 1
+		line := buildLine(measured, start, i, true, false)
+		return line, i + 1
 	}
-	return buildLine(tokens, start, len(tokens), false), len(tokens)
+	line := buildLine(measured, start, len(tokens), false, false)
+	return line, len(tokens)
 }
 
-func layoutWrappedLine(tokens []MeasuredToken, start int, ws WhiteSpace, maxWidth float64) (Line, int) {
+func layoutWrappedLine(measured Measured, start int, ws WhiteSpace, maxWidth float64) (Line, int) {
+	tokens := measured.Tokens
 	lineWidth := 0.0
 	lastBreak := -1
+	lastBreakWidth := 0.0
+	lastBreakSoft := false
 
 	for i := start; i < len(tokens); i++ {
 		token := tokens[i]
 		if token.Kind == TokenNewline {
-			return buildLine(tokens, start, i, true), i + 1
+			return buildLine(measured, start, i, true, false), i + 1
 		}
 
-		breakAt := lastBreak
-		if token.Kind == TokenSpace {
-			if ws == WhiteSpaceNormal {
-				breakAt = i
-			} else {
-				breakAt = i + 1
+		tokenWidth := tokenProgressWidth(measured, lineWidth, token)
+		fitAdvance := tokenFitAdvance(measured, lineWidth, token)
+		paintAdvance := tokenPaintAdvance(measured, lineWidth, token, token.Kind == TokenSoftHyphen)
+
+		if canBreakAfter(token.Kind) {
+			lastBreak = i + 1
+			lastBreakWidth = lineWidth + paintAdvance
+			lastBreakSoft = token.Kind == TokenSoftHyphen
+		}
+
+		candidateWidth := lineWidth + tokenWidth
+		if maxWidth > 0 && candidateWidth > maxWidth {
+			if canBreakAfter(token.Kind) && lineWidth+fitAdvance <= maxWidth {
+				line := buildLine(measured, start, i+1, false, token.Kind == TokenSoftHyphen)
+				return line, normalizeWrappedLineNext(tokens, i+1, ws)
 			}
-		}
-
-		candidateWidth := lineWidth + token.Width
-		if maxWidth > 0 && lineWidth == 0 && candidateWidth > maxWidth {
-			return buildLine(tokens, start, i+1, false), i + 1
-		}
-		if maxWidth > 0 && lineWidth > 0 && candidateWidth > maxWidth {
-			if breakAt > start {
-				next := breakAt
-				if ws == WhiteSpaceNormal {
-					for next < len(tokens) && tokens[next].Kind == TokenSpace {
-						next++
-					}
-				}
-				return buildLine(tokens, start, breakAt, false), next
+			if lastBreak > start {
+				line := buildLineWithWidth(measured, start, lastBreak, false, lastBreakSoft, lastBreakWidth)
+				return line, normalizeWrappedLineNext(tokens, lastBreak, ws)
 			}
-			return buildLine(tokens, start, i, false), i
+			if lineWidth > 0 && lineStartProhibited(token.Text) {
+				line := buildLine(measured, start, i+1, false, false)
+				return line, normalizeWrappedLineNext(tokens, i+1, ws)
+			}
+			if lineWidth == 0 {
+				line := buildLine(measured, start, i+1, false, false)
+				return line, normalizeWrappedLineNext(tokens, i+1, ws)
+			}
+			line := buildLine(measured, start, i, false, false)
+			return line, normalizeWrappedLineNext(tokens, i, ws)
 		}
-
 		lineWidth = candidateWidth
-		lastBreak = breakAt
 	}
 
-	return buildLine(tokens, start, len(tokens), false), len(tokens)
+	return buildLine(measured, start, len(tokens), false, false), len(tokens)
 }
 
-func buildLine(tokens []MeasuredToken, start, end int, hardBreak bool) Line {
+func buildLine(measured Measured, start, end int, hardBreak, softBreak bool) Line {
+	return buildLineWithWidth(measured, start, end, hardBreak, softBreak, lineDisplayWidth(measured, start, end, softBreak))
+}
+
+func buildLineWithWidth(measured Measured, start, end int, hardBreak, softBreak bool, width float64) Line {
+	tokens := measured.Tokens
 	line := Line{
 		Start:     start,
 		End:       end,
-		Width:     tokensWidth(tokens, start, end),
-		Text:      tokensText(tokens, start, end),
+		Width:     width,
+		Text:      lineText(measured, start, end, softBreak),
 		HardBreak: hardBreak,
 	}
 	if start < end {
@@ -661,23 +731,205 @@ func emptyLineAtEnd(measured Measured) Line {
 	return line
 }
 
-func tokensWidth(tokens []MeasuredToken, start, end int) float64 {
-	width := 0.0
-	for i := start; i < end && i < len(tokens); i++ {
-		width += tokens[i].Width
-	}
-	return width
-}
-
-func tokensText(tokens []MeasuredToken, start, end int) string {
+func lineText(measured Measured, start, end int, softBreak bool) string {
 	if start >= end {
 		return ""
 	}
+	tokens := measured.Tokens
+	textEnd := end
+	if normalizeWhiteSpace(measured.WhiteSpace) == WhiteSpaceNormal {
+		for textEnd > start && tokens[textEnd-1].Kind == TokenSpace {
+			textEnd--
+		}
+	}
 	var b strings.Builder
-	for i := start; i < end && i < len(tokens); i++ {
-		b.WriteString(tokens[i].Text)
+	for i := start; i < textEnd && i < len(tokens); i++ {
+		switch tokens[i].Kind {
+		case TokenNewline, TokenSoftHyphen, TokenBreak:
+			continue
+		default:
+			b.WriteString(tokens[i].Text)
+		}
+	}
+	if softBreak {
+		b.WriteByte('-')
 	}
 	return b.String()
+}
+
+func lineDisplayWidth(measured Measured, start, end int, softBreak bool) float64 {
+	if start >= end {
+		return 0
+	}
+	progress := 0.0
+	display := 0.0
+	for i := start; i < end && i < len(measured.Tokens); i++ {
+		token := measured.Tokens[i]
+		before := progress
+		progress += tokenProgressWidth(measured, progress, token)
+		display = before + tokenPaintAdvance(measured, before, token, softBreak && i == end-1 && token.Kind == TokenSoftHyphen)
+	}
+	return display
+}
+
+func tokenProgressWidth(measured Measured, lineWidth float64, token MeasuredToken) float64 {
+	switch token.Kind {
+	case TokenTab:
+		return tabAdvance(measured, lineWidth)
+	case TokenSoftHyphen, TokenBreak, TokenNewline:
+		return 0
+	default:
+		return token.Width
+	}
+}
+
+func tokenFitAdvance(measured Measured, lineWidth float64, token MeasuredToken) float64 {
+	switch token.Kind {
+	case TokenSpace:
+		if normalizeWhiteSpace(measured.WhiteSpace) == WhiteSpaceNormal {
+			return 0
+		}
+		return token.Width
+	case TokenTab:
+		return 0
+	case TokenSoftHyphen:
+		return hyphenAdvance(measured)
+	case TokenBreak, TokenNewline:
+		return 0
+	default:
+		return token.Width
+	}
+}
+
+func tokenPaintAdvance(measured Measured, lineWidth float64, token MeasuredToken, softBreak bool) float64 {
+	switch token.Kind {
+	case TokenSpace:
+		if normalizeWhiteSpace(measured.WhiteSpace) == WhiteSpaceNormal {
+			return 0
+		}
+		return token.Width
+	case TokenTab:
+		return tabAdvance(measured, lineWidth)
+	case TokenSoftHyphen:
+		if softBreak {
+			return hyphenAdvance(measured)
+		}
+		return 0
+	case TokenBreak, TokenNewline:
+		return 0
+	default:
+		return token.Width
+	}
+}
+
+func tabAdvance(measured Measured, lineWidth float64) float64 {
+	tabSize := measured.TabSize
+	if tabSize <= 0 {
+		tabSize = 8
+	}
+	spaceWidth := measured.SpaceWidth
+	if spaceWidth <= 0 {
+		spaceWidth = 1
+	}
+	tabStop := float64(tabSize) * spaceWidth
+	if tabStop <= 0 {
+		return 0
+	}
+	remainder := mathMod(lineWidth, tabStop)
+	if remainder == 0 {
+		return tabStop
+	}
+	return tabStop - remainder
+}
+
+func hyphenAdvance(measured Measured) float64 {
+	if measured.HyphenWidth > 0 {
+		return measured.HyphenWidth
+	}
+	return 1
+}
+
+func canBreakAfter(kind TokenKind) bool {
+	switch kind {
+	case TokenSpace, TokenTab, TokenSoftHyphen, TokenBreak:
+		return true
+	default:
+		return false
+	}
+}
+
+func lineStartProhibited(text string) bool {
+	if text == "" {
+		return false
+	}
+	for _, r := range text {
+		if !isLineStartProhibitedRune(r) {
+			return false
+		}
+	}
+	return true
+}
+
+func isLineStartProhibitedRune(r rune) bool {
+	switch r {
+	case '.', ',', '!', '?', ':', ';', ')', ']', '}', '%', '"', '”', '’', '»', '›', '…',
+		'、', '。', '，', '．', '！', '？', '：', '；',
+		'）', '】', '」', '』', '》', '〉', '〕', '〗', '〙', '〛',
+		'ー', '々', 'ゝ', 'ゞ', 'ヽ', 'ヾ':
+		return true
+	default:
+		return false
+	}
+}
+
+func normalizeWrappedLineStart(tokens []MeasuredToken, start int, ws WhiteSpace) int {
+	for start < len(tokens) {
+		switch tokens[start].Kind {
+		case TokenBreak, TokenSoftHyphen:
+			start++
+		case TokenSpace:
+			if ws == WhiteSpaceNormal {
+				start++
+				continue
+			}
+			return start
+		default:
+			return start
+		}
+	}
+	return start
+}
+
+func normalizeWrappedLineNext(tokens []MeasuredToken, start int, ws WhiteSpace) int {
+	for start < len(tokens) {
+		switch tokens[start].Kind {
+		case TokenBreak, TokenSoftHyphen:
+			start++
+		case TokenSpace:
+			if ws == WhiteSpaceNormal {
+				start++
+				continue
+			}
+			return start
+		default:
+			return start
+		}
+	}
+	return start
+}
+
+func mathMod(value, divisor float64) float64 {
+	if divisor == 0 {
+		return 0
+	}
+	remainder := value - float64(int(value/divisor))*divisor
+	if remainder < 0 {
+		remainder += divisor
+	}
+	if remainder < 1e-9 || divisor-remainder < 1e-9 {
+		return 0
+	}
+	return remainder
 }
 
 func normalizeWhiteSpace(ws WhiteSpace) WhiteSpace {

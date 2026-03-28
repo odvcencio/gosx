@@ -1021,7 +1021,7 @@ test("bootstrap exposes a browser text layout helper without wasm runtime", () =
   assert.equal(layout.byteLen, 21);
   assert.equal(layout.runeCount, 21);
   assert.equal(layout.lines[0].byteStart, 0);
-  assert.equal(layout.lines[0].byteEnd, 11);
+  assert.equal(layout.lines[0].byteEnd, 12);
 });
 
 test("bootstrap browser text layout helper preserves pre-wrap hard breaks", () => {
@@ -1038,6 +1038,16 @@ test("bootstrap browser text layout helper preserves pre-wrap hard breaks", () =
   assert.equal(layout.lines[1].byteEnd, 3);
 });
 
+test("bootstrap browser text layout keeps normal trailing spaces out of max width", () => {
+  const env = createContext({});
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+
+  const layout = env.context.__gosx_text_layout("hello ", "600 16px serif", 200, "normal", 18);
+  assert.equal(layout.maxLineWidth, 40);
+  assert.equal(layout.lines[0].text, "hello");
+});
+
 test("bootstrap browser text layout breaks long tokens at grapheme boundaries", () => {
   const env = createContext({
     measureText(text) {
@@ -1050,6 +1060,62 @@ test("bootstrap browser text layout breaks long tokens at grapheme boundaries", 
   const layout = env.context.__gosx_text_layout("abcdef", "600 16px serif", 4, "normal", 12);
   assert.deepEqual(Array.from(layout.lines, (line) => line.text), ["abcd", "ef"]);
   assert.equal(layout.maxLineWidth, 4);
+});
+
+test("bootstrap browser text layout uses browser-style tab stops", () => {
+  const env = createContext({
+    measureText(text) {
+      return Array.from(String(text)).length;
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+
+  const layout = env.context.__gosx_text_layout("a\tb", "600 16px serif", 99, "pre-wrap", 12);
+  assert.equal(layout.lineCount, 1);
+  assert.equal(layout.maxLineWidth, 9);
+  assert.equal(layout.lines[0].text, "a\tb");
+});
+
+test("bootstrap browser text layout breaks at soft hyphens", () => {
+  const env = createContext({
+    measureText(text) {
+      return Array.from(String(text)).length;
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+
+  const layout = env.context.__gosx_text_layout("ab\u00adcd", "600 16px serif", 3, "normal", 12);
+  assert.deepEqual(Array.from(layout.lines, (line) => line.text), ["ab-", "cd"]);
+  assert.equal(layout.lines[0].width, 3);
+});
+
+test("bootstrap browser text layout breaks at zero-width spaces", () => {
+  const env = createContext({
+    measureText(text) {
+      return Array.from(String(text)).length;
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+
+  const layout = env.context.__gosx_text_layout("foo\u200bbar", "600 16px serif", 3, "normal", 12);
+  assert.deepEqual(Array.from(layout.lines, (line) => line.text), ["foo", "bar"]);
+});
+
+test("bootstrap browser text layout keeps CJK closing punctuation off line starts", () => {
+  const env = createContext({
+    measureText(text) {
+      return Array.from(String(text)).length;
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+
+  const layout = env.context.__gosx_text_layout("あ。い", "600 16px serif", 1, "normal", 12);
+  assert.deepEqual(Array.from(layout.lines, (line) => line.text), ["あ。", "い"]);
+  assert.equal(layout.lines[0].width, 2);
 });
 
 test("bootstrap browser text layout keeps emoji grapheme clusters intact", () => {
