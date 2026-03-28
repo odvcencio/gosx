@@ -25,6 +25,9 @@ func RunExport(dir string) error {
 	if err := syncModulesPackage(absDir); err != nil {
 		return err
 	}
+	if err := ensureModuleDependencies(absDir); err != nil {
+		return err
+	}
 
 	if err := env.LoadDir(absDir, ""); err != nil {
 		return fmt.Errorf("load env: %w", err)

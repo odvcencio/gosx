@@ -78,6 +78,9 @@ func RunBuild(dir string, dev bool) error {
 	if err := syncModulesPackage(dir); err != nil {
 		return err
 	}
+	if err := ensureModuleDependencies(dir); err != nil {
+		return err
+	}
 	cfg, err := loadProjectConfig(dir)
 	if err != nil {
 		return err
@@ -224,6 +227,9 @@ func RunBuild(dir string, dev bool) error {
 	wasmTmp := filepath.Join(distDir, "gosx-runtime.wasm.tmp")
 	gosxRoot, err := resolveGoSXModuleRoot(dir)
 	if err != nil {
+		return err
+	}
+	if err := ensureWASMRuntimeDependencies(dir); err != nil {
 		return err
 	}
 	usedTinyGo := false

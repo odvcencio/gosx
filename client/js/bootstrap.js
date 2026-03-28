@@ -195,6 +195,62 @@
     );
   }
 
+  let textLayoutGraphemeSegmenter = null;
+
+  function gosxTextLayoutGraphemeSegmenter() {
+    if (textLayoutGraphemeSegmenter !== null) {
+      return textLayoutGraphemeSegmenter;
+    }
+    if (typeof Intl === "object" && Intl && typeof Intl.Segmenter === "function") {
+      textLayoutGraphemeSegmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+      return textLayoutGraphemeSegmenter;
+    }
+    textLayoutGraphemeSegmenter = false;
+    return null;
+  }
+
+  function splitPreparedTextLayoutToken(token) {
+    if (!token || token.kind === "newline" || !token.text) {
+      return [token];
+    }
+
+    const graphemes = [];
+    const segmenter = gosxTextLayoutGraphemeSegmenter();
+    if (segmenter) {
+      for (const entry of segmenter.segment(token.text)) {
+        graphemes.push(entry.segment);
+      }
+    } else {
+      graphemes.push(...Array.from(token.text));
+    }
+
+    if (graphemes.length <= 1) {
+      return [token];
+    }
+
+    const expanded = [];
+    let byteOffset = token.byteStart;
+    let runeOffset = token.runeStart;
+    for (const grapheme of graphemes) {
+      const runeLen = Array.from(grapheme).length;
+      let byteLen = 0;
+      for (const char of Array.from(grapheme)) {
+        byteLen += textLayoutCodePointByteLength(char.codePointAt(0));
+      }
+      expanded.push({
+        kind: token.kind,
+        text: grapheme,
+        byteStart: byteOffset,
+        byteEnd: byteOffset + byteLen,
+        runeStart: runeOffset,
+        runeEnd: runeOffset + runeLen,
+      });
+      byteOffset += byteLen;
+      runeOffset += runeLen;
+    }
+    return expanded;
+  }
+
   function prepareBrowserTextLayout(text, whiteSpace, tabSize) {
     const source = normalizeTextLayoutNewlines(text);
     const ws = normalizeTextLayoutWhiteSpace(whiteSpace);
@@ -361,13 +417,17 @@
   }
 
   function measurePreparedBrowserTextLayout(prepared, font) {
+    const expandedTokens = [];
+    for (const token of prepared.tokens) {
+      expandedTokens.push(...splitPreparedTextLayoutToken(token));
+    }
     const measured = {
       source: prepared.source,
       byteLen: prepared.byteLen,
       runeCount: prepared.runeCount,
       whiteSpace: prepared.whiteSpace,
       font: typeof font === "string" ? font : "",
-      tokens: prepared.tokens.map(function(token) {
+      tokens: expandedTokens.map(function(token) {
         return Object.assign({ width: 0 }, token);
       }),
     };

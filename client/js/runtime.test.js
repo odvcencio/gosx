@@ -688,6 +688,7 @@ function createContext(options) {
   const context = {
     Array,
     ArrayBuffer,
+    Intl,
     JSON,
     Map,
     Promise,
@@ -1035,6 +1036,39 @@ test("bootstrap browser text layout helper preserves pre-wrap hard breaks", () =
   assert.equal(layout.lines[0].hardBreak, true);
   assert.equal(layout.lines[1].byteStart, 3);
   assert.equal(layout.lines[1].byteEnd, 3);
+});
+
+test("bootstrap browser text layout breaks long tokens at grapheme boundaries", () => {
+  const env = createContext({
+    measureText(text) {
+      return Array.from(String(text)).length;
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+
+  const layout = env.context.__gosx_text_layout("abcdef", "600 16px serif", 4, "normal", 12);
+  assert.deepEqual(Array.from(layout.lines, (line) => line.text), ["abcd", "ef"]);
+  assert.equal(layout.maxLineWidth, 4);
+});
+
+test("bootstrap browser text layout keeps emoji grapheme clusters intact", () => {
+  const graphemeSegmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+  const env = createContext({
+    measureText(text) {
+      let count = 0;
+      for (const _entry of graphemeSegmenter.segment(String(text))) {
+        count += 1;
+      }
+      return count;
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+
+  const layout = env.context.__gosx_text_layout("👨‍👩‍👧‍👦a", "600 16px serif", 1, "normal", 12);
+  assert.deepEqual(Array.from(layout.lines, (line) => line.text), ["👨‍👩‍👧‍👦", "a"]);
+  assert.equal(layout.lineCount, 2);
 });
 
 test("bootstrap browser text layout invalidates cached widths after font loading events", () => {

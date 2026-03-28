@@ -6,6 +6,8 @@ import (
 	"sync"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/rivo/uniseg"
 )
 
 // WhiteSpace controls how Prepare normalizes input before measurement/layout.
@@ -355,18 +357,19 @@ func Measure(prepared Prepared, measurer BatchMeasurer, font string) (Measured, 
 		return Measured{}, fmt.Errorf("textlayout: nil measurer")
 	}
 
-	texts := make([]string, 0, len(prepared.Tokens))
-	indexes := make([]int, 0, len(prepared.Tokens))
+	expanded := expandPreparedTokens(prepared.Tokens)
+	texts := make([]string, 0, len(expanded))
+	indexes := make([]int, 0, len(expanded))
 	measured := Measured{
 		Source:     prepared.Source,
 		ByteLen:    prepared.ByteLen,
 		RuneCount:  prepared.RuneCount,
 		WhiteSpace: normalizeWhiteSpace(prepared.WhiteSpace),
 		Font:       font,
-		Tokens:     make([]MeasuredToken, len(prepared.Tokens)),
+		Tokens:     make([]MeasuredToken, len(expanded)),
 	}
 
-	for i, token := range prepared.Tokens {
+	for i, token := range expanded {
 		measured.Tokens[i].Token = token
 		if token.Kind == TokenNewline {
 			continue
@@ -388,6 +391,50 @@ func Measure(prepared Prepared, measurer BatchMeasurer, font string) (Measured, 
 	}
 
 	return measured, nil
+}
+
+func expandPreparedTokens(tokens []Token) []Token {
+	if len(tokens) == 0 {
+		return nil
+	}
+	expanded := make([]Token, 0, len(tokens))
+	for _, token := range tokens {
+		expanded = append(expanded, expandPreparedToken(token)...)
+	}
+	return expanded
+}
+
+func expandPreparedToken(token Token) []Token {
+	if token.Kind == TokenNewline || token.Text == "" {
+		return []Token{token}
+	}
+	if utf8.RuneCountInString(token.Text) <= 1 {
+		return []Token{token}
+	}
+
+	graphemes := uniseg.NewGraphemes(token.Text)
+	expanded := make([]Token, 0, utf8.RuneCountInString(token.Text))
+	byteOffset := token.ByteStart
+	runeOffset := token.RuneStart
+	for graphemes.Next() {
+		text := graphemes.Str()
+		byteLen := len(text)
+		runeLen := utf8.RuneCountInString(text)
+		expanded = append(expanded, Token{
+			Kind:      token.Kind,
+			Text:      text,
+			ByteStart: byteOffset,
+			ByteEnd:   byteOffset + byteLen,
+			RuneStart: runeOffset,
+			RuneEnd:   runeOffset + runeLen,
+		})
+		byteOffset += byteLen
+		runeOffset += runeLen
+	}
+	if len(expanded) == 0 {
+		return []Token{token}
+	}
+	return expanded
 }
 
 // LayoutText is a convenience wrapper for Prepare + Measure + Layout.

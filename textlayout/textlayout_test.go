@@ -3,6 +3,8 @@ package textlayout
 import (
 	"slices"
 	"testing"
+
+	"github.com/rivo/uniseg"
 )
 
 func TestPrepareNormalCollapsesWhitespace(t *testing.T) {
@@ -229,6 +231,47 @@ func TestLayoutCollapsedWhitespaceRetainsTerminalPosition(t *testing.T) {
 	}
 }
 
+func TestLayoutBreaksLongWordsAtGraphemeBoundaries(t *testing.T) {
+	result, err := LayoutText(
+		"abcdef",
+		MonospaceMeasurer{Advance: 1},
+		"mono",
+		PrepareOptions{WhiteSpace: WhiteSpaceNormal},
+		LayoutOptions{MaxWidth: 4, LineHeight: 1},
+	)
+	if err != nil {
+		t.Fatalf("layout text: %v", err)
+	}
+
+	lines := lineTexts(result.Lines)
+	want := []string{"abcd", "ef"}
+	if !slices.Equal(lines, want) {
+		t.Fatalf("line texts: expected %v, got %v", want, lines)
+	}
+	if result.MaxLineWidth != 4 {
+		t.Fatalf("maxLineWidth: expected 4, got %v", result.MaxLineWidth)
+	}
+}
+
+func TestLayoutKeepsEmojiGraphemeClustersIntact(t *testing.T) {
+	result, err := LayoutText(
+		"👨‍👩‍👧‍👦a",
+		graphemeMeasurer{},
+		"mono",
+		PrepareOptions{WhiteSpace: WhiteSpaceNormal},
+		LayoutOptions{MaxWidth: 1, LineHeight: 1},
+	)
+	if err != nil {
+		t.Fatalf("layout text: %v", err)
+	}
+
+	lines := lineTexts(result.Lines)
+	want := []string{"👨‍👩‍👧‍👦", "a"}
+	if !slices.Equal(lines, want) {
+		t.Fatalf("line texts: expected %v, got %v", want, lines)
+	}
+}
+
 func TestCachingMeasurerReusesWidths(t *testing.T) {
 	spy := &spyMeasurer{}
 	cached := NewCachingMeasurer(spy)
@@ -261,6 +304,19 @@ func (m *spyMeasurer) MeasureBatch(_ string, texts []string) ([]float64, error) 
 	widths := make([]float64, len(texts))
 	for i, text := range texts {
 		widths[i] = float64(len(text))
+	}
+	return widths, nil
+}
+
+type graphemeMeasurer struct{}
+
+func (graphemeMeasurer) MeasureBatch(_ string, texts []string) ([]float64, error) {
+	widths := make([]float64, len(texts))
+	for i, text := range texts {
+		graphemes := uniseg.NewGraphemes(text)
+		for graphemes.Next() {
+			widths[i]++
+		}
 	}
 	return widths, nil
 }

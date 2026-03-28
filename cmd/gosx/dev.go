@@ -43,6 +43,9 @@ func RunDev(dir string) error {
 	if err := syncModulesPackage(absDir); err != nil {
 		return err
 	}
+	if err := ensureModuleDependencies(absDir); err != nil {
+		return err
+	}
 
 	if err := env.LoadDir(absDir, ""); err != nil {
 		return fmt.Errorf("load env: %w", err)
@@ -135,6 +138,9 @@ func prepareDevAssets(dir string) error {
 
 	gosxRoot, err := resolveGoSXModuleRoot(dir)
 	if err != nil {
+		return err
+	}
+	if err := ensureWASMRuntimeDependencies(dir); err != nil {
 		return err
 	}
 	wasmPath := filepath.Join(buildDir, "gosx-runtime.wasm")
