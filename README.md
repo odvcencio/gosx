@@ -244,7 +244,7 @@ GoSX supports a three-tier deploy strategy:
 | `hub` | WebSocket presence, fanout, shared realtime state |
 | `engine` | Worker/surface model with capability declarations |
 | `hydrate` | Hydration manifest types |
-| `highlight` | Syntax highlighting for Go source code |
+| `highlight` | Syntax highlighting for GoSX, Go, JavaScript, JSON, and Bash snippets |
 | `format` | Source code formatter for .gsx files |
 | `dev` | Development server with file watching |
 | `cmd/gosx` | CLI tool (compile, check, render, fmt, build, dev, export) |

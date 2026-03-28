@@ -11,6 +11,7 @@ var docsMagicLinks *auth.MagicLinks
 var docsWebAuthn *auth.WebAuthn
 var docsOAuth *auth.OAuth
 var docsOAuthProviders []map[string]string
+var docsPublicAssetURL func(string) string
 
 func BindAuth(manager *auth.Manager) {
 	docsAuth = manager
@@ -49,11 +50,23 @@ func OAuthProviders() []map[string]string {
 	return append([]map[string]string(nil), docsOAuthProviders...)
 }
 
+func BindPublicAssetURL(fn func(string) string) {
+	docsPublicAssetURL = fn
+}
+
+func PublicAssetURL(path string) string {
+	if docsPublicAssetURL != nil {
+		return docsPublicAssetURL(path)
+	}
+	return server.AssetURL(path)
+}
+
 func RegisterDocsPage(title, description string, opts route.FileModuleOptions) {
 	metadata := opts.Metadata
+	bindings := opts.Bindings
 	opts.Metadata = func(ctx *route.RouteContext, page route.FilePage, data any) (server.Metadata, error) {
 		meta := server.Metadata{
-			Title:       title + " | GoSX Docs",
+			Title:       title + " | GoSX",
 			Description: description,
 		}
 		if metadata == nil {
@@ -65,14 +78,22 @@ func RegisterDocsPage(title, description string, opts route.FileModuleOptions) {
 		}
 		return mergeDocsMetadata(meta, extra), nil
 	}
+	opts.Bindings = func(ctx *route.RouteContext, page route.FilePage, data any) route.FileTemplateBindings {
+		bound := defaultDocsBindings()
+		if bindings == nil {
+			return bound
+		}
+		return mergeDocsBindings(bound, bindings(ctx, page, data))
+	}
 	route.MustRegisterFileModuleCaller(1, opts)
 }
 
 func RegisterStaticDocsPage(title, description string, opts route.FileModuleOptions) {
 	metaMetadata := opts.Metadata
+	bindings := opts.Bindings
 	opts.Metadata = func(ctx *route.RouteContext, page route.FilePage, data any) (server.Metadata, error) {
 		meta := server.Metadata{
-			Title:       title + " | GoSX Docs",
+			Title:       title + " | GoSX",
 			Description: description,
 		}
 		if metaMetadata == nil {
@@ -83,6 +104,13 @@ func RegisterStaticDocsPage(title, description string, opts route.FileModuleOpti
 			return server.Metadata{}, err
 		}
 		return mergeDocsMetadata(meta, extra), nil
+	}
+	opts.Bindings = func(ctx *route.RouteContext, page route.FilePage, data any) route.FileTemplateBindings {
+		bound := defaultDocsBindings()
+		if bindings == nil {
+			return bound
+		}
+		return mergeDocsBindings(bound, bindings(ctx, page, data))
 	}
 	route.MustRegisterFileModuleCaller(1, opts)
 }
@@ -104,4 +132,42 @@ func mergeDocsMetadata(base, extra server.Metadata) server.Metadata {
 		base.Links = append(base.Links, extra.Links...)
 	}
 	return base
+}
+
+func defaultDocsBindings() route.FileTemplateBindings {
+	return route.FileTemplateBindings{
+		Funcs: map[string]any{
+			"DocsCodeBlock": DocsCodeBlock,
+		},
+		Components: map[string]any{
+			"DocsCodeBlock": DocsCodeBlock,
+		},
+	}
+}
+
+func mergeDocsBindings(base, extra route.FileTemplateBindings) route.FileTemplateBindings {
+	out := route.FileTemplateBindings{
+		Values:     make(map[string]any, len(base.Values)+len(extra.Values)),
+		Funcs:      make(map[string]any, len(base.Funcs)+len(extra.Funcs)),
+		Components: make(map[string]any, len(base.Components)+len(extra.Components)),
+	}
+	for key, value := range base.Values {
+		out.Values[key] = value
+	}
+	for key, value := range base.Funcs {
+		out.Funcs[key] = value
+	}
+	for key, value := range base.Components {
+		out.Components[key] = value
+	}
+	for key, value := range extra.Values {
+		out.Values[key] = value
+	}
+	for key, value := range extra.Funcs {
+		out.Funcs[key] = value
+	}
+	for key, value := range extra.Components {
+		out.Components[key] = value
+	}
+	return out
 }

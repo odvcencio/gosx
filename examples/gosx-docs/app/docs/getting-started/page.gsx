@@ -14,9 +14,9 @@ func Page() Node {
 			<span class="inline-code">gosx init my-app</span>.
 			That scaffold gives you a runnable app with metadata, APIs, 404 and 500 pages, root-level public assets, and the navigation runtime already wired in.
 		</p>
-		<pre class="code-block">{`gosx init my-app
+		{DocsCodeBlock("bash", `gosx init my-app
 cd my-app
-go run .`}</pre>
+go run .`)}
 		<section class="callout">
 			<strong>Server modules</strong>
 			<p>
@@ -28,11 +28,11 @@ go run .`}</pre>
 				<span class="inline-code">main.go</span>
 				once so those init-time registrations execute.
 			</p>
-			<pre class="code-block">{`import (
+			{DocsCodeBlock("go", `import (
   _ "your/module/app"
 )
 
-route.MustRegisterFileModuleHere(route.FileModuleOptions{ ... })`}</pre>
+route.MustRegisterFileModuleHere(route.FileModuleOptions{ ... })`)}
 		</section>
 		<div class="feature-grid">
 			<section class="card">

@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"image"
 	"image/color"
 	"image/png"
@@ -17,6 +19,7 @@ import (
 	"github.com/odvcencio/gosx/auth"
 	"github.com/odvcencio/gosx/env"
 	docsapp "github.com/odvcencio/gosx/examples/gosx-docs/app"
+	scene3ddemo "github.com/odvcencio/gosx/examples/gosx-docs/app/demos/scene3d"
 	runtimedocs "github.com/odvcencio/gosx/examples/gosx-docs/app/docs/runtime"
 	_ "github.com/odvcencio/gosx/examples/gosx-docs/modules"
 	"github.com/odvcencio/gosx/route"
@@ -32,6 +35,8 @@ type navItem struct {
 var navItems = []navItem{
 	{href: "/", label: "Overview"},
 	{href: "/docs/getting-started", label: "Getting Started"},
+	{href: "/demos/cms", label: "CMS Demo"},
+	{href: "/demos/scene3d", label: "Geometry Zoo"},
 	{href: "/docs/routing", label: "Routing"},
 	{href: "/docs/forms", label: "Forms"},
 	{href: "/docs/auth", label: "Auth"},
@@ -50,6 +55,9 @@ func main() {
 	if err := env.LoadDir(root, ""); err != nil {
 		log.Fatal(err)
 	}
+	docsapp.BindPublicAssetURL(func(path string) string {
+		return versionedPublicAssetURL(root, path)
+	})
 	port := getenv("PORT", "8080")
 	publicBase := strings.TrimRight(getenv("PUBLIC_URL", "http://localhost:"+port), "/")
 	sessions := session.MustNew(getenv("SESSION_SECRET", "gosx-docs-session-secret"), session.Options{})
@@ -66,7 +74,7 @@ func main() {
 	})
 	docsapp.BindMagicLinks(magicLinks)
 	webauthn := authn.WebAuthn(auth.WebAuthnOptions{
-		RPName:      "GoSX Docs",
+		RPName:      "GoSX",
 		Origin:      publicBase,
 		SuccessPath: "/docs/auth",
 		FailurePath: "/docs/auth",
@@ -119,12 +127,12 @@ func main() {
 
 	router := route.NewRouter()
 	router.SetLayout(func(ctx *route.RouteContext, body gosx.Node) gosx.Node {
-		ctx.AddHead(server.Stylesheet("docs.css"))
+		ctx.AddHead(server.Stylesheet(docsapp.PublicAssetURL("docs.css")))
 		ctx.AddHead(server.NavigationScript())
 		if ctx != nil && ctx.Request != nil && ctx.Request.URL != nil && ctx.Request.URL.Path == "/docs/auth" {
 			ctx.AddHead(auth.WebAuthnScript())
 		}
-		return server.HTMLDocument(ctx.Title("GoSX Docs"), ctx.Head(), body)
+		return server.HTMLDocument(ctx.Title("GoSX"), ctx.Head(), body)
 	})
 	router.Add(route.Route{
 		Pattern: "/labs/stream",
@@ -160,12 +168,12 @@ func main() {
 						gosx.El("p", gosx.Text("Use ctx.Defer(...) or ctx.DeferWithOptions(...) inside server or route handlers.")),
 					),
 				),
-				gosx.El("pre", gosx.Attrs(gosx.Attr("class", "code-block")), gosx.Text(`ctx.Defer(
+				docsapp.DocsCodeBlock("gosx", `ctx.Defer(
     <p>Loading...</p>,
     func() (gosx.Node, error) {
         return <section>Resolved</section>, nil
     },
-)`)),
+)`),
 				gosx.El("div", gosx.Attrs(gosx.Attr("class", "hero-actions")),
 					gosx.El("a", gosx.Attrs(gosx.Attr("href", "/docs/runtime"), gosx.Attr("data-gosx-link", true), gosx.Attr("class", "cta-link")), gosx.Text("Back to runtime")),
 					gosx.El("a", gosx.Attrs(gosx.Attr("href", "/"), gosx.Attr("data-gosx-link", true), gosx.Attr("class", "cta-link primary")), gosx.Text("Back to overview")),
@@ -245,7 +253,7 @@ func main() {
 		}
 		return map[string]any{
 			"ok":      true,
-			"product": "gosx-docs",
+			"product": "gosx",
 			"version": gosx.Version,
 			"pages":   pages,
 		}, nil
@@ -256,6 +264,13 @@ func main() {
 			MaxAge: 5 * time.Minute,
 		})
 		return runtimedocs.SceneDemoProgram(), nil
+	})
+	app.API("GET /api/demos/scene-program", func(ctx *server.Context) (any, error) {
+		ctx.Cache(server.CachePolicy{
+			Public: true,
+			MaxAge: 5 * time.Minute,
+		})
+		return scene3ddemo.GeometryZooProgram(), nil
 	})
 	app.HandleAPI(server.APIRoute{
 		Pattern:    "GET /api/me",
@@ -279,6 +294,16 @@ func getenv(key, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+func versionedPublicAssetURL(root, name string) string {
+	base := server.AssetURL(name)
+	payload, err := os.ReadFile(filepath.Join(root, "public", filepath.FromSlash(name)))
+	if err != nil {
+		return base
+	}
+	sum := sha256.Sum256(payload)
+	return base + "?v=" + hex.EncodeToString(sum[:6])
 }
 
 func docsDemoUser(value string) auth.User {

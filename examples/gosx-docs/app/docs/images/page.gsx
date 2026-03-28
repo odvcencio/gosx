@@ -48,13 +48,13 @@ func Page() Node {
 				<p>The optimizer is still just an HTTP endpoint. No client framework magic is required.</p>
 			</div>
 		</section>
-		<pre class="code-block">{`server.Image(server.ImageProps{
+		{DocsCodeBlock("go", `server.Image(server.ImageProps{
     Src:    "/paper-card.png",
     Alt:    "Generated sample artwork",
     Width:  960,
     Height: 624,
     Widths: []int{320, 640, 960},
-})`}</pre>
+})`)}
 		<div class="hero-actions">
 			<Link class="cta-link" href="/docs/runtime">Back to runtime</Link>
 			<Link class="cta-link primary" href="/">Back to overview</Link>

@@ -2,31 +2,45 @@ package docs
 
 func Layout() Node {
 	return <div class="docs-shell">
+		<a href="#docs-main" class="skip-link">Skip to content</a>
 		<header class="mobile-bar">
-			<div>
-				<span class="mobile-kicker">GoSX Docs</span>
-				<a href="/" data-gosx-link class="brand">GoSX</a>
-			</div>
-			<details class="mobile-nav">
-				<summary class="mobile-nav-toggle">Browse sections</summary>
-				<div class="mobile-nav-frame">
-					<p class="brand-copy">
-						Go-native web framework docs for routing, forms, auth, runtime, and the path from local app to production.
-					</p>
-					<nav class="doc-nav">
-						<DocsNavigation></DocsNavigation>
-					</nav>
-					<DocsShortcuts></DocsShortcuts>
+			<div class="mobile-bar-head">
+				<div class="mobile-branding">
+					<span class="mobile-kicker">GoSX Application</span>
+					<a href="/" data-gosx-link class="brand">GoSX</a>
 				</div>
-			</details>
+				<details class="route-drawer">
+					<summary class="route-drawer-summary">
+						<span class="route-drawer-backdrop" aria-hidden="true"></span>
+						<span class="route-drawer-toggle">
+							<span class="route-drawer-toggle-kicker">Routes</span>
+							<span class="route-drawer-toggle-copy route-drawer-toggle-copy-open">Browse sections</span>
+							<span class="route-drawer-toggle-copy route-drawer-toggle-copy-close">Close</span>
+						</span>
+					</summary>
+					<div class="route-drawer-panel">
+						<div class="brand-lockup route-drawer-lockup">
+							<span class="eyebrow">GoSX Application</span>
+							<a href="/" data-gosx-link class="brand">GoSX</a>
+							<p class="brand-copy">
+								Docs, demos, and production-ready flows in one GoSX app.
+							</p>
+						</div>
+						<nav class="doc-nav">
+							<DocsNavigation></DocsNavigation>
+						</nav>
+						<DocsShortcuts></DocsShortcuts>
+					</div>
+				</details>
+			</div>
 		</header>
 		<aside class="sidebar">
 			<div class="sidebar-frame">
 				<div class="brand-lockup">
-					<span class="eyebrow">GoSX Docs</span>
+					<span class="eyebrow">GoSX Application</span>
 					<a href="/" data-gosx-link class="brand">GoSX</a>
 					<p class="brand-copy">
-						Go-native web framework docs for routing, forms, auth, runtime, and the path from local app to production.
+						Docs, demos, and production-ready flows in one GoSX app.
 					</p>
 				</div>
 				<nav class="doc-nav">
@@ -35,10 +49,10 @@ func Layout() Node {
 				<DocsShortcuts></DocsShortcuts>
 			</div>
 		</aside>
-		<main class="main">
+		<main class="main" id="docs-main">
 			<Slot />
 			<footer class="page-footer">
-				GoSX docs focus on the product: routing, server workflows, runtime behavior, and how to ship the framework in real apps.
+				GoSX lets the site, the docs, the editor, and the runtime route ship from one Go app.
 			</footer>
 		</main>
 	</div>
@@ -58,18 +72,25 @@ func DocsNavLink(props any) Node {
 func DocsNavigation() Node {
 	return <>
 		<div class="nav-group">
-			<span class="nav-group-title">Guide</span>
+			<span class="nav-group-title">Start</span>
 			<div class="nav-group-links">
 				<DocsNavLink href="/" label="Overview" active={request.path == "/"}></DocsNavLink>
 				<DocsNavLink href="/docs/getting-started" label="Getting Started" active={request.path == "/docs/getting-started"}></DocsNavLink>
-				<DocsNavLink href="/docs/routing" label="Routing" active={request.path == "/docs/routing"}></DocsNavLink>
-				<DocsNavLink href="/docs/forms" label="Forms" active={request.path == "/docs/forms"}></DocsNavLink>
-				<DocsNavLink href="/docs/auth" label="Auth" active={request.path == "/docs/auth"}></DocsNavLink>
 			</div>
 		</div>
 		<div class="nav-group">
-			<span class="nav-group-title">Runtime</span>
+			<span class="nav-group-title">Demos</span>
 			<div class="nav-group-links">
+				<DocsNavLink href="/demos/cms" label="CMS Demo" active={request.path == "/demos/cms"}></DocsNavLink>
+				<DocsNavLink href="/demos/scene3d" label="Geometry Zoo" active={request.path == "/demos/scene3d"}></DocsNavLink>
+			</div>
+		</div>
+		<div class="nav-group">
+			<span class="nav-group-title">Docs</span>
+			<div class="nav-group-links">
+				<DocsNavLink href="/docs/routing" label="Routing" active={request.path == "/docs/routing"}></DocsNavLink>
+				<DocsNavLink href="/docs/forms" label="Forms" active={request.path == "/docs/forms"}></DocsNavLink>
+				<DocsNavLink href="/docs/auth" label="Auth" active={request.path == "/docs/auth"}></DocsNavLink>
 				<DocsNavLink href="/docs/runtime" label="Runtime" active={request.path == "/docs/runtime"}></DocsNavLink>
 				<DocsNavLink href="/docs/images" label="Images" active={request.path == "/docs/images"}></DocsNavLink>
 			</div>
@@ -89,8 +110,8 @@ func DocsShortcuts() Node {
 		<span class="foot-label">Start here</span>
 		<div class="shortcut-grid">
 			<a href="/docs/getting-started" data-gosx-link class="chip">Quickstart</a>
-			<a href="/docs/forms" data-gosx-link class="chip">Forms guide</a>
-			<a href="/docs/runtime" data-gosx-link class="chip">Runtime guide</a>
+			<a href="/demos/cms" data-gosx-link class="chip">CMS demo</a>
+			<a href="/demos/scene3d" data-gosx-link class="chip">Geometry zoo</a>
 		</div>
 	</div>
 }

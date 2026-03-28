@@ -64,14 +64,14 @@ func Page() Node {
 				<div class="scene-fallback">Preparing the scene runtime...</div>
 			</Scene3D>
 		</section>
-		<pre class="code-block">{`window.__gosx_dispose_page()
+		{DocsCodeBlock("javascript", `window.__gosx_dispose_page()
 window.__gosx_bootstrap_page()
-window.__gosx_page_nav.navigate("/docs/routing")`}</pre>
-		<pre class="code-block">{`func Page() Node {
+window.__gosx_page_nav.navigate("/docs/routing")`)}
+		{DocsCodeBlock("gosx", `func Page() Node {
     return <Scene3D class="scene-shell" programRef="/api/runtime/scene-program" {...data.sceneDemo}>
         <div class="scene-fallback">Preparing the scene runtime...</div>
     </Scene3D>
-}`}</pre>
+}`)}
 		<section class="callout">
 			<strong>Constraint</strong>
 			<p>This is still HTML-first. Engines extend the page with owned browser surfaces, but the server still shapes the route, data, and outer document.</p>
