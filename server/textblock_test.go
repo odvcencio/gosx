@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/odvcencio/gosx"
+	"github.com/odvcencio/gosx/textlayout"
 )
 
 func TestEstimateTextBlockMetricsUsesApproximateLayout(t *testing.T) {
@@ -68,5 +69,26 @@ func TestTextBlockRendersTextPropWhenNoChildrenProvided(t *testing.T) {
 	match := regexp.MustCompile(`data-gosx-text-layout-line-count-hint="([0-9]+)"`).FindStringSubmatch(html)
 	if len(match) != 2 || match[1] == "0" {
 		t.Fatalf("expected non-zero line count hint in %q", html)
+	}
+}
+
+func TestTextBlockRendersClampAttrs(t *testing.T) {
+	node := TextBlock(TextBlockProps{
+		Text:       "hello world from gosx",
+		Font:       "600 16px serif",
+		LineHeight: 20,
+		MaxWidth:   88,
+		MaxLines:   1,
+		Overflow:   textlayout.OverflowEllipsis,
+	})
+	html := gosx.RenderHTML(node)
+
+	for _, snippet := range []string{
+		`data-gosx-text-layout-max-lines="1"`,
+		`data-gosx-text-layout-overflow="ellipsis"`,
+	} {
+		if !strings.Contains(html, snippet) {
+			t.Fatalf("expected %q in text block html %q", snippet, html)
+		}
 	}
 }

@@ -244,6 +244,8 @@ type sceneLabel struct {
 	DriftSpeed  float64
 	DriftPhase  float64
 	MaxWidth    float64
+	MaxLines    int
+	Overflow    string
 	Font        string
 	LineHeight  float64
 	Color       string
@@ -450,6 +452,8 @@ func sceneLabelFromResolvedNode(index int, node resolvedNode) (sceneLabel, bool)
 		DriftSpeed:  numberFromAny(propValue(node.Props, "driftSpeed"), 0),
 		DriftPhase:  numberFromAny(propValue(node.Props, "driftPhase"), 0),
 		MaxWidth:    math.Max(48, numberFromAny(propValue(node.Props, "maxWidth"), 180)),
+		MaxLines:    int(math.Max(0, numberFromAny(propValue(node.Props, "maxLines"), 0))),
+		Overflow:    normalizeSceneLabelOverflow(stringFromAny(propValue(node.Props, "overflow"), "")),
 		Font:        stringFromAny(propValue(node.Props, "font"), `600 13px "IBM Plex Sans", "Segoe UI", sans-serif`),
 		LineHeight:  math.Max(12, numberFromAny(propValue(node.Props, "lineHeight"), 18)),
 		Color:       stringFromAny(propValue(node.Props, "color"), "#ecf7ff"),
@@ -521,6 +525,8 @@ func appendSceneLabel(bundle *rootengine.RenderBundle, camera sceneCamera, width
 		Depth:       world.Z + camera.Z,
 		Priority:    label.Priority,
 		MaxWidth:    label.MaxWidth,
+		MaxLines:    label.MaxLines,
+		Overflow:    label.Overflow,
 		Font:        label.Font,
 		LineHeight:  label.LineHeight,
 		Color:       label.Color,
@@ -543,6 +549,15 @@ func sceneLabelClassName(props map[string]any) string {
 		return className
 	}
 	return strings.TrimSpace(stringFromAny(propValue(props, "class"), ""))
+}
+
+func normalizeSceneLabelOverflow(value string) string {
+	switch strings.TrimSpace(strings.ToLower(value)) {
+	case "ellipsis":
+		return "ellipsis"
+	default:
+		return "clip"
+	}
 }
 
 func appendWorldSceneLine(bundle *rootengine.RenderBundle, from, to point3, rgba [4]float64) {

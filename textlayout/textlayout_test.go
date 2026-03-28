@@ -312,6 +312,61 @@ func TestLayoutNormalTrailingSpacesHangWithoutInflatingWidth(t *testing.T) {
 	}
 }
 
+func TestLayoutClampsToMaxLinesWithEllipsis(t *testing.T) {
+	result, err := LayoutText(
+		"hello world from gosx",
+		MonospaceMeasurer{Advance: 1},
+		"mono",
+		PrepareOptions{WhiteSpace: WhiteSpaceNormal},
+		LayoutOptions{MaxWidth: 11, LineHeight: 2, MaxLines: 1, Overflow: OverflowEllipsis},
+	)
+	if err != nil {
+		t.Fatalf("layout text: %v", err)
+	}
+
+	if result.LineCount != 1 {
+		t.Fatalf("lineCount: expected 1, got %d", result.LineCount)
+	}
+	if !result.Truncated {
+		t.Fatal("expected result to be truncated")
+	}
+	if !result.Lines[0].Truncated || !result.Lines[0].Ellipsis {
+		t.Fatalf("expected truncated ellipsis line, got %+v", result.Lines[0])
+	}
+	if got := result.Lines[0].Text; got != "hello worl…" {
+		t.Fatalf("expected ellipsis text, got %q", got)
+	}
+	if result.Lines[0].Width != 11 {
+		t.Fatalf("expected clamped width 11, got %v", result.Lines[0].Width)
+	}
+}
+
+func TestLayoutClampsToMaxLinesWithoutEllipsis(t *testing.T) {
+	result, err := LayoutText(
+		"hello world from gosx",
+		MonospaceMeasurer{Advance: 1},
+		"mono",
+		PrepareOptions{WhiteSpace: WhiteSpaceNormal},
+		LayoutOptions{MaxWidth: 11, LineHeight: 2, MaxLines: 1, Overflow: OverflowClip},
+	)
+	if err != nil {
+		t.Fatalf("layout text: %v", err)
+	}
+
+	if result.LineCount != 1 {
+		t.Fatalf("lineCount: expected 1, got %d", result.LineCount)
+	}
+	if !result.Truncated {
+		t.Fatal("expected result to be truncated")
+	}
+	if result.Lines[0].Ellipsis {
+		t.Fatalf("did not expect ellipsis line, got %+v", result.Lines[0])
+	}
+	if got := result.Lines[0].Text; got != "hello world" {
+		t.Fatalf("expected clipped text, got %q", got)
+	}
+}
+
 func TestLayoutPreWrapUsesTabStops(t *testing.T) {
 	result, err := LayoutText(
 		"a\tb",

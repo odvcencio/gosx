@@ -233,6 +233,8 @@ func (r *fileProgramRenderer) renderTextBlock(node *ir.Node, env fileRenderEnv) 
 		WhiteSpace:    textlayout.WhiteSpace(stringValue(attrValue(node.Attrs, env, "whiteSpace", "whitespace"))),
 		LineHeight:    numericValue(attrValue(node.Attrs, env, "lineHeight")),
 		MaxWidth:      numericValue(attrValue(node.Attrs, env, "maxWidth")),
+		MaxLines:      int(numericValue(attrValue(node.Attrs, env, "maxLines"))),
+		Overflow:      textlayout.OverflowMode(stringValue(attrValue(node.Attrs, env, "overflow"))),
 		HeightHint:    numericValue(attrValue(node.Attrs, env, "heightHint")),
 		LineCountHint: int(numericValue(attrValue(node.Attrs, env, "lineCountHint"))),
 		Static:        truthy(attrValue(node.Attrs, env, "static")),
@@ -912,7 +914,7 @@ func (r *fileProgramRenderer) renderTextBlockExtraAttrs(b *strings.Builder, attr
 
 func isTextBlockReservedAttr(name string) bool {
 	switch strings.TrimSpace(name) {
-	case "as", "tag", "text", "font", "whiteSpace", "whitespace", "lineHeight", "maxWidth", "heightHint", "lineCountHint", "source", "static":
+	case "as", "tag", "text", "font", "whiteSpace", "whitespace", "lineHeight", "maxWidth", "maxLines", "overflow", "heightHint", "lineCountHint", "source", "static":
 		return true
 	default:
 		return false
