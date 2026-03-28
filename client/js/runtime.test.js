@@ -609,6 +609,31 @@ class FakeFontSet {
   }
 }
 
+class FakeResizeObserver {
+  constructor(callback) {
+    this.callback = callback;
+    this.targets = new Set();
+  }
+
+  observe(target) {
+    this.targets.add(target);
+  }
+
+  disconnect() {
+    this.targets.clear();
+  }
+
+  trigger(targets) {
+    const list = Array.isArray(targets) && targets.length > 0 ? targets : Array.from(this.targets);
+    this.callback(list.map((target) => ({
+      target,
+      contentRect: target && typeof target.getBoundingClientRect === "function"
+        ? target.getBoundingClientRect()
+        : { width: 0, height: 0 },
+    })));
+  }
+}
+
 class FakeResponse {
   constructor(options) {
     this.ok = options.ok !== false;
@@ -683,6 +708,11 @@ function createConsoleSpy() {
   };
 }
 
+function numberOr(value, fallback) {
+  const num = Number(value);
+  return Number.isFinite(num) ? num : fallback;
+}
+
 function createContext(options) {
   const document = new FakeDocument();
   document.disableCanvas2D = Boolean(options.disableCanvas2D);
@@ -713,6 +743,7 @@ function createContext(options) {
   const fetchCalls = [];
   const scrollCalls = [];
   const windowListeners = new Map();
+  const resizeObservers = [];
 
   const routes = new Map();
   for (const [url, response] of Object.entries(options.fetchRoutes || {})) {
@@ -751,6 +782,7 @@ function createContext(options) {
       href: "http://localhost:3000/",
       origin: "http://localhost:3000",
     },
+    devicePixelRatio: numberOr(options.devicePixelRatio, 1),
     history: {
       pushState(_state, _title, url) {
         context.location.href = String(url);
@@ -764,6 +796,12 @@ function createContext(options) {
     },
     cancelAnimationFrame(handle) {
       clearTimeout(handle);
+    },
+    ResizeObserver: class ResizeObserver extends FakeResizeObserver {
+      constructor(callback) {
+        super(callback);
+        resizeObservers.push(this);
+      }
     },
     Go: function Go() {
       this.importObject = {};
@@ -919,6 +957,7 @@ function createContext(options) {
     fetchCalls,
     hydrateCalls,
     inputBatchCalls,
+    resizeObservers,
     sharedSignalCalls,
     scrollCalls,
     sockets,
@@ -2814,6 +2853,133 @@ test("bootstrap prefers WebGL Scene3D rendering when available", async () => {
   assert.ok(gl.ops.some((entry) => entry[0] === "drawArrays" && entry[3] > 0));
   assert.equal(env.consoleLogs.warn.length, 0);
   assert.equal(env.consoleLogs.error.length, 0);
+});
+
+test("bootstrap keeps Scene3D responsive across resize and DPR changes", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-responsive";
+  mount.width = 520;
+
+  const env = createContext({
+    elements: [mount],
+    devicePixelRatio: 1,
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-responsive",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-responsive",
+          jsExport: "GoSXScene3D",
+          props: {
+            width: 520,
+            height: 320,
+            autoRotate: false,
+            scene: {
+              labels: [
+                {
+                  id: "center-label",
+                  text: "Center label",
+                  x: 0,
+                  y: 0,
+                  z: 0.5,
+                  offsetY: 0,
+                  maxWidth: 140,
+                },
+              ],
+            },
+          },
+          capabilities: ["canvas", "animation"],
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const canvas = mount.firstElementChild;
+  const label = mount.children[1].children[0];
+  const initialLeft = label.style["--gosx-scene-label-left"];
+  assert.equal(canvas.getAttribute("width"), "520");
+  assert.equal(canvas.style.width, "100%");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-pixel-ratio"), "1");
+
+  mount.width = 260;
+  env.context.devicePixelRatio = 2;
+  env.resizeObservers[0].trigger([mount]);
+  await flushAsyncWork();
+
+  assert.equal(canvas.getAttribute("width"), "520");
+  assert.equal(canvas.getAttribute("height"), "320");
+  assert.equal(canvas.style.width, "100%");
+  assert.equal(canvas.style.height, "auto");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-css-width"), "260");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-css-height"), "160");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-pixel-ratio"), "2");
+  assert.notEqual(label.style["--gosx-scene-label-left"], initialLeft);
+});
+
+test("bootstrap rerenders shared-runtime Scene3D with responsive viewport dimensions", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-runtime-responsive";
+  mount.width = 640;
+  const renderArgs = [];
+
+  const env = createContext({
+    elements: [mount],
+    fetchRoutes: {
+      "/runtime.wasm": { bytes: [0, 97, 115, 109] },
+      "/scene-responsive-runtime.json": { text: '{"name":"ResponsiveScene"}' },
+    },
+    manifest: {
+      runtime: { path: "/runtime.wasm" },
+      engines: [
+        {
+          id: "gosx-engine-runtime-responsive",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-runtime-responsive",
+          runtime: "shared",
+          programRef: "/scene-responsive-runtime.json",
+          props: {
+            width: 640,
+            height: 360,
+            autoRotate: false,
+            background: "#08151f",
+          },
+        },
+      ],
+    },
+    onHydrateEngine: () => "[]",
+    onRenderEngine: (...args) => {
+      renderArgs.push(args);
+      return JSON.stringify({
+        background: "#08151f",
+        camera: { x: 0, y: 0, z: 6, fov: 72 },
+        positions: [],
+        colors: [],
+        vertexCount: 0,
+        worldPositions: [],
+        worldColors: [],
+        worldVertexCount: 0,
+        objects: [],
+        labels: [],
+      });
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  assert.deepEqual(renderArgs[0].slice(2, 4), [640, 360]);
+
+  mount.width = 320;
+  env.resizeObservers[0].trigger([mount]);
+  await flushAsyncWork();
+
+  const last = renderArgs[renderArgs.length - 1];
+  assert.deepEqual(last.slice(2, 4), [320, 180]);
 });
 
 test("bootstrap loads explicit JS escape-hatch engines only when configured", async () => {
