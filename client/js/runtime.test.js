@@ -669,6 +669,66 @@ class FakeIntersectionObserver {
   }
 }
 
+class FakeListenerTarget {
+  constructor() {
+    this.listeners = new Map();
+  }
+
+  addEventListener(type, listener) {
+    if (!this.listeners.has(type)) {
+      this.listeners.set(type, []);
+    }
+    this.listeners.get(type).push(listener);
+  }
+
+  removeEventListener(type, listener) {
+    const current = this.listeners.get(type) || [];
+    this.listeners.set(
+      type,
+      current.filter((entry) => entry !== listener),
+    );
+  }
+
+  dispatchEvent(event) {
+    const current = this.listeners.get(event.type) || [];
+    for (const listener of current) {
+      listener(event);
+    }
+    return true;
+  }
+
+  listenerCount(type) {
+    return (this.listeners.get(type) || []).length;
+  }
+}
+
+class FakeMediaQueryList extends FakeListenerTarget {
+  constructor(query, matches) {
+    super();
+    this.media = String(query);
+    this.matches = Boolean(matches);
+  }
+
+  addListener(listener) {
+    this.addEventListener("change", listener);
+  }
+
+  removeListener(listener) {
+    this.removeEventListener("change", listener);
+  }
+
+  dispatch(matches) {
+    if (typeof matches === "boolean") {
+      this.matches = matches;
+    }
+    this.dispatchEvent({
+      type: "change",
+      media: this.media,
+      matches: this.matches,
+    });
+  }
+}
+
 class FakeResponse {
   constructor(options) {
     this.ok = options.ok !== false;
@@ -783,6 +843,14 @@ function createContext(options) {
   const windowListeners = new Map();
   const resizeObservers = [];
   const intersectionObservers = [];
+  const mediaQueries = new Map();
+  const visualViewport = options.visualViewport === false ? null : new FakeListenerTarget();
+  if (visualViewport) {
+    visualViewport.offsetLeft = numberOr(options.visualViewportOffsetLeft, 0);
+    visualViewport.offsetTop = numberOr(options.visualViewportOffsetTop, 0);
+    visualViewport.width = numberOr(options.visualViewportWidth, 0);
+    visualViewport.height = numberOr(options.visualViewportHeight, 0);
+  }
 
   const routes = new Map();
   for (const [url, response] of Object.entries(options.fetchRoutes || {})) {
@@ -820,6 +888,16 @@ function createContext(options) {
       host: "localhost:3000",
       href: "http://localhost:3000/",
       origin: "http://localhost:3000",
+    },
+    matchMedia(query) {
+      const key = String(query);
+      if (!mediaQueries.has(key)) {
+        const matches = key === "(prefers-reduced-motion: reduce)"
+          ? Boolean(options.prefersReducedMotion)
+          : Boolean(options.matchMedia && options.matchMedia[key]);
+        mediaQueries.set(key, new FakeMediaQueryList(key, matches));
+      }
+      return mediaQueries.get(key);
     },
     devicePixelRatio: numberOr(options.devicePixelRatio, 1),
     history: {
@@ -953,6 +1031,9 @@ function createContext(options) {
       instantiateStreaming: async () => ({ instance: {} }),
     },
   };
+  if (visualViewport) {
+    context.visualViewport = visualViewport;
+  }
 
   if (typeof options.parseHTML === "function") {
     context.DOMParser = class DOMParser {
@@ -1003,10 +1084,15 @@ function createContext(options) {
     hydrateCalls,
     inputBatchCalls,
     intersectionObservers,
+    matchMedia(query) {
+      return context.matchMedia(query);
+    },
+    mediaQueries,
     resizeObservers,
     sharedSignalCalls,
     scrollCalls,
     sockets,
+    visualViewport,
     windowListeners,
   };
 }
@@ -3022,6 +3108,51 @@ test("bootstrap keeps Scene3D responsive across resize and DPR changes", async (
   assert.notEqual(label.style["--gosx-scene-label-left"], initialLeft);
 });
 
+test("bootstrap respects prefers-reduced-motion for Scene3D animation loops", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-reduced-motion";
+
+  const env = createContext({
+    elements: [mount],
+    prefersReducedMotion: true,
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-reduced-motion",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-reduced-motion",
+          jsExport: "GoSXScene3D",
+          props: {
+            width: 480,
+            height: 300,
+            autoRotate: true,
+            scene: {
+              objects: [
+                { kind: "box", width: 1.4, height: 1.1, depth: 1.2, x: 0, y: 0, z: 0, color: "#8de1ff" },
+              ],
+            },
+          },
+          capabilities: ["canvas", "animation"],
+        },
+      ],
+    },
+  });
+  const raf = installManualRAF(env.context);
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  assert.equal(mount.getAttribute("data-gosx-scene3d-reduced-motion"), "true");
+  assert.equal(raf.count(), 0);
+
+  env.matchMedia("(prefers-reduced-motion: reduce)").dispatch(false);
+  await flushAsyncWork();
+
+  assert.equal(mount.getAttribute("data-gosx-scene3d-reduced-motion"), "false");
+  assert.equal(raf.count(), 1);
+});
+
 test("bootstrap rerenders shared-runtime Scene3D with responsive viewport dimensions", async () => {
   const mount = new FakeElement("div", null);
   mount.id = "scene-runtime-responsive";
@@ -3082,6 +3213,68 @@ test("bootstrap rerenders shared-runtime Scene3D with responsive viewport dimens
 
   const last = renderArgs[renderArgs.length - 1];
   assert.deepEqual(last.slice(2, 4), [320, 180]);
+});
+
+test("bootstrap rerenders shared-runtime Scene3D on visual viewport scroll changes", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-runtime-viewport-scroll";
+  mount.width = 640;
+  const renderArgs = [];
+
+  const env = createContext({
+    elements: [mount],
+    fetchRoutes: {
+      "/runtime.wasm": { bytes: [0, 97, 115, 109] },
+      "/scene-viewport-scroll.json": { text: '{"name":"ViewportScrollScene"}' },
+    },
+    manifest: {
+      runtime: { path: "/runtime.wasm" },
+      engines: [
+        {
+          id: "gosx-engine-viewport-scroll",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-runtime-viewport-scroll",
+          runtime: "shared",
+          programRef: "/scene-viewport-scroll.json",
+          props: {
+            width: 640,
+            height: 360,
+            autoRotate: false,
+            background: "#08151f",
+          },
+        },
+      ],
+    },
+    onHydrateEngine: () => "[]",
+    onRenderEngine: (...args) => {
+      renderArgs.push(args);
+      return JSON.stringify({
+        background: "#08151f",
+        camera: { x: 0, y: 0, z: 6, fov: 72 },
+        positions: [],
+        colors: [],
+        vertexCount: 0,
+        worldPositions: [],
+        worldColors: [],
+        worldVertexCount: 0,
+        objects: [],
+        labels: [],
+      });
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const initialRenderCount = renderArgs.length;
+  assert.equal(initialRenderCount > 0, true);
+  assert.equal(env.visualViewport.listenerCount("scroll"), 1);
+
+  env.visualViewport.dispatchEvent({ type: "scroll" });
+  await flushAsyncWork();
+
+  assert.equal(renderArgs.length > initialRenderCount, true);
 });
 
 test("bootstrap pauses animated Scene3D when the page is hidden and resumes on visibilitychange", async () => {

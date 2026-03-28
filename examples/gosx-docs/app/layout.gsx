@@ -75,7 +75,11 @@ func DocsNavigation() Node {
 			<span class="nav-group-title">Start</span>
 			<div class="nav-group-links">
 				<DocsNavLink href="/" label="Overview" active={request.path == "/"}></DocsNavLink>
-				<DocsNavLink href="/docs/getting-started" label="Getting Started" active={request.path == "/docs/getting-started"}></DocsNavLink>
+				<DocsNavLink
+					href="/docs/getting-started"
+					label="Getting Started"
+					active={request.path == "/docs/getting-started"}
+				></DocsNavLink>
 			</div>
 		</div>
 		<div class="nav-group">

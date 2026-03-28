@@ -14,6 +14,7 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"os"
@@ -200,25 +201,51 @@ func cmdFmt() {
 		fmtUsage(os.Stderr)
 		os.Exit(1)
 	}
-	path := os.Args[2]
+
+	args := os.Args[2:]
+	check := false
+	if len(args) > 0 && args[0] == "--check" {
+		check = true
+		args = args[1:]
+	}
+	if len(args) == 0 {
+		fmtUsage(os.Stderr)
+		os.Exit(1)
+	}
+
+	path := args[0]
 	if path == "help" || path == "-h" || path == "--help" {
 		fmtUsage(os.Stdout)
 		return
 	}
 
-	if _, err := RunFmt(path, os.Stderr); err != nil {
+	var err error
+	if check {
+		_, err = RunFmtCheck(path, os.Stderr)
+	} else {
+		_, err = RunFmt(path, os.Stderr)
+	}
+	if err != nil {
 		fatal("fmt: %v", err)
 	}
 }
 
 func RunFmt(path string, stderr io.Writer) (int, error) {
+	return runFmt(path, stderr, false)
+}
+
+func RunFmtCheck(path string, stderr io.Writer) (int, error) {
+	return runFmt(path, stderr, true)
+}
+
+func runFmt(path string, stderr io.Writer, check bool) (int, error) {
 	info, err := os.Stat(path)
 	if err != nil {
 		return 0, fmt.Errorf("stat %s: %w", path, err)
 	}
 
 	if !info.IsDir() {
-		if err := formatFile(path); err != nil {
+		if err := formatFile(path, check); err != nil {
 			return 0, err
 		}
 		return 1, nil
@@ -237,7 +264,7 @@ func RunFmt(path string, stderr io.Writer) (int, error) {
 		if fi.IsDir() || filepath.Ext(fi.Name()) != ".gsx" {
 			return nil
 		}
-		if err := formatFile(p); err != nil {
+		if err := formatFile(p, check); err != nil {
 			if firstErr == nil {
 				firstErr = fmt.Errorf("%s: %w", p, err)
 			}
@@ -253,20 +280,45 @@ func RunFmt(path string, stderr io.Writer) (int, error) {
 	if firstErr != nil {
 		return count, firstErr
 	}
-	fmt.Fprintf(stderr, "gosx: formatted %d files\n", count)
+	if check {
+		fmt.Fprintf(stderr, "gosx: verified %d files\n", count)
+	} else {
+		fmt.Fprintf(stderr, "gosx: formatted %d files\n", count)
+	}
 	return count, nil
 }
 
-func formatFile(path string) error {
+func formatFile(path string, check bool) error {
 	source, err := os.ReadFile(path)
 	if err != nil {
 		return err
 	}
-	formatted, err := format.Source(source)
+	formatted, err := formatFileStable(source)
 	if err != nil {
 		return err
 	}
+	if check {
+		if bytes.Equal(source, formatted) {
+			return nil
+		}
+		return fmt.Errorf("needs formatting")
+	}
 	return os.WriteFile(path, formatted, 0644)
+}
+
+func formatFileStable(source []byte) ([]byte, error) {
+	current := append([]byte(nil), source...)
+	for i := 0; i < 8; i++ {
+		next, err := format.Source(current)
+		if err != nil {
+			return nil, err
+		}
+		if bytes.Equal(current, next) {
+			return next, nil
+		}
+		current = next
+	}
+	return nil, fmt.Errorf("formatter did not converge")
 }
 
 func fmtUsage(w io.Writer) {
@@ -274,10 +326,12 @@ func fmtUsage(w io.Writer) {
 
 Usage:
   gosx fmt <file.gsx|dir>
+  gosx fmt --check <file.gsx|dir>
 
 Examples:
   gosx fmt app/layout.gsx
   gosx fmt ./app
+  gosx fmt --check .
 
 `)
 }

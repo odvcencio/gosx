@@ -61,12 +61,15 @@ func Page() Node {
 			<section class="home-hero">
 				<div class="page-topper">
 					<span class="eyebrow">Go-native web framework</span>
-					<p class="lede">Build the site, the docs, and the demos in the same app you ship.</p>
+					<p class="lede">
+						Build the site, the docs, and the demos in the same app you ship.
+					</p>
 				</div>
-				<h1>Build in Go. Ship the site, the editor, and the 3D demo together.</h1>
+				<h1>
+					Build in Go. Ship the site, the editor, and the 3D demo together.
+				</h1>
 				<p class="home-hero__body">
-					This example is a real GoSX app, not a brochure hung next to one. Routes, server actions, auth, client navigation, and Scene3D all live in the same
-					codebase.
+					This example is a real GoSX app, not a brochure hung next to one. Routes, server actions, auth, client navigation, and Scene3D all live in the same codebase.
 				</p>
 				<div class="hero-actions">
 					<Link class="hero-link primary" href="/docs/getting-started">Start with the quickstart</Link>
@@ -92,7 +95,9 @@ func Page() Node {
 					<div class="hero-panel__head">
 						<span class="eyebrow">Application map</span>
 						<h2>One app. Four kinds of pages.</h2>
-						<p>The same repo handles docs, editing flows, interactive runtime, and gated routes.</p>
+						<p>
+							The same repo handles docs, editing flows, interactive runtime, and gated routes.
+						</p>
 					</div>
 					<div class="application-route-list">
 						<Each as="entry" of={data.routes}>
@@ -103,8 +108,12 @@ func Page() Node {
 				<section class="hero-panel hero-panel--stack">
 					<div class="hero-panel__head">
 						<span class="eyebrow">What ships together</span>
-						<h2>The pitch, the docs, and the demos all come from the same place.</h2>
-						<p>You are looking at marketing, documentation, forms, auth, and runtime work without a second frontend stack glued on top.</p>
+						<h2>
+							The pitch, the docs, and the demos all come from the same place.
+						</h2>
+						<p>
+							You are looking at marketing, documentation, forms, auth, and runtime work without a second frontend stack glued on top.
+						</p>
 					</div>
 					<div class="stack-tags">
 						<Each as="item" of={data.stack}>
@@ -122,7 +131,9 @@ func Page() Node {
 		<section class="platform-strip">
 			<div class="platform-strip__intro">
 				<span class="eyebrow">Why it feels cleaner</span>
-				<h2>Start with pages. Add richer behavior only when it earns its place.</h2>
+				<h2>
+					Start with pages. Add richer behavior only when it earns its place.
+				</h2>
 				<p class="lede">
 					GoSX stays understandable because the default is plain HTML and Go. Interactivity is explicit. Routes stay in charge.
 				</p>

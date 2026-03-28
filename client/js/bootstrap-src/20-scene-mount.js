@@ -124,8 +124,10 @@
     }
     let resizeObserver = null;
     let windowResizeListener = null;
+    let windowScrollListener = null;
     let orientationListener = null;
     let viewportResizeListener = null;
+    let viewportScrollListener = null;
 
     if (typeof ResizeObserver === "function") {
       resizeObserver = new ResizeObserver(function() {
@@ -146,6 +148,10 @@
         refresh("orientation");
       };
       window.addEventListener("orientationchange", orientationListener);
+      windowScrollListener = function() {
+        refresh("scroll");
+      };
+      window.addEventListener("scroll", windowScrollListener);
     }
 
     if (window.visualViewport && typeof window.visualViewport.addEventListener === "function") {
@@ -153,6 +159,10 @@
         refresh("visual-viewport");
       };
       window.visualViewport.addEventListener("resize", viewportResizeListener);
+      viewportScrollListener = function() {
+        refresh("visual-viewport-scroll");
+      };
+      window.visualViewport.addEventListener("scroll", viewportScrollListener);
     }
 
     return function() {
@@ -165,8 +175,14 @@
       if (orientationListener && typeof window.removeEventListener === "function") {
         window.removeEventListener("orientationchange", orientationListener);
       }
+      if (windowScrollListener && typeof window.removeEventListener === "function") {
+        window.removeEventListener("scroll", windowScrollListener);
+      }
       if (viewportResizeListener && window.visualViewport && typeof window.visualViewport.removeEventListener === "function") {
         window.visualViewport.removeEventListener("resize", viewportResizeListener);
+      }
+      if (viewportScrollListener && window.visualViewport && typeof window.visualViewport.removeEventListener === "function") {
+        window.visualViewport.removeEventListener("scroll", viewportScrollListener);
       }
     };
   }
@@ -177,6 +193,68 @@
       pageVisible: visibilityState !== "hidden",
       inViewport: true,
     };
+  }
+
+  function initialSceneMotionState(props) {
+    const respectReducedMotion = sceneBool(props && props.respectReducedMotion, true);
+    const mediaQuery = respectReducedMotion && typeof window.matchMedia === "function"
+      ? window.matchMedia("(prefers-reduced-motion: reduce)")
+      : null;
+    return {
+      respectReducedMotion,
+      reducedMotion: Boolean(mediaQuery && mediaQuery.matches),
+    };
+  }
+
+  function applySceneMotionState(mount, motion) {
+    if (!mount || !motion) {
+      return;
+    }
+    setAttrValue(mount, "data-gosx-scene3d-reduced-motion", motion.reducedMotion ? "true" : "false");
+  }
+
+  function observeSceneMotion(mount, motion, onChange) {
+    if (!mount || !motion || typeof onChange !== "function") {
+      return function() {};
+    }
+
+    applySceneMotionState(mount, motion);
+    if (!motion.respectReducedMotion || typeof window.matchMedia !== "function") {
+      return function() {};
+    }
+
+    const mediaQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
+    if (!mediaQuery) {
+      return function() {};
+    }
+
+    function updateMotion(event) {
+      const next = Boolean(event && typeof event.matches === "boolean" ? event.matches : mediaQuery.matches);
+      if (motion.reducedMotion === next) {
+        return;
+      }
+      motion.reducedMotion = next;
+      applySceneMotionState(mount, motion);
+      onChange("motion");
+    }
+
+    if (typeof mediaQuery.addEventListener === "function") {
+      mediaQuery.addEventListener("change", updateMotion);
+      return function() {
+        if (typeof mediaQuery.removeEventListener === "function") {
+          mediaQuery.removeEventListener("change", updateMotion);
+        }
+      };
+    }
+    if (typeof mediaQuery.addListener === "function") {
+      mediaQuery.addListener(updateMotion);
+      return function() {
+        if (typeof mediaQuery.removeListener === "function") {
+          mediaQuery.removeListener(updateMotion);
+        }
+      };
+    }
+    return function() {};
   }
 
   function applySceneLifecycleState(mount, lifecycle) {
@@ -630,8 +708,12 @@
     const runtimeScene = ctx.runtimeMode === "shared" && Boolean(ctx.programRef);
     const objects = sceneStateObjects(sceneState);
     const lifecycle = initialSceneLifecycleState();
+    const motion = initialSceneMotionState(props);
 
     function sceneShouldAnimate() {
+      if (motion.reducedMotion) {
+        return false;
+      }
       if (runtimeScene || sceneBool(props.autoRotate, true)) {
         return true;
       }
@@ -764,6 +846,11 @@
       }
       scheduleRender(reason || "lifecycle");
     });
+    const releaseMotionObserver = observeSceneMotion(ctx.mount, motion, function(reason) {
+      cancelFrame();
+      cancelScheduledRender();
+      scheduleRender(reason || "motion");
+    });
 
     if (runtimeScene) {
       if (ctx.runtime && ctx.runtime.available()) {
@@ -830,6 +917,7 @@
         disposed = true;
         releaseViewportObserver();
         releaseLifecycleObserver();
+        releaseMotionObserver();
         releaseTextLayoutListener();
         dragHandle.dispose();
         renderer.dispose();

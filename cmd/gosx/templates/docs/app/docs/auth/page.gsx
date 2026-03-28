@@ -8,7 +8,9 @@ func Page() Node {
 				Session-backed auth state now rides on the same request context as file pages, actions, and route middleware.
 			</p>
 		</div>
-		<h1>Auth in GoSX is a session concern, not a separate framework bolted on later.</h1>
+		<h1>
+			Auth in GoSX is a session concern, not a separate framework bolted on later.
+		</h1>
 		<p>
 			The auth middleware resolves the current user once, stores it on the request context, and exposes it to file-routed
 			<span class="inline-code">.gsx</span>

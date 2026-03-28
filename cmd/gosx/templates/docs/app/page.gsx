@@ -20,7 +20,9 @@ func Page() Node {
 				A paper-and-ink docs surface that exists to prove GoSX can route files, swap pages, and stay coherent.
 			</p>
 		</div>
-		<h1>GoSX now has a docs site that actually runs through its own pipeline.</h1>
+		<h1>
+			GoSX now has a docs site that actually runs through its own pipeline.
+		</h1>
 		<p>
 			The point of this app is blunt: prove that GoSX can map a directory tree to routes, render real pages from
 			<span class="inline-code">.gsx</span>
@@ -40,35 +42,39 @@ func Page() Node {
 		<If when={data.showRouteTree}>
 			<section class="callout">
 				<strong>Route Tree</strong>
-				<pre class="code-block">{`app/
-  layout.gsx
-  page.server.go
-  page.gsx
-  not-found.gsx
-  docs/
-    layout.gsx
-    not-found.gsx
-    forms/
-      page.server.go
-      page.gsx
-    getting-started/
-      page.server.go
-      page.gsx
-    images/
-      page.server.go
-      page.gsx
-    routing/
-      page.server.go
-      page.gsx
-    runtime/
-      page.server.go
-      page.gsx`}</pre>
+				<pre class="code-block">
+					{`app/
+		  layout.gsx
+		  page.server.go
+		  page.gsx
+		  not-found.gsx
+		  docs/
+		    layout.gsx
+		    not-found.gsx
+		    forms/
+		      page.server.go
+		      page.gsx
+		    getting-started/
+		      page.server.go
+		      page.gsx
+		    images/
+		      page.server.go
+		      page.gsx
+		    routing/
+		      page.server.go
+		      page.gsx
+		    runtime/
+		      page.server.go
+		      page.gsx`}
+				</pre>
 			</section>
 		</If>
 		<section class="note-grid">
 			<div class="note">
 				<strong>Navigation</strong>
-				<p>Marked links fetch HTML, replace managed head and body regions, then re-enter the GoSX runtime lifecycle.</p>
+				<p>
+					Marked links fetch HTML, replace managed head and body regions, then re-enter the GoSX runtime lifecycle.
+				</p>
 			</div>
 			<div class="note">
 				<strong>Rendering</strong>

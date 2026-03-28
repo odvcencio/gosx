@@ -21,11 +21,11 @@ import (
 )
 
 type fileRenderEnv struct {
-	values       map[string]any
-	funcs        map[string]any
-	components   map[string]any
-	renderEngine func(engine.Config, gosx.Node) gosx.Node
-	renderIsland func(*islandprogram.Program, any) gosx.Node
+	values          map[string]any
+	funcs           map[string]any
+	components      map[string]any
+	renderEngine    func(engine.Config, gosx.Node) gosx.Node
+	renderIsland    func(*islandprogram.Program, any) gosx.Node
 	enableBootstrap func()
 }
 
