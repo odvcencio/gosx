@@ -282,6 +282,8 @@ class FakeElement {
     this._canvasContext = null;
     this._webglContext = null;
     this._capturedPointerID = null;
+    this.focusCalls = [];
+    this.scrollIntoViewCalls = [];
   }
 
   get id() {
@@ -420,8 +422,13 @@ class FakeElement {
     return false;
   }
 
-  focus() {
+  focus(...args) {
+    this.focusCalls.push(args);
     this.ownerDocument.activeElement = this;
+  }
+
+  scrollIntoView(...args) {
+    this.scrollIntoViewCalls.push(args);
   }
 
   getBoundingClientRect() {
@@ -633,6 +640,7 @@ function createContext(options) {
   const inputBatchCalls = [];
   const sockets = [];
   const fetchCalls = [];
+  const scrollCalls = [];
   const windowListeners = new Map();
 
   const routes = new Map();
@@ -780,7 +788,9 @@ function createContext(options) {
       }
       return true;
     },
-    scrollTo() {},
+    scrollTo(...args) {
+      scrollCalls.push(args);
+    },
     setTimeout,
     WebAssembly: {
       instantiate: async () => ({ instance: {} }),
@@ -837,6 +847,7 @@ function createContext(options) {
     hydrateCalls,
     inputBatchCalls,
     sharedSignalCalls,
+    scrollCalls,
     sockets,
     windowListeners,
   };
@@ -847,6 +858,7 @@ function runScript(source, context, filename) {
 }
 
 async function flushAsyncWork() {
+  await new Promise((resolve) => setTimeout(resolve, 0));
   await new Promise((resolve) => setTimeout(resolve, 0));
   await new Promise((resolve) => setTimeout(resolve, 0));
 }
@@ -2227,7 +2239,7 @@ test("navigation runtime swaps managed head/body and calls page lifecycle hooks"
   const nextMeta = new FakeElement("meta", null);
   nextMeta.setAttribute("name", "description");
   nextMeta.setAttribute("content", "new");
-  const nextBody = new FakeElement("div", null);
+  const nextBody = new FakeElement("main", null);
   nextBody.id = "new-page";
   nextBody.textContent = "new-page";
 
@@ -2261,11 +2273,15 @@ test("navigation runtime swaps managed head/body and calls page lifecycle hooks"
   assert.deepEqual(bootstrapCalls, ["bootstrap"]);
   assert.equal(env.document.title, "Docs");
   assert.equal(env.context.location.href, "http://localhost:3000/docs");
-  assert.equal(env.document.body.textContent, "new-page");
   assert.equal(env.document.getElementById("new-page").textContent, "new-page");
   assert.equal(env.document.head.childNodes[1].getAttribute("content"), "new");
   assert.equal(env.fetchCalls[0].init.headers["X-GoSX-Navigation"], "1");
   assert.equal(env.document.dispatchedEvents.at(-1).type, "gosx:navigate");
+  assert.equal(env.document.activeElement, env.document.getElementById("new-page"));
+  assert.equal(env.document.activeElement.getAttribute("tabindex"), "-1");
+  assert.equal(env.document.dispatchedEvents.at(-1).detail.focusTargetId, "new-page");
+  assert.equal(env.document.body.childNodes.at(-1).textContent, "Docs");
+  assert.deepEqual(env.scrollCalls, [[0, 0]]);
 });
 
 test("navigation runtime prefetches marked links and reuses cached HTML", async () => {
@@ -2380,4 +2396,55 @@ test("navigation runtime absolutizes managed asset URLs during navigation", asyn
   assert.equal(env.document.getElementById("promo").getAttribute("poster"), "http://localhost:3000/docs/runtime/poster.jpg");
   assert.equal(env.fetchCalls[1].url, "http://localhost:3000/docs/runtime/runtime.js");
   assert.equal(env.context.__navScriptLoaded, 1);
+});
+
+test("navigation runtime honors explicit a11y markers and hash targets", async () => {
+  const parsedDocs = new Map();
+  const env = createContext({
+    fetchRoutes: {
+      "http://localhost:3000/docs/a11y#details": {
+        text: "__A11Y_DOC__",
+        url: "http://localhost:3000/docs/a11y#details",
+      },
+    },
+    parseHTML(html) {
+      return parsedDocs.get(html);
+    },
+  });
+
+  env.context.__gosx_dispose_page = async function() {};
+  env.context.__gosx_bootstrap_page = async function() {};
+
+  const main = new FakeElement("section", null);
+  main.id = "main-shell";
+  main.setAttribute("data-gosx-main", "");
+  main.textContent = "Main shell";
+
+  const announce = new FakeElement("p", null);
+  announce.setAttribute("data-gosx-announce", "Accessibility docs");
+  announce.textContent = "Ignored body copy";
+  main.appendChild(announce);
+
+  const target = new FakeElement("section", null);
+  target.id = "details";
+  target.textContent = "Deep details";
+  main.appendChild(target);
+
+  parsedDocs.set("__A11Y_DOC__", buildNavigatedDocument({
+    title: "A11y",
+    bodyNodes: [main],
+  }));
+
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  await env.context.__gosx_page_nav.navigate("http://localhost:3000/docs/a11y#details");
+  await flushAsyncWork();
+
+  const renderedTarget = env.document.getElementById("details");
+  assert.equal(env.document.activeElement, renderedTarget);
+  assert.equal(renderedTarget.getAttribute("tabindex"), "-1");
+  assert.equal(renderedTarget.scrollIntoViewCalls.length, 1);
+  assert.deepEqual(env.scrollCalls, []);
+  assert.equal(env.document.body.childNodes.at(-1).textContent, "Accessibility docs");
+  assert.equal(env.document.dispatchedEvents.at(-1).detail.announcement, "Accessibility docs");
+  assert.equal(env.document.dispatchedEvents.at(-1).detail.focusTargetId, "details");
 });
