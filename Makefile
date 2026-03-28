@@ -24,6 +24,7 @@ test-race:
 	$(GO) test -race ./...
 
 test-js:
+	$(NODE) ./client/js/build-bootstrap.mjs --check
 	$(NODE) --test --test-force-exit ./client/js/*.test.js
 
 test-wasm:

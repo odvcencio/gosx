@@ -9,8 +9,9 @@
     "test": "test"
   },
   "scripts": {
+    "build:bootstrap": "node client/js/build-bootstrap.mjs",
     "test": "npm run test:js",
-    "test:js": "node --test --test-force-exit client/js/runtime.test.js",
+    "test:js": "node client/js/build-bootstrap.mjs --check && node --test --test-force-exit client/js/runtime.test.js",
     "test:e2e": "node --test e2e/gosx_docs_e2e.test.mjs"
   },
   "repository": {

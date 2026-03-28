@@ -1712,6 +1712,18 @@
     const style = document.createElement("style");
     style.setAttribute(TEXT_LAYOUT_STYLE_ATTR, "true");
     style.textContent = [
+      '[data-gosx-scene3d-mounted="true"] {',
+      '  position: relative;',
+      '  max-inline-size: 100%;',
+      '  contain: layout paint style;',
+      '}',
+      '[data-gosx-scene3d-canvas="true"] {',
+      '  display: block;',
+      '  inline-size: 100%;',
+      '  block-size: auto;',
+      '  max-inline-size: 100%;',
+      '  border-radius: inherit;',
+      '}',
       '[data-gosx-text-layout-role="block"] {',
       '  min-block-size: var(--gosx-text-layout-height, auto);',
       '}',
@@ -1731,6 +1743,7 @@
       '  inset: 0;',
       '  pointer-events: none;',
       '  overflow: hidden;',
+      '  border-radius: inherit;',
       '}',
       '[data-gosx-scene-label] {',
       '  position: absolute;',
@@ -2227,7 +2240,6 @@
     },
     dispose: disposeManagedTextLayout,
   };
-
   // Pending manifest reference, set during init, consumed when runtime is ready.
   let pendingManifest = null;
 
@@ -2954,26 +2966,36 @@
     return best;
   }
 
-  function setupSceneDragInteractions(canvas, props, width, height, readSceneBundle) {
+  function sceneViewportValue(viewport, key, fallback) {
+    return sceneNumber(viewport && viewport[key], fallback);
+  }
+
+  function setupSceneDragInteractions(canvas, props, readViewport, readSceneBundle) {
     if (!canvas || !sceneBool(props.dragToRotate, false)) {
       return { dispose() {} };
     }
 
     const dragNamespace = sceneDragSignalNamespace(props);
+    const initialViewport = typeof readViewport === "function" ? readViewport() : null;
+    const initialWidth = Math.max(1, sceneViewportValue(initialViewport, "cssWidth", sceneNumber(props.width, 720)));
+    const initialHeight = Math.max(1, sceneViewportValue(initialViewport, "cssHeight", sceneNumber(props.height, 420)));
     const state = {
       active: false,
       orbitX: 0,
       orbitY: 0,
       pointerId: null,
       targetIndex: -1,
-      lastX: width / 2,
-      lastY: height / 2,
+      lastX: initialWidth / 2,
+      lastY: initialHeight / 2,
     };
 
     canvas.style.cursor = "grab";
     canvas.style.touchAction = "none";
 
     function publish(event, phase) {
+      const viewport = typeof readViewport === "function" ? readViewport() : null;
+      const width = Math.max(1, sceneViewportValue(viewport, "cssWidth", initialWidth));
+      const height = Math.max(1, sceneViewportValue(viewport, "cssHeight", initialHeight));
       const sample = sceneLocalPointerSample(event, canvas, width, height, state, phase);
       if (!dragNamespace) {
         publishPointerSignals(sample);
@@ -3003,6 +3025,9 @@
       if (event.button !== 0) {
         return;
       }
+      const viewport = typeof readViewport === "function" ? readViewport() : null;
+      const width = Math.max(1, sceneViewportValue(viewport, "cssWidth", initialWidth));
+      const height = Math.max(1, sceneViewportValue(viewport, "cssHeight", initialHeight));
       const pointer = sceneLocalPointerPoint(event, canvas, width, height);
       const target = sceneBundlePointerDragTarget(readSceneBundle && readSceneBundle(), pointer, width, height);
       if (!target) {
@@ -3047,6 +3072,9 @@
       if (dragNamespace) {
         publish(event, "end");
       } else {
+        const viewport = typeof readViewport === "function" ? readViewport() : null;
+        const width = Math.max(1, sceneViewportValue(viewport, "cssWidth", initialWidth));
+        const height = Math.max(1, sceneViewportValue(viewport, "cssHeight", initialHeight));
         resetScenePointerSample(width, height, state);
       }
     }
@@ -3072,7 +3100,12 @@
         document.removeEventListener("pointercancel", finishDrag);
         canvas.style.cursor = "";
         canvas.style.touchAction = "";
-        resetScenePointerSample(width, height, state);
+        const viewport = typeof readViewport === "function" ? readViewport() : null;
+        resetScenePointerSample(
+          Math.max(1, sceneViewportValue(viewport, "cssWidth", initialWidth)),
+          Math.max(1, sceneViewportValue(viewport, "cssHeight", initialHeight)),
+          state,
+        );
       },
     };
   }
@@ -3924,14 +3957,25 @@
   function createSceneCanvasRenderer(ctx2d, canvas) {
     return {
       kind: "canvas",
-      render(bundle) {
+      render(bundle, viewport) {
+        const devicePixelRatio = Math.max(1, sceneViewportValue(viewport, "devicePixelRatio", 1));
+        const lines = Array.isArray(bundle && bundle.lines) ? bundle.lines : [];
         ctx2d.clearRect(0, 0, canvas.width, canvas.height);
-        ctx2d.fillStyle = bundle.background;
+        ctx2d.fillStyle = bundle && bundle.background ? bundle.background : "#08151f";
         ctx2d.fillRect(0, 0, canvas.width, canvas.height);
-        for (const line of bundle.lines) {
+        if (typeof ctx2d.save === "function") {
+          ctx2d.save();
+        }
+        if (devicePixelRatio !== 1 && typeof ctx2d.scale === "function") {
+          ctx2d.scale(devicePixelRatio, devicePixelRatio);
+        }
+        for (const line of lines) {
           ctx2d.strokeStyle = line.color;
           ctx2d.lineWidth = line.lineWidth;
           strokeLine(ctx2d, line.from, line.to);
+        }
+        if (typeof ctx2d.restore === "function") {
+          ctx2d.restore();
         }
       },
       dispose() {},
@@ -4899,7 +4943,6 @@
     }
     return shader;
   }
-
   function createSceneRenderer(canvas, props) {
     if (sceneBool(props.preferWebGL, true)) {
       const webglRenderer = createSceneWebGLRenderer(canvas);
@@ -4912,6 +4955,165 @@
       return null;
     }
     return createSceneCanvasRenderer(ctx2d, canvas);
+  }
+
+  function sceneViewportBase(props) {
+    const width = Math.max(240, sceneNumber(props && props.width, 720));
+    const height = Math.max(180, sceneNumber(props && props.height, 420));
+    return {
+      baseWidth: width,
+      baseHeight: height,
+      aspectRatio: width / Math.max(1, height),
+      responsive: sceneBool(props && props.responsive, true),
+      maxDevicePixelRatio: Math.max(1, sceneNumber(props && (props.maxDevicePixelRatio || props.maxPixelRatio), 2)),
+    };
+  }
+
+  function sceneViewportDevicePixelRatio(props, maxDevicePixelRatio) {
+    const preferred = sceneNumber(
+      props && (props.devicePixelRatio || props.pixelRatio),
+      sceneNumber(window && window.devicePixelRatio, 1),
+    );
+    return Math.max(1, Math.min(Math.max(1, maxDevicePixelRatio || 1), preferred));
+  }
+
+  function sceneViewportFromMount(mount, props, base, canvas) {
+    let cssWidth = base.baseWidth;
+    let cssHeight = base.baseHeight;
+    const useMeasuredHeight = sceneBool(props && (props.fillHeight || props.responsiveHeight), false);
+    if (base.responsive) {
+      const mountRect = mount && typeof mount.getBoundingClientRect === "function"
+        ? mount.getBoundingClientRect()
+        : null;
+      const canvasRect = canvas && typeof canvas.getBoundingClientRect === "function"
+        ? canvas.getBoundingClientRect()
+        : null;
+      const measuredCanvasWidth = sceneNumber(canvasRect && canvasRect.width, 0);
+      const measuredMountWidth = sceneNumber(mountRect && mountRect.width, 0);
+      if (measuredCanvasWidth > 0 && (measuredMountWidth <= 0 || measuredCanvasWidth <= measuredMountWidth * 1.5)) {
+        cssWidth = measuredCanvasWidth;
+      } else if (measuredMountWidth > 0) {
+        cssWidth = measuredMountWidth;
+      }
+      const measuredHeight = measuredCanvasWidth > 0 && (measuredMountWidth <= 0 || measuredCanvasWidth <= measuredMountWidth * 1.5)
+        ? sceneNumber(canvasRect && canvasRect.height, 0)
+        : sceneNumber(mountRect && mountRect.height, 0);
+      if (useMeasuredHeight && measuredHeight > 0) {
+        cssHeight = measuredHeight;
+      } else if (cssWidth > 0) {
+        cssHeight = cssWidth / Math.max(0.0001, base.aspectRatio);
+      }
+    }
+    cssWidth = Math.max(1, Math.round(cssWidth));
+    cssHeight = Math.max(1, Math.round(cssHeight));
+    const devicePixelRatio = sceneViewportDevicePixelRatio(props, base.maxDevicePixelRatio);
+    return {
+      cssWidth,
+      cssHeight,
+      devicePixelRatio,
+      pixelWidth: Math.max(1, Math.round(cssWidth * devicePixelRatio)),
+      pixelHeight: Math.max(1, Math.round(cssHeight * devicePixelRatio)),
+    };
+  }
+
+  function sceneViewportChanged(prev, next) {
+    if (!prev || !next) {
+      return true;
+    }
+    return prev.cssWidth !== next.cssWidth
+      || prev.cssHeight !== next.cssHeight
+      || prev.pixelWidth !== next.pixelWidth
+      || prev.pixelHeight !== next.pixelHeight
+      || Math.abs(sceneNumber(prev.devicePixelRatio, 1) - sceneNumber(next.devicePixelRatio, 1)) > 0.001;
+  }
+
+  function applySceneViewport(mount, canvas, labelLayer, viewport, base) {
+    if (!mount || !canvas || !viewport) {
+      return viewport;
+    }
+    setAttrValue(mount, "data-gosx-scene3d-css-width", viewport.cssWidth);
+    setAttrValue(mount, "data-gosx-scene3d-css-height", viewport.cssHeight);
+    setAttrValue(mount, "data-gosx-scene3d-pixel-ratio", viewport.devicePixelRatio);
+    setStyleValue(mount.style, "--gosx-scene-css-width", viewport.cssWidth + "px");
+    setStyleValue(mount.style, "--gosx-scene-css-height", viewport.cssHeight + "px");
+    setStyleValue(mount.style, "--gosx-scene-pixel-ratio", String(viewport.devicePixelRatio));
+    canvas.width = viewport.pixelWidth;
+    canvas.height = viewport.pixelHeight;
+    canvas.setAttribute("width", String(viewport.pixelWidth));
+    canvas.setAttribute("height", String(viewport.pixelHeight));
+    if (labelLayer) {
+      const mountRect = typeof mount.getBoundingClientRect === "function" ? mount.getBoundingClientRect() : null;
+      const canvasRect = typeof canvas.getBoundingClientRect === "function" ? canvas.getBoundingClientRect() : null;
+      const left = mountRect && canvasRect ? Math.max(0, sceneNumber(canvasRect.left, 0) - sceneNumber(mountRect.left, 0)) : 0;
+      const top = mountRect && canvasRect ? Math.max(0, sceneNumber(canvasRect.top, 0) - sceneNumber(mountRect.top, 0)) : 0;
+      labelLayer.style.left = left + "px";
+      labelLayer.style.top = top + "px";
+      labelLayer.style.right = "auto";
+      labelLayer.style.bottom = "auto";
+      labelLayer.style.width = viewport.cssWidth + "px";
+      labelLayer.style.height = viewport.cssHeight + "px";
+    }
+    if (base && !base.responsive) {
+      canvas.style.width = viewport.cssWidth + "px";
+      canvas.style.height = viewport.cssHeight + "px";
+    } else {
+      canvas.style.width = "100%";
+      canvas.style.height = "auto";
+    }
+    return viewport;
+  }
+
+  function observeSceneViewport(mount, refresh) {
+    if (!mount || typeof refresh !== "function") {
+      return function() {};
+    }
+    let resizeObserver = null;
+    let windowResizeListener = null;
+    let orientationListener = null;
+    let viewportResizeListener = null;
+
+    if (typeof ResizeObserver === "function") {
+      resizeObserver = new ResizeObserver(function() {
+        refresh("resize");
+      });
+      if (typeof resizeObserver.observe === "function") {
+        resizeObserver.observe(mount);
+      }
+    } else if (typeof window.addEventListener === "function") {
+      windowResizeListener = function() {
+        refresh("resize");
+      };
+      window.addEventListener("resize", windowResizeListener);
+    }
+
+    if (typeof window.addEventListener === "function") {
+      orientationListener = function() {
+        refresh("orientation");
+      };
+      window.addEventListener("orientationchange", orientationListener);
+    }
+
+    if (window.visualViewport && typeof window.visualViewport.addEventListener === "function") {
+      viewportResizeListener = function() {
+        refresh("visual-viewport");
+      };
+      window.visualViewport.addEventListener("resize", viewportResizeListener);
+    }
+
+    return function() {
+      if (resizeObserver && typeof resizeObserver.disconnect === "function") {
+        resizeObserver.disconnect();
+      }
+      if (windowResizeListener && typeof window.removeEventListener === "function") {
+        window.removeEventListener("resize", windowResizeListener);
+      }
+      if (orientationListener && typeof window.removeEventListener === "function") {
+        window.removeEventListener("orientationchange", orientationListener);
+      }
+      if (viewportResizeListener && window.visualViewport && typeof window.visualViewport.removeEventListener === "function") {
+        window.visualViewport.removeEventListener("resize", viewportResizeListener);
+      }
+    };
   }
 
   function sceneLabelLayoutKey(label) {
@@ -5292,8 +5494,7 @@
     }
 
     const props = ctx.props || {};
-    const width = Math.max(240, sceneNumber(props.width, 720));
-    const height = Math.max(180, sceneNumber(props.height, 420));
+    const viewportBase = sceneViewportBase(props);
     const sceneState = createSceneState(props);
     const runtimeScene = ctx.runtimeMode === "shared" && Boolean(ctx.programRef);
     const objects = sceneStateObjects(sceneState);
@@ -5311,25 +5512,24 @@
     if (!ctx.mount.style.position) {
       ctx.mount.style.position = "relative";
     }
-
     const canvas = document.createElement("canvas");
-    canvas.setAttribute("width", String(width));
-    canvas.setAttribute("height", String(height));
+    canvas.setAttribute("data-gosx-scene3d-canvas", "true");
     canvas.setAttribute("role", "img");
     canvas.setAttribute("aria-label", props.label || "Interactive GoSX 3D scene");
-    canvas.setAttribute("style", "display:block;width:100%;height:auto;border-radius:22px;");
-    canvas.width = width;
-    canvas.height = height;
+    canvas.style.maxWidth = "100%";
+    canvas.style.borderRadius = "inherit";
+    canvas.width = viewportBase.baseWidth;
+    canvas.height = viewportBase.baseHeight;
+    canvas.setAttribute("width", String(viewportBase.baseWidth));
+    canvas.setAttribute("height", String(viewportBase.baseHeight));
     ctx.mount.appendChild(canvas);
 
     const labelLayer = document.createElement("div");
     labelLayer.setAttribute("data-gosx-scene3d-label-layer", "true");
     labelLayer.setAttribute("aria-hidden", "true");
-    labelLayer.style.position = "absolute";
-    labelLayer.style.inset = "0";
-    labelLayer.style.pointerEvents = "none";
-    labelLayer.style.overflow = "hidden";
     ctx.mount.appendChild(labelLayer);
+
+    let viewport = applySceneViewport(ctx.mount, canvas, labelLayer, sceneViewportFromMount(ctx.mount, props, viewportBase, canvas), viewportBase);
 
     const renderer = createSceneRenderer(canvas, props);
     if (!renderer) {
@@ -5350,7 +5550,9 @@
     const labelLayoutCache = new Map();
     const labelElements = new Map();
     let labelRefreshHandle = null;
-    const dragHandle = setupSceneDragInteractions(canvas, props, width, height, function() {
+    const dragHandle = setupSceneDragInteractions(canvas, props, function() {
+      return viewport;
+    }, function() {
       return latestBundle;
     });
     const releaseTextLayoutListener = onTextLayoutInvalidated(function() {
@@ -5365,12 +5567,39 @@
         if (disposed || !latestBundle) {
           return;
         }
-        renderSceneLabels(labelLayer, latestBundle, labelLayoutCache, labelElements, width, height);
+        renderSceneLabels(labelLayer, latestBundle, labelLayoutCache, labelElements, viewport.cssWidth, viewport.cssHeight);
       });
     });
 
     let frameHandle = null;
+    let scheduledRenderHandle = null;
     let disposed = false;
+
+    function cancelScheduledRender() {
+      if (scheduledRenderHandle != null) {
+        cancelEngineFrame(scheduledRenderHandle);
+        scheduledRenderHandle = null;
+      }
+    }
+
+    function scheduleRender(reason) {
+      if (disposed) {
+        return;
+      }
+      const nextViewport = sceneViewportFromMount(ctx.mount, props, viewportBase, canvas);
+      if (sceneViewportChanged(viewport, nextViewport)) {
+        viewport = applySceneViewport(ctx.mount, canvas, labelLayer, nextViewport, viewportBase);
+      }
+      if (scheduledRenderHandle != null) {
+        return;
+      }
+      scheduledRenderHandle = engineFrame(function(now) {
+        scheduledRenderHandle = null;
+        renderFrame(typeof now === "number" ? now : 0, reason || "refresh");
+      });
+    }
+
+    const releaseViewportObserver = observeSceneViewport(ctx.mount, scheduleRender);
 
     if (runtimeScene) {
       if (ctx.runtime && ctx.runtime.available()) {
@@ -5382,13 +5611,14 @@
 
     function renderFrame(now) {
       if (disposed) return;
+      viewport = applySceneViewport(ctx.mount, canvas, labelLayer, sceneViewportFromMount(ctx.mount, props, viewportBase, canvas), viewportBase);
       const timeSeconds = now / 1000;
       if (runtimeScene && ctx.runtime && typeof ctx.runtime.renderFrame === "function") {
-        const runtimeBundle = ctx.runtime.renderFrame(timeSeconds, width, height);
+        const runtimeBundle = ctx.runtime.renderFrame(timeSeconds, viewport.cssWidth, viewport.cssHeight);
         if (runtimeBundle) {
           latestBundle = runtimeBundle;
-          renderer.render(runtimeBundle);
-          renderSceneLabels(labelLayer, runtimeBundle, labelLayoutCache, labelElements, width, height);
+          renderer.render(runtimeBundle, viewport);
+          renderSceneLabels(labelLayer, runtimeBundle, labelLayoutCache, labelElements, viewport.cssWidth, viewport.cssHeight);
           if (sceneShouldAnimate()) {
             frameHandle = engineFrame(renderFrame);
           }
@@ -5398,9 +5628,17 @@
       if (runtimeScene && ctx.runtime) {
         applySceneCommands(sceneState, ctx.runtime.tick());
       }
-      latestBundle = createSceneRenderBundle(width, height, sceneState.background, sceneState.camera, sceneStateObjects(sceneState), sceneStateLabels(sceneState), timeSeconds);
-      renderer.render(latestBundle);
-      renderSceneLabels(labelLayer, latestBundle, labelLayoutCache, labelElements, width, height);
+      latestBundle = createSceneRenderBundle(
+        viewport.cssWidth,
+        viewport.cssHeight,
+        sceneState.background,
+        sceneState.camera,
+        sceneStateObjects(sceneState),
+        sceneStateLabels(sceneState),
+        timeSeconds,
+      );
+      renderer.render(latestBundle, viewport);
+      renderSceneLabels(labelLayer, latestBundle, labelLayoutCache, labelElements, viewport.cssWidth, viewport.cssHeight);
       if (sceneShouldAnimate()) {
         frameHandle = engineFrame(renderFrame);
       }
@@ -5409,8 +5647,8 @@
     renderFrame(0);
 
     ctx.emit("mounted", {
-      width,
-      height,
+      width: viewport.cssWidth,
+      height: viewport.cssHeight,
       objects: objects.length,
       labels: sceneStateLabels(sceneState).length,
     });
@@ -5421,12 +5659,14 @@
       },
       dispose() {
         disposed = true;
+        releaseViewportObserver();
         releaseTextLayoutListener();
         dragHandle.dispose();
         renderer.dispose();
         if (frameHandle != null) {
           cancelEngineFrame(frameHandle);
         }
+        cancelScheduledRender();
         if (labelRefreshHandle != null) {
           cancelEngineFrame(labelRefreshHandle);
         }
@@ -5439,7 +5679,6 @@
       },
     };
   });
-
   // --------------------------------------------------------------------------
   // Event delegation
   // --------------------------------------------------------------------------
