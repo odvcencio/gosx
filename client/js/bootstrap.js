@@ -99,6 +99,467 @@
     return JSON.stringify(widths);
   };
 
+  function normalizeTextLayoutWhiteSpace(value) {
+    const mode = typeof value === "string" ? value.trim().toLowerCase() : "";
+    switch (mode) {
+      case "pre-wrap":
+        return "pre-wrap";
+      case "pre":
+        return "pre";
+      default:
+        return "normal";
+    }
+  }
+
+  function normalizeTextLayoutNewlines(text) {
+    return String(text == null ? "" : text).replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  }
+
+  function textLayoutCodePointByteLength(codePoint) {
+    if (codePoint <= 0x7F) return 1;
+    if (codePoint <= 0x7FF) return 2;
+    if (codePoint <= 0xFFFF) return 3;
+    return 4;
+  }
+
+  function textLayoutIsWhitespace(char) {
+    return /\s/u.test(char);
+  }
+
+  function textLayoutIsCJK(codePoint) {
+    return (
+      (codePoint >= 0x3400 && codePoint <= 0x4DBF) ||
+      (codePoint >= 0x4E00 && codePoint <= 0x9FFF) ||
+      (codePoint >= 0x3040 && codePoint <= 0x309F) ||
+      (codePoint >= 0x30A0 && codePoint <= 0x30FF) ||
+      (codePoint >= 0xAC00 && codePoint <= 0xD7AF)
+    );
+  }
+
+  function prepareBrowserTextLayout(text, whiteSpace, tabSize) {
+    const source = normalizeTextLayoutNewlines(text);
+    const ws = normalizeTextLayoutWhiteSpace(whiteSpace);
+    const tokens = [];
+    const tabWidth = Math.max(1, Math.floor(sceneNumber(tabSize, 4)));
+
+    let word = "";
+    let spaces = "";
+    let wordByteStart = -1;
+    let wordByteEnd = 0;
+    let wordRuneStart = -1;
+    let wordRuneEnd = 0;
+    let spaceByteStart = -1;
+    let spaceByteEnd = 0;
+    let spaceRuneStart = -1;
+    let spaceRuneEnd = 0;
+
+    function flushWord() {
+      if (!word) {
+        return;
+      }
+      tokens.push({
+        kind: "word",
+        text: word,
+        byteStart: wordByteStart,
+        byteEnd: wordByteEnd,
+        runeStart: wordRuneStart,
+        runeEnd: wordRuneEnd,
+      });
+      word = "";
+      wordByteStart = -1;
+      wordByteEnd = 0;
+      wordRuneStart = -1;
+      wordRuneEnd = 0;
+    }
+
+    function flushSpaces() {
+      if (!spaces) {
+        return;
+      }
+      tokens.push({
+        kind: "space",
+        text: spaces,
+        byteStart: spaceByteStart,
+        byteEnd: spaceByteEnd,
+        runeStart: spaceRuneStart,
+        runeEnd: spaceRuneEnd,
+      });
+      spaces = "";
+      spaceByteStart = -1;
+      spaceByteEnd = 0;
+      spaceRuneStart = -1;
+      spaceRuneEnd = 0;
+    }
+
+    function appendCollapsedSpace(byteStart, byteEnd, runeStart, runeEnd) {
+      flushWord();
+      if (tokens.length === 0) {
+        return;
+      }
+      const previous = tokens[tokens.length - 1];
+      if (previous.kind === "space") {
+        previous.byteEnd = byteEnd;
+        previous.runeEnd = runeEnd;
+        return;
+      }
+      tokens.push({
+        kind: "space",
+        text: " ",
+        byteStart,
+        byteEnd,
+        runeStart,
+        runeEnd,
+      });
+    }
+
+    let runeIndex = 0;
+    let byteOffset = 0;
+    for (const char of source) {
+      const codePoint = char.codePointAt(0);
+      const byteStart = byteOffset;
+      const byteEnd = byteStart + textLayoutCodePointByteLength(codePoint);
+      const runeStart = runeIndex;
+      const runeEnd = runeIndex + 1;
+
+      if (char === "\n") {
+        if (ws === "normal") {
+          appendCollapsedSpace(byteStart, byteEnd, runeStart, runeEnd);
+        } else {
+          flushWord();
+          flushSpaces();
+          tokens.push({
+            kind: "newline",
+            text: "\n",
+            byteStart,
+            byteEnd,
+            runeStart,
+            runeEnd,
+          });
+        }
+      } else if (char === "\t") {
+        if (ws === "normal") {
+          appendCollapsedSpace(byteStart, byteEnd, runeStart, runeEnd);
+        } else {
+          flushWord();
+          if (spaceByteStart < 0) {
+            spaceByteStart = byteStart;
+            spaceRuneStart = runeStart;
+          }
+          spaceByteEnd = byteEnd;
+          spaceRuneEnd = runeEnd;
+          spaces += " ".repeat(tabWidth);
+        }
+      } else if (textLayoutIsWhitespace(char)) {
+        if (ws === "normal") {
+          appendCollapsedSpace(byteStart, byteEnd, runeStart, runeEnd);
+        } else {
+          flushWord();
+          if (spaceByteStart < 0) {
+            spaceByteStart = byteStart;
+            spaceRuneStart = runeStart;
+          }
+          spaceByteEnd = byteEnd;
+          spaceRuneEnd = runeEnd;
+          spaces += char;
+        }
+      } else {
+        flushSpaces();
+        if (textLayoutIsCJK(codePoint)) {
+          flushWord();
+          tokens.push({
+            kind: "word",
+            text: char,
+            byteStart,
+            byteEnd,
+            runeStart,
+            runeEnd,
+          });
+        } else {
+          if (wordByteStart < 0) {
+            wordByteStart = byteStart;
+            wordRuneStart = runeStart;
+          }
+          wordByteEnd = byteEnd;
+          wordRuneEnd = runeEnd;
+          word += char;
+        }
+      }
+
+      runeIndex += 1;
+      byteOffset = byteEnd;
+    }
+
+    flushWord();
+    flushSpaces();
+
+    return {
+      source,
+      byteLen: byteOffset,
+      runeCount: runeIndex,
+      whiteSpace: ws,
+      tokens,
+    };
+  }
+
+  function measurePreparedBrowserTextLayout(prepared, font) {
+    const measured = {
+      source: prepared.source,
+      byteLen: prepared.byteLen,
+      runeCount: prepared.runeCount,
+      whiteSpace: prepared.whiteSpace,
+      font: typeof font === "string" ? font : "",
+      tokens: prepared.tokens.map(function(token) {
+        return Object.assign({ width: 0 }, token);
+      }),
+    };
+
+    const texts = [];
+    const indexes = [];
+    for (let i = 0; i < measured.tokens.length; i += 1) {
+      if (measured.tokens[i].kind === "newline") {
+        continue;
+      }
+      texts.push(measured.tokens[i].text);
+      indexes.push(i);
+    }
+
+    if (texts.length === 0) {
+      return measured;
+    }
+
+    let widths = [];
+    try {
+      const raw = window.__gosx_measure_text_batch(measured.font, JSON.stringify(texts));
+      widths = typeof raw === "string" ? JSON.parse(raw) : raw;
+    } catch (_error) {
+      widths = texts.map(function(value) {
+        return String(value || "").length * 8;
+      });
+    }
+
+    if (!Array.isArray(widths) || widths.length !== texts.length) {
+      widths = texts.map(function(value) {
+        return String(value || "").length * 8;
+      });
+    }
+
+    for (let i = 0; i < widths.length; i += 1) {
+      measured.tokens[indexes[i]].width = sceneNumber(widths[i], 0);
+    }
+
+    return measured;
+  }
+
+  function browserTextLayoutTokensWidth(tokens, start, end) {
+    let width = 0;
+    for (let i = start; i < end && i < tokens.length; i += 1) {
+      width += sceneNumber(tokens[i].width, 0);
+    }
+    return width;
+  }
+
+  function browserTextLayoutTokensText(tokens, start, end) {
+    let text = "";
+    for (let i = start; i < end && i < tokens.length; i += 1) {
+      text += tokens[i].text;
+    }
+    return text;
+  }
+
+  function buildBrowserTextLayoutLine(tokens, start, end, hardBreak) {
+    const line = {
+      start,
+      end,
+      byteStart: 0,
+      byteEnd: 0,
+      runeStart: 0,
+      runeEnd: 0,
+      width: browserTextLayoutTokensWidth(tokens, start, end),
+      text: browserTextLayoutTokensText(tokens, start, end),
+      hardBreak: Boolean(hardBreak),
+    };
+    if (start < end && start < tokens.length) {
+      line.byteStart = tokens[start].byteStart;
+      line.byteEnd = tokens[end - 1].byteEnd;
+      line.runeStart = tokens[start].runeStart;
+      line.runeEnd = tokens[end - 1].runeEnd;
+    }
+    return line;
+  }
+
+  function emptyBrowserTextLayoutLineAtIndex(tokens, index, hardBreak) {
+    const line = {
+      start: index,
+      end: index,
+      byteStart: 0,
+      byteEnd: 0,
+      runeStart: 0,
+      runeEnd: 0,
+      width: 0,
+      text: "",
+      hardBreak: Boolean(hardBreak),
+    };
+    if (index >= 0 && index < tokens.length) {
+      line.byteStart = tokens[index].byteStart;
+      line.byteEnd = tokens[index].byteStart;
+      line.runeStart = tokens[index].runeStart;
+      line.runeEnd = tokens[index].runeStart;
+    }
+    return line;
+  }
+
+  function emptyBrowserTextLayoutLineAtEnd(measured) {
+    return {
+      start: measured.tokens.length,
+      end: measured.tokens.length,
+      byteStart: measured.byteLen,
+      byteEnd: measured.byteLen,
+      runeStart: measured.runeCount,
+      runeEnd: measured.runeCount,
+      width: 0,
+      text: "",
+      hardBreak: false,
+    };
+  }
+
+  function layoutBrowserPreLine(tokens, start) {
+    for (let i = start; i < tokens.length; i += 1) {
+      if (tokens[i].kind === "newline") {
+        return [buildBrowserTextLayoutLine(tokens, start, i, true), i + 1];
+      }
+    }
+    return [buildBrowserTextLayoutLine(tokens, start, tokens.length, false), tokens.length];
+  }
+
+  function layoutBrowserWrappedLine(tokens, start, whiteSpace, maxWidth) {
+    let lineWidth = 0;
+    let lastBreak = -1;
+
+    for (let i = start; i < tokens.length; i += 1) {
+      const token = tokens[i];
+      if (token.kind === "newline") {
+        return [buildBrowserTextLayoutLine(tokens, start, i, true), i + 1];
+      }
+
+      let breakAt = lastBreak;
+      if (token.kind === "space") {
+        breakAt = whiteSpace === "normal" ? i : i + 1;
+      }
+
+      const candidateWidth = lineWidth + sceneNumber(token.width, 0);
+      if (maxWidth > 0 && lineWidth === 0 && candidateWidth > maxWidth) {
+        return [buildBrowserTextLayoutLine(tokens, start, i + 1, false), i + 1];
+      }
+      if (maxWidth > 0 && lineWidth > 0 && candidateWidth > maxWidth) {
+        if (breakAt > start) {
+          let next = breakAt;
+          if (whiteSpace === "normal") {
+            while (next < tokens.length && tokens[next].kind === "space") {
+              next += 1;
+            }
+          }
+          return [buildBrowserTextLayoutLine(tokens, start, breakAt, false), next];
+        }
+        return [buildBrowserTextLayoutLine(tokens, start, i, false), i];
+      }
+
+      lineWidth = candidateWidth;
+      lastBreak = breakAt;
+    }
+
+    return [buildBrowserTextLayoutLine(tokens, start, tokens.length, false), tokens.length];
+  }
+
+  function layoutBrowserTextNextLine(measured, start, maxWidth) {
+    const tokens = measured.tokens;
+    if (start < 0) {
+      start = 0;
+    }
+    if (start >= tokens.length) {
+      return [emptyBrowserTextLayoutLineAtEnd(measured), tokens.length];
+    }
+
+    const whiteSpace = normalizeTextLayoutWhiteSpace(measured.whiteSpace);
+    let lineStart = start;
+    if (whiteSpace === "normal") {
+      while (lineStart < tokens.length && tokens[lineStart].kind === "space") {
+        lineStart += 1;
+      }
+      if (lineStart >= tokens.length) {
+        return [emptyBrowserTextLayoutLineAtEnd(measured), tokens.length];
+      }
+    }
+
+    if (tokens[lineStart].kind === "newline") {
+      return [emptyBrowserTextLayoutLineAtIndex(tokens, lineStart, true), lineStart + 1];
+    }
+
+    if (whiteSpace === "pre") {
+      return layoutBrowserPreLine(tokens, lineStart);
+    }
+    return layoutBrowserWrappedLine(tokens, lineStart, whiteSpace, Math.max(0, sceneNumber(maxWidth, 0)));
+  }
+
+  function layoutBrowserText(text, font, maxWidth, whiteSpace, lineHeight) {
+    const prepared = prepareBrowserTextLayout(text, whiteSpace, 4);
+    const measured = measurePreparedBrowserTextLayout(prepared, font);
+    const resolvedLineHeight = Math.max(1, sceneNumber(lineHeight, 1));
+
+    if (measured.tokens.length === 0) {
+      return {
+        lines: [{
+          start: 0,
+          end: 0,
+          byteStart: measured.byteLen,
+          byteEnd: measured.byteLen,
+          runeStart: measured.runeCount,
+          runeEnd: measured.runeCount,
+          width: 0,
+          text: "",
+          hardBreak: false,
+        }],
+        lineCount: 1,
+        height: resolvedLineHeight,
+        maxLineWidth: 0,
+        byteLen: measured.byteLen,
+        runeCount: measured.runeCount,
+      };
+    }
+
+    const lines = [];
+    for (let start = 0; start < measured.tokens.length;) {
+      const nextLine = layoutBrowserTextNextLine(measured, start, maxWidth);
+      lines.push(nextLine[0]);
+      start = nextLine[1] > start ? nextLine[1] : start + 1;
+    }
+
+    if (measured.tokens[measured.tokens.length - 1].kind === "newline") {
+      lines.push(emptyBrowserTextLayoutLineAtEnd(measured));
+    }
+
+    let maxLineWidth = 0;
+    for (const line of lines) {
+      if (line.width > maxLineWidth) {
+        maxLineWidth = line.width;
+      }
+    }
+
+    return {
+      lines,
+      lineCount: lines.length,
+      height: lines.length * resolvedLineHeight,
+      maxLineWidth,
+      byteLen: measured.byteLen,
+      runeCount: measured.runeCount,
+    };
+  }
+
+  if (typeof window.__gosx_text_layout !== "function") {
+    window.__gosx_text_layout = function(text, font, maxWidth, whiteSpace, lineHeight) {
+      return layoutBrowserText(text, font, maxWidth, whiteSpace, lineHeight);
+    };
+  }
+
   // Pending manifest reference, set during init, consumed when runtime is ready.
   let pendingManifest = null;
 
