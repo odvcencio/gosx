@@ -43,6 +43,7 @@
   const sceneLabelLayoutCacheLimit = 512;
   const textLayoutCache = new Map();
   const textLayoutCacheLimit = 1024;
+  const textLayoutInvalidationListeners = new Set();
   let textMeasureContext = null;
   let textLayoutRevision = 0;
   let textLayoutFontObserverInstalled = false;
@@ -68,6 +69,23 @@
     textLayoutRevision += 1;
     textMeasureCache.clear();
     textLayoutCache.clear();
+    for (const listener of Array.from(textLayoutInvalidationListeners)) {
+      try {
+        listener(textLayoutRevision);
+      } catch (error) {
+        console.error("[gosx] text layout invalidation listener failed:", error);
+      }
+    }
+  }
+
+  function onTextLayoutInvalidated(listener) {
+    if (typeof listener !== "function") {
+      return function() {};
+    }
+    textLayoutInvalidationListeners.add(listener);
+    return function() {
+      textLayoutInvalidationListeners.delete(listener);
+    };
   }
 
   function installTextLayoutFontObserver() {
@@ -622,6 +640,50 @@
     ].join("\n");
   }
 
+  function normalizeTextLayoutLine(line, index, textByteLen, textRuneCount) {
+    const item = line && typeof line === "object" ? line : {};
+    const start = Math.max(0, Math.floor(sceneNumber(item.start, index)));
+    const end = Math.max(start, Math.floor(sceneNumber(item.end, start)));
+    const byteStart = Math.max(0, Math.floor(sceneNumber(item.byteStart, 0)));
+    const byteEnd = Math.max(byteStart, Math.floor(sceneNumber(item.byteEnd, byteStart)));
+    const runeStart = Math.max(0, Math.floor(sceneNumber(item.runeStart, 0)));
+    const runeEnd = Math.max(runeStart, Math.floor(sceneNumber(item.runeEnd, runeStart)));
+    return {
+      start,
+      end,
+      byteStart: Math.min(byteStart, textByteLen),
+      byteEnd: Math.min(byteEnd, textByteLen),
+      runeStart: Math.min(runeStart, textRuneCount),
+      runeEnd: Math.min(runeEnd, textRuneCount),
+      width: Math.max(0, sceneNumber(item.width, 0)),
+      text: typeof item.text === "string" ? item.text : "",
+      hardBreak: Boolean(item.hardBreak),
+    };
+  }
+
+  function normalizeTextLayoutResult(result, text, lineHeight) {
+    const source = normalizeTextLayoutNewlines(text);
+    const graphemes = Array.from(source);
+    const runeCount = graphemes.length;
+    const byteLen = graphemes.reduce(function(total, char) {
+        return total + textLayoutCodePointByteLength(char.codePointAt(0));
+      }, 0);
+    const lines = Array.isArray(result && result.lines)
+      ? result.lines.map(function(line, index) {
+          return normalizeTextLayoutLine(line, index, byteLen, runeCount);
+        })
+      : [];
+
+    return {
+      lines,
+      lineCount: Math.max(lines.length, Math.floor(sceneNumber(result && result.lineCount, lines.length))),
+      height: Math.max(0, sceneNumber(result && result.height, lines.length * Math.max(1, sceneNumber(lineHeight, 1)))),
+      maxLineWidth: Math.max(0, sceneNumber(result && result.maxLineWidth, 0)),
+      byteLen: Math.max(0, Math.min(byteLen, Math.floor(sceneNumber(result && result.byteLen, byteLen)))),
+      runeCount: Math.max(0, Math.min(runeCount, Math.floor(sceneNumber(result && result.runeCount, runeCount)))),
+    };
+  }
+
   function gosxTextLayout(text, font, maxWidth, whiteSpace, lineHeight) {
     const cacheKey = textLayoutCacheKey(text, font, maxWidth, whiteSpace, lineHeight);
     if (textLayoutCache.has(cacheKey)) {
@@ -629,9 +691,18 @@
     }
 
     const impl = currentTextLayoutImpl();
-    const result = impl
-      ? impl(text, font, maxWidth, whiteSpace, lineHeight)
-      : layoutBrowserText(text, font, maxWidth, whiteSpace, lineHeight);
+    let result = null;
+    if (impl) {
+      try {
+        result = impl(text, font, maxWidth, whiteSpace, lineHeight);
+      } catch (error) {
+        console.error("[gosx] text layout implementation failed:", error);
+      }
+    }
+    if (!result || !Array.isArray(result.lines)) {
+      result = layoutBrowserText(text, font, maxWidth, whiteSpace, lineHeight);
+    }
+    result = normalizeTextLayoutResult(result, text, lineHeight);
 
     if (textLayoutCache.size >= textLayoutCacheLimit) {
       const oldest = textLayoutCache.keys().next();
@@ -3519,8 +3590,24 @@
     let latestBundle = null;
     const labelLayoutCache = new Map();
     const labelElements = new Map();
+    let labelRefreshHandle = null;
     const dragHandle = setupSceneDragInteractions(canvas, props, width, height, function() {
       return latestBundle;
+    });
+    const releaseTextLayoutListener = onTextLayoutInvalidated(function() {
+      if (disposed || !latestBundle) {
+        return;
+      }
+      if (labelRefreshHandle != null) {
+        return;
+      }
+      labelRefreshHandle = engineFrame(function() {
+        labelRefreshHandle = null;
+        if (disposed || !latestBundle) {
+          return;
+        }
+        renderSceneLabels(labelLayer, latestBundle, labelLayoutCache, labelElements);
+      });
     });
 
     let frameHandle = null;
@@ -3575,10 +3662,14 @@
       },
       dispose() {
         disposed = true;
+        releaseTextLayoutListener();
         dragHandle.dispose();
         renderer.dispose();
         if (frameHandle != null) {
           cancelEngineFrame(frameHandle);
+        }
+        if (labelRefreshHandle != null) {
+          cancelEngineFrame(labelRefreshHandle);
         }
         if (canvas.parentNode === ctx.mount) {
           ctx.mount.removeChild(canvas);

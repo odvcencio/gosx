@@ -1091,6 +1091,85 @@ test("bootstrap adopts and caches runtime-provided text layout implementations",
   assert.equal(second.maxLineWidth, 24);
 });
 
+test("bootstrap falls back to browser layout when runtime text layout fails", () => {
+  const env = createContext({});
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+
+  env.context.__gosx_text_layout = function() {
+    throw new Error("boom");
+  };
+
+  env.context.__gosx_runtime_ready();
+
+  const layout = env.context.__gosx_text_layout("hello world from gosx", "600 16px serif", 88, "normal", 20);
+  assert.deepEqual(Array.from(layout.lines, (line) => line.text), ["hello world", "from gosx"]);
+  assert.equal(layout.lineCount, 2);
+  assert.equal(env.consoleLogs.error.length > 0, true);
+});
+
+test("bootstrap rerenders static Scene3D labels after font loading changes metrics", async () => {
+  let scale = 1;
+  const fonts = new FakeFontSet();
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-font-refresh";
+
+  const env = createContext({
+    elements: [mount],
+    fonts,
+    measureText(text) {
+      return String(text).length * 8 * scale;
+    },
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-font-refresh",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-font-refresh",
+          jsExport: "GoSXScene3D",
+          props: {
+            width: 520,
+            height: 320,
+            autoRotate: false,
+            scene: {
+              objects: [
+                { kind: "box", width: 1.8, height: 1.2, depth: 1.1, x: -0.8, y: 0.1, z: 0.2, color: "#8de1ff" },
+              ],
+              labels: [
+                {
+                  id: "font-refresh-label",
+                  text: "hello world from gosx",
+                  x: 0,
+                  y: 1.3,
+                  z: 0.8,
+                  maxWidth: 88,
+                },
+              ],
+            },
+          },
+          capabilities: ["canvas"],
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const labelLayer = mount.children[1];
+  assert.equal(labelLayer.children.length, 1);
+  assert.equal(labelLayer.children[0].children.length, 2);
+
+  scale = 2;
+  fonts.dispatch("loadingdone");
+  await flushAsyncWork();
+
+  assert.equal(labelLayer.children[0].children.length, 4);
+  assert.equal(labelLayer.children[0].textContent, "helloworldfromgosx");
+  assert.equal(env.consoleLogs.error.length, 0);
+});
+
 test("bootstrap infers binary island programs from .gxi refs", async () => {
   const wrapper = new FakeElement("div", null);
   const componentRoot = new FakeElement("div", null);
