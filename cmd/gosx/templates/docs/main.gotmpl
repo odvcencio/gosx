@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"image"
 	"image/color"
 	"image/png"
@@ -47,6 +49,9 @@ func main() {
 	if err := env.LoadDir(root, ""); err != nil {
 		log.Fatal(err)
 	}
+	docsapp.BindPublicAssetURL(func(path string) string {
+		return versionedPublicAssetURL(root, path)
+	})
 	port := getenv("PORT", "8080")
 	sessions := session.MustNew(getenv("SESSION_SECRET", "gosx-docs-session-secret"), session.Options{})
 	authn := auth.New(sessions, auth.Options{LoginPath: "/docs/auth"})
@@ -62,7 +67,7 @@ func main() {
 
 	router := route.NewRouter()
 	router.SetLayout(func(ctx *route.RouteContext, body gosx.Node) gosx.Node {
-		ctx.AddHead(server.Stylesheet("docs.css"))
+		ctx.AddHead(server.Stylesheet(docsapp.PublicAssetURL("docs.css")))
 		ctx.AddHead(server.NavigationScript())
 		return server.HTMLDocument(ctx.Title("GoSX Docs"), ctx.Head(), body)
 	})
@@ -198,6 +203,16 @@ func getenv(key, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+func versionedPublicAssetURL(root, name string) string {
+	base := server.AssetURL(name)
+	payload, err := os.ReadFile(filepath.Join(root, "public", filepath.FromSlash(name)))
+	if err != nil {
+		return base
+	}
+	sum := sha256.Sum256(payload)
+	return base + "?v=" + hex.EncodeToString(sum[:6])
 }
 
 func ensureDocsSampleAssets(root string) error {

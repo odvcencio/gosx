@@ -669,7 +669,7 @@ func main() {
       var code = ta.value;
       // Syntax highlight via WASM
       if (typeof window.__gosx_highlight === 'function') {
-        hl.innerHTML = window.__gosx_highlight(code) + '\n';
+        hl.innerHTML = window.__gosx_highlight(code, 'go') + '\n';
       } else {
         hl.textContent = code + '\n';
       }
@@ -777,18 +777,11 @@ func main() {
 // serverHighlight produces syntax-highlighted HTML on the server.
 // This is the initial render — the client updates it live via __gosx_highlight.
 func serverHighlight(source string) string {
-	return highlight.Go(source)
+	return highlight.HTML(highlight.LangGo, source)
 }
 
 func lineNumbersHTML(count int) string {
-	var b strings.Builder
-	for i := 1; i <= count; i++ {
-		if i > 1 {
-			b.WriteByte('\n')
-		}
-		fmt.Fprintf(&b, "%d", i)
-	}
-	return b.String()
+	return highlight.LineNumbers(count)
 }
 
 // SettingsPage renders application settings.

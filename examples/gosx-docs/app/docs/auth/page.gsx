@@ -69,7 +69,7 @@ func Page() Node {
 				<p>
 					GoSX ships begin/finish handlers plus a browser helper so apps do not have to hand-roll base64 decoding, credential serialization, or signature verification.
 				</p>
-				<pre class="code-block">{`await GoSXWebAuthn.register(
+				{DocsCodeBlock("javascript", `await GoSXWebAuthn.register(
   "/auth/webauthn/register/options",
   "/auth/webauthn/register",
   { csrfToken: "${csrf.token}" }
@@ -79,7 +79,7 @@ await GoSXWebAuthn.authenticate(
   "/auth/webauthn/login/options",
   "/auth/webauthn/login",
   { csrfToken: "${csrf.token}", next: "/docs/auth" }
-)`}</pre>
+)`)}
 				<If when={flash.passkey}>
 					<p class="form-status">{flash.passkey.status}</p>
 				</If>

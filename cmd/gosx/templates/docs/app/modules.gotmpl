@@ -11,6 +11,7 @@ var docsMagicLinks *auth.MagicLinks
 var docsWebAuthn *auth.WebAuthn
 var docsOAuth *auth.OAuth
 var docsOAuthProviders []map[string]string
+var docsPublicAssetURL func(string) string
 
 func BindAuth(manager *auth.Manager) {
 	docsAuth = manager
@@ -47,6 +48,17 @@ func OAuthManager() *auth.OAuth {
 
 func OAuthProviders() []map[string]string {
 	return append([]map[string]string(nil), docsOAuthProviders...)
+}
+
+func BindPublicAssetURL(fn func(string) string) {
+	docsPublicAssetURL = fn
+}
+
+func PublicAssetURL(path string) string {
+	if docsPublicAssetURL != nil {
+		return docsPublicAssetURL(path)
+	}
+	return server.AssetURL(path)
 }
 
 func RegisterDocsPage(title, description string, opts route.FileModuleOptions) {

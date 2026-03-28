@@ -1,59 +1,13 @@
-apiVersion: apps/v1
-kind: Deployment
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
 metadata:
-  name: gosx-demo
-  namespace: draco-quest
-  labels:
-    app: gosx-demo
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: gosx-demo
-  template:
-    metadata:
-      labels:
-        app: gosx-demo
-    spec:
-      containers:
-        - name: gosx-demo
-          image: harbor.draco.quest/library/gosx-cms-demo:20260327-161537
-          imagePullPolicy: IfNotPresent
-          ports:
-            - containerPort: 3000
-              name: http
-          readinessProbe:
-            httpGet:
-              path: /readyz
-              port: http
-            initialDelaySeconds: 3
-            periodSeconds: 5
-          livenessProbe:
-            httpGet:
-              path: /healthz
-              port: http
-            initialDelaySeconds: 5
-            periodSeconds: 10
-          resources:
-            requests:
-              cpu: 50m
-              memory: 64Mi
-            limits:
-              cpu: 250m
-              memory: 256Mi
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: gosx-demo
+  name: gosx-demo-redirect
   namespace: draco-quest
 spec:
-  selector:
-    app: gosx-demo
-  ports:
-    - name: http
-      port: 80
-      targetPort: http
+  redirectRegex:
+    regex: ^https?://gosx-demo\.m31labs\.dev/(.*)
+    replacement: https://gosx.m31labs.dev/$1
+    permanent: true
 ---
 apiVersion: networking.k8s.io/v1
 kind: Ingress
@@ -62,6 +16,7 @@ metadata:
   namespace: draco-quest
   annotations:
     cert-manager.io/cluster-issuer: cloudflare-issuer
+    traefik.ingress.kubernetes.io/router.middlewares: draco-quest-gosx-demo-redirect@kubernetescrd
     traefik.ingress.kubernetes.io/router.priority: "20"
 spec:
   ingressClassName: traefik
@@ -73,7 +28,7 @@ spec:
             pathType: Prefix
             backend:
               service:
-                name: gosx-demo
+                name: gosx-docs
                 port:
                   name: http
   tls:

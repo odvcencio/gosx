@@ -18,24 +18,24 @@ func Page() Node {
 			<span class="inline-code">[slug]</span>
 			becomes a path parameter.
 		</p>
-		<pre class="code-block">{`router := route.NewRouter()
-router.AddDir("./app", route.FileRoutesOptions{})`}</pre>
-		<pre class="code-block">{`{
+		{DocsCodeBlock("go", `router := route.NewRouter()
+router.AddDir("./app", route.FileRoutesOptions{})`)}
+		{DocsCodeBlock("json", `{
   "cache": {
     "public": true,
     "maxAge": "45s",
     "staleWhileRevalidate": "5m"
   },
   "cacheTags": ["docs-pages"]
-}`}</pre>
-		<pre class="code-block">{`func init() {
+}`)}
+		{DocsCodeBlock("go", `func init() {
   route.MustRegisterFileModuleHere(route.FileModuleOptions{
     Load:     ...,
     Metadata: ...,
     Actions:  ...,
   })
-}`}</pre>
-		<pre class="code-block">{`func init() {
+}`)}
+		{DocsCodeBlock("go", `func init() {
   route.MustRegisterDirModuleHere(route.DirModuleOptions{
     Middleware: []route.Middleware{...},
     Configure: func(ctx *route.RouteContext, page route.FilePage) error {
@@ -43,7 +43,7 @@ router.AddDir("./app", route.FileRoutesOptions{})`}</pre>
       return nil
     },
   })
-}`}</pre>
+}`)}
 		<section class="note-grid">
 			<div class="note">
 				<strong>Static pages</strong>

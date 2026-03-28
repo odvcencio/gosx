@@ -26,7 +26,7 @@ spec:
     spec:
       containers:
         - name: gosx-docs
-          image: harbor.draco.quest/library/gosx-docs:20260327-161537
+          image: harbor.draco.quest/library/gosx-docs:20260327-215616
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8080
