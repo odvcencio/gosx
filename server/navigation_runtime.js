@@ -10,9 +10,14 @@
   const SCRIPT_ROLE = "data-gosx-script";
   const LINK_ATTR = "data-gosx-link";
   const PREFETCH_ATTR = "data-gosx-prefetch";
+  const MAIN_ATTR = "data-gosx-main";
+  const ANNOUNCE_ATTR = "data-gosx-announce";
+  const ANNOUNCER_ATTR = "data-gosx-announcer";
+  const MANAGED_FOCUS_ATTR = "data-gosx-focus-managed";
   const URL_ATTRS = ["href", "src", "action", "poster"];
   const scriptCache = window.__gosx_loaded_scripts || new Map();
   const pageCache = window.__gosx_page_cache || new Map();
+  let announceSeq = 0;
   window.__gosx_loaded_scripts = scriptCache;
   window.__gosx_page_cache = pageCache;
 
@@ -275,6 +280,183 @@
     return Array.from(element.attributes).map((attr) => ({ name: attr.name, value: attr.value }));
   }
 
+  function findElement(root, predicate) {
+    const stack = [];
+    if (root) {
+      stack.push(root);
+    }
+
+    while (stack.length > 0) {
+      const node = stack.pop();
+      if (!node || node.nodeType !== 1) {
+        continue;
+      }
+      if (predicate(node)) {
+        return node;
+      }
+
+      const children = toArray(node.childNodes);
+      for (let i = children.length - 1; i >= 0; i--) {
+        stack.push(children[i]);
+      }
+    }
+
+    return null;
+  }
+
+  function normalizeTextValue(value) {
+    return String(value || "").replace(/\s+/g, " ").trim();
+  }
+
+  function findElementByID(root, id) {
+    if (!id) return null;
+    return findElement(root, function(node) {
+      return node.getAttribute && node.getAttribute("id") === id;
+    });
+  }
+
+  function isNaturallyFocusable(node) {
+    if (!node || node.nodeType !== 1) {
+      return false;
+    }
+    if (node.hasAttribute && node.hasAttribute("tabindex")) {
+      return true;
+    }
+
+    switch (String(node.tagName || "").toUpperCase()) {
+      case "A":
+        return !!node.getAttribute("href");
+      case "AUDIO":
+      case "VIDEO":
+        return node.hasAttribute("controls");
+      case "BUTTON":
+      case "IFRAME":
+      case "INPUT":
+      case "SELECT":
+      case "SUMMARY":
+      case "TEXTAREA":
+        return !node.hasAttribute("disabled");
+      default:
+        return node.hasAttribute && node.hasAttribute("contenteditable");
+    }
+  }
+
+  function ensureFocusable(node) {
+    if (!node || !node.setAttribute || isNaturallyFocusable(node)) {
+      return;
+    }
+    if (!node.hasAttribute("tabindex")) {
+      node.setAttribute("tabindex", "-1");
+      node.setAttribute(MANAGED_FOCUS_ATTR, "");
+    }
+  }
+
+  function focusElement(node, preventScroll) {
+    if (!node || typeof node.focus !== "function") {
+      return;
+    }
+
+    ensureFocusable(node);
+    try {
+      node.focus(preventScroll ? { preventScroll: true } : undefined);
+    } catch (_) {
+      node.focus();
+    }
+  }
+
+  function ensureNavigationAnnouncer() {
+    const existing = findElement(document.body, function(node) {
+      return node.hasAttribute && node.hasAttribute(ANNOUNCER_ATTR);
+    });
+    if (existing) {
+      return existing;
+    }
+
+    const region = document.createElement("div");
+    region.setAttribute(ANNOUNCER_ATTR, "");
+    region.setAttribute("role", "status");
+    region.setAttribute("aria-live", "polite");
+    region.setAttribute("aria-atomic", "true");
+    region.setAttribute("style", "position:absolute;left:-9999px;width:1px;height:1px;overflow:hidden;");
+    document.body.appendChild(region);
+    return region;
+  }
+
+  function announceNavigation(message) {
+    const text = normalizeTextValue(message);
+    if (!text) {
+      return "";
+    }
+
+    const region = ensureNavigationAnnouncer();
+    region.textContent = "";
+    announceSeq += 1;
+    const currentSeq = announceSeq;
+    Promise.resolve().then(function() {
+      if (currentSeq !== announceSeq) {
+        return;
+      }
+      region.textContent = text;
+    });
+    return text;
+  }
+
+  function customAnnouncement(root) {
+    const node = findElement(root, function(candidate) {
+      return candidate.hasAttribute && candidate.hasAttribute(ANNOUNCE_ATTR);
+    });
+    if (!node) {
+      return "";
+    }
+
+    const attrValue = normalizeTextValue(node.getAttribute(ANNOUNCE_ATTR));
+    if (attrValue) {
+      return attrValue;
+    }
+    return normalizeTextValue(node.textContent);
+  }
+
+  function resolveMainTarget(root) {
+    return findElement(root, function(node) {
+      return node.hasAttribute && node.hasAttribute(MAIN_ATTR);
+    }) || findElement(root, function(node) {
+      return isElement(node, "MAIN");
+    }) || findElement(root, function(node) {
+      return String((node.getAttribute && node.getAttribute("role")) || "").toLowerCase() === "main";
+    }) || findElement(root, function(node) {
+      return isElement(node, "H1");
+    }) || document.body;
+  }
+
+  function resolveHashTarget(url) {
+    const hash = String(url && url.hash || "");
+    if (hash.length <= 1) {
+      return null;
+    }
+
+    let targetID = hash.slice(1);
+    try {
+      targetID = decodeURIComponent(targetID);
+    } catch (_) {}
+
+    return findElementByID(document.body, targetID);
+  }
+
+  function resolveNavigationA11y(nextURL) {
+    const url = new URL(nextURL, window.location.href);
+    const hashTarget = resolveHashTarget(url);
+    const focusTarget = hashTarget || resolveMainTarget(document.body);
+    const announcement = customAnnouncement(document.body)
+      || normalizeTextValue(document.title)
+      || normalizeTextValue(focusTarget && focusTarget.textContent);
+
+    return {
+      announcement: announcement,
+      focusTarget: focusTarget,
+      hashTarget: hashTarget,
+    };
+  }
+
   function replaceBody(nextDoc, baseURL) {
     const body = document.body;
     const nextBody = nextDoc.body;
@@ -467,13 +649,22 @@
     const bootstrapLoadedNow = await ensureManagedScripts(nextDoc, nextURL);
     await bootstrapCurrentPage(bootstrapLoadedNow);
 
-    if (!opts.preserveScroll && typeof window.scrollTo === "function") {
-      window.scrollTo(0, 0);
+    const a11y = resolveNavigationA11y(nextURL);
+    if (!opts.preserveScroll) {
+      if (a11y.hashTarget && typeof a11y.hashTarget.scrollIntoView === "function") {
+        a11y.hashTarget.scrollIntoView();
+      } else if (typeof window.scrollTo === "function") {
+        window.scrollTo(0, 0);
+      }
     }
+    focusElement(a11y.focusTarget, true);
+    const announcement = announceNavigation(a11y.announcement);
 
     if (typeof document.dispatchEvent === "function" && typeof CustomEvent === "function") {
       document.dispatchEvent(new CustomEvent("gosx:navigate", {
         detail: {
+          announcement: announcement,
+          focusTargetId: a11y.focusTarget && a11y.focusTarget.getAttribute ? (a11y.focusTarget.getAttribute("id") || "") : "",
           url: nextURL,
           replace: !!opts.replace,
         },
