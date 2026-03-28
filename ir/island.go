@@ -24,6 +24,9 @@ func LowerIsland(prog *Program, compIdx int) (*program.Program, error) {
 	if comp.Scope != nil {
 		for _, sig := range comp.Scope.Signals {
 			scope.Signals[sig.Name] = true
+			if sig.Local != "" {
+				scope.SignalAliases[sig.Local] = sig.Name
+			}
 		}
 		for _, c := range comp.Scope.Computeds {
 			scope.Signals[c.Name] = true // computeds read like signals
@@ -92,8 +95,13 @@ func LowerIsland(prog *Program, compIdx int) (*program.Program, error) {
 
 		for _, handler := range comp.Scope.Handlers {
 			h := program.Handler{Name: handler.Name}
+			handlerScope := cloneExprScope(scope)
+			handlerScope.EventFields["value"] = true
+			handlerScope.EventFields["checked"] = true
+			handlerScope.EventFields["key"] = true
+			handlerScope.EventFields["selectedIndex"] = true
 			for _, stmtSource := range handler.Statements {
-				stmtExprs, stmtID, err := ParseExpr(stmtSource, scope)
+				stmtExprs, stmtID, err := ParseExpr(stmtSource, handlerScope)
 				if err != nil {
 					return nil, fmt.Errorf("parse handler %s statement %q: %w", handler.Name, stmtSource, err)
 				}
@@ -119,9 +127,11 @@ func LowerIsland(prog *Program, compIdx int) (*program.Program, error) {
 // node tree to build the expression scope needed for parsing island expressions.
 func buildIslandScope(prog *Program, comp Component) *ExprScope {
 	scope := &ExprScope{
-		Signals:  make(map[string]bool),
-		Props:    make(map[string]bool),
-		Handlers: make(map[string]bool),
+		Signals:       make(map[string]bool),
+		SignalAliases: make(map[string]string),
+		Props:         make(map[string]bool),
+		Handlers:      make(map[string]bool),
+		EventFields:   make(map[string]bool),
 	}
 
 	// Scan the component's nodes for event handler references
@@ -147,6 +157,42 @@ func buildIslandScope(prog *Program, comp Component) *ExprScope {
 	// by default — the expression parser will resolve them against scope.
 
 	return scope
+}
+
+func cloneExprScope(scope *ExprScope) *ExprScope {
+	if scope == nil {
+		return &ExprScope{
+			Signals:       make(map[string]bool),
+			SignalAliases: make(map[string]string),
+			Props:         make(map[string]bool),
+			Handlers:      make(map[string]bool),
+			EventFields:   make(map[string]bool),
+		}
+	}
+
+	next := &ExprScope{
+		Signals:       make(map[string]bool, len(scope.Signals)),
+		SignalAliases: make(map[string]string, len(scope.SignalAliases)),
+		Props:         make(map[string]bool, len(scope.Props)),
+		Handlers:      make(map[string]bool, len(scope.Handlers)),
+		EventFields:   make(map[string]bool, len(scope.EventFields)),
+	}
+	for key, value := range scope.Signals {
+		next.Signals[key] = value
+	}
+	for key, value := range scope.SignalAliases {
+		next.SignalAliases[key] = value
+	}
+	for key, value := range scope.Props {
+		next.Props[key] = value
+	}
+	for key, value := range scope.Handlers {
+		next.Handlers[key] = value
+	}
+	for key, value := range scope.EventFields {
+		next.EventFields[key] = value
+	}
+	return next
 }
 
 type islandLowerer struct {

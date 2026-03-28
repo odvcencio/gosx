@@ -80,9 +80,10 @@ type ComponentScope struct {
 }
 
 // SignalInfo describes a signal declaration found in the component body.
-// Pattern: name := signal.New(initExpr)
+// Pattern: name := signal.New(initExpr) or name := signal.NewShared(key, initExpr)
 type SignalInfo struct {
-	Name     string // variable name (e.g., "count")
+	Name     string // runtime signal name (e.g., "count" or "$dashboard.state")
+	Local    string // local variable name used inside the component (e.g., "count")
 	InitExpr string // source text of the init expression (e.g., "0")
 	TypeHint string // inferred type from init value (e.g., "int", "string")
 }

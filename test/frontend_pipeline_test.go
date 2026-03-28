@@ -192,6 +192,28 @@ func Form() Node {
 	t.Logf("incAge patches: %s", pj2)
 }
 
+func TestFrontendInputEventValueFromSource(t *testing.T) {
+	b := compileAndHydrate(t, `package main
+
+//gosx:island
+func Editor() Node {
+	code := signal.New("hello")
+	updateCode := func() { code.Set(value) }
+	return <div>
+		<textarea value={code.Get()} onInput={updateCode}></textarea>
+		<span>{code.Get()}</span>
+	</div>
+}`)
+
+	patches, err := b.DispatchAction("test-0", "updateCode", `{"value":"policy"}`)
+	if err != nil {
+		t.Fatalf("updateCode: %v", err)
+	}
+	if len(patches) == 0 {
+		t.Fatal("expected patches when updating textarea value from event payload")
+	}
+}
+
 func TestFrontendBinaryRoundTrip(t *testing.T) {
 	source := `package main
 
@@ -339,7 +361,7 @@ func TestFrontendSharedStateFromSource(t *testing.T) {
 
 //gosx:island
 func SharedCounter() Node {
-	count := signal.New(0)
+	count := signal.NewShared("count", 0)
 	inc := func() { count.Set(count.Get() + 1) }
 	return <div><span>{count.Get()}</span><button onClick={inc}>+</button></div>
 }`
@@ -377,6 +399,13 @@ func SharedCounter() Node {
 		t.Fatalf("expected 2 islands, got %d", b.IslandCount())
 	}
 
+	var sharedPatches int
+	b.SetPatchCallback(func(islandID, patchJSON string) {
+		if islandID == "b" && patchJSON != "" {
+			sharedPatches++
+		}
+	})
+
 	// Dispatch on A
 	p1, err := b.DispatchAction("a", "inc", "{}")
 	if err != nil {
@@ -399,7 +428,10 @@ func SharedCounter() Node {
 	pj2, _ := bridge.MarshalPatches(p2)
 	t.Logf("Island A patches: %s", pj1)
 	t.Logf("Island B patches: %s", pj2)
-	t.Log("Two independent islands from same source: both produce patches")
+	if sharedPatches == 0 {
+		t.Fatal("expected island B to receive shared-signal patches after island A dispatch")
+	}
+	t.Log("Two islands from same source now share state through signal.NewShared()")
 }
 
 func TestFrontendIslandDispose(t *testing.T) {

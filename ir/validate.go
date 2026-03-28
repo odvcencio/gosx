@@ -157,13 +157,17 @@ func validateIslandExprs(prog *Program, comp *Component) []Diagnostic {
 	// Build validation scope from the component's body analysis.
 	// This lets the expression parser resolve signal/handler identifiers.
 	scope := &ExprScope{
-		Signals:  map[string]bool{},
-		Props:    map[string]bool{},
-		Handlers: map[string]bool{},
+		Signals:       map[string]bool{},
+		SignalAliases: map[string]string{},
+		Props:         map[string]bool{},
+		Handlers:      map[string]bool{},
 	}
 	if comp.Scope != nil {
 		for _, sig := range comp.Scope.Signals {
 			scope.Signals[sig.Name] = true
+			if sig.Local != "" {
+				scope.SignalAliases[sig.Local] = sig.Name
+			}
 		}
 		for _, c := range comp.Scope.Computeds {
 			scope.Signals[c.Name] = true

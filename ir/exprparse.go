@@ -10,9 +10,11 @@ import (
 
 // ExprScope holds the names known at the island level for resolving identifiers.
 type ExprScope struct {
-	Signals  map[string]bool // signal names
-	Props    map[string]bool // prop names
-	Handlers map[string]bool // handler names
+	Signals       map[string]bool   // runtime signal names
+	SignalAliases map[string]string // local variable -> runtime signal name
+	Props         map[string]bool   // prop names
+	Handlers      map[string]bool   // handler names
+	EventFields   map[string]bool   // current event payload fields available inside handlers
 }
 
 // ParseExpr parses a GoSX island expression into VM opcodes.
@@ -641,6 +643,22 @@ func (p *exprParser) buildFunctionCall(name string, args []program.ExprID) (prog
 }
 
 func (p *exprParser) resolveIdent(name string) (program.ExprID, error) {
+	if p.scope != nil && p.scope.EventFields != nil && p.scope.EventFields[name] {
+		return p.addExpr(program.Expr{
+			Op:    program.OpEventGet,
+			Value: name,
+			Type:  program.TypeAny,
+		}), nil
+	}
+	if p.scope != nil && p.scope.SignalAliases != nil {
+		if signalName, ok := p.scope.SignalAliases[name]; ok && signalName != "" {
+			return p.addExpr(program.Expr{
+				Op:    program.OpSignalGet,
+				Value: signalName,
+				Type:  program.TypeAny,
+			}), nil
+		}
+	}
 	if p.scope != nil && p.scope.Signals != nil && p.scope.Signals[name] {
 		return p.addExpr(program.Expr{
 			Op:    program.OpSignalGet,

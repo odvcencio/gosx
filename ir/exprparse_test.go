@@ -244,6 +244,34 @@ func TestParseSignalGetMethod(t *testing.T) {
 	}
 }
 
+func TestParseSharedSignalAliasMethods(t *testing.T) {
+	scope := &ExprScope{
+		Signals:       map[string]bool{"$count": true},
+		SignalAliases: map[string]string{"count": "$count"},
+	}
+	getExprs, getRootID, err := ParseExpr("count.Get()", scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if getExprs[getRootID].Op != program.OpSignalGet {
+		t.Fatal("expected SignalGet")
+	}
+	if getExprs[getRootID].Value != "$count" {
+		t.Fatalf("expected $count, got %q", getExprs[getRootID].Value)
+	}
+
+	setExprs, setRootID, err := ParseExpr("count.Set(1)", scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if setExprs[setRootID].Op != program.OpSignalSet {
+		t.Fatal("expected SignalSet")
+	}
+	if setExprs[setRootID].Value != "$count" {
+		t.Fatalf("expected $count, got %q", setExprs[setRootID].Value)
+	}
+}
+
 func TestParseSignalUpdateMethod(t *testing.T) {
 	scope := &ExprScope{
 		Signals:  map[string]bool{"count": true},

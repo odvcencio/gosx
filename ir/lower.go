@@ -2,6 +2,7 @@ package ir
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	gotreesitter "github.com/odvcencio/gotreesitter"
@@ -108,9 +109,10 @@ func (l *lowerer) precedingText(n *gotreesitter.Node) string {
 //
 // Recognized patterns:
 //
-//	count := signal.New(0)          → SignalInfo{Name: "count", InitExpr: "0"}
-//	doubled := signal.Derive(...)   → ComputedInfo{Name: "doubled", BodyExpr: "..."}
-//	increment := func() { ... }    → HandlerInfo{Name: "increment", Statements: [...]}
+//	count := signal.New(0)                  → SignalInfo{Name: "count", InitExpr: "0"}
+//	state := signal.NewShared("app", ...)  → SignalInfo{Name: "$app", InitExpr: "..."}
+//	doubled := signal.Derive(...)          → ComputedInfo{Name: "doubled", BodyExpr: "..."}
+//	increment := func() { ... }            → HandlerInfo{Name: "increment", Statements: [...]}
 func (l *lowerer) analyzeBody(bodyNode *gotreesitter.Node) *ComponentScope {
 	scope := &ComponentScope{
 		Locals: make(map[string]string),
@@ -199,10 +201,29 @@ func (l *lowerer) analyzeShortVarDecl(n *gotreesitter.Node, scope *ComponentScop
 
 			// signal.New(...)
 			if funcText == "signal.New" && argsNode != nil {
-				initExpr := l.extractFirstArg(argsNode)
+				initExpr := l.extractArg(argsNode, 0)
 				typeHint := l.inferTypeHint(initExpr)
 				scope.Signals = append(scope.Signals, SignalInfo{
 					Name:     varName,
+					Local:    varName,
+					InitExpr: initExpr,
+					TypeHint: typeHint,
+				})
+				scope.Locals[varName] = "signal"
+				return
+			}
+
+			// signal.NewShared("name", init) / signal.Shared("name", init)
+			if (funcText == "signal.NewShared" || funcText == "signal.Shared") && argsNode != nil {
+				sharedName := l.normalizeSharedSignalName(l.extractArg(argsNode, 0))
+				initExpr := l.extractArg(argsNode, 1)
+				if sharedName == "" || initExpr == "" {
+					return
+				}
+				typeHint := l.inferTypeHint(initExpr)
+				scope.Signals = append(scope.Signals, SignalInfo{
+					Name:     sharedName,
+					Local:    varName,
 					InitExpr: initExpr,
 					TypeHint: typeHint,
 				})
@@ -238,13 +259,38 @@ func (l *lowerer) analyzeShortVarDecl(n *gotreesitter.Node, scope *ComponentScop
 	}
 }
 
-// extractFirstArg gets the source text of the first argument in an argument_list.
-func (l *lowerer) extractFirstArg(argsNode *gotreesitter.Node) string {
+// extractArg gets the source text of the argument at the given position in an
+// argument_list.
+func (l *lowerer) extractArg(argsNode *gotreesitter.Node, index int) string {
+	if index < 0 {
+		return ""
+	}
 	for i := 0; i < int(argsNode.NamedChildCount()); i++ {
 		child := argsNode.NamedChild(i)
-		return l.text(child)
+		if i == index {
+			return l.text(child)
+		}
 	}
 	return ""
+}
+
+func (l *lowerer) normalizeSharedSignalName(expr string) string {
+	expr = strings.TrimSpace(expr)
+	if expr == "" {
+		return ""
+	}
+	name, err := strconv.Unquote(expr)
+	if err != nil {
+		name = expr
+	}
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return ""
+	}
+	if strings.HasPrefix(name, "$") {
+		return name
+	}
+	return "$" + name
 }
 
 // extractDeriveBody extracts the return expression from a signal.Derive(func() T { return expr }) call.
