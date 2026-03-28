@@ -908,6 +908,53 @@ func Page() Node {
 	}
 }
 
+func TestRouterAddDirRendersFileLocalIslands(t *testing.T) {
+	root := t.TempDir()
+	writeRouteFile(t, root, "page.gsx", `package app
+
+//gosx:island
+func Counter(props any) Node {
+	count := signal.New(props.Initial)
+	increment := func() { count.Set(count.Get() + 1) }
+	return <div class="counter">
+		<span>{count.Get()}</span>
+		<button onClick={increment}>+</button>
+	</div>
+}
+
+func Page() Node {
+	return <main class="demo-page">
+		<Counter Initial={2} />
+	</main>
+}
+`)
+
+	router := NewRouter()
+	router.SetLayout(func(ctx *RouteContext, body gosx.Node) gosx.Node {
+		return server.HTMLDocument("Demo", ctx.Head(), body)
+	})
+	if err := router.AddDir(root, FileRoutesOptions{}); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	w := httptest.NewRecorder()
+	router.Build().ServeHTTP(w, req)
+
+	body := w.Body.String()
+	for _, snippet := range []string{
+		`class="demo-page"`,
+		`data-gosx-island="Counter"`,
+		`data-gosx-on-click="increment"`,
+		`<script id="gosx-manifest" type="application/json">`,
+		`data-gosx-script="bootstrap"`,
+	} {
+		if !strings.Contains(body, snippet) {
+			t.Fatalf("expected %q in %q", snippet, body)
+		}
+	}
+}
+
 func TestRouterAddDirAutoResolvesGoComponentsFromFuncsAndValues(t *testing.T) {
 	root := t.TempDir()
 	writeRouteFile(t, root, "crew/page.gsx", `package docs
