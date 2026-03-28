@@ -210,8 +210,8 @@ func Prepare(text string, opts PrepareOptions) Prepared {
 	tokens := make([]Token, 0, len(text)/2+1)
 	var word strings.Builder
 	var spaces strings.Builder
-	wordByteStart, wordByteEnd := -1, 0
-	wordRuneStart, wordRuneEnd := -1, 0
+	wordByteStart := -1
+	wordRuneStart := -1
 	spaceByteStart, spaceByteEnd := -1, 0
 	spaceRuneStart, spaceRuneEnd := -1, 0
 
@@ -219,17 +219,10 @@ func Prepare(text string, opts PrepareOptions) Prepared {
 		if word.Len() == 0 {
 			return
 		}
-		tokens = append(tokens, Token{
-			Kind:      TokenWord,
-			Text:      word.String(),
-			ByteStart: wordByteStart,
-			ByteEnd:   wordByteEnd,
-			RuneStart: wordRuneStart,
-			RuneEnd:   wordRuneEnd,
-		})
+		tokens = append(tokens, appendWordRunTokens(word.String(), wordByteStart, wordRuneStart)...)
 		word.Reset()
-		wordByteStart, wordByteEnd = -1, 0
-		wordRuneStart, wordRuneEnd = -1, 0
+		wordByteStart = -1
+		wordRuneStart = -1
 	}
 	flushSpaces := func() {
 		if spaces.Len() == 0 {
@@ -348,23 +341,6 @@ func Prepare(text string, opts PrepareOptions) Prepared {
 				wordByteStart = byteStart
 				wordRuneStart = runeStart
 			}
-			wordByteEnd = byteEnd
-			wordRuneEnd = runeEnd
-			if isCJK(r) {
-				flushWord()
-				tokens = append(tokens, Token{
-					Kind:      TokenWord,
-					Text:      string(r),
-					ByteStart: byteStart,
-					ByteEnd:   byteEnd,
-					RuneStart: runeStart,
-					RuneEnd:   runeEnd,
-				})
-				wordByteStart, wordByteEnd = -1, 0
-				wordRuneStart, wordRuneEnd = -1, 0
-				runeIndex++
-				continue
-			}
 			word.WriteRune(r)
 		}
 		runeIndex++
@@ -451,6 +427,94 @@ func Measure(prepared Prepared, measurer BatchMeasurer, font string) (Measured, 
 	}
 
 	return measured, nil
+}
+
+func appendWordRunTokens(text string, byteStart, runeStart int) []Token {
+	if text == "" {
+		return nil
+	}
+
+	out := make([]Token, 0, utf8.RuneCountInString(text)+2)
+	byteOffset := byteStart
+	runeOffset := runeStart
+	havePending := false
+	pending := Token{}
+	emitted := false
+
+	emit := func(token Token, breakBefore bool) {
+		if breakBefore && emitted {
+			out = append(out, Token{
+				Kind:      TokenBreak,
+				Text:      "",
+				ByteStart: token.ByteStart,
+				ByteEnd:   token.ByteStart,
+				RuneStart: token.RuneStart,
+				RuneEnd:   token.RuneStart,
+			})
+		}
+		out = append(out, token)
+		emitted = true
+	}
+
+	appendToPending := func(token Token) {
+		if !havePending {
+			pending = token
+			havePending = true
+			return
+		}
+		pending.Text += token.Text
+		pending.ByteEnd = token.ByteEnd
+		pending.RuneEnd = token.RuneEnd
+	}
+
+	for _, segment := range segmentWordRunStrings(text) {
+		if segment == "" {
+			continue
+		}
+		byteLen := len(segment)
+		runeLen := utf8.RuneCountInString(segment)
+		token := Token{
+			Kind:      TokenWord,
+			Text:      segment,
+			ByteStart: byteOffset,
+			ByteEnd:   byteOffset + byteLen,
+			RuneStart: runeOffset,
+			RuneEnd:   runeOffset + runeLen,
+		}
+		byteOffset += byteLen
+		runeOffset += runeLen
+
+		switch {
+		case lineEndProhibited(token.Text):
+			appendToPending(token)
+		case lineStartProhibited(token.Text):
+			if len(out) > 0 && out[len(out)-1].Kind == TokenWord {
+				out[len(out)-1].Text += token.Text
+				out[len(out)-1].ByteEnd = token.ByteEnd
+				out[len(out)-1].RuneEnd = token.RuneEnd
+				continue
+			}
+			if havePending {
+				appendToPending(token)
+				continue
+			}
+			emit(token, emitted)
+		default:
+			if havePending {
+				token.Text = pending.Text + token.Text
+				token.ByteStart = pending.ByteStart
+				token.RuneStart = pending.RuneStart
+				havePending = false
+			}
+			emit(token, emitted)
+		}
+	}
+
+	if havePending {
+		emit(pending, emitted)
+	}
+
+	return out
 }
 
 func expandPreparedTokens(tokens []Token) []Token {
@@ -662,6 +726,10 @@ func layoutWrappedLine(measured Measured, start int, ws WhiteSpace, maxWidth flo
 				line := buildLineWithWidth(measured, start, lastBreak, false, lastBreakSoft, lastBreakWidth)
 				return line, normalizeWrappedLineNext(tokens, lastBreak, ws)
 			}
+			if i > start && lineEndProhibited(tokens[i-1].Text) {
+				line := buildLine(measured, start, i+1, false, false)
+				return line, normalizeWrappedLineNext(tokens, i+1, ws)
+			}
 			if lineWidth > 0 && lineStartProhibited(token.Text) {
 				line := buildLine(measured, start, i+1, false, false)
 				return line, normalizeWrappedLineNext(tokens, i+1, ws)
@@ -870,12 +938,34 @@ func lineStartProhibited(text string) bool {
 	return true
 }
 
+func lineEndProhibited(text string) bool {
+	if text == "" {
+		return false
+	}
+	for _, r := range text {
+		if !isLineEndProhibitedRune(r) {
+			return false
+		}
+	}
+	return true
+}
+
 func isLineStartProhibitedRune(r rune) bool {
 	switch r {
 	case '.', ',', '!', '?', ':', ';', ')', ']', '}', '%', '"', '”', '’', '»', '›', '…',
 		'、', '。', '，', '．', '！', '？', '：', '；',
 		'）', '】', '」', '』', '》', '〉', '〕', '〗', '〙', '〛',
 		'ー', '々', 'ゝ', 'ゞ', 'ヽ', 'ヾ':
+		return true
+	default:
+		return false
+	}
+}
+
+func isLineEndProhibitedRune(r rune) bool {
+	switch r {
+	case '"', '“', '‘', '«', '‹', '(', '[', '{',
+		'（', '【', '「', '『', '《', '〈', '〔', '〖', '〘', '〚':
 		return true
 	default:
 		return false

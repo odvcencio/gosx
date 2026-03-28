@@ -209,6 +209,11 @@ func TestRuntimeTextLayoutExport(t *testing.T) {
 		}
 		return js.ValueOf(string(data))
 	})
+	setGlobalValue(t, "__gosx_segment_words", js.Global().Get("Function").New("text", `
+		return JSON.stringify(Array.from(new Intl.Segmenter(undefined, { granularity: "word" }).segment(text), function(entry) {
+			return entry.segment;
+		}));
+	`))
 
 	registerRuntime(bridge.New())
 
@@ -270,9 +275,36 @@ func TestRuntimeTextLayoutExport(t *testing.T) {
 		t.Fatalf("expected discretionary hyphen line, got %q", got)
 	}
 
+	wordRet := js.Global().Get("__gosx_text_layout").Invoke("hello,world", "16px serif", 7, "normal", 1)
+	wordLines := wordRet.Get("lines")
+	if wordLines.Length() != 2 {
+		t.Fatalf("expected 2 punctuation-boundary line entries, got %d", wordLines.Length())
+	}
+	if got := wordLines.Index(0).Get("text").String(); got != "hello," {
+		t.Fatalf("expected semantic run break at word boundary, got %q", got)
+	}
+
+	thaiRet := js.Global().Get("__gosx_text_layout").Invoke("สวัสดีครับโลก", "16px serif", 5, "normal", 1)
+	thaiLines := thaiRet.Get("lines")
+	if thaiLines.Length() != 3 {
+		t.Fatalf("expected 3 Thai line entries, got %d", thaiLines.Length())
+	}
+	if got := thaiLines.Index(0).Get("text").String(); got != "สวัสดี" {
+		t.Fatalf("expected Thai word boundary on line 0, got %q", got)
+	}
+
 	tabRet := js.Global().Get("__gosx_text_layout").Invoke("a\tb", "16px serif", 99, "pre-wrap", 1)
 	if got := tabRet.Get("maxLineWidth").Float(); got != 9 {
 		t.Fatalf("expected tab-stop width 9, got %v", got)
+	}
+
+	openRet := js.Global().Get("__gosx_text_layout").Invoke("(a", "16px serif", 1, "normal", 1)
+	openLines := openRet.Get("lines")
+	if openLines.Length() != 1 {
+		t.Fatalf("expected 1 opening-punctuation line entry, got %d", openLines.Length())
+	}
+	if got := openLines.Index(0).Get("text").String(); got != "(a" {
+		t.Fatalf("expected opening punctuation to stay with following glyph, got %q", got)
 	}
 }
 

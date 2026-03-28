@@ -340,6 +340,25 @@ func TestLayoutBreaksAtZeroWidthBreak(t *testing.T) {
 	}
 }
 
+func TestLayoutPrefersWordBoundariesInsideRuns(t *testing.T) {
+	result, err := LayoutText(
+		"hello,world",
+		MonospaceMeasurer{Advance: 1},
+		"mono",
+		PrepareOptions{WhiteSpace: WhiteSpaceNormal},
+		LayoutOptions{MaxWidth: 7, LineHeight: 1},
+	)
+	if err != nil {
+		t.Fatalf("layout text: %v", err)
+	}
+
+	lines := lineTexts(result.Lines)
+	want := []string{"hello,", "world"}
+	if !slices.Equal(lines, want) {
+		t.Fatalf("line texts: expected %v, got %v", want, lines)
+	}
+}
+
 func TestLayoutKeepsCJKClosingPunctuationOffLineStart(t *testing.T) {
 	result, err := LayoutText(
 		"あ。い",
@@ -354,6 +373,28 @@ func TestLayoutKeepsCJKClosingPunctuationOffLineStart(t *testing.T) {
 
 	lines := lineTexts(result.Lines)
 	want := []string{"あ。", "い"}
+	if !slices.Equal(lines, want) {
+		t.Fatalf("line texts: expected %v, got %v", want, lines)
+	}
+	if result.Lines[0].Width != 2 {
+		t.Fatalf("line 0 width: expected 2, got %v", result.Lines[0].Width)
+	}
+}
+
+func TestLayoutKeepsOpeningPunctuationWithFollowingGlyph(t *testing.T) {
+	result, err := LayoutText(
+		"(a",
+		MonospaceMeasurer{Advance: 1},
+		"mono",
+		PrepareOptions{WhiteSpace: WhiteSpaceNormal},
+		LayoutOptions{MaxWidth: 1, LineHeight: 1},
+	)
+	if err != nil {
+		t.Fatalf("layout text: %v", err)
+	}
+
+	lines := lineTexts(result.Lines)
+	want := []string{"(a"}
 	if !slices.Equal(lines, want) {
 		t.Fatalf("line texts: expected %v, got %v", want, lines)
 	}
