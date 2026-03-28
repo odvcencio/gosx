@@ -40,7 +40,13 @@
 
   const textMeasureCache = new Map();
   const textMeasureCacheLimit = 4096;
+  const sceneLabelLayoutCacheLimit = 512;
+  const textLayoutCache = new Map();
+  const textLayoutCacheLimit = 1024;
   let textMeasureContext = null;
+  let textLayoutRevision = 0;
+  let textLayoutFontObserverInstalled = false;
+  let textLayoutExternalImpl = typeof window.__gosx_text_layout === "function" ? window.__gosx_text_layout : null;
 
   function gosxTextMeasureContext() {
     if (textMeasureContext) {
@@ -52,6 +58,41 @@
     }
     textMeasureContext = canvas.getContext("2d");
     return textMeasureContext;
+  }
+
+  function gosxTextLayoutRevision() {
+    return textLayoutRevision;
+  }
+
+  function invalidateTextLayoutCaches() {
+    textLayoutRevision += 1;
+    textMeasureCache.clear();
+    textLayoutCache.clear();
+  }
+
+  function installTextLayoutFontObserver() {
+    if (textLayoutFontObserverInstalled) {
+      return;
+    }
+    textLayoutFontObserverInstalled = true;
+
+    const fonts = document.fonts;
+    if (!fonts || typeof fonts !== "object") {
+      return;
+    }
+
+    const onFontMetricsChanged = function() {
+      invalidateTextLayoutCaches();
+    };
+
+    if (typeof fonts.addEventListener === "function") {
+      fonts.addEventListener("loadingdone", onFontMetricsChanged);
+      fonts.addEventListener("loadingerror", onFontMetricsChanged);
+    }
+
+    if (fonts.ready && typeof fonts.ready.then === "function") {
+      fonts.ready.then(onFontMetricsChanged, function() {});
+    }
   }
 
   window.__gosx_measure_text_batch = function(font, textsJSON) {
@@ -554,11 +595,56 @@
     };
   }
 
-  if (typeof window.__gosx_text_layout !== "function") {
-    window.__gosx_text_layout = function(text, font, maxWidth, whiteSpace, lineHeight) {
-      return layoutBrowserText(text, font, maxWidth, whiteSpace, lineHeight);
-    };
+  function adoptTextLayoutImpl(candidate) {
+    if (typeof candidate !== "function" || candidate === gosxTextLayout) {
+      return;
+    }
+    if (textLayoutExternalImpl === candidate) {
+      return;
+    }
+    textLayoutExternalImpl = candidate;
+    invalidateTextLayoutCaches();
   }
+
+  function currentTextLayoutImpl() {
+    return typeof textLayoutExternalImpl === "function" ? textLayoutExternalImpl : null;
+  }
+
+  function textLayoutCacheKey(text, font, maxWidth, whiteSpace, lineHeight) {
+    return [
+      gosxTextLayoutRevision(),
+      String(text == null ? "" : text),
+      String(font == null ? "" : font),
+      sceneNumber(maxWidth, 0),
+      normalizeTextLayoutWhiteSpace(whiteSpace),
+      sceneNumber(lineHeight, 1),
+      currentTextLayoutImpl() ? "external" : "browser",
+    ].join("\n");
+  }
+
+  function gosxTextLayout(text, font, maxWidth, whiteSpace, lineHeight) {
+    const cacheKey = textLayoutCacheKey(text, font, maxWidth, whiteSpace, lineHeight);
+    if (textLayoutCache.has(cacheKey)) {
+      return textLayoutCache.get(cacheKey);
+    }
+
+    const impl = currentTextLayoutImpl();
+    const result = impl
+      ? impl(text, font, maxWidth, whiteSpace, lineHeight)
+      : layoutBrowserText(text, font, maxWidth, whiteSpace, lineHeight);
+
+    if (textLayoutCache.size >= textLayoutCacheLimit) {
+      const oldest = textLayoutCache.keys().next();
+      if (!oldest.done) {
+        textLayoutCache.delete(oldest.value);
+      }
+    }
+    textLayoutCache.set(cacheKey, result);
+    return result;
+  }
+
+  window.__gosx_text_layout = gosxTextLayout;
+  installTextLayoutFontObserver();
 
   // Pending manifest reference, set during init, consumed when runtime is ready.
   let pendingManifest = null;
@@ -3211,6 +3297,7 @@
 
   function sceneLabelLayoutKey(label) {
     return [
+      gosxTextLayoutRevision(),
       label.text,
       label.font,
       sceneNumber(label.maxWidth, 180),
@@ -3245,6 +3332,11 @@
   }
 
   function layoutSceneLabel(label, layoutCache) {
+    const revision = gosxTextLayoutRevision();
+    if (layoutCache.__gosxRevision !== revision) {
+      layoutCache.clear();
+      layoutCache.__gosxRevision = revision;
+    }
     const cacheKey = sceneLabelLayoutKey(label);
     if (layoutCache.has(cacheKey)) {
       return {
@@ -3270,6 +3362,12 @@
 
     if (!layout || !Array.isArray(layout.lines)) {
       layout = fallbackSceneLabelLayout(label);
+    }
+    if (layoutCache.size >= sceneLabelLayoutCacheLimit) {
+      const oldest = layoutCache.keys().next();
+      if (!oldest.done) {
+        layoutCache.delete(oldest.value);
+      }
     }
     layoutCache.set(cacheKey, layout);
     return {
@@ -4249,6 +4347,10 @@
   // and all exported functions (__gosx_hydrate, __gosx_action, etc.) are
   // registered. This is the signal that it is safe to hydrate islands.
   window.__gosx_runtime_ready = function() {
+    if (typeof window.__gosx_text_layout === "function" && window.__gosx_text_layout !== gosxTextLayout) {
+      adoptTextLayoutImpl(window.__gosx_text_layout);
+      window.__gosx_text_layout = gosxTextLayout;
+    }
     if (!pendingManifest) {
       window.__gosx.ready = true;
       return;

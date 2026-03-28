@@ -75,7 +75,8 @@ class FakeDocumentFragment {
 }
 
 class FakeCanvasContext2D {
-  constructor() {
+  constructor(ownerDocument) {
+    this.ownerDocument = ownerDocument;
     this.font = "10px sans-serif";
     this.fillStyle = "";
     this.strokeStyle = "";
@@ -98,6 +99,9 @@ class FakeCanvasContext2D {
   measureText(text) {
     const value = String(text == null ? "" : text);
     this.ops.push(["measureText", this.font, value]);
+    if (this.ownerDocument && typeof this.ownerDocument.measureText === "function") {
+      return { width: this.ownerDocument.measureText(value, this.font) };
+    }
     return { width: value.length * 8 };
   }
 }
@@ -457,7 +461,7 @@ class FakeElement {
         return null;
       }
       if (!this._canvasContext) {
-        this._canvasContext = new FakeCanvasContext2D();
+        this._canvasContext = new FakeCanvasContext2D(this.ownerDocument);
       }
       return this._canvasContext;
     }
@@ -584,6 +588,27 @@ class FakeDocument {
   }
 }
 
+class FakeFontSet {
+  constructor() {
+    this.listeners = new Map();
+    this.ready = null;
+  }
+
+  addEventListener(type, listener) {
+    if (!this.listeners.has(type)) {
+      this.listeners.set(type, []);
+    }
+    this.listeners.get(type).push(listener);
+  }
+
+  dispatch(type) {
+    const listeners = this.listeners.get(type) || [];
+    for (const listener of listeners) {
+      listener({ type });
+    }
+  }
+}
+
 class FakeResponse {
   constructor(options) {
     this.ok = options.ok !== false;
@@ -627,6 +652,12 @@ function createConsoleSpy() {
 function createContext(options) {
   const document = new FakeDocument();
   document.disableCanvas2D = Boolean(options.disableCanvas2D);
+  if (typeof options.measureText === "function") {
+    document.measureText = options.measureText;
+  }
+  if (options.fonts) {
+    document.fonts = options.fonts;
+  }
   if (typeof options.createWebGLContext === "function") {
     document.createWebGLContext = options.createWebGLContext;
   } else if (options.enableWebGL) {
@@ -1004,6 +1035,60 @@ test("bootstrap browser text layout helper preserves pre-wrap hard breaks", () =
   assert.equal(layout.lines[0].hardBreak, true);
   assert.equal(layout.lines[1].byteStart, 3);
   assert.equal(layout.lines[1].byteEnd, 3);
+});
+
+test("bootstrap browser text layout invalidates cached widths after font loading events", () => {
+  let scale = 1;
+  const fonts = new FakeFontSet();
+  const env = createContext({
+    fonts,
+    measureText(text) {
+      return String(text).length * 8 * scale;
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+
+  const before = env.context.__gosx_text_layout("hello world from gosx", "600 16px serif", 88, "normal", 20);
+  assert.deepEqual(Array.from(before.lines, (line) => line.text), ["hello world", "from gosx"]);
+
+  scale = 2;
+  fonts.dispatch("loadingdone");
+
+  const after = env.context.__gosx_text_layout("hello world from gosx", "600 16px serif", 88, "normal", 20);
+  assert.deepEqual(Array.from(after.lines, (line) => line.text), ["hello", "world", "from", "gosx"]);
+  assert.equal(after.lineCount, 4);
+});
+
+test("bootstrap adopts and caches runtime-provided text layout implementations", () => {
+  const env = createContext({});
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+
+  let calls = 0;
+  env.context.__gosx_text_layout = function(text, font, maxWidth, whiteSpace, lineHeight) {
+    calls += 1;
+    return {
+      lines: [{ text: String(text) }],
+      lineCount: 1,
+      height: Number(lineHeight) || 1,
+      maxLineWidth: Math.min(Number(maxWidth) || 0, 24),
+      byteLen: String(text).length,
+      runeCount: String(text).length,
+      font,
+      whiteSpace,
+    };
+  };
+
+  env.context.__gosx_runtime_ready();
+
+  const first = env.context.__gosx_text_layout("hi", "600 16px serif", 80, "normal", 18);
+  const second = env.context.__gosx_text_layout("hi", "600 16px serif", 80, "normal", 18);
+  assert.equal(calls, 1);
+  assert.equal(first.lineCount, 1);
+  assert.equal(second.lineCount, 1);
+  assert.equal(first.height, 18);
+  assert.equal(second.maxLineWidth, 24);
 });
 
 test("bootstrap infers binary island programs from .gxi refs", async () => {
