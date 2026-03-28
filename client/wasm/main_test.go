@@ -320,6 +320,18 @@ func TestRuntimeTextLayoutExport(t *testing.T) {
 	if got := metricsRet.Get("maxLineWidth").Float(); got != 11 {
 		t.Fatalf("metrics maxLineWidth: got %v", got)
 	}
+
+	rangesRet := js.Global().Get("__gosx_text_layout_ranges").Invoke("ab\u00adcd", "16px serif", 3, "normal", 1)
+	if rangesRet.Type() != js.TypeObject {
+		t.Fatalf("expected ranges object result, got %v", rangesRet.Type())
+	}
+	rangeLines := rangesRet.Get("lines")
+	if rangeLines.Length() != 2 {
+		t.Fatalf("expected 2 range line entries, got %d", rangeLines.Length())
+	}
+	if got := rangeLines.Index(0).Get("softBreak").Bool(); !got {
+		t.Fatalf("expected first range line to mark softBreak")
+	}
 }
 
 func TestRuntimeSharedSignalsPatchOtherHydratedIslands(t *testing.T) {

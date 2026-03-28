@@ -45,12 +45,15 @@
   const textLayoutCacheLimit = 1024;
   const textLayoutMetricsCache = new Map();
   const textLayoutMetricsCacheLimit = 1024;
+  const textLayoutRangesCache = new Map();
+  const textLayoutRangesCacheLimit = 1024;
   const textLayoutInvalidationListeners = new Set();
   let textMeasureContext = null;
   let textLayoutRevision = 0;
   let textLayoutFontObserverInstalled = false;
   let textLayoutExternalImpl = typeof window.__gosx_text_layout === "function" ? window.__gosx_text_layout : null;
   let textLayoutMetricsExternalImpl = typeof window.__gosx_text_layout_metrics === "function" ? window.__gosx_text_layout_metrics : null;
+  let textLayoutRangesExternalImpl = typeof window.__gosx_text_layout_ranges === "function" ? window.__gosx_text_layout_ranges : null;
 
   function gosxTextMeasureContext() {
     if (textMeasureContext) {
@@ -73,6 +76,7 @@
     textMeasureCache.clear();
     textLayoutCache.clear();
     textLayoutMetricsCache.clear();
+    textLayoutRangesCache.clear();
     for (const listener of Array.from(textLayoutInvalidationListeners)) {
       try {
         listener(textLayoutRevision);
@@ -824,7 +828,7 @@
     return display;
   }
 
-  function buildBrowserTextLayoutLine(measured, start, end, hardBreak, softBreak, width) {
+  function buildBrowserTextLayoutRecord(measured, start, end, hardBreak, softBreak, width, includeText) {
     const tokens = measured.tokens;
     const line = {
       start,
@@ -834,9 +838,12 @@
       runeStart: 0,
       runeEnd: 0,
       width: width == null ? browserTextLayoutRangeWidth(measured, start, end, softBreak) : width,
-      text: browserTextLayoutLineText(measured, start, end, softBreak),
       hardBreak: Boolean(hardBreak),
+      softBreak: Boolean(softBreak),
     };
+    if (includeText) {
+      line.text = browserTextLayoutLineText(measured, start, end, softBreak);
+    }
     if (start < end && start < tokens.length) {
       line.byteStart = tokens[start].byteStart;
       line.byteEnd = tokens[end - 1].byteEnd;
@@ -844,6 +851,14 @@
       line.runeEnd = tokens[end - 1].runeEnd;
     }
     return line;
+  }
+
+  function buildBrowserTextLayoutLine(measured, start, end, hardBreak, softBreak, width) {
+    return buildBrowserTextLayoutRecord(measured, start, end, hardBreak, softBreak, width, true);
+  }
+
+  function buildBrowserTextLayoutRange(measured, start, end, hardBreak, softBreak, width) {
+    return buildBrowserTextLayoutRecord(measured, start, end, hardBreak, softBreak, width, false);
   }
 
   function emptyBrowserTextLayoutLineAtIndex(tokens, index, hardBreak) {
@@ -857,6 +872,7 @@
       width: 0,
       text: "",
       hardBreak: Boolean(hardBreak),
+      softBreak: false,
     };
     if (index >= 0 && index < tokens.length) {
       line.byteStart = tokens[index].byteStart;
@@ -878,6 +894,7 @@
       width: 0,
       text: "",
       hardBreak: false,
+      softBreak: false,
     };
   }
 
@@ -910,6 +927,16 @@
       }
     }
     return [buildBrowserTextLayoutLine(measured, start, tokens.length, false, false), tokens.length];
+  }
+
+  function layoutBrowserPreLineRange(measured, start) {
+    const tokens = measured.tokens;
+    for (let i = start; i < tokens.length; i += 1) {
+      if (tokens[i].kind === "newline") {
+        return [buildBrowserTextLayoutRange(measured, start, i, true, false), i + 1];
+      }
+    }
+    return [buildBrowserTextLayoutRange(measured, start, tokens.length, false, false), tokens.length];
   }
 
   function layoutBrowserWrappedLine(measured, start, whiteSpace, maxWidth) {
@@ -979,6 +1006,73 @@
     return [buildBrowserTextLayoutLine(measured, start, tokens.length, false, false), tokens.length];
   }
 
+  function layoutBrowserWrappedLineRange(measured, start, whiteSpace, maxWidth) {
+    const tokens = measured.tokens;
+    let lineWidth = 0;
+    let lastBreak = -1;
+    let lastBreakWidth = 0;
+    let lastBreakSoft = false;
+
+    for (let i = start; i < tokens.length; i += 1) {
+      const token = tokens[i];
+      if (token.kind === "newline") {
+        return [buildBrowserTextLayoutRange(measured, start, i, true, false), i + 1];
+      }
+
+      const tokenWidth = browserTextLayoutTokenProgressWidth(measured, lineWidth, token);
+      const fitAdvance = browserTextLayoutTokenFitAdvance(measured, lineWidth, token);
+      const paintAdvance = browserTextLayoutTokenPaintAdvance(measured, lineWidth, token, token.kind === "soft-hyphen");
+
+      if (browserTextLayoutCanBreakAfter(token)) {
+        lastBreak = i + 1;
+        lastBreakWidth = lineWidth + paintAdvance;
+        lastBreakSoft = token.kind === "soft-hyphen";
+      }
+
+      const candidateWidth = lineWidth + tokenWidth;
+      if (maxWidth > 0 && candidateWidth > maxWidth) {
+        if (browserTextLayoutCanBreakAfter(token) && lineWidth + fitAdvance <= maxWidth) {
+          return [
+            buildBrowserTextLayoutRange(measured, start, i + 1, false, token.kind === "soft-hyphen"),
+            normalizeBrowserTextLayoutNextStart(measured, i + 1),
+          ];
+        }
+        if (lastBreak > start) {
+          return [
+            buildBrowserTextLayoutRange(measured, start, lastBreak, false, lastBreakSoft, lastBreakWidth),
+            normalizeBrowserTextLayoutNextStart(measured, lastBreak),
+          ];
+        }
+        if (i > start && textLayoutLineEndProhibited(tokens[i - 1].text)) {
+          return [
+            buildBrowserTextLayoutRange(measured, start, i + 1, false, false),
+            normalizeBrowserTextLayoutNextStart(measured, i + 1),
+          ];
+        }
+        if (lineWidth > 0 && browserTextLayoutLineStartProhibited(token.text)) {
+          return [
+            buildBrowserTextLayoutRange(measured, start, i + 1, false, false),
+            normalizeBrowserTextLayoutNextStart(measured, i + 1),
+          ];
+        }
+        if (lineWidth === 0) {
+          return [
+            buildBrowserTextLayoutRange(measured, start, i + 1, false, false),
+            normalizeBrowserTextLayoutNextStart(measured, i + 1),
+          ];
+        }
+        return [
+          buildBrowserTextLayoutRange(measured, start, i, false, false),
+          normalizeBrowserTextLayoutNextStart(measured, i),
+        ];
+      }
+
+      lineWidth = candidateWidth;
+    }
+
+    return [buildBrowserTextLayoutRange(measured, start, tokens.length, false, false), tokens.length];
+  }
+
   function layoutBrowserTextNextLine(measured, start, maxWidth) {
     const tokens = measured.tokens;
     if (start < 0) {
@@ -1002,6 +1096,31 @@
       return layoutBrowserPreLine(measured, lineStart);
     }
     return layoutBrowserWrappedLine(measured, lineStart, whiteSpace, Math.max(0, sceneNumber(maxWidth, 0)));
+  }
+
+  function layoutBrowserTextNextRange(measured, start, maxWidth) {
+    const tokens = measured.tokens;
+    if (start < 0) {
+      start = 0;
+    }
+    if (start >= tokens.length) {
+      return [emptyBrowserTextLayoutLineAtEnd(measured), tokens.length];
+    }
+
+    const whiteSpace = normalizeTextLayoutWhiteSpace(measured.whiteSpace);
+    let lineStart = normalizeBrowserTextLayoutLineStart(measured, start);
+    if (lineStart >= tokens.length) {
+      return [emptyBrowserTextLayoutLineAtEnd(measured), tokens.length];
+    }
+
+    if (tokens[lineStart].kind === "newline") {
+      return [emptyBrowserTextLayoutLineAtIndex(tokens, lineStart, true), lineStart + 1];
+    }
+
+    if (whiteSpace === "pre") {
+      return layoutBrowserPreLineRange(measured, lineStart);
+    }
+    return layoutBrowserWrappedLineRange(measured, lineStart, whiteSpace, Math.max(0, sceneNumber(maxWidth, 0)));
   }
 
   function layoutBrowserText(text, font, maxWidth, whiteSpace, lineHeight) {
@@ -1058,6 +1177,60 @@
     };
   }
 
+  function layoutBrowserTextRanges(text, font, maxWidth, whiteSpace, lineHeight) {
+    const prepared = prepareBrowserTextLayout(text, whiteSpace, 8);
+    const measured = measurePreparedBrowserTextLayout(prepared, font);
+    const resolvedLineHeight = Math.max(1, sceneNumber(lineHeight, 1));
+
+    if (measured.tokens.length === 0) {
+      return {
+        lines: [{
+          start: 0,
+          end: 0,
+          byteStart: measured.byteLen,
+          byteEnd: measured.byteLen,
+          runeStart: measured.runeCount,
+          runeEnd: measured.runeCount,
+          width: 0,
+          hardBreak: false,
+          softBreak: false,
+        }],
+        lineCount: 1,
+        height: resolvedLineHeight,
+        maxLineWidth: 0,
+        byteLen: measured.byteLen,
+        runeCount: measured.runeCount,
+      };
+    }
+
+    const lines = [];
+    for (let start = 0; start < measured.tokens.length;) {
+      const nextLine = layoutBrowserTextNextRange(measured, start, maxWidth);
+      lines.push(nextLine[0]);
+      start = nextLine[1] > start ? nextLine[1] : start + 1;
+    }
+
+    if (measured.tokens[measured.tokens.length - 1].kind === "newline") {
+      lines.push(emptyBrowserTextLayoutLineAtEnd(measured));
+    }
+
+    let maxLineWidth = 0;
+    for (const line of lines) {
+      if (line.width > maxLineWidth) {
+        maxLineWidth = line.width;
+      }
+    }
+
+    return {
+      lines,
+      lineCount: lines.length,
+      height: lines.length * resolvedLineHeight,
+      maxLineWidth,
+      byteLen: measured.byteLen,
+      runeCount: measured.runeCount,
+    };
+  }
+
   function adoptTextLayoutImpl(candidate) {
     if (typeof candidate !== "function" || candidate === gosxTextLayout) {
       return;
@@ -1077,6 +1250,17 @@
       return;
     }
     textLayoutMetricsExternalImpl = candidate;
+    invalidateTextLayoutCaches();
+  }
+
+  function adoptTextLayoutRangesImpl(candidate) {
+    if (typeof candidate !== "function" || candidate === gosxTextLayoutRanges) {
+      return;
+    }
+    if (textLayoutRangesExternalImpl === candidate) {
+      return;
+    }
+    textLayoutRangesExternalImpl = candidate;
     invalidateTextLayoutCaches();
   }
 
@@ -1108,6 +1292,18 @@
     ].join("\n");
   }
 
+  function textLayoutRangesCacheKey(text, font, maxWidth, whiteSpace, lineHeight) {
+    return [
+      gosxTextLayoutRevision(),
+      String(text == null ? "" : text),
+      String(font == null ? "" : font),
+      sceneNumber(maxWidth, 0),
+      normalizeTextLayoutWhiteSpace(whiteSpace),
+      sceneNumber(lineHeight, 1),
+      textLayoutRangesExternalImpl ? "external" : "browser",
+    ].join("\n");
+  }
+
   function normalizeTextLayoutLine(line, index, textByteLen, textRuneCount) {
     const item = line && typeof line === "object" ? line : {};
     const start = Math.max(0, Math.floor(sceneNumber(item.start, index)));
@@ -1126,6 +1322,28 @@
       width: Math.max(0, sceneNumber(item.width, 0)),
       text: typeof item.text === "string" ? item.text : "",
       hardBreak: Boolean(item.hardBreak),
+      softBreak: Boolean(item.softBreak),
+    };
+  }
+
+  function normalizeTextLayoutRange(line, index, textByteLen, textRuneCount) {
+    const item = line && typeof line === "object" ? line : {};
+    const start = Math.max(0, Math.floor(sceneNumber(item.start, index)));
+    const end = Math.max(start, Math.floor(sceneNumber(item.end, start)));
+    const byteStart = Math.max(0, Math.floor(sceneNumber(item.byteStart, 0)));
+    const byteEnd = Math.max(byteStart, Math.floor(sceneNumber(item.byteEnd, byteStart)));
+    const runeStart = Math.max(0, Math.floor(sceneNumber(item.runeStart, 0)));
+    const runeEnd = Math.max(runeStart, Math.floor(sceneNumber(item.runeEnd, runeStart)));
+    return {
+      start,
+      end,
+      byteStart: Math.min(byteStart, textByteLen),
+      byteEnd: Math.min(byteEnd, textByteLen),
+      runeStart: Math.min(runeStart, textRuneCount),
+      runeEnd: Math.min(runeEnd, textRuneCount),
+      width: Math.max(0, sceneNumber(item.width, 0)),
+      hardBreak: Boolean(item.hardBreak),
+      softBreak: Boolean(item.softBreak),
     };
   }
 
@@ -1139,6 +1357,29 @@
     const lines = Array.isArray(result && result.lines)
       ? result.lines.map(function(line, index) {
           return normalizeTextLayoutLine(line, index, byteLen, runeCount);
+        })
+      : [];
+
+    return {
+      lines,
+      lineCount: Math.max(lines.length, Math.floor(sceneNumber(result && result.lineCount, lines.length))),
+      height: Math.max(0, sceneNumber(result && result.height, lines.length * Math.max(1, sceneNumber(lineHeight, 1)))),
+      maxLineWidth: Math.max(0, sceneNumber(result && result.maxLineWidth, 0)),
+      byteLen: Math.max(0, Math.min(byteLen, Math.floor(sceneNumber(result && result.byteLen, byteLen)))),
+      runeCount: Math.max(0, Math.min(runeCount, Math.floor(sceneNumber(result && result.runeCount, runeCount)))),
+    };
+  }
+
+  function normalizeTextLayoutRangeResult(result, text, lineHeight) {
+    const source = normalizeTextLayoutNewlines(text);
+    const graphemes = Array.from(source);
+    const runeCount = graphemes.length;
+    const byteLen = graphemes.reduce(function(total, char) {
+      return total + textLayoutCodePointByteLength(char.codePointAt(0));
+    }, 0);
+    const lines = Array.isArray(result && result.lines)
+      ? result.lines.map(function(line, index) {
+          return normalizeTextLayoutRange(line, index, byteLen, runeCount);
         })
       : [];
 
@@ -1197,13 +1438,13 @@
       }
     }
     if (!result || typeof result !== "object") {
-      const layout = gosxTextLayout(text, font, maxWidth, whiteSpace, lineHeight);
+      const ranges = gosxTextLayoutRanges(text, font, maxWidth, whiteSpace, lineHeight);
       result = {
-        lineCount: layout.lineCount,
-        height: layout.height,
-        maxLineWidth: layout.maxLineWidth,
-        byteLen: layout.byteLen,
-        runeCount: layout.runeCount,
+        lineCount: ranges.lineCount,
+        height: ranges.height,
+        maxLineWidth: ranges.maxLineWidth,
+        byteLen: ranges.byteLen,
+        runeCount: ranges.runeCount,
       };
     } else {
       const normalized = normalizeTextLayoutResult({
@@ -1233,8 +1474,38 @@
     return result;
   }
 
+  function gosxTextLayoutRanges(text, font, maxWidth, whiteSpace, lineHeight) {
+    const cacheKey = textLayoutRangesCacheKey(text, font, maxWidth, whiteSpace, lineHeight);
+    if (textLayoutRangesCache.has(cacheKey)) {
+      return textLayoutRangesCache.get(cacheKey);
+    }
+
+    let result = null;
+    if (typeof textLayoutRangesExternalImpl === "function") {
+      try {
+        result = textLayoutRangesExternalImpl(text, font, maxWidth, whiteSpace, lineHeight);
+      } catch (error) {
+        console.error("[gosx] text layout ranges implementation failed:", error);
+      }
+    }
+    if (!result || !Array.isArray(result.lines)) {
+      result = layoutBrowserTextRanges(text, font, maxWidth, whiteSpace, lineHeight);
+    }
+    result = normalizeTextLayoutRangeResult(result, text, lineHeight);
+
+    if (textLayoutRangesCache.size >= textLayoutRangesCacheLimit) {
+      const oldest = textLayoutRangesCache.keys().next();
+      if (!oldest.done) {
+        textLayoutRangesCache.delete(oldest.value);
+      }
+    }
+    textLayoutRangesCache.set(cacheKey, result);
+    return result;
+  }
+
   window.__gosx_text_layout = gosxTextLayout;
   window.__gosx_text_layout_metrics = gosxTextLayoutMetrics;
+  window.__gosx_text_layout_ranges = gosxTextLayoutRanges;
   installTextLayoutFontObserver();
 
   // Pending manifest reference, set during init, consumed when runtime is ready.
@@ -4965,6 +5236,10 @@
     if (typeof window.__gosx_text_layout_metrics === "function" && window.__gosx_text_layout_metrics !== gosxTextLayoutMetrics) {
       adoptTextLayoutMetricsImpl(window.__gosx_text_layout_metrics);
       window.__gosx_text_layout_metrics = gosxTextLayoutMetrics;
+    }
+    if (typeof window.__gosx_text_layout_ranges === "function" && window.__gosx_text_layout_ranges !== gosxTextLayoutRanges) {
+      adoptTextLayoutRangesImpl(window.__gosx_text_layout_ranges);
+      window.__gosx_text_layout_ranges = gosxTextLayoutRanges;
     }
     if (!pendingManifest) {
       window.__gosx.ready = true;
