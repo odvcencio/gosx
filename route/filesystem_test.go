@@ -427,6 +427,10 @@ func Page() Node {
 	for _, snippet := range []string{
 		`class="copy"`,
 		`data-gosx-text-layout`,
+		`data-gosx-text-layout-role="block"`,
+		`data-gosx-text-layout-surface="dom"`,
+		`data-gosx-text-layout-state="hint"`,
+		`data-gosx-text-layout-ready="false"`,
 		`data-gosx-text-layout-font="600 16px serif"`,
 		`data-gosx-text-layout-line-height="20"`,
 		`data-gosx-text-layout-max-width="240"`,

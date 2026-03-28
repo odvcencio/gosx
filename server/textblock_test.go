@@ -36,6 +36,10 @@ func TestTextBlockDerivesSourceAndHintsFromChildren(t *testing.T) {
 
 	for _, snippet := range []string{
 		`data-gosx-text-layout`,
+		`data-gosx-text-layout-role="block"`,
+		`data-gosx-text-layout-surface="dom"`,
+		`data-gosx-text-layout-state="hint"`,
+		`data-gosx-text-layout-ready="false"`,
 		`data-gosx-text-layout-source="hello world from gosx"`,
 		`data-gosx-text-layout-line-count-hint="`,
 		`data-gosx-text-layout-height-hint="`,

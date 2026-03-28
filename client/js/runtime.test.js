@@ -1276,8 +1276,12 @@ test("bootstrap mounts declarative text layout blocks as managed runtime state",
   await flushAsyncWork();
 
   assert.equal(block.getAttribute("data-gosx-text-layout-ready"), "true");
+  assert.equal(block.getAttribute("data-gosx-text-layout-role"), "block");
+  assert.equal(block.getAttribute("data-gosx-text-layout-surface"), "dom");
+  assert.equal(block.getAttribute("data-gosx-text-layout-state"), "ready");
   assert.equal(block.getAttribute("data-gosx-text-layout-line-count"), "2");
   assert.equal(block.getAttribute("data-gosx-text-layout-height"), "40");
+  assert.equal(block.getAttribute("data-gosx-text-layout-byte-length"), "21");
   assert.equal(block.style["--gosx-text-layout-height"], "40px");
   assert.equal(env.context.__gosx.textLayouts.size, 1);
 
@@ -2545,11 +2549,176 @@ test("bootstrap renders mixed native Scene3D primitives", async () => {
   assert.equal(mount.getAttribute("data-gosx-scene3d-mounted"), "true");
   assert.equal(labelLayer.getAttribute("data-gosx-scene3d-label-layer"), "true");
   assert.equal(labelLayer.children.length, 1);
+  assert.equal(labelLayer.children[0].getAttribute("data-gosx-text-layout-role"), "label");
+  assert.equal(labelLayer.children[0].getAttribute("data-gosx-text-layout-surface"), "scene3d");
+  assert.equal(labelLayer.children[0].getAttribute("data-gosx-text-layout-state"), "ready");
+  assert.equal(labelLayer.children[0].getAttribute("data-gosx-scene-label-visibility"), "visible");
   assert.equal(labelLayer.children[0].children.length >= 2, true);
   assert.equal(labelLayer.children[0].textContent, "Geometry zooBrowser-measured overlay copy");
+  assert.equal(env.context.__gosx.textLayout.read(labelLayer.children[0]).lineCount >= 2, true);
   assert.ok(strokeCount >= 12);
   assert.equal(env.consoleLogs.warn.length, 0);
   assert.equal(env.consoleLogs.error.length, 0);
+});
+
+test("bootstrap gives Scene3D labels a shared text-layout CSS contract and custom classes", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-label-contract";
+
+  const env = createContext({
+    elements: [mount],
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-label-contract",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-label-contract",
+          jsExport: "GoSXScene3D",
+          props: {
+            width: 520,
+            height: 320,
+            autoRotate: false,
+            scene: {
+              labels: [
+                {
+                  id: "hero-chip",
+                  className: "hero-chip tone-accent",
+                  text: "Shared label contract",
+                  x: 0,
+                  y: 0.8,
+                  z: 0.2,
+                  maxWidth: 140,
+                  priority: 3,
+                },
+              ],
+            },
+          },
+          capabilities: ["canvas", "animation"],
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const label = mount.children[1].children[0];
+  assert.equal(label.getAttribute("class"), "gosx-scene-label hero-chip tone-accent");
+  assert.equal(label.getAttribute("data-gosx-text-layout-role"), "label");
+  assert.equal(label.getAttribute("data-gosx-text-layout-surface"), "scene3d");
+  assert.equal(label.getAttribute("data-gosx-scene-label-priority"), "3");
+  assert.equal(label.getAttribute("data-gosx-scene-label-collision"), "avoid");
+  assert.equal(label.getAttribute("data-gosx-scene-label-visibility"), "visible");
+  assert.equal(typeof env.context.__gosx.textLayout.read(label).lineCount, "number");
+});
+
+test("bootstrap hides lower-priority Scene3D labels when collision avoidance overlaps", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-label-collision";
+
+  const env = createContext({
+    elements: [mount],
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-label-collision",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-label-collision",
+          jsExport: "GoSXScene3D",
+          props: {
+            width: 520,
+            height: 320,
+            autoRotate: false,
+            scene: {
+              labels: [
+                {
+                  id: "primary-label",
+                  text: "Primary label",
+                  x: 0,
+                  y: 0.4,
+                  z: 0.2,
+                  maxWidth: 132,
+                  priority: 5,
+                },
+                {
+                  id: "secondary-label",
+                  text: "Secondary label",
+                  x: 0,
+                  y: 0.4,
+                  z: 0.2,
+                  maxWidth: 132,
+                  priority: 1,
+                },
+              ],
+            },
+          },
+          capabilities: ["canvas", "animation"],
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const labelLayer = mount.children[1];
+  assert.equal(labelLayer.children.length, 2);
+  const primary = labelLayer.children[0].getAttribute("data-gosx-scene-label") === "primary-label" ? labelLayer.children[0] : labelLayer.children[1];
+  const secondary = primary === labelLayer.children[0] ? labelLayer.children[1] : labelLayer.children[0];
+  assert.equal(primary.getAttribute("data-gosx-scene-label-visibility"), "visible");
+  assert.equal(secondary.getAttribute("data-gosx-scene-label-visibility"), "hidden");
+});
+
+test("bootstrap marks occluded Scene3D labels when scene geometry covers their anchor", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-label-occlusion";
+
+  const env = createContext({
+    elements: [mount],
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-label-occlusion",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-label-occlusion",
+          jsExport: "GoSXScene3D",
+          props: {
+            width: 520,
+            height: 320,
+            autoRotate: false,
+            scene: {
+              objects: [
+                { kind: "box", width: 2.8, height: 2.2, depth: 2.2, x: 0, y: 0, z: 0.2, color: "#8de1ff" },
+              ],
+              labels: [
+                {
+                  id: "occluded-label",
+                  text: "Covered label",
+                  x: 0,
+                  y: 0,
+                  z: 0.2,
+                  maxWidth: 140,
+                  offsetY: 0,
+                  occlude: true,
+                },
+              ],
+            },
+          },
+          capabilities: ["canvas", "animation"],
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const label = mount.children[1].children[0];
+  assert.equal(label.getAttribute("data-gosx-scene-label-occluded"), "true");
+  assert.equal(label.getAttribute("data-gosx-scene-label-visibility"), "hidden");
 });
 
 test("bootstrap prefers WebGL Scene3D rendering when available", async () => {

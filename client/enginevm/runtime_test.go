@@ -400,6 +400,10 @@ func TestRuntimeRenderBundleProjectsSceneLabels(t *testing.T) {
 					"textAlign":  8,
 					"anchorX":    9,
 					"anchorY":    10,
+					"className":  11,
+					"priority":   12,
+					"collision":  13,
+					"occlude":    14,
 				},
 			},
 		},
@@ -415,6 +419,10 @@ func TestRuntimeRenderBundleProjectsSceneLabels(t *testing.T) {
 			{Op: islandprogram.OpLitString, Value: "center", Type: islandprogram.TypeString},
 			{Op: islandprogram.OpLitFloat, Value: "0.5", Type: islandprogram.TypeFloat},
 			{Op: islandprogram.OpLitFloat, Value: "1", Type: islandprogram.TypeFloat},
+			{Op: islandprogram.OpLitString, Value: "hero-badge", Type: islandprogram.TypeString},
+			{Op: islandprogram.OpLitFloat, Value: "4", Type: islandprogram.TypeFloat},
+			{Op: islandprogram.OpLitString, Value: "avoid", Type: islandprogram.TypeString},
+			{Op: islandprogram.OpLitBool, Value: "true", Type: islandprogram.TypeBool},
 		},
 	}
 
@@ -445,6 +453,12 @@ func TestRuntimeRenderBundleProjectsSceneLabels(t *testing.T) {
 	}
 	if label.AnchorX != 0.5 || label.AnchorY != 1 {
 		t.Fatalf("expected anchor metadata in bundle, got %#v", label)
+	}
+	if label.ClassName != "hero-badge" {
+		t.Fatalf("expected class metadata in bundle, got %#v", label)
+	}
+	if label.Priority != 4 || label.Collision != "avoid" || !label.Occlude {
+		t.Fatalf("expected placement metadata in bundle, got %#v", label)
 	}
 }
 

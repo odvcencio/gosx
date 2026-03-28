@@ -50,6 +50,10 @@
   const textLayoutRangesCacheLimit = 1024;
   const TEXT_LAYOUT_ATTR = "data-gosx-text-layout";
   const TEXT_LAYOUT_ID_ATTR = "data-gosx-text-layout-id";
+  const TEXT_LAYOUT_ROLE_ATTR = "data-gosx-text-layout-role";
+  const TEXT_LAYOUT_SURFACE_ATTR = "data-gosx-text-layout-surface";
+  const TEXT_LAYOUT_STATE_ATTR = "data-gosx-text-layout-state";
+  const TEXT_LAYOUT_STYLE_ATTR = "data-gosx-text-layout-styles";
   const textLayoutInvalidationListeners = new Set();
   const textLayoutRecordsByElement = new Map();
   let textMeasureContext = null;
@@ -1512,6 +1516,7 @@
   window.__gosx_text_layout_metrics = gosxTextLayoutMetrics;
   window.__gosx_text_layout_ranges = gosxTextLayoutRanges;
   installTextLayoutFontObserver();
+  installTextLayoutSurfaceStyles();
 
   function textLayoutNumberValue(value, fallback) {
     const parsed = Number(value);
@@ -1527,6 +1532,151 @@
       return;
     }
     style[name] = String(value);
+  }
+
+  function clearStyleValue(style, name) {
+    if (!style || typeof name !== "string") {
+      return;
+    }
+    if (typeof style.removeProperty === "function") {
+      style.removeProperty(name);
+      return;
+    }
+    delete style[name];
+  }
+
+  function setAttrValue(element, name, value) {
+    if (!element || typeof element.setAttribute !== "function" || typeof name !== "string" || !name) {
+      return;
+    }
+    if (value == null || value === "") {
+      if (typeof element.removeAttribute === "function") {
+        element.removeAttribute(name);
+      }
+      return;
+    }
+    element.setAttribute(name, String(value));
+  }
+
+  function installTextLayoutSurfaceStyles() {
+    if (!document || !document.head || typeof document.createElement !== "function") {
+      return;
+    }
+    const headChildren = document.head.children || document.head.childNodes || [];
+    for (const child of headChildren) {
+      if (hasAttributeName(child, TEXT_LAYOUT_STYLE_ATTR)) {
+        return;
+      }
+    }
+
+    const style = document.createElement("style");
+    style.setAttribute(TEXT_LAYOUT_STYLE_ATTR, "true");
+    style.textContent = [
+      '[data-gosx-text-layout-role="block"] {',
+      '  min-block-size: var(--gosx-text-layout-height, auto);',
+      '}',
+      '[data-gosx-scene3d-label-layer="true"] {',
+      '  position: absolute;',
+      '  inset: 0;',
+      '  pointer-events: none;',
+      '  overflow: hidden;',
+      '}',
+      '[data-gosx-scene-label] {',
+      '  position: absolute;',
+      '  box-sizing: border-box;',
+      '  pointer-events: none;',
+      '  left: var(--gosx-scene-label-left, 0px);',
+      '  top: var(--gosx-scene-label-top, 0px);',
+      '  width: var(--gosx-scene-label-width, auto);',
+      '  max-width: var(--gosx-scene-label-max-width, none);',
+      '  min-block-size: var(--gosx-scene-label-height, auto);',
+      '  padding: 8px 10px;',
+      '  border-radius: var(--gosx-scene-label-radius, 12px);',
+      '  border: 1px solid var(--gosx-scene-label-border-color, var(--color-scene-line, rgba(141, 225, 255, 0.24)));',
+      '  background: var(--gosx-scene-label-background, var(--color-scene-surface-glass-strong, rgba(8, 21, 31, 0.82)));',
+      '  color: var(--gosx-scene-label-color, var(--color-ink-inverse, #ecf7ff));',
+      '  font: var(--gosx-scene-label-font, 600 13px "IBM Plex Sans", "Segoe UI", sans-serif);',
+      '  line-height: var(--gosx-scene-label-line-height, 18px);',
+      '  text-align: var(--gosx-scene-label-align, center);',
+      '  box-shadow: 0 14px 32px var(--gosx-scene-label-shadow, rgba(3, 10, 16, 0.28));',
+      '  backdrop-filter: blur(var(--gosx-scene-label-blur, 10px));',
+      '  -webkit-backdrop-filter: blur(var(--gosx-scene-label-blur, 10px));',
+      '  will-change: left, top, transform;',
+      '  z-index: var(--gosx-scene-label-z-index, 1);',
+      '  opacity: var(--gosx-scene-label-opacity, 1);',
+      '  transform: translate(calc(var(--gosx-scene-label-anchor-x, 0.5) * -100%), calc(var(--gosx-scene-label-anchor-y, 1) * -100%));',
+      '  transition:',
+      '    opacity var(--motion-fast, 180ms) var(--ease-out, cubic-bezier(0.16, 1, 0.3, 1)),',
+      '    transform var(--motion-fast, 180ms) var(--ease-out, cubic-bezier(0.16, 1, 0.3, 1));',
+      '}',
+      '[data-gosx-scene-label][data-gosx-scene-label-visibility="hidden"] {',
+      '  opacity: 0;',
+      '  visibility: hidden;',
+      '}',
+      '[data-gosx-scene-label][data-gosx-scene-label-occluded="true"] {',
+      '  --gosx-scene-label-opacity: 0.52;',
+      '}',
+      '[data-gosx-scene-label-line] {',
+      '  display: block;',
+      '  white-space: var(--gosx-scene-label-white-space, normal);',
+      '}',
+    ].join("\\n");
+    document.head.appendChild(style);
+  }
+
+  function applyTextLayoutPresentation(element, config, result, meta) {
+    if (!element) {
+      return;
+    }
+    const options = meta && typeof meta === "object" ? meta : {};
+    const role = typeof options.role === "string" && options.role ? options.role : "block";
+    const surface = typeof options.surface === "string" && options.surface ? options.surface : "dom";
+    const state = typeof options.state === "string" && options.state ? options.state : (result ? "ready" : "pending");
+    const align = typeof options.align === "string" && options.align ? options.align : "";
+    const revision = Number.isFinite(options.revision) ? options.revision : gosxTextLayoutRevision();
+    const font = config && typeof config.font === "string" ? config.font : "";
+    const whiteSpace = normalizeTextLayoutWhiteSpace(config && config.whiteSpace);
+    const lineHeight = Math.max(1, textLayoutNumberValue(config && config.lineHeight, 16));
+    const maxWidth = textLayoutNumberValue(config && config.maxWidth, 0);
+    const ready = Boolean(result);
+
+    setAttrValue(element, TEXT_LAYOUT_ROLE_ATTR, role);
+    setAttrValue(element, TEXT_LAYOUT_SURFACE_ATTR, surface);
+    setAttrValue(element, TEXT_LAYOUT_STATE_ATTR, state);
+    setAttrValue(element, "data-gosx-text-layout-ready", ready ? "true" : "false");
+    setAttrValue(element, "data-gosx-text-layout-font", font);
+    setAttrValue(element, "data-gosx-text-layout-white-space", whiteSpace === "normal" ? "" : whiteSpace);
+    setAttrValue(element, "data-gosx-text-layout-align", align);
+    setAttrValue(element, "data-gosx-text-layout-line-height", lineHeight > 0 ? lineHeight : "");
+    setAttrValue(element, "data-gosx-text-layout-revision", revision);
+
+    setStyleValue(element.style, "--gosx-text-layout-ready", ready ? "1" : "0");
+    setStyleValue(element.style, "--gosx-text-layout-line-height", lineHeight + "px");
+    if (maxWidth > 0 && maxWidth < Number.MAX_SAFE_INTEGER) {
+      setAttrValue(element, "data-gosx-text-layout-max-width", maxWidth);
+      setStyleValue(element.style, "--gosx-text-layout-width", maxWidth + "px");
+      setStyleValue(element.style, "--gosx-text-layout-max-width", maxWidth + "px");
+    } else {
+      setAttrValue(element, "data-gosx-text-layout-max-width", "");
+      clearStyleValue(element.style, "--gosx-text-layout-width");
+      clearStyleValue(element.style, "--gosx-text-layout-max-width");
+    }
+
+    if (!result || typeof result !== "object") {
+      return;
+    }
+
+    setAttrValue(element, "data-gosx-text-layout-line-count", result.lineCount);
+    setAttrValue(element, "data-gosx-text-layout-height", result.height);
+    setAttrValue(element, "data-gosx-text-layout-max-line-width", result.maxLineWidth);
+    setAttrValue(element, "data-gosx-text-layout-byte-length", result.byteLen);
+    setAttrValue(element, "data-gosx-text-layout-rune-count", result.runeCount);
+
+    setStyleValue(element.style, "--gosx-text-layout-height", result.height + "px");
+    setStyleValue(element.style, "--gosx-text-layout-line-count", String(result.lineCount));
+    setStyleValue(element.style, "--gosx-text-layout-max-line-width", result.maxLineWidth + "px");
+    setStyleValue(element.style, "--gosx-text-layout-byte-length", String(result.byteLen));
+    setStyleValue(element.style, "--gosx-text-layout-rune-count", String(result.runeCount));
   }
 
   function textLayoutElementID(element) {
@@ -1619,20 +1769,21 @@
     if (!element) {
       return;
     }
+    applyTextLayoutPresentation(element, config, null, {
+      role: "block",
+      surface: "dom",
+      state: (config.heightHint > 0 || config.lineCountHint > 0) ? "hint" : "pending",
+      revision: gosxTextLayoutRevision(),
+    });
     if (config.heightHint > 0) {
+      setStyleValue(element.style, "--gosx-text-layout-height-hint", config.heightHint + "px");
       setStyleValue(element.style, "--gosx-text-layout-height", config.heightHint + "px");
-      if (typeof element.setAttribute === "function") {
-        element.setAttribute("data-gosx-text-layout-height-hint", String(config.heightHint));
-      }
+      setAttrValue(element, "data-gosx-text-layout-height-hint", config.heightHint);
     }
     if (config.lineCountHint > 0) {
+      setStyleValue(element.style, "--gosx-text-layout-line-count-hint", String(config.lineCountHint));
       setStyleValue(element.style, "--gosx-text-layout-line-count", String(config.lineCountHint));
-      if (typeof element.setAttribute === "function") {
-        element.setAttribute("data-gosx-text-layout-line-count-hint", String(config.lineCountHint));
-      }
-    }
-    if (typeof element.setAttribute === "function") {
-      element.setAttribute("data-gosx-text-layout-ready", "false");
+      setAttrValue(element, "data-gosx-text-layout-line-count-hint", config.lineCountHint);
     }
   }
 
@@ -1664,21 +1815,12 @@
     if (!element) {
       return result;
     }
-
-    setStyleValue(element.style, "--gosx-text-layout-height", result.height + "px");
-    setStyleValue(element.style, "--gosx-text-layout-line-count", String(result.lineCount));
-    setStyleValue(element.style, "--gosx-text-layout-max-line-width", result.maxLineWidth + "px");
-    if (config.maxWidth > 0 && config.maxWidth < Number.MAX_SAFE_INTEGER) {
-      setStyleValue(element.style, "--gosx-text-layout-width", config.maxWidth + "px");
-    }
-
-    if (typeof element.setAttribute === "function") {
-      element.setAttribute("data-gosx-text-layout-ready", "true");
-      element.setAttribute("data-gosx-text-layout-line-count", String(result.lineCount));
-      element.setAttribute("data-gosx-text-layout-height", String(result.height));
-      element.setAttribute("data-gosx-text-layout-max-line-width", String(result.maxLineWidth));
-      element.setAttribute("data-gosx-text-layout-revision", String(gosxTextLayoutRevision()));
-    }
+    applyTextLayoutPresentation(element, config, result, {
+      role: "block",
+      surface: "dom",
+      state: "ready",
+      revision: gosxTextLayoutRevision(),
+    });
     element.__gosxTextLayout = result;
 
     if (typeof record.onUpdate === "function") {
@@ -1898,7 +2040,10 @@
     },
     read(element) {
       const record = element ? textLayoutRecordsByElement.get(element) : null;
-      return record ? record.result : null;
+      if (record) {
+        return record.result;
+      }
+      return element && element.__gosxTextLayout ? element.__gosxTextLayout : null;
     },
     dispose: disposeManagedTextLayout,
   };
@@ -2865,9 +3010,11 @@
     return {
       id: item.id || ("scene-label-" + index),
       text: typeof item.text === "string" ? item.text : "",
+      className: sceneLabelClassName(item),
       x: sceneNumber(item.x, 0),
       y: sceneNumber(item.y, 0),
       z: sceneNumber(item.z, 0),
+      priority: sceneNumber(item.priority, 0),
       shiftX: sceneNumber(item.shiftX, 0),
       shiftY: sceneNumber(item.shiftY, 0),
       shiftZ: sceneNumber(item.shiftZ, 0),
@@ -2883,9 +3030,24 @@
       offsetY: sceneNumber(item.offsetY, -14),
       anchorX: Math.max(0, Math.min(1, sceneNumber(item.anchorX, 0.5))),
       anchorY: Math.max(0, Math.min(1, sceneNumber(item.anchorY, 1))),
+      collision: normalizeSceneLabelCollision(item.collision),
+      occlude: sceneBool(item.occlude, false),
       whiteSpace: normalizeSceneLabelWhiteSpace(item.whiteSpace),
       textAlign: normalizeSceneLabelAlign(item.textAlign),
     };
+  }
+
+  function sceneLabelClassName(item) {
+    if (!item || typeof item !== "object") {
+      return "";
+    }
+    if (typeof item.className === "string" && item.className.trim()) {
+      return item.className.trim();
+    }
+    if (typeof item.class === "string" && item.class.trim()) {
+      return item.class.trim();
+    }
+    return "";
   }
 
   function normalizeSceneKind(value) {
@@ -2935,6 +3097,18 @@
         return "right";
       default:
         return "center";
+    }
+  }
+
+  function normalizeSceneLabelCollision(value) {
+    const mode = typeof value === "string" ? value.trim().toLowerCase() : "";
+    switch (mode) {
+      case "allow":
+      case "none":
+      case "overlap":
+        return "allow";
+      default:
+        return "avoid";
     }
   }
 
@@ -3500,8 +3674,10 @@
     bundle.labels.push({
       id: label.id,
       text: label.text,
+      className: label.className,
       position: { x: projected.x, y: projected.y },
       depth: projected.depth,
+      priority: sceneNumber(label.priority, 0),
       maxWidth: sceneNumber(label.maxWidth, 180),
       font: label.font,
       lineHeight: sceneNumber(label.lineHeight, 18),
@@ -3512,6 +3688,8 @@
       offsetY: sceneNumber(label.offsetY, -14),
       anchorX: sceneNumber(label.anchorX, 0.5),
       anchorY: sceneNumber(label.anchorY, 1),
+      collision: normalizeSceneLabelCollision(label.collision),
+      occlude: Boolean(label.occlude),
       whiteSpace: normalizeSceneLabelWhiteSpace(label.whiteSpace),
       textAlign: normalizeSceneLabelAlign(label.textAlign),
     });
@@ -4580,11 +4758,24 @@
   function fallbackSceneLabelLayout(label) {
     const text = String(label.text || "");
     const width = Math.min(sceneNumber(label.maxWidth, 180), Math.max(1, sceneMeasureTextWidth(label.font, text)));
+    const byteLen = textLayoutByteLength(text);
+    const runeCount = textLayoutRuneCount(text);
     return {
-      lines: [{ text: text }],
+      lines: [{
+        text: text,
+        width: width,
+        byteStart: 0,
+        byteEnd: byteLen,
+        runeStart: 0,
+        runeEnd: runeCount,
+        hardBreak: false,
+        softBreak: false,
+      }],
       lineCount: 1,
       height: sceneNumber(label.lineHeight, 18),
       maxLineWidth: width,
+      byteLen: byteLen,
+      runeCount: runeCount,
     };
   }
 
@@ -4633,31 +4824,234 @@
     };
   }
 
-  function renderSceneLabelElement(element, label, layoutKey, layout) {
-    const width = Math.max(1, Math.min(sceneNumber(label.maxWidth, 180), Math.max(1, Math.ceil(sceneNumber(layout.maxLineWidth, 0) || sceneMeasureTextWidth(label.font, label.text)))));
+  const sceneLabelPaddingX = 10;
+  const sceneLabelPaddingY = 8;
+
+  function sceneLabelBoxMetrics(label, layout) {
+    const contentWidth = Math.max(
+      1,
+      Math.min(
+        sceneNumber(label.maxWidth, 180),
+        Math.max(1, Math.ceil(sceneNumber(layout && layout.maxLineWidth, 0) || sceneMeasureTextWidth(label.font, label.text)))
+      )
+    );
+    const contentHeight = Math.max(
+      sceneNumber(label.lineHeight, 18),
+      Math.ceil(sceneNumber(layout && layout.height, sceneNumber(label.lineHeight, 18)))
+    );
+    return {
+      contentWidth,
+      contentHeight,
+      totalWidth: contentWidth + (sceneLabelPaddingX * 2),
+      totalHeight: contentHeight + (sceneLabelPaddingY * 2),
+      maxTotalWidth: Math.max(contentWidth + (sceneLabelPaddingX * 2), sceneNumber(label.maxWidth, 180) + (sceneLabelPaddingX * 2)),
+    };
+  }
+
+  function sceneLabelBounds(label, metrics) {
+    const anchorX = sceneNumber(label.anchorX, 0.5);
+    const anchorY = sceneNumber(label.anchorY, 1);
+    const anchorPointX = sceneNumber(label.position && label.position.x, 0) + sceneNumber(label.offsetX, 0);
+    const anchorPointY = sceneNumber(label.position && label.position.y, 0) + sceneNumber(label.offsetY, 0);
+    const left = anchorPointX - (anchorX * metrics.totalWidth);
+    const top = anchorPointY - (anchorY * metrics.totalHeight);
+    return {
+      left,
+      top,
+      right: left + metrics.totalWidth,
+      bottom: top + metrics.totalHeight,
+      anchor: { x: anchorPointX, y: anchorPointY },
+      center: { x: left + (metrics.totalWidth / 2), y: top + (metrics.totalHeight / 2) },
+    };
+  }
+
+  function sceneRectArea(box) {
+    if (!box) {
+      return 0;
+    }
+    return Math.max(0, box.right - box.left) * Math.max(0, box.bottom - box.top);
+  }
+
+  function sceneRectOverlapArea(a, b) {
+    if (!a || !b) {
+      return 0;
+    }
+    const overlapX = Math.max(0, Math.min(a.right, b.maxX == null ? b.right : b.maxX) - Math.max(a.left, b.minX == null ? b.left : b.minX));
+    const overlapY = Math.max(0, Math.min(a.bottom, b.maxY == null ? b.bottom : b.maxY) - Math.max(a.top, b.minY == null ? b.top : b.minY));
+    return overlapX * overlapY;
+  }
+
+  function sceneRectsIntersect(a, b) {
+    return sceneRectOverlapArea(a, b) > 0;
+  }
+
+  function sceneBoundsContainPoint(bounds, point) {
+    if (!bounds || !point) {
+      return false;
+    }
+    return point.x >= bounds.minX && point.x <= bounds.maxX && point.y >= bounds.minY && point.y <= bounds.maxY;
+  }
+
+  function buildSceneLabelOccluders(bundle, width, height) {
+    if (!bundle || !bundle.camera || !Array.isArray(bundle.objects) || !bundle.objects.length) {
+      return [];
+    }
+    const occluders = [];
+    for (const object of bundle.objects) {
+      if (!object || object.viewCulled) {
+        continue;
+      }
+      const segments = sceneProjectedObjectSegments(bundle, object, width, height);
+      if (!segments.length) {
+        continue;
+      }
+      const bounds = sceneProjectedSegmentsBounds(segments);
+      if (!bounds) {
+        continue;
+      }
+      occluders.push({
+        depth: sceneNumber(object.depthCenter, sceneObjectDepthCenter(object, bundle.camera)),
+        bounds,
+        hull: sceneProjectedObjectHull(segments),
+      });
+    }
+    occluders.sort(function(a, b) {
+      return a.depth - b.depth;
+    });
+    return occluders;
+  }
+
+  function sceneLabelOccluded(entry, occluders) {
+    if (!entry || !entry.label || !entry.label.occlude || !Array.isArray(occluders) || !occluders.length) {
+      return false;
+    }
+    const labelDepth = sceneNumber(entry.label.depth, 0);
+    for (const occluder of occluders) {
+      if (occluder.depth > labelDepth + 0.05) {
+        continue;
+      }
+      if (!sceneRectsIntersect(entry.box, occluder.bounds)) {
+        continue;
+      }
+      if (scenePointInPolygon(entry.box.anchor, occluder.hull) || sceneBoundsContainPoint(occluder.bounds, entry.box.anchor)) {
+        return true;
+      }
+      if (scenePointInPolygon(entry.box.center, occluder.hull)) {
+        return true;
+      }
+      const overlapRatio = sceneRectOverlapArea(entry.box, occluder.bounds) / Math.max(1, sceneRectArea(entry.box));
+      if (overlapRatio >= 0.28) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function sceneLabelPriorityCompare(a, b) {
+    const priorityDiff = sceneNumber(b && b.label && b.label.priority, 0) - sceneNumber(a && a.label && a.label.priority, 0);
+    if (Math.abs(priorityDiff) > 0.001) {
+      return priorityDiff;
+    }
+    const depthDiff = sceneNumber(a && a.label && a.label.depth, 0) - sceneNumber(b && b.label && b.label.depth, 0);
+    if (Math.abs(depthDiff) > 0.001) {
+      return depthDiff;
+    }
+    return sceneNumber(a && a.order, 0) - sceneNumber(b && b.order, 0);
+  }
+
+  function prepareSceneLabelEntries(bundle, layoutCache, width, height) {
+    const labels = bundle && Array.isArray(bundle.labels) ? bundle.labels : [];
+    const occluders = buildSceneLabelOccluders(bundle, width, height);
+    const entries = [];
+    for (let index = 0; index < labels.length; index += 1) {
+      const label = labels[index];
+      if (!label || typeof label.text !== "string" || label.text.trim() === "") {
+        continue;
+      }
+      const layout = layoutSceneLabel(label, layoutCache);
+      const metrics = sceneLabelBoxMetrics(label, layout.value);
+      const box = sceneLabelBounds(label, metrics);
+      entries.push({
+        id: label.id || ("scene-label-" + index),
+        order: index,
+        label,
+        layoutKey: layout.key,
+        layout: layout.value,
+        metrics,
+        box,
+        occluded: false,
+        hidden: false,
+      });
+    }
+
+    const sorted = entries.slice().sort(sceneLabelPriorityCompare);
+    const occupied = [];
+    for (const entry of sorted) {
+      entry.occluded = sceneLabelOccluded(entry, occluders);
+      if (entry.occluded) {
+        entry.hidden = true;
+        continue;
+      }
+      if (normalizeSceneLabelCollision(entry.label.collision) !== "allow") {
+        for (const prior of occupied) {
+          if (sceneRectsIntersect(entry.box, prior)) {
+            entry.hidden = true;
+            break;
+          }
+        }
+      }
+      if (!entry.hidden) {
+        occupied.push(entry.box);
+      }
+    }
+
+    return entries;
+  }
+
+  function renderSceneLabelElement(element, label, layoutKey, layout, metrics, box, hidden, occluded) {
+    const align = normalizeSceneLabelAlign(label.textAlign);
+    const whiteSpace = normalizeSceneLabelWhiteSpace(label.whiteSpace);
+    const zIndex = Math.max(1, 1000 + Math.round(sceneNumber(label.priority, 0) * 10) - Math.round(sceneNumber(label.depth, 0) * 10));
+
     element.setAttribute("data-gosx-scene-label", label.id || "");
-    element.style.position = "absolute";
-    element.style.left = (sceneNumber(label.position && label.position.x, 0) + sceneNumber(label.offsetX, 0)) + "px";
-    element.style.top = (sceneNumber(label.position && label.position.y, 0) + sceneNumber(label.offsetY, 0)) + "px";
-    element.style.transform = "translate(" + (-sceneNumber(label.anchorX, 0.5) * 100) + "%, " + (-sceneNumber(label.anchorY, 1) * 100) + "%)";
-    element.style.width = width + "px";
-    element.style.maxWidth = sceneNumber(label.maxWidth, 180) + "px";
-    element.style.pointerEvents = "none";
-    element.style.boxSizing = "border-box";
-    element.style.padding = "8px 10px";
-    element.style.borderRadius = "12px";
-    element.style.border = "1px solid " + (label.borderColor || "rgba(141, 225, 255, 0.24)");
-    element.style.background = label.background || "rgba(8, 21, 31, 0.82)";
-    element.style.color = label.color || "#ecf7ff";
-    element.style.font = label.font || '600 13px "IBM Plex Sans", "Segoe UI", sans-serif';
-    element.style.lineHeight = sceneNumber(label.lineHeight, 18) + "px";
-    element.style.textAlign = normalizeSceneLabelAlign(label.textAlign);
-    element.style.whiteSpace = normalizeSceneLabelWhiteSpace(label.whiteSpace) === "normal" ? "normal" : normalizeSceneLabelWhiteSpace(label.whiteSpace);
-    element.style.boxShadow = "0 14px 32px rgba(3, 10, 16, 0.28)";
-    element.style.backdropFilter = "blur(10px)";
-    element.style.webkitBackdropFilter = "blur(10px)";
-    element.style.willChange = "left, top, transform";
-    element.style.zIndex = String(Math.max(1, 1000 - Math.round(sceneNumber(label.depth, 0) * 10)));
+    setAttrValue(element, "class", label.className ? ("gosx-scene-label " + label.className) : "gosx-scene-label");
+    setAttrValue(element, "data-gosx-scene-label-collision", normalizeSceneLabelCollision(label.collision));
+    setAttrValue(element, "data-gosx-scene-label-occlude", label.occlude ? "true" : "false");
+    setAttrValue(element, "data-gosx-scene-label-occluded", occluded ? "true" : "false");
+    setAttrValue(element, "data-gosx-scene-label-visibility", hidden ? "hidden" : "visible");
+    setAttrValue(element, "data-gosx-scene-label-priority", sceneNumber(label.priority, 0));
+    setAttrValue(element, "data-gosx-scene-label-depth", sceneNumber(label.depth, 0));
+
+    applyTextLayoutPresentation(element, {
+      font: label.font,
+      whiteSpace: whiteSpace,
+      lineHeight: sceneNumber(label.lineHeight, 18),
+      maxWidth: sceneNumber(label.maxWidth, 180),
+    }, layout, {
+      role: "label",
+      surface: "scene3d",
+      state: "ready",
+      align: align,
+      revision: gosxTextLayoutRevision(),
+    });
+
+    setStyleValue(element.style, "--gosx-scene-label-left", box.anchor.x + "px");
+    setStyleValue(element.style, "--gosx-scene-label-top", box.anchor.y + "px");
+    setStyleValue(element.style, "--gosx-scene-label-anchor-x", String(sceneNumber(label.anchorX, 0.5)));
+    setStyleValue(element.style, "--gosx-scene-label-anchor-y", String(sceneNumber(label.anchorY, 1)));
+    setStyleValue(element.style, "--gosx-scene-label-width", metrics.totalWidth + "px");
+    setStyleValue(element.style, "--gosx-scene-label-max-width", metrics.maxTotalWidth + "px");
+    setStyleValue(element.style, "--gosx-scene-label-height", metrics.totalHeight + "px");
+    setStyleValue(element.style, "--gosx-scene-label-line-height", sceneNumber(label.lineHeight, 18) + "px");
+    setStyleValue(element.style, "--gosx-scene-label-align", align);
+    setStyleValue(element.style, "--gosx-scene-label-white-space", whiteSpace);
+    setStyleValue(element.style, "--gosx-scene-label-font", label.font || '600 13px "IBM Plex Sans", "Segoe UI", sans-serif');
+    setStyleValue(element.style, "--gosx-scene-label-color", label.color || "#ecf7ff");
+    setStyleValue(element.style, "--gosx-scene-label-background", label.background || "rgba(8, 21, 31, 0.82)");
+    setStyleValue(element.style, "--gosx-scene-label-border-color", label.borderColor || "rgba(141, 225, 255, 0.24)");
+    setStyleValue(element.style, "--gosx-scene-label-z-index", String(zIndex));
+    setStyleValue(element.style, "--gosx-scene-label-depth", String(sceneNumber(label.depth, 0)));
+    element.__gosxTextLayout = layout;
 
     if (element.__gosxLayoutKey === layoutKey) {
       return;
@@ -4669,27 +5063,24 @@
       const lineElement = document.createElement("div");
       lineElement.setAttribute("data-gosx-scene-label-line", "");
       lineElement.textContent = line && typeof line.text === "string" && line.text !== "" ? line.text : "\u00a0";
-      if (normalizeSceneLabelWhiteSpace(label.whiteSpace) !== "normal") {
-        lineElement.style.whiteSpace = normalizeSceneLabelWhiteSpace(label.whiteSpace);
+      if (whiteSpace !== "normal") {
+        lineElement.style.whiteSpace = whiteSpace;
       }
       element.appendChild(lineElement);
     }
     element.__gosxLayoutKey = layoutKey;
   }
 
-  function renderSceneLabels(layer, bundle, layoutCache, elements) {
+  function renderSceneLabels(layer, bundle, layoutCache, elements, width, height) {
     if (!layer) {
       return;
     }
 
-    const labels = bundle && Array.isArray(bundle.labels) ? bundle.labels : [];
+    const labels = prepareSceneLabelEntries(bundle, layoutCache, width, height);
     const active = new Set();
 
-    for (const label of labels) {
-      if (!label || typeof label.text !== "string" || label.text.trim() === "") {
-        continue;
-      }
-      const id = label.id || ("scene-label-" + active.size);
+    for (const entry of labels) {
+      const id = entry.id;
       active.add(id);
       let element = elements.get(id);
       if (!element) {
@@ -4697,8 +5088,7 @@
         layer.appendChild(element);
         elements.set(id, element);
       }
-      const layout = layoutSceneLabel(label, layoutCache);
-      renderSceneLabelElement(element, label, layout.key, layout.value);
+      renderSceneLabelElement(element, entry.label, entry.layoutKey, entry.layout, entry.metrics, entry.box, entry.hidden, entry.occluded);
     }
 
     for (const [id, element] of elements.entries()) {
@@ -4792,7 +5182,7 @@
         if (disposed || !latestBundle) {
           return;
         }
-        renderSceneLabels(labelLayer, latestBundle, labelLayoutCache, labelElements);
+        renderSceneLabels(labelLayer, latestBundle, labelLayoutCache, labelElements, width, height);
       });
     });
 
@@ -4815,7 +5205,7 @@
         if (runtimeBundle) {
           latestBundle = runtimeBundle;
           renderer.render(runtimeBundle);
-          renderSceneLabels(labelLayer, runtimeBundle, labelLayoutCache, labelElements);
+          renderSceneLabels(labelLayer, runtimeBundle, labelLayoutCache, labelElements, width, height);
           if (sceneShouldAnimate()) {
             frameHandle = engineFrame(renderFrame);
           }
@@ -4827,7 +5217,7 @@
       }
       latestBundle = createSceneRenderBundle(width, height, sceneState.background, sceneState.camera, sceneStateObjects(sceneState), sceneStateLabels(sceneState), timeSeconds);
       renderer.render(latestBundle);
-      renderSceneLabels(labelLayer, latestBundle, labelLayoutCache, labelElements);
+      renderSceneLabels(labelLayer, latestBundle, labelLayoutCache, labelElements, width, height);
       if (sceneShouldAnimate()) {
         frameHandle = engineFrame(renderFrame);
       }
@@ -5157,11 +5547,13 @@
       return {
         id: item.id || ("scene-label-" + index),
         text: typeof item.text === "string" ? item.text : "",
+        className: sceneLabelClassName(item),
         position: {
           x: sceneNumber(item.position && item.position.x, 0),
           y: sceneNumber(item.position && item.position.y, 0),
         },
         depth: sceneNumber(item.depth, 0),
+        priority: sceneNumber(item.priority, 0),
         maxWidth: Math.max(48, sceneNumber(item.maxWidth, 180)),
         font: typeof item.font === "string" && item.font ? item.font : '600 13px "IBM Plex Sans", "Segoe UI", sans-serif',
         lineHeight: Math.max(12, sceneNumber(item.lineHeight, 18)),
@@ -5172,6 +5564,8 @@
         offsetY: sceneNumber(item.offsetY, -14),
         anchorX: Math.max(0, Math.min(1, sceneNumber(item.anchorX, 0.5))),
         anchorY: Math.max(0, Math.min(1, sceneNumber(item.anchorY, 1))),
+        collision: normalizeSceneLabelCollision(item.collision),
+        occlude: sceneBool(item.occlude, false),
         whiteSpace: normalizeSceneLabelWhiteSpace(item.whiteSpace),
         textAlign: normalizeSceneLabelAlign(item.textAlign),
       };
