@@ -10,118 +10,58 @@ import (
 // LowerIsland converts an IR component to an IslandProgram.
 // The component must have IsIsland == true.
 func LowerIsland(prog *Program, compIdx int) (*program.Program, error) {
+	comp, err := islandComponent(prog, compIdx)
+	if err != nil {
+		return nil, err
+	}
+
+	scope := mergedIslandScope(prog, comp)
+	l := newIslandLowerer(prog, comp.Name, scope)
+
+	if err := l.lowerComponent(comp); err != nil {
+		return nil, err
+	}
+	if err := l.emitComponentScope(comp.Scope); err != nil {
+		return nil, err
+	}
+	l.populateStaticMask()
+
+	return l.dst, nil
+}
+
+func islandComponent(prog *Program, compIdx int) (Component, error) {
 	if compIdx >= len(prog.Components) {
-		return nil, fmt.Errorf("component index %d out of range", compIdx)
+		return Component{}, fmt.Errorf("component index %d out of range", compIdx)
 	}
 	comp := prog.Components[compIdx]
 	if !comp.IsIsland {
-		return nil, fmt.Errorf("component %q is not an island", comp.Name)
+		return Component{}, fmt.Errorf("component %q is not an island", comp.Name)
 	}
+	return comp, nil
+}
 
-	// Build expression scope from the component's node tree AND the body analyzer.
-	// If the component has a Scope (from body analysis), merge it into the
-	// expression scope so identifiers resolve correctly.
+func mergedIslandScope(prog *Program, comp Component) *ExprScope {
 	scope := buildIslandScope(prog, comp)
-	if comp.Scope != nil {
-		for _, sig := range comp.Scope.Signals {
-			scope.Signals[sig.Name] = true
-			if sig.Local != "" {
-				scope.SignalAliases[sig.Local] = sig.Name
-			}
-		}
-		for _, c := range comp.Scope.Computeds {
-			scope.Signals[c.Name] = true // computeds read like signals
-		}
-		for _, h := range comp.Scope.Handlers {
-			scope.Handlers[h.Name] = true
+	applyComponentScope(scope, comp.Scope)
+	return scope
+}
+
+func applyComponentScope(scope *ExprScope, compScope *ComponentScope) {
+	if scope == nil || compScope == nil {
+		return
+	}
+	for _, sig := range compScope.Signals {
+		scope.Signals[sig.Name] = true
+		if sig.Local != "" {
+			scope.SignalAliases[sig.Local] = sig.Name
 		}
 	}
-
-	l := &islandLowerer{
-		src:     prog,
-		dst:     &program.Program{Name: comp.Name},
-		nodeMap: make(map[NodeID]program.NodeID),
-		scope:   scope,
+	for _, computed := range compScope.Computeds {
+		scope.Signals[computed.Name] = true
 	}
-
-	// Lower the node tree
-	rootID, err := l.lowerNode(comp.Root)
-	if err != nil {
-		return nil, fmt.Errorf("lower %s: %w", comp.Name, err)
+	for _, handler := range compScope.Handlers {
+		scope.Handlers[handler.Name] = true
 	}
-	l.dst.Root = rootID
-
-	// Generate SignalDef, ComputedDef, Handler entries from the body analyzer.
-	if comp.Scope != nil {
-		for _, sig := range comp.Scope.Signals {
-			// Parse the init expression into opcodes
-			initExprs, initID, err := ParseExpr(sig.InitExpr, scope)
-			if err != nil {
-				// Fallback: literal init
-				initID = l.addExprDirect(program.Expr{
-					Op:    program.OpLitString,
-					Value: sig.InitExpr,
-					Type:  program.TypeAny,
-				})
-			} else {
-				initID = l.appendExprs(initExprs, initID)
-			}
-
-			exprType := typeHintToExprType(sig.TypeHint)
-			l.dst.Signals = append(l.dst.Signals, program.SignalDef{
-				Name: sig.Name,
-				Type: exprType,
-				Init: initID,
-			})
-		}
-
-		for _, comp := range comp.Scope.Computeds {
-			bodyExprs, bodyID, err := ParseExpr(comp.BodyExpr, scope)
-			if err != nil {
-				bodyID = l.addExprDirect(program.Expr{
-					Op:    program.OpPropGet,
-					Value: comp.BodyExpr,
-					Type:  program.TypeAny,
-				})
-			} else {
-				bodyID = l.appendExprs(bodyExprs, bodyID)
-			}
-
-			l.dst.Computeds = append(l.dst.Computeds, program.ComputedDef{
-				Name: comp.Name,
-				Type: program.TypeAny,
-				Expr: bodyID,
-			})
-		}
-
-		for _, handler := range comp.Scope.Handlers {
-			h := program.Handler{Name: handler.Name}
-			handlerScope := cloneExprScope(scope)
-			handlerScope.EventFields["value"] = true
-			handlerScope.EventFields["checked"] = true
-			handlerScope.EventFields["key"] = true
-			handlerScope.EventFields["selectedIndex"] = true
-			for _, stmtSource := range handler.Statements {
-				stmtExprs, stmtID, err := ParseExpr(stmtSource, handlerScope)
-				if err != nil {
-					return nil, fmt.Errorf("parse handler %s statement %q: %w", handler.Name, stmtSource, err)
-				}
-				stmtID = l.appendExprs(stmtExprs, stmtID)
-				h.Body = append(h.Body, stmtID)
-			}
-			l.dst.Handlers = append(l.dst.Handlers, h)
-		}
-	}
-
-	// Compute static mask
-	l.dst.StaticMask = make([]bool, len(l.dst.Nodes))
-	for i, srcID := range l.srcIDs {
-		if int(srcID) < len(prog.Nodes) {
-			l.dst.StaticMask[i] = prog.Nodes[srcID].IsStatic
-		}
-	}
-
-	return l.dst, nil
 }
 
 // buildIslandScope extracts signal, prop, and handler names from the component's
@@ -202,6 +142,105 @@ type islandLowerer struct {
 	nodeMap map[NodeID]program.NodeID
 	srcIDs  []NodeID // tracks source node ID for each dst node
 	scope   *ExprScope
+}
+
+func newIslandLowerer(src *Program, name string, scope *ExprScope) *islandLowerer {
+	return &islandLowerer{
+		src:     src,
+		dst:     &program.Program{Name: name},
+		nodeMap: make(map[NodeID]program.NodeID),
+		scope:   scope,
+	}
+}
+
+func (l *islandLowerer) lowerComponent(comp Component) error {
+	rootID, err := l.lowerNode(comp.Root)
+	if err != nil {
+		return fmt.Errorf("lower %s: %w", comp.Name, err)
+	}
+	l.dst.Root = rootID
+	return nil
+}
+
+func (l *islandLowerer) emitComponentScope(scope *ComponentScope) error {
+	if scope == nil {
+		return nil
+	}
+	l.emitSignalDefs(scope.Signals)
+	l.emitComputedDefs(scope.Computeds)
+	return l.emitHandlerDefs(scope.Handlers)
+}
+
+func (l *islandLowerer) emitSignalDefs(signals []SignalInfo) {
+	for _, sig := range signals {
+		initID := l.parseExprOrFallback(sig.InitExpr, l.scope, program.Expr{
+			Op:    program.OpLitString,
+			Value: sig.InitExpr,
+			Type:  program.TypeAny,
+		})
+		l.dst.Signals = append(l.dst.Signals, program.SignalDef{
+			Name: sig.Name,
+			Type: typeHintToExprType(sig.TypeHint),
+			Init: initID,
+		})
+	}
+}
+
+func (l *islandLowerer) emitComputedDefs(computeds []ComputedInfo) {
+	for _, computed := range computeds {
+		bodyID := l.parseExprOrFallback(computed.BodyExpr, l.scope, program.Expr{
+			Op:    program.OpPropGet,
+			Value: computed.BodyExpr,
+			Type:  program.TypeAny,
+		})
+		l.dst.Computeds = append(l.dst.Computeds, program.ComputedDef{
+			Name: computed.Name,
+			Type: program.TypeAny,
+			Expr: bodyID,
+		})
+	}
+}
+
+func (l *islandLowerer) emitHandlerDefs(handlers []HandlerInfo) error {
+	handlerScope := handlerExprScope(l.scope)
+	for _, handler := range handlers {
+		h := program.Handler{Name: handler.Name}
+		for _, stmtSource := range handler.Statements {
+			stmtExprs, stmtID, err := ParseExpr(stmtSource, handlerScope)
+			if err != nil {
+				return fmt.Errorf("parse handler %s statement %q: %w", handler.Name, stmtSource, err)
+			}
+			h.Body = append(h.Body, l.appendExprs(stmtExprs, stmtID))
+		}
+		l.dst.Handlers = append(l.dst.Handlers, h)
+	}
+	return nil
+}
+
+func handlerExprScope(scope *ExprScope) *ExprScope {
+	handlerScope := cloneExprScope(scope)
+	handlerScope.EventFields["value"] = true
+	handlerScope.EventFields["checked"] = true
+	handlerScope.EventFields["key"] = true
+	handlerScope.EventFields["selectedIndex"] = true
+	return handlerScope
+}
+
+func (l *islandLowerer) parseExprOrFallback(source string, scope *ExprScope, fallback program.Expr) program.ExprID {
+	exprs, rootID, err := ParseExpr(source, scope)
+	if err != nil {
+		return l.addExprDirect(fallback)
+	}
+	return l.appendExprs(exprs, rootID)
+}
+
+func (l *islandLowerer) populateStaticMask() {
+	l.dst.StaticMask = make([]bool, len(l.dst.Nodes))
+	for i, srcID := range l.srcIDs {
+		if int(srcID) < len(l.src.Nodes) {
+			l.dst.StaticMask[i] = l.src.Nodes[srcID].IsStatic
+		}
+	}
 }
 
 func (l *islandLowerer) lowerNode(srcID NodeID) (program.NodeID, error) {
