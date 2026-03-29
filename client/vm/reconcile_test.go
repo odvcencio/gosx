@@ -509,6 +509,65 @@ func TestReconcileExplicitKeyOverridesAuto(t *testing.T) {
 	}
 }
 
+func TestReconcileAutoKeysUseStableSourceIdentity(t *testing.T) {
+	prog := &program.Program{
+		Name: "AutoKeySource",
+		Nodes: []program.Node{
+			{Kind: program.NodeElement, Tag: "ul", Children: []program.NodeID{1, 2}},
+			{Kind: program.NodeElement, Tag: "li", Children: []program.NodeID{3}},
+			{Kind: program.NodeElement, Tag: "li", Children: []program.NodeID{4}},
+			{Kind: program.NodeText, Text: "A"},
+			{Kind: program.NodeText, Text: "B"},
+		},
+		Root:       0,
+		Exprs:      []program.Expr{},
+		StaticMask: []bool{false, false, false, true, true},
+	}
+
+	vm := NewVM(prog, nil)
+	vm.props["_key"] = StringVal("row-1")
+
+	first := vm.resolveNodeWithSource(1, prog.Nodes[1])
+	second := vm.resolveNodeWithSource(2, prog.Nodes[2])
+	if first.Key == "" || second.Key == "" {
+		t.Fatalf("expected source-based auto-keys, got %q and %q", first.Key, second.Key)
+	}
+	if first.Key == second.Key {
+		t.Fatalf("expected distinct source-based auto-keys, got %q", first.Key)
+	}
+
+	again := vm.resolveNodeWithSource(1, prog.Nodes[1])
+	if first.Key != again.Key {
+		t.Fatalf("expected stable auto-key for same source, got %q then %q", first.Key, again.Key)
+	}
+}
+
+func TestReconcileDuplicateKeysFallbackToPositionalDiff(t *testing.T) {
+	prev := &ResolvedTree{Nodes: []ResolvedNode{
+		{Tag: "ul", Children: []int{1, 2}},
+		{Tag: "li", Key: "dup", Text: "old-first"},
+		{Tag: "li", Key: "dup", Text: "old-second"},
+	}}
+	next := &ResolvedTree{Nodes: []ResolvedNode{
+		{Tag: "ul", Children: []int{1, 2}},
+		{Tag: "li", Key: "dup", Text: "new-first"},
+		{Tag: "li", Key: "dup", Text: "new-second"},
+	}}
+
+	ops := ReconcileTrees(prev, next, []bool{false, false, false})
+	if len(ops) != 2 {
+		t.Fatalf("expected positional text patches for duplicate keys, got %d: %+v", len(ops), ops)
+	}
+	for _, op := range ops {
+		if op.Kind != PatchSetText {
+			t.Fatalf("expected PatchSetText after duplicate-key fallback, got %+v", op)
+		}
+	}
+	if ops[0].Path != "0" || ops[1].Path != "1" {
+		t.Fatalf("expected positional paths after duplicate-key fallback, got %+v", ops)
+	}
+}
+
 func TestReconcileNoKeysUnchanged(t *testing.T) {
 	// Positional (no keys) — existing behavior should be preserved
 	prev := &ResolvedTree{Nodes: []ResolvedNode{
