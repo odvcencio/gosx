@@ -4981,6 +4981,66 @@ test("navigation runtime skips intent prefetch under reduced-data conditions", a
   assert.equal(link.getAttribute("data-gosx-prefetch-state"), "idle");
 });
 
+test("navigation runtime leaves non-interceptable links to native handling", async () => {
+  const hashLink = new FakeElement("a", null);
+  hashLink.setAttribute("href", "#details");
+  hashLink.setAttribute("data-gosx-link", "");
+
+  const externalLink = new FakeElement("a", null);
+  externalLink.setAttribute("href", "https://example.com/docs");
+  externalLink.setAttribute("data-gosx-link", "");
+
+  const downloadLink = new FakeElement("a", null);
+  downloadLink.setAttribute("href", "/download");
+  downloadLink.setAttribute("data-gosx-link", "");
+  downloadLink.setAttribute("download", "");
+
+  const targetLink = new FakeElement("a", null);
+  targetLink.setAttribute("href", "/target");
+  targetLink.setAttribute("data-gosx-link", "");
+  targetLink.setAttribute("target", "_blank");
+
+  const modifiedLink = new FakeElement("a", null);
+  modifiedLink.setAttribute("href", "/modified");
+  modifiedLink.setAttribute("data-gosx-link", "");
+
+  const env = createContext({
+    elements: [hashLink, externalLink, downloadLink, targetLink, modifiedLink],
+  });
+
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+
+  const clickListener = env.document.eventListeners.get("click")[0];
+  for (const [link, overrides] of [
+    [hashLink, {}],
+    [externalLink, {}],
+    [downloadLink, {}],
+    [targetLink, {}],
+    [modifiedLink, { ctrlKey: true }],
+  ]) {
+    let prevented = false;
+    clickListener({
+      type: "click",
+      target: link,
+      button: 0,
+      ctrlKey: false,
+      metaKey: false,
+      shiftKey: false,
+      altKey: false,
+      defaultPrevented: false,
+      preventDefault() {
+        prevented = true;
+        this.defaultPrevented = true;
+      },
+      ...overrides,
+    });
+    await flushAsyncWork();
+    assert.equal(prevented, false);
+  }
+
+  assert.equal(env.fetchCalls.length, 0);
+});
+
 test("navigation runtime absolutizes managed asset URLs during navigation", async () => {
   const parsedDocs = new Map();
   const env = createContext({
@@ -5434,4 +5494,85 @@ test("navigation runtime honors submitter overrides and falls back with native s
   assert.equal(form.requestSubmitCalls[0][0], submitter);
   assert.equal(form.hasAttribute("data-gosx-form"), true);
   assert.equal(form.getAttribute("data-gosx-form-state"), "idle");
+});
+
+test("navigation runtime honors submitter override attributes without reflected props", async () => {
+  const form = new FakeElement("form", null);
+  form.setAttribute("action", "/save");
+  form.setAttribute("method", "post");
+  form.setAttribute("data-gosx-form", "");
+  form.setAttribute("data-gosx-form-state", "idle");
+
+  const title = new FakeElement("input", null);
+  title.setAttribute("name", "title");
+  title.value = "hello";
+  form.appendChild(title);
+
+  const submitter = new FakeElement("button", null);
+  submitter.setAttribute("name", "intent");
+  submitter.setAttribute("value", "preview");
+  submitter.setAttribute("formaction", "/preview-attr");
+  submitter.setAttribute("formmethod", "get");
+  form.appendChild(submitter);
+
+  const parsedDocs = new Map();
+  const env = createContext({
+    elements: [form],
+    fetchRoutes: {
+      "http://localhost:3000/preview-attr?title=hello&intent=preview": {
+        text: "__PREVIEW_ATTR_DOC__",
+        url: "http://localhost:3000/preview-attr?title=hello&intent=preview",
+      },
+    },
+    parseHTML(html) {
+      return parsedDocs.get(html);
+    },
+  });
+  env.context.__gosx_dispose_page = async function() {};
+  env.context.__gosx_bootstrap_page = async function() {};
+
+  const preview = new FakeElement("main", null);
+  preview.id = "preview-attr";
+  preview.textContent = "preview";
+  parsedDocs.set("__PREVIEW_ATTR_DOC__", buildNavigatedDocument({
+    title: "Preview Attr",
+    bodyNodes: [preview],
+  }));
+
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+
+  const submitListener = env.document.eventListeners.get("submit")[0];
+  submitListener({
+    type: "submit",
+    target: form,
+    submitter,
+    defaultPrevented: false,
+    preventDefault() {
+      this.defaultPrevented = true;
+    },
+  });
+  await flushAsyncWork();
+
+  assert.equal(env.fetchCalls[0].url, "http://localhost:3000/preview-attr?title=hello&intent=preview");
+  assert.equal(env.document.dispatchedEvents.at(-1).detail.method, "GET");
+
+  env.fetchCalls.length = 0;
+  submitter.setAttribute("formtarget", "_blank");
+  let prevented = false;
+
+  submitListener({
+    type: "submit",
+    target: form,
+    submitter,
+    defaultPrevented: false,
+    preventDefault() {
+      prevented = true;
+      this.defaultPrevented = true;
+    },
+  });
+  await flushAsyncWork();
+
+  assert.equal(prevented, false);
+  assert.equal(form.requestSubmitCalls.length, 0);
+  assert.equal(env.fetchCalls.length, 0);
 });
