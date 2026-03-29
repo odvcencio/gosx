@@ -1,61 +1,52 @@
 # GoSX
 
-A Go-native server-first web platform. Author components in native GSX syntax, render on the server by default, hydrate interactive islands with WebAssembly.
+A Go-native web platform. Write components in `.gsx` — Go with embedded markup — compile through a real compiler pipeline, render on the server by default, hydrate interactive islands with WebAssembly. No JavaScript toolchain. Five dependencies.
 
-## Status
+## What if you never had to leave Go?
 
-GoSX is in active development. The compiler pipeline, server rendering, island architecture, and browser runtime are implemented and exercised through unit, integration, and live-browser checks.
+GoSX starts from a simple premise: the browser is a render target, not a runtime. Server components are Go functions that return HTML. Interactive components compile to bytecode and run in a shared WASM VM. Everything between those two points — the parser, the compiler, the reconciler, the signal system — is pure Go.
 
-**What works today (tested):**
+```go
+package app
 
-- `gosx init` scaffolds a runnable app with `/public` assets, `.env` loading, metadata hooks, session-backed form actions, CSRF protection, JSON API routes, custom 404/500 pages, and a file-backed `app/layout.gsx`
-- `gosx init --template docs` scaffolds a dogfooded docs site with nested file layouts, scoped docs 404s, page-scoped server modules, sessions, auth, redirects/rewrites, public assets, and colocated JSON endpoints
-- `gosx build --prod` emits a deployable `dist/` bundle with hashed assets, a server binary when present, copied `app/` + `public/`, a `run.sh` launcher, prerendered `dist/static/` output for static-safe file routes, and `export.json` metadata for ISR-aware runtime serving
-- `gosx build --prod` also writes `dist/edge/worker.js` plus `dist/platform/deployment.json` / `vercel.json` so prerendered routes can be served at the edge while dynamic requests fall back to origin
-- `gosx dev` fronts a runnable app with a stable dev proxy, staged `/gosx/*` runtime assets, file watching, SSE reload notifications, and auto-generated `modules/modules.go` imports for discovered `*.server.go` packages
-- `gosx export` prerenders static file-routed pages into `dist/static`, carries over `/public`, stages `/gosx/*` runtime assets, rewrites exported URLs for portable static output, and writes `dist/export.json`
-- opt-in client-side page navigation via `app.EnableNavigation()` plus `server.Link(...)`, with managed head swaps and intent-prefetching
-- file-based routing via `route.Router.AddDir(...)`, including `layout.gsx`, `page.gsx`, `index.gsx`, `not-found.gsx`, `error.gsx`, route groups like `(marketing)`, `[slug]` segment conventions, inherited `route.config.json`, and directory-scoped modules
-- file-route server modules via sibling `page.server.go` files and `route.MustRegisterFileModuleHere(...)`, with per-page `Load`, `Metadata`, `Render`, and relative `__actions/<name>` endpoints
-- file-route template bindings via `route.FileTemplateBindings`, so `page.server.go` modules can expose request-scoped values, helpers, and renderable Go components directly to `.gsx` pages
-- directory-scoped middleware and request hooks via `route.MustRegisterDirModuleHere(...)`, plus inheritable `route.config.json` cache/header/prerender settings
-- file-routed `.gsx` pages can now render local page-scoped components plus built-in `If`, `Each`, `Link`, and `Image` helpers through the file renderer, including mixed and repeated expression-valued attrs plus nested-brace attr expressions
-- file-routed `.gsx` pages can now render built-in `<Surface />`, `<Worker />`, and `<Scene3D />` engine helpers, with loader-provided props, server-rendered mount shells, and a native bootstrap-side 3D factory
-- file-routed pages and layouts can now own sibling `page.css` / `layout.css` sidecars, which are injected into the document head automatically during routed rendering
-- file-routed pages and layouts can now own sibling `page.meta.json` / `layout.meta.json` sidecars for static title, description, canonical, meta, and link data without manual server-module wiring
-- public asset helpers via `server.AssetURL(...)`, `server.Stylesheet(...)`, and file-routed `.gsx` `asset(...)` / `<Stylesheet ... />` helpers for root-served assets
-- session-backed browser form flows via `action` + `session`, including flashed validation state, redirect-safe success messages, and built-in CSRF protection
-- auth middleware via `auth.New(...)`, `authn.Middleware`, `authn.Require`, and pluggable `auth.Provider` backends, with request-scoped `user` context available to routed `.gsx` pages
-- built-in passwordless auth helpers via `authn.MagicLinks(...)`, `authn.WebAuthn(...)`, and `authn.OAuth(...)`, including session-backed magic-link callbacks, WebAuthn begin/finish verification, Google/GitHub OAuth provider presets, and the browser helper returned by `auth.WebAuthnScript()`
-- declarative redirects and rewrites via `app.Redirect(...)` and `app.Rewrite(...)`
-- semantic page/data cache helpers via `ctx.CacheDynamic()`, `ctx.CacheRevalidate(...)`, `ctx.CacheData(...)`, `ctx.CachePrivateData(...)`, plus automatic ETags and `app.RevalidatePath(...)` / `app.RevalidateTag(...)`
-- `app.EnableISR()` can now serve prerendered HTML from `dist/static`, mark hits vs stale responses, and refresh exported pages in the background using the same path/tag revalidation surface
-- supported extension surfaces for observability and media/build integration via `app.UseObserver(...)`, `router.UseObserver(...)`, `server.RegisterImageResolver(...)`, and `gosx.config.json` build hooks
-- app testing helpers via `apptest.Request(...)`, `apptest.App(...)`, `apptest.Router(...)`, `apptest.FormRequest(...)`, and stateful `apptest.NewAppClient(...)` / `apptest.NewRouterClient(...)`
-- deferred page regions via `ctx.Defer(...)`, with fallback-first HTML and streamed replacements
-- local image optimization via `server.Image(...)` and `/_gosx/image` for responsive raster variants
-- `.gsx` file parsing with native GSX syntax (elements, fragments, hyphenated attributes, expressions, spreads, custom-element tags)
-- `//gosx:island` directive detection on components
-- Compiler pipeline: parse → flat-array IR → validate → lower to IslandProgram → serialize
-- Body analyzer: compiler extracts signals, computeds, and handlers from `.gsx` source (proven by TestCompilerE2E_CounterFromSource)
-- Zero-manual-wiring islands: `.gsx` island → `LowerIsland` → `RenderIslandFromProgram` → auto `EventSlot`s and server-rendered `data-gosx-on-*` attributes
-- Server-side HTML rendering via the `Node` API
-- Signal system with `Signal[T]`, `Computed[T]`, `Effect`, and `Batch`
-- Expression VM evaluating typed opcodes (40+ operations)
-- Tree reconciler with static subtree skipping and patch op generation
-- Island programs in JSON (dev, inspectable) and binary (prod, compact — ~14% of JSON size)
-- WASM bridge managing island lifecycle (hydrate, dispatch, dispose)
-- browser-backed `textlayout` primitives via `Prepare`, `Measure`, `Layout`, `LayoutNextLine`, and the shared-runtime `__gosx_text_layout(...)` export, including source spans for line-aware overlays/editors
-- framework-level text layout via `server.TextBlock`, `ctx.TextBlock(...)`, `.gsx` `<TextBlock>`, and `window.__gosx.textLayout.observe(...)`, including server-side sizing hints before browser refinement and reactive DOM metrics/ranges without requiring islands
-- WASM runtime compiles to 1.2MB with TinyGo (~452KB gzipped first load)
-- Hub primitive: WebSocket presence, fanout, shared state
-- Engine primitive: worker/surface model with capability declarations
-- Cross-island shared state via `$`-prefixed signals
-- `.gsx` editor support via `gosx lsp` plus a bundled VS Code extension scaffold in `editor/vscode`
+// Server component: renders to HTML, zero JavaScript.
+func Greeting(props GreetingProps) Node {
+    return <div class="greeting">
+        <h1>Hello, {props.Name}!</h1>
+        <p>Welcome to GoSX.</p>
+    </div>
+}
 
-**What still needs deeper framework passes:**
+// Island component: compiles to bytecode, hydrates in the browser.
+//gosx:island
+func Counter(props CounterProps) Node {
+    count := signal.New(props.Initial)
+    increment := func() { count.Update(func(n int) int { return n + 1 }) }
+    decrement := func() { count.Update(func(n int) int { return n - 1 }) }
 
-- hosted deployment/control-plane layers on top of the current SSR + static bundle story
+    return <div class="counter">
+        <button onClick={decrement}>-</button>
+        <span>{count}</span>
+        <button onClick={increment}>+</button>
+    </div>
+}
+```
+
+The `//gosx:island` directive marks a component for client-side hydration. The compiler extracts signals, computed values, and handlers from the Go source, compiles expressions to VM opcodes, and serializes the result as a compact island program (~1-10KB). Server components emit static HTML with no client-side cost.
+
+## Five Primitives
+
+GoSX provides five execution primitives. A form submission is not a canvas game is not a collaborative document — the framework enforces that distinction.
+
+| Primitive | What it does | Client cost |
+|-----------|-------------|-------------|
+| **Server** | Renders pages and API responses | None |
+| **Action** | Handles mutations (forms, RPCs) with structured validation | None |
+| **Island** | Reactive DOM subtrees with signals and event delegation | Shared WASM VM + tiny program payload |
+| **Engine** | Heavy client compute — canvas, WebGL, background workers | Dedicated WASM or JS bundle |
+| **Hub** | WebSocket presence, fanout, shared state, CRDT sync | WebSocket connection |
+
+Use what you need. A static marketing page uses only Server. A dashboard adds Islands. A game adds an Engine. A collaborative editor adds a Hub. You never pay for what you don't use.
 
 ## Quick Start
 
@@ -65,7 +56,7 @@ cd my-app
 go run .
 ```
 
-Or scaffold the dogfooded docs surface:
+Or scaffold the docs template with nested layouts, auth, and forms:
 
 ```bash
 gosx init my-docs --template docs
@@ -73,296 +64,253 @@ cd my-docs
 go run .
 ```
 
-The generated project includes:
-
-- root-level static assets from `public/`
-- `.env`, `.env.local`, and `.env.<mode>` loading via `env.LoadDir`
-- file-routed `.gsx` pages under `app/` by default, with automatic nested `layout.gsx` discovery, scoped `not-found.gsx` resolution, and `app.API(...)` for colocated JSON endpoints
-- inheritable `route.config.json` support for subtree cache, headers, and prerender defaults
-- a blank import of `your/module/modules`, with `modules/modules.go` auto-generated from discovered `*.server.go` packages during `gosx init`, `gosx dev`, `gosx build`, and `gosx export`
-- sibling `page.server.go` examples that register file-route `Load`, `Metadata`, and `Actions` hooks through `route.MustRegisterFileModuleHere(...)`
-- native `.gsx` engine helpers via `<Surface />`, `<Worker />`, and `<Scene3D />` for worker/canvas/surface experiences without hand-written `gosx.El(...)` shells
-- optional directory-scoped route modules through `route.MustRegisterDirModuleHere(...)` when a subtree needs middleware or request setup
-- session middleware plus CSRF protection for browser forms
-- passwordless auth primitives for magic links, passkeys, and OAuth callbacks when the app wants a batteries-included sign-in surface without shipping password flows by default
-- semantic cache helpers plus automatic ETags for page and API responses
-- built-in ISR on deployed bundles via `app.EnableISR()`, using `dist/export.json` plus `dist/static/` when present
-- public asset helpers via `server.AssetURL(...)`, `server.Stylesheet(...)`, and file-routed `.gsx` `asset(...)`
-- opt-in page transitions via `app.EnableNavigation()` and `server.Link(...)`
-- `server.Metadata` plus arbitrary head node injection
-- customizable 404 and 500 pages
-- streamed fallback regions via `ctx.Defer(...)` in page or route handlers
-
-The docs template additionally includes:
-
-- `route.Router.AddDir("./app", ...)` plus automatic `app/layout.gsx` / `app/docs/layout.gsx` composition for file-based page discovery and shell rendering
-- `app.Redirect(...)` and `app.Rewrite(...)` examples wired through `server.App`
-- a mounted docs router, `/public`-served stylesheet, `/api/meta`, and guarded `/api/me`
-- session-backed forms, auth actions, and a protected route under `/labs/secret`
-- automatic ETags on `/api/meta` plus static docs-page cache examples that can be invalidated by path or tag
-- a docs subtree `route.config.json` that carries cache defaults through file-routed pages and static export
-- `server.Stylesheet("docs.css")` in the document shell and public-asset helpers for routed `.gsx` content
-- a sample raster asset plus image optimization examples under `/docs/images`
+Minimal server without the CLI:
 
 ```go
 package main
 
 import (
     "net/http"
-
     "github.com/odvcencio/gosx"
     "github.com/odvcencio/gosx/server"
 )
 
 func main() {
     app := server.New()
-    app.Route("/", func(r *http.Request) gosx.Node {
+    app.Page("/", func(r *http.Request) gosx.Node {
         return gosx.El("h1", gosx.Text("Hello from GoSX"))
     })
     app.ListenAndServe(":8080")
 }
 ```
 
-## GSX Language
+## File-Based Routing
 
-GSX is GoSX's own client language surface. It is Go-native, Go-first, and built to accept ordinary Go expressions directly inside modern markup without forcing a JavaScript mental model:
+Routes are discovered from the `app/` directory:
 
-```go
-package app
-
-func Greeting(props GreetingProps) Node {
-    return <div class="greeting">
-        <h1>Hello, {props.Name}!</h1>
-        <p>Welcome to GoSX.</p>
-    </div>
-}
-
-//gosx:island
-func Counter(props CounterProps) Node {
-    return <div class="counter">
-        <button onClick={decrement}>-</button>
-        <span>{count}</span>
-        <button onClick={increment}>+</button>
-    </div>
-}
+```
+app/
+  layout.gsx              # Root layout (wraps all pages)
+  page.gsx                # /
+  page.server.go          # Server module: data loading, actions, metadata
+  not-found.gsx           # Custom 404
+  error.gsx               # Custom 500
+  about/
+    page.gsx              # /about
+  blog/
+    layout.gsx            # Nested layout for /blog/*
+    page.gsx              # /blog
+    [slug]/
+      page.gsx            # /blog/{slug}
+      page.server.go      # Per-post data loader
+  (marketing)/
+    pricing/page.gsx      # /pricing (group ignored in URL)
+  docs/
+    [...slug]/page.gsx    # /docs/{slug...} (catch-all)
+    route.config.json      # Inherited cache/header config
 ```
 
-The `//gosx:island` directive marks a component for client-side hydration. Island components are compiled to IslandPrograms — compact, VM-oriented representations with typed expression opcodes. Server components render to static HTML with zero client-side JavaScript.
-
-The fully automatic path is now:
+Server modules wire Go logic to `.gsx` pages without touching the template:
 
 ```go
-irProg, _ := gosx.Compile(source)
-islandProg, _ := ir.LowerIsland(irProg, 0)
-
-renderer := island.NewRenderer("main")
-renderer.SetProgramDir("/gosx/islands")
-node := renderer.RenderIslandFromProgram(islandProg, nil)
+route.MustRegisterFileModuleHere(route.FileModuleOptions{
+    Load: func(ctx *route.RouteContext, page route.FilePage) (any, error) {
+        post, err := db.GetPost(ctx.Param("slug"))
+        if err != nil {
+            return nil, route.NotFound()
+        }
+        return post, nil
+    },
+    Metadata: func(ctx *route.RouteContext, page route.FilePage, data any) (server.Metadata, error) {
+        post := data.(*Post)
+        return server.Metadata{Title: post.Title, Description: post.Summary}, nil
+    },
+    Actions: route.FileActions{
+        "comment": handleComment,
+    },
+})
 ```
 
-That emits server HTML with delegated event attributes such as `data-gosx-on-click="increment"` and auto-populates manifest `EventSlot`s and `ProgramRef`.
+## Compilation Pipeline
 
-## Architecture
+GSX syntax is parsed by [gotreesitter](https://github.com/odvcencio/gotreesitter), a pure-Go reimplementation of the tree-sitter runtime with grammar composition. GoSX extends Go's grammar with native markup support at the CST level — no templates, no code generation, no separate build step.
 
 ```
 .gsx source
-  → parse (gotreesitter + Go grammar extension)
-  → lower to compiler IR (flat-array, index-based)
-  → validate (including island subset enforcement)
-  → body analyzer extracts signals, computeds, and handlers from Go source
-  → server components: transpile to Go
-  → island components: lower to IslandProgram → serialize (JSON dev / binary prod)
-  → shared WASM runtime (loaded once, browser-cached)
-  → per-island programs (~1-10KB each)
-  → JS host: thin patch applier + event delegation (~940 lines total)
+  -> parse (gotreesitter, extended Go grammar)
+  -> lower to IR (flat-array, index-based nodes)
+  -> validate (including island subset enforcement)
+  -> server components: render to HTML directly
+  -> island components:
+       -> extract signals, computeds, handlers from Go source
+       -> compile expressions to VM opcodes (40+ operations)
+       -> serialize as IslandProgram (JSON dev / binary prod)
+       -> browser: shared WASM VM + thin JS host (~940 lines)
+       -> per-island programs are 1-10KB each
 ```
 
-### Island Expression Subset
+Island expressions are constrained to what the client VM can evaluate: literals, property and signal access, arithmetic, comparisons, boolean logic, string operations, conditionals, handler dispatch, and list iteration. Goroutines, channels, and arbitrary Go are compile-time errors in islands.
 
-Island expressions are constrained to what the client-side VM can evaluate:
+## Reactive State
 
-- Literals (string, int, float, bool)
-- Property and signal access
-- Arithmetic, comparisons, boolean logic
-- String concatenation
-- Conditionals
-- Handler dispatch
-- List iteration
+Signals provide fine-grained reactivity in islands:
 
-Goroutines, channels, and arbitrary Go are compile-time errors in islands.
-
-### Cross-Island Shared State
-
-Signals with names starting with `$` are shared across all islands on the page:
-
-```
-$count   — shared counter, any island can read/write
-$theme   — shared theme, all islands react to changes
-$user    — shared auth state
-count    — local to the declaring island
+```go
+count := signal.New(0)                           // mutable state
+doubled := signal.Derive(func() int {            // computed
+    return count.Get() * 2
+})
+increment := func() {                            // handler
+    count.Update(func(n int) int { return n + 1 })
+}
 ```
 
-When one island mutates a `$`-signal, all other islands that reference it automatically re-render. No Redux, no context providers, no boilerplate. The bridge manages the shared store and subscription lifecycle — disposed islands are automatically unsubscribed.
+Signals prefixed with `$` are shared across all islands on the page. When one island mutates a `$`-signal, every island that references it re-renders automatically:
 
-**Init order:** The first island to declare a `$`-signal sets its type and initial value. Subsequent islands receive the existing signal. This means hydration order matters for shared state initialization — document shared signals explicitly in your manifest or ensure a consistent load order.
+```
+$count   // shared: any island can read/write
+$theme   // shared: all islands react to changes
+count    // local to the declaring island
+```
 
-### Styling Model
+## Server Features
 
-Classes and external CSS are the primary styling path. GoSX does not include CSS-in-JS.
+**Sessions and Auth** — Cookie-backed sessions with HMAC-SHA256 signing, CSRF protection, flash values. Auth supports sessions, magic links, OAuth 2.0 (GitHub, Google), and WebAuthn/Passkeys.
 
-- `class="..."` for all layout, colors, spacing
-- External `.css` files linked in page `<head>`
-- Sidecar CSS: `component.gsx` + `component.css` pairs are detected and bundled by the build pipeline
-- Inline `style=` only for truly dynamic values (computed dimensions, transforms)
+**Actions** — Named server-side mutation handlers with form/JSON parsing, field-level validation errors, and redirect-safe flash state.
 
-### Deploy Strategy
+**Caching** — Semantic cache helpers (`ctx.CacheStatic()`, `ctx.CacheRevalidate()`, `ctx.CacheData()`), automatic weak ETags from content hashing, path/tag-based revalidation, and ISR with background regeneration.
 
-GoSX supports a three-tier deploy strategy:
+**Navigation** — Opt-in client-side page transitions via `app.EnableNavigation()` with managed head swaps and intent-prefetching. Pages render server-first, enhance progressively.
 
-1. **Static** — pre-rendered HTML, no server needed
-2. **Server** — Go binary serving routes, SSR, actions, hubs
-3. **Edge** — WASM islands hydrate at the edge, server handles actions/hubs
+**Streaming** — Deferred page regions via `ctx.Defer()` render fallback content immediately, then stream resolved content into place.
+
+**Image Optimization** — Local image handler at `/_gosx/image` with resize, format conversion, and immutable caching.
+
+**Text Layout** — Server-estimated, browser-refined text measurement via `TextBlock` with font metrics, line breaking, and ellipsis. Works without islands.
+
+## Engines
+
+For work that doesn't fit the island model — canvas rendering, WebGL, background computation:
+
+```go
+ctx.Engine(engine.Config{
+    Name:         "visualizer",
+    Kind:         engine.KindSurface,
+    Capabilities: []engine.Capability{engine.CapCanvas, engine.CapAnimation},
+    WASMPath:     "/engines/visualizer.wasm",
+}, fallbackNode)
+```
+
+Engines declare capabilities (`Canvas`, `WebGL`, `Animation`, `Gamepad`, `Audio`, etc.), get their own mount point, and communicate through typed message ports. They don't touch island DOM.
+
+## Hubs
+
+WebSocket primitives for presence, fanout, and shared state:
+
+```go
+h := hub.New("workspace")
+h.On("update", func(client *hub.Client, msg hub.Message) {
+    h.Broadcast("state", currentState)
+})
+```
+
+Hubs integrate with the CRDT system for conflict-free collaborative state synchronization across peers.
+
+## CSS
+
+Classes and external CSS. No CSS-in-JS.
+
+- Sidecar `page.css` / `layout.css` files are auto-discovered and injected
+- Component-scoped CSS via `css.ScopeCSS()` with `:where()` selectors
+- Four CSS layers: `global`, `layout`, `page`, `runtime`
+- `:global()` escape hatch for unscoped rules
+
+## CLI
+
+```bash
+gosx init [name] [--template docs]    # Scaffold a new app
+gosx dev [app]                        # Dev server with file watching and SSE reload
+gosx build [--prod] [app]             # Build with hashed assets, optional static prerender
+gosx export [app]                     # Pre-render static pages to dist/static/
+gosx compile [file.gsx]               # Compile .gsx to IR
+gosx check [file.gsx]                 # Parse and validate
+gosx render [file.gsx]                # Render component to HTML
+gosx fmt [file.gsx]                   # Format source
+gosx lsp                              # Language server for editor integration
+```
+
+`gosx build --prod` emits a deployable `dist/` bundle with a server binary, hashed assets, prerendered static pages, an ISR manifest, and edge worker support.
+
+## Deploy
+
+Three tiers:
+
+1. **Static** — `gosx export` pre-renders HTML. No server needed.
+2. **Server** — Go binary. SSR, actions, hubs, ISR.
+3. **Edge** — Prerendered routes at the edge, dynamic requests fall back to origin.
 
 ## Packages
 
 | Package | Purpose |
 |---------|---------|
-| `gosx` | Core Node API, grammar, parser, compiler |
-| `ir` | Intermediate representation, lowering, validation, island lowering, expression parser |
-| `island/program` | IslandProgram types, JSON/binary serialization |
-| `signal` | Reactive state: Signal[T], Computed[T], Effect, Batch |
-| `client/vm` | Expression VM, reconciler, patch ops |
-| `client/bridge` | WASM bridge for island lifecycle |
-| `client/wasm` | WASM entry point (compiles with GOOS=js GOARCH=wasm) |
-| `client/js` | Bootstrap (343 lines) + patch applier (594 lines) |
-| `render` | Server-side HTML rendering from IR |
-| `server` | Simple HTTP server with routing |
-| `route` | Declarative routing with layouts and data loaders |
-| `action` | Named server action handlers |
-| `session` | Signed cookie sessions, flash state, and CSRF protection |
-| `auth` | Session-backed auth middleware and guards |
-| `apptest` | Route/app testing helpers for pages, APIs, and form posts |
-| `island` | Island renderer and manifest generation |
-| `hub` | WebSocket presence, fanout, shared realtime state |
+| `gosx` | Node API, grammar, parser, compiler |
+| `ir` | Intermediate representation, lowering, validation, expression parser |
+| `island` | Island renderer, manifest generation, program serialization |
+| `signal` | Reactive state: `Signal[T]`, `Computed[T]`, `Effect`, `Batch` |
+| `server` | HTTP server, page rendering, caching, streaming, assets |
+| `route` | File-based routing, layouts, data loaders, modules |
+| `action` | Named mutation handlers with validation |
+| `session` | Signed cookie sessions, CSRF, flash state |
+| `auth` | Auth middleware, OAuth, magic links, WebAuthn |
+| `hub` | WebSocket presence, fanout, shared state |
 | `engine` | Worker/surface model with capability declarations |
-| `hydrate` | Hydration manifest types |
-| `highlight` | Syntax highlighting for GoSX, Go, JavaScript, JSON, and Bash snippets |
-| `format` | Source code formatter for .gsx files |
+| `crdt` | Conflict-free replicated data types with sync protocol |
+| `client/vm` | Expression VM, tree reconciler, patch generation |
+| `client/bridge` | WASM bridge for island/engine lifecycle |
+| `client/wasm` | WASM entry point |
+| `client/js` | Bootstrap + patch applier (~940 lines total) |
+| `render` | Server-side HTML rendering from IR |
+| `css` | Component-scoped CSS with `:where()` selectors |
+| `textlayout` | Text measurement, line breaking, ellipsis |
+| `highlight` | Syntax highlighting for Go, GSX, JS, JSON, Bash |
+| `format` | Source formatter for `.gsx` files |
+| `lsp` | Language server protocol for editor integration |
+| `apptest` | HTTP testing helpers for pages, APIs, and forms |
 | `dev` | Development server with file watching |
-| `cmd/gosx` | CLI tool (compile, check, render, fmt, build, dev, export) |
+| `env` | `.env` file loading with mode support |
+| `cmd/gosx` | CLI tool |
 
-## API Stability
+## Testing
 
-Supported surfaces for ordinary web apps:
+```bash
+make test          # Full package test pass
+make test-race     # Race detector enabled
+make test-js       # Bootstrap + patch under Node test runner
+make test-wasm     # WASM runtime through exported functions
+make test-e2e      # Playwright browser tests against gosx dev
+make ci            # All of the above + build verification
+```
 
-- `server.App`, `route.Router`, file-based routing, `layout.gsx` / `page.gsx`, sibling `page.server.go`, `action`, `session`, `auth`, `server.Metadata`, `ctx.Cache*`, `app.Revalidate*`, `server.AssetURL(...)`, `server.Stylesheet(...)`, `server.Image(...)`, and `apptest`
-- opt-in pieces such as `app.EnableNavigation()`, directory-scoped modules, redirects/rewrites, and passwordless auth helpers are part of the supported app path
-
-Experimental surfaces:
-
-- native engine/runtime helpers such as `<Surface />`, `<Worker />`, and `<Scene3D />`
-- ISR/edge bundle behavior that depends on generated `dist/export.json`, `dist/static/`, and `dist/edge/worker.js`
-- build-hook and observer integration seams intended for advanced adopters
-
-Internal surfaces and formats that may change without notice:
-
-- `client/js/*`, `client/enginevm/*`, `client/vm/*`, `hydrate/*`, and manifest/program wire formats
-- generated `modules/modules.go` contents and the exact import-bucket shape used by CLI automation
-- browser bootstrap implementation details, patch protocol details, and internal route/file-eval plumbing
+Client correctness is verified at four layers: pure Go VM/bridge tests, JS runtime contract tests under Node, compiler-to-bridge integration tests, and live Playwright browser tests against the docs app.
 
 ## Dependencies
 
-One: [gotreesitter](https://github.com/odvcencio/gotreesitter) — a clean-room reimplementation of tree-sitter in Go.
+Five:
 
-## Testing and Tooling
+- [gotreesitter](https://github.com/odvcencio/gotreesitter) — pure-Go tree-sitter runtime with grammar composition
+- [gorilla/websocket](https://github.com/gorilla/websocket) — WebSocket support for hubs
+- [rivo/uniseg](https://github.com/rivo/uniseg) — Unicode segmentation for text layout
+- [golang.org/x/image](https://pkg.go.dev/golang.org/x/image) — image optimization
+- [golang.org/x/net](https://pkg.go.dev/golang.org/x/net) — HTML utilities
 
-The repo now exposes a repeatable local/CI surface through `make`:
+No CGo. No JavaScript toolchain. Compiles anywhere `GOOS/GOARCH` can reach, including WASM.
 
-```bash
-# Full package test pass
-make test
+## Built On
 
-# Data-race pass across the repo
-make test-race
+GoSX is built on [gotreesitter](https://github.com/odvcencio/gotreesitter), a clean-room reimplementation of the tree-sitter runtime in pure Go. gotreesitter enables in-process grammar composition — GoSX extends Go's own grammar with native markup syntax, which is how `.gsx` files are parsed without code generation or external build tools.
 
-# Run shipped bootstrap.js and patch.js against a minimal Node DOM harness
-make test-js
-
-# Run js/wasm tests against the shipped client/wasm entrypoint
-make test-wasm
-
-# Run the real docs/browser gate against gosx dev
-make test-e2e
-
-# CI-grade verification: format check, tests, race tests, JS contract tests, WASM tests, browser docs E2E, CLI build, WASM build
-make ci
-```
-
-Key checks:
-
-- `make test` runs `go test ./...` across the compiler, runtime, routing, server, actions, hubs, and end-to-end pipeline tests.
-- `make test-race` runs the same suite with the Go race detector enabled.
-- `make test-js` runs the shipped `client/js/bootstrap.js` and `client/js/patch.js` files under Node's built-in test runner with a minimal DOM harness, covering hydration orchestration, delegated events, disposal, and patch application.
-- `make test-wasm` runs `GOOS=js GOARCH=wasm go test ./client/wasm` so client correctness is exercised through the actual exported WASM runtime functions.
-- `make test-e2e` launches the real `gosx dev ./examples/gosx-docs` path behind Playwright and verifies client navigation, scoped 404s, forms, auth redirects, and the protected route.
-- `make build-cli` ensures `cmd/gosx` continues to compile.
-- `make build-runtime` builds the shared WASM runtime from `client/wasm`.
-- `.github/workflows/ci.yml` runs the same contract on every push and pull request, including the docs browser E2E gate.
-- `cmd/gosx/init_test.go` verifies that freshly scaffolded starter and docs apps still build against the current repo, so `gosx init` remains a release gate instead of only a file-emission check.
-- `npm run test:e2e` is the direct Node entrypoint used by `make test-e2e`.
-
-Editor tooling:
-
-- `gosx lsp` starts a stdio language server for `.gsx` diagnostics and formatting.
-- `editor/vscode` contains a VS Code extension scaffold that wires `.gsx` syntax highlighting to `gosx lsp`.
-
-Action-specific hardening is covered by regression tests for:
-
-- JSON bodies with `application/json; charset=utf-8`
-- invalid JSON requests
-- oversized JSON requests
-- oversized form submissions
-- path fallback when router `PathValue` support is not present
-
-Client correctness is covered at three layers:
-
-- pure Go VM and bridge tests in `client/vm` and `client/bridge`
-- shipped JS runtime contract tests in `client/js/runtime.test.js`
-- end-to-end compiler-to-bridge tests in `test/frontend_pipeline_test.go`
-- js/wasm runtime tests in `client/wasm/main_test.go` that compile `.gsx` islands, hydrate through `__gosx_hydrate`, dispatch through `__gosx_action`, and assert the emitted patch stream
-- live-browser verification in `e2e/gosx_docs_e2e.test.mjs`, which boots `gosx dev`, drives Chromium through the docs app, and checks the real browser/runtime contract
-
-Additional manual commands:
-
-```bash
-# Build the WASM runtime (standard Go)
-GOOS=js GOARCH=wasm go build -o build/gosx-runtime.wasm ./client/wasm/
-
-# Build with TinyGo for smaller output (1.2MB, ~452KB gz)
-tinygo build -o build/gosx-runtime.wasm -target wasm ./client/wasm/
-
-# Run the build pipeline
-go run ./cmd/gosx build --dev examples/counter/
-
-# Run the dev proxy against the dogfooded docs app
-go run ./cmd/gosx dev ./examples/gosx-docs
-
-# Pre-render static output for a file-routed app
-go run ./cmd/gosx export ./examples/gosx-docs
-
-# Run the browser E2E harness
-npm run test:e2e
-```
-
-Build output and deployment:
-
-- `gosx build --prod my-app` writes `dist/build.json`, `dist/assets/`, `dist/app/`, `dist/public/`, `dist/static/`, and when the target is runnable, `dist/server/app`, `dist/run.sh`, and `dist/export.json`
-- `gosx export my-app` writes `dist/static/` plus `dist/export.json` for pre-rendered file-routed pages, copied `/public` assets, and static-safe rewritten HTML
-- file-routed apps stay deployable because the runtime bundle now carries `app/` alongside the binary instead of assuming source-tree access
-- `dist/static/` also carries hashed `assets/` plus compatibility `/gosx/*` runtime copies so the prerendered bundle stays aligned with the main build output
-- `gosx dev`, `gosx build`, and `gosx export` resolve the shared runtime from the app's Go module graph, so scaffolded apps work outside the GoSX repo instead of assuming repo-local `client/` sources
-- scaffolded apps and the docs template resolve their runtime root through `server.ResolveAppRoot(thisFile)`, so they can run from source, from `dist/`, or with `GOSX_APP_ROOT` set explicitly
-- `dist/README.md` describes the bundle contract and launch model
+The same compiler infrastructure powers [Arbiter](https://github.com/odvcencio/arbiter) (a governed outcomes language), [Danmuji](https://github.com/odvcencio/danmuji) (a BDD testing language for Go), and [Ferrous Wheel](https://github.com/odvcencio/ferrous-wheel) (Rust-inspired syntax for Go).
 
 ## License
 
