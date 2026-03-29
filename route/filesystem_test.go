@@ -749,6 +749,79 @@ func Page() Node {
 	}
 }
 
+func TestDefaultFileRendererTextBlockFlattensNodeReturningFunctionExprs(t *testing.T) {
+	root := t.TempDir()
+	writeRouteFile(t, root, "page.gsx", `package docs
+
+func Page() Node {
+	return <TextBlock class="copy">
+		{SpanBlock()}
+		{ParagraphBlock()}
+		{DivBlock()}
+		{ItemBlock()}
+	</TextBlock>
+}
+`)
+
+	modules := NewFileModuleRegistry()
+	if err := modules.Register(FileModuleFor("page.gsx", FileModuleOptions{
+		Bindings: func(ctx *RouteContext, page FilePage, data any) FileTemplateBindings {
+			return FileTemplateBindings{
+				Funcs: map[string]any{
+					"SpanBlock": func() gosx.Node {
+						return gosx.El("span", gosx.Text("span text "))
+					},
+					"ParagraphBlock": func() gosx.Node {
+						return gosx.El("p", gosx.Text("paragraph text "))
+					},
+					"DivBlock": func() gosx.Node {
+						return gosx.El("div", gosx.Text("div text "))
+					},
+					"ItemBlock": func() gosx.Node {
+						return gosx.El("li", gosx.Text("list text"))
+					},
+				},
+			}
+		},
+	})); err != nil {
+		t.Fatal(err)
+	}
+
+	router := NewRouter()
+	router.SetLayout(func(ctx *RouteContext, body gosx.Node) gosx.Node {
+		return server.HTMLDocument("TextBlock", ctx.Head(), body)
+	})
+	if err := router.AddDir(root, FileRoutesOptions{Modules: modules}); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	w := httptest.NewRecorder()
+	router.Build().ServeHTTP(w, req)
+
+	body := w.Body.String()
+	for _, snippet := range []string{
+		`data-gosx-text-layout-source="span text  paragraph text  div text  list text"`,
+		`<span>span text </span>`,
+		`<p>paragraph text </p>`,
+		`<div>div text </div>`,
+		`<li>list text</li>`,
+	} {
+		if !strings.Contains(body, snippet) {
+			t.Fatalf("expected %q in %q", snippet, body)
+		}
+	}
+	for _, snippet := range []string{
+		`{span`,
+		`kindElement`,
+		`nodeKind`,
+	} {
+		if strings.Contains(body, snippet) {
+			t.Fatalf("did not expect %q in %q", snippet, body)
+		}
+	}
+}
+
 func TestScanDirBuildsNestedLayoutsGroupsAndNearestErrorPages(t *testing.T) {
 	root := t.TempDir()
 	writeRouteFile(t, root, "global.css", `html { color: darkslateblue; }`)
