@@ -70,6 +70,13 @@ func (a *App) serveRuntimeAsset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if fsPath, ok := runtimeManifestDirectAssetPath(root, name); ok {
+		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		MarkObservedRequest(r, "runtime", "/gosx/"+name)
+		http.ServeFile(w, r, fsPath)
+		return
+	}
+
 	if version := strings.TrimSpace(r.URL.Query().Get("v")); version != "" {
 		if fsPath, ok := a.runtimeCompatBuiltPath(root, name); ok {
 			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
@@ -94,6 +101,18 @@ func (a *App) serveRuntimeAsset(w http.ResponseWriter, r *http.Request) {
 	}
 
 	http.NotFound(w, r)
+}
+
+func runtimeManifestDirectAssetPath(root, name string) (string, bool) {
+	name = strings.TrimPrefix(strings.TrimSpace(name), "/")
+	if !strings.HasPrefix(name, "assets/") {
+		return "", false
+	}
+	target, ok := safeArtifactPath(filepath.Join(root, "assets"), strings.TrimPrefix(name, "assets/"))
+	if !ok || !isFile(target) {
+		return "", false
+	}
+	return target, true
 }
 
 func runtimeCompatSourcePath(root, name string) (string, bool) {

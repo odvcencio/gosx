@@ -2616,6 +2616,7 @@ const gosxEnvironmentListeners = new Set();
   let gosxEnvironmentObserversInstalled = false;
   let gosxDocumentObserversInstalled = false;
   const GOSX_DOCUMENT_CSS_LAYERS = ["global", "layout", "page", "runtime"];
+  const GOSX_DOCUMENT_ENHANCEMENT_LAYERS = ["html", "bootstrap", "runtime"];
   const gosxStateInvalidations = new Map();
   const gosxVisualInvalidations = new Map();
   let gosxStateInvalidationScheduled = false;
@@ -2626,6 +2627,7 @@ const gosxEnvironmentListeners = new Set();
   let gosxPresentationStopEnvironment = null;
   let gosxPresentationStopDocument = null;
   const GOSX_PRESENTATION_MUTATION_ATTRS = ["class", "style", "dir", "lang", "hidden"];
+  const gosxAppliedEnhancementKindAttrs = new Set();
 
   function gosxArrayFrom(listLike) {
     return Array.prototype.slice.call(listLike || []);
@@ -3144,6 +3146,138 @@ const gosxEnvironmentListeners = new Set();
     return layers;
   }
 
+  function gosxWalkDocumentElements(root, visit) {
+    if (!root || typeof visit !== "function") {
+      return;
+    }
+    if (root.nodeType === 1) {
+      visit(root);
+    }
+    const children = root.children || root.childNodes || [];
+    for (const child of children) {
+      if (child && child.nodeType === 1) {
+        gosxWalkDocumentElements(child, visit);
+      }
+    }
+  }
+
+  function gosxNormalizeEnhancementLayer(value, fallback) {
+    const layer = String(value || fallback || "html").trim().toLowerCase();
+    return GOSX_DOCUMENT_ENHANCEMENT_LAYERS.includes(layer) ? layer : "html";
+  }
+
+  function gosxDocumentEnhancementLayerState(layer) {
+    return {
+      layer,
+      count: 0,
+      kinds: [],
+      fallbacks: [],
+      entries: [],
+    };
+  }
+
+  function gosxDocumentEnhancementKindState(kind) {
+    return {
+      kind,
+      count: 0,
+      layers: [],
+      fallbacks: [],
+      entries: [],
+    };
+  }
+
+  function gosxDocumentEnhancementEntry(node, order) {
+    const kind = String(node && node.getAttribute && node.getAttribute("data-gosx-enhance") || "").trim();
+    if (!kind) {
+      return null;
+    }
+    const layer = gosxNormalizeEnhancementLayer(node && node.getAttribute && node.getAttribute("data-gosx-enhance-layer"), "html");
+    const fallback = String(node && node.getAttribute && node.getAttribute("data-gosx-fallback") || "").trim() || "none";
+    return {
+      kind,
+      layer,
+      fallback,
+      id: String(node && node.getAttribute && node.getAttribute("id") || ""),
+      tag: String(node && node.tagName || "").toLowerCase(),
+      engine: String(node && node.getAttribute && node.getAttribute("data-gosx-engine") || ""),
+      order,
+    };
+  }
+
+  function gosxDocumentEnhancements() {
+    const entries = [];
+    let order = 0;
+    gosxWalkDocumentElements(document.body || document.documentElement, function(node) {
+      const entry = gosxDocumentEnhancementEntry(node, order);
+      if (!entry) {
+        return;
+      }
+      entries.push(entry);
+      order += 1;
+    });
+    const layers = Object.create(null);
+    for (const layer of GOSX_DOCUMENT_ENHANCEMENT_LAYERS) {
+      layers[layer] = gosxDocumentEnhancementLayerState(layer);
+    }
+    const kinds = Object.create(null);
+    for (const entry of entries) {
+      const layerBucket = layers[entry.layer] || gosxDocumentEnhancementLayerState(entry.layer);
+      layerBucket.count += 1;
+      if (!layerBucket.kinds.includes(entry.kind)) {
+        layerBucket.kinds.push(entry.kind);
+      }
+      if (!layerBucket.fallbacks.includes(entry.fallback)) {
+        layerBucket.fallbacks.push(entry.fallback);
+      }
+      layerBucket.entries.push(Object.assign({}, entry));
+      layers[entry.layer] = layerBucket;
+
+      const kindBucket = kinds[entry.kind] || gosxDocumentEnhancementKindState(entry.kind);
+      kindBucket.count += 1;
+      if (!kindBucket.layers.includes(entry.layer)) {
+        kindBucket.layers.push(entry.layer);
+      }
+      if (!kindBucket.fallbacks.includes(entry.fallback)) {
+        kindBucket.fallbacks.push(entry.fallback);
+      }
+      kindBucket.entries.push(Object.assign({}, entry));
+      kinds[entry.kind] = kindBucket;
+    }
+    return {
+      count: entries.length,
+      entries,
+      layers,
+      kinds,
+    };
+  }
+
+  function gosxDocumentRuntimeAssets(contract, enhancement, layer) {
+    const assets = contract && contract.assets && typeof contract.assets === "object" ? contract.assets : {};
+    let bootstrapMode = String(assets.bootstrapMode || "").trim().toLowerCase();
+    if (!bootstrapMode) {
+      bootstrapMode = layer === "runtime" || Boolean(enhancement && enhancement.runtime) ? "full" : (Boolean(enhancement && enhancement.bootstrap) ? "lite" : "none");
+    }
+    if (bootstrapMode !== "none" && bootstrapMode !== "lite" && bootstrapMode !== "full") {
+      bootstrapMode = "none";
+    }
+    return {
+      bootstrapMode,
+      manifest: Boolean(assets.manifest),
+      runtimePath: String(assets.runtimePath || ""),
+      wasmExecPath: String(assets.wasmExecPath || ""),
+      patchPath: String(assets.patchPath || ""),
+      bootstrapPath: String(assets.bootstrapPath || ""),
+      islands: Math.max(0, gosxNumber(assets.islands, 0)),
+      engines: Math.max(0, gosxNumber(assets.engines, 0)),
+      hubs: Math.max(0, gosxNumber(assets.hubs, 0)),
+    };
+  }
+
+  function gosxEnhancementAttrName(kind) {
+    const value = String(kind || "").trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+    return value ? "data-gosx-enhancement-" + value + "-count" : "";
+  }
+
   function gosxDocumentHeadAssets() {
     const markers = gosxManagedHeadMarkers();
     const nodes = gosxDocumentChildrenBetween(markers.start, markers.end);
@@ -3213,6 +3347,36 @@ const gosxEnvironmentListeners = new Set();
     return {
       page: Object.assign({}, state.page),
       enhancement: Object.assign({}, state.enhancement),
+      enhancements: {
+        count: state.enhancements.count,
+        entries: state.enhancements.entries.map(function(entry) {
+          return Object.assign({}, entry);
+        }),
+        layers: Object.fromEntries(GOSX_DOCUMENT_ENHANCEMENT_LAYERS.map(function(layer) {
+          const bucket = state.enhancements.layers[layer] || gosxDocumentEnhancementLayerState(layer);
+          return [layer, {
+            layer: bucket.layer,
+            count: bucket.count,
+            kinds: bucket.kinds.slice(),
+            fallbacks: bucket.fallbacks.slice(),
+            entries: bucket.entries.map(function(entry) {
+              return Object.assign({}, entry);
+            }),
+          }];
+        })),
+        kinds: Object.fromEntries(Object.keys(state.enhancements.kinds || {}).map(function(kind) {
+          const bucket = state.enhancements.kinds[kind] || gosxDocumentEnhancementKindState(kind);
+          return [kind, {
+            kind: bucket.kind,
+            count: bucket.count,
+            layers: bucket.layers.slice(),
+            fallbacks: bucket.fallbacks.slice(),
+            entries: bucket.entries.map(function(entry) {
+              return Object.assign({}, entry);
+            }),
+          }];
+        })),
+      },
       head: Object.assign({}, state.head),
       css: {
         owned: state.css.owned.map(function(entry) {
@@ -3238,6 +3402,7 @@ const gosxEnvironmentListeners = new Set();
         })),
       },
       assets: {
+        runtime: Object.assign({}, state.assets.runtime),
         scripts: state.assets.scripts.map(function(entry) {
           return Object.assign({}, entry);
         }),
@@ -3252,6 +3417,8 @@ const gosxEnvironmentListeners = new Set();
     const assets = gosxDocumentHeadAssets();
     const cssLayers = gosxDocumentCSSLayers(assets.ownedCSS);
     const layer = gosxCurrentEnhancementLayer();
+    const runtimeAssets = gosxDocumentRuntimeAssets(contract, enhancement, layer);
+    const enhancements = gosxDocumentEnhancements();
 
     return {
       page: {
@@ -3264,11 +3431,12 @@ const gosxEnvironmentListeners = new Set();
       },
       enhancement: {
         layer,
-        bootstrap: true,
-        runtime: layer === "runtime" || Boolean(enhancement.runtime),
+        bootstrap: runtimeAssets.bootstrapMode !== "none" || Boolean(enhancement.bootstrap),
+        runtime: runtimeAssets.bootstrapMode === "full" || layer === "runtime" || Boolean(enhancement.runtime),
         navigation: Boolean(enhancement.navigation) || Boolean(window.__gosx_page_nav && typeof window.__gosx_page_nav.navigate === "function"),
         ready: Boolean(window.__gosx && window.__gosx.ready),
       },
+      enhancements,
       head: {
         managed: assets.managed,
         ownedCSSCount: assets.ownedCSS.length,
@@ -3281,6 +3449,7 @@ const gosxEnvironmentListeners = new Set();
         layers: cssLayers,
       },
       assets: {
+        runtime: runtimeAssets,
         scripts: assets.scripts,
       },
     };
@@ -3300,25 +3469,63 @@ const gosxEnvironmentListeners = new Set();
     setAttrValue(root, "data-gosx-document-id", state.page.id);
     setAttrValue(root, "data-gosx-route-pattern", state.page.pattern);
     setAttrValue(root, "data-gosx-enhancement-layer", state.enhancement.layer);
+    setAttrValue(root, "data-gosx-bootstrap-mode", state.assets && state.assets.runtime ? state.assets.runtime.bootstrapMode : "none");
     setAttrValue(root, "data-gosx-navigation", state.enhancement.navigation ? "true" : "false");
     setAttrValue(root, "data-gosx-runtime-ready", state.enhancement.ready ? "true" : "false");
     setAttrValue(root, "data-gosx-head-managed", state.head.managed ? "true" : "false");
+    setAttrValue(root, "data-gosx-enhancement-count", state.enhancements && state.enhancements.count || 0);
     setAttrValue(root, "data-gosx-css-owned-count", state.head.ownedCSSCount);
     setStyleValue(root.style, "--gosx-document-owned-css-count", String(state.head.ownedCSSCount));
     setStyleValue(root.style, "--gosx-document-stylesheet-count", String(state.head.stylesheetCount));
+    setStyleValue(root.style, "--gosx-document-enhancement-count", String(state.enhancements && state.enhancements.count || 0));
     for (const layer of GOSX_DOCUMENT_CSS_LAYERS) {
       const count = state.css && state.css.layers && state.css.layers[layer] ? state.css.layers[layer].count : 0;
       setAttrValue(root, "data-gosx-css-" + layer + "-count", count);
       setStyleValue(root.style, "--gosx-document-css-" + layer + "-count", String(count));
     }
+    for (const layer of GOSX_DOCUMENT_ENHANCEMENT_LAYERS) {
+      const count = state.enhancements && state.enhancements.layers && state.enhancements.layers[layer] ? state.enhancements.layers[layer].count : 0;
+      setAttrValue(root, "data-gosx-enhancement-" + layer + "-count", count);
+      setStyleValue(root.style, "--gosx-document-enhancement-" + layer + "-count", String(count));
+    }
+    const nextKindAttrs = new Set();
+    for (const kind of Object.keys(state.enhancements && state.enhancements.kinds || {})) {
+      const attrName = gosxEnhancementAttrName(kind);
+      if (!attrName) {
+        continue;
+      }
+      nextKindAttrs.add(attrName);
+      setAttrValue(root, attrName, state.enhancements.kinds[kind].count);
+    }
+    for (const attrName of Array.from(gosxAppliedEnhancementKindAttrs)) {
+      if (nextKindAttrs.has(attrName)) {
+        continue;
+      }
+      setAttrValue(root, attrName, "");
+      gosxAppliedEnhancementKindAttrs.delete(attrName);
+    }
+    for (const attrName of Array.from(nextKindAttrs)) {
+      gosxAppliedEnhancementKindAttrs.add(attrName);
+    }
     if (body && body !== root) {
       setAttrValue(body, "data-gosx-document-id", state.page.id);
       setAttrValue(body, "data-gosx-enhancement-layer", state.enhancement.layer);
+      setAttrValue(body, "data-gosx-bootstrap-mode", state.assets && state.assets.runtime ? state.assets.runtime.bootstrapMode : "none");
       setAttrValue(body, "data-gosx-navigation", state.enhancement.navigation ? "true" : "false");
       setAttrValue(body, "data-gosx-runtime-ready", state.enhancement.ready ? "true" : "false");
+      setAttrValue(body, "data-gosx-enhancement-count", state.enhancements && state.enhancements.count || 0);
       for (const layer of GOSX_DOCUMENT_CSS_LAYERS) {
         const count = state.css && state.css.layers && state.css.layers[layer] ? state.css.layers[layer].count : 0;
         setAttrValue(body, "data-gosx-css-" + layer + "-count", count);
+      }
+      for (const layer of GOSX_DOCUMENT_ENHANCEMENT_LAYERS) {
+        const count = state.enhancements && state.enhancements.layers && state.enhancements.layers[layer] ? state.enhancements.layers[layer].count : 0;
+        setAttrValue(body, "data-gosx-enhancement-" + layer + "-count", count);
+      }
+      for (const attrName of Array.from(gosxAppliedEnhancementKindAttrs)) {
+        const kindName = attrName.replace(/^data-gosx-enhancement-/, "").replace(/-count$/, "");
+        const bucket = state.enhancements && state.enhancements.kinds && state.enhancements.kinds[kindName];
+        setAttrValue(body, attrName, bucket ? bucket.count : "");
       }
     }
   }
@@ -3679,6 +3886,16 @@ const gosxEnvironmentListeners = new Set();
       }
       const key = gosxNormalizeDocumentCSSLayer(layer, "global");
       return cloneGosxDocumentState(gosxDocumentState).css.layers[key];
+    },
+    enhancements(kind) {
+      if (!gosxDocumentState) {
+        refreshGosxDocumentState("read");
+      }
+      const snapshot = cloneGosxDocumentState(gosxDocumentState).enhancements;
+      if (!kind) {
+        return snapshot;
+      }
+      return snapshot.kinds[String(kind)] || gosxDocumentEnhancementKindState(String(kind));
     },
     observe: observeGosxDocument,
   };

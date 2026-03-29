@@ -61,7 +61,9 @@ type DocumentContext struct {
 	Path          string
 	RequestID     string
 	Metadata      Metadata
+	Bootstrap     bool
 	RuntimeActive bool
+	Runtime       PageRuntimeSummary
 	Navigation    bool
 	Head          gosx.Node
 	Body          gosx.Node
@@ -89,6 +91,9 @@ func DocumentAttrs(doc *DocumentContext) gosx.AttrList {
 			gosx.Attr("data-gosx-navigation-current-path", documentCurrentPath(doc)),
 		)
 	}
+	if mode := documentBootstrapMode(doc.Runtime.BootstrapMode); mode != "none" {
+		attrs = append(attrs, gosx.Attr("data-gosx-bootstrap-mode", mode))
+	}
 	return gosx.Attrs(attrs...)
 }
 
@@ -111,6 +116,9 @@ func DocumentBodyAttrs(doc *DocumentContext) gosx.AttrList {
 			gosx.Attr("data-gosx-navigation-state", "idle"),
 			gosx.Attr("data-gosx-navigation-current-path", documentCurrentPath(doc)),
 		)
+	}
+	if mode := documentBootstrapMode(doc.Runtime.BootstrapMode); mode != "none" {
+		attrs = append(attrs, gosx.Attr("data-gosx-bootstrap-mode", mode))
 	}
 	return gosx.Attrs(attrs...)
 }
@@ -338,17 +346,21 @@ func (c *Context) documentContext(pattern, defaultTitle string, body gosx.Node, 
 		path = c.Request.URL.RequestURI()
 	}
 	doc := &DocumentContext{
-		Request:       c.Request,
-		Pattern:       pattern,
-		Status:        c.status,
-		Title:         title,
-		PageID:        documentPageID(pattern, path),
-		Path:          path,
-		RequestID:     RequestID(c.Request),
-		Metadata:      c.metadata,
-		RuntimeActive: c != nil && c.runtime != nil && c.runtime.Active(),
-		Navigation:    navigation,
-		Body:          body,
+		Request:    c.Request,
+		Pattern:    pattern,
+		Status:     c.status,
+		Title:      title,
+		PageID:     documentPageID(pattern, path),
+		Path:       path,
+		RequestID:  RequestID(c.Request),
+		Metadata:   c.metadata,
+		Navigation: navigation,
+		Body:       body,
+	}
+	if c != nil && c.runtime != nil {
+		doc.Runtime = c.runtime.Summary()
+		doc.Bootstrap = doc.Runtime.Bootstrap
+		doc.RuntimeActive = doc.Runtime.Runtime
 	}
 	doc.Head = gosx.Fragment(
 		c.headNode(),
@@ -373,6 +385,7 @@ type documentContract struct {
 	Version     int                         `json:"version"`
 	Page        documentContractPage        `json:"page"`
 	Enhancement documentContractEnhancement `json:"enhancement"`
+	Assets      documentContractAssets      `json:"assets"`
 }
 
 type documentContractPage struct {
@@ -390,6 +403,18 @@ type documentContractEnhancement struct {
 	Navigation bool `json:"navigation"`
 }
 
+type documentContractAssets struct {
+	BootstrapMode string `json:"bootstrapMode"`
+	Manifest      bool   `json:"manifest"`
+	RuntimePath   string `json:"runtimePath,omitempty"`
+	WASMExecPath  string `json:"wasmExecPath,omitempty"`
+	PatchPath     string `json:"patchPath,omitempty"`
+	BootstrapPath string `json:"bootstrapPath,omitempty"`
+	Islands       int    `json:"islands,omitempty"`
+	Engines       int    `json:"engines,omitempty"`
+	Hubs          int    `json:"hubs,omitempty"`
+}
+
 func documentContractNode(doc *DocumentContext) gosx.Node {
 	if doc == nil {
 		return gosx.Text("")
@@ -405,9 +430,20 @@ func documentContractNode(doc *DocumentContext) gosx.Node {
 			RequestID: doc.RequestID,
 		},
 		Enhancement: documentContractEnhancement{
-			Bootstrap:  doc.RuntimeActive,
+			Bootstrap:  doc.Bootstrap || doc.Navigation,
 			Runtime:    doc.RuntimeActive,
 			Navigation: doc.Navigation,
+		},
+		Assets: documentContractAssets{
+			BootstrapMode: documentBootstrapMode(doc.Runtime.BootstrapMode),
+			Manifest:      doc.Runtime.Manifest,
+			RuntimePath:   doc.Runtime.RuntimePath,
+			WASMExecPath:  doc.Runtime.WASMExecPath,
+			PatchPath:     doc.Runtime.PatchPath,
+			BootstrapPath: doc.Runtime.BootstrapPath,
+			Islands:       doc.Runtime.Islands,
+			Engines:       doc.Runtime.Engines,
+			Hubs:          doc.Runtime.Hubs,
 		},
 	})
 	if err != nil {
@@ -419,6 +455,15 @@ func documentContractNode(doc *DocumentContext) gosx.Node {
 		"&", "\\u0026",
 	).Replace(string(payload))
 	return gosx.RawHTML(`<script id="gosx-document" type="application/json" data-gosx-document-contract>` + safe + `</script>`)
+}
+
+func documentBootstrapMode(value string) string {
+	switch strings.TrimSpace(strings.ToLower(value)) {
+	case "lite", "full":
+		return strings.TrimSpace(strings.ToLower(value))
+	default:
+		return "none"
+	}
 }
 
 func documentPageID(pattern, path string) string {

@@ -17,6 +17,21 @@ type PageRuntime struct {
 	active   bool
 }
 
+// PageRuntimeSummary describes the bootstrap/runtime surface declared by a page.
+type PageRuntimeSummary struct {
+	Bootstrap     bool
+	Runtime       bool
+	BootstrapMode string
+	Manifest      bool
+	RuntimePath   string
+	WASMExecPath  string
+	PatchPath     string
+	BootstrapPath string
+	Islands       int
+	Engines       int
+	Hubs          int
+}
+
 // NewPageRuntime creates an empty runtime registry for a page response.
 func NewPageRuntime() *PageRuntime {
 	renderer := island.NewRenderer("gosx-page")
@@ -88,6 +103,27 @@ func (r *PageRuntime) Head() gosx.Node {
 // Active reports whether the page registered any runtime engines.
 func (r *PageRuntime) Active() bool {
 	return r != nil && r.active
+}
+
+// Summary reports the bootstrap/runtime surface declared by the page runtime.
+func (r *PageRuntime) Summary() PageRuntimeSummary {
+	if r == nil || r.renderer == nil || !r.active {
+		return PageRuntimeSummary{BootstrapMode: "none"}
+	}
+	summary := r.renderer.Summary()
+	return PageRuntimeSummary{
+		Bootstrap:     summary.Bootstrap,
+		Runtime:       summary.BootstrapMode == "full",
+		BootstrapMode: summary.BootstrapMode,
+		Manifest:      summary.Manifest,
+		RuntimePath:   summary.RuntimePath,
+		WASMExecPath:  summary.WASMExecPath,
+		PatchPath:     summary.PatchPath,
+		BootstrapPath: summary.BootstrapPath,
+		Islands:       summary.Islands,
+		Engines:       summary.Engines,
+		Hubs:          summary.Hubs,
+	}
 }
 
 func (r *PageRuntime) usesCompatRuntimeAssets() bool {

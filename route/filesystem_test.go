@@ -279,10 +279,10 @@ func Page() Node {
 
 	html := gosx.RenderHTML(node)
 	for _, snippet := range []string{
-		`href="/docs" data-gosx-link data-gosx-link-state="idle" data-gosx-link-current="ancestor" data-gosx-prefetch-state="idle"`,
-		`href="/docs/forms" data-gosx-link data-gosx-link-state="idle" data-gosx-link-current="page" data-gosx-prefetch-state="idle" aria-current="page" data-gosx-aria-current-managed="true"`,
-		`href="/blog" data-gosx-link data-gosx-link-state="idle" data-gosx-link-current="none" data-gosx-prefetch-state="idle"`,
-		`href="/docs/api" data-gosx-link data-gosx-link-state="idle" data-gosx-link-current="none" data-gosx-prefetch-state="idle" data-gosx-prefetch="render"`,
+		`href="/docs" data-gosx-link data-gosx-link-state="idle" data-gosx-enhance="navigation" data-gosx-enhance-layer="bootstrap" data-gosx-fallback="native-link" data-gosx-link-current="ancestor" data-gosx-prefetch-state="idle"`,
+		`href="/docs/forms" data-gosx-link data-gosx-link-state="idle" data-gosx-enhance="navigation" data-gosx-enhance-layer="bootstrap" data-gosx-fallback="native-link" data-gosx-link-current="page" data-gosx-prefetch-state="idle" aria-current="page" data-gosx-aria-current-managed="true"`,
+		`href="/blog" data-gosx-link data-gosx-link-state="idle" data-gosx-enhance="navigation" data-gosx-enhance-layer="bootstrap" data-gosx-fallback="native-link" data-gosx-link-current="none" data-gosx-prefetch-state="idle"`,
+		`href="/docs/api" data-gosx-link data-gosx-link-state="idle" data-gosx-enhance="navigation" data-gosx-enhance-layer="bootstrap" data-gosx-fallback="native-link" data-gosx-link-current="none" data-gosx-prefetch-state="idle" data-gosx-prefetch="render"`,
 	} {
 		if !strings.Contains(html, snippet) {
 			t.Fatalf("expected %q in rendered link html %q", snippet, html)
@@ -373,6 +373,9 @@ func Page() Node {
 	for _, snippet := range []string{
 		`action="/search"`,
 		`data-gosx-form`,
+		`data-gosx-enhance="form"`,
+		`data-gosx-enhance-layer="bootstrap"`,
+		`data-gosx-fallback="native-form"`,
 		`data-gosx-form-mode="get"`,
 		`class="search-form"`,
 		`action="/account/draco/__actions/save"`,
@@ -492,9 +495,12 @@ func Page() Node {
 	for _, snippet := range []string{
 		`class="board"`,
 		`data-gosx-engine="Whiteboard"`,
+		`data-gosx-enhance="engine"`,
+		`data-gosx-enhance-layer="runtime"`,
 		`data-gosx-engine-kind="surface"`,
 		`class="scene-shell"`,
 		`data-gosx-engine="GoSXScene3D"`,
+		`data-gosx-enhance="scene3d"`,
 		`data-gosx-scene3d`,
 		`Scene fallback`,
 	} {
@@ -580,6 +586,9 @@ func Page() Node {
 	for _, snippet := range []string{
 		`class="copy"`,
 		`data-gosx-text-layout`,
+		`data-gosx-enhance="text-layout"`,
+		`data-gosx-enhance-layer="bootstrap"`,
+		`data-gosx-fallback="html"`,
 		`data-gosx-text-layout-role="block"`,
 		`data-gosx-text-layout-surface="dom"`,
 		`data-gosx-text-layout-state="hint"`,
@@ -1189,6 +1198,8 @@ func Page() Node {
 	for _, snippet := range []string{
 		`class="demo-page"`,
 		`data-gosx-island="Counter"`,
+		`data-gosx-enhance="island"`,
+		`data-gosx-enhance-layer="runtime"`,
 		`data-gosx-on-click="increment"`,
 		`<span>2</span>`,
 		`<script id="gosx-manifest" type="application/json">`,

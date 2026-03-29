@@ -20,6 +20,9 @@ func Link(href string, args ...any) gosx.Node {
 		gosx.Attrs(
 			gosx.Attr("href", href),
 			gosx.BoolAttr("data-gosx-link"),
+			gosx.Attr("data-gosx-enhance", "navigation"),
+			gosx.Attr("data-gosx-enhance-layer", "bootstrap"),
+			gosx.Attr("data-gosx-fallback", "native-link"),
 		),
 	}, args...)
 	return gosx.El("a", prefixed...)
@@ -32,6 +35,9 @@ func Form(args ...any) gosx.Node {
 		gosx.Attrs(
 			gosx.BoolAttr("data-gosx-form"),
 			gosx.Attr("data-gosx-form-state", "idle"),
+			gosx.Attr("data-gosx-enhance", "form"),
+			gosx.Attr("data-gosx-enhance-layer", "bootstrap"),
+			gosx.Attr("data-gosx-fallback", "native-form"),
 		),
 	}, args...)
 	return gosx.El("form", prefixed...)

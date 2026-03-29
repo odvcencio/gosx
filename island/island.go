@@ -49,6 +49,34 @@ type programAsset struct {
 	hash   string
 }
 
+// Summary describes the client bootstrap/runtime surface required by a page.
+type Summary struct {
+	Bootstrap     bool
+	BootstrapMode string
+	Manifest      bool
+	RuntimePath   string
+	WASMExecPath  string
+	PatchPath     string
+	BootstrapPath string
+	Islands       int
+	Engines       int
+	Hubs          int
+}
+
+func enhancementKindForEngine(cfg engine.Config) string {
+	if strings.EqualFold(strings.TrimSpace(cfg.Name), "GoSXScene3D") {
+		return "scene3d"
+	}
+	return "engine"
+}
+
+func enhancementFallbackForNode(node gosx.Node, fallback string) string {
+	if node.IsZero() {
+		return fallback
+	}
+	return "server"
+}
+
 // NewRenderer creates an island renderer.
 func NewRenderer(bundleID string) *Renderer {
 	runtimeAssets := loadDefaultRuntimeAssets()
@@ -63,23 +91,34 @@ func NewRenderer(bundleID string) *Renderer {
 	renderer.patchPath = renderer.versionCompatRuntimePath("/gosx/patch.js", strings.TrimSpace(runtimeAssets.Patch.Hash))
 	renderer.bootstrapPath = renderer.versionCompatRuntimePath("/gosx/bootstrap.js", strings.TrimSpace(runtimeAssets.Bootstrap.Hash))
 	renderer.bootstrapLitePath = renderer.versionCompatRuntimePath("/gosx/bootstrap-lite.js", strings.TrimSpace(runtimeAssets.BootstrapLite.Hash))
+	if manifest := loadDefaultBuildManifest(); manifest != nil {
+		_ = renderer.ApplyBuildManifest(manifest, "/gosx/assets")
+	}
 	return renderer
 }
 
 func loadDefaultRuntimeAssets() buildmanifest.RuntimeAssets {
+	manifest := loadDefaultBuildManifest()
+	if manifest != nil {
+		return manifest.Runtime
+	}
+	return buildmanifest.RuntimeAssets{}
+}
+
+func loadDefaultBuildManifest() *buildmanifest.Manifest {
 	root := strings.TrimSpace(os.Getenv("GOSX_APP_ROOT"))
 	if root == "" {
 		wd, err := os.Getwd()
 		if err != nil {
-			return buildmanifest.RuntimeAssets{}
+			return nil
 		}
 		root = wd
 	}
 	manifest, err := buildmanifest.Load(filepath.Join(root, "build.json"))
 	if err != nil || manifest == nil {
-		return buildmanifest.RuntimeAssets{}
+		return nil
 	}
-	return manifest.Runtime
+	return manifest
 }
 
 // SetProgramDir sets the directory where island programs are stored.
@@ -244,6 +283,9 @@ func (r *Renderer) RenderIsland(componentName string, props any, content gosx.No
 		gosx.Attrs(
 			gosx.Attr("id", id),
 			gosx.Attr("data-gosx-island", componentName),
+			gosx.Attr("data-gosx-enhance", "island"),
+			gosx.Attr("data-gosx-enhance-layer", "runtime"),
+			gosx.Attr("data-gosx-fallback", enhancementFallbackForNode(content, "none")),
 		),
 		content,
 	)
@@ -267,6 +309,9 @@ func (r *Renderer) RenderIslandWithEvents(componentName string, props any, event
 		gosx.Attrs(
 			gosx.Attr("id", id),
 			gosx.Attr("data-gosx-island", componentName),
+			gosx.Attr("data-gosx-enhance", "island"),
+			gosx.Attr("data-gosx-enhance-layer", "runtime"),
+			gosx.Attr("data-gosx-fallback", enhancementFallbackForNode(content, "none")),
 		),
 		content,
 	)
@@ -370,6 +415,9 @@ func (r *Renderer) RenderEngine(cfg engine.Config, fallback gosx.Node) gosx.Node
 		gosx.Attr("data-gosx-engine", cfg.Name),
 		gosx.Attr("data-gosx-engine-id", id),
 		gosx.Attr("data-gosx-engine-kind", string(cfg.Kind)),
+		gosx.Attr("data-gosx-enhance", enhancementKindForEngine(cfg)),
+		gosx.Attr("data-gosx-enhance-layer", "runtime"),
+		gosx.Attr("data-gosx-fallback", enhancementFallbackForNode(fallback, "none")),
 	}
 	for name, value := range cfg.MountAttrs {
 		name = strings.TrimSpace(name)
@@ -429,6 +477,9 @@ func (r *Renderer) RenderIslandFromProgram(prog *program.Program, props any) gos
 		gosx.Attrs(
 			gosx.Attr("id", id),
 			gosx.Attr("data-gosx-island", prog.Name),
+			gosx.Attr("data-gosx-enhance", "island"),
+			gosx.Attr("data-gosx-enhance-layer", "runtime"),
+			gosx.Attr("data-gosx-fallback", enhancementFallbackForNode(content, "none")),
 		),
 		content,
 	)
@@ -708,6 +759,37 @@ func (r *Renderer) needsClientBootstrap() bool {
 
 func (r *Renderer) needsLiteBootstrap() bool {
 	return r != nil && r.bootstrapOnly && len(r.manifest.Islands) == 0 && len(r.manifest.Engines) == 0 && len(r.manifest.Hubs) == 0
+}
+
+// Summary reports the client-facing bootstrap/runtime requirements for the renderer.
+func (r *Renderer) Summary() Summary {
+	if r == nil {
+		return Summary{BootstrapMode: "none"}
+	}
+	mode := "none"
+	if r.needsLiteBootstrap() {
+		mode = "lite"
+	} else if r.needsClientBootstrap() {
+		mode = "full"
+	}
+	summary := Summary{
+		Bootstrap:     r.needsClientBootstrap(),
+		BootstrapMode: mode,
+		Manifest:      r.needsClientBootstrap() && !r.needsLiteBootstrap(),
+		RuntimePath:   r.manifest.Runtime.Path,
+		WASMExecPath:  r.wasmExecPath,
+		PatchPath:     r.patchPath,
+		BootstrapPath: r.selectedBootstrapPath(),
+		Islands:       len(r.manifest.Islands),
+		Engines:       len(r.manifest.Engines),
+		Hubs:          len(r.manifest.Hubs),
+	}
+	if r.needsLiteBootstrap() {
+		summary.RuntimePath = ""
+		summary.WASMExecPath = ""
+		summary.PatchPath = ""
+	}
+	return summary
 }
 
 func (r *Renderer) selectedBootstrapPath() string {

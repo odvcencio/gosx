@@ -46,6 +46,9 @@ func TextBlockAttrs(props TextBlockProps) []TextBlockAttr {
 	}
 	attrs := []TextBlockAttr{
 		{Name: textBlockAttr, Bool: true},
+		{Name: "data-gosx-enhance", Value: "text-layout"},
+		{Name: "data-gosx-enhance-layer", Value: "bootstrap"},
+		{Name: "data-gosx-fallback", Value: "html"},
 		{Name: "data-gosx-text-layout-role", Value: "block"},
 		{Name: "data-gosx-text-layout-surface", Value: "dom"},
 		{Name: "data-gosx-text-layout-state", Value: state},

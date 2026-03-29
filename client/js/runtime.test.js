@@ -2070,6 +2070,101 @@ test("bootstrap exposes unified environment, document, and presentation state", 
   assert.equal(presentation.environment.reducedData, true);
 });
 
+test("bootstrap exposes document assets and enhancement inventory", async () => {
+  const link = new FakeElement("a", null);
+  link.setAttribute("href", "/docs");
+  link.setAttribute("data-gosx-link", "");
+  link.setAttribute("data-gosx-enhance", "navigation");
+  link.setAttribute("data-gosx-enhance-layer", "bootstrap");
+  link.setAttribute("data-gosx-fallback", "native-link");
+
+  const form = new FakeElement("form", null);
+  form.setAttribute("data-gosx-form", "");
+  form.setAttribute("data-gosx-enhance", "form");
+  form.setAttribute("data-gosx-enhance-layer", "bootstrap");
+  form.setAttribute("data-gosx-fallback", "native-form");
+
+  const text = new FakeElement("div", null);
+  text.setAttribute("data-gosx-text-layout", "");
+  text.setAttribute("data-gosx-enhance", "text-layout");
+  text.setAttribute("data-gosx-enhance-layer", "bootstrap");
+  text.setAttribute("data-gosx-fallback", "html");
+
+  const scene = new FakeElement("div", null);
+  scene.id = "scene-runtime";
+  scene.setAttribute("data-gosx-engine", "GoSXScene3D");
+  scene.setAttribute("data-gosx-enhance", "scene3d");
+  scene.setAttribute("data-gosx-enhance-layer", "runtime");
+  scene.setAttribute("data-gosx-fallback", "server");
+
+  const island = new FakeElement("div", null);
+  island.id = "counter-island";
+  island.setAttribute("data-gosx-island", "Counter");
+  island.setAttribute("data-gosx-enhance", "island");
+  island.setAttribute("data-gosx-enhance-layer", "runtime");
+  island.setAttribute("data-gosx-fallback", "server");
+
+  const env = createContext({
+    elements: [link, form, text, scene, island],
+  });
+
+  const contract = env.document.createElement("script");
+  contract.id = "gosx-document";
+  contract.setAttribute("type", "application/json");
+  contract.setAttribute("data-gosx-document-contract", "");
+  contract.textContent = JSON.stringify({
+    version: 1,
+    page: {
+      id: "gosx-doc-docs-home",
+      pattern: "GET /docs",
+      path: "/docs",
+      title: "Docs",
+      status: 200,
+    },
+    enhancement: {
+      bootstrap: true,
+      runtime: true,
+      navigation: true,
+    },
+    assets: {
+      bootstrapMode: "full",
+      manifest: true,
+      runtimePath: "/runtime.wasm",
+      wasmExecPath: "/wasm_exec.js",
+      patchPath: "/patch.js",
+      bootstrapPath: "/bootstrap.js",
+      islands: 1,
+      engines: 1,
+      hubs: 1,
+    },
+  });
+  appendManagedHead(env.document, [contract]);
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const documentState = env.context.__gosx.document.get();
+  assert.equal(documentState.assets.runtime.bootstrapMode, "full");
+  assert.equal(documentState.assets.runtime.manifest, true);
+  assert.equal(documentState.assets.runtime.runtimePath, "/runtime.wasm");
+  assert.equal(documentState.assets.runtime.bootstrapPath, "/bootstrap.js");
+  assert.equal(documentState.assets.runtime.islands, 1);
+  assert.equal(documentState.assets.runtime.engines, 1);
+  assert.equal(documentState.assets.runtime.hubs, 1);
+  assert.equal(documentState.enhancement.bootstrap, true);
+  assert.equal(documentState.enhancement.runtime, true);
+  assert.equal(documentState.enhancements.count, 5);
+  assert.equal(documentState.enhancements.layers.bootstrap.count, 3);
+  assert.equal(documentState.enhancements.layers.runtime.count, 2);
+  assert.equal(documentState.enhancements.kinds.navigation.count, 1);
+  assert.equal(documentState.enhancements.kinds["text-layout"].count, 1);
+  assert.equal(env.context.__gosx.document.enhancements("scene3d").count, 1);
+  assert.equal(env.document.documentElement.getAttribute("data-gosx-bootstrap-mode"), "full");
+  assert.equal(env.document.documentElement.getAttribute("data-gosx-enhancement-count"), "5");
+  assert.equal(env.document.documentElement.getAttribute("data-gosx-enhancement-navigation-count"), "1");
+  assert.equal(env.document.body.getAttribute("data-gosx-enhancement-runtime-count"), "2");
+});
+
 test("bootstrap refreshes document state after navigation events", async () => {
   const env = createContext({});
   const contract = env.document.createElement("script");

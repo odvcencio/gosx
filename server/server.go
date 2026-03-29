@@ -548,6 +548,9 @@ func documentHTMLAttrs(doc *DocumentContext) string {
 		fmt.Fprintf(&b, ` data-gosx-navigation-state="%s"`, "idle")
 		fmt.Fprintf(&b, ` data-gosx-navigation-current-path="%s"`, html.EscapeString(documentCurrentPath(doc)))
 	}
+	if mode := documentBootstrapMode(doc.Runtime.BootstrapMode); mode != "none" {
+		fmt.Fprintf(&b, ` data-gosx-bootstrap-mode="%s"`, html.EscapeString(mode))
+	}
 	return b.String()
 }
 
@@ -563,6 +566,9 @@ func documentBodyAttrs(doc *DocumentContext) string {
 	if doc.Navigation {
 		fmt.Fprintf(&b, ` data-gosx-navigation-state="%s"`, "idle")
 		fmt.Fprintf(&b, ` data-gosx-navigation-current-path="%s"`, html.EscapeString(documentCurrentPath(doc)))
+	}
+	if mode := documentBootstrapMode(doc.Runtime.BootstrapMode); mode != "none" {
+		fmt.Fprintf(&b, ` data-gosx-bootstrap-mode="%s"`, html.EscapeString(mode))
 	}
 	return b.String()
 }
