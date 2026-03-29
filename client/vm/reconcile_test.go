@@ -568,6 +568,32 @@ func TestReconcileDuplicateKeysFallbackToPositionalDiff(t *testing.T) {
 	}
 }
 
+func TestReconcileDuplicateNextKeysFallbackToPositionalDiff(t *testing.T) {
+	prev := &ResolvedTree{Nodes: []ResolvedNode{
+		{Tag: "ul", Children: []int{1, 2}},
+		{Tag: "li", Key: "a", Text: "old-first"},
+		{Tag: "li", Key: "b", Text: "old-second"},
+	}}
+	next := &ResolvedTree{Nodes: []ResolvedNode{
+		{Tag: "ul", Children: []int{1, 2}},
+		{Tag: "li", Key: "dup", Text: "new-first"},
+		{Tag: "li", Key: "dup", Text: "new-second"},
+	}}
+
+	ops := ReconcileTrees(prev, next, []bool{false, false, false})
+	if len(ops) != 2 {
+		t.Fatalf("expected positional text patches for duplicate next keys, got %d: %+v", len(ops), ops)
+	}
+	for _, op := range ops {
+		if op.Kind != PatchSetText {
+			t.Fatalf("expected PatchSetText after duplicate next-key fallback, got %+v", op)
+		}
+	}
+	if ops[0].Path != "0" || ops[1].Path != "1" {
+		t.Fatalf("expected positional paths after duplicate next-key fallback, got %+v", ops)
+	}
+}
+
 func TestReconcileNoKeysUnchanged(t *testing.T) {
 	// Positional (no keys) — existing behavior should be preserved
 	prev := &ResolvedTree{Nodes: []ResolvedNode{
