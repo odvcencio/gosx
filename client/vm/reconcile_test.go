@@ -38,6 +38,24 @@ func TestReconcileStaticSkip(t *testing.T) {
 	}
 }
 
+func TestReconcileStaticSkipUsesSourceIdentity(t *testing.T) {
+	prev := &ResolvedTree{Nodes: []ResolvedNode{
+		{Tag: "div", Children: []int{1}},
+		{Tag: "span", Text: "old", Source: 7, HasSource: true},
+	}}
+	next := &ResolvedTree{Nodes: []ResolvedNode{
+		{Tag: "div", Children: []int{1}},
+		{Tag: "span", Text: "new", Source: 7, HasSource: true},
+	}}
+	staticMask := make([]bool, 8)
+	staticMask[7] = true
+
+	ops := ReconcileTrees(prev, next, staticMask)
+	if len(ops) != 0 {
+		t.Fatalf("expected 0 ops for source-static node, got %d: %+v", len(ops), ops)
+	}
+}
+
 func TestReconcileAttrChange(t *testing.T) {
 	prev := &ResolvedTree{Nodes: []ResolvedNode{
 		{Tag: "div", Attrs: []ResolvedAttr{{Name: "class", Value: "old"}}},
@@ -591,6 +609,35 @@ func TestReconcileDuplicateNextKeysFallbackToPositionalDiff(t *testing.T) {
 	}
 	if ops[0].Path != "0" || ops[1].Path != "1" {
 		t.Fatalf("expected positional paths after duplicate next-key fallback, got %+v", ops)
+	}
+}
+
+func TestReconcileMixedKeyedChildrenFallbackToPositionalDiff(t *testing.T) {
+	prev := &ResolvedTree{Nodes: []ResolvedNode{
+		{Tag: "ul", Children: []int{1, 2}},
+		{Tag: "li", Key: "a", Text: "A"},
+		{Tag: "li", Text: "B"},
+	}}
+	next := &ResolvedTree{Nodes: []ResolvedNode{
+		{Tag: "ul", Children: []int{1, 2}},
+		{Tag: "li", Text: "B"},
+		{Tag: "li", Key: "a", Text: "A"},
+	}}
+
+	ops := ReconcileTrees(prev, next, []bool{false, false, false})
+	if len(ops) != 2 {
+		t.Fatalf("expected positional text patches for mixed keyed children, got %d: %+v", len(ops), ops)
+	}
+	for _, op := range ops {
+		if op.Kind == PatchReorder {
+			t.Fatalf("expected positional fallback, got reorder op: %+v", op)
+		}
+		if op.Kind != PatchSetText {
+			t.Fatalf("expected PatchSetText during mixed keyed fallback, got %+v", op)
+		}
+	}
+	if ops[0].Path != "0" || ops[1].Path != "1" {
+		t.Fatalf("expected positional paths after mixed keyed fallback, got %+v", ops)
 	}
 }
 
