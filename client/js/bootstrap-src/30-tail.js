@@ -13,6 +13,14 @@
     const data = { type: e.type };
 
     switch (e.type) {
+      case "click":
+        if (e.target && e.target.value !== undefined) {
+          const value = String(e.target.value == null ? "" : e.target.value);
+          if (value !== "") {
+            data.value = value;
+          }
+        }
+        break;
       case "input":
       case "change":
         if (e.target && e.target.value !== undefined) {

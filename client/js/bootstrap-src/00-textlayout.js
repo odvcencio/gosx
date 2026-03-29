@@ -1678,6 +1678,71 @@
     return Number.isFinite(parsed) ? parsed : fallback;
   }
 
+  function textLayoutLengthValue(value, fallback) {
+    if (typeof value === "number" && Number.isFinite(value)) {
+      return value;
+    }
+    if (typeof value === "string") {
+      const trimmed = value.trim().toLowerCase();
+      if (!trimmed || trimmed === "none" || trimmed === "auto" || trimmed === "normal" || trimmed === "unset") {
+        return fallback;
+      }
+      const parsed = Number.parseFloat(trimmed);
+      return Number.isFinite(parsed) ? parsed : fallback;
+    }
+    return textLayoutNumberValue(value, fallback);
+  }
+
+  function textLayoutComputedStyle(element) {
+    if (!element || typeof window.getComputedStyle !== "function") {
+      return null;
+    }
+    try {
+      return window.getComputedStyle(element);
+    } catch (_error) {
+      return null;
+    }
+  }
+
+  function textLayoutComputedStyleValue(style, propertyName) {
+    if (!style || !propertyName) {
+      return "";
+    }
+    if (typeof style.getPropertyValue === "function") {
+      const propertyValue = style.getPropertyValue(propertyName);
+      if (typeof propertyValue === "string" && propertyValue.trim() !== "") {
+        return propertyValue.trim();
+      }
+    }
+    const camelName = propertyName.replace(/-([a-z])/g, function(_match, letter) {
+      return String(letter || "").toUpperCase();
+    });
+    const value = style[camelName];
+    return typeof value === "string" ? value.trim() : "";
+  }
+
+  function textLayoutComputedLineHeight(style, fallback) {
+    const explicit = textLayoutLengthValue(
+      textLayoutComputedStyleValue(style, "--gosx-text-layout-line-height")
+      || textLayoutComputedStyleValue(style, "line-height"),
+      NaN
+    );
+    if (Number.isFinite(explicit) && explicit > 0) {
+      return explicit;
+    }
+    const fontSize = textLayoutLengthValue(textLayoutComputedStyleValue(style, "font-size"), fallback);
+    return Math.max(1, fontSize * 1.35);
+  }
+
+  function textLayoutComputedMaxLines(style) {
+    return Math.max(0, Math.floor(textLayoutLengthValue(
+      textLayoutComputedStyleValue(style, "--gosx-text-layout-max-lines")
+      || textLayoutComputedStyleValue(style, "-webkit-line-clamp")
+      || textLayoutComputedStyleValue(style, "line-clamp"),
+      0
+    )));
+  }
+
   function setStyleValue(style, name, value) {
     if (!style || typeof name !== "string") {
       return;
@@ -1951,30 +2016,61 @@
   function normalizeManagedTextLayoutConfig(element, options) {
     const config = options && typeof options === "object" ? options : {};
     const hasOwn = Object.prototype.hasOwnProperty;
+    const computed = textLayoutComputedStyle(element);
     const font = hasOwn.call(config, "font")
       ? String(config.font == null ? "" : config.font)
-      : String((element.getAttribute && element.getAttribute("data-gosx-text-layout-font")) || "");
+      : String(
+        textLayoutComputedStyleValue(computed, "--gosx-text-layout-font")
+        || textLayoutComputedStyleValue(computed, "font")
+        || (element.getAttribute && element.getAttribute("data-gosx-text-layout-font"))
+        || ""
+      );
     const align = normalizeTextLayoutAlign(
       hasOwn.call(config, "align")
         ? config.align
         : (
-          (element.getAttribute && element.getAttribute("data-gosx-text-layout-align"))
+          textLayoutComputedStyleValue(computed, "--gosx-text-layout-align")
+          || textLayoutComputedStyleValue(computed, "text-align")
+          || (element.getAttribute && element.getAttribute("data-gosx-text-layout-align"))
           || (element.getAttribute && element.getAttribute("align"))
         )
     );
     const whiteSpace = normalizeTextLayoutWhiteSpace(
-      hasOwn.call(config, "whiteSpace") ? config.whiteSpace : (element.getAttribute && element.getAttribute("data-gosx-text-layout-white-space"))
+      hasOwn.call(config, "whiteSpace")
+        ? config.whiteSpace
+        : (
+          textLayoutComputedStyleValue(computed, "--gosx-text-layout-white-space")
+          || textLayoutComputedStyleValue(computed, "white-space")
+          || (element.getAttribute && element.getAttribute("data-gosx-text-layout-white-space"))
+        )
     );
-    const lineHeight = Math.max(1, textLayoutNumberValue(
-      hasOwn.call(config, "lineHeight") ? config.lineHeight : (element.getAttribute && element.getAttribute("data-gosx-text-layout-line-height")),
+    const lineHeight = Math.max(1, textLayoutLengthValue(
+      hasOwn.call(config, "lineHeight")
+        ? config.lineHeight
+        : (
+          textLayoutComputedLineHeight(computed, NaN)
+          || (element.getAttribute && element.getAttribute("data-gosx-text-layout-line-height"))
+          || 16
+        ),
       16
     ));
     const maxLines = Math.max(0, Math.floor(textLayoutNumberValue(
-      hasOwn.call(config, "maxLines") ? config.maxLines : (element.getAttribute && element.getAttribute("data-gosx-text-layout-max-lines")),
+      hasOwn.call(config, "maxLines")
+        ? config.maxLines
+        : (
+          textLayoutComputedMaxLines(computed)
+          || (element.getAttribute && element.getAttribute("data-gosx-text-layout-max-lines"))
+        ),
       0
     )));
-    let maxWidth = textLayoutNumberValue(
-      hasOwn.call(config, "maxWidth") ? config.maxWidth : (element.getAttribute && element.getAttribute("data-gosx-text-layout-max-width")),
+    let maxWidth = textLayoutLengthValue(
+      hasOwn.call(config, "maxWidth")
+        ? config.maxWidth
+        : (
+          textLayoutComputedStyleValue(computed, "--gosx-text-layout-max-width")
+          || textLayoutComputedStyleValue(computed, "max-width")
+          || (element.getAttribute && element.getAttribute("data-gosx-text-layout-max-width"))
+        ),
       0
     );
     if (!(maxWidth > 0) && element && typeof element.getBoundingClientRect === "function") {
@@ -2001,7 +2097,13 @@
       lineHeight,
       maxLines,
       overflow: normalizeTextLayoutOverflow(
-        hasOwn.call(config, "overflow") ? config.overflow : (element.getAttribute && element.getAttribute("data-gosx-text-layout-overflow"))
+        hasOwn.call(config, "overflow")
+          ? config.overflow
+          : (
+            textLayoutComputedStyleValue(computed, "--gosx-text-layout-overflow")
+            || (textLayoutComputedStyleValue(computed, "text-overflow") === "ellipsis" ? "ellipsis" : "")
+            || (element.getAttribute && element.getAttribute("data-gosx-text-layout-overflow"))
+          )
       ),
       maxWidth,
       observe,
@@ -2095,6 +2197,7 @@
       gosxTextLayoutRevision(),
       config.text,
       config.font,
+      config.align,
       config.whiteSpace,
       config.lineHeight,
       config.maxLines,

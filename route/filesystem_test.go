@@ -665,18 +665,27 @@ func Page() Node {
 	router.Build().ServeHTTP(w, req)
 
 	body := w.Body.String()
+	rootScope := fileCSSScopeID(filepath.Join(root, "layout.css"))
+	docsScope := fileCSSScopeID(filepath.Join(root, "docs", "layout.css"))
+	pageScope := fileCSSScopeID(filepath.Join(root, "docs", "page.css"))
 	for _, snippet := range []string{
 		`data-gosx-file-css="layout.css"`,
-		`.root { background: linen; }`,
-		`.docs-shell { border: 1px solid tan; }`,
-		`.page { color: sienna; }`,
+		`data-gosx-file-css-scope="` + rootScope + `"`,
+		`data-gosx-file-css-scope="` + docsScope + `"`,
+		`data-gosx-file-css-scope="` + pageScope + `"`,
+		`:where([data-gosx-s="` + rootScope + `"]) .root, .root:where([data-gosx-s="` + rootScope + `"]) { background: linen; }`,
+		`:where([data-gosx-s="` + docsScope + `"]) .docs-shell, .docs-shell:where([data-gosx-s="` + docsScope + `"]) { border: 1px solid tan; }`,
+		`:where([data-gosx-s="` + pageScope + `"]) .page, .page:where([data-gosx-s="` + pageScope + `"]) { color: sienna; }`,
+		`class="root" data-gosx-s="` + rootScope + `"`,
+		`class="docs-shell" data-gosx-s="` + docsScope + `"`,
+		`class="page" data-gosx-s="` + pageScope + `"`,
 	} {
 		if !strings.Contains(body, snippet) {
 			t.Fatalf("expected %q in %q", snippet, body)
 		}
 	}
-	if !(strings.Index(body, `.root { background: linen; }`) < strings.Index(body, `.docs-shell { border: 1px solid tan; }`) &&
-		strings.Index(body, `.docs-shell { border: 1px solid tan; }`) < strings.Index(body, `.page { color: sienna; }`)) {
+	if !(strings.Index(body, rootScope) < strings.Index(body, docsScope) &&
+		strings.Index(body, docsScope) < strings.Index(body, pageScope)) {
 		t.Fatalf("expected outer layout CSS before nested layout CSS before page CSS in %q", body)
 	}
 }

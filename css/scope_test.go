@@ -26,10 +26,13 @@ func TestScopeCSS(t *testing.T) {
 
 	scoped := ScopeCSS(css, "c8a3")
 
-	if !strings.Contains(scoped, `[data-gosx-s="c8a3"] .button`) {
+	if !strings.Contains(scoped, `:where([data-gosx-s="c8a3"]) .button`) {
 		t.Fatalf("expected scoped .button selector, got:\n%s", scoped)
 	}
-	if !strings.Contains(scoped, `[data-gosx-s="c8a3"] .label`) {
+	if !strings.Contains(scoped, `.button:where([data-gosx-s="c8a3"])`) {
+		t.Fatalf("expected root-safe .button selector, got:\n%s", scoped)
+	}
+	if !strings.Contains(scoped, `:where([data-gosx-s="c8a3"]) .label`) {
 		t.Fatalf("expected scoped .label selector, got:\n%s", scoped)
 	}
 }
@@ -38,13 +41,13 @@ func TestScopeCSSMultipleSelectors(t *testing.T) {
 	css := `.a, .b, .c { display: flex; }`
 	scoped := ScopeCSS(css, "x1y2")
 
-	if !strings.Contains(scoped, `[data-gosx-s="x1y2"] .a`) {
+	if !strings.Contains(scoped, `:where([data-gosx-s="x1y2"]) .a`) {
 		t.Fatal("expected scoped .a")
 	}
-	if !strings.Contains(scoped, `[data-gosx-s="x1y2"] .b`) {
+	if !strings.Contains(scoped, `:where([data-gosx-s="x1y2"]) .b`) {
 		t.Fatal("expected scoped .b")
 	}
-	if !strings.Contains(scoped, `[data-gosx-s="x1y2"] .c`) {
+	if !strings.Contains(scoped, `:where([data-gosx-s="x1y2"]) .c`) {
 		t.Fatal("expected scoped .c")
 	}
 }
@@ -99,5 +102,76 @@ func TestScopeCSSNoCollision(t *testing.T) {
 	}
 	if !strings.Contains(css2, scope2) {
 		t.Fatal("css2 should contain Form scope")
+	}
+}
+
+func TestScopeCSSSupportsRootSelectors(t *testing.T) {
+	css := `:root { --card-gap: 1rem; }
+.shell > .card { gap: var(--card-gap); }`
+
+	scoped := ScopeCSS(css, "root1")
+
+	if !strings.Contains(scoped, `:where([data-gosx-s="root1"]) { --card-gap: 1rem; }`) {
+		t.Fatalf("expected :root to map to scope anchor, got:\n%s", scoped)
+	}
+	if !strings.Contains(scoped, `:where([data-gosx-s="root1"]) .shell > .card, .shell:where([data-gosx-s="root1"]) > .card`) {
+		t.Fatalf("expected direct-child selector to preserve root matching, got:\n%s", scoped)
+	}
+}
+
+func TestScopeCSSScopesNestedAtRules(t *testing.T) {
+	css := `@media (min-width: 768px) {
+  .shell main { max-width: 60rem; }
+}
+@supports (display: grid) {
+  .grid { display: grid; }
+}`
+
+	scoped := ScopeCSS(css, "nest1")
+
+	if !strings.Contains(scoped, `@media (min-width: 768px) {
+  :where([data-gosx-s="nest1"]) .shell main, .shell:where([data-gosx-s="nest1"]) main { max-width: 60rem; }
+}`) {
+		t.Fatalf("expected nested @media selectors to be scoped, got:\n%s", scoped)
+	}
+	if !strings.Contains(scoped, `@supports (display: grid) {
+  :where([data-gosx-s="nest1"]) .grid, .grid:where([data-gosx-s="nest1"]) { display: grid; }
+}`) {
+		t.Fatalf("expected nested @supports selectors to be scoped, got:\n%s", scoped)
+	}
+}
+
+func TestScopeCSSPreservesKeyframesAndFontFace(t *testing.T) {
+	css := `@keyframes float {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@font-face {
+  font-family: Demo;
+  src: url("/demo.woff2");
+}`
+
+	scoped := ScopeCSS(css, "anim1")
+
+	if strings.Contains(scoped, `:where([data-gosx-s="anim1"]) from`) {
+		t.Fatalf("expected keyframe steps to stay unscoped, got:\n%s", scoped)
+	}
+	if !strings.Contains(scoped, `@font-face {
+  font-family: Demo;`) {
+		t.Fatalf("expected @font-face to be preserved, got:\n%s", scoped)
+	}
+}
+
+func TestScopeCSSSupportsGlobalSelectors(t *testing.T) {
+	css := `:global(body[data-theme="docs"]) { background: #08151f; }
+.copy :global(a) { color: inherit; }`
+
+	scoped := ScopeCSS(css, "glob1")
+
+	if !strings.Contains(scoped, `body[data-theme="docs"] { background: #08151f; }`) {
+		t.Fatalf("expected standalone :global selector to remain global, got:\n%s", scoped)
+	}
+	if !strings.Contains(scoped, `:where([data-gosx-s="glob1"]) .copy a, .copy:where([data-gosx-s="glob1"]) a`) {
+		t.Fatalf("expected inline :global(...) wrapper to unwrap inside scoped selector, got:\n%s", scoped)
 	}
 }

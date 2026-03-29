@@ -808,6 +808,21 @@ function numberOr(value, fallback) {
   return Number.isFinite(num) ? num : fallback;
 }
 
+function createComputedStyleSnapshot(element, options) {
+  const fromOption = typeof options.getComputedStyle === "function" ? options.getComputedStyle(element) : null;
+  const source = Object.assign({}, element && element.computedStyle ? element.computedStyle : {}, fromOption || {});
+  if (typeof source.getPropertyValue !== "function") {
+    source.getPropertyValue = function getPropertyValue(name) {
+      if (Object.prototype.hasOwnProperty.call(source, name)) {
+        return source[name];
+      }
+      const camel = String(name || "").replace(/-([a-z])/g, (_match, letter) => String(letter || "").toUpperCase());
+      return Object.prototype.hasOwnProperty.call(source, camel) ? source[camel] : "";
+    };
+  }
+  return source;
+}
+
 function createContext(options) {
   const document = new FakeDocument();
   if (options.visibilityState) {
@@ -883,11 +898,21 @@ function createContext(options) {
       }
       return new FakeResponse(routes.get(url));
     },
+    getComputedStyle(element) {
+      return createComputedStyleSnapshot(element, options);
+    },
     location: {
       protocol: "http:",
       host: "localhost:3000",
       href: "http://localhost:3000/",
       origin: "http://localhost:3000",
+    },
+    navigator: {
+      deviceMemory: numberOr(options.deviceMemory, 8),
+      hardwareConcurrency: Math.max(1, Math.floor(numberOr(options.hardwareConcurrency, 8))),
+      maxTouchPoints: Math.max(0, Math.floor(numberOr(options.maxTouchPoints, 0))),
+      userAgent: String(options.userAgent || "FakeBrowser/1.0"),
+      getGamepads: typeof options.getGamepads === "function" ? options.getGamepads : () => [],
     },
     matchMedia(query) {
       const key = String(query);
@@ -1560,6 +1585,80 @@ test("bootstrap installs a stronger CSS contract for managed text layout blocks"
   assert.equal(block.style["--gosx-text-layout-align"], "right");
   assert.equal(block.style["--gosx-text-layout-max-width"], "88px");
   assert.equal(block.getAttribute("data-gosx-text-layout-state"), "ready");
+});
+
+test("bootstrap derives managed text layout config from computed styles and CSS vars", async () => {
+  const block = new FakeElement("div", null);
+  block.setAttribute("data-gosx-text-layout", "");
+  block.textContent = "hello world from gosx";
+  block.computedStyle = {
+    font: "600 16px serif",
+    textAlign: "center",
+    whiteSpace: "pre-wrap",
+    lineHeight: "22px",
+    maxWidth: "88px",
+    textOverflow: "ellipsis",
+    getPropertyValue(name) {
+      switch (name) {
+        case "--gosx-text-layout-max-lines":
+          return "1";
+        case "--gosx-text-layout-overflow":
+          return "ellipsis";
+        default:
+          return this[name] || "";
+      }
+    },
+  };
+
+  const env = createContext({
+    elements: [block],
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  assert.equal(block.getAttribute("data-gosx-text-layout-align"), "center");
+  assert.equal(block.getAttribute("data-gosx-text-layout-white-space"), "pre-wrap");
+  assert.equal(block.getAttribute("data-gosx-text-layout-max-width"), "88");
+  assert.equal(block.getAttribute("data-gosx-text-layout-max-lines"), "1");
+  assert.equal(block.getAttribute("data-gosx-text-layout-overflow"), "ellipsis");
+  assert.equal(block.getAttribute("data-gosx-text-layout-state"), "truncated");
+  assert.equal(block.style["--gosx-text-layout-line-height"], "22px");
+  assert.equal(env.context.__gosx.textLayout.read(block).truncated, true);
+});
+
+test("bootstrap refreshes managed text layout blocks after computed style changes", async () => {
+  const block = new FakeElement("div", null);
+  block.setAttribute("data-gosx-text-layout", "");
+  block.textContent = "hello world from gosx";
+  block.computedStyle = {
+    font: "600 16px serif",
+    textAlign: "left",
+    whiteSpace: "normal",
+    lineHeight: "20px",
+    maxWidth: "88px",
+    getPropertyValue(name) {
+      return this[name] || "";
+    },
+  };
+
+  const env = createContext({
+    elements: [block],
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  assert.equal(block.getAttribute("data-gosx-text-layout-line-count"), "2");
+  assert.equal(block.getAttribute("data-gosx-text-layout-align"), "left");
+
+  block.computedStyle.textAlign = "right";
+  block.computedStyle.maxWidth = "200px";
+  env.context.__gosx.textLayout.refresh(block);
+
+  assert.equal(block.getAttribute("data-gosx-text-layout-align"), "right");
+  assert.equal(block.getAttribute("data-gosx-text-layout-max-width"), "200");
+  assert.equal(block.getAttribute("data-gosx-text-layout-line-count"), "1");
 });
 
 test("bootstrap refreshes managed text layout blocks after font metric invalidation", async () => {
@@ -3106,6 +3205,109 @@ test("bootstrap keeps Scene3D responsive across resize and DPR changes", async (
   assert.equal(mount.getAttribute("data-gosx-scene3d-css-height"), "160");
   assert.equal(mount.getAttribute("data-gosx-scene3d-pixel-ratio"), "2");
   assert.notEqual(label.style["--gosx-scene-label-left"], initialLeft);
+});
+
+test("bootstrap lowers Scene3D pixel ratio on constrained coarse-pointer devices", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-constrained-mobile";
+
+  const env = createContext({
+    elements: [mount],
+    devicePixelRatio: 3,
+    deviceMemory: 4,
+    hardwareConcurrency: 4,
+    enableWebGL: true,
+    matchMedia: {
+      "(pointer: coarse)": true,
+    },
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-constrained-mobile",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-constrained-mobile",
+          jsExport: "GoSXScene3D",
+          props: {
+            width: 480,
+            height: 300,
+            autoRotate: false,
+            scene: {
+              objects: [
+                { kind: "box", width: 1.4, height: 1.1, depth: 1.2, x: 0, y: 0, z: 0, color: "#8de1ff" },
+              ],
+            },
+          },
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  assert.equal(mount.getAttribute("data-gosx-scene3d-capability-tier"), "constrained");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-coarse-pointer"), "true");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-pixel-ratio"), "1.5");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "webgl");
+});
+
+test("bootstrap falls back from WebGL and restores Scene3D rendering after context events", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-webgl-fallback";
+
+  const env = createContext({
+    elements: [mount],
+    enableWebGL: true,
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-webgl-fallback",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-webgl-fallback",
+          jsExport: "GoSXScene3D",
+          props: {
+            width: 480,
+            height: 300,
+            autoRotate: false,
+            scene: {
+              objects: [
+                { kind: "box", width: 1.4, height: 1.1, depth: 1.2, x: 0, y: 0, z: 0, color: "#8de1ff" },
+              ],
+            },
+          },
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const canvas = mount.children[0];
+  const ctx2d = canvas.getContext("2d");
+  let prevented = false;
+
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "webgl");
+  canvas.dispatchEvent({
+    type: "webglcontextlost",
+    preventDefault() {
+      prevented = true;
+    },
+  });
+  await flushAsyncWork();
+
+  assert.equal(prevented, true);
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "canvas");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer-fallback"), "webgl-context-lost");
+  assert.ok(ctx2d.ops.some((entry) => entry[0] === "fillRect"));
+
+  canvas.dispatchEvent({ type: "webglcontextrestored" });
+  await flushAsyncWork();
+
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "webgl");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer-fallback"), null);
 });
 
 test("bootstrap respects prefers-reduced-motion for Scene3D animation loops", async () => {
