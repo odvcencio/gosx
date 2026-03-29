@@ -33,6 +33,9 @@ func TestRenderIsland(t *testing.T) {
 	if !strings.Contains(html, "data-gosx-island") {
 		t.Fatal("missing island attribute")
 	}
+	if !strings.Contains(html, `data-gosx-enhance="island"`) || !strings.Contains(html, `data-gosx-enhance-layer="runtime"`) {
+		t.Fatalf("missing island enhancement contract in %q", html)
+	}
 	if !strings.Contains(html, "Counter") {
 		t.Fatal("missing component name")
 	}
@@ -51,6 +54,9 @@ func TestRenderIslandWithEvents(t *testing.T) {
 
 	if !strings.Contains(html, "data-gosx-island") {
 		t.Fatal("missing island attribute")
+	}
+	if !strings.Contains(html, `data-gosx-enhance="island"`) {
+		t.Fatalf("missing island enhancement contract in %q", html)
 	}
 }
 
@@ -134,6 +140,9 @@ func TestPageHeadWithEnginesOnly(t *testing.T) {
 	if !strings.Contains(html, `data-gosx-engine="Whiteboard"`) {
 		t.Fatalf("expected engine mount shell, got %s", html)
 	}
+	if !strings.Contains(html, `data-gosx-enhance="engine"`) || !strings.Contains(html, `data-gosx-enhance-layer="runtime"`) {
+		t.Fatalf("expected engine enhancement contract, got %s", html)
+	}
 
 	head := gosx.RenderHTML(r.PageHead())
 	if !strings.Contains(head, "gosx-manifest") {
@@ -170,6 +179,9 @@ func TestRenderEngineRegistersManifestEntryAndMount(t *testing.T) {
 	html := gosx.RenderHTML(node)
 	if !strings.Contains(html, `data-gosx-engine="Whiteboard"`) {
 		t.Fatalf("expected engine mount markup, got %s", html)
+	}
+	if !strings.Contains(html, `data-gosx-enhance="engine"`) || !strings.Contains(html, `data-gosx-fallback="server"`) {
+		t.Fatalf("expected engine enhancement contract, got %s", html)
 	}
 	if !strings.Contains(html, `loading`) {
 		t.Fatalf("expected fallback content, got %s", html)
@@ -373,9 +385,9 @@ func TestRendererVersionsCompatRuntimeURLsFromBuildManifest(t *testing.T) {
 	headHTML := gosx.RenderHTML(r.PageHead())
 	for _, snippet := range []string{
 		`/gosx/runtime.wasm?v=aaaabbbb`,
-		`/gosx/wasm_exec.js?v=bbbbcccc`,
-		`/gosx/patch.js?v=ddddeeee`,
-		`/gosx/bootstrap.js?v=ccccdddd`,
+		`/gosx/assets/runtime/wasm_exec.bbbbcccc.js`,
+		`/gosx/assets/runtime/patch.ddddeeee.js`,
+		`/gosx/assets/runtime/bootstrap.ccccdddd.js`,
 	} {
 		if !strings.Contains(headHTML, snippet) {
 			t.Fatalf("expected %q in versioned compat head %s", snippet, headHTML)
@@ -383,6 +395,47 @@ func TestRendererVersionsCompatRuntimeURLsFromBuildManifest(t *testing.T) {
 	}
 	if got := r.Manifest().Runtime.Path; got != "/gosx/runtime.wasm?v=aaaabbbb" {
 		t.Fatalf("unexpected versioned runtime path %q", got)
+	}
+}
+
+func TestNewRendererAutoLoadsBuildManifestIslandPrograms(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("GOSX_APP_ROOT", root)
+
+	data := []byte(`{
+  "runtime": {
+    "wasm": {"file": "gosx-runtime.aaaabbbb.wasm", "hash": "aaaabbbb", "size": 10},
+    "wasmExec": {"file": "wasm_exec.bbbbcccc.js", "hash": "bbbbcccc", "size": 20},
+    "bootstrap": {"file": "bootstrap.ccccdddd.js", "hash": "ccccdddd", "size": 30},
+    "patch": {"file": "patch.ddddeeee.js", "hash": "ddddeeee", "size": 40}
+  },
+  "islands": [
+    {
+      "name": "Counter",
+      "format": "bin",
+      "file": "Counter.eeeeffff.gxi",
+      "hash": "eeeeffff",
+      "size": 50
+    }
+  ],
+  "css": []
+}`)
+	if err := os.WriteFile(filepath.Join(root, "build.json"), data, 0644); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+
+	r := NewRenderer("main")
+	r.RenderIsland("Counter", nil, gosx.Text("0"))
+
+	entry := r.Manifest().Islands[0]
+	if entry.ProgramRef != "/gosx/assets/islands/Counter.eeeeffff.gxi" {
+		t.Fatalf("expected hashed program ref from default build manifest, got %s", entry.ProgramRef)
+	}
+	if entry.ProgramFormat != "bin" {
+		t.Fatalf("expected bin program format, got %s", entry.ProgramFormat)
+	}
+	if r.Manifest().Runtime.Path != "/gosx/assets/runtime/gosx-runtime.aaaabbbb.wasm" {
+		t.Fatalf("expected hashed runtime path from default build manifest, got %s", r.Manifest().Runtime.Path)
 	}
 }
 

@@ -284,6 +284,9 @@ func TestAppInjectsRuntimeHeadForEnginePages(t *testing.T) {
 	body := w.Body.String()
 	for _, snippet := range []string{
 		`data-gosx-engine="GoSXScene3D"`,
+		`data-gosx-enhance="scene3d"`,
+		`data-gosx-enhance-layer="runtime"`,
+		`data-gosx-fallback="server"`,
 		`gosx-manifest`,
 		`/gosx/runtime.wasm`,
 		`/gosx/bootstrap.js`,
@@ -312,6 +315,9 @@ func TestAppInjectsBootstrapHeadForTextBlockPages(t *testing.T) {
 	body := w.Body.String()
 	for _, snippet := range []string{
 		`data-gosx-text-layout`,
+		`data-gosx-enhance="text-layout"`,
+		`data-gosx-enhance-layer="bootstrap"`,
+		`data-gosx-fallback="html"`,
 		`data-gosx-text-layout-role="block"`,
 		`data-gosx-text-layout-surface="dom"`,
 		`data-gosx-text-layout-state="hint"`,
@@ -363,11 +369,57 @@ func TestAppEmitsDocumentContract(t *testing.T) {
 		`"path":"/docs"`,
 		`"title":"Docs"`,
 		`"navigation":true`,
-		`"runtime":true`,
+		`"bootstrap":true`,
+		`"runtime":false`,
+		`"bootstrapMode":"lite"`,
+		`"bootstrapPath":"/gosx/bootstrap-lite.js`,
 		`"id":"gosx-doc-get-docs"`,
 	} {
 		if !strings.Contains(body, snippet) {
 			t.Fatalf("expected %q in %q", snippet, body)
+		}
+	}
+}
+
+func TestAppEmitsNavigationOnlyDocumentContract(t *testing.T) {
+	app := New()
+	app.EnableNavigation()
+	app.Page("GET /docs/forms", func(ctx *Context) gosx.Node {
+		ctx.SetMetadata(Metadata{Title: "Forms"})
+		return gosx.El("main", gosx.Text("Forms"))
+	})
+
+	handler := app.Build()
+	req := httptest.NewRequest(http.MethodGet, "/docs/forms", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	body := w.Body.String()
+	for _, snippet := range []string{
+		`id="gosx-document"`,
+		`data-gosx-document-contract`,
+		`"pattern":"GET /docs/forms"`,
+		`"path":"/docs/forms"`,
+		`"title":"Forms"`,
+		`"navigation":true`,
+		`"bootstrap":true`,
+		`"runtime":false`,
+		`"bootstrapMode":"none"`,
+		`"id":"gosx-doc-get-docs-forms"`,
+	} {
+		if !strings.Contains(body, snippet) {
+			t.Fatalf("expected %q in %q", snippet, body)
+		}
+	}
+	for _, snippet := range []string{
+		`data-gosx-bootstrap-mode="`,
+		`"bootstrapPath":"/gosx/`,
+		`"runtimePath":"/gosx/`,
+		`"wasmExecPath":"/gosx/`,
+		`"patchPath":"/gosx/`,
+	} {
+		if strings.Contains(body, snippet) {
+			t.Fatalf("did not expect %q in %q", snippet, body)
 		}
 	}
 }
@@ -505,6 +557,38 @@ func TestAppServesCompatRuntimeAssetsFromBuildManifest(t *testing.T) {
 	}
 	if body := w.Body.String(); !strings.Contains(body, "hashed bootstrap") {
 		t.Fatalf("unexpected built compat asset body %q", body)
+	}
+}
+
+func TestAppServesDirectBuildManifestAssets(t *testing.T) {
+	root := t.TempDir()
+	assetsDir := filepath.Join(root, "assets", "islands")
+	if err := os.MkdirAll(assetsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "build.json"), []byte(`{"runtime":{},"islands":[],"css":[]}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(assetsDir, "Dashboard.3333.gxi"), []byte("island program"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	app := New()
+	app.SetRuntimeRoot(root)
+	handler := app.Build()
+
+	req := httptest.NewRequest(http.MethodGet, "/gosx/assets/islands/Dashboard.3333.gxi", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	if got := w.Header().Get("Cache-Control"); !strings.Contains(got, "immutable") {
+		t.Fatalf("expected immutable cache control for direct build asset, got %q", got)
+	}
+	if body := w.Body.String(); !strings.Contains(body, "island program") {
+		t.Fatalf("unexpected direct build asset body %q", body)
 	}
 }
 
@@ -1168,8 +1252,14 @@ func TestEnableNavigationInjectsRuntimeIntoDefaultDocument(t *testing.T) {
 	if !strings.Contains(body, "data-gosx-link") {
 		t.Fatalf("expected Link helper marker, got %q", body)
 	}
+	if !strings.Contains(body, `data-gosx-enhance="navigation"`) || !strings.Contains(body, `data-gosx-fallback="native-link"`) {
+		t.Fatalf("expected Link enhancement contract, got %q", body)
+	}
 	if !strings.Contains(body, "data-gosx-form") || !strings.Contains(body, `data-gosx-form-state="idle"`) {
 		t.Fatalf("expected Form helper marker, got %q", body)
+	}
+	if !strings.Contains(body, `data-gosx-enhance="form"`) || !strings.Contains(body, `data-gosx-fallback="native-form"`) {
+		t.Fatalf("expected Form enhancement contract, got %q", body)
 	}
 	if !strings.Contains(body, "gosx-head-start") || !strings.Contains(body, "gosx-head-end") {
 		t.Fatalf("expected managed head markers, got %q", body)

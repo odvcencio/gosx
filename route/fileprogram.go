@@ -92,6 +92,15 @@ func (r *fileProgramRenderer) renderElement(node *ir.Node, env fileRenderEnv) st
 	if formMode != "" && attrValue(node.Attrs, env, "data-gosx-form-state") == nil {
 		b.WriteString(` data-gosx-form-state="idle"`)
 	}
+	if formMode != "" && attrValue(node.Attrs, env, "data-gosx-enhance") == nil {
+		b.WriteString(` data-gosx-enhance="form"`)
+	}
+	if formMode != "" && attrValue(node.Attrs, env, "data-gosx-enhance-layer") == nil {
+		b.WriteString(` data-gosx-enhance-layer="bootstrap"`)
+	}
+	if formMode != "" && attrValue(node.Attrs, env, "data-gosx-fallback") == nil {
+		b.WriteString(` data-gosx-fallback="native-form"`)
+	}
 	if ir.VoidElements[node.Tag] {
 		b.WriteString(" />")
 		return b.String()
@@ -224,6 +233,15 @@ func (r *fileProgramRenderer) renderLink(node *ir.Node, env fileRenderEnv) strin
 	}
 	if !hasLinkStateAttr {
 		b.WriteString(` data-gosx-link-state="idle"`)
+	}
+	if attrValue(node.Attrs, env, "data-gosx-enhance") == nil {
+		b.WriteString(` data-gosx-enhance="navigation"`)
+	}
+	if attrValue(node.Attrs, env, "data-gosx-enhance-layer") == nil {
+		b.WriteString(` data-gosx-enhance-layer="bootstrap"`)
+	}
+	if attrValue(node.Attrs, env, "data-gosx-fallback") == nil {
+		b.WriteString(` data-gosx-fallback="native-link"`)
 	}
 	fmt.Fprintf(&b, ` data-gosx-link-current="%s"`, html.EscapeString(currentValue))
 	if !hasPrefetchStateAttr {
@@ -412,6 +430,15 @@ func (r *fileProgramRenderer) renderManagedForm(node *ir.Node, env fileRenderEnv
 	}
 	if attrValue(node.Attrs, env, "data-gosx-form-state") == nil {
 		b.WriteString(` data-gosx-form-state="idle"`)
+	}
+	if attrValue(node.Attrs, env, "data-gosx-enhance") == nil {
+		b.WriteString(` data-gosx-enhance="form"`)
+	}
+	if attrValue(node.Attrs, env, "data-gosx-enhance-layer") == nil {
+		b.WriteString(` data-gosx-enhance-layer="bootstrap"`)
+	}
+	if attrValue(node.Attrs, env, "data-gosx-fallback") == nil {
+		b.WriteString(` data-gosx-fallback="native-form"`)
 	}
 	b.WriteByte('>')
 	b.WriteString(r.renderChildren(node.Children, env))
