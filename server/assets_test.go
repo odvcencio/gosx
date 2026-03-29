@@ -33,3 +33,23 @@ func TestStylesheetRendersLinkTag(t *testing.T) {
 		}
 	}
 }
+
+func TestDocumentStylesheetRendersOwnershipMetadata(t *testing.T) {
+	html := gosx.RenderHTML(DocumentStylesheet("styles/site.css", StylesheetOptions{
+		Layer:  CSSLayerPage,
+		Owner:  "route-page",
+		Source: "docs/site.css",
+	}, gosx.Attrs(gosx.Attr("media", "screen"))))
+	for _, snippet := range []string{
+		`rel="stylesheet"`,
+		`href="/styles/site.css"`,
+		`media="screen"`,
+		`data-gosx-css-layer="page"`,
+		`data-gosx-css-owner="route-page"`,
+		`data-gosx-css-source="docs/site.css"`,
+	} {
+		if !strings.Contains(html, snippet) {
+			t.Fatalf("expected %q in %q", snippet, html)
+		}
+	}
+}

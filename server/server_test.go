@@ -233,7 +233,7 @@ func TestAppDefaultDocumentRendersMetadataAndHead(t *testing.T) {
 			Title:       "Welcome",
 			Description: "Server metadata",
 			Links: []LinkTag{
-				{Rel: "stylesheet", Href: "/styles.css"},
+				{Rel: "stylesheet", Href: "/styles.css", Layer: CSSLayerPage, Owner: "metadata", Source: "styles.css"},
 			},
 		})
 		ctx.AddHead(gosx.El("meta", gosx.Attrs(gosx.Attr("property", "og:title"), gosx.Attr("content", "Welcome"))))
@@ -253,6 +253,9 @@ func TestAppDefaultDocumentRendersMetadataAndHead(t *testing.T) {
 		`content="Server metadata"`,
 		`href="/styles.css"`,
 		`rel="stylesheet"`,
+		`data-gosx-css-layer="page"`,
+		`data-gosx-css-owner="metadata"`,
+		`data-gosx-css-source="styles.css"`,
 		`property="og:title" content="Welcome"`,
 		"body",
 	} {

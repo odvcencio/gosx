@@ -278,20 +278,33 @@ func (r *fileProgramRenderer) renderStylesheet(node *ir.Node, env fileRenderEnv)
 		if attr.Name == "href" || attr.Name == "src" || attr.Name == "rel" {
 			continue
 		}
+		attrName := attr.Name
+		switch attrName {
+		case "layer":
+			attrName = "data-gosx-css-layer"
+		case "owner":
+			attrName = "data-gosx-css-owner"
+		case "source":
+			attrName = "data-gosx-css-source"
+		}
 		switch attr.Kind {
 		case ir.AttrStatic:
-			extra = append(extra, gosx.Attr(attr.Name, attr.Value))
+			extra = append(extra, gosx.Attr(attrName, attr.Value))
 		case ir.AttrExpr:
 			value := evalFileExpr(attr.Expr, env)
 			if value == nil {
 				continue
 			}
-			extra = append(extra, gosx.Attr(attr.Name, fmt.Sprint(value)))
+			extra = append(extra, gosx.Attr(attrName, fmt.Sprint(value)))
 		case ir.AttrBool:
-			extra = append(extra, gosx.BoolAttr(attr.Name))
+			extra = append(extra, gosx.BoolAttr(attrName))
 		}
 	}
-	return gosx.RenderHTML(server.Stylesheet(href, extra...))
+	args := []any{}
+	if len(extra) > 0 {
+		args = append(args, gosx.Attrs(extra...))
+	}
+	return gosx.RenderHTML(server.Stylesheet(href, args...))
 }
 
 type fileEngineDefaults struct {

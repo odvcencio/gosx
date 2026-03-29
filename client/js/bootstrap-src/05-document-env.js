@@ -333,12 +333,59 @@
     return hasRuntime ? "runtime" : "bootstrap";
   }
 
+  function gosxDocumentCSSLayer(node, fallback) {
+    const value = String(node && node.getAttribute && node.getAttribute("data-gosx-css-layer") || "").trim();
+    return value || fallback || "global";
+  }
+
+  function gosxDocumentCSSOwner(node, fallback) {
+    const value = String(node && node.getAttribute && node.getAttribute("data-gosx-css-owner") || "").trim();
+    return value || fallback || "document";
+  }
+
+  function gosxDocumentCSSSource(node, fallback) {
+    const value = String(node && node.getAttribute && node.getAttribute("data-gosx-css-source") || "").trim();
+    return value || String(fallback || "");
+  }
+
+  function gosxDocumentStyleEntry(node, order, layerFallback, ownerFallback) {
+    const file = String(node.getAttribute && node.getAttribute("data-gosx-file-css") || "");
+    const scope = String(node.getAttribute && node.getAttribute("data-gosx-file-css-scope") || "");
+    return {
+      kind: "inline",
+      file,
+      href: "",
+      media: "",
+      layer: gosxDocumentCSSLayer(node, layerFallback),
+      owner: gosxDocumentCSSOwner(node, ownerFallback),
+      source: gosxDocumentCSSSource(node, file),
+      order,
+      scope,
+    };
+  }
+
+  function gosxDocumentStylesheetEntry(node, order, layerFallback, ownerFallback) {
+    const href = String(node.getAttribute && node.getAttribute("href") || "");
+    return {
+      kind: "stylesheet",
+      file: "",
+      href,
+      media: String(node.getAttribute && node.getAttribute("media") || ""),
+      layer: gosxDocumentCSSLayer(node, layerFallback),
+      owner: gosxDocumentCSSOwner(node, ownerFallback),
+      source: gosxDocumentCSSSource(node, href),
+      order,
+      scope: "",
+    };
+  }
+
   function gosxDocumentHeadAssets() {
     const markers = gosxManagedHeadMarkers();
     const nodes = gosxDocumentChildrenBetween(markers.start, markers.end);
     const ownedCSS = [];
     const stylesheets = [];
     const scripts = [];
+    let cssOrder = 0;
 
     for (const node of nodes) {
       if (!node || node.nodeType !== 1) {
@@ -346,24 +393,20 @@
       }
       const tagName = String(node.tagName || "").toUpperCase();
       if (tagName === "STYLE") {
-        const file = String(node.getAttribute && node.getAttribute("data-gosx-file-css") || "");
-        const scope = String(node.getAttribute && node.getAttribute("data-gosx-file-css-scope") || "");
-        const layer = String(node.getAttribute && node.getAttribute("data-gosx-css-layer") || "");
-        const owner = String(node.getAttribute && node.getAttribute("data-gosx-css-owner") || "");
-        const source = String(node.getAttribute && node.getAttribute("data-gosx-css-source") || file);
-        const order = gosxNumber(node.getAttribute && node.getAttribute("data-gosx-css-order"), ownedCSS.length);
-        ownedCSS.push({
-          file,
-          layer,
-          owner,
-          source,
-          order,
-          scope,
-        });
+        ownedCSS.push(gosxDocumentStyleEntry(
+          node,
+          gosxNumber(node.getAttribute && node.getAttribute("data-gosx-css-order"), cssOrder),
+          "global",
+          "document"
+        ));
+        cssOrder += 1;
         continue;
       }
       if (tagName === "LINK" && /\bstylesheet\b/i.test(String(node.getAttribute && node.getAttribute("rel") || ""))) {
-        stylesheets.push(String(node.getAttribute && node.getAttribute("href") || ""));
+        const entry = gosxDocumentStylesheetEntry(node, cssOrder, "global", "document");
+        stylesheets.push(entry);
+        ownedCSS.push(entry);
+        cssOrder += 1;
         continue;
       }
       if (tagName === "SCRIPT") {
@@ -386,14 +429,8 @@
       if (String(node.getAttribute && node.getAttribute("data-gosx-css-layer") || "") !== "runtime") {
         continue;
       }
-      ownedCSS.push({
-        file: "",
-        layer: "runtime",
-        owner: String(node.getAttribute && node.getAttribute("data-gosx-css-owner") || ""),
-        source: String(node.getAttribute && node.getAttribute("data-gosx-css-source") || "gosx-runtime"),
-        order: ownedCSS.length,
-        scope: "",
-      });
+      ownedCSS.push(gosxDocumentStyleEntry(node, cssOrder, "runtime", "gosx-bootstrap"));
+      cssOrder += 1;
     }
 
     return {
@@ -416,7 +453,9 @@
         owned: state.css.owned.map(function(entry) {
           return Object.assign({}, entry);
         }),
-        stylesheets: state.css.stylesheets.slice(),
+        stylesheets: state.css.stylesheets.map(function(entry) {
+          return Object.assign({}, entry);
+        }),
       },
       assets: {
         scripts: state.assets.scripts.map(function(entry) {

@@ -1774,7 +1774,10 @@ test("bootstrap exposes unified environment, document, and presentation state", 
   fileCSS.setAttribute("data-gosx-css-owner", "route-file");
   fileCSS.setAttribute("data-gosx-css-source", "docs.css");
   fileCSS.setAttribute("data-gosx-css-order", "0");
-  appendManagedHead(env.document, [contract, fileCSS]);
+  const stylesheet = env.document.createElement("link");
+  stylesheet.setAttribute("rel", "stylesheet");
+  stylesheet.setAttribute("href", "/app.css");
+  appendManagedHead(env.document, [contract, fileCSS, stylesheet]);
 
   runScript(bootstrapSource, env.context, "bootstrap.js");
   await flushAsyncWork();
@@ -1797,6 +1800,10 @@ test("bootstrap exposes unified environment, document, and presentation state", 
   assert.equal(documentState.enhancement.navigation, true);
   assert.equal(documentState.css.owned[0].file, "docs.css");
   assert.equal(documentState.css.owned[0].layer, "page");
+  assert.equal(documentState.css.owned.some((entry) => entry.kind === "stylesheet" && entry.href === "/app.css"), true);
+  assert.equal(documentState.css.stylesheets[0].layer, "global");
+  assert.equal(documentState.css.stylesheets[0].owner, "document");
+  assert.equal(documentState.css.stylesheets[0].source, "/app.css");
   assert.equal(documentState.css.owned.some((entry) => entry.layer === "runtime"), true);
   assert.equal(env.document.documentElement.getAttribute("data-gosx-document-id"), "gosx-doc-docs-home");
   assert.equal(env.document.body.getAttribute("data-gosx-enhancement-layer"), "bootstrap");
@@ -3405,7 +3412,7 @@ test("bootstrap keeps Scene3D responsive across resize and DPR changes", async (
   assert.notEqual(label.style["--gosx-scene-label-left"], initialLeft);
 });
 
-test("bootstrap lowers Scene3D pixel ratio on constrained coarse-pointer devices", async () => {
+test("bootstrap prefers canvas Scene3D rendering on constrained coarse-pointer devices", async () => {
   const mount = new FakeElement("div", null);
   mount.id = "scene-constrained-mobile";
 
@@ -3446,8 +3453,64 @@ test("bootstrap lowers Scene3D pixel ratio on constrained coarse-pointer devices
 
   assert.equal(mount.getAttribute("data-gosx-scene3d-capability-tier"), "constrained");
   assert.equal(mount.getAttribute("data-gosx-scene3d-coarse-pointer"), "true");
-  assert.equal(mount.getAttribute("data-gosx-scene3d-pixel-ratio"), "1.5");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-low-power"), "true");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgl-preference"), "avoid");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-pixel-ratio"), "1.25");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "canvas");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer-fallback"), "environment-constrained");
+});
+
+test("bootstrap reconfigures Scene3D renderer when environment constraints change", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-capability-reconfigure";
+
+  const env = createContext({
+    elements: [mount],
+    enableWebGL: true,
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-capability-reconfigure",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-capability-reconfigure",
+          jsExport: "GoSXScene3D",
+          props: {
+            width: 480,
+            height: 300,
+            autoRotate: false,
+            scene: {
+              objects: [
+                { kind: "box", width: 1.4, height: 1.1, depth: 1.2, x: 0, y: 0, z: 0, color: "#8de1ff" },
+              ],
+            },
+          },
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
   assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "webgl");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer-fallback"), null);
+
+  env.matchMedia("(prefers-reduced-data: reduce)").dispatch(true);
+  await flushAsyncWork();
+
+  assert.equal(mount.getAttribute("data-gosx-scene3d-reduced-data"), "true");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgl-preference"), "avoid");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "canvas");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer-fallback"), "environment-constrained");
+
+  env.matchMedia("(prefers-reduced-data: reduce)").dispatch(false);
+  await flushAsyncWork();
+
+  assert.equal(mount.getAttribute("data-gosx-scene3d-reduced-data"), "false");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgl-preference"), "prefer");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "webgl");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer-fallback"), null);
 });
 
 test("bootstrap falls back from WebGL and restores Scene3D rendering after context events", async () => {
