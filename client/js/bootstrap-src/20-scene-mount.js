@@ -37,12 +37,22 @@
     }
   }
 
+  function sceneEnvironmentState() {
+    if (window.__gosx
+      && window.__gosx.environment
+      && typeof window.__gosx.environment.get === "function") {
+      return window.__gosx.environment.get();
+    }
+    return null;
+  }
+
   function sceneCapabilityProfile(props) {
     const requestedTier = normalizeSceneCapabilityTier(props && props.capabilityTier);
+    const environment = sceneEnvironmentState();
     const navigatorRef = window && window.navigator ? window.navigator : {};
-    const coarsePointer = sceneMediaQueryMatches("(pointer: coarse)") || sceneMediaQueryMatches("(any-pointer: coarse)");
-    const deviceMemory = sceneNumber(navigatorRef && navigatorRef.deviceMemory, 0);
-    const hardwareConcurrency = Math.max(0, Math.floor(sceneNumber(navigatorRef && navigatorRef.hardwareConcurrency, 0)));
+    const coarsePointer = environment ? Boolean(environment.coarsePointer) : (sceneMediaQueryMatches("(pointer: coarse)") || sceneMediaQueryMatches("(any-pointer: coarse)"));
+    const deviceMemory = sceneNumber(environment && environment.deviceMemory, sceneNumber(navigatorRef && navigatorRef.deviceMemory, 0));
+    const hardwareConcurrency = Math.max(0, Math.floor(sceneNumber(environment && environment.hardwareConcurrency, sceneNumber(navigatorRef && navigatorRef.hardwareConcurrency, 0))));
     const constrainedHardware = (deviceMemory > 0 && deviceMemory <= 4) || (hardwareConcurrency > 0 && hardwareConcurrency <= 4);
 
     let tier = requestedTier;
@@ -107,9 +117,10 @@
   }
 
   function sceneViewportDevicePixelRatio(props, maxDevicePixelRatio) {
+    const environment = sceneEnvironmentState();
     const preferred = sceneNumber(
       props && (props.devicePixelRatio || props.pixelRatio),
-      sceneNumber(window && window.devicePixelRatio, 1),
+      sceneNumber(window && window.devicePixelRatio, sceneNumber(environment && environment.devicePixelRatio, 1)),
     );
     return Math.max(1, Math.min(Math.max(1, maxDevicePixelRatio || 1), preferred));
   }
@@ -206,10 +217,7 @@
     }
     let resizeObserver = null;
     let windowResizeListener = null;
-    let windowScrollListener = null;
-    let orientationListener = null;
-    let viewportResizeListener = null;
-    let viewportScrollListener = null;
+    let stopEnvironment = null;
 
     if (typeof ResizeObserver === "function") {
       resizeObserver = new ResizeObserver(function() {
@@ -225,26 +233,10 @@
       window.addEventListener("resize", windowResizeListener);
     }
 
-    if (typeof window.addEventListener === "function") {
-      orientationListener = function() {
-        refresh("orientation");
-      };
-      window.addEventListener("orientationchange", orientationListener);
-      windowScrollListener = function() {
-        refresh("scroll");
-      };
-      window.addEventListener("scroll", windowScrollListener);
-    }
-
-    if (window.visualViewport && typeof window.visualViewport.addEventListener === "function") {
-      viewportResizeListener = function() {
-        refresh("visual-viewport");
-      };
-      window.visualViewport.addEventListener("resize", viewportResizeListener);
-      viewportScrollListener = function() {
-        refresh("visual-viewport-scroll");
-      };
-      window.visualViewport.addEventListener("scroll", viewportScrollListener);
+    if (window.__gosx.environment && typeof window.__gosx.environment.observe === "function") {
+      stopEnvironment = window.__gosx.environment.observe(function() {
+        refresh("environment");
+      }, { immediate: false });
     }
 
     return function() {
@@ -254,37 +246,28 @@
       if (windowResizeListener && typeof window.removeEventListener === "function") {
         window.removeEventListener("resize", windowResizeListener);
       }
-      if (orientationListener && typeof window.removeEventListener === "function") {
-        window.removeEventListener("orientationchange", orientationListener);
-      }
-      if (windowScrollListener && typeof window.removeEventListener === "function") {
-        window.removeEventListener("scroll", windowScrollListener);
-      }
-      if (viewportResizeListener && window.visualViewport && typeof window.visualViewport.removeEventListener === "function") {
-        window.visualViewport.removeEventListener("resize", viewportResizeListener);
-      }
-      if (viewportScrollListener && window.visualViewport && typeof window.visualViewport.removeEventListener === "function") {
-        window.visualViewport.removeEventListener("scroll", viewportScrollListener);
+      if (typeof stopEnvironment === "function") {
+        stopEnvironment();
       }
     };
   }
 
   function initialSceneLifecycleState() {
-    const visibilityState = String(document && document.visibilityState || "visible").toLowerCase();
+    const environment = sceneEnvironmentState();
     return {
-      pageVisible: visibilityState !== "hidden",
+      pageVisible: environment ? Boolean(environment.pageVisible) : String(document && document.visibilityState || "visible").toLowerCase() !== "hidden",
       inViewport: true,
     };
   }
 
   function initialSceneMotionState(props) {
     const respectReducedMotion = sceneBool(props && props.respectReducedMotion, true);
-    const mediaQuery = respectReducedMotion && typeof window.matchMedia === "function"
-      ? window.matchMedia("(prefers-reduced-motion: reduce)")
-      : null;
+    const environment = sceneEnvironmentState();
     return {
       respectReducedMotion,
-      reducedMotion: Boolean(mediaQuery && mediaQuery.matches),
+      reducedMotion: respectReducedMotion && environment
+        ? Boolean(environment.reducedMotion)
+        : sceneMediaQueryMatches("(prefers-reduced-motion: reduce)"),
     };
   }
 
@@ -301,42 +284,19 @@
     }
 
     applySceneMotionState(mount, motion);
-    if (!motion.respectReducedMotion || typeof window.matchMedia !== "function") {
+    if (!motion.respectReducedMotion || !(window.__gosx.environment && typeof window.__gosx.environment.observe === "function")) {
       return function() {};
     }
 
-    const mediaQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
-    if (!mediaQuery) {
-      return function() {};
-    }
-
-    function updateMotion(event) {
-      const next = Boolean(event && typeof event.matches === "boolean" ? event.matches : mediaQuery.matches);
+    return window.__gosx.environment.observe(function(environment) {
+      const next = Boolean(environment && environment.reducedMotion);
       if (motion.reducedMotion === next) {
         return;
       }
       motion.reducedMotion = next;
       applySceneMotionState(mount, motion);
       onChange("motion");
-    }
-
-    if (typeof mediaQuery.addEventListener === "function") {
-      mediaQuery.addEventListener("change", updateMotion);
-      return function() {
-        if (typeof mediaQuery.removeEventListener === "function") {
-          mediaQuery.removeEventListener("change", updateMotion);
-        }
-      };
-    }
-    if (typeof mediaQuery.addListener === "function") {
-      mediaQuery.addListener(updateMotion);
-      return function() {
-        if (typeof mediaQuery.removeListener === "function") {
-          mediaQuery.removeListener(updateMotion);
-        }
-      };
-    }
-    return function() {};
+    }, { immediate: false });
   }
 
   function applySceneLifecycleState(mount, lifecycle) {
@@ -354,22 +314,7 @@
     }
 
     let stopIntersection = null;
-    let visibilityListener = null;
-
-    function updatePageVisibility() {
-      const next = String(document && document.visibilityState || "visible").toLowerCase() !== "hidden";
-      if (lifecycle.pageVisible === next) {
-        return;
-      }
-      lifecycle.pageVisible = next;
-      applySceneLifecycleState(mount, lifecycle);
-      onChange("visibility");
-    }
-
-    if (document && typeof document.addEventListener === "function") {
-      visibilityListener = updatePageVisibility;
-      document.addEventListener("visibilitychange", visibilityListener);
-    }
+    let stopEnvironment = null;
 
     if (typeof IntersectionObserver === "function") {
       const observer = new IntersectionObserver(function(entries) {
@@ -396,13 +341,25 @@
       };
     }
 
+    if (window.__gosx.environment && typeof window.__gosx.environment.observe === "function") {
+      stopEnvironment = window.__gosx.environment.observe(function(environment) {
+        const next = Boolean(environment && environment.pageVisible);
+        if (lifecycle.pageVisible === next) {
+          return;
+        }
+        lifecycle.pageVisible = next;
+        applySceneLifecycleState(mount, lifecycle);
+        onChange("visibility");
+      }, { immediate: false });
+    }
+
     applySceneLifecycleState(mount, lifecycle);
     return function() {
       if (stopIntersection) {
         stopIntersection();
       }
-      if (visibilityListener && document && typeof document.removeEventListener === "function") {
-        document.removeEventListener("visibilitychange", visibilityListener);
+      if (typeof stopEnvironment === "function") {
+        stopEnvironment();
       }
     };
   }

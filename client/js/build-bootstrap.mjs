@@ -10,6 +10,7 @@ const __dirname = path.dirname(__filename);
 const outputPath = path.join(__dirname, "bootstrap.js");
 const sourcePaths = [
   "bootstrap-src/00-textlayout.js",
+  "bootstrap-src/05-document-env.js",
   "bootstrap-src/10-runtime-scene-core.js",
   "bootstrap-src/20-scene-mount.js",
   "bootstrap-src/30-tail.js",

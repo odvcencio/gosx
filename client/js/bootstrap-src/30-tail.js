@@ -783,8 +783,11 @@
       window.__gosx_text_layout_ranges = gosxTextLayoutRanges;
     }
     refreshManagedTextLayouts();
+    refreshGosxDocumentState("runtime-ready");
+    refreshGosxEnvironmentState("runtime-ready");
     if (!pendingManifest) {
       window.__gosx.ready = true;
+      refreshGosxDocumentState("ready");
       return;
     }
 
@@ -794,10 +797,12 @@
       connectAllHubs(pendingManifest),
     ]).then(function() {
       window.__gosx.ready = true;
+      refreshGosxDocumentState("ready");
       document.dispatchEvent(new CustomEvent("gosx:ready"));
     }).catch(function(e) {
       console.error("[gosx] bootstrap failed:", e);
       window.__gosx.ready = true;
+      refreshGosxDocumentState("ready");
     });
   };
 
@@ -806,6 +811,8 @@
   // --------------------------------------------------------------------------
 
   async function bootstrapPage() {
+    refreshGosxEnvironmentState("bootstrap-page");
+    refreshGosxDocumentState("bootstrap-page");
     mountManagedTextLayouts(document.body || document.documentElement);
 
     const manifest = loadManifest();
@@ -813,6 +820,7 @@
       // No manifest — pure server-rendered page, no islands to hydrate.
       pendingManifest = null;
       window.__gosx.ready = true;
+      refreshGosxDocumentState("ready");
       return;
     }
 
