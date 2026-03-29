@@ -145,6 +145,54 @@ func Page() Node {
 	}
 }
 
+func TestDefaultFileRendererPreservesStylesheetSpreadAttrs(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "page.gsx")
+	if err := os.WriteFile(path, []byte(`package docs
+
+func Page() Node {
+	return <div><Stylesheet href="styles/site.css" {...data.sheet} /></div>
+}
+`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := &RouteContext{
+		Data: map[string]any{
+			"sheet": map[string]any{
+				"media":      "print",
+				"disabled":   true,
+				"data-theme": "docs",
+				"className":  "sheet",
+			},
+		},
+	}
+	node, err := DefaultFileRenderer(ctx, FilePage{FilePath: path, Pattern: "/"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	html := gosx.RenderHTML(node)
+	for _, snippet := range []string{
+		`rel="stylesheet"`,
+		`href="/styles/site.css"`,
+		`media="print"`,
+		`disabled`,
+		`data-theme="docs"`,
+		`class="sheet"`,
+		`data-gosx-css-layer="page"`,
+		`data-gosx-css-owner="page-file"`,
+		`data-gosx-css-source="/styles/site.css"`,
+	} {
+		if !strings.Contains(html, snippet) {
+			t.Fatalf("expected %q in %q", snippet, html)
+		}
+	}
+	if strings.Contains(html, `className="sheet"`) {
+		t.Fatalf("expected className spread attr to normalize in %q", html)
+	}
+}
+
 func TestDefaultFileRendererRendersLiteralExpressionText(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "page.gsx")
