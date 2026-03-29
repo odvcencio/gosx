@@ -669,6 +669,33 @@ class FakeIntersectionObserver {
   }
 }
 
+class FakeMutationObserver {
+  constructor(callback) {
+    this.callback = callback;
+    this.targets = new Set();
+    this.options = [];
+  }
+
+  observe(target, options = {}) {
+    this.targets.add(target);
+    this.options.push({ target, options });
+  }
+
+  disconnect() {
+    this.targets.clear();
+    this.options = [];
+  }
+
+  trigger(records) {
+    const list = Array.isArray(records) && records.length > 0 ? records : Array.from(this.targets).map((target) => ({
+      target,
+      type: "attributes",
+      attributeName: "class",
+    }));
+    this.callback(list);
+  }
+}
+
 class FakeListenerTarget {
   constructor() {
     this.listeners = new Map();
@@ -858,6 +885,7 @@ function createContext(options) {
   const windowListeners = new Map();
   const resizeObservers = [];
   const intersectionObservers = [];
+  const mutationObservers = [];
   const mediaQueries = new Map();
   const visualViewport = options.visualViewport === false ? null : new FakeListenerTarget();
   if (visualViewport) {
@@ -943,6 +971,12 @@ function createContext(options) {
       constructor(callback) {
         super(callback);
         resizeObservers.push(this);
+      }
+    },
+    MutationObserver: class MutationObserver extends FakeMutationObserver {
+      constructor(callback) {
+        super(callback);
+        mutationObservers.push(this);
       }
     },
     IntersectionObserver: class IntersectionObserver extends FakeIntersectionObserver {
@@ -1113,6 +1147,7 @@ function createContext(options) {
       return context.matchMedia(query);
     },
     mediaQueries,
+    mutationObservers,
     resizeObservers,
     sharedSignalCalls,
     scrollCalls,
@@ -1675,6 +1710,41 @@ test("bootstrap derives managed text layout config from computed styles and CSS 
   assert.equal(env.context.__gosx.textLayout.read(block).truncated, true);
 });
 
+test("bootstrap derives managed text layout from logical inline size and locale-aware presentation", async () => {
+  const block = new FakeElement("div", null);
+  block.width = 80;
+  block.height = 160;
+  block.setAttribute("data-gosx-text-layout", "");
+  block.setAttribute("lang", "th");
+  block.textContent = "hello gosx app";
+  block.computedStyle = {
+    font: "600 16px serif",
+    textAlign: "start",
+    whiteSpace: "normal",
+    lineHeight: "20px",
+    writingMode: "vertical-rl",
+    maxInlineSize: "none",
+    getPropertyValue(name) {
+      return this[name] || "";
+    },
+  };
+
+  const env = createContext({
+    elements: [block],
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  assert.equal(block.getAttribute("data-gosx-text-layout-locale"), "th");
+  assert.equal(block.getAttribute("data-gosx-text-layout-writing-mode"), "vertical-rl");
+  assert.equal(block.getAttribute("data-gosx-text-layout-inline-size"), "160");
+  assert.equal(block.getAttribute("data-gosx-text-layout-block-size"), "80");
+  assert.equal(block.getAttribute("data-gosx-text-layout-max-width"), "160");
+  assert.equal(block.getAttribute("data-gosx-text-layout-max-inline-size"), "160");
+  assert.equal(block.getAttribute("data-gosx-text-layout-line-count"), "1");
+});
+
 test("bootstrap refreshes managed text layout blocks after computed style changes", async () => {
   const block = new FakeElement("div", null);
   block.setAttribute("data-gosx-text-layout", "");
@@ -1707,6 +1777,50 @@ test("bootstrap refreshes managed text layout blocks after computed style change
   assert.equal(block.getAttribute("data-gosx-text-layout-align"), "right");
   assert.equal(block.getAttribute("data-gosx-text-layout-max-width"), "200");
   assert.equal(block.getAttribute("data-gosx-text-layout-line-count"), "1");
+});
+
+test("bootstrap refreshes managed text layout after inherited locale and direction changes", async () => {
+  const container = new FakeElement("section", null);
+  container.setAttribute("lang", "en");
+  container.setAttribute("dir", "ltr");
+  const block = new FakeElement("div", null);
+  block.width = 120;
+  block.height = 40;
+  block.setAttribute("data-gosx-text-layout", "");
+  block.textContent = "hello world";
+  block.computedStyle = {
+    font: "600 16px serif",
+    lineHeight: "20px",
+    textAlign: "start",
+    whiteSpace: "normal",
+    getPropertyValue(name) {
+      return this[name] || "";
+    },
+  };
+  container.appendChild(block);
+
+  const env = createContext({
+    elements: [container],
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  assert.equal(block.getAttribute("data-gosx-text-layout-locale"), "en");
+  assert.equal(block.getAttribute("data-gosx-text-layout-direction"), "ltr");
+
+  container.setAttribute("lang", "th");
+  container.setAttribute("dir", "rtl");
+  const presentationObserver = env.mutationObservers.find((observer) => observer.targets.has(env.document.documentElement));
+  assert.ok(presentationObserver);
+  presentationObserver.trigger([
+    { target: container, type: "attributes", attributeName: "lang" },
+    { target: container, type: "attributes", attributeName: "dir" },
+  ]);
+  await flushAsyncWork();
+
+  assert.equal(block.getAttribute("data-gosx-text-layout-locale"), "th");
+  assert.equal(block.getAttribute("data-gosx-text-layout-direction"), "rtl");
 });
 
 test("bootstrap exposes unified environment, document, and presentation state", async () => {
@@ -1811,7 +1925,11 @@ test("bootstrap exposes unified environment, document, and presentation state", 
   const presentation = env.context.__gosx.presentation.read(block);
   assert.equal(presentation.direction, "rtl");
   assert.equal(presentation.writingMode, "vertical-rl");
+  assert.equal(presentation.lang, "");
+  assert.equal(presentation.inlineSize, 48);
+  assert.equal(presentation.blockSize, 144);
   assert.equal(presentation.maxWidth, 144);
+  assert.equal(presentation.maxInlineSize, 144);
   assert.equal(presentation.environment.reducedData, true);
 });
 

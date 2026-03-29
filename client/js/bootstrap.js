@@ -231,31 +231,70 @@
     );
   }
 
-  let textLayoutGraphemeSegmenter = null;
-  let textLayoutWordSegmenter = null;
+  const textLayoutGraphemeSegmenters = new Map();
+  const textLayoutWordSegmenters = new Map();
 
-  function gosxTextLayoutGraphemeSegmenter() {
-    if (textLayoutGraphemeSegmenter !== null) {
-      return textLayoutGraphemeSegmenter;
+  function normalizeTextLayoutLocale(value) {
+    const locale = typeof value === "string" ? value.trim() : "";
+    if (!locale) {
+      return "";
     }
-    if (typeof Intl === "object" && Intl && typeof Intl.Segmenter === "function") {
-      textLayoutGraphemeSegmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
-      return textLayoutGraphemeSegmenter;
-    }
-    textLayoutGraphemeSegmenter = false;
-    return null;
+    return locale.replace(/_/g, "-");
   }
 
-  function gosxTextLayoutWordSegmenter() {
-    if (textLayoutWordSegmenter !== null) {
-      return textLayoutWordSegmenter;
+  function textLayoutMakeSegmenter(granularity, locale) {
+    if (!(typeof Intl === "object" && Intl && typeof Intl.Segmenter === "function")) {
+      return null;
     }
-    if (typeof Intl === "object" && Intl && typeof Intl.Segmenter === "function") {
-      textLayoutWordSegmenter = new Intl.Segmenter(undefined, { granularity: "word" });
-      return textLayoutWordSegmenter;
+    const normalizedLocale = normalizeTextLayoutLocale(locale);
+    try {
+      return new Intl.Segmenter(normalizedLocale || undefined, { granularity });
+    } catch (_error) {
+      try {
+        return new Intl.Segmenter(undefined, { granularity });
+      } catch (_error2) {
+        return null;
+      }
     }
-    textLayoutWordSegmenter = false;
-    return null;
+  }
+
+  function gosxTextLayoutGraphemeSegmenter(locale) {
+    const key = normalizeTextLayoutLocale(locale);
+    if (textLayoutGraphemeSegmenters.has(key)) {
+      return textLayoutGraphemeSegmenters.get(key);
+    }
+    const segmenter = textLayoutMakeSegmenter("grapheme", key);
+    textLayoutGraphemeSegmenters.set(key, segmenter || false);
+    return segmenter;
+  }
+
+  function gosxTextLayoutWordSegmenter(locale) {
+    const key = normalizeTextLayoutLocale(locale);
+    if (textLayoutWordSegmenters.has(key)) {
+      return textLayoutWordSegmenters.get(key);
+    }
+    const segmenter = textLayoutMakeSegmenter("word", key);
+    textLayoutWordSegmenters.set(key, segmenter || false);
+    return segmenter;
+  }
+
+  function normalizeTextLayoutWritingMode(value) {
+    const mode = typeof value === "string" ? value.trim().toLowerCase() : "";
+    switch (mode) {
+      case "vertical-rl":
+      case "vertical-lr":
+      case "sideways-rl":
+      case "sideways-lr":
+      case "horizontal-tb":
+        return mode;
+      default:
+        return "";
+    }
+  }
+
+  function textLayoutIsVerticalWritingMode(value) {
+    const mode = normalizeTextLayoutWritingMode(value);
+    return mode === "vertical-rl" || mode === "vertical-lr" || mode === "sideways-rl" || mode === "sideways-lr";
   }
 
   function textLayoutRuneCount(text) {
@@ -303,12 +342,12 @@
     return true;
   }
 
-  function segmentBrowserWordRun(text) {
+  function segmentBrowserWordRun(text, locale) {
     const value = String(text || "");
     if (value === "") {
       return [];
     }
-    const segmenter = gosxTextLayoutWordSegmenter();
+    const segmenter = gosxTextLayoutWordSegmenter(locale);
     if (segmenter) {
       const segments = [];
       for (const entry of segmenter.segment(value)) {
@@ -321,13 +360,13 @@
     return Array.from(value);
   }
 
-  function appendPreparedWordRun(tokens, text, byteStart, runeStart) {
+  function appendPreparedWordRun(tokens, text, byteStart, runeStart, locale) {
     const value = String(text || "");
     if (value === "") {
       return;
     }
 
-    const segments = segmentBrowserWordRun(value);
+    const segments = segmentBrowserWordRun(value, locale);
     let byteOffset = byteStart;
     let runeOffset = runeStart;
     let pending = null;
@@ -405,13 +444,13 @@
     }
   }
 
-  function splitPreparedTextLayoutToken(token) {
+  function splitPreparedTextLayoutToken(token, locale) {
     if (!token || token.kind === "newline" || token.kind === "tab" || token.kind === "soft-hyphen" || token.kind === "break" || !token.text) {
       return [token];
     }
 
     const graphemes = [];
-    const segmenter = gosxTextLayoutGraphemeSegmenter();
+    const segmenter = gosxTextLayoutGraphemeSegmenter(locale);
     if (segmenter) {
       for (const entry of segmenter.segment(token.text)) {
         graphemes.push(entry.segment);
@@ -447,9 +486,10 @@
     return expanded;
   }
 
-  function prepareBrowserTextLayout(text, whiteSpace, tabSize) {
+  function prepareBrowserTextLayout(text, whiteSpace, tabSize, locale) {
     const source = normalizeTextLayoutNewlines(text);
     const ws = normalizeTextLayoutWhiteSpace(whiteSpace);
+    const normalizedLocale = normalizeTextLayoutLocale(locale);
     const tokens = [];
     const resolvedTabSize = Math.max(1, Math.floor(sceneNumber(tabSize, 8)));
 
@@ -468,7 +508,7 @@
       if (!word) {
         return;
       }
-      appendPreparedWordRun(tokens, word, wordByteStart, wordRuneStart);
+      appendPreparedWordRun(tokens, word, wordByteStart, wordRuneStart, locale);
       word = "";
       wordByteStart = -1;
       wordByteEnd = 0;
@@ -613,6 +653,7 @@
       byteLen: byteOffset,
       runeCount: runeIndex,
       whiteSpace: ws,
+      locale: normalizedLocale,
       tabSize: resolvedTabSize,
       tokens,
     };
@@ -621,7 +662,7 @@
   function measurePreparedBrowserTextLayout(prepared, font) {
     const expandedTokens = [];
     for (const token of prepared.tokens) {
-      expandedTokens.push(...splitPreparedTextLayoutToken(token));
+      expandedTokens.push(...splitPreparedTextLayoutToken(token, prepared.locale));
     }
     const measured = {
       source: prepared.source,
@@ -629,6 +670,7 @@
       runeCount: prepared.runeCount,
       whiteSpace: prepared.whiteSpace,
       tabSize: Math.max(1, Math.floor(sceneNumber(prepared.tabSize, 8))),
+      locale: normalizeTextLayoutLocale(prepared.locale),
       spaceWidth: 0,
       hyphenWidth: 0,
       ellipsisWidth: 0,
@@ -1228,10 +1270,10 @@
   }
 
   function layoutBrowserText(text, font, maxWidth, whiteSpace, lineHeight, options) {
-    const prepared = prepareBrowserTextLayout(text, whiteSpace, 8);
+    const normalizedOptions = normalizeTextLayoutRunOptions(options);
+    const prepared = prepareBrowserTextLayout(text, whiteSpace, 8, normalizedOptions.locale);
     const measured = measurePreparedBrowserTextLayout(prepared, font);
     const resolvedLineHeight = Math.max(1, sceneNumber(lineHeight, 1));
-    const normalizedOptions = normalizeTextLayoutRunOptions(options);
 
     if (measured.tokens.length === 0) {
       return {
@@ -1295,10 +1337,10 @@
   }
 
   function layoutBrowserTextRanges(text, font, maxWidth, whiteSpace, lineHeight, options) {
-    const prepared = prepareBrowserTextLayout(text, whiteSpace, 8);
+    const normalizedOptions = normalizeTextLayoutRunOptions(options);
+    const prepared = prepareBrowserTextLayout(text, whiteSpace, 8, normalizedOptions.locale);
     const measured = measurePreparedBrowserTextLayout(prepared, font);
     const resolvedLineHeight = Math.max(1, sceneNumber(lineHeight, 1));
-    const normalizedOptions = normalizeTextLayoutRunOptions(options);
 
     if (measured.tokens.length === 0) {
       return {
@@ -1408,6 +1450,7 @@
     return {
       maxLines: Math.max(0, Math.floor(sceneNumber(input.maxLines, 0))),
       overflow: normalizeTextLayoutOverflow(input.overflow),
+      locale: normalizeTextLayoutLocale(input.locale),
     };
   }
 
@@ -1422,6 +1465,7 @@
       sceneNumber(lineHeight, 1),
       normalized.maxLines,
       normalized.overflow,
+      normalized.locale,
       currentTextLayoutImpl() ? "external" : "browser",
     ].join("\n");
   }
@@ -1437,6 +1481,7 @@
       sceneNumber(lineHeight, 1),
       normalized.maxLines,
       normalized.overflow,
+      normalized.locale,
       textLayoutMetricsExternalImpl ? "external" : "derived",
     ].join("\n");
   }
@@ -1452,6 +1497,7 @@
       sceneNumber(lineHeight, 1),
       normalized.maxLines,
       normalized.overflow,
+      normalized.locale,
       textLayoutRangesExternalImpl ? "external" : "browser",
     ].join("\n");
   }
@@ -1734,6 +1780,14 @@
     return Math.max(1, fontSize * 1.35);
   }
 
+  function textLayoutLogicalInlineSize(width, height, writingMode) {
+    return textLayoutIsVerticalWritingMode(writingMode) ? Math.max(0, sceneNumber(height, 0)) : Math.max(0, sceneNumber(width, 0));
+  }
+
+  function textLayoutLogicalBlockSize(width, height, writingMode) {
+    return textLayoutIsVerticalWritingMode(writingMode) ? Math.max(0, sceneNumber(width, 0)) : Math.max(0, sceneNumber(height, 0));
+  }
+
   function textLayoutComputedMaxLines(style) {
     return Math.max(0, Math.floor(textLayoutLengthValue(
       textLayoutComputedStyleValue(style, "--gosx-text-layout-max-lines")
@@ -1909,11 +1963,16 @@
     const align = normalizeTextLayoutAlign(options.align || (config && config.align));
     const revision = Number.isFinite(options.revision) ? options.revision : gosxTextLayoutRevision();
     const font = config && typeof config.font === "string" ? config.font : "";
+    const locale = normalizeTextLayoutLocale(config && config.locale);
+    const direction = config && typeof config.direction === "string" ? String(config.direction).trim().toLowerCase() : "";
+    const writingMode = normalizeTextLayoutWritingMode(config && config.writingMode);
     const whiteSpace = normalizeTextLayoutWhiteSpace(config && config.whiteSpace);
     const lineHeight = Math.max(1, textLayoutNumberValue(config && config.lineHeight, 16));
     const maxLines = Math.max(0, Math.floor(textLayoutNumberValue(config && config.maxLines, 0)));
     const overflow = normalizeTextLayoutOverflow(config && config.overflow);
     const maxWidth = textLayoutNumberValue(config && config.maxWidth, 0);
+    const inlineSize = Math.max(0, textLayoutNumberValue(config && config.inlineSize, 0));
+    const blockSize = Math.max(0, textLayoutNumberValue(config && config.blockSize, 0));
     const ready = Boolean(result);
     const effectiveState = ready && result && result.truncated ? "truncated" : state;
 
@@ -1922,16 +1981,41 @@
     setAttrValue(element, TEXT_LAYOUT_STATE_ATTR, effectiveState);
     setAttrValue(element, "data-gosx-text-layout-ready", ready ? "true" : "false");
     setAttrValue(element, "data-gosx-text-layout-font", font);
+    setAttrValue(element, "data-gosx-text-layout-locale", locale);
+    setAttrValue(element, "data-gosx-text-layout-direction", direction);
+    setAttrValue(element, "data-gosx-text-layout-writing-mode", writingMode);
     setAttrValue(element, "data-gosx-text-layout-white-space", whiteSpace === "normal" ? "" : whiteSpace);
     setAttrValue(element, "data-gosx-text-layout-align", align);
     setAttrValue(element, "data-gosx-text-layout-line-height", lineHeight > 0 ? lineHeight : "");
     setAttrValue(element, "data-gosx-text-layout-max-lines", maxLines > 0 ? maxLines : "");
     setAttrValue(element, "data-gosx-text-layout-overflow", maxLines > 0 ? overflow : "");
     setAttrValue(element, "data-gosx-text-layout-revision", revision);
+    setAttrValue(element, "data-gosx-text-layout-inline-size", inlineSize > 0 ? inlineSize : "");
+    setAttrValue(element, "data-gosx-text-layout-block-size", blockSize > 0 ? blockSize : "");
 
     setStyleValue(element.style, "--gosx-text-layout-ready", ready ? "1" : "0");
     setStyleValue(element.style, "--gosx-text-layout-line-height", lineHeight + "px");
     setStyleValue(element.style, "--gosx-text-layout-white-space-mode", whiteSpace);
+    if (direction) {
+      setStyleValue(element.style, "--gosx-text-layout-direction", direction);
+    } else {
+      clearStyleValue(element.style, "--gosx-text-layout-direction");
+    }
+    if (writingMode) {
+      setStyleValue(element.style, "--gosx-text-layout-writing-mode", writingMode);
+    } else {
+      clearStyleValue(element.style, "--gosx-text-layout-writing-mode");
+    }
+    if (inlineSize > 0) {
+      setStyleValue(element.style, "--gosx-text-layout-inline-size", inlineSize + "px");
+    } else {
+      clearStyleValue(element.style, "--gosx-text-layout-inline-size");
+    }
+    if (blockSize > 0) {
+      setStyleValue(element.style, "--gosx-text-layout-block-size", blockSize + "px");
+    } else {
+      clearStyleValue(element.style, "--gosx-text-layout-block-size");
+    }
     if (align) {
       setStyleValue(element.style, "--gosx-text-layout-align", align);
     } else {
@@ -1947,12 +2031,16 @@
     setStyleValue(element.style, "--gosx-text-layout-overflow", overflow);
     if (maxWidth > 0 && maxWidth < Number.MAX_SAFE_INTEGER) {
       setAttrValue(element, "data-gosx-text-layout-max-width", maxWidth);
+      setAttrValue(element, "data-gosx-text-layout-max-inline-size", maxWidth);
       setStyleValue(element.style, "--gosx-text-layout-width", maxWidth + "px");
       setStyleValue(element.style, "--gosx-text-layout-max-width", maxWidth + "px");
+      setStyleValue(element.style, "--gosx-text-layout-max-inline-size", maxWidth + "px");
     } else {
       setAttrValue(element, "data-gosx-text-layout-max-width", "");
+      setAttrValue(element, "data-gosx-text-layout-max-inline-size", "");
       clearStyleValue(element.style, "--gosx-text-layout-width");
       clearStyleValue(element.style, "--gosx-text-layout-max-width");
+      clearStyleValue(element.style, "--gosx-text-layout-max-inline-size");
     }
 
     if (!result || typeof result !== "object") {
@@ -2023,6 +2111,56 @@
       ? window.__gosx.presentation.read(element)
       : null;
     const computed = presentation && presentation.style ? presentation.style : textLayoutComputedStyle(element);
+    const locale = normalizeTextLayoutLocale(
+      hasOwn.call(config, "locale")
+        ? config.locale
+        : (
+          textLayoutComputedStyleValue(computed, "--gosx-text-layout-locale")
+          || (presentation && presentation.lang)
+          || (element.getAttribute && element.getAttribute("data-gosx-text-layout-locale"))
+          || (element.getAttribute && element.getAttribute("lang"))
+        )
+    );
+    const direction = (function() {
+      const value = hasOwn.call(config, "direction")
+        ? config.direction
+        : (
+          textLayoutComputedStyleValue(computed, "--gosx-text-layout-direction")
+          || (presentation && presentation.direction)
+          || textLayoutComputedStyleValue(computed, "direction")
+          || (element.getAttribute && element.getAttribute("data-gosx-text-layout-direction"))
+          || (element.getAttribute && element.getAttribute("dir"))
+        );
+      switch (String(value || "").trim().toLowerCase()) {
+        case "ltr":
+        case "rtl":
+        case "auto":
+          return String(value).trim().toLowerCase();
+        default:
+          return "";
+      }
+    })();
+    const writingMode = normalizeTextLayoutWritingMode(
+      hasOwn.call(config, "writingMode")
+        ? config.writingMode
+        : (
+          textLayoutComputedStyleValue(computed, "--gosx-text-layout-writing-mode")
+          || (presentation && presentation.writingMode)
+          || textLayoutComputedStyleValue(computed, "writing-mode")
+        )
+    );
+    const inlineSize = Math.max(0, textLayoutLengthValue(
+      hasOwn.call(config, "inlineSize")
+        ? config.inlineSize
+        : (presentation && presentation.inlineSize),
+      0
+    ));
+    const blockSize = Math.max(0, textLayoutLengthValue(
+      hasOwn.call(config, "blockSize")
+        ? config.blockSize
+        : (presentation && presentation.blockSize),
+      0
+    ));
     const font = hasOwn.call(config, "font")
       ? String(config.font == null ? "" : config.font)
       : String(
@@ -2076,7 +2214,10 @@
       hasOwn.call(config, "maxWidth")
         ? config.maxWidth
         : (
-          textLayoutComputedStyleValue(computed, "--gosx-text-layout-max-width")
+          textLayoutComputedStyleValue(computed, "--gosx-text-layout-max-inline-size")
+          || textLayoutComputedStyleValue(computed, "max-inline-size")
+          || textLayoutComputedStyleValue(computed, "--gosx-text-layout-max-width")
+          || (presentation && presentation.maxInlineSize)
           || (presentation && presentation.maxWidth)
           || textLayoutComputedStyleValue(computed, "max-width")
           || (element.getAttribute && element.getAttribute("data-gosx-text-layout-max-width"))
@@ -2084,14 +2225,21 @@
       0
     );
     if (!(maxWidth > 0) && presentation) {
-      maxWidth = textLayoutNumberValue(presentation.width, 0);
+      maxWidth = textLayoutNumberValue(presentation.inlineSize, 0);
+    }
+    if (!(maxWidth > 0) && inlineSize > 0) {
+      maxWidth = inlineSize;
     }
     if (!(maxWidth > 0) && element && typeof element.getBoundingClientRect === "function") {
       const rect = element.getBoundingClientRect();
-      maxWidth = textLayoutNumberValue(rect && rect.width, 0);
+      maxWidth = textLayoutLogicalInlineSize(rect && rect.width, rect && rect.height, writingMode);
     }
     if (!(maxWidth > 0) && element) {
-      maxWidth = textLayoutNumberValue(element.clientWidth || element.offsetWidth || element.width, 0);
+      maxWidth = textLayoutLogicalInlineSize(
+        element.clientWidth || element.offsetWidth || element.width,
+        element.clientHeight || element.offsetHeight || element.height,
+        writingMode
+      );
     }
     if (!(maxWidth > 0)) {
       maxWidth = Number.MAX_SAFE_INTEGER;
@@ -2109,6 +2257,11 @@
       align,
       lineHeight,
       maxLines,
+      locale,
+      direction,
+      writingMode,
+      inlineSize,
+      blockSize,
       overflow: normalizeTextLayoutOverflow(
         hasOwn.call(config, "overflow")
           ? config.overflow
@@ -2210,12 +2363,17 @@
       gosxTextLayoutRevision(),
       config.text,
       config.font,
+      config.locale,
+      config.direction,
+      config.writingMode,
       config.align,
       config.whiteSpace,
       config.lineHeight,
       config.maxLines,
       config.overflow,
       config.maxWidth,
+      config.inlineSize,
+      config.blockSize,
     ].join("\n");
     if (layoutKey === record.layoutKey && record.result) {
       return record.result;
@@ -3026,6 +3184,26 @@
     };
   }
 
+  function gosxInheritedElementAttribute(element, name) {
+    if (!element || !name) {
+      return "";
+    }
+    let current = element;
+    while (current) {
+      if (typeof current.getAttribute === "function") {
+        const value = String(current.getAttribute(name) || "").trim();
+        if (value) {
+          return value;
+        }
+      }
+      current = current.parentNode || null;
+    }
+    if (document && document.documentElement && document.documentElement !== element && typeof document.documentElement.getAttribute === "function") {
+      return String(document.documentElement.getAttribute(name) || "").trim();
+    }
+    return "";
+  }
+
   function gosxPresentationSnapshot(element) {
     if (!element || typeof element !== "object") {
       return null;
@@ -3034,18 +3212,29 @@
     const rect = element && typeof element.getBoundingClientRect === "function" ? element.getBoundingClientRect() : null;
     const width = Math.max(0, gosxNumber(rect && rect.width, element && (element.clientWidth || element.offsetWidth || element.width) || 0));
     const height = Math.max(0, gosxNumber(rect && rect.height, element && (element.clientHeight || element.offsetHeight || element.height) || 0));
-    const maxWidth = textLayoutLengthValue(
-      textLayoutComputedStyleValue(style, "--gosx-text-layout-max-width")
+    const lang = gosxInheritedElementAttribute(element, "lang");
+    const directionAttr = gosxInheritedElementAttribute(element, "dir");
+    const writingMode = normalizeTextLayoutWritingMode(textLayoutComputedStyleValue(style, "writing-mode"));
+    const inlineSize = textLayoutLogicalInlineSize(width, height, writingMode);
+    const blockSize = textLayoutLogicalBlockSize(width, height, writingMode);
+    const maxInlineSize = textLayoutLengthValue(
+      textLayoutComputedStyleValue(style, "--gosx-text-layout-max-inline-size")
+      || textLayoutComputedStyleValue(style, "max-inline-size")
+      || textLayoutComputedStyleValue(style, "--gosx-text-layout-max-width")
       || textLayoutComputedStyleValue(style, "max-width"),
-      width,
+      inlineSize,
     );
     return {
       style,
       width,
       height,
-      maxWidth: maxWidth > 0 ? maxWidth : width,
-      direction: textLayoutComputedStyleValue(style, "direction") || "",
-      writingMode: textLayoutComputedStyleValue(style, "writing-mode") || "",
+      inlineSize,
+      blockSize,
+      maxWidth: maxInlineSize > 0 ? maxInlineSize : inlineSize,
+      maxInlineSize: maxInlineSize > 0 ? maxInlineSize : inlineSize,
+      direction: textLayoutComputedStyleValue(style, "direction") || directionAttr || "",
+      writingMode,
+      lang,
       font: textLayoutComputedStyleValue(style, "font") || "",
       lineHeight: textLayoutLengthValue(
         textLayoutComputedStyleValue(style, "--gosx-text-layout-line-height")
@@ -3056,6 +3245,7 @@
       whiteSpace: textLayoutComputedStyleValue(style, "white-space") || "",
       display: textLayoutComputedStyleValue(style, "display") || "",
       visibility: textLayoutComputedStyleValue(style, "visibility") || "",
+      containerType: textLayoutComputedStyleValue(style, "container-type") || "",
       environment: cloneGosxEnvironment(gosxEnvironmentState || refreshGosxEnvironmentState("presentation")),
     };
   }
@@ -3065,7 +3255,9 @@
       return function() {};
     }
     let resizeObserver = null;
+    let mutationObserver = null;
     let stopEnvironment = null;
+    let stopDocument = null;
     const notify = function(reason) {
       listener(gosxPresentationSnapshot(element), reason || "presentation");
     };
@@ -3083,6 +3275,33 @@
       notify("presentation-environment");
     }, { immediate: false });
 
+    stopDocument = observeGosxDocument(function() {
+      notify("presentation-document");
+    }, { immediate: false });
+
+    if (typeof MutationObserver === "function" && document && document.documentElement) {
+      mutationObserver = new MutationObserver(function(records) {
+        for (const record of records || []) {
+          const target = record && record.target;
+          if (!target || target === element || target === document.documentElement || target === document.body) {
+            notify("presentation-mutation");
+            return;
+          }
+          if (typeof target.contains === "function" && target.contains(element)) {
+            notify("presentation-mutation");
+            return;
+          }
+        }
+      });
+      if (typeof mutationObserver.observe === "function") {
+        mutationObserver.observe(document.documentElement, {
+          subtree: true,
+          attributes: true,
+          attributeFilter: ["class", "style", "dir", "lang", "hidden"],
+        });
+      }
+    }
+
     if (!options || options.immediate !== false) {
       notify("init");
     }
@@ -3091,8 +3310,14 @@
       if (resizeObserver && typeof resizeObserver.disconnect === "function") {
         resizeObserver.disconnect();
       }
+      if (mutationObserver && typeof mutationObserver.disconnect === "function") {
+        mutationObserver.disconnect();
+      }
       if (typeof stopEnvironment === "function") {
         stopEnvironment();
+      }
+      if (typeof stopDocument === "function") {
+        stopDocument();
       }
     };
   }

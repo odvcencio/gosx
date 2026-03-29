@@ -112,3 +112,26 @@ func TestTextBlockRendersAlignmentAttrs(t *testing.T) {
 		}
 	}
 }
+
+func TestTextBlockRendersLocaleAndDirectionAttrs(t *testing.T) {
+	node := TextBlock(TextBlockProps{
+		Text:       "สวัสดีครับโลก",
+		Font:       "600 16px serif",
+		Lang:       "th",
+		Direction:  "rtl",
+		LineHeight: 20,
+		MaxWidth:   180,
+	})
+	html := gosx.RenderHTML(node)
+
+	for _, snippet := range []string{
+		`lang="th"`,
+		`dir="rtl"`,
+		`data-gosx-text-layout-locale="th"`,
+		`data-gosx-text-layout-direction="rtl"`,
+	} {
+		if !strings.Contains(html, snippet) {
+			t.Fatalf("expected %q in text block html %q", snippet, html)
+		}
+	}
+}
