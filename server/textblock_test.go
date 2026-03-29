@@ -9,6 +9,14 @@ import (
 	"github.com/odvcencio/gosx/textlayout"
 )
 
+func textBlockAttrMap(attrs []TextBlockAttr) map[string]TextBlockAttr {
+	out := make(map[string]TextBlockAttr, len(attrs))
+	for _, attr := range attrs {
+		out[attr.Name] = attr
+	}
+	return out
+}
+
 func TestEstimateTextBlockMetricsUsesApproximateLayout(t *testing.T) {
 	metrics, ok := EstimateTextBlockMetrics(TextBlockProps{
 		Source:     "hello world from gosx",
@@ -136,5 +144,43 @@ func TestTextBlockRendersLocaleAndDirectionAttrs(t *testing.T) {
 		if !strings.Contains(html, snippet) {
 			t.Fatalf("expected %q in text block html %q", snippet, html)
 		}
+	}
+}
+
+func TestTextBlockAttrsPreferExplicitSourceAndDisableObservationForStaticBlocks(t *testing.T) {
+	attrs := textBlockAttrMap(TextBlockAttrs(TextBlockProps{
+		Text:          "rendered text",
+		Source:        "measured text",
+		Static:        true,
+		Font:          "600 16px serif",
+		MaxWidth:      180,
+		HeightHint:    24,
+		LineCountHint: 1,
+	}))
+
+	if got := attrs["data-gosx-text-layout-source"].Value; got != "measured text" {
+		t.Fatalf("expected explicit source to win, got %q", got)
+	}
+	if got := attrs["data-gosx-text-layout-observe"].Value; got != "false" {
+		t.Fatalf("expected static text block to disable observation, got %q", got)
+	}
+	if got := attrs["data-gosx-text-layout-state"].Value; got != "hint" {
+		t.Fatalf("expected hint state when hints are provided, got %q", got)
+	}
+}
+
+func TestTextBlockAttrsOmitDefaultWhiteSpaceAndUnclampedOverflow(t *testing.T) {
+	attrs := textBlockAttrMap(TextBlockAttrs(TextBlockProps{
+		Text:       "default white space",
+		WhiteSpace: textlayout.WhiteSpaceNormal,
+		Overflow:   textlayout.OverflowEllipsis,
+		MaxWidth:   120,
+	}))
+
+	if _, ok := attrs["data-gosx-text-layout-white-space"]; ok {
+		t.Fatalf("expected default white-space attr to be omitted, got %#v", attrs["data-gosx-text-layout-white-space"])
+	}
+	if _, ok := attrs["data-gosx-text-layout-overflow"]; ok {
+		t.Fatalf("expected unclamped text block to omit overflow attr, got %#v", attrs["data-gosx-text-layout-overflow"])
 	}
 }
