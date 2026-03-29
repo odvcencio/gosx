@@ -496,6 +496,8 @@ func TestDocumentCurrentPathNormalizesDocumentAndRequestInputs(t *testing.T) {
 		{name: "absolute document url", path: "https://example.com/docs/forms?tab=posting#intro", want: "/docs/forms"},
 		{name: "relative document path", path: "docs/forms?tab=posting", want: "/docs/forms"},
 		{name: "query only document path", path: "?tab=posting", want: "/"},
+		{name: "fragment only document path", path: "#intro", want: "/"},
+		{name: "dot segments collapse", path: "/docs/../runtime/./scene?tab=posting", want: "/runtime/scene"},
 		{name: "request path wins", request: "/live/request?tab=active", path: "https://example.com/docs/forms?tab=posting", want: "/live/request"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -521,6 +523,31 @@ func TestDocumentCurrentPathNormalizesDocumentAndRequestInputs(t *testing.T) {
 				t.Fatalf("expected custom document attrs to contain normalized current path %q, got %q", tc.want, rendered)
 			}
 		})
+	}
+}
+
+func TestDocumentAttrsShareContractWithRenderedDocumentAttrs(t *testing.T) {
+	doc := &DocumentContext{
+		Request:       httptest.NewRequest(http.MethodGet, "/docs/../runtime/scene?tab=posting", nil),
+		PageID:        "gosx-doc-runtime-scene",
+		Path:          "https://example.com/runtime/scene?tab=posting#intro",
+		Navigation:    true,
+		RuntimeActive: false,
+		Runtime: PageRuntimeSummary{
+			BootstrapMode: "lite",
+		},
+	}
+
+	htmlAttrs := documentHTMLAttrs(doc)
+	bodyAttrs := documentBodyAttrs(doc)
+	renderedHTML := gosx.RenderHTML(gosx.El("html", DocumentAttrs(doc)))
+	renderedBody := gosx.RenderHTML(gosx.El("body", DocumentBodyAttrs(doc)))
+
+	if !strings.Contains(renderedHTML, `<html`+htmlAttrs+`>`) {
+		t.Fatalf("expected custom html attrs %q in %q", htmlAttrs, renderedHTML)
+	}
+	if !strings.Contains(renderedBody, `<body`+bodyAttrs+`>`) {
+		t.Fatalf("expected custom body attrs %q in %q", bodyAttrs, renderedBody)
 	}
 }
 

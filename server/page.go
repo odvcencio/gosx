@@ -67,60 +67,6 @@ type DocumentContext struct {
 	Body          gosx.Node
 }
 
-// DocumentAttrs returns the baseline html element attributes for a GoSX page
-// document so custom document shells can preserve the framework's document and
-// navigation contract.
-func DocumentAttrs(doc *DocumentContext) gosx.AttrList {
-	attrs := []any{
-		gosx.Attr("data-gosx-document", "true"),
-	}
-	if doc == nil {
-		return gosx.Attrs(attrs...)
-	}
-	if pageID := strings.TrimSpace(doc.PageID); pageID != "" {
-		attrs = append(attrs, gosx.Attr("data-gosx-document-id", pageID))
-	}
-	if path := strings.TrimSpace(doc.Path); path != "" {
-		attrs = append(attrs, gosx.Attr("data-gosx-document-path", path))
-	}
-	if doc.Navigation {
-		attrs = append(attrs,
-			gosx.Attr("data-gosx-navigation-state", "idle"),
-			gosx.Attr("data-gosx-navigation-current-path", documentCurrentPath(doc)),
-		)
-	}
-	if mode := documentBootstrapMode(doc.Runtime.BootstrapMode); mode != "none" {
-		attrs = append(attrs, gosx.Attr("data-gosx-bootstrap-mode", mode))
-	}
-	return gosx.Attrs(attrs...)
-}
-
-// DocumentBodyAttrs returns the baseline body element attributes for a GoSX
-// page document so custom document shells can preserve enhancement and
-// navigation state.
-func DocumentBodyAttrs(doc *DocumentContext) gosx.AttrList {
-	attrs := []any{
-		gosx.Attr("data-gosx-document-body", "true"),
-		gosx.Attr("data-gosx-enhancement-layer", "html"),
-	}
-	if doc == nil {
-		return gosx.Attrs(attrs...)
-	}
-	if pageID := strings.TrimSpace(doc.PageID); pageID != "" {
-		attrs = append(attrs, gosx.Attr("data-gosx-document-id", pageID))
-	}
-	if doc.Navigation {
-		attrs = append(attrs,
-			gosx.Attr("data-gosx-navigation-state", "idle"),
-			gosx.Attr("data-gosx-navigation-current-path", documentCurrentPath(doc)),
-		)
-	}
-	if mode := documentBootstrapMode(doc.Runtime.BootstrapMode); mode != "none" {
-		attrs = append(attrs, gosx.Attr("data-gosx-bootstrap-mode", mode))
-	}
-	return gosx.Attrs(attrs...)
-}
-
 // DeferredResolver resolves a streamed page fragment after the initial HTML
 // shell has been written.
 type DeferredResolver func() (gosx.Node, error)
