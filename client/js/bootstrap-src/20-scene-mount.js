@@ -1,18 +1,25 @@
   function createSceneRenderer(canvas, props, capability) {
-    if (sceneBool(props.preferWebGL, true)) {
+    const webglPreference = sceneCapabilityWebGLPreference(props, capability);
+    if (webglPreference === "prefer" || webglPreference === "force") {
       const webglRenderer = createSceneWebGLRenderer(canvas, {
-        antialias: capability.tier !== "constrained",
-        powerPreference: capability.tier === "constrained" ? "low-power" : "high-performance",
+        antialias: capability.tier === "full" && !capability.lowPower && !capability.reducedData,
+        powerPreference: capability.lowPower || capability.tier === "constrained" ? "low-power" : "high-performance",
       });
       if (webglRenderer) {
-        return webglRenderer;
+        return {
+          renderer: webglRenderer,
+          fallbackReason: "",
+        };
       }
     }
     const ctx2d = typeof canvas.getContext === "function" ? canvas.getContext("2d") : null;
     if (!ctx2d) {
       return null;
     }
-    return createSceneCanvasRenderer(ctx2d, canvas);
+    return {
+      renderer: createSceneCanvasRenderer(ctx2d, canvas),
+      fallbackReason: sceneRendererFallbackReason(props, capability, "canvas"),
+    };
   }
 
   function normalizeSceneCapabilityTier(value) {
@@ -51,13 +58,17 @@
     const environment = sceneEnvironmentState();
     const navigatorRef = window && window.navigator ? window.navigator : {};
     const coarsePointer = environment ? Boolean(environment.coarsePointer) : (sceneMediaQueryMatches("(pointer: coarse)") || sceneMediaQueryMatches("(any-pointer: coarse)"));
+    const hover = environment ? Boolean(environment.hover) : (sceneMediaQueryMatches("(hover: hover)") || sceneMediaQueryMatches("(any-hover: hover)"));
+    const reducedData = environment ? Boolean(environment.reducedData) : sceneMediaQueryMatches("(prefers-reduced-data: reduce)");
+    const lowPower = environment ? Boolean(environment.lowPower) : false;
+    const visualViewportActive = environment ? Boolean(environment.visualViewportActive) : Boolean(window.visualViewport);
     const deviceMemory = sceneNumber(environment && environment.deviceMemory, sceneNumber(navigatorRef && navigatorRef.deviceMemory, 0));
     const hardwareConcurrency = Math.max(0, Math.floor(sceneNumber(environment && environment.hardwareConcurrency, sceneNumber(navigatorRef && navigatorRef.hardwareConcurrency, 0))));
-    const constrainedHardware = (deviceMemory > 0 && deviceMemory <= 4) || (hardwareConcurrency > 0 && hardwareConcurrency <= 4);
+    const constrainedHardware = lowPower || reducedData || (deviceMemory > 0 && deviceMemory <= 4) || (hardwareConcurrency > 0 && hardwareConcurrency <= 4);
 
     let tier = requestedTier;
     if (!tier) {
-      if (coarsePointer && constrainedHardware) {
+      if ((coarsePointer && constrainedHardware) || reducedData || lowPower) {
         tier = "constrained";
       } else if (coarsePointer) {
         tier = "balanced";
@@ -69,12 +80,76 @@
     return {
       tier,
       coarsePointer,
+      hover,
+      reducedData,
+      lowPower,
+      visualViewportActive,
       deviceMemory,
       hardwareConcurrency,
     };
   }
 
+  function sceneCapabilityWebGLPreference(props, capability) {
+    if (!sceneBool(props && props.preferWebGL, true)) {
+      return "disabled";
+    }
+    if (sceneBool(props && props.forceWebGL, false)) {
+      return "force";
+    }
+    if (sceneBool(props && props.preferCanvas, false)) {
+      return "avoid";
+    }
+    if (!capability) {
+      return "prefer";
+    }
+    if (capability.reducedData || capability.lowPower) {
+      return "avoid";
+    }
+    if (capability.tier === "constrained" && capability.coarsePointer) {
+      return "avoid";
+    }
+    return "prefer";
+  }
+
+  function sceneRendererFallbackReason(props, capability, rendererKind) {
+    if (rendererKind === "webgl") {
+      return "";
+    }
+    switch (sceneCapabilityWebGLPreference(props, capability)) {
+      case "disabled":
+        return "webgl-disabled";
+      case "avoid":
+        return "environment-constrained";
+      default:
+        return sceneBool(props && props.preferWebGL, true) ? "webgl-unavailable" : "";
+    }
+  }
+
+  function sceneCapabilityChanged(prev, next) {
+    if (!prev || !next) {
+      return true;
+    }
+    return prev.tier !== next.tier
+      || prev.coarsePointer !== next.coarsePointer
+      || prev.hover !== next.hover
+      || prev.reducedData !== next.reducedData
+      || prev.lowPower !== next.lowPower
+      || prev.visualViewportActive !== next.visualViewportActive
+      || prev.deviceMemory !== next.deviceMemory
+      || prev.hardwareConcurrency !== next.hardwareConcurrency;
+  }
+
   function defaultSceneMaxDevicePixelRatio(capability) {
+    if (capability && (capability.reducedData || capability.lowPower)) {
+      switch (capability.tier) {
+        case "constrained":
+          return 1.25;
+        case "balanced":
+          return 1.5;
+        default:
+          return 1.75;
+      }
+    }
     switch (capability && capability.tier) {
       case "constrained":
         return 1.5;
@@ -85,12 +160,17 @@
     }
   }
 
-  function applySceneCapabilityState(mount, capability) {
+  function applySceneCapabilityState(mount, props, capability) {
     if (!mount || !capability) {
       return;
     }
     setAttrValue(mount, "data-gosx-scene3d-capability-tier", capability.tier);
     setAttrValue(mount, "data-gosx-scene3d-coarse-pointer", capability.coarsePointer ? "true" : "false");
+    setAttrValue(mount, "data-gosx-scene3d-hover", capability.hover ? "true" : "false");
+    setAttrValue(mount, "data-gosx-scene3d-reduced-data", capability.reducedData ? "true" : "false");
+    setAttrValue(mount, "data-gosx-scene3d-low-power", capability.lowPower ? "true" : "false");
+    setAttrValue(mount, "data-gosx-scene3d-visual-viewport", capability.visualViewportActive ? "true" : "false");
+    setAttrValue(mount, "data-gosx-scene3d-webgl-preference", sceneCapabilityWebGLPreference(props, capability));
     setAttrValue(mount, "data-gosx-scene3d-device-memory", capability.deviceMemory > 0 ? capability.deviceMemory : "");
     setAttrValue(mount, "data-gosx-scene3d-hardware-concurrency", capability.hardwareConcurrency > 0 ? capability.hardwareConcurrency : "");
   }
@@ -103,7 +183,33 @@
     setAttrValue(mount, "data-gosx-scene3d-renderer-fallback", fallbackReason || "");
   }
 
-  function sceneViewportBase(props, capability) {
+  function observeSceneCapability(mount, props, capability, onChange) {
+    if (!mount || !capability || typeof onChange !== "function") {
+      return function() {};
+    }
+    applySceneCapabilityState(mount, props, capability);
+    if (!(window.__gosx.environment && typeof window.__gosx.environment.observe === "function")) {
+      return function() {};
+    }
+    return window.__gosx.environment.observe(function() {
+      const next = sceneCapabilityProfile(props);
+      if (!sceneCapabilityChanged(capability, next)) {
+        return;
+      }
+      capability.tier = next.tier;
+      capability.coarsePointer = next.coarsePointer;
+      capability.hover = next.hover;
+      capability.reducedData = next.reducedData;
+      capability.lowPower = next.lowPower;
+      capability.visualViewportActive = next.visualViewportActive;
+      capability.deviceMemory = next.deviceMemory;
+      capability.hardwareConcurrency = next.hardwareConcurrency;
+      applySceneCapabilityState(mount, props, capability);
+      onChange("capability");
+    }, { immediate: false });
+  }
+
+  function sceneViewportBase(props) {
     const width = Math.max(240, sceneNumber(props && props.width, 720));
     const height = Math.max(180, sceneNumber(props && props.height, 420));
     const explicitMaxDevicePixelRatio = sceneNumber(props && (props.maxDevicePixelRatio || props.maxPixelRatio), 0);
@@ -112,7 +218,7 @@
       baseHeight: height,
       aspectRatio: width / Math.max(1, height),
       responsive: sceneBool(props && props.responsive, true),
-      maxDevicePixelRatio: Math.max(1, explicitMaxDevicePixelRatio > 0 ? explicitMaxDevicePixelRatio : defaultSceneMaxDevicePixelRatio(capability)),
+      explicitMaxDevicePixelRatio,
     };
   }
 
@@ -125,7 +231,7 @@
     return Math.max(1, Math.min(Math.max(1, maxDevicePixelRatio || 1), preferred));
   }
 
-  function sceneViewportFromMount(mount, props, base, canvas) {
+  function sceneViewportFromMount(mount, props, base, canvas, capability) {
     let cssWidth = base.baseWidth;
     let cssHeight = base.baseHeight;
     const useMeasuredHeight = sceneBool(props && (props.fillHeight || props.responsiveHeight), false);
@@ -154,7 +260,8 @@
     }
     cssWidth = Math.max(1, Math.round(cssWidth));
     cssHeight = Math.max(1, Math.round(cssHeight));
-    const devicePixelRatio = sceneViewportDevicePixelRatio(props, base.maxDevicePixelRatio);
+    const maxDevicePixelRatio = Math.max(1, base.explicitMaxDevicePixelRatio > 0 ? base.explicitMaxDevicePixelRatio : defaultSceneMaxDevicePixelRatio(capability));
+    const devicePixelRatio = sceneViewportDevicePixelRatio(props, maxDevicePixelRatio);
     return {
       cssWidth,
       cssHeight,
@@ -743,7 +850,7 @@
 
     const props = ctx.props || {};
     const capability = sceneCapabilityProfile(props);
-    const viewportBase = sceneViewportBase(props, capability);
+    const viewportBase = sceneViewportBase(props);
     const sceneState = createSceneState(props);
     const runtimeScene = ctx.runtimeMode === "shared" && Boolean(ctx.programRef);
     const objects = sceneStateObjects(sceneState);
@@ -763,7 +870,7 @@
     clearChildren(ctx.mount);
     ctx.mount.setAttribute("data-gosx-scene3d-mounted", "true");
     ctx.mount.setAttribute("aria-label", props.ariaLabel || props.label || "Interactive GoSX 3D scene");
-    applySceneCapabilityState(ctx.mount, capability);
+    applySceneCapabilityState(ctx.mount, props, capability);
     if (!ctx.mount.style.position) {
       ctx.mount.style.position = "relative";
     }
@@ -784,10 +891,10 @@
     labelLayer.setAttribute("aria-hidden", "true");
     ctx.mount.appendChild(labelLayer);
 
-    let viewport = applySceneViewport(ctx.mount, canvas, labelLayer, sceneViewportFromMount(ctx.mount, props, viewportBase, canvas), viewportBase);
+    let viewport = applySceneViewport(ctx.mount, canvas, labelLayer, sceneViewportFromMount(ctx.mount, props, viewportBase, canvas, capability), viewportBase);
 
-    let renderer = createSceneRenderer(canvas, props, capability);
-    if (!renderer) {
+    const initialRenderer = createSceneRenderer(canvas, props, capability);
+    if (!initialRenderer || !initialRenderer.renderer) {
       console.warn("[gosx] Scene3D could not acquire a renderer");
       return {
         dispose() {
@@ -800,7 +907,8 @@
         },
       };
     }
-    applySceneRendererState(ctx.mount, renderer, sceneBool(props.preferWebGL, true) && renderer.kind !== "webgl" ? "webgl-unavailable" : "");
+    let renderer = initialRenderer.renderer;
+    applySceneRendererState(ctx.mount, renderer, initialRenderer.fallbackReason || "");
     let latestBundle = null;
     const labelLayoutCache = new Map();
     const labelElements = new Map();
@@ -852,12 +960,13 @@
     }
 
     function restoreSceneWebGLRenderer(reason) {
-      if (!sceneBool(props.preferWebGL, true)) {
+      const webglPreference = sceneCapabilityWebGLPreference(props, capability);
+      if (!(webglPreference === "prefer" || webglPreference === "force")) {
         return false;
       }
       const webglRenderer = createSceneWebGLRenderer(canvas, {
-        antialias: capability.tier !== "constrained",
-        powerPreference: capability.tier === "constrained" ? "low-power" : "high-performance",
+        antialias: capability.tier === "full" && !capability.lowPower && !capability.reducedData,
+        powerPreference: capability.lowPower || capability.tier === "constrained" ? "low-power" : "high-performance",
       });
       if (!webglRenderer) {
         return false;
@@ -911,7 +1020,7 @@
       if (disposed) {
         return;
       }
-      const nextViewport = sceneViewportFromMount(ctx.mount, props, viewportBase, canvas);
+      const nextViewport = sceneViewportFromMount(ctx.mount, props, viewportBase, canvas, capability);
       if (sceneViewportChanged(viewport, nextViewport)) {
         viewport = applySceneViewport(ctx.mount, canvas, labelLayer, nextViewport, viewportBase);
       }
@@ -930,6 +1039,24 @@
     }
 
     const releaseViewportObserver = observeSceneViewport(ctx.mount, scheduleRender);
+    const releaseCapabilityObserver = observeSceneCapability(ctx.mount, props, capability, function(reason) {
+      const nextViewport = sceneViewportFromMount(ctx.mount, props, viewportBase, canvas, capability);
+      if (sceneViewportChanged(viewport, nextViewport)) {
+        viewport = applySceneViewport(ctx.mount, canvas, labelLayer, nextViewport, viewportBase);
+      }
+      const desiredFallback = sceneRendererFallbackReason(props, capability, renderer && renderer.kind);
+      const webglPreference = sceneCapabilityWebGLPreference(props, capability);
+      if (renderer && renderer.kind === "webgl" && !(webglPreference === "prefer" || webglPreference === "force")) {
+        fallbackSceneRenderer(desiredFallback || "environment-constrained");
+      } else if (renderer && renderer.kind !== "webgl" && (webglPreference === "prefer" || webglPreference === "force")) {
+        if (!restoreSceneWebGLRenderer("")) {
+          applySceneRendererState(ctx.mount, renderer, desiredFallback);
+        }
+      } else {
+        applySceneRendererState(ctx.mount, renderer, desiredFallback);
+      }
+      scheduleRender(reason || "capability");
+    });
     const releaseLifecycleObserver = observeSceneLifecycle(ctx.mount, lifecycle, function(reason) {
       if (!sceneCanRender()) {
         cancelFrame();
@@ -958,7 +1085,7 @@
 
     function renderFrame(now) {
       if (disposed) return;
-      viewport = applySceneViewport(ctx.mount, canvas, labelLayer, sceneViewportFromMount(ctx.mount, props, viewportBase, canvas), viewportBase);
+      viewport = applySceneViewport(ctx.mount, canvas, labelLayer, sceneViewportFromMount(ctx.mount, props, viewportBase, canvas, capability), viewportBase);
       if (!sceneCanRender()) {
         cancelFrame();
         return;
@@ -1014,6 +1141,7 @@
         canvas.removeEventListener("webglcontextlost", onWebGLContextLost);
         canvas.removeEventListener("webglcontextrestored", onWebGLContextRestored);
         releaseViewportObserver();
+        releaseCapabilityObserver();
         releaseLifecycleObserver();
         releaseMotionObserver();
         releaseTextLayoutListener();

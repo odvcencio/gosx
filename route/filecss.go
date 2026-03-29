@@ -9,37 +9,29 @@ import (
 
 	"github.com/odvcencio/gosx"
 	gosxcss "github.com/odvcencio/gosx/css"
+	"github.com/odvcencio/gosx/server"
 )
 
 var fileCSSNodeCache sync.Map
-
-type fileCSSLayer string
-
-const (
-	fileCSSLayerGlobal  fileCSSLayer = "global"
-	fileCSSLayerLayout  fileCSSLayer = "layout"
-	fileCSSLayerPage    fileCSSLayer = "page"
-	fileCSSLayerRuntime fileCSSLayer = "runtime"
-)
 
 func addRouteFileCSSHead(ctx *RouteContext, page FilePage) {
 	if ctx == nil {
 		return
 	}
 	order := 0
-	if node, ok := fileCSSNode(page.Root, globalCSSPath(page.Root), fileCSSLayerGlobal, order); ok && !node.IsZero() {
+	if node, ok := fileCSSNode(page.Root, globalCSSPath(page.Root), server.CSSLayerGlobal, order); ok && !node.IsZero() {
 		ctx.AddHead(node)
 		order++
 	}
 	for _, file := range page.Layouts {
-		node, ok := fileCSSNode(page.Root, sidecarCSSPath(file), fileCSSLayerLayout, order)
+		node, ok := fileCSSNode(page.Root, sidecarCSSPath(file), server.CSSLayerLayout, order)
 		if !ok || node.IsZero() {
 			continue
 		}
 		ctx.AddHead(node)
 		order++
 	}
-	if node, ok := fileCSSNode(page.Root, sidecarCSSPath(page.FilePath), fileCSSLayerPage, order); ok && !node.IsZero() {
+	if node, ok := fileCSSNode(page.Root, sidecarCSSPath(page.FilePath), server.CSSLayerPage, order); ok && !node.IsZero() {
 		ctx.AddHead(node)
 	}
 }
@@ -49,7 +41,7 @@ func addFileCSSHead(ctx *RouteContext, files ...string) {
 		return
 	}
 	for _, file := range files {
-		node, ok := fileCSSNode("", sidecarCSSPath(file), fileCSSLayerPage, 0)
+		node, ok := fileCSSNode("", sidecarCSSPath(file), server.CSSLayerPage, 0)
 		if !ok || node.IsZero() {
 			continue
 		}
@@ -69,14 +61,14 @@ func globalCSSPath(root string) string {
 	return ""
 }
 
-func fileCSSCacheKey(cssPath string, layer fileCSSLayer, order int) string {
+func fileCSSCacheKey(cssPath string, layer server.CSSLayer, order int) string {
 	if cssPath == "" {
 		return ""
 	}
 	return strings.Join([]string{cssPath, string(layer), strconv.Itoa(order)}, "\x00")
 }
 
-func fileCSSNode(root, cssPath string, layer fileCSSLayer, order int) (gosx.Node, bool) {
+func fileCSSNode(root, cssPath string, layer server.CSSLayer, order int) (gosx.Node, bool) {
 	if cssPath == "" {
 		return gosx.Node{}, false
 	}
@@ -116,8 +108,8 @@ func fileCSSNode(root, cssPath string, layer fileCSSLayer, order int) (gosx.Node
 	return node, true
 }
 
-func fileCSSLayerNeedsScope(layer fileCSSLayer) bool {
-	return layer == fileCSSLayerLayout || layer == fileCSSLayerPage
+func fileCSSLayerNeedsScope(layer server.CSSLayer) bool {
+	return layer == server.CSSLayerLayout || layer == server.CSSLayerPage
 }
 
 func fileCSSSource(root, cssPath string) string {

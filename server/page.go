@@ -427,6 +427,9 @@ type LinkTag struct {
 	Media       string
 	As          string
 	CrossOrigin string
+	Layer       CSSLayer
+	Owner       string
+	Source      string
 }
 
 // Head renders metadata into head nodes. Title is handled by the document shell.
@@ -473,6 +476,15 @@ func (l LinkTag) Node() gosx.Node {
 	}
 	if l.CrossOrigin != "" {
 		attrs["crossorigin"] = l.CrossOrigin
+	}
+	if strings.Contains(strings.ToLower(strings.TrimSpace(l.Rel)), "stylesheet") {
+		attrs["data-gosx-css-layer"] = string(normalizeCSSLayer(l.Layer))
+		attrs["data-gosx-css-owner"] = stylesheetOwner(l.Owner)
+		if source := strings.TrimSpace(l.Source); source != "" {
+			attrs["data-gosx-css-source"] = source
+		} else {
+			attrs["data-gosx-css-source"] = stylesheetSource(l.Href)
+		}
 	}
 	return gosx.El("link", gosx.Spread(attrs))
 }
