@@ -1,6 +1,7 @@
 package crdt
 
 import (
+	"strconv"
 	"testing"
 
 	crdtsync "github.com/odvcencio/gosx/crdt/sync"
@@ -112,6 +113,64 @@ func TestDocSyncMessagesConverge(t *testing.T) {
 	if serverValue.Str != "from client" {
 		t.Fatalf("expected server subtitle from client, got %q", serverValue.Str)
 	}
+
+	if _, ok := server.GenerateSyncMessage(serverState); ok {
+		t.Fatal("expected synced server to have no further messages")
+	}
+	if _, ok := client.GenerateSyncMessage(clientState); ok {
+		t.Fatal("expected synced client to have no further messages")
+	}
+}
+
+func TestDocListMergeConvergesAcrossForks(t *testing.T) {
+	base := NewDoc()
+	items, err := base.MakeList(Root, "items")
+	if err != nil {
+		t.Fatalf("make list: %v", err)
+	}
+	base.Commit("init list")
+
+	left := base.Fork()
+	right := base.Fork()
+	actor, err := NewActorID()
+	if err != nil {
+		t.Fatalf("new actor id: %v", err)
+	}
+	right.actorID = actor
+
+	if err := left.InsertAt(items, 0, StringValue("left")); err != nil {
+		t.Fatalf("left insert: %v", err)
+	}
+	left.Commit("left insert")
+
+	if err := right.InsertAt(items, 0, StringValue("right")); err != nil {
+		t.Fatalf("right insert: %v", err)
+	}
+	right.Commit("right insert")
+
+	leftMerged := left.Fork()
+	rightMerged := right.Fork()
+	if err := leftMerged.Merge(right); err != nil {
+		t.Fatalf("merge right into left: %v", err)
+	}
+	if err := rightMerged.Merge(left); err != nil {
+		t.Fatalf("merge left into right: %v", err)
+	}
+
+	leftValues := listStrings(t, leftMerged, items)
+	rightValues := listStrings(t, rightMerged, items)
+	if len(leftValues) != 2 {
+		t.Fatalf("expected 2 merged list values, got %#v", leftValues)
+	}
+	if len(rightValues) != 2 {
+		t.Fatalf("expected 2 merged list values, got %#v", rightValues)
+	}
+	if leftValues[0] != rightValues[0] || leftValues[1] != rightValues[1] {
+		t.Fatalf("expected list convergence, got left=%#v right=%#v", leftValues, rightValues)
+	}
+	if !containsString(leftValues, "left") || !containsString(leftValues, "right") {
+		t.Fatalf("expected merged list to contain both inserts, got %#v", leftValues)
+	}
 }
 
 func exchangeDocs(t *testing.T, left *Doc, leftState *crdtsync.State, right *Doc, rightState *crdtsync.State) {
@@ -135,4 +194,25 @@ func exchangeDocs(t *testing.T, left *Doc, leftState *crdtsync.State, right *Doc
 		}
 	}
 	t.Fatal("sync exchange did not converge")
+}
+
+func listStrings(t *testing.T, doc *Doc, obj ObjID) []string {
+	t.Helper()
+	values := []string{}
+	for index := 0; ; index += 1 {
+		value, _, err := doc.Get(obj, Prop(strconv.Itoa(index)))
+		if err != nil {
+			return values
+		}
+		values = append(values, value.Str)
+	}
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }

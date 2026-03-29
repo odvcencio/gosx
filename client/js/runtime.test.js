@@ -1308,6 +1308,46 @@ test("bootstrap hydrates, delegates click events, and disposes islands", async (
   assert.equal(env.consoleLogs.error.length, 0);
 });
 
+test("bootstrap records island hydration failures and keeps the server fallback active", async () => {
+  const wrapper = new FakeElement("div", null);
+  wrapper.id = "gosx-island-1";
+
+  const env = createContext({
+    elements: [wrapper],
+    fetchRoutes: {
+      "/runtime.wasm": { bytes: [0, 97, 115, 109] },
+      "/counter.json": { text: '{"name":"Counter"}' },
+    },
+    manifest: {
+      runtime: { path: "/runtime.wasm" },
+      islands: [
+        {
+          id: "gosx-island-1",
+          component: "Counter",
+          props: { initial: 2 },
+          programRef: "/counter.json",
+        },
+      ],
+    },
+    onHydrate: () => "hydrate failed",
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const issues = env.context.__gosx.listIssues();
+  assert.equal(issues.length, 1);
+  assert.equal(issues[0].scope, "island");
+  assert.equal(issues[0].type, "hydrate");
+  assert.equal(issues[0].component, "Counter");
+  assert.equal(issues[0].elementID, "gosx-island-1");
+  assert.equal(wrapper.getAttribute("data-gosx-runtime-state"), "error");
+  assert.equal(wrapper.getAttribute("data-gosx-runtime-issue"), "hydrate");
+  assert.equal(wrapper.getAttribute("data-gosx-fallback-active"), "server");
+  assert.equal(env.context.__gosx.islands.size, 0);
+  assert.equal(env.document.dispatchedEvents.some((event) => event.type === "gosx:error"), true);
+});
+
 test("bootstrap forwards click target value to delegated island handlers", async () => {
   const wrapper = new FakeElement("div", null);
   const componentRoot = new FakeElement("div", null);

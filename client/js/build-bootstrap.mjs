@@ -28,8 +28,11 @@ const outputs = [
   },
 ].map((entry) => ({
   path: entry.path,
+  mapPath: entry.path + ".map",
   sources: entry.sources.map((rel) => path.join(__dirname, rel)),
 }));
+
+const BASE64_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
 function readSource(file) {
   return fs.readFileSync(file, "utf8");
@@ -38,9 +41,11 @@ function readSource(file) {
 function compactSource(source) {
   const lines = String(source).replace(/\r\n?/g, "\n").split("\n");
   const out = [];
+  const lineMap = [];
   let lastBlank = false;
 
-  for (const line of lines) {
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
     const trimmed = line.trim();
     if (trimmed.startsWith("//")) {
       continue;
@@ -53,27 +58,122 @@ function compactSource(source) {
       }
       lastBlank = true;
       out.push("");
+      lineMap.push(index);
       continue;
     }
 
     lastBlank = false;
     out.push(normalized);
+    lineMap.push(index);
   }
 
-  return out.join("\n").trim() + "\n";
+  while (out.length > 0 && out[0] === "") {
+    out.shift();
+    lineMap.shift();
+  }
+  while (out.length > 0 && out[out.length - 1] === "") {
+    out.pop();
+    lineMap.pop();
+  }
+  return {
+    code: out.length > 0 ? out.join("\n") + "\n" : "",
+    lineMap,
+  };
 }
 
-function buildBootstrapSource(entry) {
-  return entry.sources.map(readSource).map(compactSource).join("\n");
+function base64VLQEncode(value) {
+  let current = value < 0 ? ((-value) << 1) | 1 : value << 1;
+  let encoded = "";
+  do {
+    let digit = current & 31;
+    current >>>= 5;
+    if (current > 0) {
+      digit |= 32;
+    }
+    encoded += BASE64_CHARS[digit];
+  } while (current > 0);
+  return encoded;
+}
+
+function encodeMappings(lines) {
+  const segments = [];
+  let previousSource = 0;
+  let previousOriginalLine = 0;
+  let previousOriginalColumn = 0;
+
+  for (const line of lines) {
+    if (!line) {
+      segments.push("");
+      continue;
+    }
+    const originalColumn = line.column || 0;
+    segments.push([
+      base64VLQEncode(0),
+      base64VLQEncode(line.source - previousSource),
+      base64VLQEncode(line.originalLine - previousOriginalLine),
+      base64VLQEncode(originalColumn - previousOriginalColumn),
+    ].join(""));
+    previousSource = line.source;
+    previousOriginalLine = line.originalLine;
+    previousOriginalColumn = originalColumn;
+  }
+
+  return segments.join(";");
+}
+
+function buildBootstrapBundle(entry) {
+  const sections = entry.sources.map((file) => {
+    const source = readSource(file);
+    return {
+      file,
+      relative: path.relative(__dirname, file).replace(/\\/g, "/"),
+      raw: source.replace(/\r\n?/g, "\n"),
+      compacted: compactSource(source),
+    };
+  });
+
+  let code = "";
+  const lines = [];
+  for (let index = 0; index < sections.length; index += 1) {
+    const section = sections[index];
+    if (index > 0 && code !== "") {
+      code += "\n";
+      lines.push(null);
+    }
+    code += section.compacted.code;
+    for (const originalLine of section.compacted.lineMap) {
+      lines.push({
+        source: index,
+        originalLine,
+        column: 0,
+      });
+    }
+  }
+
+  code += `//# sourceMappingURL=${path.basename(entry.mapPath)}\n`;
+  lines.push(null);
+
+  return {
+    code,
+    map: JSON.stringify({
+      version: 3,
+      file: path.basename(entry.path),
+      sources: sections.map((section) => section.relative),
+      sourcesContent: sections.map((section) => section.raw),
+      names: [],
+      mappings: encodeMappings(lines),
+    }),
+  };
 }
 
 function main(argv) {
   const args = new Set(argv.slice(2));
   if (args.has("--check")) {
     const stale = outputs.filter((entry) => {
-      const next = buildBootstrapSource(entry);
-      const current = fs.existsSync(entry.path) ? fs.readFileSync(entry.path, "utf8") : "";
-      return current !== next;
+      const next = buildBootstrapBundle(entry);
+      const currentCode = fs.existsSync(entry.path) ? fs.readFileSync(entry.path, "utf8") : "";
+      const currentMap = fs.existsSync(entry.mapPath) ? fs.readFileSync(entry.mapPath, "utf8") : "";
+      return currentCode !== next.code || currentMap !== next.map;
     });
     if (stale.length > 0) {
       process.stderr.write("bootstrap runtime assets are out of date. Run `npm run build:bootstrap`.\n");
@@ -82,7 +182,9 @@ function main(argv) {
     return;
   }
   for (const entry of outputs) {
-    fs.writeFileSync(entry.path, buildBootstrapSource(entry), "utf8");
+    const built = buildBootstrapBundle(entry);
+    fs.writeFileSync(entry.path, built.code, "utf8");
+    fs.writeFileSync(entry.mapPath, built.map, "utf8");
   }
 }
 

@@ -4,26 +4,26 @@ func helperFileModuleHereSource() string {
 	return FileModuleHere(FileModuleOptions{}).Source
 }
 
-func helperMustRegisterFileModuleHere() {
-	MustRegisterFileModuleHere(FileModuleOptions{})
+func helperMustRegisterFileModuleHere(registry *FileModuleRegistry) {
+	registry.MustRegisterHere(FileModuleOptions{})
 }
 
-func helperMustRegisterFileModuleViaWrapper() {
-	helperRegisterModuleWrapper()
+func helperMustRegisterFileModuleViaWrapper(registry *FileModuleRegistry) {
+	helperRegisterModuleWrapper(registry)
 }
 
-func helperRegisterModuleWrapper() {
-	MustRegisterFileModuleCaller(1, FileModuleOptions{})
+func helperRegisterModuleWrapper(registry *FileModuleRegistry) {
+	registry.MustRegisterCaller(1, FileModuleOptions{})
 }
 
 func helperDirModuleHereSource() string {
 	return DirModuleHere(DirModuleOptions{}).Source
 }
 
-func helperMustRegisterDirModuleViaWrapper() {
-	helperRegisterDirModuleWrapper()
+func helperMustRegisterDirModuleViaWrapper(registry *DirModuleRegistry) {
+	helperRegisterDirModuleWrapper(registry)
 }
 
-func helperRegisterDirModuleWrapper() {
-	MustRegisterDirModuleCaller(1, DirModuleOptions{})
+func helperRegisterDirModuleWrapper(registry *DirModuleRegistry) {
+	registry.MustRegisterCaller(1, DirModuleOptions{})
 }

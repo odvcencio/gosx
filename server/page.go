@@ -5,10 +5,8 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/odvcencio/gosx"
-	"github.com/odvcencio/gosx/engine"
 )
 
 // PageHandler renders an HTML page for a given request context.
@@ -147,238 +145,46 @@ type DeferredRegistry struct {
 
 // Context carries request-scoped page metadata, headers, and status.
 type Context struct {
-	Request  *http.Request
-	headers  http.Header
-	status   int
-	metadata Metadata
-	head     []gosx.Node
-	deferred *DeferredRegistry
-	cache    *CacheState
-	runtime  *PageRuntime
+	Request *http.Request
+	PageState
 }
 
 func newContext(r *http.Request) *Context {
 	return &Context{
-		Request:  r,
-		headers:  make(http.Header),
-		deferred: NewDeferredRegistry(),
-		cache:    NewCacheState(),
+		Request:   r,
+		PageState: *NewPageState(),
 	}
-}
-
-// Header returns the response headers to apply when the request completes.
-func (c *Context) Header() http.Header {
-	if c.headers == nil {
-		c.headers = make(http.Header)
-	}
-	return c.headers
-}
-
-// SetStatus sets the HTTP status code for the response.
-func (c *Context) SetStatus(status int) {
-	c.status = status
-}
-
-// Cache stores HTTP caching directives for the response.
-func (c *Context) Cache(policy CachePolicy) {
-	if c == nil {
-		return
-	}
-	if c.cache == nil {
-		c.cache = NewCacheState()
-	}
-	c.cache.SetPolicy(policy)
-}
-
-// ApplyCacheProfile applies a higher-level cache profile to the response.
-func (c *Context) ApplyCacheProfile(profile CacheProfile) {
-	ApplyCacheProfile(c, profile)
-}
-
-// CachePublic marks the response as publicly cacheable for the provided duration.
-func (c *Context) CachePublic(maxAge time.Duration) {
-	c.Cache(PublicCache(maxAge))
-}
-
-// CachePrivate marks the response as privately cacheable for the provided duration.
-func (c *Context) CachePrivate(maxAge time.Duration) {
-	c.Cache(PrivateCache(maxAge))
-}
-
-// NoStore disables response storage by caches.
-func (c *Context) NoStore() {
-	c.Cache(NoStoreCache())
-}
-
-// CacheDynamic disables storage for fully dynamic responses.
-func (c *Context) CacheDynamic() {
-	c.ApplyCacheProfile(DynamicPage())
-}
-
-// CacheStatic marks the response as immutable and publicly cacheable.
-func (c *Context) CacheStatic(tags ...string) {
-	c.ApplyCacheProfile(StaticPage(tags...))
-}
-
-// CacheRevalidate marks a page as publicly cacheable with revalidation.
-func (c *Context) CacheRevalidate(maxAge, staleWhileRevalidate time.Duration, tags ...string) {
-	c.ApplyCacheProfile(RevalidatePage(maxAge, staleWhileRevalidate, tags...))
-}
-
-// CacheData marks shared data as publicly cacheable.
-func (c *Context) CacheData(maxAge time.Duration, tags ...string) {
-	c.ApplyCacheProfile(PublicData(maxAge, tags...))
-}
-
-// CachePrivateData marks user-scoped data as privately cacheable.
-func (c *Context) CachePrivateData(maxAge time.Duration, tags ...string) {
-	c.ApplyCacheProfile(PrivateData(maxAge, tags...))
-}
-
-// CacheTag associates one or more revalidation tags with the response.
-func (c *Context) CacheTag(tags ...string) {
-	if c == nil {
-		return
-	}
-	if c.cache == nil {
-		c.cache = NewCacheState()
-	}
-	c.cache.AddTags(tags...)
-}
-
-// CacheKey appends cache key dimensions used when deriving automatic ETags.
-func (c *Context) CacheKey(parts ...string) {
-	if c == nil {
-		return
-	}
-	if c.cache == nil {
-		c.cache = NewCacheState()
-	}
-	c.cache.AddKeys(parts...)
-}
-
-// SetETag overrides the automatically derived ETag for the response.
-func (c *Context) SetETag(etag string) {
-	if c == nil {
-		return
-	}
-	if c.cache == nil {
-		c.cache = NewCacheState()
-	}
-	c.cache.SetETag(etag)
-}
-
-// SetLastModified sets the resource modification timestamp for conditional requests.
-func (c *Context) SetLastModified(at time.Time) {
-	if c == nil {
-		return
-	}
-	if c.cache == nil {
-		c.cache = NewCacheState()
-	}
-	c.cache.SetLastModified(at)
-}
-
-// SetMetadata merges page metadata into the request context.
-func (c *Context) SetMetadata(meta Metadata) {
-	c.metadata = mergeMetadata(c.metadata, meta)
-}
-
-// AddHead appends arbitrary head nodes to the response document.
-func (c *Context) AddHead(nodes ...gosx.Node) {
-	for _, node := range nodes {
-		if node.IsZero() {
-			continue
-		}
-		c.head = append(c.head, node)
-	}
-}
-
-// Runtime returns the page-scoped runtime registry for client engines.
-func (c *Context) Runtime() *PageRuntime {
-	if c == nil {
-		return nil
-	}
-	if c.runtime == nil {
-		c.runtime = NewPageRuntime()
-	}
-	return c.runtime
-}
-
-// Engine registers a client engine for this page and returns its mount shell.
-func (c *Context) Engine(cfg engine.Config, fallback gosx.Node) gosx.Node {
-	if c == nil {
-		return fallback
-	}
-	return c.Runtime().Engine(cfg, fallback)
-}
-
-// TextBlock renders a managed text-layout node for the current page.
-func (c *Context) TextBlock(props TextBlockProps, args ...any) gosx.Node {
-	if c == nil {
-		return TextBlock(props, args...)
-	}
-	return c.Runtime().TextBlock(props, args...)
-}
-
-// Defer renders fallback content immediately, then streams the resolved node
-// into place once the resolver finishes.
-func (c *Context) Defer(fallback gosx.Node, resolve DeferredResolver) gosx.Node {
-	return c.DeferWithOptions(DeferredOptions{}, fallback, resolve)
-}
-
-// DeferWithOptions renders fallback content immediately, then streams the
-// resolved node into place once the resolver finishes.
-func (c *Context) DeferWithOptions(opts DeferredOptions, fallback gosx.Node, resolve DeferredResolver) gosx.Node {
-	if c.deferred == nil {
-		c.deferred = NewDeferredRegistry()
-	}
-	return c.deferred.DeferWithOptions(opts, fallback, resolve)
 }
 
 func (c *Context) documentContext(pattern, defaultTitle string, body gosx.Node, navigation bool) *DocumentContext {
-	title := c.metadata.Title
-	if title == "" {
-		title = defaultTitle
-	}
+	title := c.Title(defaultTitle)
 	path := "/"
 	if c != nil && c.Request != nil && c.Request.URL != nil {
 		path = c.Request.URL.RequestURI()
 	}
+	metadata := c.MetadataValue()
 	doc := &DocumentContext{
 		Request:    c.Request,
 		Pattern:    pattern,
-		Status:     c.status,
+		Status:     c.StatusCode(),
 		Title:      title,
 		PageID:     documentPageID(pattern, path),
 		Path:       path,
 		RequestID:  RequestID(c.Request),
-		Metadata:   c.metadata,
+		Metadata:   metadata,
 		Navigation: navigation,
 		Body:       body,
 	}
-	if c != nil && c.runtime != nil {
-		doc.Runtime = c.runtime.Summary()
+	if runtime := c.RuntimeState(); runtime != nil {
+		doc.Runtime = runtime.Summary()
 		doc.Bootstrap = doc.Runtime.Bootstrap
 		doc.RuntimeActive = doc.Runtime.Runtime
 	}
 	doc.Head = gosx.Fragment(
-		c.headNode(),
+		c.Head(),
 		documentContractNode(doc),
 	)
 	return doc
-}
-
-func (c *Context) headNode() gosx.Node {
-	nodes := []gosx.Node{}
-	if metaHead := c.metadata.Head(); !metaHead.IsZero() {
-		nodes = append(nodes, metaHead)
-	}
-	nodes = append(nodes, c.head...)
-	if len(nodes) == 0 {
-		return gosx.Text("")
-	}
-	return gosx.Fragment(nodes...)
 }
 
 type documentContract struct {

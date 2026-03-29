@@ -4,6 +4,8 @@ import (
 	"errors"
 	"strings"
 	"testing"
+
+	"github.com/odvcencio/gosx/ir"
 )
 
 func TestGrammarGeneration(t *testing.T) {
@@ -221,6 +223,36 @@ func Page() Node {
 `)
 	if _, err := Compile(source); err != nil {
 		t.Fatalf("Compile failed: %v", err)
+	}
+}
+
+func TestCompileReturnsAllValidationDiagnostics(t *testing.T) {
+	source := []byte(`package main
+
+func broken() Node {
+	return <div>first</div>
+}
+
+func alsoBroken() Node {
+	return <span>second</span>
+}
+`)
+	_, err := Compile(source)
+	if err == nil {
+		t.Fatal("expected validation diagnostics")
+	}
+	var diagErr *ir.DiagnosticsError
+	if !errors.As(err, &diagErr) {
+		t.Fatalf("expected diagnostics error, got %T: %v", err, err)
+	}
+	if len(diagErr.Diagnostics) != 2 {
+		t.Fatalf("expected 2 diagnostics, got %d", len(diagErr.Diagnostics))
+	}
+	if !strings.Contains(diagErr.Diagnostics[0].Message, "uppercase") {
+		t.Fatalf("unexpected first diagnostic %#v", diagErr.Diagnostics[0])
+	}
+	if !strings.Contains(diagErr.Diagnostics[1].Message, "uppercase") {
+		t.Fatalf("unexpected second diagnostic %#v", diagErr.Diagnostics[1])
 	}
 }
 

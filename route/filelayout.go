@@ -29,6 +29,18 @@ func FileLayout(file string) (LayoutFunc, error) {
 
 // FileLayoutWithOptions loads a file-backed layout with custom slot markers.
 func FileLayoutWithOptions(file string, opts FileLayoutOptions) (LayoutFunc, error) {
+	return FileLayoutWithOptionsAndRegistry(file, DefaultFileModuleRegistry(), opts)
+}
+
+// FileLayoutWithRegistry loads a file-backed layout using an explicit file
+// module registry instead of the shared default registry.
+func FileLayoutWithRegistry(file string, registry *FileModuleRegistry) (LayoutFunc, error) {
+	return FileLayoutWithOptionsAndRegistry(file, registry, FileLayoutOptions{})
+}
+
+// FileLayoutWithOptionsAndRegistry loads a file-backed layout with custom slot
+// markers and an explicit file module registry.
+func FileLayoutWithOptionsAndRegistry(file string, registry *FileModuleRegistry, opts FileLayoutOptions) (LayoutFunc, error) {
 	abs, err := filepath.Abs(file)
 	if err != nil {
 		return nil, fmt.Errorf("resolve %s: %w", file, err)
@@ -36,8 +48,10 @@ func FileLayoutWithOptions(file string, opts FileLayoutOptions) (LayoutFunc, err
 	if _, err := os.Stat(abs); err != nil {
 		return nil, fmt.Errorf("stat %s: %w", abs, err)
 	}
-
-	return buildFileLayout(abs, layoutFilePage("", abs), resolveLayoutModule(DefaultFileModuleRegistry(), "", abs), opts), nil
+	if registry == nil {
+		registry = DefaultFileModuleRegistry()
+	}
+	return buildFileLayout(abs, layoutFilePage("", abs), resolveLayoutModule(registry, "", abs), opts), nil
 }
 
 func buildFileLayout(file string, page FilePage, module FileModule, opts FileLayoutOptions) LayoutFunc {

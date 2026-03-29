@@ -24,32 +24,22 @@ func TestFileModuleSourceFromFilePrefersSiblingPageFile(t *testing.T) {
 
 func TestMustRegisterFileModuleHereUsesCallerSource(t *testing.T) {
 	source := helperFileModuleHereSource()
+	registry := NewFileModuleRegistry()
 
-	previous := defaultFileModuleRegistry
-	defaultFileModuleRegistry = NewFileModuleRegistry()
-	defer func() {
-		defaultFileModuleRegistry = previous
-	}()
+	helperMustRegisterFileModuleHere(registry)
 
-	helperMustRegisterFileModuleHere()
-
-	if _, ok := defaultFileModuleRegistry.Lookup(source); !ok {
+	if _, ok := registry.Lookup(source); !ok {
 		t.Fatalf("expected module registration for %q", source)
 	}
 }
 
 func TestMustRegisterFileModuleCallerSkipsWrapperFrames(t *testing.T) {
 	source := helperFileModuleHereSource()
+	registry := NewFileModuleRegistry()
 
-	previous := defaultFileModuleRegistry
-	defaultFileModuleRegistry = NewFileModuleRegistry()
-	defer func() {
-		defaultFileModuleRegistry = previous
-	}()
+	helperMustRegisterFileModuleViaWrapper(registry)
 
-	helperMustRegisterFileModuleViaWrapper()
-
-	if _, ok := defaultFileModuleRegistry.Lookup(source); !ok {
+	if _, ok := registry.Lookup(source); !ok {
 		t.Fatalf("expected wrapped module registration for %q", source)
 	}
 }
@@ -74,5 +64,18 @@ func TestResolveFileModuleMatchesBuildRootShift(t *testing.T) {
 	}
 	if module.Source != normalizeFileModuleSource(source) {
 		t.Fatalf("expected module source %q, got %q", normalizeFileModuleSource(source), module.Source)
+	}
+}
+
+func TestRegisterFileModuleRejectsConflictingRegistrations(t *testing.T) {
+	registry := NewFileModuleRegistry()
+	if err := registry.Register(FileModuleFor("docs/page.gsx", FileModuleOptions{})); err != nil {
+		t.Fatal(err)
+	}
+	if err := registry.Register(FileModuleFor("docs/page.gsx", FileModuleOptions{})); err == nil {
+		t.Fatal("expected duplicate file module registration to fail")
+	}
+	if err := registry.Register(FileModuleFor(filepath.Join("app", "docs", "page.gsx"), FileModuleOptions{})); err == nil {
+		t.Fatal("expected overlapping file module registration to fail")
 	}
 }

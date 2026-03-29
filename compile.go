@@ -57,14 +57,13 @@ func Compile(source []byte) (*ir.Program, error) {
 
 	prog, err := ir.Lower(root, source, lang)
 	if err != nil {
-		return nil, fmt.Errorf("lower: %w", err)
+		return nil, err
 	}
 
 	// Run validation
 	diags := ir.Validate(prog)
-	for _, d := range diags {
-		// For now, treat all diagnostics as errors
-		return nil, fmt.Errorf("validation: %s", d)
+	if len(diags) > 0 {
+		return nil, ir.NewDiagnosticsError("validation", diags)
 	}
 
 	return prog, nil

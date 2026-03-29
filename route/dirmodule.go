@@ -87,6 +87,21 @@ func RegisterDirModule(module DirModule) error {
 	return defaultDirModuleRegistry.Register(module)
 }
 
+// RegisterDirModuleHere infers the route directory from the calling file and
+// registers the module in the shared registry.
+func RegisterDirModuleHere(opts DirModuleOptions) error {
+	return RegisterDirModule(DirModuleFor(dirModuleSourceHere(1), opts))
+}
+
+// RegisterDirModuleCaller registers a directory module using a caller higher in
+// the stack. `skip=0` means the immediate caller.
+func RegisterDirModuleCaller(skip int, opts DirModuleOptions) error {
+	if skip < 0 {
+		skip = 0
+	}
+	return RegisterDirModule(DirModuleFor(dirModuleSourceHere(skip+1), opts))
+}
+
 // MustRegisterDirModule adds a directory module to the shared registry or panics.
 func MustRegisterDirModule(module DirModule) {
 	if err := RegisterDirModule(module); err != nil {
@@ -107,9 +122,54 @@ func (r *DirModuleRegistry) Register(module DirModule) error {
 	module.Middleware = append([]Middleware(nil), module.Middleware...)
 
 	r.mu.Lock()
+	if _, exists := r.modules[key]; exists {
+		r.mu.Unlock()
+		return fmt.Errorf("dir module %q already registered", key)
+	}
+	keySet := moduleLookupKeySet(dirModuleLookupKeys(key))
+	for _, existing := range r.modules {
+		if moduleLookupKeysOverlap(dirModuleLookupKeys(existing.Source), keySet) {
+			r.mu.Unlock()
+			return fmt.Errorf("dir module %q conflicts with existing module %q", key, existing.Source)
+		}
+	}
 	r.modules[key] = module
 	r.mu.Unlock()
 	return nil
+}
+
+// RegisterHere infers the route directory from the calling file and registers
+// the module in this registry.
+func (r *DirModuleRegistry) RegisterHere(opts DirModuleOptions) error {
+	return r.Register(DirModuleFor(dirModuleSourceHere(1), opts))
+}
+
+// MustRegisterHere registers a directory module inferred from the calling file
+// or panics on error.
+func (r *DirModuleRegistry) MustRegisterHere(opts DirModuleOptions) {
+	if err := r.Register(DirModuleFor(dirModuleSourceHere(1), opts)); err != nil {
+		panic(err)
+	}
+}
+
+// RegisterCaller registers a directory module using a caller higher in the
+// stack. `skip=0` means the immediate caller.
+func (r *DirModuleRegistry) RegisterCaller(skip int, opts DirModuleOptions) error {
+	if skip < 0 {
+		skip = 0
+	}
+	return r.Register(DirModuleFor(dirModuleSourceHere(skip+1), opts))
+}
+
+// MustRegisterCaller registers a directory module using a caller higher in the
+// stack or panics on error.
+func (r *DirModuleRegistry) MustRegisterCaller(skip int, opts DirModuleOptions) {
+	if skip < 0 {
+		skip = 0
+	}
+	if err := r.Register(DirModuleFor(dirModuleSourceHere(skip+1), opts)); err != nil {
+		panic(err)
+	}
 }
 
 // Lookup finds a registered directory module by source path.

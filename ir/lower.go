@@ -2,6 +2,7 @@ package ir
 
 import (
 	"fmt"
+	"path"
 	"strconv"
 	"strings"
 
@@ -11,24 +12,27 @@ import (
 // Lower converts a parsed GoSX CST into the component IR.
 func Lower(root *gotreesitter.Node, source []byte, lang *gotreesitter.Language) (*Program, error) {
 	l := &lowerer{
-		src:  source,
-		lang: lang,
-		prog: &Program{},
+		src:           source,
+		lang:          lang,
+		prog:          &Program{},
+		signalImports: make(map[string]struct{}),
 	}
 
 	l.lowerSourceFile(root)
 
 	if len(l.errs) > 0 {
-		return nil, fmt.Errorf("lowering errors:\n%s", strings.Join(l.errs, "\n"))
+		return nil, NewDiagnosticsError("lower", l.errs)
 	}
 	return l.prog, nil
 }
 
 type lowerer struct {
-	src  []byte
-	lang *gotreesitter.Language
-	prog *Program
-	errs []string
+	src           []byte
+	lang          *gotreesitter.Language
+	prog          *Program
+	errs          []Diagnostic
+	signalImports map[string]struct{}
+	signalDot     bool
 }
 
 func (l *lowerer) text(n *gotreesitter.Node) string {
@@ -44,9 +48,10 @@ func (l *lowerer) childByField(n *gotreesitter.Node, name string) *gotreesitter.
 }
 
 func (l *lowerer) errorf(n *gotreesitter.Node, format string, args ...any) {
-	pos := n.StartPoint()
-	msg := fmt.Sprintf("%d:%d: %s", pos.Row+1, pos.Column+1, fmt.Sprintf(format, args...))
-	l.errs = append(l.errs, msg)
+	l.errs = append(l.errs, Diagnostic{
+		Span:    l.span(n),
+		Message: fmt.Sprintf(format, args...),
+	})
 }
 
 func (l *lowerer) span(n *gotreesitter.Node) Span {
@@ -166,15 +171,18 @@ func (l *lowerer) analyzeBody(bodyNode *gotreesitter.Node) *ComponentScope {
 		}
 	}
 
-	// Walk all children of the statement list looking for short_var_declaration
-	for i := 0; i < int(stmtList.ChildCount()); i++ {
-		child := stmtList.Child(i)
+	// Walk all named statements looking for declarations that produce signals,
+	// computeds, or handlers.
+	for i := 0; i < int(stmtList.NamedChildCount()); i++ {
+		child := stmtList.NamedChild(i)
 		if child == nil {
 			continue
 		}
-		typ := l.nodeType(child)
-		if typ == "short_var_declaration" {
+		switch l.nodeType(child) {
+		case "short_var_declaration":
 			l.analyzeShortVarDecl(child, scope)
+		case "var_declaration":
+			l.analyzeVarDecl(child, scope)
 		}
 	}
 
@@ -195,49 +203,105 @@ func (l *lowerer) analyzeShortVarDecl(n *gotreesitter.Node, scope *ComponentScop
 		return
 	}
 
-	// Get the variable name (first identifier in left side)
-	varName := ""
-	for j := 0; j < int(leftNode.NamedChildCount()); j++ {
-		id := leftNode.NamedChild(j)
-		if l.nodeType(id) == "identifier" {
-			varName = l.text(id)
+	names := l.extractAssignedNames(leftNode)
+	exprs := l.extractAssignedExprs(rightNode)
+	l.analyzeAssignments(names, exprs, scope)
+}
+
+func (l *lowerer) analyzeVarDecl(n *gotreesitter.Node, scope *ComponentScope) {
+	for i := 0; i < int(n.NamedChildCount()); i++ {
+		child := n.NamedChild(i)
+		if child == nil {
+			continue
+		}
+		switch l.nodeType(child) {
+		case "var_spec":
+			l.analyzeVarSpec(child, scope)
+		case "var_spec_list":
+			for j := 0; j < int(child.NamedChildCount()); j++ {
+				spec := child.NamedChild(j)
+				if spec != nil && l.nodeType(spec) == "var_spec" {
+					l.analyzeVarSpec(spec, scope)
+				}
+			}
+		}
+	}
+}
+
+func (l *lowerer) analyzeVarSpec(n *gotreesitter.Node, scope *ComponentScope) {
+	names := l.extractAssignedNames(n)
+	var values *gotreesitter.Node
+	for i := 0; i < int(n.NamedChildCount()); i++ {
+		child := n.NamedChild(i)
+		if child != nil && l.nodeType(child) == "expression_list" {
+			values = child
 			break
 		}
 	}
-	// If left is itself an identifier (single var)
-	if varName == "" && l.nodeType(leftNode) == "identifier" {
-		varName = l.text(leftNode)
+	l.analyzeAssignments(names, l.extractAssignedExprs(values), scope)
+}
+
+func (l *lowerer) analyzeAssignments(names []string, exprs []*gotreesitter.Node, scope *ComponentScope) {
+	for idx, varName := range names {
+		if idx >= len(exprs) {
+			return
+		}
+		l.analyzeAssignedExpr(varName, exprs[idx], scope)
 	}
-	// Try expression_list → first child
-	if varName == "" {
-		varName = l.text(leftNode)
-		// Clean up if it grabbed too much
-		if strings.Contains(varName, ",") {
-			varName = strings.TrimSpace(strings.Split(varName, ",")[0])
+}
+
+func (l *lowerer) extractAssignedNames(n *gotreesitter.Node) []string {
+	if n == nil {
+		return nil
+	}
+	if l.nodeType(n) == "identifier" {
+		return []string{l.text(n)}
+	}
+	var names []string
+	for i := 0; i < int(n.NamedChildCount()); i++ {
+		child := n.NamedChild(i)
+		if child == nil {
+			continue
+		}
+		if l.nodeType(child) == "identifier" {
+			names = append(names, l.text(child))
 		}
 	}
-	if varName == "" {
+	return names
+}
+
+func (l *lowerer) extractAssignedExprs(n *gotreesitter.Node) []*gotreesitter.Node {
+	if n == nil {
+		return nil
+	}
+	if l.nodeType(n) != "expression_list" {
+		return []*gotreesitter.Node{n}
+	}
+	exprs := make([]*gotreesitter.Node, 0, n.NamedChildCount())
+	for i := 0; i < int(n.NamedChildCount()); i++ {
+		child := n.NamedChild(i)
+		if child != nil {
+			exprs = append(exprs, child)
+		}
+	}
+	return exprs
+}
+
+func (l *lowerer) analyzeAssignedExpr(varName string, rightExpr *gotreesitter.Node, scope *ComponentScope) {
+	if varName == "" || rightExpr == nil {
 		return
 	}
-
-	// Get the right-side expression
-	// It might be inside an expression_list wrapper
-	rightExpr := rightNode
-	if l.nodeType(rightExpr) == "expression_list" && rightExpr.NamedChildCount() > 0 {
-		rightExpr = rightExpr.NamedChild(0)
-	}
-
 	rightType := l.nodeType(rightExpr)
 
 	// Pattern: name := signal.New(initExpr)
 	if rightType == "call_expression" {
 		funcNode := l.childByField(rightExpr, "function")
 		if funcNode != nil {
-			funcText := l.text(funcNode)
+			callKind := l.signalCallKind(funcNode)
 			argsNode := l.childByField(rightExpr, "arguments")
 
 			// signal.New(...)
-			if funcText == "signal.New" && argsNode != nil {
+			if callKind == signalCallNew && argsNode != nil {
 				initExpr := l.extractArg(argsNode, 0)
 				typeHint := l.inferTypeHint(initExpr)
 				scope.Signals = append(scope.Signals, SignalInfo{
@@ -251,7 +315,7 @@ func (l *lowerer) analyzeShortVarDecl(n *gotreesitter.Node, scope *ComponentScop
 			}
 
 			// signal.NewShared("name", init) / signal.Shared("name", init)
-			if (funcText == "signal.NewShared" || funcText == "signal.Shared") && argsNode != nil {
+			if (callKind == signalCallNewShared || callKind == signalCallShared) && argsNode != nil {
 				sharedName := l.normalizeSharedSignalName(l.extractArg(argsNode, 0))
 				initExpr := l.extractArg(argsNode, 1)
 				if sharedName == "" || initExpr == "" {
@@ -269,7 +333,7 @@ func (l *lowerer) analyzeShortVarDecl(n *gotreesitter.Node, scope *ComponentScop
 			}
 
 			// signal.Derive(func() T { return expr })
-			if funcText == "signal.Derive" && argsNode != nil {
+			if callKind == signalCallDerive && argsNode != nil {
 				bodyExpr := l.extractDeriveBody(argsNode)
 				scope.Computeds = append(scope.Computeds, ComputedInfo{
 					Name:     varName,
@@ -293,6 +357,60 @@ func (l *lowerer) analyzeShortVarDecl(n *gotreesitter.Node, scope *ComponentScop
 			scope.Locals[varName] = "handler"
 			return
 		}
+	}
+}
+
+type signalCall int
+
+const (
+	signalCallUnknown signalCall = iota
+	signalCallNew
+	signalCallNewShared
+	signalCallShared
+	signalCallDerive
+)
+
+func (l *lowerer) signalCallKind(funcNode *gotreesitter.Node) signalCall {
+	if funcNode == nil {
+		return signalCallUnknown
+	}
+	pkgName, funcName := l.callName(funcNode)
+	if pkgName == "" {
+		if !l.signalDot {
+			return signalCallUnknown
+		}
+	} else {
+		if pkgName != "signal" {
+			if _, ok := l.signalImports[pkgName]; !ok {
+				return signalCallUnknown
+			}
+		}
+	}
+	switch funcName {
+	case "New":
+		return signalCallNew
+	case "NewShared":
+		return signalCallNewShared
+	case "Shared":
+		return signalCallShared
+	case "Derive":
+		return signalCallDerive
+	default:
+		return signalCallUnknown
+	}
+}
+
+func (l *lowerer) callName(funcNode *gotreesitter.Node) (string, string) {
+	switch l.nodeType(funcNode) {
+	case "identifier":
+		return "", l.text(funcNode)
+	case "selector_expression":
+		if funcNode.NamedChildCount() < 2 {
+			return "", ""
+		}
+		return l.text(funcNode.NamedChild(0)), l.text(funcNode.NamedChild(1))
+	default:
+		return "", ""
 	}
 }
 
@@ -537,7 +655,36 @@ func (l *lowerer) lowerImportSpec(n *gotreesitter.Node) {
 	if pathNode != nil {
 		imp.Path = strings.Trim(l.text(pathNode), `"`)
 	}
+	if imp.Alias == "" {
+		for i := 0; i < int(n.NamedChildCount()); i++ {
+			child := n.NamedChild(i)
+			switch l.nodeType(child) {
+			case "package_identifier", "dot":
+				imp.Alias = l.text(child)
+			case "interpreted_string_literal":
+				imp.Path = strings.Trim(l.text(child), `"`)
+			}
+		}
+	}
 	l.prog.Imports = append(l.prog.Imports, imp)
+	l.recordSignalImport(imp)
+}
+
+func (l *lowerer) recordSignalImport(imp Import) {
+	if strings.TrimSpace(imp.Path) != "github.com/odvcencio/gosx/signal" {
+		return
+	}
+	alias := strings.TrimSpace(imp.Alias)
+	switch alias {
+	case "":
+		l.signalImports[path.Base(imp.Path)] = struct{}{}
+	case ".":
+		l.signalDot = true
+	case "_":
+		return
+	default:
+		l.signalImports[alias] = struct{}{}
+	}
 }
 
 // lowerFunctionDecl checks if a function returns Node and contains GSX,

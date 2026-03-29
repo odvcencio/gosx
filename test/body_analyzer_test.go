@@ -89,6 +89,82 @@ func Dashboard() Node {
 	}
 }
 
+func TestBodyAnalyzerRecognizesAliasedSignalImportsInVarDecls(t *testing.T) {
+	source := []byte(`package main
+
+import sig "github.com/odvcencio/gosx/signal"
+
+//gosx:island
+func Counter() Node {
+	var count = sig.New(0)
+	var label = sig.NewShared("counter.label", "ready")
+	var doubled = sig.Derive(func() int { return count.Get() * 2 })
+
+	return <div>{label.Get()} {doubled}</div>
+}
+`)
+	prog, err := compileGSX(t, source)
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+
+	scope := prog.Components[0].Scope
+	if scope == nil {
+		t.Fatal("expected component scope")
+	}
+	if len(scope.Signals) != 2 {
+		t.Fatalf("expected 2 signals, got %d", len(scope.Signals))
+	}
+	if scope.Signals[0].Name != "count" || scope.Signals[0].InitExpr != "0" {
+		t.Fatalf("unexpected first signal %+v", scope.Signals[0])
+	}
+	if scope.Signals[1].Name != "$counter.label" || scope.Signals[1].InitExpr != `"ready"` {
+		t.Fatalf("unexpected shared signal %+v", scope.Signals[1])
+	}
+	if len(scope.Computeds) != 1 || scope.Computeds[0].Name != "doubled" {
+		t.Fatalf("expected aliased derive to register computed, got %+v", scope.Computeds)
+	}
+}
+
+func TestBodyAnalyzerRecognizesDotImportedSignalHelpers(t *testing.T) {
+	source := []byte(`package main
+
+import . "github.com/odvcencio/gosx/signal"
+
+//gosx:island
+func Dashboard() Node {
+	title := New("hello")
+	shared := Shared("dashboard.mode", "overview")
+	refresh := func() {
+		title.Set("updated")
+	}
+
+	return <button onClick={refresh}>{shared.Get()} {title.Get()}</button>
+}
+`)
+	prog, err := compileGSX(t, source)
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+
+	scope := prog.Components[0].Scope
+	if scope == nil {
+		t.Fatal("expected component scope")
+	}
+	if len(scope.Signals) != 2 {
+		t.Fatalf("expected 2 signals, got %d", len(scope.Signals))
+	}
+	if scope.Signals[0].Name != "title" {
+		t.Fatalf("unexpected local signal %+v", scope.Signals[0])
+	}
+	if scope.Signals[1].Name != "$dashboard.mode" {
+		t.Fatalf("unexpected shared signal %+v", scope.Signals[1])
+	}
+	if scope.Locals["refresh"] != "handler" {
+		t.Fatalf("expected refresh handler local, got %#v", scope.Locals)
+	}
+}
+
 // TestBodyAnalyzerHandlers verifies that func literal assignments
 // are extracted as handlers.
 func TestBodyAnalyzerHandlers(t *testing.T) {

@@ -10,11 +10,9 @@ import (
 	"net/http"
 	"path"
 	"strings"
-	"time"
 
 	"github.com/odvcencio/gosx"
 	"github.com/odvcencio/gosx/action"
-	"github.com/odvcencio/gosx/engine"
 	"github.com/odvcencio/gosx/server"
 )
 
@@ -94,13 +92,7 @@ type RouteContext struct {
 	Params     map[string]string
 	Data       any
 	parentData map[string]any
-	status     int
-	headers    http.Header
-	metadata   server.Metadata
-	head       []gosx.Node
-	deferred   *server.DeferredRegistry
-	cache      *server.CacheState
-	runtime    *server.PageRuntime
+	server.PageState
 }
 
 // Param returns a URL path parameter.
@@ -153,153 +145,6 @@ func (ctx *RouteContext) ParentData(key string) any {
 	return ctx.parentData[key]
 }
 
-// Header returns response headers to apply after rendering.
-func (ctx *RouteContext) Header() http.Header {
-	if ctx.headers == nil {
-		ctx.headers = make(http.Header)
-	}
-	return ctx.headers
-}
-
-// SetStatus sets the HTTP status code for the response.
-func (ctx *RouteContext) SetStatus(status int) {
-	ctx.status = status
-}
-
-// Cache stores HTTP caching directives for the response.
-func (ctx *RouteContext) Cache(policy server.CachePolicy) {
-	if ctx == nil {
-		return
-	}
-	if ctx.cache == nil {
-		ctx.cache = server.NewCacheState()
-	}
-	ctx.cache.SetPolicy(policy)
-}
-
-// ApplyCacheProfile applies a higher-level cache profile to the response.
-func (ctx *RouteContext) ApplyCacheProfile(profile server.CacheProfile) {
-	server.ApplyCacheProfile(ctx, profile)
-}
-
-// CachePublic marks the response as publicly cacheable for the provided duration.
-func (ctx *RouteContext) CachePublic(maxAge time.Duration) {
-	ctx.Cache(server.PublicCache(maxAge))
-}
-
-// CachePrivate marks the response as privately cacheable for the provided duration.
-func (ctx *RouteContext) CachePrivate(maxAge time.Duration) {
-	ctx.Cache(server.PrivateCache(maxAge))
-}
-
-// NoStore disables response storage by caches.
-func (ctx *RouteContext) NoStore() {
-	ctx.Cache(server.NoStoreCache())
-}
-
-// CacheDynamic disables storage for fully dynamic responses.
-func (ctx *RouteContext) CacheDynamic() {
-	ctx.ApplyCacheProfile(server.DynamicPage())
-}
-
-// CacheStatic marks the response as immutable and publicly cacheable.
-func (ctx *RouteContext) CacheStatic(tags ...string) {
-	ctx.ApplyCacheProfile(server.StaticPage(tags...))
-}
-
-// CacheRevalidate marks a page as publicly cacheable with revalidation.
-func (ctx *RouteContext) CacheRevalidate(maxAge, staleWhileRevalidate time.Duration, tags ...string) {
-	ctx.ApplyCacheProfile(server.RevalidatePage(maxAge, staleWhileRevalidate, tags...))
-}
-
-// CacheData marks shared data as publicly cacheable.
-func (ctx *RouteContext) CacheData(maxAge time.Duration, tags ...string) {
-	ctx.ApplyCacheProfile(server.PublicData(maxAge, tags...))
-}
-
-// CachePrivateData marks user-scoped data as privately cacheable.
-func (ctx *RouteContext) CachePrivateData(maxAge time.Duration, tags ...string) {
-	ctx.ApplyCacheProfile(server.PrivateData(maxAge, tags...))
-}
-
-// CacheTag associates one or more revalidation tags with the response.
-func (ctx *RouteContext) CacheTag(tags ...string) {
-	if ctx == nil {
-		return
-	}
-	if ctx.cache == nil {
-		ctx.cache = server.NewCacheState()
-	}
-	ctx.cache.AddTags(tags...)
-}
-
-// CacheKey appends cache key dimensions used when deriving automatic ETags.
-func (ctx *RouteContext) CacheKey(parts ...string) {
-	if ctx == nil {
-		return
-	}
-	if ctx.cache == nil {
-		ctx.cache = server.NewCacheState()
-	}
-	ctx.cache.AddKeys(parts...)
-}
-
-// SetETag overrides the automatically derived ETag for the response.
-func (ctx *RouteContext) SetETag(etag string) {
-	if ctx == nil {
-		return
-	}
-	if ctx.cache == nil {
-		ctx.cache = server.NewCacheState()
-	}
-	ctx.cache.SetETag(etag)
-}
-
-// SetLastModified sets the resource modification timestamp for conditional requests.
-func (ctx *RouteContext) SetLastModified(at time.Time) {
-	if ctx == nil {
-		return
-	}
-	if ctx.cache == nil {
-		ctx.cache = server.NewCacheState()
-	}
-	ctx.cache.SetLastModified(at)
-}
-
-// SetMetadata merges page metadata into the route context.
-func (ctx *RouteContext) SetMetadata(meta server.Metadata) {
-	ctx.metadata = mergeMetadata(ctx.metadata, meta)
-}
-
-// AddHead appends arbitrary head nodes for layouts to render.
-func (ctx *RouteContext) AddHead(nodes ...gosx.Node) {
-	for _, node := range nodes {
-		if node.IsZero() {
-			continue
-		}
-		ctx.head = append(ctx.head, node)
-	}
-}
-
-// Runtime returns the page-scoped runtime registry for client engines.
-func (ctx *RouteContext) Runtime() *server.PageRuntime {
-	if ctx == nil {
-		return nil
-	}
-	if ctx.runtime == nil {
-		ctx.runtime = server.NewPageRuntime()
-	}
-	return ctx.runtime
-}
-
-// Engine registers a client engine for this page and returns its mount shell.
-func (ctx *RouteContext) Engine(cfg engine.Config, fallback gosx.Node) gosx.Node {
-	if ctx == nil {
-		return fallback
-	}
-	return ctx.Runtime().Engine(cfg, fallback)
-}
-
 // Form renders a form tag opted into the GoSX navigation/runtime submission
 // layer while preserving native HTML fallback behavior.
 func (ctx *RouteContext) Form(args ...any) gosx.Node {
@@ -316,50 +161,6 @@ func (ctx *RouteContext) ActionForm(name string, args ...any) gosx.Node {
 		),
 	}, args...)
 	return server.Form(prefixed...)
-}
-
-// TextBlock renders a managed text-layout node for the current route.
-func (ctx *RouteContext) TextBlock(props server.TextBlockProps, args ...any) gosx.Node {
-	if ctx == nil {
-		return server.TextBlock(props, args...)
-	}
-	return ctx.Runtime().TextBlock(props, args...)
-}
-
-// Defer renders fallback content immediately, then streams the resolved node
-// into place once the resolver finishes.
-func (ctx *RouteContext) Defer(fallback gosx.Node, resolve server.DeferredResolver) gosx.Node {
-	return ctx.DeferWithOptions(server.DeferredOptions{}, fallback, resolve)
-}
-
-// DeferWithOptions renders fallback content immediately, then streams the
-// resolved node into place once the resolver finishes.
-func (ctx *RouteContext) DeferWithOptions(opts server.DeferredOptions, fallback gosx.Node, resolve server.DeferredResolver) gosx.Node {
-	if ctx.deferred == nil {
-		ctx.deferred = server.NewDeferredRegistry()
-	}
-	return ctx.deferred.DeferWithOptions(opts, fallback, resolve)
-}
-
-// Head returns the merged metadata/head node tree for the current request.
-func (ctx *RouteContext) Head() gosx.Node {
-	nodes := []gosx.Node{}
-	if metaHead := ctx.metadata.Head(); !metaHead.IsZero() {
-		nodes = append(nodes, metaHead)
-	}
-	nodes = append(nodes, ctx.head...)
-	if len(nodes) == 0 {
-		return gosx.Text("")
-	}
-	return gosx.Fragment(nodes...)
-}
-
-// Title returns the current metadata title or a default fallback.
-func (ctx *RouteContext) Title(fallback string) string {
-	if ctx.metadata.Title != "" {
-		return ctx.metadata.Title
-	}
-	return fallback
 }
 
 // Router builds an http.Handler from a route tree.
@@ -573,27 +374,30 @@ func (r *Router) buildHandler(pattern string, route Route, layouts []LayoutFunc,
 }
 
 func (r *Router) renderPage(w http.ResponseWriter, ctx *RouteContext, layouts []LayoutFunc, node gosx.Node, defaultStatus int) {
-	if ctx.status == 0 {
-		ctx.status = defaultStatus
+	if ctx.StatusCode() == 0 {
+		ctx.SetStatus(defaultStatus)
 	}
-	if ctx.runtime != nil {
-		ctx.AddHead(ctx.runtime.Head())
+	if runtime := ctx.RuntimeState(); runtime != nil {
+		ctx.AddHead(runtime.Head())
 	}
 
 	for i := len(layouts) - 1; i >= 0; i-- {
 		node = layouts[i](ctx, node)
 	}
 
-	if server.ApplyCacheHeaders(ctx.Request, ctx.headers, ctx.status, ctx.cache, r.Revalidator()) {
-		server.WriteNotModified(w, ctx.headers)
+	headers := ctx.Header()
+	status := ctx.StatusCode()
+	cache := ctx.CacheState()
+	if server.ApplyCacheHeaders(ctx.Request, headers, status, cache, r.Revalidator()) {
+		server.WriteNotModified(w, headers)
 		return
 	}
 
 	server.WriteHTML(w, server.HTMLResponse{
-		Status:   ctx.status,
-		Headers:  ctx.headers,
+		Status:   status,
+		Headers:  headers,
 		Node:     node,
-		Deferred: ctx.deferred,
+		Deferred: ctx.DeferredRegistry(),
 	})
 }
 
@@ -640,15 +444,15 @@ func (r *Router) renderError(w http.ResponseWriter, ctx *RouteContext, layouts [
 		ctx = newRouteContext(nil)
 	}
 	server.MarkObservedRequest(ctx.Request, "error", pattern)
-	if ctx.status == 0 {
-		ctx.status = http.StatusInternalServerError
+	if ctx.StatusCode() == 0 {
+		ctx.SetStatus(http.StatusInternalServerError)
 	}
 
 	var node gosx.Node
 	if errorHandler != nil {
 		node = errorHandler(ctx, err)
 	} else {
-		title := http.StatusText(ctx.status)
+		title := http.StatusText(ctx.StatusCode())
 		if title == "" {
 			title = "Server Error"
 		}
@@ -659,7 +463,7 @@ func (r *Router) renderError(w http.ResponseWriter, ctx *RouteContext, layouts [
 	if errorLayout != nil {
 		layouts = append(append([]LayoutFunc(nil), layouts...), errorLayout)
 	}
-	r.renderPage(w, ctx, layouts, node, ctx.status)
+	r.renderPage(w, ctx, layouts, node, ctx.StatusCode())
 }
 
 func extractParams(req *http.Request, pattern string) map[string]string {
@@ -697,31 +501,10 @@ func extractPatternParams(pattern string, requestPath string) map[string]string 
 
 func newRouteContext(req *http.Request) *RouteContext {
 	return &RouteContext{
-		Request:  req,
-		Params:   make(map[string]string),
-		headers:  make(http.Header),
-		deferred: server.NewDeferredRegistry(),
-		cache:    server.NewCacheState(),
+		Request:   req,
+		Params:    make(map[string]string),
+		PageState: *server.NewPageState(),
 	}
-}
-
-func mergeMetadata(base, extra server.Metadata) server.Metadata {
-	if extra.Title != "" {
-		base.Title = extra.Title
-	}
-	if extra.Description != "" {
-		base.Description = extra.Description
-	}
-	if extra.Canonical != "" {
-		base.Canonical = extra.Canonical
-	}
-	if len(extra.Meta) > 0 {
-		base.Meta = append(base.Meta, extra.Meta...)
-	}
-	if len(extra.Links) > 0 {
-		base.Links = append(base.Links, extra.Links...)
-	}
-	return base
 }
 
 func joinPattern(prefix, pattern string) string {
