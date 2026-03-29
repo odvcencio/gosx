@@ -8,6 +8,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -468,27 +469,51 @@ func resolveListenAddr(addr string) string {
 	if port == "" {
 		return addr
 	}
-
-	if host, parsedPort, err := net.SplitHostPort(port); err == nil && parsedPort != "" {
+	if host, parsedPort, ok := explicitListenHostPort(port); ok {
 		return net.JoinHostPort(host, parsedPort)
 	}
-	if strings.HasPrefix(port, ":") {
-		port = strings.TrimPrefix(port, ":")
+	return listenAddrWithPort(addr, port)
+}
+
+func explicitListenHostPort(value string) (string, string, bool) {
+	host, port, err := net.SplitHostPort(strings.TrimSpace(value))
+	if err != nil || strings.TrimSpace(host) == "" || strings.TrimSpace(port) == "" {
+		return "", "", false
 	}
+	return host, port, true
+}
+
+func listenAddrWithPort(addr, port string) string {
+	port = normalizedListenPort(port)
 	if port == "" {
 		return addr
 	}
-
-	if host, _, err := net.SplitHostPort(addr); err == nil {
+	if host, ok := listenAddrHost(addr); ok {
 		return net.JoinHostPort(host, port)
 	}
-	if strings.TrimSpace(addr) == "" {
-		return ":" + port
-	}
-	if !strings.Contains(addr, ":") {
-		return net.JoinHostPort(addr, port)
-	}
 	return ":" + port
+}
+
+func normalizedListenPort(value string) string {
+	return strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(value), ":"))
+}
+
+func listenAddrHost(addr string) (string, bool) {
+	addr = strings.TrimSpace(addr)
+	if addr == "" {
+		return "", false
+	}
+	if host, _, err := net.SplitHostPort(addr); err == nil {
+		return host, true
+	}
+	if strings.HasPrefix(addr, "[") && strings.HasSuffix(addr, "]") {
+		host := strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(addr, "["), "]"))
+		return host, host != ""
+	}
+	if strings.Contains(addr, ":") {
+		return "", false
+	}
+	return addr, true
 }
 
 // HTMLDocument wraps content in a full HTML5 document.
@@ -554,46 +579,61 @@ func (a *App) wrap(handler http.Handler) http.Handler {
 }
 
 func (a *App) renderPage(w http.ResponseWriter, ctx *Context, pattern string, body gosx.Node, defaultTitle string) {
+	ctx = ensurePageContext(ctx)
+	if a.pageNotModified(ctx) {
+		WriteNotModified(w, ctx.headers)
+		return
+	}
+	a.decoratePageContext(ctx)
+
+	WriteHTML(w, HTMLResponse{
+		Status:   ctx.status,
+		Headers:  ctx.headers,
+		Node:     a.renderPageNode(ctx, pattern, body, defaultTitle),
+		Deferred: ctx.deferred,
+	})
+}
+
+func ensurePageContext(ctx *Context) *Context {
 	if ctx == nil {
 		ctx = newContext(nil)
 	}
 	if ctx.status == 0 {
 		ctx.status = http.StatusOK
 	}
+	return ctx
+}
+
+func (a *App) pageNotModified(ctx *Context) bool {
+	return ApplyCacheHeaders(ctx.Request, ctx.headers, ctx.status, ctx.cache, a.Revalidator())
+}
+
+func (a *App) decoratePageContext(ctx *Context) {
 	if ctx.runtime != nil {
 		ctx.AddHead(ctx.runtime.Head())
 	}
 	if a.navigation {
 		ctx.AddHead(NavigationScript())
 	}
+}
 
-	var node gosx.Node
+func (a *App) renderPageNode(ctx *Context, pattern string, body gosx.Node, defaultTitle string) gosx.Node {
+	doc := ctx.documentContext(pattern, defaultTitle, body, a.navigation)
 	switch {
 	case a.document != nil:
-		doc := ctx.documentContext(pattern, defaultTitle, body, a.navigation)
-		node = a.document(doc)
+		return a.document(doc)
 	case a.layout != nil:
-		title := ctx.metadata.Title
-		if title == "" {
-			title = fallbackTitle(pattern, defaultTitle)
-		}
-		node = a.layout(title, body)
+		return a.layout(pageTitle(ctx, pattern, defaultTitle), body)
 	default:
-		doc := ctx.documentContext(pattern, defaultTitle, body, a.navigation)
-		node = gosx.RawHTML(renderDocumentWithContext(doc))
+		return gosx.RawHTML(renderDocumentWithContext(doc))
 	}
+}
 
-	if ApplyCacheHeaders(ctx.Request, ctx.headers, ctx.status, ctx.cache, a.Revalidator()) {
-		WriteNotModified(w, ctx.headers)
-		return
+func pageTitle(ctx *Context, pattern string, defaultTitle string) string {
+	if ctx != nil && strings.TrimSpace(ctx.metadata.Title) != "" {
+		return ctx.metadata.Title
 	}
-
-	WriteHTML(w, HTMLResponse{
-		Status:   ctx.status,
-		Headers:  ctx.headers,
-		Node:     node,
-		Deferred: ctx.deferred,
-	})
+	return fallbackTitle(pattern, defaultTitle)
 }
 
 func (a *App) renderNotFound(w http.ResponseWriter, r *http.Request) {
@@ -740,19 +780,30 @@ func statusWithDefault(status int, payload any) int {
 }
 
 func errorStatus(err error, fallback int, defaultStatus int) int {
-	if err == nil {
-		if fallback != 0 {
-			return fallback
-		}
-		return defaultStatus
+	if status := statusFromError(err); status != 0 {
+		return status
 	}
-	if sc, ok := err.(statusCoder); ok && sc.StatusCode() != 0 {
+	return firstNonZeroStatus(fallback, defaultStatus)
+}
+
+func statusFromError(err error) int {
+	if err == nil {
+		return 0
+	}
+	var sc statusCoder
+	if errors.As(err, &sc) {
 		return sc.StatusCode()
 	}
-	if fallback != 0 {
-		return fallback
+	return 0
+}
+
+func firstNonZeroStatus(values ...int) int {
+	for _, value := range values {
+		if value != 0 {
+			return value
+		}
 	}
-	return defaultStatus
+	return 0
 }
 
 func writeJSON(w http.ResponseWriter, status int, payload any, headers http.Header) {
@@ -793,11 +844,39 @@ func wantsJSON(r *http.Request) bool {
 	if strings.HasPrefix(r.URL.Path, "/api/") {
 		return true
 	}
-	accept := r.Header.Get("Accept")
-	if accept == "" {
-		return false
+	return jsonAcceptedMediaType(r.Header.Get("Accept")) && !htmlAcceptedMediaType(r.Header.Get("Accept"))
+}
+
+func jsonAcceptedMediaType(accept string) bool {
+	for _, mediaType := range acceptMediaTypes(accept) {
+		if mediaType == "application/json" || strings.HasSuffix(mediaType, "+json") {
+			return true
+		}
 	}
-	return strings.Contains(accept, "application/json") && !strings.Contains(accept, "text/html")
+	return false
+}
+
+func htmlAcceptedMediaType(accept string) bool {
+	for _, mediaType := range acceptMediaTypes(accept) {
+		if mediaType == "text/html" || mediaType == "application/xhtml+xml" {
+			return true
+		}
+	}
+	return false
+}
+
+func acceptMediaTypes(accept string) []string {
+	parts := strings.Split(accept, ",")
+	mediaTypes := make([]string, 0, len(parts))
+	for _, part := range parts {
+		mediaType, _, _ := strings.Cut(strings.ToLower(strings.TrimSpace(part)), ";")
+		mediaType = strings.TrimSpace(mediaType)
+		if mediaType == "" {
+			continue
+		}
+		mediaTypes = append(mediaTypes, mediaType)
+	}
+	return mediaTypes
 }
 
 func defaultStatusBody(title string, message string) gosx.Node {
@@ -831,13 +910,20 @@ func fallbackTitle(pattern, defaultTitle string) string {
 
 func normalizePattern(pattern string) string {
 	fields := strings.Fields(pattern)
-	if len(fields) == 1 && fields[0] == "/" {
-		return "/{$}"
-	}
-	if len(fields) == 2 && fields[1] == "/" {
-		return fields[0] + " /{$}"
+	if normalized, ok := normalizedRootPattern(fields); ok {
+		return normalized
 	}
 	return strings.TrimSpace(pattern)
+}
+
+func normalizedRootPattern(fields []string) (string, bool) {
+	if len(fields) == 1 && fields[0] == "/" {
+		return "/{$}", true
+	}
+	if len(fields) == 2 && fields[1] == "/" {
+		return fields[0] + " /{$}", true
+	}
+	return "", false
 }
 
 var pathParamPattern = regexp.MustCompile(`\{([a-zA-Z0-9_]+)\}`)
