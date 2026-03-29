@@ -2,6 +2,8 @@ package server
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -14,6 +16,18 @@ import (
 	"github.com/odvcencio/gosx/buildmanifest"
 	"github.com/odvcencio/gosx/engine"
 )
+
+type wrappedStatusError struct {
+	status int
+}
+
+func (e wrappedStatusError) Error() string {
+	return http.StatusText(e.status)
+}
+
+func (e wrappedStatusError) StatusCode() int {
+	return e.status
+}
 
 func TestAppBasic(t *testing.T) {
 	app := New()
@@ -123,6 +137,89 @@ func TestResolveListenAddrPrefersExplicitPortAddrEnv(t *testing.T) {
 
 	if got := resolveListenAddr(":3000"); got != "127.0.0.1:38177" {
 		t.Fatalf("resolveListenAddr(:3000) = %q, want %q", got, "127.0.0.1:38177")
+	}
+}
+
+func TestResolveListenAddrKeepsInputHostWhenPortEnvHasNoHost(t *testing.T) {
+	prev := os.Getenv("PORT")
+	t.Cleanup(func() {
+		if prev == "" {
+			_ = os.Unsetenv("PORT")
+			return
+		}
+		_ = os.Setenv("PORT", prev)
+	})
+
+	if err := os.Setenv("PORT", ":38177"); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := resolveListenAddr("127.0.0.1:3000"); got != "127.0.0.1:38177" {
+		t.Fatalf("resolveListenAddr(127.0.0.1:3000) = %q, want %q", got, "127.0.0.1:38177")
+	}
+}
+
+func TestResolveListenAddrSupportsBracketedIPv6Host(t *testing.T) {
+	prev := os.Getenv("PORT")
+	t.Cleanup(func() {
+		if prev == "" {
+			_ = os.Unsetenv("PORT")
+			return
+		}
+		_ = os.Setenv("PORT", prev)
+	})
+
+	if err := os.Setenv("PORT", "38177"); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := resolveListenAddr("[::1]"); got != "[::1]:38177" {
+		t.Fatalf("resolveListenAddr([::1]) = %q, want %q", got, "[::1]:38177")
+	}
+}
+
+func TestWantsJSONAcceptsStructuredJSONMediaTypes(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		path   string
+		accept string
+		want   bool
+	}{
+		{name: "problem json", path: "/docs", accept: "application/problem+json", want: true},
+		{name: "vendor json", path: "/docs", accept: "application/vnd.api+json", want: true},
+		{name: "html wins", path: "/docs", accept: "application/problem+json, text/html", want: false},
+		{name: "api path forces json", path: "/api/meta", accept: "text/html", want: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, tc.path, nil)
+			req.Header.Set("Accept", tc.accept)
+			if got := wantsJSON(req); got != tc.want {
+				t.Fatalf("wantsJSON(%q, %q) = %v, want %v", tc.path, tc.accept, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestErrorStatusUsesWrappedStatusCoder(t *testing.T) {
+	err := errors.Join(fmt.Errorf("outer"), fmt.Errorf("wrapped: %w", wrappedStatusError{status: http.StatusTeapot}))
+	if got := errorStatus(err, http.StatusBadRequest, http.StatusInternalServerError); got != http.StatusTeapot {
+		t.Fatalf("errorStatus(wrapped status coder) = %d, want %d", got, http.StatusTeapot)
+	}
+}
+
+func TestNormalizePatternCanonicalizesRootRoutes(t *testing.T) {
+	for _, tc := range []struct {
+		pattern string
+		want    string
+	}{
+		{pattern: "/", want: "/{$}"},
+		{pattern: "GET /", want: "GET /{$}"},
+		{pattern: "  POST   /  ", want: "POST /{$}"},
+		{pattern: "GET /docs", want: "GET /docs"},
+	} {
+		if got := normalizePattern(tc.pattern); got != tc.want {
+			t.Fatalf("normalizePattern(%q) = %q, want %q", tc.pattern, got, tc.want)
+		}
 	}
 }
 
@@ -1298,6 +1395,57 @@ func TestAppPageCacheHeadersAndRevalidation(t *testing.T) {
 	}
 	if nextETag := invalidatedRes.Header().Get("ETag"); nextETag == "" || nextETag == etag {
 		t.Fatalf("expected new etag after revalidate, got %q", nextETag)
+	}
+}
+
+func TestAppPageNotModifiedSkipsDocumentRender(t *testing.T) {
+	app := New()
+	documentRenders := 0
+	app.SetDocument(func(doc *DocumentContext) gosx.Node {
+		documentRenders++
+		return gosx.El("html",
+			DocumentAttrs(doc),
+			gosx.El("head",
+				gosx.El("title", gosx.Text(doc.Title)),
+				HeadOutlet(doc.Head),
+			),
+			gosx.El("body",
+				DocumentBodyAttrs(doc),
+				doc.Body,
+			),
+		)
+	})
+	app.Page("GET /cached-doc", func(ctx *Context) gosx.Node {
+		ctx.CachePublic(time.Minute)
+		ctx.CacheTag("cached-doc")
+		return gosx.Text("cached")
+	})
+
+	handler := app.Build()
+
+	firstReq := httptest.NewRequest(http.MethodGet, "/cached-doc", nil)
+	firstRes := httptest.NewRecorder()
+	handler.ServeHTTP(firstRes, firstReq)
+	if firstRes.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", firstRes.Code, firstRes.Body.String())
+	}
+	if documentRenders != 1 {
+		t.Fatalf("expected first request to render document once, got %d", documentRenders)
+	}
+	etag := firstRes.Header().Get("ETag")
+	if etag == "" {
+		t.Fatalf("expected etag in %v", firstRes.Header())
+	}
+
+	notModifiedReq := httptest.NewRequest(http.MethodGet, "/cached-doc", nil)
+	notModifiedReq.Header.Set("If-None-Match", etag)
+	notModifiedRes := httptest.NewRecorder()
+	handler.ServeHTTP(notModifiedRes, notModifiedReq)
+	if notModifiedRes.Code != http.StatusNotModified {
+		t.Fatalf("expected 304, got %d: %s", notModifiedRes.Code, notModifiedRes.Body.String())
+	}
+	if documentRenders != 1 {
+		t.Fatalf("expected conditional request to skip document render, got %d renders", documentRenders)
 	}
 }
 
