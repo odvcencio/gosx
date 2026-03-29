@@ -1246,6 +1246,53 @@ test("bootstrap hydrates, delegates click events, and disposes islands", async (
   assert.equal(env.consoleLogs.error.length, 0);
 });
 
+test("bootstrap forwards click target value to delegated island handlers", async () => {
+  const wrapper = new FakeElement("div", null);
+  const componentRoot = new FakeElement("div", null);
+  const button = new FakeElement("button", null);
+
+  wrapper.id = "gosx-island-value";
+  button.setAttribute("data-gosx-on-click", "selectFile");
+  button.value = "schema.arb";
+  componentRoot.appendChild(button);
+  wrapper.appendChild(componentRoot);
+
+  const env = createContext({
+    elements: [wrapper],
+    fetchRoutes: {
+      "/runtime.wasm": { bytes: [0, 97, 115, 109] },
+      "/selector.json": { text: '{"name":"Selector"}' },
+    },
+    manifest: {
+      runtime: { path: "/runtime.wasm" },
+      islands: [
+        {
+          id: "gosx-island-value",
+          component: "Selector",
+          props: {},
+          programRef: "/selector.json",
+        },
+      ],
+    },
+    onAction: () => 1,
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const clickEntries = wrapper.listeners.get("click") || [];
+  assert.equal(clickEntries.length, 1);
+  clickEntries[0].listener({
+    type: "click",
+    target: button,
+    preventDefault() {},
+  });
+
+  assert.deepEqual(env.actionCalls, [
+    ["gosx-island-value", "selectFile", '{"type":"click","value":"schema.arb"}'],
+  ]);
+});
+
 test("bootstrap exposes a browser text measurement helper", () => {
   const env = createContext({});
 
@@ -1723,6 +1770,10 @@ test("bootstrap exposes unified environment, document, and presentation state", 
   const fileCSS = env.document.createElement("style");
   fileCSS.setAttribute("data-gosx-file-css", "docs.css");
   fileCSS.setAttribute("data-gosx-file-css-scope", "docs-scope");
+  fileCSS.setAttribute("data-gosx-css-layer", "page");
+  fileCSS.setAttribute("data-gosx-css-owner", "route-file");
+  fileCSS.setAttribute("data-gosx-css-source", "docs.css");
+  fileCSS.setAttribute("data-gosx-css-order", "0");
   appendManagedHead(env.document, [contract, fileCSS]);
 
   runScript(bootstrapSource, env.context, "bootstrap.js");
@@ -1745,6 +1796,8 @@ test("bootstrap exposes unified environment, document, and presentation state", 
   assert.equal(documentState.enhancement.layer, "bootstrap");
   assert.equal(documentState.enhancement.navigation, true);
   assert.equal(documentState.css.owned[0].file, "docs.css");
+  assert.equal(documentState.css.owned[0].layer, "page");
+  assert.equal(documentState.css.owned.some((entry) => entry.layer === "runtime"), true);
   assert.equal(env.document.documentElement.getAttribute("data-gosx-document-id"), "gosx-doc-docs-home");
   assert.equal(env.document.body.getAttribute("data-gosx-enhancement-layer"), "bootstrap");
 

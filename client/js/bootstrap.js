@@ -1791,6 +1791,9 @@
 
     const style = document.createElement("style");
     style.setAttribute(TEXT_LAYOUT_STYLE_ATTR, "true");
+    style.setAttribute("data-gosx-css-layer", "runtime");
+    style.setAttribute("data-gosx-css-owner", "gosx-bootstrap");
+    style.setAttribute("data-gosx-css-source", "gosx-runtime");
     style.textContent = [
       '[data-gosx-scene3d-mounted="true"] {',
       '  position: relative;',
@@ -2770,8 +2773,16 @@
       if (tagName === "STYLE") {
         const file = String(node.getAttribute && node.getAttribute("data-gosx-file-css") || "");
         const scope = String(node.getAttribute && node.getAttribute("data-gosx-file-css-scope") || "");
+        const layer = String(node.getAttribute && node.getAttribute("data-gosx-css-layer") || "");
+        const owner = String(node.getAttribute && node.getAttribute("data-gosx-css-owner") || "");
+        const source = String(node.getAttribute && node.getAttribute("data-gosx-css-source") || file);
+        const order = gosxNumber(node.getAttribute && node.getAttribute("data-gosx-css-order"), ownedCSS.length);
         ownedCSS.push({
           file,
+          layer,
+          owner,
+          source,
+          order,
           scope,
         });
         continue;
@@ -2788,6 +2799,26 @@
           inline: !node.getAttribute || !node.getAttribute("src"),
         });
       }
+    }
+
+    for (const node of gosxArrayFrom(document.head && document.head.childNodes)) {
+      if (!node || node.nodeType !== 1) {
+        continue;
+      }
+      if (String(node.tagName || "").toUpperCase() !== "STYLE") {
+        continue;
+      }
+      if (String(node.getAttribute && node.getAttribute("data-gosx-css-layer") || "") !== "runtime") {
+        continue;
+      }
+      ownedCSS.push({
+        file: "",
+        layer: "runtime",
+        owner: String(node.getAttribute && node.getAttribute("data-gosx-css-owner") || ""),
+        source: String(node.getAttribute && node.getAttribute("data-gosx-css-source") || "gosx-runtime"),
+        order: ownedCSS.length,
+        scope: "",
+      });
     }
 
     return {

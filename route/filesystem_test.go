@@ -462,6 +462,7 @@ func Page() Node {
 
 func TestScanDirBuildsNestedLayoutsGroupsAndNearestErrorPages(t *testing.T) {
 	root := t.TempDir()
+	writeRouteFile(t, root, "global.css", `html { color: darkslateblue; }`)
 	writeRouteFile(t, root, "layout.gsx", `package docs
 
 func Layout() Node {
@@ -630,6 +631,7 @@ func Layout() Node {
 
 func TestRouterAddDirAutomaticallyIncludesSidecarCSSForLayoutsAndPages(t *testing.T) {
 	root := t.TempDir()
+	writeRouteFile(t, root, "global.css", `html { color: darkslateblue; }`)
 	writeRouteFile(t, root, "layout.gsx", `package docs
 
 func Layout() Node {
@@ -669,10 +671,19 @@ func Page() Node {
 	docsScope := fileCSSScopeID(filepath.Join(root, "docs", "layout.css"))
 	pageScope := fileCSSScopeID(filepath.Join(root, "docs", "page.css"))
 	for _, snippet := range []string{
+		`data-gosx-css-layer="global"`,
+		`data-gosx-css-layer="layout"`,
+		`data-gosx-css-layer="page"`,
+		`data-gosx-css-owner="route-file"`,
+		`data-gosx-css-source="global.css"`,
+		`data-gosx-css-source="layout.css"`,
+		`data-gosx-css-source="docs/layout.css"`,
+		`data-gosx-css-source="docs/page.css"`,
 		`data-gosx-file-css="layout.css"`,
 		`data-gosx-file-css-scope="` + rootScope + `"`,
 		`data-gosx-file-css-scope="` + docsScope + `"`,
 		`data-gosx-file-css-scope="` + pageScope + `"`,
+		`html { color: darkslateblue; }`,
 		`:where([data-gosx-s="` + rootScope + `"]) .root, .root:where([data-gosx-s="` + rootScope + `"]) { background: linen; }`,
 		`:where([data-gosx-s="` + docsScope + `"]) .docs-shell, .docs-shell:where([data-gosx-s="` + docsScope + `"]) { border: 1px solid tan; }`,
 		`:where([data-gosx-s="` + pageScope + `"]) .page, .page:where([data-gosx-s="` + pageScope + `"]) { color: sienna; }`,
@@ -684,9 +695,10 @@ func Page() Node {
 			t.Fatalf("expected %q in %q", snippet, body)
 		}
 	}
-	if !(strings.Index(body, rootScope) < strings.Index(body, docsScope) &&
+	if !(strings.Index(body, `data-gosx-css-source="global.css"`) < strings.Index(body, rootScope) &&
+		strings.Index(body, rootScope) < strings.Index(body, docsScope) &&
 		strings.Index(body, docsScope) < strings.Index(body, pageScope)) {
-		t.Fatalf("expected outer layout CSS before nested layout CSS before page CSS in %q", body)
+		t.Fatalf("expected global CSS before outer layout CSS before nested layout CSS before page CSS in %q", body)
 	}
 }
 
