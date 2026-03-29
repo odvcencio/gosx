@@ -4640,7 +4640,11 @@ test("navigation runtime swaps managed head/body and calls page lifecycle hooks"
   assert.equal(env.document.activeElement.getAttribute("tabindex"), "-1");
   assert.equal(env.document.dispatchedEvents.at(-1).detail.focusTargetId, "new-page");
   assert.equal(env.document.body.childNodes.at(-1).textContent, "Docs");
-  assert.deepEqual(env.scrollCalls, [[0, 0]]);
+  assert.equal(env.scrollCalls.length, 1);
+  assert.equal(env.scrollCalls[0].length, 1);
+  assert.equal(env.scrollCalls[0][0].top, 0);
+  assert.equal(env.scrollCalls[0][0].left, 0);
+  assert.equal(env.scrollCalls[0][0].behavior, "instant");
 });
 
 test("navigation runtime marks current and ancestor links and exposes navigation state", async () => {
@@ -4916,6 +4920,8 @@ test("navigation runtime honors explicit a11y markers and hash targets", async (
   assert.equal(env.document.activeElement, renderedTarget);
   assert.equal(renderedTarget.getAttribute("tabindex"), "-1");
   assert.equal(renderedTarget.scrollIntoViewCalls.length, 1);
+  assert.equal(renderedTarget.scrollIntoViewCalls[0].length, 1);
+  assert.equal(renderedTarget.scrollIntoViewCalls[0][0].behavior, "instant");
   assert.deepEqual(env.scrollCalls, []);
   assert.equal(env.document.body.childNodes.at(-1).textContent, "Accessibility docs");
   assert.equal(env.document.dispatchedEvents.at(-1).detail.announcement, "Accessibility docs");

@@ -1,7 +1,9 @@
 package sync
 
 import (
+	"bytes"
 	"encoding/hex"
+	"sort"
 )
 
 // State tracks per-peer sync progress.
@@ -56,7 +58,7 @@ func (s *State) NoteHeads(heads [][32]byte) {
 		return
 	}
 	s.Initialized = true
-	s.LastSentHeads = cloneHeads(heads)
+	s.LastSentHeads = normalizeHeads(heads)
 }
 
 func (s *State) ShouldSend(heads [][32]byte, hasChanges bool) bool {
@@ -66,19 +68,23 @@ func (s *State) ShouldSend(heads [][32]byte, hasChanges bool) bool {
 	if !s.Initialized || hasChanges {
 		return true
 	}
-	if len(s.LastSentHeads) != len(heads) {
+	current := normalizeHeads(heads)
+	if len(s.LastSentHeads) != len(current) {
 		return true
 	}
-	for i := range heads {
-		if s.LastSentHeads[i] != heads[i] {
+	for i := range current {
+		if s.LastSentHeads[i] != current[i] {
 			return true
 		}
 	}
 	return false
 }
 
-func cloneHeads(heads [][32]byte) [][32]byte {
+func normalizeHeads(heads [][32]byte) [][32]byte {
 	out := make([][32]byte, len(heads))
 	copy(out, heads)
+	sort.Slice(out, func(i, j int) bool {
+		return bytes.Compare(out[i][:], out[j][:]) < 0
+	})
 	return out
 }

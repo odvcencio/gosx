@@ -54,6 +54,36 @@ func Counter() Node {
 	t.Logf("Signals extracted: %+v", sigs)
 }
 
+func TestBodyAnalyzerInfersGoLiteralTypeHints(t *testing.T) {
+	source := []byte("package main\n\n//gosx:island\nfunc Literals() Node {\n\thexValue := signal.New(0x2a)\n\tratio := signal.New(6.02e23)\n\traw := signal.New(`hello`)\n\titems := signal.New([]string{\"a\", \"b\"})\n\tfixed := signal.New([2]int{1, 2})\n\tbuilt := signal.New(make([]int, 0, 4))\n\n\treturn <div>{hexValue}{ratio}{raw}{items}{fixed}{built}</div>\n}\n")
+	prog, err := compileGSX(t, source)
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+
+	scope := prog.Components[0].Scope
+	if scope == nil {
+		t.Fatal("expected component scope")
+	}
+
+	want := map[string]string{
+		"hexValue": "int",
+		"ratio":    "float",
+		"raw":      "string",
+		"items":    "array",
+		"fixed":    "array",
+		"built":    "array",
+	}
+	if len(scope.Signals) != len(want) {
+		t.Fatalf("expected %d signals, got %d", len(want), len(scope.Signals))
+	}
+	for _, sig := range scope.Signals {
+		if got := sig.TypeHint; got != want[sig.Local] {
+			t.Fatalf("signal %s type hint = %q, want %q", sig.Local, got, want[sig.Local])
+		}
+	}
+}
+
 func TestBodyAnalyzerSharedSignals(t *testing.T) {
 	source := []byte(`package main
 

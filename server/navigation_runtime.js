@@ -1249,9 +1249,9 @@
       return;
     }
     if (a11y.hashTarget && typeof a11y.hashTarget.scrollIntoView === "function") {
-      a11y.hashTarget.scrollIntoView();
+      a11y.hashTarget.scrollIntoView({ behavior: "instant" });
     } else if (typeof window.scrollTo === "function") {
-      window.scrollTo(0, 0);
+      window.scrollTo({ top: 0, left: 0, behavior: "instant" });
     }
   }
 
