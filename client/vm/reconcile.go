@@ -31,8 +31,21 @@ func ReconcileTrees(prev, next *ResolvedTree, staticMask []bool) []PatchOp {
 }
 
 type keyedChildIndex struct {
-	position int
-	nodeIdx  int
+	nodeIdx int
+}
+
+type keyedNextChild struct {
+	elementIdx int
+	nodeIdx    int
+	key        string
+}
+
+type keyedChildrenPlan struct {
+	prevByKey    map[string]keyedChildIndex
+	nextKeys     map[string]struct{}
+	desiredOrder []string
+	currentOrder []string
+	nextChildren []keyedNextChild
 }
 
 func reconcileNodePair(ops *[]PatchOp, prev, next *ResolvedTree, prevIdx, nextIdx int, path string, staticMask []bool) {
@@ -118,74 +131,80 @@ func childrenAreFullyKeyed(tree *ResolvedTree, node *ResolvedNode) bool {
 }
 
 func reconcileKeyedChildren(ops *[]PatchOp, prev, next *ResolvedTree, pn, nn *ResolvedNode, path string, staticMask []bool) {
-	prevByKey, prevKeysUnique := buildPrevKeyIndex(prev, pn)
-	if !prevKeysUnique {
+	plan, ok := buildKeyedChildrenPlan(prev, next, pn, nn)
+	if !ok {
 		reconcilePositionalChildren(ops, prev, next, pn, nn, path, staticMask)
 		return
 	}
-	nextKeys := make(map[string]bool, len(nn.Children))
-	desiredOrder := make([]string, 0, len(nn.Children))
 
-	for _, childIdx := range nn.Children {
+	removeMissingKeyedChildren(ops, prev, pn, plan.nextKeys, path)
+	plan.currentOrder = appendMissingKeyedChildren(ops, next, plan, path)
+	appendKeyedReorderOp(ops, path, plan.currentOrder, plan.desiredOrder)
+	reconcileExistingKeyedChildren(ops, prev, next, plan, path, staticMask)
+}
+
+func buildKeyedChildrenPlan(prev, next *ResolvedTree, pn, nn *ResolvedNode) (keyedChildrenPlan, bool) {
+	prevByKey, prevKeysUnique := buildPrevKeyIndex(prev, pn)
+	if !prevKeysUnique {
+		return keyedChildrenPlan{}, false
+	}
+	nextChildren, nextKeys, desiredOrder, nextKeysUnique := collectNextKeyedChildren(next, nn)
+	if !nextKeysUnique {
+		return keyedChildrenPlan{}, false
+	}
+	currentOrder, prevKeysComplete := currentKeyOrder(prev, pn, nextKeys)
+	if !prevKeysComplete {
+		return keyedChildrenPlan{}, false
+	}
+	return keyedChildrenPlan{
+		prevByKey:    prevByKey,
+		nextKeys:     nextKeys,
+		desiredOrder: desiredOrder,
+		currentOrder: currentOrder,
+		nextChildren: nextChildren,
+	}, true
+}
+
+func collectNextKeyedChildren(next *ResolvedTree, node *ResolvedNode) ([]keyedNextChild, map[string]struct{}, []string, bool) {
+	children := make([]keyedNextChild, 0, len(node.Children))
+	keys := make(map[string]struct{}, len(node.Children))
+	order := make([]string, 0, len(node.Children))
+	for elemIdx, childIdx := range node.Children {
 		child := resolvedNodeAt(next, childIdx)
 		if child == nil || child.Key == "" {
-			reconcilePositionalChildren(ops, prev, next, pn, nn, path, staticMask)
-			return
+			return nil, nil, nil, false
 		}
-		if nextKeys[child.Key] {
-			reconcilePositionalChildren(ops, prev, next, pn, nn, path, staticMask)
-			return
+		if _, exists := keys[child.Key]; exists {
+			return nil, nil, nil, false
 		}
-		nextKeys[child.Key] = true
-		desiredOrder = append(desiredOrder, child.Key)
+		keys[child.Key] = struct{}{}
+		children = append(children, keyedNextChild{
+			elementIdx: elemIdx,
+			nodeIdx:    childIdx,
+			key:        child.Key,
+		})
+		order = append(order, child.Key)
 	}
+	return children, keys, order, true
+}
 
-	currentOrder := make([]string, 0, len(pn.Children))
-	for _, childIdx := range pn.Children {
+func currentKeyOrder(prev *ResolvedTree, node *ResolvedNode, nextKeys map[string]struct{}) ([]string, bool) {
+	order := make([]string, 0, len(node.Children))
+	for _, childIdx := range node.Children {
 		child := resolvedNodeAt(prev, childIdx)
 		if child == nil || child.Key == "" {
-			reconcilePositionalChildren(ops, prev, next, pn, nn, path, staticMask)
-			return
+			return nil, false
 		}
-		if nextKeys[child.Key] {
-			currentOrder = append(currentOrder, child.Key)
+		if _, ok := nextKeys[child.Key]; ok {
+			order = append(order, child.Key)
 		}
 	}
-
-	removeMissingKeyedChildren(ops, prev, pn, nextKeys, path)
-
-	for elemIdx, childIdx := range nn.Children {
-		child := resolvedNodeAt(next, childIdx)
-		if child == nil {
-			continue
-		}
-		if _, ok := prevByKey[child.Key]; ok {
-			continue
-		}
-		appendCreateSubtree(ops, next, childIdx, path, elemIdx)
-		currentOrder = insertKey(currentOrder, elemIdx, child.Key)
-	}
-
-	if order := reorderIndices(currentOrder, desiredOrder); order != nil {
-		*ops = append(*ops, PatchOp{Kind: PatchReorder, Path: path, Children: order})
-	}
-
-	for elemIdx, childIdx := range nn.Children {
-		child := resolvedNodeAt(next, childIdx)
-		if child == nil {
-			continue
-		}
-		prevChild, ok := prevByKey[child.Key]
-		if !ok {
-			continue
-		}
-		reconcileNodePair(ops, prev, next, prevChild.nodeIdx, childIdx, childPath(path, elemIdx), staticMask)
-	}
+	return order, true
 }
 
 func buildPrevKeyIndex(prev *ResolvedTree, node *ResolvedNode) (map[string]keyedChildIndex, bool) {
 	byKey := make(map[string]keyedChildIndex, len(node.Children))
-	for i, childIdx := range node.Children {
+	for _, childIdx := range node.Children {
 		child := resolvedNodeAt(prev, childIdx)
 		if child == nil || child.Key == "" {
 			continue
@@ -193,21 +212,49 @@ func buildPrevKeyIndex(prev *ResolvedTree, node *ResolvedNode) (map[string]keyed
 		if _, exists := byKey[child.Key]; exists {
 			return nil, false
 		}
-		byKey[child.Key] = keyedChildIndex{position: i, nodeIdx: childIdx}
+		byKey[child.Key] = keyedChildIndex{nodeIdx: childIdx}
 	}
 	return byKey, true
 }
 
-func removeMissingKeyedChildren(ops *[]PatchOp, prev *ResolvedTree, node *ResolvedNode, nextKeys map[string]bool, path string) {
+func removeMissingKeyedChildren(ops *[]PatchOp, prev *ResolvedTree, node *ResolvedNode, nextKeys map[string]struct{}, path string) {
 	for i := len(node.Children) - 1; i >= 0; i-- {
 		child := resolvedNodeAt(prev, node.Children[i])
 		if child == nil || child.Key == "" {
 			continue
 		}
-		if nextKeys[child.Key] {
+		if _, ok := nextKeys[child.Key]; ok {
 			continue
 		}
 		appendRemoveChild(ops, childPath(path, i))
+	}
+}
+
+func appendMissingKeyedChildren(ops *[]PatchOp, next *ResolvedTree, plan keyedChildrenPlan, path string) []string {
+	currentOrder := plan.currentOrder
+	for _, child := range plan.nextChildren {
+		if _, exists := plan.prevByKey[child.key]; exists {
+			continue
+		}
+		appendCreateSubtree(ops, next, child.nodeIdx, path, child.elementIdx)
+		currentOrder = insertKey(currentOrder, child.elementIdx, child.key)
+	}
+	return currentOrder
+}
+
+func appendKeyedReorderOp(ops *[]PatchOp, path string, currentOrder, desiredOrder []string) {
+	if order := reorderIndices(currentOrder, desiredOrder); order != nil {
+		*ops = append(*ops, PatchOp{Kind: PatchReorder, Path: path, Children: order})
+	}
+}
+
+func reconcileExistingKeyedChildren(ops *[]PatchOp, prev, next *ResolvedTree, plan keyedChildrenPlan, path string, staticMask []bool) {
+	for _, child := range plan.nextChildren {
+		prevChild, ok := plan.prevByKey[child.key]
+		if !ok {
+			continue
+		}
+		reconcileNodePair(ops, prev, next, prevChild.nodeIdx, child.nodeIdx, childPath(path, child.elementIdx), staticMask)
 	}
 }
 

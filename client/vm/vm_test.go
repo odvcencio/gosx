@@ -807,3 +807,77 @@ func TestVMNewOpcodesMissingOperands(t *testing.T) {
 		vm.Eval(0)
 	}
 }
+
+func TestValueEachEntriesObjectOrderIsStable(t *testing.T) {
+	entries := valueEachEntries(ObjectVal(map[string]Value{
+		"zeta":  StringVal("z"),
+		"alpha": StringVal("a"),
+		"mu":    StringVal("m"),
+	}))
+	if len(entries) != 3 {
+		t.Fatalf("expected 3 entries, got %d", len(entries))
+	}
+	if entries[0].Key.Str != "alpha" || entries[1].Key.Str != "mu" || entries[2].Key.Str != "zeta" {
+		t.Fatalf("expected sorted object keys, got %+v", entries)
+	}
+}
+
+func TestResolveForEachRestoresScopedProps(t *testing.T) {
+	prog := &program.Program{
+		Name: "ForEachRestore",
+		Nodes: []program.Node{
+			{
+				Kind: program.NodeForEach,
+				Expr: 0,
+				Attrs: []program.Attr{
+					{Kind: program.AttrStatic, Name: "as", Value: "row"},
+					{Kind: program.AttrStatic, Name: "index", Value: "rowIndex"},
+				},
+				Children: []program.NodeID{1},
+			},
+			{Kind: program.NodeExpr, Expr: 1},
+		},
+		Root: 0,
+		Exprs: []program.Expr{
+			{Op: program.OpPropGet, Value: "items", Type: program.TypeAny},
+			{Op: program.OpPropGet, Value: "row", Type: program.TypeString},
+		},
+	}
+
+	vm := NewVM(prog, map[string]Value{
+		"items":    ArrayVal([]Value{StringVal("a"), StringVal("b")}),
+		"_item":    StringVal("outer-item"),
+		"_index":   IntVal(99),
+		"_key":     StringVal("outer-key"),
+		"row":      StringVal("outer-row"),
+		"rowKey":   StringVal("outer-row-key"),
+		"rowIndex": IntVal(42),
+	})
+
+	tree := &ResolvedTree{}
+	out := vm.resolveForEach(tree, 0, prog.Nodes[0])
+	if len(out) != 2 || len(tree.Nodes) != 2 {
+		t.Fatalf("expected 2 resolved nodes from for-each, got out=%v nodes=%d", out, len(tree.Nodes))
+	}
+	if tree.Nodes[out[0]].Text != "a" || tree.Nodes[out[1]].Text != "b" {
+		t.Fatalf("expected resolved for-each children to be [a b], got %q and %q", tree.Nodes[out[0]].Text, tree.Nodes[out[1]].Text)
+	}
+	if vm.props["_item"].Str != "outer-item" {
+		t.Fatalf("expected _item restored, got %q", vm.props["_item"].Str)
+	}
+	if vm.props["_index"].Num != 99 {
+		t.Fatalf("expected _index restored, got %f", vm.props["_index"].Num)
+	}
+	if vm.props["_key"].Str != "outer-key" {
+		t.Fatalf("expected _key restored, got %q", vm.props["_key"].Str)
+	}
+	if vm.props["row"].Str != "outer-row" {
+		t.Fatalf("expected row restored, got %q", vm.props["row"].Str)
+	}
+	if vm.props["rowKey"].Str != "outer-row-key" {
+		t.Fatalf("expected rowKey restored, got %q", vm.props["rowKey"].Str)
+	}
+	if vm.props["rowIndex"].Num != 42 {
+		t.Fatalf("expected rowIndex restored, got %f", vm.props["rowIndex"].Num)
+	}
+}

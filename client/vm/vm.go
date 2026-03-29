@@ -23,6 +23,12 @@ type iterationContext struct {
 	present map[string]bool
 }
 
+type forEachScope struct {
+	itemName  string
+	indexName string
+	keyName   string
+}
+
 // SetEventData sets the current event context for OpEventGet evaluation.
 func (vm *VM) SetEventData(data map[string]string) {
 	vm.eventData = data
@@ -652,89 +658,126 @@ type eachEntry struct {
 func (vm *VM) resolveForEach(tree *ResolvedTree, source int, node program.Node) []int {
 	entries := valueEachEntries(vm.Eval(node.Expr))
 	if len(entries) == 0 {
-		if fallbackID, ok := forEachFallbackExpr(node.Attrs); ok {
-			text := vm.Eval(fallbackID).String()
-			if text == "" {
-				return nil
-			}
-			idx := len(tree.Nodes)
-			tree.Nodes = append(tree.Nodes, ResolvedNode{
-				Source:    source,
-				HasSource: true,
-				Text:      text,
-			})
-			return []int{idx}
-		}
-		return nil
+		return vm.resolveForEachFallback(tree, source, node.Attrs)
 	}
 
-	itemName := forEachStaticAttr(node.Attrs, "as")
-	if itemName == "" {
-		itemName = "item"
-	}
-	indexName := forEachStaticAttr(node.Attrs, "index")
-	keyName := itemName + "Key"
-
-	names := []string{"_item", "_index", "_key", itemName, keyName}
-	if indexName != "" {
-		names = append(names, indexName)
-	}
-	restore := vm.captureProps(names)
+	scope := resolveForEachScope(node.Attrs)
+	restore := vm.captureProps(scope.propNames())
 	defer vm.restoreProps(restore)
 
 	var out []int
 	for _, entry := range entries {
-		vm.props["_item"] = entry.Item
-		vm.props["_index"] = IntVal(entry.Index)
-		vm.props[itemName] = entry.Item
-		if indexName != "" {
-			vm.props[indexName] = IntVal(entry.Index)
-		}
-		if entry.HasKey {
-			vm.props["_key"] = entry.Key
-			vm.props[keyName] = entry.Key
-		} else {
-			delete(vm.props, "_key")
-			delete(vm.props, keyName)
-		}
-		for _, child := range node.Children {
-			out = append(out, vm.resolveNodeRefs(tree, child)...)
-		}
+		vm.bindForEachEntry(scope, entry)
+		out = vm.appendForEachChildren(out, tree, node.Children)
 	}
 	return out
 }
 
 func valueEachEntries(value Value) []eachEntry {
 	if value.Items != nil {
-		out := make([]eachEntry, 0, len(value.Items))
-		for i, item := range value.Items {
-			out = append(out, eachEntry{
-				Index:  i,
-				Key:    IntVal(i),
-				Item:   item,
-				HasKey: true,
-			})
-		}
-		return out
+		return arrayEachEntries(value.Items)
 	}
 	if value.Fields != nil {
-		keys := make([]string, 0, len(value.Fields))
-		for key := range value.Fields {
-			keys = append(keys, key)
-		}
-		sort.Strings(keys)
-		out := make([]eachEntry, 0, len(keys))
-		for i, key := range keys {
-			out = append(out, eachEntry{
-				Index:  i,
-				Key:    StringVal(key),
-				Item:   value.Fields[key],
-				HasKey: true,
-			})
-		}
-		return out
+		return objectEachEntries(value.Fields)
 	}
 	return nil
+}
+
+func arrayEachEntries(items []Value) []eachEntry {
+	out := make([]eachEntry, 0, len(items))
+	for i, item := range items {
+		out = append(out, eachEntry{
+			Index:  i,
+			Key:    IntVal(i),
+			Item:   item,
+			HasKey: true,
+		})
+	}
+	return out
+}
+
+func objectEachEntries(fields map[string]Value) []eachEntry {
+	keys := sortedEachFieldKeys(fields)
+	out := make([]eachEntry, 0, len(keys))
+	for i, key := range keys {
+		out = append(out, eachEntry{
+			Index:  i,
+			Key:    StringVal(key),
+			Item:   fields[key],
+			HasKey: true,
+		})
+	}
+	return out
+}
+
+func sortedEachFieldKeys(fields map[string]Value) []string {
+	keys := make([]string, 0, len(fields))
+	for key := range fields {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func resolveForEachScope(attrs []program.Attr) forEachScope {
+	itemName := forEachStaticAttr(attrs, "as")
+	if itemName == "" {
+		itemName = "item"
+	}
+	return forEachScope{
+		itemName:  itemName,
+		indexName: forEachStaticAttr(attrs, "index"),
+		keyName:   itemName + "Key",
+	}
+}
+
+func (scope forEachScope) propNames() []string {
+	names := []string{"_item", "_index", "_key", scope.itemName, scope.keyName}
+	if scope.indexName != "" {
+		names = append(names, scope.indexName)
+	}
+	return names
+}
+
+func (vm *VM) bindForEachEntry(scope forEachScope, entry eachEntry) {
+	vm.props["_item"] = entry.Item
+	vm.props["_index"] = IntVal(entry.Index)
+	vm.props[scope.itemName] = entry.Item
+	if scope.indexName != "" {
+		vm.props[scope.indexName] = IntVal(entry.Index)
+	}
+	if entry.HasKey {
+		vm.props["_key"] = entry.Key
+		vm.props[scope.keyName] = entry.Key
+		return
+	}
+	delete(vm.props, "_key")
+	delete(vm.props, scope.keyName)
+}
+
+func (vm *VM) appendForEachChildren(out []int, tree *ResolvedTree, children []program.NodeID) []int {
+	for _, child := range children {
+		out = append(out, vm.resolveNodeRefs(tree, child)...)
+	}
+	return out
+}
+
+func (vm *VM) resolveForEachFallback(tree *ResolvedTree, source int, attrs []program.Attr) []int {
+	fallbackID, ok := forEachFallbackExpr(attrs)
+	if !ok {
+		return nil
+	}
+	text := vm.Eval(fallbackID).String()
+	if text == "" {
+		return nil
+	}
+	idx := len(tree.Nodes)
+	tree.Nodes = append(tree.Nodes, ResolvedNode{
+		Source:    source,
+		HasSource: true,
+		Text:      text,
+	})
+	return []int{idx}
 }
 
 func (vm *VM) captureProps(names []string) iterationContext {
