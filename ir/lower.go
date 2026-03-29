@@ -410,10 +410,26 @@ func (l *lowerer) extractReturnExpr(funcLit *gotreesitter.Node) string {
 
 // extractStatements gets the source text of each statement in a block.
 func (l *lowerer) extractStatements(bodyNode *gotreesitter.Node) []string {
+	if bodyNode == nil {
+		return nil
+	}
+	if l.nodeType(bodyNode) == "block" {
+		for i := 0; i < int(bodyNode.NamedChildCount()); i++ {
+			child := bodyNode.NamedChild(i)
+			if child != nil && l.nodeType(child) == "statement_list" {
+				bodyNode = child
+				break
+			}
+		}
+	}
 	var stmts []string
 	for i := 0; i < int(bodyNode.NamedChildCount()); i++ {
 		child := bodyNode.NamedChild(i)
-		stmts = append(stmts, l.text(child))
+		text := strings.TrimSpace(l.text(child))
+		if text == "" {
+			continue
+		}
+		stmts = append(stmts, text)
 	}
 	return stmts
 }
