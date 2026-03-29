@@ -53,3 +53,18 @@ func TestDocumentStylesheetRendersOwnershipMetadata(t *testing.T) {
 		}
 	}
 }
+
+func TestDocumentStylesheetDefaultsOwnerFromLayer(t *testing.T) {
+	html := gosx.RenderHTML(DocumentStylesheet("styles/site.css", StylesheetOptions{
+		Layer: CSSLayerPage,
+	}))
+	for _, snippet := range []string{
+		`data-gosx-css-layer="page"`,
+		`data-gosx-css-owner="document-page"`,
+		`data-gosx-css-source="/styles/site.css"`,
+	} {
+		if !strings.Contains(html, snippet) {
+			t.Fatalf("expected %q in %q", snippet, html)
+		}
+	}
+}

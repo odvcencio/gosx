@@ -113,6 +113,38 @@ func Page() Node {
 	}
 }
 
+func TestDefaultFileRendererDefaultsStylesheetToPageOwnership(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "page.gsx")
+	if err := os.WriteFile(path, []byte(`package docs
+
+func Page() Node {
+	return <div><Stylesheet href="/docs.css" media="screen" /></div>
+}
+`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	node, err := DefaultFileRenderer(nil, FilePage{FilePath: path, Pattern: "/"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	html := gosx.RenderHTML(node)
+	for _, snippet := range []string{
+		`rel="stylesheet"`,
+		`href="/docs.css"`,
+		`media="screen"`,
+		`data-gosx-css-layer="page"`,
+		`data-gosx-css-owner="page-file"`,
+		`data-gosx-css-source="/docs.css"`,
+	} {
+		if !strings.Contains(html, snippet) {
+			t.Fatalf("expected %q in %q", snippet, html)
+		}
+	}
+}
+
 func TestDefaultFileRendererRendersLiteralExpressionText(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "page.gsx")
@@ -758,7 +790,9 @@ func Page() Node {
 		`data-gosx-css-layer="global"`,
 		`data-gosx-css-layer="layout"`,
 		`data-gosx-css-layer="page"`,
-		`data-gosx-css-owner="route-file"`,
+		`data-gosx-css-owner="global-file"`,
+		`data-gosx-css-owner="layout-file"`,
+		`data-gosx-css-owner="page-file"`,
 		`data-gosx-css-source="global.css"`,
 		`data-gosx-css-source="layout.css"`,
 		`data-gosx-css-source="docs/layout.css"`,

@@ -324,41 +324,39 @@ func (r *fileProgramRenderer) renderTextBlock(node *ir.Node, env fileRenderEnv) 
 
 func (r *fileProgramRenderer) renderStylesheet(node *ir.Node, env fileRenderEnv) string {
 	href := stringValue(attrValue(node.Attrs, env, "href", "src"))
+	layer := server.CSSLayer(firstNonEmptyString(stringValue(attrValue(node.Attrs, env, "layer")), string(server.CSSLayerPage)))
+	owner := firstNonEmptyString(stringValue(attrValue(node.Attrs, env, "owner")), server.FileStylesheetOwner(layer))
+	source := stringValue(attrValue(node.Attrs, env, "source"))
 	extra := []any{}
 	for _, attr := range node.Attrs {
 		if attr.Kind == ir.AttrSpread {
 			continue
 		}
-		if attr.Name == "href" || attr.Name == "src" || attr.Name == "rel" {
+		if attr.Name == "href" || attr.Name == "src" || attr.Name == "rel" || attr.Name == "layer" || attr.Name == "owner" || attr.Name == "source" {
 			continue
-		}
-		attrName := attr.Name
-		switch attrName {
-		case "layer":
-			attrName = "data-gosx-css-layer"
-		case "owner":
-			attrName = "data-gosx-css-owner"
-		case "source":
-			attrName = "data-gosx-css-source"
 		}
 		switch attr.Kind {
 		case ir.AttrStatic:
-			extra = append(extra, gosx.Attr(attrName, attr.Value))
+			extra = append(extra, gosx.Attr(attr.Name, attr.Value))
 		case ir.AttrExpr:
 			value := evalFileExpr(attr.Expr, env)
 			if value == nil {
 				continue
 			}
-			extra = append(extra, gosx.Attr(attrName, fmt.Sprint(value)))
+			extra = append(extra, gosx.Attr(attr.Name, fmt.Sprint(value)))
 		case ir.AttrBool:
-			extra = append(extra, gosx.BoolAttr(attrName))
+			extra = append(extra, gosx.BoolAttr(attr.Name))
 		}
 	}
 	args := []any{}
 	if len(extra) > 0 {
 		args = append(args, gosx.Attrs(extra...))
 	}
-	return gosx.RenderHTML(server.Stylesheet(href, args...))
+	return gosx.RenderHTML(server.DocumentStylesheet(href, server.StylesheetOptions{
+		Layer:  layer,
+		Owner:  owner,
+		Source: source,
+	}, args...))
 }
 
 type fileEngineDefaults struct {
