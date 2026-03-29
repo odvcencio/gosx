@@ -5,6 +5,7 @@ const path = require("node:path");
 const vm = require("node:vm");
 
 const bootstrapSource = fs.readFileSync(path.join(__dirname, "bootstrap.js"), "utf8");
+const bootstrapLiteSource = fs.readFileSync(path.join(__dirname, "bootstrap-lite.js"), "utf8");
 const patchSource = fs.readFileSync(path.join(__dirname, "patch.js"), "utf8");
 const navigationSource = fs.readFileSync(path.join(__dirname, "..", "..", "server", "navigation_runtime.js"), "utf8");
 
@@ -1635,6 +1636,26 @@ test("bootstrap mounts declarative text layout blocks as managed runtime state",
   assert.equal(result.lineCount, 2);
   assert.equal(result.maxLineWidth, 88);
   assert.equal(env.document.dispatchedEvents.some((event) => event.type === "gosx:textlayout"), true);
+});
+
+test("bootstrap lite mounts managed text layout without a manifest", async () => {
+  const block = new FakeElement("div", null);
+  block.width = 88;
+  block.setAttribute("data-gosx-text-layout", "");
+  block.setAttribute("data-gosx-text-layout-font", "600 16px serif");
+  block.setAttribute("data-gosx-text-layout-line-height", "20");
+  block.textContent = "hello world from gosx";
+
+  const env = createContext({
+    elements: [block],
+  });
+
+  runScript(bootstrapLiteSource, env.context, "bootstrap-lite.js");
+  await flushAsyncWork();
+
+  assert.equal(env.context.__gosx.ready, true);
+  assert.equal(block.getAttribute("data-gosx-text-layout-ready"), "true");
+  assert.equal(env.context.__gosx.textLayouts.size, 1);
 });
 
 test("bootstrap mounts declarative text layout clamp options on managed blocks", async () => {

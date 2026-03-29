@@ -29,17 +29,18 @@ import (
 
 // Renderer handles island-aware rendering of GoSX component trees.
 type Renderer struct {
-	manifest      *hydrate.Manifest
-	counter       int
-	bundleID      string
-	programDir    string // directory where island programs are stored
-	programFormat string // "json" or "bin"
-	programAssets map[string]programAsset
-	wasmExecPath  string
-	patchPath     string
-	bootstrapPath string
-	runtimeAssets buildmanifest.RuntimeAssets
-	bootstrapOnly bool
+	manifest          *hydrate.Manifest
+	counter           int
+	bundleID          string
+	programDir        string // directory where island programs are stored
+	programFormat     string // "json" or "bin"
+	programAssets     map[string]programAsset
+	wasmExecPath      string
+	patchPath         string
+	bootstrapPath     string
+	bootstrapLitePath string
+	runtimeAssets     buildmanifest.RuntimeAssets
+	bootstrapOnly     bool
 }
 
 type programAsset struct {
@@ -61,6 +62,7 @@ func NewRenderer(bundleID string) *Renderer {
 	renderer.wasmExecPath = renderer.versionCompatRuntimePath("/gosx/wasm_exec.js", strings.TrimSpace(runtimeAssets.WASMExec.Hash))
 	renderer.patchPath = renderer.versionCompatRuntimePath("/gosx/patch.js", strings.TrimSpace(runtimeAssets.Patch.Hash))
 	renderer.bootstrapPath = renderer.versionCompatRuntimePath("/gosx/bootstrap.js", strings.TrimSpace(runtimeAssets.Bootstrap.Hash))
+	renderer.bootstrapLitePath = renderer.versionCompatRuntimePath("/gosx/bootstrap-lite.js", strings.TrimSpace(runtimeAssets.BootstrapLite.Hash))
 	return renderer
 }
 
@@ -134,6 +136,15 @@ func (r *Renderer) SetClientAssetPaths(wasmExecPath, patchPath, bootstrapPath st
 	}
 }
 
+// SetBootstrapLitePath overrides the bootstrap-only runtime script URL used on
+// pages that only need document/presentation/text-layout enhancement.
+func (r *Renderer) SetBootstrapLitePath(path string) {
+	if strings.TrimSpace(path) == "" {
+		return
+	}
+	r.bootstrapLitePath = r.versionCompatRuntimePath(path, r.compatRuntimeHash(path))
+}
+
 func (r *Renderer) compatRuntimeHash(path string) string {
 	switch compatRuntimePath(path) {
 	case "/gosx/runtime.wasm":
@@ -142,6 +153,8 @@ func (r *Renderer) compatRuntimeHash(path string) string {
 		return strings.TrimSpace(r.runtimeAssets.WASMExec.Hash)
 	case "/gosx/bootstrap.js":
 		return strings.TrimSpace(r.runtimeAssets.Bootstrap.Hash)
+	case "/gosx/bootstrap-lite.js":
+		return strings.TrimSpace(r.runtimeAssets.BootstrapLite.Hash)
 	case "/gosx/patch.js":
 		return strings.TrimSpace(r.runtimeAssets.Patch.Hash)
 	default:
@@ -159,7 +172,7 @@ func (r *Renderer) versionCompatRuntimePath(path, hash string) string {
 		return path
 	}
 	switch compatRuntimePath(path) {
-	case "/gosx/runtime.wasm", "/gosx/wasm_exec.js", "/gosx/bootstrap.js", "/gosx/patch.js":
+	case "/gosx/runtime.wasm", "/gosx/wasm_exec.js", "/gosx/bootstrap.js", "/gosx/bootstrap-lite.js", "/gosx/patch.js":
 		query := parsed.Query()
 		if query.Get("v") == "" {
 			query.Set("v", hash)
@@ -192,6 +205,7 @@ func (r *Renderer) ApplyBuildManifest(manifest *buildmanifest.Manifest, assetBas
 		r.SetBundle(r.bundleID, runtime.WASM)
 	}
 	r.SetClientAssetPaths(runtime.WASMExec, runtime.Patch, runtime.Bootstrap)
+	r.SetBootstrapLitePath(runtime.BootstrapLite)
 
 	for _, asset := range manifest.Islands {
 		r.SetProgramAsset(asset.Name, manifest.IslandURL(assetBaseURL, asset), asset.Format, asset.Hash)
@@ -291,6 +305,10 @@ func (r *Renderer) BootstrapScript() gosx.Node {
 	}
 
 	var b strings.Builder
+	mode := "full"
+	if r.needsLiteBootstrap() {
+		mode = "lite"
+	}
 	if (len(r.manifest.Islands) > 0 || len(r.manifest.Hubs) > 0 || r.hasWASMEngines()) && r.wasmExecPath != "" {
 		b.WriteString(fmt.Sprintf(`<script data-gosx-script="wasm-exec" src="%s"></script>`, html.EscapeString(r.wasmExecPath)))
 		b.WriteByte('\n')
@@ -299,7 +317,7 @@ func (r *Renderer) BootstrapScript() gosx.Node {
 		b.WriteString(fmt.Sprintf(`<script data-gosx-script="patch" src="%s"></script>`, html.EscapeString(r.patchPath)))
 		b.WriteByte('\n')
 	}
-	b.WriteString(fmt.Sprintf(`<script data-gosx-script="bootstrap" src="%s"></script>`, html.EscapeString(r.bootstrapPath)))
+	b.WriteString(fmt.Sprintf(`<script data-gosx-script="bootstrap" data-gosx-bootstrap-mode="%s" src="%s"></script>`, mode, html.EscapeString(r.selectedBootstrapPath())))
 	return gosx.RawHTML(b.String())
 }
 
@@ -651,6 +669,9 @@ func (r *Renderer) PageHead() gosx.Node {
 	if !r.needsClientBootstrap() {
 		return gosx.Text("")
 	}
+	if r.needsLiteBootstrap() {
+		return r.BootstrapScript()
+	}
 	return gosx.Fragment(
 		r.ManifestScript(),
 		r.BootstrapScript(),
@@ -683,6 +704,19 @@ func SerializeProps(props any) (json.RawMessage, error) {
 
 func (r *Renderer) needsClientBootstrap() bool {
 	return r.bootstrapOnly || len(r.manifest.Islands) > 0 || len(r.manifest.Engines) > 0 || len(r.manifest.Hubs) > 0
+}
+
+func (r *Renderer) needsLiteBootstrap() bool {
+	return r != nil && r.bootstrapOnly && len(r.manifest.Islands) == 0 && len(r.manifest.Engines) == 0 && len(r.manifest.Hubs) == 0
+}
+
+func (r *Renderer) selectedBootstrapPath() string {
+	if r.needsLiteBootstrap() {
+		if strings.TrimSpace(r.bootstrapLitePath) != "" {
+			return r.bootstrapLitePath
+		}
+	}
+	return r.bootstrapPath
 }
 
 func (r *Renderer) hasWASMEngines() bool {

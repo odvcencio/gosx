@@ -321,16 +321,18 @@ func TestAppInjectsBootstrapHeadForTextBlockPages(t *testing.T) {
 		`data-gosx-text-layout-source="hello world from gosx"`,
 		`data-gosx-text-layout-line-count-hint="`,
 		`data-gosx-text-layout-height-hint="`,
-		`gosx-manifest`,
-		`/gosx/bootstrap.js`,
+		`/gosx/bootstrap-lite.js`,
+		`data-gosx-bootstrap-mode="lite"`,
 	} {
 		if !strings.Contains(body, snippet) {
 			t.Fatalf("expected %q in text layout page body %q", snippet, body)
 		}
 	}
 	for _, snippet := range []string{
+		`gosx-manifest`,
 		`data-gosx-script="wasm-exec"`,
 		`/gosx/patch.js`,
+		`/gosx/bootstrap.js`,
 	} {
 		if strings.Contains(body, snippet) {
 			t.Fatalf("did not expect %q in bootstrap-only text layout page body %q", snippet, body)
@@ -363,6 +365,68 @@ func TestAppEmitsDocumentContract(t *testing.T) {
 		`"navigation":true`,
 		`"runtime":true`,
 		`"id":"gosx-doc-get-docs"`,
+	} {
+		if !strings.Contains(body, snippet) {
+			t.Fatalf("expected %q in %q", snippet, body)
+		}
+	}
+}
+
+func TestAppSeedsInitialNavigationDocumentState(t *testing.T) {
+	app := New()
+	app.EnableNavigation()
+	app.Page("GET /docs/forms", func(ctx *Context) gosx.Node {
+		ctx.SetMetadata(Metadata{Title: "Forms"})
+		return gosx.El("main", gosx.Text("Forms"))
+	})
+
+	handler := app.Build()
+	req := httptest.NewRequest(http.MethodGet, "/docs/forms?tab=posting", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	body := w.Body.String()
+	for _, snippet := range []string{
+		`<html data-gosx-document="true" data-gosx-document-id="gosx-doc-get-docs-forms" data-gosx-document-path="/docs/forms?tab=posting" data-gosx-navigation-state="idle" data-gosx-navigation-current-path="/docs/forms">`,
+		`<body data-gosx-document-body="true" data-gosx-enhancement-layer="html" data-gosx-document-id="gosx-doc-get-docs-forms" data-gosx-navigation-state="idle" data-gosx-navigation-current-path="/docs/forms">`,
+	} {
+		if !strings.Contains(body, snippet) {
+			t.Fatalf("expected %q in %q", snippet, body)
+		}
+	}
+}
+
+func TestCustomDocumentCanReuseDocumentContractAttrs(t *testing.T) {
+	app := New()
+	app.EnableNavigation()
+	app.Page("GET /docs/forms", func(ctx *Context) gosx.Node {
+		ctx.SetMetadata(Metadata{Title: "Forms"})
+		return gosx.El("main", gosx.Text("Forms"))
+	})
+
+	app.SetDocument(func(doc *DocumentContext) gosx.Node {
+		return gosx.El("html",
+			DocumentAttrs(doc),
+			gosx.El("head",
+				gosx.El("title", gosx.Text(doc.Title)),
+				HeadOutlet(doc.Head),
+			),
+			gosx.El("body",
+				DocumentBodyAttrs(doc),
+				doc.Body,
+			),
+		)
+	})
+
+	handler := app.Build()
+	req := httptest.NewRequest(http.MethodGet, "/docs/forms?tab=posting", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	body := w.Body.String()
+	for _, snippet := range []string{
+		`<html data-gosx-document="true" data-gosx-document-id="gosx-doc-get-docs-forms" data-gosx-document-path="/docs/forms?tab=posting" data-gosx-navigation-state="idle" data-gosx-navigation-current-path="/docs/forms">`,
+		`<body data-gosx-document-body="true" data-gosx-enhancement-layer="html" data-gosx-document-id="gosx-doc-get-docs-forms" data-gosx-navigation-state="idle" data-gosx-navigation-current-path="/docs/forms">`,
 	} {
 		if !strings.Contains(body, snippet) {
 			t.Fatalf("expected %q in %q", snippet, body)

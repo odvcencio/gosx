@@ -252,6 +252,47 @@ func Page() Node {
 	}
 }
 
+func TestDefaultFileRendererAddsManagedLinkStateAndNormalizesPrefetch(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "page.gsx")
+	source := `package docs
+
+func Page() Node {
+	return <nav>
+		<Link href="/docs">Docs</Link>
+		<Link href="/docs/forms">Forms</Link>
+		<Link href="/blog">Blog</Link>
+		<Link href="/docs/api" prefetch="render">API</Link>
+	</nav>
+}
+`
+	if err := os.WriteFile(path, []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/docs/forms", nil)
+	ctx := &RouteContext{Request: req}
+	node, err := DefaultFileRenderer(ctx, FilePage{FilePath: path, Pattern: "/docs/forms"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	html := gosx.RenderHTML(node)
+	for _, snippet := range []string{
+		`href="/docs" data-gosx-link data-gosx-link-state="idle" data-gosx-link-current="ancestor" data-gosx-prefetch-state="idle"`,
+		`href="/docs/forms" data-gosx-link data-gosx-link-state="idle" data-gosx-link-current="page" data-gosx-prefetch-state="idle" aria-current="page" data-gosx-aria-current-managed="true"`,
+		`href="/blog" data-gosx-link data-gosx-link-state="idle" data-gosx-link-current="none" data-gosx-prefetch-state="idle"`,
+		`href="/docs/api" data-gosx-link data-gosx-link-state="idle" data-gosx-link-current="none" data-gosx-prefetch-state="idle" data-gosx-prefetch="render"`,
+	} {
+		if !strings.Contains(html, snippet) {
+			t.Fatalf("expected %q in rendered link html %q", snippet, html)
+		}
+	}
+	if strings.Contains(html, ` prefetch="render"`) {
+		t.Fatalf("expected Link prefetch prop to normalize into data-gosx-prefetch in %q", html)
+	}
+}
+
 func TestDefaultFileRendererSupportsSpreadAttrsOnElementsAndLinks(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "page.gsx")
@@ -564,15 +605,21 @@ func Page() Node {
 
 	head := gosx.RenderHTML(ctx.Runtime().Head())
 	for _, snippet := range []string{
-		`gosx-manifest`,
-		`bootstrap.js`,
+		`bootstrap-lite.js`,
+		`data-gosx-bootstrap-mode="lite"`,
 	} {
 		if !strings.Contains(head, snippet) {
 			t.Fatalf("expected %q in text layout runtime head %q", snippet, head)
 		}
 	}
-	if strings.Contains(head, `data-gosx-script="wasm-exec"`) {
-		t.Fatalf("did not expect wasm_exec on text layout-only file pages, got %q", head)
+	for _, snippet := range []string{
+		`gosx-manifest`,
+		`data-gosx-script="wasm-exec"`,
+		`bootstrap.js`,
+	} {
+		if strings.Contains(head, snippet) {
+			t.Fatalf("did not expect %q on text layout-only file pages, got %q", snippet, head)
+		}
 	}
 }
 

@@ -83,6 +83,25 @@ func TestPageHeadEmpty(t *testing.T) {
 	}
 }
 
+func TestPageHeadWithBootstrapOnlyUsesLiteRuntime(t *testing.T) {
+	r := NewRenderer("main")
+	r.EnableBootstrap()
+
+	head := gosx.RenderHTML(r.PageHead())
+	if strings.Contains(head, "gosx-manifest") {
+		t.Fatal("bootstrap-only page should not emit a manifest script")
+	}
+	if !strings.Contains(head, "bootstrap-lite.js") {
+		t.Fatal("bootstrap-only page should load the lite bootstrap runtime")
+	}
+	if !strings.Contains(head, `data-gosx-bootstrap-mode="lite"`) {
+		t.Fatal("bootstrap-only page should mark the lite bootstrap mode")
+	}
+	if strings.Contains(head, "wasm_exec.js") || strings.Contains(head, "patch.js") {
+		t.Fatal("bootstrap-only page should not load wasm_exec or patch runtime assets")
+	}
+}
+
 func TestPageHeadWithIslands(t *testing.T) {
 	r := NewRenderer("main")
 	r.SetBundle("main", "/gosx/runtime.wasm")

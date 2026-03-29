@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"html"
 	"net"
 	"net/http"
 	"net/url"
@@ -497,18 +498,98 @@ func HTMLDocument(title string, head gosx.Node, body gosx.Node) gosx.Node {
 }
 
 func renderDocument(title string, head gosx.Node, body gosx.Node) string {
+	return renderDocumentWithContext(&DocumentContext{
+		Title: title,
+		Head:  head,
+		Body:  body,
+	})
+}
+
+func renderDocumentWithContext(doc *DocumentContext) string {
+	title := ""
+	head := gosx.Text("")
+	body := gosx.Text("")
+	if doc != nil {
+		title = doc.Title
+		head = doc.Head
+		body = doc.Body
+	}
 	var b strings.Builder
-	b.WriteString("<!DOCTYPE html>\n<html data-gosx-document=\"true\">\n<head>\n")
+	b.WriteString("<!DOCTYPE html>\n<html")
+	b.WriteString(documentHTMLAttrs(doc))
+	b.WriteString(">\n<head>\n")
 	b.WriteString("<meta charset=\"utf-8\">\n")
 	b.WriteString("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n")
 	fmt.Fprintf(&b, "<title>%s</title>\n", title)
 	b.WriteString(gosx.RenderHTML(HeadOutlet(head)))
-	b.WriteString("\n</head>\n<body data-gosx-document-body=\"true\" data-gosx-enhancement-layer=\"html\">\n")
+	b.WriteString("\n</head>\n<body")
+	b.WriteString(documentBodyAttrs(doc))
+	b.WriteString(">\n")
 	b.WriteString(gosx.RenderHTML(body))
 	b.WriteString("\n")
 	b.WriteString(streamTailMarker)
 	b.WriteString("\n</body>\n</html>")
 	return b.String()
+}
+
+func documentHTMLAttrs(doc *DocumentContext) string {
+	var b strings.Builder
+	b.WriteString(` data-gosx-document="true"`)
+	if doc == nil {
+		return b.String()
+	}
+	if pageID := strings.TrimSpace(doc.PageID); pageID != "" {
+		fmt.Fprintf(&b, ` data-gosx-document-id="%s"`, html.EscapeString(pageID))
+	}
+	if path := strings.TrimSpace(doc.Path); path != "" {
+		fmt.Fprintf(&b, ` data-gosx-document-path="%s"`, html.EscapeString(path))
+	}
+	if doc.Navigation {
+		fmt.Fprintf(&b, ` data-gosx-navigation-state="%s"`, "idle")
+		fmt.Fprintf(&b, ` data-gosx-navigation-current-path="%s"`, html.EscapeString(documentCurrentPath(doc)))
+	}
+	return b.String()
+}
+
+func documentBodyAttrs(doc *DocumentContext) string {
+	var b strings.Builder
+	b.WriteString(` data-gosx-document-body="true" data-gosx-enhancement-layer="html"`)
+	if doc == nil {
+		return b.String()
+	}
+	if pageID := strings.TrimSpace(doc.PageID); pageID != "" {
+		fmt.Fprintf(&b, ` data-gosx-document-id="%s"`, html.EscapeString(pageID))
+	}
+	if doc.Navigation {
+		fmt.Fprintf(&b, ` data-gosx-navigation-state="%s"`, "idle")
+		fmt.Fprintf(&b, ` data-gosx-navigation-current-path="%s"`, html.EscapeString(documentCurrentPath(doc)))
+	}
+	return b.String()
+}
+
+func documentCurrentPath(doc *DocumentContext) string {
+	if doc == nil {
+		return "/"
+	}
+	if doc.Request != nil && doc.Request.URL != nil {
+		if path := strings.TrimSpace(doc.Request.URL.Path); path != "" {
+			return path
+		}
+	}
+	if doc.Path == "" {
+		return "/"
+	}
+	parsed, err := url.Parse(doc.Path)
+	if err != nil {
+		if strings.TrimSpace(doc.Path) == "" {
+			return "/"
+		}
+		return doc.Path
+	}
+	if strings.TrimSpace(parsed.Path) == "" {
+		return "/"
+	}
+	return parsed.Path
 }
 
 // RequestID returns the per-request ID assigned by the default middleware.
@@ -560,7 +641,7 @@ func (a *App) renderPage(w http.ResponseWriter, ctx *Context, pattern string, bo
 		node = a.layout(title, body)
 	default:
 		doc := ctx.documentContext(pattern, defaultTitle, body, a.navigation)
-		node = HTMLDocument(doc.Title, doc.Head, doc.Body)
+		node = gosx.RawHTML(renderDocumentWithContext(doc))
 	}
 
 	if ApplyCacheHeaders(ctx.Request, ctx.headers, ctx.status, ctx.cache, a.Revalidator()) {
