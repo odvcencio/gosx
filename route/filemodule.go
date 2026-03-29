@@ -126,6 +126,21 @@ func RegisterFileModule(module FileModule) error {
 	return defaultFileModuleRegistry.Register(module)
 }
 
+// RegisterFileModuleHere infers the sibling page source path from the calling
+// file and registers the module in the shared registry.
+func RegisterFileModuleHere(opts FileModuleOptions) error {
+	return RegisterFileModule(FileModuleFor(fileModuleSourceHere(1), opts))
+}
+
+// RegisterFileModuleCaller registers a file module using a caller higher in the
+// stack. `skip=0` means the immediate caller.
+func RegisterFileModuleCaller(skip int, opts FileModuleOptions) error {
+	if skip < 0 {
+		skip = 0
+	}
+	return RegisterFileModule(FileModuleFor(fileModuleSourceHere(skip+1), opts))
+}
+
 // MustRegisterFileModule adds a file-route module to the shared registry or panics.
 func MustRegisterFileModule(module FileModule) {
 	if err := RegisterFileModule(module); err != nil {
@@ -146,9 +161,54 @@ func (r *FileModuleRegistry) Register(module FileModule) error {
 	module.Actions = cloneFileActions(module.Actions)
 
 	r.mu.Lock()
+	if _, exists := r.modules[key]; exists {
+		r.mu.Unlock()
+		return fmt.Errorf("file module %q already registered", key)
+	}
+	keySet := moduleLookupKeySet(fileModuleLookupKeys(key))
+	for _, existing := range r.modules {
+		if moduleLookupKeysOverlap(fileModuleLookupKeys(existing.Source), keySet) {
+			r.mu.Unlock()
+			return fmt.Errorf("file module %q conflicts with existing module %q", key, existing.Source)
+		}
+	}
 	r.modules[key] = module
 	r.mu.Unlock()
 	return nil
+}
+
+// RegisterHere infers the sibling page source path from the calling file and
+// registers the module in this registry.
+func (r *FileModuleRegistry) RegisterHere(opts FileModuleOptions) error {
+	return r.Register(FileModuleFor(fileModuleSourceHere(1), opts))
+}
+
+// MustRegisterHere registers a file module inferred from the calling file or
+// panics on error.
+func (r *FileModuleRegistry) MustRegisterHere(opts FileModuleOptions) {
+	if err := r.Register(FileModuleFor(fileModuleSourceHere(1), opts)); err != nil {
+		panic(err)
+	}
+}
+
+// RegisterCaller registers a file module inferred from a caller higher in the
+// stack. `skip=0` means the immediate caller.
+func (r *FileModuleRegistry) RegisterCaller(skip int, opts FileModuleOptions) error {
+	if skip < 0 {
+		skip = 0
+	}
+	return r.Register(FileModuleFor(fileModuleSourceHere(skip+1), opts))
+}
+
+// MustRegisterCaller registers a file module inferred from a caller higher in
+// the stack or panics on error.
+func (r *FileModuleRegistry) MustRegisterCaller(skip int, opts FileModuleOptions) {
+	if skip < 0 {
+		skip = 0
+	}
+	if err := r.Register(FileModuleFor(fileModuleSourceHere(skip+1), opts)); err != nil {
+		panic(err)
+	}
 }
 
 // Lookup finds a registered file-route module by source path.
@@ -166,6 +226,7 @@ func (r *FileModuleRegistry) Lookup(source string) (FileModule, bool) {
 	for _, key := range keys {
 		if module, ok := r.modules[key]; ok {
 			r.mu.RUnlock()
+			module.Actions = cloneFileActions(module.Actions)
 			return module, true
 		}
 	}
@@ -184,6 +245,7 @@ func (r *FileModuleRegistry) Lookup(source string) (FileModule, bool) {
 		matched = true
 	}
 	r.mu.RUnlock()
+	match.Actions = cloneFileActions(match.Actions)
 	return match, matched
 }
 

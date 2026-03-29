@@ -39,17 +39,17 @@ type Diagnostic struct {
 func Analyze(path string, source []byte) []Diagnostic {
 	tree, lang, err := gosx.Parse(source)
 	if err != nil {
-		return []Diagnostic{diagnosticForError(err)}
+		return diagnosticsForError(err)
 	}
 
 	root := tree.RootNode()
 	if root.HasError() {
-		return []Diagnostic{diagnosticForError(gosx.DescribeParseError(root, source, lang))}
+		return diagnosticsForError(gosx.DescribeParseError(root, source, lang))
 	}
 
 	prog, err := ir.Lower(root, source, lang)
 	if err != nil {
-		return []Diagnostic{diagnosticForError(err)}
+		return diagnosticsForError(err)
 	}
 
 	raw := ir.Validate(prog)
@@ -64,6 +64,23 @@ func Analyze(path string, source []byte) []Diagnostic {
 	}
 
 	return diags
+}
+
+func diagnosticsForError(err error) []Diagnostic {
+	var diagErr *ir.DiagnosticsError
+	if errors.As(err, &diagErr) && diagErr != nil && len(diagErr.Diagnostics) > 0 {
+		diags := make([]Diagnostic, 0, len(diagErr.Diagnostics))
+		for _, raw := range diagErr.Diagnostics {
+			diags = append(diags, Diagnostic{
+				Range:    rangeFromSpan(raw.Span),
+				Severity: SeverityError,
+				Source:   "gosx",
+				Message:  diagnosticMessage(raw),
+			})
+		}
+		return diags
+	}
+	return []Diagnostic{diagnosticForError(err)}
 }
 
 // FormatSource runs the canonical GoSX formatter.

@@ -23,6 +23,17 @@
       return JSON.parse(el.textContent);
     } catch (e) {
       console.error("[gosx] failed to parse manifest:", e);
+      if (window.__gosx && typeof window.__gosx.reportIssue === "function") {
+        window.__gosx.reportIssue({
+          scope: "bootstrap",
+          type: "manifest",
+          source: "gosx-manifest",
+          element: el,
+          message: "failed to parse gosx manifest",
+          error: e,
+          fallback: "server",
+        });
+      }
       return null;
     }
   }
@@ -38,6 +49,16 @@
   async function loadRuntime(runtimeRef) {
     if (typeof Go === "undefined") {
       console.error("[gosx] wasm_exec.js must be loaded before bootstrap.js");
+      if (window.__gosx && typeof window.__gosx.reportIssue === "function") {
+        window.__gosx.reportIssue({
+          scope: "bootstrap",
+          type: "runtime",
+          source: runtimeRef && runtimeRef.path,
+          ref: runtimeRef && runtimeRef.path,
+          message: "wasm_exec.js must be loaded before bootstrap.js",
+          fallback: "server",
+        });
+      }
       return;
     }
 
@@ -51,6 +72,17 @@
       go.run(result.instance);
     } catch (e) {
       console.error("[gosx] failed to load WASM runtime:", e);
+      if (window.__gosx && typeof window.__gosx.reportIssue === "function") {
+        window.__gosx.reportIssue({
+          scope: "bootstrap",
+          type: "runtime",
+          source: runtimeRef && runtimeRef.path,
+          ref: runtimeRef && runtimeRef.path,
+          message: "failed to load wasm runtime",
+          error: e,
+          fallback: "server",
+        });
+      }
     }
   }
 

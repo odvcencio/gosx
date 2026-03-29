@@ -379,6 +379,18 @@
     const factory = await resolveMountedEngineFactory(entry);
     if (typeof factory !== "function") {
       console.warn(`[gosx] no engine factory registered for ${entry.component}`);
+      if (window.__gosx && typeof window.__gosx.reportIssue === "function") {
+        window.__gosx.reportIssue({
+          scope: "engine",
+          type: "factory",
+          component: entry.component,
+          source: entry.id,
+          ref: entry.jsRef || entry.component,
+          element: mount,
+          message: `no engine factory registered for ${entry.component}`,
+          fallback: "server",
+        });
+      }
       return;
     }
 
@@ -387,6 +399,19 @@
       rememberMountedEngine(entry, mount, mounted.context, mounted.handle);
     } catch (e) {
       console.error(`[gosx] failed to mount engine ${entry.id}:`, e);
+      if (window.__gosx && typeof window.__gosx.reportIssue === "function") {
+        window.__gosx.reportIssue({
+          scope: "engine",
+          type: "mount",
+          component: entry.component,
+          source: entry.id,
+          ref: entry.jsRef || entry.programRef,
+          element: mount,
+          message: `failed to mount engine ${entry.id}`,
+          error: e,
+          fallback: "server",
+        });
+      }
     }
   }
 
@@ -398,6 +423,17 @@
     const mount = document.getElementById(mountID);
     if (!mount) {
       console.warn(`[gosx] engine mount #${mountID} not found for ${entry.id}`);
+      if (window.__gosx && typeof window.__gosx.reportIssue === "function") {
+        window.__gosx.reportIssue({
+          scope: "engine",
+          type: "mount",
+          component: entry.component,
+          source: entry.id,
+          ref: mountID,
+          message: `engine mount #${mountID} not found`,
+          fallback: "server",
+        });
+      }
       return null;
     }
     return mount;
@@ -425,6 +461,9 @@
   }
 
   function rememberMountedEngine(entry, mount, context, handle) {
+    if (window.__gosx && typeof window.__gosx.clearIssueState === "function") {
+      window.__gosx.clearIssueState(mount);
+    }
     activateInputProviders(entry);
     window.__gosx.engines.set(entry.id, {
       component: entry.component,
@@ -682,9 +721,9 @@
     if (!root) return;
     if (entry.static) return;
 
-    const program = await loadIslandProgram(entry);
+    const program = await loadIslandProgram(entry, root);
     if (!program) return;
-    if (!runIslandHydration(entry, program)) return;
+    if (!runIslandHydration(entry, root, program)) return;
     const listeners = setupEventDelegation(root, entry.id);
     rememberHydratedIsland(entry, root, listeners);
   }
@@ -698,25 +737,61 @@
     return root;
   }
 
-  async function loadIslandProgram(entry) {
+  async function loadIslandProgram(entry, root) {
     const programFormat = inferProgramFormat(entry);
     if (!entry.programRef) {
       console.error(`[gosx] skipping island ${entry.id} — missing programRef`);
+      if (window.__gosx && typeof window.__gosx.reportIssue === "function") {
+        window.__gosx.reportIssue({
+          scope: "island",
+          type: "program",
+          component: entry.component,
+          source: entry.id,
+          ref: entry.programRef,
+          element: root,
+          message: `missing programRef for island ${entry.id}`,
+          fallback: "server",
+        });
+      }
       return null;
     }
 
     const programData = await fetchProgram(entry.programRef, programFormat);
     if (programData === null) {
       console.error(`[gosx] skipping island ${entry.id} — program fetch failed`);
+      if (window.__gosx && typeof window.__gosx.reportIssue === "function") {
+        window.__gosx.reportIssue({
+          scope: "island",
+          type: "program",
+          component: entry.component,
+          source: entry.id,
+          ref: entry.programRef,
+          element: root,
+          message: `failed to fetch island program for ${entry.id}`,
+          fallback: "server",
+        });
+      }
       return null;
     }
     return { data: programData, format: programFormat };
   }
 
-  function runIslandHydration(entry, program) {
+  function runIslandHydration(entry, root, program) {
     const hydrateFn = window.__gosx_hydrate;
     if (typeof hydrateFn !== "function") {
       console.error("[gosx] __gosx_hydrate not available — cannot hydrate island", entry.id);
+      if (window.__gosx && typeof window.__gosx.reportIssue === "function") {
+        window.__gosx.reportIssue({
+          scope: "island",
+          type: "hydrate",
+          component: entry.component,
+          source: entry.id,
+          ref: entry.programRef,
+          element: root,
+          message: `__gosx_hydrate not available for island ${entry.id}`,
+          fallback: "server",
+        });
+      }
       return false;
     }
 
@@ -730,16 +805,44 @@
       );
       if (typeof result === "string" && result !== "") {
         console.error(`[gosx] failed to hydrate island ${entry.id}: ${result}`);
+        if (window.__gosx && typeof window.__gosx.reportIssue === "function") {
+          window.__gosx.reportIssue({
+            scope: "island",
+            type: "hydrate",
+            component: entry.component,
+            source: entry.id,
+            ref: entry.programRef,
+            element: root,
+            message: result,
+            fallback: "server",
+          });
+        }
         return false;
       }
       return true;
     } catch (e) {
       console.error(`[gosx] failed to hydrate island ${entry.id}:`, e);
+      if (window.__gosx && typeof window.__gosx.reportIssue === "function") {
+        window.__gosx.reportIssue({
+          scope: "island",
+          type: "hydrate",
+          component: entry.component,
+          source: entry.id,
+          ref: entry.programRef,
+          element: root,
+          message: `failed to hydrate island ${entry.id}`,
+          error: e,
+          fallback: "server",
+        });
+      }
       return false;
     }
   }
 
   function rememberHydratedIsland(entry, root, listeners) {
+    if (window.__gosx && typeof window.__gosx.clearIssueState === "function") {
+      window.__gosx.clearIssueState(root);
+    }
     window.__gosx.islands.set(entry.id, {
       component: entry.component,
       root: root,

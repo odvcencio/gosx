@@ -43,6 +43,27 @@ func broken() Node {
 	}
 }
 
+func TestAnalyzeReturnsAllValidationDiagnostics(t *testing.T) {
+	diags := Analyze("broken.gsx", []byte(`package main
+
+func broken() Node {
+	return <div>Hello</div>
+}
+
+func alsoBroken() Node {
+	return <span>World</span>
+}
+`))
+	if len(diags) != 2 {
+		t.Fatalf("expected 2 diagnostics, got %d", len(diags))
+	}
+	for _, diag := range diags {
+		if !strings.Contains(diag.Message, "uppercase") {
+			t.Fatalf("unexpected validation message %q", diag.Message)
+		}
+	}
+}
+
 func TestFormatSource(t *testing.T) {
 	formatted, err := FormatSource([]byte(`package main
 

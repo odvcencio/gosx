@@ -28,6 +28,99 @@
     ready: false,
   };
 
+  function gosxIssueStore() {
+    if (!window.__gosx.issues || !Array.isArray(window.__gosx.issues.entries)) {
+      window.__gosx.issues = {
+        nextID: 0,
+        entries: [],
+      };
+    }
+    return window.__gosx.issues;
+  }
+
+  function gosxCloneIssue(issue) {
+    return Object.assign({}, issue || {});
+  }
+
+  function gosxIssueText(value) {
+    const text = String(value == null ? "" : value).trim();
+    return text === "[object Object]" ? "" : text;
+  }
+
+  function gosxIssueMessage(issue) {
+    const message = gosxIssueText(issue && issue.message);
+    if (message) {
+      return message;
+    }
+    const errorMessage = gosxIssueText(issue && issue.error && issue.error.message);
+    if (errorMessage) {
+      return errorMessage;
+    }
+    const errorText = gosxIssueText(issue && issue.error);
+    if (errorText) {
+      return errorText;
+    }
+    return "runtime failure";
+  }
+
+  function gosxMarkIssueElement(element, issue) {
+    if (!element || typeof element.setAttribute !== "function") {
+      return;
+    }
+    element.setAttribute("data-gosx-runtime-state", "error");
+    element.setAttribute("data-gosx-runtime-issue", issue.type);
+    if (issue.fallback) {
+      element.setAttribute("data-gosx-fallback-active", issue.fallback);
+    }
+  }
+
+  function gosxClearIssueState(element) {
+    if (!element || typeof element.removeAttribute !== "function") {
+      return;
+    }
+    element.setAttribute("data-gosx-runtime-state", "ready");
+    element.removeAttribute("data-gosx-runtime-issue");
+    element.removeAttribute("data-gosx-fallback-active");
+  }
+
+  function gosxReportRuntimeIssue(issue) {
+    const store = gosxIssueStore();
+    store.nextID += 1;
+    const entry = {
+      id: "gosx-issue-" + store.nextID,
+      scope: gosxIssueText(issue && issue.scope) || "runtime",
+      type: gosxIssueText(issue && issue.type) || "runtime",
+      severity: gosxIssueText(issue && issue.severity) || "error",
+      message: gosxIssueMessage(issue),
+      component: gosxIssueText(issue && issue.component),
+      ref: gosxIssueText(issue && issue.ref),
+      source: gosxIssueText(issue && issue.source),
+      phase: gosxIssueText(issue && issue.phase),
+      fallback: gosxIssueText(issue && issue.fallback) || "server",
+      elementID: gosxIssueText(issue && issue.element && issue.element.id),
+      timestamp: Date.now(),
+    };
+    store.entries.push(entry);
+    if (store.entries.length > 100) {
+      store.entries.splice(0, store.entries.length - 100);
+    }
+    gosxMarkIssueElement(issue && issue.element, entry);
+    if (document && typeof document.dispatchEvent === "function" && typeof CustomEvent === "function") {
+      document.dispatchEvent(new CustomEvent("gosx:error", {
+        detail: { issue: gosxCloneIssue(entry) },
+      }));
+    }
+    return gosxCloneIssue(entry);
+  }
+
+  function gosxListIssues() {
+    return gosxIssueStore().entries.map(gosxCloneIssue);
+  }
+
+  window.__gosx.reportIssue = gosxReportRuntimeIssue;
+  window.__gosx.listIssues = gosxListIssues;
+  window.__gosx.clearIssueState = gosxClearIssueState;
+
   const textMeasureCache = new Map();
   const textMeasureCacheLimit = 4096;
   const sceneLabelLayoutCacheLimit = 512;
@@ -2608,7 +2701,7 @@
     dispose: disposeManagedTextLayout,
   };
 
-const gosxEnvironmentListeners = new Set();
+  const gosxEnvironmentListeners = new Set();
   const gosxDocumentListeners = new Set();
   const gosxPresentationRecordsByElement = new Map();
   let gosxEnvironmentState = null;
@@ -3910,7 +4003,7 @@ const gosxEnvironmentListeners = new Set();
   refreshGosxEnvironmentState("bootstrap");
   refreshGosxDocumentState("bootstrap");
 
-function hasAttributeName(el, attr) {
+  function hasAttributeName(el, attr) {
     return Boolean(el && el.hasAttribute && el.hasAttribute(attr));
   }
 
@@ -3940,3 +4033,4 @@ function hasAttributeName(el, attr) {
     bootstrapLitePage();
   }
 })();
+//# sourceMappingURL=bootstrap-lite.js.map
