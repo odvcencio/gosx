@@ -49,31 +49,32 @@ type keyedChildrenPlan struct {
 }
 
 func reconcileNodePair(ops *[]PatchOp, prev, next *ResolvedTree, prevIdx, nextIdx int, path string, staticMask []bool) {
-	pn := resolvedNodeAt(prev, prevIdx)
-	nn := resolvedNodeAt(next, nextIdx)
-	if pn == nil || nn == nil {
+	pair, ok := resolveNodePair(prev, next, prevIdx, nextIdx)
+	if !ok || shouldSkipReconcileNode(pair.next, nextIdx, staticMask) {
 		return
 	}
-	if isStaticNode(nn, nextIdx, staticMask) {
+	if isLeafNodePair(pair.prev, pair.next) {
+		reconcileLeafNodePair(ops, pair.prev, pair.next, next, nextIdx, path)
 		return
 	}
-
-	if pn.Tag == "" || nn.Tag == "" {
-		reconcileLeafNodePair(ops, prev, next, prevIdx, nextIdx, path)
-		return
-	}
-
-	if pn.Tag != nn.Tag {
+	if pair.prev.Tag != pair.next.Tag {
 		appendReplaceSubtree(ops, next, nextIdx, path)
 		return
 	}
+	reconcileElementNodePair(ops, prev, next, pair.prev, pair.next, nextIdx, path, staticMask)
+}
 
-	if pn.Text != nn.Text && (pn.Text != "" || nn.Text != "") {
-		appendTextPatch(ops, path, nn.Text)
+type resolvedNodePair struct {
+	prev *ResolvedNode
+	next *ResolvedNode
+}
+
+func resolveNodePair(prev, next *ResolvedTree, prevIdx, nextIdx int) (resolvedNodePair, bool) {
+	pair := resolvedNodePair{
+		prev: resolvedNodeAt(prev, prevIdx),
+		next: resolvedNodeAt(next, nextIdx),
 	}
-
-	reconcileAttrs(ops, pn, nn, path)
-	reconcileChildren(ops, prev, next, pn, nn, path, staticMask)
+	return pair, pair.prev != nil && pair.next != nil
 }
 
 func resolvedNodeAt(tree *ResolvedTree, idx int) *ResolvedNode {
@@ -83,19 +84,26 @@ func resolvedNodeAt(tree *ResolvedTree, idx int) *ResolvedNode {
 	return &tree.Nodes[idx]
 }
 
-func isStaticNode(node *ResolvedNode, nodeIdx int, staticMask []bool) bool {
-	if node == nil || !node.HasSource || node.Source < 0 {
-		return nodeIdx >= 0 && nodeIdx < len(staticMask) && staticMask[nodeIdx]
-	}
-	return node.Source < len(staticMask) && staticMask[node.Source]
+func shouldSkipReconcileNode(node *ResolvedNode, nodeIdx int, staticMask []bool) bool {
+	return staticMaskAt(staticMask, staticMaskIndex(node, nodeIdx))
 }
 
-func reconcileLeafNodePair(ops *[]PatchOp, prev, next *ResolvedTree, prevIdx, nextIdx int, path string) {
-	pn := resolvedNodeAt(prev, prevIdx)
-	nn := resolvedNodeAt(next, nextIdx)
-	if pn == nil || nn == nil {
-		return
+func staticMaskIndex(node *ResolvedNode, nodeIdx int) int {
+	if node != nil && node.HasSource && node.Source >= 0 {
+		return node.Source
 	}
+	return nodeIdx
+}
+
+func staticMaskAt(staticMask []bool, idx int) bool {
+	return idx >= 0 && idx < len(staticMask) && staticMask[idx]
+}
+
+func isLeafNodePair(prev, next *ResolvedNode) bool {
+	return prev == nil || next == nil || prev.Tag == "" || next.Tag == ""
+}
+
+func reconcileLeafNodePair(ops *[]PatchOp, pn, nn *ResolvedNode, next *ResolvedTree, nextIdx int, path string) {
 
 	switch {
 	case pn.Tag == "" && nn.Tag == "":
@@ -107,6 +115,14 @@ func reconcileLeafNodePair(ops *[]PatchOp, prev, next *ResolvedTree, prevIdx, ne
 	default:
 		appendReplaceSubtree(ops, next, nextIdx, path)
 	}
+}
+
+func reconcileElementNodePair(ops *[]PatchOp, prev, next *ResolvedTree, pn, nn *ResolvedNode, nextIdx int, path string, staticMask []bool) {
+	if pn.Text != nn.Text && (pn.Text != "" || nn.Text != "") {
+		appendTextPatch(ops, path, nn.Text)
+	}
+	reconcileAttrs(ops, pn, nn, path)
+	reconcileChildren(ops, prev, next, pn, nn, path, staticMask)
 }
 
 func reconcileChildren(ops *[]PatchOp, prev, next *ResolvedTree, prevNode, nextNode *ResolvedNode, path string, staticMask []bool) {
@@ -275,23 +291,32 @@ func reorderIndices(current, desired []string) []int {
 	if len(current) != len(desired) {
 		return nil
 	}
-
-	unchanged := true
-	for i := range current {
-		if current[i] != desired[i] {
-			unchanged = false
-			break
-		}
-	}
-	if unchanged {
+	if stringSlicesEqual(current, desired) {
 		return nil
 	}
 
-	indexByKey := make(map[string]int, len(current))
-	for i, key := range current {
+	indexByKey := stringIndexMap(current)
+	return reorderedIndices(indexByKey, desired)
+}
+
+func stringSlicesEqual(left, right []string) bool {
+	for i := range left {
+		if left[i] != right[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func stringIndexMap(values []string) map[string]int {
+	indexByKey := make(map[string]int, len(values))
+	for i, key := range values {
 		indexByKey[key] = i
 	}
+	return indexByKey
+}
 
+func reorderedIndices(indexByKey map[string]int, desired []string) []int {
 	order := make([]int, 0, len(desired))
 	for _, key := range desired {
 		idx, ok := indexByKey[key]
