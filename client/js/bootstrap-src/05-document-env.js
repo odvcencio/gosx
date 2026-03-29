@@ -601,6 +601,26 @@
     };
   }
 
+  function gosxInheritedElementAttribute(element, name) {
+    if (!element || !name) {
+      return "";
+    }
+    let current = element;
+    while (current) {
+      if (typeof current.getAttribute === "function") {
+        const value = String(current.getAttribute(name) || "").trim();
+        if (value) {
+          return value;
+        }
+      }
+      current = current.parentNode || null;
+    }
+    if (document && document.documentElement && document.documentElement !== element && typeof document.documentElement.getAttribute === "function") {
+      return String(document.documentElement.getAttribute(name) || "").trim();
+    }
+    return "";
+  }
+
   function gosxPresentationSnapshot(element) {
     if (!element || typeof element !== "object") {
       return null;
@@ -609,18 +629,29 @@
     const rect = element && typeof element.getBoundingClientRect === "function" ? element.getBoundingClientRect() : null;
     const width = Math.max(0, gosxNumber(rect && rect.width, element && (element.clientWidth || element.offsetWidth || element.width) || 0));
     const height = Math.max(0, gosxNumber(rect && rect.height, element && (element.clientHeight || element.offsetHeight || element.height) || 0));
-    const maxWidth = textLayoutLengthValue(
-      textLayoutComputedStyleValue(style, "--gosx-text-layout-max-width")
+    const lang = gosxInheritedElementAttribute(element, "lang");
+    const directionAttr = gosxInheritedElementAttribute(element, "dir");
+    const writingMode = normalizeTextLayoutWritingMode(textLayoutComputedStyleValue(style, "writing-mode"));
+    const inlineSize = textLayoutLogicalInlineSize(width, height, writingMode);
+    const blockSize = textLayoutLogicalBlockSize(width, height, writingMode);
+    const maxInlineSize = textLayoutLengthValue(
+      textLayoutComputedStyleValue(style, "--gosx-text-layout-max-inline-size")
+      || textLayoutComputedStyleValue(style, "max-inline-size")
+      || textLayoutComputedStyleValue(style, "--gosx-text-layout-max-width")
       || textLayoutComputedStyleValue(style, "max-width"),
-      width,
+      inlineSize,
     );
     return {
       style,
       width,
       height,
-      maxWidth: maxWidth > 0 ? maxWidth : width,
-      direction: textLayoutComputedStyleValue(style, "direction") || "",
-      writingMode: textLayoutComputedStyleValue(style, "writing-mode") || "",
+      inlineSize,
+      blockSize,
+      maxWidth: maxInlineSize > 0 ? maxInlineSize : inlineSize,
+      maxInlineSize: maxInlineSize > 0 ? maxInlineSize : inlineSize,
+      direction: textLayoutComputedStyleValue(style, "direction") || directionAttr || "",
+      writingMode,
+      lang,
       font: textLayoutComputedStyleValue(style, "font") || "",
       lineHeight: textLayoutLengthValue(
         textLayoutComputedStyleValue(style, "--gosx-text-layout-line-height")
@@ -631,6 +662,7 @@
       whiteSpace: textLayoutComputedStyleValue(style, "white-space") || "",
       display: textLayoutComputedStyleValue(style, "display") || "",
       visibility: textLayoutComputedStyleValue(style, "visibility") || "",
+      containerType: textLayoutComputedStyleValue(style, "container-type") || "",
       environment: cloneGosxEnvironment(gosxEnvironmentState || refreshGosxEnvironmentState("presentation")),
     };
   }
@@ -640,7 +672,9 @@
       return function() {};
     }
     let resizeObserver = null;
+    let mutationObserver = null;
     let stopEnvironment = null;
+    let stopDocument = null;
     const notify = function(reason) {
       listener(gosxPresentationSnapshot(element), reason || "presentation");
     };
@@ -658,6 +692,33 @@
       notify("presentation-environment");
     }, { immediate: false });
 
+    stopDocument = observeGosxDocument(function() {
+      notify("presentation-document");
+    }, { immediate: false });
+
+    if (typeof MutationObserver === "function" && document && document.documentElement) {
+      mutationObserver = new MutationObserver(function(records) {
+        for (const record of records || []) {
+          const target = record && record.target;
+          if (!target || target === element || target === document.documentElement || target === document.body) {
+            notify("presentation-mutation");
+            return;
+          }
+          if (typeof target.contains === "function" && target.contains(element)) {
+            notify("presentation-mutation");
+            return;
+          }
+        }
+      });
+      if (typeof mutationObserver.observe === "function") {
+        mutationObserver.observe(document.documentElement, {
+          subtree: true,
+          attributes: true,
+          attributeFilter: ["class", "style", "dir", "lang", "hidden"],
+        });
+      }
+    }
+
     if (!options || options.immediate !== false) {
       notify("init");
     }
@@ -666,8 +727,14 @@
       if (resizeObserver && typeof resizeObserver.disconnect === "function") {
         resizeObserver.disconnect();
       }
+      if (mutationObserver && typeof mutationObserver.disconnect === "function") {
+        mutationObserver.disconnect();
+      }
       if (typeof stopEnvironment === "function") {
         stopEnvironment();
+      }
+      if (typeof stopDocument === "function") {
+        stopDocument();
       }
     };
   }

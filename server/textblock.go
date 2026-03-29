@@ -16,6 +16,8 @@ type TextBlockProps struct {
 	Tag           string
 	Text          string
 	Font          string
+	Lang          string
+	Direction     string
 	Align         string
 	WhiteSpace    textlayout.WhiteSpace
 	LineHeight    float64
@@ -52,6 +54,18 @@ func TextBlockAttrs(props TextBlockProps) []TextBlockAttr {
 
 	if font := strings.TrimSpace(props.Font); font != "" {
 		attrs = append(attrs, TextBlockAttr{Name: "data-gosx-text-layout-font", Value: font})
+	}
+	if lang := strings.TrimSpace(props.Lang); lang != "" {
+		attrs = append(attrs,
+			TextBlockAttr{Name: "lang", Value: lang},
+			TextBlockAttr{Name: "data-gosx-text-layout-locale", Value: lang},
+		)
+	}
+	if direction := normalizeTextBlockDirection(props.Direction); direction != "" {
+		attrs = append(attrs,
+			TextBlockAttr{Name: "dir", Value: direction},
+			TextBlockAttr{Name: "data-gosx-text-layout-direction", Value: direction},
+		)
 	}
 	if align := normalizeTextBlockAlign(props.Align); align != "" {
 		attrs = append(attrs,
@@ -159,6 +173,15 @@ func normalizeTextBlockWhiteSpace(ws textlayout.WhiteSpace) string {
 func normalizeTextBlockAlign(value string) string {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "left", "right", "center", "justify", "start", "end":
+		return strings.ToLower(strings.TrimSpace(value))
+	default:
+		return ""
+	}
+}
+
+func normalizeTextBlockDirection(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "ltr", "rtl", "auto":
 		return strings.ToLower(strings.TrimSpace(value))
 	default:
 		return ""
