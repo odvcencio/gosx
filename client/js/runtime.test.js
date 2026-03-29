@@ -4350,6 +4350,39 @@ test("navigation runtime swaps managed head/body and calls page lifecycle hooks"
   assert.deepEqual(env.scrollCalls, [[0, 0]]);
 });
 
+test("navigation runtime marks current and ancestor links and exposes navigation state", async () => {
+  const docsLink = new FakeElement("a", null);
+  docsLink.setAttribute("href", "/docs");
+  docsLink.setAttribute("data-gosx-link", "");
+  docsLink.textContent = "Docs";
+
+  const formsLink = new FakeElement("a", null);
+  formsLink.setAttribute("href", "/docs/forms");
+  formsLink.setAttribute("data-gosx-link", "");
+  formsLink.textContent = "Forms";
+
+  const blogLink = new FakeElement("a", null);
+  blogLink.setAttribute("href", "/blog");
+  blogLink.setAttribute("data-gosx-link", "");
+  blogLink.textContent = "Blog";
+
+  const env = createContext({
+    elements: [docsLink, formsLink, blogLink],
+  });
+  env.context.location.href = "http://localhost:3000/docs/forms";
+
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  await flushAsyncWork();
+
+  assert.equal(docsLink.getAttribute("data-gosx-link-current"), "ancestor");
+  assert.equal(formsLink.getAttribute("data-gosx-link-current"), "page");
+  assert.equal(formsLink.getAttribute("aria-current"), "page");
+  assert.equal(blogLink.getAttribute("data-gosx-link-current"), "none");
+  assert.equal(env.document.documentElement.getAttribute("data-gosx-navigation-state"), "idle");
+  assert.equal(env.document.documentElement.getAttribute("data-gosx-navigation-current-path"), "/docs/forms");
+  assert.equal(env.context.__gosx_page_nav.getState().currentPath, "/docs/forms");
+});
+
 test("navigation runtime prefetches marked links and reuses cached HTML", async () => {
   const link = new FakeElement("a", null);
   link.setAttribute("href", "/prefetch");
@@ -4381,6 +4414,7 @@ test("navigation runtime prefetches marked links and reuses cached HTML", async 
   overListener({ type: "mouseover", target: link });
   await flushAsyncWork();
   assert.equal(env.fetchCalls.length, 1);
+  assert.equal(link.getAttribute("data-gosx-prefetch-state"), "ready");
 
   const clickListener = env.document.eventListeners.get("click")[0];
   clickListener({
@@ -4398,6 +4432,62 @@ test("navigation runtime prefetches marked links and reuses cached HTML", async 
 
   assert.equal(env.fetchCalls.length, 1);
   assert.equal(env.document.title, "Prefetched");
+});
+
+test("navigation runtime eagerly prefetches render-marked links", async () => {
+  const link = new FakeElement("a", null);
+  link.setAttribute("href", "/prefetch");
+  link.setAttribute("data-gosx-link", "");
+  link.setAttribute("data-gosx-prefetch", "render");
+  link.textContent = "Prefetch";
+
+  const parsedDocs = new Map();
+  const env = createContext({
+    elements: [link],
+    fetchRoutes: {
+      "http://localhost:3000/prefetch": {
+        text: "__PREFETCH_RENDER_DOC__",
+        url: "http://localhost:3000/prefetch",
+      },
+    },
+    parseHTML(html) {
+      return parsedDocs.get(html);
+    },
+  });
+
+  parsedDocs.set("__PREFETCH_RENDER_DOC__", buildNavigatedDocument({
+    title: "Prefetched",
+    bodyNodes: [new FakeElement("div", null)],
+  }));
+
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  await flushAsyncWork();
+
+  assert.equal(env.fetchCalls.length, 1);
+  assert.equal(link.getAttribute("data-gosx-prefetch-state"), "ready");
+});
+
+test("navigation runtime skips intent prefetch under reduced-data conditions", async () => {
+  const link = new FakeElement("a", null);
+  link.setAttribute("href", "/prefetch");
+  link.setAttribute("data-gosx-link", "");
+  link.textContent = "Prefetch";
+
+  const env = createContext({
+    elements: [link],
+    matchMedia: {
+      "(prefers-reduced-data: reduce)": true,
+    },
+  });
+
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+
+  const overListener = env.document.eventListeners.get("mouseover")[0];
+  overListener({ type: "mouseover", target: link });
+  await flushAsyncWork();
+
+  assert.equal(env.fetchCalls.length, 0);
+  assert.equal(link.getAttribute("data-gosx-prefetch-state"), "idle");
 });
 
 test("navigation runtime absolutizes managed asset URLs during navigation", async () => {
