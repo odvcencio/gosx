@@ -4667,13 +4667,37 @@ test("navigation runtime marks current and ancestor links and exposes navigation
   runScript(navigationSource, env.context, "navigation_runtime.js");
   await flushAsyncWork();
 
+  assert.equal(docsLink.getAttribute("data-gosx-link-current-policy"), "auto");
   assert.equal(docsLink.getAttribute("data-gosx-link-current"), "ancestor");
+  assert.equal(formsLink.getAttribute("data-gosx-link-current-policy"), "auto");
   assert.equal(formsLink.getAttribute("data-gosx-link-current"), "page");
   assert.equal(formsLink.getAttribute("aria-current"), "page");
+  assert.equal(blogLink.getAttribute("data-gosx-link-current-policy"), "auto");
   assert.equal(blogLink.getAttribute("data-gosx-link-current"), "none");
   assert.equal(env.document.documentElement.getAttribute("data-gosx-navigation-state"), "idle");
   assert.equal(env.document.documentElement.getAttribute("data-gosx-navigation-current-path"), "/docs/forms");
   assert.equal(env.context.__gosx_page_nav.getState().currentPath, "/docs/forms");
+});
+
+test("navigation runtime honors explicit link current policy", async () => {
+  const link = new FakeElement("a", null);
+  link.setAttribute("href", "/docs/forms");
+  link.setAttribute("data-gosx-link", "");
+  link.setAttribute("data-gosx-link-current-policy", "none");
+  link.setAttribute("data-gosx-link-current", "none");
+  link.textContent = "Forms";
+
+  const env = createContext({
+    elements: [link],
+  });
+  env.context.location.href = "http://localhost:3000/docs/forms";
+
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  await flushAsyncWork();
+
+  assert.equal(link.getAttribute("data-gosx-link-current-policy"), "none");
+  assert.equal(link.getAttribute("data-gosx-link-current"), "none");
+  assert.equal(link.hasAttribute("aria-current"), false);
 });
 
 test("navigation runtime prefetches marked links and reuses cached HTML", async () => {
@@ -4963,6 +4987,7 @@ test("navigation runtime intercepts managed form submissions and forwards action
   });
   await flushAsyncWork();
 
+  assert.equal(form.getAttribute("data-gosx-form-mode"), "post");
   assert.equal(prevented, true);
   assert.equal(env.fetchCalls[0].url, "http://localhost:3000/save");
   assert.equal(env.fetchCalls[0].init.method, "POST");
@@ -5034,6 +5059,7 @@ test("navigation runtime intercepts managed GET forms and navigates with query p
   });
   await flushAsyncWork();
 
+  assert.equal(form.getAttribute("data-gosx-form-mode"), "get");
   assert.equal(prevented, true);
   assert.equal(env.fetchCalls[0].url, "http://localhost:3000/search?q=scene+labels&view=list");
   assert.equal(env.fetchCalls[0].init.headers.Accept, "text/html");

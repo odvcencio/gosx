@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"html"
 	"net/http"
-	"net/url"
 	"reflect"
 	"sort"
 	"strings"
@@ -82,24 +81,28 @@ func (r *fileProgramRenderer) renderElement(node *ir.Node, env fileRenderEnv) st
 	}
 	b.WriteByte('<')
 	b.WriteString(tag)
-	r.renderAttrs(&b, node.Attrs, env)
-	if formMode != "" && attrValue(node.Attrs, env, "data-gosx-form") == nil {
-		b.WriteString(" data-gosx-form")
+	attrs := node.Attrs
+	if formMode != "" {
+		attrs = managedFormAttrs(node.Attrs)
 	}
-	if formMode != "" && attrValue(node.Attrs, env, "data-gosx-form-mode") == nil {
-		fmt.Fprintf(&b, ` data-gosx-form-mode="%s"`, html.EscapeString(formMode))
+	r.renderAttrs(&b, attrs, env)
+	if formMode != "" && attrValue(node.Attrs, env, server.NavigationFormAttr) == nil {
+		b.WriteString(" " + server.NavigationFormAttr)
 	}
-	if formMode != "" && attrValue(node.Attrs, env, "data-gosx-form-state") == nil {
-		b.WriteString(` data-gosx-form-state="idle"`)
+	if formMode != "" {
+		fmt.Fprintf(&b, ` %s="%s"`, server.NavigationFormModeAttr, html.EscapeString(formMode))
 	}
-	if formMode != "" && attrValue(node.Attrs, env, "data-gosx-enhance") == nil {
-		b.WriteString(` data-gosx-enhance="form"`)
+	if formMode != "" && attrValue(node.Attrs, env, server.NavigationFormStateAttr) == nil {
+		fmt.Fprintf(&b, ` %s="idle"`, server.NavigationFormStateAttr)
 	}
-	if formMode != "" && attrValue(node.Attrs, env, "data-gosx-enhance-layer") == nil {
-		b.WriteString(` data-gosx-enhance-layer="bootstrap"`)
+	if formMode != "" && attrValue(node.Attrs, env, server.NavigationEnhanceAttr) == nil {
+		fmt.Fprintf(&b, ` %s="form"`, server.NavigationEnhanceAttr)
 	}
-	if formMode != "" && attrValue(node.Attrs, env, "data-gosx-fallback") == nil {
-		b.WriteString(` data-gosx-fallback="native-form"`)
+	if formMode != "" && attrValue(node.Attrs, env, server.NavigationEnhanceLayerAttr) == nil {
+		fmt.Fprintf(&b, ` %s="bootstrap"`, server.NavigationEnhanceLayerAttr)
+	}
+	if formMode != "" && attrValue(node.Attrs, env, server.NavigationFallbackAttr) == nil {
+		fmt.Fprintf(&b, ` %s="native-form"`, server.NavigationFallbackAttr)
 	}
 	if ir.VoidElements[node.Tag] {
 		b.WriteString(" />")
@@ -218,40 +221,37 @@ func (r *fileProgramRenderer) renderEach(node *ir.Node, env fileRenderEnv) strin
 func (r *fileProgramRenderer) renderLink(node *ir.Node, env fileRenderEnv) string {
 	var b strings.Builder
 	b.WriteString("<a")
-	hasNavAttr := attrValue(node.Attrs, env, "data-gosx-link") != nil
-	hasLinkStateAttr := attrValue(node.Attrs, env, "data-gosx-link-state") != nil
-	hasPrefetchStateAttr := attrValue(node.Attrs, env, "data-gosx-prefetch-state") != nil
+	hasNavAttr := attrValue(node.Attrs, env, server.NavigationLinkAttr) != nil
+	hasLinkStateAttr := attrValue(node.Attrs, env, server.NavigationLinkStateAttr) != nil
+	hasPrefetchStateAttr := attrValue(node.Attrs, env, server.NavigationLinkPrefetchStateAttr) != nil
 	hasAriaCurrent := attrValue(node.Attrs, env, "aria-current", "ariaCurrent") != nil
-	currentValue, currentProvided := normalizedLinkCurrentValue(node.Attrs, env)
-	if !currentProvided {
-		currentValue = fileManagedLinkRelation(stringValue(attrValue(node.Attrs, env, "href")), fileCurrentRequestPath(env))
-	}
-	prefetchValue, prefetchProvided := normalizedLinkPrefetchValue(node.Attrs, env)
+	contract := fileManagedLinkContractForAttrs(node.Attrs, env)
 	r.renderLinkAttrs(&b, node.Attrs, env)
 	if !hasNavAttr {
-		b.WriteString(" data-gosx-link")
+		b.WriteString(" " + server.NavigationLinkAttr)
 	}
 	if !hasLinkStateAttr {
-		b.WriteString(` data-gosx-link-state="idle"`)
+		fmt.Fprintf(&b, ` %s="idle"`, server.NavigationLinkStateAttr)
 	}
-	if attrValue(node.Attrs, env, "data-gosx-enhance") == nil {
-		b.WriteString(` data-gosx-enhance="navigation"`)
+	if attrValue(node.Attrs, env, server.NavigationEnhanceAttr) == nil {
+		fmt.Fprintf(&b, ` %s="navigation"`, server.NavigationEnhanceAttr)
 	}
-	if attrValue(node.Attrs, env, "data-gosx-enhance-layer") == nil {
-		b.WriteString(` data-gosx-enhance-layer="bootstrap"`)
+	if attrValue(node.Attrs, env, server.NavigationEnhanceLayerAttr) == nil {
+		fmt.Fprintf(&b, ` %s="bootstrap"`, server.NavigationEnhanceLayerAttr)
 	}
-	if attrValue(node.Attrs, env, "data-gosx-fallback") == nil {
-		b.WriteString(` data-gosx-fallback="native-link"`)
+	if attrValue(node.Attrs, env, server.NavigationFallbackAttr) == nil {
+		fmt.Fprintf(&b, ` %s="native-link"`, server.NavigationFallbackAttr)
 	}
-	fmt.Fprintf(&b, ` data-gosx-link-current="%s"`, html.EscapeString(currentValue))
+	fmt.Fprintf(&b, ` %s="%s"`, server.NavigationLinkCurrentPolicyAttr, html.EscapeString(contract.CurrentPolicy))
+	fmt.Fprintf(&b, ` %s="%s"`, server.NavigationLinkCurrentAttr, html.EscapeString(contract.Current))
 	if !hasPrefetchStateAttr {
-		b.WriteString(` data-gosx-prefetch-state="idle"`)
+		fmt.Fprintf(&b, ` %s="idle"`, server.NavigationLinkPrefetchStateAttr)
 	}
-	if prefetchProvided {
-		fmt.Fprintf(&b, ` data-gosx-prefetch="%s"`, html.EscapeString(prefetchValue))
+	if contract.PrefetchProvided {
+		fmt.Fprintf(&b, ` %s="%s"`, server.NavigationLinkPrefetchAttr, html.EscapeString(contract.Prefetch))
 	}
-	if currentValue == "page" && !hasAriaCurrent {
-		b.WriteString(` aria-current="page" data-gosx-aria-current-managed="true"`)
+	if contract.Current == "page" && !hasAriaCurrent {
+		fmt.Fprintf(&b, ` aria-current="page" %s="true"`, server.NavigationLinkManagedCurrentAttr)
 	}
 	b.WriteByte('>')
 	b.WriteString(r.renderChildren(node.Children, env))
@@ -284,42 +284,23 @@ func (r *fileProgramRenderer) renderLinkAttrs(b *strings.Builder, attrs []ir.Att
 }
 
 func normalizedLinkPrefetchValue(attrs []ir.Attr, env fileRenderEnv) (string, bool) {
-	value := strings.ToLower(strings.TrimSpace(stringValue(attrValue(attrs, env, "data-gosx-prefetch", "prefetch"))))
-	switch value {
-	case "":
-		return "", false
-	case "off", "intent", "render", "force":
-		return value, true
-	default:
-		return value, true
-	}
-}
-
-func normalizedLinkCurrentValue(attrs []ir.Attr, env fileRenderEnv) (string, bool) {
-	value := strings.ToLower(strings.TrimSpace(stringValue(attrValue(attrs, env, "data-gosx-link-current", "current"))))
-	switch value {
-	case "":
-		return "", false
-	case "page", "ancestor", "none":
-		return value, true
-	default:
-		return "none", true
-	}
+	return server.NormalizeNavigationLinkPrefetch(stringValue(attrValue(attrs, env, server.NavigationLinkPrefetchAttr, "prefetch")))
 }
 
 func linkReservedAttr(name string) bool {
 	switch normalizeFileAttrName(strings.TrimSpace(name)) {
-	case "prefetch", "data-gosx-prefetch", "current", "data-gosx-link-current":
+	case "prefetch", server.NavigationLinkPrefetchAttr, "current", server.NavigationLinkCurrentAttr, server.NavigationLinkCurrentPolicyAttr:
 		return true
 	default:
 		return false
 	}
 }
 
-type fileNavigationTarget struct {
-	origin string
-	path   string
-	search string
+type fileManagedLinkContract struct {
+	Current          string
+	CurrentPolicy    string
+	Prefetch         string
+	PrefetchProvided bool
 }
 
 func fileCurrentRequestPath(env fileRenderEnv) string {
@@ -336,74 +317,25 @@ func fileCurrentRequestPath(env fileRenderEnv) string {
 	return "/"
 }
 
-func fileManagedLinkRelation(href string, currentPath string) string {
-	target := fileNavigationParts(href, currentPath)
-	current := fileNavigationParts(currentPath, currentPath)
-	if !sameFileNavigationURL(target, current) {
-		if ancestorFileNavigationURL(target, current) {
-			return "ancestor"
-		}
-		return "none"
-	}
-	return "page"
-}
-
-func fileNavigationParts(value string, currentPath string) *fileNavigationTarget {
-	trimmed := strings.TrimSpace(value)
-	if trimmed == "" {
-		return nil
-	}
-	base := &url.URL{
-		Scheme: "https",
-		Host:   "gosx.local",
-		Path:   firstNonEmptyString(strings.TrimSpace(currentPath), "/"),
-	}
-	parsed, err := base.Parse(trimmed)
-	if err != nil {
-		return nil
-	}
-	if parsed.Scheme != "https" && parsed.Scheme != "http" {
-		return nil
-	}
-	path := strings.TrimSpace(parsed.EscapedPath())
-	if path == "" {
-		path = strings.TrimSpace(parsed.Path)
-	}
-	if path == "" {
-		path = "/"
-	}
-	if !strings.HasPrefix(path, "/") {
-		path = "/" + path
-	}
-	if len(path) > 1 {
-		path = strings.TrimRight(path, "/")
-		if path == "" {
-			path = "/"
-		}
-	}
-	search := ""
-	if parsed.RawQuery != "" {
-		search = "?" + parsed.RawQuery
-	}
-	return &fileNavigationTarget{
-		origin: parsed.Scheme + "://" + parsed.Host,
-		path:   path,
-		search: search,
+func fileManagedLinkContractForAttrs(attrs []ir.Attr, env fileRenderEnv) fileManagedLinkContract {
+	currentPolicy := normalizedLinkCurrentPolicy(attrs, env)
+	prefetch, prefetchProvided := normalizedLinkPrefetchValue(attrs, env)
+	return fileManagedLinkContract{
+		Current:          server.ResolveNavigationLinkCurrent(stringValue(attrValue(attrs, env, "href")), fileCurrentRequestPath(env), currentPolicy),
+		CurrentPolicy:    currentPolicy,
+		Prefetch:         prefetch,
+		PrefetchProvided: prefetchProvided,
 	}
 }
 
-func sameFileNavigationURL(left, right *fileNavigationTarget) bool {
-	return left != nil && right != nil && left.origin == right.origin && left.path == right.path && left.search == right.search
-}
-
-func ancestorFileNavigationURL(parent, child *fileNavigationTarget) bool {
-	if parent == nil || child == nil || parent.origin != child.origin {
-		return false
-	}
-	if parent.path == "/" || parent.search != "" {
-		return false
-	}
-	return child.path == parent.path || strings.HasPrefix(child.path, parent.path+"/")
+func normalizedLinkCurrentPolicy(attrs []ir.Attr, env fileRenderEnv) string {
+	return server.NormalizeNavigationLinkCurrentPolicy(stringValue(attrValue(
+		attrs,
+		env,
+		server.NavigationLinkCurrentPolicyAttr,
+		server.NavigationLinkCurrentAttr,
+		"current",
+	)))
 }
 
 type managedFormOptions struct {
@@ -422,23 +354,23 @@ func (r *fileProgramRenderer) renderManagedForm(node *ir.Node, env fileRenderEnv
 		fmt.Fprintf(&b, ` action="%s"`, html.EscapeString(action))
 	}
 	r.renderAttrs(&b, managedFormAttrs(node.Attrs), env)
-	if attrValue(node.Attrs, env, "data-gosx-form") == nil {
-		b.WriteString(" data-gosx-form")
+	if attrValue(node.Attrs, env, server.NavigationFormAttr) == nil {
+		b.WriteString(" " + server.NavigationFormAttr)
 	}
-	if mode != "" && attrValue(node.Attrs, env, "data-gosx-form-mode") == nil {
-		fmt.Fprintf(&b, ` data-gosx-form-mode="%s"`, html.EscapeString(mode))
+	if mode != "" {
+		fmt.Fprintf(&b, ` %s="%s"`, server.NavigationFormModeAttr, html.EscapeString(mode))
 	}
-	if attrValue(node.Attrs, env, "data-gosx-form-state") == nil {
-		b.WriteString(` data-gosx-form-state="idle"`)
+	if attrValue(node.Attrs, env, server.NavigationFormStateAttr) == nil {
+		fmt.Fprintf(&b, ` %s="idle"`, server.NavigationFormStateAttr)
 	}
-	if attrValue(node.Attrs, env, "data-gosx-enhance") == nil {
-		b.WriteString(` data-gosx-enhance="form"`)
+	if attrValue(node.Attrs, env, server.NavigationEnhanceAttr) == nil {
+		fmt.Fprintf(&b, ` %s="form"`, server.NavigationEnhanceAttr)
 	}
-	if attrValue(node.Attrs, env, "data-gosx-enhance-layer") == nil {
-		b.WriteString(` data-gosx-enhance-layer="bootstrap"`)
+	if attrValue(node.Attrs, env, server.NavigationEnhanceLayerAttr) == nil {
+		fmt.Fprintf(&b, ` %s="bootstrap"`, server.NavigationEnhanceLayerAttr)
 	}
-	if attrValue(node.Attrs, env, "data-gosx-fallback") == nil {
-		b.WriteString(` data-gosx-fallback="native-form"`)
+	if attrValue(node.Attrs, env, server.NavigationFallbackAttr) == nil {
+		fmt.Fprintf(&b, ` %s="native-form"`, server.NavigationFallbackAttr)
 	}
 	b.WriteByte('>')
 	b.WriteString(r.renderChildren(node.Children, env))
@@ -990,7 +922,8 @@ func normalizeFileAttrName(name string) string {
 func managedFormAttrs(attrs []ir.Attr) []ir.Attr {
 	out := make([]ir.Attr, 0, len(attrs))
 	for _, attr := range attrs {
-		if strings.TrimSpace(attr.Name) == "actionName" {
+		switch strings.TrimSpace(attr.Name) {
+		case "actionName", server.NavigationFormModeAttr:
 			continue
 		}
 		out = append(out, attr)
@@ -1029,29 +962,12 @@ func fileAutoFormEnhancementMode(attrs []ir.Attr, env fileRenderEnv) string {
 }
 
 func managedFormMode(attrs []ir.Attr, env fileRenderEnv, defaultMethod string) string {
-	if attrValue(attrs, env, "target") != nil {
-		return ""
-	}
-	method := strings.ToUpper(strings.TrimSpace(stringValue(attrValue(attrs, env, "method"))))
-	if method == "" {
-		method = strings.ToUpper(strings.TrimSpace(defaultMethod))
-	}
-	if method == "" {
-		method = http.MethodGet
-	}
-	switch method {
-	case http.MethodGet, http.MethodPost:
-	default:
-		return ""
-	}
-	action := strings.ToLower(strings.TrimSpace(stringValue(attrValue(attrs, env, "action"))))
-	switch {
-	case strings.HasPrefix(action, "javascript:"),
-		strings.HasPrefix(action, "mailto:"),
-		strings.HasPrefix(action, "tel:"):
-		return ""
-	}
-	return strings.ToLower(method)
+	return server.NormalizeNavigationFormMode(
+		stringValue(attrValue(attrs, env, "method")),
+		stringValue(attrValue(attrs, env, "action")),
+		stringValue(attrValue(attrs, env, "target")),
+		defaultMethod,
+	)
 }
 
 func exportedPropAlias(name string) string {

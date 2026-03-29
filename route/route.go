@@ -157,7 +157,7 @@ func (ctx *RouteContext) ActionForm(name string, args ...any) gosx.Node {
 		gosx.Attrs(
 			gosx.Attr("method", strings.ToLower(http.MethodPost)),
 			gosx.Attr("action", ctx.ActionPath(name)),
-			gosx.Attr("data-gosx-form-mode", "post"),
+			gosx.Attr(server.NavigationFormModeAttr, "post"),
 		),
 	}, args...)
 	return server.Form(prefixed...)
