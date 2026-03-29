@@ -3,6 +3,8 @@ package hydrate
 import (
 	"encoding/json"
 	"testing"
+
+	"github.com/odvcencio/gosx/engine"
 )
 
 func TestManifestCreation(t *testing.T) {
@@ -177,5 +179,63 @@ func TestManifestAddHub(t *testing.T) {
 	}
 	if m.Hubs[0].Bindings[0].Signal != "$presence" {
 		t.Fatalf("unexpected binding %#v", m.Hubs[0].Bindings[0])
+	}
+}
+
+func TestManifestAddEngineWithPixelSurface(t *testing.T) {
+	m := NewManifest()
+	vsync := false
+
+	id, err := m.AddEngineWithRuntime(
+		"RetroScreen",
+		"surface",
+		"/gosx/engines/retro.wasm",
+		"retro-root",
+		"",
+		"",
+		"",
+		map[string]any{"palette": "amber"},
+		[]string{"pixel-surface", "canvas"},
+		&engine.PixelSurfaceConfig{
+			Width:      160,
+			Height:     144,
+			Scaling:    engine.ScaleFill,
+			ClearColor: [4]uint8{1, 2, 3, 255},
+			VSync:      &vsync,
+		},
+	)
+	if err != nil {
+		t.Fatalf("AddEngineWithRuntime failed: %v", err)
+	}
+	if id != "gosx-engine-0" {
+		t.Fatalf("expected gosx-engine-0, got %s", id)
+	}
+
+	data, err := m.Marshal()
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	decoded, err := Unmarshal(data)
+	if err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(decoded.Engines) != 1 {
+		t.Fatalf("expected 1 engine, got %d", len(decoded.Engines))
+	}
+	entry := decoded.Engines[0]
+	if entry.PixelSurface == nil {
+		t.Fatal("expected pixel surface config")
+	}
+	if entry.PixelSurface.Width != 160 || entry.PixelSurface.Height != 144 {
+		t.Fatalf("unexpected pixel surface size: %#v", entry.PixelSurface)
+	}
+	if entry.PixelSurface.Scaling != engine.ScaleFill {
+		t.Fatalf("unexpected scaling: %q", entry.PixelSurface.Scaling)
+	}
+	if entry.PixelSurface.ClearColor != [4]uint8{1, 2, 3, 255} {
+		t.Fatalf("unexpected clear color: %v", entry.PixelSurface.ClearColor)
+	}
+	if entry.PixelSurface.VSyncEnabled() {
+		t.Fatal("expected vsync disabled")
 	}
 }

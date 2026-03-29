@@ -401,6 +401,7 @@ func (r *Renderer) RenderEngine(cfg engine.Config, fallback gosx.Node) gosx.Node
 		string(cfg.Runtime),
 		props,
 		engineCapabilities(cfg.Capabilities),
+		cfg.PixelSurface,
 	)
 	if err != nil {
 		return renderEngineError(err)
@@ -432,6 +433,15 @@ func (r *Renderer) RenderEngine(cfg engine.Config, fallback gosx.Node) gosx.Node
 	}
 	if len(cfg.Capabilities) > 0 {
 		attrs = append(attrs, gosx.Attr("data-gosx-engine-capabilities", strings.Join(engineCapabilities(cfg.Capabilities), " ")))
+	}
+	if ps := cfg.PixelSurface; ps != nil {
+		attrs = append(attrs,
+			gosx.Attr("data-gosx-pixel-width", fmt.Sprint(ps.Width)),
+			gosx.Attr("data-gosx-pixel-height", fmt.Sprint(ps.Height)),
+		)
+		if ps.Scaling != "" {
+			attrs = append(attrs, gosx.Attr("data-gosx-pixel-scaling", string(ps.Scaling)))
+		}
 	}
 
 	args := []any{gosx.Attrs(attrs...)}

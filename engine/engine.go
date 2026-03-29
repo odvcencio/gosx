@@ -31,17 +31,69 @@ const (
 type Capability string
 
 const (
-	CapCanvas    Capability = "canvas"
-	CapWebGL     Capability = "webgl"
-	CapAnimation Capability = "animation"
-	CapStorage   Capability = "storage"
-	CapFetch     Capability = "fetch"
-	CapAudio     Capability = "audio"
-	CapWorker    Capability = "worker"
-	CapGamepad   Capability = "gamepad"
-	CapKeyboard  Capability = "keyboard"
-	CapPointer   Capability = "pointer"
+	CapCanvas       Capability = "canvas"
+	CapWebGL        Capability = "webgl"
+	CapWebGPU       Capability = "webgpu"
+	CapPixelSurface Capability = "pixel-surface"
+	CapAnimation    Capability = "animation"
+	CapStorage      Capability = "storage"
+	CapFetch        Capability = "fetch"
+	CapAudio        Capability = "audio"
+	CapWorker       Capability = "worker"
+	CapGamepad      Capability = "gamepad"
+	CapKeyboard     Capability = "keyboard"
+	CapPointer      Capability = "pointer"
 )
+
+// ScalingMode controls how a logical pixel buffer maps to the display surface.
+type ScalingMode string
+
+const (
+	// ScalePixelPerfect uses integer multiples only. The buffer is scaled to
+	// the largest integer factor that fits the surface, with letterboxing on
+	// the remaining area. No interpolation.
+	ScalePixelPerfect ScalingMode = "pixel-perfect"
+
+	// ScaleFill scales the buffer to fill the surface while preserving aspect
+	// ratio. Uses linear interpolation.
+	ScaleFill ScalingMode = "fill"
+
+	// ScaleStretch scales the buffer to fill the surface without preserving
+	// aspect ratio. Rarely what you want.
+	ScaleStretch ScalingMode = "stretch"
+)
+
+// PixelSurfaceConfig describes a GPU-accelerated pixel framebuffer that the
+// framework manages automatically. The engine writes RGBA bytes into a logical
+// buffer; the runtime handles upload, scaling, and presentation.
+//
+// Inspired by github.com/parasyte/pixels — adapted for browser targets.
+type PixelSurfaceConfig struct {
+	// Width is the logical pixel buffer width.
+	Width int `json:"width"`
+
+	// Height is the logical pixel buffer height.
+	Height int `json:"height"`
+
+	// Scaling controls how the logical buffer maps to the display surface.
+	// Defaults to ScalePixelPerfect.
+	Scaling ScalingMode `json:"scaling,omitempty"`
+
+	// ClearColor is the RGBA background color for letterbox regions.
+	// Each component is 0-255.
+	ClearColor [4]uint8 `json:"clearColor,omitempty"`
+
+	// VSync enables vertical sync. Defaults to true.
+	VSync *bool `json:"vsync,omitempty"`
+}
+
+// VSyncEnabled reports whether vsync is enabled, defaulting to true.
+func (p PixelSurfaceConfig) VSyncEnabled() bool {
+	if p.VSync == nil {
+		return true
+	}
+	return *p.VSync
+}
 
 // Runtime identifies how an engine instance is driven on the client.
 type Runtime string
@@ -85,6 +137,12 @@ type Config struct {
 	// Runtime selects an optional shared GoSX client runtime for program-driven
 	// engines. Empty means the engine is mounted entirely by its JS factory.
 	Runtime Runtime `json:"runtime,omitempty"`
+
+	// PixelSurface configures a managed pixel framebuffer when CapPixelSurface
+	// is declared. The runtime creates a canvas at the logical resolution,
+	// handles GPU-accelerated scaling to the mount element, and exposes the
+	// raw RGBA buffer to the engine via __gosx_engine_frame(id).
+	PixelSurface *PixelSurfaceConfig `json:"pixelSurface,omitempty"`
 }
 
 // Port is a typed message channel between an engine and the host.
@@ -130,9 +188,9 @@ func (mb *MessageBus) Emit(event string, data any) {
 // ValidateCapabilities checks if the requested capabilities are supported.
 func ValidateCapabilities(requested []Capability) error {
 	supported := map[Capability]bool{
-		CapCanvas: true, CapWebGL: true, CapAnimation: true,
-		CapStorage: true, CapFetch: true, CapAudio: true, CapWorker: true,
-		CapGamepad: true, CapKeyboard: true, CapPointer: true,
+		CapCanvas: true, CapWebGL: true, CapWebGPU: true, CapPixelSurface: true,
+		CapAnimation: true, CapStorage: true, CapFetch: true, CapAudio: true,
+		CapWorker: true, CapGamepad: true, CapKeyboard: true, CapPointer: true,
 	}
 	for _, cap := range requested {
 		if !supported[cap] {
