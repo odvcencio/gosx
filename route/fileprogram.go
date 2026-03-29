@@ -223,7 +223,9 @@ func (r *fileProgramRenderer) renderLinkAttrs(b *strings.Builder, attrs []ir.Att
 		case ir.AttrBool:
 			fmt.Fprintf(b, " %s", html.EscapeString(normalizeFileAttrName(attr.Name)))
 		case ir.AttrSpread:
-			for key, value := range spreadProps(evalFileExpr(attr.Expr, env)) {
+			for _, entry := range sortedSpreadProps(evalFileExpr(attr.Expr, env)) {
+				key := entry.Key
+				value := entry.Value
 				normalized := normalizeFileAttrName(key)
 				if normalized == "" || linkReservedAttr(normalized) {
 					continue
@@ -303,6 +305,13 @@ func fileManagedLinkPresenceForAttrs(attrs []ir.Attr, env fileRenderEnv) fileMan
 
 func (r *fileProgramRenderer) writeManagedLinkContract(b *strings.Builder, attrs []ir.Attr, env fileRenderEnv, contract fileManagedLinkContract) {
 	presence := fileManagedLinkPresenceForAttrs(attrs, env)
+	r.writeManagedLinkBaseAttrs(b, presence)
+	r.writeManagedLinkCurrentAttrs(b, contract)
+	r.writeManagedLinkPrefetchAttrs(b, presence, contract)
+	r.writeManagedLinkA11yAttrs(b, presence, contract)
+}
+
+func (r *fileProgramRenderer) writeManagedLinkBaseAttrs(b *strings.Builder, presence fileManagedLinkPresence) {
 	if !presence.Navigation {
 		b.WriteString(" " + server.NavigationLinkAttr)
 	}
@@ -318,14 +327,23 @@ func (r *fileProgramRenderer) writeManagedLinkContract(b *strings.Builder, attrs
 	if !presence.Fallback {
 		fmt.Fprintf(b, ` %s="native-link"`, server.NavigationFallbackAttr)
 	}
+}
+
+func (r *fileProgramRenderer) writeManagedLinkCurrentAttrs(b *strings.Builder, contract fileManagedLinkContract) {
 	fmt.Fprintf(b, ` %s="%s"`, server.NavigationLinkCurrentPolicyAttr, html.EscapeString(contract.CurrentPolicy))
 	fmt.Fprintf(b, ` %s="%s"`, server.NavigationLinkCurrentAttr, html.EscapeString(contract.Current))
+}
+
+func (r *fileProgramRenderer) writeManagedLinkPrefetchAttrs(b *strings.Builder, presence fileManagedLinkPresence, contract fileManagedLinkContract) {
 	if !presence.PrefetchState {
 		fmt.Fprintf(b, ` %s="idle"`, server.NavigationLinkPrefetchStateAttr)
 	}
 	if contract.PrefetchProvided {
 		fmt.Fprintf(b, ` %s="%s"`, server.NavigationLinkPrefetchAttr, html.EscapeString(contract.Prefetch))
 	}
+}
+
+func (r *fileProgramRenderer) writeManagedLinkA11yAttrs(b *strings.Builder, presence fileManagedLinkPresence, contract fileManagedLinkContract) {
 	if contract.Current == "page" && !presence.AriaCurrent {
 		fmt.Fprintf(b, ` aria-current="page" %s="true"`, server.NavigationLinkManagedCurrentAttr)
 	}
@@ -450,40 +468,13 @@ func (r *fileProgramRenderer) renderTextBlock(node *ir.Node, env fileRenderEnv) 
 }
 
 func (r *fileProgramRenderer) renderStylesheet(node *ir.Node, env fileRenderEnv) string {
-	href := stringValue(attrValue(node.Attrs, env, "href", "src"))
-	layer := server.CSSLayer(firstNonEmptyString(stringValue(attrValue(node.Attrs, env, "layer")), string(server.CSSLayerPage)))
-	owner := firstNonEmptyString(stringValue(attrValue(node.Attrs, env, "owner")), server.FileStylesheetOwner(layer))
-	source := stringValue(attrValue(node.Attrs, env, "source"))
-	extra := []any{}
-	for _, attr := range node.Attrs {
-		if attr.Kind == ir.AttrSpread {
-			continue
-		}
-		if attr.Name == "href" || attr.Name == "src" || attr.Name == "rel" || attr.Name == "layer" || attr.Name == "owner" || attr.Name == "source" {
-			continue
-		}
-		switch attr.Kind {
-		case ir.AttrStatic:
-			extra = append(extra, gosx.Attr(attr.Name, attr.Value))
-		case ir.AttrExpr:
-			value := evalFileExpr(attr.Expr, env)
-			if value == nil {
-				continue
-			}
-			extra = append(extra, gosx.Attr(attr.Name, fmt.Sprint(value)))
-		case ir.AttrBool:
-			extra = append(extra, gosx.BoolAttr(attr.Name))
-		}
-	}
+	href, opts := stylesheetContractForAttrs(node.Attrs, env)
+	extra := fileExtraNodeAttrs(node.Attrs, env, fileAttrNameSet("href", "src", "rel", "layer", "owner", "source"))
 	args := []any{}
 	if len(extra) > 0 {
 		args = append(args, gosx.Attrs(extra...))
 	}
-	return gosx.RenderHTML(server.DocumentStylesheet(href, server.StylesheetOptions{
-		Layer:  layer,
-		Owner:  owner,
-		Source: source,
-	}, args...))
+	return gosx.RenderHTML(server.DocumentStylesheet(href, opts, args...))
 }
 
 type fileEngineDefaults struct {
@@ -529,41 +520,13 @@ func (r *fileProgramRenderer) renderEngineComponent(node *ir.Node, env fileRende
 
 func (r *fileProgramRenderer) engineComponentConfig(node *ir.Node, env fileRenderEnv, kind engine.Kind, defaults fileEngineDefaults) (engine.Config, gosx.Node) {
 	props, mountAttrs := engineComponentProps(node.Attrs, env, kind == engine.KindSurface)
-	name := firstNonEmptyString(
-		stringValue(attrValue(node.Attrs, env, "name", "component")),
-		defaults.Name,
-	)
-	jsExport := firstNonEmptyString(
-		stringValue(attrValue(node.Attrs, env, "jsExport", "export", "factory")),
-		defaults.JSExport,
-		name,
-	)
-	if name == "" {
-		name = jsExport
-	}
-
+	name, jsExport := engineComponentIdentity(node.Attrs, env, defaults)
 	mountID := strings.TrimSpace(stringValue(attrValue(node.Attrs, env, "mountId", "id")))
 	if kind == engine.KindSurface {
-		for key, value := range defaults.MountAttrs {
-			if _, exists := mountAttrs[key]; exists {
-				continue
-			}
-			mountAttrs[key] = value
-		}
+		mountAttrs = withDefaultMountAttrs(mountAttrs, defaults.MountAttrs)
 	}
 
-	cfg := engine.Config{
-		Name:         name,
-		Kind:         kind,
-		WASMPath:     firstNonEmptyString(stringValue(attrValue(node.Attrs, env, "wasmPath", "wasm", "programRef", "program")), defaults.WASMPath),
-		JSPath:       firstNonEmptyString(stringValue(attrValue(node.Attrs, env, "jsPath", "js", "script")), defaults.JSPath),
-		JSExport:     jsExport,
-		MountID:      mountID,
-		MountAttrs:   mountAttrs,
-		Props:        marshalEngineProps(props),
-		Capabilities: engineCapabilitiesValue(attrValue(node.Attrs, env, "capabilities"), defaults.Capabilities),
-		Runtime:      engine.Runtime(firstNonEmptyString(stringValue(attrValue(node.Attrs, env, "runtime")), string(defaults.Runtime))),
-	}
+	cfg := engineComponentConfigValue(node.Attrs, env, kind, defaults, name, jsExport, mountID, props, mountAttrs)
 	if cfg.Runtime == engine.RuntimeNone && kind == engine.KindSurface && cfg.Name == "GoSXScene3D" && cfg.WASMPath != "" {
 		cfg.Runtime = engine.RuntimeShared
 	}
@@ -576,6 +539,53 @@ func (r *fileProgramRenderer) engineComponentConfig(node *ir.Node, env fileRende
 		}
 	}
 	return cfg, fallback
+}
+
+func engineComponentIdentity(attrs []ir.Attr, env fileRenderEnv, defaults fileEngineDefaults) (string, string) {
+	name := firstNonEmptyString(
+		stringValue(attrValue(attrs, env, "name", "component")),
+		defaults.Name,
+	)
+	jsExport := firstNonEmptyString(
+		stringValue(attrValue(attrs, env, "jsExport", "export", "factory")),
+		defaults.JSExport,
+		name,
+	)
+	if name == "" {
+		name = jsExport
+	}
+	return name, jsExport
+}
+
+func withDefaultMountAttrs(mountAttrs map[string]any, defaults map[string]any) map[string]any {
+	if len(defaults) == 0 {
+		return mountAttrs
+	}
+	if mountAttrs == nil {
+		mountAttrs = map[string]any{}
+	}
+	for _, entry := range sortedStringAnyMap(defaults) {
+		if _, exists := mountAttrs[entry.Key]; exists {
+			continue
+		}
+		mountAttrs[entry.Key] = entry.Value
+	}
+	return mountAttrs
+}
+
+func engineComponentConfigValue(attrs []ir.Attr, env fileRenderEnv, kind engine.Kind, defaults fileEngineDefaults, name, jsExport, mountID string, props, mountAttrs map[string]any) engine.Config {
+	return engine.Config{
+		Name:         name,
+		Kind:         kind,
+		WASMPath:     firstNonEmptyString(stringValue(attrValue(attrs, env, "wasmPath", "wasm", "programRef", "program")), defaults.WASMPath),
+		JSPath:       firstNonEmptyString(stringValue(attrValue(attrs, env, "jsPath", "js", "script")), defaults.JSPath),
+		JSExport:     jsExport,
+		MountID:      mountID,
+		MountAttrs:   mountAttrs,
+		Props:        marshalEngineProps(props),
+		Capabilities: engineCapabilitiesValue(attrValue(attrs, env, "capabilities"), defaults.Capabilities),
+		Runtime:      engine.Runtime(firstNonEmptyString(stringValue(attrValue(attrs, env, "runtime")), string(defaults.Runtime))),
+	}
 }
 
 func (r *fileProgramRenderer) renderBoundComponent(node *ir.Node, env fileRenderEnv) (bool, string) {
@@ -701,12 +711,12 @@ func renderFileAttr(b *strings.Builder, attr ir.Attr, env fileRenderEnv) {
 }
 
 func renderFileSpreadAttrs(b *strings.Builder, value any) {
-	for key, value := range spreadProps(value) {
-		normalized := normalizeFileAttrName(key)
+	for _, entry := range sortedSpreadProps(value) {
+		normalized := normalizeFileAttrName(entry.Key)
 		if normalized == "" {
 			continue
 		}
-		renderFileEvaluatedAttr(b, html.EscapeString(normalized), value)
+		renderFileEvaluatedAttr(b, html.EscapeString(normalized), entry.Value)
 	}
 }
 
@@ -1144,11 +1154,13 @@ func imageExtraAttrs(attrs []ir.Attr, env fileRenderEnv) []any {
 		case ir.AttrBool:
 			out = append(out, gosx.BoolAttr(attr.Name))
 		case ir.AttrSpread:
-			for key, value := range spreadProps(evalFileExpr(attr.Expr, env)) {
-				if _, ok := consumed[key]; ok {
+			for _, entry := range sortedSpreadProps(evalFileExpr(attr.Expr, env)) {
+				if _, ok := consumed[entry.Key]; ok {
 					continue
 				}
-				out = append(out, gosx.Attr(key, value))
+				if rendered, ok := fileNodeAttr(normalizeFileAttrName(entry.Key), entry.Value); ok {
+					out = append(out, rendered)
+				}
 			}
 		}
 	}
@@ -1163,7 +1175,9 @@ func engineComponentProps(attrs []ir.Attr, env fileRenderEnv, surface bool) (map
 
 	for _, attr := range attrs {
 		if attr.Kind == ir.AttrSpread {
-			for key, value := range spreadProps(evalFileExpr(attr.Expr, env)) {
+			for _, entry := range sortedSpreadProps(evalFileExpr(attr.Expr, env)) {
+				key := entry.Key
+				value := entry.Value
 				normalized := normalizeSurfaceMountAttr(key)
 				if surface && normalized != "" {
 					mountAttrs[normalized] = value
@@ -1201,9 +1215,118 @@ func engineComponentProps(attrs []ir.Attr, env fileRenderEnv, surface bool) (map
 }
 
 func mergeEngineProps(dst map[string]any, value any) {
-	for key, item := range spreadProps(value) {
-		setComponentProp(dst, key, item)
+	for _, entry := range sortedSpreadProps(value) {
+		setComponentProp(dst, entry.Key, entry.Value)
 	}
+}
+
+func stylesheetContractForAttrs(attrs []ir.Attr, env fileRenderEnv) (string, server.StylesheetOptions) {
+	href := stringValue(attrValue(attrs, env, "href", "src"))
+	layer := server.CSSLayer(firstNonEmptyString(stringValue(attrValue(attrs, env, "layer")), string(server.CSSLayerPage)))
+	return href, server.StylesheetOptions{
+		Layer:  layer,
+		Owner:  firstNonEmptyString(stringValue(attrValue(attrs, env, "owner")), server.FileStylesheetOwner(layer)),
+		Source: stringValue(attrValue(attrs, env, "source")),
+	}
+}
+
+func fileAttrNameSet(names ...string) map[string]struct{} {
+	out := make(map[string]struct{}, len(names))
+	for _, name := range names {
+		normalized := normalizeFileAttrName(name)
+		if normalized == "" {
+			continue
+		}
+		out[normalized] = struct{}{}
+	}
+	return out
+}
+
+func fileExtraNodeAttrs(attrs []ir.Attr, env fileRenderEnv, consumed map[string]struct{}) []any {
+	out := []any{}
+	for _, attr := range attrs {
+		out = appendFileExtraNodeAttr(out, attr, env, consumed)
+	}
+	return out
+}
+
+func appendFileExtraNodeAttr(out []any, attr ir.Attr, env fileRenderEnv, consumed map[string]struct{}) []any {
+	if attr.Kind == ir.AttrSpread {
+		for _, entry := range sortedSpreadProps(evalFileExpr(attr.Expr, env)) {
+			normalized := normalizeFileAttrName(entry.Key)
+			if normalized == "" || fileAttrConsumed(consumed, normalized) {
+				continue
+			}
+			if rendered, ok := fileNodeAttr(normalized, entry.Value); ok {
+				out = append(out, rendered)
+			}
+		}
+		return out
+	}
+
+	normalized := normalizeFileAttrName(attr.Name)
+	if normalized == "" || fileAttrConsumed(consumed, normalized) {
+		return out
+	}
+
+	switch attr.Kind {
+	case ir.AttrStatic:
+		out = append(out, gosx.Attr(normalized, attr.Value))
+	case ir.AttrExpr:
+		if rendered, ok := fileNodeAttr(normalized, evalFileExpr(attr.Expr, env)); ok {
+			out = append(out, rendered)
+		}
+	case ir.AttrBool:
+		out = append(out, gosx.BoolAttr(normalized))
+	}
+	return out
+}
+
+func fileAttrConsumed(consumed map[string]struct{}, name string) bool {
+	if len(consumed) == 0 {
+		return false
+	}
+	_, ok := consumed[name]
+	return ok
+}
+
+func fileNodeAttr(name string, value any) (any, bool) {
+	switch v := value.(type) {
+	case nil:
+		return nil, false
+	case bool:
+		if !v {
+			return nil, false
+		}
+		return gosx.BoolAttr(name), true
+	default:
+		return gosx.Attr(name, value), true
+	}
+}
+
+type fileStringAnyEntry struct {
+	Key   string
+	Value any
+}
+
+func sortedSpreadProps(value any) []fileStringAnyEntry {
+	return sortedStringAnyMap(spreadProps(value))
+}
+
+func sortedStringAnyMap(values map[string]any) []fileStringAnyEntry {
+	if len(values) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	out := make([]fileStringAnyEntry, 0, len(keys))
+	for _, key := range keys {
+		out = append(out, fileStringAnyEntry{Key: key, Value: values[key]})
+	}
+	return out
 }
 
 func isEngineReservedAttr(name string) bool {
