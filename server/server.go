@@ -9,7 +9,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"html"
 	"net"
 	"net/http"
 	"net/url"
@@ -530,93 +529,6 @@ func renderDocumentWithContext(doc *DocumentContext) string {
 	b.WriteString(streamTailMarker)
 	b.WriteString("\n</body>\n</html>")
 	return b.String()
-}
-
-func documentHTMLAttrs(doc *DocumentContext) string {
-	var b strings.Builder
-	b.WriteString(` data-gosx-document="true"`)
-	if doc == nil {
-		return b.String()
-	}
-	if pageID := strings.TrimSpace(doc.PageID); pageID != "" {
-		fmt.Fprintf(&b, ` data-gosx-document-id="%s"`, html.EscapeString(pageID))
-	}
-	if path := strings.TrimSpace(doc.Path); path != "" {
-		fmt.Fprintf(&b, ` data-gosx-document-path="%s"`, html.EscapeString(path))
-	}
-	if doc.Navigation {
-		fmt.Fprintf(&b, ` data-gosx-navigation-state="%s"`, "idle")
-		fmt.Fprintf(&b, ` data-gosx-navigation-current-path="%s"`, html.EscapeString(documentCurrentPath(doc)))
-	}
-	if mode := documentBootstrapMode(doc.Runtime.BootstrapMode); mode != "none" {
-		fmt.Fprintf(&b, ` data-gosx-bootstrap-mode="%s"`, html.EscapeString(mode))
-	}
-	return b.String()
-}
-
-func documentBodyAttrs(doc *DocumentContext) string {
-	var b strings.Builder
-	b.WriteString(` data-gosx-document-body="true" data-gosx-enhancement-layer="html"`)
-	if doc == nil {
-		return b.String()
-	}
-	if pageID := strings.TrimSpace(doc.PageID); pageID != "" {
-		fmt.Fprintf(&b, ` data-gosx-document-id="%s"`, html.EscapeString(pageID))
-	}
-	if doc.Navigation {
-		fmt.Fprintf(&b, ` data-gosx-navigation-state="%s"`, "idle")
-		fmt.Fprintf(&b, ` data-gosx-navigation-current-path="%s"`, html.EscapeString(documentCurrentPath(doc)))
-	}
-	if mode := documentBootstrapMode(doc.Runtime.BootstrapMode); mode != "none" {
-		fmt.Fprintf(&b, ` data-gosx-bootstrap-mode="%s"`, html.EscapeString(mode))
-	}
-	return b.String()
-}
-
-func documentCurrentPath(doc *DocumentContext) string {
-	if doc == nil {
-		return "/"
-	}
-	if doc.Request != nil && doc.Request.URL != nil {
-		if current, ok := normalizeDocumentCurrentPath(doc.Request.URL.Path); ok {
-			return current
-		}
-	}
-	if current, ok := normalizeDocumentCurrentPath(doc.Path); ok {
-		return current
-	}
-	return "/"
-}
-
-func normalizeDocumentCurrentPath(value string) (string, bool) {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return "", false
-	}
-	parsed, err := url.Parse(value)
-	if err == nil {
-		if current, ok := normalizeDocumentCurrentPathSegment(parsed.Path); ok {
-			return current, true
-		}
-		if strings.HasPrefix(value, "?") || strings.HasPrefix(value, "#") {
-			return "/", true
-		}
-	}
-	return normalizeDocumentCurrentPathSegment(value)
-}
-
-func normalizeDocumentCurrentPathSegment(value string) (string, bool) {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return "", false
-	}
-	if strings.HasPrefix(value, "?") || strings.HasPrefix(value, "#") {
-		return "/", true
-	}
-	if !strings.HasPrefix(value, "/") {
-		value = "/" + value
-	}
-	return path.Clean(value), true
 }
 
 // RequestID returns the per-request ID assigned by the default middleware.
