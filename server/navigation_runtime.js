@@ -9,9 +9,16 @@
   const HEAD_END = "gosx-head-end";
   const SCRIPT_ROLE = "data-gosx-script";
   const LINK_ATTR = "data-gosx-link";
+  const LINK_STATE_ATTR = "data-gosx-link-state";
+  const LINK_CURRENT_ATTR = "data-gosx-link-current";
+  const LINK_PREFETCH_STATE_ATTR = "data-gosx-prefetch-state";
+  const LINK_MANAGED_CURRENT_ATTR = "data-gosx-aria-current-managed";
   const FORM_ATTR = "data-gosx-form";
   const FORM_STATE_ATTR = "data-gosx-form-state";
   const PREFETCH_ATTR = "data-gosx-prefetch";
+  const NAV_STATE_ATTR = "data-gosx-navigation-state";
+  const NAV_CURRENT_PATH_ATTR = "data-gosx-navigation-current-path";
+  const NAV_PENDING_URL_ATTR = "data-gosx-navigation-pending-url";
   const MAIN_ATTR = "data-gosx-main";
   const ANNOUNCE_ATTR = "data-gosx-announce";
   const ANNOUNCER_ATTR = "data-gosx-announcer";
@@ -19,6 +26,11 @@
   const URL_ATTRS = ["href", "src", "action", "poster"];
   const scriptCache = window.__gosx_loaded_scripts || new Map();
   const pageCache = window.__gosx_page_cache || new Map();
+  let navigationState = {
+    phase: "idle",
+    currentURL: String(window.location && window.location.href || ""),
+    pendingURL: "",
+  };
   let announceSeq = 0;
   window.__gosx_loaded_scripts = scriptCache;
   window.__gosx_page_cache = pageCache;
@@ -310,6 +322,212 @@
     return String(value || "").replace(/\s+/g, " ").trim();
   }
 
+  function setOptionalAttr(node, name, value) {
+    if (!node || !node.setAttribute || !name) {
+      return;
+    }
+    if (value == null || value === "") {
+      if (typeof node.removeAttribute === "function") {
+        node.removeAttribute(name);
+      }
+      return;
+    }
+    node.setAttribute(name, String(value));
+  }
+
+  function navigationURLParts(value) {
+    if (!value) return null;
+    let parsed = null;
+    try {
+      parsed = new URL(value, window.location.href);
+    } catch (_error) {
+      return null;
+    }
+    let path = String(parsed.pathname || "/");
+    if (!path.startsWith("/")) {
+      path = "/" + path;
+    }
+    if (path.length > 1) {
+      path = path.replace(/\/+$/, "");
+    }
+    return {
+      origin: parsed.origin,
+      path: path || "/",
+      search: String(parsed.search || ""),
+      href: parsed.href,
+    };
+  }
+
+  function sameNavigationURL(left, right) {
+    return !!left && !!right && left.origin === right.origin && left.path === right.path && left.search === right.search;
+  }
+
+  function ancestorNavigationURL(parent, child) {
+    if (!parent || !child || parent.origin !== child.origin) {
+      return false;
+    }
+    if (parent.path === "/" || parent.search) {
+      return false;
+    }
+    return child.path === parent.path || child.path.startsWith(parent.path + "/");
+  }
+
+  function collectElements(root, predicate) {
+    const found = [];
+    const stack = [];
+    if (root) {
+      stack.push(root);
+    }
+
+    while (stack.length > 0) {
+      const node = stack.pop();
+      if (!node || node.nodeType !== 1) {
+        continue;
+      }
+      if (!predicate || predicate(node)) {
+        found.push(node);
+      }
+      const children = toArray(node.childNodes);
+      for (let i = children.length - 1; i >= 0; i--) {
+        stack.push(children[i]);
+      }
+    }
+
+    return found;
+  }
+
+  function managedLinks(root) {
+    return collectElements(root || document.body, function(node) {
+      return node.hasAttribute && node.hasAttribute(LINK_ATTR);
+    });
+  }
+
+  function currentNavigationSnapshot() {
+    const current = navigationURLParts(navigationState.currentURL || window.location.href) || navigationURLParts(window.location.href);
+    return {
+      phase: navigationState.phase || "idle",
+      currentURL: current ? current.href : String(window.location && window.location.href || ""),
+      currentPath: current ? current.path : "/",
+      pendingURL: String(navigationState.pendingURL || ""),
+      reducedData: Boolean(
+        (window.navigator && window.navigator.connection && window.navigator.connection.saveData)
+        || (typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-data: reduce)").matches)
+      ),
+      coarsePointer: Boolean(
+        typeof window.matchMedia === "function"
+        && (window.matchMedia("(pointer: coarse)").matches || window.matchMedia("(any-pointer: coarse)").matches)
+      ),
+    };
+  }
+
+  function applyNavigationState() {
+    const snapshot = currentNavigationSnapshot();
+    const root = document.documentElement || document.body;
+    const body = document.body || root;
+    for (const node of [root, body]) {
+      if (!node) continue;
+      setOptionalAttr(node, NAV_STATE_ATTR, snapshot.phase);
+      setOptionalAttr(node, NAV_CURRENT_PATH_ATTR, snapshot.currentPath);
+      setOptionalAttr(node, NAV_PENDING_URL_ATTR, snapshot.pendingURL);
+    }
+    refreshManagedLinks(snapshot.currentURL);
+  }
+
+  function dispatchNavigationState(reason) {
+    if (typeof document.dispatchEvent !== "function" || typeof CustomEvent !== "function") {
+      return;
+    }
+    document.dispatchEvent(new CustomEvent("gosx:navigation:state", {
+      detail: {
+        reason: reason || "navigation",
+        state: currentNavigationSnapshot(),
+      },
+    }));
+  }
+
+  function setNavigationState(next, reason) {
+    navigationState = Object.assign({}, navigationState, next || {});
+    applyNavigationState();
+    dispatchNavigationState(reason);
+  }
+
+  function linkPrefetchMode(anchor) {
+    const value = String(anchor && anchor.getAttribute && anchor.getAttribute(PREFETCH_ATTR) || "").trim().toLowerCase();
+    return value || "intent";
+  }
+
+  function shouldPrefetchLink(anchor, trigger) {
+    if (!anchor || !anchor.getAttribute) return false;
+    const mode = linkPrefetchMode(anchor);
+    if (mode === "off") return false;
+    const snapshot = currentNavigationSnapshot();
+    if (snapshot.reducedData && mode !== "force") {
+      return false;
+    }
+    if (trigger === "render") {
+      return mode === "render" || mode === "force";
+    }
+    if (trigger === "hover" && snapshot.coarsePointer && mode !== "force") {
+      return false;
+    }
+    return mode === "intent" || mode === "render" || mode === "force";
+  }
+
+  function managedCurrentRelation(anchor, currentURL) {
+    const href = anchor && anchor.getAttribute ? anchor.getAttribute("href") : "";
+    const target = navigationURLParts(href);
+    const current = navigationURLParts(currentURL || window.location.href);
+    if (!target || !current || target.origin !== current.origin) {
+      return "none";
+    }
+    if (sameNavigationURL(target, current)) {
+      return "page";
+    }
+    if (ancestorNavigationURL(target, current)) {
+      return "ancestor";
+    }
+    return "none";
+  }
+
+  function syncManagedAriaCurrent(anchor, relation) {
+    if (!anchor || !anchor.setAttribute) {
+      return;
+    }
+    if (relation === "page") {
+      if (!anchor.hasAttribute("aria-current")) {
+        anchor.setAttribute("aria-current", "page");
+        anchor.setAttribute(LINK_MANAGED_CURRENT_ATTR, "true");
+      }
+      return;
+    }
+    if (anchor.getAttribute && anchor.getAttribute(LINK_MANAGED_CURRENT_ATTR) === "true") {
+      anchor.removeAttribute("aria-current");
+      anchor.removeAttribute(LINK_MANAGED_CURRENT_ATTR);
+    }
+  }
+
+  function refreshManagedLinks(currentURL) {
+    const current = navigationURLParts(currentURL || window.location.href);
+    const pending = navigationURLParts(navigationState.pendingURL);
+    for (const anchor of managedLinks(document.body)) {
+      const href = navigationURLParts(anchor.getAttribute("href"));
+      const relation = managedCurrentRelation(anchor, current && current.href);
+      anchor.setAttribute(LINK_CURRENT_ATTR, relation);
+      syncManagedAriaCurrent(anchor, relation);
+      const state = navigationState.phase === "pending" && href && pending && sameNavigationURL(href, pending) ? "pending" : "idle";
+      anchor.setAttribute(LINK_STATE_ATTR, state);
+      if (!anchor.hasAttribute(LINK_PREFETCH_STATE_ATTR)) {
+        anchor.setAttribute(LINK_PREFETCH_STATE_ATTR, "idle");
+      }
+    }
+  }
+
+  function prefetchManagedLinks(trigger) {
+    for (const anchor of managedLinks(document.body)) {
+      prefetchLink(anchor, trigger);
+    }
+  }
+
   function findElementByID(root, id) {
     if (!id) return null;
     return findElement(root, function(node) {
@@ -576,8 +794,9 @@
     const href = anchor.getAttribute("href");
     if (!href || href.startsWith("#")) return false;
 
-    const url = new URL(href, window.location.href);
-    return url.origin === window.location.origin;
+    const url = navigationURLParts(href);
+    const current = navigationURLParts(window.location.href);
+    return !!url && !!current && url.origin === current.origin;
   }
 
   function closestLink(node) {
@@ -824,48 +1043,75 @@
     }
   }
 
-  function prefetchLink(anchor) {
-    if (!anchor || !anchor.getAttribute) return;
-    if (anchor.getAttribute(PREFETCH_ATTR) === "off") return;
-    const url = new URL(anchor.getAttribute("href"), window.location.href);
-    fetchPage(url.href).catch(function() {});
+  function prefetchLink(anchor, trigger) {
+    if (!anchor || !anchor.getAttribute) return Promise.resolve(false);
+    if (!shouldPrefetchLink(anchor, trigger || "intent")) return Promise.resolve(false);
+    const url = navigationURLParts(anchor.getAttribute("href"));
+    if (!url) return Promise.resolve(false);
+    anchor.setAttribute(LINK_PREFETCH_STATE_ATTR, "pending");
+    return fetchPage(url.href).then(function() {
+      anchor.setAttribute(LINK_PREFETCH_STATE_ATTR, "ready");
+      return true;
+    }).catch(function() {
+      anchor.setAttribute(LINK_PREFETCH_STATE_ATTR, "error");
+      return false;
+    });
   }
 
   async function navigate(url, options) {
     const opts = options || {};
-    const page = await fetchPage(url);
-    const nextURL = page.url || url;
-    const html = page.html;
-    const nextDoc = parseDocument(html);
+    setNavigationState({
+      phase: "pending",
+      pendingURL: String(url || ""),
+    }, "navigate:start");
+    try {
+      const page = await fetchPage(url);
+      const nextURL = page.url || url;
+      const html = page.html;
+      const nextDoc = parseDocument(html);
 
-    await disposeCurrentPage();
-    await replaceManagedHead(nextDoc, nextURL);
-    replaceBody(nextDoc, nextURL);
-    updateHistory(nextURL, !!opts.replace);
+      await disposeCurrentPage();
+      await replaceManagedHead(nextDoc, nextURL);
+      replaceBody(nextDoc, nextURL);
+      updateHistory(nextURL, !!opts.replace);
 
-    const bootstrapLoadedNow = await ensureManagedScripts(nextDoc, nextURL);
-    await bootstrapCurrentPage(bootstrapLoadedNow);
+      const bootstrapLoadedNow = await ensureManagedScripts(nextDoc, nextURL);
+      await bootstrapCurrentPage(bootstrapLoadedNow);
 
-    const a11y = resolveNavigationA11y(nextURL);
-    if (!opts.preserveScroll) {
-      if (a11y.hashTarget && typeof a11y.hashTarget.scrollIntoView === "function") {
-        a11y.hashTarget.scrollIntoView();
-      } else if (typeof window.scrollTo === "function") {
-        window.scrollTo(0, 0);
+      setNavigationState({
+        phase: "idle",
+        currentURL: String(nextURL),
+        pendingURL: "",
+      }, "navigate:complete");
+      prefetchManagedLinks("render");
+
+      const a11y = resolveNavigationA11y(nextURL);
+      if (!opts.preserveScroll) {
+        if (a11y.hashTarget && typeof a11y.hashTarget.scrollIntoView === "function") {
+          a11y.hashTarget.scrollIntoView();
+        } else if (typeof window.scrollTo === "function") {
+          window.scrollTo(0, 0);
+        }
       }
-    }
-    focusElement(a11y.focusTarget, true);
-    const announcement = announceNavigation(a11y.announcement);
+      focusElement(a11y.focusTarget, true);
+      const announcement = announceNavigation(a11y.announcement);
 
-    if (typeof document.dispatchEvent === "function" && typeof CustomEvent === "function") {
-      document.dispatchEvent(new CustomEvent("gosx:navigate", {
-        detail: {
-          announcement: announcement,
-          focusTargetId: a11y.focusTarget && a11y.focusTarget.getAttribute ? (a11y.focusTarget.getAttribute("id") || "") : "",
-          url: nextURL,
-          replace: !!opts.replace,
-        },
-      }));
+      if (typeof document.dispatchEvent === "function" && typeof CustomEvent === "function") {
+        document.dispatchEvent(new CustomEvent("gosx:navigate", {
+          detail: {
+            announcement: announcement,
+            focusTargetId: a11y.focusTarget && a11y.focusTarget.getAttribute ? (a11y.focusTarget.getAttribute("id") || "") : "",
+            url: nextURL,
+            replace: !!opts.replace,
+          },
+        }));
+      }
+    } catch (err) {
+      setNavigationState({
+        phase: "idle",
+        pendingURL: "",
+      }, "navigate:error");
+      throw err;
     }
   }
 
@@ -874,7 +1120,7 @@
     if (!shouldHandleLink(anchor, event)) return;
     event.preventDefault();
     const url = new URL(anchor.getAttribute("href"), window.location.href);
-    navigate(url.href, { replace: false }).catch(function(err) {
+    navigate(url.href, { replace: false, sourceLink: anchor }).catch(function(err) {
       console.error("[gosx] navigation failed:", err);
       window.location.href = url.href;
     });
@@ -883,7 +1129,7 @@
   function onMouseOver(event) {
     const anchor = closestLink(event.target);
     if (!anchor || !anchor.hasAttribute || !anchor.hasAttribute(LINK_ATTR)) return;
-    prefetchLink(anchor);
+    prefetchLink(anchor, "hover");
   }
 
   function onSubmit(event) {
@@ -899,7 +1145,7 @@
   function onFocusIn(event) {
     const anchor = closestLink(event.target);
     if (!anchor || !anchor.hasAttribute || !anchor.hasAttribute(LINK_ATTR)) return;
-    prefetchLink(anchor);
+    prefetchLink(anchor, "focus");
   }
 
   function onPopState() {
@@ -916,7 +1162,19 @@
     window.addEventListener("popstate", onPopState);
   }
 
+  setNavigationState({
+    phase: "idle",
+    currentURL: String(window.location && window.location.href || ""),
+    pendingURL: "",
+  }, "init");
+  prefetchManagedLinks("render");
+
   window.__gosx_page_nav = {
     navigate: navigate,
+    getState: currentNavigationSnapshot,
+    refresh: function() {
+      applyNavigationState();
+      return currentNavigationSnapshot();
+    },
   };
 })();
