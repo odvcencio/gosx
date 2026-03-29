@@ -252,6 +252,41 @@ func TestVMGte(t *testing.T) {
 	}
 }
 
+func TestVMEvalTreeCachesDOMAttrsForEvents(t *testing.T) {
+	prog := &program.Program{
+		Name: "Events",
+		Nodes: []program.Node{
+			{
+				Kind: program.NodeElement,
+				Tag:  "button",
+				Attrs: []program.Attr{
+					{Kind: program.AttrEvent, Name: "click", Event: "increment"},
+				},
+				Children: []program.NodeID{1},
+			},
+			{Kind: program.NodeText, Text: "+"},
+		},
+		Root: 0,
+	}
+
+	vm := NewVM(prog, nil)
+	tree := vm.EvalTree()
+	if len(tree.Nodes) == 0 {
+		t.Fatal("expected resolved tree nodes")
+	}
+
+	node := tree.Nodes[0]
+	if len(node.DOMAttrs) != 2 {
+		t.Fatalf("expected 2 DOM attrs for click handler, got %d", len(node.DOMAttrs))
+	}
+	if node.DOMAttrs[0].Name != "data-gosx-on-click" || node.DOMAttrs[0].Value != "increment" {
+		t.Fatalf("unexpected delegated handler attr: %+v", node.DOMAttrs[0])
+	}
+	if node.DOMAttrs[1].Name != "data-gosx-handler" || node.DOMAttrs[1].Value != "increment" {
+		t.Fatalf("unexpected click shorthand attr: %+v", node.DOMAttrs[1])
+	}
+}
+
 // --- Boolean logic ---
 
 func TestVMAnd(t *testing.T) {

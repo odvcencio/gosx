@@ -582,6 +582,7 @@ func (vm *VM) resolveChildren(tree *ResolvedTree, children []program.NodeID) []i
 func (vm *VM) resolveElementNode(rn *ResolvedNode, node program.Node) {
 	attrs, key, explicitKey, events := vm.resolveElementAttrs(node.Attrs)
 	rn.Attrs = attrs
+	rn.DOMAttrs = materializeDOMAttrs(attrs, events)
 	rn.Key = key
 	rn.Events = events
 	if explicitKey {

@@ -320,8 +320,8 @@ func appendCreateSubtree(ops *[]PatchOp, tree *ResolvedTree, nodeIdx int, parent
 
 func reconcileAttrs(ops *[]PatchOp, pn, nn *ResolvedNode, path string) {
 	valueElem := isValueElement(nn.Tag)
-	prevAttrs := resolvedDOMAttrs(pn, "", false)
-	nextAttrs := resolvedDOMAttrs(nn, "", false)
+	prevAttrs := pn.effectiveDOMAttrs()
+	nextAttrs := nn.effectiveDOMAttrs()
 	prevValues := attrValueMap(prevAttrs)
 	nextNames := attrPresenceMap(nextAttrs)
 
@@ -331,63 +331,11 @@ func reconcileAttrs(ops *[]PatchOp, pn, nn *ResolvedNode, path string) {
 
 func appendNodeAttrOps(ops *[]PatchOp, node *ResolvedNode, path string) {
 	valueElem := isValueElement(node.Tag)
-	for _, attr := range resolvedDOMAttrs(node, path, false) {
+	for _, attr := range node.effectiveDOMAttrs() {
 		if appendValueAttrSetOp(ops, attr, valueElem, path) {
 			continue
 		}
 		appendAttrSetOp(ops, attr, path)
-	}
-}
-
-func resolvedDOMAttrs(node *ResolvedNode, path string, includeStablePath bool) []ResolvedAttr {
-	if node == nil {
-		return nil
-	}
-
-	attrs := make([]ResolvedAttr, 0, len(node.Attrs)+(len(node.Events)*2)+1)
-	attrs = append(attrs, node.Attrs...)
-	for _, event := range node.Events {
-		eventType := eventAttrType(event.Name)
-		attrs = append(attrs, ResolvedAttr{
-			Name:  "data-gosx-on-" + eventType,
-			Value: event.Handler,
-		})
-		if eventType == "click" {
-			attrs = append(attrs, ResolvedAttr{
-				Name:  "data-gosx-handler",
-				Value: event.Handler,
-			})
-		}
-	}
-	if includeStablePath && len(node.Events) > 0 {
-		attrs = append(attrs, ResolvedAttr{Name: "data-gosx-path", Value: path})
-	}
-	return attrs
-}
-
-func eventAttrType(name string) string {
-	switch name {
-	case "onClick":
-		return "click"
-	case "onInput":
-		return "input"
-	case "onChange":
-		return "change"
-	case "onSubmit":
-		return "submit"
-	case "onKeyDown":
-		return "keydown"
-	case "onKeyUp":
-		return "keyup"
-	case "onFocus":
-		return "focus"
-	case "onBlur":
-		return "blur"
-	default:
-		if strings.HasPrefix(name, "on") && len(name) > 2 {
-			return strings.ToLower(name[2:3]) + name[3:]
-		}
-		return strings.ToLower(name)
 	}
 }
 
