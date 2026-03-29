@@ -736,6 +736,32 @@ func renderFileEvaluatedExpr(value any) string {
 	}
 }
 
+func plainTextFileEvaluatedExpr(value any) string {
+	switch v := value.(type) {
+	case nil:
+		return ""
+	case gosx.Node:
+		return gosx.PlainText(v)
+	case *gosx.Node:
+		if v == nil {
+			return ""
+		}
+		return gosx.PlainText(*v)
+	case []gosx.Node:
+		var b strings.Builder
+		for _, node := range v {
+			b.WriteString(gosx.PlainText(node))
+		}
+		return b.String()
+	case []string:
+		return strings.Join(v, "")
+	case fmt.Stringer:
+		return v.String()
+	default:
+		return fmt.Sprint(v)
+	}
+}
+
 func renderFileEvaluatedAttr(b *strings.Builder, name string, value any) {
 	switch v := value.(type) {
 	case nil:
@@ -1229,7 +1255,7 @@ func (r *fileProgramRenderer) textContentNode(nodeID ir.NodeID, env fileRenderEn
 	case ir.NodeText:
 		return node.Text
 	case ir.NodeExpr:
-		return fmt.Sprint(evalFileExpr(node.Text, env))
+		return plainTextFileEvaluatedExpr(evalFileExpr(node.Text, env))
 	case ir.NodeFragment, ir.NodeElement:
 		return r.textContentChildren(node.Children, env)
 	case ir.NodeComponent:
