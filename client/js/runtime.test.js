@@ -4922,6 +4922,54 @@ test("navigation runtime honors explicit a11y markers and hash targets", async (
   assert.equal(env.document.dispatchedEvents.at(-1).detail.focusTargetId, "details");
 });
 
+test("navigation runtime preserves scroll when requested and still focuses the target", async () => {
+  const parsedDocs = new Map();
+  const env = createContext({
+    fetchRoutes: {
+      "http://localhost:3000/docs/a11y#details": {
+        text: "__PRESERVE_SCROLL_DOC__",
+        url: "http://localhost:3000/docs/a11y#details",
+      },
+    },
+    parseHTML(html) {
+      return parsedDocs.get(html);
+    },
+  });
+
+  env.context.__gosx_dispose_page = async function() {};
+  env.context.__gosx_bootstrap_page = async function() {};
+
+  const main = new FakeElement("section", null);
+  main.id = "main-shell";
+  main.setAttribute("data-gosx-main", "");
+  main.textContent = "Main shell";
+
+  const target = new FakeElement("section", null);
+  target.id = "details";
+  target.textContent = "Deep details";
+  main.appendChild(target);
+
+  parsedDocs.set("__PRESERVE_SCROLL_DOC__", buildNavigatedDocument({
+    title: "Preserve Scroll",
+    bodyNodes: [main],
+  }));
+
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  await env.context.__gosx_page_nav.navigate("http://localhost:3000/docs/a11y#details", {
+    preserveScroll: true,
+    replace: true,
+  });
+  await flushAsyncWork();
+
+  const renderedTarget = env.document.getElementById("details");
+  assert.equal(renderedTarget.scrollIntoViewCalls.length, 0);
+  assert.deepEqual(env.scrollCalls, []);
+  assert.equal(env.document.activeElement, renderedTarget);
+  assert.equal(env.document.dispatchedEvents.at(-1).type, "gosx:navigate");
+  assert.equal(env.document.dispatchedEvents.at(-1).detail.replace, true);
+  assert.equal(env.document.dispatchedEvents.at(-1).detail.focusTargetId, "details");
+});
+
 test("navigation runtime intercepts managed form submissions and forwards action data", async () => {
   const form = new FakeElement("form", null);
   form.setAttribute("action", "/save");
@@ -5068,6 +5116,67 @@ test("navigation runtime intercepts managed GET forms and navigates with query p
   assert.equal(env.document.dispatchedEvents.at(-1).detail.method, "GET");
   assert.equal(form.getAttribute("data-gosx-pending"), null);
   assert.equal(form.getAttribute("data-gosx-form-state"), "idle");
+});
+
+test("navigation runtime restores prior managed form lifecycle attrs after submit", async () => {
+  const form = new FakeElement("form", null);
+  form.setAttribute("action", "/search");
+  form.setAttribute("method", "get");
+  form.setAttribute("data-gosx-form", "");
+  form.setAttribute("data-gosx-form-state", "validating");
+  form.setAttribute("data-gosx-pending", "queued");
+
+  const query = new FakeElement("input", null);
+  query.setAttribute("name", "q");
+  query.value = "scene labels";
+  form.appendChild(query);
+
+  const submitter = new FakeElement("button", null);
+  submitter.setAttribute("name", "view");
+  submitter.setAttribute("value", "list");
+  form.appendChild(submitter);
+
+  const parsedDocs = new Map();
+  const env = createContext({
+    elements: [form],
+    fetchRoutes: {
+      "http://localhost:3000/search?q=scene+labels&view=list": {
+        text: "__RESTORE_FORM_DOC__",
+        url: "http://localhost:3000/search?q=scene+labels&view=list",
+      },
+    },
+    parseHTML(html) {
+      return parsedDocs.get(html);
+    },
+  });
+  env.context.__gosx_dispose_page = async function() {};
+  env.context.__gosx_bootstrap_page = async function() {};
+
+  const results = new FakeElement("main", null);
+  results.id = "results";
+  results.textContent = "results";
+  parsedDocs.set("__RESTORE_FORM_DOC__", buildNavigatedDocument({
+    title: "Search",
+    bodyNodes: [results],
+  }));
+
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+
+  const submitListener = env.document.eventListeners.get("submit")[0];
+  submitListener({
+    type: "submit",
+    target: form,
+    submitter,
+    defaultPrevented: false,
+    preventDefault() {
+      this.defaultPrevented = true;
+    },
+  });
+  await flushAsyncWork();
+
+  assert.equal(form.getAttribute("data-gosx-pending"), "queued");
+  assert.equal(form.getAttribute("data-gosx-form-state"), "validating");
+  assert.equal(env.document.dispatchedEvents.at(-1).type, "gosx:form:navigate");
 });
 
 test("navigation runtime honors submitter overrides and falls back with native semantics", async () => {
