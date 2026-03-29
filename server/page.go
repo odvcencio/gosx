@@ -103,11 +103,9 @@ func newContext(r *http.Request) *Context {
 }
 
 func (c *Context) documentContext(pattern, defaultTitle string, body gosx.Node, navigation bool) *DocumentContext {
+	c = ensureContext(c)
 	title := c.Title(defaultTitle)
-	path := "/"
-	if c != nil && c.Request != nil && c.Request.URL != nil {
-		path = c.Request.URL.RequestURI()
-	}
+	path := documentContextPath(c.Request)
 	metadata := c.MetadataValue()
 	doc := &DocumentContext{
 		Request:    c.Request,
@@ -131,6 +129,23 @@ func (c *Context) documentContext(pattern, defaultTitle string, body gosx.Node, 
 		documentContractNode(doc),
 	)
 	return doc
+}
+
+func ensureContext(c *Context) *Context {
+	if c != nil {
+		return c
+	}
+	return newContext(nil)
+}
+
+func documentContextPath(r *http.Request) string {
+	if r == nil || r.URL == nil {
+		return "/"
+	}
+	if requestURI := strings.TrimSpace(r.URL.RequestURI()); requestURI != "" {
+		return requestURI
+	}
+	return "/"
 }
 
 type documentContract struct {
@@ -300,39 +315,7 @@ func (m Metadata) Head() gosx.Node {
 
 // Node renders the link tag as a GoSX node.
 func (l LinkTag) Node() gosx.Node {
-	attrs := map[string]any{}
-	if l.Rel != "" {
-		attrs["rel"] = l.Rel
-	}
-	if l.Href != "" {
-		attrs["href"] = l.Href
-	}
-	if l.Type != "" {
-		attrs["type"] = l.Type
-	}
-	if l.Sizes != "" {
-		attrs["sizes"] = l.Sizes
-	}
-	if l.Media != "" {
-		attrs["media"] = l.Media
-	}
-	if l.As != "" {
-		attrs["as"] = l.As
-	}
-	if l.CrossOrigin != "" {
-		attrs["crossorigin"] = l.CrossOrigin
-	}
-	if strings.Contains(strings.ToLower(strings.TrimSpace(l.Rel)), "stylesheet") {
-		layer := normalizeCSSLayer(l.Layer)
-		attrs["data-gosx-css-layer"] = string(layer)
-		attrs["data-gosx-css-owner"] = NormalizeStylesheetOwner(layer, l.Owner)
-		if source := strings.TrimSpace(l.Source); source != "" {
-			attrs["data-gosx-css-source"] = source
-		} else {
-			attrs["data-gosx-css-source"] = stylesheetSource(l.Href)
-		}
-	}
-	return gosx.El("link", gosx.Spread(attrs))
+	return gosx.El("link", gosx.Attrs(linkTagAttrs(l)...))
 }
 
 func mergeMetadata(base, extra Metadata) Metadata {
@@ -355,17 +338,58 @@ func mergeMetadata(base, extra Metadata) Metadata {
 }
 
 func renderMetaTag(tag MetaTag) gosx.Node {
-	attrs := map[string]any{}
-	if tag.Name != "" {
-		attrs["name"] = tag.Name
+	return gosx.El("meta", gosx.Attrs(metaTagAttrs(tag)...))
+}
+
+func linkTagAttrs(l LinkTag) []any {
+	attrs := []any{}
+	attrs = appendNonEmptyAttr(attrs, "rel", l.Rel)
+	attrs = appendNonEmptyAttr(attrs, "href", AssetURL(l.Href))
+	attrs = appendNonEmptyAttr(attrs, "type", l.Type)
+	attrs = appendNonEmptyAttr(attrs, "sizes", l.Sizes)
+	attrs = appendNonEmptyAttr(attrs, "media", l.Media)
+	attrs = appendNonEmptyAttr(attrs, "as", l.As)
+	attrs = appendNonEmptyAttr(attrs, "crossorigin", l.CrossOrigin)
+	if linkTagIsStylesheet(l.Rel) {
+		attrs = appendStylesheetLinkAttrs(attrs, l)
 	}
-	if tag.Property != "" {
-		attrs["property"] = tag.Property
+	return attrs
+}
+
+func appendStylesheetLinkAttrs(attrs []any, l LinkTag) []any {
+	layer := normalizeCSSLayer(l.Layer)
+	attrs = append(attrs,
+		gosx.Attr("data-gosx-css-layer", string(layer)),
+		gosx.Attr("data-gosx-css-owner", NormalizeStylesheetOwner(layer, l.Owner)),
+		gosx.Attr("data-gosx-css-source", linkTagSource(l)),
+	)
+	return attrs
+}
+
+func linkTagSource(l LinkTag) string {
+	if source := strings.TrimSpace(l.Source); source != "" {
+		return source
 	}
-	if tag.Content != "" {
-		attrs["content"] = tag.Content
+	return stylesheetSource(l.Href)
+}
+
+func linkTagIsStylesheet(rel string) bool {
+	return strings.Contains(strings.ToLower(strings.TrimSpace(rel)), "stylesheet")
+}
+
+func metaTagAttrs(tag MetaTag) []any {
+	attrs := []any{}
+	attrs = appendNonEmptyAttr(attrs, "name", tag.Name)
+	attrs = appendNonEmptyAttr(attrs, "property", tag.Property)
+	attrs = appendNonEmptyAttr(attrs, "content", tag.Content)
+	return attrs
+}
+
+func appendNonEmptyAttr(attrs []any, name, value string) []any {
+	if value == "" {
+		return attrs
 	}
-	return gosx.El("meta", gosx.Spread(attrs))
+	return append(attrs, gosx.Attr(name, value))
 }
 
 // NewDeferredRegistry creates an empty deferred fragment registry.
