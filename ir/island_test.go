@@ -288,3 +288,64 @@ func TestLowerIslandEachComponent(t *testing.T) {
 		t.Fatalf("expected li children to lower through each scope, got %+v %+v %+v", island.Nodes[2], island.Nodes[3], island.Nodes[4])
 	}
 }
+
+func TestLowerIslandEmitsComponentScopeDefs(t *testing.T) {
+	prog := &Program{}
+	prog.Nodes = append(prog.Nodes,
+		Node{
+			Kind: NodeElement,
+			Tag:  "button",
+			Attrs: []Attr{
+				{Kind: AttrExpr, Name: "onInput", Expr: "sync", IsEvent: true},
+			},
+			Children: []NodeID{1},
+		},
+		Node{Kind: NodeExpr, Text: "labelUpper"},
+	)
+	prog.Components = append(prog.Components, Component{
+		Name:     "Editor",
+		Root:     0,
+		IsIsland: true,
+		Scope: &ComponentScope{
+			Signals: []SignalInfo{
+				{Name: "label", Local: "label", InitExpr: `"draft"`, TypeHint: "string"},
+			},
+			Computeds: []ComputedInfo{
+				{Name: "labelUpper", BodyExpr: "label.Get()"},
+			},
+			Handlers: []HandlerInfo{
+				{Name: "sync", Statements: []string{"label.Set(value)"}},
+			},
+			Locals: map[string]string{
+				"label":      "signal",
+				"labelUpper": "computed",
+				"sync":       "handler",
+			},
+		},
+	})
+
+	island, err := LowerIsland(prog, 0)
+	if err != nil {
+		t.Fatalf("lower: %v", err)
+	}
+	if len(island.Signals) != 1 || island.Signals[0].Name != "label" {
+		t.Fatalf("expected emitted signal def for label, got %+v", island.Signals)
+	}
+	if len(island.Computeds) != 1 || island.Computeds[0].Name != "labelUpper" {
+		t.Fatalf("expected emitted computed def for labelUpper, got %+v", island.Computeds)
+	}
+	if len(island.Handlers) != 1 || island.Handlers[0].Name != "sync" || len(island.Handlers[0].Body) != 1 {
+		t.Fatalf("expected emitted sync handler body, got %+v", island.Handlers)
+	}
+
+	foundEventGet := false
+	for _, expr := range island.Exprs {
+		if expr.Op == program.OpEventGet && expr.Value == "value" {
+			foundEventGet = true
+			break
+		}
+	}
+	if !foundEventGet {
+		t.Fatalf("expected handler lowering to expose event value in expr table, got %+v", island.Exprs)
+	}
+}

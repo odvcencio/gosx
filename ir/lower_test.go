@@ -223,3 +223,24 @@ func Static() Node {
 		t.Error("expected static subtree for purely static element")
 	}
 }
+
+func TestLowerIgnoresNestedFuncLiteralGSXReturns(t *testing.T) {
+	source := []byte(`package main
+
+func Wrap() string {
+	render := func() Node {
+		return <div class="nested">Nested</div>
+	}
+	_ = render
+	return "plain"
+}
+`)
+	prog, err := parse(t, source)
+	if err != nil {
+		t.Fatalf("Lower failed: %v", err)
+	}
+
+	if len(prog.Components) != 0 {
+		t.Fatalf("expected nested GSX in func literal to stay out of top-level components, got %d components", len(prog.Components))
+	}
+}

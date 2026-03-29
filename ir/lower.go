@@ -160,15 +160,9 @@ func (l *lowerer) analyzeBody(bodyNode *gotreesitter.Node) *ComponentScope {
 		Locals: make(map[string]string),
 	}
 
-	// The function body is a block: { statement_list }
-	// Find the statement_list and walk its children.
-	stmtList := bodyNode
-	for i := 0; i < int(bodyNode.NamedChildCount()); i++ {
-		child := bodyNode.NamedChild(i)
-		if l.nodeType(child) == "statement_list" {
-			stmtList = child
-			break
-		}
+	stmtList := l.statementListNode(bodyNode)
+	if stmtList == nil {
+		stmtList = bodyNode
 	}
 
 	// Walk all named statements looking for declarations that produce signals,
@@ -291,73 +285,80 @@ func (l *lowerer) analyzeAssignedExpr(varName string, rightExpr *gotreesitter.No
 	if varName == "" || rightExpr == nil {
 		return
 	}
-	rightType := l.nodeType(rightExpr)
 
-	// Pattern: name := signal.New(initExpr)
-	if rightType == "call_expression" {
-		funcNode := l.childByField(rightExpr, "function")
-		if funcNode != nil {
-			callKind := l.signalCallKind(funcNode)
-			argsNode := l.childByField(rightExpr, "arguments")
-
-			// signal.New(...)
-			if callKind == signalCallNew && argsNode != nil {
-				initExpr := l.extractArg(argsNode, 0)
-				typeHint := l.inferTypeHint(initExpr)
-				scope.Signals = append(scope.Signals, SignalInfo{
-					Name:     varName,
-					Local:    varName,
-					InitExpr: initExpr,
-					TypeHint: typeHint,
-				})
-				scope.Locals[varName] = "signal"
-				return
-			}
-
-			// signal.NewShared("name", init) / signal.Shared("name", init)
-			if (callKind == signalCallNewShared || callKind == signalCallShared) && argsNode != nil {
-				sharedName := l.normalizeSharedSignalName(l.extractArg(argsNode, 0))
-				initExpr := l.extractArg(argsNode, 1)
-				if sharedName == "" || initExpr == "" {
-					return
-				}
-				typeHint := l.inferTypeHint(initExpr)
-				scope.Signals = append(scope.Signals, SignalInfo{
-					Name:     sharedName,
-					Local:    varName,
-					InitExpr: initExpr,
-					TypeHint: typeHint,
-				})
-				scope.Locals[varName] = "signal"
-				return
-			}
-
-			// signal.Derive(func() T { return expr })
-			if callKind == signalCallDerive && argsNode != nil {
-				bodyExpr := l.extractDeriveBody(argsNode)
-				scope.Computeds = append(scope.Computeds, ComputedInfo{
-					Name:     varName,
-					BodyExpr: bodyExpr,
-				})
-				scope.Locals[varName] = "computed"
-				return
-			}
-		}
+	if sig, ok := l.signalInfoForAssignedExpr(varName, rightExpr); ok {
+		scope.Signals = append(scope.Signals, sig)
+		scope.Locals[varName] = "signal"
+		return
 	}
 
-	// Pattern: name := func() { ...statements... }
-	if rightType == "func_literal" {
-		body := l.childByField(rightExpr, "body")
-		if body != nil {
-			stmts := l.extractStatements(body)
-			scope.Handlers = append(scope.Handlers, HandlerInfo{
-				Name:       varName,
-				Statements: stmts,
-			})
-			scope.Locals[varName] = "handler"
-			return
-		}
+	if computed, ok := l.computedInfoForAssignedExpr(varName, rightExpr); ok {
+		scope.Computeds = append(scope.Computeds, computed)
+		scope.Locals[varName] = "computed"
+		return
 	}
+
+	if handler, ok := l.handlerInfoForAssignedExpr(varName, rightExpr); ok {
+		scope.Handlers = append(scope.Handlers, handler)
+		scope.Locals[varName] = "handler"
+		return
+	}
+}
+
+func (l *lowerer) signalInfoForAssignedExpr(varName string, rightExpr *gotreesitter.Node) (SignalInfo, bool) {
+	callKind, argsNode, ok := l.signalCallExpr(rightExpr)
+	if !ok || argsNode == nil {
+		return SignalInfo{}, false
+	}
+	switch callKind {
+	case signalCallNew:
+		initExpr := l.extractArg(argsNode, 0)
+		return SignalInfo{
+			Name:     varName,
+			Local:    varName,
+			InitExpr: initExpr,
+			TypeHint: l.inferTypeHint(initExpr),
+		}, true
+	case signalCallNewShared, signalCallShared:
+		sharedName := l.normalizeSharedSignalName(l.extractArg(argsNode, 0))
+		initExpr := l.extractArg(argsNode, 1)
+		if sharedName == "" || initExpr == "" {
+			return SignalInfo{}, false
+		}
+		return SignalInfo{
+			Name:     sharedName,
+			Local:    varName,
+			InitExpr: initExpr,
+			TypeHint: l.inferTypeHint(initExpr),
+		}, true
+	default:
+		return SignalInfo{}, false
+	}
+}
+
+func (l *lowerer) computedInfoForAssignedExpr(varName string, rightExpr *gotreesitter.Node) (ComputedInfo, bool) {
+	callKind, argsNode, ok := l.signalCallExpr(rightExpr)
+	if !ok || callKind != signalCallDerive || argsNode == nil {
+		return ComputedInfo{}, false
+	}
+	return ComputedInfo{
+		Name:     varName,
+		BodyExpr: l.extractDeriveBody(argsNode),
+	}, true
+}
+
+func (l *lowerer) handlerInfoForAssignedExpr(varName string, rightExpr *gotreesitter.Node) (HandlerInfo, bool) {
+	if l.nodeType(rightExpr) != "func_literal" {
+		return HandlerInfo{}, false
+	}
+	body := l.funcLiteralBody(rightExpr)
+	if body == nil {
+		return HandlerInfo{}, false
+	}
+	return HandlerInfo{
+		Name:       varName,
+		Statements: l.extractStatements(body),
+	}, true
 }
 
 type signalCall int
@@ -398,6 +399,17 @@ func (l *lowerer) signalCallKind(funcNode *gotreesitter.Node) signalCall {
 	default:
 		return signalCallUnknown
 	}
+}
+
+func (l *lowerer) signalCallExpr(n *gotreesitter.Node) (signalCall, *gotreesitter.Node, bool) {
+	if n == nil || l.nodeType(n) != "call_expression" {
+		return signalCallUnknown, nil, false
+	}
+	funcNode := l.childByField(n, "function")
+	if funcNode == nil {
+		return signalCallUnknown, nil, false
+	}
+	return l.signalCallKind(funcNode), l.childByField(n, "arguments"), true
 }
 
 func (l *lowerer) callName(funcNode *gotreesitter.Node) (string, string) {
@@ -465,65 +477,16 @@ func (l *lowerer) extractDeriveBody(argsNode *gotreesitter.Node) string {
 
 // extractReturnExpr finds the return statement inside a func_literal and extracts its expression.
 func (l *lowerer) extractReturnExpr(funcLit *gotreesitter.Node) string {
-	// func_literal → body (block) → statement_list → return_statement → expression
-	body := l.childByField(funcLit, "body")
-	if body == nil {
-		// Try unnamed child approach
-		for i := 0; i < int(funcLit.ChildCount()); i++ {
-			child := funcLit.Child(i)
-			if child != nil && l.nodeType(child) == "block" {
-				body = child
-				break
-			}
-		}
-	}
+	body := l.funcLiteralBody(funcLit)
 	if body == nil {
 		return ""
 	}
 
-	// Find statement_list inside the block
-	var stmtList *gotreesitter.Node
-	for i := 0; i < int(body.ChildCount()); i++ {
-		child := body.Child(i)
-		if child != nil && l.nodeType(child) == "statement_list" {
-			stmtList = child
-			break
-		}
+	ret := l.firstReturnStatement(body)
+	if ret == nil {
+		return ""
 	}
-	if stmtList == nil {
-		stmtList = body // try body directly
-	}
-
-	// Find return_statement
-	for i := 0; i < int(stmtList.ChildCount()); i++ {
-		child := stmtList.Child(i)
-		if child == nil {
-			continue
-		}
-		if l.nodeType(child) == "return_statement" {
-			// Extract the expression(s) after "return"
-			// Try named children first
-			for j := 0; j < int(child.NamedChildCount()); j++ {
-				expr := child.NamedChild(j)
-				text := strings.TrimSpace(l.text(expr))
-				if text != "" {
-					return text
-				}
-			}
-			// Try all children, skip the "return" keyword
-			for j := 0; j < int(child.ChildCount()); j++ {
-				expr := child.Child(j)
-				if expr == nil {
-					continue
-				}
-				text := strings.TrimSpace(l.text(expr))
-				if text != "" && text != "return" {
-					return text
-				}
-			}
-		}
-	}
-	return ""
+	return l.firstNonEmptyNodeText(l.returnExprNodes(ret))
 }
 
 // extractStatements gets the source text of each statement in a block.
@@ -531,14 +494,8 @@ func (l *lowerer) extractStatements(bodyNode *gotreesitter.Node) []string {
 	if bodyNode == nil {
 		return nil
 	}
-	if l.nodeType(bodyNode) == "block" {
-		for i := 0; i < int(bodyNode.NamedChildCount()); i++ {
-			child := bodyNode.NamedChild(i)
-			if child != nil && l.nodeType(child) == "statement_list" {
-				bodyNode = child
-				break
-			}
-		}
+	if stmtList := l.statementListNode(bodyNode); stmtList != nil {
+		bodyNode = stmtList
 	}
 	var stmts []string
 	for i := 0; i < int(bodyNode.NamedChildCount()); i++ {
@@ -550,6 +507,115 @@ func (l *lowerer) extractStatements(bodyNode *gotreesitter.Node) []string {
 		stmts = append(stmts, text)
 	}
 	return stmts
+}
+
+func (l *lowerer) statementListNode(n *gotreesitter.Node) *gotreesitter.Node {
+	if n == nil {
+		return nil
+	}
+	if l.nodeType(n) == "statement_list" {
+		return n
+	}
+	return l.firstNamedChildByType(n, "statement_list")
+}
+
+func (l *lowerer) funcLiteralBody(n *gotreesitter.Node) *gotreesitter.Node {
+	if n == nil {
+		return nil
+	}
+	if body := l.childByField(n, "body"); body != nil {
+		return body
+	}
+	return l.firstChildByType(n, "block")
+}
+
+func (l *lowerer) firstReturnStatement(n *gotreesitter.Node) *gotreesitter.Node {
+	stmtList := l.statementListNode(n)
+	if stmtList == nil {
+		stmtList = n
+	}
+	for i := 0; i < int(stmtList.NamedChildCount()); i++ {
+		child := stmtList.NamedChild(i)
+		if child != nil && l.nodeType(child) == "return_statement" {
+			return child
+		}
+	}
+	return nil
+}
+
+func (l *lowerer) returnExprNodes(returnStmt *gotreesitter.Node) []*gotreesitter.Node {
+	if returnStmt == nil {
+		return nil
+	}
+	var exprs []*gotreesitter.Node
+	for i := 0; i < int(returnStmt.NamedChildCount()); i++ {
+		child := returnStmt.NamedChild(i)
+		if child == nil {
+			continue
+		}
+		if l.nodeType(child) == "expression_list" {
+			for j := 0; j < int(child.NamedChildCount()); j++ {
+				if expr := child.NamedChild(j); expr != nil {
+					exprs = append(exprs, expr)
+				}
+			}
+			continue
+		}
+		exprs = append(exprs, child)
+	}
+	if len(exprs) > 0 {
+		return exprs
+	}
+	for i := 0; i < int(returnStmt.ChildCount()); i++ {
+		child := returnStmt.Child(i)
+		if child == nil {
+			continue
+		}
+		text := strings.TrimSpace(l.text(child))
+		if text == "" || text == "return" {
+			continue
+		}
+		exprs = append(exprs, child)
+	}
+	return exprs
+}
+
+func (l *lowerer) firstNonEmptyNodeText(nodes []*gotreesitter.Node) string {
+	for _, node := range nodes {
+		if node == nil {
+			continue
+		}
+		if text := strings.TrimSpace(l.text(node)); text != "" {
+			return text
+		}
+	}
+	return ""
+}
+
+func (l *lowerer) firstNamedChildByType(n *gotreesitter.Node, typ string) *gotreesitter.Node {
+	if n == nil {
+		return nil
+	}
+	for i := 0; i < int(n.NamedChildCount()); i++ {
+		child := n.NamedChild(i)
+		if child != nil && l.nodeType(child) == typ {
+			return child
+		}
+	}
+	return nil
+}
+
+func (l *lowerer) firstChildByType(n *gotreesitter.Node, typ string) *gotreesitter.Node {
+	if n == nil {
+		return nil
+	}
+	for i := 0; i < int(n.ChildCount()); i++ {
+		child := n.Child(i)
+		if child != nil && l.nodeType(child) == typ {
+			return child
+		}
+	}
+	return nil
 }
 
 // inferTypeHint guesses the type from a literal expression.
@@ -777,32 +843,25 @@ func (l *lowerer) lowerFunctionDecl(n *gotreesitter.Node) {
 
 // findGSXReturn searches a function body for a return statement containing GSX.
 func (l *lowerer) findGSXReturn(n *gotreesitter.Node) *gotreesitter.Node {
+	if n == nil || l.nodeType(n) == "func_literal" {
+		return nil
+	}
+	if l.nodeType(n) == "return_statement" {
+		return l.gsxNodeInReturn(n)
+	}
 	for i := 0; i < int(n.NamedChildCount()); i++ {
 		child := n.NamedChild(i)
-		typ := l.nodeType(child)
-
-		if typ == "return_statement" {
-			// Check expression list for GSX
-			for j := 0; j < int(child.NamedChildCount()); j++ {
-				expr := child.NamedChild(j)
-				if l.isGSXNode(expr) {
-					return expr
-				}
-				// Check inside expression_list
-				if l.nodeType(expr) == "expression_list" {
-					for k := 0; k < int(expr.NamedChildCount()); k++ {
-						inner := expr.NamedChild(k)
-						if l.isGSXNode(inner) {
-							return inner
-						}
-					}
-				}
-			}
-		}
-
-		// Recurse into blocks
 		if found := l.findGSXReturn(child); found != nil {
 			return found
+		}
+	}
+	return nil
+}
+
+func (l *lowerer) gsxNodeInReturn(returnStmt *gotreesitter.Node) *gotreesitter.Node {
+	for _, expr := range l.returnExprNodes(returnStmt) {
+		if l.isGSXNode(expr) {
+			return expr
 		}
 	}
 	return nil
