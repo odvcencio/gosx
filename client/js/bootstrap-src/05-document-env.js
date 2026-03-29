@@ -1,15 +1,113 @@
   const gosxEnvironmentListeners = new Set();
   const gosxDocumentListeners = new Set();
+  const gosxPresentationRecordsByElement = new Map();
   let gosxEnvironmentState = null;
   let gosxDocumentState = null;
   let gosxEnvironmentObserversInstalled = false;
   let gosxDocumentObserversInstalled = false;
-  let gosxDocumentRefreshScheduled = false;
-  let gosxDocumentRefreshReason = "";
   const GOSX_DOCUMENT_CSS_LAYERS = ["global", "layout", "page", "runtime"];
+  const gosxStateInvalidations = new Map();
+  const gosxVisualInvalidations = new Map();
+  let gosxStateInvalidationScheduled = false;
+  let gosxVisualInvalidationScheduled = false;
+  let gosxVisualInvalidationHandle = 0;
+  let gosxPresentationResizeObserver = null;
+  let gosxPresentationMutationObserver = null;
+  let gosxPresentationStopEnvironment = null;
+  let gosxPresentationStopDocument = null;
+  const GOSX_PRESENTATION_MUTATION_ATTRS = ["class", "style", "dir", "lang", "hidden"];
 
   function gosxArrayFrom(listLike) {
     return Array.prototype.slice.call(listLike || []);
+  }
+
+  function gosxMergedReason(current, next) {
+    const value = String(next || "").trim();
+    if (!value) {
+      return current || "";
+    }
+    if (!current) {
+      return value;
+    }
+    const parts = current.split("|");
+    if (parts.includes(value)) {
+      return current;
+    }
+    parts.push(value);
+    return parts.join("|");
+  }
+
+  function gosxScheduleStateInvalidation(key, reason, callback) {
+    if (!key || typeof callback !== "function") {
+      return;
+    }
+    const entry = gosxStateInvalidations.get(key) || { callback: null, reason: "" };
+    entry.callback = callback;
+    entry.reason = gosxMergedReason(entry.reason, reason || "state");
+    gosxStateInvalidations.set(key, entry);
+    if (gosxStateInvalidationScheduled) {
+      return;
+    }
+    gosxStateInvalidationScheduled = true;
+    const flush = function() {
+      gosxStateInvalidationScheduled = false;
+      const pending = Array.from(gosxStateInvalidations.values());
+      gosxStateInvalidations.clear();
+      for (const item of pending) {
+        if (!item || typeof item.callback !== "function") {
+          continue;
+        }
+        item.callback(item.reason || "state");
+      }
+    };
+    if (typeof queueMicrotask === "function") {
+      queueMicrotask(flush);
+      return;
+    }
+    Promise.resolve().then(flush);
+  }
+
+  function gosxScheduleVisualInvalidation(key, reason, callback) {
+    if (!key || typeof callback !== "function") {
+      return;
+    }
+    const entry = gosxVisualInvalidations.get(key) || { callback: null, reason: "" };
+    entry.callback = callback;
+    entry.reason = gosxMergedReason(entry.reason, reason || "visual");
+    gosxVisualInvalidations.set(key, entry);
+    if (gosxVisualInvalidationScheduled) {
+      return;
+    }
+    gosxVisualInvalidationScheduled = true;
+    const flush = function(frameTime) {
+      gosxVisualInvalidationScheduled = false;
+      gosxVisualInvalidationHandle = 0;
+      while (gosxVisualInvalidations.size > 0) {
+        const pending = Array.from(gosxVisualInvalidations.values());
+        gosxVisualInvalidations.clear();
+        for (const item of pending) {
+          if (!item || typeof item.callback !== "function") {
+            continue;
+          }
+          item.callback(item.reason || "visual", frameTime);
+        }
+      }
+    };
+    if (typeof requestAnimationFrame === "function") {
+      gosxVisualInvalidationHandle = requestAnimationFrame(flush);
+      return;
+    }
+    gosxVisualInvalidationHandle = setTimeout(function() {
+      flush(Date.now());
+    }, 0);
+  }
+
+  function gosxCancelInvalidation(key) {
+    if (!key) {
+      return;
+    }
+    gosxStateInvalidations.delete(key);
+    gosxVisualInvalidations.delete(key);
   }
 
   function gosxMediaQueryList(query) {
@@ -190,6 +288,12 @@
     return cloneGosxEnvironment(next);
   }
 
+  function scheduleGosxEnvironmentRefresh(reason) {
+    gosxScheduleStateInvalidation("environment", reason || "environment", function(nextReason) {
+      refreshGosxEnvironmentState(nextReason);
+    });
+  }
+
   function installGosxEnvironmentObservers() {
     if (gosxEnvironmentObserversInstalled) {
       return;
@@ -197,7 +301,7 @@
     gosxEnvironmentObserversInstalled = true;
 
     const refresh = function(reason) {
-      refreshGosxEnvironmentState(reason);
+      scheduleGosxEnvironmentRefresh(reason);
     };
 
     if (document && typeof document.addEventListener === "function") {
@@ -641,18 +745,9 @@
   }
 
   function scheduleGosxDocumentRefresh(reason) {
-    gosxDocumentRefreshReason = reason || gosxDocumentRefreshReason || "refresh";
-    if (gosxDocumentRefreshScheduled) {
-      return;
-    }
-    gosxDocumentRefreshScheduled = true;
-    const run = function() {
-      gosxDocumentRefreshScheduled = false;
-      const nextReason = gosxDocumentRefreshReason || "refresh";
-      gosxDocumentRefreshReason = "";
+    gosxScheduleStateInvalidation("document", reason || "refresh", function(nextReason) {
       refreshGosxDocumentState(nextReason);
-    };
-    setTimeout(run, 0);
+    });
   }
 
   function installGosxDocumentObservers() {
@@ -663,7 +758,7 @@
     if (document && typeof document.addEventListener === "function") {
       document.addEventListener("gosx:navigate", function() {
         scheduleGosxDocumentRefresh("navigate");
-        refreshGosxEnvironmentState("navigate");
+        scheduleGosxEnvironmentRefresh("navigate");
       });
       document.addEventListener("gosx:ready", function() {
         scheduleGosxDocumentRefresh("ready");
@@ -793,72 +888,153 @@
     if (!element || typeof listener !== "function") {
       return function() {};
     }
-    let resizeObserver = null;
-    let mutationObserver = null;
-    let stopEnvironment = null;
-    let stopDocument = null;
-    const notify = function(reason) {
-      listener(gosxPresentationSnapshot(element), reason || "presentation");
-    };
-
-    if (typeof ResizeObserver === "function") {
-      resizeObserver = new ResizeObserver(function() {
-        notify("presentation-resize");
-      });
-      if (typeof resizeObserver.observe === "function") {
-        resizeObserver.observe(element);
+    let record = gosxPresentationRecordsByElement.get(element) || null;
+    if (!record) {
+      record = {
+        element,
+        listeners: new Set(),
+      };
+      gosxPresentationRecordsByElement.set(element, record);
+      ensureGosxPresentationObservers();
+      if (gosxPresentationResizeObserver && typeof gosxPresentationResizeObserver.observe === "function") {
+        gosxPresentationResizeObserver.observe(element);
       }
     }
+    record.listeners.add(listener);
+    if (!options || options.immediate !== false) {
+      listener(gosxPresentationSnapshot(element), "init");
+    }
+    return function() {
+      const current = gosxPresentationRecordsByElement.get(element);
+      if (!current) {
+        return;
+      }
+      current.listeners.delete(listener);
+      if (current.listeners.size > 0) {
+        return;
+      }
+      gosxCancelInvalidation(current);
+      if (gosxPresentationResizeObserver && typeof gosxPresentationResizeObserver.unobserve === "function") {
+        gosxPresentationResizeObserver.unobserve(element);
+      }
+      gosxPresentationRecordsByElement.delete(element);
+      teardownGosxPresentationObservers();
+    };
+  }
 
-    stopEnvironment = observeGosxEnvironment(function() {
-      notify("presentation-environment");
-    }, { immediate: false });
+  function gosxNotifyPresentationRecord(record, reason) {
+    if (!record || !record.element || record.listeners.size === 0) {
+      return;
+    }
+    const snapshot = gosxPresentationSnapshot(record.element);
+    for (const listener of Array.from(record.listeners)) {
+      try {
+        listener(snapshot, reason || "presentation");
+      } catch (error) {
+        console.error("[gosx] presentation listener failed:", error);
+      }
+    }
+  }
 
-    stopDocument = observeGosxDocument(function() {
-      notify("presentation-document");
-    }, { immediate: false });
+  function gosxSchedulePresentationRecord(record, reason) {
+    if (!record) {
+      return;
+    }
+    gosxScheduleVisualInvalidation(record, reason || "presentation", function(nextReason) {
+      gosxNotifyPresentationRecord(record, nextReason);
+    });
+  }
 
-    if (typeof MutationObserver === "function" && document && document.documentElement) {
-      mutationObserver = new MutationObserver(function(records) {
-        for (const record of records || []) {
-          const target = record && record.target;
-          if (!target || target === element || target === document.documentElement || target === document.body) {
-            notify("presentation-mutation");
-            return;
-          }
-          if (typeof target.contains === "function" && target.contains(element)) {
-            notify("presentation-mutation");
-            return;
+  function gosxSchedulePresentationRefresh(reason) {
+    for (const record of Array.from(gosxPresentationRecordsByElement.values())) {
+      gosxSchedulePresentationRecord(record, reason || "presentation");
+    }
+  }
+
+  function gosxPresentationMutationAffectsRecord(record, target) {
+    if (!record || !record.element) {
+      return false;
+    }
+    if (!target || target === record.element || target === document.documentElement || target === document.body) {
+      return true;
+    }
+    return typeof target.contains === "function" && target.contains(record.element);
+  }
+
+  function ensureGosxPresentationObservers() {
+    if (gosxPresentationRecordsByElement.size === 0) {
+      return;
+    }
+    if (!gosxPresentationResizeObserver && typeof ResizeObserver === "function") {
+      gosxPresentationResizeObserver = new ResizeObserver(function(entries) {
+        for (const entry of entries || []) {
+          const record = entry && entry.target ? gosxPresentationRecordsByElement.get(entry.target) : null;
+          if (record) {
+            gosxSchedulePresentationRecord(record, "presentation-resize");
           }
         }
       });
-      if (typeof mutationObserver.observe === "function") {
-        mutationObserver.observe(document.documentElement, {
+      for (const record of Array.from(gosxPresentationRecordsByElement.values())) {
+        if (record.element && typeof gosxPresentationResizeObserver.observe === "function") {
+          gosxPresentationResizeObserver.observe(record.element);
+        }
+      }
+    }
+    if (!gosxPresentationStopEnvironment) {
+      gosxPresentationStopEnvironment = observeGosxEnvironment(function() {
+        gosxSchedulePresentationRefresh("presentation-environment");
+      }, { immediate: false });
+    }
+    if (!gosxPresentationStopDocument) {
+      gosxPresentationStopDocument = observeGosxDocument(function() {
+        gosxSchedulePresentationRefresh("presentation-document");
+      }, { immediate: false });
+    }
+    if (!gosxPresentationMutationObserver && typeof MutationObserver === "function" && document && document.documentElement) {
+      gosxPresentationMutationObserver = new MutationObserver(function(records) {
+        const affected = new Set();
+        for (const mutation of records || []) {
+          const target = mutation && mutation.target;
+          for (const record of Array.from(gosxPresentationRecordsByElement.values())) {
+            if (gosxPresentationMutationAffectsRecord(record, target)) {
+              affected.add(record);
+            }
+          }
+        }
+        for (const record of Array.from(affected)) {
+          gosxSchedulePresentationRecord(record, "presentation-mutation");
+        }
+      });
+      if (typeof gosxPresentationMutationObserver.observe === "function") {
+        gosxPresentationMutationObserver.observe(document.documentElement, {
           subtree: true,
           attributes: true,
-          attributeFilter: ["class", "style", "dir", "lang", "hidden"],
+          attributeFilter: GOSX_PRESENTATION_MUTATION_ATTRS,
         });
       }
     }
+  }
 
-    if (!options || options.immediate !== false) {
-      notify("init");
+  function teardownGosxPresentationObservers() {
+    if (gosxPresentationRecordsByElement.size > 0) {
+      return;
     }
-
-    return function() {
-      if (resizeObserver && typeof resizeObserver.disconnect === "function") {
-        resizeObserver.disconnect();
-      }
-      if (mutationObserver && typeof mutationObserver.disconnect === "function") {
-        mutationObserver.disconnect();
-      }
-      if (typeof stopEnvironment === "function") {
-        stopEnvironment();
-      }
-      if (typeof stopDocument === "function") {
-        stopDocument();
-      }
-    };
+    if (gosxPresentationResizeObserver && typeof gosxPresentationResizeObserver.disconnect === "function") {
+      gosxPresentationResizeObserver.disconnect();
+    }
+    gosxPresentationResizeObserver = null;
+    if (gosxPresentationMutationObserver && typeof gosxPresentationMutationObserver.disconnect === "function") {
+      gosxPresentationMutationObserver.disconnect();
+    }
+    gosxPresentationMutationObserver = null;
+    if (typeof gosxPresentationStopEnvironment === "function") {
+      gosxPresentationStopEnvironment();
+    }
+    gosxPresentationStopEnvironment = null;
+    if (typeof gosxPresentationStopDocument === "function") {
+      gosxPresentationStopDocument();
+    }
+    gosxPresentationStopDocument = null;
   }
 
   window.__gosx.environment = {

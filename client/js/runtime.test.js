@@ -636,6 +636,10 @@ class FakeResizeObserver {
     this.targets.add(target);
   }
 
+  unobserve(target) {
+    this.targets.delete(target);
+  }
+
   disconnect() {
     this.targets.clear();
   }
@@ -1866,6 +1870,91 @@ test("bootstrap refreshes managed text layout after inherited locale and directi
   assert.equal(block.getAttribute("data-gosx-text-layout-direction"), "rtl");
 });
 
+test("bootstrap shares presentation observers across managed text layout blocks and tears them down", async () => {
+  const container = new FakeElement("section", null);
+  const first = new FakeElement("div", null);
+  const second = new FakeElement("div", null);
+  for (const block of [first, second]) {
+    block.width = 88;
+    block.setAttribute("data-gosx-text-layout", "");
+    block.setAttribute("data-gosx-text-layout-font", "600 16px serif");
+    block.setAttribute("data-gosx-text-layout-line-height", "20");
+    block.textContent = "hello world from gosx";
+    container.appendChild(block);
+  }
+
+  const env = createContext({
+    elements: [container],
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const presentationObserver = env.mutationObservers.filter((observer) => observer.targets.has(env.document.documentElement));
+  assert.equal(presentationObserver.length, 1);
+  assert.equal(env.resizeObservers.length >= 1, true);
+  assert.equal(env.resizeObservers[0].targets.has(first), true);
+  assert.equal(env.resizeObservers[0].targets.has(second), true);
+
+  env.context.__gosx.textLayout.dispose(first);
+
+  assert.equal(env.resizeObservers[0].targets.has(first), false);
+  assert.equal(env.resizeObservers[0].targets.has(second), true);
+
+  env.context.__gosx.textLayout.dispose(second);
+
+  assert.equal(presentationObserver[0].targets.size, 0);
+  assert.equal(env.resizeObservers[0].targets.size, 0);
+});
+
+test("bootstrap coalesces presentation-driven text layout refreshes into one frame", async () => {
+  const container = new FakeElement("section", null);
+  container.setAttribute("lang", "en");
+  const block = new FakeElement("div", null);
+  block.width = 120;
+  block.height = 40;
+  block.setAttribute("data-gosx-text-layout", "");
+  block.setAttribute("data-gosx-text-layout-font", "600 16px serif");
+  block.setAttribute("data-gosx-text-layout-line-height", "20");
+  block.textContent = "hello world from gosx";
+  container.appendChild(block);
+
+  const env = createContext({
+    elements: [container],
+  });
+  const raf = installManualRAF(env.context);
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  let updates = 0;
+  block.addEventListener("gosx:textlayout", () => {
+    updates += 1;
+  });
+
+  container.setAttribute("lang", "th");
+  container.setAttribute("dir", "rtl");
+  const presentationObserver = env.mutationObservers.find((observer) => observer.targets.has(env.document.documentElement));
+  assert.ok(presentationObserver);
+
+  presentationObserver.trigger([
+    { target: container, type: "attributes", attributeName: "lang" },
+  ]);
+  presentationObserver.trigger([
+    { target: container, type: "attributes", attributeName: "dir" },
+  ]);
+
+  assert.equal(raf.count(), 1);
+  assert.equal(updates, 0);
+
+  raf.flush();
+  await flushAsyncWork();
+
+  assert.equal(updates, 1);
+  assert.equal(block.getAttribute("data-gosx-text-layout-locale"), "th");
+  assert.equal(block.getAttribute("data-gosx-text-layout-direction"), "rtl");
+});
+
 test("bootstrap exposes unified environment, document, and presentation state", async () => {
   const block = new FakeElement("div", null);
   block.width = 144;
@@ -2077,6 +2166,54 @@ test("bootstrap refreshes document CSS state after head mutations", async () => 
   assert.equal(env.context.__gosx.document.get().css.layers.layout.count, 1);
   assert.equal(env.context.__gosx.document.css("layout").sources[0], "layout.css");
   assert.equal(env.document.documentElement.getAttribute("data-gosx-css-layout-count"), "1");
+});
+
+test("bootstrap coalesces head mutation refreshes into one document update turn", async () => {
+  const env = createContext({});
+  const contract = env.document.createElement("script");
+  contract.id = "gosx-document";
+  contract.setAttribute("type", "application/json");
+  contract.setAttribute("data-gosx-document-contract", "");
+  contract.textContent = JSON.stringify({
+    version: 1,
+    page: {
+      id: "gosx-doc-home",
+      pattern: "GET /",
+      path: "/",
+      title: "Home",
+      status: 200,
+    },
+    enhancement: {
+      bootstrap: true,
+      runtime: false,
+      navigation: true,
+    },
+  });
+  appendManagedHead(env.document, [contract]);
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const initialEvents = env.document.dispatchedEvents.filter((event) => event.type === "gosx:document").length;
+  const headObserver = env.mutationObservers.find((observer) => observer.targets.has(env.document.head));
+  assert.ok(headObserver);
+
+  const stylesheet = env.document.createElement("link");
+  stylesheet.setAttribute("rel", "stylesheet");
+  stylesheet.setAttribute("href", "/page.css");
+  stylesheet.setAttribute("data-gosx-css-layer", "page");
+  stylesheet.setAttribute("data-gosx-css-owner", "document-page");
+  stylesheet.setAttribute("data-gosx-css-source", "page.css");
+  const managedEnd = env.document.head.childNodes.find((node) => node.getAttribute && node.getAttribute("name") === "gosx-head-end");
+  env.document.head.insertBefore(stylesheet, managedEnd);
+  stylesheet.setAttribute("media", "screen");
+
+  headObserver.trigger([{ target: env.document.head, type: "childList" }]);
+  headObserver.trigger([{ target: stylesheet, type: "attributes", attributeName: "media" }]);
+  await flushAsyncWork();
+
+  const nextEvents = env.document.dispatchedEvents.filter((event) => event.type === "gosx:document").length;
+  assert.equal(nextEvents, initialEvents + 1);
 });
 
 test("bootstrap refreshes managed text layout blocks after font metric invalidation", async () => {

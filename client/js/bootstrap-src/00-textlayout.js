@@ -54,6 +54,22 @@
   const TEXT_LAYOUT_SURFACE_ATTR = "data-gosx-text-layout-surface";
   const TEXT_LAYOUT_STATE_ATTR = "data-gosx-text-layout-state";
   const TEXT_LAYOUT_STYLE_ATTR = "data-gosx-text-layout-styles";
+  const MANAGED_TEXT_LAYOUT_MUTATION_ATTRS = [
+    "align",
+    "data-gosx-text-layout-align",
+    "data-gosx-text-layout-direction",
+    "data-gosx-text-layout-font",
+    "data-gosx-text-layout-locale",
+    "data-gosx-text-layout-line-height",
+    "data-gosx-text-layout-max-lines",
+    "data-gosx-text-layout-max-width",
+    "data-gosx-text-layout-observe",
+    "data-gosx-text-layout-overflow",
+    "data-gosx-text-layout-source",
+    "data-gosx-text-layout-white-space",
+    "dir",
+    "lang",
+  ];
   const textLayoutInvalidationListeners = new Set();
   const textLayoutRecordsByElement = new Map();
   let textMeasureContext = null;
@@ -2390,6 +2406,7 @@
     if (!record) {
       return;
     }
+    gosxCancelInvalidation(record);
     if (record.resizeObserver && typeof record.resizeObserver.disconnect === "function") {
       record.resizeObserver.disconnect();
       record.resizeObserver = null;
@@ -2409,6 +2426,39 @@
     if (typeof record.stopInvalidation === "function") {
       record.stopInvalidation();
       record.stopInvalidation = null;
+    }
+  }
+
+  function scheduleManagedTextLayoutRefresh(record, reason) {
+    if (!record) {
+      return;
+    }
+    gosxScheduleVisualInvalidation(record, reason || "textlayout", function(nextReason) {
+      refreshManagedTextLayoutRecord(record, nextReason);
+    });
+  }
+
+  function connectManagedTextLayoutMutationObserver(record) {
+    if (!record || record.mutationObserver || typeof MutationObserver !== "function" || !record.element) {
+      return;
+    }
+    record.mutationObserver = new MutationObserver(function(records) {
+      for (const mutation of records || []) {
+        const target = mutation && mutation.target;
+        if (!target || target === record.element || mutation.type !== "attributes") {
+          scheduleManagedTextLayoutRefresh(record, "mutation");
+          return;
+        }
+      }
+    });
+    if (typeof record.mutationObserver.observe === "function") {
+      record.mutationObserver.observe(record.element, {
+        subtree: true,
+        childList: true,
+        characterData: true,
+        attributes: true,
+        attributeFilter: MANAGED_TEXT_LAYOUT_MUTATION_ATTRS,
+      });
     }
   }
 
@@ -2481,40 +2531,27 @@
 
     if (record.config && record.config.observe) {
       record.stopInvalidation = onTextLayoutInvalidated(function() {
-        refreshManagedTextLayoutRecord(record, "invalidate");
+        scheduleManagedTextLayoutRefresh(record, "invalidate");
       });
 
       if (window.__gosx.presentation && typeof window.__gosx.presentation.observe === "function") {
         record.stopPresentation = window.__gosx.presentation.observe(element, function() {
-          refreshManagedTextLayoutRecord(record, "presentation");
+          scheduleManagedTextLayoutRefresh(record, "presentation");
         }, { immediate: false });
       } else if (typeof ResizeObserver === "function") {
         record.resizeObserver = new ResizeObserver(function() {
-          refreshManagedTextLayoutRecord(record, "resize");
+          scheduleManagedTextLayoutRefresh(record, "resize");
         });
         if (typeof record.resizeObserver.observe === "function") {
           record.resizeObserver.observe(element);
         }
       } else if (typeof window.addEventListener === "function") {
         record.windowResizeListener = function() {
-          refreshManagedTextLayoutRecord(record, "resize");
+          scheduleManagedTextLayoutRefresh(record, "resize");
         };
         window.addEventListener("resize", record.windowResizeListener);
       }
-
-      if (typeof MutationObserver === "function") {
-        record.mutationObserver = new MutationObserver(function() {
-          refreshManagedTextLayoutRecord(record, "mutation");
-        });
-        if (typeof record.mutationObserver.observe === "function") {
-          record.mutationObserver.observe(element, {
-            subtree: true,
-            childList: true,
-            characterData: true,
-            attributes: true,
-          });
-        }
-      }
+      connectManagedTextLayoutMutationObserver(record);
     }
 
     return {
