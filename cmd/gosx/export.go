@@ -82,6 +82,7 @@ func copyExportRuntime(buildDir, outputDir string) error {
 		{src: filepath.Join(buildDir, "gosx-runtime.wasm"), dst: filepath.Join(gosxDir, "runtime.wasm")},
 		{src: filepath.Join(buildDir, "wasm_exec.js"), dst: filepath.Join(gosxDir, "wasm_exec.js")},
 		{src: filepath.Join(buildDir, "bootstrap.js"), dst: filepath.Join(gosxDir, "bootstrap.js")},
+		{src: filepath.Join(buildDir, "bootstrap-lite.js"), dst: filepath.Join(gosxDir, "bootstrap-lite.js")},
 		{src: filepath.Join(buildDir, "patch.js"), dst: filepath.Join(gosxDir, "patch.js")},
 	} {
 		if err := copyFile(asset.dst, asset.src); err != nil {

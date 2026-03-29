@@ -162,6 +162,9 @@ func prepareDevAssets(dir string) error {
 	if err := copyFile(filepath.Join(buildDir, "bootstrap.js"), filepath.Join(gosxRoot, "client", "js", "bootstrap.js")); err != nil {
 		return fmt.Errorf("stage bootstrap.js: %w", err)
 	}
+	if err := copyFile(filepath.Join(buildDir, "bootstrap-lite.js"), filepath.Join(gosxRoot, "client", "js", "bootstrap-lite.js")); err != nil {
+		return fmt.Errorf("stage bootstrap-lite.js: %w", err)
+	}
 	if err := copyFile(filepath.Join(buildDir, "patch.js"), filepath.Join(gosxRoot, "client", "js", "patch.js")); err != nil {
 		return fmt.Errorf("stage patch.js: %w", err)
 	}

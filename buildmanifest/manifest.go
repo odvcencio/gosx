@@ -16,10 +16,11 @@ type Manifest struct {
 }
 
 type RuntimeAssets struct {
-	WASM      HashedAsset `json:"wasm"`
-	WASMExec  HashedAsset `json:"wasmExec"`
-	Bootstrap HashedAsset `json:"bootstrap"`
-	Patch     HashedAsset `json:"patch"`
+	WASM          HashedAsset `json:"wasm"`
+	WASMExec      HashedAsset `json:"wasmExec"`
+	Bootstrap     HashedAsset `json:"bootstrap"`
+	BootstrapLite HashedAsset `json:"bootstrapLite,omitempty"`
+	Patch         HashedAsset `json:"patch"`
 }
 
 type IslandAsset struct {
@@ -41,10 +42,11 @@ type HashedAsset struct {
 }
 
 type RuntimePaths struct {
-	WASM      string
-	WASMExec  string
-	Bootstrap string
-	Patch     string
+	WASM          string
+	WASMExec      string
+	Bootstrap     string
+	BootstrapLite string
+	Patch         string
 }
 
 // Load reads a build manifest from disk.
@@ -64,10 +66,11 @@ func Load(path string) (*Manifest, error) {
 // RuntimeURLs returns the public URLs for the shared runtime assets.
 func (m *Manifest) RuntimeURLs(assetBaseURL string) RuntimePaths {
 	return RuntimePaths{
-		WASM:      AssetURL(assetBaseURL, "runtime", m.Runtime.WASM.File),
-		WASMExec:  AssetURL(assetBaseURL, "runtime", m.Runtime.WASMExec.File),
-		Bootstrap: AssetURL(assetBaseURL, "runtime", m.Runtime.Bootstrap.File),
-		Patch:     AssetURL(assetBaseURL, "runtime", m.Runtime.Patch.File),
+		WASM:          AssetURL(assetBaseURL, "runtime", m.Runtime.WASM.File),
+		WASMExec:      AssetURL(assetBaseURL, "runtime", m.Runtime.WASMExec.File),
+		Bootstrap:     AssetURL(assetBaseURL, "runtime", m.Runtime.Bootstrap.File),
+		BootstrapLite: AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapLite.File),
+		Patch:         AssetURL(assetBaseURL, "runtime", m.Runtime.Patch.File),
 	}
 }
 

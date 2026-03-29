@@ -99,13 +99,20 @@ func (a *App) serveRuntimeAsset(w http.ResponseWriter, r *http.Request) {
 func runtimeCompatSourcePath(root, name string) (string, bool) {
 	buildDir := filepath.Join(root, "build")
 	candidates := map[string]string{
-		"runtime.wasm": filepath.Join(buildDir, "gosx-runtime.wasm"),
-		"wasm_exec.js": filepath.Join(buildDir, "wasm_exec.js"),
-		"bootstrap.js": filepath.Join(buildDir, "bootstrap.js"),
-		"patch.js":     filepath.Join(buildDir, "patch.js"),
+		"runtime.wasm":      filepath.Join(buildDir, "gosx-runtime.wasm"),
+		"wasm_exec.js":      filepath.Join(buildDir, "wasm_exec.js"),
+		"bootstrap.js":      filepath.Join(buildDir, "bootstrap.js"),
+		"bootstrap-lite.js": filepath.Join(buildDir, "bootstrap-lite.js"),
+		"patch.js":          filepath.Join(buildDir, "patch.js"),
 	}
 	if direct, ok := candidates[name]; ok && isFile(direct) {
 		return direct, true
+	}
+	if strings.HasPrefix(name, "bootstrap") || name == "patch.js" {
+		clientPath := filepath.Join(root, "client", "js", name)
+		if isFile(clientPath) {
+			return clientPath, true
+		}
 	}
 	if strings.HasPrefix(name, "islands/") || strings.HasPrefix(name, "css/") {
 		target := filepath.Join(buildDir, filepath.FromSlash(name))
@@ -130,6 +137,11 @@ func (a *App) runtimeCompatBuiltPath(root, name string) (string, bool) {
 		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.WASMExec.File)
 	case "bootstrap.js":
 		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.Bootstrap.File)
+	case "bootstrap-lite.js":
+		if strings.TrimSpace(manifest.Runtime.BootstrapLite.File) == "" {
+			return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.Bootstrap.File)
+		}
+		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.BootstrapLite.File)
 	case "patch.js":
 		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.Patch.File)
 	}

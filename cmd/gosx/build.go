@@ -337,6 +337,7 @@ func RunBuild(dir string, dev bool) error {
 		dest *HashedAsset
 	}{
 		{"bootstrap", filepath.Join(gosxRoot, "client", "js", "bootstrap.js"), &manifest.Runtime.Bootstrap},
+		{"bootstrap-lite", filepath.Join(gosxRoot, "client", "js", "bootstrap-lite.js"), &manifest.Runtime.BootstrapLite},
 		{"patch", filepath.Join(gosxRoot, "client", "js", "patch.js"), &manifest.Runtime.Patch},
 	} {
 		data, err := os.ReadFile(js.path)
@@ -411,6 +412,7 @@ func RunBuild(dir string, dev bool) error {
 		manifest.Runtime.WASM.File,
 		manifest.Runtime.WASMExec.File,
 		manifest.Runtime.Bootstrap.File,
+		manifest.Runtime.BootstrapLite.File,
 		manifest.Runtime.Patch.File,
 	))
 	fmt.Printf("  Tier 3 (islands): %d programs + %d CSS, immutable CDN\n",
@@ -554,6 +556,7 @@ func stageManifestCompatibilityRuntime(distDir string, manifest *BuildManifest, 
 		{file: manifest.Runtime.WASM.File, dst: filepath.Join(gosxDir, "runtime.wasm")},
 		{file: manifest.Runtime.WASMExec.File, dst: filepath.Join(gosxDir, "wasm_exec.js")},
 		{file: manifest.Runtime.Bootstrap.File, dst: filepath.Join(gosxDir, "bootstrap.js")},
+		{file: manifest.Runtime.BootstrapLite.File, dst: filepath.Join(gosxDir, "bootstrap-lite.js")},
 		{file: manifest.Runtime.Patch.File, dst: filepath.Join(gosxDir, "patch.js")},
 	} {
 		if strings.TrimSpace(asset.file) == "" {

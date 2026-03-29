@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"html"
 	"net/http"
+	"net/url"
 	"reflect"
 	"sort"
 	"strings"
@@ -209,14 +210,182 @@ func (r *fileProgramRenderer) renderLink(node *ir.Node, env fileRenderEnv) strin
 	var b strings.Builder
 	b.WriteString("<a")
 	hasNavAttr := attrValue(node.Attrs, env, "data-gosx-link") != nil
-	r.renderAttrs(&b, node.Attrs, env)
+	hasLinkStateAttr := attrValue(node.Attrs, env, "data-gosx-link-state") != nil
+	hasPrefetchStateAttr := attrValue(node.Attrs, env, "data-gosx-prefetch-state") != nil
+	hasAriaCurrent := attrValue(node.Attrs, env, "aria-current", "ariaCurrent") != nil
+	currentValue, currentProvided := normalizedLinkCurrentValue(node.Attrs, env)
+	if !currentProvided {
+		currentValue = fileManagedLinkRelation(stringValue(attrValue(node.Attrs, env, "href")), fileCurrentRequestPath(env))
+	}
+	prefetchValue, prefetchProvided := normalizedLinkPrefetchValue(node.Attrs, env)
+	r.renderLinkAttrs(&b, node.Attrs, env)
 	if !hasNavAttr {
 		b.WriteString(" data-gosx-link")
+	}
+	if !hasLinkStateAttr {
+		b.WriteString(` data-gosx-link-state="idle"`)
+	}
+	fmt.Fprintf(&b, ` data-gosx-link-current="%s"`, html.EscapeString(currentValue))
+	if !hasPrefetchStateAttr {
+		b.WriteString(` data-gosx-prefetch-state="idle"`)
+	}
+	if prefetchProvided {
+		fmt.Fprintf(&b, ` data-gosx-prefetch="%s"`, html.EscapeString(prefetchValue))
+	}
+	if currentValue == "page" && !hasAriaCurrent {
+		b.WriteString(` aria-current="page" data-gosx-aria-current-managed="true"`)
 	}
 	b.WriteByte('>')
 	b.WriteString(r.renderChildren(node.Children, env))
 	b.WriteString("</a>")
 	return b.String()
+}
+
+func (r *fileProgramRenderer) renderLinkAttrs(b *strings.Builder, attrs []ir.Attr, env fileRenderEnv) {
+	for _, attr := range attrs {
+		if linkReservedAttr(attr.Name) {
+			continue
+		}
+		switch attr.Kind {
+		case ir.AttrStatic:
+			fmt.Fprintf(b, ` %s="%s"`, html.EscapeString(normalizeFileAttrName(attr.Name)), html.EscapeString(attr.Value))
+		case ir.AttrExpr:
+			renderFileEvaluatedAttr(b, html.EscapeString(normalizeFileAttrName(attr.Name)), evalFileExpr(attr.Expr, env))
+		case ir.AttrBool:
+			fmt.Fprintf(b, " %s", html.EscapeString(normalizeFileAttrName(attr.Name)))
+		case ir.AttrSpread:
+			for key, value := range spreadProps(evalFileExpr(attr.Expr, env)) {
+				normalized := normalizeFileAttrName(key)
+				if normalized == "" || linkReservedAttr(normalized) {
+					continue
+				}
+				renderFileEvaluatedAttr(b, html.EscapeString(normalized), value)
+			}
+		}
+	}
+}
+
+func normalizedLinkPrefetchValue(attrs []ir.Attr, env fileRenderEnv) (string, bool) {
+	value := strings.ToLower(strings.TrimSpace(stringValue(attrValue(attrs, env, "data-gosx-prefetch", "prefetch"))))
+	switch value {
+	case "":
+		return "", false
+	case "off", "intent", "render", "force":
+		return value, true
+	default:
+		return value, true
+	}
+}
+
+func normalizedLinkCurrentValue(attrs []ir.Attr, env fileRenderEnv) (string, bool) {
+	value := strings.ToLower(strings.TrimSpace(stringValue(attrValue(attrs, env, "data-gosx-link-current", "current"))))
+	switch value {
+	case "":
+		return "", false
+	case "page", "ancestor", "none":
+		return value, true
+	default:
+		return "none", true
+	}
+}
+
+func linkReservedAttr(name string) bool {
+	switch normalizeFileAttrName(strings.TrimSpace(name)) {
+	case "prefetch", "data-gosx-prefetch", "current", "data-gosx-link-current":
+		return true
+	default:
+		return false
+	}
+}
+
+type fileNavigationTarget struct {
+	origin string
+	path   string
+	search string
+}
+
+func fileCurrentRequestPath(env fileRenderEnv) string {
+	if pageValue, ok := env.values["page"].(map[string]any); ok {
+		if current := strings.TrimSpace(stringValue(pageValue["path"])); current != "" {
+			return current
+		}
+	}
+	if requestValue, ok := env.values["request"].(map[string]any); ok {
+		if current := strings.TrimSpace(stringValue(requestValue["path"])); current != "" {
+			return current
+		}
+	}
+	return "/"
+}
+
+func fileManagedLinkRelation(href string, currentPath string) string {
+	target := fileNavigationParts(href, currentPath)
+	current := fileNavigationParts(currentPath, currentPath)
+	if !sameFileNavigationURL(target, current) {
+		if ancestorFileNavigationURL(target, current) {
+			return "ancestor"
+		}
+		return "none"
+	}
+	return "page"
+}
+
+func fileNavigationParts(value string, currentPath string) *fileNavigationTarget {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return nil
+	}
+	base := &url.URL{
+		Scheme: "https",
+		Host:   "gosx.local",
+		Path:   firstNonEmptyString(strings.TrimSpace(currentPath), "/"),
+	}
+	parsed, err := base.Parse(trimmed)
+	if err != nil {
+		return nil
+	}
+	if parsed.Scheme != "https" && parsed.Scheme != "http" {
+		return nil
+	}
+	path := strings.TrimSpace(parsed.EscapedPath())
+	if path == "" {
+		path = strings.TrimSpace(parsed.Path)
+	}
+	if path == "" {
+		path = "/"
+	}
+	if !strings.HasPrefix(path, "/") {
+		path = "/" + path
+	}
+	if len(path) > 1 {
+		path = strings.TrimRight(path, "/")
+		if path == "" {
+			path = "/"
+		}
+	}
+	search := ""
+	if parsed.RawQuery != "" {
+		search = "?" + parsed.RawQuery
+	}
+	return &fileNavigationTarget{
+		origin: parsed.Scheme + "://" + parsed.Host,
+		path:   path,
+		search: search,
+	}
+}
+
+func sameFileNavigationURL(left, right *fileNavigationTarget) bool {
+	return left != nil && right != nil && left.origin == right.origin && left.path == right.path && left.search == right.search
+}
+
+func ancestorFileNavigationURL(parent, child *fileNavigationTarget) bool {
+	if parent == nil || child == nil || parent.origin != child.origin {
+		return false
+	}
+	if parent.path == "/" || parent.search != "" {
+		return false
+	}
+	return child.path == parent.path || strings.HasPrefix(child.path, parent.path+"/")
 }
 
 type managedFormOptions struct {

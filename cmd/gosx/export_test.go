@@ -30,6 +30,7 @@ func TestRunExportWritesStaticBundleForStarterApp(t *testing.T) {
 		"dist/static/gosx/runtime.wasm",
 		"dist/static/gosx/wasm_exec.js",
 		"dist/static/gosx/bootstrap.js",
+		"dist/static/gosx/bootstrap-lite.js",
 		"dist/static/gosx/patch.js",
 		"dist/export.json",
 	} {
