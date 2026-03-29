@@ -1255,6 +1255,9 @@ func TestEnableNavigationInjectsRuntimeIntoDefaultDocument(t *testing.T) {
 	if !strings.Contains(body, `data-gosx-enhance="navigation"`) || !strings.Contains(body, `data-gosx-fallback="native-link"`) {
 		t.Fatalf("expected Link enhancement contract, got %q", body)
 	}
+	if !strings.Contains(body, `data-gosx-link-current-policy="auto"`) || !strings.Contains(body, `data-gosx-link-state="idle"`) {
+		t.Fatalf("expected Link policy contract, got %q", body)
+	}
 	if !strings.Contains(body, "data-gosx-form") || !strings.Contains(body, `data-gosx-form-state="idle"`) {
 		t.Fatalf("expected Form helper marker, got %q", body)
 	}

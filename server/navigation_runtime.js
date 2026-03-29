@@ -11,9 +11,11 @@
   const LINK_ATTR = "data-gosx-link";
   const LINK_STATE_ATTR = "data-gosx-link-state";
   const LINK_CURRENT_ATTR = "data-gosx-link-current";
+  const LINK_CURRENT_POLICY_ATTR = "data-gosx-link-current-policy";
   const LINK_PREFETCH_STATE_ATTR = "data-gosx-prefetch-state";
   const LINK_MANAGED_CURRENT_ATTR = "data-gosx-aria-current-managed";
   const FORM_ATTR = "data-gosx-form";
+  const FORM_MODE_ATTR = "data-gosx-form-mode";
   const FORM_STATE_ATTR = "data-gosx-form-state";
   const PREFETCH_ATTR = "data-gosx-prefetch";
   const NAV_STATE_ATTR = "data-gosx-navigation-state";
@@ -431,6 +433,7 @@
       setOptionalAttr(node, NAV_PENDING_URL_ATTR, snapshot.pendingURL);
     }
     refreshManagedLinks(snapshot.currentURL);
+    refreshManagedForms();
   }
 
   function dispatchNavigationState(reason) {
@@ -473,7 +476,21 @@
     return mode === "intent" || mode === "render" || mode === "force";
   }
 
-  function managedCurrentRelation(anchor, currentURL) {
+  function normalizeManagedLinkRelation(value, allowAuto) {
+    const relation = String(value || "").trim().toLowerCase();
+    if (!relation) {
+      return "";
+    }
+    if (allowAuto && relation === "auto") {
+      return "auto";
+    }
+    if (relation === "page" || relation === "ancestor" || relation === "none") {
+      return relation;
+    }
+    return "none";
+  }
+
+  function managedAutoCurrentRelation(anchor, currentURL) {
     const href = anchor && anchor.getAttribute ? anchor.getAttribute("href") : "";
     const target = navigationURLParts(href);
     const current = navigationURLParts(currentURL || window.location.href);
@@ -487,6 +504,32 @@
       return "ancestor";
     }
     return "none";
+  }
+
+  function managedCurrentPolicy(anchor, currentURL) {
+    if (!anchor || !anchor.getAttribute) {
+      return "auto";
+    }
+    if (anchor.hasAttribute && anchor.hasAttribute(LINK_CURRENT_POLICY_ATTR)) {
+      return normalizeManagedLinkRelation(anchor.getAttribute(LINK_CURRENT_POLICY_ATTR), true) || "auto";
+    }
+    const legacy = normalizeManagedLinkRelation(anchor.getAttribute(LINK_CURRENT_ATTR), false);
+    if (!legacy) {
+      return "auto";
+    }
+    const auto = managedAutoCurrentRelation(anchor, currentURL);
+    return legacy === auto ? "auto" : legacy;
+  }
+
+  function managedCurrentRelation(anchor, currentURL) {
+    const policy = managedCurrentPolicy(anchor, currentURL);
+    if (anchor && anchor.setAttribute) {
+      anchor.setAttribute(LINK_CURRENT_POLICY_ATTR, policy);
+    }
+    if (policy !== "auto") {
+      return policy;
+    }
+    return managedAutoCurrentRelation(anchor, currentURL);
   }
 
   function syncManagedAriaCurrent(anchor, relation) {
@@ -518,6 +561,51 @@
       anchor.setAttribute(LINK_STATE_ATTR, state);
       if (!anchor.hasAttribute(LINK_PREFETCH_STATE_ATTR)) {
         anchor.setAttribute(LINK_PREFETCH_STATE_ATTR, "idle");
+      }
+    }
+  }
+
+  function managedForms(root) {
+    return collectElements(root, function(node) {
+      return node.hasAttribute && node.hasAttribute(FORM_ATTR);
+    });
+  }
+
+  function normalizeManagedFormMode(value) {
+    const mode = String(value || "").trim().toLowerCase();
+    if (mode === "get" || mode === "post") {
+      return mode;
+    }
+    return "";
+  }
+
+  function managedFormMode(form, submitter) {
+    const submitterMethod = submitterAttribute(submitter, "formMethod");
+    if (submitterMethod) {
+      return normalizeManagedFormMode(submitterMethod);
+    }
+    if (submitter && submitter.hasAttribute && submitter.hasAttribute(FORM_MODE_ATTR)) {
+      return normalizeManagedFormMode(submitter.getAttribute(FORM_MODE_ATTR));
+    }
+    if (form && form.hasAttribute && form.hasAttribute(FORM_MODE_ATTR)) {
+      return normalizeManagedFormMode(form.getAttribute(FORM_MODE_ATTR));
+    }
+    if (form && form.hasAttribute && form.hasAttribute("method")) {
+      return normalizeManagedFormMode(form.getAttribute("method"));
+    }
+    return "get";
+  }
+
+  function refreshManagedForms() {
+    for (const form of managedForms(document.body)) {
+      const mode = managedFormMode(form, null);
+      if (mode) {
+        form.setAttribute(FORM_MODE_ATTR, mode);
+      } else if (form.hasAttribute(FORM_MODE_ATTR)) {
+        form.removeAttribute(FORM_MODE_ATTR);
+      }
+      if (!form.hasAttribute(FORM_STATE_ATTR)) {
+        form.setAttribute(FORM_STATE_ATTR, "idle");
       }
     }
   }
@@ -842,11 +930,7 @@
   }
 
   function formSubmissionMethod(form, submitter) {
-    return String(
-      submitterAttribute(submitter, "formMethod")
-      || (form && form.getAttribute ? form.getAttribute("method") : "")
-      || "GET"
-    ).toUpperCase();
+    return managedFormMode(form, submitter).toUpperCase();
   }
 
   function formSubmissionAction(form, submitter) {

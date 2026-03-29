@@ -279,10 +279,10 @@ func Page() Node {
 
 	html := gosx.RenderHTML(node)
 	for _, snippet := range []string{
-		`href="/docs" data-gosx-link data-gosx-link-state="idle" data-gosx-enhance="navigation" data-gosx-enhance-layer="bootstrap" data-gosx-fallback="native-link" data-gosx-link-current="ancestor" data-gosx-prefetch-state="idle"`,
-		`href="/docs/forms" data-gosx-link data-gosx-link-state="idle" data-gosx-enhance="navigation" data-gosx-enhance-layer="bootstrap" data-gosx-fallback="native-link" data-gosx-link-current="page" data-gosx-prefetch-state="idle" aria-current="page" data-gosx-aria-current-managed="true"`,
-		`href="/blog" data-gosx-link data-gosx-link-state="idle" data-gosx-enhance="navigation" data-gosx-enhance-layer="bootstrap" data-gosx-fallback="native-link" data-gosx-link-current="none" data-gosx-prefetch-state="idle"`,
-		`href="/docs/api" data-gosx-link data-gosx-link-state="idle" data-gosx-enhance="navigation" data-gosx-enhance-layer="bootstrap" data-gosx-fallback="native-link" data-gosx-link-current="none" data-gosx-prefetch-state="idle" data-gosx-prefetch="render"`,
+		`href="/docs" data-gosx-link data-gosx-link-state="idle" data-gosx-enhance="navigation" data-gosx-enhance-layer="bootstrap" data-gosx-fallback="native-link" data-gosx-link-current-policy="auto" data-gosx-link-current="ancestor" data-gosx-prefetch-state="idle"`,
+		`href="/docs/forms" data-gosx-link data-gosx-link-state="idle" data-gosx-enhance="navigation" data-gosx-enhance-layer="bootstrap" data-gosx-fallback="native-link" data-gosx-link-current-policy="auto" data-gosx-link-current="page" data-gosx-prefetch-state="idle" aria-current="page" data-gosx-aria-current-managed="true"`,
+		`href="/blog" data-gosx-link data-gosx-link-state="idle" data-gosx-enhance="navigation" data-gosx-enhance-layer="bootstrap" data-gosx-fallback="native-link" data-gosx-link-current-policy="auto" data-gosx-link-current="none" data-gosx-prefetch-state="idle"`,
+		`href="/docs/api" data-gosx-link data-gosx-link-state="idle" data-gosx-enhance="navigation" data-gosx-enhance-layer="bootstrap" data-gosx-fallback="native-link" data-gosx-link-current-policy="auto" data-gosx-link-current="none" data-gosx-prefetch-state="idle" data-gosx-prefetch="render"`,
 	} {
 		if !strings.Contains(html, snippet) {
 			t.Fatalf("expected %q in rendered link html %q", snippet, html)

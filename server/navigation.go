@@ -19,10 +19,13 @@ func Link(href string, args ...any) gosx.Node {
 	prefixed := append([]any{
 		gosx.Attrs(
 			gosx.Attr("href", href),
-			gosx.BoolAttr("data-gosx-link"),
-			gosx.Attr("data-gosx-enhance", "navigation"),
-			gosx.Attr("data-gosx-enhance-layer", "bootstrap"),
-			gosx.Attr("data-gosx-fallback", "native-link"),
+			gosx.BoolAttr(NavigationLinkAttr),
+			gosx.Attr(NavigationLinkStateAttr, "idle"),
+			gosx.Attr(NavigationLinkCurrentPolicyAttr, "auto"),
+			gosx.Attr(NavigationLinkPrefetchStateAttr, "idle"),
+			gosx.Attr(NavigationEnhanceAttr, "navigation"),
+			gosx.Attr(NavigationEnhanceLayerAttr, "bootstrap"),
+			gosx.Attr(NavigationFallbackAttr, "native-link"),
 		),
 	}, args...)
 	return gosx.El("a", prefixed...)
@@ -33,11 +36,11 @@ func Link(href string, args ...any) gosx.Node {
 func Form(args ...any) gosx.Node {
 	prefixed := append([]any{
 		gosx.Attrs(
-			gosx.BoolAttr("data-gosx-form"),
-			gosx.Attr("data-gosx-form-state", "idle"),
-			gosx.Attr("data-gosx-enhance", "form"),
-			gosx.Attr("data-gosx-enhance-layer", "bootstrap"),
-			gosx.Attr("data-gosx-fallback", "native-form"),
+			gosx.BoolAttr(NavigationFormAttr),
+			gosx.Attr(NavigationFormStateAttr, "idle"),
+			gosx.Attr(NavigationEnhanceAttr, "form"),
+			gosx.Attr(NavigationEnhanceLayerAttr, "bootstrap"),
+			gosx.Attr(NavigationFallbackAttr, "native-form"),
 		),
 	}, args...)
 	return gosx.El("form", prefixed...)
