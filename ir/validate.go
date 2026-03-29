@@ -134,13 +134,22 @@ func (v *validator) validateAttr(node *Node, attr *Attr) {
 // validateIslandExprs validates that all expressions in an island component
 // are within the allowed island expression subset.
 func validateIslandExprs(prog *Program, comp *Component) []Diagnostic {
-	var diags []Diagnostic
-
 	if int(comp.Root) >= len(prog.Nodes) {
-		return diags
+		return nil
 	}
 
-	// Collect all node IDs reachable from the component root.
+	var diags []Diagnostic
+	nodeIDs := collectComponentNodeIDs(prog, comp.Root)
+	scope := mergedIslandScope(prog, *comp)
+	for _, id := range nodeIDs {
+		node := &prog.Nodes[id]
+		diags = append(diags, validateIslandNode(node, scope)...)
+	}
+
+	return diags
+}
+
+func collectComponentNodeIDs(prog *Program, root NodeID) []NodeID {
 	var nodeIDs []NodeID
 	var collect func(id NodeID)
 	collect = func(id NodeID) {
@@ -152,145 +161,100 @@ func validateIslandExprs(prog *Program, comp *Component) []Diagnostic {
 			collect(child)
 		}
 	}
-	collect(comp.Root)
+	collect(root)
+	return nodeIDs
+}
 
-	// Build validation scope from the component's body analysis.
-	// This lets the expression parser resolve signal/handler identifiers.
-	scope := &ExprScope{
-		Signals:       map[string]bool{},
-		SignalAliases: map[string]string{},
-		Props:         map[string]bool{},
-		Handlers:      map[string]bool{},
+func validateIslandNode(node *Node, scope *ExprScope) []Diagnostic {
+	if node == nil {
+		return nil
 	}
-	if comp.Scope != nil {
-		for _, sig := range comp.Scope.Signals {
-			scope.Signals[sig.Name] = true
-			if sig.Local != "" {
-				scope.SignalAliases[sig.Local] = sig.Name
-			}
-		}
-		for _, c := range comp.Scope.Computeds {
-			scope.Signals[c.Name] = true
-		}
-		for _, h := range comp.Scope.Handlers {
-			scope.Handlers[h.Name] = true
+	if diag, ok := unsupportedIslandComponentDiagnostic(node); ok {
+		return []Diagnostic{diag}
+	}
+	var diags []Diagnostic
+	if node.Kind == NodeExpr {
+		if diag, ok := validateIslandExprSource(node.Span, node.Text, scope); ok {
+			diags = append(diags, diag)
 		}
 	}
-
-	for _, id := range nodeIDs {
-		node := &prog.Nodes[id]
-
-		if node.Kind == NodeComponent && isUnsupportedIslandComponentRef(node.Tag) {
-			diags = append(diags, Diagnostic{
-				Span:    node.Span,
-				Message: fmt.Sprintf("component <%s> is not supported inside island components yet", node.Tag),
-				Hint:    "Use plain elements inside the island or move the component outside the hydrated subtree.",
-			})
-			continue
-		}
-
-		// Check node-level expression text (NodeExpr).
-		if node.Kind == NodeExpr && strings.TrimSpace(node.Text) != "" {
-			text := strings.TrimSpace(node.Text)
-
-			// Check for rejected patterns in expression text.
-			if idx := strings.Index(text, "go "); idx >= 0 && strings.Contains(text[idx:], "func") {
-				diags = append(diags, Diagnostic{
-					Span:    node.Span,
-					Message: fmt.Sprintf("goroutine launch not allowed in island components: %q", text),
-				})
-				continue
-			}
-			if strings.Contains(text, "<-") {
-				diags = append(diags, Diagnostic{
-					Span:    node.Span,
-					Message: fmt.Sprintf("channel operations not allowed in island components: %q", text),
-				})
-				continue
-			}
-			if strings.Contains(text, "make(chan") {
-				diags = append(diags, Diagnostic{
-					Span:    node.Span,
-					Message: fmt.Sprintf("channel creation not allowed in island components: %q", text),
-				})
-				continue
-			}
-
-			// Try parsing the expression to validate it.
-			_, _, err := ParseExpr(text, scope)
-			if err != nil {
-				diags = append(diags, Diagnostic{
-					Span:    node.Span,
-					Message: fmt.Sprintf("island expression error: %v", err),
-				})
-			}
-		}
-
-		// Check attributes on element/component nodes.
-		for _, attr := range node.Attrs {
-			// Reject spread attributes in islands.
-			if attr.Kind == AttrSpread {
-				diags = append(diags, Diagnostic{
-					Span:    node.Span,
-					Message: "spread attributes not allowed in island components",
-				})
-				continue
-			}
-
-			// Check expression attributes.
-			if attr.Kind == AttrExpr {
-				// Event handlers must have a non-empty handler name.
-				if attr.IsEvent {
-					if strings.TrimSpace(attr.Expr) == "" {
-						diags = append(diags, Diagnostic{
-							Span:    node.Span,
-							Message: fmt.Sprintf("event handler %q has empty handler name in island component", attr.Name),
-						})
-					}
-					continue
-				}
-
-				// Non-event expression attributes — check for rejected patterns.
-				text := strings.TrimSpace(attr.Expr)
-				if text == "" {
-					continue
-				}
-
-				if idx := strings.Index(text, "go "); idx >= 0 && strings.Contains(text[idx:], "func") {
-					diags = append(diags, Diagnostic{
-						Span:    node.Span,
-						Message: fmt.Sprintf("goroutine launch not allowed in island components: %q", text),
-					})
-					continue
-				}
-				if strings.Contains(text, "<-") {
-					diags = append(diags, Diagnostic{
-						Span:    node.Span,
-						Message: fmt.Sprintf("channel operations not allowed in island components: %q", text),
-					})
-					continue
-				}
-				if strings.Contains(text, "make(chan") {
-					diags = append(diags, Diagnostic{
-						Span:    node.Span,
-						Message: fmt.Sprintf("channel creation not allowed in island components: %q", text),
-					})
-					continue
-				}
-
-				// Try parsing the expression.
-				_, _, err := ParseExpr(text, scope)
-				if err != nil {
-					diags = append(diags, Diagnostic{
-						Span:    node.Span,
-						Message: fmt.Sprintf("island expression error: %v", err),
-					})
-				}
-			}
+	for _, attr := range node.Attrs {
+		if diag, ok := validateIslandAttr(node.Span, attr, scope); ok {
+			diags = append(diags, diag)
 		}
 	}
-
 	return diags
+}
+
+func unsupportedIslandComponentDiagnostic(node *Node) (Diagnostic, bool) {
+	if node == nil || node.Kind != NodeComponent || !isUnsupportedIslandComponentRef(node.Tag) {
+		return Diagnostic{}, false
+	}
+	return Diagnostic{
+		Span:    node.Span,
+		Message: fmt.Sprintf("component <%s> is not supported inside island components yet", node.Tag),
+		Hint:    "Use plain elements inside the island or move the component outside the hydrated subtree.",
+	}, true
+}
+
+func validateIslandAttr(span Span, attr Attr, scope *ExprScope) (Diagnostic, bool) {
+	switch attr.Kind {
+	case AttrSpread:
+		return Diagnostic{
+			Span:    span,
+			Message: "spread attributes not allowed in island components",
+		}, true
+	case AttrExpr:
+		if attr.IsEvent {
+			if strings.TrimSpace(attr.Expr) == "" {
+				return Diagnostic{
+					Span:    span,
+					Message: fmt.Sprintf("event handler %q has empty handler name in island component", attr.Name),
+				}, true
+			}
+			return Diagnostic{}, false
+		}
+		return validateIslandExprSource(span, attr.Expr, scope)
+	default:
+		return Diagnostic{}, false
+	}
+}
+
+func validateIslandExprSource(span Span, source string, scope *ExprScope) (Diagnostic, bool) {
+	text := strings.TrimSpace(source)
+	if text == "" {
+		return Diagnostic{}, false
+	}
+	if err := islandExprRestrictionError(text); err != nil {
+		return Diagnostic{
+			Span:    span,
+			Message: islandValidationMessage(err, text),
+		}, true
+	}
+	if _, _, err := ParseExpr(text, scope); err != nil {
+		return Diagnostic{
+			Span:    span,
+			Message: fmt.Sprintf("island expression error: %v", err),
+		}, true
+	}
+	return Diagnostic{}, false
+}
+
+func islandValidationMessage(err error, source string) string {
+	if err == nil {
+		return ""
+	}
+	text := err.Error()
+	switch {
+	case strings.Contains(text, "goroutine launch"):
+		return fmt.Sprintf("goroutine launch not allowed in island components: %q", source)
+	case strings.Contains(text, "channel creation"):
+		return fmt.Sprintf("channel creation not allowed in island components: %q", source)
+	case strings.Contains(text, "channel operations"):
+		return fmt.Sprintf("channel operations not allowed in island components: %q", source)
+	default:
+		return fmt.Sprintf("island expression error: %v", err)
+	}
 }
 
 func isUnsupportedIslandComponentRef(tag string) bool {

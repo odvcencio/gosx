@@ -23,7 +23,7 @@ func ParseExpr(source string, scope *ExprScope) ([]program.Expr, program.ExprID,
 	if source == "" {
 		return nil, 0, fmt.Errorf("empty expression")
 	}
-	if err := rejectDisallowed(source); err != nil {
+	if err := islandExprRestrictionError(source); err != nil {
 		return nil, 0, err
 	}
 
@@ -425,197 +425,24 @@ func (p *exprParser) buildFieldAccess(receiverID program.ExprID, field string) (
 }
 
 func (p *exprParser) buildMethodCall(receiverID program.ExprID, method string, args []program.ExprID) (program.ExprID, error) {
+	normalized := strings.ToLower(method)
 	if signalName, ok := p.signalReceiver(receiverID); ok {
-		switch strings.ToLower(method) {
-		case "get":
-			if len(args) != 0 {
-				return 0, fmt.Errorf("signal Get takes no arguments")
-			}
-			return p.addExpr(program.Expr{
-				Op:    program.OpSignalGet,
-				Value: signalName,
-				Type:  program.TypeAny,
-			}), nil
-		case "set":
-			if len(args) != 1 {
-				return 0, fmt.Errorf("signal Set requires exactly one argument")
-			}
-			return p.addExpr(program.Expr{
-				Op:       program.OpSignalSet,
-				Operands: []program.ExprID{args[0]},
-				Value:    signalName,
-				Type:     program.TypeAny,
-			}), nil
-		case "update":
-			if len(args) != 1 {
-				return 0, fmt.Errorf("signal Update requires exactly one argument")
-			}
-			return p.addExpr(program.Expr{
-				Op:       program.OpSignalUpdate,
-				Operands: []program.ExprID{args[0]},
-				Value:    signalName,
-				Type:     program.TypeAny,
-			}), nil
+		if exprID, handled, err := p.buildSignalMethodCall(signalName, normalized, args); handled {
+			return exprID, err
 		}
 	}
-
-	switch strings.ToLower(method) {
-	case "length", "len":
-		if len(args) != 0 {
-			return 0, fmt.Errorf("%s takes no arguments", method)
-		}
-		return p.addExpr(program.Expr{
-			Op:       program.OpLen,
-			Operands: []program.ExprID{receiverID},
-			Type:     program.TypeInt,
-		}), nil
-
-	case "toupper":
-		return p.buildUnaryMethod(receiverID, args, method, program.OpToUpper, program.TypeString)
-	case "tolower":
-		return p.buildUnaryMethod(receiverID, args, method, program.OpToLower, program.TypeString)
-	case "trim":
-		return p.buildUnaryMethod(receiverID, args, method, program.OpTrim, program.TypeString)
-	case "tostring":
-		return p.buildUnaryMethod(receiverID, args, method, program.OpToString, program.TypeString)
-	case "toint":
-		return p.buildUnaryMethod(receiverID, args, method, program.OpToInt, program.TypeInt)
-	case "tofloat":
-		return p.buildUnaryMethod(receiverID, args, method, program.OpToFloat, program.TypeFloat)
-
-	case "split":
-		if len(args) != 1 {
-			return 0, fmt.Errorf("Split requires exactly one argument")
-		}
-		expr := program.Expr{
-			Op:       program.OpSplit,
-			Operands: []program.ExprID{receiverID},
-			Type:     program.TypeAny,
-		}
-		if literal, ok := p.stringLiteralValue(args[0]); ok {
-			expr.Value = literal
-		} else {
-			expr.Operands = append(expr.Operands, args[0])
-		}
-		return p.addExpr(expr), nil
-
-	case "join":
-		if len(args) != 1 {
-			return 0, fmt.Errorf("Join requires exactly one argument")
-		}
-		expr := program.Expr{
-			Op:       program.OpJoin,
-			Operands: []program.ExprID{receiverID},
-			Type:     program.TypeString,
-		}
-		if literal, ok := p.stringLiteralValue(args[0]); ok {
-			expr.Value = literal
-		} else {
-			expr.Operands = append(expr.Operands, args[0])
-		}
-		return p.addExpr(expr), nil
-
-	case "replace":
-		if len(args) != 2 {
-			return 0, fmt.Errorf("Replace requires exactly two arguments")
-		}
-		return p.addExpr(program.Expr{
-			Op:       program.OpReplace,
-			Operands: []program.ExprID{receiverID, args[0], args[1]},
-			Type:     program.TypeString,
-		}), nil
-
-	case "substring":
-		if len(args) != 2 {
-			return 0, fmt.Errorf("Substring requires exactly two arguments")
-		}
-		return p.addExpr(program.Expr{
-			Op:       program.OpSubstring,
-			Operands: []program.ExprID{receiverID, args[0], args[1]},
-			Type:     program.TypeString,
-		}), nil
-
-	case "startswith":
-		if len(args) != 1 {
-			return 0, fmt.Errorf("StartsWith requires exactly one argument")
-		}
-		return p.addExpr(program.Expr{
-			Op:       program.OpStartsWith,
-			Operands: []program.ExprID{receiverID, args[0]},
-			Type:     program.TypeBool,
-		}), nil
-
-	case "endswith":
-		if len(args) != 1 {
-			return 0, fmt.Errorf("EndsWith requires exactly one argument")
-		}
-		return p.addExpr(program.Expr{
-			Op:       program.OpEndsWith,
-			Operands: []program.ExprID{receiverID, args[0]},
-			Type:     program.TypeBool,
-		}), nil
-
-	case "contains":
-		if len(args) != 1 {
-			return 0, fmt.Errorf("Contains requires exactly one argument")
-		}
-		return p.addExpr(program.Expr{
-			Op:       program.OpContains,
-			Operands: []program.ExprID{receiverID, args[0]},
-			Type:     program.TypeBool,
-		}), nil
-
-	case "append":
-		if len(args) != 1 {
-			return 0, fmt.Errorf("Append requires exactly one argument")
-		}
-		return p.addExpr(program.Expr{
-			Op:       program.OpAppend,
-			Operands: []program.ExprID{receiverID, args[0]},
-			Type:     program.TypeAny,
-		}), nil
-
-	case "slice":
-		if len(args) != 2 {
-			return 0, fmt.Errorf("Slice requires exactly two arguments")
-		}
-		return p.addExpr(program.Expr{
-			Op:       program.OpSlice,
-			Operands: []program.ExprID{receiverID, args[0], args[1]},
-			Type:     program.TypeAny,
-		}), nil
-
-	case "map":
-		if len(args) != 1 {
-			return 0, fmt.Errorf("map requires exactly one argument")
-		}
-		return p.addExpr(program.Expr{
-			Op:       program.OpMap,
-			Operands: []program.ExprID{receiverID, args[0]},
-			Type:     program.TypeAny,
-		}), nil
-
-	case "filter":
-		if len(args) != 1 {
-			return 0, fmt.Errorf("filter requires exactly one argument")
-		}
-		return p.addExpr(program.Expr{
-			Op:       program.OpFilter,
-			Operands: []program.ExprID{receiverID, args[0]},
-			Type:     program.TypeAny,
-		}), nil
-
-	case "find":
-		if len(args) != 1 {
-			return 0, fmt.Errorf("find requires exactly one argument")
-		}
-		return p.addExpr(program.Expr{
-			Op:       program.OpFind,
-			Operands: []program.ExprID{receiverID, args[0]},
-			Type:     program.TypeAny,
-		}), nil
+	if exprID, handled, err := p.buildLengthMethodCall(receiverID, normalized, method, args); handled {
+		return exprID, err
 	}
-
+	if exprID, handled, err := p.buildUnaryNamedMethod(receiverID, normalized, method, args); handled {
+		return exprID, err
+	}
+	if exprID, handled, err := p.buildLiteralValueMethod(receiverID, normalized, args); handled {
+		return exprID, err
+	}
+	if exprID, handled, err := p.buildFixedArityMethod(receiverID, normalized, args); handled {
+		return exprID, err
+	}
 	return 0, fmt.Errorf("unknown method %q", method)
 }
 
@@ -628,6 +455,111 @@ func (p *exprParser) buildUnaryMethod(receiverID program.ExprID, args []program.
 		Operands: []program.ExprID{receiverID},
 		Type:     typ,
 	}), nil
+}
+
+func (p *exprParser) buildSignalMethodCall(signalName, method string, args []program.ExprID) (program.ExprID, bool, error) {
+	switch method {
+	case "get":
+		if len(args) != 0 {
+			return 0, true, fmt.Errorf("signal Get takes no arguments")
+		}
+		return p.addExpr(program.Expr{
+			Op:    program.OpSignalGet,
+			Value: signalName,
+			Type:  program.TypeAny,
+		}), true, nil
+	case "set":
+		if len(args) != 1 {
+			return 0, true, fmt.Errorf("signal Set requires exactly one argument")
+		}
+		return p.addExpr(program.Expr{
+			Op:       program.OpSignalSet,
+			Operands: []program.ExprID{args[0]},
+			Value:    signalName,
+			Type:     program.TypeAny,
+		}), true, nil
+	case "update":
+		if len(args) != 1 {
+			return 0, true, fmt.Errorf("signal Update requires exactly one argument")
+		}
+		return p.addExpr(program.Expr{
+			Op:       program.OpSignalUpdate,
+			Operands: []program.ExprID{args[0]},
+			Value:    signalName,
+			Type:     program.TypeAny,
+		}), true, nil
+	default:
+		return 0, false, nil
+	}
+}
+
+func (p *exprParser) buildLengthMethodCall(receiverID program.ExprID, normalized, method string, args []program.ExprID) (program.ExprID, bool, error) {
+	if normalized != "length" && normalized != "len" {
+		return 0, false, nil
+	}
+	if len(args) != 0 {
+		return 0, true, fmt.Errorf("%s takes no arguments", method)
+	}
+	return p.addExpr(program.Expr{
+		Op:       program.OpLen,
+		Operands: []program.ExprID{receiverID},
+		Type:     program.TypeInt,
+	}), true, nil
+}
+
+func (p *exprParser) buildUnaryNamedMethod(receiverID program.ExprID, normalized, method string, args []program.ExprID) (program.ExprID, bool, error) {
+	spec, ok := unaryMethodSpecs[normalized]
+	if !ok {
+		return 0, false, nil
+	}
+	exprID, err := p.buildUnaryMethod(receiverID, args, method, spec.op, spec.typ)
+	return exprID, true, err
+}
+
+func (p *exprParser) buildLiteralValueMethod(receiverID program.ExprID, normalized string, args []program.ExprID) (program.ExprID, bool, error) {
+	spec, ok := literalValueMethodSpecs[normalized]
+	if !ok {
+		return 0, false, nil
+	}
+	if len(args) != 1 {
+		return 0, true, fmt.Errorf("%s requires exactly one argument", spec.display)
+	}
+	expr := program.Expr{
+		Op:       spec.op,
+		Operands: []program.ExprID{receiverID},
+		Type:     spec.typ,
+	}
+	if literal, ok := p.stringLiteralValue(args[0]); ok {
+		expr.Value = literal
+	} else {
+		expr.Operands = append(expr.Operands, args[0])
+	}
+	return p.addExpr(expr), true, nil
+}
+
+func (p *exprParser) buildFixedArityMethod(receiverID program.ExprID, normalized string, args []program.ExprID) (program.ExprID, bool, error) {
+	spec, ok := fixedArityMethodSpecs[normalized]
+	if !ok {
+		return 0, false, nil
+	}
+	if len(args) != spec.arity {
+		switch spec.arity {
+		case 1:
+			return 0, true, fmt.Errorf("%s requires exactly one argument", spec.display)
+		case 2:
+			return 0, true, fmt.Errorf("%s requires exactly two arguments", spec.display)
+		default:
+			return 0, true, fmt.Errorf("%s requires exactly %d arguments", spec.display, spec.arity)
+		}
+	}
+	operands := make([]program.ExprID, 0, 1+len(args))
+	operands = append(operands, receiverID)
+	operands = append(operands, args...)
+	return p.addExpr(program.Expr{
+		Op:       spec.op,
+		Operands: operands,
+		Type:     spec.typ,
+	}), true, nil
 }
 
 func (p *exprParser) buildFunctionCall(name string, args []program.ExprID) (program.ExprID, error) {
@@ -761,14 +693,74 @@ func (p *exprParser) expect(kind exprTokenKind) (exprToken, error) {
 }
 
 // rejectDisallowed rejects expressions that are outside the island subset.
-func rejectDisallowed(source string) error {
-	if strings.HasPrefix(source, "go ") {
+func islandExprRestrictionError(source string) error {
+	source = strings.TrimSpace(source)
+	switch {
+	case source == "":
+		return nil
+	case strings.HasPrefix(source, "go "):
 		return fmt.Errorf("goroutine launch is not allowed in island expressions: %q", source)
+	case disallowedGoroutineExpr(source):
+		return fmt.Errorf("goroutine launch is not allowed in island expressions: %q", source)
+	case strings.Contains(source, "<-"):
+		return fmt.Errorf("channel operations are not allowed in island expressions: %q", source)
+	case strings.Contains(source, "make(chan"):
+		return fmt.Errorf("channel creation is not allowed in island expressions: %q", source)
+	default:
+		return nil
 	}
-	if strings.HasPrefix(source, "<-") {
-		return fmt.Errorf("channel receive is not allowed in island expressions: %q", source)
+}
+
+func disallowedGoroutineExpr(source string) bool {
+	if idx := strings.Index(source, "go "); idx >= 0 {
+		return strings.Contains(source[idx:], "func")
 	}
-	return nil
+	return false
+}
+
+type unaryMethodSpec struct {
+	op  program.OpCode
+	typ program.ExprType
+}
+
+var unaryMethodSpecs = map[string]unaryMethodSpec{
+	"toupper":  {op: program.OpToUpper, typ: program.TypeString},
+	"tolower":  {op: program.OpToLower, typ: program.TypeString},
+	"trim":     {op: program.OpTrim, typ: program.TypeString},
+	"tostring": {op: program.OpToString, typ: program.TypeString},
+	"toint":    {op: program.OpToInt, typ: program.TypeInt},
+	"tofloat":  {op: program.OpToFloat, typ: program.TypeFloat},
+}
+
+type literalValueMethodSpec struct {
+	display string
+	op      program.OpCode
+	typ     program.ExprType
+}
+
+var literalValueMethodSpecs = map[string]literalValueMethodSpec{
+	"split": {display: "Split", op: program.OpSplit, typ: program.TypeAny},
+	"join":  {display: "Join", op: program.OpJoin, typ: program.TypeString},
+}
+
+type fixedArityMethodSpec struct {
+	display string
+	arity   int
+	op      program.OpCode
+	typ     program.ExprType
+}
+
+var fixedArityMethodSpecs = map[string]fixedArityMethodSpec{
+	"replace":    {display: "Replace", arity: 2, op: program.OpReplace, typ: program.TypeString},
+	"substring":  {display: "Substring", arity: 2, op: program.OpSubstring, typ: program.TypeString},
+	"startswith": {display: "StartsWith", arity: 1, op: program.OpStartsWith, typ: program.TypeBool},
+	"endswith":   {display: "EndsWith", arity: 1, op: program.OpEndsWith, typ: program.TypeBool},
+	"contains":   {display: "Contains", arity: 1, op: program.OpContains, typ: program.TypeBool},
+	"append":     {display: "Append", arity: 1, op: program.OpAppend, typ: program.TypeAny},
+	"slice":      {display: "Slice", arity: 2, op: program.OpSlice, typ: program.TypeAny},
+	"map":        {display: "map", arity: 1, op: program.OpMap, typ: program.TypeAny},
+	"filter":     {display: "filter", arity: 1, op: program.OpFilter, typ: program.TypeAny},
+	"find":       {display: "find", arity: 1, op: program.OpFind, typ: program.TypeAny},
 }
 
 type exprTokenKind uint8

@@ -422,6 +422,62 @@ func TestParseCollectionMethod(t *testing.T) {
 	}
 }
 
+func TestParseSplitMethodStoresLiteralSeparator(t *testing.T) {
+	scope := &ExprScope{Props: map[string]bool{"title": true}}
+	exprs, rootID, err := ParseExpr(`title.Split(" / ")`, scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if exprs[rootID].Op != program.OpSplit {
+		t.Fatalf("expected OpSplit, got %d", exprs[rootID].Op)
+	}
+	if exprs[rootID].Value != " / " {
+		t.Fatalf("expected literal separator to be stored in expr value, got %q", exprs[rootID].Value)
+	}
+	if len(exprs[rootID].Operands) != 1 {
+		t.Fatalf("expected only receiver operand when separator is literal, got %d operands", len(exprs[rootID].Operands))
+	}
+}
+
+func TestParseJoinMethodStoresLiteralSeparator(t *testing.T) {
+	scope := &ExprScope{Props: map[string]bool{"items": true}}
+	exprs, rootID, err := ParseExpr(`items.Join(",")`, scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if exprs[rootID].Op != program.OpJoin {
+		t.Fatalf("expected OpJoin, got %d", exprs[rootID].Op)
+	}
+	if exprs[rootID].Value != "," {
+		t.Fatalf("expected literal separator to be stored in expr value, got %q", exprs[rootID].Value)
+	}
+}
+
+func TestParsePredicateMethod(t *testing.T) {
+	scope := &ExprScope{Props: map[string]bool{"title": true}}
+	exprs, rootID, err := ParseExpr(`title.StartsWith("Go")`, scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if exprs[rootID].Op != program.OpStartsWith {
+		t.Fatalf("expected OpStartsWith, got %d", exprs[rootID].Op)
+	}
+}
+
+func TestParseReplaceMethod(t *testing.T) {
+	scope := &ExprScope{Props: map[string]bool{"title": true}}
+	exprs, rootID, err := ParseExpr(`title.Replace("a", "b")`, scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if exprs[rootID].Op != program.OpReplace {
+		t.Fatalf("expected OpReplace, got %d", exprs[rootID].Op)
+	}
+	if len(exprs[rootID].Operands) != 3 {
+		t.Fatalf("expected receiver plus two args, got %d operands", len(exprs[rootID].Operands))
+	}
+}
+
 func TestParseHandlerCallWithArgs(t *testing.T) {
 	scope := &ExprScope{Handlers: map[string]bool{"submit": true}}
 	exprs, rootID, err := ParseExpr(`submit("ok", 2)`, scope)
@@ -447,6 +503,13 @@ func TestParseChannelReceiveRejected(t *testing.T) {
 	_, _, err := ParseExpr("<-ch", &ExprScope{})
 	if err == nil {
 		t.Fatal("expected error for channel receive")
+	}
+}
+
+func TestParseChannelCreationRejected(t *testing.T) {
+	_, _, err := ParseExpr("make(chan int)", &ExprScope{})
+	if err == nil {
+		t.Fatal("expected error for channel creation")
 	}
 }
 

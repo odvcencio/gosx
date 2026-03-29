@@ -245,6 +245,52 @@ func TestValidateIslandComponentRefRejected(t *testing.T) {
 	}
 }
 
+func TestValidateIslandAcceptsSignalAliasExprsFromComponentScope(t *testing.T) {
+	prog := &Program{}
+	prog.Nodes = append(prog.Nodes, Node{
+		Kind: NodeExpr,
+		Text: "count.Get()",
+	})
+	prog.Components = append(prog.Components, Component{
+		Name:     "Counter",
+		Root:     0,
+		IsIsland: true,
+		Scope: &ComponentScope{
+			Signals: []SignalInfo{{Name: "$count", Local: "count", InitExpr: "0", TypeHint: "int"}},
+		},
+	})
+
+	diags := Validate(prog)
+	for _, d := range diags {
+		if strings.Contains(d.Message, "island expression error") {
+			t.Fatalf("expected alias signal expression to validate, got %q", d.Message)
+		}
+	}
+}
+
+func TestValidateIslandRejectsChannelCreationInAttrExpr(t *testing.T) {
+	prog := &Program{}
+	prog.Nodes = append(prog.Nodes, Node{
+		Kind: NodeElement,
+		Tag:  "div",
+		Attrs: []Attr{
+			{Kind: AttrExpr, Name: "data-bad", Expr: "make(chan int)"},
+		},
+	})
+	prog.Components = append(prog.Components, Component{Name: "Bad", Root: 0, IsIsland: true})
+
+	diags := Validate(prog)
+	found := false
+	for _, d := range diags {
+		if strings.Contains(d.Message, "channel creation") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("expected diagnostic about channel creation in attribute expression")
+	}
+}
+
 func TestLowerIslandEachComponent(t *testing.T) {
 	prog := &Program{}
 	prog.Nodes = append(prog.Nodes,
