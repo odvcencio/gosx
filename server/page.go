@@ -478,8 +478,9 @@ func (l LinkTag) Node() gosx.Node {
 		attrs["crossorigin"] = l.CrossOrigin
 	}
 	if strings.Contains(strings.ToLower(strings.TrimSpace(l.Rel)), "stylesheet") {
-		attrs["data-gosx-css-layer"] = string(normalizeCSSLayer(l.Layer))
-		attrs["data-gosx-css-owner"] = stylesheetOwner(l.Owner)
+		layer := normalizeCSSLayer(l.Layer)
+		attrs["data-gosx-css-layer"] = string(layer)
+		attrs["data-gosx-css-owner"] = NormalizeStylesheetOwner(layer, l.Owner)
 		if source := strings.TrimSpace(l.Source); source != "" {
 			attrs["data-gosx-css-source"] = source
 		} else {

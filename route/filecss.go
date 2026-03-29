@@ -96,7 +96,7 @@ func fileCSSNode(root, cssPath string, layer server.CSSLayer, order int) (gosx.N
 		gosx.Attrs(
 			gosx.Attr("data-gosx-file-css", filepath.ToSlash(filepath.Base(cssPath))),
 			gosx.Attr("data-gosx-css-layer", string(layer)),
-			gosx.Attr("data-gosx-css-owner", "route-file"),
+			gosx.Attr("data-gosx-css-owner", server.FileStylesheetOwner(layer)),
 			gosx.Attr("data-gosx-css-source", source),
 			gosx.Attr("data-gosx-css-order", strconv.Itoa(order)),
 			gosx.Attr("data-gosx-css-scope", scopeID),

@@ -4,6 +4,9 @@
   let gosxDocumentState = null;
   let gosxEnvironmentObserversInstalled = false;
   let gosxDocumentObserversInstalled = false;
+  let gosxDocumentRefreshScheduled = false;
+  let gosxDocumentRefreshReason = "";
+  const GOSX_DOCUMENT_CSS_LAYERS = ["global", "layout", "page", "runtime"];
 
   function gosxArrayFrom(listLike) {
     return Array.prototype.slice.call(listLike || []);
@@ -333,9 +336,14 @@
     return hasRuntime ? "runtime" : "bootstrap";
   }
 
+  function gosxNormalizeDocumentCSSLayer(value, fallback) {
+    const layer = String(value || fallback || "global").trim().toLowerCase();
+    return GOSX_DOCUMENT_CSS_LAYERS.includes(layer) ? layer : "global";
+  }
+
   function gosxDocumentCSSLayer(node, fallback) {
     const value = String(node && node.getAttribute && node.getAttribute("data-gosx-css-layer") || "").trim();
-    return value || fallback || "global";
+    return gosxNormalizeDocumentCSSLayer(value, fallback);
   }
 
   function gosxDocumentCSSOwner(node, fallback) {
@@ -379,6 +387,49 @@
     };
   }
 
+  function gosxDocumentCSSLayerState(layer) {
+    return {
+      layer,
+      count: 0,
+      inlineCount: 0,
+      stylesheetCount: 0,
+      scopedCount: 0,
+      owners: [],
+      sources: [],
+      entries: [],
+    };
+  }
+
+  function gosxDocumentCSSLayers(entries) {
+    const layers = Object.create(null);
+    for (const layer of GOSX_DOCUMENT_CSS_LAYERS) {
+      layers[layer] = gosxDocumentCSSLayerState(layer);
+    }
+    for (const entry of entries || []) {
+      const layer = gosxNormalizeDocumentCSSLayer(entry && entry.layer, "global");
+      const bucket = layers[layer] || gosxDocumentCSSLayerState(layer);
+      const item = Object.assign({}, entry, { layer });
+      bucket.count += 1;
+      if (item.kind === "stylesheet") {
+        bucket.stylesheetCount += 1;
+      } else {
+        bucket.inlineCount += 1;
+      }
+      if (item.scope) {
+        bucket.scopedCount += 1;
+      }
+      if (item.owner && !bucket.owners.includes(item.owner)) {
+        bucket.owners.push(item.owner);
+      }
+      if (item.source && !bucket.sources.includes(item.source)) {
+        bucket.sources.push(item.source);
+      }
+      bucket.entries.push(item);
+      layers[layer] = bucket;
+    }
+    return layers;
+  }
+
   function gosxDocumentHeadAssets() {
     const markers = gosxManagedHeadMarkers();
     const nodes = gosxDocumentChildrenBetween(markers.start, markers.end);
@@ -397,13 +448,13 @@
           node,
           gosxNumber(node.getAttribute && node.getAttribute("data-gosx-css-order"), cssOrder),
           "global",
-          "document"
+          "document-global"
         ));
         cssOrder += 1;
         continue;
       }
       if (tagName === "LINK" && /\bstylesheet\b/i.test(String(node.getAttribute && node.getAttribute("rel") || ""))) {
-        const entry = gosxDocumentStylesheetEntry(node, cssOrder, "global", "document");
+        const entry = gosxDocumentStylesheetEntry(node, cssOrder, "global", "document-global");
         stylesheets.push(entry);
         ownedCSS.push(entry);
         cssOrder += 1;
@@ -456,6 +507,21 @@
         stylesheets: state.css.stylesheets.map(function(entry) {
           return Object.assign({}, entry);
         }),
+        layers: Object.fromEntries(GOSX_DOCUMENT_CSS_LAYERS.map(function(layer) {
+          const bucket = state.css.layers[layer] || gosxDocumentCSSLayerState(layer);
+          return [layer, {
+            layer: bucket.layer,
+            count: bucket.count,
+            inlineCount: bucket.inlineCount,
+            stylesheetCount: bucket.stylesheetCount,
+            scopedCount: bucket.scopedCount,
+            owners: bucket.owners.slice(),
+            sources: bucket.sources.slice(),
+            entries: bucket.entries.map(function(entry) {
+              return Object.assign({}, entry);
+            }),
+          }];
+        })),
       },
       assets: {
         scripts: state.assets.scripts.map(function(entry) {
@@ -470,6 +536,7 @@
     const page = contract && contract.page && typeof contract.page === "object" ? contract.page : {};
     const enhancement = contract && contract.enhancement && typeof contract.enhancement === "object" ? contract.enhancement : {};
     const assets = gosxDocumentHeadAssets();
+    const cssLayers = gosxDocumentCSSLayers(assets.ownedCSS);
     const layer = gosxCurrentEnhancementLayer();
 
     return {
@@ -497,6 +564,7 @@
       css: {
         owned: assets.ownedCSS,
         stylesheets: assets.stylesheets,
+        layers: cssLayers,
       },
       assets: {
         scripts: assets.scripts,
@@ -524,11 +592,20 @@
     setAttrValue(root, "data-gosx-css-owned-count", state.head.ownedCSSCount);
     setStyleValue(root.style, "--gosx-document-owned-css-count", String(state.head.ownedCSSCount));
     setStyleValue(root.style, "--gosx-document-stylesheet-count", String(state.head.stylesheetCount));
+    for (const layer of GOSX_DOCUMENT_CSS_LAYERS) {
+      const count = state.css && state.css.layers && state.css.layers[layer] ? state.css.layers[layer].count : 0;
+      setAttrValue(root, "data-gosx-css-" + layer + "-count", count);
+      setStyleValue(root.style, "--gosx-document-css-" + layer + "-count", String(count));
+    }
     if (body && body !== root) {
       setAttrValue(body, "data-gosx-document-id", state.page.id);
       setAttrValue(body, "data-gosx-enhancement-layer", state.enhancement.layer);
       setAttrValue(body, "data-gosx-navigation", state.enhancement.navigation ? "true" : "false");
       setAttrValue(body, "data-gosx-runtime-ready", state.enhancement.ready ? "true" : "false");
+      for (const layer of GOSX_DOCUMENT_CSS_LAYERS) {
+        const count = state.css && state.css.layers && state.css.layers[layer] ? state.css.layers[layer].count : 0;
+        setAttrValue(body, "data-gosx-css-" + layer + "-count", count);
+      }
     }
   }
 
@@ -563,6 +640,21 @@
     return cloneGosxDocumentState(next);
   }
 
+  function scheduleGosxDocumentRefresh(reason) {
+    gosxDocumentRefreshReason = reason || gosxDocumentRefreshReason || "refresh";
+    if (gosxDocumentRefreshScheduled) {
+      return;
+    }
+    gosxDocumentRefreshScheduled = true;
+    const run = function() {
+      gosxDocumentRefreshScheduled = false;
+      const nextReason = gosxDocumentRefreshReason || "refresh";
+      gosxDocumentRefreshReason = "";
+      refreshGosxDocumentState(nextReason);
+    };
+    setTimeout(run, 0);
+  }
+
   function installGosxDocumentObservers() {
     if (gosxDocumentObserversInstalled) {
       return;
@@ -570,17 +662,47 @@
     gosxDocumentObserversInstalled = true;
     if (document && typeof document.addEventListener === "function") {
       document.addEventListener("gosx:navigate", function() {
-        refreshGosxDocumentState("navigate");
+        scheduleGosxDocumentRefresh("navigate");
         refreshGosxEnvironmentState("navigate");
       });
       document.addEventListener("gosx:ready", function() {
-        refreshGosxDocumentState("ready");
+        scheduleGosxDocumentRefresh("ready");
       });
     }
     if (typeof window.addEventListener === "function") {
       window.addEventListener("pageshow", function() {
-        refreshGosxDocumentState("pageshow");
+        scheduleGosxDocumentRefresh("pageshow");
       });
+    }
+    if (typeof MutationObserver === "function" && document && document.head) {
+      const headObserver = new MutationObserver(function() {
+        scheduleGosxDocumentRefresh("head-mutation");
+      });
+      if (typeof headObserver.observe === "function") {
+        headObserver.observe(document.head, {
+          subtree: true,
+          childList: true,
+          attributes: true,
+          characterData: true,
+          attributeFilter: [
+            "href",
+            "media",
+            "rel",
+            "name",
+            "content",
+            "src",
+            "data-gosx-css-layer",
+            "data-gosx-css-owner",
+            "data-gosx-css-source",
+            "data-gosx-css-order",
+            "data-gosx-css-scope",
+            "data-gosx-file-css",
+            "data-gosx-file-css-scope",
+            "data-gosx-script",
+            "data-gosx-navigation",
+          ],
+        });
+      }
     }
   }
 
@@ -761,6 +883,16 @@
     },
     refresh(reason) {
       return refreshGosxDocumentState(reason || "manual");
+    },
+    css(layer) {
+      if (!gosxDocumentState) {
+        refreshGosxDocumentState("read");
+      }
+      if (!layer) {
+        return cloneGosxDocumentState(gosxDocumentState).css;
+      }
+      const key = gosxNormalizeDocumentCSSLayer(layer, "global");
+      return cloneGosxDocumentState(gosxDocumentState).css.layers[key];
     },
     observe: observeGosxDocument,
   };

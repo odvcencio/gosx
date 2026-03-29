@@ -1907,7 +1907,7 @@ test("bootstrap exposes unified environment, document, and presentation state", 
   fileCSS.setAttribute("data-gosx-file-css", "docs.css");
   fileCSS.setAttribute("data-gosx-file-css-scope", "docs-scope");
   fileCSS.setAttribute("data-gosx-css-layer", "page");
-  fileCSS.setAttribute("data-gosx-css-owner", "route-file");
+  fileCSS.setAttribute("data-gosx-css-owner", "page-file");
   fileCSS.setAttribute("data-gosx-css-source", "docs.css");
   fileCSS.setAttribute("data-gosx-css-order", "0");
   const stylesheet = env.document.createElement("link");
@@ -1936,12 +1936,17 @@ test("bootstrap exposes unified environment, document, and presentation state", 
   assert.equal(documentState.enhancement.navigation, true);
   assert.equal(documentState.css.owned[0].file, "docs.css");
   assert.equal(documentState.css.owned[0].layer, "page");
+  assert.equal(documentState.css.layers.page.count, 1);
+  assert.equal(documentState.css.layers.page.owners[0], "page-file");
   assert.equal(documentState.css.owned.some((entry) => entry.kind === "stylesheet" && entry.href === "/app.css"), true);
   assert.equal(documentState.css.stylesheets[0].layer, "global");
-  assert.equal(documentState.css.stylesheets[0].owner, "document");
+  assert.equal(documentState.css.stylesheets[0].owner, "document-global");
   assert.equal(documentState.css.stylesheets[0].source, "/app.css");
   assert.equal(documentState.css.owned.some((entry) => entry.layer === "runtime"), true);
+  assert.equal(documentState.css.layers.runtime.count, 1);
+  assert.equal(env.context.__gosx.document.css("page").count, 1);
   assert.equal(env.document.documentElement.getAttribute("data-gosx-document-id"), "gosx-doc-docs-home");
+  assert.equal(env.document.documentElement.getAttribute("data-gosx-css-page-count"), "1");
   assert.equal(env.document.body.getAttribute("data-gosx-enhancement-layer"), "bootstrap");
 
   const presentation = env.context.__gosx.presentation.read(block);
@@ -2001,9 +2006,56 @@ test("bootstrap refreshes document state after navigation events", async () => {
   env.document.dispatchEvent(new env.context.CustomEvent("gosx:navigate", {
     detail: { url: "/docs" },
   }));
+  await flushAsyncWork();
 
   assert.equal(env.context.__gosx.document.get().page.id, "gosx-doc-docs");
   assert.equal(env.document.documentElement.getAttribute("data-gosx-route-pattern"), "GET /docs");
+});
+
+test("bootstrap refreshes document CSS state after head mutations", async () => {
+  const env = createContext({});
+  const contract = env.document.createElement("script");
+  contract.id = "gosx-document";
+  contract.setAttribute("type", "application/json");
+  contract.setAttribute("data-gosx-document-contract", "");
+  contract.textContent = JSON.stringify({
+    version: 1,
+    page: {
+      id: "gosx-doc-home",
+      pattern: "GET /",
+      path: "/",
+      title: "Home",
+      status: 200,
+    },
+    enhancement: {
+      bootstrap: true,
+      runtime: false,
+      navigation: true,
+    },
+  });
+  appendManagedHead(env.document, [contract]);
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const stylesheet = env.document.createElement("link");
+  stylesheet.setAttribute("rel", "stylesheet");
+  stylesheet.setAttribute("href", "/layout.css");
+  stylesheet.setAttribute("data-gosx-css-layer", "layout");
+  stylesheet.setAttribute("data-gosx-css-owner", "document-layout");
+  stylesheet.setAttribute("data-gosx-css-source", "layout.css");
+  const managedEnd = env.document.head.childNodes.find((node) => node.getAttribute && node.getAttribute("name") === "gosx-head-end");
+  env.document.head.insertBefore(stylesheet, managedEnd);
+
+  const headObserver = env.mutationObservers.find((observer) => observer.targets.has(env.document.head));
+  assert.ok(headObserver, "expected head mutation observer");
+  headObserver.trigger([{ target: env.document.head, type: "childList" }]);
+  await flushAsyncWork();
+  env.context.__gosx.document.refresh("head-mutation");
+
+  assert.equal(env.context.__gosx.document.get().css.layers.layout.count, 1);
+  assert.equal(env.context.__gosx.document.css("layout").sources[0], "layout.css");
+  assert.equal(env.document.documentElement.getAttribute("data-gosx-css-layout-count"), "1");
 });
 
 test("bootstrap refreshes managed text layout blocks after font metric invalidation", async () => {

@@ -5,11 +5,23 @@ import "strings"
 // CSSLayer describes the ownership layer of document-managed CSS.
 type CSSLayer string
 
+// CSSOwner describes the owner category of document-managed CSS.
+type CSSOwner string
+
 const (
 	CSSLayerGlobal  CSSLayer = "global"
 	CSSLayerLayout  CSSLayer = "layout"
 	CSSLayerPage    CSSLayer = "page"
 	CSSLayerRuntime CSSLayer = "runtime"
+
+	CSSOwnerDocumentGlobal CSSOwner = "document-global"
+	CSSOwnerDocumentLayout CSSOwner = "document-layout"
+	CSSOwnerDocumentPage   CSSOwner = "document-page"
+	CSSOwnerGlobalFile     CSSOwner = "global-file"
+	CSSOwnerLayoutFile     CSSOwner = "layout-file"
+	CSSOwnerPageFile       CSSOwner = "page-file"
+	CSSOwnerMetadata       CSSOwner = "metadata"
+	CSSOwnerRuntime        CSSOwner = "gosx-bootstrap"
 )
 
 // StylesheetOptions configures document-level stylesheet ownership metadata.
@@ -42,10 +54,43 @@ func stylesheetSource(href string) string {
 	return AssetURL(href)
 }
 
-func stylesheetOwner(owner string) string {
+// DefaultStylesheetOwner returns the default document-managed owner for a layer.
+func DefaultStylesheetOwner(layer CSSLayer) string {
+	switch normalizeCSSLayer(layer) {
+	case CSSLayerLayout:
+		return string(CSSOwnerDocumentLayout)
+	case CSSLayerPage:
+		return string(CSSOwnerDocumentPage)
+	case CSSLayerRuntime:
+		return string(CSSOwnerRuntime)
+	case CSSLayerGlobal:
+		fallthrough
+	default:
+		return string(CSSOwnerDocumentGlobal)
+	}
+}
+
+// FileStylesheetOwner returns the canonical owner for a route/file-managed CSS layer.
+func FileStylesheetOwner(layer CSSLayer) string {
+	switch normalizeCSSLayer(layer) {
+	case CSSLayerLayout:
+		return string(CSSOwnerLayoutFile)
+	case CSSLayerPage:
+		return string(CSSOwnerPageFile)
+	case CSSLayerRuntime:
+		return string(CSSOwnerRuntime)
+	case CSSLayerGlobal:
+		fallthrough
+	default:
+		return string(CSSOwnerGlobalFile)
+	}
+}
+
+// NormalizeStylesheetOwner resolves an explicit or default owner for a layer.
+func NormalizeStylesheetOwner(layer CSSLayer, owner string) string {
 	owner = strings.TrimSpace(owner)
 	if owner == "" {
-		return "document"
+		return DefaultStylesheetOwner(layer)
 	}
 	return owner
 }

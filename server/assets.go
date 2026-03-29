@@ -44,6 +44,7 @@ func Stylesheet(href string, args ...any) gosx.Node {
 // ownership metadata so the runtime can reason about it as part of the page
 // contract.
 func DocumentStylesheet(href string, opts StylesheetOptions, args ...any) gosx.Node {
+	layer := normalizeCSSLayer(opts.Layer)
 	source := strings.TrimSpace(opts.Source)
 	if source == "" {
 		source = stylesheetSource(href)
@@ -52,8 +53,8 @@ func DocumentStylesheet(href string, opts StylesheetOptions, args ...any) gosx.N
 		gosx.Attrs(
 			gosx.Attr("rel", "stylesheet"),
 			gosx.Attr("href", AssetURL(href)),
-			gosx.Attr("data-gosx-css-layer", string(normalizeCSSLayer(opts.Layer))),
-			gosx.Attr("data-gosx-css-owner", stylesheetOwner(opts.Owner)),
+			gosx.Attr("data-gosx-css-layer", string(layer)),
+			gosx.Attr("data-gosx-css-owner", NormalizeStylesheetOwner(layer, opts.Owner)),
 			gosx.Attr("data-gosx-css-source", source),
 		),
 	}
