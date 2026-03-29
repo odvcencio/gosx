@@ -268,6 +268,51 @@ func Page() Node {
 	}
 }
 
+func TestDefaultFileRendererSupportsManagedFormBuiltins(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "page.gsx")
+	source := `package docs
+
+func Page() Node {
+	return <main>
+		<Form method="get" action="/search" class="search-form">
+			<input name="q" value="docs"></input>
+		</Form>
+		<ActionForm actionName="save" class="save-form">
+			<input name="title" value="hello"></input>
+		</ActionForm>
+	</main>
+}
+`
+	if err := os.WriteFile(path, []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := &RouteContext{
+		Request: httptest.NewRequest(http.MethodGet, "/account/draco", nil),
+	}
+	node, err := DefaultFileRenderer(ctx, FilePage{FilePath: path, Pattern: "/account/[slug]"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	html := gosx.RenderHTML(node)
+	for _, snippet := range []string{
+		`action="/search"`,
+		`data-gosx-form`,
+		`data-gosx-form-mode="get"`,
+		`class="search-form"`,
+		`action="/account/draco/__actions/save"`,
+		`method="post"`,
+		`data-gosx-form-mode="post"`,
+		`class="save-form"`,
+	} {
+		if !strings.Contains(html, snippet) {
+			t.Fatalf("expected %q in rendered managed form html %q", snippet, html)
+		}
+	}
+}
+
 func TestDefaultFileRendererSupportsImageBuiltin(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "page.gsx")

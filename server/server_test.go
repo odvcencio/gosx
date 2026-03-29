@@ -1080,7 +1080,16 @@ func TestEnableNavigationInjectsRuntimeIntoDefaultDocument(t *testing.T) {
 	app := New()
 	app.EnableNavigation()
 	app.Page("GET /", func(ctx *Context) gosx.Node {
-		return Link("/docs", gosx.Text("Docs"))
+		return gosx.El("main",
+			Link("/docs", gosx.Text("Docs")),
+			Form(
+				gosx.Attrs(
+					gosx.Attr("method", http.MethodGet),
+					gosx.Attr("action", "/search"),
+				),
+				gosx.El("input", gosx.Attrs(gosx.Attr("name", "q"), gosx.Attr("value", "docs"))),
+			),
+		)
 	})
 
 	handler := app.Build()
@@ -1094,6 +1103,9 @@ func TestEnableNavigationInjectsRuntimeIntoDefaultDocument(t *testing.T) {
 	}
 	if !strings.Contains(body, "data-gosx-link") {
 		t.Fatalf("expected Link helper marker, got %q", body)
+	}
+	if !strings.Contains(body, "data-gosx-form") || !strings.Contains(body, `data-gosx-form-state="idle"`) {
+		t.Fatalf("expected Form helper marker, got %q", body)
 	}
 	if !strings.Contains(body, "gosx-head-start") || !strings.Contains(body, "gosx-head-end") {
 		t.Fatalf("expected managed head markers, got %q", body)

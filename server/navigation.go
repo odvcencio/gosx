@@ -25,6 +25,18 @@ func Link(href string, args ...any) gosx.Node {
 	return gosx.El("a", prefixed...)
 }
 
+// Form renders a form tag opted into the GoSX navigation/runtime submission
+// layer while preserving native HTML fallback behavior.
+func Form(args ...any) gosx.Node {
+	prefixed := append([]any{
+		gosx.Attrs(
+			gosx.BoolAttr("data-gosx-form"),
+			gosx.Attr("data-gosx-form-state", "idle"),
+		),
+	}, args...)
+	return gosx.El("form", prefixed...)
+}
+
 // HeadOutlet wraps head content in stable markers so the navigation runtime can
 // replace managed head nodes during client-side page swaps.
 func HeadOutlet(head gosx.Node) gosx.Node {

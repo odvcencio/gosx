@@ -1,19 +1,8 @@
-// GoSX Client Bootstrap v0.2.0
-// Loads shared WASM runtime, fetches per-island programs, hydrates islands
-// via event delegation. This is the only JavaScript in a GoSX app.
-//
-// Expects:
-//   - wasm_exec.js loaded before this script (standard Go WASM support)
-//   - <script id="gosx-manifest" type="application/json"> with island manifest
-//   - WASM exports: __gosx_hydrate, __gosx_action, __gosx_dispose
-//   - WASM calls window.__gosx_runtime_ready() when Go runtime is initialized
-
 (function() {
   "use strict";
 
   const GOSX_VERSION = "0.2.0";
 
-  // --- GoSX runtime namespace ---
   const engineFactories = window.__gosx_engine_factories || Object.create(null);
   const loadedEngineScripts = new Map();
   window.__gosx_engine_factories = engineFactories;
@@ -2581,7 +2570,8 @@
     },
     dispose: disposeManagedTextLayout,
   };
-  const gosxEnvironmentListeners = new Set();
+
+const gosxEnvironmentListeners = new Set();
   const gosxDocumentListeners = new Set();
   let gosxEnvironmentState = null;
   let gosxDocumentState = null;
@@ -3357,8 +3347,8 @@
   installGosxDocumentObservers();
   refreshGosxEnvironmentState("bootstrap");
   refreshGosxDocumentState("bootstrap");
-  // Pending manifest reference, set during init, consumed when runtime is ready.
-  let pendingManifest = null;
+
+let pendingManifest = null;
 
   function runtimeReady() {
     return (
@@ -3368,12 +3358,6 @@
     );
   }
 
-  // --------------------------------------------------------------------------
-  // Manifest loading
-  // --------------------------------------------------------------------------
-
-  // Parse the inline JSON manifest from #gosx-manifest script tag.
-  // Returns the parsed object, or null if missing/malformed.
   function loadManifest() {
     const el = document.getElementById("gosx-manifest");
     if (!el) return null;
@@ -3386,14 +3370,6 @@
     }
   }
 
-  // --------------------------------------------------------------------------
-  // Shared WASM runtime loading
-  // --------------------------------------------------------------------------
-
-  // Load the single shared Go WASM binary referenced by the manifest runtime
-  // entry. Uses Go's wasm_exec.js `Go` class. The WASM is expected to call
-  // window.__gosx_runtime_ready() once it has finished initializing its
-  // exported functions (__gosx_hydrate, __gosx_action, etc.).
   async function loadRuntime(runtimeRef) {
     if (typeof Go === "undefined") {
       console.error("[gosx] wasm_exec.js must be loaded before bootstrap.js");
@@ -3405,8 +3381,6 @@
     try {
       const response = await fetchRuntimeResponse(runtimeRef);
       const result = await instantiateRuntimeModule(response, go.importObject);
-      // go.run is intentionally not awaited — it resolves when the Go main()
-      // exits, but the runtime stays alive via syscall/js callbacks.
       go.run(result.instance);
     } catch (e) {
       console.error("[gosx] failed to load WASM runtime:", e);
@@ -3445,13 +3419,6 @@
     return WebAssembly.instantiate(bytes, importObject);
   }
 
-  // --------------------------------------------------------------------------
-  // Island program fetching
-  // --------------------------------------------------------------------------
-
-  // Fetch the compiled program data for a single island. Returns an
-  // ArrayBuffer (for "wasm" format) or a string (for "json" or other text
-  // formats). Returns null on failure.
   async function fetchProgram(programRef, programFormat) {
     try {
       const resp = await fetch(programRef);
@@ -3463,7 +3430,6 @@
       if (programFormat === "wasm" || programFormat === "bin") {
         return new Uint8Array(await resp.arrayBuffer());
       }
-      // Default: return as text (covers json, msgpack-base64, etc.)
       return await resp.text();
     } catch (e) {
       console.error(`[gosx] error fetching program ${programRef}:`, e);
@@ -6066,7 +6032,8 @@
     }
     return shader;
   }
-  function createSceneRenderer(canvas, props, capability) {
+
+function createSceneRenderer(canvas, props, capability) {
     const webglPreference = sceneCapabilityWebGLPreference(props, capability);
     if (webglPreference === "prefer" || webglPreference === "force") {
       const webglRenderer = createSceneWebGLRenderer(canvas, {
@@ -7229,17 +7196,12 @@
       },
     };
   });
-  // --------------------------------------------------------------------------
-  // Event delegation
-  // --------------------------------------------------------------------------
 
-  // Event types that are delegated on each island root element.
-  const DELEGATED_EVENTS = [
+const DELEGATED_EVENTS = [
     "click", "input", "change", "submit",
     "keydown", "keyup", "focus", "blur",
   ];
 
-  // Extract a small payload from a DOM event for forwarding to WASM.
   function extractEventData(e) {
     const data = { type: e.type };
 
@@ -7263,24 +7225,13 @@
         data.key = e.key;
         break;
       case "submit":
-        // Prevent default form submission — the WASM handler decides what to do.
         e.preventDefault();
         break;
-      // click, focus, blur: no extra data needed beyond type
     }
 
     return data;
   }
 
-  // Attach ONE delegated listener per event type on `islandRoot`. Each
-  // listener walks the ancestor chain from event.target to the root looking
-  // for a `data-gosx-handler` attribute. If found, it calls the WASM-side
-  // __gosx_action(islandID, handlerName, eventDataJSON).
-  //
-  // Returns an array of { type, listener } objects so callers can remove them.
-  // Handler attribute pattern: data-gosx-on-{eventType}="handlerName"
-  // Examples: data-gosx-on-click="increment", data-gosx-on-input="updateName"
-  // Falls back to data-gosx-handler for click-only (legacy/shorthand).
   function findHandlerForEvent(target, root, eventType) {
     const specificAttr = handlerAttrName(eventType);
 
@@ -7355,10 +7306,6 @@
       console.error(`[gosx] action error (${islandID}/${handlerName}):`, err);
     }
   }
-
-  // --------------------------------------------------------------------------
-  // Engine mounting
-  // --------------------------------------------------------------------------
 
   function resolveEngineFactory(entry) {
     const exportName = engineExportName(entry);
@@ -7679,10 +7626,6 @@
     await Promise.all(promises);
   }
 
-  // --------------------------------------------------------------------------
-  // Hub connections
-  // --------------------------------------------------------------------------
-
   function hubURL(path) {
     if (!path) return "";
     if (isAbsoluteHubURL(path)) {
@@ -7814,24 +7757,16 @@
     }
   }
 
-  // --------------------------------------------------------------------------
-  // Island disposal
-  // --------------------------------------------------------------------------
-
-  // Remove all delegated event listeners for an island and clear it from the
-  // tracking map. Optionally calls the WASM-side __gosx_dispose if available.
   window.__gosx_dispose_island = function(islandID) {
     const record = window.__gosx.islands.get(islandID);
     if (!record) return;
 
-    // Remove delegated listeners from the island root.
     if (record.root && record.listeners) {
       for (const entry of record.listeners) {
         record.root.removeEventListener(entry.type, entry.listener, entry.capture);
       }
     }
 
-    // Notify WASM side if dispose function is available.
     if (typeof window.__gosx_dispose === "function") {
       try {
         window.__gosx_dispose(islandID);
@@ -7902,12 +7837,6 @@
     window.__gosx.ready = false;
   }
 
-  // --------------------------------------------------------------------------
-  // Hydration
-  // --------------------------------------------------------------------------
-
-  // Hydrate a single island: fetch its program data, call __gosx_hydrate,
-  // and set up event delegation on the island root element.
   async function hydrateIsland(entry) {
     const root = islandRoot(entry);
     if (!root) return;
@@ -7978,12 +7907,9 @@
     });
   }
 
-  // Hydrate all islands from the manifest. Called once the WASM runtime
-  // signals readiness via __gosx_runtime_ready.
   async function hydrateAllIslands(manifest) {
     if (!manifest.islands || manifest.islands.length === 0) return;
 
-    // Hydrate islands concurrently — each is independent.
     const promises = manifest.islands.map(function(entry) {
       return hydrateIsland(entry).catch(function(e) {
         console.error(`[gosx] unexpected error hydrating ${entry.id}:`, e);
@@ -7993,13 +7919,6 @@
     await Promise.all(promises);
   }
 
-  // --------------------------------------------------------------------------
-  // Runtime ready callback
-  // --------------------------------------------------------------------------
-
-  // Called by the Go WASM binary once the runtime has finished initializing
-  // and all exported functions (__gosx_hydrate, __gosx_action, etc.) are
-  // registered. This is the signal that it is safe to hydrate islands.
   window.__gosx_runtime_ready = function() {
     if (typeof window.__gosx_text_layout === "function" && window.__gosx_text_layout !== gosxTextLayout) {
       adoptTextLayoutImpl(window.__gosx_text_layout);
@@ -8037,10 +7956,6 @@
     });
   };
 
-  // --------------------------------------------------------------------------
-  // Main initialization
-  // --------------------------------------------------------------------------
-
   async function bootstrapPage() {
     refreshGosxEnvironmentState("bootstrap-page");
     refreshGosxDocumentState("bootstrap-page");
@@ -8048,14 +7963,12 @@
 
     const manifest = loadManifest();
     if (!manifest) {
-      // No manifest — pure server-rendered page, no islands to hydrate.
       pendingManifest = null;
       window.__gosx.ready = true;
       refreshGosxDocumentState("ready");
       return;
     }
 
-    // Stash manifest for use when WASM signals readiness.
     pendingManifest = manifest;
     window.__gosx.ready = false;
 
@@ -8110,7 +8023,6 @@
   window.__gosx_bootstrap_page = bootstrapPage;
   window.__gosx_dispose_page = disposePage;
 
-  // Start when DOM is ready.
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", bootstrapPage);
   } else {
