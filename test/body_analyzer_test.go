@@ -145,6 +145,47 @@ func Counter() Node {
 	t.Logf("Handler 1: %s → %v", h1.Name, h1.Statements)
 }
 
+func TestBodyAnalyzerMultiStatementHandler(t *testing.T) {
+	source := []byte(`package main
+
+//gosx:island
+func Dashboard() Node {
+	activeFile := signal.New("main.arb")
+	inspector := signal.New("overview")
+
+	openDiagnostic := func() {
+		activeFile.Set("schema.arb")
+		inspector.Set("diagnostics")
+	}
+
+	return <button onClick={openDiagnostic}>Open</button>
+}
+`)
+	prog, err := compileGSX(t, source)
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+
+	comp := prog.Components[0]
+	if comp.Scope == nil {
+		t.Fatal("expected component scope")
+	}
+	if len(comp.Scope.Handlers) != 1 {
+		t.Fatalf("expected 1 handler, got %d", len(comp.Scope.Handlers))
+	}
+
+	got := comp.Scope.Handlers[0].Statements
+	if len(got) != 2 {
+		t.Fatalf("expected 2 statements, got %d: %#v", len(got), got)
+	}
+	if got[0] != `activeFile.Set("schema.arb")` {
+		t.Fatalf("statement 0: got %q", got[0])
+	}
+	if got[1] != `inspector.Set("diagnostics")` {
+		t.Fatalf("statement 1: got %q", got[1])
+	}
+}
+
 // TestBodyAnalyzerComputed verifies signal.Derive() extraction.
 func TestBodyAnalyzerComputed(t *testing.T) {
 	source := []byte(`package main

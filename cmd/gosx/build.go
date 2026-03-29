@@ -478,6 +478,7 @@ func getGOROOT() string {
 func buildServerBinaryIfPresent(dir, outputPath string) (bool, error) {
 	cmd := exec.Command("go", "list", "-f", "{{.Name}}", ".")
 	cmd.Dir = dir
+	cmd.Env = append(execEnvWithoutGoFlags(), "GOFLAGS=-mod=mod")
 	out, err := cmd.Output()
 	if err != nil {
 		var exitErr *exec.ExitError
@@ -489,9 +490,13 @@ func buildServerBinaryIfPresent(dir, outputPath string) (bool, error) {
 	if strings.TrimSpace(string(out)) != "main" {
 		return false, nil
 	}
+	if err := os.MkdirAll(filepath.Dir(outputPath), 0755); err != nil {
+		return false, err
+	}
 
 	buildCmd := exec.Command("go", "build", "-o", outputPath, ".")
 	buildCmd.Dir = dir
+	buildCmd.Env = append(execEnvWithoutGoFlags(), "GOFLAGS=-mod=mod")
 	buildCmd.Stderr = os.Stderr
 	if err := buildCmd.Run(); err != nil {
 		return false, err
