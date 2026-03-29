@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"html"
+	"net/http"
 	"reflect"
 	"sort"
 	"strings"
@@ -74,9 +75,22 @@ func (r *fileProgramRenderer) renderNode(nodeID ir.NodeID, env fileRenderEnv) st
 func (r *fileProgramRenderer) renderElement(node *ir.Node, env fileRenderEnv) string {
 	var b strings.Builder
 	tag := html.EscapeString(node.Tag)
+	formMode := ""
+	if strings.EqualFold(node.Tag, "form") {
+		formMode = fileAutoFormEnhancementMode(node.Attrs, env)
+	}
 	b.WriteByte('<')
 	b.WriteString(tag)
 	r.renderAttrs(&b, node.Attrs, env)
+	if formMode != "" && attrValue(node.Attrs, env, "data-gosx-form") == nil {
+		b.WriteString(" data-gosx-form")
+	}
+	if formMode != "" && attrValue(node.Attrs, env, "data-gosx-form-mode") == nil {
+		fmt.Fprintf(&b, ` data-gosx-form-mode="%s"`, html.EscapeString(formMode))
+	}
+	if formMode != "" && attrValue(node.Attrs, env, "data-gosx-form-state") == nil {
+		b.WriteString(` data-gosx-form-state="idle"`)
+	}
 	if ir.VoidElements[node.Tag] {
 		b.WriteString(" />")
 		return b.String()
@@ -126,6 +140,13 @@ func (r *fileProgramRenderer) renderBuiltinComponent(node *ir.Node, env fileRend
 		return true, r.renderEach(node, env)
 	case "Link":
 		return true, r.renderLink(node, env)
+	case "Form":
+		return true, r.renderManagedForm(node, env, managedFormOptions{})
+	case "ActionForm":
+		return true, r.renderManagedForm(node, env, managedFormOptions{
+			defaultMethod: strings.ToLower(http.MethodPost),
+			defaultAction: fileRenderActionPath(env, stringValue(attrValue(node.Attrs, env, "actionName"))),
+		})
 	case "Image":
 		return true, r.renderImage(node, env)
 	case "TextBlock":
@@ -195,6 +216,37 @@ func (r *fileProgramRenderer) renderLink(node *ir.Node, env fileRenderEnv) strin
 	b.WriteByte('>')
 	b.WriteString(r.renderChildren(node.Children, env))
 	b.WriteString("</a>")
+	return b.String()
+}
+
+type managedFormOptions struct {
+	defaultMethod string
+	defaultAction string
+}
+
+func (r *fileProgramRenderer) renderManagedForm(node *ir.Node, env fileRenderEnv, opts managedFormOptions) string {
+	var b strings.Builder
+	mode := managedFormMode(node.Attrs, env, opts.defaultMethod)
+	b.WriteString("<form")
+	if method := strings.TrimSpace(opts.defaultMethod); method != "" && attrValue(node.Attrs, env, "method") == nil {
+		fmt.Fprintf(&b, ` method="%s"`, html.EscapeString(method))
+	}
+	if action := strings.TrimSpace(opts.defaultAction); action != "" && attrValue(node.Attrs, env, "action") == nil {
+		fmt.Fprintf(&b, ` action="%s"`, html.EscapeString(action))
+	}
+	r.renderAttrs(&b, managedFormAttrs(node.Attrs), env)
+	if attrValue(node.Attrs, env, "data-gosx-form") == nil {
+		b.WriteString(" data-gosx-form")
+	}
+	if mode != "" && attrValue(node.Attrs, env, "data-gosx-form-mode") == nil {
+		fmt.Fprintf(&b, ` data-gosx-form-mode="%s"`, html.EscapeString(mode))
+	}
+	if attrValue(node.Attrs, env, "data-gosx-form-state") == nil {
+		b.WriteString(` data-gosx-form-state="idle"`)
+	}
+	b.WriteByte('>')
+	b.WriteString(r.renderChildren(node.Children, env))
+	b.WriteString("</form>")
 	return b.String()
 }
 
@@ -741,10 +793,71 @@ func normalizeFileAttrName(name string) string {
 	}
 }
 
+func managedFormAttrs(attrs []ir.Attr) []ir.Attr {
+	out := make([]ir.Attr, 0, len(attrs))
+	for _, attr := range attrs {
+		if strings.TrimSpace(attr.Name) == "actionName" {
+			continue
+		}
+		out = append(out, attr)
+	}
+	return out
+}
+
 func mergeComponentProps(props map[string]any, value any) {
 	for key, item := range spreadProps(value) {
 		setComponentProp(props, key, item)
 	}
+}
+
+func fileRenderActionPath(env fileRenderEnv, name string) string {
+	name = strings.TrimSpace(name)
+	if name == "" || env.funcs == nil {
+		return ""
+	}
+	actionPath, ok := env.funcs["actionPath"].(func(string) string)
+	if !ok {
+		return ""
+	}
+	return actionPath(name)
+}
+
+func fileFormEnhancementMode(attrs []ir.Attr, env fileRenderEnv) string {
+	return managedFormMode(attrs, env, "")
+}
+
+func fileAutoFormEnhancementMode(attrs []ir.Attr, env fileRenderEnv) string {
+	mode := managedFormMode(attrs, env, "")
+	if mode != http.MethodGet {
+		return ""
+	}
+	return mode
+}
+
+func managedFormMode(attrs []ir.Attr, env fileRenderEnv, defaultMethod string) string {
+	if attrValue(attrs, env, "target") != nil {
+		return ""
+	}
+	method := strings.ToUpper(strings.TrimSpace(stringValue(attrValue(attrs, env, "method"))))
+	if method == "" {
+		method = strings.ToUpper(strings.TrimSpace(defaultMethod))
+	}
+	if method == "" {
+		method = http.MethodGet
+	}
+	switch method {
+	case http.MethodGet, http.MethodPost:
+	default:
+		return ""
+	}
+	action := strings.ToLower(strings.TrimSpace(stringValue(attrValue(attrs, env, "action"))))
+	switch {
+	case strings.HasPrefix(action, "javascript:"),
+		strings.HasPrefix(action, "mailto:"),
+		strings.HasPrefix(action, "tel:"):
+		return ""
+	}
+	return strings.ToLower(method)
 }
 
 func exportedPropAlias(name string) string {

@@ -294,6 +294,9 @@ class FakeElement {
     this._capturedPointerID = null;
     this.focusCalls = [];
     this.scrollIntoViewCalls = [];
+    this.clickCalls = [];
+    this.requestSubmitCalls = [];
+    this.submitCalls = [];
   }
 
   get id() {
@@ -490,6 +493,18 @@ class FakeElement {
       entry.listener(event);
     }
     return true;
+  }
+
+  click() {
+    this.clickCalls.push([]);
+  }
+
+  requestSubmit(submitter) {
+    this.requestSubmitCalls.push([submitter || null]);
+  }
+
+  submit() {
+    this.submitCalls.push([]);
   }
 
   cloneNode(deep) {
@@ -804,6 +819,12 @@ class FakeFormData {
     return this.values.some((entry) => entry[0] === name);
   }
 
+  forEach(callback, thisArg) {
+    for (const [name, value] of this.values) {
+      callback.call(thisArg, value, name, this);
+    }
+  }
+
   _collect(node) {
     if (!node || node.nodeType !== ELEMENT_NODE) {
       return;
@@ -1061,6 +1082,7 @@ function createContext(options) {
       TEXT_NODE,
     },
     URL,
+    URLSearchParams,
     addEventListener(type, listener) {
       if (!windowListeners.has(type)) {
         windowListeners.set(type, []);
@@ -4517,4 +4539,153 @@ test("navigation runtime intercepts managed form submissions and forwards action
   assert.equal(env.context.location.href, "http://localhost:3000/done");
   assert.equal(env.document.dispatchedEvents.at(-1).type, "gosx:form:result");
   assert.equal(form.getAttribute("data-gosx-pending"), null);
+  assert.equal(form.getAttribute("data-gosx-form-state"), "idle");
+});
+
+test("navigation runtime intercepts managed GET forms and navigates with query params", async () => {
+  const form = new FakeElement("form", null);
+  form.setAttribute("action", "/search");
+  form.setAttribute("method", "get");
+  form.setAttribute("data-gosx-form", "");
+  form.setAttribute("data-gosx-form-state", "idle");
+
+  const query = new FakeElement("input", null);
+  query.setAttribute("name", "q");
+  query.value = "scene labels";
+  form.appendChild(query);
+
+  const submitter = new FakeElement("button", null);
+  submitter.setAttribute("name", "view");
+  submitter.setAttribute("value", "list");
+  form.appendChild(submitter);
+
+  const parsedDocs = new Map();
+  const env = createContext({
+    elements: [form],
+    fetchRoutes: {
+      "http://localhost:3000/search?q=scene+labels&view=list": {
+        text: "__SEARCH_DOC__",
+        url: "http://localhost:3000/search?q=scene+labels&view=list",
+      },
+    },
+    parseHTML(html) {
+      return parsedDocs.get(html);
+    },
+  });
+  env.context.__gosx_dispose_page = async function() {};
+  env.context.__gosx_bootstrap_page = async function() {};
+
+  const results = new FakeElement("main", null);
+  results.id = "results";
+  results.textContent = "results";
+  parsedDocs.set("__SEARCH_DOC__", buildNavigatedDocument({
+    title: "Search",
+    bodyNodes: [results],
+  }));
+
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+
+  const submitListener = env.document.eventListeners.get("submit")[0];
+  let prevented = false;
+  submitListener({
+    type: "submit",
+    target: form,
+    submitter,
+    defaultPrevented: false,
+    preventDefault() {
+      prevented = true;
+      this.defaultPrevented = true;
+    },
+  });
+  await flushAsyncWork();
+
+  assert.equal(prevented, true);
+  assert.equal(env.fetchCalls[0].url, "http://localhost:3000/search?q=scene+labels&view=list");
+  assert.equal(env.fetchCalls[0].init.headers.Accept, "text/html");
+  assert.equal(env.context.location.href, "http://localhost:3000/search?q=scene+labels&view=list");
+  assert.equal(env.document.dispatchedEvents.at(-1).type, "gosx:form:navigate");
+  assert.equal(env.document.dispatchedEvents.at(-1).detail.method, "GET");
+  assert.equal(form.getAttribute("data-gosx-pending"), null);
+  assert.equal(form.getAttribute("data-gosx-form-state"), "idle");
+});
+
+test("navigation runtime honors submitter overrides and falls back with native semantics", async () => {
+  const form = new FakeElement("form", null);
+  form.setAttribute("action", "/save");
+  form.setAttribute("method", "post");
+  form.setAttribute("data-gosx-form", "");
+  form.setAttribute("data-gosx-form-state", "idle");
+
+  const title = new FakeElement("input", null);
+  title.setAttribute("name", "title");
+  title.value = "hello";
+  form.appendChild(title);
+
+  const submitter = new FakeElement("button", null);
+  submitter.setAttribute("name", "intent");
+  submitter.setAttribute("value", "preview");
+  submitter.formAction = "http://localhost:3000/preview";
+  submitter.formMethod = "get";
+  form.appendChild(submitter);
+
+  const parsedDocs = new Map();
+  const env = createContext({
+    elements: [form],
+    fetchRoutes: {
+      "http://localhost:3000/preview?title=hello&intent=preview": {
+        text: "__PREVIEW_DOC__",
+        url: "http://localhost:3000/preview?title=hello&intent=preview",
+      },
+    },
+    parseHTML(html) {
+      return parsedDocs.get(html);
+    },
+  });
+  env.context.__gosx_dispose_page = async function() {};
+  env.context.__gosx_bootstrap_page = async function() {};
+
+  const preview = new FakeElement("main", null);
+  preview.id = "preview";
+  preview.textContent = "preview";
+  parsedDocs.set("__PREVIEW_DOC__", buildNavigatedDocument({
+    title: "Preview",
+    bodyNodes: [preview],
+  }));
+
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+
+  const submitListener = env.document.eventListeners.get("submit")[0];
+  submitListener({
+    type: "submit",
+    target: form,
+    submitter,
+    defaultPrevented: false,
+    preventDefault() {
+      this.defaultPrevented = true;
+    },
+  });
+  await flushAsyncWork();
+
+  assert.equal(env.fetchCalls[0].url, "http://localhost:3000/preview?title=hello&intent=preview");
+  assert.equal(env.document.dispatchedEvents.at(-1).detail.method, "GET");
+
+  env.fetchCalls.length = 0;
+  submitter.formMethod = "post";
+  submitter.formAction = "http://localhost:3000/missing";
+
+  submitListener({
+    type: "submit",
+    target: form,
+    submitter,
+    defaultPrevented: false,
+    preventDefault() {
+      this.defaultPrevented = true;
+    },
+  });
+  await flushAsyncWork();
+
+  assert.equal(form.requestSubmitCalls.length, 1);
+  assert.equal(form.requestSubmitCalls[0][0], submitter);
+  assert.equal(form.hasAttribute("data-gosx-form"), true);
+  assert.equal(form.getAttribute("data-gosx-form-state"), "idle");
 });

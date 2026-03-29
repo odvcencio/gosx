@@ -20,8 +20,36 @@ function readSource(file) {
   return fs.readFileSync(file, "utf8");
 }
 
+function compactSource(source) {
+  const lines = String(source).replace(/\r\n?/g, "\n").split("\n");
+  const out = [];
+  let lastBlank = false;
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (trimmed.startsWith("//")) {
+      continue;
+    }
+
+    const normalized = line.replace(/[ \t]+$/g, "");
+    if (trimmed === "") {
+      if (lastBlank) {
+        continue;
+      }
+      lastBlank = true;
+      out.push("");
+      continue;
+    }
+
+    lastBlank = false;
+    out.push(normalized);
+  }
+
+  return out.join("\n").trim() + "\n";
+}
+
 function buildBootstrapSource() {
-  return sourcePaths.map(readSource).join("");
+  return sourcePaths.map(readSource).map(compactSource).join("\n");
 }
 
 function main(argv) {

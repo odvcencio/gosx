@@ -300,6 +300,24 @@ func (ctx *RouteContext) Engine(cfg engine.Config, fallback gosx.Node) gosx.Node
 	return ctx.Runtime().Engine(cfg, fallback)
 }
 
+// Form renders a form tag opted into the GoSX navigation/runtime submission
+// layer while preserving native HTML fallback behavior.
+func (ctx *RouteContext) Form(args ...any) gosx.Node {
+	return server.Form(args...)
+}
+
+// ActionForm renders a POST form targeting the current route's named action.
+func (ctx *RouteContext) ActionForm(name string, args ...any) gosx.Node {
+	prefixed := append([]any{
+		gosx.Attrs(
+			gosx.Attr("method", strings.ToLower(http.MethodPost)),
+			gosx.Attr("action", ctx.ActionPath(name)),
+			gosx.Attr("data-gosx-form-mode", "post"),
+		),
+	}, args...)
+	return server.Form(prefixed...)
+}
+
 // TextBlock renders a managed text-layout node for the current route.
 func (ctx *RouteContext) TextBlock(props server.TextBlockProps, args ...any) gosx.Node {
 	if ctx == nil {

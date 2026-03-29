@@ -10,6 +10,7 @@
   const SCRIPT_ROLE = "data-gosx-script";
   const LINK_ATTR = "data-gosx-link";
   const FORM_ATTR = "data-gosx-form";
+  const FORM_STATE_ATTR = "data-gosx-form-state";
   const PREFETCH_ATTR = "data-gosx-prefetch";
   const MAIN_ATTR = "data-gosx-main";
   const ANNOUNCE_ATTR = "data-gosx-announce";
@@ -593,14 +594,56 @@
   function shouldHandleForm(form, event) {
     if (!form || !form.hasAttribute || !form.hasAttribute(FORM_ATTR)) return false;
     if (event.defaultPrevented) return false;
-    if (form.getAttribute("target")) return false;
+    const submitter = event && event.submitter ? event.submitter : null;
+    if (formSubmitTarget(form, submitter)) return false;
 
-    const method = String(form.getAttribute("method") || "GET").toUpperCase();
-    if (method !== "POST") return false;
+    const method = formSubmissionMethod(form, submitter);
+    if (method !== "GET" && method !== "POST") return false;
 
-    const action = form.getAttribute("action") || window.location.href;
+    const action = formSubmissionAction(form, submitter) || window.location.href;
     const url = new URL(action, window.location.href);
     return url.origin === window.location.origin;
+  }
+
+  function submitterAttribute(submitter, name) {
+    if (!submitter) return "";
+    if (name === "formAction" && typeof submitter.formAction === "string" && submitter.formAction) {
+      return submitter.formAction;
+    }
+    if (name === "formMethod" && typeof submitter.formMethod === "string" && submitter.formMethod) {
+      return submitter.formMethod;
+    }
+    if (name === "formTarget" && typeof submitter.formTarget === "string" && submitter.formTarget) {
+      return submitter.formTarget;
+    }
+    const attrName = String(name || "")
+      .replace(/^[A-Z]/, function(match) { return match.toLowerCase(); })
+      .replace(/[A-Z]/g, function(match) { return "-" + match.toLowerCase(); });
+    return typeof submitter.getAttribute === "function" ? String(submitter.getAttribute(attrName) || "") : "";
+  }
+
+  function formSubmissionMethod(form, submitter) {
+    return String(
+      submitterAttribute(submitter, "formMethod")
+      || (form && form.getAttribute ? form.getAttribute("method") : "")
+      || "GET"
+    ).toUpperCase();
+  }
+
+  function formSubmissionAction(form, submitter) {
+    return String(
+      submitterAttribute(submitter, "formAction")
+      || (form && form.getAttribute ? form.getAttribute("action") : "")
+      || window.location.href
+    );
+  }
+
+  function formSubmitTarget(form, submitter) {
+    return String(
+      submitterAttribute(submitter, "formTarget")
+      || (form && form.getAttribute ? form.getAttribute("target") : "")
+      || ""
+    ).trim();
   }
 
   function serializeForm(form, submitter) {
@@ -623,17 +666,33 @@
   async function submitForm(form, submitter) {
     if (!form) return;
 
-    const action = form.getAttribute("action") || window.location.href;
+    const method = formSubmissionMethod(form, submitter);
+    const action = formSubmissionAction(form, submitter) || window.location.href;
     const url = new URL(action, window.location.href);
     const formData = serializeForm(form, submitter);
     const previousPending = form.getAttribute("data-gosx-pending");
+    const previousState = form.getAttribute(FORM_STATE_ATTR);
 
     form.setAttribute("data-gosx-pending", "true");
+    form.setAttribute(FORM_STATE_ATTR, "pending");
 
     try {
+      if (method === "GET") {
+        await navigate(formNavigationURL(url, formData).href, { replace: false });
+        if (typeof document.dispatchEvent === "function" && typeof CustomEvent === "function") {
+          document.dispatchEvent(new CustomEvent("gosx:form:navigate", {
+            detail: {
+              action: url.href,
+              method: method,
+            },
+          }));
+        }
+        return;
+      }
+
       const csrfToken = formCSRFToken(formData);
       const response = await fetch(url.href, {
-        method: "POST",
+        method: method,
         headers: {
           Accept: "application/json",
           "X-Requested-With": "XMLHttpRequest",
@@ -662,6 +721,7 @@
         document.dispatchEvent(new CustomEvent("gosx:form:result", {
           detail: {
             action: url.href,
+            method: method,
             ok: response.ok,
             status: response.status,
             result: result,
@@ -670,7 +730,7 @@
       }
     } catch (err) {
       console.error("[gosx] form action failed:", err);
-      form.submit();
+      nativeSubmitForm(form, submitter);
       return;
     } finally {
       if (previousPending == null) {
@@ -678,6 +738,51 @@
       } else {
         form.setAttribute("data-gosx-pending", previousPending);
       }
+      if (previousState == null) {
+        form.setAttribute(FORM_STATE_ATTR, "idle");
+      } else {
+        form.setAttribute(FORM_STATE_ATTR, previousState);
+      }
+    }
+  }
+
+  function formNavigationURL(url, formData) {
+    const next = new URL(url.href);
+    const params = new URLSearchParams();
+    if (formData && typeof formData.forEach === "function") {
+      formData.forEach(function(value, key) {
+        params.append(String(key), value == null ? "" : String(value));
+      });
+    }
+    next.search = params.toString();
+    return next;
+  }
+
+  function nativeSubmitForm(form, submitter) {
+    if (!form) return;
+    const previousManaged = form.getAttribute(FORM_ATTR);
+    if (previousManaged == null) {
+      return;
+    }
+    form.removeAttribute(FORM_ATTR);
+    try {
+      if (typeof form.requestSubmit === "function") {
+        if (submitter) {
+          form.requestSubmit(submitter);
+        } else {
+          form.requestSubmit();
+        }
+        return;
+      }
+      if (submitter && typeof submitter.click === "function") {
+        submitter.click();
+        return;
+      }
+      if (typeof form.submit === "function") {
+        form.submit();
+      }
+    } finally {
+      form.setAttribute(FORM_ATTR, previousManaged);
     }
   }
 
