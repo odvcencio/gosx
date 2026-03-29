@@ -27,6 +27,11 @@
   const ANNOUNCER_ATTR = "data-gosx-announcer";
   const MANAGED_FOCUS_ATTR = "data-gosx-focus-managed";
   const URL_ATTRS = ["href", "src", "action", "poster"];
+  const SUBMITTER_ATTRS = {
+    formAction: "formaction",
+    formMethod: "formmethod",
+    formTarget: "formtarget",
+  };
   const scriptCache = window.__gosx_loaded_scripts || new Map();
   const pageCache = window.__gosx_page_cache || new Map();
   let navigationState = {
@@ -55,14 +60,22 @@
     return children.indexOf(child);
   }
 
+  function windowLocationHref() {
+    return String(window.location && window.location.href || "");
+  }
+
+  function keepsLiteralURL(value) {
+    return !value || value[0] === "#" || value.startsWith("data:") || value.startsWith("javascript:");
+  }
+
   function absolutizeURL(value, baseURL) {
     if (!value) return value;
     const trimmed = String(value).trim();
-    if (!trimmed || trimmed[0] === "#" || trimmed.startsWith("data:") || trimmed.startsWith("javascript:")) {
+    if (!trimmed || keepsLiteralURL(trimmed)) {
       return value;
     }
     try {
-      return new URL(trimmed, baseURL || window.location.href).toString();
+      return new URL(trimmed, baseURL || windowLocationHref()).toString();
     } catch (_) {
       return value;
     }
@@ -119,6 +132,27 @@
       if (isMarker(child, HEAD_END)) end = child;
     }
     return { start, end };
+  }
+
+  function walkElements(root, visit) {
+    const stack = [];
+    if (root) {
+      stack.push(root);
+    }
+
+    while (stack.length > 0) {
+      const node = stack.pop();
+      if (!node || node.nodeType !== 1) {
+        continue;
+      }
+      if (visit(node) === false) {
+        return;
+      }
+      const children = toArray(node.childNodes);
+      for (let i = children.length - 1; i >= 0; i--) {
+        stack.push(children[i]);
+      }
+    }
   }
 
   function ensureHeadMarkers() {
@@ -298,27 +332,15 @@
   }
 
   function findElement(root, predicate) {
-    const stack = [];
-    if (root) {
-      stack.push(root);
-    }
-
-    while (stack.length > 0) {
-      const node = stack.pop();
-      if (!node || node.nodeType !== 1) {
-        continue;
+    let found = null;
+    walkElements(root, function(node) {
+      if (!predicate(node)) {
+        return true;
       }
-      if (predicate(node)) {
-        return node;
-      }
-
-      const children = toArray(node.childNodes);
-      for (let i = children.length - 1; i >= 0; i--) {
-        stack.push(children[i]);
-      }
-    }
-
-    return null;
+      found = node;
+      return false;
+    });
+    return found;
   }
 
   function normalizeTextValue(value) {
@@ -338,24 +360,34 @@
     node.setAttribute(name, String(value));
   }
 
-  function navigationURLParts(value) {
+  function parsedNavigationURL(value) {
     if (!value) return null;
-    let parsed = null;
     try {
-      parsed = new URL(value, window.location.href);
+      return new URL(value, windowLocationHref());
     } catch (_error) {
       return null;
     }
-    let path = String(parsed.pathname || "/");
+  }
+
+  function normalizedNavigationPath(pathname) {
+    let path = String(pathname || "/");
     if (!path.startsWith("/")) {
       path = "/" + path;
     }
     if (path.length > 1) {
       path = path.replace(/\/+$/, "");
     }
+    return path || "/";
+  }
+
+  function navigationURLParts(value) {
+    const parsed = parsedNavigationURL(value);
+    if (!parsed) {
+      return null;
+    }
     return {
       origin: parsed.origin,
-      path: path || "/",
+      path: normalizedNavigationPath(parsed.pathname),
       search: String(parsed.search || ""),
       href: parsed.href,
     };
@@ -377,24 +409,11 @@
 
   function collectElements(root, predicate) {
     const found = [];
-    const stack = [];
-    if (root) {
-      stack.push(root);
-    }
-
-    while (stack.length > 0) {
-      const node = stack.pop();
-      if (!node || node.nodeType !== 1) {
-        continue;
-      }
+    walkElements(root, function(node) {
       if (!predicate || predicate(node)) {
         found.push(node);
       }
-      const children = toArray(node.childNodes);
-      for (let i = children.length - 1; i >= 0; i--) {
-        stack.push(children[i]);
-      }
-    }
+    });
 
     return found;
   }
@@ -405,21 +424,37 @@
     });
   }
 
+  function currentNavigationURL() {
+    return navigationURLParts(navigationState.currentURL || windowLocationHref()) || navigationURLParts(windowLocationHref());
+  }
+
+  function mediaQueryMatches(query) {
+    return typeof window.matchMedia === "function" && window.matchMedia(query).matches;
+  }
+
+  function reducedDataMode() {
+    return Boolean(
+      (window.navigator && window.navigator.connection && window.navigator.connection.saveData)
+      || mediaQueryMatches("(prefers-reduced-data: reduce)")
+    );
+  }
+
+  function coarsePointerMode() {
+    return Boolean(
+      mediaQueryMatches("(pointer: coarse)")
+      || mediaQueryMatches("(any-pointer: coarse)")
+    );
+  }
+
   function currentNavigationSnapshot() {
-    const current = navigationURLParts(navigationState.currentURL || window.location.href) || navigationURLParts(window.location.href);
+    const current = currentNavigationURL();
     return {
       phase: navigationState.phase || "idle",
-      currentURL: current ? current.href : String(window.location && window.location.href || ""),
+      currentURL: current ? current.href : windowLocationHref(),
       currentPath: current ? current.path : "/",
       pendingURL: String(navigationState.pendingURL || ""),
-      reducedData: Boolean(
-        (window.navigator && window.navigator.connection && window.navigator.connection.saveData)
-        || (typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-data: reduce)").matches)
-      ),
-      coarsePointer: Boolean(
-        typeof window.matchMedia === "function"
-        && (window.matchMedia("(pointer: coarse)").matches || window.matchMedia("(any-pointer: coarse)").matches)
-      ),
+      reducedData: reducedDataMode(),
+      coarsePointer: coarsePointerMode(),
     };
   }
 
@@ -878,17 +913,40 @@
   }
 
   function shouldHandleLink(anchor, event) {
-    if (!anchor || !anchor.hasAttribute || !anchor.hasAttribute(LINK_ATTR)) return false;
-    if (event.defaultPrevented) return false;
-    if (event.button !== 0) return false;
-    if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return false;
-    if (anchor.getAttribute("target") || anchor.hasAttribute("download")) return false;
+    if (!isManagedNavigationLink(anchor)) return false;
+    if (!isPrimaryNavigationEvent(event)) return false;
+    if (!allowsManagedLinkHandling(anchor)) return false;
+    return isSameOriginNavigation(anchor.getAttribute("href"), windowLocationHref());
+  }
 
-    const href = anchor.getAttribute("href");
-    if (!href || href.startsWith("#")) return false;
+  function isManagedNavigationLink(anchor) {
+    return !!anchor && !!anchor.hasAttribute && anchor.hasAttribute(LINK_ATTR);
+  }
 
-    const url = navigationURLParts(href);
-    const current = navigationURLParts(window.location.href);
+  function isPrimaryNavigationEvent(event) {
+    return !!event
+      && !event.defaultPrevented
+      && event.button === 0
+      && !event.metaKey
+      && !event.ctrlKey
+      && !event.shiftKey
+      && !event.altKey;
+  }
+
+  function allowsManagedLinkHandling(anchor) {
+    if (!anchor) {
+      return false;
+    }
+    if (anchor.getAttribute("target") || anchor.hasAttribute("download")) {
+      return false;
+    }
+    const href = String(anchor.getAttribute("href") || "");
+    return !!href && href[0] !== "#";
+  }
+
+  function isSameOriginNavigation(value, baseURL) {
+    const url = navigationURLParts(value);
+    const current = navigationURLParts(baseURL || windowLocationHref());
     return !!url && !!current && url.origin === current.origin;
   }
 
@@ -913,25 +971,28 @@
     if (method !== "GET" && method !== "POST") return false;
 
     const action = formSubmissionAction(form, submitter) || window.location.href;
-    const url = new URL(action, window.location.href);
-    return url.origin === window.location.origin;
+    return isSameOriginNavigation(action, windowLocationHref());
   }
 
   function submitterAttribute(submitter, name) {
     if (!submitter) return "";
-    if (name === "formAction" && typeof submitter.formAction === "string" && submitter.formAction) {
-      return submitter.formAction;
+    const property = submitterProperty(submitter, name);
+    if (property) {
+      return property;
     }
-    if (name === "formMethod" && typeof submitter.formMethod === "string" && submitter.formMethod) {
-      return submitter.formMethod;
-    }
-    if (name === "formTarget" && typeof submitter.formTarget === "string" && submitter.formTarget) {
-      return submitter.formTarget;
-    }
-    const attrName = String(name || "")
-      .replace(/^[A-Z]/, function(match) { return match.toLowerCase(); })
-      .replace(/[A-Z]/g, function(match) { return "-" + match.toLowerCase(); });
+    const attrName = submitterAttributeName(name);
     return typeof submitter.getAttribute === "function" ? String(submitter.getAttribute(attrName) || "") : "";
+  }
+
+  function submitterProperty(submitter, name) {
+    if (!submitter || !name) return "";
+    const value = submitter[name];
+    return typeof value === "string" && value ? value : "";
+  }
+
+  function submitterAttributeName(name) {
+    const key = String(name || "").trim();
+    return SUBMITTER_ATTRS[key] || key.toLowerCase();
   }
 
   function formSubmissionMethod(form, submitter) {
