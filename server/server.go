@@ -578,24 +578,45 @@ func documentCurrentPath(doc *DocumentContext) string {
 		return "/"
 	}
 	if doc.Request != nil && doc.Request.URL != nil {
-		if path := strings.TrimSpace(doc.Request.URL.Path); path != "" {
-			return path
+		if current, ok := normalizeDocumentCurrentPath(doc.Request.URL.Path); ok {
+			return current
 		}
 	}
-	if doc.Path == "" {
-		return "/"
+	if current, ok := normalizeDocumentCurrentPath(doc.Path); ok {
+		return current
 	}
-	parsed, err := url.Parse(doc.Path)
-	if err != nil {
-		if strings.TrimSpace(doc.Path) == "" {
-			return "/"
+	return "/"
+}
+
+func normalizeDocumentCurrentPath(value string) (string, bool) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "", false
+	}
+	parsed, err := url.Parse(value)
+	if err == nil {
+		if current, ok := normalizeDocumentCurrentPathSegment(parsed.Path); ok {
+			return current, true
 		}
-		return doc.Path
+		if strings.HasPrefix(value, "?") || strings.HasPrefix(value, "#") {
+			return "/", true
+		}
 	}
-	if strings.TrimSpace(parsed.Path) == "" {
-		return "/"
+	return normalizeDocumentCurrentPathSegment(value)
+}
+
+func normalizeDocumentCurrentPathSegment(value string) (string, bool) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "", false
 	}
-	return parsed.Path
+	if strings.HasPrefix(value, "?") || strings.HasPrefix(value, "#") {
+		return "/", true
+	}
+	if !strings.HasPrefix(value, "/") {
+		value = "/" + value
+	}
+	return path.Clean(value), true
 }
 
 // RequestID returns the per-request ID assigned by the default middleware.

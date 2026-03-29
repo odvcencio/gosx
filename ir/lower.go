@@ -558,48 +558,86 @@ func (l *lowerer) inferTypeHint(expr string) string {
 	if expr == "" {
 		return ""
 	}
-	if expr == "true" || expr == "false" {
+	switch {
+	case expr == "true" || expr == "false":
 		return "bool"
-	}
-	if len(expr) > 0 && expr[0] == '"' {
+	case isStringLiteral(expr):
 		return "string"
-	}
-	if len(expr) > 0 && expr[0] == '\'' {
-		return "string"
-	}
-	// Check for float (contains '.')
-	if strings.Contains(expr, ".") {
-		allDigitsAndDot := true
-		for _, c := range expr {
-			if (c < '0' || c > '9') && c != '.' && c != '-' {
-				allDigitsAndDot = false
-				break
-			}
-		}
-		if allDigitsAndDot {
-			return "float"
-		}
-	}
-	// Check for int
-	allDigits := true
-	start := 0
-	if len(expr) > 0 && expr[0] == '-' {
-		start = 1
-	}
-	for _, c := range expr[start:] {
-		if c < '0' || c > '9' {
-			allDigits = false
-			break
-		}
-	}
-	if allDigits && len(expr) > start {
+	case isFloatLiteral(expr):
+		return "float"
+	case isIntLiteral(expr):
 		return "int"
-	}
-	// Arrays/slices
-	if strings.HasPrefix(expr, "[]") || strings.HasPrefix(expr, "make([]") {
+	case isArrayLiteral(expr):
 		return "array"
+	default:
+		return ""
 	}
-	return ""
+}
+
+func isStringLiteral(expr string) bool {
+	if expr == "" {
+		return false
+	}
+	switch expr[0] {
+	case '"', '\'', '`':
+		return true
+	default:
+		return false
+	}
+}
+
+func isFloatLiteral(expr string) bool {
+	normalized := normalizeNumericLiteral(expr)
+	if normalized == "" {
+		return false
+	}
+	if !strings.ContainsAny(normalized, ".eEpP") {
+		return false
+	}
+	_, err := strconv.ParseFloat(normalized, 64)
+	return err == nil
+}
+
+func isIntLiteral(expr string) bool {
+	normalized := normalizeNumericLiteral(expr)
+	if normalized == "" {
+		return false
+	}
+	if strings.ContainsAny(normalized, ".eEpP") {
+		return false
+	}
+	if strings.HasPrefix(normalized, "+") {
+		normalized = normalized[1:]
+	}
+	if normalized == "" || normalized == "-" {
+		return false
+	}
+	if strings.HasPrefix(normalized, "-") {
+		normalized = normalized[1:]
+	}
+	if normalized == "" {
+		return false
+	}
+	_, err := strconv.ParseUint(normalized, 0, 64)
+	return err == nil
+}
+
+func normalizeNumericLiteral(expr string) string {
+	return strings.ReplaceAll(strings.TrimSpace(expr), "_", "")
+}
+
+func isArrayLiteral(expr string) bool {
+	expr = strings.TrimSpace(expr)
+	switch {
+	case strings.HasPrefix(expr, "make([]"), strings.HasPrefix(expr, "make(["):
+		return true
+	case strings.HasPrefix(expr, "[]") && strings.Contains(expr, "{"):
+		return true
+	case strings.HasPrefix(expr, "[") && strings.Contains(expr, "]") && strings.Contains(expr, "{"):
+		return true
+	default:
+		return false
+	}
 }
 
 // lowerSourceFile processes the root source_file node.

@@ -486,6 +486,44 @@ func TestCustomDocumentCanReuseDocumentContractAttrs(t *testing.T) {
 	}
 }
 
+func TestDocumentCurrentPathNormalizesDocumentAndRequestInputs(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		request string
+		path    string
+		want    string
+	}{
+		{name: "absolute document url", path: "https://example.com/docs/forms?tab=posting#intro", want: "/docs/forms"},
+		{name: "relative document path", path: "docs/forms?tab=posting", want: "/docs/forms"},
+		{name: "query only document path", path: "?tab=posting", want: "/"},
+		{name: "request path wins", request: "/live/request?tab=active", path: "https://example.com/docs/forms?tab=posting", want: "/live/request"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			doc := &DocumentContext{
+				Path:       tc.path,
+				Navigation: true,
+			}
+			if tc.request != "" {
+				doc.Request = httptest.NewRequest(http.MethodGet, tc.request, nil)
+			}
+
+			if got := documentCurrentPath(doc); got != tc.want {
+				t.Fatalf("documentCurrentPath() = %q, want %q", got, tc.want)
+			}
+			if attrs := documentHTMLAttrs(doc); !strings.Contains(attrs, `data-gosx-navigation-current-path="`+tc.want+`"`) {
+				t.Fatalf("expected html attrs to contain normalized current path %q, got %q", tc.want, attrs)
+			}
+			if attrs := documentBodyAttrs(doc); !strings.Contains(attrs, `data-gosx-navigation-current-path="`+tc.want+`"`) {
+				t.Fatalf("expected body attrs to contain normalized current path %q, got %q", tc.want, attrs)
+			}
+			rendered := gosx.RenderHTML(gosx.El("html", DocumentAttrs(doc), gosx.El("body", DocumentBodyAttrs(doc))))
+			if !strings.Contains(rendered, `data-gosx-navigation-current-path="`+tc.want+`"`) {
+				t.Fatalf("expected custom document attrs to contain normalized current path %q, got %q", tc.want, rendered)
+			}
+		})
+	}
+}
+
 func TestAppServesCompatRuntimeAssetsFromSourceBuild(t *testing.T) {
 	root := t.TempDir()
 	buildDir := filepath.Join(root, "build")
