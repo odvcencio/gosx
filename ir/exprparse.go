@@ -631,6 +631,17 @@ func (p *exprParser) buildUnaryMethod(receiverID program.ExprID, args []program.
 }
 
 func (p *exprParser) buildFunctionCall(name string, args []program.ExprID) (program.ExprID, error) {
+	switch strings.ToLower(name) {
+	case "len":
+		if len(args) != 1 {
+			return 0, fmt.Errorf("len requires exactly one argument")
+		}
+		return p.addExpr(program.Expr{
+			Op:       program.OpLen,
+			Operands: []program.ExprID{args[0]},
+			Type:     program.TypeInt,
+		}), nil
+	}
 	if p.scope != nil && p.scope.Handlers != nil && p.scope.Handlers[name] {
 		return p.addExpr(program.Expr{
 			Op:       program.OpCall,

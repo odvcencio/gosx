@@ -375,6 +375,20 @@ func TestParseLengthField(t *testing.T) {
 	}
 }
 
+func TestParseLenBuiltin(t *testing.T) {
+	scope := &ExprScope{Props: map[string]bool{"items": true}}
+	exprs, rootID, err := ParseExpr("len(items)", scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if exprs[rootID].Op != program.OpLen {
+		t.Fatalf("expected OpLen, got %d", exprs[rootID].Op)
+	}
+	if len(exprs[rootID].Operands) != 1 {
+		t.Fatalf("expected 1 operand, got %d", len(exprs[rootID].Operands))
+	}
+}
+
 func TestParseIndexAccess(t *testing.T) {
 	scope := &ExprScope{Props: map[string]bool{"items": true}}
 	exprs, rootID, err := ParseExpr("items[0]", scope)

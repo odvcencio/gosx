@@ -1740,11 +1740,17 @@
     };
   }
 
-  function createSceneWebGLRenderer(canvas) {
+  function createSceneWebGLRenderer(canvas, options) {
     if (!canvas || typeof canvas.getContext !== "function") {
       return null;
     }
-    const gl = canvas.getContext("webgl", { antialias: true, alpha: false }) || canvas.getContext("experimental-webgl", { antialias: true, alpha: false });
+    const contextOptions = {
+      alpha: false,
+      antialias: !(options && options.antialias === false),
+      powerPreference: options && options.powerPreference ? options.powerPreference : "high-performance",
+      preserveDrawingBuffer: false,
+    };
+    const gl = canvas.getContext("webgl", contextOptions) || canvas.getContext("experimental-webgl", contextOptions);
     if (!gl) {
       return null;
     }

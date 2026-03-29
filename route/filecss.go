@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"github.com/odvcencio/gosx"
+	gosxcss "github.com/odvcencio/gosx/css"
 )
 
 var fileCSSNodeCache sync.Map
@@ -39,10 +40,15 @@ func fileCSSNode(file string) (gosx.Node, bool) {
 		fileCSSNodeCache.Store(cssPath, gosx.Node{})
 		return gosx.Node{}, false
 	}
+	scopeID := fileCSSScopeID(cssPath)
+	scoped := gosxcss.ScopeCSS(string(data), scopeID)
 
 	node := gosx.El("style",
-		gosx.Attrs(gosx.Attr("data-gosx-file-css", filepath.ToSlash(filepath.Base(cssPath)))),
-		gosx.RawHTML(string(data)),
+		gosx.Attrs(
+			gosx.Attr("data-gosx-file-css", filepath.ToSlash(filepath.Base(cssPath))),
+			gosx.Attr("data-gosx-file-css-scope", scopeID),
+		),
+		gosx.RawHTML(scoped),
 	)
 	fileCSSNodeCache.Store(cssPath, node)
 	return node, true
@@ -62,4 +68,12 @@ func sidecarCSSPath(file string) string {
 		return candidate
 	}
 	return ""
+}
+
+func fileCSSScopeID(file string) string {
+	file = strings.TrimSpace(file)
+	if file == "" {
+		return ""
+	}
+	return gosxcss.ScopeID(filepath.ToSlash(file))
 }

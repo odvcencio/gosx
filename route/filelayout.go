@@ -106,6 +106,7 @@ func renderFileNode(path string, opts fileRenderOptions) (gosx.Node, error) {
 	if err != nil {
 		return gosx.Node{}, fmt.Errorf("read %s: %w", path, err)
 	}
+	scopeID := fileCSSScopeID(sidecarCSSPath(path))
 
 	switch filepath.Ext(path) {
 	case ".html":
@@ -113,15 +114,16 @@ func renderFileNode(path string, opts fileRenderOptions) (gosx.Node, error) {
 		if opts.RequireReplacement && !used {
 			return gosx.Node{}, fmt.Errorf("layout %s is missing a slot placeholder", path)
 		}
+		rendered = scopeHTMLFragmentRoots(rendered, scopeID)
 		return gosx.RawHTML(rendered), nil
 	case ".gsx":
-		return renderGSXFile(path, data, opts)
+		return renderGSXFile(path, data, opts, scopeID)
 	default:
 		return gosx.Node{}, fmt.Errorf("unsupported page extension: %s", path)
 	}
 }
 
-func renderGSXFile(path string, data []byte, opts fileRenderOptions) (gosx.Node, error) {
+func renderGSXFile(path string, data []byte, opts fileRenderOptions, scopeID string) (gosx.Node, error) {
 	prog, err := gosx.Compile(data)
 	if err != nil {
 		return gosx.Node{}, fmt.Errorf("compile %s: %w", path, err)
@@ -139,6 +141,7 @@ func renderGSXFile(path string, data []byte, opts fileRenderOptions) (gosx.Node,
 	if opts.RequireReplacement && !replaced {
 		return gosx.Node{}, fmt.Errorf("layout %s is missing a <Slot /> or <Outlet /> component", path)
 	}
+	htmlOut = scopeHTMLFragmentRoots(htmlOut, scopeID)
 	return gosx.RawHTML(htmlOut), nil
 }
 
@@ -194,6 +197,135 @@ func replaceHTMLPlaceholders(input string, replacements map[string]string, place
 		}
 	}
 	return output, used
+}
+
+func scopeHTMLFragmentRoots(fragment, scopeID string) string {
+	scopeID = strings.TrimSpace(scopeID)
+	if fragment == "" || scopeID == "" {
+		return fragment
+	}
+	attrName := "data-gosx-s"
+	attrValue := html.EscapeString(scopeID)
+
+	var out strings.Builder
+	depth := 0
+	for i := 0; i < len(fragment); {
+		if fragment[i] != '<' {
+			out.WriteByte(fragment[i])
+			i++
+			continue
+		}
+		switch {
+		case strings.HasPrefix(fragment[i:], "<!--"):
+			end := strings.Index(fragment[i+4:], "-->")
+			if end < 0 {
+				out.WriteString(fragment[i:])
+				return out.String()
+			}
+			end += i + 7
+			out.WriteString(fragment[i:end])
+			i = end
+			continue
+		case strings.HasPrefix(fragment[i:], "</"):
+			end := findHTMLTagEnd(fragment, i+2)
+			if depth > 0 {
+				depth--
+			}
+			out.WriteString(fragment[i:end])
+			i = end
+			continue
+		case strings.HasPrefix(fragment[i:], "<!") || strings.HasPrefix(fragment[i:], "<?"):
+			end := findHTMLTagEnd(fragment, i+1)
+			out.WriteString(fragment[i:end])
+			i = end
+			continue
+		}
+
+		end := findHTMLTagEnd(fragment, i+1)
+		tagText := fragment[i:end]
+		name := htmlTagName(tagText)
+		if name == "" {
+			out.WriteString(tagText)
+			i = end
+			continue
+		}
+
+		if depth == 0 && !strings.Contains(tagText, attrName+"=") {
+			tagText = injectHTMLTagAttr(tagText, attrName, attrValue)
+		}
+		out.WriteString(tagText)
+
+		if !htmlTagSelfClosing(tagText) && !ir.VoidElements[strings.ToLower(name)] {
+			depth++
+		}
+		i = end
+	}
+	return out.String()
+}
+
+func findHTMLTagEnd(fragment string, start int) int {
+	quote := byte(0)
+	for i := start; i < len(fragment); i++ {
+		ch := fragment[i]
+		if quote != 0 {
+			if ch == '\\' {
+				i++
+				continue
+			}
+			if ch == quote {
+				quote = 0
+			}
+			continue
+		}
+		if ch == '"' || ch == '\'' {
+			quote = ch
+			continue
+		}
+		if ch == '>' {
+			return i + 1
+		}
+	}
+	return len(fragment)
+}
+
+func htmlTagName(tag string) string {
+	if len(tag) < 3 || tag[0] != '<' || tag[1] == '/' || tag[1] == '!' || tag[1] == '?' {
+		return ""
+	}
+	start := 1
+	for start < len(tag) && (tag[start] == ' ' || tag[start] == '\t' || tag[start] == '\n' || tag[start] == '\r') {
+		start++
+	}
+	end := start
+	for end < len(tag) {
+		ch := tag[end]
+		if ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r' || ch == '/' || ch == '>' {
+			break
+		}
+		end++
+	}
+	if start == end {
+		return ""
+	}
+	return tag[start:end]
+}
+
+func htmlTagSelfClosing(tag string) bool {
+	trimmed := strings.TrimSpace(tag)
+	return strings.HasSuffix(trimmed, "/>")
+}
+
+func injectHTMLTagAttr(tag, name, value string) string {
+	insertAt := len(tag) - 1
+	if insertAt > 0 && tag[insertAt-1] == '/' {
+		insertAt--
+	}
+	var out strings.Builder
+	out.Grow(len(tag) + len(name) + len(value) + 4)
+	out.WriteString(tag[:insertAt])
+	fmt.Fprintf(&out, ` %s="%s"`, name, value)
+	out.WriteString(tag[insertAt:])
+	return out.String()
 }
 
 func defaultRenderedComponent(tag string, attrs map[string]any, childrenHTML string) string {

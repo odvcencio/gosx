@@ -1678,6 +1678,71 @@
     return Number.isFinite(parsed) ? parsed : fallback;
   }
 
+  function textLayoutLengthValue(value, fallback) {
+    if (typeof value === "number" && Number.isFinite(value)) {
+      return value;
+    }
+    if (typeof value === "string") {
+      const trimmed = value.trim().toLowerCase();
+      if (!trimmed || trimmed === "none" || trimmed === "auto" || trimmed === "normal" || trimmed === "unset") {
+        return fallback;
+      }
+      const parsed = Number.parseFloat(trimmed);
+      return Number.isFinite(parsed) ? parsed : fallback;
+    }
+    return textLayoutNumberValue(value, fallback);
+  }
+
+  function textLayoutComputedStyle(element) {
+    if (!element || typeof window.getComputedStyle !== "function") {
+      return null;
+    }
+    try {
+      return window.getComputedStyle(element);
+    } catch (_error) {
+      return null;
+    }
+  }
+
+  function textLayoutComputedStyleValue(style, propertyName) {
+    if (!style || !propertyName) {
+      return "";
+    }
+    if (typeof style.getPropertyValue === "function") {
+      const propertyValue = style.getPropertyValue(propertyName);
+      if (typeof propertyValue === "string" && propertyValue.trim() !== "") {
+        return propertyValue.trim();
+      }
+    }
+    const camelName = propertyName.replace(/-([a-z])/g, function(_match, letter) {
+      return String(letter || "").toUpperCase();
+    });
+    const value = style[camelName];
+    return typeof value === "string" ? value.trim() : "";
+  }
+
+  function textLayoutComputedLineHeight(style, fallback) {
+    const explicit = textLayoutLengthValue(
+      textLayoutComputedStyleValue(style, "--gosx-text-layout-line-height")
+      || textLayoutComputedStyleValue(style, "line-height"),
+      NaN
+    );
+    if (Number.isFinite(explicit) && explicit > 0) {
+      return explicit;
+    }
+    const fontSize = textLayoutLengthValue(textLayoutComputedStyleValue(style, "font-size"), fallback);
+    return Math.max(1, fontSize * 1.35);
+  }
+
+  function textLayoutComputedMaxLines(style) {
+    return Math.max(0, Math.floor(textLayoutLengthValue(
+      textLayoutComputedStyleValue(style, "--gosx-text-layout-max-lines")
+      || textLayoutComputedStyleValue(style, "-webkit-line-clamp")
+      || textLayoutComputedStyleValue(style, "line-clamp"),
+      0
+    )));
+  }
+
   function setStyleValue(style, name, value) {
     if (!style || typeof name !== "string") {
       return;
@@ -1951,30 +2016,61 @@
   function normalizeManagedTextLayoutConfig(element, options) {
     const config = options && typeof options === "object" ? options : {};
     const hasOwn = Object.prototype.hasOwnProperty;
+    const computed = textLayoutComputedStyle(element);
     const font = hasOwn.call(config, "font")
       ? String(config.font == null ? "" : config.font)
-      : String((element.getAttribute && element.getAttribute("data-gosx-text-layout-font")) || "");
+      : String(
+        textLayoutComputedStyleValue(computed, "--gosx-text-layout-font")
+        || textLayoutComputedStyleValue(computed, "font")
+        || (element.getAttribute && element.getAttribute("data-gosx-text-layout-font"))
+        || ""
+      );
     const align = normalizeTextLayoutAlign(
       hasOwn.call(config, "align")
         ? config.align
         : (
-          (element.getAttribute && element.getAttribute("data-gosx-text-layout-align"))
+          textLayoutComputedStyleValue(computed, "--gosx-text-layout-align")
+          || textLayoutComputedStyleValue(computed, "text-align")
+          || (element.getAttribute && element.getAttribute("data-gosx-text-layout-align"))
           || (element.getAttribute && element.getAttribute("align"))
         )
     );
     const whiteSpace = normalizeTextLayoutWhiteSpace(
-      hasOwn.call(config, "whiteSpace") ? config.whiteSpace : (element.getAttribute && element.getAttribute("data-gosx-text-layout-white-space"))
+      hasOwn.call(config, "whiteSpace")
+        ? config.whiteSpace
+        : (
+          textLayoutComputedStyleValue(computed, "--gosx-text-layout-white-space")
+          || textLayoutComputedStyleValue(computed, "white-space")
+          || (element.getAttribute && element.getAttribute("data-gosx-text-layout-white-space"))
+        )
     );
-    const lineHeight = Math.max(1, textLayoutNumberValue(
-      hasOwn.call(config, "lineHeight") ? config.lineHeight : (element.getAttribute && element.getAttribute("data-gosx-text-layout-line-height")),
+    const lineHeight = Math.max(1, textLayoutLengthValue(
+      hasOwn.call(config, "lineHeight")
+        ? config.lineHeight
+        : (
+          textLayoutComputedLineHeight(computed, NaN)
+          || (element.getAttribute && element.getAttribute("data-gosx-text-layout-line-height"))
+          || 16
+        ),
       16
     ));
     const maxLines = Math.max(0, Math.floor(textLayoutNumberValue(
-      hasOwn.call(config, "maxLines") ? config.maxLines : (element.getAttribute && element.getAttribute("data-gosx-text-layout-max-lines")),
+      hasOwn.call(config, "maxLines")
+        ? config.maxLines
+        : (
+          textLayoutComputedMaxLines(computed)
+          || (element.getAttribute && element.getAttribute("data-gosx-text-layout-max-lines"))
+        ),
       0
     )));
-    let maxWidth = textLayoutNumberValue(
-      hasOwn.call(config, "maxWidth") ? config.maxWidth : (element.getAttribute && element.getAttribute("data-gosx-text-layout-max-width")),
+    let maxWidth = textLayoutLengthValue(
+      hasOwn.call(config, "maxWidth")
+        ? config.maxWidth
+        : (
+          textLayoutComputedStyleValue(computed, "--gosx-text-layout-max-width")
+          || textLayoutComputedStyleValue(computed, "max-width")
+          || (element.getAttribute && element.getAttribute("data-gosx-text-layout-max-width"))
+        ),
       0
     );
     if (!(maxWidth > 0) && element && typeof element.getBoundingClientRect === "function") {
@@ -2001,7 +2097,13 @@
       lineHeight,
       maxLines,
       overflow: normalizeTextLayoutOverflow(
-        hasOwn.call(config, "overflow") ? config.overflow : (element.getAttribute && element.getAttribute("data-gosx-text-layout-overflow"))
+        hasOwn.call(config, "overflow")
+          ? config.overflow
+          : (
+            textLayoutComputedStyleValue(computed, "--gosx-text-layout-overflow")
+            || (textLayoutComputedStyleValue(computed, "text-overflow") === "ellipsis" ? "ellipsis" : "")
+            || (element.getAttribute && element.getAttribute("data-gosx-text-layout-overflow"))
+          )
       ),
       maxWidth,
       observe,
@@ -2095,6 +2197,7 @@
       gosxTextLayoutRevision(),
       config.text,
       config.font,
+      config.align,
       config.whiteSpace,
       config.lineHeight,
       config.maxLines,
@@ -4040,11 +4143,17 @@
     };
   }
 
-  function createSceneWebGLRenderer(canvas) {
+  function createSceneWebGLRenderer(canvas, options) {
     if (!canvas || typeof canvas.getContext !== "function") {
       return null;
     }
-    const gl = canvas.getContext("webgl", { antialias: true, alpha: false }) || canvas.getContext("experimental-webgl", { antialias: true, alpha: false });
+    const contextOptions = {
+      alpha: false,
+      antialias: !(options && options.antialias === false),
+      powerPreference: options && options.powerPreference ? options.powerPreference : "high-performance",
+      preserveDrawingBuffer: false,
+    };
+    const gl = canvas.getContext("webgl", contextOptions) || canvas.getContext("experimental-webgl", contextOptions);
     if (!gl) {
       return null;
     }
@@ -5001,9 +5110,12 @@
     }
     return shader;
   }
-  function createSceneRenderer(canvas, props) {
+  function createSceneRenderer(canvas, props, capability) {
     if (sceneBool(props.preferWebGL, true)) {
-      const webglRenderer = createSceneWebGLRenderer(canvas);
+      const webglRenderer = createSceneWebGLRenderer(canvas, {
+        antialias: capability.tier !== "constrained",
+        powerPreference: capability.tier === "constrained" ? "low-power" : "high-performance",
+      });
       if (webglRenderer) {
         return webglRenderer;
       }
@@ -5015,15 +5127,94 @@
     return createSceneCanvasRenderer(ctx2d, canvas);
   }
 
-  function sceneViewportBase(props) {
+  function normalizeSceneCapabilityTier(value) {
+    switch (String(value || "").trim().toLowerCase()) {
+      case "constrained":
+      case "balanced":
+      case "full":
+        return String(value).trim().toLowerCase();
+      default:
+        return "";
+    }
+  }
+
+  function sceneMediaQueryMatches(query) {
+    if (!query || typeof window.matchMedia !== "function") {
+      return false;
+    }
+    try {
+      return Boolean(window.matchMedia(query).matches);
+    } catch (_error) {
+      return false;
+    }
+  }
+
+  function sceneCapabilityProfile(props) {
+    const requestedTier = normalizeSceneCapabilityTier(props && props.capabilityTier);
+    const navigatorRef = window && window.navigator ? window.navigator : {};
+    const coarsePointer = sceneMediaQueryMatches("(pointer: coarse)") || sceneMediaQueryMatches("(any-pointer: coarse)");
+    const deviceMemory = sceneNumber(navigatorRef && navigatorRef.deviceMemory, 0);
+    const hardwareConcurrency = Math.max(0, Math.floor(sceneNumber(navigatorRef && navigatorRef.hardwareConcurrency, 0)));
+    const constrainedHardware = (deviceMemory > 0 && deviceMemory <= 4) || (hardwareConcurrency > 0 && hardwareConcurrency <= 4);
+
+    let tier = requestedTier;
+    if (!tier) {
+      if (coarsePointer && constrainedHardware) {
+        tier = "constrained";
+      } else if (coarsePointer) {
+        tier = "balanced";
+      } else {
+        tier = "full";
+      }
+    }
+
+    return {
+      tier,
+      coarsePointer,
+      deviceMemory,
+      hardwareConcurrency,
+    };
+  }
+
+  function defaultSceneMaxDevicePixelRatio(capability) {
+    switch (capability && capability.tier) {
+      case "constrained":
+        return 1.5;
+      case "balanced":
+        return 1.75;
+      default:
+        return 2;
+    }
+  }
+
+  function applySceneCapabilityState(mount, capability) {
+    if (!mount || !capability) {
+      return;
+    }
+    setAttrValue(mount, "data-gosx-scene3d-capability-tier", capability.tier);
+    setAttrValue(mount, "data-gosx-scene3d-coarse-pointer", capability.coarsePointer ? "true" : "false");
+    setAttrValue(mount, "data-gosx-scene3d-device-memory", capability.deviceMemory > 0 ? capability.deviceMemory : "");
+    setAttrValue(mount, "data-gosx-scene3d-hardware-concurrency", capability.hardwareConcurrency > 0 ? capability.hardwareConcurrency : "");
+  }
+
+  function applySceneRendererState(mount, renderer, fallbackReason) {
+    if (!mount) {
+      return;
+    }
+    setAttrValue(mount, "data-gosx-scene3d-renderer", renderer && renderer.kind ? renderer.kind : "");
+    setAttrValue(mount, "data-gosx-scene3d-renderer-fallback", fallbackReason || "");
+  }
+
+  function sceneViewportBase(props, capability) {
     const width = Math.max(240, sceneNumber(props && props.width, 720));
     const height = Math.max(180, sceneNumber(props && props.height, 420));
+    const explicitMaxDevicePixelRatio = sceneNumber(props && (props.maxDevicePixelRatio || props.maxPixelRatio), 0);
     return {
       baseWidth: width,
       baseHeight: height,
       aspectRatio: width / Math.max(1, height),
       responsive: sceneBool(props && props.responsive, true),
-      maxDevicePixelRatio: Math.max(1, sceneNumber(props && (props.maxDevicePixelRatio || props.maxPixelRatio), 2)),
+      maxDevicePixelRatio: Math.max(1, explicitMaxDevicePixelRatio > 0 ? explicitMaxDevicePixelRatio : defaultSceneMaxDevicePixelRatio(capability)),
     };
   }
 
@@ -5706,7 +5897,8 @@
     }
 
     const props = ctx.props || {};
-    const viewportBase = sceneViewportBase(props);
+    const capability = sceneCapabilityProfile(props);
+    const viewportBase = sceneViewportBase(props, capability);
     const sceneState = createSceneState(props);
     const runtimeScene = ctx.runtimeMode === "shared" && Boolean(ctx.programRef);
     const objects = sceneStateObjects(sceneState);
@@ -5726,6 +5918,7 @@
     clearChildren(ctx.mount);
     ctx.mount.setAttribute("data-gosx-scene3d-mounted", "true");
     ctx.mount.setAttribute("aria-label", props.ariaLabel || props.label || "Interactive GoSX 3D scene");
+    applySceneCapabilityState(ctx.mount, capability);
     if (!ctx.mount.style.position) {
       ctx.mount.style.position = "relative";
     }
@@ -5748,7 +5941,7 @@
 
     let viewport = applySceneViewport(ctx.mount, canvas, labelLayer, sceneViewportFromMount(ctx.mount, props, viewportBase, canvas), viewportBase);
 
-    const renderer = createSceneRenderer(canvas, props);
+    let renderer = createSceneRenderer(canvas, props, capability);
     if (!renderer) {
       console.warn("[gosx] Scene3D could not acquire a renderer");
       return {
@@ -5762,7 +5955,7 @@
         },
       };
     }
-    ctx.mount.setAttribute("data-gosx-scene3d-renderer", renderer.kind);
+    applySceneRendererState(ctx.mount, renderer, sceneBool(props.preferWebGL, true) && renderer.kind !== "webgl" ? "webgl-unavailable" : "");
     let latestBundle = null;
     const labelLayoutCache = new Map();
     const labelElements = new Map();
@@ -5791,6 +5984,61 @@
     let frameHandle = null;
     let scheduledRenderHandle = null;
     let disposed = false;
+
+    function swapRenderer(nextRenderer, fallbackReason) {
+      if (!nextRenderer) {
+        return false;
+      }
+      const previous = renderer;
+      renderer = nextRenderer;
+      applySceneRendererState(ctx.mount, renderer, fallbackReason);
+      if (previous && previous !== renderer && typeof previous.dispose === "function") {
+        previous.dispose();
+      }
+      return true;
+    }
+
+    function fallbackSceneRenderer(reason) {
+      const ctx2d = typeof canvas.getContext === "function" ? canvas.getContext("2d") : null;
+      if (!ctx2d) {
+        return false;
+      }
+      return swapRenderer(createSceneCanvasRenderer(ctx2d, canvas), reason || "webgl-unavailable");
+    }
+
+    function restoreSceneWebGLRenderer(reason) {
+      if (!sceneBool(props.preferWebGL, true)) {
+        return false;
+      }
+      const webglRenderer = createSceneWebGLRenderer(canvas, {
+        antialias: capability.tier !== "constrained",
+        powerPreference: capability.tier === "constrained" ? "low-power" : "high-performance",
+      });
+      if (!webglRenderer) {
+        return false;
+      }
+      return swapRenderer(webglRenderer, reason || "");
+    }
+
+    function onWebGLContextLost(event) {
+      if (!renderer || renderer.kind !== "webgl") {
+        return;
+      }
+      if (event && typeof event.preventDefault === "function") {
+        event.preventDefault();
+      }
+      fallbackSceneRenderer("webgl-context-lost");
+      scheduleRender("webgl-context-lost");
+    }
+
+    function onWebGLContextRestored() {
+      if (restoreSceneWebGLRenderer("")) {
+        scheduleRender("webgl-context-restored");
+      }
+    }
+
+    canvas.addEventListener("webglcontextlost", onWebGLContextLost);
+    canvas.addEventListener("webglcontextrestored", onWebGLContextRestored);
 
     function sceneCanRender() {
       return lifecycle.pageVisible && lifecycle.inViewport;
@@ -5918,6 +6166,8 @@
       },
       dispose() {
         disposed = true;
+        canvas.removeEventListener("webglcontextlost", onWebGLContextLost);
+        canvas.removeEventListener("webglcontextrestored", onWebGLContextRestored);
         releaseViewportObserver();
         releaseLifecycleObserver();
         releaseMotionObserver();
@@ -5953,6 +6203,14 @@
     const data = { type: e.type };
 
     switch (e.type) {
+      case "click":
+        if (e.target && e.target.value !== undefined) {
+          const value = String(e.target.value == null ? "" : e.target.value);
+          if (value !== "") {
+            data.value = value;
+          }
+        }
+        break;
       case "input":
       case "change":
         if (e.target && e.target.value !== undefined) {

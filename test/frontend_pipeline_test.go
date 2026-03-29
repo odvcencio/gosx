@@ -214,6 +214,22 @@ func Editor() Node {
 	}
 }
 
+func TestFrontendLenBuiltinFromSource(t *testing.T) {
+	b := compileAndHydrate(t, `package main
+
+//gosx:island
+func Lengths() Node {
+	items := signal.New([]string{"source", "trace", "runtime"})
+	return <div>
+		<span>{len(items.Get())}</span>
+	</div>
+}`)
+
+	if b == nil {
+		t.Fatal("expected hydrated bridge")
+	}
+}
+
 func TestFrontendBinaryRoundTrip(t *testing.T) {
 	source := `package main
 
