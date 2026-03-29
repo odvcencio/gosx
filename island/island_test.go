@@ -209,6 +209,45 @@ func TestRenderEngineRegistersManifestEntryAndMount(t *testing.T) {
 	}
 }
 
+func TestRenderEnginePropagatesPixelSurfaceContract(t *testing.T) {
+	r := NewRenderer("main")
+	cfg := engine.PixelSurface("RetroBoard", 160, 144,
+		engine.WithScaling(engine.ScaleFill),
+		engine.WithClearColor(1, 2, 3, 255),
+		engine.WithVSync(false),
+	)
+	cfg.WASMPath = "/gosx/engines/RetroBoard.wasm"
+
+	node := r.RenderEngine(cfg, gosx.Text("loading"))
+	html := gosx.RenderHTML(node)
+	if !strings.Contains(html, `data-gosx-pixel-width="160"`) {
+		t.Fatalf("expected pixel width contract, got %s", html)
+	}
+	if !strings.Contains(html, `data-gosx-pixel-height="144"`) {
+		t.Fatalf("expected pixel height contract, got %s", html)
+	}
+	if !strings.Contains(html, `data-gosx-pixel-scaling="fill"`) {
+		t.Fatalf("expected pixel scaling contract, got %s", html)
+	}
+
+	if len(r.Manifest().Engines) != 1 {
+		t.Fatalf("expected one engine entry, got %d", len(r.Manifest().Engines))
+	}
+	entry := r.Manifest().Engines[0]
+	if entry.PixelSurface == nil {
+		t.Fatal("expected pixel surface manifest entry")
+	}
+	if entry.PixelSurface.Width != 160 || entry.PixelSurface.Height != 144 {
+		t.Fatalf("unexpected pixel surface size: %#v", entry.PixelSurface)
+	}
+	if entry.PixelSurface.Scaling != engine.ScaleFill {
+		t.Fatalf("unexpected scaling: %q", entry.PixelSurface.Scaling)
+	}
+	if entry.PixelSurface.VSyncEnabled() {
+		t.Fatal("expected pixel surface vsync disabled")
+	}
+}
+
 func TestRenderWorkerEngineRegistersWithoutDOMShell(t *testing.T) {
 	r := NewRenderer("main")
 

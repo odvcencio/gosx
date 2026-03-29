@@ -8018,8 +8018,331 @@
     return entry && entry.runtime === "shared";
   }
 
-  function createEngineRuntime(entry) {
+  const pendingEngineRuntimes = new Map();
+
+  function pixelSurfaceCapabilityEnabled(entry) {
+    return Boolean(entry && Array.isArray(entry.capabilities) && entry.capabilities.includes("pixel-surface"));
+  }
+
+  function pixelSurfaceDimension(value, fallback) {
+    const num = Math.floor(Number(value));
+    return Number.isFinite(num) && num > 0 ? num : fallback;
+  }
+
+  function normalizePixelSurfaceScaling(value) {
+    const mode = String(value || "pixel-perfect").trim().toLowerCase();
+    switch (mode) {
+      case "fill":
+      case "stretch":
+        return mode;
+      default:
+        return "pixel-perfect";
+    }
+  }
+
+  function normalizePixelSurfaceClearColor(value) {
+    const color = Array.isArray(value) ? value : [0, 0, 0, 255];
+    const out = [0, 0, 0, 255];
+    for (let i = 0; i < out.length; i += 1) {
+      const num = Math.max(0, Math.min(255, Math.floor(Number(color[i])) || 0));
+      out[i] = num;
+    }
+    return out;
+  }
+
+  function pixelSurfaceBackgroundColor(clearColor) {
+    return "rgba(" + clearColor[0] + ", " + clearColor[1] + ", " + clearColor[2] + ", " + (clearColor[3] / 255) + ")";
+  }
+
+  function resolvePixelSurfaceConfig(entry, mount) {
+    if (!pixelSurfaceCapabilityEnabled(entry)) {
+      return null;
+    }
+    const source = entry && entry.pixelSurface && typeof entry.pixelSurface === "object" ? entry.pixelSurface : {};
+    const widthAttr = mount && typeof mount.getAttribute === "function" ? mount.getAttribute("data-gosx-pixel-width") : "";
+    const heightAttr = mount && typeof mount.getAttribute === "function" ? mount.getAttribute("data-gosx-pixel-height") : "";
+    const scalingAttr = mount && typeof mount.getAttribute === "function" ? mount.getAttribute("data-gosx-pixel-scaling") : "";
+    const width = pixelSurfaceDimension(source.width, pixelSurfaceDimension(widthAttr, 0));
+    const height = pixelSurfaceDimension(source.height, pixelSurfaceDimension(heightAttr, 0));
+    if (width <= 0 || height <= 0) {
+      return null;
+    }
+    return {
+      width,
+      height,
+      scaling: normalizePixelSurfaceScaling(source.scaling || scalingAttr),
+      clearColor: normalizePixelSurfaceClearColor(source.clearColor),
+      vsync: source.vsync !== false,
+    };
+  }
+
+  function pixelSurfaceLayout(config, mount) {
+    const rect = mount && typeof mount.getBoundingClientRect === "function" ? mount.getBoundingClientRect() : null;
+    const surfaceWidth = Math.max(1, pixelSurfaceDimension(rect && rect.width, pixelSurfaceDimension(mount && mount.width, config.width)));
+    const surfaceHeight = Math.max(1, pixelSurfaceDimension(rect && rect.height, pixelSurfaceDimension(mount && mount.height, config.height)));
+    let drawWidth = surfaceWidth;
+    let drawHeight = surfaceHeight;
+    let scaleX = surfaceWidth / config.width;
+    let scaleY = surfaceHeight / config.height;
+
+    switch (config.scaling) {
+      case "stretch":
+        break;
+      case "fill": {
+        const scale = Math.min(scaleX, scaleY);
+        drawWidth = config.width * scale;
+        drawHeight = config.height * scale;
+        scaleX = scale;
+        scaleY = scale;
+        break;
+      }
+      default: {
+        const scale = Math.max(1, Math.floor(Math.min(scaleX, scaleY)));
+        drawWidth = config.width * scale;
+        drawHeight = config.height * scale;
+        scaleX = scale;
+        scaleY = scale;
+        break;
+      }
+    }
+
+    return {
+      surfaceWidth,
+      surfaceHeight,
+      drawWidth,
+      drawHeight,
+      left: Math.max(0, (surfaceWidth - drawWidth) / 2),
+      top: Math.max(0, (surfaceHeight - drawHeight) / 2),
+      scaleX,
+      scaleY,
+    };
+  }
+
+  function pixelSurfaceWindowToPixel(windowX, windowY, mount, layout, config) {
+    const rect = mount && typeof mount.getBoundingClientRect === "function"
+      ? mount.getBoundingClientRect()
+      : { left: 0, top: 0 };
+    const localX = Number(windowX) - Number(rect.left || 0) - layout.left;
+    const localY = Number(windowY) - Number(rect.top || 0) - layout.top;
+    const pixelX = Math.floor(localX / Math.max(0.0001, layout.scaleX));
+    const pixelY = Math.floor(localY / Math.max(0.0001, layout.scaleY));
+    return {
+      x: pixelX,
+      y: pixelY,
+      inside: pixelX >= 0 && pixelX < config.width && pixelY >= 0 && pixelY < config.height,
+    };
+  }
+
+  function createPixelSurfaceRuntime(entry, mount) {
+    const config = resolvePixelSurfaceConfig(entry, mount);
+    if (!config || !mount || entry.kind !== "surface") {
+      return null;
+    }
+
+    const pixels = new Uint8ClampedArray(config.width * config.height * 4);
+    const fallbackChildren = mount && mount.childNodes ? Array.from(mount.childNodes) : [];
+    const initialPosition = mount && mount.style ? String(mount.style.position || "") : "";
+    const initialOverflow = mount && mount.style ? String(mount.style.overflow || "") : "";
+    const initialBackgroundColor = mount && mount.style ? String(mount.style.backgroundColor || "") : "";
+    let canvas = null;
+    let ctx2d = null;
+    let imageData = null;
+    let layout = null;
+    let resizeObserver = null;
+    let presentHandle = 0;
+    let disposed = false;
+
+    function restoreMountFallback() {
+      if (!mount) {
+        return;
+      }
+      if (canvas && canvas.parentNode === mount) {
+        mount.removeChild(canvas);
+      }
+      mount.removeAttribute("data-gosx-pixel-surface-mounted");
+      mount.style.position = initialPosition;
+      mount.style.overflow = initialOverflow;
+      mount.style.backgroundColor = initialBackgroundColor;
+      if (mount.childNodes && mount.childNodes.length === 0) {
+        for (const child of fallbackChildren) {
+          if (child && child.parentNode !== mount) {
+            mount.appendChild(child);
+          }
+        }
+      }
+    }
+
+    function ensureCanvas() {
+      if (disposed) {
+        return null;
+      }
+      if (canvas && ctx2d) {
+        return canvas;
+      }
+
+      const nextCanvas = document.createElement("canvas");
+      nextCanvas.setAttribute("data-gosx-pixel-surface", "true");
+      nextCanvas.setAttribute("width", String(config.width));
+      nextCanvas.setAttribute("height", String(config.height));
+      nextCanvas.width = config.width;
+      nextCanvas.height = config.height;
+      nextCanvas.style.position = "absolute";
+      nextCanvas.style.maxWidth = "none";
+      nextCanvas.style.maxHeight = "none";
+      nextCanvas.style.imageRendering = config.scaling === "pixel-perfect" ? "pixelated" : "auto";
+
+      const nextCtx2d = typeof nextCanvas.getContext === "function" ? nextCanvas.getContext("2d") : null;
+      if (!nextCtx2d) {
+        return null;
+      }
+      if ("imageSmoothingEnabled" in nextCtx2d) {
+        nextCtx2d.imageSmoothingEnabled = config.scaling !== "pixel-perfect";
+      }
+
+      canvas = nextCanvas;
+      ctx2d = nextCtx2d;
+      clearChildren(mount);
+      if (!mount.style.position) {
+        mount.style.position = "relative";
+      }
+      mount.style.overflow = "hidden";
+      mount.style.backgroundColor = pixelSurfaceBackgroundColor(config.clearColor);
+      mount.setAttribute("data-gosx-pixel-surface-mounted", "true");
+      mount.appendChild(canvas);
+      applyLayout();
+      if (!resizeObserver && typeof ResizeObserver === "function") {
+        resizeObserver = new ResizeObserver(function() {
+          applyLayout();
+        });
+        resizeObserver.observe(mount);
+      }
+      return canvas;
+    }
+
+    function applyLayout() {
+      if (!canvas) {
+        return null;
+      }
+      layout = pixelSurfaceLayout(config, mount);
+      canvas.style.left = layout.left + "px";
+      canvas.style.top = layout.top + "px";
+      canvas.style.width = layout.drawWidth + "px";
+      canvas.style.height = layout.drawHeight + "px";
+      return layout;
+    }
+
+    function copyPixelsIntoImageData() {
+      if (!ctx2d) {
+        return null;
+      }
+      if ((!imageData || imageData.width !== config.width || imageData.height !== config.height) && typeof ctx2d.createImageData === "function") {
+        imageData = ctx2d.createImageData(config.width, config.height);
+      }
+      if (imageData && imageData.data && typeof imageData.data.set === "function") {
+        imageData.data.set(pixels);
+        return imageData;
+      }
+      return {
+        width: config.width,
+        height: config.height,
+        data: pixels,
+      };
+    }
+
+    function drawNow() {
+      presentHandle = 0;
+      if (!ensureCanvas() || !ctx2d || typeof ctx2d.putImageData !== "function") {
+        return;
+      }
+      const data = copyPixelsIntoImageData();
+      if (!data) {
+        return;
+      }
+      ctx2d.putImageData(data, 0, 0);
+    }
+
+    function present() {
+      if (!ensureCanvas()) {
+        return api;
+      }
+      if (!config.vsync) {
+        drawNow();
+        return api;
+      }
+      if (!presentHandle) {
+        presentHandle = engineFrame(function() {
+          drawNow();
+        });
+      }
+      return api;
+    }
+
+    const api = {
+      id: entry.id,
+      width: config.width,
+      height: config.height,
+      stride: config.width * 4,
+      scaling: config.scaling,
+      clearColor: config.clearColor.slice(),
+      vsync: config.vsync,
+      pixels,
+      get mount() {
+        return mount;
+      },
+      get canvas() {
+        ensureCanvas();
+        return canvas;
+      },
+      get context() {
+        ensureCanvas();
+        return ctx2d;
+      },
+      clear() {
+        for (let i = 0; i < pixels.length; i += 4) {
+          pixels[i] = config.clearColor[0];
+          pixels[i + 1] = config.clearColor[1];
+          pixels[i + 2] = config.clearColor[2];
+          pixels[i + 3] = config.clearColor[3];
+        }
+        return api;
+      },
+      layout() {
+        ensureCanvas();
+        return applyLayout();
+      },
+      present,
+      toPixel(windowX, windowY) {
+        ensureCanvas();
+        const currentLayout = layout || applyLayout();
+        if (!currentLayout) {
+          return { x: 0, y: 0, inside: false };
+        }
+        return pixelSurfaceWindowToPixel(windowX, windowY, mount, currentLayout, config);
+      },
+      dispose() {
+        disposed = true;
+        if (presentHandle) {
+          cancelEngineFrame(presentHandle);
+          presentHandle = 0;
+        }
+        if (resizeObserver && typeof resizeObserver.disconnect === "function") {
+          resizeObserver.disconnect();
+        }
+        resizeObserver = null;
+        restoreMountFallback();
+        canvas = null;
+        ctx2d = null;
+        imageData = null;
+        layout = null;
+      },
+    };
+    api.clear();
+    return api;
+  }
+
+  function createEngineRuntime(entry, mount) {
     let programPromise = null;
+    let pixelSurface = undefined;
 
     async function loadProgram() {
       if (!entry.programRef) {
@@ -8032,6 +8355,13 @@
         });
       }
       return programPromise;
+    }
+
+    function frame() {
+      if (pixelSurface === undefined) {
+        pixelSurface = createPixelSurfaceRuntime(entry, mount);
+      }
+      return pixelSurface || null;
     }
 
     return {
@@ -8049,7 +8379,13 @@
       renderFrame(timeSeconds, width, height) {
         return renderSharedEngineFrame(entry, timeSeconds, width, height);
       },
+      frame,
+      pixelSurface: frame,
       dispose() {
+        const currentFrame = frame();
+        if (currentFrame && typeof currentFrame.dispose === "function") {
+          currentFrame.dispose();
+        }
         disposeSharedEngineRuntime(entry);
       },
     };
@@ -8205,7 +8541,7 @@
     return new Float32Array(0);
   }
 
-  function createEngineContext(entry, mount) {
+  function createEngineContext(entry, mount, runtime) {
     return {
       id: entry.id,
       kind: entry.kind,
@@ -8217,7 +8553,7 @@
       runtimeMode: entry.runtime || "",
       jsRef: entry.jsRef || "",
       jsExport: entry.jsExport || "",
-      runtime: createEngineRuntime(entry),
+      runtime: runtime,
       emit: function(name, detail) {
         if (typeof document.dispatchEvent === "function" && typeof CustomEvent === "function") {
           document.dispatchEvent(new CustomEvent("gosx:engine:" + name, {
@@ -8240,9 +8576,13 @@
 
     const mount = resolveEngineMount(entry);
     if (entry.kind === "surface" && !mount) return;
+    const runtime = createEngineRuntime(entry, mount);
+    const ctx = createEngineContext(entry, mount, runtime);
+    pendingEngineRuntimes.set(entry.id, runtime);
 
     const factory = await resolveMountedEngineFactory(entry);
     if (typeof factory !== "function") {
+      pendingEngineRuntimes.delete(entry.id);
       console.warn(`[gosx] no engine factory registered for ${entry.component}`);
       if (window.__gosx && typeof window.__gosx.reportIssue === "function") {
         window.__gosx.reportIssue({
@@ -8260,9 +8600,14 @@
     }
 
     try {
-      const mounted = await runEngineFactory(factory, entry, mount);
+      const mounted = await runEngineFactory(factory, ctx);
+      pendingEngineRuntimes.delete(entry.id);
       rememberMountedEngine(entry, mount, mounted.context, mounted.handle);
     } catch (e) {
+      pendingEngineRuntimes.delete(entry.id);
+      if (runtime && typeof runtime.dispose === "function") {
+        runtime.dispose();
+      }
       console.error(`[gosx] failed to mount engine ${entry.id}:`, e);
       if (window.__gosx && typeof window.__gosx.reportIssue === "function") {
         window.__gosx.reportIssue({
@@ -8313,8 +8658,7 @@
     return factory;
   }
 
-  async function runEngineFactory(factory, entry, mount) {
-    const ctx = createEngineContext(entry, mount);
+  async function runEngineFactory(factory, ctx) {
     let result = factory(ctx);
     if (result && typeof result.then === "function") {
       result = await result;
@@ -8505,6 +8849,16 @@
   };
 
   window.__gosx_dispose_engine = function(engineID) {
+    const pending = pendingEngineRuntimes.get(engineID);
+    if (pending && typeof pending.dispose === "function") {
+      try {
+        pending.dispose();
+      } catch (e) {
+        console.error(`[gosx] pending runtime dispose error for engine ${engineID}:`, e);
+      }
+    }
+    pendingEngineRuntimes.delete(engineID);
+
     const record = window.__gosx.engines.get(engineID);
     if (!record) return;
 
@@ -8527,6 +8881,18 @@
     }
 
     window.__gosx.engines.delete(engineID);
+  };
+
+  window.__gosx_engine_frame = function(engineID) {
+    const pending = pendingEngineRuntimes.get(engineID);
+    if (pending && typeof pending.frame === "function") {
+      return pending.frame();
+    }
+    const record = window.__gosx.engines.get(engineID);
+    if (!record || !record.runtime || typeof record.runtime.frame !== "function") {
+      return null;
+    }
+    return record.runtime.frame();
   };
 
   window.__gosx_disconnect_hub = function(hubID) {

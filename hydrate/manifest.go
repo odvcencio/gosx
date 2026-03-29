@@ -2,7 +2,11 @@
 // that connects server-rendered HTML to client-side WASM islands.
 package hydrate
 
-import "encoding/json"
+import (
+	"encoding/json"
+
+	"github.com/odvcencio/gosx/engine"
+)
 
 // Manifest describes all islands and engines on a page.
 type Manifest struct {
@@ -58,6 +62,11 @@ type EngineEntry struct {
 
 	// Capabilities declares what browser APIs the engine needs.
 	Capabilities []string `json:"capabilities,omitempty"`
+
+	// PixelSurface carries the managed pixel framebuffer config when the engine
+	// declares CapPixelSurface. The client runtime uses this to create the
+	// canvas, scaling pipeline, and frame buffer interface.
+	PixelSurface *engine.PixelSurfaceConfig `json:"pixelSurface,omitempty"`
 }
 
 // HubEntry describes a realtime hub connection for the page.
@@ -197,11 +206,12 @@ func (m *Manifest) AddIsland(component string, bundleID string, props any) (stri
 
 // AddEngine adds an engine entry and returns the assigned ID.
 func (m *Manifest) AddEngine(component, kind, programRef string, props any, capabilities []string) (string, error) {
-	return m.AddEngineWithRuntime(component, kind, programRef, "", "", "", "", props, capabilities)
+	return m.AddEngineWithRuntime(component, kind, programRef, "", "", "", "", props, capabilities, nil)
 }
 
-// AddEngineWithRuntime adds an engine entry with optional DOM mount and JS runtime metadata.
-func (m *Manifest) AddEngineWithRuntime(component, kind, programRef, mountID, jsRef, jsExport, runtime string, props any, capabilities []string) (string, error) {
+// AddEngineWithRuntime adds an engine entry with optional DOM mount, JS runtime
+// metadata, and pixel surface configuration.
+func (m *Manifest) AddEngineWithRuntime(component, kind, programRef, mountID, jsRef, jsExport, runtime string, props any, capabilities []string, pixelSurface *engine.PixelSurfaceConfig) (string, error) {
 	propsJSON, err := json.Marshal(props)
 	if err != nil {
 		return "", err
@@ -218,6 +228,7 @@ func (m *Manifest) AddEngineWithRuntime(component, kind, programRef, mountID, js
 		Runtime:      runtime,
 		Props:        propsJSON,
 		Capabilities: capabilities,
+		PixelSurface: pixelSurface,
 	}
 	m.Engines = append(m.Engines, entry)
 	return id, nil

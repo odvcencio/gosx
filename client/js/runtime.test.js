@@ -82,6 +82,8 @@ class FakeCanvasContext2D {
     this.fillStyle = "";
     this.strokeStyle = "";
     this.lineWidth = 1;
+    this.imageSmoothingEnabled = true;
+    this.lastImageData = null;
     this.ops = [];
   }
 
@@ -97,6 +99,22 @@ class FakeCanvasContext2D {
   scale(x, y) { this.ops.push(["scale", x, y]); }
   stroke() { this.ops.push(["stroke"]); }
   translate(x, y) { this.ops.push(["translate", x, y]); }
+  createImageData(width, height) {
+    const data = new Uint8ClampedArray(Math.max(0, width * height * 4));
+    const imageData = { width, height, data };
+    this.ops.push(["createImageData", width, height]);
+    return imageData;
+  }
+  putImageData(imageData, x, y) {
+    this.lastImageData = {
+      width: imageData && imageData.width,
+      height: imageData && imageData.height,
+      data: Uint8ClampedArray.from(imageData && imageData.data ? imageData.data : []),
+      x,
+      y,
+    };
+    this.ops.push(["putImageData", x, y, this.lastImageData.width, this.lastImageData.height]);
+  }
   measureText(text) {
     const value = String(text == null ? "" : text);
     this.ops.push(["measureText", this.font, value]);
@@ -935,6 +953,7 @@ function createContext(options) {
     Promise,
     Set,
     Uint8Array,
+    Uint8ClampedArray,
     clearTimeout,
     console: consoleSpy.console,
     CustomEvent: class CustomEvent {
@@ -2642,6 +2661,157 @@ test("bootstrap mounts registered surface engines without escape-hatch scripts",
   assert.equal(env.context.__gosx.engines.size, 0);
   assert.deepEqual(env.engineDisposals, ["gosx-engine-0"]);
   assert.equal(env.consoleLogs.warn.length, 0);
+});
+
+test("bootstrap exposes managed pixel surfaces to surface engines", async () => {
+  const mount = new FakeElement("div", null);
+  const fallback = new FakeElement("p", null);
+  fallback.textContent = "server fallback";
+  mount.id = "pixel-root";
+  mount.width = 320;
+  mount.height = 288;
+  mount.appendChild(fallback);
+
+  const env = createContext({
+    elements: [mount],
+    engineFactories: {
+      PixelBoard(ctx) {
+        const frameFromContext = ctx.runtime.pixelSurface();
+        const frameFromGlobal = env.context.__gosx_engine_frame(ctx.id);
+        env.engineMounts.push({
+          id: ctx.id,
+          sameFrame: frameFromContext === frameFromGlobal,
+          width: frameFromContext.width,
+          height: frameFromContext.height,
+          scaling: frameFromContext.scaling,
+          inside: frameFromContext.toPixel(64, 72).inside,
+          pixel: frameFromContext.toPixel(64, 72),
+        });
+        frameFromContext.pixels[0] = 17;
+        frameFromContext.pixels[1] = 34;
+        frameFromContext.pixels[2] = 51;
+        frameFromContext.pixels[3] = 255;
+        frameFromContext.present();
+        return {
+          dispose() {
+            env.engineDisposals.push(ctx.id);
+          },
+        };
+      },
+    },
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-pixel",
+          component: "PixelBoard",
+          kind: "surface",
+          mountId: "pixel-root",
+          props: { mode: "retro" },
+          capabilities: ["pixel-surface", "canvas"],
+          pixelSurface: {
+            width: 160,
+            height: 144,
+            scaling: "fill",
+            clearColor: [3, 4, 5, 255],
+            vsync: false,
+          },
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  assert.equal(env.context.__gosx.engines.size, 1);
+  assert.deepEqual(JSON.parse(JSON.stringify(env.engineMounts)), [
+    {
+      id: "gosx-engine-pixel",
+      sameFrame: true,
+      width: 160,
+      height: 144,
+      scaling: "fill",
+      inside: true,
+      pixel: { x: 32, y: 36, inside: true },
+    },
+  ]);
+  assert.equal(mount.getAttribute("data-gosx-pixel-surface-mounted"), "true");
+  assert.equal(mount.style.backgroundColor, "rgba(3, 4, 5, 1)");
+  assert.equal(mount.children.length, 1);
+  assert.equal(mount.children[0].tagName, "CANVAS");
+  assert.equal(mount.children[0].getAttribute("data-gosx-pixel-surface"), "true");
+  assert.equal(mount.children[0].width, 160);
+  assert.equal(mount.children[0].height, 144);
+  assert.equal(mount.children[0].style.width, "320px");
+  assert.equal(mount.children[0].style.height, "288px");
+  const ctx2d = mount.children[0].getContext("2d");
+  assert.ok(ctx2d.ops.some((entry) => entry[0] === "putImageData" && entry[1] === 0 && entry[2] === 0));
+  assert.equal(Array.from(ctx2d.lastImageData.data.slice(0, 4)).join(","), "17,34,51,255");
+  const frame = env.context.__gosx_engine_frame("gosx-engine-pixel");
+  assert.equal(frame.width, 160);
+  assert.deepEqual(JSON.parse(JSON.stringify(frame.toPixel(64, 72))), { x: 32, y: 36, inside: true });
+
+  env.context.__gosx_dispose_engine("gosx-engine-pixel");
+  assert.equal(env.context.__gosx.engines.size, 0);
+  assert.equal(env.context.__gosx_engine_frame("gosx-engine-pixel"), null);
+  assert.deepEqual(env.engineDisposals, ["gosx-engine-pixel"]);
+  assert.equal(mount.getAttribute("data-gosx-pixel-surface-mounted"), null);
+  assert.equal(mount.children.length, 1);
+  assert.equal(mount.children[0], fallback);
+  assert.equal(mount.children[0].textContent, "server fallback");
+});
+
+test("bootstrap restores server fallback when pixel-surface engine mount fails", async () => {
+  const mount = new FakeElement("div", null);
+  const fallback = new FakeElement("p", null);
+  fallback.textContent = "loading";
+  mount.id = "broken-pixel-root";
+  mount.width = 320;
+  mount.height = 288;
+  mount.appendChild(fallback);
+
+  const env = createContext({
+    elements: [mount],
+    engineFactories: {
+      BrokenPixel(ctx) {
+        const frame = ctx.runtime.frame();
+        frame.present();
+        throw new Error("boom");
+      },
+    },
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-broken-pixel",
+          component: "BrokenPixel",
+          kind: "surface",
+          mountId: "broken-pixel-root",
+          capabilities: ["pixel-surface", "canvas"],
+          pixelSurface: {
+            width: 160,
+            height: 144,
+            scaling: "fill",
+            vsync: false,
+          },
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  assert.equal(env.context.__gosx.engines.size, 0);
+  assert.equal(env.context.__gosx_engine_frame("gosx-engine-broken-pixel"), null);
+  assert.equal(mount.getAttribute("data-gosx-runtime-state"), "error");
+  assert.equal(mount.getAttribute("data-gosx-runtime-issue"), "mount");
+  assert.equal(mount.getAttribute("data-gosx-fallback-active"), "server");
+  assert.equal(mount.getAttribute("data-gosx-pixel-surface-mounted"), null);
+  assert.equal(mount.children.length, 1);
+  assert.equal(mount.children[0], fallback);
+  assert.equal(mount.children[0].textContent, "loading");
+  const issues = env.context.__gosx.listIssues();
+  assert.equal(issues.some((issue) => issue.scope === "engine" && issue.type === "mount" && issue.source === "gosx-engine-broken-pixel"), true);
 });
 
 test("bootstrap batches keyboard and pointer input for capable engines", async () => {
