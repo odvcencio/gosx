@@ -17,6 +17,7 @@
   const FORM_ATTR = "data-gosx-form";
   const FORM_MODE_ATTR = "data-gosx-form-mode";
   const FORM_STATE_ATTR = "data-gosx-form-state";
+  const FORM_PENDING_ATTR = "data-gosx-pending";
   const PREFETCH_ATTR = "data-gosx-prefetch";
   const NAV_STATE_ATTR = "data-gosx-navigation-state";
   const NAV_CURRENT_PATH_ATTR = "data-gosx-navigation-current-path";
@@ -437,21 +438,25 @@
   }
 
   function dispatchNavigationState(reason) {
-    if (typeof document.dispatchEvent !== "function" || typeof CustomEvent !== "function") {
-      return;
-    }
-    document.dispatchEvent(new CustomEvent("gosx:navigation:state", {
+    dispatchManagedEvent("gosx:navigation:state", {
       detail: {
         reason: reason || "navigation",
         state: currentNavigationSnapshot(),
       },
-    }));
+    });
   }
 
   function setNavigationState(next, reason) {
     navigationState = Object.assign({}, navigationState, next || {});
     applyNavigationState();
     dispatchNavigationState(reason);
+  }
+
+  function dispatchManagedEvent(type, init) {
+    if (typeof document.dispatchEvent !== "function" || typeof CustomEvent !== "function") {
+      return;
+    }
+    document.dispatchEvent(new CustomEvent(type, init || {}));
   }
 
   function linkPrefetchMode(anchor) {
@@ -966,6 +971,105 @@
     return String(token);
   }
 
+  function captureManagedFormState(form) {
+    if (!form || !form.getAttribute) {
+      return { pending: null, state: null };
+    }
+    return {
+      pending: form.getAttribute(FORM_PENDING_ATTR),
+      state: form.getAttribute(FORM_STATE_ATTR),
+    };
+  }
+
+  function setManagedFormPending(form) {
+    if (!form || !form.setAttribute) {
+      return;
+    }
+    form.setAttribute(FORM_PENDING_ATTR, "true");
+    form.setAttribute(FORM_STATE_ATTR, "pending");
+  }
+
+  function restoreManagedFormState(form, snapshot) {
+    if (!form) {
+      return;
+    }
+    const previous = snapshot || { pending: null, state: null };
+    if (previous.pending == null) {
+      if (form.removeAttribute) {
+        form.removeAttribute(FORM_PENDING_ATTR);
+      }
+    } else if (form.setAttribute) {
+      form.setAttribute(FORM_PENDING_ATTR, previous.pending);
+    }
+    if (previous.state == null) {
+      if (form.setAttribute) {
+        form.setAttribute(FORM_STATE_ATTR, "idle");
+      }
+    } else if (form.setAttribute) {
+      form.setAttribute(FORM_STATE_ATTR, previous.state);
+    }
+  }
+
+  function dispatchManagedFormNavigate(action, method) {
+    dispatchManagedEvent("gosx:form:navigate", {
+      detail: {
+        action: action,
+        method: method,
+      },
+    });
+  }
+
+  function dispatchManagedFormResult(action, method, response, result) {
+    dispatchManagedEvent("gosx:form:result", {
+      detail: {
+        action: action,
+        method: method,
+        ok: !!(response && response.ok),
+        status: response ? response.status : 0,
+        result: result,
+      },
+    });
+  }
+
+  async function parseJSONResponse(response) {
+    try {
+      return await response.json();
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function applyManagedFormData(result) {
+    if (result && result.data && typeof window.__gosx_set_input_batch === "function") {
+      window.__gosx_set_input_batch(JSON.stringify(result.data));
+    }
+  }
+
+  async function submitManagedGetForm(url, method, formData) {
+    await navigate(formNavigationURL(url, formData).href, { replace: false });
+    dispatchManagedFormNavigate(url.href, method);
+  }
+
+  async function submitManagedActionForm(url, method, formData) {
+    const csrfToken = formCSRFToken(formData);
+    const response = await fetch(url.href, {
+      method: method,
+      headers: {
+        Accept: "application/json",
+        "X-Requested-With": "XMLHttpRequest",
+        ...(csrfToken ? { "X-CSRF-Token": csrfToken } : {}),
+      },
+      body: formData,
+      redirect: "follow",
+    });
+    const result = await parseJSONResponse(response);
+    applyManagedFormData(result);
+    if (result && result.redirect) {
+      await navigate(new URL(result.redirect, window.location.href).href, { replace: false });
+    }
+    dispatchManagedFormResult(url.href, method, response, result);
+  }
+
   async function submitForm(form, submitter) {
     if (!form) return;
 
@@ -973,79 +1077,22 @@
     const action = formSubmissionAction(form, submitter) || window.location.href;
     const url = new URL(action, window.location.href);
     const formData = serializeForm(form, submitter);
-    const previousPending = form.getAttribute("data-gosx-pending");
-    const previousState = form.getAttribute(FORM_STATE_ATTR);
+    const previous = captureManagedFormState(form);
 
-    form.setAttribute("data-gosx-pending", "true");
-    form.setAttribute(FORM_STATE_ATTR, "pending");
+    setManagedFormPending(form);
 
     try {
       if (method === "GET") {
-        await navigate(formNavigationURL(url, formData).href, { replace: false });
-        if (typeof document.dispatchEvent === "function" && typeof CustomEvent === "function") {
-          document.dispatchEvent(new CustomEvent("gosx:form:navigate", {
-            detail: {
-              action: url.href,
-              method: method,
-            },
-          }));
-        }
+        await submitManagedGetForm(url, method, formData);
         return;
       }
-
-      const csrfToken = formCSRFToken(formData);
-      const response = await fetch(url.href, {
-        method: method,
-        headers: {
-          Accept: "application/json",
-          "X-Requested-With": "XMLHttpRequest",
-          ...(csrfToken ? { "X-CSRF-Token": csrfToken } : {}),
-        },
-        body: formData,
-        redirect: "follow",
-      });
-
-      let result = null;
-      try {
-        result = await response.json();
-      } catch (_) {
-        result = null;
-      }
-
-      if (result && result.data && typeof window.__gosx_set_input_batch === "function") {
-        window.__gosx_set_input_batch(JSON.stringify(result.data));
-      }
-
-      if (result && result.redirect) {
-        await navigate(new URL(result.redirect, window.location.href).href, { replace: false });
-      }
-
-      if (typeof document.dispatchEvent === "function" && typeof CustomEvent === "function") {
-        document.dispatchEvent(new CustomEvent("gosx:form:result", {
-          detail: {
-            action: url.href,
-            method: method,
-            ok: response.ok,
-            status: response.status,
-            result: result,
-          },
-        }));
-      }
+      await submitManagedActionForm(url, method, formData);
     } catch (err) {
       console.error("[gosx] form action failed:", err);
       nativeSubmitForm(form, submitter);
       return;
     } finally {
-      if (previousPending == null) {
-        form.removeAttribute("data-gosx-pending");
-      } else {
-        form.setAttribute("data-gosx-pending", previousPending);
-      }
-      if (previousState == null) {
-        form.setAttribute(FORM_STATE_ATTR, "idle");
-      } else {
-        form.setAttribute(FORM_STATE_ATTR, previousState);
-      }
+      restoreManagedFormState(form, previous);
     }
   }
 
@@ -1144,59 +1191,87 @@
 
   async function navigate(url, options) {
     const opts = options || {};
+    startNavigation(url);
+    try {
+      const page = await resolveNavigationPage(url);
+      await applyNavigatedPage(page.nextDoc, page.nextURL, !!opts.replace);
+      completeNavigation(page.nextURL);
+      finalizeNavigation(page.nextURL, opts, resolveNavigationA11y(page.nextURL));
+    } catch (err) {
+      failNavigation();
+      throw err;
+    }
+  }
+
+  function startNavigation(url) {
     setNavigationState({
       phase: "pending",
       pendingURL: String(url || ""),
     }, "navigate:start");
-    try {
-      const page = await fetchPage(url);
-      const nextURL = page.url || url;
-      const html = page.html;
-      const nextDoc = parseDocument(html);
+  }
 
-      await disposeCurrentPage();
-      await replaceManagedHead(nextDoc, nextURL);
-      replaceBody(nextDoc, nextURL);
-      updateHistory(nextURL, !!opts.replace);
+  function completeNavigation(url) {
+    setNavigationState({
+      phase: "idle",
+      currentURL: String(url),
+      pendingURL: "",
+    }, "navigate:complete");
+    prefetchManagedLinks("render");
+  }
 
-      const bootstrapLoadedNow = await ensureManagedScripts(nextDoc, nextURL);
-      await bootstrapCurrentPage(bootstrapLoadedNow);
+  function failNavigation() {
+    setNavigationState({
+      phase: "idle",
+      pendingURL: "",
+    }, "navigate:error");
+  }
 
-      setNavigationState({
-        phase: "idle",
-        currentURL: String(nextURL),
-        pendingURL: "",
-      }, "navigate:complete");
-      prefetchManagedLinks("render");
+  async function resolveNavigationPage(url) {
+    const page = await fetchPage(url);
+    const nextURL = page.url || url;
+    return {
+      nextURL: nextURL,
+      nextDoc: parseDocument(page.html),
+    };
+  }
 
-      const a11y = resolveNavigationA11y(nextURL);
-      if (!opts.preserveScroll) {
-        if (a11y.hashTarget && typeof a11y.hashTarget.scrollIntoView === "function") {
-          a11y.hashTarget.scrollIntoView();
-        } else if (typeof window.scrollTo === "function") {
-          window.scrollTo(0, 0);
-        }
-      }
-      focusElement(a11y.focusTarget, true);
-      const announcement = announceNavigation(a11y.announcement);
+  async function applyNavigatedPage(nextDoc, nextURL, replace) {
+    await disposeCurrentPage();
+    await replaceManagedHead(nextDoc, nextURL);
+    replaceBody(nextDoc, nextURL);
+    updateHistory(nextURL, !!replace);
+    const bootstrapLoadedNow = await ensureManagedScripts(nextDoc, nextURL);
+    await bootstrapCurrentPage(bootstrapLoadedNow);
+  }
 
-      if (typeof document.dispatchEvent === "function" && typeof CustomEvent === "function") {
-        document.dispatchEvent(new CustomEvent("gosx:navigate", {
-          detail: {
-            announcement: announcement,
-            focusTargetId: a11y.focusTarget && a11y.focusTarget.getAttribute ? (a11y.focusTarget.getAttribute("id") || "") : "",
-            url: nextURL,
-            replace: !!opts.replace,
-          },
-        }));
-      }
-    } catch (err) {
-      setNavigationState({
-        phase: "idle",
-        pendingURL: "",
-      }, "navigate:error");
-      throw err;
+  function applyNavigationScroll(a11y, preserveScroll) {
+    if (preserveScroll) {
+      return;
     }
+    if (a11y.hashTarget && typeof a11y.hashTarget.scrollIntoView === "function") {
+      a11y.hashTarget.scrollIntoView();
+    } else if (typeof window.scrollTo === "function") {
+      window.scrollTo(0, 0);
+    }
+  }
+
+  function dispatchNavigate(url, replace, announcement, focusTarget) {
+    dispatchManagedEvent("gosx:navigate", {
+      detail: {
+        announcement: announcement,
+        focusTargetId: focusTarget && focusTarget.getAttribute ? (focusTarget.getAttribute("id") || "") : "",
+        url: url,
+        replace: !!replace,
+      },
+    });
+  }
+
+  function finalizeNavigation(url, options, a11y) {
+    const opts = options || {};
+    applyNavigationScroll(a11y, !!opts.preserveScroll);
+    focusElement(a11y.focusTarget, true);
+    const announcement = announceNavigation(a11y.announcement);
+    dispatchNavigate(url, opts.replace, announcement, a11y.focusTarget);
   }
 
   function onClick(event) {
