@@ -40,24 +40,44 @@ type TextBlockAttr struct {
 // TextBlockAttrs returns the HTML attributes required for a managed text block.
 func TextBlockAttrs(props TextBlockProps) []TextBlockAttr {
 	props = normalizeTextBlockProps(props, "")
-	state := "pending"
-	if props.HeightHint > 0 || props.LineCountHint > 0 {
-		state = "hint"
-	}
-	attrs := []TextBlockAttr{
+	attrs := textBlockBaseAttrs(props)
+	attrs = appendTextBlockFontAttrs(attrs, props)
+	attrs = appendTextBlockLocaleAttrs(attrs, props)
+	attrs = appendTextBlockPresentationAttrs(attrs, props)
+	attrs = appendTextBlockConstraintAttrs(attrs, props)
+	attrs = appendTextBlockHintAttrs(attrs, props)
+	attrs = appendTextBlockObservationAttrs(attrs, props)
+	return attrs
+}
+
+func textBlockBaseAttrs(props TextBlockProps) []TextBlockAttr {
+	return []TextBlockAttr{
 		{Name: textBlockAttr, Bool: true},
 		{Name: "data-gosx-enhance", Value: "text-layout"},
 		{Name: "data-gosx-enhance-layer", Value: "bootstrap"},
 		{Name: "data-gosx-fallback", Value: "html"},
 		{Name: "data-gosx-text-layout-role", Value: "block"},
 		{Name: "data-gosx-text-layout-surface", Value: "dom"},
-		{Name: "data-gosx-text-layout-state", Value: state},
+		{Name: "data-gosx-text-layout-state", Value: textBlockState(props)},
 		{Name: "data-gosx-text-layout-ready", Value: "false"},
 	}
+}
 
+func textBlockState(props TextBlockProps) string {
+	if props.HeightHint > 0 || props.LineCountHint > 0 {
+		return "hint"
+	}
+	return "pending"
+}
+
+func appendTextBlockFontAttrs(attrs []TextBlockAttr, props TextBlockProps) []TextBlockAttr {
 	if font := strings.TrimSpace(props.Font); font != "" {
 		attrs = append(attrs, TextBlockAttr{Name: "data-gosx-text-layout-font", Value: font})
 	}
+	return attrs
+}
+
+func appendTextBlockLocaleAttrs(attrs []TextBlockAttr, props TextBlockProps) []TextBlockAttr {
 	if lang := strings.TrimSpace(props.Lang); lang != "" {
 		attrs = append(attrs,
 			TextBlockAttr{Name: "lang", Value: lang},
@@ -70,6 +90,10 @@ func TextBlockAttrs(props TextBlockProps) []TextBlockAttr {
 			TextBlockAttr{Name: "data-gosx-text-layout-direction", Value: direction},
 		)
 	}
+	return attrs
+}
+
+func appendTextBlockPresentationAttrs(attrs []TextBlockAttr, props TextBlockProps) []TextBlockAttr {
 	if align := normalizeTextBlockAlign(props.Align); align != "" {
 		attrs = append(attrs,
 			TextBlockAttr{Name: "data-gosx-text-layout-align", Value: align},
@@ -79,6 +103,10 @@ func TextBlockAttrs(props TextBlockProps) []TextBlockAttr {
 	if ws := normalizeTextBlockWhiteSpace(props.WhiteSpace); ws != "" && ws != string(textlayout.WhiteSpaceNormal) {
 		attrs = append(attrs, TextBlockAttr{Name: "data-gosx-text-layout-white-space", Value: ws})
 	}
+	return attrs
+}
+
+func appendTextBlockConstraintAttrs(attrs []TextBlockAttr, props TextBlockProps) []TextBlockAttr {
 	if props.LineHeight > 0 {
 		attrs = append(attrs, TextBlockAttr{Name: "data-gosx-text-layout-line-height", Value: formatTextBlockFloat(props.LineHeight)})
 	}
@@ -89,19 +117,26 @@ func TextBlockAttrs(props TextBlockProps) []TextBlockAttr {
 		attrs = append(attrs, TextBlockAttr{Name: "data-gosx-text-layout-max-lines", Value: strconv.Itoa(props.MaxLines)})
 		attrs = append(attrs, TextBlockAttr{Name: "data-gosx-text-layout-overflow", Value: normalizeTextBlockOverflow(props.Overflow)})
 	}
+	return attrs
+}
+
+func appendTextBlockHintAttrs(attrs []TextBlockAttr, props TextBlockProps) []TextBlockAttr {
 	if props.HeightHint > 0 {
 		attrs = append(attrs, TextBlockAttr{Name: "data-gosx-text-layout-height-hint", Value: formatTextBlockFloat(props.HeightHint)})
 	}
 	if props.LineCountHint > 0 {
 		attrs = append(attrs, TextBlockAttr{Name: "data-gosx-text-layout-line-count-hint", Value: strconv.Itoa(props.LineCountHint)})
 	}
+	return attrs
+}
+
+func appendTextBlockObservationAttrs(attrs []TextBlockAttr, props TextBlockProps) []TextBlockAttr {
 	if props.Static {
 		attrs = append(attrs, TextBlockAttr{Name: "data-gosx-text-layout-observe", Value: "false"})
 	}
 	if source := props.Source; source != "" {
 		attrs = append(attrs, TextBlockAttr{Name: "data-gosx-text-layout-source", Value: source})
 	}
-
 	return attrs
 }
 

@@ -152,46 +152,42 @@ func mergeFileRouteCacheConfig(base, next *FileRouteCacheConfig) *FileRouteCache
 	if next == nil {
 		return merged
 	}
-	if next.Public != nil {
-		merged.Public = cloneBoolPointer(next.Public)
-		if *next.Public {
-			merged.Private = boolPointer(false)
-		}
-	}
-	if next.Private != nil {
-		merged.Private = cloneBoolPointer(next.Private)
-		if *next.Private {
-			merged.Public = boolPointer(false)
-		}
-	}
-	if next.NoStore != nil {
-		merged.NoStore = cloneBoolPointer(next.NoStore)
-	}
-	if next.NoCache != nil {
-		merged.NoCache = cloneBoolPointer(next.NoCache)
-	}
-	if next.MaxAge != "" {
-		merged.MaxAge = next.MaxAge
-	}
-	if next.SMaxAge != "" {
-		merged.SMaxAge = next.SMaxAge
-	}
-	if next.StaleWhileRevalidate != "" {
-		merged.StaleWhileRevalidate = next.StaleWhileRevalidate
-	}
-	if next.StaleIfError != "" {
-		merged.StaleIfError = next.StaleIfError
-	}
-	if next.MustRevalidate != nil {
-		merged.MustRevalidate = cloneBoolPointer(next.MustRevalidate)
-	}
-	if next.Immutable != nil {
-		merged.Immutable = cloneBoolPointer(next.Immutable)
-	}
+	overrideExclusiveCacheBool(&merged.Public, &merged.Private, next.Public)
+	overrideExclusiveCacheBool(&merged.Private, &merged.Public, next.Private)
+	overrideCacheBool(&merged.NoStore, next.NoStore)
+	overrideCacheBool(&merged.NoCache, next.NoCache)
+	overrideCacheString(&merged.MaxAge, next.MaxAge)
+	overrideCacheString(&merged.SMaxAge, next.SMaxAge)
+	overrideCacheString(&merged.StaleWhileRevalidate, next.StaleWhileRevalidate)
+	overrideCacheString(&merged.StaleIfError, next.StaleIfError)
+	overrideCacheBool(&merged.MustRevalidate, next.MustRevalidate)
+	overrideCacheBool(&merged.Immutable, next.Immutable)
 	if !merged.hasValues() {
 		return nil
 	}
 	return merged
+}
+
+func overrideExclusiveCacheBool(dst, opposite **bool, next *bool) {
+	if next == nil {
+		return
+	}
+	*dst = cloneBoolPointer(next)
+	if *next {
+		*opposite = boolPointer(false)
+	}
+}
+
+func overrideCacheBool(dst **bool, next *bool) {
+	if next != nil {
+		*dst = cloneBoolPointer(next)
+	}
+}
+
+func overrideCacheString(dst *string, next string) {
+	if next != "" {
+		*dst = next
+	}
 }
 
 func cloneFileRouteCacheConfig(src *FileRouteCacheConfig) *FileRouteCacheConfig {
@@ -216,40 +212,55 @@ func (c FileRouteConfig) cachePolicy() (server.CachePolicy, bool, error) {
 	if c.Cache == nil || !c.Cache.hasValues() {
 		return server.CachePolicy{}, false, nil
 	}
-	policy := server.CachePolicy{}
-	if c.Cache.Public != nil {
-		policy.Public = *c.Cache.Public
+	policy := cachePolicyFromFileRouteCacheConfig(c.Cache)
+	if err := applyFileRouteDuration(&policy.MaxAge, c.Cache.MaxAge, "cache.maxAge"); err != nil {
+		return server.CachePolicy{}, true, err
 	}
-	if c.Cache.Private != nil {
-		policy.Private = *c.Cache.Private
+	if err := applyFileRouteDuration(&policy.SMaxAge, c.Cache.SMaxAge, "cache.sMaxAge"); err != nil {
+		return server.CachePolicy{}, true, err
 	}
-	if c.Cache.NoStore != nil {
-		policy.NoStore = *c.Cache.NoStore
+	if err := applyFileRouteDuration(&policy.StaleWhileRevalidate, c.Cache.StaleWhileRevalidate, "cache.staleWhileRevalidate"); err != nil {
+		return server.CachePolicy{}, true, err
 	}
-	if c.Cache.NoCache != nil {
-		policy.NoCache = *c.Cache.NoCache
-	}
-	if c.Cache.MustRevalidate != nil {
-		policy.MustRevalidate = *c.Cache.MustRevalidate
-	}
-	if c.Cache.Immutable != nil {
-		policy.Immutable = *c.Cache.Immutable
-	}
-
-	var err error
-	if policy.MaxAge, err = parseFileRouteDuration(c.Cache.MaxAge); err != nil {
-		return server.CachePolicy{}, true, fmt.Errorf("cache.maxAge: %w", err)
-	}
-	if policy.SMaxAge, err = parseFileRouteDuration(c.Cache.SMaxAge); err != nil {
-		return server.CachePolicy{}, true, fmt.Errorf("cache.sMaxAge: %w", err)
-	}
-	if policy.StaleWhileRevalidate, err = parseFileRouteDuration(c.Cache.StaleWhileRevalidate); err != nil {
-		return server.CachePolicy{}, true, fmt.Errorf("cache.staleWhileRevalidate: %w", err)
-	}
-	if policy.StaleIfError, err = parseFileRouteDuration(c.Cache.StaleIfError); err != nil {
-		return server.CachePolicy{}, true, fmt.Errorf("cache.staleIfError: %w", err)
+	if err := applyFileRouteDuration(&policy.StaleIfError, c.Cache.StaleIfError, "cache.staleIfError"); err != nil {
+		return server.CachePolicy{}, true, err
 	}
 	return policy, true, nil
+}
+
+func cachePolicyFromFileRouteCacheConfig(cache *FileRouteCacheConfig) server.CachePolicy {
+	if cache == nil {
+		return server.CachePolicy{}
+	}
+	policy := server.CachePolicy{}
+	if cache.Public != nil {
+		policy.Public = *cache.Public
+	}
+	if cache.Private != nil {
+		policy.Private = *cache.Private
+	}
+	if cache.NoStore != nil {
+		policy.NoStore = *cache.NoStore
+	}
+	if cache.NoCache != nil {
+		policy.NoCache = *cache.NoCache
+	}
+	if cache.MustRevalidate != nil {
+		policy.MustRevalidate = *cache.MustRevalidate
+	}
+	if cache.Immutable != nil {
+		policy.Immutable = *cache.Immutable
+	}
+	return policy
+}
+
+func applyFileRouteDuration(dst *time.Duration, value, field string) error {
+	parsed, err := parseFileRouteDuration(value)
+	if err != nil {
+		return fmt.Errorf("%s: %w", field, err)
+	}
+	*dst = parsed
+	return nil
 }
 
 // CachePolicy exposes the resolved cache policy for a file-route config.
