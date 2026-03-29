@@ -518,8 +518,14 @@ func (vm *VM) EvalTree() *ResolvedTree {
 }
 
 func (vm *VM) resolveNode(node program.Node) ResolvedNode {
+	return vm.resolveNodeWithSource(-1, node)
+}
+
+func (vm *VM) resolveNodeWithSource(source int, node program.Node) ResolvedNode {
 	rn := ResolvedNode{
-		Tag: node.Tag,
+		Source:    source,
+		HasSource: source >= 0,
+		Tag:       node.Tag,
 	}
 
 	switch node.Kind {
@@ -528,7 +534,7 @@ func (vm *VM) resolveNode(node program.Node) ResolvedNode {
 	case program.NodeExpr:
 		rn.Text = vm.Eval(node.Expr).String()
 	case program.NodeElement:
-		vm.resolveElementNode(&rn, node)
+		vm.resolveElementNode(&rn, source, node)
 	}
 
 	return rn
@@ -564,7 +570,7 @@ func (vm *VM) appendResolvedNode(tree *ResolvedTree, source int, node program.No
 	case program.NodeExpr:
 		tree.Nodes[idx].Text = vm.Eval(node.Expr).String()
 	case program.NodeElement:
-		vm.resolveElementNode(&tree.Nodes[idx], node)
+		vm.resolveElementNode(&tree.Nodes[idx], source, node)
 		tree.Nodes[idx].Children = vm.resolveChildren(tree, node.Children)
 	}
 
@@ -579,7 +585,7 @@ func (vm *VM) resolveChildren(tree *ResolvedTree, children []program.NodeID) []i
 	return resolved
 }
 
-func (vm *VM) resolveElementNode(rn *ResolvedNode, node program.Node) {
+func (vm *VM) resolveElementNode(rn *ResolvedNode, source int, node program.Node) {
 	attrs, key, explicitKey, events := vm.resolveElementAttrs(node.Attrs)
 	rn.Attrs = attrs
 	rn.DOMAttrs = materializeDOMAttrs(attrs, events)
@@ -588,7 +594,7 @@ func (vm *VM) resolveElementNode(rn *ResolvedNode, node program.Node) {
 	if explicitKey {
 		return
 	}
-	if autoKey, ok := vm.autoKey(node.Tag, attrs); ok {
+	if autoKey, ok := vm.autoKey(source, node.Tag); ok {
 		rn.Key = autoKey
 	}
 }
@@ -624,24 +630,16 @@ func (vm *VM) resolveElementAttrs(attrs []program.Attr) ([]ResolvedAttr, string,
 	return resolved, key, explicitKey, events
 }
 
-func (vm *VM) autoKey(tag string, attrs []ResolvedAttr) (string, bool) {
+func (vm *VM) autoKey(source int, tag string) (string, bool) {
 	keyVal, hasKey := vm.props["_key"]
 	if hasKey {
-		fingerprint := fmt.Sprintf("_auto_%s_%s", keyVal.String(), tag)
-		if len(attrs) > 0 {
-			fingerprint += "_" + attrs[0].Value
-		}
-		return fingerprint, true
+		return fmt.Sprintf("_auto_%s_%s_%d", keyVal.String(), tag, source), true
 	}
 	idxVal, hasIndex := vm.props["_index"]
 	if !hasIndex {
 		return "", false
 	}
-	fingerprint := fmt.Sprintf("_auto_%d_%s", int(idxVal.Num), tag)
-	if len(attrs) > 0 {
-		fingerprint += "_" + attrs[0].Value
-	}
-	return fingerprint, true
+	return fmt.Sprintf("_auto_%d_%s_%d", int(idxVal.Num), tag, source), true
 }
 
 type eachEntry struct {

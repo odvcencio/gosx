@@ -118,13 +118,21 @@ func childrenAreFullyKeyed(tree *ResolvedTree, node *ResolvedNode) bool {
 }
 
 func reconcileKeyedChildren(ops *[]PatchOp, prev, next *ResolvedTree, pn, nn *ResolvedNode, path string, staticMask []bool) {
-	prevByKey := buildPrevKeyIndex(prev, pn)
+	prevByKey, prevKeysUnique := buildPrevKeyIndex(prev, pn)
+	if !prevKeysUnique {
+		reconcilePositionalChildren(ops, prev, next, pn, nn, path, staticMask)
+		return
+	}
 	nextKeys := make(map[string]bool, len(nn.Children))
 	desiredOrder := make([]string, 0, len(nn.Children))
 
 	for _, childIdx := range nn.Children {
 		child := resolvedNodeAt(next, childIdx)
 		if child == nil || child.Key == "" {
+			reconcilePositionalChildren(ops, prev, next, pn, nn, path, staticMask)
+			return
+		}
+		if nextKeys[child.Key] {
 			reconcilePositionalChildren(ops, prev, next, pn, nn, path, staticMask)
 			return
 		}
@@ -175,16 +183,19 @@ func reconcileKeyedChildren(ops *[]PatchOp, prev, next *ResolvedTree, pn, nn *Re
 	}
 }
 
-func buildPrevKeyIndex(prev *ResolvedTree, node *ResolvedNode) map[string]keyedChildIndex {
+func buildPrevKeyIndex(prev *ResolvedTree, node *ResolvedNode) (map[string]keyedChildIndex, bool) {
 	byKey := make(map[string]keyedChildIndex, len(node.Children))
 	for i, childIdx := range node.Children {
 		child := resolvedNodeAt(prev, childIdx)
 		if child == nil || child.Key == "" {
 			continue
 		}
+		if _, exists := byKey[child.Key]; exists {
+			return nil, false
+		}
 		byKey[child.Key] = keyedChildIndex{position: i, nodeIdx: childIdx}
 	}
-	return byKey
+	return byKey, true
 }
 
 func removeMissingKeyedChildren(ops *[]PatchOp, prev *ResolvedTree, node *ResolvedNode, nextKeys map[string]bool, path string) {
