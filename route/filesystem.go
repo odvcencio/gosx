@@ -16,6 +16,7 @@ import (
 
 // FilePage describes a discovered file-based page route.
 type FilePage struct {
+	Root      string
 	FilePath  string
 	Source    string
 	Dir       string
@@ -523,8 +524,7 @@ func prepareFileRouteContext(ctx *RouteContext, page FilePage, module FileModule
 }
 
 func renderFilePage(ctx *RouteContext, page FilePage, module FileModule, renderFn FileRenderFunc) (gosx.Node, error) {
-	addFileCSSHead(ctx, page.Layouts...)
-	addFileCSSHead(ctx, page.FilePath)
+	addRouteFileCSSHead(ctx, page)
 	addFileMetadata(ctx, page.Layouts...)
 	addFileMetadata(ctx, page.FilePath)
 	if module.Metadata != nil {
@@ -584,11 +584,11 @@ func filePageFromPath(root, path string) (FilePage, string, error) {
 
 	switch name {
 	case "not-found":
-		return FilePage{FilePath: path, Source: slashRel, Dir: dir, RoutePath: scopeRoutePath, Pattern: scopePattern, Params: scopeParams}, "not_found", nil
+		return FilePage{Root: root, FilePath: path, Source: slashRel, Dir: dir, RoutePath: scopeRoutePath, Pattern: scopePattern, Params: scopeParams}, "not_found", nil
 	case "error":
-		return FilePage{FilePath: path, Source: slashRel, Dir: dir, RoutePath: scopeRoutePath, Pattern: scopePattern, Params: scopeParams}, "error", nil
+		return FilePage{Root: root, FilePath: path, Source: slashRel, Dir: dir, RoutePath: scopeRoutePath, Pattern: scopePattern, Params: scopeParams}, "error", nil
 	case "layout":
-		return FilePage{FilePath: path, Source: slashRel, Dir: dir, RoutePath: scopeRoutePath, Pattern: scopePattern, Params: scopeParams}, "layout", nil
+		return FilePage{Root: root, FilePath: path, Source: slashRel, Dir: dir, RoutePath: scopeRoutePath, Pattern: scopePattern, Params: scopeParams}, "layout", nil
 	}
 
 	parts := strings.Split(strings.TrimSuffix(slashRel, filepath.Ext(slashRel)), "/")
@@ -601,6 +601,7 @@ func filePageFromPath(root, path string) (FilePage, string, error) {
 
 	routePath, pattern, params := buildFileRoute(parts)
 	return FilePage{
+		Root:      root,
 		FilePath:  path,
 		Source:    slashRel,
 		Dir:       dir,

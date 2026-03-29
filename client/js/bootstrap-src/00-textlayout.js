@@ -1791,6 +1791,9 @@
 
     const style = document.createElement("style");
     style.setAttribute(TEXT_LAYOUT_STYLE_ATTR, "true");
+    style.setAttribute("data-gosx-css-layer", "runtime");
+    style.setAttribute("data-gosx-css-owner", "gosx-bootstrap");
+    style.setAttribute("data-gosx-css-source", "gosx-runtime");
     style.textContent = [
       '[data-gosx-scene3d-mounted="true"] {',
       '  position: relative;',
