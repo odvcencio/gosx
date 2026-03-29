@@ -297,6 +297,40 @@ func TestReconcileInputNonValueAttr(t *testing.T) {
 	}
 }
 
+func TestReconcileEventAttrsMaterializeFromResolvedNode(t *testing.T) {
+	prev := &ResolvedTree{Nodes: []ResolvedNode{
+		{Tag: "button"},
+	}}
+	next := &ResolvedTree{Nodes: []ResolvedNode{
+		{Tag: "button", Events: []ResolvedEvent{{Name: "click", Handler: "increment"}}},
+	}}
+
+	ops := ReconcileTrees(prev, next, []bool{false})
+	if len(ops) != 2 {
+		t.Fatalf("expected 2 attr set ops for click handler, got %d: %+v", len(ops), ops)
+	}
+
+	foundDelegated := false
+	foundLegacy := false
+	for _, op := range ops {
+		if op.Kind != PatchSetAttr {
+			t.Fatalf("expected PatchSetAttr, got %+v", op)
+		}
+		if op.AttrName == "data-gosx-on-click" && op.Text == "increment" {
+			foundDelegated = true
+		}
+		if op.AttrName == "data-gosx-handler" && op.Text == "increment" {
+			foundLegacy = true
+		}
+	}
+	if !foundDelegated || !foundLegacy {
+		t.Fatalf("expected delegated and legacy click attrs, got %+v", ops)
+	}
+	if len(next.Nodes[0].DOMAttrs) != 2 {
+		t.Fatalf("expected reconciler to cache DOM attrs, got %+v", next.Nodes[0].DOMAttrs)
+	}
+}
+
 // === Keyed Reconciliation Tests ===
 
 func TestReconcileKeyedReorder(t *testing.T) {
