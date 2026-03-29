@@ -389,6 +389,123 @@ func Page() Node {
 	}
 }
 
+func TestDefaultFileRendererPreservesExplicitManagedNavigationContractAttrs(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "page.gsx")
+	source := `package docs
+
+func Page() Node {
+	return <main>
+		<Link
+			href="/docs"
+			current="none"
+			data-gosx-link-state="warm"
+			data-gosx-prefetch-state="queued"
+			data-gosx-enhance="custom-nav"
+			data-gosx-enhance-layer="runtime"
+			data-gosx-fallback="server-link"
+			aria-current="step"
+		>Docs</Link>
+		<Form
+			method="post"
+			action="/save"
+			data-gosx-form-state="submitting"
+			data-gosx-enhance="custom-form"
+			data-gosx-enhance-layer="runtime"
+			data-gosx-fallback="server-form"
+		>
+			<input name="title" value="hello"></input>
+		</Form>
+	</main>
+}
+`
+	if err := os.WriteFile(path, []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	node, err := DefaultFileRenderer(&RouteContext{
+		Request: httptest.NewRequest(http.MethodGet, "/docs", nil),
+	}, FilePage{FilePath: path, Pattern: "/docs"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	html := gosx.RenderHTML(node)
+	for _, snippet := range []string{
+		`href="/docs"`,
+		`data-gosx-link`,
+		`data-gosx-link-state="warm"`,
+		`data-gosx-prefetch-state="queued"`,
+		`data-gosx-enhance="custom-nav"`,
+		`data-gosx-enhance-layer="runtime"`,
+		`data-gosx-fallback="server-link"`,
+		`data-gosx-link-current-policy="none"`,
+		`data-gosx-link-current="none"`,
+		`aria-current="step"`,
+		`data-gosx-form`,
+		`data-gosx-form-state="submitting"`,
+		`data-gosx-enhance="custom-form"`,
+		`data-gosx-enhance-layer="runtime"`,
+		`data-gosx-fallback="server-form"`,
+		`data-gosx-form-mode="post"`,
+	} {
+		if !strings.Contains(html, snippet) {
+			t.Fatalf("expected %q in rendered managed contract html %q", snippet, html)
+		}
+	}
+	if strings.Contains(html, `data-gosx-aria-current-managed="true"`) {
+		t.Fatalf("expected explicit aria-current to suppress managed aria marker in %q", html)
+	}
+}
+
+func TestDefaultFileRendererLeavesTargetedNativeFormsUnmanaged(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "page.gsx")
+	source := `package docs
+
+func Page() Node {
+	return <main>
+		<form method="get" action="/search" target="_blank" class="search-form">
+			<input name="q" value="docs"></input>
+		</form>
+	</main>
+}
+`
+	if err := os.WriteFile(path, []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	node, err := DefaultFileRenderer(&RouteContext{
+		Request: httptest.NewRequest(http.MethodGet, "/docs", nil),
+	}, FilePage{FilePath: path, Pattern: "/docs"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	html := gosx.RenderHTML(node)
+	for _, snippet := range []string{
+		`method="get"`,
+		`action="/search"`,
+		`target="_blank"`,
+		`class="search-form"`,
+	} {
+		if !strings.Contains(html, snippet) {
+			t.Fatalf("expected %q in rendered native form html %q", snippet, html)
+		}
+	}
+	for _, snippet := range []string{
+		`data-gosx-form`,
+		`data-gosx-form-mode`,
+		`data-gosx-form-state`,
+		`data-gosx-enhance="form"`,
+		`data-gosx-fallback="native-form"`,
+	} {
+		if strings.Contains(html, snippet) {
+			t.Fatalf("expected targeted native form to remain unmanaged, found %q in %q", snippet, html)
+		}
+	}
+}
+
 func TestDefaultFileRendererSupportsImageBuiltin(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "page.gsx")

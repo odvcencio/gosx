@@ -75,35 +75,15 @@ func (r *fileProgramRenderer) renderNode(nodeID ir.NodeID, env fileRenderEnv) st
 func (r *fileProgramRenderer) renderElement(node *ir.Node, env fileRenderEnv) string {
 	var b strings.Builder
 	tag := html.EscapeString(node.Tag)
-	formMode := ""
-	if strings.EqualFold(node.Tag, "form") {
-		formMode = fileAutoFormEnhancementMode(node.Attrs, env)
-	}
+	formContract := fileAutoManagedFormContract(node.Attrs, env, strings.EqualFold(node.Tag, "form"))
 	b.WriteByte('<')
 	b.WriteString(tag)
 	attrs := node.Attrs
-	if formMode != "" {
+	if formContract.Managed {
 		attrs = managedFormAttrs(node.Attrs)
 	}
 	r.renderAttrs(&b, attrs, env)
-	if formMode != "" && attrValue(node.Attrs, env, server.NavigationFormAttr) == nil {
-		b.WriteString(" " + server.NavigationFormAttr)
-	}
-	if formMode != "" {
-		fmt.Fprintf(&b, ` %s="%s"`, server.NavigationFormModeAttr, html.EscapeString(formMode))
-	}
-	if formMode != "" && attrValue(node.Attrs, env, server.NavigationFormStateAttr) == nil {
-		fmt.Fprintf(&b, ` %s="idle"`, server.NavigationFormStateAttr)
-	}
-	if formMode != "" && attrValue(node.Attrs, env, server.NavigationEnhanceAttr) == nil {
-		fmt.Fprintf(&b, ` %s="form"`, server.NavigationEnhanceAttr)
-	}
-	if formMode != "" && attrValue(node.Attrs, env, server.NavigationEnhanceLayerAttr) == nil {
-		fmt.Fprintf(&b, ` %s="bootstrap"`, server.NavigationEnhanceLayerAttr)
-	}
-	if formMode != "" && attrValue(node.Attrs, env, server.NavigationFallbackAttr) == nil {
-		fmt.Fprintf(&b, ` %s="native-form"`, server.NavigationFallbackAttr)
-	}
+	r.writeManagedFormContract(&b, node.Attrs, env, formContract)
 	if ir.VoidElements[node.Tag] {
 		b.WriteString(" />")
 		return b.String()
@@ -221,38 +201,9 @@ func (r *fileProgramRenderer) renderEach(node *ir.Node, env fileRenderEnv) strin
 func (r *fileProgramRenderer) renderLink(node *ir.Node, env fileRenderEnv) string {
 	var b strings.Builder
 	b.WriteString("<a")
-	hasNavAttr := attrValue(node.Attrs, env, server.NavigationLinkAttr) != nil
-	hasLinkStateAttr := attrValue(node.Attrs, env, server.NavigationLinkStateAttr) != nil
-	hasPrefetchStateAttr := attrValue(node.Attrs, env, server.NavigationLinkPrefetchStateAttr) != nil
-	hasAriaCurrent := attrValue(node.Attrs, env, "aria-current", "ariaCurrent") != nil
 	contract := fileManagedLinkContractForAttrs(node.Attrs, env)
 	r.renderLinkAttrs(&b, node.Attrs, env)
-	if !hasNavAttr {
-		b.WriteString(" " + server.NavigationLinkAttr)
-	}
-	if !hasLinkStateAttr {
-		fmt.Fprintf(&b, ` %s="idle"`, server.NavigationLinkStateAttr)
-	}
-	if attrValue(node.Attrs, env, server.NavigationEnhanceAttr) == nil {
-		fmt.Fprintf(&b, ` %s="navigation"`, server.NavigationEnhanceAttr)
-	}
-	if attrValue(node.Attrs, env, server.NavigationEnhanceLayerAttr) == nil {
-		fmt.Fprintf(&b, ` %s="bootstrap"`, server.NavigationEnhanceLayerAttr)
-	}
-	if attrValue(node.Attrs, env, server.NavigationFallbackAttr) == nil {
-		fmt.Fprintf(&b, ` %s="native-link"`, server.NavigationFallbackAttr)
-	}
-	fmt.Fprintf(&b, ` %s="%s"`, server.NavigationLinkCurrentPolicyAttr, html.EscapeString(contract.CurrentPolicy))
-	fmt.Fprintf(&b, ` %s="%s"`, server.NavigationLinkCurrentAttr, html.EscapeString(contract.Current))
-	if !hasPrefetchStateAttr {
-		fmt.Fprintf(&b, ` %s="idle"`, server.NavigationLinkPrefetchStateAttr)
-	}
-	if contract.PrefetchProvided {
-		fmt.Fprintf(&b, ` %s="%s"`, server.NavigationLinkPrefetchAttr, html.EscapeString(contract.Prefetch))
-	}
-	if contract.Current == "page" && !hasAriaCurrent {
-		fmt.Fprintf(&b, ` aria-current="page" %s="true"`, server.NavigationLinkManagedCurrentAttr)
-	}
+	r.writeManagedLinkContract(&b, node.Attrs, env, contract)
 	b.WriteByte('>')
 	b.WriteString(r.renderChildren(node.Children, env))
 	b.WriteString("</a>")
@@ -303,6 +254,16 @@ type fileManagedLinkContract struct {
 	PrefetchProvided bool
 }
 
+type fileManagedLinkPresence struct {
+	Navigation       bool
+	LinkState        bool
+	PrefetchState    bool
+	Enhancement      bool
+	EnhancementLayer bool
+	Fallback         bool
+	AriaCurrent      bool
+}
+
 func fileCurrentRequestPath(env fileRenderEnv) string {
 	if pageValue, ok := env.values["page"].(map[string]any); ok {
 		if current := strings.TrimSpace(stringValue(pageValue["path"])); current != "" {
@@ -328,6 +289,48 @@ func fileManagedLinkContractForAttrs(attrs []ir.Attr, env fileRenderEnv) fileMan
 	}
 }
 
+func fileManagedLinkPresenceForAttrs(attrs []ir.Attr, env fileRenderEnv) fileManagedLinkPresence {
+	return fileManagedLinkPresence{
+		Navigation:       attrValue(attrs, env, server.NavigationLinkAttr) != nil,
+		LinkState:        attrValue(attrs, env, server.NavigationLinkStateAttr) != nil,
+		PrefetchState:    attrValue(attrs, env, server.NavigationLinkPrefetchStateAttr) != nil,
+		Enhancement:      attrValue(attrs, env, server.NavigationEnhanceAttr) != nil,
+		EnhancementLayer: attrValue(attrs, env, server.NavigationEnhanceLayerAttr) != nil,
+		Fallback:         attrValue(attrs, env, server.NavigationFallbackAttr) != nil,
+		AriaCurrent:      attrValue(attrs, env, "aria-current", "ariaCurrent") != nil,
+	}
+}
+
+func (r *fileProgramRenderer) writeManagedLinkContract(b *strings.Builder, attrs []ir.Attr, env fileRenderEnv, contract fileManagedLinkContract) {
+	presence := fileManagedLinkPresenceForAttrs(attrs, env)
+	if !presence.Navigation {
+		b.WriteString(" " + server.NavigationLinkAttr)
+	}
+	if !presence.LinkState {
+		fmt.Fprintf(b, ` %s="idle"`, server.NavigationLinkStateAttr)
+	}
+	if !presence.Enhancement {
+		fmt.Fprintf(b, ` %s="navigation"`, server.NavigationEnhanceAttr)
+	}
+	if !presence.EnhancementLayer {
+		fmt.Fprintf(b, ` %s="bootstrap"`, server.NavigationEnhanceLayerAttr)
+	}
+	if !presence.Fallback {
+		fmt.Fprintf(b, ` %s="native-link"`, server.NavigationFallbackAttr)
+	}
+	fmt.Fprintf(b, ` %s="%s"`, server.NavigationLinkCurrentPolicyAttr, html.EscapeString(contract.CurrentPolicy))
+	fmt.Fprintf(b, ` %s="%s"`, server.NavigationLinkCurrentAttr, html.EscapeString(contract.Current))
+	if !presence.PrefetchState {
+		fmt.Fprintf(b, ` %s="idle"`, server.NavigationLinkPrefetchStateAttr)
+	}
+	if contract.PrefetchProvided {
+		fmt.Fprintf(b, ` %s="%s"`, server.NavigationLinkPrefetchAttr, html.EscapeString(contract.Prefetch))
+	}
+	if contract.Current == "page" && !presence.AriaCurrent {
+		fmt.Fprintf(b, ` aria-current="page" %s="true"`, server.NavigationLinkManagedCurrentAttr)
+	}
+}
+
 func normalizedLinkCurrentPolicy(attrs []ir.Attr, env fileRenderEnv) string {
 	return server.NormalizeNavigationLinkCurrentPolicy(stringValue(attrValue(
 		attrs,
@@ -343,9 +346,22 @@ type managedFormOptions struct {
 	defaultAction string
 }
 
+type fileManagedFormContract struct {
+	Managed bool
+	Mode    string
+}
+
+type fileManagedFormPresence struct {
+	Form             bool
+	State            bool
+	Enhancement      bool
+	EnhancementLayer bool
+	Fallback         bool
+}
+
 func (r *fileProgramRenderer) renderManagedForm(node *ir.Node, env fileRenderEnv, opts managedFormOptions) string {
 	var b strings.Builder
-	mode := managedFormMode(node.Attrs, env, opts.defaultMethod)
+	contract := fileBuiltinManagedFormContract(node.Attrs, env, opts.defaultMethod)
 	b.WriteString("<form")
 	if method := strings.TrimSpace(opts.defaultMethod); method != "" && attrValue(node.Attrs, env, "method") == nil {
 		fmt.Fprintf(&b, ` method="%s"`, html.EscapeString(method))
@@ -354,24 +370,7 @@ func (r *fileProgramRenderer) renderManagedForm(node *ir.Node, env fileRenderEnv
 		fmt.Fprintf(&b, ` action="%s"`, html.EscapeString(action))
 	}
 	r.renderAttrs(&b, managedFormAttrs(node.Attrs), env)
-	if attrValue(node.Attrs, env, server.NavigationFormAttr) == nil {
-		b.WriteString(" " + server.NavigationFormAttr)
-	}
-	if mode != "" {
-		fmt.Fprintf(&b, ` %s="%s"`, server.NavigationFormModeAttr, html.EscapeString(mode))
-	}
-	if attrValue(node.Attrs, env, server.NavigationFormStateAttr) == nil {
-		fmt.Fprintf(&b, ` %s="idle"`, server.NavigationFormStateAttr)
-	}
-	if attrValue(node.Attrs, env, server.NavigationEnhanceAttr) == nil {
-		fmt.Fprintf(&b, ` %s="form"`, server.NavigationEnhanceAttr)
-	}
-	if attrValue(node.Attrs, env, server.NavigationEnhanceLayerAttr) == nil {
-		fmt.Fprintf(&b, ` %s="bootstrap"`, server.NavigationEnhanceLayerAttr)
-	}
-	if attrValue(node.Attrs, env, server.NavigationFallbackAttr) == nil {
-		fmt.Fprintf(&b, ` %s="native-form"`, server.NavigationFallbackAttr)
-	}
+	r.writeManagedFormContract(&b, node.Attrs, env, contract)
 	b.WriteByte('>')
 	b.WriteString(r.renderChildren(node.Children, env))
 	b.WriteString("</form>")
@@ -959,6 +958,62 @@ func fileAutoFormEnhancementMode(attrs []ir.Attr, env fileRenderEnv) string {
 		return ""
 	}
 	return mode
+}
+
+func fileBuiltinManagedFormContract(attrs []ir.Attr, env fileRenderEnv, defaultMethod string) fileManagedFormContract {
+	return fileManagedFormContract{
+		Managed: true,
+		Mode:    managedFormMode(attrs, env, defaultMethod),
+	}
+}
+
+func fileAutoManagedFormContract(attrs []ir.Attr, env fileRenderEnv, isForm bool) fileManagedFormContract {
+	if !isForm {
+		return fileManagedFormContract{}
+	}
+	mode := fileAutoFormEnhancementMode(attrs, env)
+	if mode == "" {
+		return fileManagedFormContract{}
+	}
+	return fileManagedFormContract{
+		Managed: true,
+		Mode:    mode,
+	}
+}
+
+func fileManagedFormPresenceForAttrs(attrs []ir.Attr, env fileRenderEnv) fileManagedFormPresence {
+	return fileManagedFormPresence{
+		Form:             attrValue(attrs, env, server.NavigationFormAttr) != nil,
+		State:            attrValue(attrs, env, server.NavigationFormStateAttr) != nil,
+		Enhancement:      attrValue(attrs, env, server.NavigationEnhanceAttr) != nil,
+		EnhancementLayer: attrValue(attrs, env, server.NavigationEnhanceLayerAttr) != nil,
+		Fallback:         attrValue(attrs, env, server.NavigationFallbackAttr) != nil,
+	}
+}
+
+func (r *fileProgramRenderer) writeManagedFormContract(b *strings.Builder, attrs []ir.Attr, env fileRenderEnv, contract fileManagedFormContract) {
+	if !contract.Managed {
+		return
+	}
+	presence := fileManagedFormPresenceForAttrs(attrs, env)
+	if !presence.Form {
+		b.WriteString(" " + server.NavigationFormAttr)
+	}
+	if contract.Mode != "" {
+		fmt.Fprintf(b, ` %s="%s"`, server.NavigationFormModeAttr, html.EscapeString(contract.Mode))
+	}
+	if !presence.State {
+		fmt.Fprintf(b, ` %s="idle"`, server.NavigationFormStateAttr)
+	}
+	if !presence.Enhancement {
+		fmt.Fprintf(b, ` %s="form"`, server.NavigationEnhanceAttr)
+	}
+	if !presence.EnhancementLayer {
+		fmt.Fprintf(b, ` %s="bootstrap"`, server.NavigationEnhanceLayerAttr)
+	}
+	if !presence.Fallback {
+		fmt.Fprintf(b, ` %s="native-form"`, server.NavigationFallbackAttr)
+	}
 }
 
 func managedFormMode(attrs []ir.Attr, env fileRenderEnv, defaultMethod string) string {
