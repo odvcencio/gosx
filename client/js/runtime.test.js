@@ -1224,7 +1224,8 @@ test("bootstrap hydrates, delegates click events, and disposes islands", async (
   assert.equal(env.hydrateCalls[0][4], "json");
   assert.equal(env.context.__gosx.ready, true);
   assert.equal(env.context.__gosx.islands.size, 1);
-  assert.deepEqual(env.document.dispatchedEvents.map((event) => event.type), ["gosx:ready"]);
+  assert.equal(env.document.dispatchedEvents.at(-1).type, "gosx:ready");
+  assert.equal(env.document.dispatchedEvents.some((event) => event.type === "gosx:ready"), true);
 
   const clickEntries = wrapper.listeners.get("click") || [];
   assert.equal(clickEntries.length, 1);
@@ -1529,7 +1530,7 @@ test("bootstrap mounts declarative text layout blocks as managed runtime state",
   const result = env.context.__gosx.textLayout.read(block);
   assert.equal(result.lineCount, 2);
   assert.equal(result.maxLineWidth, 88);
-  assert.equal(env.document.dispatchedEvents.at(-1).type, "gosx:textlayout");
+  assert.equal(env.document.dispatchedEvents.some((event) => event.type === "gosx:textlayout"), true);
 });
 
 test("bootstrap mounts declarative text layout clamp options on managed blocks", async () => {
@@ -1659,6 +1660,150 @@ test("bootstrap refreshes managed text layout blocks after computed style change
   assert.equal(block.getAttribute("data-gosx-text-layout-align"), "right");
   assert.equal(block.getAttribute("data-gosx-text-layout-max-width"), "200");
   assert.equal(block.getAttribute("data-gosx-text-layout-line-count"), "1");
+});
+
+test("bootstrap exposes unified environment, document, and presentation state", async () => {
+  const block = new FakeElement("div", null);
+  block.width = 144;
+  block.height = 48;
+  block.computedStyle = {
+    font: "600 16px serif",
+    lineHeight: "24px",
+    direction: "rtl",
+    writingMode: "vertical-rl",
+    whiteSpace: "pre-wrap",
+    textAlign: "end",
+    maxWidth: "144px",
+    getPropertyValue(name) {
+      return this[name] || "";
+    },
+  };
+
+  const env = createContext({
+    elements: [block],
+    visibilityState: "hidden",
+    prefersReducedMotion: true,
+    devicePixelRatio: 1.75,
+    deviceMemory: 4,
+    hardwareConcurrency: 4,
+    visualViewportWidth: 640,
+    visualViewportHeight: 360,
+    visualViewportOffsetTop: 12,
+    matchMedia: {
+      "(prefers-reduced-data: reduce)": true,
+      "(pointer: coarse)": true,
+      "(any-pointer: coarse)": true,
+      "(hover: hover)": false,
+      "(any-hover: hover)": false,
+      "(prefers-contrast: more)": true,
+      "(prefers-color-scheme: dark)": true,
+    },
+  });
+
+  const contract = env.document.createElement("script");
+  contract.id = "gosx-document";
+  contract.setAttribute("type", "application/json");
+  contract.setAttribute("data-gosx-document-contract", "");
+  contract.textContent = JSON.stringify({
+    version: 1,
+    page: {
+      id: "gosx-doc-docs-home",
+      pattern: "GET /docs",
+      path: "/docs",
+      title: "Docs",
+      status: 200,
+      requestID: "req-123",
+    },
+    enhancement: {
+      bootstrap: true,
+      runtime: false,
+      navigation: true,
+    },
+  });
+  const fileCSS = env.document.createElement("style");
+  fileCSS.setAttribute("data-gosx-file-css", "docs.css");
+  fileCSS.setAttribute("data-gosx-file-css-scope", "docs-scope");
+  appendManagedHead(env.document, [contract, fileCSS]);
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const environmentState = env.context.__gosx.environment.get();
+  assert.equal(environmentState.pageVisible, false);
+  assert.equal(environmentState.coarsePointer, true);
+  assert.equal(environmentState.reducedMotion, true);
+  assert.equal(environmentState.reducedData, true);
+  assert.equal(environmentState.lowPower, true);
+  assert.equal(environmentState.colorScheme, "dark");
+  assert.equal(environmentState.contrast, "more");
+  assert.equal(env.document.documentElement.getAttribute("data-gosx-env-reduced-motion"), "true");
+  assert.equal(env.document.documentElement.style["--gosx-env-visual-viewport-height"], "360px");
+
+  const documentState = env.context.__gosx.document.get();
+  assert.equal(documentState.page.id, "gosx-doc-docs-home");
+  assert.equal(documentState.page.pattern, "GET /docs");
+  assert.equal(documentState.enhancement.layer, "bootstrap");
+  assert.equal(documentState.enhancement.navigation, true);
+  assert.equal(documentState.css.owned[0].file, "docs.css");
+  assert.equal(env.document.documentElement.getAttribute("data-gosx-document-id"), "gosx-doc-docs-home");
+  assert.equal(env.document.body.getAttribute("data-gosx-enhancement-layer"), "bootstrap");
+
+  const presentation = env.context.__gosx.presentation.read(block);
+  assert.equal(presentation.direction, "rtl");
+  assert.equal(presentation.writingMode, "vertical-rl");
+  assert.equal(presentation.maxWidth, 144);
+  assert.equal(presentation.environment.reducedData, true);
+});
+
+test("bootstrap refreshes document state after navigation events", async () => {
+  const env = createContext({});
+  const contract = env.document.createElement("script");
+  contract.id = "gosx-document";
+  contract.setAttribute("type", "application/json");
+  contract.setAttribute("data-gosx-document-contract", "");
+  contract.textContent = JSON.stringify({
+    version: 1,
+    page: {
+      id: "gosx-doc-home",
+      pattern: "GET /",
+      path: "/",
+      title: "Home",
+      status: 200,
+    },
+    enhancement: {
+      bootstrap: true,
+      runtime: false,
+      navigation: true,
+    },
+  });
+  appendManagedHead(env.document, [contract]);
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  assert.equal(env.context.__gosx.document.get().page.id, "gosx-doc-home");
+
+  contract.textContent = JSON.stringify({
+    version: 1,
+    page: {
+      id: "gosx-doc-docs",
+      pattern: "GET /docs",
+      path: "/docs",
+      title: "Docs",
+      status: 200,
+    },
+    enhancement: {
+      bootstrap: true,
+      runtime: false,
+      navigation: true,
+    },
+  });
+  env.document.dispatchEvent(new env.context.CustomEvent("gosx:navigate", {
+    detail: { url: "/docs" },
+  }));
+
+  assert.equal(env.context.__gosx.document.get().page.id, "gosx-doc-docs");
+  assert.equal(env.document.documentElement.getAttribute("data-gosx-route-pattern"), "GET /docs");
 });
 
 test("bootstrap refreshes managed text layout blocks after font metric invalidation", async () => {
@@ -3471,7 +3616,7 @@ test("bootstrap rerenders shared-runtime Scene3D on visual viewport scroll chang
 
   const initialRenderCount = renderArgs.length;
   assert.equal(initialRenderCount > 0, true);
-  assert.equal(env.visualViewport.listenerCount("scroll"), 1);
+  assert.equal(env.visualViewport.listenerCount("scroll") >= 1, true);
 
   env.visualViewport.dispatchEvent({ type: "scroll" });
   await flushAsyncWork();

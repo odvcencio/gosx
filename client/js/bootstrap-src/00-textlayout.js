@@ -2016,7 +2016,10 @@
   function normalizeManagedTextLayoutConfig(element, options) {
     const config = options && typeof options === "object" ? options : {};
     const hasOwn = Object.prototype.hasOwnProperty;
-    const computed = textLayoutComputedStyle(element);
+    const presentation = window.__gosx.presentation && typeof window.__gosx.presentation.read === "function"
+      ? window.__gosx.presentation.read(element)
+      : null;
+    const computed = presentation && presentation.style ? presentation.style : textLayoutComputedStyle(element);
     const font = hasOwn.call(config, "font")
       ? String(config.font == null ? "" : config.font)
       : String(
@@ -2030,6 +2033,7 @@
         ? config.align
         : (
           textLayoutComputedStyleValue(computed, "--gosx-text-layout-align")
+          || (presentation && presentation.textAlign)
           || textLayoutComputedStyleValue(computed, "text-align")
           || (element.getAttribute && element.getAttribute("data-gosx-text-layout-align"))
           || (element.getAttribute && element.getAttribute("align"))
@@ -2040,6 +2044,7 @@
         ? config.whiteSpace
         : (
           textLayoutComputedStyleValue(computed, "--gosx-text-layout-white-space")
+          || (presentation && presentation.whiteSpace)
           || textLayoutComputedStyleValue(computed, "white-space")
           || (element.getAttribute && element.getAttribute("data-gosx-text-layout-white-space"))
         )
@@ -2048,7 +2053,8 @@
       hasOwn.call(config, "lineHeight")
         ? config.lineHeight
         : (
-          textLayoutComputedLineHeight(computed, NaN)
+          (presentation && presentation.lineHeight)
+          || textLayoutComputedLineHeight(computed, NaN)
           || (element.getAttribute && element.getAttribute("data-gosx-text-layout-line-height"))
           || 16
         ),
@@ -2068,11 +2074,15 @@
         ? config.maxWidth
         : (
           textLayoutComputedStyleValue(computed, "--gosx-text-layout-max-width")
+          || (presentation && presentation.maxWidth)
           || textLayoutComputedStyleValue(computed, "max-width")
           || (element.getAttribute && element.getAttribute("data-gosx-text-layout-max-width"))
         ),
       0
     );
+    if (!(maxWidth > 0) && presentation) {
+      maxWidth = textLayoutNumberValue(presentation.width, 0);
+    }
     if (!(maxWidth > 0) && element && typeof element.getBoundingClientRect === "function") {
       const rect = element.getBoundingClientRect();
       maxWidth = textLayoutNumberValue(rect && rect.width, 0);
@@ -2231,6 +2241,10 @@
       window.removeEventListener("resize", record.windowResizeListener);
       record.windowResizeListener = null;
     }
+    if (typeof record.stopPresentation === "function") {
+      record.stopPresentation();
+      record.stopPresentation = null;
+    }
     if (typeof record.stopInvalidation === "function") {
       record.stopInvalidation();
       record.stopInvalidation = null;
@@ -2297,6 +2311,7 @@
       mutationObserver: null,
       windowResizeListener: null,
       stopInvalidation: null,
+      stopPresentation: null,
     };
 
     textLayoutRecordsByElement.set(element, record);
@@ -2308,7 +2323,11 @@
         refreshManagedTextLayoutRecord(record, "invalidate");
       });
 
-      if (typeof ResizeObserver === "function") {
+      if (window.__gosx.presentation && typeof window.__gosx.presentation.observe === "function") {
+        record.stopPresentation = window.__gosx.presentation.observe(element, function() {
+          refreshManagedTextLayoutRecord(record, "presentation");
+        }, { immediate: false });
+      } else if (typeof ResizeObserver === "function") {
         record.resizeObserver = new ResizeObserver(function() {
           refreshManagedTextLayoutRecord(record, "resize");
         });

@@ -1,8 +1,10 @@
 package server
 
 import (
+	"encoding/json"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/odvcencio/gosx"
@@ -51,13 +53,18 @@ type DocumentFunc func(doc *DocumentContext) gosx.Node
 // DocumentContext captures the fully prepared page state used to render a
 // document shell.
 type DocumentContext struct {
-	Request  *http.Request
-	Pattern  string
-	Status   int
-	Title    string
-	Metadata Metadata
-	Head     gosx.Node
-	Body     gosx.Node
+	Request       *http.Request
+	Pattern       string
+	Status        int
+	Title         string
+	PageID        string
+	Path          string
+	RequestID     string
+	Metadata      Metadata
+	RuntimeActive bool
+	Navigation    bool
+	Head          gosx.Node
+	Body          gosx.Node
 }
 
 // DeferredResolver resolves a streamed page fragment after the initial HTML
@@ -273,20 +280,33 @@ func (c *Context) DeferWithOptions(opts DeferredOptions, fallback gosx.Node, res
 	return c.deferred.DeferWithOptions(opts, fallback, resolve)
 }
 
-func (c *Context) documentContext(pattern, defaultTitle string, body gosx.Node) *DocumentContext {
+func (c *Context) documentContext(pattern, defaultTitle string, body gosx.Node, navigation bool) *DocumentContext {
 	title := c.metadata.Title
 	if title == "" {
 		title = defaultTitle
 	}
-	return &DocumentContext{
-		Request:  c.Request,
-		Pattern:  pattern,
-		Status:   c.status,
-		Title:    title,
-		Metadata: c.metadata,
-		Head:     c.headNode(),
-		Body:     body,
+	path := "/"
+	if c != nil && c.Request != nil && c.Request.URL != nil {
+		path = c.Request.URL.RequestURI()
 	}
+	doc := &DocumentContext{
+		Request:       c.Request,
+		Pattern:       pattern,
+		Status:        c.status,
+		Title:         title,
+		PageID:        documentPageID(pattern, path),
+		Path:          path,
+		RequestID:     RequestID(c.Request),
+		Metadata:      c.metadata,
+		RuntimeActive: c != nil && c.runtime != nil && c.runtime.Active(),
+		Navigation:    navigation,
+		Body:          body,
+	}
+	doc.Head = gosx.Fragment(
+		c.headNode(),
+		documentContractNode(doc),
+	)
+	return doc
 }
 
 func (c *Context) headNode() gosx.Node {
@@ -299,6 +319,87 @@ func (c *Context) headNode() gosx.Node {
 		return gosx.Text("")
 	}
 	return gosx.Fragment(nodes...)
+}
+
+type documentContract struct {
+	Version     int                         `json:"version"`
+	Page        documentContractPage        `json:"page"`
+	Enhancement documentContractEnhancement `json:"enhancement"`
+}
+
+type documentContractPage struct {
+	ID        string `json:"id"`
+	Pattern   string `json:"pattern"`
+	Path      string `json:"path"`
+	Title     string `json:"title"`
+	Status    int    `json:"status"`
+	RequestID string `json:"requestID,omitempty"`
+}
+
+type documentContractEnhancement struct {
+	Bootstrap  bool `json:"bootstrap"`
+	Runtime    bool `json:"runtime"`
+	Navigation bool `json:"navigation"`
+}
+
+func documentContractNode(doc *DocumentContext) gosx.Node {
+	if doc == nil {
+		return gosx.Text("")
+	}
+	payload, err := json.Marshal(documentContract{
+		Version: 1,
+		Page: documentContractPage{
+			ID:        doc.PageID,
+			Pattern:   doc.Pattern,
+			Path:      doc.Path,
+			Title:     doc.Title,
+			Status:    doc.Status,
+			RequestID: doc.RequestID,
+		},
+		Enhancement: documentContractEnhancement{
+			Bootstrap:  doc.RuntimeActive,
+			Runtime:    doc.RuntimeActive,
+			Navigation: doc.Navigation,
+		},
+	})
+	if err != nil {
+		return gosx.Text("")
+	}
+	safe := strings.NewReplacer(
+		"<", "\\u003c",
+		">", "\\u003e",
+		"&", "\\u0026",
+	).Replace(string(payload))
+	return gosx.RawHTML(`<script id="gosx-document" type="application/json" data-gosx-document-contract>` + safe + `</script>`)
+}
+
+func documentPageID(pattern, path string) string {
+	source := strings.TrimSpace(pattern)
+	if source == "" {
+		source = strings.TrimSpace(path)
+	}
+	if source == "" {
+		source = "page"
+	}
+	var b strings.Builder
+	lastDash := false
+	for _, r := range strings.ToLower(source) {
+		switch {
+		case (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9'):
+			b.WriteRune(r)
+			lastDash = false
+		default:
+			if !lastDash && b.Len() > 0 {
+				b.WriteByte('-')
+				lastDash = true
+			}
+		}
+	}
+	value := strings.Trim(b.String(), "-")
+	if value == "" {
+		value = "page"
+	}
+	return "gosx-doc-" + value
 }
 
 // Metadata describes common document head fields for a server-rendered page.

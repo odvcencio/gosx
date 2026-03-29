@@ -67,6 +67,14 @@ func TestHTMLDocument(t *testing.T) {
 	if !strings.Contains(html, "hello") {
 		t.Fatal("missing body content")
 	}
+	for _, snippet := range []string{
+		`<html data-gosx-document="true">`,
+		`<body data-gosx-document-body="true" data-gosx-enhancement-layer="html">`,
+	} {
+		if !strings.Contains(html, snippet) {
+			t.Fatalf("expected %q in %q", snippet, html)
+		}
+	}
 }
 
 func TestResolveListenAddrUsesPortEnv(t *testing.T) {
@@ -323,6 +331,38 @@ func TestAppInjectsBootstrapHeadForTextBlockPages(t *testing.T) {
 	} {
 		if strings.Contains(body, snippet) {
 			t.Fatalf("did not expect %q in bootstrap-only text layout page body %q", snippet, body)
+		}
+	}
+}
+
+func TestAppEmitsDocumentContract(t *testing.T) {
+	app := New()
+	app.EnableNavigation()
+	app.Page("GET /docs", func(ctx *Context) gosx.Node {
+		ctx.SetMetadata(Metadata{Title: "Docs"})
+		return ctx.TextBlock(TextBlockProps{
+			Text: "hello docs",
+		})
+	})
+
+	handler := app.Build()
+	req := httptest.NewRequest(http.MethodGet, "/docs", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	body := w.Body.String()
+	for _, snippet := range []string{
+		`id="gosx-document"`,
+		`data-gosx-document-contract`,
+		`"pattern":"GET /docs"`,
+		`"path":"/docs"`,
+		`"title":"Docs"`,
+		`"navigation":true`,
+		`"runtime":true`,
+		`"id":"gosx-doc-get-docs"`,
+	} {
+		if !strings.Contains(body, snippet) {
+			t.Fatalf("expected %q in %q", snippet, body)
 		}
 	}
 }

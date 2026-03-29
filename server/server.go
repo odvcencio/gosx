@@ -498,12 +498,12 @@ func HTMLDocument(title string, head gosx.Node, body gosx.Node) gosx.Node {
 
 func renderDocument(title string, head gosx.Node, body gosx.Node) string {
 	var b strings.Builder
-	b.WriteString("<!DOCTYPE html>\n<html>\n<head>\n")
+	b.WriteString("<!DOCTYPE html>\n<html data-gosx-document=\"true\">\n<head>\n")
 	b.WriteString("<meta charset=\"utf-8\">\n")
 	b.WriteString("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n")
 	fmt.Fprintf(&b, "<title>%s</title>\n", title)
 	b.WriteString(gosx.RenderHTML(HeadOutlet(head)))
-	b.WriteString("\n</head>\n<body>\n")
+	b.WriteString("\n</head>\n<body data-gosx-document-body=\"true\" data-gosx-enhancement-layer=\"html\">\n")
 	b.WriteString(gosx.RenderHTML(body))
 	b.WriteString("\n")
 	b.WriteString(streamTailMarker)
@@ -550,7 +550,7 @@ func (a *App) renderPage(w http.ResponseWriter, ctx *Context, pattern string, bo
 	var node gosx.Node
 	switch {
 	case a.document != nil:
-		doc := ctx.documentContext(pattern, defaultTitle, body)
+		doc := ctx.documentContext(pattern, defaultTitle, body, a.navigation)
 		node = a.document(doc)
 	case a.layout != nil:
 		title := ctx.metadata.Title
@@ -559,7 +559,7 @@ func (a *App) renderPage(w http.ResponseWriter, ctx *Context, pattern string, bo
 		}
 		node = a.layout(title, body)
 	default:
-		doc := ctx.documentContext(pattern, defaultTitle, body)
+		doc := ctx.documentContext(pattern, defaultTitle, body, a.navigation)
 		node = HTMLDocument(doc.Title, doc.Head, doc.Body)
 	}
 
