@@ -936,6 +936,173 @@ func TestAppEnableISRRejectsEscapingStaticFiles(t *testing.T) {
 	}
 }
 
+func TestISRConfigLoadUsesDistBundleAndDefaultsRoutes(t *testing.T) {
+	root := t.TempDir()
+	dist := filepath.Join(root, "dist")
+	if err := os.MkdirAll(filepath.Join(dist, "static"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	writeISRManifest(t, dist, isrManifest{
+		Pages: []string{"/", "docs/", " /blog/ "},
+	})
+
+	cfg := &isrConfig{}
+	if !cfg.load(root) {
+		t.Fatal("expected dist ISR bundle to load")
+	}
+	if cfg.root != dist {
+		t.Fatalf("expected bundle root %q, got %q", dist, cfg.root)
+	}
+	if cfg.staticDir != filepath.Join(dist, "static") {
+		t.Fatalf("expected static dir inside dist, got %q", cfg.staticDir)
+	}
+
+	docs, ok := cfg.lookup("/docs/")
+	if !ok {
+		t.Fatal("expected docs page to load from manifest pages list")
+	}
+	if docs.Path != "/docs" {
+		t.Fatalf("expected normalized docs path, got %q", docs.Path)
+	}
+	if docs.File != buildmanifest.ExportFilePath("/docs") {
+		t.Fatalf("expected default docs export file, got %q", docs.File)
+	}
+
+	blog, ok := cfg.lookup("/blog")
+	if !ok {
+		t.Fatal("expected blog page to load from manifest pages list")
+	}
+	if blog.File != buildmanifest.ExportFilePath("/blog") {
+		t.Fatalf("expected default blog export file, got %q", blog.File)
+	}
+}
+
+func TestISRConfigLoadResetsStateWhenBundleRootChanges(t *testing.T) {
+	rootA := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(rootA, "static", "docs"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	writeISRManifest(t, rootA, isrManifest{
+		Routes: []isrRoute{
+			{Path: "/docs", File: filepath.Join("docs", "index.html"), Tags: []string{"docs"}},
+		},
+	})
+
+	cfg := &isrConfig{}
+	if !cfg.load(rootA) {
+		t.Fatal("expected first ISR bundle to load")
+	}
+	cfg.state["/docs"] = isrPageState{
+		GeneratedAt: time.Unix(1, 0).UTC(),
+		PathVersion: 99,
+		TagVersions: map[string]uint64{"docs": 42},
+	}
+	cfg.refreshing["/docs"] = true
+
+	rootB := t.TempDir()
+	targetB := filepath.Join(rootB, "static", "docs", "index.html")
+	if err := os.MkdirAll(filepath.Dir(targetB), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(targetB, []byte("<!DOCTYPE html><html><body>docs v2</body></html>"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	modTime := time.Now().Add(-2 * time.Minute).UTC().Truncate(time.Second)
+	if err := os.Chtimes(targetB, modTime, modTime); err != nil {
+		t.Fatal(err)
+	}
+	writeISRManifest(t, rootB, isrManifest{
+		Routes: []isrRoute{
+			{Path: "/docs", File: filepath.Join("docs", "index.html"), Tags: []string{"docs", "docs", " "}},
+		},
+	})
+
+	if !cfg.load(rootB) {
+		t.Fatal("expected second ISR bundle to load")
+	}
+	if cfg.root != rootB {
+		t.Fatalf("expected bundle root %q, got %q", rootB, cfg.root)
+	}
+	if len(cfg.state) != 0 {
+		t.Fatalf("expected ISR state to reset on bundle swap, got %#v", cfg.state)
+	}
+	if len(cfg.refreshing) != 0 {
+		t.Fatalf("expected ISR refresh map to reset on bundle swap, got %#v", cfg.refreshing)
+	}
+
+	page, ok := cfg.lookup("/docs")
+	if !ok {
+		t.Fatal("expected docs page after bundle swap")
+	}
+	if len(page.Tags) != 1 || page.Tags[0] != "docs" {
+		t.Fatalf("expected compacted tags after reload, got %#v", page.Tags)
+	}
+	info, err := os.Stat(targetB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := cfg.pageState(page, info)
+	if !state.GeneratedAt.Equal(info.ModTime().UTC()) {
+		t.Fatalf("expected regenerated state time %v, got %v", info.ModTime().UTC(), state.GeneratedAt)
+	}
+	if state.PathVersion != 0 {
+		t.Fatalf("expected reset path version after bundle swap, got %d", state.PathVersion)
+	}
+}
+
+func TestAppEnableISRRegeneratesMissingArtifactAsMiss(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "static"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(root, "static", "index.html")
+	writeISRManifest(t, root, isrManifest{
+		Routes: []isrRoute{
+			{Path: "/", File: "index.html"},
+		},
+	})
+
+	app := New()
+	app.SetRuntimeRoot(root)
+	app.EnableISR()
+
+	dynamicCalls := 0
+	app.Page("GET /", func(ctx *Context) gosx.Node {
+		dynamicCalls++
+		return gosx.Text("generated home")
+	})
+
+	handler := app.Build()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("Accept", "text/html")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if body := w.Body.String(); !strings.Contains(body, "generated home") {
+		t.Fatalf("expected regenerated body on missing ISR artifact, got %q", body)
+	}
+	if got := w.Header().Get("X-GoSX-ISR"); got != "MISS" {
+		t.Fatalf("expected ISR miss header, got %q", got)
+	}
+	if dynamicCalls != 1 {
+		t.Fatalf("expected one dynamic regeneration call, got %d", dynamicCalls)
+	}
+	if data, err := os.ReadFile(target); err != nil || !strings.Contains(string(data), "generated home") {
+		t.Fatalf("expected regenerated artifact to be written, got err=%v body=%q", err, string(data))
+	}
+
+	secondReq := httptest.NewRequest(http.MethodGet, "/", nil)
+	secondReq.Header.Set("Accept", "text/html")
+	secondRes := httptest.NewRecorder()
+	handler.ServeHTTP(secondRes, secondReq)
+	if got := secondRes.Header().Get("X-GoSX-ISR"); got != "HIT" {
+		t.Fatalf("expected ISR hit after regeneration, got %q", got)
+	}
+	if dynamicCalls != 1 {
+		t.Fatalf("expected regenerated artifact to avoid a second dynamic call, got %d", dynamicCalls)
+	}
+}
+
 func writeISRManifest(t *testing.T, root string, manifest isrManifest) {
 	t.Helper()
 	data, err := json.Marshal(manifest)

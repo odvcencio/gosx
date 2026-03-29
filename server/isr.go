@@ -45,6 +45,12 @@ type isrPageState struct {
 	TagVersions map[string]uint64
 }
 
+type isrArtifact struct {
+	page     isrRoute
+	filePath string
+	info     os.FileInfo
+}
+
 // EnableISR serves prerendered HTML from static export output and refreshes it
 // in the background when a revalidation window or explicit invalidation marks a
 // page stale.
@@ -58,6 +64,26 @@ func (a *App) EnableISR() {
 }
 
 func (a *App) maybeServeISR(w http.ResponseWriter, r *http.Request, dispatch func(http.ResponseWriter, *http.Request, bool)) bool {
+	if !a.shouldAttemptISR(r, dispatch) {
+		return false
+	}
+	if !a.isr.load(a.effectiveRuntimeRoot()) {
+		return false
+	}
+
+	artifact, ok := a.isr.artifact(r.URL.Path)
+	if !ok {
+		return false
+	}
+	artifact, mode, ok := a.prepareISRArtifact(artifact, dispatch)
+	if !ok {
+		return false
+	}
+	a.isr.serve(w, r, artifact.filePath, artifact.info, artifact.page, mode)
+	return true
+}
+
+func (a *App) shouldAttemptISR(r *http.Request, dispatch func(http.ResponseWriter, *http.Request, bool)) bool {
 	if a == nil || a.isr == nil || r == nil || dispatch == nil {
 		return false
 	}
@@ -67,46 +93,40 @@ func (a *App) maybeServeISR(w http.ResponseWriter, r *http.Request, dispatch fun
 	if strings.TrimSpace(r.Header.Get(isrBypassHeader)) != "" {
 		return false
 	}
-	if !acceptsHTML(r) {
-		return false
-	}
-	if !a.isr.load(a.effectiveRuntimeRoot()) {
-		return false
-	}
+	return acceptsHTML(r)
+}
 
-	page, ok := a.isr.lookup(r.URL.Path)
-	if !ok {
-		return false
+func (a *App) prepareISRArtifact(artifact isrArtifact, dispatch func(http.ResponseWriter, *http.Request, bool)) (isrArtifact, string, bool) {
+	info, err := os.Stat(artifact.filePath)
+	switch {
+	case err == nil:
+		artifact.info = info
+		return a.isrServeArtifact(artifact, dispatch)
+	case !os.IsNotExist(err):
+		return isrArtifact{}, "", false
 	}
+	return a.regenerateISRArtifact(artifact, dispatch)
+}
 
-	filePath, ok := safeArtifactPath(a.isr.staticDir, page.File)
-	if !ok {
-		return false
-	}
-	info, err := os.Stat(filePath)
-	if err != nil {
-		if !os.IsNotExist(err) {
-			return false
-		}
-		if err := a.isr.regenerate(page, a.Revalidator(), dispatch); err != nil {
-			return false
-		}
-		info, err = os.Stat(filePath)
-		if err != nil {
-			return false
-		}
-		a.isr.serve(w, r, filePath, info, page, "MISS")
-		return true
-	}
-
-	stale := a.isr.stale(page, info, a.Revalidator())
+func (a *App) isrServeArtifact(artifact isrArtifact, dispatch func(http.ResponseWriter, *http.Request, bool)) (isrArtifact, string, bool) {
 	mode := "HIT"
-	if stale {
+	if a.isr.stale(artifact.page, artifact.info, a.Revalidator()) {
 		mode = "STALE"
-		a.isr.refresh(page, a.Revalidator(), dispatch)
+		a.isr.refresh(artifact.page, a.Revalidator(), dispatch)
 	}
-	a.isr.serve(w, r, filePath, info, page, mode)
-	return true
+	return artifact, mode, true
+}
+
+func (a *App) regenerateISRArtifact(artifact isrArtifact, dispatch func(http.ResponseWriter, *http.Request, bool)) (isrArtifact, string, bool) {
+	if err := a.isr.regenerate(artifact.page, a.Revalidator(), dispatch); err != nil {
+		return isrArtifact{}, "", false
+	}
+	info, err := os.Stat(artifact.filePath)
+	if err != nil {
+		return isrArtifact{}, "", false
+	}
+	artifact.info = info
+	return artifact, "MISS", true
 }
 
 func acceptsHTML(r *http.Request) bool {
@@ -121,71 +141,115 @@ func acceptsHTML(r *http.Request) bool {
 }
 
 func (c *isrConfig) load(root string) bool {
-	if c == nil {
+	bundleRoot, manifestPath, staticDir, ok := c.resolvedBundle(root)
+	if !ok {
 		return false
+	}
+	if c.reuseLoadedBundle(bundleRoot) {
+		return true
+	}
+	pages, ok := loadISRPages(manifestPath)
+	if !ok {
+		return false
+	}
+	c.storeBundle(bundleRoot, staticDir, pages)
+	return true
+}
+
+func (c *isrConfig) resolvedBundle(root string) (bundleRoot string, manifestPath string, staticDir string, ok bool) {
+	if c == nil {
+		return "", "", "", false
 	}
 	root = strings.TrimSpace(root)
 	if root == "" {
-		return false
+		return "", "", "", false
 	}
-
-	bundleRoot, manifestPath, staticDir := resolveISRBundleRoot(root)
+	bundleRoot, manifestPath, staticDir = resolveISRBundleRoot(root)
 	if bundleRoot == "" || manifestPath == "" || staticDir == "" {
+		return "", "", "", false
+	}
+	return bundleRoot, manifestPath, staticDir, true
+}
+
+func (c *isrConfig) reuseLoadedBundle(bundleRoot string) bool {
+	if c == nil {
 		return false
 	}
-
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.root == bundleRoot && c.pages != nil {
-		return len(c.pages) > 0
-	}
+	return c.root == bundleRoot && len(c.pages) > 0
+}
 
+func loadISRPages(manifestPath string) (map[string]isrRoute, bool) {
+	manifest, err := readISRManifest(manifestPath)
+	if err != nil {
+		return nil, false
+	}
+	pages := normalizeISRRoutes(routesForISRManifest(manifest))
+	return pages, len(pages) > 0
+}
+
+func readISRManifest(manifestPath string) (isrManifest, error) {
 	manifestData, err := os.ReadFile(manifestPath)
 	if err != nil {
-		return false
+		return isrManifest{}, err
 	}
-
 	var manifest isrManifest
 	if err := json.Unmarshal(manifestData, &manifest); err != nil {
-		return false
+		return isrManifest{}, err
 	}
-	if len(manifest.Routes) == 0 {
-		manifest.Routes = make([]isrRoute, 0, len(manifest.Pages))
-		for _, pagePath := range manifest.Pages {
-			manifest.Routes = append(manifest.Routes, isrRoute{
-				Path: pagePath,
-				File: buildmanifest.ExportFilePath(pagePath),
-			})
-		}
-	}
+	return manifest, nil
+}
 
-	pages := make(map[string]isrRoute, len(manifest.Routes))
-	for _, route := range manifest.Routes {
-		normalized := normalizeISRPath(route.Path)
-		if normalized == "" {
+func routesForISRManifest(manifest isrManifest) []isrRoute {
+	if len(manifest.Routes) > 0 {
+		routes := make([]isrRoute, 0, len(manifest.Routes))
+		routes = append(routes, manifest.Routes...)
+		return routes
+	}
+	routes := make([]isrRoute, 0, len(manifest.Pages))
+	for _, pagePath := range manifest.Pages {
+		routes = append(routes, isrRoute{
+			Path: pagePath,
+			File: buildmanifest.ExportFilePath(pagePath),
+		})
+	}
+	return routes
+}
+
+func normalizeISRRoutes(routes []isrRoute) map[string]isrRoute {
+	pages := make(map[string]isrRoute, len(routes))
+	for _, route := range routes {
+		route, ok := normalizeISRRoute(route)
+		if !ok {
 			continue
 		}
-		if strings.TrimSpace(route.File) == "" {
-			route.File = buildmanifest.ExportFilePath(normalized)
-		}
-		route.Path = normalized
-		route.Tags = compactStrings(route.Tags)
-		pages[normalized] = route
+		pages[route.Path] = route
 	}
-	if len(pages) == 0 {
-		return false
-	}
+	return pages
+}
 
+func normalizeISRRoute(route isrRoute) (isrRoute, bool) {
+	normalized := normalizeISRPath(route.Path)
+	if normalized == "" {
+		return isrRoute{}, false
+	}
+	if strings.TrimSpace(route.File) == "" {
+		route.File = buildmanifest.ExportFilePath(normalized)
+	}
+	route.Path = normalized
+	route.Tags = compactStrings(route.Tags)
+	return route, true
+}
+
+func (c *isrConfig) storeBundle(bundleRoot, staticDir string, pages map[string]isrRoute) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.root = bundleRoot
 	c.staticDir = staticDir
 	c.pages = pages
-	if c.state == nil {
-		c.state = make(map[string]isrPageState, len(pages))
-	}
-	if c.refreshing == nil {
-		c.refreshing = make(map[string]bool, len(pages))
-	}
-	return true
+	c.state = make(map[string]isrPageState, len(pages))
+	c.refreshing = make(map[string]bool, len(pages))
 }
 
 func resolveISRBundleRoot(root string) (bundleRoot string, manifestPath string, staticDir string) {
@@ -211,6 +275,25 @@ func (c *isrConfig) lookup(requestPath string) (isrRoute, bool) {
 	defer c.mu.Unlock()
 	page, ok := c.pages[normalizeISRPath(requestPath)]
 	return page, ok
+}
+
+func (c *isrConfig) artifact(requestPath string) (isrArtifact, bool) {
+	if c == nil {
+		return isrArtifact{}, false
+	}
+	normalized := normalizeISRPath(requestPath)
+	c.mu.Lock()
+	page, ok := c.pages[normalized]
+	staticDir := c.staticDir
+	c.mu.Unlock()
+	if !ok {
+		return isrArtifact{}, false
+	}
+	filePath, ok := safeArtifactPath(staticDir, page.File)
+	if !ok {
+		return isrArtifact{}, false
+	}
+	return isrArtifact{page: page, filePath: filePath}, true
 }
 
 func (c *isrConfig) stale(page isrRoute, info os.FileInfo, revalidator *Revalidator) bool {
