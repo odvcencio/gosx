@@ -5,10 +5,11 @@
 //	islands: constrained reactive DOM (shared WASM VM, tiny payloads)
 //	engines: arbitrary client computation (dedicated WASM, full power)
 //
-// Two kinds:
+// Three kinds:
 //
 //	worker:  background compute, no DOM (search, parsing, inference)
 //	surface: owns a mount point — canvas, WebGL, container div
+//	video:   framework-owned managed video mount
 //
 // Engines communicate through typed ports: props in, messages out.
 // They do NOT touch island DOM or VM internals.
@@ -25,12 +26,14 @@ type Kind string
 const (
 	KindWorker  Kind = "worker"  // Background compute, no DOM access
 	KindSurface Kind = "surface" // Owns a mount point (canvas, WebGL, div)
+	KindVideo   Kind = "video"   // Framework-owned managed video mount
 )
 
 // Capability declares a browser API the engine requires.
 type Capability string
 
 const (
+	CapVideo        Capability = "video"
 	CapCanvas       Capability = "canvas"
 	CapWebGL        Capability = "webgl"
 	CapWebGPU       Capability = "webgpu"
@@ -44,6 +47,11 @@ const (
 	CapKeyboard     Capability = "keyboard"
 	CapPointer      Capability = "pointer"
 )
+
+// KindNeedsMount reports whether an engine kind attaches to a DOM mount.
+func KindNeedsMount(kind Kind) bool {
+	return kind == KindSurface || kind == KindVideo
+}
 
 // ScalingMode controls how a logical pixel buffer maps to the display surface.
 type ScalingMode string
@@ -108,7 +116,7 @@ type Config struct {
 	// Name is the engine component name.
 	Name string `json:"name"`
 
-	// Kind is "worker" or "surface".
+	// Kind is "worker", "surface", or "video".
 	Kind Kind `json:"kind"`
 
 	// WASMPath is the URL to the engine's WASM binary.
@@ -121,7 +129,7 @@ type Config struct {
 	// JSExport is the factory name published in window.__gosx_engine_factories.
 	JSExport string `json:"jsExport,omitempty"`
 
-	// MountID is the DOM element ID for surface engines (ignored for workers).
+	// MountID is the DOM element ID for mount-bearing engines (ignored for workers).
 	MountID string `json:"mountId,omitempty"`
 
 	// MountAttrs are applied to the server-rendered mount element for surface
@@ -188,7 +196,7 @@ func (mb *MessageBus) Emit(event string, data any) {
 // ValidateCapabilities checks if the requested capabilities are supported.
 func ValidateCapabilities(requested []Capability) error {
 	supported := map[Capability]bool{
-		CapCanvas: true, CapWebGL: true, CapWebGPU: true, CapPixelSurface: true,
+		CapVideo: true, CapCanvas: true, CapWebGL: true, CapWebGPU: true, CapPixelSurface: true,
 		CapAnimation: true, CapStorage: true, CapFetch: true, CapAudio: true,
 		CapWorker: true, CapGamepad: true, CapKeyboard: true, CapPointer: true,
 	}

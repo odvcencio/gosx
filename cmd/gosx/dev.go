@@ -168,6 +168,9 @@ func prepareDevAssets(dir string) error {
 	if err := copyFile(filepath.Join(buildDir, "patch.js"), filepath.Join(gosxRoot, "client", "js", "patch.js")); err != nil {
 		return fmt.Errorf("stage patch.js: %w", err)
 	}
+	if err := copyFile(filepath.Join(buildDir, "hls.min.js"), filepath.Join(gosxRoot, "client", "js", "vendor", "hls.min.js")); err != nil {
+		return fmt.Errorf("stage hls.min.js: %w", err)
+	}
 
 	if err := compileDevIslands(dir, islandDir); err != nil {
 		return err

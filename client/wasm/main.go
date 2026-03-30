@@ -17,6 +17,12 @@ import (
 
 func registerRuntime(b *bridge.Bridge) {
 	crdtBridge := bridge.NewCRDTBridge()
+	b.SetSharedSignalCallback(func(name, valueJSON string) {
+		notify := js.Global().Get("__gosx_notify_shared_signal")
+		if notify.Type() == js.TypeFunction {
+			notify.Invoke(name, valueJSON)
+		}
+	})
 	b.SetPatchCallback(func(islandID, patchJSON string) {
 		js.Global().Call("__gosx_apply_patches", islandID, patchJSON)
 	})
@@ -29,6 +35,7 @@ func registerRuntime(b *bridge.Bridge) {
 	setRuntimeFunc("__gosx_engine_dispose", disposeEngineRuntimeFunc(b))
 	setRuntimeFunc("__gosx_highlight", highlightRuntimeFunc())
 	setRuntimeFunc("__gosx_set_shared_signal", sharedSignalRuntimeFunc(b))
+	setRuntimeFunc("__gosx_get_shared_signal", sharedSignalGetRuntimeFunc(b))
 	setRuntimeFunc("__gosx_set_input_batch", inputBatchRuntimeFunc(b))
 	setRuntimeFunc("__gosx_text_layout", textLayoutRuntimeFunc())
 	setRuntimeFunc("__gosx_text_layout_metrics", textLayoutMetricsRuntimeFunc())
@@ -161,6 +168,19 @@ func sharedSignalRuntimeFunc(b *bridge.Bridge) js.Func {
 			return jsError(err)
 		}
 		return js.Null()
+	})
+}
+
+func sharedSignalGetRuntimeFunc(b *bridge.Bridge) js.Func {
+	return js.FuncOf(func(this js.Value, args []js.Value) any {
+		if len(args) < 1 {
+			return jsErrorf("need 1 arg (signalName)")
+		}
+		valueJSON, err := b.GetSharedSignalJSON(args[0].String())
+		if err != nil {
+			return jsError(err)
+		}
+		return js.ValueOf(valueJSON)
 	})
 }
 

@@ -39,6 +39,7 @@ type Renderer struct {
 	patchPath         string
 	bootstrapPath     string
 	bootstrapLitePath string
+	videoHLSPath      string
 	runtimeAssets     buildmanifest.RuntimeAssets
 	bootstrapOnly     bool
 }
@@ -58,12 +59,16 @@ type Summary struct {
 	WASMExecPath  string
 	PatchPath     string
 	BootstrapPath string
+	HLSPath       string
 	Islands       int
 	Engines       int
 	Hubs          int
 }
 
 func enhancementKindForEngine(cfg engine.Config) string {
+	if cfg.Kind == engine.KindVideo {
+		return "video"
+	}
 	if strings.EqualFold(strings.TrimSpace(cfg.Name), "GoSXScene3D") {
 		return "scene3d"
 	}
@@ -91,6 +96,7 @@ func NewRenderer(bundleID string) *Renderer {
 	renderer.patchPath = renderer.versionCompatRuntimePath("/gosx/patch.js", strings.TrimSpace(runtimeAssets.Patch.Hash))
 	renderer.bootstrapPath = renderer.versionCompatRuntimePath("/gosx/bootstrap.js", strings.TrimSpace(runtimeAssets.Bootstrap.Hash))
 	renderer.bootstrapLitePath = renderer.versionCompatRuntimePath("/gosx/bootstrap-lite.js", strings.TrimSpace(runtimeAssets.BootstrapLite.Hash))
+	renderer.videoHLSPath = renderer.versionCompatRuntimePath("/gosx/hls.min.js", strings.TrimSpace(runtimeAssets.VideoHLS.Hash))
 	if manifest := loadDefaultBuildManifest(); manifest != nil {
 		_ = renderer.ApplyBuildManifest(manifest, "/gosx/assets")
 	}
@@ -184,6 +190,15 @@ func (r *Renderer) SetBootstrapLitePath(path string) {
 	r.bootstrapLitePath = r.versionCompatRuntimePath(path, r.compatRuntimeHash(path))
 }
 
+// SetVideoHLSPath overrides the runtime HLS library URL used by the built-in
+// video engine when native HLS playback is unavailable.
+func (r *Renderer) SetVideoHLSPath(path string) {
+	if strings.TrimSpace(path) == "" {
+		return
+	}
+	r.videoHLSPath = r.versionCompatRuntimePath(path, r.compatRuntimeHash(path))
+}
+
 func (r *Renderer) compatRuntimeHash(path string) string {
 	switch compatRuntimePath(path) {
 	case "/gosx/runtime.wasm":
@@ -196,6 +211,8 @@ func (r *Renderer) compatRuntimeHash(path string) string {
 		return strings.TrimSpace(r.runtimeAssets.BootstrapLite.Hash)
 	case "/gosx/patch.js":
 		return strings.TrimSpace(r.runtimeAssets.Patch.Hash)
+	case "/gosx/hls.min.js":
+		return strings.TrimSpace(r.runtimeAssets.VideoHLS.Hash)
 	default:
 		return ""
 	}
@@ -211,7 +228,7 @@ func (r *Renderer) versionCompatRuntimePath(path, hash string) string {
 		return path
 	}
 	switch compatRuntimePath(path) {
-	case "/gosx/runtime.wasm", "/gosx/wasm_exec.js", "/gosx/bootstrap.js", "/gosx/bootstrap-lite.js", "/gosx/patch.js":
+	case "/gosx/runtime.wasm", "/gosx/wasm_exec.js", "/gosx/bootstrap.js", "/gosx/bootstrap-lite.js", "/gosx/patch.js", "/gosx/hls.min.js":
 		query := parsed.Query()
 		if query.Get("v") == "" {
 			query.Set("v", hash)
@@ -245,6 +262,7 @@ func (r *Renderer) ApplyBuildManifest(manifest *buildmanifest.Manifest, assetBas
 	}
 	r.SetClientAssetPaths(runtime.WASMExec, runtime.Patch, runtime.Bootstrap)
 	r.SetBootstrapLitePath(runtime.BootstrapLite)
+	r.SetVideoHLSPath(runtime.VideoHLS)
 
 	for _, asset := range manifest.Islands {
 		r.SetProgramAsset(asset.Name, manifest.IslandURL(assetBaseURL, asset), asset.Format, asset.Hash)
@@ -354,7 +372,7 @@ func (r *Renderer) BootstrapScript() gosx.Node {
 	if r.needsLiteBootstrap() {
 		mode = "lite"
 	}
-	if (len(r.manifest.Islands) > 0 || len(r.manifest.Hubs) > 0 || r.hasWASMEngines()) && r.wasmExecPath != "" {
+	if (len(r.manifest.Islands) > 0 || len(r.manifest.Hubs) > 0 || r.hasWASMEngines() || r.hasRuntimeBridgeEngines()) && r.wasmExecPath != "" {
 		b.WriteString(fmt.Sprintf(`<script data-gosx-script="wasm-exec" src="%s"></script>`, html.EscapeString(r.wasmExecPath)))
 		b.WriteByte('\n')
 	}
@@ -387,7 +405,7 @@ func (r *Renderer) RenderEngine(cfg engine.Config, fallback gosx.Node) gosx.Node
 	}
 
 	mountID := cfg.MountID
-	if cfg.Kind == engine.KindSurface && mountID == "" {
+	if engine.KindNeedsMount(cfg.Kind) && mountID == "" {
 		mountID = fmt.Sprintf("gosx-engine-mount-%d", len(r.manifest.Engines))
 	}
 
@@ -407,7 +425,7 @@ func (r *Renderer) RenderEngine(cfg engine.Config, fallback gosx.Node) gosx.Node
 		return renderEngineError(err)
 	}
 
-	if cfg.Kind == engine.KindWorker {
+	if !engine.KindNeedsMount(cfg.Kind) {
 		return gosx.Text("")
 	}
 
@@ -693,7 +711,7 @@ func (r *Renderer) PreloadHints() gosx.Node {
 
 	// Preload the WASM runtime — this is the biggest asset and biggest win.
 	// "as=fetch" with crossorigin lets the browser start the download immediately.
-	if (len(r.manifest.Islands) > 0 || len(r.manifest.Hubs) > 0) && r.manifest.Runtime.Path != "" {
+	if (len(r.manifest.Islands) > 0 || len(r.manifest.Hubs) > 0 || r.hasRuntimeBridgeEngines()) && r.manifest.Runtime.Path != "" {
 		b.WriteString(fmt.Sprintf(`<link rel="preload" href="%s" as="fetch" type="application/wasm" crossorigin>`, r.manifest.Runtime.Path))
 		b.WriteByte('\n')
 	}
@@ -788,16 +806,22 @@ func (r *Renderer) Summary() Summary {
 		Manifest:      r.needsClientBootstrap() && !r.needsLiteBootstrap(),
 		RuntimePath:   r.manifest.Runtime.Path,
 		WASMExecPath:  r.wasmExecPath,
-		PatchPath:     r.patchPath,
 		BootstrapPath: r.selectedBootstrapPath(),
 		Islands:       len(r.manifest.Islands),
 		Engines:       len(r.manifest.Engines),
 		Hubs:          len(r.manifest.Hubs),
 	}
+	if len(r.manifest.Islands) > 0 {
+		summary.PatchPath = r.patchPath
+	}
+	if r.hasVideoEngines() {
+		summary.HLSPath = r.videoHLSPath
+	}
 	if r.needsLiteBootstrap() {
 		summary.RuntimePath = ""
 		summary.WASMExecPath = ""
 		summary.PatchPath = ""
+		summary.HLSPath = ""
 	}
 	return summary
 }
@@ -815,6 +839,33 @@ func (r *Renderer) hasWASMEngines() bool {
 	for _, entry := range r.manifest.Engines {
 		if entry.ProgramRef != "" {
 			return true
+		}
+	}
+	return false
+}
+
+func (r *Renderer) hasVideoEngines() bool {
+	for _, entry := range r.manifest.Engines {
+		if strings.EqualFold(strings.TrimSpace(entry.Kind), string(engine.KindVideo)) {
+			return true
+		}
+	}
+	return false
+}
+
+func (r *Renderer) hasRuntimeBridgeEngines() bool {
+	for _, entry := range r.manifest.Engines {
+		if strings.EqualFold(strings.TrimSpace(entry.Kind), string(engine.KindVideo)) {
+			return true
+		}
+		if strings.EqualFold(strings.TrimSpace(entry.Runtime), string(engine.RuntimeShared)) {
+			return true
+		}
+		for _, capability := range entry.Capabilities {
+			switch strings.TrimSpace(capability) {
+			case string(engine.CapKeyboard), string(engine.CapPointer), string(engine.CapGamepad):
+				return true
+			}
 		}
 	}
 	return false

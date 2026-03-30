@@ -1,6 +1,7 @@
 package bridge
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/odvcencio/gosx/crdt"
@@ -191,6 +192,41 @@ func TestSetSharedSignalBatchJSONRejectsInvalidPayloadWithoutApplying(t *testing
 	}
 	if _, ok := b.GetStore().Get("$input.pointer"); ok {
 		t.Fatal("expected no values applied on invalid batch payload")
+	}
+}
+
+func TestBridgeGetSharedSignalJSON(t *testing.T) {
+	b := New()
+
+	if err := b.SetSharedSignalJSON("$presence", `{"count":3,"ready":true}`); err != nil {
+		t.Fatalf("set shared signal json: %v", err)
+	}
+
+	raw, err := b.GetSharedSignalJSON("$presence")
+	if err != nil {
+		t.Fatalf("get shared signal json: %v", err)
+	}
+	if !strings.Contains(raw, `"count":3`) || !strings.Contains(raw, `"ready":true`) {
+		t.Fatalf("unexpected shared signal json: %s", raw)
+	}
+}
+
+func TestBridgeSharedSignalCallbackFiresOnUpdates(t *testing.T) {
+	b := New()
+
+	events := make([]string, 0, 2)
+	b.SetSharedSignalCallback(func(name, valueJSON string) {
+		events = append(events, name+"="+valueJSON)
+	})
+
+	if err := b.SetSharedSignalJSON("$video.playing", `true`); err != nil {
+		t.Fatalf("set shared signal json: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(events))
+	}
+	if events[0] != "$video.playing=true" {
+		t.Fatalf("unexpected callback payload: %q", events[0])
 	}
 }
 

@@ -54,6 +54,27 @@ func TestEngineWorkerConfig(t *testing.T) {
 	}
 }
 
+func TestEngineVideoConfigNeedsMount(t *testing.T) {
+	cfg := Config{
+		Name:     "Player",
+		Kind:     KindVideo,
+		MountID:  "player-root",
+		WASMPath: "",
+	}
+	if cfg.Kind != KindVideo {
+		t.Fatal("expected video")
+	}
+	if cfg.MountID == "" {
+		t.Fatal("video should keep mount id")
+	}
+	if !KindNeedsMount(cfg.Kind) {
+		t.Fatal("video should need a mount")
+	}
+	if KindNeedsMount(KindWorker) {
+		t.Fatal("worker should not need a mount")
+	}
+}
+
 func TestMessageBus(t *testing.T) {
 	bus := NewMessageBus()
 
@@ -84,7 +105,7 @@ func TestMessageBusMultipleHandlers(t *testing.T) {
 
 func TestValidateCapabilities(t *testing.T) {
 	// Valid
-	err := ValidateCapabilities([]Capability{CapCanvas, CapWebGL, CapWebGPU, CapPixelSurface, CapPointer, CapKeyboard, CapGamepad})
+	err := ValidateCapabilities([]Capability{CapVideo, CapCanvas, CapWebGL, CapWebGPU, CapPixelSurface, CapPointer, CapKeyboard, CapGamepad})
 	if err != nil {
 		t.Fatal(err)
 	}

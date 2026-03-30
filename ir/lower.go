@@ -78,7 +78,7 @@ func (l *lowerer) hasIslandDirective(n *gotreesitter.Node) bool {
 }
 
 // parseEngineDirective checks for //gosx:engine and extracts the kind.
-// Returns ("worker"|"surface", true) or ("", false).
+// Returns ("worker"|"surface"|"video", true) or ("", false).
 func (l *lowerer) parseEngineDirective(n *gotreesitter.Node) (string, bool) {
 	for _, line := range l.precedingCommentLines(n) {
 		trimmed := strings.TrimSpace(line)
@@ -88,7 +88,7 @@ func (l *lowerer) parseEngineDirective(n *gotreesitter.Node) (string, bool) {
 			if len(fields) == 0 {
 				return "worker", true
 			}
-			if kind := fields[0]; kind == "worker" || kind == "surface" {
+			if kind := fields[0]; kind == "worker" || kind == "surface" || kind == "video" {
 				return kind, true
 			}
 			continue
@@ -114,6 +114,31 @@ func (l *lowerer) parseCapabilities(n *gotreesitter.Node) []string {
 		return strings.Fields(rest)
 	}
 	return nil
+}
+
+func engineDirectiveCapabilities(kind string, declared []string) []string {
+	if kind != "video" {
+		return declared
+	}
+
+	seen := make(map[string]struct{}, len(declared)+3)
+	out := make([]string, 0, len(declared)+3)
+	for _, cap := range []string{"video", "fetch", "audio"} {
+		seen[cap] = struct{}{}
+		out = append(out, cap)
+	}
+	for _, cap := range declared {
+		cap = strings.TrimSpace(cap)
+		if cap == "" {
+			continue
+		}
+		if _, ok := seen[cap]; ok {
+			continue
+		}
+		seen[cap] = struct{}{}
+		out = append(out, cap)
+	}
+	return out
 }
 
 func (l *lowerer) precedingCommentLines(n *gotreesitter.Node) []string {
@@ -835,7 +860,7 @@ func (l *lowerer) lowerFunctionDecl(n *gotreesitter.Node) {
 	if engineKind, isEngine := l.parseEngineDirective(n); isEngine {
 		comp.IsEngine = true
 		comp.EngineKind = engineKind
-		comp.EngineCapabilities = l.parseCapabilities(n)
+		comp.EngineCapabilities = engineDirectiveCapabilities(engineKind, l.parseCapabilities(n))
 	}
 
 	l.prog.Components = append(l.prog.Components, comp)

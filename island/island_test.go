@@ -437,6 +437,33 @@ func TestRendererVersionsCompatRuntimeURLsFromBuildManifest(t *testing.T) {
 	}
 }
 
+func TestRendererSummaryIncludesVideoHLSPathForVideoPages(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("GOSX_APP_ROOT", root)
+
+	r := NewRenderer("main")
+	r.RenderEngine(engine.Config{
+		Name: "PromoVideo",
+		Kind: engine.KindVideo,
+		Props: json.RawMessage(`{
+			"src": "/media/promo.m3u8"
+		}`),
+	}, gosx.Text("loading"))
+
+	headHTML := gosx.RenderHTML(r.PageHead())
+	if !strings.Contains(headHTML, "/gosx/bootstrap.js") {
+		t.Fatalf("expected full bootstrap for video page, got %s", headHTML)
+	}
+	if !strings.Contains(headHTML, "/gosx/wasm_exec.js") {
+		t.Fatalf("expected wasm exec for video page, got %s", headHTML)
+	}
+
+	summary := r.Summary()
+	if summary.HLSPath != "/gosx/hls.min.js" {
+		t.Fatalf("expected default hls compat path, got %q", summary.HLSPath)
+	}
+}
+
 func TestNewRendererAutoLoadsBuildManifestIslandPrograms(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("GOSX_APP_ROOT", root)

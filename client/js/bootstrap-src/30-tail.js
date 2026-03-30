@@ -130,9 +130,23 @@
   // --------------------------------------------------------------------------
 
   function resolveEngineFactory(entry) {
+    const builtin = resolveBuiltinEngineFactory(entry);
+    if (builtin) {
+      return builtin;
+    }
     const exportName = engineExportName(entry);
     if (!exportName) return null;
     return engineFactories[exportName] || null;
+  }
+
+  function resolveBuiltinEngineFactory(entry) {
+    if (!entry || !engineKindUsesBuiltinFactory(entry.kind)) {
+      return null;
+    }
+    if (entry.kind === "video") {
+      return createBuiltInVideoEngine;
+    }
+    return null;
   }
 
   function engineExportName(entry) {
@@ -676,6 +690,908 @@
     return new Float32Array(0);
   }
 
+  function engineKindNeedsMount(kind) {
+    return kind === "surface" || kind === "video";
+  }
+
+  function engineKindUsesBuiltinFactory(kind) {
+    return kind === "video";
+  }
+
+  function videoPropValue(props, names, fallback) {
+    const source = props && typeof props === "object" ? props : {};
+    const list = Array.isArray(names) ? names : [names];
+    for (const name of list) {
+      if (!name) {
+        continue;
+      }
+      if (Object.prototype.hasOwnProperty.call(source, name) && source[name] != null) {
+        return source[name];
+      }
+    }
+    return fallback;
+  }
+
+  function videoSignalName(name) {
+    return "$video." + name;
+  }
+
+  function videoRuntimeAssets() {
+    if (window.__gosx && window.__gosx.document && typeof window.__gosx.document.get === "function") {
+      const documentState = window.__gosx.document.get();
+      if (documentState && documentState.assets && documentState.assets.runtime) {
+        return documentState.assets.runtime;
+      }
+    }
+    return {};
+  }
+
+  function readVideoSignal(name, fallback) {
+    const value = gosxReadSharedSignal(videoSignalName(name), fallback);
+    return value == null ? fallback : value;
+  }
+
+  function writeVideoSignal(name, value) {
+    const signalName = videoSignalName(name);
+    const payload = JSON.stringify(value == null ? null : value);
+    const setSharedSignal = window.__gosx_set_shared_signal;
+    if (typeof setSharedSignal === "function") {
+      try {
+        const result = setSharedSignal(signalName, payload);
+        if (typeof result === "string" && result !== "") {
+          console.error("[gosx] shared signal update error (" + signalName + "):", result);
+          gosxNotifySharedSignal(signalName, payload);
+        }
+        return;
+      } catch (error) {
+        console.error("[gosx] shared signal update error (" + signalName + "):", error);
+      }
+    }
+    gosxNotifySharedSignal(signalName, payload);
+  }
+
+  function subscribeVideoSignal(name, listener) {
+    return gosxSubscribeSharedSignal(videoSignalName(name), function(value) {
+      listener(value);
+    }, { immediate: true });
+  }
+
+  function videoClearChildren(node) {
+    if (!node) {
+      return;
+    }
+    while (node.firstChild) {
+      node.removeChild(node.firstChild);
+    }
+  }
+
+  function videoRestoreChildren(node, children) {
+    if (!node) {
+      return;
+    }
+    videoClearChildren(node);
+    for (const child of children || []) {
+      if (child) {
+        node.appendChild(child);
+      }
+    }
+  }
+
+  function videoNeedsHLS(source) {
+    return /\.m3u8(?:$|[?#])/i.test(String(source || "").trim());
+  }
+
+  function videoSupportsNativeHLS(video) {
+    if (!video || typeof video.canPlayType !== "function") {
+      return false;
+    }
+    const result = String(video.canPlayType("application/vnd.apple.mpegurl") || "");
+    return result !== "" && result !== "no";
+  }
+
+  async function ensureVideoHLSLibrary() {
+    if (typeof window.Hls === "function") {
+      return window.Hls;
+    }
+    const runtimeAssets = videoRuntimeAssets();
+    const path = String(runtimeAssets.hlsPath || "/gosx/hls.min.js").trim();
+    if (!path) {
+      return null;
+    }
+    await loadEngineScript(path);
+    return typeof window.Hls === "function" ? window.Hls : null;
+  }
+
+  function videoBufferedAhead(video) {
+    if (!video || !video.buffered || typeof video.buffered.length !== "number" || typeof video.buffered.end !== "function") {
+      return 0;
+    }
+    const current = Math.max(0, sceneNumber(video.currentTime, 0));
+    for (let i = 0; i < video.buffered.length; i += 1) {
+      const end = sceneNumber(video.buffered.end(i), current);
+      const start = typeof video.buffered.start === "function" ? sceneNumber(video.buffered.start(i), 0) : 0;
+      if (current >= start && current <= end + 0.1) {
+        return Math.max(0, end - current);
+      }
+    }
+    return 0;
+  }
+
+  function videoViewportSize(mount) {
+    const rect = mount && typeof mount.getBoundingClientRect === "function"
+      ? mount.getBoundingClientRect()
+      : { width: 0, height: 0 };
+    return [
+      Math.max(0, Math.round(sceneNumber(rect && rect.width, sceneNumber(mount && mount.width, 0)))),
+      Math.max(0, Math.round(sceneNumber(rect && rect.height, sceneNumber(mount && mount.height, 0)))),
+    ];
+  }
+
+  function videoNormalizeTrackInfo(item, index) {
+    const source = item && typeof item === "object" ? item : {};
+    const language = String(videoPropValue(source, ["language", "lang"], "") || "").trim();
+    const title = String(videoPropValue(source, ["title", "label", "name"], language || ("Track " + (index + 1))) || "").trim();
+    const id = String(videoPropValue(source, ["id", "trackID", "trackId"], language || title || ("track-" + index)) || "").trim();
+    return {
+      id: id || ("track-" + index),
+      language: language,
+      title: title,
+      default: sceneBool(videoPropValue(source, ["default"], false), false),
+      forced: sceneBool(videoPropValue(source, ["forced"], false), false),
+    };
+  }
+
+  function videoTracksFromProps(props) {
+    const tracks = videoPropValue(props, ["subtitleTracks", "subtitle_tracks"], []);
+    if (!Array.isArray(tracks)) {
+      return [];
+    }
+    return tracks.map(videoNormalizeTrackInfo);
+  }
+
+  function videoSanitizeCueHTML(text) {
+    const escaped = String(text == null ? "" : text)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
+    return escaped
+      .replace(/&lt;(\/?)(b|i|u|s)&gt;/gi, "<$1$2>");
+  }
+
+  function videoParseTimestamp(value) {
+    const text = String(value || "").trim();
+    if (!text) {
+      return -1;
+    }
+    const parts = text.split(":");
+    if (parts.length < 2 || parts.length > 3) {
+      return -1;
+    }
+    let hours = 0;
+    let minutes = 0;
+    let seconds = 0;
+    if (parts.length === 3) {
+      hours = Number(parts[0]);
+      minutes = Number(parts[1]);
+      seconds = Number(parts[2].replace(",", "."));
+    } else {
+      minutes = Number(parts[0]);
+      seconds = Number(parts[1].replace(",", "."));
+    }
+    if (!Number.isFinite(hours) || !Number.isFinite(minutes) || !Number.isFinite(seconds)) {
+      return -1;
+    }
+    return Math.round(((hours * 3600) + (minutes * 60) + seconds) * 1000);
+  }
+
+  function parseVideoVTT(text) {
+    const raw = String(text == null ? "" : text).replace(/\r/g, "");
+    const lines = raw.split("\n");
+    const cues = [];
+    let index = 0;
+
+    while (index < lines.length) {
+      let line = String(lines[index] || "").trim();
+      if (!line) {
+        index += 1;
+        continue;
+      }
+      if (/^WEBVTT/i.test(line)) {
+        index += 1;
+        continue;
+      }
+      if (/^NOTE\b/i.test(line)) {
+        index += 1;
+        while (index < lines.length && String(lines[index] || "").trim() !== "") {
+          index += 1;
+        }
+        continue;
+      }
+      if (!line.includes("-->")) {
+        index += 1;
+        line = String(lines[index] || "").trim();
+      }
+      if (!line.includes("-->")) {
+        index += 1;
+        continue;
+      }
+      const timing = line.split("-->");
+      const startMS = videoParseTimestamp(timing[0]);
+      const endBits = String(timing[1] || "").trim().split(/\s+/);
+      const endMS = videoParseTimestamp(endBits[0]);
+      index += 1;
+      const textLines = [];
+      while (index < lines.length && String(lines[index] || "").trim() !== "") {
+        textLines.push(String(lines[index] || ""));
+        index += 1;
+      }
+      if (startMS < 0 || endMS <= startMS) {
+        continue;
+      }
+      cues.push({
+        startMS,
+        endMS,
+        text: videoSanitizeCueHTML(textLines.join("\n")),
+      });
+    }
+
+    cues.sort(function(a, b) {
+      if (a.startMS !== b.startMS) {
+        return a.startMS - b.startMS;
+      }
+      return a.endMS - b.endMS;
+    });
+    return cues;
+  }
+
+  function videoActiveCues(cues, currentTimeSeconds) {
+    const currentMS = Math.max(0, Math.round(sceneNumber(currentTimeSeconds, 0) * 1000));
+    const active = [];
+    for (const cue of cues || []) {
+      if (cue.startMS <= currentMS && currentMS < cue.endMS) {
+        active.push({ text: cue.text });
+      }
+      if (cue.startMS > currentMS) {
+        break;
+      }
+    }
+    return active;
+  }
+
+  function videoApplyElementProps(video, props) {
+    if (!video || !props || typeof props !== "object") {
+      return;
+    }
+    const stringAttrs = [
+      ["poster", "poster"],
+      ["preload", "preload"],
+      ["crossorigin", "crossOrigin"],
+      ["crossorigin", "crossorigin"],
+    ];
+    for (const entry of stringAttrs) {
+      const value = videoPropValue(props, [entry[1], entry[0]], "");
+      if (value == null || value === "") {
+        continue;
+      }
+      video.setAttribute(entry[0], String(value));
+    }
+    const boolAttrs = [
+      ["autoplay", ["autoplay", "autoPlay"]],
+      ["controls", ["controls"]],
+      ["loop", ["loop"]],
+      ["muted", ["muted"]],
+      ["playsinline", ["playsinline", "playsInline"]],
+    ];
+    for (const entry of boolAttrs) {
+      const enabled = sceneBool(videoPropValue(props, entry[1], false), false);
+      if (enabled) {
+        video.setAttribute(entry[0], "true");
+      } else if (typeof video.removeAttribute === "function") {
+        video.removeAttribute(entry[0]);
+      }
+    }
+    if (sceneBool(videoPropValue(props, ["muted"], false), false)) {
+      video.muted = true;
+    }
+  }
+
+  function videoSyncURL(path) {
+    const source = String(path || "").trim();
+    if (!source) {
+      return "";
+    }
+    return isAbsoluteHubURL(source) ? source : hubURL(source);
+  }
+
+  async function createBuiltInVideoEngine(ctx) {
+    const mount = ctx && ctx.mount;
+    if (!mount) {
+      return {};
+    }
+
+    const props = ctx && ctx.props && typeof ctx.props === "object" ? ctx.props : {};
+    const fallbackChildren = mount && mount.childNodes ? Array.from(mount.childNodes) : [];
+    const video = document.createElement("video");
+    const unsubscribers = [];
+    const eventListeners = [];
+    const subtitleState = {
+      tracks: videoTracksFromProps(props),
+      loadedID: "",
+      activeID: "",
+      cues: [],
+      lastSignature: "",
+      status: "idle",
+    };
+    let disposed = false;
+    let hls = null;
+    let syncSocket = null;
+    let reconnectTimer = 0;
+    let followTimer = 0;
+    let lastLeadSendAt = 0;
+    let followState = null;
+    let requestedRate = Math.max(0.1, sceneNumber(readVideoSignal("rate", videoPropValue(props, ["rate"], 1)), 1));
+    let lastError = "";
+    let stalled = false;
+    let resizeObserver = null;
+    let currentSource = "";
+
+    function setError(message) {
+      lastError = String(message || "").trim();
+      writeVideoSignal("error", lastError);
+    }
+
+    function clearError() {
+      if (!lastError) {
+        return;
+      }
+      lastError = "";
+      writeVideoSignal("error", "");
+    }
+
+    function updateSubtitleOutputs() {
+      writeVideoSignal("subtitleTracks", subtitleState.tracks.slice());
+      writeVideoSignal("subtitleStatus", subtitleState.status);
+    }
+
+    function updateCueOutputs() {
+      const next = videoActiveCues(subtitleState.cues, sceneNumber(video.currentTime, 0));
+      const signature = JSON.stringify(next);
+      if (signature === subtitleState.lastSignature) {
+        return;
+      }
+      subtitleState.lastSignature = signature;
+      writeVideoSignal("activeCues", next);
+    }
+
+    function updateVideoOutputs() {
+      const duration = Math.max(0, sceneNumber(video.duration, 0));
+      const viewport = videoViewportSize(mount);
+      const playing = !sceneBool(video.paused, true) && !sceneBool(video.ended, false);
+      writeVideoSignal("position", Math.max(0, sceneNumber(video.currentTime, 0)));
+      writeVideoSignal("duration", duration);
+      writeVideoSignal("playing", playing);
+      writeVideoSignal("buffered", videoBufferedAhead(video));
+      writeVideoSignal("stalled", stalled);
+      writeVideoSignal("fullscreen", Boolean(document && document.fullscreenElement && (document.fullscreenElement === mount || document.fullscreenElement === video)));
+      writeVideoSignal("viewport", viewport);
+      writeVideoSignal("ready", sceneNumber(video.readyState, 0) >= 2);
+      writeVideoSignal("muted", Boolean(video.muted));
+      writeVideoSignal("actualRate", sceneNumber(video.playbackRate, requestedRate));
+      writeVideoSignal("syncConnected", Boolean(syncSocket && syncSocket.readyState === 1));
+      updateSubtitleOutputs();
+      updateCueOutputs();
+      if (!lastError) {
+        writeVideoSignal("error", "");
+      }
+    }
+
+    function addListener(target, type, listener) {
+      if (!target || typeof target.addEventListener !== "function") {
+        return;
+      }
+      target.addEventListener(type, listener);
+      eventListeners.push({ target, type, listener });
+    }
+
+    function teardownHLS() {
+      if (hls && typeof hls.destroy === "function") {
+        hls.destroy();
+      }
+      hls = null;
+    }
+
+    function projectedFollowPosition(state) {
+      if (!state) {
+        return 0;
+      }
+      let position = Math.max(0, sceneNumber(state.position, 0));
+      const playing = sceneBool(state.playing, false);
+      if (playing) {
+        const sentAtMS = sceneNumber(state.sentAtMS, 0);
+        const rate = Math.max(0.1, sceneNumber(state.rate, 1));
+        if (sentAtMS > 0) {
+          position += Math.max(0, (Date.now() - sentAtMS) / 1000) * rate;
+        }
+      }
+      return position;
+    }
+
+    function applyRequestedRate() {
+      const mode = String(videoPropValue(props, ["syncMode", "sync_mode"], "follow") || "follow").trim().toLowerCase();
+      if (mode === "follow" && followState) {
+        return;
+      }
+      video.playbackRate = requestedRate;
+      updateVideoOutputs();
+    }
+
+    function safePlay() {
+      try {
+        const result = video.play();
+        if (result && typeof result.then === "function") {
+          return result.catch(function(error) {
+            setError(error && error.message ? error.message : "playback failed");
+            updateVideoOutputs();
+          });
+        }
+        clearError();
+      } catch (error) {
+        setError(error && error.message ? error.message : "playback failed");
+      }
+      updateVideoOutputs();
+      return Promise.resolve();
+    }
+
+    function applyFollowState() {
+      if (!followState || disposed) {
+        return;
+      }
+      const strategy = String(videoPropValue(props, ["syncStrategy", "sync_strategy"], "nudge") || "nudge").trim().toLowerCase();
+      const playing = sceneBool(followState.playing, false);
+      const target = projectedFollowPosition(followState);
+      const drift = Math.max(-9999, Math.min(9999, sceneNumber(video.currentTime, 0) - target, 0));
+      if (playing) {
+        safePlay();
+      } else {
+        video.pause();
+      }
+      if (strategy === "snap") {
+        if (Math.abs(drift) > 1) {
+          video.currentTime = Math.max(0, target);
+        }
+        video.playbackRate = requestedRate;
+      } else if (Math.abs(drift) > 5) {
+        video.currentTime = Math.max(0, target);
+        video.playbackRate = requestedRate;
+      } else if (drift > 0.5) {
+        video.playbackRate = 0.92;
+      } else if (drift < -0.5) {
+        video.playbackRate = 1.08;
+      } else {
+        video.playbackRate = requestedRate;
+      }
+      updateVideoOutputs();
+    }
+
+    function clearFollowTimer() {
+      if (followTimer) {
+        clearInterval(followTimer);
+        followTimer = 0;
+      }
+    }
+
+    function ensureFollowTimer() {
+      if (followTimer || String(videoPropValue(props, ["syncMode", "sync_mode"], "follow")).trim().toLowerCase() !== "follow") {
+        return;
+      }
+      followTimer = setInterval(applyFollowState, 500);
+    }
+
+    function sendLeadSnapshot(force) {
+      if (!syncSocket || syncSocket.readyState !== 1) {
+        return;
+      }
+      const mode = String(videoPropValue(props, ["syncMode", "sync_mode"], "follow")).trim().toLowerCase();
+      if (mode !== "lead") {
+        return;
+      }
+      const now = Date.now();
+      if (!force && now-lastLeadSendAt < 250) {
+        return;
+      }
+      lastLeadSendAt = now;
+      try {
+        syncSocket.send(JSON.stringify({
+          type: "sync",
+          mediaID: currentSource,
+          position: Math.max(0, sceneNumber(video.currentTime, 0)),
+          playing: !sceneBool(video.paused, true) && !sceneBool(video.ended, false),
+          rate: sceneNumber(video.playbackRate, requestedRate),
+          sentAtMS: now,
+        }));
+      } catch (_error) {
+      }
+    }
+
+    function clearReconnectTimer() {
+      if (reconnectTimer) {
+        clearTimeout(reconnectTimer);
+        reconnectTimer = 0;
+      }
+    }
+
+    function closeSyncSocket() {
+      clearReconnectTimer();
+      clearFollowTimer();
+      if (syncSocket && typeof syncSocket.close === "function") {
+        syncSocket.close();
+      }
+      syncSocket = null;
+      writeVideoSignal("syncConnected", false);
+    }
+
+    function connectSync(attempt) {
+      const rawURL = videoSyncURL(videoPropValue(props, ["sync"], ""));
+      if (!rawURL || typeof WebSocket !== "function" || disposed) {
+        writeVideoSignal("syncConnected", false);
+        return;
+      }
+      const retryAttempt = Math.max(0, attempt || 0);
+      const socket = new WebSocket(rawURL);
+      syncSocket = socket;
+      socket.onopen = function() {
+        writeVideoSignal("syncConnected", true);
+        updateVideoOutputs();
+        if (String(videoPropValue(props, ["syncMode", "sync_mode"], "follow")).trim().toLowerCase() === "lead") {
+          sendLeadSnapshot(true);
+        } else {
+          ensureFollowTimer();
+        }
+      };
+      socket.onclose = function() {
+        writeVideoSignal("syncConnected", false);
+        updateVideoOutputs();
+        if (disposed) {
+          return;
+        }
+        const delay = Math.min(30000, Math.max(1000, 1000 * Math.pow(2, retryAttempt)));
+        reconnectTimer = setTimeout(function() {
+          connectSync(retryAttempt + 1);
+        }, delay);
+      };
+      socket.onerror = function() {
+        writeVideoSignal("syncConnected", false);
+      };
+      socket.onmessage = function(event) {
+        let message = null;
+        try {
+          message = JSON.parse(String(event && event.data || ""));
+        } catch (_error) {
+          return;
+        }
+        if (!message || message.type !== "sync") {
+          return;
+        }
+        if (message.mediaID && currentSource && String(message.mediaID) !== String(currentSource)) {
+          return;
+        }
+        followState = message;
+        if (String(videoPropValue(props, ["syncMode", "sync_mode"], "follow")).trim().toLowerCase() === "follow") {
+          ensureFollowTimer();
+          applyFollowState();
+        }
+      };
+    }
+
+    async function loadSubtitleTrack(trackID) {
+      const selected = String(trackID || "").trim();
+      subtitleState.activeID = selected;
+      subtitleState.cues = [];
+      subtitleState.lastSignature = "";
+      if (!selected) {
+        subtitleState.loadedID = "";
+        subtitleState.status = subtitleState.tracks.length > 0 ? "ready" : "idle";
+        updateSubtitleOutputs();
+        updateCueOutputs();
+        return;
+      }
+      const localTrack = subtitleState.tracks.find(function(track) {
+        return track.id === selected;
+      });
+      if (!localTrack) {
+        subtitleState.status = "error";
+        updateSubtitleOutputs();
+        return;
+      }
+      if (hls && Array.isArray(hls.subtitleTracks) && Object.prototype.hasOwnProperty.call(hls, "subtitleTrack")) {
+        const nextIndex = hls.subtitleTracks.findIndex(function(track) {
+          return videoNormalizeTrackInfo(track, 0).id === selected;
+        });
+        if (nextIndex >= 0) {
+          hls.subtitleTrack = nextIndex;
+        }
+      }
+      const subtitleBase = String(videoPropValue(props, ["subtitleBase", "subtitle_base"], "") || "").trim();
+      if (!subtitleBase) {
+        subtitleState.status = "ready";
+        updateSubtitleOutputs();
+        updateCueOutputs();
+        return;
+      }
+      subtitleState.status = "loading";
+      updateSubtitleOutputs();
+      const subtitleURL = subtitleBase.replace(/\/$/, "") + "/" + encodeURIComponent(selected) + ".vtt";
+      for (let attempt = 0; attempt < 60; attempt += 1) {
+        const response = await fetch(subtitleURL);
+        if (response.status === 202) {
+          subtitleState.status = "warming";
+          updateSubtitleOutputs();
+          await new Promise(function(resolve) {
+            setTimeout(resolve, 1500);
+          });
+          continue;
+        }
+        if (!response.ok) {
+          subtitleState.status = "error";
+          setError("subtitle fetch failed");
+          updateSubtitleOutputs();
+          return;
+        }
+        const text = await response.text();
+        subtitleState.cues = parseVideoVTT(text);
+        subtitleState.loadedID = selected;
+        subtitleState.status = "ready";
+        clearError();
+        updateSubtitleOutputs();
+        updateCueOutputs();
+        return;
+      }
+      subtitleState.status = "error";
+      setError("subtitle warmup timed out");
+      updateSubtitleOutputs();
+    }
+
+    async function applySource(source) {
+      const nextSource = String(source || "").trim();
+      currentSource = nextSource;
+      clearError();
+      followState = null;
+      clearFollowTimer();
+      teardownHLS();
+      subtitleState.cues = [];
+      subtitleState.lastSignature = "";
+      updateCueOutputs();
+      if (!nextSource) {
+        if (typeof video.removeAttribute === "function") {
+          video.removeAttribute("src");
+        }
+        if (typeof video.load === "function") {
+          video.load();
+        }
+        updateVideoOutputs();
+        return;
+      }
+      if (videoNeedsHLS(nextSource) && !videoSupportsNativeHLS(video)) {
+        const HlsCtor = await ensureVideoHLSLibrary();
+        if (!HlsCtor) {
+          setError("HLS.js unavailable");
+          updateVideoOutputs();
+          return;
+        }
+        const supported = typeof HlsCtor.isSupported === "function" ? HlsCtor.isSupported() : true;
+        if (!supported) {
+          setError("HLS playback unsupported");
+          updateVideoOutputs();
+          return;
+        }
+        hls = new HlsCtor(videoPropValue(props, ["hls", "hlsConfig"], {}));
+        if (hls && typeof hls.attachMedia === "function") {
+          hls.attachMedia(video);
+        }
+        if (hls && typeof hls.loadSource === "function") {
+          hls.loadSource(nextSource);
+        }
+        if (hls && typeof hls.on === "function" && HlsCtor.Events) {
+          if (HlsCtor.Events.MANIFEST_PARSED) {
+            hls.on(HlsCtor.Events.MANIFEST_PARSED, function() {
+              if (Array.isArray(hls.subtitleTracks) && hls.subtitleTracks.length > 0) {
+                subtitleState.tracks = hls.subtitleTracks.map(videoNormalizeTrackInfo);
+                updateSubtitleOutputs();
+              }
+              clearError();
+              updateVideoOutputs();
+            });
+          }
+          if (HlsCtor.Events.SUBTITLE_TRACKS_UPDATED) {
+            hls.on(HlsCtor.Events.SUBTITLE_TRACKS_UPDATED, function(_event, data) {
+              const tracks = data && Array.isArray(data.subtitleTracks) ? data.subtitleTracks : (Array.isArray(hls.subtitleTracks) ? hls.subtitleTracks : []);
+              subtitleState.tracks = tracks.map(videoNormalizeTrackInfo);
+              updateSubtitleOutputs();
+            });
+          }
+          if (HlsCtor.Events.ERROR) {
+            hls.on(HlsCtor.Events.ERROR, function(_event, data) {
+              if (data && data.fatal) {
+                setError(data && data.details ? data.details : "video transport failed");
+                updateVideoOutputs();
+              }
+            });
+          }
+        }
+      } else {
+        video.src = nextSource;
+        if (typeof video.load === "function") {
+          video.load();
+        }
+      }
+      updateVideoOutputs();
+      const activeSubtitleTrack = readVideoSignal("subtitleTrack", videoPropValue(props, ["subtitleTrack", "subtitle_track"], ""));
+      await loadSubtitleTrack(activeSubtitleTrack);
+      if (String(videoPropValue(props, ["sync"], "")).trim() !== "") {
+        closeSyncSocket();
+        connectSync(0);
+      }
+    }
+
+    video.setAttribute("data-gosx-video", "true");
+    videoApplyElementProps(video, props);
+    videoClearChildren(mount);
+    mount.appendChild(video);
+    subtitleState.status = subtitleState.tracks.length > 0 ? "ready" : "idle";
+    writeVideoSignal("subtitleTracks", subtitleState.tracks.slice());
+    writeVideoSignal("subtitleStatus", subtitleState.status);
+    writeVideoSignal("activeCues", []);
+    writeVideoSignal("syncConnected", false);
+    writeVideoSignal("error", "");
+
+    addListener(video, "timeupdate", function() {
+      updateVideoOutputs();
+      sendLeadSnapshot(false);
+    });
+    addListener(video, "durationchange", updateVideoOutputs);
+    addListener(video, "loadedmetadata", updateVideoOutputs);
+    addListener(video, "canplay", function() {
+      stalled = false;
+      clearError();
+      updateVideoOutputs();
+    });
+    addListener(video, "play", function() {
+      stalled = false;
+      clearError();
+      updateVideoOutputs();
+      sendLeadSnapshot(true);
+    });
+    addListener(video, "pause", function() {
+      stalled = false;
+      updateVideoOutputs();
+      sendLeadSnapshot(true);
+    });
+    addListener(video, "seeked", function() {
+      updateVideoOutputs();
+      sendLeadSnapshot(true);
+    });
+    addListener(video, "waiting", function() {
+      stalled = true;
+      updateVideoOutputs();
+    });
+    addListener(video, "stalled", function() {
+      stalled = true;
+      updateVideoOutputs();
+    });
+    addListener(video, "volumechange", function() {
+      updateVideoOutputs();
+    });
+    addListener(video, "ratechange", function() {
+      updateVideoOutputs();
+      sendLeadSnapshot(true);
+    });
+    addListener(video, "error", function() {
+      const mediaError = video && video.error && video.error.message ? video.error.message : "video playback failed";
+      setError(mediaError);
+      updateVideoOutputs();
+    });
+    addListener(document, "fullscreenchange", updateVideoOutputs);
+
+    if (typeof ResizeObserver === "function") {
+      resizeObserver = new ResizeObserver(function() {
+        updateVideoOutputs();
+      });
+      resizeObserver.observe(mount);
+    }
+
+    unsubscribers.push(subscribeVideoSignal("src", function(value) {
+      applySource(value);
+    }));
+    unsubscribers.push(subscribeVideoSignal("seek", function(value) {
+      const mode = String(videoPropValue(props, ["syncMode", "sync_mode"], "follow")).trim().toLowerCase();
+      if (mode === "follow" && String(videoPropValue(props, ["sync"], "")).trim() !== "") {
+        return;
+      }
+      const nextTime = sceneNumber(value, -1);
+      if (nextTime >= 0) {
+        video.currentTime = nextTime;
+        updateVideoOutputs();
+      }
+    }));
+    unsubscribers.push(subscribeVideoSignal("command", function(value) {
+      const mode = String(videoPropValue(props, ["syncMode", "sync_mode"], "follow")).trim().toLowerCase();
+      if (mode === "follow" && String(videoPropValue(props, ["sync"], "")).trim() !== "") {
+        return;
+      }
+      const command = String(value || "").trim().toLowerCase();
+      if (!command) {
+        return;
+      }
+      if (command === "play") {
+        safePlay();
+      } else if (command === "pause") {
+        video.pause();
+      } else if (command === "toggle") {
+        if (sceneBool(video.paused, true)) {
+          safePlay();
+        } else {
+          video.pause();
+        }
+      } else if ((command === "enter-fullscreen" || command === "toggle-fullscreen") && mount && typeof mount.requestFullscreen === "function") {
+        mount.requestFullscreen();
+      } else if (command === "exit-fullscreen" && document && typeof document.exitFullscreen === "function") {
+        document.exitFullscreen();
+      }
+      updateVideoOutputs();
+    }));
+    unsubscribers.push(subscribeVideoSignal("volume", function(value) {
+      const volume = Math.max(0, Math.min(1, sceneNumber(value, sceneNumber(video.volume, 1))));
+      video.volume = volume;
+      updateVideoOutputs();
+    }));
+    unsubscribers.push(subscribeVideoSignal("mute", function(value) {
+      video.muted = sceneBool(value, Boolean(video.muted));
+      updateVideoOutputs();
+    }));
+    unsubscribers.push(subscribeVideoSignal("rate", function(value) {
+      requestedRate = Math.max(0.1, sceneNumber(value, requestedRate));
+      const mode = String(videoPropValue(props, ["syncMode", "sync_mode"], "follow")).trim().toLowerCase();
+      if (!(mode === "follow" && String(videoPropValue(props, ["sync"], "")).trim() !== "")) {
+        applyRequestedRate();
+      }
+    }));
+    unsubscribers.push(subscribeVideoSignal("subtitleTrack", function(value) {
+      loadSubtitleTrack(value);
+    }));
+
+    const initialVolume = Math.max(0, Math.min(1, sceneNumber(readVideoSignal("volume", videoPropValue(props, ["volume"], 1)), 1)));
+    video.volume = initialVolume;
+    video.muted = sceneBool(readVideoSignal("mute", videoPropValue(props, ["muted"], false)), false);
+    video.playbackRate = requestedRate;
+    updateVideoOutputs();
+
+    const initialSource = readVideoSignal("src", videoPropValue(props, ["src", "Src"], ""));
+    await applySource(initialSource);
+
+    return {
+      video,
+      dispose() {
+        disposed = true;
+        closeSyncSocket();
+        teardownHLS();
+        if (resizeObserver && typeof resizeObserver.disconnect === "function") {
+          resizeObserver.disconnect();
+        }
+        for (const entry of eventListeners) {
+          if (entry.target && typeof entry.target.removeEventListener === "function") {
+            entry.target.removeEventListener(entry.type, entry.listener);
+          }
+        }
+        for (const unsub of unsubscribers) {
+          if (typeof unsub === "function") {
+            unsub();
+          }
+        }
+        videoRestoreChildren(mount, fallbackChildren);
+      },
+    };
+  }
+
   function createEngineContext(entry, mount, runtime) {
     return {
       id: entry.id,
@@ -710,7 +1626,7 @@
     }
 
     const mount = resolveEngineMount(entry);
-    if (entry.kind === "surface" && !mount) return;
+    if (engineKindNeedsMount(entry.kind) && !mount) return;
     const runtime = createEngineRuntime(entry, mount);
     const ctx = createEngineContext(entry, mount, runtime);
     pendingEngineRuntimes.set(entry.id, runtime);
@@ -761,7 +1677,7 @@
   }
 
   function resolveEngineMount(entry) {
-    if (entry.kind !== "surface") {
+    if (!engineKindNeedsMount(entry.kind)) {
       return null;
     }
     const mountID = entry.mountId || entry.id;
@@ -786,7 +1702,7 @@
 
   async function resolveMountedEngineFactory(entry) {
     let factory = resolveEngineFactory(entry);
-    if (!factory && entry.jsRef) {
+    if (!factory && entry.jsRef && !engineKindUsesBuiltinFactory(entry.kind)) {
       await loadEngineScript(entry.jsRef);
       factory = resolveEngineFactory(entry);
     }
@@ -822,7 +1738,29 @@
   async function mountAllEngines(manifest) {
     if (!manifest.engines || manifest.engines.length === 0) return;
 
-    const promises = manifest.engines.map(function(entry) {
+    const videoEngines = manifest.engines.filter(function(entry) {
+      return entry && entry.kind === "video";
+    });
+    if (videoEngines.length > 1) {
+      console.error("[gosx] only one video engine is supported per page");
+      if (window.__gosx && typeof window.__gosx.reportIssue === "function") {
+        for (const entry of videoEngines.slice(1)) {
+          window.__gosx.reportIssue({
+            scope: "engine",
+            type: "mount",
+            component: entry.component,
+            source: entry.id,
+            ref: entry.id,
+            message: "only one video engine is supported per page",
+            fallback: "server",
+          });
+        }
+      }
+    }
+
+    const promises = manifest.engines.filter(function(entry, index) {
+      return entry.kind !== "video" || videoEngines.indexOf(entry) === 0;
+    }).map(function(entry) {
       return mountEngine(entry).catch(function(e) {
         console.error(`[gosx] unexpected error mounting engine ${entry.id}:`, e);
       });
@@ -1260,11 +2198,12 @@
       return;
     }
 
-    Promise.all([
-      hydrateAllIslands(pendingManifest),
-      mountAllEngines(pendingManifest),
-      connectAllHubs(pendingManifest),
-    ]).then(function() {
+    mountAllEngines(pendingManifest).then(function() {
+      return Promise.all([
+        hydrateAllIslands(pendingManifest),
+        connectAllHubs(pendingManifest),
+      ]);
+    }).then(function() {
       window.__gosx.ready = true;
       refreshGosxDocumentState("ready");
       document.dispatchEvent(new CustomEvent("gosx:ready"));
@@ -1314,6 +2253,7 @@
   function manifestNeedsRuntimeBridge(manifest) {
     return manifestHasEntries(manifest, "islands")
       || manifestHasEntries(manifest, "hubs")
+      || manifestNeedsVideoBridge(manifest)
       || manifestNeedsEngineInputBridge(manifest)
       || manifestNeedsSharedEngineRuntime(manifest);
   }
@@ -1338,6 +2278,15 @@
     }
     return manifest.engines.some(function(entry) {
       return engineUsesSharedRuntime(entry);
+    });
+  }
+
+  function manifestNeedsVideoBridge(manifest) {
+    if (!manifestHasEntries(manifest, "engines")) {
+      return false;
+    }
+    return manifest.engines.some(function(entry) {
+      return entry && entry.kind === "video";
     });
   }
 

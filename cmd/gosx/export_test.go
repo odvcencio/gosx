@@ -32,6 +32,7 @@ func TestRunExportWritesStaticBundleForStarterApp(t *testing.T) {
 		"dist/static/gosx/bootstrap.js",
 		"dist/static/gosx/bootstrap-lite.js",
 		"dist/static/gosx/patch.js",
+		"dist/static/gosx/hls.min.js",
 		"dist/export.json",
 	} {
 		if _, err := os.Stat(filepath.Join(dir, rel)); err != nil {

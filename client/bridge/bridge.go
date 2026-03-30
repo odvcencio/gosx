@@ -3,6 +3,7 @@ package bridge
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/odvcencio/gosx/client/enginevm"
 	"github.com/odvcencio/gosx/client/vm"
@@ -17,6 +18,7 @@ type Bridge struct {
 	engines     map[string]*enginevm.Runtime
 	store       *Store
 	patchFn     func(islandID, patchJSON string) // callback to push patches to JS
+	signalFn    func(name, valueJSON string)     // callback to notify JS of shared signal changes
 	dispatching string                           // ID of the island currently dispatching
 	unsubs      map[string][]func()              // per-island unsubscribe handles for shared signals
 }
@@ -31,7 +33,8 @@ func (b *Bridge) SetPatchCallback(fn func(islandID, patchJSON string)) {
 // Any island can read/write shared signals. When a shared signal changes,
 // all islands that reference it are re-rendered — like Redux, but reactive.
 type Store struct {
-	signals map[string]*signal.Signal[vm.Value]
+	signals  map[string]*signal.Signal[vm.Value]
+	onChange func(name string, value vm.Value)
 }
 
 // NewStore creates an empty shared store.
@@ -39,12 +42,26 @@ func NewStore() *Store {
 	return &Store{signals: make(map[string]*signal.Signal[vm.Value])}
 }
 
+// SetObserver registers a callback invoked whenever any shared signal changes.
+func (s *Store) SetObserver(fn func(name string, value vm.Value)) {
+	s.onChange = fn
+}
+
 // Set creates or updates a shared signal.
 func (s *Store) Set(name string, val vm.Value) {
 	if sig, ok := s.signals[name]; ok {
 		sig.Set(val)
 	} else {
-		s.signals[name] = signal.New(val)
+		sig := signal.New(val)
+		s.signals[name] = sig
+		sig.Subscribe(func() {
+			if s.onChange != nil {
+				s.onChange(name, sig.Get())
+			}
+		})
+		if s.onChange != nil {
+			s.onChange(name, sig.Get())
+		}
 	}
 }
 
@@ -77,22 +94,36 @@ func (s *Store) Signal(name string, init vm.Value) *signal.Signal[vm.Value] {
 	}
 	sig := signal.New(init)
 	s.signals[name] = sig
+	sig.Subscribe(func() {
+		if s.onChange != nil {
+			s.onChange(name, sig.Get())
+		}
+	})
 	return sig
 }
 
 // New creates a new bridge with an empty shared store.
 func New() *Bridge {
-	return &Bridge{
+	b := &Bridge{
 		islands: make(map[string]*vm.Island),
 		engines: make(map[string]*enginevm.Runtime),
 		store:   NewStore(),
 		unsubs:  make(map[string][]func()),
 	}
+	b.store.SetObserver(func(name string, value vm.Value) {
+		b.notifySharedSignal(name, value)
+	})
+	return b
 }
 
 // Store returns the shared signal store.
 func (b *Bridge) GetStore() *Store {
 	return b.store
+}
+
+// SetSharedSignalCallback registers the function called when any shared signal changes.
+func (b *Bridge) SetSharedSignalCallback(fn func(name, valueJSON string)) {
+	b.signalFn = fn
 }
 
 // HydrateIsland creates and registers an island from a program and props.
@@ -193,6 +224,19 @@ func (b *Bridge) SetSharedSignalBatchJSON(batchJSON string) error {
 
 	b.store.SetBatch(values)
 	return nil
+}
+
+// GetSharedSignalJSON serializes the current shared signal value as JSON.
+// Missing signals return JSON null.
+func (b *Bridge) GetSharedSignalJSON(name string) (string, error) {
+	if strings.TrimSpace(name) == "" {
+		return "", fmt.Errorf("shared signal name required")
+	}
+	value, ok := b.store.Get(name)
+	if !ok {
+		return "null", nil
+	}
+	return marshalSharedSignalValue(value)
 }
 
 // TickEngine reconciles a live engine runtime and returns pending commands.
@@ -352,6 +396,25 @@ func (b *Bridge) pushPatches(islandID string, patches []vm.PatchOp) {
 	if err == nil {
 		b.patchFn(islandID, patchJSON)
 	}
+}
+
+func (b *Bridge) notifySharedSignal(name string, value vm.Value) {
+	if b == nil || b.signalFn == nil || strings.TrimSpace(name) == "" {
+		return
+	}
+	valueJSON, err := marshalSharedSignalValue(value)
+	if err != nil {
+		return
+	}
+	b.signalFn(name, valueJSON)
+}
+
+func marshalSharedSignalValue(value vm.Value) (string, error) {
+	data, err := json.Marshal(value.ToAny())
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
 }
 
 // DecodeEngineProgram decodes a runtime engine program.

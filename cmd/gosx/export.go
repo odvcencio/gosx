@@ -84,6 +84,7 @@ func copyExportRuntime(buildDir, outputDir string) error {
 		{src: filepath.Join(buildDir, "bootstrap.js"), dst: filepath.Join(gosxDir, "bootstrap.js")},
 		{src: filepath.Join(buildDir, "bootstrap-lite.js"), dst: filepath.Join(gosxDir, "bootstrap-lite.js")},
 		{src: filepath.Join(buildDir, "patch.js"), dst: filepath.Join(gosxDir, "patch.js")},
+		{src: filepath.Join(buildDir, "hls.min.js"), dst: filepath.Join(gosxDir, "hls.min.js")},
 	} {
 		if err := copyFile(asset.dst, asset.src); err != nil {
 			return err

@@ -776,6 +776,32 @@ func Renderer() Node {
 	}
 }
 
+func TestJSXVideoEngineDirective(t *testing.T) {
+	prog := mustCompile(t, `package main
+
+//gosx:engine video
+func Player() Node {
+	return <div>player</div>
+}`)
+
+	if len(prog.Components) != 1 {
+		t.Fatalf("expected 1 component, got %d", len(prog.Components))
+	}
+	comp := prog.Components[0]
+	if !comp.IsEngine {
+		t.Fatal("expected IsEngine=true")
+	}
+	if comp.EngineKind != "video" {
+		t.Fatalf("expected EngineKind 'video', got %q", comp.EngineKind)
+	}
+	if len(comp.EngineCapabilities) != 3 {
+		t.Fatalf("expected 3 capabilities, got %d", len(comp.EngineCapabilities))
+	}
+	if comp.EngineCapabilities[0] != "video" || comp.EngineCapabilities[1] != "fetch" || comp.EngineCapabilities[2] != "audio" {
+		t.Fatalf("unexpected video capabilities: %v", comp.EngineCapabilities)
+	}
+}
+
 // === Complex / Real-World Tests ===
 
 func TestJSXCompleteCounter(t *testing.T) {
