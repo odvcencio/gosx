@@ -11,4 +11,5 @@ import (
 	_ "github.com/odvcencio/gosx/examples/gosx-docs/app/docs/images"
 	_ "github.com/odvcencio/gosx/examples/gosx-docs/app/docs/routing"
 	_ "github.com/odvcencio/gosx/examples/gosx-docs/app/docs/runtime"
+	_ "github.com/odvcencio/gosx/examples/gosx-docs/app/labs/stream"
 )

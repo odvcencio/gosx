@@ -129,6 +129,16 @@ test("gosx dev serves the landing page, demos, responsive drawer, scoped 404s, a
     await page.getByRole("heading", {
       name: "Page transitions reuse the runtime instead of pretending the browser does not exist.",
     }).waitFor();
+    await page.goto(`${baseURL}/labs/stream`, { waitUntil: "domcontentloaded" });
+    await page.getByRole("heading", {
+      name: "Streaming in GoSX starts with deferred regions, not a separate rendering stack.",
+    }).waitFor();
+    await page.getByText("Resolved region").waitFor();
+
+    await page.goto(`${baseURL}/docs/runtime`, { waitUntil: "domcontentloaded" });
+    await page.getByRole("heading", {
+      name: "Page transitions reuse the runtime instead of pretending the browser does not exist.",
+    }).waitFor();
     await page.waitForTimeout(150);
     assetRequests.length = 0;
     await page.getByRole("link", { name: "Back to overview" }).click();

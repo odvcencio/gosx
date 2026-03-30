@@ -135,53 +135,6 @@ func main() {
 		return server.HTMLDocument(ctx.Title("GoSX"), ctx.Head(), body)
 	})
 	router.Add(route.Route{
-		Pattern: "/labs/stream",
-		Handler: func(ctx *route.RouteContext) gosx.Node {
-			ctx.SetMetadata(server.Metadata{
-				Title:       "Streaming | GoSX Docs",
-				Description: "Deferred regions flush fallback HTML first, then stream the resolved node into place.",
-			})
-			region := ctx.DeferWithOptions(server.DeferredOptions{
-				Class: "card",
-			}, gosx.El("div",
-				gosx.El("strong", gosx.Text("Loading region")),
-				gosx.El("p", gosx.Text("The server has already flushed this fallback while the deferred resolver finishes.")),
-			), func() (gosx.Node, error) {
-				time.Sleep(180 * time.Millisecond)
-				return gosx.El("div", gosx.Attrs(gosx.Attr("class", "card")),
-					gosx.El("strong", gosx.Text("Resolved region")),
-					gosx.El("p", gosx.Text("This card streamed after the initial HTML shell and replaced the fallback slot in-place.")),
-				), nil
-			})
-
-			return wrapSite(ctx, gosx.El("article", gosx.Attrs(gosx.Attr("class", "prose")),
-				gosx.El("div", gosx.Attrs(gosx.Attr("class", "page-topper")),
-					gosx.El("span", gosx.Attrs(gosx.Attr("class", "eyebrow")), gosx.Text("Streaming")),
-					gosx.El("p", gosx.Attrs(gosx.Attr("class", "lede")), gosx.Text("Deferred regions flush fallback HTML first, then stream resolved content into place.")),
-				),
-				gosx.El("h1", gosx.Text("Streaming in GoSX starts with deferred regions, not a separate rendering stack.")),
-				gosx.El("p", gosx.Text("A page can flush its shell immediately, keep the fallback visible, and stream late sections into the live DOM as resolvers finish.")),
-				gosx.El("section", gosx.Attrs(gosx.Attr("class", "feature-grid")),
-					region,
-					gosx.El("div", gosx.Attrs(gosx.Attr("class", "card")),
-						gosx.El("strong", gosx.Text("API")),
-						gosx.El("p", gosx.Text("Use ctx.Defer(...) or ctx.DeferWithOptions(...) inside server or route handlers.")),
-					),
-				),
-				docsapp.DocsCodeBlock("gosx", `ctx.Defer(
-    <p>Loading...</p>,
-    func() (gosx.Node, error) {
-        return <section>Resolved</section>, nil
-    },
-)`),
-				gosx.El("div", gosx.Attrs(gosx.Attr("class", "hero-actions")),
-					gosx.El("a", gosx.Attrs(gosx.Attr("href", "/docs/runtime"), gosx.Attr("data-gosx-link", true), gosx.Attr("class", "cta-link")), gosx.Text("Back to runtime")),
-					gosx.El("a", gosx.Attrs(gosx.Attr("href", "/"), gosx.Attr("data-gosx-link", true), gosx.Attr("class", "cta-link primary")), gosx.Text("Back to overview")),
-				),
-			))
-		},
-	})
-	router.Add(route.Route{
 		Pattern:    "/labs/secret",
 		Middleware: []route.Middleware{authn.Require},
 		Handler: func(ctx *route.RouteContext) gosx.Node {
