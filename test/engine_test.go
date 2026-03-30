@@ -62,6 +62,34 @@ func Whiteboard(props BoardProps) Engine {
 	t.Logf("Engine: %s, kind=%s, capabilities=%v", comp.Name, comp.EngineKind, comp.EngineCapabilities)
 }
 
+func TestEngineDirectiveVideo(t *testing.T) {
+	source := []byte(`package main
+
+//gosx:engine video
+func Player(props PlayerProps) Engine {
+	return <div>video</div>
+}
+`)
+	prog, err := compileGSX(t, source)
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+
+	comp := prog.Components[0]
+	if !comp.IsEngine {
+		t.Fatal("expected IsEngine=true")
+	}
+	if comp.EngineKind != "video" {
+		t.Fatalf("expected kind 'video', got %q", comp.EngineKind)
+	}
+	if len(comp.EngineCapabilities) != 3 {
+		t.Fatalf("expected 3 auto capabilities, got %d: %v", len(comp.EngineCapabilities), comp.EngineCapabilities)
+	}
+	if comp.EngineCapabilities[0] != "video" || comp.EngineCapabilities[1] != "fetch" || comp.EngineCapabilities[2] != "audio" {
+		t.Fatalf("unexpected video capabilities: %v", comp.EngineCapabilities)
+	}
+}
+
 func TestEngineManifest(t *testing.T) {
 	// Test that engines appear in the manifest
 	m := newTestManifest()

@@ -330,7 +330,7 @@ func RunBuild(dir string, dev bool) error {
 		return fmt.Errorf("unable to locate wasm_exec.js")
 	}
 
-	// bootstrap.js and patch.js
+	// bootstrap.js, patch.js, and the lazily loaded HLS runtime.
 	for _, js := range []struct {
 		name string
 		path string
@@ -339,6 +339,7 @@ func RunBuild(dir string, dev bool) error {
 		{"bootstrap", filepath.Join(gosxRoot, "client", "js", "bootstrap.js"), &manifest.Runtime.Bootstrap},
 		{"bootstrap-lite", filepath.Join(gosxRoot, "client", "js", "bootstrap-lite.js"), &manifest.Runtime.BootstrapLite},
 		{"patch", filepath.Join(gosxRoot, "client", "js", "patch.js"), &manifest.Runtime.Patch},
+		{"hls.min", filepath.Join(gosxRoot, "client", "js", "vendor", "hls.min.js"), &manifest.Runtime.VideoHLS},
 	} {
 		data, err := os.ReadFile(js.path)
 		if err != nil {
@@ -414,6 +415,7 @@ func RunBuild(dir string, dev bool) error {
 		manifest.Runtime.Bootstrap.File,
 		manifest.Runtime.BootstrapLite.File,
 		manifest.Runtime.Patch.File,
+		manifest.Runtime.VideoHLS.File,
 	))
 	fmt.Printf("  Tier 3 (islands): %d programs + %d CSS, immutable CDN\n",
 		len(manifest.Islands), len(manifest.CSS))
@@ -558,6 +560,7 @@ func stageManifestCompatibilityRuntime(distDir string, manifest *BuildManifest, 
 		{file: manifest.Runtime.Bootstrap.File, dst: filepath.Join(gosxDir, "bootstrap.js")},
 		{file: manifest.Runtime.BootstrapLite.File, dst: filepath.Join(gosxDir, "bootstrap-lite.js")},
 		{file: manifest.Runtime.Patch.File, dst: filepath.Join(gosxDir, "patch.js")},
+		{file: manifest.Runtime.VideoHLS.File, dst: filepath.Join(gosxDir, "hls.min.js")},
 	} {
 		if strings.TrimSpace(asset.file) == "" {
 			continue

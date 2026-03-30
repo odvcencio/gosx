@@ -21,6 +21,7 @@ type RuntimeAssets struct {
 	Bootstrap     HashedAsset `json:"bootstrap"`
 	BootstrapLite HashedAsset `json:"bootstrapLite,omitempty"`
 	Patch         HashedAsset `json:"patch"`
+	VideoHLS      HashedAsset `json:"videoHLS,omitempty"`
 }
 
 type IslandAsset struct {
@@ -47,6 +48,7 @@ type RuntimePaths struct {
 	Bootstrap     string
 	BootstrapLite string
 	Patch         string
+	VideoHLS      string
 }
 
 // Load reads a build manifest from disk.
@@ -71,6 +73,7 @@ func (m *Manifest) RuntimeURLs(assetBaseURL string) RuntimePaths {
 		Bootstrap:     AssetURL(assetBaseURL, "runtime", m.Runtime.Bootstrap.File),
 		BootstrapLite: AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapLite.File),
 		Patch:         AssetURL(assetBaseURL, "runtime", m.Runtime.Patch.File),
+		VideoHLS:      AssetURL(assetBaseURL, "runtime", m.Runtime.VideoHLS.File),
 	}
 }
 

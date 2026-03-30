@@ -183,6 +183,49 @@ func TestRuntimeSetSharedSignalExport(t *testing.T) {
 	}
 }
 
+func TestRuntimeGetSharedSignalExport(t *testing.T) {
+	setGlobalValue(t, "__gosx_runtime_ready", js.Undefined())
+
+	b := bridge.New()
+	registerRuntime(b)
+
+	if err := b.SetSharedSignalJSON("$presence", `{"count":5}`); err != nil {
+		t.Fatalf("set shared signal json: %v", err)
+	}
+
+	ret := js.Global().Get("__gosx_get_shared_signal").Invoke("$presence")
+	if ret.Type() != js.TypeString {
+		t.Fatalf("expected string result, got %v", ret.Type())
+	}
+	if got := ret.String(); !strings.Contains(got, `"count":5`) {
+		t.Fatalf("unexpected shared signal json: %q", got)
+	}
+}
+
+func TestRuntimeNotifiesSharedSignalChanges(t *testing.T) {
+	setGlobalValue(t, "__gosx_runtime_ready", js.Undefined())
+
+	var notifications []string
+	setGlobalFunc(t, "__gosx_notify_shared_signal", func(this js.Value, args []js.Value) any {
+		notifications = append(notifications, args[0].String()+"="+args[1].String())
+		return nil
+	})
+
+	b := bridge.New()
+	registerRuntime(b)
+
+	ret := js.Global().Get("__gosx_set_shared_signal").Invoke("$video.playing", `true`)
+	if !ret.IsNull() {
+		t.Fatalf("expected null result, got %q", ret.String())
+	}
+	if len(notifications) != 1 {
+		t.Fatalf("expected 1 notification, got %d", len(notifications))
+	}
+	if notifications[0] != "$video.playing=true" {
+		t.Fatalf("unexpected notification payload: %q", notifications[0])
+	}
+}
+
 func TestRuntimeTextLayoutExport(t *testing.T) {
 	setGlobalValue(t, "__gosx_runtime_ready", js.Undefined())
 	setGlobalFunc(t, "__gosx_measure_text_batch", func(this js.Value, args []js.Value) any {

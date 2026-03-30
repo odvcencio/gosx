@@ -177,6 +177,7 @@ type documentContractAssets struct {
 	WASMExecPath  string `json:"wasmExecPath,omitempty"`
 	PatchPath     string `json:"patchPath,omitempty"`
 	BootstrapPath string `json:"bootstrapPath,omitempty"`
+	HLSPath       string `json:"hlsPath,omitempty"`
 	Islands       int    `json:"islands,omitempty"`
 	Engines       int    `json:"engines,omitempty"`
 	Hubs          int    `json:"hubs,omitempty"`
@@ -208,6 +209,7 @@ func documentContractNode(doc *DocumentContext) gosx.Node {
 			WASMExecPath:  doc.Runtime.WASMExecPath,
 			PatchPath:     doc.Runtime.PatchPath,
 			BootstrapPath: doc.Runtime.BootstrapPath,
+			HLSPath:       doc.Runtime.HLSPath,
 			Islands:       doc.Runtime.Islands,
 			Engines:       doc.Runtime.Engines,
 			Hubs:          doc.Runtime.Hubs,

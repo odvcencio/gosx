@@ -123,12 +123,19 @@ func runtimeCompatSourcePath(root, name string) (string, bool) {
 		"bootstrap.js":      filepath.Join(buildDir, "bootstrap.js"),
 		"bootstrap-lite.js": filepath.Join(buildDir, "bootstrap-lite.js"),
 		"patch.js":          filepath.Join(buildDir, "patch.js"),
+		"hls.min.js":        filepath.Join(buildDir, "hls.min.js"),
 	}
 	if direct, ok := candidates[name]; ok && isFile(direct) {
 		return direct, true
 	}
 	if strings.HasPrefix(name, "bootstrap") || name == "patch.js" {
 		clientPath := filepath.Join(root, "client", "js", name)
+		if isFile(clientPath) {
+			return clientPath, true
+		}
+	}
+	if name == "hls.min.js" {
+		clientPath := filepath.Join(root, "client", "js", "vendor", name)
 		if isFile(clientPath) {
 			return clientPath, true
 		}
@@ -163,6 +170,8 @@ func (a *App) runtimeCompatBuiltPath(root, name string) (string, bool) {
 		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.BootstrapLite.File)
 	case "patch.js":
 		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.Patch.File)
+	case "hls.min.js":
+		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.VideoHLS.File)
 	}
 
 	if strings.HasPrefix(name, "islands/") {

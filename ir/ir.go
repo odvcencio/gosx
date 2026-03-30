@@ -48,10 +48,10 @@ type Component struct {
 	// IsIsland marks this component as requiring client hydration.
 	IsIsland bool
 
-	// IsEngine marks this component as a client compute engine (worker or surface).
+	// IsEngine marks this component as a client compute engine (worker, surface, or video).
 	IsEngine bool
 
-	// EngineKind is "worker" or "surface" (only set when IsEngine is true).
+	// EngineKind is "worker", "surface", or "video" (only set when IsEngine is true).
 	EngineKind string
 
 	// EngineCapabilities declares required browser APIs (canvas, webgl, animation, etc).

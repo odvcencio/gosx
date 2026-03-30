@@ -20,6 +20,11 @@
     engines: new Map(),   // engineID -> { component, kind, mount, handle }
     hubs: new Map(),      // hubID -> { entry, socket, reconnectTimer }
     textLayouts: new Map(), // textLayoutID -> { element, result, config }
+    sharedSignals: {
+      values: new Map(),
+      subscribers: new Map(),
+      nextID: 0,
+    },
     input: {
       pending: null,
       frameHandle: 0,
@@ -27,6 +32,111 @@
     },
     ready: false,
   };
+
+  function gosxSharedSignalStore() {
+    const current = window.__gosx && window.__gosx.sharedSignals;
+    if (current && current.values instanceof Map && current.subscribers instanceof Map) {
+      return current;
+    }
+    const store = {
+      values: new Map(),
+      subscribers: new Map(),
+      nextID: 0,
+    };
+    if (window.__gosx) {
+      window.__gosx.sharedSignals = store;
+    }
+    return store;
+  }
+
+  function parseSharedSignalJSON(valueJSON, fallback) {
+    if (typeof valueJSON !== "string" || valueJSON === "") {
+      return fallback;
+    }
+    if (valueJSON.startsWith("error:")) {
+      return fallback;
+    }
+    try {
+      return JSON.parse(valueJSON);
+    } catch (_error) {
+      return fallback;
+    }
+  }
+
+  function gosxReadSharedSignal(name, fallback) {
+    const signalName = String(name || "").trim();
+    if (!signalName) {
+      return fallback;
+    }
+    const store = gosxSharedSignalStore();
+    if (store.values.has(signalName)) {
+      return store.values.get(signalName);
+    }
+    const getter = window.__gosx_get_shared_signal;
+    if (typeof getter !== "function") {
+      return fallback;
+    }
+    try {
+      const value = parseSharedSignalJSON(getter(signalName), fallback);
+      store.values.set(signalName, value);
+      return value;
+    } catch (_error) {
+      return fallback;
+    }
+  }
+
+  function gosxNotifySharedSignal(name, valueJSON) {
+    const signalName = String(name || "").trim();
+    if (!signalName) {
+      return null;
+    }
+    const store = gosxSharedSignalStore();
+    const value = parseSharedSignalJSON(valueJSON, null);
+    store.values.set(signalName, value);
+    const listeners = store.subscribers.get(signalName);
+    if (!listeners) {
+      return null;
+    }
+    for (const entry of Array.from(listeners.values())) {
+      try {
+        entry(value, signalName);
+      } catch (error) {
+        console.error("[gosx] shared signal subscriber failed:", error);
+      }
+    }
+    return null;
+  }
+
+  function gosxSubscribeSharedSignal(name, listener, options) {
+    const signalName = String(name || "").trim();
+    if (!signalName || typeof listener !== "function") {
+      return function() {};
+    }
+    const store = gosxSharedSignalStore();
+    let listeners = store.subscribers.get(signalName);
+    if (!listeners) {
+      listeners = new Map();
+      store.subscribers.set(signalName, listeners);
+    }
+    store.nextID += 1;
+    const id = "shared-signal-" + store.nextID;
+    listeners.set(id, listener);
+    if (!options || options.immediate !== false) {
+      listener(gosxReadSharedSignal(signalName, null), signalName);
+    }
+    return function() {
+      const current = store.subscribers.get(signalName);
+      if (!current) {
+        return;
+      }
+      current.delete(id);
+      if (current.size === 0) {
+        store.subscribers.delete(signalName);
+      }
+    };
+  }
+
+  window.__gosx_notify_shared_signal = gosxNotifySharedSignal;
 
   function gosxIssueStore() {
     if (!window.__gosx.issues || !Array.isArray(window.__gosx.issues.entries)) {
@@ -3360,6 +3470,7 @@
       wasmExecPath: String(assets.wasmExecPath || ""),
       patchPath: String(assets.patchPath || ""),
       bootstrapPath: String(assets.bootstrapPath || ""),
+      hlsPath: String(assets.hlsPath || ""),
       islands: Math.max(0, gosxNumber(assets.islands, 0)),
       engines: Math.max(0, gosxNumber(assets.engines, 0)),
       hubs: Math.max(0, gosxNumber(assets.hubs, 0)),

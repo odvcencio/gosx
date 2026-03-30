@@ -14,7 +14,8 @@ func TestLoadAndURLs(t *testing.T) {
     "wasm": {"file": "gosx-runtime.11111111.wasm", "hash": "11111111", "size": 10},
     "wasmExec": {"file": "wasm_exec.22222222.js", "hash": "22222222", "size": 20},
     "bootstrap": {"file": "bootstrap.33333333.js", "hash": "33333333", "size": 30},
-    "patch": {"file": "patch.44444444.js", "hash": "44444444", "size": 40}
+    "patch": {"file": "patch.44444444.js", "hash": "44444444", "size": 40},
+    "videoHLS": {"file": "hls.min.77777777.js", "hash": "77777777", "size": 70}
   },
   "islands": [
     {"name": "Counter", "format": "bin", "file": "Counter.55555555.gxi", "hash": "55555555", "size": 50}
@@ -38,6 +39,9 @@ func TestLoadAndURLs(t *testing.T) {
 	}
 	if runtime.Bootstrap != "/gosx/assets/runtime/bootstrap.33333333.js" {
 		t.Fatalf("unexpected bootstrap url: %s", runtime.Bootstrap)
+	}
+	if runtime.VideoHLS != "/gosx/assets/runtime/hls.min.77777777.js" {
+		t.Fatalf("unexpected video hls url: %s", runtime.VideoHLS)
 	}
 
 	islandAsset, ok := manifest.IslandAssetByName("Counter")

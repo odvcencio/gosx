@@ -316,6 +316,29 @@ class FakeElement {
     this.clickCalls = [];
     this.requestSubmitCalls = [];
     this.submitCalls = [];
+    this.loadCalls = [];
+    this.playCalls = [];
+    this.pauseCalls = [];
+    this.fullscreenCalls = [];
+    this.paused = true;
+    this.ended = false;
+    this.muted = false;
+    this.volume = 1;
+    this.playbackRate = 1;
+    this.currentTime = 0;
+    this.duration = 0;
+    this.readyState = 0;
+    this.error = null;
+    this.buffered = {
+      length: 0,
+      start() {
+        return 0;
+      },
+      end() {
+        return 0;
+      },
+    };
+    this._canPlayTypes = Object.create(null);
   }
 
   get id() {
@@ -526,6 +549,38 @@ class FakeElement {
     this.submitCalls.push([]);
   }
 
+  load() {
+    this.loadCalls.push([]);
+  }
+
+  play() {
+    this.playCalls.push([]);
+    this.paused = false;
+    return Promise.resolve();
+  }
+
+  pause() {
+    this.pauseCalls.push([]);
+    this.paused = true;
+  }
+
+  canPlayType(type) {
+    return this._canPlayTypes[String(type)] || "";
+  }
+
+  setCanPlayType(type, value) {
+    this._canPlayTypes[String(type)] = String(value == null ? "" : value);
+  }
+
+  requestFullscreen() {
+    this.fullscreenCalls.push([]);
+    if (this.ownerDocument) {
+      this.ownerDocument.fullscreenElement = this;
+      this.ownerDocument.dispatchEvent({ type: "fullscreenchange", target: this });
+    }
+    return Promise.resolve();
+  }
+
   cloneNode(deep) {
     const clone = new FakeElement(this.tagName.toLowerCase(), this.ownerDocument);
     for (const [name, value] of this.attributes.entries()) {
@@ -534,6 +589,17 @@ class FakeElement {
     clone.value = this.value;
     clone.selectionStart = this.selectionStart;
     clone.selectionEnd = this.selectionEnd;
+    clone.paused = this.paused;
+    clone.ended = this.ended;
+    clone.muted = this.muted;
+    clone.volume = this.volume;
+    clone.playbackRate = this.playbackRate;
+    clone.currentTime = this.currentTime;
+    clone.duration = this.duration;
+    clone.readyState = this.readyState;
+    clone.error = this.error;
+    clone.buffered = this.buffered;
+    clone._canPlayTypes = Object.assign(Object.create(null), this._canPlayTypes);
     if (deep) {
       for (const child of this.childNodes) {
         clone.appendChild(child.cloneNode(true));
@@ -565,6 +631,7 @@ class FakeDocument {
     this.documentElement.appendChild(this.head);
     this.documentElement.appendChild(this.body);
     this.activeElement = this.body;
+    this.fullscreenElement = null;
     this.title = "";
     this.disableCanvas2D = false;
     this.createWebGLContext = null;
@@ -608,6 +675,12 @@ class FakeDocument {
       listener(event);
     }
     return true;
+  }
+
+  exitFullscreen() {
+    this.fullscreenElement = null;
+    this.dispatchEvent({ type: "fullscreenchange", target: this });
+    return Promise.resolve();
   }
 
   indexNode(node) {
@@ -955,6 +1028,7 @@ function createContext(options) {
     Uint8Array,
     Uint8ClampedArray,
     clearTimeout,
+    clearInterval,
     console: consoleSpy.console,
     CustomEvent: class CustomEvent {
       constructor(type, init = {}) {
@@ -1130,6 +1204,8 @@ function createContext(options) {
     scrollTo(...args) {
       scrollCalls.push(args);
     },
+    queueMicrotask,
+    setInterval,
     setTimeout,
     WebAssembly: {
       instantiate: async () => ({ instance: {} }),
@@ -1236,6 +1312,14 @@ async function flushAsyncWork() {
   await new Promise((resolve) => setTimeout(resolve, 0));
   await new Promise((resolve) => setTimeout(resolve, 0));
   await new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+function sharedSignalValue(env, name) {
+  const store = env && env.context && env.context.__gosx && env.context.__gosx.sharedSignals;
+  if (!store || !store.values || typeof store.values.get !== "function") {
+    return undefined;
+  }
+  return store.values.get(name);
 }
 
 function appendManagedHead(document, nodes) {
@@ -2192,6 +2276,7 @@ test("bootstrap exposes document assets and enhancement inventory", async () => 
       wasmExecPath: "/wasm_exec.js",
       patchPath: "/patch.js",
       bootstrapPath: "/bootstrap.js",
+      hlsPath: "/hls.min.js",
       islands: 1,
       engines: 1,
       hubs: 1,
@@ -2207,6 +2292,7 @@ test("bootstrap exposes document assets and enhancement inventory", async () => 
   assert.equal(documentState.assets.runtime.manifest, true);
   assert.equal(documentState.assets.runtime.runtimePath, "/runtime.wasm");
   assert.equal(documentState.assets.runtime.bootstrapPath, "/bootstrap.js");
+  assert.equal(documentState.assets.runtime.hlsPath, "/hls.min.js");
   assert.equal(documentState.assets.runtime.islands, 1);
   assert.equal(documentState.assets.runtime.engines, 1);
   assert.equal(documentState.assets.runtime.hubs, 1);
@@ -5575,4 +5661,169 @@ test("navigation runtime honors submitter override attributes without reflected 
   assert.equal(prevented, false);
   assert.equal(form.requestSubmitCalls.length, 0);
   assert.equal(env.fetchCalls.length, 0);
+});
+
+test("bootstrap mounts builtin video engines and bridges shared signals", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "video-root";
+  mount.width = 640;
+  mount.height = 360;
+
+  let env;
+  env = createContext({
+    elements: [mount],
+    fetchRoutes: {
+      "/runtime.wasm": { bytes: [0, 97, 115, 109] },
+    },
+    onSetSharedSignal(name, payload) {
+      if (env && typeof env.context.__gosx_notify_shared_signal === "function") {
+        env.context.__gosx_notify_shared_signal(name, payload);
+      }
+      return null;
+    },
+    manifest: {
+      runtime: { path: "/runtime.wasm" },
+      engines: [
+        {
+          id: "gosx-engine-0",
+          component: "PromoVideo",
+          kind: "video",
+          mountId: "video-root",
+          capabilities: ["video", "fetch", "audio"],
+          props: {
+            src: "/media/promo.mp4",
+            volume: 0.5,
+            subtitleTracks: [{ id: "en", language: "en", title: "English" }],
+          },
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+  await flushAsyncWork();
+
+  assert.equal(env.context.__gosx.ready, true);
+  assert.equal(env.context.__gosx.engines.size, 1);
+
+  const video = mount.firstChild;
+  assert.ok(video);
+  assert.equal(video.tagName, "VIDEO");
+  assert.equal(video.volume, 0.5);
+  assert.ok(video.loadCalls.length >= 1);
+
+  video.duration = 120;
+  video.readyState = 4;
+  video.currentTime = 10;
+  video.buffered = {
+    length: 1,
+    start() {
+      return 0;
+    },
+    end() {
+      return 25;
+    },
+  };
+  video.dispatchEvent({ type: "timeupdate", target: video });
+  await flushAsyncWork();
+
+  assert.equal(sharedSignalValue(env, "$video.position"), 10);
+  assert.equal(sharedSignalValue(env, "$video.duration"), 120);
+  assert.equal(sharedSignalValue(env, "$video.buffered"), 15);
+  assert.deepEqual(sharedSignalValue(env, "$video.viewport"), [640, 360]);
+  assert.deepEqual(sharedSignalValue(env, "$video.subtitleTracks"), [
+    { id: "en", language: "en", title: "English", default: false, forced: false },
+  ]);
+
+  env.context.__gosx_notify_shared_signal("$video.command", JSON.stringify("play"));
+  await flushAsyncWork();
+  assert.equal(video.playCalls.length, 1);
+  assert.equal(video.paused, false);
+
+  env.context.__gosx_notify_shared_signal("$video.seek", JSON.stringify(42));
+  await flushAsyncWork();
+  assert.equal(video.currentTime, 42);
+});
+
+test("bootstrap video engines load HLS.js from the document runtime contract", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "video-hls-root";
+  mount.width = 1280;
+  mount.height = 720;
+
+  const env = createContext({
+    elements: [mount],
+    fetchRoutes: {
+      "/runtime.wasm": { bytes: [0, 97, 115, 109] },
+      "/runtime/vendor/hls.min.js": {
+        text: `window.__hlsLoads = [];
+window.Hls = function FakeHls() {
+  this.attachMedia = function(video) { this.video = video; };
+  this.loadSource = function(src) { window.__hlsLoads.push(src); };
+  this.on = function() {};
+  this.destroy = function() {};
+};
+window.Hls.isSupported = function() { return true; };
+window.Hls.Events = {};`,
+      },
+    },
+    manifest: {
+      runtime: { path: "/runtime.wasm" },
+      engines: [
+        {
+          id: "gosx-engine-0",
+          component: "PromoVideo",
+          kind: "video",
+          mountId: "video-hls-root",
+          capabilities: ["video", "fetch", "audio"],
+          props: {
+            src: "/media/promo.m3u8",
+          },
+        },
+      ],
+    },
+  });
+
+  const contract = env.document.createElement("script");
+  contract.id = "gosx-document";
+  contract.setAttribute("type", "application/json");
+  contract.setAttribute("data-gosx-document-contract", "");
+  contract.textContent = JSON.stringify({
+    version: 1,
+    page: {
+      id: "gosx-doc-video",
+      pattern: "GET /video",
+      path: "/video",
+      title: "Video",
+      status: 200,
+    },
+    enhancement: {
+      bootstrap: true,
+      runtime: true,
+      navigation: false,
+    },
+    assets: {
+      bootstrapMode: "full",
+      manifest: true,
+      runtimePath: "/runtime.wasm",
+      wasmExecPath: "/wasm_exec.js",
+      bootstrapPath: "/bootstrap.js",
+      hlsPath: "/runtime/vendor/hls.min.js",
+      engines: 1,
+    },
+  });
+  appendManagedHead(env.document, [contract]);
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+  await flushAsyncWork();
+
+  assert.equal(env.context.__gosx.ready, true);
+  assert.equal(env.fetchCalls.some((call) => call.url === "/runtime/vendor/hls.min.js"), true);
+  assert.deepEqual(Array.from(env.context.__hlsLoads || []), ["/media/promo.m3u8"]);
+
+  const mounted = env.context.__gosx.engines.get("gosx-engine-0");
+  assert.ok(mounted);
+  assert.equal(mounted.handle.video.tagName, "VIDEO");
 });

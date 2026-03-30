@@ -27,6 +27,7 @@ type PageRuntimeSummary struct {
 	WASMExecPath  string
 	PatchPath     string
 	BootstrapPath string
+	HLSPath       string
 	Islands       int
 	Engines       int
 	Hubs          int
@@ -120,6 +121,7 @@ func (r *PageRuntime) Summary() PageRuntimeSummary {
 		WASMExecPath:  summary.WASMExecPath,
 		PatchPath:     summary.PatchPath,
 		BootstrapPath: summary.BootstrapPath,
+		HLSPath:       summary.HLSPath,
 		Islands:       summary.Islands,
 		Engines:       summary.Engines,
 		Hubs:          summary.Hubs,

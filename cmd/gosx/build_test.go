@@ -134,6 +134,7 @@ func TestRunBuildProdWritesHybridStaticBundleForStarterApp(t *testing.T) {
 		"dist/static/assets/runtime",
 		"dist/static/gosx/runtime.wasm",
 		"dist/static/gosx/bootstrap-lite.js",
+		"dist/static/gosx/hls.min.js",
 	} {
 		if _, err := os.Stat(filepath.Join(dir, rel)); err != nil {
 			t.Fatalf("expected build artifact %s: %v", rel, err)

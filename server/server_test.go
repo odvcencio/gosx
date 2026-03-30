@@ -394,6 +394,43 @@ func TestAppInjectsRuntimeHeadForEnginePages(t *testing.T) {
 	}
 }
 
+func TestAppInjectsRuntimeHeadForVideoEnginePages(t *testing.T) {
+	app := New()
+	app.Page("GET /video", func(ctx *Context) gosx.Node {
+		return ctx.Engine(engine.Config{
+			Name: "PromoVideo",
+			Kind: engine.KindVideo,
+			Props: json.RawMessage(`{
+				"src": "/media/promo.m3u8"
+			}`),
+		}, gosx.El("p", gosx.Text("Loading video")))
+	})
+
+	handler := app.Build()
+	req := httptest.NewRequest(http.MethodGet, "/video", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	body := w.Body.String()
+	for _, snippet := range []string{
+		`data-gosx-engine="PromoVideo"`,
+		`data-gosx-enhance="video"`,
+		`data-gosx-enhance-layer="runtime"`,
+		`data-gosx-script="wasm-exec"`,
+		`gosx-manifest`,
+		`/gosx/runtime.wasm`,
+		`/gosx/bootstrap.js`,
+		`"hlsPath":"/gosx/hls.min.js"`,
+	} {
+		if !strings.Contains(body, snippet) {
+			t.Fatalf("expected %q in runtime page body %q", snippet, body)
+		}
+	}
+	if strings.Contains(body, `/gosx/patch.js`) {
+		t.Fatalf("did not expect patch runtime on video engine page: %q", body)
+	}
+}
+
 func TestAppInjectsBootstrapHeadForTextBlockPages(t *testing.T) {
 	app := New()
 	app.Page("GET /", func(ctx *Context) gosx.Node {
@@ -677,6 +714,38 @@ func TestAppServesCompatRuntimeAssetsFromSourceBuild(t *testing.T) {
 	}
 }
 
+func TestAppServesCompatRuntimeHLSAssetFromSourceBuild(t *testing.T) {
+	root := t.TempDir()
+	buildDir := filepath.Join(root, "build")
+	if err := os.MkdirAll(buildDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(buildDir, "bootstrap.js"), []byte("console.log('bootstrap');"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(buildDir, "hls.min.js"), []byte("window.Hls = function() {};"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	app := New()
+	app.SetRuntimeRoot(root)
+	handler := app.Build()
+
+	req := httptest.NewRequest(http.MethodGet, "/gosx/hls.min.js", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	if got := w.Header().Get("Cache-Control"); !strings.Contains(got, "no-cache") {
+		t.Fatalf("expected source compat asset to disable caching, got %q", got)
+	}
+	if body := w.Body.String(); !strings.Contains(body, "window.Hls") {
+		t.Fatalf("unexpected compat asset body %q", body)
+	}
+}
+
 func TestAppServesCompatRuntimeAssetsFromBuildManifest(t *testing.T) {
 	root := t.TempDir()
 	assetsDir := filepath.Join(root, "assets", "runtime")
@@ -718,6 +787,51 @@ func TestAppServesCompatRuntimeAssetsFromBuildManifest(t *testing.T) {
 		t.Fatalf("expected built compat asset to be immutable, got %q", got)
 	}
 	if body := w.Body.String(); !strings.Contains(body, "hashed bootstrap") {
+		t.Fatalf("unexpected built compat asset body %q", body)
+	}
+}
+
+func TestAppServesCompatRuntimeHLSAssetFromBuildManifest(t *testing.T) {
+	root := t.TempDir()
+	assetsDir := filepath.Join(root, "assets", "runtime")
+	if err := os.MkdirAll(assetsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(assetsDir, "hls.min.3333.js"), []byte("window.Hls = function() {};"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	manifest := buildmanifest.Manifest{
+		Runtime: buildmanifest.RuntimeAssets{
+			VideoHLS: buildmanifest.HashedAsset{
+				File: "hls.min.3333.js",
+				Hash: "3333",
+				Size: 26,
+			},
+		},
+	}
+	data, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "build.json"), data, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	app := New()
+	app.SetRuntimeRoot(root)
+	handler := app.Build()
+
+	req := httptest.NewRequest(http.MethodGet, "/gosx/hls.min.js", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	if got := w.Header().Get("Cache-Control"); !strings.Contains(got, "immutable") {
+		t.Fatalf("expected built compat asset to be immutable, got %q", got)
+	}
+	if body := w.Body.String(); !strings.Contains(body, "window.Hls") {
 		t.Fatalf("unexpected built compat asset body %q", body)
 	}
 }
