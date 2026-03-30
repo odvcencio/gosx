@@ -28,6 +28,10 @@ func Player(props PlayerProps) Node {
 
 The framework handles everything else.
 
+**Relationship to `surface`:** A video engine uses the same mount-resolution path as a surface engine — the bootstrap finds or creates a mount `<div>` by ID. The difference is the factory: surface engines invoke a user-provided or program-driven factory, while video engines invoke the framework's built-in video factory. Every bootstrap check for `entry.kind === "surface"` must also match `"video"` for mount resolution purposes.
+
+**One video engine per page.** The `$video.*` signal namespace is global. Multiple video engines on a single page would collide. This constraint matches how most applications use video. If a future use case requires multiple players, instance-scoped signals (e.g., `$video.{engineID}.position`) can be added as an extension without breaking the single-engine contract.
+
 ## Signal Contract
 
 Every video engine exposes these signals automatically. The author does not declare them.
@@ -40,11 +44,15 @@ Every video engine exposes these signals automatically. The author does not decl
 | `$video.duration` | `float64` | Total duration in seconds |
 | `$video.playing` | `bool` | Whether video is actively playing |
 | `$video.buffered` | `float64` | Seconds of buffer ahead of position |
+| `$video.stalled` | `bool` | True when playback stopped due to buffering (not user pause) |
 | `$video.fullscreen` | `bool` | Fullscreen state |
 | `$video.viewport` | `[2]int` | Player container dimensions `[width, height]` |
 | `$video.ready` | `bool` | Enough data buffered to begin playback |
+| `$video.muted` | `bool` | Whether video is muted (distinct from volume=0 for autoplay policy) |
+| `$video.actualRate` | `float64` | Actual playback rate (may differ from requested rate during drift correction) |
 | `$video.error` | `string` | Error message, empty when healthy |
 | `$video.subtitleTracks` | `[]TrackInfo` | Available subtitle tracks with language, default, forced flags |
+| `$video.subtitleStatus` | `string` | `"idle"`, `"loading"`, `"warming"`, `"ready"`, `"error"` |
 | `$video.activeCues` | `[]VideoCue` | Currently visible subtitle cues |
 
 ### Inputs (islands write, engine reads)
@@ -55,10 +63,24 @@ Every video engine exposes these signals automatically. The author does not decl
 | `$video.seek` | `float64` | Write a value to seek to that position |
 | `$video.command` | `string` | `"play"`, `"pause"`, `"toggle"` |
 | `$video.volume` | `float64` | 0.0 to 1.0 |
-| `$video.rate` | `float64` | Playback rate, 1.0 = normal |
+| `$video.mute` | `bool` | Write to toggle mute state |
+| `$video.rate` | `float64` | Requested playback rate, 1.0 = normal |
 | `$video.subtitleTrack` | `int` | Selected subtitle track index, -1 = off |
 
 The engine subscribes to input signal changes and reacts immediately. Writing `$video.src` triggers an HLS source swap. Writing `$video.seek` seeks the video. Writing `$video.command` controls play/pause.
+
+### Command and Seek Idempotency
+
+`$video.command` and `$video.seek` are imperative in nature but delivered via reactive signals. Writing the same value twice produces no signal change and no reaction. To handle this, the engine treats these signals as edge-triggered: it reads the value on change, executes the action, then resets the signal to a neutral value (`""` for command, `-1` for seek). This ensures the next write of the same value triggers a change.
+
+### Error Clearing
+
+`$video.error` clears (resets to `""`) when:
+- A new source is loaded (`$video.src` changes)
+- Playback resumes successfully after an error
+- The engine is disposed
+
+Transient network errors that resolve on retry do not set `$video.error` — only persistent failures that stop playback.
 
 ## Props
 
@@ -66,9 +88,9 @@ The engine subscribes to input signal changes and reacts immediately. Writing `$
 type VideoEngineProps struct {
     Src          string `json:"src"`                     // HLS manifest URL (also settable via $video.src signal)
     Sync         string `json:"sync,omitempty"`          // WebSocket URL for synchronized playback
-    SyncMode     string `json:"sync_mode,omitempty"`     // "server" (follower) or "host" (authority)
+    SyncMode     string `json:"sync_mode,omitempty"`     // "follow" or "lead"
     SyncStrategy string `json:"sync_strategy,omitempty"` // "nudge" (default) or "snap"
-    SubtitleBase string `json:"subtitle_base,omitempty"` // Base URL for subtitle tracks (e.g., "/stream/{id}/subtitles/")
+    SubtitleBase string `json:"subtitle_base,omitempty"` // Base URL for subtitle tracks
 }
 ```
 
@@ -95,9 +117,9 @@ Optional. Activated when the `Sync` prop contains a WebSocket URL.
 
 ### Sync Modes
 
-**`"server"` (follower):** Position derived from server clock. The engine receives sync messages and adjusts local playback to match. `$video.command` inputs are ignored — the server controls play/pause state.
+**`"follow"` (default):** Position derived from server clock. The engine receives sync messages and adjusts local playback to match. `$video.command` inputs are ignored — the server controls play/pause state.
 
-**`"host"` (authority):** The engine is the playback authority. `$video.command` inputs work normally. The engine broadcasts position updates to other viewers via WebSocket.
+**`"lead"`:** The engine is the playback authority. `$video.command` inputs work normally. The engine broadcasts position updates to other viewers via WebSocket.
 
 ### Drift Correction
 
@@ -112,6 +134,8 @@ Optional. Activated when the `Sync` prop contains a WebSocket URL.
 - Emergency seek if drift exceeds 5s
 - Never rewind for drift — only seek forward or to server position
 
+During drift correction, `$video.actualRate` reflects the adjusted rate (0.92 or 1.08) while `$video.rate` remains at the user's requested value.
+
 **`"snap"` strategy:**
 
 - Hard seek to server position whenever drift exceeds 1s
@@ -125,7 +149,13 @@ The engine expects JSON messages:
 {"type": "sync", "position": 42.5, "playing": true}
 ```
 
-In `"host"` mode, the engine sends the same format. The protocol is intentionally minimal — the application's WebSocket handler maps its internal sync protocol to this shape.
+In `"lead"` mode, the engine sends the same format. The protocol is intentionally minimal — the application's WebSocket handler maps its internal sync protocol to this shape.
+
+### Connection Loss Behavior
+
+**In `"follow"` mode:** When the WebSocket disconnects, the engine continues playback at the last known position and rate. Drift correction pauses (no server reference). `$video.command` inputs remain ignored. On reconnect, the engine receives the current server position and resumes drift correction, seeking if the gap exceeds the strategy's threshold.
+
+**In `"lead"` mode:** The engine continues playback normally. Position updates are buffered and sent on reconnect.
 
 WebSocket reconnection uses exponential backoff (initial 1s, max 30s).
 
@@ -153,14 +183,17 @@ For non-HLS subtitle sources (e.g., goetrope's `/stream/{id}/subtitles/{track}.v
 
 An island writes `$video.subtitleTrack` with a track index. The engine constructs the VTT URL (`SubtitleBase` + track index + `.vtt`) and fetches it.
 
+Track indices depend on the source's track ordering. For persistence across sessions, applications should store the language code alongside the index and re-resolve on load. The engine does not handle this — track persistence is the application's concern.
+
 ### Warmup Handling
 
 If the server returns HTTP 202 with a `Retry-After` header, the engine polls automatically:
 
 - 1.5-second interval between retries
 - Maximum 60 retries (90 seconds)
-- No signal change until the VTT is ready
+- `$video.subtitleStatus` set to `"warming"` during polling
 - `$video.error` not set for 202 — this is expected warmup behavior, not an error
+- On success: `$video.subtitleStatus` transitions to `"ready"`
 
 ### Cue Evaluation
 
@@ -203,14 +236,15 @@ The video engine factory is built into `bootstrap.js` (not an external script). 
 ### Mount Sequence
 
 1. Bootstrap reads manifest, finds `kind: "video"` engine entry.
-2. Lazy-loads `hls.min.js` from the framework's static asset path.
-3. Creates a `<video>` element inside the engine's mount div.
-4. Initializes HLS.js (or native HLS for Safari).
-5. Registers `$video.*` signals in the shared signal store.
-6. Subscribes to input signals (`$video.src`, `$video.seek`, `$video.command`, etc.).
-7. Attaches event listeners (`timeupdate`, `durationchange`, `play`, `pause`, `error`, `fullscreenchange`).
-8. If sync props present, opens WebSocket connection.
-9. Loads initial source from `Src` prop or `$video.src` signal.
+2. Uses the same mount-resolution path as `"surface"` — finds the mount div by `mountId`.
+3. Lazy-loads `hls.min.js` from the framework's static asset path.
+4. Creates a `<video>` element inside the engine's mount div.
+5. Initializes HLS.js (or native HLS for Safari).
+6. Registers `$video.*` signals in the shared signal store.
+7. Subscribes to input signals (`$video.src`, `$video.seek`, `$video.command`, etc.).
+8. Attaches event listeners (`timeupdate`, `durationchange`, `play`, `pause`, `waiting`, `stalled`, `error`, `fullscreenchange`, `volumechange`).
+9. If sync props present, opens WebSocket connection.
+10. Loads initial source from `Src` prop or `$video.src` signal.
 
 ### Teardown
 
@@ -242,15 +276,17 @@ No `//gosx:capabilities` directive needed for video engines — the capabilities
 | `engine/video/` | New package: video engine types (`VideoEngineProps`, `TrackInfo`, `VideoCue`) |
 | `engine/video/hls.min.js` | Vendored HLS.js asset (framework-owned, version-pinned) |
 | `engine/video/signals.go` | Standard signal definitions for `$video.*` namespace |
+| `engine/render_bundle.go` | Handle `"video"` kind in engine entry rendering (same mount path as `"surface"`) |
 | `ir/lower.go` | Handle `"video"` in `parseEngineDirective`, auto-inject capabilities |
-| `client/js/bootstrap.js` | Add video engine factory: lazy HLS.js load, `<video>` creation, signal wiring, sync adapter, subtitle manager |
+| `client/js/bootstrap.js` | Add video engine factory, lazy HLS.js loader, mount-resolution to treat `"video"` like `"surface"` |
 | `client/wasm/main.go` | Register video signal definitions in WASM runtime |
 | `client/bridge/bridge.go` | Handle `$video.*` signal namespace for video engines |
-| `hydrate/manifest.go` | Add `SyncURL`, `SyncMode`, `SyncStrategy`, `SubtitleBase` to `EngineEntry` |
-| `engine/engine_test.go` | Test `KindVideo` config, capability auto-injection |
+| `hydrate/manifest.go` | Add nested `*VideoConfig` struct to `EngineEntry` (sync URL, mode, strategy, subtitle base) |
+| `build/` | Asset pipeline: copy `engine/video/hls.min.js` to output static directory |
+| `engine/engine_test.go` | Test `KindVideo` config, capability auto-injection, mount resolution |
 | `engine/video/signals_test.go` | Test signal definitions and namespacing |
 
-## Usage Example
+## Usage Examples
 
 ### Minimal player (no sync, no subtitles)
 
@@ -266,19 +302,21 @@ func Player(props struct{ Src string }) Node {
 ```gsx
 //gosx:engine video
 func WatchPlayer(props WatchPlayerProps) Node {
-    return <video src={props.src} sync={props.ws_url} syncMode={props.sync_mode} subtitleBase={props.subtitle_base} />
+    return <video src={props.src} sync={props.sync} sync_mode={props.sync_mode} subtitle_base={props.subtitle_base} />
 }
 ```
 
-### Subtitle overlay island (reads $video.activeCues)
+### Subtitle overlay island
+
+The `$video.activeCues` signal is provided by the video engine. The display option signals (`$subtitle.size`, etc.) are application-level shared signals declared by the island — not part of the video engine contract.
 
 ```gsx
 //gosx:island
 func SubtitleOverlay() Node {
     cues := $video.activeCues
-    size := $subtitle.size
-    color := $subtitle.color
-    bg := $subtitle.bg
+    size := signal.New("m")   // Application-level, persisted to localStorage
+    color := signal.New("white")
+    bg := signal.New("solid")
 
     return <div class={"subtitle-overlay subtitle--size-" + size + " subtitle--color-" + color + " subtitle--bg-" + bg}>
         <div class="subtitle-overlay-text">
@@ -290,7 +328,7 @@ func SubtitleOverlay() Node {
 }
 ```
 
-### Player controls island (writes $video.command)
+### Player controls island
 
 ```gsx
 //gosx:island
@@ -298,8 +336,12 @@ func PlayerControls() Node {
     playing := $video.playing
     position := $video.position
     duration := $video.duration
+    stalled := $video.stalled
 
     return <div class="player-controls">
+        <If when={stalled}>
+            <span class="buffering">Buffering...</span>
+        </If>
         <button onClick={() => { $video.command = playing ? "pause" : "play" }}>
             {playing ? "Pause" : "Play"}
         </button>
@@ -315,3 +357,5 @@ func PlayerControls() Node {
 - Picture-in-picture API — can be added as a signal later
 - Chromecast/AirPlay — external concern, not engine responsibility
 - Video recording/capture — different engine kind
+- Audio track selection (`$video.audioTracks` / `$video.audioTrack`) — can follow the subtitle pattern later
+- Multi-engine per page — requires instance-scoped signal namespacing
