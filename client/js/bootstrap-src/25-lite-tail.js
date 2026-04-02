@@ -12,12 +12,14 @@
   }
 
   function disposeBootstrapOnlyPage() {
+    disposeManagedMotion();
     disposeManagedTextLayouts();
   }
 
   function bootstrapLitePage() {
     refreshGosxEnvironmentState("bootstrap-lite");
     refreshGosxDocumentState("bootstrap-lite");
+    mountManagedMotion(document.body || document.documentElement);
     mountManagedTextLayouts(document.body || document.documentElement);
     window.__gosx.ready = true;
     refreshGosxDocumentState("ready");

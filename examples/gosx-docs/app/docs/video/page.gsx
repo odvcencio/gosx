@@ -178,7 +178,7 @@ func Page() Node {
 		</section>
 		<div class="hero-actions">
 			<Link class="cta-link" href="/docs/engines">Back to engines</Link>
-			<Link class="cta-link primary" href="/docs/text-layout">Continue to text layout</Link>
+			<Link class="cta-link primary" href="/docs/motion">Continue to motion</Link>
 		</div>
 	</article>
 }
