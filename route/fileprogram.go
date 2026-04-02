@@ -142,6 +142,8 @@ func (r *fileProgramRenderer) renderBuiltinComponent(node *ir.Node, env fileRend
 		})
 	case "Image":
 		return true, r.renderImage(node, env)
+	case "Video":
+		return true, r.renderVideo(node, env)
 	case "TextBlock":
 		return true, r.renderTextBlock(node, env)
 	case "Stylesheet":
@@ -418,12 +420,70 @@ func (r *fileProgramRenderer) renderImage(node *ir.Node, env fileRenderEnv) stri
 	return gosx.RenderHTML(server.Image(props, args...))
 }
 
-func (r *fileProgramRenderer) renderTextBlock(node *ir.Node, env fileRenderEnv) string {
-	if env.enableBootstrap != nil {
-		env.enableBootstrap()
+func (r *fileProgramRenderer) renderVideo(node *ir.Node, env fileRenderEnv) string {
+	props := server.VideoProps{
+		EngineName:    stringValue(attrValue(node.Attrs, env, "engineName", "name", "component")),
+		Src:           stringValue(attrValue(node.Attrs, env, "src")),
+		Sources:       videoSourceListValue(attrValue(node.Attrs, env, "sources")),
+		Poster:        stringValue(attrValue(node.Attrs, env, "poster")),
+		Preload:       stringValue(attrValue(node.Attrs, env, "preload")),
+		CrossOrigin:   firstNonEmptyString(stringValue(attrValue(node.Attrs, env, "crossOrigin")), stringValue(attrValue(node.Attrs, env, "crossorigin"))),
+		AutoPlay:      truthy(attrValue(node.Attrs, env, "autoPlay", "autoplay")),
+		Controls:      truthy(attrValue(node.Attrs, env, "controls")),
+		Loop:          truthy(attrValue(node.Attrs, env, "loop")),
+		Muted:         truthy(attrValue(node.Attrs, env, "muted")),
+		PlaysInline:   truthy(attrValue(node.Attrs, env, "playsInline", "playsinline")),
+		Width:         int(numericValue(attrValue(node.Attrs, env, "width"))),
+		Height:        int(numericValue(attrValue(node.Attrs, env, "height"))),
+		Volume:        numericValue(attrValue(node.Attrs, env, "volume")),
+		Rate:          numericValue(attrValue(node.Attrs, env, "rate")),
+		Sync:          stringValue(attrValue(node.Attrs, env, "sync")),
+		SyncMode:      firstNonEmptyString(stringValue(attrValue(node.Attrs, env, "syncMode")), stringValue(attrValue(node.Attrs, env, "sync_mode"))),
+		SyncStrategy:  firstNonEmptyString(stringValue(attrValue(node.Attrs, env, "syncStrategy")), stringValue(attrValue(node.Attrs, env, "sync_strategy"))),
+		HLS:           mapStringAnyValue(attrValue(node.Attrs, env, "hls")),
+		HLSConfig:     mapStringAnyValue(attrValue(node.Attrs, env, "hlsConfig", "hls_config")),
+		SubtitleBase:  firstNonEmptyString(stringValue(attrValue(node.Attrs, env, "subtitleBase")), stringValue(attrValue(node.Attrs, env, "subtitle_base"))),
+		SubtitleTrack: firstNonEmptyString(stringValue(attrValue(node.Attrs, env, "subtitleTrack")), stringValue(attrValue(node.Attrs, env, "subtitle_track"))),
+		SubtitleTracks: videoTrackListValue(firstNonEmptyValue(
+			attrValue(node.Attrs, env, "subtitleTracks"),
+			attrValue(node.Attrs, env, "subtitle_tracks"),
+			attrValue(node.Attrs, env, "tracks"),
+		)),
 	}
+	extra := fileExtraNodeAttrs(node.Attrs, env, fileAttrNameSet(
+		"engineName", "name", "component",
+		"src", "sources",
+		"poster", "preload",
+		"crossOrigin", "crossorigin",
+		"autoPlay", "autoplay",
+		"controls",
+		"loop",
+		"muted",
+		"playsInline", "playsinline",
+		"width", "height",
+		"volume", "rate",
+		"sync", "syncMode", "sync_mode", "syncStrategy", "sync_strategy",
+		"hls", "hlsConfig", "hls_config",
+		"subtitleBase", "subtitle_base",
+		"subtitleTrack", "subtitle_track",
+		"subtitleTracks", "subtitle_tracks",
+		"tracks",
+	))
+	args := make([]any, 0, 2)
+	if len(extra) > 0 {
+		args = append(args, gosx.Attrs(extra...))
+	}
+	childrenHTML := r.renderChildren(node.Children, env)
+	if childrenHTML != "" {
+		args = append(args, gosx.RawHTML(childrenHTML))
+	}
+	fallback := server.Video(props, args...)
+	return gosx.RenderHTML(env.engine(server.VideoEngineConfig(props), fallback))
+}
 
+func (r *fileProgramRenderer) renderTextBlock(node *ir.Node, env fileRenderEnv) string {
 	props := server.TextBlockProps{
+		Mode:          server.TextBlockMode(stringValue(attrValue(node.Attrs, env, "mode"))),
 		Tag:           firstNonEmptyString(stringValue(attrValue(node.Attrs, env, "as", "tag")), "div"),
 		Text:          stringValue(attrValue(node.Attrs, env, "text")),
 		Font:          stringValue(attrValue(node.Attrs, env, "font")),
@@ -440,31 +500,39 @@ func (r *fileProgramRenderer) renderTextBlock(node *ir.Node, env fileRenderEnv) 
 		Static:        truthy(attrValue(node.Attrs, env, "static")),
 		Source:        firstNonEmptyString(stringValue(attrValue(node.Attrs, env, "source")), r.textContentChildren(node.Children, env)),
 	}
+	if env.enableBootstrap != nil && server.TextBlockRequiresBootstrap(props) {
+		env.enableBootstrap()
+	}
 	childrenHTML := r.renderChildren(node.Children, env)
 	if strings.TrimSpace(childrenHTML) == "" && props.Text != "" {
-		childrenHTML = html.EscapeString(props.Text)
+		childrenHTML = ""
 	}
-
-	var b strings.Builder
-	tag := html.EscapeString(firstNonEmptyString(props.Tag, "div"))
-	b.WriteByte('<')
-	b.WriteString(tag)
-	for _, attr := range server.TextBlockAttrs(props) {
-		safeName := html.EscapeString(attr.Name)
-		if attr.Bool {
-			b.WriteByte(' ')
-			b.WriteString(safeName)
-			continue
-		}
-		fmt.Fprintf(&b, ` %s="%s"`, safeName, html.EscapeString(attr.Value))
+	extra := fileExtraNodeAttrs(node.Attrs, env, fileAttrNameSet(
+		"mode",
+		"as", "tag",
+		"text",
+		"font",
+		"lang", "locale",
+		"dir", "direction",
+		"align", "textAlign", "text-align",
+		"whiteSpace", "whitespace",
+		"lineHeight",
+		"maxWidth",
+		"maxLines",
+		"overflow",
+		"heightHint",
+		"lineCountHint",
+		"source",
+		"static",
+	))
+	args := make([]any, 0, 2)
+	if len(extra) > 0 {
+		args = append(args, gosx.Attrs(extra...))
 	}
-	r.renderTextBlockExtraAttrs(&b, node.Attrs, env)
-	b.WriteByte('>')
-	b.WriteString(childrenHTML)
-	b.WriteString("</")
-	b.WriteString(tag)
-	b.WriteByte('>')
-	return b.String()
+	if childrenHTML != "" {
+		args = append(args, gosx.RawHTML(childrenHTML))
+	}
+	return gosx.RenderHTML(server.TextBlock(props, args...))
 }
 
 func (r *fileProgramRenderer) renderStylesheet(node *ir.Node, env fileRenderEnv) string {
@@ -1357,7 +1425,7 @@ func (r *fileProgramRenderer) renderTextBlockExtraAttrs(b *strings.Builder, attr
 
 func isTextBlockReservedAttr(name string) bool {
 	switch strings.TrimSpace(name) {
-	case "as", "tag", "text", "font", "lang", "locale", "dir", "direction", "align", "textAlign", "text-align", "whiteSpace", "whitespace", "lineHeight", "maxWidth", "maxLines", "overflow", "heightHint", "lineCountHint", "source", "static":
+	case "mode", "as", "tag", "text", "font", "lang", "locale", "dir", "direction", "align", "textAlign", "text-align", "whiteSpace", "whitespace", "lineHeight", "maxWidth", "maxLines", "overflow", "heightHint", "lineCountHint", "source", "static":
 		return true
 	default:
 		return false
@@ -1421,6 +1489,22 @@ func firstNonEmptyString(values ...string) string {
 	return ""
 }
 
+func firstNonEmptyValue(values ...any) any {
+	for _, value := range values {
+		if value == nil {
+			continue
+		}
+		switch typed := value.(type) {
+		case string:
+			if strings.TrimSpace(typed) == "" {
+				continue
+			}
+		}
+		return value
+	}
+	return nil
+}
+
 func marshalEngineProps(props map[string]any) json.RawMessage {
 	if len(props) == 0 {
 		return nil
@@ -1430,6 +1514,55 @@ func marshalEngineProps(props map[string]any) json.RawMessage {
 		return nil
 	}
 	return data
+}
+
+func mapStringAnyValue(value any) map[string]any {
+	rv := reflect.ValueOf(value)
+	for rv.IsValid() && rv.Kind() == reflect.Pointer {
+		if rv.IsNil() {
+			return nil
+		}
+		rv = rv.Elem()
+	}
+	if !rv.IsValid() || rv.Kind() != reflect.Map || rv.Type().Key().Kind() != reflect.String {
+		return nil
+	}
+	out := make(map[string]any, rv.Len())
+	iter := rv.MapRange()
+	for iter.Next() {
+		out[iter.Key().String()] = iter.Value().Interface()
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func videoSourceListValue(value any) []server.VideoSource {
+	return decodeVideoListValue[server.VideoSource](value)
+}
+
+func videoTrackListValue(value any) []server.VideoTrack {
+	return decodeVideoListValue[server.VideoTrack](value)
+}
+
+func decodeVideoListValue[T any](value any) []T {
+	if value == nil {
+		return nil
+	}
+	data, err := json.Marshal(value)
+	if err != nil {
+		return nil
+	}
+	var list []T
+	if err := json.Unmarshal(data, &list); err == nil && len(list) > 0 {
+		return list
+	}
+	var single T
+	if err := json.Unmarshal(data, &single); err == nil {
+		return []T{single}
+	}
+	return nil
 }
 
 func engineCapabilitiesValue(value any, fallback []engine.Capability) []engine.Capability {

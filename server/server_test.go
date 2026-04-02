@@ -431,6 +431,53 @@ func TestAppInjectsRuntimeHeadForVideoEnginePages(t *testing.T) {
 	}
 }
 
+func TestAppVideoHelperRendersManagedBaselineAndRuntimeHead(t *testing.T) {
+	app := New()
+	app.Page("GET /video-helper", func(ctx *Context) gosx.Node {
+		return ctx.Video(VideoProps{
+			Poster:   "/media/poster.jpg",
+			Controls: true,
+			Sources: []VideoSource{
+				{Src: "/media/promo.webm", Type: "video/webm"},
+				{Src: "/media/promo.mp4", Type: "video/mp4"},
+			},
+			SubtitleTrack: "en",
+			SubtitleTracks: []VideoTrack{
+				{ID: "en", Language: "en", Title: "English", Kind: "captions", Src: "/subs/en-custom.vtt"},
+			},
+		}, gosx.El("p", gosx.Text("Download video")))
+	})
+
+	handler := app.Build()
+	req := httptest.NewRequest(http.MethodGet, "/video-helper", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	body := w.Body.String()
+	for _, snippet := range []string{
+		`data-gosx-engine="GoSXVideo"`,
+		`data-gosx-engine-kind="video"`,
+		`data-gosx-enhance="video"`,
+		`data-gosx-enhance-layer="runtime"`,
+		`<video data-gosx-video-fallback="true"`,
+		`poster="/media/poster.jpg"`,
+		`<source src="/media/promo.webm" type="video/webm"`,
+		`<source src="/media/promo.mp4" type="video/mp4"`,
+		`<track src="/subs/en-custom.vtt" kind="captions" srclang="en" label="English"`,
+		`<p>Download video</p>`,
+		`gosx-manifest`,
+		`/gosx/runtime.wasm`,
+		`/gosx/bootstrap.js`,
+	} {
+		if !strings.Contains(body, snippet) {
+			t.Fatalf("expected %q in video helper page body %q", snippet, body)
+		}
+	}
+	if strings.Contains(body, `/gosx/patch.js`) {
+		t.Fatalf("did not expect patch runtime on video helper page: %q", body)
+	}
+}
+
 func TestAppInjectsBootstrapHeadForTextBlockPages(t *testing.T) {
 	app := New()
 	app.Page("GET /", func(ctx *Context) gosx.Node {
@@ -476,6 +523,51 @@ func TestAppInjectsBootstrapHeadForTextBlockPages(t *testing.T) {
 	} {
 		if strings.Contains(body, snippet) {
 			t.Fatalf("did not expect %q in bootstrap-only text layout page body %q", snippet, body)
+		}
+	}
+}
+
+func TestAppKeepsNativeTextBlockPagesOffBootstrapHead(t *testing.T) {
+	app := New()
+	app.Page("GET /", func(ctx *Context) gosx.Node {
+		return ctx.TextBlock(TextBlockProps{
+			Mode:       TextBlockModeNative,
+			Text:       "hello world",
+			Font:       "16px monospace",
+			LineHeight: 20,
+			MaxWidth:   70,
+		})
+	})
+
+	handler := app.Build()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	body := w.Body.String()
+	for _, snippet := range []string{
+		`data-gosx-text-layout-mode="native"`,
+		`style="white-space: pre; font: 16px monospace; line-height: 20px; max-width: 70px"`,
+		"hello\nworld",
+		`"bootstrap":false`,
+		`"runtime":false`,
+		`"bootstrapMode":"none"`,
+	} {
+		if !strings.Contains(body, snippet) {
+			t.Fatalf("expected %q in native text layout page body %q", snippet, body)
+		}
+	}
+	for _, snippet := range []string{
+		`data-gosx-enhance="text-layout"`,
+		`/gosx/bootstrap-lite.js`,
+		`data-gosx-bootstrap-mode="lite"`,
+		`gosx-manifest`,
+		`data-gosx-script="wasm-exec"`,
+		`/gosx/bootstrap.js`,
+		`/gosx/patch.js`,
+	} {
+		if strings.Contains(body, snippet) {
+			t.Fatalf("did not expect %q in native text layout page body %q", snippet, body)
 		}
 	}
 }

@@ -8803,15 +8803,53 @@
     ];
   }
 
+  function videoNormalizeSourceInfo(item, index) {
+    const source = item && typeof item === "object" ? item : {};
+    const src = String(videoPropValue(source, ["src", "source", "url"], "") || "").trim();
+    if (!src) {
+      return null;
+    }
+    const type = String(videoPropValue(source, ["type"], "") || "").trim();
+    const media = String(videoPropValue(source, ["media"], "") || "").trim();
+    const id = String(videoPropValue(source, ["id", "name"], src || ("source-" + index)) || "").trim();
+    return {
+      id: id || ("source-" + index),
+      src: src,
+      type: type,
+      media: media,
+    };
+  }
+
+  function videoSourcesFromProps(props) {
+    const sources = videoPropValue(props, ["sources"], []);
+    if (!Array.isArray(sources)) {
+      return [];
+    }
+    const out = [];
+    for (let index = 0; index < sources.length; index += 1) {
+      const source = videoNormalizeSourceInfo(sources[index], index);
+      if (source) {
+        out.push(source);
+      }
+    }
+    return out;
+  }
+
   function videoNormalizeTrackInfo(item, index) {
     const source = item && typeof item === "object" ? item : {};
-    const language = String(videoPropValue(source, ["language", "lang"], "") || "").trim();
+    const src = String(videoPropValue(source, ["src"], "") || "").trim();
+    const srcLang = String(videoPropValue(source, ["srclang", "srcLang"], "") || "").trim();
+    const language = String(videoPropValue(source, ["language", "lang", "srclang", "srcLang"], srcLang) || "").trim();
     const title = String(videoPropValue(source, ["title", "label", "name"], language || ("Track " + (index + 1))) || "").trim();
     const id = String(videoPropValue(source, ["id", "trackID", "trackId"], language || title || ("track-" + index)) || "").trim();
+    const kind = String(videoPropValue(source, ["kind"], "subtitles") || "subtitles").trim().toLowerCase() || "subtitles";
     return {
       id: id || ("track-" + index),
       language: language,
+      srclang: srcLang || language,
       title: title,
+      kind: kind,
+      src: src,
       default: sceneBool(videoPropValue(source, ["default"], false), false),
       forced: sceneBool(videoPropValue(source, ["forced"], false), false),
     };
@@ -8823,6 +8861,99 @@
       return [];
     }
     return tracks.map(videoNormalizeTrackInfo);
+  }
+
+  function videoTrackURL(track, props) {
+    const explicit = String(videoPropValue(track, ["src"], "") || "").trim();
+    if (explicit) {
+      return explicit;
+    }
+    const subtitleBase = String(videoPropValue(props, ["subtitleBase", "subtitle_base"], "") || "").trim();
+    const id = String(track && track.id || "").trim();
+    if (!subtitleBase || !id) {
+      return "";
+    }
+    return subtitleBase.replace(/\/$/, "") + "/" + encodeURIComponent(id) + ".vtt";
+  }
+
+  function videoFirstFallbackNode(children, tagName) {
+    for (const child of children || []) {
+      if (child && child.nodeType === 1 && child.tagName === tagName) {
+        return child;
+      }
+    }
+    return null;
+  }
+
+  function videoCanUseSourceNatively(video, source) {
+    if (!source || typeof source !== "object") {
+      return false;
+    }
+    const src = String(source.src || "").trim();
+    if (!src) {
+      return false;
+    }
+    if (videoNeedsHLS(src)) {
+      return videoSupportsNativeHLS(video);
+    }
+    const type = String(source.type || "").trim();
+    if (!type || !video || typeof video.canPlayType !== "function") {
+      return true;
+    }
+    const result = String(video.canPlayType(type) || "").trim().toLowerCase();
+    return result !== "" && result !== "no";
+  }
+
+  function videoEnsureAuthoredChildren(video, props) {
+    if (!video || !props || typeof props !== "object") {
+      return;
+    }
+    let hasSourceChildren = false;
+    let hasTrackChildren = false;
+    for (const child of Array.from(video.childNodes || [])) {
+      if (!child || child.nodeType !== 1) {
+        continue;
+      }
+      if (child.tagName === "SOURCE") {
+        hasSourceChildren = true;
+      } else if (child.tagName === "TRACK") {
+        hasTrackChildren = true;
+      }
+    }
+    if (!hasSourceChildren) {
+      for (const source of videoSourcesFromProps(props)) {
+        const sourceNode = document.createElement("source");
+        sourceNode.setAttribute("src", source.src);
+        if (source.type) {
+          sourceNode.setAttribute("type", source.type);
+        }
+        if (source.media) {
+          sourceNode.setAttribute("media", source.media);
+        }
+        video.appendChild(sourceNode);
+      }
+    }
+    if (!hasTrackChildren) {
+      for (const track of videoTracksFromProps(props)) {
+        const trackURL = videoTrackURL(track, props);
+        if (!trackURL) {
+          continue;
+        }
+        const trackNode = document.createElement("track");
+        trackNode.setAttribute("src", trackURL);
+        trackNode.setAttribute("kind", track.kind || "subtitles");
+        if (track.srclang) {
+          trackNode.setAttribute("srclang", track.srclang);
+        }
+        if (track.title) {
+          trackNode.setAttribute("label", track.title);
+        }
+        if (track.default) {
+          trackNode.setAttribute("default", "true");
+        }
+        video.appendChild(trackNode);
+      }
+    }
   }
 
   function videoSanitizeCueHTML(text) {
@@ -8969,6 +9100,16 @@
     if (sceneBool(videoPropValue(props, ["muted"], false), false)) {
       video.muted = true;
     }
+    const width = Math.max(0, Math.round(sceneNumber(videoPropValue(props, ["width"], 0), 0)));
+    const height = Math.max(0, Math.round(sceneNumber(videoPropValue(props, ["height"], 0), 0)));
+    if (width > 0) {
+      video.setAttribute("width", String(width));
+      video.width = width;
+    }
+    if (height > 0) {
+      video.setAttribute("height", String(height));
+      video.height = height;
+    }
   }
 
   function videoSyncURL(path) {
@@ -8987,7 +9128,8 @@
 
     const props = ctx && ctx.props && typeof ctx.props === "object" ? ctx.props : {};
     const fallbackChildren = mount && mount.childNodes ? Array.from(mount.childNodes) : [];
-    const video = document.createElement("video");
+    const authoredSources = videoSourcesFromProps(props);
+    const video = videoFirstFallbackNode(fallbackChildren, "VIDEO") || document.createElement("video");
     const unsubscribers = [];
     const eventListeners = [];
     const subtitleState = {
@@ -9287,8 +9429,8 @@
           hls.subtitleTrack = nextIndex;
         }
       }
-      const subtitleBase = String(videoPropValue(props, ["subtitleBase", "subtitle_base"], "") || "").trim();
-      if (!subtitleBase) {
+      const subtitleURL = videoTrackURL(localTrack, props);
+      if (!subtitleURL) {
         subtitleState.status = "ready";
         updateSubtitleOutputs();
         updateCueOutputs();
@@ -9296,7 +9438,6 @@
       }
       subtitleState.status = "loading";
       updateSubtitleOutputs();
-      const subtitleURL = subtitleBase.replace(/\/$/, "") + "/" + encodeURIComponent(selected) + ".vtt";
       for (let attempt = 0; attempt < 60; attempt += 1) {
         const response = await fetch(subtitleURL);
         if (response.status === 202) {
@@ -9328,7 +9469,32 @@
     }
 
     async function applySource(source) {
-      const nextSource = String(source || "").trim();
+      const requestedSource = String(source || "").trim();
+      let nextSource = requestedSource;
+      let useAuthoredSources = false;
+      if (!nextSource && authoredSources.length > 0) {
+        let nativeCandidate = null;
+        for (const candidate of authoredSources) {
+          if (videoCanUseSourceNatively(video, candidate)) {
+            nativeCandidate = candidate;
+            break;
+          }
+        }
+        if (nativeCandidate) {
+          nextSource = nativeCandidate.src;
+          useAuthoredSources = true;
+        } else {
+          const hlsCandidate = authoredSources.find(function(candidate) {
+            return videoNeedsHLS(candidate && candidate.src);
+          });
+          if (hlsCandidate) {
+            nextSource = hlsCandidate.src;
+          } else {
+            nextSource = authoredSources[0].src;
+            useAuthoredSources = true;
+          }
+        }
+      }
       currentSource = nextSource;
       clearError();
       followState = null;
@@ -9337,9 +9503,13 @@
       subtitleState.cues = [];
       subtitleState.lastSignature = "";
       updateCueOutputs();
-      if (!nextSource) {
+      if (!nextSource && !useAuthoredSources) {
         if (typeof video.removeAttribute === "function") {
           video.removeAttribute("src");
+        }
+        try {
+          video.src = "";
+        } catch (_error) {
         }
         if (typeof video.load === "function") {
           video.load();
@@ -9347,7 +9517,18 @@
         updateVideoOutputs();
         return;
       }
-      if (videoNeedsHLS(nextSource) && !videoSupportsNativeHLS(video)) {
+      if (useAuthoredSources) {
+        if (typeof video.removeAttribute === "function") {
+          video.removeAttribute("src");
+        }
+        try {
+          video.src = "";
+        } catch (_error) {
+        }
+        if (typeof video.load === "function") {
+          video.load();
+        }
+      } else if (videoNeedsHLS(nextSource) && !videoSupportsNativeHLS(video)) {
         const HlsCtor = await ensureVideoHLSLibrary();
         if (!HlsCtor) {
           setError("HLS.js unavailable");
@@ -9411,6 +9592,7 @@
 
     video.setAttribute("data-gosx-video", "true");
     videoApplyElementProps(video, props);
+    videoEnsureAuthoredChildren(video, props);
     videoClearChildren(mount);
     mount.appendChild(video);
     subtitleState.status = subtitleState.tracks.length > 0 ? "ready" : "idle";

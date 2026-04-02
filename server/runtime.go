@@ -81,10 +81,10 @@ func (r *PageRuntime) BindHub(name, path string, bindings []hydrate.HubBinding) 
 	return r.renderer.BindHub(name, path, bindings)
 }
 
-// TextBlock renders a managed text-layout node and ensures the shared
-// bootstrap runtime is present for client-side refinement.
+// TextBlock renders a text-layout node and enables the shared bootstrap
+// runtime only when client-side refinement is requested.
 func (r *PageRuntime) TextBlock(props TextBlockProps, args ...any) gosx.Node {
-	if r != nil {
+	if r != nil && TextBlockRequiresBootstrap(props) {
 		r.EnableBootstrap()
 	}
 	return TextBlock(props, args...)

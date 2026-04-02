@@ -96,6 +96,9 @@ func DocsNavigation() Node {
 				<DocsNavLink href="/docs/forms" label="Forms" active={request.path == "/docs/forms"}></DocsNavLink>
 				<DocsNavLink href="/docs/auth" label="Auth" active={request.path == "/docs/auth"}></DocsNavLink>
 				<DocsNavLink href="/docs/runtime" label="Runtime" active={request.path == "/docs/runtime"}></DocsNavLink>
+				<DocsNavLink href="/docs/engines" label="Engines" active={request.path == "/docs/engines"}></DocsNavLink>
+				<DocsNavLink href="/docs/video" label="Video" active={request.path == "/docs/video"}></DocsNavLink>
+				<DocsNavLink href="/docs/text-layout" label="Text Layout" active={request.path == "/docs/text-layout"}></DocsNavLink>
 				<DocsNavLink href="/docs/images" label="Images" active={request.path == "/docs/images"}></DocsNavLink>
 			</div>
 		</div>
