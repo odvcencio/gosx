@@ -37,6 +37,11 @@ func inlineLang() *gotreesitter.Language {
 
 // Parse parses Markdown source into a Document AST.
 func Parse(source []byte) *Document {
+	// tree-sitter markdown requires a trailing newline for correct parsing.
+	if len(source) > 0 && source[len(source)-1] != '\n' {
+		source = append(source, '\n')
+	}
+
 	lang := blockLang()
 	if lang == nil {
 		return &Document{Root: newNode(NodeDocument), Source: source}
@@ -89,7 +94,13 @@ func convertBlock(bt *gotreesitter.BoundTree, n *gotreesitter.Node, source []byt
 		return doc
 
 	case "section":
-		// section is a wrapper in tree-sitter-markdown; flatten its children
+		// section is a wrapper in tree-sitter-markdown; flatten its children.
+		// For simple documents, tree-sitter may omit wrapper nodes and place
+		// children (e.g. list_item, fenced_code_block_delimiter) directly
+		// under section. We detect these patterns and synthesise the wrapper.
+		if synth := synthesiseSectionContent(bt, n, source); synth != nil {
+			return synth
+		}
 		var nodes []*Node
 		for i := 0; i < n.ChildCount(); i++ {
 			if child := convertBlock(bt, n.Child(i), source); child != nil {
@@ -328,7 +339,7 @@ func convertInlineChildren(bt *gotreesitter.BoundTree, n *gotreesitter.Node, sou
 			case "link_destination":
 				link.Attrs["href"] = bt.NodeText(child)
 			case "link_title":
-				link.Attrs["title"] = bt.NodeText(child)
+				link.Attrs["title"] = stripQuotes(bt.NodeText(child))
 			}
 		}
 		nodes = append(nodes, link)
@@ -364,7 +375,7 @@ func convertInlineChildren(bt *gotreesitter.BoundTree, n *gotreesitter.Node, sou
 			case "link_destination":
 				img.Attrs["src"] = bt.NodeText(child)
 			case "link_title":
-				img.Attrs["title"] = bt.NodeText(child)
+				img.Attrs["title"] = stripQuotes(bt.NodeText(child))
 			}
 		}
 		nodes = append(nodes, img)
@@ -401,55 +412,269 @@ func convertInlineChildren(bt *gotreesitter.BoundTree, n *gotreesitter.Node, sou
 }
 
 // collectInlineChildren processes the children of an inline-level node,
-// merging adjacent unnamed text spans and recursing into named nodes.
+// extracting gap text between children and recursing into structural nodes.
+// tree-sitter markdown_inline does not create child nodes for plain text;
+// text that falls between (or around) named children must be recovered
+// from the source using byte offsets.
 func collectInlineChildren(bt *gotreesitter.BoundTree, n *gotreesitter.Node, source []byte) []*Node {
+	nodeText := bt.NodeText(n)
+	src := []byte(nodeText)
+	nodeStart := n.StartByte()
+
+	if n.ChildCount() == 0 {
+		// Leaf inline — all text
+		if len(src) > 0 {
+			return []*Node{textNode(string(src))}
+		}
+		return nil
+	}
+
 	var nodes []*Node
+	cursor := uint32(0) // relative to nodeStart
+
 	for i := 0; i < n.ChildCount(); i++ {
 		child := n.Child(i)
+		childStart := child.StartByte() - nodeStart
+		childEnd := child.EndByte() - nodeStart
+
+		// Gap text before this child
+		if childStart > cursor {
+			gap := string(src[cursor:childStart])
+			if gap != "" {
+				appendText(&nodes, gap)
+			}
+		}
+
 		ct := bt.NodeType(child)
 		if isInlineStructural(ct) {
 			nodes = append(nodes, convertInlineChildren(bt, child, source)...)
 		} else {
-			// unnamed/punctuation/text nodes — take their text
+			// Non-structural child (punctuation, etc.) — include its text
 			text := bt.NodeText(child)
 			if text != "" {
-				// Merge with previous text node if possible
-				if len(nodes) > 0 && nodes[len(nodes)-1].Type == NodeText {
-					nodes[len(nodes)-1].Literal += text
-				} else {
-					nodes = append(nodes, textNode(text))
-				}
+				appendText(&nodes, text)
 			}
 		}
+		cursor = childEnd
 	}
+
+	// Trailing gap text
+	if cursor < uint32(len(src)) {
+		gap := string(src[cursor:])
+		if gap != "" {
+			appendText(&nodes, gap)
+		}
+	}
+
 	return nodes
 }
 
 // collectInlineTextOnly extracts text from an inline node, skipping
 // delimiter tokens (emphasis_delimiter, etc.) and recursing into nested
-// inline structures.
+// inline structures. Uses gap-based extraction for text between children.
 func collectInlineTextOnly(bt *gotreesitter.BoundTree, n *gotreesitter.Node, source []byte) []*Node {
+	nodeText := bt.NodeText(n)
+	src := []byte(nodeText)
+	nodeStart := n.StartByte()
+
+	if n.ChildCount() == 0 {
+		if len(src) > 0 {
+			return []*Node{textNode(string(src))}
+		}
+		return nil
+	}
+
 	var nodes []*Node
+	cursor := uint32(0)
+
 	for i := 0; i < n.ChildCount(); i++ {
 		child := n.Child(i)
 		ct := bt.NodeType(child)
+		childStart := child.StartByte() - nodeStart
+		childEnd := child.EndByte() - nodeStart
+
+		// Gap text before this child (content text between delimiters/children)
+		if childStart > cursor {
+			gap := string(src[cursor:childStart])
+			if gap != "" {
+				appendText(&nodes, gap)
+			}
+		}
+
 		if isDelimiter(ct) {
+			// Skip delimiter token itself (don't emit its text)
+			cursor = childEnd
 			continue
 		}
+
 		if isInlineStructural(ct) {
 			nodes = append(nodes, convertInlineChildren(bt, child, source)...)
 		} else {
 			text := bt.NodeText(child)
 			if text != "" {
-				if len(nodes) > 0 && nodes[len(nodes)-1].Type == NodeText {
-					nodes[len(nodes)-1].Literal += text
-				} else {
-					nodes = append(nodes, textNode(text))
+				appendText(&nodes, text)
+			}
+		}
+		cursor = childEnd
+	}
+
+	// Trailing gap text
+	if cursor < uint32(len(src)) {
+		gap := string(src[cursor:])
+		if gap != "" {
+			appendText(&nodes, gap)
+		}
+	}
+
+	return nodes
+}
+
+// appendText merges text into the last node if it's a text node,
+// or appends a new text node.
+func appendText(nodes *[]*Node, text string) {
+	if len(*nodes) > 0 && (*nodes)[len(*nodes)-1].Type == NodeText {
+		(*nodes)[len(*nodes)-1].Literal += text
+	} else {
+		*nodes = append(*nodes, textNode(text))
+	}
+}
+
+// synthesiseSectionContent checks whether a section node contains
+// unwrapped children that belong in a wrapper node and, if so,
+// synthesises the wrapper.  Returns nil if no special handling applies.
+func synthesiseSectionContent(bt *gotreesitter.BoundTree, n *gotreesitter.Node, source []byte) *Node {
+	if n.ChildCount() == 0 {
+		return nil
+	}
+
+	// Collect child types for pattern matching.
+	childTypes := make([]string, n.ChildCount())
+	for i := 0; i < n.ChildCount(); i++ {
+		childTypes[i] = bt.NodeType(n.Child(i))
+	}
+
+	// Pattern: block_quote_marker + paragraph/... = blockquote
+	if childTypes[0] == "block_quote_marker" {
+		bq := newNode(NodeBlockquote)
+		for i := 1; i < n.ChildCount(); i++ {
+			child := n.Child(i)
+			ct := childTypes[i]
+			if ct == "block_continuation" {
+				continue
+			}
+			if converted := convertBlock(bt, child, source); converted != nil {
+				bq.Children = append(bq.Children, converted)
+			}
+		}
+		return bq
+	}
+
+	// Pattern: list_item children = list
+	hasListItem := false
+	for _, ct := range childTypes {
+		if ct == "list_item" {
+			hasListItem = true
+			break
+		}
+	}
+	if hasListItem {
+		list := newNode(NodeList)
+		for i := 0; i < n.ChildCount(); i++ {
+			child := n.Child(i)
+			if bt.NodeType(child) == "list_item" {
+				if converted := convertListItem(bt, child, source); converted != nil {
+					list.Children = append(list.Children, converted)
 				}
 			}
 		}
+		return list
 	}
-	return nodes
+
+	// Pattern: fenced_code_block_delimiter + info_string + code_fence_content + ... = code block
+	hasFenceDelim := false
+	for _, ct := range childTypes {
+		if ct == "fenced_code_block_delimiter" {
+			hasFenceDelim = true
+			break
+		}
+	}
+	if hasFenceDelim {
+		cb := newNode(NodeCodeBlock)
+		cb.Attrs = make(map[string]string)
+		for i := 0; i < n.ChildCount(); i++ {
+			child := n.Child(i)
+			ct := childTypes[i]
+			switch ct {
+			case "info_string":
+				langNode := findChild(bt, child, "language")
+				if langNode != nil {
+					cb.Attrs["language"] = strings.TrimSpace(bt.NodeText(langNode))
+				} else {
+					cb.Attrs["language"] = strings.TrimSpace(bt.NodeText(child))
+				}
+			case "code_fence_content":
+				cb.Literal = bt.NodeText(child)
+			}
+		}
+		return cb
+	}
+
+	// Pattern: pipe_table_header + pipe_table_delimiter_row + pipe_table_row = table
+	hasPipeTableHeader := false
+	for _, ct := range childTypes {
+		if ct == "pipe_table_header" {
+			hasPipeTableHeader = true
+			break
+		}
+	}
+	if hasPipeTableHeader {
+		table := newNode(NodeTable)
+		for i := 0; i < n.ChildCount(); i++ {
+			child := n.Child(i)
+			ct := childTypes[i]
+			switch ct {
+			case "pipe_table_header", "pipe_table_row":
+				row := newNode(NodeTableRow)
+				for j := 0; j < child.ChildCount(); j++ {
+					cell := child.Child(j)
+					if bt.NodeType(cell) == "pipe_table_cell" {
+						c := newNode(NodeTableCell)
+						text := strings.TrimSpace(bt.NodeText(cell))
+						if text != "" {
+							c.Children = append(c.Children, textNode(text))
+						}
+						row.Children = append(row.Children, c)
+					}
+				}
+				table.Children = append(table.Children, row)
+			case "pipe_table_delimiter_row":
+				// skip
+			}
+		}
+		return table
+	}
+
+	// Pattern: section with only "inline" child(ren) and no structural wrappers = paragraph.
+	// In single-element documents, the block parser's "inline" children may only
+	// cover punctuation. Use the full section text instead.
+	allInlineOrSkip := true
+	hasInline := false
+	for _, ct := range childTypes {
+		if ct == "inline" {
+			hasInline = true
+		} else if ct != "block_continuation" && ct != "_whitespace" {
+			allInlineOrSkip = false
+			break
+		}
+	}
+	if allInlineOrSkip && hasInline {
+		para := newNode(NodeParagraph)
+		sectionText := strings.TrimRight(bt.NodeText(n), "\n")
+		para.Children = append(para.Children, parseInline(sectionText, source)...)
+		return para
+	}
+
+	return nil
 }
 
 // isInlineStructural returns true for node types that are meaningful inline
@@ -476,15 +701,41 @@ func isDelimiter(nodeType string) bool {
 }
 
 // extractCodeSpanText gets the text inside a code_span, stripping delimiters.
+// Uses gap-based extraction since tree-sitter may not represent all text as children.
 func extractCodeSpanText(bt *gotreesitter.BoundTree, n *gotreesitter.Node) string {
-	var parts []string
+	nodeText := bt.NodeText(n)
+	src := []byte(nodeText)
+	nodeStart := n.StartByte()
+
+	if n.ChildCount() == 0 {
+		return nodeText
+	}
+
+	var sb strings.Builder
+	cursor := uint32(0)
+
 	for i := 0; i < n.ChildCount(); i++ {
 		child := n.Child(i)
-		if bt.NodeType(child) != "code_span_delimiter" {
-			parts = append(parts, bt.NodeText(child))
+		childStart := child.StartByte() - nodeStart
+		childEnd := child.EndByte() - nodeStart
+
+		// Gap text before this child
+		if childStart > cursor {
+			sb.Write(src[cursor:childStart])
 		}
+
+		if bt.NodeType(child) != "code_span_delimiter" {
+			sb.WriteString(bt.NodeText(child))
+		}
+		cursor = childEnd
 	}
-	return strings.Join(parts, "")
+
+	// Trailing gap text
+	if cursor < uint32(len(src)) {
+		sb.Write(src[cursor:])
+	}
+
+	return sb.String()
 }
 
 // headingLevel extracts the heading level (1-6) from an atx_heading or setext_heading node.
@@ -532,6 +783,18 @@ func levelStr(level int) string {
 	default:
 		return "1"
 	}
+}
+
+// stripQuotes removes surrounding quote characters from a string.
+// tree-sitter link_title nodes include their surrounding quotes.
+func stripQuotes(s string) string {
+	if len(s) >= 2 {
+		first, last := s[0], s[len(s)-1]
+		if (first == '"' && last == '"') || (first == '\'' && last == '\'') || (first == '(' && last == ')') {
+			return s[1 : len(s)-1]
+		}
+	}
+	return s
 }
 
 // findChild finds the first child of n with the given node type.
