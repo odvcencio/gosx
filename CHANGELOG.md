@@ -10,8 +10,6 @@
 
 ## v0.2.1
 
-Dogfooding fixes from the m31labs.dev gosx migration.
-
 - **fix(ir):** HTML entities (`&rarr;`, `&mdash;`, etc.) in `.gsx` text are now decoded to UTF-8 characters instead of being double-escaped
 - **fix(ir):** `<script>` and `<style>` element content is now treated as raw text, preventing HTML escaping of `&&`, `<`, etc. inside inline scripts
 - **fix(build):** `gosx build` no longer generates invalid Go import paths for `[slug]` dynamic route directories
