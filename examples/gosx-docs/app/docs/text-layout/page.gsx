@@ -146,7 +146,7 @@ func Page() Node {
 			</p>
 		</section>
 		<div class="hero-actions">
-			<Link class="cta-link" href="/docs/video">Back to video</Link>
+			<Link class="cta-link" href="/docs/motion">Back to motion</Link>
 			<Link class="cta-link primary" href="/docs/images">Continue to images</Link>
 		</div>
 	</article>

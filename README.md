@@ -191,6 +191,8 @@ count    // local to the declaring island
 
 **Managed Video** — `server.Video`, `ctx.Video`, and the `.gsx` `<Video />` builtin render a real server `<video>` baseline with `<source>` and `<track>` children, then the built-in video engine can layer in HLS fallback, subtitle loading, sync, and shared `$video.*` signals when the page needs them.
 
+**Managed Motion** — `server.Motion`, `ctx.Motion`, and the `.gsx` `<Motion />` builtin expose server-authored motion presets that run on the shared bootstrap layer. Preset, trigger, duration, delay, easing, reduced-motion policy, and distance all stay in one declarative contract.
+
 ## Engines
 
 For work that doesn't fit the island model — canvas rendering, WebGL, background computation:

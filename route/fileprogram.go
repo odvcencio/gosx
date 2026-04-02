@@ -142,6 +142,8 @@ func (r *fileProgramRenderer) renderBuiltinComponent(node *ir.Node, env fileRend
 		})
 	case "Image":
 		return true, r.renderImage(node, env)
+	case "Motion":
+		return true, r.renderMotion(node, env)
 	case "Video":
 		return true, r.renderVideo(node, env)
 	case "TextBlock":
@@ -418,6 +420,41 @@ func (r *fileProgramRenderer) renderImage(node *ir.Node, env fileRenderEnv) stri
 		args = append(args, gosx.Attrs(extra...))
 	}
 	return gosx.RenderHTML(server.Image(props, args...))
+}
+
+func (r *fileProgramRenderer) renderMotion(node *ir.Node, env fileRenderEnv) string {
+	props := server.MotionProps{
+		Tag:                  firstNonEmptyString(stringValue(attrValue(node.Attrs, env, "as", "tag")), "div"),
+		Preset:               server.MotionPreset(stringValue(attrValue(node.Attrs, env, "preset"))),
+		Trigger:              server.MotionTrigger(stringValue(attrValue(node.Attrs, env, "trigger"))),
+		Duration:             int(numericValue(attrValue(node.Attrs, env, "duration", "durationMs", "duration_ms"))),
+		Delay:                int(numericValue(attrValue(node.Attrs, env, "delay", "delayMs", "delay_ms"))),
+		Easing:               stringValue(attrValue(node.Attrs, env, "easing")),
+		Distance:             numericValue(attrValue(node.Attrs, env, "distance")),
+		RespectReducedMotion: boolPointerValue(firstNonEmptyValue(attrValue(node.Attrs, env, "respectReducedMotion"), attrValue(node.Attrs, env, "respect_reduced_motion"))),
+	}
+	if env.enableBootstrap != nil {
+		env.enableBootstrap()
+	}
+	extra := fileExtraNodeAttrs(node.Attrs, env, fileAttrNameSet(
+		"as", "tag",
+		"preset",
+		"trigger",
+		"duration", "durationMs", "duration_ms",
+		"delay", "delayMs", "delay_ms",
+		"easing",
+		"distance",
+		"respectReducedMotion", "respect_reduced_motion",
+	))
+	args := make([]any, 0, 2)
+	if len(extra) > 0 {
+		args = append(args, gosx.Attrs(extra...))
+	}
+	childrenHTML := r.renderChildren(node.Children, env)
+	if childrenHTML != "" {
+		args = append(args, gosx.RawHTML(childrenHTML))
+	}
+	return gosx.RenderHTML(server.Motion(props, args...))
 }
 
 func (r *fileProgramRenderer) renderVideo(node *ir.Node, env fileRenderEnv) string {
@@ -1503,6 +1540,14 @@ func firstNonEmptyValue(values ...any) any {
 		return value
 	}
 	return nil
+}
+
+func boolPointerValue(value any) *bool {
+	if value == nil {
+		return nil
+	}
+	result := truthy(value)
+	return &result
 }
 
 func marshalEngineProps(props map[string]any) json.RawMessage {

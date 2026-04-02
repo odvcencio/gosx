@@ -2191,6 +2191,7 @@
     for (const hubID of Array.from(window.__gosx.hubs.keys())) {
       window.__gosx_disconnect_hub(hubID);
     }
+    disposeManagedMotion();
     disposeManagedTextLayouts();
     pendingManifest = null;
     window.__gosx.ready = false;
@@ -2403,6 +2404,7 @@
   async function bootstrapPage() {
     refreshGosxEnvironmentState("bootstrap-page");
     refreshGosxDocumentState("bootstrap-page");
+    mountManagedMotion(document.body || document.documentElement);
     mountManagedTextLayouts(document.body || document.documentElement);
 
     const manifest = loadManifest();

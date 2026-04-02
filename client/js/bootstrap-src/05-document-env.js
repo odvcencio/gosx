@@ -12,6 +12,20 @@
   let gosxStateInvalidationScheduled = false;
   let gosxVisualInvalidationScheduled = false;
   let gosxVisualInvalidationHandle = 0;
+  const GOSX_MOTION_ATTR = "data-gosx-motion";
+  const GOSX_MOTION_MUTATION_ATTRS = [
+    GOSX_MOTION_ATTR,
+    "data-gosx-motion-preset",
+    "data-gosx-motion-trigger",
+    "data-gosx-motion-duration",
+    "data-gosx-motion-delay",
+    "data-gosx-motion-easing",
+    "data-gosx-motion-distance",
+    "data-gosx-motion-respect-reduced",
+  ];
+  const gosxManagedMotionRecordsByElement = new Map();
+  let gosxManagedMotionObserver = null;
+  let gosxManagedMotionNextID = 0;
   let gosxPresentationResizeObserver = null;
   let gosxPresentationMutationObserver = null;
   let gosxPresentationStopEnvironment = null;
@@ -111,6 +125,315 @@
     gosxStateInvalidations.delete(key);
     gosxVisualInvalidations.delete(key);
   }
+
+  function gosxManagedMotionElements(root) {
+    const elements = [];
+    walkElementTree(root, function(element) {
+      if (element && typeof element.hasAttribute === "function" && element.hasAttribute(GOSX_MOTION_ATTR)) {
+        elements.push(element);
+      }
+    });
+    return elements;
+  }
+
+  function gosxMotionStringAttr(element, name, fallback) {
+    const value = element && typeof element.getAttribute === "function"
+      ? String(element.getAttribute(name) || "").trim()
+      : "";
+    return value || fallback;
+  }
+
+  function gosxMotionBoolAttr(element, name, fallback) {
+    const value = gosxMotionStringAttr(element, name, "");
+    if (!value) {
+      return fallback;
+    }
+    switch (value.toLowerCase()) {
+      case "false":
+      case "0":
+      case "off":
+      case "no":
+        return false;
+      default:
+        return true;
+    }
+  }
+
+  function normalizeGosxMotionPreset(value) {
+    switch (String(value || "").trim().toLowerCase()) {
+      case "slide-up":
+      case "slide-down":
+      case "slide-left":
+      case "slide-right":
+      case "zoom-in":
+        return String(value).trim().toLowerCase();
+      default:
+        return "fade";
+    }
+  }
+
+  function normalizeGosxMotionTrigger(value) {
+    switch (String(value || "").trim().toLowerCase()) {
+      case "view":
+        return "view";
+      default:
+        return "load";
+    }
+  }
+
+  function gosxManagedMotionConfig(element) {
+    return {
+      preset: normalizeGosxMotionPreset(gosxMotionStringAttr(element, "data-gosx-motion-preset", "fade")),
+      trigger: normalizeGosxMotionTrigger(gosxMotionStringAttr(element, "data-gosx-motion-trigger", "load")),
+      duration: Math.max(1, Math.round(gosxNumber(gosxMotionStringAttr(element, "data-gosx-motion-duration", 220), 220))),
+      delay: Math.max(0, Math.round(gosxNumber(gosxMotionStringAttr(element, "data-gosx-motion-delay", 0), 0))),
+      easing: gosxMotionStringAttr(element, "data-gosx-motion-easing", "cubic-bezier(0.16, 1, 0.3, 1)"),
+      distance: Math.max(0, gosxNumber(gosxMotionStringAttr(element, "data-gosx-motion-distance", 18), 18)),
+      respectReducedMotion: gosxMotionBoolAttr(element, "data-gosx-motion-respect-reduced", true),
+    };
+  }
+
+  function gosxManagedMotionReduced(config) {
+    if (!config || !config.respectReducedMotion) {
+      return false;
+    }
+    const environment = gosxEnvironmentState || refreshGosxEnvironmentState("motion");
+    return Boolean(environment && environment.reducedMotion);
+  }
+
+  function gosxManagedMotionKeyframes(config) {
+    const distance = Math.max(0, gosxNumber(config && config.distance, 18));
+    switch (config && config.preset) {
+      case "slide-up":
+        return [
+          { opacity: 0, transform: "translate3d(0, " + distance + "px, 0)" },
+          { opacity: 1, transform: "translate3d(0, 0, 0)" },
+        ];
+      case "slide-down":
+        return [
+          { opacity: 0, transform: "translate3d(0, -" + distance + "px, 0)" },
+          { opacity: 1, transform: "translate3d(0, 0, 0)" },
+        ];
+      case "slide-left":
+        return [
+          { opacity: 0, transform: "translate3d(" + distance + "px, 0, 0)" },
+          { opacity: 1, transform: "translate3d(0, 0, 0)" },
+        ];
+      case "slide-right":
+        return [
+          { opacity: 0, transform: "translate3d(-" + distance + "px, 0, 0)" },
+          { opacity: 1, transform: "translate3d(0, 0, 0)" },
+        ];
+      case "zoom-in": {
+        const scale = Math.max(0.72, 1 - (Math.min(distance, 64) / 200));
+        return [
+          { opacity: 0, transform: "scale(" + scale + ")" },
+          { opacity: 1, transform: "scale(1)" },
+        ];
+      }
+      default:
+        return [
+          { opacity: 0 },
+          { opacity: 1 },
+        ];
+    }
+  }
+
+  function gosxManagedMotionState(record, state) {
+    if (!record || !record.element) {
+      return;
+    }
+    setAttrValue(record.element, "data-gosx-motion-state", state || "idle");
+  }
+
+  function cancelManagedMotionAnimation(record) {
+    if (!record || !record.animation || typeof record.animation.cancel !== "function") {
+      record.animation = null;
+      return;
+    }
+    try {
+      record.animation.cancel();
+    } catch (_error) {
+    }
+    record.animation = null;
+  }
+
+  function playManagedMotion(record, reason) {
+    if (!record || !record.element || record.played) {
+      return;
+    }
+    record.config = gosxManagedMotionConfig(record.element);
+    if (gosxManagedMotionReduced(record.config)) {
+      record.played = true;
+      gosxManagedMotionState(record, "reduced");
+      return;
+    }
+    record.played = true;
+    gosxManagedMotionState(record, "running");
+    cancelManagedMotionAnimation(record);
+    if (typeof record.element.animate !== "function") {
+      gosxManagedMotionState(record, "finished");
+      return;
+    }
+    const animation = record.element.animate(gosxManagedMotionKeyframes(record.config), {
+      duration: record.config.duration,
+      delay: record.config.delay,
+      easing: record.config.easing,
+      fill: "both",
+    });
+    record.animation = animation || null;
+    if (animation && animation.finished && typeof animation.finished.then === "function") {
+      animation.finished.then(function() {
+        if (record.animation !== animation) {
+          return;
+        }
+        record.animation = null;
+        gosxManagedMotionState(record, "finished");
+      }, function() {
+        if (record.animation !== animation) {
+          return;
+        }
+        record.animation = null;
+        gosxManagedMotionState(record, "idle");
+      });
+      return;
+    }
+    gosxManagedMotionState(record, "finished");
+  }
+
+  function connectManagedMotion(record) {
+    if (!record || !record.element) {
+      return;
+    }
+    if (record.stopTrigger) {
+      record.stopTrigger();
+      record.stopTrigger = null;
+    }
+    if (record.config.trigger === "view" && typeof IntersectionObserver === "function") {
+      const observer = new IntersectionObserver(function(entries) {
+        for (const entry of entries || []) {
+          if (!entry || entry.target !== record.element) {
+            continue;
+          }
+          if (entry.isIntersecting !== false && gosxNumber(entry.intersectionRatio, 1) > 0) {
+            playManagedMotion(record, "view");
+          }
+        }
+      }, { threshold: [0, 0.01, 0.2] });
+      observer.observe(record.element);
+      record.stopTrigger = function() {
+        observer.disconnect();
+      };
+      return;
+    }
+    gosxScheduleVisualInvalidation(record.key, "motion-load", function(nextReason) {
+      playManagedMotion(record, nextReason || "load");
+    });
+  }
+
+  function observeManagedMotion(element) {
+    if (!element) {
+      return null;
+    }
+    let record = gosxManagedMotionRecordsByElement.get(element);
+    if (record) {
+      record.config = gosxManagedMotionConfig(element);
+      if (!record.played) {
+        connectManagedMotion(record);
+      }
+      return record;
+    }
+    gosxManagedMotionNextID += 1;
+    record = {
+      key: "motion:" + gosxManagedMotionNextID,
+      element: element,
+      config: gosxManagedMotionConfig(element),
+      played: false,
+      animation: null,
+      stopTrigger: null,
+    };
+    gosxManagedMotionRecordsByElement.set(element, record);
+    gosxManagedMotionState(record, "idle");
+    connectManagedMotion(record);
+    return record;
+  }
+
+  function disposeManagedMotionElement(element) {
+    const record = element ? gosxManagedMotionRecordsByElement.get(element) : null;
+    if (!record) {
+      return;
+    }
+    gosxCancelInvalidation(record.key);
+    if (record.stopTrigger) {
+      record.stopTrigger();
+      record.stopTrigger = null;
+    }
+    cancelManagedMotionAnimation(record);
+    gosxManagedMotionRecordsByElement.delete(element);
+  }
+
+  function installManagedMotionObserver(root) {
+    if (gosxManagedMotionObserver || typeof MutationObserver !== "function" || !root) {
+      return;
+    }
+    gosxManagedMotionObserver = new MutationObserver(function(records) {
+      for (const record of records || []) {
+        if (!record) {
+          continue;
+        }
+        if (record.type === "attributes" && record.target && record.attributeName && GOSX_MOTION_MUTATION_ATTRS.includes(record.attributeName)) {
+          if (record.target.hasAttribute && record.target.hasAttribute(GOSX_MOTION_ATTR)) {
+            observeManagedMotion(record.target);
+          } else {
+            disposeManagedMotionElement(record.target);
+          }
+        }
+        for (const node of gosxArrayFrom(record.addedNodes)) {
+          if (node && node.nodeType === 1) {
+            mountManagedMotion(node);
+          }
+        }
+        for (const node of gosxArrayFrom(record.removedNodes)) {
+          if (!node || node.nodeType !== 1) {
+            continue;
+          }
+          for (const element of gosxManagedMotionElements(node)) {
+            disposeManagedMotionElement(element);
+          }
+        }
+      }
+    });
+    gosxManagedMotionObserver.observe(root, {
+      subtree: true,
+      childList: true,
+      attributes: true,
+      attributeFilter: GOSX_MOTION_MUTATION_ATTRS,
+    });
+  }
+
+  function mountManagedMotion(root) {
+    const targetRoot = root || document.body || document.documentElement;
+    for (const element of gosxManagedMotionElements(targetRoot)) {
+      observeManagedMotion(element);
+    }
+    installManagedMotionObserver(document.body || document.documentElement);
+  }
+
+  function disposeManagedMotion() {
+    if (gosxManagedMotionObserver) {
+      gosxManagedMotionObserver.disconnect();
+      gosxManagedMotionObserver = null;
+    }
+    for (const element of Array.from(gosxManagedMotionRecordsByElement.keys())) {
+      disposeManagedMotionElement(element);
+    }
+  }
+
+  window.__gosx.motion = {
+    mountAll: mountManagedMotion,
+    observe: observeManagedMotion,
+    dispose: disposeManagedMotionElement,
+  };
 
   function gosxMediaQueryList(query) {
     if (!query || typeof window.matchMedia !== "function") {
