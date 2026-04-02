@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.3.1
+
+- **fix(eval):** `nil == ""` now returns `true` in template expressions, so unbound variables like `flash.contact` compare equal to empty string instead of rendering conditional branches incorrectly.
+- **release:** rolls the `v0.2.4` template-eval fix forward onto the `v0.3.x` line without backing out the native text layout, managed video, or managed motion work shipped in `v0.3.0`.
+
 ## v0.3.0
 
 - **feat(text-layout):** `TextBlock` now supports explicit native server-measured layout with `mode="native"` / `TextBlockModeNative`, keeping pages off the bootstrap layer when final wrapped HTML should come from the server.
