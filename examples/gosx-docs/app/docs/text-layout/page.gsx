@@ -15,8 +15,7 @@ func Page() Node {
 		<p>
 			GoSX exposes text layout as a dedicated primitive because line breaking, clamping, and ellipsis are not just styling concerns when the server needs predictable geometry. The
 			<span class="inline-code">TextBlock</span>
-			helper now supports two explicit modes:
-			server-measured
+			helper now supports two explicit modes: server-measured
 			<span class="inline-code">native</span>
 			layout with no bootstrap at all, and the original bootstrap-managed path for pages that still want browser refinement.
 		</p>
@@ -50,41 +49,37 @@ func Page() Node {
 				</p>
 			</div>
 		</section>
-		<h2>
-			Choose the mode explicitly
-		</h2>
+		<h2>Choose the mode explicitly</h2>
 		<p>
 			The default path is still bootstrap so existing pages keep their current behavior. Reach for
 			<span class="inline-code">mode="native"</span>
 			when you want the wrapped result to come entirely from the server.
 		</p>
 		{DocsCodeBlock("gosx", `func Page() Node {
-    return <TextBlock
-        mode="native"
-        as="p"
-        font="600 18px Iowan Old Style"
-        lineHeight={26}
-        maxWidth={320}
-        maxLines={3}
-        overflow="ellipsis"
-        lang="en"
-        textAlign="center"
-        text="A server-measured paragraph that ships as final HTML."
-    />
-}`)}
+	    return <TextBlock
+	        mode="native"
+	        as="p"
+	        font="600 18px Iowan Old Style"
+	        lineHeight={26}
+	        maxWidth={320}
+	        maxLines={3}
+	        overflow="ellipsis"
+	        lang="en"
+	        textAlign="center"
+	        text="A server-measured paragraph that ships as final HTML."
+	    />
+	}`)}
 		{DocsCodeBlock("go", `ctx.TextBlock(server.TextBlockProps{
-    Mode:       server.TextBlockModeNative,
-    Tag:        "p",
-    Font:       "600 18px Iowan Old Style",
-    LineHeight: 26,
-    MaxWidth:   320,
-    MaxLines:   3,
-    Overflow:   textlayout.OverflowEllipsis,
-    Align:      "center",
-}, gosx.Text("A server-measured paragraph that ships as final HTML."))`)}
-		<h2>
-			What the props are for
-		</h2>
+	    Mode:       server.TextBlockModeNative,
+	    Tag:        "p",
+	    Font:       "600 18px Iowan Old Style",
+	    LineHeight: 26,
+	    MaxWidth:   320,
+	    MaxLines:   3,
+	    Overflow:   textlayout.OverflowEllipsis,
+	    Align:      "center",
+	}, gosx.Text("A server-measured paragraph that ships as final HTML."))`)}
+		<h2>What the props are for</h2>
 		<ul>
 			<li>
 				<span class="inline-code">mode</span>

@@ -12,9 +12,7 @@ func Page() Node {
 			GoSX engines are explicit about browser power instead of hiding it behind hydration.
 		</h1>
 		<p>
-			An island is still constrained DOM work in the shared VM. An engine is for the cases that do not fit that model:
-			canvas rendering, WebGL scenes, background workers, managed video playback, low-level input, or audio-driven loops.
-			The key distinction is that
+			An island is still constrained DOM work in the shared VM. An engine is for the cases that do not fit that model: canvas rendering, WebGL scenes, background workers, managed video playback, low-level input, or audio-driven loops. The key distinction is that
 			<span class="inline-code">Kind</span>
 			and
 			<span class="inline-code">Capabilities</span>
@@ -51,19 +49,17 @@ func Page() Node {
 			</div>
 		</section>
 		{DocsCodeBlock("go", `ctx.Engine(engine.Config{
-    Name: "sampler",
-    Kind: engine.KindSurface,
-    Capabilities: []engine.Capability{
-        engine.CapCanvas,
-        engine.CapAnimation,
-        engine.CapPointer,
-        engine.CapKeyboard,
-    },
-    WASMPath: "/engines/sampler.wasm",
-}, gosx.El("div", gosx.Text("Preparing engine...")))`)}
-		<h2>
-			The supported capability surface
-		</h2>
+	    Name: "sampler",
+	    Kind: engine.KindSurface,
+	    Capabilities: []engine.Capability{
+	        engine.CapCanvas,
+	        engine.CapAnimation,
+	        engine.CapPointer,
+	        engine.CapKeyboard,
+	    },
+	    WASMPath: "/engines/sampler.wasm",
+	}, gosx.El("div", gosx.Text("Preparing engine...")))`)}
+		<h2>The supported capability surface</h2>
 		<p>
 			These are the currently supported capability tokens in
 			<span class="inline-code">engine.Config.Capabilities</span>

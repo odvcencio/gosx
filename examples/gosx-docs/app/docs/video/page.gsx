@@ -73,41 +73,39 @@ func Page() Node {
 			or Go
 		</h2>
 		{DocsCodeBlock("gosx", `func Page() Node {
-    return <Video
-        poster="/media/poster.jpg"
-        controls
-        muted
-        playsInline
-        subtitleTrack="en"
-        sources={[
-            {"src": "/media/promo.webm", "type": "video/webm"},
-            {"src": "/media/promo.m3u8", "type": "application/vnd.apple.mpegurl"},
-        ]}
-        subtitleTracks={[
-            {"id": "en", "language": "en", "title": "English", "src": "/subs/en.vtt"},
-        ]}
-    >
-        <p>Download the trailer</p>
-    </Video>
-}`)}
+	    return <Video
+	        poster="/media/poster.jpg"
+	        controls
+	        muted
+	        playsInline
+	        subtitleTrack="en"
+	        sources={[
+	            {"src": "/media/promo.webm", "type": "video/webm"},
+	            {"src": "/media/promo.m3u8", "type": "application/vnd.apple.mpegurl"},
+	        ]}
+	        subtitleTracks={[
+	            {"id": "en", "language": "en", "title": "English", "src": "/subs/en.vtt"},
+	        ]}
+	    >
+	        <p>Download the trailer</p>
+	    </Video>
+	}`)}
 		{DocsCodeBlock("go", `ctx.Video(server.VideoProps{
-    Poster:   "/media/poster.jpg",
-    Controls: true,
-    Muted:    true,
-    PlaysInline: true,
-    Sources: []server.VideoSource{
-        {Src: "/media/promo.webm", Type: "video/webm"},
-        {Src: "/media/promo.m3u8", Type: "application/vnd.apple.mpegurl"},
-    },
-    SubtitleTrack: "en",
-    SubtitleTracks: []server.VideoTrack{
-        {ID: "en", Language: "en", Title: "English", Src: "/subs/en.vtt"},
-    },
-    Sync: "wss://watch.example.com/party/demo",
-}, gosx.El("p", gosx.Text("Download the trailer")))`)}
-		<h2>
-			What the props mean
-		</h2>
+	    Poster:   "/media/poster.jpg",
+	    Controls: true,
+	    Muted:    true,
+	    PlaysInline: true,
+	    Sources: []server.VideoSource{
+	        {Src: "/media/promo.webm", Type: "video/webm"},
+	        {Src: "/media/promo.m3u8", Type: "application/vnd.apple.mpegurl"},
+	    },
+	    SubtitleTrack: "en",
+	    SubtitleTracks: []server.VideoTrack{
+	        {ID: "en", Language: "en", Title: "English", Src: "/subs/en.vtt"},
+	    },
+	    Sync: "wss://watch.example.com/party/demo",
+	}, gosx.El("p", gosx.Text("Download the trailer")))`)}
+		<h2>What the props mean</h2>
 		<ul>
 			<li>
 				<span class="inline-code">src</span>
