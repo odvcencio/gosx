@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.3.0
+
+- **feat(text-layout):** `TextBlock` now supports explicit native server-measured layout with `mode="native"` / `TextBlockModeNative`, keeping pages off the bootstrap layer when final wrapped HTML should come from the server.
+- **feat(video):** `server.Video`, `ctx.Video`, and `<Video />` now emit a real server `<video>` baseline with authored `<source>` and `<track>` children, and the managed runtime upgrades that baseline in place for HLS, sync, and shared media signals.
+- **feat(motion):** added `server.Motion`, `ctx.Motion`, and the `.gsx` `<Motion />` builtin for bootstrap-managed DOM motion presets with `load`/`view` triggers, timing controls, and reduced-motion awareness.
+- **docs:** refreshed the README and gosx-docs coverage for engines, video, motion, and native-vs-bootstrap text layout.
+- **fix(ci):** restored `make fmt-check` on `main` by formatting `server/runtime_assets.go`.
+
 ## v0.2.3
 
 - **fix(css):** Global selectors (`body`, `html`, `:root`, `*`, `*::before`, `*::after`, `::selection`, `::placeholder`) in sidecar CSS are no longer scoped — they pass through to the document directly
