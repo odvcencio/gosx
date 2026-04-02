@@ -917,8 +917,20 @@ func isStringLike(value any) bool {
 }
 
 func equalValues(left, right any) bool {
+	if left == nil && right == nil {
+		return true
+	}
+	// Treat nil as "" when compared with a string — an unbound template
+	// variable like flash.contact should equal "" rather than being a
+	// distinct nil that differs from every string.
+	if left == nil && isStringLike(right) {
+		return stringifyValue(right) == ""
+	}
+	if right == nil && isStringLike(left) {
+		return stringifyValue(left) == ""
+	}
 	if left == nil || right == nil {
-		return left == right
+		return false
 	}
 	if isNumeric(left) || isNumeric(right) {
 		return numericValue(left) == numericValue(right)
