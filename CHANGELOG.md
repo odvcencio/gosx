@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.3.2
+
+- **fix(isr):** stale ISR pages now snapshot the existing artifact before background regeneration starts, so the first stale response cannot race ahead and serve the freshly regenerated HTML.
+- **fix(test):** hardened hub websocket bootstrap tests to wait for the `__welcome` event without assuming it always arrives before every join broadcast once multiple clients connect.
+
 ## v0.3.1
 
 - **fix(eval):** `nil == ""` now returns `true` in template expressions, so unbound variables like `flash.contact` compare equal to empty string instead of rendering conditional branches incorrectly.

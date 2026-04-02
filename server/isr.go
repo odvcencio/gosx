@@ -49,6 +49,7 @@ type isrArtifact struct {
 	page     isrRoute
 	filePath string
 	info     os.FileInfo
+	body     []byte
 }
 
 // EnableISR serves prerendered HTML from static export output and refreshes it
@@ -79,7 +80,7 @@ func (a *App) maybeServeISR(w http.ResponseWriter, r *http.Request, dispatch fun
 	if !ok {
 		return false
 	}
-	a.isr.serve(w, r, artifact.filePath, artifact.info, artifact.page, mode)
+	a.isr.serve(w, r, artifact, mode)
 	return true
 }
 
@@ -111,6 +112,11 @@ func (a *App) prepareISRArtifact(artifact isrArtifact, dispatch func(http.Respon
 func (a *App) isrServeArtifact(artifact isrArtifact, dispatch func(http.ResponseWriter, *http.Request, bool)) (isrArtifact, string, bool) {
 	mode := "HIT"
 	if a.isr.stale(artifact.page, artifact.info, a.Revalidator()) {
+		body, err := os.ReadFile(artifact.filePath)
+		if err != nil {
+			return isrArtifact{}, "", false
+		}
+		artifact.body = body
 		mode = "STALE"
 		a.isr.refresh(artifact.page, a.Revalidator(), dispatch)
 	}
@@ -415,32 +421,36 @@ func (c *isrConfig) updateState(page isrRoute, generatedAt time.Time, revalidato
 	c.mu.Unlock()
 }
 
-func (c *isrConfig) serve(w http.ResponseWriter, r *http.Request, filePath string, info os.FileInfo, page isrRoute, mode string) {
+func (c *isrConfig) serve(w http.ResponseWriter, r *http.Request, artifact isrArtifact, mode string) {
 	if w == nil || r == nil {
 		return
 	}
-	data, err := os.ReadFile(filePath)
-	if err != nil {
-		http.NotFound(w, r)
-		return
+	data := artifact.body
+	if data == nil {
+		var err error
+		data, err = os.ReadFile(artifact.filePath)
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
 	}
 
 	cacheControl := "public, max-age=0, must-revalidate"
-	if page.RevalidateSeconds > 0 {
-		cacheControl = fmt.Sprintf("public, max-age=0, stale-while-revalidate=%d", page.RevalidateSeconds)
+	if artifact.page.RevalidateSeconds > 0 {
+		cacheControl = fmt.Sprintf("public, max-age=0, stale-while-revalidate=%d", artifact.page.RevalidateSeconds)
 	}
 	w.Header().Set("Cache-Control", cacheControl)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if mode != "" {
 		w.Header().Set("X-GoSX-ISR", mode)
 	}
-	MarkObservedRequest(r, "isr", page.Path)
+	MarkObservedRequest(r, "isr", artifact.page.Path)
 
 	modTime := time.Now()
-	if info != nil {
-		modTime = info.ModTime()
+	if artifact.info != nil {
+		modTime = artifact.info.ModTime()
 	}
-	http.ServeContent(w, r, filepath.Base(filePath), modTime, bytes.NewReader(data))
+	http.ServeContent(w, r, filepath.Base(artifact.filePath), modTime, bytes.NewReader(data))
 }
 
 func normalizeISRPath(value string) string {
