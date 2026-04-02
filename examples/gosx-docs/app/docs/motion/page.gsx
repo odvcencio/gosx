@@ -71,31 +71,29 @@ func Page() Node {
 			or Go
 		</h2>
 		{DocsCodeBlock("gosx", `func Page() Node {
-    return <Motion
-        as="section"
-        class="hero"
-        preset="slide-up"
-        trigger="view"
-        duration={360}
-        delay={40}
-        easing="ease-out"
-        distance={24}
-    >
-        Launch the release notes
-    </Motion>
-}`)}
+	    return <Motion
+	        as="section"
+	        class="hero"
+	        preset="slide-up"
+	        trigger="view"
+	        duration={360}
+	        delay={40}
+	        easing="ease-out"
+	        distance={24}
+	    >
+	        Launch the release notes
+	    </Motion>
+	}`)}
 		{DocsCodeBlock("go", `ctx.Motion(server.MotionProps{
-    Tag:      "section",
-    Preset:   server.MotionPresetSlideUp,
-    Trigger:  server.MotionTriggerView,
-    Duration: 360,
-    Delay:    40,
-    Easing:   "ease-out",
-    Distance: 24,
-}, gosx.Text("Launch the release notes"))`)}
-		<h2>
-			What the props mean
-		</h2>
+	    Tag:      "section",
+	    Preset:   server.MotionPresetSlideUp,
+	    Trigger:  server.MotionTriggerView,
+	    Duration: 360,
+	    Delay:    40,
+	    Easing:   "ease-out",
+	    Distance: 24,
+	}, gosx.Text("Launch the release notes"))`)}
+		<h2>What the props mean</h2>
 		<ul>
 			<li>
 				<span class="inline-code">as</span>
