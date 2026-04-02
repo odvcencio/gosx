@@ -1,5 +1,97 @@
 # Changelog
 
+## v0.2.0
+
+### Authentication
+
+- added session-backed auth manager with `auth.New()`, `Require` middleware, and `Current()` user context
+- added GitHub OAuth provider (`auth.GitHubProvider`) with automatic email fetching
+- added Google OAuth provider (`auth.GoogleProvider`)
+- added custom OAuth providers with `OAuthUserResolverFunc`
+- added magic link passwordless auth with configurable resolver
+- added WebAuthn/passkey auth with register and login flows
+- added role-based access control via `RequireRole` middleware
+
+### Engine System
+
+- added Surface engine primitive for dedicated canvas/WebGL/WebGPU workloads
+- added Scene3D engine with server-side render bundle generation
+- added pixel-surface engine runtime with managed GPU framebuffers
+- added 3D perspective rendering with world-space coordinates, frustum culling, and depth sorting
+- added material system with presets (flat, glow, ghost, glass, matte) and blend modes
+- added fluent `Builder` API for program construction
+- added box, sphere, pyramid, and plane 3D primitives
+- added scene label support with collision avoidance, occlusion, and priority layout
+- added shared engine runtime with program-driven scenes
+- added input providers with batched signal delivery (pointer, keyboard)
+
+### Islands and Reactivity
+
+- added shared signals across islands (prefixed with `$`)
+- added `Each`/`For` rendering with resolved tree reconciliation
+- added keyed reconciliation with auto-key stabilization
+- added event field access in island handlers
+- added string concatenation in VM expressions
+- added raw props object access in island expressions
+
+### File-Based Routing
+
+- added directory-scoped modules (`DirModule`) with inherited middleware
+- added file-route metadata sidecars (`page.server.go`)
+- added sidecar CSS ownership and layer tracking
+- added `route.config.json` for directory-scoped cache and header config
+- added spread attribute support in file renderer
+- added auto-resolved Go components from `Funcs`, `Values`, and dotted paths
+- added not-found error handling for data loaders
+
+### Server and Runtime
+
+- added client-side page navigation with head/body swaps and scroll restoration
+- added managed form submission via fetch with navigation runtime
+- added ISR serving for prerendered bundles
+- added static export (`gosx export`) with prerender pipeline
+- added production build pipeline with hashed runtime assets and edge bundle artifacts
+- added CSS layer architecture with ownership metadata and global styles
+- added JSON request observer for structured logging
+- added path traversal protection and runtime manifest caching
+- added CSRF token injection in form fetch requests
+
+### Text Layout
+
+- added browser-backed text measurement and layout engine
+- added grapheme-aware text layout with word segmentation
+- added `TextBlock` primitive for framework-level text layout
+- added server-side sizing hints, tab stops, soft hyphens, and CJK punctuation
+- added `maxLines` and overflow support for text truncation
+- added i18n and vertical writing mode support
+- added text layout caching with font loading invalidation
+
+### CRDT
+
+- added document core, sync messages, and hub transport for real-time collaboration
+
+### CLI
+
+- added `gosx fmt` with `--check` mode
+- added `gosx check` integration test for `.gsx` files
+- added `gosx lsp` language server
+- added `gosx init --template docs` scaffold
+
+### Docs and Examples
+
+- added gosx-docs reference app with CMS demo, Scene3D demo, auth flows, streaming, and ISR
+- rewrote README with clearer structure and user focus
+- renamed JSX terminology to native GSX throughout
+
+### Internal
+
+- modularized `bootstrap.js` with split source files and build step
+- extracted helper functions across client, route, and VM packages for readability
+- optimized WebGL state with cached blend/depth and static geometry buffers
+- added capability-aware rendering and resilient WebGL fallback
+- added `prefers-reduced-motion` and scroll handling
+- added environment, document, and presentation observation APIs
+
 ## v0.1.0
 
 - formalized the initial GoSX release line with a repo-level `gosx.Version`
