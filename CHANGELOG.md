@@ -8,6 +8,10 @@
 - **docs:** refreshed the README and gosx-docs coverage for engines, video, motion, and native-vs-bootstrap text layout.
 - **fix(ci):** restored `make fmt-check` on `main` by formatting `server/runtime_assets.go`.
 
+## v0.2.4
+
+- **fix(eval):** `nil == ""` now returns `true` in template expressions — unbound variables like `flash.contact` compare equal to empty string instead of being a distinct nil that renders `<If>` bodies incorrectly
+
 ## v0.2.3
 
 - **fix(css):** Global selectors (`body`, `html`, `:root`, `*`, `*::before`, `*::after`, `::selection`, `::placeholder`) in sidecar CSS are no longer scoped — they pass through to the document directly
