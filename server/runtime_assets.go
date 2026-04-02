@@ -1,6 +1,7 @@
 package server
 
 import (
+
 	"net/http"
 	"os"
 	"path"
@@ -11,6 +12,44 @@ import (
 
 	"github.com/odvcencio/gosx/buildmanifest"
 )
+
+// bootstrapStub is a minimal no-op bootstrap script served when the real
+// bootstrap.js has not been built yet (e.g. during `go run` development).
+const bootstrapStub = `// Minimal bootstrap stub — gosx build not yet run
+(function(){
+  window.__gosx = window.__gosx || { version: "dev", islands: new Map(), engines: new Map(), hubs: new Map(), textLayouts: new Map(), sharedSignals: { values: new Map(), subscribers: new Map() }, input: {}, ready: true };
+  window.__gosx_engine_factories = window.__gosx_engine_factories || Object.create(null);
+  window.__gosx_register_engine_factory = window.__gosx_register_engine_factory || function(name, factory) { window.__gosx_engine_factories[name] = factory; };
+  // Mount engines from page manifest
+  try {
+    var scripts = document.querySelectorAll('script:not([src])');
+    scripts.forEach(function(s) {
+      try {
+        var m = JSON.parse(s.textContent);
+        if (m && m.engines) {
+          m.engines.forEach(function(e) {
+            if (e.jsRef) {
+              var tag = document.createElement('script');
+              tag.src = e.jsRef;
+              document.head.appendChild(tag);
+            }
+          });
+          // Wait for engine scripts to load, then mount
+          setTimeout(function() {
+            m.engines.forEach(function(e) {
+              var mount = document.getElementById(e.mountId);
+              var factory = window.__gosx_engine_factories[e.jsExport || e.component];
+              if (mount && factory && mount.children.length === 0) {
+                factory({ mount: mount, id: e.id, kind: e.kind, component: e.component, props: e.props || {}, capabilities: e.capabilities || [], programRef: e.programRef || '', jsRef: e.jsRef || '', jsExport: e.jsExport || '', runtime: null, emit: function(){} });
+              }
+            });
+          }, 500);
+        }
+      } catch(ex) {}
+    });
+  } catch(ex) {}
+})();
+`
 
 type runtimeManifestCache struct {
 	mu       sync.Mutex
@@ -66,6 +105,13 @@ func (a *App) serveRuntimeAsset(w http.ResponseWriter, r *http.Request) {
 
 	root := a.effectiveRuntimeRoot()
 	if root == "" {
+		if name == "bootstrap.js" || name == "bootstrap-lite.js" {
+			w.Header().Set("Content-Type", "application/javascript")
+			w.Header().Set("Cache-Control", "no-cache")
+			MarkObservedRequest(r, "runtime", "/gosx/"+name)
+			w.Write([]byte(bootstrapStub))
+			return
+		}
 		http.NotFound(w, r)
 		return
 	}
@@ -97,6 +143,14 @@ func (a *App) serveRuntimeAsset(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 		MarkObservedRequest(r, "runtime", "/gosx/"+name)
 		http.ServeFile(w, r, fsPath)
+		return
+	}
+
+	if name == "bootstrap.js" || name == "bootstrap-lite.js" {
+		w.Header().Set("Content-Type", "application/javascript")
+		w.Header().Set("Cache-Control", "no-cache")
+		MarkObservedRequest(r, "runtime", "/gosx/"+name)
+		w.Write([]byte(bootstrapStub))
 		return
 	}
 
