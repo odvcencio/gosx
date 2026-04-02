@@ -12,6 +12,22 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+func readUntilEvent(t *testing.T, conn *websocket.Conn, event string) Message {
+	t.Helper()
+	if err := conn.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
+		t.Fatalf("set read deadline: %v", err)
+	}
+	for {
+		var msg Message
+		if err := conn.ReadJSON(&msg); err != nil {
+			t.Fatalf("read %s: %v", event, err)
+		}
+		if msg.Event == event {
+			return msg
+		}
+	}
+}
+
 func TestHubBasic(t *testing.T) {
 	h := New("test")
 	if h.Name() != "test" {
@@ -100,9 +116,8 @@ func TestHubWebSocket(t *testing.T) {
 		t.Fatalf("expected 2 clients, got %d", h.ClientCount())
 	}
 
-	// Read welcome messages
-	var msg Message
-	c1.ReadJSON(&msg)
+	// Read welcome message without assuming it beats every broadcast after both joins.
+	msg := readUntilEvent(t, c1, "__welcome")
 	if msg.Event != "__welcome" {
 		t.Fatalf("expected __welcome, got %s", msg.Event)
 	}
@@ -198,8 +213,7 @@ func TestHubBroadcast(t *testing.T) {
 
 	// Read welcome messages
 	for _, c := range clients {
-		var msg Message
-		c.ReadJSON(&msg)
+		readUntilEvent(t, c, "__welcome")
 	}
 
 	// Client 0 sends ping
