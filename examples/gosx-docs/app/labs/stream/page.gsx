@@ -24,11 +24,11 @@ func Page() Node {
 			</div>
 		</section>
 		{DocsCodeBlock("gosx", `ctx.Defer(
-    <p>Loading...</p>,
-    func() (gosx.Node, error) {
-        return <section>Resolved</section>, nil
-    },
-)`)}
+	    <p>Loading...</p>,
+	    func() (gosx.Node, error) {
+	        return <section>Resolved</section>, nil
+	    },
+	)`)}
 		<div class="hero-actions">
 			<Link class="cta-link" href="/docs/runtime">Back to runtime</Link>
 			<Link class="cta-link primary" href="/">Back to overview</Link>
