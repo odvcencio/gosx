@@ -55,6 +55,33 @@ func Page() Node {
 	}
 }
 
+func TestScanDirUnderscoreParams(t *testing.T) {
+	root := t.TempDir()
+	writeRouteFile(t, root, "page.gsx", `package docs
+func Page() Node {
+	return <main>Home</main>
+}
+`)
+	writeRouteFile(t, root, "blog/_slug/page.html", `<main>Post</main>`)
+	writeRouteFile(t, root, "docs/__path/page.html", `<main>Docs</main>`)
+
+	bundle, err := ScanDir(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	patterns := []string{}
+	for _, page := range bundle.Pages {
+		patterns = append(patterns, page.Pattern)
+	}
+	if !contains(patterns, "/blog/{slug}") {
+		t.Fatalf("expected /blog/{slug} from _slug dir, got %v", patterns)
+	}
+	if !contains(patterns, "/docs/{path...}") {
+		t.Fatalf("expected /docs/{path...} from __path dir, got %v", patterns)
+	}
+}
+
 func TestDefaultFileRendererRendersGSXPage(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "page.gsx")
