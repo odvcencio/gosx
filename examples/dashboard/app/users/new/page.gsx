@@ -13,7 +13,12 @@ func Page() Node {
 				</div>
 				<div class="form-group">
 					<label>Email</label>
-					<input type="email" name="email" placeholder="email@example.com" value={actions.createUser.values.email}></input>
+					<input
+						type="email"
+						name="email"
+						placeholder="email@example.com"
+						value={actions.createUser.values.email}
+					></input>
 					<p class="form-error">{actions.createUser.fieldErrors.email}</p>
 				</div>
 				<div class="form-group">

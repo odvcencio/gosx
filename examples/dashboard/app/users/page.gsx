@@ -22,12 +22,72 @@ func Page() Node {
 					</tr>
 				</thead>
 				<tbody>
-					<tr><td>Alice Johnson</td><td>alice@example.com</td><td>Admin</td><td><span class="badge badge-active">Active</span></td><td><button class="btn btn-danger btn-sm">Delete</button></td></tr>
-					<tr><td>Bob Smith</td><td>bob@example.com</td><td>Editor</td><td><span class="badge badge-active">Active</span></td><td><button class="btn btn-danger btn-sm">Delete</button></td></tr>
-					<tr><td>Carol Williams</td><td>carol@example.com</td><td>Viewer</td><td><span class="badge badge-inactive">Inactive</span></td><td><button class="btn btn-danger btn-sm">Delete</button></td></tr>
-					<tr><td>Dave Brown</td><td>dave@example.com</td><td>Editor</td><td><span class="badge badge-active">Active</span></td><td><button class="btn btn-danger btn-sm">Delete</button></td></tr>
-					<tr><td>Eve Davis</td><td>eve@example.com</td><td>Admin</td><td><span class="badge badge-active">Active</span></td><td><button class="btn btn-danger btn-sm">Delete</button></td></tr>
-					<tr><td>Frank Miller</td><td>frank@example.com</td><td>Viewer</td><td><span class="badge badge-inactive">Inactive</span></td><td><button class="btn btn-danger btn-sm">Delete</button></td></tr>
+					<tr>
+						<td>Alice Johnson</td>
+						<td>alice@example.com</td>
+						<td>Admin</td>
+						<td>
+							<span class="badge badge-active">Active</span>
+						</td>
+						<td>
+							<button class="btn btn-danger btn-sm">Delete</button>
+						</td>
+					</tr>
+					<tr>
+						<td>Bob Smith</td>
+						<td>bob@example.com</td>
+						<td>Editor</td>
+						<td>
+							<span class="badge badge-active">Active</span>
+						</td>
+						<td>
+							<button class="btn btn-danger btn-sm">Delete</button>
+						</td>
+					</tr>
+					<tr>
+						<td>Carol Williams</td>
+						<td>carol@example.com</td>
+						<td>Viewer</td>
+						<td>
+							<span class="badge badge-inactive">Inactive</span>
+						</td>
+						<td>
+							<button class="btn btn-danger btn-sm">Delete</button>
+						</td>
+					</tr>
+					<tr>
+						<td>Dave Brown</td>
+						<td>dave@example.com</td>
+						<td>Editor</td>
+						<td>
+							<span class="badge badge-active">Active</span>
+						</td>
+						<td>
+							<button class="btn btn-danger btn-sm">Delete</button>
+						</td>
+					</tr>
+					<tr>
+						<td>Eve Davis</td>
+						<td>eve@example.com</td>
+						<td>Admin</td>
+						<td>
+							<span class="badge badge-active">Active</span>
+						</td>
+						<td>
+							<button class="btn btn-danger btn-sm">Delete</button>
+						</td>
+					</tr>
+					<tr>
+						<td>Frank Miller</td>
+						<td>frank@example.com</td>
+						<td>Viewer</td>
+						<td>
+							<span class="badge badge-inactive">Inactive</span>
+						</td>
+						<td>
+							<button class="btn btn-danger btn-sm">Delete</button>
+						</td>
+					</tr>
 				</tbody>
 			</table>
 		</div>
