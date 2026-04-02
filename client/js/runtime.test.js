@@ -5733,7 +5733,7 @@ test("bootstrap mounts builtin video engines and bridges shared signals", async 
   assert.equal(sharedSignalValue(env, "$video.buffered"), 15);
   assert.deepEqual(sharedSignalValue(env, "$video.viewport"), [640, 360]);
   assert.deepEqual(sharedSignalValue(env, "$video.subtitleTracks"), [
-    { id: "en", language: "en", title: "English", default: false, forced: false },
+    { id: "en", language: "en", srclang: "en", title: "English", kind: "subtitles", src: "", default: false, forced: false },
   ]);
 
   env.context.__gosx_notify_shared_signal("$video.command", JSON.stringify("play"));
@@ -5744,6 +5744,99 @@ test("bootstrap mounts builtin video engines and bridges shared signals", async 
   env.context.__gosx_notify_shared_signal("$video.seek", JSON.stringify(42));
   await flushAsyncWork();
   assert.equal(video.currentTime, 42);
+});
+
+test("bootstrap upgrades server-rendered video fallbacks in place and loads explicit subtitle track URLs", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "video-fallback-root";
+  mount.width = 960;
+  mount.height = 540;
+
+  const fallback = new FakeElement("video", null);
+  fallback.setAttribute("poster", "/media/poster.jpg");
+  fallback.setCanPlayType("video/webm", "probably");
+
+  const source = new FakeElement("source", null);
+  source.setAttribute("src", "/media/promo.webm");
+  source.setAttribute("type", "video/webm");
+  fallback.appendChild(source);
+
+  const track = new FakeElement("track", null);
+  track.setAttribute("src", "/subs/en-custom.vtt");
+  track.setAttribute("kind", "captions");
+  track.setAttribute("srclang", "en");
+  track.setAttribute("label", "English");
+  fallback.appendChild(track);
+
+  mount.appendChild(fallback);
+
+  const env = createContext({
+    elements: [mount],
+    fetchRoutes: {
+      "/runtime.wasm": { bytes: [0, 97, 115, 109] },
+      "/subs/en-custom.vtt": {
+        text: "WEBVTT\n\n00:00:00.000 --> 00:00:02.000\nHello from track",
+      },
+    },
+    onSetSharedSignal(name, payload) {
+      if (env && typeof env.context.__gosx_notify_shared_signal === "function") {
+        env.context.__gosx_notify_shared_signal(name, payload);
+      }
+      return null;
+    },
+    manifest: {
+      runtime: { path: "/runtime.wasm" },
+      engines: [
+        {
+          id: "gosx-engine-0",
+          component: "PromoVideo",
+          kind: "video",
+          mountId: "video-fallback-root",
+          capabilities: ["video", "fetch", "audio"],
+          props: {
+            poster: "/media/poster.jpg",
+            sources: [
+              { src: "/media/promo.webm", type: "video/webm" },
+              { src: "/media/promo.mp4", type: "video/mp4" },
+            ],
+            subtitleTrack: "en",
+            subtitleTracks: [
+              { id: "en", language: "en", title: "English", kind: "captions", src: "/subs/en-custom.vtt" },
+            ],
+          },
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+  await flushAsyncWork();
+
+  const video = mount.firstChild;
+  assert.equal(video, fallback);
+  assert.equal(video.tagName, "VIDEO");
+  assert.equal(video.getAttribute("data-gosx-video"), "true");
+  assert.equal(video.getAttribute("poster"), "/media/poster.jpg");
+  assert.equal(video.getAttribute("src"), null);
+  assert.equal(video.children.length, 2);
+  assert.equal(video.children[0], source);
+  assert.equal(video.children[1], track);
+  assert.ok(video.loadCalls.length >= 1);
+  assert.ok(env.fetchCalls.some((call) => call.url === "/subs/en-custom.vtt"));
+  assert.deepEqual(sharedSignalValue(env, "$video.subtitleTracks"), [
+    {
+      id: "en",
+      language: "en",
+      srclang: "en",
+      title: "English",
+      kind: "captions",
+      src: "/subs/en-custom.vtt",
+      default: false,
+      forced: false,
+    },
+  ]);
+  assert.equal(sharedSignalValue(env, "$video.subtitleStatus"), "ready");
 });
 
 test("bootstrap video engines load HLS.js from the document runtime contract", async () => {

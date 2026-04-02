@@ -83,6 +83,43 @@ func TestTextBlockRendersTextPropWhenNoChildrenProvided(t *testing.T) {
 	}
 }
 
+func TestTextBlockRendersNativeServerLayoutWithoutBootstrapAttrs(t *testing.T) {
+	node := TextBlock(TextBlockProps{
+		Mode:       TextBlockModeNative,
+		Text:       "hello world",
+		Font:       "16px monospace",
+		LineHeight: 20,
+		MaxWidth:   70,
+		Align:      "center",
+		Lang:       "th",
+		Direction:  "rtl",
+	})
+	html := gosx.RenderHTML(node)
+
+	for _, snippet := range []string{
+		`data-gosx-text-layout-mode="native"`,
+		`lang="th"`,
+		`dir="rtl"`,
+		`align="center"`,
+		`style="white-space: pre; font: 16px monospace; line-height: 20px; max-width: 70px; text-align: center"`,
+		"hello\nworld",
+	} {
+		if !strings.Contains(html, snippet) {
+			t.Fatalf("expected %q in native text block html %q", snippet, html)
+		}
+	}
+	for _, snippet := range []string{
+		`data-gosx-enhance="text-layout"`,
+		`data-gosx-text-layout-source=`,
+		`data-gosx-text-layout-line-count-hint=`,
+		`data-gosx-text-layout-height-hint=`,
+	} {
+		if strings.Contains(html, snippet) {
+			t.Fatalf("did not expect %q in native text block html %q", snippet, html)
+		}
+	}
+}
+
 func TestTextBlockRendersClampAttrs(t *testing.T) {
 	node := TextBlock(TextBlockProps{
 		Text:       "hello world from gosx",
@@ -182,5 +219,28 @@ func TestTextBlockAttrsOmitDefaultWhiteSpaceAndUnclampedOverflow(t *testing.T) {
 	}
 	if _, ok := attrs["data-gosx-text-layout-overflow"]; ok {
 		t.Fatalf("expected unclamped text block to omit overflow attr, got %#v", attrs["data-gosx-text-layout-overflow"])
+	}
+}
+
+func TestTextBlockAttrsRenderNativeModeWithoutBootstrapContract(t *testing.T) {
+	attrs := textBlockAttrMap(TextBlockAttrs(TextBlockProps{
+		Mode:       TextBlockModeNative,
+		Text:       "hello world",
+		Font:       "16px monospace",
+		LineHeight: 20,
+		MaxWidth:   70,
+	}))
+
+	if got := attrs["data-gosx-text-layout-mode"].Value; got != "native" {
+		t.Fatalf("expected native mode attr, got %#v", attrs["data-gosx-text-layout-mode"])
+	}
+	if got := attrs["style"].Value; got != "white-space: pre; font: 16px monospace; line-height: 20px; max-width: 70px" {
+		t.Fatalf("unexpected native style attr %q", got)
+	}
+	if _, ok := attrs["data-gosx-text-layout"]; ok {
+		t.Fatalf("did not expect bootstrap contract attr in native mode, got %#v", attrs["data-gosx-text-layout"])
+	}
+	if _, ok := attrs["data-gosx-enhance"]; ok {
+		t.Fatalf("did not expect bootstrap enhance attr in native mode, got %#v", attrs["data-gosx-enhance"])
 	}
 }

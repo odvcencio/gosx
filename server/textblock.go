@@ -10,9 +10,20 @@ import (
 
 const textBlockAttr = "data-gosx-text-layout"
 
+// TextBlockMode controls how a TextBlock is rendered.
+type TextBlockMode string
+
+const (
+	TextBlockModeBootstrap TextBlockMode = "bootstrap"
+	TextBlockModeNative    TextBlockMode = "native"
+)
+
+var textBlockNativeMeasurer = textlayout.NewCachingMeasurer(textlayout.ApproximateMeasurer{})
+
 // TextBlockProps configures a declarative DOM text-layout node that the shared
 // bootstrap runtime can observe and keep up to date.
 type TextBlockProps struct {
+	Mode          TextBlockMode
 	Tag           string
 	Text          string
 	Font          string
@@ -40,6 +51,9 @@ type TextBlockAttr struct {
 // TextBlockAttrs returns the HTML attributes required for a managed text block.
 func TextBlockAttrs(props TextBlockProps) []TextBlockAttr {
 	props = normalizeTextBlockProps(props, "")
+	if !TextBlockRequiresBootstrap(props) {
+		return textBlockNativeAttrs(props)
+	}
 	attrs := textBlockBaseAttrs(props)
 	attrs = appendTextBlockFontAttrs(attrs, props)
 	attrs = appendTextBlockLocaleAttrs(attrs, props)
@@ -48,6 +62,12 @@ func TextBlockAttrs(props TextBlockProps) []TextBlockAttr {
 	attrs = appendTextBlockHintAttrs(attrs, props)
 	attrs = appendTextBlockObservationAttrs(attrs, props)
 	return attrs
+}
+
+// TextBlockRequiresBootstrap reports whether the provided text block needs the
+// shared bootstrap runtime for client-side refinement.
+func TextBlockRequiresBootstrap(props TextBlockProps) bool {
+	return normalizeTextBlockMode(props.Mode) != TextBlockModeNative
 }
 
 func textBlockBaseAttrs(props TextBlockProps) []TextBlockAttr {
@@ -140,12 +160,51 @@ func appendTextBlockObservationAttrs(attrs []TextBlockAttr, props TextBlockProps
 	return attrs
 }
 
+func textBlockNativeAttrs(props TextBlockProps) []TextBlockAttr {
+	attrs := []TextBlockAttr{
+		{Name: "data-gosx-text-layout-mode", Value: string(TextBlockModeNative)},
+	}
+	if lang := strings.TrimSpace(props.Lang); lang != "" {
+		attrs = append(attrs, TextBlockAttr{Name: "lang", Value: lang})
+	}
+	if direction := normalizeTextBlockDirection(props.Direction); direction != "" {
+		attrs = append(attrs, TextBlockAttr{Name: "dir", Value: direction})
+	}
+	if align := normalizeTextBlockAlign(props.Align); align != "" {
+		attrs = append(attrs, TextBlockAttr{Name: "align", Value: align})
+	}
+	if style := textBlockNativeStyle(props); style != "" {
+		attrs = append(attrs, TextBlockAttr{Name: "style", Value: style})
+	}
+	return attrs
+}
+
+func textBlockNativeStyle(props TextBlockProps) string {
+	pairs := []string{"white-space", "pre"}
+	if font := strings.TrimSpace(props.Font); font != "" {
+		pairs = append(pairs, "font", font)
+	}
+	if props.LineHeight > 0 {
+		pairs = append(pairs, "line-height", formatTextBlockFloat(props.LineHeight)+"px")
+	}
+	if props.MaxWidth > 0 {
+		pairs = append(pairs, "max-width", formatTextBlockFloat(props.MaxWidth)+"px")
+	}
+	if align := normalizeTextBlockAlign(props.Align); align != "" {
+		pairs = append(pairs, "text-align", align)
+	}
+	return gosx.Style(pairs...)
+}
+
 // TextBlock renders a DOM node opted into the shared text-layout substrate.
 func TextBlock(props TextBlockProps, args ...any) gosx.Node {
 	props = normalizeTextBlockProps(props, textBlockPlainTextArgs(args))
 	tag := strings.TrimSpace(props.Tag)
 	if tag == "" {
 		tag = "div"
+	}
+	if !TextBlockRequiresBootstrap(props) {
+		return textBlockNativeNode(tag, props, args...)
 	}
 	if !textBlockHasNodeChild(args) && props.Text != "" {
 		args = append(args, gosx.Text(props.Text))
@@ -164,6 +223,58 @@ func TextBlock(props TextBlockProps, args ...any) gosx.Node {
 	prefixed = append(prefixed, gosx.Attrs(attrArgs...))
 	prefixed = append(prefixed, args...)
 	return gosx.El(tag, prefixed...)
+}
+
+func textBlockNativeNode(tag string, props TextBlockProps, inputArgs ...any) gosx.Node {
+	attrArgs := make([]any, 0, len(TextBlockAttrs(props)))
+	for _, attr := range TextBlockAttrs(props) {
+		if attr.Bool {
+			attrArgs = append(attrArgs, gosx.BoolAttr(attr.Name))
+			continue
+		}
+		attrArgs = append(attrArgs, gosx.Attr(attr.Name, attr.Value))
+	}
+	renderArgs := []any{gosx.Attrs(attrArgs...)}
+	for _, arg := range inputArgs {
+		if attrs, ok := arg.(gosx.AttrList); ok {
+			renderArgs = append(renderArgs, attrs)
+		}
+	}
+	if text := textBlockNativeText(props); text != "" {
+		renderArgs = append(renderArgs, gosx.Text(text))
+	}
+	return gosx.El(tag, renderArgs...)
+}
+
+func textBlockNativeText(props TextBlockProps) string {
+	source := effectiveTextBlockSource(props, "")
+	if source == "" {
+		return ""
+	}
+	lineHeight := props.LineHeight
+	if lineHeight <= 0 {
+		lineHeight = textlayoutApproximateLineHeight(props.Font)
+	}
+	result, err := textlayout.LayoutText(
+		source,
+		textBlockNativeMeasurer,
+		props.Font,
+		textlayout.PrepareOptions{WhiteSpace: props.WhiteSpace},
+		textlayout.LayoutOptions{
+			MaxWidth:   props.MaxWidth,
+			LineHeight: lineHeight,
+			MaxLines:   props.MaxLines,
+			Overflow:   normalizeTextBlockOverflowMode(props.Overflow),
+		},
+	)
+	if err != nil || len(result.Lines) == 0 {
+		return source
+	}
+	lines := make([]string, 0, len(result.Lines))
+	for _, line := range result.Lines {
+		lines = append(lines, line.Text)
+	}
+	return strings.Join(lines, "\n")
 }
 
 // EstimateTextBlockMetrics returns an approximate server-side layout plan that
@@ -244,8 +355,9 @@ func formatTextBlockFloat(value float64) string {
 }
 
 func normalizeTextBlockProps(props TextBlockProps, fallbackSource string) TextBlockProps {
+	props.Mode = normalizeTextBlockMode(props.Mode)
 	props.Source = effectiveTextBlockSource(props, fallbackSource)
-	if (props.HeightHint <= 0 || props.LineCountHint <= 0) && props.Source != "" && props.MaxWidth > 0 {
+	if TextBlockRequiresBootstrap(props) && (props.HeightHint <= 0 || props.LineCountHint <= 0) && props.Source != "" && props.MaxWidth > 0 {
 		if metrics, ok := EstimateTextBlockMetrics(props); ok {
 			if props.LineCountHint <= 0 {
 				props.LineCountHint = metrics.LineCount
@@ -256,6 +368,15 @@ func normalizeTextBlockProps(props TextBlockProps, fallbackSource string) TextBl
 		}
 	}
 	return props
+}
+
+func normalizeTextBlockMode(mode TextBlockMode) TextBlockMode {
+	switch strings.ToLower(strings.TrimSpace(string(mode))) {
+	case string(TextBlockModeNative):
+		return TextBlockModeNative
+	default:
+		return TextBlockModeBootstrap
+	}
 }
 
 func effectiveTextBlockSource(props TextBlockProps, fallback string) string {

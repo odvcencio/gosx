@@ -631,6 +631,85 @@ func Page() Node {
 	}
 }
 
+func TestDefaultFileRendererSupportsVideoBuiltin(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "page.gsx")
+	source := `package docs
+
+func Page() Node {
+	return <main>
+		<Video
+			class="promo"
+			poster="media/poster.jpg"
+			controls
+			muted
+			playsInline
+			subtitleTrack="en"
+			sources={data.sources}
+			subtitleTracks={data.tracks}
+		>
+			<p>Download video</p>
+		</Video>
+	</main>
+}
+`
+	if err := os.WriteFile(path, []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := &RouteContext{
+		Data: map[string]any{
+			"sources": []map[string]any{
+				{"src": "media/promo.webm", "type": "video/webm"},
+				{"src": "media/promo.mp4", "type": "video/mp4"},
+			},
+			"tracks": []map[string]any{
+				{"id": "en", "language": "en", "title": "English", "kind": "captions", "src": "subs/en-custom.vtt"},
+			},
+		},
+	}
+	node, err := DefaultFileRenderer(ctx, FilePage{FilePath: path, Pattern: "/"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	html := gosx.RenderHTML(node)
+	for _, snippet := range []string{
+		`class="promo"`,
+		`data-gosx-engine="GoSXVideo"`,
+		`data-gosx-engine-kind="video"`,
+		`data-gosx-enhance="video"`,
+		`data-gosx-enhance-layer="runtime"`,
+		`<video data-gosx-video-fallback="true"`,
+		`poster="/media/poster.jpg"`,
+		`controls`,
+		`muted`,
+		`playsinline`,
+		`<source src="/media/promo.webm" type="video/webm"`,
+		`<source src="/media/promo.mp4" type="video/mp4"`,
+		`<track src="/subs/en-custom.vtt" kind="captions" srclang="en" label="English"`,
+		`<p>Download video</p>`,
+	} {
+		if !strings.Contains(html, snippet) {
+			t.Fatalf("expected %q in rendered video html %q", snippet, html)
+		}
+	}
+
+	head := gosx.RenderHTML(ctx.Runtime().Head())
+	for _, snippet := range []string{
+		`gosx-manifest`,
+		`data-gosx-script="wasm-exec"`,
+		`bootstrap.js`,
+	} {
+		if !strings.Contains(head, snippet) {
+			t.Fatalf("expected %q in video runtime head %q", snippet, head)
+		}
+	}
+	if strings.Contains(head, `bootstrap-lite.js`) {
+		t.Fatalf("did not expect lite bootstrap on video runtime head %q", head)
+	}
+}
+
 func TestDefaultFileRendererSupportsEngineBuiltins(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "page.gsx")
@@ -820,6 +899,60 @@ func Page() Node {
 	} {
 		if strings.Contains(head, snippet) {
 			t.Fatalf("did not expect %q on text layout-only file pages, got %q", snippet, head)
+		}
+	}
+}
+
+func TestDefaultFileRendererRendersNativeTextBlockWithoutBootstrap(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "page.gsx")
+	source := `package docs
+
+func Page() Node {
+	return <TextBlock mode="native" class="copy" font="16px monospace" lineHeight={20} maxWidth={70} text="hello world" />
+}
+`
+	if err := os.WriteFile(path, []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := &RouteContext{}
+	node, err := DefaultFileRenderer(ctx, FilePage{FilePath: path, Pattern: "/"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	html := gosx.RenderHTML(node)
+	for _, snippet := range []string{
+		`class="copy"`,
+		`data-gosx-text-layout-mode="native"`,
+		`style="white-space: pre; font: 16px monospace; line-height: 20px; max-width: 70px"`,
+		"hello\nworld",
+	} {
+		if !strings.Contains(html, snippet) {
+			t.Fatalf("expected %q in rendered native text block html %q", snippet, html)
+		}
+	}
+	for _, snippet := range []string{
+		`data-gosx-enhance="text-layout"`,
+		`data-gosx-enhance-layer="bootstrap"`,
+		`data-gosx-text-layout-source=`,
+	} {
+		if strings.Contains(html, snippet) {
+			t.Fatalf("did not expect %q in rendered native text block html %q", snippet, html)
+		}
+	}
+
+	head := gosx.RenderHTML(ctx.Runtime().Head())
+	for _, snippet := range []string{
+		`bootstrap-lite.js`,
+		`data-gosx-bootstrap-mode="lite"`,
+		`gosx-manifest`,
+		`data-gosx-script="wasm-exec"`,
+		`bootstrap.js`,
+	} {
+		if strings.Contains(head, snippet) {
+			t.Fatalf("did not expect %q in native text layout runtime head %q", snippet, head)
 		}
 	}
 }
