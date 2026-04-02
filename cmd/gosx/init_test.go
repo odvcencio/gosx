@@ -160,6 +160,7 @@ func TestRunInitCreatesDocsTemplate(t *testing.T) {
 		"app/docs/runtime/page.gsx",
 		"app/docs/runtime/page.server.go",
 		"public/docs.css",
+		"public/runtime/watch-transport.js",
 	} {
 		if _, err := os.Stat(filepath.Join(dir, rel)); err != nil {
 			t.Fatalf("expected %s: %v", rel, err)
@@ -194,6 +195,11 @@ func TestRunInitCreatesDocsTemplate(t *testing.T) {
 	}
 
 	assertAllGSXCompile(t, dir)
+
+	runtimeServerGo := readFile(t, filepath.Join(dir, "app", "docs", "runtime", "page.server.go"))
+	if !strings.Contains(runtimeServerGo, `ctx.LifecycleScript(docsapp.PublicAssetURL("runtime/watch-transport.js"))`) {
+		t.Fatalf("expected runtime scaffold to register lifecycle script, got:\n%s", runtimeServerGo)
+	}
 
 	modulesGo := readFile(t, filepath.Join(dir, "modules", "modules.go"))
 	for _, snippet := range []string{

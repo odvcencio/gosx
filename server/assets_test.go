@@ -68,3 +68,30 @@ func TestDocumentStylesheetDefaultsOwnerFromLayer(t *testing.T) {
 		}
 	}
 }
+
+func TestManagedScriptRendersRuntimeMetadata(t *testing.T) {
+	html := gosx.RenderHTML(ManagedScript("runtime/page.js", ManagedScriptOptions{
+		Role: ManagedScriptRoleLifecycle,
+	}, gosx.Attrs(gosx.Attr("defer", "defer"))))
+	for _, snippet := range []string{
+		`src="/runtime/page.js"`,
+		`data-gosx-script="lifecycle"`,
+		`defer="defer"`,
+	} {
+		if !strings.Contains(html, snippet) {
+			t.Fatalf("expected %q in %q", snippet, html)
+		}
+	}
+}
+
+func TestLifecycleScriptDefaultsLifecycleRole(t *testing.T) {
+	html := gosx.RenderHTML(LifecycleScript("runtime/page.js"))
+	for _, snippet := range []string{
+		`src="/runtime/page.js"`,
+		`data-gosx-script="lifecycle"`,
+	} {
+		if !strings.Contains(html, snippet) {
+			t.Fatalf("expected %q in %q", snippet, html)
+		}
+	}
+}
