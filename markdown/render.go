@@ -35,6 +35,11 @@ func renderNode(r *Renderer, n *Node) string {
 
 	case NodeCodeBlock:
 		lang := n.Attrs["language"]
+		if r.highlightCode && lang != "" {
+			if highlighted, ok := highlightCode(lang, n.Literal); ok {
+				return fmt.Sprintf("<pre><code class=\"language-%s\">%s</code></pre>\n", html.EscapeString(lang), highlighted)
+			}
+		}
 		code := html.EscapeString(n.Literal)
 		if lang != "" {
 			return fmt.Sprintf("<pre><code class=\"language-%s\">%s</code></pre>\n", html.EscapeString(lang), code)
