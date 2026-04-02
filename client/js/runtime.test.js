@@ -320,6 +320,7 @@ class FakeElement {
     this.playCalls = [];
     this.pauseCalls = [];
     this.fullscreenCalls = [];
+    this.animateCalls = [];
     this.paused = true;
     this.ended = false;
     this.muted = false;
@@ -562,6 +563,20 @@ class FakeElement {
   pause() {
     this.pauseCalls.push([]);
     this.paused = true;
+  }
+
+  animate(keyframes, options) {
+    const animation = {
+      keyframes,
+      options,
+      cancelled: false,
+      cancel() {
+        this.cancelled = true;
+      },
+      finished: Promise.resolve(),
+    };
+    this.animateCalls.push(animation);
+    return animation;
   }
 
   canPlayType(type) {
@@ -1803,6 +1818,83 @@ test("bootstrap lite mounts managed text layout without a manifest", async () =>
   assert.equal(env.context.__gosx.ready, true);
   assert.equal(block.getAttribute("data-gosx-text-layout-ready"), "true");
   assert.equal(env.context.__gosx.textLayouts.size, 1);
+});
+
+test("bootstrap lite mounts managed motion blocks and plays load presets", async () => {
+  const block = new FakeElement("section", null);
+  block.setAttribute("data-gosx-motion", "");
+  block.setAttribute("data-gosx-motion-preset", "slide-up");
+  block.setAttribute("data-gosx-motion-duration", "360");
+  block.setAttribute("data-gosx-motion-delay", "40");
+  block.setAttribute("data-gosx-motion-distance", "24");
+  block.setAttribute("data-gosx-motion-easing", "ease-out");
+
+  const env = createContext({
+    elements: [block],
+  });
+
+  runScript(bootstrapLiteSource, env.context, "bootstrap-lite.js");
+  await flushAsyncWork();
+
+  assert.equal(env.context.__gosx.ready, true);
+  assert.equal(block.getAttribute("data-gosx-motion-state"), "finished");
+  assert.equal(block.animateCalls.length, 1);
+  assert.deepEqual(JSON.parse(JSON.stringify(block.animateCalls[0].keyframes)), [
+    { opacity: 0, transform: "translate3d(0, 24px, 0)" },
+    { opacity: 1, transform: "translate3d(0, 0, 0)" },
+  ]);
+  assert.deepEqual(JSON.parse(JSON.stringify(block.animateCalls[0].options)), {
+    duration: 360,
+    delay: 40,
+    easing: "ease-out",
+    fill: "both",
+  });
+});
+
+test("bootstrap lite respects reduced motion on managed motion blocks", async () => {
+  const block = new FakeElement("div", null);
+  block.setAttribute("data-gosx-motion", "");
+
+  const env = createContext({
+    elements: [block],
+    prefersReducedMotion: true,
+  });
+
+  runScript(bootstrapLiteSource, env.context, "bootstrap-lite.js");
+  await flushAsyncWork();
+
+  assert.equal(block.getAttribute("data-gosx-motion-state"), "reduced");
+  assert.equal(block.animateCalls.length, 0);
+});
+
+test("bootstrap lite defers managed motion view triggers until intersection", async () => {
+  const block = new FakeElement("div", null);
+  block.setAttribute("data-gosx-motion", "");
+  block.setAttribute("data-gosx-motion-trigger", "view");
+  block.setAttribute("data-gosx-motion-preset", "zoom-in");
+
+  const env = createContext({
+    elements: [block],
+  });
+
+  runScript(bootstrapLiteSource, env.context, "bootstrap-lite.js");
+  await flushAsyncWork();
+
+  assert.equal(block.getAttribute("data-gosx-motion-state"), "idle");
+  assert.equal(block.animateCalls.length, 0);
+  assert.equal(env.intersectionObservers.length, 1);
+
+  env.intersectionObservers[0].trigger([
+    { target: block, isIntersecting: true, intersectionRatio: 0.5 },
+  ]);
+  await flushAsyncWork();
+
+  assert.equal(block.getAttribute("data-gosx-motion-state"), "finished");
+  assert.equal(block.animateCalls.length, 1);
+  assert.deepEqual(JSON.parse(JSON.stringify(block.animateCalls[0].keyframes)), [
+    { opacity: 0, transform: "scale(0.91)" },
+    { opacity: 1, transform: "scale(1)" },
+  ]);
 });
 
 test("bootstrap mounts declarative text layout clamp options on managed blocks", async () => {

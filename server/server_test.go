@@ -572,6 +572,56 @@ func TestAppKeepsNativeTextBlockPagesOffBootstrapHead(t *testing.T) {
 	}
 }
 
+func TestAppInjectsBootstrapHeadForMotionPages(t *testing.T) {
+	app := New()
+	app.Page("GET /motion", func(ctx *Context) gosx.Node {
+		respectReduced := false
+		return ctx.Motion(MotionProps{
+			Tag:                  "section",
+			Preset:               MotionPresetSlideUp,
+			Trigger:              MotionTriggerView,
+			Duration:             360,
+			Delay:                40,
+			Distance:             24,
+			RespectReducedMotion: &respectReduced,
+		}, gosx.Text("Animated hero copy"))
+	})
+
+	handler := app.Build()
+	req := httptest.NewRequest(http.MethodGet, "/motion", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	body := w.Body.String()
+	for _, snippet := range []string{
+		`data-gosx-motion`,
+		`data-gosx-enhance="motion"`,
+		`data-gosx-enhance-layer="bootstrap"`,
+		`data-gosx-motion-preset="slide-up"`,
+		`data-gosx-motion-trigger="view"`,
+		`data-gosx-motion-duration="360"`,
+		`data-gosx-motion-delay="40"`,
+		`data-gosx-motion-distance="24"`,
+		`data-gosx-motion-respect-reduced="false"`,
+		`/gosx/bootstrap-lite.js`,
+		`data-gosx-bootstrap-mode="lite"`,
+	} {
+		if !strings.Contains(body, snippet) {
+			t.Fatalf("expected %q in motion page body %q", snippet, body)
+		}
+	}
+	for _, snippet := range []string{
+		`gosx-manifest`,
+		`data-gosx-script="wasm-exec"`,
+		`/gosx/bootstrap.js`,
+		`/gosx/patch.js`,
+	} {
+		if strings.Contains(body, snippet) {
+			t.Fatalf("did not expect %q in bootstrap-only motion page body %q", snippet, body)
+		}
+	}
+}
+
 func TestAppEmitsDocumentContract(t *testing.T) {
 	app := New()
 	app.EnableNavigation()

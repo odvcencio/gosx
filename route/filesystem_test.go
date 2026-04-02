@@ -957,6 +957,79 @@ func Page() Node {
 	}
 }
 
+func TestDefaultFileRendererRendersMotionPrimitive(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "page.gsx")
+	source := `package docs
+
+func Page() Node {
+	return <Motion
+		as="section"
+		class="hero"
+		preset="slide-up"
+		trigger="view"
+		duration={360}
+		delay={40}
+		distance={24}
+		easing="ease-out"
+		respectReducedMotion={false}
+	>
+		hero copy
+	</Motion>
+}
+`
+	if err := os.WriteFile(path, []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := &RouteContext{}
+	node, err := DefaultFileRenderer(ctx, FilePage{FilePath: path, Pattern: "/"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	html := gosx.RenderHTML(node)
+	for _, snippet := range []string{
+		`<section`,
+		`class="hero"`,
+		`data-gosx-motion`,
+		`data-gosx-enhance="motion"`,
+		`data-gosx-enhance-layer="bootstrap"`,
+		`data-gosx-fallback="html"`,
+		`data-gosx-motion-preset="slide-up"`,
+		`data-gosx-motion-trigger="view"`,
+		`data-gosx-motion-duration="360"`,
+		`data-gosx-motion-delay="40"`,
+		`data-gosx-motion-easing="ease-out"`,
+		`data-gosx-motion-distance="24"`,
+		`data-gosx-motion-respect-reduced="false"`,
+		`hero copy`,
+	} {
+		if !strings.Contains(html, snippet) {
+			t.Fatalf("expected %q in rendered motion html %q", snippet, html)
+		}
+	}
+
+	head := gosx.RenderHTML(ctx.Runtime().Head())
+	for _, snippet := range []string{
+		`bootstrap-lite.js`,
+		`data-gosx-bootstrap-mode="lite"`,
+	} {
+		if !strings.Contains(head, snippet) {
+			t.Fatalf("expected %q in motion runtime head %q", snippet, head)
+		}
+	}
+	for _, snippet := range []string{
+		`gosx-manifest`,
+		`data-gosx-script="wasm-exec"`,
+		`bootstrap.js`,
+	} {
+		if strings.Contains(head, snippet) {
+			t.Fatalf("did not expect %q on motion-only file pages, got %q", snippet, head)
+		}
+	}
+}
+
 func TestDefaultFileRendererTextBlockFlattensNodeReturningFunctionExprs(t *testing.T) {
 	root := t.TempDir()
 	writeRouteFile(t, root, "page.gsx", `package docs
