@@ -981,8 +981,16 @@ func TestAppServesCompatRuntimeAssetsRejectsEscapingManifestFiles(t *testing.T) 
 	app.SetRuntimeRoot(root)
 	w := httptest.NewRecorder()
 	app.Build().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/gosx/bootstrap.js", nil))
-	if w.Code != http.StatusNotFound {
-		t.Fatalf("expected 404 for escaping compat asset, got %d body=%q", w.Code, w.Body.String())
+	body := w.Body.String()
+	if strings.Contains(body, "nope") {
+		t.Fatalf("escaping manifest path must not expose secret file, got body=%q", body)
+	}
+	// With no valid bootstrap on disk, the dev stub is served instead of 404.
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected bootstrap stub (200), got %d", w.Code)
+	}
+	if !strings.Contains(body, "window.__gosx") {
+		t.Fatalf("expected bootstrap stub content, got %q", body)
 	}
 }
 
@@ -1947,5 +1955,37 @@ func TestMountedHandlerPreservesFlushUnderObservers(t *testing.T) {
 		}
 	default:
 		t.Fatal("expected observer to receive mounted request event")
+	}
+}
+
+func TestAppServesBootstrapStubWhenNoBuildExists(t *testing.T) {
+	// Use a temp dir with no build artifacts at all — simulates `go run`
+	// without ever running `gosx build`.
+	root := t.TempDir()
+
+	app := New()
+	app.SetRuntimeRoot(root)
+	handler := app.Build()
+
+	for _, name := range []string{"bootstrap.js", "bootstrap-lite.js"} {
+		t.Run(name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/gosx/"+name, nil)
+			w := httptest.NewRecorder()
+			handler.ServeHTTP(w, req)
+
+			if w.Code != http.StatusOK {
+				t.Fatalf("expected 200 for %s stub, got %d", name, w.Code)
+			}
+			if ct := w.Header().Get("Content-Type"); !strings.Contains(ct, "javascript") {
+				t.Fatalf("expected javascript content-type, got %q", ct)
+			}
+			if cc := w.Header().Get("Cache-Control"); cc != "no-cache" {
+				t.Fatalf("expected no-cache, got %q", cc)
+			}
+			body := w.Body.String()
+			if !strings.Contains(body, "window.__gosx") {
+				t.Fatalf("expected stub script body containing window.__gosx, got %q", body)
+			}
+		})
 	}
 }
