@@ -111,8 +111,8 @@ func TestScopeCSSSupportsRootSelectors(t *testing.T) {
 
 	scoped := ScopeCSS(css, "root1")
 
-	if !strings.Contains(scoped, `:where([data-gosx-s="root1"]) { --card-gap: 1rem; }`) {
-		t.Fatalf("expected :root to map to scope anchor, got:\n%s", scoped)
+	if !strings.Contains(scoped, `:root { --card-gap: 1rem; }`) {
+		t.Fatalf("expected :root to pass through unscoped, got:\n%s", scoped)
 	}
 	if !strings.Contains(scoped, `:where([data-gosx-s="root1"]) .shell > .card, .shell:where([data-gosx-s="root1"]) > .card`) {
 		t.Fatalf("expected direct-child selector to preserve root matching, got:\n%s", scoped)
@@ -173,5 +173,53 @@ func TestScopeCSSSupportsGlobalSelectors(t *testing.T) {
 	}
 	if !strings.Contains(scoped, `:where([data-gosx-s="glob1"]) .copy a, .copy:where([data-gosx-s="glob1"]) a`) {
 		t.Fatalf("expected inline :global(...) wrapper to unwrap inside scoped selector, got:\n%s", scoped)
+	}
+}
+
+func TestScopeCSSInherentlyGlobalSelectors(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "body passes through unscoped",
+			input:    "body { margin: 0; }",
+			expected: "body { margin: 0; }",
+		},
+		{
+			name:     "html passes through unscoped",
+			input:    "html { scroll-behavior: smooth; }",
+			expected: "html { scroll-behavior: smooth; }",
+		},
+		{
+			name:     "universal selectors pass through unscoped",
+			input:    "*, *::before, *::after { box-sizing: border-box; }",
+			expected: "*,  *::before,  *::after { box-sizing: border-box; }",
+		},
+		{
+			name:     "::selection passes through unscoped",
+			input:    "::selection { background: gold; }",
+			expected: "::selection { background: gold; }",
+		},
+		{
+			name:     ":root passes through unscoped",
+			input:    ":root { --color: red; }",
+			expected: ":root { --color: red; }",
+		},
+		{
+			name:     "class selector is still scoped",
+			input:    ".my-class { color: red; }",
+			expected: `:where([data-gosx-s="g1"]) .my-class`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			scoped := ScopeCSS(tt.input, "g1")
+			if !strings.Contains(scoped, tt.expected) {
+				t.Fatalf("expected output to contain %q, got:\n%s", tt.expected, scoped)
+			}
+		})
 	}
 }

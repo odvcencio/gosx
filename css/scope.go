@@ -134,8 +134,8 @@ func scopeSingleSelector(selector string, ctx scopeContext) string {
 	if global, ok := unwrapGlobalSelector(selector); ok {
 		return global
 	}
-	if selector == ":root" {
-		return ctx.scopeAnchor
+	if isInherentlyGlobalSelector(selector) {
+		return selector
 	}
 
 	cleaned := replaceGlobalWrappers(selector)
@@ -149,6 +149,20 @@ func scopeSingleSelector(selector string, ctx scopeContext) string {
 		return ancestor
 	}
 	return ancestor + ", " + root
+}
+
+// isInherentlyGlobalSelector returns true for selectors that target
+// document-level elements or universal contexts outside the component tree.
+// Scoping these to :where([data-gosx-s="..."]) would make them ineffective.
+func isInherentlyGlobalSelector(selector string) bool {
+	s := strings.TrimSpace(selector)
+	switch s {
+	case ":root", "html", "body", "head",
+		"*", "*::before", "*::after",
+		"::selection", "::placeholder":
+		return true
+	}
+	return false
 }
 
 func scopeLeadingCompound(compound string, ctx scopeContext) string {
