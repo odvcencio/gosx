@@ -187,7 +187,9 @@ count    // local to the declaring island
 
 **Image Optimization** — Local image handler at `/_gosx/image` with resize, format conversion, and immutable caching.
 
-**Text Layout** — Server-estimated, browser-refined text measurement via `TextBlock` with font metrics, line breaking, and ellipsis. Works without islands.
+**Text Layout** — `TextBlock` supports both server-measured native rendering with no JavaScript and bootstrap-managed browser refinement. Font, width, line-height, locale, clamping, and ellipsis stay in one framework-level contract.
+
+**Managed Video** — `server.Video`, `ctx.Video`, and the `.gsx` `<Video />` builtin render a real server `<video>` baseline with `<source>` and `<track>` children, then the built-in video engine can layer in HLS fallback, subtitle loading, sync, and shared `$video.*` signals when the page needs them.
 
 ## Engines
 
@@ -202,7 +204,48 @@ ctx.Engine(engine.Config{
 }, fallbackNode)
 ```
 
-Engines declare capabilities (`Canvas`, `WebGL`, `Animation`, `Gamepad`, `Audio`, etc.), get their own mount point, and communicate through typed message ports. They don't touch island DOM.
+Engines come in three kinds:
+
+- `surface` — owns a DOM mount for canvas, WebGL, WebGPU, or managed pixel surfaces
+- `worker` — background compute with no DOM mount
+- `video` — framework-owned managed video playback
+
+The managed video path also has first-class helpers:
+
+```go
+ctx.Video(server.VideoProps{
+    Poster:   "/media/poster.jpg",
+    Controls: true,
+    Sources: []server.VideoSource{
+        {Src: "/media/promo.webm", Type: "video/webm"},
+        {Src: "/media/promo.m3u8", Type: "application/vnd.apple.mpegurl"},
+    },
+    SubtitleTrack: "en",
+    SubtitleTracks: []server.VideoTrack{
+        {ID: "en", Language: "en", Title: "English", Src: "/subs/en.vtt"},
+    },
+}, gosx.El("p", gosx.Text("Download the trailer")))
+```
+
+That emits a usable server `<video>` baseline first. When the runtime mounts, it upgrades the existing element in place instead of throwing it away and recreating the player shell in JavaScript.
+
+Supported capability declarations today are:
+
+- `video`
+- `canvas`
+- `webgl`
+- `webgpu`
+- `pixel-surface`
+- `animation`
+- `storage`
+- `fetch`
+- `audio`
+- `worker`
+- `gamepad`
+- `keyboard`
+- `pointer`
+
+Kinds choose the mount model. Capabilities declare which browser APIs the engine expects to use. Engines get their own mount point or worker context, communicate through typed message ports, and do not touch island DOM.
 
 ## Hubs
 
