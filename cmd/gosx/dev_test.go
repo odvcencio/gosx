@@ -165,7 +165,7 @@ func waitForChildProcess(parentPID int, timeout time.Duration) (int, error) {
 	deadline := time.Now().Add(timeout)
 	parent := strconv.Itoa(parentPID)
 	for time.Now().Before(deadline) {
-		out, err := exec.Command("ps", "-o", "pid=", "--ppid", parent).Output()
+		out, err := exec.Command("pgrep", "-P", parent).Output()
 		if err == nil {
 			fields := strings.Fields(string(out))
 			for _, field := range fields {
