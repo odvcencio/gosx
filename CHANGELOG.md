@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.2.2
+
+- **feat(route):** Added underscore param convention as Go-compatible alternative to bracket syntax
+  - `_slug` directory → `{slug}` route parameter (single underscore = dynamic param)
+  - `__path` directory → `{path...}` route parameter (double underscore = catch-all)
+  - Valid Go package names, works with `go mod tidy`, `go build ./...`, and module imports
+  - Legacy `[slug]` bracket syntax still supported for backward compatibility
+
 ## v0.2.1
 
 Dogfooding fixes from the m31labs.dev gosx migration.
