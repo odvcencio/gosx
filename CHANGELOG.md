@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.2.3
+
+- **fix(css):** Global selectors (`body`, `html`, `:root`, `*`, `*::before`, `*::after`, `::selection`, `::placeholder`) in sidecar CSS are no longer scoped — they pass through to the document directly
+- **fix(server):** `/gosx/bootstrap.js` serves a minimal stub script when `gosx build` has not been run, instead of returning 404. The stub initializes the gosx runtime namespace and auto-mounts registered engines from the page manifest.
+
 ## v0.2.2
 
 - **feat(route):** Added underscore param convention as Go-compatible alternative to bracket syntax
