@@ -232,6 +232,23 @@ func (s *PageState) TextBlock(props TextBlockProps, args ...any) gosx.Node {
 	return s.Runtime().TextBlock(props, args...)
 }
 
+// ManagedScript appends a GoSX-managed external script to the page runtime.
+func (s *PageState) ManagedScript(src string, opts ManagedScriptOptions, args ...any) {
+	if s == nil {
+		return
+	}
+	s.Runtime().ManagedScript(src, opts, args...)
+}
+
+// LifecycleScript appends a lifecycle helper script after runtime bootstrap
+// assets so it can safely chain onto GoSX page hooks.
+func (s *PageState) LifecycleScript(src string, args ...any) {
+	if s == nil {
+		return
+	}
+	s.Runtime().LifecycleScript(src, args...)
+}
+
 // Defer renders fallback content immediately, then streams the resolved node
 // into place once the resolver finishes.
 func (s *PageState) Defer(fallback gosx.Node, resolve DeferredResolver) gosx.Node {
