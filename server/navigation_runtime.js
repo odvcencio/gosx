@@ -874,7 +874,7 @@
   async function ensureManagedScripts(nextDoc, baseURL) {
     const scripts = collectManagedScripts(nextDoc.head, baseURL).concat(collectManagedScripts(nextDoc.body, baseURL));
     scripts.sort(function(a, b) {
-      const order = { "wasm-exec": 0, patch: 1, bootstrap: 2 };
+      const order = { "wasm-exec": 0, patch: 1, bootstrap: 2, lifecycle: 3, managed: 4 };
       const left = Object.prototype.hasOwnProperty.call(order, a.role) ? order[a.role] : 99;
       const right = Object.prototype.hasOwnProperty.call(order, b.role) ? order[b.role] : 99;
       return left - right;

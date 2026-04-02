@@ -15,6 +15,7 @@ import (
 type PageRuntime struct {
 	renderer *island.Renderer
 	active   bool
+	head     []gosx.Node
 }
 
 // PageRuntimeSummary describes the bootstrap/runtime surface declared by a page.
@@ -90,15 +91,54 @@ func (r *PageRuntime) TextBlock(props TextBlockProps, args ...any) gosx.Node {
 	return TextBlock(props, args...)
 }
 
+// AddHead appends managed head nodes that should render after the shared
+// runtime bootstrap assets.
+func (r *PageRuntime) AddHead(nodes ...gosx.Node) {
+	if r == nil {
+		return
+	}
+	for _, node := range nodes {
+		if node.IsZero() {
+			continue
+		}
+		r.head = append(r.head, node)
+	}
+}
+
+// ManagedScript appends a GoSX-managed external script to the page runtime.
+func (r *PageRuntime) ManagedScript(src string, opts ManagedScriptOptions, args ...any) {
+	if r == nil {
+		return
+	}
+	r.AddHead(ManagedScript(src, opts, args...))
+}
+
+// LifecycleScript appends a page lifecycle helper script after the shared
+// runtime assets so it can chain onto bootstrap/dispose hooks safely.
+func (r *PageRuntime) LifecycleScript(src string, args ...any) {
+	if r == nil {
+		return
+	}
+	r.AddHead(LifecycleScript(src, args...))
+}
+
 // Head renders the preload, manifest, and bootstrap tags required by the page runtime.
 func (r *PageRuntime) Head() gosx.Node {
-	if r == nil || !r.active {
+	if r == nil {
 		return gosx.Text("")
 	}
-	return gosx.Fragment(
-		r.renderer.PreloadHints(),
-		r.renderer.PageHead(),
-	)
+	nodes := []gosx.Node{}
+	if r.active {
+		nodes = append(nodes,
+			r.renderer.PreloadHints(),
+			r.renderer.PageHead(),
+		)
+	}
+	nodes = append(nodes, r.head...)
+	if len(nodes) == 0 {
+		return gosx.Text("")
+	}
+	return gosx.Fragment(nodes...)
 }
 
 // Active reports whether the page registered any runtime engines.

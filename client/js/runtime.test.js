@@ -4995,6 +4995,161 @@ test("navigation runtime swaps managed head/body and calls page lifecycle hooks"
   assert.equal(env.scrollCalls[0][0].behavior, "instant");
 });
 
+test("navigation runtime loads patch, lifecycle, and managed scripts before page bootstrap", async () => {
+  const parsedDocs = new Map();
+  const link = new FakeElement("a", null);
+  link.setAttribute("href", "/docs/runtime");
+  link.setAttribute("data-gosx-link", "");
+  link.textContent = "Runtime";
+
+  const env = createContext({
+    elements: [link],
+    fetchRoutes: {
+      "http://localhost:3000/docs/runtime": {
+        text: "__SCRIPT_DOC__",
+        url: "http://localhost:3000/docs/runtime",
+      },
+      "http://localhost:3000/patch.js": {
+        text: "window.__scriptOrder.push('patch');",
+        url: "http://localhost:3000/patch.js",
+      },
+      "http://localhost:3000/lifecycle.js": {
+        text: "window.__scriptOrder.push('lifecycle');",
+        url: "http://localhost:3000/lifecycle.js",
+      },
+      "http://localhost:3000/managed.js": {
+        text: "window.__scriptOrder.push('managed');",
+        url: "http://localhost:3000/managed.js",
+      },
+    },
+    parseHTML(html) {
+      return parsedDocs.get(html);
+    },
+  });
+
+  env.context.__scriptOrder = [];
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const originalBootstrap = env.context.__gosx_bootstrap_page;
+  env.context.__gosx_bootstrap_page = async function() {
+    env.context.__scriptOrder.push("bootstrap");
+    return originalBootstrap();
+  };
+  env.context.__gosx_dispose_page = async function() {
+    env.context.__scriptOrder.push("dispose");
+  };
+
+  const patchScript = new FakeElement("script", null);
+  patchScript.setAttribute("data-gosx-script", "patch");
+  patchScript.setAttribute("src", "/patch.js");
+
+  const lifecycleScript = new FakeElement("script", null);
+  lifecycleScript.setAttribute("data-gosx-script", "lifecycle");
+  lifecycleScript.setAttribute("src", "/lifecycle.js");
+
+  const managedScript = new FakeElement("script", null);
+  managedScript.id = "managed-script";
+  managedScript.setAttribute("data-gosx-script", "managed");
+  managedScript.setAttribute("src", "/managed.js");
+
+  const nextBody = new FakeElement("main", null);
+  nextBody.id = "runtime-page";
+  nextBody.textContent = "Runtime page";
+
+  parsedDocs.set("__SCRIPT_DOC__", buildNavigatedDocument({
+    title: "Runtime",
+    headNodes: [patchScript, lifecycleScript],
+    bodyNodes: [nextBody, managedScript],
+  }));
+
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  await env.context.__gosx_page_nav.navigate("http://localhost:3000/docs/runtime");
+  await flushAsyncWork();
+
+  assert.deepEqual(env.context.__scriptOrder, [
+    "dispose",
+    "patch",
+    "lifecycle",
+    "managed",
+    "bootstrap",
+  ]);
+  assert.equal(env.document.getElementById("runtime-page").textContent, "Runtime page");
+  assert.equal(env.document.getElementById("managed-script"), null);
+  assert.deepEqual(
+    Array.from(env.context.__gosx.document.get().assets.scripts, (entry) => entry.role),
+    ["patch", "lifecycle"],
+  );
+});
+
+test("navigation runtime caches lifecycle scripts across page transitions", async () => {
+  const parsedDocs = new Map();
+  const env = createContext({
+    fetchRoutes: {
+      "http://localhost:3000/docs/a": {
+        text: "__DOC_A__",
+        url: "http://localhost:3000/docs/a",
+      },
+      "http://localhost:3000/docs/b": {
+        text: "__DOC_B__",
+        url: "http://localhost:3000/docs/b",
+      },
+      "http://localhost:3000/shared-lifecycle.js": {
+        text: "window.__sharedLifecycleLoads = (window.__sharedLifecycleLoads || 0) + 1;",
+        url: "http://localhost:3000/shared-lifecycle.js",
+      },
+    },
+    parseHTML(html) {
+      return parsedDocs.get(html);
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  let bootstrapCount = 0;
+  const originalBootstrap = env.context.__gosx_bootstrap_page;
+  env.context.__gosx_bootstrap_page = async function() {
+    bootstrapCount += 1;
+    return originalBootstrap();
+  };
+  env.context.__gosx_dispose_page = async function() {};
+
+  function lifecycleDoc(title, id) {
+    const script = new FakeElement("script", null);
+    script.setAttribute("data-gosx-script", "lifecycle");
+    script.setAttribute("src", "/shared-lifecycle.js");
+
+    const page = new FakeElement("main", null);
+    page.id = id;
+    page.textContent = title;
+
+    return buildNavigatedDocument({
+      title,
+      headNodes: [script],
+      bodyNodes: [page],
+    });
+  }
+
+  parsedDocs.set("__DOC_A__", lifecycleDoc("Page A", "page-a"));
+  parsedDocs.set("__DOC_B__", lifecycleDoc("Page B", "page-b"));
+
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  await env.context.__gosx_page_nav.navigate("http://localhost:3000/docs/a");
+  await flushAsyncWork();
+  await env.context.__gosx_page_nav.navigate("http://localhost:3000/docs/b");
+  await flushAsyncWork();
+
+  assert.equal(env.context.__sharedLifecycleLoads, 1);
+  assert.equal(
+    env.fetchCalls.filter((call) => call.url === "http://localhost:3000/shared-lifecycle.js").length,
+    1,
+  );
+  assert.equal(bootstrapCount, 2);
+  assert.equal(env.document.getElementById("page-b").textContent, "Page B");
+});
+
 test("navigation runtime marks current and ancestor links and exposes navigation state", async () => {
   const docsLink = new FakeElement("a", null);
   docsLink.setAttribute("href", "/docs");

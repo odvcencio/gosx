@@ -11,6 +11,7 @@ func init() {
 		"Hydration bootstrap, page disposal, and streamed regions cooperate during client-side transitions.",
 		route.FileModuleOptions{
 			Load: func(ctx *route.RouteContext, page route.FilePage) (any, error) {
+				ctx.LifecycleScript(docsapp.PublicAssetURL("runtime/watch-transport.js"))
 				return map[string]any{
 					"sceneDemo": map[string]any{
 						"width":      720,

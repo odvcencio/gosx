@@ -40,6 +40,44 @@ func Stylesheet(href string, args ...any) gosx.Node {
 	return gosx.El("link", attrs...)
 }
 
+// Managed script roles consumed by the GoSX navigation/runtime layer.
+const (
+	ManagedScriptRoleWASMExec  = "wasm-exec"
+	ManagedScriptRolePatch     = "patch"
+	ManagedScriptRoleBootstrap = "bootstrap"
+	ManagedScriptRoleLifecycle = "lifecycle"
+	ManagedScriptRoleManaged   = "managed"
+)
+
+// ManagedScriptOptions configures GoSX runtime metadata attached to an
+// externally loaded script asset.
+type ManagedScriptOptions struct {
+	Role string
+}
+
+// ManagedScript renders a script tag with GoSX runtime ownership metadata so
+// the navigation layer can reload and sequence it across page transitions.
+func ManagedScript(src string, opts ManagedScriptOptions, args ...any) gosx.Node {
+	src = strings.TrimSpace(src)
+	if src == "" {
+		return gosx.Text("")
+	}
+	attrs := []any{
+		gosx.Attrs(
+			gosx.Attr("src", AssetURL(src)),
+			gosx.Attr("data-gosx-script", normalizeManagedScriptRole(opts.Role)),
+		),
+	}
+	attrs = append(attrs, args...)
+	return gosx.El("script", attrs...)
+}
+
+// LifecycleScript renders an external script that is loaded before GoSX calls
+// page lifecycle hooks during navigation and can chain onto bootstrap/dispose.
+func LifecycleScript(src string, args ...any) gosx.Node {
+	return ManagedScript(src, ManagedScriptOptions{Role: ManagedScriptRoleLifecycle}, args...)
+}
+
 // DocumentStylesheet renders a stylesheet link tag with GoSX document/CSS
 // ownership metadata so the runtime can reason about it as part of the page
 // contract.
@@ -60,4 +98,21 @@ func DocumentStylesheet(href string, opts StylesheetOptions, args ...any) gosx.N
 	}
 	attrs = append(attrs, args...)
 	return gosx.El("link", attrs...)
+}
+
+func normalizeManagedScriptRole(role string) string {
+	switch strings.TrimSpace(strings.ToLower(role)) {
+	case ManagedScriptRoleWASMExec:
+		return ManagedScriptRoleWASMExec
+	case ManagedScriptRolePatch:
+		return ManagedScriptRolePatch
+	case ManagedScriptRoleBootstrap:
+		return ManagedScriptRoleBootstrap
+	case ManagedScriptRoleLifecycle:
+		return ManagedScriptRoleLifecycle
+	case ManagedScriptRoleManaged:
+		return ManagedScriptRoleManaged
+	default:
+		return ManagedScriptRoleManaged
+	}
 }

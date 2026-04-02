@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/odvcencio/gosx"
 	"github.com/odvcencio/gosx/action"
 	docsapp "github.com/odvcencio/gosx/examples/gosx-docs/app"
 	"github.com/odvcencio/gosx/route"
@@ -39,7 +38,7 @@ func init() {
 				}, nil
 			},
 			Load: func(ctx *route.RouteContext, page route.FilePage) (any, error) {
-				ctx.AddHead(gosx.RawHTML(`<script data-gosx-script="cms-demo" src="` + docsapp.PublicAssetURL("cms-demo.js") + `"></script>`))
+				ctx.ManagedScript(docsapp.PublicAssetURL("cms-demo.js"), server.ManagedScriptOptions{})
 
 				doc := defaultCMSDocument()
 				if state, ok := ctx.ActionState("publish"); ok {

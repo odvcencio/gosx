@@ -394,6 +394,57 @@ func TestAppInjectsRuntimeHeadForEnginePages(t *testing.T) {
 	}
 }
 
+func TestAppLifecycleScriptRendersWithoutBootstrap(t *testing.T) {
+	app := New()
+	app.Page("GET /", func(ctx *Context) gosx.Node {
+		ctx.LifecycleScript("/runtime/page-lifecycle.js")
+		return gosx.Text("body")
+	})
+
+	handler := app.Build()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	body := w.Body.String()
+	if !strings.Contains(body, `src="/runtime/page-lifecycle.js"`) {
+		t.Fatalf("expected lifecycle script in %q", body)
+	}
+	if !strings.Contains(body, `data-gosx-script="lifecycle"`) {
+		t.Fatalf("expected lifecycle role in %q", body)
+	}
+	if strings.Contains(body, `data-gosx-script="bootstrap"`) {
+		t.Fatalf("did not expect bootstrap runtime in %q", body)
+	}
+}
+
+func TestAppLifecycleScriptFollowsBootstrapAssets(t *testing.T) {
+	app := New()
+	app.Page("GET /", func(ctx *Context) gosx.Node {
+		ctx.Runtime().EnableBootstrap()
+		ctx.LifecycleScript("/runtime/page-lifecycle.js")
+		return gosx.Text("body")
+	})
+
+	handler := app.Build()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	body := w.Body.String()
+	bootstrap := strings.Index(body, `data-gosx-script="bootstrap"`)
+	lifecycle := strings.Index(body, `data-gosx-script="lifecycle"`)
+	if bootstrap < 0 {
+		t.Fatalf("expected bootstrap runtime in %q", body)
+	}
+	if lifecycle < 0 {
+		t.Fatalf("expected lifecycle script in %q", body)
+	}
+	if lifecycle < bootstrap {
+		t.Fatalf("expected lifecycle script after bootstrap runtime in %q", body)
+	}
+}
+
 func TestAppInjectsRuntimeHeadForVideoEnginePages(t *testing.T) {
 	app := New()
 	app.Page("GET /video", func(ctx *Context) gosx.Node {
