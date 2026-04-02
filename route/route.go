@@ -274,7 +274,7 @@ func (r *Router) Build() http.Handler {
 		}
 		pattern := extra.pattern
 		handler := h
-		mux.Handle(normalizePattern(extra.pattern), http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		safeHandle(mux, normalizePattern(extra.pattern), http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 			server.MarkObservedRequest(req, "mount", pattern)
 			handler.ServeHTTP(w, req)
 		}))
@@ -335,7 +335,7 @@ func (r *Router) registerRoute(mux *http.ServeMux, prefix string, route Route, p
 			h = middleware[i](h)
 		}
 
-		mux.Handle(matchPattern, h)
+		safeHandle(mux, matchPattern, h)
 	}
 
 	for _, child := range route.Children {
@@ -709,4 +709,32 @@ func (w *interceptResponseWriter) commit(dst http.ResponseWriter) {
 	}
 	dst.WriteHeader(w.statusCode)
 	_, _ = dst.Write([]byte(w.body.String()))
+}
+
+// safeHandle registers a handler on the mux, recovering panics from
+// conflicting patterns and re-panicking with a clear diagnostic message.
+// Go 1.22+'s ServeMux panics when two patterns overlap without one being
+// strictly more specific. This commonly happens when a page has actions
+// (e.g. POST /blog/__actions/{action}) and a sibling [slug] directory
+// creates a wildcard route (e.g. /blog/{slug}/...) that also matches
+// the __actions segment.
+func safeHandle(mux *http.ServeMux, pattern string, handler http.Handler) {
+	defer func() {
+		if r := recover(); r != nil {
+			msg := fmt.Sprint(r)
+			if strings.Contains(msg, "conflicts with") || strings.Contains(msg, "already registered") {
+				panic(fmt.Sprintf(
+					"gosx: route conflict registering %q: %s\n\n"+
+						"This typically happens when a page with server actions sits next to a [param]\n"+
+						"directory. The __actions sub-path collides with the wildcard segment.\n\n"+
+						"To fix: move the page or its actions so that __actions doesn't share a path\n"+
+						"level with a dynamic [param] segment. For example, nest the dynamic routes\n"+
+						"under a sub-directory (e.g. /blog/posts/[slug] instead of /blog/[slug]).",
+					pattern, msg,
+				))
+			}
+			panic(r)
+		}
+	}()
+	mux.Handle(pattern, handler)
 }

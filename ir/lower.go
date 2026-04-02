@@ -2,6 +2,7 @@ package ir
 
 import (
 	"fmt"
+	"html"
 	"path"
 	"strconv"
 	"strings"
@@ -948,6 +949,18 @@ func (l *lowerer) lowerGSXElement(n *gotreesitter.Node) NodeID {
 	attrs := l.extractAttrs(openNode)
 	children := l.extractChildren(n)
 
+	// <script> and <style> contain raw text, not HTML-parsed content.
+	// Convert any text children to NodeRawHTML so the renderer won't escape
+	// operators like && or CSS selectors containing >.
+	if tag == "script" || tag == "style" {
+		for _, childID := range children {
+			child := &l.prog.Nodes[childID]
+			if child.Kind == NodeText {
+				child.Kind = NodeRawHTML
+			}
+		}
+	}
+
 	kind := NodeElement
 	if IsComponent(tag) {
 		kind = NodeComponent
@@ -1024,6 +1037,10 @@ func (l *lowerer) lowerText(n *gotreesitter.Node) NodeID {
 			Span:     l.span(n),
 		})
 	}
+	// Decode HTML entities (e.g. &rarr; → →) so the IR stores real UTF-8
+	// characters. The renderer's html.EscapeString pass will re-escape only
+	// the characters that actually need escaping (<, >, &, ").
+	text = html.UnescapeString(text)
 	return l.prog.AddNode(Node{
 		Kind:     NodeText,
 		Text:     text,
