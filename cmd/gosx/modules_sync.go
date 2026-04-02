@@ -95,10 +95,9 @@ func discoverModuleImports(projectDir, moduleRoot, modulePath string) ([]string,
 			if name != "." && strings.HasPrefix(name, ".") {
 				return filepath.SkipDir
 			}
-			// Skip dynamic route directories (e.g. [slug]) — they contain
-			// bracket characters that produce invalid Go import paths. These
-			// packages register themselves via runtime.Caller and don't need
-			// explicit imports.
+			// Skip legacy bracket directories (e.g. [slug]) — they contain
+			// characters that produce invalid Go import paths. Prefer the
+			// underscore convention (_slug) which is Go-compatible.
 			if strings.HasPrefix(name, "[") {
 				return filepath.SkipDir
 			}

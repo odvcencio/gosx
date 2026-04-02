@@ -666,11 +666,21 @@ func fileRouteSegment(part string) (segment string, param string, include bool) 
 		return "", "", false
 	}
 	switch {
+	// Legacy bracket syntax: [slug], [...path]
 	case strings.HasPrefix(part, "[...") && strings.HasSuffix(part, "]"):
 		name := strings.TrimSuffix(strings.TrimPrefix(part, "[..."), "]")
 		return "{" + name + "...}", name, true
 	case strings.HasPrefix(part, "[") && strings.HasSuffix(part, "]"):
 		name := strings.TrimSuffix(strings.TrimPrefix(part, "["), "]")
+		return "{" + name + "}", name, true
+	// Underscore syntax: _slug, __path (catch-all)
+	// Single underscore prefix = dynamic param, double = catch-all.
+	// Go-compatible: valid package names, works with go mod tidy.
+	case strings.HasPrefix(part, "__") && len(part) > 2:
+		name := part[2:]
+		return "{" + name + "...}", name, true
+	case strings.HasPrefix(part, "_") && len(part) > 1 && part[1] != '_':
+		name := part[1:]
 		return "{" + name + "}", name, true
 	default:
 		return part, "", true
