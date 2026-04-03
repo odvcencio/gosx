@@ -66,7 +66,9 @@ func Parse(source []byte) *Document {
 	if root == nil {
 		root = newNode(NodeDocument)
 	}
-	return &Document{Root: root, Source: source}
+	doc := &Document{Root: root, Source: source}
+	doc.extractFrontmatter()
+	return doc
 }
 
 // convertBlock recursively converts a block-level tree-sitter node into an AST Node.

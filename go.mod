@@ -9,3 +9,7 @@ require (
 	golang.org/x/image v0.38.0
 	golang.org/x/net v0.52.0
 )
+
+require gopkg.in/yaml.v3 v3.0.1
+
+replace github.com/odvcencio/gotreesitter => /home/draco/work/gotreesitter
