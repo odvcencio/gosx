@@ -126,6 +126,42 @@ func renderNode(r *Renderer, n *Node) string {
 	case NodeHardBreak:
 		return "<br />\n"
 
+	case NodeAdmonition:
+		adType := n.Attrs["type"]
+		inner := renderChildren(r, n)
+		title := strings.ToUpper(adType)
+		return fmt.Sprintf("<div class=\"admonition admonition-%s\"><p class=\"admonition-title\">%s</p>%s</div>\n", adType, title, inner)
+
+	case NodeTaskListItem:
+		inner := renderChildren(r, n)
+		inner = strings.TrimRight(inner, "\n")
+		checkedAttr := ""
+		if n.Attrs["checked"] == "true" {
+			checkedAttr = " checked"
+		}
+		return fmt.Sprintf("<li class=\"task-list-item\"><input type=\"checkbox\" disabled%s />%s</li>\n", checkedAttr, inner)
+
+	case NodeFootnoteRef:
+		id := html.EscapeString(n.Attrs["id"])
+		return fmt.Sprintf("<sup><a class=\"footnote-ref\" href=\"#fn-%s\" id=\"fnref-%s\">[%s]</a></sup>", id, id, id)
+
+	case NodeFootnoteDef:
+		id := html.EscapeString(n.Attrs["id"])
+		inner := renderChildren(r, n)
+		return fmt.Sprintf("<section class=\"footnotes\"><ol><li id=\"fn-%s\">%s <a href=\"#fnref-%s\">\u21a9</a></li></ol></section>\n", id, inner, id)
+
+	case NodeMathInline:
+		return fmt.Sprintf("<span class=\"math-inline\">%s</span>", html.EscapeString(n.Literal))
+
+	case NodeMathBlock:
+		return fmt.Sprintf("<div class=\"math-block\">%s</div>\n", html.EscapeString(n.Literal))
+
+	case NodeSuperscript:
+		return fmt.Sprintf("<sup>%s</sup>", html.EscapeString(n.Literal))
+
+	case NodeSubscript:
+		return fmt.Sprintf("<sub>%s</sub>", html.EscapeString(n.Literal))
+
 	default:
 		// For any unhandled node type, render children
 		return renderChildren(r, n)
