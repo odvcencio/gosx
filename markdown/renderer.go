@@ -5,6 +5,7 @@ type Renderer struct {
 	highlightCode bool
 	headingIDs    bool
 	unsafeHTML    bool
+	hardWraps     bool
 	imageResolver func(string) string
 }
 
@@ -33,6 +34,11 @@ func WithHeadingIDs(enabled bool) Option {
 // WithUnsafeHTML enables or disables raw HTML passthrough.
 func WithUnsafeHTML(enabled bool) Option {
 	return func(r *Renderer) { r.unsafeHTML = enabled }
+}
+
+// WithHardWraps makes single newlines render as <br> instead of whitespace.
+func WithHardWraps(enabled bool) Option {
+	return func(r *Renderer) { r.hardWraps = enabled }
 }
 
 // WithImageResolver sets a function to resolve image URLs.

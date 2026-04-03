@@ -121,6 +121,9 @@ func renderNode(r *Renderer, n *Node) string {
 		return html.EscapeString(n.Literal)
 
 	case NodeSoftBreak:
+		if r.hardWraps {
+			return "<br />\n"
+		}
 		return "\n"
 
 	case NodeHardBreak:
