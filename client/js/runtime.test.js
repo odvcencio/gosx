@@ -3287,6 +3287,9 @@ test("Scene3D drag only starts when the pointer lands on a shape in shared runti
   const canvas = mount.children[0];
   assert.equal(canvas.tagName, "CANVAS");
   assert.equal(canvas.style.cursor, "grab");
+  assert.equal((env.document.eventListeners.get("pointermove") || []).length, 0);
+  assert.equal((env.document.eventListeners.get("pointerup") || []).length, 0);
+  assert.equal((env.document.eventListeners.get("pointercancel") || []).length, 0);
 
   canvas.dispatchEvent({
     type: "pointerdown",
@@ -3301,6 +3304,7 @@ test("Scene3D drag only starts when the pointer lands on a shape in shared runti
   assert.equal(canvas.style.cursor, "grab");
   assert.equal(canvas._capturedPointerID, null);
   assert.equal(env.inputBatchCalls.length, 0);
+  assert.equal((env.document.eventListeners.get("pointermove") || []).length, 0);
 
   canvas.dispatchEvent({
     type: "pointerdown",
@@ -3314,6 +3318,22 @@ test("Scene3D drag only starts when the pointer lands on a shape in shared runti
   await flushAsyncWork();
 
   assert.equal(canvas.style.cursor, "grabbing");
+  assert.equal(canvas._capturedPointerID, 2);
+  assert.equal((env.document.eventListeners.get("pointermove") || []).length, 1);
+  assert.equal((env.document.eventListeners.get("pointerup") || []).length, 1);
+  assert.equal((env.document.eventListeners.get("pointercancel") || []).length, 1);
+
+  canvas.dispatchEvent({
+    type: "pointerdown",
+    button: 0,
+    pointerId: 3,
+    clientX: 320,
+    clientY: 160,
+    preventDefault() {},
+    stopPropagation() {},
+  });
+  await flushAsyncWork();
+
   assert.equal(canvas._capturedPointerID, 2);
 
   canvas.dispatchEvent({
@@ -3347,6 +3367,9 @@ test("Scene3D drag only starts when the pointer lands on a shape in shared runti
   await flushAsyncWork();
   assert.equal(canvas.style.cursor, "grab");
   assert.equal(canvas._capturedPointerID, null);
+  assert.equal((env.document.eventListeners.get("pointermove") || []).length, 0);
+  assert.equal((env.document.eventListeners.get("pointerup") || []).length, 0);
+  assert.equal((env.document.eventListeners.get("pointercancel") || []).length, 0);
   const releaseBatch = JSON.parse(env.inputBatchCalls[env.inputBatchCalls.length - 1][0]);
   assert.equal(releaseBatch["$scene.test.drag.active"], false);
   assert.equal(releaseBatch["$scene.test.drag.targetIndex"], -1);
@@ -3601,6 +3624,166 @@ test("bootstrap prefers engine-batched Scene3D pass payloads when present", asyn
 
   const gl = mount.children[0].getContext("webgl");
   assert.deepEqual(gl.bufferUploads.get(4), [1, 0, 0, 2, 0, 0]);
+});
+
+test("bootstrap keeps static Scene3D bundle-pass caches isolated per pass", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-pass-cache-root";
+  let renderIndex = 0;
+
+  const env = createContext({
+    elements: [mount],
+    enableWebGL: true,
+    disableCanvas2D: true,
+    fetchRoutes: {
+      "/runtime.wasm": { bytes: [0, 97, 115, 109] },
+      "/scene-pass-cache-program.json": { text: '{"name":"PassCache"}' },
+    },
+    manifest: {
+      runtime: { path: "/runtime.wasm" },
+      engines: [
+        {
+          id: "gosx-engine-pass-cache",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-pass-cache-root",
+          runtime: "shared",
+          props: { width: 640, height: 360, background: "#08151f" },
+          programRef: "/scene-pass-cache-program.json",
+        },
+      ],
+    },
+    onHydrateEngine: () => "[]",
+    onRenderEngine: () => {
+      renderIndex += 1;
+      return JSON.stringify({
+        background: "#08151f",
+        camera: { x: 0, y: 0, z: 6, fov: 72, near: 0.05, far: 128 },
+        positions: [],
+        colors: [],
+        vertexCount: 0,
+        worldPositions: [
+          1, 0, 0, 2, 0, 0,
+        ],
+        worldColors: [
+          0.3, 0.4, 0.5, 1, 0.3, 0.4, 0.5, 1,
+        ],
+        worldVertexCount: 2,
+        materials: [],
+        objects: [],
+        objectCount: 0,
+        passes: [
+          {
+            name: "staticOpaque",
+            blend: "opaque",
+            depth: "opaque",
+            static: true,
+            cacheKey: "shared-engine-pass-key",
+            positions: [1, 0, 0, 2, 0, 0],
+            colors: [0.3, 0.4, 0.5, 1, 0.3, 0.4, 0.5, 1],
+            materials: [0, 0, 1, 0, 0, 1],
+            vertexCount: 2,
+          },
+          {
+            name: "alpha",
+            blend: "alpha",
+            depth: "translucent",
+            static: true,
+            cacheKey: "shared-engine-pass-key",
+            positions: [-4, 0, 2, -3, 0, 2],
+            colors: [0.9, 0.8, 0.5, 1, 0.9, 0.8, 0.5, 1],
+            materials: [2, 0.05, 0.7, 2, 0.05, 0.7],
+            vertexCount: 2,
+          },
+        ],
+      });
+    },
+  });
+
+  let rafCount = 0;
+  env.context.requestAnimationFrame = (callback) => {
+    if (rafCount >= 1) return 0;
+    rafCount += 1;
+    return setTimeout(() => callback(rafCount * 16), 0);
+  };
+  env.context.cancelAnimationFrame = (handle) => clearTimeout(handle);
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const gl = mount.children[0].getContext("webgl");
+  assert.ok(env.engineRenderCalls.length >= 2);
+  assert.deepEqual(gl.bufferUploads.get(4), [1, 0, 0, 2, 0, 0]);
+  assert.deepEqual(gl.bufferUploads.get(7), [-4, 0, 2, -3, 0, 2]);
+  assert.equal(
+    gl.ops.filter((entry) => entry[0] === "bufferData" && entry[4] === gl.STATIC_DRAW && (entry[2] === 4 || entry[2] === 7)).length,
+    2,
+  );
+});
+
+test("bootstrap clamps engine-batched Scene3D pass vertex counts to uploaded geometry", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-pass-clamp-root";
+
+  const env = createContext({
+    elements: [mount],
+    enableWebGL: true,
+    disableCanvas2D: true,
+    fetchRoutes: {
+      "/runtime.wasm": { bytes: [0, 97, 115, 109] },
+      "/scene-pass-clamp-program.json": { text: '{"name":"PassClamp"}' },
+    },
+    manifest: {
+      runtime: { path: "/runtime.wasm" },
+      engines: [
+        {
+          id: "gosx-engine-pass-clamp",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-pass-clamp-root",
+          runtime: "shared",
+          props: { width: 640, height: 360, background: "#08151f" },
+          programRef: "/scene-pass-clamp-program.json",
+        },
+      ],
+    },
+    onHydrateEngine: () => "[]",
+    onRenderEngine: () => JSON.stringify({
+      background: "#08151f",
+      camera: { x: 0, y: 0, z: 6, fov: 72 },
+      positions: [],
+      colors: [],
+      vertexCount: 0,
+      worldPositions: [
+        1, 0, 0, 2, 0, 0,
+      ],
+      worldColors: [
+        0.3, 0.4, 0.5, 1, 0.3, 0.4, 0.5, 1,
+      ],
+      worldVertexCount: 2,
+      materials: [],
+      objects: [],
+      objectCount: 0,
+      passes: [
+        {
+          name: "dynamicOpaque",
+          blend: "opaque",
+          depth: "opaque",
+          positions: [1, 0, 0, 2, 0, 0],
+          colors: [0.3, 0.4, 0.5, 1, 0.3, 0.4, 0.5, 1],
+          materials: [0, 0, 1, 0, 0, 1],
+          vertexCount: 99,
+        },
+      ],
+    }),
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const gl = mount.children[0].getContext("webgl");
+  assert.ok(gl.ops.some((entry) => entry[0] === "drawArrays" && entry[3] === 2));
+  assert.ok(!gl.ops.some((entry) => entry[0] === "drawArrays" && entry[3] === 99));
 });
 
 test("bootstrap reuses opaque Scene3D WebGL state transitions within a frame", async () => {
@@ -3966,6 +4149,87 @@ test("bootstrap renders mixed native Scene3D primitives", async () => {
   assert.equal(labelLayer.children[0].textContent, "Geometry zooBrowser-measured overlay copy");
   assert.equal(env.context.__gosx.textLayout.read(labelLayer.children[0]).lineCount >= 2, true);
   assert.ok(strokeCount >= 12);
+  assert.equal(env.consoleLogs.warn.length, 0);
+  assert.equal(env.consoleLogs.error.length, 0);
+});
+
+test("bootstrap routes native Scene3D material profiles through WebGL pass planning", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-native-materials";
+
+  const env = createContext({
+    elements: [mount],
+    enableWebGL: true,
+    disableCanvas2D: true,
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-native-materials",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-native-materials",
+          jsExport: "GoSXScene3D",
+          props: {
+            width: 640,
+            height: 360,
+            background: "#08151f",
+            camera: { x: 0, y: 0, z: 6, near: 0.05, far: 128, fov: 72 },
+            scene: {
+              objects: [
+                {
+                  id: "floor",
+                  kind: "plane",
+                  width: 6.2,
+                  depth: 4.8,
+                  y: -1.8,
+                  z: 0.3,
+                  color: "#35556a",
+                  materialKind: "flat",
+                },
+                {
+                  id: "glass-orb",
+                  kind: "sphere",
+                  radius: 0.82,
+                  x: -1.35,
+                  y: 0.2,
+                  z: 0.85,
+                  color: "#c7f0ff",
+                  materialKind: "glass",
+                  opacity: 0.45,
+                  emissive: 0.05,
+                },
+                {
+                  id: "glow-orb",
+                  kind: "sphere",
+                  radius: 0.74,
+                  x: 1.45,
+                  y: 0.46,
+                  z: 1.62,
+                  color: "#8de1ff",
+                  materialKind: "glow",
+                  opacity: 0.72,
+                  emissive: 0.4,
+                },
+              ],
+            },
+          },
+          capabilities: ["webgl", "animation"],
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const gl = mount.children[0].getContext("webgl");
+  assert.ok(!gl.bufferUploads.has(1));
+  assert.ok(Array.isArray(gl.bufferUploads.get(4)) && gl.bufferUploads.get(4).length > 0);
+  assert.ok(Array.isArray(gl.bufferUploads.get(7)) && gl.bufferUploads.get(7).length > 0);
+  assert.ok(Array.isArray(gl.bufferUploads.get(10)) && gl.bufferUploads.get(10).length > 0);
+  assert.ok(gl.ops.some((entry) => entry[0] === "blendFunc" && entry[1] === gl.SRC_ALPHA && entry[2] === gl.ONE_MINUS_SRC_ALPHA));
+  assert.ok(gl.ops.some((entry) => entry[0] === "blendFunc" && entry[1] === gl.SRC_ALPHA && entry[2] === gl.ONE));
+  assert.ok(gl.ops.filter((entry) => entry[0] === "drawArrays" && entry[3] > 0).length >= 3);
   assert.equal(env.consoleLogs.warn.length, 0);
   assert.equal(env.consoleLogs.error.length, 0);
 });

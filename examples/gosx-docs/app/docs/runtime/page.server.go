@@ -39,9 +39,15 @@ func init() {
 								Rotation: scene.Rotate(-0.1, 0.24, 0),
 								Children: []scene.Node{
 									scene.Mesh{
-										ID:         "runtime-core",
-										Geometry:   scene.BoxGeometry{Width: 1.8, Height: 1.2, Depth: 1.2},
-										Material:   scene.FlatMaterial{Color: "#8de1ff"},
+										ID:       "runtime-core",
+										Geometry: scene.BoxGeometry{Width: 1.8, Height: 1.2, Depth: 1.2},
+										Material: scene.GlassMaterial{
+											Color:      "#8de1ff",
+											Opacity:    scene.Float(0.38),
+											Emissive:   scene.Float(0.06),
+											BlendMode:  scene.BlendAlpha,
+											RenderPass: scene.RenderAlpha,
+										},
 										Position:   scene.Vec3(-1.35, 0.55, 0),
 										Rotation:   scene.Rotate(0.28, 0.42, 0.08),
 										Spin:       scene.Rotate(0.08, 0.28, 0),
@@ -59,9 +65,15 @@ func init() {
 										Occlude:    true,
 									},
 									scene.Mesh{
-										ID:         "runtime-orb",
-										Geometry:   scene.SphereGeometry{Radius: 0.8, Segments: 20},
-										Material:   scene.FlatMaterial{Color: "#ffd36e"},
+										ID:       "runtime-orb",
+										Geometry: scene.SphereGeometry{Radius: 0.8, Segments: 20},
+										Material: scene.GlowMaterial{
+											Color:      "#ffd36e",
+											Opacity:    scene.Float(0.84),
+											Emissive:   scene.Float(0.42),
+											BlendMode:  scene.BlendAdditive,
+											RenderPass: scene.RenderAdditive,
+										},
 										Position:   scene.Vec3(1.2, 0.95, -0.25),
 										Spin:       scene.Rotate(0.14, 0.24, 0.08),
 										Drift:      scene.Vec3(0, 0.2, 0),
@@ -82,7 +94,7 @@ func init() {
 									scene.Mesh{
 										ID:       "runtime-floor",
 										Geometry: scene.PlaneGeometry{Width: 6.6, Height: 4.6},
-										Material: scene.FlatMaterial{Color: "#112738"},
+										Material: scene.MatteMaterial{Color: "#112738"},
 										Position: scene.Vec3(0, -1.05, 0),
 										Rotation: scene.Rotate(-math.Pi/2, 0, 0),
 									},

@@ -1,6 +1,7 @@
 package route
 
 import (
+	"encoding/json"
 	"errors"
 	"reflect"
 	"testing"
@@ -101,5 +102,69 @@ func TestSpreadPropsUsesGoSXSpreadPropsWhenAvailable(t *testing.T) {
 	objects, ok := sceneValue["objects"].([]map[string]any)
 	if !ok || len(objects) != 1 || objects[0]["kind"] != "box" {
 		t.Fatalf("expected lowered scene objects, got %#v", sceneValue["objects"])
+	}
+}
+
+func TestMarshalEnginePropsCanonicalizesCaseAliasesRecursively(t *testing.T) {
+	raw := marshalEngineProps(map[string]any{
+		"Background": "#ff00ff",
+		"background": "#08151f",
+		"Camera": map[string]any{
+			"Near": 0.15,
+			"Far":  64,
+		},
+		"Scene": map[string]any{
+			"Objects": []map[string]any{
+				{
+					"Kind":  "box",
+					"Color": "#8de1ff",
+				},
+			},
+		},
+	})
+	if len(raw) == 0 {
+		t.Fatal("expected non-empty engine props payload")
+	}
+
+	var decoded map[string]any
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		t.Fatalf("unmarshal engine props: %v", err)
+	}
+
+	if got := decoded["background"]; got != "#08151f" {
+		t.Fatalf("expected lower-camel background to win, got %#v", got)
+	}
+	if _, ok := decoded["Background"]; ok {
+		t.Fatalf("did not expect exported background alias in %#v", decoded)
+	}
+
+	camera, ok := decoded["camera"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected canonical camera map, got %#v", decoded["camera"])
+	}
+	if camera["near"] != 0.15 || camera["far"] != float64(64) {
+		t.Fatalf("expected canonical clip planes, got %#v", camera)
+	}
+	if _, ok := camera["Near"]; ok {
+		t.Fatalf("did not expect exported camera aliases in %#v", camera)
+	}
+
+	sceneValue, ok := decoded["scene"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected canonical scene map, got %#v", decoded["scene"])
+	}
+	objects, ok := sceneValue["objects"].([]any)
+	if !ok || len(objects) != 1 {
+		t.Fatalf("expected canonical scene objects, got %#v", sceneValue["objects"])
+	}
+	object, ok := objects[0].(map[string]any)
+	if !ok {
+		t.Fatalf("expected canonical object map, got %#v", objects[0])
+	}
+	if object["kind"] != "box" || object["color"] != "#8de1ff" {
+		t.Fatalf("expected lower-camel object keys, got %#v", object)
+	}
+	if _, ok := object["Kind"]; ok {
+		t.Fatalf("did not expect exported object aliases in %#v", object)
 	}
 }
