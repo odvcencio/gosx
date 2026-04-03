@@ -9,7 +9,7 @@ import (
 func init() {
 	route.MustRegisterFileModuleHere(route.FileModuleOptions{
 		Metadata: func(ctx *route.RouteContext, page route.FilePage, data any) (server.Metadata, error) {
-			return server.Metadata{Title: "Settings"}, nil
+			return server.Metadata{Title: server.Title{Absolute: "Settings"}}, nil
 		},
 		Actions: route.FileActions{
 			"saveSettings": func(ctx *action.Context) error {

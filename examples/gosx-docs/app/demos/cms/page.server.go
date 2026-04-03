@@ -34,7 +34,7 @@ func init() {
 		route.FileModuleOptions{
 			Metadata: func(ctx *route.RouteContext, page route.FilePage, data any) (server.Metadata, error) {
 				return server.Metadata{
-					Title: "CMS Demo | GoSX",
+					Title: server.Title{Absolute: "CMS Demo | GoSX"},
 				}, nil
 			},
 			Load: func(ctx *route.RouteContext, page route.FilePage) (any, error) {

@@ -67,9 +67,79 @@ func sidecarMetadataPath(file string) string {
 }
 
 func isZeroMetadata(meta server.Metadata) bool {
-	return meta.Title == "" &&
-		meta.Description == "" &&
-		meta.Canonical == "" &&
-		len(meta.Meta) == 0 &&
+	return isZeroMetadataTitle(meta.Title) &&
+		strings.TrimSpace(meta.Description) == "" &&
+		strings.TrimSpace(meta.MetadataBase) == "" &&
+		(meta.Alternates == nil || isZeroMetadataAlternates(*meta.Alternates)) &&
+		(meta.Robots == nil || isZeroMetadataRobots(*meta.Robots)) &&
+		(meta.Icons == nil || isZeroMetadataIcons(*meta.Icons)) &&
+		strings.TrimSpace(meta.Manifest) == "" &&
+		(meta.Verification == nil || isZeroMetadataVerification(*meta.Verification)) &&
+		len(meta.ThemeColor) == 0 &&
+		(meta.OpenGraph == nil || isZeroMetadataOpenGraph(*meta.OpenGraph)) &&
+		(meta.Twitter == nil || isZeroMetadataTwitter(*meta.Twitter)) &&
+		len(meta.JSONLD) == 0 &&
+		len(meta.Other) == 0 &&
 		len(meta.Links) == 0
+}
+
+func isZeroMetadataTitle(title server.Title) bool {
+	return strings.TrimSpace(title.Absolute) == "" &&
+		strings.TrimSpace(title.Default) == "" &&
+		strings.TrimSpace(title.Template) == ""
+}
+
+func isZeroMetadataAlternates(alternates server.Alternates) bool {
+	return strings.TrimSpace(alternates.Canonical) == "" &&
+		len(alternates.Languages) == 0 &&
+		len(alternates.Media) == 0 &&
+		len(alternates.Types) == 0
+}
+
+func isZeroMetadataRobots(robots server.Robots) bool {
+	return robots.Index == nil &&
+		robots.Follow == nil &&
+		!robots.NoArchive &&
+		!robots.NoImageAI &&
+		!robots.NoTranslate &&
+		(robots.GoogleBot == nil || (robots.GoogleBot.Index == nil &&
+			robots.GoogleBot.Follow == nil &&
+			robots.GoogleBot.MaxSnippet == 0 &&
+			strings.TrimSpace(robots.GoogleBot.MaxImagePreview) == "" &&
+			robots.GoogleBot.MaxVideoPreview == 0))
+}
+
+func isZeroMetadataIcons(icons server.Icons) bool {
+	return len(icons.Icon) == 0 &&
+		len(icons.Shortcut) == 0 &&
+		len(icons.Apple) == 0 &&
+		len(icons.Other) == 0
+}
+
+func isZeroMetadataVerification(verification server.Verification) bool {
+	return strings.TrimSpace(verification.Google) == "" &&
+		strings.TrimSpace(verification.Bing) == "" &&
+		strings.TrimSpace(verification.Yandex) == "" &&
+		strings.TrimSpace(verification.Yahoo) == "" &&
+		len(verification.Other) == 0
+}
+
+func isZeroMetadataOpenGraph(openGraph server.OpenGraph) bool {
+	return strings.TrimSpace(openGraph.Type) == "" &&
+		strings.TrimSpace(openGraph.URL) == "" &&
+		strings.TrimSpace(openGraph.SiteName) == "" &&
+		strings.TrimSpace(openGraph.Locale) == "" &&
+		strings.TrimSpace(openGraph.Title) == "" &&
+		strings.TrimSpace(openGraph.Description) == "" &&
+		len(openGraph.Images) == 0 &&
+		openGraph.Article == nil
+}
+
+func isZeroMetadataTwitter(twitter server.Twitter) bool {
+	return strings.TrimSpace(twitter.Card) == "" &&
+		strings.TrimSpace(twitter.Site) == "" &&
+		strings.TrimSpace(twitter.Creator) == "" &&
+		strings.TrimSpace(twitter.Title) == "" &&
+		strings.TrimSpace(twitter.Description) == "" &&
+		len(twitter.Images) == 0
 }

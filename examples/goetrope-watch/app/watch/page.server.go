@@ -28,7 +28,7 @@ func init() {
 				code = "alpha"
 			}
 			return server.Metadata{
-				Title:       fmt.Sprintf("Room %s | Goetrope Watch", strings.ToUpper(code)),
+				Title:       server.Title{Default: fmt.Sprintf("Room %s | Goetrope Watch", strings.ToUpper(code))},
 				Description: "Server-rendered room snapshot with normalized queue titles and cached subtitle state.",
 			}, nil
 		},

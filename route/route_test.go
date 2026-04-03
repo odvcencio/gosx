@@ -187,7 +187,7 @@ func TestRouterCustomNotFoundWinsOverRootRoute(t *testing.T) {
 		},
 	})
 	router.SetNotFound(func(ctx *RouteContext) gosx.Node {
-		ctx.SetMetadata(server.Metadata{Title: "Missing"})
+		ctx.SetMetadata(server.Metadata{Title: server.Title{Absolute: "Missing"}})
 		return gosx.Text("missing")
 	})
 
@@ -210,7 +210,7 @@ func TestRouterCustomNotFoundWinsOverRootRoute(t *testing.T) {
 func TestRouterErrorHandlerHandlesPanics(t *testing.T) {
 	router := NewRouter()
 	router.SetError(func(ctx *RouteContext, err error) gosx.Node {
-		ctx.SetMetadata(server.Metadata{Title: "Broken"})
+		ctx.SetMetadata(server.Metadata{Title: server.Title{Absolute: "Broken"}})
 		return gosx.Text("error:" + err.Error())
 	})
 	router.Add(Route{
@@ -242,7 +242,7 @@ func TestRouterContextMetadataCanDriveLayout(t *testing.T) {
 		Pattern: "/docs",
 		Handler: func(ctx *RouteContext) gosx.Node {
 			ctx.SetMetadata(server.Metadata{
-				Title:       "Docs",
+				Title:       server.Title{Absolute: "Docs"},
 				Description: "Route metadata",
 			})
 			ctx.AddHead(gosx.El("link", gosx.Attrs(gosx.Attr("rel", "stylesheet"), gosx.Attr("href", "/docs.css"))))

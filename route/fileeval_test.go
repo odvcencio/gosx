@@ -6,6 +6,19 @@ import (
 	"testing"
 )
 
+type testSceneSpread struct {
+	Width int
+}
+
+func (testSceneSpread) GoSXSpreadProps() map[string]any {
+	return map[string]any{
+		"width": 640,
+		"scene": map[string]any{
+			"objects": []map[string]any{{"kind": "box"}},
+		},
+	}
+}
+
 func TestTryCallValueBuildsStructAndVariadicArgs(t *testing.T) {
 	type props struct {
 		Name  string
@@ -73,5 +86,20 @@ func TestReflectValueSupportsPointerAndNilTargets(t *testing.T) {
 	}
 	if !nilValue.IsNil() {
 		t.Fatalf("expected nil pointer, got %#v", nilValue.Interface())
+	}
+}
+
+func TestSpreadPropsUsesGoSXSpreadPropsWhenAvailable(t *testing.T) {
+	got := spreadProps(testSceneSpread{Width: 320})
+	if want := 640; !reflect.DeepEqual(got["width"], want) {
+		t.Fatalf("expected width %#v, got %#v", want, got["width"])
+	}
+	sceneValue, ok := got["scene"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected lowered scene map, got %#v", got["scene"])
+	}
+	objects, ok := sceneValue["objects"].([]map[string]any)
+	if !ok || len(objects) != 1 || objects[0]["kind"] != "box" {
+		t.Fatalf("expected lowered scene objects, got %#v", sceneValue["objects"])
 	}
 }

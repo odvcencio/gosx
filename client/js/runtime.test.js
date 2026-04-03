@@ -3970,6 +3970,61 @@ test("bootstrap renders mixed native Scene3D primitives", async () => {
   assert.equal(env.consoleLogs.error.length, 0);
 });
 
+test("bootstrap respects static Scene3D camera clip props for label projection", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-camera-clip";
+
+  const env = createContext({
+    elements: [mount],
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-camera-clip",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-camera-clip",
+          jsExport: "GoSXScene3D",
+          props: {
+            width: 520,
+            height: 320,
+            autoRotate: false,
+            camera: { x: 0, y: 0, z: 6, fov: 72, near: 7, far: 8 },
+            scene: {
+              labels: [
+                {
+                  id: "clipped-label",
+                  text: "Too near",
+                  x: -0.5,
+                  y: 0.3,
+                  z: 0,
+                  maxWidth: 96,
+                },
+                {
+                  id: "visible-label",
+                  text: "Visible depth",
+                  x: 0.5,
+                  y: 0.6,
+                  z: 1.5,
+                  maxWidth: 120,
+                },
+              ],
+            },
+          },
+          capabilities: ["canvas"],
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const labelLayer = mount.children[1];
+  assert.equal(labelLayer.children.length, 1);
+  assert.equal(labelLayer.children[0].getAttribute("data-gosx-scene-label"), "visible-label");
+  assert.equal(labelLayer.children[0].textContent, "Visible depth");
+});
+
 test("bootstrap gives Scene3D labels a shared text-layout CSS contract and custom classes", async () => {
   const mount = new FakeElement("div", null);
   mount.id = "scene-label-contract";

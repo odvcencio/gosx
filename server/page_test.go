@@ -37,7 +37,7 @@ func TestDocumentContextDefaultsWithoutRequest(t *testing.T) {
 
 func TestDocumentContextUsesRequestURIForPathAndPageID(t *testing.T) {
 	ctx := newContext(httptest.NewRequest(http.MethodGet, "/docs/forms?tab=posting", nil))
-	ctx.SetMetadata(Metadata{Title: "Forms"})
+	ctx.SetMetadata(Metadata{Title: Title{Absolute: "Forms"}})
 
 	doc := ctx.documentContext("GET /docs/forms", "Fallback", gosx.Text("body"), true)
 

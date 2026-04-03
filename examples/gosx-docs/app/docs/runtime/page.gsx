@@ -90,14 +90,20 @@ func Page() Node {
 			<div class="scene-copy">
 				<span class="eyebrow">Native Scene3D</span>
 				<h2>
-					.gsx can now mount engine-backed surfaces and feed live runtime signals without dropping down to bare Go nodes.
+					.gsx can now mount engine-backed surfaces from typed Go scene data instead of hand-assembling raw prop bags.
 				</h2>
 				<p>
 					The scene below is declared in
 					<span class="inline-code">page.gsx</span>
 					while
 					<span class="inline-code">page.server.go</span>
-					points it at a real shared-runtime engine program served by the app. That keeps the authoring path server-first while making the browser runtime explicit instead of ad hoc.
+					returns a typed
+					<span class="inline-code">scene.Props</span>
+					payload with camera clipping, a
+					<span class="inline-code">scene.Graph</span>
+					fallback, and a shared-runtime
+					<span class="inline-code">ProgramRef</span>
+					served by the app. That keeps the authoring path server-first while making the browser runtime explicit instead of ad hoc.
 				</p>
 				<div class="scene-controls">
 					<div class="scene-control">
@@ -132,14 +138,30 @@ func Page() Node {
 		window.__gosx_page_nav.navigate("/docs/routing")`)}
 		{DocsCodeBlock("go", `func Load(ctx *route.RouteContext, page route.FilePage) (any, error) {
     ctx.LifecycleScript(docsapp.PublicAssetURL("runtime/watch-transport.js"))
-    return data, nil
+    return map[string]any{
+        "sceneDemo": scene.Props{
+            ProgramRef: "/api/runtime/scene-program",
+            Background: "#08151f",
+            DragToRotate: scene.Bool(true),
+            Camera: scene.PerspectiveCamera{
+                Position: scene.Vec3(0, 1.1, 6.2),
+                FOV:      58,
+                Near:     0.15,
+                Far:      72,
+            },
+            Graph: scene.NewGraph(
+                scene.Mesh{ID: "runtime-core", Geometry: scene.BoxGeometry{Width: 1.8, Height: 1.2, Depth: 1.2}},
+                scene.Label{Target: "runtime-core", Text: "Shared runtime"},
+            ),
+        },
+    }, nil
 }`)}
 		{DocsCodeBlock("go", `ctx.ManagedScript(
     docsapp.PublicAssetURL("cms-demo.js"),
     server.ManagedScriptOptions{},
 )`)}
 		{DocsCodeBlock("gosx", `func Page() Node {
-		    return <Scene3D class="scene-shell" programRef="/api/runtime/scene-program" {...data.sceneDemo}>
+		    return <Scene3D class="scene-shell" {...data.sceneDemo}>
 		        <div class="scene-fallback">Preparing the scene runtime...</div>
 		    </Scene3D>
 		}`)}

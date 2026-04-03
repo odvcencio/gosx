@@ -139,7 +139,7 @@ func main() {
 		Middleware: []route.Middleware{authn.Require},
 		Handler: func(ctx *route.RouteContext) gosx.Node {
 			ctx.SetMetadata(server.Metadata{
-				Title:       "Secret Lab | GoSX Docs",
+				Title:       server.Title{Absolute: "Secret Lab | GoSX Docs"},
 				Description: "A guarded route proving auth middleware works on the same router that serves file-based pages.",
 			})
 			name := ""

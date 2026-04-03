@@ -227,7 +227,7 @@ func init() {
 		},
 		Metadata: func(ctx *route.RouteContext, page route.FilePage, data any) (server.Metadata, error) {
 			return server.Metadata{
-				Title: "Verify Export",
+				Title: server.Title{Default: "Verify Export"},
 			}, nil
 		},
 		Bindings: func(ctx *route.RouteContext, page route.FilePage, data any) route.FileTemplateBindings {

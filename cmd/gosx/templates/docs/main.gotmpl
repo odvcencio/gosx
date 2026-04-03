@@ -75,7 +75,7 @@ func main() {
 		Pattern: "/labs/stream",
 		Handler: func(ctx *route.RouteContext) gosx.Node {
 			ctx.SetMetadata(server.Metadata{
-				Title:       "Streaming | GoSX Docs",
+				Title:       server.Title{Default: "Streaming | GoSX Docs"},
 				Description: "Deferred regions flush fallback HTML first, then stream the resolved node into place.",
 			})
 			region := ctx.DeferWithOptions(server.DeferredOptions{
@@ -123,7 +123,7 @@ func main() {
 		Middleware: []route.Middleware{authn.Require},
 		Handler: func(ctx *route.RouteContext) gosx.Node {
 			ctx.SetMetadata(server.Metadata{
-				Title:       "Secret Lab | GoSX Docs",
+				Title:       server.Title{Default: "Secret Lab | GoSX Docs"},
 				Description: "A guarded route proving auth middleware works on the same router that serves file-based pages.",
 			})
 			name := ""

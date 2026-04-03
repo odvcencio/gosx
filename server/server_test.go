@@ -300,7 +300,7 @@ func TestAppHealthAndReadinessEndpoints(t *testing.T) {
 func TestAppRecoversFromPanics(t *testing.T) {
 	app := New()
 	app.SetErrorPage(func(ctx *Context, err error) gosx.Node {
-		ctx.SetMetadata(Metadata{Title: "Broken"})
+		ctx.SetMetadata(Metadata{Title: Title{Absolute: "Broken"}})
 		return gosx.Text("custom-error:" + err.Error())
 	})
 	app.Route("/panic", func(r *http.Request) gosx.Node {
@@ -327,7 +327,7 @@ func TestAppDefaultDocumentRendersMetadataAndHead(t *testing.T) {
 	app := New()
 	app.Page("GET /", func(ctx *Context) gosx.Node {
 		ctx.SetMetadata(Metadata{
-			Title:       "Welcome",
+			Title:       Title{Absolute: "Welcome"},
 			Description: "Server metadata",
 			Links: []LinkTag{
 				{Rel: "stylesheet", Href: "/styles.css", Layer: CSSLayerPage, Owner: "metadata", Source: "styles.css"},
@@ -677,7 +677,7 @@ func TestAppEmitsDocumentContract(t *testing.T) {
 	app := New()
 	app.EnableNavigation()
 	app.Page("GET /docs", func(ctx *Context) gosx.Node {
-		ctx.SetMetadata(Metadata{Title: "Docs"})
+		ctx.SetMetadata(Metadata{Title: Title{Absolute: "Docs"}})
 		return ctx.TextBlock(TextBlockProps{
 			Text: "hello docs",
 		})
@@ -712,7 +712,7 @@ func TestAppEmitsNavigationOnlyDocumentContract(t *testing.T) {
 	app := New()
 	app.EnableNavigation()
 	app.Page("GET /docs/forms", func(ctx *Context) gosx.Node {
-		ctx.SetMetadata(Metadata{Title: "Forms"})
+		ctx.SetMetadata(Metadata{Title: Title{Absolute: "Forms"}})
 		return gosx.El("main", gosx.Text("Forms"))
 	})
 
@@ -755,7 +755,7 @@ func TestAppSeedsInitialNavigationDocumentState(t *testing.T) {
 	app := New()
 	app.EnableNavigation()
 	app.Page("GET /docs/forms", func(ctx *Context) gosx.Node {
-		ctx.SetMetadata(Metadata{Title: "Forms"})
+		ctx.SetMetadata(Metadata{Title: Title{Absolute: "Forms"}})
 		return gosx.El("main", gosx.Text("Forms"))
 	})
 
@@ -779,7 +779,7 @@ func TestCustomDocumentCanReuseDocumentContractAttrs(t *testing.T) {
 	app := New()
 	app.EnableNavigation()
 	app.Page("GET /docs/forms", func(ctx *Context) gosx.Node {
-		ctx.SetMetadata(Metadata{Title: "Forms"})
+		ctx.SetMetadata(Metadata{Title: Title{Absolute: "Forms"}})
 		return gosx.El("main", gosx.Text("Forms"))
 	})
 
@@ -1616,7 +1616,7 @@ func TestAppCustomNotFoundWinsOverRootRouteCatchall(t *testing.T) {
 		return gosx.Text("home")
 	})
 	app.SetNotFound(func(ctx *Context) gosx.Node {
-		ctx.SetMetadata(Metadata{Title: "Missing"})
+		ctx.SetMetadata(Metadata{Title: Title{Absolute: "Missing"}})
 		return gosx.Text("missing")
 	})
 
