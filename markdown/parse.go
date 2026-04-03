@@ -195,6 +195,8 @@ func convertBlock(bt *gotreesitter.BoundTree, n *gotreesitter.Node, source []byt
 				para.Children = append(para.Children, parseInline(gap, source)...)
 			}
 		}
+		// Split text nodes on newlines → insert NodeSoftBreak
+		para.Children = splitTextNewlines(para.Children)
 		return para
 
 	case "fenced_code_block", "indented_code_block":
@@ -383,7 +385,8 @@ func parseInline(text string, source []byte) []*Node {
 	defer tree.Release()
 
 	bt := gotreesitter.Bind(tree)
-	return convertInlineChildren(bt, bt.RootNode(), src)
+	nodes := convertInlineChildren(bt, bt.RootNode(), src)
+	return splitTextNewlines(nodes)
 }
 
 // convertInlineChildren walks an inline tree-sitter node and converts
@@ -982,4 +985,26 @@ func findChild(bt *gotreesitter.BoundTree, n *gotreesitter.Node, nodeType string
 		}
 	}
 	return nil
+}
+
+// splitTextNewlines splits text nodes containing newlines into
+// text + NodeSoftBreak sequences so the renderer can apply hard wraps.
+func splitTextNewlines(nodes []*Node) []*Node {
+	var out []*Node
+	for _, n := range nodes {
+		if n.Type != NodeText || !strings.Contains(n.Literal, "\n") {
+			out = append(out, n)
+			continue
+		}
+		lines := strings.Split(n.Literal, "\n")
+		for i, line := range lines {
+			if line != "" {
+				out = append(out, textNode(line))
+			}
+			if i < len(lines)-1 {
+				out = append(out, &Node{Type: NodeSoftBreak})
+			}
+		}
+	}
+	return out
 }
