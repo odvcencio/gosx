@@ -14,6 +14,7 @@ import (
 
 	"github.com/odvcencio/gosx"
 	"github.com/odvcencio/gosx/action"
+	"github.com/odvcencio/gosx/scene"
 	"github.com/odvcencio/gosx/server"
 	"github.com/odvcencio/gosx/session"
 )
@@ -832,6 +833,79 @@ func Page() Node {
 	}
 }
 
+func TestDefaultFileRendererSupportsTypedScenePropsSpread(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "page.gsx")
+	source := `package docs
+
+func Page() Node {
+	return <Scene3D class="scene-shell" {...data.scene}>
+		<div>Scene fallback</div>
+	</Scene3D>
+}
+`
+	if err := os.WriteFile(path, []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := &RouteContext{
+		Data: map[string]any{
+			"scene": scene.Props{
+				Width:      640,
+				Height:     360,
+				Label:      "Typed Scene3D",
+				Background: "#08151f",
+				ProgramRef: "/api/runtime/scene-program",
+				Camera: scene.PerspectiveCamera{
+					Position: scene.Vec3(0, 0.4, 6),
+					FOV:      62,
+					Near:     0.15,
+					Far:      64,
+				},
+				Graph: scene.NewGraph(
+					scene.Mesh{
+						ID:       "hero",
+						Geometry: scene.BoxGeometry{Width: 1.8, Height: 1.2, Depth: 0.8},
+						Material: scene.FlatMaterial{Color: "#8de1ff"},
+						Position: scene.Vec3(0, 0.2, 0),
+					},
+					scene.Label{
+						Target:     "hero",
+						Text:       "Typed spread",
+						Position:   scene.Vec3(0, 1.1, 0),
+						Shift:      scene.Vec3(0.12, 0.18, 0),
+						DriftSpeed: 0.8,
+					},
+				),
+			},
+		},
+	}
+
+	node, err := DefaultFileRenderer(ctx, FilePage{FilePath: path, Pattern: "/"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	html := gosx.RenderHTML(node)
+	if !strings.Contains(html, `data-gosx-engine="GoSXScene3D"`) {
+		t.Fatalf("expected Scene3D mount shell in %q", html)
+	}
+
+	head := gosx.RenderHTML(ctx.Runtime().Head())
+	for _, snippet := range []string{
+		`/api/runtime/scene-program`,
+		`"near": 0.15`,
+		`"far": 64`,
+		`"kind": "box"`,
+		`"text": "Typed spread"`,
+		`"driftSpeed": 0.8`,
+	} {
+		if !strings.Contains(head, snippet) {
+			t.Fatalf("expected %q in typed Scene3D runtime head %q", snippet, head)
+		}
+	}
+}
+
 func TestDefaultFileRendererRendersTextBlockPrimitive(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "page.gsx")
@@ -1521,7 +1595,7 @@ func Page() Node {
 		Metadata: func(ctx *RouteContext, page FilePage, data any) (server.Metadata, error) {
 			values := data.(map[string]string)
 			return server.Metadata{
-				Title:       values["member"] + " | " + values["team"],
+				Title:       server.Title{Absolute: values["member"] + " | " + values["team"]},
 				Description: page.Source,
 			}, nil
 		},

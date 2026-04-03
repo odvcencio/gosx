@@ -13,7 +13,7 @@ func init() {
 			}, nil
 		},
 		Metadata: func(ctx *route.RouteContext, page route.FilePage, data any) (server.Metadata, error) {
-			return server.Metadata{Title: "Users"}, nil
+			return server.Metadata{Title: server.Title{Absolute: "Users"}}, nil
 		},
 	})
 }
