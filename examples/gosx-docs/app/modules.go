@@ -66,7 +66,7 @@ func RegisterDocsPage(title, description string, opts route.FileModuleOptions) {
 	bindings := opts.Bindings
 	opts.Metadata = func(ctx *route.RouteContext, page route.FilePage, data any) (server.Metadata, error) {
 		meta := server.Metadata{
-			Title:       title + " | GoSX",
+			Title:       server.Title{Absolute: title + " | GoSX"},
 			Description: description,
 		}
 		if metadata == nil {
@@ -93,7 +93,7 @@ func RegisterStaticDocsPage(title, description string, opts route.FileModuleOpti
 	bindings := opts.Bindings
 	opts.Metadata = func(ctx *route.RouteContext, page route.FilePage, data any) (server.Metadata, error) {
 		meta := server.Metadata{
-			Title:       title + " | GoSX",
+			Title:       server.Title{Absolute: title + " | GoSX"},
 			Description: description,
 		}
 		if metaMetadata == nil {
@@ -116,22 +116,53 @@ func RegisterStaticDocsPage(title, description string, opts route.FileModuleOpti
 }
 
 func mergeDocsMetadata(base, extra server.Metadata) server.Metadata {
-	if extra.Title != "" {
+	if !isZeroDocsTitle(extra.Title) {
 		base.Title = extra.Title
 	}
 	if extra.Description != "" {
 		base.Description = extra.Description
 	}
-	if extra.Canonical != "" {
-		base.Canonical = extra.Canonical
+	if extra.MetadataBase != "" {
+		base.MetadataBase = extra.MetadataBase
 	}
-	if len(extra.Meta) > 0 {
-		base.Meta = append(base.Meta, extra.Meta...)
+	if extra.Alternates != nil {
+		base.Alternates = extra.Alternates
+	}
+	if extra.Robots != nil {
+		base.Robots = extra.Robots
+	}
+	if extra.Icons != nil {
+		base.Icons = extra.Icons
+	}
+	if extra.Manifest != "" {
+		base.Manifest = extra.Manifest
+	}
+	if extra.Verification != nil {
+		base.Verification = extra.Verification
+	}
+	if len(extra.ThemeColor) > 0 {
+		base.ThemeColor = append([]server.ThemeColor(nil), extra.ThemeColor...)
+	}
+	if extra.OpenGraph != nil {
+		base.OpenGraph = extra.OpenGraph
+	}
+	if extra.Twitter != nil {
+		base.Twitter = extra.Twitter
+	}
+	if len(extra.JSONLD) > 0 {
+		base.JSONLD = append([]any(nil), extra.JSONLD...)
+	}
+	if len(extra.Other) > 0 {
+		base.Other = append(base.Other, extra.Other...)
 	}
 	if len(extra.Links) > 0 {
 		base.Links = append(base.Links, extra.Links...)
 	}
 	return base
+}
+
+func isZeroDocsTitle(title server.Title) bool {
+	return title.Absolute == "" && title.Default == "" && title.Template == ""
 }
 
 func defaultDocsBindings() route.FileTemplateBindings {

@@ -11,7 +11,7 @@ import (
 func init() {
 	route.MustRegisterFileModuleHere(route.FileModuleOptions{
 		Metadata: func(ctx *route.RouteContext, page route.FilePage, data any) (server.Metadata, error) {
-			return server.Metadata{Title: "New User"}, nil
+			return server.Metadata{Title: server.Title{Absolute: "New User"}}, nil
 		},
 		Actions: route.FileActions{
 			"createUser": func(ctx *action.Context) error {

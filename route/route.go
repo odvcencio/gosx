@@ -432,7 +432,7 @@ func (r *Router) renderNotFound(w http.ResponseWriter, req *http.Request) {
 		}
 	}
 	if node.IsZero() {
-		ctx.SetMetadata(server.Metadata{Title: "Not Found"})
+		ctx.SetMetadata(server.Metadata{Title: server.Title{Absolute: "Not Found"}})
 		node = defaultStatusBody("Page not found", "The requested page could not be found.")
 	}
 
@@ -456,7 +456,7 @@ func (r *Router) renderError(w http.ResponseWriter, ctx *RouteContext, layouts [
 		if title == "" {
 			title = "Server Error"
 		}
-		ctx.SetMetadata(server.Metadata{Title: title})
+		ctx.SetMetadata(server.Metadata{Title: server.Title{Absolute: title}})
 		node = defaultStatusBody(title, defaultErrorMessage(err, pattern))
 	}
 

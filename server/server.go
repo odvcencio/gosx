@@ -630,8 +630,10 @@ func (a *App) renderPageNode(ctx *Context, pattern string, body gosx.Node, defau
 }
 
 func pageTitle(ctx *Context, pattern string, defaultTitle string) string {
-	if ctx != nil && strings.TrimSpace(ctx.metadata.Title) != "" {
-		return ctx.metadata.Title
+	if ctx != nil {
+		if title := resolveTitle(ctx.metadata.Title); title != "" {
+			return title
+		}
 	}
 	return fallbackTitle(pattern, defaultTitle)
 }
@@ -650,7 +652,7 @@ func (a *App) renderNotFound(w http.ResponseWriter, r *http.Request) {
 	if a.notFound != nil {
 		node = a.notFound(ctx)
 	} else {
-		ctx.SetMetadata(Metadata{Title: "Not Found"})
+		ctx.SetMetadata(Metadata{Title: Title{Absolute: "Not Found"}})
 		node = defaultStatusBody("Page not found", "The requested page could not be found.")
 	}
 	a.renderPage(w, ctx, "", node, "Not Found")
@@ -674,7 +676,7 @@ func (a *App) renderError(w http.ResponseWriter, r *http.Request, err error) {
 		if title == "" {
 			title = "Server Error"
 		}
-		ctx.SetMetadata(Metadata{Title: title})
+		ctx.SetMetadata(Metadata{Title: Title{Absolute: title}})
 		node = defaultStatusBody(title, defaultErrorMessage(err, r))
 	}
 	a.renderPage(w, ctx, "", node, http.StatusText(ctx.status))

@@ -191,8 +191,8 @@ func (s *PageState) Title(fallback string) string {
 	if s == nil {
 		return fallback
 	}
-	if s.metadata.Title != "" {
-		return s.metadata.Title
+	if title := resolveTitle(s.metadata.Title); title != "" {
+		return title
 	}
 	return fallback
 }

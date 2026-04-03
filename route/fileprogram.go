@@ -1736,11 +1736,20 @@ func spreadValue(value any, name string) (any, bool) {
 
 func spreadProps(value any) map[string]any {
 	out := map[string]any{}
+	if value == nil {
+		return out
+	}
+	if provider, ok := value.(interface{ GoSXSpreadProps() map[string]any }); ok {
+		return cloneSpreadProps(provider.GoSXSpreadProps())
+	}
 
 	rv := reflect.ValueOf(value)
 	for rv.IsValid() && rv.Kind() == reflect.Pointer {
 		if rv.IsNil() {
 			return out
+		}
+		if provider, ok := rv.Interface().(interface{ GoSXSpreadProps() map[string]any }); ok {
+			return cloneSpreadProps(provider.GoSXSpreadProps())
 		}
 		rv = rv.Elem()
 	}
@@ -1773,6 +1782,17 @@ func spreadProps(value any) map[string]any {
 			}
 			out[field.Name] = valueField.Interface()
 		}
+	}
+	return out
+}
+
+func cloneSpreadProps(values map[string]any) map[string]any {
+	if len(values) == 0 {
+		return map[string]any{}
+	}
+	out := make(map[string]any, len(values))
+	for key, value := range values {
+		out[key] = value
 	}
 	return out
 }

@@ -1135,6 +1135,8 @@
       y: 0,
       z: 6,
       fov: 75,
+      near: 0.05,
+      far: 128,
     });
   }
 
@@ -1145,6 +1147,8 @@
       y: sceneNumber(raw.y, sceneNumber(base.y, 0)),
       z: sceneNumber(raw.z, sceneNumber(base.z, 6)),
       fov: sceneNumber(raw.fov, sceneNumber(base.fov, 75)),
+      near: sceneNumber(raw.near, sceneNumber(base.near, 0.05)),
+      far: sceneNumber(raw.far, sceneNumber(base.far, 128)),
     };
   }
 

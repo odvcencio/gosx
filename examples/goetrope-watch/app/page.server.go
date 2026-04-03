@@ -14,7 +14,7 @@ func init() {
 		},
 		Metadata: func(ctx *route.RouteContext, page route.FilePage, data any) (server.Metadata, error) {
 			return server.Metadata{
-				Title:       "Goetrope Watch Surface | GoSX",
+				Title:       server.Title{Default: "Goetrope Watch Surface | GoSX"},
 				Description: "An isolated, server-driven prototype for the Goetrope viewer on GoSX.",
 			}, nil
 		},
