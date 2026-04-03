@@ -279,7 +279,7 @@ func init() {
 				appName = "My GoSX App"
 			}
 			return server.Metadata{
-				Title:       appName,
+				Title:       server.Title{Default: appName},
 				Description: "A GoSX app scaffolded with file-routed .gsx pages, session-backed form actions, root-level public assets, env loading, and a colocated JSON API.",
 			}, nil
 		},
@@ -404,7 +404,7 @@ func init() {
 				appName = "My GoSX App"
 			}
 			return server.Metadata{
-				Title:       appName + " Stack",
+				Title:       server.Title{Default: appName + " Stack"},
 				Description: "A second page rendered through the GoSX navigation runtime and declared through a file-route server module.",
 			}, nil
 		},
