@@ -65,7 +65,7 @@ func RegisterDocsPage(title, description string, opts route.FileModuleOptions) {
 	metadata := opts.Metadata
 	opts.Metadata = func(ctx *route.RouteContext, page route.FilePage, data any) (server.Metadata, error) {
 		meta := server.Metadata{
-			Title:       title + " | GoSX Docs",
+			Title:       server.Title{Default: title + " | GoSX Docs"},
 			Description: description,
 		}
 		if metadata == nil {
@@ -84,7 +84,7 @@ func RegisterStaticDocsPage(title, description string, opts route.FileModuleOpti
 	metaMetadata := opts.Metadata
 	opts.Metadata = func(ctx *route.RouteContext, page route.FilePage, data any) (server.Metadata, error) {
 		meta := server.Metadata{
-			Title:       title + " | GoSX Docs",
+			Title:       server.Title{Default: title + " | GoSX Docs"},
 			Description: description,
 		}
 		if metaMetadata == nil {
@@ -100,17 +100,11 @@ func RegisterStaticDocsPage(title, description string, opts route.FileModuleOpti
 }
 
 func mergeDocsMetadata(base, extra server.Metadata) server.Metadata {
-	if extra.Title != "" {
+	if extra.Title.Default != "" || extra.Title.Absolute != "" {
 		base.Title = extra.Title
 	}
 	if extra.Description != "" {
 		base.Description = extra.Description
-	}
-	if extra.Canonical != "" {
-		base.Canonical = extra.Canonical
-	}
-	if len(extra.Meta) > 0 {
-		base.Meta = append(base.Meta, extra.Meta...)
 	}
 	if len(extra.Links) > 0 {
 		base.Links = append(base.Links, extra.Links...)
