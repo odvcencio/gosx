@@ -137,29 +137,29 @@ func Page() Node {
 		window.__gosx_bootstrap_page()
 		window.__gosx_page_nav.navigate("/docs/routing")`)}
 		{DocsCodeBlock("go", `func Load(ctx *route.RouteContext, page route.FilePage) (any, error) {
-    ctx.LifecycleScript(docsapp.PublicAssetURL("runtime/watch-transport.js"))
-    return map[string]any{
-        "sceneDemo": scene.Props{
-            ProgramRef: "/api/runtime/scene-program",
-            Background: "#08151f",
-            DragToRotate: scene.Bool(true),
-            Camera: scene.PerspectiveCamera{
-                Position: scene.Vec3(0, 1.1, 6.2),
-                FOV:      58,
-                Near:     0.15,
-                Far:      72,
-            },
-            Graph: scene.NewGraph(
-                scene.Mesh{ID: "runtime-core", Geometry: scene.BoxGeometry{Width: 1.8, Height: 1.2, Depth: 1.2}},
-                scene.Label{Target: "runtime-core", Text: "Shared runtime"},
-            ),
-        },
-    }, nil
-}`)}
+	    ctx.LifecycleScript(docsapp.PublicAssetURL("runtime/watch-transport.js"))
+	    return map[string]any{
+	        "sceneDemo": scene.Props{
+	            ProgramRef: "/api/runtime/scene-program",
+	            Background: "#08151f",
+	            DragToRotate: scene.Bool(true),
+	            Camera: scene.PerspectiveCamera{
+	                Position: scene.Vec3(0, 1.1, 6.2),
+	                FOV:      58,
+	                Near:     0.15,
+	                Far:      72,
+	            },
+	            Graph: scene.NewGraph(
+	                scene.Mesh{ID: "runtime-core", Geometry: scene.BoxGeometry{Width: 1.8, Height: 1.2, Depth: 1.2}},
+	                scene.Label{Target: "runtime-core", Text: "Shared runtime"},
+	            ),
+	        },
+	    }, nil
+	}`)}
 		{DocsCodeBlock("go", `ctx.ManagedScript(
-    docsapp.PublicAssetURL("cms-demo.js"),
-    server.ManagedScriptOptions{},
-)`)}
+	    docsapp.PublicAssetURL("cms-demo.js"),
+	    server.ManagedScriptOptions{},
+	)`)}
 		{DocsCodeBlock("gosx", `func Page() Node {
 		    return <Scene3D class="scene-shell" {...data.sceneDemo}>
 		        <div class="scene-fallback">Preparing the scene runtime...</div>

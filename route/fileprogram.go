@@ -592,6 +592,16 @@ type fileEngineDefaults struct {
 	MountAttrs   map[string]any
 }
 
+type fileEngineTransport struct {
+	Name         any
+	JSExport     any
+	JSPath       any
+	WASMPath     any
+	MountID      any
+	Capabilities any
+	Runtime      any
+}
+
 func (r *fileProgramRenderer) renderSurface(node *ir.Node, env fileRenderEnv) string {
 	return r.renderEngineComponent(node, env, engine.KindSurface, fileEngineDefaults{})
 }
@@ -625,13 +635,17 @@ func (r *fileProgramRenderer) renderEngineComponent(node *ir.Node, env fileRende
 
 func (r *fileProgramRenderer) engineComponentConfig(node *ir.Node, env fileRenderEnv, kind engine.Kind, defaults fileEngineDefaults) (engine.Config, gosx.Node) {
 	props, mountAttrs := engineComponentProps(node.Attrs, env, kind == engine.KindSurface)
-	name, jsExport := engineComponentIdentity(node.Attrs, env, defaults)
-	mountID := strings.TrimSpace(stringValue(attrValue(node.Attrs, env, "mountId", "id")))
+	props, transport := splitEngineTransportProps(props)
+	name, jsExport := engineComponentIdentity(node.Attrs, env, defaults, transport)
+	mountID := firstNonEmptyString(
+		stringValue(attrValue(node.Attrs, env, "mountId", "id")),
+		stringValue(transport.MountID),
+	)
 	if kind == engine.KindSurface {
 		mountAttrs = withDefaultMountAttrs(mountAttrs, defaults.MountAttrs)
 	}
 
-	cfg := engineComponentConfigValue(node.Attrs, env, kind, defaults, name, jsExport, mountID, props, mountAttrs)
+	cfg := engineComponentConfigValue(node.Attrs, env, kind, defaults, transport, name, jsExport, mountID, props, mountAttrs)
 	if cfg.Runtime == engine.RuntimeNone && kind == engine.KindSurface && cfg.Name == "GoSXScene3D" && cfg.WASMPath != "" {
 		cfg.Runtime = engine.RuntimeShared
 	}
@@ -646,13 +660,15 @@ func (r *fileProgramRenderer) engineComponentConfig(node *ir.Node, env fileRende
 	return cfg, fallback
 }
 
-func engineComponentIdentity(attrs []ir.Attr, env fileRenderEnv, defaults fileEngineDefaults) (string, string) {
+func engineComponentIdentity(attrs []ir.Attr, env fileRenderEnv, defaults fileEngineDefaults, transport fileEngineTransport) (string, string) {
 	name := firstNonEmptyString(
 		stringValue(attrValue(attrs, env, "name", "component")),
+		stringValue(transport.Name),
 		defaults.Name,
 	)
 	jsExport := firstNonEmptyString(
 		stringValue(attrValue(attrs, env, "jsExport", "export", "factory")),
+		stringValue(transport.JSExport),
 		defaults.JSExport,
 		name,
 	)
@@ -678,18 +694,66 @@ func withDefaultMountAttrs(mountAttrs map[string]any, defaults map[string]any) m
 	return mountAttrs
 }
 
-func engineComponentConfigValue(attrs []ir.Attr, env fileRenderEnv, kind engine.Kind, defaults fileEngineDefaults, name, jsExport, mountID string, props, mountAttrs map[string]any) engine.Config {
+func engineComponentConfigValue(attrs []ir.Attr, env fileRenderEnv, kind engine.Kind, defaults fileEngineDefaults, transport fileEngineTransport, name, jsExport, mountID string, props, mountAttrs map[string]any) engine.Config {
 	return engine.Config{
 		Name:         name,
 		Kind:         kind,
-		WASMPath:     firstNonEmptyString(stringValue(attrValue(attrs, env, "wasmPath", "wasm", "programRef", "program")), defaults.WASMPath),
-		JSPath:       firstNonEmptyString(stringValue(attrValue(attrs, env, "jsPath", "js", "script")), defaults.JSPath),
+		WASMPath:     firstNonEmptyString(stringValue(attrValue(attrs, env, "wasmPath", "wasm", "programRef", "program")), stringValue(transport.WASMPath), defaults.WASMPath),
+		JSPath:       firstNonEmptyString(stringValue(attrValue(attrs, env, "jsPath", "js", "script")), stringValue(transport.JSPath), defaults.JSPath),
 		JSExport:     jsExport,
 		MountID:      mountID,
 		MountAttrs:   mountAttrs,
 		Props:        marshalEngineProps(props),
-		Capabilities: engineCapabilitiesValue(attrValue(attrs, env, "capabilities"), defaults.Capabilities),
-		Runtime:      engine.Runtime(firstNonEmptyString(stringValue(attrValue(attrs, env, "runtime")), string(defaults.Runtime))),
+		Capabilities: engineCapabilitiesValue(firstNonEmptyValue(attrValue(attrs, env, "capabilities"), transport.Capabilities), defaults.Capabilities),
+		Runtime:      engine.Runtime(firstNonEmptyString(stringValue(attrValue(attrs, env, "runtime")), stringValue(transport.Runtime), string(defaults.Runtime))),
+	}
+}
+
+func splitEngineTransportProps(props map[string]any) (map[string]any, fileEngineTransport) {
+	if len(props) == 0 {
+		return props, fileEngineTransport{}
+	}
+
+	clean := cloneSpreadProps(props)
+	transport := fileEngineTransport{
+		Name:         extractEngineTransportValue(clean, "name", "component"),
+		JSExport:     extractEngineTransportValue(clean, "jsExport", "export", "factory"),
+		JSPath:       extractEngineTransportValue(clean, "jsPath", "js", "script"),
+		WASMPath:     extractEngineTransportValue(clean, "wasmPath", "wasm", "programRef", "program"),
+		MountID:      extractEngineTransportValue(clean, "mountId", "id"),
+		Capabilities: extractEngineTransportValue(clean, "capabilities"),
+		Runtime:      extractEngineTransportValue(clean, "runtime"),
+	}
+	if len(clean) == 0 {
+		clean = nil
+	}
+	return clean, transport
+}
+
+func extractEngineTransportValue(props map[string]any, names ...string) any {
+	if len(props) == 0 {
+		return nil
+	}
+	for _, name := range names {
+		if value, ok := lookupTemplatePropValue(props, name); ok {
+			for _, candidate := range names {
+				deleteTemplatePropValue(props, candidate)
+			}
+			return value
+		}
+	}
+	return nil
+}
+
+func deleteTemplatePropValue(props map[string]any, name string) {
+	if len(props) == 0 {
+		return
+	}
+	for _, candidate := range []string{name, exportedPropAlias(name), unexportedPropAlias(name), strings.ToLower(name)} {
+		if candidate == "" {
+			continue
+		}
+		delete(props, candidate)
 	}
 }
 
@@ -1554,11 +1618,131 @@ func marshalEngineProps(props map[string]any) json.RawMessage {
 	if len(props) == 0 {
 		return nil
 	}
-	data, err := json.Marshal(props)
+	normalized := canonicalizeEnginePropsMap(props)
+	if len(normalized) == 0 {
+		return nil
+	}
+	data, err := json.Marshal(normalized)
 	if err != nil {
 		return nil
 	}
 	return data
+}
+
+func canonicalizeEnginePropsMap(props map[string]any) map[string]any {
+	if len(props) == 0 {
+		return nil
+	}
+
+	groups := map[string]map[string]any{}
+	for key, value := range props {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		canonical := canonicalEnginePropKey(key)
+		if groups[canonical] == nil {
+			groups[canonical] = map[string]any{}
+		}
+		groups[canonical][key] = canonicalizeEnginePropValue(value)
+	}
+
+	if len(groups) == 0 {
+		return nil
+	}
+
+	out := make(map[string]any, len(groups))
+	for canonical, candidates := range groups {
+		if value, ok := candidates[canonical]; ok {
+			out[canonical] = value
+			continue
+		}
+		if exported := exportedPropAlias(canonical); exported != "" {
+			if value, ok := candidates[exported]; ok {
+				out[canonical] = value
+				continue
+			}
+		}
+		if bestKey, ok := firstSortedMapKey(candidates); ok {
+			out[canonical] = candidates[bestKey]
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func canonicalizeEnginePropValue(value any) any {
+	if value == nil {
+		return nil
+	}
+
+	if typed := mapStringAnyValue(value); len(typed) > 0 {
+		return canonicalizeEnginePropsMap(typed)
+	}
+
+	rv := reflect.ValueOf(value)
+	for rv.IsValid() && rv.Kind() == reflect.Pointer {
+		if rv.IsNil() {
+			return nil
+		}
+		rv = rv.Elem()
+	}
+	if !rv.IsValid() {
+		return nil
+	}
+
+	switch rv.Kind() {
+	case reflect.Map:
+		if rv.Type().Key().Kind() != reflect.String {
+			return value
+		}
+		out := make(map[string]any, rv.Len())
+		iter := rv.MapRange()
+		for iter.Next() {
+			if !iter.Value().IsValid() || !iter.Value().CanInterface() {
+				continue
+			}
+			out[iter.Key().String()] = canonicalizeEnginePropValue(iter.Value().Interface())
+		}
+		return canonicalizeEnginePropsMap(out)
+	case reflect.Array, reflect.Slice:
+		out := make([]any, 0, rv.Len())
+		for i := 0; i < rv.Len(); i++ {
+			if !rv.Index(i).IsValid() || !rv.Index(i).CanInterface() {
+				out = append(out, nil)
+				continue
+			}
+			out = append(out, canonicalizeEnginePropValue(rv.Index(i).Interface()))
+		}
+		return out
+	default:
+		return value
+	}
+}
+
+func canonicalEnginePropKey(name string) string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return ""
+	}
+	if alias := unexportedPropAlias(name); alias != "" {
+		return alias
+	}
+	return name
+}
+
+func firstSortedMapKey(values map[string]any) (string, bool) {
+	if len(values) == 0 {
+		return "", false
+	}
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys[0], true
 }
 
 func mapStringAnyValue(value any) map[string]any {

@@ -5174,16 +5174,16 @@
     return sceneNumber(viewport && viewport[key], fallback);
   }
 
-  function setupSceneDragInteractions(canvas, props, readViewport, readSceneBundle) {
-    if (!canvas || !sceneBool(props.dragToRotate, false)) {
-      return { dispose() {} };
-    }
+  function sceneDragViewportMetrics(readViewport, initialWidth, initialHeight) {
+    const viewport = typeof readViewport === "function" ? readViewport() : null;
+    return {
+      width: Math.max(1, sceneViewportValue(viewport, "cssWidth", initialWidth)),
+      height: Math.max(1, sceneViewportValue(viewport, "cssHeight", initialHeight)),
+    };
+  }
 
-    const dragNamespace = sceneDragSignalNamespace(props);
-    const initialViewport = typeof readViewport === "function" ? readViewport() : null;
-    const initialWidth = Math.max(1, sceneViewportValue(initialViewport, "cssWidth", sceneNumber(props.width, 720)));
-    const initialHeight = Math.max(1, sceneViewportValue(initialViewport, "cssHeight", sceneNumber(props.height, 420)));
-    const state = {
+  function createSceneDragState(initialWidth, initialHeight) {
+    return {
       active: false,
       orbitX: 0,
       orbitY: 0,
@@ -5192,48 +5192,108 @@
       lastX: initialWidth / 2,
       lastY: initialHeight / 2,
     };
+  }
+
+  function sceneDragMatchesActivePointer(state, event) {
+    if (!state.active || state.pointerId == null) {
+      return state.active;
+    }
+    if (!event || event.type === "lostpointercapture") {
+      return true;
+    }
+    if (event.pointerId == null) {
+      return true;
+    }
+    return event.pointerId === state.pointerId;
+  }
+
+  function scenePointerCanStartDrag(state, event) {
+    if (state.active) {
+      return false;
+    }
+    if (!event) {
+      return false;
+    }
+    if (event.pointerType === "mouse") {
+      return event.button === 0;
+    }
+    return event.button == null || event.button === 0;
+  }
+
+  function sceneDragTargetAtEvent(event, canvas, readViewport, readSceneBundle, initialWidth, initialHeight) {
+    const metrics = sceneDragViewportMetrics(readViewport, initialWidth, initialHeight);
+    const pointer = sceneLocalPointerPoint(event, canvas, metrics.width, metrics.height);
+    return sceneBundlePointerDragTarget(readSceneBundle && readSceneBundle(), pointer, metrics.width, metrics.height);
+  }
+
+  function updateSceneDragOrbit(state, sample, width, height) {
+    state.orbitX = sceneClamp(state.orbitX + sample.deltaX / Math.max(width / 2, 1), -1.35, 1.35);
+    state.orbitY = sceneClamp(state.orbitY - sample.deltaY / Math.max(height / 2, 1), -1.1, 1.1);
+  }
+
+  function publishSceneDragInteraction(canvas, event, phase, state, dragNamespace, readViewport, initialWidth, initialHeight) {
+    const metrics = sceneDragViewportMetrics(readViewport, initialWidth, initialHeight);
+    const sample = sceneLocalPointerSample(event, canvas, metrics.width, metrics.height, state, phase);
+    if (!dragNamespace) {
+      publishPointerSignals(sample);
+      return;
+    }
+    if (phase === "move") {
+      updateSceneDragOrbit(state, sample, metrics.width, metrics.height);
+    }
+    publishSceneDragSignals(dragNamespace, state, phase !== "end");
+  }
+
+  function resetSceneDragInteraction(state, dragNamespace, readViewport, initialWidth, initialHeight) {
+    state.pointerId = null;
+    state.targetIndex = -1;
+    if (dragNamespace) {
+      return;
+    }
+    const metrics = sceneDragViewportMetrics(readViewport, initialWidth, initialHeight);
+    resetScenePointerSample(metrics.width, metrics.height, state);
+  }
+
+  function setupSceneDragInteractions(canvas, props, readViewport, readSceneBundle) {
+    if (!canvas || !sceneBool(props.dragToRotate, false)) {
+      return { dispose() {} };
+    }
+
+    const dragNamespace = sceneDragSignalNamespace(props);
+    const initialMetrics = sceneDragViewportMetrics(readViewport, sceneNumber(props.width, 720), sceneNumber(props.height, 420));
+    const initialWidth = initialMetrics.width;
+    const initialHeight = initialMetrics.height;
+    const state = createSceneDragState(initialWidth, initialHeight);
+    let documentListenersAttached = false;
 
     canvas.style.cursor = "grab";
     canvas.style.touchAction = "none";
 
-    function publish(event, phase) {
-      const viewport = typeof readViewport === "function" ? readViewport() : null;
-      const width = Math.max(1, sceneViewportValue(viewport, "cssWidth", initialWidth));
-      const height = Math.max(1, sceneViewportValue(viewport, "cssHeight", initialHeight));
-      const sample = sceneLocalPointerSample(event, canvas, width, height, state, phase);
-      if (!dragNamespace) {
-        publishPointerSignals(sample);
+    function attachDocumentListeners() {
+      if (documentListenersAttached) {
         return;
       }
-      if (phase === "move") {
-        state.orbitX = sceneClamp(state.orbitX + sample.deltaX / Math.max(width / 2, 1), -1.35, 1.35);
-        state.orbitY = sceneClamp(state.orbitY - sample.deltaY / Math.max(height / 2, 1), -1.1, 1.1);
-      }
-      publishSceneDragSignals(dragNamespace, state, phase !== "end");
+      documentListenersAttached = true;
+      document.addEventListener("pointermove", onPointerMove);
+      document.addEventListener("pointerup", finishDrag);
+      document.addEventListener("pointercancel", finishDrag);
     }
 
-    function pointerMatchesActiveDrag(event) {
-      if (!state.active || state.pointerId == null) {
-        return state.active;
+    function detachDocumentListeners() {
+      if (!documentListenersAttached) {
+        return;
       }
-      if (!event || event.type === "lostpointercapture") {
-        return true;
-      }
-      if (event.pointerId == null) {
-        return true;
-      }
-      return event.pointerId === state.pointerId;
+      documentListenersAttached = false;
+      document.removeEventListener("pointermove", onPointerMove);
+      document.removeEventListener("pointerup", finishDrag);
+      document.removeEventListener("pointercancel", finishDrag);
     }
 
     function onPointerDown(event) {
-      if (event.button !== 0) {
+      if (!scenePointerCanStartDrag(state, event)) {
         return;
       }
-      const viewport = typeof readViewport === "function" ? readViewport() : null;
-      const width = Math.max(1, sceneViewportValue(viewport, "cssWidth", initialWidth));
-      const height = Math.max(1, sceneViewportValue(viewport, "cssHeight", initialHeight));
-      const pointer = sceneLocalPointerPoint(event, canvas, width, height);
-      const target = sceneBundlePointerDragTarget(readSceneBundle && readSceneBundle(), pointer, width, height);
+      const target = sceneDragTargetAtEvent(event, canvas, readViewport, readSceneBundle, initialWidth, initialHeight);
       if (!target) {
         return;
       }
@@ -5241,29 +5301,35 @@
       state.pointerId = event.pointerId;
       state.targetIndex = target.index;
       canvas.style.cursor = "grabbing";
+      attachDocumentListeners();
       if (typeof canvas.setPointerCapture === "function") {
         canvas.setPointerCapture(event.pointerId);
       }
       event.preventDefault();
       event.stopPropagation();
-      publish(event, "start");
+      publishSceneDragInteraction(canvas, event, "start", state, dragNamespace, readViewport, initialWidth, initialHeight);
     }
 
     function onPointerMove(event) {
-      if (!pointerMatchesActiveDrag(event)) {
+      if (!sceneDragMatchesActivePointer(state, event)) {
         return;
       }
       event.preventDefault();
       event.stopPropagation();
-      publish(event, "move");
+      publishSceneDragInteraction(canvas, event, "move", state, dragNamespace, readViewport, initialWidth, initialHeight);
     }
 
     function finishDrag(event) {
-      if (!pointerMatchesActiveDrag(event)) {
+      if (!sceneDragMatchesActivePointer(state, event)) {
         return;
       }
+      const wasActive = state.active;
       state.active = false;
       canvas.style.cursor = "grab";
+      detachDocumentListeners();
+      if (!wasActive) {
+        return;
+      }
       event.preventDefault();
       event.stopPropagation();
       if (state.pointerId != null && typeof canvas.releasePointerCapture === "function") {
@@ -5273,14 +5339,8 @@
       }
       state.pointerId = null;
       state.targetIndex = -1;
-      if (dragNamespace) {
-        publish(event, "end");
-      } else {
-        const viewport = typeof readViewport === "function" ? readViewport() : null;
-        const width = Math.max(1, sceneViewportValue(viewport, "cssWidth", initialWidth));
-        const height = Math.max(1, sceneViewportValue(viewport, "cssHeight", initialHeight));
-        resetScenePointerSample(width, height, state);
-      }
+      publishSceneDragInteraction(canvas, event, "end", state, dragNamespace, readViewport, initialWidth, initialHeight);
+      resetSceneDragInteraction(state, dragNamespace, readViewport, initialWidth, initialHeight);
     }
 
     canvas.addEventListener("pointerdown", onPointerDown);
@@ -5288,9 +5348,6 @@
     canvas.addEventListener("pointerup", finishDrag);
     canvas.addEventListener("pointercancel", finishDrag);
     canvas.addEventListener("lostpointercapture", finishDrag);
-    document.addEventListener("pointermove", onPointerMove);
-    document.addEventListener("pointerup", finishDrag);
-    document.addEventListener("pointercancel", finishDrag);
 
     return {
       dispose() {
@@ -5299,17 +5356,18 @@
         canvas.removeEventListener("pointerup", finishDrag);
         canvas.removeEventListener("pointercancel", finishDrag);
         canvas.removeEventListener("lostpointercapture", finishDrag);
-        document.removeEventListener("pointermove", onPointerMove);
-        document.removeEventListener("pointerup", finishDrag);
-        document.removeEventListener("pointercancel", finishDrag);
+        detachDocumentListeners();
         canvas.style.cursor = "";
         canvas.style.touchAction = "";
-        const viewport = typeof readViewport === "function" ? readViewport() : null;
-        resetScenePointerSample(
-          Math.max(1, sceneViewportValue(viewport, "cssWidth", initialWidth)),
-          Math.max(1, sceneViewportValue(viewport, "cssHeight", initialHeight)),
-          state,
-        );
+        if (state.active && dragNamespace) {
+          state.active = false;
+          state.pointerId = null;
+          state.targetIndex = -1;
+          publishSceneDragSignals(dragNamespace, state, false);
+        } else {
+          state.active = false;
+        }
+        resetSceneDragInteraction(state, dragNamespace, readViewport, initialWidth, initialHeight);
       },
     };
   }
@@ -5392,10 +5450,154 @@
     return Array.isArray(value) && value.length > 0 ? value : null;
   }
 
+  function sceneObjectMaterialSource(item) {
+    return item && item.material && typeof item.material === "object" ? item.material : null;
+  }
+
+  function sceneObjectMaterialKindValue(item) {
+    if (!item || typeof item !== "object") {
+      return "";
+    }
+    if (typeof item.material === "string" && item.material.trim()) {
+      return item.material.trim();
+    }
+    if (typeof item.materialKind === "string" && item.materialKind.trim()) {
+      return item.materialKind.trim();
+    }
+    const material = sceneObjectMaterialSource(item);
+    if (material && typeof material.kind === "string" && material.kind.trim()) {
+      return material.kind.trim();
+    }
+    return "";
+  }
+
+  function sceneObjectMaterialValue(item, name) {
+    if (!item || typeof item !== "object") {
+      return undefined;
+    }
+    const material = sceneObjectMaterialSource(item);
+    if (material && Object.prototype.hasOwnProperty.call(material, name)) {
+      return material[name];
+    }
+    return Object.prototype.hasOwnProperty.call(item, name) ? item[name] : undefined;
+  }
+
+  function sceneObjectBlendModeValue(item) {
+    const direct = sceneObjectMaterialValue(item, "blendMode");
+    if (direct !== undefined) {
+      return direct;
+    }
+    const material = sceneObjectMaterialSource(item);
+    if (material && Object.prototype.hasOwnProperty.call(material, "blend")) {
+      return material.blend;
+    }
+    return item && Object.prototype.hasOwnProperty.call(item, "blend") ? item.blend : undefined;
+  }
+
+  function normalizeSceneMaterialKind(value) {
+    const kind = typeof value === "string" ? value.trim().toLowerCase() : "";
+    switch (kind) {
+      case "ghost":
+      case "glass":
+      case "glow":
+      case "matte":
+        return kind;
+      default:
+        return "flat";
+    }
+  }
+
+  function sceneDefaultMaterialOpacity(kind) {
+    switch (normalizeSceneMaterialKind(kind)) {
+      case "ghost":
+        return 0.42;
+      case "glass":
+        return 0.28;
+      case "glow":
+        return 0.92;
+      default:
+        return 1;
+    }
+  }
+
+  function sceneDefaultMaterialEmissive(kind) {
+    switch (normalizeSceneMaterialKind(kind)) {
+      case "ghost":
+        return 0.12;
+      case "glass":
+        return 0.08;
+      case "glow":
+        return 0.42;
+      default:
+        return 0;
+    }
+  }
+
+  function sceneDefaultMaterialBlendMode(kind) {
+    switch (normalizeSceneMaterialKind(kind)) {
+      case "ghost":
+      case "glass":
+        return "alpha";
+      case "glow":
+        return "additive";
+      default:
+        return "opaque";
+    }
+  }
+
+  function normalizeSceneMaterialBlendMode(value, kind, opacity) {
+    const mode = typeof value === "string" ? value.trim().toLowerCase() : "";
+    switch (mode) {
+      case "opaque":
+      case "solid":
+        return "opaque";
+      case "alpha":
+      case "transparent":
+      case "translucent":
+        return "alpha";
+      case "add":
+      case "additive":
+      case "glow":
+      case "emissive":
+        return "additive";
+      default: {
+        const fallback = sceneDefaultMaterialBlendMode(kind);
+        if (fallback !== "opaque") {
+          return fallback;
+        }
+        return opacity < 0.999 ? "alpha" : "opaque";
+      }
+    }
+  }
+
+  function normalizeSceneMaterialRenderPass(value, blendMode, opacity) {
+    const pass = typeof value === "string" ? value.trim().toLowerCase() : "";
+    switch (pass) {
+      case "opaque":
+      case "alpha":
+      case "additive":
+        return pass;
+      case "add":
+        return "additive";
+      case "transparent":
+      case "translucent":
+        return "alpha";
+      default:
+        if (blendMode === "additive") {
+          return "additive";
+        }
+        return blendMode === "alpha" || opacity < 0.999 ? "alpha" : "opaque";
+    }
+  }
+
   function normalizeSceneObject(object, index) {
     const item = object && typeof object === "object" ? object : {};
     const size = sceneNumber(item.size, 1.2);
-    return {
+    const materialKind = normalizeSceneMaterialKind(sceneObjectMaterialKindValue(item));
+    const materialColor = sceneObjectMaterialValue(item, "color");
+    const opacity = clamp01(sceneNumber(sceneObjectMaterialValue(item, "opacity"), sceneDefaultMaterialOpacity(materialKind)));
+    const blendMode = normalizeSceneMaterialBlendMode(sceneObjectBlendModeValue(item), materialKind, opacity);
+    const normalized = {
       id: item.id || ("scene-object-" + index),
       kind: normalizeSceneKind(item.kind),
       size,
@@ -5407,7 +5609,13 @@
       x: sceneNumber(item.x, 0),
       y: sceneNumber(item.y, 0),
       z: sceneNumber(item.z, 0),
-      color: typeof item.color === "string" && item.color ? item.color : "#8de1ff",
+      materialKind,
+      color: typeof materialColor === "string" && materialColor ? materialColor : "#8de1ff",
+      opacity,
+      emissive: clamp01(sceneNumber(sceneObjectMaterialValue(item, "emissive"), sceneDefaultMaterialEmissive(materialKind))),
+      blendMode,
+      renderPass: normalizeSceneMaterialRenderPass(sceneObjectMaterialValue(item, "renderPass"), blendMode, opacity),
+      wireframe: sceneBool(sceneObjectMaterialValue(item, "wireframe"), true),
       rotationX: sceneNumber(item.rotationX, 0),
       rotationY: sceneNumber(item.rotationY, 0),
       rotationZ: sceneNumber(item.rotationZ, 0),
@@ -5419,7 +5627,10 @@
       shiftZ: sceneNumber(item.shiftZ, 0),
       driftSpeed: sceneNumber(item.driftSpeed, 0),
       driftPhase: sceneNumber(item.driftPhase, 0),
+      viewCulled: sceneBool(item.viewCulled, false),
     };
+    normalized.static = sceneBool(item.static, !sceneObjectAnimated(normalized));
+    return normalized;
   }
 
   function normalizeSceneLabel(label, index) {
@@ -5946,10 +6157,92 @@
     };
   }
 
+  function sceneObjectMaterialProfile(object) {
+    const kind = normalizeSceneMaterialKind(object && object.materialKind);
+    const opacity = clamp01(sceneNumber(object && object.opacity, sceneDefaultMaterialOpacity(kind)));
+    const profile = {
+      kind,
+      color: object && typeof object.color === "string" && object.color ? object.color : "#8de1ff",
+      opacity,
+      wireframe: sceneBool(object && object.wireframe, true),
+      blendMode: normalizeSceneMaterialBlendMode(object && object.blendMode, kind, opacity),
+      emissive: clamp01(sceneNumber(object && object.emissive, sceneDefaultMaterialEmissive(kind))),
+    };
+    profile.renderPass = normalizeSceneMaterialRenderPass(object && object.renderPass, profile.blendMode, profile.opacity);
+    profile.key = sceneMaterialProfileKey(profile);
+    profile.shaderData = sceneMaterialShaderData(profile);
+    return profile;
+  }
+
+  function sceneMaterialProfileKey(profile) {
+    return [
+      normalizeSceneMaterialKind(profile && profile.kind),
+      String(profile && profile.color || ""),
+      clamp01(sceneNumber(profile && profile.opacity, 1)).toFixed(3),
+      String(sceneBool(profile && profile.wireframe, true)),
+      String(profile && profile.blendMode || "opaque"),
+      String(profile && profile.renderPass || "opaque"),
+      clamp01(sceneNumber(profile && profile.emissive, 0)).toFixed(3),
+    ].join("|");
+  }
+
+  function sceneBundleMaterialIndex(bundle, materialLookup, profile) {
+    if (!bundle || !Array.isArray(bundle.materials)) {
+      return 0;
+    }
+    const key = profile && profile.key ? profile.key : sceneMaterialProfileKey(profile);
+    if (materialLookup && materialLookup.has(key)) {
+      return materialLookup.get(key);
+    }
+    const index = bundle.materials.length;
+    bundle.materials.push(profile);
+    if (materialLookup) {
+      materialLookup.set(key, index);
+    }
+    return index;
+  }
+
+  function sceneMaterialStrokeColor(material) {
+    const rgba = sceneColorRGBA(material && material.color, [0.55, 0.88, 1, 1]);
+    rgba[3] = clamp01(rgba[3] * sceneMaterialOpacity(material));
+    return "rgba(" +
+      Math.round(rgba[0] * 255) + ", " +
+      Math.round(rgba[1] * 255) + ", " +
+      Math.round(rgba[2] * 255) + ", " +
+      rgba[3].toFixed(3) + ")";
+  }
+
+  function sceneBoundsDepthMetrics(bounds, camera) {
+    if (!bounds) {
+      const depth = sceneWorldPointDepth(0, camera);
+      return { near: depth, far: depth, center: depth };
+    }
+    const a = sceneWorldPointDepth(bounds.minZ, camera);
+    const b = sceneWorldPointDepth(bounds.maxZ, camera);
+    const near = Math.min(a, b);
+    const far = Math.max(a, b);
+    return {
+      near,
+      far,
+      center: (near + far) / 2,
+    };
+  }
+
+  function sceneBoundsViewCulled(bounds, camera) {
+    if (!bounds) {
+      return false;
+    }
+    const depth = sceneBoundsDepthMetrics(bounds, camera);
+    const near = sceneNumber(camera && camera.near, 0.05);
+    const far = sceneNumber(camera && camera.far, 128);
+    return depth.far <= near || depth.near >= far;
+  }
+
   function createSceneRenderBundle(width, height, background, camera, objects, labels, timeSeconds) {
     const bundle = {
       background: background,
       camera: sceneRenderCamera(camera),
+      materials: [],
       objects: [],
       labels: [],
       lines: [],
@@ -5961,9 +6254,10 @@
       worldVertexCount: 0,
       objectCount: 0,
     };
+    const materialLookup = new Map();
     appendSceneGridToBundle(bundle, width, height);
     for (const object of objects) {
-      appendSceneObjectToBundle(bundle, camera, width, height, object, timeSeconds);
+      appendSceneObjectToBundle(bundle, materialLookup, camera, width, height, object, timeSeconds);
     }
     for (const label of labels || []) {
       appendSceneLabelToBundle(bundle, camera, width, height, label, timeSeconds);
@@ -6023,10 +6317,12 @@
     }
   }
 
-  function appendSceneObjectToBundle(bundle, camera, width, height, object, timeSeconds) {
+  function appendSceneObjectToBundle(bundle, materialLookup, camera, width, height, object, timeSeconds) {
     const worldSegments = sceneWorldObjectSegments(object, timeSeconds);
     const vertexOffset = bundle.worldPositions.length / 3;
-    const rgba = sceneColorRGBA(object.color, [0.55, 0.88, 1, 1]);
+    const material = sceneObjectMaterialProfile(object);
+    const strokeColor = sceneMaterialStrokeColor(material);
+    const rgba = sceneColorRGBA(material.color, [0.55, 0.88, 1, 1]);
     let bounds = null;
     let vertexCount = 0;
     for (const segment of worldSegments) {
@@ -6040,14 +6336,19 @@
       const from = projectPoint(fromWorld, camera, width, height);
       const to = projectPoint(toWorld, camera, width, height);
       if (!from || !to) continue;
-      appendSceneLine(bundle, width, height, from, to, object.color, 1.8);
+      appendSceneLine(bundle, width, height, from, to, strokeColor, 1.8);
     }
     if (vertexCount > 0) {
+      const materialIndex = sceneBundleMaterialIndex(bundle, materialLookup, material);
+      const depth = sceneBoundsDepthMetrics(bounds, camera);
       bundle.objects.push({
         id: object.id,
         kind: object.kind,
+        materialIndex: materialIndex,
+        renderPass: sceneWorldObjectRenderPass(object, material),
         vertexOffset: vertexOffset,
         vertexCount: vertexCount,
+        static: Boolean(object.static),
         bounds: bounds || {
           minX: 0,
           minY: 0,
@@ -6056,6 +6357,10 @@
           maxY: 0,
           maxZ: 0,
         },
+        depthNear: depth.near,
+        depthFar: depth.far,
+        depthCenter: depth.center,
+        viewCulled: Boolean(object.viewCulled) || sceneBoundsViewCulled(bounds, camera),
       });
     }
   }
@@ -6450,31 +6755,68 @@
     const sourcePasses = Array.isArray(bundle && bundle.passes) ? bundle.passes : [];
     const passes = [];
     for (const source of sourcePasses) {
-      const name = String(source && source.name || "");
-      const targetBuffers = buffers[name];
-      if (!targetBuffers) {
-        continue;
+      const pass = sceneWorldWebGLPassFromSource(source, buffers, usages);
+      if (pass) {
+        passes.push(pass);
       }
-      const isStatic = Boolean(source && source.static);
-      const positions = sceneTypedFloatArray(source && source.positions);
-      const colors = sceneTypedFloatArray(source && source.colors);
-      const materials = sceneTypedFloatArray(source && source.materials);
-      const vertexCount = Number.isFinite(source && source.vertexCount) ? source.vertexCount : positions.length / 3;
-      passes.push({
-        name,
-        blend: String(source && source.blend || "opaque"),
-        depth: String(source && source.depth || "opaque"),
-        usage: isStatic ? usages.staticDraw : usages.dynamicDraw,
-        cacheSlot: isStatic ? "staticOpaque" : "",
-        cacheKey: String(source && source.cacheKey || ""),
-        buffers: targetBuffers,
-        positions,
-        colors,
-        materials,
-        vertexCount,
-      });
     }
     return passes;
+  }
+
+  function sceneWorldWebGLPassFromSource(source, buffers, usages) {
+    const name = sceneWorldWebGLPassName(source);
+    if (!name) {
+      return null;
+    }
+    const targetBuffers = buffers[name];
+    if (!targetBuffers) {
+      return null;
+    }
+    const isStatic = Boolean(source && source.static);
+    const positions = sceneTypedFloatArray(source && source.positions);
+    const colors = sceneTypedFloatArray(source && source.colors);
+    const materials = sceneTypedFloatArray(source && source.materials);
+    return {
+      name,
+      blend: sceneWorldWebGLPassMode(source && source.blend, "opaque"),
+      depth: sceneWorldWebGLPassMode(source && source.depth, "opaque"),
+      usage: isStatic ? usages.staticDraw : usages.dynamicDraw,
+      cacheSlot: sceneWorldWebGLPassCacheSlot(name, isStatic),
+      cacheKey: String(source && source.cacheKey || ""),
+      buffers: targetBuffers,
+      positions,
+      colors,
+      materials,
+      vertexCount: sceneWorldWebGLPassVertexCount(source, positions, colors, materials),
+    };
+  }
+
+  function sceneWorldWebGLPassName(source) {
+    return String(source && source.name || "");
+  }
+
+  function sceneWorldWebGLPassMode(value, fallback) {
+    const mode = String(value || fallback);
+    return mode || fallback;
+  }
+
+  function sceneWorldWebGLPassCacheSlot(name, isStatic) {
+    if (!isStatic) {
+      return "";
+    }
+    return name;
+  }
+
+  function sceneWorldWebGLPassVertexCount(source, positions, colors, materials) {
+    const requested = Math.max(0, Math.floor(sceneNumber(source && source.vertexCount, NaN)));
+    const positionCount = Math.floor((positions && positions.length || 0) / 3);
+    const colorCount = Math.floor((colors && colors.length || 0) / 4);
+    const materialCount = Math.floor((materials && materials.length || 0) / 3);
+    const maxCount = Math.max(0, Math.min(positionCount, colorCount, materialCount));
+    if (Number.isFinite(requested)) {
+      return Math.min(requested, maxCount);
+    }
+    return maxCount;
   }
 
   function drawSceneWebGLPasses(gl, arrayBuffer, floatType, linesMode, positionLocation, colorLocation, materialLocation, passes, cache, stateCache) {
@@ -6946,7 +7288,7 @@
     case "glow":
       return [3, sceneMaterialEmissive(material), 1];
     case "matte":
-      return [4, sceneMaterialEmissive(material), 0.78];
+      return [4, sceneMaterialEmissive(material), 0.2];
     default:
       return [0, sceneMaterialEmissive(material), 1];
     }
@@ -7011,7 +7353,7 @@
     ["maxY", 0],
     ["maxZ", 0],
   ];
-  const sceneMaterialStringFields = ["kind", "color", "blendMode"];
+  const sceneMaterialStringFields = ["kind", "color", "blendMode", "renderPass"];
   const sceneMaterialNumberFields = [
     ["opacity", 1],
     ["emissive", 0],

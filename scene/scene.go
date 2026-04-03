@@ -131,6 +131,41 @@ type Material interface {
 	legacyMaterial() map[string]any
 }
 
+type MaterialKind string
+
+const (
+	MaterialFlat  MaterialKind = "flat"
+	MaterialGhost MaterialKind = "ghost"
+	MaterialGlass MaterialKind = "glass"
+	MaterialGlow  MaterialKind = "glow"
+	MaterialMatte MaterialKind = "matte"
+)
+
+type MaterialBlendMode string
+
+const (
+	BlendOpaque   MaterialBlendMode = "opaque"
+	BlendAlpha    MaterialBlendMode = "alpha"
+	BlendAdditive MaterialBlendMode = "additive"
+)
+
+type MaterialRenderPass string
+
+const (
+	RenderOpaque   MaterialRenderPass = "opaque"
+	RenderAlpha    MaterialRenderPass = "alpha"
+	RenderAdditive MaterialRenderPass = "additive"
+)
+
+type MaterialStyle struct {
+	Color      string
+	Opacity    *float64
+	Emissive   *float64
+	BlendMode  MaterialBlendMode
+	RenderPass MaterialRenderPass
+	Wireframe  *bool
+}
+
 type CubeGeometry struct {
 	Size float64
 }
@@ -157,9 +192,11 @@ type SphereGeometry struct {
 	Segments int
 }
 
-type FlatMaterial struct {
-	Color string
-}
+type FlatMaterial MaterialStyle
+type GhostMaterial MaterialStyle
+type GlassMaterial MaterialStyle
+type GlowMaterial MaterialStyle
+type MatteMaterial MaterialStyle
 
 type quaternion struct {
 	X float64
@@ -196,10 +233,19 @@ func (PlaneGeometry) sceneGeometry()   {}
 func (PyramidGeometry) sceneGeometry() {}
 func (SphereGeometry) sceneGeometry()  {}
 
-func (FlatMaterial) sceneMaterial() {}
+func (FlatMaterial) sceneMaterial()  {}
+func (GhostMaterial) sceneMaterial() {}
+func (GlassMaterial) sceneMaterial() {}
+func (GlowMaterial) sceneMaterial()  {}
+func (MatteMaterial) sceneMaterial() {}
 
 // Bool allocates a bool for opt-in Scene3D flags.
 func Bool(value bool) *bool {
+	return &value
+}
+
+// Float allocates a float64 for optional Scene3D numeric fields.
+func Float(value float64) *float64 {
 	return &value
 }
 
@@ -515,8 +561,26 @@ func applyMaterialProps(record *ObjectIR, props map[string]any) {
 	if record == nil || len(props) == 0 {
 		return
 	}
+	if kind, ok := mapStringValue(props["materialKind"]); ok {
+		record.MaterialKind = kind
+	}
 	if color, ok := props["color"].(string); ok {
 		record.Color = strings.TrimSpace(color)
+	}
+	if opacity, ok := mapFloat64OK(props["opacity"]); ok {
+		record.Opacity = Float(opacity)
+	}
+	if emissive, ok := mapFloat64OK(props["emissive"]); ok {
+		record.Emissive = Float(emissive)
+	}
+	if blendMode, ok := mapStringValue(props["blendMode"]); ok {
+		record.BlendMode = blendMode
+	}
+	if renderPass, ok := mapStringValue(props["renderPass"]); ok {
+		record.RenderPass = renderPass
+	}
+	if wireframe, ok := mapBool(props["wireframe"]); ok {
+		record.Wireframe = Bool(wireframe)
 	}
 }
 
@@ -586,11 +650,38 @@ func legacyMaterial(material Material) map[string]any {
 }
 
 func (m FlatMaterial) legacyMaterial() map[string]any {
-	color := strings.TrimSpace(m.Color)
-	if color == "" {
+	return legacySceneMaterial(MaterialFlat, MaterialStyle(m))
+}
+
+func (m GhostMaterial) legacyMaterial() map[string]any {
+	return legacySceneMaterial(MaterialGhost, MaterialStyle(m))
+}
+
+func (m GlassMaterial) legacyMaterial() map[string]any {
+	return legacySceneMaterial(MaterialGlass, MaterialStyle(m))
+}
+
+func (m GlowMaterial) legacyMaterial() map[string]any {
+	return legacySceneMaterial(MaterialGlow, MaterialStyle(m))
+}
+
+func (m MatteMaterial) legacyMaterial() map[string]any {
+	return legacySceneMaterial(MaterialMatte, MaterialStyle(m))
+}
+
+func legacySceneMaterial(kind MaterialKind, style MaterialStyle) map[string]any {
+	out := map[string]any{}
+	setString(out, "materialKind", string(kind))
+	setString(out, "color", style.Color)
+	setNumericPtr(out, "opacity", style.Opacity)
+	setNumericPtr(out, "emissive", style.Emissive)
+	setString(out, "blendMode", string(style.BlendMode))
+	setString(out, "renderPass", string(style.RenderPass))
+	setBool(out, "wireframe", style.Wireframe)
+	if len(out) == 0 {
 		return nil
 	}
-	return map[string]any{"color": color}
+	return out
 }
 
 func localTransform(position Vector3, rotation Euler) worldTransform {
@@ -739,6 +830,13 @@ func setNumeric(target map[string]any, name string, value float64) {
 	target[name] = value
 }
 
+func setNumericPtr(target map[string]any, name string, value *float64) {
+	if target == nil || name == "" || value == nil {
+		return
+	}
+	target[name] = *value
+}
+
 func mapFloat64(value any) float64 {
 	switch current := value.(type) {
 	case float64:
@@ -754,6 +852,43 @@ func mapFloat64(value any) float64 {
 	default:
 		return 0
 	}
+}
+
+func mapFloat64OK(value any) (float64, bool) {
+	switch current := value.(type) {
+	case float64:
+		return current, true
+	case float32:
+		return float64(current), true
+	case int:
+		return float64(current), true
+	case int64:
+		return float64(current), true
+	case int32:
+		return float64(current), true
+	default:
+		return 0, false
+	}
+}
+
+func mapStringValue(value any) (string, bool) {
+	text, ok := value.(string)
+	if !ok {
+		return "", false
+	}
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return "", false
+	}
+	return text, true
+}
+
+func mapBool(value any) (bool, bool) {
+	current, ok := value.(bool)
+	if !ok {
+		return false, false
+	}
+	return current, true
 }
 
 func mapInt(value any) int {
