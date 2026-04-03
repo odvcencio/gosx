@@ -146,10 +146,53 @@ func convertBlock(bt *gotreesitter.BoundTree, n *gotreesitter.Node, source []byt
 
 	case "paragraph":
 		para := newNode(NodeParagraph)
+		nodeStart := n.StartByte()
+		nodeText := bt.NodeText(n)
+		// Trim trailing newline from paragraph text
+		nodeText = strings.TrimRight(nodeText, "\n")
+
+		cursor := uint32(0) // relative to nodeStart
+		textLen := uint32(len(nodeText))
 		for i := 0; i < n.ChildCount(); i++ {
 			child := n.Child(i)
+			cs := child.StartByte()
+			ce := child.EndByte()
+			// Ensure offsets are within the paragraph and relative to nodeStart
+			if cs < nodeStart {
+				cs = nodeStart
+			}
+			if ce < nodeStart {
+				continue
+			}
+			childStart := cs - nodeStart
+			childEnd := ce - nodeStart
+			if childStart > textLen {
+				childStart = textLen
+			}
+			if childEnd > textLen {
+				childEnd = textLen
+			}
+
+			// Gap text before this child
+			if childStart > cursor {
+				gap := nodeText[cursor:childStart]
+				if gap != "" {
+					para.Children = append(para.Children, parseInline(gap, source)...)
+				}
+			}
+
 			if bt.NodeType(child) == "inline" {
 				para.Children = append(para.Children, parseInline(bt.NodeText(child), source)...)
+			}
+			if childEnd > cursor {
+				cursor = childEnd
+			}
+		}
+		// Trailing gap text after last child
+		if cursor < textLen {
+			gap := nodeText[cursor:]
+			if strings.TrimSpace(gap) != "" {
+				para.Children = append(para.Children, parseInline(gap, source)...)
 			}
 		}
 		return para
