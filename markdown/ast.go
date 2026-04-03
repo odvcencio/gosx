@@ -1,5 +1,7 @@
 package markdown
 
+import "strings"
+
 // NodeType classifies an AST node.
 type NodeType int
 
@@ -67,6 +69,15 @@ type TOCEntry struct {
 	Level int
 	ID    string
 	Text  string
+}
+
+// collectNodesText extracts plain text from a slice of nodes.
+func collectNodesText(nodes []*Node) string {
+	var sb strings.Builder
+	for _, n := range nodes {
+		sb.WriteString(collectNodeText(n))
+	}
+	return sb.String()
 }
 
 // textNode creates a leaf text node.

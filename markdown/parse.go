@@ -68,6 +68,7 @@ func Parse(source []byte) *Document {
 	}
 	doc := &Document{Root: root, Source: source}
 	doc.extractFrontmatter()
+	postProcess(doc)
 	return doc
 }
 
@@ -217,6 +218,30 @@ func convertBlock(bt *gotreesitter.BoundTree, n *gotreesitter.Node, source []byt
 		block.Literal = bt.NodeText(n)
 		return block
 
+	case "link_reference_definition":
+		// Detect footnote definitions: [^id]: content
+		var label, dest string
+		for i := 0; i < n.ChildCount(); i++ {
+			child := n.Child(i)
+			ct := bt.NodeType(child)
+			switch ct {
+			case "link_label":
+				label = bt.NodeText(child)
+			case "link_destination":
+				dest = bt.NodeText(child)
+			}
+		}
+		// Footnote defs have labels like [^id]
+		if strings.HasPrefix(label, "[^") && strings.HasSuffix(label, "]") {
+			id := label[2 : len(label)-1]
+			fn := newNode(NodeFootnoteDef)
+			fn.Attrs = map[string]string{"id": id}
+			fn.Children = []*Node{textNode(dest)}
+			return fn
+		}
+		// Regular link reference definitions — skip (handled by tree-sitter linking)
+		return nil
+
 	default:
 		// Skip node types we don't map (block_continuation, markers, etc.)
 		return nil
@@ -226,19 +251,39 @@ func convertBlock(bt *gotreesitter.BoundTree, n *gotreesitter.Node, source []byt
 // convertListItem converts a list_item node into a NodeListItem.
 func convertListItem(bt *gotreesitter.BoundTree, n *gotreesitter.Node, source []byte) *Node {
 	item := newNode(NodeListItem)
+	isTask := false
+	checked := false
 	for i := 0; i < n.ChildCount(); i++ {
 		child := n.Child(i)
 		childType := bt.NodeType(child)
+		// Detect task list markers from tree-sitter
+		if childType == "task_list_marker_checked" {
+			isTask = true
+			checked = true
+			continue
+		}
+		if childType == "task_list_marker_unchecked" {
+			isTask = true
+			checked = false
+			continue
+		}
 		// Skip markers and continuations
 		if strings.HasPrefix(childType, "list_marker") || childType == "block_continuation" {
-			// Check for task list markers
-			if childType == "list_marker_minus" || childType == "list_marker_plus" || childType == "list_marker_star" {
-				// task list detection handled below
-			}
 			continue
 		}
 		if converted := convertBlock(bt, child, source); converted != nil {
 			item.Children = append(item.Children, converted)
+		}
+	}
+	if isTask {
+		item.Type = NodeTaskListItem
+		if item.Attrs == nil {
+			item.Attrs = make(map[string]string)
+		}
+		if checked {
+			item.Attrs["checked"] = "true"
+		} else {
+			item.Attrs["checked"] = "false"
 		}
 	}
 	return item
@@ -323,9 +368,22 @@ func convertInlineChildren(bt *gotreesitter.BoundTree, n *gotreesitter.Node, sou
 		nodes = append(nodes, em)
 
 	case "strikethrough":
-		s := newNode(NodeStrikethrough)
-		s.Children = collectInlineTextOnly(bt, n, source)
-		nodes = append(nodes, s)
+		raw := bt.NodeText(n)
+		if strings.HasPrefix(raw, "~~") {
+			// Double tilde: true strikethrough.
+			// tree-sitter nests ~~x~~ as outer(~~) > inner(~x~),
+			// so we extract text content directly to avoid converting
+			// the inner node to subscript.
+			s := newNode(NodeStrikethrough)
+			s.Children = collectStrikethroughText(bt, n, source)
+			nodes = append(nodes, s)
+		} else {
+			// Single tilde: subscript (~text~)
+			sub := newNode(NodeSubscript)
+			content := collectStrikethroughText(bt, n, source)
+			sub.Literal = collectNodesText(content)
+			nodes = append(nodes, sub)
+		}
 
 	case "inline_link":
 		link := newNode(NodeLink)
@@ -350,6 +408,11 @@ func convertInlineChildren(bt *gotreesitter.BoundTree, n *gotreesitter.Node, sou
 		link := newNode(NodeLink)
 		if link.Attrs == nil {
 			link.Attrs = make(map[string]string)
+		}
+		// Capture full raw text for shortcut links so post-processing
+		// can detect footnote refs ([^id]) and admonition markers ([!TYPE]).
+		if typ == "shortcut_link" {
+			link.Attrs["raw"] = bt.NodeText(n)
 		}
 		for i := 0; i < n.ChildCount(); i++ {
 			child := n.Child(i)
@@ -690,6 +753,74 @@ func isInlineStructural(nodeType string) bool {
 	default:
 		return false
 	}
+}
+
+// collectStrikethroughText extracts the text content from a strikethrough node,
+// stripping tilde delimiters. Unlike collectInlineTextOnly, this treats nested
+// strikethrough nodes as text content rather than structural elements, avoiding
+// incorrect conversion of inner nodes in ~~double-tilde~~ constructs.
+func collectStrikethroughText(bt *gotreesitter.BoundTree, n *gotreesitter.Node, source []byte) []*Node {
+	nodeText := bt.NodeText(n)
+	src := []byte(nodeText)
+	nodeStart := n.StartByte()
+
+	if n.ChildCount() == 0 {
+		if len(src) > 0 {
+			return []*Node{textNode(string(src))}
+		}
+		return nil
+	}
+
+	var nodes []*Node
+	cursor := uint32(0)
+
+	for i := 0; i < n.ChildCount(); i++ {
+		child := n.Child(i)
+		ct := bt.NodeType(child)
+		childStart := child.StartByte() - nodeStart
+		childEnd := child.EndByte() - nodeStart
+
+		if childStart > cursor {
+			gap := string(src[cursor:childStart])
+			if gap != "" {
+				appendText(&nodes, gap)
+			}
+		}
+
+		if isDelimiter(ct) {
+			cursor = childEnd
+			continue
+		}
+
+		if ct == "strikethrough" {
+			// Nested strikethrough: extract as text, skipping its delimiters
+			inner := collectStrikethroughText(bt, child, source)
+			for _, in := range inner {
+				if in.Type == NodeText {
+					appendText(&nodes, in.Literal)
+				} else {
+					nodes = append(nodes, in)
+				}
+			}
+		} else if isInlineStructural(ct) {
+			nodes = append(nodes, convertInlineChildren(bt, child, source)...)
+		} else {
+			text := bt.NodeText(child)
+			if text != "" {
+				appendText(&nodes, text)
+			}
+		}
+		cursor = childEnd
+	}
+
+	if cursor < uint32(len(src)) {
+		gap := string(src[cursor:])
+		if gap != "" {
+			appendText(&nodes, gap)
+		}
+	}
+
+	return nodes
 }
 
 // isDelimiter returns true for delimiter node types that should be stripped.
