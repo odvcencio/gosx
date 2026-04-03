@@ -906,6 +906,172 @@ func Page() Node {
 	}
 }
 
+func TestDefaultFileRendererCanonicalizesScene3DPropAliases(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "page.gsx")
+	source := `package docs
+
+func Page() Node {
+	return <Scene3D class="scene-shell" {...data.scene}>
+		<div>Scene fallback</div>
+	</Scene3D>
+}
+`
+	if err := os.WriteFile(path, []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := &RouteContext{
+		Data: map[string]any{
+			"scene": map[string]any{
+				"Width":      640,
+				"Height":     360,
+				"Background": "#08151f",
+				"Camera": map[string]any{
+					"FOV":  62,
+					"Near": 0.15,
+					"Far":  64,
+				},
+				"Scene": map[string]any{
+					"Objects": []map[string]any{
+						{
+							"Kind":  "box",
+							"Color": "#8de1ff",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	node, err := DefaultFileRenderer(ctx, FilePage{FilePath: path, Pattern: "/"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	html := gosx.RenderHTML(node)
+	if !strings.Contains(html, `data-gosx-engine="GoSXScene3D"`) {
+		t.Fatalf("expected Scene3D mount shell in %q", html)
+	}
+
+	head := gosx.RenderHTML(ctx.Runtime().Head())
+	for _, snippet := range []string{
+		`"background": "#08151f"`,
+		`"camera": {`,
+		`"near": 0.15`,
+		`"far": 64`,
+		`"scene": {`,
+		`"objects": [`,
+		`"kind": "box"`,
+	} {
+		if !strings.Contains(head, snippet) {
+			t.Fatalf("expected %q in canonical Scene3D runtime head %q", snippet, head)
+		}
+	}
+	for _, snippet := range []string{
+		`"Background"`,
+		`"Camera"`,
+		`"Near"`,
+		`"Far"`,
+		`"Scene"`,
+		`"Objects"`,
+		`"Kind"`,
+	} {
+		if strings.Contains(head, snippet) {
+			t.Fatalf("did not expect exported Scene3D prop aliases in runtime head %q", head)
+		}
+	}
+}
+
+func TestDefaultFileRendererSupportsTypedScenePropsThroughPropsAttr(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "page.gsx")
+	source := `package docs
+
+func Page() Node {
+	return <Scene3D class="scene-shell" props={data.scene}>
+		<div>Scene fallback</div>
+	</Scene3D>
+}
+`
+	if err := os.WriteFile(path, []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := &RouteContext{
+		Data: map[string]any{
+			"scene": scene.Props{
+				Width:      640,
+				Height:     360,
+				Background: "#08151f",
+				ProgramRef: "/api/runtime/scene-program",
+				Capabilities: []string{
+					"animation",
+					"pointer",
+					"animation",
+				},
+				Camera: scene.PerspectiveCamera{
+					Position: scene.Vec3(0, 0.4, 6),
+					FOV:      62,
+					Near:     0.15,
+					Far:      64,
+				},
+				Graph: scene.NewGraph(
+					scene.Mesh{
+						ID:       "hero",
+						Geometry: scene.BoxGeometry{Width: 1.8, Height: 1.2, Depth: 0.8},
+						Material: scene.GlassMaterial{
+							Color:      "#c7f0ff",
+							Opacity:    scene.Float(0.45),
+							Emissive:   scene.Float(0.08),
+							BlendMode:  scene.BlendAlpha,
+							RenderPass: scene.RenderAlpha,
+						},
+						Position: scene.Vec3(0, 0.2, 0),
+					},
+				),
+			},
+		},
+	}
+
+	node, err := DefaultFileRenderer(ctx, FilePage{FilePath: path, Pattern: "/"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	html := gosx.RenderHTML(node)
+	if !strings.Contains(html, `data-gosx-engine="GoSXScene3D"`) {
+		t.Fatalf("expected Scene3D mount shell in %q", html)
+	}
+
+	head := gosx.RenderHTML(ctx.Runtime().Head())
+	for _, snippet := range []string{
+		`/api/runtime/scene-program`,
+		`"capabilities": [`,
+		`"pointer"`,
+		`"near": 0.15`,
+		`"far": 64`,
+		`"kind": "box"`,
+		`"materialKind": "glass"`,
+		`"opacity": 0.45`,
+		`"emissive": 0.08`,
+		`"blendMode": "alpha"`,
+		`"renderPass": "alpha"`,
+	} {
+		if !strings.Contains(head, snippet) {
+			t.Fatalf("expected %q in typed Scene3D props runtime head %q", snippet, head)
+		}
+	}
+	for _, snippet := range []string{
+		`"props":{"programRef"`,
+		`"props":{"capabilities"`,
+	} {
+		if strings.Contains(head, snippet) {
+			t.Fatalf("did not expect transport props to leak into Scene3D payload %q", head)
+		}
+	}
+}
+
 func TestDefaultFileRendererRendersTextBlockPrimitive(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "page.gsx")

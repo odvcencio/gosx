@@ -11,29 +11,35 @@ type SceneIR struct {
 
 // ObjectIR is the typed compatibility record for one lowered scene object.
 type ObjectIR struct {
-	ID         string  `json:"id"`
-	Kind       string  `json:"kind"`
-	Size       float64 `json:"size,omitempty"`
-	Width      float64 `json:"width,omitempty"`
-	Height     float64 `json:"height,omitempty"`
-	Depth      float64 `json:"depth,omitempty"`
-	Radius     float64 `json:"radius,omitempty"`
-	Segments   int     `json:"segments,omitempty"`
-	Color      string  `json:"color,omitempty"`
-	X          float64 `json:"x,omitempty"`
-	Y          float64 `json:"y,omitempty"`
-	Z          float64 `json:"z,omitempty"`
-	RotationX  float64 `json:"rotationX,omitempty"`
-	RotationY  float64 `json:"rotationY,omitempty"`
-	RotationZ  float64 `json:"rotationZ,omitempty"`
-	SpinX      float64 `json:"spinX,omitempty"`
-	SpinY      float64 `json:"spinY,omitempty"`
-	SpinZ      float64 `json:"spinZ,omitempty"`
-	ShiftX     float64 `json:"shiftX,omitempty"`
-	ShiftY     float64 `json:"shiftY,omitempty"`
-	ShiftZ     float64 `json:"shiftZ,omitempty"`
-	DriftSpeed float64 `json:"driftSpeed,omitempty"`
-	DriftPhase float64 `json:"driftPhase,omitempty"`
+	ID           string   `json:"id"`
+	Kind         string   `json:"kind"`
+	Size         float64  `json:"size,omitempty"`
+	Width        float64  `json:"width,omitempty"`
+	Height       float64  `json:"height,omitempty"`
+	Depth        float64  `json:"depth,omitempty"`
+	Radius       float64  `json:"radius,omitempty"`
+	Segments     int      `json:"segments,omitempty"`
+	MaterialKind string   `json:"materialKind,omitempty"`
+	Color        string   `json:"color,omitempty"`
+	Opacity      *float64 `json:"opacity,omitempty"`
+	Emissive     *float64 `json:"emissive,omitempty"`
+	BlendMode    string   `json:"blendMode,omitempty"`
+	RenderPass   string   `json:"renderPass,omitempty"`
+	Wireframe    *bool    `json:"wireframe,omitempty"`
+	X            float64  `json:"x,omitempty"`
+	Y            float64  `json:"y,omitempty"`
+	Z            float64  `json:"z,omitempty"`
+	RotationX    float64  `json:"rotationX,omitempty"`
+	RotationY    float64  `json:"rotationY,omitempty"`
+	RotationZ    float64  `json:"rotationZ,omitempty"`
+	SpinX        float64  `json:"spinX,omitempty"`
+	SpinY        float64  `json:"spinY,omitempty"`
+	SpinZ        float64  `json:"spinZ,omitempty"`
+	ShiftX       float64  `json:"shiftX,omitempty"`
+	ShiftY       float64  `json:"shiftY,omitempty"`
+	ShiftZ       float64  `json:"shiftZ,omitempty"`
+	DriftSpeed   float64  `json:"driftSpeed,omitempty"`
+	DriftPhase   float64  `json:"driftPhase,omitempty"`
 }
 
 // LabelIR is the typed compatibility record for one lowered scene label.
@@ -130,11 +136,15 @@ func (item ObjectIR) legacyProps() map[string]any {
 	setNumeric(record, "height", item.Height)
 	setNumeric(record, "depth", item.Depth)
 	setNumeric(record, "radius", item.Radius)
-	if item.Segments > 0 {
-		record["segments"] = item.Segments
-	}
-	if color := strings.TrimSpace(item.Color); color != "" {
-		record["color"] = color
+	setInt(record, "segments", item.Segments)
+	setString(record, "materialKind", item.MaterialKind)
+	setString(record, "color", item.Color)
+	setNumericPtr(record, "opacity", item.Opacity)
+	setNumericPtr(record, "emissive", item.Emissive)
+	setString(record, "blendMode", item.BlendMode)
+	setString(record, "renderPass", item.RenderPass)
+	if item.Wireframe != nil {
+		record["wireframe"] = *item.Wireframe
 	}
 	setNumeric(record, "x", item.X)
 	setNumeric(record, "y", item.Y)
@@ -188,40 +198,22 @@ func (item LabelIR) legacyProps() map[string]any {
 	setNumeric(record, "driftSpeed", item.DriftSpeed)
 	setNumeric(record, "driftPhase", item.DriftPhase)
 	setNumeric(record, "maxWidth", item.MaxWidth)
-	if item.MaxLines > 0 {
-		record["maxLines"] = item.MaxLines
-	}
-	if overflow := strings.TrimSpace(item.Overflow); overflow != "" {
-		record["overflow"] = overflow
-	}
-	if font := strings.TrimSpace(item.Font); font != "" {
-		record["font"] = font
-	}
+	setInt(record, "maxLines", item.MaxLines)
+	setString(record, "overflow", item.Overflow)
+	setString(record, "font", item.Font)
 	setNumeric(record, "lineHeight", item.LineHeight)
-	if color := strings.TrimSpace(item.Color); color != "" {
-		record["color"] = color
-	}
-	if background := strings.TrimSpace(item.Background); background != "" {
-		record["background"] = background
-	}
-	if border := strings.TrimSpace(item.BorderColor); border != "" {
-		record["borderColor"] = border
-	}
+	setString(record, "color", item.Color)
+	setString(record, "background", item.Background)
+	setString(record, "borderColor", item.BorderColor)
 	setNumeric(record, "offsetX", item.OffsetX)
 	setNumeric(record, "offsetY", item.OffsetY)
 	setNumeric(record, "anchorX", item.AnchorX)
 	setNumeric(record, "anchorY", item.AnchorY)
-	if collision := strings.TrimSpace(item.Collision); collision != "" {
-		record["collision"] = collision
-	}
+	setString(record, "collision", item.Collision)
 	if item.Occlude {
 		record["occlude"] = true
 	}
-	if whiteSpace := strings.TrimSpace(item.WhiteSpace); whiteSpace != "" {
-		record["whiteSpace"] = whiteSpace
-	}
-	if align := strings.TrimSpace(item.TextAlign); align != "" {
-		record["textAlign"] = align
-	}
+	setString(record, "whiteSpace", item.WhiteSpace)
+	setString(record, "textAlign", item.TextAlign)
 	return record
 }

@@ -111,15 +111,15 @@ func Page() Node {
 		</pre>
 		<pre class="code-block">
 			{`func Load(ctx *route.RouteContext, page route.FilePage) (any, error) {
-    ctx.LifecycleScript(docsapp.PublicAssetURL("runtime/watch-transport.js"))
-    return data, nil
-}`}
+	    ctx.LifecycleScript(docsapp.PublicAssetURL("runtime/watch-transport.js"))
+	    return data, nil
+	}`}
 		</pre>
 		<pre class="code-block">
 			{`ctx.ManagedScript(
-    docsapp.PublicAssetURL("cms-demo.js"),
-    server.ManagedScriptOptions{},
-)`}
+	    docsapp.PublicAssetURL("cms-demo.js"),
+	    server.ManagedScriptOptions{},
+	)`}
 		</pre>
 		<pre class="code-block">
 			{`func Page() Node {

@@ -201,6 +201,79 @@ func TestPropsSceneIRLowerNestedGraph(t *testing.T) {
 	}
 }
 
+func TestPropsSceneIRLowersRichMaterialFields(t *testing.T) {
+	props := Props{
+		Graph: NewGraph(
+			Mesh{
+				ID:       "glass-panel",
+				Geometry: PlaneGeometry{Width: 2.4, Height: 1.6},
+				Material: GlassMaterial{
+					Color:      "#c7f0ff",
+					Opacity:    Float(0),
+					Emissive:   Float(0),
+					BlendMode:  BlendAlpha,
+					RenderPass: RenderAlpha,
+					Wireframe:  Bool(false),
+				},
+				Position: Vec3(0, 0.4, 0.8),
+			},
+		),
+	}
+
+	ir := props.SceneIR()
+	if len(ir.Objects) != 1 {
+		t.Fatalf("expected one lowered object, got %#v", ir.Objects)
+	}
+	object := ir.Objects[0]
+	if object.MaterialKind != "glass" {
+		t.Fatalf("expected glass material kind, got %#v", object.MaterialKind)
+	}
+	if object.Opacity == nil || *object.Opacity != 0 {
+		t.Fatalf("expected explicit zero opacity, got %#v", object.Opacity)
+	}
+	if object.Emissive == nil || *object.Emissive != 0 {
+		t.Fatalf("expected explicit zero emissive, got %#v", object.Emissive)
+	}
+	if object.BlendMode != "alpha" {
+		t.Fatalf("expected alpha blend mode, got %#v", object.BlendMode)
+	}
+	if object.RenderPass != "alpha" {
+		t.Fatalf("expected alpha render pass, got %#v", object.RenderPass)
+	}
+	if object.Wireframe == nil || *object.Wireframe {
+		t.Fatalf("expected explicit wireframe=false, got %#v", object.Wireframe)
+	}
+
+	legacy := props.LegacyProps()
+	sceneValue, ok := legacy["scene"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected scene map, got %#v", legacy["scene"])
+	}
+	objects, ok := sceneValue["objects"].([]map[string]any)
+	if !ok || len(objects) != 1 {
+		t.Fatalf("expected one lowered object, got %#v", sceneValue["objects"])
+	}
+	record := objects[0]
+	if got := record["materialKind"]; got != "glass" {
+		t.Fatalf("expected glass material kind in legacy props, got %#v", got)
+	}
+	if got := record["opacity"]; got != 0.0 {
+		t.Fatalf("expected explicit zero opacity in legacy props, got %#v", got)
+	}
+	if got := record["emissive"]; got != 0.0 {
+		t.Fatalf("expected explicit zero emissive in legacy props, got %#v", got)
+	}
+	if got := record["blendMode"]; got != "alpha" {
+		t.Fatalf("expected alpha blend mode in legacy props, got %#v", got)
+	}
+	if got := record["renderPass"]; got != "alpha" {
+		t.Fatalf("expected alpha render pass in legacy props, got %#v", got)
+	}
+	if got := record["wireframe"]; got != false {
+		t.Fatalf("expected explicit wireframe=false in legacy props, got %#v", got)
+	}
+}
+
 func TestPropsMarshalJSONOmitsEngineTransportFields(t *testing.T) {
 	props := Props{
 		ProgramRef:   "/api/runtime/scene-program",
