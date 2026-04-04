@@ -1,5 +1,25 @@
 # Changelog
 
+## v0.6.0
+
+### 3D Engine Phase 2-3
+
+Production-grade 3D rendering platform built into GoSX's native Scene3D.
+
+**Renderer**: PBR WebGL2 backend with Cook-Torrance BRDF, per-pixel lighting (8 lights), shadow maps (PCF), postprocessing (bloom, tone mapping, vignette, color grading), exponential fog. Draw-plan abstraction for future WebGPU backend. Split 5K LOC monolith into 10 focused modules.
+
+**Points primitive**: GL_POINTS particle system with per-vertex size/color, size attenuation, additive blending, depth write control, pinwheel spin animation, scroll-driven camera.
+
+**Asset pipeline**: Built-in glTF/GLB loader (meshes, PBR materials, textures, animations, skins). Animation mixer with keyframe interpolation, quaternion slerp, crossfading. Skeletal animation with vertex skinning (64 joints).
+
+**Interaction**: Raycast scene picking (Moller-Trumbore ray-triangle with AABB broad phase) replacing bounds-based detection.
+
+**Go API**: `StandardMaterial`, `CylinderGeometry`, `TorusGeometry`, `Points`, shadow fields, animation fields, `ScrollCameraStart`/`ScrollCameraEnd`, fog, `EffectComposer`.
+
+**Performance**: Zero per-frame allocations in animation hot path, cached vertex data, pre-allocated scratch buffers, binary keyframe search, persistent GPU buffers.
+
+**Galaxy demo**: 2,800-particle galaxy with spiral arms, scroll camera, fog — replaces three.js on m31labs.dev with 62% less JS over the wire (80KB gzipped savings).
+
 ## v0.3.2
 
 - **fix(isr):** stale ISR pages now snapshot the existing artifact before background regeneration starts, so the first stale response cannot race ahead and serve the freshly regenerated HTML.

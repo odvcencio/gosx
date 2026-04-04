@@ -60,3 +60,37 @@ func TestBuilderIncludeRemapsExprsAndChildren(t *testing.T) {
 		t.Fatalf("expected included child handle to be remapped, got %#v", includedGroup.Children)
 	}
 }
+
+func TestBuilderDeclaresSceneEventSignals(t *testing.T) {
+	builder := NewBuilder("scene")
+
+	events := builder.DeclareSceneEventSignals("$scene.runtime.event")
+	core := builder.DeclareSceneObjectSignals("$scene.runtime.event", "Runtime Core")
+	prog := builder.Build()
+
+	if len(prog.Signals) != 24 {
+		t.Fatalf("expected 24 scene event signals, got %d", len(prog.Signals))
+	}
+	if events.Type < 0 || events.SelectedID < 0 || core.Hovered < 0 || core.ClickCount < 0 {
+		t.Fatalf("expected usable scene event expressions, got %#v / %#v", events, core)
+	}
+	if got := prog.Signals[len(prog.Signals)-4].Name; got != "$scene.runtime.event.object.runtime-core.hovered" {
+		t.Fatalf("expected canonical object signal slug, got %q", got)
+	}
+}
+
+func TestBuilderSpriteCreatesSpriteNode(t *testing.T) {
+	builder := NewBuilder("sprite")
+	handle := builder.Sprite(map[string]islandprogram.ExprID{
+		"src": builder.String("/paper-card.png"),
+		"x":   builder.Float(1.2),
+	})
+	prog := builder.Build()
+
+	if handle != 0 {
+		t.Fatalf("expected first sprite handle to be 0, got %d", handle)
+	}
+	if len(prog.Nodes) != 1 || prog.Nodes[0].Kind != "sprite" {
+		t.Fatalf("expected one sprite node, got %#v", prog.Nodes)
+	}
+}

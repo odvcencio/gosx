@@ -29,9 +29,23 @@ type Euler struct {
 // PerspectiveCamera describes the current Scene3D camera contract.
 type PerspectiveCamera struct {
 	Position Vector3
+	Rotation Euler
 	FOV      float64
 	Near     float64
 	Far      float64
+}
+
+// Environment describes scene-wide ambient and hemisphere lighting.
+type Environment struct {
+	AmbientColor     string
+	AmbientIntensity float64
+	SkyColor         string
+	SkyIntensity     float64
+	GroundColor      string
+	GroundIntensity  float64
+	Exposure         float64
+	FogColor         string
+	FogDensity       float64 // for exponential fog (0 = no fog)
 }
 
 // Props is the typed Go-side Scene3D surface. It lowers into the current
@@ -44,6 +58,7 @@ type Props struct {
 	Label               string   `json:"label,omitempty"`
 	AriaLabel           string   `json:"ariaLabel,omitempty"`
 	Background          string   `json:"background,omitempty"`
+	Controls            string   `json:"controls,omitempty"`
 	AutoRotate          *bool    `json:"autoRotate,omitempty"`
 	Responsive          *bool    `json:"responsive,omitempty"`
 	FillHeight          *bool    `json:"fillHeight,omitempty"`
@@ -52,9 +67,17 @@ type Props struct {
 	PreferCanvas        *bool    `json:"preferCanvas,omitempty"`
 	DragToRotate        *bool    `json:"dragToRotate,omitempty"`
 	DragSignalNamespace string   `json:"dragSignalNamespace,omitempty"`
+	PickSignalNamespace string   `json:"pickSignalNamespace,omitempty"`
+	EventSignalNamespace string  `json:"eventSignalNamespace,omitempty"`
 	CapabilityTier      string   `json:"capabilityTier,omitempty"`
-	MaxDevicePixelRatio float64  `json:"maxDevicePixelRatio,omitempty"`
+	ControlTarget       Vector3
+	ControlRotateSpeed  float64 `json:"controlRotateSpeed,omitempty"`
+	ControlZoomSpeed    float64 `json:"controlZoomSpeed,omitempty"`
+	ScrollCameraStart   float64 `json:"scrollCameraStart,omitempty"`
+	ScrollCameraEnd     float64 `json:"scrollCameraEnd,omitempty"`
+	MaxDevicePixelRatio float64 `json:"maxDevicePixelRatio,omitempty"`
 	Camera              PerspectiveCamera
+	Environment         Environment
 	Graph               Graph
 }
 
@@ -78,16 +101,38 @@ type Group struct {
 
 // Mesh lowers into one legacy scene object.
 type Mesh struct {
-	ID         string
-	Geometry   Geometry
-	Material   Material
-	Position   Vector3
-	Rotation   Euler
-	Spin       Euler
-	Drift      Vector3
-	DriftSpeed float64
-	DriftPhase float64
-	Children   []Node
+	ID            string
+	Geometry      Geometry
+	Material      Material
+	Position      Vector3
+	Rotation      Euler
+	Pickable      *bool
+	CastShadow    bool
+	ReceiveShadow bool
+	DepthWrite    *bool // nil = default (true), false = no depth writes
+	Spin          Euler
+	Drift         Vector3
+	DriftSpeed    float64
+	DriftPhase    float64
+	Children      []Node
+}
+
+// Points renders a particle system using GL_POINTS.
+type Points struct {
+	ID          string
+	Count       int               // number of particles
+	Positions   []Vector3         // per-particle positions
+	Sizes       []float64         // per-particle sizes (optional, default 1.0)
+	Colors      []string          // per-particle hex colors (optional)
+	Color       string            // uniform color if no per-vertex colors
+	Size        float64           // uniform size if no per-vertex sizes
+	Opacity     float64           // 0-1
+	BlendMode   MaterialBlendMode
+	DepthWrite  bool              // whether to write to depth buffer
+	Attenuation bool              // size scales with distance
+	Position    Vector3           // transform position
+	Rotation    Euler             // transform rotation
+	Spin        Euler             // procedural rotation animation
 }
 
 // Label lowers into one legacy scene label.
@@ -117,6 +162,72 @@ type Label struct {
 	Occlude     bool
 	WhiteSpace  string
 	TextAlign   string
+}
+
+// Sprite lowers into one projected image billboard overlay.
+type Sprite struct {
+	ID         string
+	Target     string
+	Src        string
+	ClassName  string
+	Position   Vector3
+	Priority   float64
+	Shift      Vector3
+	DriftSpeed float64
+	DriftPhase float64
+	Width      float64
+	Height     float64
+	Scale      float64
+	Opacity    float64
+	OffsetX    float64
+	OffsetY    float64
+	AnchorX    float64
+	AnchorY    float64
+	Occlude    bool
+	Fit        string
+}
+
+// Model instances a framework-owned scene model asset with a transform and
+// optional material/static overrides.
+type Model struct {
+	ID        string
+	Src       string
+	Position  Vector3
+	Rotation  Euler
+	Scale     Vector3
+	Material  Material
+	Pickable  *bool
+	Static    *bool
+	Animation string
+	Loop      *bool
+}
+
+// AmbientLight adds untargeted scene illumination.
+type AmbientLight struct {
+	ID        string
+	Color     string
+	Intensity float64
+}
+
+// DirectionalLight adds a directional scene light.
+type DirectionalLight struct {
+	ID         string
+	Color      string
+	Intensity  float64
+	Direction  Vector3
+	CastShadow bool
+	ShadowBias float64
+	ShadowSize int
+}
+
+// PointLight adds a positioned scene light with optional range falloff.
+type PointLight struct {
+	ID        string
+	Color     string
+	Intensity float64
+	Position  Vector3
+	Range     float64
+	Decay     float64
 }
 
 // Geometry describes one supported legacy primitive.
@@ -159,6 +270,7 @@ const (
 
 type MaterialStyle struct {
 	Color      string
+	Texture    string
 	Opacity    *float64
 	Emissive   *float64
 	BlendMode  MaterialBlendMode
@@ -192,11 +304,45 @@ type SphereGeometry struct {
 	Segments int
 }
 
+type LinesGeometry struct {
+	Points   []Vector3
+	Segments [][2]int
+}
+
+type CylinderGeometry struct {
+	RadiusTop    float64
+	RadiusBottom float64
+	Height       float64
+	Segments     int
+}
+
+type TorusGeometry struct {
+	Radius          float64
+	Tube            float64
+	RadialSegments  int
+	TubularSegments int
+}
+
 type FlatMaterial MaterialStyle
 type GhostMaterial MaterialStyle
 type GlassMaterial MaterialStyle
 type GlowMaterial MaterialStyle
 type MatteMaterial MaterialStyle
+
+// StandardMaterial is a PBR material using the roughness/metalness workflow.
+type StandardMaterial struct {
+	Color        string
+	Roughness    float64
+	Metalness    float64
+	NormalMap    string
+	RoughnessMap string
+	MetalnessMap string
+	EmissiveMap  string
+	Emissive     float64
+	Opacity      *float64
+	BlendMode    MaterialBlendMode
+	Wireframe    *bool
+}
 
 type quaternion struct {
 	X float64
@@ -215,29 +361,52 @@ type pendingLabel struct {
 	parent worldTransform
 }
 
-type graphLowerer struct {
-	objects      []ObjectIR
-	pending      []pendingLabel
-	anchors      map[string]worldTransform
-	nextObjectID int
-	nextLabelID  int
+type pendingSprite struct {
+	sprite Sprite
+	parent worldTransform
 }
 
-func (Group) sceneNode() {}
-func (Mesh) sceneNode()  {}
-func (Label) sceneNode() {}
+type graphLowerer struct {
+	objects        []ObjectIR
+	models         []ModelIR
+	points         []PointsIR
+	pending        []pendingLabel
+	pendingSprites []pendingSprite
+	lights         []LightIR
+	anchors        map[string]worldTransform
+	nextObjectID   int
+	nextLabelID    int
+	nextSpriteID   int
+	nextLightID    int
+	nextModelID    int
+	nextPointsID   int
+}
 
-func (CubeGeometry) sceneGeometry()    {}
-func (BoxGeometry) sceneGeometry()     {}
-func (PlaneGeometry) sceneGeometry()   {}
-func (PyramidGeometry) sceneGeometry() {}
-func (SphereGeometry) sceneGeometry()  {}
+func (Group) sceneNode()            {}
+func (Mesh) sceneNode()             {}
+func (Points) sceneNode()           {}
+func (Label) sceneNode()            {}
+func (Sprite) sceneNode()           {}
+func (Model) sceneNode()            {}
+func (AmbientLight) sceneNode()     {}
+func (DirectionalLight) sceneNode() {}
+func (PointLight) sceneNode()       {}
 
-func (FlatMaterial) sceneMaterial()  {}
-func (GhostMaterial) sceneMaterial() {}
-func (GlassMaterial) sceneMaterial() {}
-func (GlowMaterial) sceneMaterial()  {}
-func (MatteMaterial) sceneMaterial() {}
+func (CubeGeometry) sceneGeometry()     {}
+func (BoxGeometry) sceneGeometry()      {}
+func (PlaneGeometry) sceneGeometry()    {}
+func (PyramidGeometry) sceneGeometry()  {}
+func (SphereGeometry) sceneGeometry()   {}
+func (LinesGeometry) sceneGeometry()    {}
+func (CylinderGeometry) sceneGeometry() {}
+func (TorusGeometry) sceneGeometry()    {}
+
+func (FlatMaterial) sceneMaterial()     {}
+func (GhostMaterial) sceneMaterial()    {}
+func (GlassMaterial) sceneMaterial()    {}
+func (GlowMaterial) sceneMaterial()     {}
+func (MatteMaterial) sceneMaterial()    {}
+func (StandardMaterial) sceneMaterial() {}
 
 // Bool allocates a bool for opt-in Scene3D flags.
 func Bool(value bool) *bool {
@@ -291,6 +460,7 @@ func (p Props) legacyBaseProps() map[string]any {
 	setString(out, "label", p.Label)
 	setString(out, "ariaLabel", p.AriaLabel)
 	setString(out, "background", p.Background)
+	setString(out, "controls", p.Controls)
 	setBool(out, "autoRotate", p.AutoRotate)
 	setBool(out, "responsive", p.Responsive)
 	setBool(out, "fillHeight", p.FillHeight)
@@ -299,7 +469,20 @@ func (p Props) legacyBaseProps() map[string]any {
 	setBool(out, "preferCanvas", p.PreferCanvas)
 	setBool(out, "dragToRotate", p.DragToRotate)
 	setString(out, "dragSignalNamespace", p.DragSignalNamespace)
+	setString(out, "pickSignalNamespace", p.PickSignalNamespace)
+	setString(out, "eventSignalNamespace", p.EventSignalNamespace)
 	setString(out, "capabilityTier", p.CapabilityTier)
+	if p.ControlTarget != (Vector3{}) {
+		out["controlTarget"] = map[string]any{
+			"x": p.ControlTarget.X,
+			"y": p.ControlTarget.Y,
+			"z": p.ControlTarget.Z,
+		}
+	}
+	setNumeric(out, "controlRotateSpeed", p.ControlRotateSpeed)
+	setNumeric(out, "controlZoomSpeed", p.ControlZoomSpeed)
+	setNumeric(out, "scrollCameraStart", p.ScrollCameraStart)
+	setNumeric(out, "scrollCameraEnd", p.ScrollCameraEnd)
 	setNumeric(out, "maxDevicePixelRatio", p.MaxDevicePixelRatio)
 	if !p.Camera.isZero() {
 		out["camera"] = p.Camera.legacyProps()
@@ -387,6 +570,15 @@ func (c PerspectiveCamera) legacyProps() map[string]any {
 	if c.Position.Z != 0 {
 		out["z"] = c.Position.Z
 	}
+	if c.Rotation.X != 0 {
+		out["rotationX"] = c.Rotation.X
+	}
+	if c.Rotation.Y != 0 {
+		out["rotationY"] = c.Rotation.Y
+	}
+	if c.Rotation.Z != 0 {
+		out["rotationZ"] = c.Rotation.Z
+	}
 	if c.FOV != 0 {
 		out["fov"] = c.FOV
 	}
@@ -400,7 +592,7 @@ func (c PerspectiveCamera) legacyProps() map[string]any {
 }
 
 func (c PerspectiveCamera) isZero() bool {
-	return c.Position == (Vector3{}) && c.FOV == 0 && c.Near == 0 && c.Far == 0
+	return c.Position == (Vector3{}) && c.Rotation == (Euler{}) && c.FOV == 0 && c.Near == 0 && c.Far == 0
 }
 
 func (l *graphLowerer) lowerNode(node Node, parent worldTransform) {
@@ -417,11 +609,47 @@ func (l *graphLowerer) lowerNode(node Node, parent worldTransform) {
 		if current != nil {
 			l.lowerMesh(*current, parent)
 		}
+	case Points:
+		l.lowerPoints(current, parent)
+	case *Points:
+		if current != nil {
+			l.lowerPoints(*current, parent)
+		}
 	case Label:
 		l.pending = append(l.pending, pendingLabel{label: current, parent: parent})
 	case *Label:
 		if current != nil {
 			l.pending = append(l.pending, pendingLabel{label: *current, parent: parent})
+		}
+	case Sprite:
+		l.pendingSprites = append(l.pendingSprites, pendingSprite{sprite: current, parent: parent})
+	case *Sprite:
+		if current != nil {
+			l.pendingSprites = append(l.pendingSprites, pendingSprite{sprite: *current, parent: parent})
+		}
+	case Model:
+		l.lowerModel(current, parent)
+	case *Model:
+		if current != nil {
+			l.lowerModel(*current, parent)
+		}
+	case AmbientLight:
+		l.lowerAmbientLight(current)
+	case *AmbientLight:
+		if current != nil {
+			l.lowerAmbientLight(*current)
+		}
+	case DirectionalLight:
+		l.lowerDirectionalLight(current, parent)
+	case *DirectionalLight:
+		if current != nil {
+			l.lowerDirectionalLight(*current, parent)
+		}
+	case PointLight:
+		l.lowerPointLight(current, parent)
+	case *PointLight:
+		if current != nil {
+			l.lowerPointLight(*current, parent)
 		}
 	}
 }
@@ -460,6 +688,10 @@ func (l *graphLowerer) lowerMesh(mesh Mesh, parent worldTransform) {
 	record.SpinX = mesh.Spin.X
 	record.SpinY = mesh.Spin.Y
 	record.SpinZ = mesh.Spin.Z
+	record.Pickable = mesh.Pickable
+	record.CastShadow = mesh.CastShadow
+	record.ReceiveShadow = mesh.ReceiveShadow
+	record.DepthWrite = mesh.DepthWrite
 	record.ShiftX = mesh.Drift.X
 	record.ShiftY = mesh.Drift.Y
 	record.ShiftZ = mesh.Drift.Z
@@ -470,6 +702,82 @@ func (l *graphLowerer) lowerMesh(mesh Mesh, parent worldTransform) {
 	for _, child := range mesh.Children {
 		l.lowerNode(child, world)
 	}
+}
+
+func (l *graphLowerer) lowerPoints(pts Points, parent worldTransform) {
+	world := combineTransforms(parent, localTransform(pts.Position, pts.Rotation))
+	id := strings.TrimSpace(pts.ID)
+	if id == "" {
+		l.nextPointsID += 1
+		id = "scene-points-" + intString(l.nextPointsID)
+	}
+	record := PointsIR{
+		ID:          id,
+		Count:       pts.Count,
+		Color:       strings.TrimSpace(pts.Color),
+		Size:        pts.Size,
+		Opacity:     pts.Opacity,
+		BlendMode:   strings.TrimSpace(string(pts.BlendMode)),
+		DepthWrite:  Bool(pts.DepthWrite),
+		Attenuation: pts.Attenuation,
+		X:           world.Position.X,
+		Y:           world.Position.Y,
+		Z:           world.Position.Z,
+	}
+	rotation := eulerFromQuaternion(world.Rotation)
+	record.RotationX = rotation.X
+	record.RotationY = rotation.Y
+	record.RotationZ = rotation.Z
+	record.SpinX = pts.Spin.X
+	record.SpinY = pts.Spin.Y
+	record.SpinZ = pts.Spin.Z
+	// Flatten positions to [x,y,z, x,y,z, ...].
+	if len(pts.Positions) > 0 {
+		flat := make([]float64, 0, len(pts.Positions)*3)
+		for _, p := range pts.Positions {
+			flat = append(flat, p.X, p.Y, p.Z)
+		}
+		record.Positions = flat
+	}
+	if len(pts.Sizes) > 0 {
+		record.Sizes = append([]float64(nil), pts.Sizes...)
+	}
+	if len(pts.Colors) > 0 {
+		record.Colors = append([]string(nil), pts.Colors...)
+	}
+	l.points = append(l.points, record)
+}
+
+func (l *graphLowerer) lowerModel(model Model, parent worldTransform) {
+	src := strings.TrimSpace(model.Src)
+	if src == "" {
+		return
+	}
+	world := combineTransforms(parent, localTransform(model.Position, model.Rotation))
+	id := l.nextSceneModelID(model.ID)
+	record := ModelIR{
+		ObjectIR: ObjectIR{
+			ID: id,
+			X:  world.Position.X,
+			Y:  world.Position.Y,
+			Z:  world.Position.Z,
+		},
+		Src:    src,
+		ScaleX: model.Scale.X,
+		ScaleY: model.Scale.Y,
+		ScaleZ: model.Scale.Z,
+	}
+	rotation := eulerFromQuaternion(world.Rotation)
+	record.RotationX = rotation.X
+	record.RotationY = rotation.Y
+	record.RotationZ = rotation.Z
+	applyMaterialProps(&record.ObjectIR, legacyMaterial(model.Material))
+	record.Static = model.Static
+	record.Pickable = model.Pickable
+	record.Animation = strings.TrimSpace(model.Animation)
+	record.Loop = model.Loop
+	l.models = append(l.models, record)
+	l.anchors[id] = world
 }
 
 func (l *graphLowerer) resolveLabels() []LabelIR {
@@ -483,6 +791,59 @@ func (l *graphLowerer) resolveLabels() []LabelIR {
 		}
 	}
 	return out
+}
+
+func (l *graphLowerer) resolveSprites() []SpriteIR {
+	if len(l.pendingSprites) == 0 {
+		return nil
+	}
+	out := make([]SpriteIR, 0, len(l.pendingSprites))
+	for _, item := range l.pendingSprites {
+		if record, ok := l.resolveSprite(item); ok {
+			out = append(out, record)
+		}
+	}
+	return out
+}
+
+func (l *graphLowerer) lowerAmbientLight(light AmbientLight) {
+	l.lights = append(l.lights, LightIR{
+		ID:        l.nextSceneLightID("ambient-light", light.ID),
+		Kind:      "ambient",
+		Color:     strings.TrimSpace(light.Color),
+		Intensity: light.Intensity,
+	})
+}
+
+func (l *graphLowerer) lowerDirectionalLight(light DirectionalLight, parent worldTransform) {
+	direction := parent.Rotation.rotate(light.Direction)
+	l.lights = append(l.lights, LightIR{
+		ID:         l.nextSceneLightID("directional-light", light.ID),
+		Kind:       "directional",
+		Color:      strings.TrimSpace(light.Color),
+		Intensity:  light.Intensity,
+		DirectionX: direction.X,
+		DirectionY: direction.Y,
+		DirectionZ: direction.Z,
+		CastShadow: light.CastShadow,
+		ShadowBias: light.ShadowBias,
+		ShadowSize: light.ShadowSize,
+	})
+}
+
+func (l *graphLowerer) lowerPointLight(light PointLight, parent worldTransform) {
+	world := combineTransforms(parent, localTransform(light.Position, Euler{}))
+	l.lights = append(l.lights, LightIR{
+		ID:        l.nextSceneLightID("point-light", light.ID),
+		Kind:      "point",
+		Color:     strings.TrimSpace(light.Color),
+		Intensity: light.Intensity,
+		X:         world.Position.X,
+		Y:         world.Position.Y,
+		Z:         world.Position.Z,
+		Range:     light.Range,
+		Decay:     light.Decay,
+	})
 }
 
 func (l *graphLowerer) resolveLabel(item pendingLabel) (LabelIR, bool) {
@@ -523,9 +884,45 @@ func (l *graphLowerer) resolveLabel(item pendingLabel) (LabelIR, bool) {
 	}, true
 }
 
+func (l *graphLowerer) resolveSprite(item pendingSprite) (SpriteIR, bool) {
+	src := strings.TrimSpace(item.sprite.Src)
+	if src == "" {
+		return SpriteIR{}, false
+	}
+	position := l.resolveAnchoredPosition(item.parent, item.sprite.Target, item.sprite.Position)
+	return SpriteIR{
+		ID:         l.nextSceneSpriteID(item.sprite.ID),
+		Src:        src,
+		ClassName:  strings.TrimSpace(item.sprite.ClassName),
+		X:          position.X,
+		Y:          position.Y,
+		Z:          position.Z,
+		Priority:   item.sprite.Priority,
+		ShiftX:     item.sprite.Shift.X,
+		ShiftY:     item.sprite.Shift.Y,
+		ShiftZ:     item.sprite.Shift.Z,
+		DriftSpeed: item.sprite.DriftSpeed,
+		DriftPhase: item.sprite.DriftPhase,
+		Width:      item.sprite.Width,
+		Height:     item.sprite.Height,
+		Scale:      item.sprite.Scale,
+		Opacity:    item.sprite.Opacity,
+		OffsetX:    item.sprite.OffsetX,
+		OffsetY:    item.sprite.OffsetY,
+		AnchorX:    item.sprite.AnchorX,
+		AnchorY:    item.sprite.AnchorY,
+		Occlude:    item.sprite.Occlude,
+		Fit:        strings.TrimSpace(item.sprite.Fit),
+	}, true
+}
+
 func (l *graphLowerer) resolveLabelPosition(item pendingLabel) Vector3 {
-	position := combineTransforms(item.parent, localTransform(item.label.Position, Euler{})).Position
-	target := strings.TrimSpace(item.label.Target)
+	return l.resolveAnchoredPosition(item.parent, item.label.Target, item.label.Position)
+}
+
+func (l *graphLowerer) resolveAnchoredPosition(parent worldTransform, rawTarget string, localPosition Vector3) Vector3 {
+	position := combineTransforms(parent, localTransform(localPosition, Euler{})).Position
+	target := strings.TrimSpace(rawTarget)
 	if target == "" {
 		return position
 	}
@@ -533,7 +930,7 @@ func (l *graphLowerer) resolveLabelPosition(item pendingLabel) Vector3 {
 	if !ok {
 		return position
 	}
-	return addVectors(anchor.Position, anchor.Rotation.rotate(item.label.Position))
+	return addVectors(anchor.Position, anchor.Rotation.rotate(localPosition))
 }
 
 func (l *graphLowerer) nextSceneLabelID(raw string) string {
@@ -543,6 +940,33 @@ func (l *graphLowerer) nextSceneLabelID(raw string) string {
 	}
 	l.nextLabelID += 1
 	return "scene-label-" + intString(l.nextLabelID)
+}
+
+func (l *graphLowerer) nextSceneSpriteID(raw string) string {
+	id := strings.TrimSpace(raw)
+	if id != "" {
+		return id
+	}
+	l.nextSpriteID += 1
+	return "scene-sprite-" + intString(l.nextSpriteID)
+}
+
+func (l *graphLowerer) nextSceneLightID(prefix, raw string) string {
+	id := strings.TrimSpace(raw)
+	if id != "" {
+		return id
+	}
+	l.nextLightID += 1
+	return prefix + "-" + intString(l.nextLightID)
+}
+
+func (l *graphLowerer) nextSceneModelID(raw string) string {
+	id := strings.TrimSpace(raw)
+	if id != "" {
+		return id
+	}
+	l.nextModelID += 1
+	return "scene-model-" + intString(l.nextModelID)
 }
 
 func applyGeometryProps(record *ObjectIR, props map[string]any) {
@@ -555,6 +979,13 @@ func applyGeometryProps(record *ObjectIR, props map[string]any) {
 	record.Depth = mapFloat64(props["depth"])
 	record.Radius = mapFloat64(props["radius"])
 	record.Segments = mapInt(props["segments"])
+	record.Points = mapVector3List(props["points"])
+	record.LineSegments = mapSegmentPairs(props["segments"])
+	record.RadiusTop = mapFloat64(props["radiusTop"])
+	record.RadiusBottom = mapFloat64(props["radiusBottom"])
+	record.Tube = mapFloat64(props["tube"])
+	record.RadialSegments = mapInt(props["radialSegments"])
+	record.TubularSegments = mapInt(props["tubularSegments"])
 }
 
 func applyMaterialProps(record *ObjectIR, props map[string]any) {
@@ -566,6 +997,9 @@ func applyMaterialProps(record *ObjectIR, props map[string]any) {
 	}
 	if color, ok := props["color"].(string); ok {
 		record.Color = strings.TrimSpace(color)
+	}
+	if texture, ok := props["texture"].(string); ok {
+		record.Texture = strings.TrimSpace(texture)
 	}
 	if opacity, ok := mapFloat64OK(props["opacity"]); ok {
 		record.Opacity = Float(opacity)
@@ -581,6 +1015,20 @@ func applyMaterialProps(record *ObjectIR, props map[string]any) {
 	}
 	if wireframe, ok := mapBool(props["wireframe"]); ok {
 		record.Wireframe = Bool(wireframe)
+	}
+	record.Roughness = mapFloat64(props["roughness"])
+	record.Metalness = mapFloat64(props["metalness"])
+	if normalMap, ok := mapStringValue(props["normalMap"]); ok {
+		record.NormalMap = normalMap
+	}
+	if roughnessMap, ok := mapStringValue(props["roughnessMap"]); ok {
+		record.RoughnessMap = roughnessMap
+	}
+	if metalnessMap, ok := mapStringValue(props["metalnessMap"]); ok {
+		record.MetalnessMap = metalnessMap
+	}
+	if emissiveMap, ok := mapStringValue(props["emissiveMap"]); ok {
+		record.EmissiveMap = emissiveMap
 	}
 }
 
@@ -642,6 +1090,50 @@ func (g SphereGeometry) legacyGeometry() (string, map[string]any) {
 	return "sphere", out
 }
 
+func (g LinesGeometry) legacyGeometry() (string, map[string]any) {
+	out := map[string]any{}
+	if points := legacyLinePoints(g.Points); len(points) > 0 {
+		out["points"] = points
+	}
+	if segments := legacyLineSegments(g.Segments); len(segments) > 0 {
+		out["segments"] = segments
+	}
+	if len(out) == 0 {
+		return "lines", nil
+	}
+	return "lines", out
+}
+
+func (g CylinderGeometry) legacyGeometry() (string, map[string]any) {
+	out := map[string]any{}
+	setNumeric(out, "radiusTop", g.RadiusTop)
+	setNumeric(out, "radiusBottom", g.RadiusBottom)
+	setNumeric(out, "height", g.Height)
+	if g.Segments > 0 {
+		out["segments"] = g.Segments
+	}
+	if len(out) == 0 {
+		return "cylinder", nil
+	}
+	return "cylinder", out
+}
+
+func (g TorusGeometry) legacyGeometry() (string, map[string]any) {
+	out := map[string]any{}
+	setNumeric(out, "radius", g.Radius)
+	setNumeric(out, "tube", g.Tube)
+	if g.RadialSegments > 0 {
+		out["radialSegments"] = g.RadialSegments
+	}
+	if g.TubularSegments > 0 {
+		out["tubularSegments"] = g.TubularSegments
+	}
+	if len(out) == 0 {
+		return "torus", nil
+	}
+	return "torus", out
+}
+
 func legacyMaterial(material Material) map[string]any {
 	if material == nil {
 		return nil
@@ -669,10 +1161,31 @@ func (m MatteMaterial) legacyMaterial() map[string]any {
 	return legacySceneMaterial(MaterialMatte, MaterialStyle(m))
 }
 
+func (m StandardMaterial) legacyMaterial() map[string]any {
+	out := map[string]any{}
+	setString(out, "materialKind", "standard")
+	setString(out, "color", m.Color)
+	setNumeric(out, "roughness", m.Roughness)
+	setNumeric(out, "metalness", m.Metalness)
+	setString(out, "normalMap", m.NormalMap)
+	setString(out, "roughnessMap", m.RoughnessMap)
+	setString(out, "metalnessMap", m.MetalnessMap)
+	setString(out, "emissiveMap", m.EmissiveMap)
+	setNumeric(out, "emissive", m.Emissive)
+	setNumericPtr(out, "opacity", m.Opacity)
+	setString(out, "blendMode", string(m.BlendMode))
+	setBool(out, "wireframe", m.Wireframe)
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
 func legacySceneMaterial(kind MaterialKind, style MaterialStyle) map[string]any {
 	out := map[string]any{}
 	setString(out, "materialKind", string(kind))
 	setString(out, "color", style.Color)
+	setString(out, "texture", style.Texture)
 	setNumericPtr(out, "opacity", style.Opacity)
 	setNumericPtr(out, "emissive", style.Emissive)
 	setString(out, "blendMode", string(style.BlendMode))
@@ -905,6 +1418,110 @@ func mapInt(value any) int {
 		return int(current)
 	default:
 		return 0
+	}
+}
+
+func legacyLinePoints(points []Vector3) []map[string]any {
+	if len(points) == 0 {
+		return nil
+	}
+	out := make([]map[string]any, 0, len(points))
+	for _, point := range points {
+		out = append(out, map[string]any{
+			"x": point.X,
+			"y": point.Y,
+			"z": point.Z,
+		})
+	}
+	return out
+}
+
+func legacyLineSegments(segments [][2]int) [][2]int {
+	if len(segments) == 0 {
+		return nil
+	}
+	out := make([][2]int, 0, len(segments))
+	for _, segment := range segments {
+		if segment[0] < 0 || segment[1] < 0 || segment[0] == segment[1] {
+			continue
+		}
+		out = append(out, segment)
+	}
+	return out
+}
+
+func mapVector3List(value any) []Vector3 {
+	switch current := value.(type) {
+	case []Vector3:
+		if len(current) == 0 {
+			return nil
+		}
+		return append([]Vector3(nil), current...)
+	case []map[string]any:
+		out := make([]Vector3, 0, len(current))
+		for _, item := range current {
+			out = append(out, Vector3{
+				X: mapFloat64(item["x"]),
+				Y: mapFloat64(item["y"]),
+				Z: mapFloat64(item["z"]),
+			})
+		}
+		if len(out) == 0 {
+			return nil
+		}
+		return out
+	case []any:
+		out := make([]Vector3, 0, len(current))
+		for _, item := range current {
+			entry, ok := item.(map[string]any)
+			if !ok {
+				continue
+			}
+			out = append(out, Vector3{
+				X: mapFloat64(entry["x"]),
+				Y: mapFloat64(entry["y"]),
+				Z: mapFloat64(entry["z"]),
+			})
+		}
+		if len(out) == 0 {
+			return nil
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
+func mapSegmentPairs(value any) [][2]int {
+	switch current := value.(type) {
+	case [][2]int:
+		if len(current) == 0 {
+			return nil
+		}
+		return append([][2]int(nil), current...)
+	case []any:
+		out := make([][2]int, 0, len(current))
+		for _, item := range current {
+			pair, ok := item.([]any)
+			if ok && len(pair) >= 2 {
+				left := mapInt(pair[0])
+				right := mapInt(pair[1])
+				if left >= 0 && right >= 0 && left != right {
+					out = append(out, [2]int{left, right})
+				}
+				continue
+			}
+			typed, ok := item.([2]int)
+			if ok && typed[0] >= 0 && typed[1] >= 0 && typed[0] != typed[1] {
+				out = append(out, typed)
+			}
+		}
+		if len(out) == 0 {
+			return nil
+		}
+		return out
+	default:
+		return nil
 	}
 }
 

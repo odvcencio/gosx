@@ -40,27 +40,121 @@ type RenderLabel struct {
 	TextAlign   string      `json:"textAlign,omitempty"`
 }
 
+// RenderSprite is a projected image overlay anchored to a scene position.
+type RenderSprite struct {
+	ID        string      `json:"id,omitempty"`
+	Src       string      `json:"src,omitempty"`
+	ClassName string      `json:"className,omitempty"`
+	Position  RenderPoint `json:"position"`
+	Depth     float64     `json:"depth,omitempty"`
+	Priority  float64     `json:"priority,omitempty"`
+	Width     float64     `json:"width,omitempty"`
+	Height    float64     `json:"height,omitempty"`
+	Opacity   float64     `json:"opacity,omitempty"`
+	OffsetX   float64     `json:"offsetX,omitempty"`
+	OffsetY   float64     `json:"offsetY,omitempty"`
+	AnchorX   float64     `json:"anchorX,omitempty"`
+	AnchorY   float64     `json:"anchorY,omitempty"`
+	Occlude   bool        `json:"occlude,omitempty"`
+	Fit       string      `json:"fit,omitempty"`
+}
+
 // RenderCamera describes the camera used for world-space rendering.
 type RenderCamera struct {
-	X    float64 `json:"x,omitempty"`
-	Y    float64 `json:"y,omitempty"`
-	Z    float64 `json:"z,omitempty"`
-	FOV  float64 `json:"fov,omitempty"`
-	Near float64 `json:"near,omitempty"`
-	Far  float64 `json:"far,omitempty"`
+	X         float64 `json:"x,omitempty"`
+	Y         float64 `json:"y,omitempty"`
+	Z         float64 `json:"z,omitempty"`
+	RotationX float64 `json:"rotationX,omitempty"`
+	RotationY float64 `json:"rotationY,omitempty"`
+	RotationZ float64 `json:"rotationZ,omitempty"`
+	FOV       float64 `json:"fov,omitempty"`
+	Near      float64 `json:"near,omitempty"`
+	Far       float64 `json:"far,omitempty"`
+}
+
+// RenderLight is a resolved scene light record.
+type RenderLight struct {
+	ID         string  `json:"id,omitempty"`
+	Kind       string  `json:"kind,omitempty"`
+	Color      string  `json:"color,omitempty"`
+	Intensity  float64 `json:"intensity,omitempty"`
+	X          float64 `json:"x,omitempty"`
+	Y          float64 `json:"y,omitempty"`
+	Z          float64 `json:"z,omitempty"`
+	DirectionX float64 `json:"directionX,omitempty"`
+	DirectionY float64 `json:"directionY,omitempty"`
+	DirectionZ float64 `json:"directionZ,omitempty"`
+	Range      float64 `json:"range,omitempty"`
+	Decay      float64 `json:"decay,omitempty"`
+	CastShadow bool    `json:"castShadow,omitempty"`
+	ShadowBias float64 `json:"shadowBias,omitempty"`
+	ShadowSize int     `json:"shadowSize,omitempty"`
+}
+
+// RenderEnvironment describes scene-wide lighting state.
+type RenderEnvironment struct {
+	AmbientColor     string  `json:"ambientColor,omitempty"`
+	AmbientIntensity float64 `json:"ambientIntensity,omitempty"`
+	SkyColor         string  `json:"skyColor,omitempty"`
+	SkyIntensity     float64 `json:"skyIntensity,omitempty"`
+	GroundColor      string  `json:"groundColor,omitempty"`
+	GroundIntensity  float64 `json:"groundIntensity,omitempty"`
+	Exposure         float64 `json:"exposure,omitempty"`
+	FogColor         string  `json:"fogColor,omitempty"`
+	FogDensity       float64 `json:"fogDensity,omitempty"`
+}
+
+// RenderPoints is a GPU-ready particle system entry for the render bundle.
+type RenderPoints struct {
+	ID          string    `json:"id,omitempty"`
+	Count       int       `json:"count"`
+	Positions   []float64 `json:"positions,omitempty"`
+	Sizes       []float64 `json:"sizes,omitempty"`
+	Colors      []float64 `json:"colors,omitempty"`
+	Color       string    `json:"color,omitempty"`
+	Size        float64   `json:"size,omitempty"`
+	Opacity     float64   `json:"opacity,omitempty"`
+	BlendMode   string    `json:"blendMode,omitempty"`
+	DepthWrite  *bool     `json:"depthWrite,omitempty"`
+	Attenuation bool      `json:"attenuation,omitempty"`
 }
 
 // RenderMaterial is a resolved material profile for a draw bundle.
 type RenderMaterial struct {
-	Key        string    `json:"key,omitempty"`
-	Kind       string    `json:"kind,omitempty"`
-	Color      string    `json:"color,omitempty"`
-	Opacity    float64   `json:"opacity,omitempty"`
-	Wireframe  bool      `json:"wireframe,omitempty"`
-	BlendMode  string    `json:"blendMode,omitempty"`
-	RenderPass string    `json:"renderPass,omitempty"`
-	ShaderData []float64 `json:"shaderData,omitempty"`
-	Emissive   float64   `json:"emissive,omitempty"`
+	Key          string    `json:"key,omitempty"`
+	Kind         string    `json:"kind,omitempty"`
+	Color        string    `json:"color,omitempty"`
+	Texture      string    `json:"texture,omitempty"`
+	Opacity      float64   `json:"opacity,omitempty"`
+	Wireframe    bool      `json:"wireframe,omitempty"`
+	BlendMode    string    `json:"blendMode,omitempty"`
+	RenderPass   string    `json:"renderPass,omitempty"`
+	ShaderData   []float64 `json:"shaderData,omitempty"`
+	Emissive     float64   `json:"emissive,omitempty"`
+	Roughness    float64   `json:"roughness,omitempty"`
+	Metalness    float64   `json:"metalness,omitempty"`
+	NormalMap    string    `json:"normalMap,omitempty"`
+	RoughnessMap string    `json:"roughnessMap,omitempty"`
+	MetalnessMap string    `json:"metalnessMap,omitempty"`
+	EmissiveMap  string    `json:"emissiveMap,omitempty"`
+	Unlit        bool      `json:"unlit,omitempty"`
+}
+
+// RenderSurface is a textured world-space quad emitted alongside line geometry.
+type RenderSurface struct {
+	ID            string       `json:"id,omitempty"`
+	Kind          string       `json:"kind,omitempty"`
+	MaterialIndex int          `json:"materialIndex,omitempty"`
+	RenderPass    string       `json:"renderPass,omitempty"`
+	Static        bool         `json:"static,omitempty"`
+	Positions     []float64    `json:"positions,omitempty"`
+	UV            []float64    `json:"uv,omitempty"`
+	VertexCount   int          `json:"vertexCount,omitempty"`
+	Bounds        RenderBounds `json:"bounds,omitempty"`
+	DepthNear     float64      `json:"depthNear,omitempty"`
+	DepthFar      float64      `json:"depthFar,omitempty"`
+	DepthCenter   float64      `json:"depthCenter,omitempty"`
+	ViewCulled    bool         `json:"viewCulled,omitempty"`
 }
 
 // RenderBounds is a world-space axis-aligned bounds record for a render object.
@@ -78,6 +172,10 @@ type RenderBounds struct {
 type RenderObject struct {
 	ID            string       `json:"id,omitempty"`
 	Kind          string       `json:"kind,omitempty"`
+	Pickable      *bool        `json:"pickable,omitempty"`
+	CastShadow    bool         `json:"castShadow,omitempty"`
+	ReceiveShadow bool         `json:"receiveShadow,omitempty"`
+	DepthWrite    *bool        `json:"depthWrite,omitempty"`
 	MaterialIndex int          `json:"materialIndex,omitempty"`
 	RenderPass    string       `json:"renderPass,omitempty"`
 	VertexOffset  int          `json:"vertexOffset,omitempty"`
@@ -101,6 +199,34 @@ type RenderPassBundle struct {
 	Colors      []float64 `json:"colors,omitempty"`
 	Materials   []float64 `json:"materials,omitempty"`
 	VertexCount int       `json:"vertexCount,omitempty"`
+	Normals     []float64 `json:"normals,omitempty"`
+	UVs         []float64 `json:"uvs,omitempty"`
+	Tangents    []float64 `json:"tangents,omitempty"`
+}
+
+// RenderAnimation describes a resolved animation clip for the render bundle.
+type RenderAnimation struct {
+	Name     string                   `json:"name"`
+	Channels []RenderAnimationChannel `json:"channels"`
+	Duration float64                  `json:"duration"`
+}
+
+// RenderAnimationChannel is a single property track within an animation clip.
+type RenderAnimationChannel struct {
+	TargetID      string    `json:"targetID"`
+	Property      string    `json:"property"`
+	Times         []float64 `json:"times"`
+	Values        []float64 `json:"values"`
+	Interpolation string    `json:"interpolation,omitempty"`
+}
+
+// RenderPostEffect describes a post-processing effect applied after scene rendering.
+type RenderPostEffect struct {
+	Kind      string             `json:"kind"`
+	Intensity float64            `json:"intensity,omitempty"`
+	Threshold float64            `json:"threshold,omitempty"`
+	Radius    float64            `json:"radius,omitempty"`
+	Params    map[string]float64 `json:"params,omitempty"`
 }
 
 // RenderBundle is the renderer-facing scene payload emitted by the shared
@@ -108,16 +234,26 @@ type RenderPassBundle struct {
 type RenderBundle struct {
 	Background       string             `json:"background,omitempty"`
 	Camera           RenderCamera       `json:"camera,omitempty"`
+	Lights           []RenderLight      `json:"lights,omitempty"`
+	Environment      RenderEnvironment  `json:"environment,omitempty"`
 	Materials        []RenderMaterial   `json:"materials,omitempty"`
 	Objects          []RenderObject     `json:"objects,omitempty"`
+	Points           []RenderPoints     `json:"points,omitempty"`
+	Surfaces         []RenderSurface    `json:"surfaces,omitempty"`
 	Passes           []RenderPassBundle `json:"passes,omitempty"`
 	Lines            []RenderLine       `json:"lines,omitempty"`
 	Labels           []RenderLabel      `json:"labels,omitempty"`
+	Sprites          []RenderSprite     `json:"sprites,omitempty"`
 	Positions        []float64          `json:"positions,omitempty"`
 	Colors           []float64          `json:"colors,omitempty"`
 	VertexCount      int                `json:"vertexCount,omitempty"`
 	WorldPositions   []float64          `json:"worldPositions,omitempty"`
 	WorldColors      []float64          `json:"worldColors,omitempty"`
 	WorldVertexCount int                `json:"worldVertexCount,omitempty"`
+	WorldNormals     []float64          `json:"worldNormals,omitempty"`
+	WorldUVs         []float64          `json:"worldUVs,omitempty"`
+	WorldTangents    []float64          `json:"worldTangents,omitempty"`
 	ObjectCount      int                `json:"objectCount,omitempty"`
+	Animations       []RenderAnimation  `json:"animations,omitempty"`
+	PostEffects      []RenderPostEffect `json:"postEffects,omitempty"`
 }
