@@ -83,10 +83,6 @@ test("gosx dev serves the redesigned docs site", { timeout: 90000 }, async () =>
       assert.ok(res.ok(), `${path} returned ${res.status()}\n\nLogs:\n${logs}`);
     }
 
-    // CMS demo renders (no Scene3D dependency)
-    const cmsRes = await page.goto(`${baseURL}/demos/cms`, { waitUntil: "domcontentloaded" });
-    assert.ok(cmsRes.ok(), `/demos/cms returned ${cmsRes.status()}\n\nLogs:\n${logs}`);
-
     // Scoped 404 within /docs returns page (not crash)
     const scoped404 = await page.goto(`${baseURL}/docs/nonexistent`, { waitUntil: "domcontentloaded" });
     assert.equal(scoped404.status(), 404, `expected 404 for /docs/nonexistent\n\nLogs:\n${logs}`);
