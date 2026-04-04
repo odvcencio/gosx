@@ -135,6 +135,58 @@ type Points struct {
 	Spin        Euler             // procedural rotation animation
 }
 
+// InstancedMesh renders N copies of one geometry with per-instance transforms.
+type InstancedMesh struct {
+	ID            string
+	Count         int
+	Geometry      Geometry
+	Material      Material
+	Positions     []Vector3
+	Rotations     []Euler
+	Scales        []Vector3
+	CastShadow    bool
+	ReceiveShadow bool
+}
+
+// ComputeParticles declares a GPU-computed particle system.
+type ComputeParticles struct {
+	ID       string
+	Count    int
+	Emitter  ParticleEmitter
+	Forces   []ParticleForce
+	Material ParticleMaterial
+	Bounds   float64
+}
+
+type ParticleEmitter struct {
+	Kind     string  // "point", "sphere", "disc", "spiral"
+	Position Vector3
+	Radius   float64
+	Rate     float64
+	Lifetime float64
+	Arms     int
+	Wind     float64
+	Scatter  float64
+}
+
+type ParticleForce struct {
+	Kind      string // "gravity", "wind", "turbulence", "orbit", "drag"
+	Strength  float64
+	Direction Vector3
+	Frequency float64
+}
+
+type ParticleMaterial struct {
+	Color       string
+	ColorEnd    string
+	Size        float64
+	SizeEnd     float64
+	Opacity     float64
+	OpacityEnd  float64
+	BlendMode   MaterialBlendMode
+	Attenuation bool
+}
+
 // Label lowers into one legacy scene label.
 type Label struct {
 	ID          string
@@ -367,24 +419,30 @@ type pendingSprite struct {
 }
 
 type graphLowerer struct {
-	objects        []ObjectIR
-	models         []ModelIR
-	points         []PointsIR
-	pending        []pendingLabel
-	pendingSprites []pendingSprite
-	lights         []LightIR
-	anchors        map[string]worldTransform
-	nextObjectID   int
-	nextLabelID    int
-	nextSpriteID   int
-	nextLightID    int
-	nextModelID    int
-	nextPointsID   int
+	objects          []ObjectIR
+	models           []ModelIR
+	points           []PointsIR
+	instancedMeshes  []InstancedMeshIR
+	computeParticles []ComputeParticlesIR
+	pending          []pendingLabel
+	pendingSprites   []pendingSprite
+	lights           []LightIR
+	anchors          map[string]worldTransform
+	nextObjectID     int
+	nextLabelID      int
+	nextSpriteID     int
+	nextLightID      int
+	nextModelID      int
+	nextPointsID     int
+	nextInstancedID  int
+	nextParticlesID  int
 }
 
 func (Group) sceneNode()            {}
 func (Mesh) sceneNode()             {}
 func (Points) sceneNode()           {}
+func (InstancedMesh) sceneNode()    {}
+func (ComputeParticles) sceneNode() {}
 func (Label) sceneNode()            {}
 func (Sprite) sceneNode()           {}
 func (Model) sceneNode()            {}
@@ -615,6 +673,18 @@ func (l *graphLowerer) lowerNode(node Node, parent worldTransform) {
 		if current != nil {
 			l.lowerPoints(*current, parent)
 		}
+	case InstancedMesh:
+		l.lowerInstancedMesh(current, parent)
+	case *InstancedMesh:
+		if current != nil {
+			l.lowerInstancedMesh(*current, parent)
+		}
+	case ComputeParticles:
+		l.lowerComputeParticles(current, parent)
+	case *ComputeParticles:
+		if current != nil {
+			l.lowerComputeParticles(*current, parent)
+		}
 	case Label:
 		l.pending = append(l.pending, pendingLabel{label: current, parent: parent})
 	case *Label:
@@ -746,6 +816,159 @@ func (l *graphLowerer) lowerPoints(pts Points, parent worldTransform) {
 		record.Colors = append([]string(nil), pts.Colors...)
 	}
 	l.points = append(l.points, record)
+}
+
+func (l *graphLowerer) lowerInstancedMesh(im InstancedMesh, parent worldTransform) {
+	world := combineTransforms(parent, localTransform(Vector3{}, Euler{}))
+	id := strings.TrimSpace(im.ID)
+	if id == "" {
+		l.nextInstancedID += 1
+		id = "scene-instanced-" + intString(l.nextInstancedID)
+	}
+	kind, geometryProps := legacyGeometry(im.Geometry)
+	materialProps := legacyMaterial(im.Material)
+
+	record := InstancedMeshIR{
+		ID:            id,
+		Count:         im.Count,
+		Kind:          kind,
+		CastShadow:    im.CastShadow,
+		ReceiveShadow: im.ReceiveShadow,
+	}
+	// Apply geometry dimensions.
+	if geometryProps != nil {
+		record.Width = mapFloat64(geometryProps["width"])
+		record.Height = mapFloat64(geometryProps["height"])
+		record.Depth = mapFloat64(geometryProps["depth"])
+		record.Radius = mapFloat64(geometryProps["radius"])
+		record.Segments = mapInt(geometryProps["segments"])
+	}
+	// Apply material kind.
+	if materialProps != nil {
+		if mk, ok := mapStringValue(materialProps["materialKind"]); ok {
+			record.MaterialKind = mk
+		}
+		if c, ok := materialProps["color"].(string); ok {
+			record.Color = strings.TrimSpace(c)
+		}
+		record.Roughness = mapFloat64(materialProps["roughness"])
+		record.Metalness = mapFloat64(materialProps["metalness"])
+	}
+
+	// Pre-compute per-instance column-major 4x4 transforms.
+	count := im.Count
+	transforms := make([]float64, 0, count*16)
+	for i := 0; i < count; i++ {
+		var pos Vector3
+		if i < len(im.Positions) {
+			pos = im.Positions[i]
+		}
+		var rot Euler
+		if i < len(im.Rotations) {
+			rot = im.Rotations[i]
+		}
+		var scl Vector3
+		if i < len(im.Scales) {
+			scl = im.Scales[i]
+		} else {
+			scl = Vector3{X: 1, Y: 1, Z: 1}
+		}
+		// Apply parent world transform to instance position.
+		worldPos := addVectors(world.Position, world.Rotation.rotate(pos))
+		instanceRot := world.Rotation.mul(quaternionFromEuler(rot)).normalized()
+		transforms = append(transforms, mat4FromTRS(worldPos, instanceRot, scl)...)
+	}
+	record.Transforms = transforms
+	l.instancedMeshes = append(l.instancedMeshes, record)
+}
+
+func (l *graphLowerer) lowerComputeParticles(cp ComputeParticles, parent worldTransform) {
+	world := combineTransforms(parent, localTransform(cp.Emitter.Position, Euler{}))
+	id := strings.TrimSpace(cp.ID)
+	if id == "" {
+		l.nextParticlesID += 1
+		id = "scene-particles-" + intString(l.nextParticlesID)
+	}
+
+	forces := make([]ParticleForceIR, 0, len(cp.Forces))
+	for _, f := range cp.Forces {
+		forces = append(forces, ParticleForceIR{
+			Kind:      strings.TrimSpace(f.Kind),
+			Strength:  f.Strength,
+			X:         f.Direction.X,
+			Y:         f.Direction.Y,
+			Z:         f.Direction.Z,
+			Frequency: f.Frequency,
+		})
+	}
+
+	record := ComputeParticlesIR{
+		ID:    id,
+		Count: cp.Count,
+		Emitter: ParticleEmitterIR{
+			Kind:     strings.TrimSpace(cp.Emitter.Kind),
+			X:        world.Position.X,
+			Y:        world.Position.Y,
+			Z:        world.Position.Z,
+			Radius:   cp.Emitter.Radius,
+			Rate:     cp.Emitter.Rate,
+			Lifetime: cp.Emitter.Lifetime,
+			Arms:     cp.Emitter.Arms,
+			Wind:     cp.Emitter.Wind,
+			Scatter:  cp.Emitter.Scatter,
+		},
+		Forces: forces,
+		Material: ParticleMaterialIR{
+			Color:       strings.TrimSpace(cp.Material.Color),
+			ColorEnd:    strings.TrimSpace(cp.Material.ColorEnd),
+			Size:        cp.Material.Size,
+			SizeEnd:     cp.Material.SizeEnd,
+			Opacity:     cp.Material.Opacity,
+			OpacityEnd:  cp.Material.OpacityEnd,
+			BlendMode:   strings.TrimSpace(string(cp.Material.BlendMode)),
+			Attenuation: cp.Material.Attenuation,
+		},
+		Bounds: cp.Bounds,
+	}
+	l.computeParticles = append(l.computeParticles, record)
+}
+
+// mat4FromTRS builds a column-major 4x4 matrix from translation, rotation (quaternion), and scale.
+func mat4FromTRS(t Vector3, q quaternion, s Vector3) []float64 {
+	// Rotation matrix from quaternion.
+	xx := q.X * q.X
+	yy := q.Y * q.Y
+	zz := q.Z * q.Z
+	xy := q.X * q.Y
+	xz := q.X * q.Z
+	yz := q.Y * q.Z
+	wx := q.W * q.X
+	wy := q.W * q.Y
+	wz := q.W * q.Z
+
+	// Column-major order: m[col*4 + row]
+	return []float64{
+		// Column 0
+		(1 - 2*(yy+zz)) * s.X,
+		(2 * (xy + wz)) * s.X,
+		(2 * (xz - wy)) * s.X,
+		0,
+		// Column 1
+		(2 * (xy - wz)) * s.Y,
+		(1 - 2*(xx+zz)) * s.Y,
+		(2 * (yz + wx)) * s.Y,
+		0,
+		// Column 2
+		(2 * (xz + wy)) * s.Z,
+		(2 * (yz - wx)) * s.Z,
+		(1 - 2*(xx+yy)) * s.Z,
+		0,
+		// Column 3
+		t.X,
+		t.Y,
+		t.Z,
+		1,
+	}
 }
 
 func (l *graphLowerer) lowerModel(model Model, parent worldTransform) {

@@ -1228,6 +1228,252 @@ func TestPropsSceneIRLowersDepthWriteOnMesh(t *testing.T) {
 	}
 }
 
+func TestPropsSceneIRLowersInstancedMesh(t *testing.T) {
+	props := Props{
+		Graph: NewGraph(
+			InstancedMesh{
+				ID:       "trees",
+				Count:    3,
+				Geometry: BoxGeometry{Width: 1, Height: 2, Depth: 0.5},
+				Material: FlatMaterial{Color: "#33aa55"},
+				Positions: []Vector3{
+					Vec3(0, 0, 0),
+					Vec3(5, 0, 0),
+					Vec3(0, 0, 5),
+				},
+				Rotations: []Euler{
+					Rotate(0, 0, 0),
+					Rotate(0, math.Pi/4, 0),
+					Rotate(0, 0, 0),
+				},
+				Scales: []Vector3{
+					Vec3(1, 1, 1),
+					Vec3(2, 2, 2),
+					Vec3(1, 1.5, 1),
+				},
+				CastShadow:    true,
+				ReceiveShadow: true,
+			},
+		),
+	}
+
+	ir := props.SceneIR()
+	if len(ir.InstancedMeshes) != 1 {
+		t.Fatalf("expected one instanced mesh, got %d", len(ir.InstancedMeshes))
+	}
+	im := ir.InstancedMeshes[0]
+	if im.ID != "trees" {
+		t.Fatalf("expected id 'trees', got %q", im.ID)
+	}
+	if im.Count != 3 {
+		t.Fatalf("expected count 3, got %d", im.Count)
+	}
+	if im.Kind != "box" {
+		t.Fatalf("expected box geometry kind, got %q", im.Kind)
+	}
+	if im.MaterialKind != "flat" {
+		t.Fatalf("expected flat material kind, got %q", im.MaterialKind)
+	}
+	if im.Color != "#33aa55" {
+		t.Fatalf("expected color #33aa55, got %q", im.Color)
+	}
+	if !im.CastShadow {
+		t.Fatalf("expected castShadow true")
+	}
+	if !im.ReceiveShadow {
+		t.Fatalf("expected receiveShadow true")
+	}
+	// 3 instances * 16 floats per mat4 = 48 total.
+	if len(im.Transforms) != 48 {
+		t.Fatalf("expected 48 transform floats, got %d", len(im.Transforms))
+	}
+	// First instance: identity rotation, unit scale, position (0,0,0).
+	// Column-major identity-like: [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]
+	if math.Abs(im.Transforms[0]-1) > 1e-9 {
+		t.Fatalf("expected first transform m[0,0] = 1, got %v", im.Transforms[0])
+	}
+	if math.Abs(im.Transforms[12]-0) > 1e-9 {
+		t.Fatalf("expected first transform tx = 0, got %v", im.Transforms[12])
+	}
+	if math.Abs(im.Transforms[15]-1) > 1e-9 {
+		t.Fatalf("expected first transform m[3,3] = 1, got %v", im.Transforms[15])
+	}
+	// Second instance: position (5,0,0), scale (2,2,2), rotated pi/4 around Y.
+	if math.Abs(im.Transforms[16+12]-5) > 1e-9 {
+		t.Fatalf("expected second transform tx = 5, got %v", im.Transforms[16+12])
+	}
+	// Third instance: position (0,0,5), scale (1,1.5,1), no rotation.
+	if math.Abs(im.Transforms[32+12]-0) > 1e-9 {
+		t.Fatalf("expected third transform tx = 0, got %v", im.Transforms[32+12])
+	}
+	if math.Abs(im.Transforms[32+14]-5) > 1e-9 {
+		t.Fatalf("expected third transform tz = 5, got %v", im.Transforms[32+14])
+	}
+	// Third instance scale Y = 1.5 should show up in m[1][1] (index 5).
+	if math.Abs(im.Transforms[32+5]-1.5) > 1e-9 {
+		t.Fatalf("expected third transform scaleY = 1.5, got %v", im.Transforms[32+5])
+	}
+
+	// Verify legacy props round-trip.
+	legacy := props.LegacyProps()
+	sceneValue, ok := legacy["scene"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected scene map, got %#v", legacy["scene"])
+	}
+	instancedMeshes, ok := sceneValue["instancedMeshes"].([]map[string]any)
+	if !ok || len(instancedMeshes) != 1 {
+		t.Fatalf("expected one instanced mesh record, got %#v", sceneValue["instancedMeshes"])
+	}
+	if got := instancedMeshes[0]["id"]; got != "trees" {
+		t.Fatalf("expected id in legacy props, got %#v", got)
+	}
+	if got := instancedMeshes[0]["kind"]; got != "box" {
+		t.Fatalf("expected kind in legacy props, got %#v", got)
+	}
+}
+
+func TestPropsSceneIRLowersComputeParticles(t *testing.T) {
+	props := Props{
+		Graph: NewGraph(
+			ComputeParticles{
+				ID:    "galaxy",
+				Count: 50000,
+				Emitter: ParticleEmitter{
+					Kind:     "spiral",
+					Position: Vec3(0, 5, 0),
+					Radius:   8,
+					Rate:     2000,
+					Lifetime: 4.5,
+					Arms:     4,
+					Wind:     0.3,
+					Scatter:  0.15,
+				},
+				Forces: []ParticleForce{
+					{
+						Kind:      "orbit",
+						Strength:  1.2,
+						Direction: Vec3(0, 1, 0),
+						Frequency: 0.8,
+					},
+					{
+						Kind:     "gravity",
+						Strength: -0.5,
+					},
+				},
+				Material: ParticleMaterial{
+					Color:       "#ffcc88",
+					ColorEnd:    "#3366ff",
+					Size:        0.15,
+					SizeEnd:     0.02,
+					Opacity:     1.0,
+					OpacityEnd:  0.0,
+					BlendMode:   BlendAdditive,
+					Attenuation: true,
+				},
+				Bounds: 20,
+			},
+		),
+	}
+
+	ir := props.SceneIR()
+	if len(ir.ComputeParticles) != 1 {
+		t.Fatalf("expected one compute particles entry, got %d", len(ir.ComputeParticles))
+	}
+	cp := ir.ComputeParticles[0]
+	if cp.ID != "galaxy" {
+		t.Fatalf("expected id 'galaxy', got %q", cp.ID)
+	}
+	if cp.Count != 50000 {
+		t.Fatalf("expected count 50000, got %d", cp.Count)
+	}
+	if cp.Emitter.Kind != "spiral" {
+		t.Fatalf("expected spiral emitter kind, got %q", cp.Emitter.Kind)
+	}
+	if math.Abs(cp.Emitter.Y-5) > 1e-9 {
+		t.Fatalf("expected emitter Y = 5 (from position), got %v", cp.Emitter.Y)
+	}
+	if cp.Emitter.Radius != 8 {
+		t.Fatalf("expected emitter radius 8, got %v", cp.Emitter.Radius)
+	}
+	if cp.Emitter.Rate != 2000 {
+		t.Fatalf("expected emitter rate 2000, got %v", cp.Emitter.Rate)
+	}
+	if cp.Emitter.Lifetime != 4.5 {
+		t.Fatalf("expected emitter lifetime 4.5, got %v", cp.Emitter.Lifetime)
+	}
+	if cp.Emitter.Arms != 4 {
+		t.Fatalf("expected emitter arms 4, got %d", cp.Emitter.Arms)
+	}
+	if cp.Emitter.Wind != 0.3 {
+		t.Fatalf("expected emitter wind 0.3, got %v", cp.Emitter.Wind)
+	}
+	if cp.Emitter.Scatter != 0.15 {
+		t.Fatalf("expected emitter scatter 0.15, got %v", cp.Emitter.Scatter)
+	}
+	if len(cp.Forces) != 2 {
+		t.Fatalf("expected two forces, got %d", len(cp.Forces))
+	}
+	if cp.Forces[0].Kind != "orbit" {
+		t.Fatalf("expected orbit force kind, got %q", cp.Forces[0].Kind)
+	}
+	if cp.Forces[0].Strength != 1.2 {
+		t.Fatalf("expected orbit force strength 1.2, got %v", cp.Forces[0].Strength)
+	}
+	if cp.Forces[0].Y != 1 {
+		t.Fatalf("expected orbit force direction Y = 1, got %v", cp.Forces[0].Y)
+	}
+	if cp.Forces[0].Frequency != 0.8 {
+		t.Fatalf("expected orbit force frequency 0.8, got %v", cp.Forces[0].Frequency)
+	}
+	if cp.Forces[1].Kind != "gravity" {
+		t.Fatalf("expected gravity force kind, got %q", cp.Forces[1].Kind)
+	}
+	if cp.Forces[1].Strength != -0.5 {
+		t.Fatalf("expected gravity force strength -0.5, got %v", cp.Forces[1].Strength)
+	}
+	if cp.Material.Color != "#ffcc88" {
+		t.Fatalf("expected material color, got %q", cp.Material.Color)
+	}
+	if cp.Material.ColorEnd != "#3366ff" {
+		t.Fatalf("expected material color end, got %q", cp.Material.ColorEnd)
+	}
+	if cp.Material.Size != 0.15 {
+		t.Fatalf("expected material size, got %v", cp.Material.Size)
+	}
+	if cp.Material.SizeEnd != 0.02 {
+		t.Fatalf("expected material size end, got %v", cp.Material.SizeEnd)
+	}
+	if cp.Material.Opacity != 1.0 {
+		t.Fatalf("expected material opacity, got %v", cp.Material.Opacity)
+	}
+	if cp.Material.OpacityEnd != 0.0 {
+		t.Fatalf("expected material opacity end 0, got %v", cp.Material.OpacityEnd)
+	}
+	if cp.Material.BlendMode != "additive" {
+		t.Fatalf("expected additive blend mode, got %q", cp.Material.BlendMode)
+	}
+	if !cp.Material.Attenuation {
+		t.Fatalf("expected attenuation true")
+	}
+	if cp.Bounds != 20 {
+		t.Fatalf("expected bounds 20, got %v", cp.Bounds)
+	}
+
+	// Verify legacy props round-trip.
+	legacy := props.LegacyProps()
+	sceneValue, ok := legacy["scene"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected scene map, got %#v", legacy["scene"])
+	}
+	particles, ok := sceneValue["computeParticles"].([]map[string]any)
+	if !ok || len(particles) != 1 {
+		t.Fatalf("expected one compute particles record, got %#v", sceneValue["computeParticles"])
+	}
+	if got := particles[0]["id"]; got != "galaxy" {
+		t.Fatalf("expected id in legacy props, got %#v", got)
+	}
+}
+
 func approxMapFloat(value any, want float64) bool {
 	got, ok := value.(float64)
 	if !ok {
