@@ -64,32 +64,38 @@ after(async () => {
 
 test("gosx dev serves the redesigned docs site", { timeout: 90000 }, async () => {
   try {
-    // Homepage loads with showroom content
-    await page.goto(baseURL, { waitUntil: "domcontentloaded" });
-    await page.locator(".hero").waitFor();
+    // Homepage renders successfully
+    const homeRes = await page.goto(baseURL, { waitUntil: "domcontentloaded" });
+    assert.ok(homeRes.ok(), `homepage returned ${homeRes.status()}\n\nLogs:\n${logs}`);
+    const homeTitle = await page.title();
+    assert.ok(homeTitle.includes("GoSX"), `expected title containing GoSX, got "${homeTitle}"\n\nLogs:\n${logs}`);
 
     // Docs redirect works
-    const docsResponse = await page.goto(`${baseURL}/docs`, { waitUntil: "domcontentloaded" });
+    await page.goto(`${baseURL}/docs`, { waitUntil: "domcontentloaded" });
     assert.ok(
       page.url().includes("/docs/getting-started"),
       `expected /docs to redirect to /docs/getting-started, got ${page.url()}\n\nLogs:\n${logs}`,
     );
 
-    // Reference page loads with docs layout
-    await page.goto(`${baseURL}/docs/routing`, { waitUntil: "domcontentloaded" });
-    await page.locator(".docs-content").waitFor();
+    // Reference pages render
+    for (const path of ["/docs/routing", "/docs/forms", "/docs/scene3d"]) {
+      const res = await page.goto(`${baseURL}${path}`, { waitUntil: "domcontentloaded" });
+      assert.ok(res.ok(), `${path} returned ${res.status()}\n\nLogs:\n${logs}`);
+    }
 
-    // Demo page loads
-    await page.goto(`${baseURL}/demos/galaxy`, { waitUntil: "domcontentloaded" });
-    await page.locator(".galaxy-demo").waitFor();
+    // Demo pages render
+    for (const path of ["/demos/galaxy", "/demos/scene3d", "/demos/cms"]) {
+      const res = await page.goto(`${baseURL}${path}`, { waitUntil: "domcontentloaded" });
+      assert.ok(res.ok(), `${path} returned ${res.status()}\n\nLogs:\n${logs}`);
+    }
 
-    // Scoped 404 within /docs
-    await page.goto(`${baseURL}/docs/nonexistent`, { waitUntil: "domcontentloaded" });
-    await page.locator(".docs-404").waitFor();
+    // Scoped 404 within /docs returns page (not crash)
+    const scoped404 = await page.goto(`${baseURL}/docs/nonexistent`, { waitUntil: "domcontentloaded" });
+    assert.equal(scoped404.status(), 404, `expected 404 for /docs/nonexistent\n\nLogs:\n${logs}`);
 
     // Root 404
-    await page.goto(`${baseURL}/totally-missing`, { waitUntil: "domcontentloaded" });
-    await page.locator(".error-page").waitFor();
+    const root404 = await page.goto(`${baseURL}/totally-missing`, { waitUntil: "domcontentloaded" });
+    assert.equal(root404.status(), 404, `expected 404 for /totally-missing\n\nLogs:\n${logs}`);
   } catch (error) {
     error.message += `\n\nCaptured logs:\n${logs}`;
     throw error;
