@@ -1,158 +1,184 @@
 package docs
 
 func Page() Node {
-	return <article class="prose">
-		<div class="page-topper">
-			<span class="eyebrow">Motion</span>
-			<p class="lede">
-				GoSX now exposes DOM motion as a framework primitive instead of forcing every page to hand-roll animation glue.
-			</p>
-		</div>
-		<h1>
-			<span class="inline-code">Motion</span>
-			ships server-authored animation presets on the shared bootstrap layer.
-		</h1>
-		<p>
-			The
-			<span class="inline-code">&lt;Motion /&gt;</span>
-			builtin,
-			<span class="inline-code">server.Motion(...)</span>
-			, and
-			<span class="inline-code">ctx.Motion(...)</span>
-			all render normal HTML first, then the lightweight bootstrap runtime upgrades those elements into managed entrance motion when JavaScript is available. That keeps authored content server-first while giving the framework one place to own easing, timing, viewport triggers, and reduced-motion policy.
-		</p>
-		<section class="feature-grid">
-			<div class="card">
-				<strong>Server-authored HTML</strong>
-				<p>
-					Your page still renders a real DOM element on the server. Motion is enhancement, not a separate rendering model.
-				</p>
-			</div>
-			<div class="card">
-				<strong>Preset-driven</strong>
-				<p>
-					Use
-					<span class="inline-code">fade</span>
-					,
-					<span class="inline-code">slide-up</span>
-					,
-					<span class="inline-code">slide-down</span>
-					,
-					<span class="inline-code">slide-left</span>
-					,
-					<span class="inline-code">slide-right</span>
-					, or
-					<span class="inline-code">zoom-in</span>
-					without rewriting keyframes per page.
-				</p>
-			</div>
-			<div class="card">
-				<strong>Load or viewport triggers</strong>
-				<p>
-					Choose
-					<span class="inline-code">load</span>
-					for page-entry motion or
-					<span class="inline-code">view</span>
-					to defer the animation until the element intersects the viewport.
-				</p>
-			</div>
-			<div class="card">
-				<strong>Reduced-motion aware</strong>
-				<p>
-					The bootstrap layer respects
-					<span class="inline-code">prefers-reduced-motion</span>
-					by default so motion stays declarative without ignoring accessibility policy.
-				</p>
-			</div>
-		</section>
-		<h2>
-			Author the same contract in
-			<span class="inline-code">.gsx</span>
-			or Go
-		</h2>
-		{DocsCodeBlock("gosx", `func Page() Node {
-	    return <Motion
-	        as="section"
-	        class="hero"
-	        preset="slide-up"
-	        trigger="view"
-	        duration={360}
-	        delay={40}
-	        easing="ease-out"
-	        distance={24}
-	    >
-	        Launch the release notes
-	    </Motion>
-	}`)}
-		{DocsCodeBlock("go", `ctx.Motion(server.MotionProps{
-	    Tag:      "section",
-	    Preset:   server.MotionPresetSlideUp,
-	    Trigger:  server.MotionTriggerView,
-	    Duration: 360,
-	    Delay:    40,
-	    Easing:   "ease-out",
-	    Distance: 24,
-	}, gosx.Text("Launch the release notes"))`)}
-		<h2>What the props mean</h2>
-		<ul>
-			<li>
-				<span class="inline-code">as</span>
-				or
-				<span class="inline-code">tag</span>
-				chooses the server-rendered element. The default tag is
-				<span class="inline-code">div</span>
-				.
-			</li>
-			<li>
-				<span class="inline-code">preset</span>
-				selects one of the built-in entrance behaviors:
-				<span class="inline-code">fade</span>
-				,
-				<span class="inline-code">slide-up</span>
-				,
-				<span class="inline-code">slide-down</span>
-				,
-				<span class="inline-code">slide-left</span>
-				,
-				<span class="inline-code">slide-right</span>
-				, or
-				<span class="inline-code">zoom-in</span>
-				.
-			</li>
-			<li>
-				<span class="inline-code">trigger</span>
-				is
-				<span class="inline-code">load</span>
-				or
-				<span class="inline-code">view</span>
-				.
-			</li>
-			<li>
-				<span class="inline-code">duration</span>
-				,
-				<span class="inline-code">delay</span>
-				,
-				<span class="inline-code">easing</span>
-				, and
-				<span class="inline-code">distance</span>
-				control timing and travel.
-			</li>
-			<li>
-				<span class="inline-code">respectReducedMotion</span>
-				defaults to true. Set it to false only when the motion is essential feedback instead of decoration.
-			</li>
-		</ul>
-		<section class="callout">
-			<strong>What this capability is for</strong>
+	return <div>
+		<section id="motion-presets">
+			<h2>Motion Presets</h2>
 			<p>
-				Use
-				<span class="inline-code">Motion</span>
-				when you want framework-level entrance animation on normal DOM nodes without pulling the page into a WASM runtime or inventing a custom JS hook per component.
+				GoSX exposes entrance animation as a server-authored primitive. Use
+				<span class="inline-code">&lt;Motion /&gt;</span>
+				in a
+				<span class="inline-code">.gsx</span>
+				template or
+				<span class="inline-code">server.Motion()</span>
+				in Go to apply a named preset. The element renders as ordinary HTML on the
+				server first, then the shared bootstrap runtime upgrades it into a managed
+				entrance animation when JavaScript is available.
+			</p>
+			<p>
+				Available presets:
+			</p>
+			<ul>
+				<li><span class="inline-code">fade</span> — opacity 0 to 1.</li>
+				<li><span class="inline-code">slide-up</span> — translates from below and fades in.</li>
+				<li><span class="inline-code">slide-down</span> — translates from above and fades in.</li>
+				<li><span class="inline-code">slide-left</span> — translates from the right and fades in.</li>
+				<li><span class="inline-code">slide-right</span> — translates from the left and fades in.</li>
+				<li><span class="inline-code">zoom-in</span> — scales from slightly below 1 and fades in.</li>
+			</ul>
+			{CodeBlock("gosx", `func Page() Node {
+    return <Motion as="section" preset="slide-up" trigger="view">
+        <h2>Section heading</h2>
+        <p>This content slides into view when the user scrolls to it.</p>
+    </Motion>
+}`)}
+			{CodeBlock("go", `server.Motion(server.MotionProps{
+    Tag:    "section",
+    Preset: server.MotionPresetSlideUp,
+    Trigger: server.MotionTriggerView,
+}, gosx.El("h2", gosx.Text("Section heading")),
+   gosx.El("p", gosx.Text("This content slides into view when the user scrolls to it.")))`)}
+			<p>
+				Both authoring paths produce identical HTML output. The
+				<span class="inline-code">.gsx</span>
+				path is ergonomic for page authors; the Go path is useful when motion
+				props are computed or conditional.
 			</p>
 		</section>
-		<div class="hero-actions">
-			<Link class="cta-link" href="/docs/video">Back to video</Link>
-			<Link class="cta-link primary" href="/docs/text-layout">Continue to text layout</Link>
-		</div>
-	</article>
+
+		<section id="viewport-triggers">
+			<h2>Viewport Triggers</h2>
+			<p>
+				The
+				<span class="inline-code">trigger</span>
+				prop controls when the animation fires:
+			</p>
+			<ul>
+				<li>
+					<span class="inline-code">load</span>
+					— runs immediately when the page bootstrap executes, suitable for
+					hero elements and above-the-fold content.
+				</li>
+				<li>
+					<span class="inline-code">view</span>
+					— defers the animation until the element enters the viewport via
+					<span class="inline-code">IntersectionObserver</span>, suitable for
+					content that appears as the user scrolls.
+				</li>
+			</ul>
+			{CodeBlock("gosx", `<Motion preset="fade" trigger="load">
+    Above the fold, fades in on page entry.
+</Motion>
+
+<Motion preset="slide-up" trigger="view">
+    Below the fold, animates when scrolled into view.
+</Motion>`)}
+			<p>
+				Elements with
+				<span class="inline-code">trigger="view"</span>
+				are held invisible until the observer fires. If JavaScript is unavailable,
+				the element renders as visible plain HTML with no hidden state. The motion
+				is enhancement, not a rendering gate.
+			</p>
+		</section>
+
+		<section id="reduced-motion">
+			<h2>Reduced Motion</h2>
+			<p>
+				The bootstrap runtime checks
+				<span class="inline-code">prefers-reduced-motion: reduce</span>
+				before applying any animation. When the media query matches, all Motion
+				elements are resolved immediately without animating — the content becomes
+				visible instantly.
+			</p>
+			<p>
+				This behavior is on by default. You can opt a specific element out of
+				the policy only when the motion is essential feedback rather than decoration:
+			</p>
+			{CodeBlock("gosx", `<Motion preset="fade" trigger="load" respectReducedMotion={true}>
+    Respects the user's reduced-motion preference. Default.
+</Motion>
+
+<Motion preset="fade" trigger="load" respectReducedMotion={false}>
+    Always animates, even if the user prefers reduced motion.
+    Only use for motion that communicates state, not aesthetics.
+</Motion>`)}
+			<section class="callout">
+				<strong>Accessibility policy</strong>
+				<p>
+					WCAG 2.1 Success Criterion 2.3.3 (AAA) recommends honoring
+					<span class="inline-code">prefers-reduced-motion</span>. GoSX makes
+					the accessible path the default. Setting
+					<span class="inline-code">respectReducedMotion={false}</span>
+					is an explicit opt-out that should be reserved for progress indicators
+					or other motion that carries meaning.
+				</p>
+			</section>
+		</section>
+
+		<section id="custom-timing">
+			<h2>Custom Timing</h2>
+			<p>
+				All timing parameters are optional. Omitting them falls back to
+				sensible preset defaults. Override when the design requires precise control:
+			</p>
+			<ul>
+				<li>
+					<span class="inline-code">duration</span>
+					— animation duration in milliseconds. Defaults vary by preset (200–400ms).
+				</li>
+				<li>
+					<span class="inline-code">delay</span>
+					— delay before the animation starts, in milliseconds. Useful for
+					staggering sibling elements.
+				</li>
+				<li>
+					<span class="inline-code">easing</span>
+					— a CSS easing function string:
+					<span class="inline-code">ease</span>,
+					<span class="inline-code">ease-out</span>,
+					<span class="inline-code">linear</span>, or any
+					<span class="inline-code">cubic-bezier(...)</span> value.
+				</li>
+				<li>
+					<span class="inline-code">distance</span>
+					— translation distance in pixels for slide presets. Defaults to 24px.
+				</li>
+			</ul>
+			{CodeBlock("gosx", `<Motion
+    preset="slide-up"
+    trigger="view"
+    duration={360}
+    delay={80}
+    easing="ease-out"
+    distance={32}
+>
+    Custom timing applied to this element.
+</Motion>`)}
+			{CodeBlock("go", `server.Motion(server.MotionProps{
+    Tag:      "div",
+    Preset:   server.MotionPresetSlideUp,
+    Trigger:  server.MotionTriggerView,
+    Duration: 360,
+    Delay:    80,
+    Easing:   "ease-out",
+    Distance: 32,
+}, content)`)}
+			<p>
+				Stagger a group of sibling cards by incrementing
+				<span class="inline-code">delay</span>
+				by a fixed step (40–80ms is a common value) on each item.
+				The viewport trigger means they will begin their stagger only when
+				the section scrolls into view, not immediately on page load.
+			</p>
+			{CodeBlock("go", `for i, card := range cards {
+    nodes = append(nodes, server.Motion(server.MotionProps{
+        Tag:     "article",
+        Preset:  server.MotionPresetSlideUp,
+        Trigger: server.MotionTriggerView,
+        Delay:   i * 60,
+    }, renderCard(card)))
+}`)}
+		</section>
+	</div>
 }

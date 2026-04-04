@@ -129,13 +129,17 @@ class FakeWebGLContext {
   constructor() {
     this.ops = [];
     this.bufferUploads = new Map();
+    this.textureUploads = new Map();
     this._nextBufferID = 1;
+    this._nextTextureID = 1;
     this._boundArrayBuffer = null;
+    this._boundTexture = null;
     this.ARRAY_BUFFER = 0x8892;
     this.STATIC_DRAW = 0x88E4;
     this.DYNAMIC_DRAW = 0x88E8;
     this.FLOAT = 0x1406;
     this.LINES = 0x0001;
+    this.TRIANGLES = 0x0004;
     this.COLOR_BUFFER_BIT = 0x4000;
     this.DEPTH_BUFFER_BIT = 0x0100;
     this.BLEND = 0x0BE2;
@@ -144,6 +148,16 @@ class FakeWebGLContext {
     this.ONE = 1;
     this.SRC_ALPHA = 0x0302;
     this.ONE_MINUS_SRC_ALPHA = 0x0303;
+    this.TEXTURE_2D = 0x0DE1;
+    this.TEXTURE0 = 0x84C0;
+    this.TEXTURE_MIN_FILTER = 0x2801;
+    this.TEXTURE_MAG_FILTER = 0x2800;
+    this.TEXTURE_WRAP_S = 0x2802;
+    this.TEXTURE_WRAP_T = 0x2803;
+    this.CLAMP_TO_EDGE = 0x812F;
+    this.LINEAR = 0x2601;
+    this.RGBA = 0x1908;
+    this.UNSIGNED_BYTE = 0x1401;
     this.VERTEX_SHADER = 0x8B31;
     this.FRAGMENT_SHADER = 0x8B30;
     this.COMPILE_STATUS = 0x8B81;
@@ -196,11 +210,18 @@ class FakeWebGLContext {
     return buffer;
   }
 
+  createTexture() {
+    const texture = { id: this._nextTextureID++ };
+    this.ops.push(["createTexture", texture.id]);
+    return texture;
+  }
+
   getAttribLocation(_program, name) {
     this.ops.push(["getAttribLocation", name]);
     if (name === "a_position") return 0;
     if (name === "a_color") return 1;
     if (name === "a_material") return 2;
+    if (name === "a_uv") return 3;
     return -1;
   }
 
@@ -236,12 +257,33 @@ class FakeWebGLContext {
     this.ops.push(["bindBuffer", target, buffer && buffer.id]);
   }
 
+  bindTexture(target, texture) {
+    if (target === this.TEXTURE_2D) {
+      this._boundTexture = texture || null;
+    }
+    this.ops.push(["bindTexture", target, texture && texture.id]);
+  }
+
+  activeTexture(unit) {
+    this.ops.push(["activeTexture", unit]);
+  }
+
   bufferData(target, data, usage) {
     const bufferID = this._boundArrayBuffer && this._boundArrayBuffer.id;
     if (bufferID != null) {
       this.bufferUploads.set(bufferID, Array.from(data || []));
     }
     this.ops.push(["bufferData", target, bufferID, data.length, usage]);
+  }
+
+  texParameteri(target, pname, param) {
+    this.ops.push(["texParameteri", target, pname, param]);
+  }
+
+  texImage2D(...args) {
+    const textureID = this._boundTexture && this._boundTexture.id;
+    this.textureUploads.set(textureID, args.length);
+    this.ops.push(["texImage2D", textureID, args.length]);
   }
 
   enableVertexAttribArray(location) {
@@ -260,8 +302,16 @@ class FakeWebGLContext {
     this.ops.push(["uniform4f", location && location.name, x, y, z, w]);
   }
 
+  uniform3f(location, x, y, z) {
+    this.ops.push(["uniform3f", location && location.name, x, y, z]);
+  }
+
   uniform1f(location, value) {
     this.ops.push(["uniform1f", location && location.name, value]);
+  }
+
+  uniform1i(location, value) {
+    this.ops.push(["uniform1i", location && location.name, value]);
   }
 
   enable(capability) {
@@ -290,6 +340,10 @@ class FakeWebGLContext {
 
   deleteProgram(_program) {
     this.ops.push(["deleteProgram"]);
+  }
+
+  deleteTexture(texture) {
+    this.ops.push(["deleteTexture", texture && texture.id]);
   }
 }
 
@@ -1013,6 +1067,7 @@ function createContext(options) {
   const inputBatchCalls = [];
   const sockets = [];
   const fetchCalls = [];
+  const imageLoads = [];
   const scrollCalls = [];
   const windowListeners = new Map();
   const resizeObservers = [];
@@ -1053,6 +1108,31 @@ function createContext(options) {
     },
     document,
     FormData: FakeFormData,
+    Image: class FakeImage {
+      constructor() {
+        this.onload = null;
+        this.onerror = null;
+        this.complete = false;
+        this.naturalWidth = 1;
+        this.naturalHeight = 1;
+        this._src = "";
+      }
+
+      set src(value) {
+        this._src = String(value == null ? "" : value);
+        this.complete = true;
+        imageLoads.push(this._src);
+        setTimeout(() => {
+          if (typeof this.onload === "function") {
+            this.onload({ type: "load", target: this });
+          }
+        }, 0);
+      }
+
+      get src() {
+        return this._src;
+      }
+    },
     fetch: async (url, init = {}) => {
       fetchCalls.push({ url, init });
       if (!routes.has(url)) {
@@ -1278,6 +1358,7 @@ function createContext(options) {
     engineTickCalls,
     fetchCalls,
     hydrateCalls,
+    imageLoads,
     inputBatchCalls,
     intersectionObservers,
     matchMedia(query) {
@@ -3375,6 +3456,713 @@ test("Scene3D drag only starts when the pointer lands on a shape in shared runti
   assert.equal(releaseBatch["$scene.test.drag.targetIndex"], -1);
 });
 
+test("bootstrap drives shared-runtime Scene3D orbit controls without authored JS", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-shared-orbit-root";
+
+  const env = createContext({
+    elements: [mount],
+    enableWebGL: true,
+    disableCanvas2D: true,
+    fetchRoutes: {
+      "/runtime.wasm": { bytes: [0, 97, 115, 109] },
+      "/scene-orbit-program.json": { text: '{"name":"SceneOrbit"}' },
+    },
+    manifest: {
+      runtime: { path: "/runtime.wasm" },
+      engines: [
+        {
+          id: "gosx-engine-orbit",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-shared-orbit-root",
+          runtime: "shared",
+          programRef: "/scene-orbit-program.json",
+          props: {
+            width: 640,
+            height: 360,
+            background: "#08151f",
+            autoRotate: false,
+            controls: "orbit",
+            controlTarget: { x: 0, y: 0.2, z: 0.8 },
+            camera: { x: 0, y: 0.2, z: 6, fov: 72, near: 0.05, far: 128 },
+          },
+        },
+      ],
+    },
+    onHydrateEngine: () => "[]",
+    onRenderEngine: () => JSON.stringify({
+      background: "#08151f",
+      camera: { x: 0, y: 0.2, z: 6, fov: 72, near: 0.05, far: 128 },
+      positions: [],
+      colors: [],
+      vertexCount: 0,
+      worldPositions: [
+        -1.2, -0.7, 0.1, 1.2, -0.7, 0.1,
+        0.1, -0.2, 0.1, 0.1, 1.4, 1.5,
+      ],
+      worldColors: [
+        0.55, 0.88, 1, 1, 0.55, 0.88, 1, 1,
+        0.78, 0.92, 1, 1, 0.78, 0.92, 1, 1,
+      ],
+      worldVertexCount: 4,
+      materials: [
+        { kind: "flat", color: "#8de1ff", opacity: 1, wireframe: true, blendMode: "opaque", renderPass: "opaque", emissive: 0 },
+      ],
+      objects: [
+        {
+          id: "frame",
+          kind: "box",
+          materialIndex: 0,
+          renderPass: "opaque",
+          vertexOffset: 0,
+          vertexCount: 4,
+          static: true,
+          bounds: { minX: -1.2, minY: -0.7, minZ: 0.1, maxX: 1.2, maxY: 1.4, maxZ: 1.5 },
+          depthNear: 6.1,
+          depthFar: 7.5,
+          depthCenter: 6.8,
+        },
+      ],
+      passes: [
+        {
+          name: "staticOpaque",
+          blend: "opaque",
+          depth: "opaque",
+          static: true,
+          cacheKey: "orbit-static",
+          positions: [
+            -1.2, -0.7, 0.1, 1.2, -0.7, 0.1,
+            0.1, -0.2, 0.1, 0.1, 1.4, 1.5,
+          ],
+          colors: [
+            0.55, 0.88, 1, 1, 0.55, 0.88, 1, 1,
+            0.78, 0.92, 1, 1, 0.78, 0.92, 1, 1,
+          ],
+          materials: [
+            0, 0, 1,
+            0, 0, 1,
+            0, 0, 1,
+            0, 0, 1,
+          ],
+          vertexCount: 4,
+        },
+      ],
+      objectCount: 1,
+    }),
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const canvas = mount.firstElementChild;
+  const gl = canvas.getContext("webgl");
+  const initialRotation = gl.ops.filter((entry) => entry[0] === "uniform3f" && entry[1] === "u_camera_rotation").at(-1);
+  const initialCamera = gl.ops.filter((entry) => entry[0] === "uniform4f" && entry[1] === "u_camera").at(-1);
+  assert.ok(initialRotation);
+  assert.equal(initialRotation[1], "u_camera_rotation");
+  assert.ok(Math.abs(initialRotation[2]) < 0.0001);
+  assert.ok(Math.abs(initialRotation[3]) < 0.0001);
+  assert.ok(Math.abs(initialRotation[4]) < 0.0001);
+  assert.ok(initialCamera);
+  assert.equal(initialCamera[5], 72);
+
+  canvas.dispatchEvent({
+    type: "pointerdown",
+    button: 0,
+    pointerId: 9,
+    clientX: 320,
+    clientY: 180,
+    preventDefault() {},
+    stopPropagation() {},
+  });
+  canvas.dispatchEvent({
+    type: "pointermove",
+    button: 0,
+    buttons: 1,
+    pointerId: 9,
+    clientX: 410,
+    clientY: 120,
+    preventDefault() {},
+    stopPropagation() {},
+  });
+  canvas.dispatchEvent({
+    type: "pointerup",
+    button: 0,
+    pointerId: 9,
+    clientX: 410,
+    clientY: 120,
+    preventDefault() {},
+    stopPropagation() {},
+  });
+  await flushAsyncWork();
+
+  const draggedRotation = gl.ops.filter((entry) => entry[0] === "uniform3f" && entry[1] === "u_camera_rotation").at(-1);
+  assert.ok(draggedRotation);
+  assert.ok(Math.abs(draggedRotation[2]) > 0.01 || Math.abs(draggedRotation[3]) > 0.01);
+
+  canvas.dispatchEvent({
+    type: "wheel",
+    deltaY: -120,
+    preventDefault() {},
+    stopPropagation() {},
+  });
+  await flushAsyncWork();
+
+  const zoomedCamera = gl.ops.filter((entry) => entry[0] === "uniform4f" && entry[1] === "u_camera").at(-1);
+  assert.ok(zoomedCamera);
+  assert.equal(zoomedCamera[5], 72);
+  assert.notEqual(zoomedCamera[4], initialCamera[4]);
+  assert.equal(mount.getAttribute("data-gosx-scene3d-controls"), "orbit");
+  assert.equal(env.consoleLogs.warn.length, 0);
+  assert.equal(env.consoleLogs.error.length, 0);
+});
+
+test("bootstrap loads declarative Scene3D model assets without authored JS", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-model-root";
+
+  const env = createContext({
+    elements: [mount],
+    fetchRoutes: {
+      "/models/runner.gosx3d.json": {
+        text: JSON.stringify({
+          objects: [
+            {
+              id: "runner-frame",
+              kind: "lines",
+              points: [
+                { x: -0.8, y: -0.3, z: 0 },
+                { x: 0.9, y: -0.3, z: 0 },
+                { x: 0.9, y: 0.35, z: 0.2 },
+                { x: -0.8, y: 0.35, z: 0.2 },
+                { x: -0.2, y: 0.65, z: 0.45 },
+                { x: 0.25, y: 0.65, z: 0.45 },
+              ],
+              segments: [[0, 1], [1, 2], [2, 3], [3, 0], [2, 4], [3, 5], [4, 5]],
+              material: {
+                kind: "matte",
+                color: "#5ca8ff",
+              },
+            },
+          ],
+          labels: [
+            {
+              id: "runner-label",
+              text: "Model asset",
+              x: 0,
+              y: 1.05,
+              z: 0.35,
+              maxWidth: 160,
+            },
+          ],
+          sprites: [
+            {
+              id: "runner-card",
+              src: "../paper-card.png",
+              x: 0,
+              y: 0.62,
+              z: 0.12,
+              width: 1.5,
+              height: 1,
+              opacity: 0.92,
+              priority: 3,
+              anchorX: 0.5,
+              anchorY: 0.5,
+              fit: "cover",
+              occlude: false,
+            },
+          ],
+          lights: [
+            {
+              id: "runner-light",
+              kind: "point",
+              color: "#ffd48f",
+              intensity: 1.15,
+              x: 0.4,
+              y: 0.9,
+              z: 1.2,
+              range: 4.8,
+              decay: 1.35,
+            },
+          ],
+        }),
+      },
+    },
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-model",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-model-root",
+          props: {
+            width: 640,
+            height: 360,
+            background: "#08151f",
+            models: [
+              {
+                id: "runner",
+                src: "/models/runner.gosx3d.json",
+                x: 1.1,
+                y: 0.2,
+                z: -0.6,
+                rotationY: 0.42,
+                scaleX: 1.35,
+                scaleY: 1.1,
+                scaleZ: 1.2,
+                materialKind: "glow",
+                color: "#ffd48f",
+                opacity: 0.74,
+                emissive: 0.26,
+                blendMode: "additive",
+                renderPass: "additive",
+                static: true,
+              },
+            ],
+            scene: {
+              objects: [
+                {
+                  id: "guide",
+                  kind: "lines",
+                  points: [
+                    { x: -1, y: -0.8, z: 0 },
+                    { x: 1, y: -0.8, z: 0 },
+                    { x: 1, y: 0.8, z: 0 },
+                    { x: -1, y: 0.8, z: 0 },
+                  ],
+                  segments: [[0, 1], [1, 2], [2, 3], [3, 0]],
+                  color: "#8de1ff",
+                },
+              ],
+            },
+          },
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  assert.equal(env.fetchCalls.some((call) => call.url === "/models/runner.gosx3d.json"), true);
+  assert.equal(mount.getAttribute("data-gosx-scene3d-mounted"), "true");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "canvas");
+  assert.equal(mount.children[0].tagName, "CANVAS");
+  assert.equal(mount.children[1].getAttribute("data-gosx-scene3d-label-layer"), "true");
+  assert.equal(mount.children[1].children.length, 2);
+  const modelLabel = mount.children[1].children.find((child) => child.getAttribute("data-gosx-scene-label") === "runner/runner-label");
+  const modelSprite = mount.children[1].children.find((child) => child.getAttribute("data-gosx-scene-sprite") === "runner/runner-card");
+  assert.ok(modelLabel);
+  assert.equal(modelLabel.textContent, "Model asset");
+  assert.ok(modelSprite);
+  assert.equal(modelSprite.getAttribute("data-gosx-scene-sprite-fit"), "cover");
+  assert.equal(modelSprite.firstChild.getAttribute("src"), "http://localhost:3000/paper-card.png");
+  const ctx2d = mount.children[0].getContext("2d");
+  assert.ok(ctx2d.ops.some((entry) => entry[0] === "lineTo"));
+  assert.equal(env.consoleLogs.error.length, 0);
+});
+
+test("bootstrap renders model-relative Scene3D textures without authored JS", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-model-texture-root";
+
+  const env = createContext({
+    elements: [mount],
+    enableWebGL: true,
+    disableCanvas2D: true,
+    fetchRoutes: {
+      "/models/panel.gosx3d.json": {
+        text: JSON.stringify({
+          objects: [
+            {
+              id: "panel",
+              kind: "plane",
+              width: 1.55,
+              height: 1.02,
+              x: 0,
+              y: 0.6,
+              z: 0.4,
+              material: {
+                kind: "flat",
+                color: "#f7fbff",
+                texture: "./paper-card.png",
+                wireframe: false,
+              },
+            },
+          ],
+        }),
+      },
+    },
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-model-texture",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-model-texture-root",
+          props: {
+            width: 640,
+            height: 360,
+            background: "#08151f",
+            camera: { x: 0, y: 0, z: 6, fov: 72 },
+            models: [
+              {
+                id: "panel-asset",
+                src: "/models/panel.gosx3d.json",
+                x: 0.25,
+                y: 0.1,
+                z: -0.4,
+                rotationY: 0.12,
+              },
+            ],
+          },
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+  await flushAsyncWork();
+
+  console.log("scene-logs", JSON.stringify(env.consoleLogs.log));
+  assert.equal(env.fetchCalls.some((call) => call.url === "/models/panel.gosx3d.json"), true);
+  assert.equal(env.imageLoads.includes("http://localhost:3000/models/paper-card.png"), true);
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "webgl");
+  const gl = mount.children[0].getContext("webgl");
+  assert.ok(gl.ops.some((entry) => entry[0] === "createTexture"));
+  assert.ok(gl.ops.some((entry) => entry[0] === "uniform1i" && entry[1] === "u_texture" && entry[2] === 0));
+  assert.ok(gl.ops.some((entry) => entry[0] === "vertexAttribPointer" && entry[1] === 3 && entry[2] === 2));
+  assert.ok(gl.ops.some((entry) => entry[0] === "texImage2D" && entry[2] === 9));
+  assert.ok(gl.ops.some((entry) => entry[0] === "texImage2D" && entry[2] === 6));
+  assert.ok(gl.ops.some((entry) => entry[0] === "drawArrays" && entry[1] === gl.TRIANGLES && entry[3] === 6));
+  console.log("texture-draws", JSON.stringify(gl.ops.filter((entry) => entry[0] === "drawArrays")));
+  assert.equal(gl.ops.some((entry) => entry[0] === "drawArrays" && entry[1] === gl.LINES), false);
+  assert.equal(env.consoleLogs.warn.length, 0);
+  assert.equal(env.consoleLogs.error.length, 0);
+});
+
+test("bootstrap renders declarative Scene3D sprite billboards without authored JS", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-sprite-root";
+
+  const env = createContext({
+    elements: [mount],
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-sprite",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-sprite-root",
+          props: {
+            width: 640,
+            height: 360,
+            background: "#08151f",
+            scene: {
+              objects: [
+                {
+                  id: "hero",
+                  kind: "box",
+                  width: 1.4,
+                  height: 1.1,
+                  depth: 0.9,
+                  x: 0,
+                  y: 0.2,
+                  z: 0.3,
+                  color: "#8de1ff",
+                },
+              ],
+              sprites: [
+                {
+                  id: "card",
+                  src: "/paper-card.png",
+                  x: 0.15,
+                  y: 1.3,
+                  z: 0.5,
+                  width: 1.55,
+                  height: 1.02,
+                  scale: 1,
+                  opacity: 0.94,
+                  priority: 3,
+                  anchorX: 0.5,
+                  anchorY: 0.5,
+                  fit: "cover",
+                  occlude: true,
+                },
+              ],
+            },
+            camera: { x: 0, y: 0, z: 6, fov: 72 },
+          },
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const labelLayer = mount.children[1];
+  assert.equal(labelLayer.getAttribute("data-gosx-scene3d-label-layer"), "true");
+  assert.equal(labelLayer.children.length, 1);
+  const sprite = labelLayer.children[0];
+  assert.equal(sprite.getAttribute("data-gosx-scene-sprite"), "card");
+  assert.equal(sprite.getAttribute("data-gosx-scene-sprite-fit"), "cover");
+  assert.equal(sprite.getAttribute("data-gosx-scene-sprite-occlude"), "true");
+  assert.equal(sprite.firstChild.tagName, "IMG");
+  assert.equal(sprite.firstChild.getAttribute("src"), "/paper-card.png");
+  assert.equal(env.consoleLogs.error.length, 0);
+});
+
+test("bootstrap emits declarative Scene3D pick signals without authored JS", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-pick-root";
+
+  const env = createContext({
+    elements: [mount],
+    fetchRoutes: {
+      "/runtime.wasm": { bytes: [0, 97, 115, 109] },
+      "/scene-pick-program.json": { text: '{"name":"ScenePick"}' },
+    },
+    manifest: {
+      runtime: { path: "/runtime.wasm" },
+      engines: [
+        {
+          id: "gosx-engine-pick",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-pick-root",
+          runtime: "shared",
+          programRef: "/scene-pick-program.json",
+          props: {
+            width: 640,
+            height: 360,
+            background: "#08151f",
+            pickSignalNamespace: "$scene.pick",
+            eventSignalNamespace: "$scene.event",
+            camera: { x: 0, y: 0, z: 6, fov: 72 },
+          },
+        },
+      ],
+    },
+    onHydrateEngine: () => "[]",
+    onRenderEngine: () => JSON.stringify({
+      background: "#08151f",
+      camera: { z: 6, fov: 72 },
+      positions: [],
+      colors: [],
+      vertexCount: 0,
+      worldPositions: [
+        -2.4, -1.5, 0.1, 2.4, -1.5, 0.1,
+        -0.8, 0.2, 0.5, 0.7, 0.9, 1.1,
+      ],
+      worldColors: [
+        0.25, 0.33, 0.41, 1, 0.25, 0.33, 0.41, 1,
+        0.78, 0.92, 1, 1, 0.78, 0.92, 1, 1,
+      ],
+      worldVertexCount: 4,
+      materials: [
+        { kind: "flat", color: "#35556a", opacity: 1, wireframe: true, blendMode: "opaque", emissive: 0 },
+        { kind: "flat", color: "#8de1ff", opacity: 1, wireframe: true, blendMode: "opaque", emissive: 0 },
+      ],
+      objects: [
+        {
+          id: "floor",
+          kind: "plane",
+          pickable: false,
+          materialIndex: 0,
+          vertexOffset: 0,
+          vertexCount: 2,
+          static: true,
+          bounds: { minX: -2.4, minY: -1.5, minZ: 0.1, maxX: 2.4, maxY: -1.5, maxZ: 0.1 },
+        },
+        {
+          id: "shape",
+          kind: "box",
+          pickable: true,
+          materialIndex: 1,
+          vertexOffset: 2,
+          vertexCount: 2,
+          static: false,
+          bounds: { minX: -0.8, minY: 0.2, minZ: 0.5, maxX: 0.7, maxY: 0.9, maxZ: 1.1 },
+        },
+      ],
+      objectCount: 2,
+    }),
+  });
+  const interactionEvents = [];
+  env.document.addEventListener("gosx:engine:scene-interaction", (event) => interactionEvents.push(event.detail));
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+  await flushAsyncWork();
+
+  const canvas = mount.children[0];
+  assert.equal(mount.getAttribute("data-gosx-scene3d-pick-signals"), "$scene.pick");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-event-signals"), "$scene.event");
+
+  canvas.dispatchEvent({
+    type: "pointermove",
+    button: 0,
+    pointerId: 4,
+    clientX: 320,
+    clientY: 160,
+    preventDefault() {},
+    stopPropagation() {},
+  });
+  await flushAsyncWork();
+  await flushAsyncWork();
+
+  let batch = JSON.parse(env.inputBatchCalls[env.inputBatchCalls.length - 1][0]);
+  assert.equal(batch["$scene.pick.hovered"], true);
+  assert.equal(batch["$scene.pick.hoverIndex"], 1);
+  assert.equal(batch["$scene.pick.hoverID"], "shape");
+  assert.equal(batch["$scene.pick.selected"], false);
+  assert.equal(batch["$scene.event.revision"], 1);
+  assert.equal(batch["$scene.event.type"], "hover");
+  assert.equal(batch["$scene.event.targetIndex"], 1);
+  assert.equal(batch["$scene.event.targetID"], "shape");
+  assert.equal(batch["$scene.event.targetKind"], "box");
+  assert.equal(batch["$scene.event.hovered"], true);
+  assert.equal(batch["$scene.event.hoverKind"], "box");
+  assert.equal(batch["$scene.event.object.shape.hovered"], true);
+  assert.deepEqual(JSON.parse(JSON.stringify(interactionEvents[0])), {
+    engineID: "gosx-engine-pick",
+    component: "GoSXScene3D",
+    detail: {
+      type: "hover",
+      revision: 1,
+      targetIndex: 1,
+      targetID: "shape",
+      targetKind: "box",
+      hovered: true,
+      hoverIndex: 1,
+      hoverID: "shape",
+      hoverKind: "box",
+      down: false,
+      downIndex: -1,
+      downID: "",
+      downKind: "",
+      selected: false,
+      selectedIndex: -1,
+      selectedID: "",
+      selectedKind: "",
+      clickCount: 0,
+      pointerX: 320,
+      pointerY: 160,
+    },
+  });
+  const hoverBatchCount = env.inputBatchCalls.length;
+
+  canvas.dispatchEvent({
+    type: "pointermove",
+    button: 0,
+    pointerId: 4,
+    clientX: 320,
+    clientY: 160,
+    preventDefault() {},
+    stopPropagation() {},
+  });
+  await flushAsyncWork();
+  await flushAsyncWork();
+
+  assert.equal(env.inputBatchCalls.length, hoverBatchCount);
+
+  canvas.dispatchEvent({
+    type: "pointerdown",
+    button: 0,
+    pointerId: 4,
+    clientX: 320,
+    clientY: 160,
+    preventDefault() {},
+    stopPropagation() {},
+  });
+  await flushAsyncWork();
+
+  batch = JSON.parse(env.inputBatchCalls[env.inputBatchCalls.length - 1][0]);
+  assert.equal(batch["$scene.pick.down"], true);
+  assert.equal(batch["$scene.pick.downID"], "shape");
+  assert.equal(batch["$scene.event.type"], "down");
+  assert.equal(batch["$scene.event.down"], true);
+  assert.equal(batch["$scene.event.downID"], "shape");
+  assert.equal(batch["$scene.event.object.shape.down"], true);
+
+  canvas.dispatchEvent({
+    type: "pointerup",
+    button: 0,
+    pointerId: 4,
+    clientX: 320,
+    clientY: 160,
+    preventDefault() {},
+    stopPropagation() {},
+  });
+  await flushAsyncWork();
+
+  batch = JSON.parse(env.inputBatchCalls[env.inputBatchCalls.length - 1][0]);
+  assert.equal(batch["$scene.pick.down"], false);
+  assert.equal(batch["$scene.pick.selected"], true);
+  assert.equal(batch["$scene.pick.selectedIndex"], 1);
+  assert.equal(batch["$scene.pick.selectedID"], "shape");
+  assert.equal(batch["$scene.pick.clickCount"], 1);
+  assert.equal(batch["$scene.event.type"], "select");
+  assert.equal(batch["$scene.event.selected"], true);
+  assert.equal(batch["$scene.event.selectedID"], "shape");
+  assert.equal(batch["$scene.event.object.shape.down"], false);
+  assert.equal(batch["$scene.event.object.shape.selected"], true);
+  assert.equal(batch["$scene.event.object.shape.clickCount"], 1);
+
+  canvas.dispatchEvent({
+    type: "pointermove",
+    button: 0,
+    pointerId: 5,
+    clientX: 48,
+    clientY: 332,
+    preventDefault() {},
+    stopPropagation() {},
+  });
+  await flushAsyncWork();
+
+  batch = JSON.parse(env.inputBatchCalls[env.inputBatchCalls.length - 1][0]);
+  assert.equal(batch["$scene.pick.hovered"], false);
+  assert.equal(batch["$scene.pick.hoverIndex"], -1);
+  assert.equal(batch["$scene.pick.hoverID"], "");
+  assert.equal(batch["$scene.pick.selectedID"], "shape");
+  assert.equal(batch["$scene.event.type"], "leave");
+  assert.equal(batch["$scene.event.hovered"], false);
+  assert.equal(batch["$scene.event.object.shape.hovered"], false);
+
+  canvas.dispatchEvent({
+    type: "pointerdown",
+    button: 0,
+    pointerId: 5,
+    clientX: 48,
+    clientY: 332,
+    preventDefault() {},
+    stopPropagation() {},
+  });
+  canvas.dispatchEvent({
+    type: "pointerup",
+    button: 0,
+    pointerId: 5,
+    clientX: 48,
+    clientY: 332,
+    preventDefault() {},
+    stopPropagation() {},
+  });
+  await flushAsyncWork();
+
+  batch = JSON.parse(env.inputBatchCalls[env.inputBatchCalls.length - 1][0]);
+  assert.equal(batch["$scene.pick.selected"], false);
+  assert.equal(batch["$scene.pick.selectedIndex"], -1);
+  assert.equal(batch["$scene.pick.selectedID"], "");
+  assert.equal(batch["$scene.pick.clickCount"], 1);
+  assert.equal(batch["$scene.event.type"], "deselect");
+  assert.equal(batch["$scene.event.selected"], false);
+  assert.equal(batch["$scene.event.object.shape.selected"], false);
+  assert.equal(interactionEvents.at(-1).detail.type, "deselect");
+});
+
 test("bootstrap reuses static opaque Scene3D buffers across dynamic-only runtime updates", async () => {
   const mount = new FakeElement("div", null);
   mount.id = "scene-static-cache-root";
@@ -3533,6 +4321,89 @@ test("bootstrap invalidates static opaque Scene3D buffers when camera clip state
             depthNear: cameraZ,
             depthFar: cameraZ,
             depthCenter: cameraZ,
+            viewCulled: false,
+          },
+        ],
+        objectCount: 1,
+      });
+    },
+  });
+
+  let rafCount = 0;
+  env.context.requestAnimationFrame = (callback) => {
+    if (rafCount >= 1) return 0;
+    rafCount += 1;
+    return setTimeout(() => callback(rafCount * 16), 0);
+  };
+  env.context.cancelAnimationFrame = (handle) => clearTimeout(handle);
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const gl = mount.children[0].getContext("webgl");
+  assert.ok(env.engineRenderCalls.length >= 2);
+  assert.equal(gl.ops.filter((entry) => entry[0] === "bufferData" && entry[2] === 4).length, 2);
+});
+
+test("bootstrap invalidates static opaque Scene3D buffers when shared-runtime lighting changes", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-static-lighting-root";
+  let renderIndex = 0;
+
+  const env = createContext({
+    elements: [mount],
+    enableWebGL: true,
+    disableCanvas2D: true,
+    fetchRoutes: {
+      "/runtime.wasm": { bytes: [0, 97, 115, 109] },
+      "/scene-static-lighting-program.json": { text: '{"name":"StaticLighting"}' },
+    },
+    manifest: {
+      runtime: { path: "/runtime.wasm" },
+      engines: [
+        {
+          id: "gosx-engine-static-lighting",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-static-lighting-root",
+          runtime: "shared",
+          props: { width: 640, height: 360, background: "#08151f" },
+          programRef: "/scene-static-lighting-program.json",
+        },
+      ],
+    },
+    onHydrateEngine: () => "[]",
+    onRenderEngine: () => {
+      renderIndex += 1;
+      const warm = renderIndex === 1 ? 0.35 : 0.92;
+      return JSON.stringify({
+        background: "#08151f",
+        camera: { x: 0, y: 0, z: 6, fov: 72, near: 0.05, far: 128 },
+        positions: [],
+        colors: [],
+        vertexCount: 0,
+        worldPositions: [
+          -2, 0, 0, 2, 0, 0,
+        ],
+        worldColors: [
+          warm, 0.42, 0.5, 1, warm, 0.42, 0.5, 1,
+        ],
+        worldVertexCount: 2,
+        materials: [
+          { key: "flat|#808080|1.000|true|opaque|opaque|0.000", kind: "flat", color: "#808080", opacity: 1, wireframe: true, blendMode: "opaque", renderPass: "opaque", emissive: 0 },
+        ],
+        objects: [
+          {
+            id: "hero",
+            kind: "box",
+            materialIndex: 0,
+            vertexOffset: 0,
+            vertexCount: 2,
+            static: true,
+            bounds: { minX: -2, minY: 0, minZ: 0, maxX: 2, maxY: 0, maxZ: 0 },
+            depthNear: 6,
+            depthFar: 6,
+            depthCenter: 6,
             viewCulled: false,
           },
         ],
@@ -4230,6 +5101,77 @@ test("bootstrap routes native Scene3D material profiles through WebGL pass plann
   assert.ok(gl.ops.some((entry) => entry[0] === "blendFunc" && entry[1] === gl.SRC_ALPHA && entry[2] === gl.ONE_MINUS_SRC_ALPHA));
   assert.ok(gl.ops.some((entry) => entry[0] === "blendFunc" && entry[1] === gl.SRC_ALPHA && entry[2] === gl.ONE));
   assert.ok(gl.ops.filter((entry) => entry[0] === "drawArrays" && entry[3] > 0).length >= 3);
+  assert.equal(env.consoleLogs.warn.length, 0);
+  assert.equal(env.consoleLogs.error.length, 0);
+});
+
+test("bootstrap tints native Scene3D geometry with declarative lights and environment", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-native-lighting";
+
+  const env = createContext({
+    elements: [mount],
+    enableWebGL: true,
+    disableCanvas2D: true,
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-native-lighting",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-native-lighting",
+          jsExport: "GoSXScene3D",
+          props: {
+            width: 640,
+            height: 360,
+            background: "#08151f",
+            camera: { x: 0, y: 0, z: 6, near: 0.05, far: 128, fov: 72 },
+            scene: {
+              environment: {
+                ambientColor: "#f4fbff",
+                ambientIntensity: 0.14,
+                skyColor: "#b9deff",
+                skyIntensity: 0.12,
+                groundColor: "#102030",
+                groundIntensity: 0.04,
+              },
+              lights: [
+                {
+                  id: "sun",
+                  kind: "directional",
+                  color: "#fff1d6",
+                  intensity: 1.25,
+                  directionX: 0.3,
+                  directionY: -1,
+                  directionZ: -0.35,
+                },
+              ],
+              objects: [
+                {
+                  id: "hero",
+                  kind: "box",
+                  width: 1.8,
+                  height: 1.2,
+                  depth: 1.2,
+                  color: "#808080",
+                  materialKind: "flat",
+                },
+              ],
+            },
+          },
+          capabilities: ["webgl", "animation"],
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const gl = mount.children[0].getContext("webgl");
+  const uploadedColors = gl.bufferUploads.get(5);
+  assert.ok(Array.isArray(uploadedColors) && uploadedColors.length > 0);
+  assert.ok(uploadedColors[0] > uploadedColors[2]);
   assert.equal(env.consoleLogs.warn.length, 0);
   assert.equal(env.consoleLogs.error.length, 0);
 });

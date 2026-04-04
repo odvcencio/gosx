@@ -92,7 +92,14 @@ type RouteContext struct {
 	Params     map[string]string
 	Data       any
 	parentData map[string]any
+	handlerErr error
 	server.PageState
+}
+
+// SetHandlerError records an error to be dispatched through the error handler
+// after the handler returns. This replaces panic-based error propagation.
+func (ctx *RouteContext) SetHandlerError(err error) {
+	ctx.handlerErr = err
 }
 
 // Param returns a URL path parameter.
@@ -369,6 +376,10 @@ func (r *Router) buildHandler(pattern string, route Route, layouts []LayoutFunc,
 		}
 
 		node := route.Handler(ctx)
+		if ctx.handlerErr != nil {
+			r.renderError(w, ctx, layouts, errorHandler, errorLayout, ctx.handlerErr, pattern)
+			return
+		}
 		r.renderPage(w, ctx, layouts, node, http.StatusOK)
 	}
 }

@@ -1,0 +1,329 @@
+/* ============================================================
+   GoSX Docs Design System
+   global.css — auto-discovered by GoSX CSS layer system
+   ============================================================ */
+
+/* ------------------------------------------------------------
+   @font-face declarations
+   ------------------------------------------------------------ */
+
+@font-face {
+  font-family: 'Space Grotesk';
+  src: url('/fonts/SpaceGrotesk-Bold.woff2') format('woff2');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Inter';
+  src: url('/fonts/Inter-Regular.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Inter';
+  src: url('/fonts/Inter-Medium.woff2') format('woff2');
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Inter';
+  src: url('/fonts/Inter-SemiBold.woff2') format('woff2');
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'JetBrains Mono';
+  src: url('/fonts/JetBrainsMono-Regular.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* ------------------------------------------------------------
+   Design tokens — dark mode defaults
+   ------------------------------------------------------------ */
+
+:root {
+  /* Colors */
+  --bg: #000000;
+  --surface: rgba(255, 255, 255, 0.03);
+  --surface-hover: rgba(255, 255, 255, 0.06);
+  --border: rgba(255, 255, 255, 0.08);
+  --border-hover: rgba(255, 255, 255, 0.12);
+  --text-primary: rgba(255, 255, 255, 0.92);
+  --text-secondary: rgba(255, 255, 255, 0.70);
+  --text-muted: rgba(255, 255, 255, 0.52);
+  --accent: #D4AF37;
+  --accent-deep: #c9a227;
+  --accent-glow: hsla(46, 65%, 53%, 0.3);
+  --chrome-dark: #C0C0C0;
+  --chrome-light: #E8E8E8;
+
+  /* Typography — font families */
+  --font-display: 'Space Grotesk', sans-serif;
+  --font-body: 'Inter', sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+
+  /* Typography — fluid scale */
+  --text-hero: clamp(2.5rem, 5vw + 1rem, 4.768rem);
+  --text-h2: clamp(1.728rem, 1.54rem + 0.98vw, 2.441rem);
+  --text-h3: clamp(1.44rem, 1.3rem + 0.72vw, 1.953rem);
+  --text-body: clamp(1rem, 0.93rem + 0.38vw, 1.25rem);
+  --text-small: clamp(0.833rem, 0.78rem + 0.28vw, 1rem);
+
+  /* Typography — line heights */
+  --lh-headline: 1.1;
+  --lh-body: 1.6;
+  --lh-prose: 1.7;
+  --lh-code: 1.65;
+
+  /* Typography — letter spacing */
+  --ls-headline: -0.02em;
+  --ls-display: -0.03em;
+  --ls-label: 0.05em;
+
+  /* Spacing — fluid */
+  --space-xs: clamp(0.75rem, 0.68rem + 0.33vw, 0.9375rem);
+  --space-sm: clamp(1rem, 0.91rem + 0.43vw, 1.25rem);
+  --space-md: clamp(1.5rem, 1.37rem + 0.65vw, 1.875rem);
+  --space-lg: clamp(2rem, 1.83rem + 0.87vw, 2.5rem);
+  --space-xl: clamp(3rem, 2.74rem + 1.3vw, 3.75rem);
+  --space-2xl: clamp(4rem, 3.65rem + 1.74vw, 5rem);
+  --space-3xl: clamp(6rem, 5.48rem + 2.61vw, 7.5rem);
+
+  /* Motion */
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --ease-in-out-quart: cubic-bezier(0.76, 0, 0.24, 1);
+  --duration-fast: 200ms;
+  --duration-normal: 300ms;
+  --duration-slow: 500ms;
+  --duration-slower: 800ms;
+
+  /* Code syntax — always dark */
+  --code-bg: rgba(10, 10, 10, 0.95);
+  --code-border: rgba(255, 255, 255, 0.08);
+  --code-text: rgba(255, 255, 255, 0.85);
+  --code-keyword: #ffb36b;
+  --code-string: #b8e986;
+  --code-number: #8ddae8;
+  --code-type: #ffd88f;
+  --code-comment: #728292;
+  --code-function: #d4af37;
+  --code-property: #e8e8e8;
+  --code-operator: rgba(255, 255, 255, 0.60);
+  --code-punctuation: rgba(255, 255, 255, 0.50);
+}
+
+/* ------------------------------------------------------------
+   Light mode overrides
+   ------------------------------------------------------------ */
+
+.light {
+  --bg: #FAFAF8;
+  --surface: rgba(0, 0, 0, 0.03);
+  --surface-hover: rgba(0, 0, 0, 0.06);
+  --border: rgba(0, 0, 0, 0.10);
+  --border-hover: rgba(0, 0, 0, 0.16);
+  --text-primary: #1a1a18;
+  --text-secondary: #4a4a46;
+  --text-muted: #6B6B65;
+  --accent: #8B6914;
+  --accent-deep: #7A5B0E;
+}
+
+/* ------------------------------------------------------------
+   Base resets
+   ------------------------------------------------------------ */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text-primary);
+  font-family: var(--font-body);
+  font-size: var(--text-body);
+  line-height: var(--lh-body);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overflow-x: hidden;
+}
+
+/* ------------------------------------------------------------
+   Focus styles
+   ------------------------------------------------------------ */
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: 2px;
+}
+
+/* ------------------------------------------------------------
+   Skip link
+   ------------------------------------------------------------ */
+
+.skip-link {
+  position: absolute;
+  top: -100%;
+  left: 0;
+  padding: 0.5rem 1rem;
+  background: var(--accent);
+  color: #1a1a18;
+  font-family: var(--font-body);
+  font-weight: 600;
+  text-decoration: none;
+  z-index: 9999;
+  border-radius: 0 0 4px 0;
+  transition: top var(--duration-fast) var(--ease-out-expo);
+}
+
+.skip-link:focus {
+  top: 0;
+}
+
+/* ------------------------------------------------------------
+   Utility: glass panel
+   ------------------------------------------------------------ */
+
+.glass-panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 1rem;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+/* ------------------------------------------------------------
+   Utility: chrome text
+   ------------------------------------------------------------ */
+
+.chrome-text {
+  background: linear-gradient(
+    135deg,
+    var(--chrome-dark) 0%,
+    var(--chrome-light) 40%,
+    var(--chrome-dark) 60%,
+    var(--chrome-light) 100%
+  );
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+@media (forced-colors: active) {
+  .chrome-text {
+    -webkit-text-fill-color: CanvasText;
+    background: none;
+  }
+}
+
+/* ------------------------------------------------------------
+   Reveal animation
+   ------------------------------------------------------------ */
+
+.reveal {
+  opacity: 0;
+  transform: translateY(30px);
+  transition:
+    opacity var(--duration-slow) var(--ease-out-expo),
+    transform var(--duration-slow) var(--ease-out-expo);
+}
+
+.reveal.visible {
+  opacity: 1;
+  transform: none;
+}
+
+/* ------------------------------------------------------------
+   Reduced motion
+   ------------------------------------------------------------ */
+
+/* ------------------------------------------------------------
+   Tooltip component
+   ------------------------------------------------------------ */
+
+.tooltip-trigger { position: relative; cursor: help; }
+.tooltip {
+  position: absolute; bottom: 100%; left: 50%; transform: translateX(-50%) scale(0.95);
+  padding: var(--space-xs) var(--space-sm);
+  font-size: var(--text-small); color: var(--text-primary);
+  border: 1px solid var(--accent); border-radius: 0.5rem;
+  white-space: nowrap; pointer-events: none;
+  opacity: 0; transition: opacity var(--duration-fast), transform var(--duration-fast) var(--ease-spring);
+  z-index: 50;
+}
+.tooltip-trigger:hover .tooltip,
+.tooltip-trigger:focus-within .tooltip {
+  opacity: 1; transform: translateX(-50%) scale(1);
+}
+
+/* ------------------------------------------------------------
+   Link & card hover micro-interactions
+   ------------------------------------------------------------ */
+
+/* Link underline draw */
+.prose a, .nav-link, .showcase__link {
+  position: relative;
+  text-decoration: none;
+}
+.prose a::after, .showcase__link::after {
+  content: '';
+  position: absolute; bottom: -1px; left: 0;
+  width: 0; height: 1px;
+  background: var(--accent);
+  transition: width 300ms var(--ease-out-expo);
+}
+.prose a:hover::after, .showcase__link:hover::after {
+  width: 100%;
+}
+
+/* Button press */
+button:active, .btn:active, [type="submit"]:active {
+  transform: scale(0.98);
+}
+
+/* Code block hover */
+.code-sample:hover {
+  border-color: var(--border-hover);
+}
+
+/* All hover effects also on focus-visible */
+.prose a:focus-visible::after, .showcase__link:focus-visible::after { width: 100%; }
+
+/* ------------------------------------------------------------
+   Reduced motion
+   ------------------------------------------------------------ */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  .reveal {
+    opacity: 1;
+    transform: none;
+  }
+}

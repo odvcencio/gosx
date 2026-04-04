@@ -1,0 +1,248 @@
+/* ============================================================
+   Layout — pill nav, nav overlay, footer
+   layout.css — sidecar for layout.gsx
+   ============================================================ */
+
+/* ------------------------------------------------------------
+   Site shell
+   ------------------------------------------------------------ */
+
+.site-shell {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
+/* ------------------------------------------------------------
+   Main content
+   ------------------------------------------------------------ */
+
+#main-content {
+  min-height: 100vh;
+}
+
+/* ------------------------------------------------------------
+   Pill nav
+   ------------------------------------------------------------ */
+
+.pill-nav {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-xs) var(--space-lg);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  background: rgba(0, 0, 0, 0.6);
+  border-bottom: 1px solid var(--border);
+}
+
+.light .pill-nav {
+  background: rgba(250, 250, 248, 0.8);
+}
+
+/* ------------------------------------------------------------
+   Pill logo
+   ------------------------------------------------------------ */
+
+.pill-logo {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 1.25rem;
+  color: var(--text-primary);
+  text-decoration: none;
+  letter-spacing: var(--ls-display);
+  transition: transform var(--duration-fast) var(--ease-spring);
+}
+
+.pill-logo:hover {
+  transform: scale(1.05);
+}
+
+/* ------------------------------------------------------------
+   Pill toggle (hamburger)
+   ------------------------------------------------------------ */
+
+.pill-toggle {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-width: 44px;
+  min-height: 44px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 12px;
+}
+
+.pill-toggle__bar {
+  display: block;
+  width: 20px;
+  height: 2px;
+  background: var(--text-primary);
+  transition: transform var(--duration-normal) var(--ease-out-expo);
+}
+
+/* ------------------------------------------------------------
+   Nav overlay
+   ------------------------------------------------------------ */
+
+.nav-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  background: rgba(0, 0, 0, 0.95);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: nav-overlay-fade-in var(--duration-normal) var(--ease-out-expo);
+}
+
+.nav-overlay[hidden] {
+  display: none;
+}
+
+@keyframes nav-overlay-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* ------------------------------------------------------------
+   Nav overlay inner
+   ------------------------------------------------------------ */
+
+.nav-overlay__inner {
+  max-width: 400px;
+  width: 100%;
+  padding: var(--space-xl);
+}
+
+/* ------------------------------------------------------------
+   Nav groups
+   ------------------------------------------------------------ */
+
+.nav-group {
+  margin-bottom: var(--space-lg);
+}
+
+.nav-group__label {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: var(--text-small);
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: var(--ls-label);
+  margin-bottom: var(--space-xs);
+}
+
+/* ------------------------------------------------------------
+   Nav links
+   ------------------------------------------------------------ */
+
+.nav-link {
+  display: block;
+  padding: var(--space-xs) 0;
+  color: var(--text-secondary);
+  text-decoration: none;
+  font-size: var(--text-body);
+  transition: color var(--duration-fast);
+}
+
+.nav-link:hover {
+  color: var(--accent);
+}
+
+/* ------------------------------------------------------------
+   Footer
+   ------------------------------------------------------------ */
+
+.site-footer {
+  background: #000;
+  color: var(--text-secondary);
+  padding: var(--space-3xl) var(--space-lg) var(--space-xl);
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.site-footer__inner {
+  max-width: 64rem;
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: var(--space-lg);
+}
+
+.site-footer__logo {
+  font-family: var(--font-display);
+  font-size: 1.5rem;
+  font-weight: 700;
+  letter-spacing: var(--ls-display);
+}
+
+.site-footer__tagline {
+  display: block;
+  margin-top: var(--space-xs);
+  font-size: var(--text-small);
+  color: var(--text-muted);
+}
+
+.site-footer__link {
+  color: var(--text-secondary);
+  text-decoration: none;
+  transition: color var(--duration-fast);
+}
+
+.site-footer__link:hover {
+  color: var(--accent);
+}
+
+.site-footer__a11y p {
+  font-size: var(--text-small);
+  color: var(--text-muted);
+  margin: 0;
+}
+
+/* ------------------------------------------------------------
+   Mobile breakpoint
+   ------------------------------------------------------------ */
+
+@media (max-width: 767px) {
+  .pill-nav {
+    padding: var(--space-xs) var(--space-sm);
+  }
+
+  .site-footer__inner {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ------------------------------------------------------------
+   Page transitions via GoSX client navigation
+   ------------------------------------------------------------ */
+
+[data-gosx-navigating] #main-content {
+  opacity: 0;
+  transition: opacity 150ms ease-out;
+}
+
+#main-content {
+  transition: opacity 300ms var(--ease-out-expo);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-gosx-navigating] #main-content,
+  #main-content {
+    transition: none;
+  }
+}

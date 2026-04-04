@@ -8,15 +8,19 @@ import (
 func init() {
 	docsapp.RegisterStaticDocsPage(
 		"Images",
-		"Local raster assets can be resized and served through the built-in optimizer without hand-written srcset plumbing.",
+		"Server-side image optimization with responsive resizing and format conversion.",
 		route.FileModuleOptions{
 			Load: func(ctx *route.RouteContext, page route.FilePage) (any, error) {
 				return map[string]any{
-					"image": map[string]any{
-						"src":    "/paper-card.png",
-						"width":  960,
-						"height": 624,
-						"widths": []int{320, 640, 960},
+					"mode":        "light",
+					"title":       "Images",
+					"description": "Server-side image optimization with responsive resizing and format conversion.",
+					"tags":        []string{"images", "optimization", "responsive"},
+					"toc": []map[string]string{
+						{"href": "#image-optimization", "label": "Image Optimization"},
+						{"href": "#responsive-images", "label": "Responsive Images"},
+						{"href": "#format-conversion", "label": "Format Conversion"},
+						{"href": "#caching", "label": "Caching"},
 					},
 				}, nil
 			},

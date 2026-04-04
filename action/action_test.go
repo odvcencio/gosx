@@ -1,7 +1,9 @@
 package action
 
 import (
+	"bytes"
 	"encoding/json"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -196,6 +198,41 @@ func TestRegistryHTTPFormData(t *testing.T) {
 
 	req := httptest.NewRequest("POST", "/gosx/action/submit", strings.NewReader("name=Ada"))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.SetPathValue("name", "submit")
+	w := httptest.NewRecorder()
+
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+}
+
+func TestRegistryHTTPMultipartFormData(t *testing.T) {
+	r := NewRegistry()
+	r.Register("submit", func(ctx *Context) error {
+		if got := ctx.FormData["name"]; got != "Ada" {
+			t.Fatalf("expected multipart form value Ada, got %q", got)
+		}
+		if got := ctx.FormData["path"]; got != "power" {
+			t.Fatalf("expected multipart form value power, got %q", got)
+		}
+		return nil
+	})
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	if err := writer.WriteField("name", "Ada"); err != nil {
+		t.Fatalf("write name field: %v", err)
+	}
+	if err := writer.WriteField("path", "power"); err != nil {
+		t.Fatalf("write path field: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close multipart writer: %v", err)
+	}
+
+	req := httptest.NewRequest("POST", "/gosx/action/submit", &body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
 	req.SetPathValue("name", "submit")
 	w := httptest.NewRecorder()
 

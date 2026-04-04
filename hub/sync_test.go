@@ -19,7 +19,9 @@ func TestHubSyncDocBootstrapsAndAppliesBinaryChanges(t *testing.T) {
 	if err := doc.Put(crdt.Root, "title", crdt.StringValue("server")); err != nil {
 		t.Fatalf("seed server doc: %v", err)
 	}
-	doc.Commit("seed")
+	if _, err := doc.Commit("seed"); err != nil {
+		t.Fatalf("commit seed: %v", err)
+	}
 	h.SyncDoc("room-123", doc)
 
 	server := httptest.NewServer(h)
@@ -81,7 +83,9 @@ func TestHubSyncDocBootstrapsAndAppliesBinaryChanges(t *testing.T) {
 	if err := clientDoc.Put(crdt.Root, "subtitle", crdt.StringValue("client")); err != nil {
 		t.Fatalf("client subtitle put: %v", err)
 	}
-	clientDoc.Commit("client update")
+	if _, err := clientDoc.Commit("client update"); err != nil {
+		t.Fatalf("commit client update: %v", err)
+	}
 	clientMsg, ok := clientDoc.GenerateSyncMessage(clientState)
 	if !ok {
 		t.Fatal("expected client sync message after local change")
