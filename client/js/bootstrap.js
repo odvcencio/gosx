@@ -2156,6 +2156,41 @@
       '  display: block;',
       '  white-space: var(--gosx-scene-label-white-space, normal);',
       '}',
+      '[data-gosx-scene-sprite] {',
+      '  position: absolute;',
+      '  left: var(--gosx-scene-sprite-left, 0px);',
+      '  top: var(--gosx-scene-sprite-top, 0px);',
+      '  width: var(--gosx-scene-sprite-width, 1px);',
+      '  height: var(--gosx-scene-sprite-height, 1px);',
+      '  pointer-events: none;',
+      '  opacity: var(--gosx-scene-sprite-opacity, 1);',
+      '  z-index: var(--gosx-scene-sprite-z-index, 1);',
+      '  transform: translate(calc(var(--gosx-scene-sprite-anchor-x, 0.5) * -100%), calc(var(--gosx-scene-sprite-anchor-y, 0.5) * -100%));',
+      '  will-change: left, top, transform, opacity;',
+      '  transition:',
+      '    opacity var(--motion-fast, 180ms) var(--ease-out, cubic-bezier(0.16, 1, 0.3, 1)),',
+      '    transform var(--motion-fast, 180ms) var(--ease-out, cubic-bezier(0.16, 1, 0.3, 1));',
+      '}',
+      '[data-gosx-scene-sprite][data-gosx-scene-sprite-visibility="hidden"] {',
+      '  opacity: 0;',
+      '  visibility: hidden;',
+      '}',
+      '[data-gosx-scene-sprite][data-gosx-scene-sprite-occluded="true"] {',
+      '  --gosx-scene-sprite-opacity: 0.42;',
+      '}',
+      '[data-gosx-scene-sprite] > img {',
+      '  display: block;',
+      '  inline-size: 100%;',
+      '  block-size: 100%;',
+      '  object-fit: var(--gosx-scene-sprite-fit, contain);',
+      '  user-select: none;',
+      '  -webkit-user-drag: none;',
+      '  filter: drop-shadow(0 14px 32px rgba(3, 10, 16, 0.28));',
+      '}',
+      '[data-gosx-scene3d-mounted="true"][data-gosx-scene3d-active="false"] [data-gosx-scene-sprite],',
+      '[data-gosx-scene3d-mounted="true"][data-gosx-scene3d-reduced-motion="true"] [data-gosx-scene-sprite] {',
+      '  transition: none;',
+      '}',
     ].join("\\n");
     document.head.appendChild(style);
   }
@@ -4855,523 +4890,6 @@
     queueInputSignal("$input.pointer.buttons", 0);
   }
 
-  function sceneClamp(value, min, max) {
-    return Math.max(min, Math.min(max, value));
-  }
-
-  function sceneLocalPointerPoint(event, canvas, width, height) {
-    const rect = canvas.getBoundingClientRect();
-    const safeWidth = Math.max(rect.width || 0, 1);
-    const safeHeight = Math.max(rect.height || 0, 1);
-    return {
-      x: sceneClamp(((sceneNumber(event && event.clientX, rect.left) - rect.left) / safeWidth) * width, 0, width),
-      y: sceneClamp(((sceneNumber(event && event.clientY, rect.top) - rect.top) / safeHeight) * height, 0, height),
-    };
-  }
-
-  function sceneLocalPointerSample(event, canvas, width, height, state, phase) {
-    const previousX = state.lastX == null ? width / 2 : state.lastX;
-    const previousY = state.lastY == null ? height / 2 : state.lastY;
-    const hasPointerPosition = Number.isFinite(sceneNumber(event && event.clientX, NaN)) && Number.isFinite(sceneNumber(event && event.clientY, NaN));
-    const point = hasPointerPosition ? sceneLocalPointerPoint(event, canvas, width, height) : { x: previousX, y: previousY };
-    const sample = {
-      x: point.x,
-      y: point.y,
-      deltaX: point.x - previousX,
-      deltaY: point.y - previousY,
-      buttons: phase === "end" ? 0 : 1,
-      button: phase === "start" || phase === "end" ? 0 : null,
-      active: phase !== "end",
-    };
-    state.lastX = point.x;
-    state.lastY = point.y;
-    return sample;
-  }
-
-  function resetScenePointerSample(width, height, state) {
-    state.lastX = width / 2;
-    state.lastY = height / 2;
-    publishPointerSignals({
-      x: state.lastX,
-      y: state.lastY,
-      deltaX: 0,
-      deltaY: 0,
-      buttons: 0,
-      button: 0,
-      active: false,
-    });
-  }
-
-  function sceneDragSignalNamespace(props) {
-    const value = props && props.dragSignalNamespace;
-    return typeof value === "string" ? value.trim() : "";
-  }
-
-  function publishSceneDragSignals(namespace, state, active) {
-    if (!namespace) {
-      return;
-    }
-    queueInputSignal(namespace + ".x", sceneNumber(state.orbitX, 0));
-    queueInputSignal(namespace + ".y", sceneNumber(state.orbitY, 0));
-    queueInputSignal(namespace + ".targetIndex", Math.max(-1, Math.floor(sceneNumber(state.targetIndex, -1))));
-    queueInputSignal(namespace + ".active", Boolean(active));
-  }
-
-  function sceneBoundsSize(bounds) {
-    if (!bounds || typeof bounds !== "object") return [0, 0, 0];
-    return [
-      Math.abs(sceneNumber(bounds.maxX, 0) - sceneNumber(bounds.minX, 0)),
-      Math.abs(sceneNumber(bounds.maxY, 0) - sceneNumber(bounds.minY, 0)),
-      Math.abs(sceneNumber(bounds.maxZ, 0) - sceneNumber(bounds.minZ, 0)),
-    ].sort(function(a, b) { return b - a; });
-  }
-
-  function sceneObjectAllowsPointerDrag(object) {
-    if (!object || object.kind === "plane" || object.viewCulled) {
-      return false;
-    }
-    const extents = sceneBoundsSize(object.bounds);
-    return extents[0] > 0.6 && extents[1] > 0.35;
-  }
-
-  function sceneWorldPointAt(source, vertexIndex) {
-    if (!source || typeof source.length !== "number") {
-      return null;
-    }
-    const offset = Math.max(0, vertexIndex * 3);
-    if (offset + 2 >= source.length) {
-      return null;
-    }
-    return {
-      x: sceneNumber(source[offset], 0),
-      y: sceneNumber(source[offset + 1], 0),
-      z: sceneNumber(source[offset + 2], 0),
-    };
-  }
-
-  function sceneProjectedObjectSegments(bundle, object, width, height) {
-    if (!bundle || !bundle.camera || !object) {
-      return [];
-    }
-    const vertexOffset = Math.max(0, Math.floor(sceneNumber(object.vertexOffset, 0)));
-    const vertexCount = Math.max(0, Math.floor(sceneNumber(object.vertexCount, 0)));
-    if (vertexCount < 2) {
-      return [];
-    }
-    const source = bundle.worldPositions;
-    if (!source || typeof source.length !== "number") {
-      return [];
-    }
-    const segments = [];
-    for (let i = 0; i + 1 < vertexCount; i += 2) {
-      const fromWorld = sceneWorldPointAt(source, vertexOffset + i);
-      const toWorld = sceneWorldPointAt(source, vertexOffset + i + 1);
-      if (!fromWorld || !toWorld) {
-        continue;
-      }
-      const from = projectPoint(fromWorld, bundle.camera, width, height);
-      const to = projectPoint(toWorld, bundle.camera, width, height);
-      if (!from || !to) {
-        continue;
-      }
-      segments.push([from, to]);
-    }
-    return segments;
-  }
-
-  function sceneProjectedSegmentsBounds(segments) {
-    if (!Array.isArray(segments) || !segments.length) {
-      return null;
-    }
-    let minX = segments[0][0].x;
-    let maxX = segments[0][0].x;
-    let minY = segments[0][0].y;
-    let maxY = segments[0][0].y;
-    for (const segment of segments) {
-      for (const point of segment) {
-        minX = Math.min(minX, point.x);
-        maxX = Math.max(maxX, point.x);
-        minY = Math.min(minY, point.y);
-        maxY = Math.max(maxY, point.y);
-      }
-    }
-    return { minX, maxX, minY, maxY };
-  }
-
-  function scenePointerPadding(bounds) {
-    if (!bounds) {
-      return 12;
-    }
-    const span = Math.max(bounds.maxX - bounds.minX, bounds.maxY - bounds.minY);
-    return sceneClamp(span * 0.08, 12, 22);
-  }
-
-  function sceneDistanceToSegment(point, from, to) {
-    const deltaX = to.x - from.x;
-    const deltaY = to.y - from.y;
-    const lengthSquared = deltaX * deltaX + deltaY * deltaY;
-    if (lengthSquared <= 0.0001) {
-      return Math.hypot(point.x - from.x, point.y - from.y);
-    }
-    const t = sceneClamp(((point.x - from.x) * deltaX + (point.y - from.y) * deltaY) / lengthSquared, 0, 1);
-    const closestX = from.x + deltaX * t;
-    const closestY = from.y + deltaY * t;
-    return Math.hypot(point.x - closestX, point.y - closestY);
-  }
-
-  function sceneProjectedObjectHull(segments) {
-    const points = [];
-    const seen = new Set();
-    for (const segment of segments) {
-      for (const point of segment) {
-        const key = point.x.toFixed(3) + ":" + point.y.toFixed(3);
-        if (seen.has(key)) {
-          continue;
-        }
-        seen.add(key);
-        points.push({ x: point.x, y: point.y });
-      }
-    }
-    if (points.length < 3) {
-      return points;
-    }
-    points.sort(function(a, b) {
-      return a.x === b.x ? a.y - b.y : a.x - b.x;
-    });
-    const lower = [];
-    for (const point of points) {
-      while (lower.length >= 2 && sceneTurnDirection(lower[lower.length - 2], lower[lower.length - 1], point) <= 0) {
-        lower.pop();
-      }
-      lower.push(point);
-    }
-    const upper = [];
-    for (let i = points.length - 1; i >= 0; i -= 1) {
-      const point = points[i];
-      while (upper.length >= 2 && sceneTurnDirection(upper[upper.length - 2], upper[upper.length - 1], point) <= 0) {
-        upper.pop();
-      }
-      upper.push(point);
-    }
-    lower.pop();
-    upper.pop();
-    return lower.concat(upper);
-  }
-
-  function sceneTurnDirection(a, b, c) {
-    return (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
-  }
-
-  function scenePointInPolygon(point, polygon) {
-    if (!Array.isArray(polygon) || polygon.length < 3) {
-      return false;
-    }
-    let inside = false;
-    for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i, i += 1) {
-      const xi = polygon[i].x;
-      const yi = polygon[i].y;
-      const xj = polygon[j].x;
-      const yj = polygon[j].y;
-      const intersects = ((yi > point.y) !== (yj > point.y)) &&
-        (point.x < ((xj - xi) * (point.y - yi)) / ((yj - yi) || 0.000001) + xi);
-      if (intersects) {
-        inside = !inside;
-      }
-    }
-    return inside;
-  }
-
-  function sceneObjectDepthCenter(object, camera) {
-    const bounds = object && object.bounds;
-    if (!bounds) {
-      return sceneNumber(camera && camera.z, 6);
-    }
-    const minZ = sceneNumber(bounds.minZ, 0);
-    const maxZ = sceneNumber(bounds.maxZ, minZ);
-    return ((minZ + maxZ) / 2) + sceneNumber(camera && camera.z, 6);
-  }
-
-  function sceneObjectPointerCapture(bundle, object, point, width, height) {
-    const segments = sceneProjectedObjectSegments(bundle, object, width, height);
-    if (!segments.length) {
-      return null;
-    }
-    const bounds = sceneProjectedSegmentsBounds(segments);
-    if (!bounds) {
-      return null;
-    }
-    const padding = scenePointerPadding(bounds);
-    if (
-      point.x < bounds.minX - padding ||
-      point.x > bounds.maxX + padding ||
-      point.y < bounds.minY - padding ||
-      point.y > bounds.maxY + padding
-    ) {
-      return null;
-    }
-    let minDistance = Number.POSITIVE_INFINITY;
-    for (const segment of segments) {
-      minDistance = Math.min(minDistance, sceneDistanceToSegment(point, segment[0], segment[1]));
-    }
-    const inside = scenePointInPolygon(point, sceneProjectedObjectHull(segments));
-    if (!inside && minDistance > padding) {
-      return null;
-    }
-    return {
-      inside,
-      distance: inside ? 0 : minDistance,
-      depth: sceneObjectDepthCenter(object, bundle.camera),
-      area: Math.max(1, (bounds.maxX - bounds.minX) * (bounds.maxY - bounds.minY)),
-    };
-  }
-
-  function scenePointerCaptureIsBetter(candidate, current) {
-    if (!current) {
-      return true;
-    }
-    if (candidate.inside !== current.inside) {
-      return candidate.inside;
-    }
-    if (Math.abs(candidate.distance - current.distance) > 0.5) {
-      return candidate.distance < current.distance;
-    }
-    if (Math.abs(candidate.depth - current.depth) > 0.01) {
-      return candidate.depth < current.depth;
-    }
-    return candidate.area < current.area;
-  }
-
-  function sceneBundlePointerDragTarget(bundle, point, width, height) {
-    if (!bundle || !bundle.camera || !Array.isArray(bundle.objects) || !bundle.objects.length) {
-      return null;
-    }
-    let best = null;
-    for (let index = 0; index < bundle.objects.length; index += 1) {
-      const object = bundle.objects[index];
-      if (!sceneObjectAllowsPointerDrag(object)) {
-        continue;
-      }
-      const capture = sceneObjectPointerCapture(bundle, object, point, width, height);
-      if (!capture) {
-        continue;
-      }
-      const candidate = {
-        index,
-        object,
-        inside: capture.inside,
-        distance: capture.distance,
-        depth: capture.depth,
-        area: capture.area,
-      };
-      if (scenePointerCaptureIsBetter(candidate, best)) {
-        best = candidate;
-      }
-    }
-    return best;
-  }
-
-  function sceneViewportValue(viewport, key, fallback) {
-    return sceneNumber(viewport && viewport[key], fallback);
-  }
-
-  function sceneDragViewportMetrics(readViewport, initialWidth, initialHeight) {
-    const viewport = typeof readViewport === "function" ? readViewport() : null;
-    return {
-      width: Math.max(1, sceneViewportValue(viewport, "cssWidth", initialWidth)),
-      height: Math.max(1, sceneViewportValue(viewport, "cssHeight", initialHeight)),
-    };
-  }
-
-  function createSceneDragState(initialWidth, initialHeight) {
-    return {
-      active: false,
-      orbitX: 0,
-      orbitY: 0,
-      pointerId: null,
-      targetIndex: -1,
-      lastX: initialWidth / 2,
-      lastY: initialHeight / 2,
-    };
-  }
-
-  function sceneDragMatchesActivePointer(state, event) {
-    if (!state.active || state.pointerId == null) {
-      return state.active;
-    }
-    if (!event || event.type === "lostpointercapture") {
-      return true;
-    }
-    if (event.pointerId == null) {
-      return true;
-    }
-    return event.pointerId === state.pointerId;
-  }
-
-  function scenePointerCanStartDrag(state, event) {
-    if (state.active) {
-      return false;
-    }
-    if (!event) {
-      return false;
-    }
-    if (event.pointerType === "mouse") {
-      return event.button === 0;
-    }
-    return event.button == null || event.button === 0;
-  }
-
-  function sceneDragTargetAtEvent(event, canvas, readViewport, readSceneBundle, initialWidth, initialHeight) {
-    const metrics = sceneDragViewportMetrics(readViewport, initialWidth, initialHeight);
-    const pointer = sceneLocalPointerPoint(event, canvas, metrics.width, metrics.height);
-    return sceneBundlePointerDragTarget(readSceneBundle && readSceneBundle(), pointer, metrics.width, metrics.height);
-  }
-
-  function updateSceneDragOrbit(state, sample, width, height) {
-    state.orbitX = sceneClamp(state.orbitX + sample.deltaX / Math.max(width / 2, 1), -1.35, 1.35);
-    state.orbitY = sceneClamp(state.orbitY - sample.deltaY / Math.max(height / 2, 1), -1.1, 1.1);
-  }
-
-  function publishSceneDragInteraction(canvas, event, phase, state, dragNamespace, readViewport, initialWidth, initialHeight) {
-    const metrics = sceneDragViewportMetrics(readViewport, initialWidth, initialHeight);
-    const sample = sceneLocalPointerSample(event, canvas, metrics.width, metrics.height, state, phase);
-    if (!dragNamespace) {
-      publishPointerSignals(sample);
-      return;
-    }
-    if (phase === "move") {
-      updateSceneDragOrbit(state, sample, metrics.width, metrics.height);
-    }
-    publishSceneDragSignals(dragNamespace, state, phase !== "end");
-  }
-
-  function resetSceneDragInteraction(state, dragNamespace, readViewport, initialWidth, initialHeight) {
-    state.pointerId = null;
-    state.targetIndex = -1;
-    if (dragNamespace) {
-      return;
-    }
-    const metrics = sceneDragViewportMetrics(readViewport, initialWidth, initialHeight);
-    resetScenePointerSample(metrics.width, metrics.height, state);
-  }
-
-  function setupSceneDragInteractions(canvas, props, readViewport, readSceneBundle) {
-    if (!canvas || !sceneBool(props.dragToRotate, false)) {
-      return { dispose() {} };
-    }
-
-    const dragNamespace = sceneDragSignalNamespace(props);
-    const initialMetrics = sceneDragViewportMetrics(readViewport, sceneNumber(props.width, 720), sceneNumber(props.height, 420));
-    const initialWidth = initialMetrics.width;
-    const initialHeight = initialMetrics.height;
-    const state = createSceneDragState(initialWidth, initialHeight);
-    let documentListenersAttached = false;
-
-    canvas.style.cursor = "grab";
-    canvas.style.touchAction = "none";
-
-    function attachDocumentListeners() {
-      if (documentListenersAttached) {
-        return;
-      }
-      documentListenersAttached = true;
-      document.addEventListener("pointermove", onPointerMove);
-      document.addEventListener("pointerup", finishDrag);
-      document.addEventListener("pointercancel", finishDrag);
-    }
-
-    function detachDocumentListeners() {
-      if (!documentListenersAttached) {
-        return;
-      }
-      documentListenersAttached = false;
-      document.removeEventListener("pointermove", onPointerMove);
-      document.removeEventListener("pointerup", finishDrag);
-      document.removeEventListener("pointercancel", finishDrag);
-    }
-
-    function onPointerDown(event) {
-      if (!scenePointerCanStartDrag(state, event)) {
-        return;
-      }
-      const target = sceneDragTargetAtEvent(event, canvas, readViewport, readSceneBundle, initialWidth, initialHeight);
-      if (!target) {
-        return;
-      }
-      state.active = true;
-      state.pointerId = event.pointerId;
-      state.targetIndex = target.index;
-      canvas.style.cursor = "grabbing";
-      attachDocumentListeners();
-      if (typeof canvas.setPointerCapture === "function") {
-        canvas.setPointerCapture(event.pointerId);
-      }
-      event.preventDefault();
-      event.stopPropagation();
-      publishSceneDragInteraction(canvas, event, "start", state, dragNamespace, readViewport, initialWidth, initialHeight);
-    }
-
-    function onPointerMove(event) {
-      if (!sceneDragMatchesActivePointer(state, event)) {
-        return;
-      }
-      event.preventDefault();
-      event.stopPropagation();
-      publishSceneDragInteraction(canvas, event, "move", state, dragNamespace, readViewport, initialWidth, initialHeight);
-    }
-
-    function finishDrag(event) {
-      if (!sceneDragMatchesActivePointer(state, event)) {
-        return;
-      }
-      const wasActive = state.active;
-      state.active = false;
-      canvas.style.cursor = "grab";
-      detachDocumentListeners();
-      if (!wasActive) {
-        return;
-      }
-      event.preventDefault();
-      event.stopPropagation();
-      if (state.pointerId != null && typeof canvas.releasePointerCapture === "function") {
-        try {
-          canvas.releasePointerCapture(state.pointerId);
-        } catch (_) {}
-      }
-      state.pointerId = null;
-      state.targetIndex = -1;
-      publishSceneDragInteraction(canvas, event, "end", state, dragNamespace, readViewport, initialWidth, initialHeight);
-      resetSceneDragInteraction(state, dragNamespace, readViewport, initialWidth, initialHeight);
-    }
-
-    canvas.addEventListener("pointerdown", onPointerDown);
-    canvas.addEventListener("pointermove", onPointerMove);
-    canvas.addEventListener("pointerup", finishDrag);
-    canvas.addEventListener("pointercancel", finishDrag);
-    canvas.addEventListener("lostpointercapture", finishDrag);
-
-    return {
-      dispose() {
-        canvas.removeEventListener("pointerdown", onPointerDown);
-        canvas.removeEventListener("pointermove", onPointerMove);
-        canvas.removeEventListener("pointerup", finishDrag);
-        canvas.removeEventListener("pointercancel", finishDrag);
-        canvas.removeEventListener("lostpointercapture", finishDrag);
-        detachDocumentListeners();
-        canvas.style.cursor = "";
-        canvas.style.touchAction = "";
-        if (state.active && dragNamespace) {
-          state.active = false;
-          state.pointerId = null;
-          state.targetIndex = -1;
-          publishSceneDragSignals(dragNamespace, state, false);
-        } else {
-          state.active = false;
-        }
-        resetSceneDragInteraction(state, dragNamespace, readViewport, initialWidth, initialHeight);
-      },
-    };
-  }
-
   function publishGamepadSignals(pad) {
     const axes = Array.isArray(pad.axes) ? pad.axes : [];
     queueInputSignal("$input.gamepad0.connected", true);
@@ -5442,6 +4960,46 @@
     return props && Array.isArray(props.labels) ? props.labels : [];
   }
 
+  function rawSceneSprites(props) {
+    const scene = sceneProps(props);
+    if (scene && Array.isArray(scene.sprites)) {
+      return scene.sprites;
+    }
+    return props && Array.isArray(props.sprites) ? props.sprites : [];
+  }
+
+  function rawSceneLights(props) {
+    const scene = sceneProps(props);
+    if (scene && Array.isArray(scene.lights)) {
+      return scene.lights;
+    }
+    return props && Array.isArray(props.lights) ? props.lights : [];
+  }
+
+  function rawSceneEnvironment(props) {
+    const scene = sceneProps(props);
+    if (scene && scene.environment && typeof scene.environment === "object") {
+      return scene.environment;
+    }
+    return props && props.environment && typeof props.environment === "object" ? props.environment : null;
+  }
+
+  function rawSceneModels(props) {
+    const scene = sceneProps(props);
+    if (scene && Array.isArray(scene.models)) {
+      return scene.models;
+    }
+    return props && Array.isArray(props.models) ? props.models : [];
+  }
+
+  function rawScenePoints(props) {
+    const scene = sceneProps(props);
+    if (scene && Array.isArray(scene.points)) {
+      return scene.points;
+    }
+    return props && Array.isArray(props.points) ? props.points : [];
+  }
+
   function sceneProps(props) {
     return props && props.scene && typeof props.scene === "object" ? props.scene : null;
   }
@@ -5450,172 +5008,122 @@
     return Array.isArray(value) && value.length > 0 ? value : null;
   }
 
-  function sceneObjectMaterialSource(item) {
-    return item && item.material && typeof item.material === "object" ? item.material : null;
+  function sceneLinePoint(value) {
+    if (Array.isArray(value)) {
+      return {
+        x: sceneNumber(value[0], 0),
+        y: sceneNumber(value[1], 0),
+        z: sceneNumber(value[2], 0),
+      };
+    }
+    const item = value && typeof value === "object" ? value : {};
+    return {
+      x: sceneNumber(item.x, 0),
+      y: sceneNumber(item.y, 0),
+      z: sceneNumber(item.z, 0),
+    };
   }
 
-  function sceneObjectMaterialKindValue(item) {
-    if (!item || typeof item !== "object") {
-      return "";
-    }
-    if (typeof item.material === "string" && item.material.trim()) {
-      return item.material.trim();
-    }
-    if (typeof item.materialKind === "string" && item.materialKind.trim()) {
-      return item.materialKind.trim();
-    }
-    const material = sceneObjectMaterialSource(item);
-    if (material && typeof material.kind === "string" && material.kind.trim()) {
-      return material.kind.trim();
-    }
-    return "";
+  function sceneLinePoints(value) {
+    const list = Array.isArray(value) ? value : [];
+    return list.map(sceneLinePoint);
   }
 
-  function sceneObjectMaterialValue(item, name) {
-    if (!item || typeof item !== "object") {
-      return undefined;
+  function sceneLineSegmentValue(value) {
+    function sceneLineIndex(entry) {
+      const index = Math.floor(sceneNumber(entry, -1));
+      return Number.isFinite(index) ? index : -1;
     }
-    const material = sceneObjectMaterialSource(item);
-    if (material && Object.prototype.hasOwnProperty.call(material, name)) {
-      return material[name];
+    if (Array.isArray(value)) {
+      return [sceneLineIndex(value[0]), sceneLineIndex(value[1])];
     }
-    return Object.prototype.hasOwnProperty.call(item, name) ? item[name] : undefined;
+    const item = value && typeof value === "object" ? value : {};
+    return [
+      sceneLineIndex(item.from !== undefined ? item.from : item.a),
+      sceneLineIndex(item.to !== undefined ? item.to : item.b),
+    ];
   }
 
-  function sceneObjectBlendModeValue(item) {
-    const direct = sceneObjectMaterialValue(item, "blendMode");
-    if (direct !== undefined) {
-      return direct;
-    }
-    const material = sceneObjectMaterialSource(item);
-    if (material && Object.prototype.hasOwnProperty.call(material, "blend")) {
-      return material.blend;
-    }
-    return item && Object.prototype.hasOwnProperty.call(item, "blend") ? item.blend : undefined;
-  }
-
-  function normalizeSceneMaterialKind(value) {
-    const kind = typeof value === "string" ? value.trim().toLowerCase() : "";
-    switch (kind) {
-      case "ghost":
-      case "glass":
-      case "glow":
-      case "matte":
-        return kind;
-      default:
-        return "flat";
-    }
-  }
-
-  function sceneDefaultMaterialOpacity(kind) {
-    switch (normalizeSceneMaterialKind(kind)) {
-      case "ghost":
-        return 0.42;
-      case "glass":
-        return 0.28;
-      case "glow":
-        return 0.92;
-      default:
-        return 1;
-    }
-  }
-
-  function sceneDefaultMaterialEmissive(kind) {
-    switch (normalizeSceneMaterialKind(kind)) {
-      case "ghost":
-        return 0.12;
-      case "glass":
-        return 0.08;
-      case "glow":
-        return 0.42;
-      default:
-        return 0;
-    }
-  }
-
-  function sceneDefaultMaterialBlendMode(kind) {
-    switch (normalizeSceneMaterialKind(kind)) {
-      case "ghost":
-      case "glass":
-        return "alpha";
-      case "glow":
-        return "additive";
-      default:
-        return "opaque";
-    }
-  }
-
-  function normalizeSceneMaterialBlendMode(value, kind, opacity) {
-    const mode = typeof value === "string" ? value.trim().toLowerCase() : "";
-    switch (mode) {
-      case "opaque":
-      case "solid":
-        return "opaque";
-      case "alpha":
-      case "transparent":
-      case "translucent":
-        return "alpha";
-      case "add":
-      case "additive":
-      case "glow":
-      case "emissive":
-        return "additive";
-      default: {
-        const fallback = sceneDefaultMaterialBlendMode(kind);
-        if (fallback !== "opaque") {
-          return fallback;
-        }
-        return opacity < 0.999 ? "alpha" : "opaque";
+  function sceneLineSegments(value, pointCount) {
+    const list = Array.isArray(value) ? value : [];
+    const out = [];
+    for (const item of list) {
+      const pair = sceneLineSegmentValue(item);
+      if (!Number.isFinite(pair[0]) || !Number.isFinite(pair[1])) {
+        continue;
       }
+      if (pair[0] < 0 || pair[1] < 0 || pair[0] === pair[1]) {
+        continue;
+      }
+      if (pair[0] >= pointCount || pair[1] >= pointCount) {
+        continue;
+      }
+      out.push(pair);
     }
+    return out;
   }
 
-  function normalizeSceneMaterialRenderPass(value, blendMode, opacity) {
-    const pass = typeof value === "string" ? value.trim().toLowerCase() : "";
-    switch (pass) {
-      case "opaque":
-      case "alpha":
-      case "additive":
-        return pass;
-      case "add":
-        return "additive";
-      case "transparent":
-      case "translucent":
-        return "alpha";
-      default:
-        if (blendMode === "additive") {
-          return "additive";
-        }
-        return blendMode === "alpha" || opacity < 0.999 ? "alpha" : "opaque";
+  function sceneLineGeometryMetrics(points) {
+    if (!Array.isArray(points) || points.length === 0) {
+      return null;
     }
+    let minX = points[0].x;
+    let minY = points[0].y;
+    let minZ = points[0].z;
+    let maxX = points[0].x;
+    let maxY = points[0].y;
+    let maxZ = points[0].z;
+    for (let i = 1; i < points.length; i += 1) {
+      const point = points[i];
+      minX = Math.min(minX, point.x);
+      minY = Math.min(minY, point.y);
+      minZ = Math.min(minZ, point.z);
+      maxX = Math.max(maxX, point.x);
+      maxY = Math.max(maxY, point.y);
+      maxZ = Math.max(maxZ, point.z);
+    }
+    return {
+      width: Math.max(0.0001, maxX - minX),
+      height: Math.max(0.0001, maxY - minY),
+      depth: Math.max(0.0001, maxZ - minZ),
+      radius: Math.max(0.0001, Math.max(maxX - minX, maxY - minY, maxZ - minZ) / 2),
+    };
   }
 
   function normalizeSceneObject(object, index) {
     const item = object && typeof object === "object" ? object : {};
+    const kind = normalizeSceneKind(item.kind);
     const size = sceneNumber(item.size, 1.2);
+    const points = kind === "lines" ? sceneLinePoints(item.points) : [];
+    const lineMetrics = kind === "lines" ? sceneLineGeometryMetrics(points) : null;
     const materialKind = normalizeSceneMaterialKind(sceneObjectMaterialKindValue(item));
     const materialColor = sceneObjectMaterialValue(item, "color");
+    const texture = typeof sceneObjectMaterialValue(item, "texture") === "string" ? sceneObjectMaterialValue(item, "texture").trim() : "";
     const opacity = clamp01(sceneNumber(sceneObjectMaterialValue(item, "opacity"), sceneDefaultMaterialOpacity(materialKind)));
     const blendMode = normalizeSceneMaterialBlendMode(sceneObjectBlendModeValue(item), materialKind, opacity);
     const normalized = {
       id: item.id || ("scene-object-" + index),
-      kind: normalizeSceneKind(item.kind),
+      kind,
       size,
-      width: sceneNumber(item.width, size),
-      height: sceneNumber(item.height, size),
-      depth: sceneNumber(item.depth, size),
-      radius: sceneNumber(item.radius, size / 2),
+      width: sceneNumber(item.width, lineMetrics ? lineMetrics.width : size),
+      height: sceneNumber(item.height, lineMetrics ? lineMetrics.height : size),
+      depth: sceneNumber(item.depth, kind === "plane" ? sceneNumber(item.height, size) : (lineMetrics ? lineMetrics.depth : size)),
+      radius: sceneNumber(item.radius, lineMetrics ? lineMetrics.radius : (size / 2)),
       segments: sceneSegmentResolution(item.segments),
+      points,
+      lineSegments: kind === "lines" ? sceneLineSegments(item.segments, points.length) : [],
       x: sceneNumber(item.x, 0),
       y: sceneNumber(item.y, 0),
       z: sceneNumber(item.z, 0),
       materialKind,
       color: typeof materialColor === "string" && materialColor ? materialColor : "#8de1ff",
+      texture,
       opacity,
       emissive: clamp01(sceneNumber(sceneObjectMaterialValue(item, "emissive"), sceneDefaultMaterialEmissive(materialKind))),
       blendMode,
       renderPass: normalizeSceneMaterialRenderPass(sceneObjectMaterialValue(item, "renderPass"), blendMode, opacity),
-      wireframe: sceneBool(sceneObjectMaterialValue(item, "wireframe"), true),
+      wireframe: sceneBool(sceneObjectMaterialValue(item, "wireframe"), texture === ""),
+      pickable: Object.prototype.hasOwnProperty.call(item, "pickable") ? sceneBool(item.pickable, false) : undefined,
       rotationX: sceneNumber(item.rotationX, 0),
       rotationY: sceneNumber(item.rotationY, 0),
       rotationZ: sceneNumber(item.rotationZ, 0),
@@ -5630,6 +5138,63 @@
       viewCulled: sceneBool(item.viewCulled, false),
     };
     normalized.static = sceneBool(item.static, !sceneObjectAnimated(normalized));
+    return normalized;
+  }
+
+  function normalizeSceneLightKind(value) {
+    const kind = typeof value === "string" ? value.trim().toLowerCase() : "";
+    switch (kind) {
+      case "ambient":
+        return "ambient";
+      case "directional":
+      case "sun":
+        return "directional";
+      case "point":
+        return "point";
+      default:
+        return "";
+    }
+  }
+
+  function sceneDefaultLightIntensity(kind) {
+    switch (normalizeSceneLightKind(kind)) {
+      case "ambient":
+        return 0.28;
+      case "directional":
+        return 1;
+      case "point":
+        return 1.1;
+      default:
+        return 1;
+    }
+  }
+
+  function normalizeSceneLight(light, index, fallback) {
+    const current = fallback && typeof fallback === "object" ? fallback : {};
+    const item = light && typeof light === "object" ? light : {};
+    const kind = normalizeSceneLightKind(item.kind || item.lightKind || current.kind);
+    if (!kind) {
+      return null;
+    }
+    const normalized = {
+      id: (typeof item.id === "string" && item.id) || current.id || ("scene-light-" + index),
+      kind,
+      color: typeof item.color === "string" && item.color ? item.color : (typeof current.color === "string" && current.color ? current.color : "#f3fbff"),
+      intensity: Math.max(0, Math.min(6, sceneNumber(item.intensity, sceneNumber(current.intensity, sceneDefaultLightIntensity(kind))))),
+      x: sceneNumber(item.x, sceneNumber(current.x, 0)),
+      y: sceneNumber(item.y, sceneNumber(current.y, 0)),
+      z: sceneNumber(item.z, sceneNumber(current.z, 0)),
+      directionX: sceneNumber(item.directionX, sceneNumber(current.directionX, 0)),
+      directionY: sceneNumber(item.directionY, sceneNumber(current.directionY, 0)),
+      directionZ: sceneNumber(item.directionZ, sceneNumber(current.directionZ, 0)),
+      range: Math.max(0, Math.min(256, sceneNumber(item.range, sceneNumber(current.range, kind === "point" ? 6.5 : 0)))),
+      decay: Math.max(0.1, Math.min(8, sceneNumber(item.decay, sceneNumber(current.decay, kind === "point" ? 1.35 : 1)))),
+    };
+    if (normalized.kind === "directional" && normalized.directionX === 0 && normalized.directionY === 0 && normalized.directionZ === 0) {
+      normalized.directionX = 0.35;
+      normalized.directionY = -1;
+      normalized.directionZ = -0.4;
+    }
     return normalized;
   }
 
@@ -5667,6 +5232,50 @@
     };
   }
 
+  function normalizeSceneSpriteFit(value) {
+    const mode = typeof value === "string" ? value.trim().toLowerCase() : "";
+    switch (mode) {
+      case "cover":
+        return "cover";
+      case "stretch":
+      case "fill":
+        return "fill";
+      default:
+        return "contain";
+    }
+  }
+
+  function normalizeSceneSprite(sprite, index) {
+    const item = sprite && typeof sprite === "object" ? sprite : {};
+    const width = Math.max(0.05, sceneNumber(item.width, 1.25));
+    const height = Math.max(0.05, sceneNumber(item.height, width));
+    const scale = Math.max(0.05, sceneNumber(item.scale, 1));
+    return {
+      id: item.id || ("scene-sprite-" + index),
+      src: typeof item.src === "string" ? item.src.trim() : "",
+      className: sceneLabelClassName(item),
+      x: sceneNumber(item.x, 0),
+      y: sceneNumber(item.y, 0),
+      z: sceneNumber(item.z, 0),
+      priority: sceneNumber(item.priority, 0),
+      shiftX: sceneNumber(item.shiftX, 0),
+      shiftY: sceneNumber(item.shiftY, 0),
+      shiftZ: sceneNumber(item.shiftZ, 0),
+      driftSpeed: sceneNumber(item.driftSpeed, 0),
+      driftPhase: sceneNumber(item.driftPhase, 0),
+      width: width,
+      height: height,
+      scale: scale,
+      opacity: clamp01(sceneNumber(item.opacity, 1)),
+      offsetX: sceneNumber(item.offsetX, 0),
+      offsetY: sceneNumber(item.offsetY, 0),
+      anchorX: sceneClamp(sceneNumber(item.anchorX, 0.5), 0, 1),
+      anchorY: sceneClamp(sceneNumber(item.anchorY, 0.5), 0, 1),
+      occlude: sceneBool(item.occlude, false),
+      fit: normalizeSceneSpriteFit(item.fit),
+    };
+  }
+
   function sceneLabelClassName(item) {
     if (!item || typeof item !== "object") {
       return "";
@@ -5684,6 +5293,7 @@
     const kind = typeof value === "string" ? value.trim().toLowerCase() : "";
     switch (kind) {
       case "box":
+      case "lines":
       case "plane":
       case "pyramid":
       case "sphere":
@@ -5693,15 +5303,77 @@
     }
   }
 
-  function sceneSegmentResolution(value) {
-    const segments = Math.round(sceneNumber(value, 12));
-    return Math.max(6, Math.min(24, segments));
-  }
-
   function sceneObjects(props) {
     return rawSceneObjects(props).map(function(object, index) {
       return normalizeSceneObject(object, index);
     });
+  }
+
+  function normalizeSceneModel(item, index) {
+    const current = item && typeof item === "object" ? item : {};
+    const scaleSource = current.scale && typeof current.scale === "object" ? current.scale : null;
+    const hasStatic = Object.prototype.hasOwnProperty.call(current, "static");
+    const hasPickable = Object.prototype.hasOwnProperty.call(current, "pickable");
+    const override = {};
+    const materialKind = sceneObjectMaterialKindValue(current);
+    if (materialKind) {
+      override.materialKind = normalizeSceneMaterialKind(materialKind);
+    }
+    if (sceneObjectMaterialHasValue(current, "color")) {
+      override.color = sceneObjectMaterialValue(current, "color");
+    }
+    if (sceneObjectMaterialHasValue(current, "texture")) {
+      override.texture = sceneObjectMaterialValue(current, "texture");
+    }
+    if (sceneObjectMaterialHasValue(current, "opacity")) {
+      override.opacity = sceneObjectMaterialValue(current, "opacity");
+    }
+    if (sceneObjectMaterialHasValue(current, "emissive")) {
+      override.emissive = sceneObjectMaterialValue(current, "emissive");
+    }
+    if (sceneObjectBlendModeHasValue(current)) {
+      override.blendMode = sceneObjectBlendModeValue(current);
+    }
+    if (sceneObjectMaterialHasValue(current, "renderPass")) {
+      override.renderPass = sceneObjectMaterialValue(current, "renderPass");
+    }
+    if (sceneObjectMaterialHasValue(current, "wireframe")) {
+      override.wireframe = sceneObjectMaterialValue(current, "wireframe");
+    }
+    return {
+      id: typeof current.id === "string" && current.id.trim() ? current.id.trim() : ("scene-model-" + index),
+      src: typeof current.src === "string" && current.src.trim() ? current.src.trim() : "",
+      x: sceneNumber(current.x, 0),
+      y: sceneNumber(current.y, 0),
+      z: sceneNumber(current.z, 0),
+      rotationX: sceneNumber(current.rotationX, 0),
+      rotationY: sceneNumber(current.rotationY, 0),
+      rotationZ: sceneNumber(current.rotationZ, 0),
+      scaleX: sceneNumber(current.scaleX, sceneNumber(scaleSource && scaleSource.x, sceneNumber(current.scale, 1))),
+      scaleY: sceneNumber(current.scaleY, sceneNumber(scaleSource && scaleSource.y, sceneNumber(current.scale, 1))),
+      scaleZ: sceneNumber(current.scaleZ, sceneNumber(scaleSource && scaleSource.z, sceneNumber(current.scale, 1))),
+      pickable: hasPickable ? sceneBool(current.pickable, false) : undefined,
+      static: hasStatic ? sceneBool(current.static, false) : null,
+      materialOverride: Object.keys(override).length > 0 ? override : null,
+    };
+  }
+
+  function sceneModels(props) {
+    return rawSceneModels(props)
+      .map(function(model, index) {
+        return normalizeSceneModel(model, index);
+      })
+      .filter(function(model) {
+        return Boolean(model && model.src);
+      });
+  }
+
+  function sceneLights(props) {
+    return rawSceneLights(props)
+      .map(function(light, index) {
+        return normalizeSceneLight(light, index, null);
+      })
+      .filter(Boolean);
   }
 
   function normalizeSceneLabelWhiteSpace(value) {
@@ -5753,6 +5425,16 @@
       });
   }
 
+  function sceneSprites(props) {
+    return rawSceneSprites(props)
+      .map(function(sprite, index) {
+        return normalizeSceneSprite(sprite, index);
+      })
+      .filter(function(sprite) {
+        return sprite.src !== "";
+      });
+  }
+
   function sceneCamera(props) {
     const raw = props && props.camera && typeof props.camera === "object" ? props.camera : {};
     return normalizeSceneCamera(raw, {
@@ -5771,10 +5453,64 @@
       x: sceneNumber(raw.x, sceneNumber(base.x, 0)),
       y: sceneNumber(raw.y, sceneNumber(base.y, 0)),
       z: sceneNumber(raw.z, sceneNumber(base.z, 6)),
+      rotationX: sceneNumber(raw.rotationX, sceneNumber(base.rotationX, 0)),
+      rotationY: sceneNumber(raw.rotationY, sceneNumber(base.rotationY, 0)),
+      rotationZ: sceneNumber(raw.rotationZ, sceneNumber(base.rotationZ, 0)),
       fov: sceneNumber(raw.fov, sceneNumber(base.fov, 75)),
       near: sceneNumber(raw.near, sceneNumber(base.near, 0.05)),
       far: sceneNumber(raw.far, sceneNumber(base.far, 128)),
     };
+  }
+
+  function normalizeSceneEnvironment(raw, fallback) {
+    const base = fallback && typeof fallback === "object" ? fallback : {};
+    const environment = {
+      ambientColor: typeof raw?.ambientColor === "string" && raw.ambientColor ? raw.ambientColor : (typeof base.ambientColor === "string" ? base.ambientColor : ""),
+      ambientIntensity: Math.max(0, Math.min(4, sceneNumber(raw?.ambientIntensity, sceneNumber(base.ambientIntensity, 0)))),
+      skyColor: typeof raw?.skyColor === "string" && raw.skyColor ? raw.skyColor : (typeof base.skyColor === "string" ? base.skyColor : ""),
+      skyIntensity: Math.max(0, Math.min(4, sceneNumber(raw?.skyIntensity, sceneNumber(base.skyIntensity, 0)))),
+      groundColor: typeof raw?.groundColor === "string" && raw.groundColor ? raw.groundColor : (typeof base.groundColor === "string" ? base.groundColor : ""),
+      groundIntensity: Math.max(0, Math.min(4, sceneNumber(raw?.groundIntensity, sceneNumber(base.groundIntensity, 0)))),
+      exposure: Math.max(0.05, Math.min(4, sceneNumber(raw && Object.prototype.hasOwnProperty.call(raw, "exposure") ? raw.exposure : undefined, sceneNumber(base.exposure, 1) || 1))),
+      specified: false,
+    };
+    environment.specified = Boolean(raw) && (
+      environment.ambientColor ||
+      environment.ambientIntensity !== 0 ||
+      environment.skyColor ||
+      environment.skyIntensity !== 0 ||
+      environment.groundColor ||
+      environment.groundIntensity !== 0 ||
+      Object.prototype.hasOwnProperty.call(raw, "exposure")
+    );
+    return environment;
+  }
+
+  function sceneResolveLightingEnvironment(environment, hasLights) {
+    const base = environment && typeof environment === "object" && Object.prototype.hasOwnProperty.call(environment, "specified")
+      ? {
+        ambientColor: typeof environment.ambientColor === "string" ? environment.ambientColor : "",
+        ambientIntensity: Math.max(0, Math.min(4, sceneNumber(environment.ambientIntensity, 0))),
+        skyColor: typeof environment.skyColor === "string" ? environment.skyColor : "",
+        skyIntensity: Math.max(0, Math.min(4, sceneNumber(environment.skyIntensity, 0))),
+        groundColor: typeof environment.groundColor === "string" ? environment.groundColor : "",
+        groundIntensity: Math.max(0, Math.min(4, sceneNumber(environment.groundIntensity, 0))),
+        exposure: Math.max(0.05, Math.min(4, sceneNumber(environment.exposure, 1) || 1)),
+        specified: Boolean(environment.specified),
+      }
+      : normalizeSceneEnvironment(environment, null);
+    if (base.specified || !hasLights) {
+      return base;
+    }
+    return normalizeSceneEnvironment({
+      ambientColor: "#f5fbff",
+      ambientIntensity: 0.18,
+      skyColor: "#d5ebff",
+      skyIntensity: 0.12,
+      groundColor: "#102030",
+      groundIntensity: 0.04,
+      exposure: base.exposure,
+    }, base);
   }
 
   function createSceneState(props) {
@@ -5783,12 +5519,25 @@
       camera: sceneCamera(props),
       objects: new Map(),
       labels: new Map(),
+      sprites: new Map(),
+      lights: new Map(),
+      points: rawScenePoints(props),
+      _scrollCamera: (sceneNumber(props.scrollCameraStart, 0) !== 0 || sceneNumber(props.scrollCameraEnd, 0) !== 0)
+        ? { start: sceneNumber(props.scrollCameraStart, 0), end: sceneNumber(props.scrollCameraEnd, 0) }
+        : null,
+      environment: normalizeSceneEnvironment(rawSceneEnvironment(props), null),
     };
     for (const object of sceneObjects(props)) {
       state.objects.set(object.id, object);
     }
     for (const label of sceneLabels(props)) {
       state.labels.set(label.id, label);
+    }
+    for (const sprite of sceneSprites(props)) {
+      state.sprites.set(sprite.id, sprite);
+    }
+    for (const light of sceneLights(props)) {
+      state.lights.set(light.id, light);
     }
     return state;
   }
@@ -5799,6 +5548,14 @@
 
   function sceneStateLabels(state) {
     return Array.from(state.labels.values());
+  }
+
+  function sceneStateSprites(state) {
+    return Array.from(state.sprites.values());
+  }
+
+  function sceneStateLights(state) {
+    return Array.from(state.lights.values());
   }
 
   function sceneObjectAnimated(object) {
@@ -5822,6 +5579,16 @@
       return false;
     }
     return sceneNumber(label.shiftX, 0) !== 0 || sceneNumber(label.shiftY, 0) !== 0 || sceneNumber(label.shiftZ, 0) !== 0;
+  }
+
+  function sceneSpriteAnimated(sprite) {
+    if (!sprite || typeof sprite !== "object") {
+      return false;
+    }
+    if (sceneNumber(sprite.driftSpeed, 0) === 0) {
+      return false;
+    }
+    return sceneNumber(sprite.shiftX, 0) !== 0 || sceneNumber(sprite.shiftY, 0) !== 0 || sceneNumber(sprite.shiftZ, 0) !== 0;
   }
 
   const SCENE_CMD_CREATE_OBJECT = 0;
@@ -5848,6 +5615,8 @@
       case SCENE_CMD_REMOVE_OBJECT:
         state.objects.delete(sceneObjectKey(command.objectId));
         state.labels.delete(sceneObjectKey(command.objectId));
+        state.sprites.delete(sceneObjectKey(command.objectId));
+        state.lights.delete(sceneObjectKey(command.objectId));
         return;
       case SCENE_CMD_SET_TRANSFORM:
       case SCENE_CMD_SET_MATERIAL:
@@ -5857,6 +5626,8 @@
         state.camera = normalizeSceneCamera(command.data || {}, state.camera);
         return;
       case SCENE_CMD_SET_LIGHT:
+        applySceneLightPatch(state, command.objectId, command.data);
+        return;
       case SCENE_CMD_SET_PARTICLES:
       default:
         return;
@@ -5869,13 +5640,27 @@
       state.camera = normalizeSceneCamera(payload.props || {}, state.camera);
       return;
     }
-    if (payload.kind === "light" || payload.kind === "particles") {
+    if (payload.kind === "light") {
+      const light = sceneLightFromPayload(objectID, payload, state.lights.get(sceneObjectKey(objectID)));
+      if (light) {
+        state.lights.set(sceneObjectKey(objectID), light);
+      }
+      return;
+    }
+    if (payload.kind === "particles") {
       return;
     }
     if (payload.kind === "label") {
       const label = sceneLabelFromPayload(objectID, payload, state.labels.get(sceneObjectKey(objectID)));
       if (label) {
         state.labels.set(sceneObjectKey(objectID), label);
+      }
+      return;
+    }
+    if (payload.kind === "sprite") {
+      const sprite = sceneSpriteFromPayload(objectID, payload, state.sprites.get(sceneObjectKey(objectID)));
+      if (sprite) {
+        state.sprites.set(sceneObjectKey(objectID), sprite);
       }
       return;
     }
@@ -5900,12 +5685,22 @@
       return;
     }
     const currentLabel = state.labels.get(key);
-    if (!currentLabel) return;
-    const nextLabel = sceneLabelFromPayload(objectID, {
-      props: Object.assign({}, currentLabel, patch || {}),
-    }, currentLabel);
-    if (nextLabel) {
-      state.labels.set(key, nextLabel);
+    if (currentLabel) {
+      const nextLabel = sceneLabelFromPayload(objectID, {
+        props: Object.assign({}, currentLabel, patch || {}),
+      }, currentLabel);
+      if (nextLabel) {
+        state.labels.set(key, nextLabel);
+      }
+      return;
+    }
+    const currentSprite = state.sprites.get(key);
+    if (!currentSprite) return;
+    const nextSprite = sceneSpriteFromPayload(objectID, {
+      props: Object.assign({}, currentSprite, patch || {}),
+    }, currentSprite);
+    if (nextSprite) {
+      state.sprites.set(key, nextSprite);
     }
   }
 
@@ -5935,215 +5730,42 @@
     return label;
   }
 
+  function sceneSpriteFromPayload(objectID, payload, fallback) {
+    const current = fallback && typeof fallback === "object" ? fallback : {};
+    const props = payload && payload.props && typeof payload.props === "object" ? payload.props : {};
+    const merged = Object.assign({}, current, props);
+    merged.id = current.id || merged.id || ("scene-sprite-" + objectID);
+    const sprite = normalizeSceneSprite(merged, objectID);
+    if (!sprite.src) {
+      return null;
+    }
+    return sprite;
+  }
+
+  function applySceneLightPatch(state, objectID, patch) {
+    const key = sceneObjectKey(objectID);
+    const current = state.lights.get(key);
+    if (!current) {
+      return;
+    }
+    const next = normalizeSceneLight(Object.assign({}, current, patch || {}), objectID, current);
+    if (next) {
+      state.lights.set(key, next);
+    }
+  }
+
+  function sceneLightFromPayload(objectID, payload, fallback) {
+    const current = fallback && typeof fallback === "object" ? fallback : {};
+    const props = payload && payload.props && typeof payload.props === "object" ? payload.props : {};
+    const merged = Object.assign({}, current, props);
+    merged.id = current.id || merged.id || ("scene-light-" + objectID);
+    return normalizeSceneLight(merged, objectID, current);
+  }
+
   function clearChildren(node) {
     while (node && node.firstChild) {
       node.removeChild(node.firstChild);
     }
-  }
-
-  function boxVertices(width, height, depth) {
-    const halfWidth = width / 2;
-    const halfHeight = height / 2;
-    const halfDepth = depth / 2;
-    return [
-      { x: -halfWidth, y: -halfHeight, z: -halfDepth },
-      { x: halfWidth, y: -halfHeight, z: -halfDepth },
-      { x: halfWidth, y: halfHeight, z: -halfDepth },
-      { x: -halfWidth, y: halfHeight, z: -halfDepth },
-      { x: -halfWidth, y: -halfHeight, z: halfDepth },
-      { x: halfWidth, y: -halfHeight, z: halfDepth },
-      { x: halfWidth, y: halfHeight, z: halfDepth },
-      { x: -halfWidth, y: halfHeight, z: halfDepth },
-    ];
-  }
-
-  const boxEdgePairs = [
-    [0, 1], [1, 2], [2, 3], [3, 0],
-    [4, 5], [5, 6], [6, 7], [7, 4],
-    [0, 4], [1, 5], [2, 6], [3, 7],
-  ];
-
-  function indexSegments(points, edgePairs) {
-    return edgePairs.map(function(edge) {
-      return [points[edge[0]], points[edge[1]]];
-    });
-  }
-
-  function boxSegments(object) {
-    return indexSegments(boxVertices(object.width, object.height, object.depth), boxEdgePairs);
-  }
-
-  function planeSegments(object) {
-    const vertices = boxVertices(object.width, 0, object.depth);
-    return indexSegments(vertices.slice(0, 4), [
-      [0, 1], [1, 2], [2, 3], [3, 0],
-    ]);
-  }
-
-  function pyramidSegments(object) {
-    const halfWidth = object.width / 2;
-    const halfDepth = object.depth / 2;
-    const halfHeight = object.height / 2;
-    const vertices = [
-      { x: -halfWidth, y: -halfHeight, z: -halfDepth },
-      { x: halfWidth, y: -halfHeight, z: -halfDepth },
-      { x: halfWidth, y: -halfHeight, z: halfDepth },
-      { x: -halfWidth, y: -halfHeight, z: halfDepth },
-      { x: 0, y: halfHeight, z: 0 },
-    ];
-    return indexSegments(vertices, [
-      [0, 1], [1, 2], [2, 3], [3, 0],
-      [0, 4], [1, 4], [2, 4], [3, 4],
-    ]);
-  }
-
-  function circleSegments(radius, axis, segments) {
-    const points = [];
-    for (let i = 0; i < segments; i += 1) {
-      const angle = (Math.PI * 2 * i) / segments;
-      points.push(circlePoint(radius, axis, angle));
-    }
-    const out = [];
-    for (let i = 0; i < points.length; i += 1) {
-      out.push([points[i], points[(i + 1) % points.length]]);
-    }
-    return out;
-  }
-
-  function circlePoint(radius, axis, angle) {
-    const sin = Math.sin(angle) * radius;
-    const cos = Math.cos(angle) * radius;
-    switch (axis) {
-      case "xy":
-        return { x: cos, y: sin, z: 0 };
-      case "yz":
-        return { x: 0, y: cos, z: sin };
-      default:
-        return { x: cos, y: 0, z: sin };
-    }
-  }
-
-  function sphereSegments(object) {
-    return []
-      .concat(circleSegments(object.radius, "xy", object.segments))
-      .concat(circleSegments(object.radius, "xz", object.segments))
-      .concat(circleSegments(object.radius, "yz", object.segments));
-  }
-
-  function sceneObjectSegments(object) {
-    switch (object.kind) {
-      case "box":
-      case "cube":
-        return boxSegments(object);
-      case "plane":
-        return planeSegments(object);
-      case "pyramid":
-        return pyramidSegments(object);
-      case "sphere":
-        return sphereSegments(object);
-      default:
-        return boxSegments(object);
-    }
-  }
-
-  function rotatePoint(point, rotationX, rotationY, rotationZ) {
-    let x = point.x;
-    let y = point.y;
-    let z = point.z;
-
-    const sinX = Math.sin(rotationX);
-    const cosX = Math.cos(rotationX);
-    let nextY = y * cosX - z * sinX;
-    let nextZ = y * sinX + z * cosX;
-    y = nextY;
-    z = nextZ;
-
-    const sinY = Math.sin(rotationY);
-    const cosY = Math.cos(rotationY);
-    let nextX = x * cosY + z * sinY;
-    nextZ = -x * sinY + z * cosY;
-    x = nextX;
-    z = nextZ;
-
-    const sinZ = Math.sin(rotationZ);
-    const cosZ = Math.cos(rotationZ);
-    nextX = x * cosZ - y * sinZ;
-    nextY = x * sinZ + y * cosZ;
-
-    return { x: nextX, y: nextY, z: z };
-  }
-
-  function projectPoint(point, camera, width, height) {
-    const normalizedCamera = sceneRenderCamera(camera);
-    const depth = sceneNumber(point && point.z, 0) + normalizedCamera.z;
-    if (depth <= normalizedCamera.near || depth >= normalizedCamera.far) return null;
-    const focal = (Math.min(width, height) / 2) / Math.tan((normalizedCamera.fov * Math.PI) / 360);
-    return {
-      x: width / 2 + ((sceneNumber(point && point.x, 0) - normalizedCamera.x) * focal) / depth,
-      y: height / 2 - ((sceneNumber(point && point.y, 0) - normalizedCamera.y) * focal) / depth,
-      depth,
-    };
-  }
-
-  function strokeLine(ctx2d, from, to) {
-    ctx2d.beginPath();
-    ctx2d.moveTo(from.x, from.y);
-    ctx2d.lineTo(to.x, to.y);
-    ctx2d.stroke();
-  }
-
-  function sceneColorRGBA(value, fallback) {
-    const base = Array.isArray(fallback) && fallback.length === 4 ? fallback.slice() : [0.55, 0.88, 1, 1];
-    if (typeof value !== "string") {
-      return base;
-    }
-
-    const trimmed = value.trim();
-    const shortHex = trimmed.match(/^#([0-9a-f]{3})$/i);
-    if (shortHex) {
-      return [
-        parseInt(shortHex[1][0] + shortHex[1][0], 16) / 255,
-        parseInt(shortHex[1][1] + shortHex[1][1], 16) / 255,
-        parseInt(shortHex[1][2] + shortHex[1][2], 16) / 255,
-        1,
-      ];
-    }
-
-    const fullHex = trimmed.match(/^#([0-9a-f]{6})$/i);
-    if (fullHex) {
-      return [
-        parseInt(fullHex[1].slice(0, 2), 16) / 255,
-        parseInt(fullHex[1].slice(2, 4), 16) / 255,
-        parseInt(fullHex[1].slice(4, 6), 16) / 255,
-        1,
-      ];
-    }
-
-    const rgba = trimmed.match(/^rgba?\(([^)]+)\)$/i);
-    if (rgba) {
-      const parts = rgba[1].split(",").map(function(part) {
-        return Number(part.trim());
-      });
-      if (parts.length >= 3 && parts.every(function(part, index) {
-        return Number.isFinite(part) && (index < 3 || index === 3);
-      })) {
-        return [
-          Math.max(0, Math.min(255, parts[0])) / 255,
-          Math.max(0, Math.min(255, parts[1])) / 255,
-          Math.max(0, Math.min(255, parts[2])) / 255,
-          parts.length > 3 ? Math.max(0, Math.min(1, parts[3])) : 1,
-        ];
-      }
-    }
-
-    return base;
-  }
-
-  function sceneClipPoint(point, width, height) {
-    return {
-      x: (point.x / width) * 2 - 1,
-      y: 1 - (point.y / height) * 2,
-    };
   }
 
   function sceneRenderCamera(camera) {
@@ -6151,65 +5773,27 @@
       x: sceneNumber(camera && camera.x, 0),
       y: sceneNumber(camera && camera.y, 0),
       z: sceneNumber(camera && camera.z, 6),
+      rotationX: sceneNumber(camera && camera.rotationX, 0),
+      rotationY: sceneNumber(camera && camera.rotationY, 0),
+      rotationZ: sceneNumber(camera && camera.rotationZ, 0),
       fov: sceneNumber(camera && camera.fov, 75),
       near: sceneNumber(camera && camera.near, 0.05),
       far: sceneNumber(camera && camera.far, 128),
     };
   }
 
-  function sceneObjectMaterialProfile(object) {
-    const kind = normalizeSceneMaterialKind(object && object.materialKind);
-    const opacity = clamp01(sceneNumber(object && object.opacity, sceneDefaultMaterialOpacity(kind)));
-    const profile = {
-      kind,
-      color: object && typeof object.color === "string" && object.color ? object.color : "#8de1ff",
-      opacity,
-      wireframe: sceneBool(object && object.wireframe, true),
-      blendMode: normalizeSceneMaterialBlendMode(object && object.blendMode, kind, opacity),
-      emissive: clamp01(sceneNumber(object && object.emissive, sceneDefaultMaterialEmissive(kind))),
-    };
-    profile.renderPass = normalizeSceneMaterialRenderPass(object && object.renderPass, profile.blendMode, profile.opacity);
-    profile.key = sceneMaterialProfileKey(profile);
-    profile.shaderData = sceneMaterialShaderData(profile);
-    return profile;
-  }
-
-  function sceneMaterialProfileKey(profile) {
-    return [
-      normalizeSceneMaterialKind(profile && profile.kind),
-      String(profile && profile.color || ""),
-      clamp01(sceneNumber(profile && profile.opacity, 1)).toFixed(3),
-      String(sceneBool(profile && profile.wireframe, true)),
-      String(profile && profile.blendMode || "opaque"),
-      String(profile && profile.renderPass || "opaque"),
-      clamp01(sceneNumber(profile && profile.emissive, 0)).toFixed(3),
-    ].join("|");
-  }
-
-  function sceneBundleMaterialIndex(bundle, materialLookup, profile) {
-    if (!bundle || !Array.isArray(bundle.materials)) {
-      return 0;
-    }
-    const key = profile && profile.key ? profile.key : sceneMaterialProfileKey(profile);
-    if (materialLookup && materialLookup.has(key)) {
-      return materialLookup.get(key);
-    }
-    const index = bundle.materials.length;
-    bundle.materials.push(profile);
-    if (materialLookup) {
-      materialLookup.set(key, index);
-    }
-    return index;
-  }
-
-  function sceneMaterialStrokeColor(material) {
-    const rgba = sceneColorRGBA(material && material.color, [0.55, 0.88, 1, 1]);
-    rgba[3] = clamp01(rgba[3] * sceneMaterialOpacity(material));
-    return "rgba(" +
-      Math.round(rgba[0] * 255) + ", " +
-      Math.round(rgba[1] * 255) + ", " +
-      Math.round(rgba[2] * 255) + ", " +
-      rgba[3].toFixed(3) + ")";
+  function sceneCameraEquivalent(left, right) {
+    const a = sceneRenderCamera(left);
+    const b = sceneRenderCamera(right);
+    return Math.abs(a.x - b.x) <= 0.0001 &&
+      Math.abs(a.y - b.y) <= 0.0001 &&
+      Math.abs(a.z - b.z) <= 0.0001 &&
+      Math.abs(a.rotationX - b.rotationX) <= 0.0001 &&
+      Math.abs(a.rotationY - b.rotationY) <= 0.0001 &&
+      Math.abs(a.rotationZ - b.rotationZ) <= 0.0001 &&
+      Math.abs(a.fov - b.fov) <= 0.0001 &&
+      Math.abs(a.near - b.near) <= 0.0001 &&
+      Math.abs(a.far - b.far) <= 0.0001;
   }
 
   function sceneBoundsDepthMetrics(bounds, camera) {
@@ -6217,15 +5801,32 @@
       const depth = sceneWorldPointDepth(0, camera);
       return { near: depth, far: depth, center: depth };
     }
-    const a = sceneWorldPointDepth(bounds.minZ, camera);
-    const b = sceneWorldPointDepth(bounds.maxZ, camera);
-    const near = Math.min(a, b);
-    const far = Math.max(a, b);
+    const corners = sceneBoundsCorners(bounds);
+    let near = sceneWorldPointDepth(corners[0], camera);
+    let far = near;
+    for (let index = 1; index < corners.length; index += 1) {
+      const depth = sceneWorldPointDepth(corners[index], camera);
+      near = Math.min(near, depth);
+      far = Math.max(far, depth);
+    }
     return {
       near,
       far,
       center: (near + far) / 2,
     };
+  }
+
+  function sceneBoundsCorners(bounds) {
+    return [
+      { x: sceneNumber(bounds && bounds.minX, 0), y: sceneNumber(bounds && bounds.minY, 0), z: sceneNumber(bounds && bounds.minZ, 0) },
+      { x: sceneNumber(bounds && bounds.minX, 0), y: sceneNumber(bounds && bounds.minY, 0), z: sceneNumber(bounds && bounds.maxZ, 0) },
+      { x: sceneNumber(bounds && bounds.minX, 0), y: sceneNumber(bounds && bounds.maxY, 0), z: sceneNumber(bounds && bounds.minZ, 0) },
+      { x: sceneNumber(bounds && bounds.minX, 0), y: sceneNumber(bounds && bounds.maxY, 0), z: sceneNumber(bounds && bounds.maxZ, 0) },
+      { x: sceneNumber(bounds && bounds.maxX, 0), y: sceneNumber(bounds && bounds.minY, 0), z: sceneNumber(bounds && bounds.minZ, 0) },
+      { x: sceneNumber(bounds && bounds.maxX, 0), y: sceneNumber(bounds && bounds.minY, 0), z: sceneNumber(bounds && bounds.maxZ, 0) },
+      { x: sceneNumber(bounds && bounds.maxX, 0), y: sceneNumber(bounds && bounds.maxY, 0), z: sceneNumber(bounds && bounds.minZ, 0) },
+      { x: sceneNumber(bounds && bounds.maxX, 0), y: sceneNumber(bounds && bounds.maxY, 0), z: sceneNumber(bounds && bounds.maxZ, 0) },
+    ];
   }
 
   function sceneBoundsViewCulled(bounds, camera) {
@@ -6238,14 +5839,20 @@
     return depth.far <= near || depth.near >= far;
   }
 
-  function createSceneRenderBundle(width, height, background, camera, objects, labels, timeSeconds) {
+  function createSceneRenderBundle(width, height, background, camera, objects, labels, sprites, lights, environment, timeSeconds, points) {
+    const resolvedEnvironment = sceneResolveLightingEnvironment(environment, Array.isArray(lights) && lights.length > 0);
     const bundle = {
       background: background,
       camera: sceneRenderCamera(camera),
+      lights: Array.isArray(lights) ? lights.slice() : [],
+      environment: resolvedEnvironment,
       materials: [],
       objects: [],
+      surfaces: [],
       labels: [],
+      sprites: [],
       lines: [],
+      points: Array.isArray(points) ? points : [],
       positions: [],
       colors: [],
       worldPositions: [],
@@ -6257,10 +5864,13 @@
     const materialLookup = new Map();
     appendSceneGridToBundle(bundle, width, height);
     for (const object of objects) {
-      appendSceneObjectToBundle(bundle, materialLookup, camera, width, height, object, timeSeconds);
+      appendSceneObjectToBundle(bundle, materialLookup, camera, width, height, object, bundle.lights, resolvedEnvironment, timeSeconds);
     }
     for (const label of labels || []) {
       appendSceneLabelToBundle(bundle, camera, width, height, label, timeSeconds);
+    }
+    for (const sprite of sprites || []) {
+      appendSceneSpriteToBundle(bundle, camera, width, height, sprite, timeSeconds);
     }
     bundle.positions = new Float32Array(bundle.positions);
     bundle.colors = new Float32Array(bundle.colors);
@@ -6275,14 +5885,14 @@
   function projectSceneObject(object, camera, width, height, timeSeconds) {
     return sceneObjectSegments(object).map(function(segment) {
       return [
-        projectPoint(translateScenePoint(segment[0], object, timeSeconds), camera, width, height),
-        projectPoint(translateScenePoint(segment[1], object, timeSeconds), camera, width, height),
+        sceneProjectPoint(translateScenePoint(segment[0], object, timeSeconds), camera, width, height),
+        sceneProjectPoint(translateScenePoint(segment[1], object, timeSeconds), camera, width, height),
       ];
     });
   }
 
   function translateScenePoint(point, object, timeSeconds) {
-    const rotated = rotatePoint(
+    const rotated = sceneRotatePoint(
       point,
       object.rotationX + object.spinX * timeSeconds,
       object.rotationY + object.spinY * timeSeconds,
@@ -6317,33 +5927,64 @@
     }
   }
 
-  function appendSceneObjectToBundle(bundle, materialLookup, camera, width, height, object, timeSeconds) {
-    const worldSegments = sceneWorldObjectSegments(object, timeSeconds);
+  function appendSceneObjectToBundle(bundle, materialLookup, camera, width, height, object, lights, environment, timeSeconds) {
+    const sourceSegments = sceneObjectSegments(object);
     const vertexOffset = bundle.worldPositions.length / 3;
     const material = sceneObjectMaterialProfile(object);
-    const strokeColor = sceneMaterialStrokeColor(material);
-    const rgba = sceneColorRGBA(material.color, [0.55, 0.88, 1, 1]);
+    const materialIndex = sceneBundleMaterialIndex(bundle, materialLookup, material);
+    const includeLineGeometry = sceneWorldObjectUsesLinePass(object, material);
+    if (material.texture) {
+      console.log("scene-object-material", JSON.stringify({
+        id: object && object.id,
+        kind: object && object.kind,
+        texture: material.texture,
+        wireframe: material.wireframe,
+        includeLineGeometry: includeLineGeometry,
+      }));
+    }
     let bounds = null;
     let vertexCount = 0;
-    for (const segment of worldSegments) {
-      const fromWorld = segment[0];
-      const toWorld = segment[1];
-      bundle.worldPositions.push(fromWorld.x, fromWorld.y, fromWorld.z, toWorld.x, toWorld.y, toWorld.z);
-      bundle.worldColors.push(rgba[0], rgba[1], rgba[2], rgba[3], rgba[0], rgba[1], rgba[2], rgba[3]);
-      bounds = sceneExpandWorldBounds(bounds, fromWorld);
-      bounds = sceneExpandWorldBounds(bounds, toWorld);
-      vertexCount += 2;
-      const from = projectPoint(fromWorld, camera, width, height);
-      const to = projectPoint(toWorld, camera, width, height);
-      if (!from || !to) continue;
-      appendSceneLine(bundle, width, height, from, to, strokeColor, 1.8);
+    if (includeLineGeometry) {
+      const worldSegments = sourceSegments.map(function(segment) {
+        return [
+          translateScenePoint(segment[0], object, timeSeconds),
+          translateScenePoint(segment[1], object, timeSeconds),
+        ];
+      });
+      for (let index = 0; index < worldSegments.length; index += 1) {
+        const segment = worldSegments[index];
+        const fromWorld = segment[0];
+        const toWorld = segment[1];
+        const sourceSegment = sourceSegments[index];
+        const fromLighting = sceneLitColorRGBA(material, fromWorld, sceneObjectWorldNormal(object, sourceSegment[0], timeSeconds), lights, environment);
+        const toLighting = sceneLitColorRGBA(material, toWorld, sceneObjectWorldNormal(object, sourceSegment[1], timeSeconds), lights, environment);
+        bundle.worldPositions.push(fromWorld.x, fromWorld.y, fromWorld.z, toWorld.x, toWorld.y, toWorld.z);
+        bundle.worldColors.push(
+          fromLighting[0], fromLighting[1], fromLighting[2], fromLighting[3],
+          toLighting[0], toLighting[1], toLighting[2], toLighting[3],
+        );
+        bounds = sceneExpandWorldBounds(bounds, fromWorld);
+        bounds = sceneExpandWorldBounds(bounds, toWorld);
+        vertexCount += 2;
+        const from = sceneProjectPoint(fromWorld, camera, width, height);
+        const to = sceneProjectPoint(toWorld, camera, width, height);
+        if (!from || !to) continue;
+        const stroke = sceneMixRGBA(fromLighting, toLighting);
+        stroke[3] = clamp01(stroke[3] * sceneMaterialOpacity(material));
+        appendSceneLine(bundle, width, height, from, to, sceneRGBAString(stroke), 1.8);
+      }
+    } else if (sceneObjectHasTexturedSurface(object, material)) {
+      const corners = scenePlaneSurfaceCorners(object, timeSeconds);
+      for (const corner of corners) {
+        bounds = sceneExpandWorldBounds(bounds, corner);
+      }
     }
-    if (vertexCount > 0) {
-      const materialIndex = sceneBundleMaterialIndex(bundle, materialLookup, material);
+    if (vertexCount > 0 || bounds) {
       const depth = sceneBoundsDepthMetrics(bounds, camera);
       bundle.objects.push({
         id: object.id,
         kind: object.kind,
+        pickable: typeof object.pickable === "boolean" ? object.pickable : undefined,
         materialIndex: materialIndex,
         renderPass: sceneWorldObjectRenderPass(object, material),
         vertexOffset: vertexOffset,
@@ -6362,7 +6003,39 @@
         depthCenter: depth.center,
         viewCulled: Boolean(object.viewCulled) || sceneBoundsViewCulled(bounds, camera),
       });
+      appendSceneSurfaceToBundle(bundle, camera, object, materialIndex, material, bounds, depth, timeSeconds);
     }
+  }
+
+  function sceneObjectHasTexturedSurface(object, material) {
+    return Boolean(
+      object &&
+      object.kind === "plane" &&
+      material &&
+      typeof material.texture === "string" &&
+      material.texture.trim() !== "",
+    );
+  }
+
+  function appendSceneSurfaceToBundle(bundle, camera, object, materialIndex, material, bounds, depthMetrics, timeSeconds) {
+    if (!sceneObjectHasTexturedSurface(object, material)) {
+      return;
+    }
+    bundle.surfaces.push({
+      id: object.id,
+      kind: object.kind,
+      materialIndex: materialIndex,
+      renderPass: sceneWorldObjectRenderPass(object, material),
+      static: Boolean(object.static),
+      positions: scenePlaneSurfacePositions(scenePlaneSurfaceCorners(object, timeSeconds)),
+      uv: scenePlaneSurfaceUVs(),
+      vertexCount: 6,
+      bounds: bounds,
+      depthNear: depthMetrics.near,
+      depthFar: depthMetrics.far,
+      depthCenter: depthMetrics.center,
+      viewCulled: Boolean(object.viewCulled) || sceneBoundsViewCulled(bounds, camera),
+    });
   }
 
   function sceneLabelPoint(label, timeSeconds) {
@@ -6386,9 +6059,45 @@
     };
   }
 
+  function sceneSpritePoint(sprite, timeSeconds) {
+    const offset = sceneSpriteOffset(sprite, timeSeconds);
+    return {
+      x: sceneNumber(sprite && sprite.x, 0) + offset.x,
+      y: sceneNumber(sprite && sprite.y, 0) + offset.y,
+      z: sceneNumber(sprite && sprite.z, 0) + offset.z,
+    };
+  }
+
+  function sceneSpriteOffset(sprite, timeSeconds) {
+    if (!sprite || (!sprite.shiftX && !sprite.shiftY && !sprite.shiftZ)) {
+      return { x: 0, y: 0, z: 0 };
+    }
+    const angle = sceneNumber(sprite.driftPhase, 0) + timeSeconds * sceneNumber(sprite.driftSpeed, 0);
+    return {
+      x: Math.cos(angle) * sceneNumber(sprite.shiftX, 0),
+      y: Math.sin(angle * 0.82 + sceneNumber(sprite.driftPhase, 0) * 0.35) * sceneNumber(sprite.shiftY, 0),
+      z: Math.sin(angle) * sceneNumber(sprite.shiftZ, 0),
+    };
+  }
+
+  function sceneProjectedSpriteSize(camera, width, height, sprite, depth) {
+    if (depth <= 0) {
+      return { width: 0, height: 0 };
+    }
+    const normalizedCamera = sceneRenderCamera(camera);
+    const focal = (Math.min(width, height) / 2) / Math.tan((normalizedCamera.fov * Math.PI) / 360);
+    const scale = Math.max(0.05, sceneNumber(sprite && sprite.scale, 1));
+    const worldWidth = Math.max(0.05, sceneNumber(sprite && sprite.width, 1.25));
+    const worldHeight = Math.max(0.05, sceneNumber(sprite && sprite.height, worldWidth));
+    return {
+      width: Math.max(1, (worldWidth * scale * focal) / depth),
+      height: Math.max(1, (worldHeight * scale * focal) / depth),
+    };
+  }
+
   function appendSceneLabelToBundle(bundle, camera, width, height, label, timeSeconds) {
     const point = sceneLabelPoint(label, timeSeconds);
-    const projected = projectPoint(point, camera, width, height);
+    const projected = sceneProjectPoint(point, camera, width, height);
     if (!projected) {
       return;
     }
@@ -6422,6 +6131,40 @@
       occlude: Boolean(label.occlude),
       whiteSpace: normalizeSceneLabelWhiteSpace(label.whiteSpace),
       textAlign: normalizeSceneLabelAlign(label.textAlign),
+    });
+  }
+
+  function appendSceneSpriteToBundle(bundle, camera, width, height, sprite, timeSeconds) {
+    const point = sceneSpritePoint(sprite, timeSeconds);
+    const projected = sceneProjectPoint(point, camera, width, height);
+    if (!projected) {
+      return;
+    }
+    const size = sceneProjectedSpriteSize(camera, width, height, sprite, projected.depth);
+    if (size.width <= 0 || size.height <= 0) {
+      return;
+    }
+    const marginX = Math.max(24, size.width);
+    const marginY = Math.max(24, size.height);
+    if (projected.x < -marginX || projected.x > width + marginX || projected.y < -marginY || projected.y > height + marginY) {
+      return;
+    }
+    bundle.sprites.push({
+      id: sprite.id,
+      src: sprite.src,
+      className: sprite.className,
+      position: { x: projected.x, y: projected.y },
+      depth: projected.depth,
+      priority: sceneNumber(sprite.priority, 0),
+      width: size.width,
+      height: size.height,
+      opacity: clamp01(sceneNumber(sprite.opacity, 1)),
+      offsetX: sceneNumber(sprite.offsetX, 0),
+      offsetY: sceneNumber(sprite.offsetY, 0),
+      anchorX: sceneNumber(sprite.anchorX, 0.5),
+      anchorY: sceneNumber(sprite.anchorY, 0.5),
+      occlude: Boolean(sprite.occlude),
+      fit: normalizeSceneSpriteFit(sprite.fit),
     });
   }
 
@@ -6467,34 +6210,6 @@
     bundle.colors.push(rgba[0], rgba[1], rgba[2], rgba[3], rgba[0], rgba[1], rgba[2], rgba[3]);
   }
 
-  function createSceneCanvasRenderer(ctx2d, canvas) {
-    return {
-      kind: "canvas",
-      render(bundle, viewport) {
-        const devicePixelRatio = Math.max(1, sceneViewportValue(viewport, "devicePixelRatio", 1));
-        const lines = Array.isArray(bundle && bundle.lines) ? bundle.lines : [];
-        ctx2d.clearRect(0, 0, canvas.width, canvas.height);
-        ctx2d.fillStyle = bundle && bundle.background ? bundle.background : "#08151f";
-        ctx2d.fillRect(0, 0, canvas.width, canvas.height);
-        if (typeof ctx2d.save === "function") {
-          ctx2d.save();
-        }
-        if (devicePixelRatio !== 1 && typeof ctx2d.scale === "function") {
-          ctx2d.scale(devicePixelRatio, devicePixelRatio);
-        }
-        for (const line of lines) {
-          ctx2d.strokeStyle = line.color;
-          ctx2d.lineWidth = line.lineWidth;
-          strokeLine(ctx2d, line.from, line.to);
-        }
-        if (typeof ctx2d.restore === "function") {
-          ctx2d.restore();
-        }
-      },
-      dispose() {},
-    };
-  }
-
   function createSceneWebGLRenderer(canvas, options) {
     if (!canvas || typeof canvas.getContext !== "function") {
       return null;
@@ -6511,26 +6226,45 @@
     }
 
     const program = createSceneWebGLProgram(gl);
+    const surfaceProgram = createSceneWebGLSurfaceProgram(gl);
     if (!program) {
       return null;
     }
 
-    const resources = createSceneWebGLResources(gl, program);
+    const resources = createSceneWebGLResources(gl, program, surfaceProgram);
     return {
       kind: "webgl",
       render(bundle) {
         const geometry = sceneWebGLBundleGeometry(bundle);
         prepareSceneWebGLFrame(gl, canvas, bundle, geometry.usePerspective, resources);
-        if (!bundle || geometry.vertexCount === 0 || !geometry.positions || !geometry.colors) {
+        if (!bundle) {
           return;
         }
-        gl.useProgram(program);
-        applySceneWebGLUniforms(gl, bundle, canvas, geometry.usePerspective, resources);
-        if (geometry.usePerspective && renderSceneWebGLWorldBundle(gl, bundle, resources)) {
+        const worldRendered = geometry.usePerspective && renderSceneWebGLWorldBundle(gl, bundle, canvas, resources);
+        console.log("scene-webgl-render", JSON.stringify({
+          usePerspective: geometry.usePerspective,
+          worldRendered: worldRendered,
+          surfaces: Array.isArray(bundle && bundle.surfaces) ? bundle.surfaces.length : 0,
+          worldVertexCount: bundle && bundle.worldVertexCount || 0,
+          vertexCount: geometry.vertexCount,
+          objects: Array.isArray(bundle && bundle.objects) ? bundle.objects.map(function(item) {
+            return {
+              id: item && item.id,
+              kind: item && item.kind,
+              vertexCount: item && item.vertexCount,
+            };
+          }) : [],
+        }));
+        if (worldRendered) {
           applySceneWebGLBlend(gl, "opaque", resources.stateCache);
           applySceneWebGLDepth(gl, "opaque", resources.stateCache);
           return;
         }
+        if (geometry.vertexCount === 0 || !geometry.positions || !geometry.colors) {
+          return;
+        }
+        gl.useProgram(program);
+        applySceneWebGLUniforms(gl, bundle, canvas, geometry.usePerspective, resources);
         renderSceneWebGLFallbackBundle(gl, geometry, resources);
       },
       dispose() {
@@ -6539,8 +6273,10 @@
     };
   }
 
-  function createSceneWebGLResources(gl, program) {
+  function createSceneWebGLResources(gl, program, surfaceProgram) {
     return {
+      program,
+      surfaceProgram,
       fallbackBuffers: createSceneWebGLBufferSet(gl),
       passBuffers: {
         staticOpaque: createSceneWebGLBufferSet(gl),
@@ -6553,21 +6289,43 @@
       colorLocation: gl.getAttribLocation(program, "a_color"),
       materialLocation: gl.getAttribLocation(program, "a_material"),
       cameraLocation: gl.getUniformLocation(program, "u_camera"),
+      cameraRotationLocation: gl.getUniformLocation(program, "u_camera_rotation"),
       aspectLocation: gl.getUniformLocation(program, "u_aspect"),
       perspectiveLocation: gl.getUniformLocation(program, "u_use_perspective"),
+      surfaceBuffers: createSceneWebGLSurfaceBufferSet(gl),
+      surfacePositionLocation: surfaceProgram ? gl.getAttribLocation(surfaceProgram, "a_position") : -1,
+      surfaceUVLocation: surfaceProgram ? gl.getAttribLocation(surfaceProgram, "a_uv") : -1,
+      surfaceCameraLocation: surfaceProgram ? gl.getUniformLocation(surfaceProgram, "u_camera") : null,
+      surfaceCameraRotationLocation: surfaceProgram ? gl.getUniformLocation(surfaceProgram, "u_camera_rotation") : null,
+      surfaceAspectLocation: surfaceProgram ? gl.getUniformLocation(surfaceProgram, "u_aspect") : null,
+      surfaceTintLocation: surfaceProgram ? gl.getUniformLocation(surfaceProgram, "u_tint") : null,
+      surfaceEmissiveLocation: surfaceProgram ? gl.getUniformLocation(surfaceProgram, "u_emissive") : null,
+      surfaceTextureLocation: surfaceProgram ? gl.getUniformLocation(surfaceProgram, "u_texture") : null,
       floatType: typeof gl.FLOAT === "number" ? gl.FLOAT : 0x1406,
       arrayBuffer: typeof gl.ARRAY_BUFFER === "number" ? gl.ARRAY_BUFFER : 0x8892,
       staticDraw: typeof gl.STATIC_DRAW === "number" ? gl.STATIC_DRAW : 0x88E4,
       dynamicDraw: typeof gl.DYNAMIC_DRAW === "number" ? gl.DYNAMIC_DRAW : 0x88E8,
+      trianglesMode: typeof gl.TRIANGLES === "number" ? gl.TRIANGLES : 0x0004,
       colorBufferBit: typeof gl.COLOR_BUFFER_BIT === "number" ? gl.COLOR_BUFFER_BIT : 0x4000,
       depthBufferBit: typeof gl.DEPTH_BUFFER_BIT === "number" ? gl.DEPTH_BUFFER_BIT : 0x0100,
       linesMode: typeof gl.LINES === "number" ? gl.LINES : 0x0001,
+      texture2D: typeof gl.TEXTURE_2D === "number" ? gl.TEXTURE_2D : 0x0DE1,
+      texture0: typeof gl.TEXTURE0 === "number" ? gl.TEXTURE0 : 0x84C0,
+      rgbaFormat: typeof gl.RGBA === "number" ? gl.RGBA : 0x1908,
+      unsignedByte: typeof gl.UNSIGNED_BYTE === "number" ? gl.UNSIGNED_BYTE : 0x1401,
+      linearFilter: typeof gl.LINEAR === "number" ? gl.LINEAR : 0x2601,
+      clampToEdge: typeof gl.CLAMP_TO_EDGE === "number" ? gl.CLAMP_TO_EDGE : 0x812F,
+      textureMinFilter: typeof gl.TEXTURE_MIN_FILTER === "number" ? gl.TEXTURE_MIN_FILTER : 0x2801,
+      textureMagFilter: typeof gl.TEXTURE_MAG_FILTER === "number" ? gl.TEXTURE_MAG_FILTER : 0x2800,
+      textureWrapS: typeof gl.TEXTURE_WRAP_S === "number" ? gl.TEXTURE_WRAP_S : 0x2802,
+      textureWrapT: typeof gl.TEXTURE_WRAP_T === "number" ? gl.TEXTURE_WRAP_T : 0x2803,
       passCache: {
         staticOpaque: {
           key: "",
           vertexCount: 0,
         },
       },
+      textureCache: new Map(),
       stateCache: {
         blendMode: "",
         depthMode: "",
@@ -6576,7 +6334,9 @@
   }
 
   function sceneWebGLBundleGeometry(bundle) {
-    const usePerspective = Boolean(bundle && bundle.worldVertexCount > 0 && bundle.worldPositions && bundle.worldColors);
+    const hasWorldLines = Boolean(bundle && bundle.worldVertexCount > 0 && bundle.worldPositions && bundle.worldColors);
+    const hasSurfaces = Boolean(bundle && Array.isArray(bundle.surfaces) && bundle.surfaces.length > 0);
+    const usePerspective = hasWorldLines || hasSurfaces;
     return {
       usePerspective,
       positions: usePerspective ? bundle.worldPositions : bundle && bundle.positions,
@@ -6598,13 +6358,22 @@
   function applySceneWebGLUniforms(gl, bundle, canvas, usePerspective, resources) {
     const aspect = Math.max(0.0001, canvas.width / Math.max(1, canvas.height));
     if (typeof gl.uniform4f === "function" && resources.cameraLocation) {
-      const camera = bundle.camera || {};
+      const camera = sceneRenderCamera(bundle && bundle.camera);
       gl.uniform4f(
         resources.cameraLocation,
-        sceneNumber(camera.x, 0),
-        sceneNumber(camera.y, 0),
-        sceneNumber(camera.z, 6),
-        sceneNumber(camera.fov, 75),
+        camera.x,
+        camera.y,
+        camera.z,
+        camera.fov,
+      );
+    }
+    if (typeof gl.uniform3f === "function" && resources.cameraRotationLocation) {
+      const camera = sceneRenderCamera(bundle && bundle.camera);
+      gl.uniform3f(
+        resources.cameraRotationLocation,
+        camera.rotationX,
+        camera.rotationY,
+        camera.rotationZ,
       );
     }
     if (typeof gl.uniform1f === "function" && resources.aspectLocation) {
@@ -6615,25 +6384,212 @@
     }
   }
 
-  function renderSceneWebGLWorldBundle(gl, bundle, resources) {
-    const bundledPasses = createSceneWorldWebGLPassesFromBundle(bundle, resources.passBuffers, {
-      staticDraw: resources.staticDraw,
-      dynamicDraw: resources.dynamicDraw,
-    });
-    if (bundledPasses.length > 0) {
-      drawSceneWebGLPasses(gl, resources.arrayBuffer, resources.floatType, resources.linesMode, resources.positionLocation, resources.colorLocation, resources.materialLocation, bundledPasses, resources.passCache, resources.stateCache);
-      return true;
+  function renderSceneWebGLWorldBundle(gl, bundle, canvas, resources) {
+    let drew = renderSceneWebGLSurfaces(gl, bundle, canvas, resources, "opaque");
+    gl.useProgram(resources.program);
+    applySceneWebGLUniforms(gl, bundle, canvas, true, resources);
+    if (sceneBundleCanUseBundledPasses(bundle)) {
+      const bundledPasses = createSceneWorldWebGLPassesFromBundle(bundle, resources.passBuffers, {
+        staticDraw: resources.staticDraw,
+        dynamicDraw: resources.dynamicDraw,
+      });
+      if (bundledPasses.length > 0) {
+        drawSceneWebGLPasses(gl, resources.arrayBuffer, resources.floatType, resources.linesMode, resources.positionLocation, resources.colorLocation, resources.materialLocation, bundledPasses, resources.passCache, resources.stateCache);
+        drew = true;
+        drew = renderSceneWebGLSurfaces(gl, bundle, canvas, resources, "alpha") || drew;
+        drew = renderSceneWebGLSurfaces(gl, bundle, canvas, resources, "additive") || drew;
+        return true;
+      }
     }
     const drawPlan = buildSceneWorldDrawPlan(bundle, resources.drawScratch);
     if (!drawPlan) {
-      return false;
+      drew = renderSceneWebGLSurfaces(gl, bundle, canvas, resources, "alpha") || drew;
+      drew = renderSceneWebGLSurfaces(gl, bundle, canvas, resources, "additive") || drew;
+      return drew;
     }
     const worldPasses = createSceneWorldWebGLPasses(drawPlan, resources.passBuffers, {
       staticDraw: resources.staticDraw,
       dynamicDraw: resources.dynamicDraw,
     });
     drawSceneWebGLPasses(gl, resources.arrayBuffer, resources.floatType, resources.linesMode, resources.positionLocation, resources.colorLocation, resources.materialLocation, worldPasses, resources.passCache, resources.stateCache);
+    drew = true;
+    drew = renderSceneWebGLSurfaces(gl, bundle, canvas, resources, "alpha") || drew;
+    drew = renderSceneWebGLSurfaces(gl, bundle, canvas, resources, "additive") || drew;
     return true;
+  }
+
+  function sceneBundleCanUseBundledPasses(bundle) {
+    if (!bundle || !Array.isArray(bundle.passes) || bundle.passes.length === 0) {
+      return false;
+    }
+    if (!bundle.sourceCamera) {
+      return true;
+    }
+    return sceneCameraEquivalent(bundle.sourceCamera, bundle.camera);
+  }
+
+  function renderSceneWebGLSurfaces(gl, bundle, canvas, resources, renderPass) {
+    const surfaces = sceneBundleSurfaceEntries(bundle, renderPass);
+    if (!surfaces.length || !resources.surfaceProgram) {
+      return false;
+    }
+    gl.useProgram(resources.surfaceProgram);
+    applySceneWebGLSurfaceUniforms(gl, bundle, canvas, resources);
+    applySceneWebGLBlend(gl, renderPass === "additive" ? "additive" : (renderPass === "alpha" ? "alpha" : "opaque"), resources.stateCache);
+    applySceneWebGLDepth(gl, renderPass === "opaque" ? "opaque" : "translucent", resources.stateCache);
+    for (const entry of surfaces) {
+      const material = bundle.materials[entry.materialIndex] || null;
+      const textureRecord = sceneWebGLTextureRecord(gl, resources, material && material.texture);
+      if (!textureRecord || !textureRecord.texture) {
+        continue;
+      }
+      uploadSceneWebGLSurfaceBuffers(gl, resources, entry);
+      bindSceneWebGLSurfaceTexture(gl, resources, textureRecord);
+      applySceneWebGLSurfaceMaterial(gl, resources, material);
+      drawSceneWebGLSurface(gl, resources, entry.vertexCount);
+    }
+    return true;
+  }
+
+  function sceneBundleSurfaceEntries(bundle, renderPass) {
+    const surfaces = Array.isArray(bundle && bundle.surfaces) ? bundle.surfaces.slice() : [];
+    const filtered = surfaces.filter(function(surface) {
+      return surface &&
+        !surface.viewCulled &&
+        Math.max(0, Math.floor(sceneNumber(surface.vertexCount, 0))) > 0 &&
+        String(surface.renderPass || "opaque") === renderPass;
+    });
+    if (renderPass !== "opaque") {
+      filtered.sort(function(left, right) {
+        if (sceneNumber(left.depthCenter, 0) !== sceneNumber(right.depthCenter, 0)) {
+          return sceneNumber(right.depthCenter, 0) - sceneNumber(left.depthCenter, 0);
+        }
+        return String(left.id || "").localeCompare(String(right.id || ""));
+      });
+    }
+    return filtered;
+  }
+
+  function applySceneWebGLSurfaceUniforms(gl, bundle, canvas, resources) {
+    const aspect = Math.max(0.0001, canvas.width / Math.max(1, canvas.height));
+    const camera = sceneRenderCamera(bundle && bundle.camera);
+    if (typeof gl.uniform4f === "function" && resources.surfaceCameraLocation) {
+      gl.uniform4f(resources.surfaceCameraLocation, camera.x, camera.y, camera.z, camera.fov);
+    }
+    if (typeof gl.uniform3f === "function" && resources.surfaceCameraRotationLocation) {
+      gl.uniform3f(resources.surfaceCameraRotationLocation, camera.rotationX, camera.rotationY, camera.rotationZ);
+    }
+    if (typeof gl.uniform1f === "function" && resources.surfaceAspectLocation) {
+      gl.uniform1f(resources.surfaceAspectLocation, aspect);
+    }
+  }
+
+  function uploadSceneWebGLSurfaceBuffers(gl, resources, surface) {
+    gl.bindBuffer(resources.arrayBuffer, resources.surfaceBuffers.position);
+    gl.bufferData(resources.arrayBuffer, sceneTypedFloatArray(surface && surface.positions), resources.dynamicDraw);
+    gl.bindBuffer(resources.arrayBuffer, resources.surfaceBuffers.uv);
+    gl.bufferData(resources.arrayBuffer, sceneTypedFloatArray(surface && surface.uv), resources.dynamicDraw);
+  }
+
+  function bindSceneWebGLSurfaceTexture(gl, resources, record) {
+    if (typeof gl.activeTexture === "function") {
+      gl.activeTexture(resources.texture0);
+    }
+    if (typeof gl.bindTexture === "function") {
+      gl.bindTexture(resources.texture2D, record.texture);
+    }
+    if (typeof gl.uniform1i === "function" && resources.surfaceTextureLocation) {
+      gl.uniform1i(resources.surfaceTextureLocation, 0);
+    }
+  }
+
+  function applySceneWebGLSurfaceMaterial(gl, resources, material) {
+    const tint = sceneColorRGBA(material && material.color, [1, 1, 1, 1]);
+    tint[3] = clamp01(tint[3] * sceneMaterialOpacity(material));
+    if (typeof gl.uniform4f === "function" && resources.surfaceTintLocation) {
+      gl.uniform4f(resources.surfaceTintLocation, tint[0], tint[1], tint[2], tint[3]);
+    }
+    if (typeof gl.uniform1f === "function" && resources.surfaceEmissiveLocation) {
+      gl.uniform1f(resources.surfaceEmissiveLocation, sceneMaterialEmissive(material));
+    }
+  }
+
+  function drawSceneWebGLSurface(gl, resources, vertexCount) {
+    if (!vertexCount) {
+      return;
+    }
+    gl.bindBuffer(resources.arrayBuffer, resources.surfaceBuffers.position);
+    gl.enableVertexAttribArray(resources.surfacePositionLocation);
+    gl.vertexAttribPointer(resources.surfacePositionLocation, 3, resources.floatType, false, 0, 0);
+    gl.bindBuffer(resources.arrayBuffer, resources.surfaceBuffers.uv);
+    gl.enableVertexAttribArray(resources.surfaceUVLocation);
+    gl.vertexAttribPointer(resources.surfaceUVLocation, 2, resources.floatType, false, 0, 0);
+    gl.drawArrays(resources.trianglesMode, 0, vertexCount);
+  }
+
+  function sceneWebGLTextureRecord(gl, resources, src) {
+    const key = typeof src === "string" ? src.trim() : "";
+    if (!key || !resources || !resources.textureCache) {
+      return null;
+    }
+    if (resources.textureCache.has(key)) {
+      return resources.textureCache.get(key);
+    }
+    const texture = typeof gl.createTexture === "function" ? gl.createTexture() : null;
+    const record = { texture, src: key, loaded: false };
+    resources.textureCache.set(key, record);
+    if (!texture) {
+      return record;
+    }
+    initializeSceneWebGLTexture(gl, resources, texture);
+    const image = createSceneWebGLImage();
+    if (!image) {
+      return record;
+    }
+    image.onload = function() {
+      uploadSceneWebGLTextureImage(gl, resources, texture, image);
+      record.loaded = true;
+    };
+    image.onerror = function() {
+      record.failed = true;
+    };
+    image.src = key;
+    return record;
+  }
+
+  function createSceneWebGLImage() {
+    if (typeof Image === "function") {
+      return new Image();
+    }
+    return null;
+  }
+
+  function initializeSceneWebGLTexture(gl, resources, texture) {
+    if (typeof gl.bindTexture !== "function" || typeof gl.texImage2D !== "function") {
+      return;
+    }
+    gl.bindTexture(resources.texture2D, texture);
+    if (typeof gl.texParameteri === "function") {
+      gl.texParameteri(resources.texture2D, resources.textureMinFilter, resources.linearFilter);
+      gl.texParameteri(resources.texture2D, resources.textureMagFilter, resources.linearFilter);
+      gl.texParameteri(resources.texture2D, resources.textureWrapS, resources.clampToEdge);
+      gl.texParameteri(resources.texture2D, resources.textureWrapT, resources.clampToEdge);
+    }
+    gl.texImage2D(resources.texture2D, 0, resources.rgbaFormat, 1, 1, 0, resources.rgbaFormat, resources.unsignedByte, new Uint8Array([255, 255, 255, 255]));
+  }
+
+  function uploadSceneWebGLTextureImage(gl, resources, texture, image) {
+    if (typeof gl.bindTexture !== "function" || typeof gl.texImage2D !== "function") {
+      return;
+    }
+    gl.bindTexture(resources.texture2D, texture);
+    if (typeof gl.texParameteri === "function") {
+      gl.texParameteri(resources.texture2D, resources.textureMinFilter, resources.linearFilter);
+      gl.texParameteri(resources.texture2D, resources.textureMagFilter, resources.linearFilter);
+      gl.texParameteri(resources.texture2D, resources.textureWrapS, resources.clampToEdge);
+      gl.texParameteri(resources.texture2D, resources.textureWrapT, resources.clampToEdge);
+    }
+    gl.texImage2D(resources.texture2D, 0, resources.rgbaFormat, resources.rgbaFormat, resources.unsignedByte, image);
   }
 
   function renderSceneWebGLFallbackBundle(gl, geometry, resources) {
@@ -6673,9 +6629,20 @@
       deleteSceneWebGLBufferSet(gl, resources.passBuffers.alpha);
       deleteSceneWebGLBufferSet(gl, resources.passBuffers.additive);
       deleteSceneWebGLBufferSet(gl, resources.passBuffers.dynamicOpaque);
+      deleteSceneWebGLSurfaceBufferSet(gl, resources.surfaceBuffers);
+    }
+    if (resources && resources.textureCache && typeof gl.deleteTexture === "function") {
+      for (const record of resources.textureCache.values()) {
+        if (record && record.texture) {
+          gl.deleteTexture(record.texture);
+        }
+      }
     }
     if (typeof gl.deleteProgram === "function") {
       gl.deleteProgram(program);
+      if (resources && resources.surfaceProgram) {
+        gl.deleteProgram(resources.surfaceProgram);
+      }
     }
   }
 
@@ -6687,6 +6654,13 @@
     };
   }
 
+  function createSceneWebGLSurfaceBufferSet(gl) {
+    return {
+      position: gl.createBuffer(),
+      uv: gl.createBuffer(),
+    };
+  }
+
   function deleteSceneWebGLBufferSet(gl, buffers) {
     if (!buffers) {
       return;
@@ -6694,6 +6668,14 @@
     gl.deleteBuffer(buffers.position);
     gl.deleteBuffer(buffers.color);
     gl.deleteBuffer(buffers.material);
+  }
+
+  function deleteSceneWebGLSurfaceBufferSet(gl, buffers) {
+    if (!buffers) {
+      return;
+    }
+    gl.deleteBuffer(buffers.position);
+    gl.deleteBuffer(buffers.uv);
   }
 
   function createSceneWorldWebGLPasses(drawPlan, buffers, usages) {
@@ -6972,6 +6954,1203 @@
     }
   }
 
+  function createSceneWebGLProgram(gl) {
+    const vertexSource = [
+      "attribute vec3 a_position;",
+      "attribute vec4 a_color;",
+      "attribute vec3 a_material;",
+      "uniform vec4 u_camera;",
+      "uniform vec3 u_camera_rotation;",
+      "uniform float u_aspect;",
+      "uniform float u_use_perspective;",
+      "varying vec4 v_color;",
+      "varying vec3 v_material;",
+      "vec3 inverseRotatePoint(vec3 point, vec3 rotation) {",
+      "  float sinZ = sin(-rotation.z);",
+      "  float cosZ = cos(-rotation.z);",
+      "  float nextX = point.x * cosZ - point.y * sinZ;",
+      "  float nextY = point.x * sinZ + point.y * cosZ;",
+      "  point = vec3(nextX, nextY, point.z);",
+      "  float sinY = sin(-rotation.y);",
+      "  float cosY = cos(-rotation.y);",
+      "  nextX = point.x * cosY + point.z * sinY;",
+      "  float nextZ = -point.x * sinY + point.z * cosY;",
+      "  point = vec3(nextX, point.y, nextZ);",
+      "  float sinX = sin(-rotation.x);",
+      "  float cosX = cos(-rotation.x);",
+      "  nextY = point.y * cosX - point.z * sinX;",
+      "  nextZ = point.y * sinX + point.z * cosX;",
+      "  return vec3(point.x, nextY, nextZ);",
+      "}",
+      "void main() {",
+      "  vec4 clip = vec4(a_position.xy, 0.0, 1.0);",
+      "  if (u_use_perspective > 0.5) {",
+      "    vec3 local = inverseRotatePoint(vec3(a_position.x - u_camera.x, a_position.y - u_camera.y, a_position.z + u_camera.z), u_camera_rotation);",
+      "    float depth = local.z;",
+      "    if (depth <= 0.001) {",
+      "      clip = vec4(2.0, 2.0, 0.0, 1.0);",
+      "    } else {",
+      "      float focal = 1.0 / tan(radians(u_camera.w) * 0.5);",
+      "      vec2 projected = vec2(local.x * focal / depth, local.y * focal / depth);",
+      "      projected.x /= max(u_aspect, 0.0001);",
+      "      float clipDepth = clamp(depth / 128.0, 0.0, 1.0) * 2.0 - 1.0;",
+      "      clip = vec4(projected, clipDepth, 1.0);",
+      "    }",
+      "  }",
+      "  gl_Position = clip;",
+      "  v_color = a_color;",
+      "  v_material = a_material;",
+      "}",
+    ].join("\n");
+    const fragmentSource = [
+      "precision mediump float;",
+      "varying vec4 v_color;",
+      "varying vec3 v_material;",
+      "void main() {",
+      "  vec4 color = v_color;",
+      "  float kind = floor(v_material.x + 0.5);",
+      "  float emissive = max(v_material.y, 0.0);",
+      "  float tone = clamp(v_material.z, 0.0, 1.0);",
+      "  if (kind > 3.5) {",
+      "    color.rgb *= mix(0.78, 1.0, tone);",
+      "  } else if (kind > 2.5) {",
+      "    color.rgb *= 1.0 + emissive * 0.75;",
+      "  } else if (kind > 1.5) {",
+      "    color.rgb = mix(color.rgb, vec3(0.92, 0.98, 1.0), 0.28 + tone * 0.16);",
+      "    color.a *= 0.84;",
+      "  } else if (kind > 0.5) {",
+      "    color.rgb = mix(color.rgb, vec3(0.84, 0.94, 1.0), 0.18 + tone * 0.12);",
+      "    color.a *= 0.9;",
+      "  } else {",
+      "    color.rgb *= mix(0.9, 1.0, tone);",
+      "  }",
+      "  gl_FragColor = vec4(clamp(color.rgb, 0.0, 1.0), clamp(color.a, 0.0, 1.0));",
+      "}",
+    ].join("\n");
+
+    const vertexShader = createSceneShader(gl, gl.VERTEX_SHADER, vertexSource);
+    const fragmentShader = createSceneShader(gl, gl.FRAGMENT_SHADER, fragmentSource);
+    if (!vertexShader || !fragmentShader) {
+      return null;
+    }
+
+    const program = gl.createProgram();
+    gl.attachShader(program, vertexShader);
+    gl.attachShader(program, fragmentShader);
+    gl.linkProgram(program);
+    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+      console.warn("[gosx] Scene3D WebGL link failed");
+      return null;
+    }
+    return program;
+  }
+
+  function createSceneWebGLSurfaceProgram(gl) {
+    const vertexSource = [
+      "attribute vec3 a_position;",
+      "attribute vec2 a_uv;",
+      "uniform vec4 u_camera;",
+      "uniform vec3 u_camera_rotation;",
+      "uniform float u_aspect;",
+      "varying vec2 v_uv;",
+      "vec3 inverseRotatePoint(vec3 point, vec3 rotation) {",
+      "  float sinZ = sin(-rotation.z);",
+      "  float cosZ = cos(-rotation.z);",
+      "  float nextX = point.x * cosZ - point.y * sinZ;",
+      "  float nextY = point.x * sinZ + point.y * cosZ;",
+      "  point = vec3(nextX, nextY, point.z);",
+      "  float sinY = sin(-rotation.y);",
+      "  float cosY = cos(-rotation.y);",
+      "  nextX = point.x * cosY + point.z * sinY;",
+      "  float nextZ = -point.x * sinY + point.z * cosY;",
+      "  point = vec3(nextX, point.y, nextZ);",
+      "  float sinX = sin(-rotation.x);",
+      "  float cosX = cos(-rotation.x);",
+      "  nextY = point.y * cosX - point.z * sinX;",
+      "  nextZ = point.y * sinX + point.z * cosX;",
+      "  return vec3(point.x, nextY, nextZ);",
+      "}",
+      "void main() {",
+      "  vec3 local = inverseRotatePoint(vec3(a_position.x - u_camera.x, a_position.y - u_camera.y, a_position.z + u_camera.z), u_camera_rotation);",
+      "  float depth = local.z;",
+      "  if (depth <= 0.001) {",
+      "    gl_Position = vec4(2.0, 2.0, 0.0, 1.0);",
+      "  } else {",
+      "    float focal = 1.0 / tan(radians(u_camera.w) * 0.5);",
+      "    vec2 projected = vec2(local.x * focal / depth, local.y * focal / depth);",
+      "    projected.x /= max(u_aspect, 0.0001);",
+      "    float clipDepth = clamp(depth / 128.0, 0.0, 1.0) * 2.0 - 1.0;",
+      "    gl_Position = vec4(projected, clipDepth, 1.0);",
+      "  }",
+      "  v_uv = a_uv;",
+      "}",
+    ].join("\n");
+    const fragmentSource = [
+      "precision mediump float;",
+      "varying vec2 v_uv;",
+      "uniform sampler2D u_texture;",
+      "uniform vec4 u_tint;",
+      "uniform float u_emissive;",
+      "void main() {",
+      "  vec4 sampleColor = texture2D(u_texture, v_uv);",
+      "  vec3 rgb = sampleColor.rgb * u_tint.rgb;",
+      "  rgb *= 1.0 + max(u_emissive, 0.0) * 0.5;",
+      "  gl_FragColor = vec4(clamp(rgb, 0.0, 1.0), clamp(sampleColor.a * u_tint.a, 0.0, 1.0));",
+      "}",
+    ].join("\n");
+
+    const vertexShader = createSceneShader(gl, gl.VERTEX_SHADER, vertexSource);
+    const fragmentShader = createSceneShader(gl, gl.FRAGMENT_SHADER, fragmentSource);
+    if (!vertexShader || !fragmentShader) {
+      return null;
+    }
+
+    const program = gl.createProgram();
+    gl.attachShader(program, vertexShader);
+    gl.attachShader(program, fragmentShader);
+    gl.linkProgram(program);
+    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+      console.warn("[gosx] Scene3D WebGL surface link failed");
+      return null;
+    }
+    return program;
+  }
+
+  function createSceneShader(gl, type, source) {
+    const shader = gl.createShader(type);
+    gl.shaderSource(shader, source);
+    gl.compileShader(shader);
+    if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+      console.warn("[gosx] Scene3D WebGL shader compile failed");
+      return null;
+    }
+    return shader;
+  }
+
+  function sceneClamp(value, min, max) {
+    return Math.max(min, Math.min(max, value));
+  }
+
+  function sceneAddPoint(left, right) {
+    return {
+      x: sceneNumber(left && left.x, 0) + sceneNumber(right && right.x, 0),
+      y: sceneNumber(left && left.y, 0) + sceneNumber(right && right.y, 0),
+      z: sceneNumber(left && left.z, 0) + sceneNumber(right && right.z, 0),
+    };
+  }
+
+  function sceneScalePoint(point, scale) {
+    return {
+      x: sceneNumber(point && point.x, 0) * scale,
+      y: sceneNumber(point && point.y, 0) * scale,
+      z: sceneNumber(point && point.z, 0) * scale,
+    };
+  }
+
+  function sceneMultiplyPoint(left, right) {
+    return {
+      x: sceneNumber(left && left.x, 0) * sceneNumber(right && right.x, 0),
+      y: sceneNumber(left && left.y, 0) * sceneNumber(right && right.y, 0),
+      z: sceneNumber(left && left.z, 0) * sceneNumber(right && right.z, 0),
+    };
+  }
+
+  function scenePointLength(point) {
+    var px = sceneNumber(point && point.x, 0);
+    var py = sceneNumber(point && point.y, 0);
+    var pz = sceneNumber(point && point.z, 0);
+    return Math.sqrt(px * px + py * py + pz * pz);
+  }
+
+  function sceneNormalizePoint(point) {
+    const length = scenePointLength(point);
+    if (length <= 0.000001) {
+      return { x: 0, y: 0, z: 0 };
+    }
+    return sceneScalePoint(point, 1 / length);
+  }
+
+  function sceneDotPoint(left, right) {
+    return (
+      sceneNumber(left && left.x, 0) * sceneNumber(right && right.x, 0) +
+      sceneNumber(left && left.y, 0) * sceneNumber(right && right.y, 0) +
+      sceneNumber(left && left.z, 0) * sceneNumber(right && right.z, 0)
+    );
+  }
+
+  function sceneRotatePoint(point, rotationX, rotationY, rotationZ) {
+    let x = point.x;
+    let y = point.y;
+    let z = point.z;
+
+    const sinX = Math.sin(rotationX);
+    const cosX = Math.cos(rotationX);
+    let nextY = y * cosX - z * sinX;
+    let nextZ = y * sinX + z * cosX;
+    y = nextY;
+    z = nextZ;
+
+    const sinY = Math.sin(rotationY);
+    const cosY = Math.cos(rotationY);
+    let nextX = x * cosY + z * sinY;
+    nextZ = -x * sinY + z * cosY;
+    x = nextX;
+    z = nextZ;
+
+    const sinZ = Math.sin(rotationZ);
+    const cosZ = Math.cos(rotationZ);
+    nextX = x * cosZ - y * sinZ;
+    nextY = x * sinZ + y * cosZ;
+
+    return { x: nextX, y: nextY, z: z };
+  }
+
+  function sceneInverseRotatePoint(point, rotationX, rotationY, rotationZ) {
+    let x = sceneNumber(point && point.x, 0);
+    let y = sceneNumber(point && point.y, 0);
+    let z = sceneNumber(point && point.z, 0);
+
+    const sinZ = Math.sin(-rotationZ);
+    const cosZ = Math.cos(-rotationZ);
+    let nextX = x * cosZ - y * sinZ;
+    let nextY = x * sinZ + y * cosZ;
+    x = nextX;
+    y = nextY;
+
+    const sinY = Math.sin(-rotationY);
+    const cosY = Math.cos(-rotationY);
+    nextX = x * cosY + z * sinY;
+    let nextZ = -x * sinY + z * cosY;
+    x = nextX;
+    z = nextZ;
+
+    const sinX = Math.sin(-rotationX);
+    const cosX = Math.cos(-rotationX);
+    nextY = y * cosX - z * sinX;
+    nextZ = y * sinX + z * cosX;
+    return { x, y: nextY, z: nextZ };
+  }
+
+  function sceneProjectPoint(point, camera, width, height) {
+    const normalizedCamera = sceneRenderCamera(camera);
+    const local = sceneCameraLocalPoint(point, normalizedCamera);
+    const depth = local.z;
+    if (depth <= normalizedCamera.near || depth >= normalizedCamera.far) return null;
+    const focal = (Math.min(width, height) / 2) / Math.tan((normalizedCamera.fov * Math.PI) / 360);
+    return {
+      x: width / 2 + (local.x * focal) / depth,
+      y: height / 2 - (local.y * focal) / depth,
+      depth,
+    };
+  }
+
+  function sceneCameraLocalPoint(point, camera) {
+    const normalizedCamera = sceneRenderCamera(camera);
+    return sceneInverseRotatePoint({
+      x: sceneNumber(point && point.x, 0) - normalizedCamera.x,
+      y: sceneNumber(point && point.y, 0) - normalizedCamera.y,
+      z: sceneNumber(point && point.z, 0) + normalizedCamera.z,
+    }, normalizedCamera.rotationX, normalizedCamera.rotationY, normalizedCamera.rotationZ);
+  }
+
+  function sceneClipPoint(point, width, height) {
+    return {
+      x: (point.x / width) * 2 - 1,
+      y: 1 - (point.y / height) * 2,
+    };
+  }
+
+  function sceneSafeNormal(normal) {
+    const normalized = sceneNormalizePoint(normal);
+    return scenePointLength(normalized) > 0.0001 ? normalized : { x: 0, y: 1, z: 0 };
+  }
+
+  function sceneColorPoint(value, fallback) {
+    const rgba = sceneColorRGBA(value, [sceneNumber(fallback && fallback.x, 1), sceneNumber(fallback && fallback.y, 1), sceneNumber(fallback && fallback.z, 1), 1]);
+    return { x: rgba[0], y: rgba[1], z: rgba[2] };
+  }
+
+  function sceneRGBAString(rgba) {
+    const color = Array.isArray(rgba) ? rgba : [0.55, 0.88, 1, 1];
+    return "rgba(" +
+      Math.round(clamp01(sceneNumber(color[0], 0.55)) * 255) + ", " +
+      Math.round(clamp01(sceneNumber(color[1], 0.88)) * 255) + ", " +
+      Math.round(clamp01(sceneNumber(color[2], 1)) * 255) + ", " +
+      clamp01(sceneNumber(color[3], 1)).toFixed(3) + ")";
+  }
+
+  function sceneColorRGBA(value, fallback) {
+    const base = Array.isArray(fallback) && fallback.length === 4 ? fallback.slice() : [0.55, 0.88, 1, 1];
+    if (typeof value !== "string") {
+      return base;
+    }
+
+    const trimmed = value.trim();
+    const shortHex = trimmed.match(/^#([0-9a-f]{3})$/i);
+    if (shortHex) {
+      return [
+        parseInt(shortHex[1][0] + shortHex[1][0], 16) / 255,
+        parseInt(shortHex[1][1] + shortHex[1][1], 16) / 255,
+        parseInt(shortHex[1][2] + shortHex[1][2], 16) / 255,
+        1,
+      ];
+    }
+
+    const fullHex = trimmed.match(/^#([0-9a-f]{6})$/i);
+    if (fullHex) {
+      return [
+        parseInt(fullHex[1].slice(0, 2), 16) / 255,
+        parseInt(fullHex[1].slice(2, 4), 16) / 255,
+        parseInt(fullHex[1].slice(4, 6), 16) / 255,
+        1,
+      ];
+    }
+
+    const rgba = trimmed.match(/^rgba?\(([^)]+)\)$/i);
+    if (rgba) {
+      const parts = rgba[1].split(",").map(function(part) {
+        return Number(part.trim());
+      });
+      if (parts.length >= 3 && parts.every(function(part, index) {
+        return Number.isFinite(part) && (index < 3 || index === 3);
+      })) {
+        return [
+          Math.max(0, Math.min(255, parts[0])) / 255,
+          Math.max(0, Math.min(255, parts[1])) / 255,
+          Math.max(0, Math.min(255, parts[2])) / 255,
+          parts.length > 3 ? Math.max(0, Math.min(1, parts[3])) : 1,
+        ];
+      }
+    }
+
+    return base;
+  }
+
+  function sceneMixRGBA(left, right) {
+    return [
+      (sceneNumber(left && left[0], 0.55) + sceneNumber(right && right[0], 0.55)) / 2,
+      (sceneNumber(left && left[1], 0.88) + sceneNumber(right && right[1], 0.88)) / 2,
+      (sceneNumber(left && left[2], 1) + sceneNumber(right && right[2], 1)) / 2,
+      (sceneNumber(left && left[3], 1) + sceneNumber(right && right[3], 1)) / 2,
+    ];
+  }
+
+  function sceneDot3(ax, ay, az, bx, by, bz) {
+    return ax * bx + ay * by + az * bz;
+  }
+
+  function sceneCross3Into(out, offset, ax, ay, az, bx, by, bz) {
+    out[offset] = ay * bz - az * by;
+    out[offset + 1] = az * bx - ax * bz;
+    out[offset + 2] = ax * by - ay * bx;
+  }
+
+  function sceneNormalize3Into(out, offset, x, y, z) {
+    var len = Math.sqrt(x * x + y * y + z * z);
+    if (len < 1e-10) { out[offset] = 0; out[offset + 1] = 0; out[offset + 2] = 0; return 0; }
+    var inv = 1 / len;
+    out[offset] = x * inv; out[offset + 1] = y * inv; out[offset + 2] = z * inv;
+    return len;
+  }
+
+  function sceneRayIntersectsAABB(rayOrigin, rayDir, boundsMin, boundsMax) {
+    var tMin = -Infinity;
+    var tMax = Infinity;
+
+    for (var ai = 0; ai < 3; ai++) {
+      var axis = ai === 0 ? "x" : ai === 1 ? "y" : "z";
+      var origin = rayOrigin[axis];
+      var dir = rayDir[axis];
+      var min = boundsMin[axis];
+      var max = boundsMax[axis];
+
+      if (Math.abs(dir) < 1e-10) {
+        if (origin < min || origin > max) return -1;
+      } else {
+        var t1 = (min - origin) / dir;
+        var t2 = (max - origin) / dir;
+        if (t1 > t2) { var tmp = t1; t1 = t2; t2 = tmp; }
+        tMin = Math.max(tMin, t1);
+        tMax = Math.min(tMax, t2);
+        if (tMin > tMax) return -1;
+      }
+    }
+
+    if (tMax < 0) return -1;
+    return tMin >= 0 ? tMin : tMax;
+  }
+
+  function sceneRayIntersectsTriangle(rayOrigin, rayDir, v0, v1, v2) {
+    var EPSILON = 1e-7;
+
+    var rox = rayOrigin.x, roy = rayOrigin.y, roz = rayOrigin.z;
+    var rdx = rayDir.x, rdy = rayDir.y, rdz = rayDir.z;
+    var v0x = v0.x, v0y = v0.y, v0z = v0.z;
+
+    var edge1x = v1.x - v0x, edge1y = v1.y - v0y, edge1z = v1.z - v0z;
+    var edge2x = v2.x - v0x, edge2y = v2.y - v0y, edge2z = v2.z - v0z;
+
+    var hx = rdy * edge2z - rdz * edge2y;
+    var hy = rdz * edge2x - rdx * edge2z;
+    var hz = rdx * edge2y - rdy * edge2x;
+
+    var a = sceneDot3(edge1x, edge1y, edge1z, hx, hy, hz);
+    if (a > -EPSILON && a < EPSILON) return null; // parallel
+
+    var f = 1.0 / a;
+    var sx = rox - v0x;
+    var sy = roy - v0y;
+    var sz = roz - v0z;
+
+    var u = f * sceneDot3(sx, sy, sz, hx, hy, hz);
+    if (u < 0.0 || u > 1.0) return null;
+
+    var qx = sy * edge1z - sz * edge1y;
+    var qy = sz * edge1x - sx * edge1z;
+    var qz = sx * edge1y - sy * edge1x;
+
+    var v = f * sceneDot3(rdx, rdy, rdz, qx, qy, qz);
+    if (v < 0.0 || u + v > 1.0) return null;
+
+    var t = f * sceneDot3(edge2x, edge2y, edge2z, qx, qy, qz);
+    if (t < EPSILON) return null; // behind ray
+
+    return { distance: t, u: u, v: v };
+  }
+
+  function clamp01(value) {
+    return Math.max(0, Math.min(1, value));
+  }
+
+  var SCENE_IDENTITY_MAT4 = new Float32Array([
+    1, 0, 0, 0,
+    0, 1, 0, 0,
+    0, 0, 1, 0,
+    0, 0, 0, 1,
+  ]);
+
+  var _sceneMat4ScratchA = new Float32Array(16);
+  var _sceneMat4ScratchB = new Float32Array(16);
+
+  function sceneMat4Multiply(a, b) {
+    var out = new Float32Array(16);
+    for (var col = 0; col < 4; col++) {
+      for (var row = 0; row < 4; row++) {
+        out[col * 4 + row] =
+          a[row]      * b[col * 4] +
+          a[4 + row]  * b[col * 4 + 1] +
+          a[8 + row]  * b[col * 4 + 2] +
+          a[12 + row] * b[col * 4 + 3];
+      }
+    }
+    return out;
+  }
+
+  function sceneMat4MultiplyInto(out, a, b) {
+    for (var col = 0; col < 4; col++) {
+      for (var row = 0; row < 4; row++) {
+        out[col * 4 + row] =
+          a[row]      * b[col * 4] +
+          a[4 + row]  * b[col * 4 + 1] +
+          a[8 + row]  * b[col * 4 + 2] +
+          a[12 + row] * b[col * 4 + 3];
+      }
+    }
+    return out;
+  }
+
+  function sceneTRSToMat4(t, r, s) {
+    var out = new Float32Array(16);
+    var x = r[0], y = r[1], z = r[2], w = r[3];
+    var x2 = x + x, y2 = y + y, z2 = z + z;
+    var xx = x * x2, xy = x * y2, xz = x * z2;
+    var yy = y * y2, yz = y * z2, zz = z * z2;
+    var wx = w * x2, wy = w * y2, wz = w * z2;
+
+    out[0]  = (1 - (yy + zz)) * s[0]; out[1]  = (xy + wz) * s[0];       out[2]  = (xz - wy) * s[0];       out[3]  = 0;
+    out[4]  = (xy - wz) * s[1];       out[5]  = (1 - (xx + zz)) * s[1]; out[6]  = (yz + wx) * s[1];       out[7]  = 0;
+    out[8]  = (xz + wy) * s[2];       out[9]  = (yz - wx) * s[2];       out[10] = (1 - (xx + yy)) * s[2]; out[11] = 0;
+    out[12] = t[0];                    out[13] = t[1];                    out[14] = t[2];                    out[15] = 1;
+
+    return out;
+  }
+
+  function sceneTRSToMat4Into(out, t, r, s) {
+    var x = r[0], y = r[1], z = r[2], w = r[3];
+    var x2 = x + x, y2 = y + y, z2 = z + z;
+    var xx = x * x2, xy = x * y2, xz = x * z2;
+    var yy = y * y2, yz = y * z2, zz = z * z2;
+    var wx = w * x2, wy = w * y2, wz = w * z2;
+
+    out[0]  = (1 - (yy + zz)) * s[0]; out[1]  = (xy + wz) * s[0];       out[2]  = (xz - wy) * s[0];       out[3]  = 0;
+    out[4]  = (xy - wz) * s[1];       out[5]  = (1 - (xx + zz)) * s[1]; out[6]  = (yz + wx) * s[1];       out[7]  = 0;
+    out[8]  = (xz + wy) * s[2];       out[9]  = (yz - wx) * s[2];       out[10] = (1 - (xx + yy)) * s[2]; out[11] = 0;
+    out[12] = t[0];                    out[13] = t[1];                    out[14] = t[2];                    out[15] = 1;
+
+    return out;
+  }
+
+  var _animScratch3 = [0, 0, 0];
+  var _animScratch4 = [0, 0, 0, 0];
+
+  function sceneScreenToRay(pointerX, pointerY, width, height, camera) {
+    var cam = sceneRenderCamera(camera);
+
+    var origin = { x: cam.x, y: cam.y, z: -cam.z };
+
+    var halfFov = (cam.fov * Math.PI) / 360;
+    var tanHalf = Math.tan(halfFov);
+    var minDim = Math.min(width, height) / 2;
+    var focal = minDim / tanHalf;
+
+    var dirCam = {
+      x: (pointerX - width / 2) / focal,
+      y: (height / 2 - pointerY) / focal,
+      z: 1.0,
+    };
+
+    var dirWorld = sceneRotatePoint(dirCam, cam.rotationX, cam.rotationY, cam.rotationZ);
+
+    var len = Math.sqrt(dirWorld.x * dirWorld.x + dirWorld.y * dirWorld.y + dirWorld.z * dirWorld.z);
+    if (len < 1e-12) {
+      return { origin: origin, dir: { x: 0, y: 0, z: 1 } };
+    }
+
+    return {
+      origin: origin,
+      dir: { x: dirWorld.x / len, y: dirWorld.y / len, z: dirWorld.z / len },
+    };
+  }
+
+  function sceneSegmentResolution(value) {
+    const segments = Math.round(sceneNumber(value, 12));
+    return Math.max(6, Math.min(24, segments));
+  }
+
+  function boxVertices(width, height, depth) {
+    const halfWidth = width / 2;
+    const halfHeight = height / 2;
+    const halfDepth = depth / 2;
+    return [
+      { x: -halfWidth, y: -halfHeight, z: -halfDepth },
+      { x: halfWidth, y: -halfHeight, z: -halfDepth },
+      { x: halfWidth, y: halfHeight, z: -halfDepth },
+      { x: -halfWidth, y: halfHeight, z: -halfDepth },
+      { x: -halfWidth, y: -halfHeight, z: halfDepth },
+      { x: halfWidth, y: -halfHeight, z: halfDepth },
+      { x: halfWidth, y: halfHeight, z: halfDepth },
+      { x: -halfWidth, y: halfHeight, z: halfDepth },
+    ];
+  }
+
+  const boxEdgePairs = [
+    [0, 1], [1, 2], [2, 3], [3, 0],
+    [4, 5], [5, 6], [6, 7], [7, 4],
+    [0, 4], [1, 5], [2, 6], [3, 7],
+  ];
+
+  function indexSegments(points, edgePairs) {
+    return edgePairs.map(function(edge) {
+      return [points[edge[0]], points[edge[1]]];
+    });
+  }
+
+  function boxSegments(object) {
+    return indexSegments(boxVertices(object.width, object.height, object.depth), boxEdgePairs);
+  }
+
+  function planeSegments(object) {
+    const vertices = boxVertices(object.width, 0, object.depth);
+    return indexSegments(vertices.slice(0, 4), [
+      [0, 1], [1, 2], [2, 3], [3, 0],
+    ]);
+  }
+
+  function pyramidSegments(object) {
+    const halfWidth = object.width / 2;
+    const halfDepth = object.depth / 2;
+    const halfHeight = object.height / 2;
+    const vertices = [
+      { x: -halfWidth, y: -halfHeight, z: -halfDepth },
+      { x: halfWidth, y: -halfHeight, z: -halfDepth },
+      { x: halfWidth, y: -halfHeight, z: halfDepth },
+      { x: -halfWidth, y: -halfHeight, z: halfDepth },
+      { x: 0, y: halfHeight, z: 0 },
+    ];
+    return indexSegments(vertices, [
+      [0, 1], [1, 2], [2, 3], [3, 0],
+      [0, 4], [1, 4], [2, 4], [3, 4],
+    ]);
+  }
+
+  function circleSegments(radius, axis, segments) {
+    const points = [];
+    for (let i = 0; i < segments; i += 1) {
+      const angle = (Math.PI * 2 * i) / segments;
+      points.push(circlePoint(radius, axis, angle));
+    }
+    const out = [];
+    for (let i = 0; i < points.length; i += 1) {
+      out.push([points[i], points[(i + 1) % points.length]]);
+    }
+    return out;
+  }
+
+  function circlePoint(radius, axis, angle) {
+    const sin = Math.sin(angle) * radius;
+    const cos = Math.cos(angle) * radius;
+    switch (axis) {
+      case "xy":
+        return { x: cos, y: sin, z: 0 };
+      case "yz":
+        return { x: 0, y: cos, z: sin };
+      default:
+        return { x: cos, y: 0, z: sin };
+    }
+  }
+
+  function sphereSegments(object) {
+    return []
+      .concat(circleSegments(object.radius, "xy", object.segments))
+      .concat(circleSegments(object.radius, "xz", object.segments))
+      .concat(circleSegments(object.radius, "yz", object.segments));
+  }
+
+  function lineSegments(object) {
+    const points = Array.isArray(object && object.points) ? object.points : [];
+    const segments = Array.isArray(object && object.lineSegments) ? object.lineSegments : [];
+    const out = [];
+    for (const pair of segments) {
+      if (!Array.isArray(pair) || pair.length < 2) {
+        continue;
+      }
+      const from = points[pair[0]];
+      const to = points[pair[1]];
+      if (!from || !to) {
+        continue;
+      }
+      out.push([from, to]);
+    }
+    return out;
+  }
+
+  function sceneObjectSegments(object) {
+    switch (object.kind) {
+      case "box":
+      case "cube":
+        return boxSegments(object);
+      case "lines":
+        return lineSegments(object);
+      case "plane":
+        return planeSegments(object);
+      case "pyramid":
+        return pyramidSegments(object);
+      case "sphere":
+        return sphereSegments(object);
+      default:
+        return boxSegments(object);
+    }
+  }
+
+  function scenePlaneLocalCorners(object) {
+    return boxVertices(
+      sceneNumber(object && object.width, 1),
+      0,
+      sceneNumber(object && object.depth, sceneNumber(object && object.height, 1)),
+    ).slice(0, 4);
+  }
+
+  function scenePlaneSurfaceCorners(object, timeSeconds) {
+    return scenePlaneLocalCorners(object).map(function(point) {
+      return translateScenePoint(point, object, timeSeconds);
+    });
+  }
+
+  function scenePlaneSurfacePositions(corners) {
+    if (!Array.isArray(corners) || corners.length < 4) {
+      return [];
+    }
+    return [
+      corners[0].x, corners[0].y, corners[0].z,
+      corners[1].x, corners[1].y, corners[1].z,
+      corners[2].x, corners[2].y, corners[2].z,
+      corners[0].x, corners[0].y, corners[0].z,
+      corners[2].x, corners[2].y, corners[2].z,
+      corners[3].x, corners[3].y, corners[3].z,
+    ];
+  }
+
+  function scenePlaneSurfaceUVs() {
+    return [
+      0, 1,
+      1, 1,
+      1, 0,
+      0, 1,
+      1, 0,
+      0, 0,
+    ];
+  }
+
+  function normalizeSceneMaterialKind(value) {
+    const kind = typeof value === "string" ? value.trim().toLowerCase() : "";
+    switch (kind) {
+      case "ghost":
+      case "glass":
+      case "glow":
+      case "matte":
+        return kind;
+      default:
+        return "flat";
+    }
+  }
+
+  function sceneDefaultMaterialOpacity(kind) {
+    switch (normalizeSceneMaterialKind(kind)) {
+      case "ghost":
+        return 0.42;
+      case "glass":
+        return 0.28;
+      case "glow":
+        return 0.92;
+      default:
+        return 1;
+    }
+  }
+
+  function sceneDefaultMaterialEmissive(kind) {
+    switch (normalizeSceneMaterialKind(kind)) {
+      case "ghost":
+        return 0.12;
+      case "glass":
+        return 0.08;
+      case "glow":
+        return 0.42;
+      default:
+        return 0;
+    }
+  }
+
+  function sceneDefaultMaterialBlendMode(kind) {
+    switch (normalizeSceneMaterialKind(kind)) {
+      case "ghost":
+      case "glass":
+        return "alpha";
+      case "glow":
+        return "additive";
+      default:
+        return "opaque";
+    }
+  }
+
+  function normalizeSceneMaterialBlendMode(value, kind, opacity) {
+    const mode = typeof value === "string" ? value.trim().toLowerCase() : "";
+    switch (mode) {
+      case "opaque":
+      case "solid":
+        return "opaque";
+      case "alpha":
+      case "transparent":
+      case "translucent":
+        return "alpha";
+      case "add":
+      case "additive":
+      case "glow":
+      case "emissive":
+        return "additive";
+      default: {
+        const fallback = sceneDefaultMaterialBlendMode(kind);
+        if (fallback !== "opaque") {
+          return fallback;
+        }
+        return opacity < 0.999 ? "alpha" : "opaque";
+      }
+    }
+  }
+
+  function normalizeSceneMaterialRenderPass(value, blendMode, opacity) {
+    const pass = typeof value === "string" ? value.trim().toLowerCase() : "";
+    switch (pass) {
+      case "opaque":
+      case "alpha":
+      case "additive":
+        return pass;
+      case "add":
+        return "additive";
+      case "transparent":
+      case "translucent":
+        return "alpha";
+      default:
+        if (blendMode === "additive") {
+          return "additive";
+        }
+        return blendMode === "alpha" || opacity < 0.999 ? "alpha" : "opaque";
+    }
+  }
+
+  function sceneObjectMaterialSource(item) {
+    return item && item.material && typeof item.material === "object" ? item.material : null;
+  }
+
+  function sceneObjectMaterialKindValue(item) {
+    if (!item || typeof item !== "object") {
+      return "";
+    }
+    if (typeof item.material === "string" && item.material.trim()) {
+      return item.material.trim();
+    }
+    if (typeof item.materialKind === "string" && item.materialKind.trim()) {
+      return item.materialKind.trim();
+    }
+    const material = sceneObjectMaterialSource(item);
+    if (material && typeof material.kind === "string" && material.kind.trim()) {
+      return material.kind.trim();
+    }
+    return "";
+  }
+
+  function sceneObjectMaterialValue(item, name) {
+    if (!item || typeof item !== "object") {
+      return undefined;
+    }
+    const material = sceneObjectMaterialSource(item);
+    if (material && Object.prototype.hasOwnProperty.call(material, name)) {
+      return material[name];
+    }
+    return Object.prototype.hasOwnProperty.call(item, name) ? item[name] : undefined;
+  }
+
+  function sceneObjectMaterialHasValue(item, name) {
+    if (!item || typeof item !== "object") {
+      return false;
+    }
+    const material = sceneObjectMaterialSource(item);
+    if (material && Object.prototype.hasOwnProperty.call(material, name)) {
+      return true;
+    }
+    return Object.prototype.hasOwnProperty.call(item, name);
+  }
+
+  function sceneObjectBlendModeValue(item) {
+    const direct = sceneObjectMaterialValue(item, "blendMode");
+    if (direct !== undefined) {
+      return direct;
+    }
+    const material = sceneObjectMaterialSource(item);
+    if (material && Object.prototype.hasOwnProperty.call(material, "blend")) {
+      return material.blend;
+    }
+    return item && Object.prototype.hasOwnProperty.call(item, "blend") ? item.blend : undefined;
+  }
+
+  function sceneObjectBlendModeHasValue(item) {
+    if (!item || typeof item !== "object") {
+      return false;
+    }
+    if (sceneObjectMaterialHasValue(item, "blendMode")) {
+      return true;
+    }
+    const material = sceneObjectMaterialSource(item);
+    if (material && Object.prototype.hasOwnProperty.call(material, "blend")) {
+      return true;
+    }
+    return Object.prototype.hasOwnProperty.call(item, "blend");
+  }
+
+  function sceneObjectMaterialProfile(object) {
+    const kind = normalizeSceneMaterialKind(object && object.materialKind);
+    const opacity = clamp01(sceneNumber(object && object.opacity, sceneDefaultMaterialOpacity(kind)));
+    const profile = {
+      kind,
+      color: object && typeof object.color === "string" && object.color ? object.color : "#8de1ff",
+      texture: object && typeof object.texture === "string" ? object.texture.trim() : "",
+      opacity,
+      wireframe: sceneBool(object && object.wireframe, true),
+      blendMode: normalizeSceneMaterialBlendMode(object && object.blendMode, kind, opacity),
+      emissive: clamp01(sceneNumber(object && object.emissive, sceneDefaultMaterialEmissive(kind))),
+    };
+    profile.renderPass = normalizeSceneMaterialRenderPass(object && object.renderPass, profile.blendMode, profile.opacity);
+    profile.key = sceneMaterialProfileKey(profile);
+    profile.shaderData = sceneMaterialShaderData(profile);
+    return profile;
+  }
+
+  function sceneMaterialProfileKey(profile) {
+    return [
+      normalizeSceneMaterialKind(profile && profile.kind),
+      String(profile && profile.color || ""),
+      String(profile && profile.texture || ""),
+      clamp01(sceneNumber(profile && profile.opacity, 1)).toFixed(3),
+      String(sceneBool(profile && profile.wireframe, true)),
+      String(profile && profile.blendMode || "opaque"),
+      String(profile && profile.renderPass || "opaque"),
+      clamp01(sceneNumber(profile && profile.emissive, 0)).toFixed(3),
+    ].join("|");
+  }
+
+  function sceneBundleMaterialIndex(bundle, materialLookup, profile) {
+    if (!bundle || !Array.isArray(bundle.materials)) {
+      return 0;
+    }
+    const key = profile && profile.key ? profile.key : sceneMaterialProfileKey(profile);
+    if (materialLookup && materialLookup.has(key)) {
+      return materialLookup.get(key);
+    }
+    const index = bundle.materials.length;
+    bundle.materials.push(profile);
+    if (materialLookup) {
+      materialLookup.set(key, index);
+    }
+    return index;
+  }
+
+  function sceneMaterialStrokeColor(material) {
+    const rgba = sceneColorRGBA(material && material.color, [0.55, 0.88, 1, 1]);
+    rgba[3] = clamp01(rgba[3] * sceneMaterialOpacity(material));
+    return "rgba(" +
+      Math.round(rgba[0] * 255) + ", " +
+      Math.round(rgba[1] * 255) + ", " +
+      Math.round(rgba[2] * 255) + ", " +
+      rgba[3].toFixed(3) + ")";
+  }
+
+  function sceneMaterialOpacity(material) {
+    if (!material || typeof material !== "object") {
+      return 1;
+    }
+    return clamp01(sceneNumber(material.opacity, 1));
+  }
+
+  function sceneMaterialEmissive(material) {
+    if (!material || typeof material !== "object") {
+      return 0;
+    }
+    return clamp01(sceneNumber(material.emissive, 0));
+  }
+
+  function sceneMaterialUsesAlpha(material) {
+    return sceneMaterialRenderPass(material) !== "opaque";
+  }
+
+  function sceneMaterialRenderPass(material) {
+    if (!material || typeof material !== "object") {
+      return "opaque";
+    }
+    const renderPass = String(material.renderPass || "").toLowerCase();
+    if (renderPass === "opaque" || renderPass === "alpha" || renderPass === "additive") {
+      return renderPass;
+    }
+    const blendMode = String(material.blendMode || "").toLowerCase();
+    if (blendMode === "additive") {
+      return "additive";
+    }
+    if (blendMode === "alpha" || sceneMaterialOpacity(material) < 0.999) {
+      return "alpha";
+    }
+    return "opaque";
+  }
+
+  function sceneMaterialShaderData(material) {
+    if (material && Array.isArray(material.shaderData) && material.shaderData.length >= 3) {
+      return [
+        sceneNumber(material.shaderData[0], 0),
+        sceneNumber(material.shaderData[1], 0),
+        sceneNumber(material.shaderData[2], 1),
+      ];
+    }
+    if (!material || typeof material !== "object") {
+      return [0, 0, 1];
+    }
+    const kind = String(material.kind || "").toLowerCase();
+    switch (kind) {
+    case "ghost":
+      return [1, sceneMaterialEmissive(material), 0.3];
+    case "glass":
+      return [2, sceneMaterialEmissive(material), 0.7];
+    case "glow":
+      return [3, sceneMaterialEmissive(material), 1];
+    case "matte":
+      return [4, sceneMaterialEmissive(material), 0.2];
+    default:
+      return [0, sceneMaterialEmissive(material), 1];
+    }
+  }
+
+  function sceneFallbackMaterialData(vertexCount) {
+    const values = new Float32Array(vertexCount * 3);
+    for (let i = 0; i < vertexCount; i += 1) {
+      values[i * 3 + 2] = 1;
+    }
+    return values;
+  }
+
+  function sceneLightingActive(lights, environment) {
+    return Boolean(
+      (Array.isArray(lights) && lights.length > 0) ||
+      sceneNumber(environment && environment.ambientIntensity, 0) > 0 ||
+      sceneNumber(environment && environment.skyIntensity, 0) > 0 ||
+      sceneNumber(environment && environment.groundIntensity, 0) > 0
+    );
+  }
+
+  function sceneEnvironmentLightContribution(baseColor, normal, environment) {
+    let lighting = { x: 0, y: 0, z: 0 };
+    if (sceneNumber(environment && environment.ambientIntensity, 0) > 0) {
+      lighting = sceneAddPoint(lighting, sceneMultiplyPoint(
+        baseColor,
+        sceneScalePoint(sceneColorPoint(environment && environment.ambientColor, { x: 1, y: 1, z: 1 }), sceneNumber(environment && environment.ambientIntensity, 0)),
+      ));
+    }
+    if (sceneNumber(environment && environment.skyIntensity, 0) > 0 || sceneNumber(environment && environment.groundIntensity, 0) > 0) {
+      const hemi = clamp01((normal.y * 0.5) + 0.5);
+      const sky = sceneScalePoint(sceneColorPoint(environment && environment.skyColor, { x: 0.88, y: 0.94, z: 1 }), sceneNumber(environment && environment.skyIntensity, 0) * hemi);
+      const ground = sceneScalePoint(sceneColorPoint(environment && environment.groundColor, { x: 0.12, y: 0.16, z: 0.22 }), sceneNumber(environment && environment.groundIntensity, 0) * (1 - hemi));
+      lighting = sceneAddPoint(lighting, sceneMultiplyPoint(baseColor, sceneAddPoint(sky, ground)));
+    }
+    return lighting;
+  }
+
+  function sceneAmbientLightContribution(baseColor, light) {
+    return sceneMultiplyPoint(
+      baseColor,
+      sceneScalePoint(sceneColorPoint(light && light.color, { x: 1, y: 1, z: 1 }), sceneNumber(light && light.intensity, 0)),
+    );
+  }
+
+  function sceneDirectionalLightContribution(baseColor, normal, light) {
+    const direction = sceneNormalizePoint({
+      x: -sceneNumber(light && light.directionX, 0),
+      y: -sceneNumber(light && light.directionY, -1),
+      z: -sceneNumber(light && light.directionZ, 0),
+    });
+    const diffuse = clamp01(sceneDotPoint(normal, direction));
+    if (diffuse <= 0) {
+      return { x: 0, y: 0, z: 0 };
+    }
+    return sceneMultiplyPoint(
+      baseColor,
+      sceneScalePoint(sceneColorPoint(light && light.color, { x: 1, y: 1, z: 1 }), sceneNumber(light && light.intensity, 0) * diffuse),
+    );
+  }
+
+  function scenePointLightContribution(baseColor, worldPoint, normal, light) {
+    const offset = {
+      x: sceneNumber(light && light.x, 0) - sceneNumber(worldPoint && worldPoint.x, 0),
+      y: sceneNumber(light && light.y, 0) - sceneNumber(worldPoint && worldPoint.y, 0),
+      z: sceneNumber(light && light.z, 0) - sceneNumber(worldPoint && worldPoint.z, 0),
+    };
+    const distance = Math.max(0.0001, scenePointLength(offset));
+    const diffuse = clamp01(sceneDotPoint(normal, sceneScalePoint(offset, 1 / distance)));
+    if (diffuse <= 0) {
+      return { x: 0, y: 0, z: 0 };
+    }
+    const attenuation = scenePointLightAttenuation(light, distance);
+    if (attenuation <= 0) {
+      return { x: 0, y: 0, z: 0 };
+    }
+    return sceneMultiplyPoint(
+      baseColor,
+      sceneScalePoint(sceneColorPoint(light && light.color, { x: 1, y: 1, z: 1 }), sceneNumber(light && light.intensity, 0) * diffuse * attenuation),
+    );
+  }
+
+  function sceneLightContribution(baseColor, worldPoint, normal, light) {
+    switch (light && light.kind) {
+      case "ambient":
+        return sceneAmbientLightContribution(baseColor, light);
+      case "directional":
+        return sceneDirectionalLightContribution(baseColor, normal, light);
+      case "point":
+        return scenePointLightContribution(baseColor, worldPoint, normal, light);
+      default:
+        return { x: 0, y: 0, z: 0 };
+    }
+  }
+
+  function sceneLitColorRGBA(material, worldPoint, normal, lights, environment) {
+    const base = sceneColorRGBA(material && material.color, [0.55, 0.88, 1, 1]);
+    if (!sceneLightingActive(lights, environment)) {
+      return base;
+    }
+    const safeNormal = sceneSafeNormal(normal);
+    const baseColor = { x: base[0], y: base[1], z: base[2] };
+    const emissive = clamp01(sceneMaterialEmissive(material));
+    let lighting = sceneEnvironmentLightContribution(baseColor, safeNormal, environment);
+    for (const light of Array.isArray(lights) ? lights : []) {
+      lighting = sceneAddPoint(lighting, sceneLightContribution(baseColor, worldPoint, safeNormal, light));
+    }
+    const exposure = sceneNumber(environment && environment.exposure, 1);
+    let lit = sceneAddPoint(
+      sceneScalePoint(baseColor, emissive),
+      sceneScalePoint(lighting, exposure),
+    );
+    lit = sceneAddPoint(lit, sceneScalePoint(baseColor, 0.06));
+    return [clamp01(lit.x), clamp01(lit.y), clamp01(lit.z), base[3]];
+  }
+
+  function sceneObjectWorldNormal(object, point, timeSeconds) {
+    return sceneNormalizePoint(sceneRotatePoint(
+      sceneObjectLocalNormal(object, point),
+      sceneNumber(object && object.rotationX, 0) + sceneNumber(object && object.spinX, 0) * timeSeconds,
+      sceneNumber(object && object.rotationY, 0) + sceneNumber(object && object.spinY, 0) * timeSeconds,
+      sceneNumber(object && object.rotationZ, 0) + sceneNumber(object && object.spinZ, 0) * timeSeconds,
+    ));
+  }
+
+  function sceneObjectLocalNormal(object, point) {
+    const safePoint = point && typeof point === "object" ? point : { x: 0, y: 0, z: 0 };
+    switch (object && object.kind) {
+      case "lines":
+        return sceneBoxNormal(object, safePoint);
+      case "plane":
+        return { x: 0, y: 1, z: 0 };
+      case "sphere":
+        return sceneNormalizePoint(safePoint);
+      case "pyramid":
+        return scenePyramidNormal(object, safePoint);
+      default:
+        return sceneBoxNormal(object, safePoint);
+    }
+  }
+
+  function scenePyramidNormal(object, point) {
+    const width = Math.max(sceneNumber(object && object.width, object && object.size) / 2, 0.0001);
+    const height = Math.max(sceneNumber(object && object.height, object && object.size) / 2, 0.0001);
+    const depth = Math.max(sceneNumber(object && object.depth, object && object.size) / 2, 0.0001);
+    return sceneNormalizePoint({
+      x: sceneNumber(point && point.x, 0) / width,
+      y: (sceneNumber(point && point.y, 0) / height) + 0.35,
+      z: sceneNumber(point && point.z, 0) / depth,
+    });
+  }
+
+  function sceneBoxNormal(object, point) {
+    const width = Math.max(sceneNumber(object && object.width, object && object.size) / 2, 0.0001);
+    const height = Math.max(sceneNumber(object && object.height, object && object.size) / 2, 0.0001);
+    const depth = Math.max(sceneNumber(object && object.depth, object && object.size) / 2, 0.0001);
+    const x = sceneNumber(point && point.x, 0);
+    const y = sceneNumber(point && point.y, 0);
+    const z = sceneNumber(point && point.z, 0);
+    const ax = Math.abs(x / width);
+    const ay = Math.abs(y / height);
+    const az = Math.abs(z / depth);
+    if (ax >= ay && ax >= az) {
+      return { x: Math.sign(x) || 1, y: 0, z: 0 };
+    }
+    if (ay >= az) {
+      return { x: 0, y: Math.sign(y) || 1, z: 0 };
+    }
+    return { x: 0, y: 0, z: Math.sign(z) || 1 };
+  }
+
+  function scenePointLightAttenuation(light, distance) {
+    const range = Math.max(0, sceneNumber(light && light.range, 0));
+    const decay = Math.max(0.1, sceneNumber(light && light.decay, 1.35));
+    if (range > 0) {
+      return Math.pow(clamp01(1 - (distance / range)), decay);
+    }
+    return 1 / (1 + Math.pow(distance * 0.35, Math.max(decay, 1)));
+  }
+
   function buildSceneWorldDrawPlan(bundle, scratch) {
     const objects = Array.isArray(bundle.objects) ? bundle.objects : [];
     const materials = Array.isArray(bundle.materials) ? bundle.materials : [];
@@ -6986,10 +8165,13 @@
   }
 
   function collectSceneWorldDrawObject(drawScratch, bundle, materials, object, order) {
-    if (!sceneWorldObjectRenderable(object)) {
+    if (!sceneWorldObjectRenderable(object, bundle && bundle.camera)) {
       return;
     }
     const material = materials[object.materialIndex] || null;
+    if (!sceneWorldObjectUsesLinePass(object, material)) {
+      return;
+    }
     const renderPass = sceneWorldObjectRenderPass(object, material);
     if (renderPass === "additive" || renderPass === "alpha") {
       collectSceneWorldTranslucentObject(drawScratch, bundle, object, material, renderPass, order);
@@ -6998,14 +8180,18 @@
     collectSceneWorldOpaqueObject(drawScratch, bundle, object, material);
   }
 
-  function sceneWorldObjectRenderable(object) {
+  function sceneWorldObjectRenderable(object, camera) {
     return Boolean(
       object &&
       Number.isFinite(object.vertexOffset) &&
       Number.isFinite(object.vertexCount) &&
       object.vertexCount > 0 &&
-      !sceneWorldObjectCulled(object)
+      !sceneWorldObjectCulled(object, camera)
     );
+  }
+
+  function sceneWorldObjectUsesLinePass(object, material) {
+    return !(object && object.kind === "plane" && material && typeof material.texture === "string" && material.texture.trim() !== "" && !sceneBool(material.wireframe, true));
   }
 
   function collectSceneWorldOpaqueObject(drawScratch, bundle, object, material) {
@@ -7036,7 +8222,7 @@
     const typedAlphaPlan = createSceneWorldPassPlan(bundle.worldPositions, bundle.worldColors, drawScratch.alphaEntries, drawScratch.alphaPlan);
     const typedAdditivePlan = createSceneWorldPassPlan(bundle.worldPositions, bundle.worldColors, drawScratch.additiveEntries, drawScratch.additivePlan);
     const plan = drawScratch.plan;
-    plan.staticOpaqueKey = sceneStaticDrawKey(drawScratch.staticOpaqueObjects, drawScratch.staticOpaqueMaterialProfiles, bundle.camera);
+    plan.staticOpaqueKey = sceneStaticDrawKey(bundle, drawScratch.staticOpaqueObjects, drawScratch.staticOpaqueMaterialProfiles, bundle.camera);
     plan.staticOpaquePositions = typedStaticOpaque.positions;
     plan.staticOpaqueColors = typedStaticOpaque.colors;
     plan.staticOpaqueMaterials = typedStaticOpaque.materials;
@@ -7110,6 +8296,9 @@
   }
 
   function sceneWorldObjectDepth(sourcePositions, object, camera) {
+    if (object && object.bounds) {
+      return sceneBoundsDepthMetrics(object.bounds, camera).center;
+    }
     if (object && Number.isFinite(object.depthCenter)) {
       return sceneNumber(object.depthCenter, sceneWorldPointDepth(0, camera));
     }
@@ -7118,18 +8307,25 @@
     if (!vertexCount) {
       return sceneWorldPointDepth(0, camera);
     }
-    const start = vertexOffset * 3 + 2;
+    const start = vertexOffset * 3;
     const end = start + vertexCount * 3;
     let depth = 0;
     let count = 0;
     for (let i = start; i < end; i += 3) {
-      depth += sceneNumber(sourcePositions[i], 0);
+      depth += sceneWorldPointDepth({
+        x: sceneNumber(sourcePositions[i], 0),
+        y: sceneNumber(sourcePositions[i + 1], 0),
+        z: sceneNumber(sourcePositions[i + 2], 0),
+      }, camera);
       count += 1;
     }
-    return depth / Math.max(1, count) + sceneWorldPointDepth(0, camera);
+    return depth / Math.max(1, count);
   }
 
-  function sceneWorldObjectCulled(object) {
+  function sceneWorldObjectCulled(object, camera) {
+    if (object && object.bounds) {
+      return sceneBoundsViewCulled(object.bounds, camera);
+    }
     return Boolean(object && object.viewCulled);
   }
 
@@ -7228,70 +8424,11 @@
     return buffer;
   }
 
-  function sceneWorldPointDepth(z, camera) {
-    return sceneNumber(z, 0) + sceneNumber(camera && camera.z, 6);
-  }
-
-  function sceneMaterialOpacity(material) {
-    if (!material || typeof material !== "object") {
-      return 1;
+  function sceneWorldPointDepth(pointOrZ, camera) {
+    if (pointOrZ && typeof pointOrZ === "object") {
+      return sceneCameraLocalPoint(pointOrZ, camera).z;
     }
-    return clamp01(sceneNumber(material.opacity, 1));
-  }
-
-  function sceneMaterialEmissive(material) {
-    if (!material || typeof material !== "object") {
-      return 0;
-    }
-    return clamp01(sceneNumber(material.emissive, 0));
-  }
-
-  function sceneMaterialUsesAlpha(material) {
-    return sceneMaterialRenderPass(material) !== "opaque";
-  }
-
-  function sceneMaterialRenderPass(material) {
-    if (!material || typeof material !== "object") {
-      return "opaque";
-    }
-    const renderPass = String(material.renderPass || "").toLowerCase();
-    if (renderPass === "opaque" || renderPass === "alpha" || renderPass === "additive") {
-      return renderPass;
-    }
-    const blendMode = String(material.blendMode || "").toLowerCase();
-    if (blendMode === "additive") {
-      return "additive";
-    }
-    if (blendMode === "alpha" || sceneMaterialOpacity(material) < 0.999) {
-      return "alpha";
-    }
-    return "opaque";
-  }
-
-  function sceneMaterialShaderData(material) {
-    if (material && Array.isArray(material.shaderData) && material.shaderData.length >= 3) {
-      return [
-        sceneNumber(material.shaderData[0], 0),
-        sceneNumber(material.shaderData[1], 0),
-        sceneNumber(material.shaderData[2], 1),
-      ];
-    }
-    if (!material || typeof material !== "object") {
-      return [0, 0, 1];
-    }
-    const kind = String(material.kind || "").toLowerCase();
-    switch (kind) {
-    case "ghost":
-      return [1, sceneMaterialEmissive(material), 0.3];
-    case "glass":
-      return [2, sceneMaterialEmissive(material), 0.7];
-    case "glow":
-      return [3, sceneMaterialEmissive(material), 1];
-    case "matte":
-      return [4, sceneMaterialEmissive(material), 0.2];
-    default:
-      return [0, sceneMaterialEmissive(material), 1];
-    }
+    return sceneCameraLocalPoint({ x: 0, y: 0, z: sceneNumber(pointOrZ, 0) }, camera).z;
   }
 
   function sceneWorldObjectRenderPass(object, material) {
@@ -7302,23 +8439,21 @@
     return sceneMaterialRenderPass(material);
   }
 
-  function sceneFallbackMaterialData(vertexCount) {
-    const values = new Float32Array(vertexCount * 3);
-    for (let i = 0; i < vertexCount; i += 1) {
-      values[i * 3 + 2] = 1;
-    }
-    return values;
-  }
-
-  function clamp01(value) {
-    return Math.max(0, Math.min(1, value));
-  }
-
-  function sceneStaticDrawKey(objects, materials, camera) {
+  function sceneStaticDrawKey(bundle, objects, materials, camera) {
     let hash = 2166136261 >>> 0;
     hash = sceneHashCamera(hash, camera);
     for (const object of objects) {
+      const material = object && object.materialIndex >= 0 && object.materialIndex < materials.length ? materials[object.materialIndex] : null;
+      if (!sceneWorldObjectUsesLinePass(object, material)) {
+        continue;
+      }
       hash = sceneHashStaticObject(hash, object);
+      const start = Math.max(0, Math.floor(sceneNumber(object && object.vertexOffset, 0))) * 4;
+      const end = start + Math.max(0, Math.floor(sceneNumber(object && object.vertexCount, 0))) * 4;
+      const colors = bundle && bundle.worldColors;
+      for (let index = start; index < end; index += 1) {
+        hash = sceneHashNumber(hash, sceneNumber(colors && colors[index], 0));
+      }
     }
     for (const material of materials) {
       hash = sceneHashMaterialProfile(hash, material);
@@ -7330,6 +8465,9 @@
     hash = sceneHashNumber(hash, sceneNumber(camera && camera.x, 0));
     hash = sceneHashNumber(hash, sceneNumber(camera && camera.y, 0));
     hash = sceneHashNumber(hash, sceneNumber(camera && camera.z, 6));
+    hash = sceneHashNumber(hash, sceneNumber(camera && camera.rotationX, 0));
+    hash = sceneHashNumber(hash, sceneNumber(camera && camera.rotationY, 0));
+    hash = sceneHashNumber(hash, sceneNumber(camera && camera.rotationZ, 0));
     hash = sceneHashNumber(hash, sceneNumber(camera && camera.fov, 75));
     hash = sceneHashNumber(hash, sceneNumber(camera && camera.near, 0.05));
     return sceneHashNumber(hash, sceneNumber(camera && camera.far, 128));
@@ -7353,7 +8491,7 @@
     ["maxY", 0],
     ["maxZ", 0],
   ];
-  const sceneMaterialStringFields = ["kind", "color", "blendMode", "renderPass"];
+  const sceneMaterialStringFields = ["kind", "color", "texture", "blendMode", "renderPass"];
   const sceneMaterialNumberFields = [
     ["opacity", 1],
     ["emissive", 0],
@@ -7417,92 +8555,4745 @@
     return hash;
   }
 
-  function createSceneWebGLProgram(gl) {
-    const vertexSource = [
-      "attribute vec3 a_position;",
-      "attribute vec4 a_color;",
-      "attribute vec3 a_material;",
-      "uniform vec4 u_camera;",
-      "uniform float u_aspect;",
-      "uniform float u_use_perspective;",
-      "varying vec4 v_color;",
-      "varying vec3 v_material;",
-      "void main() {",
-      "  vec4 clip = vec4(a_position.xy, 0.0, 1.0);",
-      "  if (u_use_perspective > 0.5) {",
-      "    float depth = a_position.z + u_camera.z;",
-      "    if (depth <= 0.001) {",
-      "      clip = vec4(2.0, 2.0, 0.0, 1.0);",
-      "    } else {",
-      "      float focal = 1.0 / tan(radians(u_camera.w) * 0.5);",
-      "      vec2 projected = vec2((a_position.x - u_camera.x) * focal / depth, (a_position.y - u_camera.y) * focal / depth);",
-      "      projected.x /= max(u_aspect, 0.0001);",
-      "      float clipDepth = clamp(depth / 128.0, 0.0, 1.0) * 2.0 - 1.0;",
-      "      clip = vec4(projected, clipDepth, 1.0);",
-      "    }",
-      "  }",
-      "  gl_Position = clip;",
-      "  v_color = a_color;",
-      "  v_material = a_material;",
-      "}",
-    ].join("\n");
-    const fragmentSource = [
-      "precision mediump float;",
-      "varying vec4 v_color;",
-      "varying vec3 v_material;",
-      "void main() {",
-      "  vec4 color = v_color;",
-      "  float kind = floor(v_material.x + 0.5);",
-      "  float emissive = max(v_material.y, 0.0);",
-      "  float tone = clamp(v_material.z, 0.0, 1.0);",
-      "  if (kind > 3.5) {",
-      "    color.rgb *= mix(0.78, 1.0, tone);",
-      "  } else if (kind > 2.5) {",
-      "    color.rgb *= 1.0 + emissive * 0.75;",
-      "  } else if (kind > 1.5) {",
-      "    color.rgb = mix(color.rgb, vec3(0.92, 0.98, 1.0), 0.28 + tone * 0.16);",
-      "    color.a *= 0.84;",
-      "  } else if (kind > 0.5) {",
-      "    color.rgb = mix(color.rgb, vec3(0.84, 0.94, 1.0), 0.18 + tone * 0.12);",
-      "    color.a *= 0.9;",
-      "  } else {",
-      "    color.rgb *= mix(0.9, 1.0, tone);",
-      "  }",
-      "  gl_FragColor = vec4(clamp(color.rgb, 0.0, 1.0), clamp(color.a, 0.0, 1.0));",
-      "}",
-    ].join("\n");
+  var SCENE_POST_TONE_MAPPING = "toneMapping";
+  var SCENE_POST_BLOOM = "bloom";
+  var SCENE_POST_VIGNETTE = "vignette";
+  var SCENE_POST_COLOR_GRADE = "colorGrade";
 
-    const vertexShader = createSceneShader(gl, gl.VERTEX_SHADER, vertexSource);
-    const fragmentShader = createSceneShader(gl, gl.FRAGMENT_SHADER, fragmentSource);
-    if (!vertexShader || !fragmentShader) {
-      return null;
-    }
+  const SCENE_PBR_VERTEX_SOURCE = [
+    "#version 300 es",
+    "precision highp float;",
+    "",
+    "in vec3 a_position;",
+    "in vec3 a_normal;",
+    "in vec2 a_uv;",
+    "in vec4 a_tangent;",
+    "",
+    "uniform mat4 u_viewMatrix;",
+    "uniform mat4 u_projectionMatrix;",
+    "",
+    "out vec3 v_worldPosition;",
+    "out vec3 v_normal;",
+    "out vec2 v_uv;",
+    "out vec3 v_tangent;",
+    "out vec3 v_bitangent;",
+    "",
+    "void main() {",
+    "    v_worldPosition = a_position;",
+    "    v_normal = normalize(a_normal);",
+    "    v_uv = a_uv;",
+    "",
+    "    vec3 T = normalize(a_tangent.xyz);",
+    "    vec3 N = v_normal;",
+    "    vec3 B = cross(N, T) * a_tangent.w;",
+    "    v_tangent = T;",
+    "    v_bitangent = B;",
+    "",
+    "    gl_Position = u_projectionMatrix * u_viewMatrix * vec4(a_position, 1.0);",
+    "}",
+  ].join("\n");
 
-    const program = gl.createProgram();
-    gl.attachShader(program, vertexShader);
-    gl.attachShader(program, fragmentShader);
-    gl.linkProgram(program);
-    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
-      console.warn("[gosx] Scene3D WebGL link failed");
-      return null;
-    }
-    return program;
+  const SCENE_PBR_FRAGMENT_SOURCE = [
+    "#version 300 es",
+    "precision highp float;",
+    "",
+    "in vec3 v_worldPosition;",
+    "in vec3 v_normal;",
+    "in vec2 v_uv;",
+    "in vec3 v_tangent;",
+    "in vec3 v_bitangent;",
+    "",
+    "// Camera",
+    "uniform vec3 u_cameraPosition;",
+    "",
+    "// Material",
+    "uniform vec3 u_albedo;",
+    "uniform float u_roughness;",
+    "uniform float u_metalness;",
+    "uniform float u_emissive;",
+    "uniform float u_opacity;",
+    "uniform bool u_unlit;",
+    "",
+    "// Texture maps",
+    "uniform sampler2D u_albedoMap;",
+    "uniform sampler2D u_normalMap;",
+    "uniform sampler2D u_roughnessMap;",
+    "uniform sampler2D u_metalnessMap;",
+    "uniform sampler2D u_emissiveMap;",
+    "uniform bool u_hasAlbedoMap;",
+    "uniform bool u_hasNormalMap;",
+    "uniform bool u_hasRoughnessMap;",
+    "uniform bool u_hasMetalnessMap;",
+    "uniform bool u_hasEmissiveMap;",
+    "",
+    "// Lights (max 8)",
+    "uniform int u_lightCount;",
+    "uniform int u_lightTypes[8];",
+    "uniform vec3 u_lightPositions[8];",
+    "uniform vec3 u_lightDirections[8];",
+    "uniform vec3 u_lightColors[8];",
+    "uniform float u_lightIntensities[8];",
+    "uniform float u_lightRanges[8];",
+    "uniform float u_lightDecays[8];",
+    "",
+    "// Environment",
+    "uniform vec3 u_ambientColor;",
+    "uniform float u_ambientIntensity;",
+    "uniform vec3 u_skyColor;",
+    "uniform float u_skyIntensity;",
+    "uniform vec3 u_groundColor;",
+    "uniform float u_groundIntensity;",
+    "",
+    "// Shadow maps (max 2 directional lights)",
+    "uniform sampler2D u_shadowMap0;",
+    "uniform mat4 u_lightSpaceMatrix0;",
+    "uniform bool u_hasShadow0;",
+    "uniform float u_shadowBias0;",
+    "",
+    "uniform sampler2D u_shadowMap1;",
+    "uniform mat4 u_lightSpaceMatrix1;",
+    "uniform bool u_hasShadow1;",
+    "uniform float u_shadowBias1;",
+    "",
+    "// Per-object shadow receive control",
+    "uniform bool u_receiveShadow;",
+    "",
+    "// Shadow-casting light indices — maps shadow slot to light array index.",
+    "uniform int u_shadowLightIndex0;",
+    "uniform int u_shadowLightIndex1;",
+    "",
+    "// Tone mapping control — disabled when post-processing handles it.",
+    "uniform bool u_toneMap;",
+    "",
+    "// Fog",
+    "uniform bool u_hasFog;",
+    "uniform float u_fogDensity;",
+    "uniform vec3 u_fogColor;",
+    "",
+    "out vec4 fragColor;",
+    "",
+    "const float PI = 3.14159265359;",
+    "",
+    "// 4-tap Poisson disk PCF shadow sampling.",
+    "float shadowFactor(sampler2D shadowMap, mat4 lightSpaceMatrix, float bias) {",
+    "    vec4 lightSpacePos = lightSpaceMatrix * vec4(v_worldPosition, 1.0);",
+    "    vec3 projCoords = lightSpacePos.xyz / lightSpacePos.w;",
+    "    projCoords = projCoords * 0.5 + 0.5;",
+    "",
+    "    if (projCoords.z > 1.0) return 1.0;",
+    "",
+    "    float shadow = 0.0;",
+    "    float texelSize = 1.0 / float(textureSize(shadowMap, 0).x);",
+    "    vec2 poissonDisk[4] = vec2[](",
+    "        vec2(-0.94201624, -0.39906216),",
+    "        vec2(0.94558609, -0.76890725),",
+    "        vec2(-0.094184101, -0.92938870),",
+    "        vec2(0.34495938, 0.29387760)",
+    "    );",
+    "",
+    "    for (int i = 0; i < 4; i++) {",
+    "        float depth = texture(shadowMap, projCoords.xy + poissonDisk[i] * texelSize).r;",
+    "        shadow += (projCoords.z - bias > depth) ? 0.0 : 1.0;",
+    "    }",
+    "    return shadow / 4.0;",
+    "}",
+    "",
+    "// GGX/Trowbridge-Reitz normal distribution function.",
+    "float distributionGGX(vec3 N, vec3 H, float roughness) {",
+    "    float a = roughness * roughness;",
+    "    float a2 = a * a;",
+    "    float NdotH = max(dot(N, H), 0.0);",
+    "    float NdotH2 = NdotH * NdotH;",
+    "    float denom = NdotH2 * (a2 - 1.0) + 1.0;",
+    "    denom = PI * denom * denom;",
+    "    return a2 / max(denom, 0.0000001);",
+    "}",
+    "",
+    "// Smith geometry function (GGX variant) — single direction.",
+    "float geometrySchlickGGX(float NdotV, float roughness) {",
+    "    float r = roughness + 1.0;",
+    "    float k = (r * r) / 8.0;",
+    "    return NdotV / (NdotV * (1.0 - k) + k);",
+    "}",
+    "",
+    "// Smith geometry function — combined for view and light directions.",
+    "float geometrySmith(vec3 N, vec3 V, vec3 L, float roughness) {",
+    "    float NdotV = max(dot(N, V), 0.0);",
+    "    float NdotL = max(dot(N, L), 0.0);",
+    "    return geometrySchlickGGX(NdotV, roughness) * geometrySchlickGGX(NdotL, roughness);",
+    "}",
+    "",
+    "// Schlick fresnel approximation.",
+    "vec3 fresnelSchlick(float cosTheta, vec3 F0) {",
+    "    return F0 + (1.0 - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);",
+    "}",
+    "",
+    "// Point light distance attenuation.",
+    "float pointLightAttenuation(float distance, float range, float decay) {",
+    "    if (range > 0.0) {",
+    "        float ratio = clamp(1.0 - pow(distance / range, 4.0), 0.0, 1.0);",
+    "        return ratio * ratio / max(distance * distance, 0.0001);",
+    "    }",
+    "    return 1.0 / max(pow(distance, decay), 0.0001);",
+    "}",
+    "",
+    "void main() {",
+    "    // Resolve material properties, sampling textures when available.",
+    "    vec3 albedo = u_albedo;",
+    "    if (u_hasAlbedoMap) {",
+    "        vec4 texAlbedo = texture(u_albedoMap, v_uv);",
+    "        albedo *= texAlbedo.rgb;",
+    "    }",
+    "",
+    "    float roughness = u_roughness;",
+    "    if (u_hasRoughnessMap) {",
+    "        roughness *= texture(u_roughnessMap, v_uv).g;",
+    "    }",
+    "    roughness = clamp(roughness, 0.04, 1.0);",
+    "",
+    "    float metalness = u_metalness;",
+    "    if (u_hasMetalnessMap) {",
+    "        metalness *= texture(u_metalnessMap, v_uv).b;",
+    "    }",
+    "    metalness = clamp(metalness, 0.0, 1.0);",
+    "",
+    "    float emissiveStrength = u_emissive;",
+    "    vec3 emissiveColor = albedo;",
+    "    if (u_hasEmissiveMap) {",
+    "        emissiveColor = texture(u_emissiveMap, v_uv).rgb;",
+    "    }",
+    "",
+    "    // Unlit path: output albedo directly.",
+    "    if (u_unlit) {",
+    "        vec3 color = albedo + emissiveColor * emissiveStrength;",
+    "        fragColor = vec4(color, u_opacity);",
+    "        return;",
+    "    }",
+    "",
+    "    // Resolve per-pixel normal via TBN matrix.",
+    "    vec3 N = normalize(v_normal);",
+    "    if (u_hasNormalMap) {",
+    "        vec3 T = normalize(v_tangent);",
+    "        vec3 B = normalize(v_bitangent);",
+    "        mat3 TBN = mat3(T, B, N);",
+    "        vec3 mapNormal = texture(u_normalMap, v_uv).rgb * 2.0 - 1.0;",
+    "        N = normalize(TBN * mapNormal);",
+    "    }",
+    "",
+    "    vec3 V = normalize(u_cameraPosition - v_worldPosition);",
+    "",
+    "    // Fresnel reflectance at normal incidence — dielectric vs metallic blend.",
+    "    vec3 F0 = mix(vec3(0.04), albedo, metalness);",
+    "",
+    "    // Accumulate direct lighting.",
+    "    vec3 Lo = vec3(0.0);",
+    "",
+    "    for (int i = 0; i < 8; i++) {",
+    "        if (i >= u_lightCount) break;",
+    "",
+    "        int lightType = u_lightTypes[i];",
+    "        vec3 lightColor = u_lightColors[i];",
+    "        float intensity = u_lightIntensities[i];",
+    "",
+    "        // Ambient light (type 0): add flat contribution, no BRDF.",
+    "        if (lightType == 0) {",
+    "            Lo += albedo * lightColor * intensity;",
+    "            continue;",
+    "        }",
+    "",
+    "        vec3 L;",
+    "        float attenuation = 1.0;",
+    "",
+    "        if (lightType == 1) {",
+    "            // Directional light.",
+    "            L = normalize(-u_lightDirections[i]);",
+    "        } else {",
+    "            // Point light.",
+    "            vec3 toLight = u_lightPositions[i] - v_worldPosition;",
+    "            float dist = length(toLight);",
+    "            L = toLight / max(dist, 0.0001);",
+    "            attenuation = pointLightAttenuation(dist, u_lightRanges[i], u_lightDecays[i]);",
+    "        }",
+    "",
+    "        vec3 H = normalize(V + L);",
+    "        float NdotL = max(dot(N, L), 0.0);",
+    "",
+    "        // Cook-Torrance specular BRDF.",
+    "        float D = distributionGGX(N, H, roughness);",
+    "        float G = geometrySmith(N, V, L, roughness);",
+    "        vec3 F = fresnelSchlick(max(dot(H, V), 0.0), F0);",
+    "",
+    "        vec3 numerator = D * G * F;",
+    "        float denominator = 4.0 * max(dot(N, V), 0.0) * NdotL + 0.0001;",
+    "        vec3 specular = numerator / denominator;",
+    "",
+    "        // Energy conservation: diffuse complement of specular.",
+    "        vec3 kD = (vec3(1.0) - F) * (1.0 - metalness);",
+    "",
+    "        // Shadow attenuation for directional lights.",
+    "        float shadow = 1.0;",
+    "        if (u_receiveShadow && lightType == 1) {",
+    "            if (u_hasShadow0 && i == u_shadowLightIndex0) {",
+    "                shadow = shadowFactor(u_shadowMap0, u_lightSpaceMatrix0, u_shadowBias0);",
+    "            } else if (u_hasShadow1 && i == u_shadowLightIndex1) {",
+    "                shadow = shadowFactor(u_shadowMap1, u_lightSpaceMatrix1, u_shadowBias1);",
+    "            }",
+    "        }",
+    "",
+    "        vec3 radiance = lightColor * intensity * attenuation;",
+    "        Lo += (kD * albedo / PI + specular) * radiance * NdotL * shadow;",
+    "    }",
+    "",
+    "    // Environment hemisphere lighting.",
+    "    float hemi = N.y * 0.5 + 0.5;",
+    "    vec3 envDiffuse = u_ambientColor * u_ambientIntensity",
+    "                    + u_skyColor * u_skyIntensity * hemi",
+    "                    + u_groundColor * u_groundIntensity * (1.0 - hemi);",
+    "    vec3 ambient = envDiffuse * albedo;",
+    "",
+    "    // Emissive contribution.",
+    "    vec3 emission = emissiveColor * emissiveStrength;",
+    "",
+    "    vec3 color = ambient + Lo + emission;",
+    "",
+    "    // Exponential fog.",
+    "    if (u_hasFog) {",
+    "        float fogDist = length(v_worldPosition - u_cameraPosition);",
+    "        float fogFactor = exp(-u_fogDensity * u_fogDensity * fogDist * fogDist);",
+    "        fogFactor = clamp(fogFactor, 0.0, 1.0);",
+    "        color = mix(u_fogColor, color, fogFactor);",
+    "    }",
+    "",
+    "    // Tone mapping (Reinhard) and gamma correction.",
+    "    // Skipped when post-processing pipeline handles tone mapping externally.",
+    "    if (u_toneMap) {",
+    "        color = color / (color + vec3(1.0));",
+    "        color = pow(color, vec3(1.0 / 2.2));",
+    "    }",
+    "",
+    "    fragColor = vec4(color, u_opacity);",
+    "}",
+  ].join("\n");
+
+  const SCENE_SHADOW_VERTEX_SOURCE = [
+    "#version 300 es",
+    "precision highp float;",
+    "in vec3 a_position;",
+    "uniform mat4 u_lightViewProjection;",
+    "void main() {",
+    "    gl_Position = u_lightViewProjection * vec4(a_position, 1.0);",
+    "}",
+  ].join("\n");
+
+  const SCENE_SHADOW_FRAGMENT_SOURCE = [
+    "#version 300 es",
+    "precision highp float;",
+    "void main() {}",
+  ].join("\n");
+
+  const SCENE_POINTS_VERTEX_SOURCE = [
+    "#version 300 es",
+    "precision highp float;",
+    "",
+    "in vec3 a_position;",
+    "in float a_size;",
+    "in vec3 a_color;",
+    "",
+    "uniform mat4 u_viewMatrix;",
+    "uniform mat4 u_projectionMatrix;",
+    "uniform mat4 u_modelMatrix;",
+    "uniform float u_defaultSize;",
+    "uniform vec3 u_defaultColor;",
+    "uniform bool u_hasPerVertexColor;",
+    "uniform bool u_hasPerVertexSize;",
+    "uniform bool u_sizeAttenuation;",
+    "uniform float u_viewportHeight;",
+    "",
+    "// Fog",
+    "uniform bool u_hasFog;",
+    "uniform float u_fogDensity;",
+    "",
+    "out vec3 v_color;",
+    "out float v_fogFactor;",
+    "",
+    "void main() {",
+    "    vec4 worldPos = u_modelMatrix * vec4(a_position, 1.0);",
+    "    vec4 viewPos = u_viewMatrix * worldPos;",
+    "    gl_Position = u_projectionMatrix * viewPos;",
+    "",
+    "    float size = u_hasPerVertexSize ? a_size : u_defaultSize;",
+    "    if (u_sizeAttenuation) {",
+    "        gl_PointSize = max(size * (u_viewportHeight * 0.5) / max(-viewPos.z, 0.001), 1.0);",
+    "    } else {",
+    "        gl_PointSize = max(size, 1.0);",
+    "    }",
+    "",
+    "    v_color = u_hasPerVertexColor ? a_color : u_defaultColor;",
+    "",
+    "    // Exponential fog",
+    "    if (u_hasFog) {",
+    "        float dist = length(viewPos.xyz);",
+    "        v_fogFactor = exp(-u_fogDensity * u_fogDensity * dist * dist);",
+    "        v_fogFactor = clamp(v_fogFactor, 0.0, 1.0);",
+    "    } else {",
+    "        v_fogFactor = 1.0;",
+    "    }",
+    "}",
+  ].join("\n");
+
+  const SCENE_POINTS_FRAGMENT_SOURCE = [
+    "#version 300 es",
+    "precision highp float;",
+    "",
+    "in vec3 v_color;",
+    "in float v_fogFactor;",
+    "",
+    "uniform float u_opacity;",
+    "uniform vec3 u_fogColor;",
+    "uniform bool u_hasFog;",
+    "",
+    "out vec4 fragColor;",
+    "",
+    "void main() {",
+    "    // Filled square point — matches three.js PointsMaterial (no circular cutoff).",
+    "    float alpha = 1.0;",
+    "    vec3 color = v_color;",
+    "",
+    "    // Apply fog",
+    "    if (u_hasFog) {",
+    "        color = mix(u_fogColor, color, v_fogFactor);",
+    "    }",
+    "",
+    "    fragColor = vec4(color, alpha * u_opacity);",
+    "}",
+  ].join("\n");
+
+  const SCENE_PBR_SKINNED_VERTEX_SOURCE = [
+    "#version 300 es",
+    "precision highp float;",
+    "",
+    "in vec3 a_position;",
+    "in vec3 a_normal;",
+    "in vec2 a_uv;",
+    "in vec4 a_tangent;",
+    "in vec4 a_joints;",
+    "in vec4 a_weights;",
+    "",
+    "uniform mat4 u_viewMatrix;",
+    "uniform mat4 u_projectionMatrix;",
+    "uniform mat4 u_jointMatrices[64];",
+    "uniform bool u_hasSkin;",
+    "",
+    "out vec3 v_worldPosition;",
+    "out vec3 v_normal;",
+    "out vec2 v_uv;",
+    "out vec3 v_tangent;",
+    "out vec3 v_bitangent;",
+    "",
+    "void main() {",
+    "    vec4 pos = vec4(a_position, 1.0);",
+    "    vec3 norm = a_normal;",
+    "    vec3 tang = a_tangent.xyz;",
+    "",
+    "    if (u_hasSkin) {",
+    "        mat4 skinMatrix =",
+    "            a_weights.x * u_jointMatrices[int(a_joints.x)] +",
+    "            a_weights.y * u_jointMatrices[int(a_joints.y)] +",
+    "            a_weights.z * u_jointMatrices[int(a_joints.z)] +",
+    "            a_weights.w * u_jointMatrices[int(a_joints.w)];",
+    "",
+    "        pos = skinMatrix * pos;",
+    "        norm = mat3(skinMatrix) * norm;",
+    "        tang = mat3(skinMatrix) * tang;",
+    "    }",
+    "",
+    "    v_worldPosition = pos.xyz;",
+    "    v_normal = normalize(norm);",
+    "    v_uv = a_uv;",
+    "",
+    "    vec3 T = normalize(tang);",
+    "    vec3 N = v_normal;",
+    "    vec3 B = cross(N, T) * a_tangent.w;",
+    "    v_tangent = T;",
+    "    v_bitangent = B;",
+    "",
+    "    gl_Position = u_projectionMatrix * u_viewMatrix * pos;",
+    "}",
+  ].join("\n");
+
+  function scenePBRViewMatrix(camera, out) {
+    const cam = sceneRenderCamera(camera);
+    const tx = -cam.x;
+    const ty = -cam.y;
+    const tz = -cam.z;
+
+    const sx = Math.sin(-cam.rotationX);
+    const cx = Math.cos(-cam.rotationX);
+    const sy = Math.sin(-cam.rotationY);
+    const cy = Math.cos(-cam.rotationY);
+    const sz = Math.sin(-cam.rotationZ);
+    const cz = Math.cos(-cam.rotationZ);
+
+    const r00 = cy * cz;
+    const r01 = cy * sz;
+    const r02 = -sy;
+
+    const r10 = sx * sy * cz - cx * sz;
+    const r11 = sx * sy * sz + cx * cz;
+    const r12 = sx * cy;
+
+    const r20 = cx * sy * cz + sx * sz;
+    const r21 = cx * sy * sz - sx * cz;
+    const r22 = cx * cy;
+
+    const d0 = r00 * tx + r01 * ty + r02 * tz;
+    const d1 = r10 * tx + r11 * ty + r12 * tz;
+    const d2 = r20 * tx + r21 * ty + r22 * tz;
+
+    var m = out || new Float32Array(16);
+    m[0] = r00; m[1] = r10; m[2] = r20; m[3] = 0;
+    m[4] = r01; m[5] = r11; m[6] = r21; m[7] = 0;
+    m[8] = r02; m[9] = r12; m[10] = r22; m[11] = 0;
+    m[12] = d0; m[13] = d1; m[14] = d2; m[15] = 1;
+    return m;
   }
 
-  function createSceneShader(gl, type, source) {
+  function scenePBRProjectionMatrix(fov, aspect, near, far, out) {
+    const fovRad = (fov * Math.PI) / 180;
+    const f = 1 / Math.tan(fovRad * 0.5);
+    const rangeInv = 1 / (near - far);
+
+    var m = out || new Float32Array(16);
+    m[0] = f / aspect; m[1] = 0; m[2] = 0; m[3] = 0;
+    m[4] = 0; m[5] = f; m[6] = 0; m[7] = 0;
+    m[8] = 0; m[9] = 0; m[10] = (near + far) * rangeInv; m[11] = -1;
+    m[12] = 0; m[13] = 0; m[14] = 2 * near * far * rangeInv; m[15] = 0;
+    return m;
+  }
+
+  function createSceneShadowResources(gl, size) {
+    const framebuffer = gl.createFramebuffer();
+    const depthTexture = gl.createTexture();
+
+    gl.bindTexture(gl.TEXTURE_2D, depthTexture);
+    gl.texImage2D(
+      gl.TEXTURE_2D, 0, gl.DEPTH_COMPONENT24,
+      size, size, 0,
+      gl.DEPTH_COMPONENT, gl.UNSIGNED_INT, null
+    );
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+    gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
+    gl.framebufferTexture2D(
+      gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.TEXTURE_2D, depthTexture, 0
+    );
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+
+    return { framebuffer: framebuffer, depthTexture: depthTexture, size: size };
+  }
+
+  function sceneShadowLightSpaceMatrix(light, sceneBounds) {
+    var dx = sceneNumber(light.directionX, 0);
+    var dy = sceneNumber(light.directionY, -1);
+    var dz = sceneNumber(light.directionZ, 0);
+    var len = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    if (len < 0.0001) {
+      dx = 0; dy = -1; dz = 0; len = 1;
+    }
+    dx /= len; dy /= len; dz /= len;
+
+    var cx = (sceneBounds.minX + sceneBounds.maxX) * 0.5;
+    var cy = (sceneBounds.minY + sceneBounds.maxY) * 0.5;
+    var cz = (sceneBounds.minZ + sceneBounds.maxZ) * 0.5;
+    var ex = (sceneBounds.maxX - sceneBounds.minX) * 0.5;
+    var ey = (sceneBounds.maxY - sceneBounds.minY) * 0.5;
+    var ez = (sceneBounds.maxZ - sceneBounds.minZ) * 0.5;
+    var radius = Math.sqrt(ex * ex + ey * ey + ez * ez);
+    if (radius < 0.01) radius = 10;
+
+    var eyeX = cx - dx * radius * 2;
+    var eyeY = cy - dy * radius * 2;
+    var eyeZ = cz - dz * radius * 2;
+
+    var fx = dx, fy = dy, fz = dz;
+
+    var upX = 0, upY = 1, upZ = 0;
+    if (Math.abs(fy) > 0.99) {
+      upX = 0; upY = 0; upZ = 1;
+    }
+
+    var rx = fy * upZ - fz * upY;
+    var ry = fz * upX - fx * upZ;
+    var rz = fx * upY - fy * upX;
+    var rLen = Math.sqrt(rx * rx + ry * ry + rz * rz);
+    if (rLen < 0.0001) rLen = 1;
+    rx /= rLen; ry /= rLen; rz /= rLen;
+
+    upX = ry * fz - rz * fy;
+    upY = rz * fx - rx * fz;
+    upZ = rx * fy - ry * fx;
+
+    var tx = -(rx * eyeX + ry * eyeY + rz * eyeZ);
+    var ty = -(upX * eyeX + upY * eyeY + upZ * eyeZ);
+    var tz = -(fx * eyeX + fy * eyeY + fz * eyeZ);
+
+    var view = new Float32Array([
+      rx,  upX, fx,  0,
+      ry,  upY, fy,  0,
+      rz,  upZ, fz,  0,
+      tx,  ty,  tz,  1,
+    ]);
+
+    var near = 0.01;
+    var far = radius * 4;
+    var l = -radius, rr = radius, b = -radius, t = radius;
+    var proj = new Float32Array([
+      2 / (rr - l),     0,              0,                    0,
+      0,                2 / (t - b),    0,                    0,
+      0,                0,              -2 / (far - near),    0,
+      -(rr + l) / (rr - l), -(t + b) / (t - b), -(far + near) / (far - near), 1,
+    ]);
+
+    return sceneMat4Multiply(proj, view);
+  }
+
+  function sceneShadowComputeBounds(bundle) {
+    var minX = Infinity, minY = Infinity, minZ = Infinity;
+    var maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
+    var positions = bundle.worldPositions;
+    var objects = Array.isArray(bundle.objects) ? bundle.objects : [];
+
+    for (var i = 0; i < objects.length; i++) {
+      var obj = objects[i];
+      if (!obj || obj.viewCulled) continue;
+      var offset = obj.vertexOffset;
+      var count = obj.vertexCount;
+      if (!Number.isFinite(offset) || !Number.isFinite(count) || count <= 0) continue;
+
+      for (var v = 0; v < count; v++) {
+        var idx = (offset + v) * 3;
+        var px = positions[idx];
+        var py = positions[idx + 1];
+        var pz = positions[idx + 2];
+        if (px < minX) minX = px;
+        if (py < minY) minY = py;
+        if (pz < minZ) minZ = pz;
+        if (px > maxX) maxX = px;
+        if (py > maxY) maxY = py;
+        if (pz > maxZ) maxZ = pz;
+      }
+    }
+
+    if (!isFinite(minX)) {
+      return { minX: -10, minY: -10, minZ: -10, maxX: 10, maxY: 10, maxZ: 10 };
+    }
+    return { minX: minX, minY: minY, minZ: minZ, maxX: maxX, maxY: maxY, maxZ: maxZ };
+  }
+
+  function renderSceneShadowPass(gl, shadowProgram, shadowResources, lightMatrix, bundle, shadowState) {
+    gl.bindFramebuffer(gl.FRAMEBUFFER, shadowResources.framebuffer);
+    gl.viewport(0, 0, shadowResources.size, shadowResources.size);
+    gl.clearDepth(1);
+    gl.clear(gl.DEPTH_BUFFER_BIT);
+
+    gl.useProgram(shadowProgram.program);
+    gl.uniformMatrix4fv(shadowProgram.uniforms.lightViewProjection, false, lightMatrix);
+
+    gl.enable(gl.DEPTH_TEST);
+    gl.depthMask(true);
+    gl.depthFunc(gl.LEQUAL);
+    gl.disable(gl.BLEND);
+
+    gl.enable(gl.CULL_FACE);
+    gl.cullFace(gl.FRONT);
+
+    var objects = Array.isArray(bundle.objects) ? bundle.objects : [];
+
+    for (var i = 0; i < objects.length; i++) {
+      var obj = objects[i];
+      if (!obj || obj.viewCulled) continue;
+      if (!obj.castShadow) continue;
+      if (!Number.isFinite(obj.vertexOffset) || !Number.isFinite(obj.vertexCount) || obj.vertexCount <= 0) continue;
+
+      var offset = obj.vertexOffset;
+      var count = obj.vertexCount;
+
+      var length = count * 3;
+      var start = offset * 3;
+      if (!shadowState.scratch || shadowState.scratch.length < length) {
+        shadowState.scratch = new Float32Array(length);
+      }
+      var positions = shadowState.scratch;
+      for (var vi = 0; vi < length; vi++) {
+        positions[vi] = bundle.worldPositions[start + vi] || 0;
+      }
+
+      gl.bindBuffer(gl.ARRAY_BUFFER, shadowState.buffer);
+      gl.bufferData(gl.ARRAY_BUFFER, positions.subarray(0, length), gl.DYNAMIC_DRAW);
+      gl.enableVertexAttribArray(shadowProgram.attributes.position);
+      gl.vertexAttribPointer(shadowProgram.attributes.position, 3, gl.FLOAT, false, 0, 0);
+
+      gl.drawArrays(gl.TRIANGLES, 0, count);
+    }
+
+    gl.cullFace(gl.BACK);
+    gl.disable(gl.CULL_FACE);
+
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  }
+
+  function createSceneShadowProgram(gl) {
+    var vertexShader = scenePBRCompileShader(gl, gl.VERTEX_SHADER, SCENE_SHADOW_VERTEX_SOURCE);
+    if (!vertexShader) return null;
+    var fragmentShader = scenePBRCompileShader(gl, gl.FRAGMENT_SHADER, SCENE_SHADOW_FRAGMENT_SOURCE);
+    if (!fragmentShader) {
+      gl.deleteShader(vertexShader);
+      return null;
+    }
+
+    var program = scenePBRLinkProgram(gl, vertexShader, fragmentShader, "Shadow shader");
+    if (!program) return null;
+
+    return {
+      program: program,
+      vertexShader: vertexShader,
+      fragmentShader: fragmentShader,
+      attributes: {
+        position: gl.getAttribLocation(program, "a_position"),
+      },
+      uniforms: {
+        lightViewProjection: gl.getUniformLocation(program, "u_lightViewProjection"),
+      },
+    };
+  }
+
+  const SCENE_POST_VERTEX_SOURCE = [
+    "#version 300 es",
+    "in vec2 a_position;",
+    "in vec2 a_uv;",
+    "out vec2 v_uv;",
+    "void main() {",
+    "    v_uv = a_uv;",
+    "    gl_Position = vec4(a_position, 0.0, 1.0);",
+    "}",
+  ].join("\n");
+
+  const SCENE_POST_TONEMAPPING_SOURCE = [
+    "#version 300 es",
+    "precision highp float;",
+    "in vec2 v_uv;",
+    "uniform sampler2D u_texture;",
+    "uniform float u_exposure;",
+    "out vec4 fragColor;",
+    "",
+    "vec3 aces(vec3 x) {",
+    "    float a = 2.51;",
+    "    float b = 0.03;",
+    "    float c = 2.43;",
+    "    float d = 0.59;",
+    "    float e = 0.14;",
+    "    return clamp((x * (a * x + b)) / (x * (c * x + d) + e), 0.0, 1.0);",
+    "}",
+    "",
+    "void main() {",
+    "    vec3 color = texture(u_texture, v_uv).rgb;",
+    "    color *= u_exposure;",
+    "    color = aces(color);",
+    "    fragColor = vec4(color, 1.0);",
+    "}",
+  ].join("\n");
+
+  const SCENE_POST_BLOOM_BRIGHT_SOURCE = [
+    "#version 300 es",
+    "precision highp float;",
+    "in vec2 v_uv;",
+    "uniform sampler2D u_texture;",
+    "uniform float u_threshold;",
+    "out vec4 fragColor;",
+    "",
+    "void main() {",
+    "    vec3 color = texture(u_texture, v_uv).rgb;",
+    "    float brightness = dot(color, vec3(0.2126, 0.7152, 0.0722));",
+    "    fragColor = vec4(brightness > u_threshold ? color : vec3(0.0), 1.0);",
+    "}",
+  ].join("\n");
+
+  const SCENE_POST_BLUR_SOURCE = [
+    "#version 300 es",
+    "precision highp float;",
+    "in vec2 v_uv;",
+    "uniform sampler2D u_texture;",
+    "uniform vec2 u_direction;",
+    "uniform float u_radius;",
+    "out vec4 fragColor;",
+    "",
+    "void main() {",
+    "    vec2 texelSize = 1.0 / vec2(textureSize(u_texture, 0));",
+    "    vec3 result = texture(u_texture, v_uv).rgb * 0.227027;",
+    "",
+    "    float offsets[4] = float[](1.0, 2.0, 3.0, 4.0);",
+    "    float weights[4] = float[](0.1945946, 0.1216216, 0.054054, 0.016216);",
+    "",
+    "    for (int i = 0; i < 4; i++) {",
+    "        vec2 offset = u_direction * texelSize * offsets[i] * u_radius;",
+    "        result += texture(u_texture, v_uv + offset).rgb * weights[i];",
+    "        result += texture(u_texture, v_uv - offset).rgb * weights[i];",
+    "    }",
+    "    fragColor = vec4(result, 1.0);",
+    "}",
+  ].join("\n");
+
+  const SCENE_POST_BLOOM_COMPOSITE_SOURCE = [
+    "#version 300 es",
+    "precision highp float;",
+    "in vec2 v_uv;",
+    "uniform sampler2D u_texture;",
+    "uniform sampler2D u_bloomTexture;",
+    "uniform float u_intensity;",
+    "out vec4 fragColor;",
+    "",
+    "void main() {",
+    "    vec3 scene = texture(u_texture, v_uv).rgb;",
+    "    vec3 bloom = texture(u_bloomTexture, v_uv).rgb;",
+    "    fragColor = vec4(scene + bloom * u_intensity, 1.0);",
+    "}",
+  ].join("\n");
+
+  const SCENE_POST_VIGNETTE_SOURCE = [
+    "#version 300 es",
+    "precision highp float;",
+    "in vec2 v_uv;",
+    "uniform sampler2D u_texture;",
+    "uniform float u_intensity;",
+    "out vec4 fragColor;",
+    "",
+    "void main() {",
+    "    vec3 color = texture(u_texture, v_uv).rgb;",
+    "    vec2 center = v_uv - 0.5;",
+    "    float dist = length(center);",
+    "    float vignette = 1.0 - smoothstep(0.3, 0.7, dist * u_intensity);",
+    "    fragColor = vec4(color * vignette, 1.0);",
+    "}",
+  ].join("\n");
+
+  const SCENE_POST_COLORGRADE_SOURCE = [
+    "#version 300 es",
+    "precision highp float;",
+    "in vec2 v_uv;",
+    "uniform sampler2D u_texture;",
+    "uniform float u_exposure;",
+    "uniform float u_contrast;",
+    "uniform float u_saturation;",
+    "out vec4 fragColor;",
+    "",
+    "void main() {",
+    "    vec3 color = texture(u_texture, v_uv).rgb;",
+    "    color *= u_exposure;",
+    "    color = mix(vec3(0.5), color, u_contrast);",
+    "    float gray = dot(color, vec3(0.2126, 0.7152, 0.0722));",
+    "    color = mix(vec3(gray), color, u_saturation);",
+    "    fragColor = vec4(clamp(color, 0.0, 1.0), 1.0);",
+    "}",
+  ].join("\n");
+
+  function createScenePostFBO(gl, width, height) {
+    var hdrSupported = Boolean(gl.getExtension("EXT_color_buffer_float"));
+    var internalFormat = hdrSupported ? gl.RGBA16F : gl.RGBA8;
+    var dataType = hdrSupported ? gl.FLOAT : gl.UNSIGNED_BYTE;
+
+    var fbo = gl.createFramebuffer();
+    var colorTex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, colorTex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, internalFormat, width, height, 0, gl.RGBA, dataType, null);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+    var depthRB = gl.createRenderbuffer();
+    gl.bindRenderbuffer(gl.RENDERBUFFER, depthRB);
+    gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT24, width, height);
+
+    gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, colorTex, 0);
+    gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, depthRB);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+
+    return { fbo: fbo, colorTex: colorTex, depthRB: depthRB, width: width, height: height };
+  }
+
+  function createScenePostPingPong(gl, width, height) {
+    return {
+      a: createScenePostFBO(gl, width, height),
+      b: createScenePostFBO(gl, width, height),
+    };
+  }
+
+  function createSceneFullscreenQuad(gl) {
+    var vao = gl.createVertexArray();
+    var vbo = gl.createBuffer();
+    gl.bindVertexArray(vao);
+    gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
+      -1, -1,  0, 0,
+       1, -1,  1, 0,
+      -1,  1,  0, 1,
+       1,  1,  1, 1,
+    ]), gl.STATIC_DRAW);
+    gl.enableVertexAttribArray(0);
+    gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 16, 0);
+    gl.enableVertexAttribArray(1);
+    gl.vertexAttribPointer(1, 2, gl.FLOAT, false, 16, 8);
+    gl.bindVertexArray(null);
+    return { vao: vao, vbo: vbo };
+  }
+
+  function drawSceneFullscreenQuad(gl, quadVAO) {
+    gl.bindVertexArray(quadVAO);
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    gl.bindVertexArray(null);
+  }
+
+  function createScenePostProgram(gl, fragmentSource) {
+    var vs = scenePBRCompileShader(gl, gl.VERTEX_SHADER, SCENE_POST_VERTEX_SOURCE);
+    if (!vs) return null;
+    var fs = scenePBRCompileShader(gl, gl.FRAGMENT_SHADER, fragmentSource);
+    if (!fs) {
+      gl.deleteShader(vs);
+      return null;
+    }
+
+    var prog = scenePBRLinkProgram(gl, vs, fs, "Post-process shader");
+    if (!prog) return null;
+
+    return { program: prog, vertexShader: vs, fragmentShader: fs };
+  }
+
+  function disposeScenePostFBO(gl, fboObj) {
+    if (!fboObj) return;
+    if (fboObj.colorTex) gl.deleteTexture(fboObj.colorTex);
+    if (fboObj.depthRB) gl.deleteRenderbuffer(fboObj.depthRB);
+    if (fboObj.fbo) gl.deleteFramebuffer(fboObj.fbo);
+  }
+
+  function createScenePostProcessor(gl) {
+    var quad = createSceneFullscreenQuad(gl);
+    var sceneFBO = null;
+    var auxFBO = null;
+    var pingPong = null;
+    var currentWidth = 0;
+    var currentHeight = 0;
+
+    var programs = {};
+
+    function getProgram(name, fragmentSource) {
+      if (programs[name]) return programs[name];
+      var prog = createScenePostProgram(gl, fragmentSource);
+      if (prog) programs[name] = prog;
+      return prog;
+    }
+
+    function beginPostPass(prog, inputTex, targetFBO, w, h) {
+      gl.bindFramebuffer(gl.FRAMEBUFFER, targetFBO);
+      gl.viewport(0, 0, w, h);
+      gl.useProgram(prog.program);
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, inputTex);
+      gl.uniform1i(gl.getUniformLocation(prog.program, "u_texture"), 0);
+    }
+
+    function postPass(prog, inputTex, targetFBO, w, h) {
+      beginPostPass(prog, inputTex, targetFBO ? targetFBO.fbo : null, w, h);
+      drawSceneFullscreenQuad(gl, quad.vao);
+      return targetFBO ? targetFBO.colorTex : null;
+    }
+
+    function applyToneMapping(inputTex, effect, targetFBO, w, h) {
+      var prog = getProgram("toneMapping", SCENE_POST_TONEMAPPING_SOURCE);
+      if (!prog) return inputTex;
+      beginPostPass(prog, inputTex, targetFBO ? targetFBO.fbo : null, w, h);
+      gl.uniform1f(gl.getUniformLocation(prog.program, "u_exposure"), sceneNumber(effect.exposure, 1.0));
+      drawSceneFullscreenQuad(gl, quad.vao);
+      return targetFBO ? targetFBO.colorTex : null;
+    }
+
+    function applyBloom(inputTex, effect, targetFBO, w, h) {
+      var brightProg = getProgram("bloomBright", SCENE_POST_BLOOM_BRIGHT_SOURCE);
+      var blurProg = getProgram("bloomBlur", SCENE_POST_BLUR_SOURCE);
+      var compositeProg = getProgram("bloomComposite", SCENE_POST_BLOOM_COMPOSITE_SOURCE);
+      if (!brightProg || !blurProg || !compositeProg) return inputTex;
+
+      var halfW = Math.max(1, Math.floor(w / 2));
+      var halfH = Math.max(1, Math.floor(h / 2));
+
+      if (!pingPong || pingPong.a.width !== halfW || pingPong.a.height !== halfH) {
+        if (pingPong) {
+          disposeScenePostFBO(gl, pingPong.a);
+          disposeScenePostFBO(gl, pingPong.b);
+        }
+        pingPong = createScenePostPingPong(gl, halfW, halfH);
+      }
+
+      var threshold = sceneNumber(effect.threshold, 0.8);
+      var radius = sceneNumber(effect.radius, 5.0);
+      var intensity = sceneNumber(effect.intensity, 0.5);
+
+      beginPostPass(brightProg, inputTex, pingPong.a.fbo, halfW, halfH);
+      gl.uniform1f(gl.getUniformLocation(brightProg.program, "u_threshold"), threshold);
+      drawSceneFullscreenQuad(gl, quad.vao);
+
+      beginPostPass(blurProg, pingPong.a.colorTex, pingPong.b.fbo, halfW, halfH);
+      gl.uniform2f(gl.getUniformLocation(blurProg.program, "u_direction"), 1.0, 0.0);
+      gl.uniform1f(gl.getUniformLocation(blurProg.program, "u_radius"), radius);
+      drawSceneFullscreenQuad(gl, quad.vao);
+
+      beginPostPass(blurProg, pingPong.b.colorTex, pingPong.a.fbo, halfW, halfH);
+      gl.uniform2f(gl.getUniformLocation(blurProg.program, "u_direction"), 0.0, 1.0);
+      gl.uniform1f(gl.getUniformLocation(blurProg.program, "u_radius"), radius);
+      drawSceneFullscreenQuad(gl, quad.vao);
+
+      beginPostPass(compositeProg, inputTex, targetFBO ? targetFBO.fbo : null, w, h);
+      gl.activeTexture(gl.TEXTURE1);
+      gl.bindTexture(gl.TEXTURE_2D, pingPong.a.colorTex);
+      gl.uniform1i(gl.getUniformLocation(compositeProg.program, "u_bloomTexture"), 1);
+      gl.uniform1f(gl.getUniformLocation(compositeProg.program, "u_intensity"), intensity);
+      drawSceneFullscreenQuad(gl, quad.vao);
+
+      return targetFBO ? targetFBO.colorTex : null;
+    }
+
+    function applyVignette(inputTex, effect, targetFBO, w, h) {
+      var prog = getProgram("vignette", SCENE_POST_VIGNETTE_SOURCE);
+      if (!prog) return inputTex;
+      beginPostPass(prog, inputTex, targetFBO ? targetFBO.fbo : null, w, h);
+      gl.uniform1f(gl.getUniformLocation(prog.program, "u_intensity"), sceneNumber(effect.intensity, 1.0));
+      drawSceneFullscreenQuad(gl, quad.vao);
+      return targetFBO ? targetFBO.colorTex : null;
+    }
+
+    function applyColorGrade(inputTex, effect, targetFBO, w, h) {
+      var prog = getProgram("colorGrade", SCENE_POST_COLORGRADE_SOURCE);
+      if (!prog) return inputTex;
+      beginPostPass(prog, inputTex, targetFBO ? targetFBO.fbo : null, w, h);
+      gl.uniform1f(gl.getUniformLocation(prog.program, "u_exposure"), sceneNumber(effect.exposure, 1.0));
+      gl.uniform1f(gl.getUniformLocation(prog.program, "u_contrast"), sceneNumber(effect.contrast, 1.0));
+      gl.uniform1f(gl.getUniformLocation(prog.program, "u_saturation"), sceneNumber(effect.saturation, 1.0));
+      drawSceneFullscreenQuad(gl, quad.vao);
+      return targetFBO ? targetFBO.colorTex : null;
+    }
+
+    var blitProg = null;
+    var SCENE_POST_BLIT_SOURCE = [
+      "#version 300 es",
+      "precision highp float;",
+      "in vec2 v_uv;",
+      "uniform sampler2D u_texture;",
+      "out vec4 fragColor;",
+      "void main() {",
+      "    fragColor = texture(u_texture, v_uv);",
+      "}",
+    ].join("\n");
+
+    function blitToScreen(inputTex, w, h) {
+      if (!blitProg) {
+        blitProg = createScenePostProgram(gl, SCENE_POST_BLIT_SOURCE);
+      }
+      if (!blitProg) return;
+      postPass(blitProg, inputTex, null, w, h);
+    }
+
+    return {
+      begin: function(width, height) {
+        if (width !== currentWidth || height !== currentHeight) {
+          if (sceneFBO) disposeScenePostFBO(gl, sceneFBO);
+          sceneFBO = createScenePostFBO(gl, width, height);
+          if (auxFBO) disposeScenePostFBO(gl, auxFBO);
+          auxFBO = null;
+          currentWidth = width;
+          currentHeight = height;
+        }
+        gl.bindFramebuffer(gl.FRAMEBUFFER, sceneFBO.fbo);
+      },
+
+      apply: function(effects, width, height) {
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+        gl.disable(gl.DEPTH_TEST);
+
+        var currentTexture = sceneFBO.colorTex;
+
+        if (effects.length > 1 && !auxFBO) {
+          auxFBO = createScenePostFBO(gl, width, height);
+        }
+
+        for (var i = 0; i < effects.length; i++) {
+          var effect = effects[i];
+          var isLast = (i === effects.length - 1);
+
+          var targetFBO = null;
+          if (!isLast) {
+            targetFBO = (currentTexture === sceneFBO.colorTex) ? auxFBO : sceneFBO;
+          }
+
+          switch (effect.kind) {
+            case SCENE_POST_TONE_MAPPING:
+              currentTexture = applyToneMapping(currentTexture, effect, targetFBO, width, height);
+              break;
+            case SCENE_POST_BLOOM:
+              currentTexture = applyBloom(currentTexture, effect, targetFBO, width, height);
+              break;
+            case SCENE_POST_VIGNETTE:
+              currentTexture = applyVignette(currentTexture, effect, targetFBO, width, height);
+              break;
+            case SCENE_POST_COLOR_GRADE:
+              currentTexture = applyColorGrade(currentTexture, effect, targetFBO, width, height);
+              break;
+            default:
+              break;
+          }
+
+          if (isLast && currentTexture === null) break;
+
+        }
+
+        if (currentTexture !== null && effects.length > 0) {
+          blitToScreen(currentTexture, width, height);
+        } else if (effects.length === 0) {
+          blitToScreen(sceneFBO.colorTex, width, height);
+        }
+
+        gl.enable(gl.DEPTH_TEST);
+      },
+
+      dispose: function() {
+        if (sceneFBO) {
+          disposeScenePostFBO(gl, sceneFBO);
+          sceneFBO = null;
+        }
+        if (auxFBO) {
+          disposeScenePostFBO(gl, auxFBO);
+          auxFBO = null;
+        }
+        if (pingPong) {
+          disposeScenePostFBO(gl, pingPong.a);
+          disposeScenePostFBO(gl, pingPong.b);
+          pingPong = null;
+        }
+        for (var key in programs) {
+          if (programs[key]) {
+            gl.deleteShader(programs[key].vertexShader);
+            gl.deleteShader(programs[key].fragmentShader);
+            gl.deleteProgram(programs[key].program);
+          }
+        }
+        programs = {};
+        if (blitProg) {
+          gl.deleteShader(blitProg.vertexShader);
+          gl.deleteShader(blitProg.fragmentShader);
+          gl.deleteProgram(blitProg.program);
+          blitProg = null;
+        }
+        if (quad) {
+          gl.deleteBuffer(quad.vbo);
+          gl.deleteVertexArray(quad.vao);
+        }
+        currentWidth = 0;
+        currentHeight = 0;
+      },
+    };
+  }
+
+  function scenePBRLoadTexture(gl, url, cache) {
+    if (!cache) return null;
+    const textureMap = cache;
+    const key = typeof url === "string" ? url.trim() : "";
+    if (!key) {
+      return null;
+    }
+    if (textureMap.has(key)) {
+      return textureMap.get(key);
+    }
+
+    const texture = gl.createTexture();
+    const record = { texture: texture, src: key, loaded: false, failed: false };
+    textureMap.set(key, record);
+
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([255, 255, 255, 255]));
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+    if (typeof Image === "function") {
+      const image = new Image();
+      image.onload = function() {
+        gl.bindTexture(gl.TEXTURE_2D, texture);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image);
+        gl.generateMipmap(gl.TEXTURE_2D);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+        record.loaded = true;
+      };
+      image.onerror = function() {
+        record.failed = true;
+      };
+      image.src = key;
+    }
+
+    return record;
+  }
+
+  function scenePBRBindTexture(gl, unit, texture) {
+    gl.activeTexture(gl.TEXTURE0 + unit);
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+  }
+
+  function scenePBRCacheBaseUniforms(gl, program) {
+    var uniforms = {
+      viewMatrix: gl.getUniformLocation(program, "u_viewMatrix"),
+      projectionMatrix: gl.getUniformLocation(program, "u_projectionMatrix"),
+      cameraPosition: gl.getUniformLocation(program, "u_cameraPosition"),
+
+      albedo: gl.getUniformLocation(program, "u_albedo"),
+      roughness: gl.getUniformLocation(program, "u_roughness"),
+      metalness: gl.getUniformLocation(program, "u_metalness"),
+      emissive: gl.getUniformLocation(program, "u_emissive"),
+      opacity: gl.getUniformLocation(program, "u_opacity"),
+      unlit: gl.getUniformLocation(program, "u_unlit"),
+
+      albedoMap: gl.getUniformLocation(program, "u_albedoMap"),
+      normalMap: gl.getUniformLocation(program, "u_normalMap"),
+      roughnessMap: gl.getUniformLocation(program, "u_roughnessMap"),
+      metalnessMap: gl.getUniformLocation(program, "u_metalnessMap"),
+      emissiveMap: gl.getUniformLocation(program, "u_emissiveMap"),
+      hasAlbedoMap: gl.getUniformLocation(program, "u_hasAlbedoMap"),
+      hasNormalMap: gl.getUniformLocation(program, "u_hasNormalMap"),
+      hasRoughnessMap: gl.getUniformLocation(program, "u_hasRoughnessMap"),
+      hasMetalnessMap: gl.getUniformLocation(program, "u_hasMetalnessMap"),
+      hasEmissiveMap: gl.getUniformLocation(program, "u_hasEmissiveMap"),
+
+      lightCount: gl.getUniformLocation(program, "u_lightCount"),
+      lightTypes: [],
+      lightPositions: [],
+      lightDirections: [],
+      lightColors: [],
+      lightIntensities: [],
+      lightRanges: [],
+      lightDecays: [],
+
+      ambientColor: gl.getUniformLocation(program, "u_ambientColor"),
+      ambientIntensity: gl.getUniformLocation(program, "u_ambientIntensity"),
+      skyColor: gl.getUniformLocation(program, "u_skyColor"),
+      skyIntensity: gl.getUniformLocation(program, "u_skyIntensity"),
+      groundColor: gl.getUniformLocation(program, "u_groundColor"),
+      groundIntensity: gl.getUniformLocation(program, "u_groundIntensity"),
+
+      shadowMap0: gl.getUniformLocation(program, "u_shadowMap0"),
+      lightSpaceMatrix0: gl.getUniformLocation(program, "u_lightSpaceMatrix0"),
+      hasShadow0: gl.getUniformLocation(program, "u_hasShadow0"),
+      shadowBias0: gl.getUniformLocation(program, "u_shadowBias0"),
+      shadowLightIndex0: gl.getUniformLocation(program, "u_shadowLightIndex0"),
+
+      shadowMap1: gl.getUniformLocation(program, "u_shadowMap1"),
+      lightSpaceMatrix1: gl.getUniformLocation(program, "u_lightSpaceMatrix1"),
+      hasShadow1: gl.getUniformLocation(program, "u_hasShadow1"),
+      shadowBias1: gl.getUniformLocation(program, "u_shadowBias1"),
+      shadowLightIndex1: gl.getUniformLocation(program, "u_shadowLightIndex1"),
+
+      receiveShadow: gl.getUniformLocation(program, "u_receiveShadow"),
+
+      toneMap: gl.getUniformLocation(program, "u_toneMap"),
+
+      hasFog: gl.getUniformLocation(program, "u_hasFog"),
+      fogDensity: gl.getUniformLocation(program, "u_fogDensity"),
+      fogColor: gl.getUniformLocation(program, "u_fogColor"),
+    };
+
+    for (var i = 0; i < 8; i++) {
+      uniforms.lightTypes.push(gl.getUniformLocation(program, "u_lightTypes[" + i + "]"));
+      uniforms.lightPositions.push(gl.getUniformLocation(program, "u_lightPositions[" + i + "]"));
+      uniforms.lightDirections.push(gl.getUniformLocation(program, "u_lightDirections[" + i + "]"));
+      uniforms.lightColors.push(gl.getUniformLocation(program, "u_lightColors[" + i + "]"));
+      uniforms.lightIntensities.push(gl.getUniformLocation(program, "u_lightIntensities[" + i + "]"));
+      uniforms.lightRanges.push(gl.getUniformLocation(program, "u_lightRanges[" + i + "]"));
+      uniforms.lightDecays.push(gl.getUniformLocation(program, "u_lightDecays[" + i + "]"));
+    }
+
+    return uniforms;
+  }
+
+  function createScenePBRProgram(gl) {
+    const vertexShader = scenePBRCompileShader(gl, gl.VERTEX_SHADER, SCENE_PBR_VERTEX_SOURCE);
+    if (!vertexShader) {
+      return null;
+    }
+    const fragmentShader = scenePBRCompileShader(gl, gl.FRAGMENT_SHADER, SCENE_PBR_FRAGMENT_SOURCE);
+    if (!fragmentShader) {
+      gl.deleteShader(vertexShader);
+      return null;
+    }
+
+    const program = scenePBRLinkProgram(gl, vertexShader, fragmentShader, "PBR shader");
+    if (!program) return null;
+
+    const attributes = {
+      position: gl.getAttribLocation(program, "a_position"),
+      normal: gl.getAttribLocation(program, "a_normal"),
+      uv: gl.getAttribLocation(program, "a_uv"),
+      tangent: gl.getAttribLocation(program, "a_tangent"),
+    };
+
+    const uniforms = scenePBRCacheBaseUniforms(gl, program);
+
+    return {
+      program: program,
+      vertexShader: vertexShader,
+      fragmentShader: fragmentShader,
+      attributes: attributes,
+      uniforms: uniforms,
+    };
+  }
+
+  function createScenePBRSkinnedProgram(gl) {
+    var vertexShader = scenePBRCompileShader(gl, gl.VERTEX_SHADER, SCENE_PBR_SKINNED_VERTEX_SOURCE);
+    if (!vertexShader) return null;
+    var fragmentShader = scenePBRCompileShader(gl, gl.FRAGMENT_SHADER, SCENE_PBR_FRAGMENT_SOURCE);
+    if (!fragmentShader) {
+      gl.deleteShader(vertexShader);
+      return null;
+    }
+
+    var program = scenePBRLinkProgram(gl, vertexShader, fragmentShader, "Skinned PBR shader");
+    if (!program) return null;
+
+    var attributes = {
+      position: gl.getAttribLocation(program, "a_position"),
+      normal: gl.getAttribLocation(program, "a_normal"),
+      uv: gl.getAttribLocation(program, "a_uv"),
+      tangent: gl.getAttribLocation(program, "a_tangent"),
+      joints: gl.getAttribLocation(program, "a_joints"),
+      weights: gl.getAttribLocation(program, "a_weights"),
+    };
+
+    var uniforms = scenePBRCacheBaseUniforms(gl, program);
+    uniforms.hasSkin = gl.getUniformLocation(program, "u_hasSkin");
+    uniforms.jointMatrices = [];
+
+    for (var j = 0; j < 64; j++) {
+      uniforms.jointMatrices.push(gl.getUniformLocation(program, "u_jointMatrices[" + j + "]"));
+    }
+
+    return {
+      program: program,
+      vertexShader: vertexShader,
+      fragmentShader: fragmentShader,
+      attributes: attributes,
+      uniforms: uniforms,
+    };
+  }
+
+  function createScenePointsProgram(gl) {
+    var vertexShader = scenePBRCompileShader(gl, gl.VERTEX_SHADER, SCENE_POINTS_VERTEX_SOURCE);
+    if (!vertexShader) return null;
+    var fragmentShader = scenePBRCompileShader(gl, gl.FRAGMENT_SHADER, SCENE_POINTS_FRAGMENT_SOURCE);
+    if (!fragmentShader) {
+      gl.deleteShader(vertexShader);
+      return null;
+    }
+
+    var program = scenePBRLinkProgram(gl, vertexShader, fragmentShader, "Points shader");
+    if (!program) return null;
+
+    var attributes = {
+      position: gl.getAttribLocation(program, "a_position"),
+      size: gl.getAttribLocation(program, "a_size"),
+      color: gl.getAttribLocation(program, "a_color"),
+    };
+
+    var uniforms = {
+      viewMatrix: gl.getUniformLocation(program, "u_viewMatrix"),
+      projectionMatrix: gl.getUniformLocation(program, "u_projectionMatrix"),
+      modelMatrix: gl.getUniformLocation(program, "u_modelMatrix"),
+      defaultSize: gl.getUniformLocation(program, "u_defaultSize"),
+      defaultColor: gl.getUniformLocation(program, "u_defaultColor"),
+      hasPerVertexColor: gl.getUniformLocation(program, "u_hasPerVertexColor"),
+      hasPerVertexSize: gl.getUniformLocation(program, "u_hasPerVertexSize"),
+      sizeAttenuation: gl.getUniformLocation(program, "u_sizeAttenuation"),
+      viewportHeight: gl.getUniformLocation(program, "u_viewportHeight"),
+      opacity: gl.getUniformLocation(program, "u_opacity"),
+      hasFog: gl.getUniformLocation(program, "u_hasFog"),
+      fogDensity: gl.getUniformLocation(program, "u_fogDensity"),
+      fogColor: gl.getUniformLocation(program, "u_fogColor"),
+    };
+
+    return {
+      program: program,
+      vertexShader: vertexShader,
+      fragmentShader: fragmentShader,
+      attributes: attributes,
+      uniforms: uniforms,
+    };
+  }
+
+  function scenePBRCompileShader(gl, type, source) {
     const shader = gl.createShader(type);
     gl.shaderSource(shader, source);
     gl.compileShader(shader);
     if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
-      console.warn("[gosx] Scene3D WebGL shader compile failed");
+      const label = type === gl.VERTEX_SHADER ? "vertex" : "fragment";
+      console.warn("[gosx] PBR " + label + " shader compile failed:", gl.getShaderInfoLog(shader));
+      gl.deleteShader(shader);
       return null;
     }
     return shader;
   }
 
+  function scenePBRLinkProgram(gl, vertexShader, fragmentShader, label) {
+    var program = gl.createProgram();
+    gl.attachShader(program, vertexShader);
+    gl.attachShader(program, fragmentShader);
+    gl.linkProgram(program);
+    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+      console.warn("[gosx] " + label + " program link failed:", gl.getProgramInfoLog(program));
+      gl.deleteProgram(program);
+      gl.deleteShader(vertexShader);
+      gl.deleteShader(fragmentShader);
+      return null;
+    }
+    return program;
+  }
+
+  function scenePBRUploadLights(gl, uniforms, lights, environment) {
+    const lightArray = Array.isArray(lights) ? lights : [];
+    const count = Math.min(lightArray.length, 8);
+
+    var colorCache = {};
+
+    gl.uniform1i(uniforms.lightCount, count);
+
+    for (var i = 0; i < count; i++) {
+      const light = lightArray[i];
+      const kind = typeof light.kind === "string" ? light.kind.toLowerCase() : "";
+
+      var lightType = 2; // default: point
+      if (kind === "ambient") {
+        lightType = 0;
+      } else if (kind === "directional") {
+        lightType = 1;
+      }
+
+      gl.uniform1i(uniforms.lightTypes[i], lightType);
+      gl.uniform3f(
+        uniforms.lightPositions[i],
+        sceneNumber(light.x, 0),
+        sceneNumber(light.y, 0),
+        sceneNumber(light.z, 0)
+      );
+      gl.uniform3f(
+        uniforms.lightDirections[i],
+        sceneNumber(light.directionX, 0),
+        sceneNumber(light.directionY, -1),
+        sceneNumber(light.directionZ, 0)
+      );
+
+      var colorKey = light.color;
+      var lightColorRGBA = typeof colorKey === "string" && colorCache[colorKey];
+      if (!lightColorRGBA) {
+        lightColorRGBA = sceneColorRGBA(light.color, [1, 1, 1, 1]);
+        if (typeof colorKey === "string") colorCache[colorKey] = lightColorRGBA;
+      }
+      gl.uniform3f(uniforms.lightColors[i], lightColorRGBA[0], lightColorRGBA[1], lightColorRGBA[2]);
+      gl.uniform1f(uniforms.lightIntensities[i], sceneNumber(light.intensity, 1));
+      gl.uniform1f(uniforms.lightRanges[i], sceneNumber(light.range, 0));
+      gl.uniform1f(uniforms.lightDecays[i], sceneNumber(light.decay, 2));
+    }
+
+    for (var j = count; j < 8; j++) {
+      gl.uniform1i(uniforms.lightTypes[j], 0);
+      gl.uniform3f(uniforms.lightPositions[j], 0, 0, 0);
+      gl.uniform3f(uniforms.lightDirections[j], 0, -1, 0);
+      gl.uniform3f(uniforms.lightColors[j], 0, 0, 0);
+      gl.uniform1f(uniforms.lightIntensities[j], 0);
+      gl.uniform1f(uniforms.lightRanges[j], 0);
+      gl.uniform1f(uniforms.lightDecays[j], 2);
+    }
+
+    const env = environment || {};
+    var ambientKey = env.ambientColor;
+    var ambientColorRGBA = typeof ambientKey === "string" && colorCache[ambientKey];
+    if (!ambientColorRGBA) {
+      ambientColorRGBA = sceneColorRGBA(env.ambientColor, [1, 1, 1, 1]);
+      if (typeof ambientKey === "string") colorCache[ambientKey] = ambientColorRGBA;
+    }
+    gl.uniform3f(uniforms.ambientColor, ambientColorRGBA[0], ambientColorRGBA[1], ambientColorRGBA[2]);
+    gl.uniform1f(uniforms.ambientIntensity, sceneNumber(env.ambientIntensity, 0));
+
+    var skyKey = env.skyColor;
+    var skyColorRGBA = typeof skyKey === "string" && colorCache[skyKey];
+    if (!skyColorRGBA) {
+      skyColorRGBA = sceneColorRGBA(env.skyColor, [0.88, 0.94, 1, 1]);
+      if (typeof skyKey === "string") colorCache[skyKey] = skyColorRGBA;
+    }
+    gl.uniform3f(uniforms.skyColor, skyColorRGBA[0], skyColorRGBA[1], skyColorRGBA[2]);
+    gl.uniform1f(uniforms.skyIntensity, sceneNumber(env.skyIntensity, 0));
+
+    var groundKey = env.groundColor;
+    var groundColorRGBA = typeof groundKey === "string" && colorCache[groundKey];
+    if (!groundColorRGBA) {
+      groundColorRGBA = sceneColorRGBA(env.groundColor, [0.12, 0.16, 0.22, 1]);
+      if (typeof groundKey === "string") colorCache[groundKey] = groundColorRGBA;
+    }
+    gl.uniform3f(uniforms.groundColor, groundColorRGBA[0], groundColorRGBA[1], groundColorRGBA[2]);
+    gl.uniform1f(uniforms.groundIntensity, sceneNumber(env.groundIntensity, 0));
+
+    var fogDensity = sceneNumber(env.fogDensity, 0);
+    gl.uniform1i(uniforms.hasFog, fogDensity > 0 ? 1 : 0);
+    gl.uniform1f(uniforms.fogDensity, fogDensity);
+    var fogKey = env.fogColor;
+    var fogColorRGBA = typeof fogKey === "string" && colorCache[fogKey];
+    if (!fogColorRGBA) {
+      fogColorRGBA = sceneColorRGBA(env.fogColor, [0.5, 0.5, 0.5, 1]);
+      if (typeof fogKey === "string") colorCache[fogKey] = fogColorRGBA;
+    }
+    gl.uniform3f(uniforms.fogColor, fogColorRGBA[0], fogColorRGBA[1], fogColorRGBA[2]);
+  }
+
+  function scenePBRUploadShadowUniforms(gl, uniforms, shadowSlots, shadowLightMatrices, shadowLightIndices, lights) {
+    var lightArray = Array.isArray(lights) ? lights : [];
+
+    if (shadowSlots[0] && shadowLightMatrices[0]) {
+      scenePBRBindTexture(gl, 5, shadowSlots[0].depthTexture);
+      gl.uniform1i(uniforms.shadowMap0, 5);
+      gl.uniformMatrix4fv(uniforms.lightSpaceMatrix0, false, shadowLightMatrices[0]);
+      gl.uniform1i(uniforms.hasShadow0, 1);
+      var bias0 = sceneNumber(lightArray[shadowLightIndices[0]] && lightArray[shadowLightIndices[0]].shadowBias, 0.005);
+      gl.uniform1f(uniforms.shadowBias0, bias0);
+      gl.uniform1i(uniforms.shadowLightIndex0, shadowLightIndices[0]);
+    } else {
+      gl.uniform1i(uniforms.hasShadow0, 0);
+      gl.uniform1i(uniforms.shadowLightIndex0, -1);
+    }
+
+    if (shadowSlots[1] && shadowLightMatrices[1]) {
+      scenePBRBindTexture(gl, 6, shadowSlots[1].depthTexture);
+      gl.uniform1i(uniforms.shadowMap1, 6);
+      gl.uniformMatrix4fv(uniforms.lightSpaceMatrix1, false, shadowLightMatrices[1]);
+      gl.uniform1i(uniforms.hasShadow1, 1);
+      var bias1 = sceneNumber(lightArray[shadowLightIndices[1]] && lightArray[shadowLightIndices[1]].shadowBias, 0.005);
+      gl.uniform1f(uniforms.shadowBias1, bias1);
+      gl.uniform1i(uniforms.shadowLightIndex1, shadowLightIndices[1]);
+    } else {
+      gl.uniform1i(uniforms.hasShadow1, 0);
+      gl.uniform1i(uniforms.shadowLightIndex1, -1);
+    }
+  }
+
+  function createScenePBRRenderer(gl, canvas) {
+    const pbrProgram = createScenePBRProgram(gl);
+    if (!pbrProgram) {
+      return null;
+    }
+
+    const program = pbrProgram.program;
+    const attribs = pbrProgram.attributes;
+    const uniforms = pbrProgram.uniforms;
+
+    var skinnedProgram = null;
+
+    const shadowProgram = createSceneShadowProgram(gl);
+
+    var shadowSlots = [null, null];
+
+    var postProcessor = null;
+
+    var shadowLightMatrices = [null, null];
+    var shadowLightIndices = [-1, -1];
+
+    const positionBuffer = gl.createBuffer();
+    const normalBuffer = gl.createBuffer();
+    const uvBuffer = gl.createBuffer();
+    const tangentBuffer = gl.createBuffer();
+    const jointsBuffer = gl.createBuffer();
+    const weightsBuffer = gl.createBuffer();
+
+    var pointsProgram = null;
+
+    const pointsPositionBuffer = gl.createBuffer();
+    const pointsSizeBuffer = gl.createBuffer();
+    const pointsColorBuffer = gl.createBuffer();
+
+    const textureCache = new Map();
+
+    var shadowState = { buffer: gl.createBuffer(), scratch: null };
+
+    var scratchViewMatrix = new Float32Array(16);
+    var scratchProjMatrix = new Float32Array(16);
+
+    var _frameCam = null;
+
+    var scratchPositions = null;
+    var scratchNormals = null;
+    var scratchUVs = null;
+    var scratchTangents = null;
+
+    function ensureScratch(name, length) {
+      if (name === "positions") {
+        if (!scratchPositions || scratchPositions.length < length) {
+          scratchPositions = new Float32Array(length);
+        }
+        return scratchPositions;
+      }
+      if (name === "normals") {
+        if (!scratchNormals || scratchNormals.length < length) {
+          scratchNormals = new Float32Array(length);
+        }
+        return scratchNormals;
+      }
+      if (name === "uvs") {
+        if (!scratchUVs || scratchUVs.length < length) {
+          scratchUVs = new Float32Array(length);
+        }
+        return scratchUVs;
+      }
+      if (name === "tangents") {
+        if (!scratchTangents || scratchTangents.length < length) {
+          scratchTangents = new Float32Array(length);
+        }
+        return scratchTangents;
+      }
+      return new Float32Array(length);
+    }
+
+    function sliceToFloat32(source, offset, count, stride, scratchName) {
+      const length = count * stride;
+      const start = offset * stride;
+      const buf = ensureScratch(scratchName, length);
+      for (var i = 0; i < length; i++) {
+        buf[i] = source && source[start + i] !== undefined ? +source[start + i] : 0;
+      }
+      return buf.subarray(0, length);
+    }
+
+    function uploadMaterial(gl, uniforms, material, textureCache) {
+      const mat = material || {};
+      const albedoRGBA = sceneColorRGBA(mat.color, [0.8, 0.8, 0.8, 1]);
+      gl.uniform3f(uniforms.albedo, albedoRGBA[0], albedoRGBA[1], albedoRGBA[2]);
+      gl.uniform1f(uniforms.roughness, sceneNumber(mat.roughness, 0.5));
+      gl.uniform1f(uniforms.metalness, sceneNumber(mat.metalness, 0));
+      gl.uniform1f(uniforms.emissive, sceneNumber(mat.emissive, 0));
+      gl.uniform1f(uniforms.opacity, clamp01(sceneNumber(mat.opacity, 1)));
+      gl.uniform1i(uniforms.unlit, mat.unlit ? 1 : 0);
+
+      var textureMaps = [
+        { prop: "texture",      has: "hasAlbedoMap",    sampler: "albedoMap",    unit: 0 },
+        { prop: "normalMap",    has: "hasNormalMap",     sampler: "normalMap",    unit: 1 },
+        { prop: "roughnessMap", has: "hasRoughnessMap",  sampler: "roughnessMap", unit: 2 },
+        { prop: "metalnessMap", has: "hasMetalnessMap",  sampler: "metalnessMap", unit: 3 },
+        { prop: "emissiveMap",  has: "hasEmissiveMap",   sampler: "emissiveMap",  unit: 4 },
+      ];
+      for (var ti = 0; ti < textureMaps.length; ti++) {
+        var tm = textureMaps[ti];
+        var record = mat[tm.prop] ? scenePBRLoadTexture(gl, mat[tm.prop], textureCache) : null;
+        var loaded = Boolean(record && record.texture && record.loaded);
+        gl.uniform1i(uniforms[tm.has], loaded ? 1 : 0);
+        if (loaded) {
+          scenePBRBindTexture(gl, tm.unit, record.texture);
+          gl.uniform1i(uniforms[tm.sampler], tm.unit);
+        }
+      }
+    }
+
+    function applyBlendMode(gl, renderPass) {
+      if (renderPass === "alpha") {
+        gl.enable(gl.BLEND);
+        gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+      } else if (renderPass === "additive") {
+        gl.enable(gl.BLEND);
+        gl.blendFunc(gl.SRC_ALPHA, gl.ONE);
+      } else {
+        gl.disable(gl.BLEND);
+      }
+    }
+
+    function applyDepthMode(gl, renderPass) {
+      gl.enable(gl.DEPTH_TEST);
+      if (renderPass === "opaque") {
+        gl.depthMask(true);
+        gl.depthFunc(gl.LEQUAL);
+      } else {
+        gl.depthMask(false);
+        gl.depthFunc(gl.LEQUAL);
+      }
+    }
+
+    function buildPBRDrawList(bundle) {
+      const objects = Array.isArray(bundle && bundle.objects) ? bundle.objects : [];
+      const materials = Array.isArray(bundle.materials) ? bundle.materials : [];
+      const opaque = [];
+      const alpha = [];
+      const additive = [];
+
+      for (var i = 0; i < objects.length; i++) {
+        const obj = objects[i];
+        if (!obj || obj.viewCulled) {
+          continue;
+        }
+        if (!Number.isFinite(obj.vertexOffset) || !Number.isFinite(obj.vertexCount) || obj.vertexCount <= 0) {
+          continue;
+        }
+        const mat = materials[obj.materialIndex] || null;
+        const pass = scenePBRObjectRenderPass(obj, mat);
+        if (pass === "alpha") {
+          alpha.push(obj);
+        } else if (pass === "additive") {
+          additive.push(obj);
+        } else {
+          opaque.push(obj);
+        }
+      }
+
+      alpha.sort(scenePBRDepthSort);
+      additive.sort(scenePBRDepthSort);
+
+      return { opaque: opaque, alpha: alpha, additive: additive };
+    }
+
+    function render(bundle, viewport) {
+      if (!bundle) {
+        return;
+      }
+
+      const hasPBRData = Boolean(
+        bundle.worldPositions &&
+        bundle.worldNormals &&
+        Array.isArray(bundle.objects) &&
+        bundle.objects.length > 0
+      );
+      const hasPointsData = Array.isArray(bundle.points) && bundle.points.length > 0;
+      if (!hasPBRData && !hasPointsData) {
+        return;
+      }
+
+      shadowLightMatrices[0] = null; shadowLightMatrices[1] = null;
+      shadowLightIndices[0] = -1; shadowLightIndices[1] = -1;
+      var activeShadowCount = 0;
+
+      if (shadowProgram) {
+        var lightArray = Array.isArray(bundle.lights) ? bundle.lights : [];
+        var sceneBounds = null;
+
+        for (var li = 0; li < lightArray.length && activeShadowCount < 2; li++) {
+          var light = lightArray[li];
+          if (!light || !light.castShadow) continue;
+          var kind = typeof light.kind === "string" ? light.kind.toLowerCase() : "";
+          if (kind !== "directional") continue;
+
+          if (!sceneBounds) {
+            sceneBounds = sceneShadowComputeBounds(bundle);
+          }
+
+          var slot = activeShadowCount;
+          var shadowSize = sceneNumber(light.shadowSize, 1024);
+          shadowSize = Math.max(256, Math.min(4096, shadowSize));
+
+          if (!shadowSlots[slot] || shadowSlots[slot].size !== shadowSize) {
+            if (shadowSlots[slot]) {
+              gl.deleteFramebuffer(shadowSlots[slot].framebuffer);
+              gl.deleteTexture(shadowSlots[slot].depthTexture);
+            }
+            shadowSlots[slot] = createSceneShadowResources(gl, shadowSize);
+          }
+
+          var lightMatrix = sceneShadowLightSpaceMatrix(light, sceneBounds);
+          shadowLightMatrices[slot] = lightMatrix;
+          shadowLightIndices[slot] = li;
+
+          renderSceneShadowPass(gl, shadowProgram, shadowSlots[slot], lightMatrix, bundle, shadowState);
+          activeShadowCount++;
+        }
+      }
+
+      var postEffects = Array.isArray(bundle.postEffects) ? bundle.postEffects : [];
+      var usePostProcessing = postEffects.length > 0;
+
+      if (usePostProcessing) {
+        if (!postProcessor) {
+          postProcessor = createScenePostProcessor(gl);
+        }
+        postProcessor.begin(canvas.width, canvas.height);
+      }
+
+      gl.viewport(0, 0, canvas.width, canvas.height);
+
+      var bgStr = typeof bundle.background === "string" ? bundle.background.trim().toLowerCase() : "";
+      const bg = bgStr === "transparent" ? [0, 0, 0, 0] : sceneColorRGBA(bundle.background, [0.03, 0.08, 0.12, 1]);
+      gl.clearColor(bg[0], bg[1], bg[2], bg[3]);
+      gl.clearDepth(1);
+      gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+      _frameCam = sceneRenderCamera(bundle.camera);
+      const cam = _frameCam;
+      const aspect = Math.max(0.0001, canvas.width / Math.max(1, canvas.height));
+      const viewMatrix = scenePBRViewMatrix(cam, scratchViewMatrix);
+      const projMatrix = scenePBRProjectionMatrix(cam.fov, aspect, cam.near, cam.far, scratchProjMatrix);
+
+      if (hasPBRData) {
+      gl.useProgram(program);
+      gl.uniformMatrix4fv(uniforms.viewMatrix, false, viewMatrix);
+      gl.uniformMatrix4fv(uniforms.projectionMatrix, false, projMatrix);
+      gl.uniform3f(uniforms.cameraPosition, cam.x, cam.y, -cam.z);
+
+      gl.uniform1i(uniforms.toneMap, usePostProcessing ? 0 : 1);
+
+      scenePBRUploadLights(gl, uniforms, bundle.lights, bundle.environment);
+
+      scenePBRUploadShadowUniforms(gl, uniforms, shadowSlots, shadowLightMatrices, shadowLightIndices, bundle.lights);
+
+      const drawList = buildPBRDrawList(bundle);
+      const materials = Array.isArray(bundle.materials) ? bundle.materials : [];
+
+      applyBlendMode(gl, "opaque");
+      applyDepthMode(gl, "opaque");
+      drawPBRObjectList(gl, drawList.opaque, bundle, materials);
+
+      if (drawList.alpha.length > 0) {
+        applyBlendMode(gl, "alpha");
+        applyDepthMode(gl, "alpha");
+        drawPBRObjectList(gl, drawList.alpha, bundle, materials);
+      }
+
+      if (drawList.additive.length > 0) {
+        applyBlendMode(gl, "additive");
+        applyDepthMode(gl, "additive");
+        drawPBRObjectList(gl, drawList.additive, bundle, materials);
+      }
+
+      } // end if (hasPBRData)
+
+      drawPointsEntries(gl, bundle, viewMatrix, projMatrix, performance.now() / 1000);
+
+      gl.depthMask(true);
+      gl.disable(gl.BLEND);
+
+      if (usePostProcessing && postProcessor) {
+        postProcessor.apply(postEffects, canvas.width, canvas.height);
+        gl.useProgram(program);
+      }
+    }
+
+    function objectIsSkinned(obj) {
+      return Boolean(
+        obj && obj.skin &&
+        obj.vertices && obj.vertices.joints && obj.vertices.weights
+      );
+    }
+
+    function ensureSkinnedProgram() {
+      if (skinnedProgram) return skinnedProgram;
+      skinnedProgram = createScenePBRSkinnedProgram(gl);
+      if (!skinnedProgram) {
+        console.warn("[gosx] Skinned PBR shader compilation failed; skinned objects will use static path.");
+      }
+      return skinnedProgram;
+    }
+
+    function drawPBRObjectList(gl, objectList, bundle, materials) {
+      var lastMaterialIndex = -1;
+      var currentProgram = program;       // the static PBR gl program
+      var currentAttribs = attribs;
+      var currentUniforms = uniforms;
+
+      for (var i = 0; i < objectList.length; i++) {
+        const obj = objectList[i];
+        const matIndex = sceneNumber(obj.materialIndex, 0);
+        const mat = materials[matIndex] || null;
+        var isSkinned = objectIsSkinned(obj);
+
+        if (isSkinned) {
+          var sp = ensureSkinnedProgram();
+          if (sp && currentProgram !== sp.program) {
+            gl.useProgram(sp.program);
+            currentProgram = sp.program;
+            currentAttribs = sp.attributes;
+            currentUniforms = sp.uniforms;
+
+            gl.uniformMatrix4fv(currentUniforms.viewMatrix, false, scratchViewMatrix);
+            gl.uniformMatrix4fv(currentUniforms.projectionMatrix, false, scratchProjMatrix);
+            gl.uniform3f(currentUniforms.cameraPosition, _frameCam.x, _frameCam.y, -_frameCam.z);
+
+            var postEffects = Array.isArray(bundle.postEffects) ? bundle.postEffects : [];
+            gl.uniform1i(currentUniforms.toneMap, postEffects.length > 0 ? 0 : 1);
+
+            scenePBRUploadLights(gl, currentUniforms, bundle.lights, bundle.environment);
+
+            scenePBRUploadShadowUniforms(gl, currentUniforms, shadowSlots, shadowLightMatrices, shadowLightIndices, bundle.lights);
+
+            lastMaterialIndex = -1;
+          }
+          if (!sp) isSkinned = false;
+        } else if (currentProgram !== program) {
+          gl.useProgram(program);
+          currentProgram = program;
+          currentAttribs = attribs;
+          currentUniforms = uniforms;
+          lastMaterialIndex = -1;
+        }
+
+        if (matIndex !== lastMaterialIndex) {
+          uploadMaterial(gl, currentUniforms, mat, textureCache);
+          lastMaterialIndex = matIndex;
+        }
+
+        gl.uniform1i(currentUniforms.receiveShadow, obj.receiveShadow ? 1 : 0);
+
+        var objDepthWriteOverride = obj.depthWrite !== undefined && obj.depthWrite !== null;
+        if (objDepthWriteOverride) {
+          gl.depthMask(obj.depthWrite !== false);
+        }
+
+        if (isSkinned) {
+          gl.uniform1i(currentUniforms.hasSkin, 1);
+
+          var jointMatrices = obj.skin.jointMatrices;
+          if (jointMatrices) {
+            var jointCount = Math.min(Math.floor(jointMatrices.length / 16), 64);
+            for (var ji = 0; ji < jointCount; ji++) {
+              gl.uniformMatrix4fv(
+                currentUniforms.jointMatrices[ji], false,
+                jointMatrices.subarray(ji * 16, ji * 16 + 16)
+              );
+            }
+          }
+        } else if (currentUniforms.hasSkin) {
+          gl.uniform1i(currentUniforms.hasSkin, 0);
+        }
+
+        const offset = obj.vertexOffset;
+        const count = obj.vertexCount;
+
+        const positions = sliceToFloat32(bundle.worldPositions, offset, count, 3, "positions");
+        gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, positions, gl.DYNAMIC_DRAW);
+        gl.enableVertexAttribArray(currentAttribs.position);
+        gl.vertexAttribPointer(currentAttribs.position, 3, gl.FLOAT, false, 0, 0);
+
+        const normals = sliceToFloat32(bundle.worldNormals, offset, count, 3, "normals");
+        gl.bindBuffer(gl.ARRAY_BUFFER, normalBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, normals, gl.DYNAMIC_DRAW);
+        gl.enableVertexAttribArray(currentAttribs.normal);
+        gl.vertexAttribPointer(currentAttribs.normal, 3, gl.FLOAT, false, 0, 0);
+
+        if (bundle.worldUVs) {
+          const uvs = sliceToFloat32(bundle.worldUVs, offset, count, 2, "uvs");
+          gl.bindBuffer(gl.ARRAY_BUFFER, uvBuffer);
+          gl.bufferData(gl.ARRAY_BUFFER, uvs, gl.DYNAMIC_DRAW);
+          gl.enableVertexAttribArray(currentAttribs.uv);
+          gl.vertexAttribPointer(currentAttribs.uv, 2, gl.FLOAT, false, 0, 0);
+        } else if (currentAttribs.uv >= 0) {
+          gl.disableVertexAttribArray(currentAttribs.uv);
+          gl.vertexAttrib2f(currentAttribs.uv, 0, 0);
+        }
+
+        if (bundle.worldTangents) {
+          const tangents = sliceToFloat32(bundle.worldTangents, offset, count, 4, "tangents");
+          gl.bindBuffer(gl.ARRAY_BUFFER, tangentBuffer);
+          gl.bufferData(gl.ARRAY_BUFFER, tangents, gl.DYNAMIC_DRAW);
+          gl.enableVertexAttribArray(currentAttribs.tangent);
+          gl.vertexAttribPointer(currentAttribs.tangent, 4, gl.FLOAT, false, 0, 0);
+        } else if (currentAttribs.tangent >= 0) {
+          gl.disableVertexAttribArray(currentAttribs.tangent);
+          gl.vertexAttrib4f(currentAttribs.tangent, 1, 0, 0, 1);
+        }
+
+        if (isSkinned && currentAttribs.joints >= 0 && currentAttribs.weights >= 0) {
+          var joints = obj.vertices.joints;
+          var weights = obj.vertices.weights;
+
+          gl.bindBuffer(gl.ARRAY_BUFFER, jointsBuffer);
+          gl.bufferData(gl.ARRAY_BUFFER, joints instanceof Float32Array ? joints : new Float32Array(joints), gl.DYNAMIC_DRAW);
+          gl.enableVertexAttribArray(currentAttribs.joints);
+          gl.vertexAttribPointer(currentAttribs.joints, 4, gl.FLOAT, false, 0, 0);
+
+          gl.bindBuffer(gl.ARRAY_BUFFER, weightsBuffer);
+          gl.bufferData(gl.ARRAY_BUFFER, weights instanceof Float32Array ? weights : new Float32Array(weights), gl.DYNAMIC_DRAW);
+          gl.enableVertexAttribArray(currentAttribs.weights);
+          gl.vertexAttribPointer(currentAttribs.weights, 4, gl.FLOAT, false, 0, 0);
+        } else if (currentAttribs.joints >= 0) {
+          gl.disableVertexAttribArray(currentAttribs.joints);
+          gl.vertexAttrib4f(currentAttribs.joints, 0, 0, 0, 0);
+          gl.disableVertexAttribArray(currentAttribs.weights);
+          gl.vertexAttrib4f(currentAttribs.weights, 0, 0, 0, 0);
+        }
+
+        gl.drawArrays(gl.TRIANGLES, 0, count);
+
+        if (objDepthWriteOverride) {
+          var mat2 = materials[sceneNumber(obj.materialIndex, 0)] || null;
+          var pass2 = scenePBRObjectRenderPass(obj, mat2);
+          gl.depthMask(pass2 === "opaque");
+        }
+      }
+
+      if (currentProgram !== program) {
+        gl.useProgram(program);
+      }
+    }
+
+    function ensurePointsProgram() {
+      if (pointsProgram) return pointsProgram;
+      pointsProgram = createScenePointsProgram(gl);
+      if (!pointsProgram) {
+        console.warn("[gosx] Points shader compilation failed; points will not render.");
+      }
+      return pointsProgram;
+    }
+
+    function drawPointsEntries(gl, bundle, viewMatrix, projMatrix, timeSeconds) {
+      var pointsArray = Array.isArray(bundle.points) ? bundle.points : [];
+      if (pointsArray.length === 0) return;
+
+      var pp = ensurePointsProgram();
+      if (!pp) return;
+
+      gl.useProgram(pp.program);
+
+      gl.uniformMatrix4fv(pp.uniforms.viewMatrix, false, viewMatrix);
+      gl.uniformMatrix4fv(pp.uniforms.projectionMatrix, false, projMatrix);
+      gl.uniform1f(pp.uniforms.viewportHeight, canvas.height);
+
+      var env = bundle.environment || {};
+      var fogDensity = sceneNumber(env.fogDensity, 0);
+      gl.uniform1i(pp.uniforms.hasFog, fogDensity > 0 ? 1 : 0);
+      gl.uniform1f(pp.uniforms.fogDensity, fogDensity);
+      var fogColorRGBA = sceneColorRGBA(env.fogColor, [0.5, 0.5, 0.5, 1]);
+      gl.uniform3f(pp.uniforms.fogColor, fogColorRGBA[0], fogColorRGBA[1], fogColorRGBA[2]);
+
+      gl.enable(gl.DEPTH_TEST);
+      var _pointsModelMat = new Float32Array(16);
+      var _pointsTilt = new Float32Array(16);
+      var _pointsSpin = new Float32Array(16);
+
+      for (var i = 0; i < pointsArray.length; i++) {
+        var entry = pointsArray[i];
+
+        var px = sceneNumber(entry.x, 0);
+        var py = sceneNumber(entry.y, 0);
+        var pz = sceneNumber(entry.z, 0);
+        var hasSpin = sceneNumber(entry.spinX, 0) !== 0 || sceneNumber(entry.spinY, 0) !== 0 || sceneNumber(entry.spinZ, 0) !== 0;
+
+        if (hasSpin) {
+
+          var spx = sceneNumber(entry.spinX, 0) * timeSeconds;
+          var spy = sceneNumber(entry.spinY, 0) * timeSeconds;
+          var spz = sceneNumber(entry.spinZ, 0) * timeSeconds;
+          var csx = Math.cos(spx), ssx = Math.sin(spx);
+          var csy = Math.cos(spy), ssy = Math.sin(spy);
+          var csz = Math.cos(spz), ssz = Math.sin(spz);
+          _pointsSpin[0] = csy*csz; _pointsSpin[4] = ssx*ssy*csz-csx*ssz; _pointsSpin[8]  = csx*ssy*csz+ssx*ssz; _pointsSpin[12] = 0;
+          _pointsSpin[1] = csy*ssz; _pointsSpin[5] = ssx*ssy*ssz+csx*csz; _pointsSpin[9]  = csx*ssy*ssz-ssx*csz; _pointsSpin[13] = 0;
+          _pointsSpin[2] = -ssy;    _pointsSpin[6] = ssx*csy;             _pointsSpin[10] = csx*csy;             _pointsSpin[14] = 0;
+          _pointsSpin[3] = 0;       _pointsSpin[7] = 0;                   _pointsSpin[11] = 0;                   _pointsSpin[15] = 1;
+
+          var rx = sceneNumber(entry.rotationX, 0);
+          var ry = sceneNumber(entry.rotationY, 0);
+          var rz = sceneNumber(entry.rotationZ, 0);
+          var cxr = Math.cos(rx), sxr = Math.sin(rx);
+          var cyr = Math.cos(ry), syr = Math.sin(ry);
+          var czr = Math.cos(rz), szr = Math.sin(rz);
+          _pointsTilt[0] = cyr*czr; _pointsTilt[4] = sxr*syr*czr-cxr*szr; _pointsTilt[8]  = cxr*syr*czr+sxr*szr; _pointsTilt[12] = px;
+          _pointsTilt[1] = cyr*szr; _pointsTilt[5] = sxr*syr*szr+cxr*czr; _pointsTilt[9]  = cxr*syr*szr-sxr*czr; _pointsTilt[13] = py;
+          _pointsTilt[2] = -syr;    _pointsTilt[6] = sxr*cyr;             _pointsTilt[10] = cxr*cyr;             _pointsTilt[14] = pz;
+          _pointsTilt[3] = 0;       _pointsTilt[7] = 0;                   _pointsTilt[11] = 0;                   _pointsTilt[15] = 1;
+
+          sceneMat4MultiplyInto(_pointsModelMat, _pointsTilt, _pointsSpin);
+        } else {
+          var rx = sceneNumber(entry.rotationX, 0);
+          var ry = sceneNumber(entry.rotationY, 0);
+          var rz = sceneNumber(entry.rotationZ, 0);
+          var cxr = Math.cos(rx), sxr = Math.sin(rx);
+          var cyr = Math.cos(ry), syr = Math.sin(ry);
+          var czr = Math.cos(rz), szr = Math.sin(rz);
+          _pointsModelMat[0] = cyr*czr; _pointsModelMat[4] = sxr*syr*czr-cxr*szr; _pointsModelMat[8]  = cxr*syr*czr+sxr*szr; _pointsModelMat[12] = px;
+          _pointsModelMat[1] = cyr*szr; _pointsModelMat[5] = sxr*syr*szr+cxr*czr; _pointsModelMat[9]  = cxr*syr*szr-sxr*czr; _pointsModelMat[13] = py;
+          _pointsModelMat[2] = -syr;    _pointsModelMat[6] = sxr*cyr;             _pointsModelMat[10] = cxr*cyr;             _pointsModelMat[14] = pz;
+          _pointsModelMat[3] = 0;       _pointsModelMat[7] = 0;                   _pointsModelMat[11] = 0;                   _pointsModelMat[15] = 1;
+        }
+        gl.uniformMatrix4fv(pp.uniforms.modelMatrix, false, _pointsModelMat);
+        var count = sceneNumber(entry.count, 0);
+        if (count <= 0) continue;
+
+        var blendMode = typeof entry.blendMode === "string" ? entry.blendMode.toLowerCase() : "";
+        if (blendMode === "additive") {
+          gl.enable(gl.BLEND);
+          gl.blendFunc(gl.SRC_ALPHA, gl.ONE);
+        } else if (blendMode === "alpha") {
+          gl.enable(gl.BLEND);
+          gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+        } else {
+          gl.disable(gl.BLEND);
+        }
+
+        var depthWrite = entry.depthWrite !== false;
+        gl.depthMask(depthWrite);
+        gl.depthFunc(gl.LEQUAL);
+
+        gl.uniform1f(pp.uniforms.opacity, clamp01(sceneNumber(entry.opacity, 1)));
+
+        var defaultColorRGBA = sceneColorRGBA(entry.color, [1, 1, 1, 1]);
+        gl.uniform3f(pp.uniforms.defaultColor, defaultColorRGBA[0], defaultColorRGBA[1], defaultColorRGBA[2]);
+        gl.uniform1f(pp.uniforms.defaultSize, sceneNumber(entry.size, 1));
+        gl.uniform1i(pp.uniforms.sizeAttenuation, entry.attenuation ? 1 : 0);
+
+        if (!entry._cachedPos && Array.isArray(entry.positions) && entry.positions.length >= count * 3) {
+          entry._cachedPos = new Float32Array(entry.positions);
+        }
+        if (!entry._cachedSizes && Array.isArray(entry.sizes) && entry.sizes.length >= count) {
+          entry._cachedSizes = new Float32Array(entry.sizes);
+        }
+        if (!entry._cachedColors && Array.isArray(entry.colors) && entry.colors.length >= count) {
+          var rawColors = entry.colors;
+          if (typeof rawColors[0] === "string") {
+            entry._cachedColors = new Float32Array(count * 3);
+            for (var ci = 0; ci < count; ci++) {
+              var crgba = sceneColorRGBA(rawColors[ci], [1, 1, 1, 1]);
+              entry._cachedColors[ci * 3] = crgba[0];
+              entry._cachedColors[ci * 3 + 1] = crgba[1];
+              entry._cachedColors[ci * 3 + 2] = crgba[2];
+            }
+          } else if (rawColors.length >= count * 3) {
+            entry._cachedColors = new Float32Array(rawColors);
+          }
+        }
+        if (!entry._cachedPos) continue;
+        gl.bindBuffer(gl.ARRAY_BUFFER, pointsPositionBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, entry._cachedPos, gl.STREAM_DRAW);
+        gl.enableVertexAttribArray(pp.attributes.position);
+        gl.vertexAttribPointer(pp.attributes.position, 3, gl.FLOAT, false, 0, 0);
+
+        var hasSizes = !!entry._cachedSizes;
+        gl.uniform1i(pp.uniforms.hasPerVertexSize, hasSizes ? 1 : 0);
+        if (hasSizes && pp.attributes.size >= 0) {
+          gl.bindBuffer(gl.ARRAY_BUFFER, pointsSizeBuffer);
+          gl.bufferData(gl.ARRAY_BUFFER, entry._cachedSizes, gl.STREAM_DRAW);
+          gl.enableVertexAttribArray(pp.attributes.size);
+          gl.vertexAttribPointer(pp.attributes.size, 1, gl.FLOAT, false, 0, 0);
+        } else if (pp.attributes.size >= 0) {
+          gl.disableVertexAttribArray(pp.attributes.size);
+          gl.vertexAttrib1f(pp.attributes.size, sceneNumber(entry.size, 1));
+        }
+
+        var hasColors = !!entry._cachedColors;
+        gl.uniform1i(pp.uniforms.hasPerVertexColor, hasColors ? 1 : 0);
+        if (hasColors && pp.attributes.color >= 0) {
+          gl.bindBuffer(gl.ARRAY_BUFFER, pointsColorBuffer);
+          gl.bufferData(gl.ARRAY_BUFFER, entry._cachedColors, gl.STREAM_DRAW);
+          gl.enableVertexAttribArray(pp.attributes.color);
+          gl.vertexAttribPointer(pp.attributes.color, 3, gl.FLOAT, false, 0, 0);
+        } else if (pp.attributes.color >= 0) {
+          gl.disableVertexAttribArray(pp.attributes.color);
+          gl.vertexAttrib3f(pp.attributes.color, defaultColorRGBA[0], defaultColorRGBA[1], defaultColorRGBA[2]);
+        }
+
+        gl.drawArrays(gl.POINTS, 0, count);
+      }
+
+      gl.depthMask(true);
+      gl.disable(gl.BLEND);
+
+      gl.useProgram(program);
+    }
+
+    function dispose() {
+      gl.deleteBuffer(positionBuffer);
+      gl.deleteBuffer(normalBuffer);
+      gl.deleteBuffer(uvBuffer);
+      gl.deleteBuffer(tangentBuffer);
+      gl.deleteBuffer(jointsBuffer);
+      gl.deleteBuffer(weightsBuffer);
+      gl.deleteBuffer(pointsPositionBuffer);
+      gl.deleteBuffer(pointsSizeBuffer);
+      gl.deleteBuffer(pointsColorBuffer);
+      if (shadowState.buffer) gl.deleteBuffer(shadowState.buffer);
+
+      for (const record of textureCache.values()) {
+        if (record && record.texture) {
+          gl.deleteTexture(record.texture);
+        }
+      }
+      textureCache.clear();
+
+      for (var si = 0; si < shadowSlots.length; si++) {
+        if (shadowSlots[si]) {
+          gl.deleteFramebuffer(shadowSlots[si].framebuffer);
+          gl.deleteTexture(shadowSlots[si].depthTexture);
+          shadowSlots[si] = null;
+        }
+      }
+
+      if (postProcessor) {
+        postProcessor.dispose();
+        postProcessor = null;
+      }
+
+      if (shadowProgram) {
+        gl.deleteShader(shadowProgram.vertexShader);
+        gl.deleteShader(shadowProgram.fragmentShader);
+        gl.deleteProgram(shadowProgram.program);
+      }
+
+      if (skinnedProgram) {
+        gl.deleteShader(skinnedProgram.vertexShader);
+        gl.deleteShader(skinnedProgram.fragmentShader);
+        gl.deleteProgram(skinnedProgram.program);
+        skinnedProgram = null;
+      }
+
+      if (pointsProgram) {
+        gl.deleteShader(pointsProgram.vertexShader);
+        gl.deleteShader(pointsProgram.fragmentShader);
+        gl.deleteProgram(pointsProgram.program);
+        pointsProgram = null;
+      }
+
+      gl.deleteShader(pbrProgram.vertexShader);
+      gl.deleteShader(pbrProgram.fragmentShader);
+      gl.deleteProgram(program);
+    }
+
+    return {
+      render: render,
+      dispose: dispose,
+      type: "webgl-pbr",
+    };
+  }
+
+  function scenePBRObjectRenderPass(obj, material) {
+    if (obj && typeof obj.renderPass === "string" && obj.renderPass) {
+      const pass = obj.renderPass.toLowerCase();
+      if (pass === "alpha" || pass === "additive" || pass === "opaque") {
+        return pass;
+      }
+    }
+    if (material && typeof material.renderPass === "string" && material.renderPass) {
+      const pass = material.renderPass.toLowerCase();
+      if (pass === "alpha" || pass === "additive" || pass === "opaque") {
+        return pass;
+      }
+    }
+    if (material && sceneNumber(material.opacity, 1) < 1) {
+      return "alpha";
+    }
+    return "opaque";
+  }
+
+  function scenePBRDepthSort(a, b) {
+    const da = sceneNumber(a && a.depthCenter, 0);
+    const db = sceneNumber(b && b.depthCenter, 0);
+    if (da !== db) {
+      return db - da;
+    }
+    return String(a && a.id || "").localeCompare(String(b && b.id || ""));
+  }
+
+  function createScenePBRRendererOrFallback(gl, canvas, options) {
+    if (!gl || !canvas) {
+      return null;
+    }
+    if (typeof WebGL2RenderingContext === "undefined" || !(gl instanceof WebGL2RenderingContext)) {
+      return null;
+    }
+    var renderer = null;
+    try {
+      renderer = createScenePBRRenderer(gl, canvas);
+    } catch (e) {
+      console.warn("[gosx] PBR renderer creation failed:", e);
+      return null;
+    }
+    return renderer;
+  }
+
+  var SCENE_DRAG_MIN_EXTENT_X = 0.6;
+  var SCENE_DRAG_MIN_EXTENT_Y = 0.35;
+  var SCENE_PICK_MIN_EXTENT_X = 0.12;
+  var SCENE_PICK_MIN_EXTENT_Y = 0.08;
+  var SCENE_ORBIT_PITCH_MIN = -1.35;
+  var SCENE_ORBIT_PITCH_MAX = 1.35;
+  var SCENE_ORBIT_YAW_MIN = -1.1;
+  var SCENE_ORBIT_YAW_MAX = 1.1;
+  var SCENE_POINTER_PAD_MIN = 12;
+  var SCENE_POINTER_PAD_RANGE = 22;
+  var SCENE_POINTER_PAD_SCALE = 0.08;
+
+  function sceneLocalPointerPoint(event, canvas, width, height) {
+    const rect = canvas.getBoundingClientRect();
+    const safeWidth = Math.max(rect.width || 0, 1);
+    const safeHeight = Math.max(rect.height || 0, 1);
+    return {
+      x: sceneClamp(((sceneNumber(event && event.clientX, rect.left) - rect.left) / safeWidth) * width, 0, width),
+      y: sceneClamp(((sceneNumber(event && event.clientY, rect.top) - rect.top) / safeHeight) * height, 0, height),
+    };
+  }
+
+  function sceneLocalPointerSample(event, canvas, width, height, state, phase) {
+    const previousX = state.lastX == null ? width / 2 : state.lastX;
+    const previousY = state.lastY == null ? height / 2 : state.lastY;
+    const hasPointerPosition = Number.isFinite(sceneNumber(event && event.clientX, NaN)) && Number.isFinite(sceneNumber(event && event.clientY, NaN));
+    const point = hasPointerPosition ? sceneLocalPointerPoint(event, canvas, width, height) : { x: previousX, y: previousY };
+    const sample = {
+      x: point.x,
+      y: point.y,
+      deltaX: point.x - previousX,
+      deltaY: point.y - previousY,
+      buttons: phase === "end" ? 0 : 1,
+      button: phase === "start" || phase === "end" ? 0 : null,
+      active: phase !== "end",
+    };
+    state.lastX = point.x;
+    state.lastY = point.y;
+    return sample;
+  }
+
+  function resetScenePointerSample(width, height, state) {
+    state.lastX = width / 2;
+    state.lastY = height / 2;
+    publishPointerSignals({
+      x: state.lastX,
+      y: state.lastY,
+      deltaX: 0,
+      deltaY: 0,
+      buttons: 0,
+      button: 0,
+      active: false,
+    });
+  }
+
+  function sceneDragSignalNamespace(props) {
+    const value = props && props.dragSignalNamespace;
+    return typeof value === "string" ? value.trim() : "";
+  }
+
+  function scenePickSignalNamespace(props) {
+    const value = props && props.pickSignalNamespace;
+    return typeof value === "string" ? value.trim() : "";
+  }
+
+  function sceneEventSignalNamespace(props) {
+    const value = props && props.eventSignalNamespace;
+    return typeof value === "string" ? value.trim() : "";
+  }
+
+  function sceneSignalSegment(value, fallback) {
+    const source = typeof value === "string" ? value.trim().toLowerCase() : "";
+    if (!source) {
+      return fallback;
+    }
+    const normalized = source
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "");
+    return normalized || fallback;
+  }
+
+  function sceneTargetIndex(target) {
+    return target && target.index != null ? Math.max(-1, Math.floor(sceneNumber(target.index, -1))) : -1;
+  }
+
+  function sceneTargetID(target) {
+    return target && target.object && typeof target.object.id === "string" ? target.object.id : "";
+  }
+
+  function sceneTargetKind(target) {
+    return target && target.object && typeof target.object.kind === "string" ? target.object.kind : "";
+  }
+
+  function sceneObjectSignalSlug(index, id, kind) {
+    const targetID = typeof id === "string" ? id.trim() : "";
+    if (targetID) {
+      return sceneSignalSegment(targetID, "object");
+    }
+    const targetKind = typeof kind === "string" ? kind.trim() : "";
+    if (targetKind && index >= 0) {
+      return sceneSignalSegment(targetKind + "-" + index, "object-" + index);
+    }
+    if (index >= 0) {
+      return "object-" + index;
+    }
+    return "";
+  }
+
+  function publishSceneDragSignals(namespace, state, active) {
+    if (!namespace) {
+      return;
+    }
+    queueInputSignal(namespace + ".x", sceneNumber(state.orbitX, 0));
+    queueInputSignal(namespace + ".y", sceneNumber(state.orbitY, 0));
+    queueInputSignal(namespace + ".targetIndex", Math.max(-1, Math.floor(sceneNumber(state.targetIndex, -1))));
+    queueInputSignal(namespace + ".active", Boolean(active));
+  }
+
+  function publishScenePickSignals(namespace, state) {
+    if (!namespace) {
+      return;
+    }
+    const snapshot = scenePickSignalSnapshot(state);
+    const nextKey = scenePickSignalSnapshotKey(snapshot);
+    if (nextKey === state.publishedKey) {
+      return;
+    }
+    state.publishedKey = nextKey;
+    queueInputSignal(namespace + ".hovered", snapshot.hovered);
+    queueInputSignal(namespace + ".hoverIndex", snapshot.hoverIndex);
+    queueInputSignal(namespace + ".hoverID", snapshot.hoverID);
+    queueInputSignal(namespace + ".down", snapshot.down);
+    queueInputSignal(namespace + ".downIndex", snapshot.downIndex);
+    queueInputSignal(namespace + ".downID", snapshot.downID);
+    queueInputSignal(namespace + ".selected", snapshot.selected);
+    queueInputSignal(namespace + ".selectedIndex", snapshot.selectedIndex);
+    queueInputSignal(namespace + ".selectedID", snapshot.selectedID);
+    queueInputSignal(namespace + ".clickCount", snapshot.clickCount);
+    queueInputSignal(namespace + ".pointerX", snapshot.pointerX);
+    queueInputSignal(namespace + ".pointerY", snapshot.pointerY);
+  }
+
+  function publishSceneEventSignals(namespace, state) {
+    if (!namespace) {
+      return;
+    }
+    const snapshot = sceneInteractionSnapshot(state);
+    const nextKey = sceneInteractionSnapshotKey(snapshot);
+    if (nextKey === state.publishedEventKey) {
+      return;
+    }
+    state.publishedEventKey = nextKey;
+    queueInputSignal(namespace + ".revision", snapshot.revision);
+    queueInputSignal(namespace + ".type", snapshot.type);
+    queueInputSignal(namespace + ".targetIndex", snapshot.targetIndex);
+    queueInputSignal(namespace + ".targetID", snapshot.targetID);
+    queueInputSignal(namespace + ".targetKind", snapshot.targetKind);
+    queueInputSignal(namespace + ".hovered", snapshot.hovered);
+    queueInputSignal(namespace + ".hoverIndex", snapshot.hoverIndex);
+    queueInputSignal(namespace + ".hoverID", snapshot.hoverID);
+    queueInputSignal(namespace + ".hoverKind", snapshot.hoverKind);
+    queueInputSignal(namespace + ".down", snapshot.down);
+    queueInputSignal(namespace + ".downIndex", snapshot.downIndex);
+    queueInputSignal(namespace + ".downID", snapshot.downID);
+    queueInputSignal(namespace + ".downKind", snapshot.downKind);
+    queueInputSignal(namespace + ".selected", snapshot.selected);
+    queueInputSignal(namespace + ".selectedIndex", snapshot.selectedIndex);
+    queueInputSignal(namespace + ".selectedID", snapshot.selectedID);
+    queueInputSignal(namespace + ".selectedKind", snapshot.selectedKind);
+    queueInputSignal(namespace + ".clickCount", snapshot.clickCount);
+    queueInputSignal(namespace + ".pointerX", snapshot.pointerX);
+    queueInputSignal(namespace + ".pointerY", snapshot.pointerY);
+    publishSceneObjectEventSignals(namespace, state, snapshot);
+  }
+
+  function scenePickSignalSnapshot(state) {
+    return {
+      hovered: Boolean(state.hoverIndex >= 0),
+      hoverIndex: Math.max(-1, Math.floor(sceneNumber(state.hoverIndex, -1))),
+      hoverID: state.hoverID || "",
+      down: Boolean(state.downIndex >= 0),
+      downIndex: Math.max(-1, Math.floor(sceneNumber(state.downIndex, -1))),
+      downID: state.downID || "",
+      selected: Boolean(state.selectedIndex >= 0),
+      selectedIndex: Math.max(-1, Math.floor(sceneNumber(state.selectedIndex, -1))),
+      selectedID: state.selectedID || "",
+      clickCount: Math.max(0, Math.floor(sceneNumber(state.clickCount, 0))),
+      pointerX: sceneNumber(state.pointerX, 0),
+      pointerY: sceneNumber(state.pointerY, 0),
+    };
+  }
+
+  function sceneInteractionSnapshot(state) {
+    var pick = scenePickSignalSnapshot(state);
+    pick.revision = Math.max(0, Math.floor(sceneNumber(state.eventRevision, 0)));
+    pick.type = state.eventType || "";
+    pick.targetIndex = Math.max(-1, Math.floor(sceneNumber(state.eventTargetIndex, -1)));
+    pick.targetID = state.eventTargetID || "";
+    pick.targetKind = state.eventTargetKind || "";
+    pick.hoverKind = state.hoverKind || "";
+    pick.downKind = state.downKind || "";
+    pick.selectedKind = state.selectedKind || "";
+    return pick;
+  }
+
+  function scenePickSignalSnapshotKey(snapshot) {
+    return [
+      snapshot.hovered ? 1 : 0,
+      snapshot.hoverIndex,
+      snapshot.hoverID,
+      snapshot.down ? 1 : 0,
+      snapshot.downIndex,
+      snapshot.downID,
+      snapshot.selected ? 1 : 0,
+      snapshot.selectedIndex,
+      snapshot.selectedID,
+      snapshot.clickCount,
+      snapshot.pointerX,
+      snapshot.pointerY,
+    ].join("|");
+  }
+
+  function sceneInteractionSnapshotKey(snapshot) {
+    return [
+      snapshot.revision,
+      snapshot.type,
+      snapshot.targetIndex,
+      snapshot.targetID,
+      snapshot.targetKind,
+      snapshot.hovered ? 1 : 0,
+      snapshot.hoverIndex,
+      snapshot.hoverID,
+      snapshot.hoverKind,
+      snapshot.down ? 1 : 0,
+      snapshot.downIndex,
+      snapshot.downID,
+      snapshot.downKind,
+      snapshot.selected ? 1 : 0,
+      snapshot.selectedIndex,
+      snapshot.selectedID,
+      snapshot.selectedKind,
+      snapshot.clickCount,
+      snapshot.pointerX,
+      snapshot.pointerY,
+    ].join("|");
+  }
+
+  function publishSceneObjectEventSignals(namespace, state, snapshot) {
+    publishSceneObjectBoolSignal(namespace, "hovered", state.publishedHoverSlug, sceneObjectSignalSlug(snapshot.hoverIndex, snapshot.hoverID, snapshot.hoverKind));
+    state.publishedHoverSlug = sceneObjectSignalSlug(snapshot.hoverIndex, snapshot.hoverID, snapshot.hoverKind);
+    publishSceneObjectBoolSignal(namespace, "down", state.publishedDownSlug, sceneObjectSignalSlug(snapshot.downIndex, snapshot.downID, snapshot.downKind));
+    state.publishedDownSlug = sceneObjectSignalSlug(snapshot.downIndex, snapshot.downID, snapshot.downKind);
+    publishSceneObjectBoolSignal(namespace, "selected", state.publishedSelectedSlug, sceneObjectSignalSlug(snapshot.selectedIndex, snapshot.selectedID, snapshot.selectedKind));
+    state.publishedSelectedSlug = sceneObjectSignalSlug(snapshot.selectedIndex, snapshot.selectedID, snapshot.selectedKind);
+
+    const nextCounts = state.objectClickCounts || Object.create(null);
+    const previousCounts = state.publishedObjectClickCounts || Object.create(null);
+    const slugs = new Set(Object.keys(previousCounts).concat(Object.keys(nextCounts)));
+    slugs.forEach(function(slug) {
+      const nextCount = Math.max(0, Math.floor(sceneNumber(nextCounts[slug], 0)));
+      const previousCount = Math.max(0, Math.floor(sceneNumber(previousCounts[slug], 0)));
+      if (nextCount === previousCount) {
+        return;
+      }
+      queueInputSignal(namespace + ".object." + slug + ".clickCount", nextCount);
+    });
+    state.publishedObjectClickCounts = Object.assign(Object.create(null), nextCounts);
+  }
+
+  function publishSceneObjectBoolSignal(namespace, key, previousSlug, nextSlug) {
+    if (previousSlug && previousSlug !== nextSlug) {
+      queueInputSignal(namespace + ".object." + previousSlug + "." + key, false);
+    }
+    if (nextSlug && nextSlug !== previousSlug) {
+      queueInputSignal(namespace + ".object." + nextSlug + "." + key, true);
+    }
+  }
+
+  function sceneBoundsSize(bounds) {
+    if (!bounds || typeof bounds !== "object") return [0, 0, 0];
+    return [
+      Math.abs(sceneNumber(bounds.maxX, 0) - sceneNumber(bounds.minX, 0)),
+      Math.abs(sceneNumber(bounds.maxY, 0) - sceneNumber(bounds.minY, 0)),
+      Math.abs(sceneNumber(bounds.maxZ, 0) - sceneNumber(bounds.minZ, 0)),
+    ].sort(function(a, b) { return b - a; });
+  }
+
+  function sceneObjectAllowsPointerDrag(object) {
+    if (!object || object.kind === "plane" || object.viewCulled) {
+      return false;
+    }
+    const extents = sceneBoundsSize(object.bounds);
+    return extents[0] > SCENE_DRAG_MIN_EXTENT_X && extents[1] > SCENE_DRAG_MIN_EXTENT_Y;
+  }
+
+  function sceneObjectAllowsPointerPick(object) {
+    if (!object || object.viewCulled) {
+      return false;
+    }
+    if (typeof object.pickable === "boolean") {
+      return object.pickable;
+    }
+    if (object.kind === "plane") {
+      return false;
+    }
+    const extents = sceneBoundsSize(object.bounds);
+    return extents[0] > SCENE_PICK_MIN_EXTENT_X && extents[1] > SCENE_PICK_MIN_EXTENT_Y;
+  }
+
+  function sceneWorldPointAt(source, vertexIndex) {
+    if (!source || typeof source.length !== "number") {
+      return null;
+    }
+    const offset = Math.max(0, vertexIndex * 3);
+    if (offset + 2 >= source.length) {
+      return null;
+    }
+    return {
+      x: sceneNumber(source[offset], 0),
+      y: sceneNumber(source[offset + 1], 0),
+      z: sceneNumber(source[offset + 2], 0),
+    };
+  }
+
+  function sceneProjectedObjectSegments(bundle, object, width, height) {
+    if (!bundle || !bundle.camera || !object) {
+      return [];
+    }
+    const vertexOffset = Math.max(0, Math.floor(sceneNumber(object.vertexOffset, 0)));
+    const vertexCount = Math.max(0, Math.floor(sceneNumber(object.vertexCount, 0)));
+    if (vertexCount < 2) {
+      return [];
+    }
+    const source = bundle.worldPositions;
+    if (!source || typeof source.length !== "number") {
+      return [];
+    }
+    const segments = [];
+    for (let i = 0; i + 1 < vertexCount; i += 2) {
+      const fromWorld = sceneWorldPointAt(source, vertexOffset + i);
+      const toWorld = sceneWorldPointAt(source, vertexOffset + i + 1);
+      if (!fromWorld || !toWorld) {
+        continue;
+      }
+      const from = sceneProjectPoint(fromWorld, bundle.camera, width, height);
+      const to = sceneProjectPoint(toWorld, bundle.camera, width, height);
+      if (!from || !to) {
+        continue;
+      }
+      segments.push([from, to]);
+    }
+    return segments;
+  }
+
+  function sceneProjectedSegmentsBounds(segments) {
+    if (!Array.isArray(segments) || !segments.length) {
+      return null;
+    }
+    let minX = segments[0][0].x;
+    let maxX = segments[0][0].x;
+    let minY = segments[0][0].y;
+    let maxY = segments[0][0].y;
+    for (const segment of segments) {
+      for (const point of segment) {
+        minX = Math.min(minX, point.x);
+        maxX = Math.max(maxX, point.x);
+        minY = Math.min(minY, point.y);
+        maxY = Math.max(maxY, point.y);
+      }
+    }
+    return { minX, maxX, minY, maxY };
+  }
+
+  function scenePointerPadding(bounds) {
+    if (!bounds) {
+      return SCENE_POINTER_PAD_MIN;
+    }
+    const span = Math.max(bounds.maxX - bounds.minX, bounds.maxY - bounds.minY);
+    return sceneClamp(span * SCENE_POINTER_PAD_SCALE, SCENE_POINTER_PAD_MIN, SCENE_POINTER_PAD_RANGE);
+  }
+
+  function sceneDistanceToSegment(point, from, to) {
+    const deltaX = to.x - from.x;
+    const deltaY = to.y - from.y;
+    const lengthSquared = deltaX * deltaX + deltaY * deltaY;
+    if (lengthSquared <= 0.0001) {
+      return Math.hypot(point.x - from.x, point.y - from.y);
+    }
+    const t = sceneClamp(((point.x - from.x) * deltaX + (point.y - from.y) * deltaY) / lengthSquared, 0, 1);
+    const closestX = from.x + deltaX * t;
+    const closestY = from.y + deltaY * t;
+    return Math.hypot(point.x - closestX, point.y - closestY);
+  }
+
+  function sceneProjectedObjectHull(segments) {
+    const points = [];
+    const seen = new Set();
+    for (const segment of segments) {
+      for (const point of segment) {
+        const key = point.x.toFixed(3) + ":" + point.y.toFixed(3);
+        if (seen.has(key)) {
+          continue;
+        }
+        seen.add(key);
+        points.push({ x: point.x, y: point.y });
+      }
+    }
+    if (points.length < 3) {
+      return points;
+    }
+    points.sort(function(a, b) {
+      return a.x === b.x ? a.y - b.y : a.x - b.x;
+    });
+    const lower = [];
+    for (const point of points) {
+      while (lower.length >= 2 && sceneTurnDirection(lower[lower.length - 2], lower[lower.length - 1], point) <= 0) {
+        lower.pop();
+      }
+      lower.push(point);
+    }
+    const upper = [];
+    for (let i = points.length - 1; i >= 0; i -= 1) {
+      const point = points[i];
+      while (upper.length >= 2 && sceneTurnDirection(upper[upper.length - 2], upper[upper.length - 1], point) <= 0) {
+        upper.pop();
+      }
+      upper.push(point);
+    }
+    lower.pop();
+    upper.pop();
+    return lower.concat(upper);
+  }
+
+  function sceneTurnDirection(a, b, c) {
+    return (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
+  }
+
+  function scenePointInPolygon(point, polygon) {
+    if (!Array.isArray(polygon) || polygon.length < 3) {
+      return false;
+    }
+    let inside = false;
+    for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i, i += 1) {
+      const xi = polygon[i].x;
+      const yi = polygon[i].y;
+      const xj = polygon[j].x;
+      const yj = polygon[j].y;
+      const intersects = ((yi > point.y) !== (yj > point.y)) &&
+        (point.x < ((xj - xi) * (point.y - yi)) / ((yj - yi) || 0.000001) + xi);
+      if (intersects) {
+        inside = !inside;
+      }
+    }
+    return inside;
+  }
+
+  function sceneObjectDepthCenter(object, camera) {
+    const bounds = object && object.bounds;
+    if (!bounds) {
+      return sceneWorldPointDepth(0, camera);
+    }
+    return sceneBoundsDepthMetrics(bounds, camera).center;
+  }
+
+  function sceneObjectPointerCapture(bundle, object, point, width, height) {
+    const segments = sceneProjectedObjectSegments(bundle, object, width, height);
+    if (!segments.length) {
+      return null;
+    }
+    const bounds = sceneProjectedSegmentsBounds(segments);
+    if (!bounds) {
+      return null;
+    }
+    const padding = scenePointerPadding(bounds);
+    if (
+      point.x < bounds.minX - padding ||
+      point.x > bounds.maxX + padding ||
+      point.y < bounds.minY - padding ||
+      point.y > bounds.maxY + padding
+    ) {
+      return null;
+    }
+    let minDistance = Number.POSITIVE_INFINITY;
+    for (const segment of segments) {
+      minDistance = Math.min(minDistance, sceneDistanceToSegment(point, segment[0], segment[1]));
+    }
+    const inside = scenePointInPolygon(point, sceneProjectedObjectHull(segments));
+    if (!inside && minDistance > padding) {
+      return null;
+    }
+    return {
+      inside,
+      distance: inside ? 0 : minDistance,
+      depth: sceneObjectDepthCenter(object, bundle.camera),
+      area: Math.max(1, (bounds.maxX - bounds.minX) * (bounds.maxY - bounds.minY)),
+    };
+  }
+
+  function scenePointerCaptureIsBetter(candidate, current) {
+    if (!current) {
+      return true;
+    }
+    if (candidate.inside !== current.inside) {
+      return candidate.inside;
+    }
+    if (Math.abs(candidate.distance - current.distance) > 0.5) {
+      return candidate.distance < current.distance;
+    }
+    if (Math.abs(candidate.depth - current.depth) > 0.01) {
+      return candidate.depth < current.depth;
+    }
+    return candidate.area < current.area;
+  }
+
+  function sceneRaycastPick(pointerX, pointerY, width, height, camera, bundle) {
+    if (!bundle || !Array.isArray(bundle.objects) || !bundle.objects.length) {
+      return null;
+    }
+
+    var ray = sceneScreenToRay(pointerX, pointerY, width, height, camera);
+    var closest = null;
+
+    for (var i = 0; i < bundle.objects.length; i++) {
+      var obj = bundle.objects[i];
+
+      if (!sceneObjectAllowsPointerPick(obj)) continue;
+      if (obj.viewCulled) continue;
+
+      var bounds = obj.bounds;
+      if (!bounds) continue;
+
+      var boundsMin = { x: sceneNumber(bounds.minX, 0), y: sceneNumber(bounds.minY, 0), z: sceneNumber(bounds.minZ, 0) };
+      var boundsMax = { x: sceneNumber(bounds.maxX, 0), y: sceneNumber(bounds.maxY, 0), z: sceneNumber(bounds.maxZ, 0) };
+
+      var aabbDist = sceneRayIntersectsAABB(ray.origin, ray.dir, boundsMin, boundsMax);
+      if (aabbDist < 0) continue;
+
+      var positions = bundle.worldPositions;
+      if (!positions || typeof positions.length !== "number") continue;
+
+      var vertexOffset = Math.max(0, Math.floor(sceneNumber(obj.vertexOffset, 0)));
+      var vertexCount = Math.max(0, Math.floor(sceneNumber(obj.vertexCount, 0)));
+
+      for (var tri = 0; tri + 2 < vertexCount; tri += 3) {
+        var v0 = sceneWorldPointAt(positions, vertexOffset + tri);
+        var v1 = sceneWorldPointAt(positions, vertexOffset + tri + 1);
+        var v2 = sceneWorldPointAt(positions, vertexOffset + tri + 2);
+        if (!v0 || !v1 || !v2) continue;
+
+        var hit = sceneRayIntersectsTriangle(ray.origin, ray.dir, v0, v1, v2);
+        if (hit && (!closest || hit.distance < closest.distance)) {
+          closest = {
+            index: i,
+            object: obj,
+            distance: hit.distance,
+            inside: true,
+            depth: hit.distance,
+            area: Math.max(1, (boundsMax.x - boundsMin.x) * (boundsMax.y - boundsMin.y)),
+            point: {
+              x: ray.origin.x + ray.dir.x * hit.distance,
+              y: ray.origin.y + ray.dir.y * hit.distance,
+              z: ray.origin.z + ray.dir.z * hit.distance,
+            },
+          };
+        }
+      }
+    }
+
+    return closest;
+  }
+
+  function sceneBundlePointerTarget(bundle, point, width, height, allowObject) {
+    if (!bundle || !bundle.camera || !Array.isArray(bundle.objects) || !bundle.objects.length) {
+      return null;
+    }
+    let best = null;
+    for (let index = 0; index < bundle.objects.length; index += 1) {
+      const object = bundle.objects[index];
+      if (typeof allowObject === "function" && !allowObject(object)) {
+        continue;
+      }
+      const capture = sceneObjectPointerCapture(bundle, object, point, width, height);
+      if (!capture) {
+        continue;
+      }
+      const candidate = {
+        index,
+        object,
+        inside: capture.inside,
+        distance: capture.distance,
+        depth: capture.depth,
+        area: capture.area,
+      };
+      if (scenePointerCaptureIsBetter(candidate, best)) {
+        best = candidate;
+      }
+    }
+    return best;
+  }
+
+  function sceneBundlePointerDragTarget(bundle, point, width, height) {
+    return sceneBundlePointerTarget(bundle, point, width, height, sceneObjectAllowsPointerDrag);
+  }
+
+  function sceneBundlePointerPickTarget(bundle, point, width, height) {
+    if (bundle && bundle.camera && bundle.worldPositions) {
+      var rayHit = sceneRaycastPick(point.x, point.y, width, height, bundle.camera, bundle);
+      if (rayHit) {
+        return rayHit;
+      }
+    }
+    return sceneBundlePointerTarget(bundle, point, width, height, sceneObjectAllowsPointerPick);
+  }
+
+  function sceneViewportValue(viewport, key, fallback) {
+    return sceneNumber(viewport && viewport[key], fallback);
+  }
+
+  function sceneDragViewportMetrics(readViewport, initialWidth, initialHeight) {
+    const viewport = typeof readViewport === "function" ? readViewport() : null;
+    return {
+      width: Math.max(1, sceneViewportValue(viewport, "cssWidth", initialWidth)),
+      height: Math.max(1, sceneViewportValue(viewport, "cssHeight", initialHeight)),
+    };
+  }
+
+  function createSceneDragState(initialWidth, initialHeight) {
+    return {
+      active: false,
+      orbitX: 0,
+      orbitY: 0,
+      pointerId: null,
+      targetIndex: -1,
+      lastX: initialWidth / 2,
+      lastY: initialHeight / 2,
+    };
+  }
+
+  function createScenePickState(initialWidth, initialHeight) {
+    return {
+      pointerId: null,
+      hoverIndex: -1,
+      hoverID: "",
+      hoverKind: "",
+      downIndex: -1,
+      downID: "",
+      downKind: "",
+      selectedIndex: -1,
+      selectedID: "",
+      selectedKind: "",
+      clickCount: 0,
+      pointerX: initialWidth / 2,
+      pointerY: initialHeight / 2,
+      eventRevision: 0,
+      eventType: "",
+      eventTargetIndex: -1,
+      eventTargetID: "",
+      eventTargetKind: "",
+      publishedKey: "",
+      publishedEventKey: "",
+      publishedHoverSlug: "",
+      publishedDownSlug: "",
+      publishedSelectedSlug: "",
+      objectClickCounts: Object.create(null),
+      publishedObjectClickCounts: Object.create(null),
+    };
+  }
+
+  function sceneDragMatchesActivePointer(state, event) {
+    if (!state.active || state.pointerId == null) {
+      return state.active;
+    }
+    if (!event || event.type === "lostpointercapture") {
+      return true;
+    }
+    if (event.pointerId == null) {
+      return true;
+    }
+    return event.pointerId === state.pointerId;
+  }
+
+  function scenePointerCanStartDrag(state, event) {
+    if (state.active) {
+      return false;
+    }
+    if (!event) {
+      return false;
+    }
+    if (event.pointerType === "mouse") {
+      return event.button === 0;
+    }
+    return event.button == null || event.button === 0;
+  }
+
+  function sceneDragTargetAtEvent(event, canvas, readViewport, readSceneBundle, initialWidth, initialHeight) {
+    const metrics = sceneDragViewportMetrics(readViewport, initialWidth, initialHeight);
+    const pointer = sceneLocalPointerPoint(event, canvas, metrics.width, metrics.height);
+    return sceneBundlePointerDragTarget(readSceneBundle && readSceneBundle(), pointer, metrics.width, metrics.height);
+  }
+
+  function scenePickMetricsAtEvent(event, canvas, readViewport, initialWidth, initialHeight) {
+    const metrics = sceneDragViewportMetrics(readViewport, initialWidth, initialHeight);
+    return {
+      metrics,
+      pointer: sceneLocalPointerPoint(event, canvas, metrics.width, metrics.height),
+    };
+  }
+
+  function scenePickTargetAtEvent(event, canvas, readViewport, readSceneBundle, initialWidth, initialHeight) {
+    const sample = scenePickMetricsAtEvent(event, canvas, readViewport, initialWidth, initialHeight);
+    return {
+      metrics: sample.metrics,
+      pointer: sample.pointer,
+      target: sceneBundlePointerPickTarget(readSceneBundle && readSceneBundle(), sample.pointer, sample.metrics.width, sample.metrics.height),
+    };
+  }
+
+  function updateSceneDragOrbit(state, sample, width, height) {
+    state.orbitX = sceneClamp(state.orbitX + sample.deltaX / Math.max(width / 2, 1), SCENE_ORBIT_PITCH_MIN, SCENE_ORBIT_PITCH_MAX);
+    state.orbitY = sceneClamp(state.orbitY - sample.deltaY / Math.max(height / 2, 1), SCENE_ORBIT_YAW_MIN, SCENE_ORBIT_YAW_MAX);
+  }
+
+  function publishSceneDragInteraction(canvas, event, phase, state, dragNamespace, readViewport, initialWidth, initialHeight) {
+    const metrics = sceneDragViewportMetrics(readViewport, initialWidth, initialHeight);
+    const sample = sceneLocalPointerSample(event, canvas, metrics.width, metrics.height, state, phase);
+    if (!dragNamespace) {
+      publishPointerSignals(sample);
+      return;
+    }
+    if (phase === "move") {
+      updateSceneDragOrbit(state, sample, metrics.width, metrics.height);
+    }
+    publishSceneDragSignals(dragNamespace, state, phase !== "end");
+  }
+
+  function resetSceneDragInteraction(state, dragNamespace, readViewport, initialWidth, initialHeight) {
+    state.pointerId = null;
+    state.targetIndex = -1;
+    if (dragNamespace) {
+      return;
+    }
+    const metrics = sceneDragViewportMetrics(readViewport, initialWidth, initialHeight);
+    resetScenePointerSample(metrics.width, metrics.height, state);
+  }
+
+  function scenePrimaryPointerEvent(event) {
+    if (!event) {
+      return false;
+    }
+    if (event.pointerType === "mouse") {
+      return event.button === 0 || event.button == null;
+    }
+    return event.button == null || event.button === 0;
+  }
+
+  function scenePickMatchesPointer(state, event) {
+    if (state.pointerId == null) {
+      return true;
+    }
+    if (!event || event.type === "lostpointercapture") {
+      return true;
+    }
+    if (event.pointerId == null) {
+      return true;
+    }
+    return event.pointerId === state.pointerId;
+  }
+
+  function sceneApplyPickTarget(state, sample) {
+    const target = sample && sample.target ? sample.target : null;
+    const pointer = sample && sample.pointer ? sample.pointer : { x: 0, y: 0 };
+    state.pointerX = sceneNumber(pointer.x, 0);
+    state.pointerY = sceneNumber(pointer.y, 0);
+    state.hoverIndex = target ? target.index : -1;
+    state.hoverID = sceneTargetID(target);
+    state.hoverKind = sceneTargetKind(target);
+    return target;
+  }
+
+  function sceneClearPickDown(state) {
+    state.pointerId = null;
+    state.downIndex = -1;
+    state.downID = "";
+    state.downKind = "";
+  }
+
+  function sceneSelectPickTarget(state, target) {
+    state.selectedIndex = target ? target.index : -1;
+    state.selectedID = sceneTargetID(target);
+    state.selectedKind = sceneTargetKind(target);
+  }
+
+  function scenePickTargetsMatch(target, index, id) {
+    if (!target) {
+      return false;
+    }
+    const targetID = target.object && typeof target.object.id === "string" ? target.object.id : "";
+    return target.index === index && targetID === id;
+  }
+
+  function scenePointerID(event) {
+    return event && event.pointerId != null ? event.pointerId : null;
+  }
+
+  function sceneCapturePointer(canvas, pointerID) {
+    if (pointerID == null || !canvas || typeof canvas.setPointerCapture !== "function") {
+      return;
+    }
+    try {
+      canvas.setPointerCapture(pointerID);
+    } catch (_) {}
+  }
+
+  function sceneReleasePointer(canvas, pointerID) {
+    if (pointerID == null || !canvas || typeof canvas.releasePointerCapture !== "function") {
+      return;
+    }
+    try {
+      canvas.releasePointerCapture(pointerID);
+    } catch (_) {}
+  }
+
+  function sceneSnapshotTarget(index, id, kind) {
+    const targetIndex = Math.max(-1, Math.floor(sceneNumber(index, -1)));
+    const targetID = typeof id === "string" ? id : "";
+    const targetKind = typeof kind === "string" ? kind : "";
+    if (targetIndex < 0 && !targetID && !targetKind) {
+      return null;
+    }
+    return {
+      index: targetIndex,
+      object: {
+        id: targetID,
+        kind: targetKind,
+      },
+    };
+  }
+
+  function scenePickStateSnapshot(state) {
+    return {
+      hover: sceneSnapshotTarget(state.hoverIndex, state.hoverID, state.hoverKind),
+      down: sceneSnapshotTarget(state.downIndex, state.downID, state.downKind),
+      selected: sceneSnapshotTarget(state.selectedIndex, state.selectedID, state.selectedKind),
+      clickCount: Math.max(0, Math.floor(sceneNumber(state.clickCount, 0))),
+      pointerX: sceneNumber(state.pointerX, 0),
+      pointerY: sceneNumber(state.pointerY, 0),
+    };
+  }
+
+  function sceneTargetsEqual(left, right) {
+    if (!left || !right) {
+      return left === right;
+    }
+    return sceneTargetIndex(left) === sceneTargetIndex(right) &&
+      sceneTargetID(left) === sceneTargetID(right) &&
+      sceneTargetKind(left) === sceneTargetKind(right);
+  }
+
+  function sceneDeriveInteractionEvent(action, before, after) {
+    switch (action) {
+      case "move":
+        if (!sceneTargetsEqual(before.hover, after.hover)) {
+          return after.hover ? { type: "hover", target: after.hover } : before.hover ? { type: "leave", target: before.hover } : null;
+        }
+        return null;
+      case "down":
+        if (after.down) {
+          return { type: "down", target: after.down };
+        }
+        if (before.selected && !after.selected) {
+          return { type: "deselect", target: before.selected };
+        }
+        return null;
+      case "up":
+        if (after.selected && (!sceneTargetsEqual(before.selected, after.selected) || after.clickCount !== before.clickCount)) {
+          return { type: "select", target: after.selected };
+        }
+        if (before.selected && !after.selected) {
+          return { type: "deselect", target: before.selected };
+        }
+        return null;
+      case "cancel":
+        return before.down ? { type: "cancel", target: before.down } : null;
+      case "leave":
+        return before.hover && !after.hover ? { type: "leave", target: before.hover } : null;
+      default:
+        return null;
+    }
+  }
+
+  function sceneRecordInteractionEvent(state, interaction) {
+    if (!state || !interaction || !interaction.type) {
+      return null;
+    }
+    state.eventRevision = Math.max(0, Math.floor(sceneNumber(state.eventRevision, 0))) + 1;
+    state.eventType = interaction.type;
+    state.eventTargetIndex = sceneTargetIndex(interaction.target);
+    state.eventTargetID = sceneTargetID(interaction.target);
+    state.eventTargetKind = sceneTargetKind(interaction.target);
+    const detail = sceneInteractionSnapshot(state);
+    return {
+      type: detail.type,
+      revision: detail.revision,
+      targetIndex: detail.targetIndex,
+      targetID: detail.targetID,
+      targetKind: detail.targetKind,
+      hovered: detail.hovered,
+      hoverIndex: detail.hoverIndex,
+      hoverID: detail.hoverID,
+      hoverKind: detail.hoverKind,
+      down: detail.down,
+      downIndex: detail.downIndex,
+      downID: detail.downID,
+      downKind: detail.downKind,
+      selected: detail.selected,
+      selectedIndex: detail.selectedIndex,
+      selectedID: detail.selectedID,
+      selectedKind: detail.selectedKind,
+      clickCount: detail.clickCount,
+      pointerX: detail.pointerX,
+      pointerY: detail.pointerY,
+    };
+  }
+
+  function publishSceneInteractionState(pickNamespace, eventNamespace, state) {
+    publishScenePickSignals(pickNamespace, state);
+    publishSceneEventSignals(eventNamespace, state);
+  }
+
+  function sceneHandlePickMove(state, event, canvas, readViewport, readSceneBundle, initialWidth, initialHeight) {
+    if (!scenePickMatchesPointer(state, event)) {
+      return false;
+    }
+    sceneApplyPickTarget(state, scenePickTargetAtEvent(event, canvas, readViewport, readSceneBundle, initialWidth, initialHeight));
+    return true;
+  }
+
+  function sceneHandlePickDown(state, event, canvas, readViewport, readSceneBundle, initialWidth, initialHeight) {
+    if (!scenePrimaryPointerEvent(event)) {
+      return false;
+    }
+    const sample = scenePickTargetAtEvent(event, canvas, readViewport, readSceneBundle, initialWidth, initialHeight);
+    const target = sceneApplyPickTarget(state, sample);
+    if (!target) {
+      sceneClearPickDown(state);
+      sceneSelectPickTarget(state, null);
+      return false;
+    }
+    state.pointerId = scenePointerID(event);
+    state.downIndex = target.index;
+    state.downID = sceneTargetID(target);
+    state.downKind = sceneTargetKind(target);
+    return true;
+  }
+
+  function sceneHandlePickUp(state, event, canvas, readViewport, readSceneBundle, initialWidth, initialHeight) {
+    if (!scenePickMatchesPointer(state, event)) {
+      return { handled: false, pointerId: null };
+    }
+    const downIndex = state.downIndex;
+    const downID = state.downID;
+    const pointerID = state.pointerId;
+    const sample = scenePickTargetAtEvent(event, canvas, readViewport, readSceneBundle, initialWidth, initialHeight);
+    const target = sceneApplyPickTarget(state, sample);
+    if (downIndex >= 0) {
+      if (scenePickTargetsMatch(target, downIndex, downID)) {
+        state.clickCount += 1;
+        sceneSelectPickTarget(state, target);
+        const selectedSlug = sceneObjectSignalSlug(state.selectedIndex, state.selectedID, state.selectedKind);
+        if (selectedSlug) {
+          const previousCount = state.objectClickCounts && state.objectClickCounts[selectedSlug];
+          state.objectClickCounts[selectedSlug] = Math.max(0, Math.floor(sceneNumber(previousCount, 0))) + 1;
+        }
+      } else if (!target) {
+        sceneSelectPickTarget(state, null);
+      }
+    }
+    sceneClearPickDown(state);
+    return { handled: pointerID != null || downIndex >= 0, pointerId: pointerID };
+  }
+
+  function sceneHandlePickCancel(state, event) {
+    if (!scenePickMatchesPointer(state, event)) {
+      return { handled: false, pointerId: null };
+    }
+    const pointerID = state.pointerId;
+    const handled = pointerID != null || state.downIndex >= 0;
+    sceneClearPickDown(state);
+    return { handled, pointerId: pointerID };
+  }
+
+  function sceneHandlePickLeave(state) {
+    if (state.pointerId != null) {
+      return false;
+    }
+    state.hoverIndex = -1;
+    state.hoverID = "";
+    state.hoverKind = "";
+    return true;
+  }
+
+  function setupSceneDragInteractions(canvas, props, readViewport, readSceneBundle) {
+    if (!canvas || !sceneBool(props.dragToRotate, false)) {
+      return { dispose() {} };
+    }
+
+    const dragNamespace = sceneDragSignalNamespace(props);
+    const initialMetrics = sceneDragViewportMetrics(readViewport, sceneNumber(props.width, 720), sceneNumber(props.height, 420));
+    const initialWidth = initialMetrics.width;
+    const initialHeight = initialMetrics.height;
+    const state = createSceneDragState(initialWidth, initialHeight);
+    let documentListenersAttached = false;
+
+    canvas.style.cursor = "grab";
+    canvas.style.touchAction = "none";
+
+    function attachDocumentListeners() {
+      if (documentListenersAttached) {
+        return;
+      }
+      documentListenersAttached = true;
+      document.addEventListener("pointermove", onPointerMove);
+      document.addEventListener("pointerup", finishDrag);
+      document.addEventListener("pointercancel", finishDrag);
+    }
+
+    function detachDocumentListeners() {
+      if (!documentListenersAttached) {
+        return;
+      }
+      documentListenersAttached = false;
+      document.removeEventListener("pointermove", onPointerMove);
+      document.removeEventListener("pointerup", finishDrag);
+      document.removeEventListener("pointercancel", finishDrag);
+    }
+
+    function onPointerDown(event) {
+      if (!scenePointerCanStartDrag(state, event)) {
+        return;
+      }
+      const target = sceneDragTargetAtEvent(event, canvas, readViewport, readSceneBundle, initialWidth, initialHeight);
+      if (!target) {
+        return;
+      }
+      state.active = true;
+      state.pointerId = event.pointerId;
+      state.targetIndex = target.index;
+      canvas.style.cursor = "grabbing";
+      attachDocumentListeners();
+      if (typeof canvas.setPointerCapture === "function") {
+        canvas.setPointerCapture(event.pointerId);
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      publishSceneDragInteraction(canvas, event, "start", state, dragNamespace, readViewport, initialWidth, initialHeight);
+    }
+
+    function onPointerMove(event) {
+      if (!sceneDragMatchesActivePointer(state, event)) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      publishSceneDragInteraction(canvas, event, "move", state, dragNamespace, readViewport, initialWidth, initialHeight);
+    }
+
+    function finishDrag(event) {
+      if (!sceneDragMatchesActivePointer(state, event)) {
+        return;
+      }
+      const wasActive = state.active;
+      state.active = false;
+      canvas.style.cursor = "grab";
+      detachDocumentListeners();
+      if (!wasActive) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      if (state.pointerId != null && typeof canvas.releasePointerCapture === "function") {
+        try {
+          canvas.releasePointerCapture(state.pointerId);
+        } catch (_) {}
+      }
+      state.pointerId = null;
+      state.targetIndex = -1;
+      publishSceneDragInteraction(canvas, event, "end", state, dragNamespace, readViewport, initialWidth, initialHeight);
+      resetSceneDragInteraction(state, dragNamespace, readViewport, initialWidth, initialHeight);
+    }
+
+    canvas.addEventListener("pointerdown", onPointerDown);
+    canvas.addEventListener("pointermove", onPointerMove);
+    canvas.addEventListener("pointerup", finishDrag);
+    canvas.addEventListener("pointercancel", finishDrag);
+    canvas.addEventListener("lostpointercapture", finishDrag);
+
+    return {
+      dispose() {
+        canvas.removeEventListener("pointerdown", onPointerDown);
+        canvas.removeEventListener("pointermove", onPointerMove);
+        canvas.removeEventListener("pointerup", finishDrag);
+        canvas.removeEventListener("pointercancel", finishDrag);
+        canvas.removeEventListener("lostpointercapture", finishDrag);
+        detachDocumentListeners();
+        canvas.style.cursor = "";
+        canvas.style.touchAction = "";
+        if (state.active && dragNamespace) {
+          state.active = false;
+          state.pointerId = null;
+          state.targetIndex = -1;
+          publishSceneDragSignals(dragNamespace, state, false);
+        } else {
+          state.active = false;
+        }
+        resetSceneDragInteraction(state, dragNamespace, readViewport, initialWidth, initialHeight);
+      },
+    };
+  }
+
+  function setupScenePickInteractions(canvas, props, readViewport, readSceneBundle, emitInteraction) {
+    const pickNamespace = scenePickSignalNamespace(props);
+    const eventNamespace = sceneEventSignalNamespace(props);
+    if (!canvas || (!pickNamespace && !eventNamespace)) {
+      return { dispose() {} };
+    }
+
+    const initialMetrics = sceneDragViewportMetrics(readViewport, sceneNumber(props.width, 720), sceneNumber(props.height, 420));
+    const initialWidth = initialMetrics.width;
+    const initialHeight = initialMetrics.height;
+    const state = createScenePickState(initialWidth, initialHeight);
+    let documentListenersAttached = false;
+
+    function publish() {
+      publishSceneInteractionState(pickNamespace, eventNamespace, state);
+    }
+
+    function emit(action, before) {
+      const interaction = sceneDeriveInteractionEvent(action, before, scenePickStateSnapshot(state));
+      const detail = sceneRecordInteractionEvent(state, interaction);
+      if (detail && typeof emitInteraction === "function") {
+        emitInteraction(detail);
+      }
+    }
+
+    function attachDocumentListeners() {
+      if (documentListenersAttached) {
+        return;
+      }
+      documentListenersAttached = true;
+      document.addEventListener("pointermove", onPointerMove);
+      document.addEventListener("pointerup", onPointerUp);
+      document.addEventListener("pointercancel", onPointerCancel);
+    }
+
+    function detachDocumentListeners() {
+      if (!documentListenersAttached) {
+        return;
+      }
+      documentListenersAttached = false;
+      document.removeEventListener("pointermove", onPointerMove);
+      document.removeEventListener("pointerup", onPointerUp);
+      document.removeEventListener("pointercancel", onPointerCancel);
+    }
+
+    function onPointerMove(event) {
+      const before = scenePickStateSnapshot(state);
+      if (!sceneHandlePickMove(state, event, canvas, readViewport, readSceneBundle, initialWidth, initialHeight)) {
+        return;
+      }
+      emit("move", before);
+      publish();
+    }
+
+    function onPointerDown(event) {
+      const before = scenePickStateSnapshot(state);
+      const handled = sceneHandlePickDown(state, event, canvas, readViewport, readSceneBundle, initialWidth, initialHeight);
+      emit("down", before);
+      if (handled) {
+        attachDocumentListeners();
+        sceneCapturePointer(canvas, state.pointerId);
+        if (typeof event.preventDefault === "function") {
+          event.preventDefault();
+        }
+        if (typeof event.stopPropagation === "function") {
+          event.stopPropagation();
+        }
+      }
+      publish();
+    }
+
+    function onPointerUp(event) {
+      const before = scenePickStateSnapshot(state);
+      const result = sceneHandlePickUp(state, event, canvas, readViewport, readSceneBundle, initialWidth, initialHeight);
+      if (!result.handled) {
+        return;
+      }
+      emit("up", before);
+      detachDocumentListeners();
+      sceneReleasePointer(canvas, result.pointerId);
+      if (typeof event.preventDefault === "function") {
+        event.preventDefault();
+      }
+      if (typeof event.stopPropagation === "function") {
+        event.stopPropagation();
+      }
+      publish();
+    }
+
+    function onPointerCancel(event) {
+      const before = scenePickStateSnapshot(state);
+      const result = sceneHandlePickCancel(state, event);
+      if (!result.handled) {
+        return;
+      }
+      emit("cancel", before);
+      detachDocumentListeners();
+      sceneReleasePointer(canvas, result.pointerId);
+      publish();
+    }
+
+    function onPointerLeave() {
+      const before = scenePickStateSnapshot(state);
+      if (!sceneHandlePickLeave(state)) {
+        return;
+      }
+      emit("leave", before);
+      publish();
+    }
+
+    canvas.addEventListener("pointermove", onPointerMove);
+    canvas.addEventListener("pointerdown", onPointerDown);
+    canvas.addEventListener("pointerup", onPointerUp);
+    canvas.addEventListener("pointercancel", onPointerCancel);
+    canvas.addEventListener("pointerleave", onPointerLeave);
+    canvas.addEventListener("lostpointercapture", onPointerCancel);
+    publish();
+
+    return {
+      dispose() {
+        canvas.removeEventListener("pointermove", onPointerMove);
+        canvas.removeEventListener("pointerdown", onPointerDown);
+        canvas.removeEventListener("pointerup", onPointerUp);
+        canvas.removeEventListener("pointercancel", onPointerCancel);
+        canvas.removeEventListener("pointerleave", onPointerLeave);
+        canvas.removeEventListener("lostpointercapture", onPointerCancel);
+        detachDocumentListeners();
+        sceneReleasePointer(canvas, state.pointerId);
+        state.pointerId = null;
+        state.hoverIndex = -1;
+        state.hoverID = "";
+        state.hoverKind = "";
+        state.downIndex = -1;
+        state.downID = "";
+        state.downKind = "";
+        state.selectedIndex = -1;
+        state.selectedID = "";
+        state.selectedKind = "";
+        state.clickCount = 0;
+        state.eventType = "";
+        state.eventTargetIndex = -1;
+        state.eventTargetID = "";
+        state.eventTargetKind = "";
+        state.objectClickCounts = Object.create(null);
+        publish();
+      },
+    };
+  }
+
+  function strokeLine(ctx2d, from, to) {
+    ctx2d.beginPath();
+    ctx2d.moveTo(from.x, from.y);
+    ctx2d.lineTo(to.x, to.y);
+    ctx2d.stroke();
+  }
+
+  function sceneBundleUsesWorldProjection(bundle) {
+    return Boolean(
+      bundle &&
+      bundle.camera &&
+      bundle.sourceCamera &&
+      !sceneCameraEquivalent(bundle.sourceCamera, bundle.camera) &&
+      bundle.worldVertexCount > 0 &&
+      bundle.worldPositions &&
+      bundle.worldColors
+    );
+  }
+
+  function renderSceneCanvasWorldBundle(ctx2d, bundle, width, height) {
+    const positions = bundle && bundle.worldPositions;
+    const colors = bundle && bundle.worldColors;
+    const vertexCount = Math.max(0, Math.floor(sceneNumber(bundle && bundle.worldVertexCount, 0)));
+    for (let index = 0; index + 1 < vertexCount; index += 2) {
+      const fromWorld = sceneWorldPointAt(positions, index);
+      const toWorld = sceneWorldPointAt(positions, index + 1);
+      if (!fromWorld || !toWorld) {
+        continue;
+      }
+      const from = sceneProjectPoint(fromWorld, bundle.camera, width, height);
+      const to = sceneProjectPoint(toWorld, bundle.camera, width, height);
+      if (!from || !to) {
+        continue;
+      }
+      const colorOffset = index * 4;
+      ctx2d.strokeStyle = sceneRGBAString([
+        sceneNumber(colors && colors[colorOffset], 0.55),
+        sceneNumber(colors && colors[colorOffset + 1], 0.88),
+        sceneNumber(colors && colors[colorOffset + 2], 1),
+        sceneNumber(colors && colors[colorOffset + 3], 1),
+      ]);
+      ctx2d.lineWidth = 1.8;
+      strokeLine(ctx2d, from, to);
+    }
+  }
+
+  function createSceneCanvasRenderer(ctx2d, canvas) {
+    return {
+      kind: "canvas",
+      render(bundle, viewport) {
+        const devicePixelRatio = Math.max(1, sceneViewportValue(viewport, "devicePixelRatio", 1));
+        const lines = Array.isArray(bundle && bundle.lines) ? bundle.lines : [];
+        ctx2d.clearRect(0, 0, canvas.width, canvas.height);
+        ctx2d.fillStyle = bundle && bundle.background ? bundle.background : "#08151f";
+        ctx2d.fillRect(0, 0, canvas.width, canvas.height);
+        if (typeof ctx2d.save === "function") {
+          ctx2d.save();
+        }
+        if (devicePixelRatio !== 1 && typeof ctx2d.scale === "function") {
+          ctx2d.scale(devicePixelRatio, devicePixelRatio);
+        }
+        if (sceneBundleUsesWorldProjection(bundle)) {
+          renderSceneCanvasWorldBundle(ctx2d, bundle, sceneViewportValue(viewport, "cssWidth", canvas.width), sceneViewportValue(viewport, "cssHeight", canvas.height));
+        } else {
+          for (const line of lines) {
+            ctx2d.strokeStyle = line.color;
+            ctx2d.lineWidth = line.lineWidth;
+            strokeLine(ctx2d, line.from, line.to);
+          }
+        }
+        if (typeof ctx2d.restore === "function") {
+          ctx2d.restore();
+        }
+      },
+      dispose() {},
+    };
+  }
+
+  function sceneParseGLB(arrayBuffer) {
+    var view = new DataView(arrayBuffer);
+
+    var magic = view.getUint32(0, true);
+    if (magic !== 0x46546C67) {
+      throw new Error("Invalid GLB magic");
+    }
+    var version = view.getUint32(4, true);
+    if (version !== 2) {
+      throw new Error("Unsupported glTF version: " + version);
+    }
+
+    var jsonChunkLength = view.getUint32(12, true);
+    var jsonBytes = new Uint8Array(arrayBuffer, 20, jsonChunkLength);
+    var json = JSON.parse(new TextDecoder().decode(jsonBytes));
+
+    var binaryBuffer = null;
+    var binaryOffset = 20 + jsonChunkLength;
+    if (binaryOffset < arrayBuffer.byteLength) {
+      var binChunkLength = view.getUint32(binaryOffset, true);
+      binaryBuffer = arrayBuffer.slice(binaryOffset + 8, binaryOffset + 8 + binChunkLength);
+    }
+
+    return { json: json, binaryBuffer: binaryBuffer };
+  }
+
+  var GLTF_COMPONENT_SIZES = {
+    5120: 1,  // INT8
+    5121: 1,  // UINT8
+    5122: 2,  // INT16
+    5123: 2,  // UINT16
+    5125: 4,  // UINT32
+    5126: 4,  // FLOAT32
+  };
+
+  function gltfAccessorTypeCount(type) {
+    switch (type) {
+      case "SCALAR": return 1;
+      case "VEC2":   return 2;
+      case "VEC3":   return 3;
+      case "VEC4":   return 4;
+      case "MAT2":   return 4;
+      case "MAT3":   return 9;
+      case "MAT4":   return 16;
+      default:       return 1;
+    }
+  }
+
+  function gltfTypedArrayView(buffer, byteOffset, componentType, count) {
+    switch (componentType) {
+      case 5120: return new Int8Array(buffer, byteOffset, count);
+      case 5121: return new Uint8Array(buffer, byteOffset, count);
+      case 5122: return new Int16Array(buffer, byteOffset, count);
+      case 5123: return new Uint16Array(buffer, byteOffset, count);
+      case 5125: return new Uint32Array(buffer, byteOffset, count);
+      case 5126: return new Float32Array(buffer, byteOffset, count);
+      default:   return new Float32Array(buffer, byteOffset, count);
+    }
+  }
+
+  function gltfReadAccessor(gltf, accessorIndex, binaryBuffer) {
+    var accessor = gltf.accessors[accessorIndex];
+    var bufferView = gltf.bufferViews[accessor.bufferView];
+    var buffer = binaryBuffer;
+
+    var byteOffset = (bufferView.byteOffset || 0) + (accessor.byteOffset || 0);
+    var componentCount = gltfAccessorTypeCount(accessor.type);
+    var componentSize = GLTF_COMPONENT_SIZES[accessor.componentType] || 4;
+    var stride = bufferView.byteStride || 0;
+    var totalElements = accessor.count * componentCount;
+
+    if (!stride || stride === componentCount * componentSize) {
+      return gltfTypedArrayView(buffer, byteOffset, accessor.componentType, totalElements);
+    }
+
+    var result = new Float32Array(totalElements);
+    var src = new DataView(buffer);
+    for (var i = 0; i < accessor.count; i++) {
+      var elemOffset = byteOffset + i * stride;
+      for (var c = 0; c < componentCount; c++) {
+        var co = elemOffset + c * componentSize;
+        switch (accessor.componentType) {
+          case 5120: result[i * componentCount + c] = src.getInt8(co); break;
+          case 5121: result[i * componentCount + c] = src.getUint8(co); break;
+          case 5122: result[i * componentCount + c] = src.getInt16(co, true); break;
+          case 5123: result[i * componentCount + c] = src.getUint16(co, true); break;
+          case 5125: result[i * componentCount + c] = src.getUint32(co, true); break;
+          case 5126: result[i * componentCount + c] = src.getFloat32(co, true); break;
+          default:   result[i * componentCount + c] = src.getFloat32(co, true); break;
+        }
+      }
+    }
+    return result;
+  }
+
+  function gltfGenerateFlatNormals(positions) {
+    var normals = new Float32Array(positions.length);
+    var triCount = positions.length / 9;
+    for (var t = 0; t < triCount; t++) {
+      var i = t * 9;
+      var ax = positions[i],     ay = positions[i + 1], az = positions[i + 2];
+      var bx = positions[i + 3], by = positions[i + 4], bz = positions[i + 5];
+      var cx = positions[i + 6], cy = positions[i + 7], cz = positions[i + 8];
+
+      var e1x = bx - ax, e1y = by - ay, e1z = bz - az;
+      var e2x = cx - ax, e2y = cy - ay, e2z = cz - az;
+
+      var nx = e1y * e2z - e1z * e2y;
+      var ny = e1z * e2x - e1x * e2z;
+      var nz = e1x * e2y - e1y * e2x;
+      var len = Math.sqrt(nx * nx + ny * ny + nz * nz);
+      if (len > 1e-8) { nx /= len; ny /= len; nz /= len; }
+      else { nx = 0; ny = 1; nz = 0; }
+
+      for (var v = 0; v < 3; v++) {
+        normals[i + v * 3]     = nx;
+        normals[i + v * 3 + 1] = ny;
+        normals[i + v * 3 + 2] = nz;
+      }
+    }
+    return normals;
+  }
+
+  function gltfGenerateDefaultUVs(vertexCount) {
+    return new Float32Array(vertexCount * 2);
+  }
+
+  function gltfComputeTangents(positions, normals, uvs) {
+    var vertexCount = positions.length / 3;
+    var tangents = new Float32Array(vertexCount * 4);
+    var tan1 = new Float32Array(vertexCount * 3);
+    var tan2 = new Float32Array(vertexCount * 3);
+
+    var triCount = vertexCount / 3;
+    for (var t = 0; t < triCount; t++) {
+      var i0 = t * 3, i1 = t * 3 + 1, i2 = t * 3 + 2;
+
+      var p0x = positions[i0 * 3],     p0y = positions[i0 * 3 + 1], p0z = positions[i0 * 3 + 2];
+      var p1x = positions[i1 * 3],     p1y = positions[i1 * 3 + 1], p1z = positions[i1 * 3 + 2];
+      var p2x = positions[i2 * 3],     p2y = positions[i2 * 3 + 1], p2z = positions[i2 * 3 + 2];
+
+      var u0 = uvs[i0 * 2], v0 = uvs[i0 * 2 + 1];
+      var u1 = uvs[i1 * 2], v1 = uvs[i1 * 2 + 1];
+      var u2 = uvs[i2 * 2], v2 = uvs[i2 * 2 + 1];
+
+      var e1x = p1x - p0x, e1y = p1y - p0y, e1z = p1z - p0z;
+      var e2x = p2x - p0x, e2y = p2y - p0y, e2z = p2z - p0z;
+
+      var du1 = u1 - u0, dv1 = v1 - v0;
+      var du2 = u2 - u0, dv2 = v2 - v0;
+
+      var denom = du1 * dv2 - du2 * dv1;
+      var r = Math.abs(denom) > 1e-10 ? 1.0 / denom : 0.0;
+
+      var sx = (dv2 * e1x - dv1 * e2x) * r;
+      var sy = (dv2 * e1y - dv1 * e2y) * r;
+      var sz = (dv2 * e1z - dv1 * e2z) * r;
+
+      var tx = (du1 * e2x - du2 * e1x) * r;
+      var ty = (du1 * e2y - du2 * e1y) * r;
+      var tz = (du1 * e2z - du2 * e1z) * r;
+
+      for (var vi = 0; vi < 3; vi++) {
+        var idx = (t * 3 + vi) * 3;
+        tan1[idx] += sx; tan1[idx + 1] += sy; tan1[idx + 2] += sz;
+        tan2[idx] += tx; tan2[idx + 1] += ty; tan2[idx + 2] += tz;
+      }
+    }
+
+    for (var i = 0; i < vertexCount; i++) {
+      var nx = normals[i * 3], ny = normals[i * 3 + 1], nz = normals[i * 3 + 2];
+      var t1x = tan1[i * 3], t1y = tan1[i * 3 + 1], t1z = tan1[i * 3 + 2];
+
+      var dot = nx * t1x + ny * t1y + nz * t1z;
+      var ox = t1x - nx * dot;
+      var oy = t1y - ny * dot;
+      var oz = t1z - nz * dot;
+      var len = Math.sqrt(ox * ox + oy * oy + oz * oz);
+      if (len > 1e-8) { ox /= len; oy /= len; oz /= len; }
+      else { ox = 1; oy = 0; oz = 0; }
+
+      var cx = ny * t1z - nz * t1y;
+      var cy = nz * t1x - nx * t1z;
+      var cz = nx * t1y - ny * t1x;
+      var t2x = tan2[i * 3], t2y = tan2[i * 3 + 1], t2z = tan2[i * 3 + 2];
+      var w = (cx * t2x + cy * t2y + cz * t2z) < 0 ? -1.0 : 1.0;
+
+      tangents[i * 4]     = ox;
+      tangents[i * 4 + 1] = oy;
+      tangents[i * 4 + 2] = oz;
+      tangents[i * 4 + 3] = w;
+    }
+
+    return tangents;
+  }
+
+  function gltfExpandIndexed(positions, normals, uvs, tangents, indices) {
+    var count = indices.length;
+    var outPos = new Float32Array(count * 3);
+    var outNrm = new Float32Array(count * 3);
+    var outUV  = new Float32Array(count * 2);
+    var outTan = tangents ? new Float32Array(count * 4) : null;
+
+    for (var i = 0; i < count; i++) {
+      var idx = indices[i];
+      outPos[i * 3]     = positions[idx * 3];
+      outPos[i * 3 + 1] = positions[idx * 3 + 1];
+      outPos[i * 3 + 2] = positions[idx * 3 + 2];
+
+      outNrm[i * 3]     = normals[idx * 3];
+      outNrm[i * 3 + 1] = normals[idx * 3 + 1];
+      outNrm[i * 3 + 2] = normals[idx * 3 + 2];
+
+      outUV[i * 2]     = uvs[idx * 2];
+      outUV[i * 2 + 1] = uvs[idx * 2 + 1];
+
+      if (outTan) {
+        outTan[i * 4]     = tangents[idx * 4];
+        outTan[i * 4 + 1] = tangents[idx * 4 + 1];
+        outTan[i * 4 + 2] = tangents[idx * 4 + 2];
+        outTan[i * 4 + 3] = tangents[idx * 4 + 3];
+      }
+    }
+
+    return { positions: outPos, normals: outNrm, uvs: outUV, tangents: outTan };
+  }
+
+  function gltfExtractMeshPrimitive(gltf, primitive, binaryBuffer) {
+    var positions = gltfReadAccessor(gltf, primitive.attributes.POSITION, binaryBuffer);
+
+    var normals = primitive.attributes.NORMAL != null
+      ? gltfReadAccessor(gltf, primitive.attributes.NORMAL, binaryBuffer)
+      : null;
+
+    var uvs = primitive.attributes.TEXCOORD_0 != null
+      ? gltfReadAccessor(gltf, primitive.attributes.TEXCOORD_0, binaryBuffer)
+      : null;
+
+    var tangentsRaw = primitive.attributes.TANGENT != null
+      ? gltfReadAccessor(gltf, primitive.attributes.TANGENT, binaryBuffer)
+      : null;
+
+    var indices = primitive.indices != null
+      ? gltfReadAccessor(gltf, primitive.indices, binaryBuffer)
+      : null;
+
+    if (indices) {
+      var expanded = gltfExpandIndexed(
+        positions,
+        normals || positions, // placeholder; we generate normals after expansion
+        uvs || gltfGenerateDefaultUVs(positions.length / 3),
+        tangentsRaw,
+        indices
+      );
+      positions = expanded.positions;
+      if (normals) {
+        normals = expanded.normals;
+      } else {
+        normals = gltfGenerateFlatNormals(positions);
+      }
+      uvs = expanded.uvs;
+      tangentsRaw = expanded.tangents;
+    } else {
+      if (!normals) {
+        normals = gltfGenerateFlatNormals(positions);
+      }
+      if (!uvs) {
+        uvs = gltfGenerateDefaultUVs(positions.length / 3);
+      }
+    }
+
+    var tangents = tangentsRaw || gltfComputeTangents(positions, normals, uvs);
+
+    return {
+      positions: positions,
+      normals: normals,
+      uvs: uvs,
+      tangents: tangents,
+      count: positions.length / 3,
+    };
+  }
+
+  function gltfNodeTransform(node) {
+    if (node.matrix) {
+      return new Float32Array(node.matrix);
+    }
+
+    var t = node.translation || [0, 0, 0];
+    var r = node.rotation    || [0, 0, 0, 1];
+    var s = node.scale       || [1, 1, 1];
+
+    return sceneTRSToMat4(t, r, s);
+  }
+
+  function gltfTransformPoint(m, x, y, z) {
+    return {
+      x: m[0] * x + m[4] * y + m[8]  * z + m[12],
+      y: m[1] * x + m[5] * y + m[9]  * z + m[13],
+      z: m[2] * x + m[6] * y + m[10] * z + m[14],
+    };
+  }
+
+  function gltfTransformDirection(m, x, y, z) {
+    return {
+      x: m[0] * x + m[4] * y + m[8]  * z,
+      y: m[1] * x + m[5] * y + m[9]  * z,
+      z: m[2] * x + m[6] * y + m[10] * z,
+    };
+  }
+
+  function gltfNormalMatrix(m) {
+    var a00 = m[0], a01 = m[1], a02 = m[2];
+    var a10 = m[4], a11 = m[5], a12 = m[6];
+    var a20 = m[8], a21 = m[9], a22 = m[10];
+
+    var det = a00 * (a11 * a22 - a12 * a21)
+            - a01 * (a10 * a22 - a12 * a20)
+            + a02 * (a10 * a21 - a11 * a20);
+
+    if (Math.abs(det) < 1e-10) {
+      return [1, 0, 0, 0, 1, 0, 0, 0, 1];
+    }
+
+    var invDet = 1.0 / det;
+
+    return [
+      (a11 * a22 - a12 * a21) * invDet,
+      (a12 * a20 - a10 * a22) * invDet,
+      (a10 * a21 - a11 * a20) * invDet,
+      (a02 * a21 - a01 * a22) * invDet,
+      (a00 * a22 - a02 * a20) * invDet,
+      (a01 * a20 - a00 * a21) * invDet,
+      (a01 * a12 - a02 * a11) * invDet,
+      (a02 * a10 - a00 * a12) * invDet,
+      (a00 * a11 - a01 * a10) * invDet,
+    ];
+  }
+
+  function gltfTransformNormal(nm, x, y, z) {
+    var rx = nm[0] * x + nm[3] * y + nm[6] * z;
+    var ry = nm[1] * x + nm[4] * y + nm[7] * z;
+    var rz = nm[2] * x + nm[5] * y + nm[8] * z;
+    var len = Math.sqrt(rx * rx + ry * ry + rz * rz);
+    if (len > 1e-8) { rx /= len; ry /= len; rz /= len; }
+    return { x: rx, y: ry, z: rz };
+  }
+
+  function gltfBaseColorToHex(factor) {
+    var r = Math.round(Math.max(0, Math.min(1, factor[0])) * 255);
+    var g = Math.round(Math.max(0, Math.min(1, factor[1])) * 255);
+    var b = Math.round(Math.max(0, Math.min(1, factor[2])) * 255);
+    return "#" +
+      (r < 16 ? "0" : "") + r.toString(16) +
+      (g < 16 ? "0" : "") + g.toString(16) +
+      (b < 16 ? "0" : "") + b.toString(16);
+  }
+
+  function gltfDefaultPBRMaterial() {
+    return {
+      kind: "standard",
+      color: "#cccccc",
+      roughness: 1.0,
+      metalness: 0.0,
+      opacity: 1.0,
+      emissive: 0,
+      texture: "",
+      normalMap: "",
+      roughnessMap: "",
+      metalnessMap: "",
+      emissiveMap: "",
+      alphaMode: "OPAQUE",
+      doubleSided: false,
+    };
+  }
+
+  function gltfResolveTexture(gltf, textureInfo, binaryBuffer) {
+    if (!textureInfo || textureInfo.index == null) {
+      return "";
+    }
+    var textures = gltf.textures;
+    if (!textures || textureInfo.index >= textures.length) {
+      return "";
+    }
+    var texture = textures[textureInfo.index];
+    if (!texture || texture.source == null) {
+      return "";
+    }
+    var images = gltf.images;
+    if (!images || texture.source >= images.length) {
+      return "";
+    }
+    var image = images[texture.source];
+    if (!image) {
+      return "";
+    }
+
+    if (image.uri) {
+      return image.uri;
+    }
+
+    if (image.bufferView != null && binaryBuffer) {
+      return gltfCreateBlobURLFromBufferView(gltf, image, binaryBuffer);
+    }
+
+    return "";
+  }
+
+  function gltfCreateBlobURLFromBufferView(gltf, image, binaryBuffer) {
+    var bufferView = gltf.bufferViews[image.bufferView];
+    var byteOffset = bufferView.byteOffset || 0;
+    var byteLength = bufferView.byteLength;
+    var mimeType = image.mimeType || "application/octet-stream";
+    var slice = binaryBuffer.slice(byteOffset, byteOffset + byteLength);
+    var blob = new Blob([slice], { type: mimeType });
+    return URL.createObjectURL(blob);
+  }
+
+  function gltfExtractMaterial(gltf, materialIndex, binaryBuffer) {
+    if (materialIndex == null || !gltf.materials || materialIndex >= gltf.materials.length) {
+      return gltfDefaultPBRMaterial();
+    }
+    var mat = gltf.materials[materialIndex];
+    var pbr = mat.pbrMetallicRoughness || {};
+    var baseColorFactor = pbr.baseColorFactor || [1, 1, 1, 1];
+
+    var metallicRoughnessURL = gltfResolveTexture(gltf, pbr.metallicRoughnessTexture, binaryBuffer);
+
+    var emissiveFactor = mat.emissiveFactor || [0, 0, 0];
+    var emissiveStrength = Math.max(emissiveFactor[0], emissiveFactor[1], emissiveFactor[2]);
+
+    return {
+      kind: "standard",
+      color: gltfBaseColorToHex(baseColorFactor),
+      roughness: pbr.roughnessFactor != null ? pbr.roughnessFactor : 1.0,
+      metalness: pbr.metallicFactor != null ? pbr.metallicFactor : 0.0,
+      opacity: baseColorFactor[3],
+      emissive: emissiveStrength,
+      texture: gltfResolveTexture(gltf, pbr.baseColorTexture, binaryBuffer),
+      normalMap: gltfResolveTexture(gltf, mat.normalTexture, binaryBuffer),
+      roughnessMap: metallicRoughnessURL,
+      metalnessMap: metallicRoughnessURL,
+      emissiveMap: gltfResolveTexture(gltf, mat.emissiveTexture, binaryBuffer),
+      alphaMode: mat.alphaMode || "OPAQUE",
+      doubleSided: mat.doubleSided || false,
+    };
+  }
+
+  function gltfExtractMeshNode(gltf, meshIndex, binaryBuffer, worldTransform, result) {
+    var mesh = gltf.meshes[meshIndex];
+    if (!mesh) {
+      return;
+    }
+
+    var normalMat = gltfNormalMatrix(worldTransform);
+
+    for (var p = 0; p < mesh.primitives.length; p++) {
+      var primitive = mesh.primitives[p];
+      var mode = primitive.mode != null ? primitive.mode : 4;
+      if (mode !== 4) {
+        continue;
+      }
+
+      var geometry = gltfExtractMeshPrimitive(gltf, primitive, binaryBuffer);
+      var material = gltfExtractMaterial(gltf, primitive.material, binaryBuffer);
+      var vertCount = geometry.count;
+
+      var worldPositions = new Float32Array(vertCount * 3);
+      var worldNormals = new Float32Array(vertCount * 3);
+      for (var v = 0; v < vertCount; v++) {
+        var px = geometry.positions[v * 3];
+        var py = geometry.positions[v * 3 + 1];
+        var pz = geometry.positions[v * 3 + 2];
+        var wp = gltfTransformPoint(worldTransform, px, py, pz);
+        worldPositions[v * 3]     = wp.x;
+        worldPositions[v * 3 + 1] = wp.y;
+        worldPositions[v * 3 + 2] = wp.z;
+
+        var tnx = geometry.normals[v * 3];
+        var tny = geometry.normals[v * 3 + 1];
+        var tnz = geometry.normals[v * 3 + 2];
+        var wn = gltfTransformNormal(normalMat, tnx, tny, tnz);
+        worldNormals[v * 3]     = wn.x;
+        worldNormals[v * 3 + 1] = wn.y;
+        worldNormals[v * 3 + 2] = wn.z;
+      }
+
+      var worldTangents = new Float32Array(vertCount * 4);
+      for (var v = 0; v < vertCount; v++) {
+        var ttx = geometry.tangents[v * 4];
+        var tty = geometry.tangents[v * 4 + 1];
+        var ttz = geometry.tangents[v * 4 + 2];
+        var tw  = geometry.tangents[v * 4 + 3];
+        var wt = gltfTransformDirection(worldTransform, ttx, tty, ttz);
+        var tlen = Math.sqrt(wt.x * wt.x + wt.y * wt.y + wt.z * wt.z);
+        if (tlen > 1e-8) { wt.x /= tlen; wt.y /= tlen; wt.z /= tlen; }
+        worldTangents[v * 4]     = wt.x;
+        worldTangents[v * 4 + 1] = wt.y;
+        worldTangents[v * 4 + 2] = wt.z;
+        worldTangents[v * 4 + 3] = tw;
+      }
+
+      var renderPass = "opaque";
+      if (material.alphaMode === "BLEND" || material.opacity < 0.999) {
+        renderPass = "alpha";
+      }
+
+      var objectID = "mesh-" + meshIndex + "-prim-" + p;
+      if (mesh.name) {
+        objectID = mesh.name + "-prim-" + p;
+      }
+
+      result.objects.push({
+        id: objectID,
+        kind: "gltf-mesh",
+        vertices: {
+          positions: worldPositions,
+          normals: worldNormals,
+          uvs: geometry.uvs,
+          tangents: worldTangents,
+          count: vertCount,
+        },
+        material: material,
+        transform: worldTransform,
+        renderPass: renderPass,
+        doubleSided: material.doubleSided,
+      });
+
+      result.materials.push(material);
+    }
+  }
+
+  function gltfWalkNode(gltf, nodeIndex, binaryBuffer, parentTransform, result) {
+    var node = gltf.nodes[nodeIndex];
+    if (!node) {
+      return;
+    }
+
+    var localTransform = gltfNodeTransform(node);
+    var worldTransform = sceneMat4Multiply(parentTransform, localTransform);
+
+    if (node.mesh != null) {
+      gltfExtractMeshNode(gltf, node.mesh, binaryBuffer, worldTransform, result);
+    }
+
+    var children = node.children || [];
+    for (var i = 0; i < children.length; i++) {
+      gltfWalkNode(gltf, children[i], binaryBuffer, worldTransform, result);
+    }
+  }
+
+  function gltfExtractAnimations(gltf, binaryBuffer) {
+    if (!gltf.animations || !gltf.animations.length) {
+      return [];
+    }
+    var animations = [];
+    for (var a = 0; a < gltf.animations.length; a++) {
+      var anim = gltf.animations[a];
+      var channels = [];
+      var maxTime = 0;
+
+      for (var c = 0; c < anim.channels.length; c++) {
+        var ch = anim.channels[c];
+        var sampler = anim.samplers[ch.sampler];
+        var times = gltfReadAccessor(gltf, sampler.input, binaryBuffer);
+        var values = gltfReadAccessor(gltf, sampler.output, binaryBuffer);
+
+        if (times.length > 0) {
+          var lastTime = times[times.length - 1];
+          if (lastTime > maxTime) {
+            maxTime = lastTime;
+          }
+        }
+
+        channels.push({
+          targetNode: ch.target.node,
+          property: ch.target.path,
+          interpolation: sampler.interpolation || "LINEAR",
+          times: times instanceof Float32Array ? times : new Float32Array(times),
+          values: values instanceof Float32Array ? values : new Float32Array(values),
+        });
+      }
+
+      animations.push({
+        name: anim.name || "",
+        channels: channels,
+        duration: maxTime,
+      });
+    }
+    return animations;
+  }
+
+  function gltfExtractSkin(gltf, skinIndex, binaryBuffer) {
+    if (skinIndex == null || !gltf.skins || skinIndex >= gltf.skins.length) {
+      return null;
+    }
+    var skin = gltf.skins[skinIndex];
+    var ibm = skin.inverseBindMatrices != null
+      ? new Float32Array(gltfReadAccessor(gltf, skin.inverseBindMatrices, binaryBuffer))
+      : null;
+    return {
+      joints: skin.joints.slice(),
+      inverseBindMatrices: ibm,
+      skeleton: skin.skeleton != null ? skin.skeleton : null,
+    };
+  }
+
+  function gltfExtractScene(gltf, binaryBuffer) {
+    var result = {
+      objects: [],
+      materials: [],
+      lights: [],
+      labels: [],
+      sprites: [],
+      animations: [],
+      skins: [],
+    };
+
+    var sceneIndex = gltf.scene != null ? gltf.scene : 0;
+    var scene = gltf.scenes && gltf.scenes[sceneIndex];
+    if (!scene || !scene.nodes) {
+      return result;
+    }
+
+    var identity = new Float32Array(SCENE_IDENTITY_MAT4);
+    for (var i = 0; i < scene.nodes.length; i++) {
+      gltfWalkNode(gltf, scene.nodes[i], binaryBuffer, identity, result);
+    }
+
+    result.animations = gltfExtractAnimations(gltf, binaryBuffer);
+
+    if (gltf.skins) {
+      for (var s = 0; s < gltf.skins.length; s++) {
+        var skin = gltfExtractSkin(gltf, s, binaryBuffer);
+        if (skin) {
+          result.skins.push(skin);
+        }
+      }
+    }
+
+    return result;
+  }
+
+  async function gltfFetchExternalBuffers(gltf, baseURL) {
+    if (!gltf.buffers || !gltf.buffers.length) {
+      return null;
+    }
+
+    var buffer0 = gltf.buffers[0];
+    if (!buffer0 || !buffer0.uri) {
+      return null;
+    }
+
+    var uri = buffer0.uri;
+
+    if (uri.indexOf("data:") === 0) {
+      var response = await fetch(uri);
+      return await response.arrayBuffer();
+    }
+
+    var resolved = new URL(uri, baseURL).toString();
+    var response = await fetch(resolved, { credentials: "same-origin" });
+    if (!response.ok) {
+      throw new Error("Failed to fetch glTF buffer: " + resolved + " (HTTP " + response.status + ")");
+    }
+    return await response.arrayBuffer();
+  }
+
+  async function sceneLoadGLTFModel(url) {
+    var isGLB = url.toLowerCase().endsWith(".glb");
+    var response;
+
+    if (isGLB) {
+      response = await fetch(url, { credentials: "same-origin" });
+      if (!response.ok) {
+        throw new Error("Failed to fetch GLB: " + url + " (HTTP " + response.status + ")");
+      }
+      var arrayBuffer = await response.arrayBuffer();
+      var parsed = sceneParseGLB(arrayBuffer);
+      return gltfExtractScene(parsed.json, parsed.binaryBuffer);
+    }
+
+    response = await fetch(url, { credentials: "same-origin" });
+    if (!response.ok) {
+      throw new Error("Failed to fetch glTF: " + url + " (HTTP " + response.status + ")");
+    }
+    var json = await response.json();
+    var bufferData = await gltfFetchExternalBuffers(json, url);
+    return gltfExtractScene(json, bufferData);
+  }
+
+  function gltfSceneToModelAsset(scene, src) {
+    return {
+      src: src || "",
+      objects: scene.objects || [],
+      labels: scene.labels || [],
+      sprites: scene.sprites || [],
+      lights: scene.lights || [],
+      animations: scene.animations || [],
+      skins: scene.skins || [],
+    };
+  }
+
+  var _nodeTransforms = new Map();
+  var _childSet = new Set();
+  var _mixerResults = new Map();
+
+  function sceneAnimBuildNodeTransforms(nodes, animatedTransforms) {
+    _nodeTransforms.clear();
+
+    function walkNode(nodeIndex, parentWorld) {
+      var node = nodes[nodeIndex];
+      if (!node) return;
+      var anim = animatedTransforms ? animatedTransforms.get(nodeIndex) : null;
+
+      var local = sceneTRSToMat4(
+        anim && anim.position ? anim.position : (node.translation || [0, 0, 0]),
+        anim && anim.rotation ? anim.rotation : (node.rotation || [0, 0, 0, 1]),
+        anim && anim.scale ? anim.scale : (node.scale || [1, 1, 1])
+      );
+
+      var world = parentWorld ? sceneMat4Multiply(parentWorld, local) : local;
+      _nodeTransforms.set(nodeIndex, world);
+
+      var children = node.children || [];
+      for (var i = 0; i < children.length; i++) {
+        walkNode(children[i], world);
+      }
+    }
+
+    _childSet.clear();
+    for (var n = 0; n < nodes.length; n++) {
+      var ch = nodes[n] && nodes[n].children;
+      if (ch) {
+        for (var ci = 0; ci < ch.length; ci++) _childSet.add(ch[ci]);
+      }
+    }
+    for (var i = 0; i < nodes.length; i++) {
+      if (!_childSet.has(i)) walkNode(i, null);
+    }
+
+    return _nodeTransforms;
+  }
+
+  function sceneAnimComputeJointMatrices(skin, nodeTransforms) {
+    var jointCount = skin.joints.length;
+    var matrices = skin._jointMatricesBuffer;
+    if (!matrices || matrices.length !== jointCount * 16) {
+      matrices = new Float32Array(jointCount * 16);
+      skin._jointMatricesBuffer = matrices;
+    }
+
+    for (var i = 0; i < jointCount; i++) {
+      var jointNodeIndex = skin.joints[i];
+      var worldTransform = nodeTransforms.get(jointNodeIndex) || SCENE_IDENTITY_MAT4;
+      var inverseBindOffset = i * 16;
+      var inverseBind = skin.inverseBindMatrices.subarray(inverseBindOffset, inverseBindOffset + 16);
+
+      sceneMat4MultiplyInto(_sceneMat4ScratchA, worldTransform, inverseBind);
+      matrices.set(_sceneMat4ScratchA, i * 16);
+    }
+
+    return matrices;
+  }
+
+  function sceneAnimLerpVec(a, b, t) {
+    var result = new Array(a.length);
+    for (var i = 0; i < a.length; i++) {
+      result[i] = a[i] + (b[i] - a[i]) * t;
+    }
+    return result;
+  }
+
+  function sceneAnimLerpVecInto(out, a, b, t) {
+    for (var i = 0; i < a.length; i++) {
+      out[i] = a[i] + (b[i] - a[i]) * t;
+    }
+    return out;
+  }
+
+  function sceneAnimNormalizeQuat(q) {
+    var len = Math.sqrt(q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]);
+    if (len < 1e-10) return [0, 0, 0, 1];
+    return [q[0] / len, q[1] / len, q[2] / len, q[3] / len];
+  }
+
+  function sceneAnimSlerpQuat(a, b, t) {
+    var dot = a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3];
+
+    var bx = b[0], by = b[1], bz = b[2], bw = b[3];
+    if (dot < 0) {
+      dot = -dot;
+      bx = -bx; by = -by; bz = -bz; bw = -bw;
+    }
+
+    if (dot > 0.9995) {
+      return sceneAnimNormalizeQuat(sceneAnimLerpVec(a, [bx, by, bz, bw], t));
+    }
+
+    var theta = Math.acos(dot);
+    var sinTheta = Math.sin(theta);
+    var w0 = Math.sin((1 - t) * theta) / sinTheta;
+    var w1 = Math.sin(t * theta) / sinTheta;
+
+    return [
+      a[0] * w0 + bx * w1,
+      a[1] * w0 + by * w1,
+      a[2] * w0 + bz * w1,
+      a[3] * w0 + bw * w1,
+    ];
+  }
+
+  function sceneAnimSlerpQuatInto(out, a, b, t) {
+    var dot = a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3];
+
+    var bx = b[0], by = b[1], bz = b[2], bw = b[3];
+    if (dot < 0) {
+      dot = -dot;
+      bx = -bx; by = -by; bz = -bz; bw = -bw;
+    }
+
+    if (dot > 0.9995) {
+      sceneAnimLerpVecInto(out, a, [bx, by, bz, bw], t);
+      var len = Math.sqrt(out[0] * out[0] + out[1] * out[1] + out[2] * out[2] + out[3] * out[3]);
+      if (len < 1e-10) { out[0] = 0; out[1] = 0; out[2] = 0; out[3] = 1; }
+      else { out[0] /= len; out[1] /= len; out[2] /= len; out[3] /= len; }
+      return out;
+    }
+
+    var theta = Math.acos(dot);
+    var sinTheta = Math.sin(theta);
+    var w0 = Math.sin((1 - t) * theta) / sinTheta;
+    var w1 = Math.sin(t * theta) / sinTheta;
+
+    out[0] = a[0] * w0 + bx * w1;
+    out[1] = a[1] * w0 + by * w1;
+    out[2] = a[2] * w0 + bz * w1;
+    out[3] = a[3] * w0 + bw * w1;
+    return out;
+  }
+
+  function _sceneAnimSlerpQuatOffset(out, arrA, offA, arrB, offB, t) {
+    var a0 = arrA[offA], a1 = arrA[offA + 1], a2 = arrA[offA + 2], a3 = arrA[offA + 3];
+    var bx = arrB[offB], by = arrB[offB + 1], bz = arrB[offB + 2], bw = arrB[offB + 3];
+    var dot = a0 * bx + a1 * by + a2 * bz + a3 * bw;
+
+    if (dot < 0) {
+      dot = -dot;
+      bx = -bx; by = -by; bz = -bz; bw = -bw;
+    }
+
+    if (dot > 0.9995) {
+      out[0] = a0 + (bx - a0) * t;
+      out[1] = a1 + (by - a1) * t;
+      out[2] = a2 + (bz - a2) * t;
+      out[3] = a3 + (bw - a3) * t;
+      var len = Math.sqrt(out[0] * out[0] + out[1] * out[1] + out[2] * out[2] + out[3] * out[3]);
+      if (len < 1e-10) { out[0] = 0; out[1] = 0; out[2] = 0; out[3] = 1; }
+      else { out[0] /= len; out[1] /= len; out[2] /= len; out[3] /= len; }
+      return out;
+    }
+
+    var theta = Math.acos(dot);
+    var sinTheta = Math.sin(theta);
+    var w0 = Math.sin((1 - t) * theta) / sinTheta;
+    var w1 = Math.sin(t * theta) / sinTheta;
+
+    out[0] = a0 * w0 + bx * w1;
+    out[1] = a1 * w0 + by * w1;
+    out[2] = a2 * w0 + bz * w1;
+    out[3] = a3 * w0 + bw * w1;
+    return out;
+  }
+
+  function sceneAnimInterpolateChannel(channel, time) {
+    var times = channel.times;
+    var values = channel.values;
+    var isRotation = channel.property === "rotation";
+    var componentCount = isRotation ? 4 : 3;
+    var scratch = isRotation ? _animScratch4 : _animScratch3;
+
+    if (time <= times[0]) {
+      channel._lastIndex = 0;
+      for (var si = 0; si < componentCount; si++) scratch[si] = values[si];
+      return scratch;
+    }
+    if (time >= times[times.length - 1]) {
+      channel._lastIndex = 0;
+      var start = (times.length - 1) * componentCount;
+      for (var si = 0; si < componentCount; si++) scratch[si] = values[start + si];
+      return scratch;
+    }
+
+    var i = channel._lastIndex || 0;
+    if (i >= times.length - 1 || times[i] > time) i = 0;
+    while (i < times.length - 1 && times[i + 1] < time) i++;
+    channel._lastIndex = i;
+
+    var t0 = times[i];
+    var t1 = times[i + 1];
+    var alpha = (time - t0) / (t1 - t0);
+
+    var start0 = i * componentCount;
+    var start1 = (i + 1) * componentCount;
+
+    if (channel.interpolation === "STEP") {
+      for (var si = 0; si < componentCount; si++) scratch[si] = values[start0 + si];
+      return scratch;
+    }
+
+    if (isRotation) {
+      _sceneAnimSlerpQuatOffset(scratch, values, start0, values, start1, alpha);
+    } else {
+      scratch[0] = values[start0]     + (values[start1]     - values[start0])     * alpha;
+      scratch[1] = values[start0 + 1] + (values[start1 + 1] - values[start0 + 1]) * alpha;
+      scratch[2] = values[start0 + 2] + (values[start1 + 2] - values[start0 + 2]) * alpha;
+    }
+    return scratch;
+  }
+
+  function sceneAnimBlendValue(existing, newValue, weight, property) {
+    var t = weight / (existing.totalWeight + weight);
+    existing.totalWeight += weight;
+
+    if (property === "rotation") {
+      existing.value = sceneAnimSlerpQuat(existing.value, newValue, t);
+    } else {
+      existing.value = sceneAnimLerpVec(existing.value, newValue, t);
+    }
+  }
+
+  function createSceneAnimationMixer() {
+    var clips = new Map();  // name -> clip data
+    var active = [];        // active playback entries
+
+    function addClip(name, clip) {
+      if (clip && clip.channels) {
+        for (var ci = 0; ci < clip.channels.length; ci++) {
+          var ch = clip.channels[ci];
+          ch._key = ch.targetID + ":" + ch.property;
+          ch._lastIndex = 0;
+        }
+      }
+      clips.set(name, clip);
+    }
+
+    function removeClip(name) {
+      stop(name, { fadeOut: 0 });
+      clips.delete(name);
+    }
+
+    function findActive(name) {
+      for (var i = 0; i < active.length; i++) {
+        if (active[i].name === name) return active[i];
+      }
+      return null;
+    }
+
+    function play(name, options) {
+      var clip = clips.get(name);
+      if (!clip) {
+        console.warn("[gosx] animation clip not found:", name);
+        return;
+      }
+
+      var opts = options || {};
+      var loop = opts.loop !== undefined ? opts.loop : true;
+      var speed = opts.speed !== undefined ? opts.speed : 1.0;
+      var fadeIn = opts.fadeIn !== undefined ? opts.fadeIn : 0.3;
+      var weight = opts.weight !== undefined ? opts.weight : 1.0;
+
+      var existing = findActive(name);
+      if (existing) {
+        existing.speed = speed;
+        existing.targetWeight = weight;
+        if (!existing.stopping) {
+          existing.weight = weight;
+        }
+        return;
+      }
+
+      var entry = {
+        name: name,
+        clip: clip,
+        time: 0,
+        weight: fadeIn > 0 ? 0 : weight,
+        targetWeight: weight,
+        speed: speed,
+        loop: loop,
+        fadeIn: fadeIn,
+        fadeOut: 0,
+        fadeTime: 0,
+        stopping: false,
+      };
+      active.push(entry);
+    }
+
+    function stop(name, options) {
+      var entry = findActive(name);
+      if (!entry) return;
+
+      var opts = options || {};
+      var fadeOut = opts.fadeOut !== undefined ? opts.fadeOut : 0.3;
+
+      if (fadeOut > 0) {
+        entry.stopping = true;
+        entry.fadeOut = fadeOut;
+        entry.fadeTime = 0;
+      } else {
+        for (var i = active.length - 1; i >= 0; i--) {
+          if (active[i].name === name) {
+            active.splice(i, 1);
+            break;
+          }
+        }
+      }
+    }
+
+    function stopAll() {
+      active.length = 0;
+    }
+
+    function update(deltaTime, applyTransform) {
+      var i, entry, channel, value, key, existing;
+
+      for (i = 0; i < active.length; i++) {
+        entry = active[i];
+        entry.time += deltaTime * entry.speed;
+
+        if (entry.loop && entry.clip.duration > 0 && entry.time >= entry.clip.duration) {
+          entry.time = entry.time % entry.clip.duration;
+        }
+
+        if (entry.fadeIn > 0 && !entry.stopping && entry.fadeTime < entry.fadeIn) {
+          entry.fadeTime += deltaTime;
+          entry.weight = Math.min(1.0, entry.fadeTime / entry.fadeIn) * entry.targetWeight;
+        }
+
+        if (entry.stopping && entry.fadeOut > 0) {
+          entry.fadeTime += deltaTime;
+          entry.weight = Math.max(0, 1.0 - entry.fadeTime / entry.fadeOut) * entry.targetWeight;
+        }
+      }
+
+      for (i = active.length - 1; i >= 0; i--) {
+        entry = active[i];
+        if (entry.stopping && (entry.fadeOut <= 0 || entry.fadeTime >= entry.fadeOut)) {
+          active.splice(i, 1);
+          continue;
+        }
+        if (!entry.loop && entry.clip.duration > 0 && entry.time >= entry.clip.duration) {
+          active.splice(i, 1);
+          continue;
+        }
+      }
+
+      _mixerResults.clear();
+
+      for (i = 0; i < active.length; i++) {
+        entry = active[i];
+        if (entry.weight <= 0) continue;
+
+        for (var c = 0; c < entry.clip.channels.length; c++) {
+          channel = entry.clip.channels[c];
+          value = sceneAnimInterpolateChannel(channel, entry.time);
+          key = channel._key;
+
+          existing = _mixerResults.get(key);
+          if (!existing) {
+            var componentCount = channel.property === "rotation" ? 4 : 3;
+            var copied = new Array(componentCount);
+            for (var vi = 0; vi < componentCount; vi++) copied[vi] = value[vi];
+            _mixerResults.set(key, {
+              targetID: channel.targetID,
+              property: channel.property,
+              value: copied,
+              totalWeight: entry.weight,
+            });
+          } else {
+            sceneAnimBlendValue(existing, value, entry.weight, channel.property);
+          }
+        }
+      }
+
+      _mixerResults.forEach(function(result) {
+        applyTransform(result.targetID, result.property, result.value);
+      });
+    }
+
+    function hasClips() {
+      return clips.size > 0;
+    }
+
+    function isPlaying(name) {
+      return findActive(name) !== null;
+    }
+
+    function dispose() {
+      active.length = 0;
+      clips.clear();
+    }
+
+    return {
+      addClip: addClip,
+      removeClip: removeClip,
+      play: play,
+      stop: stop,
+      stopAll: stopAll,
+      update: update,
+      hasClips: hasClips,
+      isPlaying: isPlaying,
+      dispose: dispose,
+    };
+  }
+
   function createSceneRenderer(canvas, props, capability) {
     const webglPreference = sceneCapabilityWebGLPreference(props, capability);
     if (webglPreference === "prefer" || webglPreference === "force") {
+      if (typeof createScenePBRRendererOrFallback === "function") {
+        const gl = typeof canvas.getContext === "function" ? canvas.getContext("webgl2", {
+          alpha: true,
+          premultipliedAlpha: false,
+          antialias: capability.tier === "full" && !capability.lowPower && !capability.reducedData,
+          powerPreference: capability.lowPower || capability.tier === "constrained" ? "low-power" : "high-performance",
+        }) : null;
+        if (gl) {
+          const pbrRenderer = createScenePBRRendererOrFallback(gl, canvas, {});
+          if (pbrRenderer) {
+            return {
+              renderer: pbrRenderer,
+              fallbackReason: "",
+            };
+          }
+        }
+      }
       const webglRenderer = createSceneWebGLRenderer(canvas, {
         antialias: capability.tier === "full" && !capability.lowPower && !capability.reducedData,
         powerPreference: capability.lowPower || capability.tier === "constrained" ? "low-power" : "high-performance",
@@ -7522,6 +13313,400 @@
       renderer: createSceneCanvasRenderer(ctx2d, canvas),
       fallbackReason: sceneRendererFallbackReason(props, capability, "canvas"),
     };
+  }
+
+  const sceneModelAssetCache = new Map();
+
+  function resolveSceneModelAssetURL(baseSrc, value) {
+    const raw = typeof value === "string" ? value.trim() : "";
+    if (!raw) {
+      return "";
+    }
+    try {
+      const baseURL = new URL(baseSrc || "", window.location.href).toString();
+      return new URL(raw, baseURL).toString();
+    } catch (_error) {
+      return raw;
+    }
+  }
+
+  function resolveSceneModelObjectURLs(baseSrc, rawObject) {
+    if (!rawObject || typeof rawObject !== "object") {
+      return rawObject;
+    }
+    const resolved = Object.assign({}, rawObject);
+    if (typeof resolved.texture === "string" && resolved.texture.trim()) {
+      resolved.texture = resolveSceneModelAssetURL(baseSrc, resolved.texture);
+    }
+    if (resolved.material && typeof resolved.material === "object") {
+      const material = Object.assign({}, resolved.material);
+      if (typeof material.texture === "string" && material.texture.trim()) {
+        material.texture = resolveSceneModelAssetURL(baseSrc, material.texture);
+      }
+      resolved.material = material;
+    }
+    return resolved;
+  }
+
+  function sceneModelTransformPoint(point, model) {
+    const local = point && typeof point === "object" ? point : { x: 0, y: 0, z: 0 };
+    const scaleX = sceneNumber(model && model.scaleX, 1);
+    const scaleY = sceneNumber(model && model.scaleY, 1);
+    const scaleZ = sceneNumber(model && model.scaleZ, 1);
+    const rotated = sceneRotatePoint(
+      {
+        x: local.x * scaleX,
+        y: local.y * scaleY,
+        z: local.z * scaleZ,
+      },
+      sceneNumber(model && model.rotationX, 0),
+      sceneNumber(model && model.rotationY, 0),
+      sceneNumber(model && model.rotationZ, 0),
+    );
+    return {
+      x: rotated.x + sceneNumber(model && model.x, 0),
+      y: rotated.y + sceneNumber(model && model.y, 0),
+      z: rotated.z + sceneNumber(model && model.z, 0),
+    };
+  }
+
+  function sceneModelTransformVector(point, model) {
+    const local = point && typeof point === "object" ? point : { x: 0, y: 0, z: 0 };
+    return sceneRotatePoint(
+      {
+        x: local.x * sceneNumber(model && model.scaleX, 1),
+        y: local.y * sceneNumber(model && model.scaleY, 1),
+        z: local.z * sceneNumber(model && model.scaleZ, 1),
+      },
+      sceneNumber(model && model.rotationX, 0),
+      sceneNumber(model && model.rotationY, 0),
+      sceneNumber(model && model.rotationZ, 0),
+    );
+  }
+
+  function sceneModelMaxScale(model) {
+    return Math.max(
+      Math.abs(sceneNumber(model && model.scaleX, 1)),
+      Math.abs(sceneNumber(model && model.scaleY, 1)),
+      Math.abs(sceneNumber(model && model.scaleZ, 1)),
+    );
+  }
+
+  function sceneModelRotateDirection(point, model) {
+    return sceneRotatePoint(
+      point && typeof point === "object" ? point : { x: 0, y: 0, z: 0 },
+      sceneNumber(model && model.rotationX, 0),
+      sceneNumber(model && model.rotationY, 0),
+      sceneNumber(model && model.rotationZ, 0),
+    );
+  }
+
+  function sceneModelMaterialOverrideSource(model) {
+    return model && model.materialOverride && typeof model.materialOverride === "object"
+      ? model.materialOverride
+      : null;
+  }
+
+  function sceneAssignMaterialOverride(next, material, sourceKey, targetKey, override) {
+    if (!override || !Object.prototype.hasOwnProperty.call(override, sourceKey)) {
+      return;
+    }
+    const key = targetKey || sourceKey;
+    next[key] = override[sourceKey];
+    if (material) {
+      material[key] = override[sourceKey];
+    }
+  }
+
+  function sceneApplyMaterialOverride(raw, model) {
+    const override = sceneModelMaterialOverrideSource(model);
+    if (!override) {
+      return raw && typeof raw === "object" ? Object.assign({}, raw) : {};
+    }
+    const next = raw && typeof raw === "object" ? Object.assign({}, raw) : {};
+    const material = next.material && typeof next.material === "object"
+      ? Object.assign({}, next.material)
+      : null;
+    if (typeof override.materialKind === "string" && override.materialKind) {
+      next.materialKind = override.materialKind;
+      if (typeof next.material === "string") {
+        next.material = override.materialKind;
+      }
+      if (material) {
+        material.kind = override.materialKind;
+      }
+    }
+    sceneAssignMaterialOverride(next, material, "color", "color", override);
+    sceneAssignMaterialOverride(next, material, "texture", "texture", override);
+    sceneAssignMaterialOverride(next, material, "opacity", "opacity", override);
+    sceneAssignMaterialOverride(next, material, "emissive", "emissive", override);
+    sceneAssignMaterialOverride(next, material, "blendMode", "blendMode", override);
+    sceneAssignMaterialOverride(next, material, "renderPass", "renderPass", override);
+    sceneAssignMaterialOverride(next, material, "wireframe", "wireframe", override);
+    if (material) {
+      next.material = material;
+    }
+    return next;
+  }
+
+  function sceneModelPrimitiveObject(object, model, prefix) {
+    const instanced = Object.assign({}, object, {
+      id: prefix + "/" + (object.id || "object"),
+      x: 0,
+      y: 0,
+      z: 0,
+      rotationX: sceneNumber(object.rotationX, 0) + sceneNumber(model && model.rotationX, 0),
+      rotationY: sceneNumber(object.rotationY, 0) + sceneNumber(model && model.rotationY, 0),
+      rotationZ: sceneNumber(object.rotationZ, 0) + sceneNumber(model && model.rotationZ, 0),
+    });
+    const positioned = sceneModelTransformPoint({ x: object.x, y: object.y, z: object.z }, model);
+    instanced.x = positioned.x;
+    instanced.y = positioned.y;
+    instanced.z = positioned.z;
+    const scaleX = Math.abs(sceneNumber(model && model.scaleX, 1));
+    const scaleY = Math.abs(sceneNumber(model && model.scaleY, 1));
+    const scaleZ = Math.abs(sceneNumber(model && model.scaleZ, 1));
+    switch (object.kind) {
+      case "cube":
+        if (Math.abs(scaleX - scaleY) > 0.0001 || Math.abs(scaleX - scaleZ) > 0.0001) {
+          instanced.kind = "box";
+          instanced.width = sceneNumber(object.size, 1.2) * scaleX;
+          instanced.height = sceneNumber(object.size, 1.2) * scaleY;
+          instanced.depth = sceneNumber(object.size, 1.2) * scaleZ;
+        } else {
+          instanced.size = sceneNumber(object.size, 1.2) * scaleX;
+        }
+        break;
+      case "sphere":
+        instanced.radius = sceneNumber(object.radius, sceneNumber(object.size, 1.2) / 2) * Math.max(scaleX, scaleY, scaleZ);
+        break;
+      default:
+        instanced.width = sceneNumber(object.width, sceneNumber(object.size, 1.2)) * scaleX;
+        instanced.height = sceneNumber(object.height, sceneNumber(object.size, 1.2)) * scaleY;
+        instanced.depth = sceneNumber(object.depth, sceneNumber(object.size, 1.2)) * scaleZ;
+        break;
+    }
+    if (model && model.static !== null) {
+      instanced.static = Boolean(model.static);
+    }
+    if (model && typeof model.pickable === "boolean") {
+      instanced.pickable = model.pickable;
+    }
+    return normalizeSceneObject(instanced, prefix);
+  }
+
+  function sceneModelLineObject(object, model, prefix) {
+    const scaleX = sceneNumber(model && model.scaleX, 1);
+    const scaleY = sceneNumber(model && model.scaleY, 1);
+    const scaleZ = sceneNumber(model && model.scaleZ, 1);
+    const scaled = sceneScaleModelLinePoints(object.points, scaleX, scaleY, scaleZ);
+    const positioned = sceneModelTransformPoint({ x: object.x, y: object.y, z: object.z }, model);
+    const instanced = Object.assign({}, object, {
+      id: prefix + "/" + (object.id || "object"),
+      points: scaled,
+      lineSegments: sceneCloneModelLineSegments(object.lineSegments),
+      x: positioned.x,
+      y: positioned.y,
+      z: positioned.z,
+      rotationX: sceneNumber(object.rotationX, 0) + sceneNumber(model && model.rotationX, 0),
+      rotationY: sceneNumber(object.rotationY, 0) + sceneNumber(model && model.rotationY, 0),
+      rotationZ: sceneNumber(object.rotationZ, 0) + sceneNumber(model && model.rotationZ, 0),
+    });
+    if (model && model.static !== null) {
+      instanced.static = Boolean(model.static);
+    }
+    if (model && typeof model.pickable === "boolean") {
+      instanced.pickable = model.pickable;
+    }
+    return normalizeSceneObject(instanced, prefix);
+  }
+
+  function sceneScaleModelLinePoints(points, scaleX, scaleY, scaleZ) {
+    return Array.isArray(points) ? points.map(function(point) {
+      return {
+        x: sceneNumber(point && point.x, 0) * scaleX,
+        y: sceneNumber(point && point.y, 0) * scaleY,
+        z: sceneNumber(point && point.z, 0) * scaleZ,
+      };
+    }) : [];
+  }
+
+  function sceneCloneModelLineSegments(segments) {
+    return Array.isArray(segments) ? segments.map(function(pair) {
+      return Array.isArray(pair) ? pair.slice(0, 2) : pair;
+    }) : [];
+  }
+
+  function sceneInstantiateModelObject(rawObject, model, prefix, index) {
+    const source = sceneApplyMaterialOverride(rawObject, model);
+    const normalized = normalizeSceneObject(source, index);
+    if (normalized.kind === "lines") {
+      return sceneModelLineObject(normalized, model, prefix);
+    }
+    return sceneModelPrimitiveObject(normalized, model, prefix);
+  }
+
+  function sceneInstantiateModelLabel(rawLabel, model, prefix, index) {
+    const normalized = normalizeSceneLabel(rawLabel, index);
+    const position = sceneModelTransformPoint({ x: normalized.x, y: normalized.y, z: normalized.z }, model);
+    return Object.assign({}, normalized, {
+      id: prefix + "/" + normalized.id,
+      x: position.x,
+      y: position.y,
+      z: position.z,
+    });
+  }
+
+  function sceneInstantiateModelLight(rawLight, model, prefix, index) {
+    const normalized = normalizeSceneLight(rawLight, index, null);
+    if (!normalized) {
+      return null;
+    }
+    const next = Object.assign({}, normalized, {
+      id: prefix + "/" + normalized.id,
+    });
+    if (next.kind === "directional") {
+      const rotated = sceneModelRotateDirection({
+        x: next.directionX,
+        y: next.directionY,
+        z: next.directionZ,
+      }, model);
+      next.directionX = rotated.x;
+      next.directionY = rotated.y;
+      next.directionZ = rotated.z;
+      return next;
+    }
+    const position = sceneModelTransformPoint({ x: next.x, y: next.y, z: next.z }, model);
+    next.x = position.x;
+    next.y = position.y;
+    next.z = position.z;
+    if (next.kind === "point") {
+      next.range = sceneNumber(next.range, 0) * Math.max(
+        Math.abs(sceneNumber(model && model.scaleX, 1)),
+        Math.abs(sceneNumber(model && model.scaleY, 1)),
+        Math.abs(sceneNumber(model && model.scaleZ, 1)),
+      );
+    }
+    return next;
+  }
+
+  function sceneInstantiateModelSprite(rawSprite, model, prefix, index) {
+    const normalized = normalizeSceneSprite(rawSprite, index);
+    if (!normalized || !normalized.src) {
+      return null;
+    }
+    const position = sceneModelTransformPoint({ x: normalized.x, y: normalized.y, z: normalized.z }, model);
+    const shift = sceneModelTransformVector({ x: normalized.shiftX, y: normalized.shiftY, z: normalized.shiftZ }, model);
+    const modelScale = sceneModelMaxScale(model);
+    return Object.assign({}, normalized, {
+      id: prefix + "/" + normalized.id,
+      x: position.x,
+      y: position.y,
+      z: position.z,
+      shiftX: shift.x,
+      shiftY: shift.y,
+      shiftZ: shift.z,
+      width: normalized.width * modelScale,
+      height: normalized.height * modelScale,
+    });
+  }
+
+  function parseSceneModelAsset(raw, src) {
+    let payload = raw;
+    if (payload && typeof payload === "object" && payload.scene && typeof payload.scene === "object") {
+      payload = payload.scene;
+    }
+    if (Array.isArray(payload)) {
+      payload = { objects: payload };
+    }
+    const record = payload && typeof payload === "object" ? payload : {};
+    const sprites = Array.isArray(record.sprites) ? record.sprites.map(function(sprite) {
+      if (!sprite || typeof sprite !== "object") {
+        return sprite;
+      }
+      const resolved = Object.assign({}, sprite);
+      resolved.src = resolveSceneModelAssetURL(src, sprite.src);
+      return resolved;
+    }) : [];
+    return {
+      src,
+      objects: Array.isArray(record.objects) ? record.objects.map(function(object) {
+        return resolveSceneModelObjectURLs(src, object);
+      }) : [],
+      labels: Array.isArray(record.labels) ? record.labels : [],
+      sprites,
+      lights: Array.isArray(record.lights) ? record.lights : [],
+    };
+  }
+
+  async function loadSceneModelAsset(src) {
+    const key = String(src || "").trim();
+    if (!key) {
+      return parseSceneModelAsset({}, key);
+    }
+    if (!sceneModelAssetCache.has(key)) {
+      sceneModelAssetCache.set(key, (async function() {
+        try {
+          const response = await fetch(key, { credentials: "same-origin" });
+          if (!response || !response.ok) {
+            throw new Error("HTTP " + String(response && response.status || 0));
+          }
+          return parseSceneModelAsset(await response.json(), key);
+        } catch (error) {
+          console.warn("[gosx] failed to load Scene3D model asset:", key, error && error.message ? error.message : error);
+          return parseSceneModelAsset({}, key);
+        }
+      })());
+    }
+    return sceneModelAssetCache.get(key);
+  }
+
+  async function hydrateSceneStateModels(state, props) {
+    const models = sceneModels(props);
+    if (!models.length) {
+      return { models: 0, objects: 0, labels: 0, sprites: 0, lights: 0 };
+    }
+    let objectCount = 0;
+    let labelCount = 0;
+    let spriteCount = 0;
+    let lightCount = 0;
+    await Promise.all(models.map(async function(model, modelIndex) {
+      const asset = await loadSceneModelAsset(model.src);
+      const prefix = model.id || ("scene-model-" + modelIndex);
+      for (let i = 0; i < asset.objects.length; i += 1) {
+        const object = sceneInstantiateModelObject(asset.objects[i], model, prefix, i);
+        if (!object) {
+          continue;
+        }
+        state.objects.set(object.id, object);
+        objectCount += 1;
+      }
+      for (let i = 0; i < asset.labels.length; i += 1) {
+        const label = sceneInstantiateModelLabel(asset.labels[i], model, prefix, i);
+        if (!label || !label.text.trim()) {
+          continue;
+        }
+        state.labels.set(label.id, label);
+        labelCount += 1;
+      }
+      for (let i = 0; i < asset.sprites.length; i += 1) {
+        const sprite = sceneInstantiateModelSprite(asset.sprites[i], model, prefix, i);
+        if (!sprite) {
+          continue;
+        }
+        state.sprites.set(sprite.id, sprite);
+        spriteCount += 1;
+      }
+      for (let i = 0; i < asset.lights.length; i += 1) {
+        const light = sceneInstantiateModelLight(asset.lights[i], model, prefix, i);
+        if (!light) {
+          continue;
+        }
+        state.lights.set(light.id, light);
+        lightCount += 1;
+      }
+    }));
+    return { models: models.length, objects: objectCount, labels: labelCount, sprites: spriteCount, lights: lightCount };
   }
 
   function normalizeSceneCapabilityTier(value) {
@@ -8161,12 +14346,16 @@
   }
 
   function sceneLabelOccluded(entry, occluders) {
-    if (!entry || !entry.label || !entry.label.occlude || !Array.isArray(occluders) || !occluders.length) {
+    return sceneOverlayOccluded(entry, occluders, entry && entry.label && entry.label.occlude);
+  }
+
+  function sceneOverlayOccluded(entry, occluders, occlude) {
+    if (!entry || !occlude || !Array.isArray(occluders) || !occluders.length) {
       return false;
     }
-    const labelDepth = sceneNumber(entry.label.depth, 0);
+    const overlayDepth = sceneNumber(entry && entry.depth, 0);
     for (const occluder of occluders) {
-      if (occluder.depth > labelDepth + 0.05) {
+      if (occluder.depth > overlayDepth + 0.05) {
         continue;
       }
       if (!sceneRectsIntersect(entry.box, occluder.bounds)) {
@@ -8214,6 +14403,7 @@
         id: label.id || ("scene-label-" + index),
         order: index,
         label,
+        depth: sceneNumber(label.depth, 0),
         layoutKey: layout.key,
         layout: layout.value,
         metrics,
@@ -8244,6 +14434,67 @@
       }
     }
 
+    return entries;
+  }
+
+  function sceneSpriteBounds(sprite) {
+    const anchorX = sceneNumber(sprite.anchorX, 0.5);
+    const anchorY = sceneNumber(sprite.anchorY, 0.5);
+    const spriteWidth = Math.max(1, sceneNumber(sprite.width, 1));
+    const spriteHeight = Math.max(1, sceneNumber(sprite.height, 1));
+    const anchorPointX = sceneNumber(sprite.position && sprite.position.x, 0) + sceneNumber(sprite.offsetX, 0);
+    const anchorPointY = sceneNumber(sprite.position && sprite.position.y, 0) + sceneNumber(sprite.offsetY, 0);
+    const left = anchorPointX - (anchorX * spriteWidth);
+    const top = anchorPointY - (anchorY * spriteHeight);
+    return {
+      left,
+      top,
+      right: left + spriteWidth,
+      bottom: top + spriteHeight,
+      anchor: { x: anchorPointX, y: anchorPointY },
+      center: { x: left + (spriteWidth / 2), y: top + (spriteHeight / 2) },
+    };
+  }
+
+  function sceneSpritePriorityCompare(a, b) {
+    const priorityDiff = sceneNumber(b && b.sprite && b.sprite.priority, 0) - sceneNumber(a && a.sprite && a.sprite.priority, 0);
+    if (Math.abs(priorityDiff) > 0.001) {
+      return priorityDiff;
+    }
+    const depthDiff = sceneNumber(a && a.sprite && a.sprite.depth, 0) - sceneNumber(b && b.sprite && b.sprite.depth, 0);
+    if (Math.abs(depthDiff) > 0.001) {
+      return depthDiff;
+    }
+    return sceneNumber(a && a.order, 0) - sceneNumber(b && b.order, 0);
+  }
+
+  function prepareSceneSpriteEntries(bundle, width, height) {
+    const sprites = bundle && Array.isArray(bundle.sprites) ? bundle.sprites : [];
+    const occluders = buildSceneLabelOccluders(bundle, width, height);
+    const entries = [];
+    for (let index = 0; index < sprites.length; index += 1) {
+      const sprite = sprites[index];
+      if (!sprite || typeof sprite.src !== "string" || sprite.src.trim() === "") {
+        continue;
+      }
+      const box = sceneSpriteBounds(sprite);
+      entries.push({
+        id: sprite.id || ("scene-sprite-" + index),
+        order: index,
+        sprite,
+        depth: sceneNumber(sprite.depth, 0),
+        box,
+        occluded: false,
+        hidden: false,
+      });
+    }
+    const sorted = entries.slice().sort(sceneSpritePriorityCompare);
+    for (const entry of sorted) {
+      entry.occluded = sceneOverlayOccluded(entry, occluders, entry.sprite && entry.sprite.occlude);
+      if (entry.occluded) {
+        entry.hidden = true;
+      }
+    }
     return entries;
   }
 
@@ -8344,6 +14595,389 @@
     }
   }
 
+  function renderSceneSpriteElement(element, sprite, box, hidden, occluded) {
+    const zIndex = Math.max(1, 1000 + Math.round(sceneNumber(sprite.priority, 0) * 10) - Math.round(sceneNumber(sprite.depth, 0) * 10));
+    element.setAttribute("data-gosx-scene-sprite", sprite.id || "");
+    setAttrValue(element, "class", sprite.className ? ("gosx-scene-sprite " + sprite.className) : "gosx-scene-sprite");
+    setAttrValue(element, "data-gosx-scene-sprite-fit", normalizeSceneSpriteFit(sprite.fit));
+    setAttrValue(element, "data-gosx-scene-sprite-occlude", sprite.occlude ? "true" : "false");
+    setAttrValue(element, "data-gosx-scene-sprite-occluded", occluded ? "true" : "false");
+    setAttrValue(element, "data-gosx-scene-sprite-visibility", hidden ? "hidden" : "visible");
+    setAttrValue(element, "data-gosx-scene-sprite-priority", sceneNumber(sprite.priority, 0));
+    setAttrValue(element, "data-gosx-scene-sprite-depth", sceneNumber(sprite.depth, 0));
+    setStyleValue(element.style, "--gosx-scene-sprite-left", box.anchor.x + "px");
+    setStyleValue(element.style, "--gosx-scene-sprite-top", box.anchor.y + "px");
+    setStyleValue(element.style, "--gosx-scene-sprite-anchor-x", String(sceneNumber(sprite.anchorX, 0.5)));
+    setStyleValue(element.style, "--gosx-scene-sprite-anchor-y", String(sceneNumber(sprite.anchorY, 0.5)));
+    setStyleValue(element.style, "--gosx-scene-sprite-width", Math.max(1, sceneNumber(sprite.width, 1)) + "px");
+    setStyleValue(element.style, "--gosx-scene-sprite-height", Math.max(1, sceneNumber(sprite.height, 1)) + "px");
+    setStyleValue(element.style, "--gosx-scene-sprite-opacity", String(clamp01(sceneNumber(sprite.opacity, 1))));
+    setStyleValue(element.style, "--gosx-scene-sprite-fit", normalizeSceneSpriteFit(sprite.fit));
+    setStyleValue(element.style, "--gosx-scene-sprite-z-index", String(zIndex));
+    setStyleValue(element.style, "--gosx-scene-sprite-depth", String(sceneNumber(sprite.depth, 0)));
+
+    let image = element.firstChild;
+    if (!image || image.tagName !== "IMG") {
+      clearChildren(element);
+      image = document.createElement("img");
+      image.setAttribute("draggable", "false");
+      image.setAttribute("alt", "");
+      image.setAttribute("aria-hidden", "true");
+      element.appendChild(image);
+    }
+    setAttrValue(image, "src", sprite.src || "");
+    setStyleValue(image.style, "objectFit", normalizeSceneSpriteFit(sprite.fit) === "fill" ? "fill" : normalizeSceneSpriteFit(sprite.fit));
+  }
+
+  function renderSceneSprites(layer, bundle, elements, width, height) {
+    if (!layer) {
+      return;
+    }
+
+    const sprites = prepareSceneSpriteEntries(bundle, width, height);
+    const active = new Set();
+    for (const entry of sprites) {
+      const id = entry.id;
+      active.add(id);
+      let element = elements.get(id);
+      if (!element) {
+        element = document.createElement("div");
+        layer.appendChild(element);
+        elements.set(id, element);
+      }
+      renderSceneSpriteElement(element, entry.sprite, entry.box, entry.hidden, entry.occluded);
+    }
+    for (const [id, element] of elements.entries()) {
+      if (active.has(id)) {
+        continue;
+      }
+      if (element.parentNode === layer) {
+        layer.removeChild(element);
+      }
+      elements.delete(id);
+    }
+  }
+
+  function normalizeSceneControlsMode(value) {
+    switch (String(value || "").trim().toLowerCase()) {
+      case "orbit":
+        return "orbit";
+      default:
+        return "";
+    }
+  }
+
+  function sceneControlsTarget(props) {
+    const raw = props && props.controlTarget && typeof props.controlTarget === "object" ? props.controlTarget : null;
+    return {
+      x: sceneNumber(raw && raw.x, 0),
+      y: sceneNumber(raw && raw.y, 0),
+      z: sceneNumber(raw && raw.z, 0),
+    };
+  }
+
+  function sceneControlsRotateSpeed(props) {
+    return Math.max(0.1, sceneNumber(props && props.controlRotateSpeed, 1));
+  }
+
+  function sceneControlsZoomSpeed(props) {
+    return Math.max(0.05, sceneNumber(props && props.controlZoomSpeed, 1));
+  }
+
+  function sceneWorldCameraPosition(camera) {
+    const normalized = sceneRenderCamera(camera);
+    return {
+      x: normalized.x,
+      y: normalized.y,
+      z: -normalized.z,
+    };
+  }
+
+  function sceneOrbitStateFromCamera(camera, target) {
+    const normalized = sceneRenderCamera(camera);
+    const worldPosition = sceneWorldCameraPosition(normalized);
+    const orbitTarget = target || { x: 0, y: 0, z: 0 };
+    const offsetX = worldPosition.x - sceneNumber(orbitTarget.x, 0);
+    const offsetY = worldPosition.y - sceneNumber(orbitTarget.y, 0);
+    const offsetZ = worldPosition.z - sceneNumber(orbitTarget.z, 0);
+    const radius = Math.max(0.6, Math.hypot(offsetX, offsetY, offsetZ));
+    return {
+      target: {
+        x: sceneNumber(orbitTarget.x, 0),
+        y: sceneNumber(orbitTarget.y, 0),
+        z: sceneNumber(orbitTarget.z, 0),
+      },
+      radius,
+      yaw: Math.atan2(offsetX, -offsetZ),
+      pitch: Math.asin(sceneClamp(offsetY / radius, -0.98, 0.98)),
+      fov: normalized.fov,
+      near: normalized.near,
+      far: normalized.far,
+    };
+  }
+
+  function sceneOrbitCamera(state, fallbackCamera) {
+    const base = sceneRenderCamera(fallbackCamera);
+    const orbit = state || sceneOrbitStateFromCamera(base, { x: 0, y: 0, z: 0 });
+    const radius = Math.max(0.6, sceneNumber(orbit.radius, 6));
+    const pitch = sceneClamp(sceneNumber(orbit.pitch, 0), -1.4, 1.4);
+    const yaw = sceneNumber(orbit.yaw, 0);
+    const target = orbit.target || { x: 0, y: 0, z: 0 };
+    const cosPitch = Math.cos(pitch);
+    const worldPosition = {
+      x: sceneNumber(target.x, 0) + Math.sin(yaw) * cosPitch * radius,
+      y: sceneNumber(target.y, 0) + Math.sin(pitch) * radius,
+      z: sceneNumber(target.z, 0) - Math.cos(yaw) * cosPitch * radius,
+    };
+    const forward = {
+      x: sceneNumber(target.x, 0) - worldPosition.x,
+      y: sceneNumber(target.y, 0) - worldPosition.y,
+      z: sceneNumber(target.z, 0) - worldPosition.z,
+    };
+    const horizontal = Math.max(0.0001, Math.hypot(forward.x, forward.z));
+    return {
+      x: worldPosition.x,
+      y: worldPosition.y,
+      z: -worldPosition.z,
+      rotationX: -Math.atan2(forward.y, horizontal),
+      rotationY: Math.atan2(forward.x, forward.z),
+      rotationZ: 0,
+      fov: sceneNumber(orbit.fov, base.fov),
+      near: sceneNumber(orbit.near, base.near),
+      far: sceneNumber(orbit.far, base.far),
+    };
+  }
+
+  function createSceneControls(props) {
+    const mode = normalizeSceneControlsMode(props && props.controls);
+    if (!mode) {
+      return null;
+    }
+    return {
+      mode,
+      active: false,
+      touched: false,
+      pointerId: null,
+      lastX: 0,
+      lastY: 0,
+      rotateSpeed: sceneControlsRotateSpeed(props),
+      zoomSpeed: sceneControlsZoomSpeed(props),
+      orbit: null,
+      target: sceneControlsTarget(props),
+    };
+  }
+
+  function syncSceneControlsFromCamera(controls, camera) {
+    if (!controls || controls.mode !== "orbit" || controls.active || controls.touched) {
+      return;
+    }
+    controls.orbit = sceneOrbitStateFromCamera(camera, controls.target);
+  }
+
+  function sceneCurrentControlCamera(controls, sourceCamera, scrollCamera) {
+    var cam;
+    if (controls && controls.mode === "orbit") {
+      syncSceneControlsFromCamera(controls, sourceCamera);
+      cam = controls.orbit ? sceneOrbitCamera(controls.orbit, sourceCamera) : sceneRenderCamera(sourceCamera);
+    } else {
+      cam = sceneRenderCamera(sourceCamera);
+    }
+    if (scrollCamera && scrollCamera.start !== scrollCamera.end) {
+      var target = scrollCamera._progress || 0;
+      var current = scrollCamera._smoothProgress || 0;
+      current += (target - current) * 0.08;
+      scrollCamera._smoothProgress = current;
+      cam.z = scrollCamera.start + current * (scrollCamera.end - scrollCamera.start);
+    }
+    return cam;
+  }
+
+  function sceneBundleWithCameraOverride(bundle, camera) {
+    if (!bundle) {
+      return bundle;
+    }
+    const targetCamera = sceneRenderCamera(camera);
+    const sourceCamera = sceneRenderCamera(bundle.camera);
+    if (sceneCameraEquivalent(targetCamera, sourceCamera)) {
+      return bundle;
+    }
+    return Object.assign({}, bundle, {
+      camera: targetCamera,
+      sourceCamera: sourceCamera,
+    });
+  }
+
+  function sceneControlsMetrics(readViewport, props) {
+    const viewport = typeof readViewport === "function" ? readViewport() : null;
+    return {
+      width: Math.max(1, sceneViewportValue(viewport, "cssWidth", sceneNumber(props && props.width, 720))),
+      height: Math.max(1, sceneViewportValue(viewport, "cssHeight", sceneNumber(props && props.height, 420))),
+    };
+  }
+
+  function syncSceneControlsFromSource(controls, readSourceCamera) {
+    const sourceCamera = typeof readSourceCamera === "function" ? readSourceCamera() : null;
+    syncSceneControlsFromCamera(controls, sourceCamera);
+  }
+
+  function sceneOrbitStartDrag(controls, canvas, props, readViewport, readSourceCamera, attachDocumentListeners, event) {
+    if (controls.active || !scenePointerCanStartDrag(controls, event)) {
+      return;
+    }
+    syncSceneControlsFromSource(controls, readSourceCamera);
+    controls.active = true;
+    controls.touched = true;
+    controls.pointerId = event.pointerId;
+    const metrics = sceneControlsMetrics(readViewport, props);
+    const point = sceneLocalPointerPoint(event, canvas, metrics.width, metrics.height);
+    controls.lastX = point.x;
+    controls.lastY = point.y;
+    canvas.style.cursor = "grabbing";
+    attachDocumentListeners();
+    if (typeof canvas.setPointerCapture === "function" && event.pointerId != null) {
+      canvas.setPointerCapture(event.pointerId);
+    }
+    if (typeof event.preventDefault === "function") {
+      event.preventDefault();
+    }
+    if (typeof event.stopPropagation === "function") {
+      event.stopPropagation();
+    }
+  }
+
+  function sceneOrbitMoveDrag(controls, canvas, props, readViewport, readSourceCamera, scheduleRender, event) {
+    if (!sceneDragMatchesActivePointer(controls, event)) {
+      return;
+    }
+    const metrics = sceneControlsMetrics(readViewport, props);
+    const sample = sceneLocalPointerSample(event, canvas, metrics.width, metrics.height, controls, "move");
+    if (!controls.orbit) {
+      syncSceneControlsFromSource(controls, readSourceCamera);
+    }
+    controls.orbit.yaw += (sample.deltaX / Math.max(metrics.width, 1)) * Math.PI * controls.rotateSpeed;
+    controls.orbit.pitch = sceneClamp(
+      controls.orbit.pitch + (sample.deltaY / Math.max(metrics.height, 1)) * Math.PI * controls.rotateSpeed,
+      -1.4,
+      1.4,
+    );
+    if (typeof event.preventDefault === "function") {
+      event.preventDefault();
+    }
+    if (typeof event.stopPropagation === "function") {
+      event.stopPropagation();
+    }
+    scheduleRender("controls");
+  }
+
+  function sceneOrbitFinishDrag(controls, canvas, detachDocumentListeners, event) {
+    if (!sceneDragMatchesActivePointer(controls, event)) {
+      return;
+    }
+    const pointerId = controls.pointerId;
+    controls.active = false;
+    controls.pointerId = null;
+    canvas.style.cursor = "grab";
+    detachDocumentListeners();
+    if (pointerId != null && typeof canvas.releasePointerCapture === "function") {
+      try {
+        canvas.releasePointerCapture(pointerId);
+      } catch (_error) {}
+    }
+    if (event && typeof event.preventDefault === "function") {
+      event.preventDefault();
+    }
+    if (event && typeof event.stopPropagation === "function") {
+      event.stopPropagation();
+    }
+  }
+
+  function sceneOrbitApplyWheel(controls, readSourceCamera, scheduleRender, event) {
+    syncSceneControlsFromSource(controls, readSourceCamera);
+    controls.touched = true;
+    controls.orbit.radius = sceneClamp(
+      controls.orbit.radius * Math.exp(sceneNumber(event && event.deltaY, 0) * 0.001 * controls.zoomSpeed),
+      0.6,
+      256,
+    );
+    if (event && typeof event.preventDefault === "function") {
+      event.preventDefault();
+    }
+    if (event && typeof event.stopPropagation === "function") {
+      event.stopPropagation();
+    }
+    scheduleRender("controls");
+  }
+
+  function setupSceneBuiltInControls(canvas, props, readViewport, readSourceCamera, scheduleRender) {
+    const controls = createSceneControls(props);
+    if (!canvas || !controls || controls.mode !== "orbit") {
+      return {
+        controller: controls,
+        dispose() {},
+      };
+    }
+
+    let documentListenersAttached = false;
+    canvas.style.cursor = "grab";
+    canvas.style.touchAction = "none";
+
+    function attachDocumentListeners() {
+      if (documentListenersAttached) {
+        return;
+      }
+      documentListenersAttached = true;
+      document.addEventListener("pointermove", onPointerMove);
+      document.addEventListener("pointerup", finishPointerDrag);
+      document.addEventListener("pointercancel", finishPointerDrag);
+    }
+
+    function detachDocumentListeners() {
+      if (!documentListenersAttached) {
+        return;
+      }
+      documentListenersAttached = false;
+      document.removeEventListener("pointermove", onPointerMove);
+      document.removeEventListener("pointerup", finishPointerDrag);
+      document.removeEventListener("pointercancel", finishPointerDrag);
+    }
+
+    function onPointerDown(event) {
+      sceneOrbitStartDrag(controls, canvas, props, readViewport, readSourceCamera, attachDocumentListeners, event);
+    }
+
+    function onPointerMove(event) {
+      sceneOrbitMoveDrag(controls, canvas, props, readViewport, readSourceCamera, scheduleRender, event);
+    }
+
+    function finishPointerDrag(event) {
+      sceneOrbitFinishDrag(controls, canvas, detachDocumentListeners, event);
+    }
+
+    function onWheel(event) {
+      sceneOrbitApplyWheel(controls, readSourceCamera, scheduleRender, event);
+    }
+
+    canvas.addEventListener("pointerdown", onPointerDown);
+    canvas.addEventListener("pointermove", onPointerMove);
+    canvas.addEventListener("pointerup", finishPointerDrag);
+    canvas.addEventListener("pointercancel", finishPointerDrag);
+    canvas.addEventListener("lostpointercapture", finishPointerDrag);
+    canvas.addEventListener("wheel", onWheel);
+
+    return {
+      controller: controls,
+      dispose() {
+        detachDocumentListeners();
+        canvas.removeEventListener("pointerdown", onPointerDown);
+        canvas.removeEventListener("pointermove", onPointerMove);
+        canvas.removeEventListener("pointerup", finishPointerDrag);
+        canvas.removeEventListener("pointercancel", finishPointerDrag);
+        canvas.removeEventListener("lostpointercapture", finishPointerDrag);
+        canvas.removeEventListener("wheel", onWheel);
+      },
+    };
+  }
+
   window.__gosx_register_engine_factory("GoSXScene3D", async function(ctx) {
     if (!ctx.mount || typeof document.createElement !== "function") {
       console.warn("[gosx] Scene3D requires a mount element");
@@ -8354,8 +14988,8 @@
     const capability = sceneCapabilityProfile(props);
     const viewportBase = sceneViewportBase(props);
     const sceneState = createSceneState(props);
+    const sceneModelHydration = hydrateSceneStateModels(sceneState, props);
     const runtimeScene = ctx.runtimeMode === "shared" && Boolean(ctx.programRef);
-    const objects = sceneStateObjects(sceneState);
     const lifecycle = initialSceneLifecycleState();
     const motion = initialSceneMotionState(props);
 
@@ -8366,12 +15000,22 @@
       if (runtimeScene || sceneBool(props.autoRotate, true)) {
         return true;
       }
-      return sceneStateObjects(sceneState).some(sceneObjectAnimated) || sceneStateLabels(sceneState).some(sceneLabelAnimated);
+      if (Array.isArray(sceneState.points) && sceneState.points.some(function(p) {
+        return sceneNumber(p.spinX, 0) !== 0 || sceneNumber(p.spinY, 0) !== 0 || sceneNumber(p.spinZ, 0) !== 0;
+      })) {
+        return true;
+      }
+      return sceneStateObjects(sceneState).some(sceneObjectAnimated) ||
+        sceneStateLabels(sceneState).some(sceneLabelAnimated) ||
+        sceneStateSprites(sceneState).some(sceneSpriteAnimated);
     }
 
     clearChildren(ctx.mount);
     ctx.mount.setAttribute("data-gosx-scene3d-mounted", "true");
     ctx.mount.setAttribute("aria-label", props.ariaLabel || props.label || "Interactive GoSX 3D scene");
+    setAttrValue(ctx.mount, "data-gosx-scene3d-controls", normalizeSceneControlsMode(props.controls));
+    setAttrValue(ctx.mount, "data-gosx-scene3d-pick-signals", scenePickSignalNamespace(props));
+    setAttrValue(ctx.mount, "data-gosx-scene3d-event-signals", sceneEventSignalNamespace(props));
     applySceneCapabilityState(ctx.mount, props, capability);
     if (!ctx.mount.style.position) {
       ctx.mount.style.position = "relative";
@@ -8414,12 +15058,8 @@
     let latestBundle = null;
     const labelLayoutCache = new Map();
     const labelElements = new Map();
+    const spriteElements = new Map();
     let labelRefreshHandle = null;
-    const dragHandle = setupSceneDragInteractions(canvas, props, function() {
-      return viewport;
-    }, function() {
-      return latestBundle;
-    });
     const releaseTextLayoutListener = onTextLayoutInvalidated(function() {
       if (disposed || !latestBundle || !sceneCanRender()) {
         return;
@@ -8433,6 +15073,7 @@
           return;
         }
         renderSceneLabels(labelLayer, latestBundle, labelLayoutCache, labelElements, viewport.cssWidth, viewport.cssHeight);
+        renderSceneSprites(labelLayer, latestBundle, spriteElements, viewport.cssWidth, viewport.cssHeight);
       });
     });
 
@@ -8540,6 +15181,34 @@
       });
     }
 
+    function readSceneSourceCamera() {
+      if (latestBundle && latestBundle.sourceCamera) {
+        return latestBundle.sourceCamera;
+      }
+      if (latestBundle && latestBundle.camera) {
+        return latestBundle.camera;
+      }
+      return sceneState.camera;
+    }
+
+    const sceneControlHandle = setupSceneBuiltInControls(canvas, props, function() {
+      return viewport;
+    }, readSceneSourceCamera, scheduleRender);
+    const dragHandle = sceneControlHandle.controller
+      ? { dispose() {} }
+      : setupSceneDragInteractions(canvas, props, function() {
+        return viewport;
+      }, function() {
+        return latestBundle;
+      });
+    const pickHandle = setupScenePickInteractions(canvas, props, function() {
+      return viewport;
+    }, function() {
+      return latestBundle;
+    }, function(detail) {
+      ctx.emit("scene-interaction", detail);
+    });
+
     const releaseViewportObserver = observeSceneViewport(ctx.mount, scheduleRender);
     const releaseCapabilityObserver = observeSceneCapability(ctx.mount, props, capability, function(reason) {
       const nextViewport = sceneViewportFromMount(ctx.mount, props, viewportBase, canvas, capability);
@@ -8596,9 +15265,14 @@
       if (runtimeScene && ctx.runtime && typeof ctx.runtime.renderFrame === "function") {
         const runtimeBundle = ctx.runtime.renderFrame(timeSeconds, viewport.cssWidth, viewport.cssHeight);
         if (runtimeBundle) {
-          latestBundle = runtimeBundle;
-          renderer.render(runtimeBundle, viewport);
-          renderSceneLabels(labelLayer, runtimeBundle, labelLayoutCache, labelElements, viewport.cssWidth, viewport.cssHeight);
+          const effectiveBundle = sceneBundleWithCameraOverride(
+            runtimeBundle,
+            sceneCurrentControlCamera(sceneControlHandle.controller, runtimeBundle.camera || sceneState.camera, sceneState._scrollCamera),
+          );
+          latestBundle = effectiveBundle;
+          renderer.render(effectiveBundle, viewport);
+          renderSceneLabels(labelLayer, effectiveBundle, labelLayoutCache, labelElements, viewport.cssWidth, viewport.cssHeight);
+          renderSceneSprites(labelLayer, effectiveBundle, spriteElements, viewport.cssWidth, viewport.cssHeight);
           if (sceneWantsAnimation()) {
             frameHandle = engineFrame(renderFrame);
           }
@@ -8612,26 +15286,47 @@
         viewport.cssWidth,
         viewport.cssHeight,
         sceneState.background,
-        sceneState.camera,
+        sceneCurrentControlCamera(sceneControlHandle.controller, sceneState.camera, sceneState._scrollCamera),
         sceneStateObjects(sceneState),
         sceneStateLabels(sceneState),
+        sceneStateSprites(sceneState),
+        sceneStateLights(sceneState),
+        sceneState.environment,
         timeSeconds,
+        sceneState.points,
       );
       renderer.render(latestBundle, viewport);
       renderSceneLabels(labelLayer, latestBundle, labelLayoutCache, labelElements, viewport.cssWidth, viewport.cssHeight);
+      renderSceneSprites(labelLayer, latestBundle, spriteElements, viewport.cssWidth, viewport.cssHeight);
       if (sceneWantsAnimation()) {
         frameHandle = engineFrame(renderFrame);
       }
     }
 
+    await sceneModelHydration;
     renderFrame(0);
 
     ctx.emit("mounted", {
       width: viewport.cssWidth,
       height: viewport.cssHeight,
-      objects: objects.length,
+      objects: sceneStateObjects(sceneState).length,
       labels: sceneStateLabels(sceneState).length,
+      sprites: sceneStateSprites(sceneState).length,
+      lights: sceneStateLights(sceneState).length,
+      models: sceneModels(props).length,
     });
+
+    var scrollHandler = null;
+    if (sceneState._scrollCamera) {
+      sceneState._scrollCamera._progress = 0;
+      sceneState._scrollCamera._smoothProgress = 0;
+      scrollHandler = function() {
+        var scrollMax = Math.max(1, document.documentElement.scrollHeight - window.innerHeight);
+        sceneState._scrollCamera._progress = Math.pow(Math.min(1, Math.max(0, window.scrollY / scrollMax)), 0.5);
+      };
+      window.addEventListener("scroll", scrollHandler, { passive: true });
+      scrollHandler();
+    }
 
     return {
       applyCommands(commands) {
@@ -8640,6 +15335,9 @@
       },
       dispose() {
         disposed = true;
+        if (scrollHandler) {
+          window.removeEventListener("scroll", scrollHandler);
+        }
         canvas.removeEventListener("webglcontextlost", onWebGLContextLost);
         canvas.removeEventListener("webglcontextrestored", onWebGLContextRestored);
         releaseViewportObserver();
@@ -8648,6 +15346,8 @@
         releaseMotionObserver();
         releaseTextLayoutListener();
         dragHandle.dispose();
+        pickHandle.dispose();
+        sceneControlHandle.dispose();
         renderer.dispose();
         cancelFrame();
         cancelScheduledRender();

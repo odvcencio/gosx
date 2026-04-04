@@ -2,6 +2,7 @@ package engine
 
 import (
 	"strconv"
+	"strings"
 
 	islandprogram "github.com/odvcencio/gosx/island/program"
 )
@@ -27,6 +28,39 @@ type InputSignals struct {
 	ArrowLeft  islandprogram.ExprID
 	ArrowRight islandprogram.ExprID
 	ArrowUp    islandprogram.ExprID
+}
+
+// SceneEventSignals exposes framework-owned Scene3D interaction state and the
+// latest semantic event revision routed through the shared runtime.
+type SceneEventSignals struct {
+	Revision      islandprogram.ExprID
+	Type          islandprogram.ExprID
+	TargetIndex   islandprogram.ExprID
+	TargetID      islandprogram.ExprID
+	TargetKind    islandprogram.ExprID
+	Hovered       islandprogram.ExprID
+	HoverIndex    islandprogram.ExprID
+	HoverID       islandprogram.ExprID
+	HoverKind     islandprogram.ExprID
+	Down          islandprogram.ExprID
+	DownIndex     islandprogram.ExprID
+	DownID        islandprogram.ExprID
+	DownKind      islandprogram.ExprID
+	Selected      islandprogram.ExprID
+	SelectedIndex islandprogram.ExprID
+	SelectedID    islandprogram.ExprID
+	SelectedKind  islandprogram.ExprID
+	ClickCount    islandprogram.ExprID
+	PointerX      islandprogram.ExprID
+	PointerY      islandprogram.ExprID
+}
+
+// SceneObjectSignals exposes interaction state for one Scene3D object ID.
+type SceneObjectSignals struct {
+	Hovered    islandprogram.ExprID
+	Down       islandprogram.ExprID
+	Selected   islandprogram.ExprID
+	ClickCount islandprogram.ExprID
 }
 
 // Builder assembles engine programs with stable node handles and reusable
@@ -110,6 +144,45 @@ func (b *Builder) DeclareViewportInputSignals(width, height islandprogram.ExprID
 	}
 }
 
+// DeclareSceneEventSignals adds framework-owned Scene3D interaction signals.
+func (b *Builder) DeclareSceneEventSignals(namespace string) SceneEventSignals {
+	namespace = sceneSignalNamespace(namespace)
+	return SceneEventSignals{
+		Revision:      b.DeclareSignal(namespace+".revision", islandprogram.TypeFloat, b.Float(0)),
+		Type:          b.DeclareSignal(namespace+".type", islandprogram.TypeString, b.String("")),
+		TargetIndex:   b.DeclareSignal(namespace+".targetIndex", islandprogram.TypeFloat, b.Float(-1)),
+		TargetID:      b.DeclareSignal(namespace+".targetID", islandprogram.TypeString, b.String("")),
+		TargetKind:    b.DeclareSignal(namespace+".targetKind", islandprogram.TypeString, b.String("")),
+		Hovered:       b.DeclareSignal(namespace+".hovered", islandprogram.TypeBool, b.Bool(false)),
+		HoverIndex:    b.DeclareSignal(namespace+".hoverIndex", islandprogram.TypeFloat, b.Float(-1)),
+		HoverID:       b.DeclareSignal(namespace+".hoverID", islandprogram.TypeString, b.String("")),
+		HoverKind:     b.DeclareSignal(namespace+".hoverKind", islandprogram.TypeString, b.String("")),
+		Down:          b.DeclareSignal(namespace+".down", islandprogram.TypeBool, b.Bool(false)),
+		DownIndex:     b.DeclareSignal(namespace+".downIndex", islandprogram.TypeFloat, b.Float(-1)),
+		DownID:        b.DeclareSignal(namespace+".downID", islandprogram.TypeString, b.String("")),
+		DownKind:      b.DeclareSignal(namespace+".downKind", islandprogram.TypeString, b.String("")),
+		Selected:      b.DeclareSignal(namespace+".selected", islandprogram.TypeBool, b.Bool(false)),
+		SelectedIndex: b.DeclareSignal(namespace+".selectedIndex", islandprogram.TypeFloat, b.Float(-1)),
+		SelectedID:    b.DeclareSignal(namespace+".selectedID", islandprogram.TypeString, b.String("")),
+		SelectedKind:  b.DeclareSignal(namespace+".selectedKind", islandprogram.TypeString, b.String("")),
+		ClickCount:    b.DeclareSignal(namespace+".clickCount", islandprogram.TypeFloat, b.Float(0)),
+		PointerX:      b.DeclareSignal(namespace+".pointerX", islandprogram.TypeFloat, b.Float(0)),
+		PointerY:      b.DeclareSignal(namespace+".pointerY", islandprogram.TypeFloat, b.Float(0)),
+	}
+}
+
+// DeclareSceneObjectSignals adds per-object Scene3D interaction signals for a
+// stable object ID lowered from the runtime scene.
+func (b *Builder) DeclareSceneObjectSignals(namespace, objectID string) SceneObjectSignals {
+	namespace = sceneSignalNamespace(namespace) + ".object." + sceneSignalSegment(objectID, "object")
+	return SceneObjectSignals{
+		Hovered:    b.DeclareSignal(namespace+".hovered", islandprogram.TypeBool, b.Bool(false)),
+		Down:       b.DeclareSignal(namespace+".down", islandprogram.TypeBool, b.Bool(false)),
+		Selected:   b.DeclareSignal(namespace+".selected", islandprogram.TypeBool, b.Bool(false)),
+		ClickCount: b.DeclareSignal(namespace+".clickCount", islandprogram.TypeFloat, b.Float(0)),
+	}
+}
+
 // String appends a string literal.
 func (b *Builder) String(value string) islandprogram.ExprID {
 	return b.Value(islandprogram.OpLitString, value, islandprogram.TypeString)
@@ -148,6 +221,16 @@ func (b *Builder) Div(left, right islandprogram.ExprID) islandprogram.ExprID {
 	return b.Value(islandprogram.OpDiv, "", islandprogram.TypeFloat, left, right)
 }
 
+// Eq appends a typed equality comparison.
+func (b *Builder) Eq(left, right islandprogram.ExprID) islandprogram.ExprID {
+	return b.Value(islandprogram.OpEq, "", islandprogram.TypeBool, left, right)
+}
+
+// Neq appends a typed inequality comparison.
+func (b *Builder) Neq(left, right islandprogram.ExprID) islandprogram.ExprID {
+	return b.Value(islandprogram.OpNeq, "", islandprogram.TypeBool, left, right)
+}
+
 // Cond appends a conditional expression.
 func (b *Builder) Cond(test, whenTrue, whenFalse islandprogram.ExprID, typ islandprogram.ExprType) islandprogram.ExprID {
 	return b.Value(islandprogram.OpCond, "", typ, test, whenTrue, whenFalse)
@@ -184,6 +267,22 @@ func (b *Builder) Mesh(geometry, material string, props map[string]islandprogram
 func (b *Builder) Label(props map[string]islandprogram.ExprID) Handle {
 	return b.AddNode(Node{
 		Kind:  "label",
+		Props: cloneNodeProps(props),
+	})
+}
+
+// Sprite appends a projected image billboard anchored in world space.
+func (b *Builder) Sprite(props map[string]islandprogram.ExprID) Handle {
+	return b.AddNode(Node{
+		Kind:  "sprite",
+		Props: cloneNodeProps(props),
+	})
+}
+
+// Light appends a light node.
+func (b *Builder) Light(props map[string]islandprogram.ExprID) Handle {
+	return b.AddNode(Node{
+		Kind:  "light",
 		Props: cloneNodeProps(props),
 	})
 }
@@ -250,6 +349,38 @@ func cloneExpr(expr islandprogram.Expr) islandprogram.Expr {
 
 func cloneSignals(signals []islandprogram.SignalDef) []islandprogram.SignalDef {
 	return append([]islandprogram.SignalDef(nil), signals...)
+}
+
+func sceneSignalNamespace(namespace string) string {
+	namespace = strings.TrimSpace(namespace)
+	if namespace == "" {
+		return "$scene.event"
+	}
+	return namespace
+}
+
+func sceneSignalSegment(value, fallback string) string {
+	value = strings.TrimSpace(strings.ToLower(value))
+	if value == "" {
+		return fallback
+	}
+	var builder strings.Builder
+	lastHyphen := false
+	for _, r := range value {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+			builder.WriteRune(r)
+			lastHyphen = false
+		case !lastHyphen && builder.Len() > 0:
+			builder.WriteByte('-')
+			lastHyphen = true
+		}
+	}
+	out := strings.Trim(builder.String(), "-")
+	if out == "" {
+		return fallback
+	}
+	return out
 }
 
 func cloneNodes(nodes []Node) []Node {
