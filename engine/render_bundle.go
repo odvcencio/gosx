@@ -229,6 +229,64 @@ type RenderPostEffect struct {
 	Params    map[string]float64 `json:"params,omitempty"`
 }
 
+// RenderInstancedMesh is a GPU-ready instanced mesh entry for the render bundle.
+type RenderInstancedMesh struct {
+	ID            string    `json:"id,omitempty"`
+	Kind          string    `json:"kind"`
+	MaterialIndex int       `json:"materialIndex"`
+	VertexCount   int       `json:"vertexCount"`
+	InstanceCount int       `json:"instanceCount"`
+	Transforms    []float64 `json:"transforms"`
+	CastShadow    bool      `json:"castShadow,omitempty"`
+	ReceiveShadow bool      `json:"receiveShadow,omitempty"`
+}
+
+// RenderParticleEmitter describes an emitter for the render bundle particle system.
+type RenderParticleEmitter struct {
+	Kind     string  `json:"kind"`
+	X        float64 `json:"x,omitempty"`
+	Y        float64 `json:"y,omitempty"`
+	Z        float64 `json:"z,omitempty"`
+	Radius   float64 `json:"radius,omitempty"`
+	Rate     float64 `json:"rate,omitempty"`
+	Lifetime float64 `json:"lifetime,omitempty"`
+	Arms     int     `json:"arms,omitempty"`
+	Wind     float64 `json:"wind,omitempty"`
+	Scatter  float64 `json:"scatter,omitempty"`
+}
+
+// RenderParticleForce describes a force acting on render bundle particles.
+type RenderParticleForce struct {
+	Kind      string  `json:"kind"`
+	Strength  float64 `json:"strength,omitempty"`
+	X         float64 `json:"x,omitempty"`
+	Y         float64 `json:"y,omitempty"`
+	Z         float64 `json:"z,omitempty"`
+	Frequency float64 `json:"frequency,omitempty"`
+}
+
+// RenderParticleMaterial describes the material for render bundle particles.
+type RenderParticleMaterial struct {
+	Color       string  `json:"color,omitempty"`
+	ColorEnd    string  `json:"colorEnd,omitempty"`
+	Size        float64 `json:"size,omitempty"`
+	SizeEnd     float64 `json:"sizeEnd,omitempty"`
+	Opacity     float64 `json:"opacity,omitempty"`
+	OpacityEnd  float64 `json:"opacityEnd,omitempty"`
+	BlendMode   string  `json:"blendMode,omitempty"`
+	Attenuation bool    `json:"attenuation,omitempty"`
+}
+
+// RenderComputeParticles is a GPU-ready compute particle system for the render bundle.
+type RenderComputeParticles struct {
+	ID       string                 `json:"id,omitempty"`
+	Count    int                    `json:"count"`
+	Emitter  RenderParticleEmitter  `json:"emitter"`
+	Forces   []RenderParticleForce  `json:"forces,omitempty"`
+	Material RenderParticleMaterial `json:"material"`
+	Bounds   float64                `json:"bounds,omitempty"`
+}
+
 // RenderBundle is the renderer-facing scene payload emitted by the shared
 // engine runtime for a single frame.
 type RenderBundle struct {
@@ -237,8 +295,10 @@ type RenderBundle struct {
 	Lights           []RenderLight      `json:"lights,omitempty"`
 	Environment      RenderEnvironment  `json:"environment,omitempty"`
 	Materials        []RenderMaterial   `json:"materials,omitempty"`
-	Objects          []RenderObject     `json:"objects,omitempty"`
-	Points           []RenderPoints     `json:"points,omitempty"`
+	Objects          []RenderObject         `json:"objects,omitempty"`
+	Points           []RenderPoints         `json:"points,omitempty"`
+	InstancedMeshes  []RenderInstancedMesh  `json:"instancedMeshes,omitempty"`
+	ComputeParticles []RenderComputeParticles `json:"computeParticles,omitempty"`
 	Surfaces         []RenderSurface    `json:"surfaces,omitempty"`
 	Passes           []RenderPassBundle `json:"passes,omitempty"`
 	Lines            []RenderLine       `json:"lines,omitempty"`
