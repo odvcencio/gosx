@@ -6,7 +6,6 @@ import (
 	"github.com/odvcencio/gosx/scene"
 )
 
-// Constants matching the three.js m31labs reference exactly.
 const (
 	starCount           = 2000
 	starSpread          = 2000.0
@@ -14,70 +13,8 @@ const (
 	galaxyRadius        = 200.0
 )
 
-func generateStarField() scene.Points {
-	positions := make([]scene.Vector3, starCount)
-	sizes := make([]float64, starCount)
-	for i := range positions {
-		positions[i] = scene.Vec3(
-			(rand(i*3+0)-0.5)*starSpread,
-			(rand(i*3+1)-0.5)*starSpread,
-			(rand(i*3+2)-0.5)*starSpread,
-		)
-		sizes[i] = rand(i*3+7)*2.0 + 0.5 // [0.5, 2.5]
-	}
-	return scene.Points{
-		ID:          "stars",
-		Count:       starCount,
-		Positions:   positions,
-		Sizes:       sizes,
-		Color:       "#ffffff",
-		Size:        1.5,
-		Opacity:     0.8,
-		BlendMode:   scene.BlendAdditive,
-		DepthWrite:  false,
-		Attenuation: true,
-		Spin:        scene.Euler{Y: 0.01, X: 0.005},
-	}
-}
-
-func generateGalaxy() scene.Points {
-	positions := make([]scene.Vector3, galaxyParticleCount)
-	colors := make([]string, galaxyParticleCount)
-
-	for i := 0; i < galaxyParticleCount; i++ {
-		radius := rand(i*5+0) * galaxyRadius
-		armAngle := float64(i%2)*math.Pi + (radius/galaxyRadius)*math.Pi*3
-		scatter := (rand(i*5+1) - 0.5) * (radius * 0.3)
-
-		x := math.Cos(armAngle)*radius + scatter
-		y := (rand(i*5+2) - 0.5) * (galaxyRadius * 0.05)
-		z := math.Sin(armAngle)*radius + (rand(i*5+3)-0.5)*(radius*0.3)
-
-		positions[i] = scene.Vec3(x, y, z)
-
-		t := radius / galaxyRadius
-		colors[i] = lerpHexColor("#e8e8e8", "#4b0082", t)
-	}
-
-	return scene.Points{
-		ID:          "galaxy",
-		Count:       galaxyParticleCount,
-		Positions:   positions,
-		Colors:      colors,
-		Size:        2,
-		Opacity:     0.45,
-		BlendMode:   scene.BlendAdditive,
-		DepthWrite:  false,
-		Attenuation: true,
-		// three.js pivot: position=(100,50,-600), rotation.x=-0.5, rotation.z=0.3
-		// three.js animates pivot.rotation.y = elapsed * 0.05
-		// Euler XYZ order: Rz(0.3) * Ry(0.05*t) * Rx(-0.5) — exact match via combined approach
-		Position: scene.Vec3(100, 50, -600),
-		Rotation: scene.Euler{X: -0.5, Z: 0.3},
-		Spin:     scene.Euler{Y: 0.05},
-	}
-}
-
+// GalaxyScene returns the galaxy scene with both static Points (WebGL2 fallback)
+// and ComputeParticles (WebGPU — 100K particles, zero CPU cost).
 func GalaxyScene() scene.Props {
 	return scene.Props{
 		Width:      920,
@@ -94,7 +31,106 @@ func GalaxyScene() scene.Props {
 			Near:     1,
 			Far:      3000,
 		},
-		Graph: scene.NewGraph(generateStarField(), generateGalaxy()),
+		Graph: scene.NewGraph(
+			// Static star field (Points — works on all backends).
+			generateStarField(),
+			// Static galaxy fallback (Points — WebGL2).
+			generateGalaxy(),
+			// GPU compute galaxy (ComputeParticles — WebGPU, 100K particles).
+			computeGalaxy(),
+		),
+	}
+}
+
+// generateStarField creates a static star field using Points.
+func generateStarField() scene.Points {
+	positions := make([]scene.Vector3, starCount)
+	sizes := make([]float64, starCount)
+	for i := range positions {
+		positions[i] = scene.Vec3(
+			(rand(i*3+0)-0.5)*starSpread,
+			(rand(i*3+1)-0.5)*starSpread,
+			(rand(i*3+2)-0.5)*starSpread,
+		)
+		sizes[i] = rand(i*3+7)*2.0 + 0.5
+	}
+	return scene.Points{
+		ID:          "stars",
+		Count:       starCount,
+		Positions:   positions,
+		Sizes:       sizes,
+		Color:       "#ffffff",
+		Size:        1.5,
+		Opacity:     0.8,
+		BlendMode:   scene.BlendAdditive,
+		DepthWrite:  false,
+		Attenuation: true,
+		Spin:        scene.Euler{Y: 0.01, X: 0.005},
+	}
+}
+
+// generateGalaxy creates a static galaxy using Points (WebGL2 fallback).
+func generateGalaxy() scene.Points {
+	positions := make([]scene.Vector3, galaxyParticleCount)
+	colors := make([]string, galaxyParticleCount)
+
+	for i := 0; i < galaxyParticleCount; i++ {
+		radius := rand(i*5+0) * galaxyRadius
+		armAngle := float64(i%2)*math.Pi + (radius/galaxyRadius)*math.Pi*3
+		scatter := (rand(i*5+1) - 0.5) * (radius * 0.3)
+
+		x := math.Cos(armAngle)*radius + scatter
+		y := (rand(i*5+2) - 0.5) * (galaxyRadius * 0.05)
+		z := math.Sin(armAngle)*radius + (rand(i*5+3)-0.5)*(radius*0.3)
+
+		positions[i] = scene.Vec3(x, y, z)
+		t := radius / galaxyRadius
+		colors[i] = lerpHexColor("#e8e8e8", "#4b0082", t)
+	}
+
+	return scene.Points{
+		ID:        "galaxy",
+		Count:     galaxyParticleCount,
+		Positions: positions,
+		Colors:    colors,
+		Size:      2,
+		Opacity:   0.45,
+		BlendMode: scene.BlendAdditive,
+		DepthWrite: false,
+		Attenuation: true,
+		Position:  scene.Vec3(100, 50, -600),
+		Rotation:  scene.Euler{X: -0.5, Z: 0.3},
+		Spin:      scene.Euler{Y: 0.05},
+	}
+}
+
+// computeGalaxy creates a GPU compute particle galaxy — 100K particles, zero CPU cost.
+func computeGalaxy() scene.ComputeParticles {
+	return scene.ComputeParticles{
+		ID:    "galaxy-compute",
+		Count: 100000,
+		Emitter: scene.ParticleEmitter{
+			Kind:     "spiral",
+			Position: scene.Vec3(100, 50, -600),
+			Radius:   200,
+			Arms:     2,
+			Wind:     3 * math.Pi,
+			Scatter:  0.3,
+		},
+		Forces: []scene.ParticleForce{
+			{Kind: "orbit", Strength: 0.05},
+		},
+		Material: scene.ParticleMaterial{
+			Color:       "#e8e8e8",
+			ColorEnd:    "#4b0082",
+			Size:        2,
+			SizeEnd:     2,
+			Opacity:     0.45,
+			OpacityEnd:  0.45,
+			BlendMode:   scene.BlendAdditive,
+			Attenuation: true,
+		},
+		Bounds: 300,
 	}
 }
 
