@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.7.0
+
+### Tier 1: WebGPU, Instancing, GPU Compute Particles
+
+**WebGPU backend** (2,447 lines): Full PBR renderer ported to WGSL — Cook-Torrance BRDF, shadow maps with comparison sampling, postprocessing chain, exponential fog. Points rendered as instanced billboard quads (WebGPU has no gl_PointSize). Async device initialization, pipeline caching by material+geometry signature, storage buffer light arrays, bind group architecture (per-frame / per-material / per-object).
+
+**Instanced rendering**: `InstancedMesh` node draws N copies of one geometry in a single draw call. WebGL2 via `drawArraysInstanced` + `vertexAttribDivisor`, WebGPU via native instancing. Per-instance mat4 transforms from Go-declared positions/rotations/scales. Geometry generation for box, plane, sphere with normals/UVs/tangents. Geometry cache by kind+dimensions. Performance target: 10K instances at 60fps.
+
+**GPU compute particles** (664 lines): `ComputeParticles` node declares a particle system that simulates entirely on GPU. WGSL compute shader with 4 emitter types (point, sphere, disc, spiral), 5 force types (gravity, wind, turbulence, orbit, drag), deterministic hash RNG, lifetime/respawn, color/size/opacity interpolation over lifetime. CPU fallback for WebGL2 (capped at 10K particles). Go API: one struct configures 100K particles at zero CPU cost.
+
+**Auto backend selection**: WebGPU → WebGL2 PBR → WebGL2 legacy → Canvas 2D. Transparent to scene authors.
+
+**Go API**: `InstancedMesh`, `ComputeParticles`, `ParticleEmitter`, `ParticleForce`, `ParticleMaterial` types with full IR lowering and render bundle transport.
+
 ## v0.6.0
 
 ### 3D Engine Phase 2-3
