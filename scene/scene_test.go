@@ -1485,3 +1485,129 @@ func approxMapFloat(value any, want float64) bool {
 func contains(haystack, needle string) bool {
 	return strings.Contains(haystack, needle)
 }
+
+func TestPropsSceneIRLowersSpotLight(t *testing.T) {
+	props := Props{
+		Graph: NewGraph(
+			Group{
+				Position: Vec3(0, 2, 0),
+				Rotation: Rotate(0, 0, math.Pi/2),
+				Children: []Node{
+					SpotLight{
+						ID:         "stage",
+						Color:      "#ffe0a0",
+						Intensity:  2.5,
+						Position:   Vec3(1, 0, 0),
+						Direction:  Vec3(0, -1, 0),
+						Angle:      math.Pi / 6,
+						Penumbra:   0.3,
+						Range:      20,
+						Decay:      2,
+						CastShadow: true,
+						ShadowBias: 0.002,
+						ShadowSize: 1024,
+					},
+				},
+			},
+		),
+	}
+
+	ir := props.SceneIR()
+	if len(ir.Lights) != 1 {
+		t.Fatalf("expected one lowered light, got %d: %#v", len(ir.Lights), ir.Lights)
+	}
+	spot := ir.Lights[0]
+	if spot.Kind != "spot" || spot.ID != "stage" {
+		t.Fatalf("expected spot light, got %#v", spot)
+	}
+	// Position (1,0,0) under group at (0,2,0) with pi/2 Z rotation => (0,3,0)
+	if math.Abs(spot.X-0) > 1e-9 || math.Abs(spot.Y-3) > 1e-9 {
+		t.Fatalf("expected transformed spot position (0,3,0), got (%v,%v,%v)", spot.X, spot.Y, spot.Z)
+	}
+	// Direction (0,-1,0) rotated by pi/2 about Z => (1,0,0)... actually (-1,0,0)
+	// The group rotation is pi/2 about Z: (x,y) -> (-y,x)
+	// (0,-1,0) -> (0-(-1), 0, 0) => (1, 0, 0)
+	if math.Abs(spot.DirectionX-1) > 1e-9 || math.Abs(spot.DirectionY) > 1e-9 {
+		t.Fatalf("expected rotated spot direction (1,0,0), got (%v,%v,%v)", spot.DirectionX, spot.DirectionY, spot.DirectionZ)
+	}
+	if spot.Angle != math.Pi/6 {
+		t.Fatalf("expected angle pi/6, got %v", spot.Angle)
+	}
+	if spot.Penumbra != 0.3 {
+		t.Fatalf("expected penumbra 0.3, got %v", spot.Penumbra)
+	}
+	if spot.Range != 20 || spot.Decay != 2 {
+		t.Fatalf("expected range=20 decay=2, got %v %v", spot.Range, spot.Decay)
+	}
+	if !spot.CastShadow || spot.ShadowBias != 0.002 || spot.ShadowSize != 1024 {
+		t.Fatalf("expected shadow fields, got %#v", spot)
+	}
+
+	// Verify legacy round-trip
+	legacy := props.LegacyProps()
+	sceneValue, ok := legacy["scene"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected scene map, got %#v", legacy["scene"])
+	}
+	lights, ok := sceneValue["lights"].([]map[string]any)
+	if !ok || len(lights) != 1 {
+		t.Fatalf("expected one light in legacy props, got %#v", sceneValue["lights"])
+	}
+	if lights[0]["kind"] != "spot" {
+		t.Fatalf("expected spot kind in legacy, got %#v", lights[0]["kind"])
+	}
+	if lights[0]["angle"] != math.Pi/6 {
+		t.Fatalf("expected angle in legacy, got %#v", lights[0]["angle"])
+	}
+	if lights[0]["penumbra"] != 0.3 {
+		t.Fatalf("expected penumbra in legacy, got %#v", lights[0]["penumbra"])
+	}
+}
+
+func TestPropsSceneIRLowersHemisphereLight(t *testing.T) {
+	props := Props{
+		Graph: NewGraph(
+			HemisphereLight{
+				ID:          "sky",
+				SkyColor:    "#87ceeb",
+				GroundColor: "#362312",
+				Intensity:   0.6,
+			},
+		),
+	}
+
+	ir := props.SceneIR()
+	if len(ir.Lights) != 1 {
+		t.Fatalf("expected one lowered light, got %d: %#v", len(ir.Lights), ir.Lights)
+	}
+	hemi := ir.Lights[0]
+	if hemi.Kind != "hemisphere" || hemi.ID != "sky" {
+		t.Fatalf("expected hemisphere light, got %#v", hemi)
+	}
+	if hemi.Color != "#87ceeb" {
+		t.Fatalf("expected sky color in Color field, got %q", hemi.Color)
+	}
+	if hemi.GroundColor != "#362312" {
+		t.Fatalf("expected ground color, got %q", hemi.GroundColor)
+	}
+	if hemi.Intensity != 0.6 {
+		t.Fatalf("expected intensity 0.6, got %v", hemi.Intensity)
+	}
+
+	// Verify legacy round-trip
+	legacy := props.LegacyProps()
+	sceneValue, ok := legacy["scene"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected scene map, got %#v", legacy["scene"])
+	}
+	lights, ok := sceneValue["lights"].([]map[string]any)
+	if !ok || len(lights) != 1 {
+		t.Fatalf("expected one light in legacy props, got %#v", sceneValue["lights"])
+	}
+	if lights[0]["kind"] != "hemisphere" {
+		t.Fatalf("expected hemisphere kind in legacy, got %#v", lights[0]["kind"])
+	}
+	if lights[0]["groundColor"] != "#362312" {
+		t.Fatalf("expected groundColor in legacy, got %#v", lights[0]["groundColor"])
+	}
+}
