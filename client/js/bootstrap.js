@@ -8655,6 +8655,9 @@
     "uniform float u_lightIntensities[8];",
     "uniform float u_lightRanges[8];",
     "uniform float u_lightDecays[8];",
+    "uniform float u_lightAngles[8];",
+    "uniform float u_lightPenumbras[8];",
+    "uniform vec3 u_lightGroundColors[8];",
     "",
     "// Environment",
     "uniform vec3 u_ambientColor;",
@@ -8682,8 +8685,9 @@
     "uniform int u_shadowLightIndex0;",
     "uniform int u_shadowLightIndex1;",
     "",
-    "// Tone mapping control — disabled when post-processing handles it.",
-    "uniform bool u_toneMap;",
+    "// Exposure and tone mapping control.",
+    "uniform float u_exposure;",
+    "uniform int u_toneMapMode;",
     "",
     "// Fog",
     "uniform bool u_hasFog;",
@@ -8821,14 +8825,36 @@
     "            continue;",
     "        }",
     "",
+    "        // Hemisphere light (type 4): sky/ground blend based on normal Y.",
+    "        if (lightType == 4) {",
+    "            float hBlend = N.y * 0.5 + 0.5;",
+    "            vec3 hemiColor = mix(u_lightGroundColors[i], lightColor, hBlend);",
+    "            Lo += albedo * hemiColor * intensity;",
+    "            continue;",
+    "        }",
+    "",
     "        vec3 L;",
     "        float attenuation = 1.0;",
     "",
     "        if (lightType == 1) {",
     "            // Directional light.",
     "            L = normalize(-u_lightDirections[i]);",
+    "        } else if (lightType == 3) {",
+    "            // Spot light.",
+    "            vec3 toLight = u_lightPositions[i] - v_worldPosition;",
+    "            float dist = length(toLight);",
+    "            L = toLight / max(dist, 0.0001);",
+    "",
+    "            // Cone attenuation.",
+    "            float cosAngle = dot(L, -normalize(u_lightDirections[i]));",
+    "            float outerCos = cos(u_lightAngles[i]);",
+    "            float innerCos = cos(u_lightAngles[i] * (1.0 - u_lightPenumbras[i]));",
+    "            float spotAtten = clamp((cosAngle - outerCos) / max(innerCos - outerCos, 0.001), 0.0, 1.0);",
+    "",
+    "            // Distance attenuation (same as point light).",
+    "            attenuation = pointLightAttenuation(dist, u_lightRanges[i], u_lightDecays[i]) * spotAtten;",
     "        } else {",
-    "            // Point light.",
+    "            // Point light (type 2).",
     "            vec3 toLight = u_lightPositions[i] - v_worldPosition;",
     "            float dist = length(toLight);",
     "            L = toLight / max(dist, 0.0001);",
@@ -8884,12 +8910,21 @@
     "        color = mix(u_fogColor, color, fogFactor);",
     "    }",
     "",
-    "    // Tone mapping (Reinhard) and gamma correction.",
-    "    // Skipped when post-processing pipeline handles tone mapping externally.",
-    "    if (u_toneMap) {",
+    "    // Apply exposure.",
+    "    color *= u_exposure;",
+    "",
+    "    // Tone mapping.",
+    "    if (u_toneMapMode == 1) {",
+    "        // ACES filmic.",
+    "        color = (color * (2.51 * color + 0.03)) / (color * (2.43 * color + 0.59) + 0.14);",
+    "    } else if (u_toneMapMode == 2) {",
+    "        // Reinhard.",
     "        color = color / (color + vec3(1.0));",
-    "        color = pow(color, vec3(1.0 / 2.2));",
     "    }",
+    "    // else: linear (no tone mapping).",
+    "",
+    "    // Gamma correction.",
+    "    color = pow(color, vec3(1.0 / 2.2));",
     "",
     "    fragColor = vec4(color, u_opacity);",
     "}",
@@ -9835,6 +9870,9 @@
       lightIntensities: [],
       lightRanges: [],
       lightDecays: [],
+      lightAngles: [],
+      lightPenumbras: [],
+      lightGroundColors: [],
 
       ambientColor: gl.getUniformLocation(program, "u_ambientColor"),
       ambientIntensity: gl.getUniformLocation(program, "u_ambientIntensity"),
@@ -9857,7 +9895,8 @@
 
       receiveShadow: gl.getUniformLocation(program, "u_receiveShadow"),
 
-      toneMap: gl.getUniformLocation(program, "u_toneMap"),
+      exposure: gl.getUniformLocation(program, "u_exposure"),
+      toneMapMode: gl.getUniformLocation(program, "u_toneMapMode"),
 
       hasFog: gl.getUniformLocation(program, "u_hasFog"),
       fogDensity: gl.getUniformLocation(program, "u_fogDensity"),
@@ -9872,6 +9911,9 @@
       uniforms.lightIntensities.push(gl.getUniformLocation(program, "u_lightIntensities[" + i + "]"));
       uniforms.lightRanges.push(gl.getUniformLocation(program, "u_lightRanges[" + i + "]"));
       uniforms.lightDecays.push(gl.getUniformLocation(program, "u_lightDecays[" + i + "]"));
+      uniforms.lightAngles.push(gl.getUniformLocation(program, "u_lightAngles[" + i + "]"));
+      uniforms.lightPenumbras.push(gl.getUniformLocation(program, "u_lightPenumbras[" + i + "]"));
+      uniforms.lightGroundColors.push(gl.getUniformLocation(program, "u_lightGroundColors[" + i + "]"));
     }
 
     return uniforms;
@@ -10202,6 +10244,10 @@
         lightType = 0;
       } else if (kind === "directional") {
         lightType = 1;
+      } else if (kind === "spot") {
+        lightType = 3;
+      } else if (kind === "hemisphere") {
+        lightType = 4;
       }
 
       gl.uniform1i(uniforms.lightTypes[i], lightType);
@@ -10228,6 +10274,16 @@
       gl.uniform1f(uniforms.lightIntensities[i], sceneNumber(light.intensity, 1));
       gl.uniform1f(uniforms.lightRanges[i], sceneNumber(light.range, 0));
       gl.uniform1f(uniforms.lightDecays[i], sceneNumber(light.decay, 2));
+      gl.uniform1f(uniforms.lightAngles[i], sceneNumber(light.angle, 0));
+      gl.uniform1f(uniforms.lightPenumbras[i], sceneNumber(light.penumbra, 0));
+
+      var gcKey = light.groundColor;
+      var gcRGBA = typeof gcKey === "string" && colorCache[gcKey];
+      if (!gcRGBA) {
+        gcRGBA = sceneColorRGBA(light.groundColor, [0, 0, 0, 1]);
+        if (typeof gcKey === "string") colorCache[gcKey] = gcRGBA;
+      }
+      gl.uniform3f(uniforms.lightGroundColors[i], gcRGBA[0], gcRGBA[1], gcRGBA[2]);
     }
 
     for (var j = count; j < 8; j++) {
@@ -10238,6 +10294,9 @@
       gl.uniform1f(uniforms.lightIntensities[j], 0);
       gl.uniform1f(uniforms.lightRanges[j], 0);
       gl.uniform1f(uniforms.lightDecays[j], 2);
+      gl.uniform1f(uniforms.lightAngles[j], 0);
+      gl.uniform1f(uniforms.lightPenumbras[j], 0);
+      gl.uniform3f(uniforms.lightGroundColors[j], 0, 0, 0);
     }
 
     const env = environment || {};
@@ -10278,6 +10337,23 @@
       if (typeof fogKey === "string") colorCache[fogKey] = fogColorRGBA;
     }
     gl.uniform3f(uniforms.fogColor, fogColorRGBA[0], fogColorRGBA[1], fogColorRGBA[2]);
+  }
+
+  function sceneToneMapMode(str) {
+    if (typeof str === "string") {
+      var s = str.toLowerCase();
+      if (s === "linear") return 0;
+      if (s === "reinhard") return 2;
+    }
+    return 1; // default: ACES
+  }
+
+  function scenePBRUploadExposure(gl, uniforms, environment, usePostProcessing) {
+    var env = environment || {};
+    var exposure = sceneNumber(env.exposure, 0);
+    if (exposure <= 0) exposure = 1.0;
+    gl.uniform1f(uniforms.exposure, exposure);
+    gl.uniform1i(uniforms.toneMapMode, usePostProcessing ? 0 : sceneToneMapMode(env.toneMapping));
   }
 
   function scenePBRUploadShadowUniforms(gl, uniforms, shadowSlots, shadowLightMatrices, shadowLightIndices, lights) {
@@ -10576,7 +10652,7 @@
       gl.uniformMatrix4fv(uniforms.projectionMatrix, false, projMatrix);
       gl.uniform3f(uniforms.cameraPosition, cam.x, cam.y, -cam.z);
 
-      gl.uniform1i(uniforms.toneMap, usePostProcessing ? 0 : 1);
+      scenePBRUploadExposure(gl, uniforms, bundle.environment, usePostProcessing);
 
       scenePBRUploadLights(gl, uniforms, bundle.lights, bundle.environment);
 
@@ -10657,7 +10733,7 @@
             gl.uniform3f(currentUniforms.cameraPosition, _frameCam.x, _frameCam.y, -_frameCam.z);
 
             var postEffects = Array.isArray(bundle.postEffects) ? bundle.postEffects : [];
-            gl.uniform1i(currentUniforms.toneMap, postEffects.length > 0 ? 0 : 1);
+            scenePBRUploadExposure(gl, currentUniforms, bundle.environment, postEffects.length > 0);
 
             scenePBRUploadLights(gl, currentUniforms, bundle.lights, bundle.environment);
 
@@ -10980,7 +11056,7 @@
       gl.uniform3f(ip.uniforms.cameraPosition, _frameCam.x, _frameCam.y, -_frameCam.z);
 
       var postEffects = Array.isArray(bundle.postEffects) ? bundle.postEffects : [];
-      gl.uniform1i(ip.uniforms.toneMap, postEffects.length > 0 ? 0 : 1);
+      scenePBRUploadExposure(gl, ip.uniforms, bundle.environment, postEffects.length > 0);
 
       scenePBRUploadLights(gl, ip.uniforms, bundle.lights, bundle.environment);
       scenePBRUploadShadowUniforms(gl, ip.uniforms, shadowSlots, shadowLightMatrices, shadowLightIndices, bundle.lights);
