@@ -19,7 +19,7 @@ func GalaxyScene() scene.Props {
 	return scene.Props{
 		Width:      920,
 		Height:     560,
-		Label:      "M31 Galaxy",
+		Label:             "M31 Galaxy",
 		Background: "#050008",
 		Environment: scene.Environment{
 			FogColor:   "#050008",

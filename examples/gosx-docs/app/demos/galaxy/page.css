@@ -1,39 +1,43 @@
 .galaxy-shell {
-	display: flex;
-	flex-direction: column;
-	align-items: center;
-	gap: 2rem;
-	padding: 2rem 1rem;
-	background: #050008;
-	min-height: 100vh;
+  padding: 2rem 1rem;
 }
 
 .galaxy-stage {
-	width: 100%;
-	max-width: 960px;
+  width: 100%;
+  max-width: 960px;
+  margin: 0 auto;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #050008;
 }
 
 .galaxy-scene {
-	width: 100%;
-	aspect-ratio: 920 / 560;
-	border-radius: 8px;
-	overflow: hidden;
+  width: 100%;
+  aspect-ratio: 920 / 700;
+  display: block;
 }
 
-.galaxy-copy {
-	max-width: 640px;
-	text-align: center;
-	color: #c8c0d8;
+.galaxy-overlay {
+  background: linear-gradient(to top, rgba(5,0,8,0.95) 0%, rgba(5,0,8,0.6) 50%, transparent 100%);
+  padding: 3rem 2rem 2rem;
+  margin-top: -8rem;
+  position: relative;
+  z-index: 10;
+  text-align: center;
+  pointer-events: none;
 }
 
-.galaxy-copy h1 {
-	font-size: 1.5rem;
-	color: #fff;
-	margin-bottom: 0.75rem;
+.galaxy-overlay h1 {
+  font-size: 1.4rem;
+  font-weight: 700;
+  color: #fff;
+  margin: 0 0 0.5rem;
 }
 
-.galaxy-copy p {
-	font-size: 0.95rem;
-	line-height: 1.6;
-	opacity: 0.75;
+.galaxy-overlay p {
+  max-width: 620px;
+  font-size: 0.85rem;
+  line-height: 1.6;
+  color: #c8c0d8;
+  margin: 0 auto;
 }
