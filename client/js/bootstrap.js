@@ -13404,8 +13404,30 @@
     };
   }
 
+  var _webgpuAdapterProbe = null;  // null = not probed, false = unavailable, GPUAdapter = ready
+  var _webgpuAdapterReady = false;
+
+  if (typeof navigator !== "undefined" && navigator.gpu && typeof navigator.gpu.requestAdapter === "function") {
+    navigator.gpu.requestAdapter({ powerPreference: "high-performance" }).then(function(adapter) {
+      if (adapter) {
+        _webgpuAdapterProbe = adapter;
+        _webgpuAdapterReady = true;
+      } else {
+        _webgpuAdapterProbe = false;
+      }
+    }).catch(function() {
+      _webgpuAdapterProbe = false;
+    });
+  } else {
+    _webgpuAdapterProbe = false;
+  }
+
+  function sceneWebGPUAvailable() {
+    return _webgpuAdapterReady && _webgpuAdapterProbe !== false && _webgpuAdapterProbe !== null;
+  }
+
   function createSceneWebGPURendererOrFallback(canvas) {
-    if (typeof navigator === "undefined" || !navigator.gpu) return null;
+    if (!sceneWebGPUAvailable()) return null;
     if (!canvas || typeof canvas.getContext !== "function") return null;
 
     var renderer = null;
@@ -16500,6 +16522,15 @@
   function createSceneRenderer(canvas, props, capability) {
     const webglPreference = sceneCapabilityWebGLPreference(props, capability);
     if (webglPreference === "prefer" || webglPreference === "force") {
+      if (typeof sceneWebGPUAvailable === "function" && sceneWebGPUAvailable()) {
+        var gpuRenderer = createSceneWebGPURendererOrFallback(canvas);
+        if (gpuRenderer) {
+          return {
+            renderer: gpuRenderer,
+            fallbackReason: "",
+          };
+        }
+      }
       if (typeof createScenePBRRendererOrFallback === "function") {
         const gl = typeof canvas.getContext === "function" ? canvas.getContext("webgl2", {
           alpha: true,
