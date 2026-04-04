@@ -551,6 +551,22 @@
     return props && Array.isArray(props.points) ? props.points : [];
   }
 
+  function rawSceneInstancedMeshes(props) {
+    const scene = sceneProps(props);
+    if (scene && Array.isArray(scene.instancedMeshes)) {
+      return scene.instancedMeshes;
+    }
+    return props && Array.isArray(props.instancedMeshes) ? props.instancedMeshes : [];
+  }
+
+  function rawSceneComputeParticles(props) {
+    const scene = sceneProps(props);
+    if (scene && Array.isArray(scene.computeParticles)) {
+      return scene.computeParticles;
+    }
+    return props && Array.isArray(props.computeParticles) ? props.computeParticles : [];
+  }
+
   function sceneProps(props) {
     return props && props.scene && typeof props.scene === "object" ? props.scene : null;
   }
@@ -1076,6 +1092,8 @@
       sprites: new Map(),
       lights: new Map(),
       points: rawScenePoints(props),
+      instancedMeshes: rawSceneInstancedMeshes(props),
+      computeParticles: rawSceneComputeParticles(props),
       _scrollCamera: (sceneNumber(props.scrollCameraStart, 0) !== 0 || sceneNumber(props.scrollCameraEnd, 0) !== 0)
         ? { start: sceneNumber(props.scrollCameraStart, 0), end: sceneNumber(props.scrollCameraEnd, 0) }
         : null,
@@ -1401,7 +1419,7 @@
     return depth.far <= near || depth.near >= far;
   }
 
-  function createSceneRenderBundle(width, height, background, camera, objects, labels, sprites, lights, environment, timeSeconds, points) {
+  function createSceneRenderBundle(width, height, background, camera, objects, labels, sprites, lights, environment, timeSeconds, points, instancedMeshes, computeParticles) {
     const resolvedEnvironment = sceneResolveLightingEnvironment(environment, Array.isArray(lights) && lights.length > 0);
     const bundle = {
       background: background,
@@ -1415,6 +1433,8 @@
       sprites: [],
       lines: [],
       points: Array.isArray(points) ? points : [],
+      instancedMeshes: Array.isArray(instancedMeshes) ? instancedMeshes : [],
+      computeParticles: Array.isArray(computeParticles) ? computeParticles : [],
       positions: [],
       colors: [],
       worldPositions: [],

@@ -1725,6 +1725,9 @@
       if (runtimeScene || sceneBool(props.autoRotate, true)) {
         return true;
       }
+      if (Array.isArray(sceneState.computeParticles) && sceneState.computeParticles.length > 0) {
+        return true;
+      }
       if (Array.isArray(sceneState.points) && sceneState.points.some(function(p) {
         return sceneNumber(p.spinX, 0) !== 0 || sceneNumber(p.spinY, 0) !== 0 || sceneNumber(p.spinZ, 0) !== 0;
       })) {
@@ -2019,6 +2022,8 @@
         sceneState.environment,
         timeSeconds,
         sceneState.points,
+        sceneState.instancedMeshes,
+        sceneState.computeParticles,
       );
       renderer.render(latestBundle, viewport);
       renderSceneLabels(labelLayer, latestBundle, labelLayoutCache, labelElements, viewport.cssWidth, viewport.cssHeight);
