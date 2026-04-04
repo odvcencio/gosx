@@ -20,6 +20,8 @@ const outputs = [
       "bootstrap-src/14-scene-lighting.js",
       "bootstrap-src/15-scene-draw-plan.js",
       "bootstrap-src/16-scene-webgl.js",
+      "bootstrap-src/16a-scene-webgpu.js",
+      "bootstrap-src/16b-scene-compute.js",
       "bootstrap-src/17-scene-input.js",
       "bootstrap-src/18-scene-canvas.js",
       "bootstrap-src/19-scene-gltf.js",
