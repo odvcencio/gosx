@@ -14,7 +14,6 @@ func Page() Node {
 				</form>
 			</div>
 		</header>
-
 		<div class="cms-workspace">
 			<aside class="cms-palette" aria-label="Block palette">
 				<h2 class="cms-panel-title">Blocks</h2>
@@ -42,12 +41,15 @@ func Page() Node {
 					</div>
 				</div>
 			</aside>
-
 			<main class="cms-editor" aria-label="Block editor">
 				<h2 class="cms-panel-title">Editor</h2>
 				<div class="cms-block-list">
 					<Each of={data.blocks} as="block">
-						<div class={"cms-editor-block cms-editor-block--" + block.type} role="group" aria-label={block.type + " block"}>
+						<div
+							class={"cms-editor-block cms-editor-block--" + block.type}
+							role="group"
+							aria-label={block.type + " block"}
+						>
 							<div class="cms-editor-block__header">
 								<span class="cms-editor-block__type">{block.type}</span>
 								<button class="cms-editor-block__remove" type="button" aria-label="Remove block">&#215;</button>
@@ -88,7 +90,6 @@ func Page() Node {
 					</Each>
 				</div>
 			</main>
-
 			<aside class="cms-preview" aria-label="Live preview">
 				<h2 class="cms-panel-title">Preview</h2>
 				<div class="cms-preview__canvas">
@@ -109,7 +110,10 @@ func Page() Node {
 							<If cond={block.type == "quote"}>
 								<figure class="cms-preview-quote">
 									<blockquote>{block.text}</blockquote>
-									<figcaption>— {block.author}</figcaption>
+									<figcaption>
+										—
+										{block.author}
+									</figcaption>
 								</figure>
 							</If>
 						</div>
@@ -117,9 +121,11 @@ func Page() Node {
 				</div>
 			</aside>
 		</div>
-
 		<footer class="cms-statusbar">
-			<span class="cms-statusbar__info">{len(data.blocks)} blocks</span>
+			<span class="cms-statusbar__info">
+				{len(data.blocks)}
+				blocks
+			</span>
 			<span class="cms-statusbar__hint">Drag blocks from the palette to reorder</span>
 		</footer>
 	</div>

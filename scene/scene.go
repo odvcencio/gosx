@@ -52,34 +52,34 @@ type Environment struct {
 // Props is the typed Go-side Scene3D surface. It lowers into the current
 // Scene3D compatibility prop bag while preserving room for a real scene graph.
 type Props struct {
-	ProgramRef          string   `json:"-"`
-	Capabilities        []string `json:"-"`
-	Width               int      `json:"width,omitempty"`
-	Height              int      `json:"height,omitempty"`
-	Label               string   `json:"label,omitempty"`
-	AriaLabel           string   `json:"ariaLabel,omitempty"`
-	Background          string   `json:"background,omitempty"`
-	Controls            string   `json:"controls,omitempty"`
-	AutoRotate          *bool    `json:"autoRotate,omitempty"`
-	Responsive          *bool    `json:"responsive,omitempty"`
-	FillHeight          *bool    `json:"fillHeight,omitempty"`
-	PreferWebGL         *bool    `json:"preferWebGL,omitempty"`
-	ForceWebGL          *bool    `json:"forceWebGL,omitempty"`
-	PreferCanvas        *bool    `json:"preferCanvas,omitempty"`
-	DragToRotate        *bool    `json:"dragToRotate,omitempty"`
-	DragSignalNamespace string   `json:"dragSignalNamespace,omitempty"`
-	PickSignalNamespace string   `json:"pickSignalNamespace,omitempty"`
-	EventSignalNamespace string  `json:"eventSignalNamespace,omitempty"`
-	CapabilityTier      string   `json:"capabilityTier,omitempty"`
-	ControlTarget       Vector3
-	ControlRotateSpeed  float64 `json:"controlRotateSpeed,omitempty"`
-	ControlZoomSpeed    float64 `json:"controlZoomSpeed,omitempty"`
-	ScrollCameraStart   float64 `json:"scrollCameraStart,omitempty"`
-	ScrollCameraEnd     float64 `json:"scrollCameraEnd,omitempty"`
-	MaxDevicePixelRatio float64 `json:"maxDevicePixelRatio,omitempty"`
-	Camera              PerspectiveCamera
-	Environment         Environment
-	Graph               Graph
+	ProgramRef           string   `json:"-"`
+	Capabilities         []string `json:"-"`
+	Width                int      `json:"width,omitempty"`
+	Height               int      `json:"height,omitempty"`
+	Label                string   `json:"label,omitempty"`
+	AriaLabel            string   `json:"ariaLabel,omitempty"`
+	Background           string   `json:"background,omitempty"`
+	Controls             string   `json:"controls,omitempty"`
+	AutoRotate           *bool    `json:"autoRotate,omitempty"`
+	Responsive           *bool    `json:"responsive,omitempty"`
+	FillHeight           *bool    `json:"fillHeight,omitempty"`
+	PreferWebGL          *bool    `json:"preferWebGL,omitempty"`
+	ForceWebGL           *bool    `json:"forceWebGL,omitempty"`
+	PreferCanvas         *bool    `json:"preferCanvas,omitempty"`
+	DragToRotate         *bool    `json:"dragToRotate,omitempty"`
+	DragSignalNamespace  string   `json:"dragSignalNamespace,omitempty"`
+	PickSignalNamespace  string   `json:"pickSignalNamespace,omitempty"`
+	EventSignalNamespace string   `json:"eventSignalNamespace,omitempty"`
+	CapabilityTier       string   `json:"capabilityTier,omitempty"`
+	ControlTarget        Vector3
+	ControlRotateSpeed   float64 `json:"controlRotateSpeed,omitempty"`
+	ControlZoomSpeed     float64 `json:"controlZoomSpeed,omitempty"`
+	ScrollCameraStart    float64 `json:"scrollCameraStart,omitempty"`
+	ScrollCameraEnd      float64 `json:"scrollCameraEnd,omitempty"`
+	MaxDevicePixelRatio  float64 `json:"maxDevicePixelRatio,omitempty"`
+	Camera               PerspectiveCamera
+	Environment          Environment
+	Graph                Graph
 }
 
 // Graph is the typed scene graph lowered into the legacy Scene3D prop bag.
@@ -121,19 +121,19 @@ type Mesh struct {
 // Points renders a particle system using GL_POINTS.
 type Points struct {
 	ID          string
-	Count       int               // number of particles
-	Positions   []Vector3         // per-particle positions
-	Sizes       []float64         // per-particle sizes (optional, default 1.0)
-	Colors      []string          // per-particle hex colors (optional)
-	Color       string            // uniform color if no per-vertex colors
-	Size        float64           // uniform size if no per-vertex sizes
-	Opacity     float64           // 0-1
+	Count       int       // number of particles
+	Positions   []Vector3 // per-particle positions
+	Sizes       []float64 // per-particle sizes (optional, default 1.0)
+	Colors      []string  // per-particle hex colors (optional)
+	Color       string    // uniform color if no per-vertex colors
+	Size        float64   // uniform size if no per-vertex sizes
+	Opacity     float64   // 0-1
 	BlendMode   MaterialBlendMode
-	DepthWrite  bool              // whether to write to depth buffer
-	Attenuation bool              // size scales with distance
-	Position    Vector3           // transform position
-	Rotation    Euler             // transform rotation
-	Spin        Euler             // procedural rotation animation
+	DepthWrite  bool    // whether to write to depth buffer
+	Attenuation bool    // size scales with distance
+	Position    Vector3 // transform position
+	Rotation    Euler   // transform rotation
+	Spin        Euler   // procedural rotation animation
 }
 
 // InstancedMesh renders N copies of one geometry with per-instance transforms.
@@ -160,7 +160,7 @@ type ComputeParticles struct {
 }
 
 type ParticleEmitter struct {
-	Kind     string  // "point", "sphere", "disc", "spiral"
+	Kind     string // "point", "sphere", "disc", "spiral"
 	Position Vector3
 	Radius   float64
 	Rate     float64

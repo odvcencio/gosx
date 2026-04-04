@@ -294,30 +294,30 @@ type RenderComputeParticles struct {
 // RenderBundle is the renderer-facing scene payload emitted by the shared
 // engine runtime for a single frame.
 type RenderBundle struct {
-	Background       string             `json:"background,omitempty"`
-	Camera           RenderCamera       `json:"camera,omitempty"`
-	Lights           []RenderLight      `json:"lights,omitempty"`
-	Environment      RenderEnvironment  `json:"environment,omitempty"`
-	Materials        []RenderMaterial   `json:"materials,omitempty"`
-	Objects          []RenderObject         `json:"objects,omitempty"`
-	Points           []RenderPoints         `json:"points,omitempty"`
-	InstancedMeshes  []RenderInstancedMesh  `json:"instancedMeshes,omitempty"`
+	Background       string                   `json:"background,omitempty"`
+	Camera           RenderCamera             `json:"camera,omitempty"`
+	Lights           []RenderLight            `json:"lights,omitempty"`
+	Environment      RenderEnvironment        `json:"environment,omitempty"`
+	Materials        []RenderMaterial         `json:"materials,omitempty"`
+	Objects          []RenderObject           `json:"objects,omitempty"`
+	Points           []RenderPoints           `json:"points,omitempty"`
+	InstancedMeshes  []RenderInstancedMesh    `json:"instancedMeshes,omitempty"`
 	ComputeParticles []RenderComputeParticles `json:"computeParticles,omitempty"`
-	Surfaces         []RenderSurface    `json:"surfaces,omitempty"`
-	Passes           []RenderPassBundle `json:"passes,omitempty"`
-	Lines            []RenderLine       `json:"lines,omitempty"`
-	Labels           []RenderLabel      `json:"labels,omitempty"`
-	Sprites          []RenderSprite     `json:"sprites,omitempty"`
-	Positions        []float64          `json:"positions,omitempty"`
-	Colors           []float64          `json:"colors,omitempty"`
-	VertexCount      int                `json:"vertexCount,omitempty"`
-	WorldPositions   []float64          `json:"worldPositions,omitempty"`
-	WorldColors      []float64          `json:"worldColors,omitempty"`
-	WorldVertexCount int                `json:"worldVertexCount,omitempty"`
-	WorldNormals     []float64          `json:"worldNormals,omitempty"`
-	WorldUVs         []float64          `json:"worldUVs,omitempty"`
-	WorldTangents    []float64          `json:"worldTangents,omitempty"`
-	ObjectCount      int                `json:"objectCount,omitempty"`
-	Animations       []RenderAnimation  `json:"animations,omitempty"`
-	PostEffects      []RenderPostEffect `json:"postEffects,omitempty"`
+	Surfaces         []RenderSurface          `json:"surfaces,omitempty"`
+	Passes           []RenderPassBundle       `json:"passes,omitempty"`
+	Lines            []RenderLine             `json:"lines,omitempty"`
+	Labels           []RenderLabel            `json:"labels,omitempty"`
+	Sprites          []RenderSprite           `json:"sprites,omitempty"`
+	Positions        []float64                `json:"positions,omitempty"`
+	Colors           []float64                `json:"colors,omitempty"`
+	VertexCount      int                      `json:"vertexCount,omitempty"`
+	WorldPositions   []float64                `json:"worldPositions,omitempty"`
+	WorldColors      []float64                `json:"worldColors,omitempty"`
+	WorldVertexCount int                      `json:"worldVertexCount,omitempty"`
+	WorldNormals     []float64                `json:"worldNormals,omitempty"`
+	WorldUVs         []float64                `json:"worldUVs,omitempty"`
+	WorldTangents    []float64                `json:"worldTangents,omitempty"`
+	ObjectCount      int                      `json:"objectCount,omitempty"`
+	Animations       []RenderAnimation        `json:"animations,omitempty"`
+	PostEffects      []RenderPostEffect       `json:"postEffects,omitempty"`
 }

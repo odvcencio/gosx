@@ -851,12 +851,12 @@ func Page() Node {
 	ctx := &RouteContext{
 		Data: map[string]any{
 			"scene": scene.Props{
-				Width:               640,
-				Height:              360,
-				Label:               "Typed Scene3D",
-				Background:          "#08151f",
-				ProgramRef:          "/api/runtime/scene-program",
-				PickSignalNamespace: "$scene.demo.pick",
+				Width:                640,
+				Height:               360,
+				Label:                "Typed Scene3D",
+				Background:           "#08151f",
+				ProgramRef:           "/api/runtime/scene-program",
+				PickSignalNamespace:  "$scene.demo.pick",
 				EventSignalNamespace: "$scene.demo.event",
 				Environment: scene.Environment{
 					AmbientColor:     "#f4fbff",
