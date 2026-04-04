@@ -1,10 +1,16 @@
   function createSceneRenderer(canvas, props, capability) {
     const webglPreference = sceneCapabilityWebGLPreference(props, capability);
     if (webglPreference === "prefer" || webglPreference === "force") {
-      // WebGPU: deferred — canvas.getContext("webgpu") taints the canvas,
-      // preventing WebGL2 fallback. WebGPU activation requires async adapter
-      // probing before touching the canvas. For now, WebGL2 PBR handles all
-      // rendering; WebGPU upgrades in a future release with async renderer swap.
+      // Try WebGPU if adapter probe succeeded (started at bootstrap load time).
+      if (typeof sceneWebGPUAvailable === "function" && sceneWebGPUAvailable()) {
+        var gpuRenderer = createSceneWebGPURendererOrFallback(canvas);
+        if (gpuRenderer) {
+          return {
+            renderer: gpuRenderer,
+            fallbackReason: "",
+          };
+        }
+      }
       if (typeof createScenePBRRendererOrFallback === "function") {
         const gl = typeof canvas.getContext === "function" ? canvas.getContext("webgl2", {
           alpha: true,
