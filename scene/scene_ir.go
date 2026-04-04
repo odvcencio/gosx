@@ -5,13 +5,15 @@ import "strings"
 // SceneIR is the typed lowered scene payload emitted from a Graph before it is
 // serialized into the current Scene3D compatibility contract.
 type SceneIR struct {
-	Objects     []ObjectIR    `json:"objects,omitempty"`
-	Models      []ModelIR     `json:"models,omitempty"`
-	Points      []PointsIR    `json:"points,omitempty"`
-	Labels      []LabelIR     `json:"labels,omitempty"`
-	Sprites     []SpriteIR    `json:"sprites,omitempty"`
-	Lights      []LightIR     `json:"lights,omitempty"`
-	Environment EnvironmentIR `json:"environment,omitempty"`
+	Objects          []ObjectIR           `json:"objects,omitempty"`
+	Models           []ModelIR            `json:"models,omitempty"`
+	Points           []PointsIR           `json:"points,omitempty"`
+	InstancedMeshes  []InstancedMeshIR    `json:"instancedMeshes,omitempty"`
+	ComputeParticles []ComputeParticlesIR `json:"computeParticles,omitempty"`
+	Labels           []LabelIR            `json:"labels,omitempty"`
+	Sprites          []SpriteIR           `json:"sprites,omitempty"`
+	Lights           []LightIR            `json:"lights,omitempty"`
+	Environment      EnvironmentIR        `json:"environment,omitempty"`
 }
 
 // ObjectIR is the typed compatibility record for one lowered scene object.
@@ -178,6 +180,71 @@ type PointsIR struct {
 	SpinZ       float64   `json:"spinZ,omitempty"`
 }
 
+// InstancedMeshIR is the typed compatibility record for one instanced mesh.
+type InstancedMeshIR struct {
+	ID            string    `json:"id"`
+	Count         int       `json:"count"`
+	Kind          string    `json:"kind"`
+	Width         float64   `json:"width,omitempty"`
+	Height        float64   `json:"height,omitempty"`
+	Depth         float64   `json:"depth,omitempty"`
+	Radius        float64   `json:"radius,omitempty"`
+	Segments      int       `json:"segments,omitempty"`
+	MaterialKind  string    `json:"materialKind,omitempty"`
+	Color         string    `json:"color,omitempty"`
+	Roughness     float64   `json:"roughness,omitempty"`
+	Metalness     float64   `json:"metalness,omitempty"`
+	Transforms    []float64 `json:"transforms"`
+	CastShadow    bool      `json:"castShadow,omitempty"`
+	ReceiveShadow bool      `json:"receiveShadow,omitempty"`
+}
+
+// ComputeParticlesIR is the typed compatibility record for one GPU particle system.
+type ComputeParticlesIR struct {
+	ID       string             `json:"id"`
+	Count    int                `json:"count"`
+	Emitter  ParticleEmitterIR  `json:"emitter"`
+	Forces   []ParticleForceIR  `json:"forces,omitempty"`
+	Material ParticleMaterialIR `json:"material"`
+	Bounds   float64            `json:"bounds,omitempty"`
+}
+
+// ParticleEmitterIR describes the emitter configuration for a GPU particle system.
+type ParticleEmitterIR struct {
+	Kind     string  `json:"kind"`
+	X        float64 `json:"x,omitempty"`
+	Y        float64 `json:"y,omitempty"`
+	Z        float64 `json:"z,omitempty"`
+	Radius   float64 `json:"radius,omitempty"`
+	Rate     float64 `json:"rate,omitempty"`
+	Lifetime float64 `json:"lifetime,omitempty"`
+	Arms     int     `json:"arms,omitempty"`
+	Wind     float64 `json:"wind,omitempty"`
+	Scatter  float64 `json:"scatter,omitempty"`
+}
+
+// ParticleForceIR describes one force acting on a GPU particle system.
+type ParticleForceIR struct {
+	Kind      string  `json:"kind"`
+	Strength  float64 `json:"strength,omitempty"`
+	X         float64 `json:"x,omitempty"`
+	Y         float64 `json:"y,omitempty"`
+	Z         float64 `json:"z,omitempty"`
+	Frequency float64 `json:"frequency,omitempty"`
+}
+
+// ParticleMaterialIR describes the material for a GPU particle system.
+type ParticleMaterialIR struct {
+	Color       string  `json:"color,omitempty"`
+	ColorEnd    string  `json:"colorEnd,omitempty"`
+	Size        float64 `json:"size,omitempty"`
+	SizeEnd     float64 `json:"sizeEnd,omitempty"`
+	Opacity     float64 `json:"opacity,omitempty"`
+	OpacityEnd  float64 `json:"opacityEnd,omitempty"`
+	BlendMode   string  `json:"blendMode,omitempty"`
+	Attenuation bool    `json:"attenuation,omitempty"`
+}
+
 // EnvironmentIR is the typed compatibility record for scene-wide lighting.
 type EnvironmentIR struct {
 	AmbientColor     string  `json:"ambientColor,omitempty"`
@@ -211,17 +278,19 @@ func (g Graph) SceneIR() SceneIR {
 		lowerer.lowerNode(node, identityTransform())
 	}
 	return SceneIR{
-		Objects: append([]ObjectIR(nil), lowerer.objects...),
-		Models:  append([]ModelIR(nil), lowerer.models...),
-		Points:  append([]PointsIR(nil), lowerer.points...),
-		Labels:  lowerer.resolveLabels(),
-		Sprites: lowerer.resolveSprites(),
-		Lights:  append([]LightIR(nil), lowerer.lights...),
+		Objects:          append([]ObjectIR(nil), lowerer.objects...),
+		Models:           append([]ModelIR(nil), lowerer.models...),
+		Points:           append([]PointsIR(nil), lowerer.points...),
+		InstancedMeshes:  append([]InstancedMeshIR(nil), lowerer.instancedMeshes...),
+		ComputeParticles: append([]ComputeParticlesIR(nil), lowerer.computeParticles...),
+		Labels:           lowerer.resolveLabels(),
+		Sprites:          lowerer.resolveSprites(),
+		Lights:           append([]LightIR(nil), lowerer.lights...),
 	}
 }
 
 func (ir SceneIR) isZero() bool {
-	return len(ir.Objects) == 0 && len(ir.Models) == 0 && len(ir.Points) == 0 && len(ir.Labels) == 0 && len(ir.Sprites) == 0 && len(ir.Lights) == 0 && ir.Environment.isZero()
+	return len(ir.Objects) == 0 && len(ir.Models) == 0 && len(ir.Points) == 0 && len(ir.InstancedMeshes) == 0 && len(ir.ComputeParticles) == 0 && len(ir.Labels) == 0 && len(ir.Sprites) == 0 && len(ir.Lights) == 0 && ir.Environment.isZero()
 }
 
 func (ir SceneIR) legacyProps() map[string]any {
@@ -237,6 +306,12 @@ func (ir SceneIR) legacyProps() map[string]any {
 	}
 	if points := legacyPointsList(ir.Points); len(points) > 0 {
 		out["points"] = points
+	}
+	if instancedMeshes := legacyInstancedMeshes(ir.InstancedMeshes); len(instancedMeshes) > 0 {
+		out["instancedMeshes"] = instancedMeshes
+	}
+	if computeParticles := legacyComputeParticles(ir.ComputeParticles); len(computeParticles) > 0 {
+		out["computeParticles"] = computeParticles
 	}
 	if labels := legacyLabels(ir.Labels); len(labels) > 0 {
 		out["labels"] = labels
@@ -446,6 +521,102 @@ func (item PointsIR) legacyProps() map[string]any {
 	setNumeric(record, "spinX", item.SpinX)
 	setNumeric(record, "spinY", item.SpinY)
 	setNumeric(record, "spinZ", item.SpinZ)
+	return record
+}
+
+func legacyInstancedMeshes(items []InstancedMeshIR) []map[string]any {
+	if len(items) == 0 {
+		return nil
+	}
+	out := make([]map[string]any, 0, len(items))
+	for _, item := range items {
+		out = append(out, item.legacyProps())
+	}
+	return out
+}
+
+func (item InstancedMeshIR) legacyProps() map[string]any {
+	record := map[string]any{
+		"id":    item.ID,
+		"count": item.Count,
+		"kind":  item.Kind,
+	}
+	setNumeric(record, "width", item.Width)
+	setNumeric(record, "height", item.Height)
+	setNumeric(record, "depth", item.Depth)
+	setNumeric(record, "radius", item.Radius)
+	setInt(record, "segments", item.Segments)
+	setString(record, "materialKind", item.MaterialKind)
+	setString(record, "color", item.Color)
+	setNumeric(record, "roughness", item.Roughness)
+	setNumeric(record, "metalness", item.Metalness)
+	if len(item.Transforms) > 0 {
+		record["transforms"] = item.Transforms
+	}
+	if item.CastShadow {
+		record["castShadow"] = true
+	}
+	if item.ReceiveShadow {
+		record["receiveShadow"] = true
+	}
+	return record
+}
+
+func legacyComputeParticles(items []ComputeParticlesIR) []map[string]any {
+	if len(items) == 0 {
+		return nil
+	}
+	out := make([]map[string]any, 0, len(items))
+	for _, item := range items {
+		out = append(out, item.legacyProps())
+	}
+	return out
+}
+
+func (item ComputeParticlesIR) legacyProps() map[string]any {
+	record := map[string]any{
+		"id":    item.ID,
+		"count": item.Count,
+	}
+	emitter := map[string]any{}
+	setString(emitter, "kind", item.Emitter.Kind)
+	setNumeric(emitter, "x", item.Emitter.X)
+	setNumeric(emitter, "y", item.Emitter.Y)
+	setNumeric(emitter, "z", item.Emitter.Z)
+	setNumeric(emitter, "radius", item.Emitter.Radius)
+	setNumeric(emitter, "rate", item.Emitter.Rate)
+	setNumeric(emitter, "lifetime", item.Emitter.Lifetime)
+	setInt(emitter, "arms", item.Emitter.Arms)
+	setNumeric(emitter, "wind", item.Emitter.Wind)
+	setNumeric(emitter, "scatter", item.Emitter.Scatter)
+	record["emitter"] = emitter
+	if len(item.Forces) > 0 {
+		forces := make([]map[string]any, 0, len(item.Forces))
+		for _, f := range item.Forces {
+			force := map[string]any{}
+			setString(force, "kind", f.Kind)
+			setNumeric(force, "strength", f.Strength)
+			setNumeric(force, "x", f.X)
+			setNumeric(force, "y", f.Y)
+			setNumeric(force, "z", f.Z)
+			setNumeric(force, "frequency", f.Frequency)
+			forces = append(forces, force)
+		}
+		record["forces"] = forces
+	}
+	material := map[string]any{}
+	setString(material, "color", item.Material.Color)
+	setString(material, "colorEnd", item.Material.ColorEnd)
+	setNumeric(material, "size", item.Material.Size)
+	setNumeric(material, "sizeEnd", item.Material.SizeEnd)
+	setNumeric(material, "opacity", item.Material.Opacity)
+	setNumeric(material, "opacityEnd", item.Material.OpacityEnd)
+	setString(material, "blendMode", item.Material.BlendMode)
+	if item.Material.Attenuation {
+		material["attenuation"] = true
+	}
+	record["material"] = material
+	setNumeric(record, "bounds", item.Bounds)
 	return record
 }
 
