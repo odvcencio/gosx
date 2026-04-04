@@ -44,6 +44,7 @@ type Environment struct {
 	GroundColor      string
 	GroundIntensity  float64
 	Exposure         float64
+	ToneMapping      string // "aces", "reinhard", "linear", "" (default = aces)
 	FogColor         string
 	FogDensity       float64 // for exponential fog (0 = no fog)
 }
@@ -282,6 +283,30 @@ type PointLight struct {
 	Decay     float64
 }
 
+// SpotLight adds a positioned cone light with falloff.
+type SpotLight struct {
+	ID         string
+	Color      string
+	Intensity  float64
+	Position   Vector3
+	Direction  Vector3
+	Angle      float64 // outer cone angle in radians
+	Penumbra   float64 // 0 = hard edge, 1 = fully soft
+	Range      float64
+	Decay      float64
+	CastShadow bool
+	ShadowBias float64
+	ShadowSize int
+}
+
+// HemisphereLight adds sky/ground ambient lighting.
+type HemisphereLight struct {
+	ID          string
+	SkyColor    string
+	GroundColor string
+	Intensity   float64
+}
+
 // Geometry describes one supported legacy primitive.
 type Geometry interface {
 	sceneGeometry()
@@ -449,6 +474,8 @@ func (Model) sceneNode()            {}
 func (AmbientLight) sceneNode()     {}
 func (DirectionalLight) sceneNode() {}
 func (PointLight) sceneNode()       {}
+func (SpotLight) sceneNode()        {}
+func (HemisphereLight) sceneNode()  {}
 
 func (CubeGeometry) sceneGeometry()     {}
 func (BoxGeometry) sceneGeometry()      {}
@@ -720,6 +747,18 @@ func (l *graphLowerer) lowerNode(node Node, parent worldTransform) {
 	case *PointLight:
 		if current != nil {
 			l.lowerPointLight(*current, parent)
+		}
+	case SpotLight:
+		l.lowerSpotLight(current, parent)
+	case *SpotLight:
+		if current != nil {
+			l.lowerSpotLight(*current, parent)
+		}
+	case HemisphereLight:
+		l.lowerHemisphereLight(current)
+	case *HemisphereLight:
+		if current != nil {
+			l.lowerHemisphereLight(*current)
 		}
 	}
 }
@@ -1066,6 +1105,40 @@ func (l *graphLowerer) lowerPointLight(light PointLight, parent worldTransform) 
 		Z:         world.Position.Z,
 		Range:     light.Range,
 		Decay:     light.Decay,
+	})
+}
+
+func (l *graphLowerer) lowerSpotLight(light SpotLight, parent worldTransform) {
+	world := combineTransforms(parent, localTransform(light.Position, Euler{}))
+	direction := parent.Rotation.rotate(light.Direction)
+	l.lights = append(l.lights, LightIR{
+		ID:         l.nextSceneLightID("spot-light", light.ID),
+		Kind:       "spot",
+		Color:      strings.TrimSpace(light.Color),
+		Intensity:  light.Intensity,
+		X:          world.Position.X,
+		Y:          world.Position.Y,
+		Z:          world.Position.Z,
+		DirectionX: direction.X,
+		DirectionY: direction.Y,
+		DirectionZ: direction.Z,
+		Angle:      light.Angle,
+		Penumbra:   light.Penumbra,
+		Range:      light.Range,
+		Decay:      light.Decay,
+		CastShadow: light.CastShadow,
+		ShadowBias: light.ShadowBias,
+		ShadowSize: light.ShadowSize,
+	})
+}
+
+func (l *graphLowerer) lowerHemisphereLight(light HemisphereLight) {
+	l.lights = append(l.lights, LightIR{
+		ID:          l.nextSceneLightID("hemisphere-light", light.ID),
+		Kind:        "hemisphere",
+		Color:       strings.TrimSpace(light.SkyColor),
+		GroundColor: strings.TrimSpace(light.GroundColor),
+		Intensity:   light.Intensity,
 	})
 }
 
