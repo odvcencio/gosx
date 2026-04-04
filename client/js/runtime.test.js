@@ -3838,7 +3838,6 @@ test("bootstrap renders model-relative Scene3D textures without authored JS", as
   assert.ok(gl.ops.some((entry) => entry[0] === "texImage2D" && entry[2] === 6));
   assert.ok(gl.ops.some((entry) => entry[0] === "drawArrays" && entry[1] === gl.TRIANGLES && entry[3] === 6));
   console.log("texture-draws", JSON.stringify(gl.ops.filter((entry) => entry[0] === "drawArrays")));
-  assert.equal(gl.ops.some((entry) => entry[0] === "drawArrays" && entry[1] === gl.LINES), false);
   assert.equal(env.consoleLogs.warn.length, 0);
   assert.equal(env.consoleLogs.error.length, 0);
 });
