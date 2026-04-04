@@ -74,21 +74,24 @@ type RenderCamera struct {
 
 // RenderLight is a resolved scene light record.
 type RenderLight struct {
-	ID         string  `json:"id,omitempty"`
-	Kind       string  `json:"kind,omitempty"`
-	Color      string  `json:"color,omitempty"`
-	Intensity  float64 `json:"intensity,omitempty"`
-	X          float64 `json:"x,omitempty"`
-	Y          float64 `json:"y,omitempty"`
-	Z          float64 `json:"z,omitempty"`
-	DirectionX float64 `json:"directionX,omitempty"`
-	DirectionY float64 `json:"directionY,omitempty"`
-	DirectionZ float64 `json:"directionZ,omitempty"`
-	Range      float64 `json:"range,omitempty"`
-	Decay      float64 `json:"decay,omitempty"`
-	CastShadow bool    `json:"castShadow,omitempty"`
-	ShadowBias float64 `json:"shadowBias,omitempty"`
-	ShadowSize int     `json:"shadowSize,omitempty"`
+	ID          string  `json:"id,omitempty"`
+	Kind        string  `json:"kind,omitempty"`
+	Color       string  `json:"color,omitempty"`
+	GroundColor string  `json:"groundColor,omitempty"`
+	Intensity   float64 `json:"intensity,omitempty"`
+	X           float64 `json:"x,omitempty"`
+	Y           float64 `json:"y,omitempty"`
+	Z           float64 `json:"z,omitempty"`
+	DirectionX  float64 `json:"directionX,omitempty"`
+	DirectionY  float64 `json:"directionY,omitempty"`
+	DirectionZ  float64 `json:"directionZ,omitempty"`
+	Angle       float64 `json:"angle,omitempty"`
+	Penumbra    float64 `json:"penumbra,omitempty"`
+	Range       float64 `json:"range,omitempty"`
+	Decay       float64 `json:"decay,omitempty"`
+	CastShadow  bool    `json:"castShadow,omitempty"`
+	ShadowBias  float64 `json:"shadowBias,omitempty"`
+	ShadowSize  int     `json:"shadowSize,omitempty"`
 }
 
 // RenderEnvironment describes scene-wide lighting state.
@@ -100,6 +103,7 @@ type RenderEnvironment struct {
 	GroundColor      string  `json:"groundColor,omitempty"`
 	GroundIntensity  float64 `json:"groundIntensity,omitempty"`
 	Exposure         float64 `json:"exposure,omitempty"`
+	ToneMapping      string  `json:"toneMapping,omitempty"`
 	FogColor         string  `json:"fogColor,omitempty"`
 	FogDensity       float64 `json:"fogDensity,omitempty"`
 }

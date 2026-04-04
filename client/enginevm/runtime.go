@@ -317,6 +317,7 @@ type sceneEnvironment struct {
 	GroundColor      string
 	GroundIntensity  float64
 	Exposure         float64
+	ToneMapping      string
 	Specified        bool
 }
 
@@ -598,6 +599,7 @@ func normalizeSceneEnvironment(raw map[string]any, fallback sceneEnvironment) sc
 	if exposure == 0 {
 		exposure = 1
 	}
+	toneMapping := strings.TrimSpace(stringFromAny(rawValue(raw, "toneMapping"), fallback.ToneMapping))
 	environment := sceneEnvironment{
 		AmbientColor:     strings.TrimSpace(stringFromAny(rawValue(raw, "ambientColor"), fallback.AmbientColor)),
 		AmbientIntensity: clamp(numberFromAny(rawValue(raw, "ambientIntensity"), fallback.AmbientIntensity), 0, 4),
@@ -606,6 +608,7 @@ func normalizeSceneEnvironment(raw map[string]any, fallback sceneEnvironment) sc
 		GroundColor:      strings.TrimSpace(stringFromAny(rawValue(raw, "groundColor"), fallback.GroundColor)),
 		GroundIntensity:  clamp(numberFromAny(rawValue(raw, "groundIntensity"), fallback.GroundIntensity), 0, 4),
 		Exposure:         clamp(exposure, 0.05, 4),
+		ToneMapping:      toneMapping,
 		Specified:        false,
 	}
 	if raw == nil {
@@ -726,6 +729,7 @@ func renderSceneEnvironment(environment sceneEnvironment) rootengine.RenderEnvir
 		GroundColor:      environment.GroundColor,
 		GroundIntensity:  environment.GroundIntensity,
 		Exposure:         environment.Exposure,
+		ToneMapping:      environment.ToneMapping,
 	}
 }
 
