@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.8.0
+
+### Tier 2: Visual Quality
+
+**HDR exposure control**: `Environment.Exposure` scales scene brightness before tone mapping. `Environment.ToneMapping` selects ACES filmic (default), Reinhard, or linear output. Postprocessing automatically disables built-in tone mapping.
+
+**Spot lights**: `SpotLight` with cone angle, penumbra (soft edge), distance attenuation, and shadow casting. PBR shader computes inner/outer cone cutoff with smooth falloff.
+
+**Hemisphere lights**: `HemisphereLight` with sky/ground color blend based on surface normal direction. Provides ambient lighting that varies with orientation.
+
+**MSAA**: Canvas-level multisampling verified working for non-postprocessing scenes via the existing `antialias: true` context flag.
+
+**5 light types** in the PBR shader: ambient, directional, point, spot, hemisphere.
+
 ## v0.7.0
 
 ### Tier 1: WebGPU, Instancing, GPU Compute Particles
