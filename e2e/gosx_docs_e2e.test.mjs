@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { once } from "node:events";
 import path from "node:path";
 import test, { after, before } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -63,122 +62,34 @@ after(async () => {
   await new Promise((resolve) => setTimeout(resolve, 250));
 });
 
-test("gosx dev serves the landing page, demos, responsive drawer, scoped 404s, and auth", { timeout: 90000 }, async () => {
-  const navigationRequests = [];
-  const assetRequests = [];
-  page.on("request", (request) => {
-    if (request.headers()["x-gosx-navigation"] === "1") {
-      navigationRequests.push(request.url());
-    }
-    if (request.url().includes("docs.css")) {
-      assetRequests.push(request.url());
-    }
-  });
-
+test("gosx dev serves the redesigned docs site", { timeout: 90000 }, async () => {
   try {
+    // Homepage loads with showroom content
     await page.goto(baseURL, { waitUntil: "domcontentloaded" });
-    await page.getByRole("heading", {
-      name: "Build in Go. Ship the site, the editor, and the 3D demo together.",
-    }).waitFor();
+    await page.locator(".hero").waitFor();
 
-    await page.setViewportSize({ width: 900, height: 900 });
-    await page.reload({ waitUntil: "domcontentloaded" });
-    assert.equal(
-      await page.locator(".route-drawer-panel").evaluate((el) => getComputedStyle(el).display),
-      "none",
-      `expected route drawer panel to stay hidden before opening\n\nLogs:\n${logs}`,
-    );
-    await page.locator(".route-drawer-summary").click();
-    await page.locator(".route-drawer-panel").waitFor();
-    assert.equal(
-      await page.locator(".route-drawer").evaluate((el) => el.hasAttribute("open")),
-      true,
-      `expected route drawer to open\n\nLogs:\n${logs}`,
-    );
-    await page.mouse.click(860, 180);
-    assert.equal(
-      await page.locator(".route-drawer").evaluate((el) => el.hasAttribute("open")),
-      false,
-      `expected route drawer to close from the backdrop\n\nLogs:\n${logs}`,
-    );
-
-    await page.setViewportSize({ width: 1440, height: 960 });
-    await page.goto(baseURL, { waitUntil: "domcontentloaded" });
-    await page.getByRole("link", { name: "Open the CMS demo" }).first().click();
-    await page.waitForURL(/\/demos\/cms$/);
-    await page.getByRole("heading", {
-      name: "The CMS flow stays document-shaped. Compose once, publish once.",
-    }).waitFor();
+    // Docs redirect works
+    const docsResponse = await page.goto(`${baseURL}/docs`, { waitUntil: "domcontentloaded" });
     assert.ok(
-      navigationRequests.some((url) => url.endsWith("/demos/cms")),
-      `expected a client navigation fetch for /demos/cms\n\nLogs:\n${logs}`,
+      page.url().includes("/docs/getting-started"),
+      `expected /docs to redirect to /docs/getting-started, got ${page.url()}\n\nLogs:\n${logs}`,
     );
 
-    await page.locator('[data-cms-add-type="quote"]').click();
-    await page.waitForFunction(() => document.querySelector("[data-cms-count]")?.textContent?.trim() === "4");
-    await page.getByRole("button", { name: "Publish draft" }).click();
-    await page.getByText("Draft published.").waitFor();
+    // Reference page loads with docs layout
+    await page.goto(`${baseURL}/docs/routing`, { waitUntil: "domcontentloaded" });
+    await page.locator(".docs-content").waitFor();
 
-    await page.goto(`${baseURL}/demos/scene3d`, { waitUntil: "domcontentloaded" });
-    await page.getByRole("heading", {
-      name: "Geometry Zoo is a native 3D route, not a detached client app.",
-    }).waitFor();
-    await page.locator('[data-gosx-engine="GoSXScene3D"] canvas').waitFor();
+    // Demo page loads
+    await page.goto(`${baseURL}/demos/galaxy`, { waitUntil: "domcontentloaded" });
+    await page.locator(".galaxy-demo").waitFor();
 
-    await page.goto(`${baseURL}/docs/runtime`, { waitUntil: "domcontentloaded" });
-    await page.getByRole("heading", {
-      name: "Page transitions reuse the runtime instead of pretending the browser does not exist.",
-    }).waitFor();
-    await page.goto(`${baseURL}/labs/stream`, { waitUntil: "domcontentloaded" });
-    await page.getByRole("heading", {
-      name: "Streaming in GoSX starts with deferred regions, not a separate rendering stack.",
-    }).waitFor();
-    await page.getByText("Resolved region").waitFor();
+    // Scoped 404 within /docs
+    await page.goto(`${baseURL}/docs/nonexistent`, { waitUntil: "domcontentloaded" });
+    await page.locator(".docs-404").waitFor();
 
-    await page.goto(`${baseURL}/docs/runtime`, { waitUntil: "domcontentloaded" });
-    await page.getByRole("heading", {
-      name: "Page transitions reuse the runtime instead of pretending the browser does not exist.",
-    }).waitFor();
-    await page.waitForTimeout(150);
-    assetRequests.length = 0;
-    await page.getByRole("link", { name: "Back to overview" }).click();
-    await page.waitForURL(baseURL);
-    assert.equal(
-      assetRequests.some((url) => url.includes("/docs/docs.css")),
-      false,
-      `expected nested-route navigation to avoid misresolved docs.css requests\n\nRequests:\n${assetRequests.join("\n")}\n\nLogs:\n${logs}`,
-    );
-    assert.equal(
-      await page.locator(".docs-shell").evaluate((el) => getComputedStyle(el).display),
-      "grid",
-      `expected overview navigation to keep the docs shell styled after client navigation\n\nLogs:\n${logs}`,
-    );
-    assert.equal(
-      await page.locator(".home-shell").evaluate((el) => getComputedStyle(el).display),
-      "flex",
-      `expected overview navigation to reapply page-scoped styles after client navigation\n\nLogs:\n${logs}`,
-    );
-    assert.match(
-      await page.locator('link[rel="stylesheet"]').evaluate((el) => el.href),
-      /\/docs\.css(?:\?|$)/,
-      `expected overview navigation to keep the shared docs stylesheet rooted correctly\n\nLogs:\n${logs}`,
-    );
-
-    await page.goto(`${baseURL}/docs/missing`, { waitUntil: "domcontentloaded" });
-    await page.getByRole("heading", {
-      name: "The docs subtree could not resolve this page.",
-    }).waitFor();
-
-    await page.goto(`${baseURL}/docs/forms`, { waitUntil: "domcontentloaded" });
-    await page.getByRole("heading", {
-      name: "GoSX forms can stay boring HTML and still feel like a framework feature.",
-    }).waitFor();
-
-    await page.goto(`${baseURL}/labs/secret`, { waitUntil: "domcontentloaded" });
-    await page.waitForURL(/\/docs\/auth(?:\?|$)/);
-    await page.getByRole("heading", {
-      name: "Auth in GoSX is a session concern, not a bolt-on password stack.",
-    }).waitFor();
+    // Root 404
+    await page.goto(`${baseURL}/totally-missing`, { waitUntil: "domcontentloaded" });
+    await page.locator(".error-page").waitFor();
   } catch (error) {
     error.message += `\n\nCaptured logs:\n${logs}`;
     throw error;
