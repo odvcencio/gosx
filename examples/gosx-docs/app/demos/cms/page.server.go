@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 
-	docsapp "github.com/odvcencio/gosx/examples/gosx-docs/app"
 	"github.com/odvcencio/gosx/action"
+	docsapp "github.com/odvcencio/gosx/examples/gosx-docs/app"
 	"github.com/odvcencio/gosx/route"
 )
 

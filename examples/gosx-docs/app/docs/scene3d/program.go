@@ -29,10 +29,10 @@ func DemoScene() scene.Props {
 				CastShadow: true,
 			},
 			scene.PointLight{
-				Color:    "#D4AF37",
+				Color:     "#D4AF37",
 				Intensity: 0.6,
-				Position: scene.Vec3(-2, 3, 2),
-				Range:    15,
+				Position:  scene.Vec3(-2, 3, 2),
+				Range:     15,
 			},
 			scene.Mesh{
 				Geometry: scene.SphereGeometry{Segments: 32},

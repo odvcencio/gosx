@@ -104,7 +104,7 @@ func GeometryZooProgram() scene.Props {
 		},
 		// Floor plane
 		scene.Mesh{
-			ID: "floor",
+			ID:       "floor",
 			Geometry: scene.PlaneGeometry{Width: 14, Height: 14},
 			Material: scene.StandardMaterial{
 				Color:     "#111110",
@@ -137,11 +137,11 @@ func GeometryZooProgram() scene.Props {
 	}
 
 	return scene.Props{
-		Background:  "#09141e",
-		Responsive:  scene.Bool(true),
-		FillHeight:  scene.Bool(true),
-		Controls:    "orbit",
-		AutoRotate:  scene.Bool(false),
+		Background: "#09141e",
+		Responsive: scene.Bool(true),
+		FillHeight: scene.Bool(true),
+		Controls:   "orbit",
+		AutoRotate: scene.Bool(false),
 		Camera: scene.PerspectiveCamera{
 			Position: scene.Vec3(0, 2.5, 8),
 			FOV:      58,

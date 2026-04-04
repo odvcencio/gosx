@@ -3,8 +3,8 @@ package docs
 import (
 	"strings"
 
-	docs "github.com/odvcencio/gosx/examples/gosx-docs/app"
 	"github.com/odvcencio/gosx/action"
+	docs "github.com/odvcencio/gosx/examples/gosx-docs/app"
 	"github.com/odvcencio/gosx/route"
 )
 

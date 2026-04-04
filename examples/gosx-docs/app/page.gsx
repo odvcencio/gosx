@@ -14,7 +14,6 @@ func Page() Node {
 				<span class="hero__scroll-indicator"></span>
 			</div>
 		</section>
-
 		<section class="pitch light" aria-label="What is GoSX">
 			<div class="pitch__inner">
 				<Each of={data.pitchStatements} as="statement">
@@ -25,7 +24,6 @@ func Page() Node {
 				</Each>
 			</div>
 		</section>
-
 		<section class="showcases" aria-label="Capabilities">
 			<Each of={data.showcases} as="showcase" index="i">
 				<div class={"showcase " + showcase.mode + " reveal"} aria-label={showcase.title}>
@@ -44,7 +42,6 @@ func Page() Node {
 				</div>
 			</Each>
 		</section>
-
 		<section class="proof light" aria-label="By the numbers">
 			<div class="proof__inner reveal" data-reveal-stagger="true">
 				<h2 class="proof__heading">By the numbers</h2>
