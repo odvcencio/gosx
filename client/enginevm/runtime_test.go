@@ -101,6 +101,48 @@ func TestRuntimeTickProducesIncrementalMaterialAndTransformCommands(t *testing.T
 	}
 }
 
+func TestRuntimeTickProducesIncrementalLightCommands(t *testing.T) {
+	prog := &rootengine.Program{
+		Name: "SceneLights",
+		Nodes: []rootengine.Node{
+			{
+				Kind: "light",
+				Props: map[string]islandprogram.ExprID{
+					"kind":      0,
+					"color":     1,
+					"intensity": 2,
+				},
+			},
+		},
+		Exprs: []islandprogram.Expr{
+			{Op: islandprogram.OpLitString, Value: "directional", Type: islandprogram.TypeString},
+			{Op: islandprogram.OpLitString, Value: "#f4fbff", Type: islandprogram.TypeString},
+			{Op: islandprogram.OpSignalGet, Value: "$scene.light", Type: islandprogram.TypeFloat},
+			{Op: islandprogram.OpLitFloat, Value: "0.8", Type: islandprogram.TypeFloat},
+		},
+		Signals: []islandprogram.SignalDef{
+			{Name: "$scene.light", Type: islandprogram.TypeFloat, Init: 3},
+		},
+	}
+
+	rt := New(prog, `{}`)
+	intensitySig := signal.New(vm.FloatVal(0.8))
+	rt.SetSharedSignal("$scene.light", intensitySig)
+
+	if commands := rt.Reconcile(); len(commands) != 1 || commands[0].Kind != rootengine.CommandCreateObject {
+		t.Fatalf("expected initial create command, got %#v", commands)
+	}
+
+	intensitySig.Set(vm.FloatVal(1.6))
+	commands := rt.Reconcile()
+	if len(commands) != 1 {
+		t.Fatalf("expected one light command, got %#v", commands)
+	}
+	if commands[0].Kind != rootengine.CommandSetLight {
+		t.Fatalf("expected SetLight command, got %v", commands[0].Kind)
+	}
+}
+
 func TestRuntimeMarksOnlyDependentNodesDirty(t *testing.T) {
 	prog := &rootengine.Program{
 		Name: "DirtyTracking",
@@ -469,6 +511,80 @@ func TestRuntimeRenderBundleProjectsSceneLabels(t *testing.T) {
 	}
 }
 
+func TestRuntimeRenderBundleProjectsSceneSprites(t *testing.T) {
+	prog := &rootengine.Program{
+		Name: "SceneSprites",
+		Nodes: []rootengine.Node{
+			{
+				Kind: "camera",
+				Props: map[string]islandprogram.ExprID{
+					"z":   0,
+					"fov": 1,
+				},
+			},
+			{
+				Kind: "sprite",
+				Props: map[string]islandprogram.ExprID{
+					"src":       2,
+					"x":         3,
+					"y":         4,
+					"z":         5,
+					"width":     6,
+					"height":    7,
+					"scale":     8,
+					"opacity":   9,
+					"className": 10,
+					"priority":  11,
+					"anchorX":   12,
+					"anchorY":   13,
+					"fit":       14,
+					"occlude":   15,
+				},
+			},
+		},
+		Exprs: []islandprogram.Expr{
+			{Op: islandprogram.OpLitFloat, Value: "6", Type: islandprogram.TypeFloat},
+			{Op: islandprogram.OpLitFloat, Value: "72", Type: islandprogram.TypeFloat},
+			{Op: islandprogram.OpLitString, Value: "/paper-card.png", Type: islandprogram.TypeString},
+			{Op: islandprogram.OpLitFloat, Value: "0.25", Type: islandprogram.TypeFloat},
+			{Op: islandprogram.OpLitFloat, Value: "1.1", Type: islandprogram.TypeFloat},
+			{Op: islandprogram.OpLitFloat, Value: "0.6", Type: islandprogram.TypeFloat},
+			{Op: islandprogram.OpLitFloat, Value: "1.55", Type: islandprogram.TypeFloat},
+			{Op: islandprogram.OpLitFloat, Value: "1.02", Type: islandprogram.TypeFloat},
+			{Op: islandprogram.OpLitFloat, Value: "1.1", Type: islandprogram.TypeFloat},
+			{Op: islandprogram.OpLitFloat, Value: "0.94", Type: islandprogram.TypeFloat},
+			{Op: islandprogram.OpLitString, Value: "hero-card", Type: islandprogram.TypeString},
+			{Op: islandprogram.OpLitFloat, Value: "3", Type: islandprogram.TypeFloat},
+			{Op: islandprogram.OpLitFloat, Value: "0.5", Type: islandprogram.TypeFloat},
+			{Op: islandprogram.OpLitFloat, Value: "0.5", Type: islandprogram.TypeFloat},
+			{Op: islandprogram.OpLitString, Value: "cover", Type: islandprogram.TypeString},
+			{Op: islandprogram.OpLitBool, Value: "true", Type: islandprogram.TypeBool},
+		},
+	}
+
+	rt := New(prog, `{}`)
+	bundle := rt.RenderBundle(640, 360, 0)
+	if len(bundle.Sprites) != 1 {
+		t.Fatalf("expected one projected sprite, got %#v", bundle.Sprites)
+	}
+	sprite := bundle.Sprites[0]
+	if sprite.Src != "/paper-card.png" {
+		t.Fatalf("unexpected sprite src: %#v", sprite)
+	}
+	if sprite.Position.X < 250 || sprite.Position.X > 410 {
+		t.Fatalf("expected sprite projected near center, got %#v", sprite.Position)
+	}
+	if sprite.Width <= 30 || sprite.Height <= 20 {
+		t.Fatalf("expected projected sprite dimensions, got %#v", sprite)
+	}
+	if sprite.ClassName != "hero-card" || sprite.Fit != "cover" || !sprite.Occlude {
+		t.Fatalf("expected sprite metadata in bundle, got %#v", sprite)
+	}
+	if sprite.Opacity != 0.94 || sprite.AnchorX != 0.5 || sprite.AnchorY != 0.5 {
+		t.Fatalf("expected sprite presentation metadata in bundle, got %#v", sprite)
+	}
+}
+
 func TestRuntimeRenderBundleResolvesMaterialPresets(t *testing.T) {
 	prog := &rootengine.Program{
 		Name: "MaterialProfiles",
@@ -543,6 +659,197 @@ func TestRuntimeRenderBundleResolvesMaterialPresets(t *testing.T) {
 	glow := bundle.Materials[2]
 	if glow.Kind != "glow" || glow.BlendMode != "additive" || glow.RenderPass != "additive" || glow.Opacity <= 0.5 || glow.Emissive <= 0 || glow.Key == "" || len(glow.ShaderData) != 3 || glow.ShaderData[0] != 3 {
 		t.Fatalf("expected glow preset material, got %#v", glow)
+	}
+}
+
+func TestRuntimeRenderBundleEmitsTexturedPlaneSurfaces(t *testing.T) {
+	prog := &rootengine.Program{
+		Name: "TexturedPlane",
+		Nodes: []rootengine.Node{
+			{
+				Kind: "camera",
+				Props: map[string]islandprogram.ExprID{
+					"z":   0,
+					"fov": 1,
+				},
+			},
+			{
+				Kind:     "mesh",
+				Geometry: "plane",
+				Material: "flat",
+				Props: map[string]islandprogram.ExprID{
+					"width":     2,
+					"height":    3,
+					"texture":   4,
+					"wireframe": 5,
+					"y":         6,
+					"z":         7,
+				},
+			},
+		},
+		Exprs: []islandprogram.Expr{
+			{Op: islandprogram.OpLitFloat, Value: "6", Type: islandprogram.TypeFloat},
+			{Op: islandprogram.OpLitFloat, Value: "72", Type: islandprogram.TypeFloat},
+			{Op: islandprogram.OpLitFloat, Value: "1.55", Type: islandprogram.TypeFloat},
+			{Op: islandprogram.OpLitFloat, Value: "1.02", Type: islandprogram.TypeFloat},
+			{Op: islandprogram.OpLitString, Value: "/paper-card.png", Type: islandprogram.TypeString},
+			{Op: islandprogram.OpLitBool, Value: "false", Type: islandprogram.TypeBool},
+			{Op: islandprogram.OpLitFloat, Value: "0.5", Type: islandprogram.TypeFloat},
+			{Op: islandprogram.OpLitFloat, Value: "0.25", Type: islandprogram.TypeFloat},
+		},
+	}
+
+	rt := New(prog, "")
+	bundle := rt.RenderBundle(640, 360, 0)
+	if len(bundle.Materials) != 1 {
+		t.Fatalf("expected one resolved material, got %#v", bundle.Materials)
+	}
+	if bundle.Materials[0].Texture != "/paper-card.png" {
+		t.Fatalf("expected texture to flow into resolved material, got %#v", bundle.Materials[0])
+	}
+	if len(bundle.Surfaces) != 1 {
+		t.Fatalf("expected one textured surface, got %#v", bundle.Surfaces)
+	}
+	surface := bundle.Surfaces[0]
+	if surface.Kind != "plane" {
+		t.Fatalf("expected plane surface, got %#v", surface)
+	}
+	if surface.MaterialIndex != 0 {
+		t.Fatalf("expected surface to reference first material, got %#v", surface)
+	}
+	if surface.RenderPass != "opaque" {
+		t.Fatalf("expected opaque textured surface, got %#v", surface)
+	}
+	if surface.VertexCount != 6 {
+		t.Fatalf("expected two surface triangles, got %#v", surface)
+	}
+	if len(surface.Positions) != 18 || len(surface.UV) != 12 {
+		t.Fatalf("expected surface vertex buffers, got %#v", surface)
+	}
+	if surface.ViewCulled {
+		t.Fatalf("expected textured plane to remain visible, got %#v", surface)
+	}
+}
+
+func TestRuntimeRenderBundleCarriesPickabilityMetadata(t *testing.T) {
+	prog := &rootengine.Program{
+		Name: "Pickability",
+		Nodes: []rootengine.Node{
+			{
+				Kind: "camera",
+				Props: map[string]islandprogram.ExprID{
+					"z": 0,
+				},
+			},
+			{
+				Kind:     "mesh",
+				Geometry: "box",
+				Material: "flat",
+				Props: map[string]islandprogram.ExprID{
+					"x":        1,
+					"pickable": 2,
+				},
+			},
+			{
+				Kind:     "mesh",
+				Geometry: "box",
+				Material: "flat",
+				Props: map[string]islandprogram.ExprID{
+					"x":        3,
+					"pickable": 4,
+				},
+			},
+		},
+		Exprs: []islandprogram.Expr{
+			{Op: islandprogram.OpLitFloat, Value: "6", Type: islandprogram.TypeFloat},
+			{Op: islandprogram.OpLitFloat, Value: "-1.5", Type: islandprogram.TypeFloat},
+			{Op: islandprogram.OpLitBool, Value: "false", Type: islandprogram.TypeBool},
+			{Op: islandprogram.OpLitFloat, Value: "1.5", Type: islandprogram.TypeFloat},
+			{Op: islandprogram.OpLitBool, Value: "true", Type: islandprogram.TypeBool},
+		},
+	}
+
+	rt := New(prog, "")
+	bundle := rt.RenderBundle(640, 360, 0)
+	if len(bundle.Objects) != 2 {
+		t.Fatalf("expected two render objects, got %#v", bundle.Objects)
+	}
+	if bundle.Objects[0].Pickable == nil || *bundle.Objects[0].Pickable {
+		t.Fatalf("expected explicit non-pickable metadata, got %#v", bundle.Objects[0].Pickable)
+	}
+	if bundle.Objects[1].Pickable == nil || !*bundle.Objects[1].Pickable {
+		t.Fatalf("expected explicit pickable metadata, got %#v", bundle.Objects[1].Pickable)
+	}
+}
+
+func TestRuntimeRenderBundleAppliesSceneLightingAndInvalidatesStaticPassCache(t *testing.T) {
+	prog := &rootengine.Program{
+		Name: "LightingCache",
+		Nodes: []rootengine.Node{
+			{
+				Kind: "light",
+				Props: map[string]islandprogram.ExprID{
+					"kind":       0,
+					"color":      1,
+					"intensity":  2,
+					"directionX": 3,
+					"directionY": 4,
+					"directionZ": 5,
+				},
+			},
+			{
+				Kind:     "mesh",
+				Geometry: "box",
+				Material: "flat",
+				Static:   true,
+				Props: map[string]islandprogram.ExprID{
+					"size":  6,
+					"color": 7,
+				},
+			},
+		},
+		Exprs: []islandprogram.Expr{
+			{Op: islandprogram.OpLitString, Value: "directional", Type: islandprogram.TypeString},
+			{Op: islandprogram.OpLitString, Value: "#fff1d6", Type: islandprogram.TypeString},
+			{Op: islandprogram.OpSignalGet, Value: "$scene.sun", Type: islandprogram.TypeFloat},
+			{Op: islandprogram.OpLitFloat, Value: "0.35", Type: islandprogram.TypeFloat},
+			{Op: islandprogram.OpLitFloat, Value: "-1", Type: islandprogram.TypeFloat},
+			{Op: islandprogram.OpLitFloat, Value: "-0.4", Type: islandprogram.TypeFloat},
+			{Op: islandprogram.OpLitFloat, Value: "1.6", Type: islandprogram.TypeFloat},
+			{Op: islandprogram.OpLitString, Value: "#8de1ff", Type: islandprogram.TypeString},
+			{Op: islandprogram.OpLitFloat, Value: "0.9", Type: islandprogram.TypeFloat},
+		},
+		Signals: []islandprogram.SignalDef{
+			{Name: "$scene.sun", Type: islandprogram.TypeFloat, Init: 8},
+		},
+	}
+
+	rt := New(prog, `{"scene":{"environment":{"ambientColor":"#f4fbff","ambientIntensity":0.15,"skyColor":"#b9deff","skyIntensity":0.1,"groundColor":"#102030","groundIntensity":0.04,"exposure":1.1}}}`)
+	intensitySig := signal.New(vm.FloatVal(0.9))
+	rt.SetSharedSignal("$scene.sun", intensitySig)
+	rt.Reconcile()
+
+	first := rt.RenderBundle(640, 360, 0)
+	if len(first.Lights) != 1 {
+		t.Fatalf("expected one render light, got %#v", first.Lights)
+	}
+	if first.Environment.AmbientIntensity != 0.15 || first.Environment.Exposure != 1.1 {
+		t.Fatalf("expected environment from props, got %#v", first.Environment)
+	}
+	if len(first.Passes) == 0 || first.Passes[0].CacheKey == "" {
+		t.Fatalf("expected static pass cache key, got %#v", first.Passes)
+	}
+
+	intensitySig.Set(vm.FloatVal(1.8))
+	second := rt.RenderBundle(640, 360, 0)
+	if len(second.WorldColors) == 0 || len(first.WorldColors) != len(second.WorldColors) {
+		t.Fatalf("expected comparable lit world colors, got %#v and %#v", first.WorldColors, second.WorldColors)
+	}
+	if second.Passes[0].CacheKey == first.Passes[0].CacheKey {
+		t.Fatalf("expected static pass cache key to change with lighting, got %q", second.Passes[0].CacheKey)
+	}
+	if second.WorldColors[0] == first.WorldColors[0] && second.WorldColors[1] == first.WorldColors[1] && second.WorldColors[2] == first.WorldColors[2] {
+		t.Fatalf("expected lighting to alter world colors, got %#v and %#v", first.WorldColors[:4], second.WorldColors[:4])
 	}
 }
 

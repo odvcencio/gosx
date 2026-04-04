@@ -5,41 +5,76 @@ import "strings"
 // SceneIR is the typed lowered scene payload emitted from a Graph before it is
 // serialized into the current Scene3D compatibility contract.
 type SceneIR struct {
-	Objects []ObjectIR `json:"objects,omitempty"`
-	Labels  []LabelIR  `json:"labels,omitempty"`
+	Objects     []ObjectIR    `json:"objects,omitempty"`
+	Models      []ModelIR     `json:"models,omitempty"`
+	Points      []PointsIR    `json:"points,omitempty"`
+	Labels      []LabelIR     `json:"labels,omitempty"`
+	Sprites     []SpriteIR    `json:"sprites,omitempty"`
+	Lights      []LightIR     `json:"lights,omitempty"`
+	Environment EnvironmentIR `json:"environment,omitempty"`
 }
 
 // ObjectIR is the typed compatibility record for one lowered scene object.
 type ObjectIR struct {
-	ID           string   `json:"id"`
-	Kind         string   `json:"kind"`
-	Size         float64  `json:"size,omitempty"`
-	Width        float64  `json:"width,omitempty"`
-	Height       float64  `json:"height,omitempty"`
-	Depth        float64  `json:"depth,omitempty"`
-	Radius       float64  `json:"radius,omitempty"`
-	Segments     int      `json:"segments,omitempty"`
-	MaterialKind string   `json:"materialKind,omitempty"`
-	Color        string   `json:"color,omitempty"`
-	Opacity      *float64 `json:"opacity,omitempty"`
-	Emissive     *float64 `json:"emissive,omitempty"`
-	BlendMode    string   `json:"blendMode,omitempty"`
-	RenderPass   string   `json:"renderPass,omitempty"`
-	Wireframe    *bool    `json:"wireframe,omitempty"`
-	X            float64  `json:"x,omitempty"`
-	Y            float64  `json:"y,omitempty"`
-	Z            float64  `json:"z,omitempty"`
-	RotationX    float64  `json:"rotationX,omitempty"`
-	RotationY    float64  `json:"rotationY,omitempty"`
-	RotationZ    float64  `json:"rotationZ,omitempty"`
-	SpinX        float64  `json:"spinX,omitempty"`
-	SpinY        float64  `json:"spinY,omitempty"`
-	SpinZ        float64  `json:"spinZ,omitempty"`
-	ShiftX       float64  `json:"shiftX,omitempty"`
-	ShiftY       float64  `json:"shiftY,omitempty"`
-	ShiftZ       float64  `json:"shiftZ,omitempty"`
-	DriftSpeed   float64  `json:"driftSpeed,omitempty"`
-	DriftPhase   float64  `json:"driftPhase,omitempty"`
+	ID              string    `json:"id"`
+	Kind            string    `json:"kind"`
+	Size            float64   `json:"size,omitempty"`
+	Width           float64   `json:"width,omitempty"`
+	Height          float64   `json:"height,omitempty"`
+	Depth           float64   `json:"depth,omitempty"`
+	Radius          float64   `json:"radius,omitempty"`
+	Segments        int       `json:"segments,omitempty"`
+	Points          []Vector3 `json:"points,omitempty"`
+	LineSegments    [][2]int  `json:"segments,omitempty"`
+	RadiusTop       float64   `json:"radiusTop,omitempty"`
+	RadiusBottom    float64   `json:"radiusBottom,omitempty"`
+	Tube            float64   `json:"tube,omitempty"`
+	RadialSegments  int       `json:"radialSegments,omitempty"`
+	TubularSegments int       `json:"tubularSegments,omitempty"`
+	MaterialKind    string    `json:"materialKind,omitempty"`
+	Color           string    `json:"color,omitempty"`
+	Texture         string    `json:"texture,omitempty"`
+	Opacity         *float64  `json:"opacity,omitempty"`
+	Emissive        *float64  `json:"emissive,omitempty"`
+	BlendMode       string    `json:"blendMode,omitempty"`
+	RenderPass      string    `json:"renderPass,omitempty"`
+	Wireframe       *bool     `json:"wireframe,omitempty"`
+	Pickable        *bool     `json:"pickable,omitempty"`
+	CastShadow      bool      `json:"castShadow,omitempty"`
+	ReceiveShadow   bool      `json:"receiveShadow,omitempty"`
+	DepthWrite      *bool     `json:"depthWrite,omitempty"`
+	Roughness       float64   `json:"roughness,omitempty"`
+	Metalness       float64   `json:"metalness,omitempty"`
+	NormalMap       string    `json:"normalMap,omitempty"`
+	RoughnessMap    string    `json:"roughnessMap,omitempty"`
+	MetalnessMap    string    `json:"metalnessMap,omitempty"`
+	EmissiveMap     string    `json:"emissiveMap,omitempty"`
+	X               float64   `json:"x,omitempty"`
+	Y               float64   `json:"y,omitempty"`
+	Z               float64   `json:"z,omitempty"`
+	RotationX       float64   `json:"rotationX,omitempty"`
+	RotationY       float64   `json:"rotationY,omitempty"`
+	RotationZ       float64   `json:"rotationZ,omitempty"`
+	SpinX           float64   `json:"spinX,omitempty"`
+	SpinY           float64   `json:"spinY,omitempty"`
+	SpinZ           float64   `json:"spinZ,omitempty"`
+	ShiftX          float64   `json:"shiftX,omitempty"`
+	ShiftY          float64   `json:"shiftY,omitempty"`
+	ShiftZ          float64   `json:"shiftZ,omitempty"`
+	DriftSpeed      float64   `json:"driftSpeed,omitempty"`
+	DriftPhase      float64   `json:"driftPhase,omitempty"`
+}
+
+// ModelIR is the typed compatibility record for one scene model instance.
+type ModelIR struct {
+	ObjectIR
+	Src       string  `json:"src,omitempty"`
+	ScaleX    float64 `json:"scaleX,omitempty"`
+	ScaleY    float64 `json:"scaleY,omitempty"`
+	ScaleZ    float64 `json:"scaleZ,omitempty"`
+	Static    *bool   `json:"static,omitempty"`
+	Animation string  `json:"animation,omitempty"`
+	Loop      *bool   `json:"loop,omitempty"`
 }
 
 // LabelIR is the typed compatibility record for one lowered scene label.
@@ -74,9 +109,93 @@ type LabelIR struct {
 	TextAlign   string  `json:"textAlign,omitempty"`
 }
 
+// SpriteIR is the typed compatibility record for one projected sprite overlay.
+type SpriteIR struct {
+	ID         string  `json:"id"`
+	Src        string  `json:"src"`
+	ClassName  string  `json:"className,omitempty"`
+	X          float64 `json:"x,omitempty"`
+	Y          float64 `json:"y,omitempty"`
+	Z          float64 `json:"z,omitempty"`
+	Priority   float64 `json:"priority,omitempty"`
+	ShiftX     float64 `json:"shiftX,omitempty"`
+	ShiftY     float64 `json:"shiftY,omitempty"`
+	ShiftZ     float64 `json:"shiftZ,omitempty"`
+	DriftSpeed float64 `json:"driftSpeed,omitempty"`
+	DriftPhase float64 `json:"driftPhase,omitempty"`
+	Width      float64 `json:"width,omitempty"`
+	Height     float64 `json:"height,omitempty"`
+	Scale      float64 `json:"scale,omitempty"`
+	Opacity    float64 `json:"opacity,omitempty"`
+	OffsetX    float64 `json:"offsetX,omitempty"`
+	OffsetY    float64 `json:"offsetY,omitempty"`
+	AnchorX    float64 `json:"anchorX,omitempty"`
+	AnchorY    float64 `json:"anchorY,omitempty"`
+	Occlude    bool    `json:"occlude,omitempty"`
+	Fit        string  `json:"fit,omitempty"`
+}
+
+// LightIR is the typed compatibility record for one lowered scene light.
+type LightIR struct {
+	ID         string  `json:"id"`
+	Kind       string  `json:"kind"`
+	Color      string  `json:"color,omitempty"`
+	Intensity  float64 `json:"intensity,omitempty"`
+	X          float64 `json:"x,omitempty"`
+	Y          float64 `json:"y,omitempty"`
+	Z          float64 `json:"z,omitempty"`
+	DirectionX float64 `json:"directionX,omitempty"`
+	DirectionY float64 `json:"directionY,omitempty"`
+	DirectionZ float64 `json:"directionZ,omitempty"`
+	Range      float64 `json:"range,omitempty"`
+	Decay      float64 `json:"decay,omitempty"`
+	CastShadow bool    `json:"castShadow,omitempty"`
+	ShadowBias float64 `json:"shadowBias,omitempty"`
+	ShadowSize int     `json:"shadowSize,omitempty"`
+}
+
+// PointsIR is the typed compatibility record for one lowered particle system.
+type PointsIR struct {
+	ID          string    `json:"id"`
+	Count       int       `json:"count"`
+	Positions   []float64 `json:"positions,omitempty"`
+	Sizes       []float64 `json:"sizes,omitempty"`
+	Colors      []string  `json:"colors,omitempty"`
+	Color       string    `json:"color,omitempty"`
+	Size        float64   `json:"size,omitempty"`
+	Opacity     float64   `json:"opacity,omitempty"`
+	BlendMode   string    `json:"blendMode,omitempty"`
+	DepthWrite  *bool     `json:"depthWrite,omitempty"`
+	Attenuation bool      `json:"attenuation,omitempty"`
+	X           float64   `json:"x,omitempty"`
+	Y           float64   `json:"y,omitempty"`
+	Z           float64   `json:"z,omitempty"`
+	RotationX   float64   `json:"rotationX,omitempty"`
+	RotationY   float64   `json:"rotationY,omitempty"`
+	RotationZ   float64   `json:"rotationZ,omitempty"`
+	SpinX       float64   `json:"spinX,omitempty"`
+	SpinY       float64   `json:"spinY,omitempty"`
+	SpinZ       float64   `json:"spinZ,omitempty"`
+}
+
+// EnvironmentIR is the typed compatibility record for scene-wide lighting.
+type EnvironmentIR struct {
+	AmbientColor     string  `json:"ambientColor,omitempty"`
+	AmbientIntensity float64 `json:"ambientIntensity,omitempty"`
+	SkyColor         string  `json:"skyColor,omitempty"`
+	SkyIntensity     float64 `json:"skyIntensity,omitempty"`
+	GroundColor      string  `json:"groundColor,omitempty"`
+	GroundIntensity  float64 `json:"groundIntensity,omitempty"`
+	Exposure         float64 `json:"exposure,omitempty"`
+	FogColor         string  `json:"fogColor,omitempty"`
+	FogDensity       float64 `json:"fogDensity,omitempty"`
+}
+
 // SceneIR lowers typed scene props into a typed intermediate representation.
 func (p Props) SceneIR() SceneIR {
-	return p.Graph.SceneIR()
+	ir := p.Graph.SceneIR()
+	ir.Environment = p.Environment.sceneIR()
+	return ir
 }
 
 // SceneIR lowers a typed graph into a typed intermediate representation.
@@ -93,12 +212,16 @@ func (g Graph) SceneIR() SceneIR {
 	}
 	return SceneIR{
 		Objects: append([]ObjectIR(nil), lowerer.objects...),
+		Models:  append([]ModelIR(nil), lowerer.models...),
+		Points:  append([]PointsIR(nil), lowerer.points...),
 		Labels:  lowerer.resolveLabels(),
+		Sprites: lowerer.resolveSprites(),
+		Lights:  append([]LightIR(nil), lowerer.lights...),
 	}
 }
 
 func (ir SceneIR) isZero() bool {
-	return len(ir.Objects) == 0 && len(ir.Labels) == 0
+	return len(ir.Objects) == 0 && len(ir.Models) == 0 && len(ir.Points) == 0 && len(ir.Labels) == 0 && len(ir.Sprites) == 0 && len(ir.Lights) == 0 && ir.Environment.isZero()
 }
 
 func (ir SceneIR) legacyProps() map[string]any {
@@ -109,8 +232,23 @@ func (ir SceneIR) legacyProps() map[string]any {
 	if objects := legacyObjects(ir.Objects); len(objects) > 0 {
 		out["objects"] = objects
 	}
+	if models := legacyModels(ir.Models); len(models) > 0 {
+		out["models"] = models
+	}
+	if points := legacyPointsList(ir.Points); len(points) > 0 {
+		out["points"] = points
+	}
 	if labels := legacyLabels(ir.Labels); len(labels) > 0 {
 		out["labels"] = labels
+	}
+	if sprites := legacySprites(ir.Sprites); len(sprites) > 0 {
+		out["sprites"] = sprites
+	}
+	if lights := legacyLights(ir.Lights); len(lights) > 0 {
+		out["lights"] = lights
+	}
+	if environment := ir.Environment.legacyProps(); len(environment) > 0 {
+		out["environment"] = environment
 	}
 	return out
 }
@@ -137,8 +275,20 @@ func (item ObjectIR) legacyProps() map[string]any {
 	setNumeric(record, "depth", item.Depth)
 	setNumeric(record, "radius", item.Radius)
 	setInt(record, "segments", item.Segments)
+	if points := legacyLinePoints(item.Points); len(points) > 0 {
+		record["points"] = points
+	}
+	if segments := legacyLineSegments(item.LineSegments); len(segments) > 0 {
+		record["segments"] = segments
+	}
+	setNumeric(record, "radiusTop", item.RadiusTop)
+	setNumeric(record, "radiusBottom", item.RadiusBottom)
+	setNumeric(record, "tube", item.Tube)
+	setInt(record, "radialSegments", item.RadialSegments)
+	setInt(record, "tubularSegments", item.TubularSegments)
 	setString(record, "materialKind", item.MaterialKind)
 	setString(record, "color", item.Color)
+	setString(record, "texture", item.Texture)
 	setNumericPtr(record, "opacity", item.Opacity)
 	setNumericPtr(record, "emissive", item.Emissive)
 	setString(record, "blendMode", item.BlendMode)
@@ -146,6 +296,24 @@ func (item ObjectIR) legacyProps() map[string]any {
 	if item.Wireframe != nil {
 		record["wireframe"] = *item.Wireframe
 	}
+	if item.Pickable != nil {
+		record["pickable"] = *item.Pickable
+	}
+	if item.CastShadow {
+		record["castShadow"] = true
+	}
+	if item.ReceiveShadow {
+		record["receiveShadow"] = true
+	}
+	if item.DepthWrite != nil {
+		record["depthWrite"] = *item.DepthWrite
+	}
+	setNumeric(record, "roughness", item.Roughness)
+	setNumeric(record, "metalness", item.Metalness)
+	setString(record, "normalMap", item.NormalMap)
+	setString(record, "roughnessMap", item.RoughnessMap)
+	setString(record, "metalnessMap", item.MetalnessMap)
+	setString(record, "emissiveMap", item.EmissiveMap)
 	setNumeric(record, "x", item.X)
 	setNumeric(record, "y", item.Y)
 	setNumeric(record, "z", item.Z)
@@ -163,7 +331,138 @@ func (item ObjectIR) legacyProps() map[string]any {
 	return record
 }
 
+func legacyModels(items []ModelIR) []map[string]any {
+	if len(items) == 0 {
+		return nil
+	}
+	out := make([]map[string]any, 0, len(items))
+	for _, item := range items {
+		if record := item.legacyProps(); record != nil {
+			out = append(out, record)
+		}
+	}
+	return out
+}
+
+func (item ModelIR) legacyProps() map[string]any {
+	src := strings.TrimSpace(item.Src)
+	if src == "" {
+		return nil
+	}
+	record := map[string]any{
+		"id":  item.ID,
+		"src": src,
+	}
+	setNumeric(record, "x", item.X)
+	setNumeric(record, "y", item.Y)
+	setNumeric(record, "z", item.Z)
+	setNumeric(record, "rotationX", item.RotationX)
+	setNumeric(record, "rotationY", item.RotationY)
+	setNumeric(record, "rotationZ", item.RotationZ)
+	setNumeric(record, "scaleX", item.ScaleX)
+	setNumeric(record, "scaleY", item.ScaleY)
+	setNumeric(record, "scaleZ", item.ScaleZ)
+	if item.Static != nil {
+		record["static"] = *item.Static
+	}
+	if item.MaterialKind != "" {
+		record["materialKind"] = item.MaterialKind
+	}
+	if item.Color != "" {
+		record["color"] = item.Color
+	}
+	if item.Texture != "" {
+		record["texture"] = item.Texture
+	}
+	if item.Opacity != nil {
+		record["opacity"] = *item.Opacity
+	}
+	if item.Emissive != nil {
+		record["emissive"] = *item.Emissive
+	}
+	if item.BlendMode != "" {
+		record["blendMode"] = item.BlendMode
+	}
+	if item.RenderPass != "" {
+		record["renderPass"] = item.RenderPass
+	}
+	if item.Wireframe != nil {
+		record["wireframe"] = *item.Wireframe
+	}
+	if item.DepthWrite != nil {
+		record["depthWrite"] = *item.DepthWrite
+	}
+	if item.Pickable != nil {
+		record["pickable"] = *item.Pickable
+	}
+	setString(record, "animation", item.Animation)
+	if item.Loop != nil {
+		record["loop"] = *item.Loop
+	}
+	return record
+}
+
+func legacyPointsList(items []PointsIR) []map[string]any {
+	if len(items) == 0 {
+		return nil
+	}
+	out := make([]map[string]any, 0, len(items))
+	for _, item := range items {
+		out = append(out, item.legacyProps())
+	}
+	return out
+}
+
+func (item PointsIR) legacyProps() map[string]any {
+	record := map[string]any{
+		"id":    item.ID,
+		"count": item.Count,
+	}
+	if len(item.Positions) > 0 {
+		record["positions"] = item.Positions
+	}
+	if len(item.Sizes) > 0 {
+		record["sizes"] = item.Sizes
+	}
+	if len(item.Colors) > 0 {
+		record["colors"] = item.Colors
+	}
+	setString(record, "color", item.Color)
+	setNumeric(record, "size", item.Size)
+	setNumeric(record, "opacity", item.Opacity)
+	setString(record, "blendMode", item.BlendMode)
+	if item.DepthWrite != nil {
+		record["depthWrite"] = *item.DepthWrite
+	}
+	if item.Attenuation {
+		record["attenuation"] = true
+	}
+	setNumeric(record, "x", item.X)
+	setNumeric(record, "y", item.Y)
+	setNumeric(record, "z", item.Z)
+	setNumeric(record, "rotationX", item.RotationX)
+	setNumeric(record, "rotationY", item.RotationY)
+	setNumeric(record, "rotationZ", item.RotationZ)
+	setNumeric(record, "spinX", item.SpinX)
+	setNumeric(record, "spinY", item.SpinY)
+	setNumeric(record, "spinZ", item.SpinZ)
+	return record
+}
+
 func legacyLabels(items []LabelIR) []map[string]any {
+	if len(items) == 0 {
+		return nil
+	}
+	out := make([]map[string]any, 0, len(items))
+	for _, item := range items {
+		if record := item.legacyProps(); record != nil {
+			out = append(out, record)
+		}
+	}
+	return out
+}
+
+func legacySprites(items []SpriteIR) []map[string]any {
 	if len(items) == 0 {
 		return nil
 	}
@@ -216,4 +515,121 @@ func (item LabelIR) legacyProps() map[string]any {
 	setString(record, "whiteSpace", item.WhiteSpace)
 	setString(record, "textAlign", item.TextAlign)
 	return record
+}
+
+func (item SpriteIR) legacyProps() map[string]any {
+	src := strings.TrimSpace(item.Src)
+	if src == "" {
+		return nil
+	}
+	record := map[string]any{
+		"id":  item.ID,
+		"src": src,
+	}
+	setString(record, "className", item.ClassName)
+	setNumeric(record, "x", item.X)
+	setNumeric(record, "y", item.Y)
+	setNumeric(record, "z", item.Z)
+	setNumeric(record, "priority", item.Priority)
+	setNumeric(record, "shiftX", item.ShiftX)
+	setNumeric(record, "shiftY", item.ShiftY)
+	setNumeric(record, "shiftZ", item.ShiftZ)
+	setNumeric(record, "driftSpeed", item.DriftSpeed)
+	setNumeric(record, "driftPhase", item.DriftPhase)
+	setNumeric(record, "width", item.Width)
+	setNumeric(record, "height", item.Height)
+	setNumeric(record, "scale", item.Scale)
+	setNumeric(record, "opacity", item.Opacity)
+	setNumeric(record, "offsetX", item.OffsetX)
+	setNumeric(record, "offsetY", item.OffsetY)
+	setNumeric(record, "anchorX", item.AnchorX)
+	setNumeric(record, "anchorY", item.AnchorY)
+	if item.Occlude {
+		record["occlude"] = true
+	}
+	setString(record, "fit", item.Fit)
+	return record
+}
+
+func legacyLights(items []LightIR) []map[string]any {
+	if len(items) == 0 {
+		return nil
+	}
+	out := make([]map[string]any, 0, len(items))
+	for _, item := range items {
+		if record := item.legacyProps(); record != nil {
+			out = append(out, record)
+		}
+	}
+	return out
+}
+
+func (item LightIR) legacyProps() map[string]any {
+	kind := strings.TrimSpace(item.Kind)
+	if kind == "" {
+		return nil
+	}
+	record := map[string]any{
+		"id":   item.ID,
+		"kind": kind,
+	}
+	setString(record, "color", item.Color)
+	setNumeric(record, "intensity", item.Intensity)
+	setNumeric(record, "x", item.X)
+	setNumeric(record, "y", item.Y)
+	setNumeric(record, "z", item.Z)
+	setNumeric(record, "directionX", item.DirectionX)
+	setNumeric(record, "directionY", item.DirectionY)
+	setNumeric(record, "directionZ", item.DirectionZ)
+	setNumeric(record, "range", item.Range)
+	setNumeric(record, "decay", item.Decay)
+	if item.CastShadow {
+		record["castShadow"] = true
+	}
+	setNumeric(record, "shadowBias", item.ShadowBias)
+	setInt(record, "shadowSize", item.ShadowSize)
+	return record
+}
+
+func (item EnvironmentIR) isZero() bool {
+	return item.AmbientColor == "" &&
+		item.AmbientIntensity == 0 &&
+		item.SkyColor == "" &&
+		item.SkyIntensity == 0 &&
+		item.GroundColor == "" &&
+		item.GroundIntensity == 0 &&
+		item.Exposure == 0 &&
+		item.FogColor == "" &&
+		item.FogDensity == 0
+}
+
+func (item EnvironmentIR) legacyProps() map[string]any {
+	if item.isZero() {
+		return nil
+	}
+	record := map[string]any{}
+	setString(record, "ambientColor", item.AmbientColor)
+	setNumeric(record, "ambientIntensity", item.AmbientIntensity)
+	setString(record, "skyColor", item.SkyColor)
+	setNumeric(record, "skyIntensity", item.SkyIntensity)
+	setString(record, "groundColor", item.GroundColor)
+	setNumeric(record, "groundIntensity", item.GroundIntensity)
+	setNumeric(record, "exposure", item.Exposure)
+	setString(record, "fogColor", item.FogColor)
+	setNumeric(record, "fogDensity", item.FogDensity)
+	return record
+}
+
+func (environment Environment) sceneIR() EnvironmentIR {
+	return EnvironmentIR{
+		AmbientColor:     strings.TrimSpace(environment.AmbientColor),
+		AmbientIntensity: environment.AmbientIntensity,
+		SkyColor:         strings.TrimSpace(environment.SkyColor),
+		SkyIntensity:     environment.SkyIntensity,
+		GroundColor:      strings.TrimSpace(environment.GroundColor),
+		GroundIntensity:  environment.GroundIntensity,
+		Exposure:         environment.Exposure,
+		FogColor:         strings.TrimSpace(environment.FogColor),
+		FogDensity:       environment.FogDensity,
+	}
 }

@@ -186,12 +186,15 @@ func (rt *Runtime) resolveNode(index int) resolvedNode {
 }
 
 type sceneCamera struct {
-	X    float64
-	Y    float64
-	Z    float64
-	FOV  float64
-	Near float64
-	Far  float64
+	X         float64
+	Y         float64
+	Z         float64
+	RotationX float64
+	RotationY float64
+	RotationZ float64
+	FOV       float64
+	Near      float64
+	Far       float64
 }
 
 type sceneObject struct {
@@ -204,10 +207,13 @@ type sceneObject struct {
 	Depth        float64
 	Radius       float64
 	Segments     int
+	Points       []point3
+	LineSegments [][2]int
 	X            float64
 	Y            float64
 	Z            float64
 	Color        string
+	Texture      string
 	RotationX    float64
 	RotationY    float64
 	RotationZ    float64
@@ -223,6 +229,8 @@ type sceneObject struct {
 	Wireframe    bool
 	BlendMode    string
 	Emissive     float64
+	Pickable     *bool
+	HasTexture   bool
 	HasOpacity   bool
 	HasWireframe bool
 	HasBlendMode bool
@@ -261,6 +269,57 @@ type sceneLabel struct {
 	TextAlign   string
 }
 
+type sceneSprite struct {
+	ID         string
+	Src        string
+	ClassName  string
+	X          float64
+	Y          float64
+	Z          float64
+	Priority   float64
+	ShiftX     float64
+	ShiftY     float64
+	ShiftZ     float64
+	DriftSpeed float64
+	DriftPhase float64
+	Width      float64
+	Height     float64
+	Scale      float64
+	Opacity    float64
+	OffsetX    float64
+	OffsetY    float64
+	AnchorX    float64
+	AnchorY    float64
+	Occlude    bool
+	Fit        string
+}
+
+type sceneLight struct {
+	ID         string
+	Kind       string
+	Color      string
+	Intensity  float64
+	X          float64
+	Y          float64
+	Z          float64
+	DirectionX float64
+	DirectionY float64
+	DirectionZ float64
+	Range      float64
+	Decay      float64
+}
+
+type sceneEnvironment struct {
+	AmbientColor     string
+	AmbientIntensity float64
+	SkyColor         string
+	SkyIntensity     float64
+	GroundColor      string
+	GroundIntensity  float64
+	Exposure         float64
+	Specified        bool
+}
+
 type point3 struct {
 	X float64
 	Y float64
@@ -290,8 +349,11 @@ func buildRenderBundle(props map[string]any, nodes []resolvedNode, width, height
 		Background:     sceneBackground(props),
 		Materials:      []rootengine.RenderMaterial{},
 		Objects:        []rootengine.RenderObject{},
+		Surfaces:       []rootengine.RenderSurface{},
+		Lights:         []rootengine.RenderLight{},
 		Lines:          []rootengine.RenderLine{},
 		Labels:         []rootengine.RenderLabel{},
+		Sprites:        []rootengine.RenderSprite{},
 		Positions:      []float64{},
 		Colors:         []float64{},
 		WorldPositions: []float64{},
@@ -299,57 +361,82 @@ func buildRenderBundle(props map[string]any, nodes []resolvedNode, width, height
 	}
 
 	camera := sceneCameraFromProps(props)
+	lights := sceneLightsFromProps(props)
+	sprites := sceneSpritesFromProps(props)
 	objects := make([]sceneObject, 0, len(nodes))
 	labels := make([]sceneLabel, 0, len(nodes))
 	for index, node := range nodes {
 		switch strings.TrimSpace(strings.ToLower(node.Kind)) {
 		case "camera":
 			camera = normalizeSceneCameraMap(node.Props, camera)
+		case "light":
+			if light, ok := sceneLightFromResolvedNode(index, node); ok {
+				lights = append(lights, light)
+			}
 		case "mesh":
 			objects = append(objects, sceneObjectFromResolvedNode(index, node))
 		case "label":
 			if label, ok := sceneLabelFromResolvedNode(index, node); ok {
 				labels = append(labels, label)
 			}
+		case "sprite":
+			if sprite, ok := sceneSpriteFromResolvedNode(index, node); ok {
+				sprites = append(sprites, sprite)
+			}
 		}
 	}
+	environment := resolveSceneEnvironment(props, len(lights) > 0)
 	bundle.Camera = rootengine.RenderCamera{
-		X:    camera.X,
-		Y:    camera.Y,
-		Z:    camera.Z,
-		FOV:  camera.FOV,
-		Near: camera.Near,
-		Far:  camera.Far,
+		X:         camera.X,
+		Y:         camera.Y,
+		Z:         camera.Z,
+		RotationX: camera.RotationX,
+		RotationY: camera.RotationY,
+		RotationZ: camera.RotationZ,
+		FOV:       camera.FOV,
+		Near:      camera.Near,
+		Far:       camera.Far,
+	}
+	bundle.Environment = renderSceneEnvironment(environment)
+	if len(lights) > 0 {
+		bundle.Lights = renderSceneLights(lights)
 	}
 	appendSceneGrid(&bundle, width, height)
 	for _, object := range objects {
 		vertexOffset := len(bundle.WorldPositions) / 3
 		materialIndex := ensureRenderMaterial(&bundle, object)
-		appendResult := appendSceneObject(&bundle, camera, width, height, object, timeSeconds)
+		material := bundle.Materials[materialIndex]
+		appendResult := appendSceneObject(&bundle, camera, width, height, object, material, lights, environment, timeSeconds)
 		vertexCount := (len(bundle.WorldPositions) / 3) - vertexOffset
-		if vertexCount > 0 || appendResult.ViewCulled {
+		if vertexCount > 0 || appendResult.HasBounds || appendResult.ViewCulled {
 			bounds := appendResult.Bounds
 			if !appendResult.HasBounds && vertexCount > 0 {
 				bounds = renderObjectBounds(bundle.WorldPositions, vertexOffset, vertexCount)
 			}
+			depthNear, depthFar, depthCenter := renderBoundsDepthMetrics(bounds, camera)
 			bundle.Objects = append(bundle.Objects, rootengine.RenderObject{
 				ID:            object.ID,
 				Kind:          object.Kind,
+				Pickable:      object.Pickable,
 				MaterialIndex: materialIndex,
 				RenderPass:    bundle.Materials[materialIndex].RenderPass,
 				VertexOffset:  vertexOffset,
 				VertexCount:   vertexCount,
 				Static:        object.Static,
 				Bounds:        bounds,
-				DepthNear:     bounds.MinZ + camera.Z,
-				DepthFar:      bounds.MaxZ + camera.Z,
-				DepthCenter:   ((bounds.MinZ + camera.Z) + (bounds.MaxZ + camera.Z)) / 2,
+				DepthNear:     depthNear,
+				DepthFar:      depthFar,
+				DepthCenter:   depthCenter,
 				ViewCulled:    appendResult.ViewCulled,
 			})
+			appendSceneSurface(&bundle, camera, width, height, object, materialIndex, material, bounds, timeSeconds)
 		}
 	}
 	for _, label := range labels {
 		appendSceneLabel(&bundle, camera, width, height, label, timeSeconds)
+	}
+	for _, sprite := range sprites {
+		appendSceneSprite(&bundle, camera, width, height, sprite, timeSeconds)
 	}
 	bundle.ObjectCount = len(bundle.Objects)
 	bundle.VertexCount = len(bundle.Positions) / 2
@@ -378,12 +465,267 @@ func sceneCameraFromProps(props map[string]any) sceneCamera {
 
 func normalizeSceneCameraMap(raw map[string]any, fallback sceneCamera) sceneCamera {
 	return sceneCamera{
-		X:    numberFromAny(rawValue(raw, "x"), fallback.X),
-		Y:    numberFromAny(rawValue(raw, "y"), fallback.Y),
-		Z:    numberFromAny(rawValue(raw, "z"), fallback.Z),
-		FOV:  numberFromAny(rawValue(raw, "fov"), fallback.FOV),
-		Near: numberFromAny(rawValue(raw, "near"), fallback.Near),
-		Far:  numberFromAny(rawValue(raw, "far"), fallback.Far),
+		X:         numberFromAny(rawValue(raw, "x"), fallback.X),
+		Y:         numberFromAny(rawValue(raw, "y"), fallback.Y),
+		Z:         numberFromAny(rawValue(raw, "z"), fallback.Z),
+		RotationX: numberFromAny(rawValue(raw, "rotationX"), fallback.RotationX),
+		RotationY: numberFromAny(rawValue(raw, "rotationY"), fallback.RotationY),
+		RotationZ: numberFromAny(rawValue(raw, "rotationZ"), fallback.RotationZ),
+		FOV:       numberFromAny(rawValue(raw, "fov"), fallback.FOV),
+		Near:      numberFromAny(rawValue(raw, "near"), fallback.Near),
+		Far:       numberFromAny(rawValue(raw, "far"), fallback.Far),
+	}
+}
+
+func sceneLightsFromProps(props map[string]any) []sceneLight {
+	raw := sceneLightList(sceneValue(props, "lights"))
+	if len(raw) == 0 {
+		raw = sceneLightList(rawValue(props, "lights"))
+	}
+	if len(raw) == 0 {
+		return nil
+	}
+	out := make([]sceneLight, 0, len(raw))
+	for index, item := range raw {
+		if light, ok := normalizeSceneLightMap(item, "scene-light-"+strconv.Itoa(index), sceneLight{}); ok {
+			out = append(out, light)
+		}
+	}
+	return out
+}
+
+func sceneLightList(value any) []map[string]any {
+	switch items := value.(type) {
+	case []map[string]any:
+		if len(items) == 0 {
+			return nil
+		}
+		return append([]map[string]any(nil), items...)
+	case []any:
+		if len(items) == 0 {
+			return nil
+		}
+		out := make([]map[string]any, 0, len(items))
+		for _, item := range items {
+			mapped, ok := item.(map[string]any)
+			if ok {
+				out = append(out, mapped)
+			}
+		}
+		if len(out) == 0 {
+			return nil
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
+func sceneSpritesFromProps(props map[string]any) []sceneSprite {
+	raw := sceneSpriteList(sceneValue(props, "sprites"))
+	if len(raw) == 0 {
+		raw = sceneSpriteList(rawValue(props, "sprites"))
+	}
+	if len(raw) == 0 {
+		return nil
+	}
+	out := make([]sceneSprite, 0, len(raw))
+	for index, item := range raw {
+		if sprite, ok := normalizeSceneSpriteMap(item, "scene-sprite-"+strconv.Itoa(index), sceneSprite{}); ok {
+			out = append(out, sprite)
+		}
+	}
+	return out
+}
+
+func sceneSpriteList(value any) []map[string]any {
+	switch items := value.(type) {
+	case []map[string]any:
+		if len(items) == 0 {
+			return nil
+		}
+		return append([]map[string]any(nil), items...)
+	case []any:
+		if len(items) == 0 {
+			return nil
+		}
+		out := make([]map[string]any, 0, len(items))
+		for _, item := range items {
+			mapped, ok := item.(map[string]any)
+			if ok {
+				out = append(out, mapped)
+			}
+		}
+		if len(out) == 0 {
+			return nil
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
+func sceneEnvironmentFromProps(props map[string]any) sceneEnvironment {
+	raw, _ := sceneValue(props, "environment").(map[string]any)
+	if raw == nil {
+		raw, _ = rawValue(props, "environment").(map[string]any)
+	}
+	return normalizeSceneEnvironment(raw, sceneEnvironment{})
+}
+
+func resolveSceneEnvironment(props map[string]any, hasLights bool) sceneEnvironment {
+	environment := sceneEnvironmentFromProps(props)
+	if environment.Exposure <= 0 {
+		environment.Exposure = 1
+	}
+	if environment.Specified || !hasLights {
+		return environment
+	}
+	environment.AmbientColor = "#f5fbff"
+	environment.AmbientIntensity = 0.18
+	environment.SkyColor = "#d5ebff"
+	environment.SkyIntensity = 0.12
+	environment.GroundColor = "#102030"
+	environment.GroundIntensity = 0.04
+	return environment
+}
+
+func normalizeSceneEnvironment(raw map[string]any, fallback sceneEnvironment) sceneEnvironment {
+	exposure := fallback.Exposure
+	if raw != nil && rawValue(raw, "exposure") != nil {
+		exposure = numberFromAny(rawValue(raw, "exposure"), fallback.Exposure)
+	}
+	if exposure == 0 {
+		exposure = 1
+	}
+	environment := sceneEnvironment{
+		AmbientColor:     strings.TrimSpace(stringFromAny(rawValue(raw, "ambientColor"), fallback.AmbientColor)),
+		AmbientIntensity: clamp(numberFromAny(rawValue(raw, "ambientIntensity"), fallback.AmbientIntensity), 0, 4),
+		SkyColor:         strings.TrimSpace(stringFromAny(rawValue(raw, "skyColor"), fallback.SkyColor)),
+		SkyIntensity:     clamp(numberFromAny(rawValue(raw, "skyIntensity"), fallback.SkyIntensity), 0, 4),
+		GroundColor:      strings.TrimSpace(stringFromAny(rawValue(raw, "groundColor"), fallback.GroundColor)),
+		GroundIntensity:  clamp(numberFromAny(rawValue(raw, "groundIntensity"), fallback.GroundIntensity), 0, 4),
+		Exposure:         clamp(exposure, 0.05, 4),
+		Specified:        false,
+	}
+	if raw == nil {
+		return environment
+	}
+	environment.Specified = environment.AmbientColor != "" ||
+		environment.AmbientIntensity != 0 ||
+		environment.SkyColor != "" ||
+		environment.SkyIntensity != 0 ||
+		environment.GroundColor != "" ||
+		environment.GroundIntensity != 0 ||
+		rawValue(raw, "exposure") != nil
+	return environment
+}
+
+func sceneLightFromResolvedNode(index int, node resolvedNode) (sceneLight, bool) {
+	return normalizeSceneLightMap(node.Props, "scene-light-"+strconv.Itoa(index), sceneLight{})
+}
+
+func normalizeSceneLightMap(raw map[string]any, fallbackID string, fallback sceneLight) (sceneLight, bool) {
+	if raw == nil {
+		return sceneLight{}, false
+	}
+	kind := normalizeSceneLightKind(stringFromAny(propValue(raw, "kind"), stringFromAny(propValue(raw, "lightKind"), fallback.Kind)))
+	if kind == "" {
+		return sceneLight{}, false
+	}
+	intensityFallback := fallback.Intensity
+	if intensityFallback == 0 {
+		intensityFallback = defaultSceneLightIntensity(kind)
+	}
+	rangeFallback := fallback.Range
+	if kind == "point" && rangeFallback == 0 {
+		rangeFallback = 6.5
+	}
+	decayFallback := fallback.Decay
+	if kind == "point" && decayFallback == 0 {
+		decayFallback = 1.35
+	}
+	light := sceneLight{
+		ID:         stringFromAny(propValue(raw, "id"), fallbackID),
+		Kind:       kind,
+		Color:      stringFromAny(propValue(raw, "color"), "#f3fbff"),
+		Intensity:  clamp(numberFromAny(propValue(raw, "intensity"), intensityFallback), 0, 6),
+		X:          numberFromAny(propValue(raw, "x"), fallback.X),
+		Y:          numberFromAny(propValue(raw, "y"), fallback.Y),
+		Z:          numberFromAny(propValue(raw, "z"), fallback.Z),
+		DirectionX: numberFromAny(propValue(raw, "directionX"), fallback.DirectionX),
+		DirectionY: numberFromAny(propValue(raw, "directionY"), fallback.DirectionY),
+		DirectionZ: numberFromAny(propValue(raw, "directionZ"), fallback.DirectionZ),
+		Range:      clamp(numberFromAny(propValue(raw, "range"), rangeFallback), 0, 256),
+		Decay:      clamp(numberFromAny(propValue(raw, "decay"), decayFallback), 0.1, 8),
+	}
+	if kind == "directional" && light.DirectionX == 0 && light.DirectionY == 0 && light.DirectionZ == 0 {
+		light.DirectionX = 0.35
+		light.DirectionY = -1
+		light.DirectionZ = -0.4
+	}
+	return light, true
+}
+
+func normalizeSceneLightKind(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "ambient":
+		return "ambient"
+	case "directional", "sun":
+		return "directional"
+	case "point":
+		return "point"
+	default:
+		return ""
+	}
+}
+
+func defaultSceneLightIntensity(kind string) float64 {
+	switch kind {
+	case "ambient":
+		return 0.28
+	case "directional":
+		return 1
+	case "point":
+		return 1.1
+	default:
+		return 1
+	}
+}
+
+func renderSceneLights(lights []sceneLight) []rootengine.RenderLight {
+	if len(lights) == 0 {
+		return nil
+	}
+	out := make([]rootengine.RenderLight, 0, len(lights))
+	for _, light := range lights {
+		out = append(out, rootengine.RenderLight{
+			ID:         light.ID,
+			Kind:       light.Kind,
+			Color:      light.Color,
+			Intensity:  light.Intensity,
+			X:          light.X,
+			Y:          light.Y,
+			Z:          light.Z,
+			DirectionX: light.DirectionX,
+			DirectionY: light.DirectionY,
+			DirectionZ: light.DirectionZ,
+			Range:      light.Range,
+			Decay:      light.Decay,
+		})
+	}
+	return out
+}
+
+func renderSceneEnvironment(environment sceneEnvironment) rootengine.RenderEnvironment {
+	return rootengine.RenderEnvironment{
+		AmbientColor:     environment.AmbientColor,
+		AmbientIntensity: environment.AmbientIntensity,
+		SkyColor:         environment.SkyColor,
+		SkyIntensity:     environment.SkyIntensity,
+		GroundColor:      environment.GroundColor,
+		GroundIntensity:  environment.GroundIntensity,
+		Exposure:         environment.Exposure,
 	}
 }
 
@@ -396,20 +738,28 @@ func sceneObjectFromResolvedNode(index int, node resolvedNode) sceneObject {
 		rawBlendMode = propValue(node.Props, "blend")
 	}
 	rawEmissive := propValue(node.Props, "emissive")
+	rawTexture := propValue(node.Props, "texture")
+	rawPickable := propValue(node.Props, "pickable")
+	kind := normalizeSceneKind(stringFromAny(propValue(node.Props, "kind"), node.Geometry))
+	points := scenePointList(propValue(node.Props, "points"))
+	lineMetrics := sceneLineGeometryMetrics(points)
 	return sceneObject{
 		ID:           stringFromAny(propValue(node.Props, "id"), "scene-object-"+strconv.Itoa(index)),
-		Kind:         normalizeSceneKind(stringFromAny(propValue(node.Props, "kind"), node.Geometry)),
+		Kind:         kind,
 		Material:     stringFromAny(node.Material, "flat"),
 		Size:         size,
-		Width:        numberFromAny(propValue(node.Props, "width"), size),
-		Height:       numberFromAny(propValue(node.Props, "height"), size),
-		Depth:        numberFromAny(propValue(node.Props, "depth"), size),
-		Radius:       numberFromAny(propValue(node.Props, "radius"), size/2),
+		Width:        numberFromAny(propValue(node.Props, "width"), fallbackLineMetric(lineMetrics, "width", size)),
+		Height:       numberFromAny(propValue(node.Props, "height"), fallbackLineMetric(lineMetrics, "height", size)),
+		Depth:        numberFromAny(propValue(node.Props, "depth"), fallbackSceneDepth(kind, node.Props, lineMetrics, size)),
+		Radius:       numberFromAny(propValue(node.Props, "radius"), fallbackLineMetric(lineMetrics, "radius", size/2)),
 		Segments:     sceneSegmentResolution(propValue(node.Props, "segments")),
+		Points:       points,
+		LineSegments: sceneLineSegments(propValue(node.Props, "segments"), len(points)),
 		X:            numberFromAny(propValue(node.Props, "x"), 0),
 		Y:            numberFromAny(propValue(node.Props, "y"), 0),
 		Z:            numberFromAny(propValue(node.Props, "z"), 0),
 		Color:        stringFromAny(propValue(node.Props, "color"), "#8de1ff"),
+		Texture:      strings.TrimSpace(stringFromAny(rawTexture, "")),
 		RotationX:    numberFromAny(propValue(node.Props, "rotationX"), 0),
 		RotationY:    numberFromAny(propValue(node.Props, "rotationY"), 0),
 		RotationZ:    numberFromAny(propValue(node.Props, "rotationZ"), 0),
@@ -422,9 +772,11 @@ func sceneObjectFromResolvedNode(index int, node resolvedNode) sceneObject {
 		DriftSpeed:   numberFromAny(propValue(node.Props, "driftSpeed"), 0),
 		DriftPhase:   numberFromAny(propValue(node.Props, "driftPhase"), 0),
 		Opacity:      clamp(numberFromAny(rawOpacity, 1), 0, 1),
-		Wireframe:    boolFromAny(rawWireframe, true),
+		Wireframe:    boolFromAny(rawWireframe, rawTexture == nil),
 		BlendMode:    normalizeBlendMode(stringFromAny(rawBlendMode, "")),
 		Emissive:     clamp(numberFromAny(rawEmissive, 0), 0, 1),
+		Pickable:     boolPtrFromAny(rawPickable),
+		HasTexture:   rawTexture != nil,
 		HasOpacity:   rawOpacity != nil,
 		HasWireframe: rawWireframe != nil,
 		HasBlendMode: rawBlendMode != nil,
@@ -470,6 +822,68 @@ func sceneLabelFromResolvedNode(index int, node resolvedNode) (sceneLabel, bool)
 	}, true
 }
 
+func sceneSpriteFromResolvedNode(index int, node resolvedNode) (sceneSprite, bool) {
+	return normalizeSceneSpriteMap(node.Props, "scene-sprite-"+strconv.Itoa(index), sceneSprite{})
+}
+
+func normalizeSceneSpriteMap(raw map[string]any, fallbackID string, fallback sceneSprite) (sceneSprite, bool) {
+	if raw == nil {
+		return sceneSprite{}, false
+	}
+	src := strings.TrimSpace(stringFromAny(propValue(raw, "src"), fallback.Src))
+	if src == "" {
+		return sceneSprite{}, false
+	}
+	width := numberFromAny(propValue(raw, "width"), fallback.Width)
+	if width <= 0 {
+		width = 1.25
+	}
+	height := numberFromAny(propValue(raw, "height"), fallback.Height)
+	if height <= 0 {
+		height = width
+	}
+	scale := numberFromAny(propValue(raw, "scale"), fallback.Scale)
+	if scale <= 0 {
+		scale = 1
+	}
+	opacity := clamp(numberFromAny(propValue(raw, "opacity"), fallback.Opacity), 0, 1)
+	if fallback.Opacity == 0 && rawValue(raw, "opacity") == nil {
+		opacity = 1
+	}
+	anchorX := clamp(numberFromAny(propValue(raw, "anchorX"), fallback.AnchorX), 0, 1)
+	if fallback.AnchorX == 0 && rawValue(raw, "anchorX") == nil {
+		anchorX = 0.5
+	}
+	anchorY := clamp(numberFromAny(propValue(raw, "anchorY"), fallback.AnchorY), 0, 1)
+	if fallback.AnchorY == 0 && rawValue(raw, "anchorY") == nil {
+		anchorY = 0.5
+	}
+	return sceneSprite{
+		ID:         stringFromAny(propValue(raw, "id"), fallbackID),
+		Src:        src,
+		ClassName:  sceneLabelClassName(raw),
+		X:          numberFromAny(propValue(raw, "x"), fallback.X),
+		Y:          numberFromAny(propValue(raw, "y"), fallback.Y),
+		Z:          numberFromAny(propValue(raw, "z"), fallback.Z),
+		Priority:   numberFromAny(propValue(raw, "priority"), fallback.Priority),
+		ShiftX:     numberFromAny(propValue(raw, "shiftX"), fallback.ShiftX),
+		ShiftY:     numberFromAny(propValue(raw, "shiftY"), fallback.ShiftY),
+		ShiftZ:     numberFromAny(propValue(raw, "shiftZ"), fallback.ShiftZ),
+		DriftSpeed: numberFromAny(propValue(raw, "driftSpeed"), fallback.DriftSpeed),
+		DriftPhase: numberFromAny(propValue(raw, "driftPhase"), fallback.DriftPhase),
+		Width:      width,
+		Height:     height,
+		Scale:      scale,
+		Opacity:    opacity,
+		OffsetX:    numberFromAny(propValue(raw, "offsetX"), fallback.OffsetX),
+		OffsetY:    numberFromAny(propValue(raw, "offsetY"), fallback.OffsetY),
+		AnchorX:    anchorX,
+		AnchorY:    anchorY,
+		Occlude:    boolFromAny(propValue(raw, "occlude"), fallback.Occlude),
+		Fit:        normalizeSceneSpriteFit(stringFromAny(propValue(raw, "fit"), fallback.Fit)),
+	}, true
+}
+
 func appendSceneGrid(bundle *rootengine.RenderBundle, width, height int) {
 	for x := 0; x <= width; x += 48 {
 		appendSceneLine(bundle, width, height, rootengine.RenderPoint{X: float64(x), Y: 0}, rootengine.RenderPoint{X: float64(x), Y: float64(height)}, "rgba(141, 225, 255, 0.14)", 1)
@@ -479,31 +893,117 @@ func appendSceneGrid(bundle *rootengine.RenderBundle, width, height int) {
 	}
 }
 
-func appendSceneObject(bundle *rootengine.RenderBundle, camera sceneCamera, width, height int, object sceneObject, timeSeconds float64) sceneAppendResult {
+func appendSceneObject(bundle *rootengine.RenderBundle, camera sceneCamera, width, height int, object sceneObject, material rootengine.RenderMaterial, lights []sceneLight, environment sceneEnvironment, timeSeconds float64) sceneAppendResult {
 	aspect := math.Max(0.0001, float64(width)/math.Max(1, float64(height)))
-	rgba := sceneColorRGBA(object.Color, [4]float64{0.55, 0.88, 1, 1})
 	result := sceneAppendResult{}
+	if !sceneObjectUsesLineGeometry(object, material) && sceneObjectHasTexturedSurface(object, material) {
+		for _, corner := range scenePlaneSurfaceCorners(object, timeSeconds) {
+			result.Bounds, result.HasBounds = expandRenderBounds(result.Bounds, result.HasBounds, corner)
+		}
+		if result.HasBounds {
+			result.ViewCulled = renderBoundsOutsideFrustum(result.Bounds, camera, width, height)
+		}
+		return result
+	}
 	for _, segment := range sceneObjectSegments(object) {
 		worldFrom := translatePoint(segment[0], object, timeSeconds)
 		worldTo := translatePoint(segment[1], object, timeSeconds)
+		fromNormal := sceneObjectWorldNormal(object, segment[0], timeSeconds)
+		toNormal := sceneObjectWorldNormal(object, segment[1], timeSeconds)
+		fromRGBA := sceneLitColorRGBA(material, worldFrom, fromNormal, lights, environment)
+		toRGBA := sceneLitColorRGBA(material, worldTo, toNormal, lights, environment)
 		result.Bounds, result.HasBounds = expandRenderBounds(result.Bounds, result.HasBounds, worldFrom)
 		result.Bounds, result.HasBounds = expandRenderBounds(result.Bounds, result.HasBounds, worldTo)
 		clippedFrom, clippedTo, ok := clipWorldSegmentForCamera(worldFrom, worldTo, camera, aspect)
 		if !ok {
 			continue
 		}
-		appendWorldSceneLine(bundle, clippedFrom, clippedTo, rgba)
+		appendWorldSceneLine(bundle, clippedFrom, clippedTo, fromRGBA, toRGBA)
 		from := projectPoint(clippedFrom, camera, width, height)
 		to := projectPoint(clippedTo, camera, width, height)
 		if from == nil || to == nil {
 			continue
 		}
-		appendSceneLine(bundle, width, height, *from, *to, object.Color, 1.8)
+		stroke := mixRGBA(fromRGBA, toRGBA)
+		stroke[3] = clamp(stroke[3]*material.Opacity, 0, 1)
+		appendSceneLine(bundle, width, height, *from, *to, sceneRGBAString(stroke), 1.8)
 	}
 	if result.HasBounds {
 		result.ViewCulled = renderBoundsOutsideFrustum(result.Bounds, camera, width, height)
 	}
 	return result
+}
+
+func sceneObjectUsesLineGeometry(object sceneObject, material rootengine.RenderMaterial) bool {
+	return !(sceneObjectHasTexturedSurface(object, material) && !material.Wireframe)
+}
+
+func appendSceneSurface(bundle *rootengine.RenderBundle, camera sceneCamera, width, height int, object sceneObject, materialIndex int, material rootengine.RenderMaterial, bounds rootengine.RenderBounds, timeSeconds float64) {
+	if !sceneObjectHasTexturedSurface(object, material) {
+		return
+	}
+	corners := scenePlaneSurfaceCorners(object, timeSeconds)
+	if len(corners) != 4 {
+		return
+	}
+	depthNear, depthFar, depthCenter := renderBoundsDepthMetrics(bounds, camera)
+	bundle.Surfaces = append(bundle.Surfaces, rootengine.RenderSurface{
+		ID:            object.ID,
+		Kind:          object.Kind,
+		MaterialIndex: materialIndex,
+		RenderPass:    material.RenderPass,
+		Static:        object.Static,
+		Positions:     scenePlaneSurfacePositions(corners),
+		UV:            scenePlaneSurfaceUVs(),
+		VertexCount:   6,
+		Bounds:        bounds,
+		DepthNear:     depthNear,
+		DepthFar:      depthFar,
+		DepthCenter:   depthCenter,
+		ViewCulled:    renderBoundsOutsideFrustum(bounds, camera, width, height),
+	})
+}
+
+func sceneObjectHasTexturedSurface(object sceneObject, material rootengine.RenderMaterial) bool {
+	return object.Kind == "plane" && strings.TrimSpace(material.Texture) != ""
+}
+
+func scenePlaneSurfaceCorners(object sceneObject, timeSeconds float64) []point3 {
+	vertices := boxVertices(object.Width, 0, object.Depth)
+	if len(vertices) < 4 {
+		return nil
+	}
+	return []point3{
+		translatePoint(vertices[0], object, timeSeconds),
+		translatePoint(vertices[1], object, timeSeconds),
+		translatePoint(vertices[2], object, timeSeconds),
+		translatePoint(vertices[3], object, timeSeconds),
+	}
+}
+
+func scenePlaneSurfacePositions(corners []point3) []float64 {
+	if len(corners) < 4 {
+		return nil
+	}
+	return []float64{
+		corners[0].X, corners[0].Y, corners[0].Z,
+		corners[1].X, corners[1].Y, corners[1].Z,
+		corners[2].X, corners[2].Y, corners[2].Z,
+		corners[0].X, corners[0].Y, corners[0].Z,
+		corners[2].X, corners[2].Y, corners[2].Z,
+		corners[3].X, corners[3].Y, corners[3].Z,
+	}
+}
+
+func scenePlaneSurfaceUVs() []float64 {
+	return []float64{
+		0, 1,
+		1, 1,
+		1, 0,
+		0, 1,
+		1, 0,
+		0, 0,
+	}
 }
 
 func appendSceneLabel(bundle *rootengine.RenderBundle, camera sceneCamera, width, height int, label sceneLabel, timeSeconds float64) {
@@ -522,7 +1022,7 @@ func appendSceneLabel(bundle *rootengine.RenderBundle, camera sceneCamera, width
 		Text:        label.Text,
 		ClassName:   label.ClassName,
 		Position:    *position,
-		Depth:       world.Z + camera.Z,
+		Depth:       cameraLocalPoint(world, camera).Z,
 		Priority:    label.Priority,
 		MaxWidth:    label.MaxWidth,
 		MaxLines:    label.MaxLines,
@@ -543,6 +1043,41 @@ func appendSceneLabel(bundle *rootengine.RenderBundle, camera sceneCamera, width
 	})
 }
 
+func appendSceneSprite(bundle *rootengine.RenderBundle, camera sceneCamera, width, height int, sprite sceneSprite, timeSeconds float64) {
+	point := sceneSpritePoint(sprite, timeSeconds)
+	position := projectPoint(point, camera, width, height)
+	if position == nil {
+		return
+	}
+	depth := cameraLocalPoint(point, camera).Z
+	screenWidth, screenHeight := projectedSceneSpriteSize(camera, width, height, sprite, depth)
+	if screenWidth <= 0 || screenHeight <= 0 {
+		return
+	}
+	marginX := math.Max(24, screenWidth)
+	marginY := math.Max(24, screenHeight)
+	if position.X < -marginX || position.X > float64(width)+marginX || position.Y < -marginY || position.Y > float64(height)+marginY {
+		return
+	}
+	bundle.Sprites = append(bundle.Sprites, rootengine.RenderSprite{
+		ID:        sprite.ID,
+		Src:       sprite.Src,
+		ClassName: sprite.ClassName,
+		Position:  *position,
+		Depth:     depth,
+		Priority:  sprite.Priority,
+		Width:     screenWidth,
+		Height:    screenHeight,
+		Opacity:   sprite.Opacity,
+		OffsetX:   sprite.OffsetX,
+		OffsetY:   sprite.OffsetY,
+		AnchorX:   sprite.AnchorX,
+		AnchorY:   sprite.AnchorY,
+		Occlude:   sprite.Occlude,
+		Fit:       normalizeSceneSpriteFit(sprite.Fit),
+	})
+}
+
 func sceneLabelClassName(props map[string]any) string {
 	className := strings.TrimSpace(stringFromAny(propValue(props, "className"), ""))
 	if className != "" {
@@ -560,14 +1095,14 @@ func normalizeSceneLabelOverflow(value string) string {
 	}
 }
 
-func appendWorldSceneLine(bundle *rootengine.RenderBundle, from, to point3, rgba [4]float64) {
+func appendWorldSceneLine(bundle *rootengine.RenderBundle, from, to point3, fromRGBA, toRGBA [4]float64) {
 	bundle.WorldPositions = append(bundle.WorldPositions,
 		from.X, from.Y, from.Z,
 		to.X, to.Y, to.Z,
 	)
 	bundle.WorldColors = append(bundle.WorldColors,
-		rgba[0], rgba[1], rgba[2], rgba[3],
-		rgba[0], rgba[1], rgba[2], rgba[3],
+		fromRGBA[0], fromRGBA[1], fromRGBA[2], fromRGBA[3],
+		toRGBA[0], toRGBA[1], toRGBA[2], toRGBA[3],
 	)
 }
 
@@ -592,6 +1127,47 @@ func sceneLabelOffset(label sceneLabel, timeSeconds float64) point3 {
 	}
 }
 
+func sceneSpritePoint(sprite sceneSprite, timeSeconds float64) point3 {
+	offset := sceneSpriteOffset(sprite, timeSeconds)
+	return point3{
+		X: sprite.X + offset.X,
+		Y: sprite.Y + offset.Y,
+		Z: sprite.Z + offset.Z,
+	}
+}
+
+func sceneSpriteOffset(sprite sceneSprite, timeSeconds float64) point3 {
+	if sprite.ShiftX == 0 && sprite.ShiftY == 0 && sprite.ShiftZ == 0 {
+		return point3{}
+	}
+	angle := sprite.DriftPhase + timeSeconds*sprite.DriftSpeed
+	return point3{
+		X: math.Cos(angle) * sprite.ShiftX,
+		Y: math.Sin(angle*0.82+sprite.DriftPhase*0.35) * sprite.ShiftY,
+		Z: math.Sin(angle) * sprite.ShiftZ,
+	}
+}
+
+func projectedSceneSpriteSize(camera sceneCamera, width, height int, sprite sceneSprite, depth float64) (float64, float64) {
+	if depth <= 0 {
+		return 0, 0
+	}
+	focal := (math.Min(float64(width), float64(height)) / 2) / math.Tan((camera.FOV*math.Pi)/360)
+	scale := sprite.Scale
+	if scale <= 0 {
+		scale = 1
+	}
+	worldWidth := sprite.Width
+	if worldWidth <= 0 {
+		worldWidth = 1.25
+	}
+	worldHeight := sprite.Height
+	if worldHeight <= 0 {
+		worldHeight = worldWidth
+	}
+	return math.Max(1, (worldWidth*scale*focal)/depth), math.Max(1, (worldHeight*scale*focal)/depth)
+}
+
 func ensureRenderMaterial(bundle *rootengine.RenderBundle, object sceneObject) int {
 	profile := resolveRenderMaterial(object)
 	for index, existing := range bundle.Materials {
@@ -607,6 +1183,7 @@ func renderMaterialEqual(left, right rootengine.RenderMaterial) bool {
 	if left.Key != right.Key ||
 		left.Kind != right.Kind ||
 		left.Color != right.Color ||
+		left.Texture != right.Texture ||
 		left.Opacity != right.Opacity ||
 		left.Wireframe != right.Wireframe ||
 		left.BlendMode != right.BlendMode ||
@@ -629,6 +1206,7 @@ func resolveRenderMaterial(object sceneObject) rootengine.RenderMaterial {
 	profile := rootengine.RenderMaterial{
 		Kind:      stringFromAny(object.Material, "flat"),
 		Color:     object.Color,
+		Texture:   strings.TrimSpace(object.Texture),
 		Opacity:   1,
 		Wireframe: true,
 		BlendMode: "opaque",
@@ -665,6 +1243,9 @@ func resolveRenderMaterial(object sceneObject) rootengine.RenderMaterial {
 	if object.HasEmissive {
 		profile.Emissive = object.Emissive
 	}
+	if object.HasTexture {
+		profile.Texture = strings.TrimSpace(object.Texture)
+	}
 	if profile.Opacity < 0.999 && profile.BlendMode == "opaque" {
 		profile.BlendMode = "alpha"
 	}
@@ -689,9 +1270,10 @@ func renderPassFromMaterialProfile(profile rootengine.RenderMaterial) string {
 
 func renderMaterialKey(profile rootengine.RenderMaterial) string {
 	return fmt.Sprintf(
-		"%s|%s|%.3f|%t|%s|%s|%.3f",
+		"%s|%s|%s|%.3f|%t|%s|%s|%.3f",
 		strings.ToLower(strings.TrimSpace(profile.Kind)),
 		strings.TrimSpace(profile.Color),
+		strings.TrimSpace(profile.Texture),
 		profile.Opacity,
 		profile.Wireframe,
 		strings.ToLower(strings.TrimSpace(profile.BlendMode)),
@@ -724,7 +1306,7 @@ func buildRenderPassBundles(bundle rootengine.RenderBundle) []rootengine.RenderP
 			Blend:     "opaque",
 			Depth:     "opaque",
 			Static:    true,
-			CacheKey:  renderStaticPassKey(bundle.Camera, bundle.Objects, bundle.Materials),
+			CacheKey:  renderStaticPassKey(bundle),
 			Positions: []float64{},
 			Colors:    []float64{},
 			Materials: []float64{},
@@ -809,15 +1391,22 @@ func appendRenderPassObject(passes map[string]*rootengine.RenderPassBundle, bund
 	if object.ViewCulled || object.VertexCount <= 0 {
 		return
 	}
+	material := bundle.Materials[object.MaterialIndex]
+	if !renderObjectUsesLinePass(object, material) {
+		return
+	}
 	passName := renderPassBucketName(object)
 	pass := passes[passName]
 	if pass == nil {
 		return
 	}
-	material := bundle.Materials[object.MaterialIndex]
 	pass.Positions = appendPassSlice(pass.Positions, bundle.WorldPositions, object.VertexOffset*3, object.VertexCount*3)
 	appendPassColors(pass, bundle.WorldColors, object, material)
 	appendPassMaterials(pass, material, object.VertexCount)
+}
+
+func renderObjectUsesLinePass(object rootengine.RenderObject, material rootengine.RenderMaterial) bool {
+	return !(object.Kind == "plane" && strings.TrimSpace(material.Texture) != "" && !material.Wireframe)
 }
 
 func appendPassSlice(target []float64, source []float64, start, length int) []float64 {
@@ -881,7 +1470,7 @@ func renderPassBucketName(object rootengine.RenderObject) string {
 	}
 }
 
-func renderStaticPassKey(camera rootengine.RenderCamera, objects []rootengine.RenderObject, materials []rootengine.RenderMaterial) string {
+func renderStaticPassKey(bundle rootengine.RenderBundle) string {
 	hasher := fnv.New64a()
 	writeStaticPassFloat := func(value float64) {
 		_, _ = hasher.Write([]byte(strconv.FormatFloat(value, 'f', 3, 64)))
@@ -892,16 +1481,24 @@ func renderStaticPassKey(camera rootengine.RenderCamera, objects []rootengine.Re
 		_, _ = hasher.Write([]byte{'|'})
 	}
 
-	writeStaticPassFloat(camera.X)
-	writeStaticPassFloat(camera.Y)
-	writeStaticPassFloat(camera.Z)
-	writeStaticPassFloat(camera.FOV)
-	writeStaticPassFloat(camera.Near)
-	writeStaticPassFloat(camera.Far)
+	writeStaticPassFloat(bundle.Camera.X)
+	writeStaticPassFloat(bundle.Camera.Y)
+	writeStaticPassFloat(bundle.Camera.Z)
+	writeStaticPassFloat(bundle.Camera.RotationX)
+	writeStaticPassFloat(bundle.Camera.RotationY)
+	writeStaticPassFloat(bundle.Camera.RotationZ)
+	writeStaticPassFloat(bundle.Camera.FOV)
+	writeStaticPassFloat(bundle.Camera.Near)
+	writeStaticPassFloat(bundle.Camera.Far)
 
-	for _, object := range objects {
+	for _, object := range bundle.Objects {
 		if object.ViewCulled || object.VertexCount <= 0 || object.RenderPass != "opaque" || !object.Static {
 			continue
+		}
+		if object.MaterialIndex >= 0 && object.MaterialIndex < len(bundle.Materials) {
+			if !renderObjectUsesLinePass(object, bundle.Materials[object.MaterialIndex]) {
+				continue
+			}
 		}
 		writeStaticPassString(object.ID)
 		writeStaticPassString(object.Kind)
@@ -917,8 +1514,15 @@ func renderStaticPassKey(camera rootengine.RenderCamera, objects []rootengine.Re
 		writeStaticPassFloat(object.Bounds.MaxX)
 		writeStaticPassFloat(object.Bounds.MaxY)
 		writeStaticPassFloat(object.Bounds.MaxZ)
-		if object.MaterialIndex >= 0 && object.MaterialIndex < len(materials) {
-			writeStaticPassString(materials[object.MaterialIndex].Key)
+		if object.MaterialIndex >= 0 && object.MaterialIndex < len(bundle.Materials) {
+			writeStaticPassString(bundle.Materials[object.MaterialIndex].Key)
+		}
+		start := object.VertexOffset * 4
+		end := start + object.VertexCount*4
+		if start >= 0 && end <= len(bundle.WorldColors) && start <= end {
+			for _, value := range bundle.WorldColors[start:end] {
+				writeStaticPassFloat(value)
+			}
 		}
 	}
 	return strconv.FormatUint(hasher.Sum64(), 16)
@@ -941,6 +1545,189 @@ func appendSceneLine(bundle *rootengine.RenderBundle, width, height int, from, t
 	)
 }
 
+func sceneRGBAString(rgba [4]float64) string {
+	return fmt.Sprintf(
+		"rgba(%d, %d, %d, %.3f)",
+		int(math.Round(clamp(rgba[0], 0, 1)*255)),
+		int(math.Round(clamp(rgba[1], 0, 1)*255)),
+		int(math.Round(clamp(rgba[2], 0, 1)*255)),
+		clamp(rgba[3], 0, 1),
+	)
+}
+
+func mixRGBA(left, right [4]float64) [4]float64 {
+	return [4]float64{
+		(left[0] + right[0]) / 2,
+		(left[1] + right[1]) / 2,
+		(left[2] + right[2]) / 2,
+		(left[3] + right[3]) / 2,
+	}
+}
+
+func sceneLitColorRGBA(material rootengine.RenderMaterial, worldPoint, normal point3, lights []sceneLight, environment sceneEnvironment) [4]float64 {
+	base := sceneColorRGBA(material.Color, [4]float64{0.55, 0.88, 1, 1})
+	if !sceneLightingActive(lights, environment) {
+		return base
+	}
+
+	normal = normalizePoint3(normal)
+	if normal == (point3{}) {
+		normal = point3{Y: 1}
+	}
+	baseColor := point3{X: base[0], Y: base[1], Z: base[2]}
+	emissive := clamp(material.Emissive, 0, 1)
+	lighting := point3{}
+	if environment.AmbientIntensity > 0 {
+		lighting = addPoint3(lighting, multiplyPoint3(baseColor, scalePoint3(sceneColorPoint(environment.AmbientColor, point3{X: 1, Y: 1, Z: 1}), environment.AmbientIntensity)))
+	}
+	if environment.SkyIntensity > 0 || environment.GroundIntensity > 0 {
+		hemi := clamp((normal.Y*0.5)+0.5, 0, 1)
+		sky := scalePoint3(sceneColorPoint(environment.SkyColor, point3{X: 0.88, Y: 0.94, Z: 1}), environment.SkyIntensity*hemi)
+		ground := scalePoint3(sceneColorPoint(environment.GroundColor, point3{X: 0.12, Y: 0.16, Z: 0.22}), environment.GroundIntensity*(1-hemi))
+		lighting = addPoint3(lighting, multiplyPoint3(baseColor, addPoint3(sky, ground)))
+	}
+	for _, light := range lights {
+		switch light.Kind {
+		case "ambient":
+			lighting = addPoint3(lighting, multiplyPoint3(baseColor, scalePoint3(sceneColorPoint(light.Color, point3{X: 1, Y: 1, Z: 1}), light.Intensity)))
+		case "directional":
+			direction := normalizePoint3(point3{X: -light.DirectionX, Y: -light.DirectionY, Z: -light.DirectionZ})
+			diffuse := clamp(dotPoint3(normal, direction), 0, 1)
+			if diffuse > 0 {
+				lighting = addPoint3(lighting, multiplyPoint3(baseColor, scalePoint3(sceneColorPoint(light.Color, point3{X: 1, Y: 1, Z: 1}), light.Intensity*diffuse)))
+			}
+		case "point":
+			offset := point3{X: light.X - worldPoint.X, Y: light.Y - worldPoint.Y, Z: light.Z - worldPoint.Z}
+			distance := point3Length(offset)
+			if distance == 0 {
+				distance = 0.0001
+			}
+			diffuse := clamp(dotPoint3(normal, scalePoint3(offset, 1/distance)), 0, 1)
+			if diffuse <= 0 {
+				continue
+			}
+			attenuation := scenePointLightAttenuation(light, distance)
+			if attenuation <= 0 {
+				continue
+			}
+			lighting = addPoint3(lighting, multiplyPoint3(baseColor, scalePoint3(sceneColorPoint(light.Color, point3{X: 1, Y: 1, Z: 1}), light.Intensity*diffuse*attenuation)))
+		}
+	}
+	lit := addPoint3(scalePoint3(baseColor, emissive), scalePoint3(lighting, environment.Exposure))
+	lit = addPoint3(lit, scalePoint3(baseColor, 0.06))
+	return [4]float64{
+		clamp(lit.X, 0, 1),
+		clamp(lit.Y, 0, 1),
+		clamp(lit.Z, 0, 1),
+		base[3],
+	}
+}
+
+func sceneLightingActive(lights []sceneLight, environment sceneEnvironment) bool {
+	return len(lights) > 0 ||
+		environment.AmbientIntensity > 0 ||
+		environment.SkyIntensity > 0 ||
+		environment.GroundIntensity > 0
+}
+
+func sceneObjectWorldNormal(object sceneObject, point point3, timeSeconds float64) point3 {
+	normal := sceneObjectLocalNormal(object, point)
+	return normalizePoint3(rotatePoint(normal,
+		object.RotationX+object.SpinX*timeSeconds,
+		object.RotationY+object.SpinY*timeSeconds,
+		object.RotationZ+object.SpinZ*timeSeconds,
+	))
+}
+
+func sceneObjectLocalNormal(object sceneObject, point point3) point3 {
+	switch object.Kind {
+	case "lines":
+		width := math.Max(object.Width/2, 0.0001)
+		height := math.Max(object.Height/2, 0.0001)
+		depth := math.Max(object.Depth/2, 0.0001)
+		ax := math.Abs(point.X / width)
+		ay := math.Abs(point.Y / height)
+		az := math.Abs(point.Z / depth)
+		switch {
+		case ax >= ay && ax >= az:
+			return point3{X: math.Copysign(1, point.X)}
+		case ay >= az:
+			return point3{Y: math.Copysign(1, point.Y)}
+		default:
+			return point3{Z: math.Copysign(1, point.Z)}
+		}
+	case "plane":
+		return point3{Y: 1}
+	case "sphere":
+		return normalizePoint3(point)
+	case "pyramid":
+		width := math.Max(object.Width/2, 0.0001)
+		height := math.Max(object.Height/2, 0.0001)
+		depth := math.Max(object.Depth/2, 0.0001)
+		return normalizePoint3(point3{
+			X: point.X / width,
+			Y: (point.Y / height) + 0.35,
+			Z: point.Z / depth,
+		})
+	default:
+		width := math.Max(object.Width/2, 0.0001)
+		height := math.Max(object.Height/2, 0.0001)
+		depth := math.Max(object.Depth/2, 0.0001)
+		ax := math.Abs(point.X / width)
+		ay := math.Abs(point.Y / height)
+		az := math.Abs(point.Z / depth)
+		switch {
+		case ax >= ay && ax >= az:
+			return point3{X: math.Copysign(1, point.X)}
+		case ay >= az:
+			return point3{Y: math.Copysign(1, point.Y)}
+		default:
+			return point3{Z: math.Copysign(1, point.Z)}
+		}
+	}
+}
+
+func scenePointLightAttenuation(light sceneLight, distance float64) float64 {
+	if light.Range > 0 {
+		falloff := clamp(1-(distance/light.Range), 0, 1)
+		return math.Pow(falloff, light.Decay)
+	}
+	return 1 / (1 + math.Pow(distance*0.35, math.Max(light.Decay, 1)))
+}
+
+func sceneColorPoint(value string, fallback point3) point3 {
+	rgba := sceneColorRGBA(value, [4]float64{fallback.X, fallback.Y, fallback.Z, 1})
+	return point3{X: rgba[0], Y: rgba[1], Z: rgba[2]}
+}
+
+func addPoint3(left, right point3) point3 {
+	return point3{X: left.X + right.X, Y: left.Y + right.Y, Z: left.Z + right.Z}
+}
+
+func scalePoint3(point point3, scale float64) point3 {
+	return point3{X: point.X * scale, Y: point.Y * scale, Z: point.Z * scale}
+}
+
+func multiplyPoint3(left, right point3) point3 {
+	return point3{X: left.X * right.X, Y: left.Y * right.Y, Z: left.Z * right.Z}
+}
+
+func point3Length(point point3) float64 {
+	return math.Sqrt((point.X * point.X) + (point.Y * point.Y) + (point.Z * point.Z))
+}
+
+func normalizePoint3(point point3) point3 {
+	length := point3Length(point)
+	if length == 0 {
+		return point3{}
+	}
+	return scalePoint3(point, 1/length)
+}
+
+func dotPoint3(left, right point3) float64 {
+	return (left.X * right.X) + (left.Y * right.Y) + (left.Z * right.Z)
+}
+
 func sceneClipPoint(point rootengine.RenderPoint, width, height int) (float64, float64) {
 	return (point.X/float64(width))*2 - 1, 1 - (point.Y/float64(height))*2
 }
@@ -949,6 +1736,8 @@ func sceneObjectSegments(object sceneObject) [][2]point3 {
 	switch object.Kind {
 	case "box", "cube":
 		return boxSegments(object)
+	case "lines":
+		return customLineSegments(object)
 	case "plane":
 		return planeSegments(object)
 	case "pyramid":
@@ -958,6 +1747,17 @@ func sceneObjectSegments(object sceneObject) [][2]point3 {
 	default:
 		return boxSegments(object)
 	}
+}
+
+func customLineSegments(object sceneObject) [][2]point3 {
+	out := make([][2]point3, 0, len(object.LineSegments))
+	for _, edge := range object.LineSegments {
+		if edge[0] < 0 || edge[1] < 0 || edge[0] >= len(object.Points) || edge[1] >= len(object.Points) || edge[0] == edge[1] {
+			continue
+		}
+		out = append(out, [2]point3{object.Points[edge[0]], object.Points[edge[1]]})
+	}
+	return out
 }
 
 func boxSegments(object sceneObject) [][2]point3 {
@@ -1098,20 +1898,23 @@ func rotatePoint(point point3, rotationX, rotationY, rotationZ float64) point3 {
 }
 
 func projectPoint(point point3, camera sceneCamera, width, height int) *rootengine.RenderPoint {
-	depth := point.Z + camera.Z
+	local := cameraLocalPoint(point, camera)
+	depth := local.Z
 	if depth <= camera.Near || depth >= camera.Far {
 		return nil
 	}
 	focal := (math.Min(float64(width), float64(height)) / 2) / math.Tan((camera.FOV*math.Pi)/360)
 	return &rootengine.RenderPoint{
-		X: float64(width)/2 + ((point.X-camera.X)*focal)/depth,
-		Y: float64(height)/2 - ((point.Y-camera.Y)*focal)/depth,
+		X: float64(width)/2 + (local.X*focal)/depth,
+		Y: float64(height)/2 - (local.Y*focal)/depth,
 	}
 }
 
 func clipWorldSegmentForCamera(from, to point3, camera sceneCamera, aspect float64) (point3, point3, bool) {
-	depthFrom := from.Z + camera.Z
-	depthTo := to.Z + camera.Z
+	localFrom := cameraLocalPoint(from, camera)
+	localTo := cameraLocalPoint(to, camera)
+	depthFrom := localFrom.Z
+	depthTo := localTo.Z
 	if depthFrom <= camera.Near && depthTo <= camera.Near {
 		return point3{}, point3{}, false
 	}
@@ -1125,8 +1928,8 @@ func clipWorldSegmentForCamera(from, to point3, camera sceneCamera, aspect float
 			clippedTo = lerpPoint3(from, to, t)
 		}
 	}
-	depthFrom = clippedFrom.Z + camera.Z
-	depthTo = clippedTo.Z + camera.Z
+	depthFrom = cameraLocalPoint(clippedFrom, camera).Z
+	depthTo = cameraLocalPoint(clippedTo, camera).Z
 	if worldSegmentOutsideFrustum(clippedFrom, depthFrom, clippedTo, depthTo, camera, aspect) {
 		return point3{}, point3{}, false
 	}
@@ -1161,29 +1964,41 @@ func renderObjectBounds(worldPositions []float64, vertexOffset, vertexCount int)
 }
 
 func renderBoundsOutsideFrustum(bounds rootengine.RenderBounds, camera sceneCamera, width, height int) bool {
-	minDepth := bounds.MinZ + camera.Z
-	maxDepth := bounds.MaxZ + camera.Z
-	if maxDepth <= camera.Near || minDepth >= camera.Far {
-		return true
-	}
-	if minDepth <= camera.Near {
-		return false
-	}
 	aspect := math.Max(0.0001, float64(width)/math.Max(1, float64(height)))
 	corners := renderBoundsCorners(bounds)
 	allLeft, allRight, allBottom, allTop := true, true, true, true
+	allNear, allFar := true, true
 	for _, corner := range corners {
-		depth := corner.Z + camera.Z
-		if depth <= camera.Near || depth >= camera.Far {
-			return false
-		}
+		local := cameraLocalPoint(corner, camera)
+		allNear = allNear && local.Z <= camera.Near
+		allFar = allFar && local.Z >= camera.Far
 		clipX, clipY := projectWorldClipPoint(corner, camera, aspect)
 		allLeft = allLeft && clipX < -1
 		allRight = allRight && clipX > 1
 		allBottom = allBottom && clipY < -1
 		allTop = allTop && clipY > 1
 	}
+	if allNear || allFar {
+		return true
+	}
 	return allLeft || allRight || allBottom || allTop
+}
+
+func renderBoundsDepthMetrics(bounds rootengine.RenderBounds, camera sceneCamera) (near, far, center float64) {
+	corners := renderBoundsCorners(bounds)
+	if len(corners) == 0 {
+		depth := cameraLocalPoint(point3{}, camera).Z
+		return depth, depth, depth
+	}
+	near = cameraLocalPoint(corners[0], camera).Z
+	far = near
+	for _, corner := range corners[1:] {
+		depth := cameraLocalPoint(corner, camera).Z
+		near = math.Min(near, depth)
+		far = math.Max(far, depth)
+	}
+	center = (near + far) / 2
+	return near, far, center
 }
 
 func expandRenderBounds(bounds rootengine.RenderBounds, hasBounds bool, point point3) (rootengine.RenderBounds, bool) {
@@ -1220,10 +2035,11 @@ func renderBoundsCorners(bounds rootengine.RenderBounds) []point3 {
 }
 
 func projectWorldClipPoint(point point3, camera sceneCamera, aspect float64) (float64, float64) {
-	depth := point.Z + camera.Z
+	local := cameraLocalPoint(point, camera)
+	depth := local.Z
 	focal := 1 / math.Max(0.0001, math.Tan((camera.FOV*math.Pi)/360))
-	x := ((point.X - camera.X) * focal / math.Max(depth, 0.0001)) / math.Max(aspect, 0.0001)
-	y := (point.Y - camera.Y) * focal / math.Max(depth, 0.0001)
+	x := (local.X * focal / math.Max(depth, 0.0001)) / math.Max(aspect, 0.0001)
+	y := local.Y * focal / math.Max(depth, 0.0001)
 	return x, y
 }
 
@@ -1239,6 +2055,36 @@ func worldSegmentOutsideFrustum(from point3, depthFrom float64, to point3, depth
 		(clipFromY > 1 && clipToY > 1)
 }
 
+func cameraLocalPoint(point point3, camera sceneCamera) point3 {
+	translated := point3{
+		X: point.X - camera.X,
+		Y: point.Y - camera.Y,
+		Z: point.Z + camera.Z,
+	}
+	return inverseRotatePoint(translated, camera.RotationX, camera.RotationY, camera.RotationZ)
+}
+
+func inverseRotatePoint(point point3, rotationX, rotationY, rotationZ float64) point3 {
+	x := point.X
+	y := point.Y
+	z := point.Z
+
+	sinZ, cosZ := math.Sin(-rotationZ), math.Cos(-rotationZ)
+	nextX := x*cosZ - y*sinZ
+	nextY := x*sinZ + y*cosZ
+	x, y = nextX, nextY
+
+	sinY, cosY := math.Sin(-rotationY), math.Cos(-rotationY)
+	nextX = x*cosY + z*sinY
+	nextZ := -x*sinY + z*cosY
+	x, z = nextX, nextZ
+
+	sinX, cosX := math.Sin(-rotationX), math.Cos(-rotationX)
+	nextY = y*cosX - z*sinX
+	nextZ = y*sinX + z*cosX
+	return point3{X: x, Y: nextY, Z: nextZ}
+}
+
 func lerpPoint3(from, to point3, t float64) point3 {
 	t = clamp(t, 0, 1)
 	return point3{
@@ -1250,11 +2096,30 @@ func lerpPoint3(from, to point3, t float64) point3 {
 
 func normalizeSceneKind(value string) string {
 	switch strings.TrimSpace(strings.ToLower(value)) {
-	case "box", "plane", "pyramid", "sphere":
+	case "box", "lines", "plane", "pyramid", "sphere":
 		return strings.TrimSpace(strings.ToLower(value))
 	default:
 		return "cube"
 	}
+}
+
+func fallbackLineMetric(metrics map[string]float64, key string, fallback float64) float64 {
+	if len(metrics) == 0 {
+		return fallback
+	}
+	if value, ok := metrics[key]; ok && value > 0 {
+		return value
+	}
+	return fallback
+}
+
+func fallbackSceneDepth(kind string, props map[string]any, metrics map[string]float64, fallback float64) float64 {
+	if kind == "plane" {
+		if height := numberFromAny(propValue(props, "height"), 0); height != 0 {
+			return height
+		}
+	}
+	return fallbackLineMetric(metrics, "depth", fallback)
 }
 
 func sceneSegmentResolution(value any) int {
@@ -1266,6 +2131,103 @@ func sceneSegmentResolution(value any) int {
 		return 24
 	}
 	return segments
+}
+
+func scenePointList(value any) []point3 {
+	list, ok := value.([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]point3, 0, len(list))
+	for _, item := range list {
+		out = append(out, scenePointValue(item))
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func scenePointValue(value any) point3 {
+	switch current := value.(type) {
+	case map[string]any:
+		return point3{
+			X: numberFromAny(current["x"], 0),
+			Y: numberFromAny(current["y"], 0),
+			Z: numberFromAny(current["z"], 0),
+		}
+	case []any:
+		return point3{
+			X: numberFromAny(indexAny(current, 0), 0),
+			Y: numberFromAny(indexAny(current, 1), 0),
+			Z: numberFromAny(indexAny(current, 2), 0),
+		}
+	default:
+		return point3{}
+	}
+}
+
+func indexAny(values []any, index int) any {
+	if index < 0 || index >= len(values) {
+		return nil
+	}
+	return values[index]
+}
+
+func sceneLineSegments(value any, pointCount int) [][2]int {
+	list, ok := value.([]any)
+	if !ok {
+		return nil
+	}
+	out := make([][2]int, 0, len(list))
+	for _, item := range list {
+		pair := sceneLineSegmentValue(item)
+		if pair[0] < 0 || pair[1] < 0 || pair[0] >= pointCount || pair[1] >= pointCount || pair[0] == pair[1] {
+			continue
+		}
+		out = append(out, pair)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func sceneLineSegmentValue(value any) [2]int {
+	switch current := value.(type) {
+	case []any:
+		return [2]int{int(numberFromAny(indexAny(current, 0), -1)), int(numberFromAny(indexAny(current, 1), -1))}
+	case map[string]any:
+		return [2]int{int(numberFromAny(current["from"], -1)), int(numberFromAny(current["to"], -1))}
+	default:
+		return [2]int{-1, -1}
+	}
+}
+
+func sceneLineGeometryMetrics(points []point3) map[string]float64 {
+	if len(points) == 0 {
+		return nil
+	}
+	minX, maxX := points[0].X, points[0].X
+	minY, maxY := points[0].Y, points[0].Y
+	minZ, maxZ := points[0].Z, points[0].Z
+	for _, point := range points[1:] {
+		minX = math.Min(minX, point.X)
+		maxX = math.Max(maxX, point.X)
+		minY = math.Min(minY, point.Y)
+		maxY = math.Max(maxY, point.Y)
+		minZ = math.Min(minZ, point.Z)
+		maxZ = math.Max(maxZ, point.Z)
+	}
+	width := math.Max(0.0001, maxX-minX)
+	height := math.Max(0.0001, maxY-minY)
+	depth := math.Max(0.0001, maxZ-minZ)
+	return map[string]float64{
+		"width":  width,
+		"height": height,
+		"depth":  depth,
+		"radius": math.Max(width, math.Max(height, depth)) / 2,
+	}
 }
 
 func sceneColorRGBA(value string, fallback [4]float64) [4]float64 {
@@ -1317,6 +2279,11 @@ func rawValue(values map[string]any, key string) any {
 		return nil
 	}
 	return values[key]
+}
+
+func sceneValue(values map[string]any, key string) any {
+	scene, _ := rawValue(values, "scene").(map[string]any)
+	return rawValue(scene, key)
 }
 
 func propValue(values map[string]any, key string) any {
@@ -1401,6 +2368,17 @@ func normalizeSceneLabelCollision(value string) string {
 	}
 }
 
+func normalizeSceneSpriteFit(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "cover":
+		return "cover"
+	case "stretch", "fill":
+		return "fill"
+	default:
+		return "contain"
+	}
+}
+
 func boolFromAny(value any, fallback bool) bool {
 	switch typed := value.(type) {
 	case bool:
@@ -1414,6 +2392,23 @@ func boolFromAny(value any, fallback bool) bool {
 		}
 	}
 	return fallback
+}
+
+func boolPtrFromAny(value any) *bool {
+	switch typed := value.(type) {
+	case bool:
+		return &typed
+	case string:
+		switch strings.ToLower(strings.TrimSpace(typed)) {
+		case "true", "1", "yes", "on":
+			value := true
+			return &value
+		case "false", "0", "no", "off":
+			value := false
+			return &value
+		}
+	}
+	return nil
 }
 
 func clamp(value, min, max float64) float64 {

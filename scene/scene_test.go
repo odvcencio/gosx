@@ -274,6 +274,272 @@ func TestPropsSceneIRLowersRichMaterialFields(t *testing.T) {
 	}
 }
 
+func TestPropsSceneIRLowersTexturedPlaneMaterials(t *testing.T) {
+	props := Props{
+		Graph: NewGraph(
+			Mesh{
+				ID:       "info-card",
+				Geometry: PlaneGeometry{Width: 1.55, Height: 1.02},
+				Material: FlatMaterial{
+					Color:     "#f7fbff",
+					Texture:   "/paper-card.png",
+					Wireframe: Bool(false),
+				},
+				Position: Vec3(0.3, 0.55, 0.2),
+			},
+		),
+	}
+
+	ir := props.SceneIR()
+	if len(ir.Objects) != 1 {
+		t.Fatalf("expected one lowered object, got %#v", ir.Objects)
+	}
+	object := ir.Objects[0]
+	if object.MaterialKind != "flat" {
+		t.Fatalf("expected flat material kind, got %#v", object.MaterialKind)
+	}
+	if object.Texture != "/paper-card.png" {
+		t.Fatalf("expected lowered texture, got %#v", object.Texture)
+	}
+	if object.Wireframe == nil || *object.Wireframe {
+		t.Fatalf("expected explicit wireframe=false for textured plane, got %#v", object.Wireframe)
+	}
+
+	legacy := props.LegacyProps()
+	sceneValue, ok := legacy["scene"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected scene map, got %#v", legacy["scene"])
+	}
+	objects, ok := sceneValue["objects"].([]map[string]any)
+	if !ok || len(objects) != 1 {
+		t.Fatalf("expected one lowered object, got %#v", sceneValue["objects"])
+	}
+	record := objects[0]
+	if got := record["texture"]; got != "/paper-card.png" {
+		t.Fatalf("expected texture in legacy props, got %#v", got)
+	}
+	if got := record["wireframe"]; got != false {
+		t.Fatalf("expected explicit wireframe=false in legacy props, got %#v", got)
+	}
+}
+
+func TestPropsSceneIRLowersTargetedSprites(t *testing.T) {
+	props := Props{
+		Graph: NewGraph(
+			Mesh{
+				ID:       "hero",
+				Geometry: BoxGeometry{Width: 1.4, Height: 1.1, Depth: 0.9},
+				Material: FlatMaterial{Color: "#8de1ff"},
+				Position: Vec3(1.2, 0.4, -0.2),
+			},
+			Sprite{
+				Target:     "hero",
+				Src:        "/paper-card.png",
+				Position:   Vec3(0, 1.05, 0.2),
+				Width:      1.55,
+				Height:     1.02,
+				Scale:      1.1,
+				Opacity:    0.94,
+				Priority:   3,
+				AnchorX:    0.5,
+				AnchorY:    0.5,
+				Occlude:    true,
+				Fit:        "cover",
+				Shift:      Vec3(0.08, 0.06, 0),
+				DriftSpeed: 0.62,
+				DriftPhase: 0.45,
+			},
+		),
+	}
+
+	ir := props.SceneIR()
+	if len(ir.Sprites) != 1 {
+		t.Fatalf("expected one lowered sprite, got %#v", ir.Sprites)
+	}
+	sprite := ir.Sprites[0]
+	if sprite.Src != "/paper-card.png" {
+		t.Fatalf("expected sprite src, got %#v", sprite.Src)
+	}
+	if math.Abs(sprite.X-1.2) > 1e-9 || math.Abs(sprite.Y-1.45) > 1e-9 {
+		t.Fatalf("expected targeted sprite position near hero, got (%#v,%#v)", sprite.X, sprite.Y)
+	}
+	if sprite.Fit != "cover" || !sprite.Occlude {
+		t.Fatalf("expected sprite fit/occlude, got %#v", sprite)
+	}
+
+	legacy := props.LegacyProps()
+	sceneValue, ok := legacy["scene"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected scene map, got %#v", legacy["scene"])
+	}
+	sprites, ok := sceneValue["sprites"].([]map[string]any)
+	if !ok || len(sprites) != 1 {
+		t.Fatalf("expected one lowered sprite record, got %#v", sceneValue["sprites"])
+	}
+	record := sprites[0]
+	if got := record["src"]; got != "/paper-card.png" {
+		t.Fatalf("expected sprite src in legacy props, got %#v", got)
+	}
+	if got := record["fit"]; got != "cover" {
+		t.Fatalf("expected sprite fit in legacy props, got %#v", got)
+	}
+}
+
+func TestPropsLegacyPropsIncludeEventSignalNamespace(t *testing.T) {
+	props := Props{
+		Width:                640,
+		Height:               360,
+		PickSignalNamespace:  "$scene.demo.pick",
+		EventSignalNamespace: "$scene.demo.event",
+	}
+
+	legacy := props.LegacyProps()
+	if got := legacy["pickSignalNamespace"]; got != "$scene.demo.pick" {
+		t.Fatalf("expected pick signal namespace, got %#v", got)
+	}
+	if got := legacy["eventSignalNamespace"]; got != "$scene.demo.event" {
+		t.Fatalf("expected event signal namespace, got %#v", got)
+	}
+}
+
+func TestPropsSceneIRLowersLightsAndEnvironment(t *testing.T) {
+	props := Props{
+		Environment: Environment{
+			AmbientColor:     "#f4fbff",
+			AmbientIntensity: 0.22,
+			SkyColor:         "#b9deff",
+			SkyIntensity:     0.18,
+			GroundColor:      "#102030",
+			GroundIntensity:  0.06,
+			Exposure:         1.1,
+		},
+		Graph: NewGraph(
+			Group{
+				Position: Vec3(0, 2, 0),
+				Rotation: Rotate(0, 0, math.Pi/2),
+				Children: []Node{
+					DirectionalLight{
+						ID:        "sun",
+						Color:     "#fff1d6",
+						Intensity: 1.4,
+						Direction: Vec3(1, 0, 0),
+					},
+					PointLight{
+						ID:        "beacon",
+						Color:     "#8de1ff",
+						Intensity: 1.2,
+						Position:  Vec3(1, 0, 0),
+						Range:     7.5,
+						Decay:     1.6,
+					},
+				},
+			},
+			AmbientLight{
+				ID:        "fill",
+				Color:     "#f3fbff",
+				Intensity: 0.24,
+			},
+		),
+	}
+
+	ir := props.SceneIR()
+	if len(ir.Lights) != 3 {
+		t.Fatalf("expected three lowered lights, got %#v", ir.Lights)
+	}
+	if ir.Environment.AmbientColor != "#f4fbff" || ir.Environment.Exposure != 1.1 {
+		t.Fatalf("expected lowered environment, got %#v", ir.Environment)
+	}
+
+	if ir.Lights[0].Kind != "directional" || ir.Lights[0].ID != "sun" {
+		t.Fatalf("expected directional light first, got %#v", ir.Lights[0])
+	}
+	if math.Abs(ir.Lights[0].DirectionX) > 1e-9 || math.Abs(ir.Lights[0].DirectionY-1) > 1e-9 {
+		t.Fatalf("expected rotated light direction (0,1,0), got %#v", ir.Lights[0])
+	}
+
+	if ir.Lights[1].Kind != "point" || ir.Lights[1].ID != "beacon" {
+		t.Fatalf("expected point light second, got %#v", ir.Lights[1])
+	}
+	if math.Abs(ir.Lights[1].X-0) > 1e-9 || math.Abs(ir.Lights[1].Y-3) > 1e-9 {
+		t.Fatalf("expected transformed point-light position (0,3,0), got %#v", ir.Lights[1])
+	}
+	if ir.Lights[1].Range != 7.5 || ir.Lights[1].Decay != 1.6 {
+		t.Fatalf("expected point-light falloff fields, got %#v", ir.Lights[1])
+	}
+
+	if ir.Lights[2].Kind != "ambient" || ir.Lights[2].ID != "fill" {
+		t.Fatalf("expected ambient light third, got %#v", ir.Lights[2])
+	}
+
+	legacy := props.LegacyProps()
+	sceneValue, ok := legacy["scene"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected scene map, got %#v", legacy["scene"])
+	}
+	lights, ok := sceneValue["lights"].([]map[string]any)
+	if !ok || len(lights) != 3 {
+		t.Fatalf("expected three lowered lights in legacy props, got %#v", sceneValue["lights"])
+	}
+	environment, ok := sceneValue["environment"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected environment map, got %#v", sceneValue["environment"])
+	}
+	if got := environment["ambientIntensity"]; got != 0.22 {
+		t.Fatalf("expected ambient intensity in legacy props, got %#v", got)
+	}
+	if got := environment["exposure"]; got != 1.1 {
+		t.Fatalf("expected exposure in legacy props, got %#v", got)
+	}
+}
+
+func TestPropsLegacyPropsLowerCameraRotationAndControls(t *testing.T) {
+	props := Props{
+		Controls:           "orbit",
+		ControlTarget:      Vec3(1.5, 0.25, 0.8),
+		ControlRotateSpeed: 1.4,
+		ControlZoomSpeed:   0.85,
+		Camera: PerspectiveCamera{
+			Position: Vec3(0.2, 0.6, 6),
+			Rotation: Rotate(0.18, -0.32, 0.05),
+			FOV:      62,
+			Near:     0.1,
+			Far:      96,
+		},
+	}
+
+	legacy := props.LegacyProps()
+	if got := legacy["controls"]; got != "orbit" {
+		t.Fatalf("expected controls orbit, got %#v", got)
+	}
+	controlTarget, ok := legacy["controlTarget"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected control target map, got %#v", legacy["controlTarget"])
+	}
+	if got := controlTarget["x"]; got != 1.5 {
+		t.Fatalf("expected control target x 1.5, got %#v", got)
+	}
+	if got := legacy["controlRotateSpeed"]; got != 1.4 {
+		t.Fatalf("expected rotate speed 1.4, got %#v", got)
+	}
+	if got := legacy["controlZoomSpeed"]; got != 0.85 {
+		t.Fatalf("expected zoom speed 0.85, got %#v", got)
+	}
+
+	camera, ok := legacy["camera"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected camera map, got %#v", legacy["camera"])
+	}
+	if got := camera["rotationX"]; got != 0.18 {
+		t.Fatalf("expected camera rotationX 0.18, got %#v", got)
+	}
+	if got := camera["rotationY"]; got != -0.32 {
+		t.Fatalf("expected camera rotationY -0.32, got %#v", got)
+	}
+	if got := camera["rotationZ"]; got != 0.05 {
+		t.Fatalf("expected camera rotationZ 0.05, got %#v", got)
+	}
+}
+
 func TestPropsMarshalJSONOmitsEngineTransportFields(t *testing.T) {
 	props := Props{
 		ProgramRef:   "/api/runtime/scene-program",
@@ -303,6 +569,124 @@ func TestPropsMarshalJSONOmitsEngineTransportFields(t *testing.T) {
 	}
 	if !contains(text, `"kind":"cube"`) {
 		t.Fatalf("expected lowered scene object in props json: %s", text)
+	}
+}
+
+func TestPropsSceneIRLowersModelInstancesAndLineGeometry(t *testing.T) {
+	props := Props{
+		PickSignalNamespace: "$scene.pick",
+		Graph: NewGraph(
+			Model{
+				ID:       "runner",
+				Src:      "/models/runner.gosx3d.json",
+				Position: Vec3(1.2, 0.4, -0.8),
+				Rotation: Rotate(0.1, 0.2, -0.3),
+				Scale:    Vec3(1.6, 0.8, 1.2),
+				Material: GlowMaterial{
+					Color:      "#ffd48f",
+					Opacity:    Float(0.78),
+					Emissive:   Float(0.24),
+					BlendMode:  BlendAdditive,
+					RenderPass: RenderAdditive,
+					Wireframe:  Bool(false),
+				},
+				Pickable: Bool(true),
+				Static:   Bool(true),
+			},
+			Mesh{
+				ID: "wireframe",
+				Geometry: LinesGeometry{
+					Points: []Vector3{
+						Vec3(0, 0, 0),
+						Vec3(1, 0, 0),
+						Vec3(1, 1, 0),
+						Vec3(0, 1, 0),
+					},
+					Segments: [][2]int{{0, 1}, {1, 2}, {2, 3}, {3, 0}},
+				},
+				Material: FlatMaterial{Color: "#8de1ff"},
+				Position: Vec3(-1, 0.5, 0),
+				Pickable: Bool(false),
+			},
+		),
+	}
+
+	ir := props.SceneIR()
+	if len(ir.Models) != 1 {
+		t.Fatalf("expected one model instance, got %#v", ir.Models)
+	}
+	model := ir.Models[0]
+	if model.ID != "runner" {
+		t.Fatalf("expected runner model id, got %#v", model.ID)
+	}
+	if model.Src != "/models/runner.gosx3d.json" {
+		t.Fatalf("expected model src, got %#v", model.Src)
+	}
+	if math.Abs(model.X-1.2) > 1e-9 || math.Abs(model.Y-0.4) > 1e-9 || math.Abs(model.Z+0.8) > 1e-9 {
+		t.Fatalf("expected model position, got (%#v,%#v,%#v)", model.X, model.Y, model.Z)
+	}
+	if math.Abs(model.ScaleX-1.6) > 1e-9 || math.Abs(model.ScaleY-0.8) > 1e-9 || math.Abs(model.ScaleZ-1.2) > 1e-9 {
+		t.Fatalf("expected model scale, got (%#v,%#v,%#v)", model.ScaleX, model.ScaleY, model.ScaleZ)
+	}
+	if model.MaterialKind != "glow" {
+		t.Fatalf("expected glow material override, got %#v", model.MaterialKind)
+	}
+	if model.Pickable == nil || !*model.Pickable {
+		t.Fatalf("expected explicit pickable model override, got %#v", model.Pickable)
+	}
+	if model.Static == nil || !*model.Static {
+		t.Fatalf("expected explicit static override, got %#v", model.Static)
+	}
+	if len(ir.Objects) != 1 {
+		t.Fatalf("expected one inline object, got %#v", ir.Objects)
+	}
+	object := ir.Objects[0]
+	if object.Kind != "lines" {
+		t.Fatalf("expected lines geometry kind, got %#v", object.Kind)
+	}
+	if len(object.Points) != 4 {
+		t.Fatalf("expected four line points, got %#v", object.Points)
+	}
+	if len(object.LineSegments) != 4 {
+		t.Fatalf("expected four line segments, got %#v", object.LineSegments)
+	}
+	if object.Pickable == nil || *object.Pickable {
+		t.Fatalf("expected explicit non-pickable lines object, got %#v", object.Pickable)
+	}
+
+	legacy := props.LegacyProps()
+	if got := legacy["pickSignalNamespace"]; got != "$scene.pick" {
+		t.Fatalf("expected pick signal namespace in legacy props, got %#v", got)
+	}
+	sceneValue, ok := legacy["scene"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected scene map, got %#v", legacy["scene"])
+	}
+	models, ok := sceneValue["models"].([]map[string]any)
+	if !ok || len(models) != 1 {
+		t.Fatalf("expected one model record, got %#v", sceneValue["models"])
+	}
+	if got := models[0]["src"]; got != "/models/runner.gosx3d.json" {
+		t.Fatalf("expected model src in legacy props, got %#v", got)
+	}
+	if got := models[0]["pickable"]; got != true {
+		t.Fatalf("expected model pickable in legacy props, got %#v", got)
+	}
+	objects, ok := sceneValue["objects"].([]map[string]any)
+	if !ok || len(objects) != 1 {
+		t.Fatalf("expected one object record, got %#v", sceneValue["objects"])
+	}
+	if got := objects[0]["kind"]; got != "lines" {
+		t.Fatalf("expected lines kind in legacy props, got %#v", got)
+	}
+	if _, ok := objects[0]["points"]; !ok {
+		t.Fatalf("expected line points in legacy props, got %#v", objects[0])
+	}
+	if _, ok := objects[0]["segments"]; !ok {
+		t.Fatalf("expected line segments in legacy props, got %#v", objects[0])
+	}
+	if got := objects[0]["pickable"]; got != false {
+		t.Fatalf("expected non-pickable lines object in legacy props, got %#v", got)
 	}
 }
 
@@ -352,6 +736,495 @@ func TestPropsEngineConfigUsesBuiltInSceneContract(t *testing.T) {
 	}
 	if contains(string(cfg.Props), "programRef") {
 		t.Fatalf("did not expect programRef in engine props, got %s", string(cfg.Props))
+	}
+}
+
+func TestPropsSceneIRLowersStandardMaterial(t *testing.T) {
+	props := Props{
+		Graph: NewGraph(
+			Mesh{
+				ID:       "pbr-sphere",
+				Geometry: SphereGeometry{Radius: 1.2, Segments: 32},
+				Material: StandardMaterial{
+					Color:        "#c0a070",
+					Roughness:    0.45,
+					Metalness:    0.9,
+					NormalMap:    "/maps/normal.png",
+					RoughnessMap: "/maps/roughness.png",
+					MetalnessMap: "/maps/metalness.png",
+					EmissiveMap:  "/maps/emissive.png",
+					Emissive:     0.15,
+					Opacity:      Float(0.88),
+					BlendMode:    BlendAlpha,
+					Wireframe:    Bool(false),
+				},
+				Position: Vec3(1, 2, 3),
+			},
+		),
+	}
+
+	ir := props.SceneIR()
+	if len(ir.Objects) != 1 {
+		t.Fatalf("expected one lowered object, got %d", len(ir.Objects))
+	}
+	obj := ir.Objects[0]
+	if obj.ID != "pbr-sphere" {
+		t.Fatalf("expected pbr-sphere id, got %q", obj.ID)
+	}
+	if obj.Kind != "sphere" {
+		t.Fatalf("expected sphere geometry kind, got %q", obj.Kind)
+	}
+	if obj.MaterialKind != "standard" {
+		t.Fatalf("expected standard material kind, got %q", obj.MaterialKind)
+	}
+	if obj.Roughness != 0.45 {
+		t.Fatalf("expected roughness 0.45, got %v", obj.Roughness)
+	}
+	if obj.Metalness != 0.9 {
+		t.Fatalf("expected metalness 0.9, got %v", obj.Metalness)
+	}
+	if obj.NormalMap != "/maps/normal.png" {
+		t.Fatalf("expected normalMap, got %q", obj.NormalMap)
+	}
+	if obj.RoughnessMap != "/maps/roughness.png" {
+		t.Fatalf("expected roughnessMap, got %q", obj.RoughnessMap)
+	}
+	if obj.MetalnessMap != "/maps/metalness.png" {
+		t.Fatalf("expected metalnessMap, got %q", obj.MetalnessMap)
+	}
+	if obj.EmissiveMap != "/maps/emissive.png" {
+		t.Fatalf("expected emissiveMap, got %q", obj.EmissiveMap)
+	}
+	if obj.Color != "#c0a070" {
+		t.Fatalf("expected color, got %q", obj.Color)
+	}
+	if obj.Opacity == nil || *obj.Opacity != 0.88 {
+		t.Fatalf("expected opacity 0.88, got %v", obj.Opacity)
+	}
+	if obj.BlendMode != "alpha" {
+		t.Fatalf("expected alpha blend mode, got %q", obj.BlendMode)
+	}
+	if obj.Wireframe == nil || *obj.Wireframe {
+		t.Fatalf("expected wireframe false, got %v", obj.Wireframe)
+	}
+
+	legacy := props.LegacyProps()
+	sceneValue, ok := legacy["scene"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected scene map, got %#v", legacy["scene"])
+	}
+	objects, ok := sceneValue["objects"].([]map[string]any)
+	if !ok || len(objects) != 1 {
+		t.Fatalf("expected one lowered object, got %#v", sceneValue["objects"])
+	}
+	record := objects[0]
+	if got := record["materialKind"]; got != "standard" {
+		t.Fatalf("expected standard material kind in legacy props, got %#v", got)
+	}
+	if got := record["roughness"]; got != 0.45 {
+		t.Fatalf("expected roughness in legacy props, got %#v", got)
+	}
+	if got := record["metalness"]; got != 0.9 {
+		t.Fatalf("expected metalness in legacy props, got %#v", got)
+	}
+	if got := record["normalMap"]; got != "/maps/normal.png" {
+		t.Fatalf("expected normalMap in legacy props, got %#v", got)
+	}
+}
+
+func TestPropsSceneIRLowersCylinderAndTorusGeometry(t *testing.T) {
+	props := Props{
+		Graph: NewGraph(
+			Mesh{
+				ID: "cyl",
+				Geometry: CylinderGeometry{
+					RadiusTop:    0.5,
+					RadiusBottom: 1.0,
+					Height:       2.0,
+					Segments:     16,
+				},
+				Material: FlatMaterial{Color: "#ff0000"},
+				Position: Vec3(0, 0, 0),
+			},
+			Mesh{
+				ID: "tor",
+				Geometry: TorusGeometry{
+					Radius:          1.5,
+					Tube:            0.4,
+					RadialSegments:  16,
+					TubularSegments: 48,
+				},
+				Material: FlatMaterial{Color: "#00ff00"},
+				Position: Vec3(3, 0, 0),
+			},
+		),
+	}
+
+	ir := props.SceneIR()
+	if len(ir.Objects) != 2 {
+		t.Fatalf("expected two lowered objects, got %d", len(ir.Objects))
+	}
+
+	cyl := ir.Objects[0]
+	if cyl.Kind != "cylinder" {
+		t.Fatalf("expected cylinder kind, got %q", cyl.Kind)
+	}
+	if cyl.RadiusTop != 0.5 {
+		t.Fatalf("expected radiusTop 0.5, got %v", cyl.RadiusTop)
+	}
+	if cyl.RadiusBottom != 1.0 {
+		t.Fatalf("expected radiusBottom 1.0, got %v", cyl.RadiusBottom)
+	}
+	if cyl.Height != 2.0 {
+		t.Fatalf("expected height 2.0, got %v", cyl.Height)
+	}
+	if cyl.Segments != 16 {
+		t.Fatalf("expected segments 16, got %v", cyl.Segments)
+	}
+
+	tor := ir.Objects[1]
+	if tor.Kind != "torus" {
+		t.Fatalf("expected torus kind, got %q", tor.Kind)
+	}
+	if tor.Radius != 1.5 {
+		t.Fatalf("expected radius 1.5, got %v", tor.Radius)
+	}
+	if tor.Tube != 0.4 {
+		t.Fatalf("expected tube 0.4, got %v", tor.Tube)
+	}
+	if tor.RadialSegments != 16 {
+		t.Fatalf("expected radialSegments 16, got %v", tor.RadialSegments)
+	}
+	if tor.TubularSegments != 48 {
+		t.Fatalf("expected tubularSegments 48, got %v", tor.TubularSegments)
+	}
+
+	legacy := props.LegacyProps()
+	sceneValue, ok := legacy["scene"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected scene map, got %#v", legacy["scene"])
+	}
+	objects, ok := sceneValue["objects"].([]map[string]any)
+	if !ok || len(objects) != 2 {
+		t.Fatalf("expected two objects in legacy props, got %#v", sceneValue["objects"])
+	}
+	if got := objects[0]["kind"]; got != "cylinder" {
+		t.Fatalf("expected cylinder kind in legacy props, got %#v", got)
+	}
+	if got := objects[0]["radiusTop"]; got != 0.5 {
+		t.Fatalf("expected radiusTop in legacy props, got %#v", got)
+	}
+	if got := objects[1]["kind"]; got != "torus" {
+		t.Fatalf("expected torus kind in legacy props, got %#v", got)
+	}
+	if got := objects[1]["tube"]; got != 0.4 {
+		t.Fatalf("expected tube in legacy props, got %#v", got)
+	}
+}
+
+func TestPropsSceneIRLowersShadowFields(t *testing.T) {
+	props := Props{
+		Graph: NewGraph(
+			DirectionalLight{
+				ID:         "sun",
+				Color:      "#ffffff",
+				Intensity:  1.5,
+				Direction:  Vec3(-1, -1, 0),
+				CastShadow: true,
+				ShadowBias: 0.001,
+				ShadowSize: 2048,
+			},
+			Mesh{
+				ID:            "floor",
+				Geometry:      PlaneGeometry{Width: 10, Height: 10},
+				Material:      MatteMaterial{Color: "#808080"},
+				CastShadow:    true,
+				ReceiveShadow: true,
+			},
+		),
+	}
+
+	ir := props.SceneIR()
+	if len(ir.Lights) != 1 {
+		t.Fatalf("expected one light, got %d", len(ir.Lights))
+	}
+	light := ir.Lights[0]
+	if !light.CastShadow {
+		t.Fatalf("expected light castShadow true, got false")
+	}
+	if light.ShadowBias != 0.001 {
+		t.Fatalf("expected shadowBias 0.001, got %v", light.ShadowBias)
+	}
+	if light.ShadowSize != 2048 {
+		t.Fatalf("expected shadowSize 2048, got %v", light.ShadowSize)
+	}
+
+	if len(ir.Objects) != 1 {
+		t.Fatalf("expected one object, got %d", len(ir.Objects))
+	}
+	obj := ir.Objects[0]
+	if !obj.CastShadow {
+		t.Fatalf("expected object castShadow true, got false")
+	}
+	if !obj.ReceiveShadow {
+		t.Fatalf("expected object receiveShadow true, got false")
+	}
+
+	legacy := props.LegacyProps()
+	sceneValue, ok := legacy["scene"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected scene map, got %#v", legacy["scene"])
+	}
+	lights, ok := sceneValue["lights"].([]map[string]any)
+	if !ok || len(lights) != 1 {
+		t.Fatalf("expected one light in legacy props, got %#v", sceneValue["lights"])
+	}
+	if got := lights[0]["castShadow"]; got != true {
+		t.Fatalf("expected castShadow true in legacy light, got %#v", got)
+	}
+	if got := lights[0]["shadowBias"]; got != 0.001 {
+		t.Fatalf("expected shadowBias in legacy light, got %#v", got)
+	}
+	if got := lights[0]["shadowSize"]; got != 2048 {
+		t.Fatalf("expected shadowSize in legacy light, got %#v", got)
+	}
+	objects, ok := sceneValue["objects"].([]map[string]any)
+	if !ok || len(objects) != 1 {
+		t.Fatalf("expected one object in legacy props, got %#v", sceneValue["objects"])
+	}
+	if got := objects[0]["castShadow"]; got != true {
+		t.Fatalf("expected castShadow true in legacy object, got %#v", got)
+	}
+	if got := objects[0]["receiveShadow"]; got != true {
+		t.Fatalf("expected receiveShadow true in legacy object, got %#v", got)
+	}
+}
+
+func TestPropsSceneIRLowersModelAnimationFields(t *testing.T) {
+	props := Props{
+		Graph: NewGraph(
+			Model{
+				ID:        "dancer",
+				Src:       "/models/dancer.gosx3d.json",
+				Position:  Vec3(0, 0, 0),
+				Scale:     Vec3(1, 1, 1),
+				Animation: "idle",
+				Loop:      Bool(true),
+			},
+		),
+	}
+
+	ir := props.SceneIR()
+	if len(ir.Models) != 1 {
+		t.Fatalf("expected one model, got %d", len(ir.Models))
+	}
+	model := ir.Models[0]
+	if model.Animation != "idle" {
+		t.Fatalf("expected animation 'idle', got %q", model.Animation)
+	}
+	if model.Loop == nil || !*model.Loop {
+		t.Fatalf("expected loop true, got %v", model.Loop)
+	}
+
+	legacy := props.LegacyProps()
+	sceneValue, ok := legacy["scene"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected scene map, got %#v", legacy["scene"])
+	}
+	models, ok := sceneValue["models"].([]map[string]any)
+	if !ok || len(models) != 1 {
+		t.Fatalf("expected one model in legacy props, got %#v", sceneValue["models"])
+	}
+	if got := models[0]["animation"]; got != "idle" {
+		t.Fatalf("expected animation in legacy model, got %#v", got)
+	}
+	if got := models[0]["loop"]; got != true {
+		t.Fatalf("expected loop true in legacy model, got %#v", got)
+	}
+}
+
+func TestPropsSceneIRLowersPointsNode(t *testing.T) {
+	props := Props{
+		Graph: NewGraph(
+			Points{
+				ID:          "stars",
+				Count:       3,
+				Positions:   []Vector3{Vec3(1, 2, 3), Vec3(4, 5, 6), Vec3(7, 8, 9)},
+				Sizes:       []float64{2.0, 3.0, 4.0},
+				Colors:      []string{"#ff0000", "#00ff00", "#0000ff"},
+				Color:       "#ffffff",
+				Size:        5.0,
+				Opacity:     0.8,
+				BlendMode:   BlendAdditive,
+				DepthWrite:  false,
+				Attenuation: true,
+				Position:    Vec3(10, 20, 30),
+				Spin:        Rotate(0.1, 0.2, 0.3),
+			},
+		),
+	}
+
+	ir := props.SceneIR()
+	if len(ir.Points) != 1 {
+		t.Fatalf("expected one lowered points entry, got %d", len(ir.Points))
+	}
+	pts := ir.Points[0]
+	if pts.ID != "stars" {
+		t.Fatalf("expected points id 'stars', got %q", pts.ID)
+	}
+	if pts.Count != 3 {
+		t.Fatalf("expected count 3, got %d", pts.Count)
+	}
+	// Positions should be flattened to [x,y,z,x,y,z,x,y,z].
+	if len(pts.Positions) != 9 {
+		t.Fatalf("expected 9 flat position values, got %d", len(pts.Positions))
+	}
+	if pts.Positions[0] != 1 || pts.Positions[1] != 2 || pts.Positions[2] != 3 {
+		t.Fatalf("expected first position (1,2,3), got (%v,%v,%v)", pts.Positions[0], pts.Positions[1], pts.Positions[2])
+	}
+	if len(pts.Sizes) != 3 {
+		t.Fatalf("expected 3 per-particle sizes, got %d", len(pts.Sizes))
+	}
+	if len(pts.Colors) != 3 {
+		t.Fatalf("expected 3 per-particle colors, got %d", len(pts.Colors))
+	}
+	if pts.Color != "#ffffff" {
+		t.Fatalf("expected uniform color, got %q", pts.Color)
+	}
+	if pts.Size != 5.0 {
+		t.Fatalf("expected uniform size 5.0, got %v", pts.Size)
+	}
+	if pts.Opacity != 0.8 {
+		t.Fatalf("expected opacity 0.8, got %v", pts.Opacity)
+	}
+	if pts.BlendMode != "additive" {
+		t.Fatalf("expected additive blend mode, got %q", pts.BlendMode)
+	}
+	if pts.DepthWrite == nil || *pts.DepthWrite {
+		t.Fatalf("expected depthWrite false, got %v", pts.DepthWrite)
+	}
+	if !pts.Attenuation {
+		t.Fatalf("expected attenuation true, got false")
+	}
+	if math.Abs(pts.X-10) > 1e-9 || math.Abs(pts.Y-20) > 1e-9 || math.Abs(pts.Z-30) > 1e-9 {
+		t.Fatalf("expected world position (10,20,30), got (%v,%v,%v)", pts.X, pts.Y, pts.Z)
+	}
+	if pts.SpinX != 0.1 || pts.SpinY != 0.2 || pts.SpinZ != 0.3 {
+		t.Fatalf("expected spin (0.1,0.2,0.3), got (%v,%v,%v)", pts.SpinX, pts.SpinY, pts.SpinZ)
+	}
+
+	// Verify legacy props round-trip.
+	legacy := props.LegacyProps()
+	sceneValue, ok := legacy["scene"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected scene map, got %#v", legacy["scene"])
+	}
+	pointsList, ok := sceneValue["points"].([]map[string]any)
+	if !ok || len(pointsList) != 1 {
+		t.Fatalf("expected one points record in legacy props, got %#v", sceneValue["points"])
+	}
+	if got := pointsList[0]["id"]; got != "stars" {
+		t.Fatalf("expected points id in legacy props, got %#v", got)
+	}
+	if got := pointsList[0]["attenuation"]; got != true {
+		t.Fatalf("expected attenuation true in legacy props, got %#v", got)
+	}
+	if got := pointsList[0]["depthWrite"]; got != false {
+		t.Fatalf("expected depthWrite false in legacy props, got %#v", got)
+	}
+}
+
+func TestPropsSceneIRLowersFogFields(t *testing.T) {
+	props := Props{
+		Environment: Environment{
+			AmbientColor:     "#f4fbff",
+			AmbientIntensity: 0.22,
+			FogColor:         "#aabbcc",
+			FogDensity:       0.035,
+		},
+		Graph: NewGraph(
+			Mesh{
+				ID:       "cube",
+				Geometry: CubeGeometry{Size: 1},
+				Material: FlatMaterial{Color: "#ffffff"},
+			},
+		),
+	}
+
+	ir := props.SceneIR()
+	if ir.Environment.FogColor != "#aabbcc" {
+		t.Fatalf("expected fog color '#aabbcc', got %q", ir.Environment.FogColor)
+	}
+	if ir.Environment.FogDensity != 0.035 {
+		t.Fatalf("expected fog density 0.035, got %v", ir.Environment.FogDensity)
+	}
+
+	legacy := props.LegacyProps()
+	sceneValue, ok := legacy["scene"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected scene map, got %#v", legacy["scene"])
+	}
+	environment, ok := sceneValue["environment"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected environment map, got %#v", sceneValue["environment"])
+	}
+	if got := environment["fogColor"]; got != "#aabbcc" {
+		t.Fatalf("expected fogColor in legacy props, got %#v", got)
+	}
+	if got := environment["fogDensity"]; got != 0.035 {
+		t.Fatalf("expected fogDensity in legacy props, got %#v", got)
+	}
+}
+
+func TestPropsSceneIRLowersDepthWriteOnMesh(t *testing.T) {
+	props := Props{
+		Graph: NewGraph(
+			Mesh{
+				ID:         "no-depth",
+				Geometry:   CubeGeometry{Size: 1},
+				Material:   FlatMaterial{Color: "#ffffff"},
+				DepthWrite: Bool(false),
+			},
+			Mesh{
+				ID:       "default-depth",
+				Geometry: CubeGeometry{Size: 1},
+				Material: FlatMaterial{Color: "#ffffff"},
+			},
+		),
+	}
+
+	ir := props.SceneIR()
+	if len(ir.Objects) != 2 {
+		t.Fatalf("expected two objects, got %d", len(ir.Objects))
+	}
+
+	noDepth := ir.Objects[0]
+	if noDepth.DepthWrite == nil {
+		t.Fatalf("expected explicit depthWrite on first object, got nil")
+	}
+	if *noDepth.DepthWrite {
+		t.Fatalf("expected depthWrite false on first object, got true")
+	}
+
+	defaultDepth := ir.Objects[1]
+	if defaultDepth.DepthWrite != nil {
+		t.Fatalf("expected nil depthWrite on second object (default), got %v", *defaultDepth.DepthWrite)
+	}
+
+	legacy := props.LegacyProps()
+	sceneValue, ok := legacy["scene"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected scene map, got %#v", legacy["scene"])
+	}
+	objects, ok := sceneValue["objects"].([]map[string]any)
+	if !ok || len(objects) != 2 {
+		t.Fatalf("expected two objects in legacy props, got %#v", sceneValue["objects"])
+	}
+	if got := objects[0]["depthWrite"]; got != false {
+		t.Fatalf("expected depthWrite false in legacy props, got %#v", got)
+	}
+	if _, exists := objects[1]["depthWrite"]; exists {
+		t.Fatalf("did not expect depthWrite key on default object, got %#v", objects[1]["depthWrite"])
 	}
 }
 
