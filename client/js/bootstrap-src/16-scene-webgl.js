@@ -423,6 +423,50 @@
     "}",
   ].join("\n");
 
+  // --- Instanced PBR Vertex Shader ---
+  //
+  // Variant of the PBR vertex shader for instanced rendering.
+  // Reads a per-instance mat4 transform from attributes 4-7 (with divisor 1).
+  // Attribute layout:
+  //   0: a_position  (vec3)
+  //   1: a_normal    (vec3)
+  //   2: a_uv        (vec2)
+  //   3: a_tangent   (vec4)
+  //   4-7: a_instanceMatrix (mat4, 4 × vec4 with divisor 1)
+
+  const SCENE_PBR_INSTANCED_VERTEX_SOURCE = [
+    "#version 300 es",
+    "precision highp float;",
+    "",
+    "in vec3 a_position;",
+    "in vec3 a_normal;",
+    "in vec2 a_uv;",
+    "in vec4 a_tangent;",
+    "in mat4 a_instanceMatrix;",
+    "",
+    "uniform mat4 u_viewMatrix;",
+    "uniform mat4 u_projectionMatrix;",
+    "",
+    "out vec3 v_worldPosition;",
+    "out vec3 v_normal;",
+    "out vec2 v_uv;",
+    "out vec3 v_tangent;",
+    "out vec3 v_bitangent;",
+    "",
+    "void main() {",
+    "    vec4 worldPos = a_instanceMatrix * vec4(a_position, 1.0);",
+    "    v_worldPosition = worldPos.xyz;",
+    "    mat3 normalMatrix = mat3(a_instanceMatrix);",
+    "    v_normal = normalize(normalMatrix * a_normal);",
+    "    v_uv = a_uv;",
+    "    vec3 T = normalize(normalMatrix * a_tangent.xyz);",
+    "    vec3 N = v_normal;",
+    "    v_bitangent = cross(N, T) * a_tangent.w;",
+    "    v_tangent = T;",
+    "    gl_Position = u_projectionMatrix * u_viewMatrix * worldPos;",
+    "}",
+  ].join("\n");
+
   // --- Skinned PBR Vertex Shader ---
   //
   // Variant of the PBR vertex shader with skeletal animation (vertex skinning).
@@ -1524,6 +1568,194 @@
     };
   }
 
+  // Compile the instanced PBR vertex shader with the shared PBR fragment shader.
+  // Returns a program object with cached attribute/uniform locations, or null.
+  function createScenePBRInstancedProgram(gl) {
+    var vertexShader = scenePBRCompileShader(gl, gl.VERTEX_SHADER, SCENE_PBR_INSTANCED_VERTEX_SOURCE);
+    if (!vertexShader) return null;
+    var fragmentShader = scenePBRCompileShader(gl, gl.FRAGMENT_SHADER, SCENE_PBR_FRAGMENT_SOURCE);
+    if (!fragmentShader) {
+      gl.deleteShader(vertexShader);
+      return null;
+    }
+
+    var program = scenePBRLinkProgram(gl, vertexShader, fragmentShader, "Instanced PBR shader");
+    if (!program) return null;
+
+    var attributes = {
+      position: gl.getAttribLocation(program, "a_position"),
+      normal: gl.getAttribLocation(program, "a_normal"),
+      uv: gl.getAttribLocation(program, "a_uv"),
+      tangent: gl.getAttribLocation(program, "a_tangent"),
+      instanceMatrix: gl.getAttribLocation(program, "a_instanceMatrix"),
+    };
+
+    var uniforms = scenePBRCacheBaseUniforms(gl, program);
+
+    return {
+      program: program,
+      vertexShader: vertexShader,
+      fragmentShader: fragmentShader,
+      attributes: attributes,
+      uniforms: uniforms,
+    };
+  }
+
+  // Generate PBR vertex data (positions, normals, UVs, tangents) for a geometry
+  // kind. Returns { positions, normals, uvs, tangents, vertexCount } where each
+  // array is a Float32Array ready for GPU upload.
+  function generateInstancedGeometry(kind, dims) {
+    var w = sceneNumber(dims && dims.width, 1);
+    var h = sceneNumber(dims && dims.height, 1);
+    var d = sceneNumber(dims && dims.depth, 1);
+
+    if (kind === "sphere") {
+      return generateInstancedSphereGeometry(
+        sceneNumber(dims && dims.radius, 0.5),
+        sceneNumber(dims && dims.segments, 16)
+      );
+    }
+    if (kind === "plane") {
+      return generateInstancedPlaneGeometry(w, d);
+    }
+
+    // Default: box geometry.
+    return generateInstancedBoxGeometry(w, h, d);
+  }
+
+  // Generate a unit box with the given dimensions. 36 vertices (12 triangles).
+  // Each face has outward normals, [0,1] UVs, and MikkTSpace-compatible tangents.
+  function generateInstancedBoxGeometry(w, h, d) {
+    var hw = w * 0.5, hh = h * 0.5, hd = d * 0.5;
+
+    // 6 faces × 2 triangles × 3 vertices = 36 vertices.
+    // Each face: normal, tangent(vec4), 4 corners → 2 triangles.
+    var faces = [
+      // +Z face (front)
+      { n: [0, 0, 1], t: [1, 0, 0, 1], v: [[-hw,-hh,hd],[hw,-hh,hd],[hw,hh,hd],[-hw,hh,hd]] },
+      // -Z face (back)
+      { n: [0, 0,-1], t: [-1, 0, 0, 1], v: [[hw,-hh,-hd],[-hw,-hh,-hd],[-hw,hh,-hd],[hw,hh,-hd]] },
+      // +X face (right)
+      { n: [1, 0, 0], t: [0, 0,-1, 1], v: [[hw,-hh,hd],[hw,-hh,-hd],[hw,hh,-hd],[hw,hh,hd]] },
+      // -X face (left)
+      { n: [-1, 0, 0], t: [0, 0, 1, 1], v: [[-hw,-hh,-hd],[-hw,-hh,hd],[-hw,hh,hd],[-hw,hh,-hd]] },
+      // +Y face (top)
+      { n: [0, 1, 0], t: [1, 0, 0, 1], v: [[-hw,hh,hd],[hw,hh,hd],[hw,hh,-hd],[-hw,hh,-hd]] },
+      // -Y face (bottom)
+      { n: [0,-1, 0], t: [1, 0, 0, 1], v: [[-hw,-hh,-hd],[hw,-hh,-hd],[hw,-hh,hd],[-hw,-hh,hd]] },
+    ];
+
+    var quadUVs = [[0,0],[1,0],[1,1],[0,1]];
+    var triIndices = [0,1,2, 0,2,3];
+
+    var vertexCount = 36;
+    var positions = new Float32Array(vertexCount * 3);
+    var normals = new Float32Array(vertexCount * 3);
+    var uvs = new Float32Array(vertexCount * 2);
+    var tangents = new Float32Array(vertexCount * 4);
+
+    var vi = 0;
+    for (var fi = 0; fi < 6; fi++) {
+      var face = faces[fi];
+      for (var ti = 0; ti < 6; ti++) {
+        var ci = triIndices[ti];
+        var p = face.v[ci];
+        positions[vi * 3]     = p[0];
+        positions[vi * 3 + 1] = p[1];
+        positions[vi * 3 + 2] = p[2];
+        normals[vi * 3]     = face.n[0];
+        normals[vi * 3 + 1] = face.n[1];
+        normals[vi * 3 + 2] = face.n[2];
+        uvs[vi * 2]     = quadUVs[ci][0];
+        uvs[vi * 2 + 1] = quadUVs[ci][1];
+        tangents[vi * 4]     = face.t[0];
+        tangents[vi * 4 + 1] = face.t[1];
+        tangents[vi * 4 + 2] = face.t[2];
+        tangents[vi * 4 + 3] = face.t[3];
+        vi++;
+      }
+    }
+
+    return { positions: positions, normals: normals, uvs: uvs, tangents: tangents, vertexCount: vertexCount };
+  }
+
+  // Generate a plane (quad) with the given width and depth, lying in the XZ plane.
+  // 6 vertices (2 triangles), face normal pointing up (+Y).
+  function generateInstancedPlaneGeometry(w, d) {
+    var hw = w * 0.5, hd = d * 0.5;
+    var vertexCount = 6;
+    var positions = new Float32Array(vertexCount * 3);
+    var normals = new Float32Array(vertexCount * 3);
+    var uvs = new Float32Array(vertexCount * 2);
+    var tangents = new Float32Array(vertexCount * 4);
+
+    var corners = [[-hw, 0, hd], [hw, 0, hd], [hw, 0, -hd], [-hw, 0, -hd]];
+    var cornerUVs = [[0, 0], [1, 0], [1, 1], [0, 1]];
+    var triIndices = [0, 1, 2, 0, 2, 3];
+
+    for (var i = 0; i < 6; i++) {
+      var ci = triIndices[i];
+      var p = corners[ci];
+      positions[i * 3] = p[0]; positions[i * 3 + 1] = p[1]; positions[i * 3 + 2] = p[2];
+      normals[i * 3] = 0; normals[i * 3 + 1] = 1; normals[i * 3 + 2] = 0;
+      uvs[i * 2] = cornerUVs[ci][0]; uvs[i * 2 + 1] = cornerUVs[ci][1];
+      tangents[i * 4] = 1; tangents[i * 4 + 1] = 0; tangents[i * 4 + 2] = 0; tangents[i * 4 + 3] = 1;
+    }
+
+    return { positions: positions, normals: normals, uvs: uvs, tangents: tangents, vertexCount: vertexCount };
+  }
+
+  // Generate a UV sphere with the given radius and segment count.
+  function generateInstancedSphereGeometry(radius, segments) {
+    var rings = Math.max(4, segments);
+    var slices = Math.max(4, segments * 2);
+
+    // Count: each ring-slice quad = 2 triangles = 6 vertices,
+    // except the top and bottom caps which are single triangles.
+    var vertexCount = rings * slices * 6;
+    var positions = new Float32Array(vertexCount * 3);
+    var normals = new Float32Array(vertexCount * 3);
+    var uvs = new Float32Array(vertexCount * 2);
+    var tangents = new Float32Array(vertexCount * 4);
+    var vi = 0;
+
+    function spherePoint(ring, slice) {
+      var phi = (ring / rings) * Math.PI;
+      var theta = (slice / slices) * Math.PI * 2;
+      var sp = Math.sin(phi);
+      var nx = sp * Math.cos(theta);
+      var ny = Math.cos(phi);
+      var nz = sp * Math.sin(theta);
+      return {
+        px: nx * radius, py: ny * radius, pz: nz * radius,
+        nx: nx, ny: ny, nz: nz,
+        u: slice / slices, v: ring / rings,
+        tx: -Math.sin(theta), ty: 0, tz: Math.cos(theta),
+      };
+    }
+
+    function pushVert(pt) {
+      positions[vi * 3] = pt.px; positions[vi * 3 + 1] = pt.py; positions[vi * 3 + 2] = pt.pz;
+      normals[vi * 3] = pt.nx; normals[vi * 3 + 1] = pt.ny; normals[vi * 3 + 2] = pt.nz;
+      uvs[vi * 2] = pt.u; uvs[vi * 2 + 1] = pt.v;
+      tangents[vi * 4] = pt.tx; tangents[vi * 4 + 1] = pt.ty; tangents[vi * 4 + 2] = pt.tz; tangents[vi * 4 + 3] = 1;
+      vi++;
+    }
+
+    for (var r = 0; r < rings; r++) {
+      for (var s = 0; s < slices; s++) {
+        var a = spherePoint(r, s);
+        var b = spherePoint(r, s + 1);
+        var c = spherePoint(r + 1, s + 1);
+        var dd = spherePoint(r + 1, s);
+        pushVert(a); pushVert(b); pushVert(c);
+        pushVert(a); pushVert(c); pushVert(dd);
+      }
+    }
+
+    return { positions: positions, normals: normals, uvs: uvs, tangents: tangents, vertexCount: vi };
+  }
+
   function scenePBRCompileShader(gl, type, source) {
     const shader = gl.createShader(type);
     gl.shaderSource(shader, source);
@@ -1733,6 +1965,19 @@
     const pointsSizeBuffer = gl.createBuffer();
     const pointsColorBuffer = gl.createBuffer();
 
+    // Instanced PBR program — compiled lazily on first instanced mesh.
+    var instancedProgram = null;
+
+    // Persistent GPU buffers for instanced mesh rendering.
+    const instanceTransformBuffer = gl.createBuffer();
+    const instanceVertexBuffer = gl.createBuffer();
+    const instanceNormalBuffer = gl.createBuffer();
+    const instanceUVBuffer = gl.createBuffer();
+    const instanceTangentBuffer = gl.createBuffer();
+
+    // Geometry cache: maps "kind:w:h:d:r:s" to generated geometry data.
+    var instancedGeometryCache = {};
+
     // Local texture cache for this renderer instance.
     const textureCache = new Map();
 
@@ -1893,7 +2138,8 @@
         bundle.objects.length > 0
       );
       const hasPointsData = Array.isArray(bundle.points) && bundle.points.length > 0;
-      if (!hasPBRData && !hasPointsData) {
+      const hasInstancedData = Array.isArray(bundle.instancedMeshes) && bundle.instancedMeshes.length > 0;
+      if (!hasPBRData && !hasPointsData && !hasInstancedData) {
         return;
       }
 
@@ -2013,6 +2259,9 @@
       }
 
       } // end if (hasPBRData)
+
+      // Draw instanced meshes (after regular meshes, before points).
+      drawInstancedMeshes(gl, bundle, viewMatrix, projMatrix);
 
       // Draw points entries (after meshes, before post-processing).
       drawPointsEntries(gl, bundle, viewMatrix, projMatrix, performance.now() / 1000);
@@ -2396,6 +2645,149 @@
       gl.useProgram(program);
     }
 
+    // Ensure the instanced PBR program is compiled (lazy init).
+    function ensureInstancedProgram() {
+      if (instancedProgram) return instancedProgram;
+      instancedProgram = createScenePBRInstancedProgram(gl);
+      if (!instancedProgram) {
+        console.warn("[gosx] Instanced PBR shader compilation failed; instanced meshes will not render.");
+      }
+      return instancedProgram;
+    }
+
+    // Look up or generate geometry for an instanced mesh entry.
+    function getInstancedGeometry(mesh) {
+      var kind = typeof mesh.kind === "string" ? mesh.kind.toLowerCase() : "box";
+      var w = sceneNumber(mesh.width, 1);
+      var h = sceneNumber(mesh.height, 1);
+      var d = sceneNumber(mesh.depth, 1);
+      var r = sceneNumber(mesh.radius, 0.5);
+      var s = sceneNumber(mesh.segments, 16);
+      var key = kind + ":" + w + ":" + h + ":" + d + ":" + r + ":" + s;
+      if (instancedGeometryCache[key]) return instancedGeometryCache[key];
+      var geom = generateInstancedGeometry(kind, { width: w, height: h, depth: d, radius: r, segments: s });
+      instancedGeometryCache[key] = geom;
+      return geom;
+    }
+
+    // Draw all instanced meshes from the render bundle.
+    function drawInstancedMeshes(gl, bundle, viewMatrix, projMatrix) {
+      var meshes = Array.isArray(bundle.instancedMeshes) ? bundle.instancedMeshes : [];
+      if (meshes.length === 0) return;
+
+      var ip = ensureInstancedProgram();
+      if (!ip) return;
+
+      gl.useProgram(ip.program);
+
+      // Ensure opaque render state (prior passes may leave blend/depth dirty).
+      gl.enable(gl.DEPTH_TEST);
+      gl.depthMask(true);
+      gl.depthFunc(gl.LEQUAL);
+      gl.disable(gl.BLEND);
+
+      // Upload per-frame uniforms (camera, lights, fog, shadows).
+      gl.uniformMatrix4fv(ip.uniforms.viewMatrix, false, viewMatrix);
+      gl.uniformMatrix4fv(ip.uniforms.projectionMatrix, false, projMatrix);
+      gl.uniform3f(ip.uniforms.cameraPosition, _frameCam.x, _frameCam.y, -_frameCam.z);
+
+      var postEffects = Array.isArray(bundle.postEffects) ? bundle.postEffects : [];
+      gl.uniform1i(ip.uniforms.toneMap, postEffects.length > 0 ? 0 : 1);
+
+      scenePBRUploadLights(gl, ip.uniforms, bundle.lights, bundle.environment);
+      scenePBRUploadShadowUniforms(gl, ip.uniforms, shadowSlots, shadowLightMatrices, shadowLightIndices, bundle.lights);
+
+      var materials = Array.isArray(bundle.materials) ? bundle.materials : [];
+
+      for (var i = 0; i < meshes.length; i++) {
+        var mesh = meshes[i];
+        if (!mesh.transforms || mesh.instanceCount <= 0) continue;
+
+        var instanceCount = sceneNumber(mesh.instanceCount, 0);
+        if (instanceCount <= 0) continue;
+
+        // Generate or retrieve cached geometry for this mesh kind.
+        var geom = getInstancedGeometry(mesh);
+        if (!geom || geom.vertexCount <= 0) continue;
+
+        // Upload material uniforms.
+        // Engine-VM path uses materialIndex into bundle.materials.
+        // Legacy path may have inline color/roughness/metalness.
+        var mat = materials[sceneNumber(mesh.materialIndex, 0)] || null;
+        if (!mat && mesh.color) {
+          // Build an inline material from legacy properties.
+          mat = {
+            color: mesh.color,
+            roughness: sceneNumber(mesh.roughness, 0.5),
+            metalness: sceneNumber(mesh.metalness, 0),
+          };
+        }
+        uploadMaterial(gl, ip.uniforms, mat, textureCache);
+
+        // Per-object shadow receive control.
+        gl.uniform1i(ip.uniforms.receiveShadow, mesh.receiveShadow ? 1 : 0);
+
+        // Upload geometry data to persistent buffers.
+        gl.bindBuffer(gl.ARRAY_BUFFER, instanceVertexBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, geom.positions, gl.STATIC_DRAW);
+        gl.enableVertexAttribArray(ip.attributes.position);
+        gl.vertexAttribPointer(ip.attributes.position, 3, gl.FLOAT, false, 0, 0);
+
+        gl.bindBuffer(gl.ARRAY_BUFFER, instanceNormalBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, geom.normals, gl.STATIC_DRAW);
+        gl.enableVertexAttribArray(ip.attributes.normal);
+        gl.vertexAttribPointer(ip.attributes.normal, 3, gl.FLOAT, false, 0, 0);
+
+        gl.bindBuffer(gl.ARRAY_BUFFER, instanceUVBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, geom.uvs, gl.STATIC_DRAW);
+        gl.enableVertexAttribArray(ip.attributes.uv);
+        gl.vertexAttribPointer(ip.attributes.uv, 2, gl.FLOAT, false, 0, 0);
+
+        gl.bindBuffer(gl.ARRAY_BUFFER, instanceTangentBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, geom.tangents, gl.STATIC_DRAW);
+        gl.enableVertexAttribArray(ip.attributes.tangent);
+        gl.vertexAttribPointer(ip.attributes.tangent, 4, gl.FLOAT, false, 0, 0);
+
+        // Cache the transforms Float32Array on the mesh entry (same pattern as points _cachedPos).
+        if (!mesh._cachedTransforms) {
+          if (mesh.transforms instanceof Float32Array) {
+            mesh._cachedTransforms = mesh.transforms;
+          } else if (Array.isArray(mesh.transforms)) {
+            mesh._cachedTransforms = new Float32Array(mesh.transforms);
+          }
+        }
+        var transformData = mesh._cachedTransforms;
+        if (!transformData) continue;
+
+        // Upload instance transforms to GPU.
+        gl.bindBuffer(gl.ARRAY_BUFFER, instanceTransformBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, transformData, gl.STATIC_DRAW);
+
+        // Set up mat4 attribute (4 × vec4, each with divisor 1).
+        // a_instanceMatrix occupies attribute locations starting at ip.attributes.instanceMatrix.
+        var baseLoc = ip.attributes.instanceMatrix;
+        for (var col = 0; col < 4; col++) {
+          var loc = baseLoc + col;
+          gl.enableVertexAttribArray(loc);
+          gl.vertexAttribPointer(loc, 4, gl.FLOAT, false, 64, col * 16);
+          gl.vertexAttribDivisor(loc, 1);
+        }
+
+        // Draw instanced.
+        gl.drawArraysInstanced(gl.TRIANGLES, 0, geom.vertexCount, instanceCount);
+
+        // Reset divisors and disable instance attribute slots.
+        for (var col = 0; col < 4; col++) {
+          var loc2 = baseLoc + col;
+          gl.vertexAttribDivisor(loc2, 0);
+          gl.disableVertexAttribArray(loc2);
+        }
+      }
+
+      // Switch back to regular PBR program.
+      gl.useProgram(program);
+    }
+
     function dispose() {
       gl.deleteBuffer(positionBuffer);
       gl.deleteBuffer(normalBuffer);
@@ -2406,6 +2798,11 @@
       gl.deleteBuffer(pointsPositionBuffer);
       gl.deleteBuffer(pointsSizeBuffer);
       gl.deleteBuffer(pointsColorBuffer);
+      gl.deleteBuffer(instanceTransformBuffer);
+      gl.deleteBuffer(instanceVertexBuffer);
+      gl.deleteBuffer(instanceNormalBuffer);
+      gl.deleteBuffer(instanceUVBuffer);
+      gl.deleteBuffer(instanceTangentBuffer);
       if (shadowState.buffer) gl.deleteBuffer(shadowState.buffer);
 
       for (const record of textureCache.values()) {
@@ -2451,6 +2848,15 @@
         gl.deleteProgram(pointsProgram.program);
         pointsProgram = null;
       }
+
+      // Clean up instanced PBR program.
+      if (instancedProgram) {
+        gl.deleteShader(instancedProgram.vertexShader);
+        gl.deleteShader(instancedProgram.fragmentShader);
+        gl.deleteProgram(instancedProgram.program);
+        instancedProgram = null;
+      }
+      instancedGeometryCache = {};
 
       gl.deleteShader(pbrProgram.vertexShader);
       gl.deleteShader(pbrProgram.fragmentShader);
