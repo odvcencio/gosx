@@ -1,26 +1,19 @@
 package docs
 
-func Page() Node {
-	return <article class="prose">
-		<div class="page-topper">
-			<span class="eyebrow">Docs Missing</span>
-			<p class="lede">
-				This is the
-				<span class="inline-code">/docs</span>
-				scoped not-found page, not the site-wide fallback.
-			</p>
+func NotFound() Node {
+	return <section class="docs-section light">
+		<div class="docs-grid">
+			<div class="docs-content">
+				<div class="docs-404">
+					<h1>Page not found</h1>
+					<p>This documentation page doesn't exist. Try one of these:</p>
+					<ul>
+						<li><a href="/docs/getting-started" data-gosx-link="true">Getting Started</a></li>
+						<li><a href="/docs/routing" data-gosx-link="true">Routing</a></li>
+						<li><a href="/docs/forms" data-gosx-link="true">Forms</a></li>
+					</ul>
+				</div>
+			</div>
 		</div>
-		<h1>
-			The docs subtree could not resolve this page.
-		</h1>
-		<p>
-			The request matched the docs section, so the router resolved the nearest directory-scoped
-			<span class="inline-code">not-found.gsx</span>
-			instead of falling back to the root 404 page.
-		</p>
-		<div class="hero-actions">
-			<a href="/docs/getting-started" data-gosx-link class="cta-link primary">Open getting started</a>
-			<a href="/docs/routing" data-gosx-link class="cta-link">Review routing conventions</a>
-		</div>
-	</article>
+	</section>
 }

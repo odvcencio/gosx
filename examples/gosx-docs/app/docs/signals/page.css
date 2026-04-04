@@ -1,0 +1,55 @@
+/* ============================================================
+   Signals page
+   page.css — sidecar for app/docs/signals/page.gsx
+   ============================================================ */
+
+/* ------------------------------------------------------------
+   Dependency graph visualization
+   ------------------------------------------------------------ */
+
+.signals-graph {
+  padding: var(--space-lg);
+  margin: var(--space-lg) 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.signals-graph__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.signals-graph__node {
+  font-family: var(--font-mono);
+  font-size: var(--text-small);
+  padding: 0.25em 0.75em;
+  border-radius: 0.375em;
+  border: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+.signals-graph__node--source {
+  background: rgba(212, 175, 55, 0.12);
+  border-color: rgba(212, 175, 55, 0.35);
+  color: var(--accent);
+}
+
+.signals-graph__node--computed {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(255, 255, 255, 0.15);
+  color: var(--text-primary);
+}
+
+.signals-graph__node--dom {
+  background: rgba(192, 192, 192, 0.08);
+  border-color: rgba(192, 192, 192, 0.25);
+  color: var(--chrome-light);
+}
+
+.signals-graph__arrow {
+  color: var(--text-muted);
+  font-size: 1.125rem;
+  flex-shrink: 0;
+}

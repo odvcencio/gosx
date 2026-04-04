@@ -1,0 +1,86 @@
+{
+  "format": "gosx-scene-model-v1",
+  "objects": [
+    {
+      "id": "runner-frame",
+      "kind": "lines",
+      "points": [
+        { "x": -0.95, "y": -0.28, "z": -0.12 },
+        { "x": 0.95, "y": -0.28, "z": -0.12 },
+        { "x": 1.18, "y": 0.08, "z": 0.14 },
+        { "x": 0.38, "y": 0.52, "z": 0.4 },
+        { "x": -0.32, "y": 0.52, "z": 0.4 },
+        { "x": -1.18, "y": 0.08, "z": 0.14 },
+        { "x": -0.34, "y": 0.08, "z": 0.98 },
+        { "x": 0.34, "y": 0.08, "z": 0.98 },
+        { "x": 0, "y": -0.46, "z": 1.12 }
+      ],
+      "segments": [
+        [0, 1],
+        [1, 2],
+        [2, 3],
+        [3, 4],
+        [4, 5],
+        [5, 0],
+        [3, 6],
+        [4, 7],
+        [6, 7],
+        [6, 8],
+        [7, 8],
+        [0, 6],
+        [1, 7]
+      ],
+      "material": {
+        "kind": "matte",
+        "color": "#6ab6ff"
+      }
+    }
+  ],
+  "labels": [
+    {
+      "id": "runner-label",
+      "text": "Model asset",
+      "x": 0,
+      "y": 1.02,
+      "z": 0.42,
+      "maxWidth": 160,
+      "background": "rgba(8, 21, 31, 0.82)",
+      "borderColor": "rgba(141, 225, 255, 0.24)"
+    }
+  ],
+  "sprites": [
+    {
+      "id": "runner-card",
+      "src": "../paper-card.png",
+      "x": 0.08,
+      "y": 1.05,
+      "z": 0.28,
+      "width": 1.55,
+      "height": 1.02,
+      "opacity": 0.94,
+      "priority": 3,
+      "anchorX": 0.5,
+      "anchorY": 0.5,
+      "offsetY": 8,
+      "occlude": true,
+      "fit": "cover",
+      "shiftX": 0.08,
+      "shiftY": 0.06,
+      "driftSpeed": 0.62,
+      "driftPhase": 0.45
+    }
+  ],
+  "lights": [
+    {
+      "id": "runner-rim",
+      "kind": "point",
+      "color": "#ffd48f",
+      "intensity": 1.18,
+      "x": 0.42,
+      "y": 0.94,
+      "z": 1.24,
+      "range": 4.8,
+      "decay": 1.35
+    }
+  ]
+}

@@ -345,7 +345,13 @@ func ServeHandler(w http.ResponseWriter, req *http.Request, handler Handler) {
 		}
 		ctx.Payload = payload
 	} else {
-		if err := req.ParseForm(); err != nil {
+		var err error
+		if strings.HasPrefix(contentType, "multipart/form-data") {
+			err = req.ParseMultipartForm(maxActionBodyBytes)
+		} else {
+			err = req.ParseForm()
+		}
+		if err != nil {
 			if isBodyTooLarge(err) {
 				http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
 				return

@@ -477,7 +477,8 @@ func (r *fileRouteRegistrar) buildRoute(page FilePage) (Route, error) {
 		Handler: func(ctx *RouteContext) gosx.Node {
 			node, err := renderFilePage(ctx, resolved.page, resolved.module, r.renderFn)
 			if err != nil {
-				panic(err)
+				ctx.SetHandlerError(err)
+				return gosx.Node{}
 			}
 			return node
 		},

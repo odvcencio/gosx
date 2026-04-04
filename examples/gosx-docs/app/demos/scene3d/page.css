@@ -1,120 +1,83 @@
-.zoo-shell {
+/* ============================================================
+   Geometry Zoo demo — full-viewport 3D canvas with info overlay
+   page.css — sidecar for app/demos/scene3d/page.gsx
+   ============================================================ */
+
+.geo-zoo {
+  position: relative;
+  min-height: 100vh;
+  overflow: hidden;
+  background: #09141e;
+}
+
+.geo-zoo__scene {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+}
+
+.geo-zoo__scene canvas {
+  display: block;
+  width: 100% !important;
+  height: 100% !important;
+}
+
+.geo-zoo__overlay {
+  position: relative;
+  z-index: 1;
   display: flex;
   flex-direction: column;
-  gap: var(--space-2xl);
-}
-
-.zoo-hero {
-  display: grid;
-  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
-  gap: var(--space-lg);
-  align-items: start;
-}
-
-.zoo-hero__copy {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-lg);
-}
-
-.zoo-hero__copy h1,
-.zoo-stage h2,
-.zoo-trait h3 {
-  margin: 0;
-  font-family: var(--font-display);
-  line-height: 0.94;
-  letter-spacing: -0.04em;
-}
-
-.zoo-hero__copy h1 {
-  max-width: 10ch;
-  font-size: var(--type-hero);
-}
-
-.zoo-hero__copy > p,
-.zoo-control p,
-.zoo-trait p {
-  margin: 0;
-  color: var(--color-text-secondary);
-}
-
-.zoo-stage {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-md);
-  padding: var(--space-md);
-  border: 1px solid var(--color-scene-line);
-  border-radius: var(--radius-lg);
-  background:
-    radial-gradient(circle at top, var(--color-scene-glow), transparent 48%),
-    linear-gradient(160deg, var(--color-scene-bg), var(--color-scene-surface-soft));
-  box-shadow: 0 24px 48px var(--color-shadow);
-}
-
-.zoo-scene {
-  min-height: 34rem;
-  padding: 0.75rem;
-  border-radius: calc(var(--radius-lg) - 0.1rem);
-  border: 1px solid var(--color-scene-line);
-  background:
-    radial-gradient(circle at top, var(--color-scene-glow), transparent 52%),
-    linear-gradient(180deg, var(--color-scene-bg), var(--color-scene-surface-soft));
-}
-
-.zoo-legend {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: var(--space-sm);
-}
-
-.zoo-control {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  gap: var(--space-xs) var(--space-sm);
-  align-items: start;
-  padding: var(--space-sm);
-  border: 1px solid var(--color-scene-line);
-  border-radius: var(--radius-md);
-  background: var(--color-scene-surface-glass);
-}
-
-.zoo-control p {
-  color: var(--color-ink-inverse);
-}
-
-.zoo-control kbd {
-  display: inline-flex;
   align-items: center;
-  justify-content: center;
-  min-width: 2.2rem;
-  padding: 0.2rem 0.5rem;
-  border: 1px solid var(--color-scene-line);
-  border-bottom-width: 2px;
-  border-radius: 999px;
-  background: var(--color-scene-surface-glass-strong);
-  color: var(--color-ink-inverse);
+  justify-content: flex-end;
+  min-height: 100vh;
+  padding: var(--space-xl);
+  text-align: center;
+  pointer-events: none;
+  gap: var(--space-xs);
+}
+
+.geo-zoo__title {
+  font-family: var(--font-display);
+  font-size: var(--text-hero);
+  margin: 0;
+}
+
+.geo-zoo__subtitle {
+  color: var(--text-muted);
+  font-size: var(--text-small);
   font-family: var(--font-mono);
-  font-size: var(--type-note);
-  letter-spacing: 0.08em;
   text-transform: uppercase;
+  letter-spacing: var(--ls-label);
+  margin: 0;
 }
 
-.zoo-trait h3 {
-  font-size: var(--type-title);
+.geo-zoo__legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+  list-style: none;
+  margin: var(--space-xs) 0 0;
+  padding: 0;
+  justify-content: center;
 }
 
-@media (max-width: 1180px) {
-  .zoo-hero {
-    grid-template-columns: 1fr;
+.geo-zoo__legend li {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  color: rgba(212, 175, 55, 0.75);
+  background: rgba(212, 175, 55, 0.08);
+  border: 1px solid rgba(212, 175, 55, 0.2);
+  border-radius: 0.25rem;
+  padding: 0.2em 0.6em;
+  letter-spacing: var(--ls-label);
+}
+
+@media (max-width: 767px) {
+  .geo-zoo__title {
+    font-size: clamp(2rem, 8vw, 3.5rem);
   }
-}
 
-@media (max-width: 720px) {
-  .zoo-legend {
-    grid-template-columns: 1fr;
-  }
-
-  .zoo-scene {
-    min-height: 26rem;
+  .geo-zoo__legend {
+    gap: 0.4rem 0.6rem;
   }
 }

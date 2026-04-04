@@ -1,0 +1,277 @@
+/* ============================================================
+   Docs sub-layout — TOC rail, content area, prose typography
+   layout.css — sidecar for app/docs/layout.gsx
+   ============================================================ */
+
+/* ------------------------------------------------------------
+   Grid
+   ------------------------------------------------------------ */
+
+.docs-grid {
+  display: grid;
+  grid-template-columns: 220px 1fr;
+  gap: var(--space-xl);
+  max-width: 72rem;
+  margin: 0 auto;
+  padding: var(--space-xl) var(--space-lg);
+  padding-top: calc(var(--space-xl) + 4rem);
+}
+
+/* ------------------------------------------------------------
+   TOC rail
+   ------------------------------------------------------------ */
+
+.toc-rail {
+  position: sticky;
+  top: calc(4rem + var(--space-md));
+  max-height: calc(100vh - 6rem);
+  overflow-y: auto;
+  padding-right: var(--space-md);
+}
+
+.toc-link {
+  display: block;
+  padding: var(--space-xs) 0;
+  font-size: var(--text-small);
+  color: var(--text-muted);
+  text-decoration: none;
+  border-left: 2px solid transparent;
+  padding-left: var(--space-sm);
+  transition: color var(--duration-fast);
+}
+
+.toc-link:hover {
+  color: var(--text-secondary);
+}
+
+.toc-link.active {
+  border-left-color: var(--accent);
+  color: var(--text-primary);
+}
+
+/* ------------------------------------------------------------
+   Docs content
+   ------------------------------------------------------------ */
+
+.docs-content {
+  min-width: 0;
+}
+
+/* ------------------------------------------------------------
+   Prose typography
+   ------------------------------------------------------------ */
+
+.prose h2 {
+  font-family: var(--font-display);
+  font-size: var(--text-h2);
+  letter-spacing: var(--ls-headline);
+  line-height: var(--lh-headline);
+  margin-top: var(--space-2xl);
+  margin-bottom: var(--space-sm);
+}
+
+.prose h3 {
+  font-family: var(--font-display);
+  font-size: var(--text-h3);
+  margin-top: var(--space-xl);
+  margin-bottom: var(--space-xs);
+}
+
+.prose p {
+  margin-bottom: var(--space-md);
+  line-height: var(--lh-prose);
+  color: var(--text-secondary);
+}
+
+.prose ul,
+.prose ol {
+  padding-left: var(--space-lg);
+  margin-bottom: var(--space-md);
+}
+
+.prose li {
+  margin-bottom: var(--space-xs);
+}
+
+.prose blockquote {
+  margin: var(--space-lg) 0;
+  padding: var(--space-sm) var(--space-md);
+  border-left: 3px solid var(--accent);
+  background: var(--surface);
+  font-style: italic;
+}
+
+.prose a {
+  color: var(--accent);
+  text-decoration: none;
+  border-bottom: 1px solid transparent;
+  transition: border-bottom-color var(--duration-fast);
+}
+
+.prose a:hover {
+  border-bottom-color: var(--accent);
+}
+
+.prose code {
+  font-family: var(--font-mono);
+  font-size: 0.875em;
+  background: var(--code-bg);
+  border: 1px solid var(--code-border);
+  padding: 0.15em 0.4em;
+  border-radius: 0.25em;
+}
+
+.prose pre {
+  margin: var(--space-md) 0;
+}
+
+/* ------------------------------------------------------------
+   Docs header
+   ------------------------------------------------------------ */
+
+.docs-header {
+  margin-bottom: var(--space-2xl);
+  padding-bottom: var(--space-lg);
+  border-bottom: 1px solid var(--border);
+}
+
+.docs-header__title {
+  font-family: var(--font-display);
+  font-size: var(--text-h2);
+  letter-spacing: var(--ls-headline);
+  line-height: var(--lh-headline);
+  margin: 0 0 var(--space-sm) 0;
+}
+
+.docs-header__description {
+  color: var(--text-secondary);
+  line-height: var(--lh-prose);
+  margin: 0 0 var(--space-sm) 0;
+}
+
+.docs-header__tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-xs);
+}
+
+.docs-tag {
+  font-family: var(--font-mono);
+  font-size: var(--text-small);
+  color: var(--text-muted);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  padding: 0.15em 0.5em;
+  border-radius: 0.25em;
+}
+
+/* ------------------------------------------------------------
+   Demo well
+   ------------------------------------------------------------ */
+
+.demo-well {
+  background: var(--code-bg);
+  border: 1px solid var(--code-border);
+  border-radius: 0.75rem;
+  padding: var(--space-lg);
+  margin: var(--space-lg) 0;
+}
+
+/* ------------------------------------------------------------
+   Docs footer
+   ------------------------------------------------------------ */
+
+.docs-footer {
+  margin-top: var(--space-3xl);
+  padding-top: var(--space-lg);
+  border-top: 1px solid var(--border);
+  display: flex;
+  justify-content: space-between;
+}
+
+.docs-footer__link {
+  color: var(--accent);
+  text-decoration: none;
+  transition: color var(--duration-fast);
+}
+
+.docs-footer__link:hover {
+  color: var(--accent-deep);
+}
+
+.docs-footer__link--next {
+  margin-left: auto;
+}
+
+/* ------------------------------------------------------------
+   Docs 404
+   ------------------------------------------------------------ */
+
+.docs-404 {
+  padding: var(--space-2xl) 0;
+}
+
+.docs-404 h1 {
+  font-family: var(--font-display);
+  font-size: var(--text-h2);
+  letter-spacing: var(--ls-headline);
+  margin: 0 0 var(--space-md) 0;
+}
+
+.docs-404 p {
+  color: var(--text-secondary);
+  margin: 0 0 var(--space-md) 0;
+}
+
+.docs-404 ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.docs-404 li {
+  margin-bottom: var(--space-xs);
+}
+
+.docs-404 a {
+  color: var(--accent);
+  text-decoration: none;
+  border-bottom: 1px solid transparent;
+  transition: border-bottom-color var(--duration-fast);
+}
+
+.docs-404 a:hover {
+  border-bottom-color: var(--accent);
+}
+
+/* ------------------------------------------------------------
+   Mobile breakpoint
+   ------------------------------------------------------------ */
+
+@media (max-width: 767px) {
+  .docs-grid {
+    grid-template-columns: 1fr;
+    gap: 0;
+  }
+
+  .toc-rail {
+    position: static;
+    max-height: none;
+    overflow-y: visible;
+    padding-right: 0;
+    padding-bottom: var(--space-md);
+    border-bottom: 1px solid var(--border);
+    margin-bottom: var(--space-md);
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-xs);
+  }
+
+  .toc-link {
+    border-left: none;
+    padding-left: 0;
+    padding: var(--space-xs) var(--space-sm);
+    background: var(--surface);
+    border-radius: 0.25em;
+  }
+}

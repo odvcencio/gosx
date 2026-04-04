@@ -1,0 +1,137 @@
+/* ============================================================
+   3D Engine docs page
+   page.css — sidecar for app/docs/scene3d/page.gsx
+   ============================================================ */
+
+/* ------------------------------------------------------------
+   Chrome-text heading overrides (dark mode)
+   ------------------------------------------------------------ */
+
+.docs-section:not(.light) .docs-header__title {
+  background: linear-gradient(
+    135deg,
+    var(--chrome-dark) 0%,
+    var(--chrome-light) 40%,
+    var(--chrome-dark) 60%,
+    var(--chrome-light) 100%
+  );
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+@media (forced-colors: active) {
+  .docs-section:not(.light) .docs-header__title {
+    -webkit-text-fill-color: CanvasText;
+    background: none;
+  }
+}
+
+.docs-section:not(.light) .prose h2 {
+  color: var(--chrome-light);
+}
+
+/* Gold accent on inline-code */
+.docs-section:not(.light) .inline-code {
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-size: 0.875em;
+  background: rgba(212, 175, 55, 0.08);
+  border: 1px solid rgba(212, 175, 55, 0.2);
+  padding: 0.15em 0.4em;
+  border-radius: 0.25em;
+}
+
+/* ------------------------------------------------------------
+   Demo well — hosts the live Scene3D embed
+   ------------------------------------------------------------ */
+
+.scene3d-demo-well {
+  margin: var(--space-xl) 0;
+  border-radius: 0.75rem;
+  overflow: hidden;
+  border: 1px solid rgba(212, 175, 55, 0.2);
+  background: #08151f;
+  position: relative;
+}
+
+.scene3d-demo-well canvas {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+/* ------------------------------------------------------------
+   Geometry grid
+   ------------------------------------------------------------ */
+
+.scene3d-geometry-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: var(--space-sm);
+  margin: var(--space-md) 0;
+}
+
+.scene3d-geometry-card {
+  padding: var(--space-sm);
+  border-radius: 0.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  border: 1px solid rgba(212, 175, 55, 0.15);
+  background: rgba(212, 175, 55, 0.04);
+  transition: border-color var(--duration-fast);
+}
+
+.scene3d-geometry-card:hover {
+  border-color: rgba(212, 175, 55, 0.35);
+}
+
+.scene3d-geometry-name {
+  font-family: var(--font-mono);
+  font-size: var(--text-small);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.scene3d-geometry-fields {
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+/* ------------------------------------------------------------
+   Glass panel (shared utility — dark mode tint)
+   ------------------------------------------------------------ */
+
+.docs-section:not(.light) .glass-panel {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+/* ------------------------------------------------------------
+   TOC gold accent (dark mode)
+   ------------------------------------------------------------ */
+
+.docs-section:not(.light) .toc-link.active {
+  border-left-color: var(--accent);
+  color: var(--accent);
+}
+
+.docs-section:not(.light) .docs-tag {
+  border-color: rgba(212, 175, 55, 0.2);
+  color: var(--accent);
+  background: rgba(212, 175, 55, 0.06);
+}
+
+/* ------------------------------------------------------------
+   Mobile
+   ------------------------------------------------------------ */
+
+@media (max-width: 767px) {
+  .scene3d-geometry-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+}

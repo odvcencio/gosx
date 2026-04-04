@@ -1,137 +1,160 @@
 package docs
 
 func Page() Node {
-	return <article class="prose">
-		<div class="page-topper">
-			<span class="eyebrow">Auth</span>
-			<p class="lede">
-				GoSX ships passwordless auth primitives by default: session-backed magic links, passkeys, and provider OAuth on the same routed request pipeline.
-			</p>
-		</div>
-		<h1>
-			Auth in GoSX is a session concern, not a bolt-on password stack.
-		</h1>
-		<p>
-			The auth middleware resolves the current user once, stores it on the request context, and exposes it to file-routed
-			<span class="inline-code">.gsx</span>
-			pages as
-			<span class="inline-code">user</span>
-			.
-		</p>
-		<div class="note-grid">
-			<div class="note">
-				<strong>Current user</strong>
-				<p>{user.name}</p>
-			</div>
-			<div class="note">
-				<strong>Current provider</strong>
-				<p>{user.meta.provider}</p>
-			</div>
-			<div class="note">
-				<strong>Session flash</strong>
-				<p>{flash.notice}</p>
-			</div>
-		</div>
-		<section class="callout">
-			<strong>Default stance</strong>
+	return <div>
+		<section id="sessions">
+			<h2>Sessions</h2>
 			<p>
-				Password flows are not shipped by default. If an app wants username-and-password auth, it owns that logic.
+				Sessions are the base layer. Every auth primitive in GoSX operates through a session store,
+				so the current user and flash state are available to any file-routed page without extra plumbing.
+			</p>
+			{CodeBlock("go", `sessions := session.MustNew(os.Getenv("SESSION_SECRET"), session.Options{})
+app.Use(sessions.Middleware)
+app.Use(sessions.Protect)`)}
+			<p>
+				<span class="inline-code">session.MustNew</span>
+				creates a cookie-backed, HMAC-signed session store. The secret is the only required input.
+				<span class="inline-code">sessions.Protect</span>
+				attaches CSRF enforcement to every mutating request.
 			</p>
 		</section>
-		<If when={authFlows.magicLinkEnabled}>
-			<section class="callout">
-				<strong>Magic link</strong>
-				<p>
-					Post an email address to the built-in handler and GoSX will issue a signed-in session callback without requiring a separate auth subsystem.
-				</p>
-				<form class="docs-form" method="post" action={authFlows.magicLinkRequestPath}>
+
+		<section id="magic-links">
+			<h2>Magic Links</h2>
+			<p>
+				Magic links let users authenticate by clicking a signed URL delivered to their email address.
+				GoSX ships the request and callback handlers; the app supplies the resolver and the mailer.
+			</p>
+			{CodeBlock("go", `authn := auth.New(sessions, auth.Options{LoginPath: "/docs/auth"})
+magicLinks := authn.MagicLinks(auth.MagicLinkOptions{
+    Path:        "/auth/magic-link",
+    SuccessPath: "/dashboard",
+    FailurePath: "/login",
+    FlashKey:    "magicLink",
+    Resolver: auth.MagicLinkResolverFunc(func(_ context.Context, email string) (auth.User, error) {
+        return lookupOrCreateUser(email)
+    }),
+})
+app.Mount("/auth/magic-link/request", magicLinks.RequestHandler())
+app.Mount("/auth/magic-link", magicLinks.CallbackHandler())`)}
+			<p>
+				The resolver receives the submitted email address and must return a populated
+				<span class="inline-code">auth.User</span>. GoSX handles token issuance, expiry, and signature
+				verification. The issued link is exposed in the flash payload during development so apps
+				can wire their own delivery layer without blocking on SMTP setup.
+			</p>
+			<If cond={data.authFlows.magicLinkEnabled}>
+				<form class="docs-form" method="post" action={data.authFlows.magicLinkRequestPath}>
 					<input type="hidden" name="csrf_token" value={csrf.token}></input>
 					<input type="hidden" name="next" value="/docs/auth"></input>
 					<label class="field">
 						<span>Email</span>
-						<input name="email" value={user.email}></input>
+						<input type="email" name="email" value={user.email} placeholder="you@example.com"></input>
 					</label>
-					<div class="hero-actions">
+					<div class="docs-form__actions">
 						<button class="cta-link primary" type="submit">Send demo magic link</button>
 					</div>
 				</form>
-				<If when={flash.magicLink}>
-					<div class="note-grid">
-						<div class="note">
-							<strong>Delivery</strong>
-							<p>{flash.magicLink.email}</p>
-						</div>
-						<div class="note">
-							<strong>Preview</strong>
-							<a class="cta-link" href={flash.magicLink.url}>Open the issued link</a>
-						</div>
+				<If cond={flash.magicLink != nil}>
+					<div class="callout">
+						<strong>Link issued</strong>
+						<p>Delivery target: {flash.magicLink.email}</p>
+						<a class="cta-link" href={flash.magicLink.url}>Open the issued link</a>
 					</div>
 				</If>
-			</section>
-		</If>
-		<If when={authFlows.webauthnEnabled}>
-			<section class="callout">
-				<strong>Passkeys / WebAuthn</strong>
-				<p>
-					GoSX ships begin/finish handlers plus a browser helper so apps do not have to hand-roll base64 decoding, credential serialization, or signature verification.
-				</p>
-				{DocsCodeBlock("javascript", `await GoSXWebAuthn.register(
-		  "/auth/webauthn/register/options",
-		  "/auth/webauthn/register",
-		  { csrfToken: "${csrf.token}" }
-		)
-		
-		await GoSXWebAuthn.authenticate(
-		  "/auth/webauthn/login/options",
-		  "/auth/webauthn/login",
-		  { csrfToken: "${csrf.token}", next: "/docs/auth" }
-		)`)}
-				<If when={flash.passkey}>
-					<p class="form-status">{flash.passkey.status}</p>
-				</If>
-			</section>
-		</If>
-		<If when={len(authFlows.oauthProviders) > 0}>
-			<section class="callout">
-				<strong>OAuth providers</strong>
-				<p>
-					Provider OAuth rides the same session-backed callback path. When provider credentials are configured, the docs app exposes direct sign-in links.
-				</p>
-				<div class="hero-actions">
-					<Each as="provider" of={authFlows.oauthProviders}>
-						<a class="cta-link" href={provider.Href}>{provider.Label}</a>
-					</Each>
-				</div>
-				<If when={flash.oauth}>
-					<p class="form-status">{flash.oauth.provider}</p>
-				</If>
-			</section>
-		</If>
-		<section class="callout">
-			<strong>Custom app auth logic</strong>
-			<p>
-				The framework defaults are passwordless, but apps can still write their own session actions when they need a custom identity model.
-			</p>
+			</If>
 		</section>
-		<form class="docs-form" method="post" action={actionPath("signIn")}>
-			<input type="hidden" name="csrf_token" value={csrf.token}></input>
-			<label class="field">
-				<span>Name</span>
-				<input name="name"></input>
-			</label>
-			<p class="form-error">{actions.signIn.fieldErrors.name}</p>
-			<div class="hero-actions">
-				<button class="cta-link primary" type="submit">Run custom sign-in action</button>
-				<button class="cta-link" type="submit" formaction={actionPath("signOut")}>Sign out</button>
+
+		<section id="passkeys">
+			<h2>WebAuthn / Passkeys</h2>
+			<p>
+				GoSX ships begin/finish handlers for WebAuthn registration and authentication.
+				The browser helper handles credential serialization, base64 encoding, and
+				signature verification so apps do not have to hand-roll those steps.
+			</p>
+			{CodeBlock("go", `webauthn := authn.WebAuthn(auth.WebAuthnOptions{
+    RPName:      "My App",
+    Origin:      publicBase,
+    SuccessPath: "/dashboard",
+    FailurePath: "/login",
+    FlashKey:    "passkey",
+    Resolver: auth.WebAuthnResolverFunc(func(_ context.Context, login string) (auth.User, error) {
+        return lookupUser(login)
+    }),
+})
+app.Mount("/auth/webauthn/register/options", webauthn.RegisterOptionsHandler())
+app.Mount("/auth/webauthn/register", webauthn.RegisterHandler())
+app.Mount("/auth/webauthn/login/options", webauthn.LoginOptionsHandler())
+app.Mount("/auth/webauthn/login", webauthn.LoginHandler())`)}
+			{CodeBlock("javascript", `// Registration
+await GoSXWebAuthn.register(
+    "/auth/webauthn/register/options",
+    "/auth/webauthn/register",
+    { csrfToken: document.querySelector("[name=csrf_token]").value }
+)
+
+// Authentication
+await GoSXWebAuthn.authenticate(
+    "/auth/webauthn/login/options",
+    "/auth/webauthn/login",
+    { csrfToken: document.querySelector("[name=csrf_token]").value, next: "/dashboard" }
+)`)}
+			<If cond={flash.passkey != nil}>
+				<p class="form-status">{flash.passkey.status}</p>
+			</If>
+			<div class="callout">
+				<strong>Note</strong>
+				<p>
+					OAuth provider login is deferred to v2. The same session and callback infrastructure
+					will carry it when it lands.
+				</p>
 			</div>
-		</form>
-		<section class="callout">
-			<strong>Protected route</strong>
+		</section>
+
+		<section id="protected-routes">
+			<h2>Protected Routes</h2>
 			<p>
-				Try the guarded lab route:
-				<a href="/labs/secret" data-gosx-link class="cta-link">Open the secret page</a>
+				The
+				<span class="inline-code">authn.Require</span>
+				middleware guard redirects unauthenticated requests to the configured login path.
+				Mount it on a subtree or individual route via
+				<span class="inline-code">app.Use</span>
+				or inline in an action handler.
+			</p>
+			{CodeBlock("go", `authn := auth.New(sessions, auth.Options{LoginPath: "/login"})
+app.Use(authn.Middleware)
+
+// Guard a specific subtree
+router.AddDir("./app/admin", route.FileRoutesOptions{
+    Middleware: []route.Middleware{authn.Require("admin")},
+})`)}
+			<p>
+				<span class="inline-code">authn.Require</span>
+				accepts optional role names. When roles are given, users without a matching role
+				are redirected even if they are authenticated.
 			</p>
 		</section>
+
+		<section id="csrf">
+			<h2>CSRF</h2>
+			<p>
+				CSRF protection is on by default. Every session initialized with
+				<span class="inline-code">sessions.Protect</span>
+				will reject mutating requests that do not include a valid token.
+				File-routed pages expose the token as
+				<span class="inline-code">csrf.token</span>.
+			</p>
+			{CodeBlock("gosx", `<form method="post" action={actionPath("submit")}>
+    <input type="hidden" name="csrf_token" value={csrf.token}></input>
+    <button type="submit">Submit</button>
+</form>`)}
+			<p>
+				No separate package or middleware registration is needed. The session store and
+				<span class="inline-code">sessions.Protect</span>
+				handle the full token lifecycle.
+			</p>
+		</section>
+
 		<p class="form-status">{action.message}</p>
-	</article>
+	</div>
 }

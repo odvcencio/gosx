@@ -1,179 +1,137 @@
 package docs
 
 func Page() Node {
-	return <article class="prose">
-		<div class="page-topper">
-			<span class="eyebrow">Runtime</span>
-			<p class="lede">
-				Hydration bootstrap, page disposal, and script re-entry cooperate during client-side transitions.
-			</p>
-		</div>
-		<h1>
-			Page transitions reuse the runtime instead of pretending the browser does not exist.
-		</h1>
-		<p>
-			When you click a marked link, GoSX fetches the next HTML document, swaps the managed head and body regions, loads any page-owned runtime scripts it needs, and re-runs the page bootstrap hook. Islands, engines, and hubs get a disposal phase before the next page claims the DOM.
-		</p>
-		<section class="feature-grid">
-			<div class="card">
-				<strong>Dispose</strong>
-				<p>
-					The current page tears down islands, engines, and hub sockets before replacement.
-				</p>
-			</div>
-			<div class="card">
-				<strong>Swap</strong>
-				<p>
-					Managed head nodes and body markup are replaced without reloading the whole tab.
-				</p>
-			</div>
-			<div class="card">
-				<strong>Re-enter</strong>
-				<p>
-					The existing bootstrap runtime hydrates whatever the next page needs.
-				</p>
-			</div>
-			<div class="card">
-				<strong>Prefetch</strong>
-				<p>
-					Hover and focus prefetch the next HTML payload so the click path is shorter.
-				</p>
-			</div>
-		</section>
-		<section class="runtime-watch" data-runtime-watch>
-			<div class="runtime-watch-copy">
-				<span class="eyebrow">Lifecycle Script</span>
-				<h2>
-					Page-owned scripts can ride the navigation lifecycle instead of being bolted onto the DOM by hand.
-				</h2>
-				<p>
-					This panel is updated by
-					<span class="inline-code">runtime/watch-transport.js</span>
-					, a page-owned lifecycle script registered from the route loader. It stays under the GoSX document contract, survives client transitions, and rebinds itself when you come back to this route.
-				</p>
-			</div>
-			<div class="runtime-watch-grid">
-				<div class="runtime-watch-card">
-					<span class="runtime-watch-label">Last sync</span>
-					<strong class="runtime-watch-value" data-runtime-watch-field="trigger">loading</strong>
-				</div>
-				<div class="runtime-watch-card">
-					<span class="runtime-watch-label">Page pattern</span>
-					<strong class="runtime-watch-value" data-runtime-watch-field="page">pending</strong>
-				</div>
-				<div class="runtime-watch-card">
-					<span class="runtime-watch-label">Path</span>
-					<strong class="runtime-watch-value" data-runtime-watch-field="path">pending</strong>
-				</div>
-				<div class="runtime-watch-card">
-					<span class="runtime-watch-label">Navigation</span>
-					<strong class="runtime-watch-value" data-runtime-watch-field="navigation">pending</strong>
-				</div>
-				<div class="runtime-watch-card">
-					<span class="runtime-watch-label">Bootstrap mode</span>
-					<strong class="runtime-watch-value" data-runtime-watch-field="bootstrap">pending</strong>
-				</div>
-				<div class="runtime-watch-card">
-					<span class="runtime-watch-label">Head scripts</span>
-					<strong class="runtime-watch-value" data-runtime-watch-field="scripts">0</strong>
-				</div>
-			</div>
-			<p class="runtime-watch-note">
-				Use
-				<span class="inline-code">ManagedScript</span>
-				for page-owned helpers that only need to stay managed across transitions. Use
-				<span class="inline-code">LifecycleScript</span>
-				when the script must be present before GoSX re-enters the next page and calls its bootstrap hooks.
-			</p>
-		</section>
-		<section class="scene-callout">
-			<div class="scene-copy">
-				<span class="eyebrow">Native Scene3D</span>
-				<h2>
-					.gsx can now mount engine-backed surfaces from typed Go scene data instead of hand-assembling raw prop bags.
-				</h2>
-				<p>
-					The scene below is declared in
-					<span class="inline-code">page.gsx</span>
-					while
-					<span class="inline-code">page.server.go</span>
-					returns a typed
-					<span class="inline-code">scene.Props</span>
-					payload with camera clipping, a
-					<span class="inline-code">scene.Graph</span>
-					fallback, and a shared-runtime
-					<span class="inline-code">ProgramRef</span>
-					served by the app. That keeps the authoring path server-first while making the browser runtime explicit instead of ad hoc.
-				</p>
-				<div class="scene-controls">
-					<div class="scene-control">
-						<kbd>Pointer</kbd>
-						<p>
-							Move across the surface to steer the camera and pull the geometry off center.
-						</p>
-					</div>
-					<div class="scene-control">
-						<div class="scene-keyset">
-							<kbd>Left</kbd>
-							<kbd>Right</kbd>
-						</div>
-						<p>
-							Bias the spin direction and shift the secondary mesh tint through shared keyboard signals.
-						</p>
-					</div>
-					<div class="scene-control">
-						<kbd>Up</kbd>
-						<p>
-							Warm the palette and tighten the camera to prove the runtime is ticking, not just hydrating once.
-						</p>
-					</div>
-				</div>
-			</div>
-			<Scene3D class="scene-shell" {...data.sceneDemo}>
-				<div class="scene-fallback">Preparing the scene runtime...</div>
-			</Scene3D>
-		</section>
-		{DocsCodeBlock("javascript", `window.__gosx_dispose_page()
-		window.__gosx_bootstrap_page()
-		window.__gosx_page_nav.navigate("/docs/routing")`)}
-		{DocsCodeBlock("go", `func Load(ctx *route.RouteContext, page route.FilePage) (any, error) {
-	    ctx.LifecycleScript(docsapp.PublicAssetURL("runtime/watch-transport.js"))
-	    return map[string]any{
-	        "sceneDemo": scene.Props{
-	            ProgramRef: "/api/runtime/scene-program",
-	            Background: "#08151f",
-	            DragToRotate: scene.Bool(true),
-	            Camera: scene.PerspectiveCamera{
-	                Position: scene.Vec3(0, 1.1, 6.2),
-	                FOV:      58,
-	                Near:     0.15,
-	                Far:      72,
-	            },
-	            Graph: scene.NewGraph(
-	                scene.Mesh{ID: "runtime-core", Geometry: scene.BoxGeometry{Width: 1.8, Height: 1.2, Depth: 1.2}},
-	                scene.Label{Target: "runtime-core", Text: "Shared runtime"},
-	            ),
-	        },
-	    }, nil
-	}`)}
-		{DocsCodeBlock("go", `ctx.ManagedScript(
-	    docsapp.PublicAssetURL("cms-demo.js"),
-	    server.ManagedScriptOptions{},
-	)`)}
-		{DocsCodeBlock("gosx", `func Page() Node {
-		    return <Scene3D class="scene-shell" {...data.sceneDemo}>
-		        <div class="scene-fallback">Preparing the scene runtime...</div>
-		    </Scene3D>
-		}`)}
-		<section class="callout">
-			<strong>Constraint</strong>
+	return <div>
+		<section id="client-navigation">
+			<h2>Client Navigation</h2>
 			<p>
-				This is still HTML-first. Engines extend the page with owned browser surfaces, but the server still shapes the route, data, and outer document.
+				GoSX ships an opt-in client navigation model. Mark a link with
+				<span class="inline-code">data-gosx-link</span>
+				and the runtime intercepts the click, fetches the next document, and swaps the managed
+				regions of the page without a full browser reload.
+			</p>
+			{CodeBlock("gosx", `<a href="/docs/routing" data-gosx-link="true" class="nav-link">Routing</a>`)}
+			<p>
+				The navigation script is injected by
+				<span class="inline-code">server.NavigationScript()</span>
+				from the layout loader. It must be present in the document head before any
+				<span class="inline-code">data-gosx-link</span>
+				attribute is encountered.
+			</p>
+			{CodeBlock("go", `router.SetLayout(func(ctx *route.RouteContext, body gosx.Node) gosx.Node {
+    ctx.AddHead(server.NavigationScript())
+    return server.HTMLDocument(ctx.Title("My App"), ctx.Head(), body)
+})`)}
+		</section>
+
+		<section id="page-transitions">
+			<h2>Page Transitions</h2>
+			<p>
+				When the runtime intercepts a link click it follows a predictable sequence: dispose the
+				current page, fetch the next HTML document, swap the managed head and body regions,
+				then re-run the bootstrap hook for the incoming page.
+			</p>
+			<div class="feature-grid">
+				<div class="card">
+					<strong>Fetch</strong>
+					<p>The next document is fetched as a full server-rendered HTML response.</p>
+				</div>
+				<div class="card">
+					<strong>Dispose</strong>
+					<p>Islands, engines, and hub sockets on the current page receive a teardown signal.</p>
+				</div>
+				<div class="card">
+					<strong>Swap</strong>
+					<p>Managed head nodes and the body markup are replaced in place.</p>
+				</div>
+				<div class="card">
+					<strong>Bootstrap</strong>
+					<p>The shared runtime re-hydrates whatever the incoming page declares.</p>
+				</div>
+			</div>
+			<p>
+				The navigation can also be triggered programmatically from a lifecycle script:
+			</p>
+			{CodeBlock("javascript", `window.__gosx_page_nav.navigate("/docs/routing")
+window.__gosx_dispose_page()
+window.__gosx_bootstrap_page()`)}
+		</section>
+
+		<section id="lifecycle-scripts">
+			<h2>Lifecycle Scripts</h2>
+			<p>
+				Page-owned scripts can participate in the navigation lifecycle instead of being wired
+				to the DOM manually. Register a lifecycle script from the route loader using
+				<span class="inline-code">ctx.LifecycleScript</span>.
+				It will be loaded before the next page bootstraps and re-executed on each navigation
+				back to the route.
+			</p>
+			{CodeBlock("go", `func Load(ctx *route.RouteContext, page route.FilePage) (any, error) {
+    ctx.LifecycleScript(server.AssetURL("my-page-script.js"))
+    return data, nil
+}`)}
+			<p>
+				Use
+				<span class="inline-code">data-gosx-lifecycle-script</span>
+				in markup when the script is rendered inline by the template rather than registered
+				from the loader.
+			</p>
+			{CodeBlock("gosx", `<script
+    src={server.AssetURL("chart-init.js")}
+    data-gosx-lifecycle-script
+></script>`)}
+			<p>
+				Lifecycle scripts differ from managed scripts:
+				<span class="inline-code">LifecycleScript</span>
+				guarantees execution before the bootstrap hooks run on the next page.
+				<span class="inline-code">ManagedScript</span>
+				is appropriate for helpers that only need to stay present across transitions.
+			</p>
+			{CodeBlock("go", `ctx.ManagedScript(
+    server.AssetURL("analytics.js"),
+    server.ManagedScriptOptions{},
+)`)}
+		</section>
+
+		<section id="prefetch">
+			<h2>Prefetch</h2>
+			<p>
+				The runtime prefetches the next document on link hover and focus so the navigation
+				path is shorter for mouse and keyboard users. No configuration is required; the
+				behavior is active whenever
+				<span class="inline-code">server.NavigationScript()</span>
+				is present.
+			</p>
+			<p>
+				Prefetch fires a standard
+				<span class="inline-code">fetch</span>
+				request with the same headers the full navigation would use. The response is cached
+				in memory for the duration of the hover or until the click resolves. Pages that must
+				not be prefetched can opt out with a
+				<span class="inline-code">Cache-Control: no-store</span>
+				response header.
 			</p>
 		</section>
-		<div class="hero-actions">
-			<Link class="cta-link" href="/docs/routing">Back to routing</Link>
-			<Link class="cta-link primary" href="/">Back to overview</Link>
-		</div>
-	</article>
+
+		<section id="disposal">
+			<h2>Disposal</h2>
+			<p>
+				Before the incoming page is mounted, the current page enters a disposal phase.
+				Islands stop their signal subscriptions, engines release GPU resources, and hub
+				WebSocket connections are closed. Scripts registered as lifecycle scripts also
+				receive a dispose callback if they export one.
+			</p>
+			{CodeBlock("javascript", `// In a lifecycle script
+export function dispose() {
+    myCanvas.getContext("webgl2")?.getExtension("WEBGL_lose_context")?.loseContext()
+    clearInterval(myTimer)
+}`)}
+			<p>
+				Disposal is synchronous by default. Async teardown can be awaited by returning a
+				promise from the
+				<span class="inline-code">dispose</span>
+				export. The runtime will wait up to 300 ms before proceeding with the swap.
+			</p>
+		</section>
+	</div>
 }

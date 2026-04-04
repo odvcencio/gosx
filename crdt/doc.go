@@ -122,8 +122,11 @@ func Load(data []byte) (*Doc, error) {
 	return doc, nil
 }
 
-func (d *Doc) Save() []byte {
-	hooks, patches := d.flushPendingForSnapshot()
+func (d *Doc) Save() ([]byte, error) {
+	hooks, patches, err := d.flushPendingForSnapshot()
+	if err != nil {
+		return nil, err
+	}
 	fireHooks(hooks, patches)
 
 	d.mu.RLock()
@@ -142,9 +145,9 @@ func (d *Doc) Save() []byte {
 	}
 	body, err := marshalJSON(snap)
 	if err != nil {
-		panic(err)
+		return nil, fmt.Errorf("encode document snapshot: %w", err)
 	}
-	return enc.EncodeDocument(body)
+	return enc.EncodeDocument(body), nil
 }
 
 func (d *Doc) Put(obj ObjID, prop Prop, val Value) error {
@@ -268,10 +271,13 @@ func (d *Doc) InsertAt(list ObjID, index uint64, val Value) error {
 	return nil
 }
 
-func (d *Doc) Commit(msg string) ChangeHash {
-	hooks, patches, hash := d.commitPending(msg)
+func (d *Doc) Commit(msg string) (ChangeHash, error) {
+	hooks, patches, hash, err := d.commitPending(msg)
+	if err != nil {
+		return ChangeHash{}, err
+	}
 	fireHooks(hooks, patches)
-	return hash
+	return hash, nil
 }
 
 func (d *Doc) Merge(other *Doc) error {
@@ -308,13 +314,12 @@ func (d *Doc) Merge(other *Doc) error {
 	return nil
 }
 
-func (d *Doc) Fork() *Doc {
-	saved := d.Save()
-	doc, err := Load(saved)
+func (d *Doc) Fork() (*Doc, error) {
+	saved, err := d.Save()
 	if err != nil {
-		panic(err)
+		return nil, err
 	}
-	return doc
+	return Load(saved)
 }
 
 func (d *Doc) GenerateSyncMessage(state *crdtsync.State) ([]byte, bool) {
@@ -418,16 +423,16 @@ func (d *Doc) ActorID() ActorID {
 	return d.actorID
 }
 
-func (d *Doc) flushPendingForSnapshot() ([]func([]Patch), []Patch) {
-	hooks, patches, _ := d.commitPending("")
-	return hooks, patches
+func (d *Doc) flushPendingForSnapshot() ([]func([]Patch), []Patch, error) {
+	hooks, patches, _, err := d.commitPending("")
+	return hooks, patches, err
 }
 
-func (d *Doc) commitPending(msg string) ([]func([]Patch), []Patch, ChangeHash) {
+func (d *Doc) commitPending(msg string) ([]func([]Patch), []Patch, ChangeHash, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if len(d.pending) == 0 {
-		return nil, nil, ChangeHash{}
+		return nil, nil, ChangeHash{}, nil
 	}
 
 	change := Change{
@@ -441,7 +446,7 @@ func (d *Doc) commitPending(msg string) ([]func([]Patch), []Patch, ChangeHash) {
 	}
 	_, hash, err := EncodeChangeChunk(change)
 	if err != nil {
-		panic(err)
+		return nil, nil, ChangeHash{}, fmt.Errorf("encode change chunk: %w", err)
 	}
 	change.Hash = hash
 	d.seq = change.Seq
@@ -453,7 +458,7 @@ func (d *Doc) commitPending(msg string) ([]func([]Patch), []Patch, ChangeHash) {
 	d.pending = nil
 	d.pendingPatches = nil
 	hooks := append([]func([]Patch){}, d.changeHooks...)
-	return hooks, patches, hash
+	return hooks, patches, hash, nil
 }
 
 func (d *Doc) applyRemoteChangeLocked(change Change) ([]Patch, error) {

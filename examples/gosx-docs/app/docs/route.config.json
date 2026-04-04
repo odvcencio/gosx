@@ -1,8 +1,0 @@
-{
-  "cache": {
-    "public": true,
-    "maxAge": "45s",
-    "staleWhileRevalidate": "5m"
-  },
-  "cacheTags": ["docs-pages"]
-}

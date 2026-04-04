@@ -1,43 +1,5 @@
-.galaxy-shell {
-  padding: 2rem 1rem;
-}
-
-.galaxy-stage {
-  width: 100%;
-  max-width: 960px;
-  margin: 0 auto;
-  border-radius: 8px;
-  overflow: hidden;
-  background: #050008;
-}
-
-.galaxy-scene {
-  width: 100%;
-  aspect-ratio: 920 / 700;
-  display: block;
-}
-
-.galaxy-overlay {
-  background: linear-gradient(to top, rgba(5,0,8,0.95) 0%, rgba(5,0,8,0.6) 50%, transparent 100%);
-  padding: 3rem 2rem 2rem;
-  margin-top: -8rem;
-  position: relative;
-  z-index: 10;
-  text-align: center;
-  pointer-events: none;
-}
-
-.galaxy-overlay h1 {
-  font-size: 1.4rem;
-  font-weight: 700;
-  color: #fff;
-  margin: 0 0 0.5rem;
-}
-
-.galaxy-overlay p {
-  max-width: 620px;
-  font-size: 0.85rem;
-  line-height: 1.6;
-  color: #c8c0d8;
-  margin: 0 auto;
-}
+.galaxy-demo { position: relative; min-height: 100vh; overflow: hidden; background: #000; }
+.galaxy-demo__scene { position: absolute; inset: 0; z-index: 0; }
+.galaxy-demo__overlay { position: relative; z-index: 1; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; min-height: 100vh; padding: var(--space-xl); text-align: center; pointer-events: none; }
+.galaxy-demo__overlay h1 { font-family: var(--font-display); font-size: var(--text-hero); }
+.galaxy-demo__overlay p { color: var(--text-muted); font-size: var(--text-small); font-family: var(--font-mono); text-transform: uppercase; letter-spacing: var(--ls-label); margin-top: var(--space-xs); }

@@ -312,7 +312,10 @@ func TestCRDTBridgeInitPutAndGet(t *testing.T) {
 		t.Fatalf("expected JSON string hello, got %s", got)
 	}
 
-	saved := b.Doc().Save()
+	saved, err := b.Doc().Save()
+	if err != nil {
+		t.Fatalf("save crdt doc: %v", err)
+	}
 	other := NewCRDTBridge()
 	if err := other.InitDoc(saved); err != nil {
 		t.Fatalf("init saved crdt doc: %v", err)

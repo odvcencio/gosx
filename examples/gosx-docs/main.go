@@ -2,62 +2,29 @@ package main
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
-	"image"
-	"image/color"
-	"image/png"
 	"log"
 	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
-	"time"
 
 	"github.com/odvcencio/gosx"
 	"github.com/odvcencio/gosx/auth"
 	"github.com/odvcencio/gosx/env"
 	docsapp "github.com/odvcencio/gosx/examples/gosx-docs/app"
-	scene3ddemo "github.com/odvcencio/gosx/examples/gosx-docs/app/demos/scene3d"
-	runtimedocs "github.com/odvcencio/gosx/examples/gosx-docs/app/docs/runtime"
 	_ "github.com/odvcencio/gosx/examples/gosx-docs/modules"
 	"github.com/odvcencio/gosx/route"
 	"github.com/odvcencio/gosx/server"
 	"github.com/odvcencio/gosx/session"
 )
 
-type navItem struct {
-	href  string
-	label string
-}
-
-var navItems = []navItem{
-	{href: "/", label: "Overview"},
-	{href: "/docs/getting-started", label: "Getting Started"},
-	{href: "/demos/cms", label: "CMS Demo"},
-	{href: "/demos/scene3d", label: "Geometry Zoo"},
-	{href: "/docs/routing", label: "Routing"},
-	{href: "/docs/forms", label: "Forms"},
-	{href: "/docs/auth", label: "Auth"},
-	{href: "/docs/runtime", label: "Runtime"},
-	{href: "/docs/images", label: "Images"},
-	{href: "/labs/stream", label: "Streaming"},
-	{href: "/labs/secret", label: "Secret"},
-}
-
 func main() {
 	_, thisFile, _, _ := runtime.Caller(0)
 	root := server.ResolveAppRoot(thisFile)
-	if err := ensureDocsSampleAssets(root); err != nil {
-		log.Fatal(err)
-	}
 	if err := env.LoadDir(root, ""); err != nil {
 		log.Fatal(err)
 	}
-	docsapp.BindPublicAssetURL(func(path string) string {
-		return versionedPublicAssetURL(root, path)
-	})
 	port := getenv("PORT", "8080")
 	publicBase := strings.TrimRight(getenv("PUBLIC_URL", "http://localhost:"+port), "/")
 	sessions := session.MustNew(getenv("SESSION_SECRET", "gosx-docs-session-secret"), session.Options{})
@@ -84,81 +51,14 @@ func main() {
 		}),
 	})
 	docsapp.BindWebAuthn(webauthn)
-	var oauthManager *auth.OAuth
-	var oauthProviders []map[string]string
-	var providerConfigs []auth.OAuthProvider
-	hasGoogleOAuth := false
-	hasGitHubOAuth := false
-	if clientID, clientSecret := getenv("GOOGLE_CLIENT_ID", ""), getenv("GOOGLE_CLIENT_SECRET", ""); clientID != "" && clientSecret != "" {
-		providerConfigs = append(providerConfigs, auth.GoogleProvider(clientID, clientSecret, publicBase+"/auth/oauth/google/callback"))
-		oauthProviders = append(oauthProviders, map[string]string{
-			"Name":  "google",
-			"Label": "Google",
-			"Href":  "/auth/oauth/google?next=/docs/auth",
-		})
-		hasGoogleOAuth = true
-	}
-	if clientID, clientSecret := getenv("GITHUB_CLIENT_ID", ""), getenv("GITHUB_CLIENT_SECRET", ""); clientID != "" && clientSecret != "" {
-		providerConfigs = append(providerConfigs, auth.GitHubProvider(clientID, clientSecret, publicBase+"/auth/oauth/github/callback"))
-		oauthProviders = append(oauthProviders, map[string]string{
-			"Name":  "github",
-			"Label": "GitHub",
-			"Href":  "/auth/oauth/github?next=/docs/auth",
-		})
-		hasGitHubOAuth = true
-	}
-	if len(providerConfigs) > 0 {
-		oauthManager = authn.OAuth(auth.OAuthOptions{
-			Providers:   providerConfigs,
-			SuccessPath: "/docs/auth",
-			FailurePath: "/docs/auth",
-			FlashKey:    "oauth",
-		})
-	}
-	docsapp.BindOAuth(oauthManager, oauthProviders)
-
-	siteLayout, err := route.FileLayout(filepath.Join(root, "app", "layout.gsx"))
-	if err != nil {
-		log.Fatal(err)
-	}
-	wrapSite := func(ctx *route.RouteContext, body gosx.Node) gosx.Node {
-		return siteLayout(ctx, body)
-	}
 
 	router := route.NewRouter()
 	router.SetLayout(func(ctx *route.RouteContext, body gosx.Node) gosx.Node {
-		ctx.AddHead(server.Stylesheet(docsapp.PublicAssetURL("docs.css")))
 		ctx.AddHead(server.NavigationScript())
-		if ctx != nil && ctx.Request != nil && ctx.Request.URL != nil && ctx.Request.URL.Path == "/docs/auth" {
-			ctx.AddHead(auth.WebAuthnScript())
-		}
+		ctx.AddHead(gosx.RawHTML(`<link rel="preload" href="/fonts/SpaceGrotesk-Bold.woff2" as="font" type="font/woff2" crossorigin>`))
+		ctx.AddHead(gosx.RawHTML(`<link rel="preload" href="/fonts/Inter-400.woff2" as="font" type="font/woff2" crossorigin>`))
+		ctx.AddHead(gosx.RawHTML(`<link rel="preload" href="/fonts/JetBrainsMono-Regular.woff2" as="font" type="font/woff2" crossorigin>`))
 		return server.HTMLDocument(ctx.Title("GoSX"), ctx.Head(), body)
-	})
-	router.Add(route.Route{
-		Pattern:    "/labs/secret",
-		Middleware: []route.Middleware{authn.Require},
-		Handler: func(ctx *route.RouteContext) gosx.Node {
-			ctx.SetMetadata(server.Metadata{
-				Title:       server.Title{Absolute: "Secret Lab | GoSX Docs"},
-				Description: "A guarded route proving auth middleware works on the same router that serves file-based pages.",
-			})
-			name := ""
-			if user, ok := auth.Current(ctx.Request); ok {
-				name = user.Name
-			}
-			return wrapSite(ctx, gosx.El("article", gosx.Attrs(gosx.Attr("class", "prose")),
-				gosx.El("div", gosx.Attrs(gosx.Attr("class", "page-topper")),
-					gosx.El("span", gosx.Attrs(gosx.Attr("class", "eyebrow")), gosx.Text("Protected")),
-					gosx.El("p", gosx.Attrs(gosx.Attr("class", "lede")), gosx.Text("This route is wrapped in auth middleware before the router resolves the page handler.")),
-				),
-				gosx.El("h1", gosx.Text("You reached a guarded route.")),
-				gosx.El("p", gosx.Text("Current user: "+name)),
-				gosx.El("div", gosx.Attrs(gosx.Attr("class", "hero-actions")),
-					gosx.El("a", gosx.Attrs(gosx.Attr("href", "/docs/auth"), gosx.Attr("data-gosx-link", true), gosx.Attr("class", "cta-link primary")), gosx.Text("Back to auth")),
-					gosx.El("a", gosx.Attrs(gosx.Attr("href", "/"), gosx.Attr("data-gosx-link", true), gosx.Attr("class", "cta-link")), gosx.Text("Back to overview")),
-				),
-			))
-		},
 	})
 
 	if err := router.AddDir(filepath.Join(root, "app"), route.FileRoutesOptions{}); err != nil {
@@ -179,63 +79,7 @@ func main() {
 	app.Mount("/auth/webauthn/register", webauthn.RegisterHandler())
 	app.Mount("/auth/webauthn/login/options", webauthn.LoginOptionsHandler())
 	app.Mount("/auth/webauthn/login", webauthn.LoginHandler())
-	if oauthManager != nil && hasGoogleOAuth {
-		app.Mount("/auth/oauth/google", oauthManager.BeginHandler("google"))
-		app.Mount("/auth/oauth/google/callback", oauthManager.CallbackHandler("google"))
-	}
-	if oauthManager != nil && hasGitHubOAuth {
-		app.Mount("/auth/oauth/github", oauthManager.BeginHandler("github"))
-		app.Mount("/auth/oauth/github/callback", oauthManager.CallbackHandler("github"))
-	}
 	app.Redirect("GET /docs", "/docs/getting-started", http.StatusTemporaryRedirect)
-	app.Redirect("GET /legacy/runtime", "/docs/runtime", http.StatusMovedPermanently)
-	app.Rewrite("GET /runtime", "/docs/runtime")
-	app.API("GET /api/meta", func(ctx *server.Context) (any, error) {
-		ctx.Cache(server.CachePolicy{
-			Public:               true,
-			MaxAge:               time.Minute,
-			StaleWhileRevalidate: 5 * time.Minute,
-		})
-		ctx.CacheTag("docs-meta")
-		pages := make([]map[string]string, 0, len(navItems))
-		for _, item := range navItems {
-			pages = append(pages, map[string]string{
-				"href":  item.href,
-				"label": item.label,
-			})
-		}
-		return map[string]any{
-			"ok":      true,
-			"product": "gosx",
-			"version": gosx.Version,
-			"pages":   pages,
-		}, nil
-	})
-	app.API("GET /api/runtime/scene-program", func(ctx *server.Context) (any, error) {
-		ctx.Cache(server.CachePolicy{
-			Public: true,
-			MaxAge: 5 * time.Minute,
-		})
-		return runtimedocs.SceneDemoProgram(), nil
-	})
-	app.API("GET /api/demos/scene-program", func(ctx *server.Context) (any, error) {
-		ctx.Cache(server.CachePolicy{
-			Public: true,
-			MaxAge: 5 * time.Minute,
-		})
-		return scene3ddemo.GeometryZooProgram(), nil
-	})
-	app.HandleAPI(server.APIRoute{
-		Pattern:    "GET /api/me",
-		Middleware: []server.Middleware{authn.Require},
-		Handler: func(ctx *server.Context) (any, error) {
-			user, _ := auth.Current(ctx.Request)
-			return map[string]any{
-				"ok":   true,
-				"user": user,
-			}, nil
-		},
-	})
 	app.Mount("/", router.Build())
 
 	log.Printf("gosx-docs at http://localhost:%s", port)
@@ -247,16 +91,6 @@ func getenv(key, fallback string) string {
 		return value
 	}
 	return fallback
-}
-
-func versionedPublicAssetURL(root, name string) string {
-	base := server.AssetURL(name)
-	payload, err := os.ReadFile(filepath.Join(root, "public", filepath.FromSlash(name)))
-	if err != nil {
-		return base
-	}
-	sum := sha256.Sum256(payload)
-	return base + "?v=" + hex.EncodeToString(sum[:6])
 }
 
 func docsDemoUser(value string) auth.User {
@@ -283,47 +117,4 @@ func docsDemoUser(value string) auth.User {
 			"provider": "docs-demo",
 		},
 	}
-}
-
-func ensureDocsSampleAssets(root string) error {
-	publicDir := filepath.Join(root, "public")
-	if err := os.MkdirAll(publicDir, 0755); err != nil {
-		return err
-	}
-
-	sample := filepath.Join(publicDir, "paper-card.png")
-	if _, err := os.Stat(sample); err == nil {
-		return nil
-	} else if !os.IsNotExist(err) {
-		return err
-	}
-
-	const width = 1200
-	const height = 780
-	img := image.NewRGBA(image.Rect(0, 0, width, height))
-	for y := 0; y < height; y++ {
-		for x := 0; x < width; x++ {
-			base := uint8(228 + (y*18)/height)
-			ink := uint8(36 + (x*94)/width)
-			img.Set(x, y, color.RGBA{
-				R: base,
-				G: uint8(216 + (x*20)/width),
-				B: uint8(198 + (y*24)/height),
-				A: 255,
-			})
-			if x > 84 && x < width-84 && y > 84 && y < height-84 && (x+y)%17 < 2 {
-				img.Set(x, y, color.RGBA{R: ink, G: uint8(74 + (y*32)/height), B: 62, A: 255})
-			}
-			if x > 180 && x < width-180 && y > 160 && y < 260 {
-				img.Set(x, y, color.RGBA{R: 181, G: 91, B: 52, A: 255})
-			}
-		}
-	}
-
-	file, err := os.Create(sample)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-	return png.Encode(file, img)
 }

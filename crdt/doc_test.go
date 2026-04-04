@@ -12,11 +12,18 @@ func TestDocPutCommitSaveLoad(t *testing.T) {
 	if err := doc.Put(Root, "title", StringValue("hello")); err != nil {
 		t.Fatalf("put title: %v", err)
 	}
-	if hash := doc.Commit("set title"); hash == (ChangeHash{}) {
+	hash, err := doc.Commit("set title")
+	if err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+	if hash == (ChangeHash{}) {
 		t.Fatal("expected non-zero change hash")
 	}
 
-	saved := doc.Save()
+	saved, err := doc.Save()
+	if err != nil {
+		t.Fatalf("save doc: %v", err)
+	}
 	loaded, err := Load(saved)
 	if err != nil {
 		t.Fatalf("load saved doc: %v", err)
@@ -36,10 +43,18 @@ func TestDocMergeConvergesAcrossForks(t *testing.T) {
 	if err := base.Put(Root, "title", StringValue("base")); err != nil {
 		t.Fatalf("seed title: %v", err)
 	}
-	base.Commit("seed")
+	if _, err := base.Commit("seed"); err != nil {
+		t.Fatalf("commit seed: %v", err)
+	}
 
-	left := base.Fork()
-	right := base.Fork()
+	left, err := base.Fork()
+	if err != nil {
+		t.Fatalf("fork left: %v", err)
+	}
+	right, err := base.Fork()
+	if err != nil {
+		t.Fatalf("fork right: %v", err)
+	}
 	actor, err := NewActorID()
 	if err != nil {
 		t.Fatalf("new actor id: %v", err)
@@ -49,15 +64,25 @@ func TestDocMergeConvergesAcrossForks(t *testing.T) {
 	if err := left.Put(Root, "title", StringValue("left")); err != nil {
 		t.Fatalf("left put: %v", err)
 	}
-	left.Commit("left")
+	if _, err := left.Commit("left"); err != nil {
+		t.Fatalf("commit left: %v", err)
+	}
 
 	if err := right.Put(Root, "title", StringValue("right")); err != nil {
 		t.Fatalf("right put: %v", err)
 	}
-	right.Commit("right")
+	if _, err := right.Commit("right"); err != nil {
+		t.Fatalf("commit right: %v", err)
+	}
 
-	leftMerged := left.Fork()
-	rightMerged := right.Fork()
+	leftMerged, err := left.Fork()
+	if err != nil {
+		t.Fatalf("fork left merged: %v", err)
+	}
+	rightMerged, err := right.Fork()
+	if err != nil {
+		t.Fatalf("fork right merged: %v", err)
+	}
 	if err := leftMerged.Merge(right); err != nil {
 		t.Fatalf("merge right into left: %v", err)
 	}
@@ -87,7 +112,9 @@ func TestDocSyncMessagesConverge(t *testing.T) {
 	if err := server.Put(Root, "title", StringValue("server")); err != nil {
 		t.Fatalf("server seed put: %v", err)
 	}
-	server.Commit("seed")
+	if _, err := server.Commit("seed"); err != nil {
+		t.Fatalf("commit seed: %v", err)
+	}
 
 	exchangeDocs(t, server, serverState, client, clientState)
 
@@ -102,7 +129,9 @@ func TestDocSyncMessagesConverge(t *testing.T) {
 	if err := client.Put(Root, "subtitle", StringValue("from client")); err != nil {
 		t.Fatalf("client subtitle put: %v", err)
 	}
-	client.Commit("client update")
+	if _, err := client.Commit("client update"); err != nil {
+		t.Fatalf("commit client update: %v", err)
+	}
 
 	exchangeDocs(t, server, serverState, client, clientState)
 
@@ -128,10 +157,18 @@ func TestDocListMergeConvergesAcrossForks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("make list: %v", err)
 	}
-	base.Commit("init list")
+	if _, err := base.Commit("init list"); err != nil {
+		t.Fatalf("commit init list: %v", err)
+	}
 
-	left := base.Fork()
-	right := base.Fork()
+	left, err := base.Fork()
+	if err != nil {
+		t.Fatalf("fork left: %v", err)
+	}
+	right, err := base.Fork()
+	if err != nil {
+		t.Fatalf("fork right: %v", err)
+	}
 	actor, err := NewActorID()
 	if err != nil {
 		t.Fatalf("new actor id: %v", err)
@@ -141,15 +178,25 @@ func TestDocListMergeConvergesAcrossForks(t *testing.T) {
 	if err := left.InsertAt(items, 0, StringValue("left")); err != nil {
 		t.Fatalf("left insert: %v", err)
 	}
-	left.Commit("left insert")
+	if _, err := left.Commit("left insert"); err != nil {
+		t.Fatalf("commit left insert: %v", err)
+	}
 
 	if err := right.InsertAt(items, 0, StringValue("right")); err != nil {
 		t.Fatalf("right insert: %v", err)
 	}
-	right.Commit("right insert")
+	if _, err := right.Commit("right insert"); err != nil {
+		t.Fatalf("commit right insert: %v", err)
+	}
 
-	leftMerged := left.Fork()
-	rightMerged := right.Fork()
+	leftMerged, err := left.Fork()
+	if err != nil {
+		t.Fatalf("fork left merged: %v", err)
+	}
+	rightMerged, err := right.Fork()
+	if err != nil {
+		t.Fatalf("fork right merged: %v", err)
+	}
 	if err := leftMerged.Merge(right); err != nil {
 		t.Fatalf("merge right into left: %v", err)
 	}

@@ -1,167 +1,265 @@
 package docs
 
 func Page() Node {
-	return <article class="prose">
-		<div class="page-topper">
-			<span class="eyebrow">Engines</span>
-			<p class="lede">
-				Engine kind picks the mount model. Capability declarations spell out which browser powers the runtime is allowed to depend on.
-			</p>
-		</div>
-		<h1>
-			GoSX engines are explicit about browser power instead of hiding it behind hydration.
-		</h1>
-		<p>
-			An island is still constrained DOM work in the shared VM. An engine is for the cases that do not fit that model: canvas rendering, WebGL scenes, background workers, managed video playback, low-level input, or audio-driven loops. The key distinction is that
-			<span class="inline-code">Kind</span>
-			and
-			<span class="inline-code">Capabilities</span>
-			mean different things. Kind chooses the execution shape. Capabilities declare which browser APIs the engine expects.
-		</p>
-		<section class="feature-grid">
-			<div class="card">
-				<strong>Surface</strong>
-				<p>
-					A mount-owning engine for canvas, WebGL, WebGPU, pixel buffers, or any managed browser surface.
-				</p>
-			</div>
-			<div class="card">
-				<strong>Worker</strong>
-				<p>
-					Background compute with no DOM mount. Use it for parsing, search, simulation, or long-running client work.
-				</p>
-			</div>
-			<div class="card">
-				<strong>Video</strong>
-				<p>
-					A framework-owned managed player mount. GoSX handles the
-					<span class="inline-code">&lt;video&gt;</span>
-					lifecycle, source application, HLS loading, sync signals, and subtitle plumbing.
-				</p>
-			</div>
-			<div class="card">
-				<strong>Built-ins still declare shape</strong>
-				<p>
-					Helpers like
-					<span class="inline-code">Scene3D</span>
-					are still engines underneath. They just ship with sensible defaults like canvas, WebGL, and animation already declared.
-				</p>
-			</div>
-		</section>
-		{DocsCodeBlock("go", `ctx.Engine(engine.Config{
-	    Name: "sampler",
-	    Kind: engine.KindSurface,
-	    Capabilities: []engine.Capability{
-	        engine.CapCanvas,
-	        engine.CapAnimation,
-	        engine.CapPointer,
-	        engine.CapKeyboard,
-	    },
-	    WASMPath: "/engines/sampler.wasm",
-	}, gosx.El("div", gosx.Text("Preparing engine...")))`)}
-		<h2>The supported capability surface</h2>
-		<p>
-			These are the currently supported capability tokens in
-			<span class="inline-code">engine.Config.Capabilities</span>
-			. They are declarations, not magic. They tell the runtime what the engine intends to use, and they make the page contract inspectable instead of implicit.
-		</p>
-		<section class="feature-grid">
-			<div class="card">
-				<strong>video</strong>
-				<p>
-					Managed media playback. Most useful with
-					<span class="inline-code">engine.KindVideo</span>
-					when the framework owns the player shell.
-				</p>
-			</div>
-			<div class="card">
-				<strong>canvas</strong>
-				<p>
-					2D or immediate-mode drawing surfaces, including custom raster rendering and classic game loops.
-				</p>
-			</div>
-			<div class="card">
-				<strong>webgl</strong>
-				<p>
-					GPU-backed 3D scenes and custom shaders. The built-in
-					<span class="inline-code">Scene3D</span>
-					path declares this automatically.
-				</p>
-			</div>
-			<div class="card">
-				<strong>webgpu</strong>
-				<p>
-					Next-generation GPU work where the engine is explicitly targeting WebGPU instead of WebGL.
-				</p>
-			</div>
-			<div class="card">
-				<strong>pixel-surface</strong>
-				<p>
-					A managed RGBA framebuffer driven by the runtime. Pair it with
-					<span class="inline-code">canvas</span>
-					when you want low-level pixels with framework-owned scaling.
-				</p>
-			</div>
-			<div class="card">
-				<strong>animation</strong>
-				<p>
-					Frame scheduling for loops, interpolation, or simulation ticks that need a real browser animation clock.
-				</p>
-			</div>
-			<div class="card">
-				<strong>storage</strong>
-				<p>
-					Client persistence such as local storage or cached user preferences that belong to the engine runtime.
-				</p>
-			</div>
-			<div class="card">
-				<strong>fetch</strong>
-				<p>
-					Network access from the engine for source loading, background queries, or media fetches.
-				</p>
-			</div>
-			<div class="card">
-				<strong>audio</strong>
-				<p>
-					Sound playback, media routing, or audio-driven timing. Video engines naturally pair with this capability.
-				</p>
-			</div>
-			<div class="card">
-				<strong>worker</strong>
-				<p>
-					Worker-thread style compute. Use it when the engine is explicitly structured around background execution instead of a DOM mount.
-				</p>
-			</div>
-			<div class="card">
-				<strong>gamepad</strong>
-				<p>
-					Game controller input for games, simulations, or tool surfaces that expect pad semantics.
-				</p>
-			</div>
-			<div class="card">
-				<strong>keyboard</strong>
-				<p>
-					Keyboard-driven controls and shortcuts owned by the engine rather than by island DOM handlers.
-				</p>
-			</div>
-			<div class="card">
-				<strong>pointer</strong>
-				<p>
-					Pointer movement, drag, hover, and hit-testing for mounted surfaces that need direct spatial input.
-				</p>
-			</div>
-		</section>
-		<section class="callout">
-			<strong>Rule of thumb</strong>
+	return <div>
+		<section id="engine-model">
+			<h2 class="chrome-text">Engine Model</h2>
 			<p>
-				Use the smallest honest declaration. Pick the engine
-				<span class="inline-code">Kind</span>
-				that matches the mount model, then list only the capabilities the browser code actually depends on. That keeps the runtime contract readable and keeps docs, manifests, and implementation in sync.
+				An engine is a dedicated compute surface — an isolated WASM or JS runtime that
+				owns a specific browser capability. Where islands handle reactive text and
+				attribute updates in the main document, engines handle heavy compute: 2D canvas
+				drawing, 3D rendering, audio processing, and background workers.
+			</p>
+			<p>
+				Each engine has a mount point in the page — a
+				<span class="inline-code">&lt;canvas&gt;</span>,
+				an offscreen worker, or a typed port — and a compiled Go program that runs
+				inside that context. The main page runtime and the engine communicate over a
+				structured message channel; the engine never touches the main DOM directly.
+			</p>
+			{CodeBlock("go", `// Declare an engine in the route loader.
+func Load(ctx *route.RouteContext, page route.FilePage) (any, error) {
+    eng := engine.New(engine.Options{
+        Capabilities: []engine.Cap{engine.CapCanvas, engine.CapPointer},
+        Tier:         engine.TierOptimized,
+        Program:      MyCanvasProgram,
+    })
+    return map[string]any{"engine": eng}, nil
+}`)}
+			<p>
+				Engines are declared server-side and serialised into the page as a
+				<span class="inline-code">data-engine</span>
+				descriptor. The bootstrap runtime reads the descriptor, provisions the requested
+				capability, and starts the engine program before the first animation frame.
 			</p>
 		</section>
-		<div class="hero-actions">
-			<Link class="cta-link" href="/docs/runtime">Back to runtime</Link>
-			<Link class="cta-link primary" href="/docs/video">Continue to video</Link>
-		</div>
-	</article>
+
+		<section id="capability-tiers">
+			<h2 class="chrome-text">Capability Tiers</h2>
+			<p>
+				Every engine declares which browser capabilities it needs. GoSX checks capability
+				availability at mount time and selects a fallback tier if the primary capability
+				is unavailable — so a page authored for WebGPU degrades gracefully to WebGL on
+				older hardware.
+			</p>
+			<div class="engines-cap-grid">
+				<div class="engines-cap-group glass-panel">
+					<h3 class="engines-cap-group__title">Render</h3>
+					<div class="engines-cap-list">
+						{CapabilityTag("canvas")}
+						{CapabilityTag("webgl")}
+						{CapabilityTag("webgl2")}
+						{CapabilityTag("webgpu")}
+					</div>
+				</div>
+				<div class="engines-cap-group glass-panel">
+					<h3 class="engines-cap-group__title">Input</h3>
+					<div class="engines-cap-list">
+						{CapabilityTag("pointer")}
+						{CapabilityTag("keyboard")}
+						{CapabilityTag("gamepad")}
+					</div>
+				</div>
+				<div class="engines-cap-group glass-panel">
+					<h3 class="engines-cap-group__title">I/O</h3>
+					<div class="engines-cap-list">
+						{CapabilityTag("audio")}
+						{CapabilityTag("storage")}
+						{CapabilityTag("fetch")}
+					</div>
+				</div>
+			</div>
+			<p>
+				The tier system controls how aggressively the runtime optimises:
+			</p>
+			<ul>
+				<li>
+					<span class="inline-code">engine.TierOptimized</span>
+					— requests the highest capability available. Selects WebGPU if present,
+					falls back to WebGL2, then WebGL, then canvas 2D.
+				</li>
+				<li>
+					<span class="inline-code">engine.TierBalanced</span>
+					— prefers WebGL2 or WebGL. Skips WebGPU even if available. Good for
+					content that must run consistently across mid-range hardware.
+				</li>
+				<li>
+					<span class="inline-code">engine.TierConservative</span>
+					— canvas 2D only. Guaranteed to work on any browser with a display.
+				</li>
+			</ul>
+			{CodeBlock("go", `engine.New(engine.Options{
+    Capabilities: []engine.Cap{
+        engine.CapWebGPU,
+        engine.CapWebGL2,
+        engine.CapCanvas,
+    },
+    Tier: engine.TierOptimized,
+})`)}
+		</section>
+
+		<section id="canvas-surface">
+			<h2 class="chrome-text">Canvas Surface</h2>
+			<p>
+				The canvas surface is the simplest engine type. Mount it with
+				<span class="inline-code">engine.CapCanvas</span>
+				and the bootstrap runtime will provide an
+				<span class="inline-code">OffscreenCanvas</span>
+				(or a proxied 2D context on browsers without offscreen support) to the engine
+				program's entry point.
+			</p>
+			{CodeBlock("gosx", `<div class="canvas-mount">
+    <canvas
+        data-engine={data.engine}
+        width="800"
+        height="450"
+        aria-label="Interactive canvas surface"
+    ></canvas>
+</div>`)}
+			{CodeBlock("go", `// Engine program — runs inside the canvas context.
+func MyCanvasProgram(ctx engine.Context) {
+    c := ctx.Canvas2D()
+
+    ctx.OnFrame(func(dt float64) {
+        c.ClearRect(0, 0, ctx.Width(), ctx.Height())
+        c.SetFillStyle("#D4AF37")
+        c.FillRect(10, 10, 100*dt, 60)
+    })
+
+    ctx.OnPointer(func(ev engine.PointerEvent) {
+        // React to mouse/touch without touching the main DOM.
+    })
+}`)}
+			<p>
+				The engine program has no access to the main document. All communication with
+				the page goes through typed message ports — the engine receives commands and
+				sends events back via
+				<span class="inline-code">ctx.Send</span>
+				and
+				<span class="inline-code">ctx.OnMessage</span>.
+			</p>
+		</section>
+
+		<section id="webgl-webgpu">
+			<h2 class="chrome-text">WebGL / WebGPU</h2>
+			<p>
+				For 3D and shader-heavy workloads, declare the appropriate render capability and
+				the runtime provisions a GPU context for the engine. The GoSX 3D engine uses this
+				path internally — the same capability system powers both user-defined engines and
+				the built-in
+				<span class="inline-code">scene3d</span>
+				primitives.
+			</p>
+			{CodeBlock("go", `// WebGPU engine with fallback to WebGL2.
+eng := engine.New(engine.Options{
+    Capabilities: []engine.Cap{engine.CapWebGPU, engine.CapWebGL2},
+    Tier:         engine.TierOptimized,
+    Program:      func(ctx engine.Context) {
+        gpu := ctx.WebGPU() // nil if WebGPU unavailable; use ctx.WebGL2() instead
+        if gpu == nil {
+            gl := ctx.WebGL2()
+            runWebGLPath(ctx, gl)
+            return
+        }
+        runWebGPUPath(ctx, gpu)
+    },
+})`)}
+			<p>
+				Capability negotiation happens at runtime, not at author time. The engine program
+				receives whichever context the browser can provide. Writing a two-path program
+				covers the full capability range without separate builds.
+			</p>
+			<section class="callout">
+				<strong>Ownership transfer</strong>
+				<p>
+					When a canvas element is handed to a WebGL or WebGPU engine, the runtime
+					transfers ownership to the engine's offscreen context. Subsequent attempts to
+					call
+					<span class="inline-code">getContext</span>
+					on the element from the main thread will fail. This is a browser constraint,
+					not a GoSX limitation.
+				</p>
+			</section>
+		</section>
+
+		<section id="workers">
+			<h2 class="chrome-text">Workers</h2>
+			<p>
+				Not every engine needs a render surface. Worker engines run Go programs in a
+				background thread with no canvas — useful for CPU-intensive tasks that should
+				not block the main thread: image processing, data transformation, physics
+				simulation, and cryptographic operations.
+			</p>
+			{CodeBlock("go", `// Worker engine — no canvas capability.
+eng := engine.New(engine.Options{
+    Capabilities: []engine.Cap{engine.CapFetch, engine.CapStorage},
+    Tier:         engine.TierBalanced,
+    Program:      func(ctx engine.Context) {
+        ctx.OnMessage(func(msg engine.Message) {
+            switch msg.Type {
+            case "process":
+                result := heavyCompute(msg.Payload)
+                ctx.Send(engine.Message{Type: "result", Payload: result})
+            }
+        })
+    },
+})`)}
+			<p>
+				Worker engines communicate with the page through the same typed message port
+				as render engines. From the page side, write to the engine's input port and
+				subscribe to its output via island signal bindings or lifecycle script handlers.
+			</p>
+		</section>
+
+		<section id="engine-programs">
+			<h2 class="chrome-text">Engine Programs</h2>
+			<p>
+				An engine program is a Go function with the signature
+				<span class="inline-code">func(engine.Context)</span>.
+				It runs in the engine's isolated context. The context provides the capability
+				handle, the message ports, and the frame / event hooks.
+			</p>
+			{CodeBlock("go", `// engine.Context interface (abbreviated).
+type Context interface {
+    // Capability handles.
+    Canvas2D() Canvas2DContext
+    WebGL2()   WebGL2Context
+    WebGPU()   WebGPUContext
+
+    // Dimensions (updated on resize).
+    Width()  float64
+    Height() float64
+
+    // Frame loop.
+    OnFrame(fn func(dt float64))
+    CancelFrame()
+
+    // Input events.
+    OnPointer(fn func(PointerEvent))
+    OnKey(fn func(KeyEvent))
+
+    // Messaging.
+    Send(msg Message)
+    OnMessage(fn func(Message))
+
+    // Lifecycle.
+    OnDispose(fn func())
+}`)}
+			<p>
+				Engine programs are registered at package init time and referenced by name in
+				the engine descriptor. This allows the compiler to dead-strip unreferenced
+				programs from the WASM binary at build time, keeping the shipped binary small.
+			</p>
+			{CodeBlock("go", `func init() {
+    engine.Register("my-canvas", MyCanvasProgram)
+    engine.Register("bg-worker", BackgroundWorkerProgram)
+}
+
+// In the route loader, reference by name.
+eng := engine.NewByName("my-canvas", engine.Options{
+    Capabilities: []engine.Cap{engine.CapCanvas, engine.CapPointer},
+    Tier:         engine.TierOptimized,
+})`)}
+		</section>
+	</div>
 }
