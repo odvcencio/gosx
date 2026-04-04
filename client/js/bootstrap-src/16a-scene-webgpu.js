@@ -2428,11 +2428,37 @@
   // Integration
   // -----------------------------------------------------------------------
 
-  // Attempt to create a WebGPU renderer. Returns the renderer object or null
-  // if WebGPU is not available. The renderer handles async device init
-  // internally, skipping frames until the device is ready.
+  // --- Early WebGPU adapter probe ---
+  // Starts immediately when bootstrap.js loads. By the time a Scene3D mounts
+  // (after DOM ready), this promise has usually resolved. This avoids calling
+  // canvas.getContext("webgpu") — which taints the canvas — until we KNOW
+  // an adapter is available.
+  var _webgpuAdapterProbe = null;  // null = not probed, false = unavailable, GPUAdapter = ready
+  var _webgpuAdapterReady = false;
+
+  if (typeof navigator !== "undefined" && navigator.gpu && typeof navigator.gpu.requestAdapter === "function") {
+    navigator.gpu.requestAdapter({ powerPreference: "high-performance" }).then(function(adapter) {
+      if (adapter) {
+        _webgpuAdapterProbe = adapter;
+        _webgpuAdapterReady = true;
+      } else {
+        _webgpuAdapterProbe = false;
+      }
+    }).catch(function() {
+      _webgpuAdapterProbe = false;
+    });
+  } else {
+    _webgpuAdapterProbe = false;
+  }
+
+  // Check if WebGPU is confirmed available (adapter probe succeeded).
+  function sceneWebGPUAvailable() {
+    return _webgpuAdapterReady && _webgpuAdapterProbe !== false && _webgpuAdapterProbe !== null;
+  }
+
+  // Create a WebGPU renderer. Only call this AFTER sceneWebGPUAvailable() returns true.
   function createSceneWebGPURendererOrFallback(canvas) {
-    if (typeof navigator === "undefined" || !navigator.gpu) return null;
+    if (!sceneWebGPUAvailable()) return null;
     if (!canvas || typeof canvas.getContext !== "function") return null;
 
     var renderer = null;
