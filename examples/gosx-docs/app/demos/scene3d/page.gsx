@@ -7,7 +7,9 @@ func Page() Node {
 		</div>
 		<div class="geo-zoo__overlay">
 			<h1 class="geo-zoo__title chrome-text">Geometry Zoo</h1>
-			<p class="geo-zoo__subtitle">PBR geometry primitives — drag to orbit, scroll to zoom</p>
+			<p class="geo-zoo__subtitle">
+				PBR geometry primitives — drag to orbit, scroll to zoom
+			</p>
 			<ul class="geo-zoo__legend" aria-label="Geometry types in scene">
 				<li>Sphere</li>
 				<li>Box</li>
