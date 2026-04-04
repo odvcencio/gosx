@@ -45,7 +45,9 @@ func (s *CRDTSignal[T]) Set(val T) error {
 	if err := s.doc.Put(s.obj, s.prop, value); err != nil {
 		return err
 	}
-	s.doc.Commit("")
+	if _, err := s.doc.Commit(""); err != nil {
+		return err
+	}
 	s.inner.Set(val)
 	return nil
 }
@@ -118,7 +120,9 @@ func (b *CRDTBridge) Put(obj crdt.ObjID, prop crdt.Prop, valueJSON string) error
 	if err := b.doc.Put(obj, prop, value); err != nil {
 		return err
 	}
-	b.doc.Commit("")
+	if _, err := b.doc.Commit(""); err != nil {
+		return err
+	}
 	return nil
 }
 

@@ -1,125 +1,72 @@
 package docs
 
 func Layout() Node {
-	return <div class="docs-shell">
-		<a href="#docs-main" class="skip-link">Skip to content</a>
-		<header class="mobile-bar">
-			<div class="mobile-bar-head">
-				<div class="mobile-branding">
-					<span class="mobile-kicker">GoSX Application</span>
-					<a href="/" data-gosx-link class="brand">GoSX</a>
+	return <div class="site-shell">
+		<a class="skip-link" href="#main-content">Skip to content</a>
+		<a class="skip-link" href="#pill-nav">Skip to navigation</a>
+
+		<nav id="pill-nav" class="pill-nav" role="navigation" aria-label="Main navigation">
+			<a href="/" class="pill-logo" data-gosx-link="true">GoSX</a>
+			<button class="pill-toggle" aria-expanded="false" aria-controls="nav-overlay" aria-label="Toggle navigation menu">
+				<span class="pill-toggle__bar"></span>
+				<span class="pill-toggle__bar"></span>
+				<span class="pill-toggle__bar"></span>
+			</button>
+		</nav>
+
+		<div id="nav-overlay" class="nav-overlay" role="dialog" aria-modal="true" aria-label="Site navigation" hidden>
+			<div class="nav-overlay__inner">
+				<div class="nav-group">
+					<span class="nav-group__label">Start</span>
+					<a href="/" data-gosx-link="true" class="nav-link">Overview</a>
+					<a href="/docs/getting-started" data-gosx-link="true" class="nav-link">Getting Started</a>
 				</div>
-				<details class="route-drawer">
-					<summary class="route-drawer-summary">
-						<span class="route-drawer-backdrop" aria-hidden="true"></span>
-						<span class="route-drawer-toggle">
-							<span class="route-drawer-toggle-kicker">Routes</span>
-							<span class="route-drawer-toggle-copy route-drawer-toggle-copy-open">Browse sections</span>
-							<span class="route-drawer-toggle-copy route-drawer-toggle-copy-close">Close</span>
-						</span>
-					</summary>
-					<div class="route-drawer-panel">
-						<div class="brand-lockup route-drawer-lockup">
-							<span class="eyebrow">GoSX Application</span>
-							<a href="/" data-gosx-link class="brand">GoSX</a>
-							<p class="brand-copy">
-								Docs, demos, and production-ready flows in one GoSX app.
-							</p>
-						</div>
-						<nav class="doc-nav">
-							<DocsNavigation></DocsNavigation>
-						</nav>
-						<DocsShortcuts></DocsShortcuts>
-					</div>
-				</details>
-			</div>
-		</header>
-		<aside class="sidebar">
-			<div class="sidebar-frame">
-				<div class="brand-lockup">
-					<span class="eyebrow">GoSX Application</span>
-					<a href="/" data-gosx-link class="brand">GoSX</a>
-					<p class="brand-copy">
-						Docs, demos, and production-ready flows in one GoSX app.
-					</p>
+				<div class="nav-group">
+					<span class="nav-group__label">Reference</span>
+					<a href="/docs/routing" data-gosx-link="true" class="nav-link">Routing</a>
+					<a href="/docs/forms" data-gosx-link="true" class="nav-link">Forms</a>
+					<a href="/docs/auth" data-gosx-link="true" class="nav-link">Auth</a>
+					<a href="/docs/islands" data-gosx-link="true" class="nav-link">Islands</a>
+					<a href="/docs/signals" data-gosx-link="true" class="nav-link">Signals</a>
+					<a href="/docs/engines" data-gosx-link="true" class="nav-link">Engines</a>
+					<a href="/docs/scene3d" data-gosx-link="true" class="nav-link">3D Engine</a>
+					<a href="/docs/hubs" data-gosx-link="true" class="nav-link">Hubs & CRDT</a>
+					<a href="/docs/runtime" data-gosx-link="true" class="nav-link">Runtime</a>
+					<a href="/docs/images" data-gosx-link="true" class="nav-link">Images</a>
+					<a href="/docs/text-layout" data-gosx-link="true" class="nav-link">Text Layout</a>
+					<a href="/docs/motion" data-gosx-link="true" class="nav-link">Motion</a>
+					<a href="/docs/streaming" data-gosx-link="true" class="nav-link">Streaming</a>
+					<a href="/docs/compiler" data-gosx-link="true" class="nav-link">Compiler</a>
+					<a href="/docs/deployment" data-gosx-link="true" class="nav-link">Deployment</a>
 				</div>
-				<nav class="doc-nav">
-					<DocsNavigation></DocsNavigation>
-				</nav>
-				<DocsShortcuts></DocsShortcuts>
+				<div class="nav-group">
+					<span class="nav-group__label">Demos</span>
+					<a href="/demos/galaxy" data-gosx-link="true" class="nav-link">Galaxy</a>
+					<a href="/demos/scene3d" data-gosx-link="true" class="nav-link">Geometry Zoo</a>
+					<a href="/demos/cms" data-gosx-link="true" class="nav-link">CMS Editor</a>
+				</div>
 			</div>
-		</aside>
-		<main class="main" id="docs-main">
+		</div>
+
+		<main id="main-content">
 			<Slot />
-			<footer class="page-footer">
-				GoSX lets the site, the docs, the editor, and the runtime route ship from one Go app.
-			</footer>
 		</main>
-	</div>
-}
 
-func DocsNavLink(props any) Node {
-	return <>
-		<If when={props.Active}>
-			<a href={props.Href} data-gosx-link class="nav-link active">{props.Label}</a>
-		</If>
-		<If when={props.Active == false}>
-			<a href={props.Href} data-gosx-link class="nav-link">{props.Label}</a>
-		</If>
-	</>
-}
+		<footer class="site-footer" role="contentinfo">
+			<div class="site-footer__inner">
+				<div class="site-footer__brand">
+					<span class="site-footer__logo chrome-text">GoSX</span>
+					<span class="site-footer__tagline">Go-native web platform</span>
+				</div>
+				<div class="site-footer__links">
+					<a href="https://github.com/odvcencio/gosx" class="site-footer__link" rel="noopener">GitHub</a>
+				</div>
+				<div class="site-footer__a11y">
+					<p>GoSX is committed to accessibility. This site targets WCAG 2.2 AA compliance.</p>
+				</div>
+			</div>
+		</footer>
 
-func DocsNavigation() Node {
-	return <>
-		<div class="nav-group">
-			<span class="nav-group-title">Start</span>
-			<div class="nav-group-links">
-				<DocsNavLink href="/" label="Overview" active={request.path == "/"}></DocsNavLink>
-				<DocsNavLink
-					href="/docs/getting-started"
-					label="Getting Started"
-					active={request.path == "/docs/getting-started"}
-				></DocsNavLink>
-			</div>
-		</div>
-		<div class="nav-group">
-			<span class="nav-group-title">Demos</span>
-			<div class="nav-group-links">
-				<DocsNavLink href="/demos/cms" label="CMS Demo" active={request.path == "/demos/cms"}></DocsNavLink>
-				<DocsNavLink href="/demos/scene3d" label="Geometry Zoo" active={request.path == "/demos/scene3d"}></DocsNavLink>
-			</div>
-		</div>
-		<div class="nav-group">
-			<span class="nav-group-title">Docs</span>
-			<div class="nav-group-links">
-				<DocsNavLink href="/docs/routing" label="Routing" active={request.path == "/docs/routing"}></DocsNavLink>
-				<DocsNavLink href="/docs/forms" label="Forms" active={request.path == "/docs/forms"}></DocsNavLink>
-				<DocsNavLink href="/docs/auth" label="Auth" active={request.path == "/docs/auth"}></DocsNavLink>
-				<DocsNavLink href="/docs/runtime" label="Runtime" active={request.path == "/docs/runtime"}></DocsNavLink>
-				<DocsNavLink href="/docs/engines" label="Engines" active={request.path == "/docs/engines"}></DocsNavLink>
-				<DocsNavLink href="/docs/video" label="Video" active={request.path == "/docs/video"}></DocsNavLink>
-				<DocsNavLink href="/docs/motion" label="Motion" active={request.path == "/docs/motion"}></DocsNavLink>
-				<DocsNavLink href="/docs/text-layout" label="Text Layout" active={request.path == "/docs/text-layout"}></DocsNavLink>
-				<DocsNavLink href="/docs/images" label="Images" active={request.path == "/docs/images"}></DocsNavLink>
-			</div>
-		</div>
-		<div class="nav-group">
-			<span class="nav-group-title">Labs</span>
-			<div class="nav-group-links">
-				<DocsNavLink href="/labs/stream" label="Streaming" active={request.path == "/labs/stream"}></DocsNavLink>
-				<DocsNavLink href="/labs/secret" label="Secret" active={request.path == "/labs/secret"}></DocsNavLink>
-			</div>
-		</div>
-	</>
-}
-
-func DocsShortcuts() Node {
-	return <div class="sidebar-foot">
-		<span class="foot-label">Start here</span>
-		<div class="shortcut-grid">
-			<a href="/docs/getting-started" data-gosx-link class="chip">Quickstart</a>
-			<a href="/demos/cms" data-gosx-link class="chip">CMS demo</a>
-			<a href="/demos/scene3d" data-gosx-link class="chip">Geometry zoo</a>
-		</div>
+		<script src="/reveal.js" defer></script>
 	</div>
 }

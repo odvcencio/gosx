@@ -1,5 +1,33 @@
 # Changelog
 
+## v0.9.0
+
+### Bug Fixes
+
+**Route handler error propagation**: Route handlers that encounter render errors no longer panic. Added `ctx.SetHandlerError(err)` to `RouteContext` and a check in `buildHandler` that dispatches through the error handler chain. The `defer recover()` safety net remains for unexpected panics, but normal render errors now flow through the error page system without crashing the process.
+
+**CRDT API safety**: `Doc.Save()`, `Doc.Fork()`, and `Doc.Commit()` now return errors instead of panicking on encode failures. `Save()` returns `([]byte, error)`, `Fork()` returns `(*Doc, error)`, `Commit()` returns `(ChangeHash, error)`. Internal `commitPending` and `flushPendingForSnapshot` propagate errors. All callers in `crdt/`, `hub/`, and `client/bridge/` updated.
+
+### Documentation Site Redesign
+
+Complete ground-up rebuild of the gosx-docs example app. The old Paper & Ink site is gone. The new site is a maximalist, dual-mode experience that proves GoSX by being built with GoSX at full power.
+
+**Design system**: Dual-mode token architecture (dark immersive + light editorial) built on the m31labs.dev visual language. Space Grotesk + Inter + JetBrains Mono font stack. Fluid clamp() typography and spacing. Glass morphism, chrome text gradient, gold accent family. WCAG 2.2 AA minimum with verified contrast ratios. Forced-colors override for Windows High Contrast Mode.
+
+**Showroom homepage**: Full-viewport 3D hero scene (PBR meshes, 2000 GPU compute particles, orbit controls, ACES tone mapping). Three-statement pitch section. Eight capability showcase sections alternating dark/light. Proof point stat cards with TextBlock server-measured values. Scroll reveal with IntersectionObserver stagger.
+
+**17 reference pages** where the docs ARE live demos:
+- Light mode (11): Getting Started, Routing, Forms, Auth, Runtime, Images, Text Layout, Motion, Streaming, Compiler, Deployment
+- Dark mode (5): Islands, Signals, Engines, 3D Engine (with inline PBR scene), Hubs & CRDT
+
+**3 standalone demos**: Galaxy (2800 GPU compute particles), Geometry Zoo (PBR primitives with orbit controls), CMS Editor (block editor with publish action).
+
+**Navigation**: Floating pill nav (translucent over dark, solid over light). Page-scoped TOC rail on reference pages. Full-screen overlay with focus trap on mobile.
+
+**Accessibility**: Skip links (content + navigation + TOC). `prefers-reduced-motion` global kill switch with static 3D fallbacks. Focus-visible gold rings on all interactive elements. ARIA landmarks, live regions, descriptive labels. 44px minimum touch targets. 400% zoom reflow.
+
+**Micro-interactions**: Link underline draw (left-to-right, gold). Card hover lift with chrome gradient border. Button press scale. Code block hover highlight. Page transitions (fade out 150ms, fade in 300ms). Glass panel tooltips with spring easing.
+
 ## v0.8.0
 
 ### Tier 2: Visual Quality

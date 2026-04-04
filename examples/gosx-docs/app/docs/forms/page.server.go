@@ -3,28 +3,40 @@ package docs
 import (
 	"strings"
 
+	docs "github.com/odvcencio/gosx/examples/gosx-docs/app"
 	"github.com/odvcencio/gosx/action"
-	docsapp "github.com/odvcencio/gosx/examples/gosx-docs/app"
 	"github.com/odvcencio/gosx/route"
-	"github.com/odvcencio/gosx/session"
 )
 
 func init() {
-	docsapp.RegisterDocsPage(
-		"Forms",
-		"Relative page actions, CSRF protection, validation state, and session-backed flashes now fit the file-routed app model.",
-		route.FileModuleOptions{
-			Actions: route.FileActions{
-				"subscribe": func(ctx *action.Context) error {
-					if strings.TrimSpace(ctx.FormData["email"]) == "" {
-						return action.Validation("Add an email address to continue.", map[string]string{
-							"email": "Email is required.",
-						}, ctx.FormData)
-					}
-					session.AddFlash(ctx.Request, "notice", "The session flash survived a redirect-backed form post.")
-					return ctx.Success("Validation state and success messages now survive a normal browser redirect.", nil)
+	docs.RegisterDocsPage("Forms", "Server-side form handling with validation, CSRF protection, and flash messages.", route.FileModuleOptions{
+		Load: func(ctx *route.RouteContext, page route.FilePage) (any, error) {
+			return map[string]any{
+				"mode":        "light",
+				"title":       "Forms",
+				"description": "Server-side form handling with validation, CSRF protection, and flash messages.",
+				"tags":        []string{"forms", "actions", "validation", "csrf"},
+				"toc": []map[string]string{
+					{"href": "#html-forms", "label": "HTML Forms"},
+					{"href": "#server-actions", "label": "Server Actions"},
+					{"href": "#validation", "label": "Validation"},
+					{"href": "#csrf-protection", "label": "CSRF Protection"},
+					{"href": "#flash-messages", "label": "Flash Messages"},
+					{"href": "#redirects", "label": "Redirects"},
 				},
+			}, nil
+		},
+		Actions: route.FileActions{
+			"subscribe": func(ctx *action.Context) error {
+				email := ctx.FormData["email"]
+				if email == "" || !strings.Contains(email, "@") {
+					ctx.ValidationFailure("Please enter a valid email.", map[string]string{
+						"email": "A valid email address is required.",
+					})
+					return nil
+				}
+				return ctx.Success("Subscribed!", nil)
 			},
 		},
-	)
+	})
 }

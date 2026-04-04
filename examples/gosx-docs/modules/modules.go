@@ -2,14 +2,25 @@
 package modules
 
 import (
-	_ "github.com/odvcencio/gosx/examples/gosx-docs/app"
-	_ "github.com/odvcencio/gosx/examples/gosx-docs/app/demos/cms"
-	_ "github.com/odvcencio/gosx/examples/gosx-docs/app/demos/scene3d"
 	_ "github.com/odvcencio/gosx/examples/gosx-docs/app/docs/auth"
+	_ "github.com/odvcencio/gosx/examples/gosx-docs/app/docs/compiler"
+	_ "github.com/odvcencio/gosx/examples/gosx-docs/app/docs/deployment"
 	_ "github.com/odvcencio/gosx/examples/gosx-docs/app/docs/forms"
 	_ "github.com/odvcencio/gosx/examples/gosx-docs/app/docs/getting-started"
 	_ "github.com/odvcencio/gosx/examples/gosx-docs/app/docs/images"
+	_ "github.com/odvcencio/gosx/examples/gosx-docs/app/docs/motion"
 	_ "github.com/odvcencio/gosx/examples/gosx-docs/app/docs/routing"
 	_ "github.com/odvcencio/gosx/examples/gosx-docs/app/docs/runtime"
-	_ "github.com/odvcencio/gosx/examples/gosx-docs/app/labs/stream"
+	_ "github.com/odvcencio/gosx/examples/gosx-docs/app/docs/streaming"
+	_ "github.com/odvcencio/gosx/examples/gosx-docs/app/docs/text-layout"
+
+	_ "github.com/odvcencio/gosx/examples/gosx-docs/app/docs/engines"
+	_ "github.com/odvcencio/gosx/examples/gosx-docs/app/docs/hubs"
+	_ "github.com/odvcencio/gosx/examples/gosx-docs/app/docs/islands"
+	_ "github.com/odvcencio/gosx/examples/gosx-docs/app/docs/scene3d"
+	_ "github.com/odvcencio/gosx/examples/gosx-docs/app/docs/signals"
+
+	_ "github.com/odvcencio/gosx/examples/gosx-docs/app/demos/cms"
+	_ "github.com/odvcencio/gosx/examples/gosx-docs/app/demos/galaxy"
+	_ "github.com/odvcencio/gosx/examples/gosx-docs/app/demos/scene3d"
 )

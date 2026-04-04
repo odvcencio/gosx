@@ -1,22 +1,15 @@
 package docs
 
-func Page() Node {
-	return <article class="prose">
-		<div class="page-topper">
-			<span class="eyebrow">Missing</span>
-			<p class="lede">
-				The requested page does not exist in this docs tree.
-			</p>
+func NotFound() Node {
+	return <section class="error-page" aria-label="Page not found">
+		<div class="error-page__inner">
+			<h1 class="error-page__code chrome-text">404</h1>
+			<p class="error-page__message">Page not found</p>
+			<p class="error-page__hint">The page you're looking for doesn't exist or has been moved.</p>
+			<div class="error-page__actions">
+				<a href="/" data-gosx-link="true" class="error-page__link error-page__link--primary">Back to overview</a>
+				<a href="/docs/getting-started" data-gosx-link="true" class="error-page__link">Getting started</a>
+			</div>
 		</div>
-		<h1>
-			The page you asked for is not in this route tree.
-		</h1>
-		<p>
-			The docs site is file-routed. If a page is missing, either the file does not exist or the URL needs a redirect rule.
-		</p>
-		<div class="hero-actions">
-			<a href="/" data-gosx-link class="cta-link primary">Return to overview</a>
-			<a href="/docs/getting-started" data-gosx-link class="cta-link">Open getting started</a>
-		</div>
-	</article>
+	</section>
 }

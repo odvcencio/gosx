@@ -1,258 +1,126 @@
 package docs
 
-func CMSMetric(props any) Node {
-	return <article class="signal-badge">
-		<strong>{props.Value}</strong>
-		<p>{props.Label}</p>
-	</article>
-}
-
-func CMSPaletteCard(props any) Node {
-	return <article class="cms-palette-card" data-cms-palette-card data-cms-type={props.Type} draggable="true">
-		<div class="cms-palette-card__head">
-			<span class="eyebrow">{props.Kicker}</span>
-			<button type="button" class="chip" data-cms-add-type={props.Type}>Add</button>
-		</div>
-		<h3>{props.Title}</h3>
-		<p>{props.Body}</p>
-	</article>
-}
-
-func CMSEditorBlock(props any) Node {
-	return <article class={"cms-block cms-block--" + props.Type} data-cms-block data-block-id={props.Id}>
-		<div class="cms-block__head">
-			<div class="cms-block__meta">
-				<span class="eyebrow">
-					{props.Type}
-					block
-				</span>
-				<p>
-					Drag to reorder. Edits sync into the preview immediately.
-				</p>
-			</div>
-			<div class="cms-block__actions">
-				<button type="button" class="chip" data-cms-move={props.Id} data-cms-direction="up">Up</button>
-				<button type="button" class="chip" data-cms-move={props.Id} data-cms-direction="down">Down</button>
-				<span class="chip cms-drag-handle" data-cms-drag-handle data-block-id={props.Id} draggable="true">Drag</span>
-				<button type="button" class="chip" data-cms-remove={props.Id}>Remove</button>
-			</div>
-		</div>
-		<div class="cms-block__fields">
-			<If when={props.Type == "hero"}>
-				<>
-					<label class="field">
-						<span>Eyebrow</span>
-						<input type="text" value={props.Eyebrow} placeholder="Feature launch" data-cms-field="eyebrow" />
-					</label>
-					<label class="field">
-						<span>Headline</span>
-						<input type="text" value={props.Title} placeholder="Launch headline" data-cms-field="title" />
-					</label>
-					<label class="field">
-						<span>Body</span>
-						<textarea rows="4" placeholder="Hero copy" data-cms-field="body">{props.Body}</textarea>
-					</label>
-					<label class="field">
-						<span>CTA label</span>
-						<input type="text" value={props.Cta} placeholder="Start the release" data-cms-field="cta" />
-					</label>
-				</>
-			</If>
-			<If when={props.Type == "feature"}>
-				<>
-					<label class="field">
-						<span>Stat</span>
-						<input type="text" value={props.Stat} placeholder="03" data-cms-field="stat" />
-					</label>
-					<label class="field">
-						<span>Title</span>
-						<input type="text" value={props.Title} placeholder="Feature headline" data-cms-field="title" />
-					</label>
-					<label class="field">
-						<span>Body</span>
-						<textarea rows="4" placeholder="Feature copy" data-cms-field="body">{props.Body}</textarea>
-					</label>
-				</>
-			</If>
-			<If when={props.Type == "quote"}>
-				<>
-					<label class="field">
-						<span>Quote</span>
-						<textarea rows="5" placeholder="Quote body" data-cms-field="body">{props.Body}</textarea>
-					</label>
-					<label class="field">
-						<span>Attribution</span>
-						<input
-							type="text"
-							value={props.Attribution}
-							placeholder="Editorial desk"
-							data-cms-field="attribution"
-						 />
-					</label>
-				</>
-			</If>
-		</div>
-	</article>
-}
-
-func CMSPreviewBlock(props any) Node {
-	return <>
-		<If when={props.Type == "hero"}>
-			<section class="cms-preview-block cms-preview-block--hero">
-				<span class="eyebrow">{props.Eyebrow}</span>
-				<h3>{props.Title}</h3>
-				<p>{props.Body}</p>
-				<span class="chip">{props.Cta}</span>
-			</section>
-		</If>
-		<If when={props.Type == "feature"}>
-			<section class="cms-preview-block cms-preview-block--feature">
-				<span class="cms-preview-block__stat">{props.Stat}</span>
-				<div>
-					<h3>{props.Title}</h3>
-					<p>{props.Body}</p>
-				</div>
-			</section>
-		</If>
-		<If when={props.Type == "quote"}>
-			<blockquote class="cms-preview-block cms-preview-block--quote">
-				<p>{props.Body}</p>
-				<footer>{props.Attribution}</footer>
-			</blockquote>
-		</If>
-	</>
-}
-
 func Page() Node {
-	return <article class="cms-shell">
-		<section class="page-topper">
-			<span class="eyebrow">CMS Demo</span>
-			<p class="lede">
-				Drag blocks into the draft, edit them live, and publish the document through one routed action.
-			</p>
-		</section>
-		<section class="cms-hero">
-			<div class="cms-hero__copy">
-				<h1>
-					The CMS flow stays document-shaped. Compose once, publish once.
-				</h1>
-				<p>
-					This route is not a detached admin app. The editor, preview, form action, flashed result, and final product shell all live inside the same GoSX application model.
-				</p>
-				<div class="hero-actions">
-					<Link class="hero-link primary" href="/docs/forms">Inspect the action model</Link>
-					<Link class="hero-link" href="/demos/scene3d">Open the 3D showcase</Link>
-				</div>
+	return <div class="cms-demo">
+		<header class="cms-header">
+			<div class="cms-header__brand">
+				<span class="cms-header__logo">GoSX CMS</span>
+				<span class="cms-header__badge">Block Editor</span>
 			</div>
-			<aside class="home-hero__meta">
-				<Each as="metric" of={data.metrics}>
-					<CMSMetric {...metric}></CMSMetric>
-				</Each>
-			</aside>
-		</section>
-		<section class="cms-workbench" data-cms-demo data-cms-document={data.documentJSON}>
-			<div class="cms-toolbar">
-				<div class="cms-toolbar__copy">
-					<span class="eyebrow">Editor state</span>
-					<h2>
-						<span data-cms-count>{len(data.document.blocks)}</span>
-						blocks live in the draft and
-						<span data-cms-words>0</span>
-						words feed the preview.
-					</h2>
-					<p class="form-status" aria-live="polite">{action.message}</p>
-					<p class="flash-note" aria-live="polite">{flash.notice}</p>
-					<p class="form-error">{actions.publish.fieldErrors.document}</p>
-				</div>
-				<form class="cms-publish-form" method="post" action={request.path + "/__actions/publish"}>
-					<input type="hidden" name="csrf_token" value={csrf.token}></input>
-					<input type="hidden" name="document" value={data.documentJSON} data-cms-input></input>
-					<button class="cta-link primary" type="submit">Publish draft</button>
+			<div class="cms-header__actions">
+				<form class="cms-publish-form" method="post" action={actionPath("publish")}>
+					<input type="hidden" name="csrf_token" value={csrf.token} />
+					<button type="submit" class="cms-btn cms-btn--primary">Publish</button>
 				</form>
 			</div>
-			<div class="cms-studio">
-				<aside class="cms-panel">
-					<div class="cms-panel__head">
-						<span class="eyebrow">Palette</span>
-						<h2>Block elements</h2>
-						<p>Drag one into the draft or click add.</p>
+		</header>
+
+		<div class="cms-workspace">
+			<aside class="cms-palette" aria-label="Block palette">
+				<h2 class="cms-panel-title">Blocks</h2>
+				<div class="cms-palette__list">
+					<div class="cms-block-card" draggable="true" aria-label="Hero block">
+						<span class="cms-block-card__icon" aria-hidden="true">H</span>
+						<div class="cms-block-card__meta">
+							<strong>Hero</strong>
+							<span>Title + Subtitle</span>
+						</div>
 					</div>
-					<div class="cms-palette">
-						<CMSPaletteCard
-							type="hero"
-							kicker="Hero"
-							title="Launch section"
-							body="Big headline, supporting copy, and one clear CTA."
-						></CMSPaletteCard>
-						<CMSPaletteCard
-							type="feature"
-							kicker="Feature"
-							title="Signal card"
-							body="One stat, one title, and supporting explanation for the main story."
-						></CMSPaletteCard>
-						<CMSPaletteCard
-							type="quote"
-							kicker="Quote"
-							title="Editorial pull quote"
-							body="Add a testimonial or an internal product note without leaving the page flow."
-						></CMSPaletteCard>
+					<div class="cms-block-card" draggable="true" aria-label="Feature block">
+						<span class="cms-block-card__icon" aria-hidden="true">F</span>
+						<div class="cms-block-card__meta">
+							<strong>Feature</strong>
+							<span>Title + Body</span>
+						</div>
 					</div>
-				</aside>
-				<section class="cms-panel">
-					<div class="cms-panel__head">
-						<span class="eyebrow">Composer</span>
-						<h2>Live draft</h2>
-						<p>
-							The editor writes the whole document payload, not isolated widget state.
-						</p>
+					<div class="cms-block-card" draggable="true" aria-label="Quote block">
+						<span class="cms-block-card__icon" aria-hidden="true">Q</span>
+						<div class="cms-block-card__meta">
+							<strong>Quote</strong>
+							<span>Text + Author</span>
+						</div>
 					</div>
-					<div class="cms-block-list" data-cms-block-list>
-						<If when={len(data.document.blocks) == 0}>
-							<div class="cms-empty">
-								<strong>No blocks yet.</strong>
-								<p>
-									Drag one from the palette to start the page.
-								</p>
+				</div>
+			</aside>
+
+			<main class="cms-editor" aria-label="Block editor">
+				<h2 class="cms-panel-title">Editor</h2>
+				<div class="cms-block-list">
+					<Each of={data.blocks} as="block">
+						<div class={"cms-editor-block cms-editor-block--" + block.type} role="group" aria-label={block.type + " block"}>
+							<div class="cms-editor-block__header">
+								<span class="cms-editor-block__type">{block.type}</span>
+								<button class="cms-editor-block__remove" type="button" aria-label="Remove block">&#215;</button>
 							</div>
-						</If>
-						<If when={len(data.document.blocks) > 0}>
-							<Each as="block" of={data.document.blocks}>
-								<CMSEditorBlock {...block}></CMSEditorBlock>
-							</Each>
-						</If>
-					</div>
-				</section>
-				<aside class="cms-panel">
-					<div class="cms-panel__head">
-						<span class="eyebrow">Preview</span>
-						<h2>Published surface</h2>
-						<p>
-							The right rail is the document the publish action will receive.
-						</p>
-					</div>
-					<div class="cms-preview-canvas" data-cms-preview>
-						<If when={len(data.document.blocks) == 0}>
-							<div class="cms-empty">
-								<strong>The preview is waiting.</strong>
-								<p>
-									Add a block to populate the published page.
-								</p>
+							<div class="cms-editor-block__fields">
+								<If cond={block.type == "hero"}>
+									<label class="cms-field">
+										<span>Title</span>
+										<input class="cms-input" type="text" value={block.title} placeholder="Page title" />
+									</label>
+									<label class="cms-field">
+										<span>Subtitle</span>
+										<input class="cms-input" type="text" value={block.subtitle} placeholder="Supporting subtitle" />
+									</label>
+								</If>
+								<If cond={block.type == "feature"}>
+									<label class="cms-field">
+										<span>Title</span>
+										<input class="cms-input" type="text" value={block.title} placeholder="Feature title" />
+									</label>
+									<label class="cms-field">
+										<span>Body</span>
+										<textarea class="cms-input cms-input--textarea" placeholder="Feature description">{block.body}</textarea>
+									</label>
+								</If>
+								<If cond={block.type == "quote"}>
+									<label class="cms-field">
+										<span>Quote</span>
+										<textarea class="cms-input cms-input--textarea" placeholder="The quote text">{block.text}</textarea>
+									</label>
+									<label class="cms-field">
+										<span>Author</span>
+										<input class="cms-input" type="text" value={block.author} placeholder="Author name" />
+									</label>
+								</If>
 							</div>
-						</If>
-						<If when={len(data.document.blocks) > 0}>
-							<Each as="block" of={data.document.blocks}>
-								<CMSPreviewBlock {...block}></CMSPreviewBlock>
-							</Each>
-						</If>
-					</div>
-				</aside>
-			</div>
-		</section>
-		<section class="callout">
-			<strong>What this demo is proving</strong>
-			<p>
-				The authoring layer can be rich and immediate without abandoning boring browser forms. The draft is just JSON in a hidden input, and publish is still a colocated server action.
-			</p>
-		</section>
-	</article>
+						</div>
+					</Each>
+				</div>
+			</main>
+
+			<aside class="cms-preview" aria-label="Live preview">
+				<h2 class="cms-panel-title">Preview</h2>
+				<div class="cms-preview__canvas">
+					<Each of={data.blocks} as="block">
+						<div class={"cms-preview-block cms-preview-block--" + block.type}>
+							<If cond={block.type == "hero"}>
+								<div class="cms-preview-hero">
+									<h1>{block.title}</h1>
+									<p>{block.subtitle}</p>
+								</div>
+							</If>
+							<If cond={block.type == "feature"}>
+								<div class="cms-preview-feature">
+									<h3>{block.title}</h3>
+									<p>{block.body}</p>
+								</div>
+							</If>
+							<If cond={block.type == "quote"}>
+								<figure class="cms-preview-quote">
+									<blockquote>{block.text}</blockquote>
+									<figcaption>— {block.author}</figcaption>
+								</figure>
+							</If>
+						</div>
+					</Each>
+				</div>
+			</aside>
+		</div>
+
+		<footer class="cms-statusbar">
+			<span class="cms-statusbar__info">{len(data.blocks)} blocks</span>
+			<span class="cms-statusbar__hint">Drag blocks from the palette to reorder</span>
+		</footer>
+	</div>
 }

@@ -1,0 +1,40 @@
+/* ============================================================
+   Engines page
+   page.css — sidecar for app/docs/engines/page.gsx
+   ============================================================ */
+
+/* ------------------------------------------------------------
+   Capability grid
+   ------------------------------------------------------------ */
+
+.engines-cap-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--space-md);
+  margin: var(--space-lg) 0;
+}
+
+.engines-cap-group {
+  padding: var(--space-md);
+}
+
+.engines-cap-group__title {
+  font-family: var(--font-display);
+  font-size: var(--text-small);
+  letter-spacing: var(--ls-label);
+  text-transform: uppercase;
+  color: var(--accent);
+  margin: 0 0 var(--space-sm) 0;
+}
+
+.engines-cap-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-xs);
+}
+
+@media (max-width: 767px) {
+  .engines-cap-grid {
+    grid-template-columns: 1fr;
+  }
+}

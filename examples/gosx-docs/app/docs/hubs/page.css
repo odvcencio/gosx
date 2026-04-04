@@ -1,0 +1,121 @@
+/* ============================================================
+   Hubs & CRDT docs page
+   page.css — sidecar for app/docs/hubs/page.gsx
+   ============================================================ */
+
+/* ------------------------------------------------------------
+   Chrome-text heading overrides (dark mode)
+   ------------------------------------------------------------ */
+
+.docs-section:not(.light) .docs-header__title {
+  background: linear-gradient(
+    135deg,
+    var(--chrome-dark) 0%,
+    var(--chrome-light) 40%,
+    var(--chrome-dark) 60%,
+    var(--chrome-light) 100%
+  );
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+@media (forced-colors: active) {
+  .docs-section:not(.light) .docs-header__title {
+    -webkit-text-fill-color: CanvasText;
+    background: none;
+  }
+}
+
+.docs-section:not(.light) .prose h2 {
+  color: var(--chrome-light);
+}
+
+.docs-section:not(.light) .prose h3 {
+  color: var(--chrome-dark);
+}
+
+/* Gold accent on inline-code */
+.docs-section:not(.light) .inline-code {
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-size: 0.875em;
+  background: rgba(212, 175, 55, 0.08);
+  border: 1px solid rgba(212, 175, 55, 0.2);
+  padding: 0.15em 0.4em;
+  border-radius: 0.25em;
+}
+
+/* ------------------------------------------------------------
+   TOC gold accent (dark mode)
+   ------------------------------------------------------------ */
+
+.docs-section:not(.light) .toc-link.active {
+  border-left-color: var(--accent);
+  color: var(--accent);
+}
+
+.docs-section:not(.light) .docs-tag {
+  border-color: rgba(212, 175, 55, 0.2);
+  color: var(--accent);
+  background: rgba(212, 175, 55, 0.06);
+}
+
+/* ------------------------------------------------------------
+   Use-case card grid
+   ------------------------------------------------------------ */
+
+.hubs-use-case-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: var(--space-md);
+  margin: var(--space-md) 0;
+}
+
+.hubs-use-case-card {
+  padding: var(--space-md);
+  border-radius: 0.75rem;
+  border: 1px solid rgba(212, 175, 55, 0.15);
+  background: rgba(212, 175, 55, 0.04);
+  transition: border-color var(--duration-fast), background var(--duration-fast);
+}
+
+.hubs-use-case-card:hover {
+  border-color: rgba(212, 175, 55, 0.3);
+  background: rgba(212, 175, 55, 0.07);
+}
+
+.hubs-use-case-card h3 {
+  font-family: var(--font-display);
+  font-size: var(--text-h3);
+  color: var(--accent);
+  margin: 0 0 var(--space-xs) 0;
+}
+
+.hubs-use-case-card p {
+  font-size: var(--text-small);
+  color: var(--text-secondary);
+  line-height: var(--lh-prose);
+  margin: 0;
+}
+
+/* ------------------------------------------------------------
+   Glass panel (shared utility — dark mode tint)
+   ------------------------------------------------------------ */
+
+.docs-section:not(.light) .glass-panel {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+/* ------------------------------------------------------------
+   Mobile
+   ------------------------------------------------------------ */
+
+@media (max-width: 767px) {
+  .hubs-use-case-grid {
+    grid-template-columns: 1fr;
+  }
+}

@@ -168,10 +168,16 @@ func isZeroDocsTitle(title server.Title) bool {
 func defaultDocsBindings() route.FileTemplateBindings {
 	return route.FileTemplateBindings{
 		Funcs: map[string]any{
-			"DocsCodeBlock": DocsCodeBlock,
+			"CodeBlock":     CodeBlock,
+			"StatCard":      StatCard,
+			"CapabilityTag": CapabilityTag,
+			"Tooltip":       Tooltip,
 		},
 		Components: map[string]any{
-			"DocsCodeBlock": DocsCodeBlock,
+			"CodeBlock":     CodeBlock,
+			"StatCard":      StatCard,
+			"CapabilityTag": CapabilityTag,
+			"Tooltip":       Tooltip,
 		},
 	}
 }
