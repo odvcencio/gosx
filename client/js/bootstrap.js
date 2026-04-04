@@ -16500,15 +16500,6 @@
   function createSceneRenderer(canvas, props, capability) {
     const webglPreference = sceneCapabilityWebGLPreference(props, capability);
     if (webglPreference === "prefer" || webglPreference === "force") {
-      if (typeof createSceneWebGPURendererOrFallback === "function") {
-        const gpuRenderer = createSceneWebGPURendererOrFallback(canvas);
-        if (gpuRenderer) {
-          return {
-            renderer: gpuRenderer,
-            fallbackReason: "",
-          };
-        }
-      }
       if (typeof createScenePBRRendererOrFallback === "function") {
         const gl = typeof canvas.getContext === "function" ? canvas.getContext("webgl2", {
           alpha: true,
