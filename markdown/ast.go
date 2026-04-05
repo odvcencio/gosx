@@ -42,6 +42,7 @@ const (
 	NodeFrontmatter
 	NodeTableOfContents
 	NodeAutoEmbed
+	NodeEmoji
 )
 
 // Node is a single element in the Markdown AST.

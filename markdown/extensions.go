@@ -16,6 +16,7 @@ func postProcess(doc *Document) {
 	footnoteDefs := processFootnotes(doc.Root)
 	processInlineMath(doc.Root)
 	processSuperscripts(doc.Root)
+	processEmojiShortcodes(doc.Root)
 
 	// Append collected footnote definitions at the end of the document.
 	if len(footnoteDefs) > 0 {

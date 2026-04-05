@@ -165,6 +165,13 @@ func renderNode(r *Renderer, n *Node) string {
 	case NodeSubscript:
 		return fmt.Sprintf("<sub>%s</sub>", html.EscapeString(n.Literal))
 
+	case NodeEmoji:
+		if r.wrapEmoji {
+			code := n.Attrs["code"]
+			return fmt.Sprintf("<span class=\"emoji\" role=\"img\" aria-label=\"%s\">%s</span>", html.EscapeString(code), n.Literal)
+		}
+		return n.Literal
+
 	default:
 		// For any unhandled node type, render children
 		return renderChildren(r, n)
