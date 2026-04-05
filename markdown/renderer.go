@@ -6,6 +6,7 @@ type Renderer struct {
 	headingIDs    bool
 	unsafeHTML    bool
 	hardWraps     bool
+	wrapEmoji     bool
 	imageResolver func(string) string
 }
 
@@ -39,6 +40,11 @@ func WithUnsafeHTML(enabled bool) Option {
 // WithHardWraps makes single newlines render as <br> instead of whitespace.
 func WithHardWraps(enabled bool) Option {
 	return func(r *Renderer) { r.hardWraps = enabled }
+}
+
+// WithWrapEmoji wraps emoji output in an accessible <span> with role="img" and aria-label.
+func WithWrapEmoji(enabled bool) Option {
+	return func(r *Renderer) { r.wrapEmoji = enabled }
 }
 
 // WithImageResolver sets a function to resolve image URLs.
