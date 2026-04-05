@@ -52,24 +52,24 @@ type Environment struct {
 // Props is the typed Go-side Scene3D surface. It lowers into the current
 // Scene3D compatibility prop bag while preserving room for a real scene graph.
 type Props struct {
-	ProgramRef           string   `json:"-"`
-	Capabilities         []string `json:"-"`
-	Width                int      `json:"width,omitempty"`
-	Height               int      `json:"height,omitempty"`
-	Label                string   `json:"label,omitempty"`
-	AriaLabel            string   `json:"ariaLabel,omitempty"`
-	Background           string   `json:"background,omitempty"`
-	Controls             string   `json:"controls,omitempty"`
-	AutoRotate           *bool    `json:"autoRotate,omitempty"`
-	Responsive           *bool    `json:"responsive,omitempty"`
-	FillHeight           *bool    `json:"fillHeight,omitempty"`
-	PreferWebGL          *bool    `json:"preferWebGL,omitempty"`
-	ForceWebGL           *bool    `json:"forceWebGL,omitempty"`
-	PreferCanvas         *bool    `json:"preferCanvas,omitempty"`
-	DragToRotate         *bool    `json:"dragToRotate,omitempty"`
-	DragSignalNamespace  string   `json:"dragSignalNamespace,omitempty"`
-	PickSignalNamespace  string   `json:"pickSignalNamespace,omitempty"`
-	EventSignalNamespace string   `json:"eventSignalNamespace,omitempty"`
+	ProgramRef           string       `json:"-"`
+	Capabilities         []string     `json:"-"`
+	Width                int          `json:"width,omitempty"`
+	Height               int          `json:"height,omitempty"`
+	Label                string       `json:"label,omitempty"`
+	AriaLabel            string       `json:"ariaLabel,omitempty"`
+	Background           string       `json:"background,omitempty"`
+	Controls             string       `json:"controls,omitempty"`
+	AutoRotate           *bool        `json:"autoRotate,omitempty"`
+	Responsive           *bool        `json:"responsive,omitempty"`
+	FillHeight           *bool        `json:"fillHeight,omitempty"`
+	PreferWebGL          *bool        `json:"preferWebGL,omitempty"`
+	ForceWebGL           *bool        `json:"forceWebGL,omitempty"`
+	PreferCanvas         *bool        `json:"preferCanvas,omitempty"`
+	DragToRotate         *bool        `json:"dragToRotate,omitempty"`
+	DragSignalNamespace  string       `json:"dragSignalNamespace,omitempty"`
+	PickSignalNamespace  string       `json:"pickSignalNamespace,omitempty"`
+	EventSignalNamespace string       `json:"eventSignalNamespace,omitempty"`
 	CapabilityTier       string       `json:"capabilityTier,omitempty"`
 	Compression          *Compression `json:"compression,omitempty"`
 	ControlTarget        Vector3
