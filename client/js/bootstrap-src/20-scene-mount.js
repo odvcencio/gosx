@@ -2020,6 +2020,14 @@
       if (runtimeScene && ctx.runtime) {
         applySceneCommands(sceneState, ctx.runtime.tick());
       }
+      // LOD: swap vertex data based on camera distance before building render bundle.
+      if (typeof sceneApplyLOD === "function" && props.compression && props.compression.lod) {
+        var cam = sceneCurrentControlCamera(sceneControlHandle.controller, sceneState.camera, sceneState._scrollCamera);
+        var camX = cam.x || 0, camY = cam.y || 0, camZ = cam.z || 0;
+        for (var li = 0; li < sceneState.points.length; li++) {
+          sceneApplyLOD(sceneState.points[li], camX, camY, camZ);
+        }
+      }
       latestBundle = createSceneRenderBundle(
         viewport.cssWidth,
         viewport.cssHeight,
@@ -2045,6 +2053,20 @@
 
     await sceneModelHydration;
     renderFrame(0);
+
+    // Progressive: upgrade from preview to full resolution after first paint.
+    if (typeof sceneUpgradeProgressive === "function" && props.compression && props.compression.progressive) {
+      var upgradeTimer = typeof requestIdleCallback === "function" ? requestIdleCallback : setTimeout;
+      upgradeTimer(function() {
+        sceneUpgradeProgressive(props);
+        // Force a re-render with upgraded data
+        if (sceneWantsAnimation()) {
+          // Animation loop will pick it up
+        } else {
+          renderFrame(0);
+        }
+      });
+    }
 
     ctx.emit("mounted", {
       width: viewport.cssWidth,

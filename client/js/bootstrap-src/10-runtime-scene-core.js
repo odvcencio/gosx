@@ -1085,6 +1085,7 @@
 
   function createSceneState(props) {
     // Decompress any TurboQuant-compressed vertex data before the render loop.
+    // Progressive mode: decompress preview now, schedule full-res upgrade after first frame.
     if (typeof sceneDecompressProps === "function") {
       sceneDecompressProps(props);
     }

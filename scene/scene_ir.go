@@ -194,6 +194,8 @@ type PointsIR struct {
 	SpinZ                float64           `json:"spinZ,omitempty"`
 	CompressedPositions  []CompressedArray `json:"compressedPositions,omitempty"`
 	CompressedSizes      []CompressedArray `json:"compressedSizes,omitempty"`
+	PreviewPositions     []CompressedArray `json:"previewPositions,omitempty"`
+	PreviewSizes         []CompressedArray `json:"previewSizes,omitempty"`
 }
 
 // InstancedMeshIR is the typed compatibility record for one instanced mesh.
@@ -214,6 +216,7 @@ type InstancedMeshIR struct {
 	CastShadow           bool              `json:"castShadow,omitempty"`
 	ReceiveShadow        bool              `json:"receiveShadow,omitempty"`
 	CompressedTransforms []CompressedArray `json:"compressedTransforms,omitempty"`
+	PreviewTransforms    []CompressedArray `json:"previewTransforms,omitempty"`
 }
 
 // ComputeParticlesIR is the typed compatibility record for one GPU particle system.
@@ -281,7 +284,14 @@ func (p Props) SceneIR() SceneIR {
 	ir := p.Graph.SceneIR()
 	ir.Environment = p.Environment.sceneIR()
 	if p.Compression != nil && p.Compression.BitWidth > 0 {
-		compressSceneIR(&ir, p.Compression.BitWidth)
+		previewBW := 0
+		if p.Compression.Progressive || p.Compression.LOD {
+			previewBW = p.Compression.PreviewBitWidth
+			if previewBW <= 0 {
+				previewBW = 2 // default preview at 2-bit
+			}
+		}
+		compressSceneIR(&ir, p.Compression.BitWidth, previewBW)
 	}
 	return ir
 }
@@ -519,10 +529,16 @@ func (item PointsIR) legacyProps() map[string]any {
 	} else if len(item.Positions) > 0 {
 		record["positions"] = item.Positions
 	}
+	if len(item.PreviewPositions) > 0 {
+		record["previewPositions"] = item.PreviewPositions
+	}
 	if len(item.CompressedSizes) > 0 {
 		record["compressedSizes"] = item.CompressedSizes
 	} else if len(item.Sizes) > 0 {
 		record["sizes"] = item.Sizes
+	}
+	if len(item.PreviewSizes) > 0 {
+		record["previewSizes"] = item.PreviewSizes
 	}
 	if len(item.Colors) > 0 {
 		record["colors"] = item.Colors
@@ -579,6 +595,9 @@ func (item InstancedMeshIR) legacyProps() map[string]any {
 		record["compressedTransforms"] = item.CompressedTransforms
 	} else if len(item.Transforms) > 0 {
 		record["transforms"] = item.Transforms
+	}
+	if len(item.PreviewTransforms) > 0 {
+		record["previewTransforms"] = item.PreviewTransforms
 	}
 	if item.CastShadow {
 		record["castShadow"] = true
