@@ -1084,6 +1084,10 @@
   }
 
   function createSceneState(props) {
+    // Decompress any TurboQuant-compressed vertex data before the render loop.
+    if (typeof sceneDecompressProps === "function") {
+      sceneDecompressProps(props);
+    }
     const state = {
       background: typeof props.background === "string" && props.background ? props.background : "#08151f",
       camera: sceneCamera(props),
