@@ -81,12 +81,15 @@ type App struct {
 	runtimeRoot string
 	runtimeMeta *runtimeManifestCache
 	isr         *isrConfig
+	isrStore    ISRStore
 	navigation  bool
 	observers   []RequestObserver
+	readyChecks []namedReadyCheck
 	redirects   map[string]registeredRedirectRoute
 	rewrites    map[string]registeredRewriteRoute
 	mounts      map[string]registeredMountedRoute
 	revalidator *Revalidator
+	operations  []OperationObserver
 }
 
 // New creates a new GoSX server app.
@@ -136,7 +139,7 @@ func (a *App) SetPublicDir(dir string) {
 	a.publicDir = dir
 }
 
-// SetRevalidator replaces the app-wide in-memory revalidator used for
+// SetRevalidator replaces the app-wide revalidator used for
 // automatic ETags and explicit path/tag invalidation.
 func (a *App) SetRevalidator(revalidator *Revalidator) {
 	if revalidator == nil {
@@ -145,7 +148,36 @@ func (a *App) SetRevalidator(revalidator *Revalidator) {
 	a.revalidator = revalidator
 }
 
-// Revalidator returns the app-wide in-memory revalidator.
+// SetRevalidationStore replaces the app-wide revalidation/version store used
+// for automatic ETags and explicit path/tag invalidation.
+func (a *App) SetRevalidationStore(store RevalidationStore) {
+	if a == nil {
+		return
+	}
+	if a.revalidator == nil {
+		a.revalidator = NewRevalidatorWithStore(store)
+		return
+	}
+	a.revalidator.SetStore(store)
+}
+
+// SetISRStore replaces the ISR artifact/state store used by incremental static
+// regeneration. A nil store restores the default local filesystem + in-memory
+// implementation.
+func (a *App) SetISRStore(store ISRStore) {
+	if a == nil {
+		return
+	}
+	if store == nil {
+		store = NewInMemoryISRStore()
+	}
+	a.isrStore = store
+	if a.isr != nil {
+		a.isr.store = store
+	}
+}
+
+// Revalidator returns the app-wide revalidator.
 func (a *App) Revalidator() *Revalidator {
 	if a.revalidator == nil {
 		a.revalidator = NewRevalidator()
@@ -161,6 +193,25 @@ func (a *App) RevalidatePath(target string) uint64 {
 // RevalidateTag invalidates cache validators for the provided tag.
 func (a *App) RevalidateTag(tag string) uint64 {
 	return a.Revalidator().RevalidateTag(tag)
+}
+
+// RevalidationStore returns the app-wide store backing the revalidator.
+func (a *App) RevalidationStore() RevalidationStore {
+	if a == nil {
+		return nil
+	}
+	return a.Revalidator().Store()
+}
+
+// ISRStore returns the store backing ISR state and artifacts.
+func (a *App) ISRStore() ISRStore {
+	if a == nil {
+		return nil
+	}
+	if a.isrStore == nil {
+		a.isrStore = NewInMemoryISRStore()
+	}
+	return a.isrStore
 }
 
 // SetImageDir sets the source directory used by the built-in image optimizer.
@@ -299,6 +350,25 @@ func (a *App) UseObserver(observer RequestObserver) {
 	a.observers = append(a.observers, observer)
 }
 
+// UseOperationObserver appends a non-request operational observer to the app.
+func (a *App) UseOperationObserver(observer OperationObserver) {
+	if observer == nil {
+		return
+	}
+	a.operations = append(a.operations, observer)
+}
+
+// UseReadyCheck appends a named readiness check evaluated by `/readyz`.
+func (a *App) UseReadyCheck(name string, check ReadyCheck) {
+	if check == nil {
+		return
+	}
+	a.readyChecks = append(a.readyChecks, namedReadyCheck{
+		name:  normalizeReadyCheckName(name),
+		check: check,
+	})
+}
+
 // Build finalizes routes and returns an http.Handler.
 func (a *App) Build() http.Handler {
 	mux := http.NewServeMux()
@@ -330,13 +400,16 @@ func (a *App) registerBuiltinRoutes(mux *http.ServeMux) {
 		mux.HandleFunc("/healthz", healthHandler)
 	}
 	if !a.hasRoute("/readyz") {
-		mux.HandleFunc("/readyz", healthHandler)
+		mux.HandleFunc("/readyz", a.readyHandler)
 	}
 	if !a.hasRoute("GET /gosx/") {
 		mux.Handle("GET /gosx/", http.HandlerFunc(a.serveRuntimeAsset))
 	}
 	if imageDir := a.effectiveImageDir(); imageDir != "" && !a.hasRoute(defaultImageEndpoint) {
 		mux.Handle("GET "+defaultImageEndpoint, ImageHandler(imageDir))
+	}
+	if !a.hasRoute("GET /_gosx/emoji-codes.json") {
+		mux.Handle("GET /_gosx/emoji-codes.json", EmojiCodesHandler())
 	}
 }
 
@@ -578,6 +651,17 @@ func (a *App) wrap(handler http.Handler) http.Handler {
 	return wrapped
 }
 
+func (a *App) observeOperation(event OperationEvent) {
+	if len(a.operations) == 0 {
+		return
+	}
+	for _, observer := range a.operations {
+		if observer != nil {
+			observer.ObserveOperation(event)
+		}
+	}
+}
+
 func (a *App) renderPage(w http.ResponseWriter, ctx *Context, pattern string, body gosx.Node, defaultTitle string) {
 	ctx = ensurePageContext(ctx)
 	if a.pageNotModified(ctx) {
@@ -727,6 +811,30 @@ func (a *App) effectiveImageDir() string {
 func healthHandler(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]bool{"ok": true})
+}
+
+func (a *App) readyHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	report := ReadinessReport{OK: true}
+	for _, entry := range a.readyChecks {
+		if entry.check == nil {
+			continue
+		}
+		result := ReadinessCheckResult{
+			Name: normalizeReadyCheckName(entry.name),
+			OK:   true,
+		}
+		if err := entry.check.CheckReady(r.Context()); err != nil {
+			report.OK = false
+			result.OK = false
+			result.Error = err.Error()
+		}
+		report.Checks = append(report.Checks, result)
+	}
+	if !report.OK {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}
+	_ = json.NewEncoder(w).Encode(report)
 }
 
 func requestIDMiddleware() Middleware {
