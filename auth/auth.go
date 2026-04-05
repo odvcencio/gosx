@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/odvcencio/gosx/session"
 )
@@ -44,6 +45,7 @@ type Options struct {
 	SessionKey string
 	LoginPath  string
 	Provider   Provider
+	Observers  []Observer
 }
 
 // Manager loads and guards the current user from the session store.
@@ -52,6 +54,7 @@ type Manager struct {
 	sessionKey string
 	loginPath  string
 	provider   Provider
+	observers  []Observer
 }
 
 // New creates a session-backed auth manager.
@@ -67,7 +70,16 @@ func New(sessions *session.Manager, opts Options) *Manager {
 		sessionKey: opts.SessionKey,
 		loginPath:  opts.LoginPath,
 		provider:   providerOrDefault(sessions, opts),
+		observers:  append([]Observer(nil), opts.Observers...),
 	}
+}
+
+// UseObserver appends an authentication observer to the manager.
+func (m *Manager) UseObserver(observer Observer) {
+	if m == nil || observer == nil {
+		return
+	}
+	m.observers = append(m.observers, observer)
 }
 
 // Middleware resolves the current user once and stores it on the request
@@ -112,27 +124,53 @@ func (m *Manager) Current(r *http.Request) (User, bool) {
 
 // SignIn stores the authenticated user in the session.
 func (m *Manager) SignIn(r *http.Request, user User) bool {
-	if m == nil || m.sessions == nil {
+	if m == nil {
+		return false
+	}
+	event := newAuthEvent(r, "sign_in")
+	event.UserID = user.ID
+	event.Email = user.Email
+	if m.sessions == nil {
+		event.Error = "session manager required before sign in"
+		m.observe(event)
 		return false
 	}
 	store := m.sessions.Get(r)
 	if store == nil {
+		event.Error = "session middleware required before sign in"
+		m.observe(event)
 		return false
 	}
 	store.Set(m.sessionKey, user)
+	event.Success = true
+	m.observe(event)
 	return true
 }
 
 // SignOut removes the authenticated user from the session.
 func (m *Manager) SignOut(r *http.Request) {
-	if m == nil || m.sessions == nil {
+	if m == nil {
+		return
+	}
+	event := newAuthEvent(r, "sign_out")
+	if user, ok := m.Current(r); ok {
+		event.UserID = user.ID
+		event.Email = user.Email
+	}
+	if m.sessions == nil {
+		event.Error = "session manager required before sign out"
+		m.observe(event)
 		return
 	}
 	store := m.sessions.Get(r)
 	if store == nil {
+		event.Error = "session middleware required before sign out"
+		m.observe(event)
 		return
 	}
 	store.Delete(m.sessionKey)
+	event.Success = true
+	m.observe(event)
 }
 
 // Require blocks unauthenticated requests.
@@ -234,5 +272,19 @@ func providerOrDefault(sessions *session.Manager, opts Options) Provider {
 	return sessionProvider{
 		sessions:   sessions,
 		sessionKey: opts.SessionKey,
+	}
+}
+
+func (m *Manager) observe(event AuthEvent) {
+	if m == nil || len(m.observers) == 0 {
+		return
+	}
+	if event.OccurredAt.IsZero() {
+		event.OccurredAt = time.Now().UTC()
+	}
+	for _, observer := range m.observers {
+		if observer != nil {
+			observer.ObserveAuth(event)
+		}
 	}
 }
