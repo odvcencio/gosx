@@ -7661,15 +7661,106 @@
 
   function sceneDecompressProps(props) {
     var scene = sceneProps(props);
+    var comp = props && props.compression;
+    var progressive = comp && comp.progressive;
+    var lod = comp && comp.lod;
+    var lodThreshold = comp && comp.lodThreshold || 20;
+
     var points = scene && Array.isArray(scene.points) ? scene.points :
                  (props && Array.isArray(props.points) ? props.points : []);
     for (var i = 0; i < points.length; i++) {
-      sceneDecompressPointsEntry(points[i]);
+      var entry = points[i];
+      if (progressive || lod) {
+        if (entry.previewPositions && !entry.positions) {
+          entry.positions = sceneDecompressArray(entry.previewPositions);
+          entry._pendingPositions = entry.compressedPositions;
+          entry._previewActive = true;
+          delete entry.previewPositions;
+        }
+        if (entry.previewSizes && !entry.sizes) {
+          entry.sizes = sceneDecompressArray(entry.previewSizes);
+          entry._pendingSizes = entry.compressedSizes;
+          delete entry.previewSizes;
+        }
+        if (lod) {
+          if (entry._pendingPositions) {
+            entry._fullPositions = sceneDecompressArray(entry._pendingPositions);
+            entry._previewPositions = entry.positions;
+            entry._lodThreshold = lodThreshold;
+          }
+        }
+      } else {
+        sceneDecompressPointsEntry(entry);
+      }
+    }
+
+    var meshes = scene && Array.isArray(scene.instancedMeshes) ? scene.instancedMeshes :
+                 (props && Array.isArray(props.instancedMeshes) ? props.instancedMeshes : []);
+    for (var i = 0; i < meshes.length; i++) {
+      var entry = meshes[i];
+      if (progressive || lod) {
+        if (entry.previewTransforms && !entry.transforms) {
+          entry.transforms = sceneDecompressArray(entry.previewTransforms);
+          entry._pendingTransforms = entry.compressedTransforms;
+          entry._previewActive = true;
+          delete entry.previewTransforms;
+        }
+        if (lod && entry._pendingTransforms) {
+          entry._fullTransforms = sceneDecompressArray(entry._pendingTransforms);
+          entry._previewTransforms = entry.transforms;
+          entry._lodThreshold = lodThreshold;
+        }
+      } else {
+        sceneDecompressInstancedMeshEntry(entry);
+      }
+    }
+  }
+
+  function sceneUpgradeProgressive(props) {
+    var scene = sceneProps(props);
+    var points = scene && Array.isArray(scene.points) ? scene.points :
+                 (props && Array.isArray(props.points) ? props.points : []);
+    for (var i = 0; i < points.length; i++) {
+      var entry = points[i];
+      if (entry._pendingPositions) {
+        entry.positions = sceneDecompressArray(entry._pendingPositions);
+        delete entry._pendingPositions;
+        delete entry._previewActive;
+        delete entry._cachedPos;
+      }
+      if (entry._pendingSizes) {
+        entry.sizes = sceneDecompressArray(entry._pendingSizes);
+        delete entry._pendingSizes;
+        delete entry._cachedSizes;
+      }
     }
     var meshes = scene && Array.isArray(scene.instancedMeshes) ? scene.instancedMeshes :
                  (props && Array.isArray(props.instancedMeshes) ? props.instancedMeshes : []);
     for (var i = 0; i < meshes.length; i++) {
-      sceneDecompressInstancedMeshEntry(meshes[i]);
+      var entry = meshes[i];
+      if (entry._pendingTransforms) {
+        entry.transforms = sceneDecompressArray(entry._pendingTransforms);
+        delete entry._pendingTransforms;
+        delete entry._previewActive;
+      }
+    }
+  }
+
+  function sceneApplyLOD(entry, cameraX, cameraY, cameraZ) {
+    if (!entry._fullPositions || !entry._previewPositions) return;
+    var dx = (entry.x || 0) - cameraX;
+    var dy = (entry.y || 0) - cameraY;
+    var dz = (entry.z || 0) - cameraZ;
+    var dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    var threshold = entry._lodThreshold || 20;
+    var wantFull = dist < threshold;
+    var hasFull = entry.positions === entry._fullPositions;
+    if (wantFull && !hasFull) {
+      entry.positions = entry._fullPositions;
+      delete entry._cachedPos; // force buffer rebuild
+    } else if (!wantFull && hasFull) {
+      entry.positions = entry._previewPositions;
+      delete entry._cachedPos;
     }
   }
 
@@ -18746,6 +18837,13 @@
       if (runtimeScene && ctx.runtime) {
         applySceneCommands(sceneState, ctx.runtime.tick());
       }
+      if (typeof sceneApplyLOD === "function" && props.compression && props.compression.lod) {
+        var cam = sceneCurrentControlCamera(sceneControlHandle.controller, sceneState.camera, sceneState._scrollCamera);
+        var camX = cam.x || 0, camY = cam.y || 0, camZ = cam.z || 0;
+        for (var li = 0; li < sceneState.points.length; li++) {
+          sceneApplyLOD(sceneState.points[li], camX, camY, camZ);
+        }
+      }
       latestBundle = createSceneRenderBundle(
         viewport.cssWidth,
         viewport.cssHeight,
@@ -18771,6 +18869,17 @@
 
     await sceneModelHydration;
     renderFrame(0);
+
+    if (typeof sceneUpgradeProgressive === "function" && props.compression && props.compression.progressive) {
+      var upgradeTimer = typeof requestIdleCallback === "function" ? requestIdleCallback : setTimeout;
+      upgradeTimer(function() {
+        sceneUpgradeProgressive(props);
+        if (sceneWantsAnimation()) {
+        } else {
+          renderFrame(0);
+        }
+      });
+    }
 
     ctx.emit("mounted", {
       width: viewport.cssWidth,
