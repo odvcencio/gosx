@@ -21,6 +21,7 @@ type SceneIR struct {
 	Points           []PointsIR           `json:"points,omitempty"`
 	InstancedMeshes  []InstancedMeshIR    `json:"instancedMeshes,omitempty"`
 	ComputeParticles []ComputeParticlesIR `json:"computeParticles,omitempty"`
+	Animations       []AnimationClipIR    `json:"animations,omitempty"`
 	Labels           []LabelIR            `json:"labels,omitempty"`
 	Sprites          []SpriteIR           `json:"sprites,omitempty"`
 	Lights           []LightIR            `json:"lights,omitempty"`
@@ -265,6 +266,31 @@ type ParticleMaterialIR struct {
 	Attenuation bool    `json:"attenuation,omitempty"`
 }
 
+// AnimationClipIR is the typed compatibility record for one procedural
+// animation clip with per-channel keyframe data.
+type AnimationClipIR struct {
+	Name     string              `json:"name"`
+	Duration float64             `json:"duration"`
+	Channels []AnimationChannelIR `json:"channels"`
+}
+
+// AnimationChannelIR is one keyframe track targeting a single node property.
+// Times and Values are the raw float arrays; CompressedTimes/CompressedValues
+// replace them when TurboQuant compression is enabled.
+type AnimationChannelIR struct {
+	TargetNode    int       `json:"targetNode"`
+	Property      string    `json:"property"`
+	Interpolation string    `json:"interpolation,omitempty"`
+
+	Times  []float64 `json:"times,omitempty"`
+	Values []float64 `json:"values,omitempty"`
+
+	CompressedTimes  []CompressedArray `json:"compressedTimes,omitempty"`
+	CompressedValues []CompressedArray `json:"compressedValues,omitempty"`
+	PreviewTimes     []CompressedArray `json:"previewTimes,omitempty"`
+	PreviewValues    []CompressedArray `json:"previewValues,omitempty"`
+}
+
 // EnvironmentIR is the typed compatibility record for scene-wide lighting.
 type EnvironmentIR struct {
 	AmbientColor     string  `json:"ambientColor,omitempty"`
@@ -314,6 +340,7 @@ func (g Graph) SceneIR() SceneIR {
 		Points:           append([]PointsIR(nil), lowerer.points...),
 		InstancedMeshes:  append([]InstancedMeshIR(nil), lowerer.instancedMeshes...),
 		ComputeParticles: append([]ComputeParticlesIR(nil), lowerer.computeParticles...),
+		Animations:       append([]AnimationClipIR(nil), lowerer.animations...),
 		Labels:           lowerer.resolveLabels(),
 		Sprites:          lowerer.resolveSprites(),
 		Lights:           append([]LightIR(nil), lowerer.lights...),
@@ -321,7 +348,7 @@ func (g Graph) SceneIR() SceneIR {
 }
 
 func (ir SceneIR) isZero() bool {
-	return len(ir.Objects) == 0 && len(ir.Models) == 0 && len(ir.Points) == 0 && len(ir.InstancedMeshes) == 0 && len(ir.ComputeParticles) == 0 && len(ir.Labels) == 0 && len(ir.Sprites) == 0 && len(ir.Lights) == 0 && ir.Environment.isZero()
+	return len(ir.Objects) == 0 && len(ir.Models) == 0 && len(ir.Points) == 0 && len(ir.InstancedMeshes) == 0 && len(ir.ComputeParticles) == 0 && len(ir.Animations) == 0 && len(ir.Labels) == 0 && len(ir.Sprites) == 0 && len(ir.Lights) == 0 && ir.Environment.isZero()
 }
 
 func (ir SceneIR) legacyProps() map[string]any {
@@ -343,6 +370,9 @@ func (ir SceneIR) legacyProps() map[string]any {
 	}
 	if computeParticles := legacyComputeParticles(ir.ComputeParticles); len(computeParticles) > 0 {
 		out["computeParticles"] = computeParticles
+	}
+	if animations := legacyAnimations(ir.Animations); len(animations) > 0 {
+		out["animations"] = animations
 	}
 	if labels := legacyLabels(ir.Labels); len(labels) > 0 {
 		out["labels"] = labels
@@ -663,6 +693,57 @@ func (item ComputeParticlesIR) legacyProps() map[string]any {
 	}
 	record["material"] = material
 	setNumeric(record, "bounds", item.Bounds)
+	return record
+}
+
+func legacyAnimations(items []AnimationClipIR) []map[string]any {
+	if len(items) == 0 {
+		return nil
+	}
+	out := make([]map[string]any, 0, len(items))
+	for _, item := range items {
+		out = append(out, item.legacyProps())
+	}
+	return out
+}
+
+func (item AnimationClipIR) legacyProps() map[string]any {
+	record := map[string]any{
+		"name":     item.Name,
+		"duration": item.Duration,
+	}
+	if len(item.Channels) > 0 {
+		channels := make([]map[string]any, 0, len(item.Channels))
+		for _, ch := range item.Channels {
+			channels = append(channels, ch.legacyProps())
+		}
+		record["channels"] = channels
+	}
+	return record
+}
+
+func (ch AnimationChannelIR) legacyProps() map[string]any {
+	record := map[string]any{
+		"targetNode": ch.TargetNode,
+		"property":   ch.Property,
+	}
+	setString(record, "interpolation", ch.Interpolation)
+	if len(ch.CompressedTimes) > 0 {
+		record["compressedTimes"] = ch.CompressedTimes
+	} else if len(ch.Times) > 0 {
+		record["times"] = ch.Times
+	}
+	if len(ch.PreviewTimes) > 0 {
+		record["previewTimes"] = ch.PreviewTimes
+	}
+	if len(ch.CompressedValues) > 0 {
+		record["compressedValues"] = ch.CompressedValues
+	} else if len(ch.Values) > 0 {
+		record["values"] = ch.Values
+	}
+	if len(ch.PreviewValues) > 0 {
+		record["previewValues"] = ch.PreviewValues
+	}
 	return record
 }
 

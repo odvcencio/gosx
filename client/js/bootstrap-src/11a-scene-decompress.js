@@ -122,6 +122,24 @@
     }
   }
 
+  // Decompress an animation channel entry in place — replaces compressedTimes/
+  // compressedValues with decompressed times/values arrays so the animation
+  // mixer sees plain float arrays.
+  function sceneDecompressAnimationChannel(channel) {
+    if (channel.compressedTimes && !channel.times) {
+      channel.times = sceneDecompressArray(channel.compressedTimes);
+      if (channel.times) {
+        delete channel.compressedTimes;
+      }
+    }
+    if (channel.compressedValues && !channel.values) {
+      channel.values = sceneDecompressArray(channel.compressedValues);
+      if (channel.values) {
+        delete channel.compressedValues;
+      }
+    }
+  }
+
   // Decompress all compressed data in scene props. Called once at scene init
   // before the render loop starts. Mutates entries in place for zero-copy.
   //
@@ -189,6 +207,35 @@
         sceneDecompressInstancedMeshEntry(entry);
       }
     }
+
+    var animations = scene && Array.isArray(scene.animations) ? scene.animations :
+                     (props && Array.isArray(props.animations) ? props.animations : []);
+    for (var i = 0; i < animations.length; i++) {
+      var clip = animations[i];
+      var channels = clip && Array.isArray(clip.channels) ? clip.channels : [];
+      for (var j = 0; j < channels.length; j++) {
+        var channel = channels[j];
+        if (progressive || lod) {
+          if (channel.previewTimes && !channel.times) {
+            channel.times = sceneDecompressArray(channel.previewTimes);
+            channel._pendingTimes = channel.compressedTimes;
+            channel._previewActive = true;
+            delete channel.previewTimes;
+          }
+          if (channel.previewValues && !channel.values) {
+            channel.values = sceneDecompressArray(channel.previewValues);
+            channel._pendingValues = channel.compressedValues;
+            delete channel.previewValues;
+          }
+          if (!progressive) {
+            // Non-progressive (plain compress): decompress immediately
+            sceneDecompressAnimationChannel(channel);
+          }
+        } else {
+          sceneDecompressAnimationChannel(channel);
+        }
+      }
+    }
   }
 
   // Upgrade progressive entries from preview to full resolution.
@@ -220,6 +267,24 @@
         entry.transforms = sceneDecompressArray(entry._pendingTransforms);
         delete entry._pendingTransforms;
         delete entry._previewActive;
+      }
+    }
+    var animations = scene && Array.isArray(scene.animations) ? scene.animations :
+                     (props && Array.isArray(props.animations) ? props.animations : []);
+    for (var i = 0; i < animations.length; i++) {
+      var clip = animations[i];
+      var channels = clip && Array.isArray(clip.channels) ? clip.channels : [];
+      for (var j = 0; j < channels.length; j++) {
+        var channel = channels[j];
+        if (channel._pendingTimes) {
+          channel.times = sceneDecompressArray(channel._pendingTimes);
+          delete channel._pendingTimes;
+          delete channel._previewActive;
+        }
+        if (channel._pendingValues) {
+          channel.values = sceneDecompressArray(channel._pendingValues);
+          delete channel._pendingValues;
+        }
       }
     }
   }
