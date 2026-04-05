@@ -1,7 +1,9 @@
 package workspace
 
 import (
+	"encoding/json"
 	"fmt"
+	"net/http"
 	"sync"
 
 	"github.com/odvcencio/gosx/crdt"
@@ -68,7 +70,65 @@ func New(opts Options) *Workspace {
 		clientToAgent: make(map[string]string),
 	}
 	ws.obs = newObserver(doc, idx, opts.Dim)
+	ws.registerEvents()
 	return ws
+}
+
+// ServeHTTP delegates to the underlying Hub for WebSocket upgrades.
+func (ws *Workspace) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	ws.hub.ServeHTTP(w, r)
+}
+
+func (ws *Workspace) registerEvents() {
+	ws.hub.On("finding", func(ctx *hub.Context) {
+		var msg FindingMessage
+		if err := json.Unmarshal(ctx.Data, &msg); err != nil {
+			return
+		}
+		ws.HandleWriteFinding(msg)
+	})
+
+	ws.hub.On("query", func(ctx *hub.Context) {
+		var msg QueryMessage
+		if err := json.Unmarshal(ctx.Data, &msg); err != nil {
+			return
+		}
+		results, err := ws.HandleQuery(msg)
+		if err != nil {
+			return
+		}
+		ws.hub.Send(ctx.Client.ID, "query_results", results)
+	})
+
+	ws.hub.On("join", func(ctx *hub.Context) {
+		var msg AgentJoinMessage
+		if err := json.Unmarshal(ctx.Data, &msg); err != nil {
+			return
+		}
+		if msg.Name != "" {
+			ws.HandleAgentJoin(msg)
+			ws.mu.Lock()
+			if ws.clientToAgent == nil {
+				ws.clientToAgent = make(map[string]string)
+			}
+			ws.clientToAgent[ctx.Client.ID] = msg.Name
+			ws.mu.Unlock()
+			ws.hub.Broadcast("agent_joined", msg)
+		}
+	})
+
+	ws.hub.On("leave", func(ctx *hub.Context) {
+		ws.mu.Lock()
+		name, ok := ws.clientToAgent[ctx.Client.ID]
+		if ok {
+			delete(ws.clientToAgent, ctx.Client.ID)
+		}
+		ws.mu.Unlock()
+		if ok {
+			ws.HandleAgentLeave(name)
+			ws.hub.Broadcast("agent_left", map[string]string{"name": name})
+		}
+	})
 }
 
 func (ws *Workspace) Name() string        { return ws.name }
