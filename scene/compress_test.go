@@ -188,15 +188,15 @@ func TestCompressDecompressRoundTrip(t *testing.T) {
 
 func TestCompressChunkedLargeArray(t *testing.T) {
 	rng := rand.New(rand.NewSource(456))
-	// 600 floats > sceneChunkSize (256), forces chunking
-	original := make([]float64, 600)
+	// 10000 floats > sceneChunkSize (4096), forces chunking
+	original := make([]float64, 10000)
 	for i := range original {
 		original[i] = rng.Float64()*6 - 3
 	}
 
 	chunks := compressFloat64Array(original, 2)
 	if len(chunks) < 2 {
-		t.Fatalf("expected >= 2 chunks for 600 elements, got %d", len(chunks))
+		t.Fatalf("expected >= 2 chunks for 10000 elements, got %d", len(chunks))
 	}
 
 	recovered := DecompressFloat64Array(chunks)

@@ -6,7 +6,8 @@ import "strings"
 // The client checks for compressed fields first and falls back to raw arrays.
 type CompressedArray struct {
 	Packed   []byte  `json:"packed"`
-	Norm     float32 `json:"norm"`
+	Norm     float32 `json:"norm"`              // min value (scalar quantization floor)
+	MaxVal   float32 `json:"maxVal,omitempty"`   // max value (scalar quantization ceiling)
 	Dim      int     `json:"dim"`
 	BitWidth int     `json:"bitWidth"`
 	Count    int     `json:"count"` // number of original float64 values

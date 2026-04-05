@@ -15,6 +15,7 @@ const outputs = [
       "bootstrap-src/05-document-env.js",
       "bootstrap-src/10-runtime-scene-core.js",
       "bootstrap-src/11-scene-math.js",
+      "bootstrap-src/11a-scene-decompress.js",
       "bootstrap-src/12-scene-geometry.js",
       "bootstrap-src/13-scene-material.js",
       "bootstrap-src/14-scene-lighting.js",
