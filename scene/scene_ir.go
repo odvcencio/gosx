@@ -2,6 +2,16 @@ package scene
 
 import "strings"
 
+// CompressedArray holds a TurboQuant-compressed float array.
+// The client checks for compressed fields first and falls back to raw arrays.
+type CompressedArray struct {
+	Packed   []byte  `json:"packed"`
+	Norm     float32 `json:"norm"`
+	Dim      int     `json:"dim"`
+	BitWidth int     `json:"bitWidth"`
+	Count    int     `json:"count"` // number of original float64 values
+}
+
 // SceneIR is the typed lowered scene payload emitted from a Graph before it is
 // serialized into the current Scene3D compatibility contract.
 type SceneIR struct {
@@ -178,9 +188,11 @@ type PointsIR struct {
 	RotationX   float64   `json:"rotationX,omitempty"`
 	RotationY   float64   `json:"rotationY,omitempty"`
 	RotationZ   float64   `json:"rotationZ,omitempty"`
-	SpinX       float64   `json:"spinX,omitempty"`
-	SpinY       float64   `json:"spinY,omitempty"`
-	SpinZ       float64   `json:"spinZ,omitempty"`
+	SpinX                float64           `json:"spinX,omitempty"`
+	SpinY                float64           `json:"spinY,omitempty"`
+	SpinZ                float64           `json:"spinZ,omitempty"`
+	CompressedPositions  []CompressedArray `json:"compressedPositions,omitempty"`
+	CompressedSizes      []CompressedArray `json:"compressedSizes,omitempty"`
 }
 
 // InstancedMeshIR is the typed compatibility record for one instanced mesh.
@@ -198,8 +210,9 @@ type InstancedMeshIR struct {
 	Roughness     float64   `json:"roughness,omitempty"`
 	Metalness     float64   `json:"metalness,omitempty"`
 	Transforms    []float64 `json:"transforms"`
-	CastShadow    bool      `json:"castShadow,omitempty"`
-	ReceiveShadow bool      `json:"receiveShadow,omitempty"`
+	CastShadow           bool              `json:"castShadow,omitempty"`
+	ReceiveShadow        bool              `json:"receiveShadow,omitempty"`
+	CompressedTransforms []CompressedArray `json:"compressedTransforms,omitempty"`
 }
 
 // ComputeParticlesIR is the typed compatibility record for one GPU particle system.
@@ -266,6 +279,9 @@ type EnvironmentIR struct {
 func (p Props) SceneIR() SceneIR {
 	ir := p.Graph.SceneIR()
 	ir.Environment = p.Environment.sceneIR()
+	if p.Compression != nil && p.Compression.BitWidth > 0 {
+		compressSceneIR(&ir, p.Compression.BitWidth)
+	}
 	return ir
 }
 
@@ -497,10 +513,14 @@ func (item PointsIR) legacyProps() map[string]any {
 		"id":    item.ID,
 		"count": item.Count,
 	}
-	if len(item.Positions) > 0 {
+	if len(item.CompressedPositions) > 0 {
+		record["compressedPositions"] = item.CompressedPositions
+	} else if len(item.Positions) > 0 {
 		record["positions"] = item.Positions
 	}
-	if len(item.Sizes) > 0 {
+	if len(item.CompressedSizes) > 0 {
+		record["compressedSizes"] = item.CompressedSizes
+	} else if len(item.Sizes) > 0 {
 		record["sizes"] = item.Sizes
 	}
 	if len(item.Colors) > 0 {
@@ -554,7 +574,9 @@ func (item InstancedMeshIR) legacyProps() map[string]any {
 	setString(record, "color", item.Color)
 	setNumeric(record, "roughness", item.Roughness)
 	setNumeric(record, "metalness", item.Metalness)
-	if len(item.Transforms) > 0 {
+	if len(item.CompressedTransforms) > 0 {
+		record["compressedTransforms"] = item.CompressedTransforms
+	} else if len(item.Transforms) > 0 {
 		record["transforms"] = item.Transforms
 	}
 	if item.CastShadow {
