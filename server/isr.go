@@ -3,7 +3,9 @@ package server
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -22,9 +24,8 @@ type isrConfig struct {
 	staticDir string
 	pages     map[string]isrRoute
 
-	mu         sync.Mutex
-	state      map[string]isrPageState
-	refreshing map[string]bool
+	mu    sync.Mutex
+	store ISRStore
 }
 
 type isrManifest struct {
@@ -39,17 +40,13 @@ type isrRoute struct {
 	Tags              []string `json:"tags,omitempty"`
 }
 
-type isrPageState struct {
-	GeneratedAt time.Time
-	PathVersion uint64
-	TagVersions map[string]uint64
-}
-
 type isrArtifact struct {
-	page     isrRoute
-	filePath string
-	info     os.FileInfo
-	body     []byte
+	page       isrRoute
+	bundleRoot string
+	staticDir  string
+	store      ISRStore
+	modTime    time.Time
+	body       []byte
 }
 
 // EnableISR serves prerendered HTML from static export output and refreshes it
@@ -60,7 +57,11 @@ func (a *App) EnableISR() {
 		return
 	}
 	if a.isr == nil {
-		a.isr = &isrConfig{}
+		a.isr = &isrConfig{store: a.ISRStore()}
+		return
+	}
+	if a.isr.store == nil {
+		a.isr.store = a.ISRStore()
 	}
 }
 
@@ -98,12 +99,12 @@ func (a *App) shouldAttemptISR(r *http.Request, dispatch func(http.ResponseWrite
 }
 
 func (a *App) prepareISRArtifact(artifact isrArtifact, dispatch func(http.ResponseWriter, *http.Request, bool)) (isrArtifact, string, bool) {
-	info, err := os.Stat(artifact.filePath)
+	info, err := artifact.store.StatArtifact(artifact.staticDir, artifact.page.Path, artifact.page.File)
 	switch {
 	case err == nil:
-		artifact.info = info
+		artifact.modTime = info.ModTime
 		return a.isrServeArtifact(artifact, dispatch)
-	case !os.IsNotExist(err):
+	case !errors.Is(err, ErrISRArtifactNotFound):
 		return isrArtifact{}, "", false
 	}
 	return a.regenerateISRArtifact(artifact, dispatch)
@@ -111,27 +112,41 @@ func (a *App) prepareISRArtifact(artifact isrArtifact, dispatch func(http.Respon
 
 func (a *App) isrServeArtifact(artifact isrArtifact, dispatch func(http.ResponseWriter, *http.Request, bool)) (isrArtifact, string, bool) {
 	mode := "HIT"
-	if a.isr.stale(artifact.page, artifact.info, a.Revalidator()) {
-		body, err := os.ReadFile(artifact.filePath)
+	if a.isr.stale(artifact, a.Revalidator()) {
+		stored, err := artifact.store.ReadArtifact(artifact.staticDir, artifact.page.Path, artifact.page.File)
 		if err != nil {
 			return isrArtifact{}, "", false
 		}
-		artifact.body = body
+		artifact.body = stored.Body
+		artifact.modTime = stored.ModTime
 		mode = "STALE"
-		a.isr.refresh(artifact.page, a.Revalidator(), dispatch)
+		a.isr.refresh(artifact, a.Revalidator(), dispatch, a.observeOperation)
 	}
 	return artifact, mode, true
 }
 
 func (a *App) regenerateISRArtifact(artifact isrArtifact, dispatch func(http.ResponseWriter, *http.Request, bool)) (isrArtifact, string, bool) {
-	if err := a.isr.regenerate(artifact.page, a.Revalidator(), dispatch); err != nil {
-		return isrArtifact{}, "", false
-	}
-	info, err := os.Stat(artifact.filePath)
+	started := time.Now()
+	info, err := a.isr.regenerate(artifact, a.Revalidator(), dispatch)
 	if err != nil {
+		a.observeOperation(OperationEvent{
+			Component: "isr",
+			Operation: "regenerate",
+			Target:    artifact.page.Path,
+			Status:    "error",
+			Duration:  time.Since(started),
+			Error:     err.Error(),
+		})
 		return isrArtifact{}, "", false
 	}
-	artifact.info = info
+	a.observeOperation(OperationEvent{
+		Component: "isr",
+		Operation: "regenerate",
+		Target:    artifact.page.Path,
+		Status:    "ok",
+		Duration:  time.Since(started),
+	})
+	artifact.modTime = info.ModTime
 	return artifact, "MISS", true
 }
 
@@ -254,8 +269,6 @@ func (c *isrConfig) storeBundle(bundleRoot, staticDir string, pages map[string]i
 	c.root = bundleRoot
 	c.staticDir = staticDir
 	c.pages = pages
-	c.state = make(map[string]isrPageState, len(pages))
-	c.refreshing = make(map[string]bool, len(pages))
 }
 
 func resolveISRBundleRoot(root string) (bundleRoot string, manifestPath string, staticDir string) {
@@ -290,27 +303,25 @@ func (c *isrConfig) artifact(requestPath string) (isrArtifact, bool) {
 	normalized := normalizeISRPath(requestPath)
 	c.mu.Lock()
 	page, ok := c.pages[normalized]
+	root := c.root
 	staticDir := c.staticDir
+	store := c.store
 	c.mu.Unlock()
 	if !ok {
 		return isrArtifact{}, false
 	}
-	filePath, ok := safeArtifactPath(staticDir, page.File)
-	if !ok {
-		return isrArtifact{}, false
-	}
-	return isrArtifact{page: page, filePath: filePath}, true
+	return isrArtifact{page: page, bundleRoot: root, staticDir: staticDir, store: store}, true
 }
 
-func (c *isrConfig) stale(page isrRoute, info os.FileInfo, revalidator *Revalidator) bool {
-	state := c.pageState(page, info)
-	if page.RevalidateSeconds > 0 && time.Since(state.GeneratedAt) >= time.Duration(page.RevalidateSeconds)*time.Second {
+func (c *isrConfig) stale(artifact isrArtifact, revalidator *Revalidator) bool {
+	state := c.pageState(artifact)
+	if artifact.page.RevalidateSeconds > 0 && time.Since(state.GeneratedAt) >= time.Duration(artifact.page.RevalidateSeconds)*time.Second {
 		return true
 	}
-	if revalidator != nil && revalidator.pathVersion(page.Path) > state.PathVersion {
+	if revalidator != nil && revalidator.pathVersion(artifact.page.Path) > state.PathVersion {
 		return true
 	}
-	for _, tag := range page.Tags {
+	for _, tag := range artifact.page.Tags {
 		if revalidator != nil && revalidator.tagVersion(tag) > state.TagVersions[tag] {
 			return true
 		}
@@ -318,57 +329,68 @@ func (c *isrConfig) stale(page isrRoute, info os.FileInfo, revalidator *Revalida
 	return false
 }
 
-func (c *isrConfig) pageState(page isrRoute, info os.FileInfo) isrPageState {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	state, ok := c.state[page.Path]
-	if ok {
-		if state.TagVersions == nil {
-			state.TagVersions = make(map[string]uint64, len(page.Tags))
+func (c *isrConfig) pageState(artifact isrArtifact) ISRPageState {
+	if artifact.store == nil {
+		return ISRPageState{
+			GeneratedAt: artifact.modTime.UTC(),
+			TagVersions: map[string]uint64{},
 		}
-		return state
 	}
-	generatedAt := time.Now()
-	if info != nil {
-		generatedAt = info.ModTime().UTC()
+	state, err := artifact.store.LoadState(artifact.bundleRoot, artifact.page.Path, artifact.modTime.UTC())
+	if err != nil {
+		return ISRPageState{
+			GeneratedAt: artifact.modTime.UTC(),
+			TagVersions: map[string]uint64{},
+		}
 	}
-	state = isrPageState{
-		GeneratedAt: generatedAt,
-		TagVersions: make(map[string]uint64, len(page.Tags)),
+	if state.TagVersions == nil {
+		state.TagVersions = make(map[string]uint64, len(artifact.page.Tags))
 	}
-	c.state[page.Path] = state
 	return state
 }
 
-func (c *isrConfig) refresh(page isrRoute, revalidator *Revalidator, dispatch func(http.ResponseWriter, *http.Request, bool)) {
-	if c == nil || dispatch == nil {
+func (c *isrConfig) refresh(artifact isrArtifact, revalidator *Revalidator, dispatch func(http.ResponseWriter, *http.Request, bool), report func(OperationEvent)) {
+	if c == nil || dispatch == nil || artifact.store == nil {
 		return
 	}
-
-	c.mu.Lock()
-	if c.refreshing[page.Path] {
-		c.mu.Unlock()
+	lease, acquired, err := artifact.store.AcquireRefresh(artifact.bundleRoot, artifact.page.Path)
+	if err != nil || !acquired {
 		return
 	}
-	c.refreshing[page.Path] = true
-	c.mu.Unlock()
 
 	go func() {
+		started := time.Now()
 		defer func() {
-			c.mu.Lock()
-			delete(c.refreshing, page.Path)
-			c.mu.Unlock()
+			if lease != nil {
+				_ = lease.Release()
+			}
 		}()
-		_ = c.regenerate(page, revalidator, dispatch)
+		_, err := c.regenerate(artifact, revalidator, dispatch)
+		event := OperationEvent{
+			Component: "isr",
+			Operation: "refresh",
+			Target:    artifact.page.Path,
+			Duration:  time.Since(started),
+		}
+		if err != nil {
+			event.Status = "error"
+			event.Error = err.Error()
+			log.Printf("[gosx/isr] refresh %s failed: %v", artifact.page.Path, err)
+		} else {
+			event.Status = "ok"
+		}
+		if report != nil {
+			report(event)
+		}
 	}()
 }
 
-func (c *isrConfig) regenerate(page isrRoute, revalidator *Revalidator, dispatch func(http.ResponseWriter, *http.Request, bool)) error {
-	if c == nil || dispatch == nil {
-		return fmt.Errorf("isr regenerate: dispatch required")
+func (c *isrConfig) regenerate(artifact isrArtifact, revalidator *Revalidator, dispatch func(http.ResponseWriter, *http.Request, bool)) (ISRArtifactInfo, error) {
+	if c == nil || dispatch == nil || artifact.store == nil {
+		return ISRArtifactInfo{}, fmt.Errorf("isr regenerate: dispatch and store required")
 	}
 
-	req := httptest.NewRequest(http.MethodGet, "http://gosx.local"+page.Path, nil)
+	req := httptest.NewRequest(http.MethodGet, "http://gosx.local"+artifact.page.Path, nil)
 	req.Header.Set("Accept", "text/html")
 	req.Header.Set(isrBypassHeader, "1")
 	rec := httptest.NewRecorder()
@@ -376,49 +398,32 @@ func (c *isrConfig) regenerate(page isrRoute, revalidator *Revalidator, dispatch
 	result := rec.Result()
 	defer result.Body.Close()
 	if result.StatusCode != http.StatusOK {
-		return fmt.Errorf("isr regenerate %s: unexpected status %d", page.Path, result.StatusCode)
+		return ISRArtifactInfo{}, fmt.Errorf("isr regenerate %s: unexpected status %d", artifact.page.Path, result.StatusCode)
 	}
 
-	target, ok := safeArtifactPath(c.staticDir, page.File)
-	if !ok {
-		return fmt.Errorf("isr regenerate %s: invalid file path %q", page.Path, page.File)
-	}
-	if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
-		return err
-	}
-	temp := target + ".tmp"
-	if err := os.WriteFile(temp, rec.Body.Bytes(), 0644); err != nil {
-		return err
-	}
-	if err := os.Rename(temp, target); err != nil {
-		return err
-	}
-
-	info, err := os.Stat(target)
+	info, err := artifact.store.WriteArtifact(artifact.staticDir, artifact.page.Path, artifact.page.File, rec.Body.Bytes())
 	if err != nil {
-		return err
+		return ISRArtifactInfo{}, err
 	}
-	c.updateState(page, info.ModTime(), revalidator)
-	return nil
+	c.updateState(artifact, info.ModTime, revalidator)
+	return info, nil
 }
 
-func (c *isrConfig) updateState(page isrRoute, generatedAt time.Time, revalidator *Revalidator) {
-	if c == nil {
+func (c *isrConfig) updateState(artifact isrArtifact, generatedAt time.Time, revalidator *Revalidator) {
+	if c == nil || artifact.store == nil {
 		return
 	}
-	state := isrPageState{
+	state := ISRPageState{
 		GeneratedAt: generatedAt.UTC(),
-		TagVersions: make(map[string]uint64, len(page.Tags)),
+		TagVersions: make(map[string]uint64, len(artifact.page.Tags)),
 	}
 	if revalidator != nil {
-		state.PathVersion = revalidator.pathVersion(page.Path)
-		for _, tag := range page.Tags {
+		state.PathVersion = revalidator.pathVersion(artifact.page.Path)
+		for _, tag := range artifact.page.Tags {
 			state.TagVersions[tag] = revalidator.tagVersion(tag)
 		}
 	}
-	c.mu.Lock()
-	c.state[page.Path] = state
-	c.mu.Unlock()
+	_ = artifact.store.SaveState(artifact.bundleRoot, artifact.page.Path, state)
 }
 
 func (c *isrConfig) serve(w http.ResponseWriter, r *http.Request, artifact isrArtifact, mode string) {
@@ -427,12 +432,13 @@ func (c *isrConfig) serve(w http.ResponseWriter, r *http.Request, artifact isrAr
 	}
 	data := artifact.body
 	if data == nil {
-		var err error
-		data, err = os.ReadFile(artifact.filePath)
+		stored, err := artifact.store.ReadArtifact(artifact.staticDir, artifact.page.Path, artifact.page.File)
 		if err != nil {
 			http.NotFound(w, r)
 			return
 		}
+		data = stored.Body
+		artifact.modTime = stored.ModTime
 	}
 
 	cacheControl := "public, max-age=0, must-revalidate"
@@ -446,11 +452,11 @@ func (c *isrConfig) serve(w http.ResponseWriter, r *http.Request, artifact isrAr
 	}
 	MarkObservedRequest(r, "isr", artifact.page.Path)
 
-	modTime := time.Now()
-	if artifact.info != nil {
-		modTime = artifact.info.ModTime()
+	modTime := time.Now().UTC()
+	if !artifact.modTime.IsZero() {
+		modTime = artifact.modTime
 	}
-	http.ServeContent(w, r, filepath.Base(artifact.filePath), modTime, bytes.NewReader(data))
+	http.ServeContent(w, r, filepath.Base(artifact.page.File), modTime, bytes.NewReader(data))
 }
 
 func normalizeISRPath(value string) string {

@@ -560,4 +560,3 @@ const emojiCompressed = "" +
 	"T0FCv00SMrTb7ZqFNImuEnYCcfk6SEZsiG7fBmnYbQrG6V/OpEzDXjG690v6sd84zO+ClDQ5Juzb" +
 	"R3oZR40XRwZp2u42w+aYSAc5vdPvs73maER/MkpHH4I0ou3wf5nZ8VoCJ7MTu+z4oMA/ZqfJmKYp" +
 	"69T9f+MbMwNzIAIA"
-

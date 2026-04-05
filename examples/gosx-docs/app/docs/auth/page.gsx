@@ -7,12 +7,19 @@ func Page() Node {
 			<p>
 				Sessions are the base layer. Every auth primitive in GoSX operates through a session store, so the current user and flash state are available to any file-routed page without extra plumbing.
 			</p>
-			{CodeBlock("go", `sessions := session.MustNew(os.Getenv("SESSION_SECRET"), session.Options{})
+			{CodeBlock("go", `sessions := session.MustNew(os.Getenv("SESSION_SECRET"), session.Options{
+	    Encrypt:         true,
+	    PreviousSecrets: strings.Fields(os.Getenv("SESSION_PREVIOUS_SECRETS")),
+	})
 	app.Use(sessions.Middleware)
 	app.Use(sessions.Protect)`)}
 			<p>
 				<span class="inline-code">session.MustNew</span>
-				creates a cookie-backed, HMAC-signed session store. The secret is the only required input.
+				creates a cookie-backed session store. By default it signs cookies for integrity; with
+				<span class="inline-code">Encrypt: true</span>
+				it also encrypts them for confidentiality, and
+				<span class="inline-code">PreviousSecrets</span>
+				allows zero-downtime key rotation.
 				<span class="inline-code">sessions.Protect</span>
 				attaches CSRF enforcement to every mutating request.
 			</p>
@@ -28,6 +35,9 @@ func Page() Node {
 	    SuccessPath: "/dashboard",
 	    FailurePath: "/login",
 	    FlashKey:    "magicLink",
+	    Store: authredis.NewMagicLinkStore(redisClient, authredis.Options{
+	        Prefix: "myapp:prod",
+	    }),
 	    Resolver: auth.MagicLinkResolverFunc(func(_ context.Context, email string) (auth.User, error) {
 	        return lookupOrCreateUser(email)
 	    }),
@@ -38,6 +48,11 @@ func Page() Node {
 				The resolver receives the submitted email address and must return a populated
 				<span class="inline-code">auth.User</span>
 				. GoSX handles token issuance, expiry, and signature verification. The issued link is exposed in the flash payload during development so apps can wire their own delivery layer without blocking on SMTP setup.
+			</p>
+			<p>
+				For multi-node deployments, swap the default in-memory token store for the Redis-backed
+				<span class="inline-code">auth/redis</span>
+				adapter shown above.
 			</p>
 			<If cond={data.authFlows.magicLinkEnabled}>
 				<form class="docs-form" method="post" action={data.authFlows.magicLinkRequestPath}>
@@ -74,6 +89,9 @@ func Page() Node {
 	    SuccessPath: "/dashboard",
 	    FailurePath: "/login",
 	    FlashKey:    "passkey",
+	    Store: authredis.NewWebAuthnStore(redisClient, authredis.Options{
+	        Prefix: "myapp:prod",
+	    }),
 	    Resolver: auth.WebAuthnResolverFunc(func(_ context.Context, login string) (auth.User, error) {
 	        return lookupUser(login)
 	    }),

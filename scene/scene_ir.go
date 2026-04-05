@@ -6,8 +6,8 @@ import "strings"
 // The client checks for compressed fields first and falls back to raw arrays.
 type CompressedArray struct {
 	Packed   []byte  `json:"packed"`
-	Norm     float32 `json:"norm"`              // min value (scalar quantization floor)
-	MaxVal   float32 `json:"maxVal,omitempty"`   // max value (scalar quantization ceiling)
+	Norm     float32 `json:"norm"`             // min value (scalar quantization floor)
+	MaxVal   float32 `json:"maxVal,omitempty"` // max value (scalar quantization ceiling)
 	Dim      int     `json:"dim"`
 	BitWidth int     `json:"bitWidth"`
 	Count    int     `json:"count"` // number of original float64 values
@@ -173,47 +173,47 @@ type LightIR struct {
 
 // PointsIR is the typed compatibility record for one lowered particle system.
 type PointsIR struct {
-	ID          string    `json:"id"`
-	Count       int       `json:"count"`
-	Positions   []float64 `json:"positions,omitempty"`
-	Sizes       []float64 `json:"sizes,omitempty"`
-	Colors      []string  `json:"colors,omitempty"`
-	Color       string    `json:"color,omitempty"`
-	Size        float64   `json:"size,omitempty"`
-	Opacity     float64   `json:"opacity,omitempty"`
-	BlendMode   string    `json:"blendMode,omitempty"`
-	DepthWrite  *bool     `json:"depthWrite,omitempty"`
-	Attenuation bool      `json:"attenuation,omitempty"`
-	X           float64   `json:"x,omitempty"`
-	Y           float64   `json:"y,omitempty"`
-	Z           float64   `json:"z,omitempty"`
-	RotationX   float64   `json:"rotationX,omitempty"`
-	RotationY   float64   `json:"rotationY,omitempty"`
-	RotationZ   float64   `json:"rotationZ,omitempty"`
-	SpinX                float64           `json:"spinX,omitempty"`
-	SpinY                float64           `json:"spinY,omitempty"`
-	SpinZ                float64           `json:"spinZ,omitempty"`
-	CompressedPositions  []CompressedArray `json:"compressedPositions,omitempty"`
-	CompressedSizes      []CompressedArray `json:"compressedSizes,omitempty"`
-	PreviewPositions     []CompressedArray `json:"previewPositions,omitempty"`
-	PreviewSizes         []CompressedArray `json:"previewSizes,omitempty"`
+	ID                  string            `json:"id"`
+	Count               int               `json:"count"`
+	Positions           []float64         `json:"positions,omitempty"`
+	Sizes               []float64         `json:"sizes,omitempty"`
+	Colors              []string          `json:"colors,omitempty"`
+	Color               string            `json:"color,omitempty"`
+	Size                float64           `json:"size,omitempty"`
+	Opacity             float64           `json:"opacity,omitempty"`
+	BlendMode           string            `json:"blendMode,omitempty"`
+	DepthWrite          *bool             `json:"depthWrite,omitempty"`
+	Attenuation         bool              `json:"attenuation,omitempty"`
+	X                   float64           `json:"x,omitempty"`
+	Y                   float64           `json:"y,omitempty"`
+	Z                   float64           `json:"z,omitempty"`
+	RotationX           float64           `json:"rotationX,omitempty"`
+	RotationY           float64           `json:"rotationY,omitempty"`
+	RotationZ           float64           `json:"rotationZ,omitempty"`
+	SpinX               float64           `json:"spinX,omitempty"`
+	SpinY               float64           `json:"spinY,omitempty"`
+	SpinZ               float64           `json:"spinZ,omitempty"`
+	CompressedPositions []CompressedArray `json:"compressedPositions,omitempty"`
+	CompressedSizes     []CompressedArray `json:"compressedSizes,omitempty"`
+	PreviewPositions    []CompressedArray `json:"previewPositions,omitempty"`
+	PreviewSizes        []CompressedArray `json:"previewSizes,omitempty"`
 }
 
 // InstancedMeshIR is the typed compatibility record for one instanced mesh.
 type InstancedMeshIR struct {
-	ID            string    `json:"id"`
-	Count         int       `json:"count"`
-	Kind          string    `json:"kind"`
-	Width         float64   `json:"width,omitempty"`
-	Height        float64   `json:"height,omitempty"`
-	Depth         float64   `json:"depth,omitempty"`
-	Radius        float64   `json:"radius,omitempty"`
-	Segments      int       `json:"segments,omitempty"`
-	MaterialKind  string    `json:"materialKind,omitempty"`
-	Color         string    `json:"color,omitempty"`
-	Roughness     float64   `json:"roughness,omitempty"`
-	Metalness     float64   `json:"metalness,omitempty"`
-	Transforms    []float64 `json:"transforms"`
+	ID                   string            `json:"id"`
+	Count                int               `json:"count"`
+	Kind                 string            `json:"kind"`
+	Width                float64           `json:"width,omitempty"`
+	Height               float64           `json:"height,omitempty"`
+	Depth                float64           `json:"depth,omitempty"`
+	Radius               float64           `json:"radius,omitempty"`
+	Segments             int               `json:"segments,omitempty"`
+	MaterialKind         string            `json:"materialKind,omitempty"`
+	Color                string            `json:"color,omitempty"`
+	Roughness            float64           `json:"roughness,omitempty"`
+	Metalness            float64           `json:"metalness,omitempty"`
+	Transforms           []float64         `json:"transforms"`
 	CastShadow           bool              `json:"castShadow,omitempty"`
 	ReceiveShadow        bool              `json:"receiveShadow,omitempty"`
 	CompressedTransforms []CompressedArray `json:"compressedTransforms,omitempty"`
@@ -269,8 +269,8 @@ type ParticleMaterialIR struct {
 // AnimationClipIR is the typed compatibility record for one procedural
 // animation clip with per-channel keyframe data.
 type AnimationClipIR struct {
-	Name     string              `json:"name"`
-	Duration float64             `json:"duration"`
+	Name     string               `json:"name"`
+	Duration float64              `json:"duration"`
 	Channels []AnimationChannelIR `json:"channels"`
 }
 
@@ -278,9 +278,9 @@ type AnimationClipIR struct {
 // Times and Values are the raw float arrays; CompressedTimes/CompressedValues
 // replace them when TurboQuant compression is enabled.
 type AnimationChannelIR struct {
-	TargetNode    int       `json:"targetNode"`
-	Property      string    `json:"property"`
-	Interpolation string    `json:"interpolation,omitempty"`
+	TargetNode    int    `json:"targetNode"`
+	Property      string `json:"property"`
+	Interpolation string `json:"interpolation,omitempty"`
 
 	Times  []float64 `json:"times,omitempty"`
 	Values []float64 `json:"values,omitempty"`

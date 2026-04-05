@@ -30,15 +30,15 @@ const (
 )
 
 type Value struct {
-	Kind    ValueKind  `json:"kind"`
-	Bool    bool       `json:"bool,omitempty"`
-	Int     int64      `json:"int,omitempty"`
-	Uint    uint64     `json:"uint,omitempty"`
-	Float   float64    `json:"float,omitempty"`
-	Str     string     `json:"str,omitempty"`
-	Bytes   []byte     `json:"bytes,omitempty"`
-	Counter int64      `json:"counter,omitempty"`
-	Time    *time.Time `json:"time,omitempty"`
+	Kind         ValueKind  `json:"kind"`
+	Bool         bool       `json:"bool,omitempty"`
+	Int          int64      `json:"int,omitempty"`
+	Uint         uint64     `json:"uint,omitempty"`
+	Float        float64    `json:"float,omitempty"`
+	Str          string     `json:"str,omitempty"`
+	Bytes        []byte     `json:"bytes,omitempty"`
+	Counter      int64      `json:"counter,omitempty"`
+	Time         *time.Time `json:"time,omitempty"`
 	Obj          ObjID      `json:"obj,omitempty"`
 	VectorPacked []byte     `json:"vectorPacked,omitempty"`
 	VectorNorm   float32    `json:"vectorNorm,omitempty"`
