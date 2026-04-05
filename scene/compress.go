@@ -9,15 +9,27 @@ import (
 const sceneChunkSize = 4096
 
 // compressSceneIR walks the IR and compresses eligible float arrays in place.
-func compressSceneIR(ir *SceneIR, bitWidth int) {
+// When previewBitWidth > 0, a lower-quality preview is also emitted for
+// progressive loading and LOD.
+func compressSceneIR(ir *SceneIR, bitWidth, previewBitWidth int) {
 	for i := range ir.Points {
 		if len(ir.Points[i].Positions) >= 2 {
+			if previewBitWidth > 0 && previewBitWidth < bitWidth {
+				ir.Points[i].PreviewPositions = compressFloat64Array(
+					ir.Points[i].Positions, previewBitWidth,
+				)
+			}
 			ir.Points[i].CompressedPositions = compressFloat64Array(
 				ir.Points[i].Positions, bitWidth,
 			)
 			ir.Points[i].Positions = nil
 		}
 		if len(ir.Points[i].Sizes) >= 2 {
+			if previewBitWidth > 0 && previewBitWidth < bitWidth {
+				ir.Points[i].PreviewSizes = compressFloat64Array(
+					ir.Points[i].Sizes, previewBitWidth,
+				)
+			}
 			ir.Points[i].CompressedSizes = compressFloat64Array(
 				ir.Points[i].Sizes, bitWidth,
 			)
@@ -26,6 +38,11 @@ func compressSceneIR(ir *SceneIR, bitWidth int) {
 	}
 	for i := range ir.InstancedMeshes {
 		if len(ir.InstancedMeshes[i].Transforms) >= 2 {
+			if previewBitWidth > 0 && previewBitWidth < bitWidth {
+				ir.InstancedMeshes[i].PreviewTransforms = compressFloat64Array(
+					ir.InstancedMeshes[i].Transforms, previewBitWidth,
+				)
+			}
 			ir.InstancedMeshes[i].CompressedTransforms = compressFloat64Array(
 				ir.InstancedMeshes[i].Transforms, bitWidth,
 			)

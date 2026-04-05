@@ -124,16 +124,122 @@
 
   // Decompress all compressed data in scene props. Called once at scene init
   // before the render loop starts. Mutates entries in place for zero-copy.
+  //
+  // Progressive mode: decompress preview first (fast, low quality), store full
+  // resolution as pending. A follow-up call to sceneUpgradeProgressive() swaps
+  // in the full-quality data.
+  //
+  // LOD mode: keep both preview and full decompressed. The render loop selects
+  // which to use based on camera distance.
   function sceneDecompressProps(props) {
+    var scene = sceneProps(props);
+    var comp = props && props.compression;
+    var progressive = comp && comp.progressive;
+    var lod = comp && comp.lod;
+    var lodThreshold = comp && comp.lodThreshold || 20;
+
+    var points = scene && Array.isArray(scene.points) ? scene.points :
+                 (props && Array.isArray(props.points) ? props.points : []);
+    for (var i = 0; i < points.length; i++) {
+      var entry = points[i];
+      if (progressive || lod) {
+        // Decompress preview immediately for fast first paint
+        if (entry.previewPositions && !entry.positions) {
+          entry.positions = sceneDecompressArray(entry.previewPositions);
+          // Store full-res data for upgrade
+          entry._pendingPositions = entry.compressedPositions;
+          entry._previewActive = true;
+          delete entry.previewPositions;
+        }
+        if (entry.previewSizes && !entry.sizes) {
+          entry.sizes = sceneDecompressArray(entry.previewSizes);
+          entry._pendingSizes = entry.compressedSizes;
+          delete entry.previewSizes;
+        }
+        if (lod) {
+          // Also decompress full-res for LOD switching
+          if (entry._pendingPositions) {
+            entry._fullPositions = sceneDecompressArray(entry._pendingPositions);
+            entry._previewPositions = entry.positions;
+            entry._lodThreshold = lodThreshold;
+          }
+        }
+      } else {
+        sceneDecompressPointsEntry(entry);
+      }
+    }
+
+    var meshes = scene && Array.isArray(scene.instancedMeshes) ? scene.instancedMeshes :
+                 (props && Array.isArray(props.instancedMeshes) ? props.instancedMeshes : []);
+    for (var i = 0; i < meshes.length; i++) {
+      var entry = meshes[i];
+      if (progressive || lod) {
+        if (entry.previewTransforms && !entry.transforms) {
+          entry.transforms = sceneDecompressArray(entry.previewTransforms);
+          entry._pendingTransforms = entry.compressedTransforms;
+          entry._previewActive = true;
+          delete entry.previewTransforms;
+        }
+        if (lod && entry._pendingTransforms) {
+          entry._fullTransforms = sceneDecompressArray(entry._pendingTransforms);
+          entry._previewTransforms = entry.transforms;
+          entry._lodThreshold = lodThreshold;
+        }
+      } else {
+        sceneDecompressInstancedMeshEntry(entry);
+      }
+    }
+  }
+
+  // Upgrade progressive entries from preview to full resolution.
+  // Called after the first frame renders (requestIdleCallback or setTimeout).
+  function sceneUpgradeProgressive(props) {
     var scene = sceneProps(props);
     var points = scene && Array.isArray(scene.points) ? scene.points :
                  (props && Array.isArray(props.points) ? props.points : []);
     for (var i = 0; i < points.length; i++) {
-      sceneDecompressPointsEntry(points[i]);
+      var entry = points[i];
+      if (entry._pendingPositions) {
+        entry.positions = sceneDecompressArray(entry._pendingPositions);
+        delete entry._pendingPositions;
+        delete entry._previewActive;
+        // Clear cached typed arrays so the renderer rebuilds buffers
+        delete entry._cachedPos;
+      }
+      if (entry._pendingSizes) {
+        entry.sizes = sceneDecompressArray(entry._pendingSizes);
+        delete entry._pendingSizes;
+        delete entry._cachedSizes;
+      }
     }
     var meshes = scene && Array.isArray(scene.instancedMeshes) ? scene.instancedMeshes :
                  (props && Array.isArray(props.instancedMeshes) ? props.instancedMeshes : []);
     for (var i = 0; i < meshes.length; i++) {
-      sceneDecompressInstancedMeshEntry(meshes[i]);
+      var entry = meshes[i];
+      if (entry._pendingTransforms) {
+        entry.transforms = sceneDecompressArray(entry._pendingTransforms);
+        delete entry._pendingTransforms;
+        delete entry._previewActive;
+      }
+    }
+  }
+
+  // LOD: swap positions based on camera distance to object center.
+  // Called per-frame in the render loop for LOD-enabled scenes.
+  function sceneApplyLOD(entry, cameraX, cameraY, cameraZ) {
+    if (!entry._fullPositions || !entry._previewPositions) return;
+    var dx = (entry.x || 0) - cameraX;
+    var dy = (entry.y || 0) - cameraY;
+    var dz = (entry.z || 0) - cameraZ;
+    var dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    var threshold = entry._lodThreshold || 20;
+    var wantFull = dist < threshold;
+    var hasFull = entry.positions === entry._fullPositions;
+    if (wantFull && !hasFull) {
+      entry.positions = entry._fullPositions;
+      delete entry._cachedPos; // force buffer rebuild
+    } else if (!wantFull && hasFull) {
+      entry.positions = entry._previewPositions;
+      delete entry._cachedPos;
     }
   }

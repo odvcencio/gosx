@@ -87,6 +87,19 @@ type Props struct {
 // When non-nil with BitWidth > 0, IR lowering quantizes bulk float arrays.
 type Compression struct {
 	BitWidth int `json:"bitWidth"` // 1-8, bits per coordinate. 0 = no compression.
+
+	// Progressive enables multi-resolution transport. When true, the scene
+	// ships a fast preview at PreviewBitWidth (default 2) alongside the full
+	// resolution at BitWidth. The client renders the preview immediately and
+	// upgrades when the full data is ready.
+	Progressive     bool `json:"progressive,omitempty"`
+	PreviewBitWidth int  `json:"previewBitWidth,omitempty"` // default 2 if Progressive is true
+
+	// LOD enables camera-distance-based level of detail. When true, the scene
+	// ships both preview and full resolution, and the client selects which to
+	// render based on each object's distance from the camera.
+	LOD          bool    `json:"lod,omitempty"`
+	LODThreshold float64 `json:"lodThreshold,omitempty"` // camera distance threshold; objects farther use preview. Default 20.
 }
 
 // Graph is the typed scene graph lowered into the legacy Scene3D prop bag.
@@ -576,6 +589,26 @@ func (p Props) legacyBaseProps() map[string]any {
 	setNumeric(out, "scrollCameraStart", p.ScrollCameraStart)
 	setNumeric(out, "scrollCameraEnd", p.ScrollCameraEnd)
 	setNumeric(out, "maxDevicePixelRatio", p.MaxDevicePixelRatio)
+	if p.Compression != nil {
+		comp := map[string]any{"bitWidth": p.Compression.BitWidth}
+		if p.Compression.Progressive {
+			comp["progressive"] = true
+			bw := p.Compression.PreviewBitWidth
+			if bw <= 0 {
+				bw = 2
+			}
+			comp["previewBitWidth"] = bw
+		}
+		if p.Compression.LOD {
+			comp["lod"] = true
+			thresh := p.Compression.LODThreshold
+			if thresh <= 0 {
+				thresh = 20
+			}
+			comp["lodThreshold"] = thresh
+		}
+		out["compression"] = comp
+	}
 	if !p.Camera.isZero() {
 		out["camera"] = p.Camera.legacyProps()
 	}

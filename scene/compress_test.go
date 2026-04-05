@@ -244,6 +244,123 @@ func TestCompressLegacyPropsEmitsCompressed(t *testing.T) {
 	}
 }
 
+func TestProgressiveCompression(t *testing.T) {
+	rng := rand.New(rand.NewSource(42))
+	positions := make([]float64, 300)
+	for i := range positions {
+		positions[i] = rng.Float64()*20 - 10
+	}
+
+	props := Props{
+		Width:  800,
+		Height: 600,
+		Compression: &Compression{
+			BitWidth:    4,
+			Progressive: true,
+			// PreviewBitWidth defaults to 2
+		},
+		Graph: NewGraph(
+			Points{
+				ID:        "cloud",
+				Count:     100,
+				Positions: vec3Slice(positions),
+				Color:     "#ffffff",
+				Size:      2.0,
+			},
+		),
+	}
+
+	ir := props.SceneIR()
+	pt := ir.Points[0]
+
+	// Should have both compressed (4-bit) and preview (2-bit)
+	if len(pt.CompressedPositions) == 0 {
+		t.Fatal("expected compressed positions")
+	}
+	if len(pt.PreviewPositions) == 0 {
+		t.Fatal("expected preview positions")
+	}
+	if pt.Positions != nil {
+		t.Fatal("expected raw positions to be nil")
+	}
+
+	// Preview should be smaller than full
+	previewSize := 0
+	for _, c := range pt.PreviewPositions {
+		previewSize += len(c.Packed)
+	}
+	fullSize := 0
+	for _, c := range pt.CompressedPositions {
+		fullSize += len(c.Packed)
+	}
+	if previewSize >= fullSize {
+		t.Errorf("preview (%d bytes) should be smaller than full (%d bytes)", previewSize, fullSize)
+	}
+	t.Logf("preview: %d bytes (2-bit), full: %d bytes (4-bit)", previewSize, fullSize)
+
+	// Both should decompress to approximately the same data
+	previewData := DecompressFloat64Array(pt.PreviewPositions)
+	fullData := DecompressFloat64Array(pt.CompressedPositions)
+	if len(previewData) != len(fullData) {
+		t.Fatalf("length mismatch: preview %d, full %d", len(previewData), len(fullData))
+	}
+
+	// Full should be closer to original than preview
+	var previewErr, fullErr float64
+	for i := range positions {
+		pe := math.Abs(positions[i] - previewData[i])
+		fe := math.Abs(positions[i] - fullData[i])
+		previewErr += pe
+		fullErr += fe
+	}
+	if fullErr >= previewErr {
+		t.Errorf("full resolution (err %.4f) should be better than preview (err %.4f)", fullErr, previewErr)
+	}
+	t.Logf("preview total error: %.2f, full total error: %.2f", previewErr, fullErr)
+}
+
+func TestLODCompression(t *testing.T) {
+	props := Props{
+		Width:  800,
+		Height: 600,
+		Compression: &Compression{
+			BitWidth: 4,
+			LOD:      true,
+		},
+		Graph: NewGraph(
+			Points{
+				ID:        "cloud",
+				Count:     10,
+				Positions: []Vector3{{1, 2, 3}, {4, 5, 6}, {7, 8, 9}, {10, 11, 12}},
+				Color:     "#fff",
+			},
+		),
+	}
+
+	ir := props.SceneIR()
+	pt := ir.Points[0]
+
+	if len(pt.CompressedPositions) == 0 {
+		t.Fatal("expected compressed positions")
+	}
+	if len(pt.PreviewPositions) == 0 {
+		t.Fatal("expected preview positions for LOD")
+	}
+
+	// Check that compression config is in legacy props
+	legacy := props.LegacyProps()
+	comp, ok := legacy["compression"].(map[string]any)
+	if !ok {
+		t.Fatal("expected compression in legacy props")
+	}
+	if comp["lod"] != true {
+		t.Error("expected lod=true in compression config")
+	}
+	if comp["lodThreshold"] != 20.0 {
+		t.Errorf("expected lodThreshold=20, got %v", comp["lodThreshold"])
+	}
+}
+
 // Helper: convert flat float64 positions to Vector3 slice for Points nodes.
 func vec3Slice(flat []float64) []Vector3 {
 	out := make([]Vector3, len(flat)/3)
