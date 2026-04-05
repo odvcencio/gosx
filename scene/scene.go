@@ -327,6 +327,25 @@ type HemisphereLight struct {
 	Intensity   float64
 }
 
+// AnimationClip defines a procedural animation clip with keyframe channels.
+// Animation keyframes are high-dimensional vectors: a 64-joint skeleton with
+// 60 keyframes produces 64 * 60 * 7 floats (pos xyz + quat xyzw) = 26,880
+// floats. TurboQuant compression at 2-bit reduces this from ~107KB to ~6.7KB.
+type AnimationClip struct {
+	Name     string             // clip name (e.g. "idle", "walk")
+	Duration float64            // clip duration in seconds
+	Channels []AnimationChannel // per-target keyframe tracks
+}
+
+// AnimationChannel describes one keyframe track targeting a single node property.
+type AnimationChannel struct {
+	TargetNode    int       // index of the target node in the scene node list
+	Property      string    // "translation", "rotation", "scale"
+	Interpolation string    // "LINEAR", "STEP" (default: "LINEAR")
+	Times         []float64 // keyframe timestamps in seconds
+	Values        []float64 // interleaved keyframe values (3 per time for translation/scale, 4 for rotation quaternions)
+}
+
 // Geometry describes one supported legacy primitive.
 type Geometry interface {
 	sceneGeometry()
@@ -469,6 +488,7 @@ type graphLowerer struct {
 	points           []PointsIR
 	instancedMeshes  []InstancedMeshIR
 	computeParticles []ComputeParticlesIR
+	animations       []AnimationClipIR
 	pending          []pendingLabel
 	pendingSprites   []pendingSprite
 	lights           []LightIR
@@ -496,6 +516,7 @@ func (DirectionalLight) sceneNode() {}
 func (PointLight) sceneNode()       {}
 func (SpotLight) sceneNode()        {}
 func (HemisphereLight) sceneNode()  {}
+func (AnimationClip) sceneNode()    {}
 
 func (CubeGeometry) sceneGeometry()     {}
 func (BoxGeometry) sceneGeometry()      {}
@@ -799,6 +820,12 @@ func (l *graphLowerer) lowerNode(node Node, parent worldTransform) {
 	case *HemisphereLight:
 		if current != nil {
 			l.lowerHemisphereLight(*current)
+		}
+	case AnimationClip:
+		l.lowerAnimationClip(current)
+	case *AnimationClip:
+		if current != nil {
+			l.lowerAnimationClip(*current)
 		}
 	}
 }
@@ -1179,6 +1206,39 @@ func (l *graphLowerer) lowerHemisphereLight(light HemisphereLight) {
 		Color:       strings.TrimSpace(light.SkyColor),
 		GroundColor: strings.TrimSpace(light.GroundColor),
 		Intensity:   light.Intensity,
+	})
+}
+
+func (l *graphLowerer) lowerAnimationClip(clip AnimationClip) {
+	name := strings.TrimSpace(clip.Name)
+	if name == "" || len(clip.Channels) == 0 {
+		return
+	}
+	channels := make([]AnimationChannelIR, 0, len(clip.Channels))
+	for _, ch := range clip.Channels {
+		prop := strings.TrimSpace(ch.Property)
+		if prop == "" || len(ch.Times) == 0 || len(ch.Values) == 0 {
+			continue
+		}
+		interp := strings.TrimSpace(ch.Interpolation)
+		if interp == "" {
+			interp = "LINEAR"
+		}
+		channels = append(channels, AnimationChannelIR{
+			TargetNode:    ch.TargetNode,
+			Property:      prop,
+			Interpolation: interp,
+			Times:         append([]float64(nil), ch.Times...),
+			Values:        append([]float64(nil), ch.Values...),
+		})
+	}
+	if len(channels) == 0 {
+		return
+	}
+	l.animations = append(l.animations, AnimationClipIR{
+		Name:     name,
+		Duration: clip.Duration,
+		Channels: channels,
 	})
 }
 

@@ -49,6 +49,25 @@ func compressSceneIR(ir *SceneIR, bitWidth, previewBitWidth int) {
 			ir.InstancedMeshes[i].Transforms = nil
 		}
 	}
+	for i := range ir.Animations {
+		for j := range ir.Animations[i].Channels {
+			ch := &ir.Animations[i].Channels[j]
+			if len(ch.Times) >= 2 {
+				if previewBitWidth > 0 && previewBitWidth < bitWidth {
+					ch.PreviewTimes = compressFloat64Array(ch.Times, previewBitWidth)
+				}
+				ch.CompressedTimes = compressFloat64Array(ch.Times, bitWidth)
+				ch.Times = nil
+			}
+			if len(ch.Values) >= 2 {
+				if previewBitWidth > 0 && previewBitWidth < bitWidth {
+					ch.PreviewValues = compressFloat64Array(ch.Values, previewBitWidth)
+				}
+				ch.CompressedValues = compressFloat64Array(ch.Values, bitWidth)
+				ch.Values = nil
+			}
+		}
+	}
 }
 
 // compressFloat64Array converts float64 data to scalar-quantized chunks.
