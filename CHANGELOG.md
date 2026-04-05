@@ -1,5 +1,36 @@
 # Changelog
 
+## v0.10.0
+
+### TurboQuant Vector Intelligence
+
+**`quant` package**: Pure-Go implementation of the TurboQuant algorithm (arXiv:2504.19874). Compresses high-dimensional vectors to 1-8 bits per coordinate, within ~2.7x of information-theoretic optimum. MSE-optimal quantizer via random rotation + Lloyd-Max codebook. Inner-product-optimal quantizer via MSE + 1-bit QJL residual with unbiased estimation. Deterministic via `NewWithSeed`. Zero-alloc inner product in rotated domain. `PrepareQuery` amortizes O(d²) projection for search workloads. 53μs quantize, 52μs inner product at dim=384.
+
+**`vecdb` package**: In-memory quantized vector search index. Zero indexing time (data-oblivious quantization). Add/Remove/Search with `PrepareQuery` + `InnerProductPrepared` scan and min-heap top-k selection. Thread-safe via `sync.RWMutex`. O(1) swap-and-pop removal. 45ms search over 1K vectors at dim=64.
+
+**`embed` package**: Provider interface for external embedding APIs (OpenAI, Cohere, etc.) plus BPE tokenizer with vocabulary/merge loading, special token support, and auto-detection of Ġ space-prefix convention.
+
+**`semantic` package**: Three AI-native primitives:
+- **SemanticCache** — cache responses by vector similarity instead of exact URL. Similar queries share cached responses above a configurable threshold.
+- **SemanticRouter** — match requests to handlers by embedding similarity. Route by meaning, not URL pattern. Primary consumer: AI agents calling APIs without needing schemas.
+- **ContentIndex** — index page content for related-page discovery and semantic search.
+
+### CRDT Vector Compression
+
+**`VectorValue` type**: Store high-dimensional vectors in CRDT documents using TurboQuant compression. All replicas use a deterministic seed for byte-identical output, preventing spurious merge conflicts. 16x bandwidth reduction at 2-bit (96 bytes for 384-dim vs 1,536 raw). Participates in existing LWW merge semantics.
+
+### Scene3D Compression Pipeline
+
+**Scalar quantization for vertex transport**: Per-chunk min/max quantization compresses positions, sizes, transforms, and animation keyframes. Metadata is 8 bytes per chunk (min + max) instead of a rotation matrix.
+
+**Client-side JS dequantizer**: Complete end-to-end pipeline — Go quantizes during IR lowering, JS dequantizes at scene init before the render loop. Base64 decode → unpack b-bit indices (1/2/4/8-bit fast paths) → scalar dequantize → vertex buffers.
+
+**Progressive mesh loading**: `Compression{BitWidth: 4, Progressive: true}` ships 2-bit preview alongside 4-bit full resolution. Client renders preview immediately, upgrades to full after first paint via `requestIdleCallback`. No loading spinner.
+
+**Quantization-based LOD**: `Compression{LOD: true}` stores both preview and full resolution. Per-frame, each object's camera distance determines which resolution renders. Objects beyond `LODThreshold` (default 20 units) use the preview. Crossing the threshold triggers buffer rebuild.
+
+**Animation keyframe compression**: `AnimationClip` and `AnimationChannel` scene graph nodes with compressed `Times` and `Values` arrays. 32-joint skeleton at 60 keyframes, 4-bit: 92% compression (15KB vs 182KB). Progressive preview keyframes for instant playback.
+
 ## v0.9.0
 
 ### Bug Fixes
