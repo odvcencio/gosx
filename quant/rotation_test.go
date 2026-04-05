@@ -7,7 +7,11 @@ import (
 )
 
 func TestRotationOrthogonality(t *testing.T) {
-	for _, dim := range []int{4, 16, 64, 384} {
+	dims := []int{4, 16, 64, 384}
+	if raceEnabled {
+		dims = []int{4, 16, 64}
+	}
+	for _, dim := range dims {
 		rng := rand.New(rand.NewSource(42))
 		rot := generateRotation(dim, rng)
 		for trial := 0; trial < 10; trial++ {

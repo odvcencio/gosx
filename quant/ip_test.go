@@ -7,6 +7,9 @@ import (
 )
 
 func TestIPQuantizerUnbiased(t *testing.T) {
+	if raceEnabled {
+		t.Skip("skipping statistical test under race detector")
+	}
 	dim := 384
 	rng := rand.New(rand.NewSource(99))
 	x := randomUnitVector(dim, rng)
@@ -33,6 +36,9 @@ func TestIPQuantizerUnbiased(t *testing.T) {
 }
 
 func TestIPQuantizerDistortion(t *testing.T) {
+	if raceEnabled {
+		t.Skip("skipping statistical test under race detector")
+	}
 	dim := 384
 	rng := rand.New(rand.NewSource(99))
 	x := randomUnitVector(dim, rng)

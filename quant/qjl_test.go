@@ -7,6 +7,9 @@ import (
 )
 
 func TestQJLUnbiased(t *testing.T) {
+	if raceEnabled {
+		t.Skip("skipping statistical test under race detector")
+	}
 	dim := 384
 	rng := rand.New(rand.NewSource(42))
 	x := randomUnitVector(dim, rng)
@@ -33,6 +36,9 @@ func TestQJLUnbiased(t *testing.T) {
 }
 
 func TestQJLVarianceBound(t *testing.T) {
+	if raceEnabled {
+		t.Skip("skipping statistical test under race detector")
+	}
 	dim := 384
 	rng := rand.New(rand.NewSource(42))
 	x := randomUnitVector(dim, rng)
