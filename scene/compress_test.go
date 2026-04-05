@@ -392,3 +392,343 @@ func scalesFromTransforms(_ []float64, count int) []Vector3 {
 	}
 	return out
 }
+
+func TestCompressAnimationKeyframes(t *testing.T) {
+	rng := rand.New(rand.NewSource(99))
+
+	// Simulate a 32-joint skeleton with 60 keyframes:
+	// Each channel has 60 times + 60*4 quaternion values = 300 floats per channel.
+	joints := 32
+	frames := 60
+	channels := make([]AnimationChannel, 0, joints)
+	for j := 0; j < joints; j++ {
+		times := make([]float64, frames)
+		values := make([]float64, frames*4) // quaternion xyzw per frame
+		for f := 0; f < frames; f++ {
+			times[f] = float64(f) / 30.0 // 30fps
+			values[f*4+0] = rng.Float64()*2 - 1
+			values[f*4+1] = rng.Float64()*2 - 1
+			values[f*4+2] = rng.Float64()*2 - 1
+			values[f*4+3] = rng.Float64()*2 - 1
+		}
+		channels = append(channels, AnimationChannel{
+			TargetNode:    j,
+			Property:      "rotation",
+			Interpolation: "LINEAR",
+			Times:         times,
+			Values:        values,
+		})
+	}
+
+	props := Props{
+		Width:       800,
+		Height:      600,
+		Compression: &Compression{BitWidth: 4},
+		Graph: NewGraph(
+			AnimationClip{
+				Name:     "walk",
+				Duration: 2.0,
+				Channels: channels,
+			},
+		),
+	}
+
+	ir := props.SceneIR()
+	if len(ir.Animations) != 1 {
+		t.Fatalf("expected 1 animation clip, got %d", len(ir.Animations))
+	}
+	clip := ir.Animations[0]
+	if clip.Name != "walk" {
+		t.Fatalf("expected clip name 'walk', got %q", clip.Name)
+	}
+	if len(clip.Channels) != joints {
+		t.Fatalf("expected %d channels, got %d", joints, len(clip.Channels))
+	}
+
+	// All channels should be compressed
+	for i, ch := range clip.Channels {
+		if len(ch.CompressedTimes) == 0 {
+			t.Fatalf("channel %d: expected compressed times", i)
+		}
+		if len(ch.CompressedValues) == 0 {
+			t.Fatalf("channel %d: expected compressed values", i)
+		}
+		if ch.Times != nil {
+			t.Fatalf("channel %d: raw times should be nil", i)
+		}
+		if ch.Values != nil {
+			t.Fatalf("channel %d: raw values should be nil", i)
+		}
+	}
+
+	// Verify round-trip on first channel
+	ch0 := clip.Channels[0]
+	recoveredTimes := DecompressFloat64Array(ch0.CompressedTimes)
+	recoveredValues := DecompressFloat64Array(ch0.CompressedValues)
+	if len(recoveredTimes) != frames {
+		t.Fatalf("times length mismatch: got %d, want %d", len(recoveredTimes), frames)
+	}
+	if len(recoveredValues) != frames*4 {
+		t.Fatalf("values length mismatch: got %d, want %d", len(recoveredValues), frames*4)
+	}
+
+	// Compare JSON sizes
+	compressed, _ := json.Marshal(ir)
+	propsUnc := Props{
+		Width:  800,
+		Height: 600,
+		Graph: NewGraph(
+			AnimationClip{
+				Name:     "walk",
+				Duration: 2.0,
+				Channels: channels,
+			},
+		),
+	}
+	irUnc := propsUnc.SceneIR()
+	uncompressed, _ := json.Marshal(irUnc)
+	ratio := float64(len(compressed)) / float64(len(uncompressed))
+	t.Logf("compressed: %d bytes, uncompressed: %d bytes, ratio: %.2f", len(compressed), len(uncompressed), ratio)
+	if ratio > 0.25 {
+		t.Fatalf("compression ratio %.2f exceeds 0.25 threshold", ratio)
+	}
+}
+
+func TestCompressAnimationNoCompressionByDefault(t *testing.T) {
+	props := Props{
+		Width:  800,
+		Height: 600,
+		Graph: NewGraph(
+			AnimationClip{
+				Name:     "idle",
+				Duration: 1.0,
+				Channels: []AnimationChannel{
+					{
+						TargetNode: 0,
+						Property:   "translation",
+						Times:      []float64{0, 0.5, 1.0},
+						Values:     []float64{0, 0, 0, 1, 2, 3, 0, 0, 0},
+					},
+				},
+			},
+		),
+	}
+	ir := props.SceneIR()
+	if len(ir.Animations) != 1 {
+		t.Fatalf("expected 1 animation, got %d", len(ir.Animations))
+	}
+	ch := ir.Animations[0].Channels[0]
+	if len(ch.CompressedTimes) != 0 {
+		t.Fatal("expected no compressed times without Compression set")
+	}
+	if len(ch.Times) == 0 {
+		t.Fatal("expected raw times to be populated")
+	}
+	if len(ch.CompressedValues) != 0 {
+		t.Fatal("expected no compressed values without Compression set")
+	}
+	if len(ch.Values) == 0 {
+		t.Fatal("expected raw values to be populated")
+	}
+}
+
+func TestCompressAnimationLegacyPropsEmitsCompressed(t *testing.T) {
+	rng := rand.New(rand.NewSource(42))
+	times := make([]float64, 30)
+	values := make([]float64, 30*3)
+	for i := range times {
+		times[i] = float64(i) / 30.0
+	}
+	for i := range values {
+		values[i] = rng.Float64()*10 - 5
+	}
+
+	props := Props{
+		Width:       800,
+		Height:      600,
+		Compression: &Compression{BitWidth: 2},
+		Graph: NewGraph(
+			AnimationClip{
+				Name:     "bounce",
+				Duration: 1.0,
+				Channels: []AnimationChannel{
+					{
+						TargetNode: 0,
+						Property:   "translation",
+						Times:      times,
+						Values:     values,
+					},
+				},
+			},
+		),
+	}
+
+	legacy := props.LegacyProps()
+	sceneMap, ok := legacy["scene"].(map[string]any)
+	if !ok {
+		t.Fatal("expected scene in legacy props")
+	}
+	animations, ok := sceneMap["animations"].([]map[string]any)
+	if !ok || len(animations) == 0 {
+		t.Fatal("expected animations in scene")
+	}
+	channels, ok := animations[0]["channels"].([]map[string]any)
+	if !ok || len(channels) == 0 {
+		t.Fatal("expected channels in animation")
+	}
+	if _, ok := channels[0]["compressedTimes"]; !ok {
+		t.Fatal("expected compressedTimes in legacy props")
+	}
+	if _, ok := channels[0]["times"]; ok {
+		t.Fatal("raw times should not be present when compressed")
+	}
+	if _, ok := channels[0]["compressedValues"]; !ok {
+		t.Fatal("expected compressedValues in legacy props")
+	}
+	if _, ok := channels[0]["values"]; ok {
+		t.Fatal("raw values should not be present when compressed")
+	}
+}
+
+func TestCompressAnimationProgressiveKeyframes(t *testing.T) {
+	rng := rand.New(rand.NewSource(77))
+	frames := 60
+	times := make([]float64, frames)
+	values := make([]float64, frames*4) // rotation quaternions
+	for i := 0; i < frames; i++ {
+		times[i] = float64(i) / 30.0
+		values[i*4+0] = rng.Float64()*2 - 1
+		values[i*4+1] = rng.Float64()*2 - 1
+		values[i*4+2] = rng.Float64()*2 - 1
+		values[i*4+3] = rng.Float64()*2 - 1
+	}
+
+	props := Props{
+		Width:  800,
+		Height: 600,
+		Compression: &Compression{
+			BitWidth:    4,
+			Progressive: true,
+		},
+		Graph: NewGraph(
+			AnimationClip{
+				Name:     "spin",
+				Duration: 2.0,
+				Channels: []AnimationChannel{
+					{
+						TargetNode: 0,
+						Property:   "rotation",
+						Times:      times,
+						Values:     values,
+					},
+				},
+			},
+		),
+	}
+
+	ir := props.SceneIR()
+	ch := ir.Animations[0].Channels[0]
+
+	if len(ch.CompressedValues) == 0 {
+		t.Fatal("expected compressed values")
+	}
+	if len(ch.PreviewValues) == 0 {
+		t.Fatal("expected preview values")
+	}
+	if ch.Values != nil {
+		t.Fatal("expected raw values to be nil")
+	}
+
+	// Preview should be smaller than full
+	previewSize := 0
+	for _, c := range ch.PreviewValues {
+		previewSize += len(c.Packed)
+	}
+	fullSize := 0
+	for _, c := range ch.CompressedValues {
+		fullSize += len(c.Packed)
+	}
+	if previewSize >= fullSize {
+		t.Errorf("preview (%d bytes) should be smaller than full (%d bytes)", previewSize, fullSize)
+	}
+	t.Logf("preview: %d bytes (2-bit), full: %d bytes (4-bit)", previewSize, fullSize)
+}
+
+func TestCompressAnimationKeyframeRoundTrip(t *testing.T) {
+	rng := rand.New(rand.NewSource(55))
+	frames := 100
+	times := make([]float64, frames)
+	values := make([]float64, frames*3)
+	for i := 0; i < frames; i++ {
+		times[i] = float64(i) * 0.033
+		values[i*3+0] = rng.Float64()*4 - 2
+		values[i*3+1] = rng.Float64()*4 - 2
+		values[i*3+2] = rng.Float64()*4 - 2
+	}
+
+	compressedTimes := compressFloat64Array(times, 8)
+	compressedValues := compressFloat64Array(values, 4)
+
+	recoveredTimes := DecompressFloat64Array(compressedTimes)
+	recoveredValues := DecompressFloat64Array(compressedValues)
+
+	if len(recoveredTimes) != frames {
+		t.Fatalf("times length mismatch: got %d, want %d", len(recoveredTimes), frames)
+	}
+	if len(recoveredValues) != frames*3 {
+		t.Fatalf("values length mismatch: got %d, want %d", len(recoveredValues), frames*3)
+	}
+
+	// Check times: at 8-bit, error should be very small
+	maxTimeErr := 0.0
+	for i := range times {
+		err := math.Abs(times[i] - recoveredTimes[i])
+		if err > maxTimeErr {
+			maxTimeErr = err
+		}
+	}
+	timeRange := times[frames-1] - times[0]
+	if maxTimeErr > timeRange*0.01 {
+		t.Fatalf("time max error %.6f exceeds 1%% threshold (%.6f)", maxTimeErr, timeRange*0.01)
+	}
+
+	// Check values: at 4-bit, error should be < 10% of range
+	maxValErr := 0.0
+	for i := range values {
+		err := math.Abs(values[i] - recoveredValues[i])
+		if err > maxValErr {
+			maxValErr = err
+		}
+	}
+	valRange := 4.0
+	if maxValErr > valRange*0.10 {
+		t.Fatalf("value max error %.4f exceeds 10%% threshold (%.4f)", maxValErr, valRange*0.10)
+	}
+	t.Logf("8-bit times max error: %.6f, 4-bit values max error: %.4f", maxTimeErr, maxValErr)
+}
+
+func TestCompressAnimationEmptyClipSkipped(t *testing.T) {
+	props := Props{
+		Width:       800,
+		Height:      600,
+		Compression: &Compression{BitWidth: 2},
+		Graph: NewGraph(
+			AnimationClip{
+				Name:     "",
+				Duration: 1.0,
+				Channels: []AnimationChannel{
+					{TargetNode: 0, Property: "translation", Times: []float64{0}, Values: []float64{1, 2, 3}},
+				},
+			},
+			AnimationClip{
+				Name:     "valid",
+				Duration: 1.0,
+				Channels: []AnimationChannel{},
+			},
+		),
+	}
+	ir := props.SceneIR()
+	if len(ir.Animations) != 0 {
+		t.Fatalf("expected 0 animations (empty name and empty channels should be skipped), got %d", len(ir.Animations))
+	}
+}
