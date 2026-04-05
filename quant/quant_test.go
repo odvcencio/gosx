@@ -27,6 +27,9 @@ func TestQuantizerRoundTrip(t *testing.T) {
 }
 
 func TestQuantizerMSEMatchesPaperTable(t *testing.T) {
+	if raceEnabled {
+		t.Skip("skipping statistical test under race detector")
+	}
 	bounds := map[int]float64{
 		1: 0.36, 2: 0.117, 3: 0.03, 4: 0.009,
 	}
