@@ -9,8 +9,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
-	"sync/atomic"
 	"time"
 )
 
@@ -208,18 +206,44 @@ func (c *CacheState) effectiveETag(r *http.Request, status int, revalidator *Rev
 
 // Revalidator tracks path and tag revisions used to invalidate automatic ETags.
 type Revalidator struct {
-	mu           sync.RWMutex
-	seq          atomic.Uint64
-	pathVersions map[string]uint64
-	tagVersions  map[string]uint64
+	store RevalidationStore
 }
 
-// NewRevalidator creates an empty in-memory revalidator.
+// NewRevalidator creates a revalidator backed by the default in-memory store.
 func NewRevalidator() *Revalidator {
-	return &Revalidator{
-		pathVersions: make(map[string]uint64),
-		tagVersions:  make(map[string]uint64),
+	return NewRevalidatorWithStore(nil)
+}
+
+// NewRevalidatorWithStore creates a revalidator backed by the provided store.
+// A nil store falls back to the default in-memory implementation.
+func NewRevalidatorWithStore(store RevalidationStore) *Revalidator {
+	if store == nil {
+		store = NewInMemoryRevalidationStore()
 	}
+	return &Revalidator{store: store}
+}
+
+// SetStore replaces the backing revalidation store.
+func (r *Revalidator) SetStore(store RevalidationStore) {
+	if r == nil {
+		return
+	}
+	if store == nil {
+		store = NewInMemoryRevalidationStore()
+	}
+	r.store = store
+}
+
+// Store returns the underlying revalidation store, initializing the default
+// in-memory store when needed.
+func (r *Revalidator) Store() RevalidationStore {
+	if r == nil {
+		return nil
+	}
+	if r.store == nil {
+		r.store = NewInMemoryRevalidationStore()
+	}
+	return r.store
 }
 
 // RevalidatePath invalidates cached responses for the provided path prefix.
@@ -227,12 +251,7 @@ func (r *Revalidator) RevalidatePath(target string) uint64 {
 	if r == nil {
 		return 0
 	}
-	target = cleanCachePath(target)
-	version := r.seq.Add(1)
-	r.mu.Lock()
-	r.pathVersions[target] = version
-	r.mu.Unlock()
-	return version
+	return r.Store().RevalidatePath(target)
 }
 
 // RevalidateTag invalidates cached responses associated with the provided tag.
@@ -240,41 +259,21 @@ func (r *Revalidator) RevalidateTag(tag string) uint64 {
 	if r == nil {
 		return 0
 	}
-	tag = strings.TrimSpace(tag)
-	if tag == "" {
-		return 0
-	}
-	version := r.seq.Add(1)
-	r.mu.Lock()
-	r.tagVersions[tag] = version
-	r.mu.Unlock()
-	return version
+	return r.Store().RevalidateTag(tag)
 }
 
 func (r *Revalidator) pathVersion(requestPath string) uint64 {
 	if r == nil {
 		return 0
 	}
-	requestPath = cleanCachePath(requestPath)
-	var version uint64
-	r.mu.RLock()
-	for target, candidate := range r.pathVersions {
-		if cachePathMatches(target, requestPath) && candidate > version {
-			version = candidate
-		}
-	}
-	r.mu.RUnlock()
-	return version
+	return r.Store().PathVersion(requestPath)
 }
 
 func (r *Revalidator) tagVersion(tag string) uint64 {
 	if r == nil {
 		return 0
 	}
-	r.mu.RLock()
-	version := r.tagVersions[strings.TrimSpace(tag)]
-	r.mu.RUnlock()
-	return version
+	return r.Store().TagVersion(tag)
 }
 
 // ApplyCacheHeaders writes cache validators into headers and reports whether

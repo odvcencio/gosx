@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -19,6 +20,136 @@ import (
 
 type wrappedStatusError struct {
 	status int
+}
+
+type fakeRevalidationStore struct {
+	pathVersions map[string]uint64
+	tagVersions  map[string]uint64
+	pathCalls    []string
+	tagCalls     []string
+}
+
+func (s *fakeRevalidationStore) RevalidatePath(target string) uint64 {
+	s.pathCalls = append(s.pathCalls, target)
+	if s.pathVersions == nil {
+		s.pathVersions = make(map[string]uint64)
+	}
+	next := s.pathVersions[cleanCachePath(target)] + 1
+	s.pathVersions[cleanCachePath(target)] = next
+	return next
+}
+
+func (s *fakeRevalidationStore) RevalidateTag(tag string) uint64 {
+	s.tagCalls = append(s.tagCalls, strings.TrimSpace(tag))
+	if s.tagVersions == nil {
+		s.tagVersions = make(map[string]uint64)
+	}
+	tag = strings.TrimSpace(tag)
+	next := s.tagVersions[tag] + 1
+	s.tagVersions[tag] = next
+	return next
+}
+
+func (s *fakeRevalidationStore) PathVersion(requestPath string) uint64 {
+	return s.pathVersions[cleanCachePath(requestPath)]
+}
+
+func (s *fakeRevalidationStore) TagVersion(tag string) uint64 {
+	return s.tagVersions[strings.TrimSpace(tag)]
+}
+
+type fakeISRStore struct {
+	artifacts map[string]ISRArtifact
+	states    map[string]ISRPageState
+	locks     map[string]bool
+	writes    int
+}
+
+func (s *fakeISRStore) StatArtifact(staticDir, pagePath, file string) (ISRArtifactInfo, error) {
+	artifact, ok := s.artifacts[s.artifactKey(staticDir, pagePath, file)]
+	if !ok {
+		return ISRArtifactInfo{}, ErrISRArtifactNotFound
+	}
+	return ISRArtifactInfo{ModTime: artifact.ModTime}, nil
+}
+
+func (s *fakeISRStore) ReadArtifact(staticDir, pagePath, file string) (ISRArtifact, error) {
+	artifact, ok := s.artifacts[s.artifactKey(staticDir, pagePath, file)]
+	if !ok {
+		return ISRArtifact{}, ErrISRArtifactNotFound
+	}
+	return artifact, nil
+}
+
+func (s *fakeISRStore) WriteArtifact(staticDir, pagePath, file string, body []byte) (ISRArtifactInfo, error) {
+	if s.artifacts == nil {
+		s.artifacts = make(map[string]ISRArtifact)
+	}
+	s.writes++
+	artifact := ISRArtifact{
+		Body:    append([]byte(nil), body...),
+		ModTime: time.Now().UTC().Truncate(time.Second),
+	}
+	s.artifacts[s.artifactKey(staticDir, pagePath, file)] = artifact
+	return ISRArtifactInfo{ModTime: artifact.ModTime}, nil
+}
+
+func (s *fakeISRStore) LoadState(bundleRoot, pagePath string, fallbackGeneratedAt time.Time) (ISRPageState, error) {
+	if s.states == nil {
+		s.states = make(map[string]ISRPageState)
+	}
+	key := s.stateKey(bundleRoot, pagePath)
+	if state, ok := s.states[key]; ok {
+		return state, nil
+	}
+	if fallbackGeneratedAt.IsZero() {
+		fallbackGeneratedAt = time.Now().UTC()
+	}
+	state := ISRPageState{
+		GeneratedAt: fallbackGeneratedAt.UTC(),
+		TagVersions: map[string]uint64{},
+	}
+	s.states[key] = state
+	return state, nil
+}
+
+func (s *fakeISRStore) SaveState(bundleRoot, pagePath string, state ISRPageState) error {
+	if s.states == nil {
+		s.states = make(map[string]ISRPageState)
+	}
+	s.states[s.stateKey(bundleRoot, pagePath)] = state
+	return nil
+}
+
+func (s *fakeISRStore) AcquireRefresh(bundleRoot, pagePath string) (ISRRefreshLease, bool, error) {
+	if s.locks == nil {
+		s.locks = make(map[string]bool)
+	}
+	key := s.stateKey(bundleRoot, pagePath)
+	if s.locks[key] {
+		return nil, false, nil
+	}
+	s.locks[key] = true
+	return fakeISRLease(func() {
+		delete(s.locks, key)
+	}), true, nil
+}
+
+func (s *fakeISRStore) artifactKey(staticDir, pagePath, file string) string {
+	return staticDir + "|" + pagePath + "|" + file
+}
+
+func (s *fakeISRStore) stateKey(bundleRoot, pagePath string) string {
+	return bundleRoot + "|" + pagePath
+}
+
+type fakeISRLease func()
+
+func (fn fakeISRLease) Release() error {
+	if fn != nil {
+		fn()
+	}
+	return nil
 }
 
 func (e wrappedStatusError) Error() string {
@@ -294,6 +425,87 @@ func TestAppHealthAndReadinessEndpoints(t *testing.T) {
 		if body := strings.TrimSpace(w.Body.String()); body != `{"ok":true}` {
 			t.Fatalf("%s: unexpected body %q", path, body)
 		}
+	}
+}
+
+func TestAppUsesCustomRevalidationStore(t *testing.T) {
+	app := New()
+	store := &fakeRevalidationStore{
+		pathVersions: map[string]uint64{},
+		tagVersions:  map[string]uint64{},
+	}
+	app.SetRevalidationStore(store)
+	app.Page("GET /cached", func(ctx *Context) gosx.Node {
+		ctx.Cache(CachePolicy{Public: true, MaxAge: time.Minute})
+		ctx.CacheTag("docs-pages")
+		return gosx.Text("cached")
+	})
+
+	handler := app.Build()
+	req := httptest.NewRequest(http.MethodGet, "/cached", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	etag := w.Header().Get("ETag")
+	if etag == "" {
+		t.Fatalf("expected ETag, got headers %#v", w.Header())
+	}
+
+	notModifiedReq := httptest.NewRequest(http.MethodGet, "/cached", nil)
+	notModifiedReq.Header.Set("If-None-Match", etag)
+	notModifiedRes := httptest.NewRecorder()
+	handler.ServeHTTP(notModifiedRes, notModifiedReq)
+	if notModifiedRes.Code != http.StatusNotModified {
+		t.Fatalf("expected 304 before store invalidation, got %d", notModifiedRes.Code)
+	}
+
+	store.pathVersions["/cached"] = 10
+
+	updatedReq := httptest.NewRequest(http.MethodGet, "/cached", nil)
+	updatedReq.Header.Set("If-None-Match", etag)
+	updatedRes := httptest.NewRecorder()
+	handler.ServeHTTP(updatedRes, updatedReq)
+	if updatedRes.Code != http.StatusOK {
+		t.Fatalf("expected 200 after store invalidation, got %d", updatedRes.Code)
+	}
+
+	app.RevalidatePath("/cached")
+	app.RevalidateTag("docs-pages")
+	if len(store.pathCalls) != 1 || store.pathCalls[0] != "/cached" {
+		t.Fatalf("expected path revalidation call, got %#v", store.pathCalls)
+	}
+	if len(store.tagCalls) != 1 || store.tagCalls[0] != "docs-pages" {
+		t.Fatalf("expected tag revalidation call, got %#v", store.tagCalls)
+	}
+	if app.RevalidationStore() != store {
+		t.Fatalf("expected app revalidation store to be the custom store")
+	}
+}
+
+func TestAppReadinessChecksCanFail(t *testing.T) {
+	app := New()
+	app.UseReadyCheck("cache", ReadyCheckFunc(func(ctx context.Context) error {
+		return errors.New("redis unavailable")
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
+	w := httptest.NewRecorder()
+	app.Build().ServeHTTP(w, req)
+
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d", w.Code)
+	}
+	var report ReadinessReport
+	if err := json.Unmarshal(w.Body.Bytes(), &report); err != nil {
+		t.Fatalf("decode readiness report: %v", err)
+	}
+	if report.OK {
+		t.Fatalf("expected not ready report, got %+v", report)
+	}
+	if len(report.Checks) != 1 {
+		t.Fatalf("expected one readiness check, got %+v", report)
+	}
+	if report.Checks[0].Name != "cache" || report.Checks[0].OK || !strings.Contains(report.Checks[0].Error, "redis unavailable") {
+		t.Fatalf("unexpected readiness check %+v", report.Checks[0])
 	}
 }
 
@@ -1283,6 +1495,66 @@ func TestAppEnableISRRefreshesStalePagesInBackground(t *testing.T) {
 	}
 }
 
+func TestAppEnableISRReportsBackgroundRefreshFailure(t *testing.T) {
+	root := t.TempDir()
+	staticDir := filepath.Join(root, "static")
+	if err := os.MkdirAll(staticDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(staticDir, "index.html")
+	if err := os.WriteFile(target, []byte("<!DOCTYPE html><html><body>stale home</body></html>"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	staleAt := time.Now().Add(-3 * time.Minute)
+	if err := os.Chtimes(target, staleAt, staleAt); err != nil {
+		t.Fatal(err)
+	}
+	writeISRManifest(t, root, isrManifest{
+		Routes: []isrRoute{
+			{Path: "/", File: "index.html", RevalidateSeconds: 1},
+		},
+	})
+
+	app := New()
+	app.SetRuntimeRoot(root)
+	app.EnableISR()
+	events := make(chan OperationEvent, 1)
+	app.UseOperationObserver(OperationObserverFunc(func(event OperationEvent) {
+		select {
+		case events <- event:
+		default:
+		}
+	}))
+	app.Page("GET /", func(ctx *Context) gosx.Node {
+		ctx.SetStatus(http.StatusInternalServerError)
+		return gosx.Text("broken home")
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("Accept", "text/html")
+	w := httptest.NewRecorder()
+	app.Build().ServeHTTP(w, req)
+
+	if body := w.Body.String(); !strings.Contains(body, "stale home") {
+		t.Fatalf("expected stale page to be served first, got %q", body)
+	}
+	if got := w.Header().Get("X-GoSX-ISR"); got != "STALE" {
+		t.Fatalf("expected ISR stale header, got %q", got)
+	}
+
+	select {
+	case event := <-events:
+		if event.Component != "isr" || event.Operation != "refresh" || event.Target != "/" {
+			t.Fatalf("unexpected operation event %+v", event)
+		}
+		if event.Status != "error" || !strings.Contains(event.Error, "unexpected status 500") {
+			t.Fatalf("expected ISR refresh failure event, got %+v", event)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out waiting for ISR failure event")
+	}
+}
+
 func TestAppEnableISRRespectsOnDemandTagInvalidation(t *testing.T) {
 	root := t.TempDir()
 	staticDir := filepath.Join(root, "static", "docs")
@@ -1427,16 +1699,17 @@ func TestISRConfigLoadResetsStateWhenBundleRootChanges(t *testing.T) {
 		},
 	})
 
-	cfg := &isrConfig{}
+	cfg := &isrConfig{store: NewInMemoryISRStore()}
 	if !cfg.load(rootA) {
 		t.Fatal("expected first ISR bundle to load")
 	}
-	cfg.state["/docs"] = isrPageState{
+	if err := cfg.store.SaveState(cfg.root, "/docs", ISRPageState{
 		GeneratedAt: time.Unix(1, 0).UTC(),
 		PathVersion: 99,
 		TagVersions: map[string]uint64{"docs": 42},
+	}); err != nil {
+		t.Fatal(err)
 	}
-	cfg.refreshing["/docs"] = true
 
 	rootB := t.TempDir()
 	targetB := filepath.Join(rootB, "static", "docs", "index.html")
@@ -1462,12 +1735,6 @@ func TestISRConfigLoadResetsStateWhenBundleRootChanges(t *testing.T) {
 	if cfg.root != rootB {
 		t.Fatalf("expected bundle root %q, got %q", rootB, cfg.root)
 	}
-	if len(cfg.state) != 0 {
-		t.Fatalf("expected ISR state to reset on bundle swap, got %#v", cfg.state)
-	}
-	if len(cfg.refreshing) != 0 {
-		t.Fatalf("expected ISR refresh map to reset on bundle swap, got %#v", cfg.refreshing)
-	}
 
 	page, ok := cfg.lookup("/docs")
 	if !ok {
@@ -1480,12 +1747,74 @@ func TestISRConfigLoadResetsStateWhenBundleRootChanges(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	state := cfg.pageState(page, info)
+	state := cfg.pageState(isrArtifact{
+		page:       page,
+		bundleRoot: cfg.root,
+		staticDir:  filepath.Join(rootB, "static"),
+		store:      cfg.store,
+		modTime:    info.ModTime().UTC(),
+	})
 	if !state.GeneratedAt.Equal(info.ModTime().UTC()) {
 		t.Fatalf("expected regenerated state time %v, got %v", info.ModTime().UTC(), state.GeneratedAt)
 	}
 	if state.PathVersion != 0 {
 		t.Fatalf("expected reset path version after bundle swap, got %d", state.PathVersion)
+	}
+}
+
+func TestAppEnableISRUsesCustomStoreForArtifactsAndState(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "static"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	writeISRManifest(t, root, isrManifest{
+		Routes: []isrRoute{
+			{Path: "/", File: "index.html"},
+		},
+	})
+
+	store := &fakeISRStore{}
+	app := New()
+	app.SetRuntimeRoot(root)
+	app.SetISRStore(store)
+	app.EnableISR()
+
+	dynamicCalls := 0
+	app.Page("GET /", func(ctx *Context) gosx.Node {
+		dynamicCalls++
+		return gosx.Text("generated home")
+	})
+
+	handler := app.Build()
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("Accept", "text/html")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if body := w.Body.String(); !strings.Contains(body, "generated home") {
+		t.Fatalf("expected generated body on first request, got %q", body)
+	}
+	if got := w.Header().Get("X-GoSX-ISR"); got != "MISS" {
+		t.Fatalf("expected ISR miss header, got %q", got)
+	}
+	if dynamicCalls != 1 || store.writes != 1 {
+		t.Fatalf("expected one dynamic render and one store write, got renders=%d writes=%d", dynamicCalls, store.writes)
+	}
+
+	secondReq := httptest.NewRequest(http.MethodGet, "/", nil)
+	secondReq.Header.Set("Accept", "text/html")
+	secondRes := httptest.NewRecorder()
+	handler.ServeHTTP(secondRes, secondReq)
+
+	if got := secondRes.Header().Get("X-GoSX-ISR"); got != "HIT" {
+		t.Fatalf("expected ISR hit after custom-store regeneration, got %q", got)
+	}
+	if dynamicCalls != 1 {
+		t.Fatalf("expected custom store artifact to avoid a second dynamic render, got %d", dynamicCalls)
+	}
+	if app.ISRStore() != store {
+		t.Fatalf("expected app ISR store to be the custom store")
 	}
 }
 
