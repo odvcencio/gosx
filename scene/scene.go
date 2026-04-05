@@ -70,7 +70,8 @@ type Props struct {
 	DragSignalNamespace  string   `json:"dragSignalNamespace,omitempty"`
 	PickSignalNamespace  string   `json:"pickSignalNamespace,omitempty"`
 	EventSignalNamespace string   `json:"eventSignalNamespace,omitempty"`
-	CapabilityTier       string   `json:"capabilityTier,omitempty"`
+	CapabilityTier       string       `json:"capabilityTier,omitempty"`
+	Compression          *Compression `json:"compression,omitempty"`
 	ControlTarget        Vector3
 	ControlRotateSpeed   float64 `json:"controlRotateSpeed,omitempty"`
 	ControlZoomSpeed     float64 `json:"controlZoomSpeed,omitempty"`
@@ -80,6 +81,12 @@ type Props struct {
 	Camera               PerspectiveCamera
 	Environment          Environment
 	Graph                Graph
+}
+
+// Compression configures TurboQuant compression for Scene3D vertex data.
+// When non-nil with BitWidth > 0, IR lowering quantizes bulk float arrays.
+type Compression struct {
+	BitWidth int `json:"bitWidth"` // 1-8, bits per coordinate. 0 = no compression.
 }
 
 // Graph is the typed scene graph lowered into the legacy Scene3D prop bag.
