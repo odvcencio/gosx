@@ -26,6 +26,7 @@ const (
 	ValueKindMap       ValueKind = "map"
 	ValueKindList      ValueKind = "list"
 	ValueKindText      ValueKind = "text"
+	ValueKindVector    ValueKind = "vector"
 )
 
 type Value struct {
@@ -38,7 +39,11 @@ type Value struct {
 	Bytes   []byte     `json:"bytes,omitempty"`
 	Counter int64      `json:"counter,omitempty"`
 	Time    *time.Time `json:"time,omitempty"`
-	Obj     ObjID      `json:"obj,omitempty"`
+	Obj          ObjID      `json:"obj,omitempty"`
+	VectorPacked []byte     `json:"vectorPacked,omitempty"`
+	VectorNorm   float32    `json:"vectorNorm,omitempty"`
+	VectorDim    int        `json:"vectorDim,omitempty"`
+	VectorBits   int        `json:"vectorBits,omitempty"`
 }
 
 func NullValue() Value                 { return Value{Kind: ValueKindNull} }
@@ -62,6 +67,9 @@ func (v Value) Clone() Value {
 	out := v
 	if v.Bytes != nil {
 		out.Bytes = append([]byte(nil), v.Bytes...)
+	}
+	if v.VectorPacked != nil {
+		out.VectorPacked = append([]byte(nil), v.VectorPacked...)
 	}
 	if v.Time != nil {
 		value := *v.Time
@@ -142,16 +150,20 @@ func ValueFromAny(raw any) (Value, error) {
 }
 
 type jsonValue struct {
-	Kind    ValueKind `json:"kind"`
-	Bool    bool      `json:"bool,omitempty"`
-	Int     int64     `json:"int,omitempty"`
-	Uint    uint64    `json:"uint,omitempty"`
-	Float   float64   `json:"float,omitempty"`
-	Str     string    `json:"str,omitempty"`
-	Bytes   string    `json:"bytes,omitempty"`
-	Counter int64     `json:"counter,omitempty"`
-	Time    string    `json:"time,omitempty"`
-	Obj     ObjID     `json:"obj,omitempty"`
+	Kind         ValueKind `json:"kind"`
+	Bool         bool      `json:"bool,omitempty"`
+	Int          int64     `json:"int,omitempty"`
+	Uint         uint64    `json:"uint,omitempty"`
+	Float        float64   `json:"float,omitempty"`
+	Str          string    `json:"str,omitempty"`
+	Bytes        string    `json:"bytes,omitempty"`
+	Counter      int64     `json:"counter,omitempty"`
+	Time         string    `json:"time,omitempty"`
+	Obj          ObjID     `json:"obj,omitempty"`
+	VectorPacked string    `json:"vectorPacked,omitempty"`
+	VectorNorm   float32   `json:"vectorNorm,omitempty"`
+	VectorDim    int       `json:"vectorDim,omitempty"`
+	VectorBits   int       `json:"vectorBits,omitempty"`
 }
 
 func (v Value) MarshalJSON() ([]byte, error) {
@@ -168,6 +180,12 @@ func (v Value) MarshalJSON() ([]byte, error) {
 	if len(v.Bytes) > 0 {
 		out.Bytes = base64.StdEncoding.EncodeToString(v.Bytes)
 	}
+	if len(v.VectorPacked) > 0 {
+		out.VectorPacked = base64.StdEncoding.EncodeToString(v.VectorPacked)
+	}
+	out.VectorNorm = v.VectorNorm
+	out.VectorDim = v.VectorDim
+	out.VectorBits = v.VectorBits
 	if v.Time != nil {
 		out.Time = v.Time.UTC().Format(time.RFC3339Nano)
 	}
@@ -196,6 +214,16 @@ func (v *Value) UnmarshalJSON(data []byte) error {
 		}
 		out.Bytes = bytes
 	}
+	if decoded.VectorPacked != "" {
+		bytes, err := base64.StdEncoding.DecodeString(decoded.VectorPacked)
+		if err != nil {
+			return fmt.Errorf("decode vector packed value: %w", err)
+		}
+		out.VectorPacked = bytes
+	}
+	out.VectorNorm = decoded.VectorNorm
+	out.VectorDim = decoded.VectorDim
+	out.VectorBits = decoded.VectorBits
 	if decoded.Time != "" {
 		value, err := time.Parse(time.RFC3339Nano, decoded.Time)
 		if err != nil {
