@@ -7427,3 +7427,68 @@ window.Hls.Events = {};`,
   assert.ok(mounted);
   assert.equal(mounted.handle.video.tagName, "VIDEO");
 });
+
+test("bootstrap decompresses compressedPositions for Scene3D points", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-decompress-root";
+
+  // Create a compressedPositions payload matching Go's scalar quantization format.
+  // 6 floats: [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
+  // min=1.0, max=6.0, 2-bit quantization (4 levels: 0,1,2,3)
+  // Indices: 0, floor((2-1)/(6-1)*3+0.5)=1, 1, 2, 2, 3
+  // step = (6-1)/3 = 1.6667
+  // Packed 2-bit: indices [0,1,1,2,2,3] → byte layout
+  // byte 0: idx0(00) | idx1(01) | idx2(01) | idx3(10) = 0b10010100 = 0x94
+  // byte 1: idx4(10) | idx5(11) | pad      | pad      = 0b00001110 = 0x0E
+  const packed = Buffer.from([0x94, 0x0E]).toString("base64");
+
+  const env = createContext({
+    elements: [mount],
+    enableWebGL: true,
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-decompress",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-decompress-root",
+          props: {
+            width: 200,
+            height: 200,
+            background: "#000",
+            camera: { x: 0, y: 0, z: 5, fov: 72 },
+            scene: {
+              points: [
+                {
+                  id: "compressed-cloud",
+                  count: 2,
+                  color: "#fff",
+                  size: 2,
+                  compressedPositions: [
+                    {
+                      packed: packed,
+                      norm: 1.0,    // min value
+                      maxVal: 6.0,  // max value
+                      dim: 6,
+                      bitWidth: 2,
+                      count: 6,
+                    },
+                  ],
+                },
+              ],
+            },
+          },
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  // The decompressor should have replaced compressedPositions with positions.
+  // Verify the engine mounted and the scene rendered without errors.
+  assert.equal(env.consoleLogs.error.length, 0, "expected no errors, got: " + JSON.stringify(env.consoleLogs.error));
+  const engineState = env.context.__gosx.engines.get("gosx-engine-decompress");
+  assert.ok(engineState, "expected engine to mount");
+});
