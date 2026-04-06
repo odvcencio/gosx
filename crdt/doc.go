@@ -285,6 +285,31 @@ func (d *Doc) InsertAt(list ObjID, index uint64, val Value) error {
 	return nil
 }
 
+func (d *Doc) DeleteAt(list ObjID, index uint64) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	target, err := d.objectLocked(list)
+	if err != nil {
+		return err
+	}
+	if target.Kind != objectKindList && target.Kind != objectKindText {
+		return fmt.Errorf("%s is not a list-like object", list)
+	}
+	visible := visibleElems(target.List)
+	if int(index) >= len(visible) {
+		return fmt.Errorf("list index %d out of range (length %d)", index, len(visible))
+	}
+	elemID := visible[index].ID
+	op := d.newLocalOpLocked("delete", list, Prop(elemID.String()), NullValue())
+	patch, err := d.applyOpLocked(op)
+	if err != nil {
+		return err
+	}
+	d.pending = append(d.pending, op)
+	d.pendingPatches = append(d.pendingPatches, patch)
+	return nil
+}
+
 func (d *Doc) TextToString(text ObjID) (string, error) {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
@@ -638,8 +663,17 @@ func (d *Doc) applyDeleteLocked(target *object, op Op) (Patch, error) {
 			target.Map[string(op.Prop)] = mapEntry{ID: op.ID, Deleted: true}
 		}
 		return Patch{Obj: op.Obj, Prop: op.Prop, Action: "delete"}, nil
+	case objectKindList, objectKindText:
+		elemIDStr := string(op.Prop)
+		for i := range target.List {
+			if target.List[i].ID.String() == elemIDStr {
+				target.List[i].Deleted = true
+				break
+			}
+		}
+		return Patch{Obj: op.Obj, Prop: op.Prop, Action: "delete"}, nil
 	default:
-		return Patch{}, fmt.Errorf("delete is only supported on map objects")
+		return Patch{}, fmt.Errorf("delete is not supported on %s objects", target.Kind)
 	}
 }
 

@@ -320,6 +320,70 @@ func TestListLen(t *testing.T) {
 	}
 }
 
+func TestDeleteAt(t *testing.T) {
+	doc := NewDoc()
+	textID, err := doc.MakeText(Root, "content")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Insert "abc"
+	for i, ch := range "abc" {
+		if err := doc.InsertAt(textID, uint64(i), StringValue(string(ch))); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := doc.Commit("insert"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Delete index 1 ("b")
+	if err := doc.DeleteAt(textID, 1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := doc.Commit("delete"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Should be "ac" now
+	str, err := doc.TextToString(textID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if str != "ac" {
+		t.Fatalf("expected %q, got %q", "ac", str)
+	}
+
+	// Length should be 2
+	n, err := doc.ListLen(textID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 2 {
+		t.Fatalf("expected 2, got %d", n)
+	}
+}
+
+func TestDeleteAtBounds(t *testing.T) {
+	doc := NewDoc()
+	textID, err := doc.MakeText(Root, "content")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := doc.InsertAt(textID, 0, StringValue("a")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := doc.Commit("insert"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Out of bounds should error
+	err = doc.DeleteAt(textID, 5)
+	if err == nil {
+		t.Fatal("expected error for out-of-bounds index")
+	}
+}
+
 func exchangeDocs(t *testing.T, left *Doc, leftState *crdtsync.State, right *Doc, rightState *crdtsync.State) {
 	t.Helper()
 	for i := 0; i < 8; i++ {
