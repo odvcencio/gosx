@@ -5,7 +5,7 @@ import (
 	"sort"
 	"sync"
 
-	"github.com/odvcencio/gosx/quant"
+	"github.com/odvcencio/turboquant"
 )
 
 // SearchResult holds one result from a similarity search.
@@ -16,7 +16,7 @@ type SearchResult struct {
 
 type entry struct {
 	id string
-	qv quant.IPQuantized
+	qv turboquant.IPQuantized
 }
 
 // Index is an in-memory vector index backed by TurboQuant IP quantization.
@@ -24,7 +24,7 @@ type entry struct {
 // and Add/Remove are serialized with respect to each other and to Search.
 type Index struct {
 	mu        sync.RWMutex
-	quantizer *quant.IPQuantizer
+	quantizer *turboquant.IPQuantizer
 	entries   []entry
 	idIndex   map[string]int
 }
@@ -35,7 +35,7 @@ type Index struct {
 // Uses a random seed for the underlying quantizer.
 func New(dim, bitWidth int) *Index {
 	return &Index{
-		quantizer: quant.NewIP(dim, bitWidth),
+		quantizer: turboquant.NewIP(dim, bitWidth),
 		entries:   make([]entry, 0),
 		idIndex:   make(map[string]int),
 	}
@@ -46,7 +46,7 @@ func New(dim, bitWidth int) *Index {
 // quantizations and search results for the same inputs.
 func NewWithSeed(dim, bitWidth int, seed int64) *Index {
 	return &Index{
-		quantizer: quant.NewIPWithSeed(dim, bitWidth, seed),
+		quantizer: turboquant.NewIPWithSeed(dim, bitWidth, seed),
 		entries:   make([]entry, 0),
 		idIndex:   make(map[string]int),
 	}
@@ -73,7 +73,7 @@ func (idx *Index) Add(id string, vec []float32) {
 // outside the lock for better concurrency.
 // ids and vecs must have the same length. Each vecs[i] must have length equal to dim.
 func (idx *Index) AddBatch(ids []string, vecs [][]float32) {
-	qvs := make([]quant.IPQuantized, len(ids))
+	qvs := make([]turboquant.IPQuantized, len(ids))
 	for i := range ids {
 		qvs[i] = idx.quantizer.Quantize(vecs[i])
 	}

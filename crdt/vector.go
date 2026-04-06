@@ -3,7 +3,7 @@ package crdt
 import (
 	"sync"
 
-	"github.com/odvcencio/gosx/quant"
+	"github.com/odvcencio/turboquant"
 )
 
 // vectorQuantSeed is a fixed seed shared by all CRDT vector quantizers.
@@ -11,21 +11,21 @@ import (
 // compressed output. Changing this value is a breaking protocol change.
 const vectorQuantSeed int64 = 0x676f73785f637264 // "gosx_crd"
 
-var vectorQuantCache sync.Map // key: vectorCacheKey -> *quant.Quantizer
+var vectorQuantCache sync.Map // key: vectorCacheKey -> *turboquant.Quantizer
 
 type vectorCacheKey struct {
 	dim  int
 	bits int
 }
 
-func vectorQuantizer(dim, bitWidth int) *quant.Quantizer {
+func vectorQuantizer(dim, bitWidth int) *turboquant.Quantizer {
 	key := vectorCacheKey{dim, bitWidth}
 	if q, ok := vectorQuantCache.Load(key); ok {
-		return q.(*quant.Quantizer)
+		return q.(*turboquant.Quantizer)
 	}
-	q := quant.NewWithSeed(dim, bitWidth, vectorQuantSeed)
+	q := turboquant.NewWithSeed(dim, bitWidth, vectorQuantSeed)
 	actual, _ := vectorQuantCache.LoadOrStore(key, q)
-	return actual.(*quant.Quantizer)
+	return actual.(*turboquant.Quantizer)
 }
 
 // VectorValue quantizes vec and returns a Value containing the compressed form.
