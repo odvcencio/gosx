@@ -253,6 +253,73 @@ func TestMakeTextAndInsert(t *testing.T) {
 	}
 }
 
+func TestTextToString(t *testing.T) {
+	doc := NewDoc()
+	textID, err := doc.MakeText(Root, "content")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, ch := range "Hello, world!" {
+		if err := doc.InsertAt(textID, uint64(i), StringValue(string(ch))); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := doc.Commit("write"); err != nil {
+		t.Fatal(err)
+	}
+
+	str, err := doc.TextToString(textID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if str != "Hello, world!" {
+		t.Fatalf("expected %q, got %q", "Hello, world!", str)
+	}
+}
+
+func TestTextToStringEmpty(t *testing.T) {
+	doc := NewDoc()
+	textID, err := doc.MakeText(Root, "content")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := doc.Commit("empty"); err != nil {
+		t.Fatal(err)
+	}
+
+	str, err := doc.TextToString(textID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if str != "" {
+		t.Fatalf("expected empty string, got %q", str)
+	}
+}
+
+func TestListLen(t *testing.T) {
+	doc := NewDoc()
+	textID, err := doc.MakeText(Root, "content")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, ch := range "abc" {
+		if err := doc.InsertAt(textID, uint64(i), StringValue(string(ch))); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := doc.Commit("write"); err != nil {
+		t.Fatal(err)
+	}
+
+	n, err := doc.ListLen(textID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 3 {
+		t.Fatalf("expected 3, got %d", n)
+	}
+}
+
 func exchangeDocs(t *testing.T, left *Doc, leftState *crdtsync.State, right *Doc, rightState *crdtsync.State) {
 	t.Helper()
 	for i := 0; i < 8; i++ {

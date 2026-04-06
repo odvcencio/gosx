@@ -285,6 +285,37 @@ func (d *Doc) InsertAt(list ObjID, index uint64, val Value) error {
 	return nil
 }
 
+func (d *Doc) TextToString(text ObjID) (string, error) {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	target, err := d.objectLocked(text)
+	if err != nil {
+		return "", err
+	}
+	if target.Kind != objectKindText && target.Kind != objectKindList {
+		return "", fmt.Errorf("%s is not a text or list object", text)
+	}
+	visible := visibleElems(target.List)
+	var buf []byte
+	for _, elem := range visible {
+		buf = append(buf, elem.Value.Str...)
+	}
+	return string(buf), nil
+}
+
+func (d *Doc) ListLen(list ObjID) (int, error) {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	target, err := d.objectLocked(list)
+	if err != nil {
+		return 0, err
+	}
+	if target.Kind != objectKindList && target.Kind != objectKindText {
+		return 0, fmt.Errorf("%s is not a list-like object", list)
+	}
+	return len(visibleElems(target.List)), nil
+}
+
 func (d *Doc) Commit(msg string) (ChangeHash, error) {
 	hooks, patches, hash, err := d.commitPending(msg)
 	if err != nil {
