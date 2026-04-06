@@ -44,6 +44,14 @@ func registerRuntime(b *bridge.Bridge) {
 	setRuntimeFunc("__gosx_crdt_sync", crdtSyncRuntimeFunc(crdtBridge))
 	setRuntimeFunc("__gosx_crdt_put", crdtPutRuntimeFunc(crdtBridge))
 	setRuntimeFunc("__gosx_crdt_get", crdtGetRuntimeFunc(crdtBridge))
+	setRuntimeFunc("__gosx_crdt_make_text", crdtMakeTextRuntimeFunc(crdtBridge))
+	setRuntimeFunc("__gosx_crdt_insert_at", crdtInsertAtRuntimeFunc(crdtBridge))
+	setRuntimeFunc("__gosx_crdt_delete_at", crdtDeleteAtRuntimeFunc(crdtBridge))
+	setRuntimeFunc("__gosx_crdt_commit", crdtCommitRuntimeFunc(crdtBridge))
+	setRuntimeFunc("__gosx_crdt_save", crdtSaveRuntimeFunc(crdtBridge))
+	setRuntimeFunc("__gosx_crdt_load", crdtLoadRuntimeFunc(crdtBridge))
+	setRuntimeFunc("__gosx_crdt_text_to_string", crdtTextToStringRuntimeFunc(crdtBridge))
+	setRuntimeFunc("__gosx_crdt_get_obj_id", crdtGetObjIDRuntimeFunc(crdtBridge))
 }
 
 func setRuntimeFunc(name string, fn js.Func) {
@@ -403,6 +411,112 @@ func crdtGetRuntimeFunc(b *bridge.CRDTBridge) js.Func {
 			return jsError(err)
 		}
 		return js.Global().Get("JSON").Call("parse", valueJSON)
+	})
+}
+
+func crdtMakeTextRuntimeFunc(b *bridge.CRDTBridge) js.Func {
+	return js.FuncOf(func(this js.Value, args []js.Value) any {
+		if len(args) < 2 {
+			return jsErrorf("need 2 args (obj, prop)")
+		}
+		objID, err := b.MakeText(crdt.ObjID(args[0].String()), crdt.Prop(args[1].String()))
+		if err != nil {
+			return jsError(err)
+		}
+		return js.ValueOf(objID)
+	})
+}
+
+func crdtInsertAtRuntimeFunc(b *bridge.CRDTBridge) js.Func {
+	return js.FuncOf(func(this js.Value, args []js.Value) any {
+		if len(args) < 3 {
+			return jsErrorf("need 3 args (list, index, value)")
+		}
+		valueJSON, err := normalizeJSONArg(args[2], "null")
+		if err != nil {
+			return jsError(err)
+		}
+		if err := b.InsertAt(crdt.ObjID(args[0].String()), uint64(args[1].Int()), valueJSON); err != nil {
+			return jsError(err)
+		}
+		return js.Null()
+	})
+}
+
+func crdtDeleteAtRuntimeFunc(b *bridge.CRDTBridge) js.Func {
+	return js.FuncOf(func(this js.Value, args []js.Value) any {
+		if len(args) < 2 {
+			return jsErrorf("need 2 args (list, index)")
+		}
+		if err := b.DeleteAt(crdt.ObjID(args[0].String()), uint64(args[1].Int())); err != nil {
+			return jsError(err)
+		}
+		return js.Null()
+	})
+}
+
+func crdtCommitRuntimeFunc(b *bridge.CRDTBridge) js.Func {
+	return js.FuncOf(func(this js.Value, args []js.Value) any {
+		msg := ""
+		if len(args) > 0 && args[0].Type() == js.TypeString {
+			msg = args[0].String()
+		}
+		if err := b.Commit(msg); err != nil {
+			return jsError(err)
+		}
+		return js.Null()
+	})
+}
+
+func crdtSaveRuntimeFunc(b *bridge.CRDTBridge) js.Func {
+	return js.FuncOf(func(this js.Value, args []js.Value) any {
+		data, err := b.Save()
+		if err != nil {
+			return jsError(err)
+		}
+		return bytesToJS(data)
+	})
+}
+
+func crdtLoadRuntimeFunc(b *bridge.CRDTBridge) js.Func {
+	return js.FuncOf(func(this js.Value, args []js.Value) any {
+		if len(args) < 1 {
+			return jsErrorf("need 1 arg (data)")
+		}
+		data, err := decodeProgramData(args[0])
+		if err != nil {
+			return jsError(err)
+		}
+		if err := b.LoadDoc(data); err != nil {
+			return jsError(err)
+		}
+		return js.Null()
+	})
+}
+
+func crdtTextToStringRuntimeFunc(b *bridge.CRDTBridge) js.Func {
+	return js.FuncOf(func(this js.Value, args []js.Value) any {
+		if len(args) < 1 {
+			return jsErrorf("need 1 arg (text)")
+		}
+		str, err := b.TextToString(crdt.ObjID(args[0].String()))
+		if err != nil {
+			return jsError(err)
+		}
+		return js.ValueOf(str)
+	})
+}
+
+func crdtGetObjIDRuntimeFunc(b *bridge.CRDTBridge) js.Func {
+	return js.FuncOf(func(this js.Value, args []js.Value) any {
+		if len(args) < 2 {
+			return jsErrorf("need 2 args (obj, prop)")
+		}
+		objID, err := b.GetObjID(crdt.ObjID(args[0].String()), crdt.Prop(args[1].String()))
+		if err != nil {
+			return jsError(err)
+		}
+		return js.ValueOf(objID)
 	})
 }
 

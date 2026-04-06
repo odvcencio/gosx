@@ -137,3 +137,84 @@ func (b *CRDTBridge) Get(obj crdt.ObjID, prop crdt.Prop) (string, error) {
 	}
 	return string(data), nil
 }
+
+func (b *CRDTBridge) MakeText(obj crdt.ObjID, prop crdt.Prop) (string, error) {
+	if b.doc == nil {
+		return "", fmt.Errorf("crdt doc not initialized")
+	}
+	id, err := b.doc.MakeText(obj, prop)
+	if err != nil {
+		return "", err
+	}
+	return string(id), nil
+}
+
+func (b *CRDTBridge) InsertAt(list crdt.ObjID, index uint64, valueJSON string) error {
+	if b.doc == nil {
+		return fmt.Errorf("crdt doc not initialized")
+	}
+	var raw any
+	if err := json.Unmarshal([]byte(valueJSON), &raw); err != nil {
+		return fmt.Errorf("decode crdt insert payload: %w", err)
+	}
+	value, err := crdt.ValueFromAny(raw)
+	if err != nil {
+		return err
+	}
+	return b.doc.InsertAt(list, index, value)
+}
+
+func (b *CRDTBridge) DeleteAt(list crdt.ObjID, index uint64) error {
+	if b.doc == nil {
+		return fmt.Errorf("crdt doc not initialized")
+	}
+	return b.doc.DeleteAt(list, index)
+}
+
+func (b *CRDTBridge) Commit(msg string) error {
+	if b.doc == nil {
+		return fmt.Errorf("crdt doc not initialized")
+	}
+	if _, err := b.doc.Commit(msg); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (b *CRDTBridge) Save() ([]byte, error) {
+	if b.doc == nil {
+		return nil, fmt.Errorf("crdt doc not initialized")
+	}
+	return b.doc.Save()
+}
+
+func (b *CRDTBridge) LoadDoc(data []byte) error {
+	if len(data) == 0 {
+		return fmt.Errorf("crdt load: empty data")
+	}
+	doc, err := crdt.Load(data)
+	if err != nil {
+		return err
+	}
+	b.doc = doc
+	b.state = crdtsync.NewState()
+	return nil
+}
+
+func (b *CRDTBridge) TextToString(text crdt.ObjID) (string, error) {
+	if b.doc == nil {
+		return "", fmt.Errorf("crdt doc not initialized")
+	}
+	return b.doc.TextToString(text)
+}
+
+func (b *CRDTBridge) GetObjID(obj crdt.ObjID, prop crdt.Prop) (string, error) {
+	if b.doc == nil {
+		return "", fmt.Errorf("crdt doc not initialized")
+	}
+	_, childID, err := b.doc.Get(obj, prop)
+	if err != nil {
+		return "", err
+	}
+	return string(childID), nil
+}
