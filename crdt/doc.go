@@ -246,6 +246,20 @@ func (d *Doc) MakeList(obj ObjID, prop Prop) (ObjID, error) {
 	return child, nil
 }
 
+func (d *Doc) MakeText(obj ObjID, prop Prop) (ObjID, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	child := d.newObjectIDLocked()
+	op := d.newLocalOpLocked("put", obj, prop, TextValue(child))
+	patch, err := d.applyOpLocked(op)
+	if err != nil {
+		return "", err
+	}
+	d.pending = append(d.pending, op)
+	d.pendingPatches = append(d.pendingPatches, patch)
+	return child, nil
+}
+
 func (d *Doc) InsertAt(list ObjID, index uint64, val Value) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()

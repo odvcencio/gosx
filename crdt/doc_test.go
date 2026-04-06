@@ -220,6 +220,39 @@ func TestDocListMergeConvergesAcrossForks(t *testing.T) {
 	}
 }
 
+func TestMakeTextAndInsert(t *testing.T) {
+	doc := NewDoc()
+	textID, err := doc.MakeText(Root, "content")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if textID == "" {
+		t.Fatal("expected non-empty text object ID")
+	}
+
+	// Insert characters
+	if err := doc.InsertAt(textID, 0, StringValue("H")); err != nil {
+		t.Fatal(err)
+	}
+	if err := doc.InsertAt(textID, 1, StringValue("i")); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = doc.Commit("add text")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify the text object exists and has the right kind
+	val, _, err := doc.Get(Root, "content")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if val.Kind != ValueKindText {
+		t.Fatalf("expected text kind, got %s", val.Kind)
+	}
+}
+
 func exchangeDocs(t *testing.T, left *Doc, leftState *crdtsync.State, right *Doc, rightState *crdtsync.State) {
 	t.Helper()
 	for i := 0; i < 8; i++ {
