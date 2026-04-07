@@ -109,11 +109,10 @@ func RunBuild(dir string, dev bool) error {
 	fmt.Printf("GoSX build (%s)\n", mode)
 	fmt.Println("─────────────────────────────────")
 
-	// ── Pre-compile grammar blob for instant cold starts ────────────────
-	g := gosx.GosxGrammar()
-	_, grammarBlob, err := gosx.GenerateLanguageAndBlob(g)
-	if err != nil {
-		return fmt.Errorf("generate grammar blob: %w", err)
+	// ── Stage embedded grammar blob for instant cold starts ─────────────
+	grammarBlob := gosx.GrammarBlob()
+	if len(grammarBlob) == 0 {
+		return fmt.Errorf("embedded grammar blob unavailable")
 	}
 	if err := os.WriteFile(filepath.Join(distDir, "gosx-grammar.blob"), grammarBlob, 0644); err != nil {
 		return fmt.Errorf("write grammar blob: %w", err)
@@ -366,6 +365,11 @@ func RunBuild(dir string, dev bool) error {
 		}
 		*js.dest = asset
 		fmt.Printf("    %s (%d bytes)\n", asset.File, asset.Size)
+		if mapData, err := os.ReadFile(js.path + ".map"); err == nil {
+			if err := os.WriteFile(filepath.Join(runtimeDir, js.name+".js.map"), mapData, 0644); err != nil {
+				return fmt.Errorf("write %s source map: %w", js.name, err)
+			}
+		}
 	}
 
 	// ── Build manifest ──────────────────────────────────────────────────

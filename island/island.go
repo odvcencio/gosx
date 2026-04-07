@@ -131,11 +131,16 @@ func loadDefaultBuildManifest() *buildmanifest.Manifest {
 		}
 		root = wd
 	}
-	manifest, err := buildmanifest.Load(filepath.Join(root, "build.json"))
-	if err != nil || manifest == nil {
-		return nil
+	for _, candidate := range []string{
+		filepath.Join(root, "build.json"),
+		filepath.Join(root, "dist", "build.json"),
+	} {
+		manifest, err := buildmanifest.Load(candidate)
+		if err == nil && manifest != nil {
+			return manifest
+		}
 	}
-	return manifest
+	return nil
 }
 
 // SetProgramDir sets the directory where island programs are stored.

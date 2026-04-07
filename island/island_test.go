@@ -507,6 +507,42 @@ func TestNewRendererAutoLoadsBuildManifestIslandPrograms(t *testing.T) {
 	}
 }
 
+func TestNewRendererAutoLoadsBuildManifestFromDistRoot(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("GOSX_APP_ROOT", root)
+
+	if err := os.MkdirAll(filepath.Join(root, "dist"), 0755); err != nil {
+		t.Fatalf("mkdir dist: %v", err)
+	}
+
+	data := []byte(`{
+  "runtime": {
+    "wasm": {"file": "gosx-runtime.11112222.wasm", "hash": "11112222", "size": 10},
+    "wasmExec": {"file": "wasm_exec.22223333.js", "hash": "22223333", "size": 20},
+    "bootstrap": {"file": "bootstrap.33334444.js", "hash": "33334444", "size": 30},
+    "patch": {"file": "patch.44445555.js", "hash": "44445555", "size": 40}
+  },
+  "islands": [],
+  "css": []
+}`)
+	if err := os.WriteFile(filepath.Join(root, "dist", "build.json"), data, 0644); err != nil {
+		t.Fatalf("write dist manifest: %v", err)
+	}
+
+	r := NewRenderer("main")
+	r.RenderIsland("Counter", nil, gosx.Text("0"))
+
+	headHTML := gosx.RenderHTML(r.PageHead())
+	for _, snippet := range []string{
+		`/gosx/assets/runtime/gosx-runtime.11112222.wasm`,
+		`/gosx/assets/runtime/wasm_exec.22223333.js`,
+	} {
+		if !strings.Contains(headHTML, snippet) {
+			t.Fatalf("expected %q in head %s", snippet, headHTML)
+		}
+	}
+}
+
 func TestLoadBuildManifestFromDisk(t *testing.T) {
 	dir := t.TempDir()
 	manifestPath := filepath.Join(dir, "build.json")

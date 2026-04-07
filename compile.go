@@ -17,7 +17,7 @@ var (
 
 // SetGrammarBlob preloads the GoSX grammar from a pre-compiled binary blob.
 // Call this before any Compile/Parse calls to skip the 40s grammar generation.
-// The blob is produced by GenerateLanguageAndBlob during gosx build --prod.
+// The gosx library embeds a default blob, and callers may provide an override.
 func SetGrammarBlob(data []byte) error {
 	var err error
 	gosxLangOnce.Do(func() {
@@ -34,10 +34,15 @@ func SetGrammarBlob(data []byte) error {
 
 // Language returns the GoSX tree-sitter language, generating it on first call.
 // If SetGrammarBlob was called first, returns the preloaded language instantly.
+// Otherwise it loads the embedded library blob before falling back to generation.
 func Language() (*gotreesitter.Language, error) {
 	gosxLangOnce.Do(func() {
-		g := GosxGrammar()
-		gosxLangCached, _, gosxLangErr = GenerateLanguageAndBlob(g)
+		if len(embeddedGrammarBlob) > 0 {
+			gosxLangCached, gosxLangErr = LoadLanguageBlob(embeddedGrammarBlob)
+		} else {
+			g := GosxGrammar()
+			gosxLangCached, _, gosxLangErr = GenerateLanguageAndBlob(g)
+		}
 		if gosxLangErr == nil && gosxLangCached != nil {
 			gosxLangCached.ExternalScanner = &gsxScanner{lang: gosxLangCached}
 		}
