@@ -4679,12 +4679,7 @@
     if (!payload) return;
 
     const setInputBatch = window.__gosx_set_input_batch;
-    if (typeof setInputBatch !== "function") {
-      for (const name of Object.keys(payload)) {
-        gosxNotifySharedSignal(name, JSON.stringify(payload[name]));
-      }
-      return;
-    }
+    if (typeof setInputBatch !== "function") return;
 
     try {
       const result = setInputBatch(JSON.stringify(payload));
@@ -5535,9 +5530,6 @@
   }
 
   function createSceneState(props) {
-    if (typeof sceneDecompressProps === "function") {
-      sceneDecompressProps(props);
-    }
     const state = {
       background: typeof props.background === "string" && props.background ? props.background : "#08151f",
       camera: sceneCamera(props),
@@ -7550,286 +7542,6 @@
     };
   }
 
-  function sceneDecompressArray(chunks) {
-    if (!Array.isArray(chunks) || chunks.length === 0) return null;
-    var result = [];
-    for (var ci = 0; ci < chunks.length; ci++) {
-      var chunk = chunks[ci];
-      var packed = chunk.packed;
-      var minVal = chunk.norm;      // "norm" field stores the min value
-      var maxVal = chunk.maxVal;
-      var count = chunk.count;
-      var bitWidth = chunk.bitWidth;
-
-      if (!packed || count < 2) continue;
-
-      var bytes;
-      if (typeof packed === "string") {
-        bytes = sceneBase64Decode(packed);
-      } else if (packed instanceof Uint8Array) {
-        bytes = packed;
-      } else if (Array.isArray(packed)) {
-        bytes = new Uint8Array(packed);
-      } else {
-        continue;
-      }
-
-      var levels = (1 << bitWidth) - 1;
-      var step = levels > 0 ? (maxVal - minVal) / levels : 0;
-
-      var indices = sceneUnpackIndices(bytes, count, bitWidth);
-      for (var i = 0; i < count; i++) {
-        result.push(minVal + indices[i] * step);
-      }
-    }
-    return result.length > 0 ? result : null;
-  }
-
-  function sceneUnpackIndices(src, count, bitWidth) {
-    var indices = new Int32Array(count);
-    switch (bitWidth) {
-      case 1:
-        for (var i = 0; i < count; i++) {
-          indices[i] = (src[i >> 3] >> (i & 7)) & 1;
-        }
-        break;
-      case 2:
-        for (var i = 0; i < count; i++) {
-          indices[i] = (src[i >> 2] >> ((i & 3) * 2)) & 3;
-        }
-        break;
-      case 4:
-        for (var i = 0; i < count; i++) {
-          indices[i] = (src[i >> 1] >> ((i & 1) * 4)) & 15;
-        }
-        break;
-      case 8:
-        for (var i = 0; i < count; i++) {
-          indices[i] = src[i];
-        }
-        break;
-      default:
-        var bitPos = 0;
-        var mask = (1 << bitWidth) - 1;
-        for (var i = 0; i < count; i++) {
-          var val = 0;
-          for (var b = 0; b < bitWidth; b++) {
-            if (src[bitPos >> 3] & (1 << (bitPos & 7))) {
-              val |= 1 << b;
-            }
-            bitPos++;
-          }
-          indices[i] = val & mask;
-        }
-    }
-    return indices;
-  }
-
-  function sceneBase64Decode(str) {
-    if (typeof atob === "function") {
-      var raw = atob(str);
-      var bytes = new Uint8Array(raw.length);
-      for (var i = 0; i < raw.length; i++) {
-        bytes[i] = raw.charCodeAt(i);
-      }
-      return bytes;
-    }
-    if (typeof Buffer !== "undefined") {
-      return new Uint8Array(Buffer.from(str, "base64"));
-    }
-    return new Uint8Array(0);
-  }
-
-  function sceneDecompressPointsEntry(entry) {
-    if (entry.compressedPositions && !entry.positions) {
-      entry.positions = sceneDecompressArray(entry.compressedPositions);
-      if (entry.positions) {
-        delete entry.compressedPositions;
-      }
-    }
-    if (entry.compressedSizes && !entry.sizes) {
-      entry.sizes = sceneDecompressArray(entry.compressedSizes);
-      if (entry.sizes) {
-        delete entry.compressedSizes;
-      }
-    }
-  }
-
-  function sceneDecompressInstancedMeshEntry(entry) {
-    if (entry.compressedTransforms && !entry.transforms) {
-      entry.transforms = sceneDecompressArray(entry.compressedTransforms);
-      if (entry.transforms) {
-        delete entry.compressedTransforms;
-      }
-    }
-  }
-
-  function sceneDecompressAnimationChannel(channel) {
-    if (channel.compressedTimes && !channel.times) {
-      channel.times = sceneDecompressArray(channel.compressedTimes);
-      if (channel.times) {
-        delete channel.compressedTimes;
-      }
-    }
-    if (channel.compressedValues && !channel.values) {
-      channel.values = sceneDecompressArray(channel.compressedValues);
-      if (channel.values) {
-        delete channel.compressedValues;
-      }
-    }
-  }
-
-  function sceneDecompressProps(props) {
-    var scene = sceneProps(props);
-    var comp = props && props.compression;
-    var progressive = comp && comp.progressive;
-    var lod = comp && comp.lod;
-    var lodThreshold = comp && comp.lodThreshold || 20;
-
-    var points = scene && Array.isArray(scene.points) ? scene.points :
-                 (props && Array.isArray(props.points) ? props.points : []);
-    for (var i = 0; i < points.length; i++) {
-      var entry = points[i];
-      if (progressive || lod) {
-        if (entry.previewPositions && !entry.positions) {
-          entry.positions = sceneDecompressArray(entry.previewPositions);
-          entry._pendingPositions = entry.compressedPositions;
-          entry._previewActive = true;
-          delete entry.previewPositions;
-        }
-        if (entry.previewSizes && !entry.sizes) {
-          entry.sizes = sceneDecompressArray(entry.previewSizes);
-          entry._pendingSizes = entry.compressedSizes;
-          delete entry.previewSizes;
-        }
-        if (lod) {
-          if (entry._pendingPositions) {
-            entry._fullPositions = sceneDecompressArray(entry._pendingPositions);
-            entry._previewPositions = entry.positions;
-            entry._lodThreshold = lodThreshold;
-          }
-        }
-      } else {
-        sceneDecompressPointsEntry(entry);
-      }
-    }
-
-    var meshes = scene && Array.isArray(scene.instancedMeshes) ? scene.instancedMeshes :
-                 (props && Array.isArray(props.instancedMeshes) ? props.instancedMeshes : []);
-    for (var i = 0; i < meshes.length; i++) {
-      var entry = meshes[i];
-      if (progressive || lod) {
-        if (entry.previewTransforms && !entry.transforms) {
-          entry.transforms = sceneDecompressArray(entry.previewTransforms);
-          entry._pendingTransforms = entry.compressedTransforms;
-          entry._previewActive = true;
-          delete entry.previewTransforms;
-        }
-        if (lod && entry._pendingTransforms) {
-          entry._fullTransforms = sceneDecompressArray(entry._pendingTransforms);
-          entry._previewTransforms = entry.transforms;
-          entry._lodThreshold = lodThreshold;
-        }
-      } else {
-        sceneDecompressInstancedMeshEntry(entry);
-      }
-    }
-
-    var animations = scene && Array.isArray(scene.animations) ? scene.animations :
-                     (props && Array.isArray(props.animations) ? props.animations : []);
-    for (var i = 0; i < animations.length; i++) {
-      var clip = animations[i];
-      var channels = clip && Array.isArray(clip.channels) ? clip.channels : [];
-      for (var j = 0; j < channels.length; j++) {
-        var channel = channels[j];
-        if (progressive || lod) {
-          if (channel.previewTimes && !channel.times) {
-            channel.times = sceneDecompressArray(channel.previewTimes);
-            channel._pendingTimes = channel.compressedTimes;
-            channel._previewActive = true;
-            delete channel.previewTimes;
-          }
-          if (channel.previewValues && !channel.values) {
-            channel.values = sceneDecompressArray(channel.previewValues);
-            channel._pendingValues = channel.compressedValues;
-            delete channel.previewValues;
-          }
-          if (!progressive) {
-            sceneDecompressAnimationChannel(channel);
-          }
-        } else {
-          sceneDecompressAnimationChannel(channel);
-        }
-      }
-    }
-  }
-
-  function sceneUpgradeProgressive(props) {
-    var scene = sceneProps(props);
-    var points = scene && Array.isArray(scene.points) ? scene.points :
-                 (props && Array.isArray(props.points) ? props.points : []);
-    for (var i = 0; i < points.length; i++) {
-      var entry = points[i];
-      if (entry._pendingPositions) {
-        entry.positions = sceneDecompressArray(entry._pendingPositions);
-        delete entry._pendingPositions;
-        delete entry._previewActive;
-        delete entry._cachedPos;
-      }
-      if (entry._pendingSizes) {
-        entry.sizes = sceneDecompressArray(entry._pendingSizes);
-        delete entry._pendingSizes;
-        delete entry._cachedSizes;
-      }
-    }
-    var meshes = scene && Array.isArray(scene.instancedMeshes) ? scene.instancedMeshes :
-                 (props && Array.isArray(props.instancedMeshes) ? props.instancedMeshes : []);
-    for (var i = 0; i < meshes.length; i++) {
-      var entry = meshes[i];
-      if (entry._pendingTransforms) {
-        entry.transforms = sceneDecompressArray(entry._pendingTransforms);
-        delete entry._pendingTransforms;
-        delete entry._previewActive;
-      }
-    }
-    var animations = scene && Array.isArray(scene.animations) ? scene.animations :
-                     (props && Array.isArray(props.animations) ? props.animations : []);
-    for (var i = 0; i < animations.length; i++) {
-      var clip = animations[i];
-      var channels = clip && Array.isArray(clip.channels) ? clip.channels : [];
-      for (var j = 0; j < channels.length; j++) {
-        var channel = channels[j];
-        if (channel._pendingTimes) {
-          channel.times = sceneDecompressArray(channel._pendingTimes);
-          delete channel._pendingTimes;
-          delete channel._previewActive;
-        }
-        if (channel._pendingValues) {
-          channel.values = sceneDecompressArray(channel._pendingValues);
-          delete channel._pendingValues;
-        }
-      }
-    }
-  }
-
-  function sceneApplyLOD(entry, cameraX, cameraY, cameraZ) {
-    if (!entry._fullPositions || !entry._previewPositions) return;
-    var dx = (entry.x || 0) - cameraX;
-    var dy = (entry.y || 0) - cameraY;
-    var dz = (entry.z || 0) - cameraZ;
-    var dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
-    var threshold = entry._lodThreshold || 20;
-    var wantFull = dist < threshold;
-    var hasFull = entry.positions === entry._fullPositions;
-    if (wantFull && !hasFull) {
-      entry.positions = entry._fullPositions;
-      delete entry._cachedPos; // force buffer rebuild
-    } else if (!wantFull && hasFull) {
-      entry.positions = entry._previewPositions;
-      delete entry._cachedPos;
-    }
-  }
-
   function sceneSegmentResolution(value) {
     const segments = Math.round(sceneNumber(value, 12));
     return Math.max(6, Math.min(24, segments));
@@ -8920,7 +8632,7 @@
     "uniform float u_metalness;",
     "uniform float u_emissive;",
     "uniform float u_opacity;",
-    "uniform int u_unlit;",
+    "uniform bool u_unlit;",
     "",
     "// Texture maps",
     "uniform sampler2D u_albedoMap;",
@@ -8928,11 +8640,11 @@
     "uniform sampler2D u_roughnessMap;",
     "uniform sampler2D u_metalnessMap;",
     "uniform sampler2D u_emissiveMap;",
-    "uniform int u_hasAlbedoMap;",
-    "uniform int u_hasNormalMap;",
-    "uniform int u_hasRoughnessMap;",
-    "uniform int u_hasMetalnessMap;",
-    "uniform int u_hasEmissiveMap;",
+    "uniform bool u_hasAlbedoMap;",
+    "uniform bool u_hasNormalMap;",
+    "uniform bool u_hasRoughnessMap;",
+    "uniform bool u_hasMetalnessMap;",
+    "uniform bool u_hasEmissiveMap;",
     "",
     "// Lights (max 8)",
     "uniform int u_lightCount;",
@@ -8958,16 +8670,16 @@
     "// Shadow maps (max 2 directional lights)",
     "uniform sampler2D u_shadowMap0;",
     "uniform mat4 u_lightSpaceMatrix0;",
-    "uniform int u_hasShadow0;",
+    "uniform bool u_hasShadow0;",
     "uniform float u_shadowBias0;",
     "",
     "uniform sampler2D u_shadowMap1;",
     "uniform mat4 u_lightSpaceMatrix1;",
-    "uniform int u_hasShadow1;",
+    "uniform bool u_hasShadow1;",
     "uniform float u_shadowBias1;",
     "",
     "// Per-object shadow receive control",
-    "uniform int u_receiveShadow;",
+    "uniform bool u_receiveShadow;",
     "",
     "// Shadow-casting light indices — maps shadow slot to light array index.",
     "uniform int u_shadowLightIndex0;",
@@ -8978,7 +8690,7 @@
     "uniform int u_toneMapMode;",
     "",
     "// Fog",
-    "uniform int u_hasFog;",
+    "uniform bool u_hasFog;",
     "uniform float u_fogDensity;",
     "uniform vec3 u_fogColor;",
     "",
@@ -9247,13 +8959,13 @@
     "uniform mat4 u_modelMatrix;",
     "uniform float u_defaultSize;",
     "uniform vec3 u_defaultColor;",
-    "uniform int u_hasPerVertexColor;",
-    "uniform int u_hasPerVertexSize;",
-    "uniform int u_sizeAttenuation;",
+    "uniform bool u_hasPerVertexColor;",
+    "uniform bool u_hasPerVertexSize;",
+    "uniform bool u_sizeAttenuation;",
     "uniform float u_viewportHeight;",
     "",
     "// Fog",
-    "uniform int u_hasFog;",
+    "uniform bool u_hasFog;",
     "uniform float u_fogDensity;",
     "",
     "out vec3 v_color;",
@@ -9264,14 +8976,14 @@
     "    vec4 viewPos = u_viewMatrix * worldPos;",
     "    gl_Position = u_projectionMatrix * viewPos;",
     "",
-    "    float size = (u_hasPerVertexSize != 0) ? a_size : u_defaultSize;",
+    "    float size = u_hasPerVertexSize ? a_size : u_defaultSize;",
     "    if (u_sizeAttenuation != 0) {",
     "        gl_PointSize = max(size * (u_viewportHeight * 0.5) / max(-viewPos.z, 0.001), 1.0);",
     "    } else {",
     "        gl_PointSize = max(size, 1.0);",
     "    }",
     "",
-    "    v_color = (u_hasPerVertexColor != 0) ? a_color : u_defaultColor;",
+    "    v_color = u_hasPerVertexColor ? a_color : u_defaultColor;",
     "",
     "    // Exponential fog",
     "    if (u_hasFog != 0) {",
@@ -9293,16 +9005,13 @@
     "",
     "uniform float u_opacity;",
     "uniform vec3 u_fogColor;",
-    "uniform int u_hasFog;",
+    "uniform bool u_hasFog;",
     "",
     "out vec4 fragColor;",
     "",
     "void main() {",
-    "    // Soft circular point with alpha falloff",
-    "    vec2 coord = gl_PointCoord - vec2(0.5);",
-    "    float dist = length(coord);",
-    "    if (dist > 0.5) discard;",
-    "    float alpha = 1.0 - smoothstep(0.3, 0.5, dist);",
+    "    // Filled square point — matches three.js PointsMaterial (no circular cutoff).",
+    "    float alpha = 1.0;",
     "    vec3 color = v_color;",
     "",
     "    // Apply fog",
@@ -9361,7 +9070,7 @@
     "uniform mat4 u_viewMatrix;",
     "uniform mat4 u_projectionMatrix;",
     "uniform mat4 u_jointMatrices[64];",
-    "uniform int u_hasSkin;",
+    "uniform bool u_hasSkin;",
     "",
     "out vec3 v_worldPosition;",
     "out vec3 v_normal;",
@@ -18906,13 +18615,6 @@
       if (runtimeScene && ctx.runtime) {
         applySceneCommands(sceneState, ctx.runtime.tick());
       }
-      if (typeof sceneApplyLOD === "function" && props.compression && props.compression.lod) {
-        var cam = sceneCurrentControlCamera(sceneControlHandle.controller, sceneState.camera, sceneState._scrollCamera);
-        var camX = cam.x || 0, camY = cam.y || 0, camZ = cam.z || 0;
-        for (var li = 0; li < sceneState.points.length; li++) {
-          sceneApplyLOD(sceneState.points[li], camX, camY, camZ);
-        }
-      }
       latestBundle = createSceneRenderBundle(
         viewport.cssWidth,
         viewport.cssHeight,
@@ -18938,17 +18640,6 @@
 
     await sceneModelHydration;
     renderFrame(0);
-
-    if (typeof sceneUpgradeProgressive === "function" && props.compression && props.compression.progressive) {
-      var upgradeTimer = typeof requestIdleCallback === "function" ? requestIdleCallback : setTimeout;
-      upgradeTimer(function() {
-        sceneUpgradeProgressive(props);
-        if (sceneWantsAnimation()) {
-        } else {
-          renderFrame(0);
-        }
-      });
-    }
 
     ctx.emit("mounted", {
       width: viewport.cssWidth,
@@ -20970,28 +20661,24 @@
 
   function applyHubBindings(entry, message) {
     if (!entry.bindings || entry.bindings.length === 0) return;
+    const setSharedSignal = window.__gosx_set_shared_signal;
+    if (typeof setSharedSignal !== "function") return;
+
     for (const binding of entry.bindings) {
-      applyHubBinding(entry, binding, message);
+      applyHubBinding(entry, binding, message, setSharedSignal);
     }
   }
 
-  function applyHubBinding(entry, binding, message) {
+  function applyHubBinding(entry, binding, message, setSharedSignal) {
     if (!binding || binding.event !== message.event || !binding.signal) return;
-    const payload = JSON.stringify(message.data);
-    const setSharedSignal = window.__gosx_set_shared_signal;
     try {
-      if (typeof setSharedSignal === "function") {
-        const result = setSharedSignal(binding.signal, payload);
-        if (typeof result === "string" && result !== "") {
-          console.error(`[gosx] hub binding error (${entry.id}/${binding.signal}):`, result);
-          gosxNotifySharedSignal(binding.signal, payload);
-        }
-        return;
+      const result = setSharedSignal(binding.signal, JSON.stringify(message.data));
+      if (typeof result === "string" && result !== "") {
+        console.error(`[gosx] hub binding error (${entry.id}/${binding.signal}):`, result);
       }
     } catch (e) {
       console.error(`[gosx] hub binding error (${entry.id}/${binding.signal}):`, e);
     }
-    gosxNotifySharedSignal(binding.signal, payload);
   }
 
   function connectHub(entry) {
