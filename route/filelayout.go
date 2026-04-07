@@ -1,16 +1,51 @@
 package route
 
 import (
+	"crypto/sha256"
 	"fmt"
 	"html"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/odvcencio/gosx"
 	"github.com/odvcencio/gosx/ir"
 )
+
+// gsxCompileCache caches compiled .gsx IR programs by content hash.
+// Eliminates re-compilation on subsequent renders of the same template.
+var gsxCompileCache struct {
+	mu    sync.RWMutex
+	progs map[string]*ir.Program
+}
+
+func init() {
+	gsxCompileCache.progs = make(map[string]*ir.Program)
+}
+
+func compileCachedGSX(data []byte) (*ir.Program, error) {
+	hash := fmt.Sprintf("%x", sha256.Sum256(data))
+
+	gsxCompileCache.mu.RLock()
+	if prog, ok := gsxCompileCache.progs[hash]; ok {
+		gsxCompileCache.mu.RUnlock()
+		return prog, nil
+	}
+	gsxCompileCache.mu.RUnlock()
+
+	prog, err := gosx.Compile(data)
+	if err != nil {
+		return nil, err
+	}
+
+	gsxCompileCache.mu.Lock()
+	gsxCompileCache.progs[hash] = prog
+	gsxCompileCache.mu.Unlock()
+
+	return prog, nil
+}
 
 var defaultLayoutSlotComponents = []string{"Slot", "Outlet"}
 var defaultLayoutHTMLPlaceholders = []string{"{{slot}}", "{{outlet}}", "<!-- gosx:slot -->", "<!--gosx:slot-->"}
@@ -138,7 +173,7 @@ func renderFileNode(path string, opts fileRenderOptions) (gosx.Node, error) {
 }
 
 func renderGSXFile(path string, data []byte, opts fileRenderOptions, scopeID string) (gosx.Node, error) {
-	prog, err := gosx.Compile(data)
+	prog, err := compileCachedGSX(data)
 	if err != nil {
 		return gosx.Node{}, fmt.Errorf("compile %s: %w", path, err)
 	}
