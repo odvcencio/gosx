@@ -689,12 +689,15 @@ func (a *App) renderPage(w http.ResponseWriter, ctx *Context, pattern string, bo
 		WriteNotModified(w, ctx.headers)
 		return
 	}
+	// Render the page body first so engines/islands register with PageState.
+	renderedPage := a.renderPageNode(ctx, pattern, body, defaultTitle)
+	// Now decorate — runtime scripts are injected after body registers what it needs.
 	a.decoratePageContext(ctx)
 
 	WriteHTML(w, HTMLResponse{
 		Status:   ctx.status,
 		Headers:  ctx.headers,
-		Node:     a.renderPageNode(ctx, pattern, body, defaultTitle),
+		Node:     renderedPage,
 		Deferred: ctx.deferred,
 	})
 }
@@ -728,7 +731,11 @@ func (a *App) renderPageNode(ctx *Context, pattern string, body gosx.Node, defau
 	case a.document != nil:
 		return a.document(doc)
 	case a.layout != nil:
-		return a.layout(pageTitle(ctx, pattern, defaultTitle), body)
+		// Render body to HTML first to trigger engine/island registration,
+		// then build the head (which now includes runtime scripts).
+		bodyHTML := gosx.RenderHTML(body)
+		a.decoratePageContext(ctx)
+		return HTMLDocument(pageTitle(ctx, pattern, defaultTitle), ctx.Head(), gosx.RawHTML(bodyHTML))
 	default:
 		return gosx.RawHTML(renderDocumentWithContext(doc))
 	}
