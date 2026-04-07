@@ -16,6 +16,8 @@ github.com/klauspost/cpuid/v2 v2.0.9 h1:lgaqFMSdTdQYdZ04uHyN2d/eKdOMyi2YLSvlQIBF
 github.com/klauspost/cpuid/v2 v2.0.9/go.mod h1:FInQzS24/EEf25PyTYn52gqo7WaD8xa0213Md/qVLRg=
 github.com/odvcencio/gotreesitter v0.13.2 h1:7ePyv5AirI89myBRE0Z9zlVykurrHUkk60VcvqAKhfw=
 github.com/odvcencio/gotreesitter v0.13.2/go.mod h1:Sx+iYJBfw5xSWkSttLSuFvguJctlH+ma1BTxZ0MPCqo=
+github.com/odvcencio/gotreesitter v0.13.4 h1:O/FqOlabRz1Neg6UISx0URtwuN1FQ2eGCc846KHcBbQ=
+github.com/odvcencio/gotreesitter v0.13.4/go.mod h1:Sx+iYJBfw5xSWkSttLSuFvguJctlH+ma1BTxZ0MPCqo=
 github.com/odvcencio/turboquant v0.1.0 h1:4dk7zt+T3Lu+jhqzTVQvFj77mrgDZ+ZzYIY5sUaz+qo=
 github.com/odvcencio/turboquant v0.1.0/go.mod h1:ty5h3EkX85p64iBnvWzUGvDuRr6kplOcCE2KBZLtAf8=
 github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZbAQM=
