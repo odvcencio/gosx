@@ -31,6 +31,10 @@ func TestRunExportWritesStaticBundleForStarterApp(t *testing.T) {
 		"dist/static/gosx/wasm_exec.js",
 		"dist/static/gosx/bootstrap.js",
 		"dist/static/gosx/bootstrap-lite.js",
+		"dist/static/gosx/bootstrap-runtime.js",
+		"dist/static/gosx/bootstrap-feature-islands.js",
+		"dist/static/gosx/bootstrap-feature-engines.js",
+		"dist/static/gosx/bootstrap-feature-hubs.js",
 		"dist/static/gosx/patch.js",
 		"dist/static/gosx/hls.min.js",
 		"dist/export.json",
@@ -72,6 +76,47 @@ func TestRunExportWritesStaticBundleForStarterApp(t *testing.T) {
 	}
 	if manifest.Routes[0].Path != "/" || manifest.Routes[0].File != "index.html" {
 		t.Fatalf("unexpected root export route %#v", manifest.Routes[0])
+	}
+}
+
+func TestCopyExportRuntimeCopiesSelectiveBootstrap(t *testing.T) {
+	buildDir := t.TempDir()
+	outputDir := t.TempDir()
+
+	for rel, contents := range map[string]string{
+		"gosx-runtime.wasm":            "wasm",
+		"wasm_exec.js":                 "wasm-exec",
+		"bootstrap.js":                 "bootstrap",
+		"bootstrap-lite.js":            "bootstrap-lite",
+		"bootstrap-runtime.js":         "bootstrap-runtime",
+		"bootstrap-feature-islands.js": "bootstrap-feature-islands",
+		"bootstrap-feature-engines.js": "bootstrap-feature-engines",
+		"bootstrap-feature-hubs.js":    "bootstrap-feature-hubs",
+		"patch.js":                     "patch",
+		"hls.min.js":                   "hls",
+	} {
+		mustWriteFile(t, filepath.Join(buildDir, rel), contents)
+	}
+
+	if err := copyExportRuntime(buildDir, outputDir); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, rel := range []string{
+		"gosx/runtime.wasm",
+		"gosx/wasm_exec.js",
+		"gosx/bootstrap.js",
+		"gosx/bootstrap-lite.js",
+		"gosx/bootstrap-runtime.js",
+		"gosx/bootstrap-feature-islands.js",
+		"gosx/bootstrap-feature-engines.js",
+		"gosx/bootstrap-feature-hubs.js",
+		"gosx/patch.js",
+		"gosx/hls.min.js",
+	} {
+		if _, err := os.Stat(filepath.Join(outputDir, rel)); err != nil {
+			t.Fatalf("expected copied export runtime file %s: %v", rel, err)
+		}
 	}
 }
 

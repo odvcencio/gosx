@@ -1,6 +1,6 @@
 {
   "name": "gosx",
-  "version": "0.1.0",
+  "version": "0.11.0",
   "description": "A Go-native server-first web platform. Author components in native GSX syntax, render on the server by default, hydrate interactive islands with WebAssembly.",
   "main": "index.js",
   "directories": {

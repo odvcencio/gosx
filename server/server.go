@@ -689,10 +689,7 @@ func (a *App) renderPage(w http.ResponseWriter, ctx *Context, pattern string, bo
 		WriteNotModified(w, ctx.headers)
 		return
 	}
-	// Render the page body first so engines/islands register with PageState.
 	renderedPage := a.renderPageNode(ctx, pattern, body, defaultTitle)
-	// Now decorate — runtime scripts are injected after body registers what it needs.
-	a.decoratePageContext(ctx)
 
 	WriteHTML(w, HTMLResponse{
 		Status:   ctx.status,
@@ -726,16 +723,17 @@ func (a *App) decoratePageContext(ctx *Context) {
 }
 
 func (a *App) renderPageNode(ctx *Context, pattern string, body gosx.Node, defaultTitle string) gosx.Node {
-	doc := ctx.documentContext(pattern, defaultTitle, body, a.navigation)
+	// Render the body once up front so islands/engines/hubs register with the
+	// page runtime before we finalize managed head assets.
+	bodyHTML := gosx.RenderHTML(body)
+	renderedBody := gosx.RawHTML(bodyHTML)
+	a.decoratePageContext(ctx)
+	doc := ctx.documentContext(pattern, defaultTitle, renderedBody, a.navigation)
 	switch {
 	case a.document != nil:
 		return a.document(doc)
 	case a.layout != nil:
-		// Render body to HTML first to trigger engine/island registration,
-		// then build the head (which now includes runtime scripts).
-		bodyHTML := gosx.RenderHTML(body)
-		a.decoratePageContext(ctx)
-		return HTMLDocument(pageTitle(ctx, pattern, defaultTitle), ctx.Head(), gosx.RawHTML(bodyHTML))
+		return HTMLDocument(pageTitle(ctx, pattern, defaultTitle), ctx.Head(), renderedBody)
 	default:
 		return gosx.RawHTML(renderDocumentWithContext(doc))
 	}

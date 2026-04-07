@@ -4503,36 +4503,2959 @@
   refreshGosxEnvironmentState("bootstrap");
   refreshGosxDocumentState("bootstrap");
 
+  let pendingManifest = null;
+
+  function runtimeReady() {
+    return (
+      typeof window.__gosx_hydrate === "function" ||
+      typeof window.__gosx_action === "function" ||
+      typeof window.__gosx_set_shared_signal === "function"
+    );
+  }
+
+  function loadManifest() {
+    const el = document.getElementById("gosx-manifest");
+    if (!el) return null;
+
+    try {
+      return JSON.parse(el.textContent);
+    } catch (e) {
+      console.error("[gosx] failed to parse manifest:", e);
+      if (window.__gosx && typeof window.__gosx.reportIssue === "function") {
+        window.__gosx.reportIssue({
+          scope: "bootstrap",
+          type: "manifest",
+          source: "gosx-manifest",
+          element: el,
+          message: "failed to parse gosx manifest",
+          error: e,
+          fallback: "server",
+        });
+      }
+      return null;
+    }
+  }
+
+  async function loadRuntime(runtimeRef) {
+    if (typeof Go === "undefined") {
+      console.error("[gosx] wasm_exec.js must be loaded before bootstrap.js");
+      if (window.__gosx && typeof window.__gosx.reportIssue === "function") {
+        window.__gosx.reportIssue({
+          scope: "bootstrap",
+          type: "runtime",
+          source: runtimeRef && runtimeRef.path,
+          ref: runtimeRef && runtimeRef.path,
+          message: "wasm_exec.js must be loaded before bootstrap.js",
+          fallback: "server",
+        });
+      }
+      return;
+    }
+
+    const go = new Go();
+
+    try {
+      const response = await fetchRuntimeResponse(runtimeRef);
+      const result = await instantiateRuntimeModule(response, go.importObject);
+      go.run(result.instance);
+    } catch (e) {
+      console.error("[gosx] failed to load WASM runtime:", e);
+      if (window.__gosx && typeof window.__gosx.reportIssue === "function") {
+        window.__gosx.reportIssue({
+          scope: "bootstrap",
+          type: "runtime",
+          source: runtimeRef && runtimeRef.path,
+          ref: runtimeRef && runtimeRef.path,
+          message: "failed to load wasm runtime",
+          error: e,
+          fallback: "server",
+        });
+      }
+    }
+  }
+
+  async function fetchRuntimeResponse(runtimeRef) {
+    const response = await fetch(runtimeRef.path);
+    if (!response.ok) {
+      throw new Error("runtime fetch failed with status " + response.status);
+    }
+    return response;
+  }
+
+  async function instantiateRuntimeModule(response, importObject) {
+    if (supportsInstantiateStreaming()) {
+      return instantiateRuntimeStreaming(response, importObject);
+    }
+    return instantiateRuntimeBytes(response, importObject);
+  }
+
+  function supportsInstantiateStreaming() {
+    return typeof WebAssembly.instantiateStreaming === "function";
+  }
+
+  async function instantiateRuntimeStreaming(response, importObject) {
+    try {
+      return await WebAssembly.instantiateStreaming(response.clone(), importObject);
+    } catch (streamErr) {
+      return instantiateRuntimeBytes(response, importObject);
+    }
+  }
+
+  async function instantiateRuntimeBytes(response, importObject) {
+    const bytes = await response.arrayBuffer();
+    return WebAssembly.instantiate(bytes, importObject);
+  }
+
+  async function fetchProgram(programRef, programFormat) {
+    try {
+      const resp = await fetch(programRef);
+      if (!resp.ok) {
+        console.error(`[gosx] failed to fetch program ${programRef}: ${resp.status}`);
+        return null;
+      }
+
+      if (programFormat === "wasm" || programFormat === "bin") {
+        return new Uint8Array(await resp.arrayBuffer());
+      }
+      return await resp.text();
+    } catch (e) {
+      console.error(`[gosx] error fetching program ${programRef}:`, e);
+      return null;
+    }
+  }
+
+  function inferProgramFormat(entry) {
+    if (entry.programFormat) return entry.programFormat;
+    if (typeof entry.programRef === "string" && entry.programRef.endsWith(".gxi")) {
+      return "bin";
+    }
+    return "json";
+  }
+
+  async function loadEngineScript(jsRef) {
+    if (!jsRef) return;
+    if (loadedEngineScripts.has(jsRef)) {
+      return loadedEngineScripts.get(jsRef);
+    }
+
+    const promise = (async function() {
+      try {
+        const resp = await fetch(jsRef);
+        if (!resp.ok) {
+          throw new Error("engine script fetch failed with status " + resp.status);
+        }
+
+        const source = await resp.text();
+        (0, eval)(String(source) + "\n//# sourceURL=" + jsRef);
+      } catch (e) {
+        console.error(`[gosx] failed to load engine script ${jsRef}:`, e);
+      }
+    })();
+
+    loadedEngineScripts.set(jsRef, promise);
+    return promise;
+  }
+
+  function engineFrame(callback) {
+    if (typeof window.requestAnimationFrame === "function") {
+      return window.requestAnimationFrame(callback);
+    }
+    return setTimeout(function() {
+      callback(Date.now());
+    }, 16);
+  }
+
+  function cancelEngineFrame(handle) {
+    if (typeof window.cancelAnimationFrame === "function") {
+      window.cancelAnimationFrame(handle);
+      return;
+    }
+    clearTimeout(handle);
+  }
+
+  function gosxInputState() {
+    if (!window.__gosx.input) {
+      window.__gosx.input = {
+        pending: null,
+        frameHandle: 0,
+        providers: Object.create(null),
+      };
+    }
+    return window.__gosx.input;
+  }
+
+  function queueInputSignal(name, value) {
+    if (!name) return;
+    const state = gosxInputState();
+    if (!state.pending) {
+      state.pending = Object.create(null);
+    }
+    state.pending[name] = value;
+    scheduleInputFlush();
+  }
+
+  function scheduleInputFlush() {
+    const state = gosxInputState();
+    if (state.frameHandle) return;
+    state.frameHandle = engineFrame(function() {
+      state.frameHandle = 0;
+      flushInputSignals();
+    });
+  }
+
+  function flushInputSignals() {
+    const state = gosxInputState();
+    const payload = state.pending;
+    state.pending = null;
+    if (!payload) return;
+
+    const setInputBatch = window.__gosx_set_input_batch;
+    if (typeof setInputBatch !== "function") {
+      for (const [name, value] of Object.entries(payload)) {
+        setSharedSignalValue(name, value);
+      }
+      return;
+    }
+
+    try {
+      const result = setInputBatch(JSON.stringify(payload));
+      if (typeof result === "string" && result !== "") {
+        console.error("[gosx] input batch error:", result);
+      }
+    } catch (e) {
+      console.error("[gosx] input batch error:", e);
+    }
+  }
+
+  function capabilityList(entry) {
+    return Array.isArray(entry && entry.capabilities) ? entry.capabilities : [];
+  }
+
+  function activateInputProviders(entry) {
+    for (const capability of capabilityList(entry)) {
+      activateInputProvider(capability);
+    }
+  }
+
+  function activateInputProvider(capability) {
+    const state = gosxInputState();
+    const current = state.providers[capability];
+    if (current) {
+      current.refCount += 1;
+      return;
+    }
+
+    const provider = createInputProvider(capability);
+    if (!provider) {
+      return;
+    }
+
+    provider.refCount = 1;
+    state.providers[capability] = provider;
+  }
+
+  function releaseInputProviders(record) {
+    for (const capability of capabilityList(record)) {
+      releaseInputProvider(capability);
+    }
+  }
+
+  function releaseInputProvider(capability) {
+    const state = gosxInputState();
+    const provider = state.providers[capability];
+    if (!provider) return;
+
+    provider.refCount -= 1;
+    if (provider.refCount > 0) {
+      return;
+    }
+
+    if (typeof provider.dispose === "function") {
+      provider.dispose();
+    }
+    delete state.providers[capability];
+  }
+
+  function createInputProvider(capability) {
+    switch (capability) {
+      case "keyboard":
+        return createKeyboardInputProvider();
+      case "pointer":
+        return createPointerInputProvider();
+      case "gamepad":
+        return createGamepadInputProvider();
+      default:
+        return null;
+    }
+  }
+
+  function createKeyboardInputProvider() {
+    const pressed = new Set();
+
+    function onKey(event) {
+      const key = normalizeKeyName(event);
+      if (!key) return;
+      const active = event.type === "keydown";
+      if (active) {
+        pressed.add(key);
+      } else {
+        pressed.delete(key);
+      }
+      queueInputSignal("$input.key." + key, active);
+    }
+
+    function onBlur() {
+      for (const key of Array.from(pressed)) {
+        queueInputSignal("$input.key." + key, false);
+      }
+      pressed.clear();
+    }
+
+    return bindInputProviderListeners([
+      [document, "keydown", onKey],
+      [document, "keyup", onKey],
+      [window, "blur", onBlur],
+    ]);
+  }
+
+  function createPointerInputProvider() {
+    const state = { lastX: null, lastY: null };
+
+    function publishPointer(event) {
+      publishPointerSignals(resolvePointerSample(event, state), event);
+    }
+
+    function onBlur() {
+      resetPointerSignals();
+    }
+
+    return bindInputProviderListeners([
+      [document, "pointermove", publishPointer],
+      [document, "pointerdown", publishPointer],
+      [document, "pointerup", publishPointer],
+      [window, "blur", onBlur],
+    ]);
+  }
+
+  function createGamepadInputProvider() {
+    let active = true;
+    let frameHandle = 0;
+
+    function pollGamepad() {
+      if (!active) return;
+      const navigatorRef = window.navigator;
+      if (navigatorRef && typeof navigatorRef.getGamepads === "function") {
+        const pads = navigatorRef.getGamepads() || [];
+        const pad = pads[0];
+        if (pad) {
+          publishGamepadSignals(pad);
+        } else {
+          queueInputSignal("$input.gamepad0.connected", false);
+        }
+      }
+      frameHandle = engineFrame(pollGamepad);
+    }
+
+    frameHandle = engineFrame(pollGamepad);
+
+    return {
+      dispose() {
+        active = false;
+        if (frameHandle) {
+          cancelEngineFrame(frameHandle);
+          frameHandle = 0;
+        }
+      },
+    };
+  }
+
+  function bindInputProviderListeners(bindings) {
+    for (const binding of bindings) {
+      binding[0].addEventListener(binding[1], binding[2]);
+    }
+    return {
+      dispose() {
+        for (const binding of bindings) {
+          binding[0].removeEventListener(binding[1], binding[2]);
+        }
+      },
+    };
+  }
+
+  function normalizeKeyName(event) {
+    const raw = event && (event.key || event.code);
+    if (!raw) return "";
+    return String(raw).trim().toLowerCase();
+  }
+
+  function resolvePointerSample(event, state) {
+    const previousX = state.lastX == null ? 0 : state.lastX;
+    const previousY = state.lastY == null ? 0 : state.lastY;
+    const x = sceneNumber(event && event.clientX, previousX);
+    const y = sceneNumber(event && event.clientY, previousY);
+    const sample = {
+      x,
+      y,
+      deltaX: sceneNumber(event && event.movementX, state.lastX == null ? 0 : x - previousX),
+      deltaY: sceneNumber(event && event.movementY, state.lastY == null ? 0 : y - previousY),
+      buttons: event && typeof event.buttons !== "undefined" ? sceneNumber(event.buttons, 0) : null,
+      button: event && typeof event.button === "number" ? event.button : null,
+      active: event ? event.type !== "pointerup" : false,
+    };
+    state.lastX = x;
+    state.lastY = y;
+    return sample;
+  }
+
+  function publishPointerSignals(sample, event) {
+    queueInputSignal("$input.pointer.x", sample.x);
+    queueInputSignal("$input.pointer.y", sample.y);
+    queueInputSignal("$input.pointer.deltaX", sample.deltaX);
+    queueInputSignal("$input.pointer.deltaY", sample.deltaY);
+    if (sample.buttons != null) {
+      queueInputSignal("$input.pointer.buttons", sample.buttons);
+    }
+    if (sample.button != null) {
+      queueInputSignal("$input.pointer.button" + sample.button, sample.active);
+    }
+  }
+
+  function resetPointerSignals() {
+    queueInputSignal("$input.pointer.deltaX", 0);
+    queueInputSignal("$input.pointer.deltaY", 0);
+    queueInputSignal("$input.pointer.buttons", 0);
+  }
+
+  function publishGamepadSignals(pad) {
+    const axes = Array.isArray(pad.axes) ? pad.axes : [];
+    queueInputSignal("$input.gamepad0.connected", true);
+    queueInputSignal("$input.gamepad0.leftX", sceneNumber(axes[0], 0));
+    queueInputSignal("$input.gamepad0.leftY", sceneNumber(axes[1], 0));
+    queueInputSignal("$input.gamepad0.rightX", sceneNumber(axes[2], 0));
+    queueInputSignal("$input.gamepad0.rightY", sceneNumber(axes[3], 0));
+    queueInputSignal("$input.gamepad0.buttonA", gamepadButtonPressed(pad, 0));
+    queueInputSignal("$input.gamepad0.buttonB", gamepadButtonPressed(pad, 1));
+  }
+
+  function gamepadButtonPressed(pad, index) {
+    return Boolean(pad && pad.buttons && pad.buttons[index] && pad.buttons[index].pressed);
+  }
+
+  function sceneNumber(value, fallback) {
+    const num = Number(value);
+    return Number.isFinite(num) ? num : fallback;
+  }
+
+  function sceneBool(value, fallback) {
+    if (typeof value === "boolean") return value;
+    if (typeof value === "string") {
+      const lowered = value.trim().toLowerCase();
+      if (lowered === "true") return true;
+      if (lowered === "false") return false;
+    }
+    return fallback;
+  }
+
+  function defaultSceneObjects() {
+    return [
+      {
+        kind: "cube",
+        size: 1.8,
+        x: -1.1,
+        y: 0.3,
+        z: 0,
+        color: "#8de1ff",
+        spinX: 0.42,
+        spinY: 0.74,
+        spinZ: 0.16,
+      },
+      {
+        kind: "cube",
+        size: 1.1,
+        x: 1.6,
+        y: -0.7,
+        z: 1.4,
+        color: "#ffd48f",
+        spinX: -0.24,
+        spinY: 0.48,
+        spinZ: 0.12,
+      },
+    ];
+  }
+
+  function rawSceneObjects(props) {
+    const scene = sceneProps(props);
+    return sceneObjectList(scene && scene.objects) || sceneObjectList(props && props.objects) || defaultSceneObjects();
+  }
+
+  function rawSceneLabels(props) {
+    const scene = sceneProps(props);
+    if (scene && Array.isArray(scene.labels)) {
+      return scene.labels;
+    }
+    return props && Array.isArray(props.labels) ? props.labels : [];
+  }
+
+  function rawSceneSprites(props) {
+    const scene = sceneProps(props);
+    if (scene && Array.isArray(scene.sprites)) {
+      return scene.sprites;
+    }
+    return props && Array.isArray(props.sprites) ? props.sprites : [];
+  }
+
+  function rawSceneLights(props) {
+    const scene = sceneProps(props);
+    if (scene && Array.isArray(scene.lights)) {
+      return scene.lights;
+    }
+    return props && Array.isArray(props.lights) ? props.lights : [];
+  }
+
+  function rawSceneEnvironment(props) {
+    const scene = sceneProps(props);
+    if (scene && scene.environment && typeof scene.environment === "object") {
+      return scene.environment;
+    }
+    return props && props.environment && typeof props.environment === "object" ? props.environment : null;
+  }
+
+  function rawSceneModels(props) {
+    const scene = sceneProps(props);
+    if (scene && Array.isArray(scene.models)) {
+      return scene.models;
+    }
+    return props && Array.isArray(props.models) ? props.models : [];
+  }
+
+  function rawScenePoints(props) {
+    const scene = sceneProps(props);
+    if (scene && Array.isArray(scene.points)) {
+      return scene.points;
+    }
+    return props && Array.isArray(props.points) ? props.points : [];
+  }
+
+  function rawSceneInstancedMeshes(props) {
+    const scene = sceneProps(props);
+    if (scene && Array.isArray(scene.instancedMeshes)) {
+      return scene.instancedMeshes;
+    }
+    return props && Array.isArray(props.instancedMeshes) ? props.instancedMeshes : [];
+  }
+
+  function rawSceneComputeParticles(props) {
+    const scene = sceneProps(props);
+    if (scene && Array.isArray(scene.computeParticles)) {
+      return scene.computeParticles;
+    }
+    return props && Array.isArray(props.computeParticles) ? props.computeParticles : [];
+  }
+
+  function sceneProps(props) {
+    return props && props.scene && typeof props.scene === "object" ? props.scene : null;
+  }
+
+  function sceneObjectList(value) {
+    return Array.isArray(value) && value.length > 0 ? value : null;
+  }
+
+  function sceneLinePoint(value) {
+    if (Array.isArray(value)) {
+      return {
+        x: sceneNumber(value[0], 0),
+        y: sceneNumber(value[1], 0),
+        z: sceneNumber(value[2], 0),
+      };
+    }
+    const item = value && typeof value === "object" ? value : {};
+    return {
+      x: sceneNumber(item.x, 0),
+      y: sceneNumber(item.y, 0),
+      z: sceneNumber(item.z, 0),
+    };
+  }
+
+  function sceneLinePoints(value) {
+    const list = Array.isArray(value) ? value : [];
+    return list.map(sceneLinePoint);
+  }
+
+  function sceneLineSegmentValue(value) {
+    function sceneLineIndex(entry) {
+      const index = Math.floor(sceneNumber(entry, -1));
+      return Number.isFinite(index) ? index : -1;
+    }
+    if (Array.isArray(value)) {
+      return [sceneLineIndex(value[0]), sceneLineIndex(value[1])];
+    }
+    const item = value && typeof value === "object" ? value : {};
+    return [
+      sceneLineIndex(item.from !== undefined ? item.from : item.a),
+      sceneLineIndex(item.to !== undefined ? item.to : item.b),
+    ];
+  }
+
+  function sceneLineSegments(value, pointCount) {
+    const list = Array.isArray(value) ? value : [];
+    const out = [];
+    for (const item of list) {
+      const pair = sceneLineSegmentValue(item);
+      if (!Number.isFinite(pair[0]) || !Number.isFinite(pair[1])) {
+        continue;
+      }
+      if (pair[0] < 0 || pair[1] < 0 || pair[0] === pair[1]) {
+        continue;
+      }
+      if (pair[0] >= pointCount || pair[1] >= pointCount) {
+        continue;
+      }
+      out.push(pair);
+    }
+    return out;
+  }
+
+  function sceneLineGeometryMetrics(points) {
+    if (!Array.isArray(points) || points.length === 0) {
+      return null;
+    }
+    let minX = points[0].x;
+    let minY = points[0].y;
+    let minZ = points[0].z;
+    let maxX = points[0].x;
+    let maxY = points[0].y;
+    let maxZ = points[0].z;
+    for (let i = 1; i < points.length; i += 1) {
+      const point = points[i];
+      minX = Math.min(minX, point.x);
+      minY = Math.min(minY, point.y);
+      minZ = Math.min(minZ, point.z);
+      maxX = Math.max(maxX, point.x);
+      maxY = Math.max(maxY, point.y);
+      maxZ = Math.max(maxZ, point.z);
+    }
+    return {
+      width: Math.max(0.0001, maxX - minX),
+      height: Math.max(0.0001, maxY - minY),
+      depth: Math.max(0.0001, maxZ - minZ),
+      radius: Math.max(0.0001, Math.max(maxX - minX, maxY - minY, maxZ - minZ) / 2),
+    };
+  }
+
+  function normalizeSceneObject(object, index) {
+    const item = object && typeof object === "object" ? object : {};
+    const kind = normalizeSceneKind(item.kind);
+    const size = sceneNumber(item.size, 1.2);
+    const points = kind === "lines" ? sceneLinePoints(item.points) : [];
+    const lineMetrics = kind === "lines" ? sceneLineGeometryMetrics(points) : null;
+    const materialKind = normalizeSceneMaterialKind(sceneObjectMaterialKindValue(item));
+    const materialColor = sceneObjectMaterialValue(item, "color");
+    const texture = typeof sceneObjectMaterialValue(item, "texture") === "string" ? sceneObjectMaterialValue(item, "texture").trim() : "";
+    const opacity = clamp01(sceneNumber(sceneObjectMaterialValue(item, "opacity"), sceneDefaultMaterialOpacity(materialKind)));
+    const blendMode = normalizeSceneMaterialBlendMode(sceneObjectBlendModeValue(item), materialKind, opacity);
+    const normalized = {
+      id: item.id || ("scene-object-" + index),
+      kind,
+      size,
+      width: sceneNumber(item.width, lineMetrics ? lineMetrics.width : size),
+      height: sceneNumber(item.height, lineMetrics ? lineMetrics.height : size),
+      depth: sceneNumber(item.depth, kind === "plane" ? sceneNumber(item.height, size) : (lineMetrics ? lineMetrics.depth : size)),
+      radius: sceneNumber(item.radius, lineMetrics ? lineMetrics.radius : (size / 2)),
+      segments: sceneSegmentResolution(item.segments),
+      points,
+      lineSegments: kind === "lines" ? sceneLineSegments(item.segments, points.length) : [],
+      x: sceneNumber(item.x, 0),
+      y: sceneNumber(item.y, 0),
+      z: sceneNumber(item.z, 0),
+      materialKind,
+      color: typeof materialColor === "string" && materialColor ? materialColor : "#8de1ff",
+      texture,
+      opacity,
+      emissive: clamp01(sceneNumber(sceneObjectMaterialValue(item, "emissive"), sceneDefaultMaterialEmissive(materialKind))),
+      blendMode,
+      renderPass: normalizeSceneMaterialRenderPass(sceneObjectMaterialValue(item, "renderPass"), blendMode, opacity),
+      wireframe: sceneBool(sceneObjectMaterialValue(item, "wireframe"), texture === ""),
+      pickable: Object.prototype.hasOwnProperty.call(item, "pickable") ? sceneBool(item.pickable, false) : undefined,
+      rotationX: sceneNumber(item.rotationX, 0),
+      rotationY: sceneNumber(item.rotationY, 0),
+      rotationZ: sceneNumber(item.rotationZ, 0),
+      spinX: sceneNumber(item.spinX, 0),
+      spinY: sceneNumber(item.spinY, 0),
+      spinZ: sceneNumber(item.spinZ, 0),
+      shiftX: sceneNumber(item.shiftX, 0),
+      shiftY: sceneNumber(item.shiftY, 0),
+      shiftZ: sceneNumber(item.shiftZ, 0),
+      driftSpeed: sceneNumber(item.driftSpeed, 0),
+      driftPhase: sceneNumber(item.driftPhase, 0),
+      viewCulled: sceneBool(item.viewCulled, false),
+    };
+    normalized.static = sceneBool(item.static, !sceneObjectAnimated(normalized));
+    return normalized;
+  }
+
+  function normalizeSceneLightKind(value) {
+    const kind = typeof value === "string" ? value.trim().toLowerCase() : "";
+    switch (kind) {
+      case "ambient":
+        return "ambient";
+      case "directional":
+      case "sun":
+        return "directional";
+      case "point":
+        return "point";
+      default:
+        return "";
+    }
+  }
+
+  function sceneDefaultLightIntensity(kind) {
+    switch (normalizeSceneLightKind(kind)) {
+      case "ambient":
+        return 0.28;
+      case "directional":
+        return 1;
+      case "point":
+        return 1.1;
+      default:
+        return 1;
+    }
+  }
+
+  function normalizeSceneLight(light, index, fallback) {
+    const current = fallback && typeof fallback === "object" ? fallback : {};
+    const item = light && typeof light === "object" ? light : {};
+    const kind = normalizeSceneLightKind(item.kind || item.lightKind || current.kind);
+    if (!kind) {
+      return null;
+    }
+    const normalized = {
+      id: (typeof item.id === "string" && item.id) || current.id || ("scene-light-" + index),
+      kind,
+      color: typeof item.color === "string" && item.color ? item.color : (typeof current.color === "string" && current.color ? current.color : "#f3fbff"),
+      intensity: Math.max(0, Math.min(6, sceneNumber(item.intensity, sceneNumber(current.intensity, sceneDefaultLightIntensity(kind))))),
+      x: sceneNumber(item.x, sceneNumber(current.x, 0)),
+      y: sceneNumber(item.y, sceneNumber(current.y, 0)),
+      z: sceneNumber(item.z, sceneNumber(current.z, 0)),
+      directionX: sceneNumber(item.directionX, sceneNumber(current.directionX, 0)),
+      directionY: sceneNumber(item.directionY, sceneNumber(current.directionY, 0)),
+      directionZ: sceneNumber(item.directionZ, sceneNumber(current.directionZ, 0)),
+      range: Math.max(0, Math.min(256, sceneNumber(item.range, sceneNumber(current.range, kind === "point" ? 6.5 : 0)))),
+      decay: Math.max(0.1, Math.min(8, sceneNumber(item.decay, sceneNumber(current.decay, kind === "point" ? 1.35 : 1)))),
+    };
+    if (normalized.kind === "directional" && normalized.directionX === 0 && normalized.directionY === 0 && normalized.directionZ === 0) {
+      normalized.directionX = 0.35;
+      normalized.directionY = -1;
+      normalized.directionZ = -0.4;
+    }
+    return normalized;
+  }
+
+  function normalizeSceneLabel(label, index) {
+    const item = label && typeof label === "object" ? label : {};
+    return {
+      id: item.id || ("scene-label-" + index),
+      text: typeof item.text === "string" ? item.text : "",
+      className: sceneLabelClassName(item),
+      x: sceneNumber(item.x, 0),
+      y: sceneNumber(item.y, 0),
+      z: sceneNumber(item.z, 0),
+      priority: sceneNumber(item.priority, 0),
+      shiftX: sceneNumber(item.shiftX, 0),
+      shiftY: sceneNumber(item.shiftY, 0),
+      shiftZ: sceneNumber(item.shiftZ, 0),
+      driftSpeed: sceneNumber(item.driftSpeed, 0),
+      driftPhase: sceneNumber(item.driftPhase, 0),
+      maxWidth: Math.max(48, sceneNumber(item.maxWidth, 180)),
+      maxLines: Math.max(0, Math.floor(sceneNumber(item.maxLines, 0))),
+      overflow: normalizeTextLayoutOverflow(item.overflow),
+      font: typeof item.font === "string" && item.font ? item.font : '600 13px "IBM Plex Sans", "Segoe UI", sans-serif',
+      lineHeight: Math.max(12, sceneNumber(item.lineHeight, 18)),
+      color: typeof item.color === "string" && item.color ? item.color : "#ecf7ff",
+      background: typeof item.background === "string" && item.background ? item.background : "rgba(8, 21, 31, 0.82)",
+      borderColor: typeof item.borderColor === "string" && item.borderColor ? item.borderColor : "rgba(141, 225, 255, 0.24)",
+      offsetX: sceneNumber(item.offsetX, 0),
+      offsetY: sceneNumber(item.offsetY, -14),
+      anchorX: Math.max(0, Math.min(1, sceneNumber(item.anchorX, 0.5))),
+      anchorY: Math.max(0, Math.min(1, sceneNumber(item.anchorY, 1))),
+      collision: normalizeSceneLabelCollision(item.collision),
+      occlude: sceneBool(item.occlude, false),
+      whiteSpace: normalizeSceneLabelWhiteSpace(item.whiteSpace),
+      textAlign: normalizeSceneLabelAlign(item.textAlign),
+    };
+  }
+
+  function normalizeSceneSpriteFit(value) {
+    const mode = typeof value === "string" ? value.trim().toLowerCase() : "";
+    switch (mode) {
+      case "cover":
+        return "cover";
+      case "stretch":
+      case "fill":
+        return "fill";
+      default:
+        return "contain";
+    }
+  }
+
+  function normalizeSceneSprite(sprite, index) {
+    const item = sprite && typeof sprite === "object" ? sprite : {};
+    const width = Math.max(0.05, sceneNumber(item.width, 1.25));
+    const height = Math.max(0.05, sceneNumber(item.height, width));
+    const scale = Math.max(0.05, sceneNumber(item.scale, 1));
+    return {
+      id: item.id || ("scene-sprite-" + index),
+      src: typeof item.src === "string" ? item.src.trim() : "",
+      className: sceneLabelClassName(item),
+      x: sceneNumber(item.x, 0),
+      y: sceneNumber(item.y, 0),
+      z: sceneNumber(item.z, 0),
+      priority: sceneNumber(item.priority, 0),
+      shiftX: sceneNumber(item.shiftX, 0),
+      shiftY: sceneNumber(item.shiftY, 0),
+      shiftZ: sceneNumber(item.shiftZ, 0),
+      driftSpeed: sceneNumber(item.driftSpeed, 0),
+      driftPhase: sceneNumber(item.driftPhase, 0),
+      width: width,
+      height: height,
+      scale: scale,
+      opacity: clamp01(sceneNumber(item.opacity, 1)),
+      offsetX: sceneNumber(item.offsetX, 0),
+      offsetY: sceneNumber(item.offsetY, 0),
+      anchorX: sceneClamp(sceneNumber(item.anchorX, 0.5), 0, 1),
+      anchorY: sceneClamp(sceneNumber(item.anchorY, 0.5), 0, 1),
+      occlude: sceneBool(item.occlude, false),
+      fit: normalizeSceneSpriteFit(item.fit),
+    };
+  }
+
+  function sceneLabelClassName(item) {
+    if (!item || typeof item !== "object") {
+      return "";
+    }
+    if (typeof item.className === "string" && item.className.trim()) {
+      return item.className.trim();
+    }
+    if (typeof item.class === "string" && item.class.trim()) {
+      return item.class.trim();
+    }
+    return "";
+  }
+
+  function normalizeSceneKind(value) {
+    const kind = typeof value === "string" ? value.trim().toLowerCase() : "";
+    switch (kind) {
+      case "box":
+      case "lines":
+      case "plane":
+      case "pyramid":
+      case "sphere":
+        return kind;
+      default:
+        return "cube";
+    }
+  }
+
+  function sceneObjects(props) {
+    return rawSceneObjects(props).map(function(object, index) {
+      return normalizeSceneObject(object, index);
+    });
+  }
+
+  function normalizeSceneModel(item, index) {
+    const current = item && typeof item === "object" ? item : {};
+    const scaleSource = current.scale && typeof current.scale === "object" ? current.scale : null;
+    const hasStatic = Object.prototype.hasOwnProperty.call(current, "static");
+    const hasPickable = Object.prototype.hasOwnProperty.call(current, "pickable");
+    const override = {};
+    const materialKind = sceneObjectMaterialKindValue(current);
+    if (materialKind) {
+      override.materialKind = normalizeSceneMaterialKind(materialKind);
+    }
+    if (sceneObjectMaterialHasValue(current, "color")) {
+      override.color = sceneObjectMaterialValue(current, "color");
+    }
+    if (sceneObjectMaterialHasValue(current, "texture")) {
+      override.texture = sceneObjectMaterialValue(current, "texture");
+    }
+    if (sceneObjectMaterialHasValue(current, "opacity")) {
+      override.opacity = sceneObjectMaterialValue(current, "opacity");
+    }
+    if (sceneObjectMaterialHasValue(current, "emissive")) {
+      override.emissive = sceneObjectMaterialValue(current, "emissive");
+    }
+    if (sceneObjectBlendModeHasValue(current)) {
+      override.blendMode = sceneObjectBlendModeValue(current);
+    }
+    if (sceneObjectMaterialHasValue(current, "renderPass")) {
+      override.renderPass = sceneObjectMaterialValue(current, "renderPass");
+    }
+    if (sceneObjectMaterialHasValue(current, "wireframe")) {
+      override.wireframe = sceneObjectMaterialValue(current, "wireframe");
+    }
+    return {
+      id: typeof current.id === "string" && current.id.trim() ? current.id.trim() : ("scene-model-" + index),
+      src: typeof current.src === "string" && current.src.trim() ? current.src.trim() : "",
+      x: sceneNumber(current.x, 0),
+      y: sceneNumber(current.y, 0),
+      z: sceneNumber(current.z, 0),
+      rotationX: sceneNumber(current.rotationX, 0),
+      rotationY: sceneNumber(current.rotationY, 0),
+      rotationZ: sceneNumber(current.rotationZ, 0),
+      scaleX: sceneNumber(current.scaleX, sceneNumber(scaleSource && scaleSource.x, sceneNumber(current.scale, 1))),
+      scaleY: sceneNumber(current.scaleY, sceneNumber(scaleSource && scaleSource.y, sceneNumber(current.scale, 1))),
+      scaleZ: sceneNumber(current.scaleZ, sceneNumber(scaleSource && scaleSource.z, sceneNumber(current.scale, 1))),
+      pickable: hasPickable ? sceneBool(current.pickable, false) : undefined,
+      static: hasStatic ? sceneBool(current.static, false) : null,
+      materialOverride: Object.keys(override).length > 0 ? override : null,
+    };
+  }
+
+  function sceneModels(props) {
+    return rawSceneModels(props)
+      .map(function(model, index) {
+        return normalizeSceneModel(model, index);
+      })
+      .filter(function(model) {
+        return Boolean(model && model.src);
+      });
+  }
+
+  function sceneLights(props) {
+    return rawSceneLights(props)
+      .map(function(light, index) {
+        return normalizeSceneLight(light, index, null);
+      })
+      .filter(Boolean);
+  }
+
+  function normalizeSceneLabelWhiteSpace(value) {
+    const mode = typeof value === "string" ? value.trim().toLowerCase() : "";
+    switch (mode) {
+      case "pre-wrap":
+        return "pre-wrap";
+      case "pre":
+        return "pre";
+      default:
+        return "normal";
+    }
+  }
+
+  function normalizeSceneLabelAlign(value) {
+    const align = typeof value === "string" ? value.trim().toLowerCase() : "";
+    switch (align) {
+      case "left":
+      case "start":
+        return "left";
+      case "right":
+      case "end":
+        return "right";
+      default:
+        return "center";
+    }
+  }
+
+  function normalizeSceneLabelCollision(value) {
+    const mode = typeof value === "string" ? value.trim().toLowerCase() : "";
+    switch (mode) {
+      case "allow":
+      case "none":
+      case "overlap":
+        return "allow";
+      default:
+        return "avoid";
+    }
+  }
+
+  function sceneLabels(props) {
+    const raw = rawSceneLabels(props);
+    return raw
+      .map(function(label, index) {
+        return normalizeSceneLabel(label, index);
+      })
+      .filter(function(label) {
+        return label.text.trim() !== "";
+      });
+  }
+
+  function sceneSprites(props) {
+    return rawSceneSprites(props)
+      .map(function(sprite, index) {
+        return normalizeSceneSprite(sprite, index);
+      })
+      .filter(function(sprite) {
+        return sprite.src !== "";
+      });
+  }
+
+  function sceneCamera(props) {
+    const raw = props && props.camera && typeof props.camera === "object" ? props.camera : {};
+    return normalizeSceneCamera(raw, {
+      x: 0,
+      y: 0,
+      z: 6,
+      fov: 75,
+      near: 0.05,
+      far: 128,
+    });
+  }
+
+  function normalizeSceneCamera(raw, fallback) {
+    const base = fallback || {};
+    return {
+      x: sceneNumber(raw.x, sceneNumber(base.x, 0)),
+      y: sceneNumber(raw.y, sceneNumber(base.y, 0)),
+      z: sceneNumber(raw.z, sceneNumber(base.z, 6)),
+      rotationX: sceneNumber(raw.rotationX, sceneNumber(base.rotationX, 0)),
+      rotationY: sceneNumber(raw.rotationY, sceneNumber(base.rotationY, 0)),
+      rotationZ: sceneNumber(raw.rotationZ, sceneNumber(base.rotationZ, 0)),
+      fov: sceneNumber(raw.fov, sceneNumber(base.fov, 75)),
+      near: sceneNumber(raw.near, sceneNumber(base.near, 0.05)),
+      far: sceneNumber(raw.far, sceneNumber(base.far, 128)),
+    };
+  }
+
+  function normalizeSceneEnvironment(raw, fallback) {
+    const base = fallback && typeof fallback === "object" ? fallback : {};
+    const environment = {
+      ambientColor: typeof raw?.ambientColor === "string" && raw.ambientColor ? raw.ambientColor : (typeof base.ambientColor === "string" ? base.ambientColor : ""),
+      ambientIntensity: Math.max(0, Math.min(4, sceneNumber(raw?.ambientIntensity, sceneNumber(base.ambientIntensity, 0)))),
+      skyColor: typeof raw?.skyColor === "string" && raw.skyColor ? raw.skyColor : (typeof base.skyColor === "string" ? base.skyColor : ""),
+      skyIntensity: Math.max(0, Math.min(4, sceneNumber(raw?.skyIntensity, sceneNumber(base.skyIntensity, 0)))),
+      groundColor: typeof raw?.groundColor === "string" && raw.groundColor ? raw.groundColor : (typeof base.groundColor === "string" ? base.groundColor : ""),
+      groundIntensity: Math.max(0, Math.min(4, sceneNumber(raw?.groundIntensity, sceneNumber(base.groundIntensity, 0)))),
+      exposure: Math.max(0.05, Math.min(4, sceneNumber(raw && Object.prototype.hasOwnProperty.call(raw, "exposure") ? raw.exposure : undefined, sceneNumber(base.exposure, 1) || 1))),
+      specified: false,
+    };
+    environment.specified = Boolean(raw) && (
+      environment.ambientColor ||
+      environment.ambientIntensity !== 0 ||
+      environment.skyColor ||
+      environment.skyIntensity !== 0 ||
+      environment.groundColor ||
+      environment.groundIntensity !== 0 ||
+      Object.prototype.hasOwnProperty.call(raw, "exposure")
+    );
+    return environment;
+  }
+
+  function sceneResolveLightingEnvironment(environment, hasLights) {
+    const base = environment && typeof environment === "object" && Object.prototype.hasOwnProperty.call(environment, "specified")
+      ? {
+        ambientColor: typeof environment.ambientColor === "string" ? environment.ambientColor : "",
+        ambientIntensity: Math.max(0, Math.min(4, sceneNumber(environment.ambientIntensity, 0))),
+        skyColor: typeof environment.skyColor === "string" ? environment.skyColor : "",
+        skyIntensity: Math.max(0, Math.min(4, sceneNumber(environment.skyIntensity, 0))),
+        groundColor: typeof environment.groundColor === "string" ? environment.groundColor : "",
+        groundIntensity: Math.max(0, Math.min(4, sceneNumber(environment.groundIntensity, 0))),
+        exposure: Math.max(0.05, Math.min(4, sceneNumber(environment.exposure, 1) || 1)),
+        specified: Boolean(environment.specified),
+      }
+      : normalizeSceneEnvironment(environment, null);
+    if (base.specified || !hasLights) {
+      return base;
+    }
+    return normalizeSceneEnvironment({
+      ambientColor: "#f5fbff",
+      ambientIntensity: 0.18,
+      skyColor: "#d5ebff",
+      skyIntensity: 0.12,
+      groundColor: "#102030",
+      groundIntensity: 0.04,
+      exposure: base.exposure,
+    }, base);
+  }
+
+  function createSceneState(props) {
+    if (typeof sceneDecompressProps === "function") {
+      sceneDecompressProps(props);
+    }
+    const state = {
+      background: typeof props.background === "string" && props.background ? props.background : "#08151f",
+      camera: sceneCamera(props),
+      objects: new Map(),
+      labels: new Map(),
+      sprites: new Map(),
+      lights: new Map(),
+      points: rawScenePoints(props),
+      instancedMeshes: rawSceneInstancedMeshes(props),
+      computeParticles: rawSceneComputeParticles(props),
+      _scrollCamera: (sceneNumber(props.scrollCameraStart, 0) !== 0 || sceneNumber(props.scrollCameraEnd, 0) !== 0)
+        ? { start: sceneNumber(props.scrollCameraStart, 0), end: sceneNumber(props.scrollCameraEnd, 0) }
+        : null,
+      environment: normalizeSceneEnvironment(rawSceneEnvironment(props), null),
+    };
+    for (const object of sceneObjects(props)) {
+      state.objects.set(object.id, object);
+    }
+    for (const label of sceneLabels(props)) {
+      state.labels.set(label.id, label);
+    }
+    for (const sprite of sceneSprites(props)) {
+      state.sprites.set(sprite.id, sprite);
+    }
+    for (const light of sceneLights(props)) {
+      state.lights.set(light.id, light);
+    }
+    return state;
+  }
+
+  function sceneStateObjects(state) {
+    return Array.from(state.objects.values());
+  }
+
+  function sceneStateLabels(state) {
+    return Array.from(state.labels.values());
+  }
+
+  function sceneStateSprites(state) {
+    return Array.from(state.sprites.values());
+  }
+
+  function sceneStateLights(state) {
+    return Array.from(state.lights.values());
+  }
+
+  function sceneObjectAnimated(object) {
+    if (!object || typeof object !== "object") {
+      return false;
+    }
+    if (sceneNumber(object.spinX, 0) !== 0 || sceneNumber(object.spinY, 0) !== 0 || sceneNumber(object.spinZ, 0) !== 0) {
+      return true;
+    }
+    if (sceneNumber(object.driftSpeed, 0) === 0) {
+      return false;
+    }
+    return sceneNumber(object.shiftX, 0) !== 0 || sceneNumber(object.shiftY, 0) !== 0 || sceneNumber(object.shiftZ, 0) !== 0;
+  }
+
+  function sceneLabelAnimated(label) {
+    if (!label || typeof label !== "object") {
+      return false;
+    }
+    if (sceneNumber(label.driftSpeed, 0) === 0) {
+      return false;
+    }
+    return sceneNumber(label.shiftX, 0) !== 0 || sceneNumber(label.shiftY, 0) !== 0 || sceneNumber(label.shiftZ, 0) !== 0;
+  }
+
+  function sceneSpriteAnimated(sprite) {
+    if (!sprite || typeof sprite !== "object") {
+      return false;
+    }
+    if (sceneNumber(sprite.driftSpeed, 0) === 0) {
+      return false;
+    }
+    return sceneNumber(sprite.shiftX, 0) !== 0 || sceneNumber(sprite.shiftY, 0) !== 0 || sceneNumber(sprite.shiftZ, 0) !== 0;
+  }
+
+  const SCENE_CMD_CREATE_OBJECT = 0;
+  const SCENE_CMD_REMOVE_OBJECT = 1;
+  const SCENE_CMD_SET_TRANSFORM = 2;
+  const SCENE_CMD_SET_MATERIAL = 3;
+  const SCENE_CMD_SET_LIGHT = 4;
+  const SCENE_CMD_SET_CAMERA = 5;
+  const SCENE_CMD_SET_PARTICLES = 6;
+
+  function applySceneCommands(state, commands) {
+    if (!state || !Array.isArray(commands) || commands.length === 0) return;
+    for (const command of commands) {
+      applySceneCommand(state, command);
+    }
+  }
+
+  function applySceneCommand(state, command) {
+    if (!command || typeof command !== "object") return;
+    switch (command.kind) {
+      case SCENE_CMD_CREATE_OBJECT:
+        applySceneCreateCommand(state, command.objectId, command.data);
+        return;
+      case SCENE_CMD_REMOVE_OBJECT:
+        state.objects.delete(sceneObjectKey(command.objectId));
+        state.labels.delete(sceneObjectKey(command.objectId));
+        state.sprites.delete(sceneObjectKey(command.objectId));
+        state.lights.delete(sceneObjectKey(command.objectId));
+        return;
+      case SCENE_CMD_SET_TRANSFORM:
+      case SCENE_CMD_SET_MATERIAL:
+        applySceneObjectPatch(state, command.objectId, command.data);
+        return;
+      case SCENE_CMD_SET_CAMERA:
+        state.camera = normalizeSceneCamera(command.data || {}, state.camera);
+        return;
+      case SCENE_CMD_SET_LIGHT:
+        applySceneLightPatch(state, command.objectId, command.data);
+        return;
+      case SCENE_CMD_SET_PARTICLES:
+      default:
+        return;
+    }
+  }
+
+  function applySceneCreateCommand(state, objectID, payload) {
+    if (!payload || typeof payload !== "object") return;
+    if (payload.kind === "camera") {
+      state.camera = normalizeSceneCamera(payload.props || {}, state.camera);
+      return;
+    }
+    if (payload.kind === "light") {
+      const light = sceneLightFromPayload(objectID, payload, state.lights.get(sceneObjectKey(objectID)));
+      if (light) {
+        state.lights.set(sceneObjectKey(objectID), light);
+      }
+      return;
+    }
+    if (payload.kind === "particles") {
+      return;
+    }
+    if (payload.kind === "label") {
+      const label = sceneLabelFromPayload(objectID, payload, state.labels.get(sceneObjectKey(objectID)));
+      if (label) {
+        state.labels.set(sceneObjectKey(objectID), label);
+      }
+      return;
+    }
+    if (payload.kind === "sprite") {
+      const sprite = sceneSpriteFromPayload(objectID, payload, state.sprites.get(sceneObjectKey(objectID)));
+      if (sprite) {
+        state.sprites.set(sceneObjectKey(objectID), sprite);
+      }
+      return;
+    }
+    const key = sceneObjectKey(objectID);
+    const next = sceneObjectFromPayload(objectID, payload, state.objects.get(key));
+    if (next) {
+      state.objects.set(key, next);
+    }
+  }
+
+  function applySceneObjectPatch(state, objectID, patch) {
+    const key = sceneObjectKey(objectID);
+    const current = state.objects.get(key);
+    if (current) {
+      const next = sceneObjectFromPayload(objectID, {
+        geometry: current.kind,
+        props: Object.assign({}, current, patch || {}),
+      }, current);
+      if (next) {
+        state.objects.set(key, next);
+      }
+      return;
+    }
+    const currentLabel = state.labels.get(key);
+    if (currentLabel) {
+      const nextLabel = sceneLabelFromPayload(objectID, {
+        props: Object.assign({}, currentLabel, patch || {}),
+      }, currentLabel);
+      if (nextLabel) {
+        state.labels.set(key, nextLabel);
+      }
+      return;
+    }
+    const currentSprite = state.sprites.get(key);
+    if (!currentSprite) return;
+    const nextSprite = sceneSpriteFromPayload(objectID, {
+      props: Object.assign({}, currentSprite, patch || {}),
+    }, currentSprite);
+    if (nextSprite) {
+      state.sprites.set(key, nextSprite);
+    }
+  }
+
+  function sceneObjectKey(objectID) {
+    return String(objectID);
+  }
+
+  function sceneObjectFromPayload(objectID, payload, fallback) {
+    const current = fallback && typeof fallback === "object" ? fallback : {};
+    const props = payload && payload.props && typeof payload.props === "object" ? payload.props : {};
+    const geometry = payload && typeof payload.geometry === "string" && payload.geometry ? payload.geometry : current.kind;
+    const merged = Object.assign({}, current, props);
+    merged.id = current.id || merged.id || ("scene-object-" + objectID);
+    merged.kind = normalizeSceneKind(merged.kind || geometry);
+    return normalizeSceneObject(merged, objectID);
+  }
+
+  function sceneLabelFromPayload(objectID, payload, fallback) {
+    const current = fallback && typeof fallback === "object" ? fallback : {};
+    const props = payload && payload.props && typeof payload.props === "object" ? payload.props : {};
+    const merged = Object.assign({}, current, props);
+    merged.id = current.id || merged.id || ("scene-label-" + objectID);
+    const label = normalizeSceneLabel(merged, objectID);
+    if (!label.text.trim()) {
+      return null;
+    }
+    return label;
+  }
+
+  function sceneSpriteFromPayload(objectID, payload, fallback) {
+    const current = fallback && typeof fallback === "object" ? fallback : {};
+    const props = payload && payload.props && typeof payload.props === "object" ? payload.props : {};
+    const merged = Object.assign({}, current, props);
+    merged.id = current.id || merged.id || ("scene-sprite-" + objectID);
+    const sprite = normalizeSceneSprite(merged, objectID);
+    if (!sprite.src) {
+      return null;
+    }
+    return sprite;
+  }
+
+  function applySceneLightPatch(state, objectID, patch) {
+    const key = sceneObjectKey(objectID);
+    const current = state.lights.get(key);
+    if (!current) {
+      return;
+    }
+    const next = normalizeSceneLight(Object.assign({}, current, patch || {}), objectID, current);
+    if (next) {
+      state.lights.set(key, next);
+    }
+  }
+
+  function sceneLightFromPayload(objectID, payload, fallback) {
+    const current = fallback && typeof fallback === "object" ? fallback : {};
+    const props = payload && payload.props && typeof payload.props === "object" ? payload.props : {};
+    const merged = Object.assign({}, current, props);
+    merged.id = current.id || merged.id || ("scene-light-" + objectID);
+    return normalizeSceneLight(merged, objectID, current);
+  }
+
+  function clearChildren(node) {
+    while (node && node.firstChild) {
+      node.removeChild(node.firstChild);
+    }
+  }
+
+  function sceneRenderCamera(camera) {
+    return {
+      x: sceneNumber(camera && camera.x, 0),
+      y: sceneNumber(camera && camera.y, 0),
+      z: sceneNumber(camera && camera.z, 6),
+      rotationX: sceneNumber(camera && camera.rotationX, 0),
+      rotationY: sceneNumber(camera && camera.rotationY, 0),
+      rotationZ: sceneNumber(camera && camera.rotationZ, 0),
+      fov: sceneNumber(camera && camera.fov, 75),
+      near: sceneNumber(camera && camera.near, 0.05),
+      far: sceneNumber(camera && camera.far, 128),
+    };
+  }
+
+  function sceneCameraEquivalent(left, right) {
+    const a = sceneRenderCamera(left);
+    const b = sceneRenderCamera(right);
+    return Math.abs(a.x - b.x) <= 0.0001 &&
+      Math.abs(a.y - b.y) <= 0.0001 &&
+      Math.abs(a.z - b.z) <= 0.0001 &&
+      Math.abs(a.rotationX - b.rotationX) <= 0.0001 &&
+      Math.abs(a.rotationY - b.rotationY) <= 0.0001 &&
+      Math.abs(a.rotationZ - b.rotationZ) <= 0.0001 &&
+      Math.abs(a.fov - b.fov) <= 0.0001 &&
+      Math.abs(a.near - b.near) <= 0.0001 &&
+      Math.abs(a.far - b.far) <= 0.0001;
+  }
+
+  function sceneBoundsDepthMetrics(bounds, camera) {
+    if (!bounds) {
+      const depth = sceneWorldPointDepth(0, camera);
+      return { near: depth, far: depth, center: depth };
+    }
+    const corners = sceneBoundsCorners(bounds);
+    let near = sceneWorldPointDepth(corners[0], camera);
+    let far = near;
+    for (let index = 1; index < corners.length; index += 1) {
+      const depth = sceneWorldPointDepth(corners[index], camera);
+      near = Math.min(near, depth);
+      far = Math.max(far, depth);
+    }
+    return {
+      near,
+      far,
+      center: (near + far) / 2,
+    };
+  }
+
+  function sceneBoundsCorners(bounds) {
+    return [
+      { x: sceneNumber(bounds && bounds.minX, 0), y: sceneNumber(bounds && bounds.minY, 0), z: sceneNumber(bounds && bounds.minZ, 0) },
+      { x: sceneNumber(bounds && bounds.minX, 0), y: sceneNumber(bounds && bounds.minY, 0), z: sceneNumber(bounds && bounds.maxZ, 0) },
+      { x: sceneNumber(bounds && bounds.minX, 0), y: sceneNumber(bounds && bounds.maxY, 0), z: sceneNumber(bounds && bounds.minZ, 0) },
+      { x: sceneNumber(bounds && bounds.minX, 0), y: sceneNumber(bounds && bounds.maxY, 0), z: sceneNumber(bounds && bounds.maxZ, 0) },
+      { x: sceneNumber(bounds && bounds.maxX, 0), y: sceneNumber(bounds && bounds.minY, 0), z: sceneNumber(bounds && bounds.minZ, 0) },
+      { x: sceneNumber(bounds && bounds.maxX, 0), y: sceneNumber(bounds && bounds.minY, 0), z: sceneNumber(bounds && bounds.maxZ, 0) },
+      { x: sceneNumber(bounds && bounds.maxX, 0), y: sceneNumber(bounds && bounds.maxY, 0), z: sceneNumber(bounds && bounds.minZ, 0) },
+      { x: sceneNumber(bounds && bounds.maxX, 0), y: sceneNumber(bounds && bounds.maxY, 0), z: sceneNumber(bounds && bounds.maxZ, 0) },
+    ];
+  }
+
+  function sceneBoundsViewCulled(bounds, camera) {
+    if (!bounds) {
+      return false;
+    }
+    const depth = sceneBoundsDepthMetrics(bounds, camera);
+    const near = sceneNumber(camera && camera.near, 0.05);
+    const far = sceneNumber(camera && camera.far, 128);
+    return depth.far <= near || depth.near >= far;
+  }
+
+  function createSceneRenderBundle(width, height, background, camera, objects, labels, sprites, lights, environment, timeSeconds, points, instancedMeshes, computeParticles) {
+    const resolvedEnvironment = sceneResolveLightingEnvironment(environment, Array.isArray(lights) && lights.length > 0);
+    const bundle = {
+      background: background,
+      camera: sceneRenderCamera(camera),
+      lights: Array.isArray(lights) ? lights.slice() : [],
+      environment: resolvedEnvironment,
+      materials: [],
+      objects: [],
+      surfaces: [],
+      labels: [],
+      sprites: [],
+      lines: [],
+      points: Array.isArray(points) ? points : [],
+      instancedMeshes: Array.isArray(instancedMeshes) ? instancedMeshes : [],
+      computeParticles: Array.isArray(computeParticles) ? computeParticles : [],
+      positions: [],
+      colors: [],
+      worldPositions: [],
+      worldColors: [],
+      vertexCount: 0,
+      worldVertexCount: 0,
+      objectCount: 0,
+    };
+    const materialLookup = new Map();
+    appendSceneGridToBundle(bundle, width, height);
+    for (const object of objects) {
+      appendSceneObjectToBundle(bundle, materialLookup, camera, width, height, object, bundle.lights, resolvedEnvironment, timeSeconds);
+    }
+    for (const label of labels || []) {
+      appendSceneLabelToBundle(bundle, camera, width, height, label, timeSeconds);
+    }
+    for (const sprite of sprites || []) {
+      appendSceneSpriteToBundle(bundle, camera, width, height, sprite, timeSeconds);
+    }
+    bundle.positions = new Float32Array(bundle.positions);
+    bundle.colors = new Float32Array(bundle.colors);
+    bundle.vertexCount = bundle.positions.length / 2;
+    bundle.worldPositions = new Float32Array(bundle.worldPositions);
+    bundle.worldColors = new Float32Array(bundle.worldColors);
+    bundle.worldVertexCount = bundle.worldPositions.length / 3;
+    bundle.objectCount = bundle.objects.length;
+    return bundle;
+  }
+
+  function projectSceneObject(object, camera, width, height, timeSeconds) {
+    return sceneObjectSegments(object).map(function(segment) {
+      return [
+        sceneProjectPoint(translateScenePoint(segment[0], object, timeSeconds), camera, width, height),
+        sceneProjectPoint(translateScenePoint(segment[1], object, timeSeconds), camera, width, height),
+      ];
+    });
+  }
+
+  function translateScenePoint(point, object, timeSeconds) {
+    const rotated = sceneRotatePoint(
+      point,
+      object.rotationX + object.spinX * timeSeconds,
+      object.rotationY + object.spinY * timeSeconds,
+      object.rotationZ + object.spinZ * timeSeconds,
+    );
+    const motion = sceneMotionOffset(object, timeSeconds);
+    return {
+      x: rotated.x + object.x + motion.x,
+      y: rotated.y + object.y + motion.y,
+      z: rotated.z + object.z + motion.z,
+    };
+  }
+
+  function sceneMotionOffset(object, timeSeconds) {
+    if (!object || (!object.shiftX && !object.shiftY && !object.shiftZ)) {
+      return { x: 0, y: 0, z: 0 };
+    }
+    const angle = sceneNumber(object.driftPhase, 0) + timeSeconds * sceneNumber(object.driftSpeed, 0);
+    return {
+      x: Math.cos(angle) * sceneNumber(object.shiftX, 0),
+      y: Math.sin(angle * 0.82 + sceneNumber(object.driftPhase, 0) * 0.35) * sceneNumber(object.shiftY, 0),
+      z: Math.sin(angle) * sceneNumber(object.shiftZ, 0),
+    };
+  }
+
+  function appendSceneGridToBundle(bundle, width, height) {
+    for (let x = 0; x <= width; x += 48) {
+      appendSceneLine(bundle, width, height, { x: x, y: 0 }, { x: x, y: height }, "rgba(141, 225, 255, 0.14)", 1);
+    }
+    for (let y = 0; y <= height; y += 48) {
+      appendSceneLine(bundle, width, height, { x: 0, y: y }, { x: width, y: y }, "rgba(141, 225, 255, 0.14)", 1);
+    }
+  }
+
+  function appendSceneObjectToBundle(bundle, materialLookup, camera, width, height, object, lights, environment, timeSeconds) {
+    const sourceSegments = sceneObjectSegments(object);
+    const vertexOffset = bundle.worldPositions.length / 3;
+    const material = sceneObjectMaterialProfile(object);
+    const materialIndex = sceneBundleMaterialIndex(bundle, materialLookup, material);
+    const includeLineGeometry = sceneWorldObjectUsesLinePass(object, material);
+    if (material.texture) {
+      console.log("scene-object-material", JSON.stringify({
+        id: object && object.id,
+        kind: object && object.kind,
+        texture: material.texture,
+        wireframe: material.wireframe,
+        includeLineGeometry: includeLineGeometry,
+      }));
+    }
+    let bounds = null;
+    let vertexCount = 0;
+    if (includeLineGeometry) {
+      const worldSegments = sourceSegments.map(function(segment) {
+        return [
+          translateScenePoint(segment[0], object, timeSeconds),
+          translateScenePoint(segment[1], object, timeSeconds),
+        ];
+      });
+      for (let index = 0; index < worldSegments.length; index += 1) {
+        const segment = worldSegments[index];
+        const fromWorld = segment[0];
+        const toWorld = segment[1];
+        const sourceSegment = sourceSegments[index];
+        const fromLighting = sceneLitColorRGBA(material, fromWorld, sceneObjectWorldNormal(object, sourceSegment[0], timeSeconds), lights, environment);
+        const toLighting = sceneLitColorRGBA(material, toWorld, sceneObjectWorldNormal(object, sourceSegment[1], timeSeconds), lights, environment);
+        bundle.worldPositions.push(fromWorld.x, fromWorld.y, fromWorld.z, toWorld.x, toWorld.y, toWorld.z);
+        bundle.worldColors.push(
+          fromLighting[0], fromLighting[1], fromLighting[2], fromLighting[3],
+          toLighting[0], toLighting[1], toLighting[2], toLighting[3],
+        );
+        bounds = sceneExpandWorldBounds(bounds, fromWorld);
+        bounds = sceneExpandWorldBounds(bounds, toWorld);
+        vertexCount += 2;
+        const from = sceneProjectPoint(fromWorld, camera, width, height);
+        const to = sceneProjectPoint(toWorld, camera, width, height);
+        if (!from || !to) continue;
+        const stroke = sceneMixRGBA(fromLighting, toLighting);
+        stroke[3] = clamp01(stroke[3] * sceneMaterialOpacity(material));
+        appendSceneLine(bundle, width, height, from, to, sceneRGBAString(stroke), 1.8);
+      }
+    } else if (sceneObjectHasTexturedSurface(object, material)) {
+      const corners = scenePlaneSurfaceCorners(object, timeSeconds);
+      for (const corner of corners) {
+        bounds = sceneExpandWorldBounds(bounds, corner);
+      }
+    }
+    if (vertexCount > 0 || bounds) {
+      const depth = sceneBoundsDepthMetrics(bounds, camera);
+      bundle.objects.push({
+        id: object.id,
+        kind: object.kind,
+        pickable: typeof object.pickable === "boolean" ? object.pickable : undefined,
+        materialIndex: materialIndex,
+        renderPass: sceneWorldObjectRenderPass(object, material),
+        vertexOffset: vertexOffset,
+        vertexCount: vertexCount,
+        static: Boolean(object.static),
+        bounds: bounds || {
+          minX: 0,
+          minY: 0,
+          minZ: 0,
+          maxX: 0,
+          maxY: 0,
+          maxZ: 0,
+        },
+        depthNear: depth.near,
+        depthFar: depth.far,
+        depthCenter: depth.center,
+        viewCulled: Boolean(object.viewCulled) || sceneBoundsViewCulled(bounds, camera),
+      });
+      appendSceneSurfaceToBundle(bundle, camera, object, materialIndex, material, bounds, depth, timeSeconds);
+    }
+  }
+
+  function sceneObjectHasTexturedSurface(object, material) {
+    return Boolean(
+      object &&
+      object.kind === "plane" &&
+      material &&
+      typeof material.texture === "string" &&
+      material.texture.trim() !== "",
+    );
+  }
+
+  function appendSceneSurfaceToBundle(bundle, camera, object, materialIndex, material, bounds, depthMetrics, timeSeconds) {
+    if (!sceneObjectHasTexturedSurface(object, material)) {
+      return;
+    }
+    bundle.surfaces.push({
+      id: object.id,
+      kind: object.kind,
+      materialIndex: materialIndex,
+      renderPass: sceneWorldObjectRenderPass(object, material),
+      static: Boolean(object.static),
+      positions: scenePlaneSurfacePositions(scenePlaneSurfaceCorners(object, timeSeconds)),
+      uv: scenePlaneSurfaceUVs(),
+      vertexCount: 6,
+      bounds: bounds,
+      depthNear: depthMetrics.near,
+      depthFar: depthMetrics.far,
+      depthCenter: depthMetrics.center,
+      viewCulled: Boolean(object.viewCulled) || sceneBoundsViewCulled(bounds, camera),
+    });
+  }
+
+  function sceneLabelPoint(label, timeSeconds) {
+    const offset = sceneLabelOffset(label, timeSeconds);
+    return {
+      x: label.x + offset.x,
+      y: label.y + offset.y,
+      z: label.z + offset.z,
+    };
+  }
+
+  function sceneLabelOffset(label, timeSeconds) {
+    if (!label || (!label.shiftX && !label.shiftY && !label.shiftZ)) {
+      return { x: 0, y: 0, z: 0 };
+    }
+    const angle = sceneNumber(label.driftPhase, 0) + timeSeconds * sceneNumber(label.driftSpeed, 0);
+    return {
+      x: Math.cos(angle) * sceneNumber(label.shiftX, 0),
+      y: Math.sin(angle * 0.82 + sceneNumber(label.driftPhase, 0) * 0.35) * sceneNumber(label.shiftY, 0),
+      z: Math.sin(angle) * sceneNumber(label.shiftZ, 0),
+    };
+  }
+
+  function sceneSpritePoint(sprite, timeSeconds) {
+    const offset = sceneSpriteOffset(sprite, timeSeconds);
+    return {
+      x: sceneNumber(sprite && sprite.x, 0) + offset.x,
+      y: sceneNumber(sprite && sprite.y, 0) + offset.y,
+      z: sceneNumber(sprite && sprite.z, 0) + offset.z,
+    };
+  }
+
+  function sceneSpriteOffset(sprite, timeSeconds) {
+    if (!sprite || (!sprite.shiftX && !sprite.shiftY && !sprite.shiftZ)) {
+      return { x: 0, y: 0, z: 0 };
+    }
+    const angle = sceneNumber(sprite.driftPhase, 0) + timeSeconds * sceneNumber(sprite.driftSpeed, 0);
+    return {
+      x: Math.cos(angle) * sceneNumber(sprite.shiftX, 0),
+      y: Math.sin(angle * 0.82 + sceneNumber(sprite.driftPhase, 0) * 0.35) * sceneNumber(sprite.shiftY, 0),
+      z: Math.sin(angle) * sceneNumber(sprite.shiftZ, 0),
+    };
+  }
+
+  function sceneProjectedSpriteSize(camera, width, height, sprite, depth) {
+    if (depth <= 0) {
+      return { width: 0, height: 0 };
+    }
+    const normalizedCamera = sceneRenderCamera(camera);
+    const focal = (Math.min(width, height) / 2) / Math.tan((normalizedCamera.fov * Math.PI) / 360);
+    const scale = Math.max(0.05, sceneNumber(sprite && sprite.scale, 1));
+    const worldWidth = Math.max(0.05, sceneNumber(sprite && sprite.width, 1.25));
+    const worldHeight = Math.max(0.05, sceneNumber(sprite && sprite.height, worldWidth));
+    return {
+      width: Math.max(1, (worldWidth * scale * focal) / depth),
+      height: Math.max(1, (worldHeight * scale * focal) / depth),
+    };
+  }
+
+  function appendSceneLabelToBundle(bundle, camera, width, height, label, timeSeconds) {
+    const point = sceneLabelPoint(label, timeSeconds);
+    const projected = sceneProjectPoint(point, camera, width, height);
+    if (!projected) {
+      return;
+    }
+
+    const marginX = Math.max(24, sceneNumber(label.maxWidth, 180));
+    const marginY = Math.max(24, sceneNumber(label.lineHeight, 18) * 2);
+    if (projected.x < -marginX || projected.x > width + marginX || projected.y < -marginY || projected.y > height + marginY) {
+      return;
+    }
+
+    bundle.labels.push({
+      id: label.id,
+      text: label.text,
+      className: label.className,
+      position: { x: projected.x, y: projected.y },
+      depth: projected.depth,
+      priority: sceneNumber(label.priority, 0),
+      maxWidth: sceneNumber(label.maxWidth, 180),
+      maxLines: Math.max(0, Math.floor(sceneNumber(label.maxLines, 0))),
+      overflow: normalizeTextLayoutOverflow(label.overflow),
+      font: label.font,
+      lineHeight: sceneNumber(label.lineHeight, 18),
+      color: label.color,
+      background: label.background,
+      borderColor: label.borderColor,
+      offsetX: sceneNumber(label.offsetX, 0),
+      offsetY: sceneNumber(label.offsetY, -14),
+      anchorX: sceneNumber(label.anchorX, 0.5),
+      anchorY: sceneNumber(label.anchorY, 1),
+      collision: normalizeSceneLabelCollision(label.collision),
+      occlude: Boolean(label.occlude),
+      whiteSpace: normalizeSceneLabelWhiteSpace(label.whiteSpace),
+      textAlign: normalizeSceneLabelAlign(label.textAlign),
+    });
+  }
+
+  function appendSceneSpriteToBundle(bundle, camera, width, height, sprite, timeSeconds) {
+    const point = sceneSpritePoint(sprite, timeSeconds);
+    const projected = sceneProjectPoint(point, camera, width, height);
+    if (!projected) {
+      return;
+    }
+    const size = sceneProjectedSpriteSize(camera, width, height, sprite, projected.depth);
+    if (size.width <= 0 || size.height <= 0) {
+      return;
+    }
+    const marginX = Math.max(24, size.width);
+    const marginY = Math.max(24, size.height);
+    if (projected.x < -marginX || projected.x > width + marginX || projected.y < -marginY || projected.y > height + marginY) {
+      return;
+    }
+    bundle.sprites.push({
+      id: sprite.id,
+      src: sprite.src,
+      className: sprite.className,
+      position: { x: projected.x, y: projected.y },
+      depth: projected.depth,
+      priority: sceneNumber(sprite.priority, 0),
+      width: size.width,
+      height: size.height,
+      opacity: clamp01(sceneNumber(sprite.opacity, 1)),
+      offsetX: sceneNumber(sprite.offsetX, 0),
+      offsetY: sceneNumber(sprite.offsetY, 0),
+      anchorX: sceneNumber(sprite.anchorX, 0.5),
+      anchorY: sceneNumber(sprite.anchorY, 0.5),
+      occlude: Boolean(sprite.occlude),
+      fit: normalizeSceneSpriteFit(sprite.fit),
+    });
+  }
+
+  function sceneWorldObjectSegments(object, timeSeconds) {
+    return sceneObjectSegments(object).map(function(segment) {
+      return [
+        translateScenePoint(segment[0], object, timeSeconds),
+        translateScenePoint(segment[1], object, timeSeconds),
+      ];
+    });
+  }
+
+  function sceneExpandWorldBounds(bounds, point) {
+    const next = bounds || {
+      minX: point.x,
+      minY: point.y,
+      minZ: point.z,
+      maxX: point.x,
+      maxY: point.y,
+      maxZ: point.z,
+    };
+    next.minX = Math.min(next.minX, point.x);
+    next.minY = Math.min(next.minY, point.y);
+    next.minZ = Math.min(next.minZ, point.z);
+    next.maxX = Math.max(next.maxX, point.x);
+    next.maxY = Math.max(next.maxY, point.y);
+    next.maxZ = Math.max(next.maxZ, point.z);
+    return next;
+  }
+
+  function appendSceneLine(bundle, width, height, from, to, color, lineWidth) {
+    if (!from || !to) return;
+    const rgba = sceneColorRGBA(color, [0.55, 0.88, 1, 1]);
+    const fromClip = sceneClipPoint(from, width, height);
+    const toClip = sceneClipPoint(to, width, height);
+    bundle.lines.push({
+      from: from,
+      to: to,
+      color: color,
+      lineWidth: lineWidth,
+    });
+    bundle.positions.push(fromClip.x, fromClip.y, toClip.x, toClip.y);
+    bundle.colors.push(rgba[0], rgba[1], rgba[2], rgba[3], rgba[0], rgba[1], rgba[2], rgba[3]);
+  }
+
+  function createSceneWebGLRenderer(canvas, options) {
+    if (!canvas || typeof canvas.getContext !== "function") {
+      return null;
+    }
+    const contextOptions = {
+      alpha: false,
+      antialias: !(options && options.antialias === false),
+      powerPreference: options && options.powerPreference ? options.powerPreference : "high-performance",
+      preserveDrawingBuffer: false,
+    };
+    const gl = canvas.getContext("webgl", contextOptions) || canvas.getContext("experimental-webgl", contextOptions);
+    if (!gl) {
+      return null;
+    }
+
+    const program = createSceneWebGLProgram(gl);
+    const surfaceProgram = createSceneWebGLSurfaceProgram(gl);
+    if (!program) {
+      return null;
+    }
+
+    const resources = createSceneWebGLResources(gl, program, surfaceProgram);
+    return {
+      kind: "webgl",
+      render(bundle) {
+        const geometry = sceneWebGLBundleGeometry(bundle);
+        prepareSceneWebGLFrame(gl, canvas, bundle, geometry.usePerspective, resources);
+        if (!bundle) {
+          return;
+        }
+        const worldRendered = geometry.usePerspective && renderSceneWebGLWorldBundle(gl, bundle, canvas, resources);
+        console.log("scene-webgl-render", JSON.stringify({
+          usePerspective: geometry.usePerspective,
+          worldRendered: worldRendered,
+          surfaces: Array.isArray(bundle && bundle.surfaces) ? bundle.surfaces.length : 0,
+          worldVertexCount: bundle && bundle.worldVertexCount || 0,
+          vertexCount: geometry.vertexCount,
+          objects: Array.isArray(bundle && bundle.objects) ? bundle.objects.map(function(item) {
+            return {
+              id: item && item.id,
+              kind: item && item.kind,
+              vertexCount: item && item.vertexCount,
+            };
+          }) : [],
+        }));
+        if (worldRendered) {
+          applySceneWebGLBlend(gl, "opaque", resources.stateCache);
+          applySceneWebGLDepth(gl, "opaque", resources.stateCache);
+          return;
+        }
+        if (geometry.vertexCount === 0 || !geometry.positions || !geometry.colors) {
+          return;
+        }
+        gl.useProgram(program);
+        applySceneWebGLUniforms(gl, bundle, canvas, geometry.usePerspective, resources);
+        renderSceneWebGLFallbackBundle(gl, geometry, resources);
+      },
+      dispose() {
+        disposeSceneWebGLRenderer(gl, program, resources);
+      },
+    };
+  }
+
+  function createSceneWebGLResources(gl, program, surfaceProgram) {
+    return {
+      program,
+      surfaceProgram,
+      fallbackBuffers: createSceneWebGLBufferSet(gl),
+      passBuffers: {
+        staticOpaque: createSceneWebGLBufferSet(gl),
+        alpha: createSceneWebGLBufferSet(gl),
+        additive: createSceneWebGLBufferSet(gl),
+        dynamicOpaque: createSceneWebGLBufferSet(gl),
+      },
+      drawScratch: createSceneWorldDrawScratch(),
+      positionLocation: gl.getAttribLocation(program, "a_position"),
+      colorLocation: gl.getAttribLocation(program, "a_color"),
+      materialLocation: gl.getAttribLocation(program, "a_material"),
+      cameraLocation: gl.getUniformLocation(program, "u_camera"),
+      cameraRotationLocation: gl.getUniformLocation(program, "u_camera_rotation"),
+      aspectLocation: gl.getUniformLocation(program, "u_aspect"),
+      perspectiveLocation: gl.getUniformLocation(program, "u_use_perspective"),
+      surfaceBuffers: createSceneWebGLSurfaceBufferSet(gl),
+      surfacePositionLocation: surfaceProgram ? gl.getAttribLocation(surfaceProgram, "a_position") : -1,
+      surfaceUVLocation: surfaceProgram ? gl.getAttribLocation(surfaceProgram, "a_uv") : -1,
+      surfaceCameraLocation: surfaceProgram ? gl.getUniformLocation(surfaceProgram, "u_camera") : null,
+      surfaceCameraRotationLocation: surfaceProgram ? gl.getUniformLocation(surfaceProgram, "u_camera_rotation") : null,
+      surfaceAspectLocation: surfaceProgram ? gl.getUniformLocation(surfaceProgram, "u_aspect") : null,
+      surfaceTintLocation: surfaceProgram ? gl.getUniformLocation(surfaceProgram, "u_tint") : null,
+      surfaceEmissiveLocation: surfaceProgram ? gl.getUniformLocation(surfaceProgram, "u_emissive") : null,
+      surfaceTextureLocation: surfaceProgram ? gl.getUniformLocation(surfaceProgram, "u_texture") : null,
+      floatType: typeof gl.FLOAT === "number" ? gl.FLOAT : 0x1406,
+      arrayBuffer: typeof gl.ARRAY_BUFFER === "number" ? gl.ARRAY_BUFFER : 0x8892,
+      staticDraw: typeof gl.STATIC_DRAW === "number" ? gl.STATIC_DRAW : 0x88E4,
+      dynamicDraw: typeof gl.DYNAMIC_DRAW === "number" ? gl.DYNAMIC_DRAW : 0x88E8,
+      trianglesMode: typeof gl.TRIANGLES === "number" ? gl.TRIANGLES : 0x0004,
+      colorBufferBit: typeof gl.COLOR_BUFFER_BIT === "number" ? gl.COLOR_BUFFER_BIT : 0x4000,
+      depthBufferBit: typeof gl.DEPTH_BUFFER_BIT === "number" ? gl.DEPTH_BUFFER_BIT : 0x0100,
+      linesMode: typeof gl.LINES === "number" ? gl.LINES : 0x0001,
+      texture2D: typeof gl.TEXTURE_2D === "number" ? gl.TEXTURE_2D : 0x0DE1,
+      texture0: typeof gl.TEXTURE0 === "number" ? gl.TEXTURE0 : 0x84C0,
+      rgbaFormat: typeof gl.RGBA === "number" ? gl.RGBA : 0x1908,
+      unsignedByte: typeof gl.UNSIGNED_BYTE === "number" ? gl.UNSIGNED_BYTE : 0x1401,
+      linearFilter: typeof gl.LINEAR === "number" ? gl.LINEAR : 0x2601,
+      clampToEdge: typeof gl.CLAMP_TO_EDGE === "number" ? gl.CLAMP_TO_EDGE : 0x812F,
+      textureMinFilter: typeof gl.TEXTURE_MIN_FILTER === "number" ? gl.TEXTURE_MIN_FILTER : 0x2801,
+      textureMagFilter: typeof gl.TEXTURE_MAG_FILTER === "number" ? gl.TEXTURE_MAG_FILTER : 0x2800,
+      textureWrapS: typeof gl.TEXTURE_WRAP_S === "number" ? gl.TEXTURE_WRAP_S : 0x2802,
+      textureWrapT: typeof gl.TEXTURE_WRAP_T === "number" ? gl.TEXTURE_WRAP_T : 0x2803,
+      passCache: {
+        staticOpaque: {
+          key: "",
+          vertexCount: 0,
+        },
+      },
+      textureCache: new Map(),
+      stateCache: {
+        blendMode: "",
+        depthMode: "",
+      },
+    };
+  }
+
+  function sceneWebGLBundleGeometry(bundle) {
+    const hasWorldLines = Boolean(bundle && bundle.worldVertexCount > 0 && bundle.worldPositions && bundle.worldColors);
+    const hasSurfaces = Boolean(bundle && Array.isArray(bundle.surfaces) && bundle.surfaces.length > 0);
+    const usePerspective = hasWorldLines || hasSurfaces;
+    return {
+      usePerspective,
+      positions: usePerspective ? bundle.worldPositions : bundle && bundle.positions,
+      colors: usePerspective ? bundle.worldColors : bundle && bundle.colors,
+      vertexCount: usePerspective ? bundle && bundle.worldVertexCount : bundle && bundle.vertexCount,
+    };
+  }
+
+  function prepareSceneWebGLFrame(gl, canvas, bundle, usePerspective, resources) {
+    const background = sceneColorRGBA(bundle && bundle.background, [0.03, 0.08, 0.12, 1]);
+    gl.viewport(0, 0, canvas.width, canvas.height);
+    gl.clearColor(background[0], background[1], background[2], background[3]);
+    if (usePerspective && typeof gl.clearDepth === "function") {
+      gl.clearDepth(1);
+    }
+    gl.clear(usePerspective ? resources.colorBufferBit | resources.depthBufferBit : resources.colorBufferBit);
+  }
+
+  function applySceneWebGLUniforms(gl, bundle, canvas, usePerspective, resources) {
+    const aspect = Math.max(0.0001, canvas.width / Math.max(1, canvas.height));
+    if (typeof gl.uniform4f === "function" && resources.cameraLocation) {
+      const camera = sceneRenderCamera(bundle && bundle.camera);
+      gl.uniform4f(
+        resources.cameraLocation,
+        camera.x,
+        camera.y,
+        camera.z,
+        camera.fov,
+      );
+    }
+    if (typeof gl.uniform3f === "function" && resources.cameraRotationLocation) {
+      const camera = sceneRenderCamera(bundle && bundle.camera);
+      gl.uniform3f(
+        resources.cameraRotationLocation,
+        camera.rotationX,
+        camera.rotationY,
+        camera.rotationZ,
+      );
+    }
+    if (typeof gl.uniform1f === "function" && resources.aspectLocation) {
+      gl.uniform1f(resources.aspectLocation, aspect);
+    }
+    if (typeof gl.uniform1f === "function" && resources.perspectiveLocation) {
+      gl.uniform1f(resources.perspectiveLocation, usePerspective ? 1 : 0);
+    }
+  }
+
+  function renderSceneWebGLWorldBundle(gl, bundle, canvas, resources) {
+    let drew = renderSceneWebGLSurfaces(gl, bundle, canvas, resources, "opaque");
+    gl.useProgram(resources.program);
+    applySceneWebGLUniforms(gl, bundle, canvas, true, resources);
+    if (sceneBundleCanUseBundledPasses(bundle)) {
+      const bundledPasses = createSceneWorldWebGLPassesFromBundle(bundle, resources.passBuffers, {
+        staticDraw: resources.staticDraw,
+        dynamicDraw: resources.dynamicDraw,
+      });
+      if (bundledPasses.length > 0) {
+        drawSceneWebGLPasses(gl, resources.arrayBuffer, resources.floatType, resources.linesMode, resources.positionLocation, resources.colorLocation, resources.materialLocation, bundledPasses, resources.passCache, resources.stateCache);
+        drew = true;
+        drew = renderSceneWebGLSurfaces(gl, bundle, canvas, resources, "alpha") || drew;
+        drew = renderSceneWebGLSurfaces(gl, bundle, canvas, resources, "additive") || drew;
+        return true;
+      }
+    }
+    const drawPlan = buildSceneWorldDrawPlan(bundle, resources.drawScratch);
+    if (!drawPlan) {
+      drew = renderSceneWebGLSurfaces(gl, bundle, canvas, resources, "alpha") || drew;
+      drew = renderSceneWebGLSurfaces(gl, bundle, canvas, resources, "additive") || drew;
+      return drew;
+    }
+    const worldPasses = createSceneWorldWebGLPasses(drawPlan, resources.passBuffers, {
+      staticDraw: resources.staticDraw,
+      dynamicDraw: resources.dynamicDraw,
+    });
+    drawSceneWebGLPasses(gl, resources.arrayBuffer, resources.floatType, resources.linesMode, resources.positionLocation, resources.colorLocation, resources.materialLocation, worldPasses, resources.passCache, resources.stateCache);
+    drew = true;
+    drew = renderSceneWebGLSurfaces(gl, bundle, canvas, resources, "alpha") || drew;
+    drew = renderSceneWebGLSurfaces(gl, bundle, canvas, resources, "additive") || drew;
+    return true;
+  }
+
+  function sceneBundleCanUseBundledPasses(bundle) {
+    if (!bundle || !Array.isArray(bundle.passes) || bundle.passes.length === 0) {
+      return false;
+    }
+    if (!bundle.sourceCamera) {
+      return true;
+    }
+    return sceneCameraEquivalent(bundle.sourceCamera, bundle.camera);
+  }
+
+  function renderSceneWebGLSurfaces(gl, bundle, canvas, resources, renderPass) {
+    const surfaces = sceneBundleSurfaceEntries(bundle, renderPass);
+    if (!surfaces.length || !resources.surfaceProgram) {
+      return false;
+    }
+    gl.useProgram(resources.surfaceProgram);
+    applySceneWebGLSurfaceUniforms(gl, bundle, canvas, resources);
+    applySceneWebGLBlend(gl, renderPass === "additive" ? "additive" : (renderPass === "alpha" ? "alpha" : "opaque"), resources.stateCache);
+    applySceneWebGLDepth(gl, renderPass === "opaque" ? "opaque" : "translucent", resources.stateCache);
+    for (const entry of surfaces) {
+      const material = bundle.materials[entry.materialIndex] || null;
+      const textureRecord = sceneWebGLTextureRecord(gl, resources, material && material.texture);
+      if (!textureRecord || !textureRecord.texture) {
+        continue;
+      }
+      uploadSceneWebGLSurfaceBuffers(gl, resources, entry);
+      bindSceneWebGLSurfaceTexture(gl, resources, textureRecord);
+      applySceneWebGLSurfaceMaterial(gl, resources, material);
+      drawSceneWebGLSurface(gl, resources, entry.vertexCount);
+    }
+    return true;
+  }
+
+  function sceneBundleSurfaceEntries(bundle, renderPass) {
+    const surfaces = Array.isArray(bundle && bundle.surfaces) ? bundle.surfaces.slice() : [];
+    const filtered = surfaces.filter(function(surface) {
+      return surface &&
+        !surface.viewCulled &&
+        Math.max(0, Math.floor(sceneNumber(surface.vertexCount, 0))) > 0 &&
+        String(surface.renderPass || "opaque") === renderPass;
+    });
+    if (renderPass !== "opaque") {
+      filtered.sort(function(left, right) {
+        if (sceneNumber(left.depthCenter, 0) !== sceneNumber(right.depthCenter, 0)) {
+          return sceneNumber(right.depthCenter, 0) - sceneNumber(left.depthCenter, 0);
+        }
+        return String(left.id || "").localeCompare(String(right.id || ""));
+      });
+    }
+    return filtered;
+  }
+
+  function applySceneWebGLSurfaceUniforms(gl, bundle, canvas, resources) {
+    const aspect = Math.max(0.0001, canvas.width / Math.max(1, canvas.height));
+    const camera = sceneRenderCamera(bundle && bundle.camera);
+    if (typeof gl.uniform4f === "function" && resources.surfaceCameraLocation) {
+      gl.uniform4f(resources.surfaceCameraLocation, camera.x, camera.y, camera.z, camera.fov);
+    }
+    if (typeof gl.uniform3f === "function" && resources.surfaceCameraRotationLocation) {
+      gl.uniform3f(resources.surfaceCameraRotationLocation, camera.rotationX, camera.rotationY, camera.rotationZ);
+    }
+    if (typeof gl.uniform1f === "function" && resources.surfaceAspectLocation) {
+      gl.uniform1f(resources.surfaceAspectLocation, aspect);
+    }
+  }
+
+  function uploadSceneWebGLSurfaceBuffers(gl, resources, surface) {
+    gl.bindBuffer(resources.arrayBuffer, resources.surfaceBuffers.position);
+    gl.bufferData(resources.arrayBuffer, sceneTypedFloatArray(surface && surface.positions), resources.dynamicDraw);
+    gl.bindBuffer(resources.arrayBuffer, resources.surfaceBuffers.uv);
+    gl.bufferData(resources.arrayBuffer, sceneTypedFloatArray(surface && surface.uv), resources.dynamicDraw);
+  }
+
+  function bindSceneWebGLSurfaceTexture(gl, resources, record) {
+    if (typeof gl.activeTexture === "function") {
+      gl.activeTexture(resources.texture0);
+    }
+    if (typeof gl.bindTexture === "function") {
+      gl.bindTexture(resources.texture2D, record.texture);
+    }
+    if (typeof gl.uniform1i === "function" && resources.surfaceTextureLocation) {
+      gl.uniform1i(resources.surfaceTextureLocation, 0);
+    }
+  }
+
+  function applySceneWebGLSurfaceMaterial(gl, resources, material) {
+    const tint = sceneColorRGBA(material && material.color, [1, 1, 1, 1]);
+    tint[3] = clamp01(tint[3] * sceneMaterialOpacity(material));
+    if (typeof gl.uniform4f === "function" && resources.surfaceTintLocation) {
+      gl.uniform4f(resources.surfaceTintLocation, tint[0], tint[1], tint[2], tint[3]);
+    }
+    if (typeof gl.uniform1f === "function" && resources.surfaceEmissiveLocation) {
+      gl.uniform1f(resources.surfaceEmissiveLocation, sceneMaterialEmissive(material));
+    }
+  }
+
+  function drawSceneWebGLSurface(gl, resources, vertexCount) {
+    if (!vertexCount) {
+      return;
+    }
+    gl.bindBuffer(resources.arrayBuffer, resources.surfaceBuffers.position);
+    gl.enableVertexAttribArray(resources.surfacePositionLocation);
+    gl.vertexAttribPointer(resources.surfacePositionLocation, 3, resources.floatType, false, 0, 0);
+    gl.bindBuffer(resources.arrayBuffer, resources.surfaceBuffers.uv);
+    gl.enableVertexAttribArray(resources.surfaceUVLocation);
+    gl.vertexAttribPointer(resources.surfaceUVLocation, 2, resources.floatType, false, 0, 0);
+    gl.drawArrays(resources.trianglesMode, 0, vertexCount);
+  }
+
+  function sceneWebGLTextureRecord(gl, resources, src) {
+    const key = typeof src === "string" ? src.trim() : "";
+    if (!key || !resources || !resources.textureCache) {
+      return null;
+    }
+    if (resources.textureCache.has(key)) {
+      return resources.textureCache.get(key);
+    }
+    const texture = typeof gl.createTexture === "function" ? gl.createTexture() : null;
+    const record = { texture, src: key, loaded: false };
+    resources.textureCache.set(key, record);
+    if (!texture) {
+      return record;
+    }
+    initializeSceneWebGLTexture(gl, resources, texture);
+    const image = createSceneWebGLImage();
+    if (!image) {
+      return record;
+    }
+    image.onload = function() {
+      uploadSceneWebGLTextureImage(gl, resources, texture, image);
+      record.loaded = true;
+    };
+    image.onerror = function() {
+      record.failed = true;
+    };
+    image.src = key;
+    return record;
+  }
+
+  function createSceneWebGLImage() {
+    if (typeof Image === "function") {
+      return new Image();
+    }
+    return null;
+  }
+
+  function initializeSceneWebGLTexture(gl, resources, texture) {
+    if (typeof gl.bindTexture !== "function" || typeof gl.texImage2D !== "function") {
+      return;
+    }
+    gl.bindTexture(resources.texture2D, texture);
+    if (typeof gl.texParameteri === "function") {
+      gl.texParameteri(resources.texture2D, resources.textureMinFilter, resources.linearFilter);
+      gl.texParameteri(resources.texture2D, resources.textureMagFilter, resources.linearFilter);
+      gl.texParameteri(resources.texture2D, resources.textureWrapS, resources.clampToEdge);
+      gl.texParameteri(resources.texture2D, resources.textureWrapT, resources.clampToEdge);
+    }
+    gl.texImage2D(resources.texture2D, 0, resources.rgbaFormat, 1, 1, 0, resources.rgbaFormat, resources.unsignedByte, new Uint8Array([255, 255, 255, 255]));
+  }
+
+  function uploadSceneWebGLTextureImage(gl, resources, texture, image) {
+    if (typeof gl.bindTexture !== "function" || typeof gl.texImage2D !== "function") {
+      return;
+    }
+    gl.bindTexture(resources.texture2D, texture);
+    if (typeof gl.texParameteri === "function") {
+      gl.texParameteri(resources.texture2D, resources.textureMinFilter, resources.linearFilter);
+      gl.texParameteri(resources.texture2D, resources.textureMagFilter, resources.linearFilter);
+      gl.texParameteri(resources.texture2D, resources.textureWrapS, resources.clampToEdge);
+      gl.texParameteri(resources.texture2D, resources.textureWrapT, resources.clampToEdge);
+    }
+    gl.texImage2D(resources.texture2D, 0, resources.rgbaFormat, resources.rgbaFormat, resources.unsignedByte, image);
+  }
+
+  function renderSceneWebGLFallbackBundle(gl, geometry, resources) {
+    applySceneWebGLDepth(gl, "disabled", resources.stateCache);
+    applySceneWebGLBlend(gl, "opaque", resources.stateCache);
+    uploadSceneWebGLBuffers(
+      gl,
+      resources.arrayBuffer,
+      resources.dynamicDraw,
+      resources.fallbackBuffers.position,
+      resources.fallbackBuffers.color,
+      resources.fallbackBuffers.material,
+      geometry.positions,
+      geometry.colors,
+      sceneFallbackMaterialData(geometry.vertexCount),
+    );
+    drawSceneWebGLLines(
+      gl,
+      resources.arrayBuffer,
+      resources.floatType,
+      resources.linesMode,
+      resources.positionLocation,
+      resources.colorLocation,
+      resources.materialLocation,
+      resources.fallbackBuffers.position,
+      resources.fallbackBuffers.color,
+      resources.fallbackBuffers.material,
+      geometry.vertexCount,
+      geometry.usePerspective ? 3 : 2,
+    );
+  }
+
+  function disposeSceneWebGLRenderer(gl, program, resources) {
+    if (typeof gl.deleteBuffer === "function") {
+      deleteSceneWebGLBufferSet(gl, resources.fallbackBuffers);
+      deleteSceneWebGLBufferSet(gl, resources.passBuffers.staticOpaque);
+      deleteSceneWebGLBufferSet(gl, resources.passBuffers.alpha);
+      deleteSceneWebGLBufferSet(gl, resources.passBuffers.additive);
+      deleteSceneWebGLBufferSet(gl, resources.passBuffers.dynamicOpaque);
+      deleteSceneWebGLSurfaceBufferSet(gl, resources.surfaceBuffers);
+    }
+    if (resources && resources.textureCache && typeof gl.deleteTexture === "function") {
+      for (const record of resources.textureCache.values()) {
+        if (record && record.texture) {
+          gl.deleteTexture(record.texture);
+        }
+      }
+    }
+    if (typeof gl.deleteProgram === "function") {
+      gl.deleteProgram(program);
+      if (resources && resources.surfaceProgram) {
+        gl.deleteProgram(resources.surfaceProgram);
+      }
+    }
+  }
+
+  function createSceneWebGLBufferSet(gl) {
+    return {
+      position: gl.createBuffer(),
+      color: gl.createBuffer(),
+      material: gl.createBuffer(),
+    };
+  }
+
+  function createSceneWebGLSurfaceBufferSet(gl) {
+    return {
+      position: gl.createBuffer(),
+      uv: gl.createBuffer(),
+    };
+  }
+
+  function deleteSceneWebGLBufferSet(gl, buffers) {
+    if (!buffers) {
+      return;
+    }
+    gl.deleteBuffer(buffers.position);
+    gl.deleteBuffer(buffers.color);
+    gl.deleteBuffer(buffers.material);
+  }
+
+  function deleteSceneWebGLSurfaceBufferSet(gl, buffers) {
+    if (!buffers) {
+      return;
+    }
+    gl.deleteBuffer(buffers.position);
+    gl.deleteBuffer(buffers.uv);
+  }
+
+  function createSceneWorldWebGLPasses(drawPlan, buffers, usages) {
+    const passes = [];
+    passes.push({
+      name: "staticOpaque",
+      blend: "opaque",
+      depth: "opaque",
+      usage: usages.staticDraw,
+      cacheSlot: "staticOpaque",
+      cacheKey: drawPlan.staticOpaqueKey,
+      buffers: buffers.staticOpaque,
+      positions: drawPlan.staticOpaquePositions,
+      colors: drawPlan.staticOpaqueColors,
+      materials: drawPlan.staticOpaqueMaterials,
+      vertexCount: drawPlan.staticOpaqueVertexCount,
+    });
+    passes.push({
+      name: "dynamicOpaque",
+      blend: "opaque",
+      depth: "opaque",
+      usage: usages.dynamicDraw,
+      buffers: buffers.dynamicOpaque,
+      positions: drawPlan.dynamicOpaquePositions,
+      colors: drawPlan.dynamicOpaqueColors,
+      materials: drawPlan.dynamicOpaqueMaterials,
+      vertexCount: drawPlan.dynamicOpaqueVertexCount,
+    });
+    if (drawPlan.hasAlphaPass) {
+      passes.push({
+        name: "alpha",
+        blend: "alpha",
+        depth: "translucent",
+        usage: usages.dynamicDraw,
+        buffers: buffers.alpha,
+        positions: drawPlan.alphaPositions,
+        colors: drawPlan.alphaColors,
+        materials: drawPlan.alphaMaterials,
+        vertexCount: drawPlan.alphaVertexCount,
+      });
+    }
+    if (drawPlan.hasAdditivePass) {
+      passes.push({
+        name: "additive",
+        blend: "additive",
+        depth: "translucent",
+        usage: usages.dynamicDraw,
+        buffers: buffers.additive,
+        positions: drawPlan.additivePositions,
+        colors: drawPlan.additiveColors,
+        materials: drawPlan.additiveMaterials,
+        vertexCount: drawPlan.additiveVertexCount,
+      });
+    }
+    return passes;
+  }
+
+  function createSceneWorldWebGLPassesFromBundle(bundle, buffers, usages) {
+    const sourcePasses = Array.isArray(bundle && bundle.passes) ? bundle.passes : [];
+    const passes = [];
+    for (const source of sourcePasses) {
+      const pass = sceneWorldWebGLPassFromSource(source, buffers, usages);
+      if (pass) {
+        passes.push(pass);
+      }
+    }
+    return passes;
+  }
+
+  function sceneWorldWebGLPassFromSource(source, buffers, usages) {
+    const name = sceneWorldWebGLPassName(source);
+    if (!name) {
+      return null;
+    }
+    const targetBuffers = buffers[name];
+    if (!targetBuffers) {
+      return null;
+    }
+    const isStatic = Boolean(source && source.static);
+    const positions = sceneTypedFloatArray(source && source.positions);
+    const colors = sceneTypedFloatArray(source && source.colors);
+    const materials = sceneTypedFloatArray(source && source.materials);
+    return {
+      name,
+      blend: sceneWorldWebGLPassMode(source && source.blend, "opaque"),
+      depth: sceneWorldWebGLPassMode(source && source.depth, "opaque"),
+      usage: isStatic ? usages.staticDraw : usages.dynamicDraw,
+      cacheSlot: sceneWorldWebGLPassCacheSlot(name, isStatic),
+      cacheKey: String(source && source.cacheKey || ""),
+      buffers: targetBuffers,
+      positions,
+      colors,
+      materials,
+      vertexCount: sceneWorldWebGLPassVertexCount(source, positions, colors, materials),
+    };
+  }
+
+  function sceneWorldWebGLPassName(source) {
+    return String(source && source.name || "");
+  }
+
+  function sceneWorldWebGLPassMode(value, fallback) {
+    const mode = String(value || fallback);
+    return mode || fallback;
+  }
+
+  function sceneWorldWebGLPassCacheSlot(name, isStatic) {
+    if (!isStatic) {
+      return "";
+    }
+    return name;
+  }
+
+  function sceneWorldWebGLPassVertexCount(source, positions, colors, materials) {
+    const requested = Math.max(0, Math.floor(sceneNumber(source && source.vertexCount, NaN)));
+    const positionCount = Math.floor((positions && positions.length || 0) / 3);
+    const colorCount = Math.floor((colors && colors.length || 0) / 4);
+    const materialCount = Math.floor((materials && materials.length || 0) / 3);
+    const maxCount = Math.max(0, Math.min(positionCount, colorCount, materialCount));
+    if (Number.isFinite(requested)) {
+      return Math.min(requested, maxCount);
+    }
+    return maxCount;
+  }
+
+  function drawSceneWebGLPasses(gl, arrayBuffer, floatType, linesMode, positionLocation, colorLocation, materialLocation, passes, cache, stateCache) {
+    for (const pass of passes) {
+      const vertexCount = uploadSceneWebGLPass(gl, arrayBuffer, pass, cache);
+      if (!vertexCount) {
+        continue;
+      }
+      applySceneWebGLDepth(gl, pass.depth, stateCache);
+      applySceneWebGLBlend(gl, pass.blend, stateCache);
+      drawSceneWebGLLines(gl, arrayBuffer, floatType, linesMode, positionLocation, colorLocation, materialLocation, pass.buffers.position, pass.buffers.color, pass.buffers.material, vertexCount, 3);
+    }
+  }
+
+  function uploadSceneWebGLPass(gl, arrayBuffer, pass, cache) {
+    if (!pass || !pass.buffers) {
+      return 0;
+    }
+    if (pass.cacheSlot) {
+      const record = cache[pass.cacheSlot] || (cache[pass.cacheSlot] = { key: "", vertexCount: 0 });
+      if (record.key !== pass.cacheKey) {
+        uploadSceneWebGLBuffers(gl, arrayBuffer, pass.usage, pass.buffers.position, pass.buffers.color, pass.buffers.material, pass.positions, pass.colors, pass.materials);
+        record.key = pass.cacheKey;
+        record.vertexCount = pass.vertexCount;
+      }
+      return record.vertexCount;
+    }
+    if (!pass.vertexCount) {
+      return 0;
+    }
+    uploadSceneWebGLBuffers(gl, arrayBuffer, pass.usage, pass.buffers.position, pass.buffers.color, pass.buffers.material, pass.positions, pass.colors, pass.materials);
+    return pass.vertexCount;
+  }
+
+  function uploadSceneWebGLBuffers(gl, arrayBuffer, usage, positionBuffer, colorBuffer, materialBuffer, positions, colors, materials) {
+    gl.bindBuffer(arrayBuffer, positionBuffer);
+    gl.bufferData(arrayBuffer, positions, usage);
+    gl.bindBuffer(arrayBuffer, colorBuffer);
+    gl.bufferData(arrayBuffer, colors, usage);
+    gl.bindBuffer(arrayBuffer, materialBuffer);
+    gl.bufferData(arrayBuffer, materials, usage);
+  }
+
+  function drawSceneWebGLLines(gl, arrayBuffer, floatType, linesMode, positionLocation, colorLocation, materialLocation, positionBuffer, colorBuffer, materialBuffer, vertexCount, positionSize) {
+    if (!vertexCount) {
+      return;
+    }
+    gl.bindBuffer(arrayBuffer, positionBuffer);
+    gl.enableVertexAttribArray(positionLocation);
+    gl.vertexAttribPointer(positionLocation, positionSize, floatType, false, 0, 0);
+
+    gl.bindBuffer(arrayBuffer, colorBuffer);
+    gl.enableVertexAttribArray(colorLocation);
+    gl.vertexAttribPointer(colorLocation, 4, floatType, false, 0, 0);
+
+    gl.bindBuffer(arrayBuffer, materialBuffer);
+    gl.enableVertexAttribArray(materialLocation);
+    gl.vertexAttribPointer(materialLocation, 3, floatType, false, 0, 0);
+
+    gl.drawArrays(linesMode, 0, vertexCount);
+  }
+
+  function sceneTypedFloatArray(values) {
+    if (values instanceof Float32Array) {
+      return values;
+    }
+    const list = Array.isArray(values) ? values : [];
+    const typed = new Float32Array(list.length);
+    for (let i = 0; i < list.length; i += 1) {
+      typed[i] = sceneNumber(list[i], 0);
+    }
+    return typed;
+  }
+
+  function applySceneWebGLBlend(gl, mode, stateCache) {
+    if (sceneWebGLStateUnchanged(stateCache, "blendMode", mode)) {
+      return;
+    }
+    const blendConst = typeof gl.BLEND === "number" ? gl.BLEND : 0x0BE2;
+    const one = typeof gl.ONE === "number" ? gl.ONE : 1;
+    const srcAlpha = typeof gl.SRC_ALPHA === "number" ? gl.SRC_ALPHA : 0x0302;
+    const oneMinusSrcAlpha = typeof gl.ONE_MINUS_SRC_ALPHA === "number" ? gl.ONE_MINUS_SRC_ALPHA : 0x0303;
+    const config = sceneWebGLBlendConfig(mode, srcAlpha, oneMinusSrcAlpha, one);
+    rememberSceneWebGLState(stateCache, "blendMode", mode);
+    setSceneWebGLCapability(gl, blendConst, config.enabled);
+    if (config.enabled && typeof gl.blendFunc === "function") {
+      gl.blendFunc(config.src, config.dst);
+    }
+  }
+
+  function applySceneWebGLDepth(gl, mode, stateCache) {
+    if (sceneWebGLStateUnchanged(stateCache, "depthMode", mode)) {
+      return;
+    }
+    const depthTest = typeof gl.DEPTH_TEST === "number" ? gl.DEPTH_TEST : 0x0B71;
+    const lequal = typeof gl.LEQUAL === "number" ? gl.LEQUAL : 0x0203;
+    const config = sceneWebGLDepthConfig(mode);
+    rememberSceneWebGLState(stateCache, "depthMode", mode);
+    setSceneWebGLCapability(gl, depthTest, config.enabled);
+    if (!config.enabled) {
+      return;
+    }
+    if (typeof gl.depthFunc === "function") {
+      gl.depthFunc(lequal);
+    }
+    if (typeof gl.depthMask === "function") {
+      gl.depthMask(config.mask);
+    }
+  }
+
+  function sceneWebGLStateUnchanged(stateCache, key, mode) {
+    return Boolean(stateCache && stateCache[key] === mode);
+  }
+
+  function rememberSceneWebGLState(stateCache, key, mode) {
+    if (!stateCache) {
+      return;
+    }
+    stateCache[key] = mode;
+  }
+
+  function setSceneWebGLCapability(gl, capability, enabled) {
+    if (enabled) {
+      if (typeof gl.enable === "function") {
+        gl.enable(capability);
+      }
+      return;
+    }
+    if (typeof gl.disable === "function") {
+      gl.disable(capability);
+    }
+  }
+
+  function sceneWebGLBlendConfig(mode, srcAlpha, oneMinusSrcAlpha, one) {
+    switch (mode) {
+    case "alpha":
+      return { enabled: true, src: srcAlpha, dst: oneMinusSrcAlpha };
+    case "additive":
+      return { enabled: true, src: srcAlpha, dst: one };
+    default:
+      return { enabled: false };
+    }
+  }
+
+  function sceneWebGLDepthConfig(mode) {
+    switch (mode) {
+    case "opaque":
+      return { enabled: true, mask: true };
+    case "translucent":
+      return { enabled: true, mask: false };
+    default:
+      return { enabled: false, mask: false };
+    }
+  }
+
+  function createSceneWebGLProgram(gl) {
+    const vertexSource = [
+      "attribute vec3 a_position;",
+      "attribute vec4 a_color;",
+      "attribute vec3 a_material;",
+      "uniform vec4 u_camera;",
+      "uniform vec3 u_camera_rotation;",
+      "uniform float u_aspect;",
+      "uniform float u_use_perspective;",
+      "varying vec4 v_color;",
+      "varying vec3 v_material;",
+      "vec3 inverseRotatePoint(vec3 point, vec3 rotation) {",
+      "  float sinZ = sin(-rotation.z);",
+      "  float cosZ = cos(-rotation.z);",
+      "  float nextX = point.x * cosZ - point.y * sinZ;",
+      "  float nextY = point.x * sinZ + point.y * cosZ;",
+      "  point = vec3(nextX, nextY, point.z);",
+      "  float sinY = sin(-rotation.y);",
+      "  float cosY = cos(-rotation.y);",
+      "  nextX = point.x * cosY + point.z * sinY;",
+      "  float nextZ = -point.x * sinY + point.z * cosY;",
+      "  point = vec3(nextX, point.y, nextZ);",
+      "  float sinX = sin(-rotation.x);",
+      "  float cosX = cos(-rotation.x);",
+      "  nextY = point.y * cosX - point.z * sinX;",
+      "  nextZ = point.y * sinX + point.z * cosX;",
+      "  return vec3(point.x, nextY, nextZ);",
+      "}",
+      "void main() {",
+      "  vec4 clip = vec4(a_position.xy, 0.0, 1.0);",
+      "  if (u_use_perspective > 0.5) {",
+      "    vec3 local = inverseRotatePoint(vec3(a_position.x - u_camera.x, a_position.y - u_camera.y, a_position.z + u_camera.z), u_camera_rotation);",
+      "    float depth = local.z;",
+      "    if (depth <= 0.001) {",
+      "      clip = vec4(2.0, 2.0, 0.0, 1.0);",
+      "    } else {",
+      "      float focal = 1.0 / tan(radians(u_camera.w) * 0.5);",
+      "      vec2 projected = vec2(local.x * focal / depth, local.y * focal / depth);",
+      "      projected.x /= max(u_aspect, 0.0001);",
+      "      float clipDepth = clamp(depth / 128.0, 0.0, 1.0) * 2.0 - 1.0;",
+      "      clip = vec4(projected, clipDepth, 1.0);",
+      "    }",
+      "  }",
+      "  gl_Position = clip;",
+      "  v_color = a_color;",
+      "  v_material = a_material;",
+      "}",
+    ].join("\n");
+    const fragmentSource = [
+      "precision mediump float;",
+      "varying vec4 v_color;",
+      "varying vec3 v_material;",
+      "void main() {",
+      "  vec4 color = v_color;",
+      "  float kind = floor(v_material.x + 0.5);",
+      "  float emissive = max(v_material.y, 0.0);",
+      "  float tone = clamp(v_material.z, 0.0, 1.0);",
+      "  if (kind > 3.5) {",
+      "    color.rgb *= mix(0.78, 1.0, tone);",
+      "  } else if (kind > 2.5) {",
+      "    color.rgb *= 1.0 + emissive * 0.75;",
+      "  } else if (kind > 1.5) {",
+      "    color.rgb = mix(color.rgb, vec3(0.92, 0.98, 1.0), 0.28 + tone * 0.16);",
+      "    color.a *= 0.84;",
+      "  } else if (kind > 0.5) {",
+      "    color.rgb = mix(color.rgb, vec3(0.84, 0.94, 1.0), 0.18 + tone * 0.12);",
+      "    color.a *= 0.9;",
+      "  } else {",
+      "    color.rgb *= mix(0.9, 1.0, tone);",
+      "  }",
+      "  gl_FragColor = vec4(clamp(color.rgb, 0.0, 1.0), clamp(color.a, 0.0, 1.0));",
+      "}",
+    ].join("\n");
+
+    const vertexShader = createSceneShader(gl, gl.VERTEX_SHADER, vertexSource);
+    const fragmentShader = createSceneShader(gl, gl.FRAGMENT_SHADER, fragmentSource);
+    if (!vertexShader || !fragmentShader) {
+      return null;
+    }
+
+    const program = gl.createProgram();
+    gl.attachShader(program, vertexShader);
+    gl.attachShader(program, fragmentShader);
+    gl.linkProgram(program);
+    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+      console.warn("[gosx] Scene3D WebGL link failed");
+      return null;
+    }
+    return program;
+  }
+
+  function createSceneWebGLSurfaceProgram(gl) {
+    const vertexSource = [
+      "attribute vec3 a_position;",
+      "attribute vec2 a_uv;",
+      "uniform vec4 u_camera;",
+      "uniform vec3 u_camera_rotation;",
+      "uniform float u_aspect;",
+      "varying vec2 v_uv;",
+      "vec3 inverseRotatePoint(vec3 point, vec3 rotation) {",
+      "  float sinZ = sin(-rotation.z);",
+      "  float cosZ = cos(-rotation.z);",
+      "  float nextX = point.x * cosZ - point.y * sinZ;",
+      "  float nextY = point.x * sinZ + point.y * cosZ;",
+      "  point = vec3(nextX, nextY, point.z);",
+      "  float sinY = sin(-rotation.y);",
+      "  float cosY = cos(-rotation.y);",
+      "  nextX = point.x * cosY + point.z * sinY;",
+      "  float nextZ = -point.x * sinY + point.z * cosY;",
+      "  point = vec3(nextX, point.y, nextZ);",
+      "  float sinX = sin(-rotation.x);",
+      "  float cosX = cos(-rotation.x);",
+      "  nextY = point.y * cosX - point.z * sinX;",
+      "  nextZ = point.y * sinX + point.z * cosX;",
+      "  return vec3(point.x, nextY, nextZ);",
+      "}",
+      "void main() {",
+      "  vec3 local = inverseRotatePoint(vec3(a_position.x - u_camera.x, a_position.y - u_camera.y, a_position.z + u_camera.z), u_camera_rotation);",
+      "  float depth = local.z;",
+      "  if (depth <= 0.001) {",
+      "    gl_Position = vec4(2.0, 2.0, 0.0, 1.0);",
+      "  } else {",
+      "    float focal = 1.0 / tan(radians(u_camera.w) * 0.5);",
+      "    vec2 projected = vec2(local.x * focal / depth, local.y * focal / depth);",
+      "    projected.x /= max(u_aspect, 0.0001);",
+      "    float clipDepth = clamp(depth / 128.0, 0.0, 1.0) * 2.0 - 1.0;",
+      "    gl_Position = vec4(projected, clipDepth, 1.0);",
+      "  }",
+      "  v_uv = a_uv;",
+      "}",
+    ].join("\n");
+    const fragmentSource = [
+      "precision mediump float;",
+      "varying vec2 v_uv;",
+      "uniform sampler2D u_texture;",
+      "uniform vec4 u_tint;",
+      "uniform float u_emissive;",
+      "void main() {",
+      "  vec4 sampleColor = texture2D(u_texture, v_uv);",
+      "  vec3 rgb = sampleColor.rgb * u_tint.rgb;",
+      "  rgb *= 1.0 + max(u_emissive, 0.0) * 0.5;",
+      "  gl_FragColor = vec4(clamp(rgb, 0.0, 1.0), clamp(sampleColor.a * u_tint.a, 0.0, 1.0));",
+      "}",
+    ].join("\n");
+
+    const vertexShader = createSceneShader(gl, gl.VERTEX_SHADER, vertexSource);
+    const fragmentShader = createSceneShader(gl, gl.FRAGMENT_SHADER, fragmentSource);
+    if (!vertexShader || !fragmentShader) {
+      return null;
+    }
+
+    const program = gl.createProgram();
+    gl.attachShader(program, vertexShader);
+    gl.attachShader(program, fragmentShader);
+    gl.linkProgram(program);
+    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+      console.warn("[gosx] Scene3D WebGL surface link failed");
+      return null;
+    }
+    return program;
+  }
+
+  function createSceneShader(gl, type, source) {
+    const shader = gl.createShader(type);
+    gl.shaderSource(shader, source);
+    gl.compileShader(shader);
+    if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+      console.warn("[gosx] Scene3D WebGL shader compile failed");
+      return null;
+    }
+    return shader;
+  }
+
+  const bootstrapFeatureFactories = window.__gosx_bootstrap_features || Object.create(null);
+  const activeBootstrapFeatures = new Map();
+  let pendingFeatureLoad = Promise.resolve([]);
+
+  window.__gosx_bootstrap_features = bootstrapFeatureFactories;
+  window.__gosx_register_bootstrap_feature = function(name, factory) {
+    const featureName = String(name || "").trim();
+    if (!featureName || typeof factory !== "function") {
+      console.error("[gosx] invalid bootstrap feature registration");
+      return;
+    }
+    bootstrapFeatureFactories[featureName] = factory;
+  };
+
   function hasAttributeName(el, attr) {
     return Boolean(el && el.hasAttribute && el.hasAttribute(attr));
   }
 
-  function sceneNumber(value, fallback) {
-    const number = Number(value);
-    return Number.isFinite(number) ? number : fallback;
+  function bootstrapFeatureAPI() {
+    return {
+      window,
+      document,
+      engineFactories,
+      fetchProgram,
+      inferProgramFormat,
+      loadEngineScript,
+      engineFrame,
+      cancelEngineFrame,
+      capabilityList,
+      activateInputProviders,
+      releaseInputProviders,
+      clearChildren,
+      sceneNumber,
+      sceneBool,
+      gosxReadSharedSignal,
+      gosxNotifySharedSignal,
+      gosxSubscribeSharedSignal,
+      setSharedSignalJSON,
+      setSharedSignalValue,
+    };
   }
 
-  function disposeBootstrapOnlyPage() {
-    disposeManagedMotion();
-    disposeManagedTextLayouts();
+  function runtimeFeatureAssets() {
+    if (window.__gosx && window.__gosx.document && typeof window.__gosx.document.get === "function") {
+      const state = window.__gosx.document.get();
+      if (state && state.assets && state.assets.runtime) {
+        return state.assets.runtime;
+      }
+    }
+    return {};
   }
 
-  function bootstrapLitePage() {
-    refreshGosxEnvironmentState("bootstrap-lite");
-    refreshGosxDocumentState("bootstrap-lite");
-    mountManagedMotion(document.body || document.documentElement);
-    mountManagedTextLayouts(document.body || document.documentElement);
+  function bootstrapFeatureURL(name) {
+    const assets = runtimeFeatureAssets();
+    switch (name) {
+      case "islands":
+        return String(assets.bootstrapFeatureIslandsPath || "/gosx/bootstrap-feature-islands.js").trim();
+      case "engines":
+        return String(assets.bootstrapFeatureEnginesPath || "/gosx/bootstrap-feature-engines.js").trim();
+      case "hubs":
+        return String(assets.bootstrapFeatureHubsPath || "/gosx/bootstrap-feature-hubs.js").trim();
+      default:
+        return "";
+    }
+  }
+
+  async function ensureBootstrapFeature(name) {
+    if (activeBootstrapFeatures.has(name)) {
+      return activeBootstrapFeatures.get(name);
+    }
+
+    let factory = bootstrapFeatureFactories[name];
+    if (!factory) {
+      const jsRef = bootstrapFeatureURL(name);
+      if (!jsRef) {
+        return null;
+      }
+      await loadEngineScript(jsRef);
+      factory = bootstrapFeatureFactories[name];
+    }
+
+    if (typeof factory !== "function") {
+      console.error("[gosx] missing bootstrap feature:", name);
+      return null;
+    }
+
+    try {
+      const feature = factory(bootstrapFeatureAPI()) || {};
+      activeBootstrapFeatures.set(name, feature);
+      return feature;
+    } catch (error) {
+      console.error("[gosx] failed to initialize bootstrap feature " + name + ":", error);
+      return null;
+    }
+  }
+
+  function manifestFeatureNames(manifest) {
+    const names = [];
+    if (manifestHasEntries(manifest, "engines")) {
+      names.push("engines");
+    }
+    if (manifestHasEntries(manifest, "hubs")) {
+      names.push("hubs");
+    }
+    if (manifestHasEntries(manifest, "islands")) {
+      names.push("islands");
+    }
+    return names;
+  }
+
+  function manifestHasEntries(manifest, key) {
+    return Boolean(manifest && manifest[key] && manifest[key].length > 0);
+  }
+
+  function manifestNeedsWASMRuntime(manifest) {
+    return manifestHasEntries(manifest, "islands") || manifestNeedsSharedEngineRuntime(manifest);
+  }
+
+  function manifestNeedsSharedEngineRuntime(manifest) {
+    if (!manifestHasEntries(manifest, "engines")) {
+      return false;
+    }
+    return manifest.engines.some(function(entry) {
+      return entry && entry.runtime === "shared";
+    });
+  }
+
+  function setSharedSignalJSON(name, valueJSON) {
+    const signalName = String(name || "").trim();
+    if (!signalName) {
+      return null;
+    }
+
+    const setSharedSignal = window.__gosx_set_shared_signal;
+    if (typeof setSharedSignal === "function") {
+      try {
+        const result = setSharedSignal(signalName, valueJSON);
+        if (typeof result === "string" && result !== "") {
+          console.error("[gosx] shared signal update error (" + signalName + "):", result);
+          gosxNotifySharedSignal(signalName, valueJSON);
+        }
+        return result;
+      } catch (error) {
+        console.error("[gosx] shared signal update error (" + signalName + "):", error);
+      }
+    }
+
+    gosxNotifySharedSignal(signalName, valueJSON);
+    return null;
+  }
+
+  function setSharedSignalValue(name, value) {
+    return setSharedSignalJSON(name, JSON.stringify(value == null ? null : value));
+  }
+
+  function ensureManifestFeatures(manifest) {
+    const names = manifestFeatureNames(manifest);
+    if (names.length === 0) {
+      return Promise.resolve([]);
+    }
+    return Promise.all(names.map(function(name) {
+      return ensureBootstrapFeature(name);
+    })).then(function(features) {
+      return features.filter(Boolean);
+    });
+  }
+
+  async function runRuntimeReadyForPendingManifest() {
+    if (typeof window.__gosx_text_layout === "function" && window.__gosx_text_layout !== gosxTextLayout) {
+      adoptTextLayoutImpl(window.__gosx_text_layout);
+      window.__gosx_text_layout = gosxTextLayout;
+    }
+    if (typeof window.__gosx_text_layout_metrics === "function" && window.__gosx_text_layout_metrics !== gosxTextLayoutMetrics) {
+      adoptTextLayoutMetricsImpl(window.__gosx_text_layout_metrics);
+      window.__gosx_text_layout_metrics = gosxTextLayoutMetrics;
+    }
+    if (typeof window.__gosx_text_layout_ranges === "function" && window.__gosx_text_layout_ranges !== gosxTextLayoutRanges) {
+      adoptTextLayoutRangesImpl(window.__gosx_text_layout_ranges);
+      window.__gosx_text_layout_ranges = gosxTextLayoutRanges;
+    }
+    refreshManagedTextLayouts();
+    refreshGosxDocumentState("runtime-ready");
+    refreshGosxEnvironmentState("runtime-ready");
+    if (!pendingManifest) {
+      window.__gosx.ready = true;
+      refreshGosxDocumentState("ready");
+      return;
+    }
+
+    const manifest = pendingManifest;
+    const features = await pendingFeatureLoad;
+    await Promise.all(features.map(function(feature) {
+      if (!feature || typeof feature.runtimeReady !== "function") {
+        return null;
+      }
+      return feature.runtimeReady(manifest);
+    }));
     window.__gosx.ready = true;
     refreshGosxDocumentState("ready");
+    document.dispatchEvent(new CustomEvent("gosx:ready"));
   }
 
-  window.__gosx_bootstrap_page = bootstrapLitePage;
-  window.__gosx_dispose_page = disposeBootstrapOnlyPage;
+  window.__gosx_runtime_ready = function() {
+    runRuntimeReadyForPendingManifest().catch(function(error) {
+      console.error("[gosx] bootstrap failed:", error);
+      window.__gosx.ready = true;
+      refreshGosxDocumentState("ready");
+    });
+  };
+
+  async function disposePage() {
+    for (const feature of Array.from(activeBootstrapFeatures.values())) {
+      if (feature && typeof feature.disposePage === "function") {
+        feature.disposePage();
+      }
+    }
+    disposeManagedMotion();
+    disposeManagedTextLayouts();
+    pendingManifest = null;
+    pendingFeatureLoad = Promise.resolve([]);
+    window.__gosx.ready = false;
+  }
+
+  async function bootstrapPage() {
+    refreshGosxEnvironmentState("bootstrap-page");
+    refreshGosxDocumentState("bootstrap-page");
+    mountManagedMotion(document.body || document.documentElement);
+    mountManagedTextLayouts(document.body || document.documentElement);
+
+    const manifest = loadManifest();
+    if (!manifest) {
+      pendingManifest = null;
+      pendingFeatureLoad = Promise.resolve([]);
+      window.__gosx.ready = true;
+      refreshGosxDocumentState("ready");
+      return;
+    }
+
+    pendingManifest = manifest;
+    pendingFeatureLoad = ensureManifestFeatures(manifest);
+    window.__gosx.ready = false;
+
+    if (manifestNeedsWASMRuntime(manifest)) {
+      if (!manifest.runtime || !manifest.runtime.path) {
+        console.error("[gosx] islands and shared runtime engines require manifest.runtime.path");
+        window.__gosx_runtime_ready();
+        return;
+      }
+      if (runtimeReady()) {
+        window.__gosx_runtime_ready();
+        return;
+      }
+      await Promise.all([
+        pendingFeatureLoad,
+        loadRuntime(manifest.runtime),
+      ]);
+      return;
+    }
+
+    await pendingFeatureLoad;
+    window.__gosx_runtime_ready();
+  }
+
+  window.__gosx_bootstrap_page = bootstrapPage;
+  window.__gosx_dispose_page = disposePage;
 
   if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", bootstrapLitePage);
+    document.addEventListener("DOMContentLoaded", bootstrapPage);
   } else {
-    bootstrapLitePage();
+    bootstrapPage();
   }
 })();
-//# sourceMappingURL=bootstrap-lite.js.map
+//# sourceMappingURL=bootstrap-runtime.js.map

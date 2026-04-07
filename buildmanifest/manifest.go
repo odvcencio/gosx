@@ -16,12 +16,16 @@ type Manifest struct {
 }
 
 type RuntimeAssets struct {
-	WASM          HashedAsset `json:"wasm"`
-	WASMExec      HashedAsset `json:"wasmExec"`
-	Bootstrap     HashedAsset `json:"bootstrap"`
-	BootstrapLite HashedAsset `json:"bootstrapLite,omitempty"`
-	Patch         HashedAsset `json:"patch"`
-	VideoHLS      HashedAsset `json:"videoHLS,omitempty"`
+	WASM                    HashedAsset `json:"wasm"`
+	WASMExec                HashedAsset `json:"wasmExec"`
+	Bootstrap               HashedAsset `json:"bootstrap"`
+	BootstrapLite           HashedAsset `json:"bootstrapLite,omitempty"`
+	BootstrapRuntime        HashedAsset `json:"bootstrapRuntime,omitempty"`
+	BootstrapFeatureIslands HashedAsset `json:"bootstrapFeatureIslands,omitempty"`
+	BootstrapFeatureEngines HashedAsset `json:"bootstrapFeatureEngines,omitempty"`
+	BootstrapFeatureHubs    HashedAsset `json:"bootstrapFeatureHubs,omitempty"`
+	Patch                   HashedAsset `json:"patch"`
+	VideoHLS                HashedAsset `json:"videoHLS,omitempty"`
 }
 
 type IslandAsset struct {
@@ -43,12 +47,16 @@ type HashedAsset struct {
 }
 
 type RuntimePaths struct {
-	WASM          string
-	WASMExec      string
-	Bootstrap     string
-	BootstrapLite string
-	Patch         string
-	VideoHLS      string
+	WASM                    string
+	WASMExec                string
+	Bootstrap               string
+	BootstrapLite           string
+	BootstrapRuntime        string
+	BootstrapFeatureIslands string
+	BootstrapFeatureEngines string
+	BootstrapFeatureHubs    string
+	Patch                   string
+	VideoHLS                string
 }
 
 // Load reads a build manifest from disk.
@@ -68,12 +76,16 @@ func Load(path string) (*Manifest, error) {
 // RuntimeURLs returns the public URLs for the shared runtime assets.
 func (m *Manifest) RuntimeURLs(assetBaseURL string) RuntimePaths {
 	return RuntimePaths{
-		WASM:          AssetURL(assetBaseURL, "runtime", m.Runtime.WASM.File),
-		WASMExec:      AssetURL(assetBaseURL, "runtime", m.Runtime.WASMExec.File),
-		Bootstrap:     AssetURL(assetBaseURL, "runtime", m.Runtime.Bootstrap.File),
-		BootstrapLite: AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapLite.File),
-		Patch:         AssetURL(assetBaseURL, "runtime", m.Runtime.Patch.File),
-		VideoHLS:      AssetURL(assetBaseURL, "runtime", m.Runtime.VideoHLS.File),
+		WASM:                    AssetURL(assetBaseURL, "runtime", m.Runtime.WASM.File),
+		WASMExec:                AssetURL(assetBaseURL, "runtime", m.Runtime.WASMExec.File),
+		Bootstrap:               AssetURL(assetBaseURL, "runtime", m.Runtime.Bootstrap.File),
+		BootstrapLite:           AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapLite.File),
+		BootstrapRuntime:        AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapRuntime.File),
+		BootstrapFeatureIslands: AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapFeatureIslands.File),
+		BootstrapFeatureEngines: AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapFeatureEngines.File),
+		BootstrapFeatureHubs:    AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapFeatureHubs.File),
+		Patch:                   AssetURL(assetBaseURL, "runtime", m.Runtime.Patch.File),
+		VideoHLS:                AssetURL(assetBaseURL, "runtime", m.Runtime.VideoHLS.File),
 	}
 }
 

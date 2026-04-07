@@ -83,6 +83,10 @@ func copyExportRuntime(buildDir, outputDir string) error {
 		{src: filepath.Join(buildDir, "wasm_exec.js"), dst: filepath.Join(gosxDir, "wasm_exec.js")},
 		{src: filepath.Join(buildDir, "bootstrap.js"), dst: filepath.Join(gosxDir, "bootstrap.js")},
 		{src: filepath.Join(buildDir, "bootstrap-lite.js"), dst: filepath.Join(gosxDir, "bootstrap-lite.js")},
+		{src: filepath.Join(buildDir, "bootstrap-runtime.js"), dst: filepath.Join(gosxDir, "bootstrap-runtime.js")},
+		{src: filepath.Join(buildDir, "bootstrap-feature-islands.js"), dst: filepath.Join(gosxDir, "bootstrap-feature-islands.js")},
+		{src: filepath.Join(buildDir, "bootstrap-feature-engines.js"), dst: filepath.Join(gosxDir, "bootstrap-feature-engines.js")},
+		{src: filepath.Join(buildDir, "bootstrap-feature-hubs.js"), dst: filepath.Join(gosxDir, "bootstrap-feature-hubs.js")},
 		{src: filepath.Join(buildDir, "patch.js"), dst: filepath.Join(gosxDir, "patch.js")},
 		{src: filepath.Join(buildDir, "hls.min.js"), dst: filepath.Join(gosxDir, "hls.min.js")},
 	} {

@@ -20,18 +20,21 @@ type PageRuntime struct {
 
 // PageRuntimeSummary describes the bootstrap/runtime surface declared by a page.
 type PageRuntimeSummary struct {
-	Bootstrap     bool
-	Runtime       bool
-	BootstrapMode string
-	Manifest      bool
-	RuntimePath   string
-	WASMExecPath  string
-	PatchPath     string
-	BootstrapPath string
-	HLSPath       string
-	Islands       int
-	Engines       int
-	Hubs          int
+	Bootstrap                   bool
+	Runtime                     bool
+	BootstrapMode               string
+	Manifest                    bool
+	RuntimePath                 string
+	WASMExecPath                string
+	PatchPath                   string
+	BootstrapPath               string
+	BootstrapFeatureIslandsPath string
+	BootstrapFeatureEnginesPath string
+	BootstrapFeatureHubsPath    string
+	HLSPath                     string
+	Islands                     int
+	Engines                     int
+	Hubs                        int
 }
 
 // NewPageRuntime creates an empty runtime registry for a page response.
@@ -153,18 +156,21 @@ func (r *PageRuntime) Summary() PageRuntimeSummary {
 	}
 	summary := r.renderer.Summary()
 	return PageRuntimeSummary{
-		Bootstrap:     summary.Bootstrap,
-		Runtime:       summary.BootstrapMode == "full",
-		BootstrapMode: summary.BootstrapMode,
-		Manifest:      summary.Manifest,
-		RuntimePath:   summary.RuntimePath,
-		WASMExecPath:  summary.WASMExecPath,
-		PatchPath:     summary.PatchPath,
-		BootstrapPath: summary.BootstrapPath,
-		HLSPath:       summary.HLSPath,
-		Islands:       summary.Islands,
-		Engines:       summary.Engines,
-		Hubs:          summary.Hubs,
+		Bootstrap:                   summary.Bootstrap,
+		Runtime:                     strings.TrimSpace(summary.RuntimePath) != "",
+		BootstrapMode:               summary.BootstrapMode,
+		Manifest:                    summary.Manifest,
+		RuntimePath:                 summary.RuntimePath,
+		WASMExecPath:                summary.WASMExecPath,
+		PatchPath:                   summary.PatchPath,
+		BootstrapPath:               summary.BootstrapPath,
+		BootstrapFeatureIslandsPath: summary.BootstrapFeatureIslandsPath,
+		BootstrapFeatureEnginesPath: summary.BootstrapFeatureEnginesPath,
+		BootstrapFeatureHubsPath:    summary.BootstrapFeatureHubsPath,
+		HLSPath:                     summary.HLSPath,
+		Islands:                     summary.Islands,
+		Engines:                     summary.Engines,
+		Hubs:                        summary.Hubs,
 	}
 }
 

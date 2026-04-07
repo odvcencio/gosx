@@ -1,5 +1,26 @@
 # Changelog
 
+## v0.11.0
+
+### Selective Runtime Bootstrap
+
+GoSX now ships a real selective bootstrap path for non-scene runtime pages instead of the previous full-vs-lite split.
+
+**Selective runtime bundle**: Added `bootstrap-runtime.js` plus feature chunks for islands, engines, and hubs. Pages now load only the runtime features they declare:
+- **Lite pages** keep `bootstrap-lite.js`
+- **Islands / hubs / non-Scene3D engines** use `bootstrap-runtime.js` plus the matching feature chunk(s)
+- **Scene3D pages** keep the full `bootstrap.js`
+
+**Shared wasm runtime gating**: The page runtime now emits `runtime.wasm` and `wasm_exec.js` only when they are actually needed. Hub-only pages, managed video pages, and native JS engine pages no longer pay for the shared Go wasm bridge.
+
+**Runtime asset pipeline**: Build manifests, compat asset serving, static export, and `gosx build` / `gosx export` / `gosx dev` now understand `bootstrap-runtime.js` and the `bootstrap-feature-*` assets, so selective bootstrap works in source builds, hashed build manifests, and static-export compatibility copies.
+
+**Document/runtime contract cleanup**: Default `server.App` rendering now injects managed runtime head assets correctly before the document is finalized, and the document contract now distinguishes bootstrap from shared-runtime usage instead of treating every `full` bootstrap page as a shared wasm page.
+
+### Dependency Wiring
+
+**Published TurboQuant dependency**: Replaced the local `replace github.com/odvcencio/turboquant => ../turboquant` workflow with the published `github.com/odvcencio/turboquant v0.1.0`, so `cmd/gosx` build/export integration tests can resolve wasm runtime dependencies from clean starter apps.
+
 ## v0.10.0
 
 ### TurboQuant Vector Intelligence

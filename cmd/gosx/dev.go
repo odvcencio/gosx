@@ -165,6 +165,18 @@ func prepareDevAssets(dir string) error {
 	if err := copyFile(filepath.Join(buildDir, "bootstrap-lite.js"), filepath.Join(gosxRoot, "client", "js", "bootstrap-lite.js")); err != nil {
 		return fmt.Errorf("stage bootstrap-lite.js: %w", err)
 	}
+	if err := copyFile(filepath.Join(buildDir, "bootstrap-runtime.js"), filepath.Join(gosxRoot, "client", "js", "bootstrap-runtime.js")); err != nil {
+		return fmt.Errorf("stage bootstrap-runtime.js: %w", err)
+	}
+	if err := copyFile(filepath.Join(buildDir, "bootstrap-feature-islands.js"), filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-islands.js")); err != nil {
+		return fmt.Errorf("stage bootstrap-feature-islands.js: %w", err)
+	}
+	if err := copyFile(filepath.Join(buildDir, "bootstrap-feature-engines.js"), filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-engines.js")); err != nil {
+		return fmt.Errorf("stage bootstrap-feature-engines.js: %w", err)
+	}
+	if err := copyFile(filepath.Join(buildDir, "bootstrap-feature-hubs.js"), filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-hubs.js")); err != nil {
+		return fmt.Errorf("stage bootstrap-feature-hubs.js: %w", err)
+	}
 	if err := copyFile(filepath.Join(buildDir, "patch.js"), filepath.Join(gosxRoot, "client", "js", "patch.js")); err != nil {
 		return fmt.Errorf("stage patch.js: %w", err)
 	}
