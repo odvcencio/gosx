@@ -4,7 +4,6 @@
   const GOSX_VERSION = "0.11.0";
 
   const engineFactories = window.__gosx_engine_factories || Object.create(null);
-  const loadedEngineScripts = new Map();
   window.__gosx_engine_factories = engineFactories;
   window.__gosx_register_engine_factory = function(name, factory) {
     if (!name || typeof factory !== "function") {
@@ -4632,27 +4631,23 @@
     return "json";
   }
 
-  async function loadEngineScript(jsRef) {
-    if (!jsRef) return;
-    if (loadedEngineScripts.has(jsRef)) {
-      return loadedEngineScripts.get(jsRef);
+  const loadedScriptTags = new Map();
+
+  function loadScriptTag(src) {
+    if (!src) return Promise.resolve();
+    if (loadedScriptTags.has(src)) {
+      return loadedScriptTags.get(src);
     }
-
-    const promise = (async function() {
-      try {
-        const resp = await fetch(jsRef);
-        if (!resp.ok) {
-          throw new Error("engine script fetch failed with status " + resp.status);
-        }
-
-        const source = await resp.text();
-        (0, eval)(String(source) + "\n//# sourceURL=" + jsRef);
-      } catch (e) {
-        console.error(`[gosx] failed to load engine script ${jsRef}:`, e);
-      }
-    })();
-
-    loadedEngineScripts.set(jsRef, promise);
+    const promise = new Promise(function(resolve, reject) {
+      const script = document.createElement("script");
+      script.src = src;
+      script.onload = resolve;
+      script.onerror = function() {
+        reject(new Error("failed to load script: " + src));
+      };
+      (document.head || document.documentElement).appendChild(script);
+    });
+    loadedScriptTags.set(src, promise);
     return promise;
   }
 
@@ -8902,6 +8897,7 @@
   const SCENE_PBR_VERTEX_SOURCE = [
     "#version 300 es",
     "precision highp float;",
+    "precision highp int;",
     "",
     "in vec3 a_position;",
     "in vec3 a_normal;",
@@ -8935,6 +8931,7 @@
   const SCENE_PBR_FRAGMENT_SOURCE = [
     "#version 300 es",
     "precision highp float;",
+    "precision highp int;",
     "",
     "in vec3 v_worldPosition;",
     "in vec3 v_normal;",
@@ -9009,7 +9006,7 @@
     "uniform int u_toneMapMode;",
     "",
     "// Fog",
-    "uniform bool u_hasFog;",
+    "uniform int u_hasFog;",
     "uniform float u_fogDensity;",
     "uniform vec3 u_fogColor;",
     "",
@@ -9222,7 +9219,7 @@
     "    vec3 color = ambient + Lo + emission;",
     "",
     "    // Exponential fog.",
-    "    if (u_hasFog) {",
+    "    if (u_hasFog != 0) {",
     "        float fogDist = length(v_worldPosition - u_cameraPosition);",
     "        float fogFactor = exp(-u_fogDensity * u_fogDensity * fogDist * fogDist);",
     "        fogFactor = clamp(fogFactor, 0.0, 1.0);",
@@ -9268,6 +9265,7 @@
   const SCENE_POINTS_VERTEX_SOURCE = [
     "#version 300 es",
     "precision highp float;",
+    "precision highp int;",
     "",
     "in vec3 a_position;",
     "in float a_size;",
@@ -9284,7 +9282,7 @@
     "uniform float u_viewportHeight;",
     "",
     "// Fog",
-    "uniform bool u_hasFog;",
+    "uniform int u_hasFog;",
     "uniform float u_fogDensity;",
     "",
     "out vec3 v_color;",
@@ -9305,7 +9303,7 @@
     "    v_color = u_hasPerVertexColor ? a_color : u_defaultColor;",
     "",
     "    // Exponential fog",
-    "    if (u_hasFog) {",
+    "    if (u_hasFog != 0) {",
     "        float dist = length(viewPos.xyz);",
     "        v_fogFactor = exp(-u_fogDensity * u_fogDensity * dist * dist);",
     "        v_fogFactor = clamp(v_fogFactor, 0.0, 1.0);",
@@ -9318,13 +9316,14 @@
   const SCENE_POINTS_FRAGMENT_SOURCE = [
     "#version 300 es",
     "precision highp float;",
+    "precision highp int;",
     "",
     "in vec3 v_color;",
     "in float v_fogFactor;",
     "",
     "uniform float u_opacity;",
     "uniform vec3 u_fogColor;",
-    "uniform bool u_hasFog;",
+    "uniform int u_hasFog;",
     "",
     "out vec4 fragColor;",
     "",
@@ -9334,7 +9333,7 @@
     "    vec3 color = v_color;",
     "",
     "    // Apply fog",
-    "    if (u_hasFog) {",
+    "    if (u_hasFog != 0) {",
     "        color = mix(u_fogColor, color, v_fogFactor);",
     "    }",
     "",
@@ -17596,7 +17595,13 @@
     }
     cssWidth = Math.max(1, Math.round(cssWidth));
     cssHeight = Math.max(1, Math.round(cssHeight));
-    const maxDevicePixelRatio = Math.max(1, base.explicitMaxDevicePixelRatio > 0 ? base.explicitMaxDevicePixelRatio : defaultSceneMaxDevicePixelRatio(capability));
+    const capabilityMaxDevicePixelRatio = defaultSceneMaxDevicePixelRatio(capability);
+    const maxDevicePixelRatio = Math.max(
+      1,
+      base.explicitMaxDevicePixelRatio > 0
+        ? Math.min(base.explicitMaxDevicePixelRatio, capabilityMaxDevicePixelRatio)
+        : capabilityMaxDevicePixelRatio,
+    );
     const devicePixelRatio = sceneViewportDevicePixelRatio(props, maxDevicePixelRatio);
     return {
       cssWidth,
@@ -18437,6 +18442,53 @@
     controls.orbit = sceneOrbitStateFromCamera(camera, controls.target);
   }
 
+  function sceneScrollViewportHeight() {
+    const scrollingElement = document.scrollingElement || document.documentElement || document.body;
+    const visualViewport = window.visualViewport;
+    return Math.max(1, sceneNumber(
+      visualViewport && visualViewport.height,
+      sceneNumber(window.innerHeight, sceneNumber(scrollingElement && scrollingElement.clientHeight, 0)),
+    ));
+  }
+
+  function sceneScrollTop() {
+    const scrollingElement = document.scrollingElement || document.documentElement || document.body;
+    const visualViewport = window.visualViewport;
+    const visualViewportTop = sceneNumber(visualViewport && visualViewport.pageTop, NaN);
+    if (Number.isFinite(visualViewportTop)) {
+      return Math.max(0, visualViewportTop);
+    }
+    return Math.max(0, sceneNumber(
+      window.scrollY,
+      sceneNumber(window.pageYOffset, sceneNumber(scrollingElement && scrollingElement.scrollTop, 0)),
+    ));
+  }
+
+  function sceneScrollMax() {
+    const scrollingElement = document.scrollingElement || document.documentElement || document.body;
+    const scrollHeight = Math.max(
+      sceneNumber(scrollingElement && scrollingElement.scrollHeight, 0),
+      sceneNumber(document.documentElement && document.documentElement.scrollHeight, 0),
+      sceneNumber(document.body && document.body.scrollHeight, 0),
+    );
+    return Math.max(1, scrollHeight - sceneScrollViewportHeight());
+  }
+
+  function sceneAdvanceScrollCamera(scrollCamera) {
+    if (!scrollCamera || scrollCamera.start === scrollCamera.end) {
+      return;
+    }
+    scrollCamera._progress = Math.pow(Math.min(1, Math.max(0, sceneScrollTop() / sceneScrollMax())), 0.5);
+    var target = scrollCamera._progress || 0;
+    var current = sceneNumber(scrollCamera._smoothProgress, target);
+    if (Math.abs(target - current) < 0.0005) {
+      current = target;
+    } else {
+      current += (target - current) * 0.08;
+    }
+    scrollCamera._smoothProgress = current;
+  }
+
   function sceneCurrentControlCamera(controls, sourceCamera, scrollCamera) {
     var cam;
     if (controls && controls.mode === "orbit") {
@@ -18446,11 +18498,8 @@
       cam = sceneRenderCamera(sourceCamera);
     }
     if (scrollCamera && scrollCamera.start !== scrollCamera.end) {
-      var target = scrollCamera._progress || 0;
-      var current = scrollCamera._smoothProgress || 0;
-      current += (target - current) * 0.08;
-      scrollCamera._smoothProgress = current;
-      cam.z = scrollCamera.start + current * (scrollCamera.end - scrollCamera.start);
+      var progress = sceneNumber(scrollCamera._smoothProgress, sceneNumber(scrollCamera._progress, 0));
+      cam.z = scrollCamera.start + progress * (scrollCamera.end - scrollCamera.start);
     }
     return cam;
   }
@@ -18927,6 +18976,7 @@
         cancelFrame();
         return;
       }
+      sceneAdvanceScrollCamera(sceneState._scrollCamera);
       const timeSeconds = now / 1000;
       if (runtimeScene && ctx.runtime && typeof ctx.runtime.renderFrame === "function") {
         const runtimeBundle = ctx.runtime.renderFrame(timeSeconds, viewport.cssWidth, viewport.cssHeight);
@@ -19003,15 +19053,26 @@
     });
 
     var scrollHandler = null;
+    var visualViewportScrollHandler = null;
     if (sceneState._scrollCamera) {
       sceneState._scrollCamera._progress = 0;
       sceneState._scrollCamera._smoothProgress = 0;
       scrollHandler = function() {
-        var scrollMax = Math.max(1, document.documentElement.scrollHeight - window.innerHeight);
-        sceneState._scrollCamera._progress = Math.pow(Math.min(1, Math.max(0, window.scrollY / scrollMax)), 0.5);
+        if (!sceneWantsAnimation()) {
+          scheduleRender("scroll");
+        }
       };
       window.addEventListener("scroll", scrollHandler, { passive: true });
-      scrollHandler();
+      if (window.visualViewport && typeof window.visualViewport.addEventListener === "function") {
+        visualViewportScrollHandler = function() {
+          if (!sceneWantsAnimation()) {
+            scheduleRender("visual-viewport");
+          }
+        };
+        window.visualViewport.addEventListener("scroll", visualViewportScrollHandler, { passive: true });
+        window.visualViewport.addEventListener("resize", visualViewportScrollHandler, { passive: true });
+      }
+      sceneAdvanceScrollCamera(sceneState._scrollCamera);
     }
 
     return {
@@ -19023,6 +19084,10 @@
         disposed = true;
         if (scrollHandler) {
           window.removeEventListener("scroll", scrollHandler);
+        }
+        if (visualViewportScrollHandler && window.visualViewport && typeof window.visualViewport.removeEventListener === "function") {
+          window.visualViewport.removeEventListener("scroll", visualViewportScrollHandler);
+          window.visualViewport.removeEventListener("resize", visualViewportScrollHandler);
         }
         canvas.removeEventListener("webglcontextlost", onWebGLContextLost);
         canvas.removeEventListener("webglcontextrestored", onWebGLContextRestored);
@@ -19181,7 +19246,7 @@
   }
 
   function engineExportName(entry) {
-    return entry.jsExport || entry.component;
+    return entry.component;
   }
 
   function normalizeEngineHandle(result) {
@@ -19829,7 +19894,7 @@
     if (!path) {
       return null;
     }
-    await loadEngineScript(path);
+    await loadScriptTag(path);
     return typeof window.Hls === "function" ? window.Hls : null;
   }
 
@@ -20815,8 +20880,6 @@
       capabilities: entry.capabilities || [],
       programRef: entry.programRef || "",
       runtimeMode: entry.runtime || "",
-      jsRef: entry.jsRef || "",
-      jsExport: entry.jsExport || "",
       runtime: runtime,
       emit: function(name, detail) {
         if (typeof document.dispatchEvent === "function" && typeof CustomEvent === "function") {
@@ -20854,7 +20917,7 @@
           type: "factory",
           component: entry.component,
           source: entry.id,
-          ref: entry.jsRef || entry.component,
+          ref: entry.component,
           element: mount,
           message: `no engine factory registered for ${entry.component}`,
           fallback: "server",
@@ -20879,7 +20942,7 @@
           type: "mount",
           component: entry.component,
           source: entry.id,
-          ref: entry.jsRef || entry.programRef,
+          ref: entry.programRef || entry.component,
           element: mount,
           message: `failed to mount engine ${entry.id}`,
           error: e,
@@ -20914,12 +20977,7 @@
   }
 
   async function resolveMountedEngineFactory(entry) {
-    let factory = resolveEngineFactory(entry);
-    if (!factory && entry.jsRef && !engineKindUsesBuiltinFactory(entry.kind)) {
-      await loadEngineScript(entry.jsRef);
-      factory = resolveEngineFactory(entry);
-    }
-    return factory;
+    return resolveEngineFactory(entry);
   }
 
   async function runEngineFactory(factory, ctx) {

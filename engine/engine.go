@@ -122,13 +122,6 @@ type Config struct {
 	// WASMPath is the URL to the engine's WASM binary.
 	WASMPath string `json:"wasmPath"`
 
-	// JSPath is an optional JS entrypoint for engines that opt into the
-	// unrestricted client runtime.
-	JSPath string `json:"jsPath,omitempty"`
-
-	// JSExport is the factory name published in window.__gosx_engine_factories.
-	JSExport string `json:"jsExport,omitempty"`
-
 	// MountID is the DOM element ID for mount-bearing engines (ignored for workers).
 	MountID string `json:"mountId,omitempty"`
 
@@ -191,6 +184,20 @@ func (mb *MessageBus) Emit(event string, data any) {
 	for _, h := range mb.handlers[event] {
 		h(raw)
 	}
+}
+
+// Validate checks that the engine config is safe and well-formed.
+func (c Config) Validate() error {
+	if c.Name == "" {
+		return fmt.Errorf("engine config requires a Name")
+	}
+	if c.Kind == "" {
+		return fmt.Errorf("engine config requires a Kind")
+	}
+	if KindNeedsMount(c.Kind) && c.MountID == "" {
+		return fmt.Errorf("engine kind %q requires a MountID", c.Kind)
+	}
+	return ValidateCapabilities(c.Capabilities)
 }
 
 // ValidateCapabilities checks if the requested capabilities are supported.

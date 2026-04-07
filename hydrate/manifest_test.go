@@ -192,8 +192,6 @@ func TestManifestAddEngineWithPixelSurface(t *testing.T) {
 		"/gosx/engines/retro.wasm",
 		"retro-root",
 		"",
-		"",
-		"",
 		map[string]any{"palette": "amber"},
 		[]string{"pixel-surface", "canvas"},
 		&engine.PixelSurfaceConfig{

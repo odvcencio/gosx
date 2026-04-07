@@ -15,7 +15,6 @@
 
   // --- GoSX runtime namespace ---
   const engineFactories = window.__gosx_engine_factories || Object.create(null);
-  const loadedEngineScripts = new Map();
   window.__gosx_engine_factories = engineFactories;
   window.__gosx_register_engine_factory = function(name, factory) {
     if (!name || typeof factory !== "function") {

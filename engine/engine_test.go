@@ -10,8 +10,6 @@ func TestEngineConfig(t *testing.T) {
 		Name:         "Whiteboard",
 		Kind:         KindSurface,
 		WASMPath:     "/assets/engines/Whiteboard.abc123.wasm",
-		JSPath:       "/assets/engines/Whiteboard.js",
-		JSExport:     "Whiteboard",
 		MountID:      "canvas-root",
 		Capabilities: []Capability{CapCanvas, CapAnimation},
 	}
@@ -28,12 +26,6 @@ func TestEngineConfig(t *testing.T) {
 	}
 	if decoded.Kind != KindSurface {
 		t.Fatal("wrong kind")
-	}
-	if decoded.JSPath != "/assets/engines/Whiteboard.js" {
-		t.Fatal("wrong js path")
-	}
-	if decoded.JSExport != "Whiteboard" {
-		t.Fatal("wrong js export")
 	}
 	if len(decoded.Capabilities) != 2 {
 		t.Fatal("wrong capabilities count")
@@ -114,5 +106,37 @@ func TestValidateCapabilities(t *testing.T) {
 	err = ValidateCapabilities([]Capability{"teleport"})
 	if err == nil {
 		t.Fatal("expected error for unsupported capability")
+	}
+}
+
+func TestEngineConfig_Validate(t *testing.T) {
+	// Valid surface config passes.
+	cfg := Config{
+		Name:     "ValidEngine",
+		Kind:     KindSurface,
+		WASMPath: "/assets/engines/Valid.wasm",
+		MountID:  "root",
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("expected valid config to pass, got: %v", err)
+	}
+
+	// Surface engine without MountID fails.
+	noMount := Config{
+		Name:     "BadEngine",
+		Kind:     KindSurface,
+		WASMPath: "/assets/engines/Bad.wasm",
+	}
+	if err := noMount.Validate(); err == nil {
+		t.Fatal("expected error for missing MountID on surface engine, got nil")
+	}
+
+	// Missing Name fails.
+	noName := Config{
+		Kind:    KindWorker,
+		MountID: "",
+	}
+	if err := noName.Validate(); err == nil {
+		t.Fatal("expected error for missing Name, got nil")
 	}
 }

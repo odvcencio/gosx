@@ -27,7 +27,6 @@
       engineFactories,
       fetchProgram,
       inferProgramFormat,
-      loadEngineScript,
       engineFrame,
       cancelEngineFrame,
       capabilityList,
@@ -79,7 +78,7 @@
       if (!jsRef) {
         return null;
       }
-      await loadEngineScript(jsRef);
+      await loadScriptTag(jsRef);
       factory = bootstrapFeatureFactories[name];
     }
 

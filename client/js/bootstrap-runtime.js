@@ -4,7 +4,6 @@
   const GOSX_VERSION = "0.11.0";
 
   const engineFactories = window.__gosx_engine_factories || Object.create(null);
-  const loadedEngineScripts = new Map();
   window.__gosx_engine_factories = engineFactories;
   window.__gosx_register_engine_factory = function(name, factory) {
     if (!name || typeof factory !== "function") {
@@ -4632,27 +4631,23 @@
     return "json";
   }
 
-  async function loadEngineScript(jsRef) {
-    if (!jsRef) return;
-    if (loadedEngineScripts.has(jsRef)) {
-      return loadedEngineScripts.get(jsRef);
+  const loadedScriptTags = new Map();
+
+  function loadScriptTag(src) {
+    if (!src) return Promise.resolve();
+    if (loadedScriptTags.has(src)) {
+      return loadedScriptTags.get(src);
     }
-
-    const promise = (async function() {
-      try {
-        const resp = await fetch(jsRef);
-        if (!resp.ok) {
-          throw new Error("engine script fetch failed with status " + resp.status);
-        }
-
-        const source = await resp.text();
-        (0, eval)(String(source) + "\n//# sourceURL=" + jsRef);
-      } catch (e) {
-        console.error(`[gosx] failed to load engine script ${jsRef}:`, e);
-      }
-    })();
-
-    loadedEngineScripts.set(jsRef, promise);
+    const promise = new Promise(function(resolve, reject) {
+      const script = document.createElement("script");
+      script.src = src;
+      script.onload = resolve;
+      script.onerror = function() {
+        reject(new Error("failed to load script: " + src));
+      };
+      (document.head || document.documentElement).appendChild(script);
+    });
+    loadedScriptTags.set(src, promise);
     return promise;
   }
 
@@ -7211,7 +7206,6 @@
       engineFactories,
       fetchProgram,
       inferProgramFormat,
-      loadEngineScript,
       engineFrame,
       cancelEngineFrame,
       capabilityList,
@@ -7263,7 +7257,7 @@
       if (!jsRef) {
         return null;
       }
-      await loadEngineScript(jsRef);
+      await loadScriptTag(jsRef);
       factory = bootstrapFeatureFactories[name];
     }
 

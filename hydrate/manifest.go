@@ -47,13 +47,6 @@ type EngineEntry struct {
 	// MountID is the DOM element ID the engine should attach to.
 	MountID string `json:"mountId,omitempty"`
 
-	// JSRef is an optional client-side JS entrypoint for engines that opt into
-	// the escape-hatch runtime.
-	JSRef string `json:"jsRef,omitempty"`
-
-	// JSExport is the factory name looked up in window.__gosx_engine_factories.
-	JSExport string `json:"jsExport,omitempty"`
-
 	// Runtime selects an optional shared GoSX client runtime for this engine.
 	Runtime string `json:"runtime,omitempty"`
 
@@ -206,12 +199,12 @@ func (m *Manifest) AddIsland(component string, bundleID string, props any) (stri
 
 // AddEngine adds an engine entry and returns the assigned ID.
 func (m *Manifest) AddEngine(component, kind, programRef string, props any, capabilities []string) (string, error) {
-	return m.AddEngineWithRuntime(component, kind, programRef, "", "", "", "", props, capabilities, nil)
+	return m.AddEngineWithRuntime(component, kind, programRef, "", "", props, capabilities, nil)
 }
 
-// AddEngineWithRuntime adds an engine entry with optional DOM mount, JS runtime
-// metadata, and pixel surface configuration.
-func (m *Manifest) AddEngineWithRuntime(component, kind, programRef, mountID, jsRef, jsExport, runtime string, props any, capabilities []string, pixelSurface *engine.PixelSurfaceConfig) (string, error) {
+// AddEngineWithRuntime adds an engine entry with optional DOM mount, runtime
+// selection, and pixel surface configuration.
+func (m *Manifest) AddEngineWithRuntime(component, kind, programRef, mountID, runtime string, props any, capabilities []string, pixelSurface *engine.PixelSurfaceConfig) (string, error) {
 	propsJSON, err := json.Marshal(props)
 	if err != nil {
 		return "", err
@@ -223,8 +216,6 @@ func (m *Manifest) AddEngineWithRuntime(component, kind, programRef, mountID, js
 		Kind:         kind,
 		ProgramRef:   programRef,
 		MountID:      mountID,
-		JSRef:        jsRef,
-		JSExport:     jsExport,
 		Runtime:      runtime,
 		Props:        propsJSON,
 		Capabilities: capabilities,

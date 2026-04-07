@@ -13,7 +13,6 @@
     const engineFactories = api.engineFactories;
     const fetchProgram = api.fetchProgram;
     const inferProgramFormat = api.inferProgramFormat;
-    const loadEngineScript = api.loadEngineScript;
     const engineFrame = api.engineFrame;
     const cancelEngineFrame = api.cancelEngineFrame;
     const capabilityList = api.capabilityList;
@@ -47,7 +46,7 @@
   }
 
   function engineExportName(entry) {
-    return entry.jsExport || entry.component;
+    return entry.component;
   }
 
   function normalizeEngineHandle(result) {
@@ -695,7 +694,7 @@
     if (!path) {
       return null;
     }
-    await loadEngineScript(path);
+    await loadScriptTag(path);
     return typeof window.Hls === "function" ? window.Hls : null;
   }
 
@@ -1681,8 +1680,6 @@
       capabilities: entry.capabilities || [],
       programRef: entry.programRef || "",
       runtimeMode: entry.runtime || "",
-      jsRef: entry.jsRef || "",
-      jsExport: entry.jsExport || "",
       runtime: runtime,
       emit: function(name, detail) {
         if (typeof document.dispatchEvent === "function" && typeof CustomEvent === "function") {
@@ -1720,7 +1717,7 @@
           type: "factory",
           component: entry.component,
           source: entry.id,
-          ref: entry.jsRef || entry.component,
+          ref: entry.component,
           element: mount,
           message: `no engine factory registered for ${entry.component}`,
           fallback: "server",
@@ -1745,7 +1742,7 @@
           type: "mount",
           component: entry.component,
           source: entry.id,
-          ref: entry.jsRef || entry.programRef,
+          ref: entry.programRef || entry.component,
           element: mount,
           message: `failed to mount engine ${entry.id}`,
           error: e,
@@ -1780,12 +1777,7 @@
   }
 
   async function resolveMountedEngineFactory(entry) {
-    let factory = resolveEngineFactory(entry);
-    if (!factory && entry.jsRef && !engineKindUsesBuiltinFactory(entry.kind)) {
-      await loadEngineScript(entry.jsRef);
-      factory = resolveEngineFactory(entry);
-    }
-    return factory;
+    return resolveEngineFactory(entry);
   }
 
   async function runEngineFactory(factory, ctx) {
