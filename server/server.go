@@ -371,8 +371,9 @@ func (a *App) UseReadyCheck(name string, check ReadyCheck) {
 }
 
 // Build finalizes routes and returns an http.Handler.
-// preloadGrammarBlob loads the pre-compiled GoSX grammar blob from dist/
-// if available. This eliminates the 40s+ grammar generation on cold start.
+// preloadGrammarBlob loads an app-staged GoSX grammar blob when present.
+// The gosx library also embeds a default blob, so dist/ is now just an override
+// and deployment convenience.
 func (a *App) preloadGrammarBlob() {
 	root := a.effectiveRuntimeRoot()
 	if root == "" {

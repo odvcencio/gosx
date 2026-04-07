@@ -18,6 +18,12 @@ func TestGrammarGeneration(t *testing.T) {
 	}
 }
 
+func TestGrammarBlobExposed(t *testing.T) {
+	if got := len(GrammarBlob()); got == 0 {
+		t.Fatal("GrammarBlob() returned empty data")
+	}
+}
+
 func TestParseSimpleComponent(t *testing.T) {
 	source := []byte(`package main
 

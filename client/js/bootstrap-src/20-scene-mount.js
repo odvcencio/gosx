@@ -1,8 +1,8 @@
   function createSceneRenderer(canvas, props, capability) {
     const webglPreference = sceneCapabilityWebGLPreference(props, capability);
     if (webglPreference === "prefer" || webglPreference === "force") {
-      // Try WebGPU if adapter probe succeeded (started at bootstrap load time).
-      if (typeof sceneWebGPUAvailable === "function" && sceneWebGPUAvailable()) {
+      // forceWebGL must stay on the WebGL stack instead of probing WebGPU first.
+      if (webglPreference !== "force" && typeof sceneWebGPUAvailable === "function" && sceneWebGPUAvailable()) {
         var gpuRenderer = createSceneWebGPURendererOrFallback(canvas);
         if (gpuRenderer) {
           return {
@@ -836,6 +836,18 @@
     setAttrValue(mount, "data-gosx-scene3d-active", lifecycle.pageVisible && lifecycle.inViewport ? "true" : "false");
   }
 
+  function sceneLifecyclePinnedToViewport(mount) {
+    if (!mount || typeof window.getComputedStyle !== "function") {
+      return false;
+    }
+    try {
+      const position = String(window.getComputedStyle(mount).position || "").toLowerCase();
+      return position === "fixed";
+    } catch (_error) {
+      return false;
+    }
+  }
+
   function observeSceneLifecycle(mount, lifecycle, onChange) {
     if (!mount || !lifecycle || typeof onChange !== "function") {
       return function() {};
@@ -844,7 +856,9 @@
     let stopIntersection = null;
     let stopEnvironment = null;
 
-    if (typeof IntersectionObserver === "function") {
+    if (sceneLifecyclePinnedToViewport(mount)) {
+      lifecycle.inViewport = true;
+    } else if (typeof IntersectionObserver === "function") {
       const observer = new IntersectionObserver(function(entries) {
         for (const entry of entries || []) {
           if (!entry || entry.target !== mount) {
