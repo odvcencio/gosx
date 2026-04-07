@@ -13,7 +13,6 @@
     const engineFactories = api.engineFactories;
     const fetchProgram = api.fetchProgram;
     const inferProgramFormat = api.inferProgramFormat;
-    const loadEngineScript = api.loadEngineScript;
     const engineFrame = api.engineFrame;
     const cancelEngineFrame = api.cancelEngineFrame;
     const capabilityList = api.capabilityList;

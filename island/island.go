@@ -481,8 +481,6 @@ func (r *Renderer) RenderEngine(cfg engine.Config, fallback gosx.Node) gosx.Node
 		string(cfg.Kind),
 		cfg.WASMPath,
 		mountID,
-		cfg.JSPath,
-		cfg.JSExport,
 		string(cfg.Runtime),
 		props,
 		engineCapabilities(cfg.Capabilities),
@@ -798,10 +796,6 @@ func (r *Renderer) PreloadHints() gosx.Node {
 			} else {
 				b.WriteString(fmt.Sprintf(`<link rel="prefetch" href="%s">`, entry.ProgramRef))
 			}
-			b.WriteByte('\n')
-		}
-		if entry.JSRef != "" {
-			b.WriteString(fmt.Sprintf(`<link rel="prefetch" href="%s" as="script">`, entry.JSRef))
 			b.WriteByte('\n')
 		}
 	}

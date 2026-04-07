@@ -578,10 +578,9 @@ func TestAppInjectsRuntimeHeadForEnginePages(t *testing.T) {
 	app := New()
 	app.Page("GET /", func(ctx *Context) gosx.Node {
 		return ctx.Engine(engine.Config{
-			Name:     "GoSXScene3D",
-			Kind:     engine.KindSurface,
-			JSExport: "GoSXScene3D",
-			Props:    json.RawMessage(`{"width":640,"height":360}`),
+			Name:  "GoSXScene3D",
+			Kind:  engine.KindSurface,
+			Props: json.RawMessage(`{"width":640,"height":360}`),
 		}, gosx.El("p", gosx.Text("Loading scene")))
 	})
 

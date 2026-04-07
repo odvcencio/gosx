@@ -170,8 +170,6 @@ func TestRenderEngineRegistersManifestEntryAndMount(t *testing.T) {
 		Name:         "Whiteboard",
 		Kind:         engine.KindSurface,
 		WASMPath:     "/gosx/engines/Whiteboard.wasm",
-		JSPath:       "/gosx/engines/Whiteboard.js",
-		JSExport:     "WhiteboardEngine",
 		Capabilities: []engine.Capability{engine.CapCanvas, engine.CapAnimation},
 		Props:        props,
 	}, gosx.Text("loading"))
@@ -197,12 +195,6 @@ func TestRenderEngineRegistersManifestEntryAndMount(t *testing.T) {
 	}
 	if entry.MountID == "" {
 		t.Fatal("expected mount id")
-	}
-	if entry.JSRef != "/gosx/engines/Whiteboard.js" {
-		t.Fatalf("unexpected js ref: %s", entry.JSRef)
-	}
-	if entry.JSExport != "WhiteboardEngine" {
-		t.Fatalf("unexpected js export: %s", entry.JSExport)
 	}
 	if string(entry.Props) != `{"room":"abc","stroke":2}` {
 		t.Fatalf("unexpected props: %s", entry.Props)

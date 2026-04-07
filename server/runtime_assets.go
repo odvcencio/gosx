@@ -27,22 +27,12 @@ const bootstrapStub = `// Minimal bootstrap stub — gosx build not yet run
         var m = JSON.parse(s.textContent);
         if (m && m.engines) {
           m.engines.forEach(function(e) {
-            if (e.jsRef) {
-              var tag = document.createElement('script');
-              tag.src = e.jsRef;
-              document.head.appendChild(tag);
+            var mount = document.getElementById(e.mountId);
+            var factory = window.__gosx_engine_factories[e.component];
+            if (mount && factory && mount.children.length === 0) {
+              factory({ mount: mount, id: e.id, kind: e.kind, component: e.component, props: e.props || {}, capabilities: e.capabilities || [], programRef: e.programRef || '', runtime: null, emit: function(){} });
             }
           });
-          // Wait for engine scripts to load, then mount
-          setTimeout(function() {
-            m.engines.forEach(function(e) {
-              var mount = document.getElementById(e.mountId);
-              var factory = window.__gosx_engine_factories[e.jsExport || e.component];
-              if (mount && factory && mount.children.length === 0) {
-                factory({ mount: mount, id: e.id, kind: e.kind, component: e.component, props: e.props || {}, capabilities: e.capabilities || [], programRef: e.programRef || '', jsRef: e.jsRef || '', jsExport: e.jsExport || '', runtime: null, emit: function(){} });
-              }
-            });
-          }, 500);
         }
       } catch(ex) {}
     });

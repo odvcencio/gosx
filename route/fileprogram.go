@@ -584,8 +584,6 @@ func (r *fileProgramRenderer) renderStylesheet(node *ir.Node, env fileRenderEnv)
 
 type fileEngineDefaults struct {
 	Name         string
-	JSExport     string
-	JSPath       string
 	WASMPath     string
 	Capabilities []engine.Capability
 	Runtime      engine.Runtime
@@ -594,8 +592,6 @@ type fileEngineDefaults struct {
 
 type fileEngineTransport struct {
 	Name         any
-	JSExport     any
-	JSPath       any
 	WASMPath     any
 	MountID      any
 	Capabilities any
@@ -612,8 +608,7 @@ func (r *fileProgramRenderer) renderWorker(node *ir.Node, env fileRenderEnv) str
 
 func (r *fileProgramRenderer) renderScene3D(node *ir.Node, env fileRenderEnv) string {
 	return r.renderEngineComponent(node, env, engine.KindSurface, fileEngineDefaults{
-		Name:     "GoSXScene3D",
-		JSExport: "GoSXScene3D",
+		Name: "GoSXScene3D",
 		Capabilities: []engine.Capability{
 			engine.CapCanvas,
 			engine.CapWebGL,
@@ -636,7 +631,7 @@ func (r *fileProgramRenderer) renderEngineComponent(node *ir.Node, env fileRende
 func (r *fileProgramRenderer) engineComponentConfig(node *ir.Node, env fileRenderEnv, kind engine.Kind, defaults fileEngineDefaults) (engine.Config, gosx.Node) {
 	props, mountAttrs := engineComponentProps(node.Attrs, env, kind == engine.KindSurface)
 	props, transport := splitEngineTransportProps(props)
-	name, jsExport := engineComponentIdentity(node.Attrs, env, defaults, transport)
+	name := engineComponentIdentity(node.Attrs, env, defaults, transport)
 	mountID := firstNonEmptyString(
 		stringValue(attrValue(node.Attrs, env, "mountId", "id")),
 		stringValue(transport.MountID),
@@ -645,7 +640,7 @@ func (r *fileProgramRenderer) engineComponentConfig(node *ir.Node, env fileRende
 		mountAttrs = withDefaultMountAttrs(mountAttrs, defaults.MountAttrs)
 	}
 
-	cfg := engineComponentConfigValue(node.Attrs, env, kind, defaults, transport, name, jsExport, mountID, props, mountAttrs)
+	cfg := engineComponentConfigValue(node.Attrs, env, kind, defaults, transport, name, mountID, props, mountAttrs)
 	if cfg.Runtime == engine.RuntimeNone && kind == engine.KindSurface && cfg.Name == "GoSXScene3D" && cfg.WASMPath != "" {
 		cfg.Runtime = engine.RuntimeShared
 	}
@@ -660,22 +655,12 @@ func (r *fileProgramRenderer) engineComponentConfig(node *ir.Node, env fileRende
 	return cfg, fallback
 }
 
-func engineComponentIdentity(attrs []ir.Attr, env fileRenderEnv, defaults fileEngineDefaults, transport fileEngineTransport) (string, string) {
-	name := firstNonEmptyString(
+func engineComponentIdentity(attrs []ir.Attr, env fileRenderEnv, defaults fileEngineDefaults, transport fileEngineTransport) string {
+	return firstNonEmptyString(
 		stringValue(attrValue(attrs, env, "name", "component")),
 		stringValue(transport.Name),
 		defaults.Name,
 	)
-	jsExport := firstNonEmptyString(
-		stringValue(attrValue(attrs, env, "jsExport", "export", "factory")),
-		stringValue(transport.JSExport),
-		defaults.JSExport,
-		name,
-	)
-	if name == "" {
-		name = jsExport
-	}
-	return name, jsExport
 }
 
 func withDefaultMountAttrs(mountAttrs map[string]any, defaults map[string]any) map[string]any {
@@ -694,13 +679,11 @@ func withDefaultMountAttrs(mountAttrs map[string]any, defaults map[string]any) m
 	return mountAttrs
 }
 
-func engineComponentConfigValue(attrs []ir.Attr, env fileRenderEnv, kind engine.Kind, defaults fileEngineDefaults, transport fileEngineTransport, name, jsExport, mountID string, props, mountAttrs map[string]any) engine.Config {
+func engineComponentConfigValue(attrs []ir.Attr, env fileRenderEnv, kind engine.Kind, defaults fileEngineDefaults, transport fileEngineTransport, name, mountID string, props, mountAttrs map[string]any) engine.Config {
 	return engine.Config{
 		Name:         name,
 		Kind:         kind,
 		WASMPath:     firstNonEmptyString(stringValue(attrValue(attrs, env, "wasmPath", "wasm", "programRef", "program")), stringValue(transport.WASMPath), defaults.WASMPath),
-		JSPath:       firstNonEmptyString(stringValue(attrValue(attrs, env, "jsPath", "js", "script")), stringValue(transport.JSPath), defaults.JSPath),
-		JSExport:     jsExport,
 		MountID:      mountID,
 		MountAttrs:   mountAttrs,
 		Props:        marshalEngineProps(props),
@@ -717,8 +700,6 @@ func splitEngineTransportProps(props map[string]any) (map[string]any, fileEngine
 	clean := cloneSpreadProps(props)
 	transport := fileEngineTransport{
 		Name:         extractEngineTransportValue(clean, "name", "component"),
-		JSExport:     extractEngineTransportValue(clean, "jsExport", "export", "factory"),
-		JSPath:       extractEngineTransportValue(clean, "jsPath", "js", "script"),
 		WASMPath:     extractEngineTransportValue(clean, "wasmPath", "wasm", "programRef", "program"),
 		MountID:      extractEngineTransportValue(clean, "mountId", "id"),
 		Capabilities: extractEngineTransportValue(clean, "capabilities"),
@@ -1500,7 +1481,7 @@ func sortedStringAnyMap(values map[string]any) []fileStringAnyEntry {
 
 func isEngineReservedAttr(name string) bool {
 	switch strings.TrimSpace(name) {
-	case "name", "component", "kind", "wasmPath", "wasm", "programRef", "program", "jsPath", "js", "script", "jsExport", "export", "factory", "mountId", "capabilities", "runtime", "props", "id":
+	case "name", "component", "kind", "wasmPath", "wasm", "programRef", "program", "mountId", "capabilities", "runtime", "props", "id":
 		return true
 	default:
 		return false

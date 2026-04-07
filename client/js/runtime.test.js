@@ -453,6 +453,19 @@ class FakeElement {
       this.ownerDocument.indexNode(node);
     }
 
+    if (
+      node.nodeType === ELEMENT_NODE &&
+      node.tagName === "SCRIPT" &&
+      (this.tagName === "HEAD" || this.tagName === "HTML") &&
+      this.ownerDocument &&
+      typeof this.ownerDocument.scriptLoader === "function"
+    ) {
+      const src = node.src || node.getAttribute("src");
+      if (src) {
+        this.ownerDocument.scriptLoader(src, node);
+      }
+    }
+
     return node;
   }
 
@@ -708,6 +721,8 @@ class FakeDocument {
     this.title = "";
     this.disableCanvas2D = false;
     this.createWebGLContext = null;
+    // Set by createContext to simulate <script src> loading from fetchRoutes.
+    this.scriptLoader = null;
   }
 
   createElement(tagName) {
@@ -1336,6 +1351,33 @@ function createContext(options) {
   context.__engineMounts = engineMounts;
   context.__engineDisposals = engineDisposals;
   vm.createContext(context);
+
+  document.scriptLoader = function(src, scriptElement) {
+    fetchCalls.push({ url: src, init: {} });
+    if (!routes.has(src)) {
+      setTimeout(() => {
+        if (typeof scriptElement.onerror === "function") {
+          scriptElement.onerror(new Error("script not found: " + src));
+        }
+      }, 0);
+      return;
+    }
+    const route = routes.get(src);
+    const source = route.text || "";
+    setTimeout(() => {
+      try {
+        vm.runInContext(source, context, { filename: src });
+      } catch (e) {
+        if (typeof scriptElement.onerror === "function") {
+          scriptElement.onerror(e);
+          return;
+        }
+      }
+      if (typeof scriptElement.onload === "function") {
+        scriptElement.onload({});
+      }
+    }, 0);
+  };
 
   if (options.manifest) {
     const manifestScript = document.createElement("script");
@@ -5984,26 +6026,12 @@ test("bootstrap defers offscreen shared-runtime Scene3D rerenders until the moun
   assert.deepEqual(last.slice(2, 4), [320, 180]);
 });
 
-test("bootstrap loads explicit JS escape-hatch engines only when configured", async () => {
+test("bootstrap does not load engine JS via jsRef (eval escape-hatch removed)", async () => {
   const mount = new FakeElement("div", null);
   mount.id = "escape-root";
 
   const env = createContext({
     elements: [mount],
-    fetchRoutes: {
-      "/engines/special.js": {
-        text: `
-          window.__gosx_register_engine_factory("SpecialEngine", function(ctx) {
-            window.__engineMounts.push({ id: ctx.id, mountID: ctx.mount.id, props: ctx.props });
-            return {
-              dispose: function() {
-                window.__engineDisposals.push(ctx.id);
-              }
-            };
-          });
-        `,
-      },
-    },
     manifest: {
       engines: [
         {
@@ -6011,8 +6039,6 @@ test("bootstrap loads explicit JS escape-hatch engines only when configured", as
           component: "SpecialCanvas",
           kind: "surface",
           mountId: "escape-root",
-          jsRef: "/engines/special.js",
-          jsExport: "SpecialEngine",
           props: { mode: "escape" },
         },
       ],
@@ -6023,18 +6049,9 @@ test("bootstrap loads explicit JS escape-hatch engines only when configured", as
   await flushAsyncWork();
 
   assert.equal(env.context.__gosx.ready, true);
-  assert.equal(env.context.__gosx.engines.size, 1);
-  assert.deepEqual(JSON.parse(JSON.stringify(env.engineMounts)), [
-    {
-      id: "gosx-engine-1",
-      mountID: "escape-root",
-      props: { mode: "escape" },
-    },
-  ]);
-
-  env.context.__gosx_dispose_engine("gosx-engine-1");
-  assert.deepEqual(env.engineDisposals, ["gosx-engine-1"]);
-  assert.equal(env.consoleLogs.error.length, 0);
+  // Engine does not mount because no factory is registered for "SpecialCanvas".
+  assert.equal(env.context.__gosx.engines.size, 0);
+  assert.deepEqual(env.engineMounts, []);
 });
 
 test("bootstrap connects hubs and forwards events into shared signals", async () => {
