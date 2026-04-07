@@ -22,8 +22,6 @@
 
   function bootstrapFeatureAPI() {
     return {
-      window,
-      document,
       engineFactories,
       fetchProgram,
       inferProgramFormat,

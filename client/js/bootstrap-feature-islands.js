@@ -8,8 +8,6 @@
   }
 
   registerFeature("islands", function(api) {
-    const window = api.window;
-    const document = api.document;
     const fetchProgram = api.fetchProgram;
     const inferProgramFormat = api.inferProgramFormat;
 

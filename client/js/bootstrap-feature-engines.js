@@ -8,8 +8,6 @@
   }
 
   registerFeature("engines", function(api) {
-    const window = api.window;
-    const document = api.document;
     const engineFactories = api.engineFactories;
     const fetchProgram = api.fetchProgram;
     const inferProgramFormat = api.inferProgramFormat;
