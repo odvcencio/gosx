@@ -109,6 +109,17 @@ func RunBuild(dir string, dev bool) error {
 	fmt.Printf("GoSX build (%s)\n", mode)
 	fmt.Println("─────────────────────────────────")
 
+	// ── Pre-compile grammar blob for instant cold starts ────────────────
+	g := gosx.GosxGrammar()
+	_, grammarBlob, err := gosx.GenerateLanguageAndBlob(g)
+	if err != nil {
+		return fmt.Errorf("generate grammar blob: %w", err)
+	}
+	if err := os.WriteFile(filepath.Join(distDir, "gosx-grammar.blob"), grammarBlob, 0644); err != nil {
+		return fmt.Errorf("write grammar blob: %w", err)
+	}
+	fmt.Printf("  Grammar: gosx-grammar.blob (%d bytes)\n", len(grammarBlob))
+
 	// ── Tier 1: Compile .gsx files ──────────────────────────────────────
 
 	var gsxFiles []string
