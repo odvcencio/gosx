@@ -8,8 +8,6 @@
   }
 
   registerFeature("hubs", function(api) {
-    const window = api.window;
-    const document = api.document;
     const setSharedSignalJSON = api.setSharedSignalJSON;
     const gosxNotifySharedSignal = api.gosxNotifySharedSignal;
 

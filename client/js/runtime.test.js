@@ -7634,3 +7634,115 @@ test("selective runtime connects hubs without loading the shared wasm runtime", 
   assert.equal(sockets.length, 1);
   assert.equal(String(sockets[0].url).includes("/gosx/hub/presence"), true);
 });
+
+test("engine factory context does not receive window or document", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scope-test-root";
+
+  const capturedCtx = {};
+
+  const env = createContext({
+    elements: [mount],
+    engineFactories: {
+      ScopeTest(ctx) {
+        capturedCtx.hasWindow = "window" in ctx;
+        capturedCtx.hasDocument = "document" in ctx;
+        capturedCtx.windowValue = ctx.window;
+        capturedCtx.documentValue = ctx.document;
+        return { dispose() {} };
+      },
+    },
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-scope",
+          component: "ScopeTest",
+          kind: "surface",
+          mountId: "scope-test-root",
+          capabilities: ["canvas"],
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  assert.equal(env.context.__gosx.engines.size, 1);
+  assert.equal(capturedCtx.hasWindow, false, "ctx must not expose window");
+  assert.equal(capturedCtx.hasDocument, false, "ctx must not expose document");
+  assert.equal(capturedCtx.windowValue, undefined, "ctx.window must be undefined");
+  assert.equal(capturedCtx.documentValue, undefined, "ctx.document must be undefined");
+});
+
+test("engine factory context does not receive activateInputProviders", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "input-scope-root";
+
+  const capturedCtx = {};
+
+  const env = createContext({
+    elements: [mount],
+    engineFactories: {
+      InputScopeTest(ctx) {
+        capturedCtx.hasActivateInputProviders = "activateInputProviders" in ctx;
+        capturedCtx.hasReleaseInputProviders = "releaseInputProviders" in ctx;
+        return { dispose() {} };
+      },
+    },
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-input-scope",
+          component: "InputScopeTest",
+          kind: "surface",
+          mountId: "input-scope-root",
+          capabilities: [],
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  assert.equal(env.context.__gosx.engines.size, 1);
+  assert.equal(capturedCtx.hasActivateInputProviders, false, "ctx must not expose activateInputProviders");
+  assert.equal(capturedCtx.hasReleaseInputProviders, false, "ctx must not expose releaseInputProviders");
+});
+
+test("engine factory context does not receive activateInputProviders even with input capabilities", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "input-cap-root";
+
+  const capturedCtx = {};
+
+  const env = createContext({
+    elements: [mount],
+    engineFactories: {
+      InputCapTest(ctx) {
+        capturedCtx.hasActivateInputProviders = "activateInputProviders" in ctx;
+        capturedCtx.capabilities = ctx.capabilities.slice();
+        return { dispose() {} };
+      },
+    },
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-input-cap",
+          component: "InputCapTest",
+          kind: "surface",
+          mountId: "input-cap-root",
+          capabilities: ["keyboard", "pointer", "gamepad"],
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  assert.equal(env.context.__gosx.engines.size, 1);
+  assert.deepEqual(capturedCtx.capabilities, ["keyboard", "pointer", "gamepad"]);
+  assert.equal(capturedCtx.hasActivateInputProviders, false, "ctx must not expose activateInputProviders even with input capabilities");
+});
