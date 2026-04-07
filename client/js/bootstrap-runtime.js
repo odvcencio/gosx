@@ -13,6 +13,13 @@
     engineFactories[name] = factory;
   };
 
+  document.addEventListener("DOMContentLoaded", function() {
+    window.__gosx_register_engine_factory = function(name) {
+      console.error("[gosx] engine factory registration is closed after init:", name);
+    };
+    Object.freeze(engineFactories);
+  });
+
   window.__gosx = {
     version: GOSX_VERSION,
     islands: new Map(),   // islandID -> { component, listeners, root }

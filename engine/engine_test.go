@@ -109,6 +109,25 @@ func TestValidateCapabilities(t *testing.T) {
 	}
 }
 
+func TestRegisterFactory(t *testing.T) {
+	ClearFactories()
+	RegisterFactory("test-surface", func() any { return nil })
+	if !HasFactory("test-surface") {
+		t.Fatal("factory not registered")
+	}
+}
+
+func TestRegisterFactory_RejectsDuplicate(t *testing.T) {
+	ClearFactories()
+	RegisterFactory("dup", func() any { return nil })
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("expected panic on duplicate registration")
+		}
+	}()
+	RegisterFactory("dup", func() any { return nil })
+}
+
 func TestEngineConfig_Validate(t *testing.T) {
 	// Valid surface config passes.
 	cfg := Config{
