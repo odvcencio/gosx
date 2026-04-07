@@ -4679,7 +4679,12 @@
     if (!payload) return;
 
     const setInputBatch = window.__gosx_set_input_batch;
-    if (typeof setInputBatch !== "function") return;
+    if (typeof setInputBatch !== "function") {
+      for (const name of Object.keys(payload)) {
+        gosxNotifySharedSignal(name, JSON.stringify(payload[name]));
+      }
+      return;
+    }
 
     try {
       const result = setInputBatch(JSON.stringify(payload));
@@ -9242,13 +9247,13 @@
     "uniform mat4 u_modelMatrix;",
     "uniform float u_defaultSize;",
     "uniform vec3 u_defaultColor;",
-    "uniform bool u_hasPerVertexColor;",
-    "uniform bool u_hasPerVertexSize;",
-    "uniform bool u_sizeAttenuation;",
+    "uniform int u_hasPerVertexColor;",
+    "uniform int u_hasPerVertexSize;",
+    "uniform int u_sizeAttenuation;",
     "uniform float u_viewportHeight;",
     "",
     "// Fog",
-    "uniform bool u_hasFog;",
+    "uniform int u_hasFog;",
     "uniform float u_fogDensity;",
     "",
     "out vec3 v_color;",
@@ -9259,17 +9264,17 @@
     "    vec4 viewPos = u_viewMatrix * worldPos;",
     "    gl_Position = u_projectionMatrix * viewPos;",
     "",
-    "    float size = u_hasPerVertexSize ? a_size : u_defaultSize;",
-    "    if (u_sizeAttenuation) {",
+    "    float size = (u_hasPerVertexSize != 0) ? a_size : u_defaultSize;",
+    "    if (u_sizeAttenuation != 0) {",
     "        gl_PointSize = max(size * (u_viewportHeight * 0.5) / max(-viewPos.z, 0.001), 1.0);",
     "    } else {",
     "        gl_PointSize = max(size, 1.0);",
     "    }",
     "",
-    "    v_color = u_hasPerVertexColor ? a_color : u_defaultColor;",
+    "    v_color = (u_hasPerVertexColor != 0) ? a_color : u_defaultColor;",
     "",
     "    // Exponential fog",
-    "    if (u_hasFog) {",
+    "    if (u_hasFog != 0) {",
     "        float dist = length(viewPos.xyz);",
     "        v_fogFactor = exp(-u_fogDensity * u_fogDensity * dist * dist);",
     "        v_fogFactor = clamp(v_fogFactor, 0.0, 1.0);",
@@ -9288,17 +9293,20 @@
     "",
     "uniform float u_opacity;",
     "uniform vec3 u_fogColor;",
-    "uniform bool u_hasFog;",
+    "uniform int u_hasFog;",
     "",
     "out vec4 fragColor;",
     "",
     "void main() {",
-    "    // Filled square point — matches three.js PointsMaterial (no circular cutoff).",
-    "    float alpha = 1.0;",
+    "    // Soft circular point with alpha falloff",
+    "    vec2 coord = gl_PointCoord - vec2(0.5);",
+    "    float dist = length(coord);",
+    "    if (dist > 0.5) discard;",
+    "    float alpha = 1.0 - smoothstep(0.3, 0.5, dist);",
     "    vec3 color = v_color;",
     "",
     "    // Apply fog",
-    "    if (u_hasFog) {",
+    "    if (u_hasFog != 0) {",
     "        color = mix(u_fogColor, color, v_fogFactor);",
     "    }",
     "",
@@ -20962,24 +20970,28 @@
 
   function applyHubBindings(entry, message) {
     if (!entry.bindings || entry.bindings.length === 0) return;
-    const setSharedSignal = window.__gosx_set_shared_signal;
-    if (typeof setSharedSignal !== "function") return;
-
     for (const binding of entry.bindings) {
-      applyHubBinding(entry, binding, message, setSharedSignal);
+      applyHubBinding(entry, binding, message);
     }
   }
 
-  function applyHubBinding(entry, binding, message, setSharedSignal) {
+  function applyHubBinding(entry, binding, message) {
     if (!binding || binding.event !== message.event || !binding.signal) return;
+    const payload = JSON.stringify(message.data);
+    const setSharedSignal = window.__gosx_set_shared_signal;
     try {
-      const result = setSharedSignal(binding.signal, JSON.stringify(message.data));
-      if (typeof result === "string" && result !== "") {
-        console.error(`[gosx] hub binding error (${entry.id}/${binding.signal}):`, result);
+      if (typeof setSharedSignal === "function") {
+        const result = setSharedSignal(binding.signal, payload);
+        if (typeof result === "string" && result !== "") {
+          console.error(`[gosx] hub binding error (${entry.id}/${binding.signal}):`, result);
+          gosxNotifySharedSignal(binding.signal, payload);
+        }
+        return;
       }
     } catch (e) {
       console.error(`[gosx] hub binding error (${entry.id}/${binding.signal}):`, e);
     }
+    gosxNotifySharedSignal(binding.signal, payload);
   }
 
   function connectHub(entry) {
