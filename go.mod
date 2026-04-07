@@ -10,7 +10,7 @@ require (
 	golang.org/x/net v0.52.0
 )
 
-require github.com/odvcencio/turboquant v0.0.0
+require github.com/odvcencio/turboquant v0.1.0
 
 require gopkg.in/yaml.v3 v3.0.1
 
