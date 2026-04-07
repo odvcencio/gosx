@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net"
 	"net/http"
 	"net/url"
@@ -370,7 +371,27 @@ func (a *App) UseReadyCheck(name string, check ReadyCheck) {
 }
 
 // Build finalizes routes and returns an http.Handler.
+// preloadGrammarBlob loads the pre-compiled GoSX grammar blob from dist/
+// if available. This eliminates the 40s+ grammar generation on cold start.
+func (a *App) preloadGrammarBlob() {
+	root := a.effectiveRuntimeRoot()
+	if root == "" {
+		return
+	}
+	blobPath := filepath.Join(root, "gosx-grammar.blob")
+	data, err := os.ReadFile(blobPath)
+	if err != nil {
+		return // no blob — will generate at runtime (slow but works)
+	}
+	if err := gosx.SetGrammarBlob(data); err != nil {
+		log.Printf("[gosx] failed to load grammar blob: %v", err)
+		return
+	}
+	log.Printf("[gosx] grammar blob loaded (%d bytes) — fast .gsx compilation enabled", len(data))
+}
+
 func (a *App) Build() http.Handler {
+	a.preloadGrammarBlob()
 	mux := http.NewServeMux()
 	redirectMux := http.NewServeMux()
 	rewriteMux := http.NewServeMux()
