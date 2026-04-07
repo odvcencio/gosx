@@ -47,6 +47,7 @@ const (
 	CapGamepad      Capability = "gamepad"
 	CapKeyboard     Capability = "keyboard"
 	CapPointer      Capability = "pointer"
+	CapTextInput    Capability = "text-input"
 )
 
 // KindNeedsMount reports whether an engine kind attaches to a DOM mount.
@@ -240,7 +241,7 @@ func ValidateCapabilities(requested []Capability) error {
 	supported := map[Capability]bool{
 		CapVideo: true, CapCanvas: true, CapWebGL: true, CapWebGPU: true, CapPixelSurface: true,
 		CapAnimation: true, CapStorage: true, CapFetch: true, CapAudio: true,
-		CapWorker: true, CapGamepad: true, CapKeyboard: true, CapPointer: true,
+		CapWorker: true, CapGamepad: true, CapKeyboard: true, CapPointer: true, CapTextInput: true,
 	}
 	for _, cap := range requested {
 		if !supported[cap] {

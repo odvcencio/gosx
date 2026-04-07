@@ -95,6 +95,13 @@ func TestMessageBusMultipleHandlers(t *testing.T) {
 	}
 }
 
+func TestValidateCapabilities_TextInput(t *testing.T) {
+	err := ValidateCapabilities([]Capability{CapTextInput})
+	if err != nil {
+		t.Fatalf("CapTextInput should be valid, got: %v", err)
+	}
+}
+
 func TestValidateCapabilities(t *testing.T) {
 	// Valid
 	err := ValidateCapabilities([]Capability{CapVideo, CapCanvas, CapWebGL, CapWebGPU, CapPixelSurface, CapPointer, CapKeyboard, CapGamepad})
