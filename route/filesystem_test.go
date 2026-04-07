@@ -699,15 +699,20 @@ func Page() Node {
 	head := gosx.RenderHTML(ctx.Runtime().Head())
 	for _, snippet := range []string{
 		`gosx-manifest`,
-		`data-gosx-script="wasm-exec"`,
-		`bootstrap.js`,
+		`bootstrap-runtime.js`,
 	} {
 		if !strings.Contains(head, snippet) {
 			t.Fatalf("expected %q in video runtime head %q", snippet, head)
 		}
 	}
-	if strings.Contains(head, `bootstrap-lite.js`) {
-		t.Fatalf("did not expect lite bootstrap on video runtime head %q", head)
+	for _, snippet := range []string{
+		`bootstrap-lite.js`,
+		`data-gosx-script="wasm-exec"`,
+		`/gosx/runtime.wasm`,
+	} {
+		if strings.Contains(head, snippet) {
+			t.Fatalf("did not expect %q on video runtime head %q", snippet, head)
+		}
 	}
 }
 
@@ -825,8 +830,11 @@ func Page() Node {
 	if !strings.Contains(head, `/api/runtime/scene-program`) {
 		t.Fatalf("expected programRef in runtime head %q", head)
 	}
+	if !strings.Contains(head, `/gosx/wasm_exec.js`) {
+		t.Fatalf("expected wasm_exec path in runtime head %q", head)
+	}
 	if !strings.Contains(head, `/gosx/runtime.wasm`) {
-		t.Fatalf("expected runtime wasm path in runtime head %q", head)
+		t.Fatalf("expected shared runtime wasm path in runtime head %q", head)
 	}
 	if strings.Contains(head, `"objects"`) || strings.Contains(head, `"kind":"cube"`) {
 		t.Fatalf("expected runtime Scene3D manifest without injected default objects, got %q", head)

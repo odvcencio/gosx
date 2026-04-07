@@ -230,7 +230,12 @@
     if (!payload) return;
 
     const setInputBatch = window.__gosx_set_input_batch;
-    if (typeof setInputBatch !== "function") return;
+    if (typeof setInputBatch !== "function") {
+      for (const [name, value] of Object.entries(payload)) {
+        setSharedSignalValue(name, value);
+      }
+      return;
+    }
 
     try {
       const result = setInputBatch(JSON.stringify(payload));

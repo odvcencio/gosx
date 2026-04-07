@@ -6,6 +6,10 @@ const vm = require("node:vm");
 
 const bootstrapSource = fs.readFileSync(path.join(__dirname, "bootstrap.js"), "utf8");
 const bootstrapLiteSource = fs.readFileSync(path.join(__dirname, "bootstrap-lite.js"), "utf8");
+const bootstrapRuntimeSource = fs.readFileSync(path.join(__dirname, "bootstrap-runtime.js"), "utf8");
+const bootstrapFeatureIslandsSource = fs.readFileSync(path.join(__dirname, "bootstrap-feature-islands.js"), "utf8");
+const bootstrapFeatureEnginesSource = fs.readFileSync(path.join(__dirname, "bootstrap-feature-engines.js"), "utf8");
+const bootstrapFeatureHubsSource = fs.readFileSync(path.join(__dirname, "bootstrap-feature-hubs.js"), "utf8");
 const patchSource = fs.readFileSync(path.join(__dirname, "patch.js"), "utf8");
 const navigationSource = fs.readFileSync(path.join(__dirname, "..", "..", "server", "navigation_runtime.js"), "utf8");
 
@@ -7491,4 +7495,125 @@ test("bootstrap decompresses compressedPositions for Scene3D points", async () =
   assert.equal(env.consoleLogs.error.length, 0, "expected no errors, got: " + JSON.stringify(env.consoleLogs.error));
   const engineState = env.context.__gosx.engines.get("gosx-engine-decompress");
   assert.ok(engineState, "expected engine to mount");
+});
+
+test("selective runtime loads islands feature and shared wasm only when islands are declared", async () => {
+  const wrapper = new FakeElement("div", null);
+  const componentRoot = new FakeElement("div", null);
+  wrapper.id = "gosx-island-runtime";
+  componentRoot.appendChild(new FakeTextNode("0", null));
+  wrapper.appendChild(componentRoot);
+
+  const env = createContext({
+    elements: [wrapper],
+    fetchRoutes: {
+      "/runtime.wasm": { bytes: [0, 97, 115, 109] },
+      "/counter.json": { text: '{"name":"Counter"}' },
+      "/gosx/bootstrap-feature-islands.js": { text: bootstrapFeatureIslandsSource },
+    },
+    manifest: {
+      runtime: { path: "/runtime.wasm" },
+      islands: [
+        {
+          id: "gosx-island-runtime",
+          component: "Counter",
+          props: { initial: 1 },
+          programRef: "/counter.json",
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+  await flushAsyncWork();
+
+  assert.equal(env.hydrateCalls.length, 1);
+  assert.equal(env.fetchCalls.some((entry) => entry.url === "/runtime.wasm"), true);
+  assert.equal(env.fetchCalls.some((entry) => entry.url === "/gosx/bootstrap-feature-islands.js"), true);
+  assert.equal(env.fetchCalls.some((entry) => entry.url === "/gosx/bootstrap-feature-engines.js"), false);
+  assert.equal(env.fetchCalls.some((entry) => entry.url === "/gosx/bootstrap-feature-hubs.js"), false);
+  assert.equal(env.context.__gosx.islands.size, 1);
+});
+
+test("selective runtime mounts native JS engines without loading the shared wasm runtime", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "engine-root";
+
+  const env = createContext({
+    elements: [mount],
+    engineFactories: {
+      Painter(context) {
+        context.mount.setAttribute("data-mounted", "true");
+        return {
+          dispose() {
+            context.mount.setAttribute("data-disposed", "true");
+          },
+        };
+      },
+    },
+    fetchRoutes: {
+      "/gosx/bootstrap-feature-engines.js": { text: bootstrapFeatureEnginesSource },
+    },
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-runtime",
+          component: "Painter",
+          kind: "surface",
+          mountId: "engine-root",
+          jsExport: "Painter",
+          props: { color: "#8de1ff" },
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+  await flushAsyncWork();
+
+  assert.equal(env.fetchCalls.some((entry) => entry.url === "/runtime.wasm"), false);
+  assert.equal(env.fetchCalls.some((entry) => entry.url === "/gosx/bootstrap-feature-engines.js"), true);
+  assert.equal(env.context.__gosx.engines.size, 1);
+  assert.equal(mount.getAttribute("data-mounted"), "true");
+
+  await env.context.__gosx_dispose_page();
+  assert.equal(mount.getAttribute("data-disposed"), "true");
+});
+
+test("selective runtime connects hubs without loading the shared wasm runtime", async () => {
+  const sockets = [];
+  const env = createContext({
+    createWebSocket(url) {
+      const socket = {
+        url,
+        closeCalled: false,
+        close() {
+          this.closeCalled = true;
+        },
+      };
+      sockets.push(socket);
+      return socket;
+    },
+    fetchRoutes: {
+      "/gosx/bootstrap-feature-hubs.js": { text: bootstrapFeatureHubsSource },
+    },
+    manifest: {
+      hubs: [
+        {
+          id: "gosx-hub-runtime",
+          name: "presence",
+          path: "/gosx/hub/presence",
+          bindings: [{ event: "snapshot", signal: "$presence" }],
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+  await flushAsyncWork();
+
+  assert.equal(env.fetchCalls.some((entry) => entry.url === "/runtime.wasm"), false);
+  assert.equal(env.fetchCalls.some((entry) => entry.url === "/gosx/bootstrap-feature-hubs.js"), true);
+  assert.equal(sockets.length, 1);
+  assert.equal(String(sockets[0].url).includes("/gosx/hub/presence"), true);
 });

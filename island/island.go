@@ -29,19 +29,23 @@ import (
 
 // Renderer handles island-aware rendering of GoSX component trees.
 type Renderer struct {
-	manifest          *hydrate.Manifest
-	counter           int
-	bundleID          string
-	programDir        string // directory where island programs are stored
-	programFormat     string // "json" or "bin"
-	programAssets     map[string]programAsset
-	wasmExecPath      string
-	patchPath         string
-	bootstrapPath     string
-	bootstrapLitePath string
-	videoHLSPath      string
-	runtimeAssets     buildmanifest.RuntimeAssets
-	bootstrapOnly     bool
+	manifest                    *hydrate.Manifest
+	counter                     int
+	bundleID                    string
+	programDir                  string // directory where island programs are stored
+	programFormat               string // "json" or "bin"
+	programAssets               map[string]programAsset
+	wasmExecPath                string
+	patchPath                   string
+	bootstrapPath               string
+	bootstrapLitePath           string
+	bootstrapRuntimePath        string
+	bootstrapFeatureIslandsPath string
+	bootstrapFeatureEnginesPath string
+	bootstrapFeatureHubsPath    string
+	videoHLSPath                string
+	runtimeAssets               buildmanifest.RuntimeAssets
+	bootstrapOnly               bool
 }
 
 type programAsset struct {
@@ -52,17 +56,20 @@ type programAsset struct {
 
 // Summary describes the client bootstrap/runtime surface required by a page.
 type Summary struct {
-	Bootstrap     bool
-	BootstrapMode string
-	Manifest      bool
-	RuntimePath   string
-	WASMExecPath  string
-	PatchPath     string
-	BootstrapPath string
-	HLSPath       string
-	Islands       int
-	Engines       int
-	Hubs          int
+	Bootstrap                   bool
+	BootstrapMode               string
+	Manifest                    bool
+	RuntimePath                 string
+	WASMExecPath                string
+	PatchPath                   string
+	BootstrapPath               string
+	BootstrapFeatureIslandsPath string
+	BootstrapFeatureEnginesPath string
+	BootstrapFeatureHubsPath    string
+	HLSPath                     string
+	Islands                     int
+	Engines                     int
+	Hubs                        int
 }
 
 func enhancementKindForEngine(cfg engine.Config) string {
@@ -96,6 +103,10 @@ func NewRenderer(bundleID string) *Renderer {
 	renderer.patchPath = renderer.versionCompatRuntimePath("/gosx/patch.js", strings.TrimSpace(runtimeAssets.Patch.Hash))
 	renderer.bootstrapPath = renderer.versionCompatRuntimePath("/gosx/bootstrap.js", strings.TrimSpace(runtimeAssets.Bootstrap.Hash))
 	renderer.bootstrapLitePath = renderer.versionCompatRuntimePath("/gosx/bootstrap-lite.js", strings.TrimSpace(runtimeAssets.BootstrapLite.Hash))
+	renderer.bootstrapRuntimePath = renderer.versionCompatRuntimePath("/gosx/bootstrap-runtime.js", strings.TrimSpace(runtimeAssets.BootstrapRuntime.Hash))
+	renderer.bootstrapFeatureIslandsPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-islands.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureIslands.Hash))
+	renderer.bootstrapFeatureEnginesPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-engines.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureEngines.Hash))
+	renderer.bootstrapFeatureHubsPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-hubs.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureHubs.Hash))
 	renderer.videoHLSPath = renderer.versionCompatRuntimePath("/gosx/hls.min.js", strings.TrimSpace(runtimeAssets.VideoHLS.Hash))
 	if manifest := loadDefaultBuildManifest(); manifest != nil {
 		_ = renderer.ApplyBuildManifest(manifest, "/gosx/assets")
@@ -190,6 +201,28 @@ func (r *Renderer) SetBootstrapLitePath(path string) {
 	r.bootstrapLitePath = r.versionCompatRuntimePath(path, r.compatRuntimeHash(path))
 }
 
+// SetBootstrapRuntimePath overrides the selective runtime bootstrap script URL
+// used on pages that need runtime features but not the Scene3D engine bundle.
+func (r *Renderer) SetBootstrapRuntimePath(path string) {
+	if strings.TrimSpace(path) == "" {
+		return
+	}
+	r.bootstrapRuntimePath = r.versionCompatRuntimePath(path, r.compatRuntimeHash(path))
+}
+
+// SetBootstrapFeaturePaths overrides the selective runtime feature chunk URLs.
+func (r *Renderer) SetBootstrapFeaturePaths(islandsPath, enginesPath, hubsPath string) {
+	if strings.TrimSpace(islandsPath) != "" {
+		r.bootstrapFeatureIslandsPath = r.versionCompatRuntimePath(islandsPath, r.compatRuntimeHash(islandsPath))
+	}
+	if strings.TrimSpace(enginesPath) != "" {
+		r.bootstrapFeatureEnginesPath = r.versionCompatRuntimePath(enginesPath, r.compatRuntimeHash(enginesPath))
+	}
+	if strings.TrimSpace(hubsPath) != "" {
+		r.bootstrapFeatureHubsPath = r.versionCompatRuntimePath(hubsPath, r.compatRuntimeHash(hubsPath))
+	}
+}
+
 // SetVideoHLSPath overrides the runtime HLS library URL used by the built-in
 // video engine when native HLS playback is unavailable.
 func (r *Renderer) SetVideoHLSPath(path string) {
@@ -209,6 +242,14 @@ func (r *Renderer) compatRuntimeHash(path string) string {
 		return strings.TrimSpace(r.runtimeAssets.Bootstrap.Hash)
 	case "/gosx/bootstrap-lite.js":
 		return strings.TrimSpace(r.runtimeAssets.BootstrapLite.Hash)
+	case "/gosx/bootstrap-runtime.js":
+		return strings.TrimSpace(r.runtimeAssets.BootstrapRuntime.Hash)
+	case "/gosx/bootstrap-feature-islands.js":
+		return strings.TrimSpace(r.runtimeAssets.BootstrapFeatureIslands.Hash)
+	case "/gosx/bootstrap-feature-engines.js":
+		return strings.TrimSpace(r.runtimeAssets.BootstrapFeatureEngines.Hash)
+	case "/gosx/bootstrap-feature-hubs.js":
+		return strings.TrimSpace(r.runtimeAssets.BootstrapFeatureHubs.Hash)
 	case "/gosx/patch.js":
 		return strings.TrimSpace(r.runtimeAssets.Patch.Hash)
 	case "/gosx/hls.min.js":
@@ -228,7 +269,7 @@ func (r *Renderer) versionCompatRuntimePath(path, hash string) string {
 		return path
 	}
 	switch compatRuntimePath(path) {
-	case "/gosx/runtime.wasm", "/gosx/wasm_exec.js", "/gosx/bootstrap.js", "/gosx/bootstrap-lite.js", "/gosx/patch.js", "/gosx/hls.min.js":
+	case "/gosx/runtime.wasm", "/gosx/wasm_exec.js", "/gosx/bootstrap.js", "/gosx/bootstrap-lite.js", "/gosx/bootstrap-runtime.js", "/gosx/bootstrap-feature-islands.js", "/gosx/bootstrap-feature-engines.js", "/gosx/bootstrap-feature-hubs.js", "/gosx/patch.js", "/gosx/hls.min.js":
 		query := parsed.Query()
 		if query.Get("v") == "" {
 			query.Set("v", hash)
@@ -262,6 +303,8 @@ func (r *Renderer) ApplyBuildManifest(manifest *buildmanifest.Manifest, assetBas
 	}
 	r.SetClientAssetPaths(runtime.WASMExec, runtime.Patch, runtime.Bootstrap)
 	r.SetBootstrapLitePath(runtime.BootstrapLite)
+	r.SetBootstrapRuntimePath(runtime.BootstrapRuntime)
+	r.SetBootstrapFeaturePaths(runtime.BootstrapFeatureIslands, runtime.BootstrapFeatureEngines, runtime.BootstrapFeatureHubs)
 	r.SetVideoHLSPath(runtime.VideoHLS)
 
 	for _, asset := range manifest.Islands {
@@ -340,9 +383,24 @@ func (r *Renderer) Manifest() *hydrate.Manifest {
 	return r.manifest
 }
 
+func (r *Renderer) clientManifest() *hydrate.Manifest {
+	if r == nil || r.manifest == nil {
+		return nil
+	}
+	manifest := *r.manifest
+	if !r.needsSharedRuntime() {
+		manifest.Runtime = hydrate.RuntimeRef{}
+	}
+	return &manifest
+}
+
 // ManifestJSON returns the manifest as a JSON string.
 func (r *Renderer) ManifestJSON() (string, error) {
-	data, err := r.manifest.Marshal()
+	manifest := r.clientManifest()
+	if manifest == nil {
+		return "", nil
+	}
+	data, err := manifest.Marshal()
 	if err != nil {
 		return "", err
 	}
@@ -351,7 +409,11 @@ func (r *Renderer) ManifestJSON() (string, error) {
 
 // ManifestScript returns an HTML script tag containing the manifest.
 func (r *Renderer) ManifestScript() gosx.Node {
-	data, err := r.manifest.Marshal()
+	manifest := r.clientManifest()
+	if manifest == nil {
+		return gosx.Text("")
+	}
+	data, err := manifest.Marshal()
 	if err != nil {
 		return gosx.Text("")
 	}
@@ -372,7 +434,7 @@ func (r *Renderer) BootstrapScript() gosx.Node {
 	if r.needsLiteBootstrap() {
 		mode = "lite"
 	}
-	if (len(r.manifest.Islands) > 0 || len(r.manifest.Hubs) > 0 || r.hasWASMEngines() || r.hasRuntimeBridgeEngines()) && r.wasmExecPath != "" {
+	if (len(r.manifest.Islands) > 0 || r.hasWASMEngines() || r.needsSharedRuntimeEngineBridge()) && r.wasmExecPath != "" {
 		b.WriteString(fmt.Sprintf(`<script data-gosx-script="wasm-exec" src="%s"></script>`, html.EscapeString(r.wasmExecPath)))
 		b.WriteByte('\n')
 	}
@@ -709,9 +771,9 @@ func (r *Renderer) PreloadHints() gosx.Node {
 
 	var b strings.Builder
 
-	// Preload the WASM runtime — this is the biggest asset and biggest win.
-	// "as=fetch" with crossorigin lets the browser start the download immediately.
-	if (len(r.manifest.Islands) > 0 || len(r.manifest.Hubs) > 0 || r.hasRuntimeBridgeEngines()) && r.manifest.Runtime.Path != "" {
+	// Preload the shared WASM runtime only when the page declares islands or a
+	// shared-runtime engine bridge.
+	if r.needsSharedRuntime() && r.manifest.Runtime.Path != "" {
 		b.WriteString(fmt.Sprintf(`<link rel="preload" href="%s" as="fetch" type="application/wasm" crossorigin>`, r.manifest.Runtime.Path))
 		b.WriteByte('\n')
 	}
@@ -735,6 +797,20 @@ func (r *Renderer) PreloadHints() gosx.Node {
 		}
 		if entry.JSRef != "" {
 			b.WriteString(fmt.Sprintf(`<link rel="prefetch" href="%s" as="script">`, entry.JSRef))
+			b.WriteByte('\n')
+		}
+	}
+
+	if r.usesSelectiveRuntimeBootstrap() {
+		for _, path := range []string{
+			r.selectedBootstrapFeaturePath("engines"),
+			r.selectedBootstrapFeaturePath("hubs"),
+			r.selectedBootstrapFeaturePath("islands"),
+		} {
+			if strings.TrimSpace(path) == "" {
+				continue
+			}
+			b.WriteString(fmt.Sprintf(`<link rel="preload" href="%s" as="script">`, path))
 			b.WriteByte('\n')
 		}
 	}
@@ -804,8 +880,8 @@ func (r *Renderer) Summary() Summary {
 		Bootstrap:     r.needsClientBootstrap(),
 		BootstrapMode: mode,
 		Manifest:      r.needsClientBootstrap() && !r.needsLiteBootstrap(),
-		RuntimePath:   r.manifest.Runtime.Path,
-		WASMExecPath:  r.wasmExecPath,
+		RuntimePath:   r.selectedRuntimePath(),
+		WASMExecPath:  r.selectedWASMExecPath(),
 		BootstrapPath: r.selectedBootstrapPath(),
 		Islands:       len(r.manifest.Islands),
 		Engines:       len(r.manifest.Engines),
@@ -817,9 +893,12 @@ func (r *Renderer) Summary() Summary {
 	if r.hasVideoEngines() {
 		summary.HLSPath = r.videoHLSPath
 	}
+	if r.usesSelectiveRuntimeBootstrap() {
+		summary.BootstrapFeatureIslandsPath = r.selectedBootstrapFeaturePath("islands")
+		summary.BootstrapFeatureEnginesPath = r.selectedBootstrapFeaturePath("engines")
+		summary.BootstrapFeatureHubsPath = r.selectedBootstrapFeaturePath("hubs")
+	}
 	if r.needsLiteBootstrap() {
-		summary.RuntimePath = ""
-		summary.WASMExecPath = ""
 		summary.PatchPath = ""
 		summary.HLSPath = ""
 	}
@@ -832,7 +911,62 @@ func (r *Renderer) selectedBootstrapPath() string {
 			return r.bootstrapLitePath
 		}
 	}
+	if r.usesSelectiveRuntimeBootstrap() {
+		if strings.TrimSpace(r.bootstrapRuntimePath) != "" {
+			return r.bootstrapRuntimePath
+		}
+	}
 	return r.bootstrapPath
+}
+
+func (r *Renderer) selectedBootstrapFeaturePath(name string) string {
+	if !r.usesSelectiveRuntimeBootstrap() {
+		return ""
+	}
+	switch name {
+	case "islands":
+		if len(r.manifest.Islands) == 0 {
+			return ""
+		}
+		return r.bootstrapFeatureIslandsPath
+	case "engines":
+		if len(r.manifest.Engines) == 0 {
+			return ""
+		}
+		return r.bootstrapFeatureEnginesPath
+	case "hubs":
+		if len(r.manifest.Hubs) == 0 {
+			return ""
+		}
+		return r.bootstrapFeatureHubsPath
+	default:
+		return ""
+	}
+}
+
+func (r *Renderer) selectedRuntimePath() string {
+	if r == nil || !r.needsSharedRuntime() {
+		return ""
+	}
+	return r.manifest.Runtime.Path
+}
+
+func (r *Renderer) selectedWASMExecPath() string {
+	if r == nil {
+		return ""
+	}
+	if len(r.manifest.Islands) > 0 || r.hasWASMEngines() || r.needsSharedRuntimeEngineBridge() {
+		return r.wasmExecPath
+	}
+	return ""
+}
+
+func (r *Renderer) usesSelectiveRuntimeBootstrap() bool {
+	return r != nil && r.needsClientBootstrap() && !r.needsLiteBootstrap() && !r.hasSceneEngines()
+}
+
+func (r *Renderer) needsSharedRuntime() bool {
+	return r != nil && (len(r.manifest.Islands) > 0 || r.needsSharedRuntimeEngineBridge())
 }
 
 func (r *Renderer) hasWASMEngines() bool {
@@ -853,19 +987,19 @@ func (r *Renderer) hasVideoEngines() bool {
 	return false
 }
 
-func (r *Renderer) hasRuntimeBridgeEngines() bool {
+func (r *Renderer) hasSceneEngines() bool {
 	for _, entry := range r.manifest.Engines {
-		if strings.EqualFold(strings.TrimSpace(entry.Kind), string(engine.KindVideo)) {
+		if strings.EqualFold(strings.TrimSpace(entry.Component), "GoSXScene3D") {
 			return true
 		}
+	}
+	return false
+}
+
+func (r *Renderer) needsSharedRuntimeEngineBridge() bool {
+	for _, entry := range r.manifest.Engines {
 		if strings.EqualFold(strings.TrimSpace(entry.Runtime), string(engine.RuntimeShared)) {
 			return true
-		}
-		for _, capability := range entry.Capabilities {
-			switch strings.TrimSpace(capability) {
-			case string(engine.CapKeyboard), string(engine.CapPointer), string(engine.CapGamepad):
-				return true
-			}
 		}
 	}
 	return false

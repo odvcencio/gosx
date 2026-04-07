@@ -7,48 +7,151 @@ import { fileURLToPath } from "node:url";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+function sourceFile(rel) {
+  return {
+    kind: "file",
+    file: path.join(__dirname, rel),
+    relative: rel.replace(/\\/g, "/"),
+  };
+}
+
+function sourceExtract(rel, id, start, end) {
+  return {
+    kind: "extract",
+    file: path.join(__dirname, rel),
+    relative: `${rel.replace(/\\/g, "/")}#${id}`,
+    start,
+    end,
+  };
+}
+
+const TAIL_FILE = "bootstrap-src/30-tail.js";
+const SECTION_ENGINE_MOUNTING = `  // --------------------------------------------------------------------------
+  // Engine mounting
+  // --------------------------------------------------------------------------
+`;
+const SECTION_HUB_CONNECTIONS = `  // --------------------------------------------------------------------------
+  // Hub connections
+  // --------------------------------------------------------------------------
+`;
+const SECTION_ISLAND_DISPOSAL = `  // --------------------------------------------------------------------------
+  // Island disposal
+  // --------------------------------------------------------------------------
+`;
+const SECTION_HYDRATION = `  // --------------------------------------------------------------------------
+  // Hydration
+  // --------------------------------------------------------------------------
+`;
+const SECTION_RUNTIME_READY = `  // --------------------------------------------------------------------------
+  // Runtime ready callback
+  // --------------------------------------------------------------------------
+`;
+const SECTION_EVENT_DELEGATION = `  // --------------------------------------------------------------------------
+  // Event delegation
+  // --------------------------------------------------------------------------
+`;
+
 const outputs = [
   {
     path: path.join(__dirname, "bootstrap.js"),
     sources: [
-      "bootstrap-src/00-textlayout.js",
-      "bootstrap-src/05-document-env.js",
-      "bootstrap-src/10-runtime-scene-core.js",
-      "bootstrap-src/11-scene-math.js",
-      "bootstrap-src/11a-scene-decompress.js",
-      "bootstrap-src/12-scene-geometry.js",
-      "bootstrap-src/13-scene-material.js",
-      "bootstrap-src/14-scene-lighting.js",
-      "bootstrap-src/15-scene-draw-plan.js",
-      "bootstrap-src/16-scene-webgl.js",
-      "bootstrap-src/16a-scene-webgpu.js",
-      "bootstrap-src/16b-scene-compute.js",
-      "bootstrap-src/17-scene-input.js",
-      "bootstrap-src/18-scene-canvas.js",
-      "bootstrap-src/19-scene-gltf.js",
-      "bootstrap-src/19a-scene-animation.js",
-      "bootstrap-src/20-scene-mount.js",
-      "bootstrap-src/30-tail.js",
+      sourceFile("bootstrap-src/00-textlayout.js"),
+      sourceFile("bootstrap-src/05-document-env.js"),
+      sourceFile("bootstrap-src/10-runtime-scene-core.js"),
+      sourceFile("bootstrap-src/11-scene-math.js"),
+      sourceFile("bootstrap-src/11a-scene-decompress.js"),
+      sourceFile("bootstrap-src/12-scene-geometry.js"),
+      sourceFile("bootstrap-src/13-scene-material.js"),
+      sourceFile("bootstrap-src/14-scene-lighting.js"),
+      sourceFile("bootstrap-src/15-scene-draw-plan.js"),
+      sourceFile("bootstrap-src/16-scene-webgl.js"),
+      sourceFile("bootstrap-src/16a-scene-webgpu.js"),
+      sourceFile("bootstrap-src/16b-scene-compute.js"),
+      sourceFile("bootstrap-src/17-scene-input.js"),
+      sourceFile("bootstrap-src/18-scene-canvas.js"),
+      sourceFile("bootstrap-src/19-scene-gltf.js"),
+      sourceFile("bootstrap-src/19a-scene-animation.js"),
+      sourceFile("bootstrap-src/20-scene-mount.js"),
+      sourceFile(TAIL_FILE),
     ],
   },
   {
     path: path.join(__dirname, "bootstrap-lite.js"),
     sources: [
-      "bootstrap-src/00-textlayout.js",
-      "bootstrap-src/05-document-env.js",
-      "bootstrap-src/25-lite-tail.js",
+      sourceFile("bootstrap-src/00-textlayout.js"),
+      sourceFile("bootstrap-src/05-document-env.js"),
+      sourceFile("bootstrap-src/25-lite-tail.js"),
+    ],
+  },
+  {
+    path: path.join(__dirname, "bootstrap-runtime.js"),
+    sources: [
+      sourceFile("bootstrap-src/00-textlayout.js"),
+      sourceFile("bootstrap-src/05-document-env.js"),
+      sourceFile("bootstrap-src/10-runtime-scene-core.js"),
+      sourceFile("bootstrap-src/26-runtime-tail.js"),
+    ],
+  },
+  {
+    path: path.join(__dirname, "bootstrap-feature-islands.js"),
+    sources: [
+      sourceFile("bootstrap-src/26a-feature-islands-prefix.js"),
+      sourceExtract(TAIL_FILE, "islands-event-delegation", SECTION_EVENT_DELEGATION, SECTION_ENGINE_MOUNTING),
+      sourceExtract(TAIL_FILE, "islands-dispose", `  window.__gosx_dispose_island = function(islandID) {
+`, `
+  window.__gosx_dispose_engine = function(engineID) {
+`),
+      sourceExtract(TAIL_FILE, "islands-hydration", SECTION_HYDRATION, SECTION_RUNTIME_READY),
+      sourceFile("bootstrap-src/26a-feature-islands-suffix.js"),
+    ],
+  },
+  {
+    path: path.join(__dirname, "bootstrap-feature-engines.js"),
+    sources: [
+      sourceFile("bootstrap-src/26b-feature-engines-prefix.js"),
+      sourceExtract(TAIL_FILE, "engines-mounting", SECTION_ENGINE_MOUNTING, SECTION_HUB_CONNECTIONS),
+      sourceExtract(TAIL_FILE, "engines-dispose", `  window.__gosx_dispose_engine = function(engineID) {
+`, `
+  window.__gosx_disconnect_hub = function(hubID) {
+`),
+      sourceFile("bootstrap-src/26b-feature-engines-suffix.js"),
+    ],
+  },
+  {
+    path: path.join(__dirname, "bootstrap-feature-hubs.js"),
+    sources: [
+      sourceFile("bootstrap-src/26c-feature-hubs-prefix.js"),
+      sourceExtract(TAIL_FILE, "hubs-connections", SECTION_HUB_CONNECTIONS, SECTION_ISLAND_DISPOSAL),
+      sourceExtract(TAIL_FILE, "hubs-disconnect", `  window.__gosx_disconnect_hub = function(hubID) {
+`, `
+  async function disposePage() {
+`),
+      sourceFile("bootstrap-src/26c-feature-hubs-suffix.js"),
     ],
   },
 ].map((entry) => ({
   path: entry.path,
   mapPath: entry.path + ".map",
-  sources: entry.sources.map((rel) => path.join(__dirname, rel)),
+  sources: entry.sources,
 }));
 
 const BASE64_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
 function readSource(file) {
   return fs.readFileSync(file, "utf8");
+}
+
+function extractSource(source, descriptor) {
+  const startIndex = source.indexOf(descriptor.start);
+  if (startIndex < 0) {
+    throw new Error(`missing start marker for ${descriptor.relative}`);
+  }
+  const searchFrom = startIndex + descriptor.start.length;
+  const endIndex = source.indexOf(descriptor.end, searchFrom);
+  if (endIndex < 0) {
+    throw new Error(`missing end marker for ${descriptor.relative}`);
+  }
+  return source.slice(startIndex, endIndex);
 }
 
 function compactSource(source) {
@@ -135,13 +238,14 @@ function encodeMappings(lines) {
 }
 
 function buildBootstrapBundle(entry) {
-  const sections = entry.sources.map((file) => {
-    const source = readSource(file);
+  const sections = entry.sources.map((descriptor) => {
+    const source = readSource(descriptor.file);
+    const resolved = descriptor.kind === "extract" ? extractSource(source, descriptor) : source;
     return {
-      file,
-      relative: path.relative(__dirname, file).replace(/\\/g, "/"),
-      raw: source.replace(/\r\n?/g, "\n"),
-      compacted: compactSource(source),
+      file: descriptor.file,
+      relative: descriptor.relative || path.relative(__dirname, descriptor.file).replace(/\\/g, "/"),
+      raw: resolved.replace(/\r\n?/g, "\n"),
+      compacted: compactSource(resolved),
     };
   });
 

@@ -2,7 +2,7 @@
   "name": "gosx",
   "displayName": "GoSX",
   "description": "Language support for GoSX's native GSX files.",
-  "version": "0.1.0",
+  "version": "0.11.0",
   "publisher": "gosx",
   "engines": {
     "vscode": "^1.85.0"

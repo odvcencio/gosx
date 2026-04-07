@@ -1,4 +1,4 @@
-// GoSX Client Bootstrap v0.2.0
+// GoSX Client Bootstrap v0.11.0
 // Loads shared WASM runtime, fetches per-island programs, hydrates islands
 // via event delegation. This is the only JavaScript in a GoSX app.
 //
@@ -11,7 +11,7 @@
 (function() {
   "use strict";
 
-  const GOSX_VERSION = "0.2.0";
+  const GOSX_VERSION = "0.11.0";
 
   // --- GoSX runtime namespace ---
   const engineFactories = window.__gosx_engine_factories || Object.create(null);
@@ -145,6 +145,34 @@
         store.subscribers.delete(signalName);
       }
     };
+  }
+
+  function setSharedSignalJSON(name, valueJSON) {
+    const signalName = String(name || "").trim();
+    if (!signalName) {
+      return null;
+    }
+
+    const setSharedSignal = window.__gosx_set_shared_signal;
+    if (typeof setSharedSignal === "function") {
+      try {
+        const result = setSharedSignal(signalName, valueJSON);
+        if (typeof result === "string" && result !== "") {
+          console.error("[gosx] shared signal update error (" + signalName + "):", result);
+          gosxNotifySharedSignal(signalName, valueJSON);
+        }
+        return result;
+      } catch (error) {
+        console.error("[gosx] shared signal update error (" + signalName + "):", error);
+      }
+    }
+
+    gosxNotifySharedSignal(signalName, valueJSON);
+    return null;
+  }
+
+  function setSharedSignalValue(name, value) {
+    return setSharedSignalJSON(name, JSON.stringify(value == null ? null : value));
   }
 
   window.__gosx_notify_shared_signal = gosxNotifySharedSignal;

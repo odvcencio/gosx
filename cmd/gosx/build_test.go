@@ -110,6 +110,63 @@ func TestProjectBuildHooksLoadAndRun(t *testing.T) {
 	}
 }
 
+func TestStageManifestCompatibilityRuntimeCopiesSelectiveBootstrap(t *testing.T) {
+	distDir := t.TempDir()
+	outputDir := t.TempDir()
+
+	files := map[string]string{
+		filepath.Join(distDir, "assets", "runtime", "runtime.1111.wasm"):                 "wasm",
+		filepath.Join(distDir, "assets", "runtime", "wasm_exec.2222.js"):                 "wasm-exec",
+		filepath.Join(distDir, "assets", "runtime", "bootstrap.3333.js"):                 "bootstrap",
+		filepath.Join(distDir, "assets", "runtime", "bootstrap-lite.4444.js"):            "bootstrap-lite",
+		filepath.Join(distDir, "assets", "runtime", "bootstrap-runtime.5555.js"):         "bootstrap-runtime",
+		filepath.Join(distDir, "assets", "runtime", "bootstrap-feature-islands.6666.js"): "bootstrap-feature-islands",
+		filepath.Join(distDir, "assets", "runtime", "bootstrap-feature-engines.7777.js"): "bootstrap-feature-engines",
+		filepath.Join(distDir, "assets", "runtime", "bootstrap-feature-hubs.8888.js"):    "bootstrap-feature-hubs",
+		filepath.Join(distDir, "assets", "runtime", "patch.9999.js"):                     "patch",
+		filepath.Join(distDir, "assets", "runtime", "hls.min.aaaa.js"):                   "hls",
+	}
+	for path, contents := range files {
+		mustWriteFile(t, path, contents)
+	}
+
+	manifest := &BuildManifest{
+		Runtime: RuntimeAssets{
+			WASM:                    HashedAsset{File: "runtime.1111.wasm"},
+			WASMExec:                HashedAsset{File: "wasm_exec.2222.js"},
+			Bootstrap:               HashedAsset{File: "bootstrap.3333.js"},
+			BootstrapLite:           HashedAsset{File: "bootstrap-lite.4444.js"},
+			BootstrapRuntime:        HashedAsset{File: "bootstrap-runtime.5555.js"},
+			BootstrapFeatureIslands: HashedAsset{File: "bootstrap-feature-islands.6666.js"},
+			BootstrapFeatureEngines: HashedAsset{File: "bootstrap-feature-engines.7777.js"},
+			BootstrapFeatureHubs:    HashedAsset{File: "bootstrap-feature-hubs.8888.js"},
+			Patch:                   HashedAsset{File: "patch.9999.js"},
+			VideoHLS:                HashedAsset{File: "hls.min.aaaa.js"},
+		},
+	}
+
+	if err := stageManifestCompatibilityRuntime(distDir, manifest, outputDir); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, rel := range []string{
+		"gosx/runtime.wasm",
+		"gosx/wasm_exec.js",
+		"gosx/bootstrap.js",
+		"gosx/bootstrap-lite.js",
+		"gosx/bootstrap-runtime.js",
+		"gosx/bootstrap-feature-islands.js",
+		"gosx/bootstrap-feature-engines.js",
+		"gosx/bootstrap-feature-hubs.js",
+		"gosx/patch.js",
+		"gosx/hls.min.js",
+	} {
+		if _, err := os.Stat(filepath.Join(outputDir, rel)); err != nil {
+			t.Fatalf("expected staged compat runtime file %s: %v", rel, err)
+		}
+	}
+}
+
 func TestRunBuildProdWritesHybridStaticBundleForStarterApp(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "build-app")
 	if err := RunInit(dir, "example.com/build-app", ""); err != nil {
@@ -134,6 +191,10 @@ func TestRunBuildProdWritesHybridStaticBundleForStarterApp(t *testing.T) {
 		"dist/static/assets/runtime",
 		"dist/static/gosx/runtime.wasm",
 		"dist/static/gosx/bootstrap-lite.js",
+		"dist/static/gosx/bootstrap-runtime.js",
+		"dist/static/gosx/bootstrap-feature-islands.js",
+		"dist/static/gosx/bootstrap-feature-engines.js",
+		"dist/static/gosx/bootstrap-feature-hubs.js",
 		"dist/static/gosx/hls.min.js",
 	} {
 		if _, err := os.Stat(filepath.Join(dir, rel)); err != nil {

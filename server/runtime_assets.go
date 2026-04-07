@@ -104,7 +104,7 @@ func (a *App) serveRuntimeAsset(w http.ResponseWriter, r *http.Request) {
 
 	root := a.effectiveRuntimeRoot()
 	if root == "" {
-		if name == "bootstrap.js" || name == "bootstrap-lite.js" {
+		if name == "bootstrap.js" || name == "bootstrap-lite.js" || name == "bootstrap-runtime.js" {
 			w.Header().Set("Content-Type", "application/javascript")
 			w.Header().Set("Cache-Control", "no-cache")
 			MarkObservedRequest(r, "runtime", "/gosx/"+name)
@@ -145,7 +145,7 @@ func (a *App) serveRuntimeAsset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if name == "bootstrap.js" || name == "bootstrap-lite.js" {
+	if name == "bootstrap.js" || name == "bootstrap-lite.js" || name == "bootstrap-runtime.js" {
 		w.Header().Set("Content-Type", "application/javascript")
 		w.Header().Set("Cache-Control", "no-cache")
 		MarkObservedRequest(r, "runtime", "/gosx/"+name)
@@ -171,12 +171,16 @@ func runtimeManifestDirectAssetPath(root, name string) (string, bool) {
 func runtimeCompatSourcePath(root, name string) (string, bool) {
 	buildDir := filepath.Join(root, "build")
 	candidates := map[string]string{
-		"runtime.wasm":      filepath.Join(buildDir, "gosx-runtime.wasm"),
-		"wasm_exec.js":      filepath.Join(buildDir, "wasm_exec.js"),
-		"bootstrap.js":      filepath.Join(buildDir, "bootstrap.js"),
-		"bootstrap-lite.js": filepath.Join(buildDir, "bootstrap-lite.js"),
-		"patch.js":          filepath.Join(buildDir, "patch.js"),
-		"hls.min.js":        filepath.Join(buildDir, "hls.min.js"),
+		"runtime.wasm":                 filepath.Join(buildDir, "gosx-runtime.wasm"),
+		"wasm_exec.js":                 filepath.Join(buildDir, "wasm_exec.js"),
+		"bootstrap.js":                 filepath.Join(buildDir, "bootstrap.js"),
+		"bootstrap-lite.js":            filepath.Join(buildDir, "bootstrap-lite.js"),
+		"bootstrap-runtime.js":         filepath.Join(buildDir, "bootstrap-runtime.js"),
+		"bootstrap-feature-islands.js": filepath.Join(buildDir, "bootstrap-feature-islands.js"),
+		"bootstrap-feature-engines.js": filepath.Join(buildDir, "bootstrap-feature-engines.js"),
+		"bootstrap-feature-hubs.js":    filepath.Join(buildDir, "bootstrap-feature-hubs.js"),
+		"patch.js":                     filepath.Join(buildDir, "patch.js"),
+		"hls.min.js":                   filepath.Join(buildDir, "hls.min.js"),
 	}
 	if direct, ok := candidates[name]; ok && isFile(direct) {
 		return direct, true
@@ -221,6 +225,17 @@ func (a *App) runtimeCompatBuiltPath(root, name string) (string, bool) {
 			return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.Bootstrap.File)
 		}
 		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.BootstrapLite.File)
+	case "bootstrap-runtime.js":
+		if strings.TrimSpace(manifest.Runtime.BootstrapRuntime.File) == "" {
+			return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.Bootstrap.File)
+		}
+		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.BootstrapRuntime.File)
+	case "bootstrap-feature-islands.js":
+		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.BootstrapFeatureIslands.File)
+	case "bootstrap-feature-engines.js":
+		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.BootstrapFeatureEngines.File)
+	case "bootstrap-feature-hubs.js":
+		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.BootstrapFeatureHubs.File)
 	case "patch.js":
 		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.Patch.File)
 	case "hls.min.js":

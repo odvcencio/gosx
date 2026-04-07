@@ -119,8 +119,8 @@ func TestPageHeadWithIslands(t *testing.T) {
 	if !strings.Contains(html, "gosx-manifest") {
 		t.Fatal("missing manifest in PageHead")
 	}
-	if !strings.Contains(html, "bootstrap.js") {
-		t.Fatal("missing bootstrap script in PageHead")
+	if !strings.Contains(html, "bootstrap-runtime.js") {
+		t.Fatal("missing selective bootstrap script in PageHead")
 	}
 	if !strings.Contains(html, `data-gosx-script="bootstrap"`) {
 		t.Fatal("missing bootstrap script role marker")
@@ -148,8 +148,8 @@ func TestPageHeadWithEnginesOnly(t *testing.T) {
 	if !strings.Contains(head, "gosx-manifest") {
 		t.Fatal("missing manifest for engine page")
 	}
-	if !strings.Contains(head, "bootstrap.js") {
-		t.Fatal("missing bootstrap script for engine page")
+	if !strings.Contains(head, "bootstrap-runtime.js") {
+		t.Fatal("missing selective bootstrap script for engine page")
 	}
 	if !strings.Contains(head, "wasm_exec.js") {
 		t.Fatal("missing wasm_exec for wasm-backed engine page")
@@ -285,8 +285,8 @@ func TestBindHubAddsManifestEntryAndBootstrapsPage(t *testing.T) {
 	if !strings.Contains(head, "gosx-manifest") {
 		t.Fatal("missing manifest for hub page")
 	}
-	if !strings.Contains(head, "bootstrap.js") {
-		t.Fatal("missing bootstrap for hub page")
+	if !strings.Contains(head, "bootstrap-runtime.js") {
+		t.Fatal("missing selective bootstrap for hub page")
 	}
 }
 
@@ -359,10 +359,11 @@ func TestApplyBuildManifestUsesHashedRuntimeAndIslandAssets(t *testing.T) {
 	r := NewRenderer("main")
 	manifest := &buildmanifest.Manifest{
 		Runtime: buildmanifest.RuntimeAssets{
-			WASM:      buildmanifest.HashedAsset{File: "gosx-runtime.11111111.wasm", Hash: "11111111", Size: 10},
-			WASMExec:  buildmanifest.HashedAsset{File: "wasm_exec.22222222.js", Hash: "22222222", Size: 20},
-			Bootstrap: buildmanifest.HashedAsset{File: "bootstrap.33333333.js", Hash: "33333333", Size: 30},
-			Patch:     buildmanifest.HashedAsset{File: "patch.44444444.js", Hash: "44444444", Size: 40},
+			WASM:             buildmanifest.HashedAsset{File: "gosx-runtime.11111111.wasm", Hash: "11111111", Size: 10},
+			WASMExec:         buildmanifest.HashedAsset{File: "wasm_exec.22222222.js", Hash: "22222222", Size: 20},
+			Bootstrap:        buildmanifest.HashedAsset{File: "bootstrap.33333333.js", Hash: "33333333", Size: 30},
+			BootstrapRuntime: buildmanifest.HashedAsset{File: "bootstrap-runtime.44444444.js", Hash: "44444444", Size: 31},
+			Patch:            buildmanifest.HashedAsset{File: "patch.55555555.js", Hash: "55555555", Size: 40},
 		},
 		Islands: []buildmanifest.IslandAsset{
 			{
@@ -383,8 +384,8 @@ func TestApplyBuildManifestUsesHashedRuntimeAndIslandAssets(t *testing.T) {
 	if !strings.Contains(headHTML, `/gosx/assets/runtime/wasm_exec.22222222.js`) {
 		t.Fatalf("missing hashed wasm_exec path: %s", headHTML)
 	}
-	if !strings.Contains(headHTML, `/gosx/assets/runtime/bootstrap.33333333.js`) {
-		t.Fatalf("missing hashed bootstrap path: %s", headHTML)
+	if !strings.Contains(headHTML, `/gosx/assets/runtime/bootstrap-runtime.44444444.js`) {
+		t.Fatalf("missing hashed selective bootstrap path: %s", headHTML)
 	}
 
 	entry := r.Manifest().Islands[0]
@@ -408,7 +409,8 @@ func TestRendererVersionsCompatRuntimeURLsFromBuildManifest(t *testing.T) {
     "wasm": {"file": "gosx-runtime.aaaabbbb.wasm", "hash": "aaaabbbb", "size": 10},
     "wasmExec": {"file": "wasm_exec.bbbbcccc.js", "hash": "bbbbcccc", "size": 20},
     "bootstrap": {"file": "bootstrap.ccccdddd.js", "hash": "ccccdddd", "size": 30},
-    "patch": {"file": "patch.ddddeeee.js", "hash": "ddddeeee", "size": 40}
+    "bootstrapRuntime": {"file": "bootstrap-runtime.ddddeeee.js", "hash": "ddddeeee", "size": 32},
+    "patch": {"file": "patch.eeeeffff.js", "hash": "eeeeffff", "size": 40}
   },
   "islands": [],
   "css": []
@@ -425,8 +427,8 @@ func TestRendererVersionsCompatRuntimeURLsFromBuildManifest(t *testing.T) {
 	for _, snippet := range []string{
 		`/gosx/runtime.wasm?v=aaaabbbb`,
 		`/gosx/assets/runtime/wasm_exec.bbbbcccc.js`,
-		`/gosx/assets/runtime/patch.ddddeeee.js`,
-		`/gosx/assets/runtime/bootstrap.ccccdddd.js`,
+		`/gosx/assets/runtime/patch.eeeeffff.js`,
+		`/gosx/assets/runtime/bootstrap-runtime.ddddeeee.js`,
 	} {
 		if !strings.Contains(headHTML, snippet) {
 			t.Fatalf("expected %q in versioned compat head %s", snippet, headHTML)
@@ -451,11 +453,11 @@ func TestRendererSummaryIncludesVideoHLSPathForVideoPages(t *testing.T) {
 	}, gosx.Text("loading"))
 
 	headHTML := gosx.RenderHTML(r.PageHead())
-	if !strings.Contains(headHTML, "/gosx/bootstrap.js") {
-		t.Fatalf("expected full bootstrap for video page, got %s", headHTML)
+	if !strings.Contains(headHTML, "/gosx/bootstrap-runtime.js") {
+		t.Fatalf("expected selective bootstrap for video page, got %s", headHTML)
 	}
-	if !strings.Contains(headHTML, "/gosx/wasm_exec.js") {
-		t.Fatalf("expected wasm exec for video page, got %s", headHTML)
+	if strings.Contains(headHTML, "/gosx/wasm_exec.js") {
+		t.Fatalf("did not expect wasm exec for video page, got %s", headHTML)
 	}
 
 	summary := r.Summary()

@@ -171,16 +171,19 @@ type documentContractEnhancement struct {
 }
 
 type documentContractAssets struct {
-	BootstrapMode string `json:"bootstrapMode"`
-	Manifest      bool   `json:"manifest"`
-	RuntimePath   string `json:"runtimePath,omitempty"`
-	WASMExecPath  string `json:"wasmExecPath,omitempty"`
-	PatchPath     string `json:"patchPath,omitempty"`
-	BootstrapPath string `json:"bootstrapPath,omitempty"`
-	HLSPath       string `json:"hlsPath,omitempty"`
-	Islands       int    `json:"islands,omitempty"`
-	Engines       int    `json:"engines,omitempty"`
-	Hubs          int    `json:"hubs,omitempty"`
+	BootstrapMode               string `json:"bootstrapMode"`
+	Manifest                    bool   `json:"manifest"`
+	RuntimePath                 string `json:"runtimePath,omitempty"`
+	WASMExecPath                string `json:"wasmExecPath,omitempty"`
+	PatchPath                   string `json:"patchPath,omitempty"`
+	BootstrapPath               string `json:"bootstrapPath,omitempty"`
+	BootstrapFeatureIslandsPath string `json:"bootstrapFeatureIslandsPath,omitempty"`
+	BootstrapFeatureEnginesPath string `json:"bootstrapFeatureEnginesPath,omitempty"`
+	BootstrapFeatureHubsPath    string `json:"bootstrapFeatureHubsPath,omitempty"`
+	HLSPath                     string `json:"hlsPath,omitempty"`
+	Islands                     int    `json:"islands,omitempty"`
+	Engines                     int    `json:"engines,omitempty"`
+	Hubs                        int    `json:"hubs,omitempty"`
 }
 
 func documentContractNode(doc *DocumentContext) gosx.Node {
@@ -203,16 +206,19 @@ func documentContractNode(doc *DocumentContext) gosx.Node {
 			Navigation: doc.Navigation,
 		},
 		Assets: documentContractAssets{
-			BootstrapMode: documentBootstrapMode(doc.Runtime.BootstrapMode),
-			Manifest:      doc.Runtime.Manifest,
-			RuntimePath:   doc.Runtime.RuntimePath,
-			WASMExecPath:  doc.Runtime.WASMExecPath,
-			PatchPath:     doc.Runtime.PatchPath,
-			BootstrapPath: doc.Runtime.BootstrapPath,
-			HLSPath:       doc.Runtime.HLSPath,
-			Islands:       doc.Runtime.Islands,
-			Engines:       doc.Runtime.Engines,
-			Hubs:          doc.Runtime.Hubs,
+			BootstrapMode:               documentBootstrapMode(doc.Runtime.BootstrapMode),
+			Manifest:                    doc.Runtime.Manifest,
+			RuntimePath:                 doc.Runtime.RuntimePath,
+			WASMExecPath:                doc.Runtime.WASMExecPath,
+			PatchPath:                   doc.Runtime.PatchPath,
+			BootstrapPath:               doc.Runtime.BootstrapPath,
+			BootstrapFeatureIslandsPath: doc.Runtime.BootstrapFeatureIslandsPath,
+			BootstrapFeatureEnginesPath: doc.Runtime.BootstrapFeatureEnginesPath,
+			BootstrapFeatureHubsPath:    doc.Runtime.BootstrapFeatureHubsPath,
+			HLSPath:                     doc.Runtime.HLSPath,
+			Islands:                     doc.Runtime.Islands,
+			Engines:                     doc.Runtime.Engines,
+			Hubs:                        doc.Runtime.Hubs,
 		},
 	})
 	if err != nil {

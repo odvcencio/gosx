@@ -349,6 +349,10 @@ func RunBuild(dir string, dev bool) error {
 	}{
 		{"bootstrap", filepath.Join(gosxRoot, "client", "js", "bootstrap.js"), &manifest.Runtime.Bootstrap},
 		{"bootstrap-lite", filepath.Join(gosxRoot, "client", "js", "bootstrap-lite.js"), &manifest.Runtime.BootstrapLite},
+		{"bootstrap-runtime", filepath.Join(gosxRoot, "client", "js", "bootstrap-runtime.js"), &manifest.Runtime.BootstrapRuntime},
+		{"bootstrap-feature-islands", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-islands.js"), &manifest.Runtime.BootstrapFeatureIslands},
+		{"bootstrap-feature-engines", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-engines.js"), &manifest.Runtime.BootstrapFeatureEngines},
+		{"bootstrap-feature-hubs", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-hubs.js"), &manifest.Runtime.BootstrapFeatureHubs},
 		{"patch", filepath.Join(gosxRoot, "client", "js", "patch.js"), &manifest.Runtime.Patch},
 		{"hls.min", filepath.Join(gosxRoot, "client", "js", "vendor", "hls.min.js"), &manifest.Runtime.VideoHLS},
 	} {
@@ -425,6 +429,10 @@ func RunBuild(dir string, dev bool) error {
 		manifest.Runtime.WASMExec.File,
 		manifest.Runtime.Bootstrap.File,
 		manifest.Runtime.BootstrapLite.File,
+		manifest.Runtime.BootstrapRuntime.File,
+		manifest.Runtime.BootstrapFeatureIslands.File,
+		manifest.Runtime.BootstrapFeatureEngines.File,
+		manifest.Runtime.BootstrapFeatureHubs.File,
 		manifest.Runtime.Patch.File,
 		manifest.Runtime.VideoHLS.File,
 	))
@@ -570,6 +578,10 @@ func stageManifestCompatibilityRuntime(distDir string, manifest *BuildManifest, 
 		{file: manifest.Runtime.WASMExec.File, dst: filepath.Join(gosxDir, "wasm_exec.js")},
 		{file: manifest.Runtime.Bootstrap.File, dst: filepath.Join(gosxDir, "bootstrap.js")},
 		{file: manifest.Runtime.BootstrapLite.File, dst: filepath.Join(gosxDir, "bootstrap-lite.js")},
+		{file: manifest.Runtime.BootstrapRuntime.File, dst: filepath.Join(gosxDir, "bootstrap-runtime.js")},
+		{file: manifest.Runtime.BootstrapFeatureIslands.File, dst: filepath.Join(gosxDir, "bootstrap-feature-islands.js")},
+		{file: manifest.Runtime.BootstrapFeatureEngines.File, dst: filepath.Join(gosxDir, "bootstrap-feature-engines.js")},
+		{file: manifest.Runtime.BootstrapFeatureHubs.File, dst: filepath.Join(gosxDir, "bootstrap-feature-hubs.js")},
 		{file: manifest.Runtime.Patch.File, dst: filepath.Join(gosxDir, "patch.js")},
 		{file: manifest.Runtime.VideoHLS.File, dst: filepath.Join(gosxDir, "hls.min.js")},
 	} {

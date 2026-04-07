@@ -194,8 +194,8 @@ func TestAppWithLayout(t *testing.T) {
 	if !strings.Contains(body, "content") {
 		t.Fatalf("expected 'content' in body, got %q", body)
 	}
-	if !strings.Contains(body, "<html>") {
-		t.Fatalf("expected '<html>' in body, got %q", body)
+	if !strings.Contains(body, "<html") {
+		t.Fatalf("expected '<html' in body, got %q", body)
 	}
 }
 
@@ -597,11 +597,18 @@ func TestAppInjectsRuntimeHeadForEnginePages(t *testing.T) {
 		`data-gosx-enhance-layer="runtime"`,
 		`data-gosx-fallback="server"`,
 		`gosx-manifest`,
-		`/gosx/runtime.wasm`,
 		`/gosx/bootstrap.js`,
 	} {
 		if !strings.Contains(body, snippet) {
 			t.Fatalf("expected %q in runtime page body %q", snippet, body)
+		}
+	}
+	for _, snippet := range []string{
+		`/gosx/runtime.wasm`,
+		`data-gosx-script="wasm-exec"`,
+	} {
+		if strings.Contains(body, snippet) {
+			t.Fatalf("did not expect %q in scene bootstrap page body %q", snippet, body)
 		}
 	}
 }
@@ -679,18 +686,22 @@ func TestAppInjectsRuntimeHeadForVideoEnginePages(t *testing.T) {
 		`data-gosx-engine="PromoVideo"`,
 		`data-gosx-enhance="video"`,
 		`data-gosx-enhance-layer="runtime"`,
-		`data-gosx-script="wasm-exec"`,
 		`gosx-manifest`,
-		`/gosx/runtime.wasm`,
-		`/gosx/bootstrap.js`,
+		`/gosx/bootstrap-runtime.js`,
 		`"hlsPath":"/gosx/hls.min.js"`,
 	} {
 		if !strings.Contains(body, snippet) {
 			t.Fatalf("expected %q in runtime page body %q", snippet, body)
 		}
 	}
-	if strings.Contains(body, `/gosx/patch.js`) {
-		t.Fatalf("did not expect patch runtime on video engine page: %q", body)
+	for _, snippet := range []string{
+		`/gosx/runtime.wasm`,
+		`data-gosx-script="wasm-exec"`,
+		`/gosx/patch.js`,
+	} {
+		if strings.Contains(body, snippet) {
+			t.Fatalf("did not expect %q on video engine page: %q", snippet, body)
+		}
 	}
 }
 
@@ -729,15 +740,20 @@ func TestAppVideoHelperRendersManagedBaselineAndRuntimeHead(t *testing.T) {
 		`<track src="/subs/en-custom.vtt" kind="captions" srclang="en" label="English"`,
 		`<p>Download video</p>`,
 		`gosx-manifest`,
-		`/gosx/runtime.wasm`,
-		`/gosx/bootstrap.js`,
+		`/gosx/bootstrap-runtime.js`,
 	} {
 		if !strings.Contains(body, snippet) {
 			t.Fatalf("expected %q in video helper page body %q", snippet, body)
 		}
 	}
-	if strings.Contains(body, `/gosx/patch.js`) {
-		t.Fatalf("did not expect patch runtime on video helper page: %q", body)
+	for _, snippet := range []string{
+		`/gosx/runtime.wasm`,
+		`data-gosx-script="wasm-exec"`,
+		`/gosx/patch.js`,
+	} {
+		if strings.Contains(body, snippet) {
+			t.Fatalf("did not expect %q on video helper page: %q", snippet, body)
+		}
 	}
 }
 
@@ -2489,7 +2505,7 @@ func TestAppServesBootstrapStubWhenNoBuildExists(t *testing.T) {
 	app.SetRuntimeRoot(root)
 	handler := app.Build()
 
-	for _, name := range []string{"bootstrap.js", "bootstrap-lite.js"} {
+	for _, name := range []string{"bootstrap.js", "bootstrap-lite.js", "bootstrap-runtime.js"} {
 		t.Run(name, func(t *testing.T) {
 			req := httptest.NewRequest(http.MethodGet, "/gosx/"+name, nil)
 			w := httptest.NewRecorder()
