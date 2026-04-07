@@ -18,6 +18,7 @@ package engine
 import (
 	"encoding/json"
 	"fmt"
+	"sync"
 )
 
 // Kind identifies the engine execution model.
@@ -198,6 +199,40 @@ func (c Config) Validate() error {
 		return fmt.Errorf("engine kind %q requires a MountID", c.Kind)
 	}
 	return ValidateCapabilities(c.Capabilities)
+}
+
+// Factory is a function that creates an engine instance.
+type Factory func() any
+
+var (
+	factoryMu sync.RWMutex
+	factories = make(map[string]Factory)
+)
+
+// RegisterFactory registers an engine factory by name at init time.
+// Panics on duplicate registration.
+func RegisterFactory(name string, factory Factory) {
+	factoryMu.Lock()
+	defer factoryMu.Unlock()
+	if _, exists := factories[name]; exists {
+		panic(fmt.Sprintf("engine factory %q already registered", name))
+	}
+	factories[name] = factory
+}
+
+// HasFactory reports whether a factory is registered under the given name.
+func HasFactory(name string) bool {
+	factoryMu.RLock()
+	defer factoryMu.RUnlock()
+	_, ok := factories[name]
+	return ok
+}
+
+// ClearFactories removes all registered factories (test use only).
+func ClearFactories() {
+	factoryMu.Lock()
+	defer factoryMu.Unlock()
+	factories = make(map[string]Factory)
 }
 
 // ValidateCapabilities checks if the requested capabilities are supported.
