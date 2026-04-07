@@ -4735,11 +4735,11 @@
 
   function activateInputProviders(entry) {
     for (const capability of capabilityList(entry)) {
-      activateInputProvider(capability);
+      activateInputProvider(capability, entry);
     }
   }
 
-  function activateInputProvider(capability) {
+  function activateInputProvider(capability, entry) {
     const state = gosxInputState();
     const current = state.providers[capability];
     if (current) {
@@ -4747,7 +4747,7 @@
       return;
     }
 
-    const provider = createInputProvider(capability);
+    const provider = createInputProvider(capability, entry);
     if (!provider) {
       return;
     }
@@ -4778,7 +4778,7 @@
     delete state.providers[capability];
   }
 
-  function createInputProvider(capability) {
+  function createInputProvider(capability, entry) {
     switch (capability) {
       case "keyboard":
         return createKeyboardInputProvider();
@@ -4786,6 +4786,8 @@
         return createPointerInputProvider();
       case "gamepad":
         return createGamepadInputProvider();
+      case "text-input":
+        return createTextInputProvider(entry);
       default:
         return null;
     }
@@ -4867,6 +4869,172 @@
           cancelEngineFrame(frameHandle);
           frameHandle = 0;
         }
+      },
+    };
+  }
+
+  function createTextInputProvider(entry) {
+    var inputEl = null;
+    var mount = null;
+    var unsubCursorRect = null;
+    var unsubClipboard = null;
+    var viewportListener = null;
+
+    var mountID = entry && (entry.mountId || entry.id);
+    mount = mountID ? document.getElementById(mountID) : null;
+    if (!mount) {
+      mount = document.body;
+    }
+
+    inputEl = document.createElement("div");
+    inputEl.contentEditable = "true";
+    inputEl.setAttribute("role", "textbox");
+    inputEl.setAttribute("aria-multiline", "true");
+    inputEl.style.cssText = "position:absolute;opacity:0;width:1px;height:1em;overflow:hidden;white-space:pre;pointer-events:none;z-index:-1";
+    if (!mount.style.position || mount.style.position === "static") {
+      mount.style.position = "relative";
+    }
+    mount.appendChild(inputEl);
+
+    function focusInput(e) {
+      if (e.target !== inputEl) inputEl.focus();
+    }
+
+    mount.addEventListener("mousedown", focusInput);
+    mount.addEventListener("touchstart", focusInput);
+
+    inputEl.addEventListener("beforeinput", function(e) {
+      var type = e.inputType;
+      if (type === "insertText" || type === "insertReplacementText") {
+        e.preventDefault();
+        if (e.data) queueInputSignal("$input.text.inserted", e.data);
+      } else if (type === "insertFromPaste") {
+        e.preventDefault();
+        var text = e.dataTransfer ? e.dataTransfer.getData("text/plain") : "";
+        if (text) queueInputSignal("$input.clipboard.paste", text);
+      } else if (type === "deleteContentBackward") {
+        e.preventDefault();
+        queueInputSignal("$input.command", "delete_backward");
+      } else if (type === "deleteContentForward") {
+        e.preventDefault();
+        queueInputSignal("$input.command", "delete_forward");
+      } else if (type === "insertLineBreak" || type === "insertParagraph") {
+        e.preventDefault();
+        queueInputSignal("$input.command", "newline");
+      }
+      requestAnimationFrame(function() { if (inputEl) inputEl.textContent = ""; });
+    });
+
+    inputEl.addEventListener("compositionstart", function() {
+      queueInputSignal("$input.text.composition_active", true);
+    });
+    inputEl.addEventListener("compositionupdate", function(e) {
+      queueInputSignal("$input.text.composing", e.data || "");
+    });
+    inputEl.addEventListener("compositionend", function(e) {
+      queueInputSignal("$input.text.composition_active", false);
+      queueInputSignal("$input.text.composing", "");
+      if (e.data) queueInputSignal("$input.text.inserted", e.data);
+    });
+
+    inputEl.addEventListener("keydown", function(e) {
+      if (e.isComposing) return;
+      var mod = e.metaKey || e.ctrlKey;
+      var shift = e.shiftKey;
+      var command = null;
+
+      switch (e.key) {
+        case "ArrowUp":    command = shift ? "select_up" : "move_up"; break;
+        case "ArrowDown":  command = shift ? "select_down" : "move_down"; break;
+        case "ArrowLeft":  command = shift ? "select_left" : "move_left"; break;
+        case "ArrowRight": command = shift ? "select_right" : "move_right"; break;
+        case "Home":       command = shift ? "select_line_start" : "move_line_start"; break;
+        case "End":        command = shift ? "select_line_end" : "move_line_end"; break;
+        case "Tab":        command = shift ? "dedent" : "indent"; break;
+        case "Escape":     command = "escape"; break;
+      }
+
+      if (!command && mod) {
+        switch (e.key.toLowerCase()) {
+          case "z": command = shift ? "redo" : "undo"; break;
+          case "a": command = "select_all"; break;
+          case "s": command = "save"; break;
+          case "b": command = "bold"; break;
+          case "i": command = "italic"; break;
+        }
+      }
+
+      if (command) {
+        e.preventDefault();
+        queueInputSignal("$input.command", command);
+      }
+    });
+
+    mount.addEventListener("dragover", function(e) { e.preventDefault(); });
+    mount.addEventListener("drop", function(e) {
+      e.preventDefault();
+      var files = e.dataTransfer ? e.dataTransfer.files : null;
+      if (files && files.length > 0) {
+        var file = files[0];
+        if (file.type.startsWith("image/")) {
+          var reader = new FileReader();
+          reader.onload = function() {
+            queueInputSignal("$editor.file_drop", JSON.stringify({
+              name: file.name, type: file.type, size: file.size, data: reader.result
+            }));
+          };
+          reader.readAsDataURL(file);
+        }
+      }
+    });
+
+    if (window.visualViewport) {
+      viewportListener = function() {
+        var kh = window.innerHeight - window.visualViewport.height;
+        queueInputSignal("$input.keyboard_height", Math.max(0, kh));
+      };
+      window.visualViewport.addEventListener("resize", viewportListener);
+    }
+
+    unsubCursorRect = gosxSubscribeSharedSignal("$editor.cursor_rect", function(rect) {
+      if (!inputEl) return;
+      var r = typeof rect === "string" ? JSON.parse(rect) : rect;
+      if (r) {
+        inputEl.style.left = (r.x || 0) + "px";
+        inputEl.style.top = (r.y || 0) + "px";
+        inputEl.style.height = (r.height || 20) + "px";
+      }
+    });
+
+    unsubClipboard = gosxSubscribeSharedSignal("$editor.clipboard_content", function(text) {
+      if (!inputEl || !text) return;
+      inputEl.textContent = text;
+      var range = document.createRange();
+      range.selectNodeContents(inputEl);
+      var sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
+    });
+
+    inputEl.focus();
+
+    return {
+      dispose: function() {
+        if (unsubCursorRect) { unsubCursorRect(); unsubCursorRect = null; }
+        if (unsubClipboard) { unsubClipboard(); unsubClipboard = null; }
+        if (viewportListener && window.visualViewport) {
+          window.visualViewport.removeEventListener("resize", viewportListener);
+          viewportListener = null;
+        }
+        if (mount) {
+          mount.removeEventListener("mousedown", focusInput);
+          mount.removeEventListener("touchstart", focusInput);
+        }
+        if (inputEl && inputEl.parentNode) {
+          inputEl.parentNode.removeChild(inputEl);
+        }
+        inputEl = null;
+        mount = null;
       },
     };
   }
