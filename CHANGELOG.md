@@ -1,5 +1,23 @@
 # Changelog
 
+## v0.13.0
+
+### Authoritative Simulation Module
+
+New `sim` package providing server-authoritative game simulation over gosx hubs. Games implement a four-method `Simulation` interface (Tick, Snapshot, Restore, State) and the `sim.Runner` handles everything else: fixed-rate tick loop, input collection from hub clients, state broadcast, 128-frame snapshot ring buffer for rollback, replay recording with full input logs, and spectator sync on join. One line to get tournament-grade netcode: `sim.New(hub, game, sim.Options{TickRate: 60})`.
+
+### Server Gzip Middleware
+
+`server.EnableGzip()` adds response compression with proper Hijacker/Flusher support so WebSocket upgrades and streaming still work. Pooled gzip writers, skips pre-compressed responses and WebSocket upgrades automatically.
+
+### WASM Debug Stripping
+
+Production builds now strip DWARF debug sections from WASM binaries via `wasm-opt --strip-debug --strip-producers`. Debug symbols were 45% of the binary (1.3 MB) and served no purpose in the browser. Result: 1032 KB → 526 KB gzipped, a 49% reduction. Dev builds retain debug symbols.
+
+### WASM Data Section Externalization (experimental)
+
+`wasmExternalizeData` post-processor splits the WASM data section (strings, type tables, reflection metadata) into a separate file for parallel loading. The browser can start compiling WASM code while the data section downloads independently.
+
 ## v0.12.0
 
 ### Scene3D Per-Component Compression
