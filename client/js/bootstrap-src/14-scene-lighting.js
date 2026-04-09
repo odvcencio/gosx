@@ -105,8 +105,13 @@
   }
 
   function sceneObjectWorldNormal(object, point, timeSeconds) {
+    const localPoint = {
+      x: sceneNumber(point && point.x, 0) * sceneNumber(object && object.scaleX, 1),
+      y: sceneNumber(point && point.y, 0) * sceneNumber(object && object.scaleY, 1),
+      z: sceneNumber(point && point.z, 0) * sceneNumber(object && object.scaleZ, 1),
+    };
     return sceneNormalizePoint(sceneRotatePoint(
-      sceneObjectLocalNormal(object, point),
+      sceneObjectLocalNormal(object, localPoint),
       sceneNumber(object && object.rotationX, 0) + sceneNumber(object && object.spinX, 0) * timeSeconds,
       sceneNumber(object && object.rotationY, 0) + sceneNumber(object && object.spinY, 0) * timeSeconds,
       sceneNumber(object && object.rotationZ, 0) + sceneNumber(object && object.spinZ, 0) * timeSeconds,
@@ -130,9 +135,9 @@
   }
 
   function scenePyramidNormal(object, point) {
-    const width = Math.max(sceneNumber(object && object.width, object && object.size) / 2, 0.0001);
-    const height = Math.max(sceneNumber(object && object.height, object && object.size) / 2, 0.0001);
-    const depth = Math.max(sceneNumber(object && object.depth, object && object.size) / 2, 0.0001);
+    const width = Math.max((sceneNumber(object && object.width, object && object.size) * Math.abs(sceneNumber(object && object.scaleX, 1))) / 2, 0.0001);
+    const height = Math.max((sceneNumber(object && object.height, object && object.size) * Math.abs(sceneNumber(object && object.scaleY, 1))) / 2, 0.0001);
+    const depth = Math.max((sceneNumber(object && object.depth, object && object.size) * Math.abs(sceneNumber(object && object.scaleZ, 1))) / 2, 0.0001);
     return sceneNormalizePoint({
       x: sceneNumber(point && point.x, 0) / width,
       y: (sceneNumber(point && point.y, 0) / height) + 0.35,
@@ -141,9 +146,9 @@
   }
 
   function sceneBoxNormal(object, point) {
-    const width = Math.max(sceneNumber(object && object.width, object && object.size) / 2, 0.0001);
-    const height = Math.max(sceneNumber(object && object.height, object && object.size) / 2, 0.0001);
-    const depth = Math.max(sceneNumber(object && object.depth, object && object.size) / 2, 0.0001);
+    const width = Math.max((sceneNumber(object && object.width, object && object.size) * Math.abs(sceneNumber(object && object.scaleX, 1))) / 2, 0.0001);
+    const height = Math.max((sceneNumber(object && object.height, object && object.size) * Math.abs(sceneNumber(object && object.scaleY, 1))) / 2, 0.0001);
+    const depth = Math.max((sceneNumber(object && object.depth, object && object.size) * Math.abs(sceneNumber(object && object.scaleZ, 1))) / 2, 0.0001);
     const x = sceneNumber(point && point.x, 0);
     const y = sceneNumber(point && point.y, 0);
     const z = sceneNumber(point && point.z, 0);

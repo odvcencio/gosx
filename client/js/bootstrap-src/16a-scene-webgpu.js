@@ -429,6 +429,7 @@
     "    hasPerVertexColor: u32,",
     "    hasPerVertexSize: u32,",
     "    sizeAttenuation: u32,",
+    "    pointStyle: u32,",
     "    opacity: f32,",
     "    hasFog: u32,",
     "    fogDensity: f32,",
@@ -440,6 +441,8 @@
     "    @location(0) color: vec3f,",
     "    @location(1) fogFactor: f32,",
     "    @location(2) alpha: f32,",
+    "    @location(3) pointCoord: vec2f,",
+    "    @location(4) pointSize: f32,",
     "};",
     "",
     "@group(0) @binding(0) var<uniform> frame: FrameUniforms;",
@@ -488,6 +491,8 @@
     "        out.color = points.defaultColor;",
     "    }",
     "    out.alpha = p.color.a * points.opacity;",
+    "    out.pointCoord = quad + vec2f(0.5, 0.5);",
+    "    out.pointSize = pixelSize;",
     "",
     "    // Fog.",
     "    if (points.hasFog != 0u) {",
@@ -513,6 +518,7 @@
     "    hasPerVertexColor: u32,",
     "    hasPerVertexSize: u32,",
     "    sizeAttenuation: u32,",
+    "    pointStyle: u32,",
     "    opacity: f32,",
     "    hasFog: u32,",
     "    fogDensity: f32,",
@@ -525,14 +531,31 @@
     "    @location(0) color: vec3f,",
     "    @location(1) fogFactor: f32,",
     "    @location(2) alpha: f32,",
+    "    @location(3) pointCoord: vec2f,",
+    "    @location(4) pointSize: f32,",
     "};",
     "",
     "@fragment fn fragmentMain(in: PointsInput) -> @location(0) vec4f {",
     "    var color = in.color;",
+    "    var alpha = in.alpha;",
+    "    if (points.pointStyle == 1u) {",
+    "        let centered = in.pointCoord - vec2f(0.5, 0.5);",
+    "        let radial = length(centered);",
+    "        let square = max(abs(centered.x), abs(centered.y));",
+    "        let focus = clamp((in.pointSize - 1.0) / 10.0, 0.0, 1.0);",
+    "        let coreRadius = mix(0.49, 0.18, focus);",
+    "        let core = 1.0 - smoothstep(coreRadius, coreRadius + 0.05, square);",
+    "        let halo = (1.0 - smoothstep(0.12, 0.72, radial)) * focus;",
+    "        let streakX = 1.0 - smoothstep(0.02, 0.16, abs(centered.x));",
+    "        let streakY = 1.0 - smoothstep(0.02, 0.16, abs(centered.y));",
+    "        let streak = max(streakX, streakY) * focus;",
+    "        alpha = clamp(core + halo * 0.5 + streak * 0.2, 0.0, 1.0) * in.alpha;",
+    "        color = mix(color, vec3f(1.0, 1.0, 1.0), clamp(focus * 0.22 + core * focus * 0.28, 0.0, 0.4));",
+    "    }",
     "    if (points.hasFog != 0u) {",
     "        color = mix(points.fogColor, color, in.fogFactor);",
     "    }",
-    "    return vec4f(color, in.alpha);",
+    "    return vec4f(color, alpha);",
     "}",
   ].join("\n");
 
@@ -1398,6 +1421,8 @@
     // Points buffers.
     var pointsUniformBuffer = null;
     var pointsParticleBuffer = null;
+    var computeParticleSystems = new Map();
+    var lastComputeParticleTimeSeconds = null;
 
     // Shadow pass buffer.
     var shadowPositionBuffer = null;
@@ -1430,6 +1455,12 @@
     // Scratch Float32Arrays.
     var scratchViewMatrix = new Float32Array(16);
     var scratchProjMatrix = new Float32Array(16);
+    var pointsIdentityMatrix = new Float32Array([
+      1, 0, 0, 0,
+      0, 1, 0, 0,
+      0, 0, 1, 0,
+      0, 0, 0, 1,
+    ]);
 
     var scratchPositions = null;
     var scratchNormals = null;
@@ -1621,6 +1652,69 @@
       var pipeline = wgpuCreatePointsPipeline(device, pointsPipelineLayout, pointsVertexModule, pointsFragmentModule, blendMode, depthWrite, targetFormat);
       pipelineCache[key] = pipeline;
       return pipeline;
+    }
+
+    function disposeComputeParticleSystems() {
+      for (const record of computeParticleSystems.values()) {
+        if (record && record.system && typeof record.system.dispose === "function") {
+          record.system.dispose();
+        }
+      }
+      computeParticleSystems.clear();
+      lastComputeParticleTimeSeconds = null;
+    }
+
+    function syncComputeParticleSystems(entries) {
+      var activeIds = new Set();
+      var records = [];
+      var sourceEntries = Array.isArray(entries) ? entries : [];
+      for (var i = 0; i < sourceEntries.length; i++) {
+        var entry = sourceEntries[i];
+        if (!entry || typeof entry !== "object") continue;
+        var id = typeof entry.id === "string" && entry.id ? entry.id : ("scene-particles-" + i);
+        var signature = sceneComputeSystemSignature(entry);
+        activeIds.add(id);
+        var record = computeParticleSystems.get(id);
+        if (!record || record.signature !== signature) {
+          if (record && record.system && typeof record.system.dispose === "function") {
+            record.system.dispose();
+          }
+          record = {
+            signature: signature,
+            system: createSceneParticleSystem(device, entry),
+          };
+          computeParticleSystems.set(id, record);
+        } else if (record.system) {
+          record.system.entry = entry;
+        }
+        if (record && record.system) {
+          records.push(record);
+        }
+      }
+      for (const [id, record] of computeParticleSystems.entries()) {
+        if (!activeIds.has(id)) {
+          if (record && record.system && typeof record.system.dispose === "function") {
+            record.system.dispose();
+          }
+          computeParticleSystems.delete(id);
+        }
+      }
+      return records;
+    }
+
+    function updateComputeParticleSystems(entries, encoder, timeSeconds) {
+      var currentTime = Number.isFinite(timeSeconds) ? timeSeconds : 0;
+      var deltaTime = lastComputeParticleTimeSeconds == null
+        ? 0
+        : Math.max(0, Math.min(0.1, currentTime - lastComputeParticleTimeSeconds));
+      lastComputeParticleTimeSeconds = currentTime;
+      var records = syncComputeParticleSystems(entries);
+      for (var i = 0; i < records.length; i++) {
+        if (records[i].system && typeof records[i].system.update === "function") {
+          records[i].system.update(device, encoder, deltaTime, currentTime);
+        }
+      }
+      return records;
     }
 
     // -----------------------------------------------------------------------
@@ -1895,7 +1989,7 @@
     // -----------------------------------------------------------------------
 
     function buildDrawList(bundle) {
-      var objects = Array.isArray(bundle && bundle.objects) ? bundle.objects : [];
+      var objects = Array.isArray(bundle && bundle.meshObjects) ? bundle.meshObjects : [];
       var materials = Array.isArray(bundle.materials) ? bundle.materials : [];
       var opaque = [];
       var alpha = [];
@@ -1949,14 +2043,14 @@
       pass.setPipeline(sp);
       pass.setBindGroup(0, shadowBG);
 
-      var objects = Array.isArray(bundle.objects) ? bundle.objects : [];
+      var objects = Array.isArray(bundle.meshObjects) ? bundle.meshObjects : [];
       for (var i = 0; i < objects.length; i++) {
         var obj = objects[i];
         if (!obj || obj.viewCulled) continue;
         if (!obj.castShadow) continue;
         if (!Number.isFinite(obj.vertexOffset) || !Number.isFinite(obj.vertexCount) || obj.vertexCount <= 0) continue;
 
-        var positions = sliceToFloat32(bundle.worldPositions, obj.vertexOffset, obj.vertexCount, 3, "positions");
+        var positions = sliceToFloat32(bundle.worldMeshPositions, obj.vertexOffset, obj.vertexCount, 3, "positions");
         shadowPositionBuffer = wgpuEnsureBufferData(
           device, shadowPositionBuffer,
           GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
@@ -1996,18 +2090,18 @@
         var count = obj.vertexCount;
 
         // Positions.
-        var positions = sliceToFloat32(bundle.worldPositions, offset, count, 3, "positions");
+        var positions = sliceToFloat32(bundle.worldMeshPositions, offset, count, 3, "positions");
         positionBuffer = wgpuEnsureBufferData(device, positionBuffer, GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, positions);
         pass.setVertexBuffer(0, positionBuffer);
 
         // Normals.
-        var normals = sliceToFloat32(bundle.worldNormals, offset, count, 3, "normals");
+        var normals = sliceToFloat32(bundle.worldMeshNormals, offset, count, 3, "normals");
         normalBuffer = wgpuEnsureBufferData(device, normalBuffer, GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, normals);
         pass.setVertexBuffer(1, normalBuffer);
 
         // UVs.
-        if (bundle.worldUVs) {
-          var uvs = sliceToFloat32(bundle.worldUVs, offset, count, 2, "uvs");
+        if (bundle.worldMeshUVs) {
+          var uvs = sliceToFloat32(bundle.worldMeshUVs, offset, count, 2, "uvs");
           uvBuffer = wgpuEnsureBufferData(device, uvBuffer, GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, uvs);
         } else {
           var zeroUVs = ensureScratch("uvs", count * 2);
@@ -2017,8 +2111,8 @@
         pass.setVertexBuffer(2, uvBuffer);
 
         // Tangents.
-        if (bundle.worldTangents) {
-          var tangents = sliceToFloat32(bundle.worldTangents, offset, count, 4, "tangents");
+        if (bundle.worldMeshTangents) {
+          var tangents = sliceToFloat32(bundle.worldMeshTangents, offset, count, 4, "tangents");
           tangentBuffer = wgpuEnsureBufferData(device, tangentBuffer, GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, tangents);
         } else {
           // Default tangent: (1, 0, 0, 1).
@@ -2117,12 +2211,13 @@
         puU[20] = 0; // hasPerVertexColor
         puU[21] = 0; // hasPerVertexSize
         puU[22] = entry.attenuation ? 1 : 0; // sizeAttenuation
-        puF[23] = clamp01(sceneNumber(entry.opacity, 1)); // opacity
-        puU[24] = fogDensity > 0 ? 1 : 0; // hasFog
-        puF[25] = fogDensity; // fogDensity
-        puF[26] = fogColorRGBA[0]; // fogColor
-        puF[27] = fogColorRGBA[1];
-        puF[28] = fogColorRGBA[2];
+        puU[23] = scenePointStyleCode(entry.style); // pointStyle
+        puF[24] = clamp01(sceneNumber(entry.opacity, 1)); // opacity
+        puU[25] = fogDensity > 0 ? 1 : 0; // hasFog
+        puF[26] = fogDensity; // fogDensity
+        puF[27] = fogColorRGBA[0]; // fogColor
+        puF[28] = fogColorRGBA[1];
+        puF[29] = fogColorRGBA[2];
 
         // Cache particle typed arrays on entry.
         if (!entry._cachedPos && Array.isArray(entry.positions) && entry.positions.length >= count * 3) {
@@ -2134,15 +2229,24 @@
         if (!entry._cachedColors && Array.isArray(entry.colors) && entry.colors.length >= count) {
           var rawColors = entry.colors;
           if (typeof rawColors[0] === "string") {
-            entry._cachedColors = new Float32Array(count * 3);
+            entry._cachedColors = new Float32Array(count * 4);
             for (var ci = 0; ci < count; ci++) {
               var crgba = sceneColorRGBA(rawColors[ci], [1, 1, 1, 1]);
-              entry._cachedColors[ci * 3] = crgba[0];
-              entry._cachedColors[ci * 3 + 1] = crgba[1];
-              entry._cachedColors[ci * 3 + 2] = crgba[2];
+              entry._cachedColors[ci * 4] = crgba[0];
+              entry._cachedColors[ci * 4 + 1] = crgba[1];
+              entry._cachedColors[ci * 4 + 2] = crgba[2];
+              entry._cachedColors[ci * 4 + 3] = crgba[3];
             }
-          } else if (rawColors.length >= count * 3) {
+          } else if (rawColors.length >= count * 4) {
             entry._cachedColors = new Float32Array(rawColors);
+          } else if (rawColors.length >= count * 3) {
+            entry._cachedColors = new Float32Array(count * 4);
+            for (var ci2 = 0; ci2 < count; ci2++) {
+              entry._cachedColors[ci2 * 4] = rawColors[ci2 * 3];
+              entry._cachedColors[ci2 * 4 + 1] = rawColors[ci2 * 3 + 1];
+              entry._cachedColors[ci2 * 4 + 2] = rawColors[ci2 * 3 + 2];
+              entry._cachedColors[ci2 * 4 + 3] = 1;
+            }
           }
         }
 
@@ -2165,15 +2269,16 @@
           particleData[base + 2] = entry._cachedPos[pi * 3 + 2];
           particleData[base + 3] = hasSizes ? entry._cachedSizes[pi] : sceneNumber(entry.size, 1);
           if (hasColors) {
-            particleData[base + 4] = entry._cachedColors[pi * 3];
-            particleData[base + 5] = entry._cachedColors[pi * 3 + 1];
-            particleData[base + 6] = entry._cachedColors[pi * 3 + 2];
+            particleData[base + 4] = entry._cachedColors[pi * 4];
+            particleData[base + 5] = entry._cachedColors[pi * 4 + 1];
+            particleData[base + 6] = entry._cachedColors[pi * 4 + 2];
+            particleData[base + 7] = entry._cachedColors[pi * 4 + 3];
           } else {
             particleData[base + 4] = defaultColorRGBA[0];
             particleData[base + 5] = defaultColorRGBA[1];
             particleData[base + 6] = defaultColorRGBA[2];
+            particleData[base + 7] = 1.0;
           }
-          particleData[base + 7] = 1.0; // alpha
         }
 
         pointsParticleBuffer = wgpuEnsureBufferData(
@@ -2202,6 +2307,64 @@
       }
     }
 
+    function drawComputeParticleEntries(pass, records, environment) {
+      if (!Array.isArray(records) || records.length === 0) return;
+
+      var env = environment || {};
+      var fogDensity = sceneNumber(env.fogDensity, 0);
+      var fogColorRGBA = sceneColorRGBA(env.fogColor, [0.5, 0.5, 0.5, 1]);
+
+      for (var i = 0; i < records.length; i++) {
+        var record = records[i];
+        var system = record && record.system;
+        if (!system || !system.renderBuffer || system.count <= 0) continue;
+        if (typeof system.isReady === "function" && !system.isReady()) continue;
+
+        var entry = system.entry && typeof system.entry === "object" ? system.entry : {};
+        var material = entry.material && typeof entry.material === "object" ? entry.material : {};
+
+        var puData = new ArrayBuffer(128);
+        var puF = new Float32Array(puData);
+        var puU = new Uint32Array(puData);
+        puF.set(pointsIdentityMatrix, 0);
+
+        var defaultColorRGBA = sceneColorRGBA(material.color, [1, 1, 1, 1]);
+        puF[16] = sceneNumber(material.size, 1);
+        puF[17] = defaultColorRGBA[0];
+        puF[18] = defaultColorRGBA[1];
+        puF[19] = defaultColorRGBA[2];
+        puU[20] = 1;
+        puU[21] = 1;
+        puU[22] = material.attenuation ? 1 : 0;
+        puU[23] = scenePointStyleCode(material.style);
+        puF[24] = 1;
+        puU[25] = fogDensity > 0 ? 1 : 0;
+        puF[26] = fogDensity;
+        puF[27] = fogColorRGBA[0];
+        puF[28] = fogColorRGBA[1];
+        puF[29] = fogColorRGBA[2];
+
+        device.queue.writeBuffer(pointsUniformBuffer, 0, new Float32Array(puData));
+
+        var pointsBG = device.createBindGroup({
+          layout: pointsBindGroupLayout,
+          entries: [
+            { binding: 0, resource: { buffer: pointsUniformBuffer } },
+            { binding: 1, resource: { buffer: system.renderBuffer } },
+          ],
+        });
+
+        var blendMode = typeof material.blendMode === "string" ? material.blendMode.toLowerCase() : "";
+        var depthWrite = entry.depthWrite !== false;
+        var validBlend = blendMode === "additive" || blendMode === "alpha" ? blendMode : "opaque";
+        var pipeline = getPointsPipeline(validBlend, depthWrite);
+
+        pass.setPipeline(pipeline);
+        pass.setBindGroup(2, pointsBG);
+        pass.draw(6, system.count);
+      }
+    }
+
     // -----------------------------------------------------------------------
     // Main render function
     // -----------------------------------------------------------------------
@@ -2214,12 +2377,13 @@
       if (initFailed || !bundle) return;
 
       var hasPBRData = Boolean(
-        bundle.worldPositions &&
-        bundle.worldNormals &&
-        Array.isArray(bundle.objects) &&
-        bundle.objects.length > 0
+        bundle.worldMeshPositions &&
+        bundle.worldMeshNormals &&
+        Array.isArray(bundle.meshObjects) &&
+        bundle.meshObjects.length > 0
       );
-      var hasPointsData = Array.isArray(bundle.points) && bundle.points.length > 0;
+      var hasPointsData = (Array.isArray(bundle.points) && bundle.points.length > 0) ||
+        (Array.isArray(bundle.computeParticles) && bundle.computeParticles.length > 0);
       if (!hasPBRData && !hasPointsData) return;
 
       var width = canvas.width;
@@ -2249,6 +2413,8 @@
       var activeShadowCount = 0;
 
       var encoder = device.createCommandEncoder({ label: "gosx-frame" });
+      var frameTimeSeconds = performance.now() / 1000;
+      var computeParticleRecords = updateComputeParticleSystems(bundle.computeParticles, encoder, frameTimeSeconds);
 
       var lightArray = Array.isArray(bundle.lights) ? bundle.lights : [];
       var sceneBounds = null;
@@ -2357,7 +2523,8 @@
         // Create a dummy material bind group for group 1 (points pipeline layout requires it).
         var dummyMatBG = createMaterialBindGroup(null, false);
         mainPass.setBindGroup(1, dummyMatBG);
-        drawPointsEntries(mainPass, bundle, cam, performance.now() / 1000);
+        drawPointsEntries(mainPass, bundle, cam, frameTimeSeconds);
+        drawComputeParticleEntries(mainPass, computeParticleRecords, bundle.environment);
       }
 
       mainPass.end();
@@ -2392,6 +2559,7 @@
       if (shadowFrameBuffer) shadowFrameBuffer.destroy();
       if (pointsUniformBuffer) pointsUniformBuffer.destroy();
       if (pointsParticleBuffer) pointsParticleBuffer.destroy();
+      disposeComputeParticleSystems();
 
       if (mainDepthTexture) mainDepthTexture.destroy();
       if (dummyShadowTex) dummyShadowTex.destroy();

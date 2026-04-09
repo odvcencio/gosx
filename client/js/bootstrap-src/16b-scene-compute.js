@@ -32,6 +32,7 @@
     "    emitterArms: u32,",
     "    emitterWind: f32,",
     "    emitterScatter: f32,",
+    "    emitterRotX: f32, emitterRotY: f32, emitterRotZ: f32,",
     "    _pad2: u32,",
     "    sizeStart: f32, sizeEnd: f32,",
     "    colorStartR: f32, colorStartG: f32, colorStartB: f32,",
@@ -108,6 +109,17 @@
     "    return out;",
     "}",
     "",
+    "fn rotateEulerZYX(lx: f32, ly: f32, lz: f32, rx: f32, ry: f32, rz: f32) -> vec3<f32> {",
+    "    let cx = cos(rx); let sx = sin(rx);",
+    "    let cy = cos(ry); let sy = sin(ry);",
+    "    let cz = cos(rz); let sz = sin(rz);",
+    "    return vec3<f32>(",
+    "        lx*(cy*cz) + ly*(sx*sy*cz - cx*sz) + lz*(cx*sy*cz + sx*sz),",
+    "        lx*(cy*sz) + ly*(sx*sy*sz + cx*cz) + lz*(cx*sy*sz - sx*cz),",
+    "        lx*(-sy)   + ly*(sx*cy)             + lz*(cx*cy)",
+    "    );",
+    "}",
+    "",
     "fn emitSpiral(index: u32, p: SimParams) -> Particle {",
     "    var out: Particle;",
     "    let radius = hash2(index, 30u) * p.emitterRadius;",
@@ -115,9 +127,13 @@
     "    let armAngle = f32(arm) * 3.14159265 / f32(max(p.emitterArms / 2u, 1u));",
     "    let spiralAngle = armAngle + (radius / p.emitterRadius) * p.emitterWind;",
     "    let scatter = (hash2(index, 31u) - 0.5) * radius * p.emitterScatter;",
-    "    out.posX = p.emitterX + cos(spiralAngle) * radius + scatter;",
-    "    out.posY = p.emitterY + (hash2(index, 32u) - 0.5) * p.emitterRadius * 0.05;",
-    "    out.posZ = p.emitterZ + sin(spiralAngle) * radius + (hash2(index, 33u) - 0.5) * radius * p.emitterScatter;",
+    "    let lx = cos(spiralAngle) * radius + scatter;",
+    "    let ly = (hash2(index, 32u) - 0.5) * p.emitterRadius * 0.05;",
+    "    let lz = sin(spiralAngle) * radius + (hash2(index, 33u) - 0.5) * radius * p.emitterScatter;",
+    "    let rotated = rotateEulerZYX(lx, ly, lz, p.emitterRotX, p.emitterRotY, p.emitterRotZ);",
+    "    out.posX = p.emitterX + rotated.x;",
+    "    out.posY = p.emitterY + rotated.y;",
+    "    out.posZ = p.emitterZ + rotated.z;",
     "    out.velX = 0.0; out.velY = 0.0; out.velZ = 0.0;",
     "    out.age = 0.0;",
     "    out.lifetime = p.emitterLifetime;",
@@ -244,6 +260,9 @@
     view.setUint32(offset, sceneNumber(emitter.arms, 2), true); offset += 4;
     view.setFloat32(offset, sceneNumber(emitter.wind, 0), true); offset += 4;
     view.setFloat32(offset, sceneNumber(emitter.scatter, 0), true); offset += 4;
+    view.setFloat32(offset, sceneNumber(emitter.rotationX, 0), true); offset += 4;
+    view.setFloat32(offset, sceneNumber(emitter.rotationY, 0), true); offset += 4;
+    view.setFloat32(offset, sceneNumber(emitter.rotationZ, 0), true); offset += 4;
     view.setUint32(offset, 0, true); offset += 4;                     // _pad2
 
     // Material interpolation
@@ -375,6 +394,9 @@
       count: count,
       renderBuffer: renderBuffer,
       entry: entry,
+      isReady: function() {
+        return ready;
+      },
 
       update: function(device, encoder, deltaTime, totalTime) {
         if (!ready) return;
@@ -408,10 +430,6 @@
     var count = Math.min(entry.count || 0, 10000);
     if (count <= 0) return null;
 
-    var emitter = entry.emitter || {};
-    var material = entry.material || {};
-    var forces = entry.forces || [];
-
     // Particle state: same 8-float layout as GPU (posXYZ, velXYZ, age, lifetime).
     var particles = new Float32Array(count * 8);
 
@@ -443,64 +461,94 @@
 
     // Emitter kind map.
     var kindMap = { point: 0, sphere: 1, disc: 2, spiral: 3 };
-    var emitterKind = kindMap[emitter.kind] || 0;
-    var emitterX = sceneNumber(emitter.x, 0);
-    var emitterY = sceneNumber(emitter.y, 0);
-    var emitterZ = sceneNumber(emitter.z, 0);
-    var emitterRadius = sceneNumber(emitter.radius, 0);
-    var emitterLifetime = sceneNumber(emitter.lifetime, 0);
-    var emitterArms = sceneNumber(emitter.arms, 2);
-    var emitterWind = sceneNumber(emitter.wind, 0);
-    var emitterScatter = sceneNumber(emitter.scatter, 0);
-
-    // Material.
-    var colorStart = sceneColorRGBA(material.color || "#ffffff", [1, 1, 1, 1]);
-    var colorEnd = sceneColorRGBA(material.colorEnd || material.color || "#ffffff", [1, 1, 1, 1]);
-    var sizeStart = sceneNumber(material.size, 1);
-    var sizeEnd = sceneNumber(material.sizeEnd, material.size || 1);
-    var opacityStart = sceneNumber(material.opacity, 1);
-    var opacityEnd = sceneNumber(material.opacityEnd, material.opacity || 1);
 
     // Force kind map.
     var forceKindMap = { gravity: 0, wind: 1, turbulence: 2, orbit: 3, drag: 4 };
 
-    function emitParticle(index, base) {
-      switch (emitterKind) {
+    function currentEmitterConfig() {
+      var emitter = entry && entry.emitter && typeof entry.emitter === "object" ? entry.emitter : {};
+      return {
+        kind: kindMap[emitter.kind] || 0,
+        x: sceneNumber(emitter.x, 0),
+        y: sceneNumber(emitter.y, 0),
+        z: sceneNumber(emitter.z, 0),
+        radius: sceneNumber(emitter.radius, 0),
+        lifetime: sceneNumber(emitter.lifetime, 0),
+        arms: Math.max(1, Math.floor(sceneNumber(emitter.arms, 2))),
+        wind: sceneNumber(emitter.wind, 0),
+        scatter: sceneNumber(emitter.scatter, 0),
+        rotX: sceneNumber(emitter.rotationX, 0),
+        rotY: sceneNumber(emitter.rotationY, 0),
+        rotZ: sceneNumber(emitter.rotationZ, 0),
+      };
+    }
+
+    function currentMaterialConfig() {
+      var material = entry && entry.material && typeof entry.material === "object" ? entry.material : {};
+      return {
+        colorStart: sceneColorRGBA(material.color || "#ffffff", [1, 1, 1, 1]),
+        colorEnd: sceneColorRGBA(material.colorEnd || material.color || "#ffffff", [1, 1, 1, 1]),
+        sizeStart: sceneNumber(material.size, 1),
+        sizeEnd: sceneNumber(material.sizeEnd, material.size || 1),
+        opacityStart: sceneNumber(material.opacity, 1),
+        opacityEnd: sceneNumber(material.opacityEnd, material.opacity || 1),
+      };
+    }
+
+    function currentForces() {
+      return Array.isArray(entry && entry.forces) ? entry.forces : [];
+    }
+
+    function emitParticle(index, base, emitterConfig) {
+      switch (emitterConfig.kind) {
         case 1: { // sphere
           var theta = hash2(index, 10) * 6.283185;
           var phi = Math.acos(2.0 * hash2(index, 11) - 1.0);
-          var r = emitterRadius * Math.pow(hash2(index, 12), 0.333);
-          base[0] = emitterX + r * Math.sin(phi) * Math.cos(theta);
-          base[1] = emitterY + r * Math.cos(phi);
-          base[2] = emitterZ + r * Math.sin(phi) * Math.sin(theta);
+          var r = emitterConfig.radius * Math.pow(hash2(index, 12), 0.333);
+          base[0] = emitterConfig.x + r * Math.sin(phi) * Math.cos(theta);
+          base[1] = emitterConfig.y + r * Math.cos(phi);
+          base[2] = emitterConfig.z + r * Math.sin(phi) * Math.sin(theta);
           base[3] = 0; base[4] = 0; base[5] = 0;
           break;
         }
         case 2: { // disc
           var angle = hash2(index, 20) * 6.283185;
-          var dr = emitterRadius * Math.sqrt(hash2(index, 21));
-          base[0] = emitterX + dr * Math.cos(angle);
-          base[1] = emitterY;
-          base[2] = emitterZ + dr * Math.sin(angle);
+          var dr = emitterConfig.radius * Math.sqrt(hash2(index, 21));
+          base[0] = emitterConfig.x + dr * Math.cos(angle);
+          base[1] = emitterConfig.y;
+          base[2] = emitterConfig.z + dr * Math.sin(angle);
           base[3] = 0; base[4] = 0; base[5] = 0;
           break;
         }
         case 3: { // spiral
-          var radius = hash2(index, 30) * emitterRadius;
-          var arm = index % emitterArms;
-          var armAngle = arm * 3.14159265 / Math.max(emitterArms / 2, 1);
-          var spiralAngle = armAngle + (radius / Math.max(emitterRadius, 0.001)) * emitterWind;
-          var scatter = (hash2(index, 31) - 0.5) * radius * emitterScatter;
-          base[0] = emitterX + Math.cos(spiralAngle) * radius + scatter;
-          base[1] = emitterY + (hash2(index, 32) - 0.5) * emitterRadius * 0.05;
-          base[2] = emitterZ + Math.sin(spiralAngle) * radius + (hash2(index, 33) - 0.5) * radius * emitterScatter;
+          var radius = hash2(index, 30) * emitterConfig.radius;
+          var arm = index % emitterConfig.arms;
+          var armAngle = arm * 3.14159265 / Math.max(emitterConfig.arms / 2, 1);
+          var spiralAngle = armAngle + (radius / Math.max(emitterConfig.radius, 0.001)) * emitterConfig.wind;
+          var scatter = (hash2(index, 31) - 0.5) * radius * emitterConfig.scatter;
+          var lx = Math.cos(spiralAngle) * radius + scatter;
+          var ly = (hash2(index, 32) - 0.5) * emitterConfig.radius * 0.05;
+          var lz = Math.sin(spiralAngle) * radius + (hash2(index, 33) - 0.5) * radius * emitterConfig.scatter;
+          var rx = emitterConfig.rotX, ry = emitterConfig.rotY, rz = emitterConfig.rotZ;
+          if (rx !== 0 || ry !== 0 || rz !== 0) {
+            var cx = Math.cos(rx), sx = Math.sin(rx);
+            var cy = Math.cos(ry), sy = Math.sin(ry);
+            var cz = Math.cos(rz), sz = Math.sin(rz);
+            var ox = lx*(cy*cz) + ly*(sx*sy*cz - cx*sz) + lz*(cx*sy*cz + sx*sz);
+            var oy = lx*(cy*sz) + ly*(sx*sy*sz + cx*cz) + lz*(cx*sy*sz - sx*cz);
+            var oz = lx*(-sy)   + ly*(sx*cy)             + lz*(cx*cy);
+            lx = ox; ly = oy; lz = oz;
+          }
+          base[0] = emitterConfig.x + lx;
+          base[1] = emitterConfig.y + ly;
+          base[2] = emitterConfig.z + lz;
           base[3] = 0; base[4] = 0; base[5] = 0;
           break;
         }
         default: { // point
-          base[0] = emitterX;
-          base[1] = emitterY;
-          base[2] = emitterZ;
+          base[0] = emitterConfig.x;
+          base[1] = emitterConfig.y;
+          base[2] = emitterConfig.z;
           base[3] = (hash2(index, 0) - 0.5) * 0.1;
           base[4] = (hash2(index, 1) - 0.5) * 0.1;
           base[5] = (hash2(index, 2) - 0.5) * 0.1;
@@ -508,7 +556,7 @@
         }
       }
       base[6] = 0.0;              // age
-      base[7] = emitterLifetime;   // lifetime
+      base[7] = emitterConfig.lifetime;   // lifetime
     }
 
     return {
@@ -520,6 +568,9 @@
       entry: entry,
 
       update: function(deltaTime, totalTime) {
+        var emitterConfig = currentEmitterConfig();
+        var materialConfig = currentMaterialConfig();
+        var forces = currentForces();
         for (var i = 0; i < count; i++) {
           var base = i * 8;
 
@@ -535,7 +586,7 @@
 
           // Initialize on first frame.
           if (age < 0) {
-            emitParticle(i, particles.subarray(base, base + 8));
+            emitParticle(i, particles.subarray(base, base + 8), emitterConfig);
             posX = particles[base];
             posY = particles[base + 1];
             posZ = particles[base + 2];
@@ -551,7 +602,7 @@
 
           // Respawn dead particles.
           if (lifetime > 0 && age >= lifetime) {
-            emitParticle(i, particles.subarray(base, base + 8));
+            emitParticle(i, particles.subarray(base, base + 8), emitterConfig);
             posX = particles[base];
             posY = particles[base + 1];
             posZ = particles[base + 2];
@@ -633,11 +684,11 @@
           positions[i * 3] = posX;
           positions[i * 3 + 1] = posY;
           positions[i * 3 + 2] = posZ;
-          sizes[i] = sizeStart + (sizeEnd - sizeStart) * t;
-          colors[i * 3] = colorStart[0] + (colorEnd[0] - colorStart[0]) * t;
-          colors[i * 3 + 1] = colorStart[1] + (colorEnd[1] - colorStart[1]) * t;
-          colors[i * 3 + 2] = colorStart[2] + (colorEnd[2] - colorStart[2]) * t;
-          opacities[i] = opacityStart + (opacityEnd - opacityStart) * t;
+          sizes[i] = materialConfig.sizeStart + (materialConfig.sizeEnd - materialConfig.sizeStart) * t;
+          colors[i * 3] = materialConfig.colorStart[0] + (materialConfig.colorEnd[0] - materialConfig.colorStart[0]) * t;
+          colors[i * 3 + 1] = materialConfig.colorStart[1] + (materialConfig.colorEnd[1] - materialConfig.colorStart[1]) * t;
+          colors[i * 3 + 2] = materialConfig.colorStart[2] + (materialConfig.colorEnd[2] - materialConfig.colorStart[2]) * t;
+          opacities[i] = materialConfig.opacityStart + (materialConfig.opacityEnd - materialConfig.opacityStart) * t;
         }
       },
 
@@ -660,4 +711,11 @@
       return createSceneComputeParticleSystem(device, entry);
     }
     return createSceneCPUParticleSystem(entry);
+  }
+
+  function sceneComputeSystemSignature(entry) {
+    return JSON.stringify({
+      count: Math.max(0, Math.floor(sceneNumber(entry && entry.count, 0))),
+      forces: Array.isArray(entry && entry.forces) ? entry.forces : [],
+    });
   }

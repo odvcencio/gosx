@@ -274,10 +274,81 @@
   function sceneInstantiateModelObject(rawObject, model, prefix, index) {
     const source = sceneApplyMaterialOverride(rawObject, model);
     const normalized = normalizeSceneObject(source, index);
+    if (normalized.vertices && normalized.vertices.positions && normalized.vertices.count > 0) {
+      return sceneModelMeshObject(normalized, model, prefix);
+    }
     if (normalized.kind === "lines") {
       return sceneModelLineObject(normalized, model, prefix);
     }
     return sceneModelPrimitiveObject(normalized, model, prefix);
+  }
+
+  function sceneModelTransformMeshFloats(values, tupleSize, mapper) {
+    const source = values instanceof Float32Array ? values : sceneTypedFloatArray(values);
+    const typed = new Float32Array(source.length);
+    const safeTupleSize = Math.max(1, Math.floor(sceneNumber(tupleSize, 1)));
+    for (let index = 0; index + safeTupleSize - 1 < source.length; index += safeTupleSize) {
+      const mapped = mapper(
+        sceneNumber(source[index], 0),
+        sceneNumber(source[index + 1], 0),
+        sceneNumber(source[index + 2], 0),
+        safeTupleSize > 3 ? sceneNumber(source[index + 3], 1) : undefined
+      );
+      typed[index] = sceneNumber(mapped && mapped.x, 0);
+      typed[index + 1] = sceneNumber(mapped && mapped.y, 0);
+      typed[index + 2] = sceneNumber(mapped && mapped.z, 0);
+      if (safeTupleSize > 3) {
+        typed[index + 3] = sceneNumber(mapped && mapped.w, 1);
+      }
+    }
+    return typed;
+  }
+
+  function sceneModelMeshObject(object, model, prefix) {
+    const vertices = object && object.vertices && typeof object.vertices === "object" ? object.vertices : null;
+    if (!vertices || !vertices.positions || !vertices.count) {
+      return null;
+    }
+    const instanced = Object.assign({}, object, {
+      id: prefix + "/" + (object.id || "object"),
+      x: 0,
+      y: 0,
+      z: 0,
+      rotationX: 0,
+      rotationY: 0,
+      rotationZ: 0,
+      spinX: 0,
+      spinY: 0,
+      spinZ: 0,
+      shiftX: 0,
+      shiftY: 0,
+      shiftZ: 0,
+      driftSpeed: 0,
+      driftPhase: 0,
+    });
+    instanced.vertices = {
+      count: Math.max(0, Math.floor(sceneNumber(vertices.count, 0))),
+      positions: sceneModelTransformMeshFloats(vertices.positions, 3, function(x, y, z) {
+        return sceneModelTransformPoint({ x: x, y: y, z: z }, model);
+      }),
+      normals: sceneModelTransformMeshFloats(vertices.normals, 3, function(x, y, z) {
+        return sceneNormalizeDirection(sceneModelTransformVector({ x: x, y: y, z: z }, model));
+      }),
+      uvs: vertices.uvs instanceof Float32Array ? new Float32Array(vertices.uvs) : sceneTypedFloatArray(vertices.uvs),
+      tangents: sceneModelTransformMeshFloats(vertices.tangents, 4, function(x, y, z, w) {
+        const rotated = sceneNormalizeDirection(sceneModelTransformVector({ x: x, y: y, z: z }, model));
+        return { x: rotated.x, y: rotated.y, z: rotated.z, w: sceneNumber(w, 1) };
+      }),
+      joints: vertices.joints instanceof Float32Array ? new Float32Array(vertices.joints) : sceneTypedFloatArray(vertices.joints),
+      weights: vertices.weights instanceof Float32Array ? new Float32Array(vertices.weights) : sceneTypedFloatArray(vertices.weights),
+    };
+    if (model && model.static !== null) {
+      instanced.static = Boolean(model.static);
+    }
+    if (model && typeof model.pickable === "boolean") {
+      instanced.pickable = model.pickable;
+    }
+    return normalizeSceneObject(instanced, prefix);
   }
 
   function sceneInstantiateModelLabel(rawLabel, model, prefix, index) {
@@ -373,6 +444,27 @@
     };
   }
 
+  function sceneModelAssetFormat(src) {
+    const raw = typeof src === "string" ? src.trim() : "";
+    if (!raw) {
+      return "";
+    }
+    let pathname = raw;
+    try {
+      pathname = new URL(raw, window.location.href).pathname;
+    } catch (_error) {
+      pathname = raw.split(/[?#]/, 1)[0];
+    }
+    const normalized = pathname.toLowerCase();
+    if (normalized.endsWith(".glb")) {
+      return "glb";
+    }
+    if (normalized.endsWith(".gltf")) {
+      return "gltf";
+    }
+    return "json";
+  }
+
   async function loadSceneModelAsset(src) {
     const key = String(src || "").trim();
     if (!key) {
@@ -381,6 +473,10 @@
     if (!sceneModelAssetCache.has(key)) {
       sceneModelAssetCache.set(key, (async function() {
         try {
+          const format = sceneModelAssetFormat(key);
+          if (format === "glb" || format === "gltf") {
+            return parseSceneModelAsset(gltfSceneToModelAsset(await sceneLoadGLTFModel(key), key), key);
+          }
           const response = await fetch(key, { credentials: "same-origin" });
           if (!response || !response.ok) {
             throw new Error("HTTP " + String(response && response.status || 0));
@@ -681,7 +777,13 @@
     }
     cssWidth = Math.max(1, Math.round(cssWidth));
     cssHeight = Math.max(1, Math.round(cssHeight));
-    const maxDevicePixelRatio = Math.max(1, base.explicitMaxDevicePixelRatio > 0 ? base.explicitMaxDevicePixelRatio : defaultSceneMaxDevicePixelRatio(capability));
+    const capabilityMaxDevicePixelRatio = defaultSceneMaxDevicePixelRatio(capability);
+    const maxDevicePixelRatio = Math.max(
+      1,
+      base.explicitMaxDevicePixelRatio > 0
+        ? Math.min(base.explicitMaxDevicePixelRatio, capabilityMaxDevicePixelRatio)
+        : capabilityMaxDevicePixelRatio,
+    );
     const devicePixelRatio = sceneViewportDevicePixelRatio(props, maxDevicePixelRatio);
     return {
       cssWidth,
@@ -1522,6 +1624,53 @@
     controls.orbit = sceneOrbitStateFromCamera(camera, controls.target);
   }
 
+  function sceneScrollViewportHeight() {
+    const scrollingElement = document.scrollingElement || document.documentElement || document.body;
+    const visualViewport = window.visualViewport;
+    return Math.max(1, sceneNumber(
+      visualViewport && visualViewport.height,
+      sceneNumber(window.innerHeight, sceneNumber(scrollingElement && scrollingElement.clientHeight, 0)),
+    ));
+  }
+
+  function sceneScrollTop() {
+    const scrollingElement = document.scrollingElement || document.documentElement || document.body;
+    const visualViewport = window.visualViewport;
+    const visualViewportTop = sceneNumber(visualViewport && visualViewport.pageTop, NaN);
+    if (Number.isFinite(visualViewportTop)) {
+      return Math.max(0, visualViewportTop);
+    }
+    return Math.max(0, sceneNumber(
+      window.scrollY,
+      sceneNumber(window.pageYOffset, sceneNumber(scrollingElement && scrollingElement.scrollTop, 0)),
+    ));
+  }
+
+  function sceneScrollMax() {
+    const scrollingElement = document.scrollingElement || document.documentElement || document.body;
+    const scrollHeight = Math.max(
+      sceneNumber(scrollingElement && scrollingElement.scrollHeight, 0),
+      sceneNumber(document.documentElement && document.documentElement.scrollHeight, 0),
+      sceneNumber(document.body && document.body.scrollHeight, 0),
+    );
+    return Math.max(1, scrollHeight - sceneScrollViewportHeight());
+  }
+
+  function sceneAdvanceScrollCamera(scrollCamera) {
+    if (!scrollCamera || scrollCamera.start === scrollCamera.end) {
+      return;
+    }
+    scrollCamera._progress = Math.pow(Math.min(1, Math.max(0, sceneScrollTop() / sceneScrollMax())), 0.5);
+    var target = scrollCamera._progress || 0;
+    var current = sceneNumber(scrollCamera._smoothProgress, target);
+    if (Math.abs(target - current) < 0.0005) {
+      current = target;
+    } else {
+      current += (target - current) * 0.08;
+    }
+    scrollCamera._smoothProgress = current;
+  }
+
   function sceneCurrentControlCamera(controls, sourceCamera, scrollCamera) {
     var cam;
     if (controls && controls.mode === "orbit") {
@@ -1531,12 +1680,8 @@
       cam = sceneRenderCamera(sourceCamera);
     }
     if (scrollCamera && scrollCamera.start !== scrollCamera.end) {
-      // Smooth interpolation — mimics GSAP ScrollTrigger scrub:1.
-      var target = scrollCamera._progress || 0;
-      var current = scrollCamera._smoothProgress || 0;
-      current += (target - current) * 0.08;
-      scrollCamera._smoothProgress = current;
-      cam.z = scrollCamera.start + current * (scrollCamera.end - scrollCamera.start);
+      var progress = sceneNumber(scrollCamera._smoothProgress, sceneNumber(scrollCamera._progress, 0));
+      cam.z = scrollCamera.start + progress * (scrollCamera.end - scrollCamera.start);
     }
     return cam;
   }
@@ -1745,6 +1890,9 @@
     function sceneShouldAnimate() {
       if (motion.reducedMotion) {
         return false;
+      }
+      if (sceneHasActiveTransitions(sceneState)) {
+        return true;
       }
       if (runtimeScene || sceneBool(props.autoRotate, true)) {
         return true;
@@ -1960,6 +2108,19 @@
     }, function(detail) {
       ctx.emit("scene-interaction", detail);
     });
+    const sceneHubListener = function(event) {
+      if (disposed) {
+        return;
+      }
+      const detail = event && event.detail && typeof event.detail === "object" ? event.detail : null;
+      if (!detail || typeof detail.event !== "string") {
+        return;
+      }
+      if (sceneApplyLiveEvent(sceneState, detail.event, detail.data, motion.reducedMotion, sceneNowMilliseconds())) {
+        scheduleRender("hub-event");
+      }
+    };
+    document.addEventListener("gosx:hub:event", sceneHubListener);
 
     const releaseViewportObserver = observeSceneViewport(ctx.mount, scheduleRender);
     const releaseCapabilityObserver = observeSceneCapability(ctx.mount, props, capability, function(reason) {
@@ -2013,6 +2174,7 @@
         cancelFrame();
         return;
       }
+      sceneAdvanceScrollCamera(sceneState._scrollCamera);
       const timeSeconds = now / 1000;
       if (runtimeScene && ctx.runtime && typeof ctx.runtime.renderFrame === "function") {
         const runtimeBundle = ctx.runtime.renderFrame(timeSeconds, viewport.cssWidth, viewport.cssHeight);
@@ -2034,6 +2196,7 @@
       if (runtimeScene && ctx.runtime) {
         applySceneCommands(sceneState, ctx.runtime.tick());
       }
+      sceneAdvanceTransitions(sceneState, now);
       // LOD: swap vertex data based on camera distance before building render bundle.
       if (typeof sceneApplyLOD === "function" && props.compression && props.compression.lod) {
         var cam = sceneCurrentControlCamera(sceneControlHandle.controller, sceneState.camera, sceneState._scrollCamera);
@@ -2066,6 +2229,7 @@
     }
 
     await sceneModelHydration;
+    scenePrimeInitialTransitions(sceneState, motion.reducedMotion, 0);
     renderFrame(0);
 
     // Progressive: upgrade from preview to full resolution after first paint.
@@ -2094,15 +2258,26 @@
 
     // Scroll-driven camera: just track progress, the animation loop picks it up.
     var scrollHandler = null;
+    var visualViewportScrollHandler = null;
     if (sceneState._scrollCamera) {
       sceneState._scrollCamera._progress = 0;
       sceneState._scrollCamera._smoothProgress = 0;
       scrollHandler = function() {
-        var scrollMax = Math.max(1, document.documentElement.scrollHeight - window.innerHeight);
-        sceneState._scrollCamera._progress = Math.pow(Math.min(1, Math.max(0, window.scrollY / scrollMax)), 0.5);
+        if (!sceneWantsAnimation()) {
+          scheduleRender("scroll");
+        }
       };
       window.addEventListener("scroll", scrollHandler, { passive: true });
-      scrollHandler();
+      if (window.visualViewport && typeof window.visualViewport.addEventListener === "function") {
+        visualViewportScrollHandler = function() {
+          if (!sceneWantsAnimation()) {
+            scheduleRender("visual-viewport");
+          }
+        };
+        window.visualViewport.addEventListener("scroll", visualViewportScrollHandler, { passive: true });
+        window.visualViewport.addEventListener("resize", visualViewportScrollHandler, { passive: true });
+      }
+      sceneAdvanceScrollCamera(sceneState._scrollCamera);
     }
 
     return {
@@ -2115,8 +2290,13 @@
         if (scrollHandler) {
           window.removeEventListener("scroll", scrollHandler);
         }
+        if (visualViewportScrollHandler && window.visualViewport && typeof window.visualViewport.removeEventListener === "function") {
+          window.visualViewport.removeEventListener("scroll", visualViewportScrollHandler);
+          window.visualViewport.removeEventListener("resize", visualViewportScrollHandler);
+        }
         canvas.removeEventListener("webglcontextlost", onWebGLContextLost);
         canvas.removeEventListener("webglcontextrestored", onWebGLContextRestored);
+        document.removeEventListener("gosx:hub:event", sceneHubListener);
         releaseViewportObserver();
         releaseCapabilityObserver();
         releaseLifecycleObserver();

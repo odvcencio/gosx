@@ -13,15 +13,21 @@ const sceneChunkSize = 4096
 // progressive loading and LOD.
 func compressSceneIR(ir *SceneIR, bitWidth, previewBitWidth int) {
 	for i := range ir.Points {
-		if len(ir.Points[i].Positions) >= 2 {
+		if len(ir.Points[i].Positions) >= 6 {
+			// Deinterleave [x,y,z,x,y,z,...] → [x,x,...,y,y,...,z,z,...]
+			// so each component gets its own min/max quantization range.
+			deinterleaved := deinterleaveFloat64(ir.Points[i].Positions, 3)
 			if previewBitWidth > 0 && previewBitWidth < bitWidth {
-				ir.Points[i].PreviewPositions = compressFloat64Array(
-					ir.Points[i].Positions, previewBitWidth,
-				)
+				ir.Points[i].PreviewPositions = compressFloat64Array(deinterleaved, previewBitWidth)
 			}
-			ir.Points[i].CompressedPositions = compressFloat64Array(
-				ir.Points[i].Positions, bitWidth,
-			)
+			ir.Points[i].CompressedPositions = compressFloat64Array(deinterleaved, bitWidth)
+			ir.Points[i].PositionStride = 3
+			ir.Points[i].Positions = nil
+		} else if len(ir.Points[i].Positions) >= 2 {
+			if previewBitWidth > 0 && previewBitWidth < bitWidth {
+				ir.Points[i].PreviewPositions = compressFloat64Array(ir.Points[i].Positions, previewBitWidth)
+			}
+			ir.Points[i].CompressedPositions = compressFloat64Array(ir.Points[i].Positions, bitWidth)
 			ir.Points[i].Positions = nil
 		}
 		if len(ir.Points[i].Sizes) >= 2 {
@@ -208,6 +214,21 @@ func packIndicesScene(dst []byte, indices []int, bitWidth int) {
 			}
 		}
 	}
+}
+
+// deinterleaveFloat64 rearranges [a0,b0,c0,a1,b1,c1,...] into
+// [a0,a1,...,b0,b1,...,c0,c1,...] so each component can be compressed with
+// its own min/max range. This dramatically improves precision for data like
+// XYZ positions where axes have very different ranges.
+func deinterleaveFloat64(data []float64, stride int) []float64 {
+	n := len(data) / stride
+	out := make([]float64, len(data))
+	for c := 0; c < stride; c++ {
+		for i := 0; i < n; i++ {
+			out[c*n+i] = data[i*stride+c]
+		}
+	}
+	return out
 }
 
 // unpackIndicesScene unpacks b-bit indices from bytes.

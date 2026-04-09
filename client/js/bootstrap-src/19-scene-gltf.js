@@ -8,6 +8,23 @@
   // GLB binary parser
   // ---------------------------------------------------------------------------
 
+  function sceneDecodeUTF8Bytes(bytes) {
+    if (typeof TextDecoder === "function") {
+      return new TextDecoder().decode(bytes);
+    }
+    var chunkSize = 0x8000;
+    var decoded = "";
+    for (var index = 0; index < bytes.length; index += chunkSize) {
+      var chunk = bytes.subarray(index, Math.min(index + chunkSize, bytes.length));
+      decoded += String.fromCharCode.apply(null, Array.prototype.slice.call(chunk));
+    }
+    try {
+      return decodeURIComponent(escape(decoded));
+    } catch (_error) {
+      return decoded;
+    }
+  }
+
   function sceneParseGLB(arrayBuffer) {
     var view = new DataView(arrayBuffer);
 
@@ -24,7 +41,7 @@
     // Chunk 0: JSON (type 0x4E4F534A).
     var jsonChunkLength = view.getUint32(12, true);
     var jsonBytes = new Uint8Array(arrayBuffer, 20, jsonChunkLength);
-    var json = JSON.parse(new TextDecoder().decode(jsonBytes));
+    var json = JSON.parse(sceneDecodeUTF8Bytes(jsonBytes));
 
     // Chunk 1: binary buffer (type 0x004E4942), optional.
     var binaryBuffer = null;

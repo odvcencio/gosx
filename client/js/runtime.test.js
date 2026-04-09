@@ -588,6 +588,12 @@ class FakeElement {
       }
       return this._webglContext;
     }
+    if (kind === "webgl2" && this.ownerDocument && typeof this.ownerDocument.createWebGL2Context === "function") {
+      if (!this._webglContext) {
+        this._webglContext = this.ownerDocument.createWebGL2Context();
+      }
+      return this._webglContext;
+    }
     return null;
   }
 
@@ -987,6 +993,93 @@ class FakeResponse {
   }
 }
 
+function buildMinimalGLBBytes() {
+  const positions = new Float32Array([
+    0, 0.75, 0,
+    -0.65, -0.45, 0.3,
+    0.7, -0.35, -0.2,
+  ]);
+  const normals = new Float32Array([
+    0, 0, 1,
+    0, 0, 1,
+    0, 0, 1,
+  ]);
+  const indices = new Uint16Array([0, 1, 2]);
+  const bin = Buffer.alloc(80);
+  Buffer.from(positions.buffer).copy(bin, 0);
+  Buffer.from(normals.buffer).copy(bin, 36);
+  Buffer.from(indices.buffer).copy(bin, 72);
+
+  const gltf = {
+    asset: { version: "2.0", generator: "runtime-test" },
+    scene: 0,
+    scenes: [{ nodes: [0] }],
+    nodes: [{ mesh: 0 }],
+    meshes: [{
+      name: "runner",
+      primitives: [{
+        attributes: { POSITION: 0, NORMAL: 1 },
+        indices: 2,
+        material: 0,
+      }],
+    }],
+    materials: [{
+      pbrMetallicRoughness: {
+        baseColorFactor: [0.49, 0.78, 1, 1],
+        metallicFactor: 0.08,
+        roughnessFactor: 0.72,
+      },
+    }],
+    accessors: [
+      {
+        bufferView: 0,
+        componentType: 5126,
+        count: 3,
+        type: "VEC3",
+        min: [-0.65, -0.45, -0.2],
+        max: [0.7, 0.75, 0.3],
+      },
+      {
+        bufferView: 1,
+        componentType: 5126,
+        count: 3,
+        type: "VEC3",
+      },
+      {
+        bufferView: 2,
+        componentType: 5123,
+        count: 3,
+        type: "SCALAR",
+      },
+    ],
+    bufferViews: [
+      { buffer: 0, byteOffset: 0, byteLength: 36, target: 34962 },
+      { buffer: 0, byteOffset: 36, byteLength: 36, target: 34962 },
+      { buffer: 0, byteOffset: 72, byteLength: 8, target: 34963 },
+    ],
+    buffers: [{ byteLength: 80 }],
+  };
+
+  let json = Buffer.from(JSON.stringify(gltf), "utf8");
+  while (json.length % 4 !== 0) {
+    json = Buffer.concat([json, Buffer.from(" ")]);
+  }
+
+  const totalLength = 12 + 8 + json.length + 8 + bin.length;
+  const glb = Buffer.alloc(totalLength);
+  let offset = 0;
+  glb.writeUInt32LE(0x46546c67, offset); offset += 4;
+  glb.writeUInt32LE(2, offset); offset += 4;
+  glb.writeUInt32LE(totalLength, offset); offset += 4;
+  glb.writeUInt32LE(json.length, offset); offset += 4;
+  glb.writeUInt32LE(0x4E4F534A, offset); offset += 4;
+  json.copy(glb, offset); offset += json.length;
+  glb.writeUInt32LE(bin.length, offset); offset += 4;
+  glb.writeUInt32LE(0x004E4942, offset); offset += 4;
+  bin.copy(glb, offset);
+  return Array.from(glb);
+}
+
 class FakeFormData {
   constructor(form) {
     this.values = [];
@@ -1071,6 +1164,11 @@ function createContext(options) {
     document.createWebGLContext = options.createWebGLContext;
   } else if (options.enableWebGL) {
     document.createWebGLContext = () => new FakeWebGLContext();
+  }
+  if (typeof options.createWebGL2Context === "function") {
+    document.createWebGL2Context = options.createWebGL2Context;
+  } else if (options.enableWebGL2) {
+    document.createWebGL2Context = () => new FakeWebGLContext();
   }
   const consoleSpy = createConsoleSpy();
   const hydrateCalls = [];
@@ -3806,6 +3904,110 @@ test("bootstrap loads declarative Scene3D model assets without authored JS", asy
   assert.equal(modelSprite.firstChild.getAttribute("src"), "http://localhost:3000/paper-card.png");
   const ctx2d = mount.children[0].getContext("2d");
   assert.ok(ctx2d.ops.some((entry) => entry[0] === "lineTo"));
+  assert.equal(env.consoleLogs.error.length, 0);
+});
+
+test("bootstrap loads declarative Scene3D GLB model assets through the native renderer path", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-model-glb-root";
+
+  const env = createContext({
+    elements: [mount],
+    enableWebGL2: true,
+    disableCanvas2D: true,
+    fetchRoutes: {
+      "/models/runner.glb": {
+        bytes: buildMinimalGLBBytes(),
+      },
+    },
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-model-glb",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-model-glb-root",
+          props: {
+            width: 640,
+            height: 360,
+            background: "#08151f",
+            models: [
+              {
+                id: "runner",
+                src: "/models/runner.glb",
+                x: 0.35,
+                y: 0.1,
+                z: -0.4,
+                rotationY: 0.2,
+                scaleX: 1.1,
+                scaleY: 1.1,
+                scaleZ: 1.1,
+                static: true,
+              },
+            ],
+          },
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  assert.equal(env.fetchCalls.some((call) => call.url === "/models/runner.glb"), true);
+  assert.equal(mount.getAttribute("data-gosx-scene3d-mounted"), "true");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "webgl");
+  const gl = mount.children[0].getContext("webgl2");
+  assert.ok(gl);
+  assert.ok(gl.ops.some((entry) => entry[0] === "drawArrays" && entry[1] === gl.TRIANGLES && entry[3] >= 3));
+  assert.equal(env.consoleLogs.error.length, 0);
+});
+
+test("bootstrap keeps GLB Scene3D assets visible on canvas fallback", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-model-glb-canvas-root";
+
+  const env = createContext({
+    elements: [mount],
+    fetchRoutes: {
+      "/models/runner.glb": {
+        bytes: buildMinimalGLBBytes(),
+      },
+    },
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-model-glb-canvas",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-model-glb-canvas-root",
+          props: {
+            width: 640,
+            height: 360,
+            background: "#08151f",
+            models: [
+              {
+                id: "runner",
+                src: "/models/runner.glb",
+                x: 0.35,
+                y: 0.1,
+                z: -0.4,
+              },
+            ],
+          },
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  assert.equal(env.fetchCalls.some((call) => call.url === "/models/runner.glb"), true);
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "canvas");
+  const ctx2d = mount.children[0].getContext("2d");
+  const lineCount = ctx2d.ops.filter((entry) => entry[0] === "lineTo").length;
+  assert.ok(lineCount > 22);
   assert.equal(env.consoleLogs.error.length, 0);
 });
 

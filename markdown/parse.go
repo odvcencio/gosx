@@ -126,21 +126,8 @@ func convertBlock(bt *gotreesitter.BoundTree, n *gotreesitter.Node, source []byt
 			heading.Attrs = make(map[string]string)
 		}
 		heading.Attrs["level"] = levelStr(level)
-		// Extract inline text from heading
-		for i := 0; i < n.ChildCount(); i++ {
-			child := n.Child(i)
-			childType := bt.NodeType(child)
-			if childType == "inline" {
-				heading.Children = append(heading.Children, parseInline(bt.NodeText(child), source)...)
-			} else if childType == "paragraph" {
-				// setext_heading uses paragraph for content
-				for j := 0; j < child.ChildCount(); j++ {
-					gc := child.Child(j)
-					if bt.NodeType(gc) == "inline" {
-						heading.Children = append(heading.Children, parseInline(bt.NodeText(gc), source)...)
-					}
-				}
-			}
+		if text := extractHeadingText(bt, n); text != "" {
+			heading.Children = append(heading.Children, parseInline(text, source)...)
 		}
 		return heading
 
@@ -942,6 +929,33 @@ func headingLevel(bt *gotreesitter.BoundTree, n *gotreesitter.Node) int {
 		}
 	}
 	return 1
+}
+
+func extractHeadingText(bt *gotreesitter.BoundTree, n *gotreesitter.Node) string {
+	raw := strings.TrimRight(bt.NodeText(n), "\n")
+	switch bt.NodeType(n) {
+	case "atx_heading":
+		i := 0
+		for i < len(raw) && raw[i] == '#' {
+			i++
+		}
+		raw = strings.TrimLeft(raw[i:], " \t")
+
+		trimmed := strings.TrimRight(raw, " \t")
+		j := len(trimmed) - 1
+		for j >= 0 && trimmed[j] == '#' {
+			j--
+		}
+		if j >= 0 && j < len(trimmed)-1 && (trimmed[j] == ' ' || trimmed[j] == '\t') {
+			trimmed = strings.TrimRight(trimmed[:j+1], " \t")
+		}
+		return trimmed
+	case "setext_heading":
+		if idx := strings.IndexByte(raw, '\n'); idx >= 0 {
+			raw = raw[:idx]
+		}
+	}
+	return strings.TrimSpace(raw)
 }
 
 // levelStr converts a heading level int to its string representation.

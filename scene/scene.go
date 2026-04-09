@@ -47,6 +47,10 @@ type Environment struct {
 	ToneMapping      string // "aces", "reinhard", "linear", "" (default = aces)
 	FogColor         string
 	FogDensity       float64 // for exponential fog (0 = no fog)
+	Transition       Transition
+	InState          *EnvironmentProps
+	OutState         *EnvironmentProps
+	Live             []string
 }
 
 // Props is the typed Go-side Scene3D surface. It lowers into the current
@@ -135,6 +139,10 @@ type Mesh struct {
 	Drift         Vector3
 	DriftSpeed    float64
 	DriftPhase    float64
+	Transition    Transition
+	InState       *MeshProps
+	OutState      *MeshProps
+	Live          []string
 	Children      []Node
 }
 
@@ -146,14 +154,19 @@ type Points struct {
 	Sizes       []float64 // per-particle sizes (optional, default 1.0)
 	Colors      []string  // per-particle hex colors (optional)
 	Color       string    // uniform color if no per-vertex colors
-	Size        float64   // uniform size if no per-vertex sizes
-	Opacity     float64   // 0-1
+	Style       PointStyle
+	Size        float64 // uniform size if no per-vertex sizes
+	Opacity     float64 // 0-1
 	BlendMode   MaterialBlendMode
 	DepthWrite  bool    // whether to write to depth buffer
 	Attenuation bool    // size scales with distance
 	Position    Vector3 // transform position
 	Rotation    Euler   // transform rotation
 	Spin        Euler   // procedural rotation animation
+	Transition  Transition
+	InState     *PointsProps
+	OutState    *PointsProps
+	Live        []string
 }
 
 // InstancedMesh renders N copies of one geometry with per-instance transforms.
@@ -167,21 +180,30 @@ type InstancedMesh struct {
 	Scales        []Vector3
 	CastShadow    bool
 	ReceiveShadow bool
+	Transition    Transition
+	InState       *InstancedMeshProps
+	OutState      *InstancedMeshProps
+	Live          []string
 }
 
 // ComputeParticles declares a GPU-computed particle system.
 type ComputeParticles struct {
-	ID       string
-	Count    int
-	Emitter  ParticleEmitter
-	Forces   []ParticleForce
-	Material ParticleMaterial
-	Bounds   float64
+	ID         string
+	Count      int
+	Emitter    ParticleEmitter
+	Forces     []ParticleForce
+	Material   ParticleMaterial
+	Bounds     float64
+	Transition Transition
+	InState    *ComputeParticlesProps
+	OutState   *ComputeParticlesProps
+	Live       []string
 }
 
 type ParticleEmitter struct {
 	Kind     string // "point", "sphere", "disc", "spiral"
 	Position Vector3
+	Rotation Euler
 	Radius   float64
 	Rate     float64
 	Lifetime float64
@@ -200,6 +222,7 @@ type ParticleForce struct {
 type ParticleMaterial struct {
 	Color       string
 	ColorEnd    string
+	Style       PointStyle
 	Size        float64
 	SizeEnd     float64
 	Opacity     float64
@@ -235,6 +258,10 @@ type Label struct {
 	Occlude     bool
 	WhiteSpace  string
 	TextAlign   string
+	Transition  Transition
+	InState     *LabelProps
+	OutState    *LabelProps
+	Live        []string
 }
 
 // Sprite lowers into one projected image billboard overlay.
@@ -258,28 +285,40 @@ type Sprite struct {
 	AnchorY    float64
 	Occlude    bool
 	Fit        string
+	Transition Transition
+	InState    *SpriteProps
+	OutState   *SpriteProps
+	Live       []string
 }
 
 // Model instances a framework-owned scene model asset with a transform and
 // optional material/static overrides.
 type Model struct {
-	ID        string
-	Src       string
-	Position  Vector3
-	Rotation  Euler
-	Scale     Vector3
-	Material  Material
-	Pickable  *bool
-	Static    *bool
-	Animation string
-	Loop      *bool
+	ID         string
+	Src        string
+	Position   Vector3
+	Rotation   Euler
+	Scale      Vector3
+	Material   Material
+	Pickable   *bool
+	Static     *bool
+	Animation  string
+	Loop       *bool
+	Transition Transition
+	InState    *ModelProps
+	OutState   *ModelProps
+	Live       []string
 }
 
 // AmbientLight adds untargeted scene illumination.
 type AmbientLight struct {
-	ID        string
-	Color     string
-	Intensity float64
+	ID         string
+	Color      string
+	Intensity  float64
+	Transition Transition
+	InState    *LightProps
+	OutState   *LightProps
+	Live       []string
 }
 
 // DirectionalLight adds a directional scene light.
@@ -291,16 +330,24 @@ type DirectionalLight struct {
 	CastShadow bool
 	ShadowBias float64
 	ShadowSize int
+	Transition Transition
+	InState    *LightProps
+	OutState   *LightProps
+	Live       []string
 }
 
 // PointLight adds a positioned scene light with optional range falloff.
 type PointLight struct {
-	ID        string
-	Color     string
-	Intensity float64
-	Position  Vector3
-	Range     float64
-	Decay     float64
+	ID         string
+	Color      string
+	Intensity  float64
+	Position   Vector3
+	Range      float64
+	Decay      float64
+	Transition Transition
+	InState    *LightProps
+	OutState   *LightProps
+	Live       []string
 }
 
 // SpotLight adds a positioned cone light with falloff.
@@ -317,6 +364,10 @@ type SpotLight struct {
 	CastShadow bool
 	ShadowBias float64
 	ShadowSize int
+	Transition Transition
+	InState    *LightProps
+	OutState   *LightProps
+	Live       []string
 }
 
 // HemisphereLight adds sky/ground ambient lighting.
@@ -325,6 +376,10 @@ type HemisphereLight struct {
 	SkyColor    string
 	GroundColor string
 	Intensity   float64
+	Transition  Transition
+	InState     *LightProps
+	OutState    *LightProps
+	Live        []string
 }
 
 // AnimationClip defines a procedural animation clip with keyframe channels.
@@ -374,6 +429,13 @@ const (
 	BlendOpaque   MaterialBlendMode = "opaque"
 	BlendAlpha    MaterialBlendMode = "alpha"
 	BlendAdditive MaterialBlendMode = "additive"
+)
+
+type PointStyle string
+
+const (
+	PointStyleSquare PointStyle = "square"
+	PointStyleFocus  PointStyle = "focus"
 )
 
 type MaterialRenderPass string
@@ -873,6 +935,10 @@ func (l *graphLowerer) lowerMesh(mesh Mesh, parent worldTransform) {
 	record.ShiftZ = mesh.Drift.Z
 	record.DriftSpeed = mesh.DriftSpeed
 	record.DriftPhase = mesh.DriftPhase
+	record.Transition = lowerTransition(mesh.Transition)
+	record.InState = mesh.InState.legacyProps()
+	record.OutState = mesh.OutState.legacyProps()
+	record.Live = normalizeLive(mesh.Live)
 	l.objects = append(l.objects, record)
 	l.anchors[id] = world
 	for _, child := range mesh.Children {
@@ -891,6 +957,7 @@ func (l *graphLowerer) lowerPoints(pts Points, parent worldTransform) {
 		ID:          id,
 		Count:       pts.Count,
 		Color:       strings.TrimSpace(pts.Color),
+		Style:       strings.TrimSpace(string(pts.Style)),
 		Size:        pts.Size,
 		Opacity:     pts.Opacity,
 		BlendMode:   strings.TrimSpace(string(pts.BlendMode)),
@@ -899,6 +966,10 @@ func (l *graphLowerer) lowerPoints(pts Points, parent worldTransform) {
 		X:           world.Position.X,
 		Y:           world.Position.Y,
 		Z:           world.Position.Z,
+		Transition:  lowerTransition(pts.Transition),
+		InState:     pts.InState.legacyProps(),
+		OutState:    pts.OutState.legacyProps(),
+		Live:        normalizeLive(pts.Live),
 	}
 	rotation := eulerFromQuaternion(world.Rotation)
 	record.RotationX = rotation.X
@@ -940,6 +1011,10 @@ func (l *graphLowerer) lowerInstancedMesh(im InstancedMesh, parent worldTransfor
 		Kind:          kind,
 		CastShadow:    im.CastShadow,
 		ReceiveShadow: im.ReceiveShadow,
+		Transition:    lowerTransition(im.Transition),
+		InState:       im.InState.legacyProps(),
+		OutState:      im.OutState.legacyProps(),
+		Live:          normalizeLive(im.Live),
 	}
 	// Apply geometry dimensions.
 	if geometryProps != nil {
@@ -989,7 +1064,7 @@ func (l *graphLowerer) lowerInstancedMesh(im InstancedMesh, parent worldTransfor
 }
 
 func (l *graphLowerer) lowerComputeParticles(cp ComputeParticles, parent worldTransform) {
-	world := combineTransforms(parent, localTransform(cp.Emitter.Position, Euler{}))
+	world := combineTransforms(parent, localTransform(cp.Emitter.Position, cp.Emitter.Rotation))
 	id := strings.TrimSpace(cp.ID)
 	if id == "" {
 		l.nextParticlesID += 1
@@ -1012,21 +1087,25 @@ func (l *graphLowerer) lowerComputeParticles(cp ComputeParticles, parent worldTr
 		ID:    id,
 		Count: cp.Count,
 		Emitter: ParticleEmitterIR{
-			Kind:     strings.TrimSpace(cp.Emitter.Kind),
-			X:        world.Position.X,
-			Y:        world.Position.Y,
-			Z:        world.Position.Z,
-			Radius:   cp.Emitter.Radius,
-			Rate:     cp.Emitter.Rate,
-			Lifetime: cp.Emitter.Lifetime,
-			Arms:     cp.Emitter.Arms,
-			Wind:     cp.Emitter.Wind,
-			Scatter:  cp.Emitter.Scatter,
+			Kind:      strings.TrimSpace(cp.Emitter.Kind),
+			X:         world.Position.X,
+			Y:         world.Position.Y,
+			Z:         world.Position.Z,
+			RotationX: eulerFromQuaternion(world.Rotation).X,
+			RotationY: eulerFromQuaternion(world.Rotation).Y,
+			RotationZ: eulerFromQuaternion(world.Rotation).Z,
+			Radius:    cp.Emitter.Radius,
+			Rate:      cp.Emitter.Rate,
+			Lifetime:  cp.Emitter.Lifetime,
+			Arms:      cp.Emitter.Arms,
+			Wind:      cp.Emitter.Wind,
+			Scatter:   cp.Emitter.Scatter,
 		},
 		Forces: forces,
 		Material: ParticleMaterialIR{
 			Color:       strings.TrimSpace(cp.Material.Color),
 			ColorEnd:    strings.TrimSpace(cp.Material.ColorEnd),
+			Style:       strings.TrimSpace(string(cp.Material.Style)),
 			Size:        cp.Material.Size,
 			SizeEnd:     cp.Material.SizeEnd,
 			Opacity:     cp.Material.Opacity,
@@ -1034,7 +1113,11 @@ func (l *graphLowerer) lowerComputeParticles(cp ComputeParticles, parent worldTr
 			BlendMode:   strings.TrimSpace(string(cp.Material.BlendMode)),
 			Attenuation: cp.Material.Attenuation,
 		},
-		Bounds: cp.Bounds,
+		Bounds:     cp.Bounds,
+		Transition: lowerTransition(cp.Transition),
+		InState:    cp.InState.legacyProps(),
+		OutState:   cp.OutState.legacyProps(),
+		Live:       normalizeLive(cp.Live),
 	}
 	l.computeParticles = append(l.computeParticles, record)
 }
@@ -1086,10 +1169,14 @@ func (l *graphLowerer) lowerModel(model Model, parent worldTransform) {
 	id := l.nextSceneModelID(model.ID)
 	record := ModelIR{
 		ObjectIR: ObjectIR{
-			ID: id,
-			X:  world.Position.X,
-			Y:  world.Position.Y,
-			Z:  world.Position.Z,
+			ID:         id,
+			X:          world.Position.X,
+			Y:          world.Position.Y,
+			Z:          world.Position.Z,
+			Transition: lowerTransition(model.Transition),
+			InState:    model.InState.legacyProps(),
+			OutState:   model.OutState.legacyProps(),
+			Live:       normalizeLive(model.Live),
 		},
 		Src:    src,
 		ScaleX: model.Scale.X,
@@ -1137,10 +1224,14 @@ func (l *graphLowerer) resolveSprites() []SpriteIR {
 
 func (l *graphLowerer) lowerAmbientLight(light AmbientLight) {
 	l.lights = append(l.lights, LightIR{
-		ID:        l.nextSceneLightID("ambient-light", light.ID),
-		Kind:      "ambient",
-		Color:     strings.TrimSpace(light.Color),
-		Intensity: light.Intensity,
+		ID:         l.nextSceneLightID("ambient-light", light.ID),
+		Kind:       "ambient",
+		Color:      strings.TrimSpace(light.Color),
+		Intensity:  light.Intensity,
+		Transition: lowerTransition(light.Transition),
+		InState:    light.InState.legacyProps(),
+		OutState:   light.OutState.legacyProps(),
+		Live:       normalizeLive(light.Live),
 	})
 }
 
@@ -1157,21 +1248,29 @@ func (l *graphLowerer) lowerDirectionalLight(light DirectionalLight, parent worl
 		CastShadow: light.CastShadow,
 		ShadowBias: light.ShadowBias,
 		ShadowSize: light.ShadowSize,
+		Transition: lowerTransition(light.Transition),
+		InState:    light.InState.legacyProps(),
+		OutState:   light.OutState.legacyProps(),
+		Live:       normalizeLive(light.Live),
 	})
 }
 
 func (l *graphLowerer) lowerPointLight(light PointLight, parent worldTransform) {
 	world := combineTransforms(parent, localTransform(light.Position, Euler{}))
 	l.lights = append(l.lights, LightIR{
-		ID:        l.nextSceneLightID("point-light", light.ID),
-		Kind:      "point",
-		Color:     strings.TrimSpace(light.Color),
-		Intensity: light.Intensity,
-		X:         world.Position.X,
-		Y:         world.Position.Y,
-		Z:         world.Position.Z,
-		Range:     light.Range,
-		Decay:     light.Decay,
+		ID:         l.nextSceneLightID("point-light", light.ID),
+		Kind:       "point",
+		Color:      strings.TrimSpace(light.Color),
+		Intensity:  light.Intensity,
+		X:          world.Position.X,
+		Y:          world.Position.Y,
+		Z:          world.Position.Z,
+		Range:      light.Range,
+		Decay:      light.Decay,
+		Transition: lowerTransition(light.Transition),
+		InState:    light.InState.legacyProps(),
+		OutState:   light.OutState.legacyProps(),
+		Live:       normalizeLive(light.Live),
 	})
 }
 
@@ -1196,6 +1295,10 @@ func (l *graphLowerer) lowerSpotLight(light SpotLight, parent worldTransform) {
 		CastShadow: light.CastShadow,
 		ShadowBias: light.ShadowBias,
 		ShadowSize: light.ShadowSize,
+		Transition: lowerTransition(light.Transition),
+		InState:    light.InState.legacyProps(),
+		OutState:   light.OutState.legacyProps(),
+		Live:       normalizeLive(light.Live),
 	})
 }
 
@@ -1206,6 +1309,10 @@ func (l *graphLowerer) lowerHemisphereLight(light HemisphereLight) {
 		Color:       strings.TrimSpace(light.SkyColor),
 		GroundColor: strings.TrimSpace(light.GroundColor),
 		Intensity:   light.Intensity,
+		Transition:  lowerTransition(light.Transition),
+		InState:     light.InState.legacyProps(),
+		OutState:    light.OutState.legacyProps(),
+		Live:        normalizeLive(light.Live),
 	})
 }
 
@@ -1277,6 +1384,10 @@ func (l *graphLowerer) resolveLabel(item pendingLabel) (LabelIR, bool) {
 		Occlude:     item.label.Occlude,
 		WhiteSpace:  strings.TrimSpace(item.label.WhiteSpace),
 		TextAlign:   strings.TrimSpace(item.label.TextAlign),
+		Transition:  lowerTransition(item.label.Transition),
+		InState:     item.label.InState.legacyProps(),
+		OutState:    item.label.OutState.legacyProps(),
+		Live:        normalizeLive(item.label.Live),
 	}, true
 }
 
@@ -1309,6 +1420,10 @@ func (l *graphLowerer) resolveSprite(item pendingSprite) (SpriteIR, bool) {
 		AnchorY:    item.sprite.AnchorY,
 		Occlude:    item.sprite.Occlude,
 		Fit:        strings.TrimSpace(item.sprite.Fit),
+		Transition: lowerTransition(item.sprite.Transition),
+		InState:    item.sprite.InState.legacyProps(),
+		OutState:   item.sprite.OutState.legacyProps(),
+		Live:       normalizeLive(item.sprite.Live),
 	}, true
 }
 
