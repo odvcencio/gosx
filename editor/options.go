@@ -112,6 +112,8 @@ const (
 	PanelMetadata Panel = "metadata"
 	PanelImages   Panel = "images"
 	PanelHistory  Panel = "history"
+	PanelOutline  Panel = "outline"
+	PanelScratch  Panel = "scratch"
 )
 
 // Status identifies the publication state shown in the editor chrome.
@@ -128,6 +130,8 @@ var DefaultPanels = []Panel{
 	PanelPreview,
 	PanelMetadata,
 	PanelImages,
+	PanelOutline,
+	PanelScratch,
 	PanelHistory,
 }
 
@@ -152,6 +156,7 @@ type Options struct {
 	Mood          string            // LJ-style mood key
 	MoodChoices   []MoodChoice      // available moods for dropdown
 	Music         string            // music URL (YouTube)
+	Scratch       string
 	ExtraFields   map[string]string
 	Language      Lang
 	Theme         Theme

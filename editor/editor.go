@@ -221,6 +221,12 @@ func (e *Editor) renderFullscreen() gosx.Node {
 	if e.hasPanel(PanelHistory) {
 		children = append(children, e.renderHistoryPanel())
 	}
+	if e.hasPanel(PanelOutline) {
+		children = append(children, e.renderOutlinePanel())
+	}
+	if e.hasPanel(PanelScratch) {
+		children = append(children, e.renderScratchPanel())
+	}
 
 	return gosx.El(
 		"div",
@@ -520,6 +526,58 @@ func (e *Editor) renderHistoryPanel() gosx.Node {
 				gosx.Attr("class", "history-list"),
 			),
 			gosx.El("p", gosx.Attrs(gosx.Attr("class", "gallery-loading")), gosx.Text("No history yet.")),
+		),
+	)
+}
+
+func (e *Editor) renderOutlinePanel() gosx.Node {
+	return gosx.El("div",
+		gosx.Attrs(
+			gosx.Attr("id", "editor-outline-panel"),
+			gosx.Attr("class", "editor-outline-panel"),
+			gosx.Attr("role", "navigation"),
+			gosx.Attr("aria-label", "Document outline"),
+		),
+		e.renderPanelHeader("Outline", "btn-outline-close"),
+		gosx.El("nav",
+			gosx.Attrs(
+				gosx.Attr("id", "outline-headings"),
+				gosx.Attr("class", "outline-headings"),
+			),
+			gosx.El("p",
+				gosx.Attrs(gosx.Attr("class", "outline-empty")),
+				gosx.Text("Start writing to see your outline."),
+			),
+		),
+	)
+}
+
+func (e *Editor) renderScratchPanel() gosx.Node {
+	return gosx.El("div",
+		gosx.Attrs(
+			gosx.Attr("id", "editor-scratch-panel"),
+			gosx.Attr("class", "editor-scratch-panel"),
+			gosx.Attr("role", "complementary"),
+			gosx.Attr("aria-label", "Scratch notes"),
+		),
+		e.renderPanelHeader("Scratch", "btn-scratch-close"),
+		gosx.El("div",
+			gosx.Attrs(
+				gosx.Attr("id", "scratch-editor"),
+				gosx.Attr("class", "scratch-editor"),
+				gosx.Attr("contenteditable", "true"),
+				gosx.Attr("data-placeholder", "Notes, links, ideas..."),
+			),
+			gosx.RawHTML(e.Options.Scratch),
+		),
+		gosx.El("textarea",
+			gosx.Attrs(
+				gosx.Attr("id", "scratch-raw"),
+				gosx.Attr("name", "scratch"),
+				gosx.Attr("class", "scratch-hidden"),
+				gosx.Attr("aria-hidden", "true"),
+			),
+			gosx.Text(e.Options.Scratch),
 		),
 	)
 }
@@ -824,6 +882,10 @@ func panelTitle(panel Panel) string {
 		return "Images"
 	case PanelHistory:
 		return "History"
+	case PanelOutline:
+		return "Outline"
+	case PanelScratch:
+		return "Scratch"
 	default:
 		return humanizeLabel(string(panel))
 	}
