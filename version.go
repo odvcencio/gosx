@@ -1,4 +1,4 @@
 package gosx
 
 // Version is the current GoSX library release.
-const Version = "0.11.0"
+const Version = "0.12.0"

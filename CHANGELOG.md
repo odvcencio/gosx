@@ -1,5 +1,23 @@
 # Changelog
 
+## v0.12.0
+
+### Scene3D Per-Component Compression
+
+Position arrays are now deinterleaved before quantization so each axis gets its own min/max codebook. Previously, interleaved XYZ data shared one range, destroying precision on axes with smaller extents (e.g., a flat galaxy's Y axis spanning 10 units quantized against X/Z spanning 400 units). The client-side decompressor reinterleaves after dequantization. Controlled by the existing `Compression.BitWidth` setting — no API changes needed. The `positionStride` field is plumbed through the IR and legacy serialization path automatically.
+
+### Particle Emitter Rotation
+
+`ParticleEmitter` now accepts a `Rotation Euler` field. The spiral, disc, and sphere emitters apply the rotation to emitted particle positions so compute particle systems can match a tilted parent geometry. Both the WebGPU (WGSL) and CPU fallback paths apply the ZYX Euler rotation matrix. This fixes the horizontal-band artifact when a spiral emitter is used with a tilted galaxy scene.
+
+### Editor Module
+
+New `editor` package providing a rich text editing foundation: toolbar component with default markdown actions, undo/redo history with coalescing, `LocalDocument` text model, tree-sitter based syntax highlighting for markdown, input system with IME support, and signal-driven reactivity. Build-time factory registry for engine lockdown after init.
+
+### Scene3D Improvements
+
+Lighting, input, mount, glTF, and WebGPU rendering improvements across the Scene3D pipeline. Transition system additions for smooth state morphing.
+
 ## v0.11.0
 
 ### Selective Runtime Bootstrap
