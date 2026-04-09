@@ -2,6 +2,7 @@ package sim
 
 import (
 	"testing"
+	"time"
 
 	"github.com/odvcencio/gosx/hub"
 )
@@ -61,5 +62,23 @@ func TestRunnerCollectsInputs(t *testing.T) {
 	after := r.DrainInputs()
 	if len(after) != 0 {
 		t.Fatalf("expected 0 inputs after drain, got %d", len(after))
+	}
+}
+
+func TestRunnerTickLoop(t *testing.T) {
+	h := hub.New("test")
+	s := &mockSim{}
+	r := New(h, s, Options{TickRate: 60})
+
+	r.Start()
+	time.Sleep(100 * time.Millisecond)
+	r.Stop()
+
+	frame := r.Frame()
+	if frame < 4 {
+		t.Fatalf("expected at least 4 ticks in 100ms at 60hz, got %d", frame)
+	}
+	if s.ticks < 4 {
+		t.Fatalf("expected mockSim.ticks >= 4, got %d", s.ticks)
 	}
 }
