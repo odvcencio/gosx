@@ -72,6 +72,15 @@ func (r *Runner) RegisterHandlers() {
 	r.hub.On("input", func(ctx *hub.Context) {
 		r.ReceiveInput(ctx.Client.ID, Input{Data: ctx.Data})
 	})
+
+	r.hub.On("join", func(ctx *hub.Context) {
+		snap := r.sim.Snapshot()
+		frame := r.frame.Load()
+		ctx.Hub.Send(ctx.Client.ID, "sim:snapshot", map[string]any{
+			"frame":    frame,
+			"snapshot": snap,
+		})
+	})
 }
 
 // ReceiveInput stores an input for the given player, overwriting any prior

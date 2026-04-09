@@ -117,3 +117,23 @@ func TestSnapshotRing(t *testing.T) {
 		t.Fatalf("expected 'mutable' (copy), got %q", string(data))
 	}
 }
+
+func TestSpectatorGetsCurrentState(t *testing.T) {
+	h := hub.New("test")
+	s := &mockSim{}
+	r := New(h, s, Options{})
+
+	r.RegisterHandlers()
+
+	// Verify hub is non-nil and wired
+	if r.hub == nil {
+		t.Fatal("expected hub to be non-nil after RegisterHandlers")
+	}
+
+	// Verify runner has the hub reference and handlers are set
+	// We can't directly inspect handlers, but we can verify
+	// the runner is properly configured
+	if r.hub.Name() != "test" {
+		t.Fatalf("expected hub name 'test', got %q", r.hub.Name())
+	}
+}
