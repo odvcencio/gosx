@@ -335,6 +335,13 @@ func (a *App) Mount(pattern string, handler http.Handler) {
 	}
 }
 
+// EnableGzip adds gzip compression middleware. It compresses all responses
+// when the client advertises gzip support, skipping WebSocket upgrades and
+// pre-compressed responses. Call this before Use() calls that write responses.
+func (a *App) EnableGzip() {
+	a.Use(GzipMiddleware())
+}
+
 // Use appends middleware to the handler chain.
 func (a *App) Use(mw Middleware) {
 	if mw == nil {
