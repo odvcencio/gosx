@@ -103,15 +103,37 @@ func TestFootnoteMultiple(t *testing.T) {
 // --- Math ---
 
 func TestMathInline(t *testing.T) {
-	html := NewRenderer().RenderString("The formula $E = mc^2$ is famous")
+	html := NewRenderer().RenderString("The formula $E = mc^{2}$ is famous")
 	assertContains(t, html, `class="math-inline"`)
-	assertContains(t, html, `E = mc^2`)
+	assertContains(t, html, `<sup>2</sup>`)
 }
 
 func TestMathBlock(t *testing.T) {
-	html := NewRenderer().RenderString("$$E = mc^2$$")
+	html := NewRenderer().RenderString("$$E = mc^{2}$$")
 	assertContains(t, html, `class="math-block"`)
-	assertContains(t, html, `E = mc^2`)
+	assertContains(t, html, `<sup>2</sup>`)
+}
+
+func TestMathFraction(t *testing.T) {
+	html := NewRenderer().RenderString(`$$\frac{a}{b}$$`)
+	assertContains(t, html, `math-frac-num`)
+	assertContains(t, html, `math-frac-den`)
+}
+
+func TestMathGreekLetters(t *testing.T) {
+	html := NewRenderer().RenderString(`$\alpha + \beta$`)
+	assertContains(t, html, "α")
+	assertContains(t, html, "β")
+}
+
+func TestMathSqrt(t *testing.T) {
+	html := NewRenderer().RenderString(`$\sqrt{x}$`)
+	assertContains(t, html, "√")
+}
+
+func TestMathBlackboardBold(t *testing.T) {
+	html := NewRenderer().RenderString(`$\mathbb{R}$`)
+	assertContains(t, html, "ℝ")
 }
 
 func TestMathNotTriggeredInCode(t *testing.T) {

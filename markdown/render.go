@@ -154,10 +154,10 @@ func renderNode(r *Renderer, n *Node) string {
 		return fmt.Sprintf("<section class=\"footnotes\"><ol><li id=\"fn-%s\">%s <a href=\"#fnref-%s\">\u21a9</a></li></ol></section>\n", id, inner, id)
 
 	case NodeMathInline:
-		return fmt.Sprintf("<span class=\"math-inline\">%s</span>", html.EscapeString(n.Literal))
+		return fmt.Sprintf("<span class=\"math-inline\">%s</span>", renderLatexMath(n.Literal))
 
 	case NodeMathBlock:
-		return fmt.Sprintf("<div class=\"math-block\">%s</div>\n", html.EscapeString(n.Literal))
+		return fmt.Sprintf("<div class=\"math-block\">%s</div>\n", renderLatexMath(n.Literal))
 
 	case NodeSuperscript:
 		return fmt.Sprintf("<sup>%s</sup>", html.EscapeString(n.Literal))
