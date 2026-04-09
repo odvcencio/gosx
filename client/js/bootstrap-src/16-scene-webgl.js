@@ -14,6 +14,7 @@
   const SCENE_PBR_VERTEX_SOURCE = [
     "#version 300 es",
     "precision highp float;",
+    "precision highp int;",
     "",
     "in vec3 a_position;",
     "in vec3 a_normal;",
@@ -47,6 +48,7 @@
   const SCENE_PBR_FRAGMENT_SOURCE = [
     "#version 300 es",
     "precision highp float;",
+    "precision highp int;",
     "",
     "in vec3 v_worldPosition;",
     "in vec3 v_normal;",
@@ -121,7 +123,7 @@
     "uniform int u_toneMapMode;",
     "",
     "// Fog",
-    "uniform bool u_hasFog;",
+    "uniform int u_hasFog;",
     "uniform float u_fogDensity;",
     "uniform vec3 u_fogColor;",
     "",
@@ -334,7 +336,7 @@
     "    vec3 color = ambient + Lo + emission;",
     "",
     "    // Exponential fog.",
-    "    if (u_hasFog) {",
+    "    if (u_hasFog != 0) {",
     "        float fogDist = length(v_worldPosition - u_cameraPosition);",
     "        float fogFactor = exp(-u_fogDensity * u_fogDensity * fogDist * fogDist);",
     "        fogFactor = clamp(fogFactor, 0.0, 1.0);",
@@ -384,27 +386,30 @@
   const SCENE_POINTS_VERTEX_SOURCE = [
     "#version 300 es",
     "precision highp float;",
+    "precision highp int;",
     "",
     "in vec3 a_position;",
     "in float a_size;",
-    "in vec3 a_color;",
+    "in vec4 a_color;",
     "",
     "uniform mat4 u_viewMatrix;",
     "uniform mat4 u_projectionMatrix;",
     "uniform mat4 u_modelMatrix;",
     "uniform float u_defaultSize;",
-    "uniform vec3 u_defaultColor;",
+    "uniform vec4 u_defaultColor;",
     "uniform bool u_hasPerVertexColor;",
     "uniform bool u_hasPerVertexSize;",
     "uniform bool u_sizeAttenuation;",
+    "uniform int u_pointStyle;",
     "uniform float u_viewportHeight;",
     "",
     "// Fog",
-    "uniform bool u_hasFog;",
+    "uniform int u_hasFog;",
     "uniform float u_fogDensity;",
     "",
-    "out vec3 v_color;",
+    "out vec4 v_color;",
     "out float v_fogFactor;",
+    "out float v_pointSize;",
     "",
     "void main() {",
     "    vec4 worldPos = u_modelMatrix * vec4(a_position, 1.0);",
@@ -417,11 +422,12 @@
     "    } else {",
     "        gl_PointSize = max(size, 1.0);",
     "    }",
+    "    v_pointSize = gl_PointSize;",
     "",
     "    v_color = u_hasPerVertexColor ? a_color : u_defaultColor;",
     "",
     "    // Exponential fog",
-    "    if (u_hasFog) {",
+    "    if (u_hasFog != 0) {",
     "        float dist = length(viewPos.xyz);",
     "        v_fogFactor = exp(-u_fogDensity * u_fogDensity * dist * dist);",
     "        v_fogFactor = clamp(v_fogFactor, 0.0, 1.0);",
@@ -434,27 +440,43 @@
   const SCENE_POINTS_FRAGMENT_SOURCE = [
     "#version 300 es",
     "precision highp float;",
+    "precision highp int;",
     "",
-    "in vec3 v_color;",
+    "in vec4 v_color;",
     "in float v_fogFactor;",
+    "in float v_pointSize;",
     "",
     "uniform float u_opacity;",
     "uniform vec3 u_fogColor;",
-    "uniform bool u_hasFog;",
+    "uniform int u_hasFog;",
+    "uniform int u_pointStyle;",
     "",
     "out vec4 fragColor;",
     "",
     "void main() {",
-    "    // Filled square point — matches three.js PointsMaterial (no circular cutoff).",
     "    float alpha = 1.0;",
-    "    vec3 color = v_color;",
+    "    vec3 color = v_color.rgb;",
+    "    if (u_pointStyle == 1) {",
+    "        vec2 centered = gl_PointCoord - vec2(0.5);",
+    "        float radial = length(centered);",
+    "        float square = max(abs(centered.x), abs(centered.y));",
+    "        float focus = clamp((v_pointSize - 1.0) / 10.0, 0.0, 1.0);",
+    "        float coreRadius = mix(0.49, 0.18, focus);",
+    "        float core = 1.0 - smoothstep(coreRadius, coreRadius + 0.05, square);",
+    "        float halo = (1.0 - smoothstep(0.12, 0.72, radial)) * focus;",
+    "        float streakX = 1.0 - smoothstep(0.02, 0.16, abs(centered.x));",
+    "        float streakY = 1.0 - smoothstep(0.02, 0.16, abs(centered.y));",
+    "        float streak = max(streakX, streakY) * focus;",
+    "        alpha = clamp(core + halo * 0.5 + streak * 0.2, 0.0, 1.0);",
+    "        color = mix(color, vec3(1.0), clamp(focus * 0.22 + core * focus * 0.28, 0.0, 0.4));",
+    "    }",
     "",
     "    // Apply fog",
-    "    if (u_hasFog) {",
+    "    if (u_hasFog != 0) {",
     "        color = mix(u_fogColor, color, v_fogFactor);",
     "    }",
     "",
-    "    fragColor = vec4(color, alpha * u_opacity);",
+    "    fragColor = vec4(color, alpha * v_color.a * u_opacity);",
     "}",
   ].join("\n");
 
@@ -747,8 +769,8 @@
   function sceneShadowComputeBounds(bundle) {
     var minX = Infinity, minY = Infinity, minZ = Infinity;
     var maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
-    var positions = bundle.worldPositions;
-    var objects = Array.isArray(bundle.objects) ? bundle.objects : [];
+    var positions = bundle.worldMeshPositions;
+    var objects = Array.isArray(bundle.meshObjects) ? bundle.meshObjects : [];
 
     for (var i = 0; i < objects.length; i++) {
       var obj = objects[i];
@@ -798,7 +820,7 @@
     gl.enable(gl.CULL_FACE);
     gl.cullFace(gl.FRONT);
 
-    var objects = Array.isArray(bundle.objects) ? bundle.objects : [];
+    var objects = Array.isArray(bundle.meshObjects) ? bundle.meshObjects : [];
 
     for (var i = 0; i < objects.length; i++) {
       var obj = objects[i];
@@ -817,7 +839,7 @@
       }
       var positions = shadowState.scratch;
       for (var vi = 0; vi < length; vi++) {
-        positions[vi] = bundle.worldPositions[start + vi] || 0;
+        positions[vi] = bundle.worldMeshPositions[start + vi] || 0;
       }
 
       gl.bindBuffer(gl.ARRAY_BUFFER, shadowState.buffer);
@@ -1594,6 +1616,7 @@
       hasPerVertexColor: gl.getUniformLocation(program, "u_hasPerVertexColor"),
       hasPerVertexSize: gl.getUniformLocation(program, "u_hasPerVertexSize"),
       sizeAttenuation: gl.getUniformLocation(program, "u_sizeAttenuation"),
+      pointStyle: gl.getUniformLocation(program, "u_pointStyle"),
       viewportHeight: gl.getUniformLocation(program, "u_viewportHeight"),
       opacity: gl.getUniformLocation(program, "u_opacity"),
       hasFog: gl.getUniformLocation(program, "u_hasFog"),
@@ -2045,6 +2068,8 @@
     const pointsPositionBuffer = gl.createBuffer();
     const pointsSizeBuffer = gl.createBuffer();
     const pointsColorBuffer = gl.createBuffer();
+    var computeParticleSystems = new Map();
+    var lastComputeParticleTimeSeconds = null;
 
     // Instanced PBR program — compiled lazily on first instanced mesh.
     var instancedProgram = null;
@@ -2174,7 +2199,7 @@
     // Collect objects into render-pass groups and sort translucent objects
     // by depth (back-to-front).
     function buildPBRDrawList(bundle) {
-      const objects = Array.isArray(bundle && bundle.objects) ? bundle.objects : [];
+      const objects = Array.isArray(bundle && bundle.meshObjects) ? bundle.meshObjects : [];
       const materials = Array.isArray(bundle.materials) ? bundle.materials : [];
       const opaque = [];
       const alpha = [];
@@ -2213,12 +2238,13 @@
 
       // Check that this bundle has PBR-compatible data or points.
       const hasPBRData = Boolean(
-        bundle.worldPositions &&
-        bundle.worldNormals &&
-        Array.isArray(bundle.objects) &&
-        bundle.objects.length > 0
+        bundle.worldMeshPositions &&
+        bundle.worldMeshNormals &&
+        Array.isArray(bundle.meshObjects) &&
+        bundle.meshObjects.length > 0
       );
-      const hasPointsData = Array.isArray(bundle.points) && bundle.points.length > 0;
+      const hasPointsData = (Array.isArray(bundle.points) && bundle.points.length > 0) ||
+        (Array.isArray(bundle.computeParticles) && bundle.computeParticles.length > 0);
       const hasInstancedData = Array.isArray(bundle.instancedMeshes) && bundle.instancedMeshes.length > 0;
       if (!hasPBRData && !hasPointsData && !hasInstancedData) {
         return;
@@ -2344,7 +2370,9 @@
       drawInstancedMeshes(gl, bundle, viewMatrix, projMatrix);
 
       // Draw points entries (after meshes, before post-processing).
-      drawPointsEntries(gl, bundle, viewMatrix, projMatrix, performance.now() / 1000);
+      var frameTimeSeconds = performance.now() / 1000;
+      drawPointsEntries(gl, Array.isArray(bundle.points) ? bundle.points : [], bundle.environment, viewMatrix, projMatrix, frameTimeSeconds);
+      drawPointsEntries(gl, buildComputePointsEntries(bundle.computeParticles, frameTimeSeconds), bundle.environment, viewMatrix, projMatrix, frameTimeSeconds);
 
       // Restore state.
       gl.depthMask(true);
@@ -2466,22 +2494,22 @@
         const count = obj.vertexCount;
 
         // Positions (vec3).
-        const positions = sliceToFloat32(bundle.worldPositions, offset, count, 3, "positions");
+        const positions = sliceToFloat32(bundle.worldMeshPositions, offset, count, 3, "positions");
         gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
         gl.bufferData(gl.ARRAY_BUFFER, positions, gl.DYNAMIC_DRAW);
         gl.enableVertexAttribArray(currentAttribs.position);
         gl.vertexAttribPointer(currentAttribs.position, 3, gl.FLOAT, false, 0, 0);
 
         // Normals (vec3).
-        const normals = sliceToFloat32(bundle.worldNormals, offset, count, 3, "normals");
+        const normals = sliceToFloat32(bundle.worldMeshNormals, offset, count, 3, "normals");
         gl.bindBuffer(gl.ARRAY_BUFFER, normalBuffer);
         gl.bufferData(gl.ARRAY_BUFFER, normals, gl.DYNAMIC_DRAW);
         gl.enableVertexAttribArray(currentAttribs.normal);
         gl.vertexAttribPointer(currentAttribs.normal, 3, gl.FLOAT, false, 0, 0);
 
         // UVs (vec2).
-        if (bundle.worldUVs) {
-          const uvs = sliceToFloat32(bundle.worldUVs, offset, count, 2, "uvs");
+        if (bundle.worldMeshUVs) {
+          const uvs = sliceToFloat32(bundle.worldMeshUVs, offset, count, 2, "uvs");
           gl.bindBuffer(gl.ARRAY_BUFFER, uvBuffer);
           gl.bufferData(gl.ARRAY_BUFFER, uvs, gl.DYNAMIC_DRAW);
           gl.enableVertexAttribArray(currentAttribs.uv);
@@ -2492,8 +2520,8 @@
         }
 
         // Tangents (vec4).
-        if (bundle.worldTangents) {
-          const tangents = sliceToFloat32(bundle.worldTangents, offset, count, 4, "tangents");
+        if (bundle.worldMeshTangents) {
+          const tangents = sliceToFloat32(bundle.worldMeshTangents, offset, count, 4, "tangents");
           gl.bindBuffer(gl.ARRAY_BUFFER, tangentBuffer);
           gl.bufferData(gl.ARRAY_BUFFER, tangents, gl.DYNAMIC_DRAW);
           gl.enableVertexAttribArray(currentAttribs.tangent);
@@ -2551,9 +2579,93 @@
       return pointsProgram;
     }
 
+    function disposeComputeParticleSystemRecord(record) {
+      if (record && record.system && typeof record.system.dispose === "function") {
+        record.system.dispose();
+      }
+    }
+
+    function syncComputeParticleSystems(entries) {
+      var activeIds = new Set();
+      var records = [];
+      var sourceEntries = Array.isArray(entries) ? entries : [];
+      for (var i = 0; i < sourceEntries.length; i++) {
+        var entry = sourceEntries[i];
+        if (!entry || typeof entry !== "object") continue;
+        var id = typeof entry.id === "string" && entry.id ? entry.id : ("scene-particles-" + i);
+        var signature = sceneComputeSystemSignature(entry);
+        activeIds.add(id);
+        var record = computeParticleSystems.get(id);
+        if (!record || record.signature !== signature) {
+          disposeComputeParticleSystemRecord(record);
+          record = {
+            signature: signature,
+            system: createSceneParticleSystem(null, entry),
+            colorBuffer: null,
+          };
+          computeParticleSystems.set(id, record);
+        } else if (record.system) {
+          record.system.entry = entry;
+        }
+        if (record && record.system) {
+          records.push(record);
+        }
+      }
+      for (const [id, record] of computeParticleSystems.entries()) {
+        if (!activeIds.has(id)) {
+          disposeComputeParticleSystemRecord(record);
+          computeParticleSystems.delete(id);
+        }
+      }
+      return records;
+    }
+
+    function buildComputePointsEntries(entries, timeSeconds) {
+      var currentTime = Number.isFinite(timeSeconds) ? timeSeconds : 0;
+      var deltaTime = lastComputeParticleTimeSeconds == null
+        ? 0
+        : Math.max(0, Math.min(0.1, currentTime - lastComputeParticleTimeSeconds));
+      lastComputeParticleTimeSeconds = currentTime;
+      var records = syncComputeParticleSystems(entries);
+      var pointsEntries = [];
+      for (var i = 0; i < records.length; i++) {
+        var record = records[i];
+        var system = record.system;
+        if (!system) continue;
+        system.update(deltaTime, currentTime);
+        if (!record.colorBuffer || record.colorBuffer.length !== system.count * 4) {
+          record.colorBuffer = new Float32Array(system.count * 4);
+        }
+        for (var pi = 0; pi < system.count; pi++) {
+          var rgbBase = pi * 3;
+          var rgbaBase = pi * 4;
+          record.colorBuffer[rgbaBase] = system.colors[rgbBase];
+          record.colorBuffer[rgbaBase + 1] = system.colors[rgbBase + 1];
+          record.colorBuffer[rgbaBase + 2] = system.colors[rgbBase + 2];
+          record.colorBuffer[rgbaBase + 3] = system.opacities[pi];
+        }
+        var material = system.entry && system.entry.material && typeof system.entry.material === "object"
+          ? system.entry.material
+          : {};
+        pointsEntries.push({
+          id: system.entry && system.entry.id ? system.entry.id : ("scene-compute-points-" + i),
+          count: system.count,
+          color: typeof material.color === "string" ? material.color : "#ffffff",
+          style: material.style,
+          size: sceneNumber(material.size, 1),
+          opacity: 1,
+          blendMode: material.blendMode,
+          attenuation: !!material.attenuation,
+          _cachedPos: system.positions,
+          _cachedSizes: system.sizes,
+          _cachedColors: record.colorBuffer,
+        });
+      }
+      return pointsEntries;
+    }
+
     // Draw all points entries from the render bundle.
-    function drawPointsEntries(gl, bundle, viewMatrix, projMatrix, timeSeconds) {
-      var pointsArray = Array.isArray(bundle.points) ? bundle.points : [];
+    function drawPointsEntries(gl, pointsArray, environment, viewMatrix, projMatrix, timeSeconds) {
       if (pointsArray.length === 0) return;
 
       var pp = ensurePointsProgram();
@@ -2567,7 +2679,7 @@
       gl.uniform1f(pp.uniforms.viewportHeight, canvas.height);
 
       // Upload fog uniforms.
-      var env = bundle.environment || {};
+      var env = environment || {};
       var fogDensity = sceneNumber(env.fogDensity, 0);
       gl.uniform1i(pp.uniforms.hasFog, fogDensity > 0 ? 1 : 0);
       gl.uniform1f(pp.uniforms.fogDensity, fogDensity);
@@ -2656,9 +2768,10 @@
         gl.uniform1f(pp.uniforms.opacity, clamp01(sceneNumber(entry.opacity, 1)));
 
         var defaultColorRGBA = sceneColorRGBA(entry.color, [1, 1, 1, 1]);
-        gl.uniform3f(pp.uniforms.defaultColor, defaultColorRGBA[0], defaultColorRGBA[1], defaultColorRGBA[2]);
+        gl.uniform4f(pp.uniforms.defaultColor, defaultColorRGBA[0], defaultColorRGBA[1], defaultColorRGBA[2], 1);
         gl.uniform1f(pp.uniforms.defaultSize, sceneNumber(entry.size, 1));
         gl.uniform1i(pp.uniforms.sizeAttenuation, entry.attenuation ? 1 : 0);
+        gl.uniform1i(pp.uniforms.pointStyle, scenePointStyleCode(entry.style));
 
         // Cache typed arrays on first use — positions/sizes/colors are static.
         if (!entry._cachedPos && Array.isArray(entry.positions) && entry.positions.length >= count * 3) {
@@ -2670,15 +2783,24 @@
         if (!entry._cachedColors && Array.isArray(entry.colors) && entry.colors.length >= count) {
           var rawColors = entry.colors;
           if (typeof rawColors[0] === "string") {
-            entry._cachedColors = new Float32Array(count * 3);
+            entry._cachedColors = new Float32Array(count * 4);
             for (var ci = 0; ci < count; ci++) {
               var crgba = sceneColorRGBA(rawColors[ci], [1, 1, 1, 1]);
-              entry._cachedColors[ci * 3] = crgba[0];
-              entry._cachedColors[ci * 3 + 1] = crgba[1];
-              entry._cachedColors[ci * 3 + 2] = crgba[2];
+              entry._cachedColors[ci * 4] = crgba[0];
+              entry._cachedColors[ci * 4 + 1] = crgba[1];
+              entry._cachedColors[ci * 4 + 2] = crgba[2];
+              entry._cachedColors[ci * 4 + 3] = crgba[3];
             }
-          } else if (rawColors.length >= count * 3) {
+          } else if (rawColors.length >= count * 4) {
             entry._cachedColors = new Float32Array(rawColors);
+          } else if (rawColors.length >= count * 3) {
+            entry._cachedColors = new Float32Array(count * 4);
+            for (var ci2 = 0; ci2 < count; ci2++) {
+              entry._cachedColors[ci2 * 4] = rawColors[ci2 * 3];
+              entry._cachedColors[ci2 * 4 + 1] = rawColors[ci2 * 3 + 1];
+              entry._cachedColors[ci2 * 4 + 2] = rawColors[ci2 * 3 + 2];
+              entry._cachedColors[ci2 * 4 + 3] = 1;
+            }
           }
         }
         // Positions (vec3) — upload from cached typed array.
@@ -2701,17 +2823,17 @@
           gl.vertexAttrib1f(pp.attributes.size, sceneNumber(entry.size, 1));
         }
 
-        // Per-vertex colors (vec3 rgb 0-1).
+        // Per-vertex colors (vec4 rgba 0-1).
         var hasColors = !!entry._cachedColors;
         gl.uniform1i(pp.uniforms.hasPerVertexColor, hasColors ? 1 : 0);
         if (hasColors && pp.attributes.color >= 0) {
           gl.bindBuffer(gl.ARRAY_BUFFER, pointsColorBuffer);
           gl.bufferData(gl.ARRAY_BUFFER, entry._cachedColors, gl.STREAM_DRAW);
           gl.enableVertexAttribArray(pp.attributes.color);
-          gl.vertexAttribPointer(pp.attributes.color, 3, gl.FLOAT, false, 0, 0);
+          gl.vertexAttribPointer(pp.attributes.color, 4, gl.FLOAT, false, 0, 0);
         } else if (pp.attributes.color >= 0) {
           gl.disableVertexAttribArray(pp.attributes.color);
-          gl.vertexAttrib3f(pp.attributes.color, defaultColorRGBA[0], defaultColorRGBA[1], defaultColorRGBA[2]);
+          gl.vertexAttrib4f(pp.attributes.color, defaultColorRGBA[0], defaultColorRGBA[1], defaultColorRGBA[2], 1);
         }
 
         gl.drawArrays(gl.POINTS, 0, count);
@@ -2878,6 +3000,11 @@
       gl.deleteBuffer(pointsPositionBuffer);
       gl.deleteBuffer(pointsSizeBuffer);
       gl.deleteBuffer(pointsColorBuffer);
+      for (const record of computeParticleSystems.values()) {
+        disposeComputeParticleSystemRecord(record);
+      }
+      computeParticleSystems.clear();
+      lastComputeParticleTimeSeconds = null;
       gl.deleteBuffer(instanceTransformBuffer);
       gl.deleteBuffer(instanceVertexBuffer);
       gl.deleteBuffer(instanceNormalBuffer);

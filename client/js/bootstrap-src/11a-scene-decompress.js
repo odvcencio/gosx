@@ -97,9 +97,23 @@
 
   // Decompress a points entry in place — replaces compressedPositions/compressedSizes
   // with decompressed positions/sizes arrays so the render pipeline sees plain float arrays.
+  function sceneReinterleave(data, stride) {
+    var n = data.length / stride;
+    var out = new Array(data.length);
+    for (var c = 0; c < stride; c++) {
+      for (var i = 0; i < n; i++) {
+        out[i * stride + c] = data[c * n + i];
+      }
+    }
+    return out;
+  }
+
   function sceneDecompressPointsEntry(entry) {
     if (entry.compressedPositions && !entry.positions) {
       entry.positions = sceneDecompressArray(entry.compressedPositions);
+      if (entry.positions && entry.positionStride > 1) {
+        entry.positions = sceneReinterleave(entry.positions, entry.positionStride);
+      }
       if (entry.positions) {
         delete entry.compressedPositions;
       }
@@ -164,8 +178,12 @@
         // Decompress preview immediately for fast first paint
         if (entry.previewPositions && !entry.positions) {
           entry.positions = sceneDecompressArray(entry.previewPositions);
+          if (entry.positions && entry.positionStride > 1) {
+            entry.positions = sceneReinterleave(entry.positions, entry.positionStride);
+          }
           // Store full-res data for upgrade
           entry._pendingPositions = entry.compressedPositions;
+          entry._positionStride = entry.positionStride || 0;
           entry._previewActive = true;
           delete entry.previewPositions;
         }
@@ -178,6 +196,9 @@
           // Also decompress full-res for LOD switching
           if (entry._pendingPositions) {
             entry._fullPositions = sceneDecompressArray(entry._pendingPositions);
+            if (entry._fullPositions && entry._positionStride > 1) {
+              entry._fullPositions = sceneReinterleave(entry._fullPositions, entry._positionStride);
+            }
             entry._previewPositions = entry.positions;
             entry._lodThreshold = lodThreshold;
           }
@@ -248,7 +269,11 @@
       var entry = points[i];
       if (entry._pendingPositions) {
         entry.positions = sceneDecompressArray(entry._pendingPositions);
+        if (entry.positions && entry._positionStride > 1) {
+          entry.positions = sceneReinterleave(entry.positions, entry._positionStride);
+        }
         delete entry._pendingPositions;
+        delete entry._positionStride;
         delete entry._previewActive;
         // Clear cached typed arrays so the renderer rebuilds buffers
         delete entry._cachedPos;

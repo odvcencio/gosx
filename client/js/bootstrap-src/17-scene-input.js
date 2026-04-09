@@ -515,15 +515,27 @@
   }
 
   function sceneRaycastPick(pointerX, pointerY, width, height, camera, bundle) {
-    if (!bundle || !Array.isArray(bundle.objects) || !bundle.objects.length) {
+    if (!bundle) {
       return null;
     }
 
     var ray = sceneScreenToRay(pointerX, pointerY, width, height, camera);
-    var closest = null;
+    var closest = sceneRaycastPickGroup(ray, bundle.meshObjects, bundle.worldMeshPositions, 0);
+    if (closest) {
+      return closest;
+    }
+    return sceneRaycastPickGroup(ray, bundle.objects, bundle.worldPositions, 0);
+  }
 
-    for (var i = 0; i < bundle.objects.length; i++) {
-      var obj = bundle.objects[i];
+  function sceneRaycastPickGroup(ray, objects, positions, indexOffset) {
+    if (!Array.isArray(objects) || !objects.length || !positions || typeof positions.length !== "number") {
+      return null;
+    }
+    var closest = null;
+    var safeIndexOffset = Math.max(0, Math.floor(sceneNumber(indexOffset, 0)));
+
+    for (var i = 0; i < objects.length; i++) {
+      var obj = objects[i];
 
       if (!sceneObjectAllowsPointerPick(obj)) continue;
       if (obj.viewCulled) continue;
@@ -539,9 +551,6 @@
       if (aabbDist < 0) continue;
 
       // Narrow phase: triangle intersection against world positions.
-      var positions = bundle.worldPositions;
-      if (!positions || typeof positions.length !== "number") continue;
-
       var vertexOffset = Math.max(0, Math.floor(sceneNumber(obj.vertexOffset, 0)));
       var vertexCount = Math.max(0, Math.floor(sceneNumber(obj.vertexCount, 0)));
 
@@ -554,7 +563,7 @@
         var hit = sceneRayIntersectsTriangle(ray.origin, ray.dir, v0, v1, v2);
         if (hit && (!closest || hit.distance < closest.distance)) {
           closest = {
-            index: i,
+            index: safeIndexOffset + i,
             object: obj,
             distance: hit.distance,
             inside: true,

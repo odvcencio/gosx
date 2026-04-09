@@ -5,6 +5,7 @@ import (
 	"math"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/odvcencio/gosx/engine"
 )
@@ -198,6 +199,187 @@ func TestPropsSceneIRLowerNestedGraph(t *testing.T) {
 	}
 	if math.Abs(label.DriftSpeed-0.8) > 1e-9 || math.Abs(label.DriftPhase-0.4) > 1e-9 {
 		t.Fatalf("expected label drift motion, got (%#v,%#v)", label.DriftSpeed, label.DriftPhase)
+	}
+}
+
+func TestPropsSceneIRLowersLiveTransitions(t *testing.T) {
+	props := Props{
+		Environment: Environment{
+			FogColor:   "#050008",
+			FogDensity: 0.00042,
+			Live:       Live("mood:atmosphere", " mood:atmosphere ", "mood:fog"),
+			Transition: Transition{
+				In: TransitionTiming{Duration: 4 * time.Second, Easing: EaseInOut},
+			},
+			InState: &EnvironmentProps{
+				FogDensity: Float(0),
+			},
+			OutState: &EnvironmentProps{
+				FogDensity: Float(0),
+			},
+		},
+		Graph: NewGraph(
+			Points{
+				ID:      "stars",
+				Count:   1760,
+				Color:   "#f8f7ff",
+				Opacity: 0.83,
+				Live:    Live("mood:atmosphere"),
+				Transition: Transition{
+					In:     TransitionTiming{Duration: 2 * time.Second, Easing: EaseOut},
+					Update: TransitionTiming{Duration: 300 * time.Millisecond, Easing: Linear},
+				},
+				InState: &PointsProps{
+					Opacity: Float(0),
+				},
+				OutState: &PointsProps{
+					Opacity: Float(0),
+				},
+			},
+			ComputeParticles{
+				ID:    "galaxy-dust",
+				Count: 182,
+				Live:  Live("mood:atmosphere", "mood:dust"),
+				Emitter: ParticleEmitter{
+					Kind:   "spiral",
+					Radius: 230,
+				},
+				Material: ParticleMaterial{
+					Color:   "#7c83fd",
+					Opacity: 0.24,
+				},
+				Transition: Transition{
+					In:  TransitionTiming{Duration: 3 * time.Second, Easing: EaseOut},
+					Out: TransitionTiming{Duration: 1 * time.Second, Easing: EaseIn},
+				},
+				InState: &ComputeParticlesProps{
+					Count:    Int(0),
+					Material: &ParticleMaterial{Opacity: 0},
+				},
+				OutState: &ComputeParticlesProps{
+					Count:    Int(0),
+					Material: &ParticleMaterial{Opacity: 0},
+				},
+			},
+		),
+	}
+
+	ir := props.SceneIR()
+	if len(ir.Points) != 1 {
+		t.Fatalf("expected one points record, got %#v", ir.Points)
+	}
+	if len(ir.ComputeParticles) != 1 {
+		t.Fatalf("expected one compute particle record, got %#v", ir.ComputeParticles)
+	}
+
+	points := ir.Points[0]
+	if points.Transition.In.Duration != 2000 {
+		t.Fatalf("expected 2000ms points enter duration, got %#v", points.Transition.In.Duration)
+	}
+	if points.Transition.Update.Duration != 300 {
+		t.Fatalf("expected 300ms points update duration, got %#v", points.Transition.Update.Duration)
+	}
+	if points.Transition.In.Easing != "ease-out" {
+		t.Fatalf("expected ease-out points transition, got %#v", points.Transition.In.Easing)
+	}
+	if len(points.Live) != 1 || points.Live[0] != "mood:atmosphere" {
+		t.Fatalf("expected normalized points live events, got %#v", points.Live)
+	}
+	if got := mapFloat64(points.InState["opacity"]); got != 0 {
+		t.Fatalf("expected explicit zero opacity inState, got %#v", points.InState)
+	}
+
+	particles := ir.ComputeParticles[0]
+	if particles.Transition.Out.Duration != 1000 {
+		t.Fatalf("expected 1000ms particles exit duration, got %#v", particles.Transition.Out.Duration)
+	}
+	if len(particles.Live) != 2 || particles.Live[0] != "mood:atmosphere" || particles.Live[1] != "mood:dust" {
+		t.Fatalf("expected normalized particle live events, got %#v", particles.Live)
+	}
+	if got := mapInt(particles.InState["count"]); got != 0 {
+		t.Fatalf("expected explicit zero particle count inState, got %#v", particles.InState)
+	}
+	material, ok := particles.InState["material"].(map[string]any)
+	if !ok || mapFloat64(material["opacity"]) != 0 {
+		t.Fatalf("expected particle material opacity override, got %#v", particles.InState["material"])
+	}
+
+	if ir.Environment.Transition.In.Duration != 4000 {
+		t.Fatalf("expected 4000ms environment enter duration, got %#v", ir.Environment.Transition.In.Duration)
+	}
+	if len(ir.Environment.Live) != 2 || ir.Environment.Live[0] != "mood:atmosphere" || ir.Environment.Live[1] != "mood:fog" {
+		t.Fatalf("expected normalized environment live events, got %#v", ir.Environment.Live)
+	}
+}
+
+func TestPropsLegacyPropsSerializesLiveTransitions(t *testing.T) {
+	props := Props{
+		Environment: Environment{
+			FogColor: "#050008",
+			Live:     Live("mood:atmosphere"),
+			Transition: Transition{
+				In: TransitionTiming{Duration: 4 * time.Second, Easing: EaseInOut},
+			},
+		},
+		Graph: NewGraph(
+			Points{
+				ID:      "stars",
+				Count:   1760,
+				Color:   "#f8f7ff",
+				Opacity: 0.83,
+				Live:    Live("mood:atmosphere"),
+				Transition: Transition{
+					In:     TransitionTiming{Duration: 2 * time.Second, Easing: EaseOut},
+					Update: TransitionTiming{Duration: 300 * time.Millisecond, Easing: Linear},
+				},
+				InState: &PointsProps{
+					Opacity: Float(0),
+				},
+			},
+		),
+	}
+
+	legacy := props.LegacyProps()
+	sceneValue, ok := legacy["scene"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected scene map, got %#v", legacy["scene"])
+	}
+	points, ok := sceneValue["points"].([]map[string]any)
+	if !ok || len(points) != 1 {
+		t.Fatalf("expected one points record, got %#v", sceneValue["points"])
+	}
+	record := points[0]
+	transition, ok := record["transition"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected transition map, got %#v", record["transition"])
+	}
+	in, ok := transition["in"].(map[string]any)
+	if !ok || in["duration"] != int64(2000) || in["easing"] != "ease-out" {
+		t.Fatalf("expected points in transition, got %#v", transition["in"])
+	}
+	update, ok := transition["update"].(map[string]any)
+	if !ok || update["duration"] != int64(300) || update["easing"] != "linear" {
+		t.Fatalf("expected points update transition, got %#v", transition["update"])
+	}
+	inState, ok := record["inState"].(map[string]any)
+	if !ok || inState["opacity"] != 0.0 {
+		t.Fatalf("expected points inState opacity 0, got %#v", record["inState"])
+	}
+	live, ok := record["live"].([]string)
+	if !ok || len(live) != 1 || live[0] != "mood:atmosphere" {
+		t.Fatalf("expected points live events, got %#v", record["live"])
+	}
+
+	environment, ok := sceneValue["environment"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected environment map, got %#v", sceneValue["environment"])
+	}
+	if _, ok := environment["transition"].(map[string]any); !ok {
+		t.Fatalf("expected environment transition map, got %#v", environment["transition"])
+	}
+	envLive, ok := environment["live"].([]string)
+	if !ok || len(envLive) != 1 || envLive[0] != "mood:atmosphere" {
+		t.Fatalf("expected environment live events, got %#v", environment["live"])
 	}
 }
 
@@ -1053,6 +1235,7 @@ func TestPropsSceneIRLowersPointsNode(t *testing.T) {
 				Sizes:       []float64{2.0, 3.0, 4.0},
 				Colors:      []string{"#ff0000", "#00ff00", "#0000ff"},
 				Color:       "#ffffff",
+				Style:       PointStyleFocus,
 				Size:        5.0,
 				Opacity:     0.8,
 				BlendMode:   BlendAdditive,
@@ -1090,6 +1273,9 @@ func TestPropsSceneIRLowersPointsNode(t *testing.T) {
 	}
 	if pts.Color != "#ffffff" {
 		t.Fatalf("expected uniform color, got %q", pts.Color)
+	}
+	if pts.Style != "focus" {
+		t.Fatalf("expected style focus, got %q", pts.Style)
 	}
 	if pts.Size != 5.0 {
 		t.Fatalf("expected uniform size 5.0, got %v", pts.Size)
@@ -1131,6 +1317,9 @@ func TestPropsSceneIRLowersPointsNode(t *testing.T) {
 	}
 	if got := pointsList[0]["depthWrite"]; got != false {
 		t.Fatalf("expected depthWrite false in legacy props, got %#v", got)
+	}
+	if got := pointsList[0]["style"]; got != "focus" {
+		t.Fatalf("expected style focus in legacy props, got %#v", got)
 	}
 }
 
@@ -1363,6 +1552,7 @@ func TestPropsSceneIRLowersComputeParticles(t *testing.T) {
 				Material: ParticleMaterial{
 					Color:       "#ffcc88",
 					ColorEnd:    "#3366ff",
+					Style:       PointStyleFocus,
 					Size:        0.15,
 					SizeEnd:     0.02,
 					Opacity:     1.0,
@@ -1409,6 +1599,9 @@ func TestPropsSceneIRLowersComputeParticles(t *testing.T) {
 	}
 	if cp.Emitter.Scatter != 0.15 {
 		t.Fatalf("expected emitter scatter 0.15, got %v", cp.Emitter.Scatter)
+	}
+	if cp.Material.Style != "focus" {
+		t.Fatalf("expected material style focus, got %q", cp.Material.Style)
 	}
 	if len(cp.Forces) != 2 {
 		t.Fatalf("expected two forces, got %d", len(cp.Forces))
@@ -1471,6 +1664,13 @@ func TestPropsSceneIRLowersComputeParticles(t *testing.T) {
 	}
 	if got := particles[0]["id"]; got != "galaxy" {
 		t.Fatalf("expected id in legacy props, got %#v", got)
+	}
+	material, ok := particles[0]["material"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected compute material record, got %#v", particles[0]["material"])
+	}
+	if got := material["style"]; got != "focus" {
+		t.Fatalf("expected compute material style focus in legacy props, got %#v", got)
 	}
 }
 

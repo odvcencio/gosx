@@ -753,6 +753,99 @@
     return Array.isArray(value) && value.length > 0 ? value : null;
   }
 
+  function sceneCloneData(value) {
+    if (Array.isArray(value)) {
+      return value.map(sceneCloneData);
+    }
+    if (typeof ArrayBuffer !== "undefined" && ArrayBuffer.isView && ArrayBuffer.isView(value)) {
+      return typeof value.slice === "function" ? value.slice() : value;
+    }
+    if (!value || typeof value !== "object") {
+      return value;
+    }
+    const clone = {};
+    const keys = Object.keys(value);
+    for (let i = 0; i < keys.length; i += 1) {
+      const key = keys[i];
+      clone[key] = sceneCloneData(value[key]);
+    }
+    return clone;
+  }
+
+  function sceneIsPlainObject(value) {
+    return Boolean(value) && typeof value === "object" && !Array.isArray(value) && !(typeof ArrayBuffer !== "undefined" && ArrayBuffer.isView && ArrayBuffer.isView(value));
+  }
+
+  function sceneTransitionMetadataKey(key) {
+    return key === "transition" || key === "inState" || key === "outState" || key === "live" || (typeof key === "string" && key.charAt(0) === "_");
+  }
+
+  function normalizeSceneEasing(value) {
+    switch (String(value || "").trim().toLowerCase()) {
+      case "linear":
+        return "linear";
+      case "ease-in":
+        return "ease-in";
+      case "ease-out":
+        return "ease-out";
+      case "ease-in-out":
+        return "ease-in-out";
+      default:
+        return "";
+    }
+  }
+
+  function normalizeSceneTransitionTiming(raw, fallback) {
+    const base = sceneIsPlainObject(fallback) ? fallback : {};
+    const source = sceneIsPlainObject(raw) ? raw : {};
+    return {
+      duration: Math.max(0, Math.round(sceneNumber(source.duration, sceneNumber(base.duration, 0)))),
+      easing: normalizeSceneEasing(source.easing || base.easing),
+    };
+  }
+
+  function normalizeSceneTransition(raw, fallback) {
+    const base = sceneIsPlainObject(fallback) ? fallback : {};
+    const source = sceneIsPlainObject(raw) ? raw : {};
+    return {
+      in: normalizeSceneTransitionTiming(source.in, base.in),
+      out: normalizeSceneTransitionTiming(source.out, base.out),
+      update: normalizeSceneTransitionTiming(source.update, base.update),
+    };
+  }
+
+  function sceneNormalizeLive(value, fallback) {
+    const source = Array.isArray(value) ? value : (Array.isArray(fallback) ? fallback : []);
+    if (!source.length) {
+      return [];
+    }
+    const seen = new Set();
+    const out = [];
+    for (let i = 0; i < source.length; i += 1) {
+      const next = typeof source[i] === "string" ? source[i].trim() : "";
+      if (!next || seen.has(next)) {
+        continue;
+      }
+      seen.add(next);
+      out.push(next);
+    }
+    return out;
+  }
+
+  function sceneNormalizeLifecycle(item, fallback) {
+    const current = sceneIsPlainObject(fallback) ? fallback : {};
+    const source = sceneIsPlainObject(item) ? item : {};
+    const hasInState = Object.prototype.hasOwnProperty.call(source, "inState");
+    const hasOutState = Object.prototype.hasOwnProperty.call(source, "outState");
+    const hasLive = Object.prototype.hasOwnProperty.call(source, "live");
+    return {
+      transition: normalizeSceneTransition(source.transition, current._transition),
+      inState: sceneCloneData(hasInState ? source.inState : current._inState),
+      outState: sceneCloneData(hasOutState ? source.outState : current._outState),
+      live: sceneNormalizeLive(hasLive ? source.live : undefined, current._live),
+    };
+  }
+
 
   function sceneLinePoint(value) {
     if (Array.isArray(value)) {
@@ -806,7 +899,55 @@
       }
       out.push(pair);
     }
+    if (out.length === 0 && pointCount > 1) {
+      for (let index = 0; index + 1 < pointCount; index += 1) {
+        out.push([index, index + 1]);
+      }
+    }
     return out;
+  }
+
+  function sceneNormalizeMeshFloatArray(value, tupleSize) {
+    const typed = sceneTypedFloatArray(value);
+    const safeTupleSize = Math.max(1, Math.floor(sceneNumber(tupleSize, 1)));
+    const count = Math.floor(typed.length / safeTupleSize);
+    if (!count) {
+      return new Float32Array(0);
+    }
+    if (typed.length === count * safeTupleSize) {
+      return typed;
+    }
+    return typed.slice(0, count * safeTupleSize);
+  }
+
+  function sceneNormalizeMeshVertexData(value) {
+    const item = value && typeof value === "object" ? value : {};
+    const positions = sceneNormalizeMeshFloatArray(item.positions, 3);
+    if (!positions.length) {
+      return null;
+    }
+    const inferredCount = Math.floor(positions.length / 3);
+    const count = Math.max(0, Math.min(
+      inferredCount,
+      Math.floor(sceneNumber(item.count, inferredCount)),
+    ));
+    if (!count) {
+      return null;
+    }
+    const normals = sceneNormalizeMeshFloatArray(item.normals, 3);
+    const uvs = sceneNormalizeMeshFloatArray(item.uvs, 2);
+    const tangents = sceneNormalizeMeshFloatArray(item.tangents, 4);
+    const joints = sceneNormalizeMeshFloatArray(item.joints, 4);
+    const weights = sceneNormalizeMeshFloatArray(item.weights, 4);
+    return {
+      positions: count * 3 === positions.length ? positions : positions.slice(0, count * 3),
+      normals: normals.length >= count * 3 ? normals.slice(0, count * 3) : new Float32Array(0),
+      uvs: uvs.length >= count * 2 ? uvs.slice(0, count * 2) : new Float32Array(0),
+      tangents: tangents.length >= count * 4 ? tangents.slice(0, count * 4) : new Float32Array(0),
+      joints: joints.length >= count * 4 ? joints.slice(0, count * 4) : new Float32Array(0),
+      weights: weights.length >= count * 4 ? weights.slice(0, count * 4) : new Float32Array(0),
+      count,
+    };
   }
 
   function sceneLineGeometryMetrics(points) {
@@ -837,54 +978,88 @@
   }
 
 
-  function normalizeSceneObject(object, index) {
-    const item = object && typeof object === "object" ? object : {};
-    const kind = normalizeSceneKind(item.kind);
-    const size = sceneNumber(item.size, 1.2);
-    const points = kind === "lines" ? sceneLinePoints(item.points) : [];
+  function normalizeSceneObject(object, index, fallback) {
+    const current = sceneIsPlainObject(fallback) ? fallback : {};
+    const item = sceneIsPlainObject(object) ? object : {};
+    const scaleSource = sceneIsPlainObject(item.scale) ? item.scale : (sceneIsPlainObject(current.scale) ? current.scale : null);
+    const vertices = sceneNormalizeMeshVertexData(item.vertices);
+    const kind = normalizeSceneKind(item.kind || current.kind);
+    const size = sceneNumber(item.size, sceneNumber(current.size, 1.2));
+    const points = kind === "lines"
+      ? sceneLinePoints(Object.prototype.hasOwnProperty.call(item, "points") ? item.points : current.points)
+      : [];
     const lineMetrics = kind === "lines" ? sceneLineGeometryMetrics(points) : null;
-    const materialKind = normalizeSceneMaterialKind(sceneObjectMaterialKindValue(item));
-    const materialColor = sceneObjectMaterialValue(item, "color");
-    const texture = typeof sceneObjectMaterialValue(item, "texture") === "string" ? sceneObjectMaterialValue(item, "texture").trim() : "";
-    const opacity = clamp01(sceneNumber(sceneObjectMaterialValue(item, "opacity"), sceneDefaultMaterialOpacity(materialKind)));
-    const blendMode = normalizeSceneMaterialBlendMode(sceneObjectBlendModeValue(item), materialKind, opacity);
+    const materialKind = normalizeSceneMaterialKind(sceneObjectMaterialKindValue(item) || current.materialKind);
+    const materialColor = sceneObjectMaterialHasValue(item, "color") ? sceneObjectMaterialValue(item, "color") : current.color;
+    const textureValue = sceneObjectMaterialHasValue(item, "texture") ? sceneObjectMaterialValue(item, "texture") : current.texture;
+    const texture = typeof textureValue === "string" ? textureValue.trim() : "";
+    const opacity = clamp01(sceneNumber(sceneObjectMaterialValue(item, "opacity"), sceneNumber(current.opacity, sceneDefaultMaterialOpacity(materialKind))));
+    const blendMode = normalizeSceneMaterialBlendMode(
+      sceneObjectBlendModeHasValue(item) ? sceneObjectBlendModeValue(item) : current.blendMode,
+      materialKind,
+      opacity,
+    );
+    const lifecycle = sceneNormalizeLifecycle(item, current);
     const normalized = {
-      id: item.id || ("scene-object-" + index),
+      id: item.id || current.id || ("scene-object-" + index),
       kind,
       size,
-      width: sceneNumber(item.width, lineMetrics ? lineMetrics.width : size),
-      height: sceneNumber(item.height, lineMetrics ? lineMetrics.height : size),
-      depth: sceneNumber(item.depth, kind === "plane" ? sceneNumber(item.height, size) : (lineMetrics ? lineMetrics.depth : size)),
-      radius: sceneNumber(item.radius, lineMetrics ? lineMetrics.radius : (size / 2)),
-      segments: sceneSegmentResolution(item.segments),
+      width: sceneNumber(item.width, sceneNumber(current.width, lineMetrics ? lineMetrics.width : size)),
+      height: sceneNumber(item.height, sceneNumber(current.height, lineMetrics ? lineMetrics.height : size)),
+      depth: sceneNumber(item.depth, sceneNumber(current.depth, kind === "plane" ? sceneNumber(item.height, size) : (lineMetrics ? lineMetrics.depth : size))),
+      radius: sceneNumber(item.radius, sceneNumber(current.radius, lineMetrics ? lineMetrics.radius : (size / 2))),
+      segments: sceneSegmentResolution(Object.prototype.hasOwnProperty.call(item, "segments") ? item.segments : current.segments),
       points,
-      lineSegments: kind === "lines" ? sceneLineSegments(item.segments, points.length) : [],
-      x: sceneNumber(item.x, 0),
-      y: sceneNumber(item.y, 0),
-      z: sceneNumber(item.z, 0),
+      lineSegments: kind === "lines" ? sceneLineSegments(Array.isArray(item.lineSegments) ? item.lineSegments : (Array.isArray(current.lineSegments) ? current.lineSegments : item.segments), points.length) : [],
+      vertices: vertices || current.vertices || null,
+      x: sceneNumber(item.x, sceneNumber(current.x, 0)),
+      y: sceneNumber(item.y, sceneNumber(current.y, 0)),
+      z: sceneNumber(item.z, sceneNumber(current.z, 0)),
       materialKind,
-      color: typeof materialColor === "string" && materialColor ? materialColor : "#8de1ff",
+      color: typeof materialColor === "string" && materialColor ? materialColor : (typeof current.color === "string" && current.color ? current.color : "#8de1ff"),
       texture,
-      opacity,
-      emissive: clamp01(sceneNumber(sceneObjectMaterialValue(item, "emissive"), sceneDefaultMaterialEmissive(materialKind))),
+      opacity: clamp01(sceneNumber(sceneObjectMaterialValue(item, "opacity"), sceneNumber(current.opacity, sceneDefaultMaterialOpacity(materialKind)))),
+      emissive: clamp01(sceneNumber(sceneObjectMaterialValue(item, "emissive"), sceneNumber(current.emissive, sceneDefaultMaterialEmissive(materialKind)))),
       blendMode,
-      renderPass: normalizeSceneMaterialRenderPass(sceneObjectMaterialValue(item, "renderPass"), blendMode, opacity),
-      wireframe: sceneBool(sceneObjectMaterialValue(item, "wireframe"), texture === ""),
-      pickable: Object.prototype.hasOwnProperty.call(item, "pickable") ? sceneBool(item.pickable, false) : undefined,
-      rotationX: sceneNumber(item.rotationX, 0),
-      rotationY: sceneNumber(item.rotationY, 0),
-      rotationZ: sceneNumber(item.rotationZ, 0),
-      spinX: sceneNumber(item.spinX, 0),
-      spinY: sceneNumber(item.spinY, 0),
-      spinZ: sceneNumber(item.spinZ, 0),
-      shiftX: sceneNumber(item.shiftX, 0),
-      shiftY: sceneNumber(item.shiftY, 0),
-      shiftZ: sceneNumber(item.shiftZ, 0),
-      driftSpeed: sceneNumber(item.driftSpeed, 0),
-      driftPhase: sceneNumber(item.driftPhase, 0),
-      viewCulled: sceneBool(item.viewCulled, false),
+      renderPass: normalizeSceneMaterialRenderPass(
+        sceneObjectMaterialHasValue(item, "renderPass") ? sceneObjectMaterialValue(item, "renderPass") : current.renderPass,
+        blendMode,
+        opacity,
+      ),
+      wireframe: sceneBool(
+        sceneObjectMaterialHasValue(item, "wireframe") ? sceneObjectMaterialValue(item, "wireframe") : current.wireframe,
+        texture === "",
+      ),
+      pickable: Object.prototype.hasOwnProperty.call(item, "pickable") ? sceneBool(item.pickable, false) : current.pickable,
+      rotationX: sceneNumber(item.rotationX, sceneNumber(current.rotationX, 0)),
+      rotationY: sceneNumber(item.rotationY, sceneNumber(current.rotationY, 0)),
+      rotationZ: sceneNumber(item.rotationZ, sceneNumber(current.rotationZ, 0)),
+      scaleX: sceneNumber(item.scaleX, sceneNumber(scaleSource ? scaleSource.x : undefined, sceneNumber(current.scaleX, 1))),
+      scaleY: sceneNumber(item.scaleY, sceneNumber(scaleSource ? scaleSource.y : undefined, sceneNumber(current.scaleY, 1))),
+      scaleZ: sceneNumber(item.scaleZ, sceneNumber(scaleSource ? scaleSource.z : undefined, sceneNumber(current.scaleZ, 1))),
+      spinX: sceneNumber(item.spinX, sceneNumber(current.spinX, 0)),
+      spinY: sceneNumber(item.spinY, sceneNumber(current.spinY, 0)),
+      spinZ: sceneNumber(item.spinZ, sceneNumber(current.spinZ, 0)),
+      shiftX: sceneNumber(item.shiftX, sceneNumber(current.shiftX, 0)),
+      shiftY: sceneNumber(item.shiftY, sceneNumber(current.shiftY, 0)),
+      shiftZ: sceneNumber(item.shiftZ, sceneNumber(current.shiftZ, 0)),
+      driftSpeed: sceneNumber(item.driftSpeed, sceneNumber(current.driftSpeed, 0)),
+      driftPhase: sceneNumber(item.driftPhase, sceneNumber(current.driftPhase, 0)),
+      viewCulled: sceneBool(Object.prototype.hasOwnProperty.call(item, "viewCulled") ? item.viewCulled : current.viewCulled, false),
+      castShadow: sceneBool(Object.prototype.hasOwnProperty.call(item, "castShadow") ? item.castShadow : current.castShadow, false),
+      receiveShadow: sceneBool(Object.prototype.hasOwnProperty.call(item, "receiveShadow") ? item.receiveShadow : current.receiveShadow, false),
+      doubleSided: sceneBool(Object.prototype.hasOwnProperty.call(item, "doubleSided") ? item.doubleSided : current.doubleSided, false),
+      depthWrite: Object.prototype.hasOwnProperty.call(item, "depthWrite") ? sceneBool(item.depthWrite, true) : current.depthWrite,
+      skin: item.skin && typeof item.skin === "object" ? item.skin : (current.skin && typeof current.skin === "object" ? current.skin : null),
+      _transition: lifecycle.transition,
+      _inState: lifecycle.inState,
+      _outState: lifecycle.outState,
+      _live: lifecycle.live,
     };
-    normalized.static = sceneBool(item.static, !sceneObjectAnimated(normalized));
+    normalized.static = sceneBool(
+      Object.prototype.hasOwnProperty.call(item, "static") ? item.static : current.static,
+      !sceneObjectAnimated(normalized),
+    );
     return normalized;
   }
 
@@ -917,16 +1092,18 @@
   }
 
   function normalizeSceneLight(light, index, fallback) {
-    const current = fallback && typeof fallback === "object" ? fallback : {};
-    const item = light && typeof light === "object" ? light : {};
+    const current = sceneIsPlainObject(fallback) ? fallback : {};
+    const item = sceneIsPlainObject(light) ? light : {};
     const kind = normalizeSceneLightKind(item.kind || item.lightKind || current.kind);
     if (!kind) {
       return null;
     }
+    const lifecycle = sceneNormalizeLifecycle(item, current);
     const normalized = {
       id: (typeof item.id === "string" && item.id) || current.id || ("scene-light-" + index),
       kind,
       color: typeof item.color === "string" && item.color ? item.color : (typeof current.color === "string" && current.color ? current.color : "#f3fbff"),
+      groundColor: typeof item.groundColor === "string" && item.groundColor ? item.groundColor : (typeof current.groundColor === "string" ? current.groundColor : ""),
       intensity: Math.max(0, Math.min(6, sceneNumber(item.intensity, sceneNumber(current.intensity, sceneDefaultLightIntensity(kind))))),
       x: sceneNumber(item.x, sceneNumber(current.x, 0)),
       y: sceneNumber(item.y, sceneNumber(current.y, 0)),
@@ -934,8 +1111,17 @@
       directionX: sceneNumber(item.directionX, sceneNumber(current.directionX, 0)),
       directionY: sceneNumber(item.directionY, sceneNumber(current.directionY, 0)),
       directionZ: sceneNumber(item.directionZ, sceneNumber(current.directionZ, 0)),
+      angle: Math.max(0, Math.min(Math.PI, sceneNumber(item.angle, sceneNumber(current.angle, 0)))),
+      penumbra: sceneClamp(sceneNumber(item.penumbra, sceneNumber(current.penumbra, 0)), 0, 1),
       range: Math.max(0, Math.min(256, sceneNumber(item.range, sceneNumber(current.range, kind === "point" ? 6.5 : 0)))),
       decay: Math.max(0.1, Math.min(8, sceneNumber(item.decay, sceneNumber(current.decay, kind === "point" ? 1.35 : 1)))),
+      castShadow: sceneBool(Object.prototype.hasOwnProperty.call(item, "castShadow") ? item.castShadow : current.castShadow, false),
+      shadowBias: sceneNumber(item.shadowBias, sceneNumber(current.shadowBias, 0)),
+      shadowSize: Math.max(0, Math.floor(sceneNumber(item.shadowSize, sceneNumber(current.shadowSize, 0)))),
+      _transition: lifecycle.transition,
+      _inState: lifecycle.inState,
+      _outState: lifecycle.outState,
+      _live: lifecycle.live,
     };
     if (normalized.kind === "directional" && normalized.directionX === 0 && normalized.directionY === 0 && normalized.directionZ === 0) {
       normalized.directionX = 0.35;
@@ -945,37 +1131,43 @@
     return normalized;
   }
 
-  function normalizeSceneLabel(label, index) {
-    const item = label && typeof label === "object" ? label : {};
+  function normalizeSceneLabel(label, index, fallback) {
+    const current = sceneIsPlainObject(fallback) ? fallback : {};
+    const item = sceneIsPlainObject(label) ? label : {};
+    const lifecycle = sceneNormalizeLifecycle(item, current);
     return {
-      id: item.id || ("scene-label-" + index),
-      text: typeof item.text === "string" ? item.text : "",
-      className: sceneLabelClassName(item),
-      x: sceneNumber(item.x, 0),
-      y: sceneNumber(item.y, 0),
-      z: sceneNumber(item.z, 0),
-      priority: sceneNumber(item.priority, 0),
-      shiftX: sceneNumber(item.shiftX, 0),
-      shiftY: sceneNumber(item.shiftY, 0),
-      shiftZ: sceneNumber(item.shiftZ, 0),
-      driftSpeed: sceneNumber(item.driftSpeed, 0),
-      driftPhase: sceneNumber(item.driftPhase, 0),
-      maxWidth: Math.max(48, sceneNumber(item.maxWidth, 180)),
-      maxLines: Math.max(0, Math.floor(sceneNumber(item.maxLines, 0))),
-      overflow: normalizeTextLayoutOverflow(item.overflow),
-      font: typeof item.font === "string" && item.font ? item.font : '600 13px "IBM Plex Sans", "Segoe UI", sans-serif',
-      lineHeight: Math.max(12, sceneNumber(item.lineHeight, 18)),
-      color: typeof item.color === "string" && item.color ? item.color : "#ecf7ff",
-      background: typeof item.background === "string" && item.background ? item.background : "rgba(8, 21, 31, 0.82)",
-      borderColor: typeof item.borderColor === "string" && item.borderColor ? item.borderColor : "rgba(141, 225, 255, 0.24)",
-      offsetX: sceneNumber(item.offsetX, 0),
-      offsetY: sceneNumber(item.offsetY, -14),
-      anchorX: Math.max(0, Math.min(1, sceneNumber(item.anchorX, 0.5))),
-      anchorY: Math.max(0, Math.min(1, sceneNumber(item.anchorY, 1))),
-      collision: normalizeSceneLabelCollision(item.collision),
-      occlude: sceneBool(item.occlude, false),
-      whiteSpace: normalizeSceneLabelWhiteSpace(item.whiteSpace),
-      textAlign: normalizeSceneLabelAlign(item.textAlign),
+      id: item.id || current.id || ("scene-label-" + index),
+      text: typeof item.text === "string" ? item.text : (typeof current.text === "string" ? current.text : ""),
+      className: sceneLabelClassName(item) || sceneLabelClassName(current),
+      x: sceneNumber(item.x, sceneNumber(current.x, 0)),
+      y: sceneNumber(item.y, sceneNumber(current.y, 0)),
+      z: sceneNumber(item.z, sceneNumber(current.z, 0)),
+      priority: sceneNumber(item.priority, sceneNumber(current.priority, 0)),
+      shiftX: sceneNumber(item.shiftX, sceneNumber(current.shiftX, 0)),
+      shiftY: sceneNumber(item.shiftY, sceneNumber(current.shiftY, 0)),
+      shiftZ: sceneNumber(item.shiftZ, sceneNumber(current.shiftZ, 0)),
+      driftSpeed: sceneNumber(item.driftSpeed, sceneNumber(current.driftSpeed, 0)),
+      driftPhase: sceneNumber(item.driftPhase, sceneNumber(current.driftPhase, 0)),
+      maxWidth: Math.max(48, sceneNumber(item.maxWidth, sceneNumber(current.maxWidth, 180))),
+      maxLines: Math.max(0, Math.floor(sceneNumber(item.maxLines, sceneNumber(current.maxLines, 0)))),
+      overflow: normalizeTextLayoutOverflow(item.overflow || current.overflow),
+      font: typeof item.font === "string" && item.font ? item.font : (typeof current.font === "string" && current.font ? current.font : '600 13px "IBM Plex Sans", "Segoe UI", sans-serif'),
+      lineHeight: Math.max(12, sceneNumber(item.lineHeight, sceneNumber(current.lineHeight, 18))),
+      color: typeof item.color === "string" && item.color ? item.color : (typeof current.color === "string" && current.color ? current.color : "#ecf7ff"),
+      background: typeof item.background === "string" && item.background ? item.background : (typeof current.background === "string" && current.background ? current.background : "rgba(8, 21, 31, 0.82)"),
+      borderColor: typeof item.borderColor === "string" && item.borderColor ? item.borderColor : (typeof current.borderColor === "string" && current.borderColor ? current.borderColor : "rgba(141, 225, 255, 0.24)"),
+      offsetX: sceneNumber(item.offsetX, sceneNumber(current.offsetX, 0)),
+      offsetY: sceneNumber(item.offsetY, sceneNumber(current.offsetY, -14)),
+      anchorX: Math.max(0, Math.min(1, sceneNumber(item.anchorX, sceneNumber(current.anchorX, 0.5)))),
+      anchorY: Math.max(0, Math.min(1, sceneNumber(item.anchorY, sceneNumber(current.anchorY, 1)))),
+      collision: normalizeSceneLabelCollision(item.collision || current.collision),
+      occlude: sceneBool(Object.prototype.hasOwnProperty.call(item, "occlude") ? item.occlude : current.occlude, false),
+      whiteSpace: normalizeSceneLabelWhiteSpace(item.whiteSpace || current.whiteSpace),
+      textAlign: normalizeSceneLabelAlign(item.textAlign || current.textAlign),
+      _transition: lifecycle.transition,
+      _inState: lifecycle.inState,
+      _outState: lifecycle.outState,
+      _live: lifecycle.live,
     };
   }
 
@@ -992,34 +1184,40 @@
     }
   }
 
-  function normalizeSceneSprite(sprite, index) {
-    const item = sprite && typeof sprite === "object" ? sprite : {};
-    const width = Math.max(0.05, sceneNumber(item.width, 1.25));
-    const height = Math.max(0.05, sceneNumber(item.height, width));
-    const scale = Math.max(0.05, sceneNumber(item.scale, 1));
+  function normalizeSceneSprite(sprite, index, fallback) {
+    const current = sceneIsPlainObject(fallback) ? fallback : {};
+    const item = sceneIsPlainObject(sprite) ? sprite : {};
+    const width = Math.max(0.05, sceneNumber(item.width, sceneNumber(current.width, 1.25)));
+    const height = Math.max(0.05, sceneNumber(item.height, sceneNumber(current.height, width)));
+    const scale = Math.max(0.05, sceneNumber(item.scale, sceneNumber(current.scale, 1)));
+    const lifecycle = sceneNormalizeLifecycle(item, current);
     return {
-      id: item.id || ("scene-sprite-" + index),
-      src: typeof item.src === "string" ? item.src.trim() : "",
-      className: sceneLabelClassName(item),
-      x: sceneNumber(item.x, 0),
-      y: sceneNumber(item.y, 0),
-      z: sceneNumber(item.z, 0),
-      priority: sceneNumber(item.priority, 0),
-      shiftX: sceneNumber(item.shiftX, 0),
-      shiftY: sceneNumber(item.shiftY, 0),
-      shiftZ: sceneNumber(item.shiftZ, 0),
-      driftSpeed: sceneNumber(item.driftSpeed, 0),
-      driftPhase: sceneNumber(item.driftPhase, 0),
+      id: item.id || current.id || ("scene-sprite-" + index),
+      src: typeof item.src === "string" ? item.src.trim() : (typeof current.src === "string" ? current.src : ""),
+      className: sceneLabelClassName(item) || sceneLabelClassName(current),
+      x: sceneNumber(item.x, sceneNumber(current.x, 0)),
+      y: sceneNumber(item.y, sceneNumber(current.y, 0)),
+      z: sceneNumber(item.z, sceneNumber(current.z, 0)),
+      priority: sceneNumber(item.priority, sceneNumber(current.priority, 0)),
+      shiftX: sceneNumber(item.shiftX, sceneNumber(current.shiftX, 0)),
+      shiftY: sceneNumber(item.shiftY, sceneNumber(current.shiftY, 0)),
+      shiftZ: sceneNumber(item.shiftZ, sceneNumber(current.shiftZ, 0)),
+      driftSpeed: sceneNumber(item.driftSpeed, sceneNumber(current.driftSpeed, 0)),
+      driftPhase: sceneNumber(item.driftPhase, sceneNumber(current.driftPhase, 0)),
       width: width,
       height: height,
       scale: scale,
-      opacity: clamp01(sceneNumber(item.opacity, 1)),
-      offsetX: sceneNumber(item.offsetX, 0),
-      offsetY: sceneNumber(item.offsetY, 0),
-      anchorX: sceneClamp(sceneNumber(item.anchorX, 0.5), 0, 1),
-      anchorY: sceneClamp(sceneNumber(item.anchorY, 0.5), 0, 1),
-      occlude: sceneBool(item.occlude, false),
-      fit: normalizeSceneSpriteFit(item.fit),
+      opacity: clamp01(sceneNumber(item.opacity, sceneNumber(current.opacity, 1))),
+      offsetX: sceneNumber(item.offsetX, sceneNumber(current.offsetX, 0)),
+      offsetY: sceneNumber(item.offsetY, sceneNumber(current.offsetY, 0)),
+      anchorX: sceneClamp(sceneNumber(item.anchorX, sceneNumber(current.anchorX, 0.5)), 0, 1),
+      anchorY: sceneClamp(sceneNumber(item.anchorY, sceneNumber(current.anchorY, 0.5)), 0, 1),
+      occlude: sceneBool(Object.prototype.hasOwnProperty.call(item, "occlude") ? item.occlude : current.occlude, false),
+      fit: normalizeSceneSpriteFit(item.fit || current.fit),
+      _transition: lifecycle.transition,
+      _inState: lifecycle.inState,
+      _outState: lifecycle.outState,
+      _live: lifecycle.live,
     };
   }
 
@@ -1044,6 +1242,7 @@
       case "plane":
       case "pyramid":
       case "sphere":
+      case "gltf-mesh":
         return kind;
       default:
         return "cube";
@@ -1053,7 +1252,7 @@
 
   function sceneObjects(props) {
     return rawSceneObjects(props).map(function(object, index) {
-      return normalizeSceneObject(object, index);
+      return normalizeSceneObject(object, index, null);
     });
   }
 
@@ -1166,7 +1365,7 @@
     const raw = rawSceneLabels(props);
     return raw
       .map(function(label, index) {
-        return normalizeSceneLabel(label, index);
+        return normalizeSceneLabel(label, index, null);
       })
       .filter(function(label) {
         return label.text.trim() !== "";
@@ -1176,11 +1375,205 @@
   function sceneSprites(props) {
     return rawSceneSprites(props)
       .map(function(sprite, index) {
-        return normalizeSceneSprite(sprite, index);
+        return normalizeSceneSprite(sprite, index, null);
       })
       .filter(function(sprite) {
         return sprite.src !== "";
       });
+  }
+
+  function normalizeScenePointStyle(value, fallback) {
+    const current = typeof fallback === "string" && fallback ? fallback : "square";
+    const raw = typeof value === "string" ? value.trim().toLowerCase() : "";
+    switch (raw) {
+      case "focus":
+      case "focused":
+      case "focus-star":
+        return "focus";
+      case "square":
+      case "pixel":
+      case "hard":
+      case "block":
+      case "blocky":
+        return "square";
+      default:
+        return current;
+    }
+  }
+
+  function scenePointStyleCode(value) {
+    return normalizeScenePointStyle(value, "square") === "focus" ? 1 : 0;
+  }
+
+  function normalizeScenePointsEntry(entry, index, fallback) {
+    const current = sceneIsPlainObject(fallback) ? fallback : {};
+    const item = sceneIsPlainObject(entry) ? entry : {};
+    const lifecycle = sceneNormalizeLifecycle(item, current);
+    const positions = Array.isArray(item.positions) ? item.positions.slice() : (Array.isArray(current.positions) ? current.positions : []);
+    const sizes = Array.isArray(item.sizes) ? item.sizes.slice() : (Array.isArray(current.sizes) ? current.sizes : []);
+    const colors = Array.isArray(item.colors) ? item.colors.slice() : (Array.isArray(current.colors) ? current.colors : []);
+    const normalized = {
+      id: item.id || current.id || ("scene-points-" + index),
+      count: Math.max(0, Math.floor(sceneNumber(item.count, sceneNumber(current.count, positions.length >= 3 ? Math.floor(positions.length / 3) : 0)))),
+      positions,
+      sizes,
+      colors,
+      color: typeof item.color === "string" && item.color ? item.color : (typeof current.color === "string" ? current.color : "#ffffff"),
+      style: normalizeScenePointStyle(item.style, current.style),
+      size: Math.max(0, sceneNumber(item.size, sceneNumber(current.size, 1))),
+      opacity: clamp01(sceneNumber(item.opacity, sceneNumber(current.opacity, 1))),
+      blendMode: normalizeSceneMaterialBlendMode(item.blendMode || current.blendMode, "flat", sceneNumber(item.opacity, sceneNumber(current.opacity, 1))),
+      depthWrite: Object.prototype.hasOwnProperty.call(item, "depthWrite") ? sceneBool(item.depthWrite, true) : current.depthWrite,
+      attenuation: sceneBool(Object.prototype.hasOwnProperty.call(item, "attenuation") ? item.attenuation : current.attenuation, false),
+      x: sceneNumber(item.x, sceneNumber(current.x, 0)),
+      y: sceneNumber(item.y, sceneNumber(current.y, 0)),
+      z: sceneNumber(item.z, sceneNumber(current.z, 0)),
+      rotationX: sceneNumber(item.rotationX, sceneNumber(current.rotationX, 0)),
+      rotationY: sceneNumber(item.rotationY, sceneNumber(current.rotationY, 0)),
+      rotationZ: sceneNumber(item.rotationZ, sceneNumber(current.rotationZ, 0)),
+      spinX: sceneNumber(item.spinX, sceneNumber(current.spinX, 0)),
+      spinY: sceneNumber(item.spinY, sceneNumber(current.spinY, 0)),
+      spinZ: sceneNumber(item.spinZ, sceneNumber(current.spinZ, 0)),
+      _transition: lifecycle.transition,
+      _inState: lifecycle.inState,
+      _outState: lifecycle.outState,
+      _live: lifecycle.live,
+    };
+    if (positions === current.positions && current._cachedPos) {
+      normalized._cachedPos = current._cachedPos;
+    }
+    if (sizes === current.sizes && current._cachedSizes) {
+      normalized._cachedSizes = current._cachedSizes;
+    }
+    if (colors === current.colors && current._cachedColors) {
+      normalized._cachedColors = current._cachedColors;
+    }
+    if (Array.isArray(item.previewPositions)) {
+      normalized.previewPositions = item.previewPositions.slice();
+    } else if (Array.isArray(current.previewPositions)) {
+      normalized.previewPositions = current.previewPositions;
+    }
+    if (Array.isArray(item.previewSizes)) {
+      normalized.previewSizes = item.previewSizes.slice();
+    } else if (Array.isArray(current.previewSizes)) {
+      normalized.previewSizes = current.previewSizes;
+    }
+    return normalized;
+  }
+
+  function scenePoints(props) {
+    return rawScenePoints(props).map(function(entry, index) {
+      return normalizeScenePointsEntry(entry, index, null);
+    });
+  }
+
+  function normalizeSceneInstancedMeshEntry(entry, index, fallback) {
+    const current = sceneIsPlainObject(fallback) ? fallback : {};
+    const item = sceneIsPlainObject(entry) ? entry : {};
+    const lifecycle = sceneNormalizeLifecycle(item, current);
+    return {
+      id: item.id || current.id || ("scene-instanced-" + index),
+      count: Math.max(0, Math.floor(sceneNumber(item.count, sceneNumber(current.count, 0)))),
+      kind: normalizeSceneKind(item.kind || current.kind),
+      width: Math.max(0.0001, sceneNumber(item.width, sceneNumber(current.width, sceneNumber(current.size, 1.2)))),
+      height: Math.max(0.0001, sceneNumber(item.height, sceneNumber(current.height, sceneNumber(current.size, 1.2)))),
+      depth: Math.max(0.0001, sceneNumber(item.depth, sceneNumber(current.depth, sceneNumber(current.size, 1.2)))),
+      radius: Math.max(0.0001, sceneNumber(item.radius, sceneNumber(current.radius, sceneNumber(current.size, 0.6)))),
+      segments: sceneSegmentResolution(Object.prototype.hasOwnProperty.call(item, "segments") ? item.segments : current.segments),
+      materialKind: normalizeSceneMaterialKind(item.materialKind || current.materialKind),
+      color: typeof item.color === "string" && item.color ? item.color : (typeof current.color === "string" ? current.color : "#8de1ff"),
+      roughness: sceneNumber(item.roughness, sceneNumber(current.roughness, 0)),
+      metalness: sceneNumber(item.metalness, sceneNumber(current.metalness, 0)),
+      transforms: Array.isArray(item.transforms) ? item.transforms.slice() : (Array.isArray(current.transforms) ? current.transforms : []),
+      castShadow: sceneBool(Object.prototype.hasOwnProperty.call(item, "castShadow") ? item.castShadow : current.castShadow, false),
+      receiveShadow: sceneBool(Object.prototype.hasOwnProperty.call(item, "receiveShadow") ? item.receiveShadow : current.receiveShadow, false),
+      _transition: lifecycle.transition,
+      _inState: lifecycle.inState,
+      _outState: lifecycle.outState,
+      _live: lifecycle.live,
+    };
+  }
+
+  function sceneInstancedMeshes(props) {
+    return rawSceneInstancedMeshes(props).map(function(entry, index) {
+      return normalizeSceneInstancedMeshEntry(entry, index, null);
+    });
+  }
+
+  function normalizeSceneComputeEmitter(raw, fallback) {
+    const current = sceneIsPlainObject(fallback) ? fallback : {};
+    const item = sceneIsPlainObject(raw) ? raw : {};
+    return {
+      kind: typeof item.kind === "string" && item.kind ? item.kind : (typeof current.kind === "string" ? current.kind : "point"),
+      x: sceneNumber(item.x, sceneNumber(current.x, 0)),
+      y: sceneNumber(item.y, sceneNumber(current.y, 0)),
+      z: sceneNumber(item.z, sceneNumber(current.z, 0)),
+      radius: Math.max(0, sceneNumber(item.radius, sceneNumber(current.radius, 0))),
+      rate: Math.max(0, sceneNumber(item.rate, sceneNumber(current.rate, 0))),
+      lifetime: Math.max(0.01, sceneNumber(item.lifetime, sceneNumber(current.lifetime, 1))),
+      arms: Math.max(0, Math.floor(sceneNumber(item.arms, sceneNumber(current.arms, 0)))),
+      wind: sceneNumber(item.wind, sceneNumber(current.wind, 0)),
+      scatter: Math.max(0, sceneNumber(item.scatter, sceneNumber(current.scatter, 0))),
+    };
+  }
+
+  function normalizeSceneComputeForce(raw, index, fallback) {
+    const current = sceneIsPlainObject(fallback) ? fallback : {};
+    const item = sceneIsPlainObject(raw) ? raw : {};
+    return {
+      kind: typeof item.kind === "string" && item.kind ? item.kind : (typeof current.kind === "string" ? current.kind : ""),
+      strength: sceneNumber(item.strength, sceneNumber(current.strength, 0)),
+      x: sceneNumber(item.x, sceneNumber(current.x, 0)),
+      y: sceneNumber(item.y, sceneNumber(current.y, 0)),
+      z: sceneNumber(item.z, sceneNumber(current.z, 0)),
+      frequency: sceneNumber(item.frequency, sceneNumber(current.frequency, 0)),
+      id: current.id || ("scene-force-" + index),
+    };
+  }
+
+  function normalizeSceneComputeMaterial(raw, fallback) {
+    const current = sceneIsPlainObject(fallback) ? fallback : {};
+    const item = sceneIsPlainObject(raw) ? raw : {};
+    return {
+      color: typeof item.color === "string" && item.color ? item.color : (typeof current.color === "string" ? current.color : "#ffffff"),
+      colorEnd: typeof item.colorEnd === "string" && item.colorEnd ? item.colorEnd : (typeof current.colorEnd === "string" ? current.colorEnd : ""),
+      style: normalizeScenePointStyle(item.style, current.style),
+      size: Math.max(0, sceneNumber(item.size, sceneNumber(current.size, 1))),
+      sizeEnd: Math.max(0, sceneNumber(item.sizeEnd, sceneNumber(current.sizeEnd, sceneNumber(current.size, 1)))),
+      opacity: clamp01(sceneNumber(item.opacity, sceneNumber(current.opacity, 1))),
+      opacityEnd: clamp01(sceneNumber(item.opacityEnd, sceneNumber(current.opacityEnd, sceneNumber(current.opacity, 1)))),
+      blendMode: normalizeSceneMaterialBlendMode(item.blendMode || current.blendMode, "flat", sceneNumber(item.opacity, sceneNumber(current.opacity, 1))),
+      attenuation: sceneBool(Object.prototype.hasOwnProperty.call(item, "attenuation") ? item.attenuation : current.attenuation, false),
+    };
+  }
+
+  function normalizeSceneComputeParticlesEntry(entry, index, fallback) {
+    const current = sceneIsPlainObject(fallback) ? fallback : {};
+    const item = sceneIsPlainObject(entry) ? entry : {};
+    const lifecycle = sceneNormalizeLifecycle(item, current);
+    const emitterSource = Object.prototype.hasOwnProperty.call(item, "emitter") ? item.emitter : current.emitter;
+    const materialSource = Object.prototype.hasOwnProperty.call(item, "material") ? item.material : current.material;
+    const forcesSource = Array.isArray(item.forces) ? item.forces : (Array.isArray(current.forces) ? current.forces : []);
+    return {
+      id: item.id || current.id || ("scene-particles-" + index),
+      count: Math.max(0, Math.floor(sceneNumber(item.count, sceneNumber(current.count, 0)))),
+      emitter: normalizeSceneComputeEmitter(emitterSource, current.emitter),
+      forces: forcesSource.map(function(force, forceIndex) {
+        return normalizeSceneComputeForce(force, forceIndex, Array.isArray(current.forces) ? current.forces[forceIndex] : null);
+      }),
+      material: normalizeSceneComputeMaterial(materialSource, current.material),
+      bounds: Math.max(0, sceneNumber(item.bounds, sceneNumber(current.bounds, 0))),
+      _transition: lifecycle.transition,
+      _inState: lifecycle.inState,
+      _outState: lifecycle.outState,
+      _live: lifecycle.live,
+    };
+  }
+
+  function sceneComputeParticles(props) {
+    return rawSceneComputeParticles(props).map(function(entry, index) {
+      return normalizeSceneComputeParticlesEntry(entry, index, null);
+    });
   }
 
   function sceneCamera(props) {
@@ -1211,25 +1604,37 @@
   }
 
   function normalizeSceneEnvironment(raw, fallback) {
-    const base = fallback && typeof fallback === "object" ? fallback : {};
+    const base = sceneIsPlainObject(fallback) ? fallback : {};
+    const source = sceneIsPlainObject(raw) ? raw : {};
+    const lifecycle = sceneNormalizeLifecycle(source, base);
     const environment = {
-      ambientColor: typeof raw?.ambientColor === "string" && raw.ambientColor ? raw.ambientColor : (typeof base.ambientColor === "string" ? base.ambientColor : ""),
-      ambientIntensity: Math.max(0, Math.min(4, sceneNumber(raw?.ambientIntensity, sceneNumber(base.ambientIntensity, 0)))),
-      skyColor: typeof raw?.skyColor === "string" && raw.skyColor ? raw.skyColor : (typeof base.skyColor === "string" ? base.skyColor : ""),
-      skyIntensity: Math.max(0, Math.min(4, sceneNumber(raw?.skyIntensity, sceneNumber(base.skyIntensity, 0)))),
-      groundColor: typeof raw?.groundColor === "string" && raw.groundColor ? raw.groundColor : (typeof base.groundColor === "string" ? base.groundColor : ""),
-      groundIntensity: Math.max(0, Math.min(4, sceneNumber(raw?.groundIntensity, sceneNumber(base.groundIntensity, 0)))),
-      exposure: Math.max(0.05, Math.min(4, sceneNumber(raw && Object.prototype.hasOwnProperty.call(raw, "exposure") ? raw.exposure : undefined, sceneNumber(base.exposure, 1) || 1))),
+      ambientColor: typeof source.ambientColor === "string" && source.ambientColor ? source.ambientColor : (typeof base.ambientColor === "string" ? base.ambientColor : ""),
+      ambientIntensity: Math.max(0, Math.min(4, sceneNumber(source.ambientIntensity, sceneNumber(base.ambientIntensity, 0)))),
+      skyColor: typeof source.skyColor === "string" && source.skyColor ? source.skyColor : (typeof base.skyColor === "string" ? base.skyColor : ""),
+      skyIntensity: Math.max(0, Math.min(4, sceneNumber(source.skyIntensity, sceneNumber(base.skyIntensity, 0)))),
+      groundColor: typeof source.groundColor === "string" && source.groundColor ? source.groundColor : (typeof base.groundColor === "string" ? base.groundColor : ""),
+      groundIntensity: Math.max(0, Math.min(4, sceneNumber(source.groundIntensity, sceneNumber(base.groundIntensity, 0)))),
+      exposure: Math.max(0.05, Math.min(4, sceneNumber(Object.prototype.hasOwnProperty.call(source, "exposure") ? source.exposure : undefined, sceneNumber(base.exposure, 1) || 1))),
+      toneMapping: typeof source.toneMapping === "string" && source.toneMapping ? source.toneMapping : (typeof base.toneMapping === "string" ? base.toneMapping : ""),
+      fogColor: typeof source.fogColor === "string" && source.fogColor ? source.fogColor : (typeof base.fogColor === "string" ? base.fogColor : ""),
+      fogDensity: Math.max(0, sceneNumber(source.fogDensity, sceneNumber(base.fogDensity, 0))),
+      _transition: lifecycle.transition,
+      _inState: lifecycle.inState,
+      _outState: lifecycle.outState,
+      _live: lifecycle.live,
       specified: false,
     };
-    environment.specified = Boolean(raw) && (
+    environment.specified = Boolean(raw || base.specified) && (
       environment.ambientColor ||
       environment.ambientIntensity !== 0 ||
       environment.skyColor ||
       environment.skyIntensity !== 0 ||
       environment.groundColor ||
       environment.groundIntensity !== 0 ||
-      Object.prototype.hasOwnProperty.call(raw, "exposure")
+      environment.fogColor ||
+      environment.fogDensity !== 0 ||
+      environment.toneMapping ||
+      Object.prototype.hasOwnProperty.call(source, "exposure")
     );
     return environment;
   }
@@ -1244,6 +1649,9 @@
         groundColor: typeof environment.groundColor === "string" ? environment.groundColor : "",
         groundIntensity: Math.max(0, Math.min(4, sceneNumber(environment.groundIntensity, 0))),
         exposure: Math.max(0.05, Math.min(4, sceneNumber(environment.exposure, 1) || 1)),
+        toneMapping: typeof environment.toneMapping === "string" ? environment.toneMapping : "",
+        fogColor: typeof environment.fogColor === "string" ? environment.fogColor : "",
+        fogDensity: Math.max(0, sceneNumber(environment.fogDensity, 0)),
         specified: Boolean(environment.specified),
       }
       : normalizeSceneEnvironment(environment, null);
@@ -1274,9 +1682,10 @@
       labels: new Map(),
       sprites: new Map(),
       lights: new Map(),
-      points: rawScenePoints(props),
-      instancedMeshes: rawSceneInstancedMeshes(props),
-      computeParticles: rawSceneComputeParticles(props),
+      points: scenePoints(props),
+      instancedMeshes: sceneInstancedMeshes(props),
+      computeParticles: sceneComputeParticles(props),
+      _transitions: [],
       _scrollCamera: (sceneNumber(props.scrollCameraStart, 0) !== 0 || sceneNumber(props.scrollCameraEnd, 0) !== 0)
         ? { start: sceneNumber(props.scrollCameraStart, 0), end: sceneNumber(props.scrollCameraEnd, 0) }
         : null,
@@ -1311,6 +1720,454 @@
 
   function sceneStateLights(state) {
     return Array.from(state.lights.values());
+  }
+
+  function sceneStateTransitions(state) {
+    if (!state || !Array.isArray(state._transitions)) {
+      return [];
+    }
+    return state._transitions;
+  }
+
+  function sceneHasActiveTransitions(state) {
+    return sceneStateTransitions(state).length > 0;
+  }
+
+  function sceneNowMilliseconds() {
+    if (typeof window !== "undefined" && window.performance && typeof window.performance.now === "function") {
+      return window.performance.now();
+    }
+    return Date.now();
+  }
+
+  function sceneTransitionTimingForPhase(entry, phase) {
+    const transition = sceneIsPlainObject(entry && entry._transition) ? entry._transition : null;
+    const fallback = transition && phase === "update" ? transition.in : null;
+    const timing = transition && sceneIsPlainObject(transition[phase]) ? transition[phase] : null;
+    const duration = Math.max(0, Math.round(sceneNumber(timing && timing.duration, sceneNumber(fallback && fallback.duration, 0))));
+    const easing = normalizeSceneEasing((timing && timing.easing) || (fallback && fallback.easing));
+    return { duration, easing };
+  }
+
+  function sceneTransitionEase(easing, t) {
+    const clamped = sceneClamp(sceneNumber(t, 0), 0, 1);
+    switch (normalizeSceneEasing(easing)) {
+      case "ease-in":
+        return clamped * clamped;
+      case "ease-out":
+        return clamped * (2 - clamped);
+      case "ease-in-out":
+        return clamped < 0.5 ? 2 * clamped * clamped : -1 + (4 - 2 * clamped) * clamped;
+      default:
+        return clamped;
+    }
+  }
+
+  function sceneTransitionColorLike(key, from, to) {
+    if (typeof from !== "string" || typeof to !== "string") {
+      return false;
+    }
+    if (typeof key === "string" && key.toLowerCase().indexOf("color") >= 0) {
+      return true;
+    }
+    return /^#|^rgba?\(/i.test(from.trim()) && /^#|^rgba?\(/i.test(to.trim());
+  }
+
+  function sceneRGBAToHSL(rgba) {
+    const r = clamp01(sceneNumber(rgba && rgba[0], 0));
+    const g = clamp01(sceneNumber(rgba && rgba[1], 0));
+    const b = clamp01(sceneNumber(rgba && rgba[2], 0));
+    const a = clamp01(sceneNumber(rgba && rgba[3], 1));
+    const max = Math.max(r, g, b);
+    const min = Math.min(r, g, b);
+    const delta = max - min;
+    let h = 0;
+    let s = 0;
+    const l = (max + min) / 2;
+    if (delta > 0.000001) {
+      s = l > 0.5 ? delta / (2 - max - min) : delta / (max + min);
+      switch (max) {
+        case r:
+          h = ((g - b) / delta) + (g < b ? 6 : 0);
+          break;
+        case g:
+          h = ((b - r) / delta) + 2;
+          break;
+        default:
+          h = ((r - g) / delta) + 4;
+          break;
+      }
+      h /= 6;
+    }
+    return [h, s, l, a];
+  }
+
+  function sceneHueToRGB(p, q, t) {
+    let value = t;
+    if (value < 0) value += 1;
+    if (value > 1) value -= 1;
+    if (value < 1 / 6) return p + (q - p) * 6 * value;
+    if (value < 1 / 2) return q;
+    if (value < 2 / 3) return p + (q - p) * (2 / 3 - value) * 6;
+    return p;
+  }
+
+  function sceneHSLToRGBA(hsla) {
+    const h = sceneNumber(hsla && hsla[0], 0);
+    const s = clamp01(sceneNumber(hsla && hsla[1], 0));
+    const l = clamp01(sceneNumber(hsla && hsla[2], 0));
+    const a = clamp01(sceneNumber(hsla && hsla[3], 1));
+    if (s <= 0.000001) {
+      return [l, l, l, a];
+    }
+    const q = l < 0.5 ? l * (1 + s) : l + s - (l * s);
+    const p = 2 * l - q;
+    return [
+      sceneHueToRGB(p, q, h + (1 / 3)),
+      sceneHueToRGB(p, q, h),
+      sceneHueToRGB(p, q, h - (1 / 3)),
+      a,
+    ];
+  }
+
+  function sceneLerpColorString(from, to, t) {
+    const left = sceneColorRGBA(from, [0, 0, 0, 1]);
+    const right = sceneColorRGBA(to, left);
+    const leftHSL = sceneRGBAToHSL(left);
+    const rightHSL = sceneRGBAToHSL(right);
+    const achromatic = leftHSL[1] <= 0.0001 && rightHSL[1] <= 0.0001;
+    let rgba;
+    if (achromatic) {
+      rgba = [
+        left[0] + (right[0] - left[0]) * t,
+        left[1] + (right[1] - left[1]) * t,
+        left[2] + (right[2] - left[2]) * t,
+        left[3] + (right[3] - left[3]) * t,
+      ];
+    } else {
+      let hueDelta = rightHSL[0] - leftHSL[0];
+      if (hueDelta > 0.5) hueDelta -= 1;
+      if (hueDelta < -0.5) hueDelta += 1;
+      rgba = sceneHSLToRGBA([
+        (leftHSL[0] + hueDelta * t + 1) % 1,
+        leftHSL[1] + (rightHSL[1] - leftHSL[1]) * t,
+        leftHSL[2] + (rightHSL[2] - leftHSL[2]) * t,
+        leftHSL[3] + (rightHSL[3] - leftHSL[3]) * t,
+      ]);
+    }
+    return sceneRGBAString(rgba);
+  }
+
+  function sceneTransitionValuesEqual(left, right) {
+    if (left === right) {
+      return true;
+    }
+    if (Array.isArray(left) || Array.isArray(right)) {
+      if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) {
+        return false;
+      }
+      for (let i = 0; i < left.length; i += 1) {
+        if (!sceneTransitionValuesEqual(left[i], right[i])) {
+          return false;
+        }
+      }
+      return true;
+    }
+    if (sceneIsPlainObject(left) && sceneIsPlainObject(right)) {
+      const keys = new Set(Object.keys(left).concat(Object.keys(right)));
+      for (const key of keys) {
+        if (sceneTransitionMetadataKey(key)) {
+          continue;
+        }
+        if (!sceneTransitionValuesEqual(left[key], right[key])) {
+          return false;
+        }
+      }
+      return true;
+    }
+    return false;
+  }
+
+  function sceneTransitionBuildDelta(from, to, keyName) {
+    if (sceneTransitionValuesEqual(from, to)) {
+      return null;
+    }
+    if (sceneIsPlainObject(from) && sceneIsPlainObject(to)) {
+      const delta = {};
+      const keys = new Set(Object.keys(from).concat(Object.keys(to)));
+      for (const key of keys) {
+        if (sceneTransitionMetadataKey(key)) {
+          continue;
+        }
+        const child = sceneTransitionBuildDelta(from[key], to[key], key);
+        if (child !== null) {
+          delta[key] = child;
+        }
+      }
+      return Object.keys(delta).length > 0 ? delta : null;
+    }
+    return {
+      __from: sceneCloneData(from),
+      __to: sceneCloneData(to),
+      __key: typeof keyName === "string" ? keyName : "",
+    };
+  }
+
+  function sceneTransitionLeafValue(from, to, t, keyName) {
+    if (typeof from === "number" && typeof to === "number" && Number.isFinite(from) && Number.isFinite(to)) {
+      const value = from + (to - from) * t;
+      return Number.isInteger(from) && Number.isInteger(to) ? Math.round(value) : value;
+    }
+    if (sceneTransitionColorLike(keyName, from, to)) {
+      return sceneLerpColorString(from, to, t);
+    }
+    return sceneCloneData(to);
+  }
+
+  function sceneTransitionPatchAt(delta, t) {
+    if (!delta || typeof delta !== "object") {
+      return null;
+    }
+    if (Object.prototype.hasOwnProperty.call(delta, "__from")) {
+      return sceneTransitionLeafValue(delta.__from, delta.__to, t, delta.__key);
+    }
+    const patch = {};
+    const keys = Object.keys(delta);
+    for (let i = 0; i < keys.length; i += 1) {
+      const key = keys[i];
+      patch[key] = sceneTransitionPatchAt(delta[key], t);
+    }
+    return patch;
+  }
+
+  function sceneApplyTransitionPatch(target, patch) {
+    if (!sceneIsPlainObject(target) || patch == null) {
+      return;
+    }
+    const keys = Object.keys(patch);
+    for (let i = 0; i < keys.length; i += 1) {
+      const key = keys[i];
+      const value = patch[key];
+      if (sceneIsPlainObject(value) && sceneIsPlainObject(target[key])) {
+        sceneApplyTransitionPatch(target[key], value);
+      } else {
+        target[key] = sceneCloneData(value);
+      }
+    }
+  }
+
+  function sceneTransitionKey(kind, entry) {
+    return String(kind || "scene") + ":" + String(entry && entry.id ? entry.id : "__singleton");
+  }
+
+  function sceneCancelEntryTransition(state, kind, entry) {
+    if (!state || !Array.isArray(state._transitions)) {
+      return;
+    }
+    const key = sceneTransitionKey(kind, entry);
+    state._transitions = state._transitions.filter(function(item) {
+      return item.key !== key;
+    });
+  }
+
+  function sceneNormalizeEntryByKind(kind, raw, fallback) {
+    switch (kind) {
+      case "object":
+        return normalizeSceneObject(raw, fallback && fallback.id ? fallback.id : 0, fallback);
+      case "label":
+        return normalizeSceneLabel(raw, fallback && fallback.id ? fallback.id : 0, fallback);
+      case "sprite":
+        return normalizeSceneSprite(raw, fallback && fallback.id ? fallback.id : 0, fallback);
+      case "light":
+        return normalizeSceneLight(raw, fallback && fallback.id ? fallback.id : 0, fallback);
+      case "points":
+        return normalizeScenePointsEntry(raw, fallback && fallback.id ? fallback.id : 0, fallback);
+      case "instanced":
+        return normalizeSceneInstancedMeshEntry(raw, fallback && fallback.id ? fallback.id : 0, fallback);
+      case "compute":
+        return normalizeSceneComputeParticlesEntry(raw, fallback && fallback.id ? fallback.id : 0, fallback);
+      case "environment":
+        return normalizeSceneEnvironment(raw, fallback);
+      default:
+        return sceneCloneData(fallback || raw);
+    }
+  }
+
+  function sceneDefaultTransitionPatch(kind) {
+    switch (kind) {
+      case "object":
+      case "points":
+      case "sprite":
+        return { opacity: 0 };
+      case "light":
+        return { intensity: 0 };
+      case "compute":
+        return { count: 0, material: { opacity: 0 } };
+      case "environment":
+        return { ambientIntensity: 0, skyIntensity: 0, groundIntensity: 0, fogDensity: 0 };
+      default:
+        return null;
+    }
+  }
+
+  function sceneTransitionStatePatch(kind, entry, phase) {
+    const statePatch = phase === "out" ? entry && entry._outState : entry && entry._inState;
+    if (sceneIsPlainObject(statePatch) && Object.keys(statePatch).length > 0) {
+      return sceneCloneData(statePatch);
+    }
+    return null;
+  }
+
+  function sceneStartEntryTransition(state, kind, entry, reducedMotion, nowMs) {
+    if (!entry || !sceneIsPlainObject(entry)) {
+      return false;
+    }
+    const timing = sceneTransitionTimingForPhase(entry, "in");
+    let startPatch = sceneTransitionStatePatch(kind, entry, "in");
+    if (!startPatch && timing.duration > 0) {
+      startPatch = sceneCloneData(sceneDefaultTransitionPatch(kind));
+    }
+    if ((!startPatch || !Object.keys(startPatch).length) && timing.duration <= 0) {
+      return false;
+    }
+    const target = sceneCloneData(entry);
+    const startState = sceneNormalizeEntryByKind(kind, startPatch || {}, target);
+    sceneApplyTransitionPatch(entry, startState);
+    if (reducedMotion || timing.duration <= 0) {
+      sceneApplyTransitionPatch(entry, target);
+      return false;
+    }
+    const delta = sceneTransitionBuildDelta(startState, target, "");
+    if (!delta) {
+      sceneApplyTransitionPatch(entry, target);
+      return false;
+    }
+    sceneCancelEntryTransition(state, kind, entry);
+    sceneStateTransitions(state).push({
+      key: sceneTransitionKey(kind, entry),
+      entry,
+      target,
+      delta,
+      startTime: nowMs,
+      duration: Math.max(1, timing.duration),
+      easing: timing.easing,
+    });
+    return true;
+  }
+
+  function scenePrimeInitialTransitions(state, reducedMotion, nowMs) {
+    let started = false;
+    if (state && sceneIsPlainObject(state.environment)) {
+      started = sceneStartEntryTransition(state, "environment", state.environment, reducedMotion, nowMs) || started;
+    }
+    const collections = [
+      ["object", sceneStateObjects(state)],
+      ["label", sceneStateLabels(state)],
+      ["sprite", sceneStateSprites(state)],
+      ["light", sceneStateLights(state)],
+      ["points", Array.isArray(state && state.points) ? state.points : []],
+      ["instanced", Array.isArray(state && state.instancedMeshes) ? state.instancedMeshes : []],
+      ["compute", Array.isArray(state && state.computeParticles) ? state.computeParticles : []],
+    ];
+    for (let ci = 0; ci < collections.length; ci += 1) {
+      const kind = collections[ci][0];
+      const entries = collections[ci][1];
+      for (let i = 0; i < entries.length; i += 1) {
+        started = sceneStartEntryTransition(state, kind, entries[i], reducedMotion, nowMs) || started;
+      }
+    }
+    return started;
+  }
+
+  function sceneAdvanceTransitions(state, nowMs) {
+    const active = sceneStateTransitions(state);
+    if (!active.length) {
+      return false;
+    }
+    const next = [];
+    for (let i = 0; i < active.length; i += 1) {
+      const transition = active[i];
+      const elapsed = Math.max(0, nowMs - sceneNumber(transition.startTime, 0));
+      const rawT = sceneClamp(elapsed / Math.max(1, sceneNumber(transition.duration, 1)), 0, 1);
+      const eased = sceneTransitionEase(transition.easing, rawT);
+      const patch = sceneTransitionPatchAt(transition.delta, eased);
+      if (patch) {
+        sceneApplyTransitionPatch(transition.entry, patch);
+      }
+      if (rawT >= 1) {
+        sceneApplyTransitionPatch(transition.entry, transition.target);
+      } else {
+        next.push(transition);
+      }
+    }
+    state._transitions = next;
+    return true;
+  }
+
+  function sceneEntryListensToEvent(entry, eventName) {
+    if (!entry || !Array.isArray(entry._live) || !eventName) {
+      return false;
+    }
+    return entry._live.indexOf(eventName) >= 0;
+  }
+
+  function sceneApplyLiveTransition(state, kind, entry, payload, reducedMotion, nowMs) {
+    if (!entry || !sceneEntryListensToEvent(entry, payload && payload.__eventName)) {
+      return false;
+    }
+    const target = sceneNormalizeEntryByKind(kind, payload, entry);
+    if (sceneTransitionValuesEqual(entry, target)) {
+      return false;
+    }
+    const timing = sceneTransitionTimingForPhase(entry, "update");
+    sceneCancelEntryTransition(state, kind, entry);
+    if (reducedMotion || timing.duration <= 0) {
+      sceneApplyTransitionPatch(entry, target);
+      return true;
+    }
+    const current = sceneCloneData(entry);
+    const delta = sceneTransitionBuildDelta(current, target, "");
+    if (!delta) {
+      return false;
+    }
+    sceneStateTransitions(state).push({
+      key: sceneTransitionKey(kind, entry),
+      entry,
+      target,
+      delta,
+      startTime: nowMs,
+      duration: Math.max(1, timing.duration),
+      easing: timing.easing,
+    });
+    return true;
+  }
+
+  function sceneApplyLiveEvent(state, eventName, payload, reducedMotion, nowMs) {
+    const event = typeof eventName === "string" ? eventName.trim() : "";
+    if (!event) {
+      return false;
+    }
+    const rawPayload = sceneIsPlainObject(payload) ? sceneCloneData(payload) : {};
+    rawPayload.__eventName = event;
+    let changed = sceneApplyLiveTransition(state, "environment", state && state.environment, rawPayload, reducedMotion, nowMs);
+    const collections = [
+      ["object", sceneStateObjects(state)],
+      ["label", sceneStateLabels(state)],
+      ["sprite", sceneStateSprites(state)],
+      ["light", sceneStateLights(state)],
+      ["points", Array.isArray(state && state.points) ? state.points : []],
+      ["instanced", Array.isArray(state && state.instancedMeshes) ? state.instancedMeshes : []],
+      ["compute", Array.isArray(state && state.computeParticles) ? state.computeParticles : []],
+    ];
+    for (let ci = 0; ci < collections.length; ci += 1) {
+      const kind = collections[ci][0];
+      const entries = collections[ci][1];
+      for (let i = 0; i < entries.length; i += 1) {
+        changed = sceneApplyLiveTransition(state, kind, entries[i], rawPayload, reducedMotion, nowMs) || changed;
+      }
+    }
+    delete rawPayload.__eventName;
+    return changed;
   }
 
   function sceneObjectAnimated(object) {
@@ -1470,7 +2327,7 @@
     const merged = Object.assign({}, current, props);
     merged.id = current.id || merged.id || ("scene-object-" + objectID);
     merged.kind = normalizeSceneKind(merged.kind || geometry);
-    return normalizeSceneObject(merged, objectID);
+    return normalizeSceneObject(merged, objectID, current);
   }
 
   function sceneLabelFromPayload(objectID, payload, fallback) {
@@ -1478,7 +2335,7 @@
     const props = payload && payload.props && typeof payload.props === "object" ? payload.props : {};
     const merged = Object.assign({}, current, props);
     merged.id = current.id || merged.id || ("scene-label-" + objectID);
-    const label = normalizeSceneLabel(merged, objectID);
+    const label = normalizeSceneLabel(merged, objectID, current);
     if (!label.text.trim()) {
       return null;
     }
@@ -1490,7 +2347,7 @@
     const props = payload && payload.props && typeof payload.props === "object" ? payload.props : {};
     const merged = Object.assign({}, current, props);
     merged.id = current.id || merged.id || ("scene-sprite-" + objectID);
-    const sprite = normalizeSceneSprite(merged, objectID);
+    const sprite = normalizeSceneSprite(merged, objectID, current);
     if (!sprite.src) {
       return null;
     }
@@ -1622,8 +2479,15 @@
       colors: [],
       worldPositions: [],
       worldColors: [],
+      meshObjects: [],
+      worldMeshPositions: [],
+      worldMeshColors: [],
+      worldMeshNormals: [],
+      worldMeshUVs: [],
+      worldMeshTangents: [],
       vertexCount: 0,
       worldVertexCount: 0,
+      worldMeshVertexCount: 0,
       objectCount: 0,
     };
     const materialLookup = new Map();
@@ -1643,6 +2507,12 @@
     bundle.worldPositions = new Float32Array(bundle.worldPositions);
     bundle.worldColors = new Float32Array(bundle.worldColors);
     bundle.worldVertexCount = bundle.worldPositions.length / 3;
+    bundle.worldMeshPositions = new Float32Array(bundle.worldMeshPositions);
+    bundle.worldMeshColors = new Float32Array(bundle.worldMeshColors);
+    bundle.worldMeshNormals = new Float32Array(bundle.worldMeshNormals);
+    bundle.worldMeshUVs = new Float32Array(bundle.worldMeshUVs);
+    bundle.worldMeshTangents = new Float32Array(bundle.worldMeshTangents);
+    bundle.worldMeshVertexCount = bundle.worldMeshPositions.length / 3;
     bundle.objectCount = bundle.objects.length;
     return bundle;
   }
@@ -1657,8 +2527,13 @@
   }
 
   function translateScenePoint(point, object, timeSeconds) {
+    const scaled = {
+      x: sceneNumber(point && point.x, 0) * sceneNumber(object && object.scaleX, 1),
+      y: sceneNumber(point && point.y, 0) * sceneNumber(object && object.scaleY, 1),
+      z: sceneNumber(point && point.z, 0) * sceneNumber(object && object.scaleZ, 1),
+    };
     const rotated = sceneRotatePoint(
-      point,
+      scaled,
       object.rotationX + object.spinX * timeSeconds,
       object.rotationY + object.spinY * timeSeconds,
       object.rotationZ + object.spinZ * timeSeconds,
@@ -1693,6 +2568,10 @@
   }
 
   function appendSceneObjectToBundle(bundle, materialLookup, camera, width, height, object, lights, environment, timeSeconds) {
+    if (sceneObjectHasTriangleMesh(object)) {
+      appendSceneMeshObjectToBundle(bundle, materialLookup, camera, width, height, object, lights, environment, timeSeconds);
+      return;
+    }
     const sourceSegments = sceneObjectSegments(object);
     const vertexOffset = bundle.worldPositions.length / 3;
     const material = sceneObjectMaterialProfile(object);
@@ -1755,6 +2634,9 @@
         vertexOffset: vertexOffset,
         vertexCount: vertexCount,
         static: Boolean(object.static),
+        castShadow: Boolean(object.castShadow),
+        receiveShadow: Boolean(object.receiveShadow),
+        depthWrite: object.depthWrite,
         bounds: bounds || {
           minX: 0,
           minY: 0,
@@ -1770,6 +2652,211 @@
       });
       appendSceneSurfaceToBundle(bundle, camera, object, materialIndex, material, bounds, depth, timeSeconds);
     }
+  }
+
+  function sceneObjectHasTriangleMesh(object) {
+    return Boolean(
+      object &&
+      object.vertices &&
+      object.vertices.positions &&
+      typeof object.vertices.count === "number" &&
+      object.vertices.count >= 3
+    );
+  }
+
+  function sceneMeshVertexPoint(vertices, index) {
+    const offset = index * 3;
+    return {
+      x: sceneNumber(vertices && vertices.positions && vertices.positions[offset], 0),
+      y: sceneNumber(vertices && vertices.positions && vertices.positions[offset + 1], 0),
+      z: sceneNumber(vertices && vertices.positions && vertices.positions[offset + 2], 0),
+    };
+  }
+
+  function sceneMeshVertexNormal(vertices, index) {
+    const offset = index * 3;
+    if (!vertices || !vertices.normals || vertices.normals.length < offset + 3) {
+      return { x: 0, y: 1, z: 0 };
+    }
+    return {
+      x: sceneNumber(vertices.normals[offset], 0),
+      y: sceneNumber(vertices.normals[offset + 1], 1),
+      z: sceneNumber(vertices.normals[offset + 2], 0),
+    };
+  }
+
+  function sceneMeshVertexUV(vertices, index) {
+    const offset = index * 2;
+    if (!vertices || !vertices.uvs || vertices.uvs.length < offset + 2) {
+      return { x: 0, y: 0 };
+    }
+    return {
+      x: sceneNumber(vertices.uvs[offset], 0),
+      y: sceneNumber(vertices.uvs[offset + 1], 0),
+    };
+  }
+
+  function sceneMeshVertexTangent(vertices, index) {
+    const offset = index * 4;
+    if (!vertices || !vertices.tangents || vertices.tangents.length < offset + 4) {
+      return { x: 1, y: 0, z: 0, w: 1 };
+    }
+    return {
+      x: sceneNumber(vertices.tangents[offset], 1),
+      y: sceneNumber(vertices.tangents[offset + 1], 0),
+      z: sceneNumber(vertices.tangents[offset + 2], 0),
+      w: sceneNumber(vertices.tangents[offset + 3], 1),
+    };
+  }
+
+  function sceneMeshWorldNormal(object, vertices, index, timeSeconds) {
+    const normal = sceneMeshVertexNormal(vertices, index);
+    return sceneNormalizeDirection(sceneRotatePoint(
+      normal,
+      object.rotationX + object.spinX * timeSeconds,
+      object.rotationY + object.spinY * timeSeconds,
+      object.rotationZ + object.spinZ * timeSeconds,
+    ));
+  }
+
+  function sceneMeshWorldTangent(object, vertices, index, timeSeconds) {
+    const tangent = sceneMeshVertexTangent(vertices, index);
+    const rotated = sceneNormalizeDirection(sceneRotatePoint({
+      x: tangent.x,
+      y: tangent.y,
+      z: tangent.z,
+    }, object.rotationX + object.spinX * timeSeconds, object.rotationY + object.spinY * timeSeconds, object.rotationZ + object.spinZ * timeSeconds));
+    return {
+      x: rotated.x,
+      y: rotated.y,
+      z: rotated.z,
+      w: tangent.w,
+    };
+  }
+
+  function sceneNormalizeDirection(point) {
+    const length = Math.sqrt(
+      sceneNumber(point && point.x, 0) * sceneNumber(point && point.x, 0) +
+      sceneNumber(point && point.y, 0) * sceneNumber(point && point.y, 0) +
+      sceneNumber(point && point.z, 0) * sceneNumber(point && point.z, 0)
+    );
+    if (length <= 0.000001) {
+      return { x: 0, y: 1, z: 0 };
+    }
+    return {
+      x: sceneNumber(point && point.x, 0) / length,
+      y: sceneNumber(point && point.y, 0) / length,
+      z: sceneNumber(point && point.z, 0) / length,
+    };
+  }
+
+  function appendSceneMeshWireSegment(bundle, camera, width, height, fromWorld, toWorld, fromLighting, toLighting) {
+    bundle.worldPositions.push(fromWorld.x, fromWorld.y, fromWorld.z, toWorld.x, toWorld.y, toWorld.z);
+    bundle.worldColors.push(
+      fromLighting[0], fromLighting[1], fromLighting[2], fromLighting[3],
+      toLighting[0], toLighting[1], toLighting[2], toLighting[3],
+    );
+    const from = sceneProjectPoint(fromWorld, camera, width, height);
+    const to = sceneProjectPoint(toWorld, camera, width, height);
+    if (!from || !to) {
+      return 2;
+    }
+    const stroke = sceneMixRGBA(fromLighting, toLighting);
+    appendSceneLine(bundle, width, height, from, to, sceneRGBAString(stroke), 1.6);
+    return 2;
+  }
+
+  function appendSceneMeshObjectToBundle(bundle, materialLookup, camera, width, height, object, lights, environment, timeSeconds) {
+    const vertices = object && object.vertices;
+    if (!vertices || !vertices.positions || !vertices.count) {
+      return;
+    }
+    const material = sceneObjectMaterialProfile(object);
+    const materialIndex = sceneBundleMaterialIndex(bundle, materialLookup, material);
+    const wireVertexOffset = bundle.worldPositions.length / 3;
+    const meshVertexOffset = bundle.worldMeshPositions.length / 3;
+    let wireVertexCount = 0;
+    let meshVertexCount = 0;
+    let bounds = null;
+
+    for (let tri = 0; tri + 2 < vertices.count; tri += 3) {
+      const points = [
+        translateScenePoint(sceneMeshVertexPoint(vertices, tri), object, timeSeconds),
+        translateScenePoint(sceneMeshVertexPoint(vertices, tri + 1), object, timeSeconds),
+        translateScenePoint(sceneMeshVertexPoint(vertices, tri + 2), object, timeSeconds),
+      ];
+      const normals = [
+        sceneMeshWorldNormal(object, vertices, tri, timeSeconds),
+        sceneMeshWorldNormal(object, vertices, tri + 1, timeSeconds),
+        sceneMeshWorldNormal(object, vertices, tri + 2, timeSeconds),
+      ];
+      const lighting = [
+        sceneLitColorRGBA(material, points[0], normals[0], lights, environment),
+        sceneLitColorRGBA(material, points[1], normals[1], lights, environment),
+        sceneLitColorRGBA(material, points[2], normals[2], lights, environment),
+      ];
+      const uvs = [
+        sceneMeshVertexUV(vertices, tri),
+        sceneMeshVertexUV(vertices, tri + 1),
+        sceneMeshVertexUV(vertices, tri + 2),
+      ];
+      const tangents = [
+        sceneMeshWorldTangent(object, vertices, tri, timeSeconds),
+        sceneMeshWorldTangent(object, vertices, tri + 1, timeSeconds),
+        sceneMeshWorldTangent(object, vertices, tri + 2, timeSeconds),
+      ];
+
+      for (let index = 0; index < 3; index += 1) {
+        const point = points[index];
+        const normal = normals[index];
+        const uv = uvs[index];
+        const tangent = tangents[index];
+        const color = lighting[index];
+        bundle.worldMeshPositions.push(point.x, point.y, point.z);
+        bundle.worldMeshColors.push(color[0], color[1], color[2], color[3]);
+        bundle.worldMeshNormals.push(normal.x, normal.y, normal.z);
+        bundle.worldMeshUVs.push(uv.x, uv.y);
+        bundle.worldMeshTangents.push(tangent.x, tangent.y, tangent.z, tangent.w);
+        bounds = sceneExpandWorldBounds(bounds, point);
+        meshVertexCount += 1;
+      }
+
+      wireVertexCount += appendSceneMeshWireSegment(bundle, camera, width, height, points[0], points[1], lighting[0], lighting[1]);
+      wireVertexCount += appendSceneMeshWireSegment(bundle, camera, width, height, points[1], points[2], lighting[1], lighting[2]);
+      wireVertexCount += appendSceneMeshWireSegment(bundle, camera, width, height, points[2], points[0], lighting[2], lighting[0]);
+    }
+
+    if (!bounds || meshVertexCount <= 0) {
+      return;
+    }
+    const depth = sceneBoundsDepthMetrics(bounds, camera);
+    const shared = {
+      id: object.id,
+      kind: object.kind,
+      pickable: typeof object.pickable === "boolean" ? object.pickable : undefined,
+      materialIndex: materialIndex,
+      renderPass: sceneWorldObjectRenderPass(object, material),
+      static: Boolean(object.static),
+      castShadow: Boolean(object.castShadow),
+      receiveShadow: Boolean(object.receiveShadow),
+      depthWrite: object.depthWrite,
+      bounds: bounds,
+      depthNear: depth.near,
+      depthFar: depth.far,
+      depthCenter: depth.center,
+      viewCulled: Boolean(object.viewCulled) || sceneBoundsViewCulled(bounds, camera),
+      doubleSided: Boolean(object.doubleSided),
+      skin: object.skin,
+      vertices: vertices,
+    };
+    bundle.objects.push(Object.assign({}, shared, {
+      vertexOffset: wireVertexOffset,
+      vertexCount: wireVertexCount,
+    }));
+    bundle.meshObjects.push(Object.assign({}, shared, {
+      vertexOffset: meshVertexOffset,
+      vertexCount: meshVertexCount,
+    }));
   }
 
   function sceneObjectHasTexturedSurface(object, material) {
@@ -1990,7 +3077,10 @@
       powerPreference: options && options.powerPreference ? options.powerPreference : "high-performance",
       preserveDrawingBuffer: false,
     };
-    const gl = canvas.getContext("webgl", contextOptions) || canvas.getContext("experimental-webgl", contextOptions);
+    const gl =
+      canvas.getContext("webgl", contextOptions) ||
+      canvas.getContext("experimental-webgl", contextOptions) ||
+      canvas.getContext("webgl2", contextOptions);
     if (!gl) {
       return null;
     }
@@ -2156,6 +3246,7 @@
 
   function renderSceneWebGLWorldBundle(gl, bundle, canvas, resources) {
     let drew = renderSceneWebGLSurfaces(gl, bundle, canvas, resources, "opaque");
+    drew = renderSceneWebGLMeshWorldBundle(gl, bundle, canvas, resources) || drew;
     gl.useProgram(resources.program);
     applySceneWebGLUniforms(gl, bundle, canvas, true, resources);
     if (sceneBundleCanUseBundledPasses(bundle)) {
@@ -2186,6 +3277,124 @@
     drew = renderSceneWebGLSurfaces(gl, bundle, canvas, resources, "alpha") || drew;
     drew = renderSceneWebGLSurfaces(gl, bundle, canvas, resources, "additive") || drew;
     return true;
+  }
+
+  function renderSceneWebGLMeshWorldBundle(gl, bundle, canvas, resources) {
+    const meshObjects = Array.isArray(bundle && bundle.meshObjects) ? bundle.meshObjects : [];
+    if (!meshObjects.length || !bundle || !bundle.worldMeshPositions || !bundle.worldMeshColors) {
+      return false;
+    }
+    const opaque = [];
+    const alpha = [];
+    const additive = [];
+    for (let index = 0; index < meshObjects.length; index += 1) {
+      const object = meshObjects[index];
+      if (!sceneWorldObjectRenderable(object, bundle.camera)) {
+        continue;
+      }
+      const material = Array.isArray(bundle.materials) ? bundle.materials[object.materialIndex] || null : null;
+      const renderPass = sceneWorldObjectRenderPass(object, material);
+      const entry = {
+        object,
+        material,
+        order: index,
+        depth: sceneNumber(object && object.depthCenter, 0),
+      };
+      if (renderPass === "alpha") {
+        alpha.push(entry);
+        continue;
+      }
+      if (renderPass === "additive") {
+        additive.push(entry);
+        continue;
+      }
+      opaque.push(entry);
+    }
+    if (!opaque.length && !alpha.length && !additive.length) {
+      return false;
+    }
+    gl.useProgram(resources.program);
+    applySceneWebGLUniforms(gl, bundle, canvas, true, resources);
+    let drew = false;
+    drew = renderSceneWebGLMeshWorldPass(gl, bundle, resources, opaque, "opaque", "opaque") || drew;
+    drew = renderSceneWebGLMeshWorldPass(gl, bundle, resources, alpha, "alpha", "translucent") || drew;
+    drew = renderSceneWebGLMeshWorldPass(gl, bundle, resources, additive, "additive", "translucent") || drew;
+    return drew;
+  }
+
+  function renderSceneWebGLMeshWorldPass(gl, bundle, resources, entries, blendMode, depthMode) {
+    if (!Array.isArray(entries) || !entries.length) {
+      return false;
+    }
+    if (blendMode !== "opaque") {
+      entries.sort(compareSceneWorldPassEntries);
+    }
+    applySceneWebGLDepth(gl, depthMode, resources.stateCache);
+    applySceneWebGLBlend(gl, blendMode, resources.stateCache);
+    let drew = false;
+    for (const entry of entries) {
+      drew = renderSceneWebGLMeshObject(gl, bundle, resources, entry.object, entry.material) || drew;
+    }
+    return drew;
+  }
+
+  function renderSceneWebGLMeshObject(gl, bundle, resources, object, material) {
+    const vertexOffset = Math.max(0, Math.floor(sceneNumber(object && object.vertexOffset, 0)));
+    const vertexCount = Math.max(0, Math.floor(sceneNumber(object && object.vertexCount, 0)));
+    if (!vertexCount) {
+      return false;
+    }
+    const positions = sceneSliceFloatArray(bundle.worldMeshPositions, vertexOffset * 3, vertexCount * 3);
+    const colors = sceneSliceFloatArray(bundle.worldMeshColors, vertexOffset * 4, vertexCount * 4);
+    const materials = sceneMeshMaterialArray(vertexCount, material);
+    uploadSceneWebGLBuffers(
+      gl,
+      resources.arrayBuffer,
+      object && object.static ? resources.staticDraw : resources.dynamicDraw,
+      resources.fallbackBuffers.position,
+      resources.fallbackBuffers.color,
+      resources.fallbackBuffers.material,
+      positions,
+      colors,
+      materials,
+    );
+    drawSceneWebGLPrimitives(
+      gl,
+      resources.arrayBuffer,
+      resources.floatType,
+      resources.trianglesMode,
+      resources.positionLocation,
+      resources.colorLocation,
+      resources.materialLocation,
+      resources.fallbackBuffers.position,
+      resources.fallbackBuffers.color,
+      resources.fallbackBuffers.material,
+      vertexCount,
+      3,
+    );
+    return true;
+  }
+
+  function sceneSliceFloatArray(values, start, count) {
+    const safeStart = Math.max(0, Math.floor(sceneNumber(start, 0)));
+    const safeCount = Math.max(0, Math.floor(sceneNumber(count, 0)));
+    const typed = new Float32Array(safeCount);
+    for (let index = 0; index < safeCount; index += 1) {
+      typed[index] = sceneNumber(values && values[safeStart + index], 0);
+    }
+    return typed;
+  }
+
+  function sceneMeshMaterialArray(vertexCount, material) {
+    const data = sceneMaterialShaderData(material);
+    const typed = new Float32Array(Math.max(0, vertexCount) * 3);
+    for (let index = 0; index < vertexCount; index += 1) {
+      const offset = index * 3;
+      typed[offset] = data[0];
+      typed[offset + 1] = data[1];
+      typed[offset + 2] = data[2];
+    }
+    return typed;
   }
 
   function sceneBundleCanUseBundledPasses(bundle) {
@@ -2613,6 +3822,10 @@
   }
 
   function drawSceneWebGLLines(gl, arrayBuffer, floatType, linesMode, positionLocation, colorLocation, materialLocation, positionBuffer, colorBuffer, materialBuffer, vertexCount, positionSize) {
+    drawSceneWebGLPrimitives(gl, arrayBuffer, floatType, linesMode, positionLocation, colorLocation, materialLocation, positionBuffer, colorBuffer, materialBuffer, vertexCount, positionSize);
+  }
+
+  function drawSceneWebGLPrimitives(gl, arrayBuffer, floatType, drawMode, positionLocation, colorLocation, materialLocation, positionBuffer, colorBuffer, materialBuffer, vertexCount, positionSize) {
     if (!vertexCount) {
       return;
     }
@@ -2628,7 +3841,7 @@
     gl.enableVertexAttribArray(materialLocation);
     gl.vertexAttribPointer(materialLocation, 3, floatType, false, 0, 0);
 
-    gl.drawArrays(linesMode, 0, vertexCount);
+    gl.drawArrays(drawMode, 0, vertexCount);
   }
 
   function sceneTypedFloatArray(values) {

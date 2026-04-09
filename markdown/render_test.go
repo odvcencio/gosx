@@ -146,6 +146,14 @@ func TestRenderHeadingIDs(t *testing.T) {
 	}
 }
 
+func TestRenderHeadingIDsWithExclamation(t *testing.T) {
+	r := NewRenderer(WithHeadingIDs(true))
+	out := r.RenderString("# Hello World!")
+	if !strings.Contains(out, `<h1 id="hello-world">Hello World!</h1>`) {
+		t.Errorf("expected heading with exclamation preserved, got %q", out)
+	}
+}
+
 func TestRenderUnsafeHTMLDefault(t *testing.T) {
 	// By default, raw HTML should be escaped.
 	// HTML blocks require preceding content for tree-sitter to recognise them.

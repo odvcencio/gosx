@@ -60,6 +60,21 @@ func TestParseHeadingLevels(t *testing.T) {
 	}
 }
 
+func TestParseHeadingWithExclamation(t *testing.T) {
+	doc := Parse([]byte("# Hello World!"))
+	if len(doc.Root.Children) == 0 {
+		t.Fatal("expected at least one child")
+	}
+	h := doc.Root.Children[0]
+	if h.Type != NodeHeading {
+		t.Fatalf("expected NodeHeading, got %d", h.Type)
+	}
+	text := collectText(h)
+	if text != "Hello World!" {
+		t.Fatalf("expected text %q, got %q", "Hello World!", text)
+	}
+}
+
 func TestParseParagraph(t *testing.T) {
 	doc := Parse([]byte("Just some plain text."))
 	if len(doc.Root.Children) == 0 {
