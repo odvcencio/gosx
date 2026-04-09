@@ -426,6 +426,8 @@ func (e *Editor) renderMetadataPanel() gosx.Node {
 			gosx.El("span", gosx.Attrs(gosx.Attr("class", "meta-hint")), gosx.Text("Comma-separated")),
 		),
 		e.renderMetaField("Cover Image URL", "meta-cover-image", "meta-input", "https://...", e.Options.CoverImage, false),
+		e.renderMoodField(),
+		e.renderMetaField("Music", "meta-music", "meta-input", "https://youtube.com/watch?v=...", e.Options.Music, false),
 		gosx.El("div", gosx.Attrs(gosx.Attr("class", "meta-divider"))),
 		gosx.El(
 			"div",
@@ -570,6 +572,68 @@ func (e *Editor) renderMetaField(label, id, className, placeholder, value string
 	}
 
 	return gosx.El("div", gosx.Attrs(gosx.Attr("class", "meta-field")), gosx.Fragment(children...))
+}
+
+func (e *Editor) renderMoodField() gosx.Node {
+	if len(e.Options.MoodChoices) == 0 {
+		return gosx.Fragment()
+	}
+
+	// Build data-icon attributes on each option for JS preview updates
+	options := []gosx.Node{
+		gosx.El("option", gosx.Attrs(gosx.Attr("value", ""), gosx.Attr("data-icon", ""), gosx.Attr("data-anim", "")), gosx.Text("none")),
+	}
+	for _, mc := range e.Options.MoodChoices {
+		attrs := gosx.Attrs(
+			gosx.Attr("value", mc.Key),
+			gosx.Attr("data-icon", mc.Icon),
+			gosx.Attr("data-anim", mc.Anim),
+		)
+		if mc.Key == e.Options.Mood {
+			attrs = append(attrs, gosx.BoolAttr("selected"))
+		}
+		options = append(options, gosx.El("option", attrs, gosx.Text(mc.Label)))
+	}
+
+	selectAttrs := gosx.Attrs(
+		gosx.Attr("id", "meta-mood"),
+		gosx.Attr("class", "meta-input"),
+		gosx.Attr("onchange", "var o=this.options[this.selectedIndex];var p=document.getElementById('meta-mood-preview');if(o&&o.dataset.icon){p.src=o.dataset.icon;p.className='meta-mood-preview '+(o.dataset.anim||'');p.style.display=''}else{p.style.display='none';p.className='meta-mood-preview'}"),
+	)
+	if e.Options.ReadOnly {
+		selectAttrs = append(selectAttrs, gosx.BoolAttr("disabled"))
+	}
+
+	// Initial preview icon
+	previewSrc := ""
+	previewDisplay := "none"
+	previewAnim := ""
+	for _, mc := range e.Options.MoodChoices {
+		if mc.Key == e.Options.Mood && mc.Icon != "" {
+			previewSrc = mc.Icon
+			previewAnim = mc.Anim
+			previewDisplay = ""
+			break
+		}
+	}
+
+	return gosx.El("div", gosx.Attrs(gosx.Attr("class", "meta-field")),
+		gosx.El("label", gosx.Attrs(gosx.Attr("class", "meta-label"), gosx.Attr("for", "meta-mood")),
+			gosx.Text("Mood"),
+		),
+		gosx.El("div", gosx.Attrs(gosx.Attr("class", "meta-mood-row")),
+			gosx.El("select", selectAttrs, gosx.Fragment(options...)),
+			gosx.El("img", gosx.Attrs(
+				gosx.Attr("id", "meta-mood-preview"),
+				gosx.Attr("class", "meta-mood-preview "+previewAnim),
+				gosx.Attr("src", previewSrc),
+				gosx.Attr("alt", ""),
+				gosx.Attr("width", "48"),
+				gosx.Attr("height", "48"),
+				gosx.Attr("style", "display:"+previewDisplay),
+			)),
+		),
+	)
 }
 
 func (e *Editor) renderPublishControls() []gosx.Node {

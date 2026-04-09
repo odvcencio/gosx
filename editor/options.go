@@ -7,6 +7,14 @@ import (
 	"github.com/odvcencio/gosx/hub"
 )
 
+// MoodChoice is one option in the mood dropdown.
+type MoodChoice struct {
+	Key   string // mood identifier (e.g. "quixotic")
+	Label string // display label
+	Icon  string // URL to mood icon SVG
+	Anim  string // CSS animation class (e.g. "mood-dream")
+}
+
 // Document aliases the editor text model contract at the top-level package.
 type Document = textmodel.Document
 
@@ -141,6 +149,9 @@ type Options struct {
 	StylesheetURL string
 	ScriptURL     string
 	CSRFToken     string
+	Mood          string            // LJ-style mood key
+	MoodChoices   []MoodChoice      // available moods for dropdown
+	Music         string            // music URL (YouTube)
 	ExtraFields   map[string]string
 	Language      Lang
 	Theme         Theme
