@@ -2,6 +2,8 @@ package sim
 
 import (
 	"encoding/binary"
+	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -218,4 +220,23 @@ func TestFightingGamePattern(t *testing.T) {
 	if _, ok := replay.Frames[0].Inputs["p1"]; !ok {
 		t.Fatal("expected p1 input in first replay frame")
 	}
+}
+
+func TestRunnerConcurrentInputs(t *testing.T) {
+	h := hub.New("test-race")
+	s := &mockSim{}
+	r := New(h, s, Options{TickRate: 60})
+	r.RegisterHandlers()
+	r.Start()
+	defer r.Stop()
+
+	var wg sync.WaitGroup
+	for i := 0; i < 100; i++ {
+		wg.Add(1)
+		go func(n int) {
+			defer wg.Done()
+			r.ReceiveInput(fmt.Sprintf("p%d", n), Input{Data: []byte(`{}`)})
+		}(i)
+	}
+	wg.Wait()
 }
