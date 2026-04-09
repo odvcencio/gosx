@@ -33,9 +33,8 @@ type Options struct {
 	TickRate int
 }
 
-// Placeholder types for snapshot history and replay recording.
-// These will be replaced with real implementations in later tasks.
-type snapshotRing struct{}
+// Placeholder type for replay recording.
+// This will be replaced with a real implementation in a later task.
 type replayRecorder struct{}
 
 // Runner drives a Simulation at a fixed tick rate over a hub.
@@ -62,7 +61,7 @@ func New(h *hub.Hub, s Simulation, opts Options) *Runner {
 		sim:       s,
 		tickRate:  rate,
 		inputs:    make(map[string]Input),
-		snapshots: &snapshotRing{},
+		snapshots: newSnapshotRing(128),
 		recorder:  &replayRecorder{},
 	}
 }

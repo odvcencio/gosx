@@ -82,3 +82,38 @@ func TestRunnerTickLoop(t *testing.T) {
 		t.Fatalf("expected mockSim.ticks >= 4, got %d", s.ticks)
 	}
 }
+
+func TestSnapshotRing(t *testing.T) {
+	ring := newSnapshotRing(4)
+
+	ring.Push(1, []byte("state-1"))
+	ring.Push(2, []byte("state-2"))
+	ring.Push(3, []byte("state-3"))
+
+	// Get middle entry
+	data, ok := ring.Get(2)
+	if !ok {
+		t.Fatal("expected to find frame 2")
+	}
+	if string(data) != "state-2" {
+		t.Fatalf("expected 'state-2', got %q", string(data))
+	}
+
+	// Miss on non-existent frame
+	_, ok = ring.Get(99)
+	if ok {
+		t.Fatal("expected miss on frame 99")
+	}
+
+	// Verify data is copied (mutation safety)
+	original := []byte("mutable")
+	ring.Push(4, original)
+	original[0] = 'X'
+	data, ok = ring.Get(4)
+	if !ok {
+		t.Fatal("expected to find frame 4")
+	}
+	if string(data) != "mutable" {
+		t.Fatalf("expected 'mutable' (copy), got %q", string(data))
+	}
+}
