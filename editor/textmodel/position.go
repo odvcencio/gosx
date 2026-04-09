@@ -37,7 +37,7 @@ func (r Range) Contains(pos Position) bool {
 type OpKind int
 
 const (
-	OpInsert  OpKind = iota
+	OpInsert OpKind = iota
 	OpDelete
 	OpReplace
 )

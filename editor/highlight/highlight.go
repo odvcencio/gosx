@@ -24,8 +24,8 @@ type Decoration struct {
 // EditRange describes a source change for incremental re-highlighting.
 // Row/column values are zero-based.
 type EditRange struct {
-	StartLine int
-	StartCol  int
+	StartLine  int
+	StartCol   int
 	OldEndLine int
 	OldEndCol  int
 	NewEndLine int
