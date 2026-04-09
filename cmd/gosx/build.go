@@ -257,7 +257,7 @@ func RunBuild(dir string, dev bool) error {
 			woptPath, woptErr := exec.LookPath("wasm-opt")
 			if woptErr == nil {
 				optTmp := wasmTmp + ".opt"
-				optCmd := exec.Command(woptPath, "-Oz", wasmTmp, "-o", optTmp)
+				optCmd := exec.Command(woptPath, "-Oz", "--strip-debug", "--strip-producers", wasmTmp, "-o", optTmp)
 				if optCmd.Run() == nil {
 					if err := os.Rename(optTmp, wasmTmp); err != nil {
 						return fmt.Errorf("rename optimized wasm: %w", err)
