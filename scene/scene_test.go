@@ -1811,3 +1811,101 @@ func TestPropsSceneIRLowersHemisphereLight(t *testing.T) {
 		t.Fatalf("expected groundColor in legacy, got %#v", lights[0]["groundColor"])
 	}
 }
+
+func TestComputeParticlesEmitterRotationReachesLegacyProps(t *testing.T) {
+	props := Props{
+		Graph: NewGraph(ComputeParticles{
+			ID:    "test-spiral",
+			Count: 100,
+			Emitter: ParticleEmitter{
+				Kind:     "spiral",
+				Position: Vec3(100, 50, -600),
+				Rotation: Euler{X: -0.5, Z: 0.3},
+				Radius:   200,
+				Rate:     10,
+				Lifetime: 5,
+				Arms:     2,
+				Wind:     0.04,
+				Scatter:  0.3,
+			},
+		}),
+	}
+
+	ir := props.Graph.SceneIR()
+	if len(ir.ComputeParticles) != 1 {
+		t.Fatalf("expected 1 compute particles entry, got %d", len(ir.ComputeParticles))
+	}
+
+	cp := ir.ComputeParticles[0]
+	// Verify rotation survived the Euler→Quaternion→Euler roundtrip
+	if math.Abs(cp.Emitter.RotationX-(-0.5)) > 0.001 {
+		t.Errorf("emitter RotationX = %f, want -0.5", cp.Emitter.RotationX)
+	}
+	if math.Abs(cp.Emitter.RotationZ-0.3) > 0.001 {
+		t.Errorf("emitter RotationZ = %f, want 0.3", cp.Emitter.RotationZ)
+	}
+
+	// Verify legacyProps serialization includes rotation
+	legacy := cp.legacyProps()
+	emitter, ok := legacy["emitter"].(map[string]any)
+	if !ok {
+		t.Fatal("emitter not found in legacy props")
+	}
+
+	rotX, _ := emitter["rotationX"].(float64)
+	rotZ, _ := emitter["rotationZ"].(float64)
+	if math.Abs(rotX-(-0.5)) > 0.001 {
+		t.Errorf("legacyProps rotationX = %f, want -0.5", rotX)
+	}
+	if math.Abs(rotZ-0.3) > 0.001 {
+		t.Errorf("legacyProps rotationZ = %f, want 0.3", rotZ)
+	}
+
+	// Verify JSON roundtrip
+	jsonBytes, err := json.Marshal(legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	jsonStr := string(jsonBytes)
+	if !strings.Contains(jsonStr, `"rotationX"`) {
+		t.Errorf("JSON missing rotationX: %s", jsonStr[:200])
+	}
+	if !strings.Contains(jsonStr, `"rotationZ"`) {
+		t.Errorf("JSON missing rotationZ: %s", jsonStr[:200])
+	}
+	t.Logf("Emitter rotation in JSON: rotX=%f rotZ=%f", rotX, rotZ)
+}
+
+func TestPositionStrideReachesLegacyProps(t *testing.T) {
+	props := Props{
+		Compression: &Compression{BitWidth: 6},
+		Graph: NewGraph(Points{
+			ID:    "test-points",
+			Count: 10,
+			Positions: []Vector3{
+				Vec3(1, 0, 0), Vec3(2, 0, 0), Vec3(3, 0, 0), Vec3(4, 0, 0), Vec3(5, 0, 0),
+				Vec3(6, 0, 0), Vec3(7, 0, 0), Vec3(8, 0, 0), Vec3(9, 0, 0), Vec3(10, 0, 0),
+			},
+		}),
+	}
+
+	ir := props.Graph.SceneIR()
+	if len(ir.Points) != 1 {
+		t.Fatalf("expected 1 points entry, got %d", len(ir.Points))
+	}
+
+	// Compress the IR
+	compressSceneIR(&ir, 6, 3)
+
+	pt := ir.Points[0]
+	if pt.PositionStride != 3 {
+		t.Errorf("PositionStride = %d, want 3", pt.PositionStride)
+	}
+
+	legacy := pt.legacyProps()
+	stride, _ := legacy["positionStride"].(int)
+	if stride != 3 {
+		t.Errorf("legacyProps positionStride = %d, want 3", stride)
+	}
+	t.Logf("PositionStride in legacy props: %d", stride)
+}
