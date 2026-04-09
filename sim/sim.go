@@ -71,3 +71,27 @@ func New(h *hub.Hub, s Simulation, opts Options) *Runner {
 func (r *Runner) TickRate() int {
 	return r.tickRate
 }
+
+// RegisterHandlers wires hub event handlers for input collection and spectator joins.
+func (r *Runner) RegisterHandlers() {
+	r.hub.On("input", func(ctx *hub.Context) {
+		r.ReceiveInput(ctx.Client.ID, Input{Data: ctx.Data})
+	})
+}
+
+// ReceiveInput stores an input for the given player, overwriting any prior
+// input from that player in the current tick window.
+func (r *Runner) ReceiveInput(playerID string, input Input) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.inputs[playerID] = input
+}
+
+// DrainInputs returns all collected inputs and clears the buffer.
+func (r *Runner) DrainInputs() map[string]Input {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := r.inputs
+	r.inputs = make(map[string]Input)
+	return out
+}
