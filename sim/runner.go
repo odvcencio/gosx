@@ -34,6 +34,7 @@ func (r *Runner) tickLoop() {
 
 		frame := r.frame.Add(1)
 		r.snapshots.Push(frame, r.sim.Snapshot())
+		r.recorder.Record(frame, inputs)
 
 		state := r.sim.State()
 		r.hub.Broadcast("sim:tick", map[string]any{

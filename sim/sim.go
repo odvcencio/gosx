@@ -33,10 +33,6 @@ type Options struct {
 	TickRate int
 }
 
-// Placeholder type for replay recording.
-// This will be replaced with a real implementation in a later task.
-type replayRecorder struct{}
-
 // Runner drives a Simulation at a fixed tick rate over a hub.
 type Runner struct {
 	hub       *hub.Hub
@@ -62,7 +58,7 @@ func New(h *hub.Hub, s Simulation, opts Options) *Runner {
 		tickRate:  rate,
 		inputs:    make(map[string]Input),
 		snapshots: newSnapshotRing(128),
-		recorder:  &replayRecorder{},
+		recorder:  newReplayRecorder(),
 	}
 }
 
@@ -93,4 +89,9 @@ func (r *Runner) DrainInputs() map[string]Input {
 	out := r.inputs
 	r.inputs = make(map[string]Input)
 	return out
+}
+
+// Replay returns the complete replay log of all recorded frames.
+func (r *Runner) Replay() ReplayLog {
+	return r.recorder.Finish()
 }
