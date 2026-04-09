@@ -1,6 +1,7 @@
 package sim
 
 import (
+	"encoding/binary"
 	"testing"
 	"time"
 
@@ -135,5 +136,86 @@ func TestSpectatorGetsCurrentState(t *testing.T) {
 	// the runner is properly configured
 	if r.hub.Name() != "test" {
 		t.Fatalf("expected hub name 'test', got %q", r.hub.Name())
+	}
+}
+
+// mockFightSim simulates a simple fighting game for integration testing.
+type mockFightSim struct {
+	p1Health  int
+	p2Health  int
+	tickCount int
+}
+
+func newMockFightSim() *mockFightSim {
+	return &mockFightSim{p1Health: 100, p2Health: 100}
+}
+
+func (m *mockFightSim) Tick(inputs map[string]Input) {
+	m.tickCount++
+	if _, ok := inputs["p1"]; ok {
+		m.p2Health -= 10
+	}
+}
+
+func (m *mockFightSim) Snapshot() []byte {
+	buf := make([]byte, 12)
+	binary.LittleEndian.PutUint32(buf[0:4], uint32(m.p1Health))
+	binary.LittleEndian.PutUint32(buf[4:8], uint32(m.p2Health))
+	binary.LittleEndian.PutUint32(buf[8:12], uint32(m.tickCount))
+	return buf
+}
+
+func (m *mockFightSim) Restore(snapshot []byte) {
+	if len(snapshot) < 12 {
+		return
+	}
+	m.p1Health = int(binary.LittleEndian.Uint32(snapshot[0:4]))
+	m.p2Health = int(binary.LittleEndian.Uint32(snapshot[4:8]))
+	m.tickCount = int(binary.LittleEndian.Uint32(snapshot[8:12]))
+}
+
+func (m *mockFightSim) State() []byte {
+	return m.Snapshot()
+}
+
+func TestFightingGamePattern(t *testing.T) {
+	h := hub.New("fight")
+	s := newMockFightSim()
+	r := New(h, s, Options{TickRate: 60})
+
+	// Send p1 attack input before starting
+	r.ReceiveInput("p1", Input{Data: []byte("attack")})
+
+	r.Start()
+	time.Sleep(50 * time.Millisecond)
+	r.Stop()
+
+	// Verify ticks advanced
+	if r.Frame() < 1 {
+		t.Fatalf("expected at least 1 tick, got %d", r.Frame())
+	}
+
+	// p1 health should be unchanged (only p2 takes damage)
+	if s.p1Health != 100 {
+		t.Fatalf("expected p1Health 100, got %d", s.p1Health)
+	}
+
+	// p2 should have taken at least one hit (10 damage from first tick)
+	if s.p2Health > 90 {
+		t.Fatalf("expected p2Health <= 90, got %d", s.p2Health)
+	}
+
+	// Verify replay has frames
+	replay := r.Replay()
+	if len(replay.Frames) < 1 {
+		t.Fatal("expected at least 1 replay frame")
+	}
+
+	// First frame should have p1's input
+	if len(replay.Frames[0].Inputs) < 1 {
+		t.Fatal("expected first replay frame to have at least 1 input")
+	}
+	if _, ok := replay.Frames[0].Inputs["p1"]; !ok {
+		t.Fatal("expected p1 input in first replay frame")
 	}
 }
