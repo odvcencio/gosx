@@ -709,6 +709,9 @@ func (item ComputeParticlesIR) legacyProps() map[string]any {
 	setInt(emitter, "arms", item.Emitter.Arms)
 	setNumeric(emitter, "wind", item.Emitter.Wind)
 	setNumeric(emitter, "scatter", item.Emitter.Scatter)
+	setNumeric(emitter, "rotationX", item.Emitter.RotationX)
+	setNumeric(emitter, "rotationY", item.Emitter.RotationY)
+	setNumeric(emitter, "rotationZ", item.Emitter.RotationZ)
 	record["emitter"] = emitter
 	if len(item.Forces) > 0 {
 		forces := make([]map[string]any, 0, len(item.Forces))
