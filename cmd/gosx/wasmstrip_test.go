@@ -5,7 +5,13 @@ import (
 	"testing"
 )
 
+// TestWasmExternalizeData is a developer scratch test that measures
+// the size split of externalizing WASM data sections. It relies on
+// /tmp/stripped.wasm being provided manually and is skipped in CI.
 func TestWasmExternalizeData(t *testing.T) {
+	if _, err := os.Stat("/tmp/stripped.wasm"); os.IsNotExist(err) {
+		t.Skip("skipping: /tmp/stripped.wasm not present (manual dev test)")
+	}
 	err := wasmExternalizeData("/tmp/stripped.wasm", "/tmp/extern.wasm", "/tmp/extern.data")
 	if err != nil {
 		t.Fatal(err)
