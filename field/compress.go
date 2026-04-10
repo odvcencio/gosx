@@ -79,7 +79,8 @@ func (q *Quantized) Decompress() *Field {
 	return out
 }
 
-// WireSize returns the total bytes consumed by the packed payload.
+// WireSize returns the total bytes consumed by the packed payload (excluding
+// the small Mins/Maxs/header overhead, which is constant per field).
 func (q *Quantized) WireSize() int {
 	return len(q.Packed) + len(q.Preview)
 }

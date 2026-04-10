@@ -61,3 +61,19 @@ func TestDeltaEncodingRoundTrip(t *testing.T) {
 		}
 	}
 }
+
+func TestWireSizeWithPreview(t *testing.T) {
+	f := New([3]int{16, 16, 16}, 1, AABB{Max: [3]float32{1, 1, 1}})
+	q := f.Quantize(QuantizeOptions{BitWidth: 8, PreviewBits: 4})
+	if len(q.Preview) == 0 {
+		t.Fatalf("expected non-empty preview, got %d bytes", len(q.Preview))
+	}
+	if q.PreviewBits != 4 {
+		t.Errorf("PreviewBits = %d, want 4", q.PreviewBits)
+	}
+	want := len(q.Packed) + len(q.Preview)
+	if got := q.WireSize(); got != want {
+		t.Errorf("WireSize() = %d, want %d (Packed=%d + Preview=%d)",
+			got, want, len(q.Packed), len(q.Preview))
+	}
+}
