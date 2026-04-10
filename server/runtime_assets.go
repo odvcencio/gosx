@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/odvcencio/gosx/buildmanifest"
+	"github.com/odvcencio/gosx/island"
 )
 
 // bootstrapStub is a minimal no-op bootstrap script served when the real
@@ -51,6 +52,7 @@ type runtimeManifestCache struct {
 // compatibility assets for engines and future page runtimes.
 func (a *App) SetRuntimeRoot(root string) {
 	a.runtimeRoot = strings.TrimSpace(root)
+	island.SetManifestRoot(a.runtimeRoot)
 }
 
 func (a *App) effectiveRuntimeRoot() string {
