@@ -65,3 +65,28 @@ func TestSampleScalarEdgeClamp(t *testing.T) {
 		t.Errorf("clamped high = %f, want ~1.0", got)
 	}
 }
+
+func TestSampleVec3(t *testing.T) {
+	// Vector field f(x,y,z) = (x, y, z). Sampling reproduces position.
+	f := FromFunc([3]int{16, 16, 16}, 3,
+		AABB{Min: [3]float32{0, 0, 0}, Max: [3]float32{1, 1, 1}},
+		func(x, y, z float32) []float32 { return []float32{x, y, z} },
+	)
+	got := f.SampleVec3(0.5, 0.5, 0.5)
+	for i, want := range [3]float32{0.5, 0.5, 0.5} {
+		if diff := got[i] - want; diff < -0.05 || diff > 0.05 {
+			t.Errorf("SampleVec3 component %d = %f, want ~%f", i, got[i], want)
+		}
+	}
+}
+
+func TestSampleGeneric(t *testing.T) {
+	f := FromFunc([3]int{4, 4, 4}, 2,
+		AABB{Min: [3]float32{0, 0, 0}, Max: [3]float32{1, 1, 1}},
+		func(x, y, z float32) []float32 { return []float32{x, y} },
+	)
+	got := f.Sample(0.5, 0.5, 0.5)
+	if len(got) != 2 {
+		t.Fatalf("Sample returned %d components, want 2", len(got))
+	}
+}
