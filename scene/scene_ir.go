@@ -26,6 +26,7 @@ type SceneIR struct {
 	Sprites          []SpriteIR           `json:"sprites,omitempty"`
 	Lights           []LightIR            `json:"lights,omitempty"`
 	Environment      EnvironmentIR        `json:"environment,omitempty"`
+	PostEffects      []PostEffectIR       `json:"-"` // serialized via legacyProps
 }
 
 // ObjectIR is the typed compatibility record for one lowered scene object.
@@ -350,6 +351,7 @@ type EnvironmentIR struct {
 func (p Props) SceneIR() SceneIR {
 	ir := p.Graph.SceneIR()
 	ir.Environment = p.Environment.sceneIR()
+	ir.PostEffects = p.PostFX.sceneIR()
 	if p.Compression != nil && p.Compression.BitWidth > 0 {
 		previewBW := 0
 		if p.Compression.Progressive || p.Compression.LOD {
@@ -389,7 +391,7 @@ func (g Graph) SceneIR() SceneIR {
 }
 
 func (ir SceneIR) isZero() bool {
-	return len(ir.Objects) == 0 && len(ir.Models) == 0 && len(ir.Points) == 0 && len(ir.InstancedMeshes) == 0 && len(ir.ComputeParticles) == 0 && len(ir.Animations) == 0 && len(ir.Labels) == 0 && len(ir.Sprites) == 0 && len(ir.Lights) == 0 && ir.Environment.isZero()
+	return len(ir.Objects) == 0 && len(ir.Models) == 0 && len(ir.Points) == 0 && len(ir.InstancedMeshes) == 0 && len(ir.ComputeParticles) == 0 && len(ir.Animations) == 0 && len(ir.Labels) == 0 && len(ir.Sprites) == 0 && len(ir.Lights) == 0 && ir.Environment.isZero() && len(ir.PostEffects) == 0
 }
 
 func (ir SceneIR) legacyProps() map[string]any {
@@ -426,6 +428,13 @@ func (ir SceneIR) legacyProps() map[string]any {
 	}
 	if environment := ir.Environment.legacyProps(); len(environment) > 0 {
 		out["environment"] = environment
+	}
+	if len(ir.PostEffects) > 0 {
+		effects := make([]map[string]any, 0, len(ir.PostEffects))
+		for _, e := range ir.PostEffects {
+			effects = append(effects, e.legacyProps())
+		}
+		out["postEffects"] = effects
 	}
 	return out
 }

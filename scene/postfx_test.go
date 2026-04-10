@@ -96,3 +96,46 @@ func TestPostFXSceneIR(t *testing.T) {
 		t.Errorf("irs[1] = %T, want TonemapIR", irs[1])
 	}
 }
+
+func TestPropsPostFXRoundTrip(t *testing.T) {
+	p := Props{
+		PostFX: PostFX{Effects: []PostEffect{
+			Bloom{Threshold: 0.7, Strength: 0.6, Radius: 12},
+			Tonemap{Mode: TonemapACES, Exposure: 1.1},
+		}},
+	}
+	ir := p.SceneIR()
+	if len(ir.PostEffects) != 2 {
+		t.Fatalf("ir.PostEffects len = %d, want 2", len(ir.PostEffects))
+	}
+
+	bundle := ir.legacyProps()
+	rawList, ok := bundle["postEffects"].([]map[string]any)
+	if !ok {
+		t.Fatalf("bundle.postEffects type = %T, want []map[string]any", bundle["postEffects"])
+	}
+	if len(rawList) != 2 {
+		t.Fatalf("postEffects len = %d, want 2", len(rawList))
+	}
+	if rawList[0]["kind"] != "bloom" {
+		t.Errorf(`postEffects[0].kind = %v, want "bloom"`, rawList[0]["kind"])
+	}
+	if rawList[1]["kind"] != "toneMapping" {
+		t.Errorf(`postEffects[1].kind = %v, want "toneMapping"`, rawList[1]["kind"])
+	}
+}
+
+func TestPropsNoPostFXEmitsNothing(t *testing.T) {
+	p := Props{} // no PostFX
+	ir := p.SceneIR()
+	if len(ir.PostEffects) != 0 {
+		t.Errorf("empty PostFX should produce empty PostEffects, got %d", len(ir.PostEffects))
+	}
+	bundle := ir.legacyProps()
+	if bundle == nil {
+		return // empty scene, no bundle, also fine
+	}
+	if _, exists := bundle["postEffects"]; exists {
+		t.Errorf("empty PostFX should not emit postEffects key in bundle")
+	}
+}

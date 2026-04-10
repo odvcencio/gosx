@@ -84,6 +84,7 @@ type Props struct {
 	MaxDevicePixelRatio  float64 `json:"maxDevicePixelRatio,omitempty"`
 	Camera               PerspectiveCamera
 	Environment          Environment
+	PostFX               PostFX
 	Graph                Graph
 }
 
