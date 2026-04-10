@@ -2495,6 +2495,33 @@ func TestMountedHandlerPreservesFlushUnderObservers(t *testing.T) {
 	}
 }
 
+func TestMountAppStripsPrefixBeforeDelegating(t *testing.T) {
+	child := New()
+	var childSawPath string
+	child.Mount("/foo", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		childSawPath = r.URL.Path
+		_, _ = w.Write([]byte("child-ok"))
+	}))
+
+	parent := New()
+	parent.MountApp("/cobalt/example", child)
+
+	handler := parent.Build()
+	req := httptest.NewRequest(http.MethodGet, "/cobalt/example/foo", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (body=%q)", w.Code, w.Body.String())
+	}
+	if body := w.Body.String(); !strings.Contains(body, "child-ok") {
+		t.Fatalf("expected child-ok body, got %q", body)
+	}
+	if childSawPath != "/foo" {
+		t.Fatalf("expected child to see /foo after prefix strip, got %q", childSawPath)
+	}
+}
+
 func TestAppServesBootstrapStubWhenNoBuildExists(t *testing.T) {
 	// Use a temp dir with no build artifacts at all — simulates `go run`
 	// without ever running `gosx build`.
