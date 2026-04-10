@@ -21032,7 +21032,14 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
         }
       };
       window.addEventListener("scroll", scrollHandler, { passive: true });
-      if (window.visualViewport && typeof window.visualViewport.addEventListener === "function") {
+      var isTouchDevice =
+        (typeof navigator !== "undefined" && navigator.maxTouchPoints > 0) ||
+        ("ontouchstart" in window);
+      if (
+        isTouchDevice &&
+        window.visualViewport &&
+        typeof window.visualViewport.addEventListener === "function"
+      ) {
         visualViewportScrollHandler = function() {
           if (!sceneWantsAnimation()) {
             scheduleRender("visual-viewport");

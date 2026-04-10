@@ -2268,7 +2268,21 @@
         }
       };
       window.addEventListener("scroll", scrollHandler, { passive: true });
-      if (window.visualViewport && typeof window.visualViewport.addEventListener === "function") {
+      // visualViewport listeners are only meaningful on touch devices where
+      // the visual viewport can differ from the layout viewport (mobile URL
+      // bar animations, virtual keyboard, pinch-zoom). On desktop browsers
+      // the visual viewport tracks the window 1:1 and the listeners just
+      // add event-handler overhead — on Firefox specifically they've been
+      // observed to contribute to sustained-scroll jank because each fire
+      // re-wakes the render loop.
+      var isTouchDevice =
+        (typeof navigator !== "undefined" && navigator.maxTouchPoints > 0) ||
+        ("ontouchstart" in window);
+      if (
+        isTouchDevice &&
+        window.visualViewport &&
+        typeof window.visualViewport.addEventListener === "function"
+      ) {
         visualViewportScrollHandler = function() {
           if (!sceneWantsAnimation()) {
             scheduleRender("visual-viewport");
