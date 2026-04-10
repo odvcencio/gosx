@@ -467,19 +467,20 @@
 
     function currentEmitterConfig() {
       var emitter = entry && entry.emitter && typeof entry.emitter === "object" ? entry.emitter : {};
+      // NOTE: emit in LOCAL space (origin-centered, no rotation). The compute
+      // particle render bridge sets x/y/z/rotation/spin on the rendered Points
+      // entry so the model matrix applies position + rotation + spin at draw time.
+      // This matches how static Points work and gives us free galaxy spin.
       return {
         kind: kindMap[emitter.kind] || 0,
-        x: sceneNumber(emitter.x, 0),
-        y: sceneNumber(emitter.y, 0),
-        z: sceneNumber(emitter.z, 0),
+        x: 0,
+        y: 0,
+        z: 0,
         radius: sceneNumber(emitter.radius, 0),
         lifetime: sceneNumber(emitter.lifetime, 0),
         arms: Math.max(1, Math.floor(sceneNumber(emitter.arms, 2))),
         wind: sceneNumber(emitter.wind, 0),
         scatter: sceneNumber(emitter.scatter, 0),
-        rotX: sceneNumber(emitter.rotationX, 0),
-        rotY: sceneNumber(emitter.rotationY, 0),
-        rotZ: sceneNumber(emitter.rotationZ, 0),
       };
     }
 
@@ -500,55 +501,45 @@
     }
 
     function emitParticle(index, base, emitterConfig) {
+      // All emitters produce LOCAL coordinates (origin-centered). The render
+      // pipeline applies the emitter's world position, rotation, and spin via
+      // the model matrix on the Points entry.
       switch (emitterConfig.kind) {
         case 1: { // sphere
           var theta = hash2(index, 10) * 6.283185;
           var phi = Math.acos(2.0 * hash2(index, 11) - 1.0);
           var r = emitterConfig.radius * Math.pow(hash2(index, 12), 0.333);
-          base[0] = emitterConfig.x + r * Math.sin(phi) * Math.cos(theta);
-          base[1] = emitterConfig.y + r * Math.cos(phi);
-          base[2] = emitterConfig.z + r * Math.sin(phi) * Math.sin(theta);
+          base[0] = r * Math.sin(phi) * Math.cos(theta);
+          base[1] = r * Math.cos(phi);
+          base[2] = r * Math.sin(phi) * Math.sin(theta);
           base[3] = 0; base[4] = 0; base[5] = 0;
           break;
         }
         case 2: { // disc
           var angle = hash2(index, 20) * 6.283185;
           var dr = emitterConfig.radius * Math.sqrt(hash2(index, 21));
-          base[0] = emitterConfig.x + dr * Math.cos(angle);
-          base[1] = emitterConfig.y;
-          base[2] = emitterConfig.z + dr * Math.sin(angle);
+          base[0] = dr * Math.cos(angle);
+          base[1] = 0;
+          base[2] = dr * Math.sin(angle);
           base[3] = 0; base[4] = 0; base[5] = 0;
           break;
         }
-        case 3: { // spiral
+        case 3: { // spiral (local space)
           var radius = hash2(index, 30) * emitterConfig.radius;
           var arm = index % emitterConfig.arms;
           var armAngle = arm * 3.14159265 / Math.max(emitterConfig.arms / 2, 1);
           var spiralAngle = armAngle + (radius / Math.max(emitterConfig.radius, 0.001)) * emitterConfig.wind;
           var scatter = (hash2(index, 31) - 0.5) * radius * emitterConfig.scatter;
-          var lx = Math.cos(spiralAngle) * radius + scatter;
-          var ly = (hash2(index, 32) - 0.5) * emitterConfig.radius * 0.05;
-          var lz = Math.sin(spiralAngle) * radius + (hash2(index, 33) - 0.5) * radius * emitterConfig.scatter;
-          var rx = emitterConfig.rotX, ry = emitterConfig.rotY, rz = emitterConfig.rotZ;
-          if (rx !== 0 || ry !== 0 || rz !== 0) {
-            var cx = Math.cos(rx), sx = Math.sin(rx);
-            var cy = Math.cos(ry), sy = Math.sin(ry);
-            var cz = Math.cos(rz), sz = Math.sin(rz);
-            var ox = lx*(cy*cz) + ly*(sx*sy*cz - cx*sz) + lz*(cx*sy*cz + sx*sz);
-            var oy = lx*(cy*sz) + ly*(sx*sy*sz + cx*cz) + lz*(cx*sy*sz - sx*cz);
-            var oz = lx*(-sy)   + ly*(sx*cy)             + lz*(cx*cy);
-            lx = ox; ly = oy; lz = oz;
-          }
-          base[0] = emitterConfig.x + lx;
-          base[1] = emitterConfig.y + ly;
-          base[2] = emitterConfig.z + lz;
+          base[0] = Math.cos(spiralAngle) * radius + scatter;
+          base[1] = (hash2(index, 32) - 0.5) * emitterConfig.radius * 0.05;
+          base[2] = Math.sin(spiralAngle) * radius + (hash2(index, 33) - 0.5) * radius * emitterConfig.scatter;
           base[3] = 0; base[4] = 0; base[5] = 0;
           break;
         }
         default: { // point
-          base[0] = emitterConfig.x;
-          base[1] = emitterConfig.y;
-          base[2] = emitterConfig.z;
+          base[0] = 0;
+          base[1] = 0;
+          base[2] = 0;
           base[3] = (hash2(index, 0) - 0.5) * 0.1;
           base[4] = (hash2(index, 1) - 0.5) * 0.1;
           base[5] = (hash2(index, 2) - 0.5) * 0.1;

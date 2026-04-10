@@ -204,6 +204,7 @@ type ParticleEmitter struct {
 	Kind     string // "point", "sphere", "disc", "spiral"
 	Position Vector3
 	Rotation Euler
+	Spin     Euler // procedural rotation (radians per second)
 	Radius   float64
 	Rate     float64
 	Lifetime float64
@@ -436,6 +437,7 @@ type PointStyle string
 const (
 	PointStyleSquare PointStyle = "square"
 	PointStyleFocus  PointStyle = "focus"
+	PointStyleGlow   PointStyle = "glow"
 )
 
 type MaterialRenderPass string
@@ -1094,6 +1096,9 @@ func (l *graphLowerer) lowerComputeParticles(cp ComputeParticles, parent worldTr
 			RotationX: eulerFromQuaternion(world.Rotation).X,
 			RotationY: eulerFromQuaternion(world.Rotation).Y,
 			RotationZ: eulerFromQuaternion(world.Rotation).Z,
+			SpinX:     cp.Emitter.Spin.X,
+			SpinY:     cp.Emitter.Spin.Y,
+			SpinZ:     cp.Emitter.Spin.Z,
 			Radius:    cp.Emitter.Radius,
 			Rate:      cp.Emitter.Rate,
 			Lifetime:  cp.Emitter.Lifetime,

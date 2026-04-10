@@ -39,7 +39,7 @@ type ObjectIR struct {
 	Radius          float64        `json:"radius,omitempty"`
 	Segments        int            `json:"segments,omitempty"`
 	Points          []Vector3      `json:"points,omitempty"`
-	LineSegments    [][2]int       `json:"segments,omitempty"`
+	LineSegments    [][2]int       `json:"lineSegments,omitempty"`
 	RadiusTop       float64        `json:"radiusTop,omitempty"`
 	RadiusBottom    float64        `json:"radiusBottom,omitempty"`
 	Tube            float64        `json:"tube,omitempty"`
@@ -269,6 +269,9 @@ type ParticleEmitterIR struct {
 	RotationX float64 `json:"rotationX,omitempty"`
 	RotationY float64 `json:"rotationY,omitempty"`
 	RotationZ float64 `json:"rotationZ,omitempty"`
+	SpinX     float64 `json:"spinX,omitempty"`
+	SpinY     float64 `json:"spinY,omitempty"`
+	SpinZ     float64 `json:"spinZ,omitempty"`
 	Radius    float64 `json:"radius,omitempty"`
 	Rate      float64 `json:"rate,omitempty"`
 	Lifetime  float64 `json:"lifetime,omitempty"`
@@ -453,7 +456,7 @@ func (item ObjectIR) legacyProps() map[string]any {
 		record["points"] = points
 	}
 	if segments := legacyLineSegments(item.LineSegments); len(segments) > 0 {
-		record["segments"] = segments
+		record["lineSegments"] = segments
 	}
 	setNumeric(record, "radiusTop", item.RadiusTop)
 	setNumeric(record, "radiusBottom", item.RadiusBottom)
@@ -712,6 +715,9 @@ func (item ComputeParticlesIR) legacyProps() map[string]any {
 	setNumeric(emitter, "rotationX", item.Emitter.RotationX)
 	setNumeric(emitter, "rotationY", item.Emitter.RotationY)
 	setNumeric(emitter, "rotationZ", item.Emitter.RotationZ)
+	setNumeric(emitter, "spinX", item.Emitter.SpinX)
+	setNumeric(emitter, "spinY", item.Emitter.SpinY)
+	setNumeric(emitter, "spinZ", item.Emitter.SpinZ)
 	record["emitter"] = emitter
 	if len(item.Forces) > 0 {
 		forces := make([]map[string]any, 0, len(item.Forces))

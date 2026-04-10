@@ -469,6 +469,13 @@
     "        float streak = max(streakX, streakY) * focus;",
     "        alpha = clamp(core + halo * 0.5 + streak * 0.2, 0.0, 1.0);",
     "        color = mix(color, vec3(1.0), clamp(focus * 0.22 + core * focus * 0.28, 0.0, 0.4));",
+    "    } else if (u_pointStyle == 2) {",
+    "        // glow: pure radial gaussian falloff — soft gas cloud, no core, no streaks",
+    "        vec2 centered = gl_PointCoord - vec2(0.5);",
+    "        float radial = length(centered) * 2.0;",
+    "        if (radial > 1.0) discard;",
+    "        float g = exp(-radial * radial * 3.5);",
+    "        alpha = g;",
     "    }",
     "",
     "    // Apply fog",
@@ -2647,6 +2654,9 @@
         var material = system.entry && system.entry.material && typeof system.entry.material === "object"
           ? system.entry.material
           : {};
+        var emitter = system.entry && system.entry.emitter && typeof system.entry.emitter === "object"
+          ? system.entry.emitter
+          : {};
         pointsEntries.push({
           id: system.entry && system.entry.id ? system.entry.id : ("scene-compute-points-" + i),
           count: system.count,
@@ -2656,6 +2666,18 @@
           opacity: 1,
           blendMode: material.blendMode,
           attenuation: !!material.attenuation,
+          // Model-matrix transform from the emitter: position, rotation, spin.
+          // Particles are stored in LOCAL space so the renderer's model matrix
+          // applies position + rotation + time-based spin uniformly.
+          x: sceneNumber(emitter.x, 0),
+          y: sceneNumber(emitter.y, 0),
+          z: sceneNumber(emitter.z, 0),
+          rotationX: sceneNumber(emitter.rotationX, 0),
+          rotationY: sceneNumber(emitter.rotationY, 0),
+          rotationZ: sceneNumber(emitter.rotationZ, 0),
+          spinX: sceneNumber(emitter.spinX, 0),
+          spinY: sceneNumber(emitter.spinY, 0),
+          spinZ: sceneNumber(emitter.spinZ, 0),
           _cachedPos: system.positions,
           _cachedSizes: system.sizes,
           _cachedColors: record.colorBuffer,
