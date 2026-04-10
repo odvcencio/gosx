@@ -139,3 +139,61 @@ func TestPropsNoPostFXEmitsNothing(t *testing.T) {
 		t.Errorf("empty PostFX should not emit postEffects key in bundle")
 	}
 }
+
+func TestEnvironmentTonemapMigrationSynthesizesEffect(t *testing.T) {
+	// A scene that uses the legacy Environment.ToneMapping path with NO
+	// explicit PostFX.Effects should get a synthesized Tonemap effect at
+	// compile time so the post-processor takes over from the inline shader.
+	p := Props{
+		Environment: Environment{
+			ToneMapping: "aces",
+			Exposure:    1.2,
+		},
+	}
+	ir := p.SceneIR()
+	if len(ir.PostEffects) != 1 {
+		t.Fatalf("expected 1 synthesized PostEffect, got %d", len(ir.PostEffects))
+	}
+	tm, ok := ir.PostEffects[0].(TonemapIR)
+	if !ok {
+		t.Fatalf("synthesized effect type = %T, want TonemapIR", ir.PostEffects[0])
+	}
+	if tm.Mode != "aces" {
+		t.Errorf("synthesized Mode = %q, want aces", tm.Mode)
+	}
+	if tm.Exposure != 1.2 {
+		t.Errorf("synthesized Exposure = %v, want 1.2", tm.Exposure)
+	}
+}
+
+func TestEnvironmentTonemapMigrationRespectsExplicitTonemap(t *testing.T) {
+	// If the user already declared a Tonemap effect, don't synthesize a
+	// second one — the explicit declaration wins.
+	p := Props{
+		Environment: Environment{
+			ToneMapping: "aces",
+			Exposure:    1.2,
+		},
+		PostFX: PostFX{Effects: []PostEffect{
+			Tonemap{Mode: TonemapACES, Exposure: 0.7}, // user override
+		}},
+	}
+	ir := p.SceneIR()
+	if len(ir.PostEffects) != 1 {
+		t.Fatalf("expected 1 PostEffect, got %d", len(ir.PostEffects))
+	}
+	tm := ir.PostEffects[0].(TonemapIR)
+	// Float32 → float64 widens with precision drift; compare with tolerance.
+	if diff := tm.Exposure - 0.7; diff < -1e-6 || diff > 1e-6 {
+		t.Errorf("explicit Tonemap should have won, Exposure = %v want ~0.7", tm.Exposure)
+	}
+}
+
+func TestEnvironmentTonemapMigrationNoOpWhenEmpty(t *testing.T) {
+	// No legacy field set, no explicit PostFX → no PostEffects.
+	p := Props{}
+	ir := p.SceneIR()
+	if len(ir.PostEffects) != 0 {
+		t.Errorf("expected 0 PostEffects, got %d", len(ir.PostEffects))
+	}
+}

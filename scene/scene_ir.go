@@ -352,6 +352,12 @@ func (p Props) SceneIR() SceneIR {
 	ir := p.Graph.SceneIR()
 	ir.Environment = p.Environment.sceneIR()
 	ir.PostEffects = p.PostFX.sceneIR()
+	if synthesized := migrateEnvironmentTonemap(p.Environment, ir.PostEffects); synthesized != nil {
+		// Prepend so user-declared effects still run after the synthesized
+		// tonemap. (Order doesn't matter much for tonemap-only chains, but
+		// keeping it first matches the order users typically write.)
+		ir.PostEffects = append([]PostEffectIR{synthesized}, ir.PostEffects...)
+	}
 	if p.Compression != nil && p.Compression.BitWidth > 0 {
 		previewBW := 0
 		if p.Compression.Progressive || p.Compression.LOD {

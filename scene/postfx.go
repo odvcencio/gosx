@@ -82,3 +82,30 @@ type ColorGrade struct {
 }
 
 func (ColorGrade) isPostEffect() {}
+
+// migrateEnvironmentTonemap implements backwards compatibility for the
+// pre-PostFX Environment.ToneMapping / Environment.Exposure fields. When
+// those fields are set and the existing PostFX chain does NOT already
+// include a Tonemap effect, this returns a Tonemap effect to prepend.
+//
+// Returns nil if no synthesis is needed (no legacy fields, or user already
+// declared a Tonemap explicitly).
+func migrateEnvironmentTonemap(env Environment, existing []PostEffectIR) PostEffectIR {
+	if env.ToneMapping == "" && env.Exposure == 0 {
+		return nil
+	}
+	for _, e := range existing {
+		if _, isTonemap := e.(TonemapIR); isTonemap {
+			return nil
+		}
+	}
+	mode := env.ToneMapping
+	if mode == "" {
+		mode = "aces"
+	}
+	exposure := env.Exposure
+	if exposure == 0 {
+		exposure = 1.0
+	}
+	return TonemapIR{Mode: mode, Exposure: exposure}
+}
