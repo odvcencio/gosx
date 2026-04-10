@@ -73,11 +73,13 @@ func FromFunc(resolution [3]int, components int, bounds AABB,
 }
 
 // SampleScalar returns the trilinearly interpolated scalar value at world (x,y,z).
-// For Components > 1, returns the first component. Out-of-bounds samples are
-// clamped to the nearest in-bounds voxel.
+// Panics if Components != 1. Out-of-bounds samples are clamped to the nearest
+// in-bounds voxel.
 func (f *Field) SampleScalar(x, y, z float32) float32 {
-	v := f.sampleAt(x, y, z, 0)
-	return v
+	if f.Components != 1 {
+		panic("field: SampleScalar requires Components == 1")
+	}
+	return f.sampleAt(x, y, z, 0)
 }
 
 // sampleAt returns the trilinearly interpolated value of component c at (x,y,z).
@@ -146,10 +148,11 @@ func clampF(v, lo, hi float32) float32 {
 }
 
 func floor32(x float32) float32 {
-	if x >= 0 {
-		return float32(int(x))
+	i := float32(int32(x))
+	if i > x {
+		return i - 1
 	}
-	return float32(int(x)) - 1
+	return i
 }
 
 // Sample returns the interpolated vector at world-space (x, y, z).

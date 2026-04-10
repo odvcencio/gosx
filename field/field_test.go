@@ -90,3 +90,24 @@ func TestSampleGeneric(t *testing.T) {
 		t.Fatalf("Sample returned %d components, want 2", len(got))
 	}
 }
+
+func TestFloor32(t *testing.T) {
+	cases := []struct {
+		in, want float32
+	}{
+		{0, 0},
+		{0.5, 0},
+		{1.0, 1},
+		{1.5, 1},
+		{-0.5, -1},
+		{-1.0, -1}, // exact negative integer — the bug case
+		{-1.5, -2},
+		{-2.0, -2},
+	}
+	for _, c := range cases {
+		got := floor32(c.in)
+		if got != c.want {
+			t.Errorf("floor32(%v) = %v, want %v", c.in, got, c.want)
+		}
+	}
+}
