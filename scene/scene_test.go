@@ -864,7 +864,7 @@ func TestPropsSceneIRLowersModelInstancesAndLineGeometry(t *testing.T) {
 	if _, ok := objects[0]["points"]; !ok {
 		t.Fatalf("expected line points in legacy props, got %#v", objects[0])
 	}
-	if _, ok := objects[0]["segments"]; !ok {
+	if _, ok := objects[0]["lineSegments"]; !ok {
 		t.Fatalf("expected line segments in legacy props, got %#v", objects[0])
 	}
 	if got := objects[0]["pickable"]; got != false {
