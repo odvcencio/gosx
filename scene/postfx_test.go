@@ -197,3 +197,48 @@ func TestEnvironmentTonemapMigrationNoOpWhenEmpty(t *testing.T) {
 		t.Errorf("expected 0 PostEffects, got %d", len(ir.PostEffects))
 	}
 }
+
+func TestPostFXMaxPixelsConstants(t *testing.T) {
+	// Assertions use hardcoded pixel counts so this test would catch an
+	// accidental edit to the constant expressions themselves.
+	if PostFXMaxPixels540p != 518400 {
+		t.Errorf("PostFXMaxPixels540p = %d, want 518400", PostFXMaxPixels540p)
+	}
+	if PostFXMaxPixels720p != 921600 {
+		t.Errorf("PostFXMaxPixels720p = %d, want 921600", PostFXMaxPixels720p)
+	}
+	if PostFXMaxPixels1080p != 2073600 {
+		t.Errorf("PostFXMaxPixels1080p = %d, want 2073600", PostFXMaxPixels1080p)
+	}
+	if PostFXMaxPixels1440p != 3686400 {
+		t.Errorf("PostFXMaxPixels1440p = %d, want 3686400", PostFXMaxPixels1440p)
+	}
+	if PostFXMaxPixels4K != 8294400 {
+		t.Errorf("PostFXMaxPixels4K = %d, want 8294400", PostFXMaxPixels4K)
+	}
+	if PostFXMaxPixelsUnbounded != 1073741824 {
+		t.Errorf("PostFXMaxPixelsUnbounded = %d, want 1073741824 (1<<30)", PostFXMaxPixelsUnbounded)
+	}
+}
+
+func TestPostFXResolveMaxPixels(t *testing.T) {
+	tests := []struct {
+		name string
+		in   int
+		want int
+	}{
+		{"zero maps to 1080p default", 0, PostFXMaxPixels1080p},
+		{"negative maps to 1080p default", -1, PostFXMaxPixels1080p},
+		{"large negative maps to 1080p default", -999_999, PostFXMaxPixels1080p},
+		{"positive passes through", PostFXMaxPixels720p, PostFXMaxPixels720p},
+		{"unbounded passes through", PostFXMaxPixelsUnbounded, PostFXMaxPixelsUnbounded},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := PostFX{MaxPixels: tc.in}.resolveMaxPixels()
+			if got != tc.want {
+				t.Errorf("resolveMaxPixels(%d) = %d, want %d", tc.in, got, tc.want)
+			}
+		})
+	}
+}
