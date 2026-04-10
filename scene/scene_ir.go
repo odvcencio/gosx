@@ -27,6 +27,7 @@ type SceneIR struct {
 	Lights           []LightIR            `json:"lights,omitempty"`
 	Environment      EnvironmentIR        `json:"environment,omitempty"`
 	PostEffects      []PostEffectIR       `json:"-"` // serialized via legacyProps
+	PostFXMaxPixels  int                  `json:"-"` // serialized via legacyProps
 }
 
 // ObjectIR is the typed compatibility record for one lowered scene object.
@@ -358,6 +359,7 @@ func (p Props) SceneIR() SceneIR {
 		// keeping it first matches the order users typically write.)
 		ir.PostEffects = append([]PostEffectIR{synthesized}, ir.PostEffects...)
 	}
+	ir.PostFXMaxPixels = p.PostFX.resolveMaxPixels()
 	if p.Compression != nil && p.Compression.BitWidth > 0 {
 		previewBW := 0
 		if p.Compression.Progressive || p.Compression.LOD {
@@ -441,6 +443,9 @@ func (ir SceneIR) legacyProps() map[string]any {
 			effects = append(effects, e.legacyProps())
 		}
 		out["postEffects"] = effects
+		if ir.PostFXMaxPixels != 0 {
+			out["postFXMaxPixels"] = ir.PostFXMaxPixels
+		}
 	}
 	return out
 }
