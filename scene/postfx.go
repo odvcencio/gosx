@@ -105,6 +105,16 @@ type Bloom struct {
 	Threshold float32 // luminance above which pixels bloom (default 0.8)
 	Strength  float32 // intensity of the bloom contribution (default 0.5)
 	Radius    float32 // blur radius in pixels (default 5)
+
+	// Scale is an additional bloom-internal downscale applied on top of
+	// the PostFX.MaxPixels factor. The zero value maps to 0.5 (runtime
+	// default, matching v0.14.0 behavior). Values outside (0, 1] are
+	// silently dropped at the IR boundary — the JS runtime falls back
+	// to 0.5 when no scale is emitted.
+	//
+	// Bloom is a low-frequency blur, so Scale can go much lower than the
+	// main pipeline with no visible quality loss.
+	Scale float32
 }
 
 func (Bloom) isPostEffect() {}

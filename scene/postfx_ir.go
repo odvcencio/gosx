@@ -39,6 +39,7 @@ type BloomIR struct {
 	Threshold float64
 	Strength  float64
 	Radius    float64
+	Scale     float64 // emitted only when in (0, 1]
 }
 
 func (ir BloomIR) legacyProps() map[string]any {
@@ -54,12 +55,16 @@ func (ir BloomIR) legacyProps() map[string]any {
 	if radius == 0 {
 		radius = 5.0
 	}
-	return map[string]any{
+	out := map[string]any{
 		"kind":      "bloom",
 		"threshold": threshold,
 		"intensity": strength,
 		"radius":    radius,
 	}
+	if ir.Scale > 0 && ir.Scale <= 1 {
+		out["scale"] = ir.Scale
+	}
+	return out
 }
 
 // VignetteIR lowers Vignette.
@@ -124,6 +129,7 @@ func (pfx PostFX) sceneIR() []PostEffectIR {
 				Threshold: float64(ev.Threshold),
 				Strength:  float64(ev.Strength),
 				Radius:    float64(ev.Radius),
+				Scale:     float64(ev.Scale),
 			})
 		case Vignette:
 			out = append(out, VignetteIR{

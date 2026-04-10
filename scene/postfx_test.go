@@ -242,3 +242,56 @@ func TestPostFXResolveMaxPixels(t *testing.T) {
 		})
 	}
 }
+
+func TestBloomScaleIRRoundTrip(t *testing.T) {
+	ir := BloomIR{Threshold: 0.5, Strength: 0.6, Radius: 4.0, Scale: 0.25}
+	props := ir.legacyProps()
+	got, ok := props["scale"]
+	if !ok {
+		t.Fatalf("expected scale key in IR, got %v", props)
+	}
+	if got != 0.25 {
+		t.Errorf("scale = %v, want 0.25", got)
+	}
+}
+
+func TestBloomScaleClampingDropsOutOfRange(t *testing.T) {
+	tests := []struct {
+		name  string
+		scale float64
+	}{
+		{"zero dropped", 0},
+		{"negative dropped", -0.5},
+		{"greater than one dropped", 1.5},
+		{"large dropped", 100},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ir := BloomIR{Threshold: 0.5, Strength: 0.6, Radius: 4.0, Scale: tc.scale}
+			props := ir.legacyProps()
+			if _, ok := props["scale"]; ok {
+				t.Errorf("expected scale to be absent for Scale=%v, got props=%v", tc.scale, props)
+			}
+		})
+	}
+}
+
+func TestBloomScalePassesThroughSceneIR(t *testing.T) {
+	pfx := PostFX{
+		Effects: []PostEffect{
+			Bloom{Threshold: 0.5, Strength: 0.6, Radius: 4.0, Scale: 0.3},
+		},
+	}
+	effects := pfx.sceneIR()
+	if len(effects) != 1 {
+		t.Fatalf("expected 1 effect, got %d", len(effects))
+	}
+	bloom, ok := effects[0].(BloomIR)
+	if !ok {
+		t.Fatalf("expected BloomIR, got %T", effects[0])
+	}
+	// Float32 → float64 widens with precision drift; compare with tolerance.
+	if diff := bloom.Scale - 0.3; diff < -1e-6 || diff > 1e-6 {
+		t.Errorf("bloom.Scale = %v, want ~0.3", bloom.Scale)
+	}
+}
