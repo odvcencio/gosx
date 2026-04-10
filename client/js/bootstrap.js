@@ -10329,6 +10329,17 @@ function resolvePostFXFactor(maxPixels, canvasPixels) {
   return Math.sqrt(cap / canvasPixels);
 }
 
+function resolveShadowSize(requestedSize, shadowMaxPixels) {
+  var size = Math.max(1, requestedSize | 0);
+  var cap = (typeof shadowMaxPixels === "number" && shadowMaxPixels > 0)
+    ? shadowMaxPixels
+    : 1048576; // ShadowMaxPixels1024 default
+  var requestedPixels = size * size;
+  if (requestedPixels <= cap) return size;
+  var factor = Math.sqrt(cap / requestedPixels);
+  return Math.max(1, Math.floor(size * factor));
+}
+
   var SCENE_POST_TONE_MAPPING = "toneMapping";
   var SCENE_POST_BLOOM = "bloom";
   var SCENE_POST_VIGNETTE = "vignette";
@@ -12385,6 +12396,7 @@ function resolvePostFXFactor(maxPixels, canvasPixels) {
       if (shadowProgram) {
         var lightArray = Array.isArray(bundle.lights) ? bundle.lights : [];
         var sceneBounds = null;
+        var shadowMaxPixels = (typeof bundle.shadowMaxPixels === "number") ? bundle.shadowMaxPixels : 0;
 
         for (var li = 0; li < lightArray.length && activeShadowCount < 2; li++) {
           var light = lightArray[li];
@@ -12399,6 +12411,7 @@ function resolvePostFXFactor(maxPixels, canvasPixels) {
           var slot = activeShadowCount;
           var shadowSize = sceneNumber(light.shadowSize, 1024);
           shadowSize = Math.max(256, Math.min(4096, shadowSize));
+          shadowSize = resolveShadowSize(shadowSize, shadowMaxPixels);
 
           if (!shadowSlots[slot] || shadowSlots[slot].size !== shadowSize) {
             if (shadowSlots[slot]) {
@@ -15410,6 +15423,7 @@ function resolvePostFXFactor(maxPixels, canvasPixels) {
 
       var lightArray = Array.isArray(bundle.lights) ? bundle.lights : [];
       var sceneBounds = null;
+      var shadowMaxPixels = (typeof bundle.shadowMaxPixels === "number") ? bundle.shadowMaxPixels : 0;
 
       for (var li = 0; li < lightArray.length && activeShadowCount < 2; li++) {
         var light = lightArray[li];
@@ -15422,6 +15436,7 @@ function resolvePostFXFactor(maxPixels, canvasPixels) {
         var slot = activeShadowCount;
         var shadowSize = sceneNumber(light.shadowSize, 1024);
         shadowSize = Math.max(256, Math.min(4096, shadowSize));
+        shadowSize = resolveShadowSize(shadowSize, shadowMaxPixels);
 
         if (!shadowSlots[slot] || shadowSlots[slot].size !== shadowSize) {
           if (shadowSlots[slot]) shadowSlots[slot].texture.destroy();

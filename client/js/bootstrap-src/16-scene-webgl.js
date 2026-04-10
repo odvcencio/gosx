@@ -2283,6 +2283,7 @@
       if (shadowProgram) {
         var lightArray = Array.isArray(bundle.lights) ? bundle.lights : [];
         var sceneBounds = null;
+        var shadowMaxPixels = (typeof bundle.shadowMaxPixels === "number") ? bundle.shadowMaxPixels : 0;
 
         for (var li = 0; li < lightArray.length && activeShadowCount < 2; li++) {
           var light = lightArray[li];
@@ -2297,8 +2298,10 @@
 
           var slot = activeShadowCount;
           var shadowSize = sceneNumber(light.shadowSize, 1024);
-          // Ensure power-of-two and clamp to reasonable range.
+          // Clamp to reasonable range (driver limits).
           shadowSize = Math.max(256, Math.min(4096, shadowSize));
+          // Apply scene-wide shadow pixel cap.
+          shadowSize = resolveShadowSize(shadowSize, shadowMaxPixels);
 
           // Create or resize shadow resources for this slot.
           if (!shadowSlots[slot] || shadowSlots[slot].size !== shadowSize) {

@@ -2427,6 +2427,7 @@
 
       var lightArray = Array.isArray(bundle.lights) ? bundle.lights : [];
       var sceneBounds = null;
+      var shadowMaxPixels = (typeof bundle.shadowMaxPixels === "number") ? bundle.shadowMaxPixels : 0;
 
       for (var li = 0; li < lightArray.length && activeShadowCount < 2; li++) {
         var light = lightArray[li];
@@ -2439,6 +2440,7 @@
         var slot = activeShadowCount;
         var shadowSize = sceneNumber(light.shadowSize, 1024);
         shadowSize = Math.max(256, Math.min(4096, shadowSize));
+        shadowSize = resolveShadowSize(shadowSize, shadowMaxPixels);
 
         if (!shadowSlots[slot] || shadowSlots[slot].size !== shadowSize) {
           if (shadowSlots[slot]) shadowSlots[slot].texture.destroy();
