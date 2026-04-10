@@ -1,0 +1,21 @@
+package field
+
+import (
+	"math"
+	"testing"
+)
+
+func TestAdvectConstantVelocity(t *testing.T) {
+	v := FromFunc([3]int{8, 8, 8}, 3,
+		AABB{Min: [3]float32{0, 0, 0}, Max: [3]float32{1, 1, 1}},
+		func(x, y, z float32) []float32 { return []float32{1, 0, 0} },
+	)
+	particles := []float32{0.5, 0.5, 0.5}
+	Advect(v, particles, 0.1)
+	if particles[0] < 0.55 || particles[0] > 0.65 {
+		t.Errorf("particle x = %f, want ~0.6", particles[0])
+	}
+	if math.Abs(float64(particles[1]-0.5)) > 0.01 {
+		t.Errorf("particle y drifted: %f", particles[1])
+	}
+}
