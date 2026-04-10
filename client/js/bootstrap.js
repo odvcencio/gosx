@@ -10321,6 +10321,14 @@
     return hash;
   }
 
+function resolvePostFXFactor(maxPixels, canvasPixels) {
+  var cap = (typeof maxPixels === "number" && maxPixels > 0)
+    ? maxPixels
+    : 2073600; // PostFXMaxPixels1080p default
+  if (canvasPixels <= cap) return 1;
+  return Math.sqrt(cap / canvasPixels);
+}
+
   var SCENE_POST_TONE_MAPPING = "toneMapping";
   var SCENE_POST_BLOOM = "bloom";
   var SCENE_POST_VIGNETTE = "vignette";
@@ -11351,14 +11359,6 @@
     var currentHeight = 0;
 
     var programs = {};
-
-    function resolvePostFXFactor(maxPixels, canvasPixels) {
-      var cap = (typeof maxPixels === "number" && maxPixels > 0)
-        ? maxPixels
-        : 2073600; // PostFXMaxPixels1080p default
-      if (canvasPixels <= cap) return 1;
-      return Math.sqrt(cap / canvasPixels);
-    }
 
     function getProgram(name, fragmentSource) {
       if (programs[name]) return programs[name];
@@ -14191,14 +14191,6 @@
     return { texture: texture, view: texture.createView(), size: size };
   }
 
-  function wgpuResolvePostFXFactor(maxPixels, canvasPixels) {
-    var cap = (typeof maxPixels === "number" && maxPixels > 0)
-      ? maxPixels
-      : 2073600; // PostFXMaxPixels1080p default
-    if (canvasPixels <= cap) return 1;
-    return Math.sqrt(cap / canvasPixels);
-  }
-
   function wgpuCreatePostProcessor(device, targetFormat) {
     var sceneTex = null;
     var sceneTexView = null;
@@ -15398,7 +15390,7 @@
 
       var postFXMaxPixels = (typeof bundle.postFXMaxPixels === "number") ? bundle.postFXMaxPixels : 0;
       var postfxFactor = usePostProcessing
-        ? wgpuResolvePostFXFactor(postFXMaxPixels, width * height)
+        ? resolvePostFXFactor(postFXMaxPixels, width * height)
         : 1;
       var scaledW = Math.max(1, Math.floor(width * postfxFactor));
       var scaledH = Math.max(1, Math.floor(height * postfxFactor));

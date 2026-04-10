@@ -1090,16 +1090,6 @@
   // Post-Processing Manager (WebGPU)
   // -----------------------------------------------------------------------
 
-  // Resolve the effective scaling factor for the postfx pipeline.
-  // Duplicated from 16-scene-webgl.js — shared extraction is a follow-up.
-  function wgpuResolvePostFXFactor(maxPixels, canvasPixels) {
-    var cap = (typeof maxPixels === "number" && maxPixels > 0)
-      ? maxPixels
-      : 2073600; // PostFXMaxPixels1080p default
-    if (canvasPixels <= cap) return 1;
-    return Math.sqrt(cap / canvasPixels);
-  }
-
   function wgpuCreatePostProcessor(device, targetFormat) {
     var sceneTex = null;
     var sceneTexView = null;
@@ -2414,7 +2404,7 @@
       // Compute scaled render-target dimensions (PostFX memory cap).
       var postFXMaxPixels = (typeof bundle.postFXMaxPixels === "number") ? bundle.postFXMaxPixels : 0;
       var postfxFactor = usePostProcessing
-        ? wgpuResolvePostFXFactor(postFXMaxPixels, width * height)
+        ? resolvePostFXFactor(postFXMaxPixels, width * height)
         : 1;
       var scaledW = Math.max(1, Math.floor(width * postfxFactor));
       var scaledH = Math.max(1, Math.floor(height * postfxFactor));
