@@ -5864,6 +5864,11 @@
       case "focused":
       case "focus-star":
         return "focus";
+      case "glow":
+      case "gas":
+      case "cloud":
+      case "nebula":
+        return "glow";
       case "square":
       case "pixel":
       case "hard":
@@ -5876,7 +5881,10 @@
   }
 
   function scenePointStyleCode(value) {
-    return normalizeScenePointStyle(value, "square") === "focus" ? 1 : 0;
+    const style = normalizeScenePointStyle(value, "square");
+    if (style === "focus") return 1;
+    if (style === "glow") return 2;
+    return 0;
   }
 
   function normalizeScenePointsEntry(entry, index, fallback) {
@@ -5982,6 +5990,12 @@
       x: sceneNumber(item.x, sceneNumber(current.x, 0)),
       y: sceneNumber(item.y, sceneNumber(current.y, 0)),
       z: sceneNumber(item.z, sceneNumber(current.z, 0)),
+      rotationX: sceneNumber(item.rotationX, sceneNumber(current.rotationX, 0)),
+      rotationY: sceneNumber(item.rotationY, sceneNumber(current.rotationY, 0)),
+      rotationZ: sceneNumber(item.rotationZ, sceneNumber(current.rotationZ, 0)),
+      spinX: sceneNumber(item.spinX, sceneNumber(current.spinX, 0)),
+      spinY: sceneNumber(item.spinY, sceneNumber(current.spinY, 0)),
+      spinZ: sceneNumber(item.spinZ, sceneNumber(current.spinZ, 0)),
       radius: Math.max(0, sceneNumber(item.radius, sceneNumber(current.radius, 0))),
       rate: Math.max(0, sceneNumber(item.rate, sceneNumber(current.rate, 0))),
       lifetime: Math.max(0.01, sceneNumber(item.lifetime, sceneNumber(current.lifetime, 1))),

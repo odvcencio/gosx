@@ -16064,7 +16064,7 @@
           base[3] = 0; base[4] = 0; base[5] = 0;
           break;
         }
-        case 3: { // spiral
+        case 3: { // spiral (local space)
           var radius = hash2(index, 30) * emitterConfig.radius;
           var arm = index % emitterConfig.arms;
           var armAngle = arm * 3.14159265 / Math.max(emitterConfig.arms / 2, 1);
