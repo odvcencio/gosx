@@ -309,6 +309,8 @@ Three tiers:
 | `session` | Signed cookie sessions, CSRF, flash state |
 | `auth` | Auth middleware, OAuth, magic links, WebAuthn |
 | `hub` | WebSocket presence, fanout, shared state |
+| `field` | 3D vector fields with trilinear sampling, operators (advect/curl/gradient/blur), per-component compression, and hub streaming |
+| `sim` | Server-authoritative game simulation: tick loop, snapshots, replay, spectator sync |
 | `engine` | Worker/surface model with capability declarations |
 | `crdt` | Conflict-free replicated data types with sync protocol |
 | `client/vm` | Expression VM, tree reconciler, patch generation |

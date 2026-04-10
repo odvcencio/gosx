@@ -1,5 +1,32 @@
 # Changelog
 
+## v0.14.0
+
+### `gosx/field` Module
+
+New `field` package providing a 3D vector field type with trilinear sampling, standard operators (Advect, Curl, Divergence, Gradient, Blur, Resample), per-component scalar quantization at 4–8 bits with optional delta encoding, and `gosx/hub` integration for live field broadcast across WebSocket connections. Designed as the foundation for volumetric rendering, particle advection, fluid simulation, and any consumer that needs structured 3D data — independent of any renderer.
+
+A 64³ scalar field at 6 bits packs to ~200 KB on the wire. A 64³ vec3 field packs to ~600 KB. Delta encoding shrinks subsequent updates further when the field is temporally coherent. The codec reuses the same per-component min/max scalar quantization pattern proven in `scene/compress.go`.
+
+Hub streaming maintains a per-(hub, topic) subscriber registry inside the field package itself. `PublishField` does dual dispatch: the decoded `*Field` flows to local in-process subscribers via Go channels, while the JSON-encoded `Quantized` payload goes to connected WebSocket clients via `hub.Broadcast`. Successive publishes automatically delta-encode against the previous field for that topic.
+
+### Scene3D PostFX Go API
+
+`scene.PostFX` adds a Go-side post-processing effect chain on top of the existing JS-side post-processor. The previously-dormant FBO + ping-pong + ACES tone mapping + bloom infrastructure in the WebGL2 and WebGPU renderers is now driven by typed Go effects: `Tonemap`, `Bloom`, `Vignette`, `ColorGrade`. A typical chain looks like:
+
+```go
+scene.PostFX{Effects: []scene.PostEffect{
+    scene.Bloom{Threshold: 0.65, Strength: 0.6, Radius: 8},
+    scene.Tonemap{Mode: scene.TonemapACES, Exposure: 1.0},
+}}
+```
+
+The new `PostEffect` interface is sealed via an unexported method so external packages cannot define their own effects without coordination with the renderer. Effect chains run in declaration order, ping-ponging through HDR offscreen targets before compositing to the canvas.
+
+### `Environment.ToneMapping` Backwards-Compat Migration
+
+Existing scenes that used `Environment.ToneMapping = "aces"` (and `Environment.Exposure`) keep working unchanged. The compile path now synthesizes a `Tonemap` PostEffect from those fields when `PostFX.Effects` does not already include one — the explicit Go API takes precedence when present, and the legacy fields keep working when it's absent. The synthesized effect routes through the new PostFX pipeline so the inline tonemap branches in the PBR fragment shader stay disabled.
+
 ## v0.13.0
 
 ### Authoritative Simulation Module
