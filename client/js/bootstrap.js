@@ -19618,17 +19618,30 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
     let windowResizeListener = null;
     let stopEnvironment = null;
 
-    if (typeof ResizeObserver === "function") {
-      resizeObserver = new ResizeObserver(function() {
+    var resizeRefreshPending = false;
+    function scheduleResizeRefresh() {
+      if (resizeRefreshPending) {
+        return;
+      }
+      resizeRefreshPending = true;
+      if (typeof Promise === "function") {
+        Promise.resolve().then(function() {
+          resizeRefreshPending = false;
+          refresh("resize");
+        });
+      } else {
+        resizeRefreshPending = false;
         refresh("resize");
-      });
+      }
+    }
+
+    if (typeof ResizeObserver === "function") {
+      resizeObserver = new ResizeObserver(scheduleResizeRefresh);
       if (typeof resizeObserver.observe === "function") {
         resizeObserver.observe(mount);
       }
     } else if (typeof window.addEventListener === "function") {
-      windowResizeListener = function() {
-        refresh("resize");
-      };
+      windowResizeListener = scheduleResizeRefresh;
       window.addEventListener("resize", windowResizeListener);
     }
 
