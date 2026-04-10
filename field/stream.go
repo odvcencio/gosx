@@ -25,6 +25,11 @@ type topicState struct {
 
 var streams = &streamState{topics: make(map[*hub.Hub]map[string]*topicState)}
 
+// get returns (and lazily creates) the topicState for the given hub and topic.
+//
+// IMPORTANT: callers must hold s.mu before calling get. This function reads
+// and mutates s.topics directly without acquiring the lock itself, so calling
+// it from an unlocked context is a data race.
 func (s *streamState) get(h *hub.Hub, topic string) *topicState {
 	if s.topics[h] == nil {
 		s.topics[h] = make(map[string]*topicState)

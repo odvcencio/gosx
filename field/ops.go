@@ -6,7 +6,9 @@ import "math"
 // semi-Lagrangian RK2 (midpoint) integration. The particles slice is
 // laid out as [x0,y0,z0, x1,y1,z1, ...] and modified in place.
 //
-// The velocity field's Components must equal 3.
+// The velocity field's Components must equal 3. Callers must ensure
+// len(particles) is a multiple of 3; trailing 1 or 2 elements are
+// silently ignored.
 func Advect(velocity *Field, particles []float32, dt float32) {
 	if velocity.Components != 3 {
 		panic("field.Advect: velocity field must have Components == 3")

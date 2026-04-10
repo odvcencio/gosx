@@ -39,7 +39,7 @@ field.Advect(decoded, particles, 0.016)
 
 | Section | Bytes | Notes |
 |---|---|---|
-| Header | ~64 | Resolution, Components, Bounds, BitWidth |
+| Metadata | varies (~50–150) | Resolution, Components, Bounds, BitWidth, Mins, Maxs, IsDelta — JSON-encoded by stream.go, see `Quantized` struct for full layout |
 | Mins | 4 × Components | per-component min |
 | Maxs | 4 × Components | per-component max |
 | Packed | (voxels × components × bitWidth + 7) / 8 | deinterleaved by component |
