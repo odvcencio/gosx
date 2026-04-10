@@ -153,9 +153,9 @@ type Options struct {
 	StylesheetURL string
 	ScriptURL     string
 	CSRFToken     string
-	Mood          string            // LJ-style mood key
-	MoodChoices   []MoodChoice      // available moods for dropdown
-	Music         string            // music URL (YouTube)
+	Mood          string       // LJ-style mood key
+	MoodChoices   []MoodChoice // available moods for dropdown
+	Music         string       // music URL (YouTube)
 	Scratch       string
 	ExtraFields   map[string]string
 	Language      Lang
