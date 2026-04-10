@@ -1130,6 +1130,21 @@
     // Lazily compiled shader programs, keyed by effect name.
     var programs = {};
 
+    // Resolve the effective scaling factor for the postfx pipeline. Maps the
+    // `maxPixels` cap from the IR bundle to a scale factor in (0, 1].
+    //
+    //   undefined / null / zero / negative → default 1080p cap (2_073_600)
+    //   positive → explicit cap
+    //   canvasPixels <= cap → factor of 1.0 (no scaling)
+    //   canvasPixels > cap → factor of sqrt(cap / canvasPixels)
+    function resolvePostFXFactor(maxPixels, canvasPixels) {
+      var cap = (typeof maxPixels === "number" && maxPixels > 0)
+        ? maxPixels
+        : 2073600; // PostFXMaxPixels1080p default
+      if (canvasPixels <= cap) return 1;
+      return Math.sqrt(cap / canvasPixels);
+    }
+
     // Get or compile a post-processing program.
     function getProgram(name, fragmentSource) {
       if (programs[name]) return programs[name];
@@ -1263,19 +1278,28 @@
     }
 
     return {
-      // Prepare the offscreen FBO for the main scene render.
-      // Returns the FBO to bind, or null if allocation fails.
-      begin: function(width, height) {
-        if (width !== currentWidth || height !== currentHeight) {
+      // Prepare the offscreen FBO for the main scene render. Takes the canvas
+      // backing-store dimensions and the postfx maxPixels cap from the bundle.
+      // Returns { width, height, factor } — the scaled render target dims plus
+      // the scale factor applied. Callers must use these dims for gl.viewport,
+      // uniforms like u_viewportHeight, and the apply() call.
+      begin: function(canvasW, canvasH, maxPixels) {
+        var factor = resolvePostFXFactor(maxPixels, canvasW * canvasH);
+        var sw = Math.max(1, Math.floor(canvasW * factor));
+        var sh = Math.max(1, Math.floor(canvasH * factor));
+
+        // Invalidation key is scaled dims so both canvas resize and maxPixels
+        // change trigger reallocation.
+        if (sw !== currentWidth || sh !== currentHeight) {
           if (sceneFBO) disposeScenePostFBO(gl, sceneFBO);
-          sceneFBO = createScenePostFBO(gl, width, height);
-          // Recreate auxFBO at matching size for multi-effect chains.
+          sceneFBO = createScenePostFBO(gl, sw, sh);
           if (auxFBO) disposeScenePostFBO(gl, auxFBO);
           auxFBO = null;
-          currentWidth = width;
-          currentHeight = height;
+          currentWidth = sw;
+          currentHeight = sh;
         }
         gl.bindFramebuffer(gl.FRAMEBUFFER, sceneFBO.fbo);
+        return { width: sw, height: sh, factor: factor };
       },
 
       // Process the effect chain and output to the screen.
