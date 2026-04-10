@@ -58,15 +58,17 @@ func PublishField(h *hub.Hub, topic string, f *Field, opts QuantizeOptions) {
 
 	q := f.Quantize(opts)
 
-	// 1. Local dispatch — send the decoded field directly. Each subscriber
-	// receives a fresh copy that has the delta already applied (via Quantize's
-	// reverse path: re-decompress + apply).
-	for _, ch := range subs {
+	// 1. Local dispatch — decode once and share the decoded *Field across all
+	// local subscribers. Subscribers must treat the received *Field as
+	// read-only; this is the documented contract for SubscribeField.
+	if len(subs) > 0 {
 		decoded := decodeForSubscriber(q, opts.DeltaAgainst)
-		select {
-		case ch <- decoded:
-		default:
-			// Drop if subscriber is slow; never block PublishField.
+		for _, ch := range subs {
+			select {
+			case ch <- decoded:
+			default:
+				// Drop if subscriber is slow; never block PublishField.
+			}
 		}
 	}
 
@@ -93,9 +95,16 @@ func decodeForSubscriber(q *Quantized, base *Field) *Field {
 // SubscribeField returns a channel that receives every field published to
 // the topic on the given hub. The channel is buffered (size 4); if a
 // subscriber is slow, updates are dropped to avoid blocking publishers.
+// Subscribers must treat received *Field values as read-only.
 //
 // Subscriptions are scoped to the (hub, topic) pair. Calling SubscribeField
 // twice on the same hub/topic returns two independent channels.
+//
+// Subscriptions are permanent for the lifetime of the process — there is no
+// unsubscribe API yet. Use this for long-lived consumers (rendering loops,
+// sim-state mirrors). Short-lived subscribers will leak channels and grow
+// the per-topic dispatch list. A cancellation API will be added in a
+// follow-up if/when needed.
 func SubscribeField(h *hub.Hub, topic string) <-chan *Field {
 	ch := make(chan *Field, 4)
 	streams.mu.Lock()
