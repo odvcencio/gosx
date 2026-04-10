@@ -104,3 +104,19 @@ func TestBlurSmoothsImpulse(t *testing.T) {
 		t.Errorf("blur neighbor still 0: %f", b.Data[neighbor])
 	}
 }
+
+func TestResampleUpDown(t *testing.T) {
+	f := FromFunc([3]int{16, 16, 16}, 1,
+		AABB{Min: [3]float32{0, 0, 0}, Max: [3]float32{1, 1, 1}},
+		func(x, y, z float32) []float32 { return []float32{x} },
+	)
+	low := Resample(f, [3]int{4, 4, 4})
+	if low.Resolution != [3]int{4, 4, 4} {
+		t.Fatalf("resolution = %v, want [4 4 4]", low.Resolution)
+	}
+	high := Resample(low, [3]int{16, 16, 16})
+	got := high.SampleScalar(0.5, 0.5, 0.5)
+	if got < 0.4 || got > 0.6 {
+		t.Errorf("resampled center = %f, want ~0.5", got)
+	}
+}
