@@ -335,6 +335,30 @@ func (a *App) Mount(pattern string, handler http.Handler) {
 	}
 }
 
+// MountApp mounts a child GoSX App at a path prefix. The child app's handler
+// is wrapped with http.StripPrefix so routes registered on the child (which
+// are rooted at "/") receive requests with the prefix removed. Requests to the
+// bare prefix without a trailing slash are redirected to prefix+"/" by the
+// underlying http.ServeMux.
+//
+// Example:
+//
+//	parent := server.New()
+//	child := server.New()
+//	// ... configure child routes ...
+//	parent.MountApp("/cobalt/example", child)
+//
+// With the mount above, a request to /cobalt/example/programs reaches the
+// child's handler as /programs.
+func (a *App) MountApp(prefix string, child *App) {
+	prefix = strings.TrimSpace(prefix)
+	if prefix == "" || child == nil {
+		return
+	}
+	prefix = "/" + strings.Trim(prefix, "/")
+	a.Mount(prefix+"/", http.StripPrefix(prefix, child.Build()))
+}
+
 // EnableGzip adds gzip compression middleware. It compresses all responses
 // when the client advertises gzip support, skipping WebSocket upgrades and
 // pre-compressed responses. Call this before Use() calls that write responses.
