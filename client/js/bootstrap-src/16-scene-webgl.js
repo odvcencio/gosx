@@ -1184,16 +1184,23 @@
     }
 
     // Apply bloom: bright pass, horizontal blur, vertical blur, composite.
-    function applyBloom(inputTex, effect, targetFBO, w, h) {
+    // The bloom ping-pong buffers are allocated based on scaled scene dims
+    // (not the pass dims, which flip to canvas dims on the last pass when
+    // the composite writes directly to the screen).
+    function applyBloom(inputTex, effect, targetFBO, passW, passH, scaledW, scaledH) {
       var brightProg = getProgram("bloomBright", SCENE_POST_BLOOM_BRIGHT_SOURCE);
       var blurProg = getProgram("bloomBlur", SCENE_POST_BLUR_SOURCE);
       var compositeProg = getProgram("bloomComposite", SCENE_POST_BLOOM_COMPOSITE_SOURCE);
       if (!brightProg || !blurProg || !compositeProg) return inputTex;
 
-      var halfW = Math.max(1, Math.floor(w / 2));
-      var halfH = Math.max(1, Math.floor(h / 2));
+      // bloomScale is the bloom-internal downscale applied on top of the
+      // main PostFX scaling. Defaults to 0.5 (v0.14.0 behavior). Out-of-range
+      // values silently fall back to 0.5.
+      var bloomScale = (effect.scale > 0 && effect.scale <= 1) ? effect.scale : 0.5;
+      var halfW = Math.max(1, Math.floor(scaledW * bloomScale));
+      var halfH = Math.max(1, Math.floor(scaledH * bloomScale));
 
-      // Ensure ping-pong FBOs match half-resolution.
+      // Ensure ping-pong FBOs match the bloom target resolution.
       if (!pingPong || pingPong.a.width !== halfW || pingPong.a.height !== halfH) {
         if (pingPong) {
           disposeScenePostFBO(gl, pingPong.a);
@@ -1206,7 +1213,7 @@
       var radius = sceneNumber(effect.radius, 5.0);
       var intensity = sceneNumber(effect.intensity, 0.5);
 
-      // 1. Bright pass: scene texture -> pingPong.a (half-res).
+      // 1. Bright pass: scene texture -> pingPong.a (bloom-res).
       beginPostPass(brightProg, inputTex, pingPong.a.fbo, halfW, halfH);
       gl.uniform1f(gl.getUniformLocation(brightProg.program, "u_threshold"), threshold);
       drawSceneFullscreenQuad(gl, quad.vao);
@@ -1223,8 +1230,9 @@
       gl.uniform1f(gl.getUniformLocation(blurProg.program, "u_radius"), radius);
       drawSceneFullscreenQuad(gl, quad.vao);
 
-      // 4. Composite: scene + bloom -> targetFBO.
-      beginPostPass(compositeProg, inputTex, targetFBO ? targetFBO.fbo : null, w, h);
+      // 4. Composite: scene + bloom -> targetFBO (or screen on last pass).
+      // Uses passW/passH which are scaled for intermediate, canvas for final.
+      beginPostPass(compositeProg, inputTex, targetFBO ? targetFBO.fbo : null, passW, passH);
       gl.activeTexture(gl.TEXTURE1);
       gl.bindTexture(gl.TEXTURE_2D, pingPong.a.colorTex);
       gl.uniform1i(gl.getUniformLocation(compositeProg.program, "u_bloomTexture"), 1);
@@ -1302,61 +1310,60 @@
         return { width: sw, height: sh, factor: factor };
       },
 
-      // Process the effect chain and output to the screen.
-      apply: function(effects, width, height) {
+      // Process the effect chain and output to the screen. Takes the scaled
+      // dims (for intermediate FBO writes) and the canvas dims (for the final
+      // blit to the default framebuffer).
+      apply: function(effects, scaledW, scaledH, canvasW, canvasH) {
         gl.bindFramebuffer(gl.FRAMEBUFFER, null);
         gl.disable(gl.DEPTH_TEST);
 
         var currentTexture = sceneFBO.colorTex;
 
         // Multi-effect chains need an auxiliary full-res FBO for intermediate
-        // results. Cached across frames to avoid per-frame create/destroy.
+        // results. Allocated at SCALED dims, not canvas dims.
         if (effects.length > 1 && !auxFBO) {
-          auxFBO = createScenePostFBO(gl, width, height);
+          auxFBO = createScenePostFBO(gl, scaledW, scaledH);
         }
 
         for (var i = 0; i < effects.length; i++) {
           var effect = effects[i];
           var isLast = (i === effects.length - 1);
 
-          // For the last effect, render directly to the screen (targetFBO = null).
-          // For intermediate effects, alternate between sceneFBO and auxFBO.
           var targetFBO = null;
           if (!isLast) {
-            // Write to whichever FBO is NOT the current source.
             targetFBO = (currentTexture === sceneFBO.colorTex) ? auxFBO : sceneFBO;
           }
 
+          // Intermediate passes run at scaled dims; the final pass targets
+          // the default framebuffer at canvas dims.
+          var passW = isLast ? canvasW : scaledW;
+          var passH = isLast ? canvasH : scaledH;
+
           switch (effect.kind) {
             case SCENE_POST_TONE_MAPPING:
-              currentTexture = applyToneMapping(currentTexture, effect, targetFBO, width, height);
+              currentTexture = applyToneMapping(currentTexture, effect, targetFBO, passW, passH);
               break;
             case SCENE_POST_BLOOM:
-              currentTexture = applyBloom(currentTexture, effect, targetFBO, width, height);
+              currentTexture = applyBloom(currentTexture, effect, targetFBO, passW, passH, scaledW, scaledH);
               break;
             case SCENE_POST_VIGNETTE:
-              currentTexture = applyVignette(currentTexture, effect, targetFBO, width, height);
+              currentTexture = applyVignette(currentTexture, effect, targetFBO, passW, passH);
               break;
             case SCENE_POST_COLOR_GRADE:
-              currentTexture = applyColorGrade(currentTexture, effect, targetFBO, width, height);
+              currentTexture = applyColorGrade(currentTexture, effect, targetFBO, passW, passH);
               break;
             default:
               // Unknown effect — skip.
               break;
           }
 
-          // If this was the last effect we rendered to screen, currentTexture is null.
           if (isLast && currentTexture === null) break;
-
-          // If not last, currentTexture is the color texture of the target FBO.
         }
 
-        // If there was only one effect and it rendered to screen, we're done.
-        // If currentTexture is still valid (no effects matched), blit to screen.
         if (currentTexture !== null && effects.length > 0) {
-          blitToScreen(currentTexture, width, height);
+          blitToScreen(currentTexture, canvasW, canvasH);
         } else if (effects.length === 0) {
-          blitToScreen(sceneFBO.colorTex, width, height);
+          blitToScreen(sceneFBO.colorTex, canvasW, canvasH);
         }
 
         gl.enable(gl.DEPTH_TEST);
