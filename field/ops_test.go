@@ -67,3 +67,24 @@ func TestDivergenceLinearExpansion(t *testing.T) {
 		t.Errorf("div = %f, want ~1", got)
 	}
 }
+
+func TestCurlRotation(t *testing.T) {
+	v := FromFunc([3]int{16, 16, 16}, 3,
+		AABB{Min: [3]float32{-1, -1, -1}, Max: [3]float32{1, 1, 1}},
+		func(x, y, z float32) []float32 { return []float32{-y, x, 0} },
+	)
+	c := Curl(v)
+	if c.Components != 3 {
+		t.Fatalf("curl components = %d, want 3", c.Components)
+	}
+	got := c.SampleVec3(0, 0, 0)
+	if got[0] < -0.1 || got[0] > 0.1 {
+		t.Errorf("curl.x = %f, want ~0", got[0])
+	}
+	if got[1] < -0.1 || got[1] > 0.1 {
+		t.Errorf("curl.y = %f, want ~0", got[1])
+	}
+	if got[2] < 1.9 || got[2] > 2.1 {
+		t.Errorf("curl.z = %f, want ~2", got[2])
+	}
+}
