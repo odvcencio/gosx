@@ -88,3 +88,19 @@ func TestCurlRotation(t *testing.T) {
 		t.Errorf("curl.z = %f, want ~2", got[2])
 	}
 }
+
+func TestBlurSmoothsImpulse(t *testing.T) {
+	f := New([3]int{8, 8, 8}, 1, AABB{Min: [3]float32{0, 0, 0}, Max: [3]float32{1, 1, 1}})
+	mid := ((4*8+4)*8 + 4) * 1
+	f.Data[mid] = 1.0
+	b := Blur(f, 1.5)
+	centerBefore := f.Data[mid]
+	centerAfter := b.Data[mid]
+	if centerAfter >= centerBefore {
+		t.Errorf("blur center: before=%f after=%f, expected dimmer", centerBefore, centerAfter)
+	}
+	neighbor := ((4*8+4)*8 + 5) * 1
+	if b.Data[neighbor] <= 0 {
+		t.Errorf("blur neighbor still 0: %f", b.Data[neighbor])
+	}
+}
