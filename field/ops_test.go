@@ -40,3 +40,30 @@ func TestGradientLinear(t *testing.T) {
 		t.Errorf("grad z = %f, want ~0", got[2])
 	}
 }
+
+func TestDivergenceConstant(t *testing.T) {
+	v := FromFunc([3]int{8, 8, 8}, 3,
+		AABB{Min: [3]float32{0, 0, 0}, Max: [3]float32{1, 1, 1}},
+		func(x, y, z float32) []float32 { return []float32{1, 0, 0} },
+	)
+	d := Divergence(v)
+	if d.Components != 1 {
+		t.Fatalf("divergence components = %d, want 1", d.Components)
+	}
+	got := d.SampleScalar(0.5, 0.5, 0.5)
+	if got < -0.01 || got > 0.01 {
+		t.Errorf("div = %f, want ~0", got)
+	}
+}
+
+func TestDivergenceLinearExpansion(t *testing.T) {
+	v := FromFunc([3]int{16, 16, 16}, 3,
+		AABB{Min: [3]float32{0, 0, 0}, Max: [3]float32{1, 1, 1}},
+		func(x, y, z float32) []float32 { return []float32{x, 0, 0} },
+	)
+	d := Divergence(v)
+	got := d.SampleScalar(0.5, 0.5, 0.5)
+	if got < 0.9 || got > 1.1 {
+		t.Errorf("div = %f, want ~1", got)
+	}
+}
