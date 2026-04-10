@@ -11352,6 +11352,14 @@
 
     var programs = {};
 
+    function resolvePostFXFactor(maxPixels, canvasPixels) {
+      var cap = (typeof maxPixels === "number" && maxPixels > 0)
+        ? maxPixels
+        : 2073600; // PostFXMaxPixels1080p default
+      if (canvasPixels <= cap) return 1;
+      return Math.sqrt(cap / canvasPixels);
+    }
+
     function getProgram(name, fragmentSource) {
       if (programs[name]) return programs[name];
       var prog = createScenePostProgram(gl, fragmentSource);
@@ -11383,14 +11391,15 @@
       return targetFBO ? targetFBO.colorTex : null;
     }
 
-    function applyBloom(inputTex, effect, targetFBO, w, h) {
+    function applyBloom(inputTex, effect, targetFBO, passW, passH, scaledW, scaledH) {
       var brightProg = getProgram("bloomBright", SCENE_POST_BLOOM_BRIGHT_SOURCE);
       var blurProg = getProgram("bloomBlur", SCENE_POST_BLUR_SOURCE);
       var compositeProg = getProgram("bloomComposite", SCENE_POST_BLOOM_COMPOSITE_SOURCE);
       if (!brightProg || !blurProg || !compositeProg) return inputTex;
 
-      var halfW = Math.max(1, Math.floor(w / 2));
-      var halfH = Math.max(1, Math.floor(h / 2));
+      var bloomScale = (effect.scale > 0 && effect.scale <= 1) ? effect.scale : 0.5;
+      var halfW = Math.max(1, Math.floor(scaledW * bloomScale));
+      var halfH = Math.max(1, Math.floor(scaledH * bloomScale));
 
       if (!pingPong || pingPong.a.width !== halfW || pingPong.a.height !== halfH) {
         if (pingPong) {
@@ -11418,7 +11427,7 @@
       gl.uniform1f(gl.getUniformLocation(blurProg.program, "u_radius"), radius);
       drawSceneFullscreenQuad(gl, quad.vao);
 
-      beginPostPass(compositeProg, inputTex, targetFBO ? targetFBO.fbo : null, w, h);
+      beginPostPass(compositeProg, inputTex, targetFBO ? targetFBO.fbo : null, passW, passH);
       gl.activeTexture(gl.TEXTURE1);
       gl.bindTexture(gl.TEXTURE_2D, pingPong.a.colorTex);
       gl.uniform1i(gl.getUniformLocation(compositeProg.program, "u_bloomTexture"), 1);
@@ -11469,26 +11478,31 @@
     }
 
     return {
-      begin: function(width, height) {
-        if (width !== currentWidth || height !== currentHeight) {
+      begin: function(canvasW, canvasH, maxPixels) {
+        var factor = resolvePostFXFactor(maxPixels, canvasW * canvasH);
+        var sw = Math.max(1, Math.floor(canvasW * factor));
+        var sh = Math.max(1, Math.floor(canvasH * factor));
+
+        if (sw !== currentWidth || sh !== currentHeight) {
           if (sceneFBO) disposeScenePostFBO(gl, sceneFBO);
-          sceneFBO = createScenePostFBO(gl, width, height);
+          sceneFBO = createScenePostFBO(gl, sw, sh);
           if (auxFBO) disposeScenePostFBO(gl, auxFBO);
           auxFBO = null;
-          currentWidth = width;
-          currentHeight = height;
+          currentWidth = sw;
+          currentHeight = sh;
         }
         gl.bindFramebuffer(gl.FRAMEBUFFER, sceneFBO.fbo);
+        return { width: sw, height: sh, factor: factor };
       },
 
-      apply: function(effects, width, height) {
+      apply: function(effects, scaledW, scaledH, canvasW, canvasH) {
         gl.bindFramebuffer(gl.FRAMEBUFFER, null);
         gl.disable(gl.DEPTH_TEST);
 
         var currentTexture = sceneFBO.colorTex;
 
         if (effects.length > 1 && !auxFBO) {
-          auxFBO = createScenePostFBO(gl, width, height);
+          auxFBO = createScenePostFBO(gl, scaledW, scaledH);
         }
 
         for (var i = 0; i < effects.length; i++) {
@@ -11500,31 +11514,33 @@
             targetFBO = (currentTexture === sceneFBO.colorTex) ? auxFBO : sceneFBO;
           }
 
+          var passW = isLast ? canvasW : scaledW;
+          var passH = isLast ? canvasH : scaledH;
+
           switch (effect.kind) {
             case SCENE_POST_TONE_MAPPING:
-              currentTexture = applyToneMapping(currentTexture, effect, targetFBO, width, height);
+              currentTexture = applyToneMapping(currentTexture, effect, targetFBO, passW, passH);
               break;
             case SCENE_POST_BLOOM:
-              currentTexture = applyBloom(currentTexture, effect, targetFBO, width, height);
+              currentTexture = applyBloom(currentTexture, effect, targetFBO, passW, passH, scaledW, scaledH);
               break;
             case SCENE_POST_VIGNETTE:
-              currentTexture = applyVignette(currentTexture, effect, targetFBO, width, height);
+              currentTexture = applyVignette(currentTexture, effect, targetFBO, passW, passH);
               break;
             case SCENE_POST_COLOR_GRADE:
-              currentTexture = applyColorGrade(currentTexture, effect, targetFBO, width, height);
+              currentTexture = applyColorGrade(currentTexture, effect, targetFBO, passW, passH);
               break;
             default:
               break;
           }
 
           if (isLast && currentTexture === null) break;
-
         }
 
         if (currentTexture !== null && effects.length > 0) {
-          blitToScreen(currentTexture, width, height);
+          blitToScreen(currentTexture, canvasW, canvasH);
         } else if (effects.length === 0) {
-          blitToScreen(sceneFBO.colorTex, width, height);
+          blitToScreen(sceneFBO.colorTex, canvasW, canvasH);
         }
 
         gl.enable(gl.DEPTH_TEST);
@@ -12402,16 +12418,22 @@
       }
 
       var postEffects = Array.isArray(bundle.postEffects) ? bundle.postEffects : [];
+      var postFXMaxPixels = (typeof bundle.postFXMaxPixels === "number") ? bundle.postFXMaxPixels : 0;
       var usePostProcessing = postEffects.length > 0;
+
+      var renderW = canvas.width;
+      var renderH = canvas.height;
 
       if (usePostProcessing) {
         if (!postProcessor) {
           postProcessor = createScenePostProcessor(gl);
         }
-        postProcessor.begin(canvas.width, canvas.height);
+        var scaled = postProcessor.begin(canvas.width, canvas.height, postFXMaxPixels);
+        renderW = scaled.width;
+        renderH = scaled.height;
       }
 
-      gl.viewport(0, 0, canvas.width, canvas.height);
+      gl.viewport(0, 0, renderW, renderH);
 
       var bgStr = typeof bundle.background === "string" ? bundle.background.trim().toLowerCase() : "";
       const bg = bgStr === "transparent" ? [0, 0, 0, 0] : sceneColorRGBA(bundle.background, [0.03, 0.08, 0.12, 1]);
@@ -12461,14 +12483,14 @@
       drawInstancedMeshes(gl, bundle, viewMatrix, projMatrix);
 
       var frameTimeSeconds = performance.now() / 1000;
-      drawPointsEntries(gl, Array.isArray(bundle.points) ? bundle.points : [], bundle.environment, viewMatrix, projMatrix, frameTimeSeconds);
-      drawPointsEntries(gl, buildComputePointsEntries(bundle.computeParticles, frameTimeSeconds), bundle.environment, viewMatrix, projMatrix, frameTimeSeconds);
+      drawPointsEntries(gl, Array.isArray(bundle.points) ? bundle.points : [], bundle.environment, viewMatrix, projMatrix, frameTimeSeconds, renderH);
+      drawPointsEntries(gl, buildComputePointsEntries(bundle.computeParticles, frameTimeSeconds), bundle.environment, viewMatrix, projMatrix, frameTimeSeconds, renderH);
 
       gl.depthMask(true);
       gl.disable(gl.BLEND);
 
       if (usePostProcessing && postProcessor) {
-        postProcessor.apply(postEffects, canvas.width, canvas.height);
+        postProcessor.apply(postEffects, renderW, renderH, canvas.width, canvas.height);
         gl.useProgram(program);
       }
     }
@@ -12737,7 +12759,7 @@
       return pointsEntries;
     }
 
-    function drawPointsEntries(gl, pointsArray, environment, viewMatrix, projMatrix, timeSeconds) {
+    function drawPointsEntries(gl, pointsArray, environment, viewMatrix, projMatrix, timeSeconds, renderH) {
       if (pointsArray.length === 0) return;
 
       var pp = ensurePointsProgram();
@@ -12747,7 +12769,7 @@
 
       gl.uniformMatrix4fv(pp.uniforms.viewMatrix, false, viewMatrix);
       gl.uniformMatrix4fv(pp.uniforms.projectionMatrix, false, projMatrix);
-      gl.uniform1f(pp.uniforms.viewportHeight, canvas.height);
+      gl.uniform1f(pp.uniforms.viewportHeight, renderH);
 
       var env = environment || {};
       var fogDensity = sceneNumber(env.fogDensity, 0);
@@ -14169,6 +14191,14 @@
     return { texture: texture, view: texture.createView(), size: size };
   }
 
+  function wgpuResolvePostFXFactor(maxPixels, canvasPixels) {
+    var cap = (typeof maxPixels === "number" && maxPixels > 0)
+      ? maxPixels
+      : 2073600; // PostFXMaxPixels1080p default
+    if (canvasPixels <= cap) return 1;
+    return Math.sqrt(cap / canvasPixels);
+  }
+
   function wgpuCreatePostProcessor(device, targetFormat) {
     var sceneTex = null;
     var sceneTexView = null;
@@ -14277,8 +14307,8 @@
         return { colorView: sceneTexView, depthView: depthTexView };
       },
 
-      apply: function(encoder, effects, width, height, finalView) {
-        ensureFBOs(width, height);
+      apply: function(encoder, effects, scaledW, scaledH, canvasW, canvasH, finalView) {
+        ensureFBOs(scaledW, scaledH);
 
         var currentTexView = sceneTexView;
         var blitPipeline = getPipeline("blit", WGSL_POST_BLIT_FRAGMENT, getPostBlitLayout());
@@ -14306,8 +14336,8 @@
               break;
             }
             case SCENE_POST_BLOOM: {
-              var halfW = Math.max(1, Math.floor(width / 2));
-              var halfH = Math.max(1, Math.floor(height / 2));
+              var halfW = Math.max(1, Math.floor(scaledW / 2));
+              var halfH = Math.max(1, Math.floor(scaledH / 2));
               var threshold = sceneNumber(effect.threshold, 0.8);
               var radius = sceneNumber(effect.radius, 5.0);
               var intensity = sceneNumber(effect.intensity, 0.5);
@@ -15366,7 +15396,14 @@
       var postEffects = Array.isArray(bundle.postEffects) ? bundle.postEffects : [];
       var usePostProcessing = postEffects.length > 0;
 
-      var cam = uploadFrameUniforms(bundle.camera, width, height, !usePostProcessing);
+      var postFXMaxPixels = (typeof bundle.postFXMaxPixels === "number") ? bundle.postFXMaxPixels : 0;
+      var postfxFactor = usePostProcessing
+        ? wgpuResolvePostFXFactor(postFXMaxPixels, width * height)
+        : 1;
+      var scaledW = Math.max(1, Math.floor(width * postfxFactor));
+      var scaledH = Math.max(1, Math.floor(height * postfxFactor));
+
+      var cam = uploadFrameUniforms(bundle.camera, scaledW, scaledH, !usePostProcessing);
       uploadLights(bundle.lights);
       uploadFogUniforms(bundle.environment);
       uploadEnvUniforms(bundle.environment);
@@ -15419,7 +15456,7 @@
 
       if (usePostProcessing) {
         if (!postProcessor) postProcessor = wgpuCreatePostProcessor(device, targetFormat);
-        postTarget = postProcessor.getSceneTarget(width, height);
+        postTarget = postProcessor.getSceneTarget(scaledW, scaledH);
         mainColorView = postTarget.colorView;
         mainDepthTargetView = postTarget.depthView;
       } else {
@@ -15485,7 +15522,7 @@
 
       if (usePostProcessing && postProcessor) {
         var screenView = gpuCtx.getCurrentTexture().createView();
-        postProcessor.apply(encoder, postEffects, width, height, screenView);
+        postProcessor.apply(encoder, postEffects, scaledW, scaledH, width, height, screenView);
       }
 
       device.queue.submit([encoder.finish()]);
