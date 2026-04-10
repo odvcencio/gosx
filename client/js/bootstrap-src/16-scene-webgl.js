@@ -2337,17 +2337,27 @@
 
       // Determine if post-processing is active for this frame.
       var postEffects = Array.isArray(bundle.postEffects) ? bundle.postEffects : [];
+      var postFXMaxPixels = (typeof bundle.postFXMaxPixels === "number") ? bundle.postFXMaxPixels : 0;
       var usePostProcessing = postEffects.length > 0;
+
+      // renderW/renderH reflect the actual render target. When postfx is
+      // active with a cap, these may be smaller than canvas dims. All
+      // viewport-dependent shader uniforms (u_viewportHeight, etc.) and
+      // the main gl.viewport call must use render dims, not canvas dims.
+      var renderW = canvas.width;
+      var renderH = canvas.height;
 
       if (usePostProcessing) {
         if (!postProcessor) {
           postProcessor = createScenePostProcessor(gl);
         }
-        postProcessor.begin(canvas.width, canvas.height);
+        var scaled = postProcessor.begin(canvas.width, canvas.height, postFXMaxPixels);
+        renderW = scaled.width;
+        renderH = scaled.height;
       }
 
-      // Resize viewport.
-      gl.viewport(0, 0, canvas.width, canvas.height);
+      // Resize viewport to the render target (scaled when postfx caps are active).
+      gl.viewport(0, 0, renderW, renderH);
 
       // Clear — "transparent" clears to fully transparent for alpha compositing.
       var bgStr = typeof bundle.background === "string" ? bundle.background.trim().toLowerCase() : "";
@@ -2409,8 +2419,8 @@
 
       // Draw points entries (after meshes, before post-processing).
       var frameTimeSeconds = performance.now() / 1000;
-      drawPointsEntries(gl, Array.isArray(bundle.points) ? bundle.points : [], bundle.environment, viewMatrix, projMatrix, frameTimeSeconds);
-      drawPointsEntries(gl, buildComputePointsEntries(bundle.computeParticles, frameTimeSeconds), bundle.environment, viewMatrix, projMatrix, frameTimeSeconds);
+      drawPointsEntries(gl, Array.isArray(bundle.points) ? bundle.points : [], bundle.environment, viewMatrix, projMatrix, frameTimeSeconds, renderH);
+      drawPointsEntries(gl, buildComputePointsEntries(bundle.computeParticles, frameTimeSeconds), bundle.environment, viewMatrix, projMatrix, frameTimeSeconds, renderH);
 
       // Restore state.
       gl.depthMask(true);
@@ -2418,7 +2428,7 @@
 
       // Apply post-processing chain if active.
       if (usePostProcessing && postProcessor) {
-        postProcessor.apply(postEffects, canvas.width, canvas.height);
+        postProcessor.apply(postEffects, renderW, renderH, canvas.width, canvas.height);
         // Re-activate the PBR program for the next frame since post-processing
         // switches to its own shader programs.
         gl.useProgram(program);
@@ -2718,7 +2728,7 @@
     }
 
     // Draw all points entries from the render bundle.
-    function drawPointsEntries(gl, pointsArray, environment, viewMatrix, projMatrix, timeSeconds) {
+    function drawPointsEntries(gl, pointsArray, environment, viewMatrix, projMatrix, timeSeconds, renderH) {
       if (pointsArray.length === 0) return;
 
       var pp = ensurePointsProgram();
@@ -2729,7 +2739,7 @@
       // Upload view/projection matrices.
       gl.uniformMatrix4fv(pp.uniforms.viewMatrix, false, viewMatrix);
       gl.uniformMatrix4fv(pp.uniforms.projectionMatrix, false, projMatrix);
-      gl.uniform1f(pp.uniforms.viewportHeight, canvas.height);
+      gl.uniform1f(pp.uniforms.viewportHeight, renderH);
 
       // Upload fog uniforms.
       var env = environment || {};
