@@ -1,5 +1,27 @@
 # Changelog
 
+## v0.15.0
+
+### Breaking Change
+
+`scene.PostFX` now enforces a default framebuffer resolution cap of 1080p (2,073,600 pixels) for the postfx offscreen pipeline. On displays exceeding this resolution, the postfx chain is downscaled uniformly and the result is linearly upsampled to the canvas. This protects against multi-hundred-megabyte framebuffer allocations on high-DPR displays.
+
+To restore v0.14.0 behavior (full-resolution postfx), set `MaxPixels: scene.PostFXMaxPixelsUnbounded` explicitly.
+
+### PostFX Resolution Cap
+
+**`scene.PostFX.MaxPixels int`**: Caps postfx offscreen framebuffers at a pixel count, uniformly scaling the pipeline when the canvas exceeds the cap. The zero value applies the safe 1080p default. Set to `scene.PostFXMaxPixelsUnbounded` to opt out of capping entirely.
+
+**`scene.Bloom.Scale float32`**: Optional bloom-internal downscale factor applied on top of the main cap. The zero value preserves v0.14.0 behavior (0.5 half-res ping-pong buffers). Values outside (0, 1] are silently clamped to the default.
+
+**Preset constants**: `scene.PostFXMaxPixels540p`, `PostFXMaxPixels720p`, `PostFXMaxPixels1080p`, `PostFXMaxPixels1440p`, and `PostFXMaxPixels4K` for common cap sizes. `PostFXMaxPixelsUnbounded` opts out entirely.
+
+**WebGPU parity**: The WebGPU runtime (`16a-scene-webgpu.js`) honors `MaxPixels` at full parity with the WebGL runtime — the memory guarantee holds on both backends.
+
+### Bug Fixes
+
+**Point sprite sizing**: `gl_PointSize` now scales against the render target rather than the canvas, fixing a latent bug where high-DPR displays produced oversized stars when post-processing was active.
+
 ## v0.14.0
 
 ### `gosx/field` Module
