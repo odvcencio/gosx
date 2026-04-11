@@ -1,7 +1,7 @@
 package vm
 
 import (
-	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -13,11 +13,22 @@ func isValueElement(tag string) bool {
 }
 
 // childPath builds a slash-separated path from the island root.
+//
+// Called once per reconcile walk step — dozens of times per tree diff.
+// strconv.Itoa + explicit concatenation avoids the fmt.Sprintf
+// format-state scratch (2-3 allocs) that the previous implementation paid
+// on every call.
 func childPath(parentPath string, childIdx int) string {
+	idxStr := strconv.Itoa(childIdx)
 	if parentPath == "" {
-		return fmt.Sprintf("%d", childIdx)
+		return idxStr
 	}
-	return fmt.Sprintf("%s/%d", parentPath, childIdx)
+	var b strings.Builder
+	b.Grow(len(parentPath) + 1 + len(idxStr))
+	b.WriteString(parentPath)
+	b.WriteByte('/')
+	b.WriteString(idxStr)
+	return b.String()
 }
 
 // ReconcileTrees diffs the previous and next resolved trees and returns patch ops.

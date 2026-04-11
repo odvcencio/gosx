@@ -517,9 +517,17 @@ func (vm *VM) evalBinary(e program.Expr, fn func(Value, Value) Value) Value {
 
 // EvalTree walks the island's node tree, evaluating all dynamic expressions,
 // and returns a resolved node tree for reconciliation.
+//
+// Pre-sizes tree.Nodes to len(program.Nodes) because in the common case
+// each program node resolves 1:1 to a resolved node. forEach / fragment
+// expansion can push the count higher — the append grow path handles
+// that — but pre-sizing eliminates 3-4 doublings for a small counter or
+// form-sized island.
 func (vm *VM) EvalTree() *ResolvedTree {
-	tree := &ResolvedTree{}
-	vm.resolveNodeRefs(tree, vm.program.Root)
+	tree := &ResolvedTree{
+		Nodes: make([]ResolvedNode, 0, len(vm.program.Nodes)),
+	}
+	vm.appendNodeRefs(tree, nil, vm.program.Root)
 	return tree
 }
 
@@ -546,19 +554,26 @@ func (vm *VM) resolveNodeWithSource(source int, node program.Node) ResolvedNode 
 	return rn
 }
 
-func (vm *VM) resolveNodeRefs(tree *ResolvedTree, nodeID program.NodeID) []int {
+// appendNodeRefs walks the program node at nodeID and appends the resolved
+// indices into the caller-provided out slice. Uses the append-return-value
+// pattern so callers can grow a shared buffer without paying the per-node
+// []int{idx} allocation the previous implementation incurred.
+func (vm *VM) appendNodeRefs(tree *ResolvedTree, out []int, nodeID program.NodeID) []int {
 	if int(nodeID) >= len(vm.program.Nodes) {
-		return nil
+		return out
 	}
 	node := vm.program.Nodes[nodeID]
 	switch node.Kind {
 	case program.NodeFragment:
-		return vm.resolveChildren(tree, node.Children)
+		for _, child := range node.Children {
+			out = vm.appendNodeRefs(tree, out, child)
+		}
+		return out
 	case program.NodeForEach:
-		return vm.resolveForEach(tree, int(nodeID), node)
+		return vm.appendForEach(tree, out, int(nodeID), node)
 	default:
 		idx := vm.appendResolvedNode(tree, int(nodeID), node)
-		return []int{idx}
+		return append(out, idx)
 	}
 }
 
@@ -584,17 +599,23 @@ func (vm *VM) appendResolvedNode(tree *ResolvedTree, source int, node program.No
 }
 
 func (vm *VM) resolveChildren(tree *ResolvedTree, children []program.NodeID) []int {
-	var resolved []int
+	if len(children) == 0 {
+		return nil
+	}
+	// Pre-size to len(children); fragments / forEach may expand but
+	// 1:1 child resolution is by far the most common case. Any growth
+	// beyond the initial capacity is absorbed by a single append regrow.
+	resolved := make([]int, 0, len(children))
 	for _, childID := range children {
-		resolved = append(resolved, vm.resolveNodeRefs(tree, childID)...)
+		resolved = vm.appendNodeRefs(tree, resolved, childID)
 	}
 	return resolved
 }
 
 func (vm *VM) resolveElementNode(rn *ResolvedNode, source int, node program.Node) {
-	attrs, key, explicitKey, events := vm.resolveElementAttrs(node.Attrs)
-	rn.Attrs = attrs
-	rn.DOMAttrs = materializeDOMAttrs(attrs, events)
+	resolved, domAttrs, events, key, explicitKey := vm.resolveElementAttrs(node.Attrs)
+	rn.Attrs = resolved
+	rn.DOMAttrs = domAttrs
 	rn.Key = key
 	rn.Events = events
 	if explicitKey {
@@ -605,11 +626,22 @@ func (vm *VM) resolveElementNode(rn *ResolvedNode, source int, node program.Node
 	}
 }
 
-func (vm *VM) resolveElementAttrs(attrs []program.Attr) ([]ResolvedAttr, string, bool, []ResolvedEvent) {
-	resolved := make([]ResolvedAttr, 0, len(attrs))
-	events := make([]ResolvedEvent, 0, len(attrs))
-	key := ""
-	explicitKey := false
+// resolveElementAttrs walks a program node's attribute list and returns:
+//
+//   - resolved: the non-event attrs (class/id/data-*/etc)
+//   - domAttrs: everything the browser-side reconciler needs (static
+//     attrs PLUS the synthesized data-gosx-on-* / data-gosx-handler
+//     entries for each event). This was previously built by a second
+//     pass in materializeDOMAttrs.
+//   - events: the list of (eventName, handler) pairs for renderResolvedAttrs
+//   - key / explicitKey: the element's key attribute if any
+//
+// The fast path for elements without events (by far the most common
+// in any non-interactive subtree) reuses the resolved slice as
+// domAttrs with no copy. That eliminates one allocation per
+// no-events element and collapses the old two-pass build into a
+// single walk for the with-events case.
+func (vm *VM) resolveElementAttrs(attrs []program.Attr) (resolved, domAttrs []ResolvedAttr, events []ResolvedEvent, key string, explicitKey bool) {
 	for _, attr := range attrs {
 		switch attr.Kind {
 		case program.AttrStatic:
@@ -617,6 +649,9 @@ func (vm *VM) resolveElementAttrs(attrs []program.Attr) ([]ResolvedAttr, string,
 				key = attr.Value
 				explicitKey = true
 				continue
+			}
+			if resolved == nil {
+				resolved = make([]ResolvedAttr, 0, len(attrs))
 			}
 			resolved = append(resolved, ResolvedAttr{Name: attr.Name, Value: attr.Value})
 		case program.AttrExpr:
@@ -626,14 +661,54 @@ func (vm *VM) resolveElementAttrs(attrs []program.Attr) ([]ResolvedAttr, string,
 				explicitKey = true
 				continue
 			}
+			if resolved == nil {
+				resolved = make([]ResolvedAttr, 0, len(attrs))
+			}
 			resolved = append(resolved, ResolvedAttr{Name: attr.Name, Value: value})
 		case program.AttrBool:
+			if resolved == nil {
+				resolved = make([]ResolvedAttr, 0, len(attrs))
+			}
 			resolved = append(resolved, ResolvedAttr{Name: attr.Name, Bool: true})
 		case program.AttrEvent:
+			if events == nil {
+				events = make([]ResolvedEvent, 0, len(attrs))
+			}
 			events = append(events, ResolvedEvent{Name: attr.Name, Handler: attr.Event})
 		}
 	}
-	return resolved, key, explicitKey, events
+
+	// Build domAttrs. No events → alias resolved (zero copy). Otherwise
+	// extend resolved by the synthesized event markers in a single
+	// append. Note we build into a fresh slice so the non-event subset
+	// (rn.Attrs) isn't contaminated with marker entries.
+	if len(events) == 0 {
+		domAttrs = resolved
+		return
+	}
+	// Reserve room for each event's marker attrs (1 base + 1 extra for click).
+	extra := len(events)
+	for _, ev := range events {
+		if eventAttrType(ev.Name) == "click" {
+			extra++
+		}
+	}
+	domAttrs = make([]ResolvedAttr, 0, len(resolved)+extra)
+	domAttrs = append(domAttrs, resolved...)
+	for _, event := range events {
+		eventType := eventAttrType(event.Name)
+		domAttrs = append(domAttrs, ResolvedAttr{
+			Name:  "data-gosx-on-" + eventType,
+			Value: event.Handler,
+		})
+		if eventType == "click" {
+			domAttrs = append(domAttrs, ResolvedAttr{
+				Name:  "data-gosx-handler",
+				Value: event.Handler,
+			})
+		}
+	}
+	return
 }
 
 func (vm *VM) autoKey(source int, tag string) (string, bool) {
@@ -655,17 +730,16 @@ type eachEntry struct {
 	HasKey bool
 }
 
-func (vm *VM) resolveForEach(tree *ResolvedTree, source int, node program.Node) []int {
+func (vm *VM) appendForEach(tree *ResolvedTree, out []int, source int, node program.Node) []int {
 	entries := valueEachEntries(vm.Eval(node.Expr))
 	if len(entries) == 0 {
-		return vm.resolveForEachFallback(tree, source, node.Attrs)
+		return append(out, vm.resolveForEachFallback(tree, source, node.Attrs)...)
 	}
 
 	scope := resolveForEachScope(node.Attrs)
 	restore := vm.captureProps(scope.propNames())
 	defer vm.restoreProps(restore)
 
-	var out []int
 	for _, entry := range entries {
 		vm.bindForEachEntry(scope, entry)
 		out = vm.appendForEachChildren(out, tree, node.Children)
@@ -757,7 +831,7 @@ func (vm *VM) bindForEachEntry(scope forEachScope, entry eachEntry) {
 
 func (vm *VM) appendForEachChildren(out []int, tree *ResolvedTree, children []program.NodeID) []int {
 	for _, child := range children {
-		out = append(out, vm.resolveNodeRefs(tree, child)...)
+		out = vm.appendNodeRefs(tree, out, child)
 	}
 	return out
 }

@@ -46,6 +46,13 @@ func (node *ResolvedNode) effectiveDOMAttrs() []ResolvedAttr {
 }
 
 func materializeDOMAttrs(attrs []ResolvedAttr, events []ResolvedEvent) []ResolvedAttr {
+	// Fast path: no events → alias the attrs slice directly instead of
+	// allocating a copy. The returned slice is treated as read-only by
+	// the reconcile walker (it only indexes DOMAttrs, never appends),
+	// so aliasing is safe.
+	if len(events) == 0 {
+		return attrs
+	}
 	out := make([]ResolvedAttr, 0, len(attrs)+(len(events)*2))
 	out = append(out, attrs...)
 	for _, event := range events {

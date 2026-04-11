@@ -855,7 +855,7 @@ func TestResolveForEachRestoresScopedProps(t *testing.T) {
 	})
 
 	tree := &ResolvedTree{}
-	out := vm.resolveForEach(tree, 0, prog.Nodes[0])
+	out := vm.appendForEach(tree, nil, 0, prog.Nodes[0])
 	if len(out) != 2 || len(tree.Nodes) != 2 {
 		t.Fatalf("expected 2 resolved nodes from for-each, got out=%v nodes=%d", out, len(tree.Nodes))
 	}

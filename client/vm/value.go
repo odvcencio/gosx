@@ -1,7 +1,6 @@
 package vm
 
 import (
-	"fmt"
 	"math"
 	"sort"
 	"strconv"
@@ -225,6 +224,12 @@ func (v Value) Len() int {
 }
 
 // String converts any Value to its string representation.
+//
+// The scalar paths use strconv directly instead of fmt.Sprintf so that
+// an int-typed signal (by far the most common case, e.g. counter values)
+// renders without the fmt format-state scratch allocation. Runs once per
+// expression evaluation touching any int/float signal — in a typical
+// counter island with a "{count}" display that's N calls per reconcile.
 func (v Value) String() string {
 	if v.Items != nil {
 		parts := make([]string, len(v.Items))
@@ -239,26 +244,34 @@ func (v Value) String() string {
 			keys = append(keys, key)
 		}
 		sort.Strings(keys)
-		parts := make([]string, 0, len(keys))
-		for _, key := range keys {
-			parts = append(parts, fmt.Sprintf("%s:%s", key, v.Fields[key].String()))
+		var b strings.Builder
+		b.Grow(2 + len(keys)*16)
+		b.WriteByte('{')
+		for i, key := range keys {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			b.WriteString(key)
+			b.WriteByte(':')
+			b.WriteString(v.Fields[key].String())
 		}
-		return "{" + strings.Join(parts, ", ") + "}"
+		b.WriteByte('}')
+		return b.String()
 	}
 	switch v.Type {
 	case program.TypeString:
 		return v.Str
 	case program.TypeInt:
-		return fmt.Sprintf("%d", int64(v.Num))
+		return strconv.FormatInt(int64(v.Num), 10)
 	case program.TypeFloat:
-		return fmt.Sprintf("%g", v.Num)
+		return strconv.FormatFloat(v.Num, 'g', -1, 64)
 	case program.TypeBool:
 		if v.Bool {
 			return "true"
 		}
 		return "false"
 	default:
-		return fmt.Sprintf("%v", v.Num)
+		return strconv.FormatFloat(v.Num, 'g', -1, 64)
 	}
 }
 

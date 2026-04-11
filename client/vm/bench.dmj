@@ -1,0 +1,88 @@
+// client/vm hot path benchmarks. Compiled by danmuji into
+// client/vm/bench_danmuji_test.go.
+//
+// Run with: go test -bench=. -benchmem ./client/vm/
+//
+// Rebuild after editing:
+//     danmuji build client/vm/bench.dmj
+
+package vm
+
+import (
+    "testing"
+
+    "github.com/odvcencio/gosx/island/program"
+)
+
+benchmark "resolve initial tree counter" {
+    setup {
+        prog := program.CounterProgram()
+    }
+    measure {
+        _ = ResolveInitialTree(prog, `{}`)
+    }
+    report_allocs
+}
+
+benchmark "resolve initial tree form" {
+    setup {
+        prog := program.FormProgram()
+    }
+    measure {
+        _ = ResolveInitialTree(prog, `{}`)
+    }
+    report_allocs
+}
+
+benchmark "new island counter" {
+    setup {
+        prog := program.CounterProgram()
+    }
+    measure {
+        _ = NewIsland(prog, `{}`)
+    }
+    report_allocs
+}
+
+benchmark "dispatch increment counter" {
+    setup {
+        prog := program.CounterProgram()
+        island := NewIsland(prog, `{}`)
+    }
+    measure {
+        _ = island.Dispatch("increment", "{}")
+    }
+    report_allocs
+}
+
+benchmark "reconcile counter after set" {
+    setup {
+        prog := program.CounterProgram()
+        island := NewIsland(prog, `{}`)
+        island.Dispatch("increment", "{}")
+    }
+    measure {
+        _ = island.Reconcile()
+    }
+    report_allocs
+}
+
+benchmark "value int to string" {
+    setup {
+        v := IntVal(42)
+    }
+    measure {
+        _ = v.String()
+    }
+    report_allocs
+}
+
+benchmark "value float to string" {
+    setup {
+        v := FloatVal(3.14159)
+    }
+    measure {
+        _ = v.String()
+    }
+    report_allocs
+}

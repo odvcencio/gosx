@@ -201,7 +201,12 @@ func handlerMap(prog *program.Program) map[string]*program.Handler {
 }
 
 func parseEventData(eventDataJSON string) map[string]string {
-	if eventDataJSON == "" {
+	// Fast path: the vast majority of handler dispatches come with
+	// "{}" or "" as the event-data payload (counter increments,
+	// plain button clicks, etc.). Skipping json.Unmarshal here
+	// eliminates a reflect.MakeMapWithSize + decoder state setup
+	// allocation on every dispatch.
+	if eventDataJSON == "" || eventDataJSON == "{}" {
 		return nil
 	}
 	var eventData map[string]string
