@@ -425,8 +425,17 @@ func (g Graph) SceneIR() SceneIR {
 		return SceneIR{}
 	}
 
+	// Pre-size the top-level slices and the anchors map to len(g.Nodes)
+	// — each node is likely to resolve to one object/light/label/etc.,
+	// so starting with that capacity avoids the 3-5 append doublings
+	// most typical scenes would otherwise trigger. Over-estimates waste
+	// a few slice headers but under-estimates are absorbed by the
+	// append grow path.
+	nodeCount := len(g.Nodes)
 	lowerer := &graphLowerer{
-		anchors: make(map[string]worldTransform),
+		anchors: make(map[string]worldTransform, nodeCount),
+		objects: make([]ObjectIR, 0, nodeCount),
+		lights:  make([]LightIR, 0, nodeCount),
 	}
 	for _, node := range g.Nodes {
 		lowerer.lowerNode(node, identityTransform())

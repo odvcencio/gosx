@@ -3,6 +3,7 @@ package scene
 import (
 	"encoding/json"
 	"math"
+	"strconv"
 	"strings"
 
 	"github.com/odvcencio/gosx/engine"
@@ -2264,15 +2265,13 @@ func mapSegmentPairs(value any) [][2]int {
 }
 
 func intString(value int) string {
-	if value == 0 {
-		return "0"
-	}
-	digits := []byte{}
-	for value > 0 {
-		digits = append([]byte{byte('0' + (value % 10))}, digits...)
-		value /= 10
-	}
-	return string(digits)
+	// Delegate to strconv.Itoa: the hand-rolled digit builder this used
+	// to be allocated a new []byte per digit (via `append([]byte{...},
+	// digits...)` which is a fresh slice header + grow each iteration).
+	// strconv.Itoa uses a stack-allocated 20-byte scratch buffer and
+	// returns a single string — zero heap allocations for non-negative
+	// values.
+	return strconv.Itoa(value)
 }
 
 // resolveMaxPixels normalizes the shadow cap for IR emission. Zero or
