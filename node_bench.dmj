@@ -1,0 +1,67 @@
+// gosx.Node HTML rendering benchmarks. Compiled by danmuji into
+// node_bench_danmuji_test.go.
+//
+// Run with: go test -bench=BenchmarkRender -benchmem .
+//
+// Rebuild after editing:
+//     danmuji build node_bench.dmj
+
+package gosx
+
+import "testing"
+
+benchmark "render html simple" {
+    setup {
+        node := El("div", Text("hello"))
+    }
+    measure {
+        _ = RenderHTML(node)
+    }
+    report_allocs
+}
+
+benchmark "render html with attrs" {
+    setup {
+        node := El("div",
+            Attrs(
+                Attr("id", "bench-element"),
+                Attr("class", "card card--primary chrome-surface"),
+                Attr("data-gosx-island", "counter"),
+                Attr("data-gosx-program", "counter-v2"),
+                Attr("aria-label", "Interactive counter"),
+                Attr("role", "region"),
+            ),
+            Text("body content"),
+        )
+    }
+    measure {
+        _ = RenderHTML(node)
+    }
+    report_allocs
+}
+
+benchmark "render html nested" {
+    setup {
+        link := func(href, label string) Node {
+            return El("a", Attrs(Attr("href", href), Attr("class", "nav__link")), Text(label))
+        }
+        node := El("header",
+            Attrs(Attr("class", "site-header"), Attr("role", "banner")),
+            El("div", Attrs(Attr("class", "site-header__brand")), Text("GoSX")),
+            El("nav",
+                Attrs(Attr("class", "site-header__nav"), Attr("aria-label", "Primary")),
+                El("ul", Attrs(Attr("class", "nav__list")),
+                    El("li", Attrs(Attr("class", "nav__item")), link("/", "Home")),
+                    El("li", Attrs(Attr("class", "nav__item")), link("/docs", "Docs")),
+                    El("li", Attrs(Attr("class", "nav__item")), link("/demos", "Demos")),
+                    El("li", Attrs(Attr("class", "nav__item")), link("/blog", "Blog")),
+                    El("li", Attrs(Attr("class", "nav__item")), link("/contact", "Contact")),
+                ),
+            ),
+        )
+    }
+    measure {
+        _ = RenderHTML(node)
+    }
+    report_allocs
+}

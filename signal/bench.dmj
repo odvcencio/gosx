@@ -1,0 +1,56 @@
+// Signal reactive state benchmarks. Compiled by danmuji into
+// signal/bench_danmuji_test.go.
+//
+// Run with: go test -bench=. -benchmem ./signal/
+//
+// Rebuild after editing:
+//     danmuji build signal/bench.dmj
+
+package signal
+
+import "testing"
+
+benchmark "signal set no subscribers" {
+    setup {
+        s := New(0)
+    }
+    measure {
+        s.Set(42)
+    }
+    report_allocs
+}
+
+benchmark "signal set one subscriber" {
+    setup {
+        s := New(0)
+        s.Subscribe(func() {})
+    }
+    measure {
+        s.Set(42)
+    }
+    report_allocs
+}
+
+benchmark "signal set four subscribers" {
+    setup {
+        s := New(0)
+        s.Subscribe(func() {})
+        s.Subscribe(func() {})
+        s.Subscribe(func() {})
+        s.Subscribe(func() {})
+    }
+    measure {
+        s.Set(42)
+    }
+    report_allocs
+}
+
+benchmark "signal get" {
+    setup {
+        s := New(42)
+    }
+    measure {
+        _ = s.Get()
+    }
+    report_allocs
+}

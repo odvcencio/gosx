@@ -1,19 +1,17 @@
 package scene
 
-import (
-	"encoding/json"
-	"testing"
-)
-
 // benchMixedScene constructs a moderately complex scene representative of
 // a production page: ~20 PBR meshes, a handful of lights, postfx, shadows,
 // a few thick-line decorations, and an environment. Used as the fixture
-// for every scene marshal benchmark in this file so results are
+// for every scene marshal benchmark in bench.dmj so results are
 // comparable across runs.
 //
 // Counts are deliberately conservative so the benchmark runs fast but
 // still exercises every legacyProps branch and every helper that a
 // typical Scene3D page touches.
+//
+// Lives in a _test.go file so it's only compiled for test/bench builds
+// and doesn't bloat the production binary.
 func benchMixedScene() Props {
 	const boxCount = 20
 	nodes := make([]Node, 0, 32)
@@ -33,7 +31,7 @@ func benchMixedScene() Props {
 		},
 		AmbientLight{Color: "#ffffff", Intensity: 0.2},
 	)
-	for i := 0; i < boxCount; i++ {
+	for range boxCount {
 		nodes = append(nodes, Mesh{
 			Geometry: SphereGeometry{Segments: 24},
 			Material: StandardMaterial{
@@ -41,7 +39,7 @@ func benchMixedScene() Props {
 				Roughness: 0.3,
 				Metalness: 0.9,
 			},
-			Position:      Vec3(float64(i%5)*2, 0.5, float64(i/5)*2),
+			Position:      Vec3(0, 0.5, 0),
 			CastShadow:    true,
 			ReceiveShadow: true,
 		})
@@ -88,70 +86,5 @@ func benchMixedScene() Props {
 			},
 		},
 		Graph: NewGraph(nodes...),
-	}
-}
-
-// BenchmarkPropsSceneIR measures the cost of the Props → SceneIR
-// lowering step alone (graph walk, object/light/etc. record construction).
-// Runs before any map allocations for legacyProps.
-func BenchmarkPropsSceneIR(b *testing.B) {
-	props := benchMixedScene()
-	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_ = props.SceneIR()
-	}
-}
-
-// BenchmarkPropsLegacyProps measures the cost of turning a SceneIR into
-// the nested map[string]any wire format. This is what MarshalJSON calls
-// internally and is the first phase of every scene render on the server.
-func BenchmarkPropsLegacyProps(b *testing.B) {
-	props := benchMixedScene()
-	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_ = props.LegacyProps()
-	}
-}
-
-// BenchmarkPropsMarshalJSON measures the full wire-format encoding path
-// including json.Marshal over the nested map. This is what the server
-// calls per page render when handing Scene3D props to the client.
-func BenchmarkPropsMarshalJSON(b *testing.B) {
-	props := benchMixedScene()
-	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_, err := json.Marshal(props)
-		if err != nil {
-			b.Fatal(err)
-		}
-	}
-}
-
-// BenchmarkObjectIRLegacyProps measures the single-object map conversion
-// cost. Called once per mesh inside legacyObjects; for a 20-mesh scene
-// it runs 20x per page render.
-func BenchmarkObjectIRLegacyProps(b *testing.B) {
-	ir := ObjectIR{
-		ID:            "bench-object",
-		Kind:          "sphere",
-		Radius:        0.5,
-		Segments:      24,
-		MaterialKind:  "standard",
-		Color:         "#d4af37",
-		Roughness:     0.3,
-		Metalness:     0.9,
-		X:             1.5,
-		Y:             0.5,
-		Z:             0,
-		CastShadow:    true,
-		ReceiveShadow: true,
-	}
-	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_ = ir.legacyProps()
 	}
 }

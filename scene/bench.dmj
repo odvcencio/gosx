@@ -1,0 +1,70 @@
+// Scene3D marshal benchmarks. Compiled by danmuji into scene/bench_danmuji_test.go.
+//
+// Run with: go test -bench=. -benchmem ./scene/
+//
+// Rebuild the generated Go file after editing this .dmj:
+//     danmuji build scene/bench.dmj
+
+package scene
+
+import (
+    "encoding/json"
+    "testing"
+)
+
+benchmark "props scene ir" {
+    setup {
+        props := benchMixedScene()
+    }
+    measure {
+        _ = props.SceneIR()
+    }
+    report_allocs
+}
+
+benchmark "props legacy props" {
+    setup {
+        props := benchMixedScene()
+    }
+    measure {
+        _ = props.LegacyProps()
+    }
+    report_allocs
+}
+
+benchmark "props marshal json" {
+    setup {
+        props := benchMixedScene()
+    }
+    measure {
+        _, err := json.Marshal(props)
+        if err != nil {
+            panic(err)
+        }
+    }
+    report_allocs
+}
+
+benchmark "object ir legacy props" {
+    setup {
+        ir := ObjectIR{
+            ID:            "bench-object",
+            Kind:          "sphere",
+            Radius:        0.5,
+            Segments:      24,
+            MaterialKind:  "standard",
+            Color:         "#d4af37",
+            Roughness:     0.3,
+            Metalness:     0.9,
+            X:             1.5,
+            Y:             0.5,
+            Z:             0,
+            CastShadow:    true,
+            ReceiveShadow: true,
+        }
+    }
+    measure {
+        _ = ir.legacyProps()
+    }
+    report_allocs
+}
