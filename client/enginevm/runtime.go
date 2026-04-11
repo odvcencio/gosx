@@ -2,7 +2,6 @@ package enginevm
 
 import (
 	"encoding/json"
-	"fmt"
 	"hash/fnv"
 	"math"
 	"reflect"
@@ -1273,17 +1272,30 @@ func renderPassFromMaterialProfile(profile rootengine.RenderMaterial) string {
 }
 
 func renderMaterialKey(profile rootengine.RenderMaterial) string {
-	return fmt.Sprintf(
-		"%s|%s|%s|%.3f|%t|%s|%s|%.3f",
-		strings.ToLower(strings.TrimSpace(profile.Kind)),
-		strings.TrimSpace(profile.Color),
-		strings.TrimSpace(profile.Texture),
-		profile.Opacity,
-		profile.Wireframe,
-		strings.ToLower(strings.TrimSpace(profile.BlendMode)),
-		profile.RenderPass,
-		profile.Emissive,
-	)
+	// Direct Builder writes avoid the fmt.Sprintf boxing/reflection walk
+	// that this runs on every material profile (one per scene element).
+	kind := strings.ToLower(strings.TrimSpace(profile.Kind))
+	color := strings.TrimSpace(profile.Color)
+	texture := strings.TrimSpace(profile.Texture)
+	blendMode := strings.ToLower(strings.TrimSpace(profile.BlendMode))
+	var b strings.Builder
+	b.Grow(len(kind) + len(color) + len(texture) + len(blendMode) + len(profile.RenderPass) + 40)
+	b.WriteString(kind)
+	b.WriteByte('|')
+	b.WriteString(color)
+	b.WriteByte('|')
+	b.WriteString(texture)
+	b.WriteByte('|')
+	b.WriteString(strconv.FormatFloat(profile.Opacity, 'f', 3, 64))
+	b.WriteByte('|')
+	b.WriteString(strconv.FormatBool(profile.Wireframe))
+	b.WriteByte('|')
+	b.WriteString(blendMode)
+	b.WriteByte('|')
+	b.WriteString(profile.RenderPass)
+	b.WriteByte('|')
+	b.WriteString(strconv.FormatFloat(profile.Emissive, 'f', 3, 64))
+	return b.String()
 }
 
 func renderMaterialShaderData(profile rootengine.RenderMaterial) []float64 {
@@ -1550,13 +1562,22 @@ func appendSceneLine(bundle *rootengine.RenderBundle, width, height int, from, t
 }
 
 func sceneRGBAString(rgba [4]float64) string {
-	return fmt.Sprintf(
-		"rgba(%d, %d, %d, %.3f)",
-		int(math.Round(clamp(rgba[0], 0, 1)*255)),
-		int(math.Round(clamp(rgba[1], 0, 1)*255)),
-		int(math.Round(clamp(rgba[2], 0, 1)*255)),
-		clamp(rgba[3], 0, 1),
-	)
+	r := int(math.Round(clamp(rgba[0], 0, 1) * 255))
+	g := int(math.Round(clamp(rgba[1], 0, 1) * 255))
+	bb := int(math.Round(clamp(rgba[2], 0, 1) * 255))
+	a := clamp(rgba[3], 0, 1)
+	var b strings.Builder
+	b.Grow(24)
+	b.WriteString("rgba(")
+	b.WriteString(strconv.Itoa(r))
+	b.WriteString(", ")
+	b.WriteString(strconv.Itoa(g))
+	b.WriteString(", ")
+	b.WriteString(strconv.Itoa(bb))
+	b.WriteString(", ")
+	b.WriteString(strconv.FormatFloat(a, 'f', 3, 64))
+	b.WriteByte(')')
+	return b.String()
 }
 
 func mixRGBA(left, right [4]float64) [4]float64 {

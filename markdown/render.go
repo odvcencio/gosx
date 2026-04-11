@@ -1,84 +1,134 @@
 package markdown
 
 import (
-	"fmt"
 	"html"
 	"strings"
 	"unicode"
 )
 
-// renderNode recursively renders an AST node to HTML.
+// renderNode recursively renders an AST node to HTML. Returns a string
+// for convenience at the top level, but internally delegates to
+// renderNodeInto which writes directly into a shared strings.Builder —
+// that avoids the per-node fmt.Sprintf + intermediate string allocation
+// that the previous implementation paid for every AST node.
 func renderNode(r *Renderer, n *Node) string {
 	if n == nil {
 		return ""
 	}
+	var b strings.Builder
+	renderNodeInto(r, &b, n)
+	return b.String()
+}
+
+// renderNodeInto writes the HTML for n into b. Internal recursive
+// entry point — callers that already have a builder should use this
+// directly to avoid an intermediate string alloc per subtree.
+func renderNodeInto(r *Renderer, b *strings.Builder, n *Node) {
+	if n == nil {
+		return
+	}
 
 	switch n.Type {
 	case NodeDocument:
-		return renderChildren(r, n)
+		renderChildrenInto(r, b, n)
 
 	case NodeHeading:
 		level := n.Attrs["level"]
 		if level == "" {
 			level = "1"
 		}
-		inner := renderChildren(r, n)
+		b.WriteString("<h")
+		b.WriteString(level)
 		if r.headingIDs {
 			id := slugify(collectNodeText(n))
-			return fmt.Sprintf("<h%s id=\"%s\">%s</h%s>\n", level, id, inner, level)
+			b.WriteString(` id="`)
+			b.WriteString(id)
+			b.WriteByte('"')
 		}
-		return fmt.Sprintf("<h%s>%s</h%s>\n", level, inner, level)
+		b.WriteByte('>')
+		renderChildrenInto(r, b, n)
+		b.WriteString("</h")
+		b.WriteString(level)
+		b.WriteString(">\n")
 
 	case NodeParagraph:
-		inner := renderChildren(r, n)
-		return fmt.Sprintf("<p>%s</p>\n", inner)
+		b.WriteString("<p>")
+		renderChildrenInto(r, b, n)
+		b.WriteString("</p>\n")
 
 	case NodeCodeBlock:
 		lang := n.Attrs["language"]
 		if r.highlightCode && lang != "" {
 			if highlighted, ok := highlightCode(lang, n.Literal); ok {
-				return fmt.Sprintf("<pre><code class=\"language-%s\">%s</code></pre>\n", html.EscapeString(lang), highlighted)
+				b.WriteString(`<pre><code class="language-`)
+				b.WriteString(html.EscapeString(lang))
+				b.WriteString(`">`)
+				b.WriteString(highlighted)
+				b.WriteString("</code></pre>\n")
+				return
 			}
 		}
 		code := html.EscapeString(n.Literal)
 		if lang != "" {
-			return fmt.Sprintf("<pre><code class=\"language-%s\">%s</code></pre>\n", html.EscapeString(lang), code)
+			b.WriteString(`<pre><code class="language-`)
+			b.WriteString(html.EscapeString(lang))
+			b.WriteString(`">`)
+			b.WriteString(code)
+			b.WriteString("</code></pre>\n")
+			return
 		}
-		return fmt.Sprintf("<pre><code>%s</code></pre>\n", code)
+		b.WriteString("<pre><code>")
+		b.WriteString(code)
+		b.WriteString("</code></pre>\n")
 
 	case NodeBlockquote:
-		inner := renderChildren(r, n)
-		return fmt.Sprintf("<blockquote>\n%s</blockquote>\n", inner)
+		b.WriteString("<blockquote>\n")
+		renderChildrenInto(r, b, n)
+		b.WriteString("</blockquote>\n")
 
 	case NodeList:
-		// Check if ordered
 		tag := "ul"
 		if n.Attrs != nil && n.Attrs["ordered"] == "true" {
 			tag = "ol"
 		}
-		inner := renderChildren(r, n)
-		return fmt.Sprintf("<%s>\n%s</%s>\n", tag, inner, tag)
+		b.WriteByte('<')
+		b.WriteString(tag)
+		b.WriteString(">\n")
+		renderChildrenInto(r, b, n)
+		b.WriteString("</")
+		b.WriteString(tag)
+		b.WriteString(">\n")
 
 	case NodeListItem:
-		inner := renderChildren(r, n)
-		// Trim trailing newline from inner content for cleaner output
-		inner = strings.TrimRight(inner, "\n")
-		return fmt.Sprintf("<li>%s</li>\n", inner)
+		b.WriteString("<li>")
+		// Render children into a temporary builder so we can trim the
+		// trailing newline cleanly. The child nodes are typically a
+		// single paragraph so the temp cost is bounded.
+		var inner strings.Builder
+		renderChildrenInto(r, &inner, n)
+		b.WriteString(strings.TrimRight(inner.String(), "\n"))
+		b.WriteString("</li>\n")
 
 	case NodeTable:
-		return renderTable(r, n)
+		renderTableInto(r, b, n)
 
 	case NodeThematicBreak:
-		return "<hr />\n"
+		b.WriteString("<hr />\n")
 
 	case NodeLink:
 		href := html.EscapeString(n.Attrs["href"])
-		inner := renderChildren(r, n)
 		title := n.Attrs["title"]
+		b.WriteString(`<a href="`)
+		b.WriteString(href)
+		b.WriteByte('"')
 		if title != "" {
-			return fmt.Sprintf("<a href=\"%s\" title=\"%s\">%s</a>", href, html.EscapeString(title), inner)
+			b.WriteString(` title="`)
+			b.WriteString(html.EscapeString(title))
+			b.WriteByte('"')
 		}
-		return fmt.Sprintf("<a href=\"%s\">%s</a>", href, inner)
+		b.WriteByte('>')
+		renderChildrenInto(r, b, n)
+		b.WriteString("</a>")
 
 	case NodeImage:
 		src := n.Attrs["src"]
@@ -89,132 +139,181 @@ func renderNode(r *Renderer, n *Node) string {
 		src = html.EscapeString(src)
 		title := n.Attrs["title"]
 		if title != "" {
-			return fmt.Sprintf("<figure><img src=\"%s\" alt=\"%s\" /><figcaption>%s</figcaption></figure>", src, alt, html.EscapeString(title))
+			b.WriteString(`<figure><img src="`)
+			b.WriteString(src)
+			b.WriteString(`" alt="`)
+			b.WriteString(alt)
+			b.WriteString(`" /><figcaption>`)
+			b.WriteString(html.EscapeString(title))
+			b.WriteString("</figcaption></figure>")
+			return
 		}
-		return fmt.Sprintf("<img src=\"%s\" alt=\"%s\" />", src, alt)
+		b.WriteString(`<img src="`)
+		b.WriteString(src)
+		b.WriteString(`" alt="`)
+		b.WriteString(alt)
+		b.WriteString(`" />`)
 
 	case NodeEmphasis:
-		return fmt.Sprintf("<em>%s</em>", renderChildren(r, n))
+		b.WriteString("<em>")
+		renderChildrenInto(r, b, n)
+		b.WriteString("</em>")
 
 	case NodeStrong:
-		return fmt.Sprintf("<strong>%s</strong>", renderChildren(r, n))
+		b.WriteString("<strong>")
+		renderChildrenInto(r, b, n)
+		b.WriteString("</strong>")
 
 	case NodeStrikethrough:
-		return fmt.Sprintf("<del>%s</del>", renderChildren(r, n))
+		b.WriteString("<del>")
+		renderChildrenInto(r, b, n)
+		b.WriteString("</del>")
 
 	case NodeCodeSpan:
-		return fmt.Sprintf("<code>%s</code>", html.EscapeString(n.Literal))
+		b.WriteString("<code>")
+		b.WriteString(html.EscapeString(n.Literal))
+		b.WriteString("</code>")
 
 	case NodeText:
-		return html.EscapeString(n.Literal)
+		b.WriteString(html.EscapeString(n.Literal))
 
 	case NodeHTMLBlock:
 		if r.unsafeHTML {
-			return n.Literal
+			b.WriteString(n.Literal)
+		} else {
+			b.WriteString(html.EscapeString(n.Literal))
 		}
-		return html.EscapeString(n.Literal)
 
 	case NodeHTMLInline:
 		if r.unsafeHTML {
-			return n.Literal
+			b.WriteString(n.Literal)
+		} else {
+			b.WriteString(html.EscapeString(n.Literal))
 		}
-		return html.EscapeString(n.Literal)
 
 	case NodeSoftBreak:
 		if r.hardWraps {
-			return "<br />\n"
+			b.WriteString("<br />\n")
+		} else {
+			b.WriteByte('\n')
 		}
-		return "\n"
 
 	case NodeHardBreak:
-		return "<br />\n"
+		b.WriteString("<br />\n")
 
 	case NodeAdmonition:
 		adType := n.Attrs["type"]
-		inner := renderChildren(r, n)
 		title := strings.ToUpper(adType)
-		return fmt.Sprintf("<div class=\"admonition admonition-%s\"><p class=\"admonition-title\">%s</p>%s</div>\n", adType, title, inner)
+		b.WriteString(`<div class="admonition admonition-`)
+		b.WriteString(adType)
+		b.WriteString(`"><p class="admonition-title">`)
+		b.WriteString(title)
+		b.WriteString("</p>")
+		renderChildrenInto(r, b, n)
+		b.WriteString("</div>\n")
 
 	case NodeTaskListItem:
-		inner := renderChildren(r, n)
-		inner = strings.TrimRight(inner, "\n")
-		checkedAttr := ""
+		b.WriteString(`<li class="task-list-item"><input type="checkbox" disabled`)
 		if n.Attrs["checked"] == "true" {
-			checkedAttr = " checked"
+			b.WriteString(" checked")
 		}
-		return fmt.Sprintf("<li class=\"task-list-item\"><input type=\"checkbox\" disabled%s />%s</li>\n", checkedAttr, inner)
+		b.WriteString(" />")
+		var inner strings.Builder
+		renderChildrenInto(r, &inner, n)
+		b.WriteString(strings.TrimRight(inner.String(), "\n"))
+		b.WriteString("</li>\n")
 
 	case NodeFootnoteRef:
 		id := html.EscapeString(n.Attrs["id"])
-		return fmt.Sprintf("<sup><a class=\"footnote-ref\" href=\"#fn-%s\" id=\"fnref-%s\">[%s]</a></sup>", id, id, id)
+		b.WriteString(`<sup><a class="footnote-ref" href="#fn-`)
+		b.WriteString(id)
+		b.WriteString(`" id="fnref-`)
+		b.WriteString(id)
+		b.WriteString(`">[`)
+		b.WriteString(id)
+		b.WriteString("]</a></sup>")
 
 	case NodeFootnoteDef:
 		id := html.EscapeString(n.Attrs["id"])
-		inner := renderChildren(r, n)
-		return fmt.Sprintf("<section class=\"footnotes\"><ol><li id=\"fn-%s\">%s <a href=\"#fnref-%s\">\u21a9</a></li></ol></section>\n", id, inner, id)
+		b.WriteString(`<section class="footnotes"><ol><li id="fn-`)
+		b.WriteString(id)
+		b.WriteString(`">`)
+		renderChildrenInto(r, b, n)
+		b.WriteString(` <a href="#fnref-`)
+		b.WriteString(id)
+		b.WriteString(`">\u21a9</a></li></ol></section>`)
+		b.WriteByte('\n')
 
 	case NodeMathInline:
-		return fmt.Sprintf("<span class=\"math-inline\">%s</span>", renderLatexMath(n.Literal))
+		b.WriteString(`<span class="math-inline">`)
+		b.WriteString(renderLatexMath(n.Literal))
+		b.WriteString("</span>")
 
 	case NodeMathBlock:
-		return fmt.Sprintf("<div class=\"math-block\">%s</div>\n", renderLatexMath(n.Literal))
+		b.WriteString(`<div class="math-block">`)
+		b.WriteString(renderLatexMath(n.Literal))
+		b.WriteString("</div>\n")
 
 	case NodeSuperscript:
-		return fmt.Sprintf("<sup>%s</sup>", html.EscapeString(n.Literal))
+		b.WriteString("<sup>")
+		b.WriteString(html.EscapeString(n.Literal))
+		b.WriteString("</sup>")
 
 	case NodeSubscript:
-		return fmt.Sprintf("<sub>%s</sub>", html.EscapeString(n.Literal))
+		b.WriteString("<sub>")
+		b.WriteString(html.EscapeString(n.Literal))
+		b.WriteString("</sub>")
 
 	case NodeEmoji:
 		if r.wrapEmoji {
 			code := n.Attrs["code"]
-			return fmt.Sprintf("<span class=\"emoji\" role=\"img\" aria-label=\"%s\">%s</span>", html.EscapeString(code), n.Literal)
+			b.WriteString(`<span class="emoji" role="img" aria-label="`)
+			b.WriteString(html.EscapeString(code))
+			b.WriteString(`">`)
+			b.WriteString(n.Literal)
+			b.WriteString("</span>")
+		} else {
+			b.WriteString(n.Literal)
 		}
-		return n.Literal
 
 	default:
-		// For any unhandled node type, render children
-		return renderChildren(r, n)
+		renderChildrenInto(r, b, n)
 	}
 }
 
-// renderChildren renders all children of a node and concatenates the results.
-func renderChildren(r *Renderer, n *Node) string {
-	var sb strings.Builder
+// renderChildrenInto writes the children of n into b without allocating
+// an intermediate string per child.
+func renderChildrenInto(r *Renderer, b *strings.Builder, n *Node) {
 	for _, child := range n.Children {
-		sb.WriteString(renderNode(r, child))
+		renderNodeInto(r, b, child)
 	}
-	return sb.String()
 }
 
-// renderTable renders a table node with thead/tbody structure.
-func renderTable(r *Renderer, n *Node) string {
-	var sb strings.Builder
-	sb.WriteString("<table>\n")
+func renderTableInto(r *Renderer, b *strings.Builder, n *Node) {
+	b.WriteString("<table>\n")
 	for i, row := range n.Children {
 		if row.Type != NodeTableRow {
 			continue
 		}
 		if i == 0 {
-			sb.WriteString("<thead>\n<tr>")
+			b.WriteString("<thead>\n<tr>")
 			for _, cell := range row.Children {
-				sb.WriteString("<th>")
-				sb.WriteString(renderChildren(r, cell))
-				sb.WriteString("</th>")
+				b.WriteString("<th>")
+				renderChildrenInto(r, b, cell)
+				b.WriteString("</th>")
 			}
-			sb.WriteString("</tr>\n</thead>\n<tbody>\n")
+			b.WriteString("</tr>\n</thead>\n<tbody>\n")
 		} else {
-			sb.WriteString("<tr>")
+			b.WriteString("<tr>")
 			for _, cell := range row.Children {
-				sb.WriteString("<td>")
-				sb.WriteString(renderChildren(r, cell))
-				sb.WriteString("</td>")
+				b.WriteString("<td>")
+				renderChildrenInto(r, b, cell)
+				b.WriteString("</td>")
 			}
-			sb.WriteString("</tr>\n")
+			b.WriteString("</tr>\n")
 		}
 	}
-	sb.WriteString("</tbody>\n</table>\n")
-	return sb.String()
+	b.WriteString("</tbody>\n</table>\n")
 }
 
 // collectNodeText recursively extracts plain text from a node tree.
