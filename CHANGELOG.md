@@ -1,5 +1,65 @@
 # Changelog
 
+## v0.16.0
+
+### Scene3D Thick Lines
+
+**`scene.LinesGeometry.Width float64`**: Per-mesh line stroke width in CSS pixels. Zero (the default) keeps the legacy hairline rendering for backwards compatibility. Non-zero values activate the new thick-line draw path.
+
+**WebGL thick-line pipeline**: a dedicated screen-space quad expansion shader built alongside the legacy `gl.LINES` path. Each segment `(A, B)` expands to 4 vertices (2 triangles) in the vertex shader with per-vertex offset perpendicular to the projected line direction. `gl.lineWidth()` is hairline-only on most WebGL drivers, so this is the only way to get configurable line thickness that works across hardware. Matches the projection math of the legacy renderer so thick lines align with existing geometry.
+
+**Per-pass blend state**: the thick-line draw path honors the draw plan's opaque / alpha / additive pass separation. Each scene object's render pass is recorded in `bundle.worldLinePasses` at build time; the expansion function writes per-pass index ranges so the draw path issues up to three `drawElements` calls with the correct blend + depth state. Additive thick lines (e.g., glowing lightning) now composite correctly instead of rendering as alpha.
+
+**`scene.Bloom.Scale` WebGPU parity**: the WebGPU backend now honors `Bloom.Scale` at parity with WebGL via a lazy ping-pong resize inside the bloom draw case.
+
+**Canvas 2D fallback**: the world-projected canvas renderer reads per-segment width from a parallel `bundle.worldLineWidths` array instead of hardcoding 1.8px.
+
+### Scene3D Render Path Performance
+
+A sweep of the per-frame JS hot path. Validated end-to-end by a new microbenchmark harness (`client/js/runtime.bench.js`) and a live browser overlay at `/demos/scene3d-bench`.
+
+- **Thick-line pooled scratch**: `resources.thickLineScratch` replaces the 8 fresh typed-array allocations per thick-line frame. Geometric growth (2× on miss), never shrinks, subarray-bounded uploads so small workloads don't push GPU buffers beyond their used slice.
+- **`buildPBRDrawList` scratch arrays**: the PBR draw-list builder now reuses renderer-scoped arrays instead of allocating three plain arrays plus a result object every frame. Three call sites × 60 fps × 4 allocs/call = 720 allocs/sec eliminated.
+- **Duplicate `sceneRenderCamera` call removed** from `applySceneWebGLUniforms` — it was resolving the same camera object twice per frame for no reason.
+- **`sceneRenderCamera` out-param form**: the function now accepts an optional `out` scratch the caller owns. The PBR renderer uses it to mutate its own `_frameCam` in place instead of allocating a fresh result every frame. Backwards compatible — omit the out param to preserve legacy allocation behavior.
+- **`translateScenePointInto` with hoisted scratches**: the alloc-free core of the scene-space transform now lives in `translateScenePointInto(out, px, py, pz, object, t)` with inlined rotation and motion math (no `sceneRotatePoint` or `sceneMotionOffset` intermediates). Two hot call sites — the line-geometry loop in `appendSceneObjectToBundle` and the triangle mesh loop in `appendSceneMeshObjectToBundle` — were restructured to use module-level scratches hoisted above their outer loops. Previously each allocated 4 or 7 intermediate objects per segment/triangle.
+- **`scenePBRUploadLights` dirty tracking**: a content hash stamped on each uniforms struct skips the ~30 `gl.uniform*` calls per program per frame when lights + environment haven't changed. Three call sites (main + skinned + instanced programs) share a once-per-frame hoisted hash so the cost is paid once instead of three times.
+- **Per-light / per-environment cached sub-hashes**: `normalizeSceneLight` and `normalizeSceneEnvironment` stamp `_lightHash` / `_envHash` at mutation time. `scenePBRLightsHash` combines those cached values instead of re-walking every field on every frame. `sceneApplyTransitionPatch` re-stamps duck-typed so transitions that mutate lights keep their hashes in sync. **Measured speedup: 27× on the warm path** (13µs → 479ns on a 3-light fixture).
+- **`scenePBRUploadExposure` dirty tracking**: the same pattern with direct field caching instead of hashing — only 2 uniforms, so strict-equal comparison on cached primitives is simpler and collision-free.
+- **Dead code removal**: `projectSceneObject`, `sceneWorldObjectSegments`, and `sceneMotionOffset` are dropped entirely — they had zero callers in the concatenated bundle.
+
+### Runtime Asset Serving
+
+- **Dev-mode manifest root fix**: `App.SetRuntimeRoot` now propagates into `island.SetManifestRoot`, so the HTML renderer's manifest lookup stays aligned with the file-serving root. Dev-mode setups where `runtimeRoot` points at the gosx source tree no longer produce silent 404s on hashed asset URLs.
+
+### Browser Frame-Time Bench (`/demos/scene3d-bench`)
+
+A new gosx-docs page that drives the Scene3D render pipeline under real WebGL and displays a live overlay with min/p50/p95/max/mean per-frame duration. Measured via `performance.mark("scene3d-render-start" / "scene3d-render-end")` gated behind `window.__gosx_scene3d_perf === true` — single truthy check when disabled, zero cost on production pages.
+
+Five workloads selectable via `?workload=...`:
+- **`static`** — 5 PBR meshes, no postfx, no animation. Baseline for the dirty-tracked fast path.
+- **`pbr-heavy`** — 30 shiny spheres in a ring with shadows + full postfx chain.
+- **`thick-lines`** — 12 thick bolts split across opaque / alpha / additive blend passes.
+- **`particles`** — 2000-particle compute cloud with drift motion. Dynamic scene baseline.
+- **`mixed`** — default. 15 PBR meshes + 6 additive lightning bolts + postfx + shadows.
+
+### Scene3D Microbenchmark Harness
+
+`client/js/runtime.bench.js` is a standalone Node harness that loads the bootstrap bundle in a VM context with `window.__gosx_bench_exports = true` and runs per-function microbenchmarks on the Scene3D hot path. No external deps, reports min/p50/p95/max/mean/std plus total iterations.
+
+```bash
+node client/js/runtime.bench.js                    # default 50k iterations
+node client/js/runtime.bench.js -n 100000 -w 2000  # custom sample count
+node client/js/runtime.bench.js --only Lights,Hash # substring filter
+node client/js/runtime.bench.js --json             # machine-readable output
+```
+
+Composite "simulated frame" benchmark chains the hot-path calls a real render() makes on a steady-state static scene (hash + exposure × 3 + lights × 3 + thick-line expansion) and reports **2.29µs per frame** — 0.014% of a 60fps budget after the sweep.
+
+### gts-suite `--exclude` (companion release)
+
+The `gts` code-analysis CLI (separate repo, [github.com/odvcencio/gts-suite](https://github.com/odvcencio/gts-suite)) gained a `-X / --exclude` persistent flag so `gts analyze hotspot` can filter concatenated generated bundles like `client/js/bootstrap.js` without editing workspace `.gtsignore` files. This unblocked the gosx perf sweep by surfacing real source hotspots instead of build-output noise.
+
 ## v0.15.0
 
 ### Breaking Changes
