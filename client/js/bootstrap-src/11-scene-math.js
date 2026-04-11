@@ -104,16 +104,63 @@
     return { x, y: nextY, z: nextZ };
   }
 
+  // Module-level camera scratch used by sceneProjectPoint's internal
+  // normalization. sceneRenderCamera (with out-param form) mutates in
+  // place so each call doesn't allocate a fresh camera struct. Safe
+  // because sceneProjectPoint consumes the scratch fields inline and
+  // returns before any downstream code can observe the scratch state.
+  const _sceneProjectCameraScratch = {
+    x: 0, y: 0, z: 0,
+    rotationX: 0, rotationY: 0, rotationZ: 0,
+    fov: 0, near: 0, far: 0,
+  };
+
   function sceneProjectPoint(point, camera, width, height) {
-    const normalizedCamera = sceneRenderCamera(camera);
-    const local = sceneCameraLocalPoint(point, normalizedCamera);
-    const depth = local.z;
-    if (depth <= normalizedCamera.near || depth >= normalizedCamera.far) return null;
-    const focal = (Math.min(width, height) / 2) / Math.tan((normalizedCamera.fov * Math.PI) / 360);
+    // Inlined camera normalization + local transform + perspective
+    // projection. Previously this function allocated 5 intermediate
+    // objects per call (a camera, a second camera inside
+    // sceneCameraLocalPoint, a local point arg, the sceneInverseRotatePoint
+    // result, and the final result) which turned into ~60k allocs/sec
+    // on a line-heavy scene at 60 fps. Now allocates 1 (the returned
+    // projected point — callers retain refs, so we can't scratch that).
+    const cam = sceneRenderCamera(camera, _sceneProjectCameraScratch);
+
+    // Step 1: translate into camera-local space.
+    let lx = sceneNumber(point && point.x, 0) - cam.x;
+    let ly = sceneNumber(point && point.y, 0) - cam.y;
+    let lz = sceneNumber(point && point.z, 0) + cam.z;
+
+    // Step 2: inverse-rotate into camera frame (was sceneInverseRotatePoint).
+    const sinZ = Math.sin(-cam.rotationZ);
+    const cosZ = Math.cos(-cam.rotationZ);
+    let nextX = lx * cosZ - ly * sinZ;
+    let nextY = lx * sinZ + ly * cosZ;
+    lx = nextX;
+    ly = nextY;
+
+    const sinY = Math.sin(-cam.rotationY);
+    const cosY = Math.cos(-cam.rotationY);
+    nextX = lx * cosY + lz * sinY;
+    let nextZ = -lx * sinY + lz * cosY;
+    lx = nextX;
+    lz = nextZ;
+
+    const sinX = Math.sin(-cam.rotationX);
+    const cosX = Math.cos(-cam.rotationX);
+    nextY = ly * cosX - lz * sinX;
+    nextZ = ly * sinX + lz * cosX;
+    ly = nextY;
+    lz = nextZ;
+
+    // Step 3: perspective clip test.
+    if (lz <= cam.near || lz >= cam.far) return null;
+
+    // Step 4: perspective divide.
+    const focal = (Math.min(width, height) / 2) / Math.tan((cam.fov * Math.PI) / 360);
     return {
-      x: width / 2 + (local.x * focal) / depth,
-      y: height / 2 - (local.y * focal) / depth,
-      depth,
+      x: width / 2 + (lx * focal) / lz,
+      y: height / 2 - (ly * focal) / lz,
+      depth: lz,
     };
   }
 

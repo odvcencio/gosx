@@ -2479,37 +2479,85 @@
 
 
 
+  // Dedicated camera scratch for sceneBoundsDepthMetrics. Separate from
+  // _sceneProjectCameraScratch in 11-scene-math.js so back-to-back calls
+  // from the bundle builder (projection + bounds) don't clobber each
+  // other even though both are single-threaded.
+  const _sceneBoundsDepthCameraScratch = {
+    x: 0, y: 0, z: 0,
+    rotationX: 0, rotationY: 0, rotationZ: 0,
+    fov: 0, near: 0, far: 0,
+  };
+
+  // sceneBoundsDepthMetrics inlines the 8-corner depth computation that
+  // used to go: sceneBoundsCorners (8 fresh point objects) →
+  // sceneWorldPointDepth × 8 → sceneCameraLocalPoint → sceneInverseRotatePoint
+  // (each allocating their own results). That chain was 16 allocations
+  // per call. Now: 0 allocations for the 8-corner inner loop, plus one
+  // fresh result object the caller retains.
+  //
+  // The inverse rotation math matches sceneInverseRotatePoint exactly so
+  // the depth values are identical to the old path — bit-for-bit where
+  // floating-point reordering isn't involved, within 1 ulp otherwise.
   function sceneBoundsDepthMetrics(bounds, camera) {
     if (!bounds) {
       const depth = sceneWorldPointDepth(0, camera);
       return { near: depth, far: depth, center: depth };
     }
-    const corners = sceneBoundsCorners(bounds);
-    let near = sceneWorldPointDepth(corners[0], camera);
-    let far = near;
-    for (let index = 1; index < corners.length; index += 1) {
-      const depth = sceneWorldPointDepth(corners[index], camera);
-      near = Math.min(near, depth);
-      far = Math.max(far, depth);
+    const cam = sceneRenderCamera(camera, _sceneBoundsDepthCameraScratch);
+
+    const sinX = Math.sin(-cam.rotationX);
+    const cosX = Math.cos(-cam.rotationX);
+    const sinY = Math.sin(-cam.rotationY);
+    const cosY = Math.cos(-cam.rotationY);
+    const sinZ = Math.sin(-cam.rotationZ);
+    const cosZ = Math.cos(-cam.rotationZ);
+
+    const minX = sceneNumber(bounds.minX, 0);
+    const minY = sceneNumber(bounds.minY, 0);
+    const minZ = sceneNumber(bounds.minZ, 0);
+    const maxX = sceneNumber(bounds.maxX, 0);
+    const maxY = sceneNumber(bounds.maxY, 0);
+    const maxZ = sceneNumber(bounds.maxZ, 0);
+
+    let near = Infinity;
+    let far = -Infinity;
+
+    // Iterate the 8 bounding-box corners by bit-coding (i & 1, i & 2, i & 4).
+    for (let i = 0; i < 8; i += 1) {
+      const worldX = (i & 4) ? maxX : minX;
+      const worldY = (i & 2) ? maxY : minY;
+      const worldZ = (i & 1) ? maxZ : minZ;
+
+      // Translate into camera-local space.
+      let lx = worldX - cam.x;
+      let ly = worldY - cam.y;
+      let lz = worldZ + cam.z;
+
+      // Inverse rotate: apply -rotZ, then -rotY, then -rotX in that order.
+      let nX = lx * cosZ - ly * sinZ;
+      let nY = lx * sinZ + ly * cosZ;
+      lx = nX;
+      ly = nY;
+
+      nX = lx * cosY + lz * sinY;
+      let nZ = -lx * sinY + lz * cosY;
+      lx = nX;
+      lz = nZ;
+
+      // Only lz matters for depth metrics — ly/lx discarded.
+      nZ = ly * sinX + lz * cosX;
+      lz = nZ;
+
+      if (lz < near) near = lz;
+      if (lz > far) far = lz;
     }
+
     return {
-      near,
-      far,
+      near: near,
+      far: far,
       center: (near + far) / 2,
     };
-  }
-
-  function sceneBoundsCorners(bounds) {
-    return [
-      { x: sceneNumber(bounds && bounds.minX, 0), y: sceneNumber(bounds && bounds.minY, 0), z: sceneNumber(bounds && bounds.minZ, 0) },
-      { x: sceneNumber(bounds && bounds.minX, 0), y: sceneNumber(bounds && bounds.minY, 0), z: sceneNumber(bounds && bounds.maxZ, 0) },
-      { x: sceneNumber(bounds && bounds.minX, 0), y: sceneNumber(bounds && bounds.maxY, 0), z: sceneNumber(bounds && bounds.minZ, 0) },
-      { x: sceneNumber(bounds && bounds.minX, 0), y: sceneNumber(bounds && bounds.maxY, 0), z: sceneNumber(bounds && bounds.maxZ, 0) },
-      { x: sceneNumber(bounds && bounds.maxX, 0), y: sceneNumber(bounds && bounds.minY, 0), z: sceneNumber(bounds && bounds.minZ, 0) },
-      { x: sceneNumber(bounds && bounds.maxX, 0), y: sceneNumber(bounds && bounds.minY, 0), z: sceneNumber(bounds && bounds.maxZ, 0) },
-      { x: sceneNumber(bounds && bounds.maxX, 0), y: sceneNumber(bounds && bounds.maxY, 0), z: sceneNumber(bounds && bounds.minZ, 0) },
-      { x: sceneNumber(bounds && bounds.maxX, 0), y: sceneNumber(bounds && bounds.maxY, 0), z: sceneNumber(bounds && bounds.maxZ, 0) },
-    ];
   }
 
   function sceneBoundsViewCulled(bounds, camera) {
