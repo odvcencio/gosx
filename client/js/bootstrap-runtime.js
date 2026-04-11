@@ -7087,12 +7087,6 @@
     out.z = z + object.z;
   }
 
-  function translateScenePoint(point, object, timeSeconds) {
-    const out = { x: 0, y: 0, z: 0 };
-    translateScenePointInto(out, point && point.x, point && point.y, point && point.z, object, timeSeconds);
-    return out;
-  }
-
   const _lineSegmentFromScratch = { x: 0, y: 0, z: 0 };
   const _lineSegmentToScratch = { x: 0, y: 0, z: 0 };
   const _meshTriangleP0Scratch = { x: 0, y: 0, z: 0 };

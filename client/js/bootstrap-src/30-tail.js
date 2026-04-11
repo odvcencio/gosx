@@ -2483,7 +2483,6 @@
       // 10-runtime-scene-core.js
       sceneRenderCamera: sceneRenderCamera,
       translateScenePointInto: translateScenePointInto,
-      translateScenePoint: translateScenePoint,
       createSceneThickLineScratch: createSceneThickLineScratch,
       expandSceneThickLineIntoScratch: expandSceneThickLineIntoScratch,
       sceneBundleNeedsThickLines: sceneBundleNeedsThickLines,

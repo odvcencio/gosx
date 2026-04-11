@@ -370,12 +370,6 @@ function buildBenchmarks(bench, opts) {
   });
 
   list.push({
-    key: "translateScenePoint (allocating)",
-    setup: () => ({ point: { x: 1, y: 2, z: 3 }, object: makeObjectFixture() }),
-    target: (fx) => { bench.translateScenePoint(fx.point, fx.object, 0.5); },
-  });
-
-  list.push({
     key: "translateScenePointInto (alloc-free)",
     setup: () => ({ out: { x: 0, y: 0, z: 0 }, object: makeObjectFixture() }),
     target: (fx) => { bench.translateScenePointInto(fx.out, 1, 2, 3, fx.object, 0.5); },

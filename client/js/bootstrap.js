@@ -7087,12 +7087,6 @@
     out.z = z + object.z;
   }
 
-  function translateScenePoint(point, object, timeSeconds) {
-    const out = { x: 0, y: 0, z: 0 };
-    translateScenePointInto(out, point && point.x, point && point.y, point && point.z, object, timeSeconds);
-    return out;
-  }
-
   const _lineSegmentFromScratch = { x: 0, y: 0, z: 0 };
   const _lineSegmentToScratch = { x: 0, y: 0, z: 0 };
   const _meshTriangleP0Scratch = { x: 0, y: 0, z: 0 };
@@ -9901,10 +9895,21 @@
     ).slice(0, 4);
   }
 
+  const _scenePlaneSurfaceCornersScratch = [
+    { x: 0, y: 0, z: 0 },
+    { x: 0, y: 0, z: 0 },
+    { x: 0, y: 0, z: 0 },
+    { x: 0, y: 0, z: 0 },
+  ];
+
   function scenePlaneSurfaceCorners(object, timeSeconds) {
-    return scenePlaneLocalCorners(object).map(function(point) {
-      return translateScenePoint(point, object, timeSeconds);
-    });
+    const local = scenePlaneLocalCorners(object);
+    const out = _scenePlaneSurfaceCornersScratch;
+    for (let i = 0; i < 4; i += 1) {
+      const p = local[i];
+      translateScenePointInto(out[i], p && p.x, p && p.y, p && p.z, object, timeSeconds);
+    }
+    return out;
   }
 
   function scenePlaneSurfacePositions(corners) {
@@ -24134,7 +24139,6 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
     window.__gosx_bench = {
       sceneRenderCamera: sceneRenderCamera,
       translateScenePointInto: translateScenePointInto,
-      translateScenePoint: translateScenePoint,
       createSceneThickLineScratch: createSceneThickLineScratch,
       expandSceneThickLineIntoScratch: expandSceneThickLineIntoScratch,
       sceneBundleNeedsThickLines: sceneBundleNeedsThickLines,

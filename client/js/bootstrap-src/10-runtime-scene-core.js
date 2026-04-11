@@ -2647,17 +2647,11 @@
   // transform (scale → rotate → translate + drift offset). It writes the
   // result into a caller-provided `out` object, reads raw coordinates to
   // avoid an intermediate point object at the call site, and inlines the
-  // rotation math so there's no `sceneRotatePoint` result allocation.
+  // rotation math so there's no sceneRotatePoint result allocation.
   //
-  // Hot callers (the line-segment loop and the triangle vertex loop in
-  // appendSceneObjectToBundle / appendSceneMeshObjectToBundle) hoist
-  // stable scratch `out` objects above their outer loops. That pattern is
-  // allocation-free across frames — each iteration mutates the same
-  // objects in place.
-  //
-  // The legacy allocating form `translateScenePoint(point, object, t)` is
-  // preserved below for the remaining dead-code callers. Once those are
-  // removed entirely we can drop the wrapper.
+  // Every caller in the tree uses a hoisted scratch `out` object (module-
+  // level or above-loop), so translating a point at 60 fps costs zero
+  // allocations after the initial scratch is wired up.
   function translateScenePointInto(out, px, py, pz, object, timeSeconds) {
     const scaleX = sceneNumber(object && object.scaleX, 1);
     const scaleY = sceneNumber(object && object.scaleY, 1);
@@ -2707,17 +2701,6 @@
     out.x = x + object.x;
     out.y = y + object.y;
     out.z = z + object.z;
-  }
-
-  // Allocating wrapper used by scenePlaneSurfaceCorners in 12-scene-geometry.js,
-  // which does a 4-element .map() and therefore retains all four results in
-  // an array — a shared scratch would alias them. Hot call sites inside
-  // bundle-build loops use translateScenePointInto directly with their own
-  // hoisted scratches.
-  function translateScenePoint(point, object, timeSeconds) {
-    const out = { x: 0, y: 0, z: 0 };
-    translateScenePointInto(out, point && point.x, point && point.y, point && point.z, object, timeSeconds);
-    return out;
   }
 
   // Module-level scratches used by the hot line-geometry and triangle-mesh

@@ -138,10 +138,29 @@
     ).slice(0, 4);
   }
 
+  // Module-level scratch for scenePlaneSurfaceCorners. Four stable corner
+  // objects wrapped in a stable array — the two callers in
+  // 10-runtime-scene-core.js (appendSceneObjectToBundle bounds expansion
+  // and appendSceneSurfaceToBundle positions serialization) consume the
+  // returned corners immediately inside a for loop without retaining the
+  // individual refs, so it's safe to share. Previously each call
+  // allocated a 4-element array of fresh {x,y,z} objects through
+  // translateScenePoint — 5 allocations per plane per frame.
+  const _scenePlaneSurfaceCornersScratch = [
+    { x: 0, y: 0, z: 0 },
+    { x: 0, y: 0, z: 0 },
+    { x: 0, y: 0, z: 0 },
+    { x: 0, y: 0, z: 0 },
+  ];
+
   function scenePlaneSurfaceCorners(object, timeSeconds) {
-    return scenePlaneLocalCorners(object).map(function(point) {
-      return translateScenePoint(point, object, timeSeconds);
-    });
+    const local = scenePlaneLocalCorners(object);
+    const out = _scenePlaneSurfaceCornersScratch;
+    for (let i = 0; i < 4; i += 1) {
+      const p = local[i];
+      translateScenePointInto(out[i], p && p.x, p && p.y, p && p.z, object, timeSeconds);
+    }
+    return out;
   }
 
   function scenePlaneSurfacePositions(corners) {
