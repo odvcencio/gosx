@@ -2614,10 +2614,18 @@
     let bounds = null;
     let vertexCount = 0;
     if (includeLineGeometry) {
-      // Resolve the per-object line width. Zero falls back to the legacy
-      // 1.8px default so scenes that don't set LinesGeometry.Width render
-      // identically to pre-thick-line behavior.
-      const objectLineWidth = sceneNumber(object && object.lineWidth, 0) || 1.8;
+      // Two widths in play here:
+      //   - rawLineWidth: 0 when the user didn't set LinesGeometry.Width at
+      //     all, positive when they did. Stored as-is in bundle.worldLineWidths
+      //     so the WebGL thick-line dispatch only activates on explicit
+      //     non-default widths (sceneBundleNeedsThickLines checks > 1) and
+      //     legacy wireframe objects keep using gl.LINES.
+      //   - objectLineWidth: resolved render width used by appendSceneLine's
+      //     per-line record for the Canvas 2D non-world path, which still
+      //     expects a positive width value. Falls back to the legacy 1.8px
+      //     default when rawLineWidth is zero.
+      const rawLineWidth = sceneNumber(object && object.lineWidth, 0);
+      const objectLineWidth = rawLineWidth > 0 ? rawLineWidth : 1.8;
       const worldSegments = sourceSegments.map(function(segment) {
         return [
           translateScenePoint(segment[0], object, timeSeconds),
@@ -2637,9 +2645,11 @@
           toLighting[0], toLighting[1], toLighting[2], toLighting[3],
         );
         // Keep worldLineWidths in lockstep with each segment pushed into
-        // worldPositions so the canvas 2D world renderer can index into
-        // it as bundle.worldLineWidths[segmentIndex].
-        bundle.worldLineWidths.push(objectLineWidth);
+        // worldPositions. Store rawLineWidth (zero when unset) so the
+        // canvas 2D world renderer and the WebGL thick-line dispatch can
+        // distinguish "default width" (0 → fall back at read time) from
+        // "user explicitly asked for width N" (N > 0 → honor on both paths).
+        bundle.worldLineWidths.push(rawLineWidth);
         bounds = sceneExpandWorldBounds(bounds, fromWorld);
         bounds = sceneExpandWorldBounds(bounds, toWorld);
         vertexCount += 2;
@@ -3167,6 +3177,11 @@
   }
 
   function createSceneWebGLResources(gl, program, surfaceProgram) {
+    // Thick-line program is compiled lazily (and silently tolerates failure)
+    // so a driver that refuses the program just falls back to the legacy
+    // gl.LINES path. Buffers exist up-front so the draw path doesn't allocate
+    // per frame.
+    const thickLineProgram = createSceneThickLineProgram(gl);
     return {
       program,
       surfaceProgram,
@@ -3178,6 +3193,8 @@
         dynamicOpaque: createSceneWebGLBufferSet(gl),
       },
       drawScratch: createSceneWorldDrawScratch(),
+      thickLineProgram,
+      thickLineBuffers: createSceneThickLineBufferSet(gl),
       positionLocation: gl.getAttribLocation(program, "a_position"),
       colorLocation: gl.getAttribLocation(program, "a_color"),
       materialLocation: gl.getAttribLocation(program, "a_material"),
@@ -3280,6 +3297,28 @@
   function renderSceneWebGLWorldBundle(gl, bundle, canvas, resources) {
     let drew = renderSceneWebGLSurfaces(gl, bundle, canvas, resources, "opaque");
     drew = renderSceneWebGLMeshWorldBundle(gl, bundle, canvas, resources) || drew;
+
+    // Dispatch to the thick-line program when any world line has an explicit
+    // width > 1 (scene.LinesGeometry.Width on the Go side). This preserves
+    // legacy behavior for existing scenes (hairline via gl.LINES) and only
+    // activates the new draw path for scenes that opt in. The thick-line
+    // path currently draws all world lines as one call with alpha blending
+    // and does not respect the draw plan's per-pass (opaque/alpha/additive)
+    // blend separation — follow-up work can thread per-pass state through
+    // if a production scene needs mixed-blend thick lines.
+    if (sceneBundleNeedsThickLines(bundle) && resources.thickLineProgram) {
+      const thickDrew = drawSceneThickLines(gl, bundle, canvas, resources);
+      if (thickDrew) {
+        gl.useProgram(resources.program);
+        applySceneWebGLUniforms(gl, bundle, canvas, true, resources);
+        drew = renderSceneWebGLSurfaces(gl, bundle, canvas, resources, "alpha") || drew || true;
+        drew = renderSceneWebGLSurfaces(gl, bundle, canvas, resources, "additive") || drew;
+        return true;
+      }
+      // Thick-line draw failed (e.g. segment count overflow). Fall through
+      // to the legacy gl.LINES path so the scene still renders.
+    }
+
     gl.useProgram(resources.program);
     applySceneWebGLUniforms(gl, bundle, canvas, true, resources);
     if (sceneBundleCanUseBundledPasses(bundle)) {
@@ -4148,4 +4187,368 @@
       return null;
     }
     return shader;
+  }
+
+  // ---- Thick line WebGL program (three.js Line2-style vertex expansion) ----
+  //
+  // gl.LINES respects only hairline widths on almost every driver. To honor
+  // scene.LinesGeometry.Width on WebGL we expand each segment (A, B) into a
+  // screen-space quad (4 vertices, 2 triangles) in the vertex shader and
+  // offset each vertex perpendicular to the line's screen-space direction
+  // by (side * width * 0.5) pixels.
+  //
+  // The projection math mirrors the legacy createSceneWebGLProgram path so
+  // thick lines align exactly with whatever else the legacy world renderer
+  // draws. u_viewport is the render target size in pixels (canvas.width /
+  // canvas.height) and is used to convert a pixel-space offset back into
+  // clip-space via multiplication by clip.w.
+  function createSceneThickLineProgram(gl) {
+    const vertexSource = [
+      "attribute vec3 a_positionA;",
+      "attribute vec3 a_positionB;",
+      "attribute vec4 a_colorA;",
+      "attribute vec4 a_colorB;",
+      "attribute float a_side;",
+      "attribute float a_endpoint;",
+      "attribute float a_width;",
+      "uniform vec4 u_camera;",
+      "uniform vec3 u_camera_rotation;",
+      "uniform float u_aspect;",
+      "uniform vec2 u_viewport;",
+      "varying vec4 v_color;",
+      "vec3 inverseRotatePoint(vec3 point, vec3 rotation) {",
+      "  float sinZ = sin(-rotation.z);",
+      "  float cosZ = cos(-rotation.z);",
+      "  float nextX = point.x * cosZ - point.y * sinZ;",
+      "  float nextY = point.x * sinZ + point.y * cosZ;",
+      "  point = vec3(nextX, nextY, point.z);",
+      "  float sinY = sin(-rotation.y);",
+      "  float cosY = cos(-rotation.y);",
+      "  nextX = point.x * cosY + point.z * sinY;",
+      "  float nextZ = -point.x * sinY + point.z * cosY;",
+      "  point = vec3(nextX, point.y, nextZ);",
+      "  float sinX = sin(-rotation.x);",
+      "  float cosX = cos(-rotation.x);",
+      "  nextY = point.y * cosX - point.z * sinX;",
+      "  nextZ = point.y * sinX + point.z * cosX;",
+      "  return vec3(point.x, nextY, nextZ);",
+      "}",
+      "vec4 projectEndpoint(vec3 world) {",
+      "  vec3 local = inverseRotatePoint(vec3(world.x - u_camera.x, world.y - u_camera.y, world.z + u_camera.z), u_camera_rotation);",
+      "  float depth = local.z;",
+      "  if (depth <= 0.001) {",
+      "    return vec4(2.0, 2.0, 0.0, 1.0);",
+      "  }",
+      "  float focal = 1.0 / tan(radians(u_camera.w) * 0.5);",
+      "  vec2 projected = vec2(local.x * focal / depth, local.y * focal / depth);",
+      "  projected.x /= max(u_aspect, 0.0001);",
+      "  float clipDepth = clamp(depth / 128.0, 0.0, 1.0) * 2.0 - 1.0;",
+      "  return vec4(projected, clipDepth, 1.0);",
+      "}",
+      "void main() {",
+      "  vec4 clipA = projectEndpoint(a_positionA);",
+      "  vec4 clipB = projectEndpoint(a_positionB);",
+      "  vec4 base = mix(clipA, clipB, a_endpoint);",
+      // Compute the screen-space direction using post-divide NDC positions
+      // scaled by half the viewport. Short-segment guard prevents a NaN when
+      // both endpoints collapse onto the same pixel.
+      "  vec2 ndcA = clipA.xy / max(clipA.w, 0.0001);",
+      "  vec2 ndcB = clipB.xy / max(clipB.w, 0.0001);",
+      "  vec2 screenA = ndcA * (u_viewport * 0.5);",
+      "  vec2 screenB = ndcB * (u_viewport * 0.5);",
+      "  vec2 dir = screenB - screenA;",
+      "  float len = length(dir);",
+      "  if (len < 0.0001) {",
+      "    dir = vec2(1.0, 0.0);",
+      "  } else {",
+      "    dir = dir / len;",
+      "  }",
+      "  vec2 normal = vec2(-dir.y, dir.x);",
+      // Offset = (side * width/2) pixels → NDC via division by half-viewport
+      // → clip space via multiplication by base.w.
+      "  vec2 pixelOffset = normal * (a_side * a_width * 0.5);",
+      "  vec2 ndcOffset = pixelOffset / max(u_viewport * 0.5, vec2(0.0001));",
+      "  vec2 clipOffset = ndcOffset * base.w;",
+      "  gl_Position = base + vec4(clipOffset, 0.0, 0.0);",
+      "  v_color = mix(a_colorA, a_colorB, a_endpoint);",
+      "}",
+    ].join("\n");
+
+    const fragmentSource = [
+      "precision mediump float;",
+      "varying vec4 v_color;",
+      "void main() {",
+      "  gl_FragColor = vec4(clamp(v_color.rgb, 0.0, 1.0), clamp(v_color.a, 0.0, 1.0));",
+      "}",
+    ].join("\n");
+
+    const vertexShader = createSceneShader(gl, gl.VERTEX_SHADER, vertexSource);
+    const fragmentShader = createSceneShader(gl, gl.FRAGMENT_SHADER, fragmentSource);
+    if (!vertexShader || !fragmentShader) {
+      return null;
+    }
+    const program = gl.createProgram();
+    gl.attachShader(program, vertexShader);
+    gl.attachShader(program, fragmentShader);
+    gl.linkProgram(program);
+    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+      console.warn("[gosx] Scene3D thick-line link failed");
+      return null;
+    }
+    return {
+      program,
+      positionALocation: gl.getAttribLocation(program, "a_positionA"),
+      positionBLocation: gl.getAttribLocation(program, "a_positionB"),
+      colorALocation: gl.getAttribLocation(program, "a_colorA"),
+      colorBLocation: gl.getAttribLocation(program, "a_colorB"),
+      sideLocation: gl.getAttribLocation(program, "a_side"),
+      endpointLocation: gl.getAttribLocation(program, "a_endpoint"),
+      widthLocation: gl.getAttribLocation(program, "a_width"),
+      cameraLocation: gl.getUniformLocation(program, "u_camera"),
+      cameraRotationLocation: gl.getUniformLocation(program, "u_camera_rotation"),
+      aspectLocation: gl.getUniformLocation(program, "u_aspect"),
+      viewportLocation: gl.getUniformLocation(program, "u_viewport"),
+    };
+  }
+
+  // buildSceneThickLineVertexData expands per-segment world line data into
+  // per-quad vertex attributes for the thick-line shader. 2 source vertices
+  // (one segment) become 4 expanded vertices laid out as:
+  //
+  //     endpoint=0,side=-1   endpoint=1,side=-1
+  //              *──────────*
+  //              │          │
+  //              │          │
+  //              *──────────*
+  //     endpoint=0,side=+1   endpoint=1,side=+1
+  //
+  // with triangles (0,1,2) and (0,2,3). All 4 vertices carry the full
+  // (positionA, positionB, colorA, colorB) pair so the vertex shader can
+  // compute the screen-space direction without touching the index buffer.
+  //
+  // segmentCount must equal worldLineWidths.length (one width per segment)
+  // and worldPositions.length/6 (6 floats per segment). The caller is
+  // responsible for truncating beyond 16384 segments — Uint16 indices cap
+  // out at 65535, and 4 vertices per segment × 16384 = 65536.
+  function buildSceneThickLineVertexData(worldPositions, worldColors, worldLineWidths, segmentCount) {
+    const safeCount = Math.min(segmentCount, 16384);
+    const vertsPerSegment = 4;
+    const indicesPerSegment = 6;
+    const totalVerts = safeCount * vertsPerSegment;
+
+    const positionsA = new Float32Array(totalVerts * 3);
+    const positionsB = new Float32Array(totalVerts * 3);
+    const colorsA = new Float32Array(totalVerts * 4);
+    const colorsB = new Float32Array(totalVerts * 4);
+    const sides = new Float32Array(totalVerts);
+    const endpoints = new Float32Array(totalVerts);
+    const widths = new Float32Array(totalVerts);
+    const indices = new Uint16Array(safeCount * indicesPerSegment);
+
+    // Quad corner layout: endpoint/side pairs for each of the 4 verts.
+    // Vertex indices inside a quad: 0 = A-, 1 = A+, 2 = B+, 3 = B-.
+    // Triangles: (0,1,2) and (0,2,3).
+    const quadEndpoints = [0, 0, 1, 1];
+    const quadSides = [-1, 1, 1, -1];
+
+    for (let seg = 0; seg < safeCount; seg += 1) {
+      const posOffset = seg * 6;
+      const colorOffset = seg * 8;
+      const ax = worldPositions[posOffset];
+      const ay = worldPositions[posOffset + 1];
+      const az = worldPositions[posOffset + 2];
+      const bx = worldPositions[posOffset + 3];
+      const by = worldPositions[posOffset + 4];
+      const bz = worldPositions[posOffset + 5];
+      const caR = worldColors[colorOffset];
+      const caG = worldColors[colorOffset + 1];
+      const caB = worldColors[colorOffset + 2];
+      const caA = worldColors[colorOffset + 3];
+      const cbR = worldColors[colorOffset + 4];
+      const cbG = worldColors[colorOffset + 5];
+      const cbB = worldColors[colorOffset + 6];
+      const cbA = worldColors[colorOffset + 7];
+      const width = (worldLineWidths && worldLineWidths[seg] > 0) ? worldLineWidths[seg] : 1;
+
+      for (let corner = 0; corner < 4; corner += 1) {
+        const vi = seg * 4 + corner;
+        const p3 = vi * 3;
+        const p4 = vi * 4;
+        positionsA[p3] = ax;
+        positionsA[p3 + 1] = ay;
+        positionsA[p3 + 2] = az;
+        positionsB[p3] = bx;
+        positionsB[p3 + 1] = by;
+        positionsB[p3 + 2] = bz;
+        colorsA[p4] = caR;
+        colorsA[p4 + 1] = caG;
+        colorsA[p4 + 2] = caB;
+        colorsA[p4 + 3] = caA;
+        colorsB[p4] = cbR;
+        colorsB[p4 + 1] = cbG;
+        colorsB[p4 + 2] = cbB;
+        colorsB[p4 + 3] = cbA;
+        sides[vi] = quadSides[corner];
+        endpoints[vi] = quadEndpoints[corner];
+        widths[vi] = width;
+      }
+
+      const base = seg * 4;
+      const ii = seg * 6;
+      indices[ii] = base;
+      indices[ii + 1] = base + 1;
+      indices[ii + 2] = base + 2;
+      indices[ii + 3] = base;
+      indices[ii + 4] = base + 2;
+      indices[ii + 5] = base + 3;
+    }
+
+    return {
+      positionsA,
+      positionsB,
+      colorsA,
+      colorsB,
+      sides,
+      endpoints,
+      widths,
+      indices,
+      segmentCount: safeCount,
+    };
+  }
+
+  function createSceneThickLineBufferSet(gl) {
+    return {
+      positionA: gl.createBuffer(),
+      positionB: gl.createBuffer(),
+      colorA: gl.createBuffer(),
+      colorB: gl.createBuffer(),
+      side: gl.createBuffer(),
+      endpoint: gl.createBuffer(),
+      width: gl.createBuffer(),
+      index: gl.createBuffer(),
+    };
+  }
+
+  function uploadSceneThickLineBuffers(gl, resources, data) {
+    const buffers = resources.thickLineBuffers;
+    const arrayBuffer = resources.arrayBuffer;
+    const elementArrayBuffer = typeof gl.ELEMENT_ARRAY_BUFFER === "number" ? gl.ELEMENT_ARRAY_BUFFER : 0x8893;
+    gl.bindBuffer(arrayBuffer, buffers.positionA);
+    gl.bufferData(arrayBuffer, data.positionsA, resources.dynamicDraw);
+    gl.bindBuffer(arrayBuffer, buffers.positionB);
+    gl.bufferData(arrayBuffer, data.positionsB, resources.dynamicDraw);
+    gl.bindBuffer(arrayBuffer, buffers.colorA);
+    gl.bufferData(arrayBuffer, data.colorsA, resources.dynamicDraw);
+    gl.bindBuffer(arrayBuffer, buffers.colorB);
+    gl.bufferData(arrayBuffer, data.colorsB, resources.dynamicDraw);
+    gl.bindBuffer(arrayBuffer, buffers.side);
+    gl.bufferData(arrayBuffer, data.sides, resources.dynamicDraw);
+    gl.bindBuffer(arrayBuffer, buffers.endpoint);
+    gl.bufferData(arrayBuffer, data.endpoints, resources.dynamicDraw);
+    gl.bindBuffer(arrayBuffer, buffers.width);
+    gl.bufferData(arrayBuffer, data.widths, resources.dynamicDraw);
+    gl.bindBuffer(elementArrayBuffer, buffers.index);
+    gl.bufferData(elementArrayBuffer, data.indices, resources.dynamicDraw);
+  }
+
+  function drawSceneThickLines(gl, bundle, canvas, resources) {
+    const thickProgram = resources.thickLineProgram;
+    if (!thickProgram || !thickProgram.program) {
+      return false;
+    }
+    const widths = bundle && bundle.worldLineWidths;
+    const vertexCount = Math.floor(sceneNumber(bundle && bundle.worldVertexCount, 0));
+    const segmentCount = Math.floor(vertexCount / 2);
+    if (segmentCount <= 0 || !bundle.worldPositions || !bundle.worldColors) {
+      return false;
+    }
+    // Overflow guard: Uint16 indices cap at 65535 → 16384 segments. Falling
+    // back to the legacy gl.LINES path lets enormous scenes (particle field
+    // fallback bundles) still render without a buffer overflow crash — they
+    // just won't honor per-segment width past that cutoff.
+    if (segmentCount > 16384) {
+      return false;
+    }
+
+    const data = buildSceneThickLineVertexData(bundle.worldPositions, bundle.worldColors, widths, segmentCount);
+    uploadSceneThickLineBuffers(gl, resources, data);
+
+    gl.useProgram(thickProgram.program);
+
+    const camera = sceneRenderCamera(bundle && bundle.camera);
+    if (thickProgram.cameraLocation && typeof gl.uniform4f === "function") {
+      gl.uniform4f(thickProgram.cameraLocation, camera.x, camera.y, camera.z, camera.fov);
+    }
+    if (thickProgram.cameraRotationLocation && typeof gl.uniform3f === "function") {
+      gl.uniform3f(thickProgram.cameraRotationLocation, camera.rotationX, camera.rotationY, camera.rotationZ);
+    }
+    if (thickProgram.aspectLocation && typeof gl.uniform1f === "function") {
+      const aspect = Math.max(0.0001, canvas.width / Math.max(1, canvas.height));
+      gl.uniform1f(thickProgram.aspectLocation, aspect);
+    }
+    if (thickProgram.viewportLocation && typeof gl.uniform2f === "function") {
+      gl.uniform2f(thickProgram.viewportLocation, canvas.width, canvas.height);
+    }
+
+    const arrayBuffer = resources.arrayBuffer;
+    const floatType = resources.floatType;
+    const buffers = resources.thickLineBuffers;
+
+    gl.bindBuffer(arrayBuffer, buffers.positionA);
+    gl.enableVertexAttribArray(thickProgram.positionALocation);
+    gl.vertexAttribPointer(thickProgram.positionALocation, 3, floatType, false, 0, 0);
+
+    gl.bindBuffer(arrayBuffer, buffers.positionB);
+    gl.enableVertexAttribArray(thickProgram.positionBLocation);
+    gl.vertexAttribPointer(thickProgram.positionBLocation, 3, floatType, false, 0, 0);
+
+    gl.bindBuffer(arrayBuffer, buffers.colorA);
+    gl.enableVertexAttribArray(thickProgram.colorALocation);
+    gl.vertexAttribPointer(thickProgram.colorALocation, 4, floatType, false, 0, 0);
+
+    gl.bindBuffer(arrayBuffer, buffers.colorB);
+    gl.enableVertexAttribArray(thickProgram.colorBLocation);
+    gl.vertexAttribPointer(thickProgram.colorBLocation, 4, floatType, false, 0, 0);
+
+    gl.bindBuffer(arrayBuffer, buffers.side);
+    gl.enableVertexAttribArray(thickProgram.sideLocation);
+    gl.vertexAttribPointer(thickProgram.sideLocation, 1, floatType, false, 0, 0);
+
+    gl.bindBuffer(arrayBuffer, buffers.endpoint);
+    gl.enableVertexAttribArray(thickProgram.endpointLocation);
+    gl.vertexAttribPointer(thickProgram.endpointLocation, 1, floatType, false, 0, 0);
+
+    gl.bindBuffer(arrayBuffer, buffers.width);
+    gl.enableVertexAttribArray(thickProgram.widthLocation);
+    gl.vertexAttribPointer(thickProgram.widthLocation, 1, floatType, false, 0, 0);
+
+    const elementArrayBuffer = typeof gl.ELEMENT_ARRAY_BUFFER === "number" ? gl.ELEMENT_ARRAY_BUFFER : 0x8893;
+    const unsignedShort = typeof gl.UNSIGNED_SHORT === "number" ? gl.UNSIGNED_SHORT : 0x1403;
+    gl.bindBuffer(elementArrayBuffer, buffers.index);
+
+    // Thick lines use normal alpha blending regardless of the caller's
+    // per-pass intent — the draw-plan pass structure isn't threaded through
+    // this path in v1. Follow-up: honor additive/alpha split per pass.
+    applySceneWebGLDepth(gl, "translucent", resources.stateCache);
+    applySceneWebGLBlend(gl, "alpha", resources.stateCache);
+
+    gl.drawElements(resources.trianglesMode, segmentCount * 6, unsignedShort, 0);
+    return true;
+  }
+
+  // sceneBundleNeedsThickLines returns true when any world line segment has
+  // an explicit width > 1 (LinesGeometry.Width was set on the Go side). False
+  // preserves the legacy gl.LINES draw path so pre-v0.15.1 scenes render
+  // unchanged on drivers that happily take hairline widths.
+  function sceneBundleNeedsThickLines(bundle) {
+    const widths = bundle && bundle.worldLineWidths;
+    if (!widths || !widths.length) {
+      return false;
+    }
+    for (let i = 0; i < widths.length; i += 1) {
+      if (widths[i] > 1) {
+        return true;
+      }
+    }
+    return false;
   }
