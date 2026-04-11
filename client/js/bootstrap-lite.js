@@ -3516,24 +3516,25 @@
         refresh("visibility");
       });
     }
+    const passive = { passive: true };
     if (typeof window.addEventListener === "function") {
       window.addEventListener("resize", function() {
         refresh("viewport");
-      });
+      }, passive);
       window.addEventListener("orientationchange", function() {
         refresh("viewport");
-      });
+      }, passive);
       window.addEventListener("pageshow", function() {
         refresh("pageshow");
-      });
+      }, passive);
     }
     if (window.visualViewport && typeof window.visualViewport.addEventListener === "function") {
       window.visualViewport.addEventListener("resize", function() {
         refresh("visual-viewport");
-      });
+      }, passive);
       window.visualViewport.addEventListener("scroll", function() {
         refresh("visual-viewport");
-      });
+      }, passive);
     }
 
     const queries = [

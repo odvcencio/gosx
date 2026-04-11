@@ -634,24 +634,31 @@
         refresh("visibility");
       });
     }
+    // Passive listeners: these handlers never call preventDefault, and on
+    // iOS Safari the absence of { passive: true } causes the browser to
+    // block the scroll thread until the JS handler finishes — which
+    // manifests as scroll jank and lingering stale canvas frames during
+    // rubber-band / touch scrolls. Firefox is less strict but also benefits
+    // from the hint since it lets the compositor skip extra coordination.
+    const passive = { passive: true };
     if (typeof window.addEventListener === "function") {
       window.addEventListener("resize", function() {
         refresh("viewport");
-      });
+      }, passive);
       window.addEventListener("orientationchange", function() {
         refresh("viewport");
-      });
+      }, passive);
       window.addEventListener("pageshow", function() {
         refresh("pageshow");
-      });
+      }, passive);
     }
     if (window.visualViewport && typeof window.visualViewport.addEventListener === "function") {
       window.visualViewport.addEventListener("resize", function() {
         refresh("visual-viewport");
-      });
+      }, passive);
       window.visualViewport.addEventListener("scroll", function() {
         refresh("visual-viewport");
-      });
+      }, passive);
     }
 
     const queries = [

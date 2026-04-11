@@ -508,13 +508,17 @@
       }
     });
 
-    // Mobile keyboard height
+    // Mobile keyboard height. Passive: this handler only queues a signal
+    // write — it never calls preventDefault. On iOS Safari a non-passive
+    // visualViewport listener blocks the scroll thread during keyboard
+    // show/hide animations, which manifests as jank and stale canvas
+    // frames on the keyboard transition.
     if (window.visualViewport) {
       viewportListener = function() {
         var kh = window.innerHeight - window.visualViewport.height;
         queueInputSignal("$input.keyboard_height", Math.max(0, kh));
       };
-      window.visualViewport.addEventListener("resize", viewportListener);
+      window.visualViewport.addEventListener("resize", viewportListener, { passive: true });
     }
 
     // Cursor position tracking for IME placement

@@ -3516,24 +3516,25 @@
         refresh("visibility");
       });
     }
+    const passive = { passive: true };
     if (typeof window.addEventListener === "function") {
       window.addEventListener("resize", function() {
         refresh("viewport");
-      });
+      }, passive);
       window.addEventListener("orientationchange", function() {
         refresh("viewport");
-      });
+      }, passive);
       window.addEventListener("pageshow", function() {
         refresh("pageshow");
-      });
+      }, passive);
     }
     if (window.visualViewport && typeof window.visualViewport.addEventListener === "function") {
       window.visualViewport.addEventListener("resize", function() {
         refresh("visual-viewport");
-      });
+      }, passive);
       window.visualViewport.addEventListener("scroll", function() {
         refresh("visual-viewport");
-      });
+      }, passive);
     }
 
     const queries = [
@@ -4993,7 +4994,7 @@
         var kh = window.innerHeight - window.visualViewport.height;
         queueInputSignal("$input.keyboard_height", Math.max(0, kh));
       };
-      window.visualViewport.addEventListener("resize", viewportListener);
+      window.visualViewport.addEventListener("resize", viewportListener, { passive: true });
     }
 
     unsubCursorRect = gosxSubscribeSharedSignal("$editor.cursor_rect", function(rect) {
@@ -21478,20 +21479,22 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
       if (disposed) {
         return;
       }
-      const nextViewport = sceneViewportFromMount(ctx.mount, props, viewportBase, canvas, capability);
-      if (sceneViewportChanged(viewport, nextViewport)) {
-        viewport = applySceneViewport(ctx.mount, canvas, labelLayer, nextViewport, viewportBase);
-      }
-      if (!sceneCanRender()) {
-        cancelFrame();
-        cancelScheduledRender();
-        return;
-      }
       if (scheduledRenderHandle != null) {
         return;
       }
       scheduledRenderHandle = engineFrame(function(now) {
         scheduledRenderHandle = null;
+        if (disposed) {
+          return;
+        }
+        const nextViewport = sceneViewportFromMount(ctx.mount, props, viewportBase, canvas, capability);
+        if (sceneViewportChanged(viewport, nextViewport)) {
+          viewport = applySceneViewport(ctx.mount, canvas, labelLayer, nextViewport, viewportBase);
+        }
+        if (!sceneCanRender()) {
+          cancelFrame();
+          return;
+        }
         renderFrame(typeof now === "number" ? now : 0, reason || "refresh");
       });
     }

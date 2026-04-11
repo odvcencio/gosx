@@ -2096,20 +2096,37 @@
       if (disposed) {
         return;
       }
-      const nextViewport = sceneViewportFromMount(ctx.mount, props, viewportBase, canvas, capability);
-      if (sceneViewportChanged(viewport, nextViewport)) {
-        viewport = applySceneViewport(ctx.mount, canvas, labelLayer, nextViewport, viewportBase);
-      }
-      if (!sceneCanRender()) {
-        cancelFrame();
-        cancelScheduledRender();
-        return;
-      }
       if (scheduledRenderHandle != null) {
         return;
       }
+      // Defer the viewport read+write into the RAF callback. The old
+      // code called sceneViewportFromMount / applySceneViewport
+      // synchronously, which meant every scroll event forced two
+      // layout flushes (one read pair before the write, one read pair
+      // after, because applySceneViewport both mutates canvas size and
+      // reads bounding rects for the label layer). Firefox coalesces
+      // scroll events at 30Hz during active touch-scroll, so the
+      // flushes stacked up and the browser had to reflow mid-scroll —
+      // visible as jank and a frame of stale canvas content after the
+      // scroll stopped. iOS Safari has the same symptom.
+      //
+      // Inside RAF the browser is already in a read phase (style+
+      // layout has been resolved), so rect reads are cheap and the
+      // subsequent canvas writes batch naturally into the following
+      // compositor pass.
       scheduledRenderHandle = engineFrame(function(now) {
         scheduledRenderHandle = null;
+        if (disposed) {
+          return;
+        }
+        const nextViewport = sceneViewportFromMount(ctx.mount, props, viewportBase, canvas, capability);
+        if (sceneViewportChanged(viewport, nextViewport)) {
+          viewport = applySceneViewport(ctx.mount, canvas, labelLayer, nextViewport, viewportBase);
+        }
+        if (!sceneCanRender()) {
+          cancelFrame();
+          return;
+        }
         renderFrame(typeof now === "number" ? now : 0, reason || "refresh");
       });
     }
