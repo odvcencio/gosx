@@ -2219,14 +2219,25 @@
       }
     }
 
+    // Renderer-scoped scratch arrays for the per-frame draw list so each
+    // render() call doesn't allocate three plain arrays + a result object
+    // and then throw them all into the GC nursery. Sort in-place on the
+    // persistent arrays; reset length to 0 at the top of each build.
+    const _drawListOpaque = [];
+    const _drawListAlpha = [];
+    const _drawListAdditive = [];
+    const _drawListResult = { opaque: _drawListOpaque, alpha: _drawListAlpha, additive: _drawListAdditive };
+
     // Collect objects into render-pass groups and sort translucent objects
-    // by depth (back-to-front).
+    // by depth (back-to-front). Returns a renderer-scoped scratch object —
+    // callers MUST NOT retain the reference across another buildPBRDrawList
+    // invocation because the underlying arrays are reused in place.
     function buildPBRDrawList(bundle) {
       const objects = Array.isArray(bundle && bundle.meshObjects) ? bundle.meshObjects : [];
       const materials = Array.isArray(bundle.materials) ? bundle.materials : [];
-      const opaque = [];
-      const alpha = [];
-      const additive = [];
+      _drawListOpaque.length = 0;
+      _drawListAlpha.length = 0;
+      _drawListAdditive.length = 0;
 
       for (var i = 0; i < objects.length; i++) {
         const obj = objects[i];
@@ -2239,19 +2250,19 @@
         const mat = materials[obj.materialIndex] || null;
         const pass = scenePBRObjectRenderPass(obj, mat);
         if (pass === "alpha") {
-          alpha.push(obj);
+          _drawListAlpha.push(obj);
         } else if (pass === "additive") {
-          additive.push(obj);
+          _drawListAdditive.push(obj);
         } else {
-          opaque.push(obj);
+          _drawListOpaque.push(obj);
         }
       }
 
       // Sort translucent passes back-to-front by depth center.
-      alpha.sort(scenePBRDepthSort);
-      additive.sort(scenePBRDepthSort);
+      _drawListAlpha.sort(scenePBRDepthSort);
+      _drawListAdditive.sort(scenePBRDepthSort);
 
-      return { opaque: opaque, alpha: alpha, additive: additive };
+      return _drawListResult;
     }
 
     function render(bundle, viewport) {

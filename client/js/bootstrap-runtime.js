@@ -6959,6 +6959,7 @@
       worldPositions: [],
       worldColors: [],
       worldLineWidths: [],
+      worldLinePasses: [],
       meshObjects: [],
       worldMeshPositions: [],
       worldMeshColors: [],
@@ -6988,6 +6989,7 @@
     bundle.worldColors = new Float32Array(bundle.worldColors);
     bundle.worldVertexCount = bundle.worldPositions.length / 3;
     bundle.worldLineWidths = new Float32Array(bundle.worldLineWidths);
+    bundle.worldLinePasses = new Uint8Array(bundle.worldLinePasses);
     bundle.worldMeshPositions = new Float32Array(bundle.worldMeshPositions);
     bundle.worldMeshColors = new Float32Array(bundle.worldMeshColors);
     bundle.worldMeshNormals = new Float32Array(bundle.worldMeshNormals);
@@ -7072,6 +7074,8 @@
     if (includeLineGeometry) {
       const rawLineWidth = sceneNumber(object && object.lineWidth, 0);
       const objectLineWidth = rawLineWidth > 0 ? rawLineWidth : 1.8;
+      const objectPassString = sceneWorldObjectRenderPass(object, material);
+      const objectPassIndex = objectPassString === "alpha" ? 1 : (objectPassString === "additive" ? 2 : 0);
       const worldSegments = sourceSegments.map(function(segment) {
         return [
           translateScenePoint(segment[0], object, timeSeconds),
@@ -7091,6 +7095,7 @@
           toLighting[0], toLighting[1], toLighting[2], toLighting[3],
         );
         bundle.worldLineWidths.push(rawLineWidth);
+        bundle.worldLinePasses.push(objectPassIndex);
         bounds = sceneExpandWorldBounds(bounds, fromWorld);
         bounds = sceneExpandWorldBounds(bounds, toWorld);
         vertexCount += 2;
@@ -7627,6 +7632,7 @@
       drawScratch: createSceneWorldDrawScratch(),
       thickLineProgram,
       thickLineBuffers: createSceneThickLineBufferSet(gl),
+      thickLineScratch: createSceneThickLineScratch(),
       positionLocation: gl.getAttribLocation(program, "a_position"),
       colorLocation: gl.getAttribLocation(program, "a_color"),
       materialLocation: gl.getAttribLocation(program, "a_material"),
@@ -7699,8 +7705,8 @@
 
   function applySceneWebGLUniforms(gl, bundle, canvas, usePerspective, resources) {
     const aspect = Math.max(0.0001, canvas.width / Math.max(1, canvas.height));
+    const camera = sceneRenderCamera(bundle && bundle.camera);
     if (typeof gl.uniform4f === "function" && resources.cameraLocation) {
-      const camera = sceneRenderCamera(bundle && bundle.camera);
       gl.uniform4f(
         resources.cameraLocation,
         camera.x,
@@ -7710,7 +7716,6 @@
       );
     }
     if (typeof gl.uniform3f === "function" && resources.cameraRotationLocation) {
-      const camera = sceneRenderCamera(bundle && bundle.camera);
       gl.uniform3f(
         resources.cameraRotationLocation,
         camera.rotationX,
@@ -8708,23 +8713,65 @@
     };
   }
 
-  function buildSceneThickLineVertexData(worldPositions, worldColors, worldLineWidths, segmentCount) {
+  function createSceneThickLineScratch() {
+    return {
+      segmentCapacity: 0,
+      positionsA: new Float32Array(0),
+      positionsB: new Float32Array(0),
+      colorsA: new Float32Array(0),
+      colorsB: new Float32Array(0),
+      sides: new Float32Array(0),
+      endpoints: new Float32Array(0),
+      widths: new Float32Array(0),
+      opaqueIndices: new Uint16Array(0),
+      alphaIndices: new Uint16Array(0),
+      additiveIndices: new Uint16Array(0),
+      opaqueIndexCount: 0,
+      alphaIndexCount: 0,
+      additiveIndexCount: 0,
+    };
+  }
+
+  function ensureSceneThickLineScratchCapacity(scratch, segmentCount) {
+    if (scratch.segmentCapacity >= segmentCount) {
+      return;
+    }
+    const nextCapacity = Math.max(64, Math.max(scratch.segmentCapacity * 2, segmentCount));
+    const totalVerts = nextCapacity * 4;
+    scratch.positionsA = new Float32Array(totalVerts * 3);
+    scratch.positionsB = new Float32Array(totalVerts * 3);
+    scratch.colorsA = new Float32Array(totalVerts * 4);
+    scratch.colorsB = new Float32Array(totalVerts * 4);
+    scratch.sides = new Float32Array(totalVerts);
+    scratch.endpoints = new Float32Array(totalVerts);
+    scratch.widths = new Float32Array(totalVerts);
+    scratch.opaqueIndices = new Uint16Array(nextCapacity * 6);
+    scratch.alphaIndices = new Uint16Array(nextCapacity * 6);
+    scratch.additiveIndices = new Uint16Array(nextCapacity * 6);
+    scratch.segmentCapacity = nextCapacity;
+  }
+
+  const _thickLineQuadEndpoints = [0, 0, 1, 1];
+  const _thickLineQuadSides = [-1, 1, 1, -1];
+
+  function expandSceneThickLineIntoScratch(scratch, worldPositions, worldColors, worldLineWidths, worldLinePasses, segmentCount) {
     const safeCount = Math.min(segmentCount, 16384);
-    const vertsPerSegment = 4;
-    const indicesPerSegment = 6;
-    const totalVerts = safeCount * vertsPerSegment;
+    ensureSceneThickLineScratchCapacity(scratch, safeCount);
 
-    const positionsA = new Float32Array(totalVerts * 3);
-    const positionsB = new Float32Array(totalVerts * 3);
-    const colorsA = new Float32Array(totalVerts * 4);
-    const colorsB = new Float32Array(totalVerts * 4);
-    const sides = new Float32Array(totalVerts);
-    const endpoints = new Float32Array(totalVerts);
-    const widths = new Float32Array(totalVerts);
-    const indices = new Uint16Array(safeCount * indicesPerSegment);
+    const positionsA = scratch.positionsA;
+    const positionsB = scratch.positionsB;
+    const colorsA = scratch.colorsA;
+    const colorsB = scratch.colorsB;
+    const sides = scratch.sides;
+    const endpoints = scratch.endpoints;
+    const widths = scratch.widths;
+    const opaqueIndices = scratch.opaqueIndices;
+    const alphaIndices = scratch.alphaIndices;
+    const additiveIndices = scratch.additiveIndices;
 
-    const quadEndpoints = [0, 0, 1, 1];
-    const quadSides = [-1, 1, 1, -1];
+    let opaqueIdx = 0;
+    let alphaIdx = 0;
+    let additiveIdx = 0;
 
     for (let seg = 0; seg < safeCount; seg += 1) {
       const posOffset = seg * 6;
@@ -8763,32 +8810,44 @@
         colorsB[p4 + 1] = cbG;
         colorsB[p4 + 2] = cbB;
         colorsB[p4 + 3] = cbA;
-        sides[vi] = quadSides[corner];
-        endpoints[vi] = quadEndpoints[corner];
+        sides[vi] = _thickLineQuadSides[corner];
+        endpoints[vi] = _thickLineQuadEndpoints[corner];
         widths[vi] = width;
       }
 
       const base = seg * 4;
-      const ii = seg * 6;
-      indices[ii] = base;
-      indices[ii + 1] = base + 1;
-      indices[ii + 2] = base + 2;
-      indices[ii + 3] = base;
-      indices[ii + 4] = base + 2;
-      indices[ii + 5] = base + 3;
+      const pass = (worldLinePasses && seg < worldLinePasses.length) ? worldLinePasses[seg] : 0;
+      if (pass === 2) {
+        additiveIndices[additiveIdx] = base;
+        additiveIndices[additiveIdx + 1] = base + 1;
+        additiveIndices[additiveIdx + 2] = base + 2;
+        additiveIndices[additiveIdx + 3] = base;
+        additiveIndices[additiveIdx + 4] = base + 2;
+        additiveIndices[additiveIdx + 5] = base + 3;
+        additiveIdx += 6;
+      } else if (pass === 1) {
+        alphaIndices[alphaIdx] = base;
+        alphaIndices[alphaIdx + 1] = base + 1;
+        alphaIndices[alphaIdx + 2] = base + 2;
+        alphaIndices[alphaIdx + 3] = base;
+        alphaIndices[alphaIdx + 4] = base + 2;
+        alphaIndices[alphaIdx + 5] = base + 3;
+        alphaIdx += 6;
+      } else {
+        opaqueIndices[opaqueIdx] = base;
+        opaqueIndices[opaqueIdx + 1] = base + 1;
+        opaqueIndices[opaqueIdx + 2] = base + 2;
+        opaqueIndices[opaqueIdx + 3] = base;
+        opaqueIndices[opaqueIdx + 4] = base + 2;
+        opaqueIndices[opaqueIdx + 5] = base + 3;
+        opaqueIdx += 6;
+      }
     }
 
-    return {
-      positionsA,
-      positionsB,
-      colorsA,
-      colorsB,
-      sides,
-      endpoints,
-      widths,
-      indices,
-      segmentCount: safeCount,
-    };
+    scratch.opaqueIndexCount = opaqueIdx;
+    scratch.alphaIndexCount = alphaIdx;
+    scratch.additiveIndexCount = additiveIdx;
+    return safeCount;
   }
 
   function createSceneThickLineBufferSet(gl) {
@@ -8800,30 +8859,45 @@
       side: gl.createBuffer(),
       endpoint: gl.createBuffer(),
       width: gl.createBuffer(),
-      index: gl.createBuffer(),
+      opaqueIndex: gl.createBuffer(),
+      alphaIndex: gl.createBuffer(),
+      additiveIndex: gl.createBuffer(),
     };
   }
 
-  function uploadSceneThickLineBuffers(gl, resources, data) {
+  function uploadSceneThickLineBuffers(gl, resources, scratch, segmentCount) {
     const buffers = resources.thickLineBuffers;
     const arrayBuffer = resources.arrayBuffer;
     const elementArrayBuffer = typeof gl.ELEMENT_ARRAY_BUFFER === "number" ? gl.ELEMENT_ARRAY_BUFFER : 0x8893;
+    const usedVerts = segmentCount * 4;
+
     gl.bindBuffer(arrayBuffer, buffers.positionA);
-    gl.bufferData(arrayBuffer, data.positionsA, resources.dynamicDraw);
+    gl.bufferData(arrayBuffer, scratch.positionsA.subarray(0, usedVerts * 3), resources.dynamicDraw);
     gl.bindBuffer(arrayBuffer, buffers.positionB);
-    gl.bufferData(arrayBuffer, data.positionsB, resources.dynamicDraw);
+    gl.bufferData(arrayBuffer, scratch.positionsB.subarray(0, usedVerts * 3), resources.dynamicDraw);
     gl.bindBuffer(arrayBuffer, buffers.colorA);
-    gl.bufferData(arrayBuffer, data.colorsA, resources.dynamicDraw);
+    gl.bufferData(arrayBuffer, scratch.colorsA.subarray(0, usedVerts * 4), resources.dynamicDraw);
     gl.bindBuffer(arrayBuffer, buffers.colorB);
-    gl.bufferData(arrayBuffer, data.colorsB, resources.dynamicDraw);
+    gl.bufferData(arrayBuffer, scratch.colorsB.subarray(0, usedVerts * 4), resources.dynamicDraw);
     gl.bindBuffer(arrayBuffer, buffers.side);
-    gl.bufferData(arrayBuffer, data.sides, resources.dynamicDraw);
+    gl.bufferData(arrayBuffer, scratch.sides.subarray(0, usedVerts), resources.dynamicDraw);
     gl.bindBuffer(arrayBuffer, buffers.endpoint);
-    gl.bufferData(arrayBuffer, data.endpoints, resources.dynamicDraw);
+    gl.bufferData(arrayBuffer, scratch.endpoints.subarray(0, usedVerts), resources.dynamicDraw);
     gl.bindBuffer(arrayBuffer, buffers.width);
-    gl.bufferData(arrayBuffer, data.widths, resources.dynamicDraw);
-    gl.bindBuffer(elementArrayBuffer, buffers.index);
-    gl.bufferData(elementArrayBuffer, data.indices, resources.dynamicDraw);
+    gl.bufferData(arrayBuffer, scratch.widths.subarray(0, usedVerts), resources.dynamicDraw);
+
+    if (scratch.opaqueIndexCount > 0) {
+      gl.bindBuffer(elementArrayBuffer, buffers.opaqueIndex);
+      gl.bufferData(elementArrayBuffer, scratch.opaqueIndices.subarray(0, scratch.opaqueIndexCount), resources.dynamicDraw);
+    }
+    if (scratch.alphaIndexCount > 0) {
+      gl.bindBuffer(elementArrayBuffer, buffers.alphaIndex);
+      gl.bufferData(elementArrayBuffer, scratch.alphaIndices.subarray(0, scratch.alphaIndexCount), resources.dynamicDraw);
+    }
+    if (scratch.additiveIndexCount > 0) {
+      gl.bindBuffer(elementArrayBuffer, buffers.additiveIndex);
+      gl.bufferData(elementArrayBuffer, scratch.additiveIndices.subarray(0, scratch.additiveIndexCount), resources.dynamicDraw);
+    }
   }
 
   function drawSceneThickLines(gl, bundle, canvas, resources) {
@@ -8832,6 +8906,7 @@
       return false;
     }
     const widths = bundle && bundle.worldLineWidths;
+    const passes = bundle && bundle.worldLinePasses;
     const vertexCount = Math.floor(sceneNumber(bundle && bundle.worldVertexCount, 0));
     const segmentCount = Math.floor(vertexCount / 2);
     if (segmentCount <= 0 || !bundle.worldPositions || !bundle.worldColors) {
@@ -8841,8 +8916,9 @@
       return false;
     }
 
-    const data = buildSceneThickLineVertexData(bundle.worldPositions, bundle.worldColors, widths, segmentCount);
-    uploadSceneThickLineBuffers(gl, resources, data);
+    const scratch = resources.thickLineScratch;
+    const usedSegments = expandSceneThickLineIntoScratch(scratch, bundle.worldPositions, bundle.worldColors, widths, passes, segmentCount);
+    uploadSceneThickLineBuffers(gl, resources, scratch, usedSegments);
 
     gl.useProgram(thickProgram.program);
 
@@ -8895,12 +8971,25 @@
 
     const elementArrayBuffer = typeof gl.ELEMENT_ARRAY_BUFFER === "number" ? gl.ELEMENT_ARRAY_BUFFER : 0x8893;
     const unsignedShort = typeof gl.UNSIGNED_SHORT === "number" ? gl.UNSIGNED_SHORT : 0x1403;
-    gl.bindBuffer(elementArrayBuffer, buffers.index);
 
-    applySceneWebGLDepth(gl, "translucent", resources.stateCache);
-    applySceneWebGLBlend(gl, "alpha", resources.stateCache);
-
-    gl.drawElements(resources.trianglesMode, segmentCount * 6, unsignedShort, 0);
+    if (scratch.opaqueIndexCount > 0) {
+      applySceneWebGLDepth(gl, "opaque", resources.stateCache);
+      applySceneWebGLBlend(gl, "opaque", resources.stateCache);
+      gl.bindBuffer(elementArrayBuffer, buffers.opaqueIndex);
+      gl.drawElements(resources.trianglesMode, scratch.opaqueIndexCount, unsignedShort, 0);
+    }
+    if (scratch.alphaIndexCount > 0) {
+      applySceneWebGLDepth(gl, "translucent", resources.stateCache);
+      applySceneWebGLBlend(gl, "alpha", resources.stateCache);
+      gl.bindBuffer(elementArrayBuffer, buffers.alphaIndex);
+      gl.drawElements(resources.trianglesMode, scratch.alphaIndexCount, unsignedShort, 0);
+    }
+    if (scratch.additiveIndexCount > 0) {
+      applySceneWebGLDepth(gl, "translucent", resources.stateCache);
+      applySceneWebGLBlend(gl, "additive", resources.stateCache);
+      gl.bindBuffer(elementArrayBuffer, buffers.additiveIndex);
+      gl.drawElements(resources.trianglesMode, scratch.additiveIndexCount, unsignedShort, 0);
+    }
     return true;
   }
 
