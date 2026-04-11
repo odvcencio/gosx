@@ -14213,6 +14213,8 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
     var pingPongAView = null;
     var pingPongB = null;
     var pingPongBView = null;
+    var pingPongWidth = 0;
+    var pingPongHeight = 0;
     var depthTex = null;
     var depthTexView = null;
     var currentWidth = 0;
@@ -14265,8 +14267,6 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
       if (sceneTex) sceneTex.destroy();
       if (auxTex) auxTex.destroy();
       if (depthTex) depthTex.destroy();
-      if (pingPongA) pingPongA.destroy();
-      if (pingPongB) pingPongB.destroy();
 
       var texUsage = GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING;
       sceneTex = device.createTexture({ size: [width, height, 1], format: targetFormat, usage: texUsage });
@@ -14280,15 +14280,21 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
       });
       depthTexView = depthTex.createView();
 
-      var halfW = Math.max(1, Math.floor(width / 2));
-      var halfH = Math.max(1, Math.floor(height / 2));
-      pingPongA = device.createTexture({ size: [halfW, halfH, 1], format: targetFormat, usage: texUsage });
-      pingPongAView = pingPongA.createView();
-      pingPongB = device.createTexture({ size: [halfW, halfH, 1], format: targetFormat, usage: texUsage });
-      pingPongBView = pingPongB.createView();
-
       currentWidth = width;
       currentHeight = height;
+    }
+
+    function ensureBloomPingPong(w, h) {
+      if (w === pingPongWidth && h === pingPongHeight && pingPongA) return;
+      if (pingPongA) pingPongA.destroy();
+      if (pingPongB) pingPongB.destroy();
+      var texUsage = GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING;
+      pingPongA = device.createTexture({ size: [w, h, 1], format: targetFormat, usage: texUsage });
+      pingPongAView = pingPongA.createView();
+      pingPongB = device.createTexture({ size: [w, h, 1], format: targetFormat, usage: texUsage });
+      pingPongBView = pingPongB.createView();
+      pingPongWidth = w;
+      pingPongHeight = h;
     }
 
     function fullscreenPass(encoder, pipeline, bindGroup, targetView) {
@@ -14341,8 +14347,10 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
               break;
             }
             case SCENE_POST_BLOOM: {
-              var halfW = Math.max(1, Math.floor(scaledW / 2));
-              var halfH = Math.max(1, Math.floor(scaledH / 2));
+              var bloomScale = (effect.scale > 0 && effect.scale <= 1) ? effect.scale : 0.5;
+              var halfW = Math.max(1, Math.floor(scaledW * bloomScale));
+              var halfH = Math.max(1, Math.floor(scaledH * bloomScale));
+              ensureBloomPingPong(halfW, halfH);
               var threshold = sceneNumber(effect.threshold, 0.8);
               var radius = sceneNumber(effect.radius, 5.0);
               var intensity = sceneNumber(effect.intensity, 0.5);
@@ -14468,6 +14476,8 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
         sceneTex = auxTex = depthTex = pingPongA = pingPongB = null;
         currentWidth = 0;
         currentHeight = 0;
+        pingPongWidth = 0;
+        pingPongHeight = 0;
       },
     };
   }
