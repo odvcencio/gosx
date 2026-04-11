@@ -756,12 +756,31 @@ func (p Props) legacyBaseProps() map[string]any {
 
 // MarshalJSON encodes only runtime props. Engine transport fields such as
 // ProgramRef and Capabilities stay outside the JSON payload.
+//
+// The hot path builds the base props map (width/height/camera/compression/
+// capabilities/etc. — Props has too many optional fields to express
+// reliably via struct tags) and marshals SceneIR directly via reflection
+// over its tagged struct fields, wiring the result in as a json.RawMessage
+// under the "scene" key. This skips the big sceneIR.legacyProps()
+// map tree that used to dominate Props allocations on every render —
+// hundreds of interface{} boxings for numeric setters, nested
+// map[string]any allocations per object/light/etc.
 func (p Props) MarshalJSON() ([]byte, error) {
-	values := p.LegacyProps()
-	if len(values) == 0 {
+	base := p.legacyBaseProps()
+
+	sceneIR := p.SceneIR()
+	if !sceneIR.isZero() {
+		sceneBytes, err := json.Marshal(sceneIR)
+		if err != nil {
+			return nil, err
+		}
+		base["scene"] = json.RawMessage(sceneBytes)
+	}
+
+	if len(base) == 0 {
 		return []byte("{}"), nil
 	}
-	return json.Marshal(values)
+	return json.Marshal(base)
 }
 
 // RawPropsJSON returns engine.Config-compatible runtime props.

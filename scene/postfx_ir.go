@@ -1,8 +1,18 @@
 package scene
 
+import (
+	"strconv"
+	"strings"
+)
+
 // PostEffectIR is the typed compatibility record for one post-processing
 // effect, lowered from the typed PostFX surface into the legacy props bag
 // the JS post-processor reads.
+//
+// Concrete types additionally implement json.Marshaler so SceneIR can
+// serialize a []PostEffectIR field via the standard reflection-based
+// encoder without going through an intermediate map[string]any.
+// legacyProps is preserved for tests and introspection callers.
 type PostEffectIR interface {
 	legacyProps() map[string]any
 }
@@ -26,6 +36,26 @@ func (ir TonemapIR) legacyProps() map[string]any {
 		out["mode"] = ir.Mode
 	}
 	return out
+}
+
+// MarshalJSON encodes the IR shape directly without allocating a
+// map[string]any. Output is byte-identical (up to key order) to what
+// legacyProps + json.Marshal would produce.
+func (ir TonemapIR) MarshalJSON() ([]byte, error) {
+	exposure := ir.Exposure
+	if exposure == 0 {
+		exposure = 1.0
+	}
+	var b strings.Builder
+	b.Grow(64)
+	b.WriteString(`{"kind":"toneMapping","exposure":`)
+	b.WriteString(strconv.FormatFloat(exposure, 'f', -1, 64))
+	if ir.Mode != "" {
+		b.WriteString(`,"mode":`)
+		b.WriteString(jsonString(ir.Mode))
+	}
+	b.WriteByte('}')
+	return []byte(b.String()), nil
 }
 
 // BloomIR lowers Bloom into the bundle.postEffects[i] shape:
@@ -67,6 +97,37 @@ func (ir BloomIR) legacyProps() map[string]any {
 	return out
 }
 
+// MarshalJSON produces the same bytes as legacyProps + json.Marshal
+// without allocating the intermediate map.
+func (ir BloomIR) MarshalJSON() ([]byte, error) {
+	threshold := ir.Threshold
+	if threshold == 0 {
+		threshold = 0.8
+	}
+	strength := ir.Strength
+	if strength == 0 {
+		strength = 0.5
+	}
+	radius := ir.Radius
+	if radius == 0 {
+		radius = 5.0
+	}
+	var b strings.Builder
+	b.Grow(96)
+	b.WriteString(`{"kind":"bloom","threshold":`)
+	b.WriteString(strconv.FormatFloat(threshold, 'f', -1, 64))
+	b.WriteString(`,"intensity":`)
+	b.WriteString(strconv.FormatFloat(strength, 'f', -1, 64))
+	b.WriteString(`,"radius":`)
+	b.WriteString(strconv.FormatFloat(radius, 'f', -1, 64))
+	if ir.Scale > 0 && ir.Scale <= 1 {
+		b.WriteString(`,"scale":`)
+		b.WriteString(strconv.FormatFloat(ir.Scale, 'f', -1, 64))
+	}
+	b.WriteByte('}')
+	return []byte(b.String()), nil
+}
+
 // VignetteIR lowers Vignette.
 type VignetteIR struct {
 	Intensity float64
@@ -81,6 +142,20 @@ func (ir VignetteIR) legacyProps() map[string]any {
 		"kind":      "vignette",
 		"intensity": intensity,
 	}
+}
+
+// MarshalJSON encodes the IR shape directly.
+func (ir VignetteIR) MarshalJSON() ([]byte, error) {
+	intensity := ir.Intensity
+	if intensity == 0 {
+		intensity = 1.0
+	}
+	var b strings.Builder
+	b.Grow(48)
+	b.WriteString(`{"kind":"vignette","intensity":`)
+	b.WriteString(strconv.FormatFloat(intensity, 'f', -1, 64))
+	b.WriteByte('}')
+	return []byte(b.String()), nil
 }
 
 // ColorGradeIR lowers ColorGrade.
@@ -109,6 +184,32 @@ func (ir ColorGradeIR) legacyProps() map[string]any {
 		"contrast":   contrast,
 		"saturation": saturation,
 	}
+}
+
+// MarshalJSON encodes the IR shape directly.
+func (ir ColorGradeIR) MarshalJSON() ([]byte, error) {
+	exposure := ir.Exposure
+	if exposure == 0 {
+		exposure = 1.0
+	}
+	contrast := ir.Contrast
+	if contrast == 0 {
+		contrast = 1.0
+	}
+	saturation := ir.Saturation
+	if saturation == 0 {
+		saturation = 1.0
+	}
+	var b strings.Builder
+	b.Grow(96)
+	b.WriteString(`{"kind":"colorGrade","exposure":`)
+	b.WriteString(strconv.FormatFloat(exposure, 'f', -1, 64))
+	b.WriteString(`,"contrast":`)
+	b.WriteString(strconv.FormatFloat(contrast, 'f', -1, 64))
+	b.WriteString(`,"saturation":`)
+	b.WriteString(strconv.FormatFloat(saturation, 'f', -1, 64))
+	b.WriteByte('}')
+	return []byte(b.String()), nil
 }
 
 // sceneIR converts the typed PostFX into the IR slice consumed by SceneIR.

@@ -1,6 +1,9 @@
 package scene
 
-import "strings"
+import (
+	"encoding/json"
+	"strings"
+)
 
 // CompressedArray holds a TurboQuant-compressed float array.
 // The client checks for compressed fields first and falls back to raw arrays.
@@ -15,6 +18,13 @@ type CompressedArray struct {
 
 // SceneIR is the typed lowered scene payload emitted from a Graph before it is
 // serialized into the current Scene3D compatibility contract.
+//
+// Historically serialized via legacyProps → map[string]any → json.Marshal,
+// which cost ~900 interface-boxing allocations per scene marshal. Since
+// every field (including the interface-typed PostEffects — each concrete
+// post-effect type implements json.Marshaler) now has proper json tags,
+// reflection-based json.Marshal(sceneIR) produces the same wire shape
+// directly, and Props.MarshalJSON takes that fast path.
 type SceneIR struct {
 	Objects          []ObjectIR           `json:"objects,omitempty"`
 	Models           []ModelIR            `json:"models,omitempty"`
@@ -26,9 +36,9 @@ type SceneIR struct {
 	Sprites          []SpriteIR           `json:"sprites,omitempty"`
 	Lights           []LightIR            `json:"lights,omitempty"`
 	Environment      EnvironmentIR        `json:"environment,omitzero"`
-	PostEffects      []PostEffectIR       `json:"-"` // serialized via legacyProps
-	PostFXMaxPixels  int                  `json:"-"` // serialized via legacyProps
-	ShadowMaxPixels  int                  `json:"-"` // serialized via legacyProps
+	PostEffects      []PostEffectIR       `json:"postEffects,omitempty"`
+	PostFXMaxPixels  int                  `json:"postFXMaxPixels,omitempty"`
+	ShadowMaxPixels  int                  `json:"shadowMaxPixels,omitempty"`
 }
 
 // ObjectIR is the typed compatibility record for one lowered scene object.
@@ -85,6 +95,29 @@ type ObjectIR struct {
 	InState         map[string]any `json:"inState,omitempty"`
 	OutState        map[string]any `json:"outState,omitempty"`
 	Live            []string       `json:"live,omitempty"`
+}
+
+// MarshalJSON encodes ObjectIR via the standard reflection path but
+// shadows the Points field so line-point coordinates always emit
+// their x/y/z triple even when zero. The legacy map-based marshaling
+// produced `{"x":0,"y":2,"z":0}` for a point like Vec3(0,2,0);
+// Vector3's default omitempty tag would silently drop the zero
+// coordinates and give `{"y":2}` instead, breaking any JS consumer
+// that expects all three keys.
+//
+// The `type alias` trick sheds ObjectIR's MarshalJSON method so
+// json.Marshal doesn't recurse infinitely, and the outer struct's
+// Points field shadows the embedded alias's Points (shallower depth
+// wins per encoding/json field resolution rules).
+func (o ObjectIR) MarshalJSON() ([]byte, error) {
+	type objectAlias ObjectIR
+	return json.Marshal(struct {
+		objectAlias
+		Points []linePointWire `json:"points,omitempty"`
+	}{
+		objectAlias: objectAlias(o),
+		Points:      toLinePointsWire(o.Points),
+	})
 }
 
 // ModelIR is the typed compatibility record for one scene model instance.
