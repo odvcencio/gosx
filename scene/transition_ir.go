@@ -3,9 +3,9 @@ package scene
 import "strings"
 
 type TransitionIR struct {
-	In     TransitionTimingIR `json:"in,omitempty"`
-	Out    TransitionTimingIR `json:"out,omitempty"`
-	Update TransitionTimingIR `json:"update,omitempty"`
+	In     TransitionTimingIR `json:"in,omitzero"`
+	Out    TransitionTimingIR `json:"out,omitzero"`
+	Update TransitionTimingIR `json:"update,omitzero"`
 }
 
 type TransitionTimingIR struct {
@@ -28,16 +28,24 @@ func lowerTransitionTiming(timing TransitionTiming) TransitionTimingIR {
 	}
 }
 
-func (transition TransitionIR) isZero() bool {
-	return transition.In.isZero() && transition.Out.isZero() && transition.Update.isZero()
+// IsZero reports whether all three transition phases are empty. Exported
+// (capital I) so encoding/json's `omitzero` tag recognizes it on fields
+// of type TransitionIR. That lets parent structs with
+// `json:"transition,omitzero"` skip the field entirely on the marshal
+// fast path, matching the old legacyProps behavior of not emitting a
+// transition key for zero-valued transitions.
+func (transition TransitionIR) IsZero() bool {
+	return transition.In.IsZero() && transition.Out.IsZero() && transition.Update.IsZero()
 }
 
-func (timing TransitionTimingIR) isZero() bool {
+// IsZero is the TransitionTimingIR counterpart to TransitionIR.IsZero —
+// same reason (json omitzero tag recognition).
+func (timing TransitionTimingIR) IsZero() bool {
 	return timing.Duration == 0 && strings.TrimSpace(timing.Easing) == ""
 }
 
 func (transition TransitionIR) legacyProps() map[string]any {
-	if transition.isZero() {
+	if transition.IsZero() {
 		return nil
 	}
 	record := map[string]any{}
@@ -54,7 +62,7 @@ func (transition TransitionIR) legacyProps() map[string]any {
 }
 
 func (timing TransitionTimingIR) legacyProps() map[string]any {
-	if timing.isZero() {
+	if timing.IsZero() {
 		return nil
 	}
 	record := map[string]any{}

@@ -25,7 +25,7 @@ type SceneIR struct {
 	Labels           []LabelIR            `json:"labels,omitempty"`
 	Sprites          []SpriteIR           `json:"sprites,omitempty"`
 	Lights           []LightIR            `json:"lights,omitempty"`
-	Environment      EnvironmentIR        `json:"environment,omitempty"`
+	Environment      EnvironmentIR        `json:"environment,omitzero"`
 	PostEffects      []PostEffectIR       `json:"-"` // serialized via legacyProps
 	PostFXMaxPixels  int                  `json:"-"` // serialized via legacyProps
 	ShadowMaxPixels  int                  `json:"-"` // serialized via legacyProps
@@ -81,7 +81,7 @@ type ObjectIR struct {
 	ShiftZ          float64        `json:"shiftZ,omitempty"`
 	DriftSpeed      float64        `json:"driftSpeed,omitempty"`
 	DriftPhase      float64        `json:"driftPhase,omitempty"`
-	Transition      TransitionIR   `json:"transition,omitempty"`
+	Transition      TransitionIR   `json:"transition,omitzero"`
 	InState         map[string]any `json:"inState,omitempty"`
 	OutState        map[string]any `json:"outState,omitempty"`
 	Live            []string       `json:"live,omitempty"`
@@ -129,7 +129,7 @@ type LabelIR struct {
 	Occlude     bool           `json:"occlude,omitempty"`
 	WhiteSpace  string         `json:"whiteSpace,omitempty"`
 	TextAlign   string         `json:"textAlign,omitempty"`
-	Transition  TransitionIR   `json:"transition,omitempty"`
+	Transition  TransitionIR   `json:"transition,omitzero"`
 	InState     map[string]any `json:"inState,omitempty"`
 	OutState    map[string]any `json:"outState,omitempty"`
 	Live        []string       `json:"live,omitempty"`
@@ -159,7 +159,7 @@ type SpriteIR struct {
 	AnchorY    float64        `json:"anchorY,omitempty"`
 	Occlude    bool           `json:"occlude,omitempty"`
 	Fit        string         `json:"fit,omitempty"`
-	Transition TransitionIR   `json:"transition,omitempty"`
+	Transition TransitionIR   `json:"transition,omitzero"`
 	InState    map[string]any `json:"inState,omitempty"`
 	OutState   map[string]any `json:"outState,omitempty"`
 	Live       []string       `json:"live,omitempty"`
@@ -185,7 +185,7 @@ type LightIR struct {
 	CastShadow  bool           `json:"castShadow,omitempty"`
 	ShadowBias  float64        `json:"shadowBias,omitempty"`
 	ShadowSize  int            `json:"shadowSize,omitempty"`
-	Transition  TransitionIR   `json:"transition,omitempty"`
+	Transition  TransitionIR   `json:"transition,omitzero"`
 	InState     map[string]any `json:"inState,omitempty"`
 	OutState    map[string]any `json:"outState,omitempty"`
 	Live        []string       `json:"live,omitempty"`
@@ -219,7 +219,7 @@ type PointsIR struct {
 	PreviewPositions    []CompressedArray `json:"previewPositions,omitempty"`
 	PreviewSizes        []CompressedArray `json:"previewSizes,omitempty"`
 	PositionStride      int               `json:"positionStride,omitempty"`
-	Transition          TransitionIR      `json:"transition,omitempty"`
+	Transition          TransitionIR      `json:"transition,omitzero"`
 	InState             map[string]any    `json:"inState,omitempty"`
 	OutState            map[string]any    `json:"outState,omitempty"`
 	Live                []string          `json:"live,omitempty"`
@@ -244,7 +244,7 @@ type InstancedMeshIR struct {
 	ReceiveShadow        bool              `json:"receiveShadow,omitempty"`
 	CompressedTransforms []CompressedArray `json:"compressedTransforms,omitempty"`
 	PreviewTransforms    []CompressedArray `json:"previewTransforms,omitempty"`
-	Transition           TransitionIR      `json:"transition,omitempty"`
+	Transition           TransitionIR      `json:"transition,omitzero"`
 	InState              map[string]any    `json:"inState,omitempty"`
 	OutState             map[string]any    `json:"outState,omitempty"`
 	Live                 []string          `json:"live,omitempty"`
@@ -258,7 +258,7 @@ type ComputeParticlesIR struct {
 	Forces     []ParticleForceIR  `json:"forces,omitempty"`
 	Material   ParticleMaterialIR `json:"material"`
 	Bounds     float64            `json:"bounds,omitempty"`
-	Transition TransitionIR       `json:"transition,omitempty"`
+	Transition TransitionIR       `json:"transition,omitzero"`
 	InState    map[string]any     `json:"inState,omitempty"`
 	OutState   map[string]any     `json:"outState,omitempty"`
 	Live       []string           `json:"live,omitempty"`
@@ -344,7 +344,7 @@ type EnvironmentIR struct {
 	ToneMapping      string         `json:"toneMapping,omitempty"`
 	FogColor         string         `json:"fogColor,omitempty"`
 	FogDensity       float64        `json:"fogDensity,omitempty"`
-	Transition       TransitionIR   `json:"transition,omitempty"`
+	Transition       TransitionIR   `json:"transition,omitzero"`
 	InState          map[string]any `json:"inState,omitempty"`
 	OutState         map[string]any `json:"outState,omitempty"`
 	Live             []string       `json:"live,omitempty"`
@@ -412,14 +412,20 @@ func (g Graph) SceneIR() SceneIR {
 }
 
 func (ir SceneIR) isZero() bool {
-	return len(ir.Objects) == 0 && len(ir.Models) == 0 && len(ir.Points) == 0 && len(ir.InstancedMeshes) == 0 && len(ir.ComputeParticles) == 0 && len(ir.Animations) == 0 && len(ir.Labels) == 0 && len(ir.Sprites) == 0 && len(ir.Lights) == 0 && ir.Environment.isZero() && len(ir.PostEffects) == 0
+	return len(ir.Objects) == 0 && len(ir.Models) == 0 && len(ir.Points) == 0 && len(ir.InstancedMeshes) == 0 && len(ir.ComputeParticles) == 0 && len(ir.Animations) == 0 && len(ir.Labels) == 0 && len(ir.Sprites) == 0 && len(ir.Lights) == 0 && ir.Environment.IsZero() && len(ir.PostEffects) == 0
 }
 
 func (ir SceneIR) legacyProps() map[string]any {
 	if ir.isZero() {
 		return nil
 	}
-	out := map[string]any{}
+	// Pre-sized map header — the final scene wire format rarely exceeds
+	// 12 top-level keys (objects/models/points/instancedMeshes/
+	// computeParticles/animations/labels/sprites/lights/environment/
+	// postEffects/shadowMaxPixels/postFXMaxPixels). Starting with that
+	// capacity skips the 1-2 bucket grows the default-sized literal path
+	// incurred on every marshal.
+	out := make(map[string]any, 16)
 	if objects := legacyObjects(ir.Objects); len(objects) > 0 {
 		out["objects"] = objects
 	}
@@ -987,7 +993,10 @@ func (item LightIR) legacyProps() map[string]any {
 	return record
 }
 
-func (item EnvironmentIR) isZero() bool {
+// IsZero is required for the `json:"environment,omitzero"` tag on SceneIR
+// to omit zero-valued environments. Must be exported so encoding/json's
+// struct-tag reflection can find it.
+func (item EnvironmentIR) IsZero() bool {
 	return item.AmbientColor == "" &&
 		item.AmbientIntensity == 0 &&
 		item.SkyColor == "" &&
@@ -998,14 +1007,14 @@ func (item EnvironmentIR) isZero() bool {
 		item.ToneMapping == "" &&
 		item.FogColor == "" &&
 		item.FogDensity == 0 &&
-		item.Transition.isZero() &&
+		item.Transition.IsZero() &&
 		len(item.InState) == 0 &&
 		len(item.OutState) == 0 &&
 		len(item.Live) == 0
 }
 
 func (item EnvironmentIR) legacyProps() map[string]any {
-	if item.isZero() {
+	if item.IsZero() {
 		return nil
 	}
 	record := map[string]any{}
