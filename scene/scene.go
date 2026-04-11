@@ -965,13 +965,11 @@ func (l *graphLowerer) lowerMesh(mesh Mesh, parent worldTransform) {
 		l.nextObjectID += 1
 		id = "scene-object-" + intString(l.nextObjectID)
 	}
-	kind, geometryProps := legacyGeometry(mesh.Geometry)
 	record := ObjectIR{
-		ID:   id,
-		Kind: kind,
+		ID: id,
 	}
-	applyGeometryProps(&record, geometryProps)
-	applyMaterialProps(&record, legacyMaterial(mesh.Material))
+	record.Kind = applyGeometryToObjectIR(&record, mesh.Geometry)
+	applyMaterialToObjectIR(&record, mesh.Material)
 	record.X = world.Position.X
 	record.Y = world.Position.Y
 	record.Z = world.Position.Z
@@ -1610,6 +1608,81 @@ func legacyGeometry(geometry Geometry) (string, map[string]any) {
 	return geometry.legacyGeometry()
 }
 
+// applyGeometryToObjectIR writes typed geometry fields directly onto the
+// given ObjectIR record, returning the kind string. Replaces the older
+// legacyGeometry + applyGeometryProps round-trip (typed Geometry → fresh
+// map[string]any → read-back-into-record) which allocated one map per
+// mesh even when a type switch could do the same work with zero
+// allocations. Kept in parallel with legacyGeometry for the few
+// non-hot-path callers that still want the map form.
+//
+// Adding a new concrete Geometry type? Add a case here with direct
+// field assignments matching its legacyGeometry() implementation. If
+// you forget, the fallback round-trips through the old map path.
+func applyGeometryToObjectIR(record *ObjectIR, geometry Geometry) string {
+	if geometry == nil {
+		return "cube"
+	}
+	switch g := geometry.(type) {
+	case CubeGeometry:
+		if g.Size > 0 {
+			record.Size = g.Size
+		}
+		return "cube"
+	case BoxGeometry:
+		record.Width = g.Width
+		record.Height = g.Height
+		record.Depth = g.Depth
+		return "box"
+	case PlaneGeometry:
+		record.Width = g.Width
+		record.Height = g.Height
+		return "plane"
+	case PyramidGeometry:
+		record.Width = g.Width
+		record.Height = g.Height
+		record.Depth = g.Depth
+		return "pyramid"
+	case SphereGeometry:
+		record.Radius = g.Radius
+		if g.Segments > 0 {
+			record.Segments = g.Segments
+		}
+		return "sphere"
+	case LinesGeometry:
+		record.Points = g.Points
+		record.LineSegments = g.Segments
+		if g.Width > 0 {
+			record.LineWidth = g.Width
+		}
+		return "lines"
+	case CylinderGeometry:
+		record.RadiusTop = g.RadiusTop
+		record.RadiusBottom = g.RadiusBottom
+		record.Height = g.Height
+		if g.Segments > 0 {
+			record.Segments = g.Segments
+		}
+		return "cylinder"
+	case TorusGeometry:
+		record.Radius = g.Radius
+		record.Tube = g.Tube
+		if g.RadialSegments > 0 {
+			record.RadialSegments = g.RadialSegments
+		}
+		if g.TubularSegments > 0 {
+			record.TubularSegments = g.TubularSegments
+		}
+		return "torus"
+	}
+	// Fallback for any future geometry type that hasn't been type-switched
+	// above yet — use the legacy map round-trip so correctness is
+	// preserved even if perf isn't.
+	kind, props := geometry.legacyGeometry()
+	applyGeometryProps(record, props)
+	return kind
+}
+
 func (g CubeGeometry) legacyGeometry() (string, map[string]any) {
 	if g.Size <= 0 {
 		return "cube", nil
@@ -1713,6 +1786,78 @@ func legacyMaterial(material Material) map[string]any {
 		return nil
 	}
 	return material.legacyMaterial()
+}
+
+// applyMaterialToObjectIR writes typed material fields directly onto
+// the given ObjectIR record. Parallel to applyGeometryToObjectIR —
+// replaces the legacyMaterial → applyMaterialProps map round-trip
+// with a zero-allocation type switch.
+func applyMaterialToObjectIR(record *ObjectIR, material Material) {
+	if material == nil {
+		return
+	}
+	switch m := material.(type) {
+	case FlatMaterial:
+		applyMaterialStyleToObjectIR(record, MaterialFlat, MaterialStyle(m))
+	case GhostMaterial:
+		applyMaterialStyleToObjectIR(record, MaterialGhost, MaterialStyle(m))
+	case GlassMaterial:
+		applyMaterialStyleToObjectIR(record, MaterialGlass, MaterialStyle(m))
+	case GlowMaterial:
+		applyMaterialStyleToObjectIR(record, MaterialGlow, MaterialStyle(m))
+	case MatteMaterial:
+		applyMaterialStyleToObjectIR(record, MaterialMatte, MaterialStyle(m))
+	case StandardMaterial:
+		record.MaterialKind = "standard"
+		record.Color = strings.TrimSpace(m.Color)
+		record.Roughness = m.Roughness
+		record.Metalness = m.Metalness
+		record.NormalMap = strings.TrimSpace(m.NormalMap)
+		record.RoughnessMap = strings.TrimSpace(m.RoughnessMap)
+		record.MetalnessMap = strings.TrimSpace(m.MetalnessMap)
+		record.EmissiveMap = strings.TrimSpace(m.EmissiveMap)
+		if m.Emissive != 0 {
+			record.Emissive = Float(m.Emissive)
+		}
+		if m.Opacity != nil {
+			record.Opacity = m.Opacity
+		}
+		if m.BlendMode != "" {
+			record.BlendMode = string(m.BlendMode)
+		}
+		if m.Wireframe != nil {
+			record.Wireframe = m.Wireframe
+		}
+	default:
+		// Fallback for any Material implementation not enumerated above —
+		// use the legacy map round-trip so correctness is preserved.
+		applyMaterialProps(record, material.legacyMaterial())
+	}
+}
+
+func applyMaterialStyleToObjectIR(record *ObjectIR, kind MaterialKind, style MaterialStyle) {
+	record.MaterialKind = string(kind)
+	if style.Color != "" {
+		record.Color = strings.TrimSpace(style.Color)
+	}
+	if style.Texture != "" {
+		record.Texture = strings.TrimSpace(style.Texture)
+	}
+	if style.Opacity != nil {
+		record.Opacity = style.Opacity
+	}
+	if style.Emissive != nil {
+		record.Emissive = style.Emissive
+	}
+	if style.BlendMode != "" {
+		record.BlendMode = string(style.BlendMode)
+	}
+	if style.RenderPass != "" {
+		record.RenderPass = string(style.RenderPass)
+	}
+	if style.Wireframe != nil {
+		record.Wireframe = style.Wireframe
+	}
 }
 
 func (m FlatMaterial) legacyMaterial() map[string]any {
