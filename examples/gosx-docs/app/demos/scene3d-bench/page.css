@@ -1,0 +1,125 @@
+/* ============================================================
+   Scene3D bench — full-viewport 3D canvas with perf overlay
+   page.css — sidecar for app/demos/scene3d-bench/page.gsx
+   ============================================================ */
+
+.bench3d {
+  position: relative;
+  min-height: 100vh;
+  overflow: hidden;
+  background: #05080f;
+}
+
+.bench3d__scene {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+}
+
+.bench3d__scene canvas {
+  display: block;
+  width: 100% !important;
+  height: 100% !important;
+}
+
+.bench3d__overlay {
+  position: absolute;
+  top: clamp(12px, 2vw, 28px);
+  right: clamp(12px, 2vw, 28px);
+  z-index: 2;
+  min-width: 220px;
+  padding: 16px 18px 14px;
+  border-radius: 10px;
+  background: rgba(5, 8, 15, 0.72);
+  border: 1px solid rgba(110, 180, 255, 0.22);
+  backdrop-filter: blur(12px) saturate(1.1);
+  -webkit-backdrop-filter: blur(12px) saturate(1.1);
+  color: #d6ebff;
+  font-family: "SF Mono", "JetBrains Mono", ui-monospace, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+}
+
+.bench3d__title {
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #8ecfff;
+  margin-bottom: 10px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid rgba(110, 180, 255, 0.16);
+}
+
+.bench3d__row {
+  display: flex;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.bench3d__row span {
+  color: #6b8da8;
+}
+
+.bench3d__row b {
+  color: #e8f3ff;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+.bench3d__actions {
+  margin-top: 10px;
+  display: flex;
+  gap: 8px;
+}
+
+.bench3d__actions button {
+  appearance: none;
+  background: rgba(110, 180, 255, 0.12);
+  border: 1px solid rgba(110, 180, 255, 0.3);
+  color: #d6ebff;
+  padding: 4px 12px;
+  border-radius: 6px;
+  font-family: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.bench3d__actions button:hover {
+  background: rgba(110, 180, 255, 0.22);
+}
+
+.bench3d__workloads {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(110, 180, 255, 0.16);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+}
+
+.bench3d__workloads a {
+  color: #8ecfff;
+  text-decoration: none;
+  font-size: 11px;
+  border-bottom: 1px dashed rgba(142, 207, 255, 0.35);
+  padding: 0 1px 1px;
+}
+
+.bench3d__workloads a:hover {
+  color: #d6ebff;
+  border-bottom-color: #d6ebff;
+}
+
+.bench3d__note {
+  margin: 12px 0 0;
+  padding-top: 10px;
+  border-top: 1px solid rgba(110, 180, 255, 0.16);
+  color: #7a94b0;
+  font-size: 11px;
+  line-height: 1.4;
+  font-family: system-ui, -apple-system, sans-serif;
+}

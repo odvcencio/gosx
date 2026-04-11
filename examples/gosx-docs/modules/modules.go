@@ -23,4 +23,5 @@ import (
 	_ "github.com/odvcencio/gosx/examples/gosx-docs/app/demos/cms"
 	_ "github.com/odvcencio/gosx/examples/gosx-docs/app/demos/galaxy"
 	_ "github.com/odvcencio/gosx/examples/gosx-docs/app/demos/scene3d"
+	_ "github.com/odvcencio/gosx/examples/gosx-docs/app/demos/scene3d-bench"
 )

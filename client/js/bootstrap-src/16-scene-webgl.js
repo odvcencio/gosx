@@ -2421,6 +2421,20 @@
         return;
       }
 
+      // Opt-in perf instrumentation for the browser bench overlay at
+      // /demos/scene3d-bench. The page sets window.__gosx_scene3d_perf
+      // before bootstrap runs; when it's truthy we bracket the render
+      // body with performance.mark / measure so a PerformanceObserver
+      // (installed by the page) can collect wall-clock per-frame durations.
+      //
+      // Gate is a single truthy check, ~1ns when disabled — production
+      // pages don't pay for it. Marks are cleared after each measure to
+      // prevent unbounded accumulation of performance entries.
+      var perfEnabled = typeof window !== "undefined" && window.__gosx_scene3d_perf === true;
+      if (perfEnabled) {
+        performance.mark("scene3d-render-start");
+      }
+
       // Check that this bundle has PBR-compatible data or points.
       const hasPBRData = Boolean(
         bundle.worldMeshPositions &&
@@ -2598,6 +2612,16 @@
         // Re-activate the PBR program for the next frame since post-processing
         // switches to its own shader programs.
         gl.useProgram(program);
+      }
+
+      if (perfEnabled) {
+        performance.mark("scene3d-render-end");
+        performance.measure("scene3d-render", "scene3d-render-start", "scene3d-render-end");
+        // Clean up marks so they don't accumulate across frames. Measures
+        // are consumed by the page's PerformanceObserver; leaving a short
+        // tail of unconsumed measures is fine — the browser caps the buffer.
+        performance.clearMarks("scene3d-render-start");
+        performance.clearMarks("scene3d-render-end");
       }
     }
 

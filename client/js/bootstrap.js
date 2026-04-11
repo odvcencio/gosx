@@ -12911,6 +12911,11 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
         return;
       }
 
+      var perfEnabled = typeof window !== "undefined" && window.__gosx_scene3d_perf === true;
+      if (perfEnabled) {
+        performance.mark("scene3d-render-start");
+      }
+
       const hasPBRData = Boolean(
         bundle.worldMeshPositions &&
         bundle.worldMeshNormals &&
@@ -13042,6 +13047,13 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
       if (usePostProcessing && postProcessor) {
         postProcessor.apply(postEffects, renderW, renderH, canvas.width, canvas.height);
         gl.useProgram(program);
+      }
+
+      if (perfEnabled) {
+        performance.mark("scene3d-render-end");
+        performance.measure("scene3d-render", "scene3d-render-start", "scene3d-render-end");
+        performance.clearMarks("scene3d-render-start");
+        performance.clearMarks("scene3d-render-end");
       }
     }
 
