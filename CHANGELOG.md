@@ -1,5 +1,21 @@
 # Changelog
 
+## v0.16.1
+
+Patch release following v0.16.0 with additional per-frame allocation eliminations caught in a second round of the perf sweep, plus the removal of two stray debug `console.log` statements that were shipping in production code paths.
+
+### Performance
+
+- **`sceneProjectPoint`** inlines the camera normalization, local transform, and inverse rotation. Previously allocated 5 intermediate objects per call (normalized camera ×2, local point arg, inverse-rotate result, final projected point). Now uses the out-param form of `sceneRenderCamera` with a module-level scratch and returns exactly 1 fresh object.
+- **`sceneBoundsDepthMetrics`** replaces the `sceneBoundsCorners` + `sceneWorldPointDepth × 8` chain (16 allocations per call) with an inlined 8-corner bit-coded loop that reads `bounds.{min,max}{X,Y,Z}` directly and inlines the inverse-rotate math for the Z component only. Zero allocations in the corner loop.
+- **`sceneWorldObjectDepth`** replaces the per-vertex `{x,y,z}` object + `sceneWorldPointDepth` chain (4+ allocations per vertex) with an inline camera-local Z computation using a module-level camera scratch. For a 1000-vertex mesh at 60fps that's 240k allocations per second eliminated.
+- **`scenePlaneSurfaceCorners`** uses a module-level 4-element scratch array instead of allocating 4 fresh corner objects via the old `translateScenePoint` wrapper.
+- **`translateScenePoint` allocating wrapper removed** — every call site now uses `translateScenePointInto` with hoisted scratches.
+- **`sceneMaterialShaderData`** fast path returns the cached shaderData reference directly instead of element-by-element copying through `sceneNumber`. Callers verified read-only.
+- **Stray `console.log` debug prints removed** from `appendSceneObjectToBundle` and the scene WebGL renderer wrapper — both ran every frame with `JSON.stringify` side effects and were pure log-spam.
+
+The `/demos/scene3d-bench` composite "simulated frame" benchmark holds at ~2.2µs per frame with zero JS-side allocations on the steady-state path.
+
 ## v0.16.0
 
 ### Scene3D Thick Lines
