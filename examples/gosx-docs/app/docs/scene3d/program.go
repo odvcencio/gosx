@@ -4,6 +4,130 @@ import (
 	"github.com/odvcencio/gosx/scene"
 )
 
+// DemoLightningScene is a visual QA fixture for the v0.15.0 thick-line
+// pipeline and the v0.15.4 per-pass blending fix. It renders three
+// jagged line geometries with increasing widths and different blend
+// modes so a human can eyeball the three code paths in a single frame:
+//
+//   - Hairline (Width=0, opaque)          — legacy gl.LINES path
+//   - Thick opaque (Width=3, RenderOpaque) — thick-line quad expansion,
+//     opaque index buffer, LEQUAL depth
+//   - Thick additive (Width=6, Additive)   — thick-line quad expansion,
+//     additive index buffer, additive blend — the path that was
+//     broken before v0.15.4 (all thick lines rendered as alpha)
+//
+// On a correct build the additive bolt should glow noticeably brighter
+// than the alpha-blended one at the same color, especially where the
+// segments cross. On the pre-fix build they look identical.
+//
+// Run with `gosx dev examples/gosx-docs` and mount this scene via the
+// Scene3D engine to validate visually.
+func DemoLightningScene() scene.Props {
+	// Shared jagged polyline — a crude lightning bolt traversing the scene.
+	points := []scene.Vector3{
+		scene.Vec3(-3.0, 2.5, 0),
+		scene.Vec3(-2.0, 1.5, 0.2),
+		scene.Vec3(-2.3, 0.5, -0.1),
+		scene.Vec3(-1.0, -0.3, 0.3),
+		scene.Vec3(-1.5, -1.5, 0),
+		scene.Vec3(0.0, -2.2, -0.2),
+	}
+	segments := [][2]int{{0, 1}, {1, 2}, {2, 3}, {3, 4}, {4, 5}}
+
+	return scene.Props{
+		Width:      900,
+		Height:     540,
+		Background: "#05080f",
+		Responsive: scene.Bool(true),
+		Controls:   "orbit",
+		Camera: scene.PerspectiveCamera{
+			Position: scene.Vec3(0, 0, 8),
+			FOV:      50,
+		},
+		Environment: scene.Environment{
+			AmbientColor:     "#ffffff",
+			AmbientIntensity: 0.15,
+		},
+		PostFX: scene.PostFX{
+			MaxPixels: scene.PostFXMaxPixels1080p,
+			Effects: []scene.PostEffect{
+				scene.Bloom{Threshold: 0.6, Strength: 0.9, Radius: 10, Scale: 0.25},
+				scene.Tonemap{Mode: scene.TonemapACES, Exposure: 1.2},
+			},
+		},
+		Graph: scene.NewGraph(
+			scene.AmbientLight{
+				Color:     "#8ecfff",
+				Intensity: 0.5,
+			},
+			// Hairline bolt — legacy gl.LINES. Cool blue, leftmost.
+			scene.Mesh{
+				Geometry: scene.LinesGeometry{
+					Points:   translatePoints(points, -3, 0, 0),
+					Segments: segments,
+					// Width zero → legacy path.
+				},
+				Material: scene.FlatMaterial{
+					Color: "#5fa3ff",
+				},
+			},
+			// Thick opaque bolt — middle. Should be crisp, depth-tested.
+			scene.Mesh{
+				Geometry: scene.LinesGeometry{
+					Points:   translatePoints(points, 0, 0, 0),
+					Segments: segments,
+					Width:    3,
+				},
+				Material: scene.FlatMaterial{
+					Color:      "#88d4ff",
+					RenderPass: scene.RenderOpaque,
+				},
+			},
+			// Thick additive bolt — rightmost. Should glow noticeably
+			// brighter than the opaque version, especially where the
+			// bolt crosses itself or overlaps the additive bolt below.
+			scene.Mesh{
+				Geometry: scene.LinesGeometry{
+					Points:   translatePoints(points, 3, 0, 0),
+					Segments: segments,
+					Width:    6,
+				},
+				Material: scene.FlatMaterial{
+					Color:      "#d6ebff",
+					BlendMode:  scene.BlendAdditive,
+					RenderPass: scene.RenderAdditive,
+				},
+			},
+			// Second additive bolt overlapping the first so the
+			// additive accumulation is visible where they cross.
+			scene.Mesh{
+				Geometry: scene.LinesGeometry{
+					Points:   translatePoints(points, 3.3, 0.2, 0.1),
+					Segments: segments,
+					Width:    6,
+				},
+				Material: scene.FlatMaterial{
+					Color:      "#b8dcff",
+					BlendMode:  scene.BlendAdditive,
+					RenderPass: scene.RenderAdditive,
+				},
+			},
+		),
+	}
+}
+
+// translatePoints offsets every point in a polyline by (dx, dy, dz),
+// returning a fresh slice. Used by DemoLightningScene to spawn three
+// laterally-offset copies of the same bolt shape without aliasing the
+// source point data.
+func translatePoints(src []scene.Vector3, dx, dy, dz float64) []scene.Vector3 {
+	out := make([]scene.Vector3, len(src))
+	for i, p := range src {
+		out[i] = scene.Vec3(p.X+dx, p.Y+dy, p.Z+dz)
+	}
+	return out
+}
+
 func DemoScene() scene.Props {
 	return scene.Props{
 		Width:      800,

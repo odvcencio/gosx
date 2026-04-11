@@ -506,6 +506,75 @@ function buildBenchmarks(bench, opts) {
     },
   });
 
+  // Composite "simulated frame" benchmark: chains the per-frame hot-path
+  // calls that a real render() makes, end-to-end, on a steady-state
+  // static scene. Doesn't stand up a real DOM or GL context (that would
+  // need ~1000 lines of mock surface), but approximates the frame cost
+  // of the parts of render() we've been optimizing:
+  //
+  //   1. scenePBRLightsHash once per frame (hoisted)
+  //   2. scenePBRUploadExposure × 3 (main + skinned + instanced programs)
+  //   3. scenePBRUploadLights × 3 with precomputed hash
+  //   4. expandSceneThickLineIntoScratch for 64 thick-line segments
+  //
+  // The shadow upload path, matrix math, and actual GL draw calls are
+  // not included — those are GPU-bound on real hardware and can't be
+  // meaningfully measured in a mock. This captures what the sweep
+  // actually optimized: dirty-tracked uniform uploads + thick-line
+  // scratch expansion + the hash hoist.
+  list.push({
+    key: "simulated frame (3 lights static, 64 thick lines)",
+    setup: () => {
+      const lights = makeLightsFixture(bench);
+      const lineFx = makeThickLineFixture(64);
+      const mainUniforms = makeUniformsStub();
+      const skinnedUniforms = makeUniformsStub();
+      const instancedUniforms = makeUniformsStub();
+      const gl = makeMockGl();
+      // Prime the uniforms stamps so steady-state iterations hit the
+      // cache-hit fast path (what a static scene looks like after the
+      // first frame).
+      bench.scenePBRUploadExposure(gl, mainUniforms, lights.environment, false);
+      bench.scenePBRUploadExposure(gl, skinnedUniforms, lights.environment, false);
+      bench.scenePBRUploadExposure(gl, instancedUniforms, lights.environment, false);
+      bench.scenePBRUploadLights(gl, mainUniforms, lights.lights, lights.environment);
+      bench.scenePBRUploadLights(gl, skinnedUniforms, lights.lights, lights.environment);
+      bench.scenePBRUploadLights(gl, instancedUniforms, lights.lights, lights.environment);
+      return {
+        gl,
+        mainUniforms,
+        skinnedUniforms,
+        instancedUniforms,
+        lights: lights.lights,
+        environment: lights.environment,
+        scratch: bench.createSceneThickLineScratch(),
+        ...lineFx,
+      };
+    },
+    target: (fx) => {
+      // 1. Hoisted hash (once per frame).
+      const hash = bench.scenePBRLightsHash(fx.lights, fx.environment);
+      // 2. Three exposure uploads (cache hit, 2 field comparisons each).
+      bench.scenePBRUploadExposure(fx.gl, fx.mainUniforms, fx.environment, false);
+      bench.scenePBRUploadExposure(fx.gl, fx.skinnedUniforms, fx.environment, false);
+      bench.scenePBRUploadExposure(fx.gl, fx.instancedUniforms, fx.environment, false);
+      // 3. Three lights uploads with precomputed hash (cache hit fast path).
+      bench.scenePBRUploadLights(fx.gl, fx.mainUniforms, fx.lights, fx.environment, hash);
+      bench.scenePBRUploadLights(fx.gl, fx.skinnedUniforms, fx.lights, fx.environment, hash);
+      bench.scenePBRUploadLights(fx.gl, fx.instancedUniforms, fx.lights, fx.environment, hash);
+      // 4. Thick-line buffer expansion (runs once per frame on scenes
+      //    with thick lines — scales linearly with segment count).
+      bench.expandSceneThickLineIntoScratch(
+        fx.scratch,
+        fx.worldPositions,
+        fx.worldColors,
+        fx.worldLineWidths,
+        fx.worldLinePasses,
+        fx.segmentCount,
+      );
+    },
+  });
+
   // Filter by --only if the user asked for a subset.
   if (opts.only) {
     return list.filter((entry) => {
