@@ -1,10 +1,12 @@
 # GoSX
 
-A Go-native web platform. Write components in `.gsx` — Go with embedded markup — compile through a real compiler pipeline, render on the server by default, hydrate interactive islands with WebAssembly. No JavaScript toolchain. Five dependencies.
+A Go-native web platform. Write components in `.gsx` — Go with embedded markup — compile through a real compiler pipeline, render on the server by default, hydrate interactive islands with WebAssembly. No JavaScript toolchain. No CGo. Six dependencies.
+
+Current release: **v0.15.0**. Pre-1.0; breaking changes are documented in [CHANGELOG.md](./CHANGELOG.md).
 
 ## What if you never had to leave Go?
 
-GoSX starts from a simple premise: the browser is a render target, not a runtime. Server components are Go functions that return HTML. Interactive components compile to bytecode and run in a shared WASM VM. Everything between those two points — the parser, the compiler, the reconciler, the signal system — is pure Go.
+GoSX starts from a simple premise: the browser is a render target, not a runtime. Server components are Go functions that return HTML. Interactive components compile to bytecode and run in a shared WASM VM. Everything between those two points — the parser, the compiler, the reconciler, the signal system, the 3D scene graph, the vector store, the collaborative document model — is pure Go.
 
 ```go
 package app
@@ -34,6 +36,18 @@ func Counter(props CounterProps) Node {
 
 The `//gosx:island` directive marks a component for client-side hydration. The compiler extracts signals, computed values, and handlers from the Go source, compiles expressions to VM opcodes, and serializes the result as a compact island program (~1-10KB). Server components emit static HTML with no client-side cost.
 
+## Philosophy
+
+GoSX is opinionated about a small number of things and flexible about everything else.
+
+- **The browser is a render target.** Server components are the baseline. Client-side JavaScript is something you opt into, feature by feature, not a default ambient runtime.
+- **One language, one toolchain.** You write Go. `go build` produces the server, the CLI, the WASM binary, and the client bundle. There is no Node, no npm, no webpack, no bundler config. `gosx dev` is a Go binary watching Go files.
+- **No CGo, anywhere.** Every package compiles to WASM and cross-compiles cleanly. The 3D engine runs in pure Go. The vector store runs in pure Go. The CRDT sync protocol runs in pure Go. This is not a portability footnote — it is the design constraint that lets Scene3D, `field`, `vecdb`, and `crdt` ship as ordinary Go libraries that also happen to run in a browser tab.
+- **Primitives, not frameworks-within-frameworks.** A form submission is not a canvas game is not a collaborative document. GoSX gives you five distinct execution primitives and enforces the distinction; none of them try to be the others.
+- **You pay for what you use.** Static pages are static. Islands ship only when a page has an island. Engines are opt-in. The shared WASM VM is lazy-loaded. An app with no islands has no client VM; an app with no engines has no engine bundle.
+- **No hidden magic in the hot path.** The compiler pipeline is inspectable (`gosx compile`, `gosx check`). The IR is a flat-array data structure. The island VM is ~40 opcodes. The client JS host is ~940 lines. You can read all of it.
+- **Six dependencies.** That's not marketing — it's a design budget. Every new transitive dep is a bug surface, a license to audit, and a supply-chain risk. We take that budget seriously.
+
 ## Five Primitives
 
 GoSX provides five execution primitives. A form submission is not a canvas game is not a collaborative document — the framework enforces that distinction.
@@ -43,7 +57,7 @@ GoSX provides five execution primitives. A form submission is not a canvas game 
 | **Server** | Renders pages and API responses | None |
 | **Action** | Handles mutations (forms, RPCs) with structured validation | None |
 | **Island** | Reactive DOM subtrees with signals and event delegation | Shared WASM VM + tiny program payload |
-| **Engine** | Heavy client compute — canvas, WebGL, background workers | Dedicated WASM or JS bundle |
+| **Engine** | Heavy client compute — canvas, WebGL, WebGPU, background workers | Dedicated WASM or JS bundle |
 | **Hub** | WebSocket presence, fanout, shared state, CRDT sync | WebSocket connection |
 
 Use what you need. A static marketing page uses only Server. A dashboard adds Islands. A game adds an Engine. A collaborative editor adds a Hub. You never pay for what you don't use.
@@ -249,6 +263,71 @@ Supported capability declarations today are:
 
 Kinds choose the mount model. Capabilities declare which browser APIs the engine expects to use. Engines get their own mount point or worker context, communicate through typed message ports, and do not touch island DOM.
 
+## Scene3D — 3D Engine
+
+The `scene` package is a full 3D engine authored entirely in Go. You describe the scene as a typed Go struct tree; the runtime lowers it to a compact IR, streams it to the client, and renders it through a pair of pure-Go-authored backends (WebGL and WebGPU) that reach the browser as part of the standard bootstrap bundle. There is no separate engine binary. There is no three.js. There is no JavaScript scene graph.
+
+```go
+scene.Props{
+    Responsive: scene.Bool(true),
+    Controls:   "orbit",
+    Camera: scene.PerspectiveCamera{
+        Position: scene.Vec3(0, 1.5, 5),
+        FOV:      60,
+    },
+    Environment: scene.Environment{
+        AmbientColor:     "#ffffff",
+        AmbientIntensity: 0.2,
+    },
+    Shadows: scene.Shadows{MaxPixels: scene.ShadowMaxPixels1024},
+    PostFX: scene.PostFX{
+        MaxPixels: scene.PostFXMaxPixels1080p,
+        Effects: []scene.PostEffect{
+            scene.Bloom{Threshold: 0.8, Strength: 0.5, Radius: 6, Scale: 0.25},
+            scene.Tonemap{Mode: scene.TonemapACES, Exposure: 1.1},
+        },
+    },
+    Graph: scene.NewGraph(
+        scene.DirectionalLight{
+            Color: "#fff1d6", Intensity: 1.0,
+            Direction:  scene.Vec3(0.3, -1, -0.5),
+            CastShadow: true,
+            ShadowSize: 2048,
+        },
+        scene.Mesh{
+            Geometry: scene.SphereGeometry{Segments: 32},
+            Material: scene.StandardMaterial{
+                Color: "#D4AF37", Roughness: 0.3, Metalness: 0.9,
+            },
+            Position:      scene.Vec3(0, 0.5, 0),
+            CastShadow:    true,
+            ReceiveShadow: true,
+        },
+        scene.Model{Src: "/assets/ship.glb", Animation: "idle"},
+    ),
+}
+```
+
+### Feature surface
+
+- **Scene graph** — `Group`, `Mesh`, `InstancedMesh`, `Points`, `Label`, `Sprite`, `Model`, `ComputeParticles`, per-node transforms, nesting, world-transform lowering
+- **Geometry** — `Box`, `Cube`, `Plane`, `Pyramid`, `Sphere`, `Lines`, `Cylinder`, `Torus`, plus arbitrary geometry from loaded models
+- **Materials** — `StandardMaterial` (PBR with roughness/metalness workflow), `FlatMaterial`, `GhostMaterial`, `GlassMaterial`, `GlowMaterial`, `MatteMaterial`, configurable blend modes and render passes
+- **Lights** — `AmbientLight`, `DirectionalLight`, `PointLight`, `SpotLight`, `HemisphereLight`; shadows on directional and spot with per-light `ShadowSize` and a scene-wide `Shadows.MaxPixels` cap
+- **glTF / GLB** — `scene.Model{Src: "/assets/thing.glb"}` loads binary or JSON glTF 2.0 through the in-runtime pure-JS loader (`19-scene-gltf.js`), including animations
+- **Animation** — `AnimationClip` / `AnimationChannel` for node-level keyframe animation, `Spin` convenience for auto-rotation, glTF animation playback
+- **Particles** — GPU-computed particle systems via `ComputeParticles` with emitter, forces, and material
+- **Environment** — ambient, hemisphere, sky/ground, exposure, fog, tonemapping
+- **Post-processing** — `Bloom`, `Tonemap` (ACES / Reinhard / Filmic), `Vignette`, `ColorGrade`, composable chain, runs on both WebGL and WebGPU. v0.15.0 adds `PostFX.MaxPixels` framebuffer cap (default 1080p) and `Bloom.Scale` for bloom-internal downscaling
+- **Shadow pixel cap** — v0.15.0's `Shadows.MaxPixels` caps each shadow map (default 1024²), preventing multi-megabyte-per-light allocations when individual lights request large shadow sizes
+- **Compression & LOD** — per-component scalar quantization with delta encoding, progressive streaming, camera-distance-based LOD switching via `scene.Compression`
+- **Transitions** — declarative enter/exit/state transitions on any scene node via `InState` / `OutState` / `Live`
+- **Camera controls** — `orbit`, `drag-to-rotate`, focus targets, pick signals, drag signals, event signals exposed as `$`-signals consumable by surrounding islands
+- **Capability tiers** — graceful degradation across WebGPU → WebGL → canvas fallbacks
+- **Backends at parity** — both the WebGL and WebGPU renderers honor the same IR, the same post-processing chain, and the same memory-cap semantics
+
+The scene graph is inspectable Go code. The IR is serializable. The renderer is reproducible. You can hold the whole thing in your head, and when something goes wrong you read Go and JavaScript — not a black box.
+
 ## Hubs
 
 WebSocket primitives for presence, fanout, and shared state:
@@ -260,7 +339,60 @@ h.On("update", func(client *hub.Client, msg hub.Message) {
 })
 ```
 
-Hubs integrate with the CRDT system for conflict-free collaborative state synchronization across peers.
+Hubs handle client lifecycle, message framing, broadcast patterns, per-connection state, and typed message dispatch. They integrate cleanly with the `crdt` package for conflict-free collaborative state and with the `sim` package for authoritative game loops.
+
+## Collaboration: CRDT + Workspace
+
+The `crdt` package implements a conflict-free replicated document model with a wire-compatible sync protocol (bloom-filter-based message exchange, delta-encoded changes, vector-clock causality tracking). It's independent of the transport — you can drive it over a `hub`, over Redis, or over raw bytes in a file.
+
+```go
+doc := crdt.NewDoc()
+doc.Apply(change)               // apply a local or remote change
+bytes, _ := doc.Save()          // serialize the full doc state
+sync := crdtsync.NewState()    // start a sync session
+msg := sync.Generate(doc)      // produce the next sync message to send
+```
+
+The `workspace` package layers a distributed semantic collaboration space on top of `crdt` + `hub` + `vecdb`: agents join a workspace, write findings with vector embeddings, query across peers, and persist state. It's used in GoSX's multi-agent tooling and is also the substrate for any app that wants "multiple clients editing shared state with presence and similarity search" without building it from scratch.
+
+## Volumetric Data & Simulation
+
+**`field`** — 3D vector fields. Trilinear sampling, axis-aligned bounding boxes, and a full set of operators (`Advect`, `Curl`, `Divergence`, `Gradient`, `Blur`, `Resample`). Per-component scalar quantization with delta encoding collapses a 256³ float32 vector field from ~64 MB to a few hundred KB, and streaming publish/subscribe over `hub` lets a server-authoritative simulation broadcast field updates to subscribed clients. The package is renderer-agnostic — it's the substrate for volumetric rendering, particle advection, fluid simulation, and anything else that needs structured 3D data at a distance.
+
+**`sim`** — Server-authoritative game simulation. Games implement the `Simulation` interface; a `Runner` drives it at a fixed tick rate, collects per-client inputs from a hub, broadcasts state snapshots, and handles replay and spectator sync. The server is the source of truth; clients submit inputs and render the authoritative state they receive back.
+
+Together these three packages (`field`, `sim`, `hub`) give you a complete server-authoritative multiplayer stack in pure Go, with no third-party real-time engine.
+
+## Semantic Layer
+
+GoSX ships a vector-native semantic layer for content routing, similarity search, and LLM-adjacent workflows:
+
+- **`vecdb`** — in-memory vector database with k-NN search, cosine / inner-product / L2 metrics, and TurboQuant-backed compression. Safe for concurrent reads and writes.
+- **`embed`** — embedding provider abstraction. Implement `Provider` to plug in OpenAI, Cohere, a local model, or a deterministic test encoder.
+- **`semantic`** — built on `vecdb` + `embed`, with three production-ready primitives:
+  - `semantic.Router` — route a request to the most semantically similar handler
+  - `semantic.Cache` — cache responses by embedding similarity rather than exact key match
+  - `semantic.ContentIndex` — similarity-driven content discovery and ranking
+
+The math for MSE-optimal quantization lives in [TurboQuant](https://github.com/odvcencio/turboquant), a standalone pure-Go module that GoSX consumes as a dependency. You get the compression ratio of an engineered quantizer without taking on a C library.
+
+## Markdown++
+
+The `markdown` package is a pure-Go CommonMark parser with an extension set we call Markdown++:
+
+- **Admonitions** — `:::note`, `:::warning`, `:::tip` blocks with optional titles
+- **Footnotes** — Pandoc-style `[^ref]` with automatic back-references
+- **Math** — inline `$...$` and display `$$...$$` with MathML output
+- **Superscript / subscript** — `^like this^` and `~like this~`
+- **Task lists** — GitHub-flavored checkboxes
+- **Emoji shortcodes** — `:rocket:` → 🚀
+- **Syntax highlighting** — per-language via the `highlight` package, with both native Go and WASM-dispatched highlighters
+
+The renderer is configurable per-document (heading IDs, hard wraps, emoji wrapping, unsafe HTML passthrough, custom image resolvers) and integrates with the `highlight` package for code fences.
+
+## Editor
+
+The `editor` package is a set of Go-native building blocks for building text editors inside GoSX apps: a text model with rope-like document storage, input bindings (keyboard, IME, mouse, touch), a highlight layer, a toolbar model, a theme system, and a VS Code-grammar compatibility shim. It's the substrate for in-page editing experiences — code snippets, markdown drafts, inline content editors — without importing Monaco or CodeMirror.
 
 ## CSS
 
@@ -292,7 +424,7 @@ gosx lsp                              # Language server for editor integration
 Three tiers:
 
 1. **Static** — `gosx export` pre-renders HTML. No server needed.
-2. **Server** — Go binary. SSR, actions, hubs, ISR.
+2. **Server** — Go binary. SSR, actions, hubs, ISR, Scene3D, sim, workspace.
 3. **Edge** — Prerendered routes at the edge, dynamic requests fall back to origin.
 
 ## Packages
@@ -309,21 +441,30 @@ Three tiers:
 | `session` | Signed cookie sessions, CSRF, flash state |
 | `auth` | Auth middleware, OAuth, magic links, WebAuthn |
 | `hub` | WebSocket presence, fanout, shared state |
-| `field` | 3D vector fields with trilinear sampling, operators (advect/curl/gradient/blur), per-component compression, and hub streaming |
+| `scene` | Scene3D: typed scene graph, PBR, shadows, glTF, particles, PostFX, WebGL + WebGPU runtimes |
+| `field` | 3D vector fields, trilinear sampling, operators, per-component compression, hub streaming |
 | `sim` | Server-authoritative game simulation: tick loop, snapshots, replay, spectator sync |
+| `crdt` | Conflict-free replicated documents with bloom-filter sync protocol |
+| `workspace` | Distributed semantic collaboration (CRDT + hub + vecdb) |
+| `vecdb` | In-memory vector database with k-NN search and quantized storage |
+| `embed` | Embedding provider abstraction |
+| `semantic` | Semantic router, similarity cache, content index |
 | `engine` | Worker/surface model with capability declarations |
-| `crdt` | Conflict-free replicated data types with sync protocol |
+| `markdown` | CommonMark + Markdown++ extensions (admonitions, footnotes, math, sup/sub) |
+| `editor` | Go-native text editor building blocks (textmodel, input, highlight, toolbar, vscode shim) |
+| `highlight` | Syntax highlighting for Go, GSX, JavaScript, JSON, and Bash |
 | `client/vm` | Expression VM, tree reconciler, patch generation |
 | `client/bridge` | WASM bridge for island/engine lifecycle |
+| `client/enginevm` | Lightweight VM for engine scripting |
 | `client/wasm` | WASM entry point |
 | `client/js` | Bootstrap + patch applier (~940 lines total) |
 | `render` | Server-side HTML rendering from IR |
 | `css` | Component-scoped CSS with `:where()` selectors |
 | `textlayout` | Text measurement, line breaking, ellipsis |
-| `highlight` | Syntax highlighting for Go, GSX, JS, JSON, Bash |
 | `format` | Source formatter for `.gsx` files |
 | `lsp` | Language server protocol for editor integration |
 | `apptest` | HTTP testing helpers for pages, APIs, and forms |
+| `islandtest` | Island program testing helpers |
 | `dev` | Development server with file watching |
 | `env` | `.env` file loading with mode support |
 | `cmd/gosx` | CLI tool |
@@ -343,9 +484,10 @@ Client correctness is verified at four layers: pure Go VM/bridge tests, JS runti
 
 ## Dependencies
 
-Five:
+Six:
 
 - [gotreesitter](https://github.com/odvcencio/gotreesitter) — pure-Go tree-sitter runtime with grammar composition
+- [turboquant](https://github.com/odvcencio/turboquant) — pure-Go MSE-optimal vector quantizer powering `vecdb` and `crdt` compression
 - [gorilla/websocket](https://github.com/gorilla/websocket) — WebSocket support for hubs
 - [rivo/uniseg](https://github.com/rivo/uniseg) — Unicode segmentation for text layout
 - [golang.org/x/image](https://pkg.go.dev/golang.org/x/image) — image optimization
@@ -358,6 +500,12 @@ No CGo. No JavaScript toolchain. Compiles anywhere `GOOS/GOARCH` can reach, incl
 GoSX is built on [gotreesitter](https://github.com/odvcencio/gotreesitter), a clean-room reimplementation of the tree-sitter runtime in pure Go. gotreesitter enables in-process grammar composition — GoSX extends Go's own grammar with native markup syntax, which is how `.gsx` files are parsed without code generation or external build tools.
 
 The same compiler infrastructure powers [Arbiter](https://github.com/odvcencio/arbiter) (a governed outcomes language), [Danmuji](https://github.com/odvcencio/danmuji) (a BDD testing language for Go), and [Ferrous Wheel](https://github.com/odvcencio/ferrous-wheel) (Rust-inspired syntax for Go).
+
+## Status
+
+GoSX is pre-1.0. The current release is **v0.15.0**. The five primitives (Server, Action, Island, Engine, Hub) are stable in shape — we do not expect their top-level API to change before 1.0. Subsystems like `scene`, `field`, `sim`, `workspace`, and `semantic` are still under active development and may take breaking changes; each such change is called out explicitly in [CHANGELOG.md](./CHANGELOG.md) with a migration path.
+
+If you're evaluating GoSX for production work, the server + island + route + engine + scene stack has been used in production. The semantic, workspace, and sim layers have production users but are newer.
 
 ## License
 
