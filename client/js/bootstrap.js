@@ -12674,8 +12674,14 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
     var env = environment || {};
     var exposure = sceneNumber(env.exposure, 0);
     if (exposure <= 0) exposure = 1.0;
+    var toneMapMode = usePostProcessing ? 0 : sceneToneMapMode(env.toneMapping);
+    if (uniforms._lastExposure === exposure && uniforms._lastToneMapMode === toneMapMode) {
+      return;
+    }
+    uniforms._lastExposure = exposure;
+    uniforms._lastToneMapMode = toneMapMode;
     gl.uniform1f(uniforms.exposure, exposure);
-    gl.uniform1i(uniforms.toneMapMode, usePostProcessing ? 0 : sceneToneMapMode(env.toneMapping));
+    gl.uniform1i(uniforms.toneMapMode, toneMapMode);
   }
 
   function scenePBRUploadShadowUniforms(gl, uniforms, shadowSlots, shadowLightMatrices, shadowLightIndices, lights) {
