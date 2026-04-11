@@ -2472,6 +2472,32 @@
   window.__gosx_bootstrap_page = bootstrapPage;
   window.__gosx_dispose_page = disposePage;
 
+  // Bench-mode exports. Activated only when window.__gosx_bench_exports
+  // is set to true BEFORE the bundle runs. Zero runtime cost in production
+  // — single boolean check per page load, never touches any function
+  // reference unless the flag is on. The bench harness at
+  // client/js/runtime.bench.js uses these to microbenchmark hot path
+  // functions in isolation without standing up the full DOM mount surface.
+  if (window.__gosx_bench_exports === true) {
+    window.__gosx_bench = {
+      // 10-runtime-scene-core.js
+      sceneRenderCamera: sceneRenderCamera,
+      translateScenePointInto: translateScenePointInto,
+      translateScenePoint: translateScenePoint,
+      createSceneThickLineScratch: createSceneThickLineScratch,
+      expandSceneThickLineIntoScratch: expandSceneThickLineIntoScratch,
+      sceneBundleNeedsThickLines: sceneBundleNeedsThickLines,
+      // 16-scene-webgl.js — file-scope light/exposure helpers.
+      // (The per-frame functions like buildPBRDrawList, drawPBRObjectList,
+      // and render live inside createScenePBRRenderer closures and are not
+      // exposed here. Measure those via a real Scene3D mount in a follow-up
+      // if/when we need end-to-end per-frame numbers.)
+      scenePBRLightsHash: scenePBRLightsHash,
+      scenePBRUploadLights: scenePBRUploadLights,
+      scenePBRUploadExposure: scenePBRUploadExposure,
+    };
+  }
+
   // Start when DOM is ready.
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", bootstrapPage);

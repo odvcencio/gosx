@@ -12543,8 +12543,10 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
     return h;
   }
 
-  function scenePBRUploadLights(gl, uniforms, lights, environment) {
-    const contentHash = scenePBRLightsHash(lights, environment);
+  function scenePBRUploadLights(gl, uniforms, lights, environment, precomputedHash) {
+    const contentHash = (typeof precomputedHash === "number")
+      ? precomputedHash
+      : scenePBRLightsHash(lights, environment);
     if (uniforms._lastLightsHash === contentHash) {
       return;
     }
@@ -12768,6 +12770,7 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
     var scratchProjMatrix = new Float32Array(16);
 
     var _frameCam = null;
+    var _frameLightsHash = 0;
 
     var scratchPositions = null;
     var scratchNormals = null;
@@ -12990,6 +12993,8 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
       const viewMatrix = scenePBRViewMatrix(cam, scratchViewMatrix);
       const projMatrix = scenePBRProjectionMatrix(cam.fov, aspect, cam.near, cam.far, scratchProjMatrix);
 
+      _frameLightsHash = scenePBRLightsHash(bundle.lights, bundle.environment);
+
       if (hasPBRData) {
       gl.useProgram(program);
       gl.uniformMatrix4fv(uniforms.viewMatrix, false, viewMatrix);
@@ -12998,7 +13003,7 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
 
       scenePBRUploadExposure(gl, uniforms, bundle.environment, usePostProcessing);
 
-      scenePBRUploadLights(gl, uniforms, bundle.lights, bundle.environment);
+      scenePBRUploadLights(gl, uniforms, bundle.lights, bundle.environment, _frameLightsHash);
 
       scenePBRUploadShadowUniforms(gl, uniforms, shadowSlots, shadowLightMatrices, shadowLightIndices, bundle.lights);
 
@@ -13081,7 +13086,7 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
             var postEffects = Array.isArray(bundle.postEffects) ? bundle.postEffects : [];
             scenePBRUploadExposure(gl, currentUniforms, bundle.environment, postEffects.length > 0);
 
-            scenePBRUploadLights(gl, currentUniforms, bundle.lights, bundle.environment);
+            scenePBRUploadLights(gl, currentUniforms, bundle.lights, bundle.environment, _frameLightsHash);
 
             scenePBRUploadShadowUniforms(gl, currentUniforms, shadowSlots, shadowLightMatrices, shadowLightIndices, bundle.lights);
 
@@ -13510,7 +13515,7 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
       var postEffects = Array.isArray(bundle.postEffects) ? bundle.postEffects : [];
       scenePBRUploadExposure(gl, ip.uniforms, bundle.environment, postEffects.length > 0);
 
-      scenePBRUploadLights(gl, ip.uniforms, bundle.lights, bundle.environment);
+      scenePBRUploadLights(gl, ip.uniforms, bundle.lights, bundle.environment, _frameLightsHash);
       scenePBRUploadShadowUniforms(gl, ip.uniforms, shadowSlots, shadowLightMatrices, shadowLightIndices, bundle.lights);
 
       var materials = Array.isArray(bundle.materials) ? bundle.materials : [];
@@ -24066,6 +24071,20 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
 
   window.__gosx_bootstrap_page = bootstrapPage;
   window.__gosx_dispose_page = disposePage;
+
+  if (window.__gosx_bench_exports === true) {
+    window.__gosx_bench = {
+      sceneRenderCamera: sceneRenderCamera,
+      translateScenePointInto: translateScenePointInto,
+      translateScenePoint: translateScenePoint,
+      createSceneThickLineScratch: createSceneThickLineScratch,
+      expandSceneThickLineIntoScratch: expandSceneThickLineIntoScratch,
+      sceneBundleNeedsThickLines: sceneBundleNeedsThickLines,
+      scenePBRLightsHash: scenePBRLightsHash,
+      scenePBRUploadLights: scenePBRUploadLights,
+      scenePBRUploadExposure: scenePBRUploadExposure,
+    };
+  }
 
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", bootstrapPage);
