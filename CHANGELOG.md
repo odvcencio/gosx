@@ -1,5 +1,56 @@
 # Changelog
 
+## v0.16.5
+
+Two independent fixes: a large-scale allocation win in the Scene3D JSON marshal path, and a cluster of browser-specific scroll jank issues on Firefox and iOS Safari.
+
+### `scene.Props.MarshalJSON` — **1020 → 189 allocations (-81%)**
+
+`Props.MarshalJSON` used to build a `map[string]any` tree via `sceneIR.legacyProps()` — roughly 900 interface-boxing allocations per scene marshal across every object/model/light/etc. numeric setter, plus nested `map[string]any` allocations for every sub-entity in the scene.
+
+Every IR type in the scene package (`ObjectIR`, `ModelIR`, `PointsIR`, `InstancedMeshIR`, `ComputeParticlesIR`, `AnimationClipIR`, `LabelIR`, `SpriteIR`, `LightIR`, `EnvironmentIR`) already has proper `json` tags on every field. So reflection-based `json.Marshal(sceneIR)` produces the same wire shape directly — no map tree required.
+
+`Props.MarshalJSON` now:
+
+1. Builds the small base-props map (`width`/`height`/`camera`/`compression`/`capabilities` — too conditional to express via static struct tags)
+2. Marshals `SceneIR` directly via `json.Marshal(sceneIR)`
+3. Wires the result in as a `json.RawMessage` under the `"scene"` key
+
+Two shape-preserving details required:
+
+- **`ObjectIR.MarshalJSON`** uses a `type alias` shadow trick to override its `Points` field with a `[]linePointWire` — a `Vector3` variant that always emits `x`/`y`/`z` even when zero. The legacy map-based path always emitted all three coordinates, so `Vec3(0,2,0)` rendered as `{"x":0,"y":2,"z":0}`; `Vector3`'s default `omitempty` tag would silently drop the zeroes and give `{"y":2}` instead. Preserving the legacy shape avoids breaking any JS consumer that reads three coordinates unconditionally.
+
+- **Each `PostEffectIR` concrete type** (`TonemapIR`, `BloomIR`, `VignetteIR`, `ColorGradeIR`) now implements `json.Marshaler` directly. Needed because these structs have unnamed fields — the custom marshalers emit the same `{kind, ...}` shape `legacyProps` used to build.
+
+Two new tests pin the wire shape:
+
+- `scene/marshal_golden_test.go` captures the canonicalized bytes of `Props.MarshalJSON` for the `benchMixedScene` fixture into `testdata/props_marshal_golden.json`. Byte-for-byte reference for future refactors.
+- `scene/marshal_direct_test.go` verifies that `json.Marshal(sceneIR)` and `json.Marshal(sceneIR.legacyProps())` produce semantically equal JSON — the load-bearing invariant for the new fast path.
+
+Benchmark (`./scene`, 20-mesh mixed fixture with post-FX and lights):
+
+| benchmark | before | after |
+|---|---|---|
+| `PropsMarshalJson` | 66411 ns, 108383 B, **1020 allocs** | 71230 ns, 85088 B, **189 allocs** |
+
+Time is ~7% slower because reflection-based marshaling is a bit more expensive per field than the map walker, but the 831 eliminated short-lived objects per scene marshal is a far bigger win for long-running servers under GC pressure.
+
+### Firefox + iOS Safari scroll jank / stale canvas state
+
+Three fixes addressing reports that scrolling a page containing a Scene3D canvas would lag on Firefox and iOS Safari, with the canvas sometimes showing a previous frame's content after the scroll had already stopped:
+
+1. **Passive `visualViewport` listeners** (`client/js/bootstrap-src/05-document-env.js`). The document-environment observer registered `resize` and `scroll` handlers on `visualViewport` without `{ passive: true }`. iOS Safari treats any non-passive touch-path listener as potentially `preventDefault`-ing and blocks the scroll thread until the handler completes, which stacks frame drops during rubber-band scrolls. Same applies to the `window` `resize`/`orientationchange`/`pageshow` listeners — all got the passive flag.
+
+2. **Passive IME keyboard-height listener** (`client/js/bootstrap-src/10-runtime-scene-core.js`). The `visualViewport` resize handler that queues the `$input.keyboard_height` signal also ran as non-passive. The handler only writes a signal, so it's safe to mark passive.
+
+3. **Defer forced-sync layout into RAF** (`client/js/bootstrap-src/20-scene-mount.js`). **This was the biggest root cause.** `scheduleRender()` called `sceneViewportFromMount()` and `applySceneViewport()` synchronously on every scroll event. Both read `mount.getBoundingClientRect()` and `canvas.getBoundingClientRect()` — and `applySceneViewport` does a _second_ pair of reads after writing `canvas.width` / `canvas.height` for the label-layer positioning. That's two forced synchronous layouts per scroll event.
+
+   Firefox coalesces scroll events at roughly 30Hz during active touch-scroll, so the forced layouts stacked up and the browser had to reflow mid-scroll — visible as jank and a frame of stale canvas content after the scroll stopped. iOS Safari exhibited the same symptom for the same reason.
+
+   Moved both viewport calls inside the `engineFrame()` callback. Inside RAF the browser is already in a read phase (style + layout already resolved), so rect reads are cheap and the subsequent canvas writes batch naturally into the following compositor pass. The existing `scheduledRenderHandle` coalescing still dedupes multiple scroll events into a single RAF.
+
+Bootstrap bundles (`bootstrap.js`, `bootstrap-lite.js`, `bootstrap-runtime.js`) rebuilt via `client/js/build-bootstrap.mjs`.
+
 ## v0.16.4
 
 Performance patch focused on `gosx.RenderHTML` — the single function every page render in the framework passes through — plus smaller wins in `hub`, `server/cache.go`, and `server.nextRequestID`.
