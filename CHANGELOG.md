@@ -1,5 +1,65 @@
 # Changelog
 
+## v0.16.6
+
+Sixth performance pass across five packages: `client/vm` (island runtime VM), `scene` (residual SceneIR allocs), `markdown` (builder-based render), `client/enginevm` (material key hashing), and `island` (SSR resolved-node renderer).
+
+### `client/vm` — island dispatch cut 35 → 14 allocs (-60%)
+
+The `client/vm` package evaluates island expressions and reconciles DOM trees on the server — every user interaction on a GoSX island (click, input, change) runs through it. Baselined via a new `client/vm/bench.dmj` against the `CounterProgram` fixture, then attacked from five angles:
+
+1. **`parseEventData` shortcut for empty event payloads.** The vast majority of handler dispatches come with `"{}"` or `""` as the event data. Skipping `json.Unmarshal` on those saves a `reflect.MakeMapWithSize` plus `json.decodeState` setup per dispatch.
+
+2. **`appendNodeRefs` append-into-slice pattern.** The old `resolveNodeRefs` returned `[]int{idx}` per non-fragment node and callers appended with `append(prev, refs...)`. Every resolved node paid a single-element slice allocation. The new `appendNodeRefs(tree, out, nodeID) []int` appends directly into the caller's buffer.
+
+3. **Lazy-allocate `resolveElementAttrs` output slices.** Container elements like `<div>` holding interpolated text were paying two guaranteed `make()` calls per resolve. Now lazy-init both `resolved` and `events` on first use. Also fused with `materializeDOMAttrs` into a single walk so elements with zero events simply alias the resolved slice as `domAttrs` with no copy.
+
+4. **Pre-size `tree.Nodes` in `EvalTree`.** The resolved tree's node slice grew via append from empty, doubling 3-4× for a typical island. Pre-sizing to `len(program.Nodes)` eliminates the cascade.
+
+5. **`strconv` for `Value.String` scalar paths.** `fmt.Sprintf("%d", int)` replaced with `strconv.FormatInt`. Int values (counter values, array indices — by far the most common case) drop from 30 ns / 1 alloc to **2 ns / 0 allocs**. Same treatment for `childPath` in reconcile.go which runs per reconcile-node.
+
+Bench results (`./client/vm`, `CounterProgram` fixture):
+
+| benchmark | before | after |
+|---|---|---|
+| `ResolveInitialTreeCounter` | 43 allocs, 1967 ns | **29 allocs, 1363 ns** |
+| `ResolveInitialTreeForm` | 74 allocs, 3528 ns | **42 allocs, 2492 ns** |
+| `DispatchIncrementCounter` | 35 allocs, 1906 ns | **14 allocs, 1066 ns** |
+| `ReconcileCounterAfterSet` | 27 allocs, 1299 ns | **13 allocs, 717 ns** |
+| `ValueIntToString` | 30.9 ns, 1 alloc | **2.0 ns, 0 allocs** |
+
+### `scene` — SceneIR 95 → 34 allocs (-64%)
+
+Two fixes on the residual `PropsSceneIr` hot path left over from v0.16.5:
+
+1. **`intString` replaced with `strconv.Itoa`.** The hand-rolled digit builder allocated a fresh `[]byte` per iteration via `append([]byte{digit}, digits...)`. `strconv.Itoa` uses a stack-allocated 20-byte scratch buffer and returns a single string with zero heap allocations for non-negative values. This function is called from every `scene-object-N` / `scene-points-N` / `scene-label-N` / `scene-light-N` auto-ID generator, so it was on a hot loop per scene.
+
+2. **Pre-size `graphLowerer.{objects, lights, anchors}`** to `len(g.Nodes)`. The lowerer started with nil slices and grew via append.
+
+| benchmark | before | after |
+|---|---|---|
+| `PropsSceneIr` | 95 allocs, 11864 ns, 48 KB | **34 allocs, 8014 ns, 28 KB** |
+| `PropsMarshalJson` | 189 allocs | **128 allocs** |
+
+### `markdown` — render cut 67–80% allocs via builder rewrite
+
+`renderNode` used ~25 `fmt.Sprintf` calls, one per AST node type. Rewritten to write directly into a shared `*strings.Builder` via a new `renderNodeInto`. Internal recursion (`renderChildrenInto`, `renderTableInto`) passes the same builder through, so subtrees no longer allocate intermediate strings. Top-level `renderNode` retains its string-returning API by wrapping `renderNodeInto` for external callers.
+
+| benchmark | before | after |
+|---|---|---|
+| `RenderShortDoc` | 49 allocs, 1660 ns | **16 allocs, 738 ns** |
+| `RenderLongDoc` | 255 allocs, 11481 ns | **52 allocs, 4680 ns** |
+
+(Parse is still ~22k allocs for a short doc; that's a separate rewrite for another pass.)
+
+### `client/enginevm` — `renderMaterialKey` / `sceneRGBAString`
+
+`renderMaterialKey` builds an 8-field composite cache key for every material profile during Scene3D engine dispatch, and `sceneRGBAString` stringifies scene stroke/fill colors. Both used `fmt.Sprintf`; both now use `strings.Builder` + `strconv` directly.
+
+### `island` — SSR resolved-node renderer
+
+`renderResolvedNode` is the server-side HTML path for island subtrees. Rewritten to write into a shared builder via `renderResolvedNodeInto`, matching the `markdown` and `client/vm` patterns. Per-attribute `fmt.Sprintf` replaced with direct `WriteByte`/`WriteString` calls. `childProgramPath` gets the same `strconv.Itoa` + concat treatment as the `client/vm` version, and `hydrate.EventSlot` field construction switches from `fmt.Sprintf` to string concatenation (Go lowers multi-string `+` to a single `runtime.concatstring3/4` call).
+
 ## v0.16.5
 
 Two independent fixes: a large-scale allocation win in the Scene3D JSON marshal path, and a cluster of browser-specific scroll jank issues on Firefox and iOS Safari.
