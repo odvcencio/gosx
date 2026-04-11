@@ -144,6 +144,15 @@
     return a.order - b.order;
   }
 
+  // Camera scratch owned by sceneWorldObjectDepth so the per-vertex depth
+  // loop can normalize the camera once and inline the inverse-rotate math
+  // without allocating a fresh object per vertex.
+  const _sceneWorldObjectDepthCameraScratch = {
+    x: 0, y: 0, z: 0,
+    rotationX: 0, rotationY: 0, rotationZ: 0,
+    fov: 0, near: 0, far: 0,
+  };
+
   function sceneWorldObjectDepth(sourcePositions, object, camera) {
     if (object && object.bounds) {
       return sceneBoundsDepthMetrics(object.bounds, camera).center;
@@ -156,19 +165,46 @@
     if (!vertexCount) {
       return sceneWorldPointDepth(0, camera);
     }
+
+    // Previously this loop allocated a fresh {x,y,z} object per vertex
+    // and ran sceneWorldPointDepth → sceneCameraLocalPoint →
+    // sceneInverseRotatePoint (4+ allocations per vertex). For a 1000-
+    // vertex object that's 4000 allocations per depth computation.
+    // Now the camera is normalized once into a module scratch and the
+    // inverse-rotate math is inlined for Z only — X/Y/depth-center-ignore.
+    const cam = sceneRenderCamera(camera, _sceneWorldObjectDepthCameraScratch);
+    const sinX = Math.sin(-cam.rotationX);
+    const cosX = Math.cos(-cam.rotationX);
+    const sinY = Math.sin(-cam.rotationY);
+    const cosY = Math.cos(-cam.rotationY);
+    const sinZ = Math.sin(-cam.rotationZ);
+    const cosZ = Math.cos(-cam.rotationZ);
+
     const start = vertexOffset * 3;
     const end = start + vertexCount * 3;
-    let depth = 0;
+    let depthSum = 0;
     let count = 0;
     for (let i = start; i < end; i += 3) {
-      depth += sceneWorldPointDepth({
-        x: sceneNumber(sourcePositions[i], 0),
-        y: sceneNumber(sourcePositions[i + 1], 0),
-        z: sceneNumber(sourcePositions[i + 2], 0),
-      }, camera);
+      let lx = sceneNumber(sourcePositions[i], 0) - cam.x;
+      let ly = sceneNumber(sourcePositions[i + 1], 0) - cam.y;
+      let lz = sceneNumber(sourcePositions[i + 2], 0) + cam.z;
+
+      // Inverse rotate: -rotZ, then -rotY, then -rotX (match sceneInverseRotatePoint).
+      let nX = lx * cosZ - ly * sinZ;
+      let nY = lx * sinZ + ly * cosZ;
+      lx = nX;
+      ly = nY;
+
+      nX = lx * cosY + lz * sinY;
+      let nZ = -lx * sinY + lz * cosY;
+      lx = nX;
+      lz = nZ;
+
+      nZ = ly * sinX + lz * cosX;
+      depthSum += nZ;
       count += 1;
     }
-    return depth / Math.max(1, count);
+    return depthSum / Math.max(1, count);
   }
 
   function sceneWorldObjectCulled(object, camera) {

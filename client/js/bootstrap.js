@@ -10197,11 +10197,7 @@
 
   function sceneMaterialShaderData(material) {
     if (material && Array.isArray(material.shaderData) && material.shaderData.length >= 3) {
-      return [
-        sceneNumber(material.shaderData[0], 0),
-        sceneNumber(material.shaderData[1], 0),
-        sceneNumber(material.shaderData[2], 1),
-      ];
+      return material.shaderData;
     }
     if (!material || typeof material !== "object") {
       return [0, 0, 1];
@@ -10546,6 +10542,12 @@
     return a.order - b.order;
   }
 
+  const _sceneWorldObjectDepthCameraScratch = {
+    x: 0, y: 0, z: 0,
+    rotationX: 0, rotationY: 0, rotationZ: 0,
+    fov: 0, near: 0, far: 0,
+  };
+
   function sceneWorldObjectDepth(sourcePositions, object, camera) {
     if (object && object.bounds) {
       return sceneBoundsDepthMetrics(object.bounds, camera).center;
@@ -10558,19 +10560,39 @@
     if (!vertexCount) {
       return sceneWorldPointDepth(0, camera);
     }
+
+    const cam = sceneRenderCamera(camera, _sceneWorldObjectDepthCameraScratch);
+    const sinX = Math.sin(-cam.rotationX);
+    const cosX = Math.cos(-cam.rotationX);
+    const sinY = Math.sin(-cam.rotationY);
+    const cosY = Math.cos(-cam.rotationY);
+    const sinZ = Math.sin(-cam.rotationZ);
+    const cosZ = Math.cos(-cam.rotationZ);
+
     const start = vertexOffset * 3;
     const end = start + vertexCount * 3;
-    let depth = 0;
+    let depthSum = 0;
     let count = 0;
     for (let i = start; i < end; i += 3) {
-      depth += sceneWorldPointDepth({
-        x: sceneNumber(sourcePositions[i], 0),
-        y: sceneNumber(sourcePositions[i + 1], 0),
-        z: sceneNumber(sourcePositions[i + 2], 0),
-      }, camera);
+      let lx = sceneNumber(sourcePositions[i], 0) - cam.x;
+      let ly = sceneNumber(sourcePositions[i + 1], 0) - cam.y;
+      let lz = sceneNumber(sourcePositions[i + 2], 0) + cam.z;
+
+      let nX = lx * cosZ - ly * sinZ;
+      let nY = lx * sinZ + ly * cosZ;
+      lx = nX;
+      ly = nY;
+
+      nX = lx * cosY + lz * sinY;
+      let nZ = -lx * sinY + lz * cosY;
+      lx = nX;
+      lz = nZ;
+
+      nZ = ly * sinX + lz * cosX;
+      depthSum += nZ;
       count += 1;
     }
-    return depth / Math.max(1, count);
+    return depthSum / Math.max(1, count);
   }
 
   function sceneWorldObjectCulled(object, camera) {

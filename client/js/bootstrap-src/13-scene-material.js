@@ -260,11 +260,17 @@
 
   function sceneMaterialShaderData(material) {
     if (material && Array.isArray(material.shaderData) && material.shaderData.length >= 3) {
-      return [
-        sceneNumber(material.shaderData[0], 0),
-        sceneNumber(material.shaderData[1], 0),
-        sceneNumber(material.shaderData[2], 1),
-      ];
+      // Fast path: the material already carries a computed shaderData
+      // array (typically stamped by sceneMaterialProfile on first call).
+      // Previously this branch copied the array element-by-element via
+      // sceneNumber — an extra 3-field allocation + 3 NaN-checks that
+      // served no purpose since the values were already computed by
+      // this very function. Returning the existing reference directly
+      // saves an allocation per call; callers are strictly read-only
+      // on the result (verified: sceneMeshMaterialArray,
+      // appendSceneWorldObjectSlice, and the profile self-assignment
+      // in sceneMaterialProfile all read data[0..2] and never mutate).
+      return material.shaderData;
     }
     if (!material || typeof material !== "object") {
       return [0, 0, 1];
