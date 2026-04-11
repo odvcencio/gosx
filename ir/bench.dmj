@@ -1,0 +1,100 @@
+// IR lowering benchmarks. Compiled by danmuji into ir/bench_danmuji_test.go.
+//
+// Run with: go test -bench=. -benchmem ./ir/
+//
+// Rebuild the generated Go file after editing this .dmj:
+//     danmuji build ir/bench.dmj
+
+package ir_test
+
+import (
+    "testing"
+
+    "github.com/odvcencio/gosx"
+    "github.com/odvcencio/gosx/ir"
+)
+
+benchmark "lower counter" {
+    setup {
+        source := []byte(benchCounterSource)
+        tree, lang, err := gosx.Parse(source)
+        if err != nil {
+            panic(err)
+        }
+        root := tree.RootNode()
+    }
+    measure {
+        _, err := ir.Lower(root, source, lang)
+        if err != nil {
+            panic(err)
+        }
+    }
+    report_allocs
+}
+
+benchmark "lower form" {
+    setup {
+        source := []byte(benchFormSource)
+        tree, lang, err := gosx.Parse(source)
+        if err != nil {
+            panic(err)
+        }
+        root := tree.RootNode()
+    }
+    measure {
+        _, err := ir.Lower(root, source, lang)
+        if err != nil {
+            panic(err)
+        }
+    }
+    report_allocs
+}
+
+benchmark "lower island counter" {
+    setup {
+        source := []byte(benchCounterSource)
+        tree, lang, err := gosx.Parse(source)
+        if err != nil {
+            panic(err)
+        }
+        prog, err := ir.Lower(tree.RootNode(), source, lang)
+        if err != nil {
+            panic(err)
+        }
+    }
+    measure {
+        _, err := ir.LowerIsland(prog, 0)
+        if err != nil {
+            panic(err)
+        }
+    }
+    report_allocs
+}
+
+benchmark "parse expr simple" {
+    setup {
+        src := "count + 1"
+        scope := benchExprScope()
+    }
+    measure {
+        _, _, err := ir.ParseExpr(src, scope)
+        if err != nil {
+            panic(err)
+        }
+    }
+    report_allocs
+}
+
+benchmark "parse expr complex" {
+    setup {
+        src := "user.name == \"alice\" && count > 10 ? items.length : 0"
+        scope := benchExprScope()
+    }
+    measure {
+        _, _, err := ir.ParseExpr(src, scope)
+        if err != nil {
+            panic(err)
+        }
+    }
+    report_allocs
+}

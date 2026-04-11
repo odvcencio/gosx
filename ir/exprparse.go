@@ -858,8 +858,24 @@ type exprToken struct {
 	text string
 }
 
+// singleCharTokenText interns the one-byte string for each ASCII char that
+// can appear as a single-character token. Storing the table at package scope
+// lets the lexer reuse the same string headers across calls instead of
+// allocating a fresh `string(ch)` per single-char token (which the previous
+// implementation did 8+ times for a typical complex expression).
+var singleCharTokenText = func() *[256]string {
+	var t [256]string
+	for i := range t {
+		t[i] = string(byte(i))
+	}
+	return &t
+}()
+
 func lexExpr(source string) ([]exprToken, error) {
-	var tokens []exprToken
+	// Most expressions tokenize to ~one token per 3 chars; pre-sizing
+	// tokens here keeps the slice from doubling 3-4 times for the common
+	// expression sizes we see in real islands.
+	tokens := make([]exprToken, 0, len(source)/3+4)
 
 	for i := 0; i < len(source); {
 		ch := source[i]
@@ -945,39 +961,41 @@ func lexExpr(source string) ([]exprToken, error) {
 			}
 		}
 
+		// Single-char tokens reuse the package-level text table so each
+		// case is a 16-byte token-struct write with no allocation.
 		switch ch {
 		case '(':
-			tokens = append(tokens, exprToken{kind: tokenLParen, text: string(ch)})
+			tokens = append(tokens, exprToken{kind: tokenLParen, text: singleCharTokenText[ch]})
 		case ')':
-			tokens = append(tokens, exprToken{kind: tokenRParen, text: string(ch)})
+			tokens = append(tokens, exprToken{kind: tokenRParen, text: singleCharTokenText[ch]})
 		case '[':
-			tokens = append(tokens, exprToken{kind: tokenLBracket, text: string(ch)})
+			tokens = append(tokens, exprToken{kind: tokenLBracket, text: singleCharTokenText[ch]})
 		case ']':
-			tokens = append(tokens, exprToken{kind: tokenRBracket, text: string(ch)})
+			tokens = append(tokens, exprToken{kind: tokenRBracket, text: singleCharTokenText[ch]})
 		case '.':
-			tokens = append(tokens, exprToken{kind: tokenDot, text: string(ch)})
+			tokens = append(tokens, exprToken{kind: tokenDot, text: singleCharTokenText[ch]})
 		case ',':
-			tokens = append(tokens, exprToken{kind: tokenComma, text: string(ch)})
+			tokens = append(tokens, exprToken{kind: tokenComma, text: singleCharTokenText[ch]})
 		case '?':
-			tokens = append(tokens, exprToken{kind: tokenQuestion, text: string(ch)})
+			tokens = append(tokens, exprToken{kind: tokenQuestion, text: singleCharTokenText[ch]})
 		case ':':
-			tokens = append(tokens, exprToken{kind: tokenColon, text: string(ch)})
+			tokens = append(tokens, exprToken{kind: tokenColon, text: singleCharTokenText[ch]})
 		case '+':
-			tokens = append(tokens, exprToken{kind: tokenPlus, text: string(ch)})
+			tokens = append(tokens, exprToken{kind: tokenPlus, text: singleCharTokenText[ch]})
 		case '-':
-			tokens = append(tokens, exprToken{kind: tokenMinus, text: string(ch)})
+			tokens = append(tokens, exprToken{kind: tokenMinus, text: singleCharTokenText[ch]})
 		case '*':
-			tokens = append(tokens, exprToken{kind: tokenStar, text: string(ch)})
+			tokens = append(tokens, exprToken{kind: tokenStar, text: singleCharTokenText[ch]})
 		case '/':
-			tokens = append(tokens, exprToken{kind: tokenSlash, text: string(ch)})
+			tokens = append(tokens, exprToken{kind: tokenSlash, text: singleCharTokenText[ch]})
 		case '%':
-			tokens = append(tokens, exprToken{kind: tokenPercent, text: string(ch)})
+			tokens = append(tokens, exprToken{kind: tokenPercent, text: singleCharTokenText[ch]})
 		case '!':
-			tokens = append(tokens, exprToken{kind: tokenBang, text: string(ch)})
+			tokens = append(tokens, exprToken{kind: tokenBang, text: singleCharTokenText[ch]})
 		case '<':
-			tokens = append(tokens, exprToken{kind: tokenLt, text: string(ch)})
+			tokens = append(tokens, exprToken{kind: tokenLt, text: singleCharTokenText[ch]})
 		case '>':
-			tokens = append(tokens, exprToken{kind: tokenGt, text: string(ch)})
+			tokens = append(tokens, exprToken{kind: tokenGt, text: singleCharTokenText[ch]})
 		default:
 			return nil, fmt.Errorf("unexpected character %q", ch)
 		}

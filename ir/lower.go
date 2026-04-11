@@ -14,6 +14,7 @@ import (
 func Lower(root *gotreesitter.Node, source []byte, lang *gotreesitter.Language) (*Program, error) {
 	l := &lowerer{
 		src:           source,
+		srcStr:        string(source),
 		lang:          lang,
 		prog:          &Program{},
 		signalImports: make(map[string]struct{}),
@@ -29,6 +30,7 @@ func Lower(root *gotreesitter.Node, source []byte, lang *gotreesitter.Language) 
 
 type lowerer struct {
 	src           []byte
+	srcStr        string
 	lang          *gotreesitter.Language
 	prog          *Program
 	errs          []Diagnostic
@@ -36,8 +38,12 @@ type lowerer struct {
 	signalDot     bool
 }
 
+// text returns the source text covered by node n. It substrings the
+// pre-converted srcStr instead of reallocating per call — Go strings
+// share their backing array, so this is a 16-byte slice header copy
+// instead of a fresh byte allocation + copy.
 func (l *lowerer) text(n *gotreesitter.Node) string {
-	return string(l.src[n.StartByte():n.EndByte()])
+	return l.srcStr[n.StartByte():n.EndByte()]
 }
 
 func (l *lowerer) nodeType(n *gotreesitter.Node) string {
@@ -142,32 +148,52 @@ func engineDirectiveCapabilities(kind string, declared []string) []string {
 	return out
 }
 
+// precedingCommentLines walks backwards from n.StartByte() through srcStr
+// collecting the contiguous block of // comment lines that immediately
+// precede the node (skipping blank-line padding before the block starts).
+//
+// The previous implementation did `strings.Split(string(l.src[:start]), "\n")`
+// which allocated a string of size `start` plus a slice of every line in the
+// file — wasteful for islands declared late in a file. This walk operates
+// directly on srcStr and only allocates strings for the few lines actually
+// returned (zero allocations when there are no preceding comments).
 func (l *lowerer) precedingCommentLines(n *gotreesitter.Node) []string {
-	start := int(n.StartByte())
-	if start <= 0 {
-		return nil
-	}
-	lines := strings.Split(string(l.src[:start]), "\n")
-	if len(lines) == 0 {
+	end := int(n.StartByte())
+	if end <= 0 {
 		return nil
 	}
 
+	src := l.srcStr[:end]
 	var block []string
 	collecting := false
-	for i := len(lines) - 1; i >= 0; i-- {
-		trimmed := strings.TrimSpace(lines[i])
+
+	// Walk lines from the bottom of the prefix up.
+	for end > 0 {
+		// Find the start of the previous line.
+		lineStart := strings.LastIndexByte(src[:end], '\n') + 1
+		line := src[lineStart:end]
+		trimmed := strings.TrimSpace(line)
+
 		if trimmed == "" {
 			if collecting {
 				break
 			}
-			continue
-		}
-		if strings.HasPrefix(trimmed, "//") {
+		} else if strings.HasPrefix(trimmed, "//") {
 			collecting = true
-			block = append([]string{trimmed}, block...)
-			continue
+			block = append(block, trimmed)
+		} else {
+			break
 		}
-		break
+
+		if lineStart == 0 {
+			break
+		}
+		end = lineStart - 1 // step before the '\n'
+	}
+
+	// Block was collected bottom-up — reverse in place to restore source order.
+	for i, j := 0, len(block)-1; i < j; i, j = i+1, j-1 {
+		block[i], block[j] = block[j], block[i]
 	}
 	return block
 }
@@ -1058,8 +1084,12 @@ func (l *lowerer) extractTagName(n *gotreesitter.Node) string {
 }
 
 func (l *lowerer) extractAttrs(n *gotreesitter.Node) []Attr {
-	var attrs []Attr
-	for i := 0; i < int(n.NamedChildCount()); i++ {
+	count := int(n.NamedChildCount())
+	if count == 0 {
+		return nil
+	}
+	attrs := make([]Attr, 0, count)
+	for i := 0; i < count; i++ {
 		child := n.NamedChild(i)
 		switch l.nodeType(child) {
 		case "jsx_attribute":
@@ -1128,8 +1158,12 @@ func stripGSXAttributeExpressionText(text string) string {
 }
 
 func (l *lowerer) extractChildren(n *gotreesitter.Node) []NodeID {
-	var children []NodeID
-	for i := 0; i < int(n.NamedChildCount()); i++ {
+	count := int(n.NamedChildCount())
+	if count == 0 {
+		return nil
+	}
+	children := make([]NodeID, 0, count)
+	for i := 0; i < count; i++ {
 		child := n.NamedChild(i)
 		typ := l.nodeType(child)
 		// Skip opening/closing tags
