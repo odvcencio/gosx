@@ -17,6 +17,7 @@ import (
 	neturl "net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -642,9 +643,9 @@ func extractEventSlots(prog *program.Program) []hydrate.EventSlot {
 			if attr.Kind == program.AttrEvent {
 				eventType := eventNameToType(attr.Name)
 				slots = append(slots, hydrate.EventSlot{
-					SlotID:         fmt.Sprintf("%s:%s:%s", path, eventType, attr.Event),
+					SlotID:         path + ":" + eventType + ":" + attr.Event,
 					EventType:      eventType,
-					TargetSelector: fmt.Sprintf(`[data-gosx-path="%s"]`, path),
+					TargetSelector: `[data-gosx-path="` + path + `"]`,
 					HandlerName:    attr.Event,
 				})
 			}
@@ -715,40 +716,59 @@ func RenderResolvedHTML(prog *program.Program, resolved *vm.ResolvedTree) string
 	return renderResolvedNode(resolved, 0, "0")
 }
 
+// renderResolvedNode walks a resolved VM tree and produces its HTML
+// representation. Writes directly into a shared builder to avoid the
+// per-node string allocation the old implementation incurred via
+// fmt.Sprintf for the open-tag attrs and close-tag.
 func renderResolvedNode(resolved *vm.ResolvedTree, nodeIdx int, path string) string {
 	if resolved == nil || nodeIdx < 0 || nodeIdx >= len(resolved.Nodes) {
 		return ""
 	}
+	var b strings.Builder
+	b.Grow(256)
+	renderResolvedNodeInto(&b, resolved, nodeIdx, path)
+	return b.String()
+}
+
+func renderResolvedNodeInto(b *strings.Builder, resolved *vm.ResolvedTree, nodeIdx int, path string) {
+	if resolved == nil || nodeIdx < 0 || nodeIdx >= len(resolved.Nodes) {
+		return
+	}
 	node := resolved.Nodes[nodeIdx]
 
 	if node.Tag == "" {
-		return html.EscapeString(node.Text)
+		b.WriteString(html.EscapeString(node.Text))
+		return
 	}
 
-	var b strings.Builder
 	safeTag := html.EscapeString(node.Tag)
-	b.WriteString("<")
+	b.WriteByte('<')
 	b.WriteString(safeTag)
 
 	for _, attr := range renderResolvedAttrs(&node, path) {
 		safeName := html.EscapeString(attr.Name)
 		if attr.Bool {
-			b.WriteString(" ")
+			b.WriteByte(' ')
 			b.WriteString(safeName)
 			continue
 		}
-		b.WriteString(fmt.Sprintf(` %s="%s"`, safeName, html.EscapeString(attr.Value)))
+		b.WriteByte(' ')
+		b.WriteString(safeName)
+		b.WriteString(`="`)
+		b.WriteString(html.EscapeString(attr.Value))
+		b.WriteByte('"')
 	}
 
-	b.WriteString(">")
+	b.WriteByte('>')
 	if node.Text != "" {
 		b.WriteString(html.EscapeString(node.Text))
 	}
 	for idx, childIdx := range node.Children {
-		b.WriteString(renderResolvedNode(resolved, childIdx, childProgramPath(path, idx)))
+		renderResolvedNodeInto(b, resolved, childIdx, childProgramPath(path, idx))
 	}
-	b.WriteString(fmt.Sprintf("</%s>", safeTag))
-	return b.String()
+	b.WriteString("</")
+	b.WriteString(safeTag)
+	b.WriteByte('>')
 }
 
 func renderResolvedAttrs(node *vm.ResolvedNode, path string) []vm.ResolvedAttr {
@@ -804,7 +824,15 @@ func programFileExt(format string) string {
 }
 
 func childProgramPath(parent string, idx int) string {
-	return fmt.Sprintf("%s/%d", parent, idx)
+	// Called per child per reconcile node — strconv + direct concat
+	// avoids the fmt format-state scratch alloc on the hot path.
+	idxStr := strconv.Itoa(idx)
+	var b strings.Builder
+	b.Grow(len(parent) + 1 + len(idxStr))
+	b.WriteString(parent)
+	b.WriteByte('/')
+	b.WriteString(idxStr)
+	return b.String()
 }
 
 // PreloadHints returns <link rel="preload"> tags for the HTML <head>.
