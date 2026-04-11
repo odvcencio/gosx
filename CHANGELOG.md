@@ -1,5 +1,51 @@
 # Changelog
 
+## v0.16.4
+
+Performance patch focused on `gosx.RenderHTML` — the single function every page render in the framework passes through — plus smaller wins in `hub`, `server/cache.go`, and `server.nextRequestID`.
+
+### `RenderHTML` — single-allocation rendering
+
+Three changes in `node.go`:
+
+1. **Pre-grow the output `strings.Builder`.** Added an `estimateRenderSize` walker that sums tag, attribute, and text bytes for a rough forecast of the final HTML size. Pre-growing with that estimate eliminates the 3-5 internal `bytes` doublings `strings.Builder` would otherwise perform during a typical page render. The forecast can under-shoot slightly (HTML escape expansion isn't counted) — that's fine because the Builder still grows on demand.
+
+2. **`El()` pre-sizes its children slice** to `len(args)`. The previous implementation appended one child at a time starting from a nil slice, forcing two or three doublings for any element with more than a handful of children.
+
+3. **`El()` aliases the first `AttrList` directly** into `n.attrs` instead of copying entries one by one. `Attrs()` builds a fresh `AttrList` per call so there's no sharing concern.
+
+4. **`Attrs()` pre-sizes its result slice** to `len(pairs)`.
+
+The cumulative effect brings every `RenderHTML` call to **1 allocation** — the Builder's underlying byte slice — regardless of tree depth:
+
+| benchmark | before | after |
+|---|---|---|
+| `RenderHtmlSimple` | 37 ns, 24 B, 2 allocs | **33 ns, 16 B, 1 alloc** |
+| `RenderHtmlWithAttrs` | 279 ns, 504 B, 6 allocs | **189 ns, 192 B, 1 alloc** |
+| `RenderHtmlNested` | 1156 ns, 1912 B, 8 allocs | **770 ns, 576 B, 1 alloc** |
+
+The single remaining allocation is the Builder's backing array, which is unavoidable without a pool — and any pool would need to copy the output out, putting the allocation right back.
+
+### Cascade wins downstream
+
+Every package that calls `RenderHTML` picks up the improvement for free. Re-running the server and route benches shows:
+
+| benchmark | before v0.16.4 | after v0.16.4 |
+|---|---|---|
+| `RenderDocumentSimple` | 11 allocs | **6 allocs** (-45%) |
+| `RenderDocumentComplex` | 17 allocs | **6 allocs** (-65%) |
+| `WriteHtmlSimple` | 14 allocs | **10 allocs** |
+| `WriteHtmlComplex` | 18 allocs | **10 allocs** (-44%) |
+| `RouterServeStatic` | 18 allocs | **16 allocs** |
+| `RouterServeParam` | 26 allocs | **23 allocs** |
+| `RouterServeNestedLayouts` | 54 allocs | **46 allocs** (-15%) |
+
+### Smaller per-request helpers
+
+- **`server.nextRequestID`** — the requestID middleware stamps every request with a `gosx-<nanos>-<seq>` string. The previous `fmt.Sprintf("gosx-%d-%d", …)` allocated a format-state scratch buffer per call. Replaced with a `strings.Builder` + two `strconv.Format*` calls.
+- **`server/cache.go` auto-ETag** — same treatment: `fmt.Sprintf(W/"gosx-%s", hex)` → direct string concatenation. Runs on every cacheable GET that auto-derives an ETag.
+- **`hub.Broadcast` / `hub.Send`** — the previous code called `json.Marshal` twice per send: once via `mustMarshal(data)` returning a `json.RawMessage`, then again on the wrapping `Message` envelope. Plus the `RawMessage` field assignment boxed an interface wrapper. Consolidated into a single `encodeMessage` helper that builds the wire format into one pre-sized byte buffer.
+
 ## v0.16.3
 
 Server hot-path performance patch covering four packages: `island/program` (the binary IslandProgram wire format), `ir` (lowering and expression parsing), `server` (page rendering / write), and `route` (request dispatch). Every benchmarked path is faster, and per-request allocation pressure on real page renders is meaningfully lower.
