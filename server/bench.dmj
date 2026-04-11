@@ -1,0 +1,67 @@
+// Server hot-path benchmarks. Compiled by danmuji into
+// server/bench_danmuji_test.go.
+//
+// Run with: go test -bench=. -benchmem ./server/
+//
+// Rebuild after editing:
+//     danmuji build server/bench.dmj
+
+package server
+
+import (
+    "net/http/httptest"
+    "testing"
+)
+
+benchmark "render document simple" {
+    setup {
+        ctx := benchSimplePageContext()
+    }
+    measure {
+        _ = renderDocumentWithContext(ctx)
+    }
+    report_allocs
+}
+
+benchmark "render document complex" {
+    setup {
+        ctx := benchComplexPageContext()
+    }
+    measure {
+        _ = renderDocumentWithContext(ctx)
+    }
+    report_allocs
+}
+
+benchmark "write html simple" {
+    setup {
+        node := benchSimplePageNode()
+    }
+    measure {
+        w := httptest.NewRecorder()
+        WriteHTML(w, HTMLResponse{Status: 200, Node: node})
+    }
+    report_allocs
+}
+
+benchmark "write html complex" {
+    setup {
+        node := benchComplexPageNode()
+    }
+    measure {
+        w := httptest.NewRecorder()
+        WriteHTML(w, HTMLResponse{Status: 200, Node: node})
+    }
+    report_allocs
+}
+
+benchmark "render deferred chunk" {
+    setup {
+        slotID := "stream-slot-12"
+        html := "<div class=\"deferred\">Loaded content for the slot</div>"
+    }
+    measure {
+        _ = renderDeferredChunk(slotID, html)
+    }
+    report_allocs
+}

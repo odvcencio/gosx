@@ -1,8 +1,9 @@
 package server
 
 import (
-	"fmt"
+	"io"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/odvcencio/gosx"
@@ -33,16 +34,16 @@ func WriteHTML(w http.ResponseWriter, res HTMLResponse) {
 	html := gosx.RenderHTML(res.Node)
 	if res.Deferred == nil || !res.Deferred.HasDeferred() {
 		w.WriteHeader(status)
-		fmt.Fprint(w, html)
+		io.WriteString(w, html)
 		return
 	}
 
 	prefix, suffix, marked := splitStreamTail(html)
 	w.WriteHeader(status)
 	if marked {
-		fmt.Fprint(w, prefix)
+		io.WriteString(w, prefix)
 	} else {
-		fmt.Fprint(w, html)
+		io.WriteString(w, html)
 	}
 
 	flusher, _ := w.(http.Flusher)
@@ -53,7 +54,7 @@ func WriteHTML(w http.ResponseWriter, res HTMLResponse) {
 	streamDeferredChunks(w, res.Deferred, flusher)
 
 	if marked {
-		fmt.Fprint(w, suffix)
+		io.WriteString(w, suffix)
 	}
 }
 
@@ -78,7 +79,6 @@ func streamDeferredChunks(w http.ResponseWriter, registry *DeferredRegistry, flu
 
 	chunks := make(chan deferredChunk, len(blocks))
 	for _, block := range blocks {
-		block := block
 		go func() {
 			chunks <- deferredChunk{
 				slotID: block.id,
@@ -89,7 +89,7 @@ func streamDeferredChunks(w http.ResponseWriter, registry *DeferredRegistry, flu
 
 	for range blocks {
 		chunk := <-chunks
-		fmt.Fprint(w, renderDeferredChunk(chunk.slotID, chunk.html))
+		io.WriteString(w, renderDeferredChunk(chunk.slotID, chunk.html))
 		if flusher != nil {
 			flusher.Flush()
 		}
@@ -122,13 +122,19 @@ func resolveDeferredHTML(block deferredBlock) string {
 
 func renderDeferredChunk(slotID, html string) string {
 	templateID := slotID + "-content"
-	return fmt.Sprintf(
-		`<template id=%q data-gosx-stream-template>%s</template><script>(function(){var slot=document.getElementById(%q);var tpl=document.getElementById(%q);if(!slot||!tpl){return;}slot.replaceWith(tpl.content.cloneNode(true));tpl.remove();})();</script>`,
-		templateID,
-		html,
-		slotID,
-		templateID,
-	)
+	// Pre-size to roughly the static template (~225 bytes) plus body html.
+	var b strings.Builder
+	b.Grow(256 + len(html) + 4*len(templateID) + 2*len(slotID))
+	b.WriteString(`<template id=`)
+	b.WriteString(strconv.Quote(templateID))
+	b.WriteString(` data-gosx-stream-template>`)
+	b.WriteString(html)
+	b.WriteString(`</template><script>(function(){var slot=document.getElementById(`)
+	b.WriteString(strconv.Quote(slotID))
+	b.WriteString(`);var tpl=document.getElementById(`)
+	b.WriteString(strconv.Quote(templateID))
+	b.WriteString(`);if(!slot||!tpl){return;}slot.replaceWith(tpl.content.cloneNode(true));tpl.remove();})();</script>`)
+	return b.String()
 }
 
 func defaultDeferredError(err error) gosx.Node {

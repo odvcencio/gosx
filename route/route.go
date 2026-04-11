@@ -351,10 +351,14 @@ func (r *Router) registerRoute(mux *http.ServeMux, prefix string, route Route, p
 }
 
 func (r *Router) buildHandler(pattern string, route Route, layouts []LayoutFunc, errorHandler ErrorHandler, errorLayout LayoutFunc) http.HandlerFunc {
+	// Param names depend only on the pattern; resolve them once at build
+	// time so we don't re-parse the pattern string on every request.
+	paramNames := patternParamNames(pattern)
+
 	return func(w http.ResponseWriter, req *http.Request) {
 		server.MarkObservedRequest(req, "page", pattern)
 		ctx := newRouteContext(req)
-		ctx.Params = extractParams(req, pattern)
+		ctx.Params = extractParamsByNames(req, paramNames)
 
 		defer func() {
 			if recovered := recover(); recovered != nil {
@@ -477,9 +481,16 @@ func (r *Router) renderError(w http.ResponseWriter, ctx *RouteContext, layouts [
 	r.renderPage(w, ctx, layouts, node, ctx.StatusCode())
 }
 
-func extractParams(req *http.Request, pattern string) map[string]string {
-	params := make(map[string]string)
-	for _, name := range patternParamNames(pattern) {
+// extractParamsByNames pulls path values for the given pre-computed param
+// names. Returns nil when the route has no parameters at all — reads from
+// a nil string map in Go return the zero value, so handlers calling
+// ctx.Param("x") still work without a per-request map allocation.
+func extractParamsByNames(req *http.Request, names []string) map[string]string {
+	if len(names) == 0 {
+		return nil
+	}
+	params := make(map[string]string, len(names))
+	for _, name := range names {
 		if value := req.PathValue(name); value != "" {
 			params[name] = value
 		}
@@ -511,9 +522,10 @@ func extractPatternParams(pattern string, requestPath string) map[string]string 
 }
 
 func newRouteContext(req *http.Request) *RouteContext {
+	// Params is left nil; reads from a nil map are valid and the build-time
+	// closure assigns a sized map only when the route declares parameters.
 	return &RouteContext{
 		Request:   req,
-		Params:    make(map[string]string),
 		PageState: *server.NewPageState(),
 	}
 }

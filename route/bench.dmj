@@ -1,0 +1,60 @@
+// Router hot-path benchmarks. Compiled by danmuji into
+// route/bench_danmuji_test.go.
+//
+// Run with: go test -bench=. -benchmem ./route/
+//
+// Rebuild after editing:
+//     danmuji build route/bench.dmj
+
+package route
+
+import (
+    "net/http/httptest"
+    "testing"
+)
+
+benchmark "router serve static" {
+    setup {
+        handler := benchStaticRouter()
+        req := httptest.NewRequest("GET", "/about", nil)
+    }
+    measure {
+        w := httptest.NewRecorder()
+        handler.ServeHTTP(w, req)
+    }
+    report_allocs
+}
+
+benchmark "router serve param" {
+    setup {
+        handler := benchParamRouter()
+        req := httptest.NewRequest("GET", "/users/42/posts/hello-world", nil)
+    }
+    measure {
+        w := httptest.NewRecorder()
+        handler.ServeHTTP(w, req)
+    }
+    report_allocs
+}
+
+benchmark "router serve nested layouts" {
+    setup {
+        handler := benchNestedRouter()
+        req := httptest.NewRequest("GET", "/dashboard/settings", nil)
+    }
+    measure {
+        w := httptest.NewRecorder()
+        handler.ServeHTTP(w, req)
+    }
+    report_allocs
+}
+
+benchmark "pattern param names" {
+    setup {
+        pattern := "/users/{userID}/posts/{slug}/comments/{commentID}"
+    }
+    measure {
+        _ = patternParamNames(pattern)
+    }
+    report_allocs
+}

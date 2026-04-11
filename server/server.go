@@ -459,7 +459,6 @@ func (a *App) pageRouteHandler(route registeredPageRoute) http.Handler {
 			}
 		}()
 		ctx := newContext(r)
-		ctx.cache = NewCacheState()
 		node := handler(ctx)
 		a.renderPage(w, ctx, pattern, node, "GoSX")
 	})
@@ -482,18 +481,17 @@ func (a *App) apiRouteHandler(route registeredAPIRoute) http.Handler {
 			}
 		}()
 		ctx := newContext(r)
-		ctx.cache = NewCacheState()
 		payload, err := handler(ctx)
 		if err != nil {
-			writeJSONError(w, errorStatus(err, ctx.status, http.StatusInternalServerError), err, ctx.headers)
+			writeJSONError(w, errorStatus(err, ctx.status, http.StatusInternalServerError), err, ctx.Header())
 			return
 		}
 		status := statusWithDefault(ctx.status, payload)
-		if ApplyCacheHeaders(r, ctx.headers, status, ctx.cache, a.Revalidator()) {
-			WriteNotModified(w, ctx.headers)
+		if ApplyCacheHeaders(r, ctx.Header(), status, ctx.cache, a.Revalidator()) {
+			WriteNotModified(w, ctx.Header())
 			return
 		}
-		writeJSON(w, status, payload, ctx.headers)
+		writeJSON(w, status, payload, ctx.Header())
 	})
 }
 
@@ -640,19 +638,31 @@ func renderDocumentWithContext(doc *DocumentContext) string {
 		head = doc.Head
 		body = doc.Body
 	}
+	htmlAttrs := documentHTMLAttrs(doc)
+	bodyAttrs := documentBodyAttrs(doc)
+	headHTML := gosx.RenderHTML(HeadOutlet(head))
+	bodyHTML := gosx.RenderHTML(body)
+
+	// Pre-size the builder to roughly the static template size plus
+	// the dynamic chunks. Avoids 2-3 grow doublings on a typical page.
 	var b strings.Builder
+	b.Grow(256 + len(title) + len(htmlAttrs) + len(bodyAttrs) +
+		len(headHTML) + len(bodyHTML))
+
 	b.WriteString("<!DOCTYPE html>\n<html")
-	b.WriteString(documentHTMLAttrs(doc))
+	b.WriteString(htmlAttrs)
 	b.WriteString(">\n<head>\n")
 	b.WriteString("<meta charset=\"utf-8\">\n")
 	b.WriteString("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n")
-	fmt.Fprintf(&b, "<title>%s</title>\n", title)
-	b.WriteString(gosx.RenderHTML(HeadOutlet(head)))
+	b.WriteString("<title>")
+	b.WriteString(title)
+	b.WriteString("</title>\n")
+	b.WriteString(headHTML)
 	b.WriteString("\n</head>\n<body")
-	b.WriteString(documentBodyAttrs(doc))
+	b.WriteString(bodyAttrs)
 	b.WriteString(">\n")
-	b.WriteString(gosx.RenderHTML(body))
-	b.WriteString("\n")
+	b.WriteString(bodyHTML)
+	b.WriteByte('\n')
 	b.WriteString(streamTailMarker)
 	b.WriteString("\n</body>\n</html>")
 	return b.String()
@@ -694,14 +704,14 @@ func (a *App) observeOperation(event OperationEvent) {
 func (a *App) renderPage(w http.ResponseWriter, ctx *Context, pattern string, body gosx.Node, defaultTitle string) {
 	ctx = ensurePageContext(ctx)
 	if a.pageNotModified(ctx) {
-		WriteNotModified(w, ctx.headers)
+		WriteNotModified(w, ctx.Header())
 		return
 	}
 	renderedPage := a.renderPageNode(ctx, pattern, body, defaultTitle)
 
 	WriteHTML(w, HTMLResponse{
 		Status:   ctx.status,
-		Headers:  ctx.headers,
+		Headers:  ctx.Header(),
 		Node:     renderedPage,
 		Deferred: ctx.deferred,
 	})
@@ -718,7 +728,7 @@ func ensurePageContext(ctx *Context) *Context {
 }
 
 func (a *App) pageNotModified(ctx *Context) bool {
-	return ApplyCacheHeaders(ctx.Request, ctx.headers, ctx.status, ctx.cache, a.Revalidator())
+	return ApplyCacheHeaders(ctx.Request, ctx.Header(), ctx.status, ctx.cache, a.Revalidator())
 }
 
 func (a *App) decoratePageContext(ctx *Context) {

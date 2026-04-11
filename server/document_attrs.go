@@ -1,7 +1,6 @@
 package server
 
 import (
-	"fmt"
 	"html"
 	"net/url"
 	"path"
@@ -72,10 +71,29 @@ func documentNavigationAttrValues(doc *DocumentContext) []documentAttr {
 	}
 }
 
+// renderDocumentAttrValues writes attrs as ` name="value"` pairs into a
+// strings.Builder. The previous implementation used fmt.Fprintf per attr,
+// which boxes both arguments into interface{} and walks the format string
+// each call. Direct WriteString/WriteByte avoids that and is allocation-free
+// for ASCII-clean values.
 func renderDocumentAttrValues(attrs []documentAttr) string {
-	var b strings.Builder
+	if len(attrs) == 0 {
+		return ""
+	}
+	// Pre-size: 4 bytes of fixed structure (` ="`) + ~16-byte avg name +
+	// value length per attr.
+	approx := 0
 	for _, attr := range attrs {
-		fmt.Fprintf(&b, ` %s="%s"`, attr.name, html.EscapeString(attr.value))
+		approx += len(attr.name) + len(attr.value) + 4
+	}
+	var b strings.Builder
+	b.Grow(approx)
+	for _, attr := range attrs {
+		b.WriteByte(' ')
+		b.WriteString(attr.name)
+		b.WriteString(`="`)
+		b.WriteString(html.EscapeString(attr.value))
+		b.WriteByte('"')
 	}
 	return b.String()
 }

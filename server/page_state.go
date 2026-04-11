@@ -20,13 +20,16 @@ type PageState struct {
 	runtime  *PageRuntime
 }
 
-// NewPageState creates an initialized shared page-state container.
+// NewPageState creates an empty shared page-state container.
+//
+// The headers map, deferred registry, and cache state are lazily
+// instantiated on first access via Header() / DeferredRegistry() /
+// CacheState(). That moves three guaranteed per-request allocations
+// off the hot path for handlers that never need them — most of which
+// is true for short response paths like 304 Not Modified or static
+// passthrough.
 func NewPageState() *PageState {
-	return &PageState{
-		headers:  make(http.Header),
-		deferred: NewDeferredRegistry(),
-		cache:    NewCacheState(),
-	}
+	return &PageState{}
 }
 
 // Header returns the response headers to apply when the request completes.
