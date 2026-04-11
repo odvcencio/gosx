@@ -1876,8 +1876,81 @@
 
   // --- Light Uniform Upload ---
 
+  // Shared scratch for number → u32 bit reinterpretation used by the light
+  // hash. Allocated once at module level; safe because the hash function
+  // is called synchronously per upload and never recursively.
+  var _scenePBRLightsHashBuf = new ArrayBuffer(4);
+  var _scenePBRLightsHashFloat = new Float32Array(_scenePBRLightsHashBuf);
+  var _scenePBRLightsHashInt = new Uint32Array(_scenePBRLightsHashBuf);
+
+  function scenePBRLightsHashNumber(h, n) {
+    _scenePBRLightsHashFloat[0] = (typeof n === "number" && n === n) ? n : 0;
+    return Math.imul((h ^ _scenePBRLightsHashInt[0]) >>> 0, 16777619) >>> 0;
+  }
+
+  function scenePBRLightsHashString(h, s) {
+    var str = (typeof s === "string") ? s : "";
+    var len = str.length;
+    for (var i = 0; i < len; i++) {
+      h = Math.imul((h ^ str.charCodeAt(i)) >>> 0, 16777619) >>> 0;
+    }
+    // Length-delimit to distinguish "ab" + "c" from "a" + "bc".
+    return Math.imul((h ^ (len + 1)) >>> 0, 16777619) >>> 0;
+  }
+
+  // scenePBRLightsHash computes a 32-bit FNV-1a hash of every light field
+  // and environment field that scenePBRUploadLights turns into a uniform.
+  // Used for dirty-tracking so we skip the ~30 gl.uniform* calls per
+  // program per frame when the content hasn't changed. Collisions are
+  // astronomically unlikely in practice — a collision would manifest as
+  // a one-frame visual stale, not a crash.
+  function scenePBRLightsHash(lights, environment) {
+    var h = 2166136261;
+    var lightArray = Array.isArray(lights) ? lights : [];
+    var count = Math.min(lightArray.length, 8);
+    h = Math.imul((h ^ count) >>> 0, 16777619) >>> 0;
+    for (var i = 0; i < count; i++) {
+      var l = lightArray[i];
+      h = scenePBRLightsHashString(h, l && l.kind);
+      h = scenePBRLightsHashNumber(h, sceneNumber(l && l.x, 0));
+      h = scenePBRLightsHashNumber(h, sceneNumber(l && l.y, 0));
+      h = scenePBRLightsHashNumber(h, sceneNumber(l && l.z, 0));
+      h = scenePBRLightsHashNumber(h, sceneNumber(l && l.directionX, 0));
+      h = scenePBRLightsHashNumber(h, sceneNumber(l && l.directionY, -1));
+      h = scenePBRLightsHashNumber(h, sceneNumber(l && l.directionZ, 0));
+      h = scenePBRLightsHashString(h, l && l.color);
+      h = scenePBRLightsHashNumber(h, sceneNumber(l && l.intensity, 1));
+      h = scenePBRLightsHashNumber(h, sceneNumber(l && l.range, 0));
+      h = scenePBRLightsHashNumber(h, sceneNumber(l && l.decay, 2));
+      h = scenePBRLightsHashNumber(h, sceneNumber(l && l.angle, 0));
+      h = scenePBRLightsHashNumber(h, sceneNumber(l && l.penumbra, 0));
+      h = scenePBRLightsHashString(h, l && l.groundColor);
+    }
+    var env = environment || {};
+    h = scenePBRLightsHashString(h, env.ambientColor);
+    h = scenePBRLightsHashNumber(h, sceneNumber(env.ambientIntensity, 0));
+    h = scenePBRLightsHashString(h, env.skyColor);
+    h = scenePBRLightsHashNumber(h, sceneNumber(env.skyIntensity, 0));
+    h = scenePBRLightsHashString(h, env.groundColor);
+    h = scenePBRLightsHashNumber(h, sceneNumber(env.groundIntensity, 0));
+    h = scenePBRLightsHashNumber(h, sceneNumber(env.fogDensity, 0));
+    h = scenePBRLightsHashString(h, env.fogColor);
+    return h;
+  }
+
   // Upload the light array and environment uniforms for the current frame.
+  // Dirty-tracked per uniforms object via a stamp on the uniforms itself —
+  // each program (main, skinned, instanced) has its own uniforms struct
+  // and therefore its own stamp. On a static scene the 3 per-frame calls
+  // (one per program that needs the data) all early-out after the first
+  // frame, saving roughly 90 gl.uniform* calls per frame.
   function scenePBRUploadLights(gl, uniforms, lights, environment) {
+    const contentHash = scenePBRLightsHash(lights, environment);
+    if (uniforms._lastLightsHash === contentHash) {
+      return;
+    }
+    uniforms._lastLightsHash = contentHash;
+
     const lightArray = Array.isArray(lights) ? lights : [];
     const count = Math.min(lightArray.length, 8);
 

@@ -7009,25 +7009,64 @@
     });
   }
 
-  function translateScenePoint(point, object, timeSeconds) {
-    const scaled = {
-      x: sceneNumber(point && point.x, 0) * sceneNumber(object && object.scaleX, 1),
-      y: sceneNumber(point && point.y, 0) * sceneNumber(object && object.scaleY, 1),
-      z: sceneNumber(point && point.z, 0) * sceneNumber(object && object.scaleZ, 1),
-    };
-    const rotated = sceneRotatePoint(
-      scaled,
-      object.rotationX + object.spinX * timeSeconds,
-      object.rotationY + object.spinY * timeSeconds,
-      object.rotationZ + object.spinZ * timeSeconds,
-    );
-    const motion = sceneMotionOffset(object, timeSeconds);
-    return {
-      x: rotated.x + object.x + motion.x,
-      y: rotated.y + object.y + motion.y,
-      z: rotated.z + object.z + motion.z,
-    };
+  function translateScenePointInto(out, px, py, pz, object, timeSeconds) {
+    const scaleX = sceneNumber(object && object.scaleX, 1);
+    const scaleY = sceneNumber(object && object.scaleY, 1);
+    const scaleZ = sceneNumber(object && object.scaleZ, 1);
+    let x = sceneNumber(px, 0) * scaleX;
+    let y = sceneNumber(py, 0) * scaleY;
+    let z = sceneNumber(pz, 0) * scaleZ;
+
+    const rotX = object.rotationX + object.spinX * timeSeconds;
+    const rotY = object.rotationY + object.spinY * timeSeconds;
+    const rotZ = object.rotationZ + object.spinZ * timeSeconds;
+
+    const sinX = Math.sin(rotX);
+    const cosX = Math.cos(rotX);
+    let nextY = y * cosX - z * sinX;
+    let nextZ = y * sinX + z * cosX;
+    y = nextY;
+    z = nextZ;
+
+    const sinY = Math.sin(rotY);
+    const cosY = Math.cos(rotY);
+    let nextX = x * cosY + z * sinY;
+    nextZ = -x * sinY + z * cosY;
+    x = nextX;
+    z = nextZ;
+
+    const sinZ = Math.sin(rotZ);
+    const cosZ = Math.cos(rotZ);
+    nextX = x * cosZ - y * sinZ;
+    nextY = x * sinZ + y * cosZ;
+    x = nextX;
+    y = nextY;
+
+    if (object && (object.shiftX || object.shiftY || object.shiftZ)) {
+      const driftPhase = sceneNumber(object.driftPhase, 0);
+      const angle = driftPhase + timeSeconds * sceneNumber(object.driftSpeed, 0);
+      x += Math.cos(angle) * sceneNumber(object.shiftX, 0);
+      y += Math.sin(angle * 0.82 + driftPhase * 0.35) * sceneNumber(object.shiftY, 0);
+      z += Math.sin(angle) * sceneNumber(object.shiftZ, 0);
+    }
+
+    out.x = x + object.x;
+    out.y = y + object.y;
+    out.z = z + object.z;
   }
+
+  function translateScenePoint(point, object, timeSeconds) {
+    const out = { x: 0, y: 0, z: 0 };
+    translateScenePointInto(out, point && point.x, point && point.y, point && point.z, object, timeSeconds);
+    return out;
+  }
+
+  const _lineSegmentFromScratch = { x: 0, y: 0, z: 0 };
+  const _lineSegmentToScratch = { x: 0, y: 0, z: 0 };
+  const _meshTriangleP0Scratch = { x: 0, y: 0, z: 0 };
+  const _meshTriangleP1Scratch = { x: 0, y: 0, z: 0 };
+  const _meshTriangleP2Scratch = { x: 0, y: 0, z: 0 };
+  const _meshTrianglePoints = [_meshTriangleP0Scratch, _meshTriangleP1Scratch, _meshTriangleP2Scratch];
 
   function sceneMotionOffset(object, timeSeconds) {
     if (!object || (!object.shiftX && !object.shiftY && !object.shiftZ)) {
@@ -7076,17 +7115,12 @@
       const objectLineWidth = rawLineWidth > 0 ? rawLineWidth : 1.8;
       const objectPassString = sceneWorldObjectRenderPass(object, material);
       const objectPassIndex = objectPassString === "alpha" ? 1 : (objectPassString === "additive" ? 2 : 0);
-      const worldSegments = sourceSegments.map(function(segment) {
-        return [
-          translateScenePoint(segment[0], object, timeSeconds),
-          translateScenePoint(segment[1], object, timeSeconds),
-        ];
-      });
-      for (let index = 0; index < worldSegments.length; index += 1) {
-        const segment = worldSegments[index];
-        const fromWorld = segment[0];
-        const toWorld = segment[1];
+      const fromWorld = _lineSegmentFromScratch;
+      const toWorld = _lineSegmentToScratch;
+      for (let index = 0; index < sourceSegments.length; index += 1) {
         const sourceSegment = sourceSegments[index];
+        translateScenePointInto(fromWorld, sourceSegment[0] && sourceSegment[0].x, sourceSegment[0] && sourceSegment[0].y, sourceSegment[0] && sourceSegment[0].z, object, timeSeconds);
+        translateScenePointInto(toWorld, sourceSegment[1] && sourceSegment[1].x, sourceSegment[1] && sourceSegment[1].y, sourceSegment[1] && sourceSegment[1].z, object, timeSeconds);
         const fromLighting = sceneLitColorRGBA(material, fromWorld, sceneObjectWorldNormal(object, sourceSegment[0], timeSeconds), lights, environment);
         const toLighting = sceneLitColorRGBA(material, toWorld, sceneObjectWorldNormal(object, sourceSegment[1], timeSeconds), lights, environment);
         bundle.worldPositions.push(fromWorld.x, fromWorld.y, fromWorld.z, toWorld.x, toWorld.y, toWorld.z);
@@ -7268,12 +7302,16 @@
     let meshVertexCount = 0;
     let bounds = null;
 
+    const points = _meshTrianglePoints;
+    const positions = vertices.positions;
     for (let tri = 0; tri + 2 < vertices.count; tri += 3) {
-      const points = [
-        translateScenePoint(sceneMeshVertexPoint(vertices, tri), object, timeSeconds),
-        translateScenePoint(sceneMeshVertexPoint(vertices, tri + 1), object, timeSeconds),
-        translateScenePoint(sceneMeshVertexPoint(vertices, tri + 2), object, timeSeconds),
-      ];
+      const triOffset = tri * 3;
+      const tri0 = triOffset;
+      const tri1 = triOffset + 3;
+      const tri2 = triOffset + 6;
+      translateScenePointInto(points[0], positions[tri0], positions[tri0 + 1], positions[tri0 + 2], object, timeSeconds);
+      translateScenePointInto(points[1], positions[tri1], positions[tri1 + 1], positions[tri1 + 2], object, timeSeconds);
+      translateScenePointInto(points[2], positions[tri2], positions[tri2 + 1], positions[tri2 + 2], object, timeSeconds);
       const normals = [
         sceneMeshWorldNormal(object, vertices, tri, timeSeconds),
         sceneMeshWorldNormal(object, vertices, tri + 1, timeSeconds),

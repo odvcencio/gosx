@@ -7009,25 +7009,64 @@
     });
   }
 
-  function translateScenePoint(point, object, timeSeconds) {
-    const scaled = {
-      x: sceneNumber(point && point.x, 0) * sceneNumber(object && object.scaleX, 1),
-      y: sceneNumber(point && point.y, 0) * sceneNumber(object && object.scaleY, 1),
-      z: sceneNumber(point && point.z, 0) * sceneNumber(object && object.scaleZ, 1),
-    };
-    const rotated = sceneRotatePoint(
-      scaled,
-      object.rotationX + object.spinX * timeSeconds,
-      object.rotationY + object.spinY * timeSeconds,
-      object.rotationZ + object.spinZ * timeSeconds,
-    );
-    const motion = sceneMotionOffset(object, timeSeconds);
-    return {
-      x: rotated.x + object.x + motion.x,
-      y: rotated.y + object.y + motion.y,
-      z: rotated.z + object.z + motion.z,
-    };
+  function translateScenePointInto(out, px, py, pz, object, timeSeconds) {
+    const scaleX = sceneNumber(object && object.scaleX, 1);
+    const scaleY = sceneNumber(object && object.scaleY, 1);
+    const scaleZ = sceneNumber(object && object.scaleZ, 1);
+    let x = sceneNumber(px, 0) * scaleX;
+    let y = sceneNumber(py, 0) * scaleY;
+    let z = sceneNumber(pz, 0) * scaleZ;
+
+    const rotX = object.rotationX + object.spinX * timeSeconds;
+    const rotY = object.rotationY + object.spinY * timeSeconds;
+    const rotZ = object.rotationZ + object.spinZ * timeSeconds;
+
+    const sinX = Math.sin(rotX);
+    const cosX = Math.cos(rotX);
+    let nextY = y * cosX - z * sinX;
+    let nextZ = y * sinX + z * cosX;
+    y = nextY;
+    z = nextZ;
+
+    const sinY = Math.sin(rotY);
+    const cosY = Math.cos(rotY);
+    let nextX = x * cosY + z * sinY;
+    nextZ = -x * sinY + z * cosY;
+    x = nextX;
+    z = nextZ;
+
+    const sinZ = Math.sin(rotZ);
+    const cosZ = Math.cos(rotZ);
+    nextX = x * cosZ - y * sinZ;
+    nextY = x * sinZ + y * cosZ;
+    x = nextX;
+    y = nextY;
+
+    if (object && (object.shiftX || object.shiftY || object.shiftZ)) {
+      const driftPhase = sceneNumber(object.driftPhase, 0);
+      const angle = driftPhase + timeSeconds * sceneNumber(object.driftSpeed, 0);
+      x += Math.cos(angle) * sceneNumber(object.shiftX, 0);
+      y += Math.sin(angle * 0.82 + driftPhase * 0.35) * sceneNumber(object.shiftY, 0);
+      z += Math.sin(angle) * sceneNumber(object.shiftZ, 0);
+    }
+
+    out.x = x + object.x;
+    out.y = y + object.y;
+    out.z = z + object.z;
   }
+
+  function translateScenePoint(point, object, timeSeconds) {
+    const out = { x: 0, y: 0, z: 0 };
+    translateScenePointInto(out, point && point.x, point && point.y, point && point.z, object, timeSeconds);
+    return out;
+  }
+
+  const _lineSegmentFromScratch = { x: 0, y: 0, z: 0 };
+  const _lineSegmentToScratch = { x: 0, y: 0, z: 0 };
+  const _meshTriangleP0Scratch = { x: 0, y: 0, z: 0 };
+  const _meshTriangleP1Scratch = { x: 0, y: 0, z: 0 };
+  const _meshTriangleP2Scratch = { x: 0, y: 0, z: 0 };
+  const _meshTrianglePoints = [_meshTriangleP0Scratch, _meshTriangleP1Scratch, _meshTriangleP2Scratch];
 
   function sceneMotionOffset(object, timeSeconds) {
     if (!object || (!object.shiftX && !object.shiftY && !object.shiftZ)) {
@@ -7076,17 +7115,12 @@
       const objectLineWidth = rawLineWidth > 0 ? rawLineWidth : 1.8;
       const objectPassString = sceneWorldObjectRenderPass(object, material);
       const objectPassIndex = objectPassString === "alpha" ? 1 : (objectPassString === "additive" ? 2 : 0);
-      const worldSegments = sourceSegments.map(function(segment) {
-        return [
-          translateScenePoint(segment[0], object, timeSeconds),
-          translateScenePoint(segment[1], object, timeSeconds),
-        ];
-      });
-      for (let index = 0; index < worldSegments.length; index += 1) {
-        const segment = worldSegments[index];
-        const fromWorld = segment[0];
-        const toWorld = segment[1];
+      const fromWorld = _lineSegmentFromScratch;
+      const toWorld = _lineSegmentToScratch;
+      for (let index = 0; index < sourceSegments.length; index += 1) {
         const sourceSegment = sourceSegments[index];
+        translateScenePointInto(fromWorld, sourceSegment[0] && sourceSegment[0].x, sourceSegment[0] && sourceSegment[0].y, sourceSegment[0] && sourceSegment[0].z, object, timeSeconds);
+        translateScenePointInto(toWorld, sourceSegment[1] && sourceSegment[1].x, sourceSegment[1] && sourceSegment[1].y, sourceSegment[1] && sourceSegment[1].z, object, timeSeconds);
         const fromLighting = sceneLitColorRGBA(material, fromWorld, sceneObjectWorldNormal(object, sourceSegment[0], timeSeconds), lights, environment);
         const toLighting = sceneLitColorRGBA(material, toWorld, sceneObjectWorldNormal(object, sourceSegment[1], timeSeconds), lights, environment);
         bundle.worldPositions.push(fromWorld.x, fromWorld.y, fromWorld.z, toWorld.x, toWorld.y, toWorld.z);
@@ -7268,12 +7302,16 @@
     let meshVertexCount = 0;
     let bounds = null;
 
+    const points = _meshTrianglePoints;
+    const positions = vertices.positions;
     for (let tri = 0; tri + 2 < vertices.count; tri += 3) {
-      const points = [
-        translateScenePoint(sceneMeshVertexPoint(vertices, tri), object, timeSeconds),
-        translateScenePoint(sceneMeshVertexPoint(vertices, tri + 1), object, timeSeconds),
-        translateScenePoint(sceneMeshVertexPoint(vertices, tri + 2), object, timeSeconds),
-      ];
+      const triOffset = tri * 3;
+      const tri0 = triOffset;
+      const tri1 = triOffset + 3;
+      const tri2 = triOffset + 6;
+      translateScenePointInto(points[0], positions[tri0], positions[tri0 + 1], positions[tri0 + 2], object, timeSeconds);
+      translateScenePointInto(points[1], positions[tri1], positions[tri1 + 1], positions[tri1 + 2], object, timeSeconds);
+      translateScenePointInto(points[2], positions[tri2], positions[tri2 + 1], positions[tri2 + 2], object, timeSeconds);
       const normals = [
         sceneMeshWorldNormal(object, vertices, tri, timeSeconds),
         sceneMeshWorldNormal(object, vertices, tri + 1, timeSeconds),
@@ -12453,7 +12491,65 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
     return program;
   }
 
+  var _scenePBRLightsHashBuf = new ArrayBuffer(4);
+  var _scenePBRLightsHashFloat = new Float32Array(_scenePBRLightsHashBuf);
+  var _scenePBRLightsHashInt = new Uint32Array(_scenePBRLightsHashBuf);
+
+  function scenePBRLightsHashNumber(h, n) {
+    _scenePBRLightsHashFloat[0] = (typeof n === "number" && n === n) ? n : 0;
+    return Math.imul((h ^ _scenePBRLightsHashInt[0]) >>> 0, 16777619) >>> 0;
+  }
+
+  function scenePBRLightsHashString(h, s) {
+    var str = (typeof s === "string") ? s : "";
+    var len = str.length;
+    for (var i = 0; i < len; i++) {
+      h = Math.imul((h ^ str.charCodeAt(i)) >>> 0, 16777619) >>> 0;
+    }
+    return Math.imul((h ^ (len + 1)) >>> 0, 16777619) >>> 0;
+  }
+
+  function scenePBRLightsHash(lights, environment) {
+    var h = 2166136261;
+    var lightArray = Array.isArray(lights) ? lights : [];
+    var count = Math.min(lightArray.length, 8);
+    h = Math.imul((h ^ count) >>> 0, 16777619) >>> 0;
+    for (var i = 0; i < count; i++) {
+      var l = lightArray[i];
+      h = scenePBRLightsHashString(h, l && l.kind);
+      h = scenePBRLightsHashNumber(h, sceneNumber(l && l.x, 0));
+      h = scenePBRLightsHashNumber(h, sceneNumber(l && l.y, 0));
+      h = scenePBRLightsHashNumber(h, sceneNumber(l && l.z, 0));
+      h = scenePBRLightsHashNumber(h, sceneNumber(l && l.directionX, 0));
+      h = scenePBRLightsHashNumber(h, sceneNumber(l && l.directionY, -1));
+      h = scenePBRLightsHashNumber(h, sceneNumber(l && l.directionZ, 0));
+      h = scenePBRLightsHashString(h, l && l.color);
+      h = scenePBRLightsHashNumber(h, sceneNumber(l && l.intensity, 1));
+      h = scenePBRLightsHashNumber(h, sceneNumber(l && l.range, 0));
+      h = scenePBRLightsHashNumber(h, sceneNumber(l && l.decay, 2));
+      h = scenePBRLightsHashNumber(h, sceneNumber(l && l.angle, 0));
+      h = scenePBRLightsHashNumber(h, sceneNumber(l && l.penumbra, 0));
+      h = scenePBRLightsHashString(h, l && l.groundColor);
+    }
+    var env = environment || {};
+    h = scenePBRLightsHashString(h, env.ambientColor);
+    h = scenePBRLightsHashNumber(h, sceneNumber(env.ambientIntensity, 0));
+    h = scenePBRLightsHashString(h, env.skyColor);
+    h = scenePBRLightsHashNumber(h, sceneNumber(env.skyIntensity, 0));
+    h = scenePBRLightsHashString(h, env.groundColor);
+    h = scenePBRLightsHashNumber(h, sceneNumber(env.groundIntensity, 0));
+    h = scenePBRLightsHashNumber(h, sceneNumber(env.fogDensity, 0));
+    h = scenePBRLightsHashString(h, env.fogColor);
+    return h;
+  }
+
   function scenePBRUploadLights(gl, uniforms, lights, environment) {
+    const contentHash = scenePBRLightsHash(lights, environment);
+    if (uniforms._lastLightsHash === contentHash) {
+      return;
+    }
+    uniforms._lastLightsHash = contentHash;
+
     const lightArray = Array.isArray(lights) ? lights : [];
     const count = Math.min(lightArray.length, 8);
 

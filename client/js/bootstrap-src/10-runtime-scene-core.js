@@ -2559,40 +2559,94 @@
     });
   }
 
-  // NOTE on translateScenePoint allocations: this function is called per
-  // vertex in line-geometry loops and per triangle vertex in mesh loops,
-  // which makes it a tempting target for scratch-pool optimization.
-  // However, the existing call sites (notably line-segment map loops and
-  // the 3-vertex triangle arrays in appendSceneMeshObjectToBundle) retain
-  // references to multiple translate results simultaneously, sometimes
-  // across per-iteration boundaries. A rotating scratch pool silently
-  // aliases those references the moment the pool wraps, producing
-  // incorrect world positions — exactly the kind of sneaky correctness
-  // regression that would break label occlusion and break visual tests.
+  // translateScenePointInto is the alloc-free core of the scene-space
+  // transform (scale → rotate → translate + drift offset). It writes the
+  // result into a caller-provided `out` object, reads raw coordinates to
+  // avoid an intermediate point object at the call site, and inlines the
+  // rotation math so there's no `sceneRotatePoint` result allocation.
   //
-  // Leaving the allocation in place until the call sites are refactored
-  // to consume each result immediately. The wins from scratch-allocating
-  // here are real but not worth the fragility until the restructure
-  // ships alongside.
-  function translateScenePoint(point, object, timeSeconds) {
-    const scaled = {
-      x: sceneNumber(point && point.x, 0) * sceneNumber(object && object.scaleX, 1),
-      y: sceneNumber(point && point.y, 0) * sceneNumber(object && object.scaleY, 1),
-      z: sceneNumber(point && point.z, 0) * sceneNumber(object && object.scaleZ, 1),
-    };
-    const rotated = sceneRotatePoint(
-      scaled,
-      object.rotationX + object.spinX * timeSeconds,
-      object.rotationY + object.spinY * timeSeconds,
-      object.rotationZ + object.spinZ * timeSeconds,
-    );
-    const motion = sceneMotionOffset(object, timeSeconds);
-    return {
-      x: rotated.x + object.x + motion.x,
-      y: rotated.y + object.y + motion.y,
-      z: rotated.z + object.z + motion.z,
-    };
+  // Hot callers (the line-segment loop and the triangle vertex loop in
+  // appendSceneObjectToBundle / appendSceneMeshObjectToBundle) hoist
+  // stable scratch `out` objects above their outer loops. That pattern is
+  // allocation-free across frames — each iteration mutates the same
+  // objects in place.
+  //
+  // The legacy allocating form `translateScenePoint(point, object, t)` is
+  // preserved below for the remaining dead-code callers. Once those are
+  // removed entirely we can drop the wrapper.
+  function translateScenePointInto(out, px, py, pz, object, timeSeconds) {
+    const scaleX = sceneNumber(object && object.scaleX, 1);
+    const scaleY = sceneNumber(object && object.scaleY, 1);
+    const scaleZ = sceneNumber(object && object.scaleZ, 1);
+    let x = sceneNumber(px, 0) * scaleX;
+    let y = sceneNumber(py, 0) * scaleY;
+    let z = sceneNumber(pz, 0) * scaleZ;
+
+    // Inlined XYZ Euler rotation (was sceneRotatePoint). Applies rotateX
+    // then rotateY then rotateZ to match the original helper semantics.
+    const rotX = object.rotationX + object.spinX * timeSeconds;
+    const rotY = object.rotationY + object.spinY * timeSeconds;
+    const rotZ = object.rotationZ + object.spinZ * timeSeconds;
+
+    const sinX = Math.sin(rotX);
+    const cosX = Math.cos(rotX);
+    let nextY = y * cosX - z * sinX;
+    let nextZ = y * sinX + z * cosX;
+    y = nextY;
+    z = nextZ;
+
+    const sinY = Math.sin(rotY);
+    const cosY = Math.cos(rotY);
+    let nextX = x * cosY + z * sinY;
+    nextZ = -x * sinY + z * cosY;
+    x = nextX;
+    z = nextZ;
+
+    const sinZ = Math.sin(rotZ);
+    const cosZ = Math.cos(rotZ);
+    nextX = x * cosZ - y * sinZ;
+    nextY = x * sinZ + y * cosZ;
+    x = nextX;
+    y = nextY;
+
+    // Inlined sceneMotionOffset. Short-circuits when no drift components
+    // are set so static objects skip the sin/cos math entirely — the old
+    // helper early-returned a fresh {0,0,0} per call, still allocating.
+    if (object && (object.shiftX || object.shiftY || object.shiftZ)) {
+      const driftPhase = sceneNumber(object.driftPhase, 0);
+      const angle = driftPhase + timeSeconds * sceneNumber(object.driftSpeed, 0);
+      x += Math.cos(angle) * sceneNumber(object.shiftX, 0);
+      y += Math.sin(angle * 0.82 + driftPhase * 0.35) * sceneNumber(object.shiftY, 0);
+      z += Math.sin(angle) * sceneNumber(object.shiftZ, 0);
+    }
+
+    out.x = x + object.x;
+    out.y = y + object.y;
+    out.z = z + object.z;
   }
+
+  // Allocating wrapper retained for the dead-code helpers (projectSceneObject,
+  // sceneWorldObjectSegments) and any external caller that expects a fresh
+  // point object. Hot call sites should use translateScenePointInto directly.
+  function translateScenePoint(point, object, timeSeconds) {
+    const out = { x: 0, y: 0, z: 0 };
+    translateScenePointInto(out, point && point.x, point && point.y, point && point.z, object, timeSeconds);
+    return out;
+  }
+
+  // Module-level scratches used by the hot line-geometry and triangle-mesh
+  // loops inside appendSceneObjectToBundle / appendSceneMeshObjectToBundle.
+  // They live above the loops so each frame reuses the same objects in
+  // place — no per-iteration allocations. Callers MUST NOT retain these
+  // references across another translateScenePointInto call on the same
+  // scratch; each iteration is expected to consume its scratch inline
+  // before the next iteration's translate.
+  const _lineSegmentFromScratch = { x: 0, y: 0, z: 0 };
+  const _lineSegmentToScratch = { x: 0, y: 0, z: 0 };
+  const _meshTriangleP0Scratch = { x: 0, y: 0, z: 0 };
+  const _meshTriangleP1Scratch = { x: 0, y: 0, z: 0 };
+  const _meshTriangleP2Scratch = { x: 0, y: 0, z: 0 };
+  const _meshTrianglePoints = [_meshTriangleP0Scratch, _meshTriangleP1Scratch, _meshTriangleP2Scratch];
 
   function sceneMotionOffset(object, timeSeconds) {
     if (!object || (!object.shiftX && !object.shiftY && !object.shiftZ)) {
@@ -2654,17 +2708,21 @@
       // so downstream per-segment pushes are a single integer assignment.
       const objectPassString = sceneWorldObjectRenderPass(object, material);
       const objectPassIndex = objectPassString === "alpha" ? 1 : (objectPassString === "additive" ? 2 : 0);
-      const worldSegments = sourceSegments.map(function(segment) {
-        return [
-          translateScenePoint(segment[0], object, timeSeconds),
-          translateScenePoint(segment[1], object, timeSeconds),
-        ];
-      });
-      for (let index = 0; index < worldSegments.length; index += 1) {
-        const segment = worldSegments[index];
-        const fromWorld = segment[0];
-        const toWorld = segment[1];
+      // Hoist segment world-space scratches above the loop. Both `fromWorld`
+      // and `toWorld` are stable within a single iteration because all
+      // downstream consumers (sceneLitColorRGBA, sceneExpandWorldBounds,
+      // sceneProjectPoint) read fields inline rather than retaining refs,
+      // and appendSceneLine stores the sceneProjectPoint *output* (fresh
+      // per call) not the world scratch. Pre-restructure this path built
+      // an intermediate worldSegments array with fresh pair objects per
+      // segment — 4 allocs per segment × N segments × 60 fps = a lot of
+      // GC churn on any line-heavy scene.
+      const fromWorld = _lineSegmentFromScratch;
+      const toWorld = _lineSegmentToScratch;
+      for (let index = 0; index < sourceSegments.length; index += 1) {
         const sourceSegment = sourceSegments[index];
+        translateScenePointInto(fromWorld, sourceSegment[0] && sourceSegment[0].x, sourceSegment[0] && sourceSegment[0].y, sourceSegment[0] && sourceSegment[0].z, object, timeSeconds);
+        translateScenePointInto(toWorld, sourceSegment[1] && sourceSegment[1].x, sourceSegment[1] && sourceSegment[1].y, sourceSegment[1] && sourceSegment[1].z, object, timeSeconds);
         const fromLighting = sceneLitColorRGBA(material, fromWorld, sceneObjectWorldNormal(object, sourceSegment[0], timeSeconds), lights, environment);
         const toLighting = sceneLitColorRGBA(material, toWorld, sceneObjectWorldNormal(object, sourceSegment[1], timeSeconds), lights, environment);
         bundle.worldPositions.push(fromWorld.x, fromWorld.y, fromWorld.z, toWorld.x, toWorld.y, toWorld.z);
@@ -2851,12 +2909,24 @@
     let meshVertexCount = 0;
     let bounds = null;
 
+    const points = _meshTrianglePoints;
+    const positions = vertices.positions;
     for (let tri = 0; tri + 2 < vertices.count; tri += 3) {
-      const points = [
-        translateScenePoint(sceneMeshVertexPoint(vertices, tri), object, timeSeconds),
-        translateScenePoint(sceneMeshVertexPoint(vertices, tri + 1), object, timeSeconds),
-        translateScenePoint(sceneMeshVertexPoint(vertices, tri + 2), object, timeSeconds),
-      ];
+      // Translate the three triangle vertices directly from the raw
+      // positions Float32Array into hoisted scratch points, skipping the
+      // intermediate sceneMeshVertexPoint object allocation (was 3 extra
+      // allocs per triangle). points[] itself is the shared
+      // _meshTrianglePoints module scratch — all downstream consumers
+      // (lighting computation, mesh buffer push loop, three wire segment
+      // calls) read fields inline before the next iteration clobbers
+      // them, so the scratch is stable within each triangle.
+      const triOffset = tri * 3;
+      const tri0 = triOffset;
+      const tri1 = triOffset + 3;
+      const tri2 = triOffset + 6;
+      translateScenePointInto(points[0], positions[tri0], positions[tri0 + 1], positions[tri0 + 2], object, timeSeconds);
+      translateScenePointInto(points[1], positions[tri1], positions[tri1 + 1], positions[tri1 + 2], object, timeSeconds);
+      translateScenePointInto(points[2], positions[tri2], positions[tri2 + 1], positions[tri2 + 2], object, timeSeconds);
       const normals = [
         sceneMeshWorldNormal(object, vertices, tri, timeSeconds),
         sceneMeshWorldNormal(object, vertices, tri + 1, timeSeconds),
