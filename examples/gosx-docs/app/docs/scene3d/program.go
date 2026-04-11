@@ -18,8 +18,22 @@ func DemoScene() scene.Props {
 		Environment: scene.Environment{
 			AmbientColor:     "#ffffff",
 			AmbientIntensity: 0.2,
-			Exposure:         1.1,
-			ToneMapping:      "aces",
+		},
+		// Shadows caps each shadow map at 1024². Lights can still request
+		// ShadowSize: 2048/4096 for future high-quality fallbacks, but the
+		// default keeps per-light memory at ~4 MB instead of 16–64 MB.
+		// Set MaxPixels: scene.ShadowMaxPixelsUnbounded to opt out.
+		Shadows: scene.Shadows{MaxPixels: scene.ShadowMaxPixels1024},
+		// PostFX pipeline: bloom + ACES tonemap, capped at 1080p worth of
+		// offscreen framebuffer pixels so 4K/retina displays don't allocate
+		// multi-hundred-megabyte render targets. Bloom runs at 1/4 of the
+		// scaled pipeline — low-frequency blur, no visible quality loss.
+		PostFX: scene.PostFX{
+			MaxPixels: scene.PostFXMaxPixels1080p,
+			Effects: []scene.PostEffect{
+				scene.Bloom{Threshold: 0.8, Strength: 0.5, Radius: 6, Scale: 0.25},
+				scene.Tonemap{Mode: scene.TonemapACES, Exposure: 1.1},
+			},
 		},
 		Graph: scene.NewGraph(
 			scene.DirectionalLight{
@@ -27,6 +41,7 @@ func DemoScene() scene.Props {
 				Intensity:  1.0,
 				Direction:  scene.Vec3(0.3, -1, -0.5),
 				CastShadow: true,
+				ShadowSize: 2048, // scaled down to 1024 by Shadows.MaxPixels
 			},
 			scene.PointLight{
 				Color:     "#D4AF37",
