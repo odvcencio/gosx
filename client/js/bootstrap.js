@@ -5520,6 +5520,7 @@
       shiftZ: sceneNumber(item.shiftZ, sceneNumber(current.shiftZ, 0)),
       driftSpeed: sceneNumber(item.driftSpeed, sceneNumber(current.driftSpeed, 0)),
       driftPhase: sceneNumber(item.driftPhase, sceneNumber(current.driftPhase, 0)),
+      lineWidth: sceneNumber(item.lineWidth, sceneNumber(current.lineWidth, 0)),
       viewCulled: sceneBool(Object.prototype.hasOwnProperty.call(item, "viewCulled") ? item.viewCulled : current.viewCulled, false),
       castShadow: sceneBool(Object.prototype.hasOwnProperty.call(item, "castShadow") ? item.castShadow : current.castShadow, false),
       receiveShadow: sceneBool(Object.prototype.hasOwnProperty.call(item, "receiveShadow") ? item.receiveShadow : current.receiveShadow, false),
@@ -6957,6 +6958,7 @@
       colors: [],
       worldPositions: [],
       worldColors: [],
+      worldLineWidths: [],
       meshObjects: [],
       worldMeshPositions: [],
       worldMeshColors: [],
@@ -6985,6 +6987,7 @@
     bundle.worldPositions = new Float32Array(bundle.worldPositions);
     bundle.worldColors = new Float32Array(bundle.worldColors);
     bundle.worldVertexCount = bundle.worldPositions.length / 3;
+    bundle.worldLineWidths = new Float32Array(bundle.worldLineWidths);
     bundle.worldMeshPositions = new Float32Array(bundle.worldMeshPositions);
     bundle.worldMeshColors = new Float32Array(bundle.worldMeshColors);
     bundle.worldMeshNormals = new Float32Array(bundle.worldMeshNormals);
@@ -7067,6 +7070,7 @@
     let bounds = null;
     let vertexCount = 0;
     if (includeLineGeometry) {
+      const objectLineWidth = sceneNumber(object && object.lineWidth, 0) || 1.8;
       const worldSegments = sourceSegments.map(function(segment) {
         return [
           translateScenePoint(segment[0], object, timeSeconds),
@@ -7085,6 +7089,7 @@
           fromLighting[0], fromLighting[1], fromLighting[2], fromLighting[3],
           toLighting[0], toLighting[1], toLighting[2], toLighting[3],
         );
+        bundle.worldLineWidths.push(objectLineWidth);
         bounds = sceneExpandWorldBounds(bounds, fromWorld);
         bounds = sceneExpandWorldBounds(bounds, toWorld);
         vertexCount += 2;
@@ -7093,7 +7098,7 @@
         if (!from || !to) continue;
         const stroke = sceneMixRGBA(fromLighting, toLighting);
         stroke[3] = clamp01(stroke[3] * sceneMaterialOpacity(material));
-        appendSceneLine(bundle, width, height, from, to, sceneRGBAString(stroke), 1.8);
+        appendSceneLine(bundle, width, height, from, to, sceneRGBAString(stroke), objectLineWidth);
       }
     } else if (sceneObjectHasTexturedSurface(object, material)) {
       const corners = scenePlaneSurfaceCorners(object, timeSeconds);
@@ -17591,6 +17596,7 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
   function renderSceneCanvasWorldBundle(ctx2d, bundle, width, height) {
     const positions = bundle && bundle.worldPositions;
     const colors = bundle && bundle.worldColors;
+    const widths = bundle && bundle.worldLineWidths;
     const vertexCount = Math.max(0, Math.floor(sceneNumber(bundle && bundle.worldVertexCount, 0)));
     for (let index = 0; index + 1 < vertexCount; index += 2) {
       const fromWorld = sceneWorldPointAt(positions, index);
@@ -17610,7 +17616,9 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
         sceneNumber(colors && colors[colorOffset + 2], 1),
         sceneNumber(colors && colors[colorOffset + 3], 1),
       ]);
-      ctx2d.lineWidth = 1.8;
+      const segmentIndex = index / 2;
+      const segmentWidth = widths && segmentIndex < widths.length ? widths[segmentIndex] : 0;
+      ctx2d.lineWidth = segmentWidth > 0 ? segmentWidth : 1.8;
       strokeLine(ctx2d, from, to);
     }
   }

@@ -43,6 +43,7 @@ type ObjectIR struct {
 	Segments        int            `json:"segments,omitempty"`
 	Points          []Vector3      `json:"points,omitempty"`
 	LineSegments    [][2]int       `json:"lineSegments,omitempty"`
+	LineWidth       float64        `json:"lineWidth,omitempty"`
 	RadiusTop       float64        `json:"radiusTop,omitempty"`
 	RadiusBottom    float64        `json:"radiusBottom,omitempty"`
 	Tube            float64        `json:"tube,omitempty"`
@@ -483,6 +484,7 @@ func (item ObjectIR) legacyProps() map[string]any {
 	if segments := legacyLineSegments(item.LineSegments); len(segments) > 0 {
 		record["lineSegments"] = segments
 	}
+	setNumeric(record, "lineWidth", item.LineWidth)
 	setNumeric(record, "radiusTop", item.RadiusTop)
 	setNumeric(record, "radiusBottom", item.RadiusBottom)
 	setNumeric(record, "tube", item.Tube)

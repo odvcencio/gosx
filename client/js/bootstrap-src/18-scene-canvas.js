@@ -22,6 +22,11 @@
   function renderSceneCanvasWorldBundle(ctx2d, bundle, width, height) {
     const positions = bundle && bundle.worldPositions;
     const colors = bundle && bundle.worldColors;
+    // worldLineWidths is a parallel per-segment Float32Array populated by
+    // appendSceneObjectToBundle. Segment index = index / 2 because each
+    // segment is two vertices. Undefined/zero falls back to the legacy
+    // 1.8px default so pre-v0.15.1 scenes render unchanged.
+    const widths = bundle && bundle.worldLineWidths;
     const vertexCount = Math.max(0, Math.floor(sceneNumber(bundle && bundle.worldVertexCount, 0)));
     for (let index = 0; index + 1 < vertexCount; index += 2) {
       const fromWorld = sceneWorldPointAt(positions, index);
@@ -41,7 +46,9 @@
         sceneNumber(colors && colors[colorOffset + 2], 1),
         sceneNumber(colors && colors[colorOffset + 3], 1),
       ]);
-      ctx2d.lineWidth = 1.8;
+      const segmentIndex = index / 2;
+      const segmentWidth = widths && segmentIndex < widths.length ? widths[segmentIndex] : 0;
+      ctx2d.lineWidth = segmentWidth > 0 ? segmentWidth : 1.8;
       strokeLine(ctx2d, from, to);
     }
   }

@@ -2012,3 +2012,75 @@ func TestShadowMaxPixelsIRUnbounded(t *testing.T) {
 		t.Errorf("unbounded ShadowMaxPixels = %d, want %d", ir.ShadowMaxPixels, ShadowMaxPixelsUnbounded)
 	}
 }
+
+func TestLinesGeometryWidthReachesObjectIR(t *testing.T) {
+	// LinesGeometry.Width should flow through legacyGeometry into the
+	// lowered ObjectIR.LineWidth field so renderers (canvas fallback today,
+	// WebGL thick-line shader later) can honor the caller's requested width.
+	props := Props{
+		Graph: NewGraph(
+			Mesh{
+				ID: "lightning",
+				Geometry: LinesGeometry{
+					Points:   []Vector3{Vec3(0, 0, 0), Vec3(1, 1, 0), Vec3(2, 0, 0)},
+					Segments: [][2]int{{0, 1}, {1, 2}},
+					Width:    3.5,
+				},
+				Material: FlatMaterial{Color: "#8de1ff"},
+			},
+		),
+	}
+	ir := props.SceneIR()
+	if len(ir.Objects) != 1 {
+		t.Fatalf("expected 1 object, got %d", len(ir.Objects))
+	}
+	obj := ir.Objects[0]
+	if obj.Kind != "lines" {
+		t.Fatalf("expected lines kind, got %q", obj.Kind)
+	}
+	if math.Abs(obj.LineWidth-3.5) > 1e-9 {
+		t.Errorf("expected obj.LineWidth = 3.5, got %v", obj.LineWidth)
+	}
+	// Legacy props round-trip: the lineWidth should be emitted so the JS
+	// runtime can normalize it onto the scene object.
+	legacy := ir.legacyProps()
+	objects, ok := legacy["objects"].([]map[string]any)
+	if !ok {
+		t.Fatalf("expected legacy objects slice, got %T", legacy["objects"])
+	}
+	if len(objects) != 1 {
+		t.Fatalf("expected 1 legacy object, got %d", len(objects))
+	}
+	gotWidth, present := objects[0]["lineWidth"]
+	if !present {
+		t.Fatalf("expected lineWidth key in legacy props, got %v", objects[0])
+	}
+	if diff := math.Abs(gotWidth.(float64) - 3.5); diff > 1e-9 {
+		t.Errorf("legacy lineWidth = %v, want 3.5", gotWidth)
+	}
+}
+
+func TestLinesGeometryWidthZeroOmitsProp(t *testing.T) {
+	// The default (zero) width should not emit a lineWidth prop — the JS
+	// runtime falls back to the canvas default (1.8px) when the key is absent.
+	props := Props{
+		Graph: NewGraph(
+			Mesh{
+				Geometry: LinesGeometry{
+					Points:   []Vector3{Vec3(0, 0, 0), Vec3(1, 0, 0)},
+					Segments: [][2]int{{0, 1}},
+				},
+				Material: FlatMaterial{Color: "#8de1ff"},
+			},
+		),
+	}
+	ir := props.SceneIR()
+	if obj := ir.Objects[0]; obj.LineWidth != 0 {
+		t.Errorf("expected zero LineWidth, got %v", obj.LineWidth)
+	}
+	legacy := ir.legacyProps()
+	objects := legacy["objects"].([]map[string]any)
+	if _, present := objects[0]["lineWidth"]; present {
+		t.Errorf("expected lineWidth absent when Width is zero, got %v", objects[0])
+	}
+}

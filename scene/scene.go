@@ -536,6 +536,11 @@ type SphereGeometry struct {
 type LinesGeometry struct {
 	Points   []Vector3
 	Segments [][2]int
+	// Width is the stroke width in CSS pixels for line segments. Zero value
+	// means the renderer's default (1.8px on the Canvas 2D fallback; hairline
+	// on the legacy WebGL path until the thick-line shader ships). Non-zero
+	// values flow through to renderers that honor per-line widths.
+	Width float64
 }
 
 type CylinderGeometry struct {
@@ -1546,6 +1551,7 @@ func applyGeometryProps(record *ObjectIR, props map[string]any) {
 	record.Segments = mapInt(props["segments"])
 	record.Points = mapVector3List(props["points"])
 	record.LineSegments = mapSegmentPairs(props["segments"])
+	record.LineWidth = mapFloat64(props["lineWidth"])
 	record.RadiusTop = mapFloat64(props["radiusTop"])
 	record.RadiusBottom = mapFloat64(props["radiusBottom"])
 	record.Tube = mapFloat64(props["tube"])
@@ -1662,6 +1668,9 @@ func (g LinesGeometry) legacyGeometry() (string, map[string]any) {
 	}
 	if segments := legacyLineSegments(g.Segments); len(segments) > 0 {
 		out["segments"] = segments
+	}
+	if g.Width > 0 {
+		out["lineWidth"] = g.Width
 	}
 	if len(out) == 0 {
 		return "lines", nil

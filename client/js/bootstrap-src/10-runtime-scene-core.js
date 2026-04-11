@@ -1045,6 +1045,10 @@
       shiftZ: sceneNumber(item.shiftZ, sceneNumber(current.shiftZ, 0)),
       driftSpeed: sceneNumber(item.driftSpeed, sceneNumber(current.driftSpeed, 0)),
       driftPhase: sceneNumber(item.driftPhase, sceneNumber(current.driftPhase, 0)),
+      // lineWidth: 0 means "use renderer default" (1.8px on the canvas world
+      // fallback). Non-zero values come from scene.LinesGeometry.Width on the
+      // Go side and flow into per-segment width buffers at bundle build time.
+      lineWidth: sceneNumber(item.lineWidth, sceneNumber(current.lineWidth, 0)),
       viewCulled: sceneBool(Object.prototype.hasOwnProperty.call(item, "viewCulled") ? item.viewCulled : current.viewCulled, false),
       castShadow: sceneBool(Object.prototype.hasOwnProperty.call(item, "castShadow") ? item.castShadow : current.castShadow, false),
       receiveShadow: sceneBool(Object.prototype.hasOwnProperty.call(item, "receiveShadow") ? item.receiveShadow : current.receiveShadow, false),
@@ -2493,6 +2497,12 @@
       colors: [],
       worldPositions: [],
       worldColors: [],
+      // One entry per world-projected line segment, in lockstep with
+      // worldPositions (which holds two vertices = 6 floats per segment).
+      // The canvas 2D world renderer reads bundle.worldLineWidths[segmentIndex]
+      // to honor LinesGeometry.Width. Absent values fall back to the runtime
+      // default (1.8px) at the read site.
+      worldLineWidths: [],
       meshObjects: [],
       worldMeshPositions: [],
       worldMeshColors: [],
@@ -2521,6 +2531,7 @@
     bundle.worldPositions = new Float32Array(bundle.worldPositions);
     bundle.worldColors = new Float32Array(bundle.worldColors);
     bundle.worldVertexCount = bundle.worldPositions.length / 3;
+    bundle.worldLineWidths = new Float32Array(bundle.worldLineWidths);
     bundle.worldMeshPositions = new Float32Array(bundle.worldMeshPositions);
     bundle.worldMeshColors = new Float32Array(bundle.worldMeshColors);
     bundle.worldMeshNormals = new Float32Array(bundle.worldMeshNormals);
@@ -2603,6 +2614,10 @@
     let bounds = null;
     let vertexCount = 0;
     if (includeLineGeometry) {
+      // Resolve the per-object line width. Zero falls back to the legacy
+      // 1.8px default so scenes that don't set LinesGeometry.Width render
+      // identically to pre-thick-line behavior.
+      const objectLineWidth = sceneNumber(object && object.lineWidth, 0) || 1.8;
       const worldSegments = sourceSegments.map(function(segment) {
         return [
           translateScenePoint(segment[0], object, timeSeconds),
@@ -2621,6 +2636,10 @@
           fromLighting[0], fromLighting[1], fromLighting[2], fromLighting[3],
           toLighting[0], toLighting[1], toLighting[2], toLighting[3],
         );
+        // Keep worldLineWidths in lockstep with each segment pushed into
+        // worldPositions so the canvas 2D world renderer can index into
+        // it as bundle.worldLineWidths[segmentIndex].
+        bundle.worldLineWidths.push(objectLineWidth);
         bounds = sceneExpandWorldBounds(bounds, fromWorld);
         bounds = sceneExpandWorldBounds(bounds, toWorld);
         vertexCount += 2;
@@ -2629,7 +2648,7 @@
         if (!from || !to) continue;
         const stroke = sceneMixRGBA(fromLighting, toLighting);
         stroke[3] = clamp01(stroke[3] * sceneMaterialOpacity(material));
-        appendSceneLine(bundle, width, height, from, to, sceneRGBAString(stroke), 1.8);
+        appendSceneLine(bundle, width, height, from, to, sceneRGBAString(stroke), objectLineWidth);
       }
     } else if (sceneObjectHasTexturedSurface(object, material)) {
       const corners = scenePlaneSurfaceCorners(object, timeSeconds);
