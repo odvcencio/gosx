@@ -1,5 +1,81 @@
 # Changelog
 
+## v0.16.3
+
+Server hot-path performance patch covering four packages: `island/program` (the binary IslandProgram wire format), `ir` (lowering and expression parsing), `server` (page rendering / write), and `route` (request dispatch). Every benchmarked path is faster, and per-request allocation pressure on real page renders is meaningfully lower.
+
+### `island/program` — binary encode 55% faster, decode allocs cut by 87%
+
+`EncodeBinary` was using `binary.Write(&buf, byteOrder, x)` per field, which boxes each integer into `interface{}` and walks the reflect-based path on every call. For a counter-sized program that came out to **149 allocations** per encode.
+
+Replaced with direct `putUint16` / `WriteByte` helpers and back-patched section length prefixes in place — no more per-section `bytes.Buffer`. The decoder got the matching treatment: the io.Reader-based `binReader` was rewritten as an offset-indexed slice reader where sub-readers share the parent's backing buffer instead of copying section bytes.
+
+| benchmark | before | after |
+|---|---|---|
+| `EncodeBinaryCounter` | 3068 ns, 149 allocs | **1764 ns, 11 allocs** |
+| `EncodeBinaryForm` | 6962 ns, 287 allocs | **4322 ns, 16 allocs** |
+| `DecodeBinaryCounter` | ~218 allocs | **807 ns, 29 allocs** |
+
+### `ir` — Lower 53–73% fewer allocations on counter/form fixtures
+
+Two big wins in the lowerer:
+
+1. **`lowerer.text(n)` substrings instead of allocating.** The old version did `string(l.src[a:b])` per call, which forces a fresh byte allocation + copy every time the lowerer reads source text from a tree-sitter node — easily hundreds of times per island. Added a `srcStr string` field initialized once at the top of `Lower()`, and `text()` now slices into that. Go strings share their backing storage so each call is a 16-byte slice header copy with zero heap traffic.
+
+2. **`precedingCommentLines` walks the source backwards** instead of building a full prefix string and `strings.Split`-ing every line of every previous declaration. Returns zero allocations when no comments precede the node.
+
+Plus: pre-sized `extractAttrs` / `extractChildren` to the parent's child count, and pre-sized the expression lexer's token buffer to roughly `len(source)/3`. Single-character tokens reuse a package-level `[256]string` table to avoid `string(byte)` per call.
+
+| benchmark | before | after |
+|---|---|---|
+| `LowerCounter` | 47 allocs | **22 allocs** (-53%) |
+| `LowerForm` | 147 allocs | **39 allocs** (-73%) |
+| `ParseExprComplex` | 21 allocs | **12 allocs** (-43%) |
+| `ParseExprSimple` | 8 allocs | **5 allocs** |
+
+### `server` — RenderDocument 34% faster, 45% fewer allocations
+
+`renderDocumentWithContext`, `renderDocumentAttrValues`, and `renderDeferredChunk` were all using `fmt.Fprintf` / `fmt.Sprintf` per attribute or per chunk. Each call boxes both arguments and walks the format string.
+
+Replaced with direct `strings.Builder.WriteString` / `WriteByte` writes, pre-sizing the builder via `Grow()` based on the actual lengths of the dynamic chunks (title, head HTML, body HTML, attrs). And `fmt.Fprint(w, html)` for streaming the response was replaced with `io.WriteString(w, html)` to skip the interface boxing path.
+
+`NewPageState()` was eagerly allocating four things on every request: the headers map, the deferred-fragment registry, and the cache state struct — none of which most short responses ever touch. Switched to lazy initialization: `Header()`, `DeferredRegistry()`, and `CacheState()` create their fields on first access. Same for `pageRouteHandler` / `apiRouteHandler` which were also calling `ctx.cache = NewCacheState()` redundantly.
+
+| benchmark | before | after |
+|---|---|---|
+| `RenderDocumentSimple` | 799 ns, 20 allocs | **525 ns, 11 allocs** |
+| `RenderDocumentComplex` | 3227 ns, 26 allocs | **2791 ns, 17 allocs** |
+| `RenderDeferredChunk` | 341 ns | **258 ns** |
+
+### `route` — pattern parsing hoisted out of the request closure
+
+`buildHandler` was calling `extractParams(req, pattern)` per request, which itself called `patternParamNames(pattern)` — a string parser that walked the pattern looking for `{name}` segments. Pattern is captured by closure so the param-name slice is fully determined at registration time. Hoisted it out:
+
+```go
+paramNames := patternParamNames(pattern)
+return func(w, req) {
+    ctx.Params = extractParamsByNames(req, paramNames)
+    ...
+}
+```
+
+`extractParamsByNames` now also returns `nil` (instead of an empty map) for routes that have no parameters at all — reads from a nil string map return the zero value, so handlers calling `ctx.Param("x")` don't notice the difference and we save the empty-map allocation on every parameterless route. Same for `newRouteContext`'s `Params` field.
+
+| benchmark | before | after |
+|---|---|---|
+| `RouterServeStatic` | 963 ns, 20 allocs | **795 ns, 18 allocs** |
+| `RouterServeParam` | 1486 ns, 27 allocs | **1218 ns, 26 allocs** |
+| `RouterServeNestedLayouts` | 2400 ns, 55 allocs | **2225 ns, 54 allocs** |
+
+### Benchmark coverage
+
+Four new danmuji bench files document the hot paths and double as a regression guard:
+
+- `island/program/bench.dmj` — binary encode/decode (counter, form), JSON encode (counter)
+- `ir/bench.dmj` — Lower (counter, form), LowerIsland, ParseExpr (simple, complex)
+- `server/bench.dmj` — renderDocument (simple, complex), WriteHTML (simple, complex), renderDeferredChunk
+- `route/bench.dmj` — router serve (static, param, nested layouts), patternParamNames
+
 ## v0.16.2
 
 Server-side performance patch focused on two Go hot paths that every request touches: Scene3D IR marshaling and HTML attribute rendering.
