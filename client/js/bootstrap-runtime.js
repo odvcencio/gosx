@@ -5604,6 +5604,7 @@
       normalized.directionY = -1;
       normalized.directionZ = -0.4;
     }
+    normalized._lightHash = hashLightContent(normalized);
     return normalized;
   }
 
@@ -6125,6 +6126,7 @@
       environment.toneMapping ||
       Object.prototype.hasOwnProperty.call(source, "exposure")
     );
+    environment._envHash = hashEnvironmentContent(environment);
     return environment;
   }
 
@@ -6144,6 +6146,9 @@
         specified: Boolean(environment.specified),
       }
       : normalizeSceneEnvironment(environment, null);
+    if (typeof base._envHash !== "number") {
+      base._envHash = hashEnvironmentContent(base);
+    }
     if (base.specified || !hasLights) {
       return base;
     }
@@ -6440,6 +6445,12 @@
       } else {
         target[key] = sceneCloneData(value);
       }
+    }
+    if (typeof target._lightHash === "number" && typeof hashLightContent === "function") {
+      target._lightHash = hashLightContent(target);
+    }
+    if (typeof target._envHash === "number" && typeof hashEnvironmentContent === "function") {
+      target._envHash = hashEnvironmentContent(target);
     }
   }
 
@@ -6867,18 +6878,18 @@
     }
   }
 
-  function sceneRenderCamera(camera) {
-    return {
-      x: sceneNumber(camera && camera.x, 0),
-      y: sceneNumber(camera && camera.y, 0),
-      z: sceneNumber(camera && camera.z, 6),
-      rotationX: sceneNumber(camera && camera.rotationX, 0),
-      rotationY: sceneNumber(camera && camera.rotationY, 0),
-      rotationZ: sceneNumber(camera && camera.rotationZ, 0),
-      fov: sceneNumber(camera && camera.fov, 75),
-      near: sceneNumber(camera && camera.near, 0.05),
-      far: sceneNumber(camera && camera.far, 128),
-    };
+  function sceneRenderCamera(camera, out) {
+    const target = out || { x: 0, y: 0, z: 0, rotationX: 0, rotationY: 0, rotationZ: 0, fov: 0, near: 0, far: 0 };
+    target.x = sceneNumber(camera && camera.x, 0);
+    target.y = sceneNumber(camera && camera.y, 0);
+    target.z = sceneNumber(camera && camera.z, 6);
+    target.rotationX = sceneNumber(camera && camera.rotationX, 0);
+    target.rotationY = sceneNumber(camera && camera.rotationY, 0);
+    target.rotationZ = sceneNumber(camera && camera.rotationZ, 0);
+    target.fov = sceneNumber(camera && camera.fov, 75);
+    target.near = sceneNumber(camera && camera.near, 0.05);
+    target.far = sceneNumber(camera && camera.far, 128);
+    return target;
   }
 
   function sceneCameraEquivalent(left, right) {
@@ -7000,15 +7011,6 @@
     return bundle;
   }
 
-  function projectSceneObject(object, camera, width, height, timeSeconds) {
-    return sceneObjectSegments(object).map(function(segment) {
-      return [
-        sceneProjectPoint(translateScenePoint(segment[0], object, timeSeconds), camera, width, height),
-        sceneProjectPoint(translateScenePoint(segment[1], object, timeSeconds), camera, width, height),
-      ];
-    });
-  }
-
   function translateScenePointInto(out, px, py, pz, object, timeSeconds) {
     const scaleX = sceneNumber(object && object.scaleX, 1);
     const scaleY = sceneNumber(object && object.scaleY, 1);
@@ -7067,18 +7069,6 @@
   const _meshTriangleP1Scratch = { x: 0, y: 0, z: 0 };
   const _meshTriangleP2Scratch = { x: 0, y: 0, z: 0 };
   const _meshTrianglePoints = [_meshTriangleP0Scratch, _meshTriangleP1Scratch, _meshTriangleP2Scratch];
-
-  function sceneMotionOffset(object, timeSeconds) {
-    if (!object || (!object.shiftX && !object.shiftY && !object.shiftZ)) {
-      return { x: 0, y: 0, z: 0 };
-    }
-    const angle = sceneNumber(object.driftPhase, 0) + timeSeconds * sceneNumber(object.driftSpeed, 0);
-    return {
-      x: Math.cos(angle) * sceneNumber(object.shiftX, 0),
-      y: Math.sin(angle * 0.82 + sceneNumber(object.driftPhase, 0) * 0.35) * sceneNumber(object.shiftY, 0),
-      z: Math.sin(angle) * sceneNumber(object.shiftZ, 0),
-    };
-  }
 
   function appendSceneGridToBundle(bundle, width, height) {
     for (let x = 0; x <= width; x += 48) {
@@ -7544,15 +7534,6 @@
       anchorY: sceneNumber(sprite.anchorY, 0.5),
       occlude: Boolean(sprite.occlude),
       fit: normalizeSceneSpriteFit(sprite.fit),
-    });
-  }
-
-  function sceneWorldObjectSegments(object, timeSeconds) {
-    return sceneObjectSegments(object).map(function(segment) {
-      return [
-        translateScenePoint(segment[0], object, timeSeconds),
-        translateScenePoint(segment[1], object, timeSeconds),
-      ];
     });
   }
 

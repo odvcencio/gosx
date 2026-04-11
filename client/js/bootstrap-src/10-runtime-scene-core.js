@@ -1132,6 +1132,10 @@
       normalized.directionY = -1;
       normalized.directionZ = -0.4;
     }
+    // Cache per-light content hash for scenePBRLightsHash dirty-tracking.
+    // Paid here (once per mutation, rare) instead of per-frame inside
+    // the hash function — ~13µs per call down to ~100ns in practice.
+    normalized._lightHash = hashLightContent(normalized);
     return normalized;
   }
 
@@ -1654,6 +1658,11 @@
       environment.toneMapping ||
       Object.prototype.hasOwnProperty.call(source, "exposure")
     );
+    // Cache env content hash for scenePBRLightsHash dirty-tracking.
+    // Same rationale as _lightHash above — avoids re-walking fields on
+    // every frame. sceneResolveLightingEnvironment rebuilds a new env
+    // object per frame and must also stamp _envHash.
+    environment._envHash = hashEnvironmentContent(environment);
     return environment;
   }
 
@@ -1673,6 +1682,13 @@
         specified: Boolean(environment.specified),
       }
       : normalizeSceneEnvironment(environment, null);
+    // Stamp _envHash for the manually-copied branch (normalizeSceneEnvironment
+    // handles the other branch). sceneResolveLightingEnvironment runs per
+    // bundle build, so the cost amortizes across the whole frame, not per
+    // scenePBRUploadLights call.
+    if (typeof base._envHash !== "number") {
+      base._envHash = hashEnvironmentContent(base);
+    }
     if (base.specified || !hasLights) {
       return base;
     }
@@ -1971,6 +1987,22 @@
       } else {
         target[key] = sceneCloneData(value);
       }
+    }
+    // If the patched target is a light or environment with a cached
+    // content sub-hash, re-stamp it to reflect the mutated fields.
+    // Without this, scenePBRLightsHash would read a stale _lightHash
+    // (or _envHash) and miss content changes coming from transitions,
+    // causing stale uniform state on screen.
+    //
+    // Duck-typed on the presence of the stamp rather than an explicit
+    // kind check so this helper stays generic across light / env /
+    // object transitions — only entries that opted into the stamped
+    // fast path get re-stamped.
+    if (typeof target._lightHash === "number" && typeof hashLightContent === "function") {
+      target._lightHash = hashLightContent(target);
+    }
+    if (typeof target._envHash === "number" && typeof hashEnvironmentContent === "function") {
+      target._envHash = hashEnvironmentContent(target);
     }
   }
 
@@ -2404,18 +2436,31 @@
 
 
 
-  function sceneRenderCamera(camera) {
-    return {
-      x: sceneNumber(camera && camera.x, 0),
-      y: sceneNumber(camera && camera.y, 0),
-      z: sceneNumber(camera && camera.z, 6),
-      rotationX: sceneNumber(camera && camera.rotationX, 0),
-      rotationY: sceneNumber(camera && camera.rotationY, 0),
-      rotationZ: sceneNumber(camera && camera.rotationZ, 0),
-      fov: sceneNumber(camera && camera.fov, 75),
-      near: sceneNumber(camera && camera.near, 0.05),
-      far: sceneNumber(camera && camera.far, 128),
-    };
+  // sceneRenderCamera normalizes a raw camera (partial, may be missing
+  // fields) into a full PBR camera struct. Hot callers that want to avoid
+  // the per-call allocation can pass an `out` scratch they own — the
+  // function writes into it and returns it. Callers that don't care (or
+  // need a fresh result for lifetime reasons) omit the second argument
+  // and get a newly allocated object.
+  //
+  // The PBR render path (createScenePBRRenderer.render) uses the out-param
+  // form with a renderer-scoped _frameCam scratch so each frame reuses
+  // the same object in place — confirmed safe because no code path
+  // between render() entry and the drawPBRObjectList/drawInstancedMeshes
+  // reads calls sceneRenderCamera with a DIFFERENT camera object that
+  // would clobber the scratch.
+  function sceneRenderCamera(camera, out) {
+    const target = out || { x: 0, y: 0, z: 0, rotationX: 0, rotationY: 0, rotationZ: 0, fov: 0, near: 0, far: 0 };
+    target.x = sceneNumber(camera && camera.x, 0);
+    target.y = sceneNumber(camera && camera.y, 0);
+    target.z = sceneNumber(camera && camera.z, 6);
+    target.rotationX = sceneNumber(camera && camera.rotationX, 0);
+    target.rotationY = sceneNumber(camera && camera.rotationY, 0);
+    target.rotationZ = sceneNumber(camera && camera.rotationZ, 0);
+    target.fov = sceneNumber(camera && camera.fov, 75);
+    target.near = sceneNumber(camera && camera.near, 0.05);
+    target.far = sceneNumber(camera && camera.far, 128);
+    return target;
   }
 
   function sceneCameraEquivalent(left, right) {
@@ -2550,15 +2595,6 @@
     return bundle;
   }
 
-  function projectSceneObject(object, camera, width, height, timeSeconds) {
-    return sceneObjectSegments(object).map(function(segment) {
-      return [
-        sceneProjectPoint(translateScenePoint(segment[0], object, timeSeconds), camera, width, height),
-        sceneProjectPoint(translateScenePoint(segment[1], object, timeSeconds), camera, width, height),
-      ];
-    });
-  }
-
   // translateScenePointInto is the alloc-free core of the scene-space
   // transform (scale → rotate → translate + drift offset). It writes the
   // result into a caller-provided `out` object, reads raw coordinates to
@@ -2625,9 +2661,11 @@
     out.z = z + object.z;
   }
 
-  // Allocating wrapper retained for the dead-code helpers (projectSceneObject,
-  // sceneWorldObjectSegments) and any external caller that expects a fresh
-  // point object. Hot call sites should use translateScenePointInto directly.
+  // Allocating wrapper used by scenePlaneSurfaceCorners in 12-scene-geometry.js,
+  // which does a 4-element .map() and therefore retains all four results in
+  // an array — a shared scratch would alias them. Hot call sites inside
+  // bundle-build loops use translateScenePointInto directly with their own
+  // hoisted scratches.
   function translateScenePoint(point, object, timeSeconds) {
     const out = { x: 0, y: 0, z: 0 };
     translateScenePointInto(out, point && point.x, point && point.y, point && point.z, object, timeSeconds);
@@ -2647,18 +2685,6 @@
   const _meshTriangleP1Scratch = { x: 0, y: 0, z: 0 };
   const _meshTriangleP2Scratch = { x: 0, y: 0, z: 0 };
   const _meshTrianglePoints = [_meshTriangleP0Scratch, _meshTriangleP1Scratch, _meshTriangleP2Scratch];
-
-  function sceneMotionOffset(object, timeSeconds) {
-    if (!object || (!object.shiftX && !object.shiftY && !object.shiftZ)) {
-      return { x: 0, y: 0, z: 0 };
-    }
-    const angle = sceneNumber(object.driftPhase, 0) + timeSeconds * sceneNumber(object.driftSpeed, 0);
-    return {
-      x: Math.cos(angle) * sceneNumber(object.shiftX, 0),
-      y: Math.sin(angle * 0.82 + sceneNumber(object.driftPhase, 0) * 0.35) * sceneNumber(object.shiftY, 0),
-      z: Math.sin(angle) * sceneNumber(object.shiftZ, 0),
-    };
-  }
 
   function appendSceneGridToBundle(bundle, width, height) {
     for (let x = 0; x <= width; x += 48) {
@@ -3160,15 +3186,6 @@
       anchorY: sceneNumber(sprite.anchorY, 0.5),
       occlude: Boolean(sprite.occlude),
       fit: normalizeSceneSpriteFit(sprite.fit),
-    });
-  }
-
-  function sceneWorldObjectSegments(object, timeSeconds) {
-    return sceneObjectSegments(object).map(function(segment) {
-      return [
-        translateScenePoint(segment[0], object, timeSeconds),
-        translateScenePoint(segment[1], object, timeSeconds),
-      ];
     });
   }
 

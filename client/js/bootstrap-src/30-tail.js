@@ -2493,6 +2493,8 @@
       // exposed here. Measure those via a real Scene3D mount in a follow-up
       // if/when we need end-to-end per-frame numbers.)
       scenePBRLightsHash: scenePBRLightsHash,
+      hashLightContent: hashLightContent,
+      hashEnvironmentContent: hashEnvironmentContent,
       scenePBRUploadLights: scenePBRUploadLights,
       scenePBRUploadExposure: scenePBRUploadExposure,
     };

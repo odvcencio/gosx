@@ -5604,6 +5604,7 @@
       normalized.directionY = -1;
       normalized.directionZ = -0.4;
     }
+    normalized._lightHash = hashLightContent(normalized);
     return normalized;
   }
 
@@ -6125,6 +6126,7 @@
       environment.toneMapping ||
       Object.prototype.hasOwnProperty.call(source, "exposure")
     );
+    environment._envHash = hashEnvironmentContent(environment);
     return environment;
   }
 
@@ -6144,6 +6146,9 @@
         specified: Boolean(environment.specified),
       }
       : normalizeSceneEnvironment(environment, null);
+    if (typeof base._envHash !== "number") {
+      base._envHash = hashEnvironmentContent(base);
+    }
     if (base.specified || !hasLights) {
       return base;
     }
@@ -6440,6 +6445,12 @@
       } else {
         target[key] = sceneCloneData(value);
       }
+    }
+    if (typeof target._lightHash === "number" && typeof hashLightContent === "function") {
+      target._lightHash = hashLightContent(target);
+    }
+    if (typeof target._envHash === "number" && typeof hashEnvironmentContent === "function") {
+      target._envHash = hashEnvironmentContent(target);
     }
   }
 
@@ -6867,18 +6878,18 @@
     }
   }
 
-  function sceneRenderCamera(camera) {
-    return {
-      x: sceneNumber(camera && camera.x, 0),
-      y: sceneNumber(camera && camera.y, 0),
-      z: sceneNumber(camera && camera.z, 6),
-      rotationX: sceneNumber(camera && camera.rotationX, 0),
-      rotationY: sceneNumber(camera && camera.rotationY, 0),
-      rotationZ: sceneNumber(camera && camera.rotationZ, 0),
-      fov: sceneNumber(camera && camera.fov, 75),
-      near: sceneNumber(camera && camera.near, 0.05),
-      far: sceneNumber(camera && camera.far, 128),
-    };
+  function sceneRenderCamera(camera, out) {
+    const target = out || { x: 0, y: 0, z: 0, rotationX: 0, rotationY: 0, rotationZ: 0, fov: 0, near: 0, far: 0 };
+    target.x = sceneNumber(camera && camera.x, 0);
+    target.y = sceneNumber(camera && camera.y, 0);
+    target.z = sceneNumber(camera && camera.z, 6);
+    target.rotationX = sceneNumber(camera && camera.rotationX, 0);
+    target.rotationY = sceneNumber(camera && camera.rotationY, 0);
+    target.rotationZ = sceneNumber(camera && camera.rotationZ, 0);
+    target.fov = sceneNumber(camera && camera.fov, 75);
+    target.near = sceneNumber(camera && camera.near, 0.05);
+    target.far = sceneNumber(camera && camera.far, 128);
+    return target;
   }
 
   function sceneCameraEquivalent(left, right) {
@@ -7000,15 +7011,6 @@
     return bundle;
   }
 
-  function projectSceneObject(object, camera, width, height, timeSeconds) {
-    return sceneObjectSegments(object).map(function(segment) {
-      return [
-        sceneProjectPoint(translateScenePoint(segment[0], object, timeSeconds), camera, width, height),
-        sceneProjectPoint(translateScenePoint(segment[1], object, timeSeconds), camera, width, height),
-      ];
-    });
-  }
-
   function translateScenePointInto(out, px, py, pz, object, timeSeconds) {
     const scaleX = sceneNumber(object && object.scaleX, 1);
     const scaleY = sceneNumber(object && object.scaleY, 1);
@@ -7067,18 +7069,6 @@
   const _meshTriangleP1Scratch = { x: 0, y: 0, z: 0 };
   const _meshTriangleP2Scratch = { x: 0, y: 0, z: 0 };
   const _meshTrianglePoints = [_meshTriangleP0Scratch, _meshTriangleP1Scratch, _meshTriangleP2Scratch];
-
-  function sceneMotionOffset(object, timeSeconds) {
-    if (!object || (!object.shiftX && !object.shiftY && !object.shiftZ)) {
-      return { x: 0, y: 0, z: 0 };
-    }
-    const angle = sceneNumber(object.driftPhase, 0) + timeSeconds * sceneNumber(object.driftSpeed, 0);
-    return {
-      x: Math.cos(angle) * sceneNumber(object.shiftX, 0),
-      y: Math.sin(angle * 0.82 + sceneNumber(object.driftPhase, 0) * 0.35) * sceneNumber(object.shiftY, 0),
-      z: Math.sin(angle) * sceneNumber(object.shiftZ, 0),
-    };
-  }
 
   function appendSceneGridToBundle(bundle, width, height) {
     for (let x = 0; x <= width; x += 48) {
@@ -7544,15 +7534,6 @@
       anchorY: sceneNumber(sprite.anchorY, 0.5),
       occlude: Boolean(sprite.occlude),
       fit: normalizeSceneSpriteFit(sprite.fit),
-    });
-  }
-
-  function sceneWorldObjectSegments(object, timeSeconds) {
-    return sceneObjectSegments(object).map(function(segment) {
-      return [
-        translateScenePoint(segment[0], object, timeSeconds),
-        translateScenePoint(segment[1], object, timeSeconds),
-      ];
     });
   }
 
@@ -12509,29 +12490,29 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
     return Math.imul((h ^ (len + 1)) >>> 0, 16777619) >>> 0;
   }
 
-  function scenePBRLightsHash(lights, environment) {
+  function hashLightContent(l) {
+    if (!l) return 0;
     var h = 2166136261;
-    var lightArray = Array.isArray(lights) ? lights : [];
-    var count = Math.min(lightArray.length, 8);
-    h = Math.imul((h ^ count) >>> 0, 16777619) >>> 0;
-    for (var i = 0; i < count; i++) {
-      var l = lightArray[i];
-      h = scenePBRLightsHashString(h, l && l.kind);
-      h = scenePBRLightsHashNumber(h, sceneNumber(l && l.x, 0));
-      h = scenePBRLightsHashNumber(h, sceneNumber(l && l.y, 0));
-      h = scenePBRLightsHashNumber(h, sceneNumber(l && l.z, 0));
-      h = scenePBRLightsHashNumber(h, sceneNumber(l && l.directionX, 0));
-      h = scenePBRLightsHashNumber(h, sceneNumber(l && l.directionY, -1));
-      h = scenePBRLightsHashNumber(h, sceneNumber(l && l.directionZ, 0));
-      h = scenePBRLightsHashString(h, l && l.color);
-      h = scenePBRLightsHashNumber(h, sceneNumber(l && l.intensity, 1));
-      h = scenePBRLightsHashNumber(h, sceneNumber(l && l.range, 0));
-      h = scenePBRLightsHashNumber(h, sceneNumber(l && l.decay, 2));
-      h = scenePBRLightsHashNumber(h, sceneNumber(l && l.angle, 0));
-      h = scenePBRLightsHashNumber(h, sceneNumber(l && l.penumbra, 0));
-      h = scenePBRLightsHashString(h, l && l.groundColor);
-    }
-    var env = environment || {};
+    h = scenePBRLightsHashString(h, l.kind);
+    h = scenePBRLightsHashNumber(h, sceneNumber(l.x, 0));
+    h = scenePBRLightsHashNumber(h, sceneNumber(l.y, 0));
+    h = scenePBRLightsHashNumber(h, sceneNumber(l.z, 0));
+    h = scenePBRLightsHashNumber(h, sceneNumber(l.directionX, 0));
+    h = scenePBRLightsHashNumber(h, sceneNumber(l.directionY, -1));
+    h = scenePBRLightsHashNumber(h, sceneNumber(l.directionZ, 0));
+    h = scenePBRLightsHashString(h, l.color);
+    h = scenePBRLightsHashNumber(h, sceneNumber(l.intensity, 1));
+    h = scenePBRLightsHashNumber(h, sceneNumber(l.range, 0));
+    h = scenePBRLightsHashNumber(h, sceneNumber(l.decay, 2));
+    h = scenePBRLightsHashNumber(h, sceneNumber(l.angle, 0));
+    h = scenePBRLightsHashNumber(h, sceneNumber(l.penumbra, 0));
+    h = scenePBRLightsHashString(h, l.groundColor);
+    return h;
+  }
+
+  function hashEnvironmentContent(env) {
+    if (!env) return 0;
+    var h = 2166136261;
     h = scenePBRLightsHashString(h, env.ambientColor);
     h = scenePBRLightsHashNumber(h, sceneNumber(env.ambientIntensity, 0));
     h = scenePBRLightsHashString(h, env.skyColor);
@@ -12540,6 +12521,23 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
     h = scenePBRLightsHashNumber(h, sceneNumber(env.groundIntensity, 0));
     h = scenePBRLightsHashNumber(h, sceneNumber(env.fogDensity, 0));
     h = scenePBRLightsHashString(h, env.fogColor);
+    return h;
+  }
+
+  function scenePBRLightsHash(lights, environment) {
+    var h = 2166136261;
+    var lightArray = Array.isArray(lights) ? lights : [];
+    var count = Math.min(lightArray.length, 8);
+    h = Math.imul((h ^ count) >>> 0, 16777619) >>> 0;
+    for (var i = 0; i < count; i++) {
+      var l = lightArray[i];
+      var sub = (l && typeof l._lightHash === "number") ? l._lightHash : hashLightContent(l);
+      h = Math.imul((h ^ (sub >>> 0)) >>> 0, 16777619) >>> 0;
+    }
+    var envSub = (environment && typeof environment._envHash === "number")
+      ? environment._envHash
+      : hashEnvironmentContent(environment);
+    h = Math.imul((h ^ (envSub >>> 0)) >>> 0, 16777619) >>> 0;
     return h;
   }
 
@@ -12769,7 +12767,11 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
     var scratchViewMatrix = new Float32Array(16);
     var scratchProjMatrix = new Float32Array(16);
 
-    var _frameCam = null;
+    var _frameCam = {
+      x: 0, y: 0, z: 0,
+      rotationX: 0, rotationY: 0, rotationZ: 0,
+      fov: 0, near: 0, far: 0,
+    };
     var _frameLightsHash = 0;
 
     var scratchPositions = null;
@@ -12987,7 +12989,7 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
       gl.clearDepth(1);
       gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
-      _frameCam = sceneRenderCamera(bundle.camera);
+      sceneRenderCamera(bundle.camera, _frameCam);
       const cam = _frameCam;
       const aspect = Math.max(0.0001, canvas.width / Math.max(1, canvas.height));
       const viewMatrix = scenePBRViewMatrix(cam, scratchViewMatrix);
@@ -19696,6 +19698,9 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
       next.directionX = rotated.x;
       next.directionY = rotated.y;
       next.directionZ = rotated.z;
+      if (typeof hashLightContent === "function") {
+        next._lightHash = hashLightContent(next);
+      }
       return next;
     }
     const position = sceneModelTransformPoint({ x: next.x, y: next.y, z: next.z }, model);
@@ -19708,6 +19713,9 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
         Math.abs(sceneNumber(model && model.scaleY, 1)),
         Math.abs(sceneNumber(model && model.scaleZ, 1)),
       );
+    }
+    if (typeof hashLightContent === "function") {
+      next._lightHash = hashLightContent(next);
     }
     return next;
   }
@@ -24081,6 +24089,8 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
       expandSceneThickLineIntoScratch: expandSceneThickLineIntoScratch,
       sceneBundleNeedsThickLines: sceneBundleNeedsThickLines,
       scenePBRLightsHash: scenePBRLightsHash,
+      hashLightContent: hashLightContent,
+      hashEnvironmentContent: hashEnvironmentContent,
       scenePBRUploadLights: scenePBRUploadLights,
       scenePBRUploadExposure: scenePBRUploadExposure,
     };

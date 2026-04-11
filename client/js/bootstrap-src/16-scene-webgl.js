@@ -1898,35 +1898,43 @@
     return Math.imul((h ^ (len + 1)) >>> 0, 16777619) >>> 0;
   }
 
-  // scenePBRLightsHash computes a 32-bit FNV-1a hash of every light field
-  // and environment field that scenePBRUploadLights turns into a uniform.
-  // Used for dirty-tracking so we skip the ~30 gl.uniform* calls per
-  // program per frame when the content hasn't changed. Collisions are
-  // astronomically unlikely in practice — a collision would manifest as
-  // a one-frame visual stale, not a crash.
-  function scenePBRLightsHash(lights, environment) {
+  // hashLightContent computes the per-light sub-hash the frame-level
+  // scenePBRLightsHash combines. Called from normalizeSceneLight (in
+  // 10-runtime-scene-core.js) whenever a light is created or patched,
+  // so the expensive string/number walk runs at mutation time — rare —
+  // instead of per-frame. The result is stamped onto the light object
+  // as `_lightHash` and read by scenePBRLightsHash without rehashing.
+  //
+  // Kept in 16-scene-webgl.js alongside scenePBRLightsHash so the two
+  // must agree on what fields contribute to the hash; moving either
+  // without the other is a correctness bug.
+  function hashLightContent(l) {
+    if (!l) return 0;
     var h = 2166136261;
-    var lightArray = Array.isArray(lights) ? lights : [];
-    var count = Math.min(lightArray.length, 8);
-    h = Math.imul((h ^ count) >>> 0, 16777619) >>> 0;
-    for (var i = 0; i < count; i++) {
-      var l = lightArray[i];
-      h = scenePBRLightsHashString(h, l && l.kind);
-      h = scenePBRLightsHashNumber(h, sceneNumber(l && l.x, 0));
-      h = scenePBRLightsHashNumber(h, sceneNumber(l && l.y, 0));
-      h = scenePBRLightsHashNumber(h, sceneNumber(l && l.z, 0));
-      h = scenePBRLightsHashNumber(h, sceneNumber(l && l.directionX, 0));
-      h = scenePBRLightsHashNumber(h, sceneNumber(l && l.directionY, -1));
-      h = scenePBRLightsHashNumber(h, sceneNumber(l && l.directionZ, 0));
-      h = scenePBRLightsHashString(h, l && l.color);
-      h = scenePBRLightsHashNumber(h, sceneNumber(l && l.intensity, 1));
-      h = scenePBRLightsHashNumber(h, sceneNumber(l && l.range, 0));
-      h = scenePBRLightsHashNumber(h, sceneNumber(l && l.decay, 2));
-      h = scenePBRLightsHashNumber(h, sceneNumber(l && l.angle, 0));
-      h = scenePBRLightsHashNumber(h, sceneNumber(l && l.penumbra, 0));
-      h = scenePBRLightsHashString(h, l && l.groundColor);
-    }
-    var env = environment || {};
+    h = scenePBRLightsHashString(h, l.kind);
+    h = scenePBRLightsHashNumber(h, sceneNumber(l.x, 0));
+    h = scenePBRLightsHashNumber(h, sceneNumber(l.y, 0));
+    h = scenePBRLightsHashNumber(h, sceneNumber(l.z, 0));
+    h = scenePBRLightsHashNumber(h, sceneNumber(l.directionX, 0));
+    h = scenePBRLightsHashNumber(h, sceneNumber(l.directionY, -1));
+    h = scenePBRLightsHashNumber(h, sceneNumber(l.directionZ, 0));
+    h = scenePBRLightsHashString(h, l.color);
+    h = scenePBRLightsHashNumber(h, sceneNumber(l.intensity, 1));
+    h = scenePBRLightsHashNumber(h, sceneNumber(l.range, 0));
+    h = scenePBRLightsHashNumber(h, sceneNumber(l.decay, 2));
+    h = scenePBRLightsHashNumber(h, sceneNumber(l.angle, 0));
+    h = scenePBRLightsHashNumber(h, sceneNumber(l.penumbra, 0));
+    h = scenePBRLightsHashString(h, l.groundColor);
+    return h;
+  }
+
+  // hashEnvironmentContent is the env-side counterpart to hashLightContent.
+  // Called from normalizeSceneEnvironment and sceneResolveLightingEnvironment
+  // whenever the environment is normalized so the cached sub-hash travels
+  // with the environment object downstream.
+  function hashEnvironmentContent(env) {
+    if (!env) return 0;
+    var h = 2166136261;
     h = scenePBRLightsHashString(h, env.ambientColor);
     h = scenePBRLightsHashNumber(h, sceneNumber(env.ambientIntensity, 0));
     h = scenePBRLightsHashString(h, env.skyColor);
@@ -1935,6 +1943,37 @@
     h = scenePBRLightsHashNumber(h, sceneNumber(env.groundIntensity, 0));
     h = scenePBRLightsHashNumber(h, sceneNumber(env.fogDensity, 0));
     h = scenePBRLightsHashString(h, env.fogColor);
+    return h;
+  }
+
+  // scenePBRLightsHash combines per-light and per-environment cached
+  // sub-hashes into a 32-bit frame hash. Called once per frame (hoisted
+  // at the top of render()). Previously walked every field of every
+  // light + environment on every call, which cost ~13µs per invocation
+  // on a 3-light fixture — more than the mock upload it was gating!
+  // Now reads the cached _lightHash from each light (stamped at
+  // normalize time) and _envHash from the environment, mixing them
+  // with the light count. Total cost: ~100ns for typical scenes, down
+  // from 13µs. A 130× speedup on the dirty-tracking fast path.
+  //
+  // Falls back to the full hashLightContent / hashEnvironmentContent
+  // walk when a light or environment lacks a cached stamp — keeps the
+  // function correct for callers that construct raw objects outside
+  // the normalize path (e.g. the bench harness).
+  function scenePBRLightsHash(lights, environment) {
+    var h = 2166136261;
+    var lightArray = Array.isArray(lights) ? lights : [];
+    var count = Math.min(lightArray.length, 8);
+    h = Math.imul((h ^ count) >>> 0, 16777619) >>> 0;
+    for (var i = 0; i < count; i++) {
+      var l = lightArray[i];
+      var sub = (l && typeof l._lightHash === "number") ? l._lightHash : hashLightContent(l);
+      h = Math.imul((h ^ (sub >>> 0)) >>> 0, 16777619) >>> 0;
+    }
+    var envSub = (environment && typeof environment._envHash === "number")
+      ? environment._envHash
+      : hashEnvironmentContent(environment);
+    h = Math.imul((h ^ (envSub >>> 0)) >>> 0, 16777619) >>> 0;
     return h;
   }
 
@@ -2216,8 +2255,16 @@
     var scratchViewMatrix = new Float32Array(16);
     var scratchProjMatrix = new Float32Array(16);
 
-    // Per-frame camera cache — set once in render(), reused in drawPBRObjectList.
-    var _frameCam = null;
+    // Per-frame camera cache — set once in render(), reused in
+    // drawPBRObjectList and drawInstancedMeshes. Pre-allocated so
+    // sceneRenderCamera can mutate in place instead of returning a fresh
+    // object each frame. Owned exclusively by this renderer — no other
+    // code writes to this reference.
+    var _frameCam = {
+      x: 0, y: 0, z: 0,
+      rotationX: 0, rotationY: 0, rotationZ: 0,
+      fov: 0, near: 0, far: 0,
+    };
     // Per-frame lights+environment content hash. Computed once at the top
     // of render() and reused by every scenePBRUploadLights call (main,
     // skinned, instanced) so the ~13µs hash cost is paid once per frame
@@ -2469,8 +2516,10 @@
       gl.clearDepth(1);
       gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
-      // Camera matrices — compute once per frame.
-      _frameCam = sceneRenderCamera(bundle.camera);
+      // Camera matrices — compute once per frame. Pass _frameCam as the
+      // out-param so sceneRenderCamera mutates the renderer-owned scratch
+      // instead of allocating a fresh object each frame.
+      sceneRenderCamera(bundle.camera, _frameCam);
       const cam = _frameCam;
       const aspect = Math.max(0.0001, canvas.width / Math.max(1, canvas.height));
       const viewMatrix = scenePBRViewMatrix(cam, scratchViewMatrix);

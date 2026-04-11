@@ -379,6 +379,13 @@
       next.directionX = rotated.x;
       next.directionY = rotated.y;
       next.directionZ = rotated.z;
+      // Re-stamp the light sub-hash since directionX/Y/Z were just mutated
+      // in place after normalizeSceneLight's original stamp. Without this
+      // scenePBRLightsHash would read a stale _lightHash and miss content
+      // changes for model-rotated directional lights.
+      if (typeof hashLightContent === "function") {
+        next._lightHash = hashLightContent(next);
+      }
       return next;
     }
     const position = sceneModelTransformPoint({ x: next.x, y: next.y, z: next.z }, model);
@@ -391,6 +398,11 @@
         Math.abs(sceneNumber(model && model.scaleY, 1)),
         Math.abs(sceneNumber(model && model.scaleZ, 1)),
       );
+    }
+    // Re-stamp after the above in-place x/y/z (and range for points)
+    // writes — see the directional branch comment above.
+    if (typeof hashLightContent === "function") {
+      next._lightHash = hashLightContent(next);
     }
     return next;
   }

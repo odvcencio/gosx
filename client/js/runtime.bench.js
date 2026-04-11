@@ -231,7 +231,13 @@ function runBenchmark(name, setup, target, opts) {
 
 // ---------- Fixtures ------------------------------------------------
 
-function makeLightsFixture() {
+// Raw lights fixture — no cached _lightHash / _envHash stamps. Exercises
+// the cold-cache fallback path inside scenePBRLightsHash where it has to
+// call hashLightContent / hashEnvironmentContent for every light and the
+// env in full. Represents a caller that builds lights outside the
+// normalizeSceneLight pipeline (no production code path does this today,
+// but tests and the first-frame precompute path can).
+function makeLightsFixtureRaw() {
   return {
     lights: [
       { kind: "directional", x: 5, y: 10, z: 5, directionX: 0, directionY: -1, directionZ: 0, color: "#ffffff", intensity: 1.2, range: 0, decay: 2 },
@@ -249,6 +255,26 @@ function makeLightsFixture() {
       fogColor: "#0a0a12",
     },
   };
+}
+
+// Pre-stamped lights fixture — simulates the production path where
+// normalizeSceneLight and normalizeSceneEnvironment have already computed
+// the sub-hashes at mutation time. scenePBRLightsHash just combines the
+// cached numbers instead of walking every field. This is the real
+// dirty-tracking steady state for a scene that doesn't mutate lights.
+function makeLightsFixture(bench) {
+  const fx = makeLightsFixtureRaw();
+  // Mimic normalizeSceneLight / normalizeSceneEnvironment by stamping
+  // the cached sub-hashes the bench would otherwise miss.
+  for (const light of fx.lights) {
+    light._lightHash = bench.hashLightContent
+      ? bench.hashLightContent(light)
+      : undefined;
+  }
+  fx.environment._envHash = bench.hashEnvironmentContent
+    ? bench.hashEnvironmentContent(fx.environment)
+    : undefined;
+  return fx;
 }
 
 function makeObjectFixture() {
@@ -356,15 +382,21 @@ function buildBenchmarks(bench, opts) {
   });
 
   list.push({
-    key: "scenePBRLightsHash",
-    setup: makeLightsFixture,
+    key: "scenePBRLightsHash (cold, no stamps)",
+    setup: makeLightsFixtureRaw,
+    target: (fx) => { bench.scenePBRLightsHash(fx.lights, fx.environment); },
+  });
+
+  list.push({
+    key: "scenePBRLightsHash (warm, normalized stamps)",
+    setup: () => makeLightsFixture(bench),
     target: (fx) => { bench.scenePBRLightsHash(fx.lights, fx.environment); },
   });
 
   list.push({
     key: "scenePBRUploadLights (first frame, upload path)",
     setup: () => {
-      const base = makeLightsFixture();
+      const base = makeLightsFixture(bench);
       return {
         gl: makeMockGl(),
         uniforms: makeUniformsStub(),
@@ -382,7 +414,7 @@ function buildBenchmarks(bench, opts) {
   list.push({
     key: "scenePBRUploadLights (cache hit, hash inline)",
     setup: () => {
-      const base = makeLightsFixture();
+      const base = makeLightsFixture(bench);
       const fx = {
         gl: makeMockGl(),
         uniforms: makeUniformsStub(),
@@ -401,7 +433,7 @@ function buildBenchmarks(bench, opts) {
   list.push({
     key: "scenePBRUploadLights (cache hit, precomputed hash)",
     setup: () => {
-      const base = makeLightsFixture();
+      const base = makeLightsFixture(bench);
       const fx = {
         gl: makeMockGl(),
         uniforms: makeUniformsStub(),
