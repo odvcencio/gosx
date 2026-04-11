@@ -3,7 +3,6 @@ package server
 import (
 	"crypto/sha1"
 	"encoding/hex"
-	"fmt"
 	"net/http"
 	"path"
 	"sort"
@@ -201,7 +200,10 @@ func (c *CacheState) effectiveETag(r *http.Request, status int, revalidator *Rev
 		}
 	}
 	sum := sha1.Sum([]byte(strings.Join(parts, "\x00")))
-	return fmt.Sprintf(`W/"gosx-%s"`, hex.EncodeToString(sum[:8]))
+	// Avoid fmt.Sprintf — the ETag shape is a fixed literal and this
+	// function runs for every cacheable GET, so direct string concat
+	// saves the format-state scratch allocation per call.
+	return `W/"gosx-` + hex.EncodeToString(sum[:8]) + `"`
 }
 
 // Revalidator tracks path and tag revisions used to invalidate automatic ETags.

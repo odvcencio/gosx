@@ -18,6 +18,7 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -920,7 +921,17 @@ func recoveryMiddleware() Middleware {
 
 func nextRequestID() string {
 	seq := atomic.AddUint64(&requestSeq, 1)
-	return fmt.Sprintf("gosx-%d-%d", time.Now().UnixNano(), seq)
+	// Direct string concatenation with strconv avoids the fmt.Sprintf
+	// format-state scratch buffer that would otherwise allocate per call.
+	// nextRequestID is on the hot path via requestIDMiddleware: every
+	// wrapped request assigns one.
+	var b strings.Builder
+	b.Grow(32)
+	b.WriteString("gosx-")
+	b.WriteString(strconv.FormatInt(time.Now().UnixNano(), 10))
+	b.WriteByte('-')
+	b.WriteString(strconv.FormatUint(seq, 10))
+	return b.String()
 }
 
 func statusWithDefault(status int, payload any) int {

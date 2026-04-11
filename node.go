@@ -32,13 +32,25 @@ type nodeAttr struct {
 }
 
 // El creates an element node. The variadic args can be AttrList or Node children.
+//
+// The children slice is pre-sized to len(args) which is a safe upper bound
+// (any AttrList entries will leave a few unused slots but that's cheaper
+// than growing the slice 2-3× during construction). When the first AttrList
+// is seen and n.attrs is still nil we alias it directly instead of copying
+// each entry — AttrList instances are built per-call by Attrs() so there's
+// no sharing concern.
 func El(tag string, args ...any) Node {
 	n := Node{kind: kindElement, tag: tag}
+	if len(args) > 0 {
+		n.children = make([]Node, 0, len(args))
+	}
 	for _, arg := range args {
 		switch v := arg.(type) {
 		case AttrList:
-			for _, a := range v {
-				n.attrs = append(n.attrs, a)
+			if n.attrs == nil {
+				n.attrs = v
+			} else {
+				n.attrs = append(n.attrs, v...)
 			}
 		case Node:
 			n.children = append(n.children, v)
@@ -70,12 +82,15 @@ func RawHTML(s string) Node {
 // AttrList is a list of attributes for element construction.
 type AttrList []nodeAttr
 
-// Attrs creates an attribute list from key-value pairs.
+// Attrs creates an attribute list from key-value pairs. Pre-sized to
+// len(pairs) since on the common path every arg is an Attr().
 func Attrs(pairs ...any) AttrList {
-	var attrs AttrList
+	if len(pairs) == 0 {
+		return nil
+	}
+	attrs := make(AttrList, 0, len(pairs))
 	for _, p := range pairs {
-		switch v := p.(type) {
-		case nodeAttr:
+		if v, ok := p.(nodeAttr); ok {
 			attrs = append(attrs, v)
 		}
 	}
@@ -108,10 +123,54 @@ func Props(pairs ...any) AttrList {
 
 // RenderHTML renders a Node tree to an HTML string.
 // This is the server-side rendering entry point.
+//
+// The output Builder is pre-grown based on a rough estimate of the final
+// HTML size (tag overhead per element, attribute name+value per attr, text
+// length per text/raw node). Over-estimating slightly wastes a few bytes;
+// under-estimating is fine because Builder still grows on demand. The goal
+// is to eliminate the 3-5 doublings a typical page would otherwise trigger
+// during renderNodeHTML.
 func RenderHTML(n Node) string {
 	var b strings.Builder
+	b.Grow(estimateRenderSize(n))
 	renderNodeHTML(&b, n)
 	return b.String()
+}
+
+// estimateRenderSize walks the node tree and returns a rough byte count
+// for the HTML output. This is a best-effort heuristic, not an exact size:
+// it doesn't account for escape expansion (e.g., `<` → `&lt;`) and it
+// assumes attribute values render as-is. That's fine for pre-sizing a
+// Builder — if we under-allocate by a few bytes, Builder still grows once.
+func estimateRenderSize(n Node) int {
+	switch n.kind {
+	case kindElement:
+		// <tag ...attrs...></tag> = 2*len(tag) + 5 bytes of fixed structure
+		// (`<`, `>`, `</`, `>`). Each attribute is ` name="value"` → 4 bytes
+		// of structure plus the name+value length.
+		size := 2*len(n.tag) + 5
+		for _, attr := range n.attrs {
+			size += len(attr.name) + 4
+			if s, ok := attr.value.(string); ok {
+				size += len(s)
+			} else {
+				size += 8 // rough guess for bool/int/float values
+			}
+		}
+		for _, child := range n.children {
+			size += estimateRenderSize(child)
+		}
+		return size
+	case kindText, kindExpr, kindRawHTML:
+		return len(n.text)
+	case kindFragment:
+		size := 0
+		for _, child := range n.children {
+			size += estimateRenderSize(child)
+		}
+		return size
+	}
+	return 0
 }
 
 // PlainText walks a node tree and returns the concatenated text content.

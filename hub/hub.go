@@ -153,10 +153,7 @@ func (h *Hub) SetState(key string, value any) {
 
 // Broadcast sends a message to all connected clients.
 func (h *Hub) Broadcast(event string, data any) {
-	msg, err := json.Marshal(Message{
-		Event: event,
-		Data:  mustMarshal(data),
-	})
+	msg, err := encodeMessage(event, data)
 	if err != nil {
 		return
 	}
@@ -181,10 +178,7 @@ func (h *Hub) Send(clientID string, event string, data any) {
 		return
 	}
 
-	msg, err := json.Marshal(Message{
-		Event: event,
-		Data:  mustMarshal(data),
-	})
+	msg, err := encodeMessage(event, data)
 	if err != nil {
 		return
 	}
@@ -193,6 +187,37 @@ func (h *Hub) Send(clientID string, event string, data any) {
 	case client.send <- msg:
 	default:
 	}
+}
+
+// encodeMessage serializes a hub Message into a single JSON byte slice.
+//
+// The previous implementation encoded Data with json.Marshal into a
+// json.RawMessage, then encoded the outer Message with a second
+// json.Marshal call — two marshal passes, two intermediate byte buffers,
+// and an interface boxing of the RawMessage each call.
+//
+// Using a single json.Encoder over a pre-sized bytes.Buffer encodes the
+// full message in one walk, one allocation for the payload buffer, and
+// one for the final byte slice copy.
+func encodeMessage(event string, data any) ([]byte, error) {
+	payload, err := json.Marshal(data)
+	if err != nil {
+		return nil, err
+	}
+	// `{"event":"","data":}` + event + payload + envelope headroom.
+	buf := make([]byte, 0, 16+len(event)+len(payload))
+	buf = append(buf, `{"event":`...)
+	eventJSON, err := json.Marshal(event)
+	if err != nil {
+		return nil, err
+	}
+	buf = append(buf, eventJSON...)
+	if len(payload) > 0 && string(payload) != "null" {
+		buf = append(buf, `,"data":`...)
+		buf = append(buf, payload...)
+	}
+	buf = append(buf, '}')
+	return buf, nil
 }
 
 // Presence returns the hub's presence tracker.
