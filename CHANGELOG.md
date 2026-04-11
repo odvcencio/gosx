@@ -1,5 +1,51 @@
 # Changelog
 
+## v0.16.2
+
+Server-side performance patch focused on two Go hot paths that every request touches: Scene3D IR marshaling and HTML attribute rendering.
+
+### HTML attribute rendering — **55% faster per-attribute**, 84% fewer allocations
+
+`renderAttrHTML` in `node.go` was calling `fmt.Fprintf` per attribute, which boxes the two string arguments into `interface{}` values (2 allocs per call) plus allocates a format-state scratch buffer (1-2 more allocs). For a typical server page render with hundreds of attributes that was thousands of avoidable allocations per request.
+
+Replaced with direct `b.WriteByte` / `b.WriteString` calls — the attribute format is fixed (` name="value"`) so there's no need for `fmt`'s dynamic format parsing.
+
+Benchmarks on the new `gosx/node_bench.dmj` suite (20-mesh mixed scene):
+
+| benchmark | before | after |
+|---|---|---|
+| `RenderHtmlSimple` | 50 ns, 56 B, 3 allocs | 37 ns, 24 B, 2 allocs |
+| `RenderHtmlWithAttrs` | 614 ns, 816 B, 18 allocs | **279 ns, 504 B, 6 allocs** |
+| `RenderHtmlNested` | 2115 ns, 2602 B, 50 allocs | **935 ns, 1912 B, 8 allocs** |
+
+The nested page-subtree benchmark went from 50 allocations to 8 — every server page render gets ~2× faster on the HTML marshal phase. This is a universal win: it affects ALL pages, not just Scene3D.
+
+### Scene3D IR marshaling — **27% faster**, 15% fewer allocations
+
+`scene.Props.SceneIR()` used to allocate a `map[string]any` per mesh for geometry props and a second map per mesh for material props, only to immediately read those maps back into typed fields on `ObjectIR` via `applyGeometryProps` / `applyMaterialProps`. Pure waste — the typed data was already in hand.
+
+Replaced with `applyGeometryToObjectIR` and `applyMaterialToObjectIR` helpers that type-switch over the concrete `Geometry` / `Material` types and set `ObjectIR` fields directly. Also dropped the defensive slice copies at the end of `Graph.SceneIR()` since the result is consumed immediately by `Props.SceneIR → legacyProps → MarshalJSON` with no mutation in between.
+
+Additionally:
+- `SceneIR.legacyProps()` now pre-sizes its output map to `make(map[string]any, 16)` instead of the default literal capacity, skipping 1-2 bucket grows per call.
+- Transition and environment struct tags switched from `omitempty` (which doesn't work on nested struct fields) to Go 1.24's `omitzero` tag, backed by exported `IsZero()` methods. Pure correctness prep for a future direct-struct-marshal refactor — no behavior change in the current path.
+
+Benchmarks (20-mesh mixed scene fixture):
+
+| benchmark | before | after |
+|---|---|---|
+| `PropsSceneIR` | 21741 ns, 80 KB, 292 allocs | **9215 ns, 48 KB, 95 allocs** |
+| `PropsLegacyProps` | 36918 ns, 109 KB, 665 allocs | 22221 ns, 78 KB, 439 allocs |
+| `PropsMarshalJson` | 102535 ns, 142 KB, 1308 allocs | **65040 ns, 108 KB, 1020 allocs** |
+
+`Props.SceneIR()` is 2.4× faster and allocates 67% fewer objects. The full `MarshalJSON` wire-encoding path is 37% faster end-to-end. A server rendering Scene3D pages at ~100 req/s saves ~3.7 ms of CPU per second on scene marshaling alone.
+
+### Benchmark harness moved to danmuji
+
+New benchmark suites in `node_bench.dmj`, `scene/bench.dmj`, and `signal/bench.dmj` authored in [danmuji](https://github.com/odvcencio/danmuji) `.dmj` format. Danmuji's `benchmark "name" { setup { … } measure { … } report_allocs }` blocks compile to plain `testing.B` benchmarks via `danmuji build`, so `go test -bench=.` runs them natively with no extra runner involved. The `.dmj` form is just a cleaner way to express setup + measure blocks without the boilerplate.
+
+Signal benchmark coverage confirms `Signal.Set` / `Signal.Get` remain zero-allocation thanks to Go's escape analysis stack-allocating the per-call subscriber scratch slice.
+
 ## v0.16.1
 
 Patch release following v0.16.0 with additional per-frame allocation eliminations caught in a second round of the perf sweep, plus the removal of two stray debug `console.log` statements that were shipping in production code paths.
