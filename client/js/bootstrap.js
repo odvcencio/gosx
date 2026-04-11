@@ -7119,15 +7119,6 @@
     const material = sceneObjectMaterialProfile(object);
     const materialIndex = sceneBundleMaterialIndex(bundle, materialLookup, material);
     const includeLineGeometry = sceneWorldObjectUsesLinePass(object, material);
-    if (material.texture) {
-      console.log("scene-object-material", JSON.stringify({
-        id: object && object.id,
-        kind: object && object.kind,
-        texture: material.texture,
-        wireframe: material.wireframe,
-        includeLineGeometry: includeLineGeometry,
-      }));
-    }
     let bounds = null;
     let vertexCount = 0;
     if (includeLineGeometry) {
@@ -7634,20 +7625,6 @@
           return;
         }
         const worldRendered = geometry.usePerspective && renderSceneWebGLWorldBundle(gl, bundle, canvas, resources);
-        console.log("scene-webgl-render", JSON.stringify({
-          usePerspective: geometry.usePerspective,
-          worldRendered: worldRendered,
-          surfaces: Array.isArray(bundle && bundle.surfaces) ? bundle.surfaces.length : 0,
-          worldVertexCount: bundle && bundle.worldVertexCount || 0,
-          vertexCount: geometry.vertexCount,
-          objects: Array.isArray(bundle && bundle.objects) ? bundle.objects.map(function(item) {
-            return {
-              id: item && item.id,
-              kind: item && item.kind,
-              vertexCount: item && item.vertexCount,
-            };
-          }) : [],
-        }));
         if (worldRendered) {
           applySceneWebGLBlend(gl, "opaque", resources.stateCache);
           applySceneWebGLDepth(gl, "opaque", resources.stateCache);
