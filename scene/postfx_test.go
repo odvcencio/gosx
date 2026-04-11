@@ -197,3 +197,228 @@ func TestEnvironmentTonemapMigrationNoOpWhenEmpty(t *testing.T) {
 		t.Errorf("expected 0 PostEffects, got %d", len(ir.PostEffects))
 	}
 }
+
+func TestPostFXMaxPixelsConstants(t *testing.T) {
+	// Assertions use hardcoded pixel counts so this test would catch an
+	// accidental edit to the constant expressions themselves.
+	if PostFXMaxPixels540p != 518400 {
+		t.Errorf("PostFXMaxPixels540p = %d, want 518400", PostFXMaxPixels540p)
+	}
+	if PostFXMaxPixels720p != 921600 {
+		t.Errorf("PostFXMaxPixels720p = %d, want 921600", PostFXMaxPixels720p)
+	}
+	if PostFXMaxPixels1080p != 2073600 {
+		t.Errorf("PostFXMaxPixels1080p = %d, want 2073600", PostFXMaxPixels1080p)
+	}
+	if PostFXMaxPixels1440p != 3686400 {
+		t.Errorf("PostFXMaxPixels1440p = %d, want 3686400", PostFXMaxPixels1440p)
+	}
+	if PostFXMaxPixels4K != 8294400 {
+		t.Errorf("PostFXMaxPixels4K = %d, want 8294400", PostFXMaxPixels4K)
+	}
+	if PostFXMaxPixelsUnbounded != 1073741824 {
+		t.Errorf("PostFXMaxPixelsUnbounded = %d, want 1073741824 (1<<30)", PostFXMaxPixelsUnbounded)
+	}
+}
+
+func TestPostFXResolveMaxPixels(t *testing.T) {
+	tests := []struct {
+		name string
+		in   int
+		want int
+	}{
+		{"zero maps to 1080p default", 0, PostFXMaxPixels1080p},
+		{"negative maps to 1080p default", -1, PostFXMaxPixels1080p},
+		{"large negative maps to 1080p default", -999_999, PostFXMaxPixels1080p},
+		{"positive passes through", PostFXMaxPixels720p, PostFXMaxPixels720p},
+		{"unbounded passes through", PostFXMaxPixelsUnbounded, PostFXMaxPixelsUnbounded},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := PostFX{MaxPixels: tc.in}.resolveMaxPixels()
+			if got != tc.want {
+				t.Errorf("resolveMaxPixels(%d) = %d, want %d", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestBloomScaleIRRoundTrip(t *testing.T) {
+	ir := BloomIR{Threshold: 0.5, Strength: 0.6, Radius: 4.0, Scale: 0.25}
+	props := ir.legacyProps()
+	got, ok := props["scale"]
+	if !ok {
+		t.Fatalf("expected scale key in IR, got %v", props)
+	}
+	if got != 0.25 {
+		t.Errorf("scale = %v, want 0.25", got)
+	}
+}
+
+func TestBloomScaleClampingDropsOutOfRange(t *testing.T) {
+	tests := []struct {
+		name  string
+		scale float64
+	}{
+		{"zero dropped", 0},
+		{"negative dropped", -0.5},
+		{"greater than one dropped", 1.5},
+		{"large dropped", 100},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ir := BloomIR{Threshold: 0.5, Strength: 0.6, Radius: 4.0, Scale: tc.scale}
+			props := ir.legacyProps()
+			if _, ok := props["scale"]; ok {
+				t.Errorf("expected scale to be absent for Scale=%v, got props=%v", tc.scale, props)
+			}
+		})
+	}
+}
+
+func TestBloomScalePassesThroughSceneIR(t *testing.T) {
+	pfx := PostFX{
+		Effects: []PostEffect{
+			Bloom{Threshold: 0.5, Strength: 0.6, Radius: 4.0, Scale: 0.3},
+		},
+	}
+	effects := pfx.sceneIR()
+	if len(effects) != 1 {
+		t.Fatalf("expected 1 effect, got %d", len(effects))
+	}
+	bloom, ok := effects[0].(BloomIR)
+	if !ok {
+		t.Fatalf("expected BloomIR, got %T", effects[0])
+	}
+	// Float32 → float64 widens with precision drift; compare with tolerance.
+	if diff := bloom.Scale - 0.3; diff < -1e-6 || diff > 1e-6 {
+		t.Errorf("bloom.Scale = %v, want ~0.3", bloom.Scale)
+	}
+}
+
+func TestPostFXMaxPixelsIRExplicit(t *testing.T) {
+	props := Props{
+		PostFX: PostFX{
+			MaxPixels: PostFXMaxPixels720p,
+			Effects: []PostEffect{
+				Bloom{Threshold: 0.7},
+			},
+		},
+	}
+	ir := props.SceneIR()
+	if ir.PostFXMaxPixels != PostFXMaxPixels720p {
+		t.Errorf("PostFXMaxPixels = %d, want %d", ir.PostFXMaxPixels, PostFXMaxPixels720p)
+	}
+	bag := ir.legacyProps()
+	got, ok := bag["postFXMaxPixels"]
+	if !ok {
+		t.Fatalf("expected postFXMaxPixels in legacy props, got %v", bag)
+	}
+	if got != PostFXMaxPixels720p {
+		t.Errorf("legacy postFXMaxPixels = %v, want %d", got, PostFXMaxPixels720p)
+	}
+}
+
+func TestPostFXMaxPixelsIRDefault(t *testing.T) {
+	props := Props{
+		PostFX: PostFX{
+			Effects: []PostEffect{Bloom{Threshold: 0.7}},
+		},
+	}
+	ir := props.SceneIR()
+	if ir.PostFXMaxPixels != PostFXMaxPixels1080p {
+		t.Errorf("default PostFXMaxPixels = %d, want %d (1080p)", ir.PostFXMaxPixels, PostFXMaxPixels1080p)
+	}
+	bag := ir.legacyProps()
+	got, ok := bag["postFXMaxPixels"]
+	if !ok {
+		t.Fatalf("expected postFXMaxPixels in legacy props (default), got %v", bag)
+	}
+	if got != PostFXMaxPixels1080p {
+		t.Errorf("legacy default = %v, want %d", got, PostFXMaxPixels1080p)
+	}
+}
+
+func TestPostFXMaxPixelsIRUnbounded(t *testing.T) {
+	props := Props{
+		PostFX: PostFX{
+			MaxPixels: PostFXMaxPixelsUnbounded,
+			Effects:   []PostEffect{Bloom{Threshold: 0.7}},
+		},
+	}
+	ir := props.SceneIR()
+	if ir.PostFXMaxPixels != PostFXMaxPixelsUnbounded {
+		t.Errorf("unbounded PostFXMaxPixels = %d, want %d", ir.PostFXMaxPixels, PostFXMaxPixelsUnbounded)
+	}
+}
+
+func TestPostFXMaxPixelsNotEmittedWhenNoEffects(t *testing.T) {
+	props := Props{
+		// Environment explicitly zero so migrateEnvironmentTonemap does NOT
+		// synthesize a legacy tonemap — otherwise this test would accidentally
+		// fall through the legacy-migration path and the effects slice would
+		// become non-empty.
+		Environment: Environment{},
+		PostFX: PostFX{
+			MaxPixels: PostFXMaxPixels720p,
+			// no Effects
+		},
+	}
+	ir := props.SceneIR()
+	bag := ir.legacyProps()
+	if _, ok := bag["postFXMaxPixels"]; ok {
+		t.Errorf("postFXMaxPixels should not be emitted when no effects, got %v", bag)
+	}
+	if _, ok := bag["postEffects"]; ok {
+		t.Errorf("postEffects should not be emitted when empty, got %v", bag)
+	}
+}
+
+func TestPostFXMaxPixelsEmittedWithLegacyTonemapMigration(t *testing.T) {
+	// A scene with a legacy Environment.ToneMapping but NO explicit
+	// PostFX.Effects should still get the cap emitted, because
+	// migrateEnvironmentTonemap synthesizes a tonemap effect, making
+	// len(ir.PostEffects) > 0 and triggering emission.
+	props := Props{
+		Environment: Environment{ToneMapping: "aces"},
+		PostFX: PostFX{
+			MaxPixels: PostFXMaxPixels720p,
+		},
+	}
+	ir := props.SceneIR()
+	if len(ir.PostEffects) == 0 {
+		t.Skip("migrateEnvironmentTonemap didn't synthesize — legacy path may have moved")
+	}
+	bag := ir.legacyProps()
+	got, ok := bag["postFXMaxPixels"]
+	if !ok {
+		t.Fatalf("expected postFXMaxPixels in legacy props (legacy tonemap path), got %v", bag)
+	}
+	if got != PostFXMaxPixels720p {
+		t.Errorf("legacy path postFXMaxPixels = %v, want %d", got, PostFXMaxPixels720p)
+	}
+}
+
+func TestCompressorSkipsPostFXFields(t *testing.T) {
+	// Regression: the scene compressor walks Points, InstancedMeshes, and
+	// Animations — it must not touch PostFX IR fields. This test builds a
+	// scene with compression enabled and verifies PostFXMaxPixels round-trips
+	// unchanged through Props.SceneIR().
+	props := Props{
+		PostFX: PostFX{
+			MaxPixels: PostFXMaxPixels720p,
+			Effects:   []PostEffect{Bloom{Threshold: 0.7}},
+		},
+		Compression: &Compression{BitWidth: 8},
+	}
+	ir := props.SceneIR()
+	if ir.PostFXMaxPixels != PostFXMaxPixels720p {
+		t.Errorf("PostFXMaxPixels altered by compressor: got %d, want %d",
+			ir.PostFXMaxPixels, PostFXMaxPixels720p)
+	}
+	bag := ir.legacyProps()
+	if got := bag["postFXMaxPixels"]; got != PostFXMaxPixels720p {
+		t.Errorf("legacy props postFXMaxPixels after compression = %v, want %d",
+			got, PostFXMaxPixels720p)
+	}
+}

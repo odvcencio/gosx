@@ -64,6 +64,7 @@ const outputs = [
       sourceFile("bootstrap-src/13-scene-material.js"),
       sourceFile("bootstrap-src/14-scene-lighting.js"),
       sourceFile("bootstrap-src/15-scene-draw-plan.js"),
+      sourceFile("bootstrap-src/15a-scene-postfx-shared.js"),
       sourceFile("bootstrap-src/16-scene-webgl.js"),
       sourceFile("bootstrap-src/16a-scene-webgpu.js"),
       sourceFile("bootstrap-src/16b-scene-compute.js"),

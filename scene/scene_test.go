@@ -1909,3 +1909,106 @@ func TestPositionStrideReachesLegacyProps(t *testing.T) {
 	}
 	t.Logf("PositionStride in legacy props: %d", stride)
 }
+
+func TestShadowMaxPixelsConstants(t *testing.T) {
+	if ShadowMaxPixels512 != 262144 {
+		t.Errorf("ShadowMaxPixels512 = %d, want 262144", ShadowMaxPixels512)
+	}
+	if ShadowMaxPixels1024 != 1048576 {
+		t.Errorf("ShadowMaxPixels1024 = %d, want 1048576", ShadowMaxPixels1024)
+	}
+	if ShadowMaxPixels2048 != 4194304 {
+		t.Errorf("ShadowMaxPixels2048 = %d, want 4194304", ShadowMaxPixels2048)
+	}
+	if ShadowMaxPixels4096 != 16777216 {
+		t.Errorf("ShadowMaxPixels4096 = %d, want 16777216", ShadowMaxPixels4096)
+	}
+	if ShadowMaxPixelsUnbounded != 1073741824 {
+		t.Errorf("ShadowMaxPixelsUnbounded = %d, want 1073741824", ShadowMaxPixelsUnbounded)
+	}
+}
+
+func TestShadowsResolveMaxPixels(t *testing.T) {
+	tests := []struct {
+		name string
+		in   int
+		want int
+	}{
+		{"zero maps to 1024² default", 0, ShadowMaxPixels1024},
+		{"negative maps to 1024² default", -1, ShadowMaxPixels1024},
+		{"positive passes through", ShadowMaxPixels2048, ShadowMaxPixels2048},
+		{"unbounded passes through", ShadowMaxPixelsUnbounded, ShadowMaxPixelsUnbounded},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := Shadows{MaxPixels: tc.in}.resolveMaxPixels()
+			if got != tc.want {
+				t.Errorf("resolveMaxPixels(%d) = %d, want %d", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestShadowMaxPixelsIRExplicit(t *testing.T) {
+	props := Props{
+		Shadows: Shadows{MaxPixels: ShadowMaxPixels2048},
+		Graph: NewGraph(
+			DirectionalLight{
+				ID:         "sun",
+				Color:      "#ffffff",
+				Intensity:  1.0,
+				CastShadow: true,
+				ShadowSize: 4096,
+			},
+		),
+	}
+	ir := props.SceneIR()
+	if ir.ShadowMaxPixels != ShadowMaxPixels2048 {
+		t.Errorf("ShadowMaxPixels = %d, want %d", ir.ShadowMaxPixels, ShadowMaxPixels2048)
+	}
+	bag := ir.legacyProps()
+	got, ok := bag["shadowMaxPixels"]
+	if !ok {
+		t.Fatalf("expected shadowMaxPixels in legacy props, got %v", bag)
+	}
+	if got != ShadowMaxPixels2048 {
+		t.Errorf("legacy shadowMaxPixels = %v, want %d", got, ShadowMaxPixels2048)
+	}
+}
+
+func TestShadowMaxPixelsIRDefault(t *testing.T) {
+	props := Props{
+		Graph: NewGraph(
+			DirectionalLight{
+				ID:         "sun",
+				Color:      "#ffffff",
+				Intensity:  1.0,
+				CastShadow: true,
+				ShadowSize: 1024,
+			},
+		),
+	}
+	ir := props.SceneIR()
+	if ir.ShadowMaxPixels != ShadowMaxPixels1024 {
+		t.Errorf("default ShadowMaxPixels = %d, want %d (1024²)", ir.ShadowMaxPixels, ShadowMaxPixels1024)
+	}
+}
+
+func TestShadowMaxPixelsIRUnbounded(t *testing.T) {
+	props := Props{
+		Shadows: Shadows{MaxPixels: ShadowMaxPixelsUnbounded},
+		Graph: NewGraph(
+			DirectionalLight{
+				ID:         "sun",
+				Color:      "#ffffff",
+				Intensity:  1.0,
+				CastShadow: true,
+				ShadowSize: 4096,
+			},
+		),
+	}
+	ir := props.SceneIR()
+	if ir.ShadowMaxPixels != ShadowMaxPixelsUnbounded {
+		t.Errorf("unbounded ShadowMaxPixels = %d, want %d", ir.ShadowMaxPixels, ShadowMaxPixelsUnbounded)
+	}
+}

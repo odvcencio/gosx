@@ -1,5 +1,43 @@
 # Changelog
 
+## v0.15.0
+
+### Breaking Changes
+
+**Default PostFX resolution cap**: `scene.PostFX` now enforces a default framebuffer resolution cap of 1080p (2,073,600 pixels) for the postfx offscreen pipeline. On displays exceeding this resolution, the postfx chain is downscaled uniformly and the result is linearly upsampled to the canvas. This protects against multi-hundred-megabyte framebuffer allocations on high-DPR displays. To restore v0.14.0 behavior (full-resolution postfx), set `MaxPixels: scene.PostFXMaxPixelsUnbounded` explicitly.
+
+**Default shadow pixel cap**: `scene.Shadows` is a new top-level Props field that enforces a default per-shadow-map cap of 1024² (1,048,576 pixels). Directional and spot lights with `ShadowSize: 2048` or `4096` are silently scaled down to fit the cap on both WebGL and WebGPU backends. To restore v0.14.0 behavior (honor each light's full `ShadowSize` without a global cap), set `Shadows: scene.Shadows{MaxPixels: scene.ShadowMaxPixelsUnbounded}` explicitly.
+
+### PostFX Resolution Cap
+
+**`scene.PostFX.MaxPixels int`**: Caps postfx offscreen framebuffers at a pixel count, uniformly scaling the pipeline when the canvas exceeds the cap. The zero value applies the safe 1080p default. Set to `scene.PostFXMaxPixelsUnbounded` to opt out of capping entirely.
+
+**`scene.Bloom.Scale float32`**: Optional bloom-internal downscale factor applied on top of the main cap. The zero value preserves v0.14.0 behavior (0.5 half-res ping-pong buffers). Values outside (0, 1] are silently clamped to the default.
+
+**Preset constants**: `scene.PostFXMaxPixels540p`, `PostFXMaxPixels720p`, `PostFXMaxPixels1080p`, `PostFXMaxPixels1440p`, and `PostFXMaxPixels4K` for common cap sizes. `PostFXMaxPixelsUnbounded` opts out entirely.
+
+**WebGPU parity**: The WebGPU runtime (`16a-scene-webgpu.js`) honors `MaxPixels` at full parity with the WebGL runtime — the memory guarantee holds on both backends.
+
+### Shadow Map Pixel Cap
+
+**`scene.Shadows.MaxPixels int`**: Caps individual shadow maps at this many pixels. When a light's `ShadowSize` would exceed the cap, the pipeline scales it down uniformly (e.g., a light requesting `ShadowSize: 4096` with `MaxPixels: 1048576` gets a 1024 shadow map — memory drops from ~64 MB to ~4 MB per light).
+
+**Preset constants**: `scene.ShadowMaxPixels512`, `ShadowMaxPixels1024`, `ShadowMaxPixels2048`, and `ShadowMaxPixels4096`. `ShadowMaxPixelsUnbounded` opts out entirely.
+
+**WebGPU parity**: Both WebGL and WebGPU shadow pipelines honor the cap through a shared `resolveShadowSize` helper.
+
+### Runtime Asset Serving
+
+**Dev-mode runtime root fix**: `App.SetRuntimeRoot` now propagates the chosen root into `island.SetManifestRoot`, so the HTML renderer's manifest lookup stays aligned with the file-serving root. Previously, dev-mode setups where `runtimeRoot` pointed at the gosx source tree caused silent 404s on hashed asset URLs because the renderer read the manifest from the app CWD while the file server looked under the runtime root. The new `island.SetManifestRoot` / `ResetManifestRoot` pair is also available for tests that need fine-grained manifest-root control.
+
+### Internal Refactors
+
+**Shared post-processing helpers**: `resolvePostFXFactor` and the new `resolveShadowSize` are extracted to a shared `client/js/bootstrap-src/15a-scene-postfx-shared.js` module, replacing per-renderer duplication between the WebGL and WebGPU paths.
+
+### Bug Fixes
+
+**Point sprite sizing**: `gl_PointSize` now scales against the render target rather than the canvas, fixing a latent bug where high-DPR displays produced oversized stars when post-processing was active.
+
 ## v0.14.0
 
 ### `gosx/field` Module

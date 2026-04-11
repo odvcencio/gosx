@@ -85,6 +85,7 @@ type Props struct {
 	Camera               PerspectiveCamera
 	Environment          Environment
 	PostFX               PostFX
+	Shadows              Shadows
 	Graph                Graph
 }
 
@@ -105,6 +106,53 @@ type Compression struct {
 	// render based on each object's distance from the camera.
 	LOD          bool    `json:"lod,omitempty"`
 	LODThreshold float64 `json:"lodThreshold,omitempty"` // camera distance threshold; objects farther use preview. Default 20.
+}
+
+// ShadowMaxPixelsUnbounded opts out of the shadow map pixel cap entirely.
+// Set Shadows.MaxPixels to this constant when you explicitly need the
+// v0.14.0 behavior of allocating shadow maps at each light's requested
+// shadowSize without a global cap.
+//
+// Value is 1<<30 (1,073,741,824) — effectively unbounded because the
+// scaling factor clamps to 1.0 for any physically realistic shadow map.
+const ShadowMaxPixelsUnbounded = 1 << 30
+
+// Common Shadows.MaxPixels presets. Values correspond to the per-shadow-map
+// pixel count (width * height), not total memory. Pick the one closest to
+// the maximum shadow sharpness your scene needs.
+const (
+	ShadowMaxPixels512  = 512 * 512   //   262_144
+	ShadowMaxPixels1024 = 1024 * 1024 // 1_048_576 (default)
+	ShadowMaxPixels2048 = 2048 * 2048 // 4_194_304
+	ShadowMaxPixels4096 = 4096 * 4096 // 16_777_216
+)
+
+// Shadows configures scene-wide shadow map allocation policy. Individual
+// directional and spot lights still declare their own ShadowSize; this
+// struct caps how many pixels each of those shadow maps may actually
+// allocate.
+type Shadows struct {
+	// MaxPixels caps individual shadow maps at this many pixels
+	// (width * height). When a light requests a shadow map bigger than
+	// the cap, the pipeline scales it down uniformly. Below the cap,
+	// the light's requested ShadowSize is honored as-is.
+	//
+	//   zero value (0): apply the safe default cap of 1024×1024
+	//                   (1_048_576 pixels). Recommended for most scenes.
+	//   positive:       explicit cap. Typically set via one of the
+	//                   ShadowMaxPixels* constants.
+	//   negative:       treated as zero (safe default). Not recommended;
+	//                   use ShadowMaxPixelsUnbounded to opt out instead.
+	//
+	// Scaling formula (per shadow map):
+	//     factor = min(1, sqrt(MaxPixels / (shadowSize * shadowSize)))
+	//     scaledSize = max(1, floor(shadowSize * factor))
+	//
+	// Shadow maps are self-contained depth textures, so scaling only
+	// affects shadow sharpness — no blit or upscale. A 4096-requesting
+	// light with MaxPixels=1_048_576 gets a 1024 shadow map; memory
+	// drops from 64 MB to 4 MB per light (depth24).
+	MaxPixels int
 }
 
 // Graph is the typed scene graph lowered into the legacy Scene3D prop bag.
@@ -2052,4 +2100,14 @@ func intString(value int) string {
 		value /= 10
 	}
 	return string(digits)
+}
+
+// resolveMaxPixels normalizes the shadow cap for IR emission. Zero or
+// negative values become the default 1024×1024 cap; positive values pass
+// through.
+func (s Shadows) resolveMaxPixels() int {
+	if s.MaxPixels <= 0 {
+		return ShadowMaxPixels1024
+	}
+	return s.MaxPixels
 }

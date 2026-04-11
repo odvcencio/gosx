@@ -849,17 +849,38 @@
     let windowResizeListener = null;
     let stopEnvironment = null;
 
-    if (typeof ResizeObserver === "function") {
-      resizeObserver = new ResizeObserver(function() {
+    // Coalesce ResizeObserver / window.resize fires via a microtask flag so
+    // rapid-fire events (e.g., Firefox subpixel canvas dim fluctuations during
+    // scroll) collapse into at most one refresh per synchronous burst. Without
+    // this guard, each fire calls scheduleRender unconditionally and piles
+    // renders on top of the already-running rAF loop — observed as progressive
+    // scroll jank on Firefox. A microtask-based flag is used rather than rAF
+    // so the dedup doesn't leak a pending rAF across viewport activation
+    // transitions (see runtime.test.js offscreen-rerender deferral test).
+    var resizeRefreshPending = false;
+    function scheduleResizeRefresh() {
+      if (resizeRefreshPending) {
+        return;
+      }
+      resizeRefreshPending = true;
+      if (typeof Promise === "function") {
+        Promise.resolve().then(function() {
+          resizeRefreshPending = false;
+          refresh("resize");
+        });
+      } else {
+        resizeRefreshPending = false;
         refresh("resize");
-      });
+      }
+    }
+
+    if (typeof ResizeObserver === "function") {
+      resizeObserver = new ResizeObserver(scheduleResizeRefresh);
       if (typeof resizeObserver.observe === "function") {
         resizeObserver.observe(mount);
       }
     } else if (typeof window.addEventListener === "function") {
-      windowResizeListener = function() {
-        refresh("resize");
-      };
+      windowResizeListener = scheduleResizeRefresh;
       window.addEventListener("resize", windowResizeListener);
     }
 
@@ -2268,7 +2289,21 @@
         }
       };
       window.addEventListener("scroll", scrollHandler, { passive: true });
-      if (window.visualViewport && typeof window.visualViewport.addEventListener === "function") {
+      // visualViewport listeners are only meaningful on touch devices where
+      // the visual viewport can differ from the layout viewport (mobile URL
+      // bar animations, virtual keyboard, pinch-zoom). On desktop browsers
+      // the visual viewport tracks the window 1:1 and the listeners just
+      // add event-handler overhead — on Firefox specifically they've been
+      // observed to contribute to sustained-scroll jank because each fire
+      // re-wakes the render loop.
+      var isTouchDevice =
+        (typeof navigator !== "undefined" && navigator.maxTouchPoints > 0) ||
+        ("ontouchstart" in window);
+      if (
+        isTouchDevice &&
+        window.visualViewport &&
+        typeof window.visualViewport.addEventListener === "function"
+      ) {
         visualViewportScrollHandler = function() {
           if (!sceneWantsAnimation()) {
             scheduleRender("visual-viewport");

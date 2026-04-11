@@ -597,3 +597,54 @@ func TestRenderIslandFromProgramRendersDynamicAttrs(t *testing.T) {
 		t.Fatalf("expected initial tab content, got %s", html)
 	}
 }
+
+func TestLoadDefaultBuildManifestRespectsSetManifestRoot(t *testing.T) {
+	// Create a temp dir with a build.json
+	dir := t.TempDir()
+	manifestData := []byte(`{"runtime":{"bootstrap":{"file":"bootstrap.abc123.js","hash":"abc123","size":100}},"islands":[],"css":[]}`)
+	if err := os.WriteFile(filepath.Join(dir, "build.json"), manifestData, 0644); err != nil {
+		t.Fatalf("write build.json: %v", err)
+	}
+
+	// Set the override and verify loadDefaultBuildManifest finds it
+	SetManifestRoot(dir)
+	t.Cleanup(ResetManifestRoot)
+
+	manifest := loadDefaultBuildManifest()
+	if manifest == nil {
+		t.Fatalf("expected manifest to load from %s, got nil", dir)
+	}
+	if manifest.Runtime.Bootstrap.Hash != "abc123" {
+		t.Errorf("manifest.Runtime.Bootstrap.Hash = %q, want \"abc123\"", manifest.Runtime.Bootstrap.Hash)
+	}
+}
+
+func TestLoadDefaultBuildManifestEmptyOverrideReturnsNil(t *testing.T) {
+	// Set an empty override — represents "dev mode, source tree has no manifest"
+	SetManifestRoot("")
+	t.Cleanup(ResetManifestRoot)
+
+	if manifest := loadDefaultBuildManifest(); manifest != nil {
+		t.Errorf("expected nil when override is empty, got %+v", manifest)
+	}
+}
+
+func TestLoadDefaultBuildManifestNoOverrideFallsBackToCWD(t *testing.T) {
+	// Legacy behavior: no SetManifestRoot call, should fall back to CWD.
+	// We can't easily control CWD in a test, so just verify the function
+	// doesn't panic and the override path isn't active.
+	ResetManifestRoot()
+	// Just call it; result depends on the test runner CWD.
+	_ = loadDefaultBuildManifest()
+}
+
+func TestLoadDefaultBuildManifestOverrideMissingManifestReturnsNil(t *testing.T) {
+	dir := t.TempDir()
+	// Directory exists but has no build.json.
+	SetManifestRoot(dir)
+	t.Cleanup(ResetManifestRoot)
+
+	if manifest := loadDefaultBuildManifest(); manifest != nil {
+		t.Errorf("expected nil when override dir has no manifest, got %+v", manifest)
+	}
+}

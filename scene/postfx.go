@@ -1,5 +1,27 @@
 package scene
 
+// PostFXMaxPixelsUnbounded opts out of the postfx pixel cap entirely.
+// Set PostFX.MaxPixels to this constant when you explicitly need the
+// v0.14.0 behavior of running postfx at full canvas resolution.
+//
+// Value is 1<<30 (1,073,741,824) — effectively unbounded because the
+// scaling factor clamps to 1.0 for any physically realistic canvas.
+// We use a large integer rather than a negative sentinel so the field
+// type remains a simple int with intuitive semantics (bigger = less
+// aggressive scaling).
+const PostFXMaxPixelsUnbounded = 1 << 30
+
+// Common PostFX.MaxPixels presets. Picked values correspond to common
+// display resolutions; pick the one closest to the maximum perceptual
+// quality you need for your scene.
+const (
+	PostFXMaxPixels540p  = 960 * 540   //   518_400
+	PostFXMaxPixels720p  = 1280 * 720  //   921_600
+	PostFXMaxPixels1080p = 1920 * 1080 // 2_073_600 (default)
+	PostFXMaxPixels1440p = 2560 * 1440 // 3_686_400
+	PostFXMaxPixels4K    = 3840 * 2160 // 8_294_400
+)
+
 // PostFX is the post-processing effect chain attached to a Scene3D.
 //
 // When Effects is empty (the default), the scene renders directly to the
@@ -16,6 +38,26 @@ package scene
 //	}}
 type PostFX struct {
 	Effects []PostEffect
+
+	// MaxPixels caps the postfx offscreen pipeline at this many pixels
+	// (width*height, after devicePixelRatio). When the canvas exceeds the
+	// cap, the pipeline scales down uniformly to fit; below the cap, it
+	// runs at native resolution. Memory stays flat across display sizes.
+	//
+	//   zero value (0): apply the safe default cap of 1080p (2_073_600).
+	//                   Recommended for most scenes; protects against
+	//                   accidental multi-hundred-megabyte framebuffer
+	//                   allocations on high-DPR displays.
+	//   positive:       explicit cap in pixels. Typically set via one of
+	//                   the PostFXMaxPixels* constants.
+	//   negative:       treated as zero (safe default). Not recommended;
+	//                   use PostFXMaxPixelsUnbounded to opt out instead.
+	//
+	// Scaling formula:
+	//     factor = min(1, sqrt(MaxPixels / canvasPixels))
+	//
+	// Note: canvasPixels reflects the backing-store size (includes DPR).
+	MaxPixels int
 }
 
 // PostEffect is the interface satisfied by every post-processing effect.
@@ -63,6 +105,16 @@ type Bloom struct {
 	Threshold float32 // luminance above which pixels bloom (default 0.8)
 	Strength  float32 // intensity of the bloom contribution (default 0.5)
 	Radius    float32 // blur radius in pixels (default 5)
+
+	// Scale is an additional bloom-internal downscale applied on top of
+	// the PostFX.MaxPixels factor. The zero value maps to 0.5 (runtime
+	// default, matching v0.14.0 behavior). Values outside (0, 1] are
+	// silently dropped at the IR boundary — the JS runtime falls back
+	// to 0.5 when no scale is emitted.
+	//
+	// Bloom is a low-frequency blur, so Scale can go much lower than the
+	// main pipeline with no visible quality loss.
+	Scale float32
 }
 
 func (Bloom) isPostEffect() {}
@@ -82,6 +134,15 @@ type ColorGrade struct {
 }
 
 func (ColorGrade) isPostEffect() {}
+
+// resolveMaxPixels normalizes the field for IR emission. Zero or negative
+// values become the default 1080p cap; positive values pass through.
+func (p PostFX) resolveMaxPixels() int {
+	if p.MaxPixels <= 0 {
+		return PostFXMaxPixels1080p
+	}
+	return p.MaxPixels
+}
 
 // migrateEnvironmentTonemap implements backwards compatibility for the
 // pre-PostFX Environment.ToneMapping / Environment.Exposure fields. When

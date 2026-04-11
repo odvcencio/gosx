@@ -18,6 +18,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/odvcencio/gosx"
 	"github.com/odvcencio/gosx/buildmanifest"
@@ -122,15 +123,58 @@ func loadDefaultRuntimeAssets() buildmanifest.RuntimeAssets {
 	return buildmanifest.RuntimeAssets{}
 }
 
+var (
+	manifestRootMu  sync.RWMutex
+	manifestRoot    string
+	manifestRootSet bool
+)
+
+// SetManifestRoot configures the directory where loadDefaultBuildManifest
+// searches for build.json. When set (by the server package's SetRuntimeRoot),
+// this overrides the default app-CWD search — the renderer's manifest lookup
+// stays aligned with the file-serving root. Passing an empty string still
+// counts as "explicitly set" and disables manifest loading, causing the
+// renderer to emit plain /gosx/* URLs that route through the source fallback.
+func SetManifestRoot(root string) {
+	manifestRootMu.Lock()
+	defer manifestRootMu.Unlock()
+	manifestRoot = strings.TrimSpace(root)
+	manifestRootSet = true
+}
+
+// ResetManifestRoot clears the override and restores legacy app-CWD lookup.
+// Intended for test teardown.
+func ResetManifestRoot() {
+	manifestRootMu.Lock()
+	defer manifestRootMu.Unlock()
+	manifestRoot = ""
+	manifestRootSet = false
+}
+
 func loadDefaultBuildManifest() *buildmanifest.Manifest {
-	root := strings.TrimSpace(os.Getenv("GOSX_APP_ROOT"))
-	if root == "" {
-		wd, err := os.Getwd()
-		if err != nil {
-			return nil
+	manifestRootMu.RLock()
+	root := manifestRoot
+	explicit := manifestRootSet
+	manifestRootMu.RUnlock()
+
+	if !explicit {
+		// Legacy fallback: search the app CWD. Preserved for backward
+		// compatibility with tests and callers that haven't adopted
+		// SetManifestRoot.
+		root = strings.TrimSpace(os.Getenv("GOSX_APP_ROOT"))
+		if root == "" {
+			wd, err := os.Getwd()
+			if err != nil {
+				return nil
+			}
+			root = wd
 		}
-		root = wd
 	}
+
+	if root == "" {
+		return nil
+	}
+
 	for _, candidate := range []string{
 		filepath.Join(root, "build.json"),
 		filepath.Join(root, "dist", "build.json"),

@@ -1201,8 +1201,8 @@
         return { colorView: sceneTexView, depthView: depthTexView };
       },
 
-      apply: function(encoder, effects, width, height, finalView) {
-        ensureFBOs(width, height);
+      apply: function(encoder, effects, scaledW, scaledH, canvasW, canvasH, finalView) {
+        ensureFBOs(scaledW, scaledH);
 
         var currentTexView = sceneTexView;
         var blitPipeline = getPipeline("blit", WGSL_POST_BLIT_FRAGMENT, getPostBlitLayout());
@@ -1230,8 +1230,8 @@
               break;
             }
             case SCENE_POST_BLOOM: {
-              var halfW = Math.max(1, Math.floor(width / 2));
-              var halfH = Math.max(1, Math.floor(height / 2));
+              var halfW = Math.max(1, Math.floor(scaledW / 2));
+              var halfH = Math.max(1, Math.floor(scaledH / 2));
               var threshold = sceneNumber(effect.threshold, 0.8);
               var radius = sceneNumber(effect.radius, 5.0);
               var intensity = sceneNumber(effect.intensity, 0.5);
@@ -2401,8 +2401,17 @@
       var postEffects = Array.isArray(bundle.postEffects) ? bundle.postEffects : [];
       var usePostProcessing = postEffects.length > 0;
 
-      // Upload per-frame uniforms.
-      var cam = uploadFrameUniforms(bundle.camera, width, height, !usePostProcessing);
+      // Compute scaled render-target dimensions (PostFX memory cap).
+      var postFXMaxPixels = (typeof bundle.postFXMaxPixels === "number") ? bundle.postFXMaxPixels : 0;
+      var postfxFactor = usePostProcessing
+        ? resolvePostFXFactor(postFXMaxPixels, width * height)
+        : 1;
+      var scaledW = Math.max(1, Math.floor(width * postfxFactor));
+      var scaledH = Math.max(1, Math.floor(height * postfxFactor));
+
+      // Upload per-frame uniforms (use scaled dims so point sprites and
+      // projection aspect match the actual render target, not the canvas).
+      var cam = uploadFrameUniforms(bundle.camera, scaledW, scaledH, !usePostProcessing);
       uploadLights(bundle.lights);
       uploadFogUniforms(bundle.environment);
       uploadEnvUniforms(bundle.environment);
@@ -2418,6 +2427,7 @@
 
       var lightArray = Array.isArray(bundle.lights) ? bundle.lights : [];
       var sceneBounds = null;
+      var shadowMaxPixels = (typeof bundle.shadowMaxPixels === "number") ? bundle.shadowMaxPixels : 0;
 
       for (var li = 0; li < lightArray.length && activeShadowCount < 2; li++) {
         var light = lightArray[li];
@@ -2430,6 +2440,7 @@
         var slot = activeShadowCount;
         var shadowSize = sceneNumber(light.shadowSize, 1024);
         shadowSize = Math.max(256, Math.min(4096, shadowSize));
+        shadowSize = resolveShadowSize(shadowSize, shadowMaxPixels);
 
         if (!shadowSlots[slot] || shadowSlots[slot].size !== shadowSize) {
           if (shadowSlots[slot]) shadowSlots[slot].texture.destroy();
@@ -2458,7 +2469,7 @@
 
       if (usePostProcessing) {
         if (!postProcessor) postProcessor = wgpuCreatePostProcessor(device, targetFormat);
-        postTarget = postProcessor.getSceneTarget(width, height);
+        postTarget = postProcessor.getSceneTarget(scaledW, scaledH);
         mainColorView = postTarget.colorView;
         mainDepthTargetView = postTarget.depthView;
       } else {
@@ -2532,7 +2543,7 @@
       // Post-processing.
       if (usePostProcessing && postProcessor) {
         var screenView = gpuCtx.getCurrentTexture().createView();
-        postProcessor.apply(encoder, postEffects, width, height, screenView);
+        postProcessor.apply(encoder, postEffects, scaledW, scaledH, width, height, screenView);
       }
 
       device.queue.submit([encoder.finish()]);
