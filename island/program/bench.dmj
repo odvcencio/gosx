@@ -1,0 +1,67 @@
+// IslandProgram encoding benchmarks. Compiled by danmuji into
+// program/bench_danmuji_test.go.
+//
+// Run with: go test -bench=. -benchmem ./island/program/
+//
+// Rebuild after editing:
+//     danmuji build island/program/bench.dmj
+
+package program
+
+import "testing"
+
+benchmark "encode binary counter" {
+    setup {
+        prog := benchCounterProgram()
+    }
+    measure {
+        _, err := EncodeBinary(prog)
+        if err != nil {
+            panic(err)
+        }
+    }
+    report_allocs
+}
+
+benchmark "encode binary form" {
+    setup {
+        prog := benchFormProgram()
+    }
+    measure {
+        _, err := EncodeBinary(prog)
+        if err != nil {
+            panic(err)
+        }
+    }
+    report_allocs
+}
+
+benchmark "encode json counter" {
+    setup {
+        prog := benchCounterProgram()
+    }
+    measure {
+        _, err := EncodeJSON(prog)
+        if err != nil {
+            panic(err)
+        }
+    }
+    report_allocs
+}
+
+benchmark "decode binary counter" {
+    setup {
+        prog := benchCounterProgram()
+        data, err := EncodeBinary(prog)
+        if err != nil {
+            panic(err)
+        }
+    }
+    measure {
+        _, err := DecodeBinary(data)
+        if err != nil {
+            panic(err)
+        }
+    }
+    report_allocs
+}
