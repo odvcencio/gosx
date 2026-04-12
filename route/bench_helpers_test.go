@@ -57,7 +57,7 @@ func benchNestedRouter() http.Handler {
 		},
 		Children: []Route{
 			{
-				Pattern: "/dashboard/settings",
+				Pattern: "/settings",
 				Handler: func(ctx *RouteContext) gosx.Node {
 					return gosx.El("main", gosx.Text("settings page body"))
 				},

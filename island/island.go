@@ -775,8 +775,23 @@ func renderResolvedAttrs(node *vm.ResolvedNode, path string) []vm.ResolvedAttr {
 	if node == nil {
 		return nil
 	}
+	// Fast path: no events → return the static attrs directly (no alloc).
+	// Only elements with event handlers need the synthesized data-gosx-on-*
+	// markers and the data-gosx-path attribute appended.
+	if len(node.Events) == 0 {
+		return node.Attrs
+	}
 
-	attrs := make([]vm.ResolvedAttr, 0, len(node.Attrs)+(len(node.Events)*2)+1)
+	// Pre-size: static attrs + 1 marker per event + 1 extra for each click
+	// + 1 for data-gosx-path.
+	extra := 1 // data-gosx-path
+	for _, event := range node.Events {
+		extra++
+		if eventNameToType(event.Name) == "click" {
+			extra++
+		}
+	}
+	attrs := make([]vm.ResolvedAttr, 0, len(node.Attrs)+extra)
 	attrs = append(attrs, node.Attrs...)
 	for _, event := range node.Events {
 		eventType := eventNameToType(event.Name)
@@ -791,12 +806,10 @@ func renderResolvedAttrs(node *vm.ResolvedNode, path string) []vm.ResolvedAttr {
 			})
 		}
 	}
-	if len(node.Events) > 0 {
-		attrs = append(attrs, vm.ResolvedAttr{
-			Name:  "data-gosx-path",
-			Value: path,
-		})
-	}
+	attrs = append(attrs, vm.ResolvedAttr{
+		Name:  "data-gosx-path",
+		Value: path,
+	})
 	return attrs
 }
 
