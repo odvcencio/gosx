@@ -1,0 +1,12777 @@
+(function() {
+  "use strict";
+
+  var api = window.__gosx_scene3d_api;
+  if (!api) {
+    console.error("[gosx] scene3d feature loaded before runtime — __gosx_scene3d_api missing");
+    return;
+  }
+
+  var appendSceneObjectToBundle = api.appendSceneObjectToBundle;
+  var appendSceneSurfaceToBundle = api.appendSceneSurfaceToBundle;
+  var applySceneCommands = api.applySceneCommands;
+  var cancelEngineFrame = api.cancelEngineFrame;
+  var clearChildren = api.clearChildren;
+  var createSceneRenderBundle = api.createSceneRenderBundle;
+  var createSceneState = api.createSceneState;
+  var createSceneWebGLRenderer = api.createSceneWebGLRenderer;
+  var engineFrame = api.engineFrame;
+  var normalizeSceneEnvironment = api.normalizeSceneEnvironment;
+  var normalizeSceneLabel = api.normalizeSceneLabel;
+  var normalizeSceneLabelAlign = api.normalizeSceneLabelAlign;
+  var normalizeSceneLabelCollision = api.normalizeSceneLabelCollision;
+  var normalizeSceneLabelWhiteSpace = api.normalizeSceneLabelWhiteSpace;
+  var normalizeSceneLight = api.normalizeSceneLight;
+  var normalizeSceneObject = api.normalizeSceneObject;
+  var normalizeSceneSprite = api.normalizeSceneSprite;
+  var normalizeSceneSpriteFit = api.normalizeSceneSpriteFit;
+  var publishPointerSignals = api.publishPointerSignals;
+  var queueInputSignal = api.queueInputSignal;
+  var sceneAdvanceTransitions = api.sceneAdvanceTransitions;
+  var sceneApplyLiveEvent = api.sceneApplyLiveEvent;
+  var sceneBool = api.sceneBool;
+  var sceneBoundsDepthMetrics = api.sceneBoundsDepthMetrics;
+  var sceneBoundsViewCulled = api.sceneBoundsViewCulled;
+  var sceneBundleNeedsThickLines = api.sceneBundleNeedsThickLines;
+  var sceneCameraEquivalent = api.sceneCameraEquivalent;
+  var sceneHasActiveTransitions = api.sceneHasActiveTransitions;
+  var sceneLabelAnimated = api.sceneLabelAnimated;
+  var sceneMeshMaterialArray = api.sceneMeshMaterialArray;
+  var sceneModels = api.sceneModels;
+  var sceneNormalizeDirection = api.sceneNormalizeDirection;
+  var sceneNowMilliseconds = api.sceneNowMilliseconds;
+  var sceneNumber = api.sceneNumber;
+  var sceneObjectAnimated = api.sceneObjectAnimated;
+  var scenePointStyleCode = api.scenePointStyleCode;
+  var scenePrimeInitialTransitions = api.scenePrimeInitialTransitions;
+  var sceneProps = api.sceneProps;
+  var sceneRenderCamera = api.sceneRenderCamera;
+  var sceneResolveLightingEnvironment = api.sceneResolveLightingEnvironment;
+  var sceneSpriteAnimated = api.sceneSpriteAnimated;
+  var sceneStateLabels = api.sceneStateLabels;
+  var sceneStateLights = api.sceneStateLights;
+  var sceneStateObjects = api.sceneStateObjects;
+  var sceneStateSprites = api.sceneStateSprites;
+  var sceneTypedFloatArray = api.sceneTypedFloatArray;
+  var translateScenePointInto = api.translateScenePointInto;
+
+  function sceneClamp(value, min, max) {
+    return Math.max(min, Math.min(max, value));
+  }
+
+  function sceneAddPoint(left, right) {
+    return {
+      x: sceneNumber(left && left.x, 0) + sceneNumber(right && right.x, 0),
+      y: sceneNumber(left && left.y, 0) + sceneNumber(right && right.y, 0),
+      z: sceneNumber(left && left.z, 0) + sceneNumber(right && right.z, 0),
+    };
+  }
+
+  function sceneScalePoint(point, scale) {
+    return {
+      x: sceneNumber(point && point.x, 0) * scale,
+      y: sceneNumber(point && point.y, 0) * scale,
+      z: sceneNumber(point && point.z, 0) * scale,
+    };
+  }
+
+  function sceneMultiplyPoint(left, right) {
+    return {
+      x: sceneNumber(left && left.x, 0) * sceneNumber(right && right.x, 0),
+      y: sceneNumber(left && left.y, 0) * sceneNumber(right && right.y, 0),
+      z: sceneNumber(left && left.z, 0) * sceneNumber(right && right.z, 0),
+    };
+  }
+
+  function scenePointLength(point) {
+    var px = sceneNumber(point && point.x, 0);
+    var py = sceneNumber(point && point.y, 0);
+    var pz = sceneNumber(point && point.z, 0);
+    return Math.sqrt(px * px + py * py + pz * pz);
+  }
+
+  function sceneNormalizePoint(point) {
+    const length = scenePointLength(point);
+    if (length <= 0.000001) {
+      return { x: 0, y: 0, z: 0 };
+    }
+    return sceneScalePoint(point, 1 / length);
+  }
+
+  function sceneDotPoint(left, right) {
+    return (
+      sceneNumber(left && left.x, 0) * sceneNumber(right && right.x, 0) +
+      sceneNumber(left && left.y, 0) * sceneNumber(right && right.y, 0) +
+      sceneNumber(left && left.z, 0) * sceneNumber(right && right.z, 0)
+    );
+  }
+
+  function sceneRotatePoint(point, rotationX, rotationY, rotationZ) {
+    let x = point.x;
+    let y = point.y;
+    let z = point.z;
+
+    const sinX = Math.sin(rotationX);
+    const cosX = Math.cos(rotationX);
+    let nextY = y * cosX - z * sinX;
+    let nextZ = y * sinX + z * cosX;
+    y = nextY;
+    z = nextZ;
+
+    const sinY = Math.sin(rotationY);
+    const cosY = Math.cos(rotationY);
+    let nextX = x * cosY + z * sinY;
+    nextZ = -x * sinY + z * cosY;
+    x = nextX;
+    z = nextZ;
+
+    const sinZ = Math.sin(rotationZ);
+    const cosZ = Math.cos(rotationZ);
+    nextX = x * cosZ - y * sinZ;
+    nextY = x * sinZ + y * cosZ;
+
+    return { x: nextX, y: nextY, z: z };
+  }
+
+  function sceneInverseRotatePoint(point, rotationX, rotationY, rotationZ) {
+    let x = sceneNumber(point && point.x, 0);
+    let y = sceneNumber(point && point.y, 0);
+    let z = sceneNumber(point && point.z, 0);
+
+    const sinZ = Math.sin(-rotationZ);
+    const cosZ = Math.cos(-rotationZ);
+    let nextX = x * cosZ - y * sinZ;
+    let nextY = x * sinZ + y * cosZ;
+    x = nextX;
+    y = nextY;
+
+    const sinY = Math.sin(-rotationY);
+    const cosY = Math.cos(-rotationY);
+    nextX = x * cosY + z * sinY;
+    let nextZ = -x * sinY + z * cosY;
+    x = nextX;
+    z = nextZ;
+
+    const sinX = Math.sin(-rotationX);
+    const cosX = Math.cos(-rotationX);
+    nextY = y * cosX - z * sinX;
+    nextZ = y * sinX + z * cosX;
+    return { x, y: nextY, z: nextZ };
+  }
+
+  const _sceneProjectCameraScratch = {
+    x: 0, y: 0, z: 0,
+    rotationX: 0, rotationY: 0, rotationZ: 0,
+    fov: 0, near: 0, far: 0,
+  };
+
+  function sceneProjectPoint(point, camera, width, height) {
+    const cam = sceneRenderCamera(camera, _sceneProjectCameraScratch);
+
+    let lx = sceneNumber(point && point.x, 0) - cam.x;
+    let ly = sceneNumber(point && point.y, 0) - cam.y;
+    let lz = sceneNumber(point && point.z, 0) + cam.z;
+
+    const sinZ = Math.sin(-cam.rotationZ);
+    const cosZ = Math.cos(-cam.rotationZ);
+    let nextX = lx * cosZ - ly * sinZ;
+    let nextY = lx * sinZ + ly * cosZ;
+    lx = nextX;
+    ly = nextY;
+
+    const sinY = Math.sin(-cam.rotationY);
+    const cosY = Math.cos(-cam.rotationY);
+    nextX = lx * cosY + lz * sinY;
+    let nextZ = -lx * sinY + lz * cosY;
+    lx = nextX;
+    lz = nextZ;
+
+    const sinX = Math.sin(-cam.rotationX);
+    const cosX = Math.cos(-cam.rotationX);
+    nextY = ly * cosX - lz * sinX;
+    nextZ = ly * sinX + lz * cosX;
+    ly = nextY;
+    lz = nextZ;
+
+    if (lz <= cam.near || lz >= cam.far) return null;
+
+    const focal = (Math.min(width, height) / 2) / Math.tan((cam.fov * Math.PI) / 360);
+    return {
+      x: width / 2 + (lx * focal) / lz,
+      y: height / 2 - (ly * focal) / lz,
+      depth: lz,
+    };
+  }
+
+  function sceneCameraLocalPoint(point, camera) {
+    const normalizedCamera = sceneRenderCamera(camera);
+    return sceneInverseRotatePoint({
+      x: sceneNumber(point && point.x, 0) - normalizedCamera.x,
+      y: sceneNumber(point && point.y, 0) - normalizedCamera.y,
+      z: sceneNumber(point && point.z, 0) + normalizedCamera.z,
+    }, normalizedCamera.rotationX, normalizedCamera.rotationY, normalizedCamera.rotationZ);
+  }
+
+  function sceneClipPoint(point, width, height) {
+    return {
+      x: (point.x / width) * 2 - 1,
+      y: 1 - (point.y / height) * 2,
+    };
+  }
+
+  function sceneSafeNormal(normal) {
+    const normalized = sceneNormalizePoint(normal);
+    return scenePointLength(normalized) > 0.0001 ? normalized : { x: 0, y: 1, z: 0 };
+  }
+
+  function sceneColorPoint(value, fallback) {
+    const rgba = sceneColorRGBA(value, [sceneNumber(fallback && fallback.x, 1), sceneNumber(fallback && fallback.y, 1), sceneNumber(fallback && fallback.z, 1), 1]);
+    return { x: rgba[0], y: rgba[1], z: rgba[2] };
+  }
+
+  function sceneRGBAString(rgba) {
+    const color = Array.isArray(rgba) ? rgba : [0.55, 0.88, 1, 1];
+    return "rgba(" +
+      Math.round(clamp01(sceneNumber(color[0], 0.55)) * 255) + ", " +
+      Math.round(clamp01(sceneNumber(color[1], 0.88)) * 255) + ", " +
+      Math.round(clamp01(sceneNumber(color[2], 1)) * 255) + ", " +
+      clamp01(sceneNumber(color[3], 1)).toFixed(3) + ")";
+  }
+
+  function sceneColorRGBA(value, fallback) {
+    const base = Array.isArray(fallback) && fallback.length === 4 ? fallback.slice() : [0.55, 0.88, 1, 1];
+    if (typeof value !== "string") {
+      return base;
+    }
+
+    const trimmed = value.trim();
+    const shortHex = trimmed.match(/^#([0-9a-f]{3})$/i);
+    if (shortHex) {
+      return [
+        parseInt(shortHex[1][0] + shortHex[1][0], 16) / 255,
+        parseInt(shortHex[1][1] + shortHex[1][1], 16) / 255,
+        parseInt(shortHex[1][2] + shortHex[1][2], 16) / 255,
+        1,
+      ];
+    }
+
+    const fullHex = trimmed.match(/^#([0-9a-f]{6})$/i);
+    if (fullHex) {
+      return [
+        parseInt(fullHex[1].slice(0, 2), 16) / 255,
+        parseInt(fullHex[1].slice(2, 4), 16) / 255,
+        parseInt(fullHex[1].slice(4, 6), 16) / 255,
+        1,
+      ];
+    }
+
+    const rgba = trimmed.match(/^rgba?\(([^)]+)\)$/i);
+    if (rgba) {
+      const parts = rgba[1].split(",").map(function(part) {
+        return Number(part.trim());
+      });
+      if (parts.length >= 3 && parts.every(function(part, index) {
+        return Number.isFinite(part) && (index < 3 || index === 3);
+      })) {
+        return [
+          Math.max(0, Math.min(255, parts[0])) / 255,
+          Math.max(0, Math.min(255, parts[1])) / 255,
+          Math.max(0, Math.min(255, parts[2])) / 255,
+          parts.length > 3 ? Math.max(0, Math.min(1, parts[3])) : 1,
+        ];
+      }
+    }
+
+    return base;
+  }
+
+  function sceneMixRGBA(left, right) {
+    return [
+      (sceneNumber(left && left[0], 0.55) + sceneNumber(right && right[0], 0.55)) / 2,
+      (sceneNumber(left && left[1], 0.88) + sceneNumber(right && right[1], 0.88)) / 2,
+      (sceneNumber(left && left[2], 1) + sceneNumber(right && right[2], 1)) / 2,
+      (sceneNumber(left && left[3], 1) + sceneNumber(right && right[3], 1)) / 2,
+    ];
+  }
+
+  function sceneDot3(ax, ay, az, bx, by, bz) {
+    return ax * bx + ay * by + az * bz;
+  }
+
+  function sceneCross3Into(out, offset, ax, ay, az, bx, by, bz) {
+    out[offset] = ay * bz - az * by;
+    out[offset + 1] = az * bx - ax * bz;
+    out[offset + 2] = ax * by - ay * bx;
+  }
+
+  function sceneNormalize3Into(out, offset, x, y, z) {
+    var len = Math.sqrt(x * x + y * y + z * z);
+    if (len < 1e-10) { out[offset] = 0; out[offset + 1] = 0; out[offset + 2] = 0; return 0; }
+    var inv = 1 / len;
+    out[offset] = x * inv; out[offset + 1] = y * inv; out[offset + 2] = z * inv;
+    return len;
+  }
+
+  function sceneRayIntersectsAABB(rayOrigin, rayDir, boundsMin, boundsMax) {
+    var tMin = -Infinity;
+    var tMax = Infinity;
+
+    for (var ai = 0; ai < 3; ai++) {
+      var axis = ai === 0 ? "x" : ai === 1 ? "y" : "z";
+      var origin = rayOrigin[axis];
+      var dir = rayDir[axis];
+      var min = boundsMin[axis];
+      var max = boundsMax[axis];
+
+      if (Math.abs(dir) < 1e-10) {
+        if (origin < min || origin > max) return -1;
+      } else {
+        var t1 = (min - origin) / dir;
+        var t2 = (max - origin) / dir;
+        if (t1 > t2) { var tmp = t1; t1 = t2; t2 = tmp; }
+        tMin = Math.max(tMin, t1);
+        tMax = Math.min(tMax, t2);
+        if (tMin > tMax) return -1;
+      }
+    }
+
+    if (tMax < 0) return -1;
+    return tMin >= 0 ? tMin : tMax;
+  }
+
+  function sceneRayIntersectsTriangle(rayOrigin, rayDir, v0, v1, v2) {
+    var EPSILON = 1e-7;
+
+    var rox = rayOrigin.x, roy = rayOrigin.y, roz = rayOrigin.z;
+    var rdx = rayDir.x, rdy = rayDir.y, rdz = rayDir.z;
+    var v0x = v0.x, v0y = v0.y, v0z = v0.z;
+
+    var edge1x = v1.x - v0x, edge1y = v1.y - v0y, edge1z = v1.z - v0z;
+    var edge2x = v2.x - v0x, edge2y = v2.y - v0y, edge2z = v2.z - v0z;
+
+    var hx = rdy * edge2z - rdz * edge2y;
+    var hy = rdz * edge2x - rdx * edge2z;
+    var hz = rdx * edge2y - rdy * edge2x;
+
+    var a = sceneDot3(edge1x, edge1y, edge1z, hx, hy, hz);
+    if (a > -EPSILON && a < EPSILON) return null; // parallel
+
+    var f = 1.0 / a;
+    var sx = rox - v0x;
+    var sy = roy - v0y;
+    var sz = roz - v0z;
+
+    var u = f * sceneDot3(sx, sy, sz, hx, hy, hz);
+    if (u < 0.0 || u > 1.0) return null;
+
+    var qx = sy * edge1z - sz * edge1y;
+    var qy = sz * edge1x - sx * edge1z;
+    var qz = sx * edge1y - sy * edge1x;
+
+    var v = f * sceneDot3(rdx, rdy, rdz, qx, qy, qz);
+    if (v < 0.0 || u + v > 1.0) return null;
+
+    var t = f * sceneDot3(edge2x, edge2y, edge2z, qx, qy, qz);
+    if (t < EPSILON) return null; // behind ray
+
+    return { distance: t, u: u, v: v };
+  }
+
+  function clamp01(value) {
+    return Math.max(0, Math.min(1, value));
+  }
+
+  var SCENE_IDENTITY_MAT4 = new Float32Array([
+    1, 0, 0, 0,
+    0, 1, 0, 0,
+    0, 0, 1, 0,
+    0, 0, 0, 1,
+  ]);
+
+  var _sceneMat4ScratchA = new Float32Array(16);
+  var _sceneMat4ScratchB = new Float32Array(16);
+
+  function sceneMat4Multiply(a, b) {
+    var out = new Float32Array(16);
+    for (var col = 0; col < 4; col++) {
+      for (var row = 0; row < 4; row++) {
+        out[col * 4 + row] =
+          a[row]      * b[col * 4] +
+          a[4 + row]  * b[col * 4 + 1] +
+          a[8 + row]  * b[col * 4 + 2] +
+          a[12 + row] * b[col * 4 + 3];
+      }
+    }
+    return out;
+  }
+
+  function sceneMat4MultiplyInto(out, a, b) {
+    for (var col = 0; col < 4; col++) {
+      for (var row = 0; row < 4; row++) {
+        out[col * 4 + row] =
+          a[row]      * b[col * 4] +
+          a[4 + row]  * b[col * 4 + 1] +
+          a[8 + row]  * b[col * 4 + 2] +
+          a[12 + row] * b[col * 4 + 3];
+      }
+    }
+    return out;
+  }
+
+  function sceneTRSToMat4(t, r, s) {
+    var out = new Float32Array(16);
+    var x = r[0], y = r[1], z = r[2], w = r[3];
+    var x2 = x + x, y2 = y + y, z2 = z + z;
+    var xx = x * x2, xy = x * y2, xz = x * z2;
+    var yy = y * y2, yz = y * z2, zz = z * z2;
+    var wx = w * x2, wy = w * y2, wz = w * z2;
+
+    out[0]  = (1 - (yy + zz)) * s[0]; out[1]  = (xy + wz) * s[0];       out[2]  = (xz - wy) * s[0];       out[3]  = 0;
+    out[4]  = (xy - wz) * s[1];       out[5]  = (1 - (xx + zz)) * s[1]; out[6]  = (yz + wx) * s[1];       out[7]  = 0;
+    out[8]  = (xz + wy) * s[2];       out[9]  = (yz - wx) * s[2];       out[10] = (1 - (xx + yy)) * s[2]; out[11] = 0;
+    out[12] = t[0];                    out[13] = t[1];                    out[14] = t[2];                    out[15] = 1;
+
+    return out;
+  }
+
+  function sceneTRSToMat4Into(out, t, r, s) {
+    var x = r[0], y = r[1], z = r[2], w = r[3];
+    var x2 = x + x, y2 = y + y, z2 = z + z;
+    var xx = x * x2, xy = x * y2, xz = x * z2;
+    var yy = y * y2, yz = y * z2, zz = z * z2;
+    var wx = w * x2, wy = w * y2, wz = w * z2;
+
+    out[0]  = (1 - (yy + zz)) * s[0]; out[1]  = (xy + wz) * s[0];       out[2]  = (xz - wy) * s[0];       out[3]  = 0;
+    out[4]  = (xy - wz) * s[1];       out[5]  = (1 - (xx + zz)) * s[1]; out[6]  = (yz + wx) * s[1];       out[7]  = 0;
+    out[8]  = (xz + wy) * s[2];       out[9]  = (yz - wx) * s[2];       out[10] = (1 - (xx + yy)) * s[2]; out[11] = 0;
+    out[12] = t[0];                    out[13] = t[1];                    out[14] = t[2];                    out[15] = 1;
+
+    return out;
+  }
+
+  var _animScratch3 = [0, 0, 0];
+  var _animScratch4 = [0, 0, 0, 0];
+
+  function sceneScreenToRay(pointerX, pointerY, width, height, camera) {
+    var cam = sceneRenderCamera(camera);
+
+    var origin = { x: cam.x, y: cam.y, z: -cam.z };
+
+    var halfFov = (cam.fov * Math.PI) / 360;
+    var tanHalf = Math.tan(halfFov);
+    var minDim = Math.min(width, height) / 2;
+    var focal = minDim / tanHalf;
+
+    var dirCam = {
+      x: (pointerX - width / 2) / focal,
+      y: (height / 2 - pointerY) / focal,
+      z: 1.0,
+    };
+
+    var dirWorld = sceneRotatePoint(dirCam, cam.rotationX, cam.rotationY, cam.rotationZ);
+
+    var len = Math.sqrt(dirWorld.x * dirWorld.x + dirWorld.y * dirWorld.y + dirWorld.z * dirWorld.z);
+    if (len < 1e-12) {
+      return { origin: origin, dir: { x: 0, y: 0, z: 1 } };
+    }
+
+    return {
+      origin: origin,
+      dir: { x: dirWorld.x / len, y: dirWorld.y / len, z: dirWorld.z / len },
+    };
+  }
+
+  function sceneDecompressArray(chunks) {
+    if (!Array.isArray(chunks) || chunks.length === 0) return null;
+    var result = [];
+    for (var ci = 0; ci < chunks.length; ci++) {
+      var chunk = chunks[ci];
+      var packed = chunk.packed;
+      var minVal = chunk.norm;      // "norm" field stores the min value
+      var maxVal = chunk.maxVal;
+      var count = chunk.count;
+      var bitWidth = chunk.bitWidth;
+
+      if (!packed || count < 2) continue;
+
+      var bytes;
+      if (typeof packed === "string") {
+        bytes = sceneBase64Decode(packed);
+      } else if (packed instanceof Uint8Array) {
+        bytes = packed;
+      } else if (Array.isArray(packed)) {
+        bytes = new Uint8Array(packed);
+      } else {
+        continue;
+      }
+
+      var levels = (1 << bitWidth) - 1;
+      var step = levels > 0 ? (maxVal - minVal) / levels : 0;
+
+      var indices = sceneUnpackIndices(bytes, count, bitWidth);
+      for (var i = 0; i < count; i++) {
+        result.push(minVal + indices[i] * step);
+      }
+    }
+    return result.length > 0 ? result : null;
+  }
+
+  function sceneUnpackIndices(src, count, bitWidth) {
+    var indices = new Int32Array(count);
+    switch (bitWidth) {
+      case 1:
+        for (var i = 0; i < count; i++) {
+          indices[i] = (src[i >> 3] >> (i & 7)) & 1;
+        }
+        break;
+      case 2:
+        for (var i = 0; i < count; i++) {
+          indices[i] = (src[i >> 2] >> ((i & 3) * 2)) & 3;
+        }
+        break;
+      case 4:
+        for (var i = 0; i < count; i++) {
+          indices[i] = (src[i >> 1] >> ((i & 1) * 4)) & 15;
+        }
+        break;
+      case 8:
+        for (var i = 0; i < count; i++) {
+          indices[i] = src[i];
+        }
+        break;
+      default:
+        var bitPos = 0;
+        var mask = (1 << bitWidth) - 1;
+        for (var i = 0; i < count; i++) {
+          var val = 0;
+          for (var b = 0; b < bitWidth; b++) {
+            if (src[bitPos >> 3] & (1 << (bitPos & 7))) {
+              val |= 1 << b;
+            }
+            bitPos++;
+          }
+          indices[i] = val & mask;
+        }
+    }
+    return indices;
+  }
+
+  function sceneBase64Decode(str) {
+    if (typeof atob === "function") {
+      var raw = atob(str);
+      var bytes = new Uint8Array(raw.length);
+      for (var i = 0; i < raw.length; i++) {
+        bytes[i] = raw.charCodeAt(i);
+      }
+      return bytes;
+    }
+    if (typeof Buffer !== "undefined") {
+      return new Uint8Array(Buffer.from(str, "base64"));
+    }
+    return new Uint8Array(0);
+  }
+
+  function sceneReinterleave(data, stride) {
+    var n = data.length / stride;
+    var out = new Array(data.length);
+    for (var c = 0; c < stride; c++) {
+      for (var i = 0; i < n; i++) {
+        out[i * stride + c] = data[c * n + i];
+      }
+    }
+    return out;
+  }
+
+  function sceneDecompressPointsEntry(entry) {
+    if (entry.compressedPositions && !entry.positions) {
+      entry.positions = sceneDecompressArray(entry.compressedPositions);
+      if (entry.positions && entry.positionStride > 1) {
+        entry.positions = sceneReinterleave(entry.positions, entry.positionStride);
+      }
+      if (entry.positions) {
+        delete entry.compressedPositions;
+      }
+    }
+    if (entry.compressedSizes && !entry.sizes) {
+      entry.sizes = sceneDecompressArray(entry.compressedSizes);
+      if (entry.sizes) {
+        delete entry.compressedSizes;
+      }
+    }
+  }
+
+  function sceneDecompressInstancedMeshEntry(entry) {
+    if (entry.compressedTransforms && !entry.transforms) {
+      entry.transforms = sceneDecompressArray(entry.compressedTransforms);
+      if (entry.transforms) {
+        delete entry.compressedTransforms;
+      }
+    }
+  }
+
+  function sceneDecompressAnimationChannel(channel) {
+    if (channel.compressedTimes && !channel.times) {
+      channel.times = sceneDecompressArray(channel.compressedTimes);
+      if (channel.times) {
+        delete channel.compressedTimes;
+      }
+    }
+    if (channel.compressedValues && !channel.values) {
+      channel.values = sceneDecompressArray(channel.compressedValues);
+      if (channel.values) {
+        delete channel.compressedValues;
+      }
+    }
+  }
+
+  function sceneDecompressProps(props) {
+    var scene = sceneProps(props);
+    var comp = props && props.compression;
+    var progressive = comp && comp.progressive;
+    var lod = comp && comp.lod;
+    var lodThreshold = comp && comp.lodThreshold || 20;
+
+    var points = scene && Array.isArray(scene.points) ? scene.points :
+                 (props && Array.isArray(props.points) ? props.points : []);
+    for (var i = 0; i < points.length; i++) {
+      var entry = points[i];
+      if (progressive || lod) {
+        if (entry.previewPositions && !entry.positions) {
+          entry.positions = sceneDecompressArray(entry.previewPositions);
+          if (entry.positions && entry.positionStride > 1) {
+            entry.positions = sceneReinterleave(entry.positions, entry.positionStride);
+          }
+          entry._pendingPositions = entry.compressedPositions;
+          entry._positionStride = entry.positionStride || 0;
+          entry._previewActive = true;
+          delete entry.previewPositions;
+        }
+        if (entry.previewSizes && !entry.sizes) {
+          entry.sizes = sceneDecompressArray(entry.previewSizes);
+          entry._pendingSizes = entry.compressedSizes;
+          delete entry.previewSizes;
+        }
+        if (lod) {
+          if (entry._pendingPositions) {
+            entry._fullPositions = sceneDecompressArray(entry._pendingPositions);
+            if (entry._fullPositions && entry._positionStride > 1) {
+              entry._fullPositions = sceneReinterleave(entry._fullPositions, entry._positionStride);
+            }
+            entry._previewPositions = entry.positions;
+            entry._lodThreshold = lodThreshold;
+          }
+        }
+      } else {
+        sceneDecompressPointsEntry(entry);
+      }
+    }
+
+    var meshes = scene && Array.isArray(scene.instancedMeshes) ? scene.instancedMeshes :
+                 (props && Array.isArray(props.instancedMeshes) ? props.instancedMeshes : []);
+    for (var i = 0; i < meshes.length; i++) {
+      var entry = meshes[i];
+      if (progressive || lod) {
+        if (entry.previewTransforms && !entry.transforms) {
+          entry.transforms = sceneDecompressArray(entry.previewTransforms);
+          entry._pendingTransforms = entry.compressedTransforms;
+          entry._previewActive = true;
+          delete entry.previewTransforms;
+        }
+        if (lod && entry._pendingTransforms) {
+          entry._fullTransforms = sceneDecompressArray(entry._pendingTransforms);
+          entry._previewTransforms = entry.transforms;
+          entry._lodThreshold = lodThreshold;
+        }
+      } else {
+        sceneDecompressInstancedMeshEntry(entry);
+      }
+    }
+
+    var animations = scene && Array.isArray(scene.animations) ? scene.animations :
+                     (props && Array.isArray(props.animations) ? props.animations : []);
+    for (var i = 0; i < animations.length; i++) {
+      var clip = animations[i];
+      var channels = clip && Array.isArray(clip.channels) ? clip.channels : [];
+      for (var j = 0; j < channels.length; j++) {
+        var channel = channels[j];
+        if (progressive || lod) {
+          if (channel.previewTimes && !channel.times) {
+            channel.times = sceneDecompressArray(channel.previewTimes);
+            channel._pendingTimes = channel.compressedTimes;
+            channel._previewActive = true;
+            delete channel.previewTimes;
+          }
+          if (channel.previewValues && !channel.values) {
+            channel.values = sceneDecompressArray(channel.previewValues);
+            channel._pendingValues = channel.compressedValues;
+            delete channel.previewValues;
+          }
+          if (!progressive) {
+            sceneDecompressAnimationChannel(channel);
+          }
+        } else {
+          sceneDecompressAnimationChannel(channel);
+        }
+      }
+    }
+  }
+
+  function sceneUpgradeProgressive(props) {
+    var scene = sceneProps(props);
+    var points = scene && Array.isArray(scene.points) ? scene.points :
+                 (props && Array.isArray(props.points) ? props.points : []);
+    for (var i = 0; i < points.length; i++) {
+      var entry = points[i];
+      if (entry._pendingPositions) {
+        entry.positions = sceneDecompressArray(entry._pendingPositions);
+        if (entry.positions && entry._positionStride > 1) {
+          entry.positions = sceneReinterleave(entry.positions, entry._positionStride);
+        }
+        delete entry._pendingPositions;
+        delete entry._positionStride;
+        delete entry._previewActive;
+        delete entry._cachedPos;
+      }
+      if (entry._pendingSizes) {
+        entry.sizes = sceneDecompressArray(entry._pendingSizes);
+        delete entry._pendingSizes;
+        delete entry._cachedSizes;
+      }
+    }
+    var meshes = scene && Array.isArray(scene.instancedMeshes) ? scene.instancedMeshes :
+                 (props && Array.isArray(props.instancedMeshes) ? props.instancedMeshes : []);
+    for (var i = 0; i < meshes.length; i++) {
+      var entry = meshes[i];
+      if (entry._pendingTransforms) {
+        entry.transforms = sceneDecompressArray(entry._pendingTransforms);
+        delete entry._pendingTransforms;
+        delete entry._previewActive;
+      }
+    }
+    var animations = scene && Array.isArray(scene.animations) ? scene.animations :
+                     (props && Array.isArray(props.animations) ? props.animations : []);
+    for (var i = 0; i < animations.length; i++) {
+      var clip = animations[i];
+      var channels = clip && Array.isArray(clip.channels) ? clip.channels : [];
+      for (var j = 0; j < channels.length; j++) {
+        var channel = channels[j];
+        if (channel._pendingTimes) {
+          channel.times = sceneDecompressArray(channel._pendingTimes);
+          delete channel._pendingTimes;
+          delete channel._previewActive;
+        }
+        if (channel._pendingValues) {
+          channel.values = sceneDecompressArray(channel._pendingValues);
+          delete channel._pendingValues;
+        }
+      }
+    }
+  }
+
+  function sceneApplyLOD(entry, cameraX, cameraY, cameraZ) {
+    if (!entry._fullPositions || !entry._previewPositions) return;
+    var dx = (entry.x || 0) - cameraX;
+    var dy = (entry.y || 0) - cameraY;
+    var dz = (entry.z || 0) - cameraZ;
+    var dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    var threshold = entry._lodThreshold || 20;
+    var wantFull = dist < threshold;
+    var hasFull = entry.positions === entry._fullPositions;
+    if (wantFull && !hasFull) {
+      entry.positions = entry._fullPositions;
+      delete entry._cachedPos; // force buffer rebuild
+    } else if (!wantFull && hasFull) {
+      entry.positions = entry._previewPositions;
+      delete entry._cachedPos;
+    }
+  }
+
+  function sceneSegmentResolution(value) {
+    const segments = Math.round(sceneNumber(value, 12));
+    return Math.max(6, Math.min(24, segments));
+  }
+
+  function boxVertices(width, height, depth) {
+    const halfWidth = width / 2;
+    const halfHeight = height / 2;
+    const halfDepth = depth / 2;
+    return [
+      { x: -halfWidth, y: -halfHeight, z: -halfDepth },
+      { x: halfWidth, y: -halfHeight, z: -halfDepth },
+      { x: halfWidth, y: halfHeight, z: -halfDepth },
+      { x: -halfWidth, y: halfHeight, z: -halfDepth },
+      { x: -halfWidth, y: -halfHeight, z: halfDepth },
+      { x: halfWidth, y: -halfHeight, z: halfDepth },
+      { x: halfWidth, y: halfHeight, z: halfDepth },
+      { x: -halfWidth, y: halfHeight, z: halfDepth },
+    ];
+  }
+
+  const boxEdgePairs = [
+    [0, 1], [1, 2], [2, 3], [3, 0],
+    [4, 5], [5, 6], [6, 7], [7, 4],
+    [0, 4], [1, 5], [2, 6], [3, 7],
+  ];
+
+  function indexSegments(points, edgePairs) {
+    return edgePairs.map(function(edge) {
+      return [points[edge[0]], points[edge[1]]];
+    });
+  }
+
+  function boxSegments(object) {
+    return indexSegments(boxVertices(object.width, object.height, object.depth), boxEdgePairs);
+  }
+
+  function planeSegments(object) {
+    const vertices = boxVertices(object.width, 0, object.depth);
+    return indexSegments(vertices.slice(0, 4), [
+      [0, 1], [1, 2], [2, 3], [3, 0],
+    ]);
+  }
+
+  function pyramidSegments(object) {
+    const halfWidth = object.width / 2;
+    const halfDepth = object.depth / 2;
+    const halfHeight = object.height / 2;
+    const vertices = [
+      { x: -halfWidth, y: -halfHeight, z: -halfDepth },
+      { x: halfWidth, y: -halfHeight, z: -halfDepth },
+      { x: halfWidth, y: -halfHeight, z: halfDepth },
+      { x: -halfWidth, y: -halfHeight, z: halfDepth },
+      { x: 0, y: halfHeight, z: 0 },
+    ];
+    return indexSegments(vertices, [
+      [0, 1], [1, 2], [2, 3], [3, 0],
+      [0, 4], [1, 4], [2, 4], [3, 4],
+    ]);
+  }
+
+  function circleSegments(radius, axis, segments) {
+    const points = [];
+    for (let i = 0; i < segments; i += 1) {
+      const angle = (Math.PI * 2 * i) / segments;
+      points.push(circlePoint(radius, axis, angle));
+    }
+    const out = [];
+    for (let i = 0; i < points.length; i += 1) {
+      out.push([points[i], points[(i + 1) % points.length]]);
+    }
+    return out;
+  }
+
+  function circlePoint(radius, axis, angle) {
+    const sin = Math.sin(angle) * radius;
+    const cos = Math.cos(angle) * radius;
+    switch (axis) {
+      case "xy":
+        return { x: cos, y: sin, z: 0 };
+      case "yz":
+        return { x: 0, y: cos, z: sin };
+      default:
+        return { x: cos, y: 0, z: sin };
+    }
+  }
+
+  function sphereSegments(object) {
+    return []
+      .concat(circleSegments(object.radius, "xy", object.segments))
+      .concat(circleSegments(object.radius, "xz", object.segments))
+      .concat(circleSegments(object.radius, "yz", object.segments));
+  }
+
+  function lineSegments(object) {
+    const points = Array.isArray(object && object.points) ? object.points : [];
+    const segments = Array.isArray(object && object.lineSegments) ? object.lineSegments : [];
+    const out = [];
+    for (const pair of segments) {
+      if (!Array.isArray(pair) || pair.length < 2) {
+        continue;
+      }
+      const from = points[pair[0]];
+      const to = points[pair[1]];
+      if (!from || !to) {
+        continue;
+      }
+      out.push([from, to]);
+    }
+    return out;
+  }
+
+  function sceneObjectSegments(object) {
+    switch (object.kind) {
+      case "box":
+      case "cube":
+        return boxSegments(object);
+      case "lines":
+        return lineSegments(object);
+      case "plane":
+        return planeSegments(object);
+      case "pyramid":
+        return pyramidSegments(object);
+      case "sphere":
+        return sphereSegments(object);
+      default:
+        return boxSegments(object);
+    }
+  }
+
+  function scenePlaneLocalCorners(object) {
+    return boxVertices(
+      sceneNumber(object && object.width, 1),
+      0,
+      sceneNumber(object && object.depth, sceneNumber(object && object.height, 1)),
+    ).slice(0, 4);
+  }
+
+  const _scenePlaneSurfaceCornersScratch = [
+    { x: 0, y: 0, z: 0 },
+    { x: 0, y: 0, z: 0 },
+    { x: 0, y: 0, z: 0 },
+    { x: 0, y: 0, z: 0 },
+  ];
+
+  function scenePlaneSurfaceCorners(object, timeSeconds) {
+    const local = scenePlaneLocalCorners(object);
+    const out = _scenePlaneSurfaceCornersScratch;
+    for (let i = 0; i < 4; i += 1) {
+      const p = local[i];
+      translateScenePointInto(out[i], p && p.x, p && p.y, p && p.z, object, timeSeconds);
+    }
+    return out;
+  }
+
+  function scenePlaneSurfacePositions(corners) {
+    if (!Array.isArray(corners) || corners.length < 4) {
+      return [];
+    }
+    return [
+      corners[0].x, corners[0].y, corners[0].z,
+      corners[1].x, corners[1].y, corners[1].z,
+      corners[2].x, corners[2].y, corners[2].z,
+      corners[0].x, corners[0].y, corners[0].z,
+      corners[2].x, corners[2].y, corners[2].z,
+      corners[3].x, corners[3].y, corners[3].z,
+    ];
+  }
+
+  function scenePlaneSurfaceUVs() {
+    return [
+      0, 1,
+      1, 1,
+      1, 0,
+      0, 1,
+      1, 0,
+      0, 0,
+    ];
+  }
+
+  function normalizeSceneMaterialKind(value) {
+    const kind = typeof value === "string" ? value.trim().toLowerCase() : "";
+    switch (kind) {
+      case "ghost":
+      case "glass":
+      case "glow":
+      case "matte":
+        return kind;
+      default:
+        return "flat";
+    }
+  }
+
+  function sceneDefaultMaterialOpacity(kind) {
+    switch (normalizeSceneMaterialKind(kind)) {
+      case "ghost":
+        return 0.42;
+      case "glass":
+        return 0.28;
+      case "glow":
+        return 0.92;
+      default:
+        return 1;
+    }
+  }
+
+  function sceneDefaultMaterialEmissive(kind) {
+    switch (normalizeSceneMaterialKind(kind)) {
+      case "ghost":
+        return 0.12;
+      case "glass":
+        return 0.08;
+      case "glow":
+        return 0.42;
+      default:
+        return 0;
+    }
+  }
+
+  function sceneDefaultMaterialBlendMode(kind) {
+    switch (normalizeSceneMaterialKind(kind)) {
+      case "ghost":
+      case "glass":
+        return "alpha";
+      case "glow":
+        return "additive";
+      default:
+        return "opaque";
+    }
+  }
+
+  function normalizeSceneMaterialBlendMode(value, kind, opacity) {
+    const mode = typeof value === "string" ? value.trim().toLowerCase() : "";
+    switch (mode) {
+      case "opaque":
+      case "solid":
+        return "opaque";
+      case "alpha":
+      case "transparent":
+      case "translucent":
+        return "alpha";
+      case "add":
+      case "additive":
+      case "glow":
+      case "emissive":
+        return "additive";
+      default: {
+        const fallback = sceneDefaultMaterialBlendMode(kind);
+        if (fallback !== "opaque") {
+          return fallback;
+        }
+        return opacity < 0.999 ? "alpha" : "opaque";
+      }
+    }
+  }
+
+  function normalizeSceneMaterialRenderPass(value, blendMode, opacity) {
+    const pass = typeof value === "string" ? value.trim().toLowerCase() : "";
+    switch (pass) {
+      case "opaque":
+      case "alpha":
+      case "additive":
+        return pass;
+      case "add":
+        return "additive";
+      case "transparent":
+      case "translucent":
+        return "alpha";
+      default:
+        if (blendMode === "additive") {
+          return "additive";
+        }
+        return blendMode === "alpha" || opacity < 0.999 ? "alpha" : "opaque";
+    }
+  }
+
+  function sceneObjectMaterialSource(item) {
+    return item && item.material && typeof item.material === "object" ? item.material : null;
+  }
+
+  function sceneObjectMaterialKindValue(item) {
+    if (!item || typeof item !== "object") {
+      return "";
+    }
+    if (typeof item.material === "string" && item.material.trim()) {
+      return item.material.trim();
+    }
+    if (typeof item.materialKind === "string" && item.materialKind.trim()) {
+      return item.materialKind.trim();
+    }
+    const material = sceneObjectMaterialSource(item);
+    if (material && typeof material.kind === "string" && material.kind.trim()) {
+      return material.kind.trim();
+    }
+    return "";
+  }
+
+  function sceneObjectMaterialValue(item, name) {
+    if (!item || typeof item !== "object") {
+      return undefined;
+    }
+    const material = sceneObjectMaterialSource(item);
+    if (material && Object.prototype.hasOwnProperty.call(material, name)) {
+      return material[name];
+    }
+    return Object.prototype.hasOwnProperty.call(item, name) ? item[name] : undefined;
+  }
+
+  function sceneObjectMaterialHasValue(item, name) {
+    if (!item || typeof item !== "object") {
+      return false;
+    }
+    const material = sceneObjectMaterialSource(item);
+    if (material && Object.prototype.hasOwnProperty.call(material, name)) {
+      return true;
+    }
+    return Object.prototype.hasOwnProperty.call(item, name);
+  }
+
+  function sceneObjectBlendModeValue(item) {
+    const direct = sceneObjectMaterialValue(item, "blendMode");
+    if (direct !== undefined) {
+      return direct;
+    }
+    const material = sceneObjectMaterialSource(item);
+    if (material && Object.prototype.hasOwnProperty.call(material, "blend")) {
+      return material.blend;
+    }
+    return item && Object.prototype.hasOwnProperty.call(item, "blend") ? item.blend : undefined;
+  }
+
+  function sceneObjectBlendModeHasValue(item) {
+    if (!item || typeof item !== "object") {
+      return false;
+    }
+    if (sceneObjectMaterialHasValue(item, "blendMode")) {
+      return true;
+    }
+    const material = sceneObjectMaterialSource(item);
+    if (material && Object.prototype.hasOwnProperty.call(material, "blend")) {
+      return true;
+    }
+    return Object.prototype.hasOwnProperty.call(item, "blend");
+  }
+
+  function sceneObjectMaterialProfile(object) {
+    const kind = normalizeSceneMaterialKind(object && object.materialKind);
+    const opacity = clamp01(sceneNumber(object && object.opacity, sceneDefaultMaterialOpacity(kind)));
+    const profile = {
+      kind,
+      color: object && typeof object.color === "string" && object.color ? object.color : "#8de1ff",
+      texture: object && typeof object.texture === "string" ? object.texture.trim() : "",
+      opacity,
+      wireframe: sceneBool(object && object.wireframe, true),
+      blendMode: normalizeSceneMaterialBlendMode(object && object.blendMode, kind, opacity),
+      emissive: clamp01(sceneNumber(object && object.emissive, sceneDefaultMaterialEmissive(kind))),
+    };
+    profile.renderPass = normalizeSceneMaterialRenderPass(object && object.renderPass, profile.blendMode, profile.opacity);
+    profile.key = sceneMaterialProfileKey(profile);
+    profile.shaderData = sceneMaterialShaderData(profile);
+    return profile;
+  }
+
+  function sceneMaterialProfileKey(profile) {
+    return [
+      normalizeSceneMaterialKind(profile && profile.kind),
+      String(profile && profile.color || ""),
+      String(profile && profile.texture || ""),
+      clamp01(sceneNumber(profile && profile.opacity, 1)).toFixed(3),
+      String(sceneBool(profile && profile.wireframe, true)),
+      String(profile && profile.blendMode || "opaque"),
+      String(profile && profile.renderPass || "opaque"),
+      clamp01(sceneNumber(profile && profile.emissive, 0)).toFixed(3),
+    ].join("|");
+  }
+
+  function sceneBundleMaterialIndex(bundle, materialLookup, profile) {
+    if (!bundle || !Array.isArray(bundle.materials)) {
+      return 0;
+    }
+    const key = profile && profile.key ? profile.key : sceneMaterialProfileKey(profile);
+    if (materialLookup && materialLookup.has(key)) {
+      return materialLookup.get(key);
+    }
+    const index = bundle.materials.length;
+    bundle.materials.push(profile);
+    if (materialLookup) {
+      materialLookup.set(key, index);
+    }
+    return index;
+  }
+
+  function sceneMaterialStrokeColor(material) {
+    const rgba = sceneColorRGBA(material && material.color, [0.55, 0.88, 1, 1]);
+    rgba[3] = clamp01(rgba[3] * sceneMaterialOpacity(material));
+    return "rgba(" +
+      Math.round(rgba[0] * 255) + ", " +
+      Math.round(rgba[1] * 255) + ", " +
+      Math.round(rgba[2] * 255) + ", " +
+      rgba[3].toFixed(3) + ")";
+  }
+
+  function sceneMaterialOpacity(material) {
+    if (!material || typeof material !== "object") {
+      return 1;
+    }
+    return clamp01(sceneNumber(material.opacity, 1));
+  }
+
+  function sceneMaterialEmissive(material) {
+    if (!material || typeof material !== "object") {
+      return 0;
+    }
+    return clamp01(sceneNumber(material.emissive, 0));
+  }
+
+  function sceneMaterialUsesAlpha(material) {
+    return sceneMaterialRenderPass(material) !== "opaque";
+  }
+
+  function sceneMaterialRenderPass(material) {
+    if (!material || typeof material !== "object") {
+      return "opaque";
+    }
+    const renderPass = String(material.renderPass || "").toLowerCase();
+    if (renderPass === "opaque" || renderPass === "alpha" || renderPass === "additive") {
+      return renderPass;
+    }
+    const blendMode = String(material.blendMode || "").toLowerCase();
+    if (blendMode === "additive") {
+      return "additive";
+    }
+    if (blendMode === "alpha" || sceneMaterialOpacity(material) < 0.999) {
+      return "alpha";
+    }
+    return "opaque";
+  }
+
+  function sceneMaterialShaderData(material) {
+    if (material && Array.isArray(material.shaderData) && material.shaderData.length >= 3) {
+      return material.shaderData;
+    }
+    if (!material || typeof material !== "object") {
+      return [0, 0, 1];
+    }
+    const kind = String(material.kind || "").toLowerCase();
+    switch (kind) {
+    case "ghost":
+      return [1, sceneMaterialEmissive(material), 0.3];
+    case "glass":
+      return [2, sceneMaterialEmissive(material), 0.7];
+    case "glow":
+      return [3, sceneMaterialEmissive(material), 1];
+    case "matte":
+      return [4, sceneMaterialEmissive(material), 0.2];
+    default:
+      return [0, sceneMaterialEmissive(material), 1];
+    }
+  }
+
+  function sceneFallbackMaterialData(vertexCount) {
+    const values = new Float32Array(vertexCount * 3);
+    for (let i = 0; i < vertexCount; i += 1) {
+      values[i * 3 + 2] = 1;
+    }
+    return values;
+  }
+
+  function sceneLightingActive(lights, environment) {
+    return Boolean(
+      (Array.isArray(lights) && lights.length > 0) ||
+      sceneNumber(environment && environment.ambientIntensity, 0) > 0 ||
+      sceneNumber(environment && environment.skyIntensity, 0) > 0 ||
+      sceneNumber(environment && environment.groundIntensity, 0) > 0
+    );
+  }
+
+  function sceneEnvironmentLightContribution(baseColor, normal, environment) {
+    let lighting = { x: 0, y: 0, z: 0 };
+    if (sceneNumber(environment && environment.ambientIntensity, 0) > 0) {
+      lighting = sceneAddPoint(lighting, sceneMultiplyPoint(
+        baseColor,
+        sceneScalePoint(sceneColorPoint(environment && environment.ambientColor, { x: 1, y: 1, z: 1 }), sceneNumber(environment && environment.ambientIntensity, 0)),
+      ));
+    }
+    if (sceneNumber(environment && environment.skyIntensity, 0) > 0 || sceneNumber(environment && environment.groundIntensity, 0) > 0) {
+      const hemi = clamp01((normal.y * 0.5) + 0.5);
+      const sky = sceneScalePoint(sceneColorPoint(environment && environment.skyColor, { x: 0.88, y: 0.94, z: 1 }), sceneNumber(environment && environment.skyIntensity, 0) * hemi);
+      const ground = sceneScalePoint(sceneColorPoint(environment && environment.groundColor, { x: 0.12, y: 0.16, z: 0.22 }), sceneNumber(environment && environment.groundIntensity, 0) * (1 - hemi));
+      lighting = sceneAddPoint(lighting, sceneMultiplyPoint(baseColor, sceneAddPoint(sky, ground)));
+    }
+    return lighting;
+  }
+
+  function sceneAmbientLightContribution(baseColor, light) {
+    return sceneMultiplyPoint(
+      baseColor,
+      sceneScalePoint(sceneColorPoint(light && light.color, { x: 1, y: 1, z: 1 }), sceneNumber(light && light.intensity, 0)),
+    );
+  }
+
+  function sceneDirectionalLightContribution(baseColor, normal, light) {
+    const direction = sceneNormalizePoint({
+      x: -sceneNumber(light && light.directionX, 0),
+      y: -sceneNumber(light && light.directionY, -1),
+      z: -sceneNumber(light && light.directionZ, 0),
+    });
+    const diffuse = clamp01(sceneDotPoint(normal, direction));
+    if (diffuse <= 0) {
+      return { x: 0, y: 0, z: 0 };
+    }
+    return sceneMultiplyPoint(
+      baseColor,
+      sceneScalePoint(sceneColorPoint(light && light.color, { x: 1, y: 1, z: 1 }), sceneNumber(light && light.intensity, 0) * diffuse),
+    );
+  }
+
+  function scenePointLightContribution(baseColor, worldPoint, normal, light) {
+    const offset = {
+      x: sceneNumber(light && light.x, 0) - sceneNumber(worldPoint && worldPoint.x, 0),
+      y: sceneNumber(light && light.y, 0) - sceneNumber(worldPoint && worldPoint.y, 0),
+      z: sceneNumber(light && light.z, 0) - sceneNumber(worldPoint && worldPoint.z, 0),
+    };
+    const distance = Math.max(0.0001, scenePointLength(offset));
+    const diffuse = clamp01(sceneDotPoint(normal, sceneScalePoint(offset, 1 / distance)));
+    if (diffuse <= 0) {
+      return { x: 0, y: 0, z: 0 };
+    }
+    const attenuation = scenePointLightAttenuation(light, distance);
+    if (attenuation <= 0) {
+      return { x: 0, y: 0, z: 0 };
+    }
+    return sceneMultiplyPoint(
+      baseColor,
+      sceneScalePoint(sceneColorPoint(light && light.color, { x: 1, y: 1, z: 1 }), sceneNumber(light && light.intensity, 0) * diffuse * attenuation),
+    );
+  }
+
+  function sceneLightContribution(baseColor, worldPoint, normal, light) {
+    switch (light && light.kind) {
+      case "ambient":
+        return sceneAmbientLightContribution(baseColor, light);
+      case "directional":
+        return sceneDirectionalLightContribution(baseColor, normal, light);
+      case "point":
+        return scenePointLightContribution(baseColor, worldPoint, normal, light);
+      default:
+        return { x: 0, y: 0, z: 0 };
+    }
+  }
+
+  function sceneLitColorRGBA(material, worldPoint, normal, lights, environment) {
+    const base = sceneColorRGBA(material && material.color, [0.55, 0.88, 1, 1]);
+    if (!sceneLightingActive(lights, environment)) {
+      return base;
+    }
+    const safeNormal = sceneSafeNormal(normal);
+    const baseColor = { x: base[0], y: base[1], z: base[2] };
+    const emissive = clamp01(sceneMaterialEmissive(material));
+    let lighting = sceneEnvironmentLightContribution(baseColor, safeNormal, environment);
+    for (const light of Array.isArray(lights) ? lights : []) {
+      lighting = sceneAddPoint(lighting, sceneLightContribution(baseColor, worldPoint, safeNormal, light));
+    }
+    const exposure = sceneNumber(environment && environment.exposure, 1);
+    let lit = sceneAddPoint(
+      sceneScalePoint(baseColor, emissive),
+      sceneScalePoint(lighting, exposure),
+    );
+    lit = sceneAddPoint(lit, sceneScalePoint(baseColor, 0.06));
+    return [clamp01(lit.x), clamp01(lit.y), clamp01(lit.z), base[3]];
+  }
+
+  function sceneObjectWorldNormal(object, point, timeSeconds) {
+    const localPoint = {
+      x: sceneNumber(point && point.x, 0) * sceneNumber(object && object.scaleX, 1),
+      y: sceneNumber(point && point.y, 0) * sceneNumber(object && object.scaleY, 1),
+      z: sceneNumber(point && point.z, 0) * sceneNumber(object && object.scaleZ, 1),
+    };
+    return sceneNormalizePoint(sceneRotatePoint(
+      sceneObjectLocalNormal(object, localPoint),
+      sceneNumber(object && object.rotationX, 0) + sceneNumber(object && object.spinX, 0) * timeSeconds,
+      sceneNumber(object && object.rotationY, 0) + sceneNumber(object && object.spinY, 0) * timeSeconds,
+      sceneNumber(object && object.rotationZ, 0) + sceneNumber(object && object.spinZ, 0) * timeSeconds,
+    ));
+  }
+
+  function sceneObjectLocalNormal(object, point) {
+    const safePoint = point && typeof point === "object" ? point : { x: 0, y: 0, z: 0 };
+    switch (object && object.kind) {
+      case "lines":
+        return sceneBoxNormal(object, safePoint);
+      case "plane":
+        return { x: 0, y: 1, z: 0 };
+      case "sphere":
+        return sceneNormalizePoint(safePoint);
+      case "pyramid":
+        return scenePyramidNormal(object, safePoint);
+      default:
+        return sceneBoxNormal(object, safePoint);
+    }
+  }
+
+  function scenePyramidNormal(object, point) {
+    const width = Math.max((sceneNumber(object && object.width, object && object.size) * Math.abs(sceneNumber(object && object.scaleX, 1))) / 2, 0.0001);
+    const height = Math.max((sceneNumber(object && object.height, object && object.size) * Math.abs(sceneNumber(object && object.scaleY, 1))) / 2, 0.0001);
+    const depth = Math.max((sceneNumber(object && object.depth, object && object.size) * Math.abs(sceneNumber(object && object.scaleZ, 1))) / 2, 0.0001);
+    return sceneNormalizePoint({
+      x: sceneNumber(point && point.x, 0) / width,
+      y: (sceneNumber(point && point.y, 0) / height) + 0.35,
+      z: sceneNumber(point && point.z, 0) / depth,
+    });
+  }
+
+  function sceneBoxNormal(object, point) {
+    const width = Math.max((sceneNumber(object && object.width, object && object.size) * Math.abs(sceneNumber(object && object.scaleX, 1))) / 2, 0.0001);
+    const height = Math.max((sceneNumber(object && object.height, object && object.size) * Math.abs(sceneNumber(object && object.scaleY, 1))) / 2, 0.0001);
+    const depth = Math.max((sceneNumber(object && object.depth, object && object.size) * Math.abs(sceneNumber(object && object.scaleZ, 1))) / 2, 0.0001);
+    const x = sceneNumber(point && point.x, 0);
+    const y = sceneNumber(point && point.y, 0);
+    const z = sceneNumber(point && point.z, 0);
+    const ax = Math.abs(x / width);
+    const ay = Math.abs(y / height);
+    const az = Math.abs(z / depth);
+    if (ax >= ay && ax >= az) {
+      return { x: Math.sign(x) || 1, y: 0, z: 0 };
+    }
+    if (ay >= az) {
+      return { x: 0, y: Math.sign(y) || 1, z: 0 };
+    }
+    return { x: 0, y: 0, z: Math.sign(z) || 1 };
+  }
+
+  function scenePointLightAttenuation(light, distance) {
+    const range = Math.max(0, sceneNumber(light && light.range, 0));
+    const decay = Math.max(0.1, sceneNumber(light && light.decay, 1.35));
+    if (range > 0) {
+      return Math.pow(clamp01(1 - (distance / range)), decay);
+    }
+    return 1 / (1 + Math.pow(distance * 0.35, Math.max(decay, 1)));
+  }
+
+  function buildSceneWorldDrawPlan(bundle, scratch) {
+    const objects = Array.isArray(bundle.objects) ? bundle.objects : [];
+    const materials = Array.isArray(bundle.materials) ? bundle.materials : [];
+    if (!objects.length || !materials.length) {
+      return null;
+    }
+    const drawScratch = resetSceneWorldDrawScratch(scratch || createSceneWorldDrawScratch());
+    for (let index = 0; index < objects.length; index += 1) {
+      collectSceneWorldDrawObject(drawScratch, bundle, materials, objects[index], index);
+    }
+    return finalizeSceneWorldDrawPlan(bundle, drawScratch);
+  }
+
+  function collectSceneWorldDrawObject(drawScratch, bundle, materials, object, order) {
+    if (!sceneWorldObjectRenderable(object, bundle && bundle.camera)) {
+      return;
+    }
+    const material = materials[object.materialIndex] || null;
+    if (!sceneWorldObjectUsesLinePass(object, material)) {
+      return;
+    }
+    const renderPass = sceneWorldObjectRenderPass(object, material);
+    if (renderPass === "additive" || renderPass === "alpha") {
+      collectSceneWorldTranslucentObject(drawScratch, bundle, object, material, renderPass, order);
+      return;
+    }
+    collectSceneWorldOpaqueObject(drawScratch, bundle, object, material);
+  }
+
+  function sceneWorldObjectRenderable(object, camera) {
+    return Boolean(
+      object &&
+      Number.isFinite(object.vertexOffset) &&
+      Number.isFinite(object.vertexCount) &&
+      object.vertexCount > 0 &&
+      !sceneWorldObjectCulled(object, camera)
+    );
+  }
+
+  function sceneWorldObjectUsesLinePass(object, material) {
+    return !(object && object.kind === "plane" && material && typeof material.texture === "string" && material.texture.trim() !== "" && !sceneBool(material.wireframe, true));
+  }
+
+  function collectSceneWorldOpaqueObject(drawScratch, bundle, object, material) {
+    const target = object.static ? {
+      positions: drawScratch.staticOpaquePositions,
+      colors: drawScratch.staticOpaqueColors,
+      materials: drawScratch.staticOpaqueMaterials,
+    } : {
+      positions: drawScratch.dynamicOpaquePositions,
+      colors: drawScratch.dynamicOpaqueColors,
+      materials: drawScratch.dynamicOpaqueMaterials,
+    };
+    if (object.static) {
+      drawScratch.staticOpaqueObjects.push(object);
+      drawScratch.staticOpaqueMaterialProfiles.push(material);
+    }
+    appendSceneWorldObjectSlice(target.positions, target.colors, target.materials, bundle.worldPositions, bundle.worldColors, object, material);
+  }
+
+  function collectSceneWorldTranslucentObject(drawScratch, bundle, object, material, renderPass, order) {
+    const targetEntries = renderPass === "additive" ? drawScratch.additiveEntries : drawScratch.alphaEntries;
+    targetEntries.push(createSceneWorldPassEntry(object, material, bundle.worldPositions, bundle.camera, order));
+  }
+
+  function finalizeSceneWorldDrawPlan(bundle, drawScratch) {
+    const typedStaticOpaque = createSceneWorldOpaqueBuffers(drawScratch, "typedStaticOpaque", drawScratch.staticOpaquePositions, drawScratch.staticOpaqueColors, drawScratch.staticOpaqueMaterials);
+    const typedDynamicOpaque = createSceneWorldOpaqueBuffers(drawScratch, "typedDynamicOpaque", drawScratch.dynamicOpaquePositions, drawScratch.dynamicOpaqueColors, drawScratch.dynamicOpaqueMaterials);
+    const typedAlphaPlan = createSceneWorldPassPlan(bundle.worldPositions, bundle.worldColors, drawScratch.alphaEntries, drawScratch.alphaPlan);
+    const typedAdditivePlan = createSceneWorldPassPlan(bundle.worldPositions, bundle.worldColors, drawScratch.additiveEntries, drawScratch.additivePlan);
+    const plan = drawScratch.plan;
+    plan.staticOpaqueKey = sceneStaticDrawKey(bundle, drawScratch.staticOpaqueObjects, drawScratch.staticOpaqueMaterialProfiles, bundle.camera);
+    plan.staticOpaquePositions = typedStaticOpaque.positions;
+    plan.staticOpaqueColors = typedStaticOpaque.colors;
+    plan.staticOpaqueMaterials = typedStaticOpaque.materials;
+    plan.staticOpaqueVertexCount = typedStaticOpaque.vertexCount;
+    plan.dynamicOpaquePositions = typedDynamicOpaque.positions;
+    plan.dynamicOpaqueColors = typedDynamicOpaque.colors;
+    plan.dynamicOpaqueMaterials = typedDynamicOpaque.materials;
+    plan.dynamicOpaqueVertexCount = typedDynamicOpaque.vertexCount;
+    plan.alphaPositions = typedAlphaPlan.positions;
+    plan.alphaColors = typedAlphaPlan.colors;
+    plan.alphaMaterials = typedAlphaPlan.materials;
+    plan.alphaVertexCount = typedAlphaPlan.vertexCount;
+    plan.additivePositions = typedAdditivePlan.positions;
+    plan.additiveColors = typedAdditivePlan.colors;
+    plan.additiveMaterials = typedAdditivePlan.materials;
+    plan.additiveVertexCount = typedAdditivePlan.vertexCount;
+    plan.hasAlphaPass = typedAlphaPlan.vertexCount > 0;
+    plan.hasAdditivePass = typedAdditivePlan.vertexCount > 0;
+    return plan;
+  }
+
+  function createSceneWorldOpaqueBuffers(drawScratch, keyPrefix, positions, colors, materials) {
+    const typedPositions = sceneWriteFloatArray(drawScratch, keyPrefix + "Positions", positions);
+    const typedColors = sceneWriteFloatArray(drawScratch, keyPrefix + "Colors", colors);
+    const typedMaterials = sceneWriteFloatArray(drawScratch, keyPrefix + "Materials", materials);
+    return {
+      positions: typedPositions,
+      colors: typedColors,
+      materials: typedMaterials,
+      vertexCount: typedPositions.length / 3,
+    };
+  }
+
+  function createSceneWorldPassEntry(object, material, sourcePositions, camera, order) {
+    return {
+      object,
+      material,
+      order,
+      depth: sceneWorldObjectDepth(sourcePositions, object, camera),
+    };
+  }
+
+  function createSceneWorldPassPlan(sourcePositions, sourceColors, entries, scratch) {
+    const passScratch = resetSceneWorldPassScratch(scratch || createSceneWorldPassScratch());
+    if (!entries.length) {
+      passScratch.typedPositions = sceneWriteFloatArray(passScratch, "typedPositions", passScratch.positions);
+      passScratch.typedColors = sceneWriteFloatArray(passScratch, "typedColors", passScratch.colors);
+      passScratch.typedMaterials = sceneWriteFloatArray(passScratch, "typedMaterials", passScratch.materials);
+      passScratch.vertexCount = 0;
+      return passScratch;
+    }
+    const positions = passScratch.positions;
+    const colors = passScratch.colors;
+    const materials = passScratch.materials;
+    entries.sort(compareSceneWorldPassEntries);
+    for (const entry of entries) {
+      appendSceneWorldObjectSlice(positions, colors, materials, sourcePositions, sourceColors, entry.object, entry.material);
+    }
+    passScratch.typedPositions = sceneWriteFloatArray(passScratch, "typedPositions", positions);
+    passScratch.typedColors = sceneWriteFloatArray(passScratch, "typedColors", colors);
+    passScratch.typedMaterials = sceneWriteFloatArray(passScratch, "typedMaterials", materials);
+    passScratch.vertexCount = passScratch.typedPositions.length / 3;
+    return passScratch;
+  }
+
+  function compareSceneWorldPassEntries(a, b) {
+    if (a.depth !== b.depth) {
+      return b.depth - a.depth;
+    }
+    return a.order - b.order;
+  }
+
+  const _sceneWorldObjectDepthCameraScratch = {
+    x: 0, y: 0, z: 0,
+    rotationX: 0, rotationY: 0, rotationZ: 0,
+    fov: 0, near: 0, far: 0,
+  };
+
+  function sceneWorldObjectDepth(sourcePositions, object, camera) {
+    if (object && object.bounds) {
+      return sceneBoundsDepthMetrics(object.bounds, camera).center;
+    }
+    if (object && Number.isFinite(object.depthCenter)) {
+      return sceneNumber(object.depthCenter, sceneWorldPointDepth(0, camera));
+    }
+    const vertexOffset = Math.max(0, Math.floor(sceneNumber(object && object.vertexOffset, 0)));
+    const vertexCount = Math.max(0, Math.floor(sceneNumber(object && object.vertexCount, 0)));
+    if (!vertexCount) {
+      return sceneWorldPointDepth(0, camera);
+    }
+
+    const cam = sceneRenderCamera(camera, _sceneWorldObjectDepthCameraScratch);
+    const sinX = Math.sin(-cam.rotationX);
+    const cosX = Math.cos(-cam.rotationX);
+    const sinY = Math.sin(-cam.rotationY);
+    const cosY = Math.cos(-cam.rotationY);
+    const sinZ = Math.sin(-cam.rotationZ);
+    const cosZ = Math.cos(-cam.rotationZ);
+
+    const start = vertexOffset * 3;
+    const end = start + vertexCount * 3;
+    let depthSum = 0;
+    let count = 0;
+    for (let i = start; i < end; i += 3) {
+      let lx = sceneNumber(sourcePositions[i], 0) - cam.x;
+      let ly = sceneNumber(sourcePositions[i + 1], 0) - cam.y;
+      let lz = sceneNumber(sourcePositions[i + 2], 0) + cam.z;
+
+      let nX = lx * cosZ - ly * sinZ;
+      let nY = lx * sinZ + ly * cosZ;
+      lx = nX;
+      ly = nY;
+
+      nX = lx * cosY + lz * sinY;
+      let nZ = -lx * sinY + lz * cosY;
+      lx = nX;
+      lz = nZ;
+
+      nZ = ly * sinX + lz * cosX;
+      depthSum += nZ;
+      count += 1;
+    }
+    return depthSum / Math.max(1, count);
+  }
+
+  function sceneWorldObjectCulled(object, camera) {
+    if (object && object.bounds) {
+      return sceneBoundsViewCulled(object.bounds, camera);
+    }
+    return Boolean(object && object.viewCulled);
+  }
+
+  function appendSceneWorldObjectSlice(targetPositions, targetColors, targetMaterials, sourcePositions, sourceColors, object, material) {
+    const vertexOffset = Math.max(0, Math.floor(sceneNumber(object.vertexOffset, 0)));
+    const vertexCount = Math.max(0, Math.floor(sceneNumber(object.vertexCount, 0)));
+    const opacity = sceneMaterialOpacity(material);
+    const materialData = sceneMaterialShaderData(material);
+    const startPosition = vertexOffset * 3;
+    const endPosition = startPosition + vertexCount * 3;
+    const startColor = vertexOffset * 4;
+    const endColor = startColor + vertexCount * 4;
+    for (let i = startPosition; i < endPosition; i += 1) {
+      targetPositions.push(sceneNumber(sourcePositions[i], 0));
+    }
+    for (let i = startColor; i < endColor; i += 4) {
+      targetColors.push(
+        sceneNumber(sourceColors[i], 0),
+        sceneNumber(sourceColors[i + 1], 0),
+        sceneNumber(sourceColors[i + 2], 0),
+        sceneNumber(sourceColors[i + 3], 1) * opacity,
+      );
+      targetMaterials.push(materialData[0], materialData[1], materialData[2]);
+    }
+  }
+
+  function createSceneWorldDrawScratch() {
+    return {
+      staticOpaquePositions: [],
+      staticOpaqueColors: [],
+      staticOpaqueMaterials: [],
+      dynamicOpaquePositions: [],
+      dynamicOpaqueColors: [],
+      dynamicOpaqueMaterials: [],
+      staticOpaqueObjects: [],
+      staticOpaqueMaterialProfiles: [],
+      alphaEntries: [],
+      additiveEntries: [],
+      typedStaticOpaquePositions: new Float32Array(0),
+      typedStaticOpaqueColors: new Float32Array(0),
+      typedStaticOpaqueMaterials: new Float32Array(0),
+      typedDynamicOpaquePositions: new Float32Array(0),
+      typedDynamicOpaqueColors: new Float32Array(0),
+      typedDynamicOpaqueMaterials: new Float32Array(0),
+      alphaPlan: createSceneWorldPassScratch(),
+      additivePlan: createSceneWorldPassScratch(),
+      plan: {},
+    };
+  }
+
+  function resetSceneWorldDrawScratch(scratch) {
+    scratch.staticOpaquePositions.length = 0;
+    scratch.staticOpaqueColors.length = 0;
+    scratch.staticOpaqueMaterials.length = 0;
+    scratch.dynamicOpaquePositions.length = 0;
+    scratch.dynamicOpaqueColors.length = 0;
+    scratch.dynamicOpaqueMaterials.length = 0;
+    scratch.staticOpaqueObjects.length = 0;
+    scratch.staticOpaqueMaterialProfiles.length = 0;
+    scratch.alphaEntries.length = 0;
+    scratch.additiveEntries.length = 0;
+    resetSceneWorldPassScratch(scratch.alphaPlan);
+    resetSceneWorldPassScratch(scratch.additivePlan);
+    return scratch;
+  }
+
+  function createSceneWorldPassScratch() {
+    return {
+      positions: [],
+      colors: [],
+      materials: [],
+      typedPositions: new Float32Array(0),
+      typedColors: new Float32Array(0),
+      typedMaterials: new Float32Array(0),
+      vertexCount: 0,
+    };
+  }
+
+  function resetSceneWorldPassScratch(scratch) {
+    scratch.positions.length = 0;
+    scratch.colors.length = 0;
+    scratch.materials.length = 0;
+    scratch.vertexCount = 0;
+    return scratch;
+  }
+
+  function sceneWriteFloatArray(target, key, values) {
+    let buffer = target[key];
+    if (!buffer || buffer.length !== values.length) {
+      buffer = new Float32Array(values.length);
+      target[key] = buffer;
+    }
+    for (let i = 0; i < values.length; i += 1) {
+      buffer[i] = sceneNumber(values[i], 0);
+    }
+    return buffer;
+  }
+
+  function sceneWorldPointDepth(pointOrZ, camera) {
+    if (pointOrZ && typeof pointOrZ === "object") {
+      return sceneCameraLocalPoint(pointOrZ, camera).z;
+    }
+    return sceneCameraLocalPoint({ x: 0, y: 0, z: sceneNumber(pointOrZ, 0) }, camera).z;
+  }
+
+  function sceneWorldObjectRenderPass(object, material) {
+    const renderPass = String(object && object.renderPass || "").toLowerCase();
+    if (renderPass === "opaque" || renderPass === "alpha" || renderPass === "additive") {
+      return renderPass;
+    }
+    return sceneMaterialRenderPass(material);
+  }
+
+  function sceneStaticDrawKey(bundle, objects, materials, camera) {
+    let hash = 2166136261 >>> 0;
+    hash = sceneHashCamera(hash, camera);
+    for (const object of objects) {
+      const material = object && object.materialIndex >= 0 && object.materialIndex < materials.length ? materials[object.materialIndex] : null;
+      if (!sceneWorldObjectUsesLinePass(object, material)) {
+        continue;
+      }
+      hash = sceneHashStaticObject(hash, object);
+      const start = Math.max(0, Math.floor(sceneNumber(object && object.vertexOffset, 0))) * 4;
+      const end = start + Math.max(0, Math.floor(sceneNumber(object && object.vertexCount, 0))) * 4;
+      const colors = bundle && bundle.worldColors;
+      for (let index = start; index < end; index += 1) {
+        hash = sceneHashNumber(hash, sceneNumber(colors && colors[index], 0));
+      }
+    }
+    for (const material of materials) {
+      hash = sceneHashMaterialProfile(hash, material);
+    }
+    return String(hash) + ":" + objects.length + ":" + materials.length;
+  }
+
+  function sceneHashCamera(hash, camera) {
+    hash = sceneHashNumber(hash, sceneNumber(camera && camera.x, 0));
+    hash = sceneHashNumber(hash, sceneNumber(camera && camera.y, 0));
+    hash = sceneHashNumber(hash, sceneNumber(camera && camera.z, 6));
+    hash = sceneHashNumber(hash, sceneNumber(camera && camera.rotationX, 0));
+    hash = sceneHashNumber(hash, sceneNumber(camera && camera.rotationY, 0));
+    hash = sceneHashNumber(hash, sceneNumber(camera && camera.rotationZ, 0));
+    hash = sceneHashNumber(hash, sceneNumber(camera && camera.fov, 75));
+    hash = sceneHashNumber(hash, sceneNumber(camera && camera.near, 0.05));
+    return sceneHashNumber(hash, sceneNumber(camera && camera.far, 128));
+  }
+
+  const sceneStaticObjectStringFields = ["id", "kind"];
+  const sceneStaticObjectNumberFields = [
+    ["materialIndex", 0],
+    ["vertexOffset", 0],
+    ["vertexCount", 0],
+    ["depthNear", 0],
+    ["depthFar", 0],
+    ["depthCenter", 0],
+  ];
+  const sceneStaticObjectFlagFields = ["static", "viewCulled"];
+  const sceneBoundsNumberFields = [
+    ["minX", 0],
+    ["minY", 0],
+    ["minZ", 0],
+    ["maxX", 0],
+    ["maxY", 0],
+    ["maxZ", 0],
+  ];
+  const sceneMaterialStringFields = ["kind", "color", "texture", "blendMode", "renderPass"];
+  const sceneMaterialNumberFields = [
+    ["opacity", 1],
+    ["emissive", 0],
+  ];
+  const sceneMaterialFlagFields = ["wireframe"];
+
+  function sceneHashStaticObject(hash, object) {
+    hash = sceneHashFieldStrings(hash, object, sceneStaticObjectStringFields);
+    hash = sceneHashFieldNumbers(hash, object, sceneStaticObjectNumberFields);
+    hash = sceneHashFieldFlags(hash, object, sceneStaticObjectFlagFields);
+    return sceneHashBounds(hash, object && object.bounds);
+  }
+
+  function sceneHashBounds(hash, bounds) {
+    return sceneHashFieldNumbers(hash, bounds, sceneBoundsNumberFields);
+  }
+
+  function sceneHashMaterialProfile(hash, material) {
+    const key = material && material.key;
+    if (key) {
+      return sceneHashString(hash, key);
+    }
+    hash = sceneHashFieldStrings(hash, material, sceneMaterialStringFields);
+    hash = sceneHashFieldNumbers(hash, material, sceneMaterialNumberFields);
+    return sceneHashFieldFlags(hash, material, sceneMaterialFlagFields);
+  }
+
+  function sceneHashFieldStrings(hash, source, fields) {
+    for (const field of fields) {
+      hash = sceneHashString(hash, source && source[field] || "");
+    }
+    return hash;
+  }
+
+  function sceneHashFieldNumbers(hash, source, fields) {
+    for (const field of fields) {
+      hash = sceneHashNumber(hash, sceneNumber(source && source[field[0]], field[1]));
+    }
+    return hash;
+  }
+
+  function sceneHashFieldFlags(hash, source, fields) {
+    for (const field of fields) {
+      hash = sceneHashNumber(hash, source && source[field] ? 1 : 0);
+    }
+    return hash;
+  }
+
+  function sceneHashNumber(hash, value) {
+    const scaled = Math.round(sceneNumber(value, 0) * 1000);
+    hash ^= scaled;
+    return Math.imul(hash, 16777619) >>> 0;
+  }
+
+  function sceneHashString(hash, value) {
+    const text = String(value || "");
+    for (let i = 0; i < text.length; i += 1) {
+      hash ^= text.charCodeAt(i);
+      hash = Math.imul(hash, 16777619) >>> 0;
+    }
+    return hash;
+  }
+
+function resolvePostFXFactor(maxPixels, canvasPixels) {
+  var cap = (typeof maxPixels === "number" && maxPixels > 0)
+    ? maxPixels
+    : 2073600; // PostFXMaxPixels1080p default
+  if (canvasPixels <= cap) return 1;
+  return Math.sqrt(cap / canvasPixels);
+}
+
+function resolveShadowSize(requestedSize, shadowMaxPixels) {
+  var size = Math.max(1, requestedSize | 0);
+  var cap = (typeof shadowMaxPixels === "number" && shadowMaxPixels > 0)
+    ? shadowMaxPixels
+    : 1048576; // ShadowMaxPixels1024 default
+  var requestedPixels = size * size;
+  if (requestedPixels <= cap) return size;
+  var factor = Math.sqrt(cap / requestedPixels);
+  return Math.max(1, Math.floor(size * factor));
+}
+
+  var SCENE_POST_TONE_MAPPING = "toneMapping";
+  var SCENE_POST_BLOOM = "bloom";
+  var SCENE_POST_VIGNETTE = "vignette";
+  var SCENE_POST_COLOR_GRADE = "colorGrade";
+
+  const SCENE_PBR_VERTEX_SOURCE = [
+    "#version 300 es",
+    "precision highp float;",
+    "precision highp int;",
+    "",
+    "in vec3 a_position;",
+    "in vec3 a_normal;",
+    "in vec2 a_uv;",
+    "in vec4 a_tangent;",
+    "",
+    "uniform mat4 u_viewMatrix;",
+    "uniform mat4 u_projectionMatrix;",
+    "",
+    "out vec3 v_worldPosition;",
+    "out vec3 v_normal;",
+    "out vec2 v_uv;",
+    "out vec3 v_tangent;",
+    "out vec3 v_bitangent;",
+    "",
+    "void main() {",
+    "    v_worldPosition = a_position;",
+    "    v_normal = normalize(a_normal);",
+    "    v_uv = a_uv;",
+    "",
+    "    vec3 T = normalize(a_tangent.xyz);",
+    "    vec3 N = v_normal;",
+    "    vec3 B = cross(N, T) * a_tangent.w;",
+    "    v_tangent = T;",
+    "    v_bitangent = B;",
+    "",
+    "    gl_Position = u_projectionMatrix * u_viewMatrix * vec4(a_position, 1.0);",
+    "}",
+  ].join("\n");
+
+  const SCENE_PBR_FRAGMENT_SOURCE = [
+    "#version 300 es",
+    "precision highp float;",
+    "precision highp int;",
+    "",
+    "in vec3 v_worldPosition;",
+    "in vec3 v_normal;",
+    "in vec2 v_uv;",
+    "in vec3 v_tangent;",
+    "in vec3 v_bitangent;",
+    "",
+    "// Camera",
+    "uniform vec3 u_cameraPosition;",
+    "",
+    "// Material",
+    "uniform vec3 u_albedo;",
+    "uniform float u_roughness;",
+    "uniform float u_metalness;",
+    "uniform float u_emissive;",
+    "uniform float u_opacity;",
+    "uniform bool u_unlit;",
+    "",
+    "// Texture maps",
+    "uniform sampler2D u_albedoMap;",
+    "uniform sampler2D u_normalMap;",
+    "uniform sampler2D u_roughnessMap;",
+    "uniform sampler2D u_metalnessMap;",
+    "uniform sampler2D u_emissiveMap;",
+    "uniform bool u_hasAlbedoMap;",
+    "uniform bool u_hasNormalMap;",
+    "uniform bool u_hasRoughnessMap;",
+    "uniform bool u_hasMetalnessMap;",
+    "uniform bool u_hasEmissiveMap;",
+    "",
+    "// Lights (max 8)",
+    "uniform int u_lightCount;",
+    "uniform int u_lightTypes[8];",
+    "uniform vec3 u_lightPositions[8];",
+    "uniform vec3 u_lightDirections[8];",
+    "uniform vec3 u_lightColors[8];",
+    "uniform float u_lightIntensities[8];",
+    "uniform float u_lightRanges[8];",
+    "uniform float u_lightDecays[8];",
+    "uniform float u_lightAngles[8];",
+    "uniform float u_lightPenumbras[8];",
+    "uniform vec3 u_lightGroundColors[8];",
+    "",
+    "// Environment",
+    "uniform vec3 u_ambientColor;",
+    "uniform float u_ambientIntensity;",
+    "uniform vec3 u_skyColor;",
+    "uniform float u_skyIntensity;",
+    "uniform vec3 u_groundColor;",
+    "uniform float u_groundIntensity;",
+    "",
+    "// Shadow maps (max 2 directional lights)",
+    "uniform sampler2D u_shadowMap0;",
+    "uniform mat4 u_lightSpaceMatrix0;",
+    "uniform bool u_hasShadow0;",
+    "uniform float u_shadowBias0;",
+    "",
+    "uniform sampler2D u_shadowMap1;",
+    "uniform mat4 u_lightSpaceMatrix1;",
+    "uniform bool u_hasShadow1;",
+    "uniform float u_shadowBias1;",
+    "",
+    "// Per-object shadow receive control",
+    "uniform bool u_receiveShadow;",
+    "",
+    "// Shadow-casting light indices — maps shadow slot to light array index.",
+    "uniform int u_shadowLightIndex0;",
+    "uniform int u_shadowLightIndex1;",
+    "",
+    "// Exposure and tone mapping control.",
+    "uniform float u_exposure;",
+    "uniform int u_toneMapMode;",
+    "",
+    "// Fog",
+    "uniform int u_hasFog;",
+    "uniform float u_fogDensity;",
+    "uniform vec3 u_fogColor;",
+    "",
+    "out vec4 fragColor;",
+    "",
+    "const float PI = 3.14159265359;",
+    "",
+    "// 4-tap Poisson disk PCF shadow sampling.",
+    "float shadowFactor(sampler2D shadowMap, mat4 lightSpaceMatrix, float bias) {",
+    "    vec4 lightSpacePos = lightSpaceMatrix * vec4(v_worldPosition, 1.0);",
+    "    vec3 projCoords = lightSpacePos.xyz / lightSpacePos.w;",
+    "    projCoords = projCoords * 0.5 + 0.5;",
+    "",
+    "    if (projCoords.z > 1.0) return 1.0;",
+    "",
+    "    float shadow = 0.0;",
+    "    float texelSize = 1.0 / float(textureSize(shadowMap, 0).x);",
+    "    vec2 poissonDisk[4] = vec2[](",
+    "        vec2(-0.94201624, -0.39906216),",
+    "        vec2(0.94558609, -0.76890725),",
+    "        vec2(-0.094184101, -0.92938870),",
+    "        vec2(0.34495938, 0.29387760)",
+    "    );",
+    "",
+    "    for (int i = 0; i < 4; i++) {",
+    "        float depth = texture(shadowMap, projCoords.xy + poissonDisk[i] * texelSize).r;",
+    "        shadow += (projCoords.z - bias > depth) ? 0.0 : 1.0;",
+    "    }",
+    "    return shadow / 4.0;",
+    "}",
+    "",
+    "// GGX/Trowbridge-Reitz normal distribution function.",
+    "float distributionGGX(vec3 N, vec3 H, float roughness) {",
+    "    float a = roughness * roughness;",
+    "    float a2 = a * a;",
+    "    float NdotH = max(dot(N, H), 0.0);",
+    "    float NdotH2 = NdotH * NdotH;",
+    "    float denom = NdotH2 * (a2 - 1.0) + 1.0;",
+    "    denom = PI * denom * denom;",
+    "    return a2 / max(denom, 0.0000001);",
+    "}",
+    "",
+    "// Smith geometry function (GGX variant) — single direction.",
+    "float geometrySchlickGGX(float NdotV, float roughness) {",
+    "    float r = roughness + 1.0;",
+    "    float k = (r * r) / 8.0;",
+    "    return NdotV / (NdotV * (1.0 - k) + k);",
+    "}",
+    "",
+    "// Smith geometry function — combined for view and light directions.",
+    "float geometrySmith(vec3 N, vec3 V, vec3 L, float roughness) {",
+    "    float NdotV = max(dot(N, V), 0.0);",
+    "    float NdotL = max(dot(N, L), 0.0);",
+    "    return geometrySchlickGGX(NdotV, roughness) * geometrySchlickGGX(NdotL, roughness);",
+    "}",
+    "",
+    "// Schlick fresnel approximation.",
+    "vec3 fresnelSchlick(float cosTheta, vec3 F0) {",
+    "    return F0 + (1.0 - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);",
+    "}",
+    "",
+    "// Point light distance attenuation.",
+    "float pointLightAttenuation(float distance, float range, float decay) {",
+    "    if (range > 0.0) {",
+    "        float ratio = clamp(1.0 - pow(distance / range, 4.0), 0.0, 1.0);",
+    "        return ratio * ratio / max(distance * distance, 0.0001);",
+    "    }",
+    "    return 1.0 / max(pow(distance, decay), 0.0001);",
+    "}",
+    "",
+    "void main() {",
+    "    // Resolve material properties, sampling textures when available.",
+    "    vec3 albedo = u_albedo;",
+    "    if (u_hasAlbedoMap) {",
+    "        vec4 texAlbedo = texture(u_albedoMap, v_uv);",
+    "        albedo *= texAlbedo.rgb;",
+    "    }",
+    "",
+    "    float roughness = u_roughness;",
+    "    if (u_hasRoughnessMap) {",
+    "        roughness *= texture(u_roughnessMap, v_uv).g;",
+    "    }",
+    "    roughness = clamp(roughness, 0.04, 1.0);",
+    "",
+    "    float metalness = u_metalness;",
+    "    if (u_hasMetalnessMap) {",
+    "        metalness *= texture(u_metalnessMap, v_uv).b;",
+    "    }",
+    "    metalness = clamp(metalness, 0.0, 1.0);",
+    "",
+    "    float emissiveStrength = u_emissive;",
+    "    vec3 emissiveColor = albedo;",
+    "    if (u_hasEmissiveMap) {",
+    "        emissiveColor = texture(u_emissiveMap, v_uv).rgb;",
+    "    }",
+    "",
+    "    // Unlit path: output albedo directly.",
+    "    if (u_unlit) {",
+    "        vec3 color = albedo + emissiveColor * emissiveStrength;",
+    "        fragColor = vec4(color, u_opacity);",
+    "        return;",
+    "    }",
+    "",
+    "    // Resolve per-pixel normal via TBN matrix.",
+    "    vec3 N = normalize(v_normal);",
+    "    if (u_hasNormalMap) {",
+    "        vec3 T = normalize(v_tangent);",
+    "        vec3 B = normalize(v_bitangent);",
+    "        mat3 TBN = mat3(T, B, N);",
+    "        vec3 mapNormal = texture(u_normalMap, v_uv).rgb * 2.0 - 1.0;",
+    "        N = normalize(TBN * mapNormal);",
+    "    }",
+    "",
+    "    vec3 V = normalize(u_cameraPosition - v_worldPosition);",
+    "",
+    "    // Fresnel reflectance at normal incidence — dielectric vs metallic blend.",
+    "    vec3 F0 = mix(vec3(0.04), albedo, metalness);",
+    "",
+    "    // Accumulate direct lighting.",
+    "    vec3 Lo = vec3(0.0);",
+    "",
+    "    for (int i = 0; i < 8; i++) {",
+    "        if (i >= u_lightCount) break;",
+    "",
+    "        int lightType = u_lightTypes[i];",
+    "        vec3 lightColor = u_lightColors[i];",
+    "        float intensity = u_lightIntensities[i];",
+    "",
+    "        // Ambient light (type 0): add flat contribution, no BRDF.",
+    "        if (lightType == 0) {",
+    "            Lo += albedo * lightColor * intensity;",
+    "            continue;",
+    "        }",
+    "",
+    "        // Hemisphere light (type 4): sky/ground blend based on normal Y.",
+    "        if (lightType == 4) {",
+    "            float hBlend = N.y * 0.5 + 0.5;",
+    "            vec3 hemiColor = mix(u_lightGroundColors[i], lightColor, hBlend);",
+    "            Lo += albedo * hemiColor * intensity;",
+    "            continue;",
+    "        }",
+    "",
+    "        vec3 L;",
+    "        float attenuation = 1.0;",
+    "",
+    "        if (lightType == 1) {",
+    "            // Directional light.",
+    "            L = normalize(-u_lightDirections[i]);",
+    "        } else if (lightType == 3) {",
+    "            // Spot light.",
+    "            vec3 toLight = u_lightPositions[i] - v_worldPosition;",
+    "            float dist = length(toLight);",
+    "            L = toLight / max(dist, 0.0001);",
+    "",
+    "            // Cone attenuation.",
+    "            float cosAngle = dot(L, -normalize(u_lightDirections[i]));",
+    "            float outerCos = cos(u_lightAngles[i]);",
+    "            float innerCos = cos(u_lightAngles[i] * (1.0 - u_lightPenumbras[i]));",
+    "            float spotAtten = clamp((cosAngle - outerCos) / max(innerCos - outerCos, 0.001), 0.0, 1.0);",
+    "",
+    "            // Distance attenuation (same as point light).",
+    "            attenuation = pointLightAttenuation(dist, u_lightRanges[i], u_lightDecays[i]) * spotAtten;",
+    "        } else {",
+    "            // Point light (type 2).",
+    "            vec3 toLight = u_lightPositions[i] - v_worldPosition;",
+    "            float dist = length(toLight);",
+    "            L = toLight / max(dist, 0.0001);",
+    "            attenuation = pointLightAttenuation(dist, u_lightRanges[i], u_lightDecays[i]);",
+    "        }",
+    "",
+    "        vec3 H = normalize(V + L);",
+    "        float NdotL = max(dot(N, L), 0.0);",
+    "",
+    "        // Cook-Torrance specular BRDF.",
+    "        float D = distributionGGX(N, H, roughness);",
+    "        float G = geometrySmith(N, V, L, roughness);",
+    "        vec3 F = fresnelSchlick(max(dot(H, V), 0.0), F0);",
+    "",
+    "        vec3 numerator = D * G * F;",
+    "        float denominator = 4.0 * max(dot(N, V), 0.0) * NdotL + 0.0001;",
+    "        vec3 specular = numerator / denominator;",
+    "",
+    "        // Energy conservation: diffuse complement of specular.",
+    "        vec3 kD = (vec3(1.0) - F) * (1.0 - metalness);",
+    "",
+    "        // Shadow attenuation for directional lights.",
+    "        float shadow = 1.0;",
+    "        if (u_receiveShadow && lightType == 1) {",
+    "            if (u_hasShadow0 && i == u_shadowLightIndex0) {",
+    "                shadow = shadowFactor(u_shadowMap0, u_lightSpaceMatrix0, u_shadowBias0);",
+    "            } else if (u_hasShadow1 && i == u_shadowLightIndex1) {",
+    "                shadow = shadowFactor(u_shadowMap1, u_lightSpaceMatrix1, u_shadowBias1);",
+    "            }",
+    "        }",
+    "",
+    "        vec3 radiance = lightColor * intensity * attenuation;",
+    "        Lo += (kD * albedo / PI + specular) * radiance * NdotL * shadow;",
+    "    }",
+    "",
+    "    // Environment hemisphere lighting.",
+    "    float hemi = N.y * 0.5 + 0.5;",
+    "    vec3 envDiffuse = u_ambientColor * u_ambientIntensity",
+    "                    + u_skyColor * u_skyIntensity * hemi",
+    "                    + u_groundColor * u_groundIntensity * (1.0 - hemi);",
+    "    vec3 ambient = envDiffuse * albedo;",
+    "",
+    "    // Emissive contribution.",
+    "    vec3 emission = emissiveColor * emissiveStrength;",
+    "",
+    "    vec3 color = ambient + Lo + emission;",
+    "",
+    "    // Exponential fog.",
+    "    if (u_hasFog != 0) {",
+    "        float fogDist = length(v_worldPosition - u_cameraPosition);",
+    "        float fogFactor = exp(-u_fogDensity * u_fogDensity * fogDist * fogDist);",
+    "        fogFactor = clamp(fogFactor, 0.0, 1.0);",
+    "        color = mix(u_fogColor, color, fogFactor);",
+    "    }",
+    "",
+    "    // Apply exposure.",
+    "    color *= u_exposure;",
+    "",
+    "    // Tone mapping.",
+    "    if (u_toneMapMode == 1) {",
+    "        // ACES filmic.",
+    "        color = (color * (2.51 * color + 0.03)) / (color * (2.43 * color + 0.59) + 0.14);",
+    "    } else if (u_toneMapMode == 2) {",
+    "        // Reinhard.",
+    "        color = color / (color + vec3(1.0));",
+    "    }",
+    "    // else: linear (no tone mapping).",
+    "",
+    "    // Gamma correction.",
+    "    color = pow(color, vec3(1.0 / 2.2));",
+    "",
+    "    fragColor = vec4(color, u_opacity);",
+    "}",
+  ].join("\n");
+
+  const SCENE_SHADOW_VERTEX_SOURCE = [
+    "#version 300 es",
+    "precision highp float;",
+    "in vec3 a_position;",
+    "uniform mat4 u_lightViewProjection;",
+    "void main() {",
+    "    gl_Position = u_lightViewProjection * vec4(a_position, 1.0);",
+    "}",
+  ].join("\n");
+
+  const SCENE_SHADOW_FRAGMENT_SOURCE = [
+    "#version 300 es",
+    "precision highp float;",
+    "void main() {}",
+  ].join("\n");
+
+  const SCENE_POINTS_VERTEX_SOURCE = [
+    "#version 300 es",
+    "precision highp float;",
+    "precision highp int;",
+    "",
+    "in vec3 a_position;",
+    "in float a_size;",
+    "in vec4 a_color;",
+    "",
+    "uniform mat4 u_viewMatrix;",
+    "uniform mat4 u_projectionMatrix;",
+    "uniform mat4 u_modelMatrix;",
+    "uniform float u_defaultSize;",
+    "uniform vec4 u_defaultColor;",
+    "uniform bool u_hasPerVertexColor;",
+    "uniform bool u_hasPerVertexSize;",
+    "uniform bool u_sizeAttenuation;",
+    "uniform int u_pointStyle;",
+    "uniform float u_viewportHeight;",
+    "",
+    "// Fog",
+    "uniform int u_hasFog;",
+    "uniform float u_fogDensity;",
+    "",
+    "out vec4 v_color;",
+    "out float v_fogFactor;",
+    "out float v_pointSize;",
+    "",
+    "void main() {",
+    "    vec4 worldPos = u_modelMatrix * vec4(a_position, 1.0);",
+    "    vec4 viewPos = u_viewMatrix * worldPos;",
+    "    gl_Position = u_projectionMatrix * viewPos;",
+    "",
+    "    float size = u_hasPerVertexSize ? a_size : u_defaultSize;",
+    "    if (u_sizeAttenuation) {",
+    "        gl_PointSize = max(size * (u_viewportHeight * 0.5) / max(-viewPos.z, 0.001), 1.0);",
+    "    } else {",
+    "        gl_PointSize = max(size, 1.0);",
+    "    }",
+    "    v_pointSize = gl_PointSize;",
+    "",
+    "    v_color = u_hasPerVertexColor ? a_color : u_defaultColor;",
+    "",
+    "    // Exponential fog",
+    "    if (u_hasFog != 0) {",
+    "        float dist = length(viewPos.xyz);",
+    "        v_fogFactor = exp(-u_fogDensity * u_fogDensity * dist * dist);",
+    "        v_fogFactor = clamp(v_fogFactor, 0.0, 1.0);",
+    "    } else {",
+    "        v_fogFactor = 1.0;",
+    "    }",
+    "}",
+  ].join("\n");
+
+  const SCENE_POINTS_FRAGMENT_SOURCE = [
+    "#version 300 es",
+    "precision highp float;",
+    "precision highp int;",
+    "",
+    "in vec4 v_color;",
+    "in float v_fogFactor;",
+    "in float v_pointSize;",
+    "",
+    "uniform float u_opacity;",
+    "uniform vec3 u_fogColor;",
+    "uniform int u_hasFog;",
+    "uniform int u_pointStyle;",
+    "",
+    "out vec4 fragColor;",
+    "",
+    "void main() {",
+    "    float alpha = 1.0;",
+    "    vec3 color = v_color.rgb;",
+    "    if (u_pointStyle == 1) {",
+    "        vec2 centered = gl_PointCoord - vec2(0.5);",
+    "        float radial = length(centered);",
+    "        float square = max(abs(centered.x), abs(centered.y));",
+    "        float focus = clamp((v_pointSize - 1.0) / 10.0, 0.0, 1.0);",
+    "        float coreRadius = mix(0.49, 0.18, focus);",
+    "        float core = 1.0 - smoothstep(coreRadius, coreRadius + 0.05, square);",
+    "        float halo = (1.0 - smoothstep(0.12, 0.72, radial)) * focus;",
+    "        float streakX = 1.0 - smoothstep(0.02, 0.16, abs(centered.x));",
+    "        float streakY = 1.0 - smoothstep(0.02, 0.16, abs(centered.y));",
+    "        float streak = max(streakX, streakY) * focus;",
+    "        alpha = clamp(core + halo * 0.5 + streak * 0.2, 0.0, 1.0);",
+    "        color = mix(color, vec3(1.0), clamp(focus * 0.22 + core * focus * 0.28, 0.0, 0.4));",
+    "    } else if (u_pointStyle == 2) {",
+    "        // glow: pure radial gaussian falloff — soft gas cloud, no core, no streaks",
+    "        vec2 centered = gl_PointCoord - vec2(0.5);",
+    "        float radial = length(centered) * 2.0;",
+    "        if (radial > 1.0) discard;",
+    "        float g = exp(-radial * radial * 3.5);",
+    "        alpha = g;",
+    "    }",
+    "",
+    "    // Apply fog",
+    "    if (u_hasFog != 0) {",
+    "        color = mix(u_fogColor, color, v_fogFactor);",
+    "    }",
+    "",
+    "    fragColor = vec4(color, alpha * v_color.a * u_opacity);",
+    "}",
+  ].join("\n");
+
+  const SCENE_PBR_INSTANCED_VERTEX_SOURCE = [
+    "#version 300 es",
+    "precision highp float;",
+    "",
+    "in vec3 a_position;",
+    "in vec3 a_normal;",
+    "in vec2 a_uv;",
+    "in vec4 a_tangent;",
+    "in mat4 a_instanceMatrix;",
+    "",
+    "uniform mat4 u_viewMatrix;",
+    "uniform mat4 u_projectionMatrix;",
+    "",
+    "out vec3 v_worldPosition;",
+    "out vec3 v_normal;",
+    "out vec2 v_uv;",
+    "out vec3 v_tangent;",
+    "out vec3 v_bitangent;",
+    "",
+    "void main() {",
+    "    vec4 worldPos = a_instanceMatrix * vec4(a_position, 1.0);",
+    "    v_worldPosition = worldPos.xyz;",
+    "    mat3 normalMatrix = mat3(a_instanceMatrix);",
+    "    v_normal = normalize(normalMatrix * a_normal);",
+    "    v_uv = a_uv;",
+    "    vec3 T = normalize(normalMatrix * a_tangent.xyz);",
+    "    vec3 N = v_normal;",
+    "    v_bitangent = cross(N, T) * a_tangent.w;",
+    "    v_tangent = T;",
+    "    gl_Position = u_projectionMatrix * u_viewMatrix * worldPos;",
+    "}",
+  ].join("\n");
+
+  const SCENE_PBR_SKINNED_VERTEX_SOURCE = [
+    "#version 300 es",
+    "precision highp float;",
+    "",
+    "in vec3 a_position;",
+    "in vec3 a_normal;",
+    "in vec2 a_uv;",
+    "in vec4 a_tangent;",
+    "in vec4 a_joints;",
+    "in vec4 a_weights;",
+    "",
+    "uniform mat4 u_viewMatrix;",
+    "uniform mat4 u_projectionMatrix;",
+    "uniform mat4 u_jointMatrices[64];",
+    "uniform bool u_hasSkin;",
+    "",
+    "out vec3 v_worldPosition;",
+    "out vec3 v_normal;",
+    "out vec2 v_uv;",
+    "out vec3 v_tangent;",
+    "out vec3 v_bitangent;",
+    "",
+    "void main() {",
+    "    vec4 pos = vec4(a_position, 1.0);",
+    "    vec3 norm = a_normal;",
+    "    vec3 tang = a_tangent.xyz;",
+    "",
+    "    if (u_hasSkin) {",
+    "        mat4 skinMatrix =",
+    "            a_weights.x * u_jointMatrices[int(a_joints.x)] +",
+    "            a_weights.y * u_jointMatrices[int(a_joints.y)] +",
+    "            a_weights.z * u_jointMatrices[int(a_joints.z)] +",
+    "            a_weights.w * u_jointMatrices[int(a_joints.w)];",
+    "",
+    "        pos = skinMatrix * pos;",
+    "        norm = mat3(skinMatrix) * norm;",
+    "        tang = mat3(skinMatrix) * tang;",
+    "    }",
+    "",
+    "    v_worldPosition = pos.xyz;",
+    "    v_normal = normalize(norm);",
+    "    v_uv = a_uv;",
+    "",
+    "    vec3 T = normalize(tang);",
+    "    vec3 N = v_normal;",
+    "    vec3 B = cross(N, T) * a_tangent.w;",
+    "    v_tangent = T;",
+    "    v_bitangent = B;",
+    "",
+    "    gl_Position = u_projectionMatrix * u_viewMatrix * pos;",
+    "}",
+  ].join("\n");
+
+  function scenePBRViewMatrix(camera, out) {
+    const cam = sceneRenderCamera(camera);
+    const tx = -cam.x;
+    const ty = -cam.y;
+    const tz = -cam.z;
+
+    const sx = Math.sin(-cam.rotationX);
+    const cx = Math.cos(-cam.rotationX);
+    const sy = Math.sin(-cam.rotationY);
+    const cy = Math.cos(-cam.rotationY);
+    const sz = Math.sin(-cam.rotationZ);
+    const cz = Math.cos(-cam.rotationZ);
+
+    const r00 = cy * cz;
+    const r01 = cy * sz;
+    const r02 = -sy;
+
+    const r10 = sx * sy * cz - cx * sz;
+    const r11 = sx * sy * sz + cx * cz;
+    const r12 = sx * cy;
+
+    const r20 = cx * sy * cz + sx * sz;
+    const r21 = cx * sy * sz - sx * cz;
+    const r22 = cx * cy;
+
+    const d0 = r00 * tx + r01 * ty + r02 * tz;
+    const d1 = r10 * tx + r11 * ty + r12 * tz;
+    const d2 = r20 * tx + r21 * ty + r22 * tz;
+
+    var m = out || new Float32Array(16);
+    m[0] = r00; m[1] = r10; m[2] = r20; m[3] = 0;
+    m[4] = r01; m[5] = r11; m[6] = r21; m[7] = 0;
+    m[8] = r02; m[9] = r12; m[10] = r22; m[11] = 0;
+    m[12] = d0; m[13] = d1; m[14] = d2; m[15] = 1;
+    return m;
+  }
+
+  function scenePBRProjectionMatrix(fov, aspect, near, far, out) {
+    const fovRad = (fov * Math.PI) / 180;
+    const f = 1 / Math.tan(fovRad * 0.5);
+    const rangeInv = 1 / (near - far);
+
+    var m = out || new Float32Array(16);
+    m[0] = f / aspect; m[1] = 0; m[2] = 0; m[3] = 0;
+    m[4] = 0; m[5] = f; m[6] = 0; m[7] = 0;
+    m[8] = 0; m[9] = 0; m[10] = (near + far) * rangeInv; m[11] = -1;
+    m[12] = 0; m[13] = 0; m[14] = 2 * near * far * rangeInv; m[15] = 0;
+    return m;
+  }
+
+  function createSceneShadowResources(gl, size) {
+    const framebuffer = gl.createFramebuffer();
+    const depthTexture = gl.createTexture();
+
+    gl.bindTexture(gl.TEXTURE_2D, depthTexture);
+    gl.texImage2D(
+      gl.TEXTURE_2D, 0, gl.DEPTH_COMPONENT24,
+      size, size, 0,
+      gl.DEPTH_COMPONENT, gl.UNSIGNED_INT, null
+    );
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+    gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
+    gl.framebufferTexture2D(
+      gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.TEXTURE_2D, depthTexture, 0
+    );
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+
+    return { framebuffer: framebuffer, depthTexture: depthTexture, size: size };
+  }
+
+  function sceneShadowLightSpaceMatrix(light, sceneBounds) {
+    var dx = sceneNumber(light.directionX, 0);
+    var dy = sceneNumber(light.directionY, -1);
+    var dz = sceneNumber(light.directionZ, 0);
+    var len = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    if (len < 0.0001) {
+      dx = 0; dy = -1; dz = 0; len = 1;
+    }
+    dx /= len; dy /= len; dz /= len;
+
+    var cx = (sceneBounds.minX + sceneBounds.maxX) * 0.5;
+    var cy = (sceneBounds.minY + sceneBounds.maxY) * 0.5;
+    var cz = (sceneBounds.minZ + sceneBounds.maxZ) * 0.5;
+    var ex = (sceneBounds.maxX - sceneBounds.minX) * 0.5;
+    var ey = (sceneBounds.maxY - sceneBounds.minY) * 0.5;
+    var ez = (sceneBounds.maxZ - sceneBounds.minZ) * 0.5;
+    var radius = Math.sqrt(ex * ex + ey * ey + ez * ez);
+    if (radius < 0.01) radius = 10;
+
+    var eyeX = cx - dx * radius * 2;
+    var eyeY = cy - dy * radius * 2;
+    var eyeZ = cz - dz * radius * 2;
+
+    var fx = dx, fy = dy, fz = dz;
+
+    var upX = 0, upY = 1, upZ = 0;
+    if (Math.abs(fy) > 0.99) {
+      upX = 0; upY = 0; upZ = 1;
+    }
+
+    var rx = fy * upZ - fz * upY;
+    var ry = fz * upX - fx * upZ;
+    var rz = fx * upY - fy * upX;
+    var rLen = Math.sqrt(rx * rx + ry * ry + rz * rz);
+    if (rLen < 0.0001) rLen = 1;
+    rx /= rLen; ry /= rLen; rz /= rLen;
+
+    upX = ry * fz - rz * fy;
+    upY = rz * fx - rx * fz;
+    upZ = rx * fy - ry * fx;
+
+    var tx = -(rx * eyeX + ry * eyeY + rz * eyeZ);
+    var ty = -(upX * eyeX + upY * eyeY + upZ * eyeZ);
+    var tz = -(fx * eyeX + fy * eyeY + fz * eyeZ);
+
+    var view = new Float32Array([
+      rx,  upX, fx,  0,
+      ry,  upY, fy,  0,
+      rz,  upZ, fz,  0,
+      tx,  ty,  tz,  1,
+    ]);
+
+    var near = 0.01;
+    var far = radius * 4;
+    var l = -radius, rr = radius, b = -radius, t = radius;
+    var proj = new Float32Array([
+      2 / (rr - l),     0,              0,                    0,
+      0,                2 / (t - b),    0,                    0,
+      0,                0,              -2 / (far - near),    0,
+      -(rr + l) / (rr - l), -(t + b) / (t - b), -(far + near) / (far - near), 1,
+    ]);
+
+    return sceneMat4Multiply(proj, view);
+  }
+
+  function sceneShadowComputeBounds(bundle) {
+    var minX = Infinity, minY = Infinity, minZ = Infinity;
+    var maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
+    var positions = bundle.worldMeshPositions;
+    var objects = Array.isArray(bundle.meshObjects) ? bundle.meshObjects : [];
+
+    for (var i = 0; i < objects.length; i++) {
+      var obj = objects[i];
+      if (!obj || obj.viewCulled) continue;
+      var offset = obj.vertexOffset;
+      var count = obj.vertexCount;
+      if (!Number.isFinite(offset) || !Number.isFinite(count) || count <= 0) continue;
+
+      for (var v = 0; v < count; v++) {
+        var idx = (offset + v) * 3;
+        var px = positions[idx];
+        var py = positions[idx + 1];
+        var pz = positions[idx + 2];
+        if (px < minX) minX = px;
+        if (py < minY) minY = py;
+        if (pz < minZ) minZ = pz;
+        if (px > maxX) maxX = px;
+        if (py > maxY) maxY = py;
+        if (pz > maxZ) maxZ = pz;
+      }
+    }
+
+    if (!isFinite(minX)) {
+      return { minX: -10, minY: -10, minZ: -10, maxX: 10, maxY: 10, maxZ: 10 };
+    }
+    return { minX: minX, minY: minY, minZ: minZ, maxX: maxX, maxY: maxY, maxZ: maxZ };
+  }
+
+  function renderSceneShadowPass(gl, shadowProgram, shadowResources, lightMatrix, bundle, shadowState) {
+    gl.bindFramebuffer(gl.FRAMEBUFFER, shadowResources.framebuffer);
+    gl.viewport(0, 0, shadowResources.size, shadowResources.size);
+    gl.clearDepth(1);
+    gl.clear(gl.DEPTH_BUFFER_BIT);
+
+    gl.useProgram(shadowProgram.program);
+    gl.uniformMatrix4fv(shadowProgram.uniforms.lightViewProjection, false, lightMatrix);
+
+    gl.enable(gl.DEPTH_TEST);
+    gl.depthMask(true);
+    gl.depthFunc(gl.LEQUAL);
+    gl.disable(gl.BLEND);
+
+    gl.enable(gl.CULL_FACE);
+    gl.cullFace(gl.FRONT);
+
+    var objects = Array.isArray(bundle.meshObjects) ? bundle.meshObjects : [];
+
+    for (var i = 0; i < objects.length; i++) {
+      var obj = objects[i];
+      if (!obj || obj.viewCulled) continue;
+      if (!obj.castShadow) continue;
+      if (!Number.isFinite(obj.vertexOffset) || !Number.isFinite(obj.vertexCount) || obj.vertexCount <= 0) continue;
+
+      var offset = obj.vertexOffset;
+      var count = obj.vertexCount;
+
+      var length = count * 3;
+      var start = offset * 3;
+      if (!shadowState.scratch || shadowState.scratch.length < length) {
+        shadowState.scratch = new Float32Array(length);
+      }
+      var positions = shadowState.scratch;
+      for (var vi = 0; vi < length; vi++) {
+        positions[vi] = bundle.worldMeshPositions[start + vi] || 0;
+      }
+
+      gl.bindBuffer(gl.ARRAY_BUFFER, shadowState.buffer);
+      gl.bufferData(gl.ARRAY_BUFFER, positions.subarray(0, length), gl.DYNAMIC_DRAW);
+      gl.enableVertexAttribArray(shadowProgram.attributes.position);
+      gl.vertexAttribPointer(shadowProgram.attributes.position, 3, gl.FLOAT, false, 0, 0);
+
+      gl.drawArrays(gl.TRIANGLES, 0, count);
+    }
+
+    gl.cullFace(gl.BACK);
+    gl.disable(gl.CULL_FACE);
+
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  }
+
+  function createSceneShadowProgram(gl) {
+    var vertexShader = scenePBRCompileShader(gl, gl.VERTEX_SHADER, SCENE_SHADOW_VERTEX_SOURCE);
+    if (!vertexShader) return null;
+    var fragmentShader = scenePBRCompileShader(gl, gl.FRAGMENT_SHADER, SCENE_SHADOW_FRAGMENT_SOURCE);
+    if (!fragmentShader) {
+      gl.deleteShader(vertexShader);
+      return null;
+    }
+
+    var program = scenePBRLinkProgram(gl, vertexShader, fragmentShader, "Shadow shader");
+    if (!program) return null;
+
+    return {
+      program: program,
+      vertexShader: vertexShader,
+      fragmentShader: fragmentShader,
+      attributes: {
+        position: gl.getAttribLocation(program, "a_position"),
+      },
+      uniforms: {
+        lightViewProjection: gl.getUniformLocation(program, "u_lightViewProjection"),
+      },
+    };
+  }
+
+  const SCENE_POST_VERTEX_SOURCE = [
+    "#version 300 es",
+    "in vec2 a_position;",
+    "in vec2 a_uv;",
+    "out vec2 v_uv;",
+    "void main() {",
+    "    v_uv = a_uv;",
+    "    gl_Position = vec4(a_position, 0.0, 1.0);",
+    "}",
+  ].join("\n");
+
+  const SCENE_POST_TONEMAPPING_SOURCE = [
+    "#version 300 es",
+    "precision highp float;",
+    "in vec2 v_uv;",
+    "uniform sampler2D u_texture;",
+    "uniform float u_exposure;",
+    "out vec4 fragColor;",
+    "",
+    "vec3 aces(vec3 x) {",
+    "    float a = 2.51;",
+    "    float b = 0.03;",
+    "    float c = 2.43;",
+    "    float d = 0.59;",
+    "    float e = 0.14;",
+    "    return clamp((x * (a * x + b)) / (x * (c * x + d) + e), 0.0, 1.0);",
+    "}",
+    "",
+    "void main() {",
+    "    vec3 color = texture(u_texture, v_uv).rgb;",
+    "    color *= u_exposure;",
+    "    color = aces(color);",
+    "    fragColor = vec4(color, 1.0);",
+    "}",
+  ].join("\n");
+
+  const SCENE_POST_BLOOM_BRIGHT_SOURCE = [
+    "#version 300 es",
+    "precision highp float;",
+    "in vec2 v_uv;",
+    "uniform sampler2D u_texture;",
+    "uniform float u_threshold;",
+    "out vec4 fragColor;",
+    "",
+    "void main() {",
+    "    vec3 color = texture(u_texture, v_uv).rgb;",
+    "    float brightness = dot(color, vec3(0.2126, 0.7152, 0.0722));",
+    "    fragColor = vec4(brightness > u_threshold ? color : vec3(0.0), 1.0);",
+    "}",
+  ].join("\n");
+
+  const SCENE_POST_BLUR_SOURCE = [
+    "#version 300 es",
+    "precision highp float;",
+    "in vec2 v_uv;",
+    "uniform sampler2D u_texture;",
+    "uniform vec2 u_direction;",
+    "uniform float u_radius;",
+    "out vec4 fragColor;",
+    "",
+    "void main() {",
+    "    vec2 texelSize = 1.0 / vec2(textureSize(u_texture, 0));",
+    "    vec3 result = texture(u_texture, v_uv).rgb * 0.227027;",
+    "",
+    "    float offsets[4] = float[](1.0, 2.0, 3.0, 4.0);",
+    "    float weights[4] = float[](0.1945946, 0.1216216, 0.054054, 0.016216);",
+    "",
+    "    for (int i = 0; i < 4; i++) {",
+    "        vec2 offset = u_direction * texelSize * offsets[i] * u_radius;",
+    "        result += texture(u_texture, v_uv + offset).rgb * weights[i];",
+    "        result += texture(u_texture, v_uv - offset).rgb * weights[i];",
+    "    }",
+    "    fragColor = vec4(result, 1.0);",
+    "}",
+  ].join("\n");
+
+  const SCENE_POST_BLOOM_COMPOSITE_SOURCE = [
+    "#version 300 es",
+    "precision highp float;",
+    "in vec2 v_uv;",
+    "uniform sampler2D u_texture;",
+    "uniform sampler2D u_bloomTexture;",
+    "uniform float u_intensity;",
+    "out vec4 fragColor;",
+    "",
+    "void main() {",
+    "    vec3 scene = texture(u_texture, v_uv).rgb;",
+    "    vec3 bloom = texture(u_bloomTexture, v_uv).rgb;",
+    "    fragColor = vec4(scene + bloom * u_intensity, 1.0);",
+    "}",
+  ].join("\n");
+
+  const SCENE_POST_VIGNETTE_SOURCE = [
+    "#version 300 es",
+    "precision highp float;",
+    "in vec2 v_uv;",
+    "uniform sampler2D u_texture;",
+    "uniform float u_intensity;",
+    "out vec4 fragColor;",
+    "",
+    "void main() {",
+    "    vec3 color = texture(u_texture, v_uv).rgb;",
+    "    vec2 center = v_uv - 0.5;",
+    "    float dist = length(center);",
+    "    float vignette = 1.0 - smoothstep(0.3, 0.7, dist * u_intensity);",
+    "    fragColor = vec4(color * vignette, 1.0);",
+    "}",
+  ].join("\n");
+
+  const SCENE_POST_COLORGRADE_SOURCE = [
+    "#version 300 es",
+    "precision highp float;",
+    "in vec2 v_uv;",
+    "uniform sampler2D u_texture;",
+    "uniform float u_exposure;",
+    "uniform float u_contrast;",
+    "uniform float u_saturation;",
+    "out vec4 fragColor;",
+    "",
+    "void main() {",
+    "    vec3 color = texture(u_texture, v_uv).rgb;",
+    "    color *= u_exposure;",
+    "    color = mix(vec3(0.5), color, u_contrast);",
+    "    float gray = dot(color, vec3(0.2126, 0.7152, 0.0722));",
+    "    color = mix(vec3(gray), color, u_saturation);",
+    "    fragColor = vec4(clamp(color, 0.0, 1.0), 1.0);",
+    "}",
+  ].join("\n");
+
+  function createScenePostFBO(gl, width, height) {
+    var hdrSupported = Boolean(gl.getExtension("EXT_color_buffer_float"));
+    var internalFormat = hdrSupported ? gl.RGBA16F : gl.RGBA8;
+    var dataType = hdrSupported ? gl.FLOAT : gl.UNSIGNED_BYTE;
+
+    var fbo = gl.createFramebuffer();
+    var colorTex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, colorTex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, internalFormat, width, height, 0, gl.RGBA, dataType, null);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+    var depthRB = gl.createRenderbuffer();
+    gl.bindRenderbuffer(gl.RENDERBUFFER, depthRB);
+    gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT24, width, height);
+
+    gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, colorTex, 0);
+    gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, depthRB);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+
+    return { fbo: fbo, colorTex: colorTex, depthRB: depthRB, width: width, height: height };
+  }
+
+  function createScenePostPingPong(gl, width, height) {
+    return {
+      a: createScenePostFBO(gl, width, height),
+      b: createScenePostFBO(gl, width, height),
+    };
+  }
+
+  function createSceneFullscreenQuad(gl) {
+    var vao = gl.createVertexArray();
+    var vbo = gl.createBuffer();
+    gl.bindVertexArray(vao);
+    gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
+      -1, -1,  0, 0,
+       1, -1,  1, 0,
+      -1,  1,  0, 1,
+       1,  1,  1, 1,
+    ]), gl.STATIC_DRAW);
+    gl.enableVertexAttribArray(0);
+    gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 16, 0);
+    gl.enableVertexAttribArray(1);
+    gl.vertexAttribPointer(1, 2, gl.FLOAT, false, 16, 8);
+    gl.bindVertexArray(null);
+    return { vao: vao, vbo: vbo };
+  }
+
+  function drawSceneFullscreenQuad(gl, quadVAO) {
+    gl.bindVertexArray(quadVAO);
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    gl.bindVertexArray(null);
+  }
+
+  function createScenePostProgram(gl, fragmentSource) {
+    var vs = scenePBRCompileShader(gl, gl.VERTEX_SHADER, SCENE_POST_VERTEX_SOURCE);
+    if (!vs) return null;
+    var fs = scenePBRCompileShader(gl, gl.FRAGMENT_SHADER, fragmentSource);
+    if (!fs) {
+      gl.deleteShader(vs);
+      return null;
+    }
+
+    var prog = scenePBRLinkProgram(gl, vs, fs, "Post-process shader");
+    if (!prog) return null;
+
+    return { program: prog, vertexShader: vs, fragmentShader: fs };
+  }
+
+  function disposeScenePostFBO(gl, fboObj) {
+    if (!fboObj) return;
+    if (fboObj.colorTex) gl.deleteTexture(fboObj.colorTex);
+    if (fboObj.depthRB) gl.deleteRenderbuffer(fboObj.depthRB);
+    if (fboObj.fbo) gl.deleteFramebuffer(fboObj.fbo);
+  }
+
+  function createScenePostProcessor(gl) {
+    var quad = createSceneFullscreenQuad(gl);
+    var sceneFBO = null;
+    var auxFBO = null;
+    var pingPong = null;
+    var currentWidth = 0;
+    var currentHeight = 0;
+
+    var programs = {};
+
+    function getProgram(name, fragmentSource) {
+      if (programs[name]) return programs[name];
+      var prog = createScenePostProgram(gl, fragmentSource);
+      if (prog) programs[name] = prog;
+      return prog;
+    }
+
+    function beginPostPass(prog, inputTex, targetFBO, w, h) {
+      gl.bindFramebuffer(gl.FRAMEBUFFER, targetFBO);
+      gl.viewport(0, 0, w, h);
+      gl.useProgram(prog.program);
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, inputTex);
+      gl.uniform1i(gl.getUniformLocation(prog.program, "u_texture"), 0);
+    }
+
+    function postPass(prog, inputTex, targetFBO, w, h) {
+      beginPostPass(prog, inputTex, targetFBO ? targetFBO.fbo : null, w, h);
+      drawSceneFullscreenQuad(gl, quad.vao);
+      return targetFBO ? targetFBO.colorTex : null;
+    }
+
+    function applyToneMapping(inputTex, effect, targetFBO, w, h) {
+      var prog = getProgram("toneMapping", SCENE_POST_TONEMAPPING_SOURCE);
+      if (!prog) return inputTex;
+      beginPostPass(prog, inputTex, targetFBO ? targetFBO.fbo : null, w, h);
+      gl.uniform1f(gl.getUniformLocation(prog.program, "u_exposure"), sceneNumber(effect.exposure, 1.0));
+      drawSceneFullscreenQuad(gl, quad.vao);
+      return targetFBO ? targetFBO.colorTex : null;
+    }
+
+    function applyBloom(inputTex, effect, targetFBO, passW, passH, scaledW, scaledH) {
+      var brightProg = getProgram("bloomBright", SCENE_POST_BLOOM_BRIGHT_SOURCE);
+      var blurProg = getProgram("bloomBlur", SCENE_POST_BLUR_SOURCE);
+      var compositeProg = getProgram("bloomComposite", SCENE_POST_BLOOM_COMPOSITE_SOURCE);
+      if (!brightProg || !blurProg || !compositeProg) return inputTex;
+
+      var bloomScale = (effect.scale > 0 && effect.scale <= 1) ? effect.scale : 0.5;
+      var halfW = Math.max(1, Math.floor(scaledW * bloomScale));
+      var halfH = Math.max(1, Math.floor(scaledH * bloomScale));
+
+      if (!pingPong || pingPong.a.width !== halfW || pingPong.a.height !== halfH) {
+        if (pingPong) {
+          disposeScenePostFBO(gl, pingPong.a);
+          disposeScenePostFBO(gl, pingPong.b);
+        }
+        pingPong = createScenePostPingPong(gl, halfW, halfH);
+      }
+
+      var threshold = sceneNumber(effect.threshold, 0.8);
+      var radius = sceneNumber(effect.radius, 5.0);
+      var intensity = sceneNumber(effect.intensity, 0.5);
+
+      beginPostPass(brightProg, inputTex, pingPong.a.fbo, halfW, halfH);
+      gl.uniform1f(gl.getUniformLocation(brightProg.program, "u_threshold"), threshold);
+      drawSceneFullscreenQuad(gl, quad.vao);
+
+      beginPostPass(blurProg, pingPong.a.colorTex, pingPong.b.fbo, halfW, halfH);
+      gl.uniform2f(gl.getUniformLocation(blurProg.program, "u_direction"), 1.0, 0.0);
+      gl.uniform1f(gl.getUniformLocation(blurProg.program, "u_radius"), radius);
+      drawSceneFullscreenQuad(gl, quad.vao);
+
+      beginPostPass(blurProg, pingPong.b.colorTex, pingPong.a.fbo, halfW, halfH);
+      gl.uniform2f(gl.getUniformLocation(blurProg.program, "u_direction"), 0.0, 1.0);
+      gl.uniform1f(gl.getUniformLocation(blurProg.program, "u_radius"), radius);
+      drawSceneFullscreenQuad(gl, quad.vao);
+
+      beginPostPass(compositeProg, inputTex, targetFBO ? targetFBO.fbo : null, passW, passH);
+      gl.activeTexture(gl.TEXTURE1);
+      gl.bindTexture(gl.TEXTURE_2D, pingPong.a.colorTex);
+      gl.uniform1i(gl.getUniformLocation(compositeProg.program, "u_bloomTexture"), 1);
+      gl.uniform1f(gl.getUniformLocation(compositeProg.program, "u_intensity"), intensity);
+      drawSceneFullscreenQuad(gl, quad.vao);
+
+      return targetFBO ? targetFBO.colorTex : null;
+    }
+
+    function applyVignette(inputTex, effect, targetFBO, w, h) {
+      var prog = getProgram("vignette", SCENE_POST_VIGNETTE_SOURCE);
+      if (!prog) return inputTex;
+      beginPostPass(prog, inputTex, targetFBO ? targetFBO.fbo : null, w, h);
+      gl.uniform1f(gl.getUniformLocation(prog.program, "u_intensity"), sceneNumber(effect.intensity, 1.0));
+      drawSceneFullscreenQuad(gl, quad.vao);
+      return targetFBO ? targetFBO.colorTex : null;
+    }
+
+    function applyColorGrade(inputTex, effect, targetFBO, w, h) {
+      var prog = getProgram("colorGrade", SCENE_POST_COLORGRADE_SOURCE);
+      if (!prog) return inputTex;
+      beginPostPass(prog, inputTex, targetFBO ? targetFBO.fbo : null, w, h);
+      gl.uniform1f(gl.getUniformLocation(prog.program, "u_exposure"), sceneNumber(effect.exposure, 1.0));
+      gl.uniform1f(gl.getUniformLocation(prog.program, "u_contrast"), sceneNumber(effect.contrast, 1.0));
+      gl.uniform1f(gl.getUniformLocation(prog.program, "u_saturation"), sceneNumber(effect.saturation, 1.0));
+      drawSceneFullscreenQuad(gl, quad.vao);
+      return targetFBO ? targetFBO.colorTex : null;
+    }
+
+    var blitProg = null;
+    var SCENE_POST_BLIT_SOURCE = [
+      "#version 300 es",
+      "precision highp float;",
+      "in vec2 v_uv;",
+      "uniform sampler2D u_texture;",
+      "out vec4 fragColor;",
+      "void main() {",
+      "    fragColor = texture(u_texture, v_uv);",
+      "}",
+    ].join("\n");
+
+    function blitToScreen(inputTex, w, h) {
+      if (!blitProg) {
+        blitProg = createScenePostProgram(gl, SCENE_POST_BLIT_SOURCE);
+      }
+      if (!blitProg) return;
+      postPass(blitProg, inputTex, null, w, h);
+    }
+
+    return {
+      begin: function(canvasW, canvasH, maxPixels) {
+        var factor = resolvePostFXFactor(maxPixels, canvasW * canvasH);
+        var sw = Math.max(1, Math.floor(canvasW * factor));
+        var sh = Math.max(1, Math.floor(canvasH * factor));
+
+        if (sw !== currentWidth || sh !== currentHeight) {
+          if (sceneFBO) disposeScenePostFBO(gl, sceneFBO);
+          sceneFBO = createScenePostFBO(gl, sw, sh);
+          if (auxFBO) disposeScenePostFBO(gl, auxFBO);
+          auxFBO = null;
+          currentWidth = sw;
+          currentHeight = sh;
+        }
+        gl.bindFramebuffer(gl.FRAMEBUFFER, sceneFBO.fbo);
+        return { width: sw, height: sh, factor: factor };
+      },
+
+      apply: function(effects, scaledW, scaledH, canvasW, canvasH) {
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+        gl.disable(gl.DEPTH_TEST);
+
+        var currentTexture = sceneFBO.colorTex;
+
+        if (effects.length > 1 && !auxFBO) {
+          auxFBO = createScenePostFBO(gl, scaledW, scaledH);
+        }
+
+        for (var i = 0; i < effects.length; i++) {
+          var effect = effects[i];
+          var isLast = (i === effects.length - 1);
+
+          var targetFBO = null;
+          if (!isLast) {
+            targetFBO = (currentTexture === sceneFBO.colorTex) ? auxFBO : sceneFBO;
+          }
+
+          var passW = isLast ? canvasW : scaledW;
+          var passH = isLast ? canvasH : scaledH;
+
+          switch (effect.kind) {
+            case SCENE_POST_TONE_MAPPING:
+              currentTexture = applyToneMapping(currentTexture, effect, targetFBO, passW, passH);
+              break;
+            case SCENE_POST_BLOOM:
+              currentTexture = applyBloom(currentTexture, effect, targetFBO, passW, passH, scaledW, scaledH);
+              break;
+            case SCENE_POST_VIGNETTE:
+              currentTexture = applyVignette(currentTexture, effect, targetFBO, passW, passH);
+              break;
+            case SCENE_POST_COLOR_GRADE:
+              currentTexture = applyColorGrade(currentTexture, effect, targetFBO, passW, passH);
+              break;
+            default:
+              break;
+          }
+
+          if (isLast && currentTexture === null) break;
+        }
+
+        if (currentTexture !== null && effects.length > 0) {
+          blitToScreen(currentTexture, canvasW, canvasH);
+        } else if (effects.length === 0) {
+          blitToScreen(sceneFBO.colorTex, canvasW, canvasH);
+        }
+
+        gl.enable(gl.DEPTH_TEST);
+      },
+
+      dispose: function() {
+        if (sceneFBO) {
+          disposeScenePostFBO(gl, sceneFBO);
+          sceneFBO = null;
+        }
+        if (auxFBO) {
+          disposeScenePostFBO(gl, auxFBO);
+          auxFBO = null;
+        }
+        if (pingPong) {
+          disposeScenePostFBO(gl, pingPong.a);
+          disposeScenePostFBO(gl, pingPong.b);
+          pingPong = null;
+        }
+        for (var key in programs) {
+          if (programs[key]) {
+            gl.deleteShader(programs[key].vertexShader);
+            gl.deleteShader(programs[key].fragmentShader);
+            gl.deleteProgram(programs[key].program);
+          }
+        }
+        programs = {};
+        if (blitProg) {
+          gl.deleteShader(blitProg.vertexShader);
+          gl.deleteShader(blitProg.fragmentShader);
+          gl.deleteProgram(blitProg.program);
+          blitProg = null;
+        }
+        if (quad) {
+          gl.deleteBuffer(quad.vbo);
+          gl.deleteVertexArray(quad.vao);
+        }
+        currentWidth = 0;
+        currentHeight = 0;
+      },
+    };
+  }
+
+  function scenePBRLoadTexture(gl, url, cache) {
+    if (!cache) return null;
+    const textureMap = cache;
+    const key = typeof url === "string" ? url.trim() : "";
+    if (!key) {
+      return null;
+    }
+    if (textureMap.has(key)) {
+      return textureMap.get(key);
+    }
+
+    const texture = gl.createTexture();
+    const record = { texture: texture, src: key, loaded: false, failed: false };
+    textureMap.set(key, record);
+
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([255, 255, 255, 255]));
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+    if (typeof Image === "function") {
+      const image = new Image();
+      image.onload = function() {
+        gl.bindTexture(gl.TEXTURE_2D, texture);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image);
+        gl.generateMipmap(gl.TEXTURE_2D);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+        record.loaded = true;
+      };
+      image.onerror = function() {
+        record.failed = true;
+      };
+      image.src = key;
+    }
+
+    return record;
+  }
+
+  function scenePBRBindTexture(gl, unit, texture) {
+    gl.activeTexture(gl.TEXTURE0 + unit);
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+  }
+
+  function scenePBRCacheBaseUniforms(gl, program) {
+    var uniforms = {
+      viewMatrix: gl.getUniformLocation(program, "u_viewMatrix"),
+      projectionMatrix: gl.getUniformLocation(program, "u_projectionMatrix"),
+      cameraPosition: gl.getUniformLocation(program, "u_cameraPosition"),
+
+      albedo: gl.getUniformLocation(program, "u_albedo"),
+      roughness: gl.getUniformLocation(program, "u_roughness"),
+      metalness: gl.getUniformLocation(program, "u_metalness"),
+      emissive: gl.getUniformLocation(program, "u_emissive"),
+      opacity: gl.getUniformLocation(program, "u_opacity"),
+      unlit: gl.getUniformLocation(program, "u_unlit"),
+
+      albedoMap: gl.getUniformLocation(program, "u_albedoMap"),
+      normalMap: gl.getUniformLocation(program, "u_normalMap"),
+      roughnessMap: gl.getUniformLocation(program, "u_roughnessMap"),
+      metalnessMap: gl.getUniformLocation(program, "u_metalnessMap"),
+      emissiveMap: gl.getUniformLocation(program, "u_emissiveMap"),
+      hasAlbedoMap: gl.getUniformLocation(program, "u_hasAlbedoMap"),
+      hasNormalMap: gl.getUniformLocation(program, "u_hasNormalMap"),
+      hasRoughnessMap: gl.getUniformLocation(program, "u_hasRoughnessMap"),
+      hasMetalnessMap: gl.getUniformLocation(program, "u_hasMetalnessMap"),
+      hasEmissiveMap: gl.getUniformLocation(program, "u_hasEmissiveMap"),
+
+      lightCount: gl.getUniformLocation(program, "u_lightCount"),
+      lightTypes: [],
+      lightPositions: [],
+      lightDirections: [],
+      lightColors: [],
+      lightIntensities: [],
+      lightRanges: [],
+      lightDecays: [],
+      lightAngles: [],
+      lightPenumbras: [],
+      lightGroundColors: [],
+
+      ambientColor: gl.getUniformLocation(program, "u_ambientColor"),
+      ambientIntensity: gl.getUniformLocation(program, "u_ambientIntensity"),
+      skyColor: gl.getUniformLocation(program, "u_skyColor"),
+      skyIntensity: gl.getUniformLocation(program, "u_skyIntensity"),
+      groundColor: gl.getUniformLocation(program, "u_groundColor"),
+      groundIntensity: gl.getUniformLocation(program, "u_groundIntensity"),
+
+      shadowMap0: gl.getUniformLocation(program, "u_shadowMap0"),
+      lightSpaceMatrix0: gl.getUniformLocation(program, "u_lightSpaceMatrix0"),
+      hasShadow0: gl.getUniformLocation(program, "u_hasShadow0"),
+      shadowBias0: gl.getUniformLocation(program, "u_shadowBias0"),
+      shadowLightIndex0: gl.getUniformLocation(program, "u_shadowLightIndex0"),
+
+      shadowMap1: gl.getUniformLocation(program, "u_shadowMap1"),
+      lightSpaceMatrix1: gl.getUniformLocation(program, "u_lightSpaceMatrix1"),
+      hasShadow1: gl.getUniformLocation(program, "u_hasShadow1"),
+      shadowBias1: gl.getUniformLocation(program, "u_shadowBias1"),
+      shadowLightIndex1: gl.getUniformLocation(program, "u_shadowLightIndex1"),
+
+      receiveShadow: gl.getUniformLocation(program, "u_receiveShadow"),
+
+      exposure: gl.getUniformLocation(program, "u_exposure"),
+      toneMapMode: gl.getUniformLocation(program, "u_toneMapMode"),
+
+      hasFog: gl.getUniformLocation(program, "u_hasFog"),
+      fogDensity: gl.getUniformLocation(program, "u_fogDensity"),
+      fogColor: gl.getUniformLocation(program, "u_fogColor"),
+    };
+
+    for (var i = 0; i < 8; i++) {
+      uniforms.lightTypes.push(gl.getUniformLocation(program, "u_lightTypes[" + i + "]"));
+      uniforms.lightPositions.push(gl.getUniformLocation(program, "u_lightPositions[" + i + "]"));
+      uniforms.lightDirections.push(gl.getUniformLocation(program, "u_lightDirections[" + i + "]"));
+      uniforms.lightColors.push(gl.getUniformLocation(program, "u_lightColors[" + i + "]"));
+      uniforms.lightIntensities.push(gl.getUniformLocation(program, "u_lightIntensities[" + i + "]"));
+      uniforms.lightRanges.push(gl.getUniformLocation(program, "u_lightRanges[" + i + "]"));
+      uniforms.lightDecays.push(gl.getUniformLocation(program, "u_lightDecays[" + i + "]"));
+      uniforms.lightAngles.push(gl.getUniformLocation(program, "u_lightAngles[" + i + "]"));
+      uniforms.lightPenumbras.push(gl.getUniformLocation(program, "u_lightPenumbras[" + i + "]"));
+      uniforms.lightGroundColors.push(gl.getUniformLocation(program, "u_lightGroundColors[" + i + "]"));
+    }
+
+    return uniforms;
+  }
+
+  function createScenePBRProgram(gl) {
+    const vertexShader = scenePBRCompileShader(gl, gl.VERTEX_SHADER, SCENE_PBR_VERTEX_SOURCE);
+    if (!vertexShader) {
+      return null;
+    }
+    const fragmentShader = scenePBRCompileShader(gl, gl.FRAGMENT_SHADER, SCENE_PBR_FRAGMENT_SOURCE);
+    if (!fragmentShader) {
+      gl.deleteShader(vertexShader);
+      return null;
+    }
+
+    const program = scenePBRLinkProgram(gl, vertexShader, fragmentShader, "PBR shader");
+    if (!program) return null;
+
+    const attributes = {
+      position: gl.getAttribLocation(program, "a_position"),
+      normal: gl.getAttribLocation(program, "a_normal"),
+      uv: gl.getAttribLocation(program, "a_uv"),
+      tangent: gl.getAttribLocation(program, "a_tangent"),
+    };
+
+    const uniforms = scenePBRCacheBaseUniforms(gl, program);
+
+    return {
+      program: program,
+      vertexShader: vertexShader,
+      fragmentShader: fragmentShader,
+      attributes: attributes,
+      uniforms: uniforms,
+    };
+  }
+
+  function createScenePBRSkinnedProgram(gl) {
+    var vertexShader = scenePBRCompileShader(gl, gl.VERTEX_SHADER, SCENE_PBR_SKINNED_VERTEX_SOURCE);
+    if (!vertexShader) return null;
+    var fragmentShader = scenePBRCompileShader(gl, gl.FRAGMENT_SHADER, SCENE_PBR_FRAGMENT_SOURCE);
+    if (!fragmentShader) {
+      gl.deleteShader(vertexShader);
+      return null;
+    }
+
+    var program = scenePBRLinkProgram(gl, vertexShader, fragmentShader, "Skinned PBR shader");
+    if (!program) return null;
+
+    var attributes = {
+      position: gl.getAttribLocation(program, "a_position"),
+      normal: gl.getAttribLocation(program, "a_normal"),
+      uv: gl.getAttribLocation(program, "a_uv"),
+      tangent: gl.getAttribLocation(program, "a_tangent"),
+      joints: gl.getAttribLocation(program, "a_joints"),
+      weights: gl.getAttribLocation(program, "a_weights"),
+    };
+
+    var uniforms = scenePBRCacheBaseUniforms(gl, program);
+    uniforms.hasSkin = gl.getUniformLocation(program, "u_hasSkin");
+    uniforms.jointMatrices = [];
+
+    for (var j = 0; j < 64; j++) {
+      uniforms.jointMatrices.push(gl.getUniformLocation(program, "u_jointMatrices[" + j + "]"));
+    }
+
+    return {
+      program: program,
+      vertexShader: vertexShader,
+      fragmentShader: fragmentShader,
+      attributes: attributes,
+      uniforms: uniforms,
+    };
+  }
+
+  function createScenePointsProgram(gl) {
+    var vertexShader = scenePBRCompileShader(gl, gl.VERTEX_SHADER, SCENE_POINTS_VERTEX_SOURCE);
+    if (!vertexShader) return null;
+    var fragmentShader = scenePBRCompileShader(gl, gl.FRAGMENT_SHADER, SCENE_POINTS_FRAGMENT_SOURCE);
+    if (!fragmentShader) {
+      gl.deleteShader(vertexShader);
+      return null;
+    }
+
+    var program = scenePBRLinkProgram(gl, vertexShader, fragmentShader, "Points shader");
+    if (!program) return null;
+
+    var attributes = {
+      position: gl.getAttribLocation(program, "a_position"),
+      size: gl.getAttribLocation(program, "a_size"),
+      color: gl.getAttribLocation(program, "a_color"),
+    };
+
+    var uniforms = {
+      viewMatrix: gl.getUniformLocation(program, "u_viewMatrix"),
+      projectionMatrix: gl.getUniformLocation(program, "u_projectionMatrix"),
+      modelMatrix: gl.getUniformLocation(program, "u_modelMatrix"),
+      defaultSize: gl.getUniformLocation(program, "u_defaultSize"),
+      defaultColor: gl.getUniformLocation(program, "u_defaultColor"),
+      hasPerVertexColor: gl.getUniformLocation(program, "u_hasPerVertexColor"),
+      hasPerVertexSize: gl.getUniformLocation(program, "u_hasPerVertexSize"),
+      sizeAttenuation: gl.getUniformLocation(program, "u_sizeAttenuation"),
+      pointStyle: gl.getUniformLocation(program, "u_pointStyle"),
+      viewportHeight: gl.getUniformLocation(program, "u_viewportHeight"),
+      opacity: gl.getUniformLocation(program, "u_opacity"),
+      hasFog: gl.getUniformLocation(program, "u_hasFog"),
+      fogDensity: gl.getUniformLocation(program, "u_fogDensity"),
+      fogColor: gl.getUniformLocation(program, "u_fogColor"),
+    };
+
+    return {
+      program: program,
+      vertexShader: vertexShader,
+      fragmentShader: fragmentShader,
+      attributes: attributes,
+      uniforms: uniforms,
+    };
+  }
+
+  function createScenePBRInstancedProgram(gl) {
+    var vertexShader = scenePBRCompileShader(gl, gl.VERTEX_SHADER, SCENE_PBR_INSTANCED_VERTEX_SOURCE);
+    if (!vertexShader) return null;
+    var fragmentShader = scenePBRCompileShader(gl, gl.FRAGMENT_SHADER, SCENE_PBR_FRAGMENT_SOURCE);
+    if (!fragmentShader) {
+      gl.deleteShader(vertexShader);
+      return null;
+    }
+
+    var program = scenePBRLinkProgram(gl, vertexShader, fragmentShader, "Instanced PBR shader");
+    if (!program) return null;
+
+    var attributes = {
+      position: gl.getAttribLocation(program, "a_position"),
+      normal: gl.getAttribLocation(program, "a_normal"),
+      uv: gl.getAttribLocation(program, "a_uv"),
+      tangent: gl.getAttribLocation(program, "a_tangent"),
+      instanceMatrix: gl.getAttribLocation(program, "a_instanceMatrix"),
+    };
+
+    var uniforms = scenePBRCacheBaseUniforms(gl, program);
+
+    return {
+      program: program,
+      vertexShader: vertexShader,
+      fragmentShader: fragmentShader,
+      attributes: attributes,
+      uniforms: uniforms,
+    };
+  }
+
+  function generateInstancedGeometry(kind, dims) {
+    var w = sceneNumber(dims && dims.width, 1);
+    var h = sceneNumber(dims && dims.height, 1);
+    var d = sceneNumber(dims && dims.depth, 1);
+
+    if (kind === "sphere") {
+      return generateInstancedSphereGeometry(
+        sceneNumber(dims && dims.radius, 0.5),
+        sceneNumber(dims && dims.segments, 16)
+      );
+    }
+    if (kind === "plane") {
+      return generateInstancedPlaneGeometry(w, d);
+    }
+
+    return generateInstancedBoxGeometry(w, h, d);
+  }
+
+  function generateInstancedBoxGeometry(w, h, d) {
+    var hw = w * 0.5, hh = h * 0.5, hd = d * 0.5;
+
+    var faces = [
+      { n: [0, 0, 1], t: [1, 0, 0, 1], v: [[-hw,-hh,hd],[hw,-hh,hd],[hw,hh,hd],[-hw,hh,hd]] },
+      { n: [0, 0,-1], t: [-1, 0, 0, 1], v: [[hw,-hh,-hd],[-hw,-hh,-hd],[-hw,hh,-hd],[hw,hh,-hd]] },
+      { n: [1, 0, 0], t: [0, 0,-1, 1], v: [[hw,-hh,hd],[hw,-hh,-hd],[hw,hh,-hd],[hw,hh,hd]] },
+      { n: [-1, 0, 0], t: [0, 0, 1, 1], v: [[-hw,-hh,-hd],[-hw,-hh,hd],[-hw,hh,hd],[-hw,hh,-hd]] },
+      { n: [0, 1, 0], t: [1, 0, 0, 1], v: [[-hw,hh,hd],[hw,hh,hd],[hw,hh,-hd],[-hw,hh,-hd]] },
+      { n: [0,-1, 0], t: [1, 0, 0, 1], v: [[-hw,-hh,-hd],[hw,-hh,-hd],[hw,-hh,hd],[-hw,-hh,hd]] },
+    ];
+
+    var quadUVs = [[0,0],[1,0],[1,1],[0,1]];
+    var triIndices = [0,1,2, 0,2,3];
+
+    var vertexCount = 36;
+    var positions = new Float32Array(vertexCount * 3);
+    var normals = new Float32Array(vertexCount * 3);
+    var uvs = new Float32Array(vertexCount * 2);
+    var tangents = new Float32Array(vertexCount * 4);
+
+    var vi = 0;
+    for (var fi = 0; fi < 6; fi++) {
+      var face = faces[fi];
+      for (var ti = 0; ti < 6; ti++) {
+        var ci = triIndices[ti];
+        var p = face.v[ci];
+        positions[vi * 3]     = p[0];
+        positions[vi * 3 + 1] = p[1];
+        positions[vi * 3 + 2] = p[2];
+        normals[vi * 3]     = face.n[0];
+        normals[vi * 3 + 1] = face.n[1];
+        normals[vi * 3 + 2] = face.n[2];
+        uvs[vi * 2]     = quadUVs[ci][0];
+        uvs[vi * 2 + 1] = quadUVs[ci][1];
+        tangents[vi * 4]     = face.t[0];
+        tangents[vi * 4 + 1] = face.t[1];
+        tangents[vi * 4 + 2] = face.t[2];
+        tangents[vi * 4 + 3] = face.t[3];
+        vi++;
+      }
+    }
+
+    return { positions: positions, normals: normals, uvs: uvs, tangents: tangents, vertexCount: vertexCount };
+  }
+
+  function generateInstancedPlaneGeometry(w, d) {
+    var hw = w * 0.5, hd = d * 0.5;
+    var vertexCount = 6;
+    var positions = new Float32Array(vertexCount * 3);
+    var normals = new Float32Array(vertexCount * 3);
+    var uvs = new Float32Array(vertexCount * 2);
+    var tangents = new Float32Array(vertexCount * 4);
+
+    var corners = [[-hw, 0, hd], [hw, 0, hd], [hw, 0, -hd], [-hw, 0, -hd]];
+    var cornerUVs = [[0, 0], [1, 0], [1, 1], [0, 1]];
+    var triIndices = [0, 1, 2, 0, 2, 3];
+
+    for (var i = 0; i < 6; i++) {
+      var ci = triIndices[i];
+      var p = corners[ci];
+      positions[i * 3] = p[0]; positions[i * 3 + 1] = p[1]; positions[i * 3 + 2] = p[2];
+      normals[i * 3] = 0; normals[i * 3 + 1] = 1; normals[i * 3 + 2] = 0;
+      uvs[i * 2] = cornerUVs[ci][0]; uvs[i * 2 + 1] = cornerUVs[ci][1];
+      tangents[i * 4] = 1; tangents[i * 4 + 1] = 0; tangents[i * 4 + 2] = 0; tangents[i * 4 + 3] = 1;
+    }
+
+    return { positions: positions, normals: normals, uvs: uvs, tangents: tangents, vertexCount: vertexCount };
+  }
+
+  function generateInstancedSphereGeometry(radius, segments) {
+    var rings = Math.max(4, segments);
+    var slices = Math.max(4, segments * 2);
+
+    var vertexCount = rings * slices * 6;
+    var positions = new Float32Array(vertexCount * 3);
+    var normals = new Float32Array(vertexCount * 3);
+    var uvs = new Float32Array(vertexCount * 2);
+    var tangents = new Float32Array(vertexCount * 4);
+    var vi = 0;
+
+    function spherePoint(ring, slice) {
+      var phi = (ring / rings) * Math.PI;
+      var theta = (slice / slices) * Math.PI * 2;
+      var sp = Math.sin(phi);
+      var nx = sp * Math.cos(theta);
+      var ny = Math.cos(phi);
+      var nz = sp * Math.sin(theta);
+      return {
+        px: nx * radius, py: ny * radius, pz: nz * radius,
+        nx: nx, ny: ny, nz: nz,
+        u: slice / slices, v: ring / rings,
+        tx: -Math.sin(theta), ty: 0, tz: Math.cos(theta),
+      };
+    }
+
+    function pushVert(pt) {
+      positions[vi * 3] = pt.px; positions[vi * 3 + 1] = pt.py; positions[vi * 3 + 2] = pt.pz;
+      normals[vi * 3] = pt.nx; normals[vi * 3 + 1] = pt.ny; normals[vi * 3 + 2] = pt.nz;
+      uvs[vi * 2] = pt.u; uvs[vi * 2 + 1] = pt.v;
+      tangents[vi * 4] = pt.tx; tangents[vi * 4 + 1] = pt.ty; tangents[vi * 4 + 2] = pt.tz; tangents[vi * 4 + 3] = 1;
+      vi++;
+    }
+
+    for (var r = 0; r < rings; r++) {
+      for (var s = 0; s < slices; s++) {
+        var a = spherePoint(r, s);
+        var b = spherePoint(r, s + 1);
+        var c = spherePoint(r + 1, s + 1);
+        var dd = spherePoint(r + 1, s);
+        pushVert(a); pushVert(b); pushVert(c);
+        pushVert(a); pushVert(c); pushVert(dd);
+      }
+    }
+
+    return { positions: positions, normals: normals, uvs: uvs, tangents: tangents, vertexCount: vi };
+  }
+
+  function scenePBRCompileShader(gl, type, source) {
+    const shader = gl.createShader(type);
+    gl.shaderSource(shader, source);
+    gl.compileShader(shader);
+    if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+      const label = type === gl.VERTEX_SHADER ? "vertex" : "fragment";
+      console.warn("[gosx] PBR " + label + " shader compile failed:", gl.getShaderInfoLog(shader));
+      gl.deleteShader(shader);
+      return null;
+    }
+    return shader;
+  }
+
+  function scenePBRLinkProgram(gl, vertexShader, fragmentShader, label) {
+    var program = gl.createProgram();
+    gl.attachShader(program, vertexShader);
+    gl.attachShader(program, fragmentShader);
+    gl.linkProgram(program);
+    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+      console.warn("[gosx] " + label + " program link failed:", gl.getProgramInfoLog(program));
+      gl.deleteProgram(program);
+      gl.deleteShader(vertexShader);
+      gl.deleteShader(fragmentShader);
+      return null;
+    }
+    return program;
+  }
+
+  var _scenePBRLightsHashBuf = new ArrayBuffer(4);
+  var _scenePBRLightsHashFloat = new Float32Array(_scenePBRLightsHashBuf);
+  var _scenePBRLightsHashInt = new Uint32Array(_scenePBRLightsHashBuf);
+
+  function scenePBRLightsHashNumber(h, n) {
+    _scenePBRLightsHashFloat[0] = (typeof n === "number" && n === n) ? n : 0;
+    return Math.imul((h ^ _scenePBRLightsHashInt[0]) >>> 0, 16777619) >>> 0;
+  }
+
+  function scenePBRLightsHashString(h, s) {
+    var str = (typeof s === "string") ? s : "";
+    var len = str.length;
+    for (var i = 0; i < len; i++) {
+      h = Math.imul((h ^ str.charCodeAt(i)) >>> 0, 16777619) >>> 0;
+    }
+    return Math.imul((h ^ (len + 1)) >>> 0, 16777619) >>> 0;
+  }
+
+  function hashLightContent(l) {
+    if (!l) return 0;
+    var h = 2166136261;
+    h = scenePBRLightsHashString(h, l.kind);
+    h = scenePBRLightsHashNumber(h, sceneNumber(l.x, 0));
+    h = scenePBRLightsHashNumber(h, sceneNumber(l.y, 0));
+    h = scenePBRLightsHashNumber(h, sceneNumber(l.z, 0));
+    h = scenePBRLightsHashNumber(h, sceneNumber(l.directionX, 0));
+    h = scenePBRLightsHashNumber(h, sceneNumber(l.directionY, -1));
+    h = scenePBRLightsHashNumber(h, sceneNumber(l.directionZ, 0));
+    h = scenePBRLightsHashString(h, l.color);
+    h = scenePBRLightsHashNumber(h, sceneNumber(l.intensity, 1));
+    h = scenePBRLightsHashNumber(h, sceneNumber(l.range, 0));
+    h = scenePBRLightsHashNumber(h, sceneNumber(l.decay, 2));
+    h = scenePBRLightsHashNumber(h, sceneNumber(l.angle, 0));
+    h = scenePBRLightsHashNumber(h, sceneNumber(l.penumbra, 0));
+    h = scenePBRLightsHashString(h, l.groundColor);
+    return h;
+  }
+
+  function hashEnvironmentContent(env) {
+    if (!env) return 0;
+    var h = 2166136261;
+    h = scenePBRLightsHashString(h, env.ambientColor);
+    h = scenePBRLightsHashNumber(h, sceneNumber(env.ambientIntensity, 0));
+    h = scenePBRLightsHashString(h, env.skyColor);
+    h = scenePBRLightsHashNumber(h, sceneNumber(env.skyIntensity, 0));
+    h = scenePBRLightsHashString(h, env.groundColor);
+    h = scenePBRLightsHashNumber(h, sceneNumber(env.groundIntensity, 0));
+    h = scenePBRLightsHashNumber(h, sceneNumber(env.fogDensity, 0));
+    h = scenePBRLightsHashString(h, env.fogColor);
+    return h;
+  }
+
+  function scenePBRLightsHash(lights, environment) {
+    var h = 2166136261;
+    var lightArray = Array.isArray(lights) ? lights : [];
+    var count = Math.min(lightArray.length, 8);
+    h = Math.imul((h ^ count) >>> 0, 16777619) >>> 0;
+    for (var i = 0; i < count; i++) {
+      var l = lightArray[i];
+      var sub = (l && typeof l._lightHash === "number") ? l._lightHash : hashLightContent(l);
+      h = Math.imul((h ^ (sub >>> 0)) >>> 0, 16777619) >>> 0;
+    }
+    var envSub = (environment && typeof environment._envHash === "number")
+      ? environment._envHash
+      : hashEnvironmentContent(environment);
+    h = Math.imul((h ^ (envSub >>> 0)) >>> 0, 16777619) >>> 0;
+    return h;
+  }
+
+  function scenePBRUploadLights(gl, uniforms, lights, environment, precomputedHash) {
+    const contentHash = (typeof precomputedHash === "number")
+      ? precomputedHash
+      : scenePBRLightsHash(lights, environment);
+    if (uniforms._lastLightsHash === contentHash) {
+      return;
+    }
+    uniforms._lastLightsHash = contentHash;
+
+    const lightArray = Array.isArray(lights) ? lights : [];
+    const count = Math.min(lightArray.length, 8);
+
+    var colorCache = {};
+
+    gl.uniform1i(uniforms.lightCount, count);
+
+    for (var i = 0; i < count; i++) {
+      const light = lightArray[i];
+      const kind = typeof light.kind === "string" ? light.kind.toLowerCase() : "";
+
+      var lightType = 2; // default: point
+      if (kind === "ambient") {
+        lightType = 0;
+      } else if (kind === "directional") {
+        lightType = 1;
+      } else if (kind === "spot") {
+        lightType = 3;
+      } else if (kind === "hemisphere") {
+        lightType = 4;
+      }
+
+      gl.uniform1i(uniforms.lightTypes[i], lightType);
+      gl.uniform3f(
+        uniforms.lightPositions[i],
+        sceneNumber(light.x, 0),
+        sceneNumber(light.y, 0),
+        sceneNumber(light.z, 0)
+      );
+      gl.uniform3f(
+        uniforms.lightDirections[i],
+        sceneNumber(light.directionX, 0),
+        sceneNumber(light.directionY, -1),
+        sceneNumber(light.directionZ, 0)
+      );
+
+      var colorKey = light.color;
+      var lightColorRGBA = typeof colorKey === "string" && colorCache[colorKey];
+      if (!lightColorRGBA) {
+        lightColorRGBA = sceneColorRGBA(light.color, [1, 1, 1, 1]);
+        if (typeof colorKey === "string") colorCache[colorKey] = lightColorRGBA;
+      }
+      gl.uniform3f(uniforms.lightColors[i], lightColorRGBA[0], lightColorRGBA[1], lightColorRGBA[2]);
+      gl.uniform1f(uniforms.lightIntensities[i], sceneNumber(light.intensity, 1));
+      gl.uniform1f(uniforms.lightRanges[i], sceneNumber(light.range, 0));
+      gl.uniform1f(uniforms.lightDecays[i], sceneNumber(light.decay, 2));
+      gl.uniform1f(uniforms.lightAngles[i], sceneNumber(light.angle, 0));
+      gl.uniform1f(uniforms.lightPenumbras[i], sceneNumber(light.penumbra, 0));
+
+      var gcKey = light.groundColor;
+      var gcRGBA = typeof gcKey === "string" && colorCache[gcKey];
+      if (!gcRGBA) {
+        gcRGBA = sceneColorRGBA(light.groundColor, [0, 0, 0, 1]);
+        if (typeof gcKey === "string") colorCache[gcKey] = gcRGBA;
+      }
+      gl.uniform3f(uniforms.lightGroundColors[i], gcRGBA[0], gcRGBA[1], gcRGBA[2]);
+    }
+
+    for (var j = count; j < 8; j++) {
+      gl.uniform1i(uniforms.lightTypes[j], 0);
+      gl.uniform3f(uniforms.lightPositions[j], 0, 0, 0);
+      gl.uniform3f(uniforms.lightDirections[j], 0, -1, 0);
+      gl.uniform3f(uniforms.lightColors[j], 0, 0, 0);
+      gl.uniform1f(uniforms.lightIntensities[j], 0);
+      gl.uniform1f(uniforms.lightRanges[j], 0);
+      gl.uniform1f(uniforms.lightDecays[j], 2);
+      gl.uniform1f(uniforms.lightAngles[j], 0);
+      gl.uniform1f(uniforms.lightPenumbras[j], 0);
+      gl.uniform3f(uniforms.lightGroundColors[j], 0, 0, 0);
+    }
+
+    const env = environment || {};
+    var ambientKey = env.ambientColor;
+    var ambientColorRGBA = typeof ambientKey === "string" && colorCache[ambientKey];
+    if (!ambientColorRGBA) {
+      ambientColorRGBA = sceneColorRGBA(env.ambientColor, [1, 1, 1, 1]);
+      if (typeof ambientKey === "string") colorCache[ambientKey] = ambientColorRGBA;
+    }
+    gl.uniform3f(uniforms.ambientColor, ambientColorRGBA[0], ambientColorRGBA[1], ambientColorRGBA[2]);
+    gl.uniform1f(uniforms.ambientIntensity, sceneNumber(env.ambientIntensity, 0));
+
+    var skyKey = env.skyColor;
+    var skyColorRGBA = typeof skyKey === "string" && colorCache[skyKey];
+    if (!skyColorRGBA) {
+      skyColorRGBA = sceneColorRGBA(env.skyColor, [0.88, 0.94, 1, 1]);
+      if (typeof skyKey === "string") colorCache[skyKey] = skyColorRGBA;
+    }
+    gl.uniform3f(uniforms.skyColor, skyColorRGBA[0], skyColorRGBA[1], skyColorRGBA[2]);
+    gl.uniform1f(uniforms.skyIntensity, sceneNumber(env.skyIntensity, 0));
+
+    var groundKey = env.groundColor;
+    var groundColorRGBA = typeof groundKey === "string" && colorCache[groundKey];
+    if (!groundColorRGBA) {
+      groundColorRGBA = sceneColorRGBA(env.groundColor, [0.12, 0.16, 0.22, 1]);
+      if (typeof groundKey === "string") colorCache[groundKey] = groundColorRGBA;
+    }
+    gl.uniform3f(uniforms.groundColor, groundColorRGBA[0], groundColorRGBA[1], groundColorRGBA[2]);
+    gl.uniform1f(uniforms.groundIntensity, sceneNumber(env.groundIntensity, 0));
+
+    var fogDensity = sceneNumber(env.fogDensity, 0);
+    gl.uniform1i(uniforms.hasFog, fogDensity > 0 ? 1 : 0);
+    gl.uniform1f(uniforms.fogDensity, fogDensity);
+    var fogKey = env.fogColor;
+    var fogColorRGBA = typeof fogKey === "string" && colorCache[fogKey];
+    if (!fogColorRGBA) {
+      fogColorRGBA = sceneColorRGBA(env.fogColor, [0.5, 0.5, 0.5, 1]);
+      if (typeof fogKey === "string") colorCache[fogKey] = fogColorRGBA;
+    }
+    gl.uniform3f(uniforms.fogColor, fogColorRGBA[0], fogColorRGBA[1], fogColorRGBA[2]);
+  }
+
+  function sceneToneMapMode(str) {
+    if (typeof str === "string") {
+      var s = str.toLowerCase();
+      if (s === "linear") return 0;
+      if (s === "reinhard") return 2;
+    }
+    return 1; // default: ACES
+  }
+
+  function scenePBRUploadExposure(gl, uniforms, environment, usePostProcessing) {
+    var env = environment || {};
+    var exposure = sceneNumber(env.exposure, 0);
+    if (exposure <= 0) exposure = 1.0;
+    var toneMapMode = usePostProcessing ? 0 : sceneToneMapMode(env.toneMapping);
+    if (uniforms._lastExposure === exposure && uniforms._lastToneMapMode === toneMapMode) {
+      return;
+    }
+    uniforms._lastExposure = exposure;
+    uniforms._lastToneMapMode = toneMapMode;
+    gl.uniform1f(uniforms.exposure, exposure);
+    gl.uniform1i(uniforms.toneMapMode, toneMapMode);
+  }
+
+  function scenePBRUploadShadowUniforms(gl, uniforms, shadowSlots, shadowLightMatrices, shadowLightIndices, lights) {
+    var lightArray = Array.isArray(lights) ? lights : [];
+
+    if (shadowSlots[0] && shadowLightMatrices[0]) {
+      scenePBRBindTexture(gl, 5, shadowSlots[0].depthTexture);
+      gl.uniform1i(uniforms.shadowMap0, 5);
+      gl.uniformMatrix4fv(uniforms.lightSpaceMatrix0, false, shadowLightMatrices[0]);
+      gl.uniform1i(uniforms.hasShadow0, 1);
+      var bias0 = sceneNumber(lightArray[shadowLightIndices[0]] && lightArray[shadowLightIndices[0]].shadowBias, 0.005);
+      gl.uniform1f(uniforms.shadowBias0, bias0);
+      gl.uniform1i(uniforms.shadowLightIndex0, shadowLightIndices[0]);
+    } else {
+      gl.uniform1i(uniforms.hasShadow0, 0);
+      gl.uniform1i(uniforms.shadowLightIndex0, -1);
+    }
+
+    if (shadowSlots[1] && shadowLightMatrices[1]) {
+      scenePBRBindTexture(gl, 6, shadowSlots[1].depthTexture);
+      gl.uniform1i(uniforms.shadowMap1, 6);
+      gl.uniformMatrix4fv(uniforms.lightSpaceMatrix1, false, shadowLightMatrices[1]);
+      gl.uniform1i(uniforms.hasShadow1, 1);
+      var bias1 = sceneNumber(lightArray[shadowLightIndices[1]] && lightArray[shadowLightIndices[1]].shadowBias, 0.005);
+      gl.uniform1f(uniforms.shadowBias1, bias1);
+      gl.uniform1i(uniforms.shadowLightIndex1, shadowLightIndices[1]);
+    } else {
+      gl.uniform1i(uniforms.hasShadow1, 0);
+      gl.uniform1i(uniforms.shadowLightIndex1, -1);
+    }
+  }
+
+  function createScenePBRRenderer(gl, canvas) {
+    const pbrProgram = createScenePBRProgram(gl);
+    if (!pbrProgram) {
+      return null;
+    }
+
+    const program = pbrProgram.program;
+    const attribs = pbrProgram.attributes;
+    const uniforms = pbrProgram.uniforms;
+
+    var skinnedProgram = null;
+
+    const shadowProgram = createSceneShadowProgram(gl);
+
+    var shadowSlots = [null, null];
+
+    var postProcessor = null;
+
+    var shadowLightMatrices = [null, null];
+    var shadowLightIndices = [-1, -1];
+
+    const positionBuffer = gl.createBuffer();
+    const normalBuffer = gl.createBuffer();
+    const uvBuffer = gl.createBuffer();
+    const tangentBuffer = gl.createBuffer();
+    const jointsBuffer = gl.createBuffer();
+    const weightsBuffer = gl.createBuffer();
+
+    var pointsProgram = null;
+
+    const pointsPositionBuffer = gl.createBuffer();
+    const pointsSizeBuffer = gl.createBuffer();
+    const pointsColorBuffer = gl.createBuffer();
+    var computeParticleSystems = new Map();
+    var lastComputeParticleTimeSeconds = null;
+
+    var instancedProgram = null;
+
+    const instanceTransformBuffer = gl.createBuffer();
+    const instanceVertexBuffer = gl.createBuffer();
+    const instanceNormalBuffer = gl.createBuffer();
+    const instanceUVBuffer = gl.createBuffer();
+    const instanceTangentBuffer = gl.createBuffer();
+
+    var instancedGeometryCache = {};
+
+    const textureCache = new Map();
+
+    var shadowState = { buffer: gl.createBuffer(), scratch: null };
+
+    var scratchViewMatrix = new Float32Array(16);
+    var scratchProjMatrix = new Float32Array(16);
+
+    var _frameCam = {
+      x: 0, y: 0, z: 0,
+      rotationX: 0, rotationY: 0, rotationZ: 0,
+      fov: 0, near: 0, far: 0,
+    };
+    var _frameLightsHash = 0;
+
+    var scratchPositions = null;
+    var scratchNormals = null;
+    var scratchUVs = null;
+    var scratchTangents = null;
+
+    function ensureScratch(name, length) {
+      if (name === "positions") {
+        if (!scratchPositions || scratchPositions.length < length) {
+          scratchPositions = new Float32Array(length);
+        }
+        return scratchPositions;
+      }
+      if (name === "normals") {
+        if (!scratchNormals || scratchNormals.length < length) {
+          scratchNormals = new Float32Array(length);
+        }
+        return scratchNormals;
+      }
+      if (name === "uvs") {
+        if (!scratchUVs || scratchUVs.length < length) {
+          scratchUVs = new Float32Array(length);
+        }
+        return scratchUVs;
+      }
+      if (name === "tangents") {
+        if (!scratchTangents || scratchTangents.length < length) {
+          scratchTangents = new Float32Array(length);
+        }
+        return scratchTangents;
+      }
+      return new Float32Array(length);
+    }
+
+    function sliceToFloat32(source, offset, count, stride, scratchName) {
+      const length = count * stride;
+      const start = offset * stride;
+      const buf = ensureScratch(scratchName, length);
+      for (var i = 0; i < length; i++) {
+        buf[i] = source && source[start + i] !== undefined ? +source[start + i] : 0;
+      }
+      return buf.subarray(0, length);
+    }
+
+    function uploadMaterial(gl, uniforms, material, textureCache) {
+      const mat = material || {};
+      const albedoRGBA = sceneColorRGBA(mat.color, [0.8, 0.8, 0.8, 1]);
+      gl.uniform3f(uniforms.albedo, albedoRGBA[0], albedoRGBA[1], albedoRGBA[2]);
+      gl.uniform1f(uniforms.roughness, sceneNumber(mat.roughness, 0.5));
+      gl.uniform1f(uniforms.metalness, sceneNumber(mat.metalness, 0));
+      gl.uniform1f(uniforms.emissive, sceneNumber(mat.emissive, 0));
+      gl.uniform1f(uniforms.opacity, clamp01(sceneNumber(mat.opacity, 1)));
+      gl.uniform1i(uniforms.unlit, mat.unlit ? 1 : 0);
+
+      var textureMaps = [
+        { prop: "texture",      has: "hasAlbedoMap",    sampler: "albedoMap",    unit: 0 },
+        { prop: "normalMap",    has: "hasNormalMap",     sampler: "normalMap",    unit: 1 },
+        { prop: "roughnessMap", has: "hasRoughnessMap",  sampler: "roughnessMap", unit: 2 },
+        { prop: "metalnessMap", has: "hasMetalnessMap",  sampler: "metalnessMap", unit: 3 },
+        { prop: "emissiveMap",  has: "hasEmissiveMap",   sampler: "emissiveMap",  unit: 4 },
+      ];
+      for (var ti = 0; ti < textureMaps.length; ti++) {
+        var tm = textureMaps[ti];
+        var record = mat[tm.prop] ? scenePBRLoadTexture(gl, mat[tm.prop], textureCache) : null;
+        var loaded = Boolean(record && record.texture && record.loaded);
+        gl.uniform1i(uniforms[tm.has], loaded ? 1 : 0);
+        if (loaded) {
+          scenePBRBindTexture(gl, tm.unit, record.texture);
+          gl.uniform1i(uniforms[tm.sampler], tm.unit);
+        }
+      }
+    }
+
+    function applyBlendMode(gl, renderPass) {
+      if (renderPass === "alpha") {
+        gl.enable(gl.BLEND);
+        gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+      } else if (renderPass === "additive") {
+        gl.enable(gl.BLEND);
+        gl.blendFunc(gl.SRC_ALPHA, gl.ONE);
+      } else {
+        gl.disable(gl.BLEND);
+      }
+    }
+
+    function applyDepthMode(gl, renderPass) {
+      gl.enable(gl.DEPTH_TEST);
+      if (renderPass === "opaque") {
+        gl.depthMask(true);
+        gl.depthFunc(gl.LEQUAL);
+      } else {
+        gl.depthMask(false);
+        gl.depthFunc(gl.LEQUAL);
+      }
+    }
+
+    const _drawListOpaque = [];
+    const _drawListAlpha = [];
+    const _drawListAdditive = [];
+    const _drawListResult = { opaque: _drawListOpaque, alpha: _drawListAlpha, additive: _drawListAdditive };
+
+    function buildPBRDrawList(bundle) {
+      const objects = Array.isArray(bundle && bundle.meshObjects) ? bundle.meshObjects : [];
+      const materials = Array.isArray(bundle.materials) ? bundle.materials : [];
+      _drawListOpaque.length = 0;
+      _drawListAlpha.length = 0;
+      _drawListAdditive.length = 0;
+
+      for (var i = 0; i < objects.length; i++) {
+        const obj = objects[i];
+        if (!obj || obj.viewCulled) {
+          continue;
+        }
+        if (!Number.isFinite(obj.vertexOffset) || !Number.isFinite(obj.vertexCount) || obj.vertexCount <= 0) {
+          continue;
+        }
+        const mat = materials[obj.materialIndex] || null;
+        const pass = scenePBRObjectRenderPass(obj, mat);
+        if (pass === "alpha") {
+          _drawListAlpha.push(obj);
+        } else if (pass === "additive") {
+          _drawListAdditive.push(obj);
+        } else {
+          _drawListOpaque.push(obj);
+        }
+      }
+
+      _drawListAlpha.sort(scenePBRDepthSort);
+      _drawListAdditive.sort(scenePBRDepthSort);
+
+      return _drawListResult;
+    }
+
+    function render(bundle, viewport) {
+      if (!bundle) {
+        return;
+      }
+
+      var perfEnabled = typeof window !== "undefined" && window.__gosx_scene3d_perf === true;
+      if (perfEnabled) {
+        performance.mark("scene3d-render-start");
+      }
+
+      const hasPBRData = Boolean(
+        bundle.worldMeshPositions &&
+        bundle.worldMeshNormals &&
+        Array.isArray(bundle.meshObjects) &&
+        bundle.meshObjects.length > 0
+      );
+      const hasPointsData = (Array.isArray(bundle.points) && bundle.points.length > 0) ||
+        (Array.isArray(bundle.computeParticles) && bundle.computeParticles.length > 0);
+      const hasInstancedData = Array.isArray(bundle.instancedMeshes) && bundle.instancedMeshes.length > 0;
+      if (!hasPBRData && !hasPointsData && !hasInstancedData) {
+        return;
+      }
+
+      shadowLightMatrices[0] = null; shadowLightMatrices[1] = null;
+      shadowLightIndices[0] = -1; shadowLightIndices[1] = -1;
+      var activeShadowCount = 0;
+
+      if (shadowProgram) {
+        var lightArray = Array.isArray(bundle.lights) ? bundle.lights : [];
+        var sceneBounds = null;
+        var shadowMaxPixels = (typeof bundle.shadowMaxPixels === "number") ? bundle.shadowMaxPixels : 0;
+
+        for (var li = 0; li < lightArray.length && activeShadowCount < 2; li++) {
+          var light = lightArray[li];
+          if (!light || !light.castShadow) continue;
+          var kind = typeof light.kind === "string" ? light.kind.toLowerCase() : "";
+          if (kind !== "directional") continue;
+
+          if (!sceneBounds) {
+            sceneBounds = sceneShadowComputeBounds(bundle);
+          }
+
+          var slot = activeShadowCount;
+          var shadowSize = sceneNumber(light.shadowSize, 1024);
+          shadowSize = Math.max(256, Math.min(4096, shadowSize));
+          shadowSize = resolveShadowSize(shadowSize, shadowMaxPixels);
+
+          if (!shadowSlots[slot] || shadowSlots[slot].size !== shadowSize) {
+            if (shadowSlots[slot]) {
+              gl.deleteFramebuffer(shadowSlots[slot].framebuffer);
+              gl.deleteTexture(shadowSlots[slot].depthTexture);
+            }
+            shadowSlots[slot] = createSceneShadowResources(gl, shadowSize);
+          }
+
+          var lightMatrix = sceneShadowLightSpaceMatrix(light, sceneBounds);
+          shadowLightMatrices[slot] = lightMatrix;
+          shadowLightIndices[slot] = li;
+
+          renderSceneShadowPass(gl, shadowProgram, shadowSlots[slot], lightMatrix, bundle, shadowState);
+          activeShadowCount++;
+        }
+      }
+
+      var postEffects = Array.isArray(bundle.postEffects) ? bundle.postEffects : [];
+      var postFXMaxPixels = (typeof bundle.postFXMaxPixels === "number") ? bundle.postFXMaxPixels : 0;
+      var usePostProcessing = postEffects.length > 0;
+
+      var renderW = canvas.width;
+      var renderH = canvas.height;
+
+      if (usePostProcessing) {
+        if (!postProcessor) {
+          postProcessor = createScenePostProcessor(gl);
+        }
+        var scaled = postProcessor.begin(canvas.width, canvas.height, postFXMaxPixels);
+        renderW = scaled.width;
+        renderH = scaled.height;
+      }
+
+      gl.viewport(0, 0, renderW, renderH);
+
+      var bgStr = typeof bundle.background === "string" ? bundle.background.trim().toLowerCase() : "";
+      const bg = bgStr === "transparent" ? [0, 0, 0, 0] : sceneColorRGBA(bundle.background, [0.03, 0.08, 0.12, 1]);
+      gl.clearColor(bg[0], bg[1], bg[2], bg[3]);
+      gl.clearDepth(1);
+      gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+      sceneRenderCamera(bundle.camera, _frameCam);
+      const cam = _frameCam;
+      const aspect = Math.max(0.0001, canvas.width / Math.max(1, canvas.height));
+      const viewMatrix = scenePBRViewMatrix(cam, scratchViewMatrix);
+      const projMatrix = scenePBRProjectionMatrix(cam.fov, aspect, cam.near, cam.far, scratchProjMatrix);
+
+      _frameLightsHash = scenePBRLightsHash(bundle.lights, bundle.environment);
+
+      if (hasPBRData) {
+      gl.useProgram(program);
+      gl.uniformMatrix4fv(uniforms.viewMatrix, false, viewMatrix);
+      gl.uniformMatrix4fv(uniforms.projectionMatrix, false, projMatrix);
+      gl.uniform3f(uniforms.cameraPosition, cam.x, cam.y, -cam.z);
+
+      scenePBRUploadExposure(gl, uniforms, bundle.environment, usePostProcessing);
+
+      scenePBRUploadLights(gl, uniforms, bundle.lights, bundle.environment, _frameLightsHash);
+
+      scenePBRUploadShadowUniforms(gl, uniforms, shadowSlots, shadowLightMatrices, shadowLightIndices, bundle.lights);
+
+      const drawList = buildPBRDrawList(bundle);
+      const materials = Array.isArray(bundle.materials) ? bundle.materials : [];
+
+      applyBlendMode(gl, "opaque");
+      applyDepthMode(gl, "opaque");
+      drawPBRObjectList(gl, drawList.opaque, bundle, materials);
+
+      if (drawList.alpha.length > 0) {
+        applyBlendMode(gl, "alpha");
+        applyDepthMode(gl, "alpha");
+        drawPBRObjectList(gl, drawList.alpha, bundle, materials);
+      }
+
+      if (drawList.additive.length > 0) {
+        applyBlendMode(gl, "additive");
+        applyDepthMode(gl, "additive");
+        drawPBRObjectList(gl, drawList.additive, bundle, materials);
+      }
+
+      } // end if (hasPBRData)
+
+      drawInstancedMeshes(gl, bundle, viewMatrix, projMatrix);
+
+      var frameTimeSeconds = performance.now() / 1000;
+      drawPointsEntries(gl, Array.isArray(bundle.points) ? bundle.points : [], bundle.environment, viewMatrix, projMatrix, frameTimeSeconds, renderH);
+      drawPointsEntries(gl, buildComputePointsEntries(bundle.computeParticles, frameTimeSeconds), bundle.environment, viewMatrix, projMatrix, frameTimeSeconds, renderH);
+
+      gl.depthMask(true);
+      gl.disable(gl.BLEND);
+
+      if (usePostProcessing && postProcessor) {
+        postProcessor.apply(postEffects, renderW, renderH, canvas.width, canvas.height);
+        gl.useProgram(program);
+      }
+
+      if (perfEnabled) {
+        performance.mark("scene3d-render-end");
+        performance.measure("scene3d-render", "scene3d-render-start", "scene3d-render-end");
+        performance.clearMarks("scene3d-render-start");
+        performance.clearMarks("scene3d-render-end");
+      }
+    }
+
+    function objectIsSkinned(obj) {
+      return Boolean(
+        obj && obj.skin &&
+        obj.vertices && obj.vertices.joints && obj.vertices.weights
+      );
+    }
+
+    function ensureSkinnedProgram() {
+      if (skinnedProgram) return skinnedProgram;
+      skinnedProgram = createScenePBRSkinnedProgram(gl);
+      if (!skinnedProgram) {
+        console.warn("[gosx] Skinned PBR shader compilation failed; skinned objects will use static path.");
+      }
+      return skinnedProgram;
+    }
+
+    function drawPBRObjectList(gl, objectList, bundle, materials) {
+      var lastMaterialIndex = -1;
+      var currentProgram = program;       // the static PBR gl program
+      var currentAttribs = attribs;
+      var currentUniforms = uniforms;
+
+      for (var i = 0; i < objectList.length; i++) {
+        const obj = objectList[i];
+        const matIndex = sceneNumber(obj.materialIndex, 0);
+        const mat = materials[matIndex] || null;
+        var isSkinned = objectIsSkinned(obj);
+
+        if (isSkinned) {
+          var sp = ensureSkinnedProgram();
+          if (sp && currentProgram !== sp.program) {
+            gl.useProgram(sp.program);
+            currentProgram = sp.program;
+            currentAttribs = sp.attributes;
+            currentUniforms = sp.uniforms;
+
+            gl.uniformMatrix4fv(currentUniforms.viewMatrix, false, scratchViewMatrix);
+            gl.uniformMatrix4fv(currentUniforms.projectionMatrix, false, scratchProjMatrix);
+            gl.uniform3f(currentUniforms.cameraPosition, _frameCam.x, _frameCam.y, -_frameCam.z);
+
+            var postEffects = Array.isArray(bundle.postEffects) ? bundle.postEffects : [];
+            scenePBRUploadExposure(gl, currentUniforms, bundle.environment, postEffects.length > 0);
+
+            scenePBRUploadLights(gl, currentUniforms, bundle.lights, bundle.environment, _frameLightsHash);
+
+            scenePBRUploadShadowUniforms(gl, currentUniforms, shadowSlots, shadowLightMatrices, shadowLightIndices, bundle.lights);
+
+            lastMaterialIndex = -1;
+          }
+          if (!sp) isSkinned = false;
+        } else if (currentProgram !== program) {
+          gl.useProgram(program);
+          currentProgram = program;
+          currentAttribs = attribs;
+          currentUniforms = uniforms;
+          lastMaterialIndex = -1;
+        }
+
+        if (matIndex !== lastMaterialIndex) {
+          uploadMaterial(gl, currentUniforms, mat, textureCache);
+          lastMaterialIndex = matIndex;
+        }
+
+        gl.uniform1i(currentUniforms.receiveShadow, obj.receiveShadow ? 1 : 0);
+
+        var objDepthWriteOverride = obj.depthWrite !== undefined && obj.depthWrite !== null;
+        if (objDepthWriteOverride) {
+          gl.depthMask(obj.depthWrite !== false);
+        }
+
+        if (isSkinned) {
+          gl.uniform1i(currentUniforms.hasSkin, 1);
+
+          var jointMatrices = obj.skin.jointMatrices;
+          if (jointMatrices) {
+            var jointCount = Math.min(Math.floor(jointMatrices.length / 16), 64);
+            for (var ji = 0; ji < jointCount; ji++) {
+              gl.uniformMatrix4fv(
+                currentUniforms.jointMatrices[ji], false,
+                jointMatrices.subarray(ji * 16, ji * 16 + 16)
+              );
+            }
+          }
+        } else if (currentUniforms.hasSkin) {
+          gl.uniform1i(currentUniforms.hasSkin, 0);
+        }
+
+        const offset = obj.vertexOffset;
+        const count = obj.vertexCount;
+
+        const positions = sliceToFloat32(bundle.worldMeshPositions, offset, count, 3, "positions");
+        gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, positions, gl.DYNAMIC_DRAW);
+        gl.enableVertexAttribArray(currentAttribs.position);
+        gl.vertexAttribPointer(currentAttribs.position, 3, gl.FLOAT, false, 0, 0);
+
+        const normals = sliceToFloat32(bundle.worldMeshNormals, offset, count, 3, "normals");
+        gl.bindBuffer(gl.ARRAY_BUFFER, normalBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, normals, gl.DYNAMIC_DRAW);
+        gl.enableVertexAttribArray(currentAttribs.normal);
+        gl.vertexAttribPointer(currentAttribs.normal, 3, gl.FLOAT, false, 0, 0);
+
+        if (bundle.worldMeshUVs) {
+          const uvs = sliceToFloat32(bundle.worldMeshUVs, offset, count, 2, "uvs");
+          gl.bindBuffer(gl.ARRAY_BUFFER, uvBuffer);
+          gl.bufferData(gl.ARRAY_BUFFER, uvs, gl.DYNAMIC_DRAW);
+          gl.enableVertexAttribArray(currentAttribs.uv);
+          gl.vertexAttribPointer(currentAttribs.uv, 2, gl.FLOAT, false, 0, 0);
+        } else if (currentAttribs.uv >= 0) {
+          gl.disableVertexAttribArray(currentAttribs.uv);
+          gl.vertexAttrib2f(currentAttribs.uv, 0, 0);
+        }
+
+        if (bundle.worldMeshTangents) {
+          const tangents = sliceToFloat32(bundle.worldMeshTangents, offset, count, 4, "tangents");
+          gl.bindBuffer(gl.ARRAY_BUFFER, tangentBuffer);
+          gl.bufferData(gl.ARRAY_BUFFER, tangents, gl.DYNAMIC_DRAW);
+          gl.enableVertexAttribArray(currentAttribs.tangent);
+          gl.vertexAttribPointer(currentAttribs.tangent, 4, gl.FLOAT, false, 0, 0);
+        } else if (currentAttribs.tangent >= 0) {
+          gl.disableVertexAttribArray(currentAttribs.tangent);
+          gl.vertexAttrib4f(currentAttribs.tangent, 1, 0, 0, 1);
+        }
+
+        if (isSkinned && currentAttribs.joints >= 0 && currentAttribs.weights >= 0) {
+          var joints = obj.vertices.joints;
+          var weights = obj.vertices.weights;
+
+          gl.bindBuffer(gl.ARRAY_BUFFER, jointsBuffer);
+          gl.bufferData(gl.ARRAY_BUFFER, joints instanceof Float32Array ? joints : new Float32Array(joints), gl.DYNAMIC_DRAW);
+          gl.enableVertexAttribArray(currentAttribs.joints);
+          gl.vertexAttribPointer(currentAttribs.joints, 4, gl.FLOAT, false, 0, 0);
+
+          gl.bindBuffer(gl.ARRAY_BUFFER, weightsBuffer);
+          gl.bufferData(gl.ARRAY_BUFFER, weights instanceof Float32Array ? weights : new Float32Array(weights), gl.DYNAMIC_DRAW);
+          gl.enableVertexAttribArray(currentAttribs.weights);
+          gl.vertexAttribPointer(currentAttribs.weights, 4, gl.FLOAT, false, 0, 0);
+        } else if (currentAttribs.joints >= 0) {
+          gl.disableVertexAttribArray(currentAttribs.joints);
+          gl.vertexAttrib4f(currentAttribs.joints, 0, 0, 0, 0);
+          gl.disableVertexAttribArray(currentAttribs.weights);
+          gl.vertexAttrib4f(currentAttribs.weights, 0, 0, 0, 0);
+        }
+
+        gl.drawArrays(gl.TRIANGLES, 0, count);
+
+        if (objDepthWriteOverride) {
+          var mat2 = materials[sceneNumber(obj.materialIndex, 0)] || null;
+          var pass2 = scenePBRObjectRenderPass(obj, mat2);
+          gl.depthMask(pass2 === "opaque");
+        }
+      }
+
+      if (currentProgram !== program) {
+        gl.useProgram(program);
+      }
+    }
+
+    function ensurePointsProgram() {
+      if (pointsProgram) return pointsProgram;
+      pointsProgram = createScenePointsProgram(gl);
+      if (!pointsProgram) {
+        console.warn("[gosx] Points shader compilation failed; points will not render.");
+      }
+      return pointsProgram;
+    }
+
+    function disposeComputeParticleSystemRecord(record) {
+      if (record && record.system && typeof record.system.dispose === "function") {
+        record.system.dispose();
+      }
+    }
+
+    function syncComputeParticleSystems(entries) {
+      var activeIds = new Set();
+      var records = [];
+      var sourceEntries = Array.isArray(entries) ? entries : [];
+      for (var i = 0; i < sourceEntries.length; i++) {
+        var entry = sourceEntries[i];
+        if (!entry || typeof entry !== "object") continue;
+        var id = typeof entry.id === "string" && entry.id ? entry.id : ("scene-particles-" + i);
+        var signature = sceneComputeSystemSignature(entry);
+        activeIds.add(id);
+        var record = computeParticleSystems.get(id);
+        if (!record || record.signature !== signature) {
+          disposeComputeParticleSystemRecord(record);
+          record = {
+            signature: signature,
+            system: createSceneParticleSystem(null, entry),
+            colorBuffer: null,
+          };
+          computeParticleSystems.set(id, record);
+        } else if (record.system) {
+          record.system.entry = entry;
+        }
+        if (record && record.system) {
+          records.push(record);
+        }
+      }
+      for (const [id, record] of computeParticleSystems.entries()) {
+        if (!activeIds.has(id)) {
+          disposeComputeParticleSystemRecord(record);
+          computeParticleSystems.delete(id);
+        }
+      }
+      return records;
+    }
+
+    function buildComputePointsEntries(entries, timeSeconds) {
+      var currentTime = Number.isFinite(timeSeconds) ? timeSeconds : 0;
+      var deltaTime = lastComputeParticleTimeSeconds == null
+        ? 0
+        : Math.max(0, Math.min(0.1, currentTime - lastComputeParticleTimeSeconds));
+      lastComputeParticleTimeSeconds = currentTime;
+      var records = syncComputeParticleSystems(entries);
+      var pointsEntries = [];
+      for (var i = 0; i < records.length; i++) {
+        var record = records[i];
+        var system = record.system;
+        if (!system) continue;
+        system.update(deltaTime, currentTime);
+        if (!record.colorBuffer || record.colorBuffer.length !== system.count * 4) {
+          record.colorBuffer = new Float32Array(system.count * 4);
+        }
+        for (var pi = 0; pi < system.count; pi++) {
+          var rgbBase = pi * 3;
+          var rgbaBase = pi * 4;
+          record.colorBuffer[rgbaBase] = system.colors[rgbBase];
+          record.colorBuffer[rgbaBase + 1] = system.colors[rgbBase + 1];
+          record.colorBuffer[rgbaBase + 2] = system.colors[rgbBase + 2];
+          record.colorBuffer[rgbaBase + 3] = system.opacities[pi];
+        }
+        var material = system.entry && system.entry.material && typeof system.entry.material === "object"
+          ? system.entry.material
+          : {};
+        var emitter = system.entry && system.entry.emitter && typeof system.entry.emitter === "object"
+          ? system.entry.emitter
+          : {};
+        pointsEntries.push({
+          id: system.entry && system.entry.id ? system.entry.id : ("scene-compute-points-" + i),
+          count: system.count,
+          color: typeof material.color === "string" ? material.color : "#ffffff",
+          style: material.style,
+          size: sceneNumber(material.size, 1),
+          opacity: 1,
+          blendMode: material.blendMode,
+          attenuation: !!material.attenuation,
+          x: sceneNumber(emitter.x, 0),
+          y: sceneNumber(emitter.y, 0),
+          z: sceneNumber(emitter.z, 0),
+          rotationX: sceneNumber(emitter.rotationX, 0),
+          rotationY: sceneNumber(emitter.rotationY, 0),
+          rotationZ: sceneNumber(emitter.rotationZ, 0),
+          spinX: sceneNumber(emitter.spinX, 0),
+          spinY: sceneNumber(emitter.spinY, 0),
+          spinZ: sceneNumber(emitter.spinZ, 0),
+          _cachedPos: system.positions,
+          _cachedSizes: system.sizes,
+          _cachedColors: record.colorBuffer,
+        });
+      }
+      return pointsEntries;
+    }
+
+    function drawPointsEntries(gl, pointsArray, environment, viewMatrix, projMatrix, timeSeconds, renderH) {
+      if (pointsArray.length === 0) return;
+
+      var pp = ensurePointsProgram();
+      if (!pp) return;
+
+      gl.useProgram(pp.program);
+
+      gl.uniformMatrix4fv(pp.uniforms.viewMatrix, false, viewMatrix);
+      gl.uniformMatrix4fv(pp.uniforms.projectionMatrix, false, projMatrix);
+      gl.uniform1f(pp.uniforms.viewportHeight, renderH);
+
+      var env = environment || {};
+      var fogDensity = sceneNumber(env.fogDensity, 0);
+      gl.uniform1i(pp.uniforms.hasFog, fogDensity > 0 ? 1 : 0);
+      gl.uniform1f(pp.uniforms.fogDensity, fogDensity);
+      var fogColorRGBA = sceneColorRGBA(env.fogColor, [0.5, 0.5, 0.5, 1]);
+      gl.uniform3f(pp.uniforms.fogColor, fogColorRGBA[0], fogColorRGBA[1], fogColorRGBA[2]);
+
+      gl.enable(gl.DEPTH_TEST);
+      var _pointsModelMat = new Float32Array(16);
+      var _pointsTilt = new Float32Array(16);
+      var _pointsSpin = new Float32Array(16);
+
+      for (var i = 0; i < pointsArray.length; i++) {
+        var entry = pointsArray[i];
+
+        var px = sceneNumber(entry.x, 0);
+        var py = sceneNumber(entry.y, 0);
+        var pz = sceneNumber(entry.z, 0);
+        var hasSpin = sceneNumber(entry.spinX, 0) !== 0 || sceneNumber(entry.spinY, 0) !== 0 || sceneNumber(entry.spinZ, 0) !== 0;
+
+        if (hasSpin) {
+
+          var spx = sceneNumber(entry.spinX, 0) * timeSeconds;
+          var spy = sceneNumber(entry.spinY, 0) * timeSeconds;
+          var spz = sceneNumber(entry.spinZ, 0) * timeSeconds;
+          var csx = Math.cos(spx), ssx = Math.sin(spx);
+          var csy = Math.cos(spy), ssy = Math.sin(spy);
+          var csz = Math.cos(spz), ssz = Math.sin(spz);
+          _pointsSpin[0] = csy*csz; _pointsSpin[4] = ssx*ssy*csz-csx*ssz; _pointsSpin[8]  = csx*ssy*csz+ssx*ssz; _pointsSpin[12] = 0;
+          _pointsSpin[1] = csy*ssz; _pointsSpin[5] = ssx*ssy*ssz+csx*csz; _pointsSpin[9]  = csx*ssy*ssz-ssx*csz; _pointsSpin[13] = 0;
+          _pointsSpin[2] = -ssy;    _pointsSpin[6] = ssx*csy;             _pointsSpin[10] = csx*csy;             _pointsSpin[14] = 0;
+          _pointsSpin[3] = 0;       _pointsSpin[7] = 0;                   _pointsSpin[11] = 0;                   _pointsSpin[15] = 1;
+
+          var rx = sceneNumber(entry.rotationX, 0);
+          var ry = sceneNumber(entry.rotationY, 0);
+          var rz = sceneNumber(entry.rotationZ, 0);
+          var cxr = Math.cos(rx), sxr = Math.sin(rx);
+          var cyr = Math.cos(ry), syr = Math.sin(ry);
+          var czr = Math.cos(rz), szr = Math.sin(rz);
+          _pointsTilt[0] = cyr*czr; _pointsTilt[4] = sxr*syr*czr-cxr*szr; _pointsTilt[8]  = cxr*syr*czr+sxr*szr; _pointsTilt[12] = px;
+          _pointsTilt[1] = cyr*szr; _pointsTilt[5] = sxr*syr*szr+cxr*czr; _pointsTilt[9]  = cxr*syr*szr-sxr*czr; _pointsTilt[13] = py;
+          _pointsTilt[2] = -syr;    _pointsTilt[6] = sxr*cyr;             _pointsTilt[10] = cxr*cyr;             _pointsTilt[14] = pz;
+          _pointsTilt[3] = 0;       _pointsTilt[7] = 0;                   _pointsTilt[11] = 0;                   _pointsTilt[15] = 1;
+
+          sceneMat4MultiplyInto(_pointsModelMat, _pointsTilt, _pointsSpin);
+        } else {
+          var rx = sceneNumber(entry.rotationX, 0);
+          var ry = sceneNumber(entry.rotationY, 0);
+          var rz = sceneNumber(entry.rotationZ, 0);
+          var cxr = Math.cos(rx), sxr = Math.sin(rx);
+          var cyr = Math.cos(ry), syr = Math.sin(ry);
+          var czr = Math.cos(rz), szr = Math.sin(rz);
+          _pointsModelMat[0] = cyr*czr; _pointsModelMat[4] = sxr*syr*czr-cxr*szr; _pointsModelMat[8]  = cxr*syr*czr+sxr*szr; _pointsModelMat[12] = px;
+          _pointsModelMat[1] = cyr*szr; _pointsModelMat[5] = sxr*syr*szr+cxr*czr; _pointsModelMat[9]  = cxr*syr*szr-sxr*czr; _pointsModelMat[13] = py;
+          _pointsModelMat[2] = -syr;    _pointsModelMat[6] = sxr*cyr;             _pointsModelMat[10] = cxr*cyr;             _pointsModelMat[14] = pz;
+          _pointsModelMat[3] = 0;       _pointsModelMat[7] = 0;                   _pointsModelMat[11] = 0;                   _pointsModelMat[15] = 1;
+        }
+        gl.uniformMatrix4fv(pp.uniforms.modelMatrix, false, _pointsModelMat);
+        var count = sceneNumber(entry.count, 0);
+        if (count <= 0) continue;
+
+        var blendMode = typeof entry.blendMode === "string" ? entry.blendMode.toLowerCase() : "";
+        if (blendMode === "additive") {
+          gl.enable(gl.BLEND);
+          gl.blendFunc(gl.SRC_ALPHA, gl.ONE);
+        } else if (blendMode === "alpha") {
+          gl.enable(gl.BLEND);
+          gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+        } else {
+          gl.disable(gl.BLEND);
+        }
+
+        var depthWrite = entry.depthWrite !== false;
+        gl.depthMask(depthWrite);
+        gl.depthFunc(gl.LEQUAL);
+
+        gl.uniform1f(pp.uniforms.opacity, clamp01(sceneNumber(entry.opacity, 1)));
+
+        var defaultColorRGBA = sceneColorRGBA(entry.color, [1, 1, 1, 1]);
+        gl.uniform4f(pp.uniforms.defaultColor, defaultColorRGBA[0], defaultColorRGBA[1], defaultColorRGBA[2], 1);
+        gl.uniform1f(pp.uniforms.defaultSize, sceneNumber(entry.size, 1));
+        gl.uniform1i(pp.uniforms.sizeAttenuation, entry.attenuation ? 1 : 0);
+        gl.uniform1i(pp.uniforms.pointStyle, scenePointStyleCode(entry.style));
+
+        if (!entry._cachedPos && Array.isArray(entry.positions) && entry.positions.length >= count * 3) {
+          entry._cachedPos = new Float32Array(entry.positions);
+        }
+        if (!entry._cachedSizes && Array.isArray(entry.sizes) && entry.sizes.length >= count) {
+          entry._cachedSizes = new Float32Array(entry.sizes);
+        }
+        if (!entry._cachedColors && Array.isArray(entry.colors) && entry.colors.length >= count) {
+          var rawColors = entry.colors;
+          if (typeof rawColors[0] === "string") {
+            entry._cachedColors = new Float32Array(count * 4);
+            for (var ci = 0; ci < count; ci++) {
+              var crgba = sceneColorRGBA(rawColors[ci], [1, 1, 1, 1]);
+              entry._cachedColors[ci * 4] = crgba[0];
+              entry._cachedColors[ci * 4 + 1] = crgba[1];
+              entry._cachedColors[ci * 4 + 2] = crgba[2];
+              entry._cachedColors[ci * 4 + 3] = crgba[3];
+            }
+          } else if (rawColors.length >= count * 4) {
+            entry._cachedColors = new Float32Array(rawColors);
+          } else if (rawColors.length >= count * 3) {
+            entry._cachedColors = new Float32Array(count * 4);
+            for (var ci2 = 0; ci2 < count; ci2++) {
+              entry._cachedColors[ci2 * 4] = rawColors[ci2 * 3];
+              entry._cachedColors[ci2 * 4 + 1] = rawColors[ci2 * 3 + 1];
+              entry._cachedColors[ci2 * 4 + 2] = rawColors[ci2 * 3 + 2];
+              entry._cachedColors[ci2 * 4 + 3] = 1;
+            }
+          }
+        }
+        if (!entry._cachedPos) continue;
+        gl.bindBuffer(gl.ARRAY_BUFFER, pointsPositionBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, entry._cachedPos, gl.STREAM_DRAW);
+        gl.enableVertexAttribArray(pp.attributes.position);
+        gl.vertexAttribPointer(pp.attributes.position, 3, gl.FLOAT, false, 0, 0);
+
+        var hasSizes = !!entry._cachedSizes;
+        gl.uniform1i(pp.uniforms.hasPerVertexSize, hasSizes ? 1 : 0);
+        if (hasSizes && pp.attributes.size >= 0) {
+          gl.bindBuffer(gl.ARRAY_BUFFER, pointsSizeBuffer);
+          gl.bufferData(gl.ARRAY_BUFFER, entry._cachedSizes, gl.STREAM_DRAW);
+          gl.enableVertexAttribArray(pp.attributes.size);
+          gl.vertexAttribPointer(pp.attributes.size, 1, gl.FLOAT, false, 0, 0);
+        } else if (pp.attributes.size >= 0) {
+          gl.disableVertexAttribArray(pp.attributes.size);
+          gl.vertexAttrib1f(pp.attributes.size, sceneNumber(entry.size, 1));
+        }
+
+        var hasColors = !!entry._cachedColors;
+        gl.uniform1i(pp.uniforms.hasPerVertexColor, hasColors ? 1 : 0);
+        if (hasColors && pp.attributes.color >= 0) {
+          gl.bindBuffer(gl.ARRAY_BUFFER, pointsColorBuffer);
+          gl.bufferData(gl.ARRAY_BUFFER, entry._cachedColors, gl.STREAM_DRAW);
+          gl.enableVertexAttribArray(pp.attributes.color);
+          gl.vertexAttribPointer(pp.attributes.color, 4, gl.FLOAT, false, 0, 0);
+        } else if (pp.attributes.color >= 0) {
+          gl.disableVertexAttribArray(pp.attributes.color);
+          gl.vertexAttrib4f(pp.attributes.color, defaultColorRGBA[0], defaultColorRGBA[1], defaultColorRGBA[2], 1);
+        }
+
+        gl.drawArrays(gl.POINTS, 0, count);
+      }
+
+      gl.depthMask(true);
+      gl.disable(gl.BLEND);
+
+      gl.useProgram(program);
+    }
+
+    function ensureInstancedProgram() {
+      if (instancedProgram) return instancedProgram;
+      instancedProgram = createScenePBRInstancedProgram(gl);
+      if (!instancedProgram) {
+        console.warn("[gosx] Instanced PBR shader compilation failed; instanced meshes will not render.");
+      }
+      return instancedProgram;
+    }
+
+    function getInstancedGeometry(mesh) {
+      var kind = typeof mesh.kind === "string" ? mesh.kind.toLowerCase() : "box";
+      var w = sceneNumber(mesh.width, 1);
+      var h = sceneNumber(mesh.height, 1);
+      var d = sceneNumber(mesh.depth, 1);
+      var r = sceneNumber(mesh.radius, 0.5);
+      var s = sceneNumber(mesh.segments, 16);
+      var key = kind + ":" + w + ":" + h + ":" + d + ":" + r + ":" + s;
+      if (instancedGeometryCache[key]) return instancedGeometryCache[key];
+      var geom = generateInstancedGeometry(kind, { width: w, height: h, depth: d, radius: r, segments: s });
+      instancedGeometryCache[key] = geom;
+      return geom;
+    }
+
+    function drawInstancedMeshes(gl, bundle, viewMatrix, projMatrix) {
+      var meshes = Array.isArray(bundle.instancedMeshes) ? bundle.instancedMeshes : [];
+      if (meshes.length === 0) return;
+
+      var ip = ensureInstancedProgram();
+      if (!ip) return;
+
+      gl.useProgram(ip.program);
+
+      gl.enable(gl.DEPTH_TEST);
+      gl.depthMask(true);
+      gl.depthFunc(gl.LEQUAL);
+      gl.disable(gl.BLEND);
+
+      gl.uniformMatrix4fv(ip.uniforms.viewMatrix, false, viewMatrix);
+      gl.uniformMatrix4fv(ip.uniforms.projectionMatrix, false, projMatrix);
+      gl.uniform3f(ip.uniforms.cameraPosition, _frameCam.x, _frameCam.y, -_frameCam.z);
+
+      var postEffects = Array.isArray(bundle.postEffects) ? bundle.postEffects : [];
+      scenePBRUploadExposure(gl, ip.uniforms, bundle.environment, postEffects.length > 0);
+
+      scenePBRUploadLights(gl, ip.uniforms, bundle.lights, bundle.environment, _frameLightsHash);
+      scenePBRUploadShadowUniforms(gl, ip.uniforms, shadowSlots, shadowLightMatrices, shadowLightIndices, bundle.lights);
+
+      var materials = Array.isArray(bundle.materials) ? bundle.materials : [];
+
+      for (var i = 0; i < meshes.length; i++) {
+        var mesh = meshes[i];
+        if (!mesh.transforms || mesh.instanceCount <= 0) continue;
+
+        var instanceCount = sceneNumber(mesh.instanceCount, 0);
+        if (instanceCount <= 0) continue;
+
+        var geom = getInstancedGeometry(mesh);
+        if (!geom || geom.vertexCount <= 0) continue;
+
+        var mat = materials[sceneNumber(mesh.materialIndex, 0)] || null;
+        if (!mat && mesh.color) {
+          mat = {
+            color: mesh.color,
+            roughness: sceneNumber(mesh.roughness, 0.5),
+            metalness: sceneNumber(mesh.metalness, 0),
+          };
+        }
+        uploadMaterial(gl, ip.uniforms, mat, textureCache);
+
+        gl.uniform1i(ip.uniforms.receiveShadow, mesh.receiveShadow ? 1 : 0);
+
+        gl.bindBuffer(gl.ARRAY_BUFFER, instanceVertexBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, geom.positions, gl.STATIC_DRAW);
+        gl.enableVertexAttribArray(ip.attributes.position);
+        gl.vertexAttribPointer(ip.attributes.position, 3, gl.FLOAT, false, 0, 0);
+
+        gl.bindBuffer(gl.ARRAY_BUFFER, instanceNormalBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, geom.normals, gl.STATIC_DRAW);
+        gl.enableVertexAttribArray(ip.attributes.normal);
+        gl.vertexAttribPointer(ip.attributes.normal, 3, gl.FLOAT, false, 0, 0);
+
+        gl.bindBuffer(gl.ARRAY_BUFFER, instanceUVBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, geom.uvs, gl.STATIC_DRAW);
+        gl.enableVertexAttribArray(ip.attributes.uv);
+        gl.vertexAttribPointer(ip.attributes.uv, 2, gl.FLOAT, false, 0, 0);
+
+        gl.bindBuffer(gl.ARRAY_BUFFER, instanceTangentBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, geom.tangents, gl.STATIC_DRAW);
+        gl.enableVertexAttribArray(ip.attributes.tangent);
+        gl.vertexAttribPointer(ip.attributes.tangent, 4, gl.FLOAT, false, 0, 0);
+
+        if (!mesh._cachedTransforms) {
+          if (mesh.transforms instanceof Float32Array) {
+            mesh._cachedTransforms = mesh.transforms;
+          } else if (Array.isArray(mesh.transforms)) {
+            mesh._cachedTransforms = new Float32Array(mesh.transforms);
+          }
+        }
+        var transformData = mesh._cachedTransforms;
+        if (!transformData) continue;
+
+        gl.bindBuffer(gl.ARRAY_BUFFER, instanceTransformBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, transformData, gl.STATIC_DRAW);
+
+        var baseLoc = ip.attributes.instanceMatrix;
+        for (var col = 0; col < 4; col++) {
+          var loc = baseLoc + col;
+          gl.enableVertexAttribArray(loc);
+          gl.vertexAttribPointer(loc, 4, gl.FLOAT, false, 64, col * 16);
+          gl.vertexAttribDivisor(loc, 1);
+        }
+
+        gl.drawArraysInstanced(gl.TRIANGLES, 0, geom.vertexCount, instanceCount);
+
+        for (var col = 0; col < 4; col++) {
+          var loc2 = baseLoc + col;
+          gl.vertexAttribDivisor(loc2, 0);
+          gl.disableVertexAttribArray(loc2);
+        }
+      }
+
+      gl.useProgram(program);
+    }
+
+    function dispose() {
+      gl.deleteBuffer(positionBuffer);
+      gl.deleteBuffer(normalBuffer);
+      gl.deleteBuffer(uvBuffer);
+      gl.deleteBuffer(tangentBuffer);
+      gl.deleteBuffer(jointsBuffer);
+      gl.deleteBuffer(weightsBuffer);
+      gl.deleteBuffer(pointsPositionBuffer);
+      gl.deleteBuffer(pointsSizeBuffer);
+      gl.deleteBuffer(pointsColorBuffer);
+      for (const record of computeParticleSystems.values()) {
+        disposeComputeParticleSystemRecord(record);
+      }
+      computeParticleSystems.clear();
+      lastComputeParticleTimeSeconds = null;
+      gl.deleteBuffer(instanceTransformBuffer);
+      gl.deleteBuffer(instanceVertexBuffer);
+      gl.deleteBuffer(instanceNormalBuffer);
+      gl.deleteBuffer(instanceUVBuffer);
+      gl.deleteBuffer(instanceTangentBuffer);
+      if (shadowState.buffer) gl.deleteBuffer(shadowState.buffer);
+
+      for (const record of textureCache.values()) {
+        if (record && record.texture) {
+          gl.deleteTexture(record.texture);
+        }
+      }
+      textureCache.clear();
+
+      for (var si = 0; si < shadowSlots.length; si++) {
+        if (shadowSlots[si]) {
+          gl.deleteFramebuffer(shadowSlots[si].framebuffer);
+          gl.deleteTexture(shadowSlots[si].depthTexture);
+          shadowSlots[si] = null;
+        }
+      }
+
+      if (postProcessor) {
+        postProcessor.dispose();
+        postProcessor = null;
+      }
+
+      if (shadowProgram) {
+        gl.deleteShader(shadowProgram.vertexShader);
+        gl.deleteShader(shadowProgram.fragmentShader);
+        gl.deleteProgram(shadowProgram.program);
+      }
+
+      if (skinnedProgram) {
+        gl.deleteShader(skinnedProgram.vertexShader);
+        gl.deleteShader(skinnedProgram.fragmentShader);
+        gl.deleteProgram(skinnedProgram.program);
+        skinnedProgram = null;
+      }
+
+      if (pointsProgram) {
+        gl.deleteShader(pointsProgram.vertexShader);
+        gl.deleteShader(pointsProgram.fragmentShader);
+        gl.deleteProgram(pointsProgram.program);
+        pointsProgram = null;
+      }
+
+      if (instancedProgram) {
+        gl.deleteShader(instancedProgram.vertexShader);
+        gl.deleteShader(instancedProgram.fragmentShader);
+        gl.deleteProgram(instancedProgram.program);
+        instancedProgram = null;
+      }
+      instancedGeometryCache = {};
+
+      gl.deleteShader(pbrProgram.vertexShader);
+      gl.deleteShader(pbrProgram.fragmentShader);
+      gl.deleteProgram(program);
+    }
+
+    return {
+      render: render,
+      dispose: dispose,
+      type: "webgl-pbr",
+    };
+  }
+
+  function scenePBRObjectRenderPass(obj, material) {
+    if (obj && typeof obj.renderPass === "string" && obj.renderPass) {
+      const pass = obj.renderPass.toLowerCase();
+      if (pass === "alpha" || pass === "additive" || pass === "opaque") {
+        return pass;
+      }
+    }
+    if (material && typeof material.renderPass === "string" && material.renderPass) {
+      const pass = material.renderPass.toLowerCase();
+      if (pass === "alpha" || pass === "additive" || pass === "opaque") {
+        return pass;
+      }
+    }
+    if (material && sceneNumber(material.opacity, 1) < 1) {
+      return "alpha";
+    }
+    return "opaque";
+  }
+
+  function scenePBRDepthSort(a, b) {
+    const da = sceneNumber(a && a.depthCenter, 0);
+    const db = sceneNumber(b && b.depthCenter, 0);
+    if (da !== db) {
+      return db - da;
+    }
+    return String(a && a.id || "").localeCompare(String(b && b.id || ""));
+  }
+
+  function createScenePBRRendererOrFallback(gl, canvas, options) {
+    if (!gl || !canvas) {
+      return null;
+    }
+    if (typeof WebGL2RenderingContext === "undefined" || !(gl instanceof WebGL2RenderingContext)) {
+      return null;
+    }
+    var renderer = null;
+    try {
+      renderer = createScenePBRRenderer(gl, canvas);
+    } catch (e) {
+      console.warn("[gosx] PBR renderer creation failed:", e);
+      return null;
+    }
+    return renderer;
+  }
+
+  var WGSL_COMMON_CONSTANTS = [
+    "const PI: f32 = 3.14159265359;",
+    "const MAX_LIGHTS: u32 = 8u;",
+  ].join("\n");
+
+  var WGSL_FRAME_STRUCTS = [
+    "struct Light {",
+    "    position: vec4f,",       // xyz = position, w = type (0=ambient,1=dir,2=point)
+    "    direction: vec4f,",      // xyz = direction, w = intensity
+    "    color: vec4f,",          // rgb = color, a = range
+    "    params: vec4f,",         // x = decay, y = shadowBias, z = castShadow, w = unused
+    "};",
+    "",
+    "struct FrameUniforms {",
+    "    viewMatrix: mat4x4f,",
+    "    projMatrix: mat4x4f,",
+    "    cameraPos: vec3f,",
+    "    lightCount: u32,",
+    "    viewportWidth: f32,",
+    "    viewportHeight: f32,",
+    "    toneMap: u32,",
+    "    _pad0: u32,",
+    "};",
+    "",
+    "struct FogUniforms {",
+    "    fogColor: vec3f,",
+    "    fogDensity: f32,",
+    "    hasFog: u32,",
+    "    _pad0: u32,",
+    "    _pad1: u32,",
+    "    _pad2: u32,",
+    "};",
+    "",
+    "struct EnvUniforms {",
+    "    ambientColor: vec3f,",
+    "    ambientIntensity: f32,",
+    "    skyColor: vec3f,",
+    "    skyIntensity: f32,",
+    "    groundColor: vec3f,",
+    "    groundIntensity: f32,",
+    "};",
+    "",
+    "struct ShadowUniforms {",
+    "    lightSpaceMatrix0: mat4x4f,",
+    "    lightSpaceMatrix1: mat4x4f,",
+    "    hasShadow0: u32,",
+    "    hasShadow1: u32,",
+    "    shadowBias0: f32,",
+    "    shadowBias1: f32,",
+    "    shadowLightIndex0: i32,",
+    "    shadowLightIndex1: i32,",
+    "    _pad0: u32,",
+    "    _pad1: u32,",
+    "};",
+  ].join("\n");
+
+  var WGSL_MATERIAL_STRUCT = [
+    "struct MaterialUniforms {",
+    "    albedo: vec3f,",
+    "    roughness: f32,",
+    "    metalness: f32,",
+    "    emissive: f32,",
+    "    opacity: f32,",
+    "    unlit: u32,",
+    "    hasAlbedoMap: u32,",
+    "    hasNormalMap: u32,",
+    "    hasRoughnessMap: u32,",
+    "    hasMetalnessMap: u32,",
+    "    hasEmissiveMap: u32,",
+    "    receiveShadow: u32,",
+    "    _pad0: u32,",
+    "    _pad1: u32,",
+    "};",
+  ].join("\n");
+
+  var WGSL_PBR_VERTEX = [
+    WGSL_FRAME_STRUCTS,
+    "",
+    "struct VertexInput {",
+    "    @location(0) position: vec3f,",
+    "    @location(1) normal: vec3f,",
+    "    @location(2) uv: vec2f,",
+    "    @location(3) tangent: vec4f,",
+    "};",
+    "",
+    "struct VertexOutput {",
+    "    @builtin(position) clipPos: vec4f,",
+    "    @location(0) worldPos: vec3f,",
+    "    @location(1) normal: vec3f,",
+    "    @location(2) uv: vec2f,",
+    "    @location(3) tangent: vec3f,",
+    "    @location(4) bitangent: vec3f,",
+    "};",
+    "",
+    "@group(0) @binding(0) var<uniform> frame: FrameUniforms;",
+    "",
+    "@vertex fn vertexMain(in: VertexInput) -> VertexOutput {",
+    "    var out: VertexOutput;",
+    "    out.worldPos = in.position;",
+    "    out.normal = normalize(in.normal);",
+    "    out.uv = in.uv;",
+    "    let T = normalize(in.tangent.xyz);",
+    "    let N = out.normal;",
+    "    out.tangent = T;",
+    "    out.bitangent = cross(N, T) * in.tangent.w;",
+    "    out.clipPos = frame.projMatrix * frame.viewMatrix * vec4f(in.position, 1.0);",
+    "    return out;",
+    "}",
+  ].join("\n");
+
+  var WGSL_PBR_FRAGMENT = [
+    WGSL_COMMON_CONSTANTS,
+    "",
+    WGSL_FRAME_STRUCTS,
+    "",
+    WGSL_MATERIAL_STRUCT,
+    "",
+    "struct VertexOutput {",
+    "    @builtin(position) clipPos: vec4f,",
+    "    @location(0) worldPos: vec3f,",
+    "    @location(1) normal: vec3f,",
+    "    @location(2) uv: vec2f,",
+    "    @location(3) tangent: vec3f,",
+    "    @location(4) bitangent: vec3f,",
+    "};",
+    "",
+    "// Group 0: per-frame",
+    "@group(0) @binding(0) var<uniform> frame: FrameUniforms;",
+    "@group(0) @binding(1) var<storage, read> lights: array<Light>;",
+    "@group(0) @binding(2) var<uniform> fog: FogUniforms;",
+    "@group(0) @binding(3) var<uniform> env: EnvUniforms;",
+    "@group(0) @binding(4) var shadowMap0: texture_depth_2d;",
+    "@group(0) @binding(5) var shadowSampler0: sampler_comparison;",
+    "@group(0) @binding(6) var shadowMap1: texture_depth_2d;",
+    "@group(0) @binding(7) var shadowSampler1: sampler_comparison;",
+    "@group(0) @binding(8) var<uniform> shadow: ShadowUniforms;",
+    "",
+    "// Group 1: per-material",
+    "@group(1) @binding(0) var<uniform> material: MaterialUniforms;",
+    "@group(1) @binding(1) var albedoTex: texture_2d<f32>;",
+    "@group(1) @binding(2) var albedoSamp: sampler;",
+    "@group(1) @binding(3) var normalTex: texture_2d<f32>;",
+    "@group(1) @binding(4) var normalSamp: sampler;",
+    "@group(1) @binding(5) var roughnessTex: texture_2d<f32>;",
+    "@group(1) @binding(6) var roughnessSamp: sampler;",
+    "@group(1) @binding(7) var metalnessTex: texture_2d<f32>;",
+    "@group(1) @binding(8) var metalnessSamp: sampler;",
+    "@group(1) @binding(9) var emissiveTex: texture_2d<f32>;",
+    "@group(1) @binding(10) var emissiveSamp: sampler;",
+    "",
+    "// 4-tap Poisson disk PCF shadow sampling.",
+    "fn shadowFactor(lightSpaceMatrix: mat4x4f, bias: f32, useShadow0: bool) -> f32 {",
+    "    let lightSpacePos = lightSpaceMatrix * vec4f(fragWorldPos, 1.0);",
+    "    let projCoords3 = lightSpacePos.xyz / lightSpacePos.w;",
+    "    let projCoords = projCoords3 * 0.5 + 0.5;",
+    "",
+    "    if (projCoords.z > 1.0) { return 1.0; }",
+    "",
+    "    let poissonDisk = array<vec2f, 4>(",
+    "        vec2f(-0.94201624, -0.39906216),",
+    "        vec2f(0.94558609, -0.76890725),",
+    "        vec2f(-0.094184101, -0.92938870),",
+    "        vec2f(0.34495938, 0.29387760),",
+    "    );",
+    "",
+    "    var shadowVal: f32 = 0.0;",
+    "    var texDim: vec2u;",
+    "    if (useShadow0) {",
+    "        texDim = textureDimensions(shadowMap0);",
+    "    } else {",
+    "        texDim = textureDimensions(shadowMap1);",
+    "    }",
+    "    let texelSize = 1.0 / f32(texDim.x);",
+    "",
+    "    for (var i = 0u; i < 4u; i = i + 1u) {",
+    "        let sampleUV = projCoords.xy + poissonDisk[i] * texelSize;",
+    "        let refDepth = projCoords.z - bias;",
+    "        var tapShadow: f32;",
+    "        if (useShadow0) {",
+    "            tapShadow = textureSampleCompare(shadowMap0, shadowSampler0, sampleUV, refDepth);",
+    "        } else {",
+    "            tapShadow = textureSampleCompare(shadowMap1, shadowSampler1, sampleUV, refDepth);",
+    "        }",
+    "        shadowVal = shadowVal + tapShadow;",
+    "    }",
+    "    return shadowVal / 4.0;",
+    "}",
+    "",
+    "// GGX/Trowbridge-Reitz normal distribution function.",
+    "fn distributionGGX(N: vec3f, H: vec3f, roughness: f32) -> f32 {",
+    "    let a = roughness * roughness;",
+    "    let a2 = a * a;",
+    "    let NdotH = max(dot(N, H), 0.0);",
+    "    let NdotH2 = NdotH * NdotH;",
+    "    let denom = NdotH2 * (a2 - 1.0) + 1.0;",
+    "    return a2 / max(PI * denom * denom, 0.0000001);",
+    "}",
+    "",
+    "// Smith geometry function (GGX variant) -- single direction.",
+    "fn geometrySchlickGGX(NdotV: f32, roughness: f32) -> f32 {",
+    "    let r = roughness + 1.0;",
+    "    let k = (r * r) / 8.0;",
+    "    return NdotV / (NdotV * (1.0 - k) + k);",
+    "}",
+    "",
+    "// Smith geometry function -- combined for view and light directions.",
+    "fn geometrySmith(N: vec3f, V: vec3f, L: vec3f, roughness: f32) -> f32 {",
+    "    let NdotV = max(dot(N, V), 0.0);",
+    "    let NdotL = max(dot(N, L), 0.0);",
+    "    return geometrySchlickGGX(NdotV, roughness) * geometrySchlickGGX(NdotL, roughness);",
+    "}",
+    "",
+    "// Schlick fresnel approximation.",
+    "fn fresnelSchlick(cosTheta: f32, F0: vec3f) -> vec3f {",
+    "    return F0 + (1.0 - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);",
+    "}",
+    "",
+    "// Point light distance attenuation.",
+    "fn pointLightAttenuation(distance: f32, range: f32, decay: f32) -> f32 {",
+    "    if (range > 0.0) {",
+    "        let ratio = clamp(1.0 - pow(distance / range, 4.0), 0.0, 1.0);",
+    "        return ratio * ratio / max(distance * distance, 0.0001);",
+    "    }",
+    "    return 1.0 / max(pow(distance, decay), 0.0001);",
+    "}",
+    "",
+    "// Module-scope variable for world position (used by shadowFactor).",
+    "var<private> fragWorldPos: vec3f;",
+    "",
+    "@fragment fn fragmentMain(in: VertexOutput) -> @location(0) vec4f {",
+    "    fragWorldPos = in.worldPos;",
+    "",
+    "    // Resolve material properties, sampling textures when available.",
+    "    var albedo = material.albedo;",
+    "    if (material.hasAlbedoMap != 0u) {",
+    "        let texAlbedo = textureSample(albedoTex, albedoSamp, in.uv);",
+    "        albedo = albedo * texAlbedo.rgb;",
+    "    }",
+    "",
+    "    var roughness = material.roughness;",
+    "    if (material.hasRoughnessMap != 0u) {",
+    "        roughness = roughness * textureSample(roughnessTex, roughnessSamp, in.uv).g;",
+    "    }",
+    "    roughness = clamp(roughness, 0.04, 1.0);",
+    "",
+    "    var metalness = material.metalness;",
+    "    if (material.hasMetalnessMap != 0u) {",
+    "        metalness = metalness * textureSample(metalnessTex, metalnessSamp, in.uv).b;",
+    "    }",
+    "    metalness = clamp(metalness, 0.0, 1.0);",
+    "",
+    "    var emissiveStrength = material.emissive;",
+    "    var emissiveColor = albedo;",
+    "    if (material.hasEmissiveMap != 0u) {",
+    "        emissiveColor = textureSample(emissiveTex, emissiveSamp, in.uv).rgb;",
+    "    }",
+    "",
+    "    // Unlit path: output albedo directly.",
+    "    if (material.unlit != 0u) {",
+    "        let color = albedo + emissiveColor * emissiveStrength;",
+    "        return vec4f(color, material.opacity);",
+    "    }",
+    "",
+    "    // Resolve per-pixel normal via TBN matrix.",
+    "    var N = normalize(in.normal);",
+    "    if (material.hasNormalMap != 0u) {",
+    "        let T = normalize(in.tangent);",
+    "        let B = normalize(in.bitangent);",
+    "        let TBN = mat3x3f(T, B, N);",
+    "        let mapNormal = textureSample(normalTex, normalSamp, in.uv).rgb * 2.0 - 1.0;",
+    "        N = normalize(TBN * mapNormal);",
+    "    }",
+    "",
+    "    let V = normalize(frame.cameraPos - in.worldPos);",
+    "",
+    "    // Fresnel reflectance at normal incidence.",
+    "    let F0 = mix(vec3f(0.04), albedo, metalness);",
+    "",
+    "    // Accumulate direct lighting.",
+    "    var Lo = vec3f(0.0);",
+    "",
+    "    let lightCount = min(frame.lightCount, MAX_LIGHTS);",
+    "    for (var i = 0u; i < lightCount; i = i + 1u) {",
+    "        let light = lights[i];",
+    "        let lightType = u32(light.position.w);",
+    "        let lightColor = light.color.rgb;",
+    "        let intensity = light.direction.w;",
+    "        let range = light.color.a;",
+    "        let decay = light.params.x;",
+    "",
+    "        // Ambient light (type 0): add flat contribution, no BRDF.",
+    "        if (lightType == 0u) {",
+    "            Lo = Lo + albedo * lightColor * intensity;",
+    "            continue;",
+    "        }",
+    "",
+    "        var L: vec3f;",
+    "        var attenuation: f32 = 1.0;",
+    "",
+    "        if (lightType == 1u) {",
+    "            // Directional light.",
+    "            L = normalize(-light.direction.xyz);",
+    "        } else {",
+    "            // Point light.",
+    "            let toLight = light.position.xyz - in.worldPos;",
+    "            let dist = length(toLight);",
+    "            L = toLight / max(dist, 0.0001);",
+    "            attenuation = pointLightAttenuation(dist, range, decay);",
+    "        }",
+    "",
+    "        let H = normalize(V + L);",
+    "        let NdotL = max(dot(N, L), 0.0);",
+    "",
+    "        // Cook-Torrance specular BRDF.",
+    "        let D = distributionGGX(N, H, roughness);",
+    "        let G = geometrySmith(N, V, L, roughness);",
+    "        let F = fresnelSchlick(max(dot(H, V), 0.0), F0);",
+    "",
+    "        let numerator = D * G * F;",
+    "        let denominator = 4.0 * max(dot(N, V), 0.0) * NdotL + 0.0001;",
+    "        let specular = numerator / denominator;",
+    "",
+    "        // Energy conservation: diffuse complement of specular.",
+    "        let kD = (vec3f(1.0) - F) * (1.0 - metalness);",
+    "",
+    "        // Shadow attenuation for directional lights.",
+    "        var shadowAtten: f32 = 1.0;",
+    "        if (material.receiveShadow != 0u && lightType == 1u) {",
+    "            if (shadow.hasShadow0 != 0u && i32(i) == shadow.shadowLightIndex0) {",
+    "                shadowAtten = shadowFactor(shadow.lightSpaceMatrix0, shadow.shadowBias0, true);",
+    "            } else if (shadow.hasShadow1 != 0u && i32(i) == shadow.shadowLightIndex1) {",
+    "                shadowAtten = shadowFactor(shadow.lightSpaceMatrix1, shadow.shadowBias1, false);",
+    "            }",
+    "        }",
+    "",
+    "        let radiance = lightColor * intensity * attenuation;",
+    "        Lo = Lo + (kD * albedo / PI + specular) * radiance * NdotL * shadowAtten;",
+    "    }",
+    "",
+    "    // Environment hemisphere lighting.",
+    "    let hemi = N.y * 0.5 + 0.5;",
+    "    let envDiffuse = env.ambientColor * env.ambientIntensity",
+    "                   + env.skyColor * env.skyIntensity * hemi",
+    "                   + env.groundColor * env.groundIntensity * (1.0 - hemi);",
+    "    let ambient = envDiffuse * albedo;",
+    "",
+    "    // Emissive contribution.",
+    "    let emission = emissiveColor * emissiveStrength;",
+    "",
+    "    var color = ambient + Lo + emission;",
+    "",
+    "    // Exponential fog.",
+    "    if (fog.hasFog != 0u) {",
+    "        let fogDist = length(in.worldPos - frame.cameraPos);",
+    "        let fogFactor = exp(-fog.fogDensity * fog.fogDensity * fogDist * fogDist);",
+    "        color = mix(fog.fogColor, color, clamp(fogFactor, 0.0, 1.0));",
+    "    }",
+    "",
+    "    // Tone mapping (Reinhard) and gamma correction.",
+    "    if (frame.toneMap != 0u) {",
+    "        color = color / (color + vec3f(1.0));",
+    "        color = pow(color, vec3f(1.0 / 2.2));",
+    "    }",
+    "",
+    "    return vec4f(color, material.opacity);",
+    "}",
+  ].join("\n");
+
+  var WGSL_SHADOW_VERTEX = [
+    "struct ShadowFrameUniforms {",
+    "    lightViewProjection: mat4x4f,",
+    "};",
+    "",
+    "@group(0) @binding(0) var<uniform> shadowFrame: ShadowFrameUniforms;",
+    "",
+    "@vertex fn vertexMain(@location(0) position: vec3f) -> @builtin(position) vec4f {",
+    "    return shadowFrame.lightViewProjection * vec4f(position, 1.0);",
+    "}",
+  ].join("\n");
+
+  var WGSL_SHADOW_FRAGMENT = [
+    "@fragment fn fragmentMain() {}",
+  ].join("\n");
+
+  var WGSL_POINTS_VERTEX = [
+    WGSL_FRAME_STRUCTS,
+    "",
+    "struct ParticleInstance {",
+    "    position: vec3f,",
+    "    size: f32,",
+    "    color: vec4f,",
+    "};",
+    "",
+    "struct PointsUniforms {",
+    "    modelMatrix: mat4x4f,",
+    "    defaultSize: f32,",
+    "    defaultColor: vec3f,",
+    "    hasPerVertexColor: u32,",
+    "    hasPerVertexSize: u32,",
+    "    sizeAttenuation: u32,",
+    "    pointStyle: u32,",
+    "    opacity: f32,",
+    "    hasFog: u32,",
+    "    fogDensity: f32,",
+    "    fogColor: vec3f,",
+    "};",
+    "",
+    "struct PointsOutput {",
+    "    @builtin(position) clipPos: vec4f,",
+    "    @location(0) color: vec3f,",
+    "    @location(1) fogFactor: f32,",
+    "    @location(2) alpha: f32,",
+    "    @location(3) pointCoord: vec2f,",
+    "    @location(4) pointSize: f32,",
+    "};",
+    "",
+    "@group(0) @binding(0) var<uniform> frame: FrameUniforms;",
+    "@group(2) @binding(0) var<uniform> points: PointsUniforms;",
+    "@group(2) @binding(1) var<storage, read> particles: array<ParticleInstance>;",
+    "",
+    "// Unit quad: 6 vertices for 2 triangles.",
+    "const quadPos = array<vec2f, 6>(",
+    "    vec2f(-0.5, -0.5), vec2f(0.5, -0.5), vec2f(-0.5, 0.5),",
+    "    vec2f(0.5, -0.5), vec2f(0.5, 0.5), vec2f(-0.5, 0.5),",
+    ");",
+    "",
+    "@vertex fn vertexMain(",
+    "    @builtin(vertex_index) vertexIndex: u32,",
+    "    @builtin(instance_index) instanceIndex: u32,",
+    ") -> PointsOutput {",
+    "    let quad = quadPos[vertexIndex];",
+    "    let p = particles[instanceIndex];",
+    "",
+    "    let worldPos = (points.modelMatrix * vec4f(p.position, 1.0)).xyz;",
+    "    let viewPos = frame.viewMatrix * vec4f(worldPos, 1.0);",
+    "",
+    "    // Compute point size with optional attenuation.",
+    "    var rawSize = p.size;",
+    "    if (points.hasPerVertexSize == 0u) { rawSize = points.defaultSize; }",
+    "",
+    "    var pixelSize: f32;",
+    "    if (points.sizeAttenuation != 0u) {",
+    "        pixelSize = max(rawSize * (frame.viewportHeight * 0.5) / max(-viewPos.z, 0.001), 1.0);",
+    "    } else {",
+    "        pixelSize = max(rawSize, 1.0);",
+    "    }",
+    "",
+    "    // Billboard: offset in clip space by quad * pixelSize.",
+    "    let clipPos = frame.projMatrix * viewPos;",
+    "    let ndcOffsetX = quad.x * pixelSize / frame.viewportWidth * clipPos.w * 2.0;",
+    "    let ndcOffsetY = quad.y * pixelSize / frame.viewportHeight * clipPos.w * 2.0;",
+    "",
+    "    var out: PointsOutput;",
+    "    out.clipPos = vec4f(clipPos.x + ndcOffsetX, clipPos.y + ndcOffsetY, clipPos.z, clipPos.w);",
+    "",
+    "    // Color.",
+    "    if (points.hasPerVertexColor != 0u) {",
+    "        out.color = p.color.rgb;",
+    "    } else {",
+    "        out.color = points.defaultColor;",
+    "    }",
+    "    out.alpha = p.color.a * points.opacity;",
+    "    out.pointCoord = quad + vec2f(0.5, 0.5);",
+    "    out.pointSize = pixelSize;",
+    "",
+    "    // Fog.",
+    "    if (points.hasFog != 0u) {",
+    "        let dist = length(viewPos.xyz);",
+    "        out.fogFactor = clamp(exp(-points.fogDensity * points.fogDensity * dist * dist), 0.0, 1.0);",
+    "    } else {",
+    "        out.fogFactor = 1.0;",
+    "    }",
+    "",
+    "    return out;",
+    "}",
+  ].join("\n");
+
+  var WGSL_POINTS_FRAGMENT = [
+    "struct PointsUniforms {",
+    "    modelMatrix: mat4x4f,",
+    "    defaultSize: f32,",
+    "    defaultColor: vec3f,",
+    "    hasPerVertexColor: u32,",
+    "    hasPerVertexSize: u32,",
+    "    sizeAttenuation: u32,",
+    "    pointStyle: u32,",
+    "    opacity: f32,",
+    "    hasFog: u32,",
+    "    fogDensity: f32,",
+    "    fogColor: vec3f,",
+    "};",
+    "",
+    "@group(2) @binding(0) var<uniform> points: PointsUniforms;",
+    "",
+    "struct PointsInput {",
+    "    @location(0) color: vec3f,",
+    "    @location(1) fogFactor: f32,",
+    "    @location(2) alpha: f32,",
+    "    @location(3) pointCoord: vec2f,",
+    "    @location(4) pointSize: f32,",
+    "};",
+    "",
+    "@fragment fn fragmentMain(in: PointsInput) -> @location(0) vec4f {",
+    "    var color = in.color;",
+    "    var alpha = in.alpha;",
+    "    if (points.pointStyle == 1u) {",
+    "        let centered = in.pointCoord - vec2f(0.5, 0.5);",
+    "        let radial = length(centered);",
+    "        let square = max(abs(centered.x), abs(centered.y));",
+    "        let focus = clamp((in.pointSize - 1.0) / 10.0, 0.0, 1.0);",
+    "        let coreRadius = mix(0.49, 0.18, focus);",
+    "        let core = 1.0 - smoothstep(coreRadius, coreRadius + 0.05, square);",
+    "        let halo = (1.0 - smoothstep(0.12, 0.72, radial)) * focus;",
+    "        let streakX = 1.0 - smoothstep(0.02, 0.16, abs(centered.x));",
+    "        let streakY = 1.0 - smoothstep(0.02, 0.16, abs(centered.y));",
+    "        let streak = max(streakX, streakY) * focus;",
+    "        alpha = clamp(core + halo * 0.5 + streak * 0.2, 0.0, 1.0) * in.alpha;",
+    "        color = mix(color, vec3f(1.0, 1.0, 1.0), clamp(focus * 0.22 + core * focus * 0.28, 0.0, 0.4));",
+    "    }",
+    "    if (points.hasFog != 0u) {",
+    "        color = mix(points.fogColor, color, in.fogFactor);",
+    "    }",
+    "    return vec4f(color, alpha);",
+    "}",
+  ].join("\n");
+
+  var WGSL_POST_VERTEX = [
+    "struct VertexOutput {",
+    "    @builtin(position) position: vec4f,",
+    "    @location(0) uv: vec2f,",
+    "};",
+    "",
+    "const positions = array<vec2f, 4>(",
+    "    vec2f(-1.0, -1.0),",
+    "    vec2f( 1.0, -1.0),",
+    "    vec2f(-1.0,  1.0),",
+    "    vec2f( 1.0,  1.0),",
+    ");",
+    "const uvs = array<vec2f, 4>(",
+    "    vec2f(0.0, 1.0),",
+    "    vec2f(1.0, 1.0),",
+    "    vec2f(0.0, 0.0),",
+    "    vec2f(1.0, 0.0),",
+    ");",
+    "",
+    "@vertex fn vertexMain(@builtin(vertex_index) vi: u32) -> VertexOutput {",
+    "    var out: VertexOutput;",
+    "    out.position = vec4f(positions[vi], 0.0, 1.0);",
+    "    out.uv = uvs[vi];",
+    "    return out;",
+    "}",
+  ].join("\n");
+
+  var WGSL_POST_BLIT_FRAGMENT = [
+    "@group(0) @binding(0) var inputTex: texture_2d<f32>;",
+    "@group(0) @binding(1) var inputSamp: sampler;",
+    "",
+    "@fragment fn fragmentMain(@location(0) uv: vec2f) -> @location(0) vec4f {",
+    "    return textureSample(inputTex, inputSamp, uv);",
+    "}",
+  ].join("\n");
+
+  var WGSL_POST_TONEMAPPING_FRAGMENT = [
+    "struct ToneMappingParams {",
+    "    exposure: f32,",
+    "    _pad0: f32,",
+    "    _pad1: f32,",
+    "    _pad2: f32,",
+    "};",
+    "",
+    "@group(0) @binding(0) var inputTex: texture_2d<f32>;",
+    "@group(0) @binding(1) var inputSamp: sampler;",
+    "@group(0) @binding(2) var<uniform> params: ToneMappingParams;",
+    "",
+    "fn aces(x: vec3f) -> vec3f {",
+    "    let a = 2.51;",
+    "    let b = 0.03;",
+    "    let c = 2.43;",
+    "    let d = 0.59;",
+    "    let e = 0.14;",
+    "    return clamp((x * (a * x + b)) / (x * (c * x + d) + e), vec3f(0.0), vec3f(1.0));",
+    "}",
+    "",
+    "@fragment fn fragmentMain(@location(0) uv: vec2f) -> @location(0) vec4f {",
+    "    var color = textureSample(inputTex, inputSamp, uv).rgb;",
+    "    color = color * params.exposure;",
+    "    color = aces(color);",
+    "    return vec4f(color, 1.0);",
+    "}",
+  ].join("\n");
+
+  var WGSL_POST_BLOOM_BRIGHT_FRAGMENT = [
+    "struct BloomBrightParams {",
+    "    threshold: f32,",
+    "    _pad0: f32,",
+    "    _pad1: f32,",
+    "    _pad2: f32,",
+    "};",
+    "",
+    "@group(0) @binding(0) var inputTex: texture_2d<f32>;",
+    "@group(0) @binding(1) var inputSamp: sampler;",
+    "@group(0) @binding(2) var<uniform> params: BloomBrightParams;",
+    "",
+    "@fragment fn fragmentMain(@location(0) uv: vec2f) -> @location(0) vec4f {",
+    "    let color = textureSample(inputTex, inputSamp, uv).rgb;",
+    "    let brightness = dot(color, vec3f(0.2126, 0.7152, 0.0722));",
+    "    if (brightness > params.threshold) {",
+    "        return vec4f(color, 1.0);",
+    "    }",
+    "    return vec4f(0.0, 0.0, 0.0, 1.0);",
+    "}",
+  ].join("\n");
+
+  var WGSL_POST_BLUR_FRAGMENT = [
+    "struct BlurParams {",
+    "    direction: vec2f,",
+    "    radius: f32,",
+    "    _pad0: f32,",
+    "};",
+    "",
+    "@group(0) @binding(0) var inputTex: texture_2d<f32>;",
+    "@group(0) @binding(1) var inputSamp: sampler;",
+    "@group(0) @binding(2) var<uniform> params: BlurParams;",
+    "",
+    "@fragment fn fragmentMain(@location(0) uv: vec2f) -> @location(0) vec4f {",
+    "    let texDim = vec2f(textureDimensions(inputTex));",
+    "    let texelSize = 1.0 / texDim;",
+    "    var result = textureSample(inputTex, inputSamp, uv).rgb * 0.227027;",
+    "",
+    "    let offsets = array<f32, 4>(1.0, 2.0, 3.0, 4.0);",
+    "    let weights = array<f32, 4>(0.1945946, 0.1216216, 0.054054, 0.016216);",
+    "",
+    "    for (var i = 0u; i < 4u; i = i + 1u) {",
+    "        let offset = params.direction * texelSize * offsets[i] * params.radius;",
+    "        result = result + textureSample(inputTex, inputSamp, uv + offset).rgb * weights[i];",
+    "        result = result + textureSample(inputTex, inputSamp, uv - offset).rgb * weights[i];",
+    "    }",
+    "    return vec4f(result, 1.0);",
+    "}",
+  ].join("\n");
+
+  var WGSL_POST_BLOOM_COMPOSITE_FRAGMENT = [
+    "struct BloomCompositeParams {",
+    "    intensity: f32,",
+    "    _pad0: f32,",
+    "    _pad1: f32,",
+    "    _pad2: f32,",
+    "};",
+    "",
+    "@group(0) @binding(0) var sceneTex: texture_2d<f32>;",
+    "@group(0) @binding(1) var sceneSamp: sampler;",
+    "@group(0) @binding(2) var bloomTex: texture_2d<f32>;",
+    "@group(0) @binding(3) var bloomSamp: sampler;",
+    "@group(0) @binding(4) var<uniform> params: BloomCompositeParams;",
+    "",
+    "@fragment fn fragmentMain(@location(0) uv: vec2f) -> @location(0) vec4f {",
+    "    let scene = textureSample(sceneTex, sceneSamp, uv).rgb;",
+    "    let bloom = textureSample(bloomTex, bloomSamp, uv).rgb;",
+    "    return vec4f(scene + bloom * params.intensity, 1.0);",
+    "}",
+  ].join("\n");
+
+  var WGSL_POST_VIGNETTE_FRAGMENT = [
+    "struct VignetteParams {",
+    "    intensity: f32,",
+    "    _pad0: f32,",
+    "    _pad1: f32,",
+    "    _pad2: f32,",
+    "};",
+    "",
+    "@group(0) @binding(0) var inputTex: texture_2d<f32>;",
+    "@group(0) @binding(1) var inputSamp: sampler;",
+    "@group(0) @binding(2) var<uniform> params: VignetteParams;",
+    "",
+    "@fragment fn fragmentMain(@location(0) uv: vec2f) -> @location(0) vec4f {",
+    "    let color = textureSample(inputTex, inputSamp, uv).rgb;",
+    "    let center = uv - 0.5;",
+    "    let dist = length(center);",
+    "    let vignette = 1.0 - smoothstep(0.3, 0.7, dist * params.intensity);",
+    "    return vec4f(color * vignette, 1.0);",
+    "}",
+  ].join("\n");
+
+  var WGSL_POST_COLORGRADE_FRAGMENT = [
+    "struct ColorGradeParams {",
+    "    exposure: f32,",
+    "    contrast: f32,",
+    "    saturation: f32,",
+    "    _pad0: f32,",
+    "};",
+    "",
+    "@group(0) @binding(0) var inputTex: texture_2d<f32>;",
+    "@group(0) @binding(1) var inputSamp: sampler;",
+    "@group(0) @binding(2) var<uniform> params: ColorGradeParams;",
+    "",
+    "@fragment fn fragmentMain(@location(0) uv: vec2f) -> @location(0) vec4f {",
+    "    var color = textureSample(inputTex, inputSamp, uv).rgb;",
+    "    color = color * params.exposure;",
+    "    color = mix(vec3f(0.5), color, params.contrast);",
+    "    let gray = dot(color, vec3f(0.2126, 0.7152, 0.0722));",
+    "    color = mix(vec3f(gray), color, params.saturation);",
+    "    return vec4f(clamp(color, vec3f(0.0), vec3f(1.0)), 1.0);",
+    "}",
+  ].join("\n");
+
+  function wgpuAlignUp(size, alignment) {
+    return Math.ceil(size / alignment) * alignment;
+  }
+
+  function wgpuCreateBuffer(device, usage, dataOrSize) {
+    var size;
+    var mappedAtCreation = false;
+    if (typeof dataOrSize === "number") {
+      size = wgpuAlignUp(Math.max(dataOrSize, 4), 4);
+    } else {
+      size = wgpuAlignUp(Math.max(dataOrSize.byteLength, 4), 4);
+      mappedAtCreation = true;
+    }
+    var buffer = device.createBuffer({
+      size: size,
+      usage: usage,
+      mappedAtCreation: mappedAtCreation,
+    });
+    if (mappedAtCreation) {
+      new dataOrSize.constructor(buffer.getMappedRange()).set(dataOrSize);
+      buffer.unmap();
+    }
+    return buffer;
+  }
+
+  function wgpuEnsureBufferData(device, existingBuffer, usage, data) {
+    var needed = wgpuAlignUp(Math.max(data.byteLength, 4), 4);
+    if (existingBuffer && existingBuffer.size >= needed) {
+      device.queue.writeBuffer(existingBuffer, 0, data);
+      return existingBuffer;
+    }
+    if (existingBuffer) existingBuffer.destroy();
+    return wgpuCreateBuffer(device, usage, data);
+  }
+
+  function wgpuPipelineKey(shaderVariant, blendMode, depthWrite, targetFormat, depthFormat) {
+    return shaderVariant + "|" + blendMode + "|" + (depthWrite ? "1" : "0") + "|" + targetFormat + "|" + (depthFormat || "");
+  }
+
+  function wgpuLoadTexture(device, url, cache) {
+    if (!cache) return null;
+    var key = typeof url === "string" ? url.trim() : "";
+    if (!key) return null;
+    if (cache.has(key)) return cache.get(key);
+
+    var placeholderTex = device.createTexture({
+      size: [1, 1, 1],
+      format: "rgba8unorm",
+      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT,
+    });
+    device.queue.writeTexture(
+      { texture: placeholderTex },
+      new Uint8Array([255, 255, 255, 255]),
+      { bytesPerRow: 4 },
+      [1, 1, 1]
+    );
+
+    var record = { texture: placeholderTex, view: placeholderTex.createView(), src: key, loaded: false, failed: false };
+    cache.set(key, record);
+
+    if (typeof Image === "function") {
+      var image = new Image();
+      image.onload = function() {
+        var w = image.width;
+        var h = image.height;
+        var tex = device.createTexture({
+          size: [w, h, 1],
+          format: "rgba8unorm",
+          usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT,
+        });
+        if (typeof createImageBitmap === "function") {
+          createImageBitmap(image).then(function(bitmap) {
+            device.queue.copyExternalImageToTexture(
+              { source: bitmap },
+              { texture: tex },
+              [w, h]
+            );
+            record.texture.destroy();
+            record.texture = tex;
+            record.view = tex.createView();
+            record.loaded = true;
+          }).catch(function() {
+            record.failed = true;
+          });
+        } else {
+          record.failed = true;
+        }
+      };
+      image.onerror = function() {
+        record.failed = true;
+      };
+      image.crossOrigin = "anonymous";
+      image.src = key;
+    }
+
+    return record;
+  }
+
+  function wgpuCreateFrameBindGroupLayout(device) {
+    return device.createBindGroupLayout({
+      label: "gosx-frame",
+      entries: [
+        { binding: 0, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: { type: "uniform" } },
+        { binding: 1, visibility: GPUShaderStage.FRAGMENT, buffer: { type: "read-only-storage" } },
+        { binding: 2, visibility: GPUShaderStage.FRAGMENT, buffer: { type: "uniform" } },
+        { binding: 3, visibility: GPUShaderStage.FRAGMENT, buffer: { type: "uniform" } },
+        { binding: 4, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "depth" } },
+        { binding: 5, visibility: GPUShaderStage.FRAGMENT, sampler: { type: "comparison" } },
+        { binding: 6, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "depth" } },
+        { binding: 7, visibility: GPUShaderStage.FRAGMENT, sampler: { type: "comparison" } },
+        { binding: 8, visibility: GPUShaderStage.FRAGMENT, buffer: { type: "uniform" } },
+      ],
+    });
+  }
+
+  function wgpuCreateMaterialBindGroupLayout(device) {
+    return device.createBindGroupLayout({
+      label: "gosx-material",
+      entries: [
+        { binding: 0, visibility: GPUShaderStage.FRAGMENT, buffer: { type: "uniform" } },
+        { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "float" } },
+        { binding: 2, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
+        { binding: 3, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "float" } },
+        { binding: 4, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
+        { binding: 5, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "float" } },
+        { binding: 6, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
+        { binding: 7, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "float" } },
+        { binding: 8, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
+        { binding: 9, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "float" } },
+        { binding: 10, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
+      ],
+    });
+  }
+
+  function wgpuCreatePointsBindGroupLayout(device) {
+    return device.createBindGroupLayout({
+      label: "gosx-points",
+      entries: [
+        { binding: 0, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: { type: "uniform" } },
+        { binding: 1, visibility: GPUShaderStage.VERTEX, buffer: { type: "read-only-storage" } },
+      ],
+    });
+  }
+
+  function wgpuCreateShadowBindGroupLayout(device) {
+    return device.createBindGroupLayout({
+      label: "gosx-shadow-frame",
+      entries: [
+        { binding: 0, visibility: GPUShaderStage.VERTEX, buffer: { type: "uniform" } },
+      ],
+    });
+  }
+
+  function wgpuCreatePostBindGroupLayout(device) {
+    return device.createBindGroupLayout({
+      label: "gosx-post",
+      entries: [
+        { binding: 0, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "float" } },
+        { binding: 1, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
+      ],
+    });
+  }
+
+  function wgpuCreatePostWithParamsBindGroupLayout(device) {
+    return device.createBindGroupLayout({
+      label: "gosx-post-params",
+      entries: [
+        { binding: 0, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "float" } },
+        { binding: 1, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
+        { binding: 2, visibility: GPUShaderStage.FRAGMENT, buffer: { type: "uniform" } },
+      ],
+    });
+  }
+
+  function wgpuCreateBloomCompositeBindGroupLayout(device) {
+    return device.createBindGroupLayout({
+      label: "gosx-bloom-composite",
+      entries: [
+        { binding: 0, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "float" } },
+        { binding: 1, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
+        { binding: 2, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "float" } },
+        { binding: 3, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
+        { binding: 4, visibility: GPUShaderStage.FRAGMENT, buffer: { type: "uniform" } },
+      ],
+    });
+  }
+
+  var WGPU_PBR_VERTEX_LAYOUT = [
+    { arrayStride: 12, stepMode: "vertex", attributes: [{ format: "float32x3", offset: 0, shaderLocation: 0 }] },
+    { arrayStride: 12, stepMode: "vertex", attributes: [{ format: "float32x3", offset: 0, shaderLocation: 1 }] },
+    { arrayStride: 8,  stepMode: "vertex", attributes: [{ format: "float32x2", offset: 0, shaderLocation: 2 }] },
+    { arrayStride: 16, stepMode: "vertex", attributes: [{ format: "float32x4", offset: 0, shaderLocation: 3 }] },
+  ];
+
+  var WGPU_SHADOW_VERTEX_LAYOUT = [
+    { arrayStride: 12, stepMode: "vertex", attributes: [{ format: "float32x3", offset: 0, shaderLocation: 0 }] },
+  ];
+
+  function wgpuBlendState(mode) {
+    if (mode === "alpha") {
+      return {
+        color: { srcFactor: "src-alpha", dstFactor: "one-minus-src-alpha", operation: "add" },
+        alpha: { srcFactor: "one", dstFactor: "one-minus-src-alpha", operation: "add" },
+      };
+    }
+    if (mode === "additive") {
+      return {
+        color: { srcFactor: "src-alpha", dstFactor: "one", operation: "add" },
+        alpha: { srcFactor: "one", dstFactor: "one", operation: "add" },
+      };
+    }
+    return undefined; // opaque -- no blending
+  }
+
+  function wgpuCreatePBRPipeline(device, pipelineLayout, vertexModule, fragmentModule, blendMode, depthWrite, targetFormat) {
+    return device.createRenderPipeline({
+      label: "gosx-pbr-" + blendMode,
+      layout: pipelineLayout,
+      vertex: {
+        module: vertexModule,
+        entryPoint: "vertexMain",
+        buffers: WGPU_PBR_VERTEX_LAYOUT,
+      },
+      fragment: {
+        module: fragmentModule,
+        entryPoint: "fragmentMain",
+        targets: [{
+          format: targetFormat,
+          blend: wgpuBlendState(blendMode),
+        }],
+      },
+      primitive: { topology: "triangle-list", cullMode: "back" },
+      depthStencil: {
+        format: "depth24plus",
+        depthWriteEnabled: depthWrite,
+        depthCompare: "less-equal",
+      },
+    });
+  }
+
+  function wgpuCreateShadowPipeline(device, shadowLayout, vertexModule) {
+    return device.createRenderPipeline({
+      label: "gosx-shadow",
+      layout: device.createPipelineLayout({ bindGroupLayouts: [shadowLayout] }),
+      vertex: {
+        module: vertexModule,
+        entryPoint: "vertexMain",
+        buffers: WGPU_SHADOW_VERTEX_LAYOUT,
+      },
+      primitive: { topology: "triangle-list", cullMode: "front" },
+      depthStencil: {
+        format: "depth24plus",
+        depthWriteEnabled: true,
+        depthCompare: "less-equal",
+      },
+    });
+  }
+
+  function wgpuCreatePointsPipeline(device, pipelineLayout, vertexModule, fragmentModule, blendMode, depthWrite, targetFormat) {
+    return device.createRenderPipeline({
+      label: "gosx-points-" + blendMode,
+      layout: pipelineLayout,
+      vertex: {
+        module: vertexModule,
+        entryPoint: "vertexMain",
+        buffers: [],
+      },
+      fragment: {
+        module: fragmentModule,
+        entryPoint: "fragmentMain",
+        targets: [{
+          format: targetFormat,
+          blend: wgpuBlendState(blendMode),
+        }],
+      },
+      primitive: { topology: "triangle-list" },
+      depthStencil: {
+        format: "depth24plus",
+        depthWriteEnabled: depthWrite,
+        depthCompare: "less-equal",
+      },
+    });
+  }
+
+  function wgpuCreatePostPipeline(device, layout, fragmentModule, targetFormat) {
+    var vertModule = device.createShaderModule({ label: "post-vert", code: WGSL_POST_VERTEX });
+    return device.createRenderPipeline({
+      label: "gosx-post",
+      layout: layout,
+      vertex: {
+        module: vertModule,
+        entryPoint: "vertexMain",
+        buffers: [],
+      },
+      fragment: {
+        module: fragmentModule,
+        entryPoint: "fragmentMain",
+        targets: [{ format: targetFormat }],
+      },
+      primitive: { topology: "triangle-strip", stripIndexFormat: "uint32" },
+    });
+  }
+
+  function wgpuCreateShadowMap(device, size) {
+    var texture = device.createTexture({
+      size: [size, size, 1],
+      format: "depth24plus",
+      usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+    });
+    return { texture: texture, view: texture.createView(), size: size };
+  }
+
+  function wgpuCreatePostProcessor(device, targetFormat) {
+    var sceneTex = null;
+    var sceneTexView = null;
+    var auxTex = null;
+    var auxTexView = null;
+    var pingPongA = null;
+    var pingPongAView = null;
+    var pingPongB = null;
+    var pingPongBView = null;
+    var pingPongWidth = 0;
+    var pingPongHeight = 0;
+    var depthTex = null;
+    var depthTexView = null;
+    var currentWidth = 0;
+    var currentHeight = 0;
+
+    var linearSampler = device.createSampler({ magFilter: "linear", minFilter: "linear" });
+
+    var pipelines = {};
+    var postParamsLayout = null;
+    var bloomCompositeLayout = null;
+    var postBlitLayout = null;
+    var postParamBuffers = {};
+
+    function getPostParamsLayout() {
+      if (!postParamsLayout) postParamsLayout = wgpuCreatePostWithParamsBindGroupLayout(device);
+      return postParamsLayout;
+    }
+    function getBloomCompositeLayout() {
+      if (!bloomCompositeLayout) bloomCompositeLayout = wgpuCreateBloomCompositeBindGroupLayout(device);
+      return bloomCompositeLayout;
+    }
+    function getPostBlitLayout() {
+      if (!postBlitLayout) postBlitLayout = wgpuCreatePostBindGroupLayout(device);
+      return postBlitLayout;
+    }
+
+    function getPipeline(name, fragmentSource, layout) {
+      if (pipelines[name]) return pipelines[name];
+      var fragModule = device.createShaderModule({ label: "post-" + name, code: fragmentSource });
+      var pipelineLayout = device.createPipelineLayout({ bindGroupLayouts: [layout] });
+      var pipeline = wgpuCreatePostPipeline(device, pipelineLayout, fragModule, targetFormat);
+      pipelines[name] = pipeline;
+      return pipeline;
+    }
+
+    function getParamBuffer(name, byteSize) {
+      if (postParamBuffers[name] && postParamBuffers[name].size >= byteSize) {
+        return postParamBuffers[name];
+      }
+      if (postParamBuffers[name]) postParamBuffers[name].destroy();
+      postParamBuffers[name] = device.createBuffer({
+        size: wgpuAlignUp(byteSize, 16),
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+      });
+      return postParamBuffers[name];
+    }
+
+    function ensureFBOs(width, height) {
+      if (width === currentWidth && height === currentHeight && sceneTex) return;
+      if (sceneTex) sceneTex.destroy();
+      if (auxTex) auxTex.destroy();
+      if (depthTex) depthTex.destroy();
+
+      var texUsage = GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING;
+      sceneTex = device.createTexture({ size: [width, height, 1], format: targetFormat, usage: texUsage });
+      sceneTexView = sceneTex.createView();
+      auxTex = device.createTexture({ size: [width, height, 1], format: targetFormat, usage: texUsage });
+      auxTexView = auxTex.createView();
+      depthTex = device.createTexture({
+        size: [width, height, 1],
+        format: "depth24plus",
+        usage: GPUTextureUsage.RENDER_ATTACHMENT,
+      });
+      depthTexView = depthTex.createView();
+
+      currentWidth = width;
+      currentHeight = height;
+    }
+
+    function ensureBloomPingPong(w, h) {
+      if (w === pingPongWidth && h === pingPongHeight && pingPongA) return;
+      if (pingPongA) pingPongA.destroy();
+      if (pingPongB) pingPongB.destroy();
+      var texUsage = GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING;
+      pingPongA = device.createTexture({ size: [w, h, 1], format: targetFormat, usage: texUsage });
+      pingPongAView = pingPongA.createView();
+      pingPongB = device.createTexture({ size: [w, h, 1], format: targetFormat, usage: texUsage });
+      pingPongBView = pingPongB.createView();
+      pingPongWidth = w;
+      pingPongHeight = h;
+    }
+
+    function fullscreenPass(encoder, pipeline, bindGroup, targetView) {
+      var pass = encoder.beginRenderPass({
+        colorAttachments: [{
+          view: targetView,
+          loadOp: "clear",
+          storeOp: "store",
+          clearValue: { r: 0, g: 0, b: 0, a: 1 },
+        }],
+      });
+      pass.setPipeline(pipeline);
+      pass.setBindGroup(0, bindGroup);
+      pass.draw(4);
+      pass.end();
+    }
+
+    return {
+      getSceneTarget: function(width, height) {
+        ensureFBOs(width, height);
+        return { colorView: sceneTexView, depthView: depthTexView };
+      },
+
+      apply: function(encoder, effects, scaledW, scaledH, canvasW, canvasH, finalView) {
+        ensureFBOs(scaledW, scaledH);
+
+        var currentTexView = sceneTexView;
+        var blitPipeline = getPipeline("blit", WGSL_POST_BLIT_FRAGMENT, getPostBlitLayout());
+
+        for (var i = 0; i < effects.length; i++) {
+          var effect = effects[i];
+          var isLast = (i === effects.length - 1);
+          var outputView = isLast ? finalView : (currentTexView === sceneTexView ? auxTexView : sceneTexView);
+
+          switch (effect.kind) {
+            case SCENE_POST_TONE_MAPPING: {
+              var pipeline = getPipeline("toneMapping", WGSL_POST_TONEMAPPING_FRAGMENT, getPostParamsLayout());
+              var buf = getParamBuffer("toneMapping", 16);
+              device.queue.writeBuffer(buf, 0, new Float32Array([sceneNumber(effect.exposure, 1.0), 0, 0, 0]));
+              var bg = device.createBindGroup({
+                layout: getPostParamsLayout(),
+                entries: [
+                  { binding: 0, resource: currentTexView },
+                  { binding: 1, resource: linearSampler },
+                  { binding: 2, resource: { buffer: buf } },
+                ],
+              });
+              fullscreenPass(encoder, pipeline, bg, outputView);
+              currentTexView = outputView;
+              break;
+            }
+            case SCENE_POST_BLOOM: {
+              var bloomScale = (effect.scale > 0 && effect.scale <= 1) ? effect.scale : 0.5;
+              var halfW = Math.max(1, Math.floor(scaledW * bloomScale));
+              var halfH = Math.max(1, Math.floor(scaledH * bloomScale));
+              ensureBloomPingPong(halfW, halfH);
+              var threshold = sceneNumber(effect.threshold, 0.8);
+              var radius = sceneNumber(effect.radius, 5.0);
+              var intensity = sceneNumber(effect.intensity, 0.5);
+
+              var brightPipeline = getPipeline("bloomBright", WGSL_POST_BLOOM_BRIGHT_FRAGMENT, getPostParamsLayout());
+              var brightBuf = getParamBuffer("bloomBright", 16);
+              device.queue.writeBuffer(brightBuf, 0, new Float32Array([threshold, 0, 0, 0]));
+              var brightBG = device.createBindGroup({
+                layout: getPostParamsLayout(),
+                entries: [
+                  { binding: 0, resource: currentTexView },
+                  { binding: 1, resource: linearSampler },
+                  { binding: 2, resource: { buffer: brightBuf } },
+                ],
+              });
+              fullscreenPass(encoder, brightPipeline, brightBG, pingPongAView);
+
+              var blurPipeline = getPipeline("blur", WGSL_POST_BLUR_FRAGMENT, getPostParamsLayout());
+              var blurBuf = getParamBuffer("bloomBlurH", 16);
+              device.queue.writeBuffer(blurBuf, 0, new Float32Array([1.0, 0.0, radius, 0]));
+              var blurBGH = device.createBindGroup({
+                layout: getPostParamsLayout(),
+                entries: [
+                  { binding: 0, resource: pingPongAView },
+                  { binding: 1, resource: linearSampler },
+                  { binding: 2, resource: { buffer: blurBuf } },
+                ],
+              });
+              fullscreenPass(encoder, blurPipeline, blurBGH, pingPongBView);
+
+              var blurBufV = getParamBuffer("bloomBlurV", 16);
+              device.queue.writeBuffer(blurBufV, 0, new Float32Array([0.0, 1.0, radius, 0]));
+              var blurBGV = device.createBindGroup({
+                layout: getPostParamsLayout(),
+                entries: [
+                  { binding: 0, resource: pingPongBView },
+                  { binding: 1, resource: linearSampler },
+                  { binding: 2, resource: { buffer: blurBufV } },
+                ],
+              });
+              fullscreenPass(encoder, blurPipeline, blurBGV, pingPongAView);
+
+              var compPipeline = getPipeline("bloomComposite", WGSL_POST_BLOOM_COMPOSITE_FRAGMENT, getBloomCompositeLayout());
+              var compBuf = getParamBuffer("bloomComposite", 16);
+              device.queue.writeBuffer(compBuf, 0, new Float32Array([intensity, 0, 0, 0]));
+              var compBG = device.createBindGroup({
+                layout: getBloomCompositeLayout(),
+                entries: [
+                  { binding: 0, resource: currentTexView },
+                  { binding: 1, resource: linearSampler },
+                  { binding: 2, resource: pingPongAView },
+                  { binding: 3, resource: linearSampler },
+                  { binding: 4, resource: { buffer: compBuf } },
+                ],
+              });
+              fullscreenPass(encoder, compPipeline, compBG, outputView);
+              currentTexView = outputView;
+              break;
+            }
+            case SCENE_POST_VIGNETTE: {
+              var vigPipeline = getPipeline("vignette", WGSL_POST_VIGNETTE_FRAGMENT, getPostParamsLayout());
+              var vigBuf = getParamBuffer("vignette", 16);
+              device.queue.writeBuffer(vigBuf, 0, new Float32Array([sceneNumber(effect.intensity, 1.0), 0, 0, 0]));
+              var vigBG = device.createBindGroup({
+                layout: getPostParamsLayout(),
+                entries: [
+                  { binding: 0, resource: currentTexView },
+                  { binding: 1, resource: linearSampler },
+                  { binding: 2, resource: { buffer: vigBuf } },
+                ],
+              });
+              fullscreenPass(encoder, vigPipeline, vigBG, outputView);
+              currentTexView = outputView;
+              break;
+            }
+            case SCENE_POST_COLOR_GRADE: {
+              var cgPipeline = getPipeline("colorGrade", WGSL_POST_COLORGRADE_FRAGMENT, getPostParamsLayout());
+              var cgBuf = getParamBuffer("colorGrade", 16);
+              device.queue.writeBuffer(cgBuf, 0, new Float32Array([
+                sceneNumber(effect.exposure, 1.0),
+                sceneNumber(effect.contrast, 1.0),
+                sceneNumber(effect.saturation, 1.0),
+                0,
+              ]));
+              var cgBG = device.createBindGroup({
+                layout: getPostParamsLayout(),
+                entries: [
+                  { binding: 0, resource: currentTexView },
+                  { binding: 1, resource: linearSampler },
+                  { binding: 2, resource: { buffer: cgBuf } },
+                ],
+              });
+              fullscreenPass(encoder, cgPipeline, cgBG, outputView);
+              currentTexView = outputView;
+              break;
+            }
+            default:
+              break;
+          }
+        }
+
+        if (currentTexView !== finalView) {
+          var blitBG = device.createBindGroup({
+            layout: getPostBlitLayout(),
+            entries: [
+              { binding: 0, resource: currentTexView },
+              { binding: 1, resource: linearSampler },
+            ],
+          });
+          fullscreenPass(encoder, blitPipeline, blitBG, finalView);
+        }
+      },
+
+      dispose: function() {
+        if (sceneTex) sceneTex.destroy();
+        if (auxTex) auxTex.destroy();
+        if (depthTex) depthTex.destroy();
+        if (pingPongA) pingPongA.destroy();
+        if (pingPongB) pingPongB.destroy();
+        for (var key in postParamBuffers) {
+          if (postParamBuffers[key]) postParamBuffers[key].destroy();
+        }
+        sceneTex = auxTex = depthTex = pingPongA = pingPongB = null;
+        currentWidth = 0;
+        currentHeight = 0;
+        pingPongWidth = 0;
+        pingPongHeight = 0;
+      },
+    };
+  }
+
+  function createSceneWebGPURenderer(canvas) {
+    if (typeof navigator === "undefined" || !navigator.gpu) return null;
+    if (typeof canvas.getContext !== "function") return null;
+
+    var gpuCtx = canvas.getContext("webgpu");
+    if (!gpuCtx) return null;
+
+    var device = null;
+    var adapter = null;
+    var initFailed = false;
+    var initStarted = false;
+    var targetFormat = "bgra8unorm";
+
+    var frameBindGroupLayout = null;
+    var materialBindGroupLayout = null;
+    var pointsBindGroupLayout = null;
+    var shadowBindGroupLayout = null;
+    var pbrPipelineLayout = null;
+    var pointsPipelineLayout = null;
+
+    var pbrVertexModule = null;
+    var pbrFragmentModule = null;
+    var shadowVertexModule = null;
+    var shadowFragmentModule = null;
+    var pointsVertexModule = null;
+    var pointsFragmentModule = null;
+
+    var pipelineCache = {};
+
+    var shadowSlots = [null, null];
+
+    var frameUniformBuffer = null;
+    var lightStorageBuffer = null;
+    var fogUniformBuffer = null;
+    var envUniformBuffer = null;
+    var shadowUniformBuffer = null;
+    var materialUniformBuffer = null;
+    var positionBuffer = null;
+    var normalBuffer = null;
+    var uvBuffer = null;
+    var tangentBuffer = null;
+
+    var pointsUniformBuffer = null;
+    var pointsParticleBuffer = null;
+    var computeParticleSystems = new Map();
+    var lastComputeParticleTimeSeconds = null;
+
+    var shadowPositionBuffer = null;
+    var shadowFrameBuffer = null;
+
+    var mainDepthTexture = null;
+    var mainDepthView = null;
+    var mainDepthWidth = 0;
+    var mainDepthHeight = 0;
+
+    var dummyShadowTex = null;
+    var dummyShadowView = null;
+
+    var linearSampler = null;
+    var comparisonSampler = null;
+
+    var textureCache = new Map();
+
+    var placeholderTex = null;
+    var placeholderView = null;
+
+    var postProcessor = null;
+
+    var scratchViewMatrix = new Float32Array(16);
+    var scratchProjMatrix = new Float32Array(16);
+    var pointsIdentityMatrix = new Float32Array([
+      1, 0, 0, 0,
+      0, 1, 0, 0,
+      0, 0, 1, 0,
+      0, 0, 0, 1,
+    ]);
+
+    var scratchPositions = null;
+    var scratchNormals = null;
+    var scratchUVs = null;
+    var scratchTangents = null;
+
+    function ensureScratch(name, length) {
+      if (name === "positions") {
+        if (!scratchPositions || scratchPositions.length < length) scratchPositions = new Float32Array(length);
+        return scratchPositions;
+      }
+      if (name === "normals") {
+        if (!scratchNormals || scratchNormals.length < length) scratchNormals = new Float32Array(length);
+        return scratchNormals;
+      }
+      if (name === "uvs") {
+        if (!scratchUVs || scratchUVs.length < length) scratchUVs = new Float32Array(length);
+        return scratchUVs;
+      }
+      if (name === "tangents") {
+        if (!scratchTangents || scratchTangents.length < length) scratchTangents = new Float32Array(length);
+        return scratchTangents;
+      }
+      return new Float32Array(length);
+    }
+
+    function sliceToFloat32(source, offset, count, stride, scratchName) {
+      var length = count * stride;
+      var start = offset * stride;
+      var buf = ensureScratch(scratchName, length);
+      for (var i = 0; i < length; i++) {
+        buf[i] = source && source[start + i] !== undefined ? +source[start + i] : 0;
+      }
+      return buf.subarray(0, length);
+    }
+
+    function startInit() {
+      if (initStarted) return;
+      initStarted = true;
+
+      navigator.gpu.requestAdapter({ powerPreference: "high-performance" }).then(function(a) {
+        if (!a) { initFailed = true; return; }
+        adapter = a;
+        return adapter.requestDevice();
+      }).then(function(d) {
+        if (!d) { initFailed = true; return; }
+        device = d;
+
+        device.lost.then(function(info) {
+          console.warn("[gosx] WebGPU device lost:", info.message);
+          device = null;
+          initFailed = true;
+        });
+
+        targetFormat = navigator.gpu.getPreferredCanvasFormat();
+        gpuCtx.configure({
+          device: device,
+          format: targetFormat,
+          alphaMode: "premultiplied",
+        });
+
+        frameBindGroupLayout = wgpuCreateFrameBindGroupLayout(device);
+        materialBindGroupLayout = wgpuCreateMaterialBindGroupLayout(device);
+        pointsBindGroupLayout = wgpuCreatePointsBindGroupLayout(device);
+        shadowBindGroupLayout = wgpuCreateShadowBindGroupLayout(device);
+
+        pbrPipelineLayout = device.createPipelineLayout({
+          bindGroupLayouts: [frameBindGroupLayout, materialBindGroupLayout],
+        });
+        pointsPipelineLayout = device.createPipelineLayout({
+          bindGroupLayouts: [frameBindGroupLayout, materialBindGroupLayout, pointsBindGroupLayout],
+        });
+
+        pbrVertexModule = device.createShaderModule({ label: "pbr-vert", code: WGSL_PBR_VERTEX });
+        pbrFragmentModule = device.createShaderModule({ label: "pbr-frag", code: WGSL_PBR_FRAGMENT });
+        shadowVertexModule = device.createShaderModule({ label: "shadow-vert", code: WGSL_SHADOW_VERTEX });
+        shadowFragmentModule = device.createShaderModule({ label: "shadow-frag", code: WGSL_SHADOW_FRAGMENT });
+        pointsVertexModule = device.createShaderModule({ label: "points-vert", code: WGSL_POINTS_VERTEX });
+        pointsFragmentModule = device.createShaderModule({ label: "points-frag", code: WGSL_POINTS_FRAGMENT });
+
+        frameUniformBuffer = device.createBuffer({ size: 256, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+        lightStorageBuffer = device.createBuffer({ size: 512, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+        fogUniformBuffer = device.createBuffer({ size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+        envUniformBuffer = device.createBuffer({ size: 48, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+        shadowUniformBuffer = device.createBuffer({ size: 256, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+        materialUniformBuffer = device.createBuffer({ size: 64, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+        shadowFrameBuffer = device.createBuffer({ size: 64, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+        pointsUniformBuffer = device.createBuffer({ size: 128, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+
+        linearSampler = device.createSampler({
+          magFilter: "linear",
+          minFilter: "linear",
+          mipmapFilter: "linear",
+          addressModeU: "clamp-to-edge",
+          addressModeV: "clamp-to-edge",
+        });
+        comparisonSampler = device.createSampler({
+          compare: "less",
+          magFilter: "linear",
+          minFilter: "linear",
+        });
+
+        dummyShadowTex = device.createTexture({
+          size: [1, 1, 1],
+          format: "depth24plus",
+          usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+        });
+        dummyShadowView = dummyShadowTex.createView();
+
+        var initEncoder = device.createCommandEncoder();
+        initEncoder.beginRenderPass({
+          colorAttachments: [],
+          depthStencilAttachment: {
+            view: dummyShadowView,
+            depthLoadOp: "clear",
+            depthClearValue: 1.0,
+            depthStoreOp: "store",
+          },
+        }).end();
+        device.queue.submit([initEncoder.finish()]);
+
+        placeholderTex = device.createTexture({
+          size: [1, 1, 1],
+          format: "rgba8unorm",
+          usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+        });
+        device.queue.writeTexture(
+          { texture: placeholderTex },
+          new Uint8Array([255, 255, 255, 255]),
+          { bytesPerRow: 4 },
+          [1, 1, 1]
+        );
+        placeholderView = placeholderTex.createView();
+
+      }).catch(function(err) {
+        console.warn("[gosx] WebGPU initialization failed:", err);
+        initFailed = true;
+      });
+    }
+
+    function ensureMainDepth(width, height) {
+      if (mainDepthTexture && mainDepthWidth === width && mainDepthHeight === height) return;
+      if (mainDepthTexture) mainDepthTexture.destroy();
+      mainDepthTexture = device.createTexture({
+        size: [width, height, 1],
+        format: "depth24plus",
+        usage: GPUTextureUsage.RENDER_ATTACHMENT,
+      });
+      mainDepthView = mainDepthTexture.createView();
+      mainDepthWidth = width;
+      mainDepthHeight = height;
+    }
+
+    function getPBRPipeline(blendMode, depthWrite) {
+      var key = wgpuPipelineKey("pbr", blendMode, depthWrite, targetFormat, "depth24plus");
+      if (pipelineCache[key]) return pipelineCache[key];
+      var pipeline = wgpuCreatePBRPipeline(device, pbrPipelineLayout, pbrVertexModule, pbrFragmentModule, blendMode, depthWrite, targetFormat);
+      pipelineCache[key] = pipeline;
+      return pipeline;
+    }
+
+    var shadowPipeline = null;
+    function getShadowPipeline() {
+      if (shadowPipeline) return shadowPipeline;
+      shadowPipeline = wgpuCreateShadowPipeline(device, shadowBindGroupLayout, shadowVertexModule);
+      return shadowPipeline;
+    }
+
+    function getPointsPipeline(blendMode, depthWrite) {
+      var key = wgpuPipelineKey("points", blendMode, depthWrite, targetFormat, "depth24plus");
+      if (pipelineCache[key]) return pipelineCache[key];
+      var pipeline = wgpuCreatePointsPipeline(device, pointsPipelineLayout, pointsVertexModule, pointsFragmentModule, blendMode, depthWrite, targetFormat);
+      pipelineCache[key] = pipeline;
+      return pipeline;
+    }
+
+    function disposeComputeParticleSystems() {
+      for (const record of computeParticleSystems.values()) {
+        if (record && record.system && typeof record.system.dispose === "function") {
+          record.system.dispose();
+        }
+      }
+      computeParticleSystems.clear();
+      lastComputeParticleTimeSeconds = null;
+    }
+
+    function syncComputeParticleSystems(entries) {
+      var activeIds = new Set();
+      var records = [];
+      var sourceEntries = Array.isArray(entries) ? entries : [];
+      for (var i = 0; i < sourceEntries.length; i++) {
+        var entry = sourceEntries[i];
+        if (!entry || typeof entry !== "object") continue;
+        var id = typeof entry.id === "string" && entry.id ? entry.id : ("scene-particles-" + i);
+        var signature = sceneComputeSystemSignature(entry);
+        activeIds.add(id);
+        var record = computeParticleSystems.get(id);
+        if (!record || record.signature !== signature) {
+          if (record && record.system && typeof record.system.dispose === "function") {
+            record.system.dispose();
+          }
+          record = {
+            signature: signature,
+            system: createSceneParticleSystem(device, entry),
+          };
+          computeParticleSystems.set(id, record);
+        } else if (record.system) {
+          record.system.entry = entry;
+        }
+        if (record && record.system) {
+          records.push(record);
+        }
+      }
+      for (const [id, record] of computeParticleSystems.entries()) {
+        if (!activeIds.has(id)) {
+          if (record && record.system && typeof record.system.dispose === "function") {
+            record.system.dispose();
+          }
+          computeParticleSystems.delete(id);
+        }
+      }
+      return records;
+    }
+
+    function updateComputeParticleSystems(entries, encoder, timeSeconds) {
+      var currentTime = Number.isFinite(timeSeconds) ? timeSeconds : 0;
+      var deltaTime = lastComputeParticleTimeSeconds == null
+        ? 0
+        : Math.max(0, Math.min(0.1, currentTime - lastComputeParticleTimeSeconds));
+      lastComputeParticleTimeSeconds = currentTime;
+      var records = syncComputeParticleSystems(entries);
+      for (var i = 0; i < records.length; i++) {
+        if (records[i].system && typeof records[i].system.update === "function") {
+          records[i].system.update(device, encoder, deltaTime, currentTime);
+        }
+      }
+      return records;
+    }
+
+    function uploadFrameUniforms(camera, width, height, toneMap) {
+      var cam = sceneRenderCamera(camera);
+      var aspect = Math.max(0.0001, width / Math.max(1, height));
+      scenePBRViewMatrix(cam, scratchViewMatrix);
+      scenePBRProjectionMatrix(cam.fov, aspect, cam.near, cam.far, scratchProjMatrix);
+
+      var data = new ArrayBuffer(160);
+      var f = new Float32Array(data);
+      var u = new Uint32Array(data);
+      f.set(scratchViewMatrix, 0);          // offset 0
+      f.set(scratchProjMatrix, 16);         // offset 64
+      f[32] = cam.x;                         // cameraPos.x
+      f[33] = cam.y;                         // cameraPos.y
+      f[34] = -cam.z;                        // cameraPos.z (negated per convention)
+      f[36] = width;                          // viewportWidth
+      f[37] = height;                         // viewportHeight
+      u[38] = toneMap ? 1 : 0;               // toneMap
+      u[39] = 0;                              // pad
+
+      device.queue.writeBuffer(frameUniformBuffer, 0, new Float32Array(data));
+      return cam;
+    }
+
+    function uploadLights(lights) {
+      var lightArray = Array.isArray(lights) ? lights : [];
+      var count = Math.min(lightArray.length, 8);
+
+      var countBuf = new Uint32Array([count]);
+      device.queue.writeBuffer(frameUniformBuffer, 140, countBuf);
+
+      var lightData = new Float32Array(8 * 16);
+      var colorCache = {};
+
+      for (var i = 0; i < count; i++) {
+        var light = lightArray[i];
+        var kind = typeof light.kind === "string" ? light.kind.toLowerCase() : "";
+        var lightType = 2; // point
+        if (kind === "ambient") lightType = 0;
+        else if (kind === "directional") lightType = 1;
+
+        var base = i * 16;
+        lightData[base + 0] = sceneNumber(light.x, 0);
+        lightData[base + 1] = sceneNumber(light.y, 0);
+        lightData[base + 2] = sceneNumber(light.z, 0);
+        lightData[base + 3] = lightType;
+
+        lightData[base + 4] = sceneNumber(light.directionX, 0);
+        lightData[base + 5] = sceneNumber(light.directionY, -1);
+        lightData[base + 6] = sceneNumber(light.directionZ, 0);
+        lightData[base + 7] = sceneNumber(light.intensity, 1);
+
+        var colorKey = light.color;
+        var lc = typeof colorKey === "string" && colorCache[colorKey];
+        if (!lc) {
+          lc = sceneColorRGBA(light.color, [1, 1, 1, 1]);
+          if (typeof colorKey === "string") colorCache[colorKey] = lc;
+        }
+        lightData[base + 8] = lc[0];
+        lightData[base + 9] = lc[1];
+        lightData[base + 10] = lc[2];
+        lightData[base + 11] = sceneNumber(light.range, 0);
+
+        lightData[base + 12] = sceneNumber(light.decay, 2);
+        lightData[base + 13] = sceneNumber(light.shadowBias, 0.005);
+        lightData[base + 14] = light.castShadow ? 1.0 : 0.0;
+        lightData[base + 15] = 0;
+      }
+
+      device.queue.writeBuffer(lightStorageBuffer, 0, lightData);
+    }
+
+    function uploadFogUniforms(environment) {
+      var env = environment || {};
+      var fogDensity = sceneNumber(env.fogDensity, 0);
+      var fogColorRGBA = sceneColorRGBA(env.fogColor, [0.5, 0.5, 0.5, 1]);
+
+      var data = new ArrayBuffer(32);
+      var f = new Float32Array(data);
+      var u = new Uint32Array(data);
+      f[0] = fogColorRGBA[0];
+      f[1] = fogColorRGBA[1];
+      f[2] = fogColorRGBA[2];
+      f[3] = fogDensity;
+      u[4] = fogDensity > 0 ? 1 : 0;
+      u[5] = 0;
+      u[6] = 0;
+      u[7] = 0;
+      device.queue.writeBuffer(fogUniformBuffer, 0, new Float32Array(data));
+    }
+
+    function uploadEnvUniforms(environment) {
+      var env = environment || {};
+      var ambientColorRGBA = sceneColorRGBA(env.ambientColor, [1, 1, 1, 1]);
+      var skyColorRGBA = sceneColorRGBA(env.skyColor, [0.88, 0.94, 1, 1]);
+      var groundColorRGBA = sceneColorRGBA(env.groundColor, [0.12, 0.16, 0.22, 1]);
+
+      var data = new Float32Array(12);
+      data[0] = ambientColorRGBA[0]; data[1] = ambientColorRGBA[1]; data[2] = ambientColorRGBA[2];
+      data[3] = sceneNumber(env.ambientIntensity, 0);
+      data[4] = skyColorRGBA[0]; data[5] = skyColorRGBA[1]; data[6] = skyColorRGBA[2];
+      data[7] = sceneNumber(env.skyIntensity, 0);
+      data[8] = groundColorRGBA[0]; data[9] = groundColorRGBA[1]; data[10] = groundColorRGBA[2];
+      data[11] = sceneNumber(env.groundIntensity, 0);
+      device.queue.writeBuffer(envUniformBuffer, 0, data);
+    }
+
+    function uploadShadowUniforms(shadowLightMatrices, shadowLightIndices, lights) {
+      var lightArray = Array.isArray(lights) ? lights : [];
+      var data = new ArrayBuffer(160);
+      var f = new Float32Array(data);
+      var u = new Uint32Array(data);
+      var i = new Int32Array(data);
+
+      if (shadowLightMatrices[0]) {
+        f.set(shadowLightMatrices[0], 0);   // lightSpaceMatrix0 @ offset 0
+      }
+      if (shadowLightMatrices[1]) {
+        f.set(shadowLightMatrices[1], 16);  // lightSpaceMatrix1 @ offset 64
+      }
+
+      u[32] = shadowLightMatrices[0] ? 1 : 0;  // hasShadow0
+      u[33] = shadowLightMatrices[1] ? 1 : 0;  // hasShadow1
+
+      var bias0 = 0.005;
+      if (shadowLightIndices[0] >= 0 && lightArray[shadowLightIndices[0]]) {
+        bias0 = sceneNumber(lightArray[shadowLightIndices[0]].shadowBias, 0.005);
+      }
+      f[34] = bias0;  // shadowBias0
+
+      var bias1 = 0.005;
+      if (shadowLightIndices[1] >= 0 && lightArray[shadowLightIndices[1]]) {
+        bias1 = sceneNumber(lightArray[shadowLightIndices[1]].shadowBias, 0.005);
+      }
+      f[35] = bias1;  // shadowBias1
+
+      i[36] = shadowLightIndices[0];  // shadowLightIndex0
+      i[37] = shadowLightIndices[1];  // shadowLightIndex1
+      u[38] = 0; // pad
+      u[39] = 0; // pad
+
+      device.queue.writeBuffer(shadowUniformBuffer, 0, new Float32Array(data));
+    }
+
+    function uploadMaterialUniforms(material) {
+      var mat = material || {};
+      var albedoRGBA = sceneColorRGBA(mat.color, [0.8, 0.8, 0.8, 1]);
+
+      var data = new ArrayBuffer(64);
+      var f = new Float32Array(data);
+      var u = new Uint32Array(data);
+
+      f[0] = albedoRGBA[0]; f[1] = albedoRGBA[1]; f[2] = albedoRGBA[2];
+      f[3] = sceneNumber(mat.roughness, 0.5);
+      f[4] = sceneNumber(mat.metalness, 0);
+      f[5] = sceneNumber(mat.emissive, 0);
+      f[6] = clamp01(sceneNumber(mat.opacity, 1));
+      u[7] = mat.unlit ? 1 : 0;
+
+      device.queue.writeBuffer(materialUniformBuffer, 0, new Float32Array(data));
+    }
+
+    function createMaterialBindGroup(material, receiveShadow) {
+      var mat = material || {};
+      var albedoRGBA = sceneColorRGBA(mat.color, [0.8, 0.8, 0.8, 1]);
+
+      var data = new ArrayBuffer(64);
+      var f = new Float32Array(data);
+      var u = new Uint32Array(data);
+
+      f[0] = albedoRGBA[0]; f[1] = albedoRGBA[1]; f[2] = albedoRGBA[2];
+      f[3] = sceneNumber(mat.roughness, 0.5);
+      f[4] = sceneNumber(mat.metalness, 0);
+      f[5] = sceneNumber(mat.emissive, 0);
+      f[6] = clamp01(sceneNumber(mat.opacity, 1));
+      u[7] = mat.unlit ? 1 : 0;
+
+      var textureMaps = [
+        { prop: "texture",      index: 8 },
+        { prop: "normalMap",    index: 9 },
+        { prop: "roughnessMap", index: 10 },
+        { prop: "metalnessMap", index: 11 },
+        { prop: "emissiveMap",  index: 12 },
+      ];
+
+      var texViews = [];
+      for (var ti = 0; ti < textureMaps.length; ti++) {
+        var tm = textureMaps[ti];
+        var record = mat[tm.prop] ? wgpuLoadTexture(device, mat[tm.prop], textureCache) : null;
+        var loaded = Boolean(record && record.loaded);
+        u[tm.index] = loaded ? 1 : 0;
+        texViews.push(loaded ? record.view : placeholderView);
+      }
+
+      u[13] = receiveShadow ? 1 : 0;
+      u[14] = 0;
+      u[15] = 0;
+
+      device.queue.writeBuffer(materialUniformBuffer, 0, new Float32Array(data));
+
+      return device.createBindGroup({
+        layout: materialBindGroupLayout,
+        entries: [
+          { binding: 0, resource: { buffer: materialUniformBuffer } },
+          { binding: 1, resource: texViews[0] },
+          { binding: 2, resource: linearSampler },
+          { binding: 3, resource: texViews[1] },
+          { binding: 4, resource: linearSampler },
+          { binding: 5, resource: texViews[2] },
+          { binding: 6, resource: linearSampler },
+          { binding: 7, resource: texViews[3] },
+          { binding: 8, resource: linearSampler },
+          { binding: 9, resource: texViews[4] },
+          { binding: 10, resource: linearSampler },
+        ],
+      });
+    }
+
+    function createFrameBindGroup(shadowView0, shadowView1) {
+      return device.createBindGroup({
+        layout: frameBindGroupLayout,
+        entries: [
+          { binding: 0, resource: { buffer: frameUniformBuffer } },
+          { binding: 1, resource: { buffer: lightStorageBuffer } },
+          { binding: 2, resource: { buffer: fogUniformBuffer } },
+          { binding: 3, resource: { buffer: envUniformBuffer } },
+          { binding: 4, resource: shadowView0 || dummyShadowView },
+          { binding: 5, resource: comparisonSampler },
+          { binding: 6, resource: shadowView1 || dummyShadowView },
+          { binding: 7, resource: comparisonSampler },
+          { binding: 8, resource: { buffer: shadowUniformBuffer } },
+        ],
+      });
+    }
+
+    function buildDrawList(bundle) {
+      var objects = Array.isArray(bundle && bundle.meshObjects) ? bundle.meshObjects : [];
+      var materials = Array.isArray(bundle.materials) ? bundle.materials : [];
+      var opaque = [];
+      var alpha = [];
+      var additive = [];
+
+      for (var i = 0; i < objects.length; i++) {
+        var obj = objects[i];
+        if (!obj || obj.viewCulled) continue;
+        if (!Number.isFinite(obj.vertexOffset) || !Number.isFinite(obj.vertexCount) || obj.vertexCount <= 0) continue;
+        var mat = materials[obj.materialIndex] || null;
+        var pass = scenePBRObjectRenderPass(obj, mat);
+        if (pass === "alpha") alpha.push(obj);
+        else if (pass === "additive") additive.push(obj);
+        else opaque.push(obj);
+      }
+
+      alpha.sort(scenePBRDepthSort);
+      additive.sort(scenePBRDepthSort);
+
+      return { opaque: opaque, alpha: alpha, additive: additive };
+    }
+
+    function renderShadowPass(encoder, lightMatrix, bundle, shadowResource) {
+      var sp = getShadowPipeline();
+      if (!sp) return;
+
+      device.queue.writeBuffer(shadowFrameBuffer, 0, lightMatrix);
+
+      var shadowBG = device.createBindGroup({
+        layout: shadowBindGroupLayout,
+        entries: [
+          { binding: 0, resource: { buffer: shadowFrameBuffer } },
+        ],
+      });
+
+      var pass = encoder.beginRenderPass({
+        colorAttachments: [],
+        depthStencilAttachment: {
+          view: shadowResource.view,
+          depthLoadOp: "clear",
+          depthClearValue: 1.0,
+          depthStoreOp: "store",
+        },
+      });
+
+      pass.setPipeline(sp);
+      pass.setBindGroup(0, shadowBG);
+
+      var objects = Array.isArray(bundle.meshObjects) ? bundle.meshObjects : [];
+      for (var i = 0; i < objects.length; i++) {
+        var obj = objects[i];
+        if (!obj || obj.viewCulled) continue;
+        if (!obj.castShadow) continue;
+        if (!Number.isFinite(obj.vertexOffset) || !Number.isFinite(obj.vertexCount) || obj.vertexCount <= 0) continue;
+
+        var positions = sliceToFloat32(bundle.worldMeshPositions, obj.vertexOffset, obj.vertexCount, 3, "positions");
+        shadowPositionBuffer = wgpuEnsureBufferData(
+          device, shadowPositionBuffer,
+          GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+          positions
+        );
+
+        pass.setVertexBuffer(0, shadowPositionBuffer);
+        pass.draw(obj.vertexCount);
+      }
+
+      pass.end();
+    }
+
+    function drawPBRObjects(pass, objectList, bundle, materials, frameBindGroup) {
+      var lastMaterialIndex = -1;
+      var lastReceiveShadow = null;
+
+      for (var i = 0; i < objectList.length; i++) {
+        var obj = objectList[i];
+        var matIndex = sceneNumber(obj.materialIndex, 0);
+        var mat = materials[matIndex] || null;
+        var receiveShadow = !!obj.receiveShadow;
+
+        if (matIndex !== lastMaterialIndex || receiveShadow !== lastReceiveShadow) {
+          var matBG = createMaterialBindGroup(mat, receiveShadow);
+          pass.setBindGroup(1, matBG);
+          lastMaterialIndex = matIndex;
+          lastReceiveShadow = receiveShadow;
+        }
+
+        var offset = obj.vertexOffset;
+        var count = obj.vertexCount;
+
+        var positions = sliceToFloat32(bundle.worldMeshPositions, offset, count, 3, "positions");
+        positionBuffer = wgpuEnsureBufferData(device, positionBuffer, GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, positions);
+        pass.setVertexBuffer(0, positionBuffer);
+
+        var normals = sliceToFloat32(bundle.worldMeshNormals, offset, count, 3, "normals");
+        normalBuffer = wgpuEnsureBufferData(device, normalBuffer, GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, normals);
+        pass.setVertexBuffer(1, normalBuffer);
+
+        if (bundle.worldMeshUVs) {
+          var uvs = sliceToFloat32(bundle.worldMeshUVs, offset, count, 2, "uvs");
+          uvBuffer = wgpuEnsureBufferData(device, uvBuffer, GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, uvs);
+        } else {
+          var zeroUVs = ensureScratch("uvs", count * 2);
+          for (var ui = 0; ui < count * 2; ui++) zeroUVs[ui] = 0;
+          uvBuffer = wgpuEnsureBufferData(device, uvBuffer, GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, zeroUVs.subarray(0, count * 2));
+        }
+        pass.setVertexBuffer(2, uvBuffer);
+
+        if (bundle.worldMeshTangents) {
+          var tangents = sliceToFloat32(bundle.worldMeshTangents, offset, count, 4, "tangents");
+          tangentBuffer = wgpuEnsureBufferData(device, tangentBuffer, GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, tangents);
+        } else {
+          var defTangents = ensureScratch("tangents", count * 4);
+          for (var ti = 0; ti < count; ti++) {
+            defTangents[ti * 4] = 1;
+            defTangents[ti * 4 + 1] = 0;
+            defTangents[ti * 4 + 2] = 0;
+            defTangents[ti * 4 + 3] = 1;
+          }
+          tangentBuffer = wgpuEnsureBufferData(device, tangentBuffer, GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, defTangents.subarray(0, count * 4));
+        }
+        pass.setVertexBuffer(3, tangentBuffer);
+
+        pass.draw(count);
+      }
+    }
+
+    function drawPointsEntries(pass, bundle, cam, timeSeconds) {
+      var pointsArray = Array.isArray(bundle.points) ? bundle.points : [];
+      if (pointsArray.length === 0) return;
+
+      var env = bundle.environment || {};
+      var fogDensity = sceneNumber(env.fogDensity, 0);
+      var fogColorRGBA = sceneColorRGBA(env.fogColor, [0.5, 0.5, 0.5, 1]);
+
+      var _pointsModelMat = new Float32Array(16);
+      var _pointsTilt = new Float32Array(16);
+      var _pointsSpin = new Float32Array(16);
+
+      for (var i = 0; i < pointsArray.length; i++) {
+        var entry = pointsArray[i];
+        var count = sceneNumber(entry.count, 0);
+        if (count <= 0) continue;
+
+        var px = sceneNumber(entry.x, 0);
+        var py = sceneNumber(entry.y, 0);
+        var pz = sceneNumber(entry.z, 0);
+        var hasSpin = sceneNumber(entry.spinX, 0) !== 0 || sceneNumber(entry.spinY, 0) !== 0 || sceneNumber(entry.spinZ, 0) !== 0;
+
+        if (hasSpin) {
+          var spx = sceneNumber(entry.spinX, 0) * timeSeconds;
+          var spy = sceneNumber(entry.spinY, 0) * timeSeconds;
+          var spz = sceneNumber(entry.spinZ, 0) * timeSeconds;
+          var csx = Math.cos(spx), ssx = Math.sin(spx);
+          var csy = Math.cos(spy), ssy = Math.sin(spy);
+          var csz = Math.cos(spz), ssz = Math.sin(spz);
+          _pointsSpin[0] = csy*csz; _pointsSpin[4] = ssx*ssy*csz-csx*ssz; _pointsSpin[8]  = csx*ssy*csz+ssx*ssz; _pointsSpin[12] = 0;
+          _pointsSpin[1] = csy*ssz; _pointsSpin[5] = ssx*ssy*ssz+csx*csz; _pointsSpin[9]  = csx*ssy*ssz-ssx*csz; _pointsSpin[13] = 0;
+          _pointsSpin[2] = -ssy;    _pointsSpin[6] = ssx*csy;             _pointsSpin[10] = csx*csy;             _pointsSpin[14] = 0;
+          _pointsSpin[3] = 0;       _pointsSpin[7] = 0;                   _pointsSpin[11] = 0;                   _pointsSpin[15] = 1;
+
+          var rx = sceneNumber(entry.rotationX, 0);
+          var ry = sceneNumber(entry.rotationY, 0);
+          var rz = sceneNumber(entry.rotationZ, 0);
+          var cxr = Math.cos(rx), sxr = Math.sin(rx);
+          var cyr = Math.cos(ry), syr = Math.sin(ry);
+          var czr = Math.cos(rz), szr = Math.sin(rz);
+          _pointsTilt[0] = cyr*czr; _pointsTilt[4] = sxr*syr*czr-cxr*szr; _pointsTilt[8]  = cxr*syr*czr+sxr*szr; _pointsTilt[12] = px;
+          _pointsTilt[1] = cyr*szr; _pointsTilt[5] = sxr*syr*szr+cxr*czr; _pointsTilt[9]  = cxr*syr*szr-sxr*czr; _pointsTilt[13] = py;
+          _pointsTilt[2] = -syr;    _pointsTilt[6] = sxr*cyr;             _pointsTilt[10] = cxr*cyr;             _pointsTilt[14] = pz;
+          _pointsTilt[3] = 0;       _pointsTilt[7] = 0;                   _pointsTilt[11] = 0;                   _pointsTilt[15] = 1;
+
+          sceneMat4MultiplyInto(_pointsModelMat, _pointsTilt, _pointsSpin);
+        } else {
+          var rx2 = sceneNumber(entry.rotationX, 0);
+          var ry2 = sceneNumber(entry.rotationY, 0);
+          var rz2 = sceneNumber(entry.rotationZ, 0);
+          var cxr2 = Math.cos(rx2), sxr2 = Math.sin(rx2);
+          var cyr2 = Math.cos(ry2), syr2 = Math.sin(ry2);
+          var czr2 = Math.cos(rz2), szr2 = Math.sin(rz2);
+          _pointsModelMat[0] = cyr2*czr2; _pointsModelMat[4] = sxr2*syr2*czr2-cxr2*szr2; _pointsModelMat[8]  = cxr2*syr2*czr2+sxr2*szr2; _pointsModelMat[12] = px;
+          _pointsModelMat[1] = cyr2*szr2; _pointsModelMat[5] = sxr2*syr2*szr2+cxr2*czr2; _pointsModelMat[9]  = cxr2*syr2*szr2-sxr2*czr2; _pointsModelMat[13] = py;
+          _pointsModelMat[2] = -syr2;     _pointsModelMat[6] = sxr2*cyr2;                _pointsModelMat[10] = cxr2*cyr2;                _pointsModelMat[14] = pz;
+          _pointsModelMat[3] = 0;         _pointsModelMat[7] = 0;                        _pointsModelMat[11] = 0;                        _pointsModelMat[15] = 1;
+        }
+
+        var puData = new ArrayBuffer(128);
+        var puF = new Float32Array(puData);
+        var puU = new Uint32Array(puData);
+
+        puF.set(_pointsModelMat, 0);   // modelMatrix @ 0
+        puF[16] = sceneNumber(entry.size, 1); // defaultSize @ 64
+        var defaultColorRGBA = sceneColorRGBA(entry.color, [1, 1, 1, 1]);
+        puF[17] = defaultColorRGBA[0]; // defaultColor @ 68
+        puF[18] = defaultColorRGBA[1];
+        puF[19] = defaultColorRGBA[2];
+        puU[20] = 0; // hasPerVertexColor
+        puU[21] = 0; // hasPerVertexSize
+        puU[22] = entry.attenuation ? 1 : 0; // sizeAttenuation
+        puU[23] = scenePointStyleCode(entry.style); // pointStyle
+        puF[24] = clamp01(sceneNumber(entry.opacity, 1)); // opacity
+        puU[25] = fogDensity > 0 ? 1 : 0; // hasFog
+        puF[26] = fogDensity; // fogDensity
+        puF[27] = fogColorRGBA[0]; // fogColor
+        puF[28] = fogColorRGBA[1];
+        puF[29] = fogColorRGBA[2];
+
+        if (!entry._cachedPos && Array.isArray(entry.positions) && entry.positions.length >= count * 3) {
+          entry._cachedPos = new Float32Array(entry.positions);
+        }
+        if (!entry._cachedSizes && Array.isArray(entry.sizes) && entry.sizes.length >= count) {
+          entry._cachedSizes = new Float32Array(entry.sizes);
+        }
+        if (!entry._cachedColors && Array.isArray(entry.colors) && entry.colors.length >= count) {
+          var rawColors = entry.colors;
+          if (typeof rawColors[0] === "string") {
+            entry._cachedColors = new Float32Array(count * 4);
+            for (var ci = 0; ci < count; ci++) {
+              var crgba = sceneColorRGBA(rawColors[ci], [1, 1, 1, 1]);
+              entry._cachedColors[ci * 4] = crgba[0];
+              entry._cachedColors[ci * 4 + 1] = crgba[1];
+              entry._cachedColors[ci * 4 + 2] = crgba[2];
+              entry._cachedColors[ci * 4 + 3] = crgba[3];
+            }
+          } else if (rawColors.length >= count * 4) {
+            entry._cachedColors = new Float32Array(rawColors);
+          } else if (rawColors.length >= count * 3) {
+            entry._cachedColors = new Float32Array(count * 4);
+            for (var ci2 = 0; ci2 < count; ci2++) {
+              entry._cachedColors[ci2 * 4] = rawColors[ci2 * 3];
+              entry._cachedColors[ci2 * 4 + 1] = rawColors[ci2 * 3 + 1];
+              entry._cachedColors[ci2 * 4 + 2] = rawColors[ci2 * 3 + 2];
+              entry._cachedColors[ci2 * 4 + 3] = 1;
+            }
+          }
+        }
+
+        if (!entry._cachedPos) continue;
+
+        var hasSizes = !!entry._cachedSizes;
+        var hasColors = !!entry._cachedColors;
+        puU[20] = hasColors ? 1 : 0;
+        puU[21] = hasSizes ? 1 : 0;
+
+        device.queue.writeBuffer(pointsUniformBuffer, 0, new Float32Array(puData));
+
+        var particleData = new Float32Array(count * 8);
+        for (var pi = 0; pi < count; pi++) {
+          var base = pi * 8;
+          particleData[base + 0] = entry._cachedPos[pi * 3];
+          particleData[base + 1] = entry._cachedPos[pi * 3 + 1];
+          particleData[base + 2] = entry._cachedPos[pi * 3 + 2];
+          particleData[base + 3] = hasSizes ? entry._cachedSizes[pi] : sceneNumber(entry.size, 1);
+          if (hasColors) {
+            particleData[base + 4] = entry._cachedColors[pi * 4];
+            particleData[base + 5] = entry._cachedColors[pi * 4 + 1];
+            particleData[base + 6] = entry._cachedColors[pi * 4 + 2];
+            particleData[base + 7] = entry._cachedColors[pi * 4 + 3];
+          } else {
+            particleData[base + 4] = defaultColorRGBA[0];
+            particleData[base + 5] = defaultColorRGBA[1];
+            particleData[base + 6] = defaultColorRGBA[2];
+            particleData[base + 7] = 1.0;
+          }
+        }
+
+        pointsParticleBuffer = wgpuEnsureBufferData(
+          device, pointsParticleBuffer,
+          GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+          particleData
+        );
+
+        var pointsBG = device.createBindGroup({
+          layout: pointsBindGroupLayout,
+          entries: [
+            { binding: 0, resource: { buffer: pointsUniformBuffer } },
+            { binding: 1, resource: { buffer: pointsParticleBuffer } },
+          ],
+        });
+
+        var blendMode = typeof entry.blendMode === "string" ? entry.blendMode.toLowerCase() : "";
+        var depthWrite = entry.depthWrite !== false;
+        var validBlend = blendMode === "additive" || blendMode === "alpha" ? blendMode : "opaque";
+        var pipeline = getPointsPipeline(validBlend, depthWrite);
+
+        pass.setPipeline(pipeline);
+        pass.setBindGroup(2, pointsBG);
+        pass.draw(6, count); // 6 vertices per quad, count instances
+      }
+    }
+
+    function drawComputeParticleEntries(pass, records, environment) {
+      if (!Array.isArray(records) || records.length === 0) return;
+
+      var env = environment || {};
+      var fogDensity = sceneNumber(env.fogDensity, 0);
+      var fogColorRGBA = sceneColorRGBA(env.fogColor, [0.5, 0.5, 0.5, 1]);
+
+      for (var i = 0; i < records.length; i++) {
+        var record = records[i];
+        var system = record && record.system;
+        if (!system || !system.renderBuffer || system.count <= 0) continue;
+        if (typeof system.isReady === "function" && !system.isReady()) continue;
+
+        var entry = system.entry && typeof system.entry === "object" ? system.entry : {};
+        var material = entry.material && typeof entry.material === "object" ? entry.material : {};
+
+        var puData = new ArrayBuffer(128);
+        var puF = new Float32Array(puData);
+        var puU = new Uint32Array(puData);
+        puF.set(pointsIdentityMatrix, 0);
+
+        var defaultColorRGBA = sceneColorRGBA(material.color, [1, 1, 1, 1]);
+        puF[16] = sceneNumber(material.size, 1);
+        puF[17] = defaultColorRGBA[0];
+        puF[18] = defaultColorRGBA[1];
+        puF[19] = defaultColorRGBA[2];
+        puU[20] = 1;
+        puU[21] = 1;
+        puU[22] = material.attenuation ? 1 : 0;
+        puU[23] = scenePointStyleCode(material.style);
+        puF[24] = 1;
+        puU[25] = fogDensity > 0 ? 1 : 0;
+        puF[26] = fogDensity;
+        puF[27] = fogColorRGBA[0];
+        puF[28] = fogColorRGBA[1];
+        puF[29] = fogColorRGBA[2];
+
+        device.queue.writeBuffer(pointsUniformBuffer, 0, new Float32Array(puData));
+
+        var pointsBG = device.createBindGroup({
+          layout: pointsBindGroupLayout,
+          entries: [
+            { binding: 0, resource: { buffer: pointsUniformBuffer } },
+            { binding: 1, resource: { buffer: system.renderBuffer } },
+          ],
+        });
+
+        var blendMode = typeof material.blendMode === "string" ? material.blendMode.toLowerCase() : "";
+        var depthWrite = entry.depthWrite !== false;
+        var validBlend = blendMode === "additive" || blendMode === "alpha" ? blendMode : "opaque";
+        var pipeline = getPointsPipeline(validBlend, depthWrite);
+
+        pass.setPipeline(pipeline);
+        pass.setBindGroup(2, pointsBG);
+        pass.draw(6, system.count);
+      }
+    }
+
+    function render(bundle, viewport) {
+      if (!device) {
+        startInit();
+        return;
+      }
+      if (initFailed || !bundle) return;
+
+      var hasPBRData = Boolean(
+        bundle.worldMeshPositions &&
+        bundle.worldMeshNormals &&
+        Array.isArray(bundle.meshObjects) &&
+        bundle.meshObjects.length > 0
+      );
+      var hasPointsData = (Array.isArray(bundle.points) && bundle.points.length > 0) ||
+        (Array.isArray(bundle.computeParticles) && bundle.computeParticles.length > 0);
+      if (!hasPBRData && !hasPointsData) return;
+
+      var width = canvas.width;
+      var height = canvas.height;
+      if (width <= 0 || height <= 0) return;
+
+      gpuCtx.configure({
+        device: device,
+        format: targetFormat,
+        alphaMode: "premultiplied",
+      });
+
+      var postEffects = Array.isArray(bundle.postEffects) ? bundle.postEffects : [];
+      var usePostProcessing = postEffects.length > 0;
+
+      var postFXMaxPixels = (typeof bundle.postFXMaxPixels === "number") ? bundle.postFXMaxPixels : 0;
+      var postfxFactor = usePostProcessing
+        ? resolvePostFXFactor(postFXMaxPixels, width * height)
+        : 1;
+      var scaledW = Math.max(1, Math.floor(width * postfxFactor));
+      var scaledH = Math.max(1, Math.floor(height * postfxFactor));
+
+      var cam = uploadFrameUniforms(bundle.camera, scaledW, scaledH, !usePostProcessing);
+      uploadLights(bundle.lights);
+      uploadFogUniforms(bundle.environment);
+      uploadEnvUniforms(bundle.environment);
+
+      var shadowLightMatrices = [null, null];
+      var shadowLightIndices = [-1, -1];
+      var activeShadowCount = 0;
+
+      var encoder = device.createCommandEncoder({ label: "gosx-frame" });
+      var frameTimeSeconds = performance.now() / 1000;
+      var computeParticleRecords = updateComputeParticleSystems(bundle.computeParticles, encoder, frameTimeSeconds);
+
+      var lightArray = Array.isArray(bundle.lights) ? bundle.lights : [];
+      var sceneBounds = null;
+      var shadowMaxPixels = (typeof bundle.shadowMaxPixels === "number") ? bundle.shadowMaxPixels : 0;
+
+      for (var li = 0; li < lightArray.length && activeShadowCount < 2; li++) {
+        var light = lightArray[li];
+        if (!light || !light.castShadow) continue;
+        var kind = typeof light.kind === "string" ? light.kind.toLowerCase() : "";
+        if (kind !== "directional") continue;
+
+        if (!sceneBounds) sceneBounds = sceneShadowComputeBounds(bundle);
+
+        var slot = activeShadowCount;
+        var shadowSize = sceneNumber(light.shadowSize, 1024);
+        shadowSize = Math.max(256, Math.min(4096, shadowSize));
+        shadowSize = resolveShadowSize(shadowSize, shadowMaxPixels);
+
+        if (!shadowSlots[slot] || shadowSlots[slot].size !== shadowSize) {
+          if (shadowSlots[slot]) shadowSlots[slot].texture.destroy();
+          shadowSlots[slot] = wgpuCreateShadowMap(device, shadowSize);
+        }
+
+        var lightMatrix = sceneShadowLightSpaceMatrix(light, sceneBounds);
+        shadowLightMatrices[slot] = lightMatrix;
+        shadowLightIndices[slot] = li;
+
+        renderShadowPass(encoder, lightMatrix, bundle, shadowSlots[slot]);
+        activeShadowCount++;
+      }
+
+      uploadShadowUniforms(shadowLightMatrices, shadowLightIndices, bundle.lights);
+
+      var shadowView0 = shadowSlots[0] ? shadowSlots[0].view : null;
+      var shadowView1 = shadowSlots[1] ? shadowSlots[1].view : null;
+      var frameBindGroup = createFrameBindGroup(shadowView0, shadowView1);
+
+      var mainColorView;
+      var mainDepthTargetView;
+      var postTarget = null;
+
+      if (usePostProcessing) {
+        if (!postProcessor) postProcessor = wgpuCreatePostProcessor(device, targetFormat);
+        postTarget = postProcessor.getSceneTarget(scaledW, scaledH);
+        mainColorView = postTarget.colorView;
+        mainDepthTargetView = postTarget.depthView;
+      } else {
+        var currentTexture = gpuCtx.getCurrentTexture();
+        mainColorView = currentTexture.createView();
+        ensureMainDepth(width, height);
+        mainDepthTargetView = mainDepthView;
+      }
+
+      var bgStr = typeof bundle.background === "string" ? bundle.background.trim().toLowerCase() : "";
+      var bg = bgStr === "transparent" ? [0, 0, 0, 0] : sceneColorRGBA(bundle.background, [0.03, 0.08, 0.12, 1]);
+
+      var mainPass = encoder.beginRenderPass({
+        colorAttachments: [{
+          view: mainColorView,
+          loadOp: "clear",
+          storeOp: "store",
+          clearValue: { r: bg[0], g: bg[1], b: bg[2], a: bg[3] },
+        }],
+        depthStencilAttachment: {
+          view: mainDepthTargetView,
+          depthLoadOp: "clear",
+          depthClearValue: 1.0,
+          depthStoreOp: "store",
+        },
+      });
+
+      if (hasPBRData) {
+        var drawList = buildDrawList(bundle);
+        var materials = Array.isArray(bundle.materials) ? bundle.materials : [];
+
+        if (drawList.opaque.length > 0) {
+          var opaquePipeline = getPBRPipeline("opaque", true);
+          mainPass.setPipeline(opaquePipeline);
+          mainPass.setBindGroup(0, frameBindGroup);
+          drawPBRObjects(mainPass, drawList.opaque, bundle, materials, frameBindGroup);
+        }
+
+        if (drawList.alpha.length > 0) {
+          var alphaPipeline = getPBRPipeline("alpha", false);
+          mainPass.setPipeline(alphaPipeline);
+          mainPass.setBindGroup(0, frameBindGroup);
+          drawPBRObjects(mainPass, drawList.alpha, bundle, materials, frameBindGroup);
+        }
+
+        if (drawList.additive.length > 0) {
+          var additivePipeline = getPBRPipeline("additive", false);
+          mainPass.setPipeline(additivePipeline);
+          mainPass.setBindGroup(0, frameBindGroup);
+          drawPBRObjects(mainPass, drawList.additive, bundle, materials, frameBindGroup);
+        }
+      }
+
+      if (hasPointsData) {
+        mainPass.setBindGroup(0, frameBindGroup);
+        var dummyMatBG = createMaterialBindGroup(null, false);
+        mainPass.setBindGroup(1, dummyMatBG);
+        drawPointsEntries(mainPass, bundle, cam, frameTimeSeconds);
+        drawComputeParticleEntries(mainPass, computeParticleRecords, bundle.environment);
+      }
+
+      mainPass.end();
+
+      if (usePostProcessing && postProcessor) {
+        var screenView = gpuCtx.getCurrentTexture().createView();
+        postProcessor.apply(encoder, postEffects, scaledW, scaledH, width, height, screenView);
+      }
+
+      device.queue.submit([encoder.finish()]);
+    }
+
+    function dispose() {
+      if (!device) return;
+
+      if (frameUniformBuffer) frameUniformBuffer.destroy();
+      if (lightStorageBuffer) lightStorageBuffer.destroy();
+      if (fogUniformBuffer) fogUniformBuffer.destroy();
+      if (envUniformBuffer) envUniformBuffer.destroy();
+      if (shadowUniformBuffer) shadowUniformBuffer.destroy();
+      if (materialUniformBuffer) materialUniformBuffer.destroy();
+      if (positionBuffer) positionBuffer.destroy();
+      if (normalBuffer) normalBuffer.destroy();
+      if (uvBuffer) uvBuffer.destroy();
+      if (tangentBuffer) tangentBuffer.destroy();
+      if (shadowPositionBuffer) shadowPositionBuffer.destroy();
+      if (shadowFrameBuffer) shadowFrameBuffer.destroy();
+      if (pointsUniformBuffer) pointsUniformBuffer.destroy();
+      if (pointsParticleBuffer) pointsParticleBuffer.destroy();
+      disposeComputeParticleSystems();
+
+      if (mainDepthTexture) mainDepthTexture.destroy();
+      if (dummyShadowTex) dummyShadowTex.destroy();
+      if (placeholderTex) placeholderTex.destroy();
+
+      for (var si = 0; si < shadowSlots.length; si++) {
+        if (shadowSlots[si]) shadowSlots[si].texture.destroy();
+      }
+
+      for (var record of textureCache.values()) {
+        if (record && record.texture) record.texture.destroy();
+      }
+      textureCache.clear();
+
+      if (postProcessor) {
+        postProcessor.dispose();
+        postProcessor = null;
+      }
+
+      device = null;
+    }
+
+    startInit();
+
+    return {
+      type: "webgpu",
+      render: render,
+      dispose: dispose,
+    };
+  }
+
+  var _webgpuAdapterProbe = null;  // null = not probed, false = unavailable, GPUAdapter = ready
+  var _webgpuAdapterReady = false;
+
+  if (typeof navigator !== "undefined" && navigator.gpu && typeof navigator.gpu.requestAdapter === "function") {
+    navigator.gpu.requestAdapter({ powerPreference: "high-performance" }).then(function(adapter) {
+      if (adapter) {
+        _webgpuAdapterProbe = adapter;
+        _webgpuAdapterReady = true;
+      } else {
+        _webgpuAdapterProbe = false;
+      }
+    }).catch(function() {
+      _webgpuAdapterProbe = false;
+    });
+  } else {
+    _webgpuAdapterProbe = false;
+  }
+
+  function sceneWebGPUAvailable() {
+    return _webgpuAdapterReady && _webgpuAdapterProbe !== false && _webgpuAdapterProbe !== null;
+  }
+
+  function createSceneWebGPURendererOrFallback(canvas) {
+    if (!sceneWebGPUAvailable()) return null;
+    if (!canvas || typeof canvas.getContext !== "function") return null;
+
+    var renderer = null;
+    try {
+      renderer = createSceneWebGPURenderer(canvas);
+    } catch (e) {
+      console.warn("[gosx] WebGPU renderer creation failed:", e);
+      return null;
+    }
+    return renderer;
+  }
+
+  var SCENE_COMPUTE_PARTICLE_SOURCE = [
+    "struct Particle {",
+    "    posX: f32, posY: f32, posZ: f32,",
+    "    velX: f32, velY: f32, velZ: f32,",
+    "    age: f32,",
+    "    lifetime: f32,",
+    "};",
+    "",
+    "struct RenderVertex {",
+    "    posX: f32, posY: f32, posZ: f32,",
+    "    size: f32,",
+    "    r: f32, g: f32, b: f32, a: f32,",
+    "};",
+    "",
+    "struct SimParams {",
+    "    deltaTime: f32,",
+    "    totalTime: f32,",
+    "    count: u32,",
+    "    _pad0: u32,",
+    "    emitterKind: u32,",
+    "    emitterX: f32, emitterY: f32, emitterZ: f32,",
+    "    emitterRadius: f32,",
+    "    emitterRate: f32,",
+    "    emitterLifetime: f32,",
+    "    _pad1: u32,",
+    "    emitterArms: u32,",
+    "    emitterWind: f32,",
+    "    emitterScatter: f32,",
+    "    emitterRotX: f32, emitterRotY: f32, emitterRotZ: f32,",
+    "    _pad2: u32,",
+    "    sizeStart: f32, sizeEnd: f32,",
+    "    colorStartR: f32, colorStartG: f32, colorStartB: f32,",
+    "    colorEndR: f32, colorEndG: f32, colorEndB: f32,",
+    "    opacityStart: f32, opacityEnd: f32,",
+    "    forceCount: u32,",
+    "    _pad3: u32,",
+    "};",
+    "",
+    "struct Force {",
+    "    kind: u32,",
+    "    strength: f32,",
+    "    dirX: f32, dirY: f32, dirZ: f32,",
+    "    frequency: f32,",
+    "    _pad0: f32, _pad1: f32,",
+    "};",
+    "",
+    "@group(0) @binding(0) var<storage, read_write> particles: array<Particle>;",
+    "@group(0) @binding(1) var<storage, read_write> renderData: array<RenderVertex>;",
+    "@group(0) @binding(2) var<uniform> params: SimParams;",
+    "@group(0) @binding(3) var<storage, read> forces: array<Force>;",
+    "",
+    "fn hash(seed: u32) -> f32 {",
+    "    var s = seed;",
+    "    s = s ^ (s >> 16u);",
+    "    s = s * 0x45d9f3bu;",
+    "    s = s ^ (s >> 16u);",
+    "    s = s * 0x45d9f3bu;",
+    "    s = s ^ (s >> 16u);",
+    "    return f32(s) / f32(0xffffffffu);",
+    "}",
+    "",
+    "fn hash2(a: u32, b: u32) -> f32 {",
+    "    return hash(a * 1597334677u + b * 3812015801u);",
+    "}",
+    "",
+    "fn emitPoint(index: u32, p: SimParams) -> Particle {",
+    "    var out: Particle;",
+    "    out.posX = p.emitterX;",
+    "    out.posY = p.emitterY;",
+    "    out.posZ = p.emitterZ;",
+    "    out.velX = (hash2(index, 0u) - 0.5) * 0.1;",
+    "    out.velY = (hash2(index, 1u) - 0.5) * 0.1;",
+    "    out.velZ = (hash2(index, 2u) - 0.5) * 0.1;",
+    "    out.age = 0.0;",
+    "    out.lifetime = p.emitterLifetime;",
+    "    return out;",
+    "}",
+    "",
+    "fn emitSphere(index: u32, p: SimParams) -> Particle {",
+    "    var out: Particle;",
+    "    let theta = hash2(index, 10u) * 6.283185;",
+    "    let phi = acos(2.0 * hash2(index, 11u) - 1.0);",
+    "    let r = p.emitterRadius * pow(hash2(index, 12u), 0.333);",
+    "    out.posX = p.emitterX + r * sin(phi) * cos(theta);",
+    "    out.posY = p.emitterY + r * cos(phi);",
+    "    out.posZ = p.emitterZ + r * sin(phi) * sin(theta);",
+    "    out.velX = 0.0; out.velY = 0.0; out.velZ = 0.0;",
+    "    out.age = 0.0;",
+    "    out.lifetime = p.emitterLifetime;",
+    "    return out;",
+    "}",
+    "",
+    "fn emitDisc(index: u32, p: SimParams) -> Particle {",
+    "    var out: Particle;",
+    "    let angle = hash2(index, 20u) * 6.283185;",
+    "    let r = p.emitterRadius * sqrt(hash2(index, 21u));",
+    "    out.posX = p.emitterX + r * cos(angle);",
+    "    out.posY = p.emitterY;",
+    "    out.posZ = p.emitterZ + r * sin(angle);",
+    "    out.velX = 0.0; out.velY = 0.0; out.velZ = 0.0;",
+    "    out.age = 0.0;",
+    "    out.lifetime = p.emitterLifetime;",
+    "    return out;",
+    "}",
+    "",
+    "fn rotateEulerZYX(lx: f32, ly: f32, lz: f32, rx: f32, ry: f32, rz: f32) -> vec3<f32> {",
+    "    let cx = cos(rx); let sx = sin(rx);",
+    "    let cy = cos(ry); let sy = sin(ry);",
+    "    let cz = cos(rz); let sz = sin(rz);",
+    "    return vec3<f32>(",
+    "        lx*(cy*cz) + ly*(sx*sy*cz - cx*sz) + lz*(cx*sy*cz + sx*sz),",
+    "        lx*(cy*sz) + ly*(sx*sy*sz + cx*cz) + lz*(cx*sy*sz - sx*cz),",
+    "        lx*(-sy)   + ly*(sx*cy)             + lz*(cx*cy)",
+    "    );",
+    "}",
+    "",
+    "fn emitSpiral(index: u32, p: SimParams) -> Particle {",
+    "    var out: Particle;",
+    "    let radius = hash2(index, 30u) * p.emitterRadius;",
+    "    let arm = index % p.emitterArms;",
+    "    let armAngle = f32(arm) * 3.14159265 / f32(max(p.emitterArms / 2u, 1u));",
+    "    let spiralAngle = armAngle + (radius / p.emitterRadius) * p.emitterWind;",
+    "    let scatter = (hash2(index, 31u) - 0.5) * radius * p.emitterScatter;",
+    "    let lx = cos(spiralAngle) * radius + scatter;",
+    "    let ly = (hash2(index, 32u) - 0.5) * p.emitterRadius * 0.05;",
+    "    let lz = sin(spiralAngle) * radius + (hash2(index, 33u) - 0.5) * radius * p.emitterScatter;",
+    "    let rotated = rotateEulerZYX(lx, ly, lz, p.emitterRotX, p.emitterRotY, p.emitterRotZ);",
+    "    out.posX = p.emitterX + rotated.x;",
+    "    out.posY = p.emitterY + rotated.y;",
+    "    out.posZ = p.emitterZ + rotated.z;",
+    "    out.velX = 0.0; out.velY = 0.0; out.velZ = 0.0;",
+    "    out.age = 0.0;",
+    "    out.lifetime = p.emitterLifetime;",
+    "    return out;",
+    "}",
+    "",
+    "fn emitParticle(index: u32, p: SimParams) -> Particle {",
+    "    switch (p.emitterKind) {",
+    "        case 1u: { return emitSphere(index, p); }",
+    "        case 2u: { return emitDisc(index, p); }",
+    "        case 3u: { return emitSpiral(index, p); }",
+    "        default: { return emitPoint(index, p); }",
+    "    }",
+    "}",
+    "",
+    "fn applyGravity(part: Particle, f: Force, dt: f32) -> vec3f {",
+    "    return vec3f(f.dirX, f.dirY, f.dirZ) * f.strength * dt;",
+    "}",
+    "",
+    "fn applyWind(part: Particle, f: Force, dt: f32) -> vec3f {",
+    "    return vec3f(f.dirX, f.dirY, f.dirZ) * f.strength * dt;",
+    "}",
+    "",
+    "fn applyTurbulence(part: Particle, f: Force, dt: f32, time: f32) -> vec3f {",
+    "    let freq = f.frequency;",
+    "    let nx = sin(part.posX * freq + time * 1.3) * cos(part.posZ * freq + time * 0.7);",
+    "    let ny = sin(part.posY * freq + time * 0.9) * cos(part.posX * freq + time * 1.1);",
+    "    let nz = sin(part.posZ * freq + time * 1.7) * cos(part.posY * freq + time * 0.5);",
+    "    return vec3f(nx, ny, nz) * f.strength * dt;",
+    "}",
+    "",
+    "fn applyOrbit(part: Particle, f: Force, dt: f32) -> vec3f {",
+    "    let dx = part.posX;",
+    "    let dz = part.posZ;",
+    "    let dist = max(sqrt(dx * dx + dz * dz), 0.001);",
+    "    return vec3f(-dz / dist, 0.0, dx / dist) * f.strength * dt;",
+    "}",
+    "",
+    "fn applyDrag(part: Particle, f: Force, dt: f32) -> vec3f {",
+    "    return vec3f(-part.velX, -part.velY, -part.velZ) * f.strength * dt;",
+    "}",
+    "",
+    "@compute @workgroup_size(64)",
+    "fn simulate(@builtin(global_invocation_id) id: vec3u) {",
+    "    let i = id.x;",
+    "    if (i >= params.count) { return; }",
+    "",
+    "    var p = particles[i];",
+    "",
+    "    if (p.age < 0.0) {",
+    "        p = emitParticle(i, params);",
+    "    }",
+    "",
+    "    p.age += params.deltaTime;",
+    "",
+    "    if (p.lifetime > 0.0 && p.age >= p.lifetime) {",
+    "        p = emitParticle(i, params);",
+    "    }",
+    "",
+    "    for (var fi = 0u; fi < params.forceCount; fi++) {",
+    "        let f = forces[fi];",
+    "        switch (f.kind) {",
+    "            case 0u: { let dv = applyGravity(p, f, params.deltaTime); p.velX += dv.x; p.velY += dv.y; p.velZ += dv.z; }",
+    "            case 1u: { let dv = applyWind(p, f, params.deltaTime); p.velX += dv.x; p.velY += dv.y; p.velZ += dv.z; }",
+    "            case 2u: { let dv = applyTurbulence(p, f, params.deltaTime, params.totalTime); p.velX += dv.x; p.velY += dv.y; p.velZ += dv.z; }",
+    "            case 3u: { let dv = applyOrbit(p, f, params.deltaTime); p.velX += dv.x; p.velY += dv.y; p.velZ += dv.z; }",
+    "            case 4u: { let dv = applyDrag(p, f, params.deltaTime); p.velX += dv.x; p.velY += dv.y; p.velZ += dv.z; }",
+    "            default: {}",
+    "        }",
+    "    }",
+    "",
+    "    p.posX += p.velX * params.deltaTime;",
+    "    p.posY += p.velY * params.deltaTime;",
+    "    p.posZ += p.velZ * params.deltaTime;",
+    "",
+    "    particles[i] = p;",
+    "",
+    "    let t = select(p.age / p.lifetime, 0.0, p.lifetime <= 0.0);",
+    "    var rv: RenderVertex;",
+    "    rv.posX = p.posX;",
+    "    rv.posY = p.posY;",
+    "    rv.posZ = p.posZ;",
+    "    rv.size = mix(params.sizeStart, params.sizeEnd, t);",
+    "    rv.r = mix(params.colorStartR, params.colorEndR, t);",
+    "    rv.g = mix(params.colorStartG, params.colorEndG, t);",
+    "    rv.b = mix(params.colorStartB, params.colorEndB, t);",
+    "    rv.a = mix(params.opacityStart, params.opacityEnd, t);",
+    "    renderData[i] = rv;",
+    "}",
+  ].join("\n");
+
+  function sceneComputeUploadSimParams(device, buffer, entry, deltaTime, totalTime) {
+    var emitter = entry.emitter || {};
+    var material = entry.material || {};
+    var forces = entry.forces || [];
+
+    var kindMap = { point: 0, sphere: 1, disc: 2, spiral: 3 };
+    var emitterKind = kindMap[emitter.kind] || 0;
+
+    var colorStart = sceneColorRGBA(material.color || "#ffffff", [1, 1, 1, 1]);
+    var colorEnd = sceneColorRGBA(material.colorEnd || material.color || "#ffffff", [1, 1, 1, 1]);
+
+    var buf = new ArrayBuffer(256);
+    var view = new DataView(buf);
+    var offset = 0;
+
+    view.setFloat32(offset, deltaTime, true); offset += 4;            // deltaTime
+    view.setFloat32(offset, totalTime, true); offset += 4;            // totalTime
+    view.setUint32(offset, entry.count, true); offset += 4;           // count
+    view.setUint32(offset, 0, true); offset += 4;                     // _pad0
+
+    view.setUint32(offset, emitterKind, true); offset += 4;           // emitterKind
+    view.setFloat32(offset, sceneNumber(emitter.x, 0), true); offset += 4;
+    view.setFloat32(offset, sceneNumber(emitter.y, 0), true); offset += 4;
+    view.setFloat32(offset, sceneNumber(emitter.z, 0), true); offset += 4;
+    view.setFloat32(offset, sceneNumber(emitter.radius, 0), true); offset += 4;
+    view.setFloat32(offset, sceneNumber(emitter.rate, 0), true); offset += 4;
+    view.setFloat32(offset, sceneNumber(emitter.lifetime, 0), true); offset += 4;
+    view.setUint32(offset, 0, true); offset += 4;                     // _pad1
+
+    view.setUint32(offset, sceneNumber(emitter.arms, 2), true); offset += 4;
+    view.setFloat32(offset, sceneNumber(emitter.wind, 0), true); offset += 4;
+    view.setFloat32(offset, sceneNumber(emitter.scatter, 0), true); offset += 4;
+    view.setFloat32(offset, sceneNumber(emitter.rotationX, 0), true); offset += 4;
+    view.setFloat32(offset, sceneNumber(emitter.rotationY, 0), true); offset += 4;
+    view.setFloat32(offset, sceneNumber(emitter.rotationZ, 0), true); offset += 4;
+    view.setUint32(offset, 0, true); offset += 4;                     // _pad2
+
+    view.setFloat32(offset, sceneNumber(material.size, 1), true); offset += 4;
+    view.setFloat32(offset, sceneNumber(material.sizeEnd, material.size || 1), true); offset += 4;
+    view.setFloat32(offset, colorStart[0], true); offset += 4;
+    view.setFloat32(offset, colorStart[1], true); offset += 4;
+    view.setFloat32(offset, colorStart[2], true); offset += 4;
+    view.setFloat32(offset, colorEnd[0], true); offset += 4;
+    view.setFloat32(offset, colorEnd[1], true); offset += 4;
+    view.setFloat32(offset, colorEnd[2], true); offset += 4;
+    view.setFloat32(offset, sceneNumber(material.opacity, 1), true); offset += 4;
+    view.setFloat32(offset, sceneNumber(material.opacityEnd, material.opacity || 1), true); offset += 4;
+
+    view.setUint32(offset, forces.length, true); offset += 4;
+    view.setUint32(offset, 0, true); offset += 4;                     // _pad3
+
+    device.queue.writeBuffer(buffer, 0, buf, 0, 256);
+  }
+
+  function sceneComputeUploadForces(device, buffer, forces) {
+    var kindMap = { gravity: 0, wind: 1, turbulence: 2, orbit: 3, drag: 4 };
+    var byteLen = Math.max(32, forces.length * 32);
+    var buf = new ArrayBuffer(byteLen);
+    var view = new DataView(buf);
+
+    for (var i = 0; i < forces.length; i++) {
+      var f = forces[i];
+      var off = i * 32;
+      view.setUint32(off, kindMap[f.kind] || 0, true);
+      view.setFloat32(off + 4, sceneNumber(f.strength, 0), true);
+      view.setFloat32(off + 8, sceneNumber(f.x, 0), true);
+      view.setFloat32(off + 12, sceneNumber(f.y, 0), true);
+      view.setFloat32(off + 16, sceneNumber(f.z, 0), true);
+      view.setFloat32(off + 20, sceneNumber(f.frequency, 1), true);
+    }
+
+    device.queue.writeBuffer(buffer, 0, buf);
+  }
+
+  function createSceneComputeParticleSystem(device, entry) {
+    var count = entry.count || 0;
+    if (count <= 0) return null;
+
+    var particleBuffer = device.createBuffer({
+      size: count * 32,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+    });
+
+    var renderBuffer = device.createBuffer({
+      size: count * 32,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.VERTEX,
+    });
+
+    var paramsBuffer = device.createBuffer({
+      size: 256,
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+    });
+
+    var forceCount = (entry.forces || []).length;
+    var forceBuffer = device.createBuffer({
+      size: Math.max(32, forceCount * 32),
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+    });
+
+    var initData = new Float32Array(count * 8);
+    for (var i = 0; i < count; i++) {
+      initData[i * 8 + 6] = -1.0;
+    }
+    device.queue.writeBuffer(particleBuffer, 0, initData);
+
+    sceneComputeUploadForces(device, forceBuffer, entry.forces || []);
+
+    var computePipeline = null;
+    var bindGroup = null;
+    var ready = false;
+
+    var shaderModule = device.createShaderModule({
+      code: SCENE_COMPUTE_PARTICLE_SOURCE,
+    });
+
+    var bindGroupLayout = device.createBindGroupLayout({
+      entries: [
+        { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } },
+        { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } },
+        { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: "uniform" } },
+        { binding: 3, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" } },
+      ],
+    });
+
+    var pipelineLayout = device.createPipelineLayout({
+      bindGroupLayouts: [bindGroupLayout],
+    });
+
+    device.createComputePipelineAsync({
+      layout: pipelineLayout,
+      compute: {
+        module: shaderModule,
+        entryPoint: "simulate",
+      },
+    }).then(function(pipeline) {
+      computePipeline = pipeline;
+      bindGroup = device.createBindGroup({
+        layout: bindGroupLayout,
+        entries: [
+          { binding: 0, resource: { buffer: particleBuffer } },
+          { binding: 1, resource: { buffer: renderBuffer } },
+          { binding: 2, resource: { buffer: paramsBuffer } },
+          { binding: 3, resource: { buffer: forceBuffer } },
+        ],
+      });
+      ready = true;
+    }).catch(function(err) {
+      console.warn("[gosx] Compute particle pipeline creation failed:", err);
+    });
+
+    return {
+      count: count,
+      renderBuffer: renderBuffer,
+      entry: entry,
+      isReady: function() {
+        return ready;
+      },
+
+      update: function(device, encoder, deltaTime, totalTime) {
+        if (!ready) return;
+
+        sceneComputeUploadSimParams(device, paramsBuffer, entry, deltaTime, totalTime);
+
+        var pass = encoder.beginComputePass();
+        pass.setPipeline(computePipeline);
+        pass.setBindGroup(0, bindGroup);
+        pass.dispatchWorkgroups(Math.ceil(count / 64));
+        pass.end();
+      },
+
+      dispose: function() {
+        particleBuffer.destroy();
+        renderBuffer.destroy();
+        paramsBuffer.destroy();
+        forceBuffer.destroy();
+        computePipeline = null;
+        bindGroup = null;
+        ready = false;
+      },
+    };
+  }
+
+  function createSceneCPUParticleSystem(entry) {
+    var count = Math.min(entry.count || 0, 10000);
+    if (count <= 0) return null;
+
+    var particles = new Float32Array(count * 8);
+
+    var positions = new Float32Array(count * 3);
+    var sizes = new Float32Array(count);
+    var colors = new Float32Array(count * 3);
+    var opacities = new Float32Array(count);
+
+    for (var i = 0; i < count; i++) {
+      particles[i * 8 + 6] = -1.0;
+    }
+
+    function hash(seed) {
+      var s = seed >>> 0;
+      s = s ^ (s >>> 16);
+      s = Math.imul(s, 0x45d9f3b) >>> 0;
+      s = s ^ (s >>> 16);
+      s = Math.imul(s, 0x45d9f3b) >>> 0;
+      s = s ^ (s >>> 16);
+      return (s >>> 0) / 0xffffffff;
+    }
+
+    function hash2(a, b) {
+      return hash(Math.imul(a >>> 0, 1597334677) + Math.imul(b >>> 0, 3812015801));
+    }
+
+    var kindMap = { point: 0, sphere: 1, disc: 2, spiral: 3 };
+
+    var forceKindMap = { gravity: 0, wind: 1, turbulence: 2, orbit: 3, drag: 4 };
+
+    function currentEmitterConfig() {
+      var emitter = entry && entry.emitter && typeof entry.emitter === "object" ? entry.emitter : {};
+      return {
+        kind: kindMap[emitter.kind] || 0,
+        x: 0,
+        y: 0,
+        z: 0,
+        radius: sceneNumber(emitter.radius, 0),
+        lifetime: sceneNumber(emitter.lifetime, 0),
+        arms: Math.max(1, Math.floor(sceneNumber(emitter.arms, 2))),
+        wind: sceneNumber(emitter.wind, 0),
+        scatter: sceneNumber(emitter.scatter, 0),
+      };
+    }
+
+    function currentMaterialConfig() {
+      var material = entry && entry.material && typeof entry.material === "object" ? entry.material : {};
+      return {
+        colorStart: sceneColorRGBA(material.color || "#ffffff", [1, 1, 1, 1]),
+        colorEnd: sceneColorRGBA(material.colorEnd || material.color || "#ffffff", [1, 1, 1, 1]),
+        sizeStart: sceneNumber(material.size, 1),
+        sizeEnd: sceneNumber(material.sizeEnd, material.size || 1),
+        opacityStart: sceneNumber(material.opacity, 1),
+        opacityEnd: sceneNumber(material.opacityEnd, material.opacity || 1),
+      };
+    }
+
+    function currentForces() {
+      return Array.isArray(entry && entry.forces) ? entry.forces : [];
+    }
+
+    function emitParticle(index, base, emitterConfig) {
+      switch (emitterConfig.kind) {
+        case 1: { // sphere
+          var theta = hash2(index, 10) * 6.283185;
+          var phi = Math.acos(2.0 * hash2(index, 11) - 1.0);
+          var r = emitterConfig.radius * Math.pow(hash2(index, 12), 0.333);
+          base[0] = r * Math.sin(phi) * Math.cos(theta);
+          base[1] = r * Math.cos(phi);
+          base[2] = r * Math.sin(phi) * Math.sin(theta);
+          base[3] = 0; base[4] = 0; base[5] = 0;
+          break;
+        }
+        case 2: { // disc
+          var angle = hash2(index, 20) * 6.283185;
+          var dr = emitterConfig.radius * Math.sqrt(hash2(index, 21));
+          base[0] = dr * Math.cos(angle);
+          base[1] = 0;
+          base[2] = dr * Math.sin(angle);
+          base[3] = 0; base[4] = 0; base[5] = 0;
+          break;
+        }
+        case 3: { // spiral (local space)
+          var radius = hash2(index, 30) * emitterConfig.radius;
+          var arm = index % emitterConfig.arms;
+          var armAngle = arm * 3.14159265 / Math.max(emitterConfig.arms / 2, 1);
+          var spiralAngle = armAngle + (radius / Math.max(emitterConfig.radius, 0.001)) * emitterConfig.wind;
+          var scatter = (hash2(index, 31) - 0.5) * radius * emitterConfig.scatter;
+          base[0] = Math.cos(spiralAngle) * radius + scatter;
+          base[1] = (hash2(index, 32) - 0.5) * emitterConfig.radius * 0.05;
+          base[2] = Math.sin(spiralAngle) * radius + (hash2(index, 33) - 0.5) * radius * emitterConfig.scatter;
+          base[3] = 0; base[4] = 0; base[5] = 0;
+          break;
+        }
+        default: { // point
+          base[0] = 0;
+          base[1] = 0;
+          base[2] = 0;
+          base[3] = (hash2(index, 0) - 0.5) * 0.1;
+          base[4] = (hash2(index, 1) - 0.5) * 0.1;
+          base[5] = (hash2(index, 2) - 0.5) * 0.1;
+          break;
+        }
+      }
+      base[6] = 0.0;              // age
+      base[7] = emitterConfig.lifetime;   // lifetime
+    }
+
+    return {
+      count: count,
+      positions: positions,
+      sizes: sizes,
+      colors: colors,
+      opacities: opacities,
+      entry: entry,
+
+      update: function(deltaTime, totalTime) {
+        var emitterConfig = currentEmitterConfig();
+        var materialConfig = currentMaterialConfig();
+        var forces = currentForces();
+        for (var i = 0; i < count; i++) {
+          var base = i * 8;
+
+          var posX = particles[base];
+          var posY = particles[base + 1];
+          var posZ = particles[base + 2];
+          var velX = particles[base + 3];
+          var velY = particles[base + 4];
+          var velZ = particles[base + 5];
+          var age = particles[base + 6];
+          var lifetime = particles[base + 7];
+
+          if (age < 0) {
+            emitParticle(i, particles.subarray(base, base + 8), emitterConfig);
+            posX = particles[base];
+            posY = particles[base + 1];
+            posZ = particles[base + 2];
+            velX = particles[base + 3];
+            velY = particles[base + 4];
+            velZ = particles[base + 5];
+            age = particles[base + 6];
+            lifetime = particles[base + 7];
+          }
+
+          age += deltaTime;
+
+          if (lifetime > 0 && age >= lifetime) {
+            emitParticle(i, particles.subarray(base, base + 8), emitterConfig);
+            posX = particles[base];
+            posY = particles[base + 1];
+            posZ = particles[base + 2];
+            velX = particles[base + 3];
+            velY = particles[base + 4];
+            velZ = particles[base + 5];
+            age = particles[base + 6];
+            lifetime = particles[base + 7];
+          }
+
+          for (var fi = 0; fi < forces.length; fi++) {
+            var f = forces[fi];
+            var fKind = forceKindMap[f.kind] || 0;
+            var str = sceneNumber(f.strength, 0);
+            var fx = sceneNumber(f.x, 0);
+            var fy = sceneNumber(f.y, 0);
+            var fz = sceneNumber(f.z, 0);
+            var freq = sceneNumber(f.frequency, 1);
+
+            switch (fKind) {
+              case 0: { // gravity
+                velX += fx * str * deltaTime;
+                velY += fy * str * deltaTime;
+                velZ += fz * str * deltaTime;
+                break;
+              }
+              case 1: { // wind
+                velX += fx * str * deltaTime;
+                velY += fy * str * deltaTime;
+                velZ += fz * str * deltaTime;
+                break;
+              }
+              case 2: { // turbulence
+                var nx = Math.sin(posX * freq + totalTime * 1.3) * Math.cos(posZ * freq + totalTime * 0.7);
+                var ny = Math.sin(posY * freq + totalTime * 0.9) * Math.cos(posX * freq + totalTime * 1.1);
+                var nz = Math.sin(posZ * freq + totalTime * 1.7) * Math.cos(posY * freq + totalTime * 0.5);
+                velX += nx * str * deltaTime;
+                velY += ny * str * deltaTime;
+                velZ += nz * str * deltaTime;
+                break;
+              }
+              case 3: { // orbit
+                var dx = posX;
+                var dz = posZ;
+                var dist = Math.max(Math.sqrt(dx * dx + dz * dz), 0.001);
+                velX += (-dz / dist) * str * deltaTime;
+                velZ += (dx / dist) * str * deltaTime;
+                break;
+              }
+              case 4: { // drag
+                velX += -velX * str * deltaTime;
+                velY += -velY * str * deltaTime;
+                velZ += -velZ * str * deltaTime;
+                break;
+              }
+            }
+          }
+
+          posX += velX * deltaTime;
+          posY += velY * deltaTime;
+          posZ += velZ * deltaTime;
+
+          particles[base] = posX;
+          particles[base + 1] = posY;
+          particles[base + 2] = posZ;
+          particles[base + 3] = velX;
+          particles[base + 4] = velY;
+          particles[base + 5] = velZ;
+          particles[base + 6] = age;
+          particles[base + 7] = lifetime;
+
+          var t = lifetime > 0 ? age / lifetime : 0;
+
+          positions[i * 3] = posX;
+          positions[i * 3 + 1] = posY;
+          positions[i * 3 + 2] = posZ;
+          sizes[i] = materialConfig.sizeStart + (materialConfig.sizeEnd - materialConfig.sizeStart) * t;
+          colors[i * 3] = materialConfig.colorStart[0] + (materialConfig.colorEnd[0] - materialConfig.colorStart[0]) * t;
+          colors[i * 3 + 1] = materialConfig.colorStart[1] + (materialConfig.colorEnd[1] - materialConfig.colorStart[1]) * t;
+          colors[i * 3 + 2] = materialConfig.colorStart[2] + (materialConfig.colorEnd[2] - materialConfig.colorStart[2]) * t;
+          opacities[i] = materialConfig.opacityStart + (materialConfig.opacityEnd - materialConfig.opacityStart) * t;
+        }
+      },
+
+      dispose: function() {
+        particles = null;
+        positions = null;
+        sizes = null;
+        colors = null;
+        opacities = null;
+      },
+    };
+  }
+
+  function createSceneParticleSystem(device, entry) {
+    if (device) {
+      return createSceneComputeParticleSystem(device, entry);
+    }
+    return createSceneCPUParticleSystem(entry);
+  }
+
+  function sceneComputeSystemSignature(entry) {
+    return JSON.stringify({
+      count: Math.max(0, Math.floor(sceneNumber(entry && entry.count, 0))),
+      forces: Array.isArray(entry && entry.forces) ? entry.forces : [],
+    });
+  }
+
+  var SCENE_DRAG_MIN_EXTENT_X = 0.6;
+  var SCENE_DRAG_MIN_EXTENT_Y = 0.35;
+  var SCENE_PICK_MIN_EXTENT_X = 0.12;
+  var SCENE_PICK_MIN_EXTENT_Y = 0.08;
+  var SCENE_ORBIT_PITCH_MIN = -1.35;
+  var SCENE_ORBIT_PITCH_MAX = 1.35;
+  var SCENE_ORBIT_YAW_MIN = -1.1;
+  var SCENE_ORBIT_YAW_MAX = 1.1;
+  var SCENE_POINTER_PAD_MIN = 12;
+  var SCENE_POINTER_PAD_RANGE = 22;
+  var SCENE_POINTER_PAD_SCALE = 0.08;
+
+  function sceneLocalPointerPoint(event, canvas, width, height) {
+    const rect = canvas.getBoundingClientRect();
+    const safeWidth = Math.max(rect.width || 0, 1);
+    const safeHeight = Math.max(rect.height || 0, 1);
+    return {
+      x: sceneClamp(((sceneNumber(event && event.clientX, rect.left) - rect.left) / safeWidth) * width, 0, width),
+      y: sceneClamp(((sceneNumber(event && event.clientY, rect.top) - rect.top) / safeHeight) * height, 0, height),
+    };
+  }
+
+  function sceneLocalPointerSample(event, canvas, width, height, state, phase) {
+    const previousX = state.lastX == null ? width / 2 : state.lastX;
+    const previousY = state.lastY == null ? height / 2 : state.lastY;
+    const hasPointerPosition = Number.isFinite(sceneNumber(event && event.clientX, NaN)) && Number.isFinite(sceneNumber(event && event.clientY, NaN));
+    const point = hasPointerPosition ? sceneLocalPointerPoint(event, canvas, width, height) : { x: previousX, y: previousY };
+    const sample = {
+      x: point.x,
+      y: point.y,
+      deltaX: point.x - previousX,
+      deltaY: point.y - previousY,
+      buttons: phase === "end" ? 0 : 1,
+      button: phase === "start" || phase === "end" ? 0 : null,
+      active: phase !== "end",
+    };
+    state.lastX = point.x;
+    state.lastY = point.y;
+    return sample;
+  }
+
+  function resetScenePointerSample(width, height, state) {
+    state.lastX = width / 2;
+    state.lastY = height / 2;
+    publishPointerSignals({
+      x: state.lastX,
+      y: state.lastY,
+      deltaX: 0,
+      deltaY: 0,
+      buttons: 0,
+      button: 0,
+      active: false,
+    });
+  }
+
+  function sceneDragSignalNamespace(props) {
+    const value = props && props.dragSignalNamespace;
+    return typeof value === "string" ? value.trim() : "";
+  }
+
+  function scenePickSignalNamespace(props) {
+    const value = props && props.pickSignalNamespace;
+    return typeof value === "string" ? value.trim() : "";
+  }
+
+  function sceneEventSignalNamespace(props) {
+    const value = props && props.eventSignalNamespace;
+    return typeof value === "string" ? value.trim() : "";
+  }
+
+  function sceneSignalSegment(value, fallback) {
+    const source = typeof value === "string" ? value.trim().toLowerCase() : "";
+    if (!source) {
+      return fallback;
+    }
+    const normalized = source
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "");
+    return normalized || fallback;
+  }
+
+  function sceneTargetIndex(target) {
+    return target && target.index != null ? Math.max(-1, Math.floor(sceneNumber(target.index, -1))) : -1;
+  }
+
+  function sceneTargetID(target) {
+    return target && target.object && typeof target.object.id === "string" ? target.object.id : "";
+  }
+
+  function sceneTargetKind(target) {
+    return target && target.object && typeof target.object.kind === "string" ? target.object.kind : "";
+  }
+
+  function sceneObjectSignalSlug(index, id, kind) {
+    const targetID = typeof id === "string" ? id.trim() : "";
+    if (targetID) {
+      return sceneSignalSegment(targetID, "object");
+    }
+    const targetKind = typeof kind === "string" ? kind.trim() : "";
+    if (targetKind && index >= 0) {
+      return sceneSignalSegment(targetKind + "-" + index, "object-" + index);
+    }
+    if (index >= 0) {
+      return "object-" + index;
+    }
+    return "";
+  }
+
+  function publishSceneDragSignals(namespace, state, active) {
+    if (!namespace) {
+      return;
+    }
+    queueInputSignal(namespace + ".x", sceneNumber(state.orbitX, 0));
+    queueInputSignal(namespace + ".y", sceneNumber(state.orbitY, 0));
+    queueInputSignal(namespace + ".targetIndex", Math.max(-1, Math.floor(sceneNumber(state.targetIndex, -1))));
+    queueInputSignal(namespace + ".active", Boolean(active));
+  }
+
+  function publishScenePickSignals(namespace, state) {
+    if (!namespace) {
+      return;
+    }
+    const snapshot = scenePickSignalSnapshot(state);
+    const nextKey = scenePickSignalSnapshotKey(snapshot);
+    if (nextKey === state.publishedKey) {
+      return;
+    }
+    state.publishedKey = nextKey;
+    queueInputSignal(namespace + ".hovered", snapshot.hovered);
+    queueInputSignal(namespace + ".hoverIndex", snapshot.hoverIndex);
+    queueInputSignal(namespace + ".hoverID", snapshot.hoverID);
+    queueInputSignal(namespace + ".down", snapshot.down);
+    queueInputSignal(namespace + ".downIndex", snapshot.downIndex);
+    queueInputSignal(namespace + ".downID", snapshot.downID);
+    queueInputSignal(namespace + ".selected", snapshot.selected);
+    queueInputSignal(namespace + ".selectedIndex", snapshot.selectedIndex);
+    queueInputSignal(namespace + ".selectedID", snapshot.selectedID);
+    queueInputSignal(namespace + ".clickCount", snapshot.clickCount);
+    queueInputSignal(namespace + ".pointerX", snapshot.pointerX);
+    queueInputSignal(namespace + ".pointerY", snapshot.pointerY);
+  }
+
+  function publishSceneEventSignals(namespace, state) {
+    if (!namespace) {
+      return;
+    }
+    const snapshot = sceneInteractionSnapshot(state);
+    const nextKey = sceneInteractionSnapshotKey(snapshot);
+    if (nextKey === state.publishedEventKey) {
+      return;
+    }
+    state.publishedEventKey = nextKey;
+    queueInputSignal(namespace + ".revision", snapshot.revision);
+    queueInputSignal(namespace + ".type", snapshot.type);
+    queueInputSignal(namespace + ".targetIndex", snapshot.targetIndex);
+    queueInputSignal(namespace + ".targetID", snapshot.targetID);
+    queueInputSignal(namespace + ".targetKind", snapshot.targetKind);
+    queueInputSignal(namespace + ".hovered", snapshot.hovered);
+    queueInputSignal(namespace + ".hoverIndex", snapshot.hoverIndex);
+    queueInputSignal(namespace + ".hoverID", snapshot.hoverID);
+    queueInputSignal(namespace + ".hoverKind", snapshot.hoverKind);
+    queueInputSignal(namespace + ".down", snapshot.down);
+    queueInputSignal(namespace + ".downIndex", snapshot.downIndex);
+    queueInputSignal(namespace + ".downID", snapshot.downID);
+    queueInputSignal(namespace + ".downKind", snapshot.downKind);
+    queueInputSignal(namespace + ".selected", snapshot.selected);
+    queueInputSignal(namespace + ".selectedIndex", snapshot.selectedIndex);
+    queueInputSignal(namespace + ".selectedID", snapshot.selectedID);
+    queueInputSignal(namespace + ".selectedKind", snapshot.selectedKind);
+    queueInputSignal(namespace + ".clickCount", snapshot.clickCount);
+    queueInputSignal(namespace + ".pointerX", snapshot.pointerX);
+    queueInputSignal(namespace + ".pointerY", snapshot.pointerY);
+    publishSceneObjectEventSignals(namespace, state, snapshot);
+  }
+
+  function scenePickSignalSnapshot(state) {
+    return {
+      hovered: Boolean(state.hoverIndex >= 0),
+      hoverIndex: Math.max(-1, Math.floor(sceneNumber(state.hoverIndex, -1))),
+      hoverID: state.hoverID || "",
+      down: Boolean(state.downIndex >= 0),
+      downIndex: Math.max(-1, Math.floor(sceneNumber(state.downIndex, -1))),
+      downID: state.downID || "",
+      selected: Boolean(state.selectedIndex >= 0),
+      selectedIndex: Math.max(-1, Math.floor(sceneNumber(state.selectedIndex, -1))),
+      selectedID: state.selectedID || "",
+      clickCount: Math.max(0, Math.floor(sceneNumber(state.clickCount, 0))),
+      pointerX: sceneNumber(state.pointerX, 0),
+      pointerY: sceneNumber(state.pointerY, 0),
+    };
+  }
+
+  function sceneInteractionSnapshot(state) {
+    var pick = scenePickSignalSnapshot(state);
+    pick.revision = Math.max(0, Math.floor(sceneNumber(state.eventRevision, 0)));
+    pick.type = state.eventType || "";
+    pick.targetIndex = Math.max(-1, Math.floor(sceneNumber(state.eventTargetIndex, -1)));
+    pick.targetID = state.eventTargetID || "";
+    pick.targetKind = state.eventTargetKind || "";
+    pick.hoverKind = state.hoverKind || "";
+    pick.downKind = state.downKind || "";
+    pick.selectedKind = state.selectedKind || "";
+    return pick;
+  }
+
+  function scenePickSignalSnapshotKey(snapshot) {
+    return [
+      snapshot.hovered ? 1 : 0,
+      snapshot.hoverIndex,
+      snapshot.hoverID,
+      snapshot.down ? 1 : 0,
+      snapshot.downIndex,
+      snapshot.downID,
+      snapshot.selected ? 1 : 0,
+      snapshot.selectedIndex,
+      snapshot.selectedID,
+      snapshot.clickCount,
+      snapshot.pointerX,
+      snapshot.pointerY,
+    ].join("|");
+  }
+
+  function sceneInteractionSnapshotKey(snapshot) {
+    return [
+      snapshot.revision,
+      snapshot.type,
+      snapshot.targetIndex,
+      snapshot.targetID,
+      snapshot.targetKind,
+      snapshot.hovered ? 1 : 0,
+      snapshot.hoverIndex,
+      snapshot.hoverID,
+      snapshot.hoverKind,
+      snapshot.down ? 1 : 0,
+      snapshot.downIndex,
+      snapshot.downID,
+      snapshot.downKind,
+      snapshot.selected ? 1 : 0,
+      snapshot.selectedIndex,
+      snapshot.selectedID,
+      snapshot.selectedKind,
+      snapshot.clickCount,
+      snapshot.pointerX,
+      snapshot.pointerY,
+    ].join("|");
+  }
+
+  function publishSceneObjectEventSignals(namespace, state, snapshot) {
+    publishSceneObjectBoolSignal(namespace, "hovered", state.publishedHoverSlug, sceneObjectSignalSlug(snapshot.hoverIndex, snapshot.hoverID, snapshot.hoverKind));
+    state.publishedHoverSlug = sceneObjectSignalSlug(snapshot.hoverIndex, snapshot.hoverID, snapshot.hoverKind);
+    publishSceneObjectBoolSignal(namespace, "down", state.publishedDownSlug, sceneObjectSignalSlug(snapshot.downIndex, snapshot.downID, snapshot.downKind));
+    state.publishedDownSlug = sceneObjectSignalSlug(snapshot.downIndex, snapshot.downID, snapshot.downKind);
+    publishSceneObjectBoolSignal(namespace, "selected", state.publishedSelectedSlug, sceneObjectSignalSlug(snapshot.selectedIndex, snapshot.selectedID, snapshot.selectedKind));
+    state.publishedSelectedSlug = sceneObjectSignalSlug(snapshot.selectedIndex, snapshot.selectedID, snapshot.selectedKind);
+
+    const nextCounts = state.objectClickCounts || Object.create(null);
+    const previousCounts = state.publishedObjectClickCounts || Object.create(null);
+    const slugs = new Set(Object.keys(previousCounts).concat(Object.keys(nextCounts)));
+    slugs.forEach(function(slug) {
+      const nextCount = Math.max(0, Math.floor(sceneNumber(nextCounts[slug], 0)));
+      const previousCount = Math.max(0, Math.floor(sceneNumber(previousCounts[slug], 0)));
+      if (nextCount === previousCount) {
+        return;
+      }
+      queueInputSignal(namespace + ".object." + slug + ".clickCount", nextCount);
+    });
+    state.publishedObjectClickCounts = Object.assign(Object.create(null), nextCounts);
+  }
+
+  function publishSceneObjectBoolSignal(namespace, key, previousSlug, nextSlug) {
+    if (previousSlug && previousSlug !== nextSlug) {
+      queueInputSignal(namespace + ".object." + previousSlug + "." + key, false);
+    }
+    if (nextSlug && nextSlug !== previousSlug) {
+      queueInputSignal(namespace + ".object." + nextSlug + "." + key, true);
+    }
+  }
+
+  function sceneBoundsSize(bounds) {
+    if (!bounds || typeof bounds !== "object") return [0, 0, 0];
+    return [
+      Math.abs(sceneNumber(bounds.maxX, 0) - sceneNumber(bounds.minX, 0)),
+      Math.abs(sceneNumber(bounds.maxY, 0) - sceneNumber(bounds.minY, 0)),
+      Math.abs(sceneNumber(bounds.maxZ, 0) - sceneNumber(bounds.minZ, 0)),
+    ].sort(function(a, b) { return b - a; });
+  }
+
+  function sceneObjectAllowsPointerDrag(object) {
+    if (!object || object.kind === "plane" || object.viewCulled) {
+      return false;
+    }
+    const extents = sceneBoundsSize(object.bounds);
+    return extents[0] > SCENE_DRAG_MIN_EXTENT_X && extents[1] > SCENE_DRAG_MIN_EXTENT_Y;
+  }
+
+  function sceneObjectAllowsPointerPick(object) {
+    if (!object || object.viewCulled) {
+      return false;
+    }
+    if (typeof object.pickable === "boolean") {
+      return object.pickable;
+    }
+    if (object.kind === "plane") {
+      return false;
+    }
+    const extents = sceneBoundsSize(object.bounds);
+    return extents[0] > SCENE_PICK_MIN_EXTENT_X && extents[1] > SCENE_PICK_MIN_EXTENT_Y;
+  }
+
+  function sceneWorldPointAt(source, vertexIndex) {
+    if (!source || typeof source.length !== "number") {
+      return null;
+    }
+    const offset = Math.max(0, vertexIndex * 3);
+    if (offset + 2 >= source.length) {
+      return null;
+    }
+    return {
+      x: sceneNumber(source[offset], 0),
+      y: sceneNumber(source[offset + 1], 0),
+      z: sceneNumber(source[offset + 2], 0),
+    };
+  }
+
+  function sceneProjectedObjectSegments(bundle, object, width, height) {
+    if (!bundle || !bundle.camera || !object) {
+      return [];
+    }
+    const vertexOffset = Math.max(0, Math.floor(sceneNumber(object.vertexOffset, 0)));
+    const vertexCount = Math.max(0, Math.floor(sceneNumber(object.vertexCount, 0)));
+    if (vertexCount < 2) {
+      return [];
+    }
+    const source = bundle.worldPositions;
+    if (!source || typeof source.length !== "number") {
+      return [];
+    }
+    const segments = [];
+    for (let i = 0; i + 1 < vertexCount; i += 2) {
+      const fromWorld = sceneWorldPointAt(source, vertexOffset + i);
+      const toWorld = sceneWorldPointAt(source, vertexOffset + i + 1);
+      if (!fromWorld || !toWorld) {
+        continue;
+      }
+      const from = sceneProjectPoint(fromWorld, bundle.camera, width, height);
+      const to = sceneProjectPoint(toWorld, bundle.camera, width, height);
+      if (!from || !to) {
+        continue;
+      }
+      segments.push([from, to]);
+    }
+    return segments;
+  }
+
+  function sceneProjectedSegmentsBounds(segments) {
+    if (!Array.isArray(segments) || !segments.length) {
+      return null;
+    }
+    let minX = segments[0][0].x;
+    let maxX = segments[0][0].x;
+    let minY = segments[0][0].y;
+    let maxY = segments[0][0].y;
+    for (const segment of segments) {
+      for (const point of segment) {
+        minX = Math.min(minX, point.x);
+        maxX = Math.max(maxX, point.x);
+        minY = Math.min(minY, point.y);
+        maxY = Math.max(maxY, point.y);
+      }
+    }
+    return { minX, maxX, minY, maxY };
+  }
+
+  function scenePointerPadding(bounds) {
+    if (!bounds) {
+      return SCENE_POINTER_PAD_MIN;
+    }
+    const span = Math.max(bounds.maxX - bounds.minX, bounds.maxY - bounds.minY);
+    return sceneClamp(span * SCENE_POINTER_PAD_SCALE, SCENE_POINTER_PAD_MIN, SCENE_POINTER_PAD_RANGE);
+  }
+
+  function sceneDistanceToSegment(point, from, to) {
+    const deltaX = to.x - from.x;
+    const deltaY = to.y - from.y;
+    const lengthSquared = deltaX * deltaX + deltaY * deltaY;
+    if (lengthSquared <= 0.0001) {
+      return Math.hypot(point.x - from.x, point.y - from.y);
+    }
+    const t = sceneClamp(((point.x - from.x) * deltaX + (point.y - from.y) * deltaY) / lengthSquared, 0, 1);
+    const closestX = from.x + deltaX * t;
+    const closestY = from.y + deltaY * t;
+    return Math.hypot(point.x - closestX, point.y - closestY);
+  }
+
+  function sceneProjectedObjectHull(segments) {
+    const points = [];
+    const seen = new Set();
+    for (const segment of segments) {
+      for (const point of segment) {
+        const key = point.x.toFixed(3) + ":" + point.y.toFixed(3);
+        if (seen.has(key)) {
+          continue;
+        }
+        seen.add(key);
+        points.push({ x: point.x, y: point.y });
+      }
+    }
+    if (points.length < 3) {
+      return points;
+    }
+    points.sort(function(a, b) {
+      return a.x === b.x ? a.y - b.y : a.x - b.x;
+    });
+    const lower = [];
+    for (const point of points) {
+      while (lower.length >= 2 && sceneTurnDirection(lower[lower.length - 2], lower[lower.length - 1], point) <= 0) {
+        lower.pop();
+      }
+      lower.push(point);
+    }
+    const upper = [];
+    for (let i = points.length - 1; i >= 0; i -= 1) {
+      const point = points[i];
+      while (upper.length >= 2 && sceneTurnDirection(upper[upper.length - 2], upper[upper.length - 1], point) <= 0) {
+        upper.pop();
+      }
+      upper.push(point);
+    }
+    lower.pop();
+    upper.pop();
+    return lower.concat(upper);
+  }
+
+  function sceneTurnDirection(a, b, c) {
+    return (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
+  }
+
+  function scenePointInPolygon(point, polygon) {
+    if (!Array.isArray(polygon) || polygon.length < 3) {
+      return false;
+    }
+    let inside = false;
+    for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i, i += 1) {
+      const xi = polygon[i].x;
+      const yi = polygon[i].y;
+      const xj = polygon[j].x;
+      const yj = polygon[j].y;
+      const intersects = ((yi > point.y) !== (yj > point.y)) &&
+        (point.x < ((xj - xi) * (point.y - yi)) / ((yj - yi) || 0.000001) + xi);
+      if (intersects) {
+        inside = !inside;
+      }
+    }
+    return inside;
+  }
+
+  function sceneObjectDepthCenter(object, camera) {
+    const bounds = object && object.bounds;
+    if (!bounds) {
+      return sceneWorldPointDepth(0, camera);
+    }
+    return sceneBoundsDepthMetrics(bounds, camera).center;
+  }
+
+  function sceneObjectPointerCapture(bundle, object, point, width, height) {
+    const segments = sceneProjectedObjectSegments(bundle, object, width, height);
+    if (!segments.length) {
+      return null;
+    }
+    const bounds = sceneProjectedSegmentsBounds(segments);
+    if (!bounds) {
+      return null;
+    }
+    const padding = scenePointerPadding(bounds);
+    if (
+      point.x < bounds.minX - padding ||
+      point.x > bounds.maxX + padding ||
+      point.y < bounds.minY - padding ||
+      point.y > bounds.maxY + padding
+    ) {
+      return null;
+    }
+    let minDistance = Number.POSITIVE_INFINITY;
+    for (const segment of segments) {
+      minDistance = Math.min(minDistance, sceneDistanceToSegment(point, segment[0], segment[1]));
+    }
+    const inside = scenePointInPolygon(point, sceneProjectedObjectHull(segments));
+    if (!inside && minDistance > padding) {
+      return null;
+    }
+    return {
+      inside,
+      distance: inside ? 0 : minDistance,
+      depth: sceneObjectDepthCenter(object, bundle.camera),
+      area: Math.max(1, (bounds.maxX - bounds.minX) * (bounds.maxY - bounds.minY)),
+    };
+  }
+
+  function scenePointerCaptureIsBetter(candidate, current) {
+    if (!current) {
+      return true;
+    }
+    if (candidate.inside !== current.inside) {
+      return candidate.inside;
+    }
+    if (Math.abs(candidate.distance - current.distance) > 0.5) {
+      return candidate.distance < current.distance;
+    }
+    if (Math.abs(candidate.depth - current.depth) > 0.01) {
+      return candidate.depth < current.depth;
+    }
+    return candidate.area < current.area;
+  }
+
+  function sceneRaycastPick(pointerX, pointerY, width, height, camera, bundle) {
+    if (!bundle) {
+      return null;
+    }
+
+    var ray = sceneScreenToRay(pointerX, pointerY, width, height, camera);
+    var closest = sceneRaycastPickGroup(ray, bundle.meshObjects, bundle.worldMeshPositions, 0);
+    if (closest) {
+      return closest;
+    }
+    return sceneRaycastPickGroup(ray, bundle.objects, bundle.worldPositions, 0);
+  }
+
+  function sceneRaycastPickGroup(ray, objects, positions, indexOffset) {
+    if (!Array.isArray(objects) || !objects.length || !positions || typeof positions.length !== "number") {
+      return null;
+    }
+    var closest = null;
+    var safeIndexOffset = Math.max(0, Math.floor(sceneNumber(indexOffset, 0)));
+
+    for (var i = 0; i < objects.length; i++) {
+      var obj = objects[i];
+
+      if (!sceneObjectAllowsPointerPick(obj)) continue;
+      if (obj.viewCulled) continue;
+
+      var bounds = obj.bounds;
+      if (!bounds) continue;
+
+      var boundsMin = { x: sceneNumber(bounds.minX, 0), y: sceneNumber(bounds.minY, 0), z: sceneNumber(bounds.minZ, 0) };
+      var boundsMax = { x: sceneNumber(bounds.maxX, 0), y: sceneNumber(bounds.maxY, 0), z: sceneNumber(bounds.maxZ, 0) };
+
+      var aabbDist = sceneRayIntersectsAABB(ray.origin, ray.dir, boundsMin, boundsMax);
+      if (aabbDist < 0) continue;
+
+      var vertexOffset = Math.max(0, Math.floor(sceneNumber(obj.vertexOffset, 0)));
+      var vertexCount = Math.max(0, Math.floor(sceneNumber(obj.vertexCount, 0)));
+
+      for (var tri = 0; tri + 2 < vertexCount; tri += 3) {
+        var v0 = sceneWorldPointAt(positions, vertexOffset + tri);
+        var v1 = sceneWorldPointAt(positions, vertexOffset + tri + 1);
+        var v2 = sceneWorldPointAt(positions, vertexOffset + tri + 2);
+        if (!v0 || !v1 || !v2) continue;
+
+        var hit = sceneRayIntersectsTriangle(ray.origin, ray.dir, v0, v1, v2);
+        if (hit && (!closest || hit.distance < closest.distance)) {
+          closest = {
+            index: safeIndexOffset + i,
+            object: obj,
+            distance: hit.distance,
+            inside: true,
+            depth: hit.distance,
+            area: Math.max(1, (boundsMax.x - boundsMin.x) * (boundsMax.y - boundsMin.y)),
+            point: {
+              x: ray.origin.x + ray.dir.x * hit.distance,
+              y: ray.origin.y + ray.dir.y * hit.distance,
+              z: ray.origin.z + ray.dir.z * hit.distance,
+            },
+          };
+        }
+      }
+    }
+
+    return closest;
+  }
+
+  function sceneBundlePointerTarget(bundle, point, width, height, allowObject) {
+    if (!bundle || !bundle.camera || !Array.isArray(bundle.objects) || !bundle.objects.length) {
+      return null;
+    }
+    let best = null;
+    for (let index = 0; index < bundle.objects.length; index += 1) {
+      const object = bundle.objects[index];
+      if (typeof allowObject === "function" && !allowObject(object)) {
+        continue;
+      }
+      const capture = sceneObjectPointerCapture(bundle, object, point, width, height);
+      if (!capture) {
+        continue;
+      }
+      const candidate = {
+        index,
+        object,
+        inside: capture.inside,
+        distance: capture.distance,
+        depth: capture.depth,
+        area: capture.area,
+      };
+      if (scenePointerCaptureIsBetter(candidate, best)) {
+        best = candidate;
+      }
+    }
+    return best;
+  }
+
+  function sceneBundlePointerDragTarget(bundle, point, width, height) {
+    return sceneBundlePointerTarget(bundle, point, width, height, sceneObjectAllowsPointerDrag);
+  }
+
+  function sceneBundlePointerPickTarget(bundle, point, width, height) {
+    if (bundle && bundle.camera && bundle.worldPositions) {
+      var rayHit = sceneRaycastPick(point.x, point.y, width, height, bundle.camera, bundle);
+      if (rayHit) {
+        return rayHit;
+      }
+    }
+    return sceneBundlePointerTarget(bundle, point, width, height, sceneObjectAllowsPointerPick);
+  }
+
+  function sceneViewportValue(viewport, key, fallback) {
+    return sceneNumber(viewport && viewport[key], fallback);
+  }
+
+  function sceneDragViewportMetrics(readViewport, initialWidth, initialHeight) {
+    const viewport = typeof readViewport === "function" ? readViewport() : null;
+    return {
+      width: Math.max(1, sceneViewportValue(viewport, "cssWidth", initialWidth)),
+      height: Math.max(1, sceneViewportValue(viewport, "cssHeight", initialHeight)),
+    };
+  }
+
+  function createSceneDragState(initialWidth, initialHeight) {
+    return {
+      active: false,
+      orbitX: 0,
+      orbitY: 0,
+      pointerId: null,
+      targetIndex: -1,
+      lastX: initialWidth / 2,
+      lastY: initialHeight / 2,
+    };
+  }
+
+  function createScenePickState(initialWidth, initialHeight) {
+    return {
+      pointerId: null,
+      hoverIndex: -1,
+      hoverID: "",
+      hoverKind: "",
+      downIndex: -1,
+      downID: "",
+      downKind: "",
+      selectedIndex: -1,
+      selectedID: "",
+      selectedKind: "",
+      clickCount: 0,
+      pointerX: initialWidth / 2,
+      pointerY: initialHeight / 2,
+      eventRevision: 0,
+      eventType: "",
+      eventTargetIndex: -1,
+      eventTargetID: "",
+      eventTargetKind: "",
+      publishedKey: "",
+      publishedEventKey: "",
+      publishedHoverSlug: "",
+      publishedDownSlug: "",
+      publishedSelectedSlug: "",
+      objectClickCounts: Object.create(null),
+      publishedObjectClickCounts: Object.create(null),
+    };
+  }
+
+  function sceneDragMatchesActivePointer(state, event) {
+    if (!state.active || state.pointerId == null) {
+      return state.active;
+    }
+    if (!event || event.type === "lostpointercapture") {
+      return true;
+    }
+    if (event.pointerId == null) {
+      return true;
+    }
+    return event.pointerId === state.pointerId;
+  }
+
+  function scenePointerCanStartDrag(state, event) {
+    if (state.active) {
+      return false;
+    }
+    if (!event) {
+      return false;
+    }
+    if (event.pointerType === "mouse") {
+      return event.button === 0;
+    }
+    return event.button == null || event.button === 0;
+  }
+
+  function sceneDragTargetAtEvent(event, canvas, readViewport, readSceneBundle, initialWidth, initialHeight) {
+    const metrics = sceneDragViewportMetrics(readViewport, initialWidth, initialHeight);
+    const pointer = sceneLocalPointerPoint(event, canvas, metrics.width, metrics.height);
+    return sceneBundlePointerDragTarget(readSceneBundle && readSceneBundle(), pointer, metrics.width, metrics.height);
+  }
+
+  function scenePickMetricsAtEvent(event, canvas, readViewport, initialWidth, initialHeight) {
+    const metrics = sceneDragViewportMetrics(readViewport, initialWidth, initialHeight);
+    return {
+      metrics,
+      pointer: sceneLocalPointerPoint(event, canvas, metrics.width, metrics.height),
+    };
+  }
+
+  function scenePickTargetAtEvent(event, canvas, readViewport, readSceneBundle, initialWidth, initialHeight) {
+    const sample = scenePickMetricsAtEvent(event, canvas, readViewport, initialWidth, initialHeight);
+    return {
+      metrics: sample.metrics,
+      pointer: sample.pointer,
+      target: sceneBundlePointerPickTarget(readSceneBundle && readSceneBundle(), sample.pointer, sample.metrics.width, sample.metrics.height),
+    };
+  }
+
+  function updateSceneDragOrbit(state, sample, width, height) {
+    state.orbitX = sceneClamp(state.orbitX + sample.deltaX / Math.max(width / 2, 1), SCENE_ORBIT_PITCH_MIN, SCENE_ORBIT_PITCH_MAX);
+    state.orbitY = sceneClamp(state.orbitY - sample.deltaY / Math.max(height / 2, 1), SCENE_ORBIT_YAW_MIN, SCENE_ORBIT_YAW_MAX);
+  }
+
+  function publishSceneDragInteraction(canvas, event, phase, state, dragNamespace, readViewport, initialWidth, initialHeight) {
+    const metrics = sceneDragViewportMetrics(readViewport, initialWidth, initialHeight);
+    const sample = sceneLocalPointerSample(event, canvas, metrics.width, metrics.height, state, phase);
+    if (!dragNamespace) {
+      publishPointerSignals(sample);
+      return;
+    }
+    if (phase === "move") {
+      updateSceneDragOrbit(state, sample, metrics.width, metrics.height);
+    }
+    publishSceneDragSignals(dragNamespace, state, phase !== "end");
+  }
+
+  function resetSceneDragInteraction(state, dragNamespace, readViewport, initialWidth, initialHeight) {
+    state.pointerId = null;
+    state.targetIndex = -1;
+    if (dragNamespace) {
+      return;
+    }
+    const metrics = sceneDragViewportMetrics(readViewport, initialWidth, initialHeight);
+    resetScenePointerSample(metrics.width, metrics.height, state);
+  }
+
+  function scenePrimaryPointerEvent(event) {
+    if (!event) {
+      return false;
+    }
+    if (event.pointerType === "mouse") {
+      return event.button === 0 || event.button == null;
+    }
+    return event.button == null || event.button === 0;
+  }
+
+  function scenePickMatchesPointer(state, event) {
+    if (state.pointerId == null) {
+      return true;
+    }
+    if (!event || event.type === "lostpointercapture") {
+      return true;
+    }
+    if (event.pointerId == null) {
+      return true;
+    }
+    return event.pointerId === state.pointerId;
+  }
+
+  function sceneApplyPickTarget(state, sample) {
+    const target = sample && sample.target ? sample.target : null;
+    const pointer = sample && sample.pointer ? sample.pointer : { x: 0, y: 0 };
+    state.pointerX = sceneNumber(pointer.x, 0);
+    state.pointerY = sceneNumber(pointer.y, 0);
+    state.hoverIndex = target ? target.index : -1;
+    state.hoverID = sceneTargetID(target);
+    state.hoverKind = sceneTargetKind(target);
+    return target;
+  }
+
+  function sceneClearPickDown(state) {
+    state.pointerId = null;
+    state.downIndex = -1;
+    state.downID = "";
+    state.downKind = "";
+  }
+
+  function sceneSelectPickTarget(state, target) {
+    state.selectedIndex = target ? target.index : -1;
+    state.selectedID = sceneTargetID(target);
+    state.selectedKind = sceneTargetKind(target);
+  }
+
+  function scenePickTargetsMatch(target, index, id) {
+    if (!target) {
+      return false;
+    }
+    const targetID = target.object && typeof target.object.id === "string" ? target.object.id : "";
+    return target.index === index && targetID === id;
+  }
+
+  function scenePointerID(event) {
+    return event && event.pointerId != null ? event.pointerId : null;
+  }
+
+  function sceneCapturePointer(canvas, pointerID) {
+    if (pointerID == null || !canvas || typeof canvas.setPointerCapture !== "function") {
+      return;
+    }
+    try {
+      canvas.setPointerCapture(pointerID);
+    } catch (_) {}
+  }
+
+  function sceneReleasePointer(canvas, pointerID) {
+    if (pointerID == null || !canvas || typeof canvas.releasePointerCapture !== "function") {
+      return;
+    }
+    try {
+      canvas.releasePointerCapture(pointerID);
+    } catch (_) {}
+  }
+
+  function sceneSnapshotTarget(index, id, kind) {
+    const targetIndex = Math.max(-1, Math.floor(sceneNumber(index, -1)));
+    const targetID = typeof id === "string" ? id : "";
+    const targetKind = typeof kind === "string" ? kind : "";
+    if (targetIndex < 0 && !targetID && !targetKind) {
+      return null;
+    }
+    return {
+      index: targetIndex,
+      object: {
+        id: targetID,
+        kind: targetKind,
+      },
+    };
+  }
+
+  function scenePickStateSnapshot(state) {
+    return {
+      hover: sceneSnapshotTarget(state.hoverIndex, state.hoverID, state.hoverKind),
+      down: sceneSnapshotTarget(state.downIndex, state.downID, state.downKind),
+      selected: sceneSnapshotTarget(state.selectedIndex, state.selectedID, state.selectedKind),
+      clickCount: Math.max(0, Math.floor(sceneNumber(state.clickCount, 0))),
+      pointerX: sceneNumber(state.pointerX, 0),
+      pointerY: sceneNumber(state.pointerY, 0),
+    };
+  }
+
+  function sceneTargetsEqual(left, right) {
+    if (!left || !right) {
+      return left === right;
+    }
+    return sceneTargetIndex(left) === sceneTargetIndex(right) &&
+      sceneTargetID(left) === sceneTargetID(right) &&
+      sceneTargetKind(left) === sceneTargetKind(right);
+  }
+
+  function sceneDeriveInteractionEvent(action, before, after) {
+    switch (action) {
+      case "move":
+        if (!sceneTargetsEqual(before.hover, after.hover)) {
+          return after.hover ? { type: "hover", target: after.hover } : before.hover ? { type: "leave", target: before.hover } : null;
+        }
+        return null;
+      case "down":
+        if (after.down) {
+          return { type: "down", target: after.down };
+        }
+        if (before.selected && !after.selected) {
+          return { type: "deselect", target: before.selected };
+        }
+        return null;
+      case "up":
+        if (after.selected && (!sceneTargetsEqual(before.selected, after.selected) || after.clickCount !== before.clickCount)) {
+          return { type: "select", target: after.selected };
+        }
+        if (before.selected && !after.selected) {
+          return { type: "deselect", target: before.selected };
+        }
+        return null;
+      case "cancel":
+        return before.down ? { type: "cancel", target: before.down } : null;
+      case "leave":
+        return before.hover && !after.hover ? { type: "leave", target: before.hover } : null;
+      default:
+        return null;
+    }
+  }
+
+  function sceneRecordInteractionEvent(state, interaction) {
+    if (!state || !interaction || !interaction.type) {
+      return null;
+    }
+    state.eventRevision = Math.max(0, Math.floor(sceneNumber(state.eventRevision, 0))) + 1;
+    state.eventType = interaction.type;
+    state.eventTargetIndex = sceneTargetIndex(interaction.target);
+    state.eventTargetID = sceneTargetID(interaction.target);
+    state.eventTargetKind = sceneTargetKind(interaction.target);
+    const detail = sceneInteractionSnapshot(state);
+    return {
+      type: detail.type,
+      revision: detail.revision,
+      targetIndex: detail.targetIndex,
+      targetID: detail.targetID,
+      targetKind: detail.targetKind,
+      hovered: detail.hovered,
+      hoverIndex: detail.hoverIndex,
+      hoverID: detail.hoverID,
+      hoverKind: detail.hoverKind,
+      down: detail.down,
+      downIndex: detail.downIndex,
+      downID: detail.downID,
+      downKind: detail.downKind,
+      selected: detail.selected,
+      selectedIndex: detail.selectedIndex,
+      selectedID: detail.selectedID,
+      selectedKind: detail.selectedKind,
+      clickCount: detail.clickCount,
+      pointerX: detail.pointerX,
+      pointerY: detail.pointerY,
+    };
+  }
+
+  function publishSceneInteractionState(pickNamespace, eventNamespace, state) {
+    publishScenePickSignals(pickNamespace, state);
+    publishSceneEventSignals(eventNamespace, state);
+  }
+
+  function sceneHandlePickMove(state, event, canvas, readViewport, readSceneBundle, initialWidth, initialHeight) {
+    if (!scenePickMatchesPointer(state, event)) {
+      return false;
+    }
+    sceneApplyPickTarget(state, scenePickTargetAtEvent(event, canvas, readViewport, readSceneBundle, initialWidth, initialHeight));
+    return true;
+  }
+
+  function sceneHandlePickDown(state, event, canvas, readViewport, readSceneBundle, initialWidth, initialHeight) {
+    if (!scenePrimaryPointerEvent(event)) {
+      return false;
+    }
+    const sample = scenePickTargetAtEvent(event, canvas, readViewport, readSceneBundle, initialWidth, initialHeight);
+    const target = sceneApplyPickTarget(state, sample);
+    if (!target) {
+      sceneClearPickDown(state);
+      sceneSelectPickTarget(state, null);
+      return false;
+    }
+    state.pointerId = scenePointerID(event);
+    state.downIndex = target.index;
+    state.downID = sceneTargetID(target);
+    state.downKind = sceneTargetKind(target);
+    return true;
+  }
+
+  function sceneHandlePickUp(state, event, canvas, readViewport, readSceneBundle, initialWidth, initialHeight) {
+    if (!scenePickMatchesPointer(state, event)) {
+      return { handled: false, pointerId: null };
+    }
+    const downIndex = state.downIndex;
+    const downID = state.downID;
+    const pointerID = state.pointerId;
+    const sample = scenePickTargetAtEvent(event, canvas, readViewport, readSceneBundle, initialWidth, initialHeight);
+    const target = sceneApplyPickTarget(state, sample);
+    if (downIndex >= 0) {
+      if (scenePickTargetsMatch(target, downIndex, downID)) {
+        state.clickCount += 1;
+        sceneSelectPickTarget(state, target);
+        const selectedSlug = sceneObjectSignalSlug(state.selectedIndex, state.selectedID, state.selectedKind);
+        if (selectedSlug) {
+          const previousCount = state.objectClickCounts && state.objectClickCounts[selectedSlug];
+          state.objectClickCounts[selectedSlug] = Math.max(0, Math.floor(sceneNumber(previousCount, 0))) + 1;
+        }
+      } else if (!target) {
+        sceneSelectPickTarget(state, null);
+      }
+    }
+    sceneClearPickDown(state);
+    return { handled: pointerID != null || downIndex >= 0, pointerId: pointerID };
+  }
+
+  function sceneHandlePickCancel(state, event) {
+    if (!scenePickMatchesPointer(state, event)) {
+      return { handled: false, pointerId: null };
+    }
+    const pointerID = state.pointerId;
+    const handled = pointerID != null || state.downIndex >= 0;
+    sceneClearPickDown(state);
+    return { handled, pointerId: pointerID };
+  }
+
+  function sceneHandlePickLeave(state) {
+    if (state.pointerId != null) {
+      return false;
+    }
+    state.hoverIndex = -1;
+    state.hoverID = "";
+    state.hoverKind = "";
+    return true;
+  }
+
+  function setupSceneDragInteractions(canvas, props, readViewport, readSceneBundle) {
+    if (!canvas || !sceneBool(props.dragToRotate, false)) {
+      return { dispose() {} };
+    }
+
+    const dragNamespace = sceneDragSignalNamespace(props);
+    const initialMetrics = sceneDragViewportMetrics(readViewport, sceneNumber(props.width, 720), sceneNumber(props.height, 420));
+    const initialWidth = initialMetrics.width;
+    const initialHeight = initialMetrics.height;
+    const state = createSceneDragState(initialWidth, initialHeight);
+    let documentListenersAttached = false;
+
+    canvas.style.cursor = "grab";
+    canvas.style.touchAction = "none";
+
+    function attachDocumentListeners() {
+      if (documentListenersAttached) {
+        return;
+      }
+      documentListenersAttached = true;
+      document.addEventListener("pointermove", onPointerMove);
+      document.addEventListener("pointerup", finishDrag);
+      document.addEventListener("pointercancel", finishDrag);
+    }
+
+    function detachDocumentListeners() {
+      if (!documentListenersAttached) {
+        return;
+      }
+      documentListenersAttached = false;
+      document.removeEventListener("pointermove", onPointerMove);
+      document.removeEventListener("pointerup", finishDrag);
+      document.removeEventListener("pointercancel", finishDrag);
+    }
+
+    function onPointerDown(event) {
+      if (!scenePointerCanStartDrag(state, event)) {
+        return;
+      }
+      const target = sceneDragTargetAtEvent(event, canvas, readViewport, readSceneBundle, initialWidth, initialHeight);
+      if (!target) {
+        return;
+      }
+      state.active = true;
+      state.pointerId = event.pointerId;
+      state.targetIndex = target.index;
+      canvas.style.cursor = "grabbing";
+      attachDocumentListeners();
+      if (typeof canvas.setPointerCapture === "function") {
+        canvas.setPointerCapture(event.pointerId);
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      publishSceneDragInteraction(canvas, event, "start", state, dragNamespace, readViewport, initialWidth, initialHeight);
+    }
+
+    function onPointerMove(event) {
+      if (!sceneDragMatchesActivePointer(state, event)) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      publishSceneDragInteraction(canvas, event, "move", state, dragNamespace, readViewport, initialWidth, initialHeight);
+    }
+
+    function finishDrag(event) {
+      if (!sceneDragMatchesActivePointer(state, event)) {
+        return;
+      }
+      const wasActive = state.active;
+      state.active = false;
+      canvas.style.cursor = "grab";
+      detachDocumentListeners();
+      if (!wasActive) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      if (state.pointerId != null && typeof canvas.releasePointerCapture === "function") {
+        try {
+          canvas.releasePointerCapture(state.pointerId);
+        } catch (_) {}
+      }
+      state.pointerId = null;
+      state.targetIndex = -1;
+      publishSceneDragInteraction(canvas, event, "end", state, dragNamespace, readViewport, initialWidth, initialHeight);
+      resetSceneDragInteraction(state, dragNamespace, readViewport, initialWidth, initialHeight);
+    }
+
+    canvas.addEventListener("pointerdown", onPointerDown);
+    canvas.addEventListener("pointermove", onPointerMove);
+    canvas.addEventListener("pointerup", finishDrag);
+    canvas.addEventListener("pointercancel", finishDrag);
+    canvas.addEventListener("lostpointercapture", finishDrag);
+
+    return {
+      dispose() {
+        canvas.removeEventListener("pointerdown", onPointerDown);
+        canvas.removeEventListener("pointermove", onPointerMove);
+        canvas.removeEventListener("pointerup", finishDrag);
+        canvas.removeEventListener("pointercancel", finishDrag);
+        canvas.removeEventListener("lostpointercapture", finishDrag);
+        detachDocumentListeners();
+        canvas.style.cursor = "";
+        canvas.style.touchAction = "";
+        if (state.active && dragNamespace) {
+          state.active = false;
+          state.pointerId = null;
+          state.targetIndex = -1;
+          publishSceneDragSignals(dragNamespace, state, false);
+        } else {
+          state.active = false;
+        }
+        resetSceneDragInteraction(state, dragNamespace, readViewport, initialWidth, initialHeight);
+      },
+    };
+  }
+
+  function setupScenePickInteractions(canvas, props, readViewport, readSceneBundle, emitInteraction) {
+    const pickNamespace = scenePickSignalNamespace(props);
+    const eventNamespace = sceneEventSignalNamespace(props);
+    if (!canvas || (!pickNamespace && !eventNamespace)) {
+      return { dispose() {} };
+    }
+
+    const initialMetrics = sceneDragViewportMetrics(readViewport, sceneNumber(props.width, 720), sceneNumber(props.height, 420));
+    const initialWidth = initialMetrics.width;
+    const initialHeight = initialMetrics.height;
+    const state = createScenePickState(initialWidth, initialHeight);
+    let documentListenersAttached = false;
+
+    function publish() {
+      publishSceneInteractionState(pickNamespace, eventNamespace, state);
+    }
+
+    function emit(action, before) {
+      const interaction = sceneDeriveInteractionEvent(action, before, scenePickStateSnapshot(state));
+      const detail = sceneRecordInteractionEvent(state, interaction);
+      if (detail && typeof emitInteraction === "function") {
+        emitInteraction(detail);
+      }
+    }
+
+    function attachDocumentListeners() {
+      if (documentListenersAttached) {
+        return;
+      }
+      documentListenersAttached = true;
+      document.addEventListener("pointermove", onPointerMove);
+      document.addEventListener("pointerup", onPointerUp);
+      document.addEventListener("pointercancel", onPointerCancel);
+    }
+
+    function detachDocumentListeners() {
+      if (!documentListenersAttached) {
+        return;
+      }
+      documentListenersAttached = false;
+      document.removeEventListener("pointermove", onPointerMove);
+      document.removeEventListener("pointerup", onPointerUp);
+      document.removeEventListener("pointercancel", onPointerCancel);
+    }
+
+    function onPointerMove(event) {
+      const before = scenePickStateSnapshot(state);
+      if (!sceneHandlePickMove(state, event, canvas, readViewport, readSceneBundle, initialWidth, initialHeight)) {
+        return;
+      }
+      emit("move", before);
+      publish();
+    }
+
+    function onPointerDown(event) {
+      const before = scenePickStateSnapshot(state);
+      const handled = sceneHandlePickDown(state, event, canvas, readViewport, readSceneBundle, initialWidth, initialHeight);
+      emit("down", before);
+      if (handled) {
+        attachDocumentListeners();
+        sceneCapturePointer(canvas, state.pointerId);
+        if (typeof event.preventDefault === "function") {
+          event.preventDefault();
+        }
+        if (typeof event.stopPropagation === "function") {
+          event.stopPropagation();
+        }
+      }
+      publish();
+    }
+
+    function onPointerUp(event) {
+      const before = scenePickStateSnapshot(state);
+      const result = sceneHandlePickUp(state, event, canvas, readViewport, readSceneBundle, initialWidth, initialHeight);
+      if (!result.handled) {
+        return;
+      }
+      emit("up", before);
+      detachDocumentListeners();
+      sceneReleasePointer(canvas, result.pointerId);
+      if (typeof event.preventDefault === "function") {
+        event.preventDefault();
+      }
+      if (typeof event.stopPropagation === "function") {
+        event.stopPropagation();
+      }
+      publish();
+    }
+
+    function onPointerCancel(event) {
+      const before = scenePickStateSnapshot(state);
+      const result = sceneHandlePickCancel(state, event);
+      if (!result.handled) {
+        return;
+      }
+      emit("cancel", before);
+      detachDocumentListeners();
+      sceneReleasePointer(canvas, result.pointerId);
+      publish();
+    }
+
+    function onPointerLeave() {
+      const before = scenePickStateSnapshot(state);
+      if (!sceneHandlePickLeave(state)) {
+        return;
+      }
+      emit("leave", before);
+      publish();
+    }
+
+    canvas.addEventListener("pointermove", onPointerMove);
+    canvas.addEventListener("pointerdown", onPointerDown);
+    canvas.addEventListener("pointerup", onPointerUp);
+    canvas.addEventListener("pointercancel", onPointerCancel);
+    canvas.addEventListener("pointerleave", onPointerLeave);
+    canvas.addEventListener("lostpointercapture", onPointerCancel);
+    publish();
+
+    return {
+      dispose() {
+        canvas.removeEventListener("pointermove", onPointerMove);
+        canvas.removeEventListener("pointerdown", onPointerDown);
+        canvas.removeEventListener("pointerup", onPointerUp);
+        canvas.removeEventListener("pointercancel", onPointerCancel);
+        canvas.removeEventListener("pointerleave", onPointerLeave);
+        canvas.removeEventListener("lostpointercapture", onPointerCancel);
+        detachDocumentListeners();
+        sceneReleasePointer(canvas, state.pointerId);
+        state.pointerId = null;
+        state.hoverIndex = -1;
+        state.hoverID = "";
+        state.hoverKind = "";
+        state.downIndex = -1;
+        state.downID = "";
+        state.downKind = "";
+        state.selectedIndex = -1;
+        state.selectedID = "";
+        state.selectedKind = "";
+        state.clickCount = 0;
+        state.eventType = "";
+        state.eventTargetIndex = -1;
+        state.eventTargetID = "";
+        state.eventTargetKind = "";
+        state.objectClickCounts = Object.create(null);
+        publish();
+      },
+    };
+  }
+
+  function strokeLine(ctx2d, from, to) {
+    ctx2d.beginPath();
+    ctx2d.moveTo(from.x, from.y);
+    ctx2d.lineTo(to.x, to.y);
+    ctx2d.stroke();
+  }
+
+  function sceneBundleUsesWorldProjection(bundle) {
+    return Boolean(
+      bundle &&
+      bundle.camera &&
+      bundle.sourceCamera &&
+      !sceneCameraEquivalent(bundle.sourceCamera, bundle.camera) &&
+      bundle.worldVertexCount > 0 &&
+      bundle.worldPositions &&
+      bundle.worldColors
+    );
+  }
+
+  function renderSceneCanvasWorldBundle(ctx2d, bundle, width, height) {
+    const positions = bundle && bundle.worldPositions;
+    const colors = bundle && bundle.worldColors;
+    const widths = bundle && bundle.worldLineWidths;
+    const vertexCount = Math.max(0, Math.floor(sceneNumber(bundle && bundle.worldVertexCount, 0)));
+    for (let index = 0; index + 1 < vertexCount; index += 2) {
+      const fromWorld = sceneWorldPointAt(positions, index);
+      const toWorld = sceneWorldPointAt(positions, index + 1);
+      if (!fromWorld || !toWorld) {
+        continue;
+      }
+      const from = sceneProjectPoint(fromWorld, bundle.camera, width, height);
+      const to = sceneProjectPoint(toWorld, bundle.camera, width, height);
+      if (!from || !to) {
+        continue;
+      }
+      const colorOffset = index * 4;
+      ctx2d.strokeStyle = sceneRGBAString([
+        sceneNumber(colors && colors[colorOffset], 0.55),
+        sceneNumber(colors && colors[colorOffset + 1], 0.88),
+        sceneNumber(colors && colors[colorOffset + 2], 1),
+        sceneNumber(colors && colors[colorOffset + 3], 1),
+      ]);
+      const segmentIndex = index / 2;
+      const segmentWidth = widths && segmentIndex < widths.length ? widths[segmentIndex] : 0;
+      ctx2d.lineWidth = segmentWidth > 0 ? segmentWidth : 1.8;
+      strokeLine(ctx2d, from, to);
+    }
+  }
+
+  function createSceneCanvasRenderer(ctx2d, canvas) {
+    return {
+      kind: "canvas",
+      render(bundle, viewport) {
+        const devicePixelRatio = Math.max(1, sceneViewportValue(viewport, "devicePixelRatio", 1));
+        const lines = Array.isArray(bundle && bundle.lines) ? bundle.lines : [];
+        ctx2d.clearRect(0, 0, canvas.width, canvas.height);
+        ctx2d.fillStyle = bundle && bundle.background ? bundle.background : "#08151f";
+        ctx2d.fillRect(0, 0, canvas.width, canvas.height);
+        if (typeof ctx2d.save === "function") {
+          ctx2d.save();
+        }
+        if (devicePixelRatio !== 1 && typeof ctx2d.scale === "function") {
+          ctx2d.scale(devicePixelRatio, devicePixelRatio);
+        }
+        if (sceneBundleUsesWorldProjection(bundle)) {
+          renderSceneCanvasWorldBundle(ctx2d, bundle, sceneViewportValue(viewport, "cssWidth", canvas.width), sceneViewportValue(viewport, "cssHeight", canvas.height));
+        } else {
+          for (const line of lines) {
+            ctx2d.strokeStyle = line.color;
+            ctx2d.lineWidth = line.lineWidth;
+            strokeLine(ctx2d, line.from, line.to);
+          }
+        }
+        if (typeof ctx2d.restore === "function") {
+          ctx2d.restore();
+        }
+      },
+      dispose() {},
+    };
+  }
+
+  function sceneDecodeUTF8Bytes(bytes) {
+    if (typeof TextDecoder === "function") {
+      return new TextDecoder().decode(bytes);
+    }
+    var chunkSize = 0x8000;
+    var decoded = "";
+    for (var index = 0; index < bytes.length; index += chunkSize) {
+      var chunk = bytes.subarray(index, Math.min(index + chunkSize, bytes.length));
+      decoded += String.fromCharCode.apply(null, Array.prototype.slice.call(chunk));
+    }
+    try {
+      return decodeURIComponent(escape(decoded));
+    } catch (_error) {
+      return decoded;
+    }
+  }
+
+  function sceneParseGLB(arrayBuffer) {
+    var view = new DataView(arrayBuffer);
+
+    var magic = view.getUint32(0, true);
+    if (magic !== 0x46546C67) {
+      throw new Error("Invalid GLB magic");
+    }
+    var version = view.getUint32(4, true);
+    if (version !== 2) {
+      throw new Error("Unsupported glTF version: " + version);
+    }
+
+    var jsonChunkLength = view.getUint32(12, true);
+    var jsonBytes = new Uint8Array(arrayBuffer, 20, jsonChunkLength);
+    var json = JSON.parse(sceneDecodeUTF8Bytes(jsonBytes));
+
+    var binaryBuffer = null;
+    var binaryOffset = 20 + jsonChunkLength;
+    if (binaryOffset < arrayBuffer.byteLength) {
+      var binChunkLength = view.getUint32(binaryOffset, true);
+      binaryBuffer = arrayBuffer.slice(binaryOffset + 8, binaryOffset + 8 + binChunkLength);
+    }
+
+    return { json: json, binaryBuffer: binaryBuffer };
+  }
+
+  var GLTF_COMPONENT_SIZES = {
+    5120: 1,  // INT8
+    5121: 1,  // UINT8
+    5122: 2,  // INT16
+    5123: 2,  // UINT16
+    5125: 4,  // UINT32
+    5126: 4,  // FLOAT32
+  };
+
+  function gltfAccessorTypeCount(type) {
+    switch (type) {
+      case "SCALAR": return 1;
+      case "VEC2":   return 2;
+      case "VEC3":   return 3;
+      case "VEC4":   return 4;
+      case "MAT2":   return 4;
+      case "MAT3":   return 9;
+      case "MAT4":   return 16;
+      default:       return 1;
+    }
+  }
+
+  function gltfTypedArrayView(buffer, byteOffset, componentType, count) {
+    switch (componentType) {
+      case 5120: return new Int8Array(buffer, byteOffset, count);
+      case 5121: return new Uint8Array(buffer, byteOffset, count);
+      case 5122: return new Int16Array(buffer, byteOffset, count);
+      case 5123: return new Uint16Array(buffer, byteOffset, count);
+      case 5125: return new Uint32Array(buffer, byteOffset, count);
+      case 5126: return new Float32Array(buffer, byteOffset, count);
+      default:   return new Float32Array(buffer, byteOffset, count);
+    }
+  }
+
+  function gltfReadAccessor(gltf, accessorIndex, binaryBuffer) {
+    var accessor = gltf.accessors[accessorIndex];
+    var bufferView = gltf.bufferViews[accessor.bufferView];
+    var buffer = binaryBuffer;
+
+    var byteOffset = (bufferView.byteOffset || 0) + (accessor.byteOffset || 0);
+    var componentCount = gltfAccessorTypeCount(accessor.type);
+    var componentSize = GLTF_COMPONENT_SIZES[accessor.componentType] || 4;
+    var stride = bufferView.byteStride || 0;
+    var totalElements = accessor.count * componentCount;
+
+    if (!stride || stride === componentCount * componentSize) {
+      return gltfTypedArrayView(buffer, byteOffset, accessor.componentType, totalElements);
+    }
+
+    var result = new Float32Array(totalElements);
+    var src = new DataView(buffer);
+    for (var i = 0; i < accessor.count; i++) {
+      var elemOffset = byteOffset + i * stride;
+      for (var c = 0; c < componentCount; c++) {
+        var co = elemOffset + c * componentSize;
+        switch (accessor.componentType) {
+          case 5120: result[i * componentCount + c] = src.getInt8(co); break;
+          case 5121: result[i * componentCount + c] = src.getUint8(co); break;
+          case 5122: result[i * componentCount + c] = src.getInt16(co, true); break;
+          case 5123: result[i * componentCount + c] = src.getUint16(co, true); break;
+          case 5125: result[i * componentCount + c] = src.getUint32(co, true); break;
+          case 5126: result[i * componentCount + c] = src.getFloat32(co, true); break;
+          default:   result[i * componentCount + c] = src.getFloat32(co, true); break;
+        }
+      }
+    }
+    return result;
+  }
+
+  function gltfGenerateFlatNormals(positions) {
+    var normals = new Float32Array(positions.length);
+    var triCount = positions.length / 9;
+    for (var t = 0; t < triCount; t++) {
+      var i = t * 9;
+      var ax = positions[i],     ay = positions[i + 1], az = positions[i + 2];
+      var bx = positions[i + 3], by = positions[i + 4], bz = positions[i + 5];
+      var cx = positions[i + 6], cy = positions[i + 7], cz = positions[i + 8];
+
+      var e1x = bx - ax, e1y = by - ay, e1z = bz - az;
+      var e2x = cx - ax, e2y = cy - ay, e2z = cz - az;
+
+      var nx = e1y * e2z - e1z * e2y;
+      var ny = e1z * e2x - e1x * e2z;
+      var nz = e1x * e2y - e1y * e2x;
+      var len = Math.sqrt(nx * nx + ny * ny + nz * nz);
+      if (len > 1e-8) { nx /= len; ny /= len; nz /= len; }
+      else { nx = 0; ny = 1; nz = 0; }
+
+      for (var v = 0; v < 3; v++) {
+        normals[i + v * 3]     = nx;
+        normals[i + v * 3 + 1] = ny;
+        normals[i + v * 3 + 2] = nz;
+      }
+    }
+    return normals;
+  }
+
+  function gltfGenerateDefaultUVs(vertexCount) {
+    return new Float32Array(vertexCount * 2);
+  }
+
+  function gltfComputeTangents(positions, normals, uvs) {
+    var vertexCount = positions.length / 3;
+    var tangents = new Float32Array(vertexCount * 4);
+    var tan1 = new Float32Array(vertexCount * 3);
+    var tan2 = new Float32Array(vertexCount * 3);
+
+    var triCount = vertexCount / 3;
+    for (var t = 0; t < triCount; t++) {
+      var i0 = t * 3, i1 = t * 3 + 1, i2 = t * 3 + 2;
+
+      var p0x = positions[i0 * 3],     p0y = positions[i0 * 3 + 1], p0z = positions[i0 * 3 + 2];
+      var p1x = positions[i1 * 3],     p1y = positions[i1 * 3 + 1], p1z = positions[i1 * 3 + 2];
+      var p2x = positions[i2 * 3],     p2y = positions[i2 * 3 + 1], p2z = positions[i2 * 3 + 2];
+
+      var u0 = uvs[i0 * 2], v0 = uvs[i0 * 2 + 1];
+      var u1 = uvs[i1 * 2], v1 = uvs[i1 * 2 + 1];
+      var u2 = uvs[i2 * 2], v2 = uvs[i2 * 2 + 1];
+
+      var e1x = p1x - p0x, e1y = p1y - p0y, e1z = p1z - p0z;
+      var e2x = p2x - p0x, e2y = p2y - p0y, e2z = p2z - p0z;
+
+      var du1 = u1 - u0, dv1 = v1 - v0;
+      var du2 = u2 - u0, dv2 = v2 - v0;
+
+      var denom = du1 * dv2 - du2 * dv1;
+      var r = Math.abs(denom) > 1e-10 ? 1.0 / denom : 0.0;
+
+      var sx = (dv2 * e1x - dv1 * e2x) * r;
+      var sy = (dv2 * e1y - dv1 * e2y) * r;
+      var sz = (dv2 * e1z - dv1 * e2z) * r;
+
+      var tx = (du1 * e2x - du2 * e1x) * r;
+      var ty = (du1 * e2y - du2 * e1y) * r;
+      var tz = (du1 * e2z - du2 * e1z) * r;
+
+      for (var vi = 0; vi < 3; vi++) {
+        var idx = (t * 3 + vi) * 3;
+        tan1[idx] += sx; tan1[idx + 1] += sy; tan1[idx + 2] += sz;
+        tan2[idx] += tx; tan2[idx + 1] += ty; tan2[idx + 2] += tz;
+      }
+    }
+
+    for (var i = 0; i < vertexCount; i++) {
+      var nx = normals[i * 3], ny = normals[i * 3 + 1], nz = normals[i * 3 + 2];
+      var t1x = tan1[i * 3], t1y = tan1[i * 3 + 1], t1z = tan1[i * 3 + 2];
+
+      var dot = nx * t1x + ny * t1y + nz * t1z;
+      var ox = t1x - nx * dot;
+      var oy = t1y - ny * dot;
+      var oz = t1z - nz * dot;
+      var len = Math.sqrt(ox * ox + oy * oy + oz * oz);
+      if (len > 1e-8) { ox /= len; oy /= len; oz /= len; }
+      else { ox = 1; oy = 0; oz = 0; }
+
+      var cx = ny * t1z - nz * t1y;
+      var cy = nz * t1x - nx * t1z;
+      var cz = nx * t1y - ny * t1x;
+      var t2x = tan2[i * 3], t2y = tan2[i * 3 + 1], t2z = tan2[i * 3 + 2];
+      var w = (cx * t2x + cy * t2y + cz * t2z) < 0 ? -1.0 : 1.0;
+
+      tangents[i * 4]     = ox;
+      tangents[i * 4 + 1] = oy;
+      tangents[i * 4 + 2] = oz;
+      tangents[i * 4 + 3] = w;
+    }
+
+    return tangents;
+  }
+
+  function gltfExpandIndexed(positions, normals, uvs, tangents, indices) {
+    var count = indices.length;
+    var outPos = new Float32Array(count * 3);
+    var outNrm = new Float32Array(count * 3);
+    var outUV  = new Float32Array(count * 2);
+    var outTan = tangents ? new Float32Array(count * 4) : null;
+
+    for (var i = 0; i < count; i++) {
+      var idx = indices[i];
+      outPos[i * 3]     = positions[idx * 3];
+      outPos[i * 3 + 1] = positions[idx * 3 + 1];
+      outPos[i * 3 + 2] = positions[idx * 3 + 2];
+
+      outNrm[i * 3]     = normals[idx * 3];
+      outNrm[i * 3 + 1] = normals[idx * 3 + 1];
+      outNrm[i * 3 + 2] = normals[idx * 3 + 2];
+
+      outUV[i * 2]     = uvs[idx * 2];
+      outUV[i * 2 + 1] = uvs[idx * 2 + 1];
+
+      if (outTan) {
+        outTan[i * 4]     = tangents[idx * 4];
+        outTan[i * 4 + 1] = tangents[idx * 4 + 1];
+        outTan[i * 4 + 2] = tangents[idx * 4 + 2];
+        outTan[i * 4 + 3] = tangents[idx * 4 + 3];
+      }
+    }
+
+    return { positions: outPos, normals: outNrm, uvs: outUV, tangents: outTan };
+  }
+
+  function gltfExtractMeshPrimitive(gltf, primitive, binaryBuffer) {
+    var positions = gltfReadAccessor(gltf, primitive.attributes.POSITION, binaryBuffer);
+
+    var normals = primitive.attributes.NORMAL != null
+      ? gltfReadAccessor(gltf, primitive.attributes.NORMAL, binaryBuffer)
+      : null;
+
+    var uvs = primitive.attributes.TEXCOORD_0 != null
+      ? gltfReadAccessor(gltf, primitive.attributes.TEXCOORD_0, binaryBuffer)
+      : null;
+
+    var tangentsRaw = primitive.attributes.TANGENT != null
+      ? gltfReadAccessor(gltf, primitive.attributes.TANGENT, binaryBuffer)
+      : null;
+
+    var indices = primitive.indices != null
+      ? gltfReadAccessor(gltf, primitive.indices, binaryBuffer)
+      : null;
+
+    if (indices) {
+      var expanded = gltfExpandIndexed(
+        positions,
+        normals || positions, // placeholder; we generate normals after expansion
+        uvs || gltfGenerateDefaultUVs(positions.length / 3),
+        tangentsRaw,
+        indices
+      );
+      positions = expanded.positions;
+      if (normals) {
+        normals = expanded.normals;
+      } else {
+        normals = gltfGenerateFlatNormals(positions);
+      }
+      uvs = expanded.uvs;
+      tangentsRaw = expanded.tangents;
+    } else {
+      if (!normals) {
+        normals = gltfGenerateFlatNormals(positions);
+      }
+      if (!uvs) {
+        uvs = gltfGenerateDefaultUVs(positions.length / 3);
+      }
+    }
+
+    var tangents = tangentsRaw || gltfComputeTangents(positions, normals, uvs);
+
+    return {
+      positions: positions,
+      normals: normals,
+      uvs: uvs,
+      tangents: tangents,
+      count: positions.length / 3,
+    };
+  }
+
+  function gltfNodeTransform(node) {
+    if (node.matrix) {
+      return new Float32Array(node.matrix);
+    }
+
+    var t = node.translation || [0, 0, 0];
+    var r = node.rotation    || [0, 0, 0, 1];
+    var s = node.scale       || [1, 1, 1];
+
+    return sceneTRSToMat4(t, r, s);
+  }
+
+  function gltfTransformPoint(m, x, y, z) {
+    return {
+      x: m[0] * x + m[4] * y + m[8]  * z + m[12],
+      y: m[1] * x + m[5] * y + m[9]  * z + m[13],
+      z: m[2] * x + m[6] * y + m[10] * z + m[14],
+    };
+  }
+
+  function gltfTransformDirection(m, x, y, z) {
+    return {
+      x: m[0] * x + m[4] * y + m[8]  * z,
+      y: m[1] * x + m[5] * y + m[9]  * z,
+      z: m[2] * x + m[6] * y + m[10] * z,
+    };
+  }
+
+  function gltfNormalMatrix(m) {
+    var a00 = m[0], a01 = m[1], a02 = m[2];
+    var a10 = m[4], a11 = m[5], a12 = m[6];
+    var a20 = m[8], a21 = m[9], a22 = m[10];
+
+    var det = a00 * (a11 * a22 - a12 * a21)
+            - a01 * (a10 * a22 - a12 * a20)
+            + a02 * (a10 * a21 - a11 * a20);
+
+    if (Math.abs(det) < 1e-10) {
+      return [1, 0, 0, 0, 1, 0, 0, 0, 1];
+    }
+
+    var invDet = 1.0 / det;
+
+    return [
+      (a11 * a22 - a12 * a21) * invDet,
+      (a12 * a20 - a10 * a22) * invDet,
+      (a10 * a21 - a11 * a20) * invDet,
+      (a02 * a21 - a01 * a22) * invDet,
+      (a00 * a22 - a02 * a20) * invDet,
+      (a01 * a20 - a00 * a21) * invDet,
+      (a01 * a12 - a02 * a11) * invDet,
+      (a02 * a10 - a00 * a12) * invDet,
+      (a00 * a11 - a01 * a10) * invDet,
+    ];
+  }
+
+  function gltfTransformNormal(nm, x, y, z) {
+    var rx = nm[0] * x + nm[3] * y + nm[6] * z;
+    var ry = nm[1] * x + nm[4] * y + nm[7] * z;
+    var rz = nm[2] * x + nm[5] * y + nm[8] * z;
+    var len = Math.sqrt(rx * rx + ry * ry + rz * rz);
+    if (len > 1e-8) { rx /= len; ry /= len; rz /= len; }
+    return { x: rx, y: ry, z: rz };
+  }
+
+  function gltfBaseColorToHex(factor) {
+    var r = Math.round(Math.max(0, Math.min(1, factor[0])) * 255);
+    var g = Math.round(Math.max(0, Math.min(1, factor[1])) * 255);
+    var b = Math.round(Math.max(0, Math.min(1, factor[2])) * 255);
+    return "#" +
+      (r < 16 ? "0" : "") + r.toString(16) +
+      (g < 16 ? "0" : "") + g.toString(16) +
+      (b < 16 ? "0" : "") + b.toString(16);
+  }
+
+  function gltfDefaultPBRMaterial() {
+    return {
+      kind: "standard",
+      color: "#cccccc",
+      roughness: 1.0,
+      metalness: 0.0,
+      opacity: 1.0,
+      emissive: 0,
+      texture: "",
+      normalMap: "",
+      roughnessMap: "",
+      metalnessMap: "",
+      emissiveMap: "",
+      alphaMode: "OPAQUE",
+      doubleSided: false,
+    };
+  }
+
+  function gltfResolveTexture(gltf, textureInfo, binaryBuffer) {
+    if (!textureInfo || textureInfo.index == null) {
+      return "";
+    }
+    var textures = gltf.textures;
+    if (!textures || textureInfo.index >= textures.length) {
+      return "";
+    }
+    var texture = textures[textureInfo.index];
+    if (!texture || texture.source == null) {
+      return "";
+    }
+    var images = gltf.images;
+    if (!images || texture.source >= images.length) {
+      return "";
+    }
+    var image = images[texture.source];
+    if (!image) {
+      return "";
+    }
+
+    if (image.uri) {
+      return image.uri;
+    }
+
+    if (image.bufferView != null && binaryBuffer) {
+      return gltfCreateBlobURLFromBufferView(gltf, image, binaryBuffer);
+    }
+
+    return "";
+  }
+
+  function gltfCreateBlobURLFromBufferView(gltf, image, binaryBuffer) {
+    var bufferView = gltf.bufferViews[image.bufferView];
+    var byteOffset = bufferView.byteOffset || 0;
+    var byteLength = bufferView.byteLength;
+    var mimeType = image.mimeType || "application/octet-stream";
+    var slice = binaryBuffer.slice(byteOffset, byteOffset + byteLength);
+    var blob = new Blob([slice], { type: mimeType });
+    return URL.createObjectURL(blob);
+  }
+
+  function gltfExtractMaterial(gltf, materialIndex, binaryBuffer) {
+    if (materialIndex == null || !gltf.materials || materialIndex >= gltf.materials.length) {
+      return gltfDefaultPBRMaterial();
+    }
+    var mat = gltf.materials[materialIndex];
+    var pbr = mat.pbrMetallicRoughness || {};
+    var baseColorFactor = pbr.baseColorFactor || [1, 1, 1, 1];
+
+    var metallicRoughnessURL = gltfResolveTexture(gltf, pbr.metallicRoughnessTexture, binaryBuffer);
+
+    var emissiveFactor = mat.emissiveFactor || [0, 0, 0];
+    var emissiveStrength = Math.max(emissiveFactor[0], emissiveFactor[1], emissiveFactor[2]);
+
+    return {
+      kind: "standard",
+      color: gltfBaseColorToHex(baseColorFactor),
+      roughness: pbr.roughnessFactor != null ? pbr.roughnessFactor : 1.0,
+      metalness: pbr.metallicFactor != null ? pbr.metallicFactor : 0.0,
+      opacity: baseColorFactor[3],
+      emissive: emissiveStrength,
+      texture: gltfResolveTexture(gltf, pbr.baseColorTexture, binaryBuffer),
+      normalMap: gltfResolveTexture(gltf, mat.normalTexture, binaryBuffer),
+      roughnessMap: metallicRoughnessURL,
+      metalnessMap: metallicRoughnessURL,
+      emissiveMap: gltfResolveTexture(gltf, mat.emissiveTexture, binaryBuffer),
+      alphaMode: mat.alphaMode || "OPAQUE",
+      doubleSided: mat.doubleSided || false,
+    };
+  }
+
+  function gltfExtractMeshNode(gltf, meshIndex, binaryBuffer, worldTransform, result) {
+    var mesh = gltf.meshes[meshIndex];
+    if (!mesh) {
+      return;
+    }
+
+    var normalMat = gltfNormalMatrix(worldTransform);
+
+    for (var p = 0; p < mesh.primitives.length; p++) {
+      var primitive = mesh.primitives[p];
+      var mode = primitive.mode != null ? primitive.mode : 4;
+      if (mode !== 4) {
+        continue;
+      }
+
+      var geometry = gltfExtractMeshPrimitive(gltf, primitive, binaryBuffer);
+      var material = gltfExtractMaterial(gltf, primitive.material, binaryBuffer);
+      var vertCount = geometry.count;
+
+      var worldPositions = new Float32Array(vertCount * 3);
+      var worldNormals = new Float32Array(vertCount * 3);
+      for (var v = 0; v < vertCount; v++) {
+        var px = geometry.positions[v * 3];
+        var py = geometry.positions[v * 3 + 1];
+        var pz = geometry.positions[v * 3 + 2];
+        var wp = gltfTransformPoint(worldTransform, px, py, pz);
+        worldPositions[v * 3]     = wp.x;
+        worldPositions[v * 3 + 1] = wp.y;
+        worldPositions[v * 3 + 2] = wp.z;
+
+        var tnx = geometry.normals[v * 3];
+        var tny = geometry.normals[v * 3 + 1];
+        var tnz = geometry.normals[v * 3 + 2];
+        var wn = gltfTransformNormal(normalMat, tnx, tny, tnz);
+        worldNormals[v * 3]     = wn.x;
+        worldNormals[v * 3 + 1] = wn.y;
+        worldNormals[v * 3 + 2] = wn.z;
+      }
+
+      var worldTangents = new Float32Array(vertCount * 4);
+      for (var v = 0; v < vertCount; v++) {
+        var ttx = geometry.tangents[v * 4];
+        var tty = geometry.tangents[v * 4 + 1];
+        var ttz = geometry.tangents[v * 4 + 2];
+        var tw  = geometry.tangents[v * 4 + 3];
+        var wt = gltfTransformDirection(worldTransform, ttx, tty, ttz);
+        var tlen = Math.sqrt(wt.x * wt.x + wt.y * wt.y + wt.z * wt.z);
+        if (tlen > 1e-8) { wt.x /= tlen; wt.y /= tlen; wt.z /= tlen; }
+        worldTangents[v * 4]     = wt.x;
+        worldTangents[v * 4 + 1] = wt.y;
+        worldTangents[v * 4 + 2] = wt.z;
+        worldTangents[v * 4 + 3] = tw;
+      }
+
+      var renderPass = "opaque";
+      if (material.alphaMode === "BLEND" || material.opacity < 0.999) {
+        renderPass = "alpha";
+      }
+
+      var objectID = "mesh-" + meshIndex + "-prim-" + p;
+      if (mesh.name) {
+        objectID = mesh.name + "-prim-" + p;
+      }
+
+      result.objects.push({
+        id: objectID,
+        kind: "gltf-mesh",
+        vertices: {
+          positions: worldPositions,
+          normals: worldNormals,
+          uvs: geometry.uvs,
+          tangents: worldTangents,
+          count: vertCount,
+        },
+        material: material,
+        transform: worldTransform,
+        renderPass: renderPass,
+        doubleSided: material.doubleSided,
+      });
+
+      result.materials.push(material);
+    }
+  }
+
+  function gltfWalkNode(gltf, nodeIndex, binaryBuffer, parentTransform, result) {
+    var node = gltf.nodes[nodeIndex];
+    if (!node) {
+      return;
+    }
+
+    var localTransform = gltfNodeTransform(node);
+    var worldTransform = sceneMat4Multiply(parentTransform, localTransform);
+
+    if (node.mesh != null) {
+      gltfExtractMeshNode(gltf, node.mesh, binaryBuffer, worldTransform, result);
+    }
+
+    var children = node.children || [];
+    for (var i = 0; i < children.length; i++) {
+      gltfWalkNode(gltf, children[i], binaryBuffer, worldTransform, result);
+    }
+  }
+
+  function gltfExtractAnimations(gltf, binaryBuffer) {
+    if (!gltf.animations || !gltf.animations.length) {
+      return [];
+    }
+    var animations = [];
+    for (var a = 0; a < gltf.animations.length; a++) {
+      var anim = gltf.animations[a];
+      var channels = [];
+      var maxTime = 0;
+
+      for (var c = 0; c < anim.channels.length; c++) {
+        var ch = anim.channels[c];
+        var sampler = anim.samplers[ch.sampler];
+        var times = gltfReadAccessor(gltf, sampler.input, binaryBuffer);
+        var values = gltfReadAccessor(gltf, sampler.output, binaryBuffer);
+
+        if (times.length > 0) {
+          var lastTime = times[times.length - 1];
+          if (lastTime > maxTime) {
+            maxTime = lastTime;
+          }
+        }
+
+        channels.push({
+          targetNode: ch.target.node,
+          property: ch.target.path,
+          interpolation: sampler.interpolation || "LINEAR",
+          times: times instanceof Float32Array ? times : new Float32Array(times),
+          values: values instanceof Float32Array ? values : new Float32Array(values),
+        });
+      }
+
+      animations.push({
+        name: anim.name || "",
+        channels: channels,
+        duration: maxTime,
+      });
+    }
+    return animations;
+  }
+
+  function gltfExtractSkin(gltf, skinIndex, binaryBuffer) {
+    if (skinIndex == null || !gltf.skins || skinIndex >= gltf.skins.length) {
+      return null;
+    }
+    var skin = gltf.skins[skinIndex];
+    var ibm = skin.inverseBindMatrices != null
+      ? new Float32Array(gltfReadAccessor(gltf, skin.inverseBindMatrices, binaryBuffer))
+      : null;
+    return {
+      joints: skin.joints.slice(),
+      inverseBindMatrices: ibm,
+      skeleton: skin.skeleton != null ? skin.skeleton : null,
+    };
+  }
+
+  function gltfExtractScene(gltf, binaryBuffer) {
+    var result = {
+      objects: [],
+      materials: [],
+      lights: [],
+      labels: [],
+      sprites: [],
+      animations: [],
+      skins: [],
+    };
+
+    var sceneIndex = gltf.scene != null ? gltf.scene : 0;
+    var scene = gltf.scenes && gltf.scenes[sceneIndex];
+    if (!scene || !scene.nodes) {
+      return result;
+    }
+
+    var identity = new Float32Array(SCENE_IDENTITY_MAT4);
+    for (var i = 0; i < scene.nodes.length; i++) {
+      gltfWalkNode(gltf, scene.nodes[i], binaryBuffer, identity, result);
+    }
+
+    result.animations = gltfExtractAnimations(gltf, binaryBuffer);
+
+    if (gltf.skins) {
+      for (var s = 0; s < gltf.skins.length; s++) {
+        var skin = gltfExtractSkin(gltf, s, binaryBuffer);
+        if (skin) {
+          result.skins.push(skin);
+        }
+      }
+    }
+
+    return result;
+  }
+
+  async function gltfFetchExternalBuffers(gltf, baseURL) {
+    if (!gltf.buffers || !gltf.buffers.length) {
+      return null;
+    }
+
+    var buffer0 = gltf.buffers[0];
+    if (!buffer0 || !buffer0.uri) {
+      return null;
+    }
+
+    var uri = buffer0.uri;
+
+    if (uri.indexOf("data:") === 0) {
+      var response = await fetch(uri);
+      return await response.arrayBuffer();
+    }
+
+    var resolved = new URL(uri, baseURL).toString();
+    var response = await fetch(resolved, { credentials: "same-origin" });
+    if (!response.ok) {
+      throw new Error("Failed to fetch glTF buffer: " + resolved + " (HTTP " + response.status + ")");
+    }
+    return await response.arrayBuffer();
+  }
+
+  async function sceneLoadGLTFModel(url) {
+    var isGLB = url.toLowerCase().endsWith(".glb");
+    var response;
+
+    if (isGLB) {
+      response = await fetch(url, { credentials: "same-origin" });
+      if (!response.ok) {
+        throw new Error("Failed to fetch GLB: " + url + " (HTTP " + response.status + ")");
+      }
+      var arrayBuffer = await response.arrayBuffer();
+      var parsed = sceneParseGLB(arrayBuffer);
+      return gltfExtractScene(parsed.json, parsed.binaryBuffer);
+    }
+
+    response = await fetch(url, { credentials: "same-origin" });
+    if (!response.ok) {
+      throw new Error("Failed to fetch glTF: " + url + " (HTTP " + response.status + ")");
+    }
+    var json = await response.json();
+    var bufferData = await gltfFetchExternalBuffers(json, url);
+    return gltfExtractScene(json, bufferData);
+  }
+
+  function gltfSceneToModelAsset(scene, src) {
+    return {
+      src: src || "",
+      objects: scene.objects || [],
+      labels: scene.labels || [],
+      sprites: scene.sprites || [],
+      lights: scene.lights || [],
+      animations: scene.animations || [],
+      skins: scene.skins || [],
+    };
+  }
+
+  var _nodeTransforms = new Map();
+  var _childSet = new Set();
+  var _mixerResults = new Map();
+
+  function sceneAnimBuildNodeTransforms(nodes, animatedTransforms) {
+    _nodeTransforms.clear();
+
+    function walkNode(nodeIndex, parentWorld) {
+      var node = nodes[nodeIndex];
+      if (!node) return;
+      var anim = animatedTransforms ? animatedTransforms.get(nodeIndex) : null;
+
+      var local = sceneTRSToMat4(
+        anim && anim.position ? anim.position : (node.translation || [0, 0, 0]),
+        anim && anim.rotation ? anim.rotation : (node.rotation || [0, 0, 0, 1]),
+        anim && anim.scale ? anim.scale : (node.scale || [1, 1, 1])
+      );
+
+      var world = parentWorld ? sceneMat4Multiply(parentWorld, local) : local;
+      _nodeTransforms.set(nodeIndex, world);
+
+      var children = node.children || [];
+      for (var i = 0; i < children.length; i++) {
+        walkNode(children[i], world);
+      }
+    }
+
+    _childSet.clear();
+    for (var n = 0; n < nodes.length; n++) {
+      var ch = nodes[n] && nodes[n].children;
+      if (ch) {
+        for (var ci = 0; ci < ch.length; ci++) _childSet.add(ch[ci]);
+      }
+    }
+    for (var i = 0; i < nodes.length; i++) {
+      if (!_childSet.has(i)) walkNode(i, null);
+    }
+
+    return _nodeTransforms;
+  }
+
+  function sceneAnimComputeJointMatrices(skin, nodeTransforms) {
+    var jointCount = skin.joints.length;
+    var matrices = skin._jointMatricesBuffer;
+    if (!matrices || matrices.length !== jointCount * 16) {
+      matrices = new Float32Array(jointCount * 16);
+      skin._jointMatricesBuffer = matrices;
+    }
+
+    for (var i = 0; i < jointCount; i++) {
+      var jointNodeIndex = skin.joints[i];
+      var worldTransform = nodeTransforms.get(jointNodeIndex) || SCENE_IDENTITY_MAT4;
+      var inverseBindOffset = i * 16;
+      var inverseBind = skin.inverseBindMatrices.subarray(inverseBindOffset, inverseBindOffset + 16);
+
+      sceneMat4MultiplyInto(_sceneMat4ScratchA, worldTransform, inverseBind);
+      matrices.set(_sceneMat4ScratchA, i * 16);
+    }
+
+    return matrices;
+  }
+
+  function sceneAnimLerpVec(a, b, t) {
+    var result = new Array(a.length);
+    for (var i = 0; i < a.length; i++) {
+      result[i] = a[i] + (b[i] - a[i]) * t;
+    }
+    return result;
+  }
+
+  function sceneAnimLerpVecInto(out, a, b, t) {
+    for (var i = 0; i < a.length; i++) {
+      out[i] = a[i] + (b[i] - a[i]) * t;
+    }
+    return out;
+  }
+
+  function sceneAnimNormalizeQuat(q) {
+    var len = Math.sqrt(q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]);
+    if (len < 1e-10) return [0, 0, 0, 1];
+    return [q[0] / len, q[1] / len, q[2] / len, q[3] / len];
+  }
+
+  function sceneAnimSlerpQuat(a, b, t) {
+    var dot = a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3];
+
+    var bx = b[0], by = b[1], bz = b[2], bw = b[3];
+    if (dot < 0) {
+      dot = -dot;
+      bx = -bx; by = -by; bz = -bz; bw = -bw;
+    }
+
+    if (dot > 0.9995) {
+      return sceneAnimNormalizeQuat(sceneAnimLerpVec(a, [bx, by, bz, bw], t));
+    }
+
+    var theta = Math.acos(dot);
+    var sinTheta = Math.sin(theta);
+    var w0 = Math.sin((1 - t) * theta) / sinTheta;
+    var w1 = Math.sin(t * theta) / sinTheta;
+
+    return [
+      a[0] * w0 + bx * w1,
+      a[1] * w0 + by * w1,
+      a[2] * w0 + bz * w1,
+      a[3] * w0 + bw * w1,
+    ];
+  }
+
+  function sceneAnimSlerpQuatInto(out, a, b, t) {
+    var dot = a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3];
+
+    var bx = b[0], by = b[1], bz = b[2], bw = b[3];
+    if (dot < 0) {
+      dot = -dot;
+      bx = -bx; by = -by; bz = -bz; bw = -bw;
+    }
+
+    if (dot > 0.9995) {
+      sceneAnimLerpVecInto(out, a, [bx, by, bz, bw], t);
+      var len = Math.sqrt(out[0] * out[0] + out[1] * out[1] + out[2] * out[2] + out[3] * out[3]);
+      if (len < 1e-10) { out[0] = 0; out[1] = 0; out[2] = 0; out[3] = 1; }
+      else { out[0] /= len; out[1] /= len; out[2] /= len; out[3] /= len; }
+      return out;
+    }
+
+    var theta = Math.acos(dot);
+    var sinTheta = Math.sin(theta);
+    var w0 = Math.sin((1 - t) * theta) / sinTheta;
+    var w1 = Math.sin(t * theta) / sinTheta;
+
+    out[0] = a[0] * w0 + bx * w1;
+    out[1] = a[1] * w0 + by * w1;
+    out[2] = a[2] * w0 + bz * w1;
+    out[3] = a[3] * w0 + bw * w1;
+    return out;
+  }
+
+  function _sceneAnimSlerpQuatOffset(out, arrA, offA, arrB, offB, t) {
+    var a0 = arrA[offA], a1 = arrA[offA + 1], a2 = arrA[offA + 2], a3 = arrA[offA + 3];
+    var bx = arrB[offB], by = arrB[offB + 1], bz = arrB[offB + 2], bw = arrB[offB + 3];
+    var dot = a0 * bx + a1 * by + a2 * bz + a3 * bw;
+
+    if (dot < 0) {
+      dot = -dot;
+      bx = -bx; by = -by; bz = -bz; bw = -bw;
+    }
+
+    if (dot > 0.9995) {
+      out[0] = a0 + (bx - a0) * t;
+      out[1] = a1 + (by - a1) * t;
+      out[2] = a2 + (bz - a2) * t;
+      out[3] = a3 + (bw - a3) * t;
+      var len = Math.sqrt(out[0] * out[0] + out[1] * out[1] + out[2] * out[2] + out[3] * out[3]);
+      if (len < 1e-10) { out[0] = 0; out[1] = 0; out[2] = 0; out[3] = 1; }
+      else { out[0] /= len; out[1] /= len; out[2] /= len; out[3] /= len; }
+      return out;
+    }
+
+    var theta = Math.acos(dot);
+    var sinTheta = Math.sin(theta);
+    var w0 = Math.sin((1 - t) * theta) / sinTheta;
+    var w1 = Math.sin(t * theta) / sinTheta;
+
+    out[0] = a0 * w0 + bx * w1;
+    out[1] = a1 * w0 + by * w1;
+    out[2] = a2 * w0 + bz * w1;
+    out[3] = a3 * w0 + bw * w1;
+    return out;
+  }
+
+  function sceneAnimInterpolateChannel(channel, time) {
+    var times = channel.times;
+    var values = channel.values;
+    var isRotation = channel.property === "rotation";
+    var componentCount = isRotation ? 4 : 3;
+    var scratch = isRotation ? _animScratch4 : _animScratch3;
+
+    if (time <= times[0]) {
+      channel._lastIndex = 0;
+      for (var si = 0; si < componentCount; si++) scratch[si] = values[si];
+      return scratch;
+    }
+    if (time >= times[times.length - 1]) {
+      channel._lastIndex = 0;
+      var start = (times.length - 1) * componentCount;
+      for (var si = 0; si < componentCount; si++) scratch[si] = values[start + si];
+      return scratch;
+    }
+
+    var i = channel._lastIndex || 0;
+    if (i >= times.length - 1 || times[i] > time) i = 0;
+    while (i < times.length - 1 && times[i + 1] < time) i++;
+    channel._lastIndex = i;
+
+    var t0 = times[i];
+    var t1 = times[i + 1];
+    var alpha = (time - t0) / (t1 - t0);
+
+    var start0 = i * componentCount;
+    var start1 = (i + 1) * componentCount;
+
+    if (channel.interpolation === "STEP") {
+      for (var si = 0; si < componentCount; si++) scratch[si] = values[start0 + si];
+      return scratch;
+    }
+
+    if (isRotation) {
+      _sceneAnimSlerpQuatOffset(scratch, values, start0, values, start1, alpha);
+    } else {
+      scratch[0] = values[start0]     + (values[start1]     - values[start0])     * alpha;
+      scratch[1] = values[start0 + 1] + (values[start1 + 1] - values[start0 + 1]) * alpha;
+      scratch[2] = values[start0 + 2] + (values[start1 + 2] - values[start0 + 2]) * alpha;
+    }
+    return scratch;
+  }
+
+  function sceneAnimBlendValue(existing, newValue, weight, property) {
+    var t = weight / (existing.totalWeight + weight);
+    existing.totalWeight += weight;
+
+    if (property === "rotation") {
+      existing.value = sceneAnimSlerpQuat(existing.value, newValue, t);
+    } else {
+      existing.value = sceneAnimLerpVec(existing.value, newValue, t);
+    }
+  }
+
+  function createSceneAnimationMixer() {
+    var clips = new Map();  // name -> clip data
+    var active = [];        // active playback entries
+
+    function addClip(name, clip) {
+      if (clip && clip.channels) {
+        for (var ci = 0; ci < clip.channels.length; ci++) {
+          var ch = clip.channels[ci];
+          ch._key = ch.targetID + ":" + ch.property;
+          ch._lastIndex = 0;
+        }
+      }
+      clips.set(name, clip);
+    }
+
+    function removeClip(name) {
+      stop(name, { fadeOut: 0 });
+      clips.delete(name);
+    }
+
+    function findActive(name) {
+      for (var i = 0; i < active.length; i++) {
+        if (active[i].name === name) return active[i];
+      }
+      return null;
+    }
+
+    function play(name, options) {
+      var clip = clips.get(name);
+      if (!clip) {
+        console.warn("[gosx] animation clip not found:", name);
+        return;
+      }
+
+      var opts = options || {};
+      var loop = opts.loop !== undefined ? opts.loop : true;
+      var speed = opts.speed !== undefined ? opts.speed : 1.0;
+      var fadeIn = opts.fadeIn !== undefined ? opts.fadeIn : 0.3;
+      var weight = opts.weight !== undefined ? opts.weight : 1.0;
+
+      var existing = findActive(name);
+      if (existing) {
+        existing.speed = speed;
+        existing.targetWeight = weight;
+        if (!existing.stopping) {
+          existing.weight = weight;
+        }
+        return;
+      }
+
+      var entry = {
+        name: name,
+        clip: clip,
+        time: 0,
+        weight: fadeIn > 0 ? 0 : weight,
+        targetWeight: weight,
+        speed: speed,
+        loop: loop,
+        fadeIn: fadeIn,
+        fadeOut: 0,
+        fadeTime: 0,
+        stopping: false,
+      };
+      active.push(entry);
+    }
+
+    function stop(name, options) {
+      var entry = findActive(name);
+      if (!entry) return;
+
+      var opts = options || {};
+      var fadeOut = opts.fadeOut !== undefined ? opts.fadeOut : 0.3;
+
+      if (fadeOut > 0) {
+        entry.stopping = true;
+        entry.fadeOut = fadeOut;
+        entry.fadeTime = 0;
+      } else {
+        for (var i = active.length - 1; i >= 0; i--) {
+          if (active[i].name === name) {
+            active.splice(i, 1);
+            break;
+          }
+        }
+      }
+    }
+
+    function stopAll() {
+      active.length = 0;
+    }
+
+    function update(deltaTime, applyTransform) {
+      var i, entry, channel, value, key, existing;
+
+      for (i = 0; i < active.length; i++) {
+        entry = active[i];
+        entry.time += deltaTime * entry.speed;
+
+        if (entry.loop && entry.clip.duration > 0 && entry.time >= entry.clip.duration) {
+          entry.time = entry.time % entry.clip.duration;
+        }
+
+        if (entry.fadeIn > 0 && !entry.stopping && entry.fadeTime < entry.fadeIn) {
+          entry.fadeTime += deltaTime;
+          entry.weight = Math.min(1.0, entry.fadeTime / entry.fadeIn) * entry.targetWeight;
+        }
+
+        if (entry.stopping && entry.fadeOut > 0) {
+          entry.fadeTime += deltaTime;
+          entry.weight = Math.max(0, 1.0 - entry.fadeTime / entry.fadeOut) * entry.targetWeight;
+        }
+      }
+
+      for (i = active.length - 1; i >= 0; i--) {
+        entry = active[i];
+        if (entry.stopping && (entry.fadeOut <= 0 || entry.fadeTime >= entry.fadeOut)) {
+          active.splice(i, 1);
+          continue;
+        }
+        if (!entry.loop && entry.clip.duration > 0 && entry.time >= entry.clip.duration) {
+          active.splice(i, 1);
+          continue;
+        }
+      }
+
+      _mixerResults.clear();
+
+      for (i = 0; i < active.length; i++) {
+        entry = active[i];
+        if (entry.weight <= 0) continue;
+
+        for (var c = 0; c < entry.clip.channels.length; c++) {
+          channel = entry.clip.channels[c];
+          value = sceneAnimInterpolateChannel(channel, entry.time);
+          key = channel._key;
+
+          existing = _mixerResults.get(key);
+          if (!existing) {
+            var componentCount = channel.property === "rotation" ? 4 : 3;
+            var copied = new Array(componentCount);
+            for (var vi = 0; vi < componentCount; vi++) copied[vi] = value[vi];
+            _mixerResults.set(key, {
+              targetID: channel.targetID,
+              property: channel.property,
+              value: copied,
+              totalWeight: entry.weight,
+            });
+          } else {
+            sceneAnimBlendValue(existing, value, entry.weight, channel.property);
+          }
+        }
+      }
+
+      _mixerResults.forEach(function(result) {
+        applyTransform(result.targetID, result.property, result.value);
+      });
+    }
+
+    function hasClips() {
+      return clips.size > 0;
+    }
+
+    function isPlaying(name) {
+      return findActive(name) !== null;
+    }
+
+    function dispose() {
+      active.length = 0;
+      clips.clear();
+    }
+
+    return {
+      addClip: addClip,
+      removeClip: removeClip,
+      play: play,
+      stop: stop,
+      stopAll: stopAll,
+      update: update,
+      hasClips: hasClips,
+      isPlaying: isPlaying,
+      dispose: dispose,
+    };
+  }
+
+  function createSceneRenderer(canvas, props, capability) {
+    const webglPreference = sceneCapabilityWebGLPreference(props, capability);
+    if (webglPreference === "prefer" || webglPreference === "force") {
+      if (webglPreference !== "force" && typeof sceneWebGPUAvailable === "function" && sceneWebGPUAvailable()) {
+        var gpuRenderer = createSceneWebGPURendererOrFallback(canvas);
+        if (gpuRenderer) {
+          return {
+            renderer: gpuRenderer,
+            fallbackReason: "",
+          };
+        }
+      }
+      if (typeof createScenePBRRendererOrFallback === "function") {
+        const gl = typeof canvas.getContext === "function" ? canvas.getContext("webgl2", {
+          alpha: true,
+          premultipliedAlpha: false,
+          antialias: capability.tier === "full" && !capability.lowPower && !capability.reducedData,
+          powerPreference: capability.lowPower || capability.tier === "constrained" ? "low-power" : "high-performance",
+        }) : null;
+        if (gl) {
+          const pbrRenderer = createScenePBRRendererOrFallback(gl, canvas, {});
+          if (pbrRenderer) {
+            return {
+              renderer: pbrRenderer,
+              fallbackReason: "",
+            };
+          }
+        }
+      }
+      const webglRenderer = createSceneWebGLRenderer(canvas, {
+        antialias: capability.tier === "full" && !capability.lowPower && !capability.reducedData,
+        powerPreference: capability.lowPower || capability.tier === "constrained" ? "low-power" : "high-performance",
+      });
+      if (webglRenderer) {
+        return {
+          renderer: webglRenderer,
+          fallbackReason: "",
+        };
+      }
+    }
+    const ctx2d = typeof canvas.getContext === "function" ? canvas.getContext("2d") : null;
+    if (!ctx2d) {
+      return null;
+    }
+    return {
+      renderer: createSceneCanvasRenderer(ctx2d, canvas),
+      fallbackReason: sceneRendererFallbackReason(props, capability, "canvas"),
+    };
+  }
+
+  const sceneModelAssetCache = new Map();
+
+  function resolveSceneModelAssetURL(baseSrc, value) {
+    const raw = typeof value === "string" ? value.trim() : "";
+    if (!raw) {
+      return "";
+    }
+    try {
+      const baseURL = new URL(baseSrc || "", window.location.href).toString();
+      return new URL(raw, baseURL).toString();
+    } catch (_error) {
+      return raw;
+    }
+  }
+
+  function resolveSceneModelObjectURLs(baseSrc, rawObject) {
+    if (!rawObject || typeof rawObject !== "object") {
+      return rawObject;
+    }
+    const resolved = Object.assign({}, rawObject);
+    if (typeof resolved.texture === "string" && resolved.texture.trim()) {
+      resolved.texture = resolveSceneModelAssetURL(baseSrc, resolved.texture);
+    }
+    if (resolved.material && typeof resolved.material === "object") {
+      const material = Object.assign({}, resolved.material);
+      if (typeof material.texture === "string" && material.texture.trim()) {
+        material.texture = resolveSceneModelAssetURL(baseSrc, material.texture);
+      }
+      resolved.material = material;
+    }
+    return resolved;
+  }
+
+  function sceneModelTransformPoint(point, model) {
+    const local = point && typeof point === "object" ? point : { x: 0, y: 0, z: 0 };
+    const scaleX = sceneNumber(model && model.scaleX, 1);
+    const scaleY = sceneNumber(model && model.scaleY, 1);
+    const scaleZ = sceneNumber(model && model.scaleZ, 1);
+    const rotated = sceneRotatePoint(
+      {
+        x: local.x * scaleX,
+        y: local.y * scaleY,
+        z: local.z * scaleZ,
+      },
+      sceneNumber(model && model.rotationX, 0),
+      sceneNumber(model && model.rotationY, 0),
+      sceneNumber(model && model.rotationZ, 0),
+    );
+    return {
+      x: rotated.x + sceneNumber(model && model.x, 0),
+      y: rotated.y + sceneNumber(model && model.y, 0),
+      z: rotated.z + sceneNumber(model && model.z, 0),
+    };
+  }
+
+  function sceneModelTransformVector(point, model) {
+    const local = point && typeof point === "object" ? point : { x: 0, y: 0, z: 0 };
+    return sceneRotatePoint(
+      {
+        x: local.x * sceneNumber(model && model.scaleX, 1),
+        y: local.y * sceneNumber(model && model.scaleY, 1),
+        z: local.z * sceneNumber(model && model.scaleZ, 1),
+      },
+      sceneNumber(model && model.rotationX, 0),
+      sceneNumber(model && model.rotationY, 0),
+      sceneNumber(model && model.rotationZ, 0),
+    );
+  }
+
+  function sceneModelMaxScale(model) {
+    return Math.max(
+      Math.abs(sceneNumber(model && model.scaleX, 1)),
+      Math.abs(sceneNumber(model && model.scaleY, 1)),
+      Math.abs(sceneNumber(model && model.scaleZ, 1)),
+    );
+  }
+
+  function sceneModelRotateDirection(point, model) {
+    return sceneRotatePoint(
+      point && typeof point === "object" ? point : { x: 0, y: 0, z: 0 },
+      sceneNumber(model && model.rotationX, 0),
+      sceneNumber(model && model.rotationY, 0),
+      sceneNumber(model && model.rotationZ, 0),
+    );
+  }
+
+  function sceneModelMaterialOverrideSource(model) {
+    return model && model.materialOverride && typeof model.materialOverride === "object"
+      ? model.materialOverride
+      : null;
+  }
+
+  function sceneAssignMaterialOverride(next, material, sourceKey, targetKey, override) {
+    if (!override || !Object.prototype.hasOwnProperty.call(override, sourceKey)) {
+      return;
+    }
+    const key = targetKey || sourceKey;
+    next[key] = override[sourceKey];
+    if (material) {
+      material[key] = override[sourceKey];
+    }
+  }
+
+  function sceneApplyMaterialOverride(raw, model) {
+    const override = sceneModelMaterialOverrideSource(model);
+    if (!override) {
+      return raw && typeof raw === "object" ? Object.assign({}, raw) : {};
+    }
+    const next = raw && typeof raw === "object" ? Object.assign({}, raw) : {};
+    const material = next.material && typeof next.material === "object"
+      ? Object.assign({}, next.material)
+      : null;
+    if (typeof override.materialKind === "string" && override.materialKind) {
+      next.materialKind = override.materialKind;
+      if (typeof next.material === "string") {
+        next.material = override.materialKind;
+      }
+      if (material) {
+        material.kind = override.materialKind;
+      }
+    }
+    sceneAssignMaterialOverride(next, material, "color", "color", override);
+    sceneAssignMaterialOverride(next, material, "texture", "texture", override);
+    sceneAssignMaterialOverride(next, material, "opacity", "opacity", override);
+    sceneAssignMaterialOverride(next, material, "emissive", "emissive", override);
+    sceneAssignMaterialOverride(next, material, "blendMode", "blendMode", override);
+    sceneAssignMaterialOverride(next, material, "renderPass", "renderPass", override);
+    sceneAssignMaterialOverride(next, material, "wireframe", "wireframe", override);
+    if (material) {
+      next.material = material;
+    }
+    return next;
+  }
+
+  function sceneModelPrimitiveObject(object, model, prefix) {
+    const instanced = Object.assign({}, object, {
+      id: prefix + "/" + (object.id || "object"),
+      x: 0,
+      y: 0,
+      z: 0,
+      rotationX: sceneNumber(object.rotationX, 0) + sceneNumber(model && model.rotationX, 0),
+      rotationY: sceneNumber(object.rotationY, 0) + sceneNumber(model && model.rotationY, 0),
+      rotationZ: sceneNumber(object.rotationZ, 0) + sceneNumber(model && model.rotationZ, 0),
+    });
+    const positioned = sceneModelTransformPoint({ x: object.x, y: object.y, z: object.z }, model);
+    instanced.x = positioned.x;
+    instanced.y = positioned.y;
+    instanced.z = positioned.z;
+    const scaleX = Math.abs(sceneNumber(model && model.scaleX, 1));
+    const scaleY = Math.abs(sceneNumber(model && model.scaleY, 1));
+    const scaleZ = Math.abs(sceneNumber(model && model.scaleZ, 1));
+    switch (object.kind) {
+      case "cube":
+        if (Math.abs(scaleX - scaleY) > 0.0001 || Math.abs(scaleX - scaleZ) > 0.0001) {
+          instanced.kind = "box";
+          instanced.width = sceneNumber(object.size, 1.2) * scaleX;
+          instanced.height = sceneNumber(object.size, 1.2) * scaleY;
+          instanced.depth = sceneNumber(object.size, 1.2) * scaleZ;
+        } else {
+          instanced.size = sceneNumber(object.size, 1.2) * scaleX;
+        }
+        break;
+      case "sphere":
+        instanced.radius = sceneNumber(object.radius, sceneNumber(object.size, 1.2) / 2) * Math.max(scaleX, scaleY, scaleZ);
+        break;
+      default:
+        instanced.width = sceneNumber(object.width, sceneNumber(object.size, 1.2)) * scaleX;
+        instanced.height = sceneNumber(object.height, sceneNumber(object.size, 1.2)) * scaleY;
+        instanced.depth = sceneNumber(object.depth, sceneNumber(object.size, 1.2)) * scaleZ;
+        break;
+    }
+    if (model && model.static !== null) {
+      instanced.static = Boolean(model.static);
+    }
+    if (model && typeof model.pickable === "boolean") {
+      instanced.pickable = model.pickable;
+    }
+    return normalizeSceneObject(instanced, prefix);
+  }
+
+  function sceneModelLineObject(object, model, prefix) {
+    const scaleX = sceneNumber(model && model.scaleX, 1);
+    const scaleY = sceneNumber(model && model.scaleY, 1);
+    const scaleZ = sceneNumber(model && model.scaleZ, 1);
+    const scaled = sceneScaleModelLinePoints(object.points, scaleX, scaleY, scaleZ);
+    const positioned = sceneModelTransformPoint({ x: object.x, y: object.y, z: object.z }, model);
+    const instanced = Object.assign({}, object, {
+      id: prefix + "/" + (object.id || "object"),
+      points: scaled,
+      lineSegments: sceneCloneModelLineSegments(object.lineSegments),
+      x: positioned.x,
+      y: positioned.y,
+      z: positioned.z,
+      rotationX: sceneNumber(object.rotationX, 0) + sceneNumber(model && model.rotationX, 0),
+      rotationY: sceneNumber(object.rotationY, 0) + sceneNumber(model && model.rotationY, 0),
+      rotationZ: sceneNumber(object.rotationZ, 0) + sceneNumber(model && model.rotationZ, 0),
+    });
+    if (model && model.static !== null) {
+      instanced.static = Boolean(model.static);
+    }
+    if (model && typeof model.pickable === "boolean") {
+      instanced.pickable = model.pickable;
+    }
+    return normalizeSceneObject(instanced, prefix);
+  }
+
+  function sceneScaleModelLinePoints(points, scaleX, scaleY, scaleZ) {
+    return Array.isArray(points) ? points.map(function(point) {
+      return {
+        x: sceneNumber(point && point.x, 0) * scaleX,
+        y: sceneNumber(point && point.y, 0) * scaleY,
+        z: sceneNumber(point && point.z, 0) * scaleZ,
+      };
+    }) : [];
+  }
+
+  function sceneCloneModelLineSegments(segments) {
+    return Array.isArray(segments) ? segments.map(function(pair) {
+      return Array.isArray(pair) ? pair.slice(0, 2) : pair;
+    }) : [];
+  }
+
+  function sceneInstantiateModelObject(rawObject, model, prefix, index) {
+    const source = sceneApplyMaterialOverride(rawObject, model);
+    const normalized = normalizeSceneObject(source, index);
+    if (normalized.vertices && normalized.vertices.positions && normalized.vertices.count > 0) {
+      return sceneModelMeshObject(normalized, model, prefix);
+    }
+    if (normalized.kind === "lines") {
+      return sceneModelLineObject(normalized, model, prefix);
+    }
+    return sceneModelPrimitiveObject(normalized, model, prefix);
+  }
+
+  function sceneModelTransformMeshFloats(values, tupleSize, mapper) {
+    const source = values instanceof Float32Array ? values : sceneTypedFloatArray(values);
+    const typed = new Float32Array(source.length);
+    const safeTupleSize = Math.max(1, Math.floor(sceneNumber(tupleSize, 1)));
+    for (let index = 0; index + safeTupleSize - 1 < source.length; index += safeTupleSize) {
+      const mapped = mapper(
+        sceneNumber(source[index], 0),
+        sceneNumber(source[index + 1], 0),
+        sceneNumber(source[index + 2], 0),
+        safeTupleSize > 3 ? sceneNumber(source[index + 3], 1) : undefined
+      );
+      typed[index] = sceneNumber(mapped && mapped.x, 0);
+      typed[index + 1] = sceneNumber(mapped && mapped.y, 0);
+      typed[index + 2] = sceneNumber(mapped && mapped.z, 0);
+      if (safeTupleSize > 3) {
+        typed[index + 3] = sceneNumber(mapped && mapped.w, 1);
+      }
+    }
+    return typed;
+  }
+
+  function sceneModelMeshObject(object, model, prefix) {
+    const vertices = object && object.vertices && typeof object.vertices === "object" ? object.vertices : null;
+    if (!vertices || !vertices.positions || !vertices.count) {
+      return null;
+    }
+    const instanced = Object.assign({}, object, {
+      id: prefix + "/" + (object.id || "object"),
+      x: 0,
+      y: 0,
+      z: 0,
+      rotationX: 0,
+      rotationY: 0,
+      rotationZ: 0,
+      spinX: 0,
+      spinY: 0,
+      spinZ: 0,
+      shiftX: 0,
+      shiftY: 0,
+      shiftZ: 0,
+      driftSpeed: 0,
+      driftPhase: 0,
+    });
+    instanced.vertices = {
+      count: Math.max(0, Math.floor(sceneNumber(vertices.count, 0))),
+      positions: sceneModelTransformMeshFloats(vertices.positions, 3, function(x, y, z) {
+        return sceneModelTransformPoint({ x: x, y: y, z: z }, model);
+      }),
+      normals: sceneModelTransformMeshFloats(vertices.normals, 3, function(x, y, z) {
+        return sceneNormalizeDirection(sceneModelTransformVector({ x: x, y: y, z: z }, model));
+      }),
+      uvs: vertices.uvs instanceof Float32Array ? new Float32Array(vertices.uvs) : sceneTypedFloatArray(vertices.uvs),
+      tangents: sceneModelTransformMeshFloats(vertices.tangents, 4, function(x, y, z, w) {
+        const rotated = sceneNormalizeDirection(sceneModelTransformVector({ x: x, y: y, z: z }, model));
+        return { x: rotated.x, y: rotated.y, z: rotated.z, w: sceneNumber(w, 1) };
+      }),
+      joints: vertices.joints instanceof Float32Array ? new Float32Array(vertices.joints) : sceneTypedFloatArray(vertices.joints),
+      weights: vertices.weights instanceof Float32Array ? new Float32Array(vertices.weights) : sceneTypedFloatArray(vertices.weights),
+    };
+    if (model && model.static !== null) {
+      instanced.static = Boolean(model.static);
+    }
+    if (model && typeof model.pickable === "boolean") {
+      instanced.pickable = model.pickable;
+    }
+    return normalizeSceneObject(instanced, prefix);
+  }
+
+  function sceneInstantiateModelLabel(rawLabel, model, prefix, index) {
+    const normalized = normalizeSceneLabel(rawLabel, index);
+    const position = sceneModelTransformPoint({ x: normalized.x, y: normalized.y, z: normalized.z }, model);
+    return Object.assign({}, normalized, {
+      id: prefix + "/" + normalized.id,
+      x: position.x,
+      y: position.y,
+      z: position.z,
+    });
+  }
+
+  function sceneInstantiateModelLight(rawLight, model, prefix, index) {
+    const normalized = normalizeSceneLight(rawLight, index, null);
+    if (!normalized) {
+      return null;
+    }
+    const next = Object.assign({}, normalized, {
+      id: prefix + "/" + normalized.id,
+    });
+    if (next.kind === "directional") {
+      const rotated = sceneModelRotateDirection({
+        x: next.directionX,
+        y: next.directionY,
+        z: next.directionZ,
+      }, model);
+      next.directionX = rotated.x;
+      next.directionY = rotated.y;
+      next.directionZ = rotated.z;
+      if (typeof hashLightContent === "function") {
+        next._lightHash = hashLightContent(next);
+      }
+      return next;
+    }
+    const position = sceneModelTransformPoint({ x: next.x, y: next.y, z: next.z }, model);
+    next.x = position.x;
+    next.y = position.y;
+    next.z = position.z;
+    if (next.kind === "point") {
+      next.range = sceneNumber(next.range, 0) * Math.max(
+        Math.abs(sceneNumber(model && model.scaleX, 1)),
+        Math.abs(sceneNumber(model && model.scaleY, 1)),
+        Math.abs(sceneNumber(model && model.scaleZ, 1)),
+      );
+    }
+    if (typeof hashLightContent === "function") {
+      next._lightHash = hashLightContent(next);
+    }
+    return next;
+  }
+
+  function sceneInstantiateModelSprite(rawSprite, model, prefix, index) {
+    const normalized = normalizeSceneSprite(rawSprite, index);
+    if (!normalized || !normalized.src) {
+      return null;
+    }
+    const position = sceneModelTransformPoint({ x: normalized.x, y: normalized.y, z: normalized.z }, model);
+    const shift = sceneModelTransformVector({ x: normalized.shiftX, y: normalized.shiftY, z: normalized.shiftZ }, model);
+    const modelScale = sceneModelMaxScale(model);
+    return Object.assign({}, normalized, {
+      id: prefix + "/" + normalized.id,
+      x: position.x,
+      y: position.y,
+      z: position.z,
+      shiftX: shift.x,
+      shiftY: shift.y,
+      shiftZ: shift.z,
+      width: normalized.width * modelScale,
+      height: normalized.height * modelScale,
+    });
+  }
+
+  function parseSceneModelAsset(raw, src) {
+    let payload = raw;
+    if (payload && typeof payload === "object" && payload.scene && typeof payload.scene === "object") {
+      payload = payload.scene;
+    }
+    if (Array.isArray(payload)) {
+      payload = { objects: payload };
+    }
+    const record = payload && typeof payload === "object" ? payload : {};
+    const sprites = Array.isArray(record.sprites) ? record.sprites.map(function(sprite) {
+      if (!sprite || typeof sprite !== "object") {
+        return sprite;
+      }
+      const resolved = Object.assign({}, sprite);
+      resolved.src = resolveSceneModelAssetURL(src, sprite.src);
+      return resolved;
+    }) : [];
+    return {
+      src,
+      objects: Array.isArray(record.objects) ? record.objects.map(function(object) {
+        return resolveSceneModelObjectURLs(src, object);
+      }) : [],
+      labels: Array.isArray(record.labels) ? record.labels : [],
+      sprites,
+      lights: Array.isArray(record.lights) ? record.lights : [],
+    };
+  }
+
+  function sceneModelAssetFormat(src) {
+    const raw = typeof src === "string" ? src.trim() : "";
+    if (!raw) {
+      return "";
+    }
+    let pathname = raw;
+    try {
+      pathname = new URL(raw, window.location.href).pathname;
+    } catch (_error) {
+      pathname = raw.split(/[?#]/, 1)[0];
+    }
+    const normalized = pathname.toLowerCase();
+    if (normalized.endsWith(".glb")) {
+      return "glb";
+    }
+    if (normalized.endsWith(".gltf")) {
+      return "gltf";
+    }
+    return "json";
+  }
+
+  async function loadSceneModelAsset(src) {
+    const key = String(src || "").trim();
+    if (!key) {
+      return parseSceneModelAsset({}, key);
+    }
+    if (!sceneModelAssetCache.has(key)) {
+      sceneModelAssetCache.set(key, (async function() {
+        try {
+          const format = sceneModelAssetFormat(key);
+          if (format === "glb" || format === "gltf") {
+            return parseSceneModelAsset(gltfSceneToModelAsset(await sceneLoadGLTFModel(key), key), key);
+          }
+          const response = await fetch(key, { credentials: "same-origin" });
+          if (!response || !response.ok) {
+            throw new Error("HTTP " + String(response && response.status || 0));
+          }
+          return parseSceneModelAsset(await response.json(), key);
+        } catch (error) {
+          console.warn("[gosx] failed to load Scene3D model asset:", key, error && error.message ? error.message : error);
+          return parseSceneModelAsset({}, key);
+        }
+      })());
+    }
+    return sceneModelAssetCache.get(key);
+  }
+
+  async function hydrateSceneStateModels(state, props) {
+    const models = sceneModels(props);
+    if (!models.length) {
+      return { models: 0, objects: 0, labels: 0, sprites: 0, lights: 0 };
+    }
+    let objectCount = 0;
+    let labelCount = 0;
+    let spriteCount = 0;
+    let lightCount = 0;
+    await Promise.all(models.map(async function(model, modelIndex) {
+      const asset = await loadSceneModelAsset(model.src);
+      const prefix = model.id || ("scene-model-" + modelIndex);
+      for (let i = 0; i < asset.objects.length; i += 1) {
+        const object = sceneInstantiateModelObject(asset.objects[i], model, prefix, i);
+        if (!object) {
+          continue;
+        }
+        state.objects.set(object.id, object);
+        objectCount += 1;
+      }
+      for (let i = 0; i < asset.labels.length; i += 1) {
+        const label = sceneInstantiateModelLabel(asset.labels[i], model, prefix, i);
+        if (!label || !label.text.trim()) {
+          continue;
+        }
+        state.labels.set(label.id, label);
+        labelCount += 1;
+      }
+      for (let i = 0; i < asset.sprites.length; i += 1) {
+        const sprite = sceneInstantiateModelSprite(asset.sprites[i], model, prefix, i);
+        if (!sprite) {
+          continue;
+        }
+        state.sprites.set(sprite.id, sprite);
+        spriteCount += 1;
+      }
+      for (let i = 0; i < asset.lights.length; i += 1) {
+        const light = sceneInstantiateModelLight(asset.lights[i], model, prefix, i);
+        if (!light) {
+          continue;
+        }
+        state.lights.set(light.id, light);
+        lightCount += 1;
+      }
+    }));
+    return { models: models.length, objects: objectCount, labels: labelCount, sprites: spriteCount, lights: lightCount };
+  }
+
+  function normalizeSceneCapabilityTier(value) {
+    switch (String(value || "").trim().toLowerCase()) {
+      case "constrained":
+      case "balanced":
+      case "full":
+        return String(value).trim().toLowerCase();
+      default:
+        return "";
+    }
+  }
+
+  function sceneMediaQueryMatches(query) {
+    if (!query || typeof window.matchMedia !== "function") {
+      return false;
+    }
+    try {
+      return Boolean(window.matchMedia(query).matches);
+    } catch (_error) {
+      return false;
+    }
+  }
+
+  function sceneEnvironmentState() {
+    if (window.__gosx
+      && window.__gosx.environment
+      && typeof window.__gosx.environment.get === "function") {
+      return window.__gosx.environment.get();
+    }
+    return null;
+  }
+
+  function sceneCapabilityProfile(props) {
+    const requestedTier = normalizeSceneCapabilityTier(props && props.capabilityTier);
+    const environment = sceneEnvironmentState();
+    const navigatorRef = window && window.navigator ? window.navigator : {};
+    const coarsePointer = environment ? Boolean(environment.coarsePointer) : (sceneMediaQueryMatches("(pointer: coarse)") || sceneMediaQueryMatches("(any-pointer: coarse)"));
+    const hover = environment ? Boolean(environment.hover) : (sceneMediaQueryMatches("(hover: hover)") || sceneMediaQueryMatches("(any-hover: hover)"));
+    const reducedData = environment ? Boolean(environment.reducedData) : sceneMediaQueryMatches("(prefers-reduced-data: reduce)");
+    const lowPower = environment ? Boolean(environment.lowPower) : false;
+    const visualViewportActive = environment ? Boolean(environment.visualViewportActive) : Boolean(window.visualViewport);
+    const deviceMemory = sceneNumber(environment && environment.deviceMemory, sceneNumber(navigatorRef && navigatorRef.deviceMemory, 0));
+    const hardwareConcurrency = Math.max(0, Math.floor(sceneNumber(environment && environment.hardwareConcurrency, sceneNumber(navigatorRef && navigatorRef.hardwareConcurrency, 0))));
+    const constrainedHardware = lowPower || reducedData || (deviceMemory > 0 && deviceMemory <= 4) || (hardwareConcurrency > 0 && hardwareConcurrency <= 4);
+
+    let tier = requestedTier;
+    if (!tier) {
+      if ((coarsePointer && constrainedHardware) || reducedData || lowPower) {
+        tier = "constrained";
+      } else if (coarsePointer) {
+        tier = "balanced";
+      } else {
+        tier = "full";
+      }
+    }
+
+    return {
+      tier,
+      coarsePointer,
+      hover,
+      reducedData,
+      lowPower,
+      visualViewportActive,
+      deviceMemory,
+      hardwareConcurrency,
+    };
+  }
+
+  function sceneCapabilityWebGLPreference(props, capability) {
+    if (!sceneBool(props && props.preferWebGL, true)) {
+      return "disabled";
+    }
+    if (sceneBool(props && props.forceWebGL, false)) {
+      return "force";
+    }
+    if (sceneBool(props && props.preferCanvas, false)) {
+      return "avoid";
+    }
+    if (!capability) {
+      return "prefer";
+    }
+    if (capability.reducedData || capability.lowPower) {
+      return "avoid";
+    }
+    if (capability.tier === "constrained" && capability.coarsePointer) {
+      return "avoid";
+    }
+    return "prefer";
+  }
+
+  function sceneRendererFallbackReason(props, capability, rendererKind) {
+    if (rendererKind === "webgl") {
+      return "";
+    }
+    switch (sceneCapabilityWebGLPreference(props, capability)) {
+      case "disabled":
+        return "webgl-disabled";
+      case "avoid":
+        return "environment-constrained";
+      default:
+        return sceneBool(props && props.preferWebGL, true) ? "webgl-unavailable" : "";
+    }
+  }
+
+  function sceneCapabilityChanged(prev, next) {
+    if (!prev || !next) {
+      return true;
+    }
+    return prev.tier !== next.tier
+      || prev.coarsePointer !== next.coarsePointer
+      || prev.hover !== next.hover
+      || prev.reducedData !== next.reducedData
+      || prev.lowPower !== next.lowPower
+      || prev.visualViewportActive !== next.visualViewportActive
+      || prev.deviceMemory !== next.deviceMemory
+      || prev.hardwareConcurrency !== next.hardwareConcurrency;
+  }
+
+  function defaultSceneMaxDevicePixelRatio(capability) {
+    if (capability && (capability.reducedData || capability.lowPower)) {
+      switch (capability.tier) {
+        case "constrained":
+          return 1.25;
+        case "balanced":
+          return 1.5;
+        default:
+          return 1.75;
+      }
+    }
+    switch (capability && capability.tier) {
+      case "constrained":
+        return 1.5;
+      case "balanced":
+        return 1.75;
+      default:
+        return 2;
+    }
+  }
+
+  function applySceneCapabilityState(mount, props, capability) {
+    if (!mount || !capability) {
+      return;
+    }
+    setAttrValue(mount, "data-gosx-scene3d-capability-tier", capability.tier);
+    setAttrValue(mount, "data-gosx-scene3d-coarse-pointer", capability.coarsePointer ? "true" : "false");
+    setAttrValue(mount, "data-gosx-scene3d-hover", capability.hover ? "true" : "false");
+    setAttrValue(mount, "data-gosx-scene3d-reduced-data", capability.reducedData ? "true" : "false");
+    setAttrValue(mount, "data-gosx-scene3d-low-power", capability.lowPower ? "true" : "false");
+    setAttrValue(mount, "data-gosx-scene3d-visual-viewport", capability.visualViewportActive ? "true" : "false");
+    setAttrValue(mount, "data-gosx-scene3d-webgl-preference", sceneCapabilityWebGLPreference(props, capability));
+    setAttrValue(mount, "data-gosx-scene3d-device-memory", capability.deviceMemory > 0 ? capability.deviceMemory : "");
+    setAttrValue(mount, "data-gosx-scene3d-hardware-concurrency", capability.hardwareConcurrency > 0 ? capability.hardwareConcurrency : "");
+  }
+
+  function applySceneRendererState(mount, renderer, fallbackReason) {
+    if (!mount) {
+      return;
+    }
+    setAttrValue(mount, "data-gosx-scene3d-renderer", renderer && renderer.kind ? renderer.kind : "");
+    setAttrValue(mount, "data-gosx-scene3d-renderer-fallback", fallbackReason || "");
+  }
+
+  function observeSceneCapability(mount, props, capability, onChange) {
+    if (!mount || !capability || typeof onChange !== "function") {
+      return function() {};
+    }
+    applySceneCapabilityState(mount, props, capability);
+    if (!(window.__gosx.environment && typeof window.__gosx.environment.observe === "function")) {
+      return function() {};
+    }
+    return window.__gosx.environment.observe(function() {
+      const next = sceneCapabilityProfile(props);
+      if (!sceneCapabilityChanged(capability, next)) {
+        return;
+      }
+      capability.tier = next.tier;
+      capability.coarsePointer = next.coarsePointer;
+      capability.hover = next.hover;
+      capability.reducedData = next.reducedData;
+      capability.lowPower = next.lowPower;
+      capability.visualViewportActive = next.visualViewportActive;
+      capability.deviceMemory = next.deviceMemory;
+      capability.hardwareConcurrency = next.hardwareConcurrency;
+      applySceneCapabilityState(mount, props, capability);
+      onChange("capability");
+    }, { immediate: false });
+  }
+
+  function sceneViewportBase(props) {
+    const width = Math.max(240, sceneNumber(props && props.width, 720));
+    const height = Math.max(180, sceneNumber(props && props.height, 420));
+    const explicitMaxDevicePixelRatio = sceneNumber(props && (props.maxDevicePixelRatio || props.maxPixelRatio), 0);
+    return {
+      baseWidth: width,
+      baseHeight: height,
+      aspectRatio: width / Math.max(1, height),
+      responsive: sceneBool(props && props.responsive, true),
+      explicitMaxDevicePixelRatio,
+    };
+  }
+
+  function sceneViewportDevicePixelRatio(props, maxDevicePixelRatio) {
+    const environment = sceneEnvironmentState();
+    const preferred = sceneNumber(
+      props && (props.devicePixelRatio || props.pixelRatio),
+      sceneNumber(window && window.devicePixelRatio, sceneNumber(environment && environment.devicePixelRatio, 1)),
+    );
+    return Math.max(1, Math.min(Math.max(1, maxDevicePixelRatio || 1), preferred));
+  }
+
+  function sceneViewportFromMount(mount, props, base, canvas, capability) {
+    let cssWidth = base.baseWidth;
+    let cssHeight = base.baseHeight;
+    const useMeasuredHeight = sceneBool(props && (props.fillHeight || props.responsiveHeight), false);
+    if (base.responsive) {
+      const mountRect = mount && typeof mount.getBoundingClientRect === "function"
+        ? mount.getBoundingClientRect()
+        : null;
+      const canvasRect = canvas && typeof canvas.getBoundingClientRect === "function"
+        ? canvas.getBoundingClientRect()
+        : null;
+      const measuredCanvasWidth = sceneNumber(canvasRect && canvasRect.width, 0);
+      const measuredMountWidth = sceneNumber(mountRect && mountRect.width, 0);
+      if (measuredCanvasWidth > 0 && (measuredMountWidth <= 0 || measuredCanvasWidth <= measuredMountWidth * 1.5)) {
+        cssWidth = measuredCanvasWidth;
+      } else if (measuredMountWidth > 0) {
+        cssWidth = measuredMountWidth;
+      }
+      const measuredHeight = measuredCanvasWidth > 0 && (measuredMountWidth <= 0 || measuredCanvasWidth <= measuredMountWidth * 1.5)
+        ? sceneNumber(canvasRect && canvasRect.height, 0)
+        : sceneNumber(mountRect && mountRect.height, 0);
+      if (useMeasuredHeight && measuredHeight > 0) {
+        cssHeight = measuredHeight;
+      } else if (cssWidth > 0) {
+        cssHeight = cssWidth / Math.max(0.0001, base.aspectRatio);
+      }
+    }
+    cssWidth = Math.max(1, Math.round(cssWidth));
+    cssHeight = Math.max(1, Math.round(cssHeight));
+    const capabilityMaxDevicePixelRatio = defaultSceneMaxDevicePixelRatio(capability);
+    const maxDevicePixelRatio = Math.max(
+      1,
+      base.explicitMaxDevicePixelRatio > 0
+        ? Math.min(base.explicitMaxDevicePixelRatio, capabilityMaxDevicePixelRatio)
+        : capabilityMaxDevicePixelRatio,
+    );
+    const devicePixelRatio = sceneViewportDevicePixelRatio(props, maxDevicePixelRatio);
+    return {
+      cssWidth,
+      cssHeight,
+      devicePixelRatio,
+      pixelWidth: Math.max(1, Math.round(cssWidth * devicePixelRatio)),
+      pixelHeight: Math.max(1, Math.round(cssHeight * devicePixelRatio)),
+    };
+  }
+
+  function sceneViewportChanged(prev, next) {
+    if (!prev || !next) {
+      return true;
+    }
+    return prev.cssWidth !== next.cssWidth
+      || prev.cssHeight !== next.cssHeight
+      || prev.pixelWidth !== next.pixelWidth
+      || prev.pixelHeight !== next.pixelHeight
+      || Math.abs(sceneNumber(prev.devicePixelRatio, 1) - sceneNumber(next.devicePixelRatio, 1)) > 0.001;
+  }
+
+  function applySceneViewport(mount, canvas, labelLayer, viewport, base) {
+    if (!mount || !canvas || !viewport) {
+      return viewport;
+    }
+    setAttrValue(mount, "data-gosx-scene3d-css-width", viewport.cssWidth);
+    setAttrValue(mount, "data-gosx-scene3d-css-height", viewport.cssHeight);
+    setAttrValue(mount, "data-gosx-scene3d-pixel-ratio", viewport.devicePixelRatio);
+    setStyleValue(mount.style, "--gosx-scene-css-width", viewport.cssWidth + "px");
+    setStyleValue(mount.style, "--gosx-scene-css-height", viewport.cssHeight + "px");
+    setStyleValue(mount.style, "--gosx-scene-pixel-ratio", String(viewport.devicePixelRatio));
+    canvas.width = viewport.pixelWidth;
+    canvas.height = viewport.pixelHeight;
+    canvas.setAttribute("width", String(viewport.pixelWidth));
+    canvas.setAttribute("height", String(viewport.pixelHeight));
+    if (labelLayer) {
+      const mountRect = typeof mount.getBoundingClientRect === "function" ? mount.getBoundingClientRect() : null;
+      const canvasRect = typeof canvas.getBoundingClientRect === "function" ? canvas.getBoundingClientRect() : null;
+      const left = mountRect && canvasRect ? Math.max(0, sceneNumber(canvasRect.left, 0) - sceneNumber(mountRect.left, 0)) : 0;
+      const top = mountRect && canvasRect ? Math.max(0, sceneNumber(canvasRect.top, 0) - sceneNumber(mountRect.top, 0)) : 0;
+      labelLayer.style.left = left + "px";
+      labelLayer.style.top = top + "px";
+      labelLayer.style.right = "auto";
+      labelLayer.style.bottom = "auto";
+      labelLayer.style.width = viewport.cssWidth + "px";
+      labelLayer.style.height = viewport.cssHeight + "px";
+    }
+    if (base && !base.responsive) {
+      canvas.style.width = viewport.cssWidth + "px";
+      canvas.style.height = viewport.cssHeight + "px";
+    } else {
+      canvas.style.width = "100%";
+      canvas.style.height = "auto";
+    }
+    return viewport;
+  }
+
+  function observeSceneViewport(mount, refresh) {
+    if (!mount || typeof refresh !== "function") {
+      return function() {};
+    }
+    let resizeObserver = null;
+    let windowResizeListener = null;
+    let stopEnvironment = null;
+
+    var resizeRefreshPending = false;
+    function scheduleResizeRefresh() {
+      if (resizeRefreshPending) {
+        return;
+      }
+      resizeRefreshPending = true;
+      if (typeof Promise === "function") {
+        Promise.resolve().then(function() {
+          resizeRefreshPending = false;
+          refresh("resize");
+        });
+      } else {
+        resizeRefreshPending = false;
+        refresh("resize");
+      }
+    }
+
+    if (typeof ResizeObserver === "function") {
+      resizeObserver = new ResizeObserver(scheduleResizeRefresh);
+      if (typeof resizeObserver.observe === "function") {
+        resizeObserver.observe(mount);
+      }
+    } else if (typeof window.addEventListener === "function") {
+      windowResizeListener = scheduleResizeRefresh;
+      window.addEventListener("resize", windowResizeListener);
+    }
+
+    if (window.__gosx.environment && typeof window.__gosx.environment.observe === "function") {
+      stopEnvironment = window.__gosx.environment.observe(function() {
+        refresh("environment");
+      }, { immediate: false });
+    }
+
+    return function() {
+      if (resizeObserver && typeof resizeObserver.disconnect === "function") {
+        resizeObserver.disconnect();
+      }
+      if (windowResizeListener && typeof window.removeEventListener === "function") {
+        window.removeEventListener("resize", windowResizeListener);
+      }
+      if (typeof stopEnvironment === "function") {
+        stopEnvironment();
+      }
+    };
+  }
+
+  function initialSceneLifecycleState() {
+    const environment = sceneEnvironmentState();
+    return {
+      pageVisible: environment ? Boolean(environment.pageVisible) : String(document && document.visibilityState || "visible").toLowerCase() !== "hidden",
+      inViewport: true,
+    };
+  }
+
+  function initialSceneMotionState(props) {
+    const respectReducedMotion = sceneBool(props && props.respectReducedMotion, true);
+    const environment = sceneEnvironmentState();
+    return {
+      respectReducedMotion,
+      reducedMotion: respectReducedMotion && environment
+        ? Boolean(environment.reducedMotion)
+        : sceneMediaQueryMatches("(prefers-reduced-motion: reduce)"),
+    };
+  }
+
+  function applySceneMotionState(mount, motion) {
+    if (!mount || !motion) {
+      return;
+    }
+    setAttrValue(mount, "data-gosx-scene3d-reduced-motion", motion.reducedMotion ? "true" : "false");
+  }
+
+  function observeSceneMotion(mount, motion, onChange) {
+    if (!mount || !motion || typeof onChange !== "function") {
+      return function() {};
+    }
+
+    applySceneMotionState(mount, motion);
+    if (!motion.respectReducedMotion || !(window.__gosx.environment && typeof window.__gosx.environment.observe === "function")) {
+      return function() {};
+    }
+
+    return window.__gosx.environment.observe(function(environment) {
+      const next = Boolean(environment && environment.reducedMotion);
+      if (motion.reducedMotion === next) {
+        return;
+      }
+      motion.reducedMotion = next;
+      applySceneMotionState(mount, motion);
+      onChange("motion");
+    }, { immediate: false });
+  }
+
+  function applySceneLifecycleState(mount, lifecycle) {
+    if (!mount || !lifecycle) {
+      return;
+    }
+    setAttrValue(mount, "data-gosx-scene3d-page-visible", lifecycle.pageVisible ? "true" : "false");
+    setAttrValue(mount, "data-gosx-scene3d-in-viewport", lifecycle.inViewport ? "true" : "false");
+    setAttrValue(mount, "data-gosx-scene3d-active", lifecycle.pageVisible && lifecycle.inViewport ? "true" : "false");
+  }
+
+  function sceneLifecyclePinnedToViewport(mount) {
+    if (!mount || typeof window.getComputedStyle !== "function") {
+      return false;
+    }
+    try {
+      const position = String(window.getComputedStyle(mount).position || "").toLowerCase();
+      return position === "fixed";
+    } catch (_error) {
+      return false;
+    }
+  }
+
+  function observeSceneLifecycle(mount, lifecycle, onChange) {
+    if (!mount || !lifecycle || typeof onChange !== "function") {
+      return function() {};
+    }
+
+    let stopIntersection = null;
+    let stopEnvironment = null;
+
+    if (sceneLifecyclePinnedToViewport(mount)) {
+      lifecycle.inViewport = true;
+    } else if (typeof IntersectionObserver === "function") {
+      const observer = new IntersectionObserver(function(entries) {
+        for (const entry of entries || []) {
+          if (!entry || entry.target !== mount) {
+            continue;
+          }
+          const next = entry.isIntersecting !== false && sceneNumber(entry.intersectionRatio, 1) > 0;
+          if (lifecycle.inViewport === next) {
+            continue;
+          }
+          lifecycle.inViewport = next;
+          applySceneLifecycleState(mount, lifecycle);
+          onChange("intersection");
+        }
+      }, { threshold: [0, 0.01, 0.25] });
+      if (typeof observer.observe === "function") {
+        observer.observe(mount);
+      }
+      stopIntersection = function() {
+        if (typeof observer.disconnect === "function") {
+          observer.disconnect();
+        }
+      };
+    }
+
+    if (window.__gosx.environment && typeof window.__gosx.environment.observe === "function") {
+      stopEnvironment = window.__gosx.environment.observe(function(environment) {
+        const next = Boolean(environment && environment.pageVisible);
+        if (lifecycle.pageVisible === next) {
+          return;
+        }
+        lifecycle.pageVisible = next;
+        applySceneLifecycleState(mount, lifecycle);
+        onChange("visibility");
+      }, { immediate: false });
+    }
+
+    applySceneLifecycleState(mount, lifecycle);
+    return function() {
+      if (stopIntersection) {
+        stopIntersection();
+      }
+      if (typeof stopEnvironment === "function") {
+        stopEnvironment();
+      }
+    };
+  }
+
+  function sceneLabelLayoutKey(label) {
+    return [
+      gosxTextLayoutRevision(),
+      label.text,
+      label.font,
+      sceneNumber(label.maxWidth, 180),
+      Math.max(0, Math.floor(sceneNumber(label.maxLines, 0))),
+      normalizeTextLayoutOverflow(label.overflow),
+      normalizeSceneLabelWhiteSpace(label.whiteSpace),
+      sceneNumber(label.lineHeight, 18),
+      normalizeSceneLabelAlign(label.textAlign),
+    ].join("\n");
+  }
+
+  function sceneMeasureTextWidth(font, text) {
+    if (typeof window.__gosx_measure_text_batch !== "function") {
+      return String(text || "").length * 8;
+    }
+    try {
+      const raw = window.__gosx_measure_text_batch(font, JSON.stringify([String(text || "")]));
+      const widths = typeof raw === "string" ? JSON.parse(raw) : raw;
+      return Array.isArray(widths) && widths.length > 0 ? sceneNumber(widths[0], String(text || "").length * 8) : String(text || "").length * 8;
+    } catch (_error) {
+      return String(text || "").length * 8;
+    }
+  }
+
+  function fallbackSceneLabelLayout(label) {
+    return layoutBrowserText(
+      String(label.text || ""),
+      label.font,
+      sceneNumber(label.maxWidth, 180),
+      normalizeSceneLabelWhiteSpace(label.whiteSpace),
+      sceneNumber(label.lineHeight, 18),
+      {
+        maxLines: Math.max(0, Math.floor(sceneNumber(label.maxLines, 0))),
+        overflow: normalizeTextLayoutOverflow(label.overflow),
+      },
+    );
+  }
+
+  function layoutSceneLabel(label, layoutCache) {
+    const revision = gosxTextLayoutRevision();
+    if (layoutCache.__gosxRevision !== revision) {
+      layoutCache.clear();
+      layoutCache.__gosxRevision = revision;
+    }
+    const cacheKey = sceneLabelLayoutKey(label);
+    if (layoutCache.has(cacheKey)) {
+      return {
+        key: cacheKey,
+        value: layoutCache.get(cacheKey),
+      };
+    }
+
+    let layout = null;
+    if (typeof window.__gosx_text_layout === "function") {
+      try {
+        layout = window.__gosx_text_layout(
+          label.text,
+          label.font,
+          sceneNumber(label.maxWidth, 180),
+          normalizeSceneLabelWhiteSpace(label.whiteSpace),
+          sceneNumber(label.lineHeight, 18),
+          {
+            maxLines: Math.max(0, Math.floor(sceneNumber(label.maxLines, 0))),
+            overflow: normalizeTextLayoutOverflow(label.overflow),
+          },
+        );
+      } catch (error) {
+        console.error("[gosx] scene label layout failed:", error);
+      }
+    }
+
+    if (!layout || !Array.isArray(layout.lines)) {
+      layout = fallbackSceneLabelLayout(label);
+    }
+    if (layoutCache.size >= sceneLabelLayoutCacheLimit) {
+      const oldest = layoutCache.keys().next();
+      if (!oldest.done) {
+        layoutCache.delete(oldest.value);
+      }
+    }
+    layoutCache.set(cacheKey, layout);
+    return {
+      key: cacheKey,
+      value: layout,
+    };
+  }
+
+  const sceneLabelPaddingX = 10;
+  const sceneLabelPaddingY = 8;
+
+  function sceneLabelBoxMetrics(label, layout) {
+    const contentWidth = Math.max(
+      1,
+      Math.min(
+        sceneNumber(label.maxWidth, 180),
+        Math.max(1, Math.ceil(sceneNumber(layout && layout.maxLineWidth, 0) || sceneMeasureTextWidth(label.font, label.text)))
+      )
+    );
+    const contentHeight = Math.max(
+      sceneNumber(label.lineHeight, 18),
+      Math.ceil(sceneNumber(layout && layout.height, sceneNumber(label.lineHeight, 18)))
+    );
+    return {
+      contentWidth,
+      contentHeight,
+      totalWidth: contentWidth + (sceneLabelPaddingX * 2),
+      totalHeight: contentHeight + (sceneLabelPaddingY * 2),
+      maxTotalWidth: Math.max(contentWidth + (sceneLabelPaddingX * 2), sceneNumber(label.maxWidth, 180) + (sceneLabelPaddingX * 2)),
+    };
+  }
+
+  function sceneLabelBounds(label, metrics) {
+    const anchorX = sceneNumber(label.anchorX, 0.5);
+    const anchorY = sceneNumber(label.anchorY, 1);
+    const anchorPointX = sceneNumber(label.position && label.position.x, 0) + sceneNumber(label.offsetX, 0);
+    const anchorPointY = sceneNumber(label.position && label.position.y, 0) + sceneNumber(label.offsetY, 0);
+    const left = anchorPointX - (anchorX * metrics.totalWidth);
+    const top = anchorPointY - (anchorY * metrics.totalHeight);
+    return {
+      left,
+      top,
+      right: left + metrics.totalWidth,
+      bottom: top + metrics.totalHeight,
+      anchor: { x: anchorPointX, y: anchorPointY },
+      center: { x: left + (metrics.totalWidth / 2), y: top + (metrics.totalHeight / 2) },
+    };
+  }
+
+  function sceneRectArea(box) {
+    if (!box) {
+      return 0;
+    }
+    return Math.max(0, box.right - box.left) * Math.max(0, box.bottom - box.top);
+  }
+
+  function sceneRectOverlapArea(a, b) {
+    if (!a || !b) {
+      return 0;
+    }
+    const overlapX = Math.max(0, Math.min(a.right, b.maxX == null ? b.right : b.maxX) - Math.max(a.left, b.minX == null ? b.left : b.minX));
+    const overlapY = Math.max(0, Math.min(a.bottom, b.maxY == null ? b.bottom : b.maxY) - Math.max(a.top, b.minY == null ? b.top : b.minY));
+    return overlapX * overlapY;
+  }
+
+  function sceneRectsIntersect(a, b) {
+    return sceneRectOverlapArea(a, b) > 0;
+  }
+
+  function sceneBoundsContainPoint(bounds, point) {
+    if (!bounds || !point) {
+      return false;
+    }
+    return point.x >= bounds.minX && point.x <= bounds.maxX && point.y >= bounds.minY && point.y <= bounds.maxY;
+  }
+
+  function buildSceneLabelOccluders(bundle, width, height) {
+    if (!bundle || !bundle.camera || !Array.isArray(bundle.objects) || !bundle.objects.length) {
+      return [];
+    }
+    const occluders = [];
+    for (const object of bundle.objects) {
+      if (!object || object.viewCulled) {
+        continue;
+      }
+      const segments = sceneProjectedObjectSegments(bundle, object, width, height);
+      if (!segments.length) {
+        continue;
+      }
+      const bounds = sceneProjectedSegmentsBounds(segments);
+      if (!bounds) {
+        continue;
+      }
+      occluders.push({
+        depth: sceneNumber(object.depthCenter, sceneObjectDepthCenter(object, bundle.camera)),
+        bounds,
+        hull: sceneProjectedObjectHull(segments),
+      });
+    }
+    occluders.sort(function(a, b) {
+      return a.depth - b.depth;
+    });
+    return occluders;
+  }
+
+  function sceneLabelOccluded(entry, occluders) {
+    return sceneOverlayOccluded(entry, occluders, entry && entry.label && entry.label.occlude);
+  }
+
+  function sceneOverlayOccluded(entry, occluders, occlude) {
+    if (!entry || !occlude || !Array.isArray(occluders) || !occluders.length) {
+      return false;
+    }
+    const overlayDepth = sceneNumber(entry && entry.depth, 0);
+    for (const occluder of occluders) {
+      if (occluder.depth > overlayDepth + 0.05) {
+        continue;
+      }
+      if (!sceneRectsIntersect(entry.box, occluder.bounds)) {
+        continue;
+      }
+      if (scenePointInPolygon(entry.box.anchor, occluder.hull) || sceneBoundsContainPoint(occluder.bounds, entry.box.anchor)) {
+        return true;
+      }
+      if (scenePointInPolygon(entry.box.center, occluder.hull)) {
+        return true;
+      }
+      const overlapRatio = sceneRectOverlapArea(entry.box, occluder.bounds) / Math.max(1, sceneRectArea(entry.box));
+      if (overlapRatio >= 0.28) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function sceneLabelPriorityCompare(a, b) {
+    const priorityDiff = sceneNumber(b && b.label && b.label.priority, 0) - sceneNumber(a && a.label && a.label.priority, 0);
+    if (Math.abs(priorityDiff) > 0.001) {
+      return priorityDiff;
+    }
+    const depthDiff = sceneNumber(a && a.label && a.label.depth, 0) - sceneNumber(b && b.label && b.label.depth, 0);
+    if (Math.abs(depthDiff) > 0.001) {
+      return depthDiff;
+    }
+    return sceneNumber(a && a.order, 0) - sceneNumber(b && b.order, 0);
+  }
+
+  function prepareSceneLabelEntries(bundle, layoutCache, width, height) {
+    const labels = bundle && Array.isArray(bundle.labels) ? bundle.labels : [];
+    const occluders = buildSceneLabelOccluders(bundle, width, height);
+    const entries = [];
+    for (let index = 0; index < labels.length; index += 1) {
+      const label = labels[index];
+      if (!label || typeof label.text !== "string" || label.text.trim() === "") {
+        continue;
+      }
+      const layout = layoutSceneLabel(label, layoutCache);
+      const metrics = sceneLabelBoxMetrics(label, layout.value);
+      const box = sceneLabelBounds(label, metrics);
+      entries.push({
+        id: label.id || ("scene-label-" + index),
+        order: index,
+        label,
+        depth: sceneNumber(label.depth, 0),
+        layoutKey: layout.key,
+        layout: layout.value,
+        metrics,
+        box,
+        occluded: false,
+        hidden: false,
+      });
+    }
+
+    const sorted = entries.slice().sort(sceneLabelPriorityCompare);
+    const occupied = [];
+    for (const entry of sorted) {
+      entry.occluded = sceneLabelOccluded(entry, occluders);
+      if (entry.occluded) {
+        entry.hidden = true;
+        continue;
+      }
+      if (normalizeSceneLabelCollision(entry.label.collision) !== "allow") {
+        for (const prior of occupied) {
+          if (sceneRectsIntersect(entry.box, prior)) {
+            entry.hidden = true;
+            break;
+          }
+        }
+      }
+      if (!entry.hidden) {
+        occupied.push(entry.box);
+      }
+    }
+
+    return entries;
+  }
+
+  function sceneSpriteBounds(sprite) {
+    const anchorX = sceneNumber(sprite.anchorX, 0.5);
+    const anchorY = sceneNumber(sprite.anchorY, 0.5);
+    const spriteWidth = Math.max(1, sceneNumber(sprite.width, 1));
+    const spriteHeight = Math.max(1, sceneNumber(sprite.height, 1));
+    const anchorPointX = sceneNumber(sprite.position && sprite.position.x, 0) + sceneNumber(sprite.offsetX, 0);
+    const anchorPointY = sceneNumber(sprite.position && sprite.position.y, 0) + sceneNumber(sprite.offsetY, 0);
+    const left = anchorPointX - (anchorX * spriteWidth);
+    const top = anchorPointY - (anchorY * spriteHeight);
+    return {
+      left,
+      top,
+      right: left + spriteWidth,
+      bottom: top + spriteHeight,
+      anchor: { x: anchorPointX, y: anchorPointY },
+      center: { x: left + (spriteWidth / 2), y: top + (spriteHeight / 2) },
+    };
+  }
+
+  function sceneSpritePriorityCompare(a, b) {
+    const priorityDiff = sceneNumber(b && b.sprite && b.sprite.priority, 0) - sceneNumber(a && a.sprite && a.sprite.priority, 0);
+    if (Math.abs(priorityDiff) > 0.001) {
+      return priorityDiff;
+    }
+    const depthDiff = sceneNumber(a && a.sprite && a.sprite.depth, 0) - sceneNumber(b && b.sprite && b.sprite.depth, 0);
+    if (Math.abs(depthDiff) > 0.001) {
+      return depthDiff;
+    }
+    return sceneNumber(a && a.order, 0) - sceneNumber(b && b.order, 0);
+  }
+
+  function prepareSceneSpriteEntries(bundle, width, height) {
+    const sprites = bundle && Array.isArray(bundle.sprites) ? bundle.sprites : [];
+    const occluders = buildSceneLabelOccluders(bundle, width, height);
+    const entries = [];
+    for (let index = 0; index < sprites.length; index += 1) {
+      const sprite = sprites[index];
+      if (!sprite || typeof sprite.src !== "string" || sprite.src.trim() === "") {
+        continue;
+      }
+      const box = sceneSpriteBounds(sprite);
+      entries.push({
+        id: sprite.id || ("scene-sprite-" + index),
+        order: index,
+        sprite,
+        depth: sceneNumber(sprite.depth, 0),
+        box,
+        occluded: false,
+        hidden: false,
+      });
+    }
+    const sorted = entries.slice().sort(sceneSpritePriorityCompare);
+    for (const entry of sorted) {
+      entry.occluded = sceneOverlayOccluded(entry, occluders, entry.sprite && entry.sprite.occlude);
+      if (entry.occluded) {
+        entry.hidden = true;
+      }
+    }
+    return entries;
+  }
+
+  function renderSceneLabelElement(element, label, layoutKey, layout, metrics, box, hidden, occluded) {
+    const align = normalizeSceneLabelAlign(label.textAlign);
+    const whiteSpace = normalizeSceneLabelWhiteSpace(label.whiteSpace);
+    const zIndex = Math.max(1, 1000 + Math.round(sceneNumber(label.priority, 0) * 10) - Math.round(sceneNumber(label.depth, 0) * 10));
+
+    element.setAttribute("data-gosx-scene-label", label.id || "");
+    setAttrValue(element, "class", label.className ? ("gosx-scene-label " + label.className) : "gosx-scene-label");
+    setAttrValue(element, "data-gosx-scene-label-collision", normalizeSceneLabelCollision(label.collision));
+    setAttrValue(element, "data-gosx-scene-label-occlude", label.occlude ? "true" : "false");
+    setAttrValue(element, "data-gosx-scene-label-occluded", occluded ? "true" : "false");
+    setAttrValue(element, "data-gosx-scene-label-visibility", hidden ? "hidden" : "visible");
+    setAttrValue(element, "data-gosx-scene-label-priority", sceneNumber(label.priority, 0));
+    setAttrValue(element, "data-gosx-scene-label-depth", sceneNumber(label.depth, 0));
+    setAttrValue(element, "data-gosx-scene-label-truncated", layout && layout.truncated ? "true" : "false");
+
+    applyTextLayoutPresentation(element, {
+      font: label.font,
+      whiteSpace: whiteSpace,
+      lineHeight: sceneNumber(label.lineHeight, 18),
+      maxLines: Math.max(0, Math.floor(sceneNumber(label.maxLines, 0))),
+      overflow: normalizeTextLayoutOverflow(label.overflow),
+      maxWidth: sceneNumber(label.maxWidth, 180),
+    }, layout, {
+      role: "label",
+      surface: "scene3d",
+      state: "ready",
+      align: align,
+      revision: gosxTextLayoutRevision(),
+    });
+
+    setStyleValue(element.style, "--gosx-scene-label-left", box.anchor.x + "px");
+    setStyleValue(element.style, "--gosx-scene-label-top", box.anchor.y + "px");
+    setStyleValue(element.style, "--gosx-scene-label-anchor-x", String(sceneNumber(label.anchorX, 0.5)));
+    setStyleValue(element.style, "--gosx-scene-label-anchor-y", String(sceneNumber(label.anchorY, 1)));
+    setStyleValue(element.style, "--gosx-scene-label-width", metrics.totalWidth + "px");
+    setStyleValue(element.style, "--gosx-scene-label-max-width", metrics.maxTotalWidth + "px");
+    setStyleValue(element.style, "--gosx-scene-label-height", metrics.totalHeight + "px");
+    setStyleValue(element.style, "--gosx-scene-label-line-height", sceneNumber(label.lineHeight, 18) + "px");
+    setStyleValue(element.style, "--gosx-scene-label-align", align);
+    setStyleValue(element.style, "--gosx-scene-label-white-space", whiteSpace);
+    setStyleValue(element.style, "--gosx-scene-label-font", label.font || '600 13px "IBM Plex Sans", "Segoe UI", sans-serif');
+    setStyleValue(element.style, "--gosx-scene-label-color", label.color || "#ecf7ff");
+    setStyleValue(element.style, "--gosx-scene-label-background", label.background || "rgba(8, 21, 31, 0.82)");
+    setStyleValue(element.style, "--gosx-scene-label-border-color", label.borderColor || "rgba(141, 225, 255, 0.24)");
+    setStyleValue(element.style, "--gosx-scene-label-z-index", String(zIndex));
+    setStyleValue(element.style, "--gosx-scene-label-depth", String(sceneNumber(label.depth, 0)));
+    element.__gosxTextLayout = layout;
+
+    if (element.__gosxLayoutKey === layoutKey) {
+      return;
+    }
+
+    clearChildren(element);
+    const lines = Array.isArray(layout.lines) && layout.lines.length > 0 ? layout.lines : [{ text: label.text }];
+    for (const line of lines) {
+      const lineElement = document.createElement("div");
+      lineElement.setAttribute("data-gosx-scene-label-line", "");
+      lineElement.textContent = line && typeof line.text === "string" && line.text !== "" ? line.text : "\u00a0";
+      if (whiteSpace !== "normal") {
+        lineElement.style.whiteSpace = whiteSpace;
+      }
+      element.appendChild(lineElement);
+    }
+    element.__gosxLayoutKey = layoutKey;
+  }
+
+  function renderSceneLabels(layer, bundle, layoutCache, elements, width, height) {
+    if (!layer) {
+      return;
+    }
+
+    const labels = prepareSceneLabelEntries(bundle, layoutCache, width, height);
+    const active = new Set();
+
+    for (const entry of labels) {
+      const id = entry.id;
+      active.add(id);
+      let element = elements.get(id);
+      if (!element) {
+        element = document.createElement("div");
+        layer.appendChild(element);
+        elements.set(id, element);
+      }
+      renderSceneLabelElement(element, entry.label, entry.layoutKey, entry.layout, entry.metrics, entry.box, entry.hidden, entry.occluded);
+    }
+
+    for (const [id, element] of elements.entries()) {
+      if (active.has(id)) {
+        continue;
+      }
+      if (element.parentNode === layer) {
+        layer.removeChild(element);
+      }
+      elements.delete(id);
+    }
+  }
+
+  function renderSceneSpriteElement(element, sprite, box, hidden, occluded) {
+    const zIndex = Math.max(1, 1000 + Math.round(sceneNumber(sprite.priority, 0) * 10) - Math.round(sceneNumber(sprite.depth, 0) * 10));
+    element.setAttribute("data-gosx-scene-sprite", sprite.id || "");
+    setAttrValue(element, "class", sprite.className ? ("gosx-scene-sprite " + sprite.className) : "gosx-scene-sprite");
+    setAttrValue(element, "data-gosx-scene-sprite-fit", normalizeSceneSpriteFit(sprite.fit));
+    setAttrValue(element, "data-gosx-scene-sprite-occlude", sprite.occlude ? "true" : "false");
+    setAttrValue(element, "data-gosx-scene-sprite-occluded", occluded ? "true" : "false");
+    setAttrValue(element, "data-gosx-scene-sprite-visibility", hidden ? "hidden" : "visible");
+    setAttrValue(element, "data-gosx-scene-sprite-priority", sceneNumber(sprite.priority, 0));
+    setAttrValue(element, "data-gosx-scene-sprite-depth", sceneNumber(sprite.depth, 0));
+    setStyleValue(element.style, "--gosx-scene-sprite-left", box.anchor.x + "px");
+    setStyleValue(element.style, "--gosx-scene-sprite-top", box.anchor.y + "px");
+    setStyleValue(element.style, "--gosx-scene-sprite-anchor-x", String(sceneNumber(sprite.anchorX, 0.5)));
+    setStyleValue(element.style, "--gosx-scene-sprite-anchor-y", String(sceneNumber(sprite.anchorY, 0.5)));
+    setStyleValue(element.style, "--gosx-scene-sprite-width", Math.max(1, sceneNumber(sprite.width, 1)) + "px");
+    setStyleValue(element.style, "--gosx-scene-sprite-height", Math.max(1, sceneNumber(sprite.height, 1)) + "px");
+    setStyleValue(element.style, "--gosx-scene-sprite-opacity", String(clamp01(sceneNumber(sprite.opacity, 1))));
+    setStyleValue(element.style, "--gosx-scene-sprite-fit", normalizeSceneSpriteFit(sprite.fit));
+    setStyleValue(element.style, "--gosx-scene-sprite-z-index", String(zIndex));
+    setStyleValue(element.style, "--gosx-scene-sprite-depth", String(sceneNumber(sprite.depth, 0)));
+
+    let image = element.firstChild;
+    if (!image || image.tagName !== "IMG") {
+      clearChildren(element);
+      image = document.createElement("img");
+      image.setAttribute("draggable", "false");
+      image.setAttribute("alt", "");
+      image.setAttribute("aria-hidden", "true");
+      element.appendChild(image);
+    }
+    setAttrValue(image, "src", sprite.src || "");
+    setStyleValue(image.style, "objectFit", normalizeSceneSpriteFit(sprite.fit) === "fill" ? "fill" : normalizeSceneSpriteFit(sprite.fit));
+  }
+
+  function renderSceneSprites(layer, bundle, elements, width, height) {
+    if (!layer) {
+      return;
+    }
+
+    const sprites = prepareSceneSpriteEntries(bundle, width, height);
+    const active = new Set();
+    for (const entry of sprites) {
+      const id = entry.id;
+      active.add(id);
+      let element = elements.get(id);
+      if (!element) {
+        element = document.createElement("div");
+        layer.appendChild(element);
+        elements.set(id, element);
+      }
+      renderSceneSpriteElement(element, entry.sprite, entry.box, entry.hidden, entry.occluded);
+    }
+    for (const [id, element] of elements.entries()) {
+      if (active.has(id)) {
+        continue;
+      }
+      if (element.parentNode === layer) {
+        layer.removeChild(element);
+      }
+      elements.delete(id);
+    }
+  }
+
+  function normalizeSceneControlsMode(value) {
+    switch (String(value || "").trim().toLowerCase()) {
+      case "orbit":
+        return "orbit";
+      default:
+        return "";
+    }
+  }
+
+  function sceneControlsTarget(props) {
+    const raw = props && props.controlTarget && typeof props.controlTarget === "object" ? props.controlTarget : null;
+    return {
+      x: sceneNumber(raw && raw.x, 0),
+      y: sceneNumber(raw && raw.y, 0),
+      z: sceneNumber(raw && raw.z, 0),
+    };
+  }
+
+  function sceneControlsRotateSpeed(props) {
+    return Math.max(0.1, sceneNumber(props && props.controlRotateSpeed, 1));
+  }
+
+  function sceneControlsZoomSpeed(props) {
+    return Math.max(0.05, sceneNumber(props && props.controlZoomSpeed, 1));
+  }
+
+  function sceneWorldCameraPosition(camera) {
+    const normalized = sceneRenderCamera(camera);
+    return {
+      x: normalized.x,
+      y: normalized.y,
+      z: -normalized.z,
+    };
+  }
+
+  function sceneOrbitStateFromCamera(camera, target) {
+    const normalized = sceneRenderCamera(camera);
+    const worldPosition = sceneWorldCameraPosition(normalized);
+    const orbitTarget = target || { x: 0, y: 0, z: 0 };
+    const offsetX = worldPosition.x - sceneNumber(orbitTarget.x, 0);
+    const offsetY = worldPosition.y - sceneNumber(orbitTarget.y, 0);
+    const offsetZ = worldPosition.z - sceneNumber(orbitTarget.z, 0);
+    const radius = Math.max(0.6, Math.hypot(offsetX, offsetY, offsetZ));
+    return {
+      target: {
+        x: sceneNumber(orbitTarget.x, 0),
+        y: sceneNumber(orbitTarget.y, 0),
+        z: sceneNumber(orbitTarget.z, 0),
+      },
+      radius,
+      yaw: Math.atan2(offsetX, -offsetZ),
+      pitch: Math.asin(sceneClamp(offsetY / radius, -0.98, 0.98)),
+      fov: normalized.fov,
+      near: normalized.near,
+      far: normalized.far,
+    };
+  }
+
+  function sceneOrbitCamera(state, fallbackCamera) {
+    const base = sceneRenderCamera(fallbackCamera);
+    const orbit = state || sceneOrbitStateFromCamera(base, { x: 0, y: 0, z: 0 });
+    const radius = Math.max(0.6, sceneNumber(orbit.radius, 6));
+    const pitch = sceneClamp(sceneNumber(orbit.pitch, 0), -1.4, 1.4);
+    const yaw = sceneNumber(orbit.yaw, 0);
+    const target = orbit.target || { x: 0, y: 0, z: 0 };
+    const cosPitch = Math.cos(pitch);
+    const worldPosition = {
+      x: sceneNumber(target.x, 0) + Math.sin(yaw) * cosPitch * radius,
+      y: sceneNumber(target.y, 0) + Math.sin(pitch) * radius,
+      z: sceneNumber(target.z, 0) - Math.cos(yaw) * cosPitch * radius,
+    };
+    const forward = {
+      x: sceneNumber(target.x, 0) - worldPosition.x,
+      y: sceneNumber(target.y, 0) - worldPosition.y,
+      z: sceneNumber(target.z, 0) - worldPosition.z,
+    };
+    const horizontal = Math.max(0.0001, Math.hypot(forward.x, forward.z));
+    return {
+      x: worldPosition.x,
+      y: worldPosition.y,
+      z: -worldPosition.z,
+      rotationX: -Math.atan2(forward.y, horizontal),
+      rotationY: Math.atan2(forward.x, forward.z),
+      rotationZ: 0,
+      fov: sceneNumber(orbit.fov, base.fov),
+      near: sceneNumber(orbit.near, base.near),
+      far: sceneNumber(orbit.far, base.far),
+    };
+  }
+
+  function createSceneControls(props) {
+    const mode = normalizeSceneControlsMode(props && props.controls);
+    if (!mode) {
+      return null;
+    }
+    return {
+      mode,
+      active: false,
+      touched: false,
+      pointerId: null,
+      lastX: 0,
+      lastY: 0,
+      rotateSpeed: sceneControlsRotateSpeed(props),
+      zoomSpeed: sceneControlsZoomSpeed(props),
+      orbit: null,
+      target: sceneControlsTarget(props),
+    };
+  }
+
+  function syncSceneControlsFromCamera(controls, camera) {
+    if (!controls || controls.mode !== "orbit" || controls.active || controls.touched) {
+      return;
+    }
+    controls.orbit = sceneOrbitStateFromCamera(camera, controls.target);
+  }
+
+  function sceneScrollViewportHeight() {
+    const scrollingElement = document.scrollingElement || document.documentElement || document.body;
+    const visualViewport = window.visualViewport;
+    return Math.max(1, sceneNumber(
+      visualViewport && visualViewport.height,
+      sceneNumber(window.innerHeight, sceneNumber(scrollingElement && scrollingElement.clientHeight, 0)),
+    ));
+  }
+
+  function sceneScrollTop() {
+    const scrollingElement = document.scrollingElement || document.documentElement || document.body;
+    const visualViewport = window.visualViewport;
+    const visualViewportTop = sceneNumber(visualViewport && visualViewport.pageTop, NaN);
+    if (Number.isFinite(visualViewportTop)) {
+      return Math.max(0, visualViewportTop);
+    }
+    return Math.max(0, sceneNumber(
+      window.scrollY,
+      sceneNumber(window.pageYOffset, sceneNumber(scrollingElement && scrollingElement.scrollTop, 0)),
+    ));
+  }
+
+  function sceneScrollMax() {
+    const scrollingElement = document.scrollingElement || document.documentElement || document.body;
+    const scrollHeight = Math.max(
+      sceneNumber(scrollingElement && scrollingElement.scrollHeight, 0),
+      sceneNumber(document.documentElement && document.documentElement.scrollHeight, 0),
+      sceneNumber(document.body && document.body.scrollHeight, 0),
+    );
+    return Math.max(1, scrollHeight - sceneScrollViewportHeight());
+  }
+
+  function sceneAdvanceScrollCamera(scrollCamera) {
+    if (!scrollCamera || scrollCamera.start === scrollCamera.end) {
+      return;
+    }
+    scrollCamera._progress = Math.pow(Math.min(1, Math.max(0, sceneScrollTop() / sceneScrollMax())), 0.5);
+    var target = scrollCamera._progress || 0;
+    var current = sceneNumber(scrollCamera._smoothProgress, target);
+    if (Math.abs(target - current) < 0.0005) {
+      current = target;
+    } else {
+      current += (target - current) * 0.08;
+    }
+    scrollCamera._smoothProgress = current;
+  }
+
+  function sceneCurrentControlCamera(controls, sourceCamera, scrollCamera) {
+    var cam;
+    if (controls && controls.mode === "orbit") {
+      syncSceneControlsFromCamera(controls, sourceCamera);
+      cam = controls.orbit ? sceneOrbitCamera(controls.orbit, sourceCamera) : sceneRenderCamera(sourceCamera);
+    } else {
+      cam = sceneRenderCamera(sourceCamera);
+    }
+    if (scrollCamera && scrollCamera.start !== scrollCamera.end) {
+      var progress = sceneNumber(scrollCamera._smoothProgress, sceneNumber(scrollCamera._progress, 0));
+      cam.z = scrollCamera.start + progress * (scrollCamera.end - scrollCamera.start);
+    }
+    return cam;
+  }
+
+  function sceneBundleWithCameraOverride(bundle, camera) {
+    if (!bundle) {
+      return bundle;
+    }
+    const targetCamera = sceneRenderCamera(camera);
+    const sourceCamera = sceneRenderCamera(bundle.camera);
+    if (sceneCameraEquivalent(targetCamera, sourceCamera)) {
+      return bundle;
+    }
+    return Object.assign({}, bundle, {
+      camera: targetCamera,
+      sourceCamera: sourceCamera,
+    });
+  }
+
+  function sceneControlsMetrics(readViewport, props) {
+    const viewport = typeof readViewport === "function" ? readViewport() : null;
+    return {
+      width: Math.max(1, sceneViewportValue(viewport, "cssWidth", sceneNumber(props && props.width, 720))),
+      height: Math.max(1, sceneViewportValue(viewport, "cssHeight", sceneNumber(props && props.height, 420))),
+    };
+  }
+
+  function syncSceneControlsFromSource(controls, readSourceCamera) {
+    const sourceCamera = typeof readSourceCamera === "function" ? readSourceCamera() : null;
+    syncSceneControlsFromCamera(controls, sourceCamera);
+  }
+
+  function sceneOrbitStartDrag(controls, canvas, props, readViewport, readSourceCamera, attachDocumentListeners, event) {
+    if (controls.active || !scenePointerCanStartDrag(controls, event)) {
+      return;
+    }
+    syncSceneControlsFromSource(controls, readSourceCamera);
+    controls.active = true;
+    controls.touched = true;
+    controls.pointerId = event.pointerId;
+    const metrics = sceneControlsMetrics(readViewport, props);
+    const point = sceneLocalPointerPoint(event, canvas, metrics.width, metrics.height);
+    controls.lastX = point.x;
+    controls.lastY = point.y;
+    canvas.style.cursor = "grabbing";
+    attachDocumentListeners();
+    if (typeof canvas.setPointerCapture === "function" && event.pointerId != null) {
+      canvas.setPointerCapture(event.pointerId);
+    }
+    if (typeof event.preventDefault === "function") {
+      event.preventDefault();
+    }
+    if (typeof event.stopPropagation === "function") {
+      event.stopPropagation();
+    }
+  }
+
+  function sceneOrbitMoveDrag(controls, canvas, props, readViewport, readSourceCamera, scheduleRender, event) {
+    if (!sceneDragMatchesActivePointer(controls, event)) {
+      return;
+    }
+    const metrics = sceneControlsMetrics(readViewport, props);
+    const sample = sceneLocalPointerSample(event, canvas, metrics.width, metrics.height, controls, "move");
+    if (!controls.orbit) {
+      syncSceneControlsFromSource(controls, readSourceCamera);
+    }
+    controls.orbit.yaw += (sample.deltaX / Math.max(metrics.width, 1)) * Math.PI * controls.rotateSpeed;
+    controls.orbit.pitch = sceneClamp(
+      controls.orbit.pitch + (sample.deltaY / Math.max(metrics.height, 1)) * Math.PI * controls.rotateSpeed,
+      -1.4,
+      1.4,
+    );
+    if (typeof event.preventDefault === "function") {
+      event.preventDefault();
+    }
+    if (typeof event.stopPropagation === "function") {
+      event.stopPropagation();
+    }
+    scheduleRender("controls");
+  }
+
+  function sceneOrbitFinishDrag(controls, canvas, detachDocumentListeners, event) {
+    if (!sceneDragMatchesActivePointer(controls, event)) {
+      return;
+    }
+    const pointerId = controls.pointerId;
+    controls.active = false;
+    controls.pointerId = null;
+    canvas.style.cursor = "grab";
+    detachDocumentListeners();
+    if (pointerId != null && typeof canvas.releasePointerCapture === "function") {
+      try {
+        canvas.releasePointerCapture(pointerId);
+      } catch (_error) {}
+    }
+    if (event && typeof event.preventDefault === "function") {
+      event.preventDefault();
+    }
+    if (event && typeof event.stopPropagation === "function") {
+      event.stopPropagation();
+    }
+  }
+
+  function sceneOrbitApplyWheel(controls, readSourceCamera, scheduleRender, event) {
+    syncSceneControlsFromSource(controls, readSourceCamera);
+    controls.touched = true;
+    controls.orbit.radius = sceneClamp(
+      controls.orbit.radius * Math.exp(sceneNumber(event && event.deltaY, 0) * 0.001 * controls.zoomSpeed),
+      0.6,
+      256,
+    );
+    if (event && typeof event.preventDefault === "function") {
+      event.preventDefault();
+    }
+    if (event && typeof event.stopPropagation === "function") {
+      event.stopPropagation();
+    }
+    scheduleRender("controls");
+  }
+
+  function setupSceneBuiltInControls(canvas, props, readViewport, readSourceCamera, scheduleRender) {
+    const controls = createSceneControls(props);
+    if (!canvas || !controls || controls.mode !== "orbit") {
+      return {
+        controller: controls,
+        dispose() {},
+      };
+    }
+
+    let documentListenersAttached = false;
+    canvas.style.cursor = "grab";
+    canvas.style.touchAction = "none";
+
+    function attachDocumentListeners() {
+      if (documentListenersAttached) {
+        return;
+      }
+      documentListenersAttached = true;
+      document.addEventListener("pointermove", onPointerMove);
+      document.addEventListener("pointerup", finishPointerDrag);
+      document.addEventListener("pointercancel", finishPointerDrag);
+    }
+
+    function detachDocumentListeners() {
+      if (!documentListenersAttached) {
+        return;
+      }
+      documentListenersAttached = false;
+      document.removeEventListener("pointermove", onPointerMove);
+      document.removeEventListener("pointerup", finishPointerDrag);
+      document.removeEventListener("pointercancel", finishPointerDrag);
+    }
+
+    function onPointerDown(event) {
+      sceneOrbitStartDrag(controls, canvas, props, readViewport, readSourceCamera, attachDocumentListeners, event);
+    }
+
+    function onPointerMove(event) {
+      sceneOrbitMoveDrag(controls, canvas, props, readViewport, readSourceCamera, scheduleRender, event);
+    }
+
+    function finishPointerDrag(event) {
+      sceneOrbitFinishDrag(controls, canvas, detachDocumentListeners, event);
+    }
+
+    function onWheel(event) {
+      sceneOrbitApplyWheel(controls, readSourceCamera, scheduleRender, event);
+    }
+
+    canvas.addEventListener("pointerdown", onPointerDown);
+    canvas.addEventListener("pointermove", onPointerMove);
+    canvas.addEventListener("pointerup", finishPointerDrag);
+    canvas.addEventListener("pointercancel", finishPointerDrag);
+    canvas.addEventListener("lostpointercapture", finishPointerDrag);
+    canvas.addEventListener("wheel", onWheel);
+
+    return {
+      controller: controls,
+      dispose() {
+        detachDocumentListeners();
+        canvas.removeEventListener("pointerdown", onPointerDown);
+        canvas.removeEventListener("pointermove", onPointerMove);
+        canvas.removeEventListener("pointerup", finishPointerDrag);
+        canvas.removeEventListener("pointercancel", finishPointerDrag);
+        canvas.removeEventListener("lostpointercapture", finishPointerDrag);
+        canvas.removeEventListener("wheel", onWheel);
+      },
+    };
+  }
+
+  window.__gosx_register_engine_factory("GoSXScene3D", async function(ctx) {
+    if (!ctx.mount || typeof document.createElement !== "function") {
+      console.warn("[gosx] Scene3D requires a mount element");
+      return {};
+    }
+
+    const props = ctx.props || {};
+    const capability = sceneCapabilityProfile(props);
+    const viewportBase = sceneViewportBase(props);
+    const sceneState = createSceneState(props);
+    const sceneModelHydration = hydrateSceneStateModels(sceneState, props);
+    const runtimeScene = ctx.runtimeMode === "shared" && Boolean(ctx.programRef);
+    const lifecycle = initialSceneLifecycleState();
+    const motion = initialSceneMotionState(props);
+
+    function sceneShouldAnimate() {
+      if (motion.reducedMotion) {
+        return false;
+      }
+      if (sceneHasActiveTransitions(sceneState)) {
+        return true;
+      }
+      if (runtimeScene || sceneBool(props.autoRotate, true)) {
+        return true;
+      }
+      if (Array.isArray(sceneState.computeParticles) && sceneState.computeParticles.length > 0) {
+        return true;
+      }
+      if (Array.isArray(sceneState.points) && sceneState.points.some(function(p) {
+        return sceneNumber(p.spinX, 0) !== 0 || sceneNumber(p.spinY, 0) !== 0 || sceneNumber(p.spinZ, 0) !== 0;
+      })) {
+        return true;
+      }
+      return sceneStateObjects(sceneState).some(sceneObjectAnimated) ||
+        sceneStateLabels(sceneState).some(sceneLabelAnimated) ||
+        sceneStateSprites(sceneState).some(sceneSpriteAnimated);
+    }
+
+    clearChildren(ctx.mount);
+    ctx.mount.setAttribute("data-gosx-scene3d-mounted", "true");
+    ctx.mount.setAttribute("aria-label", props.ariaLabel || props.label || "Interactive GoSX 3D scene");
+    setAttrValue(ctx.mount, "data-gosx-scene3d-controls", normalizeSceneControlsMode(props.controls));
+    setAttrValue(ctx.mount, "data-gosx-scene3d-pick-signals", scenePickSignalNamespace(props));
+    setAttrValue(ctx.mount, "data-gosx-scene3d-event-signals", sceneEventSignalNamespace(props));
+    applySceneCapabilityState(ctx.mount, props, capability);
+    if (!ctx.mount.style.position) {
+      ctx.mount.style.position = "relative";
+    }
+    const canvas = document.createElement("canvas");
+    canvas.setAttribute("data-gosx-scene3d-canvas", "true");
+    canvas.setAttribute("role", "img");
+    canvas.setAttribute("aria-label", props.label || "Interactive GoSX 3D scene");
+    canvas.style.maxWidth = "100%";
+    canvas.style.borderRadius = "inherit";
+    canvas.width = viewportBase.baseWidth;
+    canvas.height = viewportBase.baseHeight;
+    canvas.setAttribute("width", String(viewportBase.baseWidth));
+    canvas.setAttribute("height", String(viewportBase.baseHeight));
+    ctx.mount.appendChild(canvas);
+
+    const labelLayer = document.createElement("div");
+    labelLayer.setAttribute("data-gosx-scene3d-label-layer", "true");
+    labelLayer.setAttribute("aria-hidden", "true");
+    ctx.mount.appendChild(labelLayer);
+
+    let viewport = applySceneViewport(ctx.mount, canvas, labelLayer, sceneViewportFromMount(ctx.mount, props, viewportBase, canvas, capability), viewportBase);
+
+    const initialRenderer = createSceneRenderer(canvas, props, capability);
+    if (!initialRenderer || !initialRenderer.renderer) {
+      console.warn("[gosx] Scene3D could not acquire a renderer");
+      return {
+        dispose() {
+          if (canvas.parentNode === ctx.mount) {
+            ctx.mount.removeChild(canvas);
+          }
+          if (labelLayer.parentNode === ctx.mount) {
+            ctx.mount.removeChild(labelLayer);
+          }
+        },
+      };
+    }
+    let renderer = initialRenderer.renderer;
+    applySceneRendererState(ctx.mount, renderer, initialRenderer.fallbackReason || "");
+    let latestBundle = null;
+    const labelLayoutCache = new Map();
+    const labelElements = new Map();
+    const spriteElements = new Map();
+    let labelRefreshHandle = null;
+    const releaseTextLayoutListener = onTextLayoutInvalidated(function() {
+      if (disposed || !latestBundle || !sceneCanRender()) {
+        return;
+      }
+      if (labelRefreshHandle != null) {
+        return;
+      }
+      labelRefreshHandle = engineFrame(function() {
+        labelRefreshHandle = null;
+        if (disposed || !latestBundle) {
+          return;
+        }
+        renderSceneLabels(labelLayer, latestBundle, labelLayoutCache, labelElements, viewport.cssWidth, viewport.cssHeight);
+        renderSceneSprites(labelLayer, latestBundle, spriteElements, viewport.cssWidth, viewport.cssHeight);
+      });
+    });
+
+    let frameHandle = null;
+    let scheduledRenderHandle = null;
+    let disposed = false;
+
+    function swapRenderer(nextRenderer, fallbackReason) {
+      if (!nextRenderer) {
+        return false;
+      }
+      const previous = renderer;
+      renderer = nextRenderer;
+      applySceneRendererState(ctx.mount, renderer, fallbackReason);
+      if (previous && previous !== renderer && typeof previous.dispose === "function") {
+        previous.dispose();
+      }
+      return true;
+    }
+
+    function fallbackSceneRenderer(reason) {
+      const ctx2d = typeof canvas.getContext === "function" ? canvas.getContext("2d") : null;
+      if (!ctx2d) {
+        return false;
+      }
+      return swapRenderer(createSceneCanvasRenderer(ctx2d, canvas), reason || "webgl-unavailable");
+    }
+
+    function restoreSceneWebGLRenderer(reason) {
+      const webglPreference = sceneCapabilityWebGLPreference(props, capability);
+      if (!(webglPreference === "prefer" || webglPreference === "force")) {
+        return false;
+      }
+      const webglRenderer = createSceneWebGLRenderer(canvas, {
+        antialias: capability.tier === "full" && !capability.lowPower && !capability.reducedData,
+        powerPreference: capability.lowPower || capability.tier === "constrained" ? "low-power" : "high-performance",
+      });
+      if (!webglRenderer) {
+        return false;
+      }
+      return swapRenderer(webglRenderer, reason || "");
+    }
+
+    function onWebGLContextLost(event) {
+      if (!renderer || renderer.kind !== "webgl") {
+        return;
+      }
+      if (event && typeof event.preventDefault === "function") {
+        event.preventDefault();
+      }
+      fallbackSceneRenderer("webgl-context-lost");
+      scheduleRender("webgl-context-lost");
+    }
+
+    function onWebGLContextRestored() {
+      if (restoreSceneWebGLRenderer("")) {
+        scheduleRender("webgl-context-restored");
+      }
+    }
+
+    canvas.addEventListener("webglcontextlost", onWebGLContextLost);
+    canvas.addEventListener("webglcontextrestored", onWebGLContextRestored);
+
+    function sceneCanRender() {
+      return lifecycle.pageVisible && lifecycle.inViewport;
+    }
+
+    function sceneWantsAnimation() {
+      return sceneShouldAnimate() && sceneCanRender();
+    }
+
+    function cancelFrame() {
+      if (frameHandle != null) {
+        cancelEngineFrame(frameHandle);
+        frameHandle = null;
+      }
+    }
+
+    function cancelScheduledRender() {
+      if (scheduledRenderHandle != null) {
+        cancelEngineFrame(scheduledRenderHandle);
+        scheduledRenderHandle = null;
+      }
+    }
+
+    function scheduleRender(reason) {
+      if (disposed) {
+        return;
+      }
+      if (scheduledRenderHandle != null) {
+        return;
+      }
+      scheduledRenderHandle = engineFrame(function(now) {
+        scheduledRenderHandle = null;
+        if (disposed) {
+          return;
+        }
+        const nextViewport = sceneViewportFromMount(ctx.mount, props, viewportBase, canvas, capability);
+        if (sceneViewportChanged(viewport, nextViewport)) {
+          viewport = applySceneViewport(ctx.mount, canvas, labelLayer, nextViewport, viewportBase);
+        }
+        if (!sceneCanRender()) {
+          cancelFrame();
+          return;
+        }
+        renderFrame(typeof now === "number" ? now : 0, reason || "refresh");
+      });
+    }
+
+    function readSceneSourceCamera() {
+      if (latestBundle && latestBundle.sourceCamera) {
+        return latestBundle.sourceCamera;
+      }
+      if (latestBundle && latestBundle.camera) {
+        return latestBundle.camera;
+      }
+      return sceneState.camera;
+    }
+
+    const sceneControlHandle = setupSceneBuiltInControls(canvas, props, function() {
+      return viewport;
+    }, readSceneSourceCamera, scheduleRender);
+    const dragHandle = sceneControlHandle.controller
+      ? { dispose() {} }
+      : setupSceneDragInteractions(canvas, props, function() {
+        return viewport;
+      }, function() {
+        return latestBundle;
+      });
+    const pickHandle = setupScenePickInteractions(canvas, props, function() {
+      return viewport;
+    }, function() {
+      return latestBundle;
+    }, function(detail) {
+      ctx.emit("scene-interaction", detail);
+    });
+    const sceneHubListener = function(event) {
+      if (disposed) {
+        return;
+      }
+      const detail = event && event.detail && typeof event.detail === "object" ? event.detail : null;
+      if (!detail || typeof detail.event !== "string") {
+        return;
+      }
+      if (sceneApplyLiveEvent(sceneState, detail.event, detail.data, motion.reducedMotion, sceneNowMilliseconds())) {
+        scheduleRender("hub-event");
+      }
+    };
+    document.addEventListener("gosx:hub:event", sceneHubListener);
+
+    const releaseViewportObserver = observeSceneViewport(ctx.mount, scheduleRender);
+    const releaseCapabilityObserver = observeSceneCapability(ctx.mount, props, capability, function(reason) {
+      const nextViewport = sceneViewportFromMount(ctx.mount, props, viewportBase, canvas, capability);
+      if (sceneViewportChanged(viewport, nextViewport)) {
+        viewport = applySceneViewport(ctx.mount, canvas, labelLayer, nextViewport, viewportBase);
+      }
+      const desiredFallback = sceneRendererFallbackReason(props, capability, renderer && renderer.kind);
+      const webglPreference = sceneCapabilityWebGLPreference(props, capability);
+      if (renderer && renderer.kind === "webgl" && !(webglPreference === "prefer" || webglPreference === "force")) {
+        fallbackSceneRenderer(desiredFallback || "environment-constrained");
+      } else if (renderer && renderer.kind !== "webgl" && (webglPreference === "prefer" || webglPreference === "force")) {
+        if (!restoreSceneWebGLRenderer("")) {
+          applySceneRendererState(ctx.mount, renderer, desiredFallback);
+        }
+      } else {
+        applySceneRendererState(ctx.mount, renderer, desiredFallback);
+      }
+      scheduleRender(reason || "capability");
+    });
+    const releaseLifecycleObserver = observeSceneLifecycle(ctx.mount, lifecycle, function(reason) {
+      if (!sceneCanRender()) {
+        cancelFrame();
+        cancelScheduledRender();
+        if (labelRefreshHandle != null) {
+          cancelEngineFrame(labelRefreshHandle);
+          labelRefreshHandle = null;
+        }
+        return;
+      }
+      scheduleRender(reason || "lifecycle");
+    });
+    const releaseMotionObserver = observeSceneMotion(ctx.mount, motion, function(reason) {
+      cancelFrame();
+      cancelScheduledRender();
+      scheduleRender(reason || "motion");
+    });
+
+    if (runtimeScene) {
+      if (ctx.runtime && ctx.runtime.available()) {
+        applySceneCommands(sceneState, await ctx.runtime.hydrateFromProgramRef());
+      } else {
+        console.warn("[gosx] Scene3D runtime requested but shared engine runtime is unavailable");
+      }
+    }
+
+    function renderFrame(now) {
+      if (disposed) return;
+      viewport = applySceneViewport(ctx.mount, canvas, labelLayer, sceneViewportFromMount(ctx.mount, props, viewportBase, canvas, capability), viewportBase);
+      if (!sceneCanRender()) {
+        cancelFrame();
+        return;
+      }
+      sceneAdvanceScrollCamera(sceneState._scrollCamera);
+      const timeSeconds = now / 1000;
+      if (runtimeScene && ctx.runtime && typeof ctx.runtime.renderFrame === "function") {
+        const runtimeBundle = ctx.runtime.renderFrame(timeSeconds, viewport.cssWidth, viewport.cssHeight);
+        if (runtimeBundle) {
+          const effectiveBundle = sceneBundleWithCameraOverride(
+            runtimeBundle,
+            sceneCurrentControlCamera(sceneControlHandle.controller, runtimeBundle.camera || sceneState.camera, sceneState._scrollCamera),
+          );
+          latestBundle = effectiveBundle;
+          renderer.render(effectiveBundle, viewport);
+          renderSceneLabels(labelLayer, effectiveBundle, labelLayoutCache, labelElements, viewport.cssWidth, viewport.cssHeight);
+          renderSceneSprites(labelLayer, effectiveBundle, spriteElements, viewport.cssWidth, viewport.cssHeight);
+          if (sceneWantsAnimation()) {
+            frameHandle = engineFrame(renderFrame);
+          }
+          return;
+        }
+      }
+      if (runtimeScene && ctx.runtime) {
+        applySceneCommands(sceneState, ctx.runtime.tick());
+      }
+      sceneAdvanceTransitions(sceneState, now);
+      if (typeof sceneApplyLOD === "function" && props.compression && props.compression.lod) {
+        var cam = sceneCurrentControlCamera(sceneControlHandle.controller, sceneState.camera, sceneState._scrollCamera);
+        var camX = cam.x || 0, camY = cam.y || 0, camZ = cam.z || 0;
+        for (var li = 0; li < sceneState.points.length; li++) {
+          sceneApplyLOD(sceneState.points[li], camX, camY, camZ);
+        }
+      }
+      latestBundle = createSceneRenderBundle(
+        viewport.cssWidth,
+        viewport.cssHeight,
+        sceneState.background,
+        sceneCurrentControlCamera(sceneControlHandle.controller, sceneState.camera, sceneState._scrollCamera),
+        sceneStateObjects(sceneState),
+        sceneStateLabels(sceneState),
+        sceneStateSprites(sceneState),
+        sceneStateLights(sceneState),
+        sceneState.environment,
+        timeSeconds,
+        sceneState.points,
+        sceneState.instancedMeshes,
+        sceneState.computeParticles,
+      );
+      renderer.render(latestBundle, viewport);
+      renderSceneLabels(labelLayer, latestBundle, labelLayoutCache, labelElements, viewport.cssWidth, viewport.cssHeight);
+      renderSceneSprites(labelLayer, latestBundle, spriteElements, viewport.cssWidth, viewport.cssHeight);
+      if (sceneWantsAnimation()) {
+        frameHandle = engineFrame(renderFrame);
+      }
+    }
+
+    await sceneModelHydration;
+    scenePrimeInitialTransitions(sceneState, motion.reducedMotion, 0);
+    renderFrame(0);
+
+    if (typeof sceneUpgradeProgressive === "function" && props.compression && props.compression.progressive) {
+      var upgradeTimer = typeof requestIdleCallback === "function" ? requestIdleCallback : setTimeout;
+      upgradeTimer(function() {
+        sceneUpgradeProgressive(props);
+        if (sceneWantsAnimation()) {
+        } else {
+          renderFrame(0);
+        }
+      });
+    }
+
+    ctx.emit("mounted", {
+      width: viewport.cssWidth,
+      height: viewport.cssHeight,
+      objects: sceneStateObjects(sceneState).length,
+      labels: sceneStateLabels(sceneState).length,
+      sprites: sceneStateSprites(sceneState).length,
+      lights: sceneStateLights(sceneState).length,
+      models: sceneModels(props).length,
+    });
+
+    var scrollHandler = null;
+    var visualViewportScrollHandler = null;
+    if (sceneState._scrollCamera) {
+      sceneState._scrollCamera._progress = 0;
+      sceneState._scrollCamera._smoothProgress = 0;
+      scrollHandler = function() {
+        if (!sceneWantsAnimation()) {
+          scheduleRender("scroll");
+        }
+      };
+      window.addEventListener("scroll", scrollHandler, { passive: true });
+      var isTouchDevice =
+        (typeof navigator !== "undefined" && navigator.maxTouchPoints > 0) ||
+        ("ontouchstart" in window);
+      if (
+        isTouchDevice &&
+        window.visualViewport &&
+        typeof window.visualViewport.addEventListener === "function"
+      ) {
+        visualViewportScrollHandler = function() {
+          if (!sceneWantsAnimation()) {
+            scheduleRender("visual-viewport");
+          }
+        };
+        window.visualViewport.addEventListener("scroll", visualViewportScrollHandler, { passive: true });
+        window.visualViewport.addEventListener("resize", visualViewportScrollHandler, { passive: true });
+      }
+      sceneAdvanceScrollCamera(sceneState._scrollCamera);
+    }
+
+    return {
+      applyCommands(commands) {
+        applySceneCommands(sceneState, commands);
+        scheduleRender("commands");
+      },
+      dispose() {
+        disposed = true;
+        if (scrollHandler) {
+          window.removeEventListener("scroll", scrollHandler);
+        }
+        if (visualViewportScrollHandler && window.visualViewport && typeof window.visualViewport.removeEventListener === "function") {
+          window.visualViewport.removeEventListener("scroll", visualViewportScrollHandler);
+          window.visualViewport.removeEventListener("resize", visualViewportScrollHandler);
+        }
+        canvas.removeEventListener("webglcontextlost", onWebGLContextLost);
+        canvas.removeEventListener("webglcontextrestored", onWebGLContextRestored);
+        document.removeEventListener("gosx:hub:event", sceneHubListener);
+        releaseViewportObserver();
+        releaseCapabilityObserver();
+        releaseLifecycleObserver();
+        releaseMotionObserver();
+        releaseTextLayoutListener();
+        dragHandle.dispose();
+        pickHandle.dispose();
+        sceneControlHandle.dispose();
+        renderer.dispose();
+        cancelFrame();
+        cancelScheduledRender();
+        if (labelRefreshHandle != null) {
+          cancelEngineFrame(labelRefreshHandle);
+        }
+        if (canvas.parentNode === ctx.mount) {
+          ctx.mount.removeChild(canvas);
+        }
+        if (labelLayer.parentNode === ctx.mount) {
+          ctx.mount.removeChild(labelLayer);
+        }
+      },
+    };
+  });
+
+  window.__gosx_scene3d_available = true;
+  if (typeof window.__gosx_scene3d_loaded === "function") {
+    window.__gosx_scene3d_loaded();
+  }
+})();
+//# sourceMappingURL=bootstrap-feature-scene3d.js.map
