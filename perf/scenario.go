@@ -44,6 +44,16 @@ func RunScenario(s *Scenario) (*Report, error) {
 		frames = 120
 	}
 
+	// Start recording if requested.
+	var recorder *Recorder
+	if s.RecordPath != "" {
+		rec, err := StartRecording(d)
+		if err != nil {
+			return nil, fmt.Errorf("start recording: %w", err)
+		}
+		recorder = rec
+	}
+
 	report := &Report{
 		Timestamp: time.Now(),
 	}
@@ -99,6 +109,13 @@ func RunScenario(s *Scenario) (*Report, error) {
 		report.URL = report.Pages[0].URL
 	} else if len(report.Pages) > 0 {
 		report.URL = report.Pages[0].URL
+	}
+
+	// Stop recording and write file.
+	if recorder != nil {
+		if err := recorder.Stop(d, s.RecordPath); err != nil {
+			return nil, fmt.Errorf("stop recording: %w", err)
+		}
 	}
 
 	return report, nil
