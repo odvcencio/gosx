@@ -1392,16 +1392,30 @@
     if (typeof navigator === "undefined" || !navigator.gpu) return null;
     if (typeof canvas.getContext !== "function") return null;
 
-    // Attempt to obtain a WebGPU context synchronously.
+    // Device + adapter come from the main-bundle probe (16z). The
+    // probe has already verified BOTH requestAdapter AND requestDevice
+    // succeed — if we're here, WebGPU is genuinely usable. Reusing the
+    // probed device (instead of requesting another) sidesteps a subtle
+    // failure mode where requestAdapter works twice but requestDevice
+    // fails on the second call (seen on some mobile GPUs).
+    var probe = _externalProbe();
+    if (!probe || !probe.ready || !probe.adapter || !probe.device) return null;
+    var adapter = probe.adapter;
+    var device = probe.device;
+
+    // Only NOW taint the canvas with a WebGPU context. If any of the
+    // checks above failed we never reached this line, so the canvas
+    // stays clean and the mount code can fall through to WebGL.
     var gpuCtx = canvas.getContext("webgpu");
     if (!gpuCtx) return null;
 
-    // Async device initialization state.
-    var device = null;
-    var adapter = null;
+    // initFailed remains for runtime device-loss recovery; startInit is
+    // effectively a no-op now that we have the device up front, but we
+    // keep the name for backwards compatibility with the existing render
+    // loop structure.
     var initFailed = false;
-    var initStarted = false;
-    var targetFormat = "bgra8unorm";
+    var initStarted = true;
+    var targetFormat = navigator.gpu.getPreferredCanvasFormat();
 
     // GPU resources (initialized after device is ready).
     var frameBindGroupLayout = null;
@@ -1515,28 +1529,34 @@
       return buf.subarray(0, length);
     }
 
-    // Start async device initialization.
-    function startInit() {
-      if (initStarted) return;
-      initStarted = true;
+    // Synchronous device initialization — device was already obtained
+    // by the main-bundle probe (16z). Previously this was a two-stage
+    // async sequence (requestAdapter → requestDevice → set up GPU
+    // resources), but the probe now owns the adapter+device lifecycle
+    // so we can do all the GPU-resource setup synchronously at factory
+    // construction time, ensuring the renderer is never returned in a
+    // half-initialized state.
+    //
+    // startInit is retained as a no-op for the existing call site in
+    // render() ("if (!device) startInit()") to keep the diff tight;
+    // the first render call falls straight through since device is
+    // already set.
+    function startInit() { /* no-op: device already initialized */ }
 
-      navigator.gpu.requestAdapter({ powerPreference: "high-performance" }).then(function(a) {
-        if (!a) { initFailed = true; return; }
-        adapter = a;
-        return adapter.requestDevice();
-      }).then(function(d) {
-        if (!d) { initFailed = true; return; }
-        device = d;
-
-        // Handle device loss.
+    // Everything below used to be inside the .then() chain after
+    // requestDevice resolved. It's now run synchronously so the
+    // returned renderer is fully ready before the factory call returns.
+    (function initGPUResources() {
+      try {
+        // Handle device loss post-factory. Re-uses the stub's probe
+        // invalidation path via window.__gosx_scene3d_webgpu_api.
         device.lost.then(function(info) {
-          console.warn("[gosx] WebGPU device lost:", info.message);
+          console.warn("[gosx] WebGPU device lost:", info && info.message);
           device = null;
           initFailed = true;
-        });
+        }).catch(function() {});
 
         // Configure the canvas context.
-        targetFormat = navigator.gpu.getPreferredCanvasFormat();
         gpuCtx.configure({
           device: device,
           format: targetFormat,
@@ -1625,12 +1645,18 @@
           [1, 1, 1]
         );
         placeholderView = placeholderTex.createView();
-
-      }).catch(function(err) {
-        console.warn("[gosx] WebGPU initialization failed:", err);
+      } catch (err) {
+        // Synchronous GPU resource setup failed — the probe said the
+        // device was good, but something in the texture/buffer/shader
+        // creation path failed anyway. Mark the renderer broken so
+        // render() no-ops. The canvas is tainted at this point (we
+        // already called getContext("webgpu") above), so the mount
+        // code can't fall back to WebGL — but at least we log loudly
+        // and stop doing broken work.
+        console.warn("[gosx] WebGPU synchronous init failed:", err);
         initFailed = true;
-      });
-    }
+      }
+    })();
 
     // Ensure main depth texture matches canvas size.
     function ensureMainDepth(width, height) {
@@ -2627,8 +2653,16 @@
       device = null;
     }
 
-    // Start initialization immediately.
-    startInit();
+    // Device + GPU resources were already initialized synchronously
+    // above (using the pre-probed device from 16z). If that setup
+    // failed, initFailed is true and render() will no-op; return null
+    // so the mount code can try to fall back — though note the canvas
+    // is already tainted at this point (getContext("webgpu") ran
+    // before initGPUResources), so the fallback will itself fail.
+    // The probe in 16z is what prevents us from ever reaching this
+    // state on broken backends — it verifies device creation works
+    // before we're allowed to construct a renderer at all.
+    if (initFailed) return null;
 
     return {
       type: "webgpu",

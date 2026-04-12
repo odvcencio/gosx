@@ -15184,14 +15184,17 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
     if (typeof navigator === "undefined" || !navigator.gpu) return null;
     if (typeof canvas.getContext !== "function") return null;
 
+    var probe = _externalProbe();
+    if (!probe || !probe.ready || !probe.adapter || !probe.device) return null;
+    var adapter = probe.adapter;
+    var device = probe.device;
+
     var gpuCtx = canvas.getContext("webgpu");
     if (!gpuCtx) return null;
 
-    var device = null;
-    var adapter = null;
     var initFailed = false;
-    var initStarted = false;
-    var targetFormat = "bgra8unorm";
+    var initStarted = true;
+    var targetFormat = navigator.gpu.getPreferredCanvasFormat();
 
     var frameBindGroupLayout = null;
     var materialBindGroupLayout = null;
@@ -15292,25 +15295,16 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
       return buf.subarray(0, length);
     }
 
-    function startInit() {
-      if (initStarted) return;
-      initStarted = true;
+    function startInit() { /* no-op: device already initialized */ }
 
-      navigator.gpu.requestAdapter({ powerPreference: "high-performance" }).then(function(a) {
-        if (!a) { initFailed = true; return; }
-        adapter = a;
-        return adapter.requestDevice();
-      }).then(function(d) {
-        if (!d) { initFailed = true; return; }
-        device = d;
-
+    (function initGPUResources() {
+      try {
         device.lost.then(function(info) {
-          console.warn("[gosx] WebGPU device lost:", info.message);
+          console.warn("[gosx] WebGPU device lost:", info && info.message);
           device = null;
           initFailed = true;
-        });
+        }).catch(function() {});
 
-        targetFormat = navigator.gpu.getPreferredCanvasFormat();
         gpuCtx.configure({
           device: device,
           format: targetFormat,
@@ -15389,12 +15383,11 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
           [1, 1, 1]
         );
         placeholderView = placeholderTex.createView();
-
-      }).catch(function(err) {
-        console.warn("[gosx] WebGPU initialization failed:", err);
+      } catch (err) {
+        console.warn("[gosx] WebGPU synchronous init failed:", err);
         initFailed = true;
-      });
-    }
+      }
+    })();
 
     function ensureMainDepth(width, height) {
       if (mainDepthTexture && mainDepthWidth === width && mainDepthHeight === height) return;
@@ -16295,7 +16288,7 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
       device = null;
     }
 
-    startInit();
+    if (initFailed) return null;
 
     return {
       type: "webgpu",

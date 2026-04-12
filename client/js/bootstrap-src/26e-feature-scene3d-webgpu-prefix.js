@@ -50,16 +50,23 @@
   // by 16b-scene-compute.js concatenated into this same IIFE below —
   // no bridge needed.
 
-  // Adapter probe result shared with the main bundle. The probe is
-  // asynchronous: when this chunk first runs, the probe may still be
-  // pending. We re-call the function each time we need the result so
-  // sceneWebGPUAvailable reflects the current probe state, not a
-  // snapshot taken at chunk-load time.
+  // Adapter + device probe result shared with the main bundle. The
+  // probe is asynchronous: when this chunk first runs, the probe may
+  // still be pending. We re-call the function each time we need the
+  // result so sceneWebGPUAvailable reflects the current probe state,
+  // not a snapshot taken at chunk-load time.
+  //
+  // The probe owns the lifecycle of both the adapter AND the device
+  // (see 16z-scene-webgpu-probe.js). The renderer in 16a reuses the
+  // probed device instead of requesting its own, which is what lets
+  // the factory be synchronous and guarantees we never taint the
+  // canvas with a WebGPU context for a device that doesn't actually
+  // work.
   function _externalProbe() {
     if (typeof window.__gosx_scene3d_webgpu_probe === "function") {
       return window.__gosx_scene3d_webgpu_probe();
     }
-    return { adapter: null, ready: false };
+    return { adapter: null, device: null, ready: false };
   }
 
   // --- file 16a (scene-webgpu.js) is concatenated next, followed by 16b.

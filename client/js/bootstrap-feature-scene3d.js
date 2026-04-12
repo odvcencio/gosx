@@ -9375,31 +9375,54 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
     return renderer;
   }
 
-  var _webgpuAdapterProbe = null;  // null = unprobed, false = unavailable, GPUAdapter = ready
+  var _webgpuAdapterProbe = null; // null = unprobed, false = unavailable, GPUAdapter = ready
+  var _webgpuDeviceProbe = null;  // null = unprobed, false = unavailable, GPUDevice = ready
   var _webgpuAdapterReady = false;
 
   if (typeof navigator !== "undefined" && navigator.gpu && typeof navigator.gpu.requestAdapter === "function") {
     navigator.gpu.requestAdapter({ powerPreference: "high-performance" }).then(function(adapter) {
-      if (adapter) {
-        _webgpuAdapterProbe = adapter;
-        _webgpuAdapterReady = true;
-      } else {
+      if (!adapter) {
         _webgpuAdapterProbe = false;
+        _webgpuDeviceProbe = false;
+        return null;
       }
-    }).catch(function() {
+      _webgpuAdapterProbe = adapter;
+      return adapter.requestDevice();
+    }).then(function(device) {
+      if (!device) {
+        _webgpuDeviceProbe = false;
+        return;
+      }
+      _webgpuDeviceProbe = device;
+      _webgpuAdapterReady = true;
+      device.lost.then(function(info) {
+        console.warn("[gosx] WebGPU probe device lost:", info && info.message);
+        _webgpuAdapterReady = false;
+        _webgpuDeviceProbe = false;
+      }).catch(function() {});
+    }).catch(function(err) {
+      console.warn("[gosx] WebGPU probe failed:", err && err.message);
       _webgpuAdapterProbe = false;
+      _webgpuDeviceProbe = false;
     });
     window.__gosx_scene3d_webgpu_probe = function() {
-      return { adapter: _webgpuAdapterProbe, ready: _webgpuAdapterReady };
+      return {
+        adapter: _webgpuAdapterProbe,
+        device: _webgpuDeviceProbe,
+        ready: _webgpuAdapterReady,
+      };
     };
   } else {
     _webgpuAdapterProbe = false;
+    _webgpuDeviceProbe = false;
   }
 
   function sceneWebGPUAvailable() {
     return _webgpuAdapterReady
       && _webgpuAdapterProbe !== false
       && _webgpuAdapterProbe !== null
+      && _webgpuDeviceProbe !== false
+      && _webgpuDeviceProbe !== null
       && !!(window.__gosx_scene3d_webgpu_api
         && typeof window.__gosx_scene3d_webgpu_api.createRenderer === "function");
   }
@@ -9408,7 +9431,11 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
     if (!sceneWebGPUAvailable()) return null;
     if (!canvas || typeof canvas.getContext !== "function") return null;
     try {
-      return window.__gosx_scene3d_webgpu_api.createRenderer(canvas);
+      var renderer = window.__gosx_scene3d_webgpu_api.createRenderer(canvas);
+      if (!renderer) {
+        console.warn("[gosx] WebGPU factory returned null after probe success; canvas may be tainted");
+      }
+      return renderer;
     } catch (e) {
       console.warn("[gosx] WebGPU renderer creation failed:", e);
       return null;
