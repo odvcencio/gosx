@@ -2,17 +2,19 @@ package perf
 
 import (
 	"fmt"
+	"os"
 	"time"
 )
 
 // Scenario describes a profiling session.
 type Scenario struct {
 	URLs         []string
-	Frames       int           // scene3D frames to sample (default 120)
+	Frames       int // scene3D frames to sample (default 120)
 	Interactions []Interaction
 	Timeout      time.Duration
 	Headless     bool
 	RecordPath   string // video output path (empty = no recording)
+	TracePath    string // Chrome DevTools trace output path (empty = no trace)
 }
 
 // Interaction is a user action to execute during profiling.
@@ -58,16 +60,34 @@ func RunScenario(s *Scenario) (*Report, error) {
 		Timestamp: time.Now(),
 	}
 
-	// Navigate to each URL, collect page metrics.
-	for _, url := range s.URLs {
-		if err := d.Navigate(url); err != nil {
-			return nil, fmt.Errorf("navigate %s: %w", url, err)
+	// Navigate to each URL, collect page metrics. A trace capture — if
+	// requested — wraps the navigation + ready wait of the FIRST URL only,
+	// since the common use case is "what's happening during page load" and
+	// capturing across a full multi-page scenario would produce an
+	// oversized file. The trace is written after the run completes.
+	var traceBytes []byte
+	for i, url := range s.URLs {
+		navigate := func() error {
+			if err := d.Navigate(url); err != nil {
+				return fmt.Errorf("navigate %s: %w", url, err)
+			}
+			if err := d.WaitReady(); err != nil {
+				return fmt.Errorf("wait ready %s: %w", url, err)
+			}
+			// Allow instrumentation + initial renders to settle.
+			time.Sleep(300 * time.Millisecond)
+			return nil
 		}
-		if err := d.WaitReady(); err != nil {
-			return nil, fmt.Errorf("wait ready %s: %w", url, err)
+
+		if s.TracePath != "" && i == 0 {
+			tb, err := CaptureTrace(d, navigate)
+			if err != nil {
+				return nil, fmt.Errorf("capture trace: %w", err)
+			}
+			traceBytes = tb
+		} else if err := navigate(); err != nil {
+			return nil, err
 		}
-		// Allow instrumentation + initial renders to settle.
-		time.Sleep(300 * time.Millisecond)
 
 		page, err := CollectPageReport(d, url)
 		if err != nil {
@@ -115,6 +135,14 @@ func RunScenario(s *Scenario) (*Report, error) {
 	if recorder != nil {
 		if err := recorder.Stop(d, s.RecordPath); err != nil {
 			return nil, fmt.Errorf("stop recording: %w", err)
+		}
+	}
+
+	// Write trace file if one was captured. Written at the end so a
+	// mid-run error doesn't leave a partial file around.
+	if len(traceBytes) > 0 && s.TracePath != "" {
+		if err := os.WriteFile(s.TracePath, traceBytes, 0o644); err != nil {
+			return nil, fmt.Errorf("write trace: %w", err)
 		}
 	}
 

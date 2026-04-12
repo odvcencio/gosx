@@ -49,6 +49,15 @@ func New(opts ...Option) (*Driver, error) {
 	allocOpts := append(chromedp.DefaultExecAllocatorOptions[:],
 		chromedp.ExecPath(chromePath),
 		chromedp.Flag("headless", d.headless),
+		// WebGPU/GPU enablement for headless. Without these, navigator.gpu
+		// exists but requestAdapter() returns null, so scene3d falls back
+		// to WebGL2 even when the site explicitly probes WebGPU. Kept
+		// conservative: only enable-unsafe-webgpu, no ANGLE or Vulkan
+		// overrides that would fail on systems without those drivers
+		// (WSL, headless CI, etc.). A real GPU + driver is still required
+		// for requestAdapter() to succeed — these flags just remove the
+		// hard disable so the browser can try.
+		chromedp.Flag("enable-unsafe-webgpu", true),
 	)
 
 	allocCtx, allocCancel := chromedp.NewExecAllocator(context.Background(), allocOpts...)

@@ -20,6 +20,7 @@ func cmdPerf() {
 	timeout := fs.Duration("timeout", 30*time.Second, "max wait duration")
 	headless := fs.Bool("headless", true, "run Chrome in headless mode")
 	record := fs.String("record", "", "record video to file path")
+	trace := fs.String("trace", "", "capture Chrome DevTools trace to file (load in chrome://tracing or DevTools Performance panel)")
 	waterfall := fs.Bool("waterfall", false, "show network resource waterfall")
 	var asserts stringSlice
 	fs.Var(&asserts, "assert", "assertion expression (repeatable)")
@@ -36,6 +37,7 @@ func cmdPerf() {
 		Timeout:    *timeout,
 		Headless:   *headless,
 		RecordPath: *record,
+		TracePath:  *trace,
 	}
 
 	if *clickSel != "" {
@@ -72,6 +74,13 @@ func cmdPerf() {
 		fmt.Print(perf.FormatTable(report))
 		if *waterfall {
 			fmt.Print(perf.FormatWaterfallTable(report))
+		}
+		if *trace != "" {
+			if data, err := os.ReadFile(*trace); err == nil {
+				if hot, err := perf.SummarizeTrace(data, 10, 5); err == nil {
+					fmt.Print(perf.FormatTraceSummary(hot, *trace))
+				}
+			}
 		}
 	}
 
