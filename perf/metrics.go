@@ -24,6 +24,50 @@ type PageReport struct {
 	JSHeapSizeMB      float64             `json:"jsHeapSizeMb"`
 	Scene             *SceneMetric        `json:"scene,omitempty"`
 	Interactions      []InteractionMetric `json:"interactions,omitempty"`
+
+	// Core Web Vitals
+	LargestContentfulPaintMs float64 `json:"lcpMs"`
+	CumulativeLayoutShift    float64 `json:"cls"`
+	FirstInputDelayMs        float64 `json:"fidMs"`
+
+	// Main-thread blocking
+	LongTasks             []LongTaskMetric `json:"longTasks,omitempty"`
+	LongTaskCount         int              `json:"longTaskCount"`
+	LongTaskTotalMs       float64          `json:"longTaskTotalMs"`
+	TotalBlockingTimeMs   float64          `json:"totalBlockingTimeMs"`
+
+	// GoSX runtime throughput
+	SignalWrites     int `json:"signalWrites"`
+	SignalReads      int `json:"signalReads"`
+	HubMessageCount  int `json:"hubMessageCount"`
+	HubMessageBytes  int `json:"hubMessageBytes"`
+	HubSendCount     int `json:"hubSendCount"`
+
+	// WebGL context info (nil if no canvas detected)
+	WebGL *WebGLInfo `json:"webgl,omitempty"`
+}
+
+// LongTaskMetric represents one main-thread blocking task (> 50ms).
+type LongTaskMetric struct {
+	Name       string  `json:"name"`
+	StartTime  float64 `json:"startTime"`
+	DurationMs float64 `json:"durationMs"`
+}
+
+// WebGLInfo holds WebGL context introspection results.
+type WebGLInfo struct {
+	Version                     string   `json:"version"`
+	ShadingLanguageVersion      string   `json:"shadingLanguageVersion"`
+	Vendor                      string   `json:"vendor"`
+	Renderer                    string   `json:"renderer"`
+	MaxTextureSize              int      `json:"maxTextureSize"`
+	MaxCubeMapSize              int      `json:"maxCubeMapSize"`
+	MaxRenderbufferSize         int      `json:"maxRenderbufferSize"`
+	MaxVertexAttribs            int      `json:"maxVertexAttribs"`
+	MaxCombinedTextureImageUnits int     `json:"maxCombinedTextureImageUnits"`
+	Antialiasing                bool     `json:"antialiasing"`
+	PreserveDrawingBuffer       bool     `json:"preserveDrawingBuffer"`
+	Extensions                  []string `json:"extensions,omitempty"`
 }
 
 // IslandMetric holds per-island hydration timing.
@@ -143,6 +187,67 @@ func CollectPageReport(d *Driver, url string) (*PageReport, error) {
 			DispatchMs: dl.Ms,
 			PatchCount: dl.Patches,
 		})
+	}
+
+	// Core Web Vitals + extended runtime counters
+	var vitals struct {
+		LCP              float64 `json:"lcp"`
+		CLS              float64 `json:"cls"`
+		FID              float64 `json:"fid"`
+		SignalWrites     int     `json:"signalWrites"`
+		SignalReads      int     `json:"signalReads"`
+		HubMessageCount  int     `json:"hubMessageCount"`
+		HubMessageBytes  int     `json:"hubMessageBytes"`
+		HubSendCount     int     `json:"hubSendCount"`
+	}
+	_ = d.Evaluate(`(function() {
+		var p = window.__gosx_perf || {};
+		return {
+			lcp: p.largestContentfulPaint || 0,
+			cls: p.cumulativeLayoutShift || 0,
+			fid: p.firstInputDelay || 0,
+			signalWrites: p.signalWrites || 0,
+			signalReads: p.signalReads || 0,
+			hubMessageCount: p.hubMessageCount || 0,
+			hubMessageBytes: p.hubMessageBytes || 0,
+			hubSendCount: p.hubSendCount || 0
+		};
+	})()`, &vitals)
+	pr.LargestContentfulPaintMs = vitals.LCP
+	pr.CumulativeLayoutShift = vitals.CLS
+	pr.FirstInputDelayMs = vitals.FID
+	pr.SignalWrites = vitals.SignalWrites
+	pr.SignalReads = vitals.SignalReads
+	pr.HubMessageCount = vitals.HubMessageCount
+	pr.HubMessageBytes = vitals.HubMessageBytes
+	pr.HubSendCount = vitals.HubSendCount
+
+	// Long tasks
+	var longTasks []struct {
+		Name      string  `json:"name"`
+		StartTime float64 `json:"startTime"`
+		Duration  float64 `json:"duration"`
+	}
+	_ = d.Evaluate(`(window.__gosx_perf && window.__gosx_perf.longTasks) || []`, &longTasks)
+	for _, lt := range longTasks {
+		pr.LongTasks = append(pr.LongTasks, LongTaskMetric{
+			Name:       lt.Name,
+			StartTime:  lt.StartTime,
+			DurationMs: lt.Duration,
+		})
+		pr.LongTaskTotalMs += lt.Duration
+		// Total Blocking Time = sum of (duration - 50ms) for tasks > 50ms
+		if lt.Duration > 50 {
+			pr.TotalBlockingTimeMs += lt.Duration - 50
+		}
+	}
+	pr.LongTaskCount = len(longTasks)
+
+	// WebGL info (best-effort, may return null if no canvas)
+	var webgl WebGLInfo
+	err = d.Evaluate(`(typeof window.__gosx_perf_webgl_info === "function") ? window.__gosx_perf_webgl_info() : null`, &webgl)
+	if err == nil && webgl.Version != "" {
+		pr.WebGL = &webgl
 	}
 
 	return pr, nil

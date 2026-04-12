@@ -59,6 +59,80 @@ func FormatTable(r *Report) string {
 		}
 	}
 
+	// Core Web Vitals
+	if p.LargestContentfulPaintMs > 0 || p.CumulativeLayoutShift > 0 || p.FirstInputDelayMs > 0 {
+		b.WriteString("\n  Core Web Vitals\n")
+		if p.LargestContentfulPaintMs > 0 {
+			rating := " (good)"
+			if p.LargestContentfulPaintMs > 4000 {
+				rating = " (poor)"
+			} else if p.LargestContentfulPaintMs > 2500 {
+				rating = " (needs improvement)"
+			}
+			b.WriteString(fmt.Sprintf("    %-24s%.1fms%s\n", "LCP", p.LargestContentfulPaintMs, rating))
+		}
+		if p.CumulativeLayoutShift > 0 {
+			rating := " (good)"
+			if p.CumulativeLayoutShift > 0.25 {
+				rating = " (poor)"
+			} else if p.CumulativeLayoutShift > 0.1 {
+				rating = " (needs improvement)"
+			}
+			b.WriteString(fmt.Sprintf("    %-24s%.3f%s\n", "CLS", p.CumulativeLayoutShift, rating))
+		}
+		if p.FirstInputDelayMs > 0 {
+			rating := " (good)"
+			if p.FirstInputDelayMs > 300 {
+				rating = " (poor)"
+			} else if p.FirstInputDelayMs > 100 {
+				rating = " (needs improvement)"
+			}
+			b.WriteString(fmt.Sprintf("    %-24s%.1fms%s\n", "FID", p.FirstInputDelayMs, rating))
+		}
+	}
+
+	// Long tasks — main thread blocking
+	if p.LongTaskCount > 0 {
+		b.WriteString("\n  Main-Thread Blocking\n")
+		b.WriteString(fmt.Sprintf("    %-24s%d\n", "Long tasks", p.LongTaskCount))
+		b.WriteString(fmt.Sprintf("    %-24s%.1fms\n", "Long task total", p.LongTaskTotalMs))
+		b.WriteString(fmt.Sprintf("    %-24s%.1fms\n", "Total blocking time", p.TotalBlockingTimeMs))
+		// Show top 5 longest
+		show := len(p.LongTasks)
+		if show > 5 {
+			show = 5
+		}
+		for i := 0; i < show; i++ {
+			lt := p.LongTasks[i]
+			b.WriteString(fmt.Sprintf("      %-22s%.1fms at %.0fms\n", lt.Name, lt.DurationMs, lt.StartTime))
+		}
+		if len(p.LongTasks) > 5 {
+			b.WriteString(fmt.Sprintf("      ... %d more\n", len(p.LongTasks)-5))
+		}
+	}
+
+	// GoSX runtime throughput
+	if p.SignalWrites > 0 || p.SignalReads > 0 || p.HubMessageCount > 0 {
+		b.WriteString("\n  Runtime Throughput\n")
+		if p.SignalWrites > 0 || p.SignalReads > 0 {
+			b.WriteString(fmt.Sprintf("    %-24sw:%d  r:%d\n", "Signal ops", p.SignalWrites, p.SignalReads))
+		}
+		if p.HubMessageCount > 0 {
+			b.WriteString(fmt.Sprintf("    %-24srecv:%d (%dB)  send:%d\n",
+				"Hub messages", p.HubMessageCount, p.HubMessageBytes, p.HubSendCount))
+		}
+	}
+
+	// WebGL context info
+	if p.WebGL != nil {
+		b.WriteString("\n  WebGL Context\n")
+		b.WriteString(fmt.Sprintf("    %-24s%s\n", "Version", p.WebGL.Version))
+		b.WriteString(fmt.Sprintf("    %-24s%s\n", "Vendor", p.WebGL.Vendor))
+		b.WriteString(fmt.Sprintf("    %-24s%s\n", "Renderer", p.WebGL.Renderer))
+		b.WriteString(fmt.Sprintf("    %-24s%d\n", "Max texture size", p.WebGL.MaxTextureSize))
+		b.WriteString(fmt.Sprintf("    %-24s%d extensions\n", "Extensions", len(p.WebGL.Extensions)))
+	}
+
 	return b.String()
 }
 

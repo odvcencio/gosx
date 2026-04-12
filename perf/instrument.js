@@ -15,7 +15,15 @@
     dispatchLog: [],
     hydrationLog: [],
     hubMessageCount: 0,
-    frameCount: 0
+    hubMessageBytes: 0,
+    hubSendCount: 0,
+    frameCount: 0,
+    longTasks: [],        // {name, duration, startTime}
+    largestContentfulPaint: 0,
+    cumulativeLayoutShift: 0,
+    firstInputDelay: 0,
+    signalWrites: 0,
+    signalReads: 0
   };
 
   // --- 1. Bridge gosx:ready CustomEvent → performance mark ---
@@ -41,6 +49,64 @@
       }
     });
     sceneObserver.observe({ type: "measure", buffered: true });
+  } catch (_e) {}
+
+  // --- 3a. Long task observer (tasks > 50ms that block main thread) ---
+  // This is the single most valuable signal for scroll jank diagnosis:
+  // any main-thread task > 50ms will cause dropped frames during scroll.
+  try {
+    var longTaskObserver = new PerformanceObserver(function(list) {
+      var entries = list.getEntries();
+      for (var i = 0; i < entries.length; i++) {
+        var e = entries[i];
+        perf.longTasks.push({
+          name: e.name || "unknown",
+          duration: e.duration,
+          startTime: e.startTime
+        });
+      }
+    });
+    longTaskObserver.observe({ type: "longtask", buffered: true });
+  } catch (_e) {}
+
+  // --- 3b. Core Web Vitals: Largest Contentful Paint ---
+  try {
+    var lcpObserver = new PerformanceObserver(function(list) {
+      var entries = list.getEntries();
+      // LCP can update multiple times; use the latest entry.
+      var last = entries[entries.length - 1];
+      if (last && last.startTime > perf.largestContentfulPaint) {
+        perf.largestContentfulPaint = last.startTime;
+      }
+    });
+    lcpObserver.observe({ type: "largest-contentful-paint", buffered: true });
+  } catch (_e) {}
+
+  // --- 3c. Core Web Vitals: Cumulative Layout Shift ---
+  try {
+    var clsObserver = new PerformanceObserver(function(list) {
+      var entries = list.getEntries();
+      for (var i = 0; i < entries.length; i++) {
+        var e = entries[i];
+        // Ignore shifts triggered by user input
+        if (!e.hadRecentInput) {
+          perf.cumulativeLayoutShift += e.value;
+        }
+      }
+    });
+    clsObserver.observe({ type: "layout-shift", buffered: true });
+  } catch (_e) {}
+
+  // --- 3d. Core Web Vitals: First Input Delay ---
+  try {
+    var fidObserver = new PerformanceObserver(function(list) {
+      var entries = list.getEntries();
+      if (entries.length > 0 && perf.firstInputDelay === 0) {
+        var first = entries[0];
+        perf.firstInputDelay = first.processingStart - first.startTime;
+      }
+    });
+    fidObserver.observe({ type: "first-input", buffered: true });
   } catch (_e) {}
 
   // --- 4. Trap __gosx_runtime_ready assignment ---
@@ -169,6 +235,9 @@
           performance.measure("gosx:hub:message",
             "gosx:hub:message:start", "gosx:hub:message:end");
           perf.hubMessageCount++;
+          if (evt && evt.data) {
+            perf.hubMessageBytes += (typeof evt.data === "string" ? evt.data.length : (evt.data.byteLength || 0));
+          }
         };
         origOnMessageDesc.set.call(this, wrapped);
       },
@@ -187,7 +256,65 @@
     performance.mark("gosx:hub:send:end");
     performance.measure("gosx:hub:send",
       "gosx:hub:send:start", "gosx:hub:send:end");
+    perf.hubSendCount++;
     return result;
+  };
+
+  // --- 10. Signal throughput counters ---
+  // Wrap the shared signal setter/getter to count per-dispatch signal
+  // operations. This helps diagnose whether a slow dispatch is signal-
+  // bound (too many writes) or reconcile-bound (too many DOM diffs).
+  var _origSet = null;
+  Object.defineProperty(window, "__gosx_set_shared_signal", {
+    set: function(fn) { _origSet = fn; },
+    get: function() {
+      if (!_origSet) return undefined;
+      return function(name, valueJSON) {
+        perf.signalWrites++;
+        return _origSet.apply(this, arguments);
+      };
+    },
+    configurable: true
+  });
+
+  var _origGet = null;
+  Object.defineProperty(window, "__gosx_get_shared_signal", {
+    set: function(fn) { _origGet = fn; },
+    get: function() {
+      if (!_origGet) return undefined;
+      return function(name) {
+        perf.signalReads++;
+        return _origGet.apply(this, arguments);
+      };
+    },
+    configurable: true
+  });
+
+  // --- 11. WebGL context introspection ---
+  // Exposed as a helper the metrics collector can call after scene mounts.
+  // Returns vendor, renderer, max texture size, and supported extensions.
+  window.__gosx_perf_webgl_info = function() {
+    var canvases = document.querySelectorAll("canvas");
+    for (var i = 0; i < canvases.length; i++) {
+      var ctx = canvases[i].getContext("webgl2") || canvases[i].getContext("webgl");
+      if (!ctx) continue;
+      var dbg = ctx.getExtension("WEBGL_debug_renderer_info");
+      return {
+        version: ctx.getParameter(ctx.VERSION),
+        shadingLanguageVersion: ctx.getParameter(ctx.SHADING_LANGUAGE_VERSION),
+        vendor: dbg ? ctx.getParameter(dbg.UNMASKED_VENDOR_WEBGL) : ctx.getParameter(ctx.VENDOR),
+        renderer: dbg ? ctx.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : ctx.getParameter(ctx.RENDERER),
+        maxTextureSize: ctx.getParameter(ctx.MAX_TEXTURE_SIZE),
+        maxCubeMapSize: ctx.getParameter(ctx.MAX_CUBE_MAP_TEXTURE_SIZE),
+        maxRenderbufferSize: ctx.getParameter(ctx.MAX_RENDERBUFFER_SIZE),
+        maxVertexAttribs: ctx.getParameter(ctx.MAX_VERTEX_ATTRIBS),
+        maxCombinedTextureImageUnits: ctx.getParameter(ctx.MAX_COMBINED_TEXTURE_IMAGE_UNITS),
+        antialiasing: !!ctx.getContextAttributes().antialias,
+        preserveDrawingBuffer: !!ctx.getContextAttributes().preserveDrawingBuffer,
+        extensions: ctx.getSupportedExtensions() || []
+      };
+    }
+    return null;
   };
 
 })();
