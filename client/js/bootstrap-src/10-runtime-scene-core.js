@@ -643,6 +643,11 @@
     return Number.isFinite(num) ? num : fallback;
   }
 
+  function sceneSegmentResolution(value) {
+    const segments = Math.round(sceneNumber(value, 12));
+    return Math.max(6, Math.min(24, segments));
+  }
+
   function sceneBool(value, fallback) {
     if (typeof value === "boolean") return value;
     if (typeof value === "string") {
@@ -1139,7 +1144,9 @@
     // Cache per-light content hash for scenePBRLightsHash dirty-tracking.
     // Paid here (once per mutation, rare) instead of per-frame inside
     // the hash function — ~13µs per call down to ~100ns in practice.
-    normalized._lightHash = hashLightContent(normalized);
+    if (typeof hashLightContent === "function") {
+      normalized._lightHash = hashLightContent(normalized);
+    }
     return normalized;
   }
 
@@ -1666,7 +1673,9 @@
     // Same rationale as _lightHash above — avoids re-walking fields on
     // every frame. sceneResolveLightingEnvironment rebuilds a new env
     // object per frame and must also stamp _envHash.
-    environment._envHash = hashEnvironmentContent(environment);
+    if (typeof hashEnvironmentContent === "function") {
+      environment._envHash = hashEnvironmentContent(environment);
+    }
     return environment;
   }
 
@@ -1690,7 +1699,7 @@
     // handles the other branch). sceneResolveLightingEnvironment runs per
     // bundle build, so the cost amortizes across the whole frame, not per
     // scenePBRUploadLights call.
-    if (typeof base._envHash !== "number") {
+    if (typeof base._envHash !== "number" && typeof hashEnvironmentContent === "function") {
       base._envHash = hashEnvironmentContent(base);
     }
     if (base.specified || !hasLights) {

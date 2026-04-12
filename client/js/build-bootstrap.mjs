@@ -89,7 +89,7 @@ const outputs = [
     sources: [
       sourceFile("bootstrap-src/00-textlayout.js"),
       sourceFile("bootstrap-src/05-document-env.js"),
-      sourceFile("bootstrap-src/10-runtime-scene-core.js"),
+      sourceFile("bootstrap-src/10a-runtime-utils.js"),
       sourceFile("bootstrap-src/26-runtime-tail.js"),
     ],
   },
@@ -134,6 +134,7 @@ const outputs = [
     path: path.join(__dirname, "bootstrap-feature-scene3d.js"),
     sources: [
       sourceFile("bootstrap-src/26d-feature-scene3d-prefix.js"),
+      sourceFile("bootstrap-src/10-runtime-scene-core.js"),
       sourceFile("bootstrap-src/11-scene-math.js"),
       sourceFile("bootstrap-src/11a-scene-decompress.js"),
       sourceFile("bootstrap-src/12-scene-geometry.js"),
