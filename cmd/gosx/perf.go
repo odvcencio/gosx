@@ -20,6 +20,7 @@ func cmdPerf() {
 	timeout := fs.Duration("timeout", 30*time.Second, "max wait duration")
 	headless := fs.Bool("headless", true, "run Chrome in headless mode")
 	record := fs.String("record", "", "record video to file path")
+	waterfall := fs.Bool("waterfall", false, "show network resource waterfall")
 	var asserts stringSlice
 	fs.Var(&asserts, "assert", "assertion expression (repeatable)")
 	fs.Parse(os.Args[2:])
@@ -69,6 +70,9 @@ func cmdPerf() {
 		fmt.Println(string(data))
 	} else {
 		fmt.Print(perf.FormatTable(report))
+		if *waterfall {
+			fmt.Print(perf.FormatWaterfallTable(report))
+		}
 	}
 
 	// Evaluate assertions

@@ -133,6 +133,26 @@ func FormatTable(r *Report) string {
 		b.WriteString(fmt.Sprintf("    %-24s%d extensions\n", "Extensions", len(p.WebGL.Extensions)))
 	}
 
+	// Network summary (detail available via --waterfall)
+	if len(p.Resources) > 0 {
+		b.WriteString("\n  Network\n")
+		b.WriteString(fmt.Sprintf("    %-24s%d\n", "Total requests", len(p.Resources)))
+		b.WriteString(fmt.Sprintf("    %-24s%.1fKB\n", "Total transferred", float64(p.TotalBytesTransferred)/1024))
+		b.WriteString(fmt.Sprintf("    %-24s%.0fms\n", "Blocking resource", p.BlockingResourceMs))
+	}
+
+	return b.String()
+}
+
+// FormatWaterfallTable formats the resource waterfall as a detailed table.
+func FormatWaterfallTable(r *Report) string {
+	p := &r.PageReport
+	if len(p.Resources) == 0 {
+		return "  No resources captured.\n"
+	}
+	var b strings.Builder
+	b.WriteString(fmt.Sprintf("\n  Resource Waterfall (%d entries)\n", len(p.Resources)))
+	b.WriteString("  " + FormatWaterfall(p.Resources))
 	return b.String()
 }
 

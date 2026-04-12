@@ -25,6 +25,11 @@ type PageReport struct {
 	Scene             *SceneMetric        `json:"scene,omitempty"`
 	Interactions      []InteractionMetric `json:"interactions,omitempty"`
 
+	// Network resource waterfall (top-N slowest or largest)
+	Resources []ResourceEntry `json:"resources,omitempty"`
+	TotalBytesTransferred int64 `json:"totalBytesTransferred"`
+	BlockingResourceMs    float64 `json:"blockingResourceMs"`
+
 	// Core Web Vitals
 	LargestContentfulPaintMs float64 `json:"lcpMs"`
 	CumulativeLayoutShift    float64 `json:"cls"`
@@ -248,6 +253,21 @@ func CollectPageReport(d *Driver, url string) (*PageReport, error) {
 	err = d.Evaluate(`(typeof window.__gosx_perf_webgl_info === "function") ? window.__gosx_perf_webgl_info() : null`, &webgl)
 	if err == nil && webgl.Version != "" {
 		pr.WebGL = &webgl
+	}
+
+	// Resource waterfall
+	resources, err := QueryResourceWaterfall(d)
+	if err == nil {
+		pr.Resources = resources
+		for _, r := range resources {
+			pr.TotalBytesTransferred += int64(r.TransferSize)
+			// Blocking script/style resources that delay rendering
+			if r.InitiatorType == "script" || r.InitiatorType == "link" {
+				if r.ResponseEnd > pr.BlockingResourceMs {
+					pr.BlockingResourceMs = r.ResponseEnd
+				}
+			}
+		}
 	}
 
 	return pr, nil
