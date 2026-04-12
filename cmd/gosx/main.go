@@ -53,6 +53,10 @@ func main() {
 		cmdFmt()
 	case "lsp":
 		cmdLSP()
+	case "perf":
+		cmdPerf()
+	case "repl":
+		cmdRepl()
 	case "version":
 		fmt.Println("gosx v0.1.0")
 	case "help", "-h", "--help":
@@ -78,6 +82,8 @@ Commands:
   render <file> [comp] Render component to HTML
   fmt <path>           Format GoSX source files
   lsp                  Start the GoSX language server
+  perf <url>           Profile browser runtime performance
+  repl <url>           Interactive browser runtime explorer
   version              Print version
 
 Init templates:
