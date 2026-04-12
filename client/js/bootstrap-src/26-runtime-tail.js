@@ -60,6 +60,8 @@
         return String(assets.bootstrapFeatureEnginesPath || "/gosx/bootstrap-feature-engines.js").trim();
       case "hubs":
         return String(assets.bootstrapFeatureHubsPath || "/gosx/bootstrap-feature-hubs.js").trim();
+      case "scene3d":
+        return assets && assets.bootstrapFeatureScene3dPath;
       default:
         return "";
     }
@@ -68,6 +70,24 @@
   async function ensureBootstrapFeature(name) {
     if (activeBootstrapFeatures.has(name)) {
       return activeBootstrapFeatures.get(name);
+    }
+
+    // Scene3D is loaded via an async <script> tag emitted by the Go renderer,
+    // not dynamically by the runtime. Wait for it to signal readiness.
+    if (name === "scene3d") {
+      if (!window.__gosx_scene3d_available) {
+        await new Promise(function(resolve) {
+          if (window.__gosx_scene3d_available) { resolve(); return; }
+          var prev = window.__gosx_scene3d_loaded;
+          window.__gosx_scene3d_loaded = function() {
+            if (typeof prev === "function") { prev(); }
+            resolve();
+          };
+        });
+      }
+      var scene3dFeature = { name: "scene3d" };
+      activeBootstrapFeatures.set(name, scene3dFeature);
+      return scene3dFeature;
     }
 
     let factory = bootstrapFeatureFactories[name];
@@ -99,6 +119,13 @@
     const names = [];
     if (manifestHasEntries(manifest, "engines")) {
       names.push("engines");
+      // Check if any engine is GoSXScene3D
+      for (var i = 0; i < manifest.engines.length; i++) {
+        if (manifest.engines[i].component === "GoSXScene3D") {
+          names.push("scene3d");
+          break;
+        }
+      }
     }
     if (manifestHasEntries(manifest, "hubs")) {
       names.push("hubs");
