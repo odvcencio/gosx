@@ -22,6 +22,8 @@ func cmdPerf() {
 	record := fs.String("record", "", "record video to file path")
 	trace := fs.String("trace", "", "capture Chrome DevTools trace to file (load in chrome://tracing or DevTools Performance panel)")
 	waterfall := fs.Bool("waterfall", false, "show network resource waterfall")
+	throttle := fs.Float64("throttle", 1, "CPU throttle rate (1=realtime, 4=mid-range phone, 6=low-end)")
+	mobile := fs.String("mobile", "", "mobile device emulation: pixel7 | iphone14")
 	var asserts stringSlice
 	fs.Var(&asserts, "assert", "assertion expression (repeatable)")
 	fs.Parse(os.Args[2:])
@@ -32,12 +34,14 @@ func cmdPerf() {
 	}
 
 	scenario := &perf.Scenario{
-		URLs:       urls,
-		Frames:     *frames,
-		Timeout:    *timeout,
-		Headless:   *headless,
-		RecordPath: *record,
-		TracePath:  *trace,
+		URLs:        urls,
+		Frames:      *frames,
+		Timeout:     *timeout,
+		Headless:    *headless,
+		RecordPath:  *record,
+		TracePath:   *trace,
+		CPUThrottle: *throttle,
+		MobileName:  *mobile,
 	}
 
 	if *clickSel != "" {

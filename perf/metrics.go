@@ -50,6 +50,12 @@ type PageReport struct {
 
 	// WebGL context info (nil if no canvas detected)
 	WebGL *WebGLInfo `json:"webgl,omitempty"`
+
+	// Console and uncaught exceptions captured during the page load, in
+	// arrival order. Only warnings, errors, asserts, and uncaught
+	// exceptions are kept by default — see StartConsoleCaptureAll for
+	// the noisy variant.
+	ConsoleEntries []ConsoleEntry `json:"consoleEntries,omitempty"`
 }
 
 // LongTaskMetric represents one main-thread blocking task (> 50ms).

@@ -177,6 +177,46 @@ func FormatTable(r *Report) string {
 		}
 	}
 
+	// Console entries — warnings, errors, and uncaught exceptions
+	// captured during page load. These are the silent killers that
+	// break features in prod without showing up in dev, so they get
+	// prominent placement and truncated messages are marked with ….
+	if len(p.ConsoleEntries) > 0 {
+		b.WriteString("\n  Console\n")
+		var nErr, nWarn, nExc int
+		for _, c := range p.ConsoleEntries {
+			switch c.Level {
+			case "error", "assert":
+				nErr++
+			case "warning":
+				nWarn++
+			case "exception":
+				nExc++
+			}
+		}
+		b.WriteString(fmt.Sprintf("    %-24sexceptions:%d  errors:%d  warnings:%d\n",
+			"Counts", nExc, nErr, nWarn))
+		show := len(p.ConsoleEntries)
+		if show > 6 {
+			show = 6
+		}
+		for i := 0; i < show; i++ {
+			c := p.ConsoleEntries[i]
+			msg := strings.ReplaceAll(c.Text, "\n", " ⏎ ")
+			if len(msg) > 80 {
+				msg = msg[:79] + "…"
+			}
+			label := c.Level
+			if label == "warning" {
+				label = "warn"
+			}
+			b.WriteString(fmt.Sprintf("      %-8s%s\n", label, msg))
+		}
+		if len(p.ConsoleEntries) > 6 {
+			b.WriteString(fmt.Sprintf("      … %d more\n", len(p.ConsoleEntries)-6))
+		}
+	}
+
 	// Network summary (detail available via --waterfall)
 	if len(p.Resources) > 0 {
 		b.WriteString("\n  Network\n")

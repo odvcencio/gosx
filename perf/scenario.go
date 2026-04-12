@@ -15,6 +15,10 @@ type Scenario struct {
 	Headless     bool
 	RecordPath   string // video output path (empty = no recording)
 	TracePath    string // Chrome DevTools trace output path (empty = no trace)
+
+	// Device emulation — match Chrome DevTools' device toolbar.
+	CPUThrottle float64 // 1 = realtime, 4 = mid-range phone, 6 = low-end
+	MobileName  string  // "" | "pixel7" | "iphone14"
 }
 
 // Interaction is a user action to execute during profiling.
@@ -39,6 +43,32 @@ func RunScenario(s *Scenario) (*Report, error) {
 
 	if err := InjectDriver(d); err != nil {
 		return nil, fmt.Errorf("inject: %w", err)
+	}
+
+	// Install console + exception capture BEFORE navigation so we see
+	// early-page errors. Warnings/errors/asserts/exceptions only — we
+	// don't want info/log/debug noise in the perf report.
+	console, err := StartConsoleCapture(d)
+	if err != nil {
+		return nil, fmt.Errorf("console capture: %w", err)
+	}
+
+	// Apply device emulation BEFORE navigation so the initial load sees
+	// the simulated viewport, user agent, and CPU speed. Chrome DevTools'
+	// "Performance panel with Slow 4x CPU" is the direct analogue.
+	if s.MobileName != "" {
+		profile := ResolveMobileProfile(s.MobileName)
+		if profile.Width == 0 {
+			return nil, fmt.Errorf("unknown mobile profile %q (want: pixel7, iphone14)", s.MobileName)
+		}
+		if err := ApplyMobileEmulation(d, profile); err != nil {
+			return nil, fmt.Errorf("mobile emulation: %w", err)
+		}
+	}
+	if s.CPUThrottle > 1 {
+		if err := ApplyCPUThrottle(d, s.CPUThrottle); err != nil {
+			return nil, fmt.Errorf("cpu throttle: %w", err)
+		}
 	}
 
 	frames := s.Frames
@@ -107,6 +137,12 @@ func RunScenario(s *Scenario) (*Report, error) {
 				page.Scene.FrameCount = len(sceneEntries)
 			}
 		}
+
+		// Attach console entries captured so far to this page. For
+		// multi-page scenarios we clear between pages so each page
+		// reports only its own errors.
+		page.ConsoleEntries = console.Entries()
+		console.Clear()
 
 		report.Pages = append(report.Pages, *page)
 	}
