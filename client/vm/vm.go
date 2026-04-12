@@ -631,17 +631,48 @@ func (vm *VM) resolveElementNode(rn *ResolvedNode, source int, node program.Node
 //   - resolved: the non-event attrs (class/id/data-*/etc)
 //   - domAttrs: everything the browser-side reconciler needs (static
 //     attrs PLUS the synthesized data-gosx-on-* / data-gosx-handler
-//     entries for each event). This was previously built by a second
-//     pass in materializeDOMAttrs.
+//     entries for each event)
 //   - events: the list of (eventName, handler) pairs for renderResolvedAttrs
 //   - key / explicitKey: the element's key attribute if any
 //
-// The fast path for elements without events (by far the most common
-// in any non-interactive subtree) reuses the resolved slice as
-// domAttrs with no copy. That eliminates one allocation per
-// no-events element and collapses the old two-pass build into a
-// single walk for the with-events case.
+// domAttrs and resolved share a single backing array — resolved is the
+// prefix `domAttrs[:staticCount]` covering just the static attrs, and
+// domAttrs extends past that with the synthesized event marker entries.
+// This means elements with BOTH static attrs and events allocate a
+// single []ResolvedAttr slice instead of the two the earlier fused
+// implementation used. Elements with only statics (resolved == domAttrs)
+// and elements with no attrs at all (both nil) stay the same.
 func (vm *VM) resolveElementAttrs(attrs []program.Attr) (resolved, domAttrs []ResolvedAttr, events []ResolvedEvent, key string, explicitKey bool) {
+	// Two-pass: first count what we need so we can allocate exactly once.
+	// Counting is cheap (it's the same loop body minus the writes) and
+	// lets us avoid the lazy-init branches the earlier version used.
+	staticCount := 0
+	eventCount := 0
+	clickCount := 0
+	for _, attr := range attrs {
+		switch attr.Kind {
+		case program.AttrStatic, program.AttrExpr:
+			if attr.Name != "key" {
+				staticCount++
+			}
+		case program.AttrBool:
+			staticCount++
+		case program.AttrEvent:
+			eventCount++
+			if eventAttrType(attr.Name) == "click" {
+				clickCount++
+			}
+		}
+	}
+
+	totalDOMAttrs := staticCount + eventCount + clickCount
+	if totalDOMAttrs > 0 {
+		domAttrs = make([]ResolvedAttr, 0, totalDOMAttrs)
+	}
+	if eventCount > 0 {
+		events = make([]ResolvedEvent, 0, eventCount)
+	}
+
 	for _, attr := range attrs {
 		switch attr.Kind {
 		case program.AttrStatic:
@@ -650,10 +681,7 @@ func (vm *VM) resolveElementAttrs(attrs []program.Attr) (resolved, domAttrs []Re
 				explicitKey = true
 				continue
 			}
-			if resolved == nil {
-				resolved = make([]ResolvedAttr, 0, len(attrs))
-			}
-			resolved = append(resolved, ResolvedAttr{Name: attr.Name, Value: attr.Value})
+			domAttrs = append(domAttrs, ResolvedAttr{Name: attr.Name, Value: attr.Value})
 		case program.AttrExpr:
 			value := vm.Eval(attr.Expr).String()
 			if attr.Name == "key" {
@@ -661,40 +689,22 @@ func (vm *VM) resolveElementAttrs(attrs []program.Attr) (resolved, domAttrs []Re
 				explicitKey = true
 				continue
 			}
-			if resolved == nil {
-				resolved = make([]ResolvedAttr, 0, len(attrs))
-			}
-			resolved = append(resolved, ResolvedAttr{Name: attr.Name, Value: value})
+			domAttrs = append(domAttrs, ResolvedAttr{Name: attr.Name, Value: value})
 		case program.AttrBool:
-			if resolved == nil {
-				resolved = make([]ResolvedAttr, 0, len(attrs))
-			}
-			resolved = append(resolved, ResolvedAttr{Name: attr.Name, Bool: true})
+			domAttrs = append(domAttrs, ResolvedAttr{Name: attr.Name, Bool: true})
 		case program.AttrEvent:
-			if events == nil {
-				events = make([]ResolvedEvent, 0, len(attrs))
-			}
 			events = append(events, ResolvedEvent{Name: attr.Name, Handler: attr.Event})
 		}
 	}
 
-	// Build domAttrs. No events → alias resolved (zero copy). Otherwise
-	// extend resolved by the synthesized event markers in a single
-	// append. Note we build into a fresh slice so the non-event subset
-	// (rn.Attrs) isn't contaminated with marker entries.
-	if len(events) == 0 {
-		domAttrs = resolved
-		return
+	// resolved is a subslice of domAttrs covering just the static attrs.
+	// Sharing the backing array means rn.Attrs reads the same memory as
+	// the first `len(resolved)` entries of rn.DOMAttrs.
+	if len(domAttrs) > 0 {
+		resolved = domAttrs[:staticCount:staticCount]
 	}
-	// Reserve room for each event's marker attrs (1 base + 1 extra for click).
-	extra := len(events)
-	for _, ev := range events {
-		if eventAttrType(ev.Name) == "click" {
-			extra++
-		}
-	}
-	domAttrs = make([]ResolvedAttr, 0, len(resolved)+extra)
-	domAttrs = append(domAttrs, resolved...)
+
+	// Append the event markers after the static prefix.
 	for _, event := range events {
 		eventType := eventAttrType(event.Name)
 		domAttrs = append(domAttrs, ResolvedAttr{

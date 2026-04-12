@@ -1,0 +1,107 @@
+// End-to-end island behavior benchmarks.
+//
+// Run with: go test -bench=. -benchmem ./island/
+//
+// These measure realistic flows that production islands go through —
+// not just VM unit ops. They're intentionally aligned with the four
+// most common interaction patterns a GoSX page exercises:
+//
+//   1. Counter — simplest reactive element, dispatch/reconcile loop
+//   2. Form    — multi-field form with input validation
+//   3. List    — forEach-driven list (tests iteration resolve)
+//   4. Toggle  — boolean state flip with conditional render
+//
+// Plus the SSR-render path that server-rendered pages hit for every
+// island on first request.
+//
+// Rebuild after editing:
+//     danmuji build island/bench.dmj
+
+package island
+
+import (
+    "testing"
+
+    "github.com/odvcencio/gosx/client/vm"
+    "github.com/odvcencio/gosx/island/program"
+)
+
+benchmark "counter full cycle" {
+    setup {
+        prog := program.CounterProgram()
+    }
+    measure {
+        // Full flow: build island, dispatch a handler, reconcile, render.
+        island := vm.NewIsland(prog, `{}`)
+        _ = island.Dispatch("increment", "{}")
+    }
+    report_allocs
+}
+
+benchmark "counter ssr render" {
+    setup {
+        prog := program.CounterProgram()
+        resolved := vm.ResolveInitialTree(prog, `{}`)
+    }
+    measure {
+        _ = RenderResolvedHTML(prog, resolved)
+    }
+    report_allocs
+}
+
+benchmark "form full cycle" {
+    setup {
+        prog := program.FormProgram()
+    }
+    measure {
+        island := vm.NewIsland(prog, `{}`)
+        _ = island.Reconcile()
+    }
+    report_allocs
+}
+
+benchmark "form ssr render" {
+    setup {
+        prog := program.FormProgram()
+        resolved := vm.ResolveInitialTree(prog, `{}`)
+    }
+    measure {
+        _ = RenderResolvedHTML(prog, resolved)
+    }
+    report_allocs
+}
+
+benchmark "list ssr render" {
+    setup {
+        prog := program.ListProgram()
+        resolved := vm.ResolveInitialTree(prog, `{"items": ["apple", "banana", "cherry", "date", "elderberry"]}`)
+    }
+    measure {
+        _ = RenderResolvedHTML(prog, resolved)
+    }
+    report_allocs
+}
+
+benchmark "toggle full cycle" {
+    setup {
+        prog := program.ToggleProgram()
+    }
+    measure {
+        island := vm.NewIsland(prog, `{}`)
+        _ = island.Dispatch("toggle", "{}")
+    }
+    report_allocs
+}
+
+benchmark "counter ten dispatches" {
+    setup {
+        prog := program.CounterProgram()
+        island := vm.NewIsland(prog, `{}`)
+    }
+    measure {
+        for range 10 {
+            _ = island.Dispatch("increment", "{}")
+        }
+    }
+    report_allocs
+}
