@@ -2897,7 +2897,6 @@
   window.__gosx_runtime_api = {
     setAttrValue,
     setStyleValue,
-    emit,
     gosxSubscribeSharedSignal,
     setSharedSignalValue,
     gosxTextLayoutRevision,

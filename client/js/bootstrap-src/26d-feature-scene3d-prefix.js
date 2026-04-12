@@ -16,7 +16,6 @@
   var runtimeApi = window.__gosx_runtime_api || {};
   var setAttrValue = runtimeApi.setAttrValue || function() {};
   var setStyleValue = runtimeApi.setStyleValue || function() {};
-  var emit = runtimeApi.emit || function() {};
   var gosxSubscribeSharedSignal = runtimeApi.gosxSubscribeSharedSignal || function() { return function() {}; };
   var setSharedSignalValue = runtimeApi.setSharedSignalValue || function() {};
   var gosxTextLayoutRevision = runtimeApi.gosxTextLayoutRevision || function() { return 0; };
