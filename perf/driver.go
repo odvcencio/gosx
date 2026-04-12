@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/chromedp/cdproto/runtime"
 	"github.com/chromedp/chromedp"
 )
 
@@ -85,9 +86,14 @@ func (d *Driver) Navigate(url string) error {
 }
 
 // Evaluate runs JavaScript in the page and unmarshals the result into dst.
-// If dst is nil the result is discarded.
+// If dst is nil the result is discarded. If the expression returns a Promise,
+// Evaluate awaits it and returns the resolved value — letting REPL users and
+// query helpers write `(async () => { ... })()` without needing a separate
+// polling loop.
 func (d *Driver) Evaluate(expr string, dst interface{}) error {
-	return chromedp.Run(d.ctx, chromedp.Evaluate(expr, dst))
+	return chromedp.Run(d.ctx, chromedp.Evaluate(expr, dst, func(p *runtime.EvaluateParams) *runtime.EvaluateParams {
+		return p.WithAwaitPromise(true)
+	}))
 }
 
 // WaitReady waits for the page body to be present in the DOM.
