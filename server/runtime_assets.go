@@ -171,6 +171,7 @@ func runtimeCompatSourcePath(root, name string) (string, bool) {
 		"bootstrap-feature-islands.js": filepath.Join(buildDir, "bootstrap-feature-islands.js"),
 		"bootstrap-feature-engines.js": filepath.Join(buildDir, "bootstrap-feature-engines.js"),
 		"bootstrap-feature-hubs.js":    filepath.Join(buildDir, "bootstrap-feature-hubs.js"),
+		"bootstrap-feature-scene3d.js": filepath.Join(buildDir, "bootstrap-feature-scene3d.js"),
 		"patch.js":                     filepath.Join(buildDir, "patch.js"),
 		"hls.min.js":                   filepath.Join(buildDir, "hls.min.js"),
 	}
@@ -228,6 +229,8 @@ func (a *App) runtimeCompatBuiltPath(root, name string) (string, bool) {
 		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.BootstrapFeatureEngines.File)
 	case "bootstrap-feature-hubs.js":
 		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.BootstrapFeatureHubs.File)
+	case "bootstrap-feature-scene3d.js":
+		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.BootstrapFeatureScene3D.File)
 	case "patch.js":
 		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.Patch.File)
 	case "hls.min.js":

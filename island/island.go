@@ -45,6 +45,7 @@ type Renderer struct {
 	bootstrapFeatureIslandsPath string
 	bootstrapFeatureEnginesPath string
 	bootstrapFeatureHubsPath    string
+	bootstrapFeatureScene3dPath string
 	videoHLSPath                string
 	runtimeAssets               buildmanifest.RuntimeAssets
 	bootstrapOnly               bool
@@ -68,6 +69,7 @@ type Summary struct {
 	BootstrapFeatureIslandsPath string
 	BootstrapFeatureEnginesPath string
 	BootstrapFeatureHubsPath    string
+	BootstrapFeatureScene3DPath string
 	HLSPath                     string
 	Islands                     int
 	Engines                     int
@@ -109,6 +111,7 @@ func NewRenderer(bundleID string) *Renderer {
 	renderer.bootstrapFeatureIslandsPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-islands.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureIslands.Hash))
 	renderer.bootstrapFeatureEnginesPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-engines.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureEngines.Hash))
 	renderer.bootstrapFeatureHubsPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-hubs.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureHubs.Hash))
+	renderer.bootstrapFeatureScene3dPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3D.Hash))
 	renderer.videoHLSPath = renderer.versionCompatRuntimePath("/gosx/hls.min.js", strings.TrimSpace(runtimeAssets.VideoHLS.Hash))
 	if manifest := loadDefaultBuildManifest(); manifest != nil {
 		_ = renderer.ApplyBuildManifest(manifest, "/gosx/assets")
@@ -273,6 +276,14 @@ func (r *Renderer) SetBootstrapFeaturePaths(islandsPath, enginesPath, hubsPath s
 	}
 }
 
+// SetBootstrapFeatureScene3DPath overrides the async Scene3D feature chunk URL.
+func (r *Renderer) SetBootstrapFeatureScene3DPath(path string) {
+	if strings.TrimSpace(path) == "" {
+		return
+	}
+	r.bootstrapFeatureScene3dPath = r.versionCompatRuntimePath(path, r.compatRuntimeHash(path))
+}
+
 // SetVideoHLSPath overrides the runtime HLS library URL used by the built-in
 // video engine when native HLS playback is unavailable.
 func (r *Renderer) SetVideoHLSPath(path string) {
@@ -300,6 +311,8 @@ func (r *Renderer) compatRuntimeHash(path string) string {
 		return strings.TrimSpace(r.runtimeAssets.BootstrapFeatureEngines.Hash)
 	case "/gosx/bootstrap-feature-hubs.js":
 		return strings.TrimSpace(r.runtimeAssets.BootstrapFeatureHubs.Hash)
+	case "/gosx/bootstrap-feature-scene3d.js":
+		return strings.TrimSpace(r.runtimeAssets.BootstrapFeatureScene3D.Hash)
 	case "/gosx/patch.js":
 		return strings.TrimSpace(r.runtimeAssets.Patch.Hash)
 	case "/gosx/hls.min.js":
@@ -319,7 +332,7 @@ func (r *Renderer) versionCompatRuntimePath(path, hash string) string {
 		return path
 	}
 	switch compatRuntimePath(path) {
-	case "/gosx/runtime.wasm", "/gosx/wasm_exec.js", "/gosx/bootstrap.js", "/gosx/bootstrap-lite.js", "/gosx/bootstrap-runtime.js", "/gosx/bootstrap-feature-islands.js", "/gosx/bootstrap-feature-engines.js", "/gosx/bootstrap-feature-hubs.js", "/gosx/patch.js", "/gosx/hls.min.js":
+	case "/gosx/runtime.wasm", "/gosx/wasm_exec.js", "/gosx/bootstrap.js", "/gosx/bootstrap-lite.js", "/gosx/bootstrap-runtime.js", "/gosx/bootstrap-feature-islands.js", "/gosx/bootstrap-feature-engines.js", "/gosx/bootstrap-feature-hubs.js", "/gosx/bootstrap-feature-scene3d.js", "/gosx/patch.js", "/gosx/hls.min.js":
 		query := parsed.Query()
 		if query.Get("v") == "" {
 			query.Set("v", hash)
@@ -355,6 +368,7 @@ func (r *Renderer) ApplyBuildManifest(manifest *buildmanifest.Manifest, assetBas
 	r.SetBootstrapLitePath(runtime.BootstrapLite)
 	r.SetBootstrapRuntimePath(runtime.BootstrapRuntime)
 	r.SetBootstrapFeaturePaths(runtime.BootstrapFeatureIslands, runtime.BootstrapFeatureEngines, runtime.BootstrapFeatureHubs)
+	r.SetBootstrapFeatureScene3DPath(runtime.BootstrapFeatureScene3D)
 	r.SetVideoHLSPath(runtime.VideoHLS)
 
 	for _, asset := range manifest.Islands {
@@ -493,6 +507,12 @@ func (r *Renderer) BootstrapScript() gosx.Node {
 		b.WriteByte('\n')
 	}
 	b.WriteString(fmt.Sprintf(`<script data-gosx-script="bootstrap" data-gosx-bootstrap-mode="%s" src="%s"></script>`, mode, html.EscapeString(r.selectedBootstrapPath())))
+	if scene3dPath := r.selectedBootstrapFeaturePath("scene3d"); scene3dPath != "" {
+		b.WriteByte('\n')
+		b.WriteString(`<script async data-gosx-script="feature-scene3d" src="`)
+		b.WriteString(html.EscapeString(scene3dPath))
+		b.WriteString("\">\x3c/script>")
+	}
 	return gosx.RawHTML(b.String())
 }
 
@@ -890,6 +910,7 @@ func (r *Renderer) PreloadHints() gosx.Node {
 			r.selectedBootstrapFeaturePath("engines"),
 			r.selectedBootstrapFeaturePath("hubs"),
 			r.selectedBootstrapFeaturePath("islands"),
+			r.selectedBootstrapFeaturePath("scene3d"),
 		} {
 			if strings.TrimSpace(path) == "" {
 				continue
@@ -981,6 +1002,7 @@ func (r *Renderer) Summary() Summary {
 		summary.BootstrapFeatureIslandsPath = r.selectedBootstrapFeaturePath("islands")
 		summary.BootstrapFeatureEnginesPath = r.selectedBootstrapFeaturePath("engines")
 		summary.BootstrapFeatureHubsPath = r.selectedBootstrapFeaturePath("hubs")
+		summary.BootstrapFeatureScene3DPath = r.selectedBootstrapFeaturePath("scene3d")
 	}
 	if r.needsLiteBootstrap() {
 		summary.PatchPath = ""
@@ -1023,6 +1045,11 @@ func (r *Renderer) selectedBootstrapFeaturePath(name string) string {
 			return ""
 		}
 		return r.bootstrapFeatureHubsPath
+	case "scene3d":
+		if !r.hasSceneEngines() {
+			return ""
+		}
+		return r.bootstrapFeatureScene3dPath
 	default:
 		return ""
 	}
@@ -1046,7 +1073,7 @@ func (r *Renderer) selectedWASMExecPath() string {
 }
 
 func (r *Renderer) usesSelectiveRuntimeBootstrap() bool {
-	return r != nil && r.needsClientBootstrap() && !r.needsLiteBootstrap() && !r.hasSceneEngines()
+	return r != nil && r.needsClientBootstrap() && !r.needsLiteBootstrap()
 }
 
 func (r *Renderer) needsSharedRuntime() bool {

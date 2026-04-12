@@ -24,6 +24,7 @@ type RuntimeAssets struct {
 	BootstrapFeatureIslands HashedAsset `json:"bootstrapFeatureIslands,omitempty"`
 	BootstrapFeatureEngines HashedAsset `json:"bootstrapFeatureEngines,omitempty"`
 	BootstrapFeatureHubs    HashedAsset `json:"bootstrapFeatureHubs,omitempty"`
+	BootstrapFeatureScene3D HashedAsset `json:"bootstrapFeatureScene3d,omitempty"`
 	Patch                   HashedAsset `json:"patch"`
 	VideoHLS                HashedAsset `json:"videoHLS,omitempty"`
 }
@@ -55,6 +56,7 @@ type RuntimePaths struct {
 	BootstrapFeatureIslands string
 	BootstrapFeatureEngines string
 	BootstrapFeatureHubs    string
+	BootstrapFeatureScene3D string
 	Patch                   string
 	VideoHLS                string
 }
@@ -84,6 +86,7 @@ func (m *Manifest) RuntimeURLs(assetBaseURL string) RuntimePaths {
 		BootstrapFeatureIslands: AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapFeatureIslands.File),
 		BootstrapFeatureEngines: AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapFeatureEngines.File),
 		BootstrapFeatureHubs:    AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapFeatureHubs.File),
+		BootstrapFeatureScene3D: AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapFeatureScene3D.File),
 		Patch:                   AssetURL(assetBaseURL, "runtime", m.Runtime.Patch.File),
 		VideoHLS:                AssetURL(assetBaseURL, "runtime", m.Runtime.VideoHLS.File),
 	}
