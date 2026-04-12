@@ -19,6 +19,10 @@ type Scenario struct {
 	// Device emulation — match Chrome DevTools' device toolbar.
 	CPUThrottle float64 // 1 = realtime, 4 = mid-range phone, 6 = low-end
 	MobileName  string  // "" | "pixel7" | "iphone14"
+
+	// Capture JS coverage (Profiler.startPreciseCoverage + blocks) for
+	// the first URL. Expensive enough that it's opt-in.
+	Coverage bool
 }
 
 // Interaction is a user action to execute during profiling.
@@ -109,13 +113,27 @@ func RunScenario(s *Scenario) (*Report, error) {
 			return nil
 		}
 
+		// If coverage and trace are both requested, coverage wraps the
+		// trace capture so a single navigate yields both signals.
+		var coverageEntries []CoverageEntry
+		runNav := navigate
 		if s.TracePath != "" && i == 0 {
-			tb, err := CaptureTrace(d, navigate)
-			if err != nil {
-				return nil, fmt.Errorf("capture trace: %w", err)
+			runNav = func() error {
+				tb, err := CaptureTrace(d, navigate)
+				if err != nil {
+					return fmt.Errorf("capture trace: %w", err)
+				}
+				traceBytes = tb
+				return nil
 			}
-			traceBytes = tb
-		} else if err := navigate(); err != nil {
+		}
+		if s.Coverage && i == 0 {
+			entries, err := CaptureCoverage(d, runNav)
+			if err != nil {
+				return nil, fmt.Errorf("capture coverage: %w", err)
+			}
+			coverageEntries = entries
+		} else if err := runNav(); err != nil {
 			return nil, err
 		}
 
@@ -143,6 +161,11 @@ func RunScenario(s *Scenario) (*Report, error) {
 		// reports only its own errors.
 		page.ConsoleEntries = console.Entries()
 		console.Clear()
+
+		// Attach coverage if captured for this (first) page.
+		if len(coverageEntries) > 0 {
+			page.Coverage = coverageEntries
+		}
 
 		report.Pages = append(report.Pages, *page)
 	}

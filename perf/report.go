@@ -217,6 +217,12 @@ func FormatTable(r *Report) string {
 		}
 	}
 
+	// Coverage summary — only printed when captured. Shows scripts
+	// sorted by unused bytes (biggest split opportunities first).
+	if len(p.Coverage) > 0 {
+		b.WriteString(FormatCoverageSummary(p.Coverage, 1024, 8))
+	}
+
 	// Network summary (detail available via --waterfall)
 	if len(p.Resources) > 0 {
 		b.WriteString("\n  Network\n")

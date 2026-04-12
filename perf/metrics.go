@@ -56,6 +56,10 @@ type PageReport struct {
 	// exceptions are kept by default — see StartConsoleCaptureAll for
 	// the noisy variant.
 	ConsoleEntries []ConsoleEntry `json:"consoleEntries,omitempty"`
+
+	// JS coverage per script (populated only when --coverage is set).
+	// Sorted by unused bytes descending — biggest split opportunities first.
+	Coverage []CoverageEntry `json:"coverage,omitempty"`
 }
 
 // LongTaskMetric represents one main-thread blocking task (> 50ms).

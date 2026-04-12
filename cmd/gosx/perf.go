@@ -24,6 +24,7 @@ func cmdPerf() {
 	waterfall := fs.Bool("waterfall", false, "show network resource waterfall")
 	throttle := fs.Float64("throttle", 1, "CPU throttle rate (1=realtime, 4=mid-range phone, 6=low-end)")
 	mobile := fs.String("mobile", "", "mobile device emulation: pixel7 | iphone14")
+	coverage := fs.Bool("coverage", false, "capture JS block-level coverage per script")
 	var asserts stringSlice
 	fs.Var(&asserts, "assert", "assertion expression (repeatable)")
 	fs.Parse(os.Args[2:])
@@ -42,6 +43,7 @@ func cmdPerf() {
 		TracePath:   *trace,
 		CPUThrottle: *throttle,
 		MobileName:  *mobile,
+		Coverage:    *coverage,
 	}
 
 	if *clickSel != "" {
