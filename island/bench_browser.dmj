@@ -1,0 +1,77 @@
+// Browser runtime behavior tests for GoSX islands.
+// Uses perftest.Run to drive headless Chrome.
+//
+// Run:   go test -tags browser ./island/ -run TestBrowser -v
+// Build: danmuji build island/bench_browser.dmj
+
+package island_test
+
+import (
+    "testing"
+    "time"
+
+    "github.com/odvcencio/gosx/perf/perftest"
+)
+
+unit "BrowserPageLifecycle" {
+    given "a running GoSX page" {
+        when "profiling page load" {
+            report := perftest.Run(t, "http://localhost:3000",
+                perftest.Timeout(15 * time.Second),
+            )
+            then "TTFB is positive" {
+                ttfb := report.TTFBMs
+                if ttfb <= 0 {
+                    t.Fatalf("TTFB should be > 0, got %.2f", ttfb)
+                }
+            }
+            then "TTFB is under 500ms" {
+                if report.TTFBMs > 500 {
+                    t.Fatalf("TTFB too slow: %.2fms", report.TTFBMs)
+                }
+            }
+        }
+    }
+}
+
+unit "BrowserCounterDispatch" {
+    given "a page with a counter island" {
+        when "clicking increment" {
+            report := perftest.Run(t, "http://localhost:3000",
+                perftest.Click("[data-gosx-handler='increment']"),
+            )
+            then "produces an interaction" {
+                count := len(report.Interactions)
+                if count == 0 {
+                    t.Fatal("no interactions recorded")
+                }
+            }
+            then "dispatch is under 50ms" {
+                if len(report.Interactions) > 0 && report.Interactions[0].DispatchMs > 50 {
+                    t.Fatalf("dispatch too slow: %.2fms", report.Interactions[0].DispatchMs)
+                }
+            }
+        }
+    }
+}
+
+unit "BrowserScene3DFrameBudget" {
+    given "a page with Scene3D" {
+        when "sampling 60 frames" {
+            report := perftest.Run(t, "http://localhost:3000/demos/galaxy",
+                perftest.Frames(60),
+                perftest.Timeout(20 * time.Second),
+            )
+            then "scene is detected" {
+                if report.Scene == nil {
+                    t.Skip("no scene detected")
+                }
+            }
+            then "p95 frame budget is under 16ms" {
+                if report.Scene != nil && report.Scene.FrameStats.P95 > 16 {
+                    t.Fatalf("p95 exceeded: %.2fms", report.Scene.FrameStats.P95)
+                }
+            }
+        }
+    }
+}
