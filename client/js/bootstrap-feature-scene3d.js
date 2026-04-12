@@ -9380,8 +9380,9 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
   var _webgpuAdapterReady = false;
 
   if (typeof navigator !== "undefined" && navigator.gpu && typeof navigator.gpu.requestAdapter === "function") {
-    navigator.gpu.requestAdapter({ powerPreference: "high-performance" }).then(function(adapter) {
+    navigator.gpu.requestAdapter().then(function(adapter) {
       if (!adapter) {
+        console.warn("[gosx] WebGPU probe: requestAdapter returned null");
         _webgpuAdapterProbe = false;
         _webgpuDeviceProbe = false;
         return null;
@@ -9390,6 +9391,7 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
       return adapter.requestDevice();
     }).then(function(device) {
       if (!device) {
+        console.warn("[gosx] WebGPU probe: requestDevice returned null");
         _webgpuDeviceProbe = false;
         return;
       }
@@ -9401,7 +9403,7 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
         _webgpuDeviceProbe = false;
       }).catch(function() {});
     }).catch(function(err) {
-      console.warn("[gosx] WebGPU probe failed:", err && err.message);
+      console.warn("[gosx] WebGPU probe failed:", err && (err.message || err));
       _webgpuAdapterProbe = false;
       _webgpuDeviceProbe = false;
     });

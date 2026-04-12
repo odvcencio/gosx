@@ -537,9 +537,18 @@ func (r *Renderer) BootstrapScript() gosx.Node {
 		// cost minimal — the script body is ~190 bytes before gzip.
 		if webgpuPath := r.selectedBootstrapFeaturePath("scene3d-webgpu"); webgpuPath != "" {
 			b.WriteByte('\n')
+			// NB: Go raw-string literal (backticks) doesn't process \x
+			// escapes, so the closing </script> is written as a regular
+			// double-quoted string. Historical bug from v0.17.16: using
+			// `\x3c/script>` inside a raw-string literal produced literal
+			// "\x3c/script>" in the HTML, which JavaScript then parsed as
+			// a syntax error at the end of the IIFE, silently dropping
+			// the entire inline script — so the WebGPU sub-chunk never
+			// loaded on any page.
 			b.WriteString(`<script>if(navigator.gpu){var s=document.createElement('script');s.defer=true;s.dataset.gosxScript='feature-scene3d-webgpu';s.src=`)
 			b.WriteString(htmlJSStringLiteral(webgpuPath))
-			b.WriteString(`;document.head.appendChild(s);}\x3c/script>`)
+			b.WriteString(";document.head.appendChild(s);}")
+			b.WriteString("\x3c/script>")
 		}
 	}
 	return gosx.RawHTML(b.String())
