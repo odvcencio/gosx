@@ -1073,7 +1073,10 @@ func (r *Renderer) selectedWASMExecPath() string {
 }
 
 func (r *Renderer) usesSelectiveRuntimeBootstrap() bool {
-	return r != nil && r.needsClientBootstrap() && !r.needsLiteBootstrap()
+	// Scene3D pages still use the monolith until the async feature chunk
+	// loading is debugged — the defer/async split has a race condition
+	// where the engine factory doesn't register in time.
+	return r != nil && r.needsClientBootstrap() && !r.needsLiteBootstrap() && !r.hasSceneEngines()
 }
 
 func (r *Renderer) needsSharedRuntime() bool {

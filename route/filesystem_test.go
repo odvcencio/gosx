@@ -792,7 +792,7 @@ func Page() Node {
 		`Whiteboard`,
 		`SearchIndexer`,
 		`GoSXScene3D`,
-		`bootstrap-runtime.js`,
+		`bootstrap.js`,
 	} {
 		if !strings.Contains(head, snippet) {
 			t.Fatalf("expected %q in engine runtime head %q", snippet, head)
