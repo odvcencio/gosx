@@ -421,10 +421,21 @@ func decodeStringTable(br *binReader) []string {
 	count := br.readU16()
 	strs := make([]string, count)
 	for i := range count {
-		slen := br.readU16()
-		buf := make([]byte, slen)
-		br.readFull(buf)
-		strs[i] = string(buf)
+		slen := int(br.readU16())
+		if br.err != nil {
+			return strs
+		}
+		if br.remaining() < slen {
+			br.err = io.ErrUnexpectedEOF
+			return strs
+		}
+		// Read directly from the backing slice — avoids the
+		// intermediate make([]byte, slen) allocation per string
+		// that readFull would incur. string() copies the bytes
+		// into a new string header, which is the one unavoidable
+		// allocation per interned string.
+		strs[i] = string(br.data[br.off : br.off+slen])
+		br.off += slen
 	}
 	return strs
 }
