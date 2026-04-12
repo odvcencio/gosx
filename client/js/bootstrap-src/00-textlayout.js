@@ -2891,3 +2891,18 @@
     },
     dispose: disposeManagedTextLayout,
   };
+
+  // Runtime API — exposed for the async Scene3D feature chunk which
+  // runs in a separate IIFE and can't access these via closure.
+  window.__gosx_runtime_api = {
+    setAttrValue,
+    setStyleValue,
+    emit,
+    gosxSubscribeSharedSignal,
+    setSharedSignalValue,
+    gosxTextLayoutRevision,
+    normalizeTextLayoutOverflow,
+    layoutBrowserText,
+    applyTextLayoutPresentation,
+    onTextLayoutInvalidated,
+  };

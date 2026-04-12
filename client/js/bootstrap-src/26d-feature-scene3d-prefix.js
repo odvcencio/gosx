@@ -1,21 +1,28 @@
 // GoSX Scene3D Feature Chunk — loaded via <script defer>
 //
-// Contains the FULL scene pipeline: file 10 (scene-core with normalizers,
-// state builders, bundle builders) through file 20 (scene-mount with the
-// GoSXScene3D engine factory). This IIFE is self-contained — all scene
-// functions are defined within it via the concatenated source files.
+// Contains the FULL scene pipeline: file 10 (scene-core) through file 20
+// (scene-mount with the GoSXScene3D engine factory). This IIFE is
+// self-contained — all scene functions are defined within it.
 //
-// A few infrastructure utilities (engineFrame, sceneNumber, clearChildren,
-// etc.) are duplicated between this chunk and the runtime's 10a-runtime-utils.
-// That's intentional: each IIFE has its own copy. The runtime uses them for
-// input providers and feature API; the scene chunk uses them for rendering.
+// A few functions from the runtime (00-textlayout.js, 10a-runtime-utils.js)
+// are needed by the scene code. These are bridged from window.__gosx_runtime_api
+// and duplicated declarations from the runtime-utils extraction.
 
 (function() {
   "use strict";
 
-  // setSharedSignalValue is defined in 26-runtime-tail.js (the runtime).
-  // The scene core references it for input signal flushing. Bridge it
-  // from the global that the runtime exposes.
-  var setSharedSignalValue = window.__gosx_set_shared_signal_value || function() {};
+  // Bridge runtime utilities that live in the runtime's IIFE scope.
+  // These are exported by 00-textlayout.js to window.__gosx_runtime_api.
+  var runtimeApi = window.__gosx_runtime_api || {};
+  var setAttrValue = runtimeApi.setAttrValue || function() {};
+  var setStyleValue = runtimeApi.setStyleValue || function() {};
+  var emit = runtimeApi.emit || function() {};
+  var gosxSubscribeSharedSignal = runtimeApi.gosxSubscribeSharedSignal || function() { return function() {}; };
+  var setSharedSignalValue = runtimeApi.setSharedSignalValue || function() {};
+  var gosxTextLayoutRevision = runtimeApi.gosxTextLayoutRevision || function() { return 0; };
+  var normalizeTextLayoutOverflow = runtimeApi.normalizeTextLayoutOverflow || function() { return "ellipsis"; };
+  var layoutBrowserText = runtimeApi.layoutBrowserText || function() { return null; };
+  var applyTextLayoutPresentation = runtimeApi.applyTextLayoutPresentation || function() {};
+  var onTextLayoutInvalidated = runtimeApi.onTextLayoutInvalidated || function() { return function() {}; };
 
-  // --- file 10 (runtime-scene-core.js) is concatenated next ---
+  // --- file 10 (runtime-scene-core.js) is concatenated next, followed by files 11-20 ---

@@ -2880,6 +2880,19 @@
     dispose: disposeManagedTextLayout,
   };
 
+  window.__gosx_runtime_api = {
+    setAttrValue,
+    setStyleValue,
+    emit,
+    gosxSubscribeSharedSignal,
+    setSharedSignalValue,
+    gosxTextLayoutRevision,
+    normalizeTextLayoutOverflow,
+    layoutBrowserText,
+    applyTextLayoutPresentation,
+    onTextLayoutInvalidated,
+  };
+
   const gosxEnvironmentListeners = new Set();
   const gosxDocumentListeners = new Set();
   const gosxPresentationRecordsByElement = new Map();
