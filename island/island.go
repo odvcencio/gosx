@@ -537,15 +537,22 @@ func (r *Renderer) BootstrapScript() gosx.Node {
 		// cost minimal — the script body is ~190 bytes before gzip.
 		if webgpuPath := r.selectedBootstrapFeaturePath("scene3d-webgpu"); webgpuPath != "" {
 			b.WriteByte('\n')
-			// NB: Go raw-string literal (backticks) doesn't process \x
-			// escapes, so the closing </script> is written as a regular
-			// double-quoted string. Historical bug from v0.17.16: using
-			// `\x3c/script>` inside a raw-string literal produced literal
-			// "\x3c/script>" in the HTML, which JavaScript then parsed as
-			// a syntax error at the end of the IIFE, silently dropping
-			// the entire inline script — so the WebGPU sub-chunk never
-			// loaded on any page.
-			b.WriteString(`<script>if(navigator.gpu){var s=document.createElement('script');s.defer=true;s.dataset.gosxScript='feature-scene3d-webgpu';s.src=`)
+			// Dynamically-inserted scripts are async-by-default even when
+			// .defer is set — so a naive implementation races the main
+			// scene3d chunk and usually wins, executing before
+			// window.__gosx_scene3d_api is defined. Setting
+			// s.async = false forces the browser to treat this
+			// dynamically-inserted script as an ordered-deferred script,
+			// which runs AFTER the parser-inserted defer scripts and so
+			// sees the main scene3d bundle's API already in place.
+			//
+			// NB: Go raw-string (backticks) doesn't process \x escapes,
+			// so the closing </script> must come from a double-quoted
+			// string — hence the split. Historical bug from v0.17.16:
+			// using `\x3c/script>` inside the raw-string literal produced
+			// a literal "\x3c/script>" in the HTML, which JS parsed as a
+			// syntax error, silently dropping the entire inline loader.
+			b.WriteString(`<script>if(navigator.gpu){var s=document.createElement('script');s.async=false;s.defer=true;s.dataset.gosxScript='feature-scene3d-webgpu';s.src=`)
 			b.WriteString(htmlJSStringLiteral(webgpuPath))
 			b.WriteString(";document.head.appendChild(s);}")
 			b.WriteString("\x3c/script>")
