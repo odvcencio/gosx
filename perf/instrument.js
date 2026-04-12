@@ -290,31 +290,127 @@
     configurable: true
   });
 
-  // --- 11. WebGL context introspection ---
-  // Exposed as a helper the metrics collector can call after scene mounts.
-  // Returns vendor, renderer, max texture size, and supported extensions.
+  // --- 11. GPU context introspection (WebGPU + WebGL2 + WebGL1) ---
+  // Reports which GPU tier the engine is actually using and what the
+  // browser supports, so the report can flag when a better tier is
+  // available but unused.
   window.__gosx_perf_webgl_info = function() {
+    // Browser-level capability detection — what the browser can provide,
+    // independent of what any canvas selected.
+    var caps = {
+      webgpuAvailable: typeof navigator !== "undefined" && !!navigator.gpu,
+      webgl2Available: false,
+      webgl1Available: false
+    };
+    try {
+      var probe = document.createElement("canvas");
+      caps.webgl2Available = !!probe.getContext("webgl2");
+    } catch (_e) {}
+    try {
+      var probe2 = document.createElement("canvas");
+      caps.webgl1Available = !!(probe2.getContext("webgl") || probe2.getContext("experimental-webgl"));
+    } catch (_e) {}
+
+    // Find the engine's canvas. Try known mount attributes first.
     var canvases = document.querySelectorAll("canvas");
     for (var i = 0; i < canvases.length; i++) {
-      var ctx = canvases[i].getContext("webgl2") || canvases[i].getContext("webgl");
-      if (!ctx) continue;
-      var dbg = ctx.getExtension("WEBGL_debug_renderer_info");
+      var c = canvases[i];
+
+      // Engine-provided tier hint (preferred — doesn't alter context type).
+      var hint = c.__gosx_scene_tier || c.getAttribute("data-gosx-scene-tier") || null;
+      if (hint === "webgpu") {
+        return {
+          tier: "webgpu",
+          version: "WebGPU",
+          vendor: "",
+          renderer: "(WebGPU canvas — details not available via DOM)",
+          maxTextureSize: 0,
+          caps: caps
+        };
+      }
+
+      // No hint — try reading existing WebGL context. getContext with the
+      // same type returns the existing context. Using a DIFFERENT type on
+      // a canvas that already has a context returns null without disturbing
+      // the existing context.
+      var ctx = null;
+      var contextType = "";
+      try {
+        ctx = c.getContext("webgl2");
+        if (ctx) contextType = "webgl2";
+      } catch (_e) {}
+      if (!ctx) {
+        try {
+          ctx = c.getContext("webgl");
+          if (ctx) contextType = "webgl1";
+        } catch (_e) {}
+      }
+      if (!ctx) {
+        // Canvas has a non-WebGL context (WebGPU or 2d). If hint wasn't
+        // set, we can't know for sure — guess WebGPU if available.
+        continue;
+      }
+
+      // Guard against null/invalid context state. getContextAttributes()
+      // can return null on lost contexts or unusual canvas states.
+      var attrs = {};
+      try {
+        var raw = ctx.getContextAttributes();
+        if (raw) attrs = raw;
+      } catch (_e) {}
+
+      var dbg = null;
+      try { dbg = ctx.getExtension("WEBGL_debug_renderer_info"); } catch (_e) {}
+
+      var info = {
+        tier: contextType,
+        version: "",
+        shadingLanguageVersion: "",
+        vendor: "",
+        renderer: "",
+        maxTextureSize: 0,
+        maxCubeMapSize: 0,
+        maxRenderbufferSize: 0,
+        maxVertexAttribs: 0,
+        maxCombinedTextureImageUnits: 0,
+        antialiasing: !!attrs.antialias,
+        preserveDrawingBuffer: !!attrs.preserveDrawingBuffer,
+        extensions: [],
+        caps: caps
+      };
+
+      try { info.version = ctx.getParameter(ctx.VERSION) || ""; } catch (_e) {}
+      try { info.shadingLanguageVersion = ctx.getParameter(ctx.SHADING_LANGUAGE_VERSION) || ""; } catch (_e) {}
+      try {
+        info.vendor = dbg ? ctx.getParameter(dbg.UNMASKED_VENDOR_WEBGL) : ctx.getParameter(ctx.VENDOR);
+      } catch (_e) {}
+      try {
+        info.renderer = dbg ? ctx.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : ctx.getParameter(ctx.RENDERER);
+      } catch (_e) {}
+      try { info.maxTextureSize = ctx.getParameter(ctx.MAX_TEXTURE_SIZE) || 0; } catch (_e) {}
+      try { info.maxCubeMapSize = ctx.getParameter(ctx.MAX_CUBE_MAP_TEXTURE_SIZE) || 0; } catch (_e) {}
+      try { info.maxRenderbufferSize = ctx.getParameter(ctx.MAX_RENDERBUFFER_SIZE) || 0; } catch (_e) {}
+      try { info.maxVertexAttribs = ctx.getParameter(ctx.MAX_VERTEX_ATTRIBS) || 0; } catch (_e) {}
+      try { info.maxCombinedTextureImageUnits = ctx.getParameter(ctx.MAX_COMBINED_TEXTURE_IMAGE_UNITS) || 0; } catch (_e) {}
+      try { info.extensions = ctx.getSupportedExtensions() || []; } catch (_e) {}
+
+      return info;
+    }
+
+    // No canvas matched WebGL — check if any canvas exists and WebGPU is
+    // available (likely using WebGPU since we couldn't attach a WebGL ctx).
+    if (canvases.length > 0 && caps.webgpuAvailable) {
       return {
-        version: ctx.getParameter(ctx.VERSION),
-        shadingLanguageVersion: ctx.getParameter(ctx.SHADING_LANGUAGE_VERSION),
-        vendor: dbg ? ctx.getParameter(dbg.UNMASKED_VENDOR_WEBGL) : ctx.getParameter(ctx.VENDOR),
-        renderer: dbg ? ctx.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : ctx.getParameter(ctx.RENDERER),
-        maxTextureSize: ctx.getParameter(ctx.MAX_TEXTURE_SIZE),
-        maxCubeMapSize: ctx.getParameter(ctx.MAX_CUBE_MAP_TEXTURE_SIZE),
-        maxRenderbufferSize: ctx.getParameter(ctx.MAX_RENDERBUFFER_SIZE),
-        maxVertexAttribs: ctx.getParameter(ctx.MAX_VERTEX_ATTRIBS),
-        maxCombinedTextureImageUnits: ctx.getParameter(ctx.MAX_COMBINED_TEXTURE_IMAGE_UNITS),
-        antialiasing: !!ctx.getContextAttributes().antialias,
-        preserveDrawingBuffer: !!ctx.getContextAttributes().preserveDrawingBuffer,
-        extensions: ctx.getSupportedExtensions() || []
+        tier: "webgpu",
+        version: "WebGPU",
+        vendor: "",
+        renderer: "(detected by elimination — no WebGL context on canvas)",
+        maxTextureSize: 0,
+        caps: caps
       };
     }
-    return null;
+
+    return { tier: "none", caps: caps, version: "", vendor: "", renderer: "", maxTextureSize: 0 };
   };
 
 })();

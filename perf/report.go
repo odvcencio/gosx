@@ -123,14 +123,58 @@ func FormatTable(r *Report) string {
 		}
 	}
 
-	// WebGL context info
+	// GPU context info — shows the tier actually in use and flags
+	// whether the engine is running on the best available tier.
 	if p.WebGL != nil {
-		b.WriteString("\n  WebGL Context\n")
-		b.WriteString(fmt.Sprintf("    %-24s%s\n", "Version", p.WebGL.Version))
-		b.WriteString(fmt.Sprintf("    %-24s%s\n", "Vendor", p.WebGL.Vendor))
-		b.WriteString(fmt.Sprintf("    %-24s%s\n", "Renderer", p.WebGL.Renderer))
-		b.WriteString(fmt.Sprintf("    %-24s%d\n", "Max texture size", p.WebGL.MaxTextureSize))
-		b.WriteString(fmt.Sprintf("    %-24s%d extensions\n", "Extensions", len(p.WebGL.Extensions)))
+		b.WriteString("\n  GPU Context\n")
+		tierLabel := p.WebGL.Tier
+		if p.WebGL.Caps != nil {
+			// Annotate the tier with whether it's the best available.
+			best := ""
+			if p.WebGL.Caps.WebGPUAvailable {
+				best = "webgpu"
+			} else if p.WebGL.Caps.WebGL2Available {
+				best = "webgl2"
+			} else if p.WebGL.Caps.WebGL1Available {
+				best = "webgl1"
+			}
+			if best != "" && best != tierLabel {
+				tierLabel = tierLabel + " (best available: " + best + ")"
+			} else if best != "" {
+				tierLabel = tierLabel + " ✓"
+			}
+		}
+		b.WriteString(fmt.Sprintf("    %-24s%s\n", "Tier", tierLabel))
+		if p.WebGL.Version != "" {
+			b.WriteString(fmt.Sprintf("    %-24s%s\n", "Version", p.WebGL.Version))
+		}
+		if p.WebGL.Vendor != "" {
+			b.WriteString(fmt.Sprintf("    %-24s%s\n", "Vendor", p.WebGL.Vendor))
+		}
+		if p.WebGL.Renderer != "" {
+			b.WriteString(fmt.Sprintf("    %-24s%s\n", "Renderer", p.WebGL.Renderer))
+		}
+		if p.WebGL.MaxTextureSize > 0 {
+			b.WriteString(fmt.Sprintf("    %-24s%d\n", "Max texture size", p.WebGL.MaxTextureSize))
+		}
+		if len(p.WebGL.Extensions) > 0 {
+			b.WriteString(fmt.Sprintf("    %-24s%d extensions\n", "Extensions", len(p.WebGL.Extensions)))
+		}
+		if p.WebGL.Caps != nil {
+			var avail []string
+			if p.WebGL.Caps.WebGPUAvailable {
+				avail = append(avail, "WebGPU")
+			}
+			if p.WebGL.Caps.WebGL2Available {
+				avail = append(avail, "WebGL2")
+			}
+			if p.WebGL.Caps.WebGL1Available {
+				avail = append(avail, "WebGL1")
+			}
+			if len(avail) > 0 {
+				b.WriteString(fmt.Sprintf("    %-24s%s\n", "Browser supports", strings.Join(avail, ", ")))
+			}
+		}
 	}
 
 	// Network summary (detail available via --waterfall)

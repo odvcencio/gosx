@@ -59,20 +59,31 @@ type LongTaskMetric struct {
 	DurationMs float64 `json:"durationMs"`
 }
 
-// WebGLInfo holds WebGL context introspection results.
+// WebGLInfo holds GPU context introspection results.
+// Tier is "webgpu" | "webgl2" | "webgl1" | "none".
 type WebGLInfo struct {
-	Version                     string   `json:"version"`
-	ShadingLanguageVersion      string   `json:"shadingLanguageVersion"`
-	Vendor                      string   `json:"vendor"`
-	Renderer                    string   `json:"renderer"`
-	MaxTextureSize              int      `json:"maxTextureSize"`
-	MaxCubeMapSize              int      `json:"maxCubeMapSize"`
-	MaxRenderbufferSize         int      `json:"maxRenderbufferSize"`
-	MaxVertexAttribs            int      `json:"maxVertexAttribs"`
-	MaxCombinedTextureImageUnits int     `json:"maxCombinedTextureImageUnits"`
-	Antialiasing                bool     `json:"antialiasing"`
-	PreserveDrawingBuffer       bool     `json:"preserveDrawingBuffer"`
-	Extensions                  []string `json:"extensions,omitempty"`
+	Tier                         string    `json:"tier"`
+	Version                      string    `json:"version"`
+	ShadingLanguageVersion       string    `json:"shadingLanguageVersion,omitempty"`
+	Vendor                       string    `json:"vendor"`
+	Renderer                     string    `json:"renderer"`
+	MaxTextureSize               int       `json:"maxTextureSize"`
+	MaxCubeMapSize               int       `json:"maxCubeMapSize,omitempty"`
+	MaxRenderbufferSize          int       `json:"maxRenderbufferSize,omitempty"`
+	MaxVertexAttribs             int       `json:"maxVertexAttribs,omitempty"`
+	MaxCombinedTextureImageUnits int       `json:"maxCombinedTextureImageUnits,omitempty"`
+	Antialiasing                 bool      `json:"antialiasing,omitempty"`
+	PreserveDrawingBuffer        bool      `json:"preserveDrawingBuffer,omitempty"`
+	Extensions                   []string  `json:"extensions,omitempty"`
+	Caps                         *GPUCaps  `json:"caps,omitempty"`
+}
+
+// GPUCaps reports browser-level GPU tier availability independent of what
+// any particular canvas ended up selecting.
+type GPUCaps struct {
+	WebGPUAvailable bool `json:"webgpuAvailable"`
+	WebGL2Available bool `json:"webgl2Available"`
+	WebGL1Available bool `json:"webgl1Available"`
 }
 
 // IslandMetric holds per-island hydration timing.
@@ -248,10 +259,11 @@ func CollectPageReport(d *Driver, url string) (*PageReport, error) {
 	}
 	pr.LongTaskCount = len(longTasks)
 
-	// WebGL info (best-effort, may return null if no canvas)
+	// GPU context info (tier + caps). Captured even when no canvas is
+	// present so the report can show browser capabilities.
 	var webgl WebGLInfo
 	err = d.Evaluate(`(typeof window.__gosx_perf_webgl_info === "function") ? window.__gosx_perf_webgl_info() : null`, &webgl)
-	if err == nil && webgl.Version != "" {
+	if err == nil && webgl.Tier != "" {
 		pr.WebGL = &webgl
 	}
 
