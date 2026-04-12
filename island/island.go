@@ -509,7 +509,7 @@ func (r *Renderer) BootstrapScript() gosx.Node {
 	b.WriteString(fmt.Sprintf(`<script data-gosx-script="bootstrap" data-gosx-bootstrap-mode="%s" src="%s"></script>`, mode, html.EscapeString(r.selectedBootstrapPath())))
 	if scene3dPath := r.selectedBootstrapFeaturePath("scene3d"); scene3dPath != "" {
 		b.WriteByte('\n')
-		b.WriteString(`<script async data-gosx-script="feature-scene3d" src="`)
+		b.WriteString(`<script defer data-gosx-script="feature-scene3d" src="`)
 		b.WriteString(html.EscapeString(scene3dPath))
 		b.WriteString("\">\x3c/script>")
 	}
