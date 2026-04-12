@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -11,6 +12,14 @@ import (
 )
 
 func cmdPerf() {
+	// Subcommand dispatch: `gosx perf compare a.json b.json`. Detected
+	// before the flag parser so the compare subcommand doesn't conflict
+	// with perf's main flag set.
+	if len(os.Args) > 2 && os.Args[2] == "compare" {
+		cmdPerfCompare()
+		return
+	}
+
 	fs := flag.NewFlagSet("perf", flag.ExitOnError)
 	frames := fs.Int("frames", 120, "scene3D frames to sample")
 	clickSel := fs.String("click", "", "CSS selector to click")
@@ -115,6 +124,47 @@ func cmdPerf() {
 		if !allPassed {
 			os.Exit(1)
 		}
+	}
+}
+
+// cmdPerfCompare implements `gosx perf compare baseline.json candidate.json`.
+// Reads two gosx perf --json reports, diffs the key metrics, and prints a
+// side-by-side table. Exits nonzero when any metric regresses beyond the
+// --threshold (default 5%).
+func cmdPerfCompare() {
+	fs := flag.NewFlagSet("perf compare", flag.ExitOnError)
+	threshold := fs.Float64("threshold", 5, "regression threshold percent (exit 1 if any metric moves worse by more than this)")
+	jsonOut := fs.Bool("json", false, "output as JSON")
+	// os.Args[2] is "compare"; os.Args[3..] are baseline, candidate, and flags.
+	fs.Parse(os.Args[3:])
+
+	if fs.NArg() != 2 {
+		fatal("usage: gosx perf compare <baseline.json> <candidate.json> [--threshold N] [--json]")
+	}
+
+	baseline, err := perf.LoadReport(fs.Arg(0))
+	if err != nil {
+		fatal("gosx perf compare: load baseline: %v", err)
+	}
+	candidate, err := perf.LoadReport(fs.Arg(1))
+	if err != nil {
+		fatal("gosx perf compare: load candidate: %v", err)
+	}
+
+	cmp := perf.CompareReports(baseline, candidate)
+
+	if *jsonOut {
+		enc, err := json.MarshalIndent(cmp, "", "  ")
+		if err != nil {
+			fatal("gosx perf compare: json: %v", err)
+		}
+		fmt.Println(string(enc))
+	} else {
+		fmt.Print(perf.FormatComparison(cmp, *threshold))
+	}
+
+	if perf.AnyRegression(cmp, *threshold) {
+		os.Exit(1)
 	}
 }
 

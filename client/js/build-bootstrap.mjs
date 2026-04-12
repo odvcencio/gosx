@@ -143,14 +143,27 @@ const outputs = [
       sourceFile("bootstrap-src/15-scene-draw-plan.js"),
       sourceFile("bootstrap-src/15a-scene-postfx-shared.js"),
       sourceFile("bootstrap-src/16-scene-webgl.js"),
-      sourceFile("bootstrap-src/16a-scene-webgpu.js"),
-      sourceFile("bootstrap-src/16b-scene-compute.js"),
+      // 16a-scene-webgpu.js + 16b-scene-compute.js are NOT here — they
+      // moved to bootstrap-feature-scene3d-webgpu.js so WebGL-only pages
+      // (Safari, Firefox on most platforms, ForceWebGL) don't have to
+      // parse ~136 KB of WebGPU code they'll never run. 16z holds the
+      // tiny stub + adapter probe so the WebGL mount path stays sync.
+      sourceFile("bootstrap-src/16z-scene-webgpu-probe.js"),
       sourceFile("bootstrap-src/17-scene-input.js"),
       sourceFile("bootstrap-src/18-scene-canvas.js"),
       sourceFile("bootstrap-src/19-scene-gltf.js"),
       sourceFile("bootstrap-src/19a-scene-animation.js"),
       sourceFile("bootstrap-src/20-scene-mount.js"),
       sourceFile("bootstrap-src/26d-feature-scene3d-suffix.js"),
+    ],
+  },
+  {
+    path: path.join(__dirname, "bootstrap-feature-scene3d-webgpu.js"),
+    sources: [
+      sourceFile("bootstrap-src/26e-feature-scene3d-webgpu-prefix.js"),
+      sourceFile("bootstrap-src/16a-scene-webgpu.js"),
+      sourceFile("bootstrap-src/16b-scene-compute.js"),
+      sourceFile("bootstrap-src/26e-feature-scene3d-webgpu-suffix.js"),
     ],
   },
 ].map((entry) => ({

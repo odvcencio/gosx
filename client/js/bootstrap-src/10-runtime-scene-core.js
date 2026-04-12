@@ -4852,4 +4852,23 @@
     sceneStateSprites,
     sceneTypedFloatArray,
     translateScenePointInto,
+
+    // PBR + shadow helpers from 16-scene-webgl.js, re-exported for the
+    // bootstrap-feature-scene3d-webgpu.js sub-feature chunk. These are
+    // function declarations, hoisted to the enclosing IIFE scope, so
+    // the literal captures them even though 16 lexically follows 10.
+    scenePBRDepthSort: typeof scenePBRDepthSort === "function" ? scenePBRDepthSort : undefined,
+    scenePBRObjectRenderPass: typeof scenePBRObjectRenderPass === "function" ? scenePBRObjectRenderPass : undefined,
+    scenePBRProjectionMatrix: typeof scenePBRProjectionMatrix === "function" ? scenePBRProjectionMatrix : undefined,
+    scenePBRViewMatrix: typeof scenePBRViewMatrix === "function" ? scenePBRViewMatrix : undefined,
+    sceneShadowLightSpaceMatrix: typeof sceneShadowLightSpaceMatrix === "function" ? sceneShadowLightSpaceMatrix : undefined,
+    sceneShadowComputeBounds: typeof sceneShadowComputeBounds === "function" ? sceneShadowComputeBounds : undefined,
+
+    // Post-fx helpers from 15a-scene-postfx-shared.js.
+    resolvePostFXFactor: typeof resolvePostFXFactor === "function" ? resolvePostFXFactor : undefined,
+    resolveShadowSize: typeof resolveShadowSize === "function" ? resolveShadowSize : undefined,
+
+    // Color helper from 11-scene-math.js (already visible, re-exported
+    // explicitly so the webgpu chunk has a stable lookup path).
+    sceneColorRGBA: typeof sceneColorRGBA === "function" ? sceneColorRGBA : undefined,
   };

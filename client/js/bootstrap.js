@@ -9096,6 +9096,18 @@
     sceneStateSprites,
     sceneTypedFloatArray,
     translateScenePointInto,
+
+    scenePBRDepthSort: typeof scenePBRDepthSort === "function" ? scenePBRDepthSort : undefined,
+    scenePBRObjectRenderPass: typeof scenePBRObjectRenderPass === "function" ? scenePBRObjectRenderPass : undefined,
+    scenePBRProjectionMatrix: typeof scenePBRProjectionMatrix === "function" ? scenePBRProjectionMatrix : undefined,
+    scenePBRViewMatrix: typeof scenePBRViewMatrix === "function" ? scenePBRViewMatrix : undefined,
+    sceneShadowLightSpaceMatrix: typeof sceneShadowLightSpaceMatrix === "function" ? sceneShadowLightSpaceMatrix : undefined,
+    sceneShadowComputeBounds: typeof sceneShadowComputeBounds === "function" ? sceneShadowComputeBounds : undefined,
+
+    resolvePostFXFactor: typeof resolvePostFXFactor === "function" ? resolvePostFXFactor : undefined,
+    resolveShadowSize: typeof resolveShadowSize === "function" ? resolveShadowSize : undefined,
+
+    sceneColorRGBA: typeof sceneColorRGBA === "function" ? sceneColorRGBA : undefined,
   };
 
   function sceneClamp(value, min, max) {
@@ -16292,40 +16304,9 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
     };
   }
 
-  var _webgpuAdapterProbe = null;  // null = not probed, false = unavailable, GPUAdapter = ready
-  var _webgpuAdapterReady = false;
-
-  if (typeof navigator !== "undefined" && navigator.gpu && typeof navigator.gpu.requestAdapter === "function") {
-    navigator.gpu.requestAdapter({ powerPreference: "high-performance" }).then(function(adapter) {
-      if (adapter) {
-        _webgpuAdapterProbe = adapter;
-        _webgpuAdapterReady = true;
-      } else {
-        _webgpuAdapterProbe = false;
-      }
-    }).catch(function() {
-      _webgpuAdapterProbe = false;
-    });
-  } else {
-    _webgpuAdapterProbe = false;
-  }
-
   function sceneWebGPUAvailable() {
-    return _webgpuAdapterReady && _webgpuAdapterProbe !== false && _webgpuAdapterProbe !== null;
-  }
-
-  function createSceneWebGPURendererOrFallback(canvas) {
-    if (!sceneWebGPUAvailable()) return null;
-    if (!canvas || typeof canvas.getContext !== "function") return null;
-
-    var renderer = null;
-    try {
-      renderer = createSceneWebGPURenderer(canvas);
-    } catch (e) {
-      console.warn("[gosx] WebGPU renderer creation failed:", e);
-      return null;
-    }
-    return renderer;
+    var probe = _externalProbe();
+    return probe.ready && probe.adapter !== false && probe.adapter !== null;
   }
 
   var SCENE_COMPUTE_PARTICLE_SOURCE = [

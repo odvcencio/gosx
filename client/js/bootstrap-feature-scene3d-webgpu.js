@@ -1,21 +1,40 @@
-  // WebGPU rendering backend for GoSX Scene3D.
-  //
-  // Parallel implementation of the PBR WebGL2 renderer (16-scene-webgl.js)
-  // using the WebGPU API. Provides Cook-Torrance BRDF with per-pixel
-  // lighting, shadow maps, fog, and post-processing. Points are rendered
-  // as instanced camera-facing quads since WebGPU has no gl_PointSize.
+(function() {
+  "use strict";
 
-  // -----------------------------------------------------------------------
-  // WGSL Shader Sources
-  // -----------------------------------------------------------------------
+  if (!window.__gosx_scene3d_api) {
+    console.warn("[gosx] scene3d-webgpu chunk loaded without main scene3d bundle");
+    return;
+  }
 
-  // -- Shared constants embedded in multiple shaders --
+  var sceneApi = window.__gosx_scene3d_api;
+  var runtimeApi = window.__gosx_runtime_api || {};
+
+  var sceneBool = sceneApi.sceneBool || function(v, d) { return v == null ? d : !!v; };
+  var sceneNumber = sceneApi.sceneNumber || function(v, d) { var n = Number(v); return Number.isFinite(n) ? n : d; };
+  var sceneColorRGBA = sceneApi.sceneColorRGBA || function() { return [0, 0, 0, 1]; };
+  var scenePointStyleCode = sceneApi.scenePointStyleCode || function() { return 0; };
+  var sceneRenderCamera = sceneApi.sceneRenderCamera || function(c) { return c; };
+  var scenePBRDepthSort = sceneApi.scenePBRDepthSort;
+  var scenePBRObjectRenderPass = sceneApi.scenePBRObjectRenderPass;
+  var scenePBRProjectionMatrix = sceneApi.scenePBRProjectionMatrix;
+  var scenePBRViewMatrix = sceneApi.scenePBRViewMatrix;
+  var sceneShadowLightSpaceMatrix = sceneApi.sceneShadowLightSpaceMatrix;
+  var sceneShadowComputeBounds = sceneApi.sceneShadowComputeBounds;
+  var resolvePostFXFactor = sceneApi.resolvePostFXFactor || function() { return 1; };
+  var resolveShadowSize = sceneApi.resolveShadowSize || function(s) { return s; };
+
+  function _externalProbe() {
+    if (typeof window.__gosx_scene3d_webgpu_probe === "function") {
+      return window.__gosx_scene3d_webgpu_probe();
+    }
+    return { adapter: null, ready: false };
+  }
+
   var WGSL_COMMON_CONSTANTS = [
     "const PI: f32 = 3.14159265359;",
     "const MAX_LIGHTS: u32 = 8u;",
   ].join("\n");
 
-  // -- Frame-level uniform structures --
   var WGSL_FRAME_STRUCTS = [
     "struct Light {",
     "    position: vec4f,",       // xyz = position, w = type (0=ambient,1=dir,2=point)
@@ -67,7 +86,6 @@
     "};",
   ].join("\n");
 
-  // -- PBR material uniform structure --
   var WGSL_MATERIAL_STRUCT = [
     "struct MaterialUniforms {",
     "    albedo: vec3f,",
@@ -86,10 +104,6 @@
     "    _pad1: u32,",
     "};",
   ].join("\n");
-
-  // -----------------------------------------------------------------------
-  // PBR Vertex Shader (WGSL)
-  // -----------------------------------------------------------------------
 
   var WGSL_PBR_VERTEX = [
     WGSL_FRAME_STRUCTS,
@@ -125,10 +139,6 @@
     "    return out;",
     "}",
   ].join("\n");
-
-  // -----------------------------------------------------------------------
-  // PBR Fragment Shader (WGSL)
-  // -----------------------------------------------------------------------
 
   var WGSL_PBR_FRAGMENT = [
     WGSL_COMMON_CONSTANTS,
@@ -388,10 +398,6 @@
     "}",
   ].join("\n");
 
-  // -----------------------------------------------------------------------
-  // Shadow Depth Shader (WGSL)
-  // -----------------------------------------------------------------------
-
   var WGSL_SHADOW_VERTEX = [
     "struct ShadowFrameUniforms {",
     "    lightViewProjection: mat4x4f,",
@@ -404,14 +410,9 @@
     "}",
   ].join("\n");
 
-  // Shadow fragment shader is empty -- depth-only pass.
   var WGSL_SHADOW_FRAGMENT = [
     "@fragment fn fragmentMain() {}",
   ].join("\n");
-
-  // -----------------------------------------------------------------------
-  // Points Vertex Shader (WGSL) -- instanced billboard quads
-  // -----------------------------------------------------------------------
 
   var WGSL_POINTS_VERTEX = [
     WGSL_FRAME_STRUCTS,
@@ -506,10 +507,6 @@
     "}",
   ].join("\n");
 
-  // -----------------------------------------------------------------------
-  // Points Fragment Shader (WGSL)
-  // -----------------------------------------------------------------------
-
   var WGSL_POINTS_FRAGMENT = [
     "struct PointsUniforms {",
     "    modelMatrix: mat4x4f,",
@@ -558,10 +555,6 @@
     "    return vec4f(color, alpha);",
     "}",
   ].join("\n");
-
-  // -----------------------------------------------------------------------
-  // Post-processing shaders (WGSL)
-  // -----------------------------------------------------------------------
 
   var WGSL_POST_VERTEX = [
     "struct VertexOutput {",
@@ -742,16 +735,10 @@
     "}",
   ].join("\n");
 
-  // -----------------------------------------------------------------------
-  // Buffer / Uniform Helpers
-  // -----------------------------------------------------------------------
-
-  // Align a byte count up to the specified alignment (typically 256 for uniform buffers).
   function wgpuAlignUp(size, alignment) {
     return Math.ceil(size / alignment) * alignment;
   }
 
-  // Create a GPU buffer with the given usage flags and initial data (or size).
   function wgpuCreateBuffer(device, usage, dataOrSize) {
     var size;
     var mappedAtCreation = false;
@@ -773,7 +760,6 @@
     return buffer;
   }
 
-  // Write data into an existing buffer. If the buffer is too small, recreate it.
   function wgpuEnsureBufferData(device, existingBuffer, usage, data) {
     var needed = wgpuAlignUp(Math.max(data.byteLength, 4), 4);
     if (existingBuffer && existingBuffer.size >= needed) {
@@ -784,18 +770,9 @@
     return wgpuCreateBuffer(device, usage, data);
   }
 
-  // -----------------------------------------------------------------------
-  // Pipeline Cache
-  // -----------------------------------------------------------------------
-
-  // Build a cache key from pipeline configuration parameters.
   function wgpuPipelineKey(shaderVariant, blendMode, depthWrite, targetFormat, depthFormat) {
     return shaderVariant + "|" + blendMode + "|" + (depthWrite ? "1" : "0") + "|" + targetFormat + "|" + (depthFormat || "");
   }
-
-  // -----------------------------------------------------------------------
-  // Texture Management
-  // -----------------------------------------------------------------------
 
   function wgpuLoadTexture(device, url, cache) {
     if (!cache) return null;
@@ -803,7 +780,6 @@
     if (!key) return null;
     if (cache.has(key)) return cache.get(key);
 
-    // Placeholder: 1x1 white pixel.
     var placeholderTex = device.createTexture({
       size: [1, 1, 1],
       format: "rgba8unorm",
@@ -829,7 +805,6 @@
           format: "rgba8unorm",
           usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT,
         });
-        // Use createImageBitmap for copyExternalImageToTexture.
         if (typeof createImageBitmap === "function") {
           createImageBitmap(image).then(function(bitmap) {
             device.queue.copyExternalImageToTexture(
@@ -857,10 +832,6 @@
 
     return record;
   }
-
-  // -----------------------------------------------------------------------
-  // Bind Group Layout Definitions
-  // -----------------------------------------------------------------------
 
   function wgpuCreateFrameBindGroupLayout(device) {
     return device.createBindGroupLayout({
@@ -951,11 +922,6 @@
     });
   }
 
-  // -----------------------------------------------------------------------
-  // Pipeline Creation
-  // -----------------------------------------------------------------------
-
-  // PBR vertex buffer layout (position, normal, uv, tangent).
   var WGPU_PBR_VERTEX_LAYOUT = [
     { arrayStride: 12, stepMode: "vertex", attributes: [{ format: "float32x3", offset: 0, shaderLocation: 0 }] },
     { arrayStride: 12, stepMode: "vertex", attributes: [{ format: "float32x3", offset: 0, shaderLocation: 1 }] },
@@ -963,7 +929,6 @@
     { arrayStride: 16, stepMode: "vertex", attributes: [{ format: "float32x4", offset: 0, shaderLocation: 3 }] },
   ];
 
-  // Shadow vertex buffer layout (position only).
   var WGPU_SHADOW_VERTEX_LAYOUT = [
     { arrayStride: 12, stepMode: "vertex", attributes: [{ format: "float32x3", offset: 0, shaderLocation: 0 }] },
   ];
@@ -1073,10 +1038,6 @@
     });
   }
 
-  // -----------------------------------------------------------------------
-  // Shadow Resources
-  // -----------------------------------------------------------------------
-
   function wgpuCreateShadowMap(device, size) {
     var texture = device.createTexture({
       size: [size, size, 1],
@@ -1085,10 +1046,6 @@
     });
     return { texture: texture, view: texture.createView(), size: size };
   }
-
-  // -----------------------------------------------------------------------
-  // Post-Processing Manager (WebGPU)
-  // -----------------------------------------------------------------------
 
   function wgpuCreatePostProcessor(device, targetFormat) {
     var sceneTex = null;
@@ -1108,12 +1065,10 @@
 
     var linearSampler = device.createSampler({ magFilter: "linear", minFilter: "linear" });
 
-    // Lazily compiled pipelines and layouts.
     var pipelines = {};
     var postParamsLayout = null;
     var bloomCompositeLayout = null;
     var postBlitLayout = null;
-    // Uniform buffers for post params (reused each frame).
     var postParamBuffers = {};
 
     function getPostParamsLayout() {
@@ -1152,7 +1107,6 @@
 
     function ensureFBOs(width, height) {
       if (width === currentWidth && height === currentHeight && sceneTex) return;
-      // Destroy old.
       if (sceneTex) sceneTex.destroy();
       if (auxTex) auxTex.destroy();
       if (depthTex) depthTex.destroy();
@@ -1173,11 +1127,6 @@
       currentHeight = height;
     }
 
-    // Lazily (re)allocate the bloom ping-pong pair at a specific resolution.
-    // Called from inside the bloom effect case with dims derived from
-    // effect.scale, so Bloom.Scale reaches the WebGPU backend at parity with
-    // the WebGL backend. Keeps the textures cached across frames and only
-    // tears them down when the target resolution changes.
     function ensureBloomPingPong(w, h) {
       if (w === pingPongWidth && h === pingPongHeight && pingPongA) return;
       if (pingPongA) pingPongA.destroy();
@@ -1241,9 +1190,6 @@
               break;
             }
             case SCENE_POST_BLOOM: {
-              // Bloom ping-pong resolution is scaledW/H * Bloom.Scale.
-              // Zero / out-of-range scale falls back to 0.5 (v0.14.0 default),
-              // matching the WebGL helper in applyBloom.
               var bloomScale = (effect.scale > 0 && effect.scale <= 1) ? effect.scale : 0.5;
               var halfW = Math.max(1, Math.floor(scaledW * bloomScale));
               var halfH = Math.max(1, Math.floor(scaledH * bloomScale));
@@ -1252,7 +1198,6 @@
               var radius = sceneNumber(effect.radius, 5.0);
               var intensity = sceneNumber(effect.intensity, 0.5);
 
-              // 1. Bright pass -> pingPongA.
               var brightPipeline = getPipeline("bloomBright", WGSL_POST_BLOOM_BRIGHT_FRAGMENT, getPostParamsLayout());
               var brightBuf = getParamBuffer("bloomBright", 16);
               device.queue.writeBuffer(brightBuf, 0, new Float32Array([threshold, 0, 0, 0]));
@@ -1266,7 +1211,6 @@
               });
               fullscreenPass(encoder, brightPipeline, brightBG, pingPongAView);
 
-              // 2. Horizontal blur: pingPongA -> pingPongB.
               var blurPipeline = getPipeline("blur", WGSL_POST_BLUR_FRAGMENT, getPostParamsLayout());
               var blurBuf = getParamBuffer("bloomBlurH", 16);
               device.queue.writeBuffer(blurBuf, 0, new Float32Array([1.0, 0.0, radius, 0]));
@@ -1280,7 +1224,6 @@
               });
               fullscreenPass(encoder, blurPipeline, blurBGH, pingPongBView);
 
-              // 3. Vertical blur: pingPongB -> pingPongA.
               var blurBufV = getParamBuffer("bloomBlurV", 16);
               device.queue.writeBuffer(blurBufV, 0, new Float32Array([0.0, 1.0, radius, 0]));
               var blurBGV = device.createBindGroup({
@@ -1293,7 +1236,6 @@
               });
               fullscreenPass(encoder, blurPipeline, blurBGV, pingPongAView);
 
-              // 4. Composite: scene + bloom -> output.
               var compPipeline = getPipeline("bloomComposite", WGSL_POST_BLOOM_COMPOSITE_FRAGMENT, getBloomCompositeLayout());
               var compBuf = getParamBuffer("bloomComposite", 16);
               device.queue.writeBuffer(compBuf, 0, new Float32Array([intensity, 0, 0, 0]));
@@ -1353,7 +1295,6 @@
           }
         }
 
-        // If no effects matched or we need a final blit.
         if (currentTexView !== finalView) {
           var blitBG = device.createBindGroup({
             layout: getPostBlitLayout(),
@@ -1384,26 +1325,19 @@
     };
   }
 
-  // -----------------------------------------------------------------------
-  // WebGPU Renderer
-  // -----------------------------------------------------------------------
-
   function createSceneWebGPURenderer(canvas) {
     if (typeof navigator === "undefined" || !navigator.gpu) return null;
     if (typeof canvas.getContext !== "function") return null;
 
-    // Attempt to obtain a WebGPU context synchronously.
     var gpuCtx = canvas.getContext("webgpu");
     if (!gpuCtx) return null;
 
-    // Async device initialization state.
     var device = null;
     var adapter = null;
     var initFailed = false;
     var initStarted = false;
     var targetFormat = "bgra8unorm";
 
-    // GPU resources (initialized after device is ready).
     var frameBindGroupLayout = null;
     var materialBindGroupLayout = null;
     var pointsBindGroupLayout = null;
@@ -1418,13 +1352,10 @@
     var pointsVertexModule = null;
     var pointsFragmentModule = null;
 
-    // Pipeline cache.
     var pipelineCache = {};
 
-    // Shadow resources.
     var shadowSlots = [null, null];
 
-    // Persistent GPU buffers.
     var frameUniformBuffer = null;
     var lightStorageBuffer = null;
     var fogUniformBuffer = null;
@@ -1436,41 +1367,32 @@
     var uvBuffer = null;
     var tangentBuffer = null;
 
-    // Points buffers.
     var pointsUniformBuffer = null;
     var pointsParticleBuffer = null;
     var computeParticleSystems = new Map();
     var lastComputeParticleTimeSeconds = null;
 
-    // Shadow pass buffer.
     var shadowPositionBuffer = null;
     var shadowFrameBuffer = null;
 
-    // Depth texture for main render pass.
     var mainDepthTexture = null;
     var mainDepthView = null;
     var mainDepthWidth = 0;
     var mainDepthHeight = 0;
 
-    // 1x1 dummy depth texture for shadow map bind group when no shadows.
     var dummyShadowTex = null;
     var dummyShadowView = null;
 
-    // Default sampler for materials.
     var linearSampler = null;
     var comparisonSampler = null;
 
-    // Texture cache.
     var textureCache = new Map();
 
-    // 1x1 white placeholder texture (for unbound material maps).
     var placeholderTex = null;
     var placeholderView = null;
 
-    // Post-processor.
     var postProcessor = null;
 
-    // Scratch Float32Arrays.
     var scratchViewMatrix = new Float32Array(16);
     var scratchProjMatrix = new Float32Array(16);
     var pointsIdentityMatrix = new Float32Array([
@@ -1515,7 +1437,6 @@
       return buf.subarray(0, length);
     }
 
-    // Start async device initialization.
     function startInit() {
       if (initStarted) return;
       initStarted = true;
@@ -1528,14 +1449,12 @@
         if (!d) { initFailed = true; return; }
         device = d;
 
-        // Handle device loss.
         device.lost.then(function(info) {
           console.warn("[gosx] WebGPU device lost:", info.message);
           device = null;
           initFailed = true;
         });
 
-        // Configure the canvas context.
         targetFormat = navigator.gpu.getPreferredCanvasFormat();
         gpuCtx.configure({
           device: device,
@@ -1543,13 +1462,11 @@
           alphaMode: "premultiplied",
         });
 
-        // Create bind group layouts.
         frameBindGroupLayout = wgpuCreateFrameBindGroupLayout(device);
         materialBindGroupLayout = wgpuCreateMaterialBindGroupLayout(device);
         pointsBindGroupLayout = wgpuCreatePointsBindGroupLayout(device);
         shadowBindGroupLayout = wgpuCreateShadowBindGroupLayout(device);
 
-        // Pipeline layouts.
         pbrPipelineLayout = device.createPipelineLayout({
           bindGroupLayouts: [frameBindGroupLayout, materialBindGroupLayout],
         });
@@ -1557,7 +1474,6 @@
           bindGroupLayouts: [frameBindGroupLayout, materialBindGroupLayout, pointsBindGroupLayout],
         });
 
-        // Compile shader modules.
         pbrVertexModule = device.createShaderModule({ label: "pbr-vert", code: WGSL_PBR_VERTEX });
         pbrFragmentModule = device.createShaderModule({ label: "pbr-frag", code: WGSL_PBR_FRAGMENT });
         shadowVertexModule = device.createShaderModule({ label: "shadow-vert", code: WGSL_SHADOW_VERTEX });
@@ -1565,10 +1481,7 @@
         pointsVertexModule = device.createShaderModule({ label: "points-vert", code: WGSL_POINTS_VERTEX });
         pointsFragmentModule = device.createShaderModule({ label: "points-frag", code: WGSL_POINTS_FRAGMENT });
 
-        // Create persistent uniform buffers.
-        // FrameUniforms: 2*mat4 + vec3 + u32 + 2*f32 + 2*u32 = 128+16+16 = ~160 bytes.
         frameUniformBuffer = device.createBuffer({ size: 256, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
-        // 8 lights * 64 bytes = 512 bytes.
         lightStorageBuffer = device.createBuffer({ size: 512, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
         fogUniformBuffer = device.createBuffer({ size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
         envUniformBuffer = device.createBuffer({ size: 48, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
@@ -1577,7 +1490,6 @@
         shadowFrameBuffer = device.createBuffer({ size: 64, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
         pointsUniformBuffer = device.createBuffer({ size: 128, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
 
-        // Create samplers.
         linearSampler = device.createSampler({
           magFilter: "linear",
           minFilter: "linear",
@@ -1591,7 +1503,6 @@
           minFilter: "linear",
         });
 
-        // Create 1x1 dummy shadow depth texture.
         dummyShadowTex = device.createTexture({
           size: [1, 1, 1],
           format: "depth24plus",
@@ -1599,7 +1510,6 @@
         });
         dummyShadowView = dummyShadowTex.createView();
 
-        // Clear the dummy shadow texture to depth 1.0.
         var initEncoder = device.createCommandEncoder();
         initEncoder.beginRenderPass({
           colorAttachments: [],
@@ -1612,7 +1522,6 @@
         }).end();
         device.queue.submit([initEncoder.finish()]);
 
-        // Placeholder texture.
         placeholderTex = device.createTexture({
           size: [1, 1, 1],
           format: "rgba8unorm",
@@ -1632,7 +1541,6 @@
       });
     }
 
-    // Ensure main depth texture matches canvas size.
     function ensureMainDepth(width, height) {
       if (mainDepthTexture && mainDepthWidth === width && mainDepthHeight === height) return;
       if (mainDepthTexture) mainDepthTexture.destroy();
@@ -1646,7 +1554,6 @@
       mainDepthHeight = height;
     }
 
-    // Get or create a PBR pipeline for the given blend mode.
     function getPBRPipeline(blendMode, depthWrite) {
       var key = wgpuPipelineKey("pbr", blendMode, depthWrite, targetFormat, "depth24plus");
       if (pipelineCache[key]) return pipelineCache[key];
@@ -1655,7 +1562,6 @@
       return pipeline;
     }
 
-    // Get or create a shadow pipeline.
     var shadowPipeline = null;
     function getShadowPipeline() {
       if (shadowPipeline) return shadowPipeline;
@@ -1663,7 +1569,6 @@
       return shadowPipeline;
     }
 
-    // Get or create a points pipeline for the given blend mode.
     function getPointsPipeline(blendMode, depthWrite) {
       var key = wgpuPipelineKey("points", blendMode, depthWrite, targetFormat, "depth24plus");
       if (pipelineCache[key]) return pipelineCache[key];
@@ -1735,25 +1640,12 @@
       return records;
     }
 
-    // -----------------------------------------------------------------------
-    // Uniform upload helpers
-    // -----------------------------------------------------------------------
-
     function uploadFrameUniforms(camera, width, height, toneMap) {
       var cam = sceneRenderCamera(camera);
       var aspect = Math.max(0.0001, width / Math.max(1, height));
       scenePBRViewMatrix(cam, scratchViewMatrix);
       scenePBRProjectionMatrix(cam.fov, aspect, cam.near, cam.far, scratchProjMatrix);
 
-      // FrameUniforms layout (std140):
-      // mat4x4f viewMatrix:  0  (64 bytes)
-      // mat4x4f projMatrix:  64 (64 bytes)
-      // vec3f cameraPos:     128 (12 bytes)
-      // u32 lightCount:      140 (4 bytes)
-      // f32 viewportWidth:   144 (4 bytes)
-      // f32 viewportHeight:  148 (4 bytes)
-      // u32 toneMap:         152 (4 bytes)
-      // u32 _pad:            156 (4 bytes)
       var data = new ArrayBuffer(160);
       var f = new Float32Array(data);
       var u = new Uint32Array(data);
@@ -1762,7 +1654,6 @@
       f[32] = cam.x;                         // cameraPos.x
       f[33] = cam.y;                         // cameraPos.y
       f[34] = -cam.z;                        // cameraPos.z (negated per convention)
-      // lightCount set below in uploadLights
       f[36] = width;                          // viewportWidth
       f[37] = height;                         // viewportHeight
       u[38] = toneMap ? 1 : 0;               // toneMap
@@ -1776,11 +1667,9 @@
       var lightArray = Array.isArray(lights) ? lights : [];
       var count = Math.min(lightArray.length, 8);
 
-      // Write lightCount into frame uniform buffer at byte offset 140.
       var countBuf = new Uint32Array([count]);
       device.queue.writeBuffer(frameUniformBuffer, 140, countBuf);
 
-      // Each light: 4 * vec4f = 64 bytes.
       var lightData = new Float32Array(8 * 16);
       var colorCache = {};
 
@@ -1792,19 +1681,16 @@
         else if (kind === "directional") lightType = 1;
 
         var base = i * 16;
-        // position (xyz) + type (w, stored as float, cast to u32 in WGSL)
         lightData[base + 0] = sceneNumber(light.x, 0);
         lightData[base + 1] = sceneNumber(light.y, 0);
         lightData[base + 2] = sceneNumber(light.z, 0);
         lightData[base + 3] = lightType;
 
-        // direction (xyz) + intensity (w)
         lightData[base + 4] = sceneNumber(light.directionX, 0);
         lightData[base + 5] = sceneNumber(light.directionY, -1);
         lightData[base + 6] = sceneNumber(light.directionZ, 0);
         lightData[base + 7] = sceneNumber(light.intensity, 1);
 
-        // color (rgb) + range (a)
         var colorKey = light.color;
         var lc = typeof colorKey === "string" && colorCache[colorKey];
         if (!lc) {
@@ -1816,7 +1702,6 @@
         lightData[base + 10] = lc[2];
         lightData[base + 11] = sceneNumber(light.range, 0);
 
-        // params: decay, shadowBias, castShadow, unused
         lightData[base + 12] = sceneNumber(light.decay, 2);
         lightData[base + 13] = sceneNumber(light.shadowBias, 0.005);
         lightData[base + 14] = light.castShadow ? 1.0 : 0.0;
@@ -1831,7 +1716,6 @@
       var fogDensity = sceneNumber(env.fogDensity, 0);
       var fogColorRGBA = sceneColorRGBA(env.fogColor, [0.5, 0.5, 0.5, 1]);
 
-      // FogUniforms: vec3f fogColor(12) + f32 density(4) + u32 hasFog(4) + pad(12) = 32 bytes.
       var data = new ArrayBuffer(32);
       var f = new Float32Array(data);
       var u = new Uint32Array(data);
@@ -1852,7 +1736,6 @@
       var skyColorRGBA = sceneColorRGBA(env.skyColor, [0.88, 0.94, 1, 1]);
       var groundColorRGBA = sceneColorRGBA(env.groundColor, [0.12, 0.16, 0.22, 1]);
 
-      // EnvUniforms: vec3f + f32 + vec3f + f32 + vec3f + f32 = 48 bytes.
       var data = new Float32Array(12);
       data[0] = ambientColorRGBA[0]; data[1] = ambientColorRGBA[1]; data[2] = ambientColorRGBA[2];
       data[3] = sceneNumber(env.ambientIntensity, 0);
@@ -1865,7 +1748,6 @@
 
     function uploadShadowUniforms(shadowLightMatrices, shadowLightIndices, lights) {
       var lightArray = Array.isArray(lights) ? lights : [];
-      // ShadowUniforms: mat4(64) + mat4(64) + 6*u32(24) + pad(8) = 160. Round up to 256.
       var data = new ArrayBuffer(160);
       var f = new Float32Array(data);
       var u = new Uint32Array(data);
@@ -1905,7 +1787,6 @@
       var mat = material || {};
       var albedoRGBA = sceneColorRGBA(mat.color, [0.8, 0.8, 0.8, 1]);
 
-      // MaterialUniforms: vec3f(12) + f32 + f32 + f32 + f32 + 8*u32(32) = 64 bytes.
       var data = new ArrayBuffer(64);
       var f = new Float32Array(data);
       var u = new Uint32Array(data);
@@ -1916,12 +1797,6 @@
       f[5] = sceneNumber(mat.emissive, 0);
       f[6] = clamp01(sceneNumber(mat.opacity, 1));
       u[7] = mat.unlit ? 1 : 0;
-
-      // Texture presence flags -- filled in by createMaterialBindGroup.
-      // Left as 0 here, will be set when bind group is created.
-      // u[8..13] = has*Map flags
-      // u[14] = receiveShadow (set per-object)
-      // u[15] = pad
 
       device.queue.writeBuffer(materialUniformBuffer, 0, new Float32Array(data));
     }
@@ -1930,7 +1805,6 @@
       var mat = material || {};
       var albedoRGBA = sceneColorRGBA(mat.color, [0.8, 0.8, 0.8, 1]);
 
-      // Build material data buffer.
       var data = new ArrayBuffer(64);
       var f = new Float32Array(data);
       var u = new Uint32Array(data);
@@ -1942,7 +1816,6 @@
       f[6] = clamp01(sceneNumber(mat.opacity, 1));
       u[7] = mat.unlit ? 1 : 0;
 
-      // Texture records.
       var textureMaps = [
         { prop: "texture",      index: 8 },
         { prop: "normalMap",    index: 9 },
@@ -1966,7 +1839,6 @@
 
       device.queue.writeBuffer(materialUniformBuffer, 0, new Float32Array(data));
 
-      // Create bind group with texture views and sampler.
       return device.createBindGroup({
         layout: materialBindGroupLayout,
         entries: [
@@ -2002,10 +1874,6 @@
       });
     }
 
-    // -----------------------------------------------------------------------
-    // Draw list construction
-    // -----------------------------------------------------------------------
-
     function buildDrawList(bundle) {
       var objects = Array.isArray(bundle && bundle.meshObjects) ? bundle.meshObjects : [];
       var materials = Array.isArray(bundle.materials) ? bundle.materials : [];
@@ -2030,15 +1898,10 @@
       return { opaque: opaque, alpha: alpha, additive: additive };
     }
 
-    // -----------------------------------------------------------------------
-    // Shadow pass
-    // -----------------------------------------------------------------------
-
     function renderShadowPass(encoder, lightMatrix, bundle, shadowResource) {
       var sp = getShadowPipeline();
       if (!sp) return;
 
-      // Upload light space matrix.
       device.queue.writeBuffer(shadowFrameBuffer, 0, lightMatrix);
 
       var shadowBG = device.createBindGroup({
@@ -2082,10 +1945,6 @@
       pass.end();
     }
 
-    // -----------------------------------------------------------------------
-    // PBR object drawing
-    // -----------------------------------------------------------------------
-
     function drawPBRObjects(pass, objectList, bundle, materials, frameBindGroup) {
       var lastMaterialIndex = -1;
       var lastReceiveShadow = null;
@@ -2096,7 +1955,6 @@
         var mat = materials[matIndex] || null;
         var receiveShadow = !!obj.receiveShadow;
 
-        // Recreate material bind group when material or receiveShadow changes.
         if (matIndex !== lastMaterialIndex || receiveShadow !== lastReceiveShadow) {
           var matBG = createMaterialBindGroup(mat, receiveShadow);
           pass.setBindGroup(1, matBG);
@@ -2107,17 +1965,14 @@
         var offset = obj.vertexOffset;
         var count = obj.vertexCount;
 
-        // Positions.
         var positions = sliceToFloat32(bundle.worldMeshPositions, offset, count, 3, "positions");
         positionBuffer = wgpuEnsureBufferData(device, positionBuffer, GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, positions);
         pass.setVertexBuffer(0, positionBuffer);
 
-        // Normals.
         var normals = sliceToFloat32(bundle.worldMeshNormals, offset, count, 3, "normals");
         normalBuffer = wgpuEnsureBufferData(device, normalBuffer, GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, normals);
         pass.setVertexBuffer(1, normalBuffer);
 
-        // UVs.
         if (bundle.worldMeshUVs) {
           var uvs = sliceToFloat32(bundle.worldMeshUVs, offset, count, 2, "uvs");
           uvBuffer = wgpuEnsureBufferData(device, uvBuffer, GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, uvs);
@@ -2128,12 +1983,10 @@
         }
         pass.setVertexBuffer(2, uvBuffer);
 
-        // Tangents.
         if (bundle.worldMeshTangents) {
           var tangents = sliceToFloat32(bundle.worldMeshTangents, offset, count, 4, "tangents");
           tangentBuffer = wgpuEnsureBufferData(device, tangentBuffer, GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, tangents);
         } else {
-          // Default tangent: (1, 0, 0, 1).
           var defTangents = ensureScratch("tangents", count * 4);
           for (var ti = 0; ti < count; ti++) {
             defTangents[ti * 4] = 1;
@@ -2148,10 +2001,6 @@
         pass.draw(count);
       }
     }
-
-    // -----------------------------------------------------------------------
-    // Points drawing (instanced billboard quads)
-    // -----------------------------------------------------------------------
 
     function drawPointsEntries(pass, bundle, cam, timeSeconds) {
       var pointsArray = Array.isArray(bundle.points) ? bundle.points : [];
@@ -2170,7 +2019,6 @@
         var count = sceneNumber(entry.count, 0);
         if (count <= 0) continue;
 
-        // Compute model matrix (same logic as WebGL2 backend).
         var px = sceneNumber(entry.x, 0);
         var py = sceneNumber(entry.y, 0);
         var pz = sceneNumber(entry.z, 0);
@@ -2213,9 +2061,6 @@
           _pointsModelMat[3] = 0;         _pointsModelMat[7] = 0;                        _pointsModelMat[11] = 0;                        _pointsModelMat[15] = 1;
         }
 
-        // Build PointsUniforms buffer.
-        // Layout: mat4x4f(64) + f32 defaultSize(4) + vec3f defaultColor(12) + 4*u32(16) + f32 opacity(4) +
-        //         u32 hasFog(4) + f32 fogDensity(4) + vec3f fogColor(12) = 120 -> align to 128.
         var puData = new ArrayBuffer(128);
         var puF = new Float32Array(puData);
         var puU = new Uint32Array(puData);
@@ -2237,7 +2082,6 @@
         puF[28] = fogColorRGBA[1];
         puF[29] = fogColorRGBA[2];
 
-        // Cache particle typed arrays on entry.
         if (!entry._cachedPos && Array.isArray(entry.positions) && entry.positions.length >= count * 3) {
           entry._cachedPos = new Float32Array(entry.positions);
         }
@@ -2277,8 +2121,6 @@
 
         device.queue.writeBuffer(pointsUniformBuffer, 0, new Float32Array(puData));
 
-        // Build particle instance storage buffer.
-        // Each particle: vec3f position(12) + f32 size(4) + vec4f color(16) = 32 bytes.
         var particleData = new Float32Array(count * 8);
         for (var pi = 0; pi < count; pi++) {
           var base = pi * 8;
@@ -2313,7 +2155,6 @@
           ],
         });
 
-        // Select pipeline based on blend mode.
         var blendMode = typeof entry.blendMode === "string" ? entry.blendMode.toLowerCase() : "";
         var depthWrite = entry.depthWrite !== false;
         var validBlend = blendMode === "additive" || blendMode === "alpha" ? blendMode : "opaque";
@@ -2383,10 +2224,6 @@
       }
     }
 
-    // -----------------------------------------------------------------------
-    // Main render function
-    // -----------------------------------------------------------------------
-
     function render(bundle, viewport) {
       if (!device) {
         startInit();
@@ -2408,27 +2245,20 @@
       var height = canvas.height;
       if (width <= 0 || height <= 0) return;
 
-      // Opt-in perf instrumentation. Mirrors the WebGL renderer: when
-      // window.__gosx_scene3d_perf is truthy, emit performance.mark +
-      // measure pairs so a PerformanceObserver (installed by gosx perf's
-      // instrument.js) can collect per-frame wall-clock durations.
       var perfEnabled = typeof window !== "undefined" && window.__gosx_scene3d_perf === true;
       if (perfEnabled) {
         performance.mark("scene3d-render-start");
       }
 
-      // Reconfigure context if canvas resized.
       gpuCtx.configure({
         device: device,
         format: targetFormat,
         alphaMode: "premultiplied",
       });
 
-      // Determine post-processing.
       var postEffects = Array.isArray(bundle.postEffects) ? bundle.postEffects : [];
       var usePostProcessing = postEffects.length > 0;
 
-      // Compute scaled render-target dimensions (PostFX memory cap).
       var postFXMaxPixels = (typeof bundle.postFXMaxPixels === "number") ? bundle.postFXMaxPixels : 0;
       var postfxFactor = usePostProcessing
         ? resolvePostFXFactor(postFXMaxPixels, width * height)
@@ -2436,14 +2266,11 @@
       var scaledW = Math.max(1, Math.floor(width * postfxFactor));
       var scaledH = Math.max(1, Math.floor(height * postfxFactor));
 
-      // Upload per-frame uniforms (use scaled dims so point sprites and
-      // projection aspect match the actual render target, not the canvas).
       var cam = uploadFrameUniforms(bundle.camera, scaledW, scaledH, !usePostProcessing);
       uploadLights(bundle.lights);
       uploadFogUniforms(bundle.environment);
       uploadEnvUniforms(bundle.environment);
 
-      // --- Shadow Pass ---
       var shadowLightMatrices = [null, null];
       var shadowLightIndices = [-1, -1];
       var activeShadowCount = 0;
@@ -2484,12 +2311,10 @@
 
       uploadShadowUniforms(shadowLightMatrices, shadowLightIndices, bundle.lights);
 
-      // Create frame bind group.
       var shadowView0 = shadowSlots[0] ? shadowSlots[0].view : null;
       var shadowView1 = shadowSlots[1] ? shadowSlots[1].view : null;
       var frameBindGroup = createFrameBindGroup(shadowView0, shadowView1);
 
-      // --- Main Render Target ---
       var mainColorView;
       var mainDepthTargetView;
       var postTarget = null;
@@ -2506,7 +2331,6 @@
         mainDepthTargetView = mainDepthView;
       }
 
-      // Clear color.
       var bgStr = typeof bundle.background === "string" ? bundle.background.trim().toLowerCase() : "";
       var bg = bgStr === "transparent" ? [0, 0, 0, 0] : sceneColorRGBA(bundle.background, [0.03, 0.08, 0.12, 1]);
 
@@ -2525,12 +2349,10 @@
         },
       });
 
-      // Draw PBR meshes.
       if (hasPBRData) {
         var drawList = buildDrawList(bundle);
         var materials = Array.isArray(bundle.materials) ? bundle.materials : [];
 
-        // Opaque pass.
         if (drawList.opaque.length > 0) {
           var opaquePipeline = getPBRPipeline("opaque", true);
           mainPass.setPipeline(opaquePipeline);
@@ -2538,7 +2360,6 @@
           drawPBRObjects(mainPass, drawList.opaque, bundle, materials, frameBindGroup);
         }
 
-        // Alpha pass.
         if (drawList.alpha.length > 0) {
           var alphaPipeline = getPBRPipeline("alpha", false);
           mainPass.setPipeline(alphaPipeline);
@@ -2546,7 +2367,6 @@
           drawPBRObjects(mainPass, drawList.alpha, bundle, materials, frameBindGroup);
         }
 
-        // Additive pass.
         if (drawList.additive.length > 0) {
           var additivePipeline = getPBRPipeline("additive", false);
           mainPass.setPipeline(additivePipeline);
@@ -2555,10 +2375,8 @@
         }
       }
 
-      // Draw points.
       if (hasPointsData) {
         mainPass.setBindGroup(0, frameBindGroup);
-        // Create a dummy material bind group for group 1 (points pipeline layout requires it).
         var dummyMatBG = createMaterialBindGroup(null, false);
         mainPass.setBindGroup(1, dummyMatBG);
         drawPointsEntries(mainPass, bundle, cam, frameTimeSeconds);
@@ -2567,7 +2385,6 @@
 
       mainPass.end();
 
-      // Post-processing.
       if (usePostProcessing && postProcessor) {
         var screenView = gpuCtx.getCurrentTexture().createView();
         postProcessor.apply(encoder, postEffects, scaledW, scaledH, width, height, screenView);
@@ -2582,10 +2399,6 @@
         performance.clearMarks("scene3d-render-end");
       }
     }
-
-    // -----------------------------------------------------------------------
-    // Dispose
-    // -----------------------------------------------------------------------
 
     function dispose() {
       if (!device) return;
@@ -2627,7 +2440,6 @@
       device = null;
     }
 
-    // Start initialization immediately.
     startInit();
 
     return {
@@ -2637,29 +2449,679 @@
     };
   }
 
-  // -----------------------------------------------------------------------
-  // Integration
-  // -----------------------------------------------------------------------
-
-  // --- Early WebGPU adapter probe ---
-  // Adapter probe + sceneWebGPUAvailable + createSceneWebGPURendererOrFallback
-  // used to live here. They've been moved to:
-  //   - 16z-scene-webgpu-probe.js (main scene3d bundle) — owns the
-  //     probe, the stub sceneWebGPUAvailable, and the fallback factory
-  //     that reads from window.__gosx_scene3d_webgpu_api.
-  //   - This file is now loaded only via bootstrap-feature-scene3d-webgpu.js
-  //     (the sub-feature chunk), whose suffix publishes
-  //     createSceneWebGPURenderer to the api so the stub can dispatch.
-  //
-  // createSceneWebGPURenderer itself (the real factory, ~1300 lines
-  // above) is still defined in this file and is exported by the suffix.
-
-  // Local sceneWebGPUAvailable for use by createSceneWebGPURenderer's
-  // own startup paths — checks the probe shared by the main bundle.
-  // _externalProbe is a function (not a snapshot) so each call sees
-  // the current probe state — the main bundle's probe is async and
-  // may still be pending when this chunk first loads.
   function sceneWebGPUAvailable() {
     var probe = _externalProbe();
     return probe.ready && probe.adapter !== false && probe.adapter !== null;
   }
+
+  var SCENE_COMPUTE_PARTICLE_SOURCE = [
+    "struct Particle {",
+    "    posX: f32, posY: f32, posZ: f32,",
+    "    velX: f32, velY: f32, velZ: f32,",
+    "    age: f32,",
+    "    lifetime: f32,",
+    "};",
+    "",
+    "struct RenderVertex {",
+    "    posX: f32, posY: f32, posZ: f32,",
+    "    size: f32,",
+    "    r: f32, g: f32, b: f32, a: f32,",
+    "};",
+    "",
+    "struct SimParams {",
+    "    deltaTime: f32,",
+    "    totalTime: f32,",
+    "    count: u32,",
+    "    _pad0: u32,",
+    "    emitterKind: u32,",
+    "    emitterX: f32, emitterY: f32, emitterZ: f32,",
+    "    emitterRadius: f32,",
+    "    emitterRate: f32,",
+    "    emitterLifetime: f32,",
+    "    _pad1: u32,",
+    "    emitterArms: u32,",
+    "    emitterWind: f32,",
+    "    emitterScatter: f32,",
+    "    emitterRotX: f32, emitterRotY: f32, emitterRotZ: f32,",
+    "    _pad2: u32,",
+    "    sizeStart: f32, sizeEnd: f32,",
+    "    colorStartR: f32, colorStartG: f32, colorStartB: f32,",
+    "    colorEndR: f32, colorEndG: f32, colorEndB: f32,",
+    "    opacityStart: f32, opacityEnd: f32,",
+    "    forceCount: u32,",
+    "    _pad3: u32,",
+    "};",
+    "",
+    "struct Force {",
+    "    kind: u32,",
+    "    strength: f32,",
+    "    dirX: f32, dirY: f32, dirZ: f32,",
+    "    frequency: f32,",
+    "    _pad0: f32, _pad1: f32,",
+    "};",
+    "",
+    "@group(0) @binding(0) var<storage, read_write> particles: array<Particle>;",
+    "@group(0) @binding(1) var<storage, read_write> renderData: array<RenderVertex>;",
+    "@group(0) @binding(2) var<uniform> params: SimParams;",
+    "@group(0) @binding(3) var<storage, read> forces: array<Force>;",
+    "",
+    "fn hash(seed: u32) -> f32 {",
+    "    var s = seed;",
+    "    s = s ^ (s >> 16u);",
+    "    s = s * 0x45d9f3bu;",
+    "    s = s ^ (s >> 16u);",
+    "    s = s * 0x45d9f3bu;",
+    "    s = s ^ (s >> 16u);",
+    "    return f32(s) / f32(0xffffffffu);",
+    "}",
+    "",
+    "fn hash2(a: u32, b: u32) -> f32 {",
+    "    return hash(a * 1597334677u + b * 3812015801u);",
+    "}",
+    "",
+    "fn emitPoint(index: u32, p: SimParams) -> Particle {",
+    "    var out: Particle;",
+    "    out.posX = p.emitterX;",
+    "    out.posY = p.emitterY;",
+    "    out.posZ = p.emitterZ;",
+    "    out.velX = (hash2(index, 0u) - 0.5) * 0.1;",
+    "    out.velY = (hash2(index, 1u) - 0.5) * 0.1;",
+    "    out.velZ = (hash2(index, 2u) - 0.5) * 0.1;",
+    "    out.age = 0.0;",
+    "    out.lifetime = p.emitterLifetime;",
+    "    return out;",
+    "}",
+    "",
+    "fn emitSphere(index: u32, p: SimParams) -> Particle {",
+    "    var out: Particle;",
+    "    let theta = hash2(index, 10u) * 6.283185;",
+    "    let phi = acos(2.0 * hash2(index, 11u) - 1.0);",
+    "    let r = p.emitterRadius * pow(hash2(index, 12u), 0.333);",
+    "    out.posX = p.emitterX + r * sin(phi) * cos(theta);",
+    "    out.posY = p.emitterY + r * cos(phi);",
+    "    out.posZ = p.emitterZ + r * sin(phi) * sin(theta);",
+    "    out.velX = 0.0; out.velY = 0.0; out.velZ = 0.0;",
+    "    out.age = 0.0;",
+    "    out.lifetime = p.emitterLifetime;",
+    "    return out;",
+    "}",
+    "",
+    "fn emitDisc(index: u32, p: SimParams) -> Particle {",
+    "    var out: Particle;",
+    "    let angle = hash2(index, 20u) * 6.283185;",
+    "    let r = p.emitterRadius * sqrt(hash2(index, 21u));",
+    "    out.posX = p.emitterX + r * cos(angle);",
+    "    out.posY = p.emitterY;",
+    "    out.posZ = p.emitterZ + r * sin(angle);",
+    "    out.velX = 0.0; out.velY = 0.0; out.velZ = 0.0;",
+    "    out.age = 0.0;",
+    "    out.lifetime = p.emitterLifetime;",
+    "    return out;",
+    "}",
+    "",
+    "fn rotateEulerZYX(lx: f32, ly: f32, lz: f32, rx: f32, ry: f32, rz: f32) -> vec3<f32> {",
+    "    let cx = cos(rx); let sx = sin(rx);",
+    "    let cy = cos(ry); let sy = sin(ry);",
+    "    let cz = cos(rz); let sz = sin(rz);",
+    "    return vec3<f32>(",
+    "        lx*(cy*cz) + ly*(sx*sy*cz - cx*sz) + lz*(cx*sy*cz + sx*sz),",
+    "        lx*(cy*sz) + ly*(sx*sy*sz + cx*cz) + lz*(cx*sy*sz - sx*cz),",
+    "        lx*(-sy)   + ly*(sx*cy)             + lz*(cx*cy)",
+    "    );",
+    "}",
+    "",
+    "fn emitSpiral(index: u32, p: SimParams) -> Particle {",
+    "    var out: Particle;",
+    "    let radius = hash2(index, 30u) * p.emitterRadius;",
+    "    let arm = index % p.emitterArms;",
+    "    let armAngle = f32(arm) * 3.14159265 / f32(max(p.emitterArms / 2u, 1u));",
+    "    let spiralAngle = armAngle + (radius / p.emitterRadius) * p.emitterWind;",
+    "    let scatter = (hash2(index, 31u) - 0.5) * radius * p.emitterScatter;",
+    "    let lx = cos(spiralAngle) * radius + scatter;",
+    "    let ly = (hash2(index, 32u) - 0.5) * p.emitterRadius * 0.05;",
+    "    let lz = sin(spiralAngle) * radius + (hash2(index, 33u) - 0.5) * radius * p.emitterScatter;",
+    "    let rotated = rotateEulerZYX(lx, ly, lz, p.emitterRotX, p.emitterRotY, p.emitterRotZ);",
+    "    out.posX = p.emitterX + rotated.x;",
+    "    out.posY = p.emitterY + rotated.y;",
+    "    out.posZ = p.emitterZ + rotated.z;",
+    "    out.velX = 0.0; out.velY = 0.0; out.velZ = 0.0;",
+    "    out.age = 0.0;",
+    "    out.lifetime = p.emitterLifetime;",
+    "    return out;",
+    "}",
+    "",
+    "fn emitParticle(index: u32, p: SimParams) -> Particle {",
+    "    switch (p.emitterKind) {",
+    "        case 1u: { return emitSphere(index, p); }",
+    "        case 2u: { return emitDisc(index, p); }",
+    "        case 3u: { return emitSpiral(index, p); }",
+    "        default: { return emitPoint(index, p); }",
+    "    }",
+    "}",
+    "",
+    "fn applyGravity(part: Particle, f: Force, dt: f32) -> vec3f {",
+    "    return vec3f(f.dirX, f.dirY, f.dirZ) * f.strength * dt;",
+    "}",
+    "",
+    "fn applyWind(part: Particle, f: Force, dt: f32) -> vec3f {",
+    "    return vec3f(f.dirX, f.dirY, f.dirZ) * f.strength * dt;",
+    "}",
+    "",
+    "fn applyTurbulence(part: Particle, f: Force, dt: f32, time: f32) -> vec3f {",
+    "    let freq = f.frequency;",
+    "    let nx = sin(part.posX * freq + time * 1.3) * cos(part.posZ * freq + time * 0.7);",
+    "    let ny = sin(part.posY * freq + time * 0.9) * cos(part.posX * freq + time * 1.1);",
+    "    let nz = sin(part.posZ * freq + time * 1.7) * cos(part.posY * freq + time * 0.5);",
+    "    return vec3f(nx, ny, nz) * f.strength * dt;",
+    "}",
+    "",
+    "fn applyOrbit(part: Particle, f: Force, dt: f32) -> vec3f {",
+    "    let dx = part.posX;",
+    "    let dz = part.posZ;",
+    "    let dist = max(sqrt(dx * dx + dz * dz), 0.001);",
+    "    return vec3f(-dz / dist, 0.0, dx / dist) * f.strength * dt;",
+    "}",
+    "",
+    "fn applyDrag(part: Particle, f: Force, dt: f32) -> vec3f {",
+    "    return vec3f(-part.velX, -part.velY, -part.velZ) * f.strength * dt;",
+    "}",
+    "",
+    "@compute @workgroup_size(64)",
+    "fn simulate(@builtin(global_invocation_id) id: vec3u) {",
+    "    let i = id.x;",
+    "    if (i >= params.count) { return; }",
+    "",
+    "    var p = particles[i];",
+    "",
+    "    if (p.age < 0.0) {",
+    "        p = emitParticle(i, params);",
+    "    }",
+    "",
+    "    p.age += params.deltaTime;",
+    "",
+    "    if (p.lifetime > 0.0 && p.age >= p.lifetime) {",
+    "        p = emitParticle(i, params);",
+    "    }",
+    "",
+    "    for (var fi = 0u; fi < params.forceCount; fi++) {",
+    "        let f = forces[fi];",
+    "        switch (f.kind) {",
+    "            case 0u: { let dv = applyGravity(p, f, params.deltaTime); p.velX += dv.x; p.velY += dv.y; p.velZ += dv.z; }",
+    "            case 1u: { let dv = applyWind(p, f, params.deltaTime); p.velX += dv.x; p.velY += dv.y; p.velZ += dv.z; }",
+    "            case 2u: { let dv = applyTurbulence(p, f, params.deltaTime, params.totalTime); p.velX += dv.x; p.velY += dv.y; p.velZ += dv.z; }",
+    "            case 3u: { let dv = applyOrbit(p, f, params.deltaTime); p.velX += dv.x; p.velY += dv.y; p.velZ += dv.z; }",
+    "            case 4u: { let dv = applyDrag(p, f, params.deltaTime); p.velX += dv.x; p.velY += dv.y; p.velZ += dv.z; }",
+    "            default: {}",
+    "        }",
+    "    }",
+    "",
+    "    p.posX += p.velX * params.deltaTime;",
+    "    p.posY += p.velY * params.deltaTime;",
+    "    p.posZ += p.velZ * params.deltaTime;",
+    "",
+    "    particles[i] = p;",
+    "",
+    "    let t = select(p.age / p.lifetime, 0.0, p.lifetime <= 0.0);",
+    "    var rv: RenderVertex;",
+    "    rv.posX = p.posX;",
+    "    rv.posY = p.posY;",
+    "    rv.posZ = p.posZ;",
+    "    rv.size = mix(params.sizeStart, params.sizeEnd, t);",
+    "    rv.r = mix(params.colorStartR, params.colorEndR, t);",
+    "    rv.g = mix(params.colorStartG, params.colorEndG, t);",
+    "    rv.b = mix(params.colorStartB, params.colorEndB, t);",
+    "    rv.a = mix(params.opacityStart, params.opacityEnd, t);",
+    "    renderData[i] = rv;",
+    "}",
+  ].join("\n");
+
+  function sceneComputeUploadSimParams(device, buffer, entry, deltaTime, totalTime) {
+    var emitter = entry.emitter || {};
+    var material = entry.material || {};
+    var forces = entry.forces || [];
+
+    var kindMap = { point: 0, sphere: 1, disc: 2, spiral: 3 };
+    var emitterKind = kindMap[emitter.kind] || 0;
+
+    var colorStart = sceneColorRGBA(material.color || "#ffffff", [1, 1, 1, 1]);
+    var colorEnd = sceneColorRGBA(material.colorEnd || material.color || "#ffffff", [1, 1, 1, 1]);
+
+    var buf = new ArrayBuffer(256);
+    var view = new DataView(buf);
+    var offset = 0;
+
+    view.setFloat32(offset, deltaTime, true); offset += 4;            // deltaTime
+    view.setFloat32(offset, totalTime, true); offset += 4;            // totalTime
+    view.setUint32(offset, entry.count, true); offset += 4;           // count
+    view.setUint32(offset, 0, true); offset += 4;                     // _pad0
+
+    view.setUint32(offset, emitterKind, true); offset += 4;           // emitterKind
+    view.setFloat32(offset, sceneNumber(emitter.x, 0), true); offset += 4;
+    view.setFloat32(offset, sceneNumber(emitter.y, 0), true); offset += 4;
+    view.setFloat32(offset, sceneNumber(emitter.z, 0), true); offset += 4;
+    view.setFloat32(offset, sceneNumber(emitter.radius, 0), true); offset += 4;
+    view.setFloat32(offset, sceneNumber(emitter.rate, 0), true); offset += 4;
+    view.setFloat32(offset, sceneNumber(emitter.lifetime, 0), true); offset += 4;
+    view.setUint32(offset, 0, true); offset += 4;                     // _pad1
+
+    view.setUint32(offset, sceneNumber(emitter.arms, 2), true); offset += 4;
+    view.setFloat32(offset, sceneNumber(emitter.wind, 0), true); offset += 4;
+    view.setFloat32(offset, sceneNumber(emitter.scatter, 0), true); offset += 4;
+    view.setFloat32(offset, sceneNumber(emitter.rotationX, 0), true); offset += 4;
+    view.setFloat32(offset, sceneNumber(emitter.rotationY, 0), true); offset += 4;
+    view.setFloat32(offset, sceneNumber(emitter.rotationZ, 0), true); offset += 4;
+    view.setUint32(offset, 0, true); offset += 4;                     // _pad2
+
+    view.setFloat32(offset, sceneNumber(material.size, 1), true); offset += 4;
+    view.setFloat32(offset, sceneNumber(material.sizeEnd, material.size || 1), true); offset += 4;
+    view.setFloat32(offset, colorStart[0], true); offset += 4;
+    view.setFloat32(offset, colorStart[1], true); offset += 4;
+    view.setFloat32(offset, colorStart[2], true); offset += 4;
+    view.setFloat32(offset, colorEnd[0], true); offset += 4;
+    view.setFloat32(offset, colorEnd[1], true); offset += 4;
+    view.setFloat32(offset, colorEnd[2], true); offset += 4;
+    view.setFloat32(offset, sceneNumber(material.opacity, 1), true); offset += 4;
+    view.setFloat32(offset, sceneNumber(material.opacityEnd, material.opacity || 1), true); offset += 4;
+
+    view.setUint32(offset, forces.length, true); offset += 4;
+    view.setUint32(offset, 0, true); offset += 4;                     // _pad3
+
+    device.queue.writeBuffer(buffer, 0, buf, 0, 256);
+  }
+
+  function sceneComputeUploadForces(device, buffer, forces) {
+    var kindMap = { gravity: 0, wind: 1, turbulence: 2, orbit: 3, drag: 4 };
+    var byteLen = Math.max(32, forces.length * 32);
+    var buf = new ArrayBuffer(byteLen);
+    var view = new DataView(buf);
+
+    for (var i = 0; i < forces.length; i++) {
+      var f = forces[i];
+      var off = i * 32;
+      view.setUint32(off, kindMap[f.kind] || 0, true);
+      view.setFloat32(off + 4, sceneNumber(f.strength, 0), true);
+      view.setFloat32(off + 8, sceneNumber(f.x, 0), true);
+      view.setFloat32(off + 12, sceneNumber(f.y, 0), true);
+      view.setFloat32(off + 16, sceneNumber(f.z, 0), true);
+      view.setFloat32(off + 20, sceneNumber(f.frequency, 1), true);
+    }
+
+    device.queue.writeBuffer(buffer, 0, buf);
+  }
+
+  function createSceneComputeParticleSystem(device, entry) {
+    var count = entry.count || 0;
+    if (count <= 0) return null;
+
+    var particleBuffer = device.createBuffer({
+      size: count * 32,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+    });
+
+    var renderBuffer = device.createBuffer({
+      size: count * 32,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.VERTEX,
+    });
+
+    var paramsBuffer = device.createBuffer({
+      size: 256,
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+    });
+
+    var forceCount = (entry.forces || []).length;
+    var forceBuffer = device.createBuffer({
+      size: Math.max(32, forceCount * 32),
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+    });
+
+    var initData = new Float32Array(count * 8);
+    for (var i = 0; i < count; i++) {
+      initData[i * 8 + 6] = -1.0;
+    }
+    device.queue.writeBuffer(particleBuffer, 0, initData);
+
+    sceneComputeUploadForces(device, forceBuffer, entry.forces || []);
+
+    var computePipeline = null;
+    var bindGroup = null;
+    var ready = false;
+
+    var shaderModule = device.createShaderModule({
+      code: SCENE_COMPUTE_PARTICLE_SOURCE,
+    });
+
+    var bindGroupLayout = device.createBindGroupLayout({
+      entries: [
+        { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } },
+        { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } },
+        { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: "uniform" } },
+        { binding: 3, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" } },
+      ],
+    });
+
+    var pipelineLayout = device.createPipelineLayout({
+      bindGroupLayouts: [bindGroupLayout],
+    });
+
+    device.createComputePipelineAsync({
+      layout: pipelineLayout,
+      compute: {
+        module: shaderModule,
+        entryPoint: "simulate",
+      },
+    }).then(function(pipeline) {
+      computePipeline = pipeline;
+      bindGroup = device.createBindGroup({
+        layout: bindGroupLayout,
+        entries: [
+          { binding: 0, resource: { buffer: particleBuffer } },
+          { binding: 1, resource: { buffer: renderBuffer } },
+          { binding: 2, resource: { buffer: paramsBuffer } },
+          { binding: 3, resource: { buffer: forceBuffer } },
+        ],
+      });
+      ready = true;
+    }).catch(function(err) {
+      console.warn("[gosx] Compute particle pipeline creation failed:", err);
+    });
+
+    return {
+      count: count,
+      renderBuffer: renderBuffer,
+      entry: entry,
+      isReady: function() {
+        return ready;
+      },
+
+      update: function(device, encoder, deltaTime, totalTime) {
+        if (!ready) return;
+
+        sceneComputeUploadSimParams(device, paramsBuffer, entry, deltaTime, totalTime);
+
+        var pass = encoder.beginComputePass();
+        pass.setPipeline(computePipeline);
+        pass.setBindGroup(0, bindGroup);
+        pass.dispatchWorkgroups(Math.ceil(count / 64));
+        pass.end();
+      },
+
+      dispose: function() {
+        particleBuffer.destroy();
+        renderBuffer.destroy();
+        paramsBuffer.destroy();
+        forceBuffer.destroy();
+        computePipeline = null;
+        bindGroup = null;
+        ready = false;
+      },
+    };
+  }
+
+  function createSceneCPUParticleSystem(entry) {
+    var count = Math.min(entry.count || 0, 10000);
+    if (count <= 0) return null;
+
+    var particles = new Float32Array(count * 8);
+
+    var positions = new Float32Array(count * 3);
+    var sizes = new Float32Array(count);
+    var colors = new Float32Array(count * 3);
+    var opacities = new Float32Array(count);
+
+    for (var i = 0; i < count; i++) {
+      particles[i * 8 + 6] = -1.0;
+    }
+
+    function hash(seed) {
+      var s = seed >>> 0;
+      s = s ^ (s >>> 16);
+      s = Math.imul(s, 0x45d9f3b) >>> 0;
+      s = s ^ (s >>> 16);
+      s = Math.imul(s, 0x45d9f3b) >>> 0;
+      s = s ^ (s >>> 16);
+      return (s >>> 0) / 0xffffffff;
+    }
+
+    function hash2(a, b) {
+      return hash(Math.imul(a >>> 0, 1597334677) + Math.imul(b >>> 0, 3812015801));
+    }
+
+    var kindMap = { point: 0, sphere: 1, disc: 2, spiral: 3 };
+
+    var forceKindMap = { gravity: 0, wind: 1, turbulence: 2, orbit: 3, drag: 4 };
+
+    function currentEmitterConfig() {
+      var emitter = entry && entry.emitter && typeof entry.emitter === "object" ? entry.emitter : {};
+      return {
+        kind: kindMap[emitter.kind] || 0,
+        x: 0,
+        y: 0,
+        z: 0,
+        radius: sceneNumber(emitter.radius, 0),
+        lifetime: sceneNumber(emitter.lifetime, 0),
+        arms: Math.max(1, Math.floor(sceneNumber(emitter.arms, 2))),
+        wind: sceneNumber(emitter.wind, 0),
+        scatter: sceneNumber(emitter.scatter, 0),
+      };
+    }
+
+    function currentMaterialConfig() {
+      var material = entry && entry.material && typeof entry.material === "object" ? entry.material : {};
+      return {
+        colorStart: sceneColorRGBA(material.color || "#ffffff", [1, 1, 1, 1]),
+        colorEnd: sceneColorRGBA(material.colorEnd || material.color || "#ffffff", [1, 1, 1, 1]),
+        sizeStart: sceneNumber(material.size, 1),
+        sizeEnd: sceneNumber(material.sizeEnd, material.size || 1),
+        opacityStart: sceneNumber(material.opacity, 1),
+        opacityEnd: sceneNumber(material.opacityEnd, material.opacity || 1),
+      };
+    }
+
+    function currentForces() {
+      return Array.isArray(entry && entry.forces) ? entry.forces : [];
+    }
+
+    function emitParticle(index, base, emitterConfig) {
+      switch (emitterConfig.kind) {
+        case 1: { // sphere
+          var theta = hash2(index, 10) * 6.283185;
+          var phi = Math.acos(2.0 * hash2(index, 11) - 1.0);
+          var r = emitterConfig.radius * Math.pow(hash2(index, 12), 0.333);
+          base[0] = r * Math.sin(phi) * Math.cos(theta);
+          base[1] = r * Math.cos(phi);
+          base[2] = r * Math.sin(phi) * Math.sin(theta);
+          base[3] = 0; base[4] = 0; base[5] = 0;
+          break;
+        }
+        case 2: { // disc
+          var angle = hash2(index, 20) * 6.283185;
+          var dr = emitterConfig.radius * Math.sqrt(hash2(index, 21));
+          base[0] = dr * Math.cos(angle);
+          base[1] = 0;
+          base[2] = dr * Math.sin(angle);
+          base[3] = 0; base[4] = 0; base[5] = 0;
+          break;
+        }
+        case 3: { // spiral (local space)
+          var radius = hash2(index, 30) * emitterConfig.radius;
+          var arm = index % emitterConfig.arms;
+          var armAngle = arm * 3.14159265 / Math.max(emitterConfig.arms / 2, 1);
+          var spiralAngle = armAngle + (radius / Math.max(emitterConfig.radius, 0.001)) * emitterConfig.wind;
+          var scatter = (hash2(index, 31) - 0.5) * radius * emitterConfig.scatter;
+          base[0] = Math.cos(spiralAngle) * radius + scatter;
+          base[1] = (hash2(index, 32) - 0.5) * emitterConfig.radius * 0.05;
+          base[2] = Math.sin(spiralAngle) * radius + (hash2(index, 33) - 0.5) * radius * emitterConfig.scatter;
+          base[3] = 0; base[4] = 0; base[5] = 0;
+          break;
+        }
+        default: { // point
+          base[0] = 0;
+          base[1] = 0;
+          base[2] = 0;
+          base[3] = (hash2(index, 0) - 0.5) * 0.1;
+          base[4] = (hash2(index, 1) - 0.5) * 0.1;
+          base[5] = (hash2(index, 2) - 0.5) * 0.1;
+          break;
+        }
+      }
+      base[6] = 0.0;              // age
+      base[7] = emitterConfig.lifetime;   // lifetime
+    }
+
+    return {
+      count: count,
+      positions: positions,
+      sizes: sizes,
+      colors: colors,
+      opacities: opacities,
+      entry: entry,
+
+      update: function(deltaTime, totalTime) {
+        var emitterConfig = currentEmitterConfig();
+        var materialConfig = currentMaterialConfig();
+        var forces = currentForces();
+        for (var i = 0; i < count; i++) {
+          var base = i * 8;
+
+          var posX = particles[base];
+          var posY = particles[base + 1];
+          var posZ = particles[base + 2];
+          var velX = particles[base + 3];
+          var velY = particles[base + 4];
+          var velZ = particles[base + 5];
+          var age = particles[base + 6];
+          var lifetime = particles[base + 7];
+
+          if (age < 0) {
+            emitParticle(i, particles.subarray(base, base + 8), emitterConfig);
+            posX = particles[base];
+            posY = particles[base + 1];
+            posZ = particles[base + 2];
+            velX = particles[base + 3];
+            velY = particles[base + 4];
+            velZ = particles[base + 5];
+            age = particles[base + 6];
+            lifetime = particles[base + 7];
+          }
+
+          age += deltaTime;
+
+          if (lifetime > 0 && age >= lifetime) {
+            emitParticle(i, particles.subarray(base, base + 8), emitterConfig);
+            posX = particles[base];
+            posY = particles[base + 1];
+            posZ = particles[base + 2];
+            velX = particles[base + 3];
+            velY = particles[base + 4];
+            velZ = particles[base + 5];
+            age = particles[base + 6];
+            lifetime = particles[base + 7];
+          }
+
+          for (var fi = 0; fi < forces.length; fi++) {
+            var f = forces[fi];
+            var fKind = forceKindMap[f.kind] || 0;
+            var str = sceneNumber(f.strength, 0);
+            var fx = sceneNumber(f.x, 0);
+            var fy = sceneNumber(f.y, 0);
+            var fz = sceneNumber(f.z, 0);
+            var freq = sceneNumber(f.frequency, 1);
+
+            switch (fKind) {
+              case 0: { // gravity
+                velX += fx * str * deltaTime;
+                velY += fy * str * deltaTime;
+                velZ += fz * str * deltaTime;
+                break;
+              }
+              case 1: { // wind
+                velX += fx * str * deltaTime;
+                velY += fy * str * deltaTime;
+                velZ += fz * str * deltaTime;
+                break;
+              }
+              case 2: { // turbulence
+                var nx = Math.sin(posX * freq + totalTime * 1.3) * Math.cos(posZ * freq + totalTime * 0.7);
+                var ny = Math.sin(posY * freq + totalTime * 0.9) * Math.cos(posX * freq + totalTime * 1.1);
+                var nz = Math.sin(posZ * freq + totalTime * 1.7) * Math.cos(posY * freq + totalTime * 0.5);
+                velX += nx * str * deltaTime;
+                velY += ny * str * deltaTime;
+                velZ += nz * str * deltaTime;
+                break;
+              }
+              case 3: { // orbit
+                var dx = posX;
+                var dz = posZ;
+                var dist = Math.max(Math.sqrt(dx * dx + dz * dz), 0.001);
+                velX += (-dz / dist) * str * deltaTime;
+                velZ += (dx / dist) * str * deltaTime;
+                break;
+              }
+              case 4: { // drag
+                velX += -velX * str * deltaTime;
+                velY += -velY * str * deltaTime;
+                velZ += -velZ * str * deltaTime;
+                break;
+              }
+            }
+          }
+
+          posX += velX * deltaTime;
+          posY += velY * deltaTime;
+          posZ += velZ * deltaTime;
+
+          particles[base] = posX;
+          particles[base + 1] = posY;
+          particles[base + 2] = posZ;
+          particles[base + 3] = velX;
+          particles[base + 4] = velY;
+          particles[base + 5] = velZ;
+          particles[base + 6] = age;
+          particles[base + 7] = lifetime;
+
+          var t = lifetime > 0 ? age / lifetime : 0;
+
+          positions[i * 3] = posX;
+          positions[i * 3 + 1] = posY;
+          positions[i * 3 + 2] = posZ;
+          sizes[i] = materialConfig.sizeStart + (materialConfig.sizeEnd - materialConfig.sizeStart) * t;
+          colors[i * 3] = materialConfig.colorStart[0] + (materialConfig.colorEnd[0] - materialConfig.colorStart[0]) * t;
+          colors[i * 3 + 1] = materialConfig.colorStart[1] + (materialConfig.colorEnd[1] - materialConfig.colorStart[1]) * t;
+          colors[i * 3 + 2] = materialConfig.colorStart[2] + (materialConfig.colorEnd[2] - materialConfig.colorStart[2]) * t;
+          opacities[i] = materialConfig.opacityStart + (materialConfig.opacityEnd - materialConfig.opacityStart) * t;
+        }
+      },
+
+      dispose: function() {
+        particles = null;
+        positions = null;
+        sizes = null;
+        colors = null;
+        opacities = null;
+      },
+    };
+  }
+
+  function createSceneParticleSystem(device, entry) {
+    if (device) {
+      return createSceneComputeParticleSystem(device, entry);
+    }
+    return createSceneCPUParticleSystem(entry);
+  }
+
+  function sceneComputeSystemSignature(entry) {
+    return JSON.stringify({
+      count: Math.max(0, Math.floor(sceneNumber(entry && entry.count, 0))),
+      forces: Array.isArray(entry && entry.forces) ? entry.forces : [],
+    });
+  }
+
+  window.__gosx_scene3d_webgpu_api = {
+    createRenderer: createSceneWebGPURenderer,
+    available: sceneWebGPUAvailable,
+  };
+
+  window.__gosx_scene3d_webgpu_loaded = true;
+
+})();
+//# sourceMappingURL=bootstrap-feature-scene3d-webgpu.js.map

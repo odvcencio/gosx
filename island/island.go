@@ -45,8 +45,9 @@ type Renderer struct {
 	bootstrapFeatureIslandsPath string
 	bootstrapFeatureEnginesPath string
 	bootstrapFeatureHubsPath    string
-	bootstrapFeatureScene3dPath string
-	videoHLSPath                string
+	bootstrapFeatureScene3dPath       string
+	bootstrapFeatureScene3dWebGPUPath string
+	videoHLSPath                      string
 	runtimeAssets               buildmanifest.RuntimeAssets
 	bootstrapOnly               bool
 }
@@ -112,6 +113,7 @@ func NewRenderer(bundleID string) *Renderer {
 	renderer.bootstrapFeatureEnginesPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-engines.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureEngines.Hash))
 	renderer.bootstrapFeatureHubsPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-hubs.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureHubs.Hash))
 	renderer.bootstrapFeatureScene3dPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3D.Hash))
+	renderer.bootstrapFeatureScene3dWebGPUPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-webgpu.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DWebGPU.Hash))
 	renderer.videoHLSPath = renderer.versionCompatRuntimePath("/gosx/hls.min.js", strings.TrimSpace(runtimeAssets.VideoHLS.Hash))
 	if manifest := loadDefaultBuildManifest(); manifest != nil {
 		_ = renderer.ApplyBuildManifest(manifest, "/gosx/assets")
@@ -284,6 +286,16 @@ func (r *Renderer) SetBootstrapFeatureScene3DPath(path string) {
 	r.bootstrapFeatureScene3dPath = r.versionCompatRuntimePath(path, r.compatRuntimeHash(path))
 }
 
+// SetBootstrapFeatureScene3DWebGPUPath overrides the async Scene3D WebGPU
+// sub-feature chunk URL. Emitted inline after the main scene3d script tag,
+// gated on navigator.gpu so non-WebGPU browsers skip the download.
+func (r *Renderer) SetBootstrapFeatureScene3DWebGPUPath(path string) {
+	if strings.TrimSpace(path) == "" {
+		return
+	}
+	r.bootstrapFeatureScene3dWebGPUPath = r.versionCompatRuntimePath(path, r.compatRuntimeHash(path))
+}
+
 // SetVideoHLSPath overrides the runtime HLS library URL used by the built-in
 // video engine when native HLS playback is unavailable.
 func (r *Renderer) SetVideoHLSPath(path string) {
@@ -313,6 +325,8 @@ func (r *Renderer) compatRuntimeHash(path string) string {
 		return strings.TrimSpace(r.runtimeAssets.BootstrapFeatureHubs.Hash)
 	case "/gosx/bootstrap-feature-scene3d.js":
 		return strings.TrimSpace(r.runtimeAssets.BootstrapFeatureScene3D.Hash)
+	case "/gosx/bootstrap-feature-scene3d-webgpu.js":
+		return strings.TrimSpace(r.runtimeAssets.BootstrapFeatureScene3DWebGPU.Hash)
 	case "/gosx/patch.js":
 		return strings.TrimSpace(r.runtimeAssets.Patch.Hash)
 	case "/gosx/hls.min.js":
@@ -332,7 +346,7 @@ func (r *Renderer) versionCompatRuntimePath(path, hash string) string {
 		return path
 	}
 	switch compatRuntimePath(path) {
-	case "/gosx/runtime.wasm", "/gosx/wasm_exec.js", "/gosx/bootstrap.js", "/gosx/bootstrap-lite.js", "/gosx/bootstrap-runtime.js", "/gosx/bootstrap-feature-islands.js", "/gosx/bootstrap-feature-engines.js", "/gosx/bootstrap-feature-hubs.js", "/gosx/bootstrap-feature-scene3d.js", "/gosx/patch.js", "/gosx/hls.min.js":
+	case "/gosx/runtime.wasm", "/gosx/wasm_exec.js", "/gosx/bootstrap.js", "/gosx/bootstrap-lite.js", "/gosx/bootstrap-runtime.js", "/gosx/bootstrap-feature-islands.js", "/gosx/bootstrap-feature-engines.js", "/gosx/bootstrap-feature-hubs.js", "/gosx/bootstrap-feature-scene3d.js", "/gosx/bootstrap-feature-scene3d-webgpu.js", "/gosx/patch.js", "/gosx/hls.min.js":
 		query := parsed.Query()
 		if query.Get("v") == "" {
 			query.Set("v", hash)
@@ -369,6 +383,7 @@ func (r *Renderer) ApplyBuildManifest(manifest *buildmanifest.Manifest, assetBas
 	r.SetBootstrapRuntimePath(runtime.BootstrapRuntime)
 	r.SetBootstrapFeaturePaths(runtime.BootstrapFeatureIslands, runtime.BootstrapFeatureEngines, runtime.BootstrapFeatureHubs)
 	r.SetBootstrapFeatureScene3DPath(runtime.BootstrapFeatureScene3D)
+	r.SetBootstrapFeatureScene3DWebGPUPath(runtime.BootstrapFeatureScene3DWebGPU)
 	r.SetVideoHLSPath(runtime.VideoHLS)
 
 	for _, asset := range manifest.Islands {
@@ -512,8 +527,37 @@ func (r *Renderer) BootstrapScript() gosx.Node {
 		b.WriteString(`<script defer data-gosx-script="feature-scene3d" src="`)
 		b.WriteString(html.EscapeString(scene3dPath))
 		b.WriteString("\">\x3c/script>")
+
+		// WebGPU sub-feature: lazy-load only when navigator.gpu exists.
+		// Safari and Firefox-on-most-platforms skip the download
+		// entirely, saving ~55KB gzip / 120KB raw per load. Chromium
+		// browsers fetch it in parallel with the main scene3d chunk so
+		// the scene mount can pick webgpu on the first render. Inlined
+		// rather than added to a manifest loader to keep the HTML byte
+		// cost minimal — the script body is ~190 bytes before gzip.
+		if webgpuPath := r.selectedBootstrapFeaturePath("scene3d-webgpu"); webgpuPath != "" {
+			b.WriteByte('\n')
+			b.WriteString(`<script>if(navigator.gpu){var s=document.createElement('script');s.defer=true;s.dataset.gosxScript='feature-scene3d-webgpu';s.src=`)
+			b.WriteString(htmlJSStringLiteral(webgpuPath))
+			b.WriteString(`;document.head.appendChild(s);}\x3c/script>`)
+		}
 	}
 	return gosx.RawHTML(b.String())
+}
+
+// htmlJSStringLiteral returns a JS string literal (including surrounding
+// quotes) safe to embed inside an inline <script> tag. Uses JSON encoding
+// plus a </script> guard so the result can sit inside an HTML context
+// without being terminated early by a literal </script> in the payload.
+func htmlJSStringLiteral(s string) string {
+	b, err := json.Marshal(s)
+	if err != nil {
+		return `""`
+	}
+	// HTML spec forbids the literal string "</" inside a script element
+	// if it starts a closing tag; escape the forward slash to be safe.
+	out := strings.ReplaceAll(string(b), "</", `<\/`)
+	return out
 }
 
 // RenderEngine registers an engine instance in the hydration manifest and,
@@ -1050,6 +1094,15 @@ func (r *Renderer) selectedBootstrapFeaturePath(name string) string {
 			return ""
 		}
 		return r.bootstrapFeatureScene3dPath
+	case "scene3d-webgpu":
+		// Paired with "scene3d" — emitted only when the page has a
+		// Scene3D engine AND the WebGPU sub-feature bundle exists.
+		// The inline loader in RenderEntrypoints gates the actual
+		// download on navigator.gpu so Safari / Firefox skip it.
+		if !r.hasSceneEngines() {
+			return ""
+		}
+		return r.bootstrapFeatureScene3dWebGPUPath
 	default:
 		return ""
 	}
