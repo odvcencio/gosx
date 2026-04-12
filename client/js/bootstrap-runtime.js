@@ -5117,6 +5117,11 @@
     return Number.isFinite(num) ? num : fallback;
   }
 
+  function sceneSegmentResolution(value) {
+    const segments = Math.round(sceneNumber(value, 12));
+    return Math.max(6, Math.min(24, segments));
+  }
+
   function sceneBool(value, fallback) {
     if (typeof value === "boolean") return value;
     if (typeof value === "string") {
@@ -5605,7 +5610,9 @@
       normalized.directionY = -1;
       normalized.directionZ = -0.4;
     }
-    normalized._lightHash = hashLightContent(normalized);
+    if (typeof hashLightContent === "function") {
+      normalized._lightHash = hashLightContent(normalized);
+    }
     return normalized;
   }
 
@@ -6127,7 +6134,9 @@
       environment.toneMapping ||
       Object.prototype.hasOwnProperty.call(source, "exposure")
     );
-    environment._envHash = hashEnvironmentContent(environment);
+    if (typeof hashEnvironmentContent === "function") {
+      environment._envHash = hashEnvironmentContent(environment);
+    }
     return environment;
   }
 
@@ -6147,7 +6156,7 @@
         specified: Boolean(environment.specified),
       }
       : normalizeSceneEnvironment(environment, null);
-    if (typeof base._envHash !== "number") {
+    if (typeof base._envHash !== "number" && typeof hashEnvironmentContent === "function") {
       base._envHash = hashEnvironmentContent(base);
     }
     if (base.specified || !hasLights) {

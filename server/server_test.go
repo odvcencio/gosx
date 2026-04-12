@@ -596,7 +596,7 @@ func TestAppInjectsRuntimeHeadForEnginePages(t *testing.T) {
 		`data-gosx-enhance-layer="runtime"`,
 		`data-gosx-fallback="server"`,
 		`gosx-manifest`,
-		`/gosx/bootstrap.js`,
+		`/gosx/bootstrap-runtime.js`,
 	} {
 		if !strings.Contains(body, snippet) {
 			t.Fatalf("expected %q in runtime page body %q", snippet, body)
