@@ -25,6 +25,7 @@ func cmdPerf() {
 	throttle := fs.Float64("throttle", 1, "CPU throttle rate (1=realtime, 4=mid-range phone, 6=low-end)")
 	mobile := fs.String("mobile", "", "mobile device emulation: pixel7 | iphone14")
 	coverage := fs.Bool("coverage", false, "capture JS block-level coverage per script")
+	heapSnap := fs.String("heap-snapshot", "", "write a .heapsnapshot file (load in DevTools Memory panel)")
 	var asserts stringSlice
 	fs.Var(&asserts, "assert", "assertion expression (repeatable)")
 	fs.Parse(os.Args[2:])
@@ -43,7 +44,8 @@ func cmdPerf() {
 		TracePath:   *trace,
 		CPUThrottle: *throttle,
 		MobileName:  *mobile,
-		Coverage:    *coverage,
+		Coverage:         *coverage,
+		HeapSnapshotPath: *heapSnap,
 	}
 
 	if *clickSel != "" {

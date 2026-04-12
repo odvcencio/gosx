@@ -23,6 +23,11 @@ type Scenario struct {
 	// Capture JS coverage (Profiler.startPreciseCoverage + blocks) for
 	// the first URL. Expensive enough that it's opt-in.
 	Coverage bool
+
+	// Write a .heapsnapshot file for the final page state after all
+	// interactions have run. GC runs first so the snapshot reflects
+	// live retention, not ephemeral churn.
+	HeapSnapshotPath string
 }
 
 // Interaction is a user action to execute during profiling.
@@ -202,6 +207,19 @@ func RunScenario(s *Scenario) (*Report, error) {
 	if len(traceBytes) > 0 && s.TracePath != "" {
 		if err := os.WriteFile(s.TracePath, traceBytes, 0o644); err != nil {
 			return nil, fmt.Errorf("write trace: %w", err)
+		}
+	}
+
+	// Heap snapshot of the final page state, after interactions. GC
+	// first so we measure live retention. Written last so its disk
+	// write doesn't block the rest of the run.
+	if s.HeapSnapshotPath != "" {
+		snap, err := TakeHeapSnapshotAfterGC(d)
+		if err != nil {
+			return nil, fmt.Errorf("heap snapshot: %w", err)
+		}
+		if err := os.WriteFile(s.HeapSnapshotPath, snap, 0o644); err != nil {
+			return nil, fmt.Errorf("write heap snapshot: %w", err)
 		}
 	}
 
