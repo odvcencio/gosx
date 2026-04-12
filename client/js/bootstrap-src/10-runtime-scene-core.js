@@ -4789,3 +4789,58 @@
     }
     return false;
   }
+
+  // Scene3D shared API — exposed for the async bootstrap-feature-scene3d.js
+  // chunk. Files 11-20 (scene-math through scene-mount) depend on these
+  // functions via closure capture in the monolithic bootstrap.js. When
+  // loaded as a separate feature chunk, they destructure from this
+  // namespace instead.
+  window.__gosx_scene3d_api = {
+    appendSceneObjectToBundle,
+    appendSceneSurfaceToBundle,
+    applySceneCommands,
+    cancelEngineFrame,
+    clearChildren,
+    createSceneRenderBundle,
+    createSceneState,
+    createSceneWebGLRenderer,
+    engineFrame,
+    normalizeSceneEnvironment,
+    normalizeSceneLabel,
+    normalizeSceneLabelAlign,
+    normalizeSceneLabelCollision,
+    normalizeSceneLabelWhiteSpace,
+    normalizeSceneLight,
+    normalizeSceneObject,
+    normalizeSceneSprite,
+    normalizeSceneSpriteFit,
+    publishPointerSignals,
+    queueInputSignal,
+    sceneAdvanceTransitions,
+    sceneApplyLiveEvent,
+    sceneBool,
+    sceneBoundsDepthMetrics,
+    sceneBoundsViewCulled,
+    sceneBundleNeedsThickLines,
+    sceneCameraEquivalent,
+    sceneHasActiveTransitions,
+    sceneLabelAnimated,
+    sceneMeshMaterialArray,
+    sceneModels,
+    sceneNormalizeDirection,
+    sceneNowMilliseconds,
+    sceneNumber,
+    sceneObjectAnimated,
+    scenePointStyleCode,
+    scenePrimeInitialTransitions,
+    sceneProps,
+    sceneRenderCamera,
+    sceneResolveLightingEnvironment,
+    sceneSpriteAnimated,
+    sceneStateLabels,
+    sceneStateLights,
+    sceneStateObjects,
+    sceneStateSprites,
+    sceneTypedFloatArray,
+    translateScenePointInto,
+  };
