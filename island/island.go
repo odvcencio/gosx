@@ -537,24 +537,28 @@ func (r *Renderer) BootstrapScript() gosx.Node {
 		// cost minimal — the script body is ~190 bytes before gzip.
 		if webgpuPath := r.selectedBootstrapFeaturePath("scene3d-webgpu"); webgpuPath != "" {
 			b.WriteByte('\n')
-			// Dynamically-inserted scripts are async-by-default even when
-			// .defer is set — so a naive implementation races the main
-			// scene3d chunk and usually wins, executing before
-			// window.__gosx_scene3d_api is defined. Setting
-			// s.async = false forces the browser to treat this
-			// dynamically-inserted script as an ordered-deferred script,
-			// which runs AFTER the parser-inserted defer scripts and so
-			// sees the main scene3d bundle's API already in place.
+			// Gate the sub-chunk load behind DOMContentLoaded so it runs
+			// AFTER the parser-inserted defer scripts (which include the
+			// main bootstrap-feature-scene3d.js). Trying s.async = false
+			// on the dynamically-inserted script element doesn't work
+			// reliably in every Chromium build — the sub-chunk still
+			// races the main bundle and usually wins, firing the
+			// IIFE's early-return guard because __gosx_scene3d_api
+			// isn't defined yet. Waiting for DCL sidesteps the ordering
+			// problem entirely: by the time DCL fires, all parser-
+			// inserted defer scripts have already executed, so the main
+			// scene3d bundle has published its API.
 			//
 			// NB: Go raw-string (backticks) doesn't process \x escapes,
 			// so the closing </script> must come from a double-quoted
 			// string — hence the split. Historical bug from v0.17.16:
-			// using `\x3c/script>` inside the raw-string literal produced
-			// a literal "\x3c/script>" in the HTML, which JS parsed as a
-			// syntax error, silently dropping the entire inline loader.
-			b.WriteString(`<script>if(navigator.gpu){var s=document.createElement('script');s.async=false;s.defer=true;s.dataset.gosxScript='feature-scene3d-webgpu';s.src=`)
+			// using `\x3c/script>` inside a raw-string literal produced
+			// a literal "\x3c/script>" in the HTML, which JS parsed as
+			// a syntax error, silently dropping the entire inline loader.
+			b.WriteString(`<script>if(navigator.gpu){var _w=function(){var s=document.createElement('script');s.async=false;s.dataset.gosxScript='feature-scene3d-webgpu';s.src=`)
 			b.WriteString(htmlJSStringLiteral(webgpuPath))
-			b.WriteString(";document.head.appendChild(s);}")
+			b.WriteString(";document.head.appendChild(s);};")
+			b.WriteString("if(document.readyState==='loading'){document.addEventListener('DOMContentLoaded',_w);}else{_w();}}")
 			b.WriteString("\x3c/script>")
 		}
 	}
