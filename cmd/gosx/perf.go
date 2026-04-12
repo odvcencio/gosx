@@ -70,6 +70,31 @@ func cmdPerf() {
 	} else {
 		fmt.Print(perf.FormatTable(report))
 	}
+
+	// Evaluate assertions
+	if len(asserts) > 0 {
+		var parsed []perf.Assertion
+		for _, expr := range asserts {
+			a, err := perf.ParseAssertion(expr)
+			if err != nil {
+				fatal("gosx perf: bad assertion %q: %v", expr, err)
+			}
+			parsed = append(parsed, a)
+		}
+		results := perf.EvalAssertions(parsed, report)
+		allPassed := true
+		for _, r := range results {
+			if !r.Passed {
+				fmt.Fprintf(os.Stderr, "  \u2717 %s %s %.2f (actual: %.2f)\n", r.Metric, r.Op, r.Value, r.Actual)
+				allPassed = false
+			} else {
+				fmt.Fprintf(os.Stderr, "  \u2713 %s %s %.2f\n", r.Metric, r.Op, r.Value)
+			}
+		}
+		if !allPassed {
+			os.Exit(1)
+		}
+	}
 }
 
 // stringSlice implements flag.Value for repeatable string flags.
