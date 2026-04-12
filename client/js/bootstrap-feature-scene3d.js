@@ -11578,6 +11578,11 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
       var height = canvas.height;
       if (width <= 0 || height <= 0) return;
 
+      var perfEnabled = typeof window !== "undefined" && window.__gosx_scene3d_perf === true;
+      if (perfEnabled) {
+        performance.mark("scene3d-render-start");
+      }
+
       gpuCtx.configure({
         device: device,
         format: targetFormat,
@@ -11719,6 +11724,13 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
       }
 
       device.queue.submit([encoder.finish()]);
+
+      if (perfEnabled) {
+        performance.mark("scene3d-render-end");
+        performance.measure("scene3d-render", "scene3d-render-start", "scene3d-render-end");
+        performance.clearMarks("scene3d-render-start");
+        performance.clearMarks("scene3d-render-end");
+      }
     }
 
     function dispose() {
