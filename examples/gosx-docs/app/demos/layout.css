@@ -1,0 +1,388 @@
+/* ============================================================
+   Demos editorial shell
+   layout.css — sidecar for demos/layout.gsx
+   Linear/Vercel/Stripe-inspired: restrained, generous whitespace,
+   one accent-color slot per demo, humanist sans typography.
+   ============================================================ */
+
+/* ------------------------------------------------------------
+   Design tokens — scoped to .demos-shell
+   ------------------------------------------------------------ */
+
+.demos-shell {
+  --demo-bg: #0b0b0d;
+  --demo-fg: #f5f5ef;
+  --demo-muted: #9a9a9a;
+  --demo-hair: rgba(255, 255, 255, 0.08);
+  --demo-hair-strong: rgba(255, 255, 255, 0.16);
+  --demo-accent: #9fffa5;
+
+  /* Per-demo accent palette — applied via data-demo-slug (set by inline script) */
+  --demo-accent-playground: #9fffa5;
+  --demo-accent-fluid:      #7aa2ff;
+  --demo-accent-livesim:    #f59e0b;
+  --demo-accent-cms:        #ec4899;
+  --demo-accent-scene3d:    #5fb4ff;
+  --demo-accent-scene3d-bench: #cbd5e1;
+  --demo-accent-collab:     #d9f99d;
+
+  font-family: "IBM Plex Sans", "Inter", system-ui, -apple-system, sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--demo-fg);
+  background: var(--demo-bg);
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Per-demo accent override via data attribute (set by inline script at runtime) */
+.demos-shell[data-demo-slug="playground"] { --demo-accent: #9fffa5; }
+.demos-shell[data-demo-slug="fluid"]      { --demo-accent: #7aa2ff; }
+.demos-shell[data-demo-slug="livesim"]    { --demo-accent: #f59e0b; }
+.demos-shell[data-demo-slug="cms"]        { --demo-accent: #ec4899; }
+.demos-shell[data-demo-slug="scene3d"]    { --demo-accent: #5fb4ff; }
+.demos-shell[data-demo-slug="scene3d-bench"] { --demo-accent: #cbd5e1; }
+.demos-shell[data-demo-slug="collab"]    { --demo-accent: #d9f99d; }
+
+/* ------------------------------------------------------------
+   Top bar — thin context strip
+   ------------------------------------------------------------ */
+
+.demos-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 44px;
+  padding: 0 20px;
+  border-bottom: 1px solid var(--demo-hair);
+  background: var(--demo-bg);
+  flex-shrink: 0;
+}
+
+.demos-topbar__crumb {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+}
+
+.demos-topbar__home,
+.demos-topbar__section {
+  color: var(--demo-muted);
+  text-decoration: none;
+  transition: color 0.15s ease;
+}
+
+.demos-topbar__home:hover,
+.demos-topbar__section:hover {
+  color: var(--demo-fg);
+}
+
+.demos-topbar__home:focus-visible,
+.demos-topbar__section:focus-visible {
+  outline: 2px solid var(--demo-accent);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+.demos-topbar__sep {
+  color: var(--demo-hair-strong);
+  user-select: none;
+}
+
+/* Hamburger — only visible on mobile (<900px) */
+.demos-topbar__menu {
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-width: 44px;
+  min-height: 44px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 10px;
+  color: var(--demo-fg);
+}
+
+.demos-topbar__menu:focus-visible {
+  outline: 2px solid var(--demo-accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.demos-topbar__menu-bar {
+  display: block;
+  width: 18px;
+  height: 1.5px;
+  background: currentColor;
+  transition: transform 0.2s ease, opacity 0.2s ease;
+}
+
+/* ------------------------------------------------------------
+   Body — side-by-side dock + viewport
+   ------------------------------------------------------------ */
+
+.demos-body {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 260px 1fr;
+  min-height: 0;
+}
+
+/* ------------------------------------------------------------
+   Demo dock — left navigation rail
+   ------------------------------------------------------------ */
+
+.demo-dock {
+  border-right: 1px solid var(--demo-hair);
+  background: var(--demo-bg);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.demo-dock__list {
+  list-style: none;
+  margin: 0;
+  padding: 12px 0;
+}
+
+/* Each dock item */
+.demo-dock__item {
+  padding: 0 8px;
+}
+
+/* The link/span anchor element */
+.demo-dock__link {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 10px;
+  border-radius: 6px;
+  text-decoration: none;
+  color: var(--demo-fg);
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+
+.demo-dock__link:hover {
+  background: var(--demo-hair);
+}
+
+.demo-dock__link:focus-visible {
+  outline: 2px solid var(--demo-accent);
+  outline-offset: -2px;
+}
+
+/* Active state — set by inline script */
+.demo-dock__item[aria-current="page"] > .demo-dock__link,
+.demo-dock__link[aria-current="page"] {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--demo-fg);
+}
+
+.demo-dock__item[aria-current="page"] > .demo-dock__link .demo-dock__title,
+.demo-dock__link[aria-current="page"] .demo-dock__title {
+  color: var(--demo-accent);
+}
+
+/* Soon items — dimmed, unclickable */
+.demo-dock__link--soon {
+  color: var(--demo-muted);
+  cursor: default;
+  pointer-events: none;
+}
+
+.demo-dock__link--soon:hover {
+  background: none;
+}
+
+/* Accent dot */
+.demo-dock__dot {
+  flex-shrink: 0;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--demo-accent);
+  opacity: 0.7;
+}
+
+.demo-dock__link--soon .demo-dock__dot {
+  opacity: 0.3;
+}
+
+/* Body (title + tagline) */
+.demo-dock__body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.demo-dock__title {
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.3;
+}
+
+.demo-dock__tag {
+  font-size: 11px;
+  color: var(--demo-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.3;
+}
+
+.demo-dock__link--soon .demo-dock__title,
+.demo-dock__link--soon .demo-dock__tag {
+  opacity: 0.5;
+}
+
+/* Status chip */
+.demo-dock__chip {
+  flex-shrink: 0;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  border-radius: 3px;
+  line-height: 1.4;
+}
+
+.demo-dock__chip--live {
+  background: rgba(159, 255, 165, 0.12);
+  color: #9fffa5;
+  border: 1px solid rgba(159, 255, 165, 0.25);
+}
+
+.demo-dock__chip--soon {
+  background: rgba(154, 154, 154, 0.08);
+  color: var(--demo-muted);
+  border: 1px solid var(--demo-hair-strong);
+}
+
+/* ------------------------------------------------------------
+   Viewport — child page content area
+   ------------------------------------------------------------ */
+
+.demo-viewport {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--demo-bg);
+}
+
+/* Individual demos own their own padding */
+.demo-viewport > :not(.demo-meta) {
+  flex: 1;
+  min-height: 0;
+}
+
+/* ------------------------------------------------------------
+   Meta footer — three pill buttons at bottom of viewport
+   ------------------------------------------------------------ */
+
+.demo-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  border-top: 1px solid var(--demo-hair);
+  flex-shrink: 0;
+}
+
+.demo-meta__pill {
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  color: var(--demo-muted);
+  background: none;
+  border: 1px solid var(--demo-hair-strong);
+  border-radius: 20px;
+  padding: 3px 10px;
+  cursor: pointer;
+  transition: color 0.12s ease, border-color 0.12s ease;
+  line-height: 1.6;
+}
+
+.demo-meta__pill:hover {
+  color: var(--demo-fg);
+  border-color: var(--demo-hair-strong);
+  background: var(--demo-hair);
+}
+
+.demo-meta__pill:focus-visible {
+  outline: 2px solid var(--demo-accent);
+  outline-offset: 2px;
+}
+
+/* ------------------------------------------------------------
+   Mobile — off-canvas drawer at <900px
+   ------------------------------------------------------------ */
+
+@media (max-width: 900px) {
+  .demos-topbar__menu {
+    display: flex;
+  }
+
+  .demos-body {
+    grid-template-columns: 1fr;
+    position: relative;
+  }
+
+  .demo-dock {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: 280px;
+    z-index: 300;
+    border-right: 1px solid var(--demo-hair-strong);
+    transform: translateX(-100%);
+    transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+    overflow-y: auto;
+  }
+
+  /* JS toggles aria-expanded on the menu button; CSS reads it via sibling/body class.
+     The drawer open state is driven by the [data-dock-open] attribute on .demos-body,
+     toggled by the same inline wiring future task 14 will add.
+     For now the selector matches when the button has aria-expanded="true". */
+  .demos-body[data-dock-open] .demo-dock {
+    transform: translateX(0);
+  }
+
+  .demo-viewport {
+    width: 100%;
+  }
+}
+
+/* ------------------------------------------------------------
+   Reduced-motion
+   ------------------------------------------------------------ */
+
+@media (prefers-reduced-motion: reduce) {
+  .demo-dock {
+    transition: none;
+  }
+
+  .demos-topbar__menu-bar {
+    transition: none;
+  }
+
+  .demo-dock__link,
+  .demo-meta__pill {
+    transition: none;
+  }
+}
