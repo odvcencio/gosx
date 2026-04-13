@@ -382,10 +382,14 @@
       try { info.version = ctx.getParameter(ctx.VERSION) || ""; } catch (_e) {}
       try { info.shadingLanguageVersion = ctx.getParameter(ctx.SHADING_LANGUAGE_VERSION) || ""; } catch (_e) {}
       try {
-        info.vendor = dbg ? ctx.getParameter(dbg.UNMASKED_VENDOR_WEBGL) : ctx.getParameter(ctx.VENDOR);
+        // Use || "" fallback — getParameter can return null on lost contexts
+        // or when the debug extension is partially exposed, and we want empty
+        // strings (not JSON null) so the Go report and software-GPU detection
+        // downstream always have a string to pattern-match on.
+        info.vendor = (dbg ? ctx.getParameter(dbg.UNMASKED_VENDOR_WEBGL) : ctx.getParameter(ctx.VENDOR)) || "";
       } catch (_e) {}
       try {
-        info.renderer = dbg ? ctx.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : ctx.getParameter(ctx.RENDERER);
+        info.renderer = (dbg ? ctx.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : ctx.getParameter(ctx.RENDERER)) || "";
       } catch (_e) {}
       try { info.maxTextureSize = ctx.getParameter(ctx.MAX_TEXTURE_SIZE) || 0; } catch (_e) {}
       try { info.maxCubeMapSize = ctx.getParameter(ctx.MAX_CUBE_MAP_TEXTURE_SIZE) || 0; } catch (_e) {}
@@ -393,6 +397,45 @@
       try { info.maxVertexAttribs = ctx.getParameter(ctx.MAX_VERTEX_ATTRIBS) || 0; } catch (_e) {}
       try { info.maxCombinedTextureImageUnits = ctx.getParameter(ctx.MAX_COMBINED_TEXTURE_IMAGE_UNITS) || 0; } catch (_e) {}
       try { info.extensions = ctx.getSupportedExtensions() || []; } catch (_e) {}
+
+      // If the existing canvas's context is lost/stale (all queries returned
+      // empty), probe a FRESH canvas to get real GPU info. This happens when
+      // Scene3D has failed mid-initialization — the canvas still advertises
+      // webgl2 but getParameter returns null for everything. A fresh canvas
+      // gets a clean context straight from the browser/driver so we can
+      // still report renderer/vendor for software-GPU detection and general
+      // diagnostics.
+      if (!info.renderer && !info.version && !info.maxTextureSize) {
+        try {
+          var fresh = document.createElement("canvas");
+          fresh.width = 1;
+          fresh.height = 1;
+          var freshCtx = fresh.getContext("webgl2") || fresh.getContext("webgl");
+          if (freshCtx) {
+            var freshDbg = null;
+            try { freshDbg = freshCtx.getExtension("WEBGL_debug_renderer_info"); } catch (_e) {}
+            try { info.version = freshCtx.getParameter(freshCtx.VERSION) || info.version; } catch (_e) {}
+            try { info.shadingLanguageVersion = freshCtx.getParameter(freshCtx.SHADING_LANGUAGE_VERSION) || info.shadingLanguageVersion; } catch (_e) {}
+            try {
+              info.vendor = (freshDbg ? freshCtx.getParameter(freshDbg.UNMASKED_VENDOR_WEBGL) : freshCtx.getParameter(freshCtx.VENDOR)) || info.vendor;
+            } catch (_e) {}
+            try {
+              info.renderer = (freshDbg ? freshCtx.getParameter(freshDbg.UNMASKED_RENDERER_WEBGL) : freshCtx.getParameter(freshCtx.RENDERER)) || info.renderer;
+            } catch (_e) {}
+            try { info.maxTextureSize = freshCtx.getParameter(freshCtx.MAX_TEXTURE_SIZE) || info.maxTextureSize; } catch (_e) {}
+            try { info.maxCubeMapSize = freshCtx.getParameter(freshCtx.MAX_CUBE_MAP_TEXTURE_SIZE) || info.maxCubeMapSize; } catch (_e) {}
+            try { info.maxRenderbufferSize = freshCtx.getParameter(freshCtx.MAX_RENDERBUFFER_SIZE) || info.maxRenderbufferSize; } catch (_e) {}
+            try { info.maxVertexAttribs = freshCtx.getParameter(freshCtx.MAX_VERTEX_ATTRIBS) || info.maxVertexAttribs; } catch (_e) {}
+            try { info.maxCombinedTextureImageUnits = freshCtx.getParameter(freshCtx.MAX_COMBINED_TEXTURE_IMAGE_UNITS) || info.maxCombinedTextureImageUnits; } catch (_e) {}
+            try {
+              var freshExts = freshCtx.getSupportedExtensions() || [];
+              if (freshExts.length > 0) info.extensions = freshExts;
+            } catch (_e) {}
+            // Mark that the existing canvas had a stale context — useful diagnostic.
+            info.staleExistingContext = true;
+          }
+        } catch (_e) {}
+      }
 
       return info;
     }

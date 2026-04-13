@@ -2,6 +2,7 @@ package perf
 
 import (
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -86,6 +87,63 @@ type WebGLInfo struct {
 	PreserveDrawingBuffer        bool      `json:"preserveDrawingBuffer,omitempty"`
 	Extensions                   []string  `json:"extensions,omitempty"`
 	Caps                         *GPUCaps  `json:"caps,omitempty"`
+}
+
+// IsSoftwareRendered reports whether the WebGL context is backed by a
+// software rasterizer (SwiftShader, Mesa llvmpipe, Mesa softpipe, Apple
+// software renderer, etc.) rather than real GPU hardware.
+//
+// Perf numbers from software rendering — especially Scene3D frame budgets,
+// main-thread blocking during shader compilation, and buffer upload times
+// — do NOT reflect what real users on hardware GPUs will experience.
+// Callers should surface a clear warning when this returns true so that
+// automated perf gates or manual profiling sessions don't chase ghost
+// regressions that are entirely artifacts of software emulation.
+func (w *WebGLInfo) IsSoftwareRendered() bool {
+	if w == nil {
+		return false
+	}
+	hay := strings.ToLower(w.Renderer + " " + w.Vendor)
+	// Known software renderer substrings.
+	markers := []string{
+		"swiftshader",
+		"llvmpipe",
+		"softpipe",
+		"software rasterizer",
+		"apple software renderer",
+		"microsoft basic render driver",
+		"google swiftshader",
+	}
+	for _, m := range markers {
+		if strings.Contains(hay, m) {
+			return true
+		}
+	}
+	return false
+}
+
+// SoftwareRendererName returns a short human-readable name for the detected
+// software renderer, or "" when none is detected.
+func (w *WebGLInfo) SoftwareRendererName() string {
+	if w == nil {
+		return ""
+	}
+	hay := strings.ToLower(w.Renderer + " " + w.Vendor)
+	switch {
+	case strings.Contains(hay, "swiftshader"):
+		return "SwiftShader"
+	case strings.Contains(hay, "llvmpipe"):
+		return "Mesa llvmpipe"
+	case strings.Contains(hay, "softpipe"):
+		return "Mesa softpipe"
+	case strings.Contains(hay, "apple software"):
+		return "Apple Software Renderer"
+	case strings.Contains(hay, "microsoft basic"):
+		return "Microsoft Basic Render Driver"
+	case strings.Contains(hay, "software rasterizer"):
+		return "Generic Software Rasterizer"
+	}
+	return ""
 }
 
 // GPUCaps reports browser-level GPU tier availability independent of what

@@ -123,6 +123,22 @@ func FormatTable(r *Report) string {
 		}
 	}
 
+	// Software-GPU warning banner — surface this above all GPU-dependent
+	// sections so users immediately understand that Scene3D timings and
+	// main-thread blocking numbers reflect software emulation, not the
+	// real user experience on hardware GPUs.
+	if p.WebGL != nil && p.WebGL.IsSoftwareRendered() {
+		name := p.WebGL.SoftwareRendererName()
+		if name == "" {
+			name = "a software rasterizer"
+		}
+		b.WriteString("\n  ⚠  Software GPU detected (" + name + ")\n")
+		b.WriteString("     Scene3D frame timings, shader-compile blocking, and main-thread\n")
+		b.WriteString("     long tasks below are software-emulated and do NOT reflect what real\n")
+		b.WriteString("     users on hardware GPUs experience. Run this profile against a browser\n")
+		b.WriteString("     with a real GPU for accurate Scene3D numbers.\n")
+	}
+
 	// GPU context info — shows the tier actually in use and flags
 	// whether the engine is running on the best available tier.
 	if p.WebGL != nil {
