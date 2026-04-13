@@ -19925,6 +19925,78 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
     return "json";
   }
 
+  function resolveSceneSubFeatureURL(datasetKey, fallback) {
+    try {
+      var tag = document.querySelector('script[data-gosx-script="feature-scene3d"]');
+      if (tag && tag.dataset && tag.dataset[datasetKey]) {
+        return tag.dataset[datasetKey];
+      }
+    } catch (_e) {}
+    return fallback;
+  }
+
+  var sceneGLTFFeaturePromise = null;
+
+  function ensureGLTFFeatureLoaded() {
+    if (window.__gosx_scene3d_gltf_api) {
+      return Promise.resolve(window.__gosx_scene3d_gltf_api);
+    }
+    if (sceneGLTFFeaturePromise) {
+      return sceneGLTFFeaturePromise;
+    }
+    sceneGLTFFeaturePromise = new Promise(function(resolve, reject) {
+      var s = document.createElement("script");
+      s.async = false;
+      s.dataset.gosxScript = "feature-scene3d-gltf";
+      s.src = resolveSceneSubFeatureURL("gosxScene3dGltfUrl", "/gosx/bootstrap-feature-scene3d-gltf.js");
+      s.onload = function() {
+        if (window.__gosx_scene3d_gltf_api) {
+          resolve(window.__gosx_scene3d_gltf_api);
+        } else {
+          reject(new Error("scene3d-gltf chunk loaded but did not publish API"));
+        }
+      };
+      s.onerror = function() {
+        sceneGLTFFeaturePromise = null; // allow retry on next attempt
+        reject(new Error("failed to load scene3d-gltf chunk"));
+      };
+      document.head.appendChild(s);
+    });
+    return sceneGLTFFeaturePromise;
+  }
+
+  var sceneAnimationFeaturePromise = null;
+
+  function ensureAnimationFeatureLoaded() {
+    if (window.__gosx_scene3d_animation_api) {
+      return Promise.resolve(window.__gosx_scene3d_animation_api);
+    }
+    if (sceneAnimationFeaturePromise) {
+      return sceneAnimationFeaturePromise;
+    }
+    sceneAnimationFeaturePromise = new Promise(function(resolve, reject) {
+      var s = document.createElement("script");
+      s.async = false;
+      s.dataset.gosxScript = "feature-scene3d-animation";
+      s.src = resolveSceneSubFeatureURL("gosxScene3dAnimationUrl", "/gosx/bootstrap-feature-scene3d-animation.js");
+      s.onload = function() {
+        if (window.__gosx_scene3d_animation_api) {
+          resolve(window.__gosx_scene3d_animation_api);
+        } else {
+          reject(new Error("scene3d-animation chunk loaded but did not publish API"));
+        }
+      };
+      s.onerror = function() {
+        sceneAnimationFeaturePromise = null;
+        reject(new Error("failed to load scene3d-animation chunk"));
+      };
+      document.head.appendChild(s);
+    });
+    return sceneAnimationFeaturePromise;
+  }
+
+  window.__gosx_ensure_scene3d_animation_loaded = ensureAnimationFeatureLoaded;
+
   async function loadSceneModelAsset(src) {
     const key = String(src || "").trim();
     if (!key) {
@@ -19935,7 +20007,8 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
         try {
           const format = sceneModelAssetFormat(key);
           if (format === "glb" || format === "gltf") {
-            return parseSceneModelAsset(gltfSceneToModelAsset(await sceneLoadGLTFModel(key), key), key);
+            var gltfApi = await ensureGLTFFeatureLoaded();
+            return parseSceneModelAsset(gltfApi.gltfSceneToModelAsset(await gltfApi.sceneLoadGLTFModel(key), key), key);
           }
           const response = await fetch(key, { credentials: "same-origin" });
           if (!response || !response.ok) {
@@ -21704,7 +21777,20 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
 
     await sceneModelHydration;
     scenePrimeInitialTransitions(sceneState, motion.reducedMotion, 0);
-    renderFrame(0);
+
+    function scheduleInitialRender() {
+      if (disposed) return;
+      if (typeof scheduler !== "undefined" && scheduler && typeof scheduler.postTask === "function") {
+        scheduler.postTask(function() { if (!disposed) renderFrame(0); }, { priority: "user-visible" });
+        return;
+      }
+      if (typeof requestAnimationFrame === "function") {
+        requestAnimationFrame(function() { if (!disposed) renderFrame(0); });
+        return;
+      }
+      setTimeout(function() { if (!disposed) renderFrame(0); }, 0);
+    }
+    scheduleInitialRender();
 
     if (typeof sceneUpgradeProgressive === "function" && props.compression && props.compression.progressive) {
       var upgradeTimer = typeof requestIdleCallback === "function" ? requestIdleCallback : setTimeout;
