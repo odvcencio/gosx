@@ -364,6 +364,70 @@ func TestScene3DDemoCinematicShape(t *testing.T) {
 	}
 }
 
+// TestScene3DBenchRewrittenShape verifies the scene3d-bench demo was rewritten
+// to the editorial steel design language (flat, monospace, token-driven) with
+// a live histogram SVG and GPU info strip.
+func TestScene3DBenchRewrittenShape(t *testing.T) {
+	_, thisFile, _, _ := runtime.Caller(0)
+	benchDir := filepath.Join(filepath.Dir(thisFile), "app", "demos", "scene3d-bench")
+
+	// -- page.css checks --
+	cssSource, err := os.ReadFile(filepath.Join(benchDir, "page.css"))
+	if err != nil {
+		t.Fatalf("read scene3d-bench/page.css: %v", err)
+	}
+	cssSrc := string(cssSource)
+
+	// Must wire to shell design token for accent color.
+	if !strings.Contains(cssSrc, "var(--demo-accent)") {
+		t.Error("scene3d-bench/page.css missing var(--demo-accent) — theming must wire to shell tokens")
+	}
+
+	// Must NOT use glass blur (flat design).
+	if strings.Contains(cssSrc, "backdrop-filter") {
+		t.Error("scene3d-bench/page.css must not contain backdrop-filter — flat design, no glass blur")
+	}
+
+	// Regression guard: none of the old hardcoded blue hexes.
+	for _, oldBlue := range []string{"#8ecfff", "#6b8da8", "#d6ebff"} {
+		if strings.Contains(cssSrc, oldBlue) {
+			t.Errorf("scene3d-bench/page.css must not contain old hardcoded blue %q — editorial rewrite required", oldBlue)
+		}
+	}
+
+	// -- page.gsx checks --
+	gsxSource, err := os.ReadFile(filepath.Join(benchDir, "page.gsx"))
+	if err != nil {
+		t.Fatalf("read scene3d-bench/page.gsx: %v", err)
+	}
+	gsxSrc := string(gsxSource)
+
+	// New class names must be in place.
+	if !strings.Contains(gsxSrc, "scene3d-bench__overlay") {
+		t.Error("scene3d-bench/page.gsx missing class scene3d-bench__overlay — rename from bench3d required")
+	}
+
+	// GPU strip must be present.
+	if !strings.Contains(gsxSrc, "bench3d-gpu") {
+		t.Error("scene3d-bench/page.gsx missing id bench3d-gpu — GPU info strip required")
+	}
+
+	// Histogram SVG must be present (viewBox covering 240 wide x 40 tall).
+	if !strings.Contains(gsxSrc, `viewBox="0 0 240 40"`) {
+		t.Error(`scene3d-bench/page.gsx missing histogram SVG with viewBox="0 0 240 40"`)
+	}
+
+	// Functional substrate: perf gate flag must still be set.
+	if !strings.Contains(gsxSrc, "__gosx_scene3d_perf = true") {
+		t.Error("scene3d-bench/page.gsx missing __gosx_scene3d_perf = true — perf gate must remain")
+	}
+
+	// Functional substrate: PerformanceObserver must still be attached.
+	if !strings.Contains(gsxSrc, "PerformanceObserver") {
+		t.Error("scene3d-bench/page.gsx missing PerformanceObserver — observer must remain")
+	}
+}
+
 // TestDemosIndexLists7Cards verifies the /demos index page files have the
 // expected structure and roster. We use raw-source grep rather than rendering
 // because the GSX IR does not expose an HTML renderer in tests.

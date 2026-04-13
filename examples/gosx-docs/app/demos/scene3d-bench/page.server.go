@@ -8,7 +8,7 @@ import (
 func init() {
 	docsapp.RegisterStaticDocsPage(
 		"Scene3D Bench",
-		"Live in-browser frame-time overlay for the Scene3D render path. Drives configurable workloads through a real WebGL pipeline and reports p50/p95/max wall-clock stats.",
+		"Live frame-time instrumentation for the Scene3D renderer — histogram, p50/p95/max, GPU info, and five stress workloads.",
 		route.FileModuleOptions{
 			Load: func(ctx *route.RouteContext, page route.FilePage) (any, error) {
 				workload := ctx.Query("workload")
