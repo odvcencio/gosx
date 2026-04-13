@@ -6,7 +6,7 @@ import (
 )
 
 func init() {
-	docsapp.RegisterStaticDocsPage("Geometry Zoo", "Interactive 3D scene with PBR geometry primitives.", route.FileModuleOptions{
+	docsapp.RegisterStaticDocsPage("Geometry Zoo", "Cinematic PBR showcase with three-point lighting, ACES tonemapping, and bloom — all declared in Go.", route.FileModuleOptions{
 		Load: func(ctx *route.RouteContext, page route.FilePage) (any, error) {
 			return map[string]any{
 				"scene": GeometryZooProgram(),

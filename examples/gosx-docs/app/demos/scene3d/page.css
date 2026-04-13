@@ -1,83 +1,105 @@
 /* ============================================================
-   Geometry Zoo demo — full-viewport 3D canvas with info overlay
+   Scene3D cinematic showcase
    page.css — sidecar for app/demos/scene3d/page.gsx
+   Full-viewport canvas, bottom-left editorial overlay.
+   All chrome uses shell design tokens — no hardcoded colours.
    ============================================================ */
 
-.geo-zoo {
+.scene3d-showcase {
   position: relative;
-  min-height: 100vh;
+  min-height: 100%;
+  min-width: 0;
   overflow: hidden;
-  background: #09141e;
+  background: var(--demo-bg);
 }
 
-.geo-zoo__scene {
+/* Canvas layer — fills the entire section behind the overlay */
+.scene3d-showcase__canvas {
   position: absolute;
   inset: 0;
   z-index: 0;
 }
 
-.geo-zoo__scene canvas {
+.scene3d-showcase__canvas canvas {
   display: block;
-  width: 100% !important;
-  height: 100% !important;
+  width: 100%;
+  height: 100%;
 }
 
-.geo-zoo__overlay {
-  position: relative;
+/* Overlay — bottom-left corner, pointer-events off so orbit drag works */
+.scene3d-showcase__overlay {
+  position: absolute;
+  bottom: var(--space-lg, 2rem);
+  left: var(--space-lg, 2rem);
   z-index: 1;
+  pointer-events: none;
   display: flex;
   flex-direction: column;
-  align-items: center;
-  justify-content: flex-end;
-  min-height: 100vh;
-  padding: var(--space-xl);
-  text-align: center;
-  pointer-events: none;
-  gap: var(--space-xs);
+  gap: 0.25rem;
+  max-width: 22rem;
 }
 
-.geo-zoo__title {
-  font-family: var(--font-display);
-  font-size: var(--text-hero);
+/* Display title */
+.scene3d-showcase__title {
+  font-family: var(--font-display, "IBM Plex Sans", system-ui, sans-serif);
+  font-size: clamp(1.75rem, 4vw, 2.75rem);
+  font-weight: 600;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+  color: var(--demo-fg);
   margin: 0;
 }
 
-.geo-zoo__subtitle {
-  color: var(--text-muted);
-  font-size: var(--text-small);
-  font-family: var(--font-mono);
+/* Accent rule under the title — uses cold-blue shell accent */
+.scene3d-showcase__title::after {
+  content: "";
+  display: block;
+  width: 2rem;
+  height: 2px;
+  background: var(--demo-accent);
+  margin-top: 0.5rem;
+  border-radius: 1px;
+}
+
+/* One-line tagline */
+.scene3d-showcase__tagline {
+  font-family: var(--font-display, "IBM Plex Sans", system-ui, sans-serif);
+  font-size: 0.8rem;
+  color: var(--demo-muted);
+  letter-spacing: 0.03em;
+  margin: 0.25rem 0 0;
+}
+
+/* Controls hint — monospace, dimmer */
+.scene3d-showcase__controls {
+  font-family: var(--font-mono, "IBM Plex Mono", "Fira Code", monospace);
+  font-size: 0.68rem;
+  color: var(--demo-accent);
+  letter-spacing: 0.08em;
   text-transform: uppercase;
-  letter-spacing: var(--ls-label);
   margin: 0;
+  opacity: 0.75;
 }
 
-.geo-zoo__legend {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem 1rem;
-  list-style: none;
-  margin: var(--space-xs) 0 0;
-  padding: 0;
-  justify-content: center;
-}
-
-.geo-zoo__legend li {
-  font-family: var(--font-mono);
-  font-size: 0.75rem;
-  color: rgba(212, 175, 55, 0.75);
-  background: rgba(212, 175, 55, 0.08);
-  border: 1px solid rgba(212, 175, 55, 0.2);
-  border-radius: 0.25rem;
-  padding: 0.2em 0.6em;
-  letter-spacing: var(--ls-label);
-}
-
-@media (max-width: 767px) {
-  .geo-zoo__title {
-    font-size: clamp(2rem, 8vw, 3.5rem);
+/* Responsive — smaller overlay on narrow viewports */
+@media (max-width: 700px) {
+  .scene3d-showcase__overlay {
+    bottom: var(--space-md, 1.25rem);
+    left: var(--space-md, 1.25rem);
   }
 
-  .geo-zoo__legend {
-    gap: 0.4rem 0.6rem;
+  .scene3d-showcase__title {
+    font-size: clamp(1.4rem, 6vw, 2rem);
+  }
+
+  .scene3d-showcase__tagline {
+    font-size: 0.72rem;
+  }
+}
+
+/* Reduced-motion: honour system preference (AutoRotate is purely JS-side) */
+@media (prefers-reduced-motion: reduce) {
+  .scene3d-showcase__title::after {
+    transition: none;
   }
 }

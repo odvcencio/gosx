@@ -297,6 +297,73 @@ func TestCMSDemoRewrittenShape(t *testing.T) {
 	}
 }
 
+// TestScene3DDemoCinematicShape verifies the scene3d demo was rewritten to a
+// cinematic PBR showcase with three-point lighting, ACES tonemapping, bloom,
+// editorial CSS tokens, and proper accessibility markup.
+func TestScene3DDemoCinematicShape(t *testing.T) {
+	_, thisFile, _, _ := runtime.Caller(0)
+	sceneDir := filepath.Join(filepath.Dir(thisFile), "app", "demos", "scene3d")
+
+	// -- program.go checks --
+	progSource, err := os.ReadFile(filepath.Join(sceneDir, "program.go"))
+	if err != nil {
+		t.Fatalf("read scene3d/program.go: %v", err)
+	}
+	progSrc := string(progSource)
+
+	// PostFX chain: ACES tonemap + bloom must be declared.
+	progRequire := []string{
+		"scene.Tonemap",
+		"scene.Bloom",
+	}
+	for _, needle := range progRequire {
+		if !strings.Contains(progSrc, needle) {
+			t.Errorf("scene3d/program.go missing %q — postfx not wired", needle)
+		}
+	}
+
+	// Three-point lighting: must have at least three distinct light types.
+	lightTypes := []string{"DirectionalLight", "PointLight", "HemisphereLight"}
+	found := 0
+	for _, lt := range lightTypes {
+		if strings.Contains(progSrc, lt) {
+			found++
+		}
+	}
+	if found < 2 {
+		t.Errorf("scene3d/program.go has %d distinct light types (DirectionalLight, PointLight, HemisphereLight); want at least 2 for three-point setup", found)
+	}
+
+	// -- page.css checks --
+	cssSource, err := os.ReadFile(filepath.Join(sceneDir, "page.css"))
+	if err != nil {
+		t.Fatalf("read scene3d/page.css: %v", err)
+	}
+	cssSrc := string(cssSource)
+
+	// Must wire to shell design tokens.
+	if !strings.Contains(cssSrc, "var(--demo-accent)") {
+		t.Error("scene3d/page.css missing var(--demo-accent) — theming must wire to shell tokens")
+	}
+
+	// Must NOT contain old geo-zoo class (renamed to scene3d-showcase).
+	if strings.Contains(cssSrc, ".geo-zoo") {
+		t.Error("scene3d/page.css still contains .geo-zoo class — must be renamed to .scene3d-showcase")
+	}
+
+	// -- page.gsx checks --
+	gsxSource, err := os.ReadFile(filepath.Join(sceneDir, "page.gsx"))
+	if err != nil {
+		t.Fatalf("read scene3d/page.gsx: %v", err)
+	}
+	gsxSrc := string(gsxSource)
+
+	// Must carry aria-label for accessibility.
+	if !strings.Contains(gsxSrc, "aria-label") {
+		t.Error("scene3d/page.gsx missing aria-label — accessibility required")
+	}
+}
+
 // TestDemosIndexLists7Cards verifies the /demos index page files have the
 // expected structure and roster. We use raw-source grep rather than rendering
 // because the GSX IR does not expose an HTML renderer in tests.
