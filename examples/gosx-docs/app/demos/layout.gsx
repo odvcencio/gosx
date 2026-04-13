@@ -94,14 +94,14 @@ func Layout() Node {
                         </a>
                     </li>
                     <li class="demo-dock__item" role="listitem">
-                        <span class="demo-dock__link demo-dock__link--soon" data-demo="collab" aria-disabled="true">
+                        <a href="/demos/collab" class="demo-dock__link" data-demo="collab">
                             <span class="demo-dock__dot" aria-hidden="true"></span>
                             <span class="demo-dock__body">
                                 <span class="demo-dock__title">Collab Editor</span>
-                                <span class="demo-dock__tag">CRDT markdown</span>
+                                <span class="demo-dock__tag">LWW markdown sync</span>
                             </span>
-                            <span class="demo-dock__chip demo-dock__chip--soon">Soon</span>
-                        </span>
+                            <span class="demo-dock__chip demo-dock__chip--live">Live</span>
+                        </a>
                     </li>
                 </ul>
             </nav>

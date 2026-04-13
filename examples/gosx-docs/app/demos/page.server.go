@@ -66,10 +66,10 @@ var demosIndexCards = []demoCard{
 	{
 		Slug:   "collab",
 		Title:  "Collab Editor",
-		Tag:    "CRDT markdown",
-		Body:   "Two tabs, one document. Shared cursors, real-time preview, ephemeral rooms.",
+		Tag:    "LWW markdown sync",
+		Body:   "Two tabs, one document. Real-time preview, instant sync via a hub. Open two tabs — start typing.",
 		Accent: "#d9f99d",
-		Live:   false,
+		Live:   true,
 	},
 }
 

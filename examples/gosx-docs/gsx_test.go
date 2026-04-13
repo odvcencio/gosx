@@ -580,3 +580,116 @@ func TestLiveSimDemoShape(t *testing.T) {
 		t.Error(`main.go missing app.Mount("/demos/livesim/ws"`)
 	}
 }
+
+// TestCollabDemoShape verifies the collab demo has correct structural wiring:
+// hub, LWW doc, BindHub, page markup, client JS, nav flip, and route config.
+func TestCollabDemoShape(t *testing.T) {
+	_, thisFile, _, _ := runtime.Caller(0)
+	root := filepath.Dir(thisFile)
+	collabDir := filepath.Join(root, "app", "demos", "collab")
+	publicDir := filepath.Join(root, "public")
+	mainPath := filepath.Join(root, "main.go")
+	layoutPath := filepath.Join(root, "app", "demos", "layout.gsx")
+
+	// ── page.server.go ────────────────────────────────────────────────────────
+	serverSource, err := os.ReadFile(filepath.Join(collabDir, "page.server.go"))
+	if err != nil {
+		t.Fatalf("read collab/page.server.go: %v", err)
+	}
+	serverSrc := string(serverSource)
+
+	serverChecks := []struct{ needle, label string }{
+		{`hub.New("collab")`, `hub.New("collab")`},
+		{"ctx.Runtime().BindHub(", "ctx.Runtime().BindHub("},
+		{`"doc:edit"`, `"doc:edit"`},
+		{`"doc:update"`, `"doc:update"`},
+	}
+	for _, c := range serverChecks {
+		if !strings.Contains(serverSrc, c.needle) {
+			t.Errorf("collab/page.server.go missing %q", c.label)
+		}
+	}
+
+	// ── doc.go ────────────────────────────────────────────────────────────────
+	docSource, err := os.ReadFile(filepath.Join(collabDir, "doc.go"))
+	if err != nil {
+		t.Fatalf("read collab/doc.go: %v", err)
+	}
+	docSrc := string(docSource)
+
+	docChecks := []struct{ needle, label string }{
+		{"func NewDoc", "func NewDoc"},
+		{"func (d *Doc) Apply", "func (d *Doc) Apply"},
+	}
+	for _, c := range docChecks {
+		if !strings.Contains(docSrc, c.needle) {
+			t.Errorf("collab/doc.go missing %q", c.label)
+		}
+	}
+
+	// ── page.gsx ──────────────────────────────────────────────────────────────
+	gsxSource, err := os.ReadFile(filepath.Join(collabDir, "page.gsx"))
+	if err != nil {
+		t.Fatalf("read collab/page.gsx: %v", err)
+	}
+	gsxSrc := string(gsxSource)
+
+	gsxChecks := []string{"collab-source", "collab-preview", "/collab-client.js"}
+	for _, needle := range gsxChecks {
+		if !strings.Contains(gsxSrc, needle) {
+			t.Errorf("collab/page.gsx missing %q", needle)
+		}
+	}
+
+	// page.gsx must compile and export Page.
+	prog, err := gosx.Compile(gsxSource)
+	if err != nil {
+		t.Fatalf("compile collab/page.gsx: %v", err)
+	}
+	if len(prog.Components) == 0 || prog.Components[0].Name != "Page" {
+		t.Error("collab/page.gsx: expected Page component")
+	}
+
+	// ── public/collab-client.js ───────────────────────────────────────────────
+	jsSource, err := os.ReadFile(filepath.Join(publicDir, "collab-client.js"))
+	if err != nil {
+		t.Fatalf("read public/collab-client.js: %v", err)
+	}
+	jsSrc := string(jsSource)
+
+	jsChecks := []string{"gosx:hub:event", "doc:edit", "renderMarkdown"}
+	for _, needle := range jsChecks {
+		if !strings.Contains(jsSrc, needle) {
+			t.Errorf("public/collab-client.js missing %q", needle)
+		}
+	}
+
+	// ── layout.gsx: collab must be a live <a>, not an aria-disabled <span> ───
+	layoutSource, err := os.ReadFile(layoutPath)
+	if err != nil {
+		t.Fatalf("read layout.gsx: %v", err)
+	}
+	layoutSrc := string(layoutSource)
+
+	if !strings.Contains(layoutSrc, `href="/demos/collab"`) {
+		t.Error(`layout.gsx missing href="/demos/collab" — dock item not flipped to Live`)
+	}
+	if strings.Contains(layoutSrc, `data-demo="collab" aria-disabled`) {
+		t.Error("layout.gsx collab entry still has aria-disabled — not fully flipped")
+	}
+
+	// ── main.go: hub mount ────────────────────────────────────────────────────
+	mainSource, err := os.ReadFile(mainPath)
+	if err != nil {
+		t.Fatalf("read main.go: %v", err)
+	}
+	mainSrc := string(mainSource)
+	if !strings.Contains(mainSrc, `app.Mount("/demos/collab/ws"`) {
+		t.Error(`main.go missing app.Mount("/demos/collab/ws"`)
+	}
+
+	// ── route.config.json must exist ─────────────────────────────────────────
+	if _, err := os.Stat(filepath.Join(collabDir, "route.config.json")); err != nil {
+		t.Error("collab/route.config.json missing — prerender opt-out required")
+	}
+}

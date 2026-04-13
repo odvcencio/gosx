@@ -13,6 +13,7 @@ import (
 	"github.com/odvcencio/gosx/auth"
 	"github.com/odvcencio/gosx/env"
 	docsapp "github.com/odvcencio/gosx/examples/gosx-docs/app"
+	collab "github.com/odvcencio/gosx/examples/gosx-docs/app/demos/collab"
 	livesim "github.com/odvcencio/gosx/examples/gosx-docs/app/demos/livesim"
 	_ "github.com/odvcencio/gosx/examples/gosx-docs/modules"
 	"github.com/odvcencio/gosx/route"
@@ -81,6 +82,7 @@ func main() {
 	app.Mount("/auth/webauthn/login/options", webauthn.LoginOptionsHandler())
 	app.Mount("/auth/webauthn/login", webauthn.LoginHandler())
 	app.Redirect("GET /docs", "/docs/getting-started", http.StatusTemporaryRedirect)
+	app.Mount("/demos/collab/ws", collab.Hub)
 	app.Mount("/demos/livesim/ws", livesim.Hub)
 	app.Mount("/", router.Build())
 
