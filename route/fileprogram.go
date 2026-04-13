@@ -162,7 +162,7 @@ func (r *fileProgramRenderer) renderBuiltinComponent(node *ir.Node, env fileRend
 }
 
 func (r *fileProgramRenderer) renderConditional(node *ir.Node, env fileRenderEnv) string {
-	condition := attrValue(node.Attrs, env, "when", "if", "test")
+	condition := attrValue(node.Attrs, env, "when", "if", "cond", "test")
 	if truthy(condition) {
 		return r.renderChildren(node.Children, env)
 	}

@@ -1,6 +1,9 @@
 /* ============================================================
-   CMS Editor demo — dark glass-panel block editor
+   CMS Editor demo — editorial magenta block editor
    page.css — sidecar for app/demos/cms/page.gsx
+   Design language: near-black canvas, magenta accent (sparing),
+   typography-first hierarchy. No glass blur, no gradients (except
+   publish button hover glow). All color through shell CSS vars.
    ============================================================ */
 
 /* ---- Shell ------------------------------------------------- */
@@ -8,10 +11,13 @@
 .cms-demo {
   display: flex;
   flex-direction: column;
-  min-height: 100vh;
-  background: #0b0e14;
-  color: #e2e8f0;
-  font-family: var(--font-sans);
+  height: 100%;
+  min-height: 0;
+  background: var(--demo-bg);
+  color: var(--demo-fg);
+  font-family: "IBM Plex Sans", "Inter", system-ui, sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
 }
 
 /* ---- Header ----------------------------------------------- */
@@ -21,13 +27,8 @@
   align-items: center;
   justify-content: space-between;
   padding: 0.75rem 1.5rem;
-  background: rgba(255, 255, 255, 0.04);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  position: sticky;
-  top: 0;
-  z-index: 10;
+  border-bottom: 1px solid var(--demo-hair);
+  flex-shrink: 0;
 }
 
 .cms-header__brand {
@@ -37,24 +38,53 @@
 }
 
 .cms-header__logo {
-  font-family: var(--font-display);
-  font-size: 1.1rem;
+  font-family: "Space Grotesk", system-ui, sans-serif;
+  font-size: 1rem;
   font-weight: 700;
   letter-spacing: -0.02em;
-  color: #fff;
+  color: var(--demo-fg);
 }
 
 .cms-header__badge {
-  font-family: var(--font-mono);
-  font-size: 0.7rem;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.65rem;
   text-transform: uppercase;
-  letter-spacing: var(--ls-label);
-  color: rgba(212, 175, 55, 0.8);
-  background: rgba(212, 175, 55, 0.1);
-  border: 1px solid rgba(212, 175, 55, 0.2);
+  letter-spacing: 0.08em;
+  color: var(--demo-accent);
+  background: rgba(236, 72, 153, 0.1);
+  border: 1px solid rgba(236, 72, 153, 0.25);
   border-radius: 0.25rem;
   padding: 0.15em 0.5em;
 }
+
+.cms-header__status {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.7rem;
+  color: var(--demo-muted);
+  letter-spacing: 0.02em;
+}
+
+.cms-header__status-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--demo-muted);
+  margin-right: 0.4em;
+  vertical-align: middle;
+}
+
+.cms-header__status--published .cms-header__status-dot {
+  background: var(--demo-accent);
+}
+
+.cms-header__actions {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+/* ---- Publish form / button -------------------------------- */
 
 .cms-publish-form {
   display: flex;
@@ -64,13 +94,15 @@
 .cms-btn {
   display: inline-flex;
   align-items: center;
-  padding: 0.45rem 1rem;
+  padding: 0.4rem 1rem;
   border-radius: 0.35rem;
-  font-size: 0.875rem;
+  font-size: 0.8rem;
   font-weight: 600;
   cursor: pointer;
   border: none;
-  transition: opacity 0.15s ease, transform 0.1s ease;
+  transition: opacity 0.15s ease, box-shadow 0.15s ease, transform 0.1s ease;
+  font-family: inherit;
+  letter-spacing: 0.01em;
 }
 
 .cms-btn:active {
@@ -78,47 +110,54 @@
 }
 
 .cms-btn--primary {
-  background: #D4AF37;
-  color: #0b0e14;
+  background: var(--demo-accent);
+  color: var(--demo-bg);
 }
 
 .cms-btn--primary:hover {
-  opacity: 0.88;
+  opacity: 0.9;
+  box-shadow: 0 0 16px rgba(236, 72, 153, 0.35);
+}
+
+.cms-btn--primary:focus-visible {
+  outline: 2px solid var(--demo-accent);
+  outline-offset: 2px;
 }
 
 /* ---- Workspace (3-column grid) ----------------------------- */
 
 .cms-workspace {
   display: grid;
-  grid-template-columns: 220px 1fr 280px;
+  grid-template-columns: 240px 1fr 320px;
   flex: 1;
-  overflow: hidden;
   min-height: 0;
+  overflow: hidden;
+  gap: 0;
 }
 
-/* ---- Panel title ------------------------------------------ */
+/* ---- Panel label (sits above each panel) ------------------- */
 
-.cms-panel-title {
-  font-family: var(--font-mono);
-  font-size: 0.7rem;
+.cms-panel-label {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.65rem;
   text-transform: uppercase;
-  letter-spacing: var(--ls-label);
-  color: rgba(255, 255, 255, 0.35);
-  padding: 0.75rem 1rem 0.5rem;
+  letter-spacing: 0.1em;
+  color: var(--demo-muted);
+  padding: 0.6rem 1.25rem 0.4rem;
   margin: 0;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  border-bottom: 1px solid var(--demo-hair);
 }
 
 /* ---- Palette (left column) -------------------------------- */
 
 .cms-palette {
-  border-right: 1px solid rgba(255, 255, 255, 0.08);
+  border-right: 1px solid var(--demo-hair);
   overflow-y: auto;
-  background: rgba(255, 255, 255, 0.02);
+  background: var(--demo-bg);
 }
 
 .cms-palette__list {
-  padding: 0.75rem;
+  padding: 0.75rem 1rem;
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
@@ -128,37 +167,47 @@
   display: flex;
   align-items: center;
   gap: 0.65rem;
-  padding: 0.65rem 0.75rem;
-  border-radius: 0.4rem;
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  cursor: grab;
-  transition: background 0.15s ease, border-color 0.15s ease;
+  padding: 0.6rem 0.75rem;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--demo-hair);
+  transition: background 0.12s ease, border-color 0.12s ease;
   user-select: none;
 }
 
 .cms-block-card:hover {
-  background: rgba(212, 175, 55, 0.08);
-  border-color: rgba(212, 175, 55, 0.25);
-}
-
-.cms-block-card:active {
-  cursor: grabbing;
+  background: rgba(236, 72, 153, 0.06);
+  border-color: rgba(236, 72, 153, 0.2);
 }
 
 .cms-block-card__icon {
-  width: 1.75rem;
-  height: 1.75rem;
+  width: 1.6rem;
+  height: 1.6rem;
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 0.3rem;
-  background: rgba(212, 175, 55, 0.15);
-  color: #D4AF37;
-  font-family: var(--font-mono);
-  font-size: 0.8rem;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--demo-muted);
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.75rem;
   font-weight: 700;
   flex-shrink: 0;
+}
+
+.cms-block-card--hero .cms-block-card__icon {
+  color: var(--demo-accent);
+  background: rgba(236, 72, 153, 0.1);
+}
+
+.cms-block-card--feature .cms-block-card__icon {
+  color: #8b5cf6;
+  background: rgba(139, 92, 246, 0.1);
+}
+
+.cms-block-card--quote .cms-block-card__icon {
+  color: #f5a6cc;
+  background: rgba(245, 166, 204, 0.1);
 }
 
 .cms-block-card__meta {
@@ -168,212 +217,243 @@
 }
 
 .cms-block-card__meta strong {
-  font-size: 0.85rem;
-  color: #e2e8f0;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--demo-fg);
 }
 
 .cms-block-card__meta span {
-  font-size: 0.72rem;
-  color: rgba(255, 255, 255, 0.4);
-  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  color: var(--demo-muted);
+  font-family: "JetBrains Mono", monospace;
 }
 
 /* ---- Editor (center column) ------------------------------- */
 
 .cms-editor {
   overflow-y: auto;
-  border-right: 1px solid rgba(255, 255, 255, 0.08);
+  border-right: 1px solid var(--demo-hair);
 }
 
 .cms-block-list {
-  padding: 1rem;
+  padding: 1rem 1.25rem;
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
 }
 
 .cms-editor-block {
-  border-radius: 0.5rem;
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--demo-hair);
   overflow: hidden;
-  transition: border-color 0.15s ease;
+  transition: border-color 0.12s ease;
 }
 
 .cms-editor-block:hover {
-  border-color: rgba(212, 175, 55, 0.2);
+  border-color: rgba(255, 255, 255, 0.14);
 }
 
 .cms-editor-block--hero {
-  border-left: 3px solid #D4AF37;
+  border-left: 3px solid var(--demo-accent);
 }
 
 .cms-editor-block--feature {
-  border-left: 3px solid #60a5fa;
+  border-left: 3px solid #8b5cf6;
 }
 
 .cms-editor-block--quote {
-  border-left: 3px solid #a78bfa;
+  border-left: 3px solid #f5a6cc;
 }
 
 .cms-editor-block__header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 0.5rem 0.75rem;
-  background: rgba(255, 255, 255, 0.03);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  padding: 0.45rem 0.75rem;
+  background: rgba(255, 255, 255, 0.02);
+  border-bottom: 1px solid var(--demo-hair);
 }
 
 .cms-editor-block__type {
-  font-family: var(--font-mono);
-  font-size: 0.7rem;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.65rem;
   text-transform: uppercase;
-  letter-spacing: var(--ls-label);
-  color: rgba(255, 255, 255, 0.4);
-}
-
-.cms-editor-block__remove {
-  background: none;
-  border: none;
-  color: rgba(255, 255, 255, 0.25);
-  cursor: pointer;
-  font-size: 1rem;
-  line-height: 1;
-  padding: 0 0.2rem;
-  transition: color 0.15s ease;
-}
-
-.cms-editor-block__remove:hover {
-  color: rgba(255, 80, 80, 0.8);
+  letter-spacing: 0.08em;
+  color: var(--demo-muted);
 }
 
 .cms-editor-block__fields {
   padding: 0.75rem;
   display: flex;
   flex-direction: column;
-  gap: 0.65rem;
+  gap: 0.6rem;
 }
 
 .cms-field {
   display: flex;
   flex-direction: column;
-  gap: 0.3rem;
+  gap: 0.25rem;
 }
 
-.cms-field span {
-  font-size: 0.72rem;
-  font-family: var(--font-mono);
-  color: rgba(255, 255, 255, 0.4);
+.cms-field span,
+.cms-field legend {
+  font-size: 0.65rem;
+  font-family: "JetBrains Mono", monospace;
+  color: var(--demo-muted);
   text-transform: uppercase;
-  letter-spacing: 0.05em;
+  letter-spacing: 0.07em;
 }
 
 .cms-input {
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 0.35rem;
-  padding: 0.45rem 0.65rem;
-  font-size: 0.875rem;
-  color: #e2e8f0;
-  font-family: var(--font-sans);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--demo-hair);
+  border-radius: 4px;
+  padding: 0.4rem 0.6rem;
+  font-size: 0.85rem;
+  color: var(--demo-fg);
+  font-family: "IBM Plex Sans", "Inter", system-ui, sans-serif;
   outline: none;
-  transition: border-color 0.15s ease, background 0.15s ease;
+  transition: border-color 0.12s ease, background 0.12s ease;
   width: 100%;
   box-sizing: border-box;
 }
 
 .cms-input:focus {
-  border-color: rgba(212, 175, 55, 0.45);
-  background: rgba(212, 175, 55, 0.04);
+  border-color: rgba(236, 72, 153, 0.4);
+  background: rgba(236, 72, 153, 0.03);
+  box-shadow: 0 0 0 2px rgba(236, 72, 153, 0.12);
 }
 
 .cms-input--textarea {
   resize: vertical;
-  min-height: 5rem;
-  line-height: 1.5;
+  min-height: 4.5rem;
+  line-height: 1.6;
 }
 
 /* ---- Preview (right column) ------------------------------- */
 
 .cms-preview {
   overflow-y: auto;
-  background: rgba(255, 255, 255, 0.015);
+  background: var(--demo-bg);
 }
 
 .cms-preview__canvas {
-  padding: 1rem;
+  padding: 1.25rem 1rem;
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
+  gap: 1rem;
 }
 
+/* ---- Preview blocks --------------------------------------- */
+
 .cms-preview-block {
-  border-radius: 0.5rem;
+  border-radius: 6px;
   overflow: hidden;
 }
 
+/* Hero: centered editorial headline */
+
 .cms-preview-hero {
-  padding: 1.5rem 1rem;
-  background: linear-gradient(135deg, rgba(212, 175, 55, 0.08) 0%, rgba(212, 175, 55, 0.02) 100%);
-  border: 1px solid rgba(212, 175, 55, 0.15);
-  border-radius: 0.5rem;
+  padding: 2rem 1.25rem 1.75rem;
   text-align: center;
+  border-top: 3px solid var(--demo-accent);
+  background: rgba(255, 255, 255, 0.02);
+  border-radius: 6px;
 }
 
 .cms-preview-hero h1 {
-  margin: 0 0 0.4rem;
-  font-size: 1.25rem;
-  font-family: var(--font-display);
-  color: #fff;
+  margin: 0 0 0.5rem;
+  font-family: "Space Grotesk", system-ui, sans-serif;
+  font-size: 1.5rem;
+  font-weight: 700;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+  color: var(--demo-fg);
+  font-feature-settings: "ss01";
+}
+
+.cms-preview-hero__divider {
+  display: block;
+  width: 2rem;
+  height: 2px;
+  background: var(--demo-accent);
+  margin: 0.5rem auto 0.6rem;
+  border-radius: 1px;
 }
 
 .cms-preview-hero p {
   margin: 0;
-  font-size: 0.85rem;
-  color: rgba(255, 255, 255, 0.5);
+  font-size: 0.875rem;
+  color: var(--demo-muted);
+  line-height: 1.5;
 }
 
+/* Feature: left-aligned, subtle left accent border */
+
 .cms-preview-feature {
-  padding: 0.85rem 1rem;
-  background: rgba(96, 165, 250, 0.06);
-  border: 1px solid rgba(96, 165, 250, 0.15);
-  border-radius: 0.5rem;
+  padding: 0.9rem 1rem 0.9rem 1.1rem;
+  border-left: 2px solid #8b5cf6;
+  background: rgba(139, 92, 246, 0.04);
+  border-radius: 0 6px 6px 0;
 }
 
 .cms-preview-feature h3 {
   margin: 0 0 0.3rem;
+  font-family: "Space Grotesk", system-ui, sans-serif;
   font-size: 0.95rem;
-  color: #93c5fd;
+  font-weight: 600;
+  color: var(--demo-fg);
+  line-height: 1.3;
 }
 
 .cms-preview-feature p {
   margin: 0;
   font-size: 0.82rem;
-  color: rgba(255, 255, 255, 0.5);
-  line-height: 1.5;
+  color: var(--demo-muted);
+  line-height: 1.6;
 }
+
+/* Quote: pull-quote styling with large opening mark */
 
 .cms-preview-quote {
   margin: 0;
-  padding: 0.85rem 1rem;
-  background: rgba(167, 139, 250, 0.06);
-  border: 1px solid rgba(167, 139, 250, 0.15);
-  border-radius: 0.5rem;
+  padding: 1rem 1.25rem 0.9rem;
+  position: relative;
+  background: rgba(245, 166, 204, 0.04);
+  border-radius: 6px;
+}
+
+.cms-preview-quote::before {
+  content: "\201C";
+  position: absolute;
+  top: -0.2rem;
+  left: 0.75rem;
+  font-size: 3rem;
+  line-height: 1;
+  color: rgba(245, 166, 204, 0.4);
+  font-family: Georgia, serif;
+  pointer-events: none;
 }
 
 .cms-preview-quote blockquote {
-  margin: 0 0 0.4rem;
+  margin: 1.2rem 0 0.6rem;
   font-size: 0.9rem;
   font-style: italic;
-  color: rgba(255, 255, 255, 0.7);
-  line-height: 1.5;
+  color: var(--demo-fg);
+  line-height: 1.6;
+}
+
+.cms-preview-quote hr {
+  border: none;
+  border-top: 1px solid var(--demo-hair);
+  margin: 0.5rem 0;
 }
 
 .cms-preview-quote figcaption {
-  font-size: 0.75rem;
-  color: rgba(167, 139, 250, 0.7);
-  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: rgba(245, 166, 204, 0.7);
+  font-family: "JetBrains Mono", monospace;
+  text-align: right;
 }
 
 /* ---- Status bar ------------------------------------------- */
@@ -382,19 +462,20 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0.5rem 1.5rem;
-  background: rgba(255, 255, 255, 0.03);
-  border-top: 1px solid rgba(255, 255, 255, 0.06);
-  font-size: 0.75rem;
-  font-family: var(--font-mono);
+  padding: 0.45rem 1.5rem;
+  border-top: 1px solid var(--demo-hair);
+  font-size: 0.7rem;
+  font-family: "JetBrains Mono", monospace;
+  flex-shrink: 0;
 }
 
 .cms-statusbar__info {
-  color: rgba(212, 175, 55, 0.7);
+  color: var(--demo-muted);
 }
 
-.cms-statusbar__hint {
-  color: rgba(255, 255, 255, 0.25);
+.cms-statusbar__info span {
+  color: var(--demo-fg);
+  font-weight: 600;
 }
 
 /* ---- Responsive ------------------------------------------- */
@@ -402,12 +483,12 @@
 @media (max-width: 900px) {
   .cms-workspace {
     grid-template-columns: 1fr;
-    grid-template-rows: auto 1fr auto;
+    overflow-y: auto;
   }
 
   .cms-palette {
     border-right: none;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    border-bottom: 1px solid var(--demo-hair);
   }
 
   .cms-palette__list {
@@ -417,23 +498,39 @@
 
   .cms-editor {
     border-right: none;
+    border-bottom: 1px solid var(--demo-hair);
+    overflow-y: visible;
   }
 
   .cms-preview {
-    border-top: 1px solid rgba(255, 255, 255, 0.08);
+    border-top: none;
+    overflow-y: visible;
   }
 }
 
 @media (max-width: 600px) {
   .cms-header {
     flex-direction: column;
-    gap: 0.75rem;
+    gap: 0.6rem;
     align-items: flex-start;
+    padding: 0.75rem 1rem;
   }
 
   .cms-statusbar {
     flex-direction: column;
-    gap: 0.25rem;
+    gap: 0.2rem;
     align-items: flex-start;
+    padding: 0.5rem 1rem;
+  }
+}
+
+/* ---- Reduced motion --------------------------------------- */
+
+@media (prefers-reduced-motion: reduce) {
+  .cms-btn,
+  .cms-block-card,
+  .cms-editor-block,
+  .cms-input {
+    transition: none;
   }
 }

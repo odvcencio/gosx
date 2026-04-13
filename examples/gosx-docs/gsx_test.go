@@ -229,6 +229,74 @@ func TestPlaygroundPageHasEditorPlumbing(t *testing.T) {
 	}
 }
 
+// TestCMSDemoRewrittenShape verifies the CMS demo was rewritten to the editorial
+// magenta design language, has proper server-side state, and is free of dead
+// drag affordances.
+func TestCMSDemoRewrittenShape(t *testing.T) {
+	_, thisFile, _, _ := runtime.Caller(0)
+	cmsDir := filepath.Join(filepath.Dir(thisFile), "app", "demos", "cms")
+
+	// -- page.gsx checks --
+	gsxSource, err := os.ReadFile(filepath.Join(cmsDir, "page.gsx"))
+	if err != nil {
+		t.Fatalf("read cms/page.gsx: %v", err)
+	}
+	gsxSrc := string(gsxSource)
+
+	gsxRequire := []string{
+		"data.blocks",
+		"<Each",
+		`actionPath("publish")`,
+		"csrf_token",
+	}
+	for _, needle := range gsxRequire {
+		if !strings.Contains(gsxSrc, needle) {
+			t.Errorf("cms/page.gsx missing %q", needle)
+		}
+	}
+
+	// -- page.css checks --
+	cssSource, err := os.ReadFile(filepath.Join(cmsDir, "page.css"))
+	if err != nil {
+		t.Fatalf("read cms/page.css: %v", err)
+	}
+	cssSrc := string(cssSource)
+
+	// Must use shell design tokens (not hardcoded values).
+	if !strings.Contains(cssSrc, "var(--demo-accent)") {
+		t.Error("cms/page.css missing var(--demo-accent) — theming must wire to shell tokens")
+	}
+
+	// Must NOT contain cursor: grab (dead drag affordance).
+	if strings.Contains(cssSrc, "cursor: grab") {
+		t.Error("cms/page.css must not contain 'cursor: grab' — no drag affordances on non-draggable elements")
+	}
+
+	// Must NOT contain old gold hex (regression guard).
+	if strings.Contains(cssSrc, "#D4AF37") {
+		t.Error("cms/page.css must not contain old gold hex #D4AF37 — editorial magenta rewrite required")
+	}
+
+	// -- page.server.go checks --
+	serverSource, err := os.ReadFile(filepath.Join(cmsDir, "page.server.go"))
+	if err != nil {
+		t.Fatalf("read cms/page.server.go: %v", err)
+	}
+	serverSrc := string(serverSource)
+
+	serverRequire := []string{
+		"democtl.NewLimiter",
+		`RegisterStaticDocsPage("CMS Editor"`,
+		"sync.Mutex",
+		"publishStore",
+	}
+	for _, needle := range serverRequire {
+		if !strings.Contains(serverSrc, needle) {
+			t.Errorf("cms/page.server.go missing %q", needle)
+		}
+	}
+}
+
 // TestDemosIndexLists7Cards verifies the /demos index page files have the
 // expected structure and roster. We use raw-source grep rather than rendering
 // because the GSX IR does not expose an HTML renderer in tests.
