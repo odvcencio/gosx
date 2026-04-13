@@ -5,6 +5,7 @@ import (
 	_ "github.com/odvcencio/gosx/examples/gosx-docs/app"
 	_ "github.com/odvcencio/gosx/examples/gosx-docs/app/demos"
 	_ "github.com/odvcencio/gosx/examples/gosx-docs/app/demos/cms"
+	_ "github.com/odvcencio/gosx/examples/gosx-docs/app/demos/playground"
 	_ "github.com/odvcencio/gosx/examples/gosx-docs/app/demos/scene3d"
 	_ "github.com/odvcencio/gosx/examples/gosx-docs/app/demos/scene3d-bench"
 	_ "github.com/odvcencio/gosx/examples/gosx-docs/app/docs/auth"

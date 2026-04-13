@@ -116,6 +116,61 @@ func TestDemosLayoutStructure(t *testing.T) {
 	}
 }
 
+// TestPlaygroundPageRenders verifies the playground page shell compiles and
+// registers correctly.
+func TestPlaygroundPageRenders(t *testing.T) {
+	_, thisFile, _, _ := runtime.Caller(0)
+	playDir := filepath.Join(filepath.Dir(thisFile), "app", "demos", "playground")
+
+	// 1. page.gsx must compile and export a Page component.
+	gsxSource, err := os.ReadFile(filepath.Join(playDir, "page.gsx"))
+	if err != nil {
+		t.Fatalf("read playground/page.gsx: %v", err)
+	}
+	prog, err := gosx.Compile(gsxSource)
+	if err != nil {
+		t.Fatalf("compile playground/page.gsx: %v", err)
+	}
+	if len(prog.Components) < 1 {
+		t.Fatal("playground/page.gsx: expected at least one component")
+	}
+	if prog.Components[0].Name != "Page" {
+		t.Errorf("playground/page.gsx: Components[0].Name = %q; want %q", prog.Components[0].Name, "Page")
+	}
+
+	// 2. page.server.go must contain the registration call and key symbols.
+	serverSource, err := os.ReadFile(filepath.Join(playDir, "page.server.go"))
+	if err != nil {
+		t.Fatalf("read playground/page.server.go: %v", err)
+	}
+	serverSrc := string(serverSource)
+	serverChecks := []string{
+		"docsapp.RegisterStaticDocsPage",
+		`"Playground"`,
+		`"compile"`,
+		"NewCompileAction",
+		"playgroundCompiler",
+	}
+	for _, needle := range serverChecks {
+		if !strings.Contains(serverSrc, needle) {
+			t.Errorf("playground/page.server.go missing %q", needle)
+		}
+	}
+
+	// 3. page.css must be scoped under .play and use the terminal green accent.
+	cssSource, err := os.ReadFile(filepath.Join(playDir, "page.css"))
+	if err != nil {
+		t.Fatalf("read playground/page.css: %v", err)
+	}
+	cssSrc := string(cssSource)
+	cssChecks := []string{".play", "#9fffa5"}
+	for _, needle := range cssChecks {
+		if !strings.Contains(cssSrc, needle) {
+			t.Errorf("playground/page.css missing %q", needle)
+		}
+	}
+}
+
 // TestDemosIndexLists7Cards verifies the /demos index page files have the
 // expected structure and roster. We use raw-source grep rather than rendering
 // because the GSX IR does not expose an HTML renderer in tests.

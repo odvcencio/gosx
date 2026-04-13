@@ -1,0 +1,259 @@
+/* playground/page.css — scoped under .play
+   Terminal green accent: #9fffa5
+   Inherits --demo-bg, --demo-fg, --demo-muted, --demo-hair from .demos-shell
+*/
+
+/* ---------------------------------------------------------------------------
+   Layout: top-level flex column
+--------------------------------------------------------------------------- */
+
+.play {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 1.5rem;
+  gap: 1rem;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
+/* ---------------------------------------------------------------------------
+   Header row
+--------------------------------------------------------------------------- */
+
+.play__header {
+  flex-shrink: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 1rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid var(--demo-hair);
+}
+
+.play__title {
+  font-size: 1rem;
+  font-weight: 600;
+  color: #9fffa5;
+  margin: 0;
+  letter-spacing: 0.01em;
+}
+
+.play__subtitle {
+  font-size: 0.8rem;
+  color: var(--demo-muted);
+  margin: 0;
+}
+
+/* ---------------------------------------------------------------------------
+   Two-column body grid
+--------------------------------------------------------------------------- */
+
+.play__body {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+  flex: 1;
+  min-height: 0;
+}
+
+/* ---------------------------------------------------------------------------
+   Editor pane (left)
+--------------------------------------------------------------------------- */
+
+.play__editor {
+  display: flex;
+  flex-direction: column;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--demo-hair);
+  border-radius: 8px;
+  padding: 1rem;
+  gap: 0.5rem;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.play__editor-top {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-shrink: 0;
+}
+
+.play__preset-label {
+  font-size: 0.75rem;
+  color: var(--demo-muted);
+  white-space: nowrap;
+}
+
+.play__preset-select {
+  flex: 1;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--demo-hair);
+  border-radius: 4px;
+  color: var(--demo-fg);
+  font-size: 0.8rem;
+  padding: 0.25rem 0.5rem;
+  cursor: pointer;
+  appearance: auto;
+}
+
+.play__preset-select:focus {
+  outline: 2px solid #9fffa5;
+  outline-offset: 1px;
+}
+
+.play__reset-btn {
+  background: rgba(159, 255, 165, 0.08);
+  border: 1px solid rgba(159, 255, 165, 0.3);
+  border-radius: 4px;
+  color: #9fffa5;
+  font-size: 0.75rem;
+  padding: 0.25rem 0.6rem;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s ease;
+}
+
+.play__reset-btn:hover {
+  background: rgba(159, 255, 165, 0.16);
+}
+
+.play__reset-btn:focus {
+  outline: 2px solid #9fffa5;
+  outline-offset: 1px;
+}
+
+.play__source {
+  flex: 1;
+  font-family: "JetBrains Mono", ui-monospace, "Cascadia Code", "Fira Code",
+    Consolas, "Courier New", monospace;
+  font-size: 0.875rem;
+  line-height: 1.5;
+  resize: none;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--demo-fg);
+  caret-color: #9fffa5;
+  min-height: 0;
+  tab-size: 2;
+}
+
+.play__errors {
+  flex-shrink: 0;
+  font-size: 0.775rem;
+  font-family: "JetBrains Mono", ui-monospace, Consolas, monospace;
+  color: #ff9999;
+  white-space: pre-wrap;
+  min-height: 0;
+}
+
+.play__errors:empty {
+  display: none;
+}
+
+/* ---------------------------------------------------------------------------
+   Preview pane (right)
+--------------------------------------------------------------------------- */
+
+.play__preview {
+  display: flex;
+  flex-direction: column;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--demo-hair);
+  border-radius: 8px;
+  padding: 1rem;
+  gap: 0.75rem;
+  min-height: 0;
+  overflow: auto;
+}
+
+.play__preview-frame {
+  flex: 1;
+  border-left: 2px solid #9fffa5;
+  padding-left: 1rem;
+  min-height: 4rem;
+}
+
+.play__preview-status {
+  flex-shrink: 0;
+  font-size: 0.75rem;
+  color: var(--demo-muted);
+  font-style: italic;
+}
+
+/* ---------------------------------------------------------------------------
+   Compiler output drawer (bottom)
+--------------------------------------------------------------------------- */
+
+.play__compiler {
+  flex-shrink: 0;
+  border: 1px solid var(--demo-hair);
+  border-radius: 8px;
+  padding: 0;
+  overflow: hidden;
+}
+
+.play__compiler summary {
+  padding: 0.5rem 1rem;
+  font-size: 0.8rem;
+  color: var(--demo-muted);
+  cursor: pointer;
+  user-select: none;
+  list-style: none;
+}
+
+.play__compiler summary::-webkit-details-marker {
+  display: none;
+}
+
+.play__compiler summary::before {
+  content: "▶ ";
+  font-size: 0.65rem;
+  color: #9fffa5;
+}
+
+.play__compiler[open] summary::before {
+  content: "▼ ";
+}
+
+.play__compiler summary:focus {
+  outline: 2px solid #9fffa5;
+  outline-offset: -2px;
+}
+
+.play__compiler-body {
+  padding: 0.75rem 1rem;
+  font-size: 0.8rem;
+  font-family: "JetBrains Mono", ui-monospace, Consolas, monospace;
+  color: var(--demo-muted);
+  white-space: pre-wrap;
+  word-break: break-all;
+  border-top: 1px solid var(--demo-hair);
+}
+
+/* ---------------------------------------------------------------------------
+   Responsive: collapse to single column on narrow viewports
+--------------------------------------------------------------------------- */
+
+@media (max-width: 900px) {
+  .play {
+    padding: 1rem;
+    overflow: auto;
+  }
+
+  .play__body {
+    grid-template-columns: 1fr;
+    flex: none;
+    min-height: unset;
+  }
+
+  .play__editor,
+  .play__preview {
+    min-height: 280px;
+  }
+
+  .play__source {
+    min-height: 200px;
+  }
+}
