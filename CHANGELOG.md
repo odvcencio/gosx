@@ -1,5 +1,491 @@
 # Changelog
 
+## v0.17.20
+
+Third fix in the WebGPU sub-chunk ordering chase. `s.async = false` on a dynamically-inserted `<script>` element is supposed to force ordered-deferred execution (i.e., run the script in document order, behind any parser-inserted `defer` scripts), but chromedp's headless Chromium — and likely several real builds — still raced the webgpu sub-chunk ahead of `bootstrap-feature-scene3d.js`. When the sub-chunk won the race, its IIFE's early-return guard fired:
+
+```js
+if (!window.__gosx_scene3d_api) {
+  console.warn("[gosx] scene3d-webgpu chunk loaded without main scene3d bundle");
+  return;
+}
+```
+
+and `window.__gosx_scene3d_webgpu_api` was never published, so `sceneWebGPUAvailable()` stayed false for the life of the page and the mount silently stayed on WebGL.
+
+Fix: gate the dynamic script insertion on `DOMContentLoaded` instead. By the time DCL fires, all parser-inserted defer scripts have already executed, so `__gosx_scene3d_api` is guaranteed to be in place when the sub-chunk runs. Fall through to immediate insertion if `readyState !== "loading"`, which covers pages where the inline script runs after DCL somehow.
+
+```go
+b.WriteString(`<script>if(navigator.gpu){var _w=function(){`)
+b.WriteString(`var s=document.createElement('script');s.async=false;`)
+b.WriteString(`s.dataset.gosxScript='feature-scene3d-webgpu';s.src=`)
+b.WriteString(htmlJSStringLiteral(webgpuPath))
+b.WriteString(`;document.head.appendChild(s);};`)
+b.WriteString(`if(document.readyState==='loading'){`)
+b.WriteString(`document.addEventListener('DOMContentLoaded',_w);`)
+b.WriteString(`}else{_w();}}`)
+b.WriteString("\x3c/script>")
+```
+
+The delay to sub-chunk load is bounded by DCL, which for a scene3d page is typically ~400ms after the main bundle completes — acceptable since the main bundle's scene mount code falls back to WebGL gracefully while waiting.
+
+Verified end-to-end on m31labs.dev: the "scene3d-webgpu chunk loaded without main scene3d bundle" warning is gone. The only remaining console warning is the probe's diagnostic that SwiftShader can't create a device, which is exactly what the v0.17.17 probe is supposed to surface.
+
+## v0.17.19
+
+First attempt at the sub-chunk ordering fix: set `s.async = false` on the dynamically-inserted `<script>` element. Superseded by v0.17.20 once it became clear the flag isn't reliably honored in every Chromium build. Kept because the flag is still the right intent — it just isn't sufficient on its own, and combining it with a DCL gate produces a robustly-ordered load in every browser.
+
+## v0.17.18
+
+Two related fixes in the inline WebGPU sub-chunk loader, both shipped latent in v0.17.16 and only surfaced after a real scene3d page went into production:
+
+### Inline `<script>` emitted literal `\x3c/script>`
+
+The inline loader was written with a Go raw-string (backtick) literal:
+
+```go
+b.WriteString(`<script>if(navigator.gpu){var s=document.createElement('script');...}\x3c/script>`)
+```
+
+Raw-string literals don't process `\x` escapes, so the HTML contained the literal seven characters `\x3c/script>` instead of `</script>`. Browsers scanned the `<script>` body for `</script>` (which wasn't there), found the next real `</script>` in the page much later, and parsed the entire intervening text as script source. JavaScript then hit `}\x3c/script>...` and threw `SyntaxError`, silently dropping the whole IIFE — so the `if(navigator.gpu){...}` check never ran on any page since v0.17.16, and the WebGPU sub-chunk was never dynamically loaded.
+
+Fix: split the string so the closing `</script>` comes from a double-quoted Go string where `\x3c` is processed correctly:
+
+```go
+b.WriteString(`<script>if(navigator.gpu){...};document.head.appendChild(s);}`)
+b.WriteString("\x3c/script>")
+```
+
+### Probe used `powerPreference: "high-performance"`
+
+The module-level adapter probe in `16z-scene-webgpu-probe.js` requested an adapter with `{ powerPreference: "high-performance" }`. On some headless / server Chromium backends (notably SwiftShader and certain Linux Mesa / ANGLE builds) that hint causes `requestAdapter()` to return null where the unbounded request succeeds — there's no discrete GPU to match the preference against and Chromium won't fall back to the integrated path automatically.
+
+Dropped the hint. We don't have a discrete-vs-integrated selection need here; any working device is better than none. Also added `console.warn` diagnostics to the probe's `null`-adapter, `null`-device, and `catch` branches so probe failures surface in the `gosx perf` console-capture section instead of silently disabling WebGPU.
+
+## v0.17.17
+
+Fix for the "shader / context-loss symptoms when forcing the GPU renderer" bug report against v0.17.15 / v0.17.16.
+
+### Root cause: canvas tainted before device was verified
+
+`createSceneWebGPURenderer` in `16a-scene-webgpu.js` called `canvas.getContext("webgpu")` synchronously at factory construction time, **before** any adapter or device had been confirmed. Once a canvas has been bound to a `webgpu` context it can't be reused for `webgl2` / `webgl`, so any subsequent WebGL fallback fails.
+
+The pre-v0.17.17 sequence that reproduced the bug:
+
+1. Module-level probe in 16z: `requestAdapter()` resolves with a non-null adapter (SwiftShader, partial mobile GPU, broken ANGLE backend) — probe flips `_webgpuAdapterReady = true`
+2. `sceneWebGPUAvailable()` returns true, scene mount calls `createSceneWebGPURenderer(canvas)`
+3. Inside the factory: `canvas.getContext("webgpu")` taints the canvas
+4. `startInit()` is called, async `adapter.requestDevice()` throws — device creation actually fails on this backend
+5. `initFailed = true`, `render()` becomes a no-op
+6. Mount has no working renderer and **no clean canvas to fall back to WebGL with** — the scene never renders, user sees "no shaders, context loss"
+
+The pre-v0.17.17 probe only verified `requestAdapter()`; it never attempted `requestDevice()`. That's the gap — adapters are available on many backends where devices aren't.
+
+### Fix: full-lifecycle probe + synchronous factory
+
+**`16z-scene-webgpu-probe.js`** now chains `requestAdapter().then(a => a.requestDevice()).then(d => { ... })` and only flips `_webgpuAdapterReady = true` when the full chain succeeds. Partial implementations (adapter OK, device fails) are detected at probe time, so `sceneWebGPUAvailable()` returns false and the canvas is never touched. The probe caches the device and exposes it through `window.__gosx_scene3d_webgpu_probe()`:
+
+```js
+window.__gosx_scene3d_webgpu_probe = function() {
+  return {
+    adapter: _webgpuAdapterProbe,
+    device: _webgpuDeviceProbe,
+    ready: _webgpuAdapterReady,
+  };
+};
+```
+
+Device-loss after probe resolution also invalidates the probe (`device.lost.then(...)`), so a transient success followed by device death still lets the next mount fall through to WebGL.
+
+**`createSceneWebGPURenderer`** in `16a-scene-webgpu.js` is now synchronous. It reuses the probed device instead of requesting a fresh one:
+
+```js
+var probe = _externalProbe();
+if (!probe || !probe.ready || !probe.adapter || !probe.device) return null;
+var adapter = probe.adapter;
+var device = probe.device;
+// Only NOW taint the canvas.
+var gpuCtx = canvas.getContext("webgpu");
+if (!gpuCtx) return null;
+```
+
+The previous two-stage `.then(requestAdapter).then(requestDevice)` setup inside `startInit` was collapsed into a synchronous `initGPUResources` IIFE wrapped in `try/catch` — if any step fails (shader compile, buffer allocation, texture creation) the factory returns null with a warning.
+
+### Net effect
+
+- **Headless Chromium / SwiftShader / CI**: probe catches the device-creation failure at page load, `sceneWebGPUAvailable()` stays false, mount uses WebGL with an **untouched canvas**, scene renders normally. No shader errors, no context loss.
+- **Real Chrome desktop with working Vulkan/D3D12**: probe succeeds, factory reuses the probed device (no extra round-trip), WebGPU renderer works as before.
+- **Any backend where adapter works but device creation fails**: same clean fallback to WebGL.
+
+The bug-fix was validated against m31labs.dev in chromedp headless: 586+ frames rendered cleanly, no console errors, only the probe's own diagnostic warning (`WebGPU probe failed: requestDevice returned null`) surfacing — which is exactly the signal the fix is supposed to produce.
+
+## v0.17.16
+
+Two features shipped together: the second-pass WebGPU renderer code split, and a new `perf compare` subcommand for diffing two profile reports.
+
+### Scene3D WebGPU renderer moved to a lazy sub-feature chunk
+
+Coverage data from v0.17.14 on the m31labs.dev homepage showed that **only 26% of `bootstrap-feature-scene3d.js` (643 KB) was actually executed** on a WebGL-rendered galaxy page — about 475 KB of dead bytes. A big chunk of that was `16a-scene-webgpu.js` (108 KB) and `16b-scene-compute.js` (28 KB): the WebGPU renderer and compute-particle code sitting dead in the bundle on every page that uses WebGL.
+
+This release splits them out into a new async bundle `bootstrap-feature-scene3d-webgpu.js` (120 KB raw / ~55 KB gzip) that loads only when `navigator.gpu` exists. The main `bootstrap-feature-scene3d.js` shrinks from **643 KB → 527 KB (-117 KB / -18%)** on every WebGL page — Safari, Firefox on most platforms, and any page with `ForceWebGL`.
+
+Structural changes:
+
+- **`10-runtime-scene-core.js`** extends `window.__gosx_scene3d_api` with the PBR/shadow/post-fx helpers the webgpu renderer needs (`scenePBRDepthSort`, `scenePBRObjectRenderPass`, `scenePBRProjectionMatrix`, `scenePBRViewMatrix`, `sceneShadowLightSpaceMatrix`, `sceneShadowComputeBounds`, `resolvePostFXFactor`, `resolveShadowSize`, `sceneColorRGBA`). These are function declarations in files 11-16 of the main scene3d bundle, hoisted into the IIFE scope, so the `__gosx_scene3d_api` literal in file 10 captures them via `typeof X === "function" ? X : undefined` guards.
+
+- **`16z-scene-webgpu-probe.js`** (new, stays in main scene3d bundle) owns the `navigator.gpu.requestAdapter()` probe and the `sceneWebGPUAvailable()` / `createSceneWebGPURendererOrFallback()` stubs. The stubs dispatch to `window.__gosx_scene3d_webgpu_api.createRenderer(canvas)` if and only if the sub-chunk has loaded AND the adapter probe succeeded. (This file is reworked in v0.17.17 to also verify device creation.)
+
+- **`26e-feature-scene3d-webgpu-prefix.js` / `26e-feature-scene3d-webgpu-suffix.js`** (new) wrap the sub-chunk as its own IIFE. The prefix destructures all shared helpers from `window.__gosx_scene3d_api`. The suffix publishes the renderer factory to `window.__gosx_scene3d_webgpu_api`.
+
+- **`16a-scene-webgpu.js`** drops its inline adapter probe (now owned by 16z) and reads the shared probe via `_externalProbe()`.
+
+- **`island/island.go` `RenderEntrypoints`** emits a gated inline loader right after the main scene3d script tag:
+
+```html
+<script>if(navigator.gpu){var s=document.createElement('script');s.defer=true;s.dataset.gosxScript='feature-scene3d-webgpu';s.src="...";document.head.appendChild(s);}</script>
+```
+
+Safari and Firefox-on-most-platforms skip the download entirely because `navigator.gpu` doesn't exist; Chromium browsers fetch the sub-chunk in parallel with the main scene3d chunk so the mount can pick WebGPU on the first render when available.
+
+Build manifest, asset copy, runtime asset resolver, HTTP handler allow-list, and version-compat path whitelist all updated to include the new bundle (`bootstrap-feature-scene3d-webgpu.js`) alongside the main scene3d one.
+
+*Note: v0.17.16 shipped with two latent bugs in the inline loader that weren't discovered until v0.17.18 — the `\x3c/script>` raw-string issue and the `powerPreference: "high-performance"` probe problem. Both fixed subsequently. The split itself was correct; only the gating script was broken.*
+
+### `gosx perf compare` — side-by-side profile diff
+
+New subcommand: `gosx perf compare baseline.json candidate.json`. Reads two `gosx perf --json` reports, diffs every tracked metric (TTFB, DCL, LCP, CLS, long-task count/total, TBT, scene p50/p95/p99, hub bytes, network bytes, JS coverage ratio/used/total), and prints a table with baseline/candidate/Δ%/status columns. Metrics that move the wrong way by more than `--threshold` (default 5%) are marked `⚠ regression`; improvements get `↓ improved` or `↑ improved` depending on direction. Anything under the threshold prints `~`.
+
+Exit code is 1 if any metric regressed beyond threshold, making it CI-gateable. `--json` flag dumps the comparison as JSON.
+
+New exports in `perf/compare.go`:
+
+- `LoadReport(path)` — reads a JSON report, normalizes single-page reports so `Pages[0]` is always populated
+- `CompareReports(baseline, candidate)` — produces a `Comparison{Metrics []ComparedMetric}`
+- `FormatComparison(cmp, threshold)` — renders the side-by-side table
+- `AnyRegression(cmp, threshold)` — boolean for CI gating
+- `ComparedMetric.IsRegression(threshold)` — per-metric check respecting `Direction` (LowerBetter for timing metrics, HigherBetter for coverage ratio)
+
+First in-anger use: diffing m31labs.dev before/after the WebGPU split + kinetic.js minification deploy showed **LCP -50%, TBT -60%, long-task total -52%, JS shipped -17%** on Pixel 7 @ 4× CPU throttle.
+
+## v0.17.15
+
+New feature in `perf`: heap snapshot capture via CDP `HeapProfiler.takeHeapSnapshot`.
+
+- **`perf.TakeHeapSnapshot(d *Driver)`** and **`perf.TakeHeapSnapshotAfterGC(d *Driver)`** stream the snapshot through Chrome's `EventAddHeapSnapshotChunk` sequence, concatenate the JSON chunks, and return the assembled document as bytes ready to write to a `.heapsnapshot` file. Load the file in Chrome DevTools' Memory panel for retainer analysis, leak detection, and before/after comparisons. The `AfterGC` variant runs `HeapProfiler.collectGarbage` before capturing so the snapshot reflects live retention rather than ephemeral allocation churn.
+
+- **`perf.QueryMemoryStats(d *Driver)`** reads `performance.memory` plus document DOM node count via a single JS eval and returns a lightweight `MemoryStats{JSHeapUsedMB, JSHeapTotalMB, JSHeapLimitMB, DOMNodeCount}`. Cheap enough to run between scenario interactions for delta checks without paying the full snapshot cost.
+
+- **`gosx perf --heap-snapshot <path>`** CLI flag captures the final page state after all interactions have run, GC'd first. On m31labs.dev the homepage snapshot lands at ~5 MB — small enough to ship as a CI artifact for diffing.
+
+Like v0.17.14's coverage capture, both `HeapProfiler.enable()` and `TakeHeapSnapshot` are called via `cdp.WithExecutor(d.ctx, chromedp.FromContext(d.ctx).Target)` because their Do methods return non-`error` values and don't satisfy the `chromedp.Action` interface.
+
+## v0.17.14
+
+JS block-level coverage capture: per-script used-vs-total byte breakdown from CDP `Profiler.startPreciseCoverage`. The measurement that tells you how much of each shipped bundle is actually executing on a given page.
+
+### `perf.CaptureCoverage(d, during func() error) ([]CoverageEntry, error)`
+
+Wraps a driver callback with `Debugger.enable` + `Profiler.enable` + `Profiler.startPreciseCoverage(WithCallCount(false), WithDetailed(true))`. After the callback runs, pulls coverage via `Profiler.takePreciseCoverage` and resolves each script's total source size via `Debugger.getScriptSource(scriptID)` — Chrome's coverage only reports executed byte ranges, not absolute sizes, and network `Content-Length` is unreliable for streamed scripts.
+
+The coverage algorithm is worth documenting because the Chrome block format is easy to get wrong. With detailed block-level coverage enabled and call counts disabled, Chrome emits per-function `FunctionCoverage{Ranges []CoverageRange}` where `range.Count > 0` means executed and `range.Count == 0` means unreached. Count-0 ranges are non-overlapping leaves (if a block never ran, no child range was emitted inside it), so the correct `used` calculation is:
+
+```go
+unused := 0
+for _, fn := range script.Functions {
+  for _, r := range fn.Ranges {
+    if r.Count == 0 {
+      unused += int(r.EndOffset - r.StartOffset)
+    }
+  }
+}
+used := total - unused
+```
+
+The first version of this code summed `count > 0` ranges directly and produced "100% used" for every script (because outer function ranges always include their inner unused blocks). The `total - unused` formulation is correct for both partial functions and whole-function count=0 (never-called) cases.
+
+Results sorted by unused bytes descending so the biggest split opportunities surface first. `gosx perf --coverage` emits a `JS Coverage` section in `FormatTable`:
+
+```
+  JS Coverage (used / total)
+      …e/bootstrap-feature-scene3d.e10b9a8e2f70a20e.js  26.0%   167.4 KB / 643.1 KB
+      …s/runtime/bootstrap-runtime.0ce4c5ebe39aaf9f.js  30.4%    56.1 KB / 184.5 KB
+      /gosx/bootstrap-feature-engines.js                 8.7%     5.3 KB /  61.4 KB
+      /kinetic.js                                       41.0%     9.5 KB /  23.1 KB
+    Overall                 26.2%  (10 scripts, 261.2 KB used / 997.9 KB total)
+```
+
+### The first measurement immediately justified the tool
+
+On the m31labs.dev homepage galaxy page, **only 26.2% of 998 KB of shipped JavaScript is actually executing** — 737 KB of dead code per page load. Top offenders:
+
+- `bootstrap-feature-scene3d.js`: 26% used (476 KB dead) — primarily the WebGPU renderer + compute-particle code sitting unused on WebGL pages. Became the second-split target in v0.17.16.
+- `bootstrap-runtime.js`: 30% used (128 KB dead) — baseline runtime.
+- `bootstrap-feature-engines.js`: **8.7% used** (56 KB dead) — mostly engine-kind-specific mount paths and dispose code that doesn't run during a single page load measurement.
+- `kinetic.js`: 41% used (13 KB dead) — custom typography animation library, became the minification target in the m31labs.dev deploy.
+
+## v0.17.13
+
+Three independent `perf` features that together close the "how do we reproduce mobile perf issues in the headless profiler" gap.
+
+### Console + exception capture
+
+**`perf.StartConsoleCapture(d)`** installs CDP `Runtime.consoleAPICalled` and `Runtime.exceptionThrown` listeners. Captures warnings, errors, asserts, and uncaught exceptions by default (info/log/debug filtered out as noise); `StartConsoleCaptureAll` keeps everything. Entries land in `PageReport.ConsoleEntries` and print in a new `Console` section of `FormatTable`:
+
+```
+  Console
+    Counts                  exceptions:1  errors:1  warnings:1
+      warn    this is a warning from the test page
+      error   this is an error from the test page
+      exception Error: uncaught explosion   at file:///tmp/test.html:9:26
+```
+
+Silent errors are one of the most common causes of "feature broken on mobile" bugs that don't surface in dev, so the capture is on by default in every `gosx perf` run — no opt-in flag.
+
+### CPU throttling
+
+**`perf.ApplyCPUThrottle(d, rate)`** wraps `Emulation.setCPUThrottlingRate`. `rate=1` is realtime, `rate=4` is the direct analogue of Chrome DevTools' "4× slowdown" preset (mid-range phone), `rate=6` is low-end. Must be called before `Navigate` for the throttle to cover the initial page load — done automatically by `RunScenario` when `Scenario.CPUThrottle > 1`.
+
+### Mobile device emulation
+
+**`perf.ApplyMobileEmulation(d, profile MobileProfile)`** sets viewport width/height, device scale factor, mobile flag, and user-agent override via `Emulation.setDeviceMetricsOverride` + `Emulation.setUserAgentOverride`. Built-in presets:
+
+- `Pixel7` — 412×915 @ 2.625×, Chrome Android UA
+- `iPhone14` — 390×844 @ 3×, Safari iOS UA
+
+**`gosx perf --throttle 4 --mobile pixel7`** — the direct answer to "my site is slow on mobile and I can't reproduce it in desktop devtools".
+
+First run against m31labs.dev at Pixel 7 @ 4× throttle: TBT jumped from 83ms desktop to **849ms** mobile, 24 long tasks, 254ms EventDispatch + 253ms RunMicrotasks at the top of the trace summary — exactly the signal needed to diagnose the reported mobile scroll jank, and the trigger for the WebGPU renderer split in v0.17.16.
+
+## v0.17.12
+
+CDP trace capture + hot-event summary. The piece of instrumentation that gives `gosx perf` a flame chart story.
+
+### `perf.CaptureTrace(d, during)`
+
+Wraps a driver callback with CDP `Tracing.start` / `Tracing.End` using `TransferModeReturnAsStream` + `StreamFormatJSON`, listens for `EventTracingComplete`, drains the returned `IO.StreamHandle` via `IO.Read` until EOF, and returns a Chrome DevTools-format JSON trace. Default category set matches DevTools' Performance panel:
+
+```
+devtools.timeline, v8.execute,
+disabled-by-default-devtools.timeline,
+disabled-by-default-devtools.timeline.frame,
+disabled-by-default-devtools.timeline.stack,
+disabled-by-default-v8.cpu_profiler,
+disabled-by-default-v8.cpu_profiler.hires,
+blink.user_timing, latencyInfo, loading, toplevel
+```
+
+`blink.user_timing` is the important one — that's where `gosx:ready`, `scene3d-render`, `gosx:island:hydrate:*`, and `gosx:dispatch:*` measures from `instrument.js` show up. Load the resulting `.trace.json` in chrome://tracing, Perfetto (ui.perfetto.dev), or Chrome DevTools' Performance panel (Load profile…).
+
+`CaptureTraceWithCategories` is the custom-category variant. Chunks delivered via `EventDataCollected` are handled as a fallback for older Chrome builds that don't deliver the stream format.
+
+### `perf.SummarizeTrace(trace, topN, minMs)` / `FormatTraceSummary`
+
+Parses a captured trace and returns the top-N longest main-thread events matching an interesting-subset filter (`EvaluateScript`, `v8.compile`, `v8.parseOnBackground`, `CompileScript`, `FunctionCall`, `EventDispatch`, `RunMicrotasks`, `FireAnimationFrame`, `Layout`, `UpdateLayoutTree`, `Paint`, `ParseHTML`, `WebAssembly.Compile`, `WebAssembly.Instantiate`). The toplevel/`RunTask` shells are excluded because they double-count the real work they wrap.
+
+`gosx perf --trace <path>` writes the `.trace.json` and also prints the summary as a `Trace Summary` section in the report:
+
+```
+  Trace Summary
+    Saved to                /tmp/m31.trace.json
+    Top main-thread events
+      EventDispatch             276.9ms
+      RunMicrotasks             276.8ms
+      EvaluateScript             99.6ms  https://m31labs.dev/kinetic.js
+      EventDispatch              55.0ms
+      FunctionCall               47.9ms  …bootstrap-runtime.0ce4c5ebe39aaf9f.js
+      v8.parseOnBackground       32.7ms  …bootstrap-feature-scene3d.e10b9a8e2f70a20e.js
+      ...
+```
+
+The first measurement on m31labs.dev immediately validated the v0.16.3 Scene3D code-split (v0.17.1): `bootstrap-feature-scene3d.js` parse (33ms) lands on `v8.parseOnBackground` — a background thread — confirming the split moved the bulk of the parse cost off the main thread. The largest remaining main-thread tasks are `EventDispatch` / `RunMicrotasks` (WASM startup + hydration chain), not script parse. The summary also caught `kinetic.js` at 100ms EvaluateScript on mobile, which became the minification target.
+
+## v0.17.11
+
+Small but load-bearing fix in `perf/driver.go`: `Driver.Evaluate` now awaits Promise return values via `chromedp.Evaluate` + `runtime.EvaluateParams.WithAwaitPromise(true)`.
+
+Previously any `(async () => { ... })()` expression in REPL eval or query helper code returned a pending Promise that JSON-serialized to `{}`, making sleep-based inspection useless. After the fix, REPL users can write:
+
+```
+eval (async () => { await new Promise(r=>setTimeout(r,4000)); return {adapter: !!await navigator.gpu.requestAdapter()}; })()
+```
+
+and actually get back the resolved value. Added `github.com/chromedp/cdproto` as a direct dependency (it was indirect before).
+
+## v0.17.10
+
+Filled a gap in the `scene3d-render` performance instrumentation: the WebGPU renderer was missing the `performance.mark` / `measure` pairs that the WebGL renderer has had since the bench overlay shipped.
+
+Without the marks, `gosx perf` reported zero `Scene3D` frame stats on any page that actually ran on the WebGPU backend — the `sceneObserver` in `instrument.js` never saw any `scene3d-render` measures. `client/js/bootstrap-src/16a-scene-webgpu.js::render` now brackets the render body with the same opt-in mark pair, gated on `window.__gosx_scene3d_perf`:
+
+```js
+var perfEnabled = typeof window !== "undefined" && window.__gosx_scene3d_perf === true;
+if (perfEnabled) performance.mark("scene3d-render-start");
+// ... render body ...
+if (perfEnabled) {
+  performance.mark("scene3d-render-end");
+  performance.measure("scene3d-render", "scene3d-render-start", "scene3d-render-end");
+  performance.clearMarks("scene3d-render-start");
+  performance.clearMarks("scene3d-render-end");
+}
+```
+
+Early returns (no bundle data, zero-sized canvas) are now positioned before the `perfEnabled` check so they don't leave stale start marks around.
+
+## v0.17.9
+
+Extended runtime instrumentation pass — closes out the "batteries-included browser profiler" story with Core Web Vitals, long-task detection, GoSX runtime throughput counters, GPU tier introspection, and a network resource waterfall. The single biggest addition to `gosx perf` since v0.17.0.
+
+### Core Web Vitals
+
+Three `PerformanceObserver` subscriptions in `instrument.js` for the standard web-vitals triad:
+
+- **Largest Contentful Paint** (`PerformanceObserver({type: "largest-contentful-paint"})`) — uses the latest entry since LCP can update multiple times. Rated good (<2500ms) / needs improvement (2500-4000ms) / poor (>4000ms) in the report.
+- **Cumulative Layout Shift** (`{type: "layout-shift"}`) — accumulates non-user-input shifts. Rated <0.1 / 0.1-0.25 / >0.25.
+- **First Input Delay** (`{type: "first-input"}`) — uses `processingStart - startTime`. Rated <100ms / 100-300ms / >300ms.
+
+All three land in `PageReport` and print in a new `Core Web Vitals` section with the good/needs-improvement/poor rating annotation.
+
+### Main-thread blocking
+
+PerformanceObserver on `{type: "longtask"}` (the single most valuable signal for scroll jank diagnosis). Any main-thread task over 50ms is captured with `{name, duration, startTime}`. The report surfaces:
+
+- Long task count
+- Long task total (summed duration)
+- **Total Blocking Time** — `sum(max(0, duration - 50))` over all long tasks, matching Lighthouse's TBT definition
+- Top 5 longest tasks with their names and offsets
+
+### Runtime throughput counters
+
+Object.defineProperty traps on `__gosx_set_shared_signal` and `__gosx_get_shared_signal` count per-dispatch signal writes/reads, so a slow dispatch can be diagnosed as signal-bound (too many writes) or reconcile-bound (too many DOM diffs). Hub message counters (`hubMessageCount`, `hubMessageBytes`, `hubSendCount`) extended to track byte totals in addition to event counts.
+
+### GPU tier detection
+
+`window.__gosx_perf_webgl_info()` reports which GPU backend the engine is actually using plus what the browser *could* provide:
+
+```
+  GPU Context
+    Tier                    webgl2 (best available: webgpu)
+    Version                 WebGL 2.0 (OpenGL ES 3.0 Chromium)
+    Vendor                  Google Inc. (Google)
+    Renderer                ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device...))
+    Max texture size        8192
+    Extensions              29 extensions
+    Browser supports        WebGPU, WebGL2, WebGL1
+```
+
+Reads `UNMASKED_VENDOR_WEBGL` / `UNMASKED_RENDERER_WEBGL` via `WEBGL_debug_renderer_info` when available. Checks `navigator.gpu`, `canvas.getContext("webgl2")`, and `canvas.getContext("webgl")` separately for a complete capability picture. If the tier actually in use differs from the best available, the report flags it (`webgl2 (best available: webgpu)` is a hint the engine is leaving capacity on the table).
+
+The scene engine can opt-out of the auto-detection by setting `canvas.__gosx_scene_tier = "webgpu"` or `data-gosx-scene-tier="webgpu"` so the introspection doesn't need to probe the canvas itself.
+
+### Network resource waterfall
+
+New `PerformanceObserver({type: "resource"})` collects every resource timing entry. `gosx perf --waterfall` adds a `Resource Waterfall` section to the report showing per-resource transfer size, duration, start time, and connection type. Also tracks:
+
+- `TotalBytesTransferred` — sum of `transferSize` across all resources
+- `BlockingResourceMs` — duration of the longest render-blocking resource
+
+Both surface in the default `Network` section; the waterfall flag is opt-in because the detail is verbose.
+
+### Chrome launch flag
+
+Added `--enable-unsafe-webgpu` to the chromedp allocator options so WebGPU probes can succeed on systems with a real GPU driver. Flag is harmless on WSL / headless CI where the driver isn't present — `requestAdapter()` just returns null as before — but enables WebGPU on real Chrome desktop for the newly-added tier detection.
+
+## v0.17.8
+
+Final scene3d split stabilization fix: remove a false `emit` export from the runtime API bridge.
+
+`00-textlayout.js` was exporting `emit` as part of `window.__gosx_runtime_api`, but `emit` is actually a nested function inside `segmentBrowserWordRun` — not a top-level function in the IIFE scope. The export line captured `undefined`, which the scene3d chunk's prefix then destructured as `var emit = runtimeApi.emit || ...`. Harmless in isolation, but the fallback produced a `ReferenceError: emit is not defined` when the runtime crashed during the scene3d chunk evaluation phase on first load.
+
+Fixed by removing `emit` from the runtime API export. Nothing in the scene3d chunk was actually using it — the false positive came from a grep-based extraction earlier in the split series.
+
+## v0.17.7
+
+Bridge the runtime API for scene3d chunk cross-IIFE access: introduces `window.__gosx_runtime_api` as the formal contract between the runtime bundle and the scene3d feature chunk. `00-textlayout.js` exports `setAttrValue`, `setStyleValue`, `gosxSubscribeSharedSignal`, `setSharedSignalValue`, `gosxTextLayoutRevision`, `normalizeTextLayoutOverflow`, `layoutBrowserText`, `applyTextLayoutPresentation`, and `onTextLayoutInvalidated` onto the namespace. The scene3d chunk's prefix (`26d-feature-scene3d-prefix.js`) destructures from it with fallbacks, so a missing runtime API degrades to a no-op rather than a hard reference error.
+
+## v0.17.6
+
+Corrected the Scene3D code split boundary after v0.17.5's partial re-enablement. The runtime bundle now includes file `10a-runtime-utils.js` (extracted from file 10), which contains the pure runtime utilities — `loadManifest`, `loadRuntime`, `fetchProgram`, `loadScriptTag`, `engineFrame`, `cancelEngineFrame`, `queueInputSignal`, `createInputProvider`, `capabilityList`, `sceneNumber`, `sceneBool`, `clearChildren`. These are the functions file 10's infrastructure needs without pulling in any scene-specific state.
+
+The scene3d chunk contains the full file `10-runtime-scene-core.js` plus files 11-20 (scene math through scene mount). Files 11-20 depend heavily on symbols defined in file 10 (the `engineFactories` registry, `__gosx.engines` map, etc.), so the split point must be above file 10 — hence 10a carries just the standalone utilities and file 10 stays with the scene code.
+
+## v0.17.5
+
+Restore clean runtime sources and re-enable the Scene3D split after the v0.17.4 revert. The previous attempt left extra function declarations in the runtime bundle which caused "identifier already declared" errors when the scene3d chunk loaded on top. Reverted the runtime sources to a clean baseline (00 + 05 + 10a + 26) and re-ran the extraction so files 11-20 live exclusively in the scene3d chunk with no shadow declarations in the runtime.
+
+## v0.17.4
+
+Temporary revert of the Scene3D split on pages that use Scene3D engines: `usesSelectiveRuntimeBootstrap()` gains back a `!r.hasSceneEngines()` guard so scene3d pages fall back to the monolithic `bootstrap.js`. Runtime wasn't stable yet across the IIFE boundary and the revert bought time to fix the underlying issue — landed cleanly in v0.17.5 / v0.17.6 / v0.17.7 and the guard was removed in v0.17.9.
+
+## v0.17.3
+
+`<script defer>` instead of `<script async>` for the Scene3D feature chunk emit. The v0.17.1 version used `async` on the theory that the scene3d chunk was independent enough to run out of order, but scene3d's hydration depends on the main runtime bundle already being loaded. `defer` guarantees the parser-inserted script runs after the runtime and preserves document order, which was the right semantics all along.
+
+## v0.17.2
+
+`gosx build --prod` now copies `bootstrap-feature-scene3d.js` into the dist asset output. The v0.17.1 build generated the file via `client/js/build-bootstrap.mjs` but the prod asset-copy loop in `cmd/gosx/build.go` missed it, so deployments shipped a `<script src="...bootstrap-feature-scene3d.js">` tag referring to a 404 URL. Added the file to both the `manifest.Runtime.BootstrapFeatureScene3D` registration and the dist copy list.
+
+## v0.17.1
+
+**Scene3D bootstrap code splitting** — split the 894 KB monolithic `bootstrap.js` into a smaller `bootstrap-runtime.js` (blocking, ~185 KB) + `bootstrap-feature-scene3d.js` (async, ~640 KB) so pages that use Scene3D don't force users to parse the full runtime on the main thread.
+
+The goal was to address reports of mobile Safari / Firefox scroll jank during page load: the main thread was pegged for 580+ ms parsing and executing the monolith before any user input could be processed. Splitting out the scene graph pipeline (files 11-20 of the bootstrap sources — scene math, geometry, materials, lighting, draw-plan, post-fx, WebGL/WebGPU renderers, compute, input, canvas, glTF, animations, mount) into a `<script defer>` chunk lets the main runtime load and hydrate islands while the scene3d chunk downloads and parses in the background.
+
+Structural wiring:
+
+- **`client/js/build-bootstrap.mjs`** now emits four bundles: `bootstrap.js` (monolith for pages without feature chunks), `bootstrap-lite.js`, `bootstrap-runtime.js` (runtime + islands + engines + hubs), and `bootstrap-feature-scene3d.js` (files 10–20, the scene graph pipeline).
+
+- **`client/js/bootstrap-src/26d-feature-scene3d-prefix.js` / `...-suffix.js`** (new) wrap the scene3d chunk as its own IIFE. The prefix declares the symbols the IIFE needs from the runtime's scope (file 00's text layout state, file 10's registries).
+
+- **`client/js/bootstrap-src/10-runtime-scene-core.js`** exposes scene utilities on `window.__gosx_scene3d_api` for future cross-IIFE access — the foundation the v0.17.16 WebGPU split builds on.
+
+- **`island/island.go::RenderEntrypoints`** emits a `<script defer data-gosx-script="feature-scene3d" src="...">` tag right after the main bootstrap tag on any page that has a Scene3D engine. Pages without scene engines get nothing extra.
+
+- **`island/island.go::usesSelectiveRuntimeBootstrap`** decides whether to emit the selective runtime or fall back to the monolith based on feature chunk presence + manifest state.
+
+- **`buildmanifest/manifest.go`** extends `RuntimeAssets` with `BootstrapRuntime`, `BootstrapFeatureIslands`, `BootstrapFeatureEngines`, `BootstrapFeatureHubs`, and `BootstrapFeatureScene3D` fields; `cmd/gosx/build.go` hashes each file into the manifest and copies them to the dist runtime dir.
+
+This release was the first of several — v0.17.2 through v0.17.8 all stabilized different corners of the split (asset copy, script attrs, IIFE scope boundaries, cross-chunk APIs). v0.17.9 finalized the split; v0.17.16 added a second-pass sub-feature for the WebGPU renderer.
+
+## v0.17.0
+
+Birth of **`gosx perf`** and **`gosx repl`** — a batteries-included, Go-native browser profiler and interactive runtime explorer shipped as subcommands of the main `gosx` CLI. The motivating need: existing browser instrumentation stories (Superpowers Chrome MCP, manual DevTools, Puppeteer wrappers) were awkward for testing GoSX-specific runtime behavior and didn't integrate with `.dmj` test files the rest of the framework uses for SSR benchmarks.
+
+### Architecture
+
+All new code lives under `perf/` as a standalone Go package, plus three CLI entry points in `cmd/gosx/`:
+
+- **`perf.Driver`** — chromedp wrapper that manages Chrome allocator + context lifecycle, `Navigate`, `WaitReady`, `Evaluate`, and `Close`. Driver launches headless Chrome (or headed via `WithHeadless(false)`) via `chromedp.NewExecAllocator` + `chromedp.NewContext` with a configurable overall timeout.
+- **`perf.FindChrome`** — cross-platform Chrome binary discovery that checks standard install locations on Linux/Mac/Windows plus the `CHROME_PATH` env override. Returns the first working binary or an error with diagnostic context.
+- **`perf/instrument.js` + `perf.InjectDriver(d)`** — GoSX-aware instrumentation script injected via `Page.addScriptToEvaluateOnNewDocument` before any page scripts run. Installs Object.defineProperty traps on `__gosx_runtime_ready`, `__gosx_hydrate`, `__gosx_action`, and `__gosx_hydrate_engine` to bracket each call with `performance.mark` + `measure`. Separately listens for `gosx:ready` and `scene3d-render` PerformanceObserver entries, and wraps `WebSocket.prototype.onmessage` / `send` to count hub messages.
+- **`perf.QueryPerformanceMeasures` / `QueryNavigationTiming` / `QueryHeapSize` / `QuerySceneFrames` / `QueryIslandHydrations` / `QueryDispatchLog` / `QueryHubMessages`** — typed CDP query helpers in `perf/query.go` that return structured `[]PerfEntry` slices for each kind of captured data.
+- **`perf.Report`, `perf.PageReport`, `perf.SceneMetric`, `perf.IslandMetric`, `perf.InteractionMetric`, `perf.FrameStats`** — the metric data model (`perf/metrics.go`). `Report` holds multi-page scenarios with an embedded `PageReport` for single-page backward compat. `FrameStats` precomputes p50/p95/p99/max/mean from a frame-time slice.
+- **`perf.CollectPageReport(d, url)`** — orchestrates all the query helpers into a single `PageReport` for the currently loaded page. Conditionally populates `Scene` metrics when `__gosx_perf.firstFrame` is set.
+- **`perf.FormatTable(r)` / `FormatJSON(r)`** — output formatters. Table formatter is the default, JSON is opt-in via `--json`.
+- **`perf.Interaction`, `perf.Scroll`, `perf.Click`, `perf.Type`** — user-interaction primitives that drive DOM via CDP.
+- **`perf.Scenario` / `perf.RunScenario(s)`** — the top-level profiling session runner. Takes URLs, frame sample count, interaction list, timeout, and headless flag; returns a `*Report`. Orchestrates driver launch, instrumentation inject, per-URL navigate+collect, post-navigation frame wait, per-interaction dispatch measurement, and driver close.
+- **`perf.Assertion` / `ParseAssertion` / `EvalAssertions`** — metric assertion engine. Assertions are string expressions like `dcl < 500` or `scene.p95 < 16` that the runner evaluates against a populated `Report`. Failed assertions produce human-readable error messages and exit the CLI with non-zero status — the foundation for CI gating.
+- **`perf.Recorder` + `StartRecording` / `Stop`** — video recording via CDP `Page.startScreencast` / `stopScreencast`. Captures base64 frames, writes an MJPEG-ish sequence via ffmpeg or raw screenshots to a directory. Enabled via `--record <path>`.
+- **`perf.RunREPL(d, url)`** — interactive command-line console for driving a live browser. Commands: `help`, `islands`, `engines`, `signals`, `dispatch <id> <handler>`, `scene`, `profile`, `scroll <px>`, `click <sel>`, `type <sel>:<text>`, `navigate <url>`, `record <path>`, `perf`, `eval <js>`, `heap`, `exit`. The `eval` command evaluates arbitrary JS against the page context — the killer feature for exploring GoSX's runtime internals without DevTools.
+- **`perftest.GoSXPerf`** — a `testing.T`-integrated wrapper (`perf/perftest/perftest.go`) that `.dmj` files can call from a Go-compiled test. Wraps `RunScenario` and exposes the resulting report through a fluent API (`TTFBMs`, `LCPMs`, `SceneFrameBudget`, etc.). `.dmj` files can now mix SSR benchmarks with browser-side assertions against a real Chromium runtime.
+
+### `cmd/gosx/perf.go` / `cmd/gosx/repl.go`
+
+`gosx perf <url>` parses flags (`--frames`, `--click`, `--scroll`, `--type`, `--json`, `--timeout`, `--headless`, `--record`, `--assert`), builds a `perf.Scenario`, runs it, and prints the report. Multi-URL scenarios run sequentially against the same driver. `--assert` is repeatable and CI-gates on failure.
+
+`gosx repl <url>` launches a browser in non-headless mode, injects the driver, navigates, waits for ready, and drops into `RunREPL`. Default URL is `http://localhost:3000` when invoked without an argument or with `--dev`.
+
+### Dependencies added
+
+`github.com/chromedp/chromedp` and `github.com/chromedp/cdproto` as direct deps. Goes into `go.mod` with the `@v0.15.1` pin for chromedp and the then-current pin for cdproto. The chromedp choice was deliberate: Go-native, no Node.js runtime, no puppeteer/playwright wrapper, integrates cleanly with the existing `testing.T` flow.
+
+### Other optimization wins in the v0.17.0 batch
+
+Two bundled allocation improvements landed in the same release:
+
+- **`client/vm` resolveElementAttrs** — single-allocation rewrite, plus the first set of island behavior benchmarks in `.dmj` form (`client/vm/bench.dmj`, `island/bench.dmj`). Cut SSR attr allocation further on top of v0.16.6's 35→14 work.
+- **`island/program` decodeStringTable** — eliminated the intermediate `[]byte` allocation per entry in the binary program format decoder. Strings are now sliced directly out of the caller's backing buffer.
+- **`island` + `route` SSR attr aliasing** — `renderResolvedAttrs` returns `node.Attrs` directly when a node has no events, skipping a copy in the no-event case. Also fixed a nested-router bench that was inadvertently measuring the 404 path due to a mismatched child-pattern prefix; dropped alloc count from 46 → 18 once the route actually matched.
+
 ## v0.16.6
 
 Sixth performance pass across five packages: `client/vm` (island runtime VM), `scene` (residual SceneIR allocs), `markdown` (builder-based render), `client/enginevm` (material key hashing), and `island` (SSR resolved-node renderer).
