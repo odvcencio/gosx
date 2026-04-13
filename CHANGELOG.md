@@ -1,5 +1,89 @@
 # Changelog
 
+## v0.17.22
+
+Four loosely-related wins that all surfaced while investigating Scene3D performance on the m31labs.dev galaxy page:
+
+1. A new `gosx/visual` package + `gosx visual` CLI for pixel-level regression testing
+2. Scene3D critical-path bundle shrunk by 35KB via two new lazy sub-feature splits (GLTF loader, animation mixer)
+3. First-render deferred so WebGL buffer upload doesn't block LCP
+4. `gosx perf` reports now flag software-GPU environments so automated gates don't chase ghost regressions
+
+### `visual` — new package for pixel-level regression testing
+
+A dedicated `visual/` package and `gosx visual` CLI for catching unintended rendering changes. Uses the existing `perf.FindChrome` integration to auto-select between a remote `CHROME_WS_URL` (for in-cluster perf browsers) and a locally-launched Chrome, so the same API works for developer-machine runs, CI jobs, and scheduled in-cluster audits.
+
+Three public entry points:
+
+- **`Capture(ctx, url, CaptureOptions)`** — navigates with a viewport, waits for a selector + settle period, optionally runs a JS snippet to hide dynamic UI chrome, returns PNG bytes.
+- **`Diff(baseline, current)`** — pixelmatch comparison with a side-by-side diagnostic image when dimensions differ. Mismatched pixels highlighted red on a grey-washed background for human review.
+- **`Assert(ctx, url, AssertOptions)`** — capture + diff + baseline IO + threshold gate in one call. Writes a baseline when `Update=true`, returns `*AssertMismatch` (with diff path, current-capture path, mismatch count, diff percentage) when drift exceeds threshold.
+
+`gosx visual [flags] <url>` exposes the full flag surface — `--update`, `--baseline`, `--threshold`, `-w/-h/--scale`, `--wait`, `--wait-selector`, `--selector`, `--eval`, `--timeout`, `--diff`, `--json`.
+
+**Scene3D determinism note:** For visual regression against Scene3D pages, consumers should honor a `?__gosx_visual_seed=HASH` query param in their scene props loader and derive the RNG seed from it — see `app/galaxy.go` in the m31labs.dev reference app for a working pattern (multiple named seeds map to canonical frozen moments of the galaxy's time-based palette system). Rotation phase remains driven by requestAnimationFrame even when particles are seeded, so a small `--threshold 0.2` absorbs rotation drift between captures while still catching palette changes.
+
+`github.com/orisano/pixelmatch` is promoted from transitive-only to a direct dependency so `visual/` can import it without relying on chromedp pulling it in.
+
+### `scene3d` — lazy sub-feature bundles shrink main payload by 35KB
+
+Two more subsystems extracted from `bootstrap-feature-scene3d.js` into on-demand chunks, following the same pattern as v0.17.16's WebGPU split. Pages that don't use these features now skip the parse cost entirely:
+
+| Bundle | v0.17.21 | v0.17.22 | Loading |
+|---|---|---|---|
+| `bootstrap-feature-scene3d.js` | 540 KB | **505 KB** | eager |
+| `bootstrap-feature-scene3d-gltf.js` | *(bundled)* | **24 KB** | lazy |
+| `bootstrap-feature-scene3d-animation.js` | *(bundled)* | **13 KB** | lazy |
+
+**GLTF loader** (`19-scene-gltf.js`) moved into `bootstrap-feature-scene3d-gltf.js` behind a new `ensureGLTFFeatureLoaded()` helper in `20-scene-mount.js`. `loadSceneModelAsset()` awaits the chunk the first time it encounters a `.glb`/`.gltf` URL. Pages with only programmatic geometry (points, lines, procedural meshes, particle systems, data viz — the majority of Scene3D consumers) never fetch the chunk. m31labs.dev's galaxy page confirms zero network traffic for GLTF.
+
+**Animation mixer** (`19a-scene-animation.js`) moved into `bootstrap-feature-scene3d-animation.js` and exposed via `window.__gosx_ensure_scene3d_animation_loaded` so consumers can lazy-load the keyframe mixer / bone math before driving animations. Scenes with only transform spins or auto-rotation never fetch this chunk.
+
+Each sub-feature publishes its API through a window global (`__gosx_scene3d_gltf_api`, `__gosx_scene3d_animation_api`) so the main bundle can bridge across IIFE boundaries without touching the original `sceneLoadGLTFModel` / `createSceneAnimationMixer` function bodies.
+
+**Hashed URL hints for immutable caching** — the lazy loaders default to unhashed compat URLs (`/gosx/bootstrap-feature-scene3d-gltf.js`) which the server resolves through the manifest but which the browser can't cache immutably. New `data-gosx-scene3d-gltf-url` and `data-gosx-scene3d-animation-url` attributes on the main `<script defer data-gosx-script="feature-scene3d">` tag carry the hashed URLs (`...-gltf.HASH.js`). A new `resolveSceneSubFeatureURL()` helper in `20-scene-mount.js` reads the dataset and falls back to the unhashed URL only when the attribute isn't present (dev mode, manual integration). First lazy-load now hits `Cache-Control: max-age=31536000 immutable`.
+
+**Plumbing** extends through `buildmanifest` (two new `HashedAsset` slots), `cmd/gosx/build.go` (hash + copy at `gosx build` time), `server/runtime_assets.go` (new compat cases), and `island/island.go` (path storage, `versionCompatRuntimePath` init, compat-hash lookup, allow-list entries, `SetBootstrapFeatureScene3D{GLTF,Animation}Path` setters wired into `ApplyBuildManifest`). One new `.js` file and one new test `HashedAsset` slot per sub-feature — the pattern is now cheap enough to repeat for future splits (PBR, shadows, labels, etc.).
+
+**Cumulative scene3d critical-path savings since v0.17.8:** 658 KB → **505 KB**, **-153 KB** (-23%).
+
+### `scene3d` — defer first `renderFrame` to yield LCP ahead of WebGL init
+
+The mount factory previously called `renderFrame(0)` synchronously after `await sceneModelHydration`. On hardware GPUs that's a ~50-200ms block for vertex buffer upload + shader compile; on SwiftShader software WebGL (headless-shell, WSL2 without GPU passthrough) it balloons to 1-2 seconds of blocking work straddling LCP.
+
+New `scheduleInitialRender()` uses the best-available scheduling primitive to push the first WebGL draw one frame later:
+
+1. `scheduler.postTask({ priority: "user-visible" })` — Chrome 94+, Firefox 126+
+2. `requestAnimationFrame` — universal, paints on next vsync
+3. `setTimeout(0)` — last-resort task-queue defer
+
+Total work is identical but LCP fires on the pre-existing CSS/DOM content one frame earlier, the site stays interactive during galaxy load, and headless visual-regression captures / CI perf profiles aren't dominated by SwiftShader shader-compile blocking that has nothing to do with real user experience.
+
+### `perf` — software GPU detection + nil-safe WebGL info query
+
+Two fixes to make `gosx perf` reliable in headless environments.
+
+**Software GPU detection.** When `gosx perf` runs in headless Chrome without GPU passthrough (CI, cluster perf audits, WSL2 dev machines, headless-shell screenshot tooling), Chrome falls back to SwiftShader software rasterization. Scene3D frame timings, shader-compile blocking, and main-thread long tasks on that path are dominated by software-GPU latency and do NOT reflect real user experience. Previously `gosx perf` reported those numbers with no qualifier.
+
+Two new helpers on `WebGLInfo`:
+
+```go
+func (*WebGLInfo) IsSoftwareRendered() bool
+func (*WebGLInfo) SoftwareRendererName() string
+```
+
+Pattern-match the unmasked `GL_RENDERER` + `GL_VENDOR` strings against known software rasterizers (SwiftShader, Mesa llvmpipe/softpipe, Apple Software Renderer, Microsoft Basic Render Driver, generic "software rasterizer"). When detected, the perf report now emits a visible warning banner above the GPU Context section:
+
+```
+  ⚠  Software GPU detected (SwiftShader)
+     Scene3D frame timings, shader-compile blocking, and main-thread
+     long tasks below are software-emulated and do NOT reflect what real
+     users on hardware GPUs experience. Run this profile against a browser
+     with a real GPU for accurate Scene3D numbers.
+```
+
+**Nil-safety in `instrument.js queryWebGLInfo`.** The `vendor` and `renderer` fields were assigned directly from `ctx.getParameter()` without the `|| ""` fallback the other fields had, so lost or restricted contexts produced JSON `null` instead of empty strings. The Go-side software-GPU detection pattern-matches strings and needed empty strings, not nulls. Also added a fresh-canvas fallback probe: when the existing scene3d canvas has a lost/stale context (every `getParameter` returns null — happens when Scene3D has hit a shader-compile error path that left the original context unusable), we create a throwaway 1x1 canvas, grab a clean WebGL2 context from the browser/driver, and read vendor/renderer/etc. from that. Preserves diagnostics when the main scene context is unusable.
+
 ## v0.17.21
 
 Scene3D SSR hot-path optimization + end-to-end benchmark coverage across `scene`, `route`, and `island`. Three tasks resolved in one release.
