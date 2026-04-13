@@ -1,5 +1,127 @@
 # Changelog
 
+## v0.17.21
+
+Scene3D SSR hot-path optimization + end-to-end benchmark coverage across `scene`, `route`, and `island`. Three tasks resolved in one release.
+
+### `Props.GoSXSpreadProps` — **378 → 105 allocs (-72%)**
+
+`Props.GoSXSpreadProps` is the public entry point the file-route renderer calls on every `<Scene3D {...data.galaxy}>` server render. The pre-v0.17.21 implementation called `Props.LegacyProps()` which recursively built a deep `map[string]any` tree via `SceneIR().legacyProps()` — about 350 interface-boxing allocations per render plus nested `map[string]any` for every object/model/light/sprite/label. On m31labs.dev's homepage galaxy scene that was the single biggest allocation site in the SSR path.
+
+`MarshalJSON` already had the optimized path from v0.16.5: `legacyBaseProps()` for the shallow scalar props, plus `json.Marshal(SceneIR())` wrapped as `json.RawMessage` under the `"scene"` key. This release extracts that fast-path body into a new internal helper:
+
+```go
+func (p Props) spreadPropsFast() map[string]any {
+    base := p.legacyBaseProps()
+    sceneIR := p.SceneIR()
+    if !sceneIR.isZero() {
+        if sceneBytes, err := json.Marshal(sceneIR); err == nil {
+            base["scene"] = json.RawMessage(sceneBytes)
+        }
+    }
+    return base
+}
+```
+
+and rewires three public methods onto it:
+
+- **`GoSXSpreadProps`** — used to call `LegacyProps()` (378 allocs) then add `programRef` and `capabilities`. Now calls `spreadPropsFast()` and adds the same two extras. **105 allocs** on the 20-mesh mixed scene fixture.
+- **`MarshalJSON`** — was inlining the fast-path body directly. Now delegates to `spreadPropsFast()` + `json.Marshal`. Same alloc count (128), zero semantic change, one less source of drift.
+- **`RawPropsJSON`** — used to call `LegacyProps()` + `json.Marshal(values)` (two map walks, 378+ allocs). Now delegates to `MarshalJSON()` directly. **126 allocs**.
+
+`LegacyProps` is preserved as-is because exported scene package tests still type-assert `legacy["scene"].(map[string]any)` to inspect the nested tree. It's effectively a test-only export now; none of the three hot-path methods use it anymore.
+
+### `canonicalizeEnginePropValue` now passes `json.RawMessage` through unchanged
+
+Downstream of `GoSXSpreadProps`, the route file-renderer calls `marshalEngineProps → canonicalizeEnginePropsMap → canonicalizeEnginePropValue` to normalize key casing (PascalCase vs camelCase) before marshaling the final `engine.Config.Props` bytes. `canonicalizeEnginePropValue` recurses through nested maps and slices — without a special case, a `json.RawMessage` (which is a `[]byte`) would be iterated byte by byte, boxed into individual `interface{}` values, and the whole spread optimization would evaporate (plus the output would be corrupt).
+
+Added an early type-assertion at the top of `canonicalizeEnginePropValue`:
+
+```go
+if _, ok := value.(json.RawMessage); ok {
+    return value
+}
+```
+
+`json.Marshal` handles `json.RawMessage` natively — it splices the raw bytes directly into the output without re-marshaling — so pass-through is both correct and fast.
+
+### Latent bug: `ModelIR.MarshalJSON` was missing
+
+`ModelIR` embeds `ObjectIR` by value:
+
+```go
+type ModelIR struct {
+    ObjectIR
+    Src       string  `json:"src,omitempty"`
+    ScaleX    float64 `json:"scaleX,omitempty"`
+    // ... six more model-specific fields
+}
+```
+
+Go's method promotion made `json.Marshal(modelIR)` dispatch to `ObjectIR.MarshalJSON` — which only emits the `ObjectIR` half via its `objectAlias` type-alias trick, silently dropping every `ModelIR`-local field. The old map-building path in `legacyModels` sidestepped this because it built the record manually; the new direct-marshal path hit it as soon as a typed scene with a `Model` node reached `spreadPropsFast`. `TestDefaultFileRendererSupportsTypedScenePropsSpread` caught it immediately.
+
+Added a proper `ModelIR.MarshalJSON` using the same alias trick as `ObjectIR.MarshalJSON`:
+
+```go
+func (m ModelIR) MarshalJSON() ([]byte, error) {
+    type objectAlias ObjectIR
+    type modelWire struct {
+        objectAlias
+        Points    []linePointWire `json:"points,omitempty"`
+        Src       string          `json:"src,omitempty"`
+        ScaleX    float64         `json:"scaleX,omitempty"`
+        ScaleY    float64         `json:"scaleY,omitempty"`
+        ScaleZ    float64         `json:"scaleZ,omitempty"`
+        Static    *bool           `json:"static,omitempty"`
+        Animation string          `json:"animation,omitempty"`
+        Loop      *bool           `json:"loop,omitempty"`
+    }
+    return json.Marshal(modelWire{
+        objectAlias: objectAlias(m.ObjectIR),
+        Points:      toLinePointsWire(m.Points),
+        // ... rest of fields
+    })
+}
+```
+
+The shadow `Points` field on `modelWire` wins over the embedded `ObjectIR.Points` by Go's field resolution rules (shallower depth wins), so the canonical `linePointWire` wire shape is emitted.
+
+### Benchmark coverage — three .dmj files updated
+
+**`scene/bench.dmj`** gains five new benchmarks:
+
+| benchmark | allocs | ns/op | context |
+|---|---|---|---|
+| `PropsSpreadPropsFast` | 103 | 99μs | Direct measure of the new helper |
+| `PropsGosxSpreadProps` | 105 | 98μs | Public entry with cap + ref adds |
+| `PropsRawJson` | 126 | 131μs | Engine-manifest emitter |
+| `PropsMarshalGalaxy` | 383 | 588μs | 80-mesh galaxy fixture |
+| `SceneIrGalaxy` | 172 | 86μs | Graph → SceneIR lowering isolated |
+
+Plus a new `benchGalaxyScene` test helper — a production-shaped ~80-sphere fixture approximating m31labs.dev's homepage galaxy engine, used by the larger benches to catch accidental quadratic drift in the lowerer and marshal as scene complexity grows.
+
+**`route/bench.dmj`** gains four engine-props end-to-end benchmarks (task #13 — the "engine/Scene3D end-to-end" piece):
+
+| benchmark | allocs | ns/op | context |
+|---|---|---|---|
+| `EnginePropsSceneSpread` | 73 | 30μs | Just `marshalEngineProps` on a pre-spread map |
+| `EnginePropsSceneEndToEnd` | 171 | 122μs | Full `GoSXSpreadProps + canonicalize + marshal` |
+| `EnginePropsGalaxyEndToEnd` | 433 | 438μs | Same pipeline, 80-mesh scale |
+| `SceneIrGalaxyLower` | 172 | 67μs | Isolated lowering via cross-package helper |
+
+Galaxy scene pays roughly **5 allocs per mesh** through the full pipeline — linear in node count, which is the expected shape and the regression trip-wire for future refactors. Route bench helpers gain `benchScene3DProps` / `benchGalaxyScene3DProps` — inlined mirrors of the scene fixtures so the route package can benchmark the full cross-package SSR pipeline without adding exports that only tests would use.
+
+**`island/bench.dmj`** gains four end-to-end coverage benches (task #12):
+
+| benchmark | allocs | ns/op | context |
+|---|---|---|---|
+| `ToggleSsrRender` | 8 | 0.9μs | Fills the SSR coverage gap for the 4th fixture |
+| `MultiIslandSsrRender` | 100 | 10.3μs | 10-island page SSR (typical prod page) |
+| `FormTypingBurst` | 204 | 30μs | 5 rapid field dispatches in sequence |
+| `CounterHydrationRoundTrip` | 70 | 11.7μs | NewIsland + 2 Dispatch + Reconcile |
+
+The multi-island bench measures aggregate SSR cost at realistic page sizes — 10 allocs per island × 10 islands = 100 allocs total, which matches single-island measurements exactly and confirms there's no per-island overhead (manifest registration, program lookup, etc.) above what the counter SSR already pays. `FormTypingBurst` simulates the common pattern of typing into a form field (change-change-change-change-submit) so interaction-burst performance regressions would surface clearly.
+
 ## v0.17.20
 
 Third fix in the WebGPU sub-chunk ordering chase. `s.async = false` on a dynamically-inserted `<script>` element is supposed to force ordered-deferred execution (i.e., run the script in document order, behind any parser-inserted `defer` scripts), but chromedp's headless Chromium — and likely several real builds — still raced the webgpu sub-chunk ahead of `bootstrap-feature-scene3d.js`. When the sub-chunk won the race, its IIFE's early-return guard fired:
