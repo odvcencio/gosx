@@ -25,8 +25,19 @@ func TestDocsGSXFilesCompile(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		if _, err := gosx.Compile(source); err != nil {
+		prog, err := gosx.Compile(source)
+		if err != nil {
 			t.Fatalf("compile %s: %v", path, err)
+		}
+		// Any file a route loader will bind (layout.gsx / page.gsx) must
+		// produce at least one component. A bare fragment compiles but
+		// silently 500s at prerender with "no components found".
+		base := filepath.Base(path)
+		if base == "layout.gsx" || base == "page.gsx" {
+			if len(prog.Components) == 0 {
+				rel, _ := filepath.Rel(root, path)
+				t.Fatalf("%s has no components (bare-fragment form breaks route resolution)", rel)
+			}
 		}
 		return nil
 	})
