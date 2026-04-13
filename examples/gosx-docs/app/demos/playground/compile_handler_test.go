@@ -3,6 +3,7 @@ package playground
 import (
 	"bytes"
 	"errors"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -369,5 +370,56 @@ func TestCacheEvictsLRU(t *testing.T) {
 	}
 	if _, ok := cache.Get("c"); !ok {
 		t.Fatal("expected 'c' (newest) to survive")
+	}
+}
+
+// TestClientIPFromRequestStripsPort guards against the rate-limiter bypass
+// where net/http's RemoteAddr includes the client's ephemeral port. A naive
+// implementation would give every new connection its own rate bucket and
+// effectively disable throttling. Every curl process in the wrapping E2E
+// smoke test was slipping past the limit because of this — the fix strips
+// the port so all connections from the same host share a bucket.
+func TestClientIPFromRequestStripsPort(t *testing.T) {
+	cases := []struct {
+		name       string
+		remoteAddr string
+		xff        string
+		want       string
+	}{
+		{"ipv4 with port", "127.0.0.1:49352", "", "127.0.0.1"},
+		{"ipv4 different port same host", "127.0.0.1:49999", "", "127.0.0.1"},
+		{"ipv6 with port", "[::1]:49352", "", "::1"},
+		{"xff single", "10.0.0.1:80", "203.0.113.5", "203.0.113.5"},
+		{"xff chain takes first", "10.0.0.1:80", "203.0.113.5, 10.0.0.2", "203.0.113.5"},
+		{"xff with spaces", "10.0.0.1:80", " 203.0.113.5 , 10.0.0.2", "203.0.113.5"},
+		{"no port fallback", "bare-host", "", "bare-host"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := &http.Request{RemoteAddr: tc.remoteAddr, Header: http.Header{}}
+			if tc.xff != "" {
+				r.Header.Set("X-Forwarded-For", tc.xff)
+			}
+			if got := clientIPFromRequest(r); got != tc.want {
+				t.Fatalf("clientIPFromRequest(%q, %q) = %q, want %q", tc.remoteAddr, tc.xff, got, tc.want)
+			}
+		})
+	}
+
+	// Nil request should return a stable fallback, not panic.
+	if got := clientIPFromRequest(nil); got == "" {
+		t.Fatal("nil request should return a non-empty fallback key")
+	}
+}
+
+// TestClientIPFromRequestSharesBucketAcrossPorts proves the end-to-end
+// invariant that two connections from the same host but different ephemeral
+// ports consume from the same rate-limit bucket.
+func TestClientIPFromRequestSharesBucketAcrossPorts(t *testing.T) {
+	r1 := &http.Request{RemoteAddr: "127.0.0.1:49100", Header: http.Header{}}
+	r2 := &http.Request{RemoteAddr: "127.0.0.1:49200", Header: http.Header{}}
+	if clientIPFromRequest(r1) != clientIPFromRequest(r2) {
+		t.Fatalf("same host different ports should share bucket: %q vs %q",
+			clientIPFromRequest(r1), clientIPFromRequest(r2))
 	}
 }

@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/odvcencio/gosx"
@@ -354,14 +356,26 @@ func CompileAction(ctx *action.Context) error {
 }
 
 // clientIPFromRequest extracts a stable rate-limiting key from the HTTP
-// request. It prefers X-Forwarded-For (set by reverse proxies) and falls
-// back to RemoteAddr.
+// request. It prefers the first entry of X-Forwarded-For (set by reverse
+// proxies) and falls back to the host part of RemoteAddr.
+//
+// RemoteAddr comes from net/http in the form "host:port" where port is the
+// client's ephemeral port. Using it verbatim would give every new connection
+// its own rate-limit bucket and effectively disable throttling. We strip the
+// port so all connections from the same host share a bucket.
 func clientIPFromRequest(r *http.Request) string {
 	if r == nil {
 		return "playground"
 	}
 	if fwd := r.Header.Get("X-Forwarded-For"); fwd != "" {
-		return fwd
+		// X-Forwarded-For may be "client, proxy1, proxy2" — take the first.
+		if comma := strings.IndexByte(fwd, ','); comma >= 0 {
+			fwd = fwd[:comma]
+		}
+		return strings.TrimSpace(fwd)
+	}
+	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+		return host
 	}
 	return r.RemoteAddr
 }
