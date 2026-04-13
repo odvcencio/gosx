@@ -248,10 +248,7 @@ func RunBuild(dir string, dev bool) error {
 	if tinygoErr == nil && !dev {
 		// TinyGo available and prod mode — use it for smaller WASM
 		fmt.Println("    Using TinyGo for smaller WASM binary...")
-		cmd := exec.Command(tinygoPath, "build", "-target", "wasm", "-o", wasmTmp, gosxModuleImportPath+"/client/wasm")
-		cmd.Dir = dir
-		cmd.Stderr = os.Stderr
-		if err := cmd.Run(); err == nil {
+		if err := buildTinyGoWASM(dir, gosxRoot, wasmTmp, tinygoPath); err == nil {
 			usedTinyGo = true
 			// Try wasm-opt if available
 			woptPath, woptErr := exec.LookPath("wasm-opt")

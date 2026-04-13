@@ -1,5 +1,38 @@
 # Changelog
 
+## v0.17.23
+
+TinyGo-backed WASM runtime builds ship again.
+
+### `gosx build` — TinyGo works from a pruned WASM module graph
+
+Production builds already tried TinyGo before falling back to the standard Go WASM compiler, but the attempt never reached GoSX code on current developer machines. The installed TinyGo was already current (`0.40.1`), but TinyGo 0.40.1 only accepts Go 1.19 through Go 1.25. GoSX's root module now requires Go 1.26, and a few non-WASM tooling dependencies also require Go 1.26, so TinyGo exited during module loading and `gosx build` silently produced the full standard-Go runtime.
+
+The build now constructs a temporary scratch module for the TinyGo attempt:
+
+- derives the real `GOOS=js GOARCH=wasm` dependency closure with `go list -deps -json`
+- copies only the GoSX packages in that closure into the scratch module
+- writes a minimal `go.mod` with the external modules that the WASM runtime actually imports
+- pins the scratch module directive to `go 1.25`
+- preserves `go.sum` for checksum reuse
+
+For the current runtime, that trims the external graph to `github.com/odvcencio/turboquant` and `github.com/rivo/uniseg` instead of asking TinyGo to load the full project graph.
+
+### TinyGo toolchain fallback for Go 1.26 hosts
+
+When the active `go` binary is too new for TinyGo, `gosx build` now retries the TinyGo compile against compatible installed Go SDKs. It checks `GOSX_TINYGO_GOROOT`, `$HOME/sdk/go1.*`, and `/usr/local/go`, filters to Go 1.19 through Go 1.25, picks the newest compatible root, and runs TinyGo with that root first on `PATH` plus `GOTOOLCHAIN=local`.
+
+On the release machine, the build used Go 1.25.9 at `/home/draco/sdk/go1.25.9`, then applied `wasm-opt -Oz`.
+
+Measured release output:
+
+| Runtime | Raw | gzip estimate |
+|---|---:|---:|
+| Standard Go WASM fallback | ~6 MB | ~2 MB |
+| TinyGo + `wasm-opt -Oz` | 1,417,044 bytes | 484 KB |
+
+This keeps the standard Go fallback intact for environments without TinyGo or a compatible Go SDK, but makes the fast path work on the current GoSX toolchain.
+
 ## v0.17.22
 
 Four loosely-related wins that all surfaced while investigating Scene3D performance on the m31labs.dev galaxy page:
