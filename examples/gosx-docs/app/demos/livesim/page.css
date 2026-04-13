@@ -1,0 +1,114 @@
+/* ─── Live Sim demo — scoped under .livesim ─────────────────────────────── */
+/* Amber editorial aesthetic on the shell's near-black background.           */
+/* Shell tokens: --demo-bg, --demo-fg, --demo-muted, --demo-hair,           */
+/*               --demo-accent (amber #f59e0b for data-demo-slug="livesim") */
+
+.livesim {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0;
+  padding: 2rem 1.5rem 1.5rem;
+  min-height: 100%;
+  background: var(--demo-bg, #0b0b0d);
+  color: var(--demo-fg, #f5f5ef);
+}
+
+/* ─── Frame: canvas + HUD side-by-side on wide, stacked on narrow ─────────── */
+
+.livesim__frame {
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 1.25rem;
+  width: 100%;
+  max-width: 1060px;
+}
+
+/* ─── Canvas ────────────────────────────────────────────────────────────────── */
+
+.livesim__canvas {
+  display: block;
+  flex-shrink: 0;
+  width: 800px;
+  height: 500px;
+  max-width: 100%;
+  background: var(--demo-bg, #0b0b0d);
+  border: 1px solid var(--demo-accent, #f59e0b);
+  cursor: crosshair;
+  /* Prevent text selection while clicking rapidly */
+  user-select: none;
+}
+
+/* ─── HUD panel ─────────────────────────────────────────────────────────────── */
+
+.livesim__hud {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 1rem 1.25rem;
+  border-left: 3px solid var(--demo-accent, #f59e0b);
+  background: transparent;
+  min-width: 140px;
+  flex-shrink: 0;
+}
+
+.livesim__stat {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.livesim__stat-label {
+  font-family: "JetBrains Mono", "Fira Mono", monospace;
+  font-size: 0.65rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--demo-muted, #9a9a9a);
+}
+
+.livesim__stat-value {
+  font-family: "JetBrains Mono", "Fira Mono", monospace;
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--demo-accent, #f59e0b);
+  letter-spacing: 0.03em;
+}
+
+/* ─── Footer ─────────────────────────────────────────────────────────────────── */
+
+.livesim__footer {
+  width: 100%;
+  max-width: 1060px;
+  padding: 0.75rem 0 0;
+  border-top: 1px solid var(--demo-hair, rgba(255,255,255,0.08));
+  margin-top: 1rem;
+  font-family: "JetBrains Mono", "Fira Mono", monospace;
+  font-size: 0.7rem;
+  color: var(--demo-muted, #9a9a9a);
+  letter-spacing: 0.04em;
+}
+
+/* ─── Responsive: narrow viewport stacks HUD below canvas ──────────────────── */
+
+@media (max-width: 900px) {
+  .livesim__frame {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .livesim__canvas {
+    width: 100%;
+    height: auto;
+    aspect-ratio: 800 / 500;
+  }
+
+  .livesim__hud {
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 1rem 2rem;
+    border-left: none;
+    border-top: 3px solid var(--demo-accent, #f59e0b);
+    padding: 0.75rem 0 0;
+  }
+}

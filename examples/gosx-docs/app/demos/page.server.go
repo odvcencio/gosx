@@ -35,9 +35,9 @@ var demosIndexCards = []demoCard{
 		Slug:   "livesim",
 		Title:  "Live Sim",
 		Tag:    "authoritative multiplayer",
-		Body:   "A tick-rate server runs the full game state. Join, spectate, scrub the replay ring.",
+		Body:   "A tick-rate server runs the full game state. Drop circles, watch them collide in real time across all connected clients.",
 		Accent: "#f59e0b",
-		Live:   false,
+		Live:   true,
 	},
 	{
 		Slug:   "cms",

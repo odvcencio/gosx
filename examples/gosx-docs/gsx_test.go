@@ -474,3 +474,109 @@ func TestDemosIndexLists7Cards(t *testing.T) {
 		t.Error(`app/demos/page.server.go missing "Demos" title string`)
 	}
 }
+
+// TestLiveSimDemoShape verifies the livesim demo has correct structural wiring:
+// hub, sim runner, BindHub, page markup, client JS, and nav flip.
+func TestLiveSimDemoShape(t *testing.T) {
+	_, thisFile, _, _ := runtime.Caller(0)
+	root := filepath.Dir(thisFile)
+	livesimDir := filepath.Join(root, "app", "demos", "livesim")
+	publicDir := filepath.Join(root, "public")
+	mainPath := filepath.Join(root, "main.go")
+	layoutPath := filepath.Join(root, "app", "demos", "layout.gsx")
+
+	// ── page.server.go ────────────────────────────────────────────────────────
+	serverSource, err := os.ReadFile(filepath.Join(livesimDir, "page.server.go"))
+	if err != nil {
+		t.Fatalf("read livesim/page.server.go: %v", err)
+	}
+	serverSrc := string(serverSource)
+
+	serverChecks := []struct{ needle, label string }{
+		{`hub.New("livesim")`, `hub.New("livesim")`},
+		{"sim.New(", "sim.New("},
+		{"ctx.Runtime().BindHub(", "ctx.Runtime().BindHub("},
+		{"runner.Start()", "runner.Start()"},
+	}
+	for _, c := range serverChecks {
+		if !strings.Contains(serverSrc, c.needle) {
+			t.Errorf("livesim/page.server.go missing %q", c.label)
+		}
+	}
+
+	// ── page.gsx ──────────────────────────────────────────────────────────────
+	gsxSource, err := os.ReadFile(filepath.Join(livesimDir, "page.gsx"))
+	if err != nil {
+		t.Fatalf("read livesim/page.gsx: %v", err)
+	}
+	gsxSrc := string(gsxSource)
+
+	if !strings.Contains(gsxSrc, "/livesim-client.js") {
+		t.Error("livesim/page.gsx missing /livesim-client.js script src")
+	}
+	if !strings.Contains(gsxSrc, "livesim-canvas") {
+		t.Error("livesim/page.gsx missing livesim-canvas id")
+	}
+
+	// page.gsx must compile and export Page.
+	prog, err := gosx.Compile(gsxSource)
+	if err != nil {
+		t.Fatalf("compile livesim/page.gsx: %v", err)
+	}
+	if len(prog.Components) == 0 || prog.Components[0].Name != "Page" {
+		t.Error("livesim/page.gsx: expected Page component")
+	}
+
+	// ── game.go ───────────────────────────────────────────────────────────────
+	gameSource, err := os.ReadFile(filepath.Join(livesimDir, "game.go"))
+	if err != nil {
+		t.Fatalf("read livesim/game.go: %v", err)
+	}
+	gameSrc := string(gameSource)
+
+	if !strings.Contains(gameSrc, "func (g *game) Tick(") {
+		t.Error("livesim/game.go missing func (g *game) Tick(")
+	}
+	if !strings.Contains(gameSrc, "worldWidth") {
+		t.Error("livesim/game.go missing worldWidth constant")
+	}
+	if !strings.Contains(gameSrc, "worldHeight") {
+		t.Error("livesim/game.go missing worldHeight constant")
+	}
+
+	// ── public/livesim-client.js ──────────────────────────────────────────────
+	jsSource, err := os.ReadFile(filepath.Join(publicDir, "livesim-client.js"))
+	if err != nil {
+		t.Fatalf("read public/livesim-client.js: %v", err)
+	}
+	jsSrc := string(jsSource)
+	if !strings.Contains(jsSrc, "gosx:hub:event") {
+		t.Error("public/livesim-client.js missing gosx:hub:event listener")
+	}
+
+	// ── layout.gsx: livesim must be a live <a>, not an aria-disabled <span> ──
+	layoutSource, err := os.ReadFile(layoutPath)
+	if err != nil {
+		t.Fatalf("read layout.gsx: %v", err)
+	}
+	layoutSrc := string(layoutSource)
+	if !strings.Contains(layoutSrc, `href="/demos/livesim"`) {
+		t.Error(`layout.gsx missing href="/demos/livesim" — dock item not flipped to Live`)
+	}
+	// Must NOT still have aria-disabled on the livesim entry.
+	// Check that the pattern `data-demo="livesim" aria-disabled` does not appear
+	// on the same element (other demos may still be aria-disabled).
+	if strings.Contains(layoutSrc, `data-demo="livesim" aria-disabled`) {
+		t.Error("layout.gsx livesim entry still has aria-disabled — not fully flipped")
+	}
+
+	// ── main.go: hub mount ────────────────────────────────────────────────────
+	mainSource, err := os.ReadFile(mainPath)
+	if err != nil {
+		t.Fatalf("read main.go: %v", err)
+	}
+	mainSrc := string(mainSource)
+	if !strings.Contains(mainSrc, `app.Mount("/demos/livesim/ws"`) {
+		t.Error(`main.go missing app.Mount("/demos/livesim/ws"`)
+	}
+}
