@@ -1,0 +1,142 @@
+/* ─── Fluid demo — scoped under .fluid ──────────────────────────────────── */
+/* Cyan-violet editorial aesthetic on the shell's near-black background.    */
+/* Shell tokens: --demo-bg, --demo-fg, --demo-muted, --demo-hair,           */
+/*               --demo-accent (#a8b8ff for data-demo-slug="fluid")         */
+
+.fluid {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0;
+  padding: 2rem 1.5rem 1.5rem;
+  min-height: 100%;
+  background: var(--demo-bg, #0b0b0d);
+  color: var(--demo-fg, #f5f5ef);
+}
+
+/* ─── Frame: canvas + HUD side-by-side on wide, stacked on narrow ────────── */
+
+.fluid__frame {
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 1.25rem;
+  width: 100%;
+  max-width: 1060px;
+}
+
+/* ─── Canvas ────────────────────────────────────────────────────────────── */
+
+.fluid__canvas {
+  display: block;
+  flex-shrink: 0;
+  width: 800px;
+  height: 500px;
+  max-width: 100%;
+  background: var(--demo-bg, #0b0b0d);
+  border: 1px solid var(--demo-accent, #a8b8ff);
+}
+
+/* ─── HUD panel ─────────────────────────────────────────────────────────── */
+
+.fluid__hud {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  padding: 1rem 1.25rem;
+  border-left: 3px solid var(--demo-accent, #a8b8ff);
+  background: transparent;
+  min-width: 148px;
+  flex-shrink: 0;
+}
+
+.fluid__hud-title {
+  font-family: "JetBrains Mono", "Fira Mono", monospace;
+  font-size: 0.6rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--demo-accent, #a8b8ff);
+  margin-bottom: 0.35rem;
+}
+
+.fluid__stat {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.fluid__stat-label {
+  font-family: "JetBrains Mono", "Fira Mono", monospace;
+  font-size: 0.6rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--demo-muted, #9a9a9a);
+}
+
+.fluid__stat-value {
+  font-family: "JetBrains Mono", "Fira Mono", monospace;
+  font-size: 1rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--demo-fg, #f5f5ef);
+  letter-spacing: 0.03em;
+}
+
+/* ─── Footer ─────────────────────────────────────────────────────────────── */
+
+.fluid__footer {
+  width: 100%;
+  max-width: 1060px;
+  padding: 0.75rem 0 0;
+  border-top: 1px solid var(--demo-hair, rgba(255,255,255,0.08));
+  margin-top: 1rem;
+  font-family: "JetBrains Mono", "Fira Mono", monospace;
+  font-size: 0.7rem;
+  color: var(--demo-muted, #9a9a9a);
+  letter-spacing: 0.04em;
+  text-align: center;
+}
+
+/* ─── Responsive: narrow viewport stacks HUD below canvas ──────────────── */
+
+@media (max-width: 900px) {
+  .fluid__frame {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .fluid__canvas {
+    width: 100%;
+    height: auto;
+    aspect-ratio: 800 / 500;
+  }
+
+  .fluid__hud {
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 0.75rem 1.75rem;
+    border-left: none;
+    border-top: 3px solid var(--demo-accent, #a8b8ff);
+    padding: 0.75rem 0 0;
+    min-width: 0;
+  }
+
+  .fluid__hud-title {
+    width: 100%;
+    margin-bottom: 0;
+  }
+}
+
+@media (max-width: 480px) {
+  .fluid {
+    padding: 1rem 0.75rem 1rem;
+  }
+
+  .fluid__stat-value {
+    font-size: 0.85rem;
+  }
+
+  .fluid__footer {
+    font-size: 0.62rem;
+  }
+}

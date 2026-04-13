@@ -693,3 +693,119 @@ func TestCollabDemoShape(t *testing.T) {
 		t.Error("collab/route.config.json missing — prerender opt-out required")
 	}
 }
+
+// TestFluidDemoShape verifies the fluid demo has correct structural wiring:
+// field sim, hub, BindHub, page markup, client JS decoder, nav flip, and route config.
+func TestFluidDemoShape(t *testing.T) {
+	_, thisFile, _, _ := runtime.Caller(0)
+	root := filepath.Dir(thisFile)
+	fluidDir := filepath.Join(root, "app", "demos", "fluid")
+	publicDir := filepath.Join(root, "public")
+	mainPath := filepath.Join(root, "main.go")
+	layoutPath := filepath.Join(root, "app", "demos", "layout.gsx")
+
+	// ── sim.go ────────────────────────────────────────────────────────────────
+	simSource, err := os.ReadFile(filepath.Join(fluidDir, "sim.go"))
+	if err != nil {
+		t.Fatalf("read fluid/sim.go: %v", err)
+	}
+	simSrc := string(simSource)
+
+	simChecks := []struct{ needle, label string }{
+		{"field.PublishField", "field.PublishField"},
+		{"field.FromFunc", "field.FromFunc"},
+		{"QuantizeOptions{BitWidth:", "QuantizeOptions{BitWidth:"},
+	}
+	for _, c := range simChecks {
+		if !strings.Contains(simSrc, c.needle) {
+			t.Errorf("fluid/sim.go missing %q", c.label)
+		}
+	}
+
+	// ── page.server.go ────────────────────────────────────────────────────────
+	serverSource, err := os.ReadFile(filepath.Join(fluidDir, "page.server.go"))
+	if err != nil {
+		t.Fatalf("read fluid/page.server.go: %v", err)
+	}
+	serverSrc := string(serverSource)
+
+	serverChecks := []struct{ needle, label string }{
+		{`hub.New("fluid")`, `hub.New("fluid")`},
+		{"ctx.Runtime().BindHub(", "ctx.Runtime().BindHub("},
+	}
+	for _, c := range serverChecks {
+		if !strings.Contains(serverSrc, c.needle) {
+			t.Errorf("fluid/page.server.go missing %q", c.label)
+		}
+	}
+
+	// ── page.gsx ──────────────────────────────────────────────────────────────
+	gsxSource, err := os.ReadFile(filepath.Join(fluidDir, "page.gsx"))
+	if err != nil {
+		t.Fatalf("read fluid/page.gsx: %v", err)
+	}
+	gsxSrc := string(gsxSource)
+
+	gsxChecks := []string{"fluid-canvas", "/fluid-client.js"}
+	for _, needle := range gsxChecks {
+		if !strings.Contains(gsxSrc, needle) {
+			t.Errorf("fluid/page.gsx missing %q", needle)
+		}
+	}
+
+	// page.gsx must compile and export Page.
+	prog, err := gosx.Compile(gsxSource)
+	if err != nil {
+		t.Fatalf("compile fluid/page.gsx: %v", err)
+	}
+	if len(prog.Components) == 0 || prog.Components[0].Name != "Page" {
+		t.Error("fluid/page.gsx: expected Page component")
+	}
+
+	// ── route.config.json must exist with prerender:false ─────────────────────
+	cfgBytes, err := os.ReadFile(filepath.Join(fluidDir, "route.config.json"))
+	if err != nil {
+		t.Fatal("fluid/route.config.json missing — prerender opt-out required")
+	}
+	if !strings.Contains(string(cfgBytes), `"prerender": false`) {
+		t.Error(`fluid/route.config.json must contain "prerender": false`)
+	}
+
+	// ── public/fluid-client.js ────────────────────────────────────────────────
+	jsSource, err := os.ReadFile(filepath.Join(publicDir, "fluid-client.js"))
+	if err != nil {
+		t.Fatalf("read public/fluid-client.js: %v", err)
+	}
+	jsSrc := string(jsSource)
+
+	jsChecks := []string{"decodeQuantized", "unpackBits", "gosx:hub:event", "IsDelta"}
+	for _, needle := range jsChecks {
+		if !strings.Contains(jsSrc, needle) {
+			t.Errorf("public/fluid-client.js missing %q", needle)
+		}
+	}
+
+	// ── layout.gsx: fluid must be a live <a>, not an aria-disabled <span> ─────
+	layoutSource, err := os.ReadFile(layoutPath)
+	if err != nil {
+		t.Fatalf("read layout.gsx: %v", err)
+	}
+	layoutSrc := string(layoutSource)
+
+	if !strings.Contains(layoutSrc, `href="/demos/fluid"`) {
+		t.Error(`layout.gsx missing href="/demos/fluid" — dock item not flipped to Live`)
+	}
+	if strings.Contains(layoutSrc, `data-demo="fluid" aria-disabled`) {
+		t.Error("layout.gsx fluid entry still has aria-disabled — not fully flipped")
+	}
+
+	// ── main.go: hub mount ────────────────────────────────────────────────────
+	mainSource, err := os.ReadFile(mainPath)
+	if err != nil {
+		t.Fatalf("read main.go: %v", err)
+	}
+	mainSrc := string(mainSource)
+	if !strings.Contains(mainSrc, `app.Mount("/demos/fluid/ws"`) {
+		t.Error(`main.go missing app.Mount("/demos/fluid/ws"`)
+	}
+}

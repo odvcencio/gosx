@@ -27,9 +27,9 @@ var demosIndexCards = []demoCard{
 		Slug:   "fluid",
 		Title:  "Fluid",
 		Tag:    "server-streamed velocity field",
-		Body:   "A 3D velocity field advected on the server and streamed to your browser as quantized deltas. Particles ride the field on the GPU.",
+		Body:   "A 3D velocity field advected on the server and streamed to your browser as quantized deltas. Particles ride the decoded slice client-side.",
 		Accent: "#a8b8ff",
-		Live:   false,
+		Live:   true,
 	},
 	{
 		Slug:   "livesim",

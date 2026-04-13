@@ -44,14 +44,14 @@ func Layout() Node {
                         </a>
                     </li>
                     <li class="demo-dock__item" role="listitem">
-                        <span class="demo-dock__link demo-dock__link--soon" data-demo="fluid" aria-disabled="true">
+                        <a href="/demos/fluid" class="demo-dock__link" data-demo="fluid">
                             <span class="demo-dock__dot" aria-hidden="true"></span>
                             <span class="demo-dock__body">
                                 <span class="demo-dock__title">Fluid</span>
                                 <span class="demo-dock__tag">server-streamed velocity field</span>
                             </span>
-                            <span class="demo-dock__chip demo-dock__chip--soon">Soon</span>
-                        </span>
+                            <span class="demo-dock__chip demo-dock__chip--live">Live</span>
+                        </a>
                     </li>
                     <li class="demo-dock__item" role="listitem">
                         <a href="/demos/livesim" class="demo-dock__link" data-demo="livesim">
