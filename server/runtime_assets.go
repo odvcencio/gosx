@@ -164,6 +164,7 @@ func runtimeCompatSourcePath(root, name string) (string, bool) {
 	buildDir := filepath.Join(root, "build")
 	candidates := map[string]string{
 		"runtime.wasm":                 filepath.Join(buildDir, "gosx-runtime.wasm"),
+		"runtime-islands.wasm":         filepath.Join(buildDir, "gosx-runtime-islands.wasm"),
 		"wasm_exec.js":                 filepath.Join(buildDir, "wasm_exec.js"),
 		"bootstrap.js":                 filepath.Join(buildDir, "bootstrap.js"),
 		"bootstrap-lite.js":            filepath.Join(buildDir, "bootstrap-lite.js"),
@@ -209,6 +210,11 @@ func (a *App) runtimeCompatBuiltPath(root, name string) (string, bool) {
 	switch name {
 	case "runtime.wasm":
 		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.WASM.File)
+	case "runtime-islands.wasm":
+		if strings.TrimSpace(manifest.Runtime.WASMIslands.File) == "" {
+			return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.WASM.File)
+		}
+		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.WASMIslands.File)
 	case "wasm_exec.js":
 		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.WASMExec.File)
 	case "bootstrap.js":

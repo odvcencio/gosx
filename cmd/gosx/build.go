@@ -250,17 +250,12 @@ func RunBuild(dir string, dev bool) error {
 		fmt.Println("    Using TinyGo for smaller WASM binary...")
 		if err := buildTinyGoWASM(dir, gosxRoot, wasmTmp, tinygoPath); err == nil {
 			usedTinyGo = true
-			// Try wasm-opt if available
-			woptPath, woptErr := exec.LookPath("wasm-opt")
-			if woptErr == nil {
-				optTmp := wasmTmp + ".opt"
-				optCmd := exec.Command(woptPath, "-Oz", "--strip-debug", "--strip-producers", wasmTmp, "-o", optTmp)
-				if optCmd.Run() == nil {
-					if err := os.Rename(optTmp, wasmTmp); err != nil {
-						return fmt.Errorf("rename optimized wasm: %w", err)
-					}
-					fmt.Println("    Applied wasm-opt -Oz")
-				}
+			optimized, err := optimizeWASMWithWasmOpt(wasmTmp)
+			if err != nil {
+				return err
+			}
+			if optimized {
+				fmt.Println("    Applied wasm-opt -Oz")
 			}
 		} else {
 			fmt.Printf("    TinyGo build failed, falling back to standard Go: %v\n", err)
@@ -294,6 +289,36 @@ func RunBuild(dir string, dev bool) error {
 	fmt.Printf("    %s (%d bytes, %dKB gz, built with %s)\n", asset.File, asset.Size, gzEst/1024, compiler)
 	if err := os.Remove(wasmTmp); err != nil {
 		return fmt.Errorf("remove temporary WASM artifact: %w", err)
+	}
+
+	if usedTinyGo && !tinyGoFullRuntimeEnabled() {
+		islandsTmp := filepath.Join(distDir, "gosx-runtime-islands.wasm.tmp")
+		if err := buildTinyGoWASM(dir, gosxRoot, islandsTmp, tinygoPath, "gosx_tiny_islands_only"); err != nil {
+			fmt.Printf("    TinyGo islands-only runtime build failed, using shared runtime for islands: %v\n", err)
+			_ = os.Remove(islandsTmp)
+		} else {
+			optimized, err := optimizeWASMWithWasmOpt(islandsTmp)
+			if err != nil {
+				return err
+			}
+			if optimized {
+				fmt.Println("    Applied wasm-opt -Oz (islands runtime)")
+			}
+			islandsData, err := os.ReadFile(islandsTmp)
+			if err != nil {
+				return fmt.Errorf("read compiled islands WASM: %w", err)
+			}
+			asset, err := writeHashed(runtimeDir, "gosx-runtime-islands", ".wasm", islandsData)
+			if err != nil {
+				return fmt.Errorf("write islands wasm asset: %w", err)
+			}
+			manifest.Runtime.WASMIslands = asset
+			gzEst := gzip_c_len(islandsData)
+			fmt.Printf("    %s (%d bytes, %dKB gz, built with TinyGo, islands-only)\n", asset.File, asset.Size, gzEst/1024)
+			if err := os.Remove(islandsTmp); err != nil {
+				return fmt.Errorf("remove temporary islands WASM artifact: %w", err)
+			}
+		}
 	}
 
 	// wasm_exec.js — use TinyGo's version if we built with TinyGo
@@ -431,6 +456,7 @@ func RunBuild(dir string, dev bool) error {
 	}
 	fmt.Printf("  Tier 2 (runtime): %d assets, immutable CDN\n", countNonEmpty(
 		manifest.Runtime.WASM.File,
+		manifest.Runtime.WASMIslands.File,
 		manifest.Runtime.WASMExec.File,
 		manifest.Runtime.Bootstrap.File,
 		manifest.Runtime.BootstrapLite.File,
@@ -465,6 +491,22 @@ func RunBuild(dir string, dev bool) error {
 // gzip_c_len estimates gzipped size.
 func gzip_c_len(data []byte) int {
 	return int(float64(len(data)) * 0.35)
+}
+
+func optimizeWASMWithWasmOpt(path string) (bool, error) {
+	woptPath, woptErr := exec.LookPath("wasm-opt")
+	if woptErr != nil {
+		return false, nil
+	}
+	optTmp := path + ".opt"
+	optCmd := exec.Command(woptPath, "-Oz", "--strip-debug", "--strip-producers", path, "-o", optTmp)
+	if optCmd.Run() != nil {
+		return false, nil
+	}
+	if err := os.Rename(optTmp, path); err != nil {
+		return false, fmt.Errorf("rename optimized wasm: %w", err)
+	}
+	return true, nil
 }
 
 func countNonEmpty(strs ...string) int {
@@ -580,6 +622,7 @@ func stageManifestCompatibilityRuntime(distDir string, manifest *BuildManifest, 
 		dst  string
 	}{
 		{file: manifest.Runtime.WASM.File, dst: filepath.Join(gosxDir, "runtime.wasm")},
+		{file: manifest.Runtime.WASMIslands.File, dst: filepath.Join(gosxDir, "runtime-islands.wasm")},
 		{file: manifest.Runtime.WASMExec.File, dst: filepath.Join(gosxDir, "wasm_exec.js")},
 		{file: manifest.Runtime.Bootstrap.File, dst: filepath.Join(gosxDir, "bootstrap.js")},
 		{file: manifest.Runtime.BootstrapLite.File, dst: filepath.Join(gosxDir, "bootstrap-lite.js")},

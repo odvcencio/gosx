@@ -76,10 +76,12 @@ func copyExportRuntime(buildDir, outputDir string) error {
 		return err
 	}
 	for _, asset := range []struct {
-		src string
-		dst string
+		src      string
+		dst      string
+		optional bool
 	}{
 		{src: filepath.Join(buildDir, "gosx-runtime.wasm"), dst: filepath.Join(gosxDir, "runtime.wasm")},
+		{src: filepath.Join(buildDir, "gosx-runtime-islands.wasm"), dst: filepath.Join(gosxDir, "runtime-islands.wasm"), optional: true},
 		{src: filepath.Join(buildDir, "wasm_exec.js"), dst: filepath.Join(gosxDir, "wasm_exec.js")},
 		{src: filepath.Join(buildDir, "bootstrap.js"), dst: filepath.Join(gosxDir, "bootstrap.js")},
 		{src: filepath.Join(buildDir, "bootstrap-lite.js"), dst: filepath.Join(gosxDir, "bootstrap-lite.js")},
@@ -90,6 +92,12 @@ func copyExportRuntime(buildDir, outputDir string) error {
 		{src: filepath.Join(buildDir, "patch.js"), dst: filepath.Join(gosxDir, "patch.js")},
 		{src: filepath.Join(buildDir, "hls.min.js"), dst: filepath.Join(gosxDir, "hls.min.js")},
 	} {
+		if asset.optional {
+			if err := copyFileIfPresent(asset.src, asset.dst); err != nil {
+				return err
+			}
+			continue
+		}
 		if err := copyFile(asset.dst, asset.src); err != nil {
 			return err
 		}

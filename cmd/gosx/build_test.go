@@ -116,6 +116,7 @@ func TestStageManifestCompatibilityRuntimeCopiesSelectiveBootstrap(t *testing.T)
 
 	files := map[string]string{
 		filepath.Join(distDir, "assets", "runtime", "runtime.1111.wasm"):                 "wasm",
+		filepath.Join(distDir, "assets", "runtime", "runtime-islands.aaaa.wasm"):         "wasm-islands",
 		filepath.Join(distDir, "assets", "runtime", "wasm_exec.2222.js"):                 "wasm-exec",
 		filepath.Join(distDir, "assets", "runtime", "bootstrap.3333.js"):                 "bootstrap",
 		filepath.Join(distDir, "assets", "runtime", "bootstrap-lite.4444.js"):            "bootstrap-lite",
@@ -133,6 +134,7 @@ func TestStageManifestCompatibilityRuntimeCopiesSelectiveBootstrap(t *testing.T)
 	manifest := &BuildManifest{
 		Runtime: RuntimeAssets{
 			WASM:                    HashedAsset{File: "runtime.1111.wasm"},
+			WASMIslands:             HashedAsset{File: "runtime-islands.aaaa.wasm"},
 			WASMExec:                HashedAsset{File: "wasm_exec.2222.js"},
 			Bootstrap:               HashedAsset{File: "bootstrap.3333.js"},
 			BootstrapLite:           HashedAsset{File: "bootstrap-lite.4444.js"},
@@ -151,6 +153,7 @@ func TestStageManifestCompatibilityRuntimeCopiesSelectiveBootstrap(t *testing.T)
 
 	for _, rel := range []string{
 		"gosx/runtime.wasm",
+		"gosx/runtime-islands.wasm",
 		"gosx/wasm_exec.js",
 		"gosx/bootstrap.js",
 		"gosx/bootstrap-lite.js",

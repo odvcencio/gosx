@@ -42,7 +42,7 @@ type tinyGoBuildEnv struct {
 	env   []string
 }
 
-func buildTinyGoWASM(projectDir, gosxRoot, outputPath, tinygoPath string) error {
+func buildTinyGoWASM(projectDir, gosxRoot, outputPath, tinygoPath string, extraTags ...string) error {
 	scratchDir, cleanup, err := prepareTinyGoWASMModule(projectDir, gosxRoot)
 	if err != nil {
 		return err
@@ -52,7 +52,7 @@ func buildTinyGoWASM(projectDir, gosxRoot, outputPath, tinygoPath string) error 
 	envs := tinyGoBuildEnvironments()
 	var failures []string
 	for _, candidate := range envs {
-		cmd := exec.Command(tinygoPath, tinyGoBuildArgs(outputPath)...)
+		cmd := exec.Command(tinygoPath, tinyGoBuildArgs(outputPath, extraTags...)...)
 		cmd.Dir = scratchDir
 		cmd.Env = setEnv(candidate.env, "GOFLAGS", "-mod=mod")
 		out, err := cmd.CombinedOutput()
@@ -74,13 +74,18 @@ func buildTinyGoWASM(projectDir, gosxRoot, outputPath, tinygoPath string) error 
 	return errors.New(strings.Join(failures, "\n"))
 }
 
-func tinyGoBuildArgs(outputPath string) []string {
+func tinyGoBuildArgs(outputPath string, extraTags ...string) []string {
 	args := []string{
 		"build",
 		"-target", "wasm",
 	}
+	tags := make([]string, 0, 1+len(extraTags))
 	if !tinyGoFullRuntimeEnabled() {
-		args = append(args, "-tags=gosx_tiny_runtime")
+		tags = append(tags, "gosx_tiny_runtime")
+	}
+	tags = append(tags, extraTags...)
+	if len(tags) > 0 {
+		args = append(args, "-tags="+strings.Join(tags, " "))
 	}
 	args = append(args,
 		"-no-debug",

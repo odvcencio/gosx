@@ -85,6 +85,7 @@ func TestCopyExportRuntimeCopiesSelectiveBootstrap(t *testing.T) {
 
 	for rel, contents := range map[string]string{
 		"gosx-runtime.wasm":            "wasm",
+		"gosx-runtime-islands.wasm":    "wasm-islands",
 		"wasm_exec.js":                 "wasm-exec",
 		"bootstrap.js":                 "bootstrap",
 		"bootstrap-lite.js":            "bootstrap-lite",
@@ -104,6 +105,7 @@ func TestCopyExportRuntimeCopiesSelectiveBootstrap(t *testing.T) {
 
 	for _, rel := range []string{
 		"gosx/runtime.wasm",
+		"gosx/runtime-islands.wasm",
 		"gosx/wasm_exec.js",
 		"gosx/bootstrap.js",
 		"gosx/bootstrap-lite.js",

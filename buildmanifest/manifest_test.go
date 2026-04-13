@@ -12,6 +12,7 @@ func TestLoadAndURLs(t *testing.T) {
 	data := []byte(`{
   "runtime": {
     "wasm": {"file": "gosx-runtime.11111111.wasm", "hash": "11111111", "size": 10},
+    "wasmIslands": {"file": "gosx-runtime-islands.99999999.wasm", "hash": "99999999", "size": 9},
     "wasmExec": {"file": "wasm_exec.22222222.js", "hash": "22222222", "size": 20},
     "bootstrap": {"file": "bootstrap.33333333.js", "hash": "33333333", "size": 30},
     "patch": {"file": "patch.44444444.js", "hash": "44444444", "size": 40},
@@ -36,6 +37,9 @@ func TestLoadAndURLs(t *testing.T) {
 	runtime := manifest.RuntimeURLs("/gosx/assets")
 	if runtime.WASM != "/gosx/assets/runtime/gosx-runtime.11111111.wasm" {
 		t.Fatalf("unexpected wasm url: %s", runtime.WASM)
+	}
+	if runtime.WASMIslands != "/gosx/assets/runtime/gosx-runtime-islands.99999999.wasm" {
+		t.Fatalf("unexpected islands wasm url: %s", runtime.WASMIslands)
 	}
 	if runtime.Bootstrap != "/gosx/assets/runtime/bootstrap.33333333.js" {
 		t.Fatalf("unexpected bootstrap url: %s", runtime.Bootstrap)

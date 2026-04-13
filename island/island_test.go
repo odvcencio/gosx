@@ -392,6 +392,69 @@ func TestApplyBuildManifestUsesHashedRuntimeAndIslandAssets(t *testing.T) {
 	}
 }
 
+func TestRendererUsesIslandOnlyRuntimeForIslandPages(t *testing.T) {
+	r := NewRenderer("main")
+	manifest := &buildmanifest.Manifest{
+		Runtime: buildmanifest.RuntimeAssets{
+			WASM:        buildmanifest.HashedAsset{File: "gosx-runtime.full.wasm", Hash: "full", Size: 100},
+			WASMIslands: buildmanifest.HashedAsset{File: "gosx-runtime-islands.slim.wasm", Hash: "slim", Size: 50},
+			WASMExec:    buildmanifest.HashedAsset{File: "wasm_exec.js", Hash: "exec", Size: 20},
+			Bootstrap:   buildmanifest.HashedAsset{File: "bootstrap.js", Hash: "boot", Size: 30},
+			Patch:       buildmanifest.HashedAsset{File: "patch.js", Hash: "patch", Size: 40},
+		},
+	}
+	if err := r.ApplyBuildManifest(manifest, "/gosx/assets"); err != nil {
+		t.Fatalf("apply build manifest: %v", err)
+	}
+
+	r.RenderIsland("Counter", nil, gosx.Text("0"))
+
+	manifestJSON, err := r.ManifestJSON()
+	if err != nil {
+		t.Fatalf("manifest json: %v", err)
+	}
+	if !strings.Contains(manifestJSON, `/gosx/assets/runtime/gosx-runtime-islands.slim.wasm`) {
+		t.Fatalf("expected island-only runtime in manifest: %s", manifestJSON)
+	}
+	if strings.Contains(manifestJSON, `/gosx/assets/runtime/gosx-runtime.full.wasm`) {
+		t.Fatalf("did not expect full runtime in island-only manifest: %s", manifestJSON)
+	}
+}
+
+func TestRendererKeepsFullRuntimeForSharedEnginePages(t *testing.T) {
+	r := NewRenderer("main")
+	manifest := &buildmanifest.Manifest{
+		Runtime: buildmanifest.RuntimeAssets{
+			WASM:        buildmanifest.HashedAsset{File: "gosx-runtime.full.wasm", Hash: "full", Size: 100},
+			WASMIslands: buildmanifest.HashedAsset{File: "gosx-runtime-islands.slim.wasm", Hash: "slim", Size: 50},
+			WASMExec:    buildmanifest.HashedAsset{File: "wasm_exec.js", Hash: "exec", Size: 20},
+			Bootstrap:   buildmanifest.HashedAsset{File: "bootstrap.js", Hash: "boot", Size: 30},
+			Patch:       buildmanifest.HashedAsset{File: "patch.js", Hash: "patch", Size: 40},
+		},
+	}
+	if err := r.ApplyBuildManifest(manifest, "/gosx/assets"); err != nil {
+		t.Fatalf("apply build manifest: %v", err)
+	}
+
+	r.RenderIsland("Counter", nil, gosx.Text("0"))
+	r.RenderEngine(engine.Config{
+		Name:    "SharedScene",
+		Kind:    engine.KindWorker,
+		Runtime: engine.RuntimeShared,
+	}, gosx.Text(""))
+
+	manifestJSON, err := r.ManifestJSON()
+	if err != nil {
+		t.Fatalf("manifest json: %v", err)
+	}
+	if !strings.Contains(manifestJSON, `/gosx/assets/runtime/gosx-runtime.full.wasm`) {
+		t.Fatalf("expected full runtime in shared-engine manifest: %s", manifestJSON)
+	}
+	if strings.Contains(manifestJSON, `/gosx/assets/runtime/gosx-runtime-islands.slim.wasm`) {
+		t.Fatalf("did not expect island-only runtime for shared-engine manifest: %s", manifestJSON)
+	}
+}
+
 func TestRendererVersionsCompatRuntimeURLsFromBuildManifest(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("GOSX_APP_ROOT", root)

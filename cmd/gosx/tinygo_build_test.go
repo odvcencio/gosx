@@ -32,6 +32,15 @@ func TestTinyGoBuildArgsCanKeepFullRuntime(t *testing.T) {
 	}
 }
 
+func TestTinyGoBuildArgsAppendVariantTags(t *testing.T) {
+	t.Setenv("GOSX_TINYGO_FULL_RUNTIME", "")
+
+	args := tinyGoBuildArgs("runtime.wasm", "gosx_tiny_islands_only")
+	if !stringSliceContains(args, "-tags=gosx_tiny_runtime gosx_tiny_islands_only") {
+		t.Fatalf("expected combined TinyGo runtime tags in args: %v", args)
+	}
+}
+
 func stringSliceContains(values []string, want string) bool {
 	for _, value := range values {
 		if value == want {

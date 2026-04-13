@@ -3,12 +3,11 @@
 package main
 
 import (
-	"fmt"
+	"errors"
 	"syscall/js"
 
 	"github.com/odvcencio/gosx/client/bridge"
 	"github.com/odvcencio/gosx/client/vm"
-	rootengine "github.com/odvcencio/gosx/engine"
 )
 
 func registerRuntime(b *bridge.Bridge) {
@@ -22,12 +21,9 @@ func registerRuntime(b *bridge.Bridge) {
 		js.Global().Call("__gosx_apply_patches", islandID, patchJSON)
 	})
 	setRuntimeFunc("__gosx_hydrate", hydrateRuntimeFunc(b))
-	setRuntimeFunc("__gosx_hydrate_engine", hydrateEngineRuntimeFunc(b))
 	setRuntimeFunc("__gosx_action", actionRuntimeFunc(b))
 	setRuntimeFunc("__gosx_dispose", disposeRuntimeFunc(b))
-	setRuntimeFunc("__gosx_tick_engine", tickEngineRuntimeFunc(b))
-	setRuntimeFunc("__gosx_render_engine", renderEngineRuntimeFunc(b))
-	setRuntimeFunc("__gosx_engine_dispose", disposeEngineRuntimeFunc(b))
+	registerEngineRuntime(b)
 	registerHighlightRuntime()
 	setRuntimeFunc("__gosx_set_shared_signal", sharedSignalRuntimeFunc(b))
 	setRuntimeFunc("__gosx_get_shared_signal", sharedSignalGetRuntimeFunc(b))
@@ -67,71 +63,12 @@ func actionRuntimeFunc(b *bridge.Bridge) js.Func {
 	})
 }
 
-func hydrateEngineRuntimeFunc(b *bridge.Bridge) js.Func {
-	return js.FuncOf(func(this js.Value, args []js.Value) any {
-		call, err := parseHydrateCall(args)
-		if err != nil {
-			return jsError(err)
-		}
-		commands, err := b.HydrateEngine(call.islandID, call.componentName, call.propsJSON, call.programData, call.format)
-		if err != nil {
-			return jsError(err)
-		}
-		return marshalEngineCommandResult(commands)
-	})
-}
-
 func disposeRuntimeFunc(b *bridge.Bridge) js.Func {
 	return js.FuncOf(func(this js.Value, args []js.Value) any {
 		if len(args) < 1 {
 			return js.Null()
 		}
 		b.DisposeIsland(args[0].String())
-		return js.Null()
-	})
-}
-
-func tickEngineRuntimeFunc(b *bridge.Bridge) js.Func {
-	return js.FuncOf(func(this js.Value, args []js.Value) any {
-		if len(args) < 1 {
-			return jsErrorf("need 1 arg (engineID)")
-		}
-		commands, err := b.TickEngine(args[0].String())
-		if err != nil {
-			return jsError(err)
-		}
-		return marshalEngineCommandResult(commands)
-	})
-}
-
-func renderEngineRuntimeFunc(b *bridge.Bridge) js.Func {
-	return js.FuncOf(func(this js.Value, args []js.Value) any {
-		if len(args) < 4 {
-			return jsErrorf("need 4 args (engineID, timeSeconds, width, height)")
-		}
-		bundle, err := b.RenderEngine(
-			args[0].String(),
-			args[2].Int(),
-			args[3].Int(),
-			args[1].Float(),
-		)
-		if err != nil {
-			return jsError(err)
-		}
-		bundleJSON, err := bridge.MarshalEngineRenderBundle(bundle)
-		if err != nil {
-			return jsError(err)
-		}
-		return js.ValueOf(bundleJSON)
-	})
-}
-
-func disposeEngineRuntimeFunc(b *bridge.Bridge) js.Func {
-	return js.FuncOf(func(this js.Value, args []js.Value) any {
-		if len(args) < 1 {
-			return js.Null()
-		}
-		b.DisposeEngine(args[0].String())
 		return js.Null()
 	})
 }
@@ -187,7 +124,7 @@ type hydrateCall struct {
 
 func parseHydrateCall(args []js.Value) (hydrateCall, error) {
 	if len(args) < 5 {
-		return hydrateCall{}, fmt.Errorf("need 5 args (islandID, componentName, propsJSON, programData, format)")
+		return hydrateCall{}, errors.New("need 5 args (islandID, componentName, propsJSON, programData, format)")
 	}
 	programData, err := decodeProgramData(args[3])
 	if err != nil {
@@ -208,7 +145,7 @@ func decodeProgramData(value js.Value) ([]byte, error) {
 	}
 	uint8Array := normalizeUint8Array(value)
 	if uint8Array.IsUndefined() || uint8Array.IsNull() {
-		return nil, fmt.Errorf("programData must be a string, Uint8Array, or ArrayBuffer")
+		return nil, errors.New("programData must be a string, Uint8Array, or ArrayBuffer")
 	}
 	length := uint8Array.Get("length").Int()
 	programData := make([]byte, length)
@@ -232,11 +169,11 @@ func normalizeJSONArg(value js.Value, fallback string) (string, error) {
 	default:
 		jsonGlobal := js.Global().Get("JSON")
 		if !jsonGlobal.Truthy() {
-			return "", fmt.Errorf("JSON global not available")
+			return "", errors.New("JSON global not available")
 		}
 		out := jsonGlobal.Call("stringify", value)
 		if out.Type() != js.TypeString {
-			return "", fmt.Errorf("argument must be JSON-serializable")
+			return "", errors.New("argument must be JSON-serializable")
 		}
 		return out.String(), nil
 	}
@@ -254,17 +191,6 @@ func applyPatchedResult(islandID string, patches []vm.PatchOp) any {
 	return js.ValueOf(len(patches))
 }
 
-func marshalEngineCommandResult(commands []rootengine.Command) any {
-	if len(commands) == 0 {
-		return js.ValueOf("[]")
-	}
-	commandJSON, err := bridge.MarshalEngineCommands(commands)
-	if err != nil {
-		return js.ValueOf("marshal:" + err.Error())
-	}
-	return js.ValueOf(commandJSON)
-}
-
 func logRuntimeError(prefix string, err error) {
 	js.Global().Get("console").Call("error", "[gosx/wasm] "+prefix+":", err.Error())
 }
@@ -276,8 +202,8 @@ func jsError(err error) js.Value {
 	return js.ValueOf("error: " + err.Error())
 }
 
-func jsErrorf(format string, args ...any) js.Value {
-	return js.ValueOf("error: " + fmt.Sprintf(format, args...))
+func jsErrorf(message string) js.Value {
+	return js.ValueOf("error: " + message)
 }
 
 func notifyRuntimeReady() {

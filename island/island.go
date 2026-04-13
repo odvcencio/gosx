@@ -31,27 +31,28 @@ import (
 
 // Renderer handles island-aware rendering of GoSX component trees.
 type Renderer struct {
-	manifest                    *hydrate.Manifest
-	counter                     int
-	bundleID                    string
-	programDir                  string // directory where island programs are stored
-	programFormat               string // "json" or "bin"
-	programAssets               map[string]programAsset
-	wasmExecPath                string
-	patchPath                   string
-	bootstrapPath               string
-	bootstrapLitePath           string
-	bootstrapRuntimePath        string
-	bootstrapFeatureIslandsPath string
-	bootstrapFeatureEnginesPath string
-	bootstrapFeatureHubsPath    string
+	manifest                             *hydrate.Manifest
+	counter                              int
+	bundleID                             string
+	programDir                           string // directory where island programs are stored
+	programFormat                        string // "json" or "bin"
+	programAssets                        map[string]programAsset
+	wasmExecPath                         string
+	patchPath                            string
+	bootstrapPath                        string
+	bootstrapLitePath                    string
+	bootstrapRuntimePath                 string
+	bootstrapFeatureIslandsPath          string
+	bootstrapFeatureEnginesPath          string
+	bootstrapFeatureHubsPath             string
 	bootstrapFeatureScene3dPath          string
 	bootstrapFeatureScene3dWebGPUPath    string
 	bootstrapFeatureScene3dGLTFPath      string
 	bootstrapFeatureScene3dAnimationPath string
 	videoHLSPath                         string
-	runtimeAssets               buildmanifest.RuntimeAssets
-	bootstrapOnly               bool
+	islandRuntime                        hydrate.RuntimeRef
+	runtimeAssets                        buildmanifest.RuntimeAssets
+	bootstrapOnly                        bool
 }
 
 type programAsset struct {
@@ -233,6 +234,23 @@ func (r *Renderer) SetRuntime(path string, hash string, size int64) {
 	}
 }
 
+// SetIslandRuntime registers the smaller shared WASM runtime used by pages
+// that hydrate islands but do not need the shared engine bridge.
+func (r *Renderer) SetIslandRuntime(path string, hash string, size int64) {
+	if strings.TrimSpace(path) == "" {
+		return
+	}
+	if hash == "" {
+		hash = r.compatRuntimeHash(path)
+	}
+	path = r.versionCompatRuntimePath(path, hash)
+	r.islandRuntime = hydrate.RuntimeRef{
+		Path: path,
+		Hash: hash,
+		Size: size,
+	}
+}
+
 // SetBundle registers a WASM bundle in the manifest.
 func (r *Renderer) SetBundle(id string, path string) {
 	r.manifest.Bundles[id] = hydrate.BundleRef{Path: path}
@@ -337,6 +355,8 @@ func (r *Renderer) compatRuntimeHash(path string) string {
 	switch compatRuntimePath(path) {
 	case "/gosx/runtime.wasm":
 		return strings.TrimSpace(r.runtimeAssets.WASM.Hash)
+	case "/gosx/runtime-islands.wasm":
+		return strings.TrimSpace(r.runtimeAssets.WASMIslands.Hash)
 	case "/gosx/wasm_exec.js":
 		return strings.TrimSpace(r.runtimeAssets.WASMExec.Hash)
 	case "/gosx/bootstrap.js":
@@ -378,7 +398,7 @@ func (r *Renderer) versionCompatRuntimePath(path, hash string) string {
 		return path
 	}
 	switch compatRuntimePath(path) {
-	case "/gosx/runtime.wasm", "/gosx/wasm_exec.js", "/gosx/bootstrap.js", "/gosx/bootstrap-lite.js", "/gosx/bootstrap-runtime.js", "/gosx/bootstrap-feature-islands.js", "/gosx/bootstrap-feature-engines.js", "/gosx/bootstrap-feature-hubs.js", "/gosx/bootstrap-feature-scene3d.js", "/gosx/bootstrap-feature-scene3d-webgpu.js", "/gosx/bootstrap-feature-scene3d-gltf.js", "/gosx/bootstrap-feature-scene3d-animation.js", "/gosx/patch.js", "/gosx/hls.min.js":
+	case "/gosx/runtime.wasm", "/gosx/runtime-islands.wasm", "/gosx/wasm_exec.js", "/gosx/bootstrap.js", "/gosx/bootstrap-lite.js", "/gosx/bootstrap-runtime.js", "/gosx/bootstrap-feature-islands.js", "/gosx/bootstrap-feature-engines.js", "/gosx/bootstrap-feature-hubs.js", "/gosx/bootstrap-feature-scene3d.js", "/gosx/bootstrap-feature-scene3d-webgpu.js", "/gosx/bootstrap-feature-scene3d-gltf.js", "/gosx/bootstrap-feature-scene3d-animation.js", "/gosx/patch.js", "/gosx/hls.min.js":
 		query := parsed.Query()
 		if query.Get("v") == "" {
 			query.Set("v", hash)
@@ -409,6 +429,9 @@ func (r *Renderer) ApplyBuildManifest(manifest *buildmanifest.Manifest, assetBas
 	if runtime.WASM != "" {
 		r.SetRuntime(runtime.WASM, manifest.Runtime.WASM.Hash, manifest.Runtime.WASM.Size)
 		r.SetBundle(r.bundleID, runtime.WASM)
+	}
+	if runtime.WASMIslands != "" {
+		r.SetIslandRuntime(runtime.WASMIslands, manifest.Runtime.WASMIslands.Hash, manifest.Runtime.WASMIslands.Size)
 	}
 	r.SetClientAssetPaths(runtime.WASMExec, runtime.Patch, runtime.Bootstrap)
 	r.SetBootstrapLitePath(runtime.BootstrapLite)
@@ -501,8 +524,23 @@ func (r *Renderer) clientManifest() *hydrate.Manifest {
 		return nil
 	}
 	manifest := *r.manifest
+	if len(r.manifest.Bundles) > 0 {
+		manifest.Bundles = make(map[string]hydrate.BundleRef, len(r.manifest.Bundles))
+		for id, bundle := range r.manifest.Bundles {
+			manifest.Bundles[id] = bundle
+		}
+	}
 	if !r.needsSharedRuntime() {
 		manifest.Runtime = hydrate.RuntimeRef{}
+	} else {
+		manifest.Runtime = r.selectedRuntimeRef()
+		if manifest.Bundles != nil && r.bundleID != "" && manifest.Runtime.Path != "" {
+			manifest.Bundles[r.bundleID] = hydrate.BundleRef{
+				Path: manifest.Runtime.Path,
+				Hash: manifest.Runtime.Hash,
+				Size: manifest.Runtime.Size,
+			}
+		}
 	}
 	return &manifest
 }
@@ -994,9 +1032,12 @@ func (r *Renderer) PreloadHints() gosx.Node {
 
 	// Preload the shared WASM runtime only when the page declares islands or a
 	// shared-runtime engine bridge.
-	if r.needsSharedRuntime() && r.manifest.Runtime.Path != "" {
-		b.WriteString(fmt.Sprintf(`<link rel="preload" href="%s" as="fetch" type="application/wasm" crossorigin>`, r.manifest.Runtime.Path))
-		b.WriteByte('\n')
+	if r.needsSharedRuntime() {
+		runtime := r.selectedRuntimeRef()
+		if runtime.Path != "" {
+			b.WriteString(fmt.Sprintf(`<link rel="preload" href="%s" as="fetch" type="application/wasm" crossorigin>`, runtime.Path))
+			b.WriteByte('\n')
+		}
 	}
 
 	// Prefetch island programs — downloaded during WASM compile.
@@ -1181,7 +1222,17 @@ func (r *Renderer) selectedRuntimePath() string {
 	if r == nil || !r.needsSharedRuntime() {
 		return ""
 	}
-	return r.manifest.Runtime.Path
+	return r.selectedRuntimeRef().Path
+}
+
+func (r *Renderer) selectedRuntimeRef() hydrate.RuntimeRef {
+	if r == nil {
+		return hydrate.RuntimeRef{}
+	}
+	if len(r.manifest.Islands) > 0 && !r.needsSharedRuntimeEngineBridge() && strings.TrimSpace(r.islandRuntime.Path) != "" {
+		return r.islandRuntime
+	}
+	return r.manifest.Runtime
 }
 
 func (r *Renderer) selectedWASMExecPath() string {

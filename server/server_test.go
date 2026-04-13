@@ -1211,6 +1211,51 @@ func TestAppServesCompatRuntimeAssetsFromBuildManifest(t *testing.T) {
 	}
 }
 
+func TestAppServesCompatIslandRuntimeAssetFromBuildManifest(t *testing.T) {
+	root := t.TempDir()
+	assetsDir := filepath.Join(root, "assets", "runtime")
+	if err := os.MkdirAll(assetsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(assetsDir, "gosx-runtime-islands.3333.wasm"), []byte("island runtime"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	manifest := buildmanifest.Manifest{
+		Runtime: buildmanifest.RuntimeAssets{
+			WASMIslands: buildmanifest.HashedAsset{
+				File: "gosx-runtime-islands.3333.wasm",
+				Hash: "3333",
+				Size: 14,
+			},
+		},
+	}
+	data, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "build.json"), data, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	app := New()
+	app.SetRuntimeRoot(root)
+	handler := app.Build()
+
+	req := httptest.NewRequest(http.MethodGet, "/gosx/runtime-islands.wasm", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	if got := w.Header().Get("Cache-Control"); !strings.Contains(got, "immutable") {
+		t.Fatalf("expected built compat asset to be immutable, got %q", got)
+	}
+	if body := w.Body.String(); !strings.Contains(body, "island runtime") {
+		t.Fatalf("unexpected built compat asset body %q", body)
+	}
+}
+
 func TestAppServesCompatRuntimeHLSAssetFromBuildManifest(t *testing.T) {
 	root := t.TempDir()
 	assetsDir := filepath.Join(root, "assets", "runtime")
