@@ -607,7 +607,7 @@ func KitchenSinkPage(islands *island.Renderer) gosx.Node {
 	// === CODE EDITOR ===
 	// The editor uses an overlay pattern: a transparent textarea for input
 	// (native cursor, selection, undo) with a highlighted <pre> layer behind it.
-	// The WASM runtime's __gosx_highlight function provides syntax coloring.
+	// __gosx_highlight provides live syntax coloring when that optional export is available.
 	sampleCode := `package main
 
 import "fmt"
@@ -655,7 +655,7 @@ func main() {
 
 	// Inline script for editor-specific behavior:
 	// - Syncs textarea scroll with highlight layer
-	// - Calls __gosx_highlight for live syntax highlighting
+	// - Uses __gosx_highlight for live syntax highlighting when available
 	// - Updates line numbers
 	editorScript := gosx.RawHTML(`<script>
 (function() {
@@ -667,7 +667,7 @@ func main() {
 
     function update() {
       var code = ta.value;
-      // Syntax highlight via WASM
+      // Syntax highlight when the optional runtime highlighter is present.
       if (typeof window.__gosx_highlight === 'function') {
         hl.innerHTML = window.__gosx_highlight(code, 'go') + '\n';
       } else {

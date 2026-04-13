@@ -52,7 +52,7 @@ func buildTinyGoWASM(projectDir, gosxRoot, outputPath, tinygoPath string) error 
 	envs := tinyGoBuildEnvironments()
 	var failures []string
 	for _, candidate := range envs {
-		cmd := exec.Command(tinygoPath, "build", "-target", "wasm", "-o", outputPath, gosxModuleImportPath+"/client/wasm")
+		cmd := exec.Command(tinygoPath, tinyGoBuildArgs(outputPath)...)
 		cmd.Dir = scratchDir
 		cmd.Env = setEnv(candidate.env, "GOFLAGS", "-mod=mod")
 		out, err := cmd.CombinedOutput()
@@ -72,6 +72,32 @@ func buildTinyGoWASM(projectDir, gosxRoot, outputPath, tinygoPath string) error 
 		return fmt.Errorf("tinygo build did not run")
 	}
 	return errors.New(strings.Join(failures, "\n"))
+}
+
+func tinyGoBuildArgs(outputPath string) []string {
+	args := []string{
+		"build",
+		"-target", "wasm",
+	}
+	if !tinyGoFullRuntimeEnabled() {
+		args = append(args, "-tags=gosx_tiny_runtime")
+	}
+	args = append(args,
+		"-no-debug",
+		"-panic=trap",
+		"-o", outputPath,
+		gosxModuleImportPath+"/client/wasm",
+	)
+	return args
+}
+
+func tinyGoFullRuntimeEnabled() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("GOSX_TINYGO_FULL_RUNTIME"))) {
+	case "1", "true", "yes", "full":
+		return true
+	default:
+		return false
+	}
 }
 
 func prepareTinyGoWASMModule(projectDir, gosxRoot string) (string, func(), error) {

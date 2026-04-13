@@ -1,5 +1,34 @@
 # Changelog
 
+## v0.17.24
+
+TinyGo WASM runtime builds now ship a slim core runtime by default.
+
+### `gosx build` — TinyGo core runtime drops below 225KB gzip
+
+The TinyGo path now builds with `-no-debug` and `-panic=trap`, then uses a `gosx_tiny_runtime` build tag to keep optional browser exports out of the core island/engine runtime. The slim TinyGo runtime keeps the core exports used by GoSX pages:
+
+- `__gosx_hydrate`, `__gosx_action`, `__gosx_dispose`
+- shared-engine exports: `__gosx_hydrate_engine`, `__gosx_tick_engine`, `__gosx_render_engine`, `__gosx_engine_dispose`
+- shared signal exports: `__gosx_set_shared_signal`, `__gosx_get_shared_signal`, `__gosx_set_input_batch`
+
+The optional browser-side exports are still compiled into normal Go/WASM builds, but TinyGo omits them by default:
+
+- `__gosx_text_layout`, `__gosx_text_layout_metrics`, `__gosx_text_layout_ranges` — the JS bootstrap already provides the public `window.__gosx_text_layout*` API and adopts a WASM implementation only when one is present.
+- `__gosx_highlight` — used by the dashboard example when available, with plain-text fallback.
+- `__gosx_crdt_*` — the first-party Go `crdt` package and hub sync path remain available; these direct browser exports no longer ride along on every TinyGo island page.
+
+Set `GOSX_TINYGO_FULL_RUNTIME=1` during `gosx build` to keep the full TinyGo export set for applications that call those optional globals directly.
+
+Measured release output:
+
+| Runtime | Raw | gzip estimate |
+|---|---:|---:|
+| Standard Go WASM fallback | ~6 MB | ~2 MB |
+| v0.17.23 TinyGo + `wasm-opt -Oz` | 1,417,044 bytes | 484 KB |
+| v0.17.24 TinyGo full exports + `wasm-opt -Oz` | 1,090,196 bytes | 372 KB |
+| v0.17.24 TinyGo core + `wasm-opt -Oz` | 654,211 bytes | 223 KB |
+
 ## v0.17.23
 
 TinyGo-backed WASM runtime builds ship again.
