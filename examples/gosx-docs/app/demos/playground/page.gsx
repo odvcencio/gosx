@@ -1,7 +1,7 @@
 package playground
 
 func Page() Node {
-	return <section class="play">
+	return <section class="play" data-compile-url={actionPath("compile")} data-csrf-token={csrf.token}>
 		<header class="play__header">
 			<h1 class="play__title">GoSX Playground</h1>
 			<p class="play__subtitle">Edit gsx on the left. Preview hydrates on the right.</p>
@@ -12,7 +12,7 @@ func Page() Node {
 					<label class="play__preset-label" for="play-preset-select">Preset</label>
 					<select class="play__preset-select" id="play-preset-select" aria-label="Choose a preset">
 						<Each of={data.presets} as="p">
-							<option value={p.Slug}>{p.Title}</option>
+							<option value={p.Slug} data-source={p.Source}>{p.Title}</option>
 						</Each>
 					</select>
 					<button class="play__reset-btn" type="button" aria-label="Reset to selected preset">Reset</button>
@@ -33,5 +33,6 @@ func Page() Node {
 			<summary>Compiler output</summary>
 			<div class="play__compiler-body">Hydrate to see IR and program bytes.</div>
 		</details>
+		<script src="/playground-editor.js" defer></script>
 	</section>
 }

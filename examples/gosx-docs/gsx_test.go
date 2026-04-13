@@ -171,6 +171,64 @@ func TestPlaygroundPageRenders(t *testing.T) {
 	}
 }
 
+// TestPlaygroundPageHasEditorPlumbing verifies that page.gsx carries the
+// data attributes and script tag needed by editor.js, and that editor.js
+// itself contains the key functions.
+func TestPlaygroundPageHasEditorPlumbing(t *testing.T) {
+	_, thisFile, _, _ := runtime.Caller(0)
+	playDir := filepath.Join(filepath.Dir(thisFile), "app", "demos", "playground")
+	publicDir := filepath.Join(filepath.Dir(thisFile), "public")
+
+	// 1. Read page.gsx.
+	gsxSource, err := os.ReadFile(filepath.Join(playDir, "page.gsx"))
+	if err != nil {
+		t.Fatalf("read playground/page.gsx: %v", err)
+	}
+	src := string(gsxSource)
+
+	// 2. Root section must carry data-compile-url.
+	if !strings.Contains(src, `data-compile-url={actionPath("compile")}`) {
+		t.Error(`playground/page.gsx missing data-compile-url={actionPath("compile")} on root section`)
+	}
+
+	// 3. Root section must carry data-csrf-token.
+	if !strings.Contains(src, `data-csrf-token={csrf.token}`) {
+		t.Error(`playground/page.gsx missing data-csrf-token={csrf.token} on root section`)
+	}
+
+	// 4. Preset options must carry data-source.
+	if !strings.Contains(src, `data-source={p.Source}`) {
+		t.Error(`playground/page.gsx missing data-source={p.Source} on preset <option> elements`)
+	}
+
+	// 5. Script tag for editor.js must be present (either via src attr or inline).
+	hasEditorScript := strings.Contains(src, "playground-editor.js") ||
+		(strings.Contains(src, "<script") && strings.Contains(src, "waitForRuntime"))
+	if !hasEditorScript {
+		t.Error(`playground/page.gsx missing editor.js script (expected playground-editor.js src or inline waitForRuntime)`)
+	}
+
+	// 6. editor.js must exist and contain the key functions.
+	editorPath := filepath.Join(publicDir, "playground-editor.js")
+	editorSource, err := os.ReadFile(editorPath)
+	if err != nil {
+		t.Fatalf("read public/playground-editor.js: %v", err)
+	}
+	editorSrc := string(editorSource)
+
+	editorChecks := []string{
+		"compile",
+		"waitForRuntime",
+		"base64ToBytes",
+		"window.__gosx_hydrate",
+	}
+	for _, needle := range editorChecks {
+		if !strings.Contains(editorSrc, needle) {
+			t.Errorf("public/playground-editor.js missing %q", needle)
+		}
+	}
+}
+
 // TestDemosIndexLists7Cards verifies the /demos index page files have the
 // expected structure and roster. We use raw-source grep rather than rendering
 // because the GSX IR does not expose an HTML renderer in tests.
