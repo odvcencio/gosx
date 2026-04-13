@@ -51,7 +51,6 @@ func Layout() Node {
 				</div>
 				<div class="nav-group">
 					<span class="nav-group__label">Demos</span>
-					<a href="/demos/galaxy" data-gosx-link="true" class="nav-link">Galaxy</a>
 					<a href="/demos/scene3d" data-gosx-link="true" class="nav-link">Geometry Zoo</a>
 					<a href="/demos/cms" data-gosx-link="true" class="nav-link">CMS Editor</a>
 				</div>
