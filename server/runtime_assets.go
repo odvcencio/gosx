@@ -233,6 +233,10 @@ func (a *App) runtimeCompatBuiltPath(root, name string) (string, bool) {
 		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.BootstrapFeatureScene3D.File)
 	case "bootstrap-feature-scene3d-webgpu.js":
 		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.BootstrapFeatureScene3DWebGPU.File)
+	case "bootstrap-feature-scene3d-gltf.js":
+		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.BootstrapFeatureScene3DGLTF.File)
+	case "bootstrap-feature-scene3d-animation.js":
+		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.BootstrapFeatureScene3DAnimation.File)
 	case "patch.js":
 		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.Patch.File)
 	case "hls.min.js":

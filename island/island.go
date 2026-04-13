@@ -45,9 +45,11 @@ type Renderer struct {
 	bootstrapFeatureIslandsPath string
 	bootstrapFeatureEnginesPath string
 	bootstrapFeatureHubsPath    string
-	bootstrapFeatureScene3dPath       string
-	bootstrapFeatureScene3dWebGPUPath string
-	videoHLSPath                      string
+	bootstrapFeatureScene3dPath          string
+	bootstrapFeatureScene3dWebGPUPath    string
+	bootstrapFeatureScene3dGLTFPath      string
+	bootstrapFeatureScene3dAnimationPath string
+	videoHLSPath                         string
 	runtimeAssets               buildmanifest.RuntimeAssets
 	bootstrapOnly               bool
 }
@@ -114,6 +116,8 @@ func NewRenderer(bundleID string) *Renderer {
 	renderer.bootstrapFeatureHubsPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-hubs.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureHubs.Hash))
 	renderer.bootstrapFeatureScene3dPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3D.Hash))
 	renderer.bootstrapFeatureScene3dWebGPUPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-webgpu.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DWebGPU.Hash))
+	renderer.bootstrapFeatureScene3dGLTFPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-gltf.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DGLTF.Hash))
+	renderer.bootstrapFeatureScene3dAnimationPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-animation.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DAnimation.Hash))
 	renderer.videoHLSPath = renderer.versionCompatRuntimePath("/gosx/hls.min.js", strings.TrimSpace(runtimeAssets.VideoHLS.Hash))
 	if manifest := loadDefaultBuildManifest(); manifest != nil {
 		_ = renderer.ApplyBuildManifest(manifest, "/gosx/assets")
@@ -296,6 +300,30 @@ func (r *Renderer) SetBootstrapFeatureScene3DWebGPUPath(path string) {
 	r.bootstrapFeatureScene3dWebGPUPath = r.versionCompatRuntimePath(path, r.compatRuntimeHash(path))
 }
 
+// SetBootstrapFeatureScene3DGLTFPath overrides the lazy Scene3D GLTF
+// sub-feature chunk URL. NOT emitted as a static <script> tag — the
+// main scene3d bundle's loadSceneModelAsset() helper dynamically
+// inserts a <script> with this URL the first time a .glb/.gltf model
+// is requested. Pages that never load models never fetch the chunk.
+func (r *Renderer) SetBootstrapFeatureScene3DGLTFPath(path string) {
+	if strings.TrimSpace(path) == "" {
+		return
+	}
+	r.bootstrapFeatureScene3dGLTFPath = r.versionCompatRuntimePath(path, r.compatRuntimeHash(path))
+}
+
+// SetBootstrapFeatureScene3DAnimationPath overrides the lazy Scene3D
+// animation mixer sub-feature chunk URL. Consumers that want to drive
+// keyframe animations or skeletal clips can fetch this chunk via
+// window.__gosx_scene3d_animation_api.createMixer(). Pages without
+// animations never fetch the chunk.
+func (r *Renderer) SetBootstrapFeatureScene3DAnimationPath(path string) {
+	if strings.TrimSpace(path) == "" {
+		return
+	}
+	r.bootstrapFeatureScene3dAnimationPath = r.versionCompatRuntimePath(path, r.compatRuntimeHash(path))
+}
+
 // SetVideoHLSPath overrides the runtime HLS library URL used by the built-in
 // video engine when native HLS playback is unavailable.
 func (r *Renderer) SetVideoHLSPath(path string) {
@@ -327,6 +355,10 @@ func (r *Renderer) compatRuntimeHash(path string) string {
 		return strings.TrimSpace(r.runtimeAssets.BootstrapFeatureScene3D.Hash)
 	case "/gosx/bootstrap-feature-scene3d-webgpu.js":
 		return strings.TrimSpace(r.runtimeAssets.BootstrapFeatureScene3DWebGPU.Hash)
+	case "/gosx/bootstrap-feature-scene3d-gltf.js":
+		return strings.TrimSpace(r.runtimeAssets.BootstrapFeatureScene3DGLTF.Hash)
+	case "/gosx/bootstrap-feature-scene3d-animation.js":
+		return strings.TrimSpace(r.runtimeAssets.BootstrapFeatureScene3DAnimation.Hash)
 	case "/gosx/patch.js":
 		return strings.TrimSpace(r.runtimeAssets.Patch.Hash)
 	case "/gosx/hls.min.js":
@@ -346,7 +378,7 @@ func (r *Renderer) versionCompatRuntimePath(path, hash string) string {
 		return path
 	}
 	switch compatRuntimePath(path) {
-	case "/gosx/runtime.wasm", "/gosx/wasm_exec.js", "/gosx/bootstrap.js", "/gosx/bootstrap-lite.js", "/gosx/bootstrap-runtime.js", "/gosx/bootstrap-feature-islands.js", "/gosx/bootstrap-feature-engines.js", "/gosx/bootstrap-feature-hubs.js", "/gosx/bootstrap-feature-scene3d.js", "/gosx/bootstrap-feature-scene3d-webgpu.js", "/gosx/patch.js", "/gosx/hls.min.js":
+	case "/gosx/runtime.wasm", "/gosx/wasm_exec.js", "/gosx/bootstrap.js", "/gosx/bootstrap-lite.js", "/gosx/bootstrap-runtime.js", "/gosx/bootstrap-feature-islands.js", "/gosx/bootstrap-feature-engines.js", "/gosx/bootstrap-feature-hubs.js", "/gosx/bootstrap-feature-scene3d.js", "/gosx/bootstrap-feature-scene3d-webgpu.js", "/gosx/bootstrap-feature-scene3d-gltf.js", "/gosx/bootstrap-feature-scene3d-animation.js", "/gosx/patch.js", "/gosx/hls.min.js":
 		query := parsed.Query()
 		if query.Get("v") == "" {
 			query.Set("v", hash)
@@ -384,6 +416,8 @@ func (r *Renderer) ApplyBuildManifest(manifest *buildmanifest.Manifest, assetBas
 	r.SetBootstrapFeaturePaths(runtime.BootstrapFeatureIslands, runtime.BootstrapFeatureEngines, runtime.BootstrapFeatureHubs)
 	r.SetBootstrapFeatureScene3DPath(runtime.BootstrapFeatureScene3D)
 	r.SetBootstrapFeatureScene3DWebGPUPath(runtime.BootstrapFeatureScene3DWebGPU)
+	r.SetBootstrapFeatureScene3DGLTFPath(runtime.BootstrapFeatureScene3DGLTF)
+	r.SetBootstrapFeatureScene3DAnimationPath(runtime.BootstrapFeatureScene3DAnimation)
 	r.SetVideoHLSPath(runtime.VideoHLS)
 
 	for _, asset := range manifest.Islands {
@@ -524,7 +558,22 @@ func (r *Renderer) BootstrapScript() gosx.Node {
 	b.WriteString(fmt.Sprintf(`<script data-gosx-script="bootstrap" data-gosx-bootstrap-mode="%s" src="%s"></script>`, mode, html.EscapeString(r.selectedBootstrapPath())))
 	if scene3dPath := r.selectedBootstrapFeaturePath("scene3d"); scene3dPath != "" {
 		b.WriteByte('\n')
-		b.WriteString(`<script defer data-gosx-script="feature-scene3d" src="`)
+		b.WriteString(`<script defer data-gosx-script="feature-scene3d"`)
+		// Embed hashed URLs for lazy sub-feature chunks as data-* attributes
+		// so the main scene3d bundle can use immutable hashed URLs at first
+		// dynamic-load time instead of the unhashed compat URL. Lets the
+		// browser cache the sub-feature forever, keyed on its content hash.
+		if gltfPath := r.bootstrapFeatureScene3dGLTFPath; gltfPath != "" {
+			b.WriteString(` data-gosx-scene3d-gltf-url="`)
+			b.WriteString(html.EscapeString(gltfPath))
+			b.WriteByte('"')
+		}
+		if animPath := r.bootstrapFeatureScene3dAnimationPath; animPath != "" {
+			b.WriteString(` data-gosx-scene3d-animation-url="`)
+			b.WriteString(html.EscapeString(animPath))
+			b.WriteByte('"')
+		}
+		b.WriteString(` src="`)
 		b.WriteString(html.EscapeString(scene3dPath))
 		b.WriteString("\">\x3c/script>")
 

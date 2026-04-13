@@ -354,6 +354,8 @@ func RunBuild(dir string, dev bool) error {
 		{"bootstrap-feature-hubs", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-hubs.js"), &manifest.Runtime.BootstrapFeatureHubs},
 		{"bootstrap-feature-scene3d", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d.js"), &manifest.Runtime.BootstrapFeatureScene3D},
 		{"bootstrap-feature-scene3d-webgpu", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-webgpu.js"), &manifest.Runtime.BootstrapFeatureScene3DWebGPU},
+		{"bootstrap-feature-scene3d-gltf", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-gltf.js"), &manifest.Runtime.BootstrapFeatureScene3DGLTF},
+		{"bootstrap-feature-scene3d-animation", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-animation.js"), &manifest.Runtime.BootstrapFeatureScene3DAnimation},
 		{"patch", filepath.Join(gosxRoot, "client", "js", "patch.js"), &manifest.Runtime.Patch},
 		{"hls.min", filepath.Join(gosxRoot, "client", "js", "vendor", "hls.min.js"), &manifest.Runtime.VideoHLS},
 	} {
@@ -590,6 +592,8 @@ func stageManifestCompatibilityRuntime(distDir string, manifest *BuildManifest, 
 		{file: manifest.Runtime.BootstrapFeatureHubs.File, dst: filepath.Join(gosxDir, "bootstrap-feature-hubs.js")},
 		{file: manifest.Runtime.BootstrapFeatureScene3D.File, dst: filepath.Join(gosxDir, "bootstrap-feature-scene3d.js")},
 		{file: manifest.Runtime.BootstrapFeatureScene3DWebGPU.File, dst: filepath.Join(gosxDir, "bootstrap-feature-scene3d-webgpu.js")},
+		{file: manifest.Runtime.BootstrapFeatureScene3DGLTF.File, dst: filepath.Join(gosxDir, "bootstrap-feature-scene3d-gltf.js")},
+		{file: manifest.Runtime.BootstrapFeatureScene3DAnimation.File, dst: filepath.Join(gosxDir, "bootstrap-feature-scene3d-animation.js")},
 		{file: manifest.Runtime.Patch.File, dst: filepath.Join(gosxDir, "patch.js")},
 		{file: manifest.Runtime.VideoHLS.File, dst: filepath.Join(gosxDir, "hls.min.js")},
 	} {

@@ -151,8 +151,18 @@ const outputs = [
       sourceFile("bootstrap-src/16z-scene-webgpu-probe.js"),
       sourceFile("bootstrap-src/17-scene-input.js"),
       sourceFile("bootstrap-src/18-scene-canvas.js"),
-      sourceFile("bootstrap-src/19-scene-gltf.js"),
-      sourceFile("bootstrap-src/19a-scene-animation.js"),
+      // 19-scene-gltf.js is NOT here — it moved to
+      // bootstrap-feature-scene3d-gltf.js so pages that don't load .glb/
+      // .gltf model assets (galaxies, particle systems, CSS-driven 3D
+      // scenes — the majority of Scene3D consumers) don't pay the ~30KB
+      // parse cost. 20-scene-mount.js lazy-fetches the chunk on first
+      // model request via ensureGLTFFeatureLoaded().
+      //
+      // 19a-scene-animation.js is NOT here either — it moved to
+      // bootstrap-feature-scene3d-animation.js. Pages that don't use
+      // keyframe animations or skeletal clips skip ~16KB of bone math
+      // and quaternion slerp. Consumers that DO need the mixer can
+      // lazy-load it via window.__gosx_scene3d_animation_api.
       sourceFile("bootstrap-src/20-scene-mount.js"),
       sourceFile("bootstrap-src/26d-feature-scene3d-suffix.js"),
     ],
@@ -164,6 +174,22 @@ const outputs = [
       sourceFile("bootstrap-src/16a-scene-webgpu.js"),
       sourceFile("bootstrap-src/16b-scene-compute.js"),
       sourceFile("bootstrap-src/26e-feature-scene3d-webgpu-suffix.js"),
+    ],
+  },
+  {
+    path: path.join(__dirname, "bootstrap-feature-scene3d-gltf.js"),
+    sources: [
+      sourceFile("bootstrap-src/26f-feature-scene3d-gltf-prefix.js"),
+      sourceFile("bootstrap-src/19-scene-gltf.js"),
+      sourceFile("bootstrap-src/26f-feature-scene3d-gltf-suffix.js"),
+    ],
+  },
+  {
+    path: path.join(__dirname, "bootstrap-feature-scene3d-animation.js"),
+    sources: [
+      sourceFile("bootstrap-src/26g-feature-scene3d-animation-prefix.js"),
+      sourceFile("bootstrap-src/19a-scene-animation.js"),
+      sourceFile("bootstrap-src/26g-feature-scene3d-animation-suffix.js"),
     ],
   },
 ].map((entry) => ({

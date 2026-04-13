@@ -477,6 +477,93 @@
     return "json";
   }
 
+  // resolveSceneSubFeatureURL reads a hashed sub-feature URL that the
+  // island renderer embedded as a data-* attribute on the main scene3d
+  // script tag. Using the hashed URL (rather than the unhashed compat
+  // URL) lets the browser cache the sub-feature forever, keyed on its
+  // content hash. Falls back to the unhashed URL when the attribute
+  // isn't present (dev mode, manual integration without the island
+  // renderer, etc.).
+  function resolveSceneSubFeatureURL(datasetKey, fallback) {
+    try {
+      var tag = document.querySelector('script[data-gosx-script="feature-scene3d"]');
+      if (tag && tag.dataset && tag.dataset[datasetKey]) {
+        return tag.dataset[datasetKey];
+      }
+    } catch (_e) {}
+    return fallback;
+  }
+
+  // Cached promise for the GLTF sub-feature chunk. First call starts the
+  // fetch; subsequent calls await the same promise. See 26f-feature-
+  // scene3d-gltf-prefix.js for the split rationale.
+  var sceneGLTFFeaturePromise = null;
+
+  function ensureGLTFFeatureLoaded() {
+    if (window.__gosx_scene3d_gltf_api) {
+      return Promise.resolve(window.__gosx_scene3d_gltf_api);
+    }
+    if (sceneGLTFFeaturePromise) {
+      return sceneGLTFFeaturePromise;
+    }
+    sceneGLTFFeaturePromise = new Promise(function(resolve, reject) {
+      var s = document.createElement("script");
+      s.async = false;
+      s.dataset.gosxScript = "feature-scene3d-gltf";
+      s.src = resolveSceneSubFeatureURL("gosxScene3dGltfUrl", "/gosx/bootstrap-feature-scene3d-gltf.js");
+      s.onload = function() {
+        if (window.__gosx_scene3d_gltf_api) {
+          resolve(window.__gosx_scene3d_gltf_api);
+        } else {
+          reject(new Error("scene3d-gltf chunk loaded but did not publish API"));
+        }
+      };
+      s.onerror = function() {
+        sceneGLTFFeaturePromise = null; // allow retry on next attempt
+        reject(new Error("failed to load scene3d-gltf chunk"));
+      };
+      document.head.appendChild(s);
+    });
+    return sceneGLTFFeaturePromise;
+  }
+
+  // Cached promise for the animation sub-feature chunk. Consumers that
+  // want to drive keyframe or skeletal animations can await this helper
+  // and then use window.__gosx_scene3d_animation_api.
+  var sceneAnimationFeaturePromise = null;
+
+  function ensureAnimationFeatureLoaded() {
+    if (window.__gosx_scene3d_animation_api) {
+      return Promise.resolve(window.__gosx_scene3d_animation_api);
+    }
+    if (sceneAnimationFeaturePromise) {
+      return sceneAnimationFeaturePromise;
+    }
+    sceneAnimationFeaturePromise = new Promise(function(resolve, reject) {
+      var s = document.createElement("script");
+      s.async = false;
+      s.dataset.gosxScript = "feature-scene3d-animation";
+      s.src = resolveSceneSubFeatureURL("gosxScene3dAnimationUrl", "/gosx/bootstrap-feature-scene3d-animation.js");
+      s.onload = function() {
+        if (window.__gosx_scene3d_animation_api) {
+          resolve(window.__gosx_scene3d_animation_api);
+        } else {
+          reject(new Error("scene3d-animation chunk loaded but did not publish API"));
+        }
+      };
+      s.onerror = function() {
+        sceneAnimationFeaturePromise = null;
+        reject(new Error("failed to load scene3d-animation chunk"));
+      };
+      document.head.appendChild(s);
+    });
+    return sceneAnimationFeaturePromise;
+  }
+
+  // Expose the animation lazy-loader for consumers that need to drive
+  // keyframe or skeletal clips from outside the main scene mount.
+  window.__gosx_ensure_scene3d_animation_loaded = ensureAnimationFeatureLoaded;
+
   async function loadSceneModelAsset(src) {
     const key = String(src || "").trim();
     if (!key) {
@@ -487,7 +574,13 @@
         try {
           const format = sceneModelAssetFormat(key);
           if (format === "glb" || format === "gltf") {
-            return parseSceneModelAsset(gltfSceneToModelAsset(await sceneLoadGLTFModel(key), key), key);
+            // GLTF parsing lives in a sub-feature chunk that's fetched
+            // on demand — the first .glb/.gltf request on a page pays
+            // the download + parse cost, subsequent ones reuse the
+            // cached module. Pages that never load models never fetch
+            // the chunk at all.
+            var gltfApi = await ensureGLTFFeatureLoaded();
+            return parseSceneModelAsset(gltfApi.gltfSceneToModelAsset(await gltfApi.sceneLoadGLTFModel(key), key), key);
           }
           const response = await fetch(key, { credentials: "same-origin" });
           if (!response || !response.ok) {
@@ -2280,7 +2373,40 @@
 
     await sceneModelHydration;
     scenePrimeInitialTransitions(sceneState, motion.reducedMotion, 0);
-    renderFrame(0);
+
+    // Defer the first renderFrame to the next frame boundary. Goal: let
+    // the browser paint the pre-existing CSS/DOM content (LCP candidate)
+    // one frame earlier than it would if renderFrame ran synchronously
+    // here.
+    //
+    // On real hardware this is a small LCP nudge (real browsers show
+    // ~0 long tasks during mount — shader compile + buffer upload is
+    // typically 50-200ms on a real GPU, well under the 50ms long-task
+    // threshold once broken by this deferral).
+    //
+    // On headless-shell SwiftShader it's a big win: SwiftShader can
+    // take 1-2 seconds to compile/fall-back-compile the point shaders,
+    // and deferring keeps that entire chunk out of the LCP window so
+    // visual regression captures and CI perf profiles aren't dominated
+    // by GPU software-emulation latency.
+    //
+    // Scheduling priority (best → fallback):
+    //   1. scheduler.postTask('user-visible') — Chrome 94+, Firefox 126+
+    //   2. requestAnimationFrame — universal, paints on next vsync
+    //   3. setTimeout(0) — last-resort task-queue defer
+    function scheduleInitialRender() {
+      if (disposed) return;
+      if (typeof scheduler !== "undefined" && scheduler && typeof scheduler.postTask === "function") {
+        scheduler.postTask(function() { if (!disposed) renderFrame(0); }, { priority: "user-visible" });
+        return;
+      }
+      if (typeof requestAnimationFrame === "function") {
+        requestAnimationFrame(function() { if (!disposed) renderFrame(0); });
+        return;
+      }
+      setTimeout(function() { if (!disposed) renderFrame(0); }, 0);
+    }
+    scheduleInitialRender();
 
     // Progressive: upgrade from preview to full resolution after first paint.
     if (typeof sceneUpgradeProgressive === "function" && props.compression && props.compression.progressive) {
