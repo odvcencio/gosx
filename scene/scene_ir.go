@@ -132,6 +132,43 @@ type ModelIR struct {
 	Loop      *bool   `json:"loop,omitempty"`
 }
 
+// MarshalJSON emits both the embedded ObjectIR fields AND the ModelIR
+// local fields. Without this method, Go's method promotion would dispatch
+// json.Marshal(modelIR) to ObjectIR.MarshalJSON — which only emits the
+// ObjectIR half and silently drops src/scaleX/scaleY/scaleZ/static/
+// animation/loop. The symptom is a Scene3D typed-spread test that
+// expects "src" in the runtime head missing it entirely.
+//
+// Uses the same type-alias trick as ObjectIR.MarshalJSON: alias ObjectIR
+// to shed its MarshalJSON method, then flatten both sets of fields into
+// one struct literal so field shadowing gives the outer Points field
+// precedence (canonical wire shape for lines).
+func (m ModelIR) MarshalJSON() ([]byte, error) {
+	type objectAlias ObjectIR
+	type modelWire struct {
+		objectAlias
+		Points    []linePointWire `json:"points,omitempty"`
+		Src       string          `json:"src,omitempty"`
+		ScaleX    float64         `json:"scaleX,omitempty"`
+		ScaleY    float64         `json:"scaleY,omitempty"`
+		ScaleZ    float64         `json:"scaleZ,omitempty"`
+		Static    *bool           `json:"static,omitempty"`
+		Animation string          `json:"animation,omitempty"`
+		Loop      *bool           `json:"loop,omitempty"`
+	}
+	return json.Marshal(modelWire{
+		objectAlias: objectAlias(m.ObjectIR),
+		Points:      toLinePointsWire(m.Points),
+		Src:         m.Src,
+		ScaleX:      m.ScaleX,
+		ScaleY:      m.ScaleY,
+		ScaleZ:      m.ScaleZ,
+		Static:      m.Static,
+		Animation:   m.Animation,
+		Loop:        m.Loop,
+	})
+}
+
 // LabelIR is the typed compatibility record for one lowered scene label.
 type LabelIR struct {
 	ID          string         `json:"id"`

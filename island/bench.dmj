@@ -105,3 +105,75 @@ benchmark "counter ten dispatches" {
     }
     report_allocs
 }
+
+// SSR render of the toggle island — parity with counter/form/list
+// coverage. Toggles exercise the conditional-render branch of the
+// resolved-node renderer (the one path that had no SSR bench).
+benchmark "toggle ssr render" {
+    setup {
+        prog := program.ToggleProgram()
+        resolved := vm.ResolveInitialTree(prog, `{}`)
+    }
+    measure {
+        _ = RenderResolvedHTML(prog, resolved)
+    }
+    report_allocs
+}
+
+// Multi-island page SSR: ten counter islands on one page, each with
+// its own state. This is the closest bench we have to "typical
+// production page" — most real pages have 5–15 islands. Also catches
+// per-island overhead that isn't proportional to content (e.g.,
+// hydration manifest registration, program lookup, initial prop
+// marshal), which would dominate a page with many small islands.
+benchmark "multi island ssr render" {
+    setup {
+        prog := program.CounterProgram()
+        resolved := vm.ResolveInitialTree(prog, `{}`)
+    }
+    measure {
+        // Ten independent SSR renders simulating a page that mounts
+        // ten islands at once. Each render resolves + renders from
+        // scratch as if the server were handling a fresh request.
+        for range 10 {
+            _ = RenderResolvedHTML(prog, resolved)
+        }
+    }
+    report_allocs
+}
+
+// Form typing simulation — four rapid dispatches against a form
+// island (field-change, field-change, field-change, submit). Measures
+// the cumulative cost of a realistic interaction burst and reveals
+// per-dispatch overhead that isn't visible in a single-dispatch bench.
+benchmark "form typing burst" {
+    setup {
+        prog := program.FormProgram()
+        island := vm.NewIsland(prog, `{}`)
+    }
+    measure {
+        _ = island.Dispatch("updateName", `{"value":"A"}`)
+        _ = island.Dispatch("updateName", `{"value":"Al"}`)
+        _ = island.Dispatch("updateName", `{"value":"Ali"}`)
+        _ = island.Dispatch("updateName", `{"value":"Alic"}`)
+        _ = island.Dispatch("updateName", `{"value":"Alice"}`)
+    }
+    report_allocs
+}
+
+// Hydration round trip: NewIsland + Dispatch + second Dispatch +
+// Reconcile, the typical interaction sequence for a reactive
+// component. Each dispatch updates state, the second reconcile
+// should hit the steady-state path (no tree reallocation).
+benchmark "counter hydration round trip" {
+    setup {
+        prog := program.CounterProgram()
+    }
+    measure {
+        island := vm.NewIsland(prog, `{}`)
+        _ = island.Dispatch("increment", "{}")
+        _ = island.Dispatch("increment", "{}")
+        _ = island.Reconcile()
+    }
+    report_allocs
+}

@@ -74,3 +74,83 @@ func BenchmarkObjectIrLegacyProps(b *testing.B) {
 	}
 }
 
+
+// Exercises the fast-path SSR helper that GoSXSpreadProps (and, via
+// refactor, MarshalJSON / RawPropsJSON) now routes through. This is
+// the real shape measured on every Scene3D SSR render — builds the
+// flat base-props map, lowers the scene graph, and wraps the SceneIR
+// JSON bytes as a json.RawMessage under the "scene" key without
+// touching the slower legacyProps() map tree.
+func BenchmarkPropsSpreadPropsFast(b *testing.B) {
+//line /home/draco/work/gosx/scene/bench.dmj:78
+	props := benchMixedScene()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = props.spreadPropsFast()
+	}
+}
+
+
+// Full GoSXSpreadProps: the public entry point the route file-spread
+// handler calls when lowering a `<Scene3D {...data.galaxy}>` component.
+// Includes the capabilities slice allocation and programRef trimming
+// on top of spreadPropsFast, so this is the end-to-end number a GoSX
+// SSR render of a Scene3D component actually pays per request.
+func BenchmarkPropsGosxSpreadProps(b *testing.B) {
+//line /home/draco/work/gosx/scene/bench.dmj:93
+	props := benchMixedScene()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = props.GoSXSpreadProps()
+	}
+}
+
+
+// RawPropsJSON is the engine-manifest JSON emitter — it's what the
+// Go runtime writes to engine.Config.Props. Now routes through
+// MarshalJSON (which routes through spreadPropsFast), so this
+// measurement is equivalent to BenchmarkPropsMarshalJson with the
+// trailing wrap/trim step included.
+func BenchmarkPropsRawJson(b *testing.B) {
+//line /home/draco/work/gosx/scene/bench.dmj:108
+	props := benchMixedScene()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = props.RawPropsJSON()
+	}
+}
+
+
+// Larger fixture (80 spheres) stressing the lowerer and scene IR
+// construction to roughly the size of a production homepage galaxy
+// scene. Alloc growth here is linear in mesh count — the point is
+// to catch accidental quadratic blowups during refactors.
+func BenchmarkPropsMarshalGalaxy(b *testing.B) {
+//line /home/draco/work/gosx/scene/bench.dmj:122
+	props := benchGalaxyScene()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, err := json.Marshal(props)
+		if err != nil {
+            panic(err)
+        }
+	}
+}
+
+
+// Scene graph lowering in isolation — Graph → SceneIR — so bench
+// drift can be attributed to the lowerer vs. the downstream marshal.
+func BenchmarkSceneIrGalaxy(b *testing.B) {
+//line /home/draco/work/gosx/scene/bench.dmj:137
+	props := benchGalaxyScene()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = props.SceneIR()
+	}
+}
+

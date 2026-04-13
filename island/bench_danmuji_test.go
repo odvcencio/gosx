@@ -113,3 +113,76 @@ func BenchmarkCounterTenDispatches(b *testing.B) {
 	}
 }
 
+
+// SSR render of the toggle island — parity with counter/form/list
+// coverage. Toggles exercise the conditional-render branch of the
+// resolved-node renderer (the one path that had no SSR bench).
+func BenchmarkToggleSsrRender(b *testing.B) {
+//line /home/draco/work/gosx/island/bench.dmj:112
+	prog := program.ToggleProgram()
+	resolved := vm.ResolveInitialTree(prog, `{}`)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = RenderResolvedHTML(prog, resolved)
+	}
+}
+
+
+// Multi-island page SSR: ten counter islands on one page, each with
+// its own state. This is the closest bench we have to "typical
+// production page" — most real pages have 5–15 islands. Also catches
+// per-island overhead that isn't proportional to content (e.g.,
+// hydration manifest registration, program lookup, initial prop
+// marshal), which would dominate a page with many small islands.
+func BenchmarkMultiIslandSsrRender(b *testing.B) {
+//line /home/draco/work/gosx/island/bench.dmj:129
+	prog := program.CounterProgram()
+	resolved := vm.ResolveInitialTree(prog, `{}`)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		for range 10 {
+            _ = RenderResolvedHTML(prog, resolved)
+        }
+	}
+}
+
+
+// Form typing simulation — four rapid dispatches against a form
+// island (field-change, field-change, field-change, submit). Measures
+// the cumulative cost of a realistic interaction burst and reveals
+// per-dispatch overhead that isn't visible in a single-dispatch bench.
+func BenchmarkFormTypingBurst(b *testing.B) {
+//line /home/draco/work/gosx/island/bench.dmj:149
+	prog := program.FormProgram()
+	island := vm.NewIsland(prog, `{}`)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = island.Dispatch("updateName", `{"value":"A"}`)
+		_ = island.Dispatch("updateName", `{"value":"Al"}`)
+		_ = island.Dispatch("updateName", `{"value":"Ali"}`)
+		_ = island.Dispatch("updateName", `{"value":"Alic"}`)
+		_ = island.Dispatch("updateName", `{"value":"Alice"}`)
+	}
+}
+
+
+// Hydration round trip: NewIsland + Dispatch + second Dispatch +
+// Reconcile, the typical interaction sequence for a reactive
+// component. Each dispatch updates state, the second reconcile
+// should hit the steady-state path (no tree reallocation).
+func BenchmarkCounterHydrationRoundTrip(b *testing.B) {
+//line /home/draco/work/gosx/island/bench.dmj:168
+	prog := program.CounterProgram()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		island := vm.NewIsland(prog, `{}`)
+		_ = island.Dispatch("increment", "{}")
+		_ = island.Dispatch("increment", "{}")
+		_ = island.Reconcile()
+	}
+}
+

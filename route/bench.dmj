@@ -58,3 +58,72 @@ benchmark "pattern param names" {
     }
     report_allocs
 }
+
+// End-to-end measure of what the file-route renderer does on every
+// <Scene3D {...data.galaxy}> SSR: take typed scene.Props → get the
+// GoSXSpreadProps() map → canonicalize the key casing → marshal to
+// engine.Config.Props bytes. This is the engine-props hot path for
+// every Scene3D page render and the direct analog to what would
+// run per HTTP request if m31labs.dev routed through the file
+// renderer.
+//
+// On the 20-mesh mixed fixture with the v0.17.21 spreadPropsFast
+// optimization, this is the number to watch when refactoring the
+// scene package or the route engine-props canonicalization code.
+benchmark "engine props scene spread" {
+    setup {
+        props := benchScene3DProps()
+        spread := props.GoSXSpreadProps()
+    }
+    measure {
+        _ = marshalEngineProps(spread)
+    }
+    report_allocs
+}
+
+// Full GoSXSpreadProps → marshalEngineProps round trip (spread +
+// canonicalize + marshal), so the benchmark reflects the true
+// per-request cost of a Scene3D SSR render path end-to-end.
+benchmark "engine props scene end to end" {
+    setup {
+        props := benchScene3DProps()
+    }
+    measure {
+        spread := props.GoSXSpreadProps()
+        _ = marshalEngineProps(spread)
+    }
+    report_allocs
+}
+
+// Galaxy-scale variant — 80 point spheres, plane, shadow + post-fx
+// lights. This is the closest thing the bench suite has to the
+// actual m31labs.dev homepage Scene3D cost per request.
+benchmark "engine props galaxy end to end" {
+    setup {
+        props := benchGalaxyScene3DProps()
+    }
+    measure {
+        spread := props.GoSXSpreadProps()
+        _ = marshalEngineProps(spread)
+    }
+    report_allocs
+}
+
+// Graph lowering alone (Graph → SceneIR) for a galaxy-scale fixture.
+// Isolates the lowerer cost so bench drift can be attributed to the
+// graph walker vs. the downstream marshal/canonicalize steps.
+benchmark "scene ir galaxy lower" {
+    setup {
+        props := benchGalaxyScene3DProps()
+    }
+    measure {
+        _ = props.SceneIR()
+    }
+    report_allocs
+}
+
+// Helpers imported from bench_helpers_test.go (route package).
+// These mirror scene.benchMixedScene / benchGalaxyScene without
+// sharing symbols across packages — the inline duplication is
+// intentional so route can benchmark the full cross-package SSR
+// pipeline without adding exports that only tests would use.

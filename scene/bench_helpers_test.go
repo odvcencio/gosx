@@ -12,6 +12,73 @@ package scene
 //
 // Lives in a _test.go file so it's only compiled for test/bench builds
 // and doesn't bloat the production binary.
+// benchGalaxyScene approximates a production "background galaxy" scene:
+// ~80 point spheres orbiting a central directional light, a camera
+// preset, a grounding plane, and shadow + post-fx enabled. Roughly
+// the shape m31labs.dev's homepage galaxy engine produces per frame.
+// Used by the larger benchmarks that want to exercise lowerer + IR +
+// marshal behavior at a realistic node count rather than the 20-mesh
+// smoke test benchMixedScene uses.
+func benchGalaxyScene() Props {
+	const starCount = 80
+	nodes := make([]Node, 0, starCount+4)
+	nodes = append(nodes,
+		DirectionalLight{
+			Color:      "#fff1d6",
+			Intensity:  1.1,
+			Direction:  Vec3(0.3, -1, -0.5),
+			CastShadow: true,
+			ShadowSize: 2048,
+		},
+		AmbientLight{Color: "#101325", Intensity: 0.12},
+	)
+	for i := 0; i < starCount; i++ {
+		angle := float64(i) / float64(starCount)
+		nodes = append(nodes, Mesh{
+			Geometry: SphereGeometry{Segments: 12},
+			Material: StandardMaterial{
+				Color:     "#c8a8ff",
+				Roughness: 0.2,
+				Metalness: 0.4,
+				Emissive:  0.35,
+			},
+			Position:   Vec3(6*angle, 0.5, 3*angle),
+			CastShadow: false,
+		})
+	}
+	nodes = append(nodes,
+		Mesh{
+			Geometry: PlaneGeometry{Width: 40, Height: 40},
+			Material: StandardMaterial{Color: "#05080f", Roughness: 0.9, Metalness: 0.05},
+			Rotation: Rotate(-1.5708, 0, 0),
+		},
+	)
+	return Props{
+		Width:      1280,
+		Height:     720,
+		Background: "#03070d",
+		Responsive: Bool(true),
+		Controls:   "orbit",
+		Camera: PerspectiveCamera{
+			Position: Vec3(0, 6, 14),
+			FOV:      55,
+		},
+		Environment: Environment{
+			AmbientColor:     "#ffffff",
+			AmbientIntensity: 0.22,
+		},
+		Shadows: Shadows{MaxPixels: ShadowMaxPixels1024},
+		PostFX: PostFX{
+			MaxPixels: PostFXMaxPixels1080p,
+			Effects: []PostEffect{
+				Bloom{Threshold: 0.7, Strength: 0.55, Radius: 8, Scale: 0.25},
+				Tonemap{Mode: TonemapACES, Exposure: 1.15},
+			},
+		},
+		Graph: NewGraph(nodes...),
+	}
+}
+
 func benchMixedScene() Props {
 	const boxCount = 20
 	nodes := make([]Node, 0, 32)

@@ -64,3 +64,76 @@ func BenchmarkPatternParamNames(b *testing.B) {
 	}
 }
 
+
+// End-to-end measure of what the file-route renderer does on every
+// <Scene3D {...data.galaxy}> SSR: take typed scene.Props → get the
+// GoSXSpreadProps() map → canonicalize the key casing → marshal to
+// engine.Config.Props bytes. This is the engine-props hot path for
+// every Scene3D page render and the direct analog to what would
+// run per HTTP request if m31labs.dev routed through the file
+// renderer.
+//
+// On the 20-mesh mixed fixture with the v0.17.21 spreadPropsFast
+// optimization, this is the number to watch when refactoring the
+// scene package or the route engine-props canonicalization code.
+func BenchmarkEnginePropsSceneSpread(b *testing.B) {
+//line /home/draco/work/gosx/route/bench.dmj:73
+	props := benchScene3DProps()
+	spread := props.GoSXSpreadProps()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = marshalEngineProps(spread)
+	}
+}
+
+
+// Full GoSXSpreadProps → marshalEngineProps round trip (spread +
+// canonicalize + marshal), so the benchmark reflects the true
+// per-request cost of a Scene3D SSR render path end-to-end.
+func BenchmarkEnginePropsSceneEndToEnd(b *testing.B) {
+//line /home/draco/work/gosx/route/bench.dmj:87
+	props := benchScene3DProps()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		spread := props.GoSXSpreadProps()
+		_ = marshalEngineProps(spread)
+	}
+}
+
+
+// Galaxy-scale variant — 80 point spheres, plane, shadow + post-fx
+// lights. This is the closest thing the bench suite has to the
+// actual m31labs.dev homepage Scene3D cost per request.
+func BenchmarkEnginePropsGalaxyEndToEnd(b *testing.B) {
+//line /home/draco/work/gosx/route/bench.dmj:101
+	props := benchGalaxyScene3DProps()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		spread := props.GoSXSpreadProps()
+		_ = marshalEngineProps(spread)
+	}
+}
+
+
+// Graph lowering alone (Graph → SceneIR) for a galaxy-scale fixture.
+// Isolates the lowerer cost so bench drift can be attributed to the
+// graph walker vs. the downstream marshal/canonicalize steps.
+func BenchmarkSceneIrGalaxyLower(b *testing.B) {
+//line /home/draco/work/gosx/route/bench.dmj:115
+	props := benchGalaxyScene3DProps()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = props.SceneIR()
+	}
+}
+
+
+// Helpers imported from bench_helpers_test.go (route package).
+// These mirror scene.benchMixedScene / benchGalaxyScene without
+// sharing symbols across packages — the inline duplication is
+// intentional so route can benchmark the full cross-package SSR
+// pipeline without adding exports that only tests would use.

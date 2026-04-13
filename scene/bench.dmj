@@ -68,3 +68,78 @@ benchmark "object ir legacy props" {
     }
     report_allocs
 }
+
+// Exercises the fast-path SSR helper that GoSXSpreadProps (and, via
+// refactor, MarshalJSON / RawPropsJSON) now routes through. This is
+// the real shape measured on every Scene3D SSR render — builds the
+// flat base-props map, lowers the scene graph, and wraps the SceneIR
+// JSON bytes as a json.RawMessage under the "scene" key without
+// touching the slower legacyProps() map tree.
+benchmark "props spread props fast" {
+    setup {
+        props := benchMixedScene()
+    }
+    measure {
+        _ = props.spreadPropsFast()
+    }
+    report_allocs
+}
+
+// Full GoSXSpreadProps: the public entry point the route file-spread
+// handler calls when lowering a `<Scene3D {...data.galaxy}>` component.
+// Includes the capabilities slice allocation and programRef trimming
+// on top of spreadPropsFast, so this is the end-to-end number a GoSX
+// SSR render of a Scene3D component actually pays per request.
+benchmark "props gosx spread props" {
+    setup {
+        props := benchMixedScene()
+    }
+    measure {
+        _ = props.GoSXSpreadProps()
+    }
+    report_allocs
+}
+
+// RawPropsJSON is the engine-manifest JSON emitter — it's what the
+// Go runtime writes to engine.Config.Props. Now routes through
+// MarshalJSON (which routes through spreadPropsFast), so this
+// measurement is equivalent to BenchmarkPropsMarshalJson with the
+// trailing wrap/trim step included.
+benchmark "props raw json" {
+    setup {
+        props := benchMixedScene()
+    }
+    measure {
+        _ = props.RawPropsJSON()
+    }
+    report_allocs
+}
+
+// Larger fixture (80 spheres) stressing the lowerer and scene IR
+// construction to roughly the size of a production homepage galaxy
+// scene. Alloc growth here is linear in mesh count — the point is
+// to catch accidental quadratic blowups during refactors.
+benchmark "props marshal galaxy" {
+    setup {
+        props := benchGalaxyScene()
+    }
+    measure {
+        _, err := json.Marshal(props)
+        if err != nil {
+            panic(err)
+        }
+    }
+    report_allocs
+}
+
+// Scene graph lowering in isolation — Graph → SceneIR — so bench
+// drift can be attributed to the lowerer vs. the downstream marshal.
+benchmark "scene ir galaxy" {
+    setup {
+        props := benchGalaxyScene()
+    }
+    measure {
+        _ = props.SceneIR()
+    }
+    report_allocs
+}

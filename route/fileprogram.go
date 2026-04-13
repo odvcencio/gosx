@@ -1659,6 +1659,18 @@ func canonicalizeEnginePropValue(value any) any {
 		return nil
 	}
 
+	// Pre-marshaled JSON bytes pass through unchanged. The scene package's
+	// spreadPropsFast() wraps the Scene3D IR in json.RawMessage to skip the
+	// legacy map-tree build — if we let the default reflect.Slice branch
+	// below iterate over those bytes, each byte would get canonicalized into
+	// a separate interface{} and the whole optimization would evaporate
+	// (and produce corrupt JSON downstream). json.Marshal handles
+	// json.RawMessage natively so passing the value straight through is
+	// both correct and fast.
+	if _, ok := value.(json.RawMessage); ok {
+		return value
+	}
+
 	if typed := mapStringAnyValue(value); len(typed) > 0 {
 		return canonicalizeEnginePropsMap(typed)
 	}
