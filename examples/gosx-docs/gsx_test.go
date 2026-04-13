@@ -115,3 +115,50 @@ func TestDemosLayoutStructure(t *testing.T) {
 		t.Error("demos/layout.gsx missing <Slot /> for page content")
 	}
 }
+
+// TestDemosIndexLists7Cards verifies the /demos index page files have the
+// expected structure and roster. We use raw-source grep rather than rendering
+// because the GSX IR does not expose an HTML renderer in tests.
+func TestDemosIndexLists7Cards(t *testing.T) {
+	_, thisFile, _, _ := runtime.Caller(0)
+	demosDir := filepath.Join(filepath.Dir(thisFile), "app", "demos")
+	pagePath := filepath.Join(demosDir, "page.gsx")
+	serverPath := filepath.Join(demosDir, "page.server.go")
+
+	// 1. page.gsx must compile.
+	pageSource, err := os.ReadFile(pagePath)
+	if err != nil {
+		t.Fatalf("read app/demos/page.gsx: %v", err)
+	}
+	prog, err := gosx.Compile(pageSource)
+	if err != nil {
+		t.Fatalf("compile app/demos/page.gsx: %v", err)
+	}
+	if len(prog.Components) == 0 {
+		t.Fatal("app/demos/page.gsx has no components (bare-fragment form breaks route resolution)")
+	}
+
+	// 2. page.server.go must contain all 7 demo slugs.
+	serverSource, err := os.ReadFile(serverPath)
+	if err != nil {
+		t.Fatalf("read app/demos/page.server.go: %v", err)
+	}
+	serverSrc := string(serverSource)
+
+	slugs := []string{"playground", "fluid", "livesim", "cms", "scene3d", "scene3d-bench", "collab"}
+	for _, slug := range slugs {
+		if !strings.Contains(serverSrc, slug) {
+			t.Errorf("app/demos/page.server.go missing demo slug %q", slug)
+		}
+	}
+
+	// 3. Must use RegisterStaticDocsPage.
+	if !strings.Contains(serverSrc, "RegisterStaticDocsPage") {
+		t.Error(`app/demos/page.server.go missing "RegisterStaticDocsPage"`)
+	}
+
+	// 4. Must carry the "Demos" title.
+	if !strings.Contains(serverSrc, `"Demos"`) {
+		t.Error(`app/demos/page.server.go missing "Demos" title string`)
+	}
+}
