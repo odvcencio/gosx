@@ -55,6 +55,8 @@ func main() {
 		cmdLSP()
 	case "perf":
 		cmdPerf()
+	case "visual":
+		cmdVisual()
 	case "repl":
 		cmdRepl()
 	case "version":
@@ -83,6 +85,7 @@ Commands:
   fmt <path>           Format GoSX source files
   lsp                  Start the GoSX language server
   perf <url>           Profile browser runtime performance
+  visual <url>         Pixel-level visual regression testing
   repl <url>           Interactive browser runtime explorer
   version              Print version
 

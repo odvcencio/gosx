@@ -16,6 +16,7 @@ require (
 	github.com/alicebob/miniredis/v2 v2.37.0
 	github.com/chromedp/cdproto v0.0.0-20260321001828-e3e3800016bc
 	github.com/chromedp/chromedp v0.15.1
+	github.com/orisano/pixelmatch v0.0.0-20220722002657-fb0b55479cde
 	github.com/redis/go-redis/v9 v9.18.0
 	gopkg.in/yaml.v3 v3.0.1
 )
