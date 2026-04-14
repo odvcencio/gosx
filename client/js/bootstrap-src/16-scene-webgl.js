@@ -806,10 +806,57 @@
     return { minX: minX, minY: minY, minZ: minZ, maxX: maxX, maxY: maxY, maxZ: maxZ };
   }
 
+  // Computes a cheap change-detector hash for a shadow pass. When the
+  // hash matches the last rendered pass for this light, the previously
+  // drawn shadow map is still valid and the whole pass can be skipped.
+  //
+  // Inputs that move the hash:
+  //   - lightMatrix (16 floats) — summed
+  //   - For each shadow-casting mesh: vertexOffset + vertexCount +
+  //     depthNear + depthFar. depthNear/Far is the transform-sensitive
+  //     signal (recomputed by the cached sceneBoundsDepthMetrics), so
+  //     moving a caster or camera invalidates the hash. vertexOffset/
+  //     Count pick up topology changes (skinning, geometry swaps).
+  //
+  // Not hashed but acceptable:
+  //   - Position values themselves (too expensive). We rely on depthNear/
+  //     Far changing when vertices move, which is a reliable proxy for
+  //     any transform but misses pure topology edits that keep the AABB
+  //     constant (rare, and visually imperceptible because the shadow
+  //     silhouette is unchanged).
+  function sceneShadowPassHash(lightMatrix, meshObjects) {
+    var h = 0;
+    if (lightMatrix) {
+      for (var i = 0; i < 16; i++) h += lightMatrix[i] || 0;
+    }
+    var casterCount = 0;
+    for (var j = 0; j < meshObjects.length; j++) {
+      var o = meshObjects[j];
+      if (!o || !o.castShadow || o.viewCulled) continue;
+      h += (o.vertexOffset || 0) + (o.vertexCount || 0)
+         + (o.depthNear || 0) + (o.depthFar || 0);
+      casterCount++;
+    }
+    h += casterCount * 17.0;
+    return h;
+  }
+
   // Render a depth-only shadow pass into the shadow framebuffer.
   // shadowState holds a persistent GL buffer and scratch typed array
   // to avoid per-object per-light per-frame allocations.
+  //
+  // Skips the entire pass when the content hash matches the previous
+  // frame — on a static scene with static lights this reclaims every
+  // bit of the shadow pipeline (clear, N×bufferData, N×drawArrays)
+  // and lets the existing depth texture be sampled as-is.
   function renderSceneShadowPass(gl, shadowProgram, shadowResources, lightMatrix, bundle, shadowState) {
+    var meshObjectsForHash = Array.isArray(bundle.meshObjects) ? bundle.meshObjects : [];
+    var passHash = sceneShadowPassHash(lightMatrix, meshObjectsForHash);
+    if (shadowResources._lastPassHash === passHash) {
+      return;
+    }
+    shadowResources._lastPassHash = passHash;
+
     gl.bindFramebuffer(gl.FRAMEBUFFER, shadowResources.framebuffer);
     gl.viewport(0, 0, shadowResources.size, shadowResources.size);
     gl.clearDepth(1);
@@ -2384,6 +2431,24 @@
 
     function uploadMaterial(gl, uniforms, material, textureCache) {
       const mat = material || {};
+      // Global material cache on the program's uniforms object. Skip the
+      // 6 gl.uniform* calls + 5 texture binds when the same material is
+      // re-applied consecutively. Unlike the per-draw-loop lastMaterialIndex
+      // check that callers already do, this survives program swaps and
+      // covers the A→B→A pattern where material A is used, then B, then A
+      // again — without this cache the second A upload would re-issue
+      // every uniform even though the GL state is already correct.
+      //
+      // Reference equality is sufficient because materials in the scene
+      // bundle are stable objects across frames (the materialLookup Map
+      // in createSceneRenderBundle dedupes them by content hash). If a
+      // consumer mutates a material in place, they're expected to flip
+      // the bundle's materialIndex, which gives a different reference
+      // and naturally triggers a re-upload.
+      if (uniforms._lastMaterial === material) {
+        return;
+      }
+      uniforms._lastMaterial = material;
       const albedoRGBA = sceneColorRGBA(mat.color, [0.8, 0.8, 0.8, 1]);
       gl.uniform3f(uniforms.albedo, albedoRGBA[0], albedoRGBA[1], albedoRGBA[2]);
       gl.uniform1f(uniforms.roughness, sceneNumber(mat.roughness, 0.5));

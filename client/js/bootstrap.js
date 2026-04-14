@@ -6948,12 +6948,23 @@
     fov: 0, near: 0, far: 0,
   };
 
-  function sceneBoundsDepthMetrics(bounds, camera) {
+  function sceneBoundsDepthMetrics(bounds, camera, cacheOwner) {
     if (!bounds) {
       const depth = sceneWorldPointDepth(0, camera);
       return { near: depth, far: depth, center: depth };
     }
     const cam = sceneRenderCamera(camera, _sceneBoundsDepthCameraScratch);
+
+    let cacheHash = 0;
+    if (cacheOwner) {
+      cacheHash = sceneNumber(bounds.minX, 0) + sceneNumber(bounds.minY, 0) + sceneNumber(bounds.minZ, 0)
+        + sceneNumber(bounds.maxX, 0) + sceneNumber(bounds.maxY, 0) + sceneNumber(bounds.maxZ, 0)
+        + cam.x + cam.y + cam.z
+        + cam.rotationX + cam.rotationY + cam.rotationZ;
+      if (cacheOwner._depthCacheHash === cacheHash && cacheOwner._depthCacheResult) {
+        return cacheOwner._depthCacheResult;
+      }
+    }
 
     const sinX = Math.sin(-cam.rotationX);
     const cosX = Math.cos(-cam.rotationX);
@@ -6998,18 +7009,23 @@
       if (lz > far) far = lz;
     }
 
-    return {
+    const result = {
       near: near,
       far: far,
       center: (near + far) / 2,
     };
+    if (cacheOwner) {
+      cacheOwner._depthCacheHash = cacheHash;
+      cacheOwner._depthCacheResult = result;
+    }
+    return result;
   }
 
-  function sceneBoundsViewCulled(bounds, camera) {
+  function sceneBoundsViewCulled(bounds, camera, cacheOwner) {
     if (!bounds) {
       return false;
     }
-    const depth = sceneBoundsDepthMetrics(bounds, camera);
+    const depth = sceneBoundsDepthMetrics(bounds, camera, cacheOwner);
     const near = sceneNumber(camera && camera.near, 0.05);
     const far = sceneNumber(camera && camera.far, 128);
     return depth.far <= near || depth.near >= far;
@@ -7188,7 +7204,7 @@
       }
     }
     if (vertexCount > 0 || bounds) {
-      const depth = sceneBoundsDepthMetrics(bounds, camera);
+      const depth = sceneBoundsDepthMetrics(bounds, camera, object);
       bundle.objects.push({
         id: object.id,
         kind: object.kind,
@@ -7212,7 +7228,7 @@
         depthNear: depth.near,
         depthFar: depth.far,
         depthCenter: depth.center,
-        viewCulled: Boolean(object.viewCulled) || sceneBoundsViewCulled(bounds, camera),
+        viewCulled: Boolean(object.viewCulled) || sceneBoundsViewCulled(bounds, camera, object),
       });
       appendSceneSurfaceToBundle(bundle, camera, object, materialIndex, material, bounds, depth, timeSeconds);
     }
@@ -7397,7 +7413,7 @@
     if (!bounds || meshVertexCount <= 0) {
       return;
     }
-    const depth = sceneBoundsDepthMetrics(bounds, camera);
+    const depth = sceneBoundsDepthMetrics(bounds, camera, object);
     const shared = {
       id: object.id,
       kind: object.kind,
@@ -7412,7 +7428,7 @@
       depthNear: depth.near,
       depthFar: depth.far,
       depthCenter: depth.center,
-      viewCulled: Boolean(object.viewCulled) || sceneBoundsViewCulled(bounds, camera),
+      viewCulled: Boolean(object.viewCulled) || sceneBoundsViewCulled(bounds, camera, object),
       doubleSided: Boolean(object.doubleSided),
       skin: object.skin,
       vertices: vertices,
@@ -7454,7 +7470,7 @@
       depthNear: depthMetrics.near,
       depthFar: depthMetrics.far,
       depthCenter: depthMetrics.center,
-      viewCulled: Boolean(object.viewCulled) || sceneBoundsViewCulled(bounds, camera),
+      viewCulled: Boolean(object.viewCulled) || sceneBoundsViewCulled(bounds, camera, object),
     });
   }
 
@@ -11680,7 +11696,31 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
     return { minX: minX, minY: minY, minZ: minZ, maxX: maxX, maxY: maxY, maxZ: maxZ };
   }
 
+  function sceneShadowPassHash(lightMatrix, meshObjects) {
+    var h = 0;
+    if (lightMatrix) {
+      for (var i = 0; i < 16; i++) h += lightMatrix[i] || 0;
+    }
+    var casterCount = 0;
+    for (var j = 0; j < meshObjects.length; j++) {
+      var o = meshObjects[j];
+      if (!o || !o.castShadow || o.viewCulled) continue;
+      h += (o.vertexOffset || 0) + (o.vertexCount || 0)
+         + (o.depthNear || 0) + (o.depthFar || 0);
+      casterCount++;
+    }
+    h += casterCount * 17.0;
+    return h;
+  }
+
   function renderSceneShadowPass(gl, shadowProgram, shadowResources, lightMatrix, bundle, shadowState) {
+    var meshObjectsForHash = Array.isArray(bundle.meshObjects) ? bundle.meshObjects : [];
+    var passHash = sceneShadowPassHash(lightMatrix, meshObjectsForHash);
+    if (shadowResources._lastPassHash === passHash) {
+      return;
+    }
+    shadowResources._lastPassHash = passHash;
+
     gl.bindFramebuffer(gl.FRAMEBUFFER, shadowResources.framebuffer);
     gl.viewport(0, 0, shadowResources.size, shadowResources.size);
     gl.clearDepth(1);
@@ -13007,6 +13047,10 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
 
     function uploadMaterial(gl, uniforms, material, textureCache) {
       const mat = material || {};
+      if (uniforms._lastMaterial === material) {
+        return;
+      }
+      uniforms._lastMaterial = material;
       const albedoRGBA = sceneColorRGBA(mat.color, [0.8, 0.8, 0.8, 1]);
       gl.uniform3f(uniforms.albedo, albedoRGBA[0], albedoRGBA[1], albedoRGBA[2]);
       gl.uniform1f(uniforms.roughness, sceneNumber(mat.roughness, 0.5));
