@@ -2107,6 +2107,25 @@
     let scheduledRenderHandle = null;
     let disposed = false;
 
+    // Viewport-dirty flag: when false, renderFrame skips the per-frame
+    // sceneViewportFromMount + applySceneViewport calls and reuses the
+    // cached `viewport` object. Both helpers are layout-flushing — they
+    // call mount/canvas.getBoundingClientRect(), forcing the browser to
+    // recompute layout synchronously. Doing that every frame burns 1-3 ms
+    // on a busy page where no DOM has actually changed. The dirty flag
+    // is set to true on:
+    //   - initial mount (first frame must measure)
+    //   - ResizeObserver fire (canvas or mount size changed)
+    //   - window resize fallback
+    //   - environment / capability change (DPR update)
+    //   - lifecycle / motion observer refresh (safer to re-measure)
+    //   - visibility transitions
+    // Scroll events do NOT mark the viewport dirty — scrolling doesn't
+    // change a fixed-positioned canvas's rect, and non-fixed scenes
+    // also don't care about scroll-time position unless the consumer
+    // explicitly schedules a refresh.
+    let viewportDirty = true;
+
     // Guarded animation-frame scheduler. The animation loop was previously
     // just `frameHandle = engineFrame(renderFrame)` at the end of every
     // renderFrame call site — no guard against a second chain starting
@@ -2245,10 +2264,6 @@
         if (disposed) {
           return;
         }
-        const nextViewport = sceneViewportFromMount(ctx.mount, props, viewportBase, canvas, capability);
-        if (sceneViewportChanged(viewport, nextViewport)) {
-          viewport = applySceneViewport(ctx.mount, canvas, labelLayer, nextViewport, viewportBase);
-        }
         if (!sceneCanRender()) {
           cancelFrame();
           return;
@@ -2266,6 +2281,17 @@
         cancelFrame();
         renderFrame(typeof now === "number" ? now : 0, reason || "refresh");
       });
+    }
+
+    // Wraps scheduleRender so the caller can opt into marking the
+    // viewport dirty. Used by the observers whose triggers imply a
+    // physical viewport change (resize, visibility, capability /
+    // environment, motion). Other scheduleRender callers (live
+    // events, hub events, controls) don't need to force re-measurement
+    // and should call scheduleRender directly.
+    function scheduleRenderWithViewport(reason) {
+      viewportDirty = true;
+      scheduleRender(reason);
     }
 
     function readSceneSourceCamera() {
@@ -2309,12 +2335,14 @@
     };
     document.addEventListener("gosx:hub:event", sceneHubListener);
 
-    const releaseViewportObserver = observeSceneViewport(ctx.mount, scheduleRender);
+    // Viewport observer fires on canvas/mount resize. Mark dirty so
+    // renderFrame re-measures the rect on the next tick — this is the
+    // one place we genuinely need a fresh getBoundingClientRect.
+    const releaseViewportObserver = observeSceneViewport(ctx.mount, scheduleRenderWithViewport);
     const releaseCapabilityObserver = observeSceneCapability(ctx.mount, props, capability, function(reason) {
-      const nextViewport = sceneViewportFromMount(ctx.mount, props, viewportBase, canvas, capability);
-      if (sceneViewportChanged(viewport, nextViewport)) {
-        viewport = applySceneViewport(ctx.mount, canvas, labelLayer, nextViewport, viewportBase);
-      }
+      // Capability change (DPR / WebGL availability shift) invalidates
+      // the viewport — mark dirty so the next renderFrame re-measures.
+      viewportDirty = true;
       const desiredFallback = sceneRendererFallbackReason(props, capability, renderer && renderer.kind);
       const webglPreference = sceneCapabilityWebGLPreference(props, capability);
       if (renderer && renderer.kind === "webgl" && !(webglPreference === "prefer" || webglPreference === "force")) {
@@ -2338,12 +2366,16 @@
         }
         return;
       }
-      scheduleRender(reason || "lifecycle");
+      // Visibility/viewport presence transition — the mount may have
+      // been offscreen, so force a re-measure on resume.
+      scheduleRenderWithViewport(reason || "lifecycle");
     });
     const releaseMotionObserver = observeSceneMotion(ctx.mount, motion, function(reason) {
       cancelFrame();
       cancelScheduledRender();
-      scheduleRender(reason || "motion");
+      // Reduced-motion transition resets render state; safer to re-
+      // measure than risk stale canvas dimensions.
+      scheduleRenderWithViewport(reason || "motion");
     });
 
     if (runtimeScene) {
@@ -2356,7 +2388,16 @@
 
     function renderFrame(now) {
       if (disposed) return;
-      viewport = applySceneViewport(ctx.mount, canvas, labelLayer, sceneViewportFromMount(ctx.mount, props, viewportBase, canvas, capability), viewportBase);
+      // Only re-measure the viewport when something has actually
+      // invalidated it. Static frames (the common case during continuous
+      // animation without DOM changes) reuse the cached `viewport` and
+      // skip the 4 getBoundingClientRect layout flushes that used to
+      // run every frame.
+      if (viewportDirty) {
+        const nextViewport = sceneViewportFromMount(ctx.mount, props, viewportBase, canvas, capability);
+        viewport = applySceneViewport(ctx.mount, canvas, labelLayer, nextViewport, viewportBase);
+        viewportDirty = false;
+      }
       if (!sceneCanRender()) {
         cancelFrame();
         return;

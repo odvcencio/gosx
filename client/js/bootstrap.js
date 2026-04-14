@@ -21573,6 +21573,8 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
     let scheduledRenderHandle = null;
     let disposed = false;
 
+    let viewportDirty = true;
+
     function scheduleNextAnimationFrame() {
       if (disposed) return;
       if (frameHandle != null) return;
@@ -21673,10 +21675,6 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
         if (disposed) {
           return;
         }
-        const nextViewport = sceneViewportFromMount(ctx.mount, props, viewportBase, canvas, capability);
-        if (sceneViewportChanged(viewport, nextViewport)) {
-          viewport = applySceneViewport(ctx.mount, canvas, labelLayer, nextViewport, viewportBase);
-        }
         if (!sceneCanRender()) {
           cancelFrame();
           return;
@@ -21684,6 +21682,11 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
         cancelFrame();
         renderFrame(typeof now === "number" ? now : 0, reason || "refresh");
       });
+    }
+
+    function scheduleRenderWithViewport(reason) {
+      viewportDirty = true;
+      scheduleRender(reason);
     }
 
     function readSceneSourceCamera() {
@@ -21727,12 +21730,9 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
     };
     document.addEventListener("gosx:hub:event", sceneHubListener);
 
-    const releaseViewportObserver = observeSceneViewport(ctx.mount, scheduleRender);
+    const releaseViewportObserver = observeSceneViewport(ctx.mount, scheduleRenderWithViewport);
     const releaseCapabilityObserver = observeSceneCapability(ctx.mount, props, capability, function(reason) {
-      const nextViewport = sceneViewportFromMount(ctx.mount, props, viewportBase, canvas, capability);
-      if (sceneViewportChanged(viewport, nextViewport)) {
-        viewport = applySceneViewport(ctx.mount, canvas, labelLayer, nextViewport, viewportBase);
-      }
+      viewportDirty = true;
       const desiredFallback = sceneRendererFallbackReason(props, capability, renderer && renderer.kind);
       const webglPreference = sceneCapabilityWebGLPreference(props, capability);
       if (renderer && renderer.kind === "webgl" && !(webglPreference === "prefer" || webglPreference === "force")) {
@@ -21756,12 +21756,12 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
         }
         return;
       }
-      scheduleRender(reason || "lifecycle");
+      scheduleRenderWithViewport(reason || "lifecycle");
     });
     const releaseMotionObserver = observeSceneMotion(ctx.mount, motion, function(reason) {
       cancelFrame();
       cancelScheduledRender();
-      scheduleRender(reason || "motion");
+      scheduleRenderWithViewport(reason || "motion");
     });
 
     if (runtimeScene) {
@@ -21774,7 +21774,11 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
 
     function renderFrame(now) {
       if (disposed) return;
-      viewport = applySceneViewport(ctx.mount, canvas, labelLayer, sceneViewportFromMount(ctx.mount, props, viewportBase, canvas, capability), viewportBase);
+      if (viewportDirty) {
+        const nextViewport = sceneViewportFromMount(ctx.mount, props, viewportBase, canvas, capability);
+        viewport = applySceneViewport(ctx.mount, canvas, labelLayer, nextViewport, viewportBase);
+        viewportDirty = false;
+      }
       if (!sceneCanRender()) {
         cancelFrame();
         return;
