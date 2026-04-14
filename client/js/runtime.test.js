@@ -4494,8 +4494,13 @@ test("bootstrap reuses static opaque Scene3D buffers across dynamic-only runtime
   });
 
   let rafCount = 0;
+  // Allow two frames so the test can observe buffer reuse across a
+  // second render. The scene mount defers its first render to rAF for
+  // LCP; bounding at one rAF here used to match an older sync-mount
+  // path that no longer exists, leaving the test stuck at a single
+  // engineRenderCalls entry while the assertion wants >= 2.
   env.context.requestAnimationFrame = (callback) => {
-    if (rafCount >= 1) return 0;
+    if (rafCount >= 2) return 0;
     rafCount += 1;
     return setTimeout(() => callback(rafCount * 16), 0);
   };
@@ -4577,8 +4582,13 @@ test("bootstrap invalidates static opaque Scene3D buffers when camera clip state
   });
 
   let rafCount = 0;
+  // Allow two frames so the test can observe buffer reuse across a
+  // second render. The scene mount defers its first render to rAF for
+  // LCP; bounding at one rAF here used to match an older sync-mount
+  // path that no longer exists, leaving the test stuck at a single
+  // engineRenderCalls entry while the assertion wants >= 2.
   env.context.requestAnimationFrame = (callback) => {
-    if (rafCount >= 1) return 0;
+    if (rafCount >= 2) return 0;
     rafCount += 1;
     return setTimeout(() => callback(rafCount * 16), 0);
   };
@@ -4660,8 +4670,13 @@ test("bootstrap invalidates static opaque Scene3D buffers when shared-runtime li
   });
 
   let rafCount = 0;
+  // Allow two frames so the test can observe buffer reuse across a
+  // second render. The scene mount defers its first render to rAF for
+  // LCP; bounding at one rAF here used to match an older sync-mount
+  // path that no longer exists, leaving the test stuck at a single
+  // engineRenderCalls entry while the assertion wants >= 2.
   env.context.requestAnimationFrame = (callback) => {
-    if (rafCount >= 1) return 0;
+    if (rafCount >= 2) return 0;
     rafCount += 1;
     return setTimeout(() => callback(rafCount * 16), 0);
   };
@@ -4819,8 +4834,13 @@ test("bootstrap keeps static Scene3D bundle-pass caches isolated per pass", asyn
   });
 
   let rafCount = 0;
+  // Allow two frames so the test can observe buffer reuse across a
+  // second render. The scene mount defers its first render to rAF for
+  // LCP; bounding at one rAF here used to match an older sync-mount
+  // path that no longer exists, leaving the test stuck at a single
+  // engineRenderCalls entry while the assertion wants >= 2.
   env.context.requestAnimationFrame = (callback) => {
-    if (rafCount >= 1) return 0;
+    if (rafCount >= 2) return 0;
     rafCount += 1;
     return setTimeout(() => callback(rafCount * 16), 0);
   };

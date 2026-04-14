@@ -720,6 +720,14 @@
     };
   }
 
+  if (typeof window !== "undefined") {
+    window.__gosx_scene3d_gltf_api = {
+      sceneLoadGLTFModel: sceneLoadGLTFModel,
+      gltfSceneToModelAsset: gltfSceneToModelAsset,
+    };
+    window.__gosx_scene3d_gltf_loaded = true;
+  }
+
   window.__gosx_scene3d_gltf_api = {
     sceneLoadGLTFModel: sceneLoadGLTFModel,
     gltfSceneToModelAsset: gltfSceneToModelAsset,

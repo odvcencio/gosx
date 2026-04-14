@@ -13975,6 +13975,82 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
     return renderer;
   }
 
+  var _webgpuAdapterProbe = null; // null = unprobed, false = unavailable, GPUAdapter = ready
+  var _webgpuDeviceProbe = null;  // null = unprobed, false = unavailable, GPUDevice = ready
+  var _webgpuAdapterReady = false;
+
+  function _externalProbe() {
+    if (typeof window !== "undefined" && typeof window.__gosx_scene3d_webgpu_probe === "function") {
+      return window.__gosx_scene3d_webgpu_probe();
+    }
+    return { adapter: null, device: null, ready: false };
+  }
+
+  if (typeof navigator !== "undefined" && navigator.gpu && typeof navigator.gpu.requestAdapter === "function") {
+    navigator.gpu.requestAdapter().then(function(adapter) {
+      if (!adapter) {
+        console.warn("[gosx] WebGPU probe: requestAdapter returned null");
+        _webgpuAdapterProbe = false;
+        _webgpuDeviceProbe = false;
+        return null;
+      }
+      _webgpuAdapterProbe = adapter;
+      return adapter.requestDevice();
+    }).then(function(device) {
+      if (!device) {
+        console.warn("[gosx] WebGPU probe: requestDevice returned null");
+        _webgpuDeviceProbe = false;
+        return;
+      }
+      _webgpuDeviceProbe = device;
+      _webgpuAdapterReady = true;
+      device.lost.then(function(info) {
+        console.warn("[gosx] WebGPU probe device lost:", info && info.message);
+        _webgpuAdapterReady = false;
+        _webgpuDeviceProbe = false;
+      }).catch(function() {});
+    }).catch(function(err) {
+      console.warn("[gosx] WebGPU probe failed:", err && (err.message || err));
+      _webgpuAdapterProbe = false;
+      _webgpuDeviceProbe = false;
+    });
+    window.__gosx_scene3d_webgpu_probe = function() {
+      return {
+        adapter: _webgpuAdapterProbe,
+        device: _webgpuDeviceProbe,
+        ready: _webgpuAdapterReady,
+      };
+    };
+  } else {
+    _webgpuAdapterProbe = false;
+    _webgpuDeviceProbe = false;
+  }
+
+  function sceneWebGPUAvailable() {
+    return _webgpuAdapterReady
+      && _webgpuAdapterProbe !== false
+      && _webgpuAdapterProbe !== null
+      && _webgpuDeviceProbe !== false
+      && _webgpuDeviceProbe !== null
+      && !!(window.__gosx_scene3d_webgpu_api
+        && typeof window.__gosx_scene3d_webgpu_api.createRenderer === "function");
+  }
+
+  function createSceneWebGPURendererOrFallback(canvas) {
+    if (!sceneWebGPUAvailable()) return null;
+    if (!canvas || typeof canvas.getContext !== "function") return null;
+    try {
+      var renderer = window.__gosx_scene3d_webgpu_api.createRenderer(canvas);
+      if (!renderer) {
+        console.warn("[gosx] WebGPU factory returned null after probe success; canvas may be tainted");
+      }
+      return renderer;
+    } catch (e) {
+      console.warn("[gosx] WebGPU renderer creation failed:", e);
+      return null;
+    }
+  }
+
   var WGSL_COMMON_CONSTANTS = [
     "const PI: f32 = 3.14159265359;",
     "const MAX_LIGHTS: u32 = 8u;",
@@ -19131,6 +19207,14 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
     };
   }
 
+  if (typeof window !== "undefined") {
+    window.__gosx_scene3d_gltf_api = {
+      sceneLoadGLTFModel: sceneLoadGLTFModel,
+      gltfSceneToModelAsset: gltfSceneToModelAsset,
+    };
+    window.__gosx_scene3d_gltf_loaded = true;
+  }
+
   var _nodeTransforms = new Map();
   var _childSet = new Set();
   var _mixerResults = new Map();
@@ -19541,6 +19625,15 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
       isPlaying: isPlaying,
       dispose: dispose,
     };
+  }
+
+  if (typeof window !== "undefined") {
+    window.__gosx_scene3d_animation_api = {
+      createMixer: createSceneAnimationMixer,
+      buildNodeTransforms: sceneAnimBuildNodeTransforms,
+      computeJointMatrices: sceneAnimComputeJointMatrices,
+    };
+    window.__gosx_scene3d_animation_loaded = true;
   }
 
   function createSceneRenderer(canvas, props, capability) {
@@ -21881,15 +21974,9 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
 
     function scheduleInitialRender() {
       if (disposed) return;
-      if (typeof scheduler !== "undefined" && scheduler && typeof scheduler.postTask === "function") {
-        scheduler.postTask(function() { if (!disposed) renderFrame(0); }, { priority: "user-visible" });
-        return;
-      }
-      if (typeof requestAnimationFrame === "function") {
-        requestAnimationFrame(function() { if (!disposed) renderFrame(0); });
-        return;
-      }
-      setTimeout(function() { if (!disposed) renderFrame(0); }, 0);
+      Promise.resolve().then(function() {
+        if (!disposed) renderFrame(0);
+      });
     }
     scheduleInitialRender();
 

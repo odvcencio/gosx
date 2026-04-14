@@ -31,6 +31,23 @@
   var _webgpuDeviceProbe = null;  // null = unprobed, false = unavailable, GPUDevice = ready
   var _webgpuAdapterReady = false;
 
+  // Shared probe helper. Callers in 16a-scene-webgpu.js use this to read
+  // the current probe state without re-running the async adapter/device
+  // request. Duplicated in 26e-feature-scene3d-webgpu-prefix.js for the
+  // split webgpu sub-feature bundle (which does not include 16z), and
+  // kept here for the legacy monolithic bootstrap.js bundle that inlines
+  // 16a without the sub-feature prefix. When both definitions land in
+  // the same IIFE (scene3d main bundle includes 16z but excludes 16a,
+  // so no conflict), the function declaration is the only copy; when
+  // bootstrap.js inlines 16a with 16z this function satisfies the
+  // reference and the webgpu bundle's separate copy is loaded elsewhere.
+  function _externalProbe() {
+    if (typeof window !== "undefined" && typeof window.__gosx_scene3d_webgpu_probe === "function") {
+      return window.__gosx_scene3d_webgpu_probe();
+    }
+    return { adapter: null, device: null, ready: false };
+  }
+
   if (typeof navigator !== "undefined" && navigator.gpu && typeof navigator.gpu.requestAdapter === "function") {
     // No powerPreference: on some backends (SwiftShader in headless
     // Chrome, certain Linux Mesa/ANGLE builds) the 'high-performance'

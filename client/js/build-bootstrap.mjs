@@ -66,6 +66,13 @@ const outputs = [
       sourceFile("bootstrap-src/15-scene-draw-plan.js"),
       sourceFile("bootstrap-src/15a-scene-postfx-shared.js"),
       sourceFile("bootstrap-src/16-scene-webgl.js"),
+      // 16z provides _externalProbe and window.__gosx_scene3d_webgpu_probe,
+      // which 16a-scene-webgpu.js references at runtime. Without it the
+      // legacy monolithic bootstrap.js throws ReferenceError the first
+      // time the scene3d mount path touches the webgpu probe, which in
+      // turn aborts GoSXScene3D engine registration and kills 38 tests
+      // in runtime.test.js that rely on scene3d mount.
+      sourceFile("bootstrap-src/16z-scene-webgpu-probe.js"),
       sourceFile("bootstrap-src/16a-scene-webgpu.js"),
       sourceFile("bootstrap-src/16b-scene-compute.js"),
       sourceFile("bootstrap-src/17-scene-input.js"),

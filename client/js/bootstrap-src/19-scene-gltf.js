@@ -827,3 +827,21 @@
       skins: scene.skins || [],
     };
   }
+
+  // Publish the GLTF API onto window so ensureGLTFFeatureLoaded() in
+  // 20-scene-mount.js finds it without trying to lazy-load the split
+  // sub-feature chunk. Required for the legacy monolithic bootstrap.js
+  // bundle that inlines 19-scene-gltf.js — without this publish, the
+  // lazy-loader races to fetch bootstrap-feature-scene3d-gltf.js (which
+  // in test environments and in pages that serve only bootstrap.js
+  // doesn't exist), and every declarative model load times out. The
+  // split bootstrap-feature-scene3d-gltf.js bundle also has its own
+  // publish in 26f-feature-scene3d-gltf-suffix.js; both writing the
+  // same value to the same global is a harmless double-set.
+  if (typeof window !== "undefined") {
+    window.__gosx_scene3d_gltf_api = {
+      sceneLoadGLTFModel: sceneLoadGLTFModel,
+      gltfSceneToModelAsset: gltfSceneToModelAsset,
+    };
+    window.__gosx_scene3d_gltf_loaded = true;
+  }

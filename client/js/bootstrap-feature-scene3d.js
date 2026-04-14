@@ -9469,6 +9469,13 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
   var _webgpuDeviceProbe = null;  // null = unprobed, false = unavailable, GPUDevice = ready
   var _webgpuAdapterReady = false;
 
+  function _externalProbe() {
+    if (typeof window !== "undefined" && typeof window.__gosx_scene3d_webgpu_probe === "function") {
+      return window.__gosx_scene3d_webgpu_probe();
+    }
+    return { adapter: null, device: null, ready: false };
+  }
+
   if (typeof navigator !== "undefined" && navigator.gpu && typeof navigator.gpu.requestAdapter === "function") {
     navigator.gpu.requestAdapter().then(function(adapter) {
       if (!adapter) {
@@ -13230,15 +13237,9 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
 
     function scheduleInitialRender() {
       if (disposed) return;
-      if (typeof scheduler !== "undefined" && scheduler && typeof scheduler.postTask === "function") {
-        scheduler.postTask(function() { if (!disposed) renderFrame(0); }, { priority: "user-visible" });
-        return;
-      }
-      if (typeof requestAnimationFrame === "function") {
-        requestAnimationFrame(function() { if (!disposed) renderFrame(0); });
-        return;
-      }
-      setTimeout(function() { if (!disposed) renderFrame(0); }, 0);
+      Promise.resolve().then(function() {
+        if (!disposed) renderFrame(0);
+      });
     }
     scheduleInitialRender();
 

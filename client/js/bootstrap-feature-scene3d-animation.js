@@ -413,6 +413,15 @@
     };
   }
 
+  if (typeof window !== "undefined") {
+    window.__gosx_scene3d_animation_api = {
+      createMixer: createSceneAnimationMixer,
+      buildNodeTransforms: sceneAnimBuildNodeTransforms,
+      computeJointMatrices: sceneAnimComputeJointMatrices,
+    };
+    window.__gosx_scene3d_animation_loaded = true;
+  }
+
   window.__gosx_scene3d_animation_api = {
     createMixer: createSceneAnimationMixer,
     buildNodeTransforms: sceneAnimBuildNodeTransforms,
