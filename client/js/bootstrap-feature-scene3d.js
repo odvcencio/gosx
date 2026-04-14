@@ -12922,6 +12922,16 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
     let scheduledRenderHandle = null;
     let disposed = false;
 
+    function scheduleNextAnimationFrame() {
+      if (disposed) return;
+      if (frameHandle != null) return;
+      if (!sceneWantsAnimation()) return;
+      frameHandle = engineFrame(function(now) {
+        frameHandle = null;
+        renderFrame(now);
+      });
+    }
+
     function swapRenderer(nextRenderer, fallbackReason) {
       if (!nextRenderer) {
         return false;
@@ -13020,6 +13030,7 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
           cancelFrame();
           return;
         }
+        cancelFrame();
         renderFrame(typeof now === "number" ? now : 0, reason || "refresh");
       });
     }
@@ -13130,9 +13141,7 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
           renderer.render(effectiveBundle, viewport);
           renderSceneLabels(labelLayer, effectiveBundle, labelLayoutCache, labelElements, viewport.cssWidth, viewport.cssHeight);
           renderSceneSprites(labelLayer, effectiveBundle, spriteElements, viewport.cssWidth, viewport.cssHeight);
-          if (sceneWantsAnimation()) {
-            frameHandle = engineFrame(renderFrame);
-          }
+          scheduleNextAnimationFrame();
           return;
         }
       }
@@ -13165,9 +13174,7 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
       renderer.render(latestBundle, viewport);
       renderSceneLabels(labelLayer, latestBundle, labelLayoutCache, labelElements, viewport.cssWidth, viewport.cssHeight);
       renderSceneSprites(labelLayer, latestBundle, spriteElements, viewport.cssWidth, viewport.cssHeight);
-      if (sceneWantsAnimation()) {
-        frameHandle = engineFrame(renderFrame);
-      }
+      scheduleNextAnimationFrame();
     }
 
     await sceneModelHydration;

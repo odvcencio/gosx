@@ -2107,6 +2107,39 @@
     let scheduledRenderHandle = null;
     let disposed = false;
 
+    // Guarded animation-frame scheduler. The animation loop was previously
+    // just `frameHandle = engineFrame(renderFrame)` at the end of every
+    // renderFrame call site — no guard against a second chain starting
+    // in parallel. When scheduleRender fires from a scroll event (or any
+    // other observer) its rAF callback calls renderFrame, which then
+    // scheduled ANOTHER rAF via frameHandle, starting a parallel loop.
+    // Each additional scheduleRender kick started another independent
+    // chain, and they never merged back.
+    //
+    // Firefox exposes this dramatically: under programmatic scroll on a
+    // scene with active data-kinetic reveal animations, scroll events fire
+    // many times per frame, each starting a new chain, and rAF queues
+    // depth grows until the main thread is processing 20+ renderFrames per
+    // display-refresh tick — measured at 956/s during a 2 s scroll, with
+    // the matching rAF gap growing to 51 ms p50 (10-20 fps). Chrome hides
+    // some of this via scroll event coalescing but still doubles up (2
+    // renderFrames per display tick), so Chrome gets a free speedup too.
+    //
+    // Fix: schedule via this guarded helper, null frameHandle inside the
+    // rAF callback so the next call-site can schedule exactly one chain
+    // advance, and have scheduleRender cancel any in-flight frameHandle
+    // before calling renderFrame so the eager refresh path doesn't leak
+    // into a duplicate chain.
+    function scheduleNextAnimationFrame() {
+      if (disposed) return;
+      if (frameHandle != null) return;
+      if (!sceneWantsAnimation()) return;
+      frameHandle = engineFrame(function(now) {
+        frameHandle = null;
+        renderFrame(now);
+      });
+    }
+
     function swapRenderer(nextRenderer, fallbackReason) {
       if (!nextRenderer) {
         return false;
@@ -2220,6 +2253,17 @@
           cancelFrame();
           return;
         }
+        // Cancel any in-flight animation-chain rAF before calling
+        // renderFrame directly from this eager-refresh path. Without
+        // this, the animation chain's pending rAF from the previous
+        // frame fires alongside this one, starting a parallel chain
+        // every time scheduleRender is hit. On scroll-heavy pages
+        // those parallel chains compound into the duplicate-rAF
+        // storm that was visible on Firefox as 20 renderFrame calls
+        // per display tick. cancelFrame clears frameHandle; the
+        // subsequent renderFrame call ends with scheduleNextAnimationFrame
+        // which schedules exactly one fresh chain advance.
+        cancelFrame();
         renderFrame(typeof now === "number" ? now : 0, reason || "refresh");
       });
     }
@@ -2330,9 +2374,7 @@
           renderer.render(effectiveBundle, viewport);
           renderSceneLabels(labelLayer, effectiveBundle, labelLayoutCache, labelElements, viewport.cssWidth, viewport.cssHeight);
           renderSceneSprites(labelLayer, effectiveBundle, spriteElements, viewport.cssWidth, viewport.cssHeight);
-          if (sceneWantsAnimation()) {
-            frameHandle = engineFrame(renderFrame);
-          }
+          scheduleNextAnimationFrame();
           return;
         }
       }
@@ -2366,9 +2408,7 @@
       renderer.render(latestBundle, viewport);
       renderSceneLabels(labelLayer, latestBundle, labelLayoutCache, labelElements, viewport.cssWidth, viewport.cssHeight);
       renderSceneSprites(labelLayer, latestBundle, spriteElements, viewport.cssWidth, viewport.cssHeight);
-      if (sceneWantsAnimation()) {
-        frameHandle = engineFrame(renderFrame);
-      }
+      scheduleNextAnimationFrame();
     }
 
     await sceneModelHydration;
