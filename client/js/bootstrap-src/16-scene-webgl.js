@@ -2224,22 +2224,87 @@
     // Points program — compiled lazily on first points entry.
     var pointsProgram = null;
 
-    // Persistent GPU buffers for points.
-    const pointsPositionBuffer = gl.createBuffer();
-    const pointsSizeBuffer = gl.createBuffer();
-    const pointsColorBuffer = gl.createBuffer();
+    // Per-typed-array VBO cache.
+    //
+    // Root cause this fixes: the prior renderer allocated three shared
+    // global VBOs (pointsPositionBuffer/Size/Color) and re-uploaded the
+    // cached typed arrays to them on every entry on every frame via
+    // gl.bufferData(STREAM_DRAW). For an 8-12 entry galaxy scene with
+    // thousands of vertices per layer, that was ~30 bufferData calls and
+    // ~700KB of GPU upload per frame of already-cached, known-static data.
+    // Chrome's driver optimizes the pattern away; Firefox's does not, so
+    // the Scene3D draw loop on FF tripped the script watchdog and fell
+    // to 10-19 fps on particle-heavy pages.
+    //
+    // New approach:
+    //   - Static data (normal scene points, instanced mesh geometry +
+    //     transforms): WeakMap keyed by the typed-array reference. Upload
+    //     once with STATIC_DRAW, reuse the buffer forever. Cache survives
+    //     the per-tick re-normalization in normalizeScenePointsEntry
+    //     because _cachedPos / _cachedSizes / _cachedColors are carried
+    //     forward by reference when the underlying arrays are unchanged.
+    //   - Dynamic data (compute particle systems): persistent per-entry
+    //     buffer with bufferSubData each frame into DYNAMIC_DRAW storage.
+    //     Still avoids the bufferData reallocation churn of the old path;
+    //     only the data upload is paid, not the GPU memory allocator.
+    //
+    // Invalidation:
+    //   - When the proxy setter at 10-runtime-scene-core.js:2017-2021
+    //     nulls _cachedPos (user wrote a new positions array), the next
+    //     draw call constructs a new Float32Array from item.positions,
+    //     and ensureStaticPointsVBO sees a fresh key → new GPU upload.
+    //   - The stale typed array becomes unreachable after normalization
+    //     discards the previous frame's normalized entry, and the
+    //     WeakMap entry vanishes on GC. The associated GPU buffer lives
+    //     in pointsEntryBuffers until dispose() runs (bounded leak only
+    //     on live palette edits; zero leak in steady state).
+    //
+    // All per-entry buffers — static and dynamic, points and meshes —
+    // register into pointsEntryBuffers so dispose() can free them on
+    // scene unmount without needing a per-subsystem bookkeeping pass.
+    const staticPointsArrayVBOs = new WeakMap();
+    const staticMeshArrayVBOs = new WeakMap();
+    const pointsEntryBuffers = new Set();
     var computeParticleSystems = new Map();
     var lastComputeParticleTimeSeconds = null;
 
+    function ensureStaticArrayVBO(cache, typedArray) {
+      if (!typedArray) return null;
+      var buf = cache.get(typedArray);
+      if (buf) return buf;
+      buf = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+      gl.bufferData(gl.ARRAY_BUFFER, typedArray, gl.STATIC_DRAW);
+      cache.set(typedArray, buf);
+      pointsEntryBuffers.add(buf);
+      return buf;
+    }
+
+    // Dynamic path: used by compute particle systems whose backing
+    // Float32Array is stable in identity but whose contents change every
+    // frame. buildComputePointsEntries attaches a stable per-record entry
+    // shell so entry[slot] persists across calls.
+    function ensureDynamicPointsVBO(entry, slot, typedArray) {
+      if (!typedArray) return null;
+      var buf = entry[slot];
+      if (!buf) {
+        buf = gl.createBuffer();
+        entry[slot] = buf;
+        entry[slot + "Bytes"] = 0;
+        pointsEntryBuffers.add(buf);
+      }
+      gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+      if (entry[slot + "Bytes"] !== typedArray.byteLength) {
+        gl.bufferData(gl.ARRAY_BUFFER, typedArray, gl.DYNAMIC_DRAW);
+        entry[slot + "Bytes"] = typedArray.byteLength;
+      } else {
+        gl.bufferSubData(gl.ARRAY_BUFFER, 0, typedArray);
+      }
+      return buf;
+    }
+
     // Instanced PBR program — compiled lazily on first instanced mesh.
     var instancedProgram = null;
-
-    // Persistent GPU buffers for instanced mesh rendering.
-    const instanceTransformBuffer = gl.createBuffer();
-    const instanceVertexBuffer = gl.createBuffer();
-    const instanceNormalBuffer = gl.createBuffer();
-    const instanceUVBuffer = gl.createBuffer();
-    const instanceTangentBuffer = gl.createBuffer();
 
     // Geometry cache: maps "kind:w:h:d:r:s" to generated geometry data.
     var instancedGeometryCache = {};
@@ -2821,6 +2886,17 @@
       if (record && record.system && typeof record.system.dispose === "function") {
         record.system.dispose();
       }
+      // Free any dynamic VBOs attached to the persistent compute entry
+      // shell. Safe to run even if the entry never got drawn (all three
+      // slots will just be undefined). pointsEntryBuffers is keyed by
+      // buffer identity so remove there too to keep dispose() idempotent.
+      if (record && record.pointsEntry) {
+        var ce = record.pointsEntry;
+        if (ce._vboPos) { gl.deleteBuffer(ce._vboPos); pointsEntryBuffers.delete(ce._vboPos); ce._vboPos = null; }
+        if (ce._vboSizes) { gl.deleteBuffer(ce._vboSizes); pointsEntryBuffers.delete(ce._vboSizes); ce._vboSizes = null; }
+        if (ce._vboColors) { gl.deleteBuffer(ce._vboColors); pointsEntryBuffers.delete(ce._vboColors); ce._vboColors = null; }
+        record.pointsEntry = null;
+      }
     }
 
     function syncComputeParticleSystems(entries) {
@@ -2888,31 +2964,41 @@
         var emitter = system.entry && system.entry.emitter && typeof system.entry.emitter === "object"
           ? system.entry.emitter
           : {};
-        pointsEntries.push({
-          id: system.entry && system.entry.id ? system.entry.id : ("scene-compute-points-" + i),
-          count: system.count,
-          color: typeof material.color === "string" ? material.color : "#ffffff",
-          style: material.style,
-          size: sceneNumber(material.size, 1),
-          opacity: 1,
-          blendMode: material.blendMode,
-          attenuation: !!material.attenuation,
-          // Model-matrix transform from the emitter: position, rotation, spin.
-          // Particles are stored in LOCAL space so the renderer's model matrix
-          // applies position + rotation + time-based spin uniformly.
-          x: sceneNumber(emitter.x, 0),
-          y: sceneNumber(emitter.y, 0),
-          z: sceneNumber(emitter.z, 0),
-          rotationX: sceneNumber(emitter.rotationX, 0),
-          rotationY: sceneNumber(emitter.rotationY, 0),
-          rotationZ: sceneNumber(emitter.rotationZ, 0),
-          spinX: sceneNumber(emitter.spinX, 0),
-          spinY: sceneNumber(emitter.spinY, 0),
-          spinZ: sceneNumber(emitter.spinZ, 0),
-          _cachedPos: system.positions,
-          _cachedSizes: system.sizes,
-          _cachedColors: record.colorBuffer,
-        });
+        // Reuse the same synthetic entry object across frames. The
+        // dynamic VBO helper keys its persistent GL buffers off entry
+        // identity (_vboPos / _vboSizes / _vboColors on this object),
+        // so rebuilding a fresh object each frame would allocate a new
+        // buffer every tick and leak GPU memory. The record persists
+        // in computeParticleSystems for the lifetime of the system;
+        // stashing the entry on it gives us a stable handle.
+        if (!record.pointsEntry) {
+          record.pointsEntry = { _dynamic: true };
+        }
+        var computeEntry = record.pointsEntry;
+        computeEntry.id = system.entry && system.entry.id ? system.entry.id : ("scene-compute-points-" + i);
+        computeEntry.count = system.count;
+        computeEntry.color = typeof material.color === "string" ? material.color : "#ffffff";
+        computeEntry.style = material.style;
+        computeEntry.size = sceneNumber(material.size, 1);
+        computeEntry.opacity = 1;
+        computeEntry.blendMode = material.blendMode;
+        computeEntry.attenuation = !!material.attenuation;
+        // Model-matrix transform from the emitter: position, rotation, spin.
+        // Particles are stored in LOCAL space so the renderer's model matrix
+        // applies position + rotation + time-based spin uniformly.
+        computeEntry.x = sceneNumber(emitter.x, 0);
+        computeEntry.y = sceneNumber(emitter.y, 0);
+        computeEntry.z = sceneNumber(emitter.z, 0);
+        computeEntry.rotationX = sceneNumber(emitter.rotationX, 0);
+        computeEntry.rotationY = sceneNumber(emitter.rotationY, 0);
+        computeEntry.rotationZ = sceneNumber(emitter.rotationZ, 0);
+        computeEntry.spinX = sceneNumber(emitter.spinX, 0);
+        computeEntry.spinY = sceneNumber(emitter.spinY, 0);
+        computeEntry.spinZ = sceneNumber(emitter.spinZ, 0);
+        computeEntry._cachedPos = system.positions;
+        computeEntry._cachedSizes = system.sizes;
+        computeEntry._cachedColors = record.colorBuffer;
+        pointsEntries.push(computeEntry);
       }
       return pointsEntries;
     }
@@ -3056,10 +3142,14 @@
             }
           }
         }
-        // Positions (vec3) — upload from cached typed array.
+        // Positions (vec3) — bind the entry's cached VBO (uploaded once
+        // per typed-array lifetime for static points, updated in-place
+        // via bufferSubData for dynamic compute particle systems).
         if (!entry._cachedPos) continue;
-        gl.bindBuffer(gl.ARRAY_BUFFER, pointsPositionBuffer);
-        gl.bufferData(gl.ARRAY_BUFFER, entry._cachedPos, gl.STREAM_DRAW);
+        var posBuf = entry._dynamic
+          ? ensureDynamicPointsVBO(entry, "_vboPos", entry._cachedPos)
+          : ensureStaticArrayVBO(staticPointsArrayVBOs, entry._cachedPos);
+        gl.bindBuffer(gl.ARRAY_BUFFER, posBuf);
         gl.enableVertexAttribArray(pp.attributes.position);
         gl.vertexAttribPointer(pp.attributes.position, 3, gl.FLOAT, false, 0, 0);
 
@@ -3067,8 +3157,10 @@
         var hasSizes = !!entry._cachedSizes;
         gl.uniform1i(pp.uniforms.hasPerVertexSize, hasSizes ? 1 : 0);
         if (hasSizes && pp.attributes.size >= 0) {
-          gl.bindBuffer(gl.ARRAY_BUFFER, pointsSizeBuffer);
-          gl.bufferData(gl.ARRAY_BUFFER, entry._cachedSizes, gl.STREAM_DRAW);
+          var sizeBuf = entry._dynamic
+            ? ensureDynamicPointsVBO(entry, "_vboSizes", entry._cachedSizes)
+            : ensureStaticArrayVBO(staticPointsArrayVBOs, entry._cachedSizes);
+          gl.bindBuffer(gl.ARRAY_BUFFER, sizeBuf);
           gl.enableVertexAttribArray(pp.attributes.size);
           gl.vertexAttribPointer(pp.attributes.size, 1, gl.FLOAT, false, 0, 0);
         } else if (pp.attributes.size >= 0) {
@@ -3080,8 +3172,10 @@
         var hasColors = !!entry._cachedColors;
         gl.uniform1i(pp.uniforms.hasPerVertexColor, hasColors ? 1 : 0);
         if (hasColors && pp.attributes.color >= 0) {
-          gl.bindBuffer(gl.ARRAY_BUFFER, pointsColorBuffer);
-          gl.bufferData(gl.ARRAY_BUFFER, entry._cachedColors, gl.STREAM_DRAW);
+          var colorBuf = entry._dynamic
+            ? ensureDynamicPointsVBO(entry, "_vboColors", entry._cachedColors)
+            : ensureStaticArrayVBO(staticPointsArrayVBOs, entry._cachedColors);
+          gl.bindBuffer(gl.ARRAY_BUFFER, colorBuf);
           gl.enableVertexAttribArray(pp.attributes.color);
           gl.vertexAttribPointer(pp.attributes.color, 4, gl.FLOAT, false, 0, 0);
         } else if (pp.attributes.color >= 0) {
@@ -3182,28 +3276,31 @@
         // Per-object shadow receive control.
         gl.uniform1i(ip.uniforms.receiveShadow, mesh.receiveShadow ? 1 : 0);
 
-        // Upload geometry data to persistent buffers.
-        gl.bindBuffer(gl.ARRAY_BUFFER, instanceVertexBuffer);
-        gl.bufferData(gl.ARRAY_BUFFER, geom.positions, gl.STATIC_DRAW);
+        // Bind per-geometry cached VBOs. getInstancedGeometry returns
+        // the same geom object for any mesh sharing kind+dimensions, so
+        // the WeakMap keyed by geom.positions / normals / uvs / tangents
+        // hits on every subsequent draw and avoids the repeat bufferData.
+        gl.bindBuffer(gl.ARRAY_BUFFER, ensureStaticArrayVBO(staticMeshArrayVBOs, geom.positions));
         gl.enableVertexAttribArray(ip.attributes.position);
         gl.vertexAttribPointer(ip.attributes.position, 3, gl.FLOAT, false, 0, 0);
 
-        gl.bindBuffer(gl.ARRAY_BUFFER, instanceNormalBuffer);
-        gl.bufferData(gl.ARRAY_BUFFER, geom.normals, gl.STATIC_DRAW);
+        gl.bindBuffer(gl.ARRAY_BUFFER, ensureStaticArrayVBO(staticMeshArrayVBOs, geom.normals));
         gl.enableVertexAttribArray(ip.attributes.normal);
         gl.vertexAttribPointer(ip.attributes.normal, 3, gl.FLOAT, false, 0, 0);
 
-        gl.bindBuffer(gl.ARRAY_BUFFER, instanceUVBuffer);
-        gl.bufferData(gl.ARRAY_BUFFER, geom.uvs, gl.STATIC_DRAW);
+        gl.bindBuffer(gl.ARRAY_BUFFER, ensureStaticArrayVBO(staticMeshArrayVBOs, geom.uvs));
         gl.enableVertexAttribArray(ip.attributes.uv);
         gl.vertexAttribPointer(ip.attributes.uv, 2, gl.FLOAT, false, 0, 0);
 
-        gl.bindBuffer(gl.ARRAY_BUFFER, instanceTangentBuffer);
-        gl.bufferData(gl.ARRAY_BUFFER, geom.tangents, gl.STATIC_DRAW);
+        gl.bindBuffer(gl.ARRAY_BUFFER, ensureStaticArrayVBO(staticMeshArrayVBOs, geom.tangents));
         gl.enableVertexAttribArray(ip.attributes.tangent);
         gl.vertexAttribPointer(ip.attributes.tangent, 4, gl.FLOAT, false, 0, 0);
 
-        // Cache the transforms Float32Array on the mesh entry (same pattern as points _cachedPos).
+        // Cache the transforms Float32Array on the mesh entry (same
+        // pattern as points _cachedPos). normalizeSceneInstancedMeshEntry
+        // now carries _cachedTransforms forward across ticks when
+        // mesh.transforms is unchanged by reference, so this branch
+        // only allocates on the first draw of a mesh identity.
         if (!mesh._cachedTransforms) {
           if (mesh.transforms instanceof Float32Array) {
             mesh._cachedTransforms = mesh.transforms;
@@ -3214,9 +3311,8 @@
         var transformData = mesh._cachedTransforms;
         if (!transformData) continue;
 
-        // Upload instance transforms to GPU.
-        gl.bindBuffer(gl.ARRAY_BUFFER, instanceTransformBuffer);
-        gl.bufferData(gl.ARRAY_BUFFER, transformData, gl.STATIC_DRAW);
+        // Bind cached transforms VBO.
+        gl.bindBuffer(gl.ARRAY_BUFFER, ensureStaticArrayVBO(staticMeshArrayVBOs, transformData));
 
         // Set up mat4 attribute (4 × vec4, each with divisor 1).
         // a_instanceMatrix occupies attribute locations starting at ip.attributes.instanceMatrix.
@@ -3250,19 +3346,20 @@
       gl.deleteBuffer(tangentBuffer);
       gl.deleteBuffer(jointsBuffer);
       gl.deleteBuffer(weightsBuffer);
-      gl.deleteBuffer(pointsPositionBuffer);
-      gl.deleteBuffer(pointsSizeBuffer);
-      gl.deleteBuffer(pointsColorBuffer);
+      // Free all per-entry points / mesh VBOs allocated by the lazy
+      // cache (static + dynamic paths both register here). WeakMap
+      // entries for the static caches get GC'd alongside their typed
+      // arrays — we just need to free the GL buffers explicitly since
+      // WebGLBuffer has no GC hook.
+      for (const buf of pointsEntryBuffers) {
+        gl.deleteBuffer(buf);
+      }
+      pointsEntryBuffers.clear();
       for (const record of computeParticleSystems.values()) {
         disposeComputeParticleSystemRecord(record);
       }
       computeParticleSystems.clear();
       lastComputeParticleTimeSeconds = null;
-      gl.deleteBuffer(instanceTransformBuffer);
-      gl.deleteBuffer(instanceVertexBuffer);
-      gl.deleteBuffer(instanceNormalBuffer);
-      gl.deleteBuffer(instanceUVBuffer);
-      gl.deleteBuffer(instanceTangentBuffer);
       if (shadowState.buffer) gl.deleteBuffer(shadowState.buffer);
 
       for (const record of textureCache.values()) {

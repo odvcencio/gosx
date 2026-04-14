@@ -1465,7 +1465,8 @@
     const current = sceneIsPlainObject(fallback) ? fallback : {};
     const item = sceneIsPlainObject(entry) ? entry : {};
     const lifecycle = sceneNormalizeLifecycle(item, current);
-    return {
+    const transforms = Array.isArray(item.transforms) ? item.transforms.slice() : (Array.isArray(current.transforms) ? current.transforms : []);
+    const normalized = {
       id: item.id || current.id || ("scene-instanced-" + index),
       count: Math.max(0, Math.floor(sceneNumber(item.count, sceneNumber(current.count, 0)))),
       kind: normalizeSceneKind(item.kind || current.kind),
@@ -1478,7 +1479,7 @@
       color: typeof item.color === "string" && item.color ? item.color : (typeof current.color === "string" ? current.color : "#8de1ff"),
       roughness: sceneNumber(item.roughness, sceneNumber(current.roughness, 0)),
       metalness: sceneNumber(item.metalness, sceneNumber(current.metalness, 0)),
-      transforms: Array.isArray(item.transforms) ? item.transforms.slice() : (Array.isArray(current.transforms) ? current.transforms : []),
+      transforms,
       castShadow: sceneBool(Object.prototype.hasOwnProperty.call(item, "castShadow") ? item.castShadow : current.castShadow, false),
       receiveShadow: sceneBool(Object.prototype.hasOwnProperty.call(item, "receiveShadow") ? item.receiveShadow : current.receiveShadow, false),
       _transition: lifecycle.transition,
@@ -1486,6 +1487,10 @@
       _outState: lifecycle.outState,
       _live: lifecycle.live,
     };
+    if (transforms === current.transforms && current._cachedTransforms) {
+      normalized._cachedTransforms = current._cachedTransforms;
+    }
+    return normalized;
   }
 
   function sceneInstancedMeshes(props) {
@@ -1962,6 +1967,8 @@
           target._cachedPos = null;
         } else if (key === "sizes" && Object.prototype.hasOwnProperty.call(target, "_cachedSizes")) {
           target._cachedSizes = null;
+        } else if (key === "transforms" && Object.prototype.hasOwnProperty.call(target, "_cachedTransforms")) {
+          target._cachedTransforms = null;
         }
       }
     }
@@ -8390,19 +8397,44 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
 
     var pointsProgram = null;
 
-    const pointsPositionBuffer = gl.createBuffer();
-    const pointsSizeBuffer = gl.createBuffer();
-    const pointsColorBuffer = gl.createBuffer();
+    const staticPointsArrayVBOs = new WeakMap();
+    const staticMeshArrayVBOs = new WeakMap();
+    const pointsEntryBuffers = new Set();
     var computeParticleSystems = new Map();
     var lastComputeParticleTimeSeconds = null;
 
-    var instancedProgram = null;
+    function ensureStaticArrayVBO(cache, typedArray) {
+      if (!typedArray) return null;
+      var buf = cache.get(typedArray);
+      if (buf) return buf;
+      buf = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+      gl.bufferData(gl.ARRAY_BUFFER, typedArray, gl.STATIC_DRAW);
+      cache.set(typedArray, buf);
+      pointsEntryBuffers.add(buf);
+      return buf;
+    }
 
-    const instanceTransformBuffer = gl.createBuffer();
-    const instanceVertexBuffer = gl.createBuffer();
-    const instanceNormalBuffer = gl.createBuffer();
-    const instanceUVBuffer = gl.createBuffer();
-    const instanceTangentBuffer = gl.createBuffer();
+    function ensureDynamicPointsVBO(entry, slot, typedArray) {
+      if (!typedArray) return null;
+      var buf = entry[slot];
+      if (!buf) {
+        buf = gl.createBuffer();
+        entry[slot] = buf;
+        entry[slot + "Bytes"] = 0;
+        pointsEntryBuffers.add(buf);
+      }
+      gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+      if (entry[slot + "Bytes"] !== typedArray.byteLength) {
+        gl.bufferData(gl.ARRAY_BUFFER, typedArray, gl.DYNAMIC_DRAW);
+        entry[slot + "Bytes"] = typedArray.byteLength;
+      } else {
+        gl.bufferSubData(gl.ARRAY_BUFFER, 0, typedArray);
+      }
+      return buf;
+    }
+
+    var instancedProgram = null;
 
     var instancedGeometryCache = {};
 
@@ -8874,6 +8906,13 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
       if (record && record.system && typeof record.system.dispose === "function") {
         record.system.dispose();
       }
+      if (record && record.pointsEntry) {
+        var ce = record.pointsEntry;
+        if (ce._vboPos) { gl.deleteBuffer(ce._vboPos); pointsEntryBuffers.delete(ce._vboPos); ce._vboPos = null; }
+        if (ce._vboSizes) { gl.deleteBuffer(ce._vboSizes); pointsEntryBuffers.delete(ce._vboSizes); ce._vboSizes = null; }
+        if (ce._vboColors) { gl.deleteBuffer(ce._vboColors); pointsEntryBuffers.delete(ce._vboColors); ce._vboColors = null; }
+        record.pointsEntry = null;
+      }
     }
 
     function syncComputeParticleSystems(entries) {
@@ -8941,28 +8980,31 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
         var emitter = system.entry && system.entry.emitter && typeof system.entry.emitter === "object"
           ? system.entry.emitter
           : {};
-        pointsEntries.push({
-          id: system.entry && system.entry.id ? system.entry.id : ("scene-compute-points-" + i),
-          count: system.count,
-          color: typeof material.color === "string" ? material.color : "#ffffff",
-          style: material.style,
-          size: sceneNumber(material.size, 1),
-          opacity: 1,
-          blendMode: material.blendMode,
-          attenuation: !!material.attenuation,
-          x: sceneNumber(emitter.x, 0),
-          y: sceneNumber(emitter.y, 0),
-          z: sceneNumber(emitter.z, 0),
-          rotationX: sceneNumber(emitter.rotationX, 0),
-          rotationY: sceneNumber(emitter.rotationY, 0),
-          rotationZ: sceneNumber(emitter.rotationZ, 0),
-          spinX: sceneNumber(emitter.spinX, 0),
-          spinY: sceneNumber(emitter.spinY, 0),
-          spinZ: sceneNumber(emitter.spinZ, 0),
-          _cachedPos: system.positions,
-          _cachedSizes: system.sizes,
-          _cachedColors: record.colorBuffer,
-        });
+        if (!record.pointsEntry) {
+          record.pointsEntry = { _dynamic: true };
+        }
+        var computeEntry = record.pointsEntry;
+        computeEntry.id = system.entry && system.entry.id ? system.entry.id : ("scene-compute-points-" + i);
+        computeEntry.count = system.count;
+        computeEntry.color = typeof material.color === "string" ? material.color : "#ffffff";
+        computeEntry.style = material.style;
+        computeEntry.size = sceneNumber(material.size, 1);
+        computeEntry.opacity = 1;
+        computeEntry.blendMode = material.blendMode;
+        computeEntry.attenuation = !!material.attenuation;
+        computeEntry.x = sceneNumber(emitter.x, 0);
+        computeEntry.y = sceneNumber(emitter.y, 0);
+        computeEntry.z = sceneNumber(emitter.z, 0);
+        computeEntry.rotationX = sceneNumber(emitter.rotationX, 0);
+        computeEntry.rotationY = sceneNumber(emitter.rotationY, 0);
+        computeEntry.rotationZ = sceneNumber(emitter.rotationZ, 0);
+        computeEntry.spinX = sceneNumber(emitter.spinX, 0);
+        computeEntry.spinY = sceneNumber(emitter.spinY, 0);
+        computeEntry.spinZ = sceneNumber(emitter.spinZ, 0);
+        computeEntry._cachedPos = system.positions;
+        computeEntry._cachedSizes = system.sizes;
+        computeEntry._cachedColors = record.colorBuffer;
+        pointsEntries.push(computeEntry);
       }
       return pointsEntries;
     }
@@ -9093,16 +9135,20 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
           }
         }
         if (!entry._cachedPos) continue;
-        gl.bindBuffer(gl.ARRAY_BUFFER, pointsPositionBuffer);
-        gl.bufferData(gl.ARRAY_BUFFER, entry._cachedPos, gl.STREAM_DRAW);
+        var posBuf = entry._dynamic
+          ? ensureDynamicPointsVBO(entry, "_vboPos", entry._cachedPos)
+          : ensureStaticArrayVBO(staticPointsArrayVBOs, entry._cachedPos);
+        gl.bindBuffer(gl.ARRAY_BUFFER, posBuf);
         gl.enableVertexAttribArray(pp.attributes.position);
         gl.vertexAttribPointer(pp.attributes.position, 3, gl.FLOAT, false, 0, 0);
 
         var hasSizes = !!entry._cachedSizes;
         gl.uniform1i(pp.uniforms.hasPerVertexSize, hasSizes ? 1 : 0);
         if (hasSizes && pp.attributes.size >= 0) {
-          gl.bindBuffer(gl.ARRAY_BUFFER, pointsSizeBuffer);
-          gl.bufferData(gl.ARRAY_BUFFER, entry._cachedSizes, gl.STREAM_DRAW);
+          var sizeBuf = entry._dynamic
+            ? ensureDynamicPointsVBO(entry, "_vboSizes", entry._cachedSizes)
+            : ensureStaticArrayVBO(staticPointsArrayVBOs, entry._cachedSizes);
+          gl.bindBuffer(gl.ARRAY_BUFFER, sizeBuf);
           gl.enableVertexAttribArray(pp.attributes.size);
           gl.vertexAttribPointer(pp.attributes.size, 1, gl.FLOAT, false, 0, 0);
         } else if (pp.attributes.size >= 0) {
@@ -9113,8 +9159,10 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
         var hasColors = !!entry._cachedColors;
         gl.uniform1i(pp.uniforms.hasPerVertexColor, hasColors ? 1 : 0);
         if (hasColors && pp.attributes.color >= 0) {
-          gl.bindBuffer(gl.ARRAY_BUFFER, pointsColorBuffer);
-          gl.bufferData(gl.ARRAY_BUFFER, entry._cachedColors, gl.STREAM_DRAW);
+          var colorBuf = entry._dynamic
+            ? ensureDynamicPointsVBO(entry, "_vboColors", entry._cachedColors)
+            : ensureStaticArrayVBO(staticPointsArrayVBOs, entry._cachedColors);
+          gl.bindBuffer(gl.ARRAY_BUFFER, colorBuf);
           gl.enableVertexAttribArray(pp.attributes.color);
           gl.vertexAttribPointer(pp.attributes.color, 4, gl.FLOAT, false, 0, 0);
         } else if (pp.attributes.color >= 0) {
@@ -9202,23 +9250,19 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
 
         gl.uniform1i(ip.uniforms.receiveShadow, mesh.receiveShadow ? 1 : 0);
 
-        gl.bindBuffer(gl.ARRAY_BUFFER, instanceVertexBuffer);
-        gl.bufferData(gl.ARRAY_BUFFER, geom.positions, gl.STATIC_DRAW);
+        gl.bindBuffer(gl.ARRAY_BUFFER, ensureStaticArrayVBO(staticMeshArrayVBOs, geom.positions));
         gl.enableVertexAttribArray(ip.attributes.position);
         gl.vertexAttribPointer(ip.attributes.position, 3, gl.FLOAT, false, 0, 0);
 
-        gl.bindBuffer(gl.ARRAY_BUFFER, instanceNormalBuffer);
-        gl.bufferData(gl.ARRAY_BUFFER, geom.normals, gl.STATIC_DRAW);
+        gl.bindBuffer(gl.ARRAY_BUFFER, ensureStaticArrayVBO(staticMeshArrayVBOs, geom.normals));
         gl.enableVertexAttribArray(ip.attributes.normal);
         gl.vertexAttribPointer(ip.attributes.normal, 3, gl.FLOAT, false, 0, 0);
 
-        gl.bindBuffer(gl.ARRAY_BUFFER, instanceUVBuffer);
-        gl.bufferData(gl.ARRAY_BUFFER, geom.uvs, gl.STATIC_DRAW);
+        gl.bindBuffer(gl.ARRAY_BUFFER, ensureStaticArrayVBO(staticMeshArrayVBOs, geom.uvs));
         gl.enableVertexAttribArray(ip.attributes.uv);
         gl.vertexAttribPointer(ip.attributes.uv, 2, gl.FLOAT, false, 0, 0);
 
-        gl.bindBuffer(gl.ARRAY_BUFFER, instanceTangentBuffer);
-        gl.bufferData(gl.ARRAY_BUFFER, geom.tangents, gl.STATIC_DRAW);
+        gl.bindBuffer(gl.ARRAY_BUFFER, ensureStaticArrayVBO(staticMeshArrayVBOs, geom.tangents));
         gl.enableVertexAttribArray(ip.attributes.tangent);
         gl.vertexAttribPointer(ip.attributes.tangent, 4, gl.FLOAT, false, 0, 0);
 
@@ -9232,8 +9276,7 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
         var transformData = mesh._cachedTransforms;
         if (!transformData) continue;
 
-        gl.bindBuffer(gl.ARRAY_BUFFER, instanceTransformBuffer);
-        gl.bufferData(gl.ARRAY_BUFFER, transformData, gl.STATIC_DRAW);
+        gl.bindBuffer(gl.ARRAY_BUFFER, ensureStaticArrayVBO(staticMeshArrayVBOs, transformData));
 
         var baseLoc = ip.attributes.instanceMatrix;
         for (var col = 0; col < 4; col++) {
@@ -9262,19 +9305,15 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
       gl.deleteBuffer(tangentBuffer);
       gl.deleteBuffer(jointsBuffer);
       gl.deleteBuffer(weightsBuffer);
-      gl.deleteBuffer(pointsPositionBuffer);
-      gl.deleteBuffer(pointsSizeBuffer);
-      gl.deleteBuffer(pointsColorBuffer);
+      for (const buf of pointsEntryBuffers) {
+        gl.deleteBuffer(buf);
+      }
+      pointsEntryBuffers.clear();
       for (const record of computeParticleSystems.values()) {
         disposeComputeParticleSystemRecord(record);
       }
       computeParticleSystems.clear();
       lastComputeParticleTimeSeconds = null;
-      gl.deleteBuffer(instanceTransformBuffer);
-      gl.deleteBuffer(instanceVertexBuffer);
-      gl.deleteBuffer(instanceNormalBuffer);
-      gl.deleteBuffer(instanceUVBuffer);
-      gl.deleteBuffer(instanceTangentBuffer);
       if (shadowState.buffer) gl.deleteBuffer(shadowState.buffer);
 
       for (const record of textureCache.values()) {

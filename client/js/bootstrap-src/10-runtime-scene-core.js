@@ -1498,7 +1498,8 @@
     const current = sceneIsPlainObject(fallback) ? fallback : {};
     const item = sceneIsPlainObject(entry) ? entry : {};
     const lifecycle = sceneNormalizeLifecycle(item, current);
-    return {
+    const transforms = Array.isArray(item.transforms) ? item.transforms.slice() : (Array.isArray(current.transforms) ? current.transforms : []);
+    const normalized = {
       id: item.id || current.id || ("scene-instanced-" + index),
       count: Math.max(0, Math.floor(sceneNumber(item.count, sceneNumber(current.count, 0)))),
       kind: normalizeSceneKind(item.kind || current.kind),
@@ -1511,7 +1512,7 @@
       color: typeof item.color === "string" && item.color ? item.color : (typeof current.color === "string" ? current.color : "#8de1ff"),
       roughness: sceneNumber(item.roughness, sceneNumber(current.roughness, 0)),
       metalness: sceneNumber(item.metalness, sceneNumber(current.metalness, 0)),
-      transforms: Array.isArray(item.transforms) ? item.transforms.slice() : (Array.isArray(current.transforms) ? current.transforms : []),
+      transforms,
       castShadow: sceneBool(Object.prototype.hasOwnProperty.call(item, "castShadow") ? item.castShadow : current.castShadow, false),
       receiveShadow: sceneBool(Object.prototype.hasOwnProperty.call(item, "receiveShadow") ? item.receiveShadow : current.receiveShadow, false),
       _transition: lifecycle.transition,
@@ -1519,6 +1520,16 @@
       _outState: lifecycle.outState,
       _live: lifecycle.live,
     };
+    // Carry the cached Float32Array view of transforms forward when the
+    // underlying array reference is unchanged (i.e. item.transforms was
+    // not re-supplied this tick, so we fell through to current.transforms).
+    // Mirrors the same pattern used for scene points at line 1469. Without
+    // this, every tick would allocate a fresh Float32Array and VBO for
+    // instanced meshes — defeating the static VBO cache in 16-scene-webgl.
+    if (transforms === current.transforms && current._cachedTransforms) {
+      normalized._cachedTransforms = current._cachedTransforms;
+    }
+    return normalized;
   }
 
   function sceneInstancedMeshes(props) {
@@ -2019,6 +2030,12 @@
           target._cachedPos = null;
         } else if (key === "sizes" && Object.prototype.hasOwnProperty.call(target, "_cachedSizes")) {
           target._cachedSizes = null;
+        } else if (key === "transforms" && Object.prototype.hasOwnProperty.call(target, "_cachedTransforms")) {
+          // Same pattern for instanced mesh transforms — without this,
+          // live transition patches mutating mesh.transforms would
+          // leave the renderer binding the stale cached typed array
+          // (and the WeakMap-keyed VBO bound to it) forever.
+          target._cachedTransforms = null;
         }
       }
     }
