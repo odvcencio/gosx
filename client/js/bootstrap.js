@@ -6466,6 +6466,13 @@
         sceneApplyTransitionPatch(target[key], value);
       } else {
         target[key] = sceneCloneData(value);
+        if (key === "colors" && Object.prototype.hasOwnProperty.call(target, "_cachedColors")) {
+          target._cachedColors = null;
+        } else if (key === "positions" && Object.prototype.hasOwnProperty.call(target, "_cachedPos")) {
+          target._cachedPos = null;
+        } else if (key === "sizes" && Object.prototype.hasOwnProperty.call(target, "_cachedSizes")) {
+          target._cachedSizes = null;
+        }
       }
     }
     if (typeof target._lightHash === "number" && typeof hashLightContent === "function") {

@@ -1999,6 +1999,27 @@
         sceneApplyTransitionPatch(target[key], value);
       } else {
         target[key] = sceneCloneData(value);
+        // Invalidate paired GPU buffer caches when the source array is
+        // replaced. Points entries cache the uploaded GPU buffer in
+        // _cachedColors / _cachedPos / _cachedSizes (set by
+        // normalizeScenePointsEntry), and the renderer keeps using the
+        // cached buffer until it sees the field cleared. Without this,
+        // any live event that updates `colors`, `positions`, or `sizes`
+        // mutates the source array but leaves the renderer uploading
+        // the stale GPU buffer forever — every frame after the live
+        // event reads the wrong data and the visual is unchanged.
+        // Discovered while debugging the m31labs.dev galaxy hub: the
+        // server broadcasts new colors at every time-of-day boundary,
+        // the client receives them via the gosx:hub:event chain, the
+        // patch correctly mutates entry.colors — but the galaxy never
+        // actually re-paints because _cachedColors is never invalidated.
+        if (key === "colors" && Object.prototype.hasOwnProperty.call(target, "_cachedColors")) {
+          target._cachedColors = null;
+        } else if (key === "positions" && Object.prototype.hasOwnProperty.call(target, "_cachedPos")) {
+          target._cachedPos = null;
+        } else if (key === "sizes" && Object.prototype.hasOwnProperty.call(target, "_cachedSizes")) {
+          target._cachedSizes = null;
+        }
       }
     }
     // If the patched target is a light or environment with a cached
