@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.18.0-alpha.5
+
+Patch release for Firefox Scene3D scroll performance.
+
+Scroll-driven Scene3D cameras now cache scroll position and scroll range from scroll/viewport invalidation handlers instead of reading scroll geometry inside every animated render frame. This removes a Firefox layout hot path that could surface as script-timeout warnings during sustained scrolling on particle-heavy scenes.
+
 ## v0.18.0-alpha.4
 
 Patch release for Scene3D renderer state reporting.

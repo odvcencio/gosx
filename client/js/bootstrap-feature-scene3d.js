@@ -14792,11 +14792,23 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
     return Math.max(1, scrollHeight - sceneScrollViewportHeight());
   }
 
+  function sceneUpdateScrollCameraMetrics(scrollCamera, includeMax) {
+    if (!scrollCamera) {
+      return;
+    }
+    scrollCamera._scrollTop = sceneScrollTop();
+    if (includeMax || !Number.isFinite(sceneNumber(scrollCamera._scrollMax, NaN))) {
+      scrollCamera._scrollMax = sceneScrollMax();
+    }
+  }
+
   function sceneAdvanceScrollCamera(scrollCamera) {
     if (!scrollCamera || scrollCamera.start === scrollCamera.end) {
       return;
     }
-    scrollCamera._progress = Math.pow(Math.min(1, Math.max(0, sceneScrollTop() / sceneScrollMax())), 0.5);
+    const scrollTop = sceneNumber(scrollCamera._scrollTop, 0);
+    const scrollMax = Math.max(1, sceneNumber(scrollCamera._scrollMax, 1));
+    scrollCamera._progress = Math.pow(Math.min(1, Math.max(0, scrollTop / scrollMax)), 0.5);
     var target = scrollCamera._progress || 0;
     var current = sceneNumber(scrollCamera._smoothProgress, target);
     if (Math.abs(target - current) < 0.0005) {
@@ -15459,7 +15471,10 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
     };
     document.addEventListener("gosx:hub:event", sceneHubListener);
 
-    const releaseViewportObserver = observeSceneViewport(ctx.mount, scheduleRenderWithViewport);
+    const releaseViewportObserver = observeSceneViewport(ctx.mount, function(reason) {
+      sceneUpdateScrollCameraMetrics(sceneState._scrollCamera, true);
+      scheduleRenderWithViewport(reason);
+    });
     const releaseCapabilityObserver = observeSceneCapability(ctx.mount, props, capability, function(reason) {
       viewportDirty = true;
       const desiredFallback = sceneRendererFallbackReason(props, capability, renderer && renderer.kind);
@@ -15602,7 +15617,9 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
     if (sceneState._scrollCamera) {
       sceneState._scrollCamera._progress = 0;
       sceneState._scrollCamera._smoothProgress = 0;
+      sceneUpdateScrollCameraMetrics(sceneState._scrollCamera, true);
       scrollHandler = function() {
+        sceneUpdateScrollCameraMetrics(sceneState._scrollCamera, false);
         if (!sceneWantsAnimation()) {
           scheduleRender("scroll");
         }
@@ -15617,6 +15634,7 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
         typeof window.visualViewport.addEventListener === "function"
       ) {
         visualViewportScrollHandler = function() {
+          sceneUpdateScrollCameraMetrics(sceneState._scrollCamera, true);
           if (!sceneWantsAnimation()) {
             scheduleRender("visual-viewport");
           }
