@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.18.0-alpha.3
+
+Patch release for Scene3D CSS performance and point-layer memory stability.
+
+The planner now caches resolved Scene3D CSS values behind a mount/root CSS revision, so animated scenes do not call `getComputedStyle()` every frame when no CSS state changed. CSS transition windows still re-resolve at frame cadence while a real transition is active, preserving CSS-driven scene fades without keeping the resolver hot forever.
+
+Point layers that inherit named `<Material>` values now reuse the material-applied point record while the source arrays and material values are unchanged. The cached CSS path also reuses resolved point records. This prevents WebGL from rebuilding large `_cachedPos` / `_cachedColors` typed arrays every frame on particle-heavy scenes such as the m31labs.dev galaxy.
+
+The WebGPU availability probe now avoids a redundant `requestDevice returned null` warning when `requestAdapter()` already reported no adapter. Edge/Firefox fallback still lands on WebGL as before.
+
 ## v0.18.0-alpha.2
 
 Patch release for Scene3D CSS-backed point materials.

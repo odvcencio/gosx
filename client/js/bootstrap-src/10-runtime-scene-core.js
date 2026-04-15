@@ -1967,7 +1967,7 @@
   }
 
   function sceneApplyNamedMaterialToPoints(point, material) {
-    return Object.assign({}, point, {
+    const nextValues = {
       color: material._colorSpecified ? material.color : point.color,
       style: material.style || point.style,
       size: material.size != null ? material.size : point.size,
@@ -1975,7 +1975,33 @@
       blendMode: material._blendModeSpecified ? material.blendMode : point.blendMode,
       depthWrite: material._depthWriteSpecified ? material.depthWrite : point.depthWrite,
       attenuation: material.attenuation != null ? material.attenuation : point.attenuation,
-    });
+    };
+    const cache = point._namedMaterialCache;
+    if (
+      cache &&
+      cache.material === material &&
+      cache.positions === point.positions &&
+      cache.sizes === point.sizes &&
+      cache.colors === point.colors &&
+      cache.color === nextValues.color &&
+      cache.style === nextValues.style &&
+      cache.size === nextValues.size &&
+      cache.opacity === nextValues.opacity &&
+      cache.blendMode === nextValues.blendMode &&
+      cache.depthWrite === nextValues.depthWrite &&
+      cache.attenuation === nextValues.attenuation
+    ) {
+      return cache.value;
+    }
+    const value = Object.assign({}, point, nextValues);
+    point._namedMaterialCache = Object.assign({
+      material,
+      positions: point.positions,
+      sizes: point.sizes,
+      colors: point.colors,
+      value,
+    }, nextValues);
+    return value;
   }
 
   function sceneStateLabels(state) {

@@ -4559,7 +4559,13 @@ test("bootstrap prepares Scene3D pass plans and cached buffers through shared pl
 });
 
 test("bootstrap resolves Scene3D CSS custom properties in the planner", async () => {
-  const env = createContext({});
+  let computedStyleCalls = 0;
+  const env = createContext({
+    getComputedStyle(element) {
+      computedStyleCalls += 1;
+      return element && element.computedStyle ? element.computedStyle : {};
+    },
+  });
   runScript(bootstrapSource, env.context, "bootstrap.js");
   await flushAsyncWork();
 
@@ -4594,7 +4600,8 @@ test("bootstrap resolves Scene3D CSS custom properties in the planner", async ()
     worldMeshNormals: new Float32Array(9),
   };
   const viewport = { cssWidth: 320, cssHeight: 180, pixelWidth: 320, pixelHeight: 180, pixelRatio: 1 };
-  const prepared = api.prepareScene(bundle, bundle.camera, viewport, null, { mount, sentinels });
+  const prepared = api.prepareScene(bundle, bundle.camera, viewport, null, { mount, sentinels, revision: 1 });
+  const firstComputedStyleCalls = computedStyleCalls;
 
   assert.equal(prepared.ir.materials[0].color, "#5eead4");
   assert.equal(prepared.ir.materials[0].roughness, 0.3);
@@ -4603,10 +4610,24 @@ test("bootstrap resolves Scene3D CSS custom properties in the planner", async ()
   assert.equal(prepared.ir.postEffects.length, 2);
   assert.equal(JSON.stringify(prepared.ir.postEffects[0]), JSON.stringify({ kind: "bloom", threshold: 0.8, intensity: 1.1 }));
 
+  const cached = api.prepareScene(bundle, bundle.camera, viewport, prepared, { mount, sentinels, revision: 1 });
+  assert.equal(cached, prepared);
+  assert.equal(computedStyleCalls, firstComputedStyleCalls);
+
+  const cachedAgain = api.prepareScene(bundle, bundle.camera, viewport, cached, { mount, sentinels, revision: 1 });
+  assert.equal(cachedAgain.ir.points[0], cached.ir.points[0]);
+  assert.equal(computedStyleCalls, firstComputedStyleCalls);
+
   mount.computedStyle["--scene-core-color"] = "#1e3a8a";
-  const updated = api.prepareScene(bundle, bundle.camera, viewport, prepared, { mount, sentinels });
+  const staleRevision = api.prepareScene(bundle, bundle.camera, viewport, cachedAgain, { mount, sentinels, revision: 1 });
+  assert.equal(staleRevision, cachedAgain);
+  assert.equal(staleRevision.ir.materials[0].color, "#5eead4");
+  assert.equal(computedStyleCalls, firstComputedStyleCalls);
+
+  const updated = api.prepareScene(bundle, bundle.camera, viewport, staleRevision, { mount, sentinels, revision: 2 });
   assert.notEqual(updated, prepared);
   assert.equal(updated.ir.materials[0].color, "#1e3a8a");
+  assert.ok(computedStyleCalls > firstComputedStyleCalls);
 });
 
 test("bootstrap keeps WebGPU Scene3D points on per-entry cached GPU buffers", () => {
@@ -4640,10 +4661,12 @@ test("bootstrap applies named Scene3D materials to point layers", async () => {
     },
   });
   const points = api.sceneStatePointsWithMaterials(state);
+  const again = api.sceneStatePointsWithMaterials(state);
 
   assert.equal(points[0].color, "var(--galaxy-core-inner)");
   assert.equal(points[0].opacity, "var(--galaxy-core-opacity)");
   assert.equal(points[0].blendMode, "additive");
+  assert.equal(again[0], points[0]);
 });
 
 test("bootstrap observes inherited root CSS var mutations for Scene3D", () => {

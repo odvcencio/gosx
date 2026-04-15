@@ -2119,6 +2119,8 @@
     const sceneNodeSentinels = new Map();
     ctx.mount.__gosxScene3DSentinels = sceneNodeSentinels;
     ctx.mount.__gosxScene3DCSSDynamic = false;
+    ctx.mount.__gosxScene3DCSSRevision = 1;
+    ctx.mount.__gosxScene3DCSSAnimationUntil = 0;
 
     let viewport = applySceneViewport(ctx.mount, canvas, labelLayer, sceneViewportFromMount(ctx.mount, props, viewportBase, canvas, capability), viewportBase);
 
@@ -2138,6 +2140,8 @@
           }
           delete ctx.mount.__gosxScene3DSentinels;
           delete ctx.mount.__gosxScene3DCSSDynamic;
+          delete ctx.mount.__gosxScene3DCSSRevision;
+          delete ctx.mount.__gosxScene3DCSSAnimationUntil;
         },
       };
     }
@@ -2409,6 +2413,8 @@
     }
 
     function markSceneCSSInvalidated(reason) {
+      const revision = Number(ctx.mount && ctx.mount.__gosxScene3DCSSRevision);
+      ctx.mount.__gosxScene3DCSSRevision = Number.isFinite(revision) ? revision + 1 : 1;
       const transitionWindow = Math.max(
         sceneCSSTransitionWindowMillis(ctx.mount),
         sceneCSSTransitionWindowMillis(document && document.documentElement)
@@ -2416,6 +2422,7 @@
       if (transitionWindow > 0) {
         sceneCSSAnimationUntil = Date.now() + transitionWindow;
       }
+      ctx.mount.__gosxScene3DCSSAnimationUntil = sceneCSSAnimationUntil;
       scheduleRender(reason || "css");
     }
 
@@ -2830,6 +2837,8 @@
         }
         delete ctx.mount.__gosxScene3DSentinels;
         delete ctx.mount.__gosxScene3DCSSDynamic;
+        delete ctx.mount.__gosxScene3DCSSRevision;
+        delete ctx.mount.__gosxScene3DCSSAnimationUntil;
       },
     };
   });

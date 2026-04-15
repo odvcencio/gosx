@@ -59,7 +59,7 @@
         console.warn("[gosx] WebGPU probe: requestAdapter returned null");
         _webgpuAdapterProbe = false;
         _webgpuDeviceProbe = false;
-        return null;
+        return false;
       }
       _webgpuAdapterProbe = adapter;
       // Verify device creation actually succeeds — this is where
@@ -68,6 +68,9 @@
       // WebGPU "ready" until the device itself is in hand.
       return adapter.requestDevice();
     }).then(function(device) {
+      if (device === false) {
+        return;
+      }
       if (!device) {
         console.warn("[gosx] WebGPU probe: requestDevice returned null");
         _webgpuDeviceProbe = false;

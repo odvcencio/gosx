@@ -3,11 +3,25 @@
 
   function prepareScene(ir, camera, viewport, lastPrepared, cssContext) {
     const initialSource = ir && typeof ir === "object" ? ir : {};
-    const cssResolved = sceneResolveCSSBundle(initialSource, cssContext);
+    const css = sceneCSSResolverContext(cssContext);
+    const cssInputSignature = sceneCSSInputSignature(initialSource);
+    const cssCache = lastPrepared && lastPrepared.cssCache;
+    const cssResolved = cssCache
+      && cssCache.inputSignature === cssInputSignature
+      && cssCache.revision === css.revision
+      && cssCache.transitionFrame === css.transitionFrame
+        ? sceneCSSApplyCachedResolution(initialSource, cssCache)
+        : sceneResolveCSSBundleWithContext(initialSource, css, cssInputSignature);
     const source = cssResolved.ir;
     const resolvedCamera = camera || source.camera || {};
     const signature = scenePreparedSignature(source, resolvedCamera, viewport);
     if (lastPrepared && lastPrepared.signature === signature) {
+      lastPrepared.ir = source;
+      lastPrepared.camera = resolvedCamera;
+      lastPrepared.viewport = viewport;
+      lastPrepared.resolvedEnv = source.environment || {};
+      lastPrepared.cssDynamic = Boolean(cssResolved.dynamic);
+      lastPrepared.cssCache = cssResolved.cache;
       return lastPrepared;
     }
 
@@ -30,6 +44,7 @@
       materialsHash: scenePlannerMaterialsHash(source),
       resolvedEnv: source.environment || {},
       cssDynamic: Boolean(cssResolved.dynamic),
+      cssCache: cssResolved.cache,
       rebuilds: lastPrepared ? lastPrepared.rebuilds + 1 : 1,
     };
     return prepared;
@@ -37,16 +52,29 @@
 
   function sceneResolveCSSBundle(source, cssContext) {
     const css = sceneCSSResolverContext(cssContext);
+    return sceneResolveCSSBundleWithContext(source, css, sceneCSSInputSignature(source));
+  }
+
+  function sceneResolveCSSBundleWithContext(source, css, inputSignature) {
     const state = {
       source,
       out: source,
       dynamic: false,
+      patches: [],
     };
     sceneCSSResolveExplicitVars(state, css);
     sceneCSSApplyComputedDefaults(state, css);
+    const cache = {
+      inputSignature,
+      revision: css.revision,
+      transitionFrame: css.transitionFrame,
+      dynamic: state.dynamic,
+      patches: state.patches,
+    };
     return {
       ir: state.out,
       dynamic: state.dynamic,
+      cache,
     };
   }
 
@@ -55,12 +83,253 @@
     const mount = context.mount && typeof context.mount === "object" ? context.mount : null;
     const sentinels = context.sentinels || (mount && mount.__gosxScene3DSentinels) || null;
     const win = typeof window !== "undefined" ? window : null;
+    const revision = sceneCSSContextRevision(context, mount);
+    const animationUntil = sceneCSSContextAnimationUntil(context, mount);
+    const now = typeof Date !== "undefined" && typeof Date.now === "function" ? Date.now() : 0;
     return {
       mount,
       sentinels,
       styles: typeof Map === "function" ? new Map() : null,
       hasComputedStyle: Boolean(win && typeof win.getComputedStyle === "function"),
+      revision,
+      transitionFrame: animationUntil > now ? Math.floor(now / 16) : 0,
     };
+  }
+
+  function sceneCSSContextRevision(context, mount) {
+    const raw = context.revision != null
+      ? context.revision
+      : context.cssRevision != null
+        ? context.cssRevision
+        : mount && mount.__gosxScene3DCSSRevision;
+    const revision = Number(raw);
+    return Number.isFinite(revision) ? revision : 0;
+  }
+
+  function sceneCSSContextAnimationUntil(context, mount) {
+    const raw = context.animationUntil != null
+      ? context.animationUntil
+      : context.cssAnimationUntil != null
+        ? context.cssAnimationUntil
+        : mount && mount.__gosxScene3DCSSAnimationUntil;
+    const until = Number(raw);
+    return Number.isFinite(until) ? until : 0;
+  }
+
+  function sceneCSSInputSignature(bundle) {
+    let hash = 2166136261 >>> 0;
+    hash = scenePlannerHashString(hash, "css");
+    hash = scenePlannerHashAny(hash, bundle && bundle.environment, 0);
+    hash = sceneCSSHashCollection(hash, bundle && bundle.materials, [
+      "id", "name", "kind", "color", "opacity", "emissive", "roughness", "metalness",
+      "normalMap", "roughnessMap", "metalnessMap", "emissiveMap", "blendMode",
+      "renderPass", "depthWrite", "style", "size", "attenuation",
+    ]);
+    hash = sceneCSSHashCollection(hash, bundle && bundle.lights, [
+      "id", "kind", "color", "groundColor", "intensity", "x", "y", "z",
+      "directionX", "directionY", "directionZ", "angle", "penumbra",
+      "range", "decay", "shadowBias", "shadowSize",
+    ]);
+    hash = sceneCSSHashCollection(hash, bundle && bundle.objects, [
+      "id", "kind", "material", "materialIndex", "color", "opacity", "emissive",
+      "roughness", "metalness", "lineWidth", "x", "y", "z", "rotationX",
+      "rotationY", "rotationZ", "spinX", "spinY", "spinZ",
+    ]);
+    hash = sceneCSSHashCollection(hash, bundle && bundle.meshObjects, [
+      "id", "kind", "material", "materialIndex", "depthCenter", "vertexOffset",
+      "vertexCount", "color", "opacity", "roughness", "metalness",
+    ]);
+    hash = sceneCSSHashCollection(hash, bundle && bundle.points, [
+      "id", "material", "materialIndex", "count", "color", "size", "opacity",
+      "blendMode", "depthWrite", "x", "y", "z", "rotationX", "rotationY",
+      "rotationZ", "spinX", "spinY", "spinZ",
+    ]);
+    hash = sceneCSSHashCollection(hash, bundle && bundle.instancedMeshes, [
+      "id", "kind", "material", "materialIndex", "count", "color", "roughness",
+      "metalness", "width", "height", "depth", "radius",
+    ]);
+    hash = sceneCSSHashCollection(hash, bundle && bundle.labels, [
+      "id", "color", "background", "borderColor", "offsetX", "offsetY", "opacity",
+    ]);
+    hash = sceneCSSHashCollection(hash, bundle && bundle.sprites, [
+      "id", "width", "height", "scale", "opacity", "offsetX", "offsetY",
+    ]);
+    hash = sceneCSSHashComputeParticles(hash, bundle && bundle.computeParticles);
+    hash = sceneCSSHashCollection(hash, bundle && bundle.postEffects, [
+      "kind", "threshold", "intensity", "radius", "scale", "saturation", "contrast", "exposure",
+    ]);
+    hash = sceneCSSHashCollection(hash, bundle && bundle.postFX, [
+      "kind", "threshold", "intensity", "radius", "scale", "saturation", "contrast", "exposure",
+    ]);
+    return String(hash);
+  }
+
+  function sceneCSSHashCollection(hash, collection, keys) {
+    if (!Array.isArray(collection)) {
+      return scenePlannerHashNumber(hash, 0);
+    }
+    hash = scenePlannerHashNumber(hash, collection.length);
+    for (let index = 0; index < collection.length; index += 1) {
+      hash = sceneCSSHashRecordKeys(hash, collection[index], keys);
+    }
+    return hash;
+  }
+
+  function sceneCSSHashRecordKeys(hash, record, keys) {
+    if (!record || typeof record !== "object") {
+      return scenePlannerHashString(hash, "null");
+    }
+    for (let index = 0; index < keys.length; index += 1) {
+      const key = keys[index];
+      hash = scenePlannerHashString(hash, key);
+      hash = scenePlannerHashAny(hash, record[key], 0);
+    }
+    return hash;
+  }
+
+  function sceneCSSHashComputeParticles(hash, collection) {
+    if (!Array.isArray(collection)) {
+      return scenePlannerHashNumber(hash, 0);
+    }
+    hash = scenePlannerHashNumber(hash, collection.length);
+    for (let index = 0; index < collection.length; index += 1) {
+      const record = collection[index] || {};
+      hash = sceneCSSHashRecordKeys(hash, record, ["id", "kind", "count"]);
+      hash = sceneCSSHashRecordKeys(hash, record.emitter, [
+        "x", "y", "z", "rotationX", "rotationY", "rotationZ", "spinX", "spinY",
+        "spinZ", "radius", "rate", "lifetime", "arms", "wind", "scatter",
+      ]);
+      hash = sceneCSSHashRecordKeys(hash, record.material, [
+        "color", "colorEnd", "size", "sizeEnd", "opacity", "opacityEnd",
+      ]);
+    }
+    return hash;
+  }
+
+  function sceneCSSApplyCachedResolution(source, cache) {
+    const patches = cache && Array.isArray(cache.patches) ? cache.patches : [];
+    if (!patches.length) {
+      return {
+        ir: source,
+        dynamic: Boolean(cache && cache.dynamic),
+        cache,
+      };
+    }
+    const state = {
+      source,
+      out: source,
+      dynamic: Boolean(cache.dynamic),
+    };
+    const recordGroups = typeof Map === "function" ? new Map() : null;
+    for (let index = 0; index < patches.length; index += 1) {
+      const patch = patches[index];
+      if (patch && patch.kind === "record" && recordGroups) {
+        const key = String(patch.collectionKey) + ":" + String(patch.index);
+        if (!recordGroups.has(key)) {
+          recordGroups.set(key, []);
+        }
+        recordGroups.get(key).push(patch);
+      } else {
+        sceneCSSApplyPatch(state, patch);
+      }
+    }
+    if (recordGroups) {
+      recordGroups.forEach(function(group) {
+        sceneCSSApplyRecordPatchGroup(state, group, cache);
+      });
+    }
+    return {
+      ir: state.out,
+      dynamic: Boolean(cache.dynamic),
+      cache,
+    };
+  }
+
+  function sceneCSSApplyRecordPatchGroup(state, patches, cache) {
+    if (!Array.isArray(patches) || patches.length === 0) {
+      return;
+    }
+    const first = patches[0];
+    const collectionKey = first.collectionKey;
+    const index = first.index;
+    const sourceList = Array.isArray(state.source[collectionKey]) ? state.source[collectionKey] : [];
+    const sourceRecord = sourceList[index];
+    if (!sceneIsPlainObject(sourceRecord)) {
+      for (let patchIndex = 0; patchIndex < patches.length; patchIndex += 1) {
+        sceneCSSApplyPatch(state, patches[patchIndex]);
+      }
+      return;
+    }
+    const signature = sceneCSSRecordPatchSignature(patches);
+    const existingCache = sourceRecord._sceneCSSPatchCache;
+    if (
+      existingCache &&
+      existingCache.inputSignature === cache.inputSignature &&
+      existingCache.revision === cache.revision &&
+      existingCache.transitionFrame === cache.transitionFrame &&
+      existingCache.signature === signature &&
+      existingCache.value
+    ) {
+      const list = sceneCSSMutableArray(state, collectionKey);
+      list[index] = existingCache.value;
+      return;
+    }
+    const list = sceneCSSMutableArray(state, collectionKey);
+    const next = Object.assign({}, sourceRecord);
+    for (let patchIndex = 0; patchIndex < patches.length; patchIndex += 1) {
+      const patch = patches[patchIndex];
+      next[patch.key] = sceneCSSClonePatchValue(patch.value);
+    }
+    list[index] = next;
+    sourceRecord._sceneCSSPatchCache = {
+      inputSignature: cache.inputSignature,
+      revision: cache.revision,
+      transitionFrame: cache.transitionFrame,
+      signature,
+      value: next,
+    };
+  }
+
+  function sceneCSSRecordPatchSignature(patches) {
+    let signature = "";
+    for (let index = 0; index < patches.length; index += 1) {
+      const patch = patches[index];
+      signature += String(patch.key) + "=" + String(patch.value) + ";";
+    }
+    return signature;
+  }
+
+  function sceneCSSApplyPatch(state, patch) {
+    if (!patch || typeof patch !== "object") {
+      return;
+    }
+    const value = sceneCSSClonePatchValue(patch.value);
+    switch (patch.kind) {
+      case "topObject":
+        sceneCSSSetTopObjectKey(state, patch.objectKey, patch.key, value);
+        break;
+      case "topValue":
+        sceneCSSSetTopValue(state, patch.key, value);
+        break;
+      case "record":
+        sceneCSSSetRecordKey(state, patch.collectionKey, patch.index, patch.key, value);
+        break;
+      case "nested":
+        sceneCSSSetNestedKey(state, patch.collectionKey, patch.index, patch.childKey, patch.key, value);
+        break;
+      default:
+        break;
+    }
+  }
+
+  function sceneCSSClonePatchValue(value) {
+    if (Array.isArray(value)) {
+      return value.map(sceneCSSClonePatchValue);
+    }
+    if (sceneIsPlainObject(value)) {
+      return Object.assign({}, value);
+    }
+    return value;
   }
 
   function sceneCSSResolveExplicitVars(state, css) {
@@ -120,9 +389,8 @@
         continue;
       }
       state.dynamic = true;
-      if (resolved.hasValue && !sceneCSSSameValue(target[key], resolved.value)) {
-        const object = sceneCSSMutableTopObject(state, objectKey);
-        object[key] = resolved.value;
+      if (resolved.hasValue) {
+        sceneCSSSetTopObjectKey(state, objectKey, key, resolved.value);
       }
     }
   }
@@ -145,9 +413,8 @@
           continue;
         }
         state.dynamic = true;
-        if (resolved.hasValue && !sceneCSSSameValue(record[key], resolved.value)) {
-          const mutable = sceneCSSMutableRecord(state, collectionKey, index);
-          mutable[key] = resolved.value;
+        if (resolved.hasValue) {
+          sceneCSSSetRecordKey(state, collectionKey, index, key, resolved.value);
         }
       }
     }
@@ -182,9 +449,8 @@
             continue;
           }
           state.dynamic = true;
-          if (resolved.hasValue && !sceneCSSSameValue(child[key], resolved.value)) {
-            const mutable = sceneCSSMutableNestedObject(state, "computeParticles", index, childKey);
-            mutable[key] = resolved.value;
+          if (resolved.hasValue) {
+            sceneCSSSetNestedKey(state, "computeParticles", index, childKey, key, resolved.value);
           }
         }
       }
@@ -295,10 +561,11 @@
       if (color != null || roughness != null || metalness != null || opacity != null) {
         const material = sceneCSSMutableMaterialForRecord(state, record);
         if (material) {
-          if (color != null) material.color = color;
-          if (roughness != null) material.roughness = sceneCSSCoerceValue(roughness);
-          if (metalness != null) material.metalness = sceneCSSCoerceValue(metalness);
-          if (opacity != null) material.opacity = sceneCSSCoerceValue(opacity);
+          const materialIndex = sceneCSSMaterialIndexForRecord(record);
+          if (color != null) sceneCSSSetRecordKey(state, "materials", materialIndex, "color", color);
+          if (roughness != null) sceneCSSSetRecordKey(state, "materials", materialIndex, "roughness", sceneCSSCoerceValue(roughness));
+          if (metalness != null) sceneCSSSetRecordKey(state, "materials", materialIndex, "metalness", sceneCSSCoerceValue(metalness));
+          if (opacity != null) sceneCSSSetRecordKey(state, "materials", materialIndex, "opacity", sceneCSSCoerceValue(opacity));
         } else {
           if (color != null) sceneCSSSetRecordKey(state, collectionKey, index, "color", color);
           if (roughness != null) sceneCSSSetRecordKey(state, collectionKey, index, "roughness", sceneCSSCoerceValue(roughness));
@@ -381,18 +648,16 @@
       const element = sceneCSSRecordElement(css, record);
       const wind = sceneCSSReadFirstProperty(css, element, ["--scene-particle-wind"]);
       if (wind != null) {
-        const emitter = sceneCSSMutableNestedObject(state, "computeParticles", index, "emitter");
-        emitter.wind = sceneCSSCoerceValue(wind);
+        sceneCSSSetNestedKey(state, "computeParticles", index, "emitter", "wind", sceneCSSCoerceValue(wind));
         state.dynamic = true;
       }
       const color = sceneCSSReadFirstProperty(css, element, ["--point-color", "--mesh-color"]);
       const size = sceneCSSReadFirstProperty(css, element, ["--point-size"]);
       const opacity = sceneCSSReadFirstProperty(css, element, ["--point-opacity"]);
       if (color != null || size != null || opacity != null) {
-        const material = sceneCSSMutableNestedObject(state, "computeParticles", index, "material");
-        if (color != null) material.color = color;
-        if (size != null) material.size = sceneCSSCoerceValue(size);
-        if (opacity != null) material.opacity = sceneCSSCoerceValue(opacity);
+        if (color != null) sceneCSSSetNestedKey(state, "computeParticles", index, "material", "color", color);
+        if (size != null) sceneCSSSetNestedKey(state, "computeParticles", index, "material", "size", sceneCSSCoerceValue(size));
+        if (opacity != null) sceneCSSSetNestedKey(state, "computeParticles", index, "material", "opacity", sceneCSSCoerceValue(opacity));
         state.dynamic = true;
       }
     }
@@ -552,6 +817,7 @@
     }
     const object = sceneCSSMutableTopObject(state, objectKey);
     object[key] = value;
+    sceneCSSRecordPatch(state, { kind: "topObject", objectKey, key, value });
     return true;
   }
 
@@ -562,6 +828,7 @@
     }
     const mutable = sceneCSSMutableBundle(state);
     mutable[key] = value;
+    sceneCSSRecordPatch(state, { kind: "topValue", key, value });
     return true;
   }
 
@@ -596,6 +863,20 @@
     }
     const mutable = sceneCSSMutableRecord(state, collectionKey, index);
     mutable[key] = value;
+    sceneCSSRecordPatch(state, { kind: "record", collectionKey, index, key, value });
+    return true;
+  }
+
+  function sceneCSSSetNestedKey(state, collectionKey, index, childKey, key, value) {
+    const list = sceneCSSCurrentCollection(state, collectionKey);
+    const record = Array.isArray(list) ? list[index] : null;
+    const child = record && sceneIsPlainObject(record[childKey]) ? record[childKey] : null;
+    if (child && sceneCSSSameValue(child[key], value)) {
+      return false;
+    }
+    const mutable = sceneCSSMutableNestedObject(state, collectionKey, index, childKey);
+    mutable[key] = value;
+    sceneCSSRecordPatch(state, { kind: "nested", collectionKey, index, childKey, key, value });
     return true;
   }
 
@@ -613,12 +894,25 @@
   }
 
   function sceneCSSMutableMaterialForRecord(state, record) {
-    const materialIndex = Math.floor(sceneNumber(record && record.materialIndex, -1));
+    const materialIndex = sceneCSSMaterialIndexForRecord(record);
     const materials = sceneCSSCurrentCollection(state, "materials");
     if (!Array.isArray(materials) || materialIndex < 0 || materialIndex >= materials.length) {
       return null;
     }
     return sceneCSSMutableRecord(state, "materials", materialIndex);
+  }
+
+  function sceneCSSMaterialIndexForRecord(record) {
+    return Math.floor(sceneNumber(record && record.materialIndex, -1));
+  }
+
+  function sceneCSSRecordPatch(state, patch) {
+    if (!state || !Array.isArray(state.patches) || !patch) {
+      return;
+    }
+    state.patches.push(Object.assign({}, patch, {
+      value: sceneCSSClonePatchValue(patch.value),
+    }));
   }
 
   function sceneParseSceneFilter(value) {
