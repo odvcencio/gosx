@@ -1993,7 +1993,25 @@
     ) {
       return cache.value;
     }
+    const previousValue = cache &&
+      cache.positions === point.positions &&
+      cache.sizes === point.sizes &&
+      cache.colors === point.colors &&
+      cache.value
+        ? cache.value
+        : null;
     const value = Object.assign({}, point, nextValues);
+    if (previousValue) {
+      if (previousValue._cachedPos) {
+        value._cachedPos = previousValue._cachedPos;
+      }
+      if (previousValue._cachedSizes) {
+        value._cachedSizes = previousValue._cachedSizes;
+      }
+      if (previousValue._cachedColors) {
+        value._cachedColors = previousValue._cachedColors;
+      }
+    }
     point._namedMaterialCache = Object.assign({
       material,
       positions: point.positions,

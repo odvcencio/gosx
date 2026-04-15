@@ -1155,25 +1155,19 @@
     let hash = 2166136261 >>> 0;
     hash = scenePlannerHashString(hash, "v");
     hash = scenePlannerHashNumber(hash, sceneNumber(bundle && (bundle.bundleVersion != null ? bundle.bundleVersion : bundle.version), 0));
-    hash = scenePlannerHashNumber(hash, sceneNumber(bundle && bundle.timeSeconds, 0));
     hash = scenePlannerHashCamera(hash, camera);
     hash = scenePlannerHashViewport(hash, viewport);
-    hash = scenePlannerHashAny(hash, bundle && bundle.environment, 0);
     hash = scenePlannerHashCollection(hash, bundle && bundle.meshObjects, scenePlannerHashMeshObject);
     hash = scenePlannerHashCollection(hash, bundle && bundle.objects, scenePlannerHashLineObject);
     hash = scenePlannerHashCollection(hash, bundle && bundle.materials, scenePlannerHashMaterial);
     hash = scenePlannerHashCollection(hash, bundle && bundle.lights, scenePlannerHashLight);
-    hash = scenePlannerHashAny(hash, bundle && bundle.points, 0);
-    hash = scenePlannerHashAny(hash, bundle && bundle.instancedMeshes, 0);
-    hash = scenePlannerHashAny(hash, bundle && bundle.computeParticles, 0);
-    hash = scenePlannerHashAny(hash, bundle && bundle.labels, 0);
-    hash = scenePlannerHashAny(hash, bundle && bundle.sprites, 0);
-    hash = scenePlannerHashAny(hash, bundle && bundle.postFX, 0);
-    hash = scenePlannerHashAny(hash, bundle && bundle.postEffects, 0);
+    hash = scenePlannerHashCollection(hash, bundle && bundle.points, scenePlannerHashPointsEntry);
+    hash = scenePlannerHashCollection(hash, bundle && bundle.instancedMeshes, scenePlannerHashInstancedEntry);
+    hash = scenePlannerHashCollection(hash, bundle && bundle.computeParticles, scenePlannerHashComputeEntry);
     hash = scenePlannerHashNumber(hash, arrayLength(bundle && bundle.worldPositions));
     hash = scenePlannerHashNumber(hash, arrayLength(bundle && bundle.worldColors));
-    hash = scenePlannerHashAny(hash, bundle && bundle.worldLineWidths, 0);
-    hash = scenePlannerHashAny(hash, bundle && bundle.worldLinePasses, 0);
+    hash = scenePlannerHashArrayShape(hash, bundle && bundle.worldLineWidths);
+    hash = scenePlannerHashArrayShape(hash, bundle && bundle.worldLinePasses);
     hash = scenePlannerHashNumber(hash, arrayLength(bundle && bundle.worldMeshPositions));
     hash = scenePlannerHashNumber(hash, arrayLength(bundle && bundle.worldMeshNormals));
     return String(hash);
@@ -1313,6 +1307,41 @@
     hash = scenePlannerHashNumber(hash, sceneNumber(light && light.directionZ, 0));
     hash = scenePlannerHashNumber(hash, light && light.castShadow ? 1 : 0);
     return scenePlannerHashNumber(hash, sceneNumber(light && light.shadowSize, 0));
+  }
+
+  function scenePlannerHashPointsEntry(hash, entry) {
+    hash = scenePlannerHashString(hash, entry && entry.id || "");
+    hash = scenePlannerHashString(hash, entry && entry.material || "");
+    hash = scenePlannerHashNumber(hash, sceneNumber(entry && entry.count, 0));
+    hash = scenePlannerHashNumber(hash, sceneNumber(entry && entry.materialIndex, 0));
+    hash = scenePlannerHashString(hash, entry && entry.blendMode || "");
+    hash = scenePlannerHashNumber(hash, entry && entry.depthWrite === false ? 0 : 1);
+    return scenePlannerHashNumber(hash, entry && entry.viewCulled ? 1 : 0);
+  }
+
+  function scenePlannerHashInstancedEntry(hash, entry) {
+    hash = scenePlannerHashString(hash, entry && entry.id || "");
+    hash = scenePlannerHashString(hash, entry && entry.kind || "");
+    hash = scenePlannerHashString(hash, entry && entry.material || "");
+    hash = scenePlannerHashNumber(hash, sceneNumber(entry && entry.count, 0));
+    hash = scenePlannerHashNumber(hash, sceneNumber(entry && entry.materialIndex, 0));
+    hash = scenePlannerHashString(hash, entry && entry.blendMode || "");
+    return scenePlannerHashNumber(hash, entry && entry.depthWrite === false ? 0 : 1);
+  }
+
+  function scenePlannerHashComputeEntry(hash, entry) {
+    hash = scenePlannerHashString(hash, entry && entry.id || "");
+    hash = scenePlannerHashNumber(hash, sceneNumber(entry && entry.count, 0));
+    hash = scenePlannerHashString(hash, entry && entry.kind || "");
+    return scenePlannerHashString(hash, entry && entry.material && entry.material.blendMode || "");
+  }
+
+  function scenePlannerHashArrayShape(hash, value) {
+    hash = scenePlannerHashNumber(hash, arrayLength(value));
+    if (value && typeof value === "object") {
+      hash = scenePlannerHashString(hash, Array.isArray(value) ? "array" : "typed");
+    }
+    return hash;
   }
 
   function scenePlannerHashAny(hash, value, depth) {

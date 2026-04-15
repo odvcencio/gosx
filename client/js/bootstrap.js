@@ -2043,11 +2043,18 @@
     if (!style || typeof name !== "string") {
       return;
     }
+    const next = String(value);
     if (typeof style.setProperty === "function") {
-      style.setProperty(name, String(value));
+      if (typeof style.getPropertyValue === "function" && style.getPropertyValue(name) === next) {
+        return;
+      }
+      style.setProperty(name, next);
       return;
     }
-    style[name] = String(value);
+    if (style[name] === next) {
+      return;
+    }
+    style[name] = next;
   }
 
   function clearStyleValue(style, name) {
@@ -2055,7 +2062,13 @@
       return;
     }
     if (typeof style.removeProperty === "function") {
+      if (typeof style.getPropertyValue === "function" && !style.getPropertyValue(name)) {
+        return;
+      }
       style.removeProperty(name);
+      return;
+    }
+    if (style[name] == null || style[name] === "") {
       return;
     }
     delete style[name];
@@ -2067,11 +2080,18 @@
     }
     if (value == null || value === "") {
       if (typeof element.removeAttribute === "function") {
+        if (!element.hasAttribute || !element.hasAttribute(name)) {
+          return;
+        }
         element.removeAttribute(name);
       }
       return;
     }
-    element.setAttribute(name, String(value));
+    const next = String(value);
+    if (typeof element.getAttribute === "function" && element.getAttribute(name) === next) {
+      return;
+    }
+    element.setAttribute(name, next);
   }
 
   function installTextLayoutSurfaceStyles() {
@@ -6454,7 +6474,25 @@
     ) {
       return cache.value;
     }
+    const previousValue = cache &&
+      cache.positions === point.positions &&
+      cache.sizes === point.sizes &&
+      cache.colors === point.colors &&
+      cache.value
+        ? cache.value
+        : null;
     const value = Object.assign({}, point, nextValues);
+    if (previousValue) {
+      if (previousValue._cachedPos) {
+        value._cachedPos = previousValue._cachedPos;
+      }
+      if (previousValue._cachedSizes) {
+        value._cachedSizes = previousValue._cachedSizes;
+      }
+      if (previousValue._cachedColors) {
+        value._cachedColors = previousValue._cachedColors;
+      }
+    }
     point._namedMaterialCache = Object.assign({
       material,
       positions: point.positions,
@@ -12577,25 +12615,19 @@
     let hash = 2166136261 >>> 0;
     hash = scenePlannerHashString(hash, "v");
     hash = scenePlannerHashNumber(hash, sceneNumber(bundle && (bundle.bundleVersion != null ? bundle.bundleVersion : bundle.version), 0));
-    hash = scenePlannerHashNumber(hash, sceneNumber(bundle && bundle.timeSeconds, 0));
     hash = scenePlannerHashCamera(hash, camera);
     hash = scenePlannerHashViewport(hash, viewport);
-    hash = scenePlannerHashAny(hash, bundle && bundle.environment, 0);
     hash = scenePlannerHashCollection(hash, bundle && bundle.meshObjects, scenePlannerHashMeshObject);
     hash = scenePlannerHashCollection(hash, bundle && bundle.objects, scenePlannerHashLineObject);
     hash = scenePlannerHashCollection(hash, bundle && bundle.materials, scenePlannerHashMaterial);
     hash = scenePlannerHashCollection(hash, bundle && bundle.lights, scenePlannerHashLight);
-    hash = scenePlannerHashAny(hash, bundle && bundle.points, 0);
-    hash = scenePlannerHashAny(hash, bundle && bundle.instancedMeshes, 0);
-    hash = scenePlannerHashAny(hash, bundle && bundle.computeParticles, 0);
-    hash = scenePlannerHashAny(hash, bundle && bundle.labels, 0);
-    hash = scenePlannerHashAny(hash, bundle && bundle.sprites, 0);
-    hash = scenePlannerHashAny(hash, bundle && bundle.postFX, 0);
-    hash = scenePlannerHashAny(hash, bundle && bundle.postEffects, 0);
+    hash = scenePlannerHashCollection(hash, bundle && bundle.points, scenePlannerHashPointsEntry);
+    hash = scenePlannerHashCollection(hash, bundle && bundle.instancedMeshes, scenePlannerHashInstancedEntry);
+    hash = scenePlannerHashCollection(hash, bundle && bundle.computeParticles, scenePlannerHashComputeEntry);
     hash = scenePlannerHashNumber(hash, arrayLength(bundle && bundle.worldPositions));
     hash = scenePlannerHashNumber(hash, arrayLength(bundle && bundle.worldColors));
-    hash = scenePlannerHashAny(hash, bundle && bundle.worldLineWidths, 0);
-    hash = scenePlannerHashAny(hash, bundle && bundle.worldLinePasses, 0);
+    hash = scenePlannerHashArrayShape(hash, bundle && bundle.worldLineWidths);
+    hash = scenePlannerHashArrayShape(hash, bundle && bundle.worldLinePasses);
     hash = scenePlannerHashNumber(hash, arrayLength(bundle && bundle.worldMeshPositions));
     hash = scenePlannerHashNumber(hash, arrayLength(bundle && bundle.worldMeshNormals));
     return String(hash);
@@ -12735,6 +12767,41 @@
     hash = scenePlannerHashNumber(hash, sceneNumber(light && light.directionZ, 0));
     hash = scenePlannerHashNumber(hash, light && light.castShadow ? 1 : 0);
     return scenePlannerHashNumber(hash, sceneNumber(light && light.shadowSize, 0));
+  }
+
+  function scenePlannerHashPointsEntry(hash, entry) {
+    hash = scenePlannerHashString(hash, entry && entry.id || "");
+    hash = scenePlannerHashString(hash, entry && entry.material || "");
+    hash = scenePlannerHashNumber(hash, sceneNumber(entry && entry.count, 0));
+    hash = scenePlannerHashNumber(hash, sceneNumber(entry && entry.materialIndex, 0));
+    hash = scenePlannerHashString(hash, entry && entry.blendMode || "");
+    hash = scenePlannerHashNumber(hash, entry && entry.depthWrite === false ? 0 : 1);
+    return scenePlannerHashNumber(hash, entry && entry.viewCulled ? 1 : 0);
+  }
+
+  function scenePlannerHashInstancedEntry(hash, entry) {
+    hash = scenePlannerHashString(hash, entry && entry.id || "");
+    hash = scenePlannerHashString(hash, entry && entry.kind || "");
+    hash = scenePlannerHashString(hash, entry && entry.material || "");
+    hash = scenePlannerHashNumber(hash, sceneNumber(entry && entry.count, 0));
+    hash = scenePlannerHashNumber(hash, sceneNumber(entry && entry.materialIndex, 0));
+    hash = scenePlannerHashString(hash, entry && entry.blendMode || "");
+    return scenePlannerHashNumber(hash, entry && entry.depthWrite === false ? 0 : 1);
+  }
+
+  function scenePlannerHashComputeEntry(hash, entry) {
+    hash = scenePlannerHashString(hash, entry && entry.id || "");
+    hash = scenePlannerHashNumber(hash, sceneNumber(entry && entry.count, 0));
+    hash = scenePlannerHashString(hash, entry && entry.kind || "");
+    return scenePlannerHashString(hash, entry && entry.material && entry.material.blendMode || "");
+  }
+
+  function scenePlannerHashArrayShape(hash, value) {
+    hash = scenePlannerHashNumber(hash, arrayLength(value));
+    if (value && typeof value === "object") {
+      hash = scenePlannerHashString(hash, Array.isArray(value) ? "array" : "typed");
+    }
+    return hash;
   }
 
   function scenePlannerHashAny(hash, value, depth) {
@@ -22804,6 +22871,20 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
       || Math.abs(sceneNumber(prev.devicePixelRatio, 1) - sceneNumber(next.devicePixelRatio, 1)) > 0.001;
   }
 
+  function sceneViewportEnvironmentSignature(environment) {
+    if (!environment || typeof environment !== "object") {
+      return "";
+    }
+    return [
+      sceneNumber(environment.devicePixelRatio, 1).toFixed(3),
+      Math.round(sceneNumber(environment.viewportWidth, 0)),
+      Math.round(sceneNumber(environment.viewportHeight, 0)),
+      Math.round(sceneNumber(environment.visualViewportWidth, 0)),
+      Math.round(sceneNumber(environment.visualViewportHeight, 0)),
+      environment.visualViewportActive ? "1" : "0",
+    ].join("|");
+  }
+
   function applySceneViewport(mount, canvas, labelLayer, viewport, base) {
     if (!mount || !canvas || !viewport) {
       return viewport;
@@ -22876,7 +22957,13 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
     }
 
     if (window.__gosx.environment && typeof window.__gosx.environment.observe === "function") {
-      stopEnvironment = window.__gosx.environment.observe(function() {
+      let environmentSignature = sceneViewportEnvironmentSignature(sceneEnvironmentState());
+      stopEnvironment = window.__gosx.environment.observe(function(environment) {
+        const nextSignature = sceneViewportEnvironmentSignature(environment);
+        if (environmentSignature === nextSignature) {
+          return;
+        }
+        environmentSignature = nextSignature;
         refresh("environment");
       }, { immediate: false });
     }
@@ -24175,11 +24262,23 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
       }
     }
 
+    function recordScenePerfCounter(name) {
+      if (!(typeof window !== "undefined" && window.__gosx_scene3d_perf === true)) {
+        return;
+      }
+      const key = String(name || "unknown");
+      const counters = ctx.mount.__gosxScene3DScheduleCounts || Object.create(null);
+      counters[key] = (counters[key] || 0) + 1;
+      ctx.mount.__gosxScene3DScheduleCounts = counters;
+    }
+
     function scheduleRender(reason) {
       if (disposed) {
         return;
       }
+      recordScenePerfCounter("schedule:" + (reason || "refresh"));
       if (scheduledRenderHandle != null) {
+        recordScenePerfCounter("coalesced:" + (reason || "refresh"));
         return;
       }
       scheduledRenderHandle = engineFrame(function(now) {
@@ -24254,21 +24353,89 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
       });
     }
 
+    function sceneCSSExternalStyleSignatureFromText(value) {
+      const items = [];
+      const parts = String(value || "").split(";");
+      for (let index = 0; index < parts.length; index += 1) {
+        const part = parts[index];
+        const colon = part.indexOf(":");
+        if (colon < 0) {
+          continue;
+        }
+        const name = part.slice(0, colon).trim();
+        if (!name || name.indexOf("--gosx-") === 0) {
+          continue;
+        }
+        items.push(name + ":" + part.slice(colon + 1).trim());
+      }
+      items.sort();
+      return items.join(";");
+    }
+
+    function sceneCSSExternalStyleSignature(element) {
+      const style = element && element.style;
+      if (!style) {
+        return "";
+      }
+      const items = [];
+      if (typeof style.length === "number" && typeof style.getPropertyValue === "function") {
+        for (let index = 0; index < style.length; index += 1) {
+          const name = style[index];
+          if (!name || String(name).indexOf("--gosx-") === 0) {
+            continue;
+          }
+          items.push(String(name) + ":" + String(style.getPropertyValue(name) || "").trim());
+        }
+        items.sort();
+        return items.join(";");
+      }
+      return sceneCSSExternalStyleSignatureFromText(style.cssText || "");
+    }
+
+    function sceneCSSMutationShouldInvalidate(records) {
+      let sawRecord = false;
+      for (let index = 0; index < (records || []).length; index += 1) {
+        const record = records[index];
+        if (!record || record.type !== "attributes") {
+          continue;
+        }
+        sawRecord = true;
+        const attributeName = String(record.attributeName || "");
+        if (attributeName === "class") {
+          return true;
+        }
+        if (attributeName !== "style") {
+          return true;
+        }
+        const previous = sceneCSSExternalStyleSignatureFromText(record.oldValue || "");
+        const current = sceneCSSExternalStyleSignature(record.target);
+        if (previous !== current) {
+          return true;
+        }
+      }
+      return !sawRecord;
+    }
+
     function observeSceneCSSInvalidation() {
       const releases = [];
       if (typeof MutationObserver === "function") {
-        const observer = new MutationObserver(function() {
+        const observer = new MutationObserver(function(records) {
+          if (!sceneCSSMutationShouldInvalidate(records)) {
+            return;
+          }
           markSceneCSSInvalidated("css");
         });
         observer.observe(ctx.mount, {
           attributes: true,
           attributeFilter: ["class", "style"],
+          attributeOldValue: true,
           subtree: false,
         });
         if (document && document.documentElement && document.documentElement !== ctx.mount) {
           observer.observe(document.documentElement, {
             attributes: true,
             attributeFilter: ["class", "style"],
+            attributeOldValue: true,
             subtree: false,
           });
         }
@@ -24393,8 +24560,9 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
       }
     }
 
-    function renderFrame(now) {
+    function renderFrame(now, reason) {
       if (disposed) return;
+      recordScenePerfCounter("render:" + (reason || "animation"));
       if (viewportDirty) {
         const nextViewport = sceneViewportFromMount(ctx.mount, props, viewportBase, canvas, capability);
         viewport = applySceneViewport(ctx.mount, canvas, labelLayer, nextViewport, viewportBase);

@@ -948,6 +948,20 @@
       || Math.abs(sceneNumber(prev.devicePixelRatio, 1) - sceneNumber(next.devicePixelRatio, 1)) > 0.001;
   }
 
+  function sceneViewportEnvironmentSignature(environment) {
+    if (!environment || typeof environment !== "object") {
+      return "";
+    }
+    return [
+      sceneNumber(environment.devicePixelRatio, 1).toFixed(3),
+      Math.round(sceneNumber(environment.viewportWidth, 0)),
+      Math.round(sceneNumber(environment.viewportHeight, 0)),
+      Math.round(sceneNumber(environment.visualViewportWidth, 0)),
+      Math.round(sceneNumber(environment.visualViewportHeight, 0)),
+      environment.visualViewportActive ? "1" : "0",
+    ].join("|");
+  }
+
   function applySceneViewport(mount, canvas, labelLayer, viewport, base) {
     if (!mount || !canvas || !viewport) {
       return viewport;
@@ -1028,7 +1042,13 @@
     }
 
     if (window.__gosx.environment && typeof window.__gosx.environment.observe === "function") {
-      stopEnvironment = window.__gosx.environment.observe(function() {
+      let environmentSignature = sceneViewportEnvironmentSignature(sceneEnvironmentState());
+      stopEnvironment = window.__gosx.environment.observe(function(environment) {
+        const nextSignature = sceneViewportEnvironmentSignature(environment);
+        if (environmentSignature === nextSignature) {
+          return;
+        }
+        environmentSignature = nextSignature;
         refresh("environment");
       }, { immediate: false });
     }
@@ -2367,11 +2387,23 @@
       }
     }
 
+    function recordScenePerfCounter(name) {
+      if (!(typeof window !== "undefined" && window.__gosx_scene3d_perf === true)) {
+        return;
+      }
+      const key = String(name || "unknown");
+      const counters = ctx.mount.__gosxScene3DScheduleCounts || Object.create(null);
+      counters[key] = (counters[key] || 0) + 1;
+      ctx.mount.__gosxScene3DScheduleCounts = counters;
+    }
+
     function scheduleRender(reason) {
       if (disposed) {
         return;
       }
+      recordScenePerfCounter("schedule:" + (reason || "refresh"));
       if (scheduledRenderHandle != null) {
+        recordScenePerfCounter("coalesced:" + (reason || "refresh"));
         return;
       }
       // Defer the viewport read+write into the RAF callback. The old
@@ -2477,21 +2509,89 @@
       });
     }
 
+    function sceneCSSExternalStyleSignatureFromText(value) {
+      const items = [];
+      const parts = String(value || "").split(";");
+      for (let index = 0; index < parts.length; index += 1) {
+        const part = parts[index];
+        const colon = part.indexOf(":");
+        if (colon < 0) {
+          continue;
+        }
+        const name = part.slice(0, colon).trim();
+        if (!name || name.indexOf("--gosx-") === 0) {
+          continue;
+        }
+        items.push(name + ":" + part.slice(colon + 1).trim());
+      }
+      items.sort();
+      return items.join(";");
+    }
+
+    function sceneCSSExternalStyleSignature(element) {
+      const style = element && element.style;
+      if (!style) {
+        return "";
+      }
+      const items = [];
+      if (typeof style.length === "number" && typeof style.getPropertyValue === "function") {
+        for (let index = 0; index < style.length; index += 1) {
+          const name = style[index];
+          if (!name || String(name).indexOf("--gosx-") === 0) {
+            continue;
+          }
+          items.push(String(name) + ":" + String(style.getPropertyValue(name) || "").trim());
+        }
+        items.sort();
+        return items.join(";");
+      }
+      return sceneCSSExternalStyleSignatureFromText(style.cssText || "");
+    }
+
+    function sceneCSSMutationShouldInvalidate(records) {
+      let sawRecord = false;
+      for (let index = 0; index < (records || []).length; index += 1) {
+        const record = records[index];
+        if (!record || record.type !== "attributes") {
+          continue;
+        }
+        sawRecord = true;
+        const attributeName = String(record.attributeName || "");
+        if (attributeName === "class") {
+          return true;
+        }
+        if (attributeName !== "style") {
+          return true;
+        }
+        const previous = sceneCSSExternalStyleSignatureFromText(record.oldValue || "");
+        const current = sceneCSSExternalStyleSignature(record.target);
+        if (previous !== current) {
+          return true;
+        }
+      }
+      return !sawRecord;
+    }
+
     function observeSceneCSSInvalidation() {
       const releases = [];
       if (typeof MutationObserver === "function") {
-        const observer = new MutationObserver(function() {
+        const observer = new MutationObserver(function(records) {
+          if (!sceneCSSMutationShouldInvalidate(records)) {
+            return;
+          }
           markSceneCSSInvalidated("css");
         });
         observer.observe(ctx.mount, {
           attributes: true,
           attributeFilter: ["class", "style"],
+          attributeOldValue: true,
           subtree: false,
         });
         if (document && document.documentElement && document.documentElement !== ctx.mount) {
           observer.observe(document.documentElement, {
             attributes: true,
             attributeFilter: ["class", "style"],
+            attributeOldValue: true,
             subtree: false,
           });
         }
@@ -2625,8 +2725,9 @@
       }
     }
 
-    function renderFrame(now) {
+    function renderFrame(now, reason) {
       if (disposed) return;
+      recordScenePerfCounter("render:" + (reason || "animation"));
       // Only re-measure the viewport when something has actually
       // invalidated it. Static frames (the common case during continuous
       // animation without DOM changes) reuse the cached `viewport` and

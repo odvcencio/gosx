@@ -4523,8 +4523,13 @@ test("bootstrap prepares Scene3D pass plans and cached buffers through shared pl
 
   bundle.environment = { fogColor: "#0b142a", fogDensity: 0.0003 };
   const withFog = api.prepareScene(bundle, bundle.camera, viewport, updatedPoints);
-  assert.notEqual(withFog, updatedPoints);
+  assert.equal(withFog, updatedPoints);
   assert.equal(withFog.ir.environment.fogDensity, 0.0003);
+
+  bundle.points = [{ id: "stars", count: 8, color: "#5eead4", size: 1.5, positions: [0, 0, 0, 1, 1, 1] }];
+  const withPointGeometry = api.prepareScene(bundle, bundle.camera, viewport, withFog);
+  assert.equal(withPointGeometry, withFog);
+  assert.equal(withPointGeometry.ir.points[0].positions.length, 6);
 
   const cache = new WeakMap();
   const typed = new Float32Array([1, 2, 3]);
@@ -4673,7 +4678,29 @@ test("bootstrap observes inherited root CSS var mutations for Scene3D", () => {
   const source = fs.readFileSync(path.join(__dirname, "bootstrap-src", "20-scene-mount.js"), "utf8");
 
   assert.match(source, /observer\.observe\(document\.documentElement,\s*\{/);
+  assert.match(source, /attributeOldValue:\s*true/);
+  assert.match(source, /sceneCSSMutationShouldInvalidate\(records\)/);
+  assert.match(source, /name\.indexOf\("--gosx-"\)\s*===\s*0/);
   assert.match(source, /sceneCSSTransitionWindowMillis\(document && document\.documentElement\)/);
+});
+
+test("bootstrap gates Scene3D viewport refreshes to viewport-shaped environment changes", () => {
+  const source = fs.readFileSync(path.join(__dirname, "bootstrap-src", "20-scene-mount.js"), "utf8");
+
+  assert.match(source, /function sceneViewportEnvironmentSignature\(environment\)/);
+  assert.match(source, /sceneNumber\(environment\.devicePixelRatio,\s*1\)/);
+  assert.match(source, /Math\.round\(sceneNumber\(environment\.visualViewportHeight,\s*0\)\)/);
+  assert.doesNotMatch(source, /environment\.visualViewportOffsetTop/);
+  assert.match(source, /if \(environmentSignature === nextSignature\) \{\s*return;\s*\}/);
+});
+
+test("bootstrap skips redundant runtime style and attribute writes", () => {
+  const source = fs.readFileSync(path.join(__dirname, "bootstrap-src", "00-textlayout.js"), "utf8");
+
+  assert.match(source, /style\.getPropertyValue\(name\) === next/);
+  assert.match(source, /style\.setProperty\(name,\s*next\)/);
+  assert.match(source, /element\.getAttribute\(name\) === next/);
+  assert.match(source, /element\.setAttribute\(name,\s*next\)/);
 });
 
 test("bootstrap keeps WebGL and WebGPU Scene3D command logs in parity", async () => {

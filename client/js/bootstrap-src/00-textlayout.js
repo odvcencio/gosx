@@ -2055,11 +2055,18 @@
     if (!style || typeof name !== "string") {
       return;
     }
+    const next = String(value);
     if (typeof style.setProperty === "function") {
-      style.setProperty(name, String(value));
+      if (typeof style.getPropertyValue === "function" && style.getPropertyValue(name) === next) {
+        return;
+      }
+      style.setProperty(name, next);
       return;
     }
-    style[name] = String(value);
+    if (style[name] === next) {
+      return;
+    }
+    style[name] = next;
   }
 
   function clearStyleValue(style, name) {
@@ -2067,7 +2074,13 @@
       return;
     }
     if (typeof style.removeProperty === "function") {
+      if (typeof style.getPropertyValue === "function" && !style.getPropertyValue(name)) {
+        return;
+      }
       style.removeProperty(name);
+      return;
+    }
+    if (style[name] == null || style[name] === "") {
       return;
     }
     delete style[name];
@@ -2079,11 +2092,18 @@
     }
     if (value == null || value === "") {
       if (typeof element.removeAttribute === "function") {
+        if (!element.hasAttribute || !element.hasAttribute(name)) {
+          return;
+        }
         element.removeAttribute(name);
       }
       return;
     }
-    element.setAttribute(name, String(value));
+    const next = String(value);
+    if (typeof element.getAttribute === "function" && element.getAttribute(name) === next) {
+      return;
+    }
+    element.setAttribute(name, next);
   }
 
   function installTextLayoutSurfaceStyles() {

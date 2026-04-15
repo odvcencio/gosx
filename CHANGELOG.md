@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.18.0-alpha.6
+
+Patch release for Scene3D CSS invalidation and Firefox/Chromium scroll stability.
+
+Runtime style and attribute writes now skip no-op updates before touching the DOM. Scene3D also ignores environment changes that only alter visual viewport offsets, and its CSS observer filters GoSX-owned `--gosx-*` style churn while still reacting to author CSS variables such as `--galaxy-core-inner`.
+
+This keeps CSS-driven Scene3D live transitions intact without letting root environment updates wake the planner during every scroll frame. On the m31labs.dev galaxy, Firefox now stays at the page scroll floor while the animated WebGL scene continues rendering normally.
+
 ## v0.18.0-alpha.5
 
 Patch release for Firefox Scene3D scroll performance.
