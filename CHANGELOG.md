@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.18.0-alpha.2
+
+Patch release for Scene3D CSS-backed point materials.
+
+Named `<Material>` records can now style `<Points>` layers without accidentally replacing point-specific rendering defaults. The `v0.18.0-alpha.1` material normalizer always assigned mesh-style defaults such as `blendMode`, then the point resolver applied those defaults back to particle layers. Point-heavy scenes that depended on additive blending, such as the m31labs.dev galaxy, could lose their glow/spark particle effect.
+
+The point material resolver now only overrides `color`, `opacity`, `blendMode`, and `depthWrite` when the material explicitly specified those fields. Existing point-layer values remain intact otherwise. The regression test covers a CSS-var material applied to an additive point layer.
+
 ## v0.18.0-alpha.1
 
 Scene3D now has a compiler-first authoring path and a shared render planner that both WebGL and WebGPU consume.

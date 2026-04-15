@@ -6137,6 +6137,10 @@
     const current = sceneIsPlainObject(fallback) ? fallback : {};
     const item = sceneIsPlainObject(raw) ? raw : {};
     const kind = normalizeSceneMaterialKind(item.kind || item.materialKind || current.kind);
+    const colorSpecified = typeof item.color === "string" && item.color !== "";
+    const opacitySpecified = Object.prototype.hasOwnProperty.call(item, "opacity");
+    const blendModeSpecified = Object.prototype.hasOwnProperty.call(item, "blendMode") && String(item.blendMode || "").trim() !== "";
+    const depthWriteSpecified = Object.prototype.hasOwnProperty.call(item, "depthWrite");
     const opacity = sceneClampNumberOrCSSVar(item.opacity, sceneNumber(current.opacity, sceneDefaultMaterialOpacity(kind)), 0, 1);
     const numericOpacity = sceneNumber(opacity, sceneNumber(current.opacity, sceneDefaultMaterialOpacity(kind)));
     const blendMode = normalizeSceneMaterialBlendMode(item.blendMode || current.blendMode, kind, numericOpacity);
@@ -6158,6 +6162,10 @@
       renderPass: normalizeSceneMaterialRenderPass(item.renderPass || current.renderPass, blendMode, numericOpacity),
       wireframe: sceneBool(Object.prototype.hasOwnProperty.call(item, "wireframe") ? item.wireframe : current.wireframe, false),
       depthWrite: Object.prototype.hasOwnProperty.call(item, "depthWrite") ? sceneBool(item.depthWrite, true) : current.depthWrite,
+      _colorSpecified: colorSpecified || current._colorSpecified === true,
+      _opacitySpecified: opacitySpecified || current._opacitySpecified === true,
+      _blendModeSpecified: blendModeSpecified || current._blendModeSpecified === true,
+      _depthWriteSpecified: depthWriteSpecified || current._depthWriteSpecified === true,
     };
     out.key = sceneMaterialProfileKey(out);
     out.shaderData = sceneMaterialShaderData(out);
@@ -6421,12 +6429,12 @@
 
   function sceneApplyNamedMaterialToPoints(point, material) {
     return Object.assign({}, point, {
-      color: material.color || point.color,
+      color: material._colorSpecified ? material.color : point.color,
       style: material.style || point.style,
       size: material.size != null ? material.size : point.size,
-      opacity: material.opacity != null ? material.opacity : point.opacity,
-      blendMode: material.blendMode || point.blendMode,
-      depthWrite: material.depthWrite != null ? material.depthWrite : point.depthWrite,
+      opacity: material._opacitySpecified ? material.opacity : point.opacity,
+      blendMode: material._blendModeSpecified ? material.blendMode : point.blendMode,
+      depthWrite: material._depthWriteSpecified ? material.depthWrite : point.depthWrite,
       attenuation: material.attenuation != null ? material.attenuation : point.attenuation,
     });
   }

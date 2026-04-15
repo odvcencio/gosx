@@ -4632,10 +4632,10 @@ test("bootstrap applies named Scene3D materials to point layers", async () => {
   const state = api.createSceneState({
     scene: {
       materials: [
-        { name: "core", color: "var(--galaxy-core-inner)", opacity: "var(--galaxy-core-opacity)", blendMode: "additive" },
+        { name: "core", color: "var(--galaxy-core-inner)", opacity: "var(--galaxy-core-opacity)" },
       ],
       points: [
-        { id: "galaxy", count: 1, material: "core", color: "#ffffff", opacity: 0.1, blendMode: "alpha" },
+        { id: "galaxy", count: 1, material: "core", color: "#ffffff", opacity: 0.1, blendMode: "additive" },
       ],
     },
   });
