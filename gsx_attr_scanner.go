@@ -26,7 +26,35 @@ func (s *gsxScanner) Scan(payload any, lexer *gotreesitter.ExternalLexer, validS
 	if gsxValid(validSymbols, 0) && lexer.Lookahead() == '{' {
 		return s.scanAttributeExpression(lexer)
 	}
+	if gsxValid(validSymbols, 1) {
+		if s.scanJSXText(lexer) {
+			return true
+		}
+	}
 	return false
+}
+
+// scanJSXText consumes characters that are valid inside JSX text (anything
+// other than `{`, `}`, `<`, `>`, or end-of-input) and emits a jsx_text token.
+// Unlike the regex-based internal lexer, the scanner can begin a text token
+// immediately after a closing tag without requiring leading whitespace, which
+// fixes parses like `<p>a<span>b</span>c</p>`.
+func (s *gsxScanner) scanJSXText(lexer *gotreesitter.ExternalLexer) bool {
+	consumed := 0
+	for {
+		ch := lexer.Lookahead()
+		if ch == 0 || ch == '<' || ch == '>' || ch == '{' || ch == '}' {
+			break
+		}
+		lexer.Advance(false)
+		consumed++
+	}
+	if consumed == 0 {
+		return false
+	}
+	lexer.MarkEnd()
+	lexer.SetResultSymbol(s.lang.ExternalSymbols[1])
+	return true
 }
 
 func (s *gsxScanner) scanAttributeExpression(lexer *gotreesitter.ExternalLexer) bool {

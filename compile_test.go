@@ -232,6 +232,48 @@ func Page() Node {
 	}
 }
 
+func TestCompileTextImmediatelyAfterChildElement(t *testing.T) {
+	cases := []struct {
+		name   string
+		source string
+	}{
+		{
+			name: "trailing punctuation after inline element",
+			source: `package main
+
+func Page() Node {
+	return <p>start <a href="#">link</a>.</p>
+}
+`,
+		},
+		{
+			name: "tight text-element-text on one line",
+			source: `package main
+
+func Page() Node {
+	return <p>a<span>b</span>c</p>
+}
+`,
+		},
+		{
+			name: "anchor with attributes followed by punctuation",
+			source: `package main
+
+func Page() Node {
+	return <p>visit <a href="https://example.com" target="_blank" rel="noopener">example</a>!</p>
+}
+`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := Compile([]byte(tc.source)); err != nil {
+				t.Fatalf("Compile failed: %v", err)
+			}
+		})
+	}
+}
+
 func TestCompileReturnsAllValidationDiagnostics(t *testing.T) {
 	source := []byte(`package main
 

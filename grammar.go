@@ -98,9 +98,13 @@ func GosxGrammar() *Grammar {
 		// Children
 		// ---------------------------------------------------------------
 
-		// Text content between tags (no braces or angle brackets)
-		g.Define("jsx_text",
-			Token(Pat(`[^{}<>]+`)))
+		// Text content between tags. Produced by the external scanner so that
+		// text can begin immediately after a closing tag (e.g. `<p>a<span>b</span>c</p>`)
+		// without requiring intervening whitespace. The internal LR lexer cannot
+		// resolve the boundary between a closing tag and adjacent text without
+		// a whitespace separator; an external scanner has unconstrained
+		// lookahead and can.
+		g.Externals = append(g.Externals, Sym("jsx_text"))
 
 		// Child can be: element, expression, text, or fragment
 		g.Define("_jsx_child",
