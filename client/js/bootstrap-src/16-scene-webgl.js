@@ -2314,17 +2314,17 @@
     const pointsEntryBuffers = new Set();
     var computeParticleSystems = new Map();
     var lastComputeParticleTimeSeconds = null;
+    var lastPreparedScene = null;
 
     function ensureStaticArrayVBO(cache, typedArray) {
-      if (!typedArray) return null;
-      var buf = cache.get(typedArray);
-      if (buf) return buf;
-      buf = gl.createBuffer();
-      gl.bindBuffer(gl.ARRAY_BUFFER, buf);
-      gl.bufferData(gl.ARRAY_BUFFER, typedArray, gl.STATIC_DRAW);
-      cache.set(typedArray, buf);
-      pointsEntryBuffers.add(buf);
-      return buf;
+      return sceneCachedBuffer(cache, typedArray, function() {
+        var buf = gl.createBuffer();
+        pointsEntryBuffers.add(buf);
+        return buf;
+      }, function(buf, data) {
+        gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+        gl.bufferData(gl.ARRAY_BUFFER, data, gl.STATIC_DRAW);
+      });
     }
 
     // Dynamic path: used by compute particle systems whose backing
@@ -2332,22 +2332,18 @@
     // frame. buildComputePointsEntries attaches a stable per-record entry
     // shell so entry[slot] persists across calls.
     function ensureDynamicPointsVBO(entry, slot, typedArray) {
-      if (!typedArray) return null;
-      var buf = entry[slot];
-      if (!buf) {
-        buf = gl.createBuffer();
-        entry[slot] = buf;
-        entry[slot + "Bytes"] = 0;
+      return sceneCachedBuffer(entry, typedArray, function() {
+        var buf = gl.createBuffer();
         pointsEntryBuffers.add(buf);
-      }
-      gl.bindBuffer(gl.ARRAY_BUFFER, buf);
-      if (entry[slot + "Bytes"] !== typedArray.byteLength) {
-        gl.bufferData(gl.ARRAY_BUFFER, typedArray, gl.DYNAMIC_DRAW);
-        entry[slot + "Bytes"] = typedArray.byteLength;
-      } else {
-        gl.bufferSubData(gl.ARRAY_BUFFER, 0, typedArray);
-      }
-      return buf;
+        return buf;
+      }, function(buf, data, state) {
+        gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+        if (!state || state.bytesChanged) {
+          gl.bufferData(gl.ARRAY_BUFFER, data, gl.DYNAMIC_DRAW);
+        } else {
+          gl.bufferSubData(gl.ARRAY_BUFFER, 0, data);
+        }
+      }, { slot: slot, dynamic: true });
     }
 
     // Instanced PBR program — compiled lazily on first instanced mesh.
@@ -2578,6 +2574,19 @@
       if (!hasPBRData && !hasPointsData && !hasInstancedData) {
         return;
       }
+      const preparedScene = typeof prepareScene === "function"
+        ? prepareScene(bundle, bundle.camera, viewport, lastPreparedScene, {
+          mount: canvas && canvas.parentNode || null,
+          sentinels: canvas && canvas.parentNode && canvas.parentNode.__gosxScene3DSentinels || null,
+        })
+        : null;
+      if (preparedScene) {
+        lastPreparedScene = preparedScene;
+        bundle = preparedScene.ir || bundle;
+        if (canvas && canvas.parentNode) {
+          canvas.parentNode.__gosxScene3DCSSDynamic = Boolean(preparedScene.cssDynamic);
+        }
+      }
 
       // --- Shadow Pass ---
       // Identify shadow-casting directional lights (max 2) and render depth maps.
@@ -2700,7 +2709,9 @@
       scenePBRUploadShadowUniforms(gl, uniforms, shadowSlots, shadowLightMatrices, shadowLightIndices, bundle.lights);
 
       // Build draw list grouped by render pass.
-      const drawList = buildPBRDrawList(bundle);
+      const drawList = preparedScene && preparedScene.pbrPasses
+        ? preparedScene.pbrPasses
+        : buildPBRDrawList(bundle);
       const materials = Array.isArray(bundle.materials) ? bundle.materials : [];
 
       // Draw opaque pass.
@@ -3523,6 +3534,16 @@
     return String(a && a.id || "").localeCompare(String(b && b.id || ""));
   }
 
+  function sceneWebGLCommandSequence(bundle, viewport, previousPrepared) {
+    const prepared = prepareScene(
+      bundle || {},
+      bundle && bundle.camera || {},
+      viewport || {},
+      previousPrepared || null
+    );
+    return scenePreparedCommandSequence(prepared);
+  }
+
   // --- Integration ---
 
   // Try to create a PBR renderer. If PBR shader compilation fails,
@@ -3543,4 +3564,31 @@
       return null;
     }
     return renderer;
+  }
+
+  if (typeof sceneBackendRegistry !== "undefined" && sceneBackendRegistry) {
+    sceneBackendRegistry.register("webgl", {
+      capabilities: ["webgl", "webgl2", "shaders", "instancing", "shadows"],
+      create: function(canvas, props, capability) {
+        const caps = capability || {};
+        if (typeof createScenePBRRendererOrFallback === "function") {
+          const gl = typeof canvas.getContext === "function" ? canvas.getContext("webgl2", {
+            alpha: true,
+            premultipliedAlpha: false,
+            antialias: caps.tier === "full" && !caps.lowPower && !caps.reducedData,
+            powerPreference: caps.lowPower || caps.tier === "constrained" ? "low-power" : "high-performance",
+          }) : null;
+          if (gl) {
+            const pbrRenderer = createScenePBRRendererOrFallback(gl, canvas, {});
+            if (pbrRenderer) {
+              return pbrRenderer;
+            }
+          }
+        }
+        return createSceneWebGLRenderer(canvas, {
+          antialias: caps.tier === "full" && !caps.lowPower && !caps.reducedData,
+          powerPreference: caps.lowPower || caps.tier === "constrained" ? "low-power" : "high-performance",
+        });
+      },
+    });
   }

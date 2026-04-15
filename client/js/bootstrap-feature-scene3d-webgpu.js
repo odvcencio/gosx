@@ -16,6 +16,9 @@
   var sceneRenderCamera = sceneApi.sceneRenderCamera || function(c) { return c; };
   var scenePBRDepthSort = sceneApi.scenePBRDepthSort;
   var scenePBRObjectRenderPass = sceneApi.scenePBRObjectRenderPass;
+  var prepareScene = sceneApi.prepareScene || function(ir) { return { ir: ir, pbrPasses: null }; };
+  var scenePreparedCommandSequence = sceneApi.scenePreparedCommandSequence || function() { return []; };
+  var sceneCachedBuffer = sceneApi.sceneCachedBuffer;
   var scenePBRProjectionMatrix = sceneApi.scenePBRProjectionMatrix;
   var scenePBRViewMatrix = sceneApi.scenePBRViewMatrix;
   var sceneShadowLightSpaceMatrix = sceneApi.sceneShadowLightSpaceMatrix;
@@ -1370,10 +1373,13 @@
     var uvBuffer = null;
     var tangentBuffer = null;
 
-    var pointsUniformBuffer = null;
-    var pointsParticleBuffer = null;
+    var pointsEntryGPUBuffers = new Set(); // all allocated GPUBuffers for dispose()
+    var pointsUniformScratch = new ArrayBuffer(128);
+    var pointsUniformScratchF = new Float32Array(pointsUniformScratch);
+    var pointsUniformScratchU = new Uint32Array(pointsUniformScratch);
     var computeParticleSystems = new Map();
     var lastComputeParticleTimeSeconds = null;
+    var lastPreparedScene = null;
 
     var shadowPositionBuffer = null;
     var shadowFrameBuffer = null;
@@ -1440,6 +1446,139 @@
       return buf.subarray(0, length);
     }
 
+    function wgpuCreateTrackedBuffer(usage, dataOrSize) {
+      var size = typeof dataOrSize === "number"
+        ? wgpuAlignUp(Math.max(dataOrSize, 4), 4)
+        : wgpuAlignUp(Math.max(dataOrSize.byteLength, 4), 4);
+      var buffer = wgpuCreateBuffer(device, usage, dataOrSize);
+      try { buffer._gosxByteLength = size; } catch (_err) {}
+      pointsEntryGPUBuffers.add(buffer);
+      return buffer;
+    }
+
+    function wgpuTrackedBufferSize(buffer) {
+      if (!buffer) return 0;
+      if (typeof buffer.size === "number") return buffer.size;
+      if (typeof buffer._gosxByteLength === "number") return buffer._gosxByteLength;
+      return 0;
+    }
+
+    function wgpuUploadTrackedBuffer(usage, buffer, data, state) {
+      var needed = wgpuAlignUp(Math.max(data && data.byteLength || 0, 4), 4);
+      if (state && state.bytesChanged && wgpuTrackedBufferSize(buffer) < needed) {
+        if (buffer && typeof buffer.destroy === "function") {
+          pointsEntryGPUBuffers.delete(buffer);
+          buffer.destroy();
+        }
+        buffer = wgpuCreateTrackedBuffer(usage, needed);
+      }
+      device.queue.writeBuffer(buffer, 0, data);
+      return buffer;
+    }
+
+    function wgpuCachedTrackedBuffer(owner, slot, typedArray, usage, dynamic) {
+      if (!owner || !typedArray) return null;
+      if (typeof sceneCachedBuffer === "function") {
+        return sceneCachedBuffer(owner, typedArray, function(data) {
+          return wgpuCreateTrackedBuffer(usage, data && data.byteLength || 4);
+        }, function(buffer, data, state) {
+          return wgpuUploadTrackedBuffer(usage, buffer, data, state);
+        }, { slot: slot, dynamic: !!dynamic });
+      }
+      var existing = owner[slot];
+      if (!existing || wgpuTrackedBufferSize(existing) < typedArray.byteLength) {
+        if (existing && typeof existing.destroy === "function") {
+          pointsEntryGPUBuffers.delete(existing);
+          existing.destroy();
+        }
+        existing = wgpuCreateTrackedBuffer(usage, typedArray && typedArray.byteLength || 4);
+        owner[slot] = existing;
+        device.queue.writeBuffer(existing, 0, typedArray);
+        owner[slot + "Source"] = typedArray;
+        return existing;
+      }
+      if (dynamic || owner[slot + "Source"] !== typedArray) {
+        device.queue.writeBuffer(existing, 0, typedArray);
+        owner[slot + "Source"] = typedArray;
+      }
+      return existing;
+    }
+
+    function ensurePointsUniformGPUBuffer(owner, uniformData) {
+      return wgpuCachedTrackedBuffer(
+        owner,
+        "_gosxWGPUPointsUniformBuffer",
+        uniformData,
+        GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+        true
+      );
+    }
+
+    function ensurePointsParticleGPUBuffer(entry, particleData) {
+      return wgpuCachedTrackedBuffer(
+        entry,
+        "_gosxWGPUPointsParticleBuffer",
+        particleData,
+        GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+        false
+      );
+    }
+
+    function pointsDefaultColorChanged(entry, rgba) {
+      var cached = entry._cachedParticleDefaultColor;
+      return !cached ||
+        cached[0] !== rgba[0] ||
+        cached[1] !== rgba[1] ||
+        cached[2] !== rgba[2] ||
+        cached[3] !== rgba[3];
+    }
+
+    function ensurePointsParticleData(entry, count, hasSizes, hasColors, defaultColorRGBA) {
+      var pos = entry._cachedPos;
+      var sizes = hasSizes ? entry._cachedSizes : null;
+      var colors = hasColors ? entry._cachedColors : null;
+      if (
+        entry._cachedParticleData &&
+        entry._cachedParticleCount === count &&
+        entry._cachedParticlePositions === pos &&
+        entry._cachedParticleSizes === sizes &&
+        entry._cachedParticleColors === colors &&
+        !pointsDefaultColorChanged(entry, defaultColorRGBA)
+      ) {
+        return entry._cachedParticleData;
+      }
+
+      var particleData = new Float32Array(count * 8);
+      for (var pi = 0; pi < count; pi++) {
+        var base = pi * 8;
+        particleData[base + 0] = pos[pi * 3];
+        particleData[base + 1] = pos[pi * 3 + 1];
+        particleData[base + 2] = pos[pi * 3 + 2];
+        particleData[base + 3] = hasSizes ? sizes[pi] : sceneNumber(entry.size, 1);
+        if (hasColors) {
+          particleData[base + 4] = colors[pi * 4];
+          particleData[base + 5] = colors[pi * 4 + 1];
+          particleData[base + 6] = colors[pi * 4 + 2];
+          particleData[base + 7] = colors[pi * 4 + 3];
+        } else {
+          particleData[base + 4] = defaultColorRGBA[0];
+          particleData[base + 5] = defaultColorRGBA[1];
+          particleData[base + 6] = defaultColorRGBA[2];
+          particleData[base + 7] = 1.0;
+        }
+      }
+
+      entry._cachedParticleData = particleData;
+      entry._cachedParticleCount = count;
+      entry._cachedParticlePositions = pos;
+      entry._cachedParticleSizes = sizes;
+      entry._cachedParticleColors = colors;
+      entry._cachedParticleDefaultColor = defaultColorRGBA.slice ? defaultColorRGBA.slice(0, 4) : [
+        defaultColorRGBA[0], defaultColorRGBA[1], defaultColorRGBA[2], defaultColorRGBA[3],
+      ];
+      return particleData;
+    }
+
     function startInit() { /* no-op: device already initialized */ }
 
     (function initGPUResources() {
@@ -1482,7 +1621,6 @@
         shadowUniformBuffer = device.createBuffer({ size: 256, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
         materialUniformBuffer = device.createBuffer({ size: 64, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
         shadowFrameBuffer = device.createBuffer({ size: 64, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
-        pointsUniformBuffer = device.createBuffer({ size: 128, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
 
         linearSampler = device.createSampler({
           magFilter: "linear",
@@ -2054,9 +2192,9 @@
           _pointsModelMat[3] = 0;         _pointsModelMat[7] = 0;                        _pointsModelMat[11] = 0;                        _pointsModelMat[15] = 1;
         }
 
-        var puData = new ArrayBuffer(128);
-        var puF = new Float32Array(puData);
-        var puU = new Uint32Array(puData);
+        pointsUniformScratchF.fill(0);
+        var puF = pointsUniformScratchF;
+        var puU = pointsUniformScratchU;
 
         puF.set(_pointsModelMat, 0);   // modelMatrix @ 0
         puF[16] = sceneNumber(entry.size, 1); // defaultSize @ 64
@@ -2112,33 +2250,10 @@
         puU[20] = hasColors ? 1 : 0;
         puU[21] = hasSizes ? 1 : 0;
 
-        device.queue.writeBuffer(pointsUniformBuffer, 0, new Float32Array(puData));
+        var pointsUniformBuffer = ensurePointsUniformGPUBuffer(entry, puF);
 
-        var particleData = new Float32Array(count * 8);
-        for (var pi = 0; pi < count; pi++) {
-          var base = pi * 8;
-          particleData[base + 0] = entry._cachedPos[pi * 3];
-          particleData[base + 1] = entry._cachedPos[pi * 3 + 1];
-          particleData[base + 2] = entry._cachedPos[pi * 3 + 2];
-          particleData[base + 3] = hasSizes ? entry._cachedSizes[pi] : sceneNumber(entry.size, 1);
-          if (hasColors) {
-            particleData[base + 4] = entry._cachedColors[pi * 4];
-            particleData[base + 5] = entry._cachedColors[pi * 4 + 1];
-            particleData[base + 6] = entry._cachedColors[pi * 4 + 2];
-            particleData[base + 7] = entry._cachedColors[pi * 4 + 3];
-          } else {
-            particleData[base + 4] = defaultColorRGBA[0];
-            particleData[base + 5] = defaultColorRGBA[1];
-            particleData[base + 6] = defaultColorRGBA[2];
-            particleData[base + 7] = 1.0;
-          }
-        }
-
-        pointsParticleBuffer = wgpuEnsureBufferData(
-          device, pointsParticleBuffer,
-          GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-          particleData
-        );
+        var particleData = ensurePointsParticleData(entry, count, hasSizes, hasColors, defaultColorRGBA);
+        var pointsParticleBuffer = ensurePointsParticleGPUBuffer(entry, particleData);
 
         var pointsBG = device.createBindGroup({
           layout: pointsBindGroupLayout,
@@ -2175,9 +2290,9 @@
         var entry = system.entry && typeof system.entry === "object" ? system.entry : {};
         var material = entry.material && typeof entry.material === "object" ? entry.material : {};
 
-        var puData = new ArrayBuffer(128);
-        var puF = new Float32Array(puData);
-        var puU = new Uint32Array(puData);
+        pointsUniformScratchF.fill(0);
+        var puF = pointsUniformScratchF;
+        var puU = pointsUniformScratchU;
         puF.set(pointsIdentityMatrix, 0);
 
         var defaultColorRGBA = sceneColorRGBA(material.color, [1, 1, 1, 1]);
@@ -2196,7 +2311,7 @@
         puF[28] = fogColorRGBA[1];
         puF[29] = fogColorRGBA[2];
 
-        device.queue.writeBuffer(pointsUniformBuffer, 0, new Float32Array(puData));
+        var pointsUniformBuffer = ensurePointsUniformGPUBuffer(system, puF);
 
         var pointsBG = device.createBindGroup({
           layout: pointsBindGroupLayout,
@@ -2233,6 +2348,19 @@
       var hasPointsData = (Array.isArray(bundle.points) && bundle.points.length > 0) ||
         (Array.isArray(bundle.computeParticles) && bundle.computeParticles.length > 0);
       if (!hasPBRData && !hasPointsData) return;
+      var preparedScene = typeof prepareScene === "function"
+        ? prepareScene(bundle, bundle.camera, viewport, lastPreparedScene, {
+          mount: canvas && canvas.parentNode || null,
+          sentinels: canvas && canvas.parentNode && canvas.parentNode.__gosxScene3DSentinels || null,
+        })
+        : null;
+      if (preparedScene) {
+        lastPreparedScene = preparedScene;
+        bundle = preparedScene.ir || bundle;
+        if (canvas && canvas.parentNode) {
+          canvas.parentNode.__gosxScene3DCSSDynamic = Boolean(preparedScene.cssDynamic);
+        }
+      }
 
       var width = canvas.width;
       var height = canvas.height;
@@ -2343,7 +2471,9 @@
       });
 
       if (hasPBRData) {
-        var drawList = buildDrawList(bundle);
+        var drawList = preparedScene && preparedScene.pbrPasses
+          ? preparedScene.pbrPasses
+          : buildDrawList(bundle);
         var materials = Array.isArray(bundle.materials) ? bundle.materials : [];
 
         if (drawList.opaque.length > 0) {
@@ -2408,8 +2538,10 @@
       if (tangentBuffer) tangentBuffer.destroy();
       if (shadowPositionBuffer) shadowPositionBuffer.destroy();
       if (shadowFrameBuffer) shadowFrameBuffer.destroy();
-      if (pointsUniformBuffer) pointsUniformBuffer.destroy();
-      if (pointsParticleBuffer) pointsParticleBuffer.destroy();
+      pointsEntryGPUBuffers.forEach(function(buffer) {
+        if (buffer && typeof buffer.destroy === "function") buffer.destroy();
+      });
+      pointsEntryGPUBuffers.clear();
       disposeComputeParticleSystems();
 
       if (mainDepthTexture) mainDepthTexture.destroy();
@@ -2440,6 +2572,16 @@
       render: render,
       dispose: dispose,
     };
+  }
+
+  function sceneWebGPUCommandSequence(bundle, viewport, previousPrepared) {
+    var prepared = prepareScene(
+      bundle || {},
+      bundle && bundle.camera || {},
+      viewport || {},
+      previousPrepared || null
+    );
+    return scenePreparedCommandSequence(prepared);
   }
 
   function sceneWebGPUAvailable() {
@@ -3112,7 +3254,9 @@
   window.__gosx_scene3d_webgpu_api = {
     createRenderer: createSceneWebGPURenderer,
     available: sceneWebGPUAvailable,
+    commandSequence: sceneWebGPUCommandSequence,
   };
+  window.__gosx_scene3d_api.sceneWebGPUCommandSequence = sceneWebGPUCommandSequence;
 
   window.__gosx_scene3d_webgpu_loaded = true;
 

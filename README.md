@@ -62,6 +62,8 @@ GoSX provides five execution primitives. A form submission is not a canvas game 
 
 Use what you need. A static marketing page uses only Server. A dashboard adds Islands. A game adds an Engine. A collaborative editor adds a Hub. You never pay for what you don't use.
 
+Scene3D is the built-in 3D engine primitive: prop-based scenes and composable `<Scene3D><Mesh /><Points /></Scene3D>` authoring both lower toward the same versioned SceneIR contract.
+
 ## Quick Start
 
 ```bash
@@ -325,6 +327,7 @@ scene.Props{
 - **Camera controls** — `orbit`, `drag-to-rotate`, focus targets, pick signals, drag signals, event signals exposed as `$`-signals consumable by surrounding islands
 - **Capability tiers** — graceful degradation across WebGPU → WebGL → canvas fallbacks
 - **Backends at parity** — both the WebGL and WebGPU renderers honor the same IR, the same post-processing chain, and the same memory-cap semantics
+- **CSS-stylable 3D** — composable materials, lights, environment, point layers, and post-FX can read `var(--scene-*)` custom properties through the planner, so class changes, media queries, and CSS transitions can drive scene state without authored JavaScript animation code
 
 The scene graph is inspectable Go code. The IR is serializable. The renderer is reproducible. You can hold the whole thing in your head, and when something goes wrong you read Go and JavaScript — not a black box.
 

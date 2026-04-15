@@ -11,6 +11,7 @@ import (
 	"sync"
 
 	"github.com/odvcencio/gosx"
+	gosxcss "github.com/odvcencio/gosx/css"
 	"github.com/odvcencio/gosx/ir"
 )
 
@@ -148,6 +149,7 @@ type fileRenderOptions struct {
 	HTMLPlaceholders      []string
 	EvalEnv               fileRenderEnv
 	RequireReplacement    bool
+	Scene3DStyles         gosxcss.Scene3DStylesheet
 }
 
 func renderFileNode(path string, opts fileRenderOptions) (gosx.Node, error) {
@@ -155,7 +157,9 @@ func renderFileNode(path string, opts fileRenderOptions) (gosx.Node, error) {
 	if err != nil {
 		return gosx.Node{}, fmt.Errorf("read %s: %w", path, err)
 	}
-	scopeID := fileCSSScopeID(sidecarCSSPath(path))
+	cssPath := sidecarCSSPath(path)
+	scopeID := fileCSSScopeID(cssPath)
+	opts.Scene3DStyles = opts.Scene3DStyles.Merge(fileScene3DStyles(cssPath))
 
 	switch filepath.Ext(path) {
 	case ".html":

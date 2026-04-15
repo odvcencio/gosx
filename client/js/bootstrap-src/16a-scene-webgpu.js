@@ -1451,10 +1451,24 @@
     var tangentBuffer = null;
 
     // Points buffers.
-    var pointsUniformBuffer = null;
-    var pointsParticleBuffer = null;
+    //
+    // Each points entry owns its uniform/storage buffers. Uniform data can
+    // move every frame (spin/fog/opacity), so it reuses per-entry GPUBuffer
+    // storage with writeBuffer. Particle storage is keyed by the stable
+    // typed-array payload and uploads only when source/count/color inputs
+    // change.
+    var pointsEntryGPUBuffers = new Set(); // all allocated GPUBuffers for dispose()
+    // Hoisted scratches so uniform uploads don't allocate fresh 128-byte
+    // ArrayBuffers per entry per frame. The uniform layout is 128 bytes
+    // aligned (see PointsUniforms comment in drawPointsEntries). Wrapped
+    // Float32Array / Uint32Array views are created once for the same
+    // underlying storage.
+    var pointsUniformScratch = new ArrayBuffer(128);
+    var pointsUniformScratchF = new Float32Array(pointsUniformScratch);
+    var pointsUniformScratchU = new Uint32Array(pointsUniformScratch);
     var computeParticleSystems = new Map();
     var lastComputeParticleTimeSeconds = null;
+    var lastPreparedScene = null;
 
     // Shadow pass buffer.
     var shadowPositionBuffer = null;
@@ -1529,6 +1543,139 @@
       return buf.subarray(0, length);
     }
 
+    function wgpuCreateTrackedBuffer(usage, dataOrSize) {
+      var size = typeof dataOrSize === "number"
+        ? wgpuAlignUp(Math.max(dataOrSize, 4), 4)
+        : wgpuAlignUp(Math.max(dataOrSize.byteLength, 4), 4);
+      var buffer = wgpuCreateBuffer(device, usage, dataOrSize);
+      try { buffer._gosxByteLength = size; } catch (_err) {}
+      pointsEntryGPUBuffers.add(buffer);
+      return buffer;
+    }
+
+    function wgpuTrackedBufferSize(buffer) {
+      if (!buffer) return 0;
+      if (typeof buffer.size === "number") return buffer.size;
+      if (typeof buffer._gosxByteLength === "number") return buffer._gosxByteLength;
+      return 0;
+    }
+
+    function wgpuUploadTrackedBuffer(usage, buffer, data, state) {
+      var needed = wgpuAlignUp(Math.max(data && data.byteLength || 0, 4), 4);
+      if (state && state.bytesChanged && wgpuTrackedBufferSize(buffer) < needed) {
+        if (buffer && typeof buffer.destroy === "function") {
+          pointsEntryGPUBuffers.delete(buffer);
+          buffer.destroy();
+        }
+        buffer = wgpuCreateTrackedBuffer(usage, needed);
+      }
+      device.queue.writeBuffer(buffer, 0, data);
+      return buffer;
+    }
+
+    function wgpuCachedTrackedBuffer(owner, slot, typedArray, usage, dynamic) {
+      if (!owner || !typedArray) return null;
+      if (typeof sceneCachedBuffer === "function") {
+        return sceneCachedBuffer(owner, typedArray, function(data) {
+          return wgpuCreateTrackedBuffer(usage, data && data.byteLength || 4);
+        }, function(buffer, data, state) {
+          return wgpuUploadTrackedBuffer(usage, buffer, data, state);
+        }, { slot: slot, dynamic: !!dynamic });
+      }
+      var existing = owner[slot];
+      if (!existing || wgpuTrackedBufferSize(existing) < typedArray.byteLength) {
+        if (existing && typeof existing.destroy === "function") {
+          pointsEntryGPUBuffers.delete(existing);
+          existing.destroy();
+        }
+        existing = wgpuCreateTrackedBuffer(usage, typedArray && typedArray.byteLength || 4);
+        owner[slot] = existing;
+        device.queue.writeBuffer(existing, 0, typedArray);
+        owner[slot + "Source"] = typedArray;
+        return existing;
+      }
+      if (dynamic || owner[slot + "Source"] !== typedArray) {
+        device.queue.writeBuffer(existing, 0, typedArray);
+        owner[slot + "Source"] = typedArray;
+      }
+      return existing;
+    }
+
+    function ensurePointsUniformGPUBuffer(owner, uniformData) {
+      return wgpuCachedTrackedBuffer(
+        owner,
+        "_gosxWGPUPointsUniformBuffer",
+        uniformData,
+        GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+        true
+      );
+    }
+
+    function ensurePointsParticleGPUBuffer(entry, particleData) {
+      return wgpuCachedTrackedBuffer(
+        entry,
+        "_gosxWGPUPointsParticleBuffer",
+        particleData,
+        GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+        false
+      );
+    }
+
+    function pointsDefaultColorChanged(entry, rgba) {
+      var cached = entry._cachedParticleDefaultColor;
+      return !cached ||
+        cached[0] !== rgba[0] ||
+        cached[1] !== rgba[1] ||
+        cached[2] !== rgba[2] ||
+        cached[3] !== rgba[3];
+    }
+
+    function ensurePointsParticleData(entry, count, hasSizes, hasColors, defaultColorRGBA) {
+      var pos = entry._cachedPos;
+      var sizes = hasSizes ? entry._cachedSizes : null;
+      var colors = hasColors ? entry._cachedColors : null;
+      if (
+        entry._cachedParticleData &&
+        entry._cachedParticleCount === count &&
+        entry._cachedParticlePositions === pos &&
+        entry._cachedParticleSizes === sizes &&
+        entry._cachedParticleColors === colors &&
+        !pointsDefaultColorChanged(entry, defaultColorRGBA)
+      ) {
+        return entry._cachedParticleData;
+      }
+
+      var particleData = new Float32Array(count * 8);
+      for (var pi = 0; pi < count; pi++) {
+        var base = pi * 8;
+        particleData[base + 0] = pos[pi * 3];
+        particleData[base + 1] = pos[pi * 3 + 1];
+        particleData[base + 2] = pos[pi * 3 + 2];
+        particleData[base + 3] = hasSizes ? sizes[pi] : sceneNumber(entry.size, 1);
+        if (hasColors) {
+          particleData[base + 4] = colors[pi * 4];
+          particleData[base + 5] = colors[pi * 4 + 1];
+          particleData[base + 6] = colors[pi * 4 + 2];
+          particleData[base + 7] = colors[pi * 4 + 3];
+        } else {
+          particleData[base + 4] = defaultColorRGBA[0];
+          particleData[base + 5] = defaultColorRGBA[1];
+          particleData[base + 6] = defaultColorRGBA[2];
+          particleData[base + 7] = 1.0;
+        }
+      }
+
+      entry._cachedParticleData = particleData;
+      entry._cachedParticleCount = count;
+      entry._cachedParticlePositions = pos;
+      entry._cachedParticleSizes = sizes;
+      entry._cachedParticleColors = colors;
+      entry._cachedParticleDefaultColor = defaultColorRGBA.slice ? defaultColorRGBA.slice(0, 4) : [
+        defaultColorRGBA[0], defaultColorRGBA[1], defaultColorRGBA[2], defaultColorRGBA[3],
+      ];
+      return particleData;
+    }
+
     // Synchronous device initialization — device was already obtained
     // by the main-bundle probe (16z). Previously this was a two-stage
     // async sequence (requestAdapter → requestDevice → set up GPU
@@ -1595,7 +1742,6 @@
         shadowUniformBuffer = device.createBuffer({ size: 256, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
         materialUniformBuffer = device.createBuffer({ size: 64, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
         shadowFrameBuffer = device.createBuffer({ size: 64, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
-        pointsUniformBuffer = device.createBuffer({ size: 128, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
 
         // Create samplers.
         linearSampler = device.createSampler({
@@ -2242,9 +2388,9 @@
         // Build PointsUniforms buffer.
         // Layout: mat4x4f(64) + f32 defaultSize(4) + vec3f defaultColor(12) + 4*u32(16) + f32 opacity(4) +
         //         u32 hasFog(4) + f32 fogDensity(4) + vec3f fogColor(12) = 120 -> align to 128.
-        var puData = new ArrayBuffer(128);
-        var puF = new Float32Array(puData);
-        var puU = new Uint32Array(puData);
+        pointsUniformScratchF.fill(0);
+        var puF = pointsUniformScratchF;
+        var puU = pointsUniformScratchU;
 
         puF.set(_pointsModelMat, 0);   // modelMatrix @ 0
         puF[16] = sceneNumber(entry.size, 1); // defaultSize @ 64
@@ -2301,35 +2447,12 @@
         puU[20] = hasColors ? 1 : 0;
         puU[21] = hasSizes ? 1 : 0;
 
-        device.queue.writeBuffer(pointsUniformBuffer, 0, new Float32Array(puData));
+        var pointsUniformBuffer = ensurePointsUniformGPUBuffer(entry, puF);
 
         // Build particle instance storage buffer.
         // Each particle: vec3f position(12) + f32 size(4) + vec4f color(16) = 32 bytes.
-        var particleData = new Float32Array(count * 8);
-        for (var pi = 0; pi < count; pi++) {
-          var base = pi * 8;
-          particleData[base + 0] = entry._cachedPos[pi * 3];
-          particleData[base + 1] = entry._cachedPos[pi * 3 + 1];
-          particleData[base + 2] = entry._cachedPos[pi * 3 + 2];
-          particleData[base + 3] = hasSizes ? entry._cachedSizes[pi] : sceneNumber(entry.size, 1);
-          if (hasColors) {
-            particleData[base + 4] = entry._cachedColors[pi * 4];
-            particleData[base + 5] = entry._cachedColors[pi * 4 + 1];
-            particleData[base + 6] = entry._cachedColors[pi * 4 + 2];
-            particleData[base + 7] = entry._cachedColors[pi * 4 + 3];
-          } else {
-            particleData[base + 4] = defaultColorRGBA[0];
-            particleData[base + 5] = defaultColorRGBA[1];
-            particleData[base + 6] = defaultColorRGBA[2];
-            particleData[base + 7] = 1.0;
-          }
-        }
-
-        pointsParticleBuffer = wgpuEnsureBufferData(
-          device, pointsParticleBuffer,
-          GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-          particleData
-        );
+        var particleData = ensurePointsParticleData(entry, count, hasSizes, hasColors, defaultColorRGBA);
+        var pointsParticleBuffer = ensurePointsParticleGPUBuffer(entry, particleData);
 
         var pointsBG = device.createBindGroup({
           layout: pointsBindGroupLayout,
@@ -2367,9 +2490,9 @@
         var entry = system.entry && typeof system.entry === "object" ? system.entry : {};
         var material = entry.material && typeof entry.material === "object" ? entry.material : {};
 
-        var puData = new ArrayBuffer(128);
-        var puF = new Float32Array(puData);
-        var puU = new Uint32Array(puData);
+        pointsUniformScratchF.fill(0);
+        var puF = pointsUniformScratchF;
+        var puU = pointsUniformScratchU;
         puF.set(pointsIdentityMatrix, 0);
 
         var defaultColorRGBA = sceneColorRGBA(material.color, [1, 1, 1, 1]);
@@ -2388,7 +2511,7 @@
         puF[28] = fogColorRGBA[1];
         puF[29] = fogColorRGBA[2];
 
-        device.queue.writeBuffer(pointsUniformBuffer, 0, new Float32Array(puData));
+        var pointsUniformBuffer = ensurePointsUniformGPUBuffer(system, puF);
 
         var pointsBG = device.createBindGroup({
           layout: pointsBindGroupLayout,
@@ -2429,6 +2552,19 @@
       var hasPointsData = (Array.isArray(bundle.points) && bundle.points.length > 0) ||
         (Array.isArray(bundle.computeParticles) && bundle.computeParticles.length > 0);
       if (!hasPBRData && !hasPointsData) return;
+      var preparedScene = typeof prepareScene === "function"
+        ? prepareScene(bundle, bundle.camera, viewport, lastPreparedScene, {
+          mount: canvas && canvas.parentNode || null,
+          sentinels: canvas && canvas.parentNode && canvas.parentNode.__gosxScene3DSentinels || null,
+        })
+        : null;
+      if (preparedScene) {
+        lastPreparedScene = preparedScene;
+        bundle = preparedScene.ir || bundle;
+        if (canvas && canvas.parentNode) {
+          canvas.parentNode.__gosxScene3DCSSDynamic = Boolean(preparedScene.cssDynamic);
+        }
+      }
 
       var width = canvas.width;
       var height = canvas.height;
@@ -2553,7 +2689,9 @@
 
       // Draw PBR meshes.
       if (hasPBRData) {
-        var drawList = buildDrawList(bundle);
+        var drawList = preparedScene && preparedScene.pbrPasses
+          ? preparedScene.pbrPasses
+          : buildDrawList(bundle);
         var materials = Array.isArray(bundle.materials) ? bundle.materials : [];
 
         // Opaque pass.
@@ -2628,8 +2766,10 @@
       if (tangentBuffer) tangentBuffer.destroy();
       if (shadowPositionBuffer) shadowPositionBuffer.destroy();
       if (shadowFrameBuffer) shadowFrameBuffer.destroy();
-      if (pointsUniformBuffer) pointsUniformBuffer.destroy();
-      if (pointsParticleBuffer) pointsParticleBuffer.destroy();
+      pointsEntryGPUBuffers.forEach(function(buffer) {
+        if (buffer && typeof buffer.destroy === "function") buffer.destroy();
+      });
+      pointsEntryGPUBuffers.clear();
       disposeComputeParticleSystems();
 
       if (mainDepthTexture) mainDepthTexture.destroy();
@@ -2669,6 +2809,16 @@
       render: render,
       dispose: dispose,
     };
+  }
+
+  function sceneWebGPUCommandSequence(bundle, viewport, previousPrepared) {
+    var prepared = prepareScene(
+      bundle || {},
+      bundle && bundle.camera || {},
+      viewport || {},
+      previousPrepared || null
+    );
+    return scenePreparedCommandSequence(prepared);
   }
 
   // -----------------------------------------------------------------------

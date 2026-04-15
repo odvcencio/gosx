@@ -619,6 +619,21 @@
     return Number.isFinite(num) ? num : fallback;
   }
 
+  function sceneCSSVarReference(value) {
+    return typeof value === "string" && /^var\(\s*--[-_a-zA-Z0-9]+\s*(?:,|\))/.test(value.trim());
+  }
+
+  function sceneNumberOrCSSVar(value, fallback) {
+    return sceneCSSVarReference(value) ? value.trim() : sceneNumber(value, fallback);
+  }
+
+  function sceneClampNumberOrCSSVar(value, fallback, min, max) {
+    if (sceneCSSVarReference(value)) {
+      return value.trim();
+    }
+    return Math.max(min, Math.min(max, sceneNumber(value, fallback)));
+  }
+
   function sceneSegmentResolution(value) {
     const segments = Math.round(sceneNumber(value, 12));
     return Math.max(6, Math.min(24, segments));
@@ -728,6 +743,28 @@
       return scene.computeParticles;
     }
     return props && Array.isArray(props.computeParticles) ? props.computeParticles : [];
+  }
+
+  function rawSceneMaterials(props) {
+    const scene = sceneProps(props);
+    if (scene && Array.isArray(scene.materials)) {
+      return scene.materials;
+    }
+    return props && Array.isArray(props.materials) ? props.materials : [];
+  }
+
+  function rawScenePostEffects(props) {
+    const scene = sceneProps(props);
+    if (scene && Array.isArray(scene.postEffects)) {
+      return scene.postEffects;
+    }
+    if (scene && Array.isArray(scene.postFX)) {
+      return scene.postFX;
+    }
+    if (props && Array.isArray(props.postEffects)) {
+      return props.postEffects;
+    }
+    return props && Array.isArray(props.postFX) ? props.postFX : [];
   }
 
   function sceneProps(props) {
@@ -976,16 +1013,18 @@
     const materialColor = sceneObjectMaterialHasValue(item, "color") ? sceneObjectMaterialValue(item, "color") : current.color;
     const textureValue = sceneObjectMaterialHasValue(item, "texture") ? sceneObjectMaterialValue(item, "texture") : current.texture;
     const texture = typeof textureValue === "string" ? textureValue.trim() : "";
-    const opacity = clamp01(sceneNumber(sceneObjectMaterialValue(item, "opacity"), sceneNumber(current.opacity, sceneDefaultMaterialOpacity(materialKind))));
+    const opacity = sceneClampNumberOrCSSVar(sceneObjectMaterialValue(item, "opacity"), sceneNumber(current.opacity, sceneDefaultMaterialOpacity(materialKind)), 0, 1);
+    const numericOpacity = sceneNumber(opacity, sceneNumber(current.opacity, sceneDefaultMaterialOpacity(materialKind)));
     const blendMode = normalizeSceneMaterialBlendMode(
       sceneObjectBlendModeHasValue(item) ? sceneObjectBlendModeValue(item) : current.blendMode,
       materialKind,
-      opacity,
+      numericOpacity,
     );
     const lifecycle = sceneNormalizeLifecycle(item, current);
     const normalized = {
       id: item.id || current.id || ("scene-object-" + index),
       kind,
+      material: typeof item.material === "string" && item.material.trim() ? item.material.trim() : (typeof current.material === "string" ? current.material : ""),
       size,
       width: sceneNumber(item.width, sceneNumber(current.width, lineMetrics ? lineMetrics.width : size)),
       height: sceneNumber(item.height, sceneNumber(current.height, lineMetrics ? lineMetrics.height : size)),
@@ -1001,13 +1040,15 @@
       materialKind,
       color: typeof materialColor === "string" && materialColor ? materialColor : (typeof current.color === "string" && current.color ? current.color : "#8de1ff"),
       texture,
-      opacity: clamp01(sceneNumber(sceneObjectMaterialValue(item, "opacity"), sceneNumber(current.opacity, sceneDefaultMaterialOpacity(materialKind)))),
-      emissive: clamp01(sceneNumber(sceneObjectMaterialValue(item, "emissive"), sceneNumber(current.emissive, sceneDefaultMaterialEmissive(materialKind)))),
+      opacity,
+      emissive: sceneClampNumberOrCSSVar(sceneObjectMaterialValue(item, "emissive"), sceneNumber(current.emissive, sceneDefaultMaterialEmissive(materialKind)), 0, 1),
+      roughness: sceneNumberOrCSSVar(sceneObjectMaterialValue(item, "roughness"), sceneNumber(current.roughness, 0.5)),
+      metalness: sceneNumberOrCSSVar(sceneObjectMaterialValue(item, "metalness"), sceneNumber(current.metalness, 0)),
       blendMode,
       renderPass: normalizeSceneMaterialRenderPass(
         sceneObjectMaterialHasValue(item, "renderPass") ? sceneObjectMaterialValue(item, "renderPass") : current.renderPass,
         blendMode,
-        opacity,
+        numericOpacity,
       ),
       wireframe: sceneBool(
         sceneObjectMaterialHasValue(item, "wireframe") ? sceneObjectMaterialValue(item, "wireframe") : current.wireframe,
@@ -1088,7 +1129,7 @@
       kind,
       color: typeof item.color === "string" && item.color ? item.color : (typeof current.color === "string" && current.color ? current.color : "#f3fbff"),
       groundColor: typeof item.groundColor === "string" && item.groundColor ? item.groundColor : (typeof current.groundColor === "string" ? current.groundColor : ""),
-      intensity: Math.max(0, Math.min(6, sceneNumber(item.intensity, sceneNumber(current.intensity, sceneDefaultLightIntensity(kind))))),
+      intensity: sceneClampNumberOrCSSVar(item.intensity, sceneNumber(current.intensity, sceneDefaultLightIntensity(kind)), 0, 6),
       x: sceneNumber(item.x, sceneNumber(current.x, 0)),
       y: sceneNumber(item.y, sceneNumber(current.y, 0)),
       z: sceneNumber(item.z, sceneNumber(current.z, 0)),
@@ -1412,10 +1453,11 @@
       positions,
       sizes,
       colors,
+      material: typeof item.material === "string" && item.material ? item.material : (typeof current.material === "string" ? current.material : ""),
       color: typeof item.color === "string" && item.color ? item.color : (typeof current.color === "string" ? current.color : "#ffffff"),
       style: normalizeScenePointStyle(item.style, current.style),
-      size: Math.max(0, sceneNumber(item.size, sceneNumber(current.size, 1))),
-      opacity: clamp01(sceneNumber(item.opacity, sceneNumber(current.opacity, 1))),
+      size: sceneClampNumberOrCSSVar(item.size, sceneNumber(current.size, 1), 0, Number.POSITIVE_INFINITY),
+      opacity: sceneClampNumberOrCSSVar(item.opacity, sceneNumber(current.opacity, 1), 0, 1),
       blendMode: normalizeSceneMaterialBlendMode(item.blendMode || current.blendMode, "flat", sceneNumber(item.opacity, sceneNumber(current.opacity, 1))),
       depthWrite: Object.prototype.hasOwnProperty.call(item, "depthWrite") ? sceneBool(item.depthWrite, true) : current.depthWrite,
       attenuation: sceneBool(Object.prototype.hasOwnProperty.call(item, "attenuation") ? item.attenuation : current.attenuation, false),
@@ -1477,8 +1519,8 @@
       segments: sceneSegmentResolution(Object.prototype.hasOwnProperty.call(item, "segments") ? item.segments : current.segments),
       materialKind: normalizeSceneMaterialKind(item.materialKind || current.materialKind),
       color: typeof item.color === "string" && item.color ? item.color : (typeof current.color === "string" ? current.color : "#8de1ff"),
-      roughness: sceneNumber(item.roughness, sceneNumber(current.roughness, 0)),
-      metalness: sceneNumber(item.metalness, sceneNumber(current.metalness, 0)),
+      roughness: sceneNumberOrCSSVar(item.roughness, sceneNumber(current.roughness, 0)),
+      metalness: sceneNumberOrCSSVar(item.metalness, sceneNumber(current.metalness, 0)),
       transforms,
       castShadow: sceneBool(Object.prototype.hasOwnProperty.call(item, "castShadow") ? item.castShadow : current.castShadow, false),
       receiveShadow: sceneBool(Object.prototype.hasOwnProperty.call(item, "receiveShadow") ? item.receiveShadow : current.receiveShadow, false),
@@ -1517,7 +1559,7 @@
       rate: Math.max(0, sceneNumber(item.rate, sceneNumber(current.rate, 0))),
       lifetime: Math.max(0.01, sceneNumber(item.lifetime, sceneNumber(current.lifetime, 1))),
       arms: Math.max(0, Math.floor(sceneNumber(item.arms, sceneNumber(current.arms, 0)))),
-      wind: sceneNumber(item.wind, sceneNumber(current.wind, 0)),
+      wind: sceneNumberOrCSSVar(item.wind, sceneNumber(current.wind, 0)),
       scatter: Math.max(0, sceneNumber(item.scatter, sceneNumber(current.scatter, 0))),
     };
   }
@@ -1543,10 +1585,10 @@
       color: typeof item.color === "string" && item.color ? item.color : (typeof current.color === "string" ? current.color : "#ffffff"),
       colorEnd: typeof item.colorEnd === "string" && item.colorEnd ? item.colorEnd : (typeof current.colorEnd === "string" ? current.colorEnd : ""),
       style: normalizeScenePointStyle(item.style, current.style),
-      size: Math.max(0, sceneNumber(item.size, sceneNumber(current.size, 1))),
-      sizeEnd: Math.max(0, sceneNumber(item.sizeEnd, sceneNumber(current.sizeEnd, sceneNumber(current.size, 1)))),
-      opacity: clamp01(sceneNumber(item.opacity, sceneNumber(current.opacity, 1))),
-      opacityEnd: clamp01(sceneNumber(item.opacityEnd, sceneNumber(current.opacityEnd, sceneNumber(current.opacity, 1)))),
+      size: sceneClampNumberOrCSSVar(item.size, sceneNumber(current.size, 1), 0, Number.POSITIVE_INFINITY),
+      sizeEnd: sceneClampNumberOrCSSVar(item.sizeEnd, sceneNumber(current.sizeEnd, sceneNumber(current.size, 1)), 0, Number.POSITIVE_INFINITY),
+      opacity: sceneClampNumberOrCSSVar(item.opacity, sceneNumber(current.opacity, 1), 0, 1),
+      opacityEnd: sceneClampNumberOrCSSVar(item.opacityEnd, sceneNumber(current.opacityEnd, sceneNumber(current.opacity, 1)), 0, 1),
       blendMode: normalizeSceneMaterialBlendMode(item.blendMode || current.blendMode, "flat", sceneNumber(item.opacity, sceneNumber(current.opacity, 1))),
       attenuation: sceneBool(Object.prototype.hasOwnProperty.call(item, "attenuation") ? item.attenuation : current.attenuation, false),
     };
@@ -1579,6 +1621,76 @@
     return rawSceneComputeParticles(props).map(function(entry, index) {
       return normalizeSceneComputeParticlesEntry(entry, index, null);
     });
+  }
+
+  function normalizeSceneMaterialRecord(raw, index, fallback) {
+    const current = sceneIsPlainObject(fallback) ? fallback : {};
+    const item = sceneIsPlainObject(raw) ? raw : {};
+    const kind = normalizeSceneMaterialKind(item.kind || item.materialKind || current.kind);
+    const opacity = sceneClampNumberOrCSSVar(item.opacity, sceneNumber(current.opacity, sceneDefaultMaterialOpacity(kind)), 0, 1);
+    const numericOpacity = sceneNumber(opacity, sceneNumber(current.opacity, sceneDefaultMaterialOpacity(kind)));
+    const blendMode = normalizeSceneMaterialBlendMode(item.blendMode || current.blendMode, kind, numericOpacity);
+    const out = {
+      id: typeof item.id === "string" && item.id ? item.id : (typeof current.id === "string" ? current.id : ""),
+      name: typeof item.name === "string" && item.name ? item.name : (typeof current.name === "string" ? current.name : ("scene-material-" + index)),
+      kind,
+      color: typeof item.color === "string" && item.color ? item.color : (typeof current.color === "string" ? current.color : "#8de1ff"),
+      texture: typeof item.texture === "string" ? item.texture.trim() : (typeof current.texture === "string" ? current.texture : ""),
+      opacity,
+      emissive: sceneClampNumberOrCSSVar(item.emissive, sceneNumber(current.emissive, sceneDefaultMaterialEmissive(kind)), 0, 1),
+      roughness: sceneNumberOrCSSVar(item.roughness, sceneNumber(current.roughness, 0.5)),
+      metalness: sceneNumberOrCSSVar(item.metalness, sceneNumber(current.metalness, 0)),
+      normalMap: typeof item.normalMap === "string" ? item.normalMap.trim() : (typeof current.normalMap === "string" ? current.normalMap : ""),
+      roughnessMap: typeof item.roughnessMap === "string" ? item.roughnessMap.trim() : (typeof current.roughnessMap === "string" ? current.roughnessMap : ""),
+      metalnessMap: typeof item.metalnessMap === "string" ? item.metalnessMap.trim() : (typeof current.metalnessMap === "string" ? current.metalnessMap : ""),
+      emissiveMap: typeof item.emissiveMap === "string" ? item.emissiveMap.trim() : (typeof current.emissiveMap === "string" ? current.emissiveMap : ""),
+      blendMode,
+      renderPass: normalizeSceneMaterialRenderPass(item.renderPass || current.renderPass, blendMode, numericOpacity),
+      wireframe: sceneBool(Object.prototype.hasOwnProperty.call(item, "wireframe") ? item.wireframe : current.wireframe, false),
+      depthWrite: Object.prototype.hasOwnProperty.call(item, "depthWrite") ? sceneBool(item.depthWrite, true) : current.depthWrite,
+    };
+    out.key = sceneMaterialProfileKey(out);
+    out.shaderData = sceneMaterialShaderData(out);
+    return out;
+  }
+
+  function sceneMaterials(props) {
+    return rawSceneMaterials(props).map(function(entry, index) {
+      return normalizeSceneMaterialRecord(entry, index, null);
+    });
+  }
+
+  function normalizeScenePostEffect(raw, index, fallback) {
+    const current = sceneIsPlainObject(fallback) ? fallback : {};
+    const item = sceneIsPlainObject(raw) ? raw : {};
+    const kind = typeof item.kind === "string" && item.kind ? item.kind.trim().toLowerCase() : (typeof current.kind === "string" ? current.kind : "");
+    if (!kind) {
+      return null;
+    }
+    return {
+      kind,
+      threshold: sceneNumberOrCSSVar(item.threshold, sceneNumber(current.threshold, 0)),
+      intensity: sceneNumberOrCSSVar(item.intensity, sceneNumber(current.intensity, 0)),
+      radius: sceneNumberOrCSSVar(item.radius, sceneNumber(current.radius, 0)),
+      scale: sceneNumberOrCSSVar(item.scale, sceneNumber(current.scale, 0)),
+      saturation: sceneNumberOrCSSVar(item.saturation, sceneNumber(current.saturation, 0)),
+      contrast: sceneNumberOrCSSVar(item.contrast, sceneNumber(current.contrast, 0)),
+      exposure: sceneNumberOrCSSVar(item.exposure, sceneNumber(current.exposure, 0)),
+      mode: typeof item.mode === "string" ? item.mode : (typeof current.mode === "string" ? current.mode : ""),
+      id: typeof item.id === "string" && item.id ? item.id : (typeof current.id === "string" ? current.id : ("scene-postfx-" + index)),
+    };
+  }
+
+  function scenePostEffects(props) {
+    const out = [];
+    const raw = rawScenePostEffects(props);
+    for (let index = 0; index < raw.length; index += 1) {
+      const effect = normalizeScenePostEffect(raw[index], index, null);
+      if (effect) {
+        out.push(effect);
+      }
+    }
+    return out;
   }
 
   function sceneCamera(props) {
@@ -1614,15 +1726,15 @@
     const lifecycle = sceneNormalizeLifecycle(source, base);
     const environment = {
       ambientColor: typeof source.ambientColor === "string" && source.ambientColor ? source.ambientColor : (typeof base.ambientColor === "string" ? base.ambientColor : ""),
-      ambientIntensity: Math.max(0, Math.min(4, sceneNumber(source.ambientIntensity, sceneNumber(base.ambientIntensity, 0)))),
+      ambientIntensity: sceneClampNumberOrCSSVar(source.ambientIntensity, sceneNumber(base.ambientIntensity, 0), 0, 4),
       skyColor: typeof source.skyColor === "string" && source.skyColor ? source.skyColor : (typeof base.skyColor === "string" ? base.skyColor : ""),
-      skyIntensity: Math.max(0, Math.min(4, sceneNumber(source.skyIntensity, sceneNumber(base.skyIntensity, 0)))),
+      skyIntensity: sceneClampNumberOrCSSVar(source.skyIntensity, sceneNumber(base.skyIntensity, 0), 0, 4),
       groundColor: typeof source.groundColor === "string" && source.groundColor ? source.groundColor : (typeof base.groundColor === "string" ? base.groundColor : ""),
-      groundIntensity: Math.max(0, Math.min(4, sceneNumber(source.groundIntensity, sceneNumber(base.groundIntensity, 0)))),
-      exposure: Math.max(0.05, Math.min(4, sceneNumber(Object.prototype.hasOwnProperty.call(source, "exposure") ? source.exposure : undefined, sceneNumber(base.exposure, 1) || 1))),
+      groundIntensity: sceneClampNumberOrCSSVar(source.groundIntensity, sceneNumber(base.groundIntensity, 0), 0, 4),
+      exposure: sceneClampNumberOrCSSVar(Object.prototype.hasOwnProperty.call(source, "exposure") ? source.exposure : undefined, sceneNumber(base.exposure, 1) || 1, 0.05, 4),
       toneMapping: typeof source.toneMapping === "string" && source.toneMapping ? source.toneMapping : (typeof base.toneMapping === "string" ? base.toneMapping : ""),
       fogColor: typeof source.fogColor === "string" && source.fogColor ? source.fogColor : (typeof base.fogColor === "string" ? base.fogColor : ""),
-      fogDensity: Math.max(0, sceneNumber(source.fogDensity, sceneNumber(base.fogDensity, 0))),
+      fogDensity: sceneClampNumberOrCSSVar(source.fogDensity, sceneNumber(base.fogDensity, 0), 0, Number.POSITIVE_INFINITY),
       _transition: lifecycle.transition,
       _inState: lifecycle.inState,
       _outState: lifecycle.outState,
@@ -1651,15 +1763,15 @@
     const base = environment && typeof environment === "object" && Object.prototype.hasOwnProperty.call(environment, "specified")
       ? {
         ambientColor: typeof environment.ambientColor === "string" ? environment.ambientColor : "",
-        ambientIntensity: Math.max(0, Math.min(4, sceneNumber(environment.ambientIntensity, 0))),
+        ambientIntensity: sceneClampNumberOrCSSVar(environment.ambientIntensity, 0, 0, 4),
         skyColor: typeof environment.skyColor === "string" ? environment.skyColor : "",
-        skyIntensity: Math.max(0, Math.min(4, sceneNumber(environment.skyIntensity, 0))),
+        skyIntensity: sceneClampNumberOrCSSVar(environment.skyIntensity, 0, 0, 4),
         groundColor: typeof environment.groundColor === "string" ? environment.groundColor : "",
-        groundIntensity: Math.max(0, Math.min(4, sceneNumber(environment.groundIntensity, 0))),
-        exposure: Math.max(0.05, Math.min(4, sceneNumber(environment.exposure, 1) || 1)),
+        groundIntensity: sceneClampNumberOrCSSVar(environment.groundIntensity, 0, 0, 4),
+        exposure: sceneClampNumberOrCSSVar(environment.exposure, 1, 0.05, 4),
         toneMapping: typeof environment.toneMapping === "string" ? environment.toneMapping : "",
         fogColor: typeof environment.fogColor === "string" ? environment.fogColor : "",
-        fogDensity: Math.max(0, sceneNumber(environment.fogDensity, 0)),
+        fogDensity: sceneClampNumberOrCSSVar(environment.fogDensity, 0, 0, Number.POSITIVE_INFINITY),
         specified: Boolean(environment.specified),
       }
       : normalizeSceneEnvironment(environment, null);
@@ -1694,6 +1806,8 @@
       points: scenePoints(props),
       instancedMeshes: sceneInstancedMeshes(props),
       computeParticles: sceneComputeParticles(props),
+      materials: sceneMaterials(props),
+      postEffects: scenePostEffects(props),
       _transitions: [],
       _scrollCamera: (sceneNumber(props.scrollCameraStart, 0) !== 0 || sceneNumber(props.scrollCameraEnd, 0) !== 0)
         ? { start: sceneNumber(props.scrollCameraStart, 0), end: sceneNumber(props.scrollCameraEnd, 0) }
@@ -1717,6 +1831,94 @@
 
   function sceneStateObjects(state) {
     return Array.from(state.objects.values());
+  }
+
+  function sceneStateObjectsWithMaterials(state) {
+    const objects = sceneStateObjects(state);
+    const lookup = sceneMaterialLookup(state);
+    if (!lookup.size) {
+      return objects;
+    }
+    return objects.map(function(object) {
+      const material = sceneNamedMaterialForRecord(lookup, object);
+      if (!material) {
+        return object;
+      }
+      return sceneApplyNamedMaterialToObject(object, material);
+    });
+  }
+
+  function sceneStatePointsWithMaterials(state) {
+    const points = Array.isArray(state && state.points) ? state.points : [];
+    const lookup = sceneMaterialLookup(state);
+    if (!lookup.size) {
+      return points;
+    }
+    return points.map(function(point) {
+      const material = sceneNamedMaterialForRecord(lookup, point);
+      if (!material) {
+        return point;
+      }
+      return sceneApplyNamedMaterialToPoints(point, material);
+    });
+  }
+
+  function sceneMaterialLookup(state) {
+    const materials = Array.isArray(state && state.materials) ? state.materials : [];
+    if (!materials.length) {
+      return new Map();
+    }
+    const lookup = new Map();
+    for (let index = 0; index < materials.length; index += 1) {
+      const material = materials[index];
+      if (!material) {
+        continue;
+      }
+      if (material.name) {
+        lookup.set(String(material.name), material);
+      }
+      if (material.id) {
+        lookup.set(String(material.id), material);
+      }
+    }
+    return lookup;
+  }
+
+  function sceneNamedMaterialForRecord(lookup, record) {
+    const materialName = record && record.material ? String(record.material) : "";
+    return materialName ? lookup.get(materialName) || null : null;
+  }
+
+  function sceneApplyNamedMaterialToObject(object, material) {
+    return Object.assign({}, object, {
+      materialKind: material.kind || object.materialKind,
+      color: material.color || object.color,
+      texture: material.texture || object.texture,
+      opacity: material.opacity != null ? material.opacity : object.opacity,
+      emissive: material.emissive != null ? material.emissive : object.emissive,
+      roughness: material.roughness != null ? material.roughness : object.roughness,
+      metalness: material.metalness != null ? material.metalness : object.metalness,
+      normalMap: material.normalMap || object.normalMap,
+      roughnessMap: material.roughnessMap || object.roughnessMap,
+      metalnessMap: material.metalnessMap || object.metalnessMap,
+      emissiveMap: material.emissiveMap || object.emissiveMap,
+      blendMode: material.blendMode || object.blendMode,
+      renderPass: material.renderPass || object.renderPass,
+      wireframe: material.wireframe != null ? material.wireframe : object.wireframe,
+      depthWrite: material.depthWrite != null ? material.depthWrite : object.depthWrite,
+    });
+  }
+
+  function sceneApplyNamedMaterialToPoints(point, material) {
+    return Object.assign({}, point, {
+      color: material.color || point.color,
+      style: material.style || point.style,
+      size: material.size != null ? material.size : point.size,
+      opacity: material.opacity != null ? material.opacity : point.opacity,
+      blendMode: material.blendMode || point.blendMode,
+      depthWrite: material.depthWrite != null ? material.depthWrite : point.depthWrite,
+      attenuation: material.attenuation != null ? material.attenuation : point.attenuation,
+    });
   }
 
   function sceneStateLabels(state) {
@@ -2521,13 +2723,16 @@
     return depth.far <= near || depth.near >= far;
   }
 
-  function createSceneRenderBundle(width, height, background, camera, objects, labels, sprites, lights, environment, timeSeconds, points, instancedMeshes, computeParticles) {
+  function createSceneRenderBundle(width, height, background, camera, objects, labels, sprites, lights, environment, timeSeconds, points, instancedMeshes, computeParticles, postEffects) {
     const resolvedEnvironment = sceneResolveLightingEnvironment(environment, Array.isArray(lights) && lights.length > 0);
     const bundle = {
+      bundleVersion: 1,
       background: background,
+      timeSeconds: sceneNumber(timeSeconds, 0),
       camera: sceneRenderCamera(camera),
       lights: Array.isArray(lights) ? lights.slice() : [],
       environment: resolvedEnvironment,
+      postEffects: Array.isArray(postEffects) ? postEffects.slice() : [],
       materials: [],
       objects: [],
       surfaces: [],
@@ -4575,7 +4780,17 @@
     cancelEngineFrame,
     clearChildren,
     createSceneRenderBundle,
+    SCENE_IR_VERSION: 1,
+    SCENE_RENDER_BUNDLE_VERSION: 1,
+    validateSceneIR: typeof validateSceneIR === "function" ? validateSceneIR : undefined,
+    prepareScene: typeof prepareScene === "function" ? prepareScene : undefined,
+    scenePreparedCommandSequence: typeof scenePreparedCommandSequence === "function" ? scenePreparedCommandSequence : undefined,
+    sceneCachedBuffer: typeof sceneCachedBuffer === "function" ? sceneCachedBuffer : undefined,
+    sceneWebGLCommandSequence: typeof sceneWebGLCommandSequence === "function" ? sceneWebGLCommandSequence : undefined,
+    sceneWebGPUCommandSequence: typeof sceneWebGPUCommandSequence === "function" ? sceneWebGPUCommandSequence : undefined,
+    sceneBackendRegistry: undefined,
     createSceneState,
+    sceneStatePointsWithMaterials,
     createSceneWebGLRenderer,
     engineFrame,
     normalizeSceneEnvironment,
@@ -5716,7 +5931,13 @@
       opacity,
       wireframe: sceneBool(object && object.wireframe, true),
       blendMode: normalizeSceneMaterialBlendMode(object && object.blendMode, kind, opacity),
-      emissive: clamp01(sceneNumber(object && object.emissive, sceneDefaultMaterialEmissive(kind))),
+      emissive: sceneCSSVarReference(object && object.emissive) ? String(object.emissive).trim() : clamp01(sceneNumber(object && object.emissive, sceneDefaultMaterialEmissive(kind))),
+      roughness: sceneNumberOrCSSVar(object && object.roughness, 0.5),
+      metalness: sceneNumberOrCSSVar(object && object.metalness, 0),
+      normalMap: object && typeof object.normalMap === "string" ? object.normalMap.trim() : "",
+      roughnessMap: object && typeof object.roughnessMap === "string" ? object.roughnessMap.trim() : "",
+      metalnessMap: object && typeof object.metalnessMap === "string" ? object.metalnessMap.trim() : "",
+      emissiveMap: object && typeof object.emissiveMap === "string" ? object.emissiveMap.trim() : "",
     };
     profile.renderPass = normalizeSceneMaterialRenderPass(object && object.renderPass, profile.blendMode, profile.opacity);
     profile.key = sceneMaterialProfileKey(profile);
@@ -5733,7 +5954,13 @@
       String(sceneBool(profile && profile.wireframe, true)),
       String(profile && profile.blendMode || "opaque"),
       String(profile && profile.renderPass || "opaque"),
-      clamp01(sceneNumber(profile && profile.emissive, 0)).toFixed(3),
+      sceneCSSVarReference(profile && profile.emissive) ? String(profile.emissive).trim() : clamp01(sceneNumber(profile && profile.emissive, 0)).toFixed(3),
+      sceneCSSVarReference(profile && profile.roughness) ? String(profile.roughness).trim() : sceneNumber(profile && profile.roughness, 0.5).toFixed(3),
+      sceneCSSVarReference(profile && profile.metalness) ? String(profile.metalness).trim() : sceneNumber(profile && profile.metalness, 0).toFixed(3),
+      String(profile && profile.normalMap || ""),
+      String(profile && profile.roughnessMap || ""),
+      String(profile && profile.metalnessMap || ""),
+      String(profile && profile.emissiveMap || ""),
     ].join("|");
   }
 
@@ -6000,6 +6227,226 @@
       return Math.pow(clamp01(1 - (distance / range)), decay);
     }
     return 1 / (1 + Math.pow(distance * 0.35, Math.max(decay, 1)));
+  }
+
+  const SCENE_IR_VERSION = 1;
+  const SCENE_RENDER_BUNDLE_VERSION = 1;
+
+  /**
+   * @typedef {object} SceneIR
+   * @property {number} version
+   * @property {SceneCamera} camera
+   * @property {SceneEnvironment} environment
+   * @property {SceneMaterial[]} [materials]
+   * @property {SceneLight[]} [lights]
+   * @property {SceneNode[]} [nodes]
+   * @property {ScenePostEffect[]} [postFX]
+   */
+
+  /**
+   * @typedef {object} SceneRenderBundle
+   * @property {number} bundleVersion
+   * @property {SceneCamera} camera
+   * @property {SceneEnvironment} environment
+   * @property {SceneMaterial[]} [materials]
+   * @property {object[]} [objects]
+   * @property {object[]} [meshObjects]
+   * @property {object[]} [points]
+   * @property {object[]} [instancedMeshes]
+   * @property {object[]} [computeParticles]
+   */
+
+  /**
+   * @typedef {object} SceneCamera
+   * @property {string} [kind]
+   * @property {number} [x]
+   * @property {number} [y]
+   * @property {number} [z]
+   * @property {number} [rotationX]
+   * @property {number} [rotationY]
+   * @property {number} [rotationZ]
+   * @property {number} [fov]
+   * @property {number} [near]
+   * @property {number} [far]
+   */
+
+  /**
+   * @typedef {object} SceneEnvironment
+   * @property {string} [background]
+   * @property {string} [ambientColor]
+   * @property {number} [ambientIntensity]
+   * @property {string} [fogColor]
+   * @property {number} [fogDensity]
+   */
+
+  /**
+   * @typedef {object} SceneMaterial
+   * @property {string} [name]
+   * @property {string} [kind]
+   * @property {string} [color]
+   * @property {number} [opacity]
+   * @property {number} [roughness]
+   * @property {number} [metalness]
+   */
+
+  /**
+   * @typedef {object} SceneNode
+   * @property {"mesh"|"points"|"instanced-mesh"|"compute-particles"|"sprite"|"label"|string} kind
+   * @property {string} [id]
+   * @property {number} [materialIndex]
+   * @property {object} transform
+   * @property {object} [mesh]
+   * @property {object} [points]
+   * @property {object} [instancedMesh]
+   * @property {object} [compute]
+   * @property {object} [sprite]
+   * @property {object} [label]
+   */
+
+  /**
+   * @typedef {object} SceneLight
+   * @property {string} kind
+   * @property {string} [color]
+   * @property {number} [intensity]
+   */
+
+  /**
+   * @typedef {object} ScenePostEffect
+   * @property {string} kind
+   */
+
+  function validateSceneIR(ir) {
+    const errors = [];
+    if (!ir || typeof ir !== "object") {
+      return { valid: false, errors: ["scene IR must be an object"] };
+    }
+    const isRenderBundle = ir.bundleVersion != null;
+    if (isRenderBundle) {
+      if (ir.bundleVersion != null && ir.bundleVersion !== SCENE_RENDER_BUNDLE_VERSION) {
+        errors.push("bundleVersion must be " + SCENE_RENDER_BUNDLE_VERSION);
+      }
+      if (ir.version != null && ir.version !== SCENE_IR_VERSION) {
+        errors.push("version must be " + SCENE_IR_VERSION);
+      }
+    } else if (ir.version !== SCENE_IR_VERSION) {
+      errors.push("version must be " + SCENE_IR_VERSION);
+    }
+    if (!ir.camera || typeof ir.camera !== "object") {
+      errors.push("camera must be an object");
+    } else {
+      validateSceneIRCamera(ir.camera, errors);
+    }
+    if (ir.environment != null && typeof ir.environment !== "object") {
+      errors.push("environment must be an object");
+    }
+    validateSceneIRArray(ir, "materials", errors);
+    validateSceneIRArray(ir, "lights", errors);
+    validateSceneIRArray(ir, "nodes", errors);
+    validateSceneIRArray(ir, "postFX", errors);
+    validateSceneIRArray(ir, "postEffects", errors);
+
+    if (isRenderBundle) {
+      validateRenderBundleShape(ir, errors);
+    } else {
+      validateCanonicalSceneNodes(Array.isArray(ir.nodes) ? ir.nodes : [], Array.isArray(ir.materials) ? ir.materials.length : 0, errors);
+    }
+    return { valid: errors.length === 0, errors };
+  }
+
+  function validateSceneIRCamera(camera, errors) {
+    const near = sceneNumber(camera.near, 0);
+    const far = sceneNumber(camera.far, 0);
+    if (near < 0) {
+      errors.push("camera.near must be non-negative");
+    }
+    if (near > 0 && far > 0 && far <= near) {
+      errors.push("camera.far must be greater than camera.near");
+    }
+  }
+
+  function validateSceneIRArray(ir, key, errors) {
+    if (ir[key] != null && !Array.isArray(ir[key])) {
+      errors.push(key + " must be an array");
+    }
+  }
+
+  function validateCanonicalSceneNodes(nodes, materialCount, errors) {
+    const kindPayloads = {
+      "mesh": "mesh",
+      "points": "points",
+      "instanced-mesh": "instancedMesh",
+      "compute-particles": "compute",
+      "sprite": "sprite",
+      "label": "label",
+    };
+    for (let index = 0; index < nodes.length; index += 1) {
+      const node = nodes[index];
+      if (!node || typeof node !== "object") {
+        errors.push("nodes[" + index + "] must be an object");
+        continue;
+      }
+      const kind = typeof node.kind === "string" ? node.kind.trim() : "";
+      if (!kind) {
+        errors.push("nodes[" + index + "].kind is required");
+      } else if (!Object.prototype.hasOwnProperty.call(kindPayloads, kind)) {
+        errors.push("nodes[" + index + "].kind " + JSON.stringify(kind) + " is unknown");
+      }
+      if (node.materialIndex != null) {
+        const materialIndex = sceneNumber(node.materialIndex, -1);
+        if (materialIndex < 0 || Math.floor(materialIndex) !== materialIndex) {
+          errors.push("nodes[" + index + "].materialIndex must be a non-negative integer");
+        } else if (materialCount > 0 && materialIndex >= materialCount) {
+          errors.push("nodes[" + index + "].materialIndex out of range");
+        }
+      }
+      const payloadCount = [
+        node.mesh,
+        node.points,
+        node.instancedMesh,
+        node.compute,
+        node.sprite,
+        node.label,
+      ].filter(Boolean).length;
+      if (payloadCount !== 1) {
+        errors.push("nodes[" + index + "] must set exactly one payload");
+      }
+      const expectedPayload = kindPayloads[kind];
+      if (expectedPayload && !node[expectedPayload]) {
+        errors.push("nodes[" + index + "]." + expectedPayload + " is required");
+      }
+      if (node.points) {
+        validateSceneIRNonNegativeInteger(node.points.count, "nodes[" + index + "].points.count", errors);
+      }
+      if (node.instancedMesh) {
+        validateSceneIRNonNegativeInteger(node.instancedMesh.count, "nodes[" + index + "].instancedMesh.count", errors);
+      }
+      if (node.compute) {
+        validateSceneIRNonNegativeInteger(node.compute.count, "nodes[" + index + "].compute.count", errors);
+      }
+    }
+  }
+
+  function validateSceneIRNonNegativeInteger(value, label, errors) {
+    if (value == null) {
+      return;
+    }
+    const number = sceneNumber(value, -1);
+    if (number < 0 || Math.floor(number) !== number) {
+      errors.push(label + " must be non-negative");
+    }
+  }
+
+  function validateRenderBundleShape(bundle, errors) {
+    validateSceneIRArray(bundle, "objects", errors);
+    validateSceneIRArray(bundle, "meshObjects", errors);
+    validateSceneIRArray(bundle, "points", errors);
+    validateSceneIRArray(bundle, "instancedMeshes", errors);
+    validateSceneIRArray(bundle, "computeParticles", errors);
+    validateSceneIRArray(bundle, "labels", errors);
+    validateSceneIRArray(bundle, "sprites", errors);
+    if (!bundle.objects && !bundle.meshObjects && !bundle.points && !bundle.instancedMeshes && !bundle.computeParticles && !bundle.labels && !bundle.sprites) {
+      errors.push("scene IR must include nodes or render-bundle arrays");
+    }
   }
 
   function buildSceneWorldDrawPlan(bundle, scratch) {
@@ -6430,6 +6877,1263 @@
       hash = Math.imul(hash, 16777619) >>> 0;
     }
     return hash;
+  }
+
+  function prepareScene(ir, camera, viewport, lastPrepared, cssContext) {
+    const initialSource = ir && typeof ir === "object" ? ir : {};
+    const cssResolved = sceneResolveCSSBundle(initialSource, cssContext);
+    const source = cssResolved.ir;
+    const resolvedCamera = camera || source.camera || {};
+    const signature = scenePreparedSignature(source, resolvedCamera, viewport);
+    if (lastPrepared && lastPrepared.signature === signature) {
+      return lastPrepared;
+    }
+
+    const worldDrawScratch = lastPrepared && lastPrepared.worldDrawScratch
+      ? lastPrepared.worldDrawScratch
+      : createSceneWorldDrawScratch();
+    const worldDrawPlan = buildSceneWorldDrawPlan(source, worldDrawScratch);
+    const pbrPasses = prepareScenePBRPasses(source);
+    const prepared = {
+      ir: source,
+      camera: resolvedCamera,
+      viewport,
+      signature,
+      passes: scenePreparedPassList(worldDrawPlan, pbrPasses),
+      pbrPasses,
+      worldDrawPlan,
+      worldDrawScratch,
+      caches: lastPrepared && lastPrepared.caches ? lastPrepared.caches : new Map(),
+      shadowPassHash: scenePlannerShadowHash(source),
+      materialsHash: scenePlannerMaterialsHash(source),
+      resolvedEnv: source.environment || {},
+      cssDynamic: Boolean(cssResolved.dynamic),
+      rebuilds: lastPrepared ? lastPrepared.rebuilds + 1 : 1,
+    };
+    return prepared;
+  }
+
+  function sceneResolveCSSBundle(source, cssContext) {
+    const css = sceneCSSResolverContext(cssContext);
+    const state = {
+      source,
+      out: source,
+      dynamic: false,
+    };
+    sceneCSSResolveExplicitVars(state, css);
+    sceneCSSApplyComputedDefaults(state, css);
+    return {
+      ir: state.out,
+      dynamic: state.dynamic,
+    };
+  }
+
+  function sceneCSSResolverContext(input) {
+    const context = input && typeof input === "object" ? input : {};
+    const mount = context.mount && typeof context.mount === "object" ? context.mount : null;
+    const sentinels = context.sentinels || (mount && mount.__gosxScene3DSentinels) || null;
+    const win = typeof window !== "undefined" ? window : null;
+    return {
+      mount,
+      sentinels,
+      styles: typeof Map === "function" ? new Map() : null,
+      hasComputedStyle: Boolean(win && typeof win.getComputedStyle === "function"),
+    };
+  }
+
+  function sceneCSSResolveExplicitVars(state, css) {
+    sceneCSSResolveTopObjectKeys(state, css, "environment", [
+      "ambientColor", "ambientIntensity", "skyColor", "skyIntensity",
+      "groundColor", "groundIntensity", "exposure", "fogColor", "fogDensity",
+    ], css.mount);
+    sceneCSSResolveCollectionKeys(state, css, "materials", [
+      "color", "opacity", "emissive", "roughness", "metalness",
+      "normalMap", "roughnessMap", "metalnessMap", "emissiveMap",
+    ], null);
+    sceneCSSResolveCollectionKeys(state, css, "lights", [
+      "color", "groundColor", "intensity", "x", "y", "z",
+      "directionX", "directionY", "directionZ", "angle", "penumbra",
+      "range", "decay", "shadowBias", "shadowSize",
+    ], sceneCSSRecordElement);
+    sceneCSSResolveCollectionKeys(state, css, "objects", [
+      "color", "opacity", "emissive", "roughness", "metalness", "lineWidth",
+      "x", "y", "z", "rotationX", "rotationY", "rotationZ",
+      "spinX", "spinY", "spinZ",
+    ], sceneCSSRecordElement);
+    sceneCSSResolveCollectionKeys(state, css, "meshObjects", [
+      "depthCenter", "vertexOffset", "vertexCount",
+    ], sceneCSSRecordElement);
+    sceneCSSResolveCollectionKeys(state, css, "points", [
+      "color", "size", "opacity", "x", "y", "z",
+      "rotationX", "rotationY", "rotationZ", "spinX", "spinY", "spinZ",
+    ], sceneCSSRecordElement);
+    sceneCSSResolveCollectionKeys(state, css, "instancedMeshes", [
+      "color", "roughness", "metalness", "width", "height", "depth", "radius",
+    ], sceneCSSRecordElement);
+    sceneCSSResolveCollectionKeys(state, css, "labels", [
+      "color", "background", "borderColor", "offsetX", "offsetY", "opacity",
+    ], sceneCSSRecordElement);
+    sceneCSSResolveCollectionKeys(state, css, "sprites", [
+      "width", "height", "scale", "opacity", "offsetX", "offsetY",
+    ], sceneCSSRecordElement);
+    sceneCSSResolveCollectionKeys(state, css, "postEffects", [
+      "threshold", "intensity", "radius", "scale", "saturation", "contrast", "exposure",
+    ], null);
+    sceneCSSResolveCollectionKeys(state, css, "postFX", [
+      "threshold", "intensity", "radius", "scale", "saturation", "contrast", "exposure",
+    ], null);
+    sceneCSSResolveComputeParticleVars(state, css);
+  }
+
+  function sceneCSSResolveTopObjectKeys(state, css, objectKey, keys, element) {
+    const bundle = state.out || state.source || {};
+    const target = bundle && bundle[objectKey];
+    if (!sceneIsPlainObject(target)) {
+      return;
+    }
+    for (let index = 0; index < keys.length; index += 1) {
+      const key = keys[index];
+      const resolved = sceneCSSResolveVarValue(target[key], element || css.mount, css);
+      if (!resolved.matched) {
+        continue;
+      }
+      state.dynamic = true;
+      if (resolved.hasValue && !sceneCSSSameValue(target[key], resolved.value)) {
+        const object = sceneCSSMutableTopObject(state, objectKey);
+        object[key] = resolved.value;
+      }
+    }
+  }
+
+  function sceneCSSResolveCollectionKeys(state, css, collectionKey, keys, elementFn) {
+    const collection = sceneCSSCurrentCollection(state, collectionKey);
+    if (!Array.isArray(collection)) {
+      return;
+    }
+    for (let index = 0; index < collection.length; index += 1) {
+      const record = collection[index];
+      if (!sceneIsPlainObject(record)) {
+        continue;
+      }
+      const element = typeof elementFn === "function" ? elementFn(css, record) : css.mount;
+      for (let keyIndex = 0; keyIndex < keys.length; keyIndex += 1) {
+        const key = keys[keyIndex];
+        const resolved = sceneCSSResolveVarValue(record[key], element, css);
+        if (!resolved.matched) {
+          continue;
+        }
+        state.dynamic = true;
+        if (resolved.hasValue && !sceneCSSSameValue(record[key], resolved.value)) {
+          const mutable = sceneCSSMutableRecord(state, collectionKey, index);
+          mutable[key] = resolved.value;
+        }
+      }
+    }
+  }
+
+  function sceneCSSResolveComputeParticleVars(state, css) {
+    const collection = sceneCSSCurrentCollection(state, "computeParticles");
+    if (!Array.isArray(collection)) {
+      return;
+    }
+    const nested = [
+      ["emitter", ["x", "y", "z", "rotationX", "rotationY", "rotationZ", "spinX", "spinY", "spinZ", "radius", "rate", "lifetime", "arms", "wind", "scatter"]],
+      ["material", ["color", "colorEnd", "size", "sizeEnd", "opacity", "opacityEnd"]],
+    ];
+    for (let index = 0; index < collection.length; index += 1) {
+      const record = collection[index];
+      if (!sceneIsPlainObject(record)) {
+        continue;
+      }
+      const element = sceneCSSRecordElement(css, record);
+      for (let nestedIndex = 0; nestedIndex < nested.length; nestedIndex += 1) {
+        const childKey = nested[nestedIndex][0];
+        const keys = nested[nestedIndex][1];
+        const child = sceneIsPlainObject(record[childKey]) ? record[childKey] : null;
+        if (!child) {
+          continue;
+        }
+        for (let keyIndex = 0; keyIndex < keys.length; keyIndex += 1) {
+          const key = keys[keyIndex];
+          const resolved = sceneCSSResolveVarValue(child[key], element, css);
+          if (!resolved.matched) {
+            continue;
+          }
+          state.dynamic = true;
+          if (resolved.hasValue && !sceneCSSSameValue(child[key], resolved.value)) {
+            const mutable = sceneCSSMutableNestedObject(state, "computeParticles", index, childKey);
+            mutable[key] = resolved.value;
+          }
+        }
+      }
+    }
+  }
+
+  function sceneCSSApplyComputedDefaults(state, css) {
+    if (!css.hasComputedStyle || !css.mount) {
+      return;
+    }
+    sceneCSSApplyEnvironmentDefaults(state, css);
+    sceneCSSApplySceneFilter(state, css);
+    sceneCSSApplyLightDefaults(state, css);
+    sceneCSSApplyNodeDefaults(state, css);
+  }
+
+  function sceneCSSApplyEnvironmentDefaults(state, css) {
+    const mappings = [
+      ["ambientColor", ["--scene-ambient-color"]],
+      ["ambientIntensity", ["--scene-ambient-intensity"]],
+      ["fogColor", ["--scene-fog-color"]],
+      ["fogDensity", ["--scene-fog-density"]],
+      ["skyColor", ["--scene-sky-color"]],
+      ["skyIntensity", ["--scene-sky-intensity"]],
+      ["groundColor", ["--scene-ground-color"]],
+      ["groundIntensity", ["--scene-ground-intensity"]],
+      ["exposure", ["--scene-exposure"]],
+      ["toneMapping", ["--scene-tone-mapping"]],
+    ];
+    for (let index = 0; index < mappings.length; index += 1) {
+      const key = mappings[index][0];
+      const value = sceneCSSReadFirstProperty(css, css.mount, mappings[index][1]);
+      if (value == null) {
+        continue;
+      }
+      sceneCSSSetTopObjectKey(state, "environment", key, sceneCSSCoerceValue(value));
+      state.dynamic = true;
+    }
+  }
+
+  function sceneCSSApplySceneFilter(state, css) {
+    const value = sceneCSSReadFirstProperty(css, css.mount, ["--scene-filter", "scene-filter"]);
+    if (value == null) {
+      return;
+    }
+    const effects = sceneParseSceneFilter(value);
+    if (!effects || effects.length === 0) {
+      return;
+    }
+    sceneCSSSetTopValue(state, "postEffects", effects);
+    state.dynamic = true;
+  }
+
+  function sceneCSSApplyLightDefaults(state, css) {
+    const lights = sceneCSSCurrentCollection(state, "lights");
+    if (!Array.isArray(lights)) {
+      return;
+    }
+    for (let index = 0; index < lights.length; index += 1) {
+      const light = lights[index];
+      if (!sceneIsPlainObject(light)) {
+        continue;
+      }
+      const element = sceneCSSRecordElement(css, light);
+      const directional = String(light.kind || "").toLowerCase() === "directional";
+      const colorNames = directional
+        ? ["--sun-color", "--scene-sun-color", "--light-color", "--scene-light-color"]
+        : ["--light-color", "--scene-light-color"];
+      const intensityNames = directional
+        ? ["--sun-intensity", "--scene-sun-intensity", "--light-intensity", "--scene-light-intensity"]
+        : ["--light-intensity", "--scene-light-intensity"];
+      const color = sceneCSSReadFirstProperty(css, element, colorNames);
+      if (color != null) {
+        sceneCSSSetRecordKey(state, "lights", index, "color", color);
+        state.dynamic = true;
+      }
+      const intensity = sceneCSSReadFirstProperty(css, element, intensityNames);
+      if (intensity != null) {
+        sceneCSSSetRecordKey(state, "lights", index, "intensity", sceneCSSCoerceValue(intensity));
+        state.dynamic = true;
+      }
+    }
+  }
+
+  function sceneCSSApplyNodeDefaults(state, css) {
+    sceneCSSApplyMeshCollectionDefaults(state, css, "meshObjects");
+    sceneCSSApplyMeshCollectionDefaults(state, css, "objects");
+    sceneCSSApplyPointDefaults(state, css);
+    sceneCSSApplyInstancedDefaults(state, css);
+    sceneCSSApplyComputeDefaults(state, css);
+  }
+
+  function sceneCSSApplyMeshCollectionDefaults(state, css, collectionKey) {
+    const collection = sceneCSSCurrentCollection(state, collectionKey);
+    if (!Array.isArray(collection)) {
+      return;
+    }
+    for (let index = 0; index < collection.length; index += 1) {
+      const record = collection[index];
+      if (!sceneIsPlainObject(record)) {
+        continue;
+      }
+      const element = sceneCSSRecordElement(css, record);
+      const color = sceneCSSReadFirstProperty(css, element, ["--mesh-color"]);
+      const roughness = sceneCSSReadFirstProperty(css, element, ["--mesh-roughness"]);
+      const metalness = sceneCSSReadFirstProperty(css, element, ["--mesh-metalness"]);
+      const opacity = sceneCSSReadFirstProperty(css, element, ["--mesh-opacity", "--material-opacity"]);
+      if (color != null || roughness != null || metalness != null || opacity != null) {
+        const material = sceneCSSMutableMaterialForRecord(state, record);
+        if (material) {
+          if (color != null) material.color = color;
+          if (roughness != null) material.roughness = sceneCSSCoerceValue(roughness);
+          if (metalness != null) material.metalness = sceneCSSCoerceValue(metalness);
+          if (opacity != null) material.opacity = sceneCSSCoerceValue(opacity);
+        } else {
+          if (color != null) sceneCSSSetRecordKey(state, collectionKey, index, "color", color);
+          if (roughness != null) sceneCSSSetRecordKey(state, collectionKey, index, "roughness", sceneCSSCoerceValue(roughness));
+          if (metalness != null) sceneCSSSetRecordKey(state, collectionKey, index, "metalness", sceneCSSCoerceValue(metalness));
+          if (opacity != null) sceneCSSSetRecordKey(state, collectionKey, index, "opacity", sceneCSSCoerceValue(opacity));
+        }
+        state.dynamic = true;
+      }
+    }
+  }
+
+  function sceneCSSApplyPointDefaults(state, css) {
+    const collection = sceneCSSCurrentCollection(state, "points");
+    if (!Array.isArray(collection)) {
+      return;
+    }
+    for (let index = 0; index < collection.length; index += 1) {
+      const record = collection[index];
+      if (!sceneIsPlainObject(record)) {
+        continue;
+      }
+      const element = sceneCSSRecordElement(css, record);
+      const color = sceneCSSReadFirstProperty(css, element, ["--point-color", "--mesh-color"]);
+      const size = sceneCSSReadFirstProperty(css, element, ["--point-size"]);
+      const opacity = sceneCSSReadFirstProperty(css, element, ["--point-opacity"]);
+      if (color != null) {
+        sceneCSSSetRecordKey(state, "points", index, "color", color);
+        state.dynamic = true;
+      }
+      if (size != null) {
+        sceneCSSSetRecordKey(state, "points", index, "size", sceneCSSCoerceValue(size));
+        state.dynamic = true;
+      }
+      if (opacity != null) {
+        sceneCSSSetRecordKey(state, "points", index, "opacity", sceneCSSCoerceValue(opacity));
+        state.dynamic = true;
+      }
+    }
+  }
+
+  function sceneCSSApplyInstancedDefaults(state, css) {
+    const collection = sceneCSSCurrentCollection(state, "instancedMeshes");
+    if (!Array.isArray(collection)) {
+      return;
+    }
+    for (let index = 0; index < collection.length; index += 1) {
+      const record = collection[index];
+      if (!sceneIsPlainObject(record)) {
+        continue;
+      }
+      const element = sceneCSSRecordElement(css, record);
+      const color = sceneCSSReadFirstProperty(css, element, ["--mesh-color"]);
+      const roughness = sceneCSSReadFirstProperty(css, element, ["--mesh-roughness"]);
+      const metalness = sceneCSSReadFirstProperty(css, element, ["--mesh-metalness"]);
+      if (color != null) {
+        sceneCSSSetRecordKey(state, "instancedMeshes", index, "color", color);
+        state.dynamic = true;
+      }
+      if (roughness != null) {
+        sceneCSSSetRecordKey(state, "instancedMeshes", index, "roughness", sceneCSSCoerceValue(roughness));
+        state.dynamic = true;
+      }
+      if (metalness != null) {
+        sceneCSSSetRecordKey(state, "instancedMeshes", index, "metalness", sceneCSSCoerceValue(metalness));
+        state.dynamic = true;
+      }
+    }
+  }
+
+  function sceneCSSApplyComputeDefaults(state, css) {
+    const collection = sceneCSSCurrentCollection(state, "computeParticles");
+    if (!Array.isArray(collection)) {
+      return;
+    }
+    for (let index = 0; index < collection.length; index += 1) {
+      const record = collection[index];
+      if (!sceneIsPlainObject(record)) {
+        continue;
+      }
+      const element = sceneCSSRecordElement(css, record);
+      const wind = sceneCSSReadFirstProperty(css, element, ["--scene-particle-wind"]);
+      if (wind != null) {
+        const emitter = sceneCSSMutableNestedObject(state, "computeParticles", index, "emitter");
+        emitter.wind = sceneCSSCoerceValue(wind);
+        state.dynamic = true;
+      }
+      const color = sceneCSSReadFirstProperty(css, element, ["--point-color", "--mesh-color"]);
+      const size = sceneCSSReadFirstProperty(css, element, ["--point-size"]);
+      const opacity = sceneCSSReadFirstProperty(css, element, ["--point-opacity"]);
+      if (color != null || size != null || opacity != null) {
+        const material = sceneCSSMutableNestedObject(state, "computeParticles", index, "material");
+        if (color != null) material.color = color;
+        if (size != null) material.size = sceneCSSCoerceValue(size);
+        if (opacity != null) material.opacity = sceneCSSCoerceValue(opacity);
+        state.dynamic = true;
+      }
+    }
+  }
+
+  function sceneCSSCurrentCollection(state, key) {
+    const bundle = state.out || state.source || {};
+    return bundle[key];
+  }
+
+  function sceneCSSRecordElement(css, record) {
+    if (!record || !record.id) {
+      return css.mount;
+    }
+    const id = String(record.id);
+    const sentinels = css.sentinels;
+    if (!sentinels) {
+      return css.mount;
+    }
+    if (typeof sentinels.get === "function") {
+      return sentinels.get(id) || css.mount;
+    }
+    return sentinels[id] || css.mount;
+  }
+
+  function sceneCSSResolveVarValue(value, element, css) {
+    if (typeof value !== "string") {
+      return { matched: false, hasValue: false, value };
+    }
+    const parsed = sceneCSSParseVarExpression(value);
+    if (!parsed) {
+      return { matched: false, hasValue: false, value };
+    }
+    const computed = sceneCSSReadProperty(css, element, parsed.name);
+    const text = computed != null && computed !== "" ? computed : parsed.fallback;
+    if (text == null || String(text).trim() === "") {
+      return { matched: true, hasValue: false, value };
+    }
+    return {
+      matched: true,
+      hasValue: true,
+      value: sceneCSSCoerceValue(text),
+    };
+  }
+
+  function sceneCSSParseVarExpression(value) {
+    const text = String(value || "").trim();
+    const match = /^var\(\s*(--[-_a-zA-Z0-9]+)\s*(?:,\s*([\s\S]*?))?\s*\)$/.exec(text);
+    if (!match) {
+      return null;
+    }
+    return {
+      name: match[1],
+      fallback: match[2] == null ? null : match[2].trim(),
+    };
+  }
+
+  function sceneCSSReadFirstProperty(css, element, names) {
+    for (let index = 0; index < names.length; index += 1) {
+      const value = sceneCSSReadProperty(css, element, names[index]);
+      if (value != null && value !== "") {
+        return value;
+      }
+    }
+    return null;
+  }
+
+  function sceneCSSReadProperty(css, element, name) {
+    if (!css || !css.hasComputedStyle || !name) {
+      return null;
+    }
+    const primary = sceneCSSReadPropertyOnElement(css, element || css.mount, name);
+    if (primary != null && primary !== "") {
+      return primary;
+    }
+    if (element && element !== css.mount) {
+      return sceneCSSReadPropertyOnElement(css, css.mount, name);
+    }
+    return primary;
+  }
+
+  function sceneCSSReadPropertyOnElement(css, element, name) {
+    const style = sceneCSSComputedStyle(css, element);
+    if (!style) {
+      return null;
+    }
+    let value = "";
+    if (typeof style.getPropertyValue === "function") {
+      value = style.getPropertyValue(name);
+    } else if (Object.prototype.hasOwnProperty.call(style, name)) {
+      value = style[name];
+    }
+    const text = String(value == null ? "" : value).trim();
+    return text === "" ? null : text;
+  }
+
+  function sceneCSSComputedStyle(css, element) {
+    if (!element || !css.hasComputedStyle) {
+      return null;
+    }
+    if (css.styles && css.styles.has(element)) {
+      return css.styles.get(element);
+    }
+    let style = null;
+    try {
+      style = window.getComputedStyle(element);
+    } catch (_error) {
+      style = null;
+    }
+    if (css.styles) {
+      css.styles.set(element, style);
+    }
+    return style;
+  }
+
+  function sceneCSSCoerceValue(value) {
+    const text = String(value == null ? "" : value).trim();
+    if (text === "") {
+      return "";
+    }
+    if (/^[-+]?(?:\d+\.?\d*|\.\d+)(?:e[-+]?\d+)?$/i.test(text)) {
+      const number = Number(text);
+      if (Number.isFinite(number)) {
+        return number;
+      }
+    }
+    return text;
+  }
+
+  function sceneCSSSameValue(left, right) {
+    return left === right || String(left) === String(right);
+  }
+
+  function sceneCSSMutableBundle(state) {
+    if (state.out === state.source) {
+      state.out = Object.assign({}, state.source);
+    }
+    return state.out;
+  }
+
+  function sceneCSSMutableTopObject(state, key) {
+    const bundle = sceneCSSMutableBundle(state);
+    const current = sceneIsPlainObject(bundle[key]) ? bundle[key] : {};
+    if (current === state.source[key]) {
+      bundle[key] = Object.assign({}, current);
+    } else if (!sceneIsPlainObject(bundle[key])) {
+      bundle[key] = {};
+    }
+    return bundle[key];
+  }
+
+  function sceneCSSSetTopObjectKey(state, objectKey, key, value) {
+    const current = state.out && state.out[objectKey];
+    const oldValue = current && current[key];
+    if (sceneCSSSameValue(oldValue, value)) {
+      return false;
+    }
+    const object = sceneCSSMutableTopObject(state, objectKey);
+    object[key] = value;
+    return true;
+  }
+
+  function sceneCSSSetTopValue(state, key, value) {
+    const bundle = state.out || state.source || {};
+    if (bundle[key] === value) {
+      return false;
+    }
+    const mutable = sceneCSSMutableBundle(state);
+    mutable[key] = value;
+    return true;
+  }
+
+  function sceneCSSMutableArray(state, key) {
+    const bundle = sceneCSSMutableBundle(state);
+    const current = Array.isArray(bundle[key]) ? bundle[key] : [];
+    if (current === state.source[key]) {
+      bundle[key] = current.slice();
+    } else if (!Array.isArray(bundle[key])) {
+      bundle[key] = [];
+    }
+    return bundle[key];
+  }
+
+  function sceneCSSMutableRecord(state, key, index) {
+    const list = sceneCSSMutableArray(state, key);
+    const current = sceneIsPlainObject(list[index]) ? list[index] : {};
+    const sourceList = Array.isArray(state.source[key]) ? state.source[key] : [];
+    if (current === sourceList[index]) {
+      list[index] = Object.assign({}, current);
+    } else if (!sceneIsPlainObject(list[index])) {
+      list[index] = {};
+    }
+    return list[index];
+  }
+
+  function sceneCSSSetRecordKey(state, collectionKey, index, key, value) {
+    const list = sceneCSSCurrentCollection(state, collectionKey);
+    const record = Array.isArray(list) ? list[index] : null;
+    if (record && sceneCSSSameValue(record[key], value)) {
+      return false;
+    }
+    const mutable = sceneCSSMutableRecord(state, collectionKey, index);
+    mutable[key] = value;
+    return true;
+  }
+
+  function sceneCSSMutableNestedObject(state, collectionKey, index, childKey) {
+    const record = sceneCSSMutableRecord(state, collectionKey, index);
+    const current = sceneIsPlainObject(record[childKey]) ? record[childKey] : {};
+    const sourceList = Array.isArray(state.source[collectionKey]) ? state.source[collectionKey] : [];
+    const sourceRecord = sourceList[index];
+    if (sourceRecord && current === sourceRecord[childKey]) {
+      record[childKey] = Object.assign({}, current);
+    } else if (!sceneIsPlainObject(record[childKey])) {
+      record[childKey] = {};
+    }
+    return record[childKey];
+  }
+
+  function sceneCSSMutableMaterialForRecord(state, record) {
+    const materialIndex = Math.floor(sceneNumber(record && record.materialIndex, -1));
+    const materials = sceneCSSCurrentCollection(state, "materials");
+    if (!Array.isArray(materials) || materialIndex < 0 || materialIndex >= materials.length) {
+      return null;
+    }
+    return sceneCSSMutableRecord(state, "materials", materialIndex);
+  }
+
+  function sceneParseSceneFilter(value) {
+    const text = String(value || "").trim();
+    if (!text || text === "none") {
+      return [];
+    }
+    const effects = [];
+    const fnPattern = /([a-zA-Z][-_a-zA-Z0-9]*)\s*\(([^)]*)\)/g;
+    let match;
+    while ((match = fnPattern.exec(text))) {
+      const kind = sceneNormalizeSceneFilterKind(match[1]);
+      if (!kind) {
+        continue;
+      }
+      const effect = { kind };
+      const body = String(match[2] || "").replace(/[,:=]/g, " ");
+      const parts = body.split(/\s+/).filter(Boolean);
+      for (let index = 0; index + 1 < parts.length; index += 2) {
+        const key = sceneNormalizeSceneFilterKey(parts[index]);
+        const valueText = parts[index + 1];
+        if (!key) {
+          continue;
+        }
+        const number = Number(valueText);
+        if (Number.isFinite(number)) {
+          effect[key] = number;
+        }
+      }
+      effects.push(effect);
+    }
+    return effects;
+  }
+
+  function sceneNormalizeSceneFilterKind(kind) {
+    const text = String(kind || "").trim().toLowerCase();
+    if (text === "bloom" || text === "vignette") {
+      return text;
+    }
+    if (text === "color-grade" || text === "color-grading" || text === "colorgrade") {
+      return "color-grade";
+    }
+    return "";
+  }
+
+  function sceneNormalizeSceneFilterKey(key) {
+    const text = String(key || "").trim().toLowerCase();
+    switch (text) {
+      case "threshold":
+      case "intensity":
+      case "radius":
+      case "scale":
+      case "saturation":
+      case "contrast":
+      case "exposure":
+        return text;
+      default:
+        return "";
+    }
+  }
+
+  function prepareScenePBRPasses(bundle) {
+    const objects = Array.isArray(bundle && bundle.meshObjects) ? bundle.meshObjects : [];
+    const materials = Array.isArray(bundle && bundle.materials) ? bundle.materials : [];
+    const opaque = [];
+    const alpha = [];
+    const additive = [];
+
+    for (let index = 0; index < objects.length; index += 1) {
+      const object = objects[index];
+      if (!scenePlannerRenderableObject(object)) {
+        continue;
+      }
+      const material = materials[object.materialIndex] || null;
+      const pass = typeof scenePBRObjectRenderPass === "function"
+        ? scenePBRObjectRenderPass(object, material)
+        : scenePlannerObjectRenderPass(object, material);
+      if (pass === "alpha") {
+        alpha.push(object);
+      } else if (pass === "additive") {
+        additive.push(object);
+      } else {
+        opaque.push(object);
+      }
+    }
+
+    if (typeof scenePBRDepthSort === "function") {
+      alpha.sort(scenePBRDepthSort);
+      additive.sort(scenePBRDepthSort);
+    } else {
+      alpha.sort(scenePlannerDepthSort);
+      additive.sort(scenePlannerDepthSort);
+    }
+
+    return { opaque, alpha, additive };
+  }
+
+  function scenePreparedPassList(worldDrawPlan, pbrPasses) {
+    const passes = [];
+    if (worldDrawPlan) {
+      if (worldDrawPlan.staticOpaqueVertexCount > 0) {
+        passes.push({ name: "staticOpaque", kind: "lines", blend: "opaque", depth: "opaque", vertexCount: worldDrawPlan.staticOpaqueVertexCount });
+      }
+      if (worldDrawPlan.dynamicOpaqueVertexCount > 0) {
+        passes.push({ name: "dynamicOpaque", kind: "lines", blend: "opaque", depth: "opaque", vertexCount: worldDrawPlan.dynamicOpaqueVertexCount });
+      }
+      if (worldDrawPlan.alphaVertexCount > 0) {
+        passes.push({ name: "alpha", kind: "lines", blend: "alpha", depth: "translucent", vertexCount: worldDrawPlan.alphaVertexCount });
+      }
+      if (worldDrawPlan.additiveVertexCount > 0) {
+        passes.push({ name: "additive", kind: "lines", blend: "additive", depth: "translucent", vertexCount: worldDrawPlan.additiveVertexCount });
+      }
+    }
+    if (pbrPasses) {
+      if (pbrPasses.opaque.length > 0) {
+        passes.push({ name: "pbrOpaque", kind: "mesh", blend: "opaque", depth: "opaque", count: pbrPasses.opaque.length });
+      }
+      if (pbrPasses.alpha.length > 0) {
+        passes.push({ name: "pbrAlpha", kind: "mesh", blend: "alpha", depth: "translucent", count: pbrPasses.alpha.length });
+      }
+      if (pbrPasses.additive.length > 0) {
+        passes.push({ name: "pbrAdditive", kind: "mesh", blend: "additive", depth: "translucent", count: pbrPasses.additive.length });
+      }
+    }
+    return passes;
+  }
+
+  function sceneCachedBuffer(cacheOwner, typedArray, allocFn, uploadFn, options) {
+    if (!typedArray) {
+      return null;
+    }
+    const opts = options || {};
+    if (opts.slot) {
+      return sceneCachedSlotBuffer(cacheOwner, opts.slot, typedArray, allocFn, uploadFn, opts);
+    }
+    if (!cacheOwner || typeof cacheOwner.get !== "function" || typeof cacheOwner.set !== "function") {
+      return sceneCachedSlotBuffer(cacheOwner || {}, "_sceneCachedBuffer", typedArray, allocFn, uploadFn, opts);
+    }
+    let handle = cacheOwner.get(typedArray);
+    if (handle) {
+      return handle;
+    }
+    handle = allocFn(typedArray);
+    uploadFn(handle, typedArray, null);
+    cacheOwner.set(typedArray, handle);
+    return handle;
+  }
+
+  function scenePreparedCommandSequence(prepared) {
+    const scene = prepared && prepared.ir ? prepared.ir : {};
+    const commands = [];
+    const pbrPasses = prepared && prepared.pbrPasses;
+    if (pbrPasses) {
+      sceneAppendPreparedMeshCommands(commands, "opaque", pbrPasses.opaque);
+      sceneAppendPreparedMeshCommands(commands, "alpha", pbrPasses.alpha);
+      sceneAppendPreparedMeshCommands(commands, "additive", pbrPasses.additive);
+    }
+    if (prepared && prepared.worldDrawPlan) {
+      sceneAppendPreparedLineCommand(commands, "staticOpaque", prepared.worldDrawPlan.staticOpaqueVertexCount);
+      sceneAppendPreparedLineCommand(commands, "dynamicOpaque", prepared.worldDrawPlan.dynamicOpaqueVertexCount);
+      sceneAppendPreparedLineCommand(commands, "alpha", prepared.worldDrawPlan.alphaVertexCount);
+      sceneAppendPreparedLineCommand(commands, "additive", prepared.worldDrawPlan.additiveVertexCount);
+    }
+    const points = Array.isArray(scene.points) ? scene.points : [];
+    for (let index = 0; index < points.length; index += 1) {
+      const entry = points[index];
+      commands.push({
+        op: "drawPoints",
+        id: entry && entry.id || "",
+        count: Math.max(0, Math.floor(sceneNumber(entry && entry.count, 0))),
+      });
+    }
+    const instanced = Array.isArray(scene.instancedMeshes) ? scene.instancedMeshes : [];
+    for (let index = 0; index < instanced.length; index += 1) {
+      const entry = instanced[index];
+      commands.push({
+        op: "drawInstancedMesh",
+        id: entry && entry.id || "",
+        kind: entry && entry.kind || "",
+        count: Math.max(0, Math.floor(sceneNumber(entry && entry.count, 0))),
+      });
+    }
+    return commands;
+  }
+
+  function sceneAppendPreparedMeshCommands(commands, pass, objects) {
+    const list = Array.isArray(objects) ? objects : [];
+    for (let index = 0; index < list.length; index += 1) {
+      const object = list[index];
+      commands.push({
+        op: "drawMesh",
+        pass,
+        id: object && object.id || "",
+        kind: object && object.kind || "",
+        vertexOffset: Math.max(0, Math.floor(sceneNumber(object && object.vertexOffset, 0))),
+        vertexCount: Math.max(0, Math.floor(sceneNumber(object && object.vertexCount, 0))),
+      });
+    }
+  }
+
+  function sceneAppendPreparedLineCommand(commands, pass, vertexCount) {
+    const count = Math.max(0, Math.floor(sceneNumber(vertexCount, 0)));
+    if (count > 0) {
+      commands.push({ op: "drawLines", pass, vertexCount: count });
+    }
+  }
+
+  function sceneCachedSlotBuffer(owner, slot, typedArray, allocFn, uploadFn, options) {
+    if (!owner) {
+      return null;
+    }
+    const bytesKey = slot + "Bytes";
+    const sourceKey = slot + "Source";
+    let handle = owner[slot];
+    if (!handle) {
+      handle = allocFn(typedArray);
+      owner[slot] = handle;
+      owner[bytesKey] = 0;
+      owner[sourceKey] = null;
+    }
+    const sourceChanged = owner[sourceKey] !== typedArray;
+    const bytesChanged = owner[bytesKey] !== typedArray.byteLength;
+    if (options && options.dynamic || sourceChanged || bytesChanged) {
+      const replacement = uploadFn(handle, typedArray, {
+        sourceChanged,
+        bytesChanged,
+        previousBytes: owner[bytesKey] || 0,
+      });
+      if (replacement && replacement !== handle) {
+        handle = replacement;
+        owner[slot] = handle;
+      }
+      owner[bytesKey] = typedArray.byteLength;
+      owner[sourceKey] = typedArray;
+    }
+    return handle;
+  }
+
+  function scenePreparedSignature(bundle, camera, viewport) {
+    let hash = 2166136261 >>> 0;
+    hash = scenePlannerHashString(hash, "v");
+    hash = scenePlannerHashNumber(hash, sceneNumber(bundle && (bundle.bundleVersion != null ? bundle.bundleVersion : bundle.version), 0));
+    hash = scenePlannerHashNumber(hash, sceneNumber(bundle && bundle.timeSeconds, 0));
+    hash = scenePlannerHashCamera(hash, camera);
+    hash = scenePlannerHashViewport(hash, viewport);
+    hash = scenePlannerHashAny(hash, bundle && bundle.environment, 0);
+    hash = scenePlannerHashCollection(hash, bundle && bundle.meshObjects, scenePlannerHashMeshObject);
+    hash = scenePlannerHashCollection(hash, bundle && bundle.objects, scenePlannerHashLineObject);
+    hash = scenePlannerHashCollection(hash, bundle && bundle.materials, scenePlannerHashMaterial);
+    hash = scenePlannerHashCollection(hash, bundle && bundle.lights, scenePlannerHashLight);
+    hash = scenePlannerHashAny(hash, bundle && bundle.points, 0);
+    hash = scenePlannerHashAny(hash, bundle && bundle.instancedMeshes, 0);
+    hash = scenePlannerHashAny(hash, bundle && bundle.computeParticles, 0);
+    hash = scenePlannerHashAny(hash, bundle && bundle.labels, 0);
+    hash = scenePlannerHashAny(hash, bundle && bundle.sprites, 0);
+    hash = scenePlannerHashAny(hash, bundle && bundle.postFX, 0);
+    hash = scenePlannerHashAny(hash, bundle && bundle.postEffects, 0);
+    hash = scenePlannerHashNumber(hash, arrayLength(bundle && bundle.worldPositions));
+    hash = scenePlannerHashNumber(hash, arrayLength(bundle && bundle.worldColors));
+    hash = scenePlannerHashAny(hash, bundle && bundle.worldLineWidths, 0);
+    hash = scenePlannerHashAny(hash, bundle && bundle.worldLinePasses, 0);
+    hash = scenePlannerHashNumber(hash, arrayLength(bundle && bundle.worldMeshPositions));
+    hash = scenePlannerHashNumber(hash, arrayLength(bundle && bundle.worldMeshNormals));
+    return String(hash);
+  }
+
+  function scenePlannerMaterialsHash(bundle) {
+    let hash = 2166136261 >>> 0;
+    return String(scenePlannerHashCollection(hash, bundle && bundle.materials, scenePlannerHashMaterial));
+  }
+
+  function scenePlannerShadowHash(bundle) {
+    let hash = 2166136261 >>> 0;
+    hash = scenePlannerHashCollection(hash, bundle && bundle.lights, scenePlannerHashLight);
+    hash = scenePlannerHashCollection(hash, bundle && bundle.meshObjects, function(next, object) {
+      if (!object || !object.castShadow) {
+        return next;
+      }
+      return scenePlannerHashMeshObject(next, object);
+    });
+    return String(hash);
+  }
+
+  function scenePlannerRenderableObject(object) {
+    return Boolean(
+      object &&
+      !object.viewCulled &&
+      Number.isFinite(object.vertexOffset) &&
+      Number.isFinite(object.vertexCount) &&
+      object.vertexCount > 0
+    );
+  }
+
+  function scenePlannerObjectRenderPass(object, material) {
+    const objectPass = object && typeof object.renderPass === "string" ? object.renderPass.toLowerCase() : "";
+    if (objectPass === "opaque" || objectPass === "alpha" || objectPass === "additive") {
+      return objectPass;
+    }
+    const materialPass = material && typeof material.renderPass === "string" ? material.renderPass.toLowerCase() : "";
+    if (materialPass === "opaque" || materialPass === "alpha" || materialPass === "additive") {
+      return materialPass;
+    }
+    if (material && sceneNumber(material.opacity, 1) < 1) {
+      return "alpha";
+    }
+    return "opaque";
+  }
+
+  function scenePlannerDepthSort(a, b) {
+    const da = sceneNumber(a && a.depthCenter, 0);
+    const db = sceneNumber(b && b.depthCenter, 0);
+    if (da !== db) {
+      return db - da;
+    }
+    return String(a && a.id || "").localeCompare(String(b && b.id || ""));
+  }
+
+  function scenePlannerHashCamera(hash, camera) {
+    hash = scenePlannerHashNumber(hash, sceneNumber(camera && camera.x, 0));
+    hash = scenePlannerHashNumber(hash, sceneNumber(camera && camera.y, 0));
+    hash = scenePlannerHashNumber(hash, sceneNumber(camera && camera.z, 0));
+    hash = scenePlannerHashNumber(hash, sceneNumber(camera && camera.rotationX, 0));
+    hash = scenePlannerHashNumber(hash, sceneNumber(camera && camera.rotationY, 0));
+    hash = scenePlannerHashNumber(hash, sceneNumber(camera && camera.rotationZ, 0));
+    hash = scenePlannerHashNumber(hash, sceneNumber(camera && camera.fov, 0));
+    hash = scenePlannerHashNumber(hash, sceneNumber(camera && camera.near, 0));
+    return scenePlannerHashNumber(hash, sceneNumber(camera && camera.far, 0));
+  }
+
+  function scenePlannerHashViewport(hash, viewport) {
+    hash = scenePlannerHashNumber(hash, sceneNumber(viewport && viewport.cssWidth, 0));
+    hash = scenePlannerHashNumber(hash, sceneNumber(viewport && viewport.cssHeight, 0));
+    hash = scenePlannerHashNumber(hash, sceneNumber(viewport && viewport.pixelWidth, 0));
+    hash = scenePlannerHashNumber(hash, sceneNumber(viewport && viewport.pixelHeight, 0));
+    return scenePlannerHashNumber(hash, sceneNumber(viewport && viewport.pixelRatio, 0));
+  }
+
+  function scenePlannerHashCollection(hash, collection, itemFn) {
+    if (!Array.isArray(collection)) {
+      return scenePlannerHashNumber(hash, 0);
+    }
+    hash = scenePlannerHashNumber(hash, collection.length);
+    for (let index = 0; index < collection.length; index += 1) {
+      hash = itemFn(hash, collection[index]);
+    }
+    return hash;
+  }
+
+  function scenePlannerHashMeshObject(hash, object) {
+    hash = scenePlannerHashString(hash, object && object.id || "");
+    hash = scenePlannerHashString(hash, object && object.kind || "");
+    hash = scenePlannerHashNumber(hash, sceneNumber(object && object.materialIndex, 0));
+    hash = scenePlannerHashNumber(hash, sceneNumber(object && object.vertexOffset, 0));
+    hash = scenePlannerHashNumber(hash, sceneNumber(object && object.vertexCount, 0));
+    hash = scenePlannerHashNumber(hash, sceneNumber(object && object.depthCenter, 0));
+    hash = scenePlannerHashNumber(hash, object && object.viewCulled ? 1 : 0);
+    hash = scenePlannerHashNumber(hash, object && object.castShadow ? 1 : 0);
+    return scenePlannerHashNumber(hash, object && object.receiveShadow ? 1 : 0);
+  }
+
+  function scenePlannerHashLineObject(hash, object) {
+    hash = scenePlannerHashString(hash, object && object.id || "");
+    hash = scenePlannerHashString(hash, object && object.kind || "");
+    hash = scenePlannerHashNumber(hash, sceneNumber(object && object.materialIndex, 0));
+    hash = scenePlannerHashNumber(hash, sceneNumber(object && object.vertexOffset, 0));
+    hash = scenePlannerHashNumber(hash, sceneNumber(object && object.vertexCount, 0));
+    hash = scenePlannerHashNumber(hash, sceneNumber(object && object.depthCenter, 0));
+    hash = scenePlannerHashNumber(hash, object && object.static ? 1 : 0);
+    return scenePlannerHashNumber(hash, object && object.viewCulled ? 1 : 0);
+  }
+
+  function scenePlannerHashMaterial(hash, material) {
+    if (material && material.key) {
+      return scenePlannerHashString(hash, material.key);
+    }
+    hash = scenePlannerHashString(hash, material && material.kind || "");
+    hash = scenePlannerHashString(hash, material && material.color || "");
+    hash = scenePlannerHashString(hash, material && material.texture || "");
+    hash = scenePlannerHashString(hash, material && material.blendMode || "");
+    hash = scenePlannerHashString(hash, material && material.renderPass || "");
+    hash = scenePlannerHashNumber(hash, sceneNumber(material && material.opacity, 1));
+    hash = scenePlannerHashNumber(hash, sceneNumber(material && material.emissive, 0));
+    hash = scenePlannerHashNumber(hash, sceneNumber(material && material.roughness, 0));
+    hash = scenePlannerHashNumber(hash, sceneNumber(material && material.metalness, 0));
+    return scenePlannerHashNumber(hash, material && material.wireframe ? 1 : 0);
+  }
+
+  function scenePlannerHashLight(hash, light) {
+    hash = scenePlannerHashString(hash, light && light.id || "");
+    hash = scenePlannerHashString(hash, light && light.kind || "");
+    hash = scenePlannerHashString(hash, light && light.color || "");
+    hash = scenePlannerHashNumber(hash, sceneNumber(light && light.intensity, 0));
+    hash = scenePlannerHashNumber(hash, sceneNumber(light && light.x, 0));
+    hash = scenePlannerHashNumber(hash, sceneNumber(light && light.y, 0));
+    hash = scenePlannerHashNumber(hash, sceneNumber(light && light.z, 0));
+    hash = scenePlannerHashNumber(hash, sceneNumber(light && light.directionX, 0));
+    hash = scenePlannerHashNumber(hash, sceneNumber(light && light.directionY, 0));
+    hash = scenePlannerHashNumber(hash, sceneNumber(light && light.directionZ, 0));
+    hash = scenePlannerHashNumber(hash, light && light.castShadow ? 1 : 0);
+    return scenePlannerHashNumber(hash, sceneNumber(light && light.shadowSize, 0));
+  }
+
+  function scenePlannerHashAny(hash, value, depth) {
+    if (value == null) {
+      return scenePlannerHashString(hash, "null");
+    }
+    const valueType = typeof value;
+    if (valueType === "number") {
+      return scenePlannerHashNumber(hash, value);
+    }
+    if (valueType === "string" || valueType === "boolean") {
+      return scenePlannerHashString(hash, String(value));
+    }
+    if (valueType !== "object" || depth > 5) {
+      return scenePlannerHashString(hash, valueType);
+    }
+    if (typeof ArrayBuffer !== "undefined" && ArrayBuffer.isView && ArrayBuffer.isView(value)) {
+      return scenePlannerHashArraySample(hash, value);
+    }
+    if (Array.isArray(value)) {
+      hash = scenePlannerHashString(hash, "array");
+      hash = scenePlannerHashNumber(hash, value.length);
+      const length = value.length;
+      if (length <= 64) {
+        for (let index = 0; index < length; index += 1) {
+          hash = scenePlannerHashAny(hash, value[index], depth + 1);
+        }
+      } else {
+        for (let index = 0; index < 16; index += 1) {
+          hash = scenePlannerHashAny(hash, value[index], depth + 1);
+        }
+        hash = scenePlannerHashAny(hash, value[Math.floor(length / 2)], depth + 1);
+        for (let index = Math.max(16, length - 16); index < length; index += 1) {
+          hash = scenePlannerHashAny(hash, value[index], depth + 1);
+        }
+      }
+      return hash;
+    }
+    const keys = Object.keys(value).filter(function(key) {
+      return key && key.charAt(0) !== "_" && typeof value[key] !== "function";
+    }).sort();
+    hash = scenePlannerHashString(hash, "object");
+    hash = scenePlannerHashNumber(hash, keys.length);
+    for (let index = 0; index < keys.length; index += 1) {
+      const key = keys[index];
+      hash = scenePlannerHashString(hash, key);
+      hash = scenePlannerHashAny(hash, value[key], depth + 1);
+    }
+    return hash;
+  }
+
+  function scenePlannerHashArraySample(hash, value) {
+    const length = arrayLength(value);
+    hash = scenePlannerHashString(hash, "typed");
+    hash = scenePlannerHashNumber(hash, length);
+    if (length === 0) {
+      return hash;
+    }
+    const step = Math.max(1, Math.floor(length / 32));
+    for (let index = 0; index < length; index += step) {
+      hash = scenePlannerHashNumber(hash, sceneNumber(value[index], 0));
+    }
+    if ((length - 1) % step !== 0) {
+      hash = scenePlannerHashNumber(hash, sceneNumber(value[length - 1], 0));
+    }
+    return hash;
+  }
+
+  function scenePlannerHashNumber(hash, value) {
+    const scaled = Math.round(sceneNumber(value, 0) * 1000);
+    hash ^= scaled;
+    return Math.imul(hash, 16777619) >>> 0;
+  }
+
+  function scenePlannerHashString(hash, value) {
+    const text = String(value || "");
+    for (let i = 0; i < text.length; i += 1) {
+      hash ^= text.charCodeAt(i);
+      hash = Math.imul(hash, 16777619) >>> 0;
+    }
+    return hash;
+  }
+
+  function arrayLength(value) {
+    return value && typeof value.length === "number" ? value.length : 0;
+  }
+
+  var sceneBackendRegistry = (function() {
+    const entries = [];
+    const byKind = new Map();
+
+    function register(kind, factory, options) {
+      const normalizedKind = String(kind || "").trim();
+      if (!normalizedKind) {
+        throw new Error("scene backend kind is required");
+      }
+      const entry = normalizeBackendEntry(normalizedKind, factory, options);
+      if (byKind.has(normalizedKind)) {
+        const previous = byKind.get(normalizedKind);
+        const index = entries.indexOf(previous);
+        if (index >= 0) {
+          entries.splice(index, 1, entry);
+        }
+      } else {
+        entries.push(entry);
+      }
+      byKind.set(normalizedKind, entry);
+      return entry;
+    }
+
+    function select(request) {
+      const list = candidates(request);
+      return list.length > 0 ? list[0] : null;
+    }
+
+    function candidates(request) {
+      const req = request || {};
+      const order = backendSelectionOrder(req);
+      const out = [];
+      for (const kind of order) {
+        const entry = byKind.get(kind);
+        if (!entry) {
+          continue;
+        }
+        if (typeof entry.available === "function" && !entry.available(req)) {
+          continue;
+        }
+        out.push(entry);
+      }
+      for (const entry of entries) {
+        if (order.indexOf(entry.kind) >= 0) {
+          continue;
+        }
+        if (!backendRequestAllowsKind(req, entry.kind)) {
+          continue;
+        }
+        if (typeof entry.available === "function" && !entry.available(req)) {
+          continue;
+        }
+        out.push(entry);
+      }
+      return out;
+    }
+
+    function list() {
+      return entries.slice();
+    }
+
+    function dispose(kind) {
+      if (kind == null) {
+        entries.length = 0;
+        byKind.clear();
+        return;
+      }
+      const normalizedKind = String(kind || "").trim();
+      const entry = byKind.get(normalizedKind);
+      if (!entry) {
+        return;
+      }
+      byKind.delete(normalizedKind);
+      const index = entries.indexOf(entry);
+      if (index >= 0) {
+        entries.splice(index, 1);
+      }
+    }
+
+    return {
+      register,
+      select,
+      candidates,
+      list,
+      dispose,
+    };
+  })();
+
+  function normalizeBackendEntry(kind, factory, options) {
+    const opts = options || {};
+    if (typeof factory === "function") {
+      return {
+        kind,
+        capabilities: Array.isArray(opts.capabilities) ? opts.capabilities.slice() : [],
+        create: factory,
+        available: typeof opts.available === "function" ? opts.available : null,
+        priority: sceneNumber(opts.priority, 0),
+      };
+    }
+    const source = factory && typeof factory === "object" ? factory : {};
+    return {
+      kind,
+      capabilities: Array.isArray(source.capabilities) ? source.capabilities.slice() : [],
+      create: typeof source.create === "function" ? source.create : function() { return null; },
+      available: typeof source.available === "function" ? source.available : null,
+      priority: sceneNumber(source.priority, sceneNumber(opts.priority, 0)),
+    };
+  }
+
+  function backendSelectionOrder(request) {
+    const order = [];
+    if (request.forceWebGL) {
+      if (backendRequestAllowsKind(request, "webgl")) {
+        order.push("webgl");
+      }
+      if (backendRequestAllowsKind(request, "canvas2d")) {
+        order.push("canvas2d");
+      }
+      return order;
+    }
+    if (request.preferWebGPU && backendRequestAllowsKind(request, "webgpu")) {
+      order.push("webgpu");
+    }
+    if (backendRequestAllowsKind(request, "webgl")) {
+      order.push("webgl");
+    }
+    if (order.indexOf("webgpu") < 0 && backendRequestAllowsKind(request, "webgpu")) {
+      order.push("webgpu");
+    }
+    if (backendRequestAllowsKind(request, "canvas2d")) {
+      order.push("canvas2d");
+    }
+    return order;
+  }
+
+  function backendRequestAllowsKind(request, kind) {
+    if (kind === "webgpu") {
+      return request.webgpu !== false && (request.webgpu === true || request.preferWebGPU === true);
+    }
+    if (kind === "webgl") {
+      return request.webgl !== false && (request.webgl === true || request.webgl2 === true);
+    }
+    if (kind === "canvas2d") {
+      return request.canvas2d !== false && request.canvas !== false;
+    }
+    return request[kind] !== false;
+  }
+
+  if (window.__gosx_scene3d_api) {
+    window.__gosx_scene3d_api.sceneBackendRegistry = sceneBackendRegistry;
   }
 
 function resolvePostFXFactor(maxPixels, canvasPixels) {
@@ -8442,36 +10146,32 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
     const pointsEntryBuffers = new Set();
     var computeParticleSystems = new Map();
     var lastComputeParticleTimeSeconds = null;
+    var lastPreparedScene = null;
 
     function ensureStaticArrayVBO(cache, typedArray) {
-      if (!typedArray) return null;
-      var buf = cache.get(typedArray);
-      if (buf) return buf;
-      buf = gl.createBuffer();
-      gl.bindBuffer(gl.ARRAY_BUFFER, buf);
-      gl.bufferData(gl.ARRAY_BUFFER, typedArray, gl.STATIC_DRAW);
-      cache.set(typedArray, buf);
-      pointsEntryBuffers.add(buf);
-      return buf;
+      return sceneCachedBuffer(cache, typedArray, function() {
+        var buf = gl.createBuffer();
+        pointsEntryBuffers.add(buf);
+        return buf;
+      }, function(buf, data) {
+        gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+        gl.bufferData(gl.ARRAY_BUFFER, data, gl.STATIC_DRAW);
+      });
     }
 
     function ensureDynamicPointsVBO(entry, slot, typedArray) {
-      if (!typedArray) return null;
-      var buf = entry[slot];
-      if (!buf) {
-        buf = gl.createBuffer();
-        entry[slot] = buf;
-        entry[slot + "Bytes"] = 0;
+      return sceneCachedBuffer(entry, typedArray, function() {
+        var buf = gl.createBuffer();
         pointsEntryBuffers.add(buf);
-      }
-      gl.bindBuffer(gl.ARRAY_BUFFER, buf);
-      if (entry[slot + "Bytes"] !== typedArray.byteLength) {
-        gl.bufferData(gl.ARRAY_BUFFER, typedArray, gl.DYNAMIC_DRAW);
-        entry[slot + "Bytes"] = typedArray.byteLength;
-      } else {
-        gl.bufferSubData(gl.ARRAY_BUFFER, 0, typedArray);
-      }
-      return buf;
+        return buf;
+      }, function(buf, data, state) {
+        gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+        if (!state || state.bytesChanged) {
+          gl.bufferData(gl.ARRAY_BUFFER, data, gl.DYNAMIC_DRAW);
+        } else {
+          gl.bufferSubData(gl.ARRAY_BUFFER, 0, data);
+        }
+      }, { slot: slot, dynamic: true });
     }
 
     var instancedProgram = null;
@@ -8650,6 +10350,19 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
       if (!hasPBRData && !hasPointsData && !hasInstancedData) {
         return;
       }
+      const preparedScene = typeof prepareScene === "function"
+        ? prepareScene(bundle, bundle.camera, viewport, lastPreparedScene, {
+          mount: canvas && canvas.parentNode || null,
+          sentinels: canvas && canvas.parentNode && canvas.parentNode.__gosxScene3DSentinels || null,
+        })
+        : null;
+      if (preparedScene) {
+        lastPreparedScene = preparedScene;
+        bundle = preparedScene.ir || bundle;
+        if (canvas && canvas.parentNode) {
+          canvas.parentNode.__gosxScene3DCSSDynamic = Boolean(preparedScene.cssDynamic);
+        }
+      }
 
       shadowLightMatrices[0] = null; shadowLightMatrices[1] = null;
       shadowLightIndices[0] = -1; shadowLightIndices[1] = -1;
@@ -8736,7 +10449,9 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
 
       scenePBRUploadShadowUniforms(gl, uniforms, shadowSlots, shadowLightMatrices, shadowLightIndices, bundle.lights);
 
-      const drawList = buildPBRDrawList(bundle);
+      const drawList = preparedScene && preparedScene.pbrPasses
+        ? preparedScene.pbrPasses
+        : buildPBRDrawList(bundle);
       const materials = Array.isArray(bundle.materials) ? bundle.materials : [];
 
       applyBlendMode(gl, "opaque");
@@ -9448,6 +11163,16 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
     return String(a && a.id || "").localeCompare(String(b && b.id || ""));
   }
 
+  function sceneWebGLCommandSequence(bundle, viewport, previousPrepared) {
+    const prepared = prepareScene(
+      bundle || {},
+      bundle && bundle.camera || {},
+      viewport || {},
+      previousPrepared || null
+    );
+    return scenePreparedCommandSequence(prepared);
+  }
+
   function createScenePBRRendererOrFallback(gl, canvas, options) {
     if (!gl || !canvas) {
       return null;
@@ -9463,6 +11188,33 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
       return null;
     }
     return renderer;
+  }
+
+  if (typeof sceneBackendRegistry !== "undefined" && sceneBackendRegistry) {
+    sceneBackendRegistry.register("webgl", {
+      capabilities: ["webgl", "webgl2", "shaders", "instancing", "shadows"],
+      create: function(canvas, props, capability) {
+        const caps = capability || {};
+        if (typeof createScenePBRRendererOrFallback === "function") {
+          const gl = typeof canvas.getContext === "function" ? canvas.getContext("webgl2", {
+            alpha: true,
+            premultipliedAlpha: false,
+            antialias: caps.tier === "full" && !caps.lowPower && !caps.reducedData,
+            powerPreference: caps.lowPower || caps.tier === "constrained" ? "low-power" : "high-performance",
+          }) : null;
+          if (gl) {
+            const pbrRenderer = createScenePBRRendererOrFallback(gl, canvas, {});
+            if (pbrRenderer) {
+              return pbrRenderer;
+            }
+          }
+        }
+        return createSceneWebGLRenderer(canvas, {
+          antialias: caps.tier === "full" && !caps.lowPower && !caps.reducedData,
+          powerPreference: caps.lowPower || caps.tier === "constrained" ? "low-power" : "high-performance",
+        });
+      },
+    });
   }
 
   var _webgpuAdapterProbe = null; // null = unprobed, false = unavailable, GPUAdapter = ready
@@ -9539,6 +11291,18 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
       console.warn("[gosx] WebGPU renderer creation failed:", e);
       return null;
     }
+  }
+
+  if (typeof sceneBackendRegistry !== "undefined" && sceneBackendRegistry) {
+    sceneBackendRegistry.register("webgpu", {
+      capabilities: ["webgpu", "shaders", "instancing", "compute", "shadows"],
+      available: function() {
+        return sceneWebGPUAvailable();
+      },
+      create: function(canvas) {
+        return createSceneWebGPURendererOrFallback(canvas);
+      },
+    });
   }
 
   var SCENE_DRAG_MIN_EXTENT_X = 0.6;
@@ -10899,7 +12663,22 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
     };
   }
 
+  if (typeof sceneBackendRegistry !== "undefined" && sceneBackendRegistry) {
+    sceneBackendRegistry.register("canvas2d", {
+      capabilities: ["canvas"],
+      create: function(canvas) {
+        const ctx2d = typeof canvas.getContext === "function" ? canvas.getContext("2d") : null;
+        return ctx2d ? createSceneCanvasRenderer(ctx2d, canvas) : null;
+      },
+    });
+  }
+
   function createSceneRenderer(canvas, props, capability) {
+    const registryResult = createSceneRendererFromRegistry(canvas, props, capability);
+    if (registryResult) {
+      return registryResult;
+    }
+
     const webglPreference = sceneCapabilityWebGLPreference(props, capability);
     if (webglPreference === "prefer" || webglPreference === "force") {
       if (webglPreference !== "force" && typeof sceneWebGPUAvailable === "function" && sceneWebGPUAvailable()) {
@@ -10947,6 +12726,39 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
       renderer: createSceneCanvasRenderer(ctx2d, canvas),
       fallbackReason: sceneRendererFallbackReason(props, capability, "canvas"),
     };
+  }
+
+  function createSceneRendererFromRegistry(canvas, props, capability) {
+    if (typeof sceneBackendRegistry === "undefined" || !sceneBackendRegistry || typeof sceneBackendRegistry.candidates !== "function") {
+      return null;
+    }
+    const webglPreference = sceneCapabilityWebGLPreference(props, capability);
+    const request = {
+      props,
+      capability,
+      webgpu: webglPreference === "prefer",
+      webgl: webglPreference === "prefer" || webglPreference === "force",
+      webgl2: webglPreference === "prefer" || webglPreference === "force",
+      canvas2d: true,
+      preferWebGPU: webglPreference === "prefer",
+      forceWebGL: webglPreference === "force",
+    };
+    const candidates = sceneBackendRegistry.candidates(request);
+    for (const entry of candidates) {
+      if (!entry || typeof entry.create !== "function") {
+        continue;
+      }
+      const renderer = entry.create(canvas, props, capability);
+      if (renderer) {
+        return {
+          renderer,
+          fallbackReason: entry.kind === "canvas2d" || renderer.kind === "canvas"
+            ? sceneRendererFallbackReason(props, capability, "canvas")
+            : "",
+        };
+      }
+    }
+    return null;
   }
 
   const sceneModelAssetCache = new Map();
@@ -12878,10 +14690,14 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
     const runtimeScene = ctx.runtimeMode === "shared" && Boolean(ctx.programRef);
     const lifecycle = initialSceneLifecycleState();
     const motion = initialSceneMotionState(props);
+    let sceneCSSAnimationUntil = 0;
 
     function sceneShouldAnimate() {
       if (motion.reducedMotion) {
         return false;
+      }
+      if (ctx.mount && ctx.mount.__gosxScene3DCSSDynamic && Date.now() < sceneCSSAnimationUntil) {
+        return true;
       }
       if (sceneHasActiveTransitions(sceneState)) {
         return true;
@@ -12929,6 +14745,21 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
     labelLayer.setAttribute("aria-hidden", "true");
     ctx.mount.appendChild(labelLayer);
 
+    const sentinelLayer = document.createElement("div");
+    sentinelLayer.setAttribute("data-gosx-scene-node-layer", "true");
+    sentinelLayer.setAttribute("aria-hidden", "true");
+    sentinelLayer.style.position = "absolute";
+    sentinelLayer.style.inset = "0";
+    sentinelLayer.style.width = "0";
+    sentinelLayer.style.height = "0";
+    sentinelLayer.style.overflow = "visible";
+    sentinelLayer.style.pointerEvents = "none";
+    canvas.appendChild(sentinelLayer);
+
+    const sceneNodeSentinels = new Map();
+    ctx.mount.__gosxScene3DSentinels = sceneNodeSentinels;
+    ctx.mount.__gosxScene3DCSSDynamic = false;
+
     let viewport = applySceneViewport(ctx.mount, canvas, labelLayer, sceneViewportFromMount(ctx.mount, props, viewportBase, canvas, capability), viewportBase);
 
     const initialRenderer = createSceneRenderer(canvas, props, capability);
@@ -12942,6 +14773,11 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
           if (labelLayer.parentNode === ctx.mount) {
             ctx.mount.removeChild(labelLayer);
           }
+          if (sentinelLayer.parentNode === ctx.mount) {
+            ctx.mount.removeChild(sentinelLayer);
+          }
+          delete ctx.mount.__gosxScene3DSentinels;
+          delete ctx.mount.__gosxScene3DCSSDynamic;
         },
       };
     }
@@ -12952,6 +14788,58 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
     const labelElements = new Map();
     const spriteElements = new Map();
     let labelRefreshHandle = null;
+
+    function syncSceneNodeSentinels(bundle) {
+      const next = new Set();
+      collectSceneNodeSentinelIDs(next, bundle && bundle.meshObjects);
+      collectSceneNodeSentinelIDs(next, bundle && bundle.objects);
+      collectSceneNodeSentinelIDs(next, bundle && bundle.points);
+      collectSceneNodeSentinelIDs(next, bundle && bundle.instancedMeshes);
+      collectSceneNodeSentinelIDs(next, bundle && bundle.computeParticles);
+      collectSceneNodeSentinelIDs(next, bundle && bundle.lights);
+      collectSceneNodeSentinelIDs(next, bundle && bundle.labels);
+      collectSceneNodeSentinelIDs(next, bundle && bundle.sprites);
+      next.forEach(function(id) {
+        if (sceneNodeSentinels.has(id)) {
+          return;
+        }
+        const sentinel = document.createElement("div");
+        sentinel.setAttribute("data-gosx-scene-node", id);
+        sentinel.setAttribute("aria-hidden", "true");
+        sentinel.style.position = "absolute";
+        sentinel.style.left = "0";
+        sentinel.style.top = "0";
+        sentinel.style.width = "1px";
+        sentinel.style.height = "1px";
+        sentinel.style.opacity = "0";
+        sentinel.style.pointerEvents = "auto";
+        sentinelLayer.appendChild(sentinel);
+        sceneNodeSentinels.set(id, sentinel);
+      });
+      sceneNodeSentinels.forEach(function(sentinel, id) {
+        if (next.has(id)) {
+          return;
+        }
+        if (sentinel.parentNode === sentinelLayer) {
+          sentinelLayer.removeChild(sentinel);
+        }
+        sceneNodeSentinels.delete(id);
+      });
+    }
+
+    function collectSceneNodeSentinelIDs(target, entries) {
+      if (!Array.isArray(entries)) {
+        return;
+      }
+      for (let index = 0; index < entries.length; index += 1) {
+        const entry = entries[index];
+        const id = entry && entry.id;
+        if (id != null && String(id).trim() !== "") {
+          target.add(String(id));
+        }
+      }
+    }
+
     const releaseTextLayoutListener = onTextLayoutInvalidated(function() {
       if (disposed || !latestBundle || !sceneCanRender()) {
         return;
@@ -13089,6 +14977,108 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
       scheduleRender(reason);
     }
 
+    function markSceneCSSInvalidated(reason) {
+      const transitionWindow = Math.max(
+        sceneCSSTransitionWindowMillis(ctx.mount),
+        sceneCSSTransitionWindowMillis(document && document.documentElement)
+      );
+      if (transitionWindow > 0) {
+        sceneCSSAnimationUntil = Date.now() + transitionWindow;
+      }
+      scheduleRender(reason || "css");
+    }
+
+    function sceneCSSTransitionWindowMillis(element) {
+      if (!element || typeof window.getComputedStyle !== "function") {
+        return 0;
+      }
+      let style = null;
+      try {
+        style = window.getComputedStyle(element);
+      } catch (_error) {
+        style = null;
+      }
+      if (!style) {
+        return 0;
+      }
+      const durations = sceneCSSParseTimeList(style.transitionDuration || (typeof style.getPropertyValue === "function" ? style.getPropertyValue("transition-duration") : ""));
+      const delays = sceneCSSParseTimeList(style.transitionDelay || (typeof style.getPropertyValue === "function" ? style.getPropertyValue("transition-delay") : ""));
+      const length = Math.max(durations.length, delays.length);
+      let max = 0;
+      for (let index = 0; index < length; index += 1) {
+        const duration = durations[index % Math.max(1, durations.length)] || 0;
+        const delay = delays[index % Math.max(1, delays.length)] || 0;
+        max = Math.max(max, duration + delay);
+      }
+      return max > 0 ? max + 80 : 0;
+    }
+
+    function sceneCSSParseTimeList(value) {
+      return String(value || "").split(",").map(function(part) {
+        const text = part.trim().toLowerCase();
+        if (!text) {
+          return 0;
+        }
+        const number = Number.parseFloat(text);
+        if (!Number.isFinite(number)) {
+          return 0;
+        }
+        return text.endsWith("ms") ? number : number * 1000;
+      });
+    }
+
+    function observeSceneCSSInvalidation() {
+      const releases = [];
+      if (typeof MutationObserver === "function") {
+        const observer = new MutationObserver(function() {
+          markSceneCSSInvalidated("css");
+        });
+        observer.observe(ctx.mount, {
+          attributes: true,
+          attributeFilter: ["class", "style"],
+          subtree: false,
+        });
+        if (document && document.documentElement && document.documentElement !== ctx.mount) {
+          observer.observe(document.documentElement, {
+            attributes: true,
+            attributeFilter: ["class", "style"],
+            subtree: false,
+          });
+        }
+        releases.push(function() { observer.disconnect(); });
+      }
+      if (typeof window.matchMedia === "function") {
+        const queries = [
+          "(prefers-color-scheme: dark)",
+          "(prefers-reduced-motion: reduce)",
+          "(prefers-contrast: more)",
+          "(prefers-reduced-data: reduce)",
+        ];
+        for (let index = 0; index < queries.length; index += 1) {
+          const query = window.matchMedia(queries[index]);
+          const listener = function() {
+            markSceneCSSInvalidated("css-media");
+          };
+          if (query && typeof query.addEventListener === "function") {
+            query.addEventListener("change", listener);
+            releases.push(function(q, l) {
+              return function() { q.removeEventListener("change", l); };
+            }(query, listener));
+          } else if (query && typeof query.addListener === "function") {
+            query.addListener(listener);
+            releases.push(function(q, l) {
+              return function() { q.removeListener(l); };
+            }(query, listener));
+          }
+        }
+      }
+      return function releaseSceneCSSInvalidation() {
+        for (let index = 0; index < releases.length; index += 1) {
+          releases[index]();
+        }
+      };
+    }
+
     function readSceneSourceCamera() {
       if (latestBundle && latestBundle.sourceCamera) {
         return latestBundle.sourceCamera;
@@ -13163,6 +15153,7 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
       cancelScheduledRender();
       scheduleRenderWithViewport(reason || "motion");
     });
+    const releaseSceneCSSObserver = observeSceneCSSInvalidation();
 
     if (runtimeScene) {
       if (ctx.runtime && ctx.runtime.available()) {
@@ -13193,6 +15184,7 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
             sceneCurrentControlCamera(sceneControlHandle.controller, runtimeBundle.camera || sceneState.camera, sceneState._scrollCamera),
           );
           latestBundle = effectiveBundle;
+          syncSceneNodeSentinels(effectiveBundle);
           renderer.render(effectiveBundle, viewport);
           renderSceneLabels(labelLayer, effectiveBundle, labelLayoutCache, labelElements, viewport.cssWidth, viewport.cssHeight);
           renderSceneSprites(labelLayer, effectiveBundle, spriteElements, viewport.cssWidth, viewport.cssHeight);
@@ -13216,16 +15208,18 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
         viewport.cssHeight,
         sceneState.background,
         sceneCurrentControlCamera(sceneControlHandle.controller, sceneState.camera, sceneState._scrollCamera),
-        sceneStateObjects(sceneState),
+        sceneStateObjectsWithMaterials(sceneState),
         sceneStateLabels(sceneState),
         sceneStateSprites(sceneState),
         sceneStateLights(sceneState),
         sceneState.environment,
         timeSeconds,
-        sceneState.points,
+        sceneStatePointsWithMaterials(sceneState),
         sceneState.instancedMeshes,
         sceneState.computeParticles,
+        sceneState.postEffects,
       );
+      syncSceneNodeSentinels(latestBundle);
       renderer.render(latestBundle, viewport);
       renderSceneLabels(labelLayer, latestBundle, labelLayoutCache, labelElements, viewport.cssWidth, viewport.cssHeight);
       renderSceneSprites(labelLayer, latestBundle, spriteElements, viewport.cssWidth, viewport.cssHeight);
@@ -13315,6 +15309,7 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
         releaseCapabilityObserver();
         releaseLifecycleObserver();
         releaseMotionObserver();
+        releaseSceneCSSObserver();
         releaseTextLayoutListener();
         dragHandle.dispose();
         pickHandle.dispose();
@@ -13331,6 +15326,11 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
         if (labelLayer.parentNode === ctx.mount) {
           ctx.mount.removeChild(labelLayer);
         }
+        if (sentinelLayer.parentNode === ctx.mount) {
+          ctx.mount.removeChild(sentinelLayer);
+        }
+        delete ctx.mount.__gosxScene3DSentinels;
+        delete ctx.mount.__gosxScene3DCSSDynamic;
       },
     };
   });

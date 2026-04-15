@@ -5,6 +5,8 @@ import (
 	_ "github.com/odvcencio/gosx/examples/gosx-docs/app"
 	_ "github.com/odvcencio/gosx/examples/gosx-docs/app/demos"
 	_ "github.com/odvcencio/gosx/examples/gosx-docs/app/demos/cms"
+	_ "github.com/odvcencio/gosx/examples/gosx-docs/app/demos/collab"
+	_ "github.com/odvcencio/gosx/examples/gosx-docs/app/demos/fluid"
 	_ "github.com/odvcencio/gosx/examples/gosx-docs/app/demos/livesim"
 	_ "github.com/odvcencio/gosx/examples/gosx-docs/app/demos/playground"
 	_ "github.com/odvcencio/gosx/examples/gosx-docs/app/demos/scene3d"

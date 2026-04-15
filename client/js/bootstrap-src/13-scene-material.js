@@ -175,7 +175,13 @@
       opacity,
       wireframe: sceneBool(object && object.wireframe, true),
       blendMode: normalizeSceneMaterialBlendMode(object && object.blendMode, kind, opacity),
-      emissive: clamp01(sceneNumber(object && object.emissive, sceneDefaultMaterialEmissive(kind))),
+      emissive: sceneCSSVarReference(object && object.emissive) ? String(object.emissive).trim() : clamp01(sceneNumber(object && object.emissive, sceneDefaultMaterialEmissive(kind))),
+      roughness: sceneNumberOrCSSVar(object && object.roughness, 0.5),
+      metalness: sceneNumberOrCSSVar(object && object.metalness, 0),
+      normalMap: object && typeof object.normalMap === "string" ? object.normalMap.trim() : "",
+      roughnessMap: object && typeof object.roughnessMap === "string" ? object.roughnessMap.trim() : "",
+      metalnessMap: object && typeof object.metalnessMap === "string" ? object.metalnessMap.trim() : "",
+      emissiveMap: object && typeof object.emissiveMap === "string" ? object.emissiveMap.trim() : "",
     };
     profile.renderPass = normalizeSceneMaterialRenderPass(object && object.renderPass, profile.blendMode, profile.opacity);
     profile.key = sceneMaterialProfileKey(profile);
@@ -192,7 +198,13 @@
       String(sceneBool(profile && profile.wireframe, true)),
       String(profile && profile.blendMode || "opaque"),
       String(profile && profile.renderPass || "opaque"),
-      clamp01(sceneNumber(profile && profile.emissive, 0)).toFixed(3),
+      sceneCSSVarReference(profile && profile.emissive) ? String(profile.emissive).trim() : clamp01(sceneNumber(profile && profile.emissive, 0)).toFixed(3),
+      sceneCSSVarReference(profile && profile.roughness) ? String(profile.roughness).trim() : sceneNumber(profile && profile.roughness, 0.5).toFixed(3),
+      sceneCSSVarReference(profile && profile.metalness) ? String(profile.metalness).trim() : sceneNumber(profile && profile.metalness, 0).toFixed(3),
+      String(profile && profile.normalMap || ""),
+      String(profile && profile.roughnessMap || ""),
+      String(profile && profile.metalnessMap || ""),
+      String(profile && profile.emissiveMap || ""),
     ].join("|");
   }
 

@@ -1,5 +1,31 @@
 # Changelog
 
+## v0.18.0-alpha.1
+
+Scene3D now has a compiler-first authoring path and a shared render planner that both WebGL and WebGPU consume.
+
+### Scene3D composable authoring and IR validation
+
+`<Scene3D>` accepts composable children such as `<Camera>`, `<Environment>`, `<Material>`, `<Mesh>`, `<Points>`, light components, and `PostFX.*` components. The route compiler lowers them into the same runtime scene shape as prop-based scenes, so existing `<Scene3D {...props}>` users and new composable markup share one backend contract.
+
+The Go and browser-side validators now agree on the SceneIR schema: node kind/payload pairing, material-index edge cases, non-negative counts, render-bundle discrimination, and capability gates are covered. Compiler lowering now fails loudly when a scene requests capabilities the target engine does not provide.
+
+### CSS-stylable 3D scene state
+
+Scene3D can resolve CSS custom properties in material, point, light, environment, and post-FX fields. Authors can write values like `color="var(--galaxy-core-inner)"`, `roughness="var(--scene-core-roughness, 0.4)"`, or `fogDensity="var(--galaxy-fog-density)"`; the planner batches computed-style reads, applies the resolved values to a cloned IR, and hands normal data to the renderers.
+
+The runtime also emits scene-node sentinels for selector-driven styling and observes mount/root `class` and `style` mutations, media query changes, and CSS transition windows. That lets CSS class toggles, inherited `:root` variables, and `@property` transitions drive the WebGL/WebGPU canvas without reviving the older Scene3D Live event path.
+
+### Shared planner, backend parity, and WebGPU buffer fixes
+
+The new shared planner owns pass buckets, command sequencing, CSS-var resolution, scene-filter parsing, and buffer cache helpers. WebGL and WebGPU now expose parity command logs in tests, which locks both backends to the same prepared command sequence.
+
+WebGPU point rendering now uses per-entry cached GPU buffers through `sceneCachedBuffer()` for point uniforms and particle storage data, avoiding the old shared-buffer churn on point-heavy scenes. Regression coverage guards against reintroducing the previous `pointsUniformBuffer` write-every-entry pattern.
+
+### `@scene3d` and post-FX CSS hooks
+
+The CSS package can extract `@scene3d` declarations and mirrors plain `scene-filter:` CSS into a custom property consumed by the planner. `scene-filter: bloom(...) vignette(...) color-grade(...)` maps into the scene post-processing chain, parallel to the browser's `filter:` shape but scoped to Scene3D.
+
 ## v0.17.24
 
 TinyGo WASM runtime builds now ship a slim core runtime by default.

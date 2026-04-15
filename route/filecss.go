@@ -13,6 +13,7 @@ import (
 )
 
 var fileCSSNodeCache sync.Map
+var fileScene3DStyleCache sync.Map
 
 func addRouteFileCSSHead(ctx *RouteContext, page FilePage) {
 	if ctx == nil {
@@ -87,6 +88,7 @@ func fileCSSNode(root, cssPath string, layer server.CSSLayer, order int) (gosx.N
 	source := fileCSSSource(root, cssPath)
 	scopeID := ""
 	cssText := string(data)
+	cssText, _ = gosxcss.ExtractScene3DStyles(cssText)
 	if fileCSSLayerNeedsScope(layer) {
 		scopeID = fileCSSScopeID(cssPath)
 		cssText = gosxcss.ScopeCSS(cssText, scopeID)
@@ -106,6 +108,33 @@ func fileCSSNode(root, cssPath string, layer server.CSSLayer, order int) (gosx.N
 	)
 	fileCSSNodeCache.Store(cacheKey, node)
 	return node, true
+}
+
+func fileAncestorScene3DStyles(page FilePage) gosxcss.Scene3DStylesheet {
+	var sheet gosxcss.Scene3DStylesheet
+	sheet = sheet.Merge(fileScene3DStyles(globalCSSPath(page.Root)))
+	for _, file := range page.Layouts {
+		sheet = sheet.Merge(fileScene3DStyles(sidecarCSSPath(file)))
+	}
+	return sheet
+}
+
+func fileScene3DStyles(cssPath string) gosxcss.Scene3DStylesheet {
+	if cssPath == "" {
+		return gosxcss.Scene3DStylesheet{}
+	}
+	if cached, ok := fileScene3DStyleCache.Load(cssPath); ok {
+		sheet, _ := cached.(gosxcss.Scene3DStylesheet)
+		return sheet
+	}
+	data, err := os.ReadFile(cssPath)
+	if err != nil {
+		fileScene3DStyleCache.Store(cssPath, gosxcss.Scene3DStylesheet{})
+		return gosxcss.Scene3DStylesheet{}
+	}
+	_, sheet := gosxcss.ExtractScene3DStyles(string(data))
+	fileScene3DStyleCache.Store(cssPath, sheet)
+	return sheet
 }
 
 func fileCSSLayerNeedsScope(layer server.CSSLayer) bool {

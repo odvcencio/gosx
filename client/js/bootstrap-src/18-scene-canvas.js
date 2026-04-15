@@ -84,3 +84,13 @@
       dispose() {},
     };
   }
+
+  if (typeof sceneBackendRegistry !== "undefined" && sceneBackendRegistry) {
+    sceneBackendRegistry.register("canvas2d", {
+      capabilities: ["canvas"],
+      create: function(canvas) {
+        const ctx2d = typeof canvas.getContext === "function" ? canvas.getContext("2d") : null;
+        return ctx2d ? createSceneCanvasRenderer(ctx2d, canvas) : null;
+      },
+    });
+  }

@@ -1,4 +1,9 @@
   function createSceneRenderer(canvas, props, capability) {
+    const registryResult = createSceneRendererFromRegistry(canvas, props, capability);
+    if (registryResult) {
+      return registryResult;
+    }
+
     const webglPreference = sceneCapabilityWebGLPreference(props, capability);
     if (webglPreference === "prefer" || webglPreference === "force") {
       // forceWebGL must stay on the WebGL stack instead of probing WebGPU first.
@@ -47,6 +52,39 @@
       renderer: createSceneCanvasRenderer(ctx2d, canvas),
       fallbackReason: sceneRendererFallbackReason(props, capability, "canvas"),
     };
+  }
+
+  function createSceneRendererFromRegistry(canvas, props, capability) {
+    if (typeof sceneBackendRegistry === "undefined" || !sceneBackendRegistry || typeof sceneBackendRegistry.candidates !== "function") {
+      return null;
+    }
+    const webglPreference = sceneCapabilityWebGLPreference(props, capability);
+    const request = {
+      props,
+      capability,
+      webgpu: webglPreference === "prefer",
+      webgl: webglPreference === "prefer" || webglPreference === "force",
+      webgl2: webglPreference === "prefer" || webglPreference === "force",
+      canvas2d: true,
+      preferWebGPU: webglPreference === "prefer",
+      forceWebGL: webglPreference === "force",
+    };
+    const candidates = sceneBackendRegistry.candidates(request);
+    for (const entry of candidates) {
+      if (!entry || typeof entry.create !== "function") {
+        continue;
+      }
+      const renderer = entry.create(canvas, props, capability);
+      if (renderer) {
+        return {
+          renderer,
+          fallbackReason: entry.kind === "canvas2d" || renderer.kind === "canvas"
+            ? sceneRendererFallbackReason(props, capability, "canvas")
+            : "",
+        };
+      }
+    }
+    return null;
   }
 
   const sceneModelAssetCache = new Map();
@@ -2012,10 +2050,14 @@
     const runtimeScene = ctx.runtimeMode === "shared" && Boolean(ctx.programRef);
     const lifecycle = initialSceneLifecycleState();
     const motion = initialSceneMotionState(props);
+    let sceneCSSAnimationUntil = 0;
 
     function sceneShouldAnimate() {
       if (motion.reducedMotion) {
         return false;
+      }
+      if (ctx.mount && ctx.mount.__gosxScene3DCSSDynamic && Date.now() < sceneCSSAnimationUntil) {
+        return true;
       }
       if (sceneHasActiveTransitions(sceneState)) {
         return true;
@@ -2063,6 +2105,21 @@
     labelLayer.setAttribute("aria-hidden", "true");
     ctx.mount.appendChild(labelLayer);
 
+    const sentinelLayer = document.createElement("div");
+    sentinelLayer.setAttribute("data-gosx-scene-node-layer", "true");
+    sentinelLayer.setAttribute("aria-hidden", "true");
+    sentinelLayer.style.position = "absolute";
+    sentinelLayer.style.inset = "0";
+    sentinelLayer.style.width = "0";
+    sentinelLayer.style.height = "0";
+    sentinelLayer.style.overflow = "visible";
+    sentinelLayer.style.pointerEvents = "none";
+    canvas.appendChild(sentinelLayer);
+
+    const sceneNodeSentinels = new Map();
+    ctx.mount.__gosxScene3DSentinels = sceneNodeSentinels;
+    ctx.mount.__gosxScene3DCSSDynamic = false;
+
     let viewport = applySceneViewport(ctx.mount, canvas, labelLayer, sceneViewportFromMount(ctx.mount, props, viewportBase, canvas, capability), viewportBase);
 
     const initialRenderer = createSceneRenderer(canvas, props, capability);
@@ -2076,6 +2133,11 @@
           if (labelLayer.parentNode === ctx.mount) {
             ctx.mount.removeChild(labelLayer);
           }
+          if (sentinelLayer.parentNode === ctx.mount) {
+            ctx.mount.removeChild(sentinelLayer);
+          }
+          delete ctx.mount.__gosxScene3DSentinels;
+          delete ctx.mount.__gosxScene3DCSSDynamic;
         },
       };
     }
@@ -2086,6 +2148,58 @@
     const labelElements = new Map();
     const spriteElements = new Map();
     let labelRefreshHandle = null;
+
+    function syncSceneNodeSentinels(bundle) {
+      const next = new Set();
+      collectSceneNodeSentinelIDs(next, bundle && bundle.meshObjects);
+      collectSceneNodeSentinelIDs(next, bundle && bundle.objects);
+      collectSceneNodeSentinelIDs(next, bundle && bundle.points);
+      collectSceneNodeSentinelIDs(next, bundle && bundle.instancedMeshes);
+      collectSceneNodeSentinelIDs(next, bundle && bundle.computeParticles);
+      collectSceneNodeSentinelIDs(next, bundle && bundle.lights);
+      collectSceneNodeSentinelIDs(next, bundle && bundle.labels);
+      collectSceneNodeSentinelIDs(next, bundle && bundle.sprites);
+      next.forEach(function(id) {
+        if (sceneNodeSentinels.has(id)) {
+          return;
+        }
+        const sentinel = document.createElement("div");
+        sentinel.setAttribute("data-gosx-scene-node", id);
+        sentinel.setAttribute("aria-hidden", "true");
+        sentinel.style.position = "absolute";
+        sentinel.style.left = "0";
+        sentinel.style.top = "0";
+        sentinel.style.width = "1px";
+        sentinel.style.height = "1px";
+        sentinel.style.opacity = "0";
+        sentinel.style.pointerEvents = "auto";
+        sentinelLayer.appendChild(sentinel);
+        sceneNodeSentinels.set(id, sentinel);
+      });
+      sceneNodeSentinels.forEach(function(sentinel, id) {
+        if (next.has(id)) {
+          return;
+        }
+        if (sentinel.parentNode === sentinelLayer) {
+          sentinelLayer.removeChild(sentinel);
+        }
+        sceneNodeSentinels.delete(id);
+      });
+    }
+
+    function collectSceneNodeSentinelIDs(target, entries) {
+      if (!Array.isArray(entries)) {
+        return;
+      }
+      for (let index = 0; index < entries.length; index += 1) {
+        const entry = entries[index];
+        const id = entry && entry.id;
+        if (id != null && String(id).trim() !== "") {
+          target.add(String(id));
+        }
+      }
+    }
+
     const releaseTextLayoutListener = onTextLayoutInvalidated(function() {
       if (disposed || !latestBundle || !sceneCanRender()) {
         return;
@@ -2294,6 +2408,108 @@
       scheduleRender(reason);
     }
 
+    function markSceneCSSInvalidated(reason) {
+      const transitionWindow = Math.max(
+        sceneCSSTransitionWindowMillis(ctx.mount),
+        sceneCSSTransitionWindowMillis(document && document.documentElement)
+      );
+      if (transitionWindow > 0) {
+        sceneCSSAnimationUntil = Date.now() + transitionWindow;
+      }
+      scheduleRender(reason || "css");
+    }
+
+    function sceneCSSTransitionWindowMillis(element) {
+      if (!element || typeof window.getComputedStyle !== "function") {
+        return 0;
+      }
+      let style = null;
+      try {
+        style = window.getComputedStyle(element);
+      } catch (_error) {
+        style = null;
+      }
+      if (!style) {
+        return 0;
+      }
+      const durations = sceneCSSParseTimeList(style.transitionDuration || (typeof style.getPropertyValue === "function" ? style.getPropertyValue("transition-duration") : ""));
+      const delays = sceneCSSParseTimeList(style.transitionDelay || (typeof style.getPropertyValue === "function" ? style.getPropertyValue("transition-delay") : ""));
+      const length = Math.max(durations.length, delays.length);
+      let max = 0;
+      for (let index = 0; index < length; index += 1) {
+        const duration = durations[index % Math.max(1, durations.length)] || 0;
+        const delay = delays[index % Math.max(1, delays.length)] || 0;
+        max = Math.max(max, duration + delay);
+      }
+      return max > 0 ? max + 80 : 0;
+    }
+
+    function sceneCSSParseTimeList(value) {
+      return String(value || "").split(",").map(function(part) {
+        const text = part.trim().toLowerCase();
+        if (!text) {
+          return 0;
+        }
+        const number = Number.parseFloat(text);
+        if (!Number.isFinite(number)) {
+          return 0;
+        }
+        return text.endsWith("ms") ? number : number * 1000;
+      });
+    }
+
+    function observeSceneCSSInvalidation() {
+      const releases = [];
+      if (typeof MutationObserver === "function") {
+        const observer = new MutationObserver(function() {
+          markSceneCSSInvalidated("css");
+        });
+        observer.observe(ctx.mount, {
+          attributes: true,
+          attributeFilter: ["class", "style"],
+          subtree: false,
+        });
+        if (document && document.documentElement && document.documentElement !== ctx.mount) {
+          observer.observe(document.documentElement, {
+            attributes: true,
+            attributeFilter: ["class", "style"],
+            subtree: false,
+          });
+        }
+        releases.push(function() { observer.disconnect(); });
+      }
+      if (typeof window.matchMedia === "function") {
+        const queries = [
+          "(prefers-color-scheme: dark)",
+          "(prefers-reduced-motion: reduce)",
+          "(prefers-contrast: more)",
+          "(prefers-reduced-data: reduce)",
+        ];
+        for (let index = 0; index < queries.length; index += 1) {
+          const query = window.matchMedia(queries[index]);
+          const listener = function() {
+            markSceneCSSInvalidated("css-media");
+          };
+          if (query && typeof query.addEventListener === "function") {
+            query.addEventListener("change", listener);
+            releases.push(function(q, l) {
+              return function() { q.removeEventListener("change", l); };
+            }(query, listener));
+          } else if (query && typeof query.addListener === "function") {
+            query.addListener(listener);
+            releases.push(function(q, l) {
+              return function() { q.removeListener(l); };
+            }(query, listener));
+          }
+        }
+      }
+      return function releaseSceneCSSInvalidation() {
+        for (let index = 0; index < releases.length; index += 1) {
+          releases[index]();
+        }
+      };
+    }
+
     function readSceneSourceCamera() {
       if (latestBundle && latestBundle.sourceCamera) {
         return latestBundle.sourceCamera;
@@ -2377,6 +2593,7 @@
       // measure than risk stale canvas dimensions.
       scheduleRenderWithViewport(reason || "motion");
     });
+    const releaseSceneCSSObserver = observeSceneCSSInvalidation();
 
     if (runtimeScene) {
       if (ctx.runtime && ctx.runtime.available()) {
@@ -2412,6 +2629,7 @@
             sceneCurrentControlCamera(sceneControlHandle.controller, runtimeBundle.camera || sceneState.camera, sceneState._scrollCamera),
           );
           latestBundle = effectiveBundle;
+          syncSceneNodeSentinels(effectiveBundle);
           renderer.render(effectiveBundle, viewport);
           renderSceneLabels(labelLayer, effectiveBundle, labelLayoutCache, labelElements, viewport.cssWidth, viewport.cssHeight);
           renderSceneSprites(labelLayer, effectiveBundle, spriteElements, viewport.cssWidth, viewport.cssHeight);
@@ -2436,16 +2654,18 @@
         viewport.cssHeight,
         sceneState.background,
         sceneCurrentControlCamera(sceneControlHandle.controller, sceneState.camera, sceneState._scrollCamera),
-        sceneStateObjects(sceneState),
+        sceneStateObjectsWithMaterials(sceneState),
         sceneStateLabels(sceneState),
         sceneStateSprites(sceneState),
         sceneStateLights(sceneState),
         sceneState.environment,
         timeSeconds,
-        sceneState.points,
+        sceneStatePointsWithMaterials(sceneState),
         sceneState.instancedMeshes,
         sceneState.computeParticles,
+        sceneState.postEffects,
       );
+      syncSceneNodeSentinels(latestBundle);
       renderer.render(latestBundle, viewport);
       renderSceneLabels(labelLayer, latestBundle, labelLayoutCache, labelElements, viewport.cssWidth, viewport.cssHeight);
       renderSceneSprites(labelLayer, latestBundle, spriteElements, viewport.cssWidth, viewport.cssHeight);
@@ -2588,6 +2808,7 @@
         releaseCapabilityObserver();
         releaseLifecycleObserver();
         releaseMotionObserver();
+        releaseSceneCSSObserver();
         releaseTextLayoutListener();
         dragHandle.dispose();
         pickHandle.dispose();
@@ -2604,6 +2825,11 @@
         if (labelLayer.parentNode === ctx.mount) {
           ctx.mount.removeChild(labelLayer);
         }
+        if (sentinelLayer.parentNode === ctx.mount) {
+          ctx.mount.removeChild(sentinelLayer);
+        }
+        delete ctx.mount.__gosxScene3DSentinels;
+        delete ctx.mount.__gosxScene3DCSSDynamic;
       },
     };
   });

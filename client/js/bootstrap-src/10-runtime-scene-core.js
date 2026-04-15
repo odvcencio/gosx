@@ -643,6 +643,21 @@
     return Number.isFinite(num) ? num : fallback;
   }
 
+  function sceneCSSVarReference(value) {
+    return typeof value === "string" && /^var\(\s*--[-_a-zA-Z0-9]+\s*(?:,|\))/.test(value.trim());
+  }
+
+  function sceneNumberOrCSSVar(value, fallback) {
+    return sceneCSSVarReference(value) ? value.trim() : sceneNumber(value, fallback);
+  }
+
+  function sceneClampNumberOrCSSVar(value, fallback, min, max) {
+    if (sceneCSSVarReference(value)) {
+      return value.trim();
+    }
+    return Math.max(min, Math.min(max, sceneNumber(value, fallback)));
+  }
+
   function sceneSegmentResolution(value) {
     const segments = Math.round(sceneNumber(value, 12));
     return Math.max(6, Math.min(24, segments));
@@ -752,6 +767,28 @@
       return scene.computeParticles;
     }
     return props && Array.isArray(props.computeParticles) ? props.computeParticles : [];
+  }
+
+  function rawSceneMaterials(props) {
+    const scene = sceneProps(props);
+    if (scene && Array.isArray(scene.materials)) {
+      return scene.materials;
+    }
+    return props && Array.isArray(props.materials) ? props.materials : [];
+  }
+
+  function rawScenePostEffects(props) {
+    const scene = sceneProps(props);
+    if (scene && Array.isArray(scene.postEffects)) {
+      return scene.postEffects;
+    }
+    if (scene && Array.isArray(scene.postFX)) {
+      return scene.postFX;
+    }
+    if (props && Array.isArray(props.postEffects)) {
+      return props.postEffects;
+    }
+    return props && Array.isArray(props.postFX) ? props.postFX : [];
   }
 
   function sceneProps(props) {
@@ -1002,16 +1039,18 @@
     const materialColor = sceneObjectMaterialHasValue(item, "color") ? sceneObjectMaterialValue(item, "color") : current.color;
     const textureValue = sceneObjectMaterialHasValue(item, "texture") ? sceneObjectMaterialValue(item, "texture") : current.texture;
     const texture = typeof textureValue === "string" ? textureValue.trim() : "";
-    const opacity = clamp01(sceneNumber(sceneObjectMaterialValue(item, "opacity"), sceneNumber(current.opacity, sceneDefaultMaterialOpacity(materialKind))));
+    const opacity = sceneClampNumberOrCSSVar(sceneObjectMaterialValue(item, "opacity"), sceneNumber(current.opacity, sceneDefaultMaterialOpacity(materialKind)), 0, 1);
+    const numericOpacity = sceneNumber(opacity, sceneNumber(current.opacity, sceneDefaultMaterialOpacity(materialKind)));
     const blendMode = normalizeSceneMaterialBlendMode(
       sceneObjectBlendModeHasValue(item) ? sceneObjectBlendModeValue(item) : current.blendMode,
       materialKind,
-      opacity,
+      numericOpacity,
     );
     const lifecycle = sceneNormalizeLifecycle(item, current);
     const normalized = {
       id: item.id || current.id || ("scene-object-" + index),
       kind,
+      material: typeof item.material === "string" && item.material.trim() ? item.material.trim() : (typeof current.material === "string" ? current.material : ""),
       size,
       width: sceneNumber(item.width, sceneNumber(current.width, lineMetrics ? lineMetrics.width : size)),
       height: sceneNumber(item.height, sceneNumber(current.height, lineMetrics ? lineMetrics.height : size)),
@@ -1027,13 +1066,15 @@
       materialKind,
       color: typeof materialColor === "string" && materialColor ? materialColor : (typeof current.color === "string" && current.color ? current.color : "#8de1ff"),
       texture,
-      opacity: clamp01(sceneNumber(sceneObjectMaterialValue(item, "opacity"), sceneNumber(current.opacity, sceneDefaultMaterialOpacity(materialKind)))),
-      emissive: clamp01(sceneNumber(sceneObjectMaterialValue(item, "emissive"), sceneNumber(current.emissive, sceneDefaultMaterialEmissive(materialKind)))),
+      opacity,
+      emissive: sceneClampNumberOrCSSVar(sceneObjectMaterialValue(item, "emissive"), sceneNumber(current.emissive, sceneDefaultMaterialEmissive(materialKind)), 0, 1),
+      roughness: sceneNumberOrCSSVar(sceneObjectMaterialValue(item, "roughness"), sceneNumber(current.roughness, 0.5)),
+      metalness: sceneNumberOrCSSVar(sceneObjectMaterialValue(item, "metalness"), sceneNumber(current.metalness, 0)),
       blendMode,
       renderPass: normalizeSceneMaterialRenderPass(
         sceneObjectMaterialHasValue(item, "renderPass") ? sceneObjectMaterialValue(item, "renderPass") : current.renderPass,
         blendMode,
-        opacity,
+        numericOpacity,
       ),
       wireframe: sceneBool(
         sceneObjectMaterialHasValue(item, "wireframe") ? sceneObjectMaterialValue(item, "wireframe") : current.wireframe,
@@ -1117,7 +1158,7 @@
       kind,
       color: typeof item.color === "string" && item.color ? item.color : (typeof current.color === "string" && current.color ? current.color : "#f3fbff"),
       groundColor: typeof item.groundColor === "string" && item.groundColor ? item.groundColor : (typeof current.groundColor === "string" ? current.groundColor : ""),
-      intensity: Math.max(0, Math.min(6, sceneNumber(item.intensity, sceneNumber(current.intensity, sceneDefaultLightIntensity(kind))))),
+      intensity: sceneClampNumberOrCSSVar(item.intensity, sceneNumber(current.intensity, sceneDefaultLightIntensity(kind)), 0, 6),
       x: sceneNumber(item.x, sceneNumber(current.x, 0)),
       y: sceneNumber(item.y, sceneNumber(current.y, 0)),
       z: sceneNumber(item.z, sceneNumber(current.z, 0)),
@@ -1445,10 +1486,11 @@
       positions,
       sizes,
       colors,
+      material: typeof item.material === "string" && item.material ? item.material : (typeof current.material === "string" ? current.material : ""),
       color: typeof item.color === "string" && item.color ? item.color : (typeof current.color === "string" ? current.color : "#ffffff"),
       style: normalizeScenePointStyle(item.style, current.style),
-      size: Math.max(0, sceneNumber(item.size, sceneNumber(current.size, 1))),
-      opacity: clamp01(sceneNumber(item.opacity, sceneNumber(current.opacity, 1))),
+      size: sceneClampNumberOrCSSVar(item.size, sceneNumber(current.size, 1), 0, Number.POSITIVE_INFINITY),
+      opacity: sceneClampNumberOrCSSVar(item.opacity, sceneNumber(current.opacity, 1), 0, 1),
       blendMode: normalizeSceneMaterialBlendMode(item.blendMode || current.blendMode, "flat", sceneNumber(item.opacity, sceneNumber(current.opacity, 1))),
       depthWrite: Object.prototype.hasOwnProperty.call(item, "depthWrite") ? sceneBool(item.depthWrite, true) : current.depthWrite,
       attenuation: sceneBool(Object.prototype.hasOwnProperty.call(item, "attenuation") ? item.attenuation : current.attenuation, false),
@@ -1510,8 +1552,8 @@
       segments: sceneSegmentResolution(Object.prototype.hasOwnProperty.call(item, "segments") ? item.segments : current.segments),
       materialKind: normalizeSceneMaterialKind(item.materialKind || current.materialKind),
       color: typeof item.color === "string" && item.color ? item.color : (typeof current.color === "string" ? current.color : "#8de1ff"),
-      roughness: sceneNumber(item.roughness, sceneNumber(current.roughness, 0)),
-      metalness: sceneNumber(item.metalness, sceneNumber(current.metalness, 0)),
+      roughness: sceneNumberOrCSSVar(item.roughness, sceneNumber(current.roughness, 0)),
+      metalness: sceneNumberOrCSSVar(item.metalness, sceneNumber(current.metalness, 0)),
       transforms,
       castShadow: sceneBool(Object.prototype.hasOwnProperty.call(item, "castShadow") ? item.castShadow : current.castShadow, false),
       receiveShadow: sceneBool(Object.prototype.hasOwnProperty.call(item, "receiveShadow") ? item.receiveShadow : current.receiveShadow, false),
@@ -1556,7 +1598,7 @@
       rate: Math.max(0, sceneNumber(item.rate, sceneNumber(current.rate, 0))),
       lifetime: Math.max(0.01, sceneNumber(item.lifetime, sceneNumber(current.lifetime, 1))),
       arms: Math.max(0, Math.floor(sceneNumber(item.arms, sceneNumber(current.arms, 0)))),
-      wind: sceneNumber(item.wind, sceneNumber(current.wind, 0)),
+      wind: sceneNumberOrCSSVar(item.wind, sceneNumber(current.wind, 0)),
       scatter: Math.max(0, sceneNumber(item.scatter, sceneNumber(current.scatter, 0))),
     };
   }
@@ -1582,10 +1624,10 @@
       color: typeof item.color === "string" && item.color ? item.color : (typeof current.color === "string" ? current.color : "#ffffff"),
       colorEnd: typeof item.colorEnd === "string" && item.colorEnd ? item.colorEnd : (typeof current.colorEnd === "string" ? current.colorEnd : ""),
       style: normalizeScenePointStyle(item.style, current.style),
-      size: Math.max(0, sceneNumber(item.size, sceneNumber(current.size, 1))),
-      sizeEnd: Math.max(0, sceneNumber(item.sizeEnd, sceneNumber(current.sizeEnd, sceneNumber(current.size, 1)))),
-      opacity: clamp01(sceneNumber(item.opacity, sceneNumber(current.opacity, 1))),
-      opacityEnd: clamp01(sceneNumber(item.opacityEnd, sceneNumber(current.opacityEnd, sceneNumber(current.opacity, 1)))),
+      size: sceneClampNumberOrCSSVar(item.size, sceneNumber(current.size, 1), 0, Number.POSITIVE_INFINITY),
+      sizeEnd: sceneClampNumberOrCSSVar(item.sizeEnd, sceneNumber(current.sizeEnd, sceneNumber(current.size, 1)), 0, Number.POSITIVE_INFINITY),
+      opacity: sceneClampNumberOrCSSVar(item.opacity, sceneNumber(current.opacity, 1), 0, 1),
+      opacityEnd: sceneClampNumberOrCSSVar(item.opacityEnd, sceneNumber(current.opacityEnd, sceneNumber(current.opacity, 1)), 0, 1),
       blendMode: normalizeSceneMaterialBlendMode(item.blendMode || current.blendMode, "flat", sceneNumber(item.opacity, sceneNumber(current.opacity, 1))),
       attenuation: sceneBool(Object.prototype.hasOwnProperty.call(item, "attenuation") ? item.attenuation : current.attenuation, false),
     };
@@ -1618,6 +1660,76 @@
     return rawSceneComputeParticles(props).map(function(entry, index) {
       return normalizeSceneComputeParticlesEntry(entry, index, null);
     });
+  }
+
+  function normalizeSceneMaterialRecord(raw, index, fallback) {
+    const current = sceneIsPlainObject(fallback) ? fallback : {};
+    const item = sceneIsPlainObject(raw) ? raw : {};
+    const kind = normalizeSceneMaterialKind(item.kind || item.materialKind || current.kind);
+    const opacity = sceneClampNumberOrCSSVar(item.opacity, sceneNumber(current.opacity, sceneDefaultMaterialOpacity(kind)), 0, 1);
+    const numericOpacity = sceneNumber(opacity, sceneNumber(current.opacity, sceneDefaultMaterialOpacity(kind)));
+    const blendMode = normalizeSceneMaterialBlendMode(item.blendMode || current.blendMode, kind, numericOpacity);
+    const out = {
+      id: typeof item.id === "string" && item.id ? item.id : (typeof current.id === "string" ? current.id : ""),
+      name: typeof item.name === "string" && item.name ? item.name : (typeof current.name === "string" ? current.name : ("scene-material-" + index)),
+      kind,
+      color: typeof item.color === "string" && item.color ? item.color : (typeof current.color === "string" ? current.color : "#8de1ff"),
+      texture: typeof item.texture === "string" ? item.texture.trim() : (typeof current.texture === "string" ? current.texture : ""),
+      opacity,
+      emissive: sceneClampNumberOrCSSVar(item.emissive, sceneNumber(current.emissive, sceneDefaultMaterialEmissive(kind)), 0, 1),
+      roughness: sceneNumberOrCSSVar(item.roughness, sceneNumber(current.roughness, 0.5)),
+      metalness: sceneNumberOrCSSVar(item.metalness, sceneNumber(current.metalness, 0)),
+      normalMap: typeof item.normalMap === "string" ? item.normalMap.trim() : (typeof current.normalMap === "string" ? current.normalMap : ""),
+      roughnessMap: typeof item.roughnessMap === "string" ? item.roughnessMap.trim() : (typeof current.roughnessMap === "string" ? current.roughnessMap : ""),
+      metalnessMap: typeof item.metalnessMap === "string" ? item.metalnessMap.trim() : (typeof current.metalnessMap === "string" ? current.metalnessMap : ""),
+      emissiveMap: typeof item.emissiveMap === "string" ? item.emissiveMap.trim() : (typeof current.emissiveMap === "string" ? current.emissiveMap : ""),
+      blendMode,
+      renderPass: normalizeSceneMaterialRenderPass(item.renderPass || current.renderPass, blendMode, numericOpacity),
+      wireframe: sceneBool(Object.prototype.hasOwnProperty.call(item, "wireframe") ? item.wireframe : current.wireframe, false),
+      depthWrite: Object.prototype.hasOwnProperty.call(item, "depthWrite") ? sceneBool(item.depthWrite, true) : current.depthWrite,
+    };
+    out.key = sceneMaterialProfileKey(out);
+    out.shaderData = sceneMaterialShaderData(out);
+    return out;
+  }
+
+  function sceneMaterials(props) {
+    return rawSceneMaterials(props).map(function(entry, index) {
+      return normalizeSceneMaterialRecord(entry, index, null);
+    });
+  }
+
+  function normalizeScenePostEffect(raw, index, fallback) {
+    const current = sceneIsPlainObject(fallback) ? fallback : {};
+    const item = sceneIsPlainObject(raw) ? raw : {};
+    const kind = typeof item.kind === "string" && item.kind ? item.kind.trim().toLowerCase() : (typeof current.kind === "string" ? current.kind : "");
+    if (!kind) {
+      return null;
+    }
+    return {
+      kind,
+      threshold: sceneNumberOrCSSVar(item.threshold, sceneNumber(current.threshold, 0)),
+      intensity: sceneNumberOrCSSVar(item.intensity, sceneNumber(current.intensity, 0)),
+      radius: sceneNumberOrCSSVar(item.radius, sceneNumber(current.radius, 0)),
+      scale: sceneNumberOrCSSVar(item.scale, sceneNumber(current.scale, 0)),
+      saturation: sceneNumberOrCSSVar(item.saturation, sceneNumber(current.saturation, 0)),
+      contrast: sceneNumberOrCSSVar(item.contrast, sceneNumber(current.contrast, 0)),
+      exposure: sceneNumberOrCSSVar(item.exposure, sceneNumber(current.exposure, 0)),
+      mode: typeof item.mode === "string" ? item.mode : (typeof current.mode === "string" ? current.mode : ""),
+      id: typeof item.id === "string" && item.id ? item.id : (typeof current.id === "string" ? current.id : ("scene-postfx-" + index)),
+    };
+  }
+
+  function scenePostEffects(props) {
+    const out = [];
+    const raw = rawScenePostEffects(props);
+    for (let index = 0; index < raw.length; index += 1) {
+      const effect = normalizeScenePostEffect(raw[index], index, null);
+      if (effect) {
+        out.push(effect);
+      }
+    }
+    return out;
   }
 
   function sceneCamera(props) {
@@ -1653,15 +1765,15 @@
     const lifecycle = sceneNormalizeLifecycle(source, base);
     const environment = {
       ambientColor: typeof source.ambientColor === "string" && source.ambientColor ? source.ambientColor : (typeof base.ambientColor === "string" ? base.ambientColor : ""),
-      ambientIntensity: Math.max(0, Math.min(4, sceneNumber(source.ambientIntensity, sceneNumber(base.ambientIntensity, 0)))),
+      ambientIntensity: sceneClampNumberOrCSSVar(source.ambientIntensity, sceneNumber(base.ambientIntensity, 0), 0, 4),
       skyColor: typeof source.skyColor === "string" && source.skyColor ? source.skyColor : (typeof base.skyColor === "string" ? base.skyColor : ""),
-      skyIntensity: Math.max(0, Math.min(4, sceneNumber(source.skyIntensity, sceneNumber(base.skyIntensity, 0)))),
+      skyIntensity: sceneClampNumberOrCSSVar(source.skyIntensity, sceneNumber(base.skyIntensity, 0), 0, 4),
       groundColor: typeof source.groundColor === "string" && source.groundColor ? source.groundColor : (typeof base.groundColor === "string" ? base.groundColor : ""),
-      groundIntensity: Math.max(0, Math.min(4, sceneNumber(source.groundIntensity, sceneNumber(base.groundIntensity, 0)))),
-      exposure: Math.max(0.05, Math.min(4, sceneNumber(Object.prototype.hasOwnProperty.call(source, "exposure") ? source.exposure : undefined, sceneNumber(base.exposure, 1) || 1))),
+      groundIntensity: sceneClampNumberOrCSSVar(source.groundIntensity, sceneNumber(base.groundIntensity, 0), 0, 4),
+      exposure: sceneClampNumberOrCSSVar(Object.prototype.hasOwnProperty.call(source, "exposure") ? source.exposure : undefined, sceneNumber(base.exposure, 1) || 1, 0.05, 4),
       toneMapping: typeof source.toneMapping === "string" && source.toneMapping ? source.toneMapping : (typeof base.toneMapping === "string" ? base.toneMapping : ""),
       fogColor: typeof source.fogColor === "string" && source.fogColor ? source.fogColor : (typeof base.fogColor === "string" ? base.fogColor : ""),
-      fogDensity: Math.max(0, sceneNumber(source.fogDensity, sceneNumber(base.fogDensity, 0))),
+      fogDensity: sceneClampNumberOrCSSVar(source.fogDensity, sceneNumber(base.fogDensity, 0), 0, Number.POSITIVE_INFINITY),
       _transition: lifecycle.transition,
       _inState: lifecycle.inState,
       _outState: lifecycle.outState,
@@ -1694,15 +1806,15 @@
     const base = environment && typeof environment === "object" && Object.prototype.hasOwnProperty.call(environment, "specified")
       ? {
         ambientColor: typeof environment.ambientColor === "string" ? environment.ambientColor : "",
-        ambientIntensity: Math.max(0, Math.min(4, sceneNumber(environment.ambientIntensity, 0))),
+        ambientIntensity: sceneClampNumberOrCSSVar(environment.ambientIntensity, 0, 0, 4),
         skyColor: typeof environment.skyColor === "string" ? environment.skyColor : "",
-        skyIntensity: Math.max(0, Math.min(4, sceneNumber(environment.skyIntensity, 0))),
+        skyIntensity: sceneClampNumberOrCSSVar(environment.skyIntensity, 0, 0, 4),
         groundColor: typeof environment.groundColor === "string" ? environment.groundColor : "",
-        groundIntensity: Math.max(0, Math.min(4, sceneNumber(environment.groundIntensity, 0))),
-        exposure: Math.max(0.05, Math.min(4, sceneNumber(environment.exposure, 1) || 1)),
+        groundIntensity: sceneClampNumberOrCSSVar(environment.groundIntensity, 0, 0, 4),
+        exposure: sceneClampNumberOrCSSVar(environment.exposure, 1, 0.05, 4),
         toneMapping: typeof environment.toneMapping === "string" ? environment.toneMapping : "",
         fogColor: typeof environment.fogColor === "string" ? environment.fogColor : "",
-        fogDensity: Math.max(0, sceneNumber(environment.fogDensity, 0)),
+        fogDensity: sceneClampNumberOrCSSVar(environment.fogDensity, 0, 0, Number.POSITIVE_INFINITY),
         specified: Boolean(environment.specified),
       }
       : normalizeSceneEnvironment(environment, null);
@@ -1743,6 +1855,8 @@
       points: scenePoints(props),
       instancedMeshes: sceneInstancedMeshes(props),
       computeParticles: sceneComputeParticles(props),
+      materials: sceneMaterials(props),
+      postEffects: scenePostEffects(props),
       _transitions: [],
       _scrollCamera: (sceneNumber(props.scrollCameraStart, 0) !== 0 || sceneNumber(props.scrollCameraEnd, 0) !== 0)
         ? { start: sceneNumber(props.scrollCameraStart, 0), end: sceneNumber(props.scrollCameraEnd, 0) }
@@ -1766,6 +1880,94 @@
 
   function sceneStateObjects(state) {
     return Array.from(state.objects.values());
+  }
+
+  function sceneStateObjectsWithMaterials(state) {
+    const objects = sceneStateObjects(state);
+    const lookup = sceneMaterialLookup(state);
+    if (!lookup.size) {
+      return objects;
+    }
+    return objects.map(function(object) {
+      const material = sceneNamedMaterialForRecord(lookup, object);
+      if (!material) {
+        return object;
+      }
+      return sceneApplyNamedMaterialToObject(object, material);
+    });
+  }
+
+  function sceneStatePointsWithMaterials(state) {
+    const points = Array.isArray(state && state.points) ? state.points : [];
+    const lookup = sceneMaterialLookup(state);
+    if (!lookup.size) {
+      return points;
+    }
+    return points.map(function(point) {
+      const material = sceneNamedMaterialForRecord(lookup, point);
+      if (!material) {
+        return point;
+      }
+      return sceneApplyNamedMaterialToPoints(point, material);
+    });
+  }
+
+  function sceneMaterialLookup(state) {
+    const materials = Array.isArray(state && state.materials) ? state.materials : [];
+    if (!materials.length) {
+      return new Map();
+    }
+    const lookup = new Map();
+    for (let index = 0; index < materials.length; index += 1) {
+      const material = materials[index];
+      if (!material) {
+        continue;
+      }
+      if (material.name) {
+        lookup.set(String(material.name), material);
+      }
+      if (material.id) {
+        lookup.set(String(material.id), material);
+      }
+    }
+    return lookup;
+  }
+
+  function sceneNamedMaterialForRecord(lookup, record) {
+    const materialName = record && record.material ? String(record.material) : "";
+    return materialName ? lookup.get(materialName) || null : null;
+  }
+
+  function sceneApplyNamedMaterialToObject(object, material) {
+    return Object.assign({}, object, {
+      materialKind: material.kind || object.materialKind,
+      color: material.color || object.color,
+      texture: material.texture || object.texture,
+      opacity: material.opacity != null ? material.opacity : object.opacity,
+      emissive: material.emissive != null ? material.emissive : object.emissive,
+      roughness: material.roughness != null ? material.roughness : object.roughness,
+      metalness: material.metalness != null ? material.metalness : object.metalness,
+      normalMap: material.normalMap || object.normalMap,
+      roughnessMap: material.roughnessMap || object.roughnessMap,
+      metalnessMap: material.metalnessMap || object.metalnessMap,
+      emissiveMap: material.emissiveMap || object.emissiveMap,
+      blendMode: material.blendMode || object.blendMode,
+      renderPass: material.renderPass || object.renderPass,
+      wireframe: material.wireframe != null ? material.wireframe : object.wireframe,
+      depthWrite: material.depthWrite != null ? material.depthWrite : object.depthWrite,
+    });
+  }
+
+  function sceneApplyNamedMaterialToPoints(point, material) {
+    return Object.assign({}, point, {
+      color: material.color || point.color,
+      style: material.style || point.style,
+      size: material.size != null ? material.size : point.size,
+      opacity: material.opacity != null ? material.opacity : point.opacity,
+      blendMode: material.blendMode || point.blendMode,
+      depthWrite: material.depthWrite != null ? material.depthWrite : point.depthWrite,
+      attenuation: material.attenuation != null ? material.attenuation : point.attenuation,
+    });
   }
 
   function sceneStateLabels(state) {
@@ -2653,13 +2855,16 @@
     return depth.far <= near || depth.near >= far;
   }
 
-  function createSceneRenderBundle(width, height, background, camera, objects, labels, sprites, lights, environment, timeSeconds, points, instancedMeshes, computeParticles) {
+  function createSceneRenderBundle(width, height, background, camera, objects, labels, sprites, lights, environment, timeSeconds, points, instancedMeshes, computeParticles, postEffects) {
     const resolvedEnvironment = sceneResolveLightingEnvironment(environment, Array.isArray(lights) && lights.length > 0);
     const bundle = {
+      bundleVersion: 1,
       background: background,
+      timeSeconds: sceneNumber(timeSeconds, 0),
       camera: sceneRenderCamera(camera),
       lights: Array.isArray(lights) ? lights.slice() : [],
       environment: resolvedEnvironment,
+      postEffects: Array.isArray(postEffects) ? postEffects.slice() : [],
       materials: [],
       objects: [],
       surfaces: [],
@@ -4881,7 +5086,17 @@
     cancelEngineFrame,
     clearChildren,
     createSceneRenderBundle,
+    SCENE_IR_VERSION: 1,
+    SCENE_RENDER_BUNDLE_VERSION: 1,
+    validateSceneIR: typeof validateSceneIR === "function" ? validateSceneIR : undefined,
+    prepareScene: typeof prepareScene === "function" ? prepareScene : undefined,
+    scenePreparedCommandSequence: typeof scenePreparedCommandSequence === "function" ? scenePreparedCommandSequence : undefined,
+    sceneCachedBuffer: typeof sceneCachedBuffer === "function" ? sceneCachedBuffer : undefined,
+    sceneWebGLCommandSequence: typeof sceneWebGLCommandSequence === "function" ? sceneWebGLCommandSequence : undefined,
+    sceneWebGPUCommandSequence: typeof sceneWebGPUCommandSequence === "function" ? sceneWebGPUCommandSequence : undefined,
+    sceneBackendRegistry: undefined,
     createSceneState,
+    sceneStatePointsWithMaterials,
     createSceneWebGLRenderer,
     engineFrame,
     normalizeSceneEnvironment,

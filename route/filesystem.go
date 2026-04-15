@@ -495,7 +495,8 @@ func (r *fileRouteRegistrar) renderPrepared(ctx *RouteContext, resolved resolved
 // DefaultFileRenderer renders `.gsx` and `.html` page files directly.
 func DefaultFileRenderer(ctx *RouteContext, page FilePage) (gosx.Node, error) {
 	return renderFileNode(page.FilePath, fileRenderOptions{
-		EvalEnv: newFileRenderEnv(ctx, page),
+		EvalEnv:       newFileRenderEnv(ctx, page),
+		Scene3DStyles: fileAncestorScene3DStyles(page),
 	})
 }
 

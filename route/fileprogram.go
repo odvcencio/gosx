@@ -10,9 +10,11 @@ import (
 	"strings"
 
 	"github.com/odvcencio/gosx"
+	gosxcss "github.com/odvcencio/gosx/css"
 	"github.com/odvcencio/gosx/engine"
 	"github.com/odvcencio/gosx/ir"
 	islandprogram "github.com/odvcencio/gosx/island/program"
+	gosxscene "github.com/odvcencio/gosx/scene"
 	"github.com/odvcencio/gosx/server"
 	"github.com/odvcencio/gosx/textlayout"
 )
@@ -24,6 +26,7 @@ type fileProgramRenderer struct {
 	islandPrograms map[string]*islandprogram.Program
 	opts           fileRenderOptions
 	replaced       bool
+	err            error
 }
 
 func renderFileProgramHTML(prog *ir.Program, component string, opts fileRenderOptions) (string, bool, error) {
@@ -33,6 +36,9 @@ func renderFileProgramHTML(prog *ir.Program, component string, opts fileRenderOp
 		return "", false, fmt.Errorf("component %q not found", component)
 	}
 	html := renderer.renderNode(comp.Root, opts.EvalEnv)
+	if renderer.err != nil {
+		return "", renderer.replaced, renderer.err
+	}
 	return html, renderer.replaced, nil
 }
 
@@ -623,9 +629,21 @@ func (r *fileProgramRenderer) renderScene3D(node *ir.Node, env fileRenderEnv) st
 func (r *fileProgramRenderer) renderEngineComponent(node *ir.Node, env fileRenderEnv, kind engine.Kind, defaults fileEngineDefaults) string {
 	cfg, fallback := r.engineComponentConfig(node, env, kind, defaults)
 	if kind == engine.KindSurface && cfg.Name == "GoSXScene3D" {
+		cfg.Props = r.applyScene3DComposableChildren(cfg.Props, node, env)
 		cfg.Props = defaultScene3DProps(cfg.Props, cfg.WASMPath)
+		cfg.Props = r.applyScene3DStyles(cfg.Props, node, env)
+		if err := validateScene3DCompilerCapabilities(cfg.Props, cfg.Capabilities); err != nil {
+			return r.renderError(err)
+		}
 	}
 	return gosx.RenderHTML(env.engine(cfg, fallback))
+}
+
+func (r *fileProgramRenderer) renderError(err error) string {
+	if err != nil && r.err == nil {
+		r.err = err
+	}
+	return ""
 }
 
 func (r *fileProgramRenderer) engineComponentConfig(node *ir.Node, env fileRenderEnv, kind engine.Kind, defaults fileEngineDefaults) (engine.Config, gosx.Node) {
@@ -647,12 +665,27 @@ func (r *fileProgramRenderer) engineComponentConfig(node *ir.Node, env fileRende
 
 	var fallback gosx.Node
 	if kind == engine.KindSurface {
-		childrenHTML := strings.TrimSpace(r.renderChildren(node.Children, env))
+		childrenHTML := strings.TrimSpace(r.renderEngineFallbackChildren(node, env, name))
 		if childrenHTML != "" {
 			fallback = gosx.RawHTML(childrenHTML)
 		}
 	}
 	return cfg, fallback
+}
+
+func (r *fileProgramRenderer) renderEngineFallbackChildren(node *ir.Node, env fileRenderEnv, engineName string) string {
+	if engineName != "GoSXScene3D" {
+		return r.renderChildren(node.Children, env)
+	}
+	var b strings.Builder
+	for _, childID := range node.Children {
+		child := r.prog.NodeAt(childID)
+		if child.Kind == ir.NodeComponent && isScene3DComposableTag(child.Tag) {
+			continue
+		}
+		b.WriteString(r.renderNode(childID, env))
+	}
+	return b.String()
 }
 
 func engineComponentIdentity(attrs []ir.Attr, env fileRenderEnv, defaults fileEngineDefaults, transport fileEngineTransport) string {
@@ -1839,6 +1872,544 @@ func engineCapabilitiesValue(value any, fallback []engine.Capability) []engine.C
 	return normalized
 }
 
+func (r *fileProgramRenderer) applyScene3DStyles(raw json.RawMessage, node *ir.Node, env fileRenderEnv) json.RawMessage {
+	if len(r.opts.Scene3DStyles.Rules) == 0 {
+		return raw
+	}
+	props := map[string]any{}
+	if len(raw) > 0 {
+		_ = json.Unmarshal(raw, &props)
+	}
+	if props == nil {
+		props = map[string]any{}
+	}
+
+	rootAttrs := map[string]any{}
+	if node != nil {
+		rootAttrs = r.componentAttrMap(node.Attrs, env)
+	}
+	sceneMap := mapStringAnyValue(props["scene"])
+	sceneChanged := false
+	propsChanged := false
+
+	for _, rule := range r.opts.Scene3DStyles.Rules {
+		if scene3DStyleSelectorMatches(rule.Selector, "Scene3D", rootAttrs) {
+			for _, declaration := range rule.Declarations {
+				if applyScene3DRootDeclaration(props, &sceneMap, &sceneChanged, declaration) {
+					propsChanged = true
+				}
+			}
+		}
+	}
+
+	if sceneMap != nil {
+		for _, target := range scene3DStyleTargets(sceneMap) {
+			records := scene3DRecordList(sceneMap[target.key])
+			if len(records) == 0 {
+				continue
+			}
+			recordsChanged := false
+			for index := range records {
+				for _, rule := range r.opts.Scene3DStyles.Rules {
+					if !scene3DStyleSelectorMatchesAny(rule.Selector, target.tags(records[index]), records[index]) {
+						continue
+					}
+					for _, declaration := range rule.Declarations {
+						if applyScene3DRecordDeclaration(records[index], declaration) {
+							recordsChanged = true
+						}
+					}
+				}
+			}
+			if recordsChanged {
+				sceneMap[target.key] = records
+				sceneChanged = true
+			}
+		}
+	}
+
+	if sceneChanged && sceneMap != nil {
+		props["scene"] = sceneMap
+		propsChanged = true
+	}
+	if !propsChanged {
+		return raw
+	}
+	return marshalEngineProps(props)
+}
+
+type scene3DStyleTarget struct {
+	key  string
+	tags func(map[string]any) []string
+}
+
+func scene3DStyleTargets(sceneMap map[string]any) []scene3DStyleTarget {
+	return []scene3DStyleTarget{
+		{key: "objects", tags: func(map[string]any) []string { return []string{"Mesh"} }},
+		{key: "points", tags: func(map[string]any) []string { return []string{"Points"} }},
+		{key: "instancedMeshes", tags: func(map[string]any) []string { return []string{"InstancedMesh"} }},
+		{key: "computeParticles", tags: func(map[string]any) []string { return []string{"ComputeParticles"} }},
+		{key: "lights", tags: scene3DLightStyleTags},
+		{key: "materials", tags: func(map[string]any) []string { return []string{"Material"} }},
+		{key: "postEffects", tags: scene3DPostEffectStyleTags},
+	}
+}
+
+func scene3DLightStyleTags(record map[string]any) []string {
+	switch strings.ToLower(strings.TrimSpace(scene3DStyleAttrString(record["kind"]))) {
+	case "directional":
+		return []string{"Light", "DirectionalLight"}
+	case "point":
+		return []string{"Light", "PointLight"}
+	case "ambient":
+		return []string{"Light", "AmbientLight"}
+	case "spot":
+		return []string{"Light", "SpotLight"}
+	case "hemisphere":
+		return []string{"Light", "HemisphereLight"}
+	default:
+		return []string{"Light"}
+	}
+}
+
+func scene3DPostEffectStyleTags(record map[string]any) []string {
+	switch strings.ToLower(strings.TrimSpace(scene3DStyleAttrString(record["kind"]))) {
+	case "bloom":
+		return []string{"PostFX", "Bloom"}
+	case "vignette":
+		return []string{"PostFX", "Vignette"}
+	case "color-grade", "colorgrading", "color-grading":
+		return []string{"PostFX", "ColorGrading"}
+	default:
+		return []string{"PostFX"}
+	}
+}
+
+func applyScene3DRootDeclaration(props map[string]any, sceneMapRef *map[string]any, sceneChanged *bool, declaration gosxcss.Scene3DDeclaration) bool {
+	switch declaration.Name {
+	case "background", "scene-background":
+		props["background"] = scene3DCSSStringValue(declaration.Value)
+		return true
+	case "auto-rotate":
+		return scene3DSetBool(props, "autoRotate", declaration.Value)
+	case "camera-x":
+		return scene3DSetNestedNumber(props, "camera", "x", declaration.Value)
+	case "camera-y":
+		return scene3DSetNestedNumber(props, "camera", "y", declaration.Value)
+	case "camera-z":
+		return scene3DSetNestedNumber(props, "camera", "z", declaration.Value)
+	case "camera-fov":
+		return scene3DSetNestedNumber(props, "camera", "fov", declaration.Value)
+	case "environment-ambient-color":
+		return scene3DSetSceneNestedString(sceneMapRef, sceneChanged, "environment", "ambientColor", declaration.Value)
+	case "environment-ambient-intensity":
+		return scene3DSetSceneNestedNumber(sceneMapRef, sceneChanged, "environment", "ambientIntensity", declaration.Value)
+	case "environment-fog-color":
+		return scene3DSetSceneNestedString(sceneMapRef, sceneChanged, "environment", "fogColor", declaration.Value)
+	case "environment-fog-density":
+		return scene3DSetSceneNestedNumber(sceneMapRef, sceneChanged, "environment", "fogDensity", declaration.Value)
+	case "environment-sky-color":
+		return scene3DSetSceneNestedString(sceneMapRef, sceneChanged, "environment", "skyColor", declaration.Value)
+	case "environment-ground-color":
+		return scene3DSetSceneNestedString(sceneMapRef, sceneChanged, "environment", "groundColor", declaration.Value)
+	case "postfx-bloom-intensity":
+		return scene3DSetPostEffectNumber(sceneMapRef, sceneChanged, "bloom", "intensity", declaration.Value)
+	case "postfx-bloom-threshold":
+		return scene3DSetPostEffectNumber(sceneMapRef, sceneChanged, "bloom", "threshold", declaration.Value)
+	case "postfx-vignette-intensity":
+		return scene3DSetPostEffectNumber(sceneMapRef, sceneChanged, "vignette", "intensity", declaration.Value)
+	case "scene-filter":
+		return scene3DSetSceneFilter(sceneMapRef, sceneChanged, declaration.Value)
+	default:
+		return false
+	}
+}
+
+func applyScene3DRecordDeclaration(record map[string]any, declaration gosxcss.Scene3DDeclaration) bool {
+	switch declaration.Name {
+	case "color", "material-color", "point-color", "light-color":
+		record["color"] = scene3DCSSStringValue(declaration.Value)
+		return true
+	case "material-kind":
+		record["materialKind"] = scene3DCSSStringValue(declaration.Value)
+		return true
+	case "blend-mode":
+		record["blendMode"] = scene3DCSSStringValue(declaration.Value)
+		return true
+	case "render-pass":
+		record["renderPass"] = scene3DCSSStringValue(declaration.Value)
+		return true
+	case "x":
+		return scene3DSetNumber(record, "x", declaration.Value)
+	case "y":
+		return scene3DSetNumber(record, "y", declaration.Value)
+	case "z":
+		return scene3DSetNumber(record, "z", declaration.Value)
+	case "width":
+		return scene3DSetNumber(record, "width", declaration.Value)
+	case "height":
+		return scene3DSetNumber(record, "height", declaration.Value)
+	case "depth":
+		return scene3DSetNumber(record, "depth", declaration.Value)
+	case "size", "point-size":
+		return scene3DSetNumber(record, "size", declaration.Value)
+	case "radius":
+		return scene3DSetNumber(record, "radius", declaration.Value)
+	case "segments":
+		return scene3DSetNumber(record, "segments", declaration.Value)
+	case "opacity", "material-opacity":
+		return scene3DSetNumber(record, "opacity", declaration.Value)
+	case "roughness", "material-roughness":
+		return scene3DSetNumber(record, "roughness", declaration.Value)
+	case "metalness", "material-metalness":
+		return scene3DSetNumber(record, "metalness", declaration.Value)
+	case "emissive", "material-emissive":
+		return scene3DSetNumber(record, "emissive", declaration.Value)
+	case "light-intensity":
+		return scene3DSetNumber(record, "intensity", declaration.Value)
+	case "rotation-x", "rotate-x":
+		return scene3DSetNumber(record, "rotationX", declaration.Value)
+	case "rotation-y", "rotate-y":
+		return scene3DSetNumber(record, "rotationY", declaration.Value)
+	case "rotation-z", "rotate-z":
+		return scene3DSetNumber(record, "rotationZ", declaration.Value)
+	case "spin-x":
+		return scene3DSetNumber(record, "spinX", declaration.Value)
+	case "spin-y":
+		return scene3DSetNumber(record, "spinY", declaration.Value)
+	case "spin-z":
+		return scene3DSetNumber(record, "spinZ", declaration.Value)
+	case "line-width":
+		return scene3DSetNumber(record, "lineWidth", declaration.Value)
+	case "cast-shadow":
+		return scene3DSetBool(record, "castShadow", declaration.Value)
+	case "receive-shadow":
+		return scene3DSetBool(record, "receiveShadow", declaration.Value)
+	case "depth-write":
+		return scene3DSetBool(record, "depthWrite", declaration.Value)
+	case "wireframe":
+		return scene3DSetBool(record, "wireframe", declaration.Value)
+	case "pickable":
+		return scene3DSetBool(record, "pickable", declaration.Value)
+	case "attenuation", "size-attenuation":
+		return scene3DSetBool(record, "attenuation", declaration.Value)
+	default:
+		return false
+	}
+}
+
+func scene3DSetNestedNumber(parent map[string]any, key, childKey, value string) bool {
+	child := mapStringAnyValue(parent[key])
+	if child == nil {
+		child = map[string]any{}
+	}
+	if !scene3DSetNumber(child, childKey, value) {
+		return false
+	}
+	parent[key] = child
+	return true
+}
+
+func scene3DSetSceneNestedString(sceneMapRef *map[string]any, changed *bool, key, childKey, value string) bool {
+	sceneMap := scene3DEnsureMap(sceneMapRef)
+	child := mapStringAnyValue(sceneMap[key])
+	if child == nil {
+		child = map[string]any{}
+	}
+	child[childKey] = scene3DCSSStringValue(value)
+	sceneMap[key] = child
+	*changed = true
+	return true
+}
+
+func scene3DSetSceneNestedNumber(sceneMapRef *map[string]any, changed *bool, key, childKey, value string) bool {
+	sceneMap := scene3DEnsureMap(sceneMapRef)
+	child := mapStringAnyValue(sceneMap[key])
+	if child == nil {
+		child = map[string]any{}
+	}
+	if !scene3DSetNumber(child, childKey, value) {
+		return false
+	}
+	sceneMap[key] = child
+	*changed = true
+	return true
+}
+
+func scene3DSetPostEffectNumber(sceneMapRef *map[string]any, changed *bool, kind, key, value string) bool {
+	number, ok := scene3DCSSNumber(value)
+	if !ok {
+		return false
+	}
+	sceneMap := scene3DEnsureMap(sceneMapRef)
+	effects := scene3DRecordList(sceneMap["postEffects"])
+	for index := range effects {
+		if strings.EqualFold(scene3DStyleAttrString(effects[index]["kind"]), kind) {
+			effects[index][key] = number
+			sceneMap["postEffects"] = effects
+			*changed = true
+			return true
+		}
+	}
+	effects = append(effects, map[string]any{
+		"kind": kind,
+		key:    number,
+	})
+	sceneMap["postEffects"] = effects
+	*changed = true
+	return true
+}
+
+func scene3DSetSceneFilter(sceneMapRef *map[string]any, changed *bool, value string) bool {
+	effects := scene3DParseSceneFilter(value)
+	if len(effects) == 0 {
+		return false
+	}
+	sceneMap := scene3DEnsureMap(sceneMapRef)
+	sceneMap["postEffects"] = effects
+	*changed = true
+	return true
+}
+
+func scene3DParseSceneFilter(value string) []map[string]any {
+	text := strings.TrimSpace(value)
+	if text == "" || strings.EqualFold(text, "none") {
+		return nil
+	}
+	effects := []map[string]any{}
+	for {
+		open := strings.IndexByte(text, '(')
+		if open < 0 {
+			break
+		}
+		kind := scene3DSceneFilterKind(strings.TrimSpace(text[:open]))
+		rest := text[open+1:]
+		close := strings.IndexByte(rest, ')')
+		if close < 0 {
+			break
+		}
+		if kind != "" {
+			effect := map[string]any{"kind": kind}
+			body := strings.NewReplacer(",", " ", ":", " ", "=", " ").Replace(rest[:close])
+			parts := strings.Fields(body)
+			for i := 0; i+1 < len(parts); i += 2 {
+				key := scene3DSceneFilterKey(parts[i])
+				if key == "" {
+					continue
+				}
+				if number, ok := scene3DCSSNumber(parts[i+1]); ok {
+					effect[key] = number
+				}
+			}
+			effects = append(effects, effect)
+		}
+		text = strings.TrimSpace(rest[close+1:])
+	}
+	return effects
+}
+
+func scene3DSceneFilterKind(kind string) string {
+	switch strings.ToLower(strings.TrimSpace(kind)) {
+	case "bloom", "vignette":
+		return strings.ToLower(strings.TrimSpace(kind))
+	case "color-grade", "color-grading", "colorgrade":
+		return "color-grade"
+	default:
+		return ""
+	}
+}
+
+func scene3DSceneFilterKey(key string) string {
+	switch strings.ToLower(strings.TrimSpace(key)) {
+	case "threshold", "intensity", "radius", "scale", "saturation", "contrast", "exposure":
+		return strings.ToLower(strings.TrimSpace(key))
+	default:
+		return ""
+	}
+}
+
+func scene3DEnsureMap(ref *map[string]any) map[string]any {
+	if *ref == nil {
+		*ref = map[string]any{}
+	}
+	return *ref
+}
+
+func scene3DSetString(record map[string]any, key, value string) bool {
+	record[key] = scene3DCSSStringValue(value)
+	return true
+}
+
+func scene3DSetNumber(record map[string]any, key, value string) bool {
+	if scene3DCSSVarExpression(value) {
+		record[key] = strings.TrimSpace(value)
+		return true
+	}
+	number, ok := scene3DCSSNumber(value)
+	if !ok {
+		return false
+	}
+	record[key] = number
+	return true
+}
+
+func scene3DSetBool(record map[string]any, key, value string) bool {
+	boolean, ok := scene3DCSSBool(value)
+	if !ok {
+		return false
+	}
+	record[key] = boolean
+	return true
+}
+
+func scene3DCSSStringValue(value string) string {
+	value = strings.TrimSpace(value)
+	if len(value) >= 2 {
+		if (value[0] == '"' && value[len(value)-1] == '"') || (value[0] == '\'' && value[len(value)-1] == '\'') {
+			return value[1 : len(value)-1]
+		}
+	}
+	return value
+}
+
+func scene3DCSSNumber(value string) (float64, bool) {
+	value = strings.TrimSpace(value)
+	value = strings.TrimSuffix(value, "px")
+	if scene3DCSSVarExpression(value) {
+		return 0, false
+	}
+	var number float64
+	if _, err := fmt.Sscanf(value, "%f", &number); err != nil {
+		return 0, false
+	}
+	return number, true
+}
+
+func scene3DCSSVarExpression(value string) bool {
+	value = strings.TrimSpace(value)
+	return strings.HasPrefix(value, "var(") && strings.Contains(value, "--") && strings.HasSuffix(value, ")")
+}
+
+func scene3DCSSBool(value string) (bool, bool) {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "true", "1", "yes", "on":
+		return true, true
+	case "false", "0", "no", "off":
+		return false, true
+	default:
+		return false, false
+	}
+}
+
+func scene3DStyleSelectorMatchesAny(selector string, tags []string, attrs map[string]any) bool {
+	for _, tag := range tags {
+		if scene3DStyleSelectorMatches(selector, tag, attrs) {
+			return true
+		}
+	}
+	return false
+}
+
+func scene3DStyleSelectorMatches(selector, tag string, attrs map[string]any) bool {
+	for _, part := range splitScene3DSelectorList(selector) {
+		if scene3DStyleSimpleSelectorMatches(part, tag, attrs) {
+			return true
+		}
+	}
+	return false
+}
+
+func splitScene3DSelectorList(selector string) []string {
+	parts := []string{}
+	start := 0
+	for pos := 0; pos <= len(selector); pos++ {
+		if pos < len(selector) && selector[pos] != ',' {
+			continue
+		}
+		if part := strings.TrimSpace(selector[start:pos]); part != "" {
+			parts = append(parts, part)
+		}
+		start = pos + 1
+	}
+	return parts
+}
+
+func scene3DStyleSimpleSelectorMatches(selector, tag string, attrs map[string]any) bool {
+	selector = strings.TrimSpace(selector)
+	if selector == "" || strings.ContainsAny(selector, " >+~[:") {
+		return false
+	}
+	pos := 0
+	for pos < len(selector) && selector[pos] != '.' && selector[pos] != '#' {
+		pos++
+	}
+	typeName := selector[:pos]
+	if typeName != "" && typeName != "*" && !strings.EqualFold(typeName, tag) {
+		return false
+	}
+	if typeName == "" && (pos >= len(selector) || selector[pos] != '.' && selector[pos] != '#') {
+		return false
+	}
+	for pos < len(selector) {
+		prefix := selector[pos]
+		if prefix != '.' && prefix != '#' {
+			return false
+		}
+		pos++
+		start := pos
+		for pos < len(selector) && selector[pos] != '.' && selector[pos] != '#' {
+			pos++
+		}
+		value := strings.TrimSpace(selector[start:pos])
+		if value == "" {
+			return false
+		}
+		if prefix == '#' {
+			if scene3DStyleAttrString(attrs["id"]) != value {
+				return false
+			}
+			continue
+		}
+		if !scene3DStyleHasClass(attrs, value) {
+			return false
+		}
+	}
+	return true
+}
+
+func scene3DStyleHasClass(attrs map[string]any, className string) bool {
+	for _, source := range []any{attrs["class"], attrs["className"]} {
+		for _, class := range strings.Fields(scene3DStyleAttrString(source)) {
+			if class == className {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func scene3DStyleAttrString(value any) string {
+	if value == nil {
+		return ""
+	}
+	switch v := value.(type) {
+	case string:
+		return strings.TrimSpace(v)
+	case []string:
+		return strings.TrimSpace(strings.Join(v, " "))
+	case []any:
+		parts := make([]string, 0, len(v))
+		for _, item := range v {
+			if text := scene3DStyleAttrString(item); text != "" {
+				parts = append(parts, text)
+			}
+		}
+		return strings.Join(parts, " ")
+	default:
+		return strings.TrimSpace(fmt.Sprint(v))
+	}
+}
+
 func defaultScene3DProps(raw json.RawMessage, programRef string) json.RawMessage {
 	props := map[string]any{}
 	if len(raw) > 0 {
@@ -1894,6 +2465,251 @@ func defaultScene3DProps(raw json.RawMessage, programRef string) json.RawMessage
 		}
 	}
 	return marshalEngineProps(props)
+}
+
+func validateScene3DCompilerCapabilities(raw json.RawMessage, capabilities []engine.Capability) error {
+	if len(raw) == 0 {
+		return nil
+	}
+	props := map[string]any{}
+	if err := json.Unmarshal(raw, &props); err != nil {
+		return fmt.Errorf("decode Scene3D props for capability validation: %w", err)
+	}
+
+	nodes := scene3DCapabilityNodes(props)
+	if sceneMap := mapStringAnyValue(props["scene"]); sceneMap != nil {
+		nodes = append(nodes, scene3DCapabilityNodes(sceneMap)...)
+	}
+	if len(nodes) == 0 {
+		return nil
+	}
+
+	caps := make([]string, 0, len(capabilities))
+	for _, capability := range capabilities {
+		caps = append(caps, string(capability))
+	}
+	if err := gosxscene.ValidateCapabilities(gosxscene.IR{
+		Version: gosxscene.IRVersion,
+		Nodes:   nodes,
+	}, caps); err != nil {
+		return fmt.Errorf("Scene3D capability validation failed: %w", err)
+	}
+	return nil
+}
+
+func scene3DCapabilityNodes(values map[string]any) []gosxscene.IRNode {
+	if len(values) == 0 {
+		return nil
+	}
+	nodes := []gosxscene.IRNode{}
+	for _, record := range scene3DRecordList(values["computeParticles"]) {
+		nodes = append(nodes, gosxscene.IRNode{
+			Kind:         "compute-particles",
+			ID:           strings.TrimSpace(fmt.Sprint(record["id"])),
+			Capabilities: []string{"compute"},
+			Compute:      &gosxscene.IRComputeNode{},
+		})
+	}
+	for _, record := range scene3DRecordList(values["nodes"]) {
+		kind := strings.TrimSpace(fmt.Sprint(record["kind"]))
+		if kind == "compute-particles" {
+			nodes = append(nodes, gosxscene.IRNode{
+				Kind:         kind,
+				ID:           strings.TrimSpace(fmt.Sprint(record["id"])),
+				Capabilities: []string{"compute"},
+				Compute:      &gosxscene.IRComputeNode{},
+			})
+		}
+	}
+	return nodes
+}
+
+func (r *fileProgramRenderer) applyScene3DComposableChildren(raw json.RawMessage, node *ir.Node, env fileRenderEnv) json.RawMessage {
+	if node == nil || len(node.Children) == 0 {
+		return raw
+	}
+	childProps := r.lowerScene3DComposableChildren(node.Children, env)
+	if len(childProps) == 0 {
+		return raw
+	}
+
+	props := map[string]any{}
+	if len(raw) > 0 {
+		_ = json.Unmarshal(raw, &props)
+	}
+	if props == nil {
+		props = map[string]any{}
+	}
+	if camera, ok := childProps["camera"]; ok {
+		if mapped := mapStringAnyValue(camera); mapped != nil {
+			mergeStringAnyMapValue(props, "camera", mapped)
+		} else {
+			props["camera"] = camera
+		}
+	}
+	if sceneValue, ok := childProps["scene"].(map[string]any); ok {
+		sceneMap := mapStringAnyValue(props["scene"])
+		if sceneMap == nil {
+			sceneMap = map[string]any{}
+		}
+		mergeScene3DSceneMap(sceneMap, sceneValue)
+		props["scene"] = sceneMap
+	}
+	return marshalEngineProps(props)
+}
+
+func (r *fileProgramRenderer) lowerScene3DComposableChildren(children []ir.NodeID, env fileRenderEnv) map[string]any {
+	sceneMap := map[string]any{}
+	out := map[string]any{}
+	for _, childID := range children {
+		child := r.prog.NodeAt(childID)
+		if child == nil || child.Kind != ir.NodeComponent || !isScene3DComposableTag(child.Tag) {
+			continue
+		}
+		attrs := r.componentAttrMap(child.Attrs, env)
+		switch child.Tag {
+		case "Mesh":
+			appendScene3DSceneRecord(sceneMap, "objects", attrs)
+		case "Points":
+			appendScene3DSceneRecord(sceneMap, "points", attrs)
+		case "InstancedMesh":
+			appendScene3DSceneRecord(sceneMap, "instancedMeshes", attrs)
+		case "ComputeParticles":
+			appendScene3DSceneRecord(sceneMap, "computeParticles", attrs)
+		case "DirectionalLight", "PointLight", "AmbientLight", "SpotLight", "HemisphereLight":
+			attrs = cloneStringAnyMap(attrs)
+			if _, ok := attrs["kind"]; !ok {
+				attrs["kind"] = scene3DLightKind(child.Tag)
+			}
+			appendScene3DSceneRecord(sceneMap, "lights", attrs)
+		case "Environment":
+			mergeStringAnyMapValue(sceneMap, "environment", attrs)
+		case "Camera":
+			out["camera"] = attrs
+		case "Material":
+			appendScene3DSceneRecord(sceneMap, "materials", attrs)
+		case "PostFX.Bloom":
+			appendScene3DSceneRecord(sceneMap, "postEffects", withDefaultKind(attrs, "bloom"))
+		case "PostFX.Vignette":
+			appendScene3DSceneRecord(sceneMap, "postEffects", withDefaultKind(attrs, "vignette"))
+		case "PostFX.ColorGrading":
+			appendScene3DSceneRecord(sceneMap, "postEffects", withDefaultKind(attrs, "color-grade"))
+		case "PostFX.Tonemap":
+			appendScene3DSceneRecord(sceneMap, "postEffects", withDefaultKind(attrs, "tonemap"))
+		}
+	}
+	if len(sceneMap) > 0 {
+		out["scene"] = sceneMap
+	}
+	return out
+}
+
+func isScene3DComposableTag(tag string) bool {
+	switch tag {
+	case "Mesh", "Points", "InstancedMesh", "ComputeParticles",
+		"DirectionalLight", "PointLight", "AmbientLight", "SpotLight", "HemisphereLight",
+		"Environment", "Camera", "Material",
+		"PostFX.Bloom", "PostFX.Vignette", "PostFX.ColorGrading", "PostFX.Tonemap":
+		return true
+	default:
+		return false
+	}
+}
+
+func scene3DLightKind(tag string) string {
+	switch tag {
+	case "DirectionalLight":
+		return "directional"
+	case "PointLight":
+		return "point"
+	case "AmbientLight":
+		return "ambient"
+	case "SpotLight":
+		return "spot"
+	case "HemisphereLight":
+		return "hemisphere"
+	default:
+		return ""
+	}
+}
+
+func appendScene3DSceneRecord(sceneMap map[string]any, key string, record map[string]any) {
+	if sceneMap == nil || record == nil {
+		return
+	}
+	current, _ := sceneMap[key].([]map[string]any)
+	if current == nil {
+		if values, ok := sceneMap[key].([]any); ok {
+			current = make([]map[string]any, 0, len(values)+1)
+			for _, value := range values {
+				if mapped := mapStringAnyValue(value); mapped != nil {
+					current = append(current, mapped)
+				}
+			}
+		}
+	}
+	sceneMap[key] = append(current, cloneStringAnyMap(record))
+}
+
+func mergeScene3DSceneMap(dst, src map[string]any) {
+	for key, value := range src {
+		switch key {
+		case "objects", "points", "instancedMeshes", "computeParticles", "lights", "materials", "postEffects":
+			for _, item := range scene3DRecordList(value) {
+				appendScene3DSceneRecord(dst, key, item)
+			}
+		case "environment":
+			if mapped := mapStringAnyValue(value); mapped != nil {
+				mergeStringAnyMapValue(dst, key, mapped)
+			}
+		default:
+			dst[key] = value
+		}
+	}
+}
+
+func scene3DRecordList(value any) []map[string]any {
+	switch items := value.(type) {
+	case []map[string]any:
+		return items
+	case []any:
+		out := make([]map[string]any, 0, len(items))
+		for _, item := range items {
+			if mapped := mapStringAnyValue(item); mapped != nil {
+				out = append(out, mapped)
+			}
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
+func mergeStringAnyMapValue(target map[string]any, key string, values map[string]any) {
+	current := mapStringAnyValue(target[key])
+	if current == nil {
+		current = map[string]any{}
+	}
+	for itemKey, itemValue := range values {
+		current[itemKey] = itemValue
+	}
+	target[key] = current
+}
+
+func cloneStringAnyMap(values map[string]any) map[string]any {
+	out := make(map[string]any, len(values))
+	for key, value := range values {
+		out[key] = value
+	}
+	return out
+}
+
+func withDefaultKind(values map[string]any, kind string) map[string]any {
+	out := cloneStringAnyMap(values)
+	if _, ok := out["kind"]; !ok {
+		out["kind"] = kind
+	}
+	return out
 }
 
 func spreadValue(value any, name string) (any, bool) {

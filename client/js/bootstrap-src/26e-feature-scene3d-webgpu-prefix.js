@@ -40,6 +40,9 @@
   var sceneRenderCamera = sceneApi.sceneRenderCamera || function(c) { return c; };
   var scenePBRDepthSort = sceneApi.scenePBRDepthSort;
   var scenePBRObjectRenderPass = sceneApi.scenePBRObjectRenderPass;
+  var prepareScene = sceneApi.prepareScene || function(ir) { return { ir: ir, pbrPasses: null }; };
+  var scenePreparedCommandSequence = sceneApi.scenePreparedCommandSequence || function() { return []; };
+  var sceneCachedBuffer = sceneApi.sceneCachedBuffer;
   var scenePBRProjectionMatrix = sceneApi.scenePBRProjectionMatrix;
   var scenePBRViewMatrix = sceneApi.scenePBRViewMatrix;
   var sceneShadowLightSpaceMatrix = sceneApi.sceneShadowLightSpaceMatrix;

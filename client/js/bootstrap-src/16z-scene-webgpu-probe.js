@@ -139,3 +139,15 @@
       return null;
     }
   }
+
+  if (typeof sceneBackendRegistry !== "undefined" && sceneBackendRegistry) {
+    sceneBackendRegistry.register("webgpu", {
+      capabilities: ["webgpu", "shaders", "instancing", "compute", "shadows"],
+      available: function() {
+        return sceneWebGPUAvailable();
+      },
+      create: function(canvas) {
+        return createSceneWebGPURendererOrFallback(canvas);
+      },
+    });
+  }

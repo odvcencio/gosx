@@ -4410,6 +4410,313 @@ test("bootstrap emits declarative Scene3D pick signals without authored JS", asy
   assert.equal(interactionEvents.at(-1).detail.type, "deselect");
 });
 
+test("bootstrap stamps and validates Scene3D IR bundles", async () => {
+  const env = createContext({});
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const api = env.context.__gosx_scene3d_api;
+  assert.equal(api.SCENE_IR_VERSION, 1);
+  assert.equal(typeof api.validateSceneIR, "function");
+
+  const bundle = api.createSceneRenderBundle(
+    320,
+    180,
+    "#08151f",
+    { x: 0, y: 0, z: 6, fov: 72, near: 0.05, far: 128 },
+    [],
+    [],
+    [],
+    [],
+    { ambientColor: "#ffffff", ambientIntensity: 0.1 },
+    0,
+    [],
+    [],
+    [],
+  );
+  assert.equal(bundle.bundleVersion, api.SCENE_RENDER_BUNDLE_VERSION);
+  assert.equal(JSON.stringify(api.validateSceneIR(bundle)), JSON.stringify({ valid: true, errors: [] }));
+
+  const invalid = api.validateSceneIR({
+    version: 1,
+    camera: { near: 2, far: 1 },
+    environment: {},
+    nodes: [{ kind: "points", points: { count: -1 } }],
+  });
+  assert.equal(invalid.valid, false);
+  assert.ok(invalid.errors.some((entry) => entry.includes("camera.far")));
+  assert.ok(invalid.errors.some((entry) => entry.includes("points.count")));
+
+  const emptyCanonical = api.validateSceneIR({
+    version: 1,
+    camera: { near: 0.05, far: 128 },
+    environment: { fogDensity: 0.001 },
+    lights: [{ kind: "directional" }],
+  });
+  assert.equal(JSON.stringify(emptyCanonical), JSON.stringify({ valid: true, errors: [] }));
+
+  const mismatched = api.validateSceneIR({
+    version: 1,
+    camera: { near: 0.05, far: 128 },
+    nodes: [{ kind: "mesh", points: { count: 1 } }],
+  });
+  assert.equal(mismatched.valid, false);
+  assert.ok(mismatched.errors.some((entry) => entry.includes(".mesh is required")));
+
+  const negativeInstanced = api.validateSceneIR({
+    version: 1,
+    camera: { near: 0.05, far: 128 },
+    nodes: [{ kind: "instanced-mesh", instancedMesh: { count: -1 } }],
+  });
+  assert.equal(negativeInstanced.valid, false);
+  assert.ok(negativeInstanced.errors.some((entry) => entry.includes("instancedMesh.count")));
+});
+
+test("bootstrap prepares Scene3D pass plans and cached buffers through shared planner", async () => {
+  const env = createContext({});
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const api = env.context.__gosx_scene3d_api;
+  assert.equal(typeof api.prepareScene, "function");
+  assert.equal(typeof api.sceneCachedBuffer, "function");
+
+  const bundle = {
+    bundleVersion: api.SCENE_RENDER_BUNDLE_VERSION,
+    camera: { x: 0, y: 0, z: 6, fov: 72, near: 0.05, far: 128 },
+    environment: {},
+    materials: [
+      { kind: "flat", opacity: 1, renderPass: "opaque" },
+      { kind: "glass", opacity: 0.5, renderPass: "alpha" },
+    ],
+    meshObjects: [
+      { id: "near", kind: "box", materialIndex: 1, vertexOffset: 0, vertexCount: 3, depthCenter: 4 },
+      { id: "far", kind: "box", materialIndex: 1, vertexOffset: 3, vertexCount: 3, depthCenter: 8 },
+      { id: "solid", kind: "box", materialIndex: 0, vertexOffset: 6, vertexCount: 3, depthCenter: 6 },
+    ],
+    objects: [],
+    worldPositions: new Float32Array(0),
+    worldColors: new Float32Array(0),
+    worldMeshPositions: new Float32Array(27),
+    worldMeshNormals: new Float32Array(27),
+  };
+  const viewport = { cssWidth: 320, cssHeight: 180, pixelWidth: 320, pixelHeight: 180, pixelRatio: 1 };
+  const prepared = api.prepareScene(bundle, bundle.camera, viewport, null);
+  assert.equal(JSON.stringify(prepared.pbrPasses.opaque.map((entry) => entry.id)), JSON.stringify(["solid"]));
+  assert.equal(JSON.stringify(prepared.pbrPasses.alpha.map((entry) => entry.id)), JSON.stringify(["far", "near"]));
+  assert.equal(JSON.stringify(api.scenePreparedCommandSequence(prepared)), JSON.stringify([
+    { op: "drawMesh", pass: "opaque", id: "solid", kind: "box", vertexOffset: 6, vertexCount: 3 },
+    { op: "drawMesh", pass: "alpha", id: "far", kind: "box", vertexOffset: 3, vertexCount: 3 },
+    { op: "drawMesh", pass: "alpha", id: "near", kind: "box", vertexOffset: 0, vertexCount: 3 },
+  ]));
+  assert.equal(prepared.shadowPassHash, api.prepareScene(bundle, bundle.camera, viewport, prepared).shadowPassHash);
+  assert.equal(api.prepareScene(bundle, bundle.camera, viewport, prepared), prepared);
+
+  bundle.points = [{ id: "stars", count: 5, color: "#ffffff", size: 1 }];
+  const withPoints = api.prepareScene(bundle, bundle.camera, viewport, prepared);
+  assert.notEqual(withPoints, prepared);
+  assert.equal(api.scenePreparedCommandSequence(withPoints).at(-1).count, 5);
+  bundle.points = [{ id: "stars", count: 8, color: "#5eead4", size: 1.5 }];
+  const updatedPoints = api.prepareScene(bundle, bundle.camera, viewport, withPoints);
+  assert.notEqual(updatedPoints, withPoints);
+  assert.equal(api.scenePreparedCommandSequence(updatedPoints).at(-1).count, 8);
+
+  bundle.environment = { fogColor: "#0b142a", fogDensity: 0.0003 };
+  const withFog = api.prepareScene(bundle, bundle.camera, viewport, updatedPoints);
+  assert.notEqual(withFog, updatedPoints);
+  assert.equal(withFog.ir.environment.fogDensity, 0.0003);
+
+  const cache = new WeakMap();
+  const typed = new Float32Array([1, 2, 3]);
+  let uploads = 0;
+  const first = api.sceneCachedBuffer(cache, typed, () => ({ id: "buffer" }), () => { uploads += 1; });
+  const second = api.sceneCachedBuffer(cache, typed, () => ({ id: "next" }), () => { uploads += 1; });
+  assert.equal(first, second);
+  assert.equal(uploads, 1);
+
+  const owner = {};
+  const small = new Float32Array([1]);
+  const large = new Float32Array([1, 2, 3, 4]);
+  const smallHandle = api.sceneCachedBuffer(
+    owner,
+    small,
+    () => ({ id: "small", size: small.byteLength }),
+    () => {},
+    { slot: "gpuBuffer" }
+  );
+  const largeHandle = api.sceneCachedBuffer(
+    owner,
+    large,
+    () => ({ id: "unused" }),
+    (handle, data, state) => state.bytesChanged && data.byteLength > handle.size
+      ? { id: "large", size: data.byteLength }
+      : handle,
+    { slot: "gpuBuffer" }
+  );
+  assert.equal(smallHandle.id, "small");
+  assert.equal(largeHandle.id, "large");
+  assert.equal(owner.gpuBuffer, largeHandle);
+});
+
+test("bootstrap resolves Scene3D CSS custom properties in the planner", async () => {
+  const env = createContext({});
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const api = env.context.__gosx_scene3d_api;
+  const mount = new FakeElement("div", null);
+  mount.computedStyle = {
+    "--scene-core-color": "#5eead4",
+    "--scene-core-roughness": "0.3",
+    "--scene-ambient-intensity": "0.2",
+    "--scene-filter": "bloom(threshold 0.8 intensity 1.1) vignette(intensity 0.5)",
+  };
+  const starsSentinel = new FakeElement("div", null);
+  starsSentinel.computedStyle = {
+    "--point-size": "2.5",
+  };
+  const sentinels = new Map([["stars", starsSentinel]]);
+  const bundle = {
+    bundleVersion: api.SCENE_RENDER_BUNDLE_VERSION,
+    camera: { x: 0, y: 0, z: 6, fov: 72, near: 0.05, far: 128 },
+    environment: { ambientIntensity: 0 },
+    materials: [
+      { name: "core", color: "var(--scene-core-color)", roughness: "var(--scene-core-roughness, 0.4)" },
+    ],
+    meshObjects: [
+      { id: "hero", kind: "box", materialIndex: 0, vertexOffset: 0, vertexCount: 3, depthCenter: 4 },
+    ],
+    objects: [],
+    points: [{ id: "stars", count: 3, color: "#ffffff", size: 1 }],
+    worldPositions: new Float32Array(0),
+    worldColors: new Float32Array(0),
+    worldMeshPositions: new Float32Array(9),
+    worldMeshNormals: new Float32Array(9),
+  };
+  const viewport = { cssWidth: 320, cssHeight: 180, pixelWidth: 320, pixelHeight: 180, pixelRatio: 1 };
+  const prepared = api.prepareScene(bundle, bundle.camera, viewport, null, { mount, sentinels });
+
+  assert.equal(prepared.ir.materials[0].color, "#5eead4");
+  assert.equal(prepared.ir.materials[0].roughness, 0.3);
+  assert.equal(prepared.ir.environment.ambientIntensity, 0.2);
+  assert.equal(prepared.ir.points[0].size, 2.5);
+  assert.equal(prepared.ir.postEffects.length, 2);
+  assert.equal(JSON.stringify(prepared.ir.postEffects[0]), JSON.stringify({ kind: "bloom", threshold: 0.8, intensity: 1.1 }));
+
+  mount.computedStyle["--scene-core-color"] = "#1e3a8a";
+  const updated = api.prepareScene(bundle, bundle.camera, viewport, prepared, { mount, sentinels });
+  assert.notEqual(updated, prepared);
+  assert.equal(updated.ir.materials[0].color, "#1e3a8a");
+});
+
+test("bootstrap keeps WebGPU Scene3D points on per-entry cached GPU buffers", () => {
+  const source = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+
+  assert.match(source, /function ensurePointsUniformGPUBuffer\(owner, uniformData\)/);
+  assert.match(source, /function ensurePointsParticleGPUBuffer\(entry, particleData\)/);
+  assert.match(source, /sceneCachedBuffer\(owner,\s*typedArray/);
+  assert.match(source, /ensurePointsUniformGPUBuffer\(entry,\s*puF\)/);
+  assert.match(source, /ensurePointsParticleGPUBuffer\(entry,\s*particleData\)/);
+  assert.doesNotMatch(source, /var\s+pointsUniformBuffer\s*=\s*device\.createBuffer/);
+  assert.doesNotMatch(source, /device\.queue\.writeBuffer\(pointsUniformBuffer,\s*0/);
+});
+
+test("bootstrap applies named Scene3D materials to point layers", async () => {
+  const env = createContext({});
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const api = env.context.__gosx_scene3d_api;
+  assert.equal(typeof api.sceneStatePointsWithMaterials, "function");
+
+  const state = api.createSceneState({
+    scene: {
+      materials: [
+        { name: "core", color: "var(--galaxy-core-inner)", opacity: "var(--galaxy-core-opacity)", blendMode: "additive" },
+      ],
+      points: [
+        { id: "galaxy", count: 1, material: "core", color: "#ffffff", opacity: 0.1, blendMode: "alpha" },
+      ],
+    },
+  });
+  const points = api.sceneStatePointsWithMaterials(state);
+
+  assert.equal(points[0].color, "var(--galaxy-core-inner)");
+  assert.equal(points[0].opacity, "var(--galaxy-core-opacity)");
+  assert.equal(points[0].blendMode, "additive");
+});
+
+test("bootstrap observes inherited root CSS var mutations for Scene3D", () => {
+  const source = fs.readFileSync(path.join(__dirname, "bootstrap-src", "20-scene-mount.js"), "utf8");
+
+  assert.match(source, /observer\.observe\(document\.documentElement,\s*\{/);
+  assert.match(source, /sceneCSSTransitionWindowMillis\(document && document\.documentElement\)/);
+});
+
+test("bootstrap keeps WebGL and WebGPU Scene3D command logs in parity", async () => {
+  const env = createContext({});
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const api = env.context.__gosx_scene3d_api;
+  assert.equal(typeof api.sceneWebGLCommandSequence, "function");
+  assert.equal(typeof api.sceneWebGPUCommandSequence, "function");
+
+  const bundle = {
+    bundleVersion: api.SCENE_RENDER_BUNDLE_VERSION,
+    camera: { x: 0, y: 0, z: 6, fov: 72, near: 0.05, far: 128 },
+    environment: {},
+    materials: [
+      { kind: "flat", opacity: 1, renderPass: "opaque" },
+      { kind: "glass", opacity: 0.5, renderPass: "alpha" },
+      { kind: "glow", opacity: 0.7, renderPass: "additive" },
+    ],
+    meshObjects: [
+      { id: "near", kind: "box", materialIndex: 1, vertexOffset: 0, vertexCount: 3, depthCenter: 4 },
+      { id: "far", kind: "box", materialIndex: 1, vertexOffset: 3, vertexCount: 3, depthCenter: 8 },
+      { id: "solid", kind: "sphere", materialIndex: 0, vertexOffset: 6, vertexCount: 3, depthCenter: 6 },
+      { id: "spark", kind: "plane", materialIndex: 2, vertexOffset: 9, vertexCount: 3, depthCenter: 7 },
+    ],
+    objects: [],
+    worldPositions: new Float32Array(0),
+    worldColors: new Float32Array(0),
+    worldMeshPositions: new Float32Array(36),
+    worldMeshNormals: new Float32Array(36),
+    points: [
+      { id: "stars", count: 5 },
+    ],
+    instancedMeshes: [
+      { id: "debris", kind: "box", count: 3 },
+    ],
+  };
+  const viewport = { cssWidth: 320, cssHeight: 180, pixelWidth: 320, pixelHeight: 180, pixelRatio: 1 };
+  const expected = api.scenePreparedCommandSequence(api.prepareScene(bundle, bundle.camera, viewport, null));
+
+  assert.deepEqual(api.sceneWebGLCommandSequence(bundle, viewport), expected);
+  assert.deepEqual(api.sceneWebGPUCommandSequence(bundle, viewport), expected);
+  assert.deepEqual(api.sceneWebGPUCommandSequence(bundle, viewport), api.sceneWebGLCommandSequence(bundle, viewport));
+});
+
+test("bootstrap registers and selects Scene3D backends through registry", async () => {
+  const env = createContext({});
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const registry = env.context.__gosx_scene3d_api.sceneBackendRegistry;
+  assert.equal(typeof registry.register, "function");
+  assert.ok(registry.list().some((entry) => entry.kind === "webgl"));
+  assert.ok(registry.list().some((entry) => entry.kind === "canvas2d"));
+
+  const custom = registry.register("foo", {
+    capabilities: ["foo"],
+    create: () => ({ kind: "foo", render() {}, dispose() {} }),
+  });
+  assert.equal(registry.select({ foo: true, canvas2d: false, canvas: false, webgl: false, webgpu: false }).kind, custom.kind);
+  registry.dispose("foo");
+  assert.equal(registry.list().some((entry) => entry.kind === "foo"), false);
+  assert.equal(registry.select({ canvas: false, canvas2d: false, webgl: false, webgl2: false, webgpu: false }), null);
+});
+
 test("bootstrap reuses static opaque Scene3D buffers across dynamic-only runtime updates", async () => {
   const mount = new FakeElement("div", null);
   mount.id = "scene-static-cache-root";

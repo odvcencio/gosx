@@ -800,6 +800,154 @@ func Page() Node {
 	}
 }
 
+func TestDefaultFileRendererLowersComposableScene3DChildren(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "page.gsx")
+	source := `package docs
+
+func Page() Node {
+	return <Scene3D class="scene-shell" width={640} height={360}>
+		<Camera z={7} fov={64} near={0.1} far={96} />
+		<Environment ambientColor="#f4fbff" ambientIntensity={0.2} fogColor="#050008" fogDensity={0.001} />
+		<DirectionalLight id="sun" color="#fff1d6" intensity={1.2} directionX={0.3} directionY={-1} directionZ={-0.4} />
+		<PostFX.Bloom threshold={0.65} intensity={0.6} radius={8.0} />
+		<PostFX.Tonemap mode="aces" exposure={1.0} />
+		<Mesh id="hero" kind="box" width={1.8} height={1.2} depth={0.8} color="#8de1ff" materialKind="flat" />
+		<Points id="stars" count={2} positions={data.positions} size={0.5} color="#ffffff" blendMode="additive" />
+		<div>Scene fallback</div>
+	</Scene3D>
+}
+`
+	if err := os.WriteFile(path, []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := &RouteContext{
+		Data: map[string]any{
+			"positions": []float64{0, 0, 0, 1, 1, 1},
+		},
+	}
+	node, err := DefaultFileRenderer(ctx, FilePage{FilePath: path, Pattern: "/"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	html := gosx.RenderHTML(node)
+	if !strings.Contains(html, `data-gosx-engine="GoSXScene3D"`) {
+		t.Fatalf("expected Scene3D mount shell in %q", html)
+	}
+	if !strings.Contains(html, `Scene fallback`) {
+		t.Fatalf("expected non-Scene3D fallback children in %q", html)
+	}
+	if strings.Contains(html, `<Mesh`) || strings.Contains(html, `<Points`) {
+		t.Fatalf("did not expect composable Scene3D children to render as fallback HTML: %q", html)
+	}
+
+	head := gosx.RenderHTML(ctx.Runtime().Head())
+	for _, snippet := range []string{
+		`"camera": {`,
+		`"z": 7`,
+		`"fov": 64`,
+		`"environment": {`,
+		`"ambientColor": "#f4fbff"`,
+		`"lights": [`,
+		`"kind": "directional"`,
+		`"id": "sun"`,
+		`"postEffects": [`,
+		`"kind": "bloom"`,
+		`"kind": "tonemap"`,
+		`"objects": [`,
+		`"id": "hero"`,
+		`"kind": "box"`,
+		`"points": [`,
+		`"id": "stars"`,
+		`"positions": [`,
+		`"blendMode": "additive"`,
+	} {
+		if !strings.Contains(head, snippet) {
+			t.Fatalf("expected %q in composable Scene3D runtime head %q", snippet, head)
+		}
+	}
+}
+
+func TestDefaultFileRendererMergesComposableScene3DCameraWithProps(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "page.gsx")
+	source := `package docs
+
+func Page() Node {
+	return <Scene3D class="scene-shell" {...data.scene}>
+		<Camera z={7} />
+	</Scene3D>
+}
+`
+	if err := os.WriteFile(path, []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := &RouteContext{
+		Data: map[string]any{
+			"scene": map[string]any{
+				"camera": map[string]any{
+					"z":   5,
+					"fov": 54,
+					"far": 96,
+				},
+				"scene": map[string]any{
+					"objects": []map[string]any{{"id": "legacy", "kind": "cube"}},
+				},
+			},
+		},
+	}
+	_, err := DefaultFileRenderer(ctx, FilePage{FilePath: path, Pattern: "/"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	head := gosx.RenderHTML(ctx.Runtime().Head())
+	for _, snippet := range []string{
+		`"camera": {`,
+		`"z": 7`,
+		`"fov": 54`,
+		`"far": 96`,
+		`"id": "legacy"`,
+	} {
+		if !strings.Contains(head, snippet) {
+			t.Fatalf("expected %q in merged Scene3D runtime head %q", snippet, head)
+		}
+	}
+}
+
+func TestDefaultFileRendererDoesNotInjectDemoSceneForMeshOnlyComposableScene(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "page.gsx")
+	source := `package docs
+
+func Page() Node {
+	return <Scene3D class="scene-shell">
+		<Mesh id="solo" kind="sphere" />
+	</Scene3D>
+}
+`
+	if err := os.WriteFile(path, []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := &RouteContext{}
+	_, err := DefaultFileRenderer(ctx, FilePage{FilePath: path, Pattern: "/"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	head := gosx.RenderHTML(ctx.Runtime().Head())
+	if !strings.Contains(head, `"id": "solo"`) {
+		t.Fatalf("expected solo mesh in Scene3D runtime head %q", head)
+	}
+	if strings.Contains(head, `"kind": "cube"`) || strings.Contains(head, `#ffd48f`) {
+		t.Fatalf("expected no injected demo scene objects in %q", head)
+	}
+}
+
 func TestDefaultFileRendererDoesNotInjectDefaultSceneObjectsForProgramRef(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "page.gsx")
@@ -838,6 +986,127 @@ func Page() Node {
 	}
 	if strings.Contains(head, `"objects"`) || strings.Contains(head, `"kind":"cube"`) {
 		t.Fatalf("expected runtime Scene3D manifest without injected default objects, got %q", head)
+	}
+}
+
+func TestDefaultFileRendererRejectsUnsupportedScene3DComposableCapabilities(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "page.gsx")
+	source := `package docs
+
+func Page() Node {
+	return <Scene3D capabilities="canvas">
+		<ComputeParticles id="spark-field" count={128} />
+	</Scene3D>
+}
+`
+	if err := os.WriteFile(path, []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := DefaultFileRenderer(&RouteContext{}, FilePage{FilePath: path, Pattern: "/"})
+	if err == nil {
+		t.Fatal("expected Scene3D capability validation error")
+	}
+	if !strings.Contains(err.Error(), "ComputeParticles requires webgpu or webgl2 capability") {
+		t.Fatalf("expected ComputeParticles capability error, got %v", err)
+	}
+}
+
+func TestDefaultFileRendererAppliesScene3DStyleSubset(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "page.gsx")
+	source := `package docs
+
+func Page() Node {
+	return <Scene3D class="hero-scene" width={640} height={360}>
+		<Mesh id="hero" class="primary" kind="box" />
+		<Points id="stars" class="stars" count={2} positions={data.positions} />
+		<DirectionalLight id="sun" />
+	</Scene3D>
+}
+`
+	if err := os.WriteFile(path, []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+	cssPath := filepath.Join(root, "page.css")
+	cssSource := `
+.hero-scene { color: white; }
+@scene3d {
+	Scene3D.hero-scene {
+		scene-background: #101820;
+		environment-ambient-intensity: 0.33;
+		scene-filter: bloom(threshold 0.8 intensity 1.1) vignette(intensity 0.5);
+		postfx-bloom-intensity: 0.7;
+	}
+	Mesh.primary {
+		material-color: #8de1ff;
+		material-roughness: 0.42;
+		cast-shadow: true;
+		x: 1.5;
+	}
+	Points.stars {
+		point-size: 0.5;
+		blend-mode: additive;
+		spin-y: 0.04;
+	}
+	DirectionalLight#sun {
+		light-intensity: 2;
+		light-color: #fff4cc;
+	}
+}
+`
+	if err := os.WriteFile(cssPath, []byte(cssSource), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := &RouteContext{
+		Data: map[string]any{
+			"positions": []float64{0, 0, 0, 1, 1, 1},
+		},
+	}
+	node, err := DefaultFileRenderer(ctx, FilePage{Root: root, FilePath: path, Pattern: "/"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if html := gosx.RenderHTML(node); !strings.Contains(html, `data-gosx-engine="GoSXScene3D"`) {
+		t.Fatalf("expected Scene3D mount shell in %q", html)
+	}
+
+	head := gosx.RenderHTML(ctx.Runtime().Head())
+	for _, snippet := range []string{
+		`"background": "#101820"`,
+		`"ambientIntensity": 0.33`,
+		`"kind": "bloom"`,
+		`"threshold": 0.8`,
+		`"intensity": 0.7`,
+		`"kind": "vignette"`,
+		`"id": "hero"`,
+		`"color": "#8de1ff"`,
+		`"roughness": 0.42`,
+		`"castShadow": true`,
+		`"x": 1.5`,
+		`"id": "stars"`,
+		`"size": 0.5`,
+		`"blendMode": "additive"`,
+		`"spinY": 0.04`,
+		`"id": "sun"`,
+		`"color": "#fff4cc"`,
+		`"intensity": 2`,
+	} {
+		if !strings.Contains(head, snippet) {
+			t.Fatalf("expected %q in Scene3D styled runtime head %q", snippet, head)
+		}
+	}
+
+	cssCtx := &RouteContext{}
+	addRouteFileCSSHead(cssCtx, FilePage{Root: root, FilePath: path})
+	cssHead := gosx.RenderHTML(cssCtx.Head())
+	if strings.Contains(cssHead, "@scene3d") || strings.Contains(cssHead, "scene-background") {
+		t.Fatalf("expected @scene3d stripped from emitted CSS head, got %q", cssHead)
+	}
+	if !strings.Contains(cssHead, ".hero-scene") {
+		t.Fatalf("expected normal CSS preserved in emitted CSS head, got %q", cssHead)
 	}
 }
 
