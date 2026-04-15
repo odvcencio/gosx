@@ -15967,6 +15967,7 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
     }
 
     return {
+      kind: "webgl",
       render: render,
       dispose: dispose,
       type: "webgl-pbr",

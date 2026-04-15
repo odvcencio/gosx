@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.18.0-alpha.4
+
+Patch release for Scene3D renderer state reporting.
+
+The WebGL2 PBR renderer now reports `kind: "webgl"` like the legacy WebGL renderer. This keeps `data-gosx-scene3d-renderer` accurate on real PBR mounts and lets environment/capability recovery logic classify the active renderer correctly.
+
 ## v0.18.0-alpha.3
 
 Patch release for Scene3D CSS performance and point-layer memory stability.
