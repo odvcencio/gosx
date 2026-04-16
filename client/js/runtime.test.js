@@ -148,7 +148,10 @@ class FakeWebGLContext {
     this.DEPTH_BUFFER_BIT = 0x0100;
     this.BLEND = 0x0BE2;
     this.DEPTH_TEST = 0x0B71;
+    this.CULL_FACE = 0x0B44;
     this.LEQUAL = 0x0203;
+    this.FRONT = 0x0404;
+    this.BACK = 0x0405;
     this.ONE = 1;
     this.SRC_ALPHA = 0x0302;
     this.ONE_MINUS_SRC_ALPHA = 0x0303;
@@ -162,6 +165,11 @@ class FakeWebGLContext {
     this.LINEAR = 0x2601;
     this.RGBA = 0x1908;
     this.UNSIGNED_BYTE = 0x1401;
+    this.UNSIGNED_INT = 0x1405;
+    this.FRAMEBUFFER = 0x8D40;
+    this.DEPTH_ATTACHMENT = 0x8D00;
+    this.DEPTH_COMPONENT = 0x1902;
+    this.DEPTH_COMPONENT24 = 0x81A6;
     this.VERTEX_SHADER = 0x8B31;
     this.FRAGMENT_SHADER = 0x8B30;
     this.COMPILE_STATUS = 0x8B81;
@@ -220,12 +228,20 @@ class FakeWebGLContext {
     return texture;
   }
 
+  createFramebuffer() {
+    const framebuffer = { id: "fb-" + this.ops.length };
+    this.ops.push(["createFramebuffer", framebuffer.id]);
+    return framebuffer;
+  }
+
   getAttribLocation(_program, name) {
     this.ops.push(["getAttribLocation", name]);
     if (name === "a_position") return 0;
     if (name === "a_color") return 1;
     if (name === "a_material") return 2;
     if (name === "a_uv") return 3;
+    if (name === "a_joints") return 7;
+    if (name === "a_weights") return 8;
     return -1;
   }
 
@@ -268,6 +284,14 @@ class FakeWebGLContext {
     this.ops.push(["bindTexture", target, texture && texture.id]);
   }
 
+  bindFramebuffer(target, framebuffer) {
+    this.ops.push(["bindFramebuffer", target, framebuffer && framebuffer.id]);
+  }
+
+  framebufferTexture2D(target, attachment, textarget, texture, level) {
+    this.ops.push(["framebufferTexture2D", target, attachment, textarget, texture && texture.id, level]);
+  }
+
   activeTexture(unit) {
     this.ops.push(["activeTexture", unit]);
   }
@@ -278,6 +302,11 @@ class FakeWebGLContext {
       this.bufferUploads.set(bufferID, Array.from(data || []));
     }
     this.ops.push(["bufferData", target, bufferID, data.length, usage]);
+  }
+
+  bufferSubData(target, offset, data) {
+    const bufferID = this._boundArrayBuffer && this._boundArrayBuffer.id;
+    this.ops.push(["bufferSubData", target, bufferID, offset, data && data.length]);
   }
 
   texParameteri(target, pname, param) {
@@ -296,6 +325,18 @@ class FakeWebGLContext {
 
   vertexAttribPointer(location, size, type, normalized, stride, offset) {
     this.ops.push(["vertexAttribPointer", location, size, type, normalized, stride, offset]);
+  }
+
+  disableVertexAttribArray(location) {
+    this.ops.push(["disableVertexAttribArray", location]);
+  }
+
+  vertexAttrib2f(location, x, y) {
+    this.ops.push(["vertexAttrib2f", location, x, y]);
+  }
+
+  vertexAttrib4f(location, x, y, z, w) {
+    this.ops.push(["vertexAttrib4f", location, x, y, z, w]);
   }
 
   drawArrays(mode, first, count) {
@@ -318,6 +359,18 @@ class FakeWebGLContext {
     this.ops.push(["uniform1i", location && location.name, value]);
   }
 
+  uniform2f(location, x, y) {
+    this.ops.push(["uniform2f", location && location.name, x, y]);
+  }
+
+  uniform1fv(location, value) {
+    this.ops.push(["uniform1fv", location && location.name, value && value.length, value && Array.from(value).slice(0, 4)]);
+  }
+
+  uniformMatrix4fv(location, transpose, value) {
+    this.ops.push(["uniformMatrix4fv", location && location.name, Boolean(transpose), value && value.length]);
+  }
+
   enable(capability) {
     this.ops.push(["enable", capability]);
   }
@@ -338,12 +391,20 @@ class FakeWebGLContext {
     this.ops.push(["depthMask", flag]);
   }
 
+  cullFace(face) {
+    this.ops.push(["cullFace", face]);
+  }
+
   deleteBuffer(_buffer) {
     this.ops.push(["deleteBuffer"]);
   }
 
   deleteProgram(_program) {
     this.ops.push(["deleteProgram"]);
+  }
+
+  deleteFramebuffer(framebuffer) {
+    this.ops.push(["deleteFramebuffer", framebuffer && framebuffer.id]);
   }
 
   deleteTexture(texture) {
@@ -1080,6 +1141,162 @@ function buildMinimalGLBBytes() {
   return Array.from(glb);
 }
 
+function buildSkinnedGLBBytes() {
+  const chunks = [];
+  const bufferViews = [];
+  let byteOffset = 0;
+
+  function alignBuffer() {
+    const pad = (4 - (byteOffset % 4)) % 4;
+    if (pad > 0) {
+      chunks.push(Buffer.alloc(pad));
+      byteOffset += pad;
+    }
+  }
+
+  function appendTypedArray(typed, target) {
+    alignBuffer();
+    const viewIndex = bufferViews.length;
+    const bytes = Buffer.from(typed.buffer, typed.byteOffset, typed.byteLength);
+    const view = { buffer: 0, byteOffset, byteLength: bytes.length };
+    if (target) {
+      view.target = target;
+    }
+    bufferViews.push(view);
+    chunks.push(bytes);
+    byteOffset += bytes.length;
+    return viewIndex;
+  }
+
+  const positions = new Float32Array([
+    0, 0, 0,
+    1, 0, 0,
+    0, 1, 0,
+  ]);
+  const normals = new Float32Array([
+    0, 0, 1,
+    0, 0, 1,
+    0, 0, 1,
+  ]);
+  const joints = new Uint8Array([
+    0, 1, 0, 0,
+    0, 1, 0, 0,
+    0, 1, 0, 0,
+  ]);
+  const weights = new Float32Array([
+    0.75, 0.25, 0, 0,
+    0.5, 0.5, 0, 0,
+    1, 0, 0, 0,
+  ]);
+  const indices = new Uint16Array([2, 0, 1]);
+  const inverseBindMatrices = new Float32Array(32);
+  inverseBindMatrices[0] = 1;
+  inverseBindMatrices[5] = 1;
+  inverseBindMatrices[10] = 1;
+  inverseBindMatrices[15] = 1;
+  inverseBindMatrices[16] = 1;
+  inverseBindMatrices[21] = 1;
+  inverseBindMatrices[26] = 1;
+  inverseBindMatrices[31] = 1;
+  const times = new Float32Array([0, 1]);
+  const translations = new Float32Array([
+    0, 0, 0,
+    0, 0.5, 0,
+  ]);
+
+  const positionView = appendTypedArray(positions, 34962);
+  const normalView = appendTypedArray(normals, 34962);
+  const jointView = appendTypedArray(joints, 34962);
+  const weightView = appendTypedArray(weights, 34962);
+  const indexView = appendTypedArray(indices, 34963);
+  const inverseBindView = appendTypedArray(inverseBindMatrices);
+  const timeView = appendTypedArray(times);
+  const translationView = appendTypedArray(translations);
+  alignBuffer();
+
+  const bin = Buffer.concat(chunks);
+  const gltf = {
+    asset: { version: "2.0", generator: "runtime-test-skinned" },
+    scene: 0,
+    scenes: [{ nodes: [0, 1] }],
+    nodes: [
+      { name: "skinned-mesh", mesh: 0, skin: 0, translation: [2, 0, 0] },
+      { name: "root-joint", children: [2] },
+      { name: "tip-joint" },
+    ],
+    meshes: [{
+      name: "rig",
+      primitives: [{
+        attributes: {
+          POSITION: 0,
+          NORMAL: 1,
+          JOINTS_0: 2,
+          WEIGHTS_0: 3,
+        },
+        indices: 4,
+        material: 0,
+      }],
+    }],
+    skins: [{
+      name: "rig-skin",
+      joints: [1, 2],
+      inverseBindMatrices: 5,
+      skeleton: 1,
+    }],
+    animations: [{
+      name: "bend",
+      samplers: [{
+        input: 6,
+        output: 7,
+        interpolation: "LINEAR",
+      }],
+      channels: [{
+        sampler: 0,
+        target: { node: 2, path: "translation" },
+      }],
+    }],
+    materials: [{
+      pbrMetallicRoughness: {
+        baseColorFactor: [0.8, 0.4, 0.2, 1],
+        metallicFactor: 0,
+        roughnessFactor: 0.9,
+      },
+    }],
+    accessors: [
+      { bufferView: positionView, componentType: 5126, count: 3, type: "VEC3" },
+      { bufferView: normalView, componentType: 5126, count: 3, type: "VEC3" },
+      { bufferView: jointView, componentType: 5121, count: 3, type: "VEC4" },
+      { bufferView: weightView, componentType: 5126, count: 3, type: "VEC4" },
+      { bufferView: indexView, componentType: 5123, count: 3, type: "SCALAR" },
+      { bufferView: inverseBindView, componentType: 5126, count: 2, type: "MAT4" },
+      { bufferView: timeView, componentType: 5126, count: 2, type: "SCALAR" },
+      { bufferView: translationView, componentType: 5126, count: 2, type: "VEC3" },
+    ],
+    bufferViews,
+    buffers: [{ byteLength: bin.length }],
+  };
+
+  let json = Buffer.from(JSON.stringify(gltf), "utf8");
+  while (json.length % 4 !== 0) {
+    json = Buffer.concat([json, Buffer.from(" ")]);
+  }
+
+  const totalLength = 12 + 8 + json.length + 8 + bin.length;
+  const glb = Buffer.alloc(totalLength);
+  let offset = 0;
+  glb.writeUInt32LE(0x46546c67, offset); offset += 4;
+  glb.writeUInt32LE(2, offset); offset += 4;
+  glb.writeUInt32LE(totalLength, offset); offset += 4;
+  glb.writeUInt32LE(json.length, offset); offset += 4;
+  glb.writeUInt32LE(0x4E4F534A, offset); offset += 4;
+  json.copy(glb, offset); offset += json.length;
+  glb.writeUInt32LE(bin.length, offset); offset += 4;
+  glb.writeUInt32LE(0x004E4942, offset); offset += 4;
+  bin.copy(glb, offset);
+
+  return Array.from(glb);
+}
+
 class FakeFormData {
   constructor(form) {
     this.values = [];
@@ -1272,6 +1489,12 @@ function createContext(options) {
       maxTouchPoints: Math.max(0, Math.floor(numberOr(options.maxTouchPoints, 0))),
       userAgent: String(options.userAgent || "FakeBrowser/1.0"),
       getGamepads: typeof options.getGamepads === "function" ? options.getGamepads : () => [],
+    },
+    performance: {
+      now: typeof options.performanceNow === "function" ? options.performanceNow : () => Date.now(),
+      mark() {},
+      measure() {},
+      clearMarks() {},
     },
     matchMedia(query) {
       const key = String(query);
@@ -3885,7 +4108,6 @@ test("bootstrap loads declarative Scene3D model assets without authored JS", asy
       ],
     },
   });
-
   runScript(bootstrapSource, env.context, "bootstrap.js");
   await flushAsyncWork();
 
@@ -3960,6 +4182,594 @@ test("bootstrap loads declarative Scene3D GLB model assets through the native re
   const gl = mount.children[0].getContext("webgl2");
   assert.ok(gl);
   assert.ok(gl.ops.some((entry) => entry[0] === "drawArrays" && entry[1] === gl.TRIANGLES && entry[3] >= 3));
+  assert.equal(env.consoleLogs.error.length, 0);
+});
+
+test("bootstrap GLB loader extracts skin attributes and evaluates animation joint matrices", async () => {
+  const env = createContext({
+    fetchRoutes: {
+      "/models/rig.glb": {
+        bytes: buildSkinnedGLBBytes(),
+      },
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  const scene = await env.context.__gosx_scene3d_gltf_api.sceneLoadGLTFModel("/models/rig.glb");
+
+  assert.equal(scene.objects.length, 1);
+  assert.equal(scene.skins.length, 1);
+  assert.equal(scene.nodes.length, 3);
+  assert.equal(scene.animations.length, 1);
+
+  const object = scene.objects[0];
+  assert.equal(object.skin, scene.skins[0]);
+  assert.equal(object.skinIndex, 0);
+  assert.equal(object.vertices.count, 3);
+  assert.equal(object.vertices.positions[0], 0);
+  assert.equal(object.vertices.positions[1], 1);
+  assert.deepEqual(Array.from(object.vertices.weights.slice(0, 8)), [1, 0, 0, 0, 0.75, 0.25, 0, 0]);
+  assert.deepEqual(Array.from(object.vertices.joints.slice(0, 4)), [0, 1, 0, 0]);
+  assert.equal(scene.animations[0].channels[0].targetID, 2);
+
+  const animationApi = env.context.__gosx_scene3d_animation_api;
+  const mixer = animationApi.createMixer();
+  mixer.addClip(scene.animations[0].name, scene.animations[0]);
+  mixer.play("bend", { loop: false, fadeIn: 0 });
+
+  const animatedTransforms = new env.context.Map();
+  mixer.update(0.5, function(targetNode, property, value) {
+    animatedTransforms.set(targetNode, {
+      [property]: Array.from(value),
+    });
+  });
+
+  const nodeTransforms = animationApi.buildNodeTransforms(scene.nodes, animatedTransforms);
+  const jointMatrices = animationApi.computeJointMatrices(scene.skins[0], nodeTransforms);
+  assert.equal(jointMatrices.length, 32);
+  assert.ok(Math.abs(jointMatrices[16 + 13] - 0.25) < 0.00001);
+  assert.equal(env.consoleLogs.error.length, 0);
+});
+
+test("bootstrap starts Scene3D GLB model animation playback from model props", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-model-skinned-root";
+
+  const env = createContext({
+    elements: [mount],
+    fetchRoutes: {
+      "/models/rig.glb": {
+        bytes: buildSkinnedGLBBytes(),
+      },
+    },
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-model-skinned",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-model-skinned-root",
+          props: {
+            width: 640,
+            height: 360,
+            autoRotate: false,
+            models: [
+              {
+                id: "rig",
+                src: "/models/rig.glb",
+                animation: "bend",
+                loop: true,
+              },
+            ],
+          },
+        },
+      ],
+    },
+  });
+  const raf = installManualRAF(env.context);
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  assert.equal(env.fetchCalls.some((call) => call.url === "/models/rig.glb"), true);
+  assert.equal(mount.getAttribute("data-gosx-scene3d-mounted"), "true");
+  assert.equal(raf.count(), 1);
+  assert.equal(env.consoleLogs.error.length, 0);
+});
+
+test("bootstrap uploads skinned GLB joint matrices through WebGL PBR", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-model-skinned-webgl-root";
+
+  const env = createContext({
+    elements: [mount],
+    enableWebGL2: true,
+    disableCanvas2D: true,
+    fetchRoutes: {
+      "/models/rig.glb": {
+        bytes: buildSkinnedGLBBytes(),
+      },
+    },
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-model-skinned-webgl",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-model-skinned-webgl-root",
+          props: {
+            width: 640,
+            height: 360,
+            autoRotate: false,
+            models: [
+              {
+                id: "rig",
+                src: "/models/rig.glb",
+                animation: "bend",
+                loop: true,
+              },
+            ],
+          },
+        },
+      ],
+    },
+  });
+  env.context.WebGL2RenderingContext = FakeWebGLContext;
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+  await flushAsyncWork();
+
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "webgl");
+  const gl = mount.children[0].getContext("webgl2");
+  assert.ok(gl.ops.some((entry) => entry[0] === "getAttribLocation" && entry[1] === "a_joints"));
+  assert.ok(gl.ops.some((entry) => entry[0] === "getAttribLocation" && entry[1] === "a_weights"));
+  assert.ok(gl.ops.some((entry) => entry[0] === "uniform1i" && entry[1] === "u_hasSkin" && entry[2] === 1));
+  assert.ok(gl.ops.some((entry) => entry[0] === "uniformMatrix4fv" && entry[1] === "u_jointMatrices[0]" && entry[3] === 16));
+  assert.ok(gl.ops.some((entry) => entry[0] === "uniformMatrix4fv" && entry[1] === "u_jointMatrices[1]" && entry[3] === 16));
+  assert.ok(gl.ops.some((entry) => entry[0] === "vertexAttribPointer" && entry[1] === 7 && entry[2] === 4));
+  assert.ok(gl.ops.some((entry) => entry[0] === "vertexAttribPointer" && entry[1] === 8 && entry[2] === 4));
+  assert.equal(env.consoleLogs.error.length, 0);
+});
+
+test("bootstrap allocates Scene3D texture units without CSM and IBL collisions", () => {
+  const env = createContext({});
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+
+  const api = env.context.window.__gosx_scene3d_resource_api;
+  assert.equal(typeof api.allocateTextureUnits, "function");
+
+  const twoShadowLayout = api.allocateTextureUnits({ shadowCount: 2, ibl: true, maxUnits: 16 });
+  assert.deepEqual(Array.from(twoShadowLayout.shadows), [5, 6]);
+  assert.deepEqual({ ...twoShadowLayout.ibl }, { irradiance: 7, radiance: 8, brdfLUT: 9 });
+
+  const defaultLayout = api.allocateTextureUnits({ shadowCount: 2, ibl: true });
+  assert.deepEqual(Array.from(defaultLayout.shadows), [5, 6]);
+  assert.deepEqual({ ...defaultLayout.ibl }, { irradiance: 7, radiance: 8, brdfLUT: 9 });
+
+  const csmLayout = api.allocateTextureUnits({ shadowCount: 4, ibl: true, maxUnits: 16 });
+  assert.deepEqual(Array.from(csmLayout.shadows), [5, 6, 7, 8]);
+  assert.deepEqual({ ...csmLayout.ibl }, { irradiance: 9, radiance: 10, brdfLUT: 11 });
+
+  const constrained = api.allocateTextureUnits({ shadowCount: 6, ibl: true, maxUnits: 10 });
+  assert.deepEqual(Array.from(constrained.shadows), [5, 6]);
+  assert.deepEqual({ ...constrained.ibl }, { irradiance: 7, radiance: 8, brdfLUT: 9 });
+  assert.equal(constrained.warnings.length > 0, true);
+});
+
+test("bootstrap resolves Scene3D shadow and IBL resource budgets", () => {
+  const env = createContext({});
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+
+  const api = env.context.window.__gosx_scene3d_resource_api;
+  const budget = api.resolveTextureMemoryBudget({
+    shadowCount: 4,
+    shadowSize: 1024,
+    ibl: true,
+  });
+
+  assert.equal(budget.totalBytes <= 26 * 1024 * 1024, true);
+  assert.equal(budget.ibl, true);
+  assert.equal(budget.iblProfile.sourceFaceSize <= 256, true);
+  assert.equal(budget.warnings.some((msg) => msg.includes("IBL profile downscaled")), true);
+
+  const halfFloat = api.resolveIBLRenderTargetMode({
+    getExtension(name) {
+      return name === "EXT_color_buffer_half_float" ? { name } : null;
+    },
+  });
+  assert.equal(halfFloat.mode, "half-float");
+
+  const fallback = api.resolveIBLRenderTargetMode({ getExtension() { return null; } }, { lowPower: true });
+  assert.equal(fallback.mode, "ldr-fallback");
+  assert.equal(fallback.profile.sourceFaceSize, 128);
+
+  const disabled = api.resolveIBLRenderTargetMode({ getExtension() { return null; } }, { allowLDRFallback: false });
+  assert.equal(disabled.mode, "disabled");
+
+  const rawHDR = Buffer.concat([
+    Buffer.from("#?RADIANCE\nFORMAT=32-bit_rle_rgbe\n\n-Y 1 +X 1\n", "ascii"),
+    Buffer.from([128, 64, 32, 129]),
+  ]);
+  const parsed = api.parseRadianceHDR(rawHDR.buffer.slice(rawHDR.byteOffset, rawHDR.byteOffset + rawHDR.byteLength));
+  assert.equal(parsed.width, 1);
+  assert.equal(parsed.height, 1);
+  assert.ok(Math.abs(parsed.data[0] - 1) < 0.00001);
+  assert.ok(Math.abs(parsed.data[1] - 0.5) < 0.00001);
+  assert.ok(Math.abs(parsed.data[2] - 0.25) < 0.00001);
+});
+
+test("bootstrap hashes shadow passes with cascade-sensitive inputs", () => {
+  const env = createContext({});
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+
+  const api = env.context.window.__gosx_scene3d_resource_api;
+  assert.equal(typeof api.shadowPassHash, "function");
+
+  const matrix = new Float32Array(16);
+  matrix[0] = 1;
+  matrix[5] = 1;
+  matrix[10] = 1;
+  matrix[15] = 1;
+  const casters = [
+    { castShadow: true, vertexOffset: 0, vertexCount: 6, depthNear: 1, depthFar: 3 },
+  ];
+  const base = api.shadowPassHash(matrix, casters, {
+    cascadeIndex: 0,
+    splitNear: 0.1,
+    splitFar: 10,
+    shadowSize: 1024,
+  });
+
+  assert.notEqual(base, api.shadowPassHash(matrix, casters, {
+    cascadeIndex: 1,
+    splitNear: 0.1,
+    splitFar: 10,
+    shadowSize: 1024,
+  }));
+  assert.notEqual(base, api.shadowPassHash(matrix, casters, {
+    cascadeIndex: 0,
+    splitNear: 0.1,
+    splitFar: 25,
+    shadowSize: 1024,
+  }));
+  assert.notEqual(base, api.shadowPassHash(matrix, casters, {
+    cascadeIndex: 0,
+    splitNear: 0.1,
+    splitFar: 10,
+    shadowSize: 512,
+  }));
+});
+
+test("bootstrap computes CSM cascade splits blending uniform and log", () => {
+  const env = createContext({});
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+
+  const api = env.context.window.__gosx_scene3d_resource_api;
+  assert.equal(typeof api.computeCascadeSplits, "function");
+
+  const uniform = api.computeCascadeSplits(1, 101, 4, 0);
+  // Uniform scheme: splits at 26, 51, 76, 101.
+  assert.ok(Math.abs(uniform[0] - 26) < 0.001, "uniform[0]=" + uniform[0]);
+  assert.ok(Math.abs(uniform[3] - 101) < 0.001, "uniform[3]=" + uniform[3]);
+
+  const log = api.computeCascadeSplits(1, 100, 4, 1);
+  // Log scheme over [1,100] with 4 splits: 100^(1/4) ≈ 3.162 factor.
+  assert.ok(Math.abs(log[0] - 3.162) < 0.01);
+  assert.ok(Math.abs(log[3] - 100) < 0.001);
+
+  const practical = api.computeCascadeSplits(1, 100, 4, 0.5);
+  // Last split always equals far regardless of lambda.
+  assert.ok(Math.abs(practical[3] - 100) < 0.001);
+  // Practical splits should be monotonically increasing.
+  for (let i = 1; i < practical.length; i++) {
+    assert.ok(practical[i] > practical[i - 1], "splits must be increasing");
+  }
+
+  // Single cascade returns just far.
+  const one = api.computeCascadeSplits(1, 50, 1, 0.5);
+  assert.equal(one.length, 1);
+  assert.ok(Math.abs(one[0] - 50) < 0.001);
+});
+
+test("bootstrap fits light-space ortho around a known frustum", () => {
+  const env = createContext({});
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+
+  const api = env.context.window.__gosx_scene3d_resource_api;
+  assert.equal(typeof api.fitLightSpaceOrtho, "function");
+
+  // Identity view: camera at origin, looking down -Z. Near=1, Far=10, fov=90, aspect=1
+  // gives a symmetric frustum. Corners lie in world space since view is identity.
+  const identity = new Float32Array([
+    1, 0, 0, 0,
+    0, 1, 0, 0,
+    0, 0, 1, 0,
+    0, 0, 0, 1,
+  ]);
+  const corners = api.frustumSubCorners(identity, 90, 1, 1, 10);
+  assert.equal(corners.length, 24);
+  // Near corners at z = -1, far at z = -10 (camera looks -Z).
+  assert.ok(Math.abs(corners[2] - -1) < 0.001);    // near TL z
+  assert.ok(Math.abs(corners[14] - -10) < 0.001);  // far TL z
+  // Near half-extent at z=1, fov 90, aspect 1: tan(45)=1 → ±1 in x and y.
+  assert.ok(Math.abs(Math.abs(corners[0]) - 1) < 0.001);
+  assert.ok(Math.abs(Math.abs(corners[1]) - 1) < 0.001);
+
+  // Fit a light looking straight down (light dir = (0,-1,0)) — the ortho
+  // matrix should transform any world point inside the frustum to NDC within
+  // [-1,1]^3.
+  const lightMatrix = api.fitLightSpaceOrtho([0, -1, 0], corners, 0);
+  // Centroid of the 8 corners — guaranteed to be inside the fit box, so
+  // transformed NDC should be ~origin (within floating-point tolerance).
+  let cx = 0, cy = 0, cz = 0;
+  for (let i = 0; i < 8; i++) {
+    cx += corners[i * 3];
+    cy += corners[i * 3 + 1];
+    cz += corners[i * 3 + 2];
+  }
+  cx /= 8; cy /= 8; cz /= 8;
+
+  // Apply mat4 (column-major) * vec4(cx, cy, cz, 1).
+  const w = lightMatrix[3] * cx + lightMatrix[7] * cy + lightMatrix[11] * cz + lightMatrix[15];
+  const x = (lightMatrix[0] * cx + lightMatrix[4] * cy + lightMatrix[8] * cz + lightMatrix[12]) / w;
+  const y = (lightMatrix[1] * cx + lightMatrix[5] * cy + lightMatrix[9] * cz + lightMatrix[13]) / w;
+  const z = (lightMatrix[2] * cx + lightMatrix[6] * cy + lightMatrix[10] * cz + lightMatrix[14]) / w;
+  assert.ok(Math.abs(x) < 0.2, "centroid x in NDC: " + x);
+  assert.ok(Math.abs(y) < 0.2, "centroid y in NDC: " + y);
+  assert.ok(z >= -1.01 && z <= 1.01, "centroid z in NDC [-1,1]: " + z);
+
+  // All 8 corners should transform into NDC cube [-1,1]^3.
+  for (let i = 0; i < 8; i++) {
+    const px = corners[i * 3];
+    const py = corners[i * 3 + 1];
+    const pz = corners[i * 3 + 2];
+    const ww = lightMatrix[3] * px + lightMatrix[7] * py + lightMatrix[11] * pz + lightMatrix[15];
+    const nx = (lightMatrix[0] * px + lightMatrix[4] * py + lightMatrix[8] * pz + lightMatrix[12]) / ww;
+    const ny = (lightMatrix[1] * px + lightMatrix[5] * py + lightMatrix[9] * pz + lightMatrix[13]) / ww;
+    const nz = (lightMatrix[2] * px + lightMatrix[6] * py + lightMatrix[10] * pz + lightMatrix[14]) / ww;
+    assert.ok(nx >= -1.01 && nx <= 1.01, "corner " + i + " x in NDC: " + nx);
+    assert.ok(ny >= -1.01 && ny <= 1.01, "corner " + i + " y in NDC: " + ny);
+    assert.ok(nz >= -1.01 && nz <= 1.01, "corner " + i + " z in NDC: " + nz);
+  }
+});
+
+test("bootstrap snaps CSM light-space ortho to shadow texels", () => {
+  const env = createContext({});
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+
+  const api = env.context.window.__gosx_scene3d_resource_api;
+  const identity = new Float32Array([
+    1, 0, 0, 0,
+    0, 1, 0, 0,
+    0, 0, 1, 0,
+    0, 0, 0, 1,
+  ]);
+  const corners = api.frustumSubCorners(identity, 90, 1, 1, 10);
+  const shifted = new Float32Array(corners);
+  for (let i = 0; i < 8; i++) {
+    shifted[i * 3] += 0.001;
+  }
+
+  const unsnappedA = api.fitLightSpaceOrtho([0, -1, 0], corners, 0);
+  const unsnappedB = api.fitLightSpaceOrtho([0, -1, 0], shifted, 0);
+  const snappedA = api.fitLightSpaceOrtho([0, -1, 0], corners, 0, 1024);
+  const snappedB = api.fitLightSpaceOrtho([0, -1, 0], shifted, 0, 1024);
+
+  let unsnappedDiff = 0;
+  let snappedDiff = 0;
+  for (let i = 0; i < 16; i++) {
+    unsnappedDiff += Math.abs(unsnappedA[i] - unsnappedB[i]);
+    snappedDiff += Math.abs(snappedA[i] - snappedB[i]);
+  }
+  assert.ok(unsnappedDiff > 0.00001, "unsnapped matrix should move with sub-texel camera shifts: " + unsnappedDiff);
+  assert.ok(snappedDiff < 0.000001, "snapped matrix should stay stable below one texel: " + snappedDiff + " vs " + unsnappedDiff);
+});
+
+test("bootstrap binds Scene3D environment maps for WebGL PBR", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-envmap-root";
+
+  const env = createContext({
+    elements: [mount],
+    enableWebGL2: true,
+    disableCanvas2D: true,
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-envmap",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-envmap-root",
+          props: {
+            width: 640,
+            height: 360,
+            background: "#08151f",
+            environment: {
+              envMap: "/hdri/studio.png",
+              envIntensity: 1.25,
+              envRotation: 0.5,
+            },
+            scene: {
+              environment: {
+                envMap: "/hdri/studio.png",
+                envIntensity: 1.25,
+                envRotation: 0.5,
+              },
+              objects: [
+                {
+                  id: "chrome-ball",
+                  kind: "sphere",
+                  radius: 1,
+                  materialKind: "pbr",
+                  color: "#ffffff",
+                  metalness: 1,
+                  roughness: 0.15,
+                  vertices: {
+                    count: 3,
+                    positions: [0, 1, 0, -1, -1, 0, 1, -1, 0],
+                    normals: [0, 0, 1, 0, 0, 1, 0, 0, 1],
+                    uvs: [0.5, 1, 0, 0, 1, 0],
+                  },
+                },
+              ],
+            },
+          },
+        },
+      ],
+    },
+  });
+  env.context.WebGL2RenderingContext = FakeWebGLContext;
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  assert.equal(env.imageLoads.includes("/hdri/studio.png"), true);
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "webgl");
+  const gl = mount.children[0].getContext("webgl2");
+  assert.ok(gl.ops.some((entry) => entry[0] === "uniform1i" && entry[1] === "u_hasEnvMap" && entry[2] === 1));
+  assert.ok(gl.ops.some((entry) => entry[0] === "uniform1i" && entry[1] === "u_envMap" && entry[2] === 7));
+  assert.ok(gl.ops.some((entry) => entry[0] === "uniform1f" && entry[1] === "u_envIntensity" && entry[2] === 1.25));
+  assert.ok(gl.ops.some((entry) => entry[0] === "uniform1f" && entry[1] === "u_envRotation" && entry[2] === 0.5));
+  assert.equal(env.consoleLogs.error.length, 0);
+});
+
+test("bootstrap keeps Scene3D CSM shadow units ahead of IBL units", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-csm-ibl-root";
+
+  const env = createContext({
+    elements: [mount],
+    enableWebGL2: true,
+    disableCanvas2D: true,
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-csm-ibl",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-csm-ibl-root",
+          props: {
+            width: 640,
+            height: 360,
+            camera: { x: 0, y: 0, z: 6, near: 0.1, far: 100, fov: 72 },
+            environment: {
+              envMap: "/hdri/studio.png",
+              envIntensity: 1,
+            },
+            scene: {
+              lights: [
+                {
+                  id: "sun",
+                  kind: "directional",
+                  castShadow: true,
+                  shadowCascades: 4,
+                  shadowSize: 256,
+                  shadowSoftness: 0.05,
+                  directionX: 0.2,
+                  directionY: -1,
+                  directionZ: -0.35,
+                },
+              ],
+              objects: [
+                {
+                  id: "shadow-triangle",
+                  kind: "gltf-mesh",
+                  materialKind: "pbr",
+                  castShadow: true,
+                  receiveShadow: true,
+                  vertices: {
+                    count: 3,
+                    positions: [0, 1, 0, -1, -1, 0, 1, -1, 0],
+                    normals: [0, 0, 1, 0, 0, 1, 0, 0, 1],
+                    uvs: [0.5, 1, 0, 0, 1, 0],
+                  },
+                },
+              ],
+            },
+          },
+        },
+      ],
+    },
+  });
+  env.context.WebGL2RenderingContext = FakeWebGLContext;
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  assert.equal(env.imageLoads.includes("/hdri/studio.png"), true);
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "webgl");
+  const gl = mount.children[0].getContext("webgl2");
+  assert.equal(gl.ops.filter((entry) => entry[0] === "createFramebuffer").length, 4);
+  assert.ok(gl.ops.some((entry) => entry[0] === "uniform1i" && entry[1] === "u_shadowCascades0" && entry[2] === 4));
+  assert.ok(gl.ops.some((entry) => entry[0] === "uniform1i" && entry[1] === "u_shadowMap0_0" && entry[2] === 5));
+  assert.ok(gl.ops.some((entry) => entry[0] === "uniform1i" && entry[1] === "u_shadowMap0_1" && entry[2] === 6));
+  assert.ok(gl.ops.some((entry) => entry[0] === "uniform1i" && entry[1] === "u_shadowMap0_2" && entry[2] === 7));
+  assert.ok(gl.ops.some((entry) => entry[0] === "uniform1i" && entry[1] === "u_shadowMap0_3" && entry[2] === 8));
+  assert.ok(gl.ops.some((entry) => entry[0] === "uniform1i" && entry[1] === "u_envMap" && entry[2] === 9));
+  assert.ok(gl.ops.some((entry) => entry[0] === "uniform1fv" && entry[1] === "u_shadowCascadeSplits0" && entry[2] === 4));
+  assert.equal(env.consoleLogs.error.length, 0);
+});
+
+test("bootstrap fetches Radiance HDR Scene3D environment maps for WebGL PBR", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-hdr-envmap-root";
+  const rawHDR = Buffer.concat([
+    Buffer.from("#?RADIANCE\nFORMAT=32-bit_rle_rgbe\n\n-Y 1 +X 1\n", "ascii"),
+    Buffer.from([128, 64, 32, 129]),
+  ]);
+
+  const env = createContext({
+    elements: [mount],
+    enableWebGL2: true,
+    disableCanvas2D: true,
+    fetchRoutes: {
+      "/hdri/studio.hdr": {
+        bytes: Array.from(rawHDR),
+      },
+    },
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-hdr-envmap",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-hdr-envmap-root",
+          props: {
+            width: 320,
+            height: 180,
+            environment: {
+              envMap: "/hdri/studio.hdr",
+              envIntensity: 0.75,
+            },
+            objects: [
+              {
+                id: "hdr-triangle",
+                kind: "gltf-mesh",
+                materialKind: "pbr",
+                vertices: {
+                  count: 3,
+                  positions: [0, 1, 0, -1, -1, 0, 1, -1, 0],
+                  normals: [0, 0, 1, 0, 0, 1, 0, 0, 1],
+                  uvs: [0.5, 1, 0, 0, 1, 0],
+                },
+              },
+            ],
+          },
+        },
+      ],
+    },
+  });
+  env.context.WebGL2RenderingContext = FakeWebGLContext;
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  assert.equal(env.fetchCalls.some((call) => call.url === "/hdri/studio.hdr"), true);
+  assert.equal(env.imageLoads.includes("/hdri/studio.hdr"), false);
+  const gl = mount.children[0].getContext("webgl2");
+  assert.ok(gl.ops.filter((entry) => entry[0] === "texImage2D").length >= 2);
+  assert.ok(gl.ops.some((entry) => entry[0] === "uniform1i" && entry[1] === "u_envMap" && entry[2] === 7));
   assert.equal(env.consoleLogs.error.length, 0);
 });
 
@@ -6289,6 +7099,219 @@ test("bootstrap falls back from WebGL and restores Scene3D rendering after conte
   assert.equal(mount.getAttribute("data-gosx-scene3d-renderer-fallback"), null);
 });
 
+function telemetryPostBodies(env) {
+  return env.fetchCalls
+    .filter((call) => call.url === "/_gosx/client-events" && call.init && call.init.method === "POST")
+    .map((call) => JSON.parse(call.init.body));
+}
+
+function telemetryEvents(env) {
+  const bodies = telemetryPostBodies(env);
+  const events = [];
+  for (const body of bodies) {
+    if (body && Array.isArray(body.events)) {
+      for (const event of body.events) {
+        events.push(event);
+      }
+    }
+  }
+  return events;
+}
+
+test("bootstrap installs a client-event telemetry emitter that POSTs to /_gosx/client-events", async () => {
+  const env = createContext({
+    fetchRoutes: {
+      "/_gosx/client-events": { status: 204, text: "" },
+    },
+  });
+  env.context.__gosx_telemetry_config = { flushInterval: 0 };
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  assert.equal(typeof env.context.__gosx_emit, "function", "__gosx_emit should be installed");
+
+  env.context.__gosx_emit("warn", "test", "hello world", { k: "v" });
+  env.context.__gosx_telemetry_flush();
+  await flushAsyncWork();
+
+  const events = telemetryEvents(env);
+  assert.equal(events.length, 1, "expected one event, got: " + JSON.stringify(events));
+  assert.equal(events[0].cat, "test");
+  assert.equal(events[0].msg, "hello world");
+  assert.equal(events[0].lvl, "warn");
+  assert.deepEqual(events[0].fields, { k: "v" });
+  assert.ok(events[0].ua, "first batch should include userAgent");
+
+  const bodies = telemetryPostBodies(env);
+  assert.ok(bodies[0].sid && bodies[0].sid.startsWith("s_"), "sid should be generated");
+});
+
+test("bootstrap telemetry flushes on scheduled timer", async () => {
+  const env = createContext({
+    fetchRoutes: {
+      "/_gosx/client-events": { status: 204, text: "" },
+    },
+  });
+  env.context.__gosx_telemetry_config = { flushInterval: 10 };
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  env.context.__gosx_emit("info", "timer-test", "tick", {});
+
+  await new Promise((resolve) => setTimeout(resolve, 40));
+  await flushAsyncWork();
+
+  const events = telemetryEvents(env);
+  assert.equal(events.length, 1, "expected one event after timer fired, got: " + JSON.stringify(events));
+  assert.equal(events[0].cat, "timer-test");
+});
+
+test("bootstrap telemetry drops into no-op when disabled via config", async () => {
+  const env = createContext({
+    fetchRoutes: {
+      "/_gosx/client-events": { status: 204, text: "" },
+    },
+  });
+  env.context.__gosx_telemetry_config = { enabled: false, flushInterval: 0 };
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  env.context.__gosx_emit("warn", "x", "should-not-ship", {});
+  env.context.__gosx_telemetry_flush();
+  await flushAsyncWork();
+
+  assert.equal(telemetryEvents(env).length, 0, "disabled telemetry must not POST");
+});
+
+test("bootstrap telemetry captures uncaught window errors", async () => {
+  const env = createContext({
+    fetchRoutes: {
+      "/_gosx/client-events": { status: 204, text: "" },
+    },
+  });
+  env.context.__gosx_telemetry_config = { flushInterval: 0 };
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  env.context.dispatchEvent({
+    type: "error",
+    message: "Test uncaught",
+    filename: "app.js",
+    lineno: 7,
+    colno: 3,
+    error: { stack: "Error: Test uncaught\n    at app.js:7:3" },
+  });
+  env.context.__gosx_telemetry_flush();
+  await flushAsyncWork();
+
+  const events = telemetryEvents(env);
+  assert.equal(events.length, 1);
+  assert.equal(events[0].cat, "runtime");
+  assert.equal(events[0].lvl, "error");
+  assert.equal(events[0].msg, "Test uncaught");
+  assert.equal(events[0].fields.filename, "app.js");
+  assert.equal(events[0].fields.lineno, 7);
+});
+
+test("bootstrap scene3d emits telemetry for webgl context-lost and context-restored", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-telemetry-ctx";
+
+  const env = createContext({
+    elements: [mount],
+    enableWebGL: true,
+    fetchRoutes: {
+      "/_gosx/client-events": { status: 204, text: "" },
+    },
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-telemetry-ctx",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-telemetry-ctx",
+          jsExport: "GoSXScene3D",
+          props: {
+            width: 480,
+            height: 300,
+            autoRotate: false,
+            scene: {
+              objects: [
+                { kind: "box", width: 1.4, height: 1.1, depth: 1.2, x: 0, y: 0, z: 0, color: "#8de1ff" },
+              ],
+            },
+          },
+        },
+      ],
+    },
+  });
+  env.context.__gosx_telemetry_config = { flushInterval: 0 };
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const canvas = mount.children[0];
+  canvas.dispatchEvent({ type: "webglcontextlost", preventDefault() {} });
+  await flushAsyncWork();
+  canvas.dispatchEvent({ type: "webglcontextrestored" });
+  await flushAsyncWork();
+
+  env.context.__gosx_telemetry_flush();
+  await flushAsyncWork();
+
+  const events = telemetryEvents(env);
+  const scene3dMsgs = events.filter((ev) => ev.cat === "scene3d").map((ev) => ev.msg);
+  assert.ok(
+    scene3dMsgs.some((msg) => msg === "webgl-context-lost"),
+    "expected scene3d/webgl-context-lost telemetry, got: " + scene3dMsgs.join(", "),
+  );
+  assert.ok(
+    scene3dMsgs.some((msg) => msg === "webgl-context-restored"),
+    "expected scene3d/webgl-context-restored telemetry, got: " + scene3dMsgs.join(", "),
+  );
+  const restored = events.find((ev) => ev.cat === "scene3d" && ev.msg === "webgl-context-restored");
+  assert.equal(restored && restored.fields && restored.fields.swapped, true, "context-restored should report swapped=true");
+
+  const renderEmpty = events.find((ev) => ev.cat === "scene3d" && ev.msg === "render-empty");
+  assert.equal(
+    renderEmpty,
+    undefined,
+    "restored renderer must produce non-empty bundle (render-empty should not fire), got: " + JSON.stringify(renderEmpty),
+  );
+});
+
+test("bootstrap telemetry flushes via sendBeacon on visibility hidden", async () => {
+  const env = createContext({
+    fetchRoutes: {
+      "/_gosx/client-events": { status: 204, text: "" },
+    },
+  });
+  const beaconCalls = [];
+  env.context.navigator.sendBeacon = function (url, body) {
+    beaconCalls.push({ url, body });
+    return true;
+  };
+  env.context.__gosx_telemetry_config = { flushInterval: 30000 };
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  env.context.__gosx_emit("info", "visibility-test", "bye", {});
+  env.document.visibilityState = "hidden";
+  env.document.dispatchEvent({ type: "visibilitychange" });
+  await flushAsyncWork();
+
+  assert.equal(beaconCalls.length, 1, "expected one beacon call, got: " + JSON.stringify(beaconCalls));
+  assert.equal(beaconCalls[0].url, "/_gosx/client-events");
+  const parsed = JSON.parse(beaconCalls[0].body);
+  assert.equal(parsed.events[0].cat, "visibility-test");
+  assert.equal(telemetryPostBodies(env).length, 0, "should prefer beacon over fetch when available");
+});
+
 test("bootstrap respects prefers-reduced-motion for Scene3D animation loops", async () => {
   const mount = new FakeElement("div", null);
   mount.id = "scene-reduced-motion";
@@ -7851,6 +8874,52 @@ test("bootstrap mounts builtin video engines and bridges shared signals", async 
   env.context.__gosx_notify_shared_signal("$video.seek", JSON.stringify(42));
   await flushAsyncWork();
   assert.equal(video.currentTime, 42);
+});
+
+test("bootstrap mounts only the first video engine on a page", async () => {
+  const firstMount = new FakeElement("div", null);
+  firstMount.id = "video-root-a";
+  const secondMount = new FakeElement("div", null);
+  secondMount.id = "video-root-b";
+
+  const env = createContext({
+    elements: [firstMount, secondMount],
+    fetchRoutes: {
+      "/runtime.wasm": { bytes: [0, 97, 115, 109] },
+    },
+    manifest: {
+      runtime: { path: "/runtime.wasm" },
+      engines: [
+        {
+          id: "gosx-engine-0",
+          component: "PromoVideoA",
+          kind: "video",
+          mountId: "video-root-a",
+          capabilities: ["video", "fetch", "audio"],
+          props: { src: "/media/a.mp4" },
+        },
+        {
+          id: "gosx-engine-1",
+          component: "PromoVideoB",
+          kind: "video",
+          mountId: "video-root-b",
+          capabilities: ["video", "fetch", "audio"],
+          props: { src: "/media/b.mp4" },
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+  await flushAsyncWork();
+
+  assert.equal(env.context.__gosx.engines.size, 1);
+  assert.equal(firstMount.firstChild && firstMount.firstChild.tagName, "VIDEO");
+  assert.equal(secondMount.firstChild, null);
+  assert.ok(env.consoleLogs.error.some((entry) => entry.includes("only one video engine is supported per page")));
+  const issues = env.context.__gosx.listIssues();
+  assert.equal(issues.some((issue) => issue.scope === "engine" && issue.source === "gosx-engine-1"), true);
 });
 
 test("bootstrap upgrades server-rendered video fallbacks in place and loads explicit subtitle track URLs", async () => {

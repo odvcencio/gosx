@@ -1172,6 +1172,10 @@
       castShadow: sceneBool(Object.prototype.hasOwnProperty.call(item, "castShadow") ? item.castShadow : current.castShadow, false),
       shadowBias: sceneNumber(item.shadowBias, sceneNumber(current.shadowBias, 0)),
       shadowSize: Math.max(0, Math.floor(sceneNumber(item.shadowSize, sceneNumber(current.shadowSize, 0)))),
+      shadowCascades: kind === "directional"
+        ? Math.max(0, Math.min(4, Math.floor(sceneNumber(item.shadowCascades, sceneNumber(current.shadowCascades, 0)))))
+        : 0,
+      shadowSoftness: Math.max(0, sceneNumber(item.shadowSoftness, sceneNumber(current.shadowSoftness, 0))),
       _transition: lifecycle.transition,
       _inState: lifecycle.inState,
       _outState: lifecycle.outState,
@@ -1359,6 +1363,8 @@
       scaleX: sceneNumber(current.scaleX, sceneNumber(scaleSource && scaleSource.x, sceneNumber(current.scale, 1))),
       scaleY: sceneNumber(current.scaleY, sceneNumber(scaleSource && scaleSource.y, sceneNumber(current.scale, 1))),
       scaleZ: sceneNumber(current.scaleZ, sceneNumber(scaleSource && scaleSource.z, sceneNumber(current.scale, 1))),
+      animation: typeof current.animation === "string" && current.animation.trim() ? current.animation.trim() : "",
+      loop: Object.prototype.hasOwnProperty.call(current, "loop") ? sceneBool(current.loop, true) : true,
       pickable: hasPickable ? sceneBool(current.pickable, false) : undefined,
       static: hasStatic ? sceneBool(current.static, false) : null,
       materialOverride: Object.keys(override).length > 0 ? override : null,
@@ -1778,6 +1784,9 @@
       skyIntensity: sceneClampNumberOrCSSVar(source.skyIntensity, sceneNumber(base.skyIntensity, 0), 0, 4),
       groundColor: typeof source.groundColor === "string" && source.groundColor ? source.groundColor : (typeof base.groundColor === "string" ? base.groundColor : ""),
       groundIntensity: sceneClampNumberOrCSSVar(source.groundIntensity, sceneNumber(base.groundIntensity, 0), 0, 4),
+      envMap: typeof source.envMap === "string" && source.envMap ? source.envMap : (typeof base.envMap === "string" ? base.envMap : ""),
+      envIntensity: sceneClampNumberOrCSSVar(Object.prototype.hasOwnProperty.call(source, "envIntensity") ? source.envIntensity : undefined, sceneNumber(base.envIntensity, 1) || 1, 0, 8),
+      envRotation: sceneClampNumberOrCSSVar(source.envRotation, sceneNumber(base.envRotation, 0), Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY),
       exposure: sceneClampNumberOrCSSVar(Object.prototype.hasOwnProperty.call(source, "exposure") ? source.exposure : undefined, sceneNumber(base.exposure, 1) || 1, 0.05, 4),
       toneMapping: typeof source.toneMapping === "string" && source.toneMapping ? source.toneMapping : (typeof base.toneMapping === "string" ? base.toneMapping : ""),
       fogColor: typeof source.fogColor === "string" && source.fogColor ? source.fogColor : (typeof base.fogColor === "string" ? base.fogColor : ""),
@@ -1795,6 +1804,9 @@
       environment.skyIntensity !== 0 ||
       environment.groundColor ||
       environment.groundIntensity !== 0 ||
+      environment.envMap ||
+      environment.envIntensity !== 1 ||
+      environment.envRotation !== 0 ||
       environment.fogColor ||
       environment.fogDensity !== 0 ||
       environment.toneMapping ||
@@ -1819,6 +1831,9 @@
         skyIntensity: sceneClampNumberOrCSSVar(environment.skyIntensity, 0, 0, 4),
         groundColor: typeof environment.groundColor === "string" ? environment.groundColor : "",
         groundIntensity: sceneClampNumberOrCSSVar(environment.groundIntensity, 0, 0, 4),
+        envMap: typeof environment.envMap === "string" ? environment.envMap : "",
+        envIntensity: sceneClampNumberOrCSSVar(environment.envIntensity, 1, 0, 8),
+        envRotation: sceneClampNumberOrCSSVar(environment.envRotation, 0, Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY),
         exposure: sceneClampNumberOrCSSVar(environment.exposure, 1, 0.05, 4),
         toneMapping: typeof environment.toneMapping === "string" ? environment.toneMapping : "",
         fogColor: typeof environment.fogColor === "string" ? environment.fogColor : "",

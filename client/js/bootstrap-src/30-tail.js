@@ -1815,6 +1815,12 @@
     if (typeof factory !== "function") {
       pendingEngineRuntimes.delete(entry.id);
       console.warn(`[gosx] no engine factory registered for ${entry.component}`);
+      if (typeof window !== "undefined" && typeof window.__gosx_emit === "function") {
+        window.__gosx_emit("warn", "engine", "no engine factory registered", {
+          component: String(entry.component || ""),
+          engineID: String(entry.id || ""),
+        });
+      }
       if (window.__gosx && typeof window.__gosx.reportIssue === "function") {
         window.__gosx.reportIssue({
           scope: "engine",
@@ -1840,6 +1846,14 @@
         runtime.dispose();
       }
       console.error(`[gosx] failed to mount engine ${entry.id}:`, e);
+      if (typeof window !== "undefined" && typeof window.__gosx_emit === "function") {
+        window.__gosx_emit("error", "engine", "failed to mount engine", {
+          component: String(entry.component || ""),
+          engineID: String(entry.id || ""),
+          error: e && e.message ? String(e.message) : String(e),
+          stack: e && e.stack ? String(e.stack) : "",
+        });
+      }
       if (window.__gosx && typeof window.__gosx.reportIssue === "function") {
         window.__gosx.reportIssue({
           scope: "engine",
@@ -2219,6 +2233,12 @@
     const programFormat = inferProgramFormat(entry);
     if (!entry.programRef) {
       console.error(`[gosx] skipping island ${entry.id} — missing programRef`);
+      if (typeof window !== "undefined" && typeof window.__gosx_emit === "function") {
+        window.__gosx_emit("error", "island", "missing programRef", {
+          islandID: String(entry.id || ""),
+          component: String(entry.component || ""),
+        });
+      }
       if (window.__gosx && typeof window.__gosx.reportIssue === "function") {
         window.__gosx.reportIssue({
           scope: "island",
@@ -2283,6 +2303,14 @@
       );
       if (typeof result === "string" && result !== "") {
         console.error(`[gosx] failed to hydrate island ${entry.id}: ${result}`);
+        if (typeof window !== "undefined" && typeof window.__gosx_emit === "function") {
+          window.__gosx_emit("error", "island", "failed to hydrate island", {
+            islandID: String(entry.id || ""),
+            component: String(entry.component || ""),
+            programRef: String(entry.programRef || ""),
+            reason: String(result),
+          });
+        }
         if (window.__gosx && typeof window.__gosx.reportIssue === "function") {
           window.__gosx.reportIssue({
             scope: "island",

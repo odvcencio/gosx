@@ -249,12 +249,14 @@
   // Index expansion — convert indexed geometry to flat triangle arrays
   // ---------------------------------------------------------------------------
 
-  function gltfExpandIndexed(positions, normals, uvs, tangents, indices) {
+  function gltfExpandIndexed(positions, normals, uvs, tangents, joints, weights, indices) {
     var count = indices.length;
     var outPos = new Float32Array(count * 3);
     var outNrm = new Float32Array(count * 3);
     var outUV  = new Float32Array(count * 2);
     var outTan = tangents ? new Float32Array(count * 4) : null;
+    var outJoints = joints ? new Float32Array(count * 4) : null;
+    var outWeights = weights ? new Float32Array(count * 4) : null;
 
     for (var i = 0; i < count; i++) {
       var idx = indices[i];
@@ -275,9 +277,30 @@
         outTan[i * 4 + 2] = tangents[idx * 4 + 2];
         outTan[i * 4 + 3] = tangents[idx * 4 + 3];
       }
+
+      if (outJoints) {
+        outJoints[i * 4]     = joints[idx * 4];
+        outJoints[i * 4 + 1] = joints[idx * 4 + 1];
+        outJoints[i * 4 + 2] = joints[idx * 4 + 2];
+        outJoints[i * 4 + 3] = joints[idx * 4 + 3];
+      }
+
+      if (outWeights) {
+        outWeights[i * 4]     = weights[idx * 4];
+        outWeights[i * 4 + 1] = weights[idx * 4 + 1];
+        outWeights[i * 4 + 2] = weights[idx * 4 + 2];
+        outWeights[i * 4 + 3] = weights[idx * 4 + 3];
+      }
     }
 
-    return { positions: outPos, normals: outNrm, uvs: outUV, tangents: outTan };
+    return {
+      positions: outPos,
+      normals: outNrm,
+      uvs: outUV,
+      tangents: outTan,
+      joints: outJoints,
+      weights: outWeights,
+    };
   }
 
   // ---------------------------------------------------------------------------
@@ -299,6 +322,20 @@
       ? gltfReadAccessor(gltf, primitive.attributes.TANGENT, binaryBuffer)
       : null;
 
+    var joints = primitive.attributes.JOINTS_0 != null
+      ? gltfReadAccessor(gltf, primitive.attributes.JOINTS_0, binaryBuffer)
+      : null;
+    if (joints && !(joints instanceof Float32Array)) {
+      joints = new Float32Array(joints);
+    }
+
+    var weights = primitive.attributes.WEIGHTS_0 != null
+      ? gltfReadAccessor(gltf, primitive.attributes.WEIGHTS_0, binaryBuffer)
+      : null;
+    if (weights && !(weights instanceof Float32Array)) {
+      weights = new Float32Array(weights);
+    }
+
     var indices = primitive.indices != null
       ? gltfReadAccessor(gltf, primitive.indices, binaryBuffer)
       : null;
@@ -310,6 +347,8 @@
         normals || positions, // placeholder; we generate normals after expansion
         uvs || gltfGenerateDefaultUVs(positions.length / 3),
         tangentsRaw,
+        joints,
+        weights,
         indices
       );
       positions = expanded.positions;
@@ -320,6 +359,8 @@
       }
       uvs = expanded.uvs;
       tangentsRaw = expanded.tangents;
+      joints = expanded.joints;
+      weights = expanded.weights;
     } else {
       if (!normals) {
         normals = gltfGenerateFlatNormals(positions);
@@ -337,6 +378,8 @@
       normals: normals,
       uvs: uvs,
       tangents: tangents,
+      joints: joints,
+      weights: weights,
       count: positions.length / 3,
     };
   }
@@ -532,13 +575,15 @@
   // Mesh node extraction — produces objects for the scene asset
   // ---------------------------------------------------------------------------
 
-  function gltfExtractMeshNode(gltf, meshIndex, binaryBuffer, worldTransform, result) {
+  function gltfExtractMeshNode(gltf, meshIndex, binaryBuffer, worldTransform, result, skinIndex) {
     var mesh = gltf.meshes[meshIndex];
     if (!mesh) {
       return;
     }
 
     var normalMat = gltfNormalMatrix(worldTransform);
+    var skin = skinIndex != null && result.skins ? result.skins[skinIndex] : null;
+    var isSkinned = Boolean(skin);
 
     for (var p = 0; p < mesh.primitives.length; p++) {
       var primitive = mesh.primitives[p];
@@ -551,42 +596,53 @@
       var geometry = gltfExtractMeshPrimitive(gltf, primitive, binaryBuffer);
       var material = gltfExtractMaterial(gltf, primitive.material, binaryBuffer);
       var vertCount = geometry.count;
+      var primitiveSkinned = isSkinned && geometry.joints && geometry.weights;
 
-      // Apply world transform to positions and normals.
-      var worldPositions = new Float32Array(vertCount * 3);
-      var worldNormals = new Float32Array(vertCount * 3);
-      for (var v = 0; v < vertCount; v++) {
-        var px = geometry.positions[v * 3];
-        var py = geometry.positions[v * 3 + 1];
-        var pz = geometry.positions[v * 3 + 2];
-        var wp = gltfTransformPoint(worldTransform, px, py, pz);
-        worldPositions[v * 3]     = wp.x;
-        worldPositions[v * 3 + 1] = wp.y;
-        worldPositions[v * 3 + 2] = wp.z;
+      var objectPositions;
+      var objectNormals;
+      var objectTangents;
 
-        var tnx = geometry.normals[v * 3];
-        var tny = geometry.normals[v * 3 + 1];
-        var tnz = geometry.normals[v * 3 + 2];
-        var wn = gltfTransformNormal(normalMat, tnx, tny, tnz);
-        worldNormals[v * 3]     = wn.x;
-        worldNormals[v * 3 + 1] = wn.y;
-        worldNormals[v * 3 + 2] = wn.z;
-      }
+      if (primitiveSkinned) {
+        objectPositions = new Float32Array(geometry.positions);
+        objectNormals = new Float32Array(geometry.normals);
+        objectTangents = new Float32Array(geometry.tangents);
+      } else {
+        // Apply world transform to positions and normals.
+        objectPositions = new Float32Array(vertCount * 3);
+        objectNormals = new Float32Array(vertCount * 3);
+        for (var v = 0; v < vertCount; v++) {
+          var px = geometry.positions[v * 3];
+          var py = geometry.positions[v * 3 + 1];
+          var pz = geometry.positions[v * 3 + 2];
+          var wp = gltfTransformPoint(worldTransform, px, py, pz);
+          objectPositions[v * 3]     = wp.x;
+          objectPositions[v * 3 + 1] = wp.y;
+          objectPositions[v * 3 + 2] = wp.z;
 
-      // Transform tangent directions by the upper-left 3x3.
-      var worldTangents = new Float32Array(vertCount * 4);
-      for (var v = 0; v < vertCount; v++) {
-        var ttx = geometry.tangents[v * 4];
-        var tty = geometry.tangents[v * 4 + 1];
-        var ttz = geometry.tangents[v * 4 + 2];
-        var tw  = geometry.tangents[v * 4 + 3];
-        var wt = gltfTransformDirection(worldTransform, ttx, tty, ttz);
-        var tlen = Math.sqrt(wt.x * wt.x + wt.y * wt.y + wt.z * wt.z);
-        if (tlen > 1e-8) { wt.x /= tlen; wt.y /= tlen; wt.z /= tlen; }
-        worldTangents[v * 4]     = wt.x;
-        worldTangents[v * 4 + 1] = wt.y;
-        worldTangents[v * 4 + 2] = wt.z;
-        worldTangents[v * 4 + 3] = tw;
+          var tnx = geometry.normals[v * 3];
+          var tny = geometry.normals[v * 3 + 1];
+          var tnz = geometry.normals[v * 3 + 2];
+          var wn = gltfTransformNormal(normalMat, tnx, tny, tnz);
+          objectNormals[v * 3]     = wn.x;
+          objectNormals[v * 3 + 1] = wn.y;
+          objectNormals[v * 3 + 2] = wn.z;
+        }
+
+        // Transform tangent directions by the upper-left 3x3.
+        objectTangents = new Float32Array(vertCount * 4);
+        for (var tv = 0; tv < vertCount; tv++) {
+          var ttx = geometry.tangents[tv * 4];
+          var tty = geometry.tangents[tv * 4 + 1];
+          var ttz = geometry.tangents[tv * 4 + 2];
+          var tw  = geometry.tangents[tv * 4 + 3];
+          var wt = gltfTransformDirection(worldTransform, ttx, tty, ttz);
+          var tlen = Math.sqrt(wt.x * wt.x + wt.y * wt.y + wt.z * wt.z);
+          if (tlen > 1e-8) { wt.x /= tlen; wt.y /= tlen; wt.z /= tlen; }
+          objectTangents[tv * 4]     = wt.x;
+          objectTangents[tv * 4 + 1] = wt.y;
+          objectTangents[tv * 4 + 2] = wt.z;
+          objectTangents[tv * 4 + 3] = tw;
+        }
       }
 
       // Determine render pass from material alpha mode.
@@ -600,21 +656,32 @@
         objectID = mesh.name + "-prim-" + p;
       }
 
-      result.objects.push({
+      var vertices = {
+        positions: objectPositions,
+        normals: objectNormals,
+        uvs: geometry.uvs,
+        tangents: objectTangents,
+        count: vertCount,
+      };
+
+      var object = {
         id: objectID,
         kind: "gltf-mesh",
-        vertices: {
-          positions: worldPositions,
-          normals: worldNormals,
-          uvs: geometry.uvs,
-          tangents: worldTangents,
-          count: vertCount,
-        },
+        vertices: vertices,
         material: material,
         transform: worldTransform,
         renderPass: renderPass,
         doubleSided: material.doubleSided,
-      });
+      };
+
+      if (primitiveSkinned) {
+        vertices.joints = geometry.joints;
+        vertices.weights = geometry.weights;
+        object.skinIndex = skinIndex;
+        object.skin = skin;
+      }
+
+      result.objects.push(object);
 
       result.materials.push(material);
     }
@@ -634,7 +701,7 @@
     var worldTransform = sceneMat4Multiply(parentTransform, localTransform);
 
     if (node.mesh != null) {
-      gltfExtractMeshNode(gltf, node.mesh, binaryBuffer, worldTransform, result);
+      gltfExtractMeshNode(gltf, node.mesh, binaryBuffer, worldTransform, result, node.skin != null ? node.skin : null);
     }
 
     var children = node.children || [];
@@ -671,6 +738,7 @@
         }
 
         channels.push({
+          targetID: ch.target.node,
           targetNode: ch.target.node,
           property: ch.target.path,
           interpolation: sampler.interpolation || "LINEAR",
@@ -697,11 +765,27 @@
       return null;
     }
     var skin = gltf.skins[skinIndex];
+    var joints = Array.isArray(skin.joints) ? skin.joints.slice() : [];
+    if (joints.length > 64) {
+      console.warn("[gosx] glTF skin has " + joints.length + " joints; max supported is 64. Rendering mesh as static:", skin.name || skinIndex);
+      return null;
+    }
     var ibm = skin.inverseBindMatrices != null
       ? new Float32Array(gltfReadAccessor(gltf, skin.inverseBindMatrices, binaryBuffer))
       : null;
+    if (!ibm || ibm.length < joints.length * 16) {
+      ibm = new Float32Array(joints.length * 16);
+      for (var i = 0; i < joints.length; i++) {
+        ibm[i * 16] = 1;
+        ibm[i * 16 + 5] = 1;
+        ibm[i * 16 + 10] = 1;
+        ibm[i * 16 + 15] = 1;
+      }
+    }
     return {
-      joints: skin.joints.slice(),
+      index: skinIndex,
+      name: skin.name || "",
+      joints: joints,
       inverseBindMatrices: ibm,
       skeleton: skin.skeleton != null ? skin.skeleton : null,
     };
@@ -720,12 +804,21 @@
       sprites: [],
       animations: [],
       skins: [],
+      nodes: Array.isArray(gltf.nodes) ? gltf.nodes : [],
     };
 
     var sceneIndex = gltf.scene != null ? gltf.scene : 0;
     var scene = gltf.scenes && gltf.scenes[sceneIndex];
     if (!scene || !scene.nodes) {
       return result;
+    }
+
+    // Extract skins.
+    if (gltf.skins) {
+      for (var s = 0; s < gltf.skins.length; s++) {
+        var skin = gltfExtractSkin(gltf, s, binaryBuffer);
+        result.skins[s] = skin;
+      }
     }
 
     var identity = new Float32Array(SCENE_IDENTITY_MAT4);
@@ -735,16 +828,6 @@
 
     // Extract animations.
     result.animations = gltfExtractAnimations(gltf, binaryBuffer);
-
-    // Extract skins.
-    if (gltf.skins) {
-      for (var s = 0; s < gltf.skins.length; s++) {
-        var skin = gltfExtractSkin(gltf, s, binaryBuffer);
-        if (skin) {
-          result.skins.push(skin);
-        }
-      }
-    }
 
     return result;
   }
@@ -825,6 +908,7 @@
       lights: scene.lights || [],
       animations: scene.animations || [],
       skins: scene.skins || [],
+      nodes: scene.nodes || [],
     };
   }
 

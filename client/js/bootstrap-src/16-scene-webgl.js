@@ -58,6 +58,7 @@
     "",
     "// Camera",
     "uniform vec3 u_cameraPosition;",
+    "uniform mat4 u_viewMatrix;",
     "",
     "// Material",
     "uniform vec3 u_albedo;",
@@ -99,17 +100,37 @@
     "uniform float u_skyIntensity;",
     "uniform vec3 u_groundColor;",
     "uniform float u_groundIntensity;",
+    "uniform sampler2D u_envMap;",
+    "uniform bool u_hasEnvMap;",
+    "uniform float u_envIntensity;",
+    "uniform float u_envRotation;",
     "",
-    "// Shadow maps (max 2 directional lights)",
-    "uniform sampler2D u_shadowMap0;",
-    "uniform mat4 u_lightSpaceMatrix0;",
+    "// Shadow maps (max 2 directional lights × up to 4 cascades each).",
+    "// CSM: the renderer picks a cascade per fragment via view-space depth",
+    "// against u_shadowCascadeSplits*[]. When u_shadowCascades* == 1 the",
+    "// extra cascade samplers are bound to the same texture as cascade 0 and",
+    "// the first branch always wins, matching the pre-CSM single-map path.",
+    "uniform sampler2D u_shadowMap0_0;",
+    "uniform sampler2D u_shadowMap0_1;",
+    "uniform sampler2D u_shadowMap0_2;",
+    "uniform sampler2D u_shadowMap0_3;",
+    "uniform mat4 u_lightSpaceMatrices0[4];",
+    "uniform float u_shadowCascadeSplits0[4];",
+    "uniform int u_shadowCascades0;",
     "uniform bool u_hasShadow0;",
     "uniform float u_shadowBias0;",
+    "uniform float u_shadowSoftness0;",
     "",
-    "uniform sampler2D u_shadowMap1;",
-    "uniform mat4 u_lightSpaceMatrix1;",
+    "uniform sampler2D u_shadowMap1_0;",
+    "uniform sampler2D u_shadowMap1_1;",
+    "uniform sampler2D u_shadowMap1_2;",
+    "uniform sampler2D u_shadowMap1_3;",
+    "uniform mat4 u_lightSpaceMatrices1[4];",
+    "uniform float u_shadowCascadeSplits1[4];",
+    "uniform int u_shadowCascades1;",
     "uniform bool u_hasShadow1;",
     "uniform float u_shadowBias1;",
+    "uniform float u_shadowSoftness1;",
     "",
     "// Per-object shadow receive control",
     "uniform bool u_receiveShadow;",
@@ -131,28 +152,108 @@
     "",
     "const float PI = 3.14159265359;",
     "",
-    "// 4-tap Poisson disk PCF shadow sampling.",
-    "float shadowFactor(sampler2D shadowMap, mat4 lightSpaceMatrix, float bias) {",
+    "// Poisson disk taps used for both the PCSS blocker search and the final",
+    "// PCF filter. 8 taps provide a stable penumbra estimate without pushing",
+    "// WebGL2 fragment register pressure too high.",
+    "const vec2 kPoissonDisk8[8] = vec2[](",
+    "    vec2(-0.94201624, -0.39906216),",
+    "    vec2( 0.94558609, -0.76890725),",
+    "    vec2(-0.09418410, -0.92938870),",
+    "    vec2( 0.34495938,  0.29387760),",
+    "    vec2(-0.91588581,  0.45771432),",
+    "    vec2(-0.81544232, -0.87912464),",
+    "    vec2( 0.38277543,  0.27676845),",
+    "    vec2( 0.97484398,  0.75648379)",
+    ");",
+    "",
+    "// PCSS (Percentage-Closer Soft Shadows) with PCF fallback.",
+    "// The softness parameter is interpreted as a combined (light-size /",
+    "// world-units) hint: when > 0 we do a blocker search, estimate the",
+    "// penumbra from the receiver-to-blocker distance, and then PCF with a",
+    "// filter radius scaled to the penumbra. When softness is 0 we skip the",
+    "// extra samples and just return a hard comparison.",
+    "float shadowFactor(sampler2D shadowMap, mat4 lightSpaceMatrix, float bias, float softness) {",
     "    vec4 lightSpacePos = lightSpaceMatrix * vec4(v_worldPosition, 1.0);",
     "    vec3 projCoords = lightSpacePos.xyz / lightSpacePos.w;",
     "    projCoords = projCoords * 0.5 + 0.5;",
     "",
     "    if (projCoords.z > 1.0) return 1.0;",
     "",
-    "    float shadow = 0.0;",
+    "    float receiverDepth = projCoords.z;",
     "    float texelSize = 1.0 / float(textureSize(shadowMap, 0).x);",
-    "    vec2 poissonDisk[4] = vec2[](",
-    "        vec2(-0.94201624, -0.39906216),",
-    "        vec2(0.94558609, -0.76890725),",
-    "        vec2(-0.094184101, -0.92938870),",
-    "        vec2(0.34495938, 0.29387760)",
-    "    );",
     "",
-    "    for (int i = 0; i < 4; i++) {",
-    "        float depth = texture(shadowMap, projCoords.xy + poissonDisk[i] * texelSize).r;",
-    "        shadow += (projCoords.z - bias > depth) ? 0.0 : 1.0;",
+    "    // Hard-shadow fast path.",
+    "    if (softness <= 0.0001) {",
+    "        float depth = texture(shadowMap, projCoords.xy).r;",
+    "        return (receiverDepth - bias > depth) ? 0.0 : 1.0;",
     "    }",
-    "    return shadow / 4.0;",
+    "",
+    "    // --- Blocker search ---",
+    "    // Sample a disk sized by the light's shadow-space \"size\" (softness)",
+    "    // and average the depth of taps that are behind the receiver. These",
+    "    // are the occluders contributing to the penumbra.",
+    "    float blockerRadius = max(1.0, softness * 32.0);",
+    "    float blockerDepthSum = 0.0;",
+    "    float blockerCount = 0.0;",
+    "    for (int i = 0; i < 8; i++) {",
+    "        vec2 offset = kPoissonDisk8[i] * texelSize * blockerRadius;",
+    "        float d = texture(shadowMap, projCoords.xy + offset).r;",
+    "        if (receiverDepth - bias > d) {",
+    "            blockerDepthSum += d;",
+    "            blockerCount += 1.0;",
+    "        }",
+    "    }",
+    "",
+    "    // No blockers: fully lit.",
+    "    if (blockerCount < 0.5) {",
+    "        return 1.0;",
+    "    }",
+    "",
+    "    float avgBlockerDepth = blockerDepthSum / blockerCount;",
+    "",
+    "    // --- Penumbra estimate ---",
+    "    // penumbra = (receiver - blocker) / blocker * lightSize.",
+    "    // Guard blocker against zero to avoid division by near-plane epsilon.",
+    "    float penumbra = (receiverDepth - avgBlockerDepth) * softness / max(avgBlockerDepth, 1e-4);",
+    "",
+    "    // --- PCF with penumbra-scaled radius ---",
+    "    float filterRadius = max(1.0, clamp(penumbra * 128.0, 1.0, softness * 96.0));",
+    "    float shadow = 0.0;",
+    "    for (int i = 0; i < 8; i++) {",
+    "        vec2 offset = kPoissonDisk8[i] * texelSize * filterRadius;",
+    "        float d = texture(shadowMap, projCoords.xy + offset).r;",
+    "        shadow += (receiverDepth - bias > d) ? 0.0 : 1.0;",
+    "    }",
+    "    return shadow / 8.0;",
+    "}",
+    "",
+    "// Cascaded-shadow dispatchers for up to 4 cascades per slot.",
+    "// View-space positive depth is compared against u_shadowCascadeSplits*[c],",
+    "// where split[c] is the far plane of cascade c. Sampler selection is",
+    "// unrolled because GLSL ES 3.00 disallows dynamic uniform-int indexing of",
+    "// sampler arrays; mat4 and float arrays are indexed normally.",
+    "float shadowFactorSlot0(float viewDepth) {",
+    "    int c = 0;",
+    "    if (u_shadowCascades0 >= 2 && viewDepth >= u_shadowCascadeSplits0[0]) c = 1;",
+    "    if (u_shadowCascades0 >= 3 && viewDepth >= u_shadowCascadeSplits0[1]) c = 2;",
+    "    if (u_shadowCascades0 >= 4 && viewDepth >= u_shadowCascadeSplits0[2]) c = 3;",
+    "    mat4 ls = u_lightSpaceMatrices0[c];",
+    "    if (c == 1) return shadowFactor(u_shadowMap0_1, ls, u_shadowBias0, u_shadowSoftness0);",
+    "    if (c == 2) return shadowFactor(u_shadowMap0_2, ls, u_shadowBias0, u_shadowSoftness0);",
+    "    if (c == 3) return shadowFactor(u_shadowMap0_3, ls, u_shadowBias0, u_shadowSoftness0);",
+    "    return shadowFactor(u_shadowMap0_0, ls, u_shadowBias0, u_shadowSoftness0);",
+    "}",
+    "",
+    "float shadowFactorSlot1(float viewDepth) {",
+    "    int c = 0;",
+    "    if (u_shadowCascades1 >= 2 && viewDepth >= u_shadowCascadeSplits1[0]) c = 1;",
+    "    if (u_shadowCascades1 >= 3 && viewDepth >= u_shadowCascadeSplits1[1]) c = 2;",
+    "    if (u_shadowCascades1 >= 4 && viewDepth >= u_shadowCascadeSplits1[2]) c = 3;",
+    "    mat4 ls = u_lightSpaceMatrices1[c];",
+    "    if (c == 1) return shadowFactor(u_shadowMap1_1, ls, u_shadowBias1, u_shadowSoftness1);",
+    "    if (c == 2) return shadowFactor(u_shadowMap1_2, ls, u_shadowBias1, u_shadowSoftness1);",
+    "    if (c == 3) return shadowFactor(u_shadowMap1_3, ls, u_shadowBias1, u_shadowSoftness1);",
+    "    return shadowFactor(u_shadowMap1_0, ls, u_shadowBias1, u_shadowSoftness1);",
     "}",
     "",
     "// GGX/Trowbridge-Reitz normal distribution function.",
@@ -183,6 +284,21 @@
     "// Schlick fresnel approximation.",
     "vec3 fresnelSchlick(float cosTheta, vec3 F0) {",
     "    return F0 + (1.0 - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);",
+    "}",
+    "",
+    "vec3 fresnelSchlickRoughness(float cosTheta, vec3 F0, float roughness) {",
+    "    return F0 + (max(vec3(1.0 - roughness), F0) - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);",
+    "}",
+    "",
+    "vec3 rotateEnvY(vec3 dir, float radians) {",
+    "    float c = cos(radians);",
+    "    float s = sin(radians);",
+    "    return vec3(dir.x * c + dir.z * s, dir.y, -dir.x * s + dir.z * c);",
+    "}",
+    "",
+    "vec2 envEquirectUV(vec3 dir) {",
+    "    vec3 d = normalize(dir);",
+    "    return vec2(atan(d.z, d.x) / (2.0 * PI) + 0.5, asin(clamp(d.y, -1.0, 1.0)) / PI + 0.5);",
     "}",
     "",
     "// Point light distance attenuation.",
@@ -244,6 +360,12 @@
     "",
     "    // Accumulate direct lighting.",
     "    vec3 Lo = vec3(0.0);",
+    "",
+    "    // View-space positive depth of this fragment — used to pick a cascade",
+    "    // in shadowFactorSlot*(). Light-space transforms already happen per",
+    "    // cascade inside shadowFactor(); this extra multiply per fragment is",
+    "    // cheap and isolates CSM logic to the fragment shader.",
+    "    float viewDepth = -(u_viewMatrix * vec4(v_worldPosition, 1.0)).z;",
     "",
     "    for (int i = 0; i < 8; i++) {",
     "        if (i >= u_lightCount) break;",
@@ -313,9 +435,9 @@
     "        float shadow = 1.0;",
     "        if (u_receiveShadow && lightType == 1) {",
     "            if (u_hasShadow0 && i == u_shadowLightIndex0) {",
-    "                shadow = shadowFactor(u_shadowMap0, u_lightSpaceMatrix0, u_shadowBias0);",
+    "                shadow = shadowFactorSlot0(viewDepth);",
     "            } else if (u_hasShadow1 && i == u_shadowLightIndex1) {",
-    "                shadow = shadowFactor(u_shadowMap1, u_lightSpaceMatrix1, u_shadowBias1);",
+    "                shadow = shadowFactorSlot1(viewDepth);",
     "            }",
     "        }",
     "",
@@ -323,12 +445,23 @@
     "        Lo += (kD * albedo / PI + specular) * radiance * NdotL * shadow;",
     "    }",
     "",
-    "    // Environment hemisphere lighting.",
-    "    float hemi = N.y * 0.5 + 0.5;",
-    "    vec3 envDiffuse = u_ambientColor * u_ambientIntensity",
-    "                    + u_skyColor * u_skyIntensity * hemi",
-    "                    + u_groundColor * u_groundIntensity * (1.0 - hemi);",
-    "    vec3 ambient = envDiffuse * albedo;",
+    "    // Environment lighting: equirectangular envMap when loaded, hemisphere fallback otherwise.",
+    "    vec3 ambient;",
+    "    if (u_hasEnvMap) {",
+    "        vec3 Nr = rotateEnvY(N, u_envRotation);",
+    "        vec3 Rr = rotateEnvY(reflect(-V, N), u_envRotation);",
+    "        vec3 envDiffuse = texture(u_envMap, envEquirectUV(Nr)).rgb * albedo;",
+    "        vec3 envSpecular = texture(u_envMap, envEquirectUV(Rr)).rgb;",
+    "        vec3 Fenv = fresnelSchlickRoughness(max(dot(N, V), 0.0), F0, roughness);",
+    "        vec3 kDenv = (vec3(1.0) - Fenv) * (1.0 - metalness);",
+    "        ambient = (kDenv * envDiffuse + envSpecular * Fenv * (1.0 - roughness * 0.65)) * u_envIntensity;",
+    "    } else {",
+    "        float hemi = N.y * 0.5 + 0.5;",
+    "        vec3 envDiffuse = u_ambientColor * u_ambientIntensity",
+    "                        + u_skyColor * u_skyIntensity * hemi",
+    "                        + u_groundColor * u_groundIntensity * (1.0 - hemi);",
+    "        ambient = envDiffuse * albedo;",
+    "    }",
     "",
     "    // Emissive contribution.",
     "    vec3 emission = emissiveColor * emissiveStrength;",
@@ -692,6 +825,324 @@
     return { framebuffer: framebuffer, depthTexture: depthTexture, size: size };
   }
 
+  // Create a shadow slot with N cascades. Each cascade gets its own
+  // framebuffer+depth-texture pair. Cascade-specific matrices and view-space
+  // far plane (splitFar) are filled in by computeShadowSlotCascadeMatrices().
+  function createSceneShadowSlot(gl, size, numCascades) {
+    var n = Math.max(1, Math.min(4, numCascades | 0));
+    var cascades = [];
+    for (var i = 0; i < n; i++) {
+      var res = createSceneShadowResources(gl, size);
+      cascades.push({
+        framebuffer: res.framebuffer,
+        depthTexture: res.depthTexture,
+        size: size,
+        cascadeIndex: i,
+        splitNear: 0,
+        splitFar: 0,
+        lightMatrix: null,
+        _lastPassHash: null,
+      });
+    }
+    return {
+      size: size,
+      numCascades: n,
+      cascades: cascades,
+    };
+  }
+
+  // Release GPU resources for a shadow slot (all cascades). Safe to pass null.
+  function disposeShadowSlot(gl, slot) {
+    if (!slot) return;
+    if (Array.isArray(slot.cascades)) {
+      for (var i = 0; i < slot.cascades.length; i++) {
+        var c = slot.cascades[i];
+        if (c && c.framebuffer) gl.deleteFramebuffer(c.framebuffer);
+        if (c && c.depthTexture) gl.deleteTexture(c.depthTexture);
+      }
+    } else {
+      // Legacy single-cascade slot shape.
+      if (slot.framebuffer) gl.deleteFramebuffer(slot.framebuffer);
+      if (slot.depthTexture) gl.deleteTexture(slot.depthTexture);
+    }
+  }
+
+  // Compute per-cascade light-space matrices and split-far view-space depths
+  // for the given shadow slot. When numCascades === 1 the function falls back
+  // to the legacy full-scene ortho fit so behaviour is identical to pre-CSM
+  // single-map output.
+  function computeShadowSlotCascadeMatrices(light, slot, sceneBounds, viewMatrix, fovDeg, aspect, camNear, camFar) {
+    var n = slot.numCascades;
+    if (n <= 1) {
+      var m = sceneShadowLightSpaceMatrix(light, sceneBounds);
+      slot.cascades[0].lightMatrix = m;
+      slot.cascades[0].splitNear = 0;
+      slot.cascades[0].splitFar = camFar || 100;
+      return;
+    }
+
+    var lambda = sceneNumber(light.shadowCascadeLambda, 0.5);
+    var splits = sceneShadowComputeCascadeSplits(camNear || 0.1, camFar || 100, n, lambda);
+
+    // Light direction (normalized) — matches sceneShadowLightSpaceMatrix.
+    var dx = sceneNumber(light.directionX, 0);
+    var dy = sceneNumber(light.directionY, -1);
+    var dz = sceneNumber(light.directionZ, 0);
+    var len = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    if (len < 0.0001) { dx = 0; dy = -1; dz = 0; len = 1; }
+    dx /= len; dy /= len; dz /= len;
+
+    // Scene radius for extending each cascade's far plane along the light
+    // axis so casters outside the camera frustum still contribute.
+    var ex = (sceneBounds.maxX - sceneBounds.minX) * 0.5;
+    var ey = (sceneBounds.maxY - sceneBounds.minY) * 0.5;
+    var ez = (sceneBounds.maxZ - sceneBounds.minZ) * 0.5;
+    var sceneRadius = Math.sqrt(ex * ex + ey * ey + ez * ez);
+
+    var prevSplit = camNear || 0.1;
+    for (var i = 0; i < n; i++) {
+      var splitFar = splits[i];
+      var corners = sceneShadowFrustumSubCorners(viewMatrix, fovDeg, aspect, prevSplit, splitFar);
+      var matrix = sceneShadowFitLightSpaceOrtho([dx, dy, dz], corners, sceneRadius, slot.size);
+      slot.cascades[i].lightMatrix = matrix;
+      slot.cascades[i].splitNear = prevSplit;
+      slot.cascades[i].splitFar = splitFar;
+      prevSplit = splitFar;
+    }
+  }
+
+  // --- Cascaded Shadow Map helpers ---
+  //
+  // Pure (GL-independent) math for splitting the view frustum into cascades
+  // and fitting each cascade's orthographic light-space box. Exposed via
+  // __gosx_scene3d_resource_api for unit tests; renderer orchestration below
+  // consumes the same helpers.
+
+  // Compute cascade far distances (view-space positive z) using the Parallel
+  // Split Shadow Maps practical scheme: lambda * log-distribution + (1 - lambda)
+  // * uniform-distribution. Returns an array of length numCascades where the
+  // last element equals far.
+  //
+  // lambda=0 → uniform splits (more coverage far away, less near-detail).
+  // lambda=1 → logarithmic splits (more near-detail, less far coverage).
+  // lambda=0.5 is the practical default that works well for most scenes.
+  function sceneShadowComputeCascadeSplits(near, far, numCascades, lambda) {
+    var n = Math.max(0.0001, near || 0.1);
+    var f = Math.max(n + 0.0001, far || 100);
+    var count = Math.max(1, Math.min(4, numCascades | 0));
+    var lam = Math.max(0, Math.min(1, typeof lambda === "number" ? lambda : 0.5));
+    var ratio = f / n;
+    var splits = new Array(count);
+    for (var i = 0; i < count; i++) {
+      var p = (i + 1) / count;
+      var logSplit = n * Math.pow(ratio, p);
+      var uniSplit = n + (f - n) * p;
+      splits[i] = lam * logSplit + (1 - lam) * uniSplit;
+    }
+    return splits;
+  }
+
+  // Compute the 8 corners of a sub-frustum (in world space) bounded by
+  // splitNear and splitFar (positive view-space depths). The projection is a
+  // standard perspective with fovY in degrees, aspect = width/height. The
+  // view matrix is column-major (same convention as scenePBRViewMatrix).
+  //
+  // Returns a flat Float32Array of 24 floats (8 corners × 3 components).
+  function sceneShadowFrustumSubCorners(viewMatrix, fovDeg, aspect, splitNear, splitFar) {
+    var fovY = (fovDeg * Math.PI) / 180;
+    var tanY = Math.tan(fovY * 0.5);
+    var tanX = tanY * (aspect || 1);
+
+    var hNearY = splitNear * tanY;
+    var hNearX = splitNear * tanX;
+    var hFarY = splitFar * tanY;
+    var hFarX = splitFar * tanX;
+
+    // Corners in view space (camera looks down -Z). Order: near TL, TR, BL, BR,
+    // far TL, TR, BL, BR.
+    var viewCorners = [
+      -hNearX,  hNearY, -splitNear,
+       hNearX,  hNearY, -splitNear,
+      -hNearX, -hNearY, -splitNear,
+       hNearX, -hNearY, -splitNear,
+      -hFarX,   hFarY,  -splitFar,
+       hFarX,   hFarY,  -splitFar,
+      -hFarX,  -hFarY,  -splitFar,
+       hFarX,  -hFarY,  -splitFar,
+    ];
+
+    // Inverse view matrix: view is orthonormal (rotation) + translation, so
+    // inverse is R^T + -R^T * t. For simplicity we invert analytically by
+    // recognizing view = [R t; 0 1] where R is orthonormal.
+    var invView = sceneInvertOrthonormalView(viewMatrix);
+
+    var corners = new Float32Array(24);
+    for (var i = 0; i < 8; i++) {
+      var x = viewCorners[i * 3];
+      var y = viewCorners[i * 3 + 1];
+      var z = viewCorners[i * 3 + 2];
+      // Apply inverse view (column-major mat4 * vec4(x,y,z,1)).
+      corners[i * 3]     = invView[0] * x + invView[4] * y + invView[8]  * z + invView[12];
+      corners[i * 3 + 1] = invView[1] * x + invView[5] * y + invView[9]  * z + invView[13];
+      corners[i * 3 + 2] = invView[2] * x + invView[6] * y + invView[10] * z + invView[14];
+    }
+    return corners;
+  }
+
+  // Invert an orthonormal view matrix (columns 0,1,2 are unit, orthogonal).
+  // Handles the view matrices scenePBRViewMatrix produces.
+  function sceneInvertOrthonormalView(view) {
+    var out = new Float32Array(16);
+    // R^T: transpose the 3x3 rotation block.
+    out[0]  = view[0];  out[1]  = view[4];  out[2]  = view[8];   out[3]  = 0;
+    out[4]  = view[1];  out[5]  = view[5];  out[6]  = view[9];   out[7]  = 0;
+    out[8]  = view[2];  out[9]  = view[6];  out[10] = view[10];  out[11] = 0;
+    // t' = -R^T * t
+    var tx = view[12], ty = view[13], tz = view[14];
+    out[12] = -(out[0]  * tx + out[4]  * ty + out[8]  * tz);
+    out[13] = -(out[1]  * tx + out[5]  * ty + out[9]  * tz);
+    out[14] = -(out[2]  * tx + out[6]  * ty + out[10] * tz);
+    out[15] = 1;
+    return out;
+  }
+
+  // Fit a tight orthographic light-space matrix that encloses the given
+  // world-space corners (24 floats = 8 points × xyz). The light direction
+  // must be normalized. Returns a column-major Float32Array(16) = proj * view
+  // suitable for use as u_lightSpaceMatrix.
+  //
+  // sceneBoundsRadius extends the far plane so shadow casters outside the
+  // frustum (but between the light and the frustum) still contribute.
+  function sceneShadowFitLightSpaceOrtho(lightDir, worldCorners, sceneBoundsRadius, shadowMapSize) {
+    var dx = lightDir[0], dy = lightDir[1], dz = lightDir[2];
+    var len = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    if (len < 0.0001) { dx = 0; dy = -1; dz = 0; len = 1; }
+    dx /= len; dy /= len; dz /= len;
+
+    // Centroid of the frustum corners — use as the light's lookAt target so
+    // the bounding box stays centered.
+    var cx = 0, cy = 0, cz = 0;
+    for (var i = 0; i < 8; i++) {
+      cx += worldCorners[i * 3];
+      cy += worldCorners[i * 3 + 1];
+      cz += worldCorners[i * 3 + 2];
+    }
+    cx /= 8; cy /= 8; cz /= 8;
+
+    // Build a lookAt view from an "eye" offset back along -lightDir.
+    // offset magnitude will be tightened by the ortho near plane; initial
+    // guess is the distance to the farthest corner along the light axis.
+    var fx = dx, fy = dy, fz = dz; // forward in view = lightDir
+
+    var upX = 0, upY = 1, upZ = 0;
+    if (Math.abs(fy) > 0.99) { upX = 0; upY = 0; upZ = 1; }
+
+    // right = forward × up
+    var rx = fy * upZ - fz * upY;
+    var ry = fz * upX - fx * upZ;
+    var rz = fx * upY - fy * upX;
+    var rLen = Math.sqrt(rx * rx + ry * ry + rz * rz);
+    if (rLen < 0.0001) rLen = 1;
+    rx /= rLen; ry /= rLen; rz /= rLen;
+    // up = right × forward (re-orthonormalize)
+    upX = ry * fz - rz * fy;
+    upY = rz * fx - rx * fz;
+    upZ = rx * fy - ry * fx;
+
+    // Project each corner into light-space axes (right, up, forward) to find
+    // min/max extents.
+    var minR = Infinity, maxR = -Infinity;
+    var minU = Infinity, maxU = -Infinity;
+    var minF = Infinity, maxF = -Infinity;
+    for (var j = 0; j < 8; j++) {
+      var px = worldCorners[j * 3] - cx;
+      var py = worldCorners[j * 3 + 1] - cy;
+      var pz = worldCorners[j * 3 + 2] - cz;
+      var pr = rx * px + ry * py + rz * pz;
+      var pu = upX * px + upY * py + upZ * pz;
+      var pf = fx * px + fy * py + fz * pz;
+      if (pr < minR) minR = pr; if (pr > maxR) maxR = pr;
+      if (pu < minU) minU = pu; if (pu > maxU) maxU = pu;
+      if (pf < minF) minF = pf; if (pf > maxF) maxF = pf;
+    }
+
+    // Snap the orthographic bounds to the shadow-map texel grid. Without this,
+    // tiny camera movements move the cascade projection by sub-texel amounts,
+    // which produces visible CSM shimmer. Snap in world light-space rather
+    // than local-to-centroid space so small camera translations cancel out in
+    // the final proj*view matrix until they cross a texel boundary.
+    var snapSize = Math.max(0, shadowMapSize | 0);
+    if (snapSize > 0 && isFinite(minR) && isFinite(maxR) && isFinite(minU) && isFinite(maxU)) {
+      var width = maxR - minR;
+      var height = maxU - minU;
+      if (width > 0.000001 && height > 0.000001) {
+        var texelR = width / snapSize;
+        var texelU = height / snapSize;
+        var centerWorldR = rx * cx + ry * cy + rz * cz;
+        var centerWorldU = upX * cx + upY * cy + upZ * cz;
+        var centerR = (minR + maxR) * 0.5;
+        var centerU = (minU + maxU) * 0.5;
+        var snappedCenterR = Math.round((centerWorldR + centerR) / texelR) * texelR;
+        var snappedCenterU = Math.round((centerWorldU + centerU) / texelU) * texelU;
+        var halfR = width * 0.5 + texelR;
+        var halfU = height * 0.5 + texelU;
+        centerR = snappedCenterR - centerWorldR;
+        centerU = snappedCenterU - centerWorldU;
+        minR = centerR - halfR;
+        maxR = centerR + halfR;
+        minU = centerU - halfU;
+        maxU = centerU + halfU;
+      }
+    }
+
+    // Expand the far plane outward along the light direction so shadow
+    // casters behind the frustum (relative to the light) still render into
+    // the shadow map.
+    var extend = Math.max(0.0, sceneBoundsRadius || 0.0);
+    minF -= extend;
+
+    // Eye = centroid shifted back along -forward by (maxF - minF) so that the
+    // frustum box sits entirely in front of the eye along the light axis.
+    // With the standard GL view convention (+forward becomes the *negative*
+    // Z row in the view matrix), points inside the box have view_z in
+    // [-(maxF-minF), 0], which matches what the ortho proj below expects.
+    var eyeX = cx - fx * maxF;
+    var eyeY = cy - fy * maxF;
+    var eyeZ = cz - fz * maxF;
+
+    // View matrix rows: right, up, -forward. The negative-forward row is the
+    // standard GL lookAt convention that makes view_z negative for points in
+    // front of the eye — required for the ortho proj below to map them into
+    // NDC [-1, 1] correctly.
+    var tx = -(rx * eyeX + ry * eyeY + rz * eyeZ);
+    var ty = -(upX * eyeX + upY * eyeY + upZ * eyeZ);
+    var tz = -(-fx * eyeX + -fy * eyeY + -fz * eyeZ);
+
+    var view = new Float32Array([
+      rx,  upX, -fx, 0,
+      ry,  upY, -fy, 0,
+      rz,  upZ, -fz, 0,
+      tx,  ty,   tz, 1,
+    ]);
+
+    // Ortho projection: right/left/top/bottom derived from min/max in light-
+    // space right/up axes. Near/Far in standard GL convention: near is the
+    // plane at view_z = -(0) = eye, far is view_z = -(maxF-minF).
+    var l = minR, rr = maxR, b = minU, t = maxU;
+    var near = 0.0;
+    var far = (maxF - minF);
+    if (far <= near) far = near + 1;
+
+    var proj = new Float32Array([
+      2 / (rr - l),            0,                       0,                            0,
+      0,                       2 / (t - b),             0,                            0,
+      0,                       0,                       -2 / (far - near),            0,
+      -(rr + l) / (rr - l),   -(t + b) / (t - b),       -(far + near) / (far - near), 1,
+    ]);
+
+    return sceneMat4Multiply(proj, view);
+  }
+
   // Compute an orthographic light-space matrix for a directional light.
   // sceneBounds is { minX, minY, minZ, maxX, maxY, maxZ }.
   function sceneShadowLightSpaceMatrix(light, sceneBounds) {
@@ -824,11 +1275,16 @@
   //     any transform but misses pure topology edits that keep the AABB
   //     constant (rare, and visually imperceptible because the shadow
   //     silhouette is unchanged).
-  function sceneShadowPassHash(lightMatrix, meshObjects) {
+  function sceneShadowPassHash(lightMatrix, meshObjects, options) {
+    var opts = options || {};
     var h = 0;
     if (lightMatrix) {
       for (var i = 0; i < 16; i++) h += lightMatrix[i] || 0;
     }
+    h += sceneFiniteNumber(opts.cascadeIndex, 0) * 101.0;
+    h += sceneFiniteNumber(opts.splitNear, 0) * 103.0;
+    h += sceneFiniteNumber(opts.splitFar, 0) * 107.0;
+    h += sceneFiniteNumber(opts.shadowSize, 0) * 109.0;
     var casterCount = 0;
     for (var j = 0; j < meshObjects.length; j++) {
       var o = meshObjects[j];
@@ -851,7 +1307,12 @@
   // and lets the existing depth texture be sampled as-is.
   function renderSceneShadowPass(gl, shadowProgram, shadowResources, lightMatrix, bundle, shadowState) {
     var meshObjectsForHash = Array.isArray(bundle.meshObjects) ? bundle.meshObjects : [];
-    var passHash = sceneShadowPassHash(lightMatrix, meshObjectsForHash);
+    var passHash = sceneShadowPassHash(lightMatrix, meshObjectsForHash, {
+      cascadeIndex: shadowResources && typeof shadowResources.cascadeIndex === "number" ? shadowResources.cascadeIndex : 0,
+      splitNear: shadowResources && typeof shadowResources.splitNear === "number" ? shadowResources.splitNear : 0,
+      splitFar: shadowResources && typeof shadowResources.splitFar === "number" ? shadowResources.splitFar : 0,
+      shadowSize: shadowResources && typeof shadowResources.size === "number" ? shadowResources.size : 0,
+    });
     if (shadowResources._lastPassHash === passHash) {
       return;
     }
@@ -1444,6 +1905,57 @@
 
   // Load and cache a WebGL2 texture from a URL. Returns a record
   // { texture, loaded, failed } that updates asynchronously.
+  function scenePBRTextureLooksHDR(url) {
+    var key = typeof url === "string" ? url.trim().toLowerCase() : "";
+    return key.endsWith(".hdr") || key.indexOf(".hdr?") >= 0 || key.indexOf(".hdr#") >= 0;
+  }
+
+  function scenePBRTonemapHDRPixels(parsed) {
+    var width = Math.max(1, Math.floor(sceneNumber(parsed && parsed.width, 1)));
+    var height = Math.max(1, Math.floor(sceneNumber(parsed && parsed.height, 1)));
+    var source = parsed && parsed.data;
+    var pixels = new Uint8Array(width * height * 4);
+    for (var i = 0, j = 0; i < width * height; i++, j += 3) {
+      var r = Math.max(0, sceneNumber(source && source[j], 0));
+      var g = Math.max(0, sceneNumber(source && source[j + 1], 0));
+      var b = Math.max(0, sceneNumber(source && source[j + 2], 0));
+      pixels[i * 4] = Math.max(0, Math.min(255, Math.round(Math.pow(r / (1 + r), 1 / 2.2) * 255)));
+      pixels[i * 4 + 1] = Math.max(0, Math.min(255, Math.round(Math.pow(g / (1 + g), 1 / 2.2) * 255)));
+      pixels[i * 4 + 2] = Math.max(0, Math.min(255, Math.round(Math.pow(b / (1 + b), 1 / 2.2) * 255)));
+      pixels[i * 4 + 3] = 255;
+    }
+    return { width: width, height: height, pixels: pixels };
+  }
+
+  function scenePBRLoadHDRTexture(gl, key, texture, record) {
+    if (typeof fetch !== "function" || typeof sceneParseRadianceHDR !== "function") {
+      return false;
+    }
+    fetch(key)
+      .then(function(response) {
+        if (!response || response.ok === false) {
+          throw new Error("failed to fetch HDR environment map");
+        }
+        return response.arrayBuffer();
+      })
+      .then(function(buffer) {
+        var parsed = sceneParseRadianceHDR(buffer);
+        var ldr = scenePBRTonemapHDRPixels(parsed);
+        gl.bindTexture(gl.TEXTURE_2D, texture);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, ldr.width, ldr.height, 0, gl.RGBA, gl.UNSIGNED_BYTE, ldr.pixels);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+        record.loaded = true;
+        record.width = ldr.width;
+        record.height = ldr.height;
+        record.hdr = true;
+      })
+      .catch(function() {
+        record.failed = true;
+      });
+    return true;
+  }
+
   function scenePBRLoadTexture(gl, url, cache) {
     if (!cache) return null;
     const textureMap = cache;
@@ -1467,13 +1979,21 @@
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
 
+    if (scenePBRTextureLooksHDR(key) && scenePBRLoadHDRTexture(gl, key, texture, record)) {
+      return record;
+    }
+
     if (typeof Image === "function") {
       const image = new Image();
       image.onload = function() {
         gl.bindTexture(gl.TEXTURE_2D, texture);
         gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image);
-        gl.generateMipmap(gl.TEXTURE_2D);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+        if (typeof gl.generateMipmap === "function" && gl.LINEAR_MIPMAP_LINEAR !== undefined) {
+          gl.generateMipmap(gl.TEXTURE_2D);
+          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+        } else {
+          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+        }
         record.loaded = true;
       };
       image.onerror = function() {
@@ -1537,17 +2057,33 @@
       skyIntensity: gl.getUniformLocation(program, "u_skyIntensity"),
       groundColor: gl.getUniformLocation(program, "u_groundColor"),
       groundIntensity: gl.getUniformLocation(program, "u_groundIntensity"),
+      envMap: gl.getUniformLocation(program, "u_envMap"),
+      hasEnvMap: gl.getUniformLocation(program, "u_hasEnvMap"),
+      envIntensity: gl.getUniformLocation(program, "u_envIntensity"),
+      envRotation: gl.getUniformLocation(program, "u_envRotation"),
 
-      shadowMap0: gl.getUniformLocation(program, "u_shadowMap0"),
-      lightSpaceMatrix0: gl.getUniformLocation(program, "u_lightSpaceMatrix0"),
+      shadowMap0_0: gl.getUniformLocation(program, "u_shadowMap0_0"),
+      shadowMap0_1: gl.getUniformLocation(program, "u_shadowMap0_1"),
+      shadowMap0_2: gl.getUniformLocation(program, "u_shadowMap0_2"),
+      shadowMap0_3: gl.getUniformLocation(program, "u_shadowMap0_3"),
+      lightSpaceMatrices0: gl.getUniformLocation(program, "u_lightSpaceMatrices0"),
+      shadowCascadeSplits0: gl.getUniformLocation(program, "u_shadowCascadeSplits0"),
+      shadowCascades0: gl.getUniformLocation(program, "u_shadowCascades0"),
       hasShadow0: gl.getUniformLocation(program, "u_hasShadow0"),
       shadowBias0: gl.getUniformLocation(program, "u_shadowBias0"),
+      shadowSoftness0: gl.getUniformLocation(program, "u_shadowSoftness0"),
       shadowLightIndex0: gl.getUniformLocation(program, "u_shadowLightIndex0"),
 
-      shadowMap1: gl.getUniformLocation(program, "u_shadowMap1"),
-      lightSpaceMatrix1: gl.getUniformLocation(program, "u_lightSpaceMatrix1"),
+      shadowMap1_0: gl.getUniformLocation(program, "u_shadowMap1_0"),
+      shadowMap1_1: gl.getUniformLocation(program, "u_shadowMap1_1"),
+      shadowMap1_2: gl.getUniformLocation(program, "u_shadowMap1_2"),
+      shadowMap1_3: gl.getUniformLocation(program, "u_shadowMap1_3"),
+      lightSpaceMatrices1: gl.getUniformLocation(program, "u_lightSpaceMatrices1"),
+      shadowCascadeSplits1: gl.getUniformLocation(program, "u_shadowCascadeSplits1"),
+      shadowCascades1: gl.getUniformLocation(program, "u_shadowCascades1"),
       hasShadow1: gl.getUniformLocation(program, "u_hasShadow1"),
       shadowBias1: gl.getUniformLocation(program, "u_shadowBias1"),
+      shadowSoftness1: gl.getUniformLocation(program, "u_shadowSoftness1"),
       shadowLightIndex1: gl.getUniformLocation(program, "u_shadowLightIndex1"),
 
       receiveShadow: gl.getUniformLocation(program, "u_receiveShadow"),
@@ -1972,6 +2508,10 @@
     h = scenePBRLightsHashNumber(h, sceneNumber(l.angle, 0));
     h = scenePBRLightsHashNumber(h, sceneNumber(l.penumbra, 0));
     h = scenePBRLightsHashString(h, l.groundColor);
+    h = scenePBRLightsHashNumber(h, sceneNumber(l.shadowBias, 0));
+    h = scenePBRLightsHashNumber(h, sceneNumber(l.shadowSize, 0));
+    h = scenePBRLightsHashNumber(h, sceneNumber(l.shadowCascades, 0));
+    h = scenePBRLightsHashNumber(h, sceneNumber(l.shadowSoftness, 0));
     return h;
   }
 
@@ -1988,6 +2528,9 @@
     h = scenePBRLightsHashNumber(h, sceneNumber(env.skyIntensity, 0));
     h = scenePBRLightsHashString(h, env.groundColor);
     h = scenePBRLightsHashNumber(h, sceneNumber(env.groundIntensity, 0));
+    h = scenePBRLightsHashString(h, env.envMap);
+    h = scenePBRLightsHashNumber(h, sceneNumber(env.envIntensity, 1));
+    h = scenePBRLightsHashNumber(h, sceneNumber(env.envRotation, 0));
     h = scenePBRLightsHashNumber(h, sceneNumber(env.fogDensity, 0));
     h = scenePBRLightsHashString(h, env.fogColor);
     return h;
@@ -2200,34 +2743,154 @@
     gl.uniform1i(uniforms.toneMapMode, toneMapMode);
   }
 
-  // Upload shadow map uniforms for both slots to the given program's uniforms.
-  function scenePBRUploadShadowUniforms(gl, uniforms, shadowSlots, shadowLightMatrices, shadowLightIndices, lights) {
-    var lightArray = Array.isArray(lights) ? lights : [];
+  // Scratch buffers for cascade matrix / split uploads — 4 cascades × 16 =
+  // 64 floats for matrices, 4 floats for splits. Reused across both slots
+  // and across frames to avoid per-upload allocations.
+  var _scenePBRCascadeMatScratch = new Float32Array(64);
+  var _scenePBRCascadeSplitScratch = new Float32Array(4);
 
-    if (shadowSlots[0] && shadowLightMatrices[0]) {
-      scenePBRBindTexture(gl, 5, shadowSlots[0].depthTexture);
-      gl.uniform1i(uniforms.shadowMap0, 5);
-      gl.uniformMatrix4fv(uniforms.lightSpaceMatrix0, false, shadowLightMatrices[0]);
-      gl.uniform1i(uniforms.hasShadow0, 1);
-      var bias0 = sceneNumber(lightArray[shadowLightIndices[0]] && lightArray[shadowLightIndices[0]].shadowBias, 0.005);
-      gl.uniform1f(uniforms.shadowBias0, bias0);
-      gl.uniform1i(uniforms.shadowLightIndex0, shadowLightIndices[0]);
-    } else {
-      gl.uniform1i(uniforms.hasShadow0, 0);
-      gl.uniform1i(uniforms.shadowLightIndex0, -1);
+  function scenePBREnvironmentHasMap(environment) {
+    return Boolean(environment && typeof environment.envMap === "string" && environment.envMap.trim());
+  }
+
+  function scenePBRSlotCascadeCount(slot, lightIndex) {
+    if (!slot || lightIndex < 0) {
+      return 0;
+    }
+    return Math.max(1, Math.min(4, slot.numCascades | 0));
+  }
+
+  function scenePBRShadowTextureCount(shadowSlots, shadowLightIndices) {
+    var slots = Array.isArray(shadowSlots) ? shadowSlots : [];
+    var indices = Array.isArray(shadowLightIndices) ? shadowLightIndices : [];
+    var count = 0;
+    for (var i = 0; i < slots.length; i++) {
+      count += scenePBRSlotCascadeCount(slots[i], indices[i]);
+    }
+    return count;
+  }
+
+  function scenePBRTextureLayoutForFrame(shadowSlots, shadowLightIndices, environment) {
+    var shadowCount = scenePBRShadowTextureCount(shadowSlots, shadowLightIndices);
+    if (scenePBREnvironmentHasMap(environment)) {
+      // Keep the legacy two-shadow reservation for non-shadowed env-map scenes
+      // while still moving IBL after all active CSM cascades.
+      shadowCount = Math.max(2, shadowCount);
+    }
+    return sceneAllocateTextureUnits({
+      shadowCount: shadowCount,
+      ibl: scenePBREnvironmentHasMap(environment),
+    });
+  }
+
+  // Upload cascaded-shadow uniforms for both slots to the given program's
+  // uniforms. `shadowSlots[s]` is either null (no shadow light in slot s)
+  // or an object produced by createSceneShadowSlot with up to 4 cascades.
+  function scenePBRUploadShadowUniforms(gl, uniforms, shadowSlots, shadowLightIndices, lights, environment) {
+    var lightArray = Array.isArray(lights) ? lights : [];
+    // Allocate only the active cascade count, while reserving IBL after the
+    // cascades when an envMap is present. Slot offsets are packed, not
+    // hard-coded to 4-wide blocks, so two single-cascade lights use units 5/6
+    // and one 4-cascade CSM light uses 5/6/7/8.
+    var layout = scenePBRTextureLayoutForFrame(shadowSlots, shadowLightIndices, environment);
+    var shadowUnits = layout.shadows;
+
+    var unitBase = 0;
+    uploadCascadedSlot(gl, uniforms, 0, shadowSlots[0], shadowLightIndices[0],
+      lightArray, shadowUnits, unitBase);
+    unitBase += scenePBRSlotCascadeCount(shadowSlots[0], shadowLightIndices[0]);
+    uploadCascadedSlot(gl, uniforms, 1, shadowSlots[1], shadowLightIndices[1],
+      lightArray, shadowUnits, unitBase);
+  }
+
+  function uploadCascadedSlot(gl, uniforms, slotIndex, slot, lightIndex, lightArray, shadowUnits, unitBase) {
+    var samplerKeys = slotIndex === 0
+      ? ["shadowMap0_0", "shadowMap0_1", "shadowMap0_2", "shadowMap0_3"]
+      : ["shadowMap1_0", "shadowMap1_1", "shadowMap1_2", "shadowMap1_3"];
+    var matricesKey = slotIndex === 0 ? "lightSpaceMatrices0" : "lightSpaceMatrices1";
+    var splitsKey = slotIndex === 0 ? "shadowCascadeSplits0" : "shadowCascadeSplits1";
+    var cascadesKey = slotIndex === 0 ? "shadowCascades0" : "shadowCascades1";
+    var hasKey = slotIndex === 0 ? "hasShadow0" : "hasShadow1";
+    var biasKey = slotIndex === 0 ? "shadowBias0" : "shadowBias1";
+    var softKey = slotIndex === 0 ? "shadowSoftness0" : "shadowSoftness1";
+    var indexKey = slotIndex === 0 ? "shadowLightIndex0" : "shadowLightIndex1";
+    var base = Math.max(0, unitBase | 0);
+
+    if (!slot || lightIndex < 0) {
+      gl.uniform1i(uniforms[hasKey], 0);
+      gl.uniform1f(uniforms[softKey], 0);
+      gl.uniform1i(uniforms[indexKey], -1);
+      gl.uniform1i(uniforms[cascadesKey], 1);
+      return;
     }
 
-    if (shadowSlots[1] && shadowLightMatrices[1]) {
-      scenePBRBindTexture(gl, 6, shadowSlots[1].depthTexture);
-      gl.uniform1i(uniforms.shadowMap1, 6);
-      gl.uniformMatrix4fv(uniforms.lightSpaceMatrix1, false, shadowLightMatrices[1]);
-      gl.uniform1i(uniforms.hasShadow1, 1);
-      var bias1 = sceneNumber(lightArray[shadowLightIndices[1]] && lightArray[shadowLightIndices[1]].shadowBias, 0.005);
-      gl.uniform1f(uniforms.shadowBias1, bias1);
-      gl.uniform1i(uniforms.shadowLightIndex1, shadowLightIndices[1]);
-    } else {
-      gl.uniform1i(uniforms.hasShadow1, 0);
-      gl.uniform1i(uniforms.shadowLightIndex1, -1);
+    var light = lightArray[lightIndex] || {};
+    var numCascades = Math.max(1, Math.min(4, slot.numCascades | 0));
+
+    // Bind each cascade's depth texture. When the allocator doesn't have
+    // enough units for all cascades, fall back to reusing cascade 0's unit
+    // — the shader's c=0 branch will dominate because the split comparison
+    // against Infinity always returns cascade 0.
+    for (var ci = 0; ci < 4; ci++) {
+      var effectiveCascade = ci < numCascades ? slot.cascades[ci] : slot.cascades[0];
+      var unit = shadowUnits[base + ci];
+      if (unit == null) unit = shadowUnits[base] || shadowUnits[0] || null;
+      if (unit == null) continue;
+      scenePBRBindTexture(gl, unit, effectiveCascade.depthTexture);
+      gl.uniform1i(uniforms[samplerKeys[ci]], unit);
+    }
+
+    // Pack matrices and splits. Matrix array = 4*16 = 64 floats; cascades
+    // beyond numCascades are filled with cascade 0's matrix as a safe
+    // fallback (shader never selects them when numCascades is set correctly,
+    // but we still want deterministic uniforms).
+    for (var mi = 0; mi < 4; mi++) {
+      var src = (mi < numCascades ? slot.cascades[mi] : slot.cascades[0]).lightMatrix;
+      for (var k = 0; k < 16; k++) {
+        _scenePBRCascadeMatScratch[mi * 16 + k] = src ? src[k] : 0;
+      }
+    }
+    // Split array: split[c] is the view-space far plane of cascade c; the
+    // shader compares viewDepth >= splits[c-1] to advance from cascade c-1
+    // → c. splits[N-1] (last cascade) is still written for determinism.
+    for (var si = 0; si < 4; si++) {
+      _scenePBRCascadeSplitScratch[si] = si < numCascades
+        ? (slot.cascades[si].splitFar || 0)
+        : Infinity;
+    }
+
+    gl.uniformMatrix4fv(uniforms[matricesKey], false, _scenePBRCascadeMatScratch);
+    gl.uniform1fv(uniforms[splitsKey], _scenePBRCascadeSplitScratch);
+    gl.uniform1i(uniforms[cascadesKey], numCascades);
+    gl.uniform1i(uniforms[hasKey], 1);
+    gl.uniform1f(uniforms[biasKey], sceneNumber(light.shadowBias, 0.005));
+    gl.uniform1f(uniforms[softKey], Math.max(0, sceneNumber(light.shadowSoftness, 0)));
+    gl.uniform1i(uniforms[indexKey], lightIndex);
+  }
+
+  function scenePBRUploadEnvironmentMap(gl, uniforms, environment, textureCache, shadowSlots, shadowLightIndices) {
+    var env = environment || {};
+    var envMap = typeof env.envMap === "string" ? env.envMap.trim() : "";
+    if (!envMap) {
+      gl.uniform1i(uniforms.hasEnvMap, 0);
+      gl.uniform1f(uniforms.envIntensity, 0);
+      gl.uniform1f(uniforms.envRotation, 0);
+      return;
+    }
+
+    var layout = scenePBRTextureLayoutForFrame(shadowSlots, shadowLightIndices, env);
+    var unit = layout && layout.ibl ? layout.ibl.irradiance : null;
+    var record = scenePBRLoadTexture(gl, envMap, textureCache);
+    var available = Boolean(record && record.texture && !record.failed);
+    gl.uniform1i(uniforms.hasEnvMap, available ? 1 : 0);
+    var envIntensity = Object.prototype.hasOwnProperty.call(env, "envIntensity")
+      ? sceneNumber(env.envIntensity, 1)
+      : 1;
+    gl.uniform1f(uniforms.envIntensity, Math.max(0, envIntensity));
+    gl.uniform1f(uniforms.envRotation, sceneNumber(env.envRotation, 0));
+    if (available && unit != null) {
+      scenePBRBindTexture(gl, unit, record.texture);
+      gl.uniform1i(uniforms.envMap, unit);
     }
   }
 
@@ -2257,7 +2920,8 @@
     var postProcessor = null;
 
     // Per-frame shadow state, shared between render() and drawPBRObjectList().
-    var shadowLightMatrices = [null, null];
+    // Light matrices now live on the per-cascade objects in shadowSlots[s];
+    // only the light-index lookup table remains renderer-scoped.
     var shadowLightIndices = [-1, -1];
 
     // Persistent GPU buffers.
@@ -2588,10 +3252,20 @@
         }
       }
 
+      // --- Camera Matrices ---
+      // Hoisted above the shadow pass because CSM cascade-frustum fitting
+      // needs the inverse view matrix to reconstruct world-space frustum
+      // corners per cascade.
+      sceneRenderCamera(bundle.camera, _frameCam);
+      const cam = _frameCam;
+      const aspect = Math.max(0.0001, canvas.width / Math.max(1, canvas.height));
+      const viewMatrix = scenePBRViewMatrix(cam, scratchViewMatrix);
+      const projMatrix = scenePBRProjectionMatrix(cam.fov, aspect, cam.near, cam.far, scratchProjMatrix);
+
       // --- Shadow Pass ---
-      // Identify shadow-casting directional lights (max 2) and render depth maps.
-      // Reset per-frame shadow state (closure-scoped for drawPBRObjectList access).
-      shadowLightMatrices[0] = null; shadowLightMatrices[1] = null;
+      // Identify shadow-casting directional lights (max 2) and render per-
+      // cascade depth maps. Reset per-frame shadow state (closure-scoped for
+      // drawPBRObjectList access).
       shadowLightIndices[0] = -1; shadowLightIndices[1] = -1;
       var activeShadowCount = 0;
 
@@ -2612,26 +3286,33 @@
           }
 
           var slot = activeShadowCount;
+          var numCascades = Math.max(1, Math.min(4, (light.shadowCascades | 0) || 1));
           var shadowSize = sceneNumber(light.shadowSize, 1024);
-          // Clamp to reasonable range (driver limits).
           shadowSize = Math.max(256, Math.min(4096, shadowSize));
-          // Apply scene-wide shadow pixel cap.
           shadowSize = resolveShadowSize(shadowSize, shadowMaxPixels);
 
-          // Create or resize shadow resources for this slot.
-          if (!shadowSlots[slot] || shadowSlots[slot].size !== shadowSize) {
-            if (shadowSlots[slot]) {
-              gl.deleteFramebuffer(shadowSlots[slot].framebuffer);
-              gl.deleteTexture(shadowSlots[slot].depthTexture);
-            }
-            shadowSlots[slot] = createSceneShadowResources(gl, shadowSize);
+          // Create or resize shadow resources for this slot (per cascade).
+          if (!shadowSlots[slot] ||
+              shadowSlots[slot].size !== shadowSize ||
+              shadowSlots[slot].numCascades !== numCascades) {
+            disposeShadowSlot(gl, shadowSlots[slot]);
+            shadowSlots[slot] = createSceneShadowSlot(gl, shadowSize, numCascades);
           }
 
-          var lightMatrix = sceneShadowLightSpaceMatrix(light, sceneBounds);
-          shadowLightMatrices[slot] = lightMatrix;
           shadowLightIndices[slot] = li;
 
-          renderSceneShadowPass(gl, shadowProgram, shadowSlots[slot], lightMatrix, bundle, shadowState);
+          // Fit a per-cascade light-space matrix. When numCascades > 1 the
+          // camera's view frustum is split into N sub-frusta (PSSM); each
+          // cascade's corners are fit to a tight ortho box in light-space.
+          // numCascades == 1 matches the legacy full-scene ortho fit.
+          computeShadowSlotCascadeMatrices(light, shadowSlots[slot], sceneBounds,
+            viewMatrix, cam.fov, aspect, cam.near, cam.far);
+
+          // Render one depth pass per cascade.
+          for (var ci = 0; ci < shadowSlots[slot].numCascades; ci++) {
+            var cascade = shadowSlots[slot].cascades[ci];
+            renderSceneShadowPass(gl, shadowProgram, cascade, cascade.lightMatrix, bundle, shadowState);
+          }
           activeShadowCount++;
         }
       }
@@ -2669,14 +3350,9 @@
       gl.clearDepth(1);
       gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
-      // Camera matrices — compute once per frame. Pass _frameCam as the
-      // out-param so sceneRenderCamera mutates the renderer-owned scratch
-      // instead of allocating a fresh object each frame.
-      sceneRenderCamera(bundle.camera, _frameCam);
-      const cam = _frameCam;
-      const aspect = Math.max(0.0001, canvas.width / Math.max(1, canvas.height));
-      const viewMatrix = scenePBRViewMatrix(cam, scratchViewMatrix);
-      const projMatrix = scenePBRProjectionMatrix(cam.fov, aspect, cam.near, cam.far, scratchProjMatrix);
+      // Camera matrices were already computed above the shadow pass so CSM
+      // could build per-cascade frusta; `cam`, `viewMatrix`, `projMatrix`,
+      // and `aspect` are still in scope here.
 
       // Compute the lights+environment content hash ONCE per frame and
       // reuse it across every scenePBRUploadLights call (main program,
@@ -2704,9 +3380,10 @@
 
       // Upload lights and environment once per frame.
       scenePBRUploadLights(gl, uniforms, bundle.lights, bundle.environment, _frameLightsHash);
+      scenePBRUploadEnvironmentMap(gl, uniforms, bundle.environment, textureCache, shadowSlots, shadowLightIndices);
 
-      // Upload shadow map uniforms (texture units 5 and 6, material maps use 0-4).
-      scenePBRUploadShadowUniforms(gl, uniforms, shadowSlots, shadowLightMatrices, shadowLightIndices, bundle.lights);
+      // Upload shadow map uniforms through the shared Scene3D texture-unit allocator.
+      scenePBRUploadShadowUniforms(gl, uniforms, shadowSlots, shadowLightIndices, bundle.lights, bundle.environment);
 
       // Build draw list grouped by render pass.
       const drawList = preparedScene && preparedScene.pbrPasses
@@ -2817,9 +3494,10 @@
             scenePBRUploadExposure(gl, currentUniforms, bundle.environment, postEffects.length > 0);
 
             scenePBRUploadLights(gl, currentUniforms, bundle.lights, bundle.environment, _frameLightsHash);
+            scenePBRUploadEnvironmentMap(gl, currentUniforms, bundle.environment, textureCache, shadowSlots, shadowLightIndices);
 
             // Re-upload shadow uniforms.
-            scenePBRUploadShadowUniforms(gl, currentUniforms, shadowSlots, shadowLightMatrices, shadowLightIndices, bundle.lights);
+            scenePBRUploadShadowUniforms(gl, currentUniforms, shadowSlots, shadowLightIndices, bundle.lights, bundle.environment);
 
             // Force material re-upload since we switched programs.
             lastMaterialIndex = -1;
@@ -3320,7 +3998,8 @@
       scenePBRUploadExposure(gl, ip.uniforms, bundle.environment, postEffects.length > 0);
 
       scenePBRUploadLights(gl, ip.uniforms, bundle.lights, bundle.environment, _frameLightsHash);
-      scenePBRUploadShadowUniforms(gl, ip.uniforms, shadowSlots, shadowLightMatrices, shadowLightIndices, bundle.lights);
+      scenePBRUploadEnvironmentMap(gl, ip.uniforms, bundle.environment, textureCache, shadowSlots, shadowLightIndices);
+      scenePBRUploadShadowUniforms(gl, ip.uniforms, shadowSlots, shadowLightIndices, bundle.lights, bundle.environment);
 
       var materials = Array.isArray(bundle.materials) ? bundle.materials : [];
 
@@ -3445,13 +4124,10 @@
       }
       textureCache.clear();
 
-      // Clean up shadow resources.
+      // Clean up shadow resources (all cascades per slot).
       for (var si = 0; si < shadowSlots.length; si++) {
-        if (shadowSlots[si]) {
-          gl.deleteFramebuffer(shadowSlots[si].framebuffer);
-          gl.deleteTexture(shadowSlots[si].depthTexture);
-          shadowSlots[si] = null;
-        }
+        disposeShadowSlot(gl, shadowSlots[si]);
+        shadowSlots[si] = null;
       }
 
       // Clean up post-processing resources.
@@ -3565,6 +4241,15 @@
       return null;
     }
     return renderer;
+  }
+
+  if (typeof window !== "undefined") {
+    window.__gosx_scene3d_resource_api = Object.assign(window.__gosx_scene3d_resource_api || {}, {
+      shadowPassHash: sceneShadowPassHash,
+      computeCascadeSplits: sceneShadowComputeCascadeSplits,
+      frustumSubCorners: sceneShadowFrustumSubCorners,
+      fitLightSpaceOrtho: sceneShadowFitLightSpaceOrtho,
+    });
   }
 
   if (typeof sceneBackendRegistry !== "undefined" && sceneBackendRegistry) {

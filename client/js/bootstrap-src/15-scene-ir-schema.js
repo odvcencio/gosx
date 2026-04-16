@@ -48,6 +48,15 @@
    * @property {string} [background]
    * @property {string} [ambientColor]
    * @property {number} [ambientIntensity]
+   * @property {string} [skyColor]
+   * @property {number} [skyIntensity]
+   * @property {string} [groundColor]
+   * @property {number} [groundIntensity]
+   * @property {string} [envMap]
+   * @property {number} [envIntensity]
+   * @property {number} [envRotation]
+   * @property {number} [exposure]
+   * @property {string} [toneMapping]
    * @property {string} [fogColor]
    * @property {number} [fogDensity]
    */
@@ -81,6 +90,11 @@
    * @property {string} kind
    * @property {string} [color]
    * @property {number} [intensity]
+   * @property {boolean} [castShadow]
+   * @property {number} [shadowBias]
+   * @property {number} [shadowSize]
+   * @property {number} [shadowCascades]
+   * @property {number} [shadowSoftness]
    */
 
   /**

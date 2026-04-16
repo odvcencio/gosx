@@ -56,6 +56,7 @@ const outputs = [
     path: path.join(__dirname, "bootstrap.js"),
     sources: [
       sourceFile("bootstrap-src/00-textlayout.js"),
+      sourceFile("bootstrap-src/04-telemetry.js"),
       sourceFile("bootstrap-src/05-document-env.js"),
       sourceFile("bootstrap-src/10-runtime-scene-core.js"),
       sourceFile("bootstrap-src/11-scene-math.js"),
@@ -68,6 +69,7 @@ const outputs = [
       sourceFile("bootstrap-src/15b-scene-planner.js"),
       sourceFile("bootstrap-src/15c-scene-backend-registry.js"),
       sourceFile("bootstrap-src/15a-scene-postfx-shared.js"),
+      sourceFile("bootstrap-src/16b-scene-hdr.js"),
       sourceFile("bootstrap-src/16-scene-webgl.js"),
       // 16z provides _externalProbe and window.__gosx_scene3d_webgpu_probe,
       // which 16a-scene-webgpu.js references at runtime. Without it the
@@ -90,6 +92,7 @@ const outputs = [
     path: path.join(__dirname, "bootstrap-lite.js"),
     sources: [
       sourceFile("bootstrap-src/00-textlayout.js"),
+      sourceFile("bootstrap-src/04-telemetry.js"),
       sourceFile("bootstrap-src/05-document-env.js"),
       sourceFile("bootstrap-src/25-lite-tail.js"),
     ],
@@ -98,6 +101,7 @@ const outputs = [
     path: path.join(__dirname, "bootstrap-runtime.js"),
     sources: [
       sourceFile("bootstrap-src/00-textlayout.js"),
+      sourceFile("bootstrap-src/04-telemetry.js"),
       sourceFile("bootstrap-src/05-document-env.js"),
       sourceFile("bootstrap-src/10a-runtime-utils.js"),
       sourceFile("bootstrap-src/26-runtime-tail.js"),
@@ -155,6 +159,7 @@ const outputs = [
       sourceFile("bootstrap-src/15b-scene-planner.js"),
       sourceFile("bootstrap-src/15c-scene-backend-registry.js"),
       sourceFile("bootstrap-src/15a-scene-postfx-shared.js"),
+      sourceFile("bootstrap-src/16b-scene-hdr.js"),
       sourceFile("bootstrap-src/16-scene-webgl.js"),
       // 16a-scene-webgpu.js + 16b-scene-compute.js are NOT here — they
       // moved to bootstrap-feature-scene3d-webgpu.js so WebGL-only pages

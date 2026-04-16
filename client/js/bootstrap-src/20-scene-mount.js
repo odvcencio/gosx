@@ -1,3 +1,13 @@
+  function gosxSceneEmit(level, msg, fields) {
+    try {
+      if (typeof window !== "undefined" && typeof window.__gosx_emit === "function") {
+        window.__gosx_emit(level, "scene3d", msg, fields || {});
+      }
+    } catch (_err) {
+      /* telemetry must never surface to users */
+    }
+  }
+
   function createSceneRenderer(canvas, props, capability) {
     const registryResult = createSceneRendererFromRegistry(canvas, props, capability);
     if (registryResult) {
@@ -173,6 +183,86 @@
     );
   }
 
+  function sceneModelTransformMatrix(model) {
+    const rx = sceneNumber(model && model.rotationX, 0);
+    const ry = sceneNumber(model && model.rotationY, 0);
+    const rz = sceneNumber(model && model.rotationZ, 0);
+    const basisX = sceneRotatePoint({ x: sceneNumber(model && model.scaleX, 1), y: 0, z: 0 }, rx, ry, rz);
+    const basisY = sceneRotatePoint({ x: 0, y: sceneNumber(model && model.scaleY, 1), z: 0 }, rx, ry, rz);
+    const basisZ = sceneRotatePoint({ x: 0, y: 0, z: sceneNumber(model && model.scaleZ, 1) }, rx, ry, rz);
+    return new Float32Array([
+      basisX.x, basisX.y, basisX.z, 0,
+      basisY.x, basisY.y, basisY.z, 0,
+      basisZ.x, basisZ.y, basisZ.z, 0,
+      sceneNumber(model && model.x, 0), sceneNumber(model && model.y, 0), sceneNumber(model && model.z, 0), 1,
+    ]);
+  }
+
+  function sceneModelIdentityBindMatrices(jointCount) {
+    const matrices = new Float32Array(Math.max(0, jointCount) * 16);
+    for (let index = 0; index < jointCount; index += 1) {
+      matrices[index * 16] = 1;
+      matrices[index * 16 + 5] = 1;
+      matrices[index * 16 + 10] = 1;
+      matrices[index * 16 + 15] = 1;
+    }
+    return matrices;
+  }
+
+  function sceneCloneModelSkin(skin) {
+    if (!skin || typeof skin !== "object") {
+      return null;
+    }
+    const joints = Array.isArray(skin.joints) ? skin.joints.slice() : [];
+    if (!joints.length || joints.length > 64) {
+      return null;
+    }
+    let inverseBindMatrices = skin.inverseBindMatrices instanceof Float32Array
+      ? new Float32Array(skin.inverseBindMatrices)
+      : sceneTypedFloatArray(skin.inverseBindMatrices);
+    if (inverseBindMatrices.length < joints.length * 16) {
+      inverseBindMatrices = sceneModelIdentityBindMatrices(joints.length);
+    } else if (inverseBindMatrices.length !== joints.length * 16) {
+      inverseBindMatrices = inverseBindMatrices.slice(0, joints.length * 16);
+    }
+    return {
+      index: typeof skin.index === "number" ? skin.index : null,
+      name: typeof skin.name === "string" ? skin.name : "",
+      joints,
+      inverseBindMatrices,
+      skeleton: skin.skeleton != null ? skin.skeleton : null,
+    };
+  }
+
+  function sceneCloneModelSkins(skins) {
+    return Array.isArray(skins) ? skins.map(sceneCloneModelSkin) : [];
+  }
+
+  function sceneCloneModelAnimations(animations) {
+    if (!Array.isArray(animations)) {
+      return [];
+    }
+    return animations.map(function(clip, index) {
+      const source = clip && typeof clip === "object" ? clip : {};
+      const channels = Array.isArray(source.channels) ? source.channels.map(function(channel) {
+        const ch = channel && typeof channel === "object" ? channel : {};
+        return {
+          targetID: ch.targetID != null ? ch.targetID : ch.targetNode,
+          targetNode: ch.targetNode != null ? ch.targetNode : ch.targetID,
+          property: typeof ch.property === "string" ? ch.property : "translation",
+          interpolation: typeof ch.interpolation === "string" && ch.interpolation ? ch.interpolation : "LINEAR",
+          times: ch.times instanceof Float32Array ? new Float32Array(ch.times) : sceneTypedFloatArray(ch.times),
+          values: ch.values instanceof Float32Array ? new Float32Array(ch.values) : sceneTypedFloatArray(ch.values),
+        };
+      }) : [];
+      return {
+        name: typeof source.name === "string" && source.name ? source.name : ("clip-" + index),
+        duration: sceneNumber(source.duration, 0),
+        channels,
+      };
+    });
+  }
+
   function sceneModelMaterialOverrideSource(model) {
     return model && model.materialOverride && typeof model.materialOverride === "object"
       ? model.materialOverride
@@ -309,8 +399,11 @@
     }) : [];
   }
 
-  function sceneInstantiateModelObject(rawObject, model, prefix, index) {
+  function sceneInstantiateModelObject(rawObject, model, prefix, index, skinInstances) {
     const source = sceneApplyMaterialOverride(rawObject, model);
+    if (skinInstances && source && source.skinIndex != null && skinInstances[source.skinIndex]) {
+      source.skin = skinInstances[source.skinIndex];
+    }
     const normalized = normalizeSceneObject(source, index);
     if (normalized.vertices && normalized.vertices.positions && normalized.vertices.count > 0) {
       return sceneModelMeshObject(normalized, model, prefix);
@@ -364,24 +457,40 @@
       driftSpeed: 0,
       driftPhase: 0,
     });
-    instanced.vertices = {
-      count: Math.max(0, Math.floor(sceneNumber(vertices.count, 0))),
-      positions: sceneModelTransformMeshFloats(vertices.positions, 3, function(x, y, z) {
-        return sceneModelTransformPoint({ x: x, y: y, z: z }, model);
-      }),
-      normals: sceneModelTransformMeshFloats(vertices.normals, 3, function(x, y, z) {
-        return sceneNormalizeDirection(sceneModelTransformVector({ x: x, y: y, z: z }, model));
-      }),
-      uvs: vertices.uvs instanceof Float32Array ? new Float32Array(vertices.uvs) : sceneTypedFloatArray(vertices.uvs),
-      tangents: sceneModelTransformMeshFloats(vertices.tangents, 4, function(x, y, z, w) {
-        const rotated = sceneNormalizeDirection(sceneModelTransformVector({ x: x, y: y, z: z }, model));
-        return { x: rotated.x, y: rotated.y, z: rotated.z, w: sceneNumber(w, 1) };
-      }),
-      joints: vertices.joints instanceof Float32Array ? new Float32Array(vertices.joints) : sceneTypedFloatArray(vertices.joints),
-      weights: vertices.weights instanceof Float32Array ? new Float32Array(vertices.weights) : sceneTypedFloatArray(vertices.weights),
-    };
+    const hasSkin = instanced.skin && typeof instanced.skin === "object";
+    if (hasSkin) {
+      instanced.vertices = {
+        count: Math.max(0, Math.floor(sceneNumber(vertices.count, 0))),
+        positions: vertices.positions instanceof Float32Array ? new Float32Array(vertices.positions) : sceneTypedFloatArray(vertices.positions),
+        normals: vertices.normals instanceof Float32Array ? new Float32Array(vertices.normals) : sceneTypedFloatArray(vertices.normals),
+        uvs: vertices.uvs instanceof Float32Array ? new Float32Array(vertices.uvs) : sceneTypedFloatArray(vertices.uvs),
+        tangents: vertices.tangents instanceof Float32Array ? new Float32Array(vertices.tangents) : sceneTypedFloatArray(vertices.tangents),
+        joints: vertices.joints instanceof Float32Array ? new Float32Array(vertices.joints) : sceneTypedFloatArray(vertices.joints),
+        weights: vertices.weights instanceof Float32Array ? new Float32Array(vertices.weights) : sceneTypedFloatArray(vertices.weights),
+      };
+    } else {
+      instanced.vertices = {
+        count: Math.max(0, Math.floor(sceneNumber(vertices.count, 0))),
+        positions: sceneModelTransformMeshFloats(vertices.positions, 3, function(x, y, z) {
+          return sceneModelTransformPoint({ x: x, y: y, z: z }, model);
+        }),
+        normals: sceneModelTransformMeshFloats(vertices.normals, 3, function(x, y, z) {
+          return sceneNormalizeDirection(sceneModelTransformVector({ x: x, y: y, z: z }, model));
+        }),
+        uvs: vertices.uvs instanceof Float32Array ? new Float32Array(vertices.uvs) : sceneTypedFloatArray(vertices.uvs),
+        tangents: sceneModelTransformMeshFloats(vertices.tangents, 4, function(x, y, z, w) {
+          const rotated = sceneNormalizeDirection(sceneModelTransformVector({ x: x, y: y, z: z }, model));
+          return { x: rotated.x, y: rotated.y, z: rotated.z, w: sceneNumber(w, 1) };
+        }),
+        joints: vertices.joints instanceof Float32Array ? new Float32Array(vertices.joints) : sceneTypedFloatArray(vertices.joints),
+        weights: vertices.weights instanceof Float32Array ? new Float32Array(vertices.weights) : sceneTypedFloatArray(vertices.weights),
+      };
+    }
     if (model && model.static !== null) {
       instanced.static = Boolean(model.static);
+    }
+    if (hasSkin && model && model.animation) {
+      instanced.static = false;
     }
     if (model && typeof model.pickable === "boolean") {
       instanced.pickable = model.pickable;
@@ -491,6 +600,9 @@
       labels: Array.isArray(record.labels) ? record.labels : [],
       sprites,
       lights: Array.isArray(record.lights) ? record.lights : [],
+      animations: Array.isArray(record.animations) ? record.animations : [],
+      skins: Array.isArray(record.skins) ? record.skins : [],
+      nodes: Array.isArray(record.nodes) ? record.nodes : [],
     };
   }
 
@@ -627,6 +739,10 @@
           return parseSceneModelAsset(await response.json(), key);
         } catch (error) {
           console.warn("[gosx] failed to load Scene3D model asset:", key, error && error.message ? error.message : error);
+          gosxSceneEmit("warn", "model-asset-load-failed", {
+            asset: String(key || ""),
+            error: error && error.message ? String(error.message) : String(error),
+          });
           return parseSceneModelAsset({}, key);
         }
       })());
@@ -634,8 +750,111 @@
     return sceneModelAssetCache.get(key);
   }
 
+  function sceneModelHasSkins(skins) {
+    return Array.isArray(skins) && skins.some(function(skin) {
+      return Boolean(skin && skin.joints && skin.inverseBindMatrices);
+    });
+  }
+
+  function sceneApplyModelSkinPose(record, deltaTime) {
+    if (!record || !record.animationApi || !record.nodes || !record.skins) {
+      return;
+    }
+    const animatedTransforms = record.animatedTransforms;
+    if (animatedTransforms && typeof animatedTransforms.clear === "function") {
+      animatedTransforms.clear();
+    }
+    if (record.mixer) {
+      record.mixer.update(deltaTime, function(targetNode, property, value) {
+        let entry = animatedTransforms.get(targetNode);
+        if (!entry) {
+          entry = {};
+          animatedTransforms.set(targetNode, entry);
+        }
+        entry[property] = Array.isArray(value) ? value.slice() : Array.from(value || []);
+      });
+    }
+    const nodeTransforms = record.animationApi.buildNodeTransforms(record.nodes, animatedTransforms, record.rootTransform);
+    for (let index = 0; index < record.skins.length; index += 1) {
+      const skin = record.skins[index];
+      if (!skin) {
+        continue;
+      }
+      skin.jointMatrices = record.animationApi.computeJointMatrices(skin, nodeTransforms);
+    }
+  }
+
+  async function scenePrepareModelSkinPlayback(state, asset, model, skinInstances) {
+    if (!sceneModelHasSkins(skinInstances) || !Array.isArray(asset.nodes) || !asset.nodes.length) {
+      return;
+    }
+
+    let animationApi = null;
+    try {
+      animationApi = await ensureAnimationFeatureLoaded();
+    } catch (error) {
+      console.warn("[gosx] failed to load Scene3D animation support:", error && error.message ? error.message : error);
+      return;
+    }
+    if (!animationApi || typeof animationApi.buildNodeTransforms !== "function" || typeof animationApi.computeJointMatrices !== "function") {
+      return;
+    }
+
+    const record = {
+      nodes: asset.nodes,
+      skins: skinInstances,
+      animatedTransforms: new Map(),
+      rootTransform: sceneModelTransformMatrix(model),
+      animationApi,
+      mixer: null,
+      animation: "",
+    };
+
+    const requestedAnimation = typeof model.animation === "string" ? model.animation.trim() : "";
+    if (requestedAnimation && typeof animationApi.createMixer === "function") {
+      const clips = sceneCloneModelAnimations(asset.animations);
+      if (clips.length) {
+        const mixer = animationApi.createMixer();
+        for (let index = 0; index < clips.length; index += 1) {
+          const clip = clips[index];
+          mixer.addClip(clip.name, clip);
+        }
+        mixer.play(requestedAnimation, { loop: model.loop !== false, fadeIn: 0 });
+        if (mixer.isPlaying(requestedAnimation)) {
+          record.mixer = mixer;
+          record.animation = requestedAnimation;
+          if (!Array.isArray(state._modelAnimations)) {
+            state._modelAnimations = [];
+          }
+          state._modelAnimations.push(record);
+        }
+      }
+    }
+
+    sceneApplyModelSkinPose(record, 0);
+  }
+
+  function sceneHasActiveModelAnimations(state) {
+    const records = state && Array.isArray(state._modelAnimations) ? state._modelAnimations : [];
+    return records.some(function(record) {
+      return Boolean(record && record.mixer && record.animation && record.mixer.isPlaying(record.animation));
+    });
+  }
+
+  function sceneAdvanceModelAnimations(state, deltaTime) {
+    const records = state && Array.isArray(state._modelAnimations) ? state._modelAnimations : [];
+    for (let index = 0; index < records.length; index += 1) {
+      const record = records[index];
+      if (!record || !record.mixer || !record.animation || !record.mixer.isPlaying(record.animation)) {
+        continue;
+      }
+      sceneApplyModelSkinPose(record, deltaTime);
+    }
+  }
+
   async function hydrateSceneStateModels(state, props) {
     const models = sceneModels(props);
+    state._modelAnimations = [];
     if (!models.length) {
       return { models: 0, objects: 0, labels: 0, sprites: 0, lights: 0 };
     }
@@ -646,8 +865,9 @@
     await Promise.all(models.map(async function(model, modelIndex) {
       const asset = await loadSceneModelAsset(model.src);
       const prefix = model.id || ("scene-model-" + modelIndex);
+      const skinInstances = sceneCloneModelSkins(asset.skins);
       for (let i = 0; i < asset.objects.length; i += 1) {
-        const object = sceneInstantiateModelObject(asset.objects[i], model, prefix, i);
+        const object = sceneInstantiateModelObject(asset.objects[i], model, prefix, i, skinInstances);
         if (!object) {
           continue;
         }
@@ -678,6 +898,7 @@
         state.lights.set(light.id, light);
         lightCount += 1;
       }
+      await scenePrepareModelSkinPlayback(state, asset, model, skinInstances);
     }));
     return { models: models.length, objects: objectCount, labels: labelCount, sprites: spriteCount, lights: lightCount };
   }
@@ -2114,6 +2335,7 @@
     const lifecycle = initialSceneLifecycleState();
     const motion = initialSceneMotionState(props);
     let sceneCSSAnimationUntil = 0;
+    let lastModelAnimationTimeSeconds = null;
 
     function sceneShouldAnimate() {
       if (motion.reducedMotion) {
@@ -2129,6 +2351,9 @@
         return true;
       }
       if (Array.isArray(sceneState.computeParticles) && sceneState.computeParticles.length > 0) {
+        return true;
+      }
+      if (sceneHasActiveModelAnimations(sceneState)) {
         return true;
       }
       if (Array.isArray(sceneState.points) && sceneState.points.some(function(p) {
@@ -2399,6 +2624,9 @@
       });
     }
 
+    let sceneRendererRecentlySwapped = false;
+    let sceneRendererLastSwapReason = "";
+
     function swapRenderer(nextRenderer, fallbackReason) {
       if (!nextRenderer) {
         return false;
@@ -2409,12 +2637,20 @@
       if (previous && previous !== renderer && typeof previous.dispose === "function") {
         previous.dispose();
       }
+      sceneRendererRecentlySwapped = true;
+      sceneRendererLastSwapReason = fallbackReason || "";
+      gosxSceneEmit("info", "renderer-swap", {
+        from: previous && previous.kind ? previous.kind : "",
+        to: nextRenderer.kind || "",
+        reason: fallbackReason || "",
+      });
       return true;
     }
 
     function fallbackSceneRenderer(reason) {
       const ctx2d = typeof canvas.getContext === "function" ? canvas.getContext("2d") : null;
       if (!ctx2d) {
+        gosxSceneEmit("warn", "renderer-fallback-unavailable", { reason: reason || "" });
         return false;
       }
       return swapRenderer(createSceneCanvasRenderer(ctx2d, canvas), reason || "webgl-unavailable");
@@ -2442,13 +2678,25 @@
       if (event && typeof event.preventDefault === "function") {
         event.preventDefault();
       }
-      fallbackSceneRenderer("webgl-context-lost");
+      gosxSceneEmit("warn", "webgl-context-lost", {
+        voluntary: contextVoluntarilyLost === true,
+      });
+      const swapped = fallbackSceneRenderer("webgl-context-lost");
       scheduleRender("webgl-context-lost");
+      if (!swapped) {
+        gosxSceneEmit("warn", "webgl-context-lost-no-fallback", {});
+      }
     }
 
     function onWebGLContextRestored() {
+      const voluntary = contextVoluntarilyLost === true;
       contextVoluntarilyLost = false;
-      if (restoreSceneWebGLRenderer("")) {
+      const swapped = restoreSceneWebGLRenderer("");
+      gosxSceneEmit(swapped ? "info" : "warn", "webgl-context-restored", {
+        swapped: swapped,
+        voluntary: voluntary,
+      });
+      if (swapped) {
         viewportDirty = true;
         scheduleRender("webgl-context-restored");
       }
@@ -2845,6 +3093,11 @@
       }
       sceneAdvanceScrollCamera(sceneState._scrollCamera);
       const timeSeconds = now / 1000;
+      const modelAnimationDelta = lastModelAnimationTimeSeconds == null
+        ? 0
+        : Math.max(0, Math.min(0.1, timeSeconds - lastModelAnimationTimeSeconds));
+      lastModelAnimationTimeSeconds = timeSeconds;
+      sceneAdvanceModelAnimations(sceneState, modelAnimationDelta);
       if (runtimeScene && ctx.runtime && typeof ctx.runtime.renderFrame === "function") {
         const runtimeBundle = ctx.runtime.renderFrame(timeSeconds, viewport.cssWidth, viewport.cssHeight);
         if (runtimeBundle) {
@@ -2891,9 +3144,39 @@
       );
       syncSceneNodeSentinels(latestBundle);
       renderer.render(latestBundle, viewport);
+      maybeEmitRenderEmpty(latestBundle);
       renderSceneLabels(labelLayer, latestBundle, labelLayoutCache, labelElements, viewport.cssWidth, viewport.cssHeight);
       renderSceneSprites(labelLayer, latestBundle, spriteElements, viewport.cssWidth, viewport.cssHeight);
       scheduleNextAnimationFrame();
+    }
+
+    function maybeEmitRenderEmpty(bundle) {
+      if (!sceneRendererRecentlySwapped) {
+        return;
+      }
+      sceneRendererRecentlySwapped = false;
+      const reason = sceneRendererLastSwapReason;
+      sceneRendererLastSwapReason = "";
+      const bundleVerts = Number((bundle && bundle.vertexCount) || 0);
+      const worldVerts = Number((bundle && bundle.worldVertexCount) || 0);
+      const surfaceCount = Array.isArray(bundle && bundle.surfaces) ? bundle.surfaces.length : 0;
+      if (bundleVerts > 0 || worldVerts > 0 || surfaceCount > 0) {
+        return;
+      }
+      const pointCount = Array.isArray(sceneState.points) ? sceneState.points.length : 0;
+      const objectCount = (sceneState.meshObjects ? sceneState.meshObjects.length : 0)
+        + (Array.isArray(sceneState.objects) ? sceneState.objects.length : 0);
+      const instanceCount = Array.isArray(sceneState.instancedMeshes) ? sceneState.instancedMeshes.length : 0;
+      if (pointCount + objectCount + instanceCount === 0) {
+        return;
+      }
+      gosxSceneEmit("error", "render-empty", {
+        rendererKind: renderer && renderer.kind ? renderer.kind : "",
+        lastSwapReason: reason,
+        scenePoints: pointCount,
+        sceneObjects: objectCount,
+        sceneInstances: instanceCount,
+      });
     }
 
     await sceneModelHydration;
