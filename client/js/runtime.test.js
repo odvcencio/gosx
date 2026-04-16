@@ -7295,6 +7295,90 @@ test("bootstrap scene3d emits telemetry for webgl context-lost and context-resto
     undefined,
     "restored renderer must produce non-empty bundle (render-empty should not fire), got: " + JSON.stringify(renderEmpty),
   );
+
+  const warmup = events.find((ev) => ev.cat === "scene3d" && ev.msg === "renderer-warmup");
+  assert.ok(warmup, "renderer-warmup should fire after restore, events: " + JSON.stringify(events));
+  assert.equal(warmup.fields.rendererKind, "webgl");
+  assert.ok(warmup.fields.bundleMeshObjects >= 0, "warmup reports mesh object count");
+});
+
+test("scene3d render-empty does NOT fire on restore when bundle has meshObjects (modern PBR path)", async () => {
+  // Regression: the pre-alpha.21 detector only inspected legacy vertex/surface
+  // fields on the bundle. If the PBR path populated only meshObjects (no
+  // legacy verts), the detector fell through, counted sceneState objects, and
+  // fired a FALSE POSITIVE render-empty. After alpha.21 the early-return
+  // also considers bundle.meshObjects and bundle.instancedMeshes.
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-modern-pbr-probe";
+  const env = createContext({
+    elements: [mount],
+    enableWebGL: true,
+    fetchRoutes: {
+      "/_gosx/client-events": { status: 204, text: "" },
+    },
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-modern-pbr",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-modern-pbr-probe",
+          jsExport: "GoSXScene3D",
+          props: {
+            width: 480,
+            height: 300,
+            autoRotate: false,
+            scene: {
+              objects: [
+                { kind: "box", width: 1, height: 1, depth: 1, x: 0, y: 0, z: 0, color: "#fff" },
+              ],
+            },
+          },
+        },
+      ],
+    },
+  });
+  env.context.__gosx_telemetry_config = { flushInterval: 0 };
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  // Simulate the PBR-only bundle shape by stripping the legacy vertex fields
+  // from every bundle the runtime hands the renderer. The bundle will still
+  // carry meshObjects (populated from sceneState.objects). Post-restore the
+  // detector must treat that as "geometry is present" and skip render-empty.
+  const api = env.context.__gosx_scene3d_api;
+  const origCreateBundle = api.createSceneRenderBundle;
+  api.createSceneRenderBundle = function (...args) {
+    const bundle = origCreateBundle.apply(this, args);
+    return Object.assign({}, bundle, {
+      vertexCount: 0,
+      worldVertexCount: 0,
+      surfaces: [],
+      meshObjects: bundle.meshObjects && bundle.meshObjects.length > 0
+        ? bundle.meshObjects
+        : [{ id: "synthetic-pbr-box", material: "pbr", transform: null, geometry: { vertexCount: 36 } }],
+    });
+  };
+
+  const canvas = mount.children[0];
+  canvas.dispatchEvent({ type: "webglcontextlost", preventDefault() {} });
+  await flushAsyncWork();
+  canvas.dispatchEvent({ type: "webglcontextrestored" });
+  await flushAsyncWork();
+
+  env.context.__gosx_telemetry_flush();
+  await flushAsyncWork();
+
+  const events = telemetryEvents(env);
+  const renderEmpty = events.find((ev) => ev.cat === "scene3d" && ev.msg === "render-empty");
+  assert.equal(
+    renderEmpty,
+    undefined,
+    "render-empty must not fire when bundle has meshObjects (modern PBR), got: " + JSON.stringify(renderEmpty),
+  );
+  const warmup = events.find((ev) => ev.cat === "scene3d" && ev.msg === "renderer-warmup");
+  assert.ok(warmup, "renderer-warmup should fire after restore, events: " + JSON.stringify(events));
+  assert.equal(warmup.fields.rendererKind, "webgl");
 });
 
 test("bootstrap telemetry flushes via sendBeacon on visibility hidden", async () => {

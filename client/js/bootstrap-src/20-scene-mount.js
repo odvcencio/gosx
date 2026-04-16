@@ -2663,10 +2663,34 @@
       recordScenePerfCounter("render:" + (reason || "restore"));
       syncSceneNodeSentinels(latestBundle);
       renderer.render(latestBundle, viewport);
+      emitRendererWarmup(reason, latestBundle);
       maybeEmitRenderEmpty(latestBundle);
       renderSceneLabels(labelLayer, latestBundle, labelLayoutCache, labelElements, viewport.cssWidth, viewport.cssHeight);
       renderSceneSprites(labelLayer, latestBundle, spriteElements, viewport.cssWidth, viewport.cssHeight);
       return true;
+    }
+
+    // emitRendererWarmup: called once per renderer-swap, after the first
+    // render on the new renderer. Reports the bundle inventory the fresh
+    // renderer just had to deal with so a silent post-restore black canvas
+    // can be narrowed down to a specific resource class (PBR mesh count,
+    // instanced mesh count, lights, post-fx, etc.) in the server slog.
+    function emitRendererWarmup(reason, bundle) {
+      gosxSceneEmit("info", "renderer-warmup", {
+        rendererKind: renderer && renderer.kind ? renderer.kind : "",
+        reason: reason || "",
+        bundleMeshObjects: Array.isArray(bundle && bundle.meshObjects) ? bundle.meshObjects.length : 0,
+        bundleInstancedMeshes: Array.isArray(bundle && bundle.instancedMeshes) ? bundle.instancedMeshes.length : 0,
+        bundlePoints: Array.isArray(bundle && bundle.points) ? bundle.points.length : 0,
+        bundleLights: Array.isArray(bundle && bundle.lights) ? bundle.lights.length : 0,
+        bundleLabels: Array.isArray(bundle && bundle.labels) ? bundle.labels.length : 0,
+        bundleSprites: Array.isArray(bundle && bundle.sprites) ? bundle.sprites.length : 0,
+        bundleSurfaces: Array.isArray(bundle && bundle.surfaces) ? bundle.surfaces.length : 0,
+        bundleComputeParticles: Array.isArray(bundle && bundle.computeParticles) ? bundle.computeParticles.length : 0,
+        bundleWorldVertexCount: Number((bundle && bundle.worldVertexCount) || 0),
+        bundleVertexCount: Number((bundle && bundle.vertexCount) || 0),
+        bundleHasPostFX: Boolean(bundle && bundle.postEffects && Object.keys(bundle.postEffects).length > 0),
+      });
     }
 
     function restoreSceneWebGLRenderer(reason) {
@@ -3177,7 +3201,22 @@
       const bundleVerts = Number((bundle && bundle.vertexCount) || 0);
       const worldVerts = Number((bundle && bundle.worldVertexCount) || 0);
       const surfaceCount = Array.isArray(bundle && bundle.surfaces) ? bundle.surfaces.length : 0;
-      if (bundleVerts > 0 || worldVerts > 0 || surfaceCount > 0) {
+      const bundleMeshObjects = Array.isArray(bundle && bundle.meshObjects) ? bundle.meshObjects.length : 0;
+      const bundleInstancedMeshes = Array.isArray(bundle && bundle.instancedMeshes) ? bundle.instancedMeshes.length : 0;
+      // A bundle with legacy verts, surfaces, OR a modern PBR mesh/instance list
+      // means the renderer had something to draw. Only if ALL paths are empty
+      // and sceneState itself has drawable content do we call it render-empty.
+      if (bundleVerts > 0 || worldVerts > 0 || surfaceCount > 0
+          || bundleMeshObjects > 0 || bundleInstancedMeshes > 0) {
+        // Bundle had geometry — schedule a canvas-pixel check next tick to
+        // confirm something actually landed on the drawing buffer. Gated by
+        // GOSX_TELEMETRY feature flag on the client config so we don't probe
+        // on every swap in production unless requested.
+        scheduleCanvasBlankProbe(reason, {
+          bundleMeshObjects,
+          bundleInstancedMeshes,
+          bundleVerts: bundleVerts + worldVerts,
+        });
         return;
       }
       const pointCount = Array.isArray(sceneState.points) ? sceneState.points.length : 0;
@@ -3193,6 +3232,67 @@
         scenePoints: pointCount,
         sceneObjects: objectCount,
         sceneInstances: instanceCount,
+      });
+    }
+
+    // scheduleCanvasBlankProbe: after a renderer-swap produced a non-empty
+    // bundle, wait one animation-frame boundary and sample a 32x32 center
+    // region of the drawing buffer via gl.readPixels. If every sampled pixel
+    // is (0,0,0,0) while sceneState still has drawable geometry, emit a
+    // render-canvas-blank event. This catches the class of bug where the
+    // renderer claims success, the bundle has geometry, drawElements fires,
+    // but the canvas silently stays black — the pattern seen in Chrome after
+    // a WebGL context-restore that invalidates PBR framebuffer attachments
+    // without signaling failure upstream.
+    function scheduleCanvasBlankProbe(reason, stats) {
+      if (typeof window === "undefined" || !window.__gosx_telemetry_config
+          || window.__gosx_telemetry_config.probeCanvasBlank !== true) {
+        return;
+      }
+      if (typeof window.requestAnimationFrame !== "function") {
+        return;
+      }
+      window.requestAnimationFrame(function () {
+        window.requestAnimationFrame(function () {
+          if (disposed || !renderer || renderer.kind !== "webgl") {
+            return;
+          }
+          const gl = typeof canvas.getContext === "function"
+            ? (canvas.getContext("webgl2") || canvas.getContext("webgl"))
+            : null;
+          if (!gl || gl.isContextLost()) {
+            return;
+          }
+          const probeSide = 32;
+          const pxBytes = probeSide * probeSide * 4;
+          const pixels = new Uint8Array(pxBytes);
+          const x0 = Math.max(0, ((canvas.width - probeSide) / 2) | 0);
+          const y0 = Math.max(0, ((canvas.height - probeSide) / 2) | 0);
+          try {
+            gl.readPixels(x0, y0, probeSide, probeSide, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+          } catch (_err) {
+            return;
+          }
+          let nonBlack = 0;
+          for (let i = 0; i < pxBytes; i += 4) {
+            if (pixels[i] > 3 || pixels[i + 1] > 3 || pixels[i + 2] > 3 || pixels[i + 3] > 3) {
+              nonBlack++;
+            }
+          }
+          if (nonBlack > 0) {
+            return;
+          }
+          gosxSceneEmit("error", "render-canvas-blank", {
+            rendererKind: renderer && renderer.kind ? renderer.kind : "",
+            lastSwapReason: reason || "",
+            bundleMeshObjects: stats ? stats.bundleMeshObjects : 0,
+            bundleInstancedMeshes: stats ? stats.bundleInstancedMeshes : 0,
+            bundleVerts: stats ? stats.bundleVerts : 0,
+            probeWidth: probeSide,
+            probeHeight: probeSide,
+            glError: typeof gl.getError === "function" ? gl.getError() : 0,
+          });
+        });
       });
     }
 

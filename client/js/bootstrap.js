@@ -25999,10 +25999,29 @@ if (typeof window !== "undefined") {
       recordScenePerfCounter("render:" + (reason || "restore"));
       syncSceneNodeSentinels(latestBundle);
       renderer.render(latestBundle, viewport);
+      emitRendererWarmup(reason, latestBundle);
       maybeEmitRenderEmpty(latestBundle);
       renderSceneLabels(labelLayer, latestBundle, labelLayoutCache, labelElements, viewport.cssWidth, viewport.cssHeight);
       renderSceneSprites(labelLayer, latestBundle, spriteElements, viewport.cssWidth, viewport.cssHeight);
       return true;
+    }
+
+    function emitRendererWarmup(reason, bundle) {
+      gosxSceneEmit("info", "renderer-warmup", {
+        rendererKind: renderer && renderer.kind ? renderer.kind : "",
+        reason: reason || "",
+        bundleMeshObjects: Array.isArray(bundle && bundle.meshObjects) ? bundle.meshObjects.length : 0,
+        bundleInstancedMeshes: Array.isArray(bundle && bundle.instancedMeshes) ? bundle.instancedMeshes.length : 0,
+        bundlePoints: Array.isArray(bundle && bundle.points) ? bundle.points.length : 0,
+        bundleLights: Array.isArray(bundle && bundle.lights) ? bundle.lights.length : 0,
+        bundleLabels: Array.isArray(bundle && bundle.labels) ? bundle.labels.length : 0,
+        bundleSprites: Array.isArray(bundle && bundle.sprites) ? bundle.sprites.length : 0,
+        bundleSurfaces: Array.isArray(bundle && bundle.surfaces) ? bundle.surfaces.length : 0,
+        bundleComputeParticles: Array.isArray(bundle && bundle.computeParticles) ? bundle.computeParticles.length : 0,
+        bundleWorldVertexCount: Number((bundle && bundle.worldVertexCount) || 0),
+        bundleVertexCount: Number((bundle && bundle.vertexCount) || 0),
+        bundleHasPostFX: Boolean(bundle && bundle.postEffects && Object.keys(bundle.postEffects).length > 0),
+      });
     }
 
     function restoreSceneWebGLRenderer(reason) {
@@ -26464,7 +26483,15 @@ if (typeof window !== "undefined") {
       const bundleVerts = Number((bundle && bundle.vertexCount) || 0);
       const worldVerts = Number((bundle && bundle.worldVertexCount) || 0);
       const surfaceCount = Array.isArray(bundle && bundle.surfaces) ? bundle.surfaces.length : 0;
-      if (bundleVerts > 0 || worldVerts > 0 || surfaceCount > 0) {
+      const bundleMeshObjects = Array.isArray(bundle && bundle.meshObjects) ? bundle.meshObjects.length : 0;
+      const bundleInstancedMeshes = Array.isArray(bundle && bundle.instancedMeshes) ? bundle.instancedMeshes.length : 0;
+      if (bundleVerts > 0 || worldVerts > 0 || surfaceCount > 0
+          || bundleMeshObjects > 0 || bundleInstancedMeshes > 0) {
+        scheduleCanvasBlankProbe(reason, {
+          bundleMeshObjects,
+          bundleInstancedMeshes,
+          bundleVerts: bundleVerts + worldVerts,
+        });
         return;
       }
       const pointCount = Array.isArray(sceneState.points) ? sceneState.points.length : 0;
@@ -26480,6 +26507,58 @@ if (typeof window !== "undefined") {
         scenePoints: pointCount,
         sceneObjects: objectCount,
         sceneInstances: instanceCount,
+      });
+    }
+
+    function scheduleCanvasBlankProbe(reason, stats) {
+      if (typeof window === "undefined" || !window.__gosx_telemetry_config
+          || window.__gosx_telemetry_config.probeCanvasBlank !== true) {
+        return;
+      }
+      if (typeof window.requestAnimationFrame !== "function") {
+        return;
+      }
+      window.requestAnimationFrame(function () {
+        window.requestAnimationFrame(function () {
+          if (disposed || !renderer || renderer.kind !== "webgl") {
+            return;
+          }
+          const gl = typeof canvas.getContext === "function"
+            ? (canvas.getContext("webgl2") || canvas.getContext("webgl"))
+            : null;
+          if (!gl || gl.isContextLost()) {
+            return;
+          }
+          const probeSide = 32;
+          const pxBytes = probeSide * probeSide * 4;
+          const pixels = new Uint8Array(pxBytes);
+          const x0 = Math.max(0, ((canvas.width - probeSide) / 2) | 0);
+          const y0 = Math.max(0, ((canvas.height - probeSide) / 2) | 0);
+          try {
+            gl.readPixels(x0, y0, probeSide, probeSide, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+          } catch (_err) {
+            return;
+          }
+          let nonBlack = 0;
+          for (let i = 0; i < pxBytes; i += 4) {
+            if (pixels[i] > 3 || pixels[i + 1] > 3 || pixels[i + 2] > 3 || pixels[i + 3] > 3) {
+              nonBlack++;
+            }
+          }
+          if (nonBlack > 0) {
+            return;
+          }
+          gosxSceneEmit("error", "render-canvas-blank", {
+            rendererKind: renderer && renderer.kind ? renderer.kind : "",
+            lastSwapReason: reason || "",
+            bundleMeshObjects: stats ? stats.bundleMeshObjects : 0,
+            bundleInstancedMeshes: stats ? stats.bundleInstancedMeshes : 0,
+            bundleVerts: stats ? stats.bundleVerts : 0,
+            probeWidth: probeSide,
+            probeHeight: probeSide,
+            glError: typeof gl.getError === "function" ? gl.getError() : 0,
+          });
+        });
       });
     }
 
