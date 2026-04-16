@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.18.0-alpha.21
+
+Scene3D restore-path diagnostics.
+
+The `render-empty` detector was missing the modern PBR drawing path: a bundle with `meshObjects` or `instancedMeshes` but no legacy `vertexCount`/`worldVertexCount`/`surfaces` fell through the early-return and produced a false-positive `render-empty` (or, conversely, stayed silent when the modern path silently produced a black canvas). The detector now counts `bundle.meshObjects.length` and `bundle.instancedMeshes.length` as real geometry.
+
+When the bundle has geometry but the renderer may still be producing a blank canvas (framebuffer binding lost across a WebGL context-restore, stale PBR shadow attachments, etc.), gosx now schedules a one-frame-later `gl.readPixels` probe of a 32×32 center region. If every sampled pixel is `(0,0,0,0)` and `sceneState` still has drawable geometry, a new `render-canvas-blank` event fires with `lastSwapReason`, `rendererKind`, `glError`, and bundle inventory counts. The probe is opt-in via `window.__gosx_telemetry_config.probeCanvasBlank = true` so production pages do not readback every frame on every swap.
+
+`restoreSceneWebGLRenderer` also emits `renderer-warmup` after `renderLatestSceneBundle`. The event carries the bundle inventory the fresh renderer just had to process — mesh/instance/point/light/label/sprite/surface counts plus `bundleHasPostFX` — so a silent post-restore blank frame can be narrowed to a specific resource class in the server slog.
+
 ## v0.18.0-alpha.20
 
 Scene3D WebGL context-restore fix.

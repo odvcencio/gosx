@@ -8,5 +8,7 @@ node_modules/
 data/
 
 # Specs and plans — never commit
+.claude/
+docs/blog-outlines/
 docs/specs/
 docs/superpowers/
