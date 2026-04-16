@@ -3,3 +3,7 @@ build/
 /docs/
 /gosx
 node_modules/
+
+# Specs and plans — never commit
+docs/specs/
+docs/superpowers/
