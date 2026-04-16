@@ -142,7 +142,7 @@ func prepareTinyGoWASMModule(projectDir, gosxRoot string) (string, func(), error
 func tinyGoWASMDependencyClosure(projectDir string) ([]tinyGoPackage, []tinyGoExternalModule, error) {
 	cmd := exec.Command("go", "list", "-deps", "-json", gosxModuleImportPath+"/client/wasm")
 	cmd.Dir = projectDir
-	cmd.Env = append(execEnvWithoutGoFlags(), "GOFLAGS=-mod=mod", "GOOS=js", "GOARCH=wasm")
+	cmd.Env = append(execEnvWithoutGoFlags(), "GOFLAGS=-mod=mod", "GOOS=js", "GOARCH=wasm", "GOWORK=off")
 	out, err := cmd.Output()
 	if err != nil {
 		var exitErr *exec.ExitError
@@ -281,6 +281,7 @@ func writeTinyGoModuleFile(dir string, modules []tinyGoExternalModule) error {
 
 func tinyGoBuildEnvironments() []tinyGoBuildEnv {
 	base := setEnv(execEnvWithoutGoFlags(), "GOFLAGS", "-mod=mod")
+	base = setEnv(base, "GOWORK", "off")
 	envs := []tinyGoBuildEnv{{label: "current Go", env: base}}
 	seenRoots := map[string]bool{}
 	for _, root := range tinyGoCompatibleGoRoots() {

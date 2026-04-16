@@ -27,7 +27,7 @@ func goListDeps(projectDir string, extraEnv []string, packages ...string) error 
 
 	cmd := exec.Command("go", args...)
 	cmd.Dir = projectDir
-	cmd.Env = append(execEnvWithoutGoFlags(), "GOFLAGS=-mod=mod")
+	cmd.Env = append(execEnvWithoutGoFlags(), "GOFLAGS=-mod=mod", "GOWORK=off")
 	cmd.Env = append(cmd.Env, extraEnv...)
 	if err := cmd.Run(); err != nil {
 		return err

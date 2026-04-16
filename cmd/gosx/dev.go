@@ -146,7 +146,7 @@ func prepareDevAssets(dir string) error {
 	wasmPath := filepath.Join(buildDir, "gosx-runtime.wasm")
 	cmd := exec.Command("go", "build", "-o", wasmPath, gosxModuleImportPath+"/client/wasm")
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "GOOS=js", "GOARCH=wasm")
+	cmd.Env = append(execEnvWithoutGoFlags(), "GOOS=js", "GOARCH=wasm", "GOWORK=off", "GOFLAGS=-mod=mod")
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("build runtime wasm: %w", err)
@@ -290,6 +290,7 @@ func stageSidecarCSS(dir, cssDir string) error {
 func isMainPackage(dir string) (bool, error) {
 	cmd := exec.Command("go", "list", "-f", "{{.Name}}", ".")
 	cmd.Dir = dir
+	cmd.Env = append(execEnvWithoutGoFlags(), "GOFLAGS=-mod=mod", "GOWORK=off")
 	out, err := cmd.Output()
 	if err != nil {
 		if _, ok := err.(*exec.ExitError); ok {
