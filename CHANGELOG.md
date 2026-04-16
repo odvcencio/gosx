@@ -1,5 +1,29 @@
 # Changelog
 
+## v0.18.0-alpha.16
+
+Scene3D transition and capability release.
+
+CSS-driven Scene3D updates now have a scene-wide default transition timing fallback. When a record does not declare its own transition, the planner searches material transitions first and then environment transition settings, caches the resolved timing on planner state, and uses that duration/easing for CSS variable animations.
+
+Typed `scene.Props` graphs that include `ComputeParticles` now declare the `webgpu` engine capability automatically. File-route spread lookup also honors `GoSXSpreadProps()` for reserved transport fields such as `capabilities`, so `<Scene3D {...data.scene}>` uses the same computed capability contract as its serialized scene props. This fixes the docs homepage server-render failure where compute particles were validated against only the default `canvas webgl animation` capability set.
+
+## v0.18.0-alpha.15
+
+Scene3D material transition fallback release.
+
+The CSS planner can now resolve transition timing from material records when an animated object, points layer, or instanced mesh does not carry its own transition metadata. Records can refer to materials by index or name, and the planner uses the material transition as the fallback timing source for CSS-backed scene updates.
+
+Transition diagnostics now include fresh resolve logs with the CSS revision and previous-cache state, making it easier to trace whether a scene update came from a cached CSS bundle or a new resolution pass.
+
+## v0.18.0-alpha.14
+
+Scene3D transition diagnostics and CI format release.
+
+Scene3D CSS variable transition debugging now emits planner diagnostics through `console.log`, making the messages visible in the browser and CI log paths that suppress `console.debug`. The transition logs were added around CSS bundle resolution to expose revision and cache behavior while chasing material-driven animation updates.
+
+The repository formatter output was also backfilled across tracked generated Go and GSX files, unblocking the GitHub Actions format gate before the later Scene3D E2E fixes landed.
+
 ## v0.18.0-alpha.13
 
 Editor release for Slack-style emoji shortcodes and picker suggestions.
