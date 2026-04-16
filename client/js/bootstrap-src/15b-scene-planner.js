@@ -61,6 +61,9 @@
   }
 
   function sceneResolveCSSBundleWithContext(source, css, inputSignature) {
+    if (typeof console !== "undefined") {
+      console.log("[gosx:css-transition] FRESH RESOLVE revision=" + css.revision + " prevCache=" + Boolean(css.prevCache));
+    }
     const prevCache = css.prevCache || null;
     const prevResolved = prevCache && prevCache.resolvedVars ? prevCache.resolvedVars : null;
     const prevTransitions = prevCache && Array.isArray(prevCache.varTransitions) ? prevCache.varTransitions : [];
@@ -104,7 +107,8 @@
   }
 
   // sceneCSSRecordTransitionTiming extracts the update transition config from
-  // a material or environment record. Returns { duration, easing } or null.
+  // a material, environment, or points record. For points/objects that reference
+  // a material by name or index, falls back to the material's transition config.
   function sceneCSSRecordTransitionTiming(state, kind, collectionKey, index) {
     var record = null;
     if (kind === "topObject") {
@@ -114,7 +118,17 @@
       var collection = sceneCSSCurrentCollection(state, collectionKey);
       record = Array.isArray(collection) ? collection[index] : null;
     }
-    if (!record || !sceneIsPlainObject(record.transition)) {
+    if (record && sceneIsPlainObject(record.transition)) {
+      // Record has its own transition config — use it directly.
+    } else if (record) {
+      // No transition on the record itself — check the referenced material.
+      var materialRecord = sceneCSSFindMaterialForRecord(state, record);
+      if (materialRecord && sceneIsPlainObject(materialRecord.transition)) {
+        record = materialRecord;
+      } else {
+        return null;
+      }
+    } else {
       return null;
     }
     var update = record.transition.update || record.transition;
@@ -126,6 +140,30 @@
       duration: duration,
       easing: typeof update.easing === "string" ? update.easing : "ease-in-out",
     };
+  }
+
+  // sceneCSSFindMaterialForRecord looks up the material referenced by a
+  // points, object, or instanced mesh record via materialIndex or material name.
+  function sceneCSSFindMaterialForRecord(state, record) {
+    var materials = sceneCSSCurrentCollection(state, "materials");
+    if (!Array.isArray(materials) || materials.length === 0) {
+      return null;
+    }
+    // Direct index reference
+    var idx = typeof record.materialIndex === "number" ? record.materialIndex : -1;
+    if (idx >= 0 && idx < materials.length) {
+      return materials[idx];
+    }
+    // Name-based reference
+    var name = typeof record.material === "string" ? record.material : "";
+    if (name) {
+      for (var i = 0; i < materials.length; i++) {
+        if (materials[i] && materials[i].name === name) {
+          return materials[i];
+        }
+      }
+    }
+    return null;
   }
 
   // sceneCSSParseDuration parses a duration value — accepts milliseconds

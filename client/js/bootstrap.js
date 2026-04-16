@@ -11520,6 +11520,9 @@
   }
 
   function sceneResolveCSSBundleWithContext(source, css, inputSignature) {
+    if (typeof console !== "undefined") {
+      console.log("[gosx:css-transition] FRESH RESOLVE revision=" + css.revision + " prevCache=" + Boolean(css.prevCache));
+    }
     const prevCache = css.prevCache || null;
     const prevResolved = prevCache && prevCache.resolvedVars ? prevCache.resolvedVars : null;
     const prevTransitions = prevCache && Array.isArray(prevCache.varTransitions) ? prevCache.varTransitions : [];
@@ -11569,7 +11572,15 @@
       var collection = sceneCSSCurrentCollection(state, collectionKey);
       record = Array.isArray(collection) ? collection[index] : null;
     }
-    if (!record || !sceneIsPlainObject(record.transition)) {
+    if (record && sceneIsPlainObject(record.transition)) {
+    } else if (record) {
+      var materialRecord = sceneCSSFindMaterialForRecord(state, record);
+      if (materialRecord && sceneIsPlainObject(materialRecord.transition)) {
+        record = materialRecord;
+      } else {
+        return null;
+      }
+    } else {
       return null;
     }
     var update = record.transition.update || record.transition;
@@ -11581,6 +11592,26 @@
       duration: duration,
       easing: typeof update.easing === "string" ? update.easing : "ease-in-out",
     };
+  }
+
+  function sceneCSSFindMaterialForRecord(state, record) {
+    var materials = sceneCSSCurrentCollection(state, "materials");
+    if (!Array.isArray(materials) || materials.length === 0) {
+      return null;
+    }
+    var idx = typeof record.materialIndex === "number" ? record.materialIndex : -1;
+    if (idx >= 0 && idx < materials.length) {
+      return materials[idx];
+    }
+    var name = typeof record.material === "string" ? record.material : "";
+    if (name) {
+      for (var i = 0; i < materials.length; i++) {
+        if (materials[i] && materials[i].name === name) {
+          return materials[i];
+        }
+      }
+    }
+    return null;
   }
 
   function sceneCSSParseDuration(value) {
