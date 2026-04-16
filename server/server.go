@@ -20,6 +20,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -334,6 +335,60 @@ func (a *App) Mount(pattern string, handler http.Handler) {
 		pattern: pattern,
 		handler: handler,
 	}
+}
+
+// MountApp mounts a child GoSX App at a path prefix. For non-root prefixes,
+// the child app's handler is wrapped with http.StripPrefix so routes
+// registered on the child (which are rooted at "/") receive requests with the
+// prefix removed. Requests to the bare prefix without a trailing slash are
+// redirected to prefix+"/" by the underlying http.ServeMux.
+//
+// Example:
+//
+//	parent := server.New()
+//	child := server.New()
+//	// ... configure child routes ...
+//	parent.MountApp("/cobalt/example", child)
+//
+// With the mount above, a request to /cobalt/example/programs reaches the
+// child's handler as /programs.
+func (a *App) MountApp(prefix string, child *App) {
+	prefix = strings.TrimSpace(prefix)
+	if prefix == "" || child == nil {
+		return
+	}
+	prefix = "/" + strings.Trim(prefix, "/")
+
+	var (
+		cached  atomic.Value
+		buildMu sync.Mutex
+	)
+	loadChild := func() http.Handler {
+		handler, ok := cached.Load().(http.Handler)
+		if ok {
+			return handler
+		}
+		buildMu.Lock()
+		defer buildMu.Unlock()
+		handler, ok = cached.Load().(http.Handler)
+		if !ok {
+			handler = child.Build()
+			if prefix != "/" {
+				handler = http.StripPrefix(prefix, handler)
+			}
+			cached.Store(handler)
+		}
+		return handler
+	}
+	lazy := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		loadChild().ServeHTTP(w, r)
+	})
+
+	pattern := prefix
+	if pattern != "/" {
+		pattern += "/"
+	}
+	a.Mount(pattern, lazy)
 }
 
 // EnableGzip adds gzip compression middleware. It compresses all responses

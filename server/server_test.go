@@ -2540,6 +2540,87 @@ func TestMountedHandlerPreservesFlushUnderObservers(t *testing.T) {
 	}
 }
 
+func TestMountAppStripsPrefixBeforeDelegating(t *testing.T) {
+	child := New()
+	var childSawPath string
+	child.Mount("/foo", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		childSawPath = r.URL.Path
+		_, _ = w.Write([]byte("child-ok"))
+	}))
+
+	parent := New()
+	parent.MountApp("/cobalt/example", child)
+
+	handler := parent.Build()
+	req := httptest.NewRequest(http.MethodGet, "/cobalt/example/foo", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (body=%q)", w.Code, w.Body.String())
+	}
+	if body := w.Body.String(); !strings.Contains(body, "child-ok") {
+		t.Fatalf("expected child-ok body, got %q", body)
+	}
+	if childSawPath != "/foo" {
+		t.Fatalf("expected child to see /foo after prefix strip, got %q", childSawPath)
+	}
+}
+
+func TestMountAppRootPrefixDelegatesWithoutStrippingSlash(t *testing.T) {
+	child := New()
+	var childSawPath string
+	child.Mount("/foo", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		childSawPath = r.URL.Path
+		_, _ = w.Write([]byte("root-child-ok"))
+	}))
+
+	parent := New()
+	parent.MountApp("/", child)
+
+	handler := parent.Build()
+	req := httptest.NewRequest(http.MethodGet, "/foo", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (body=%q)", w.Code, w.Body.String())
+	}
+	if body := w.Body.String(); !strings.Contains(body, "root-child-ok") {
+		t.Fatalf("expected root-child-ok body, got %q", body)
+	}
+	if childSawPath != "/foo" {
+		t.Fatalf("expected child to see /foo for root mount, got %q", childSawPath)
+	}
+}
+
+func TestMountAppIncludesRoutesRegisteredAfterMount(t *testing.T) {
+	child := New()
+	parent := New()
+	parent.MountApp("/child", child)
+
+	var childSawPath string
+	child.Mount("/late", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		childSawPath = r.URL.Path
+		_, _ = w.Write([]byte("late-child-ok"))
+	}))
+
+	handler := parent.Build()
+	req := httptest.NewRequest(http.MethodGet, "/child/late", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (body=%q)", w.Code, w.Body.String())
+	}
+	if body := w.Body.String(); !strings.Contains(body, "late-child-ok") {
+		t.Fatalf("expected late-child-ok body, got %q", body)
+	}
+	if childSawPath != "/late" {
+		t.Fatalf("expected child to see /late after prefix strip, got %q", childSawPath)
+	}
+}
+
 func TestAppServesBootstrapStubWhenNoBuildExists(t *testing.T) {
 	// Use a temp dir with no build artifacts at all — simulates `go run`
 	// without ever running `gosx build`.
