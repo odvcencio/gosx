@@ -77,6 +77,7 @@
       prevResolved,
       prevTransitions,
       nowMs: css.nowMs || Date.now(),
+      _cssMount: css.mount || null,
     };
     sceneCSSResolveExplicitVars(state, css);
     sceneCSSApplyComputedDefaults(state, css);
@@ -140,42 +141,20 @@
     };
   }
 
-  // sceneCSSDefaultTransitionTiming returns the first transition timing
-  // found on any material in the scene, cached per planner state.
+  // sceneCSSDefaultTransitionTiming returns the transition timing stashed
+  // on the mount element by the scene mount init. The mount extracts this
+  // from the original props (materials/environment) before they get merged
+  // into the render bundle.
   function sceneCSSDefaultTransitionTiming(state) {
     if (state._defaultTransitionTiming !== undefined) {
       return state._defaultTransitionTiming;
     }
-    var materials = sceneCSSCurrentCollection(state, "materials");
-    if (Array.isArray(materials)) {
-      for (var i = 0; i < materials.length; i++) {
-        var m = materials[i];
-        if (m && sceneIsPlainObject(m.transition)) {
-          var update = m.transition.update || m.transition;
-          var duration = sceneCSSParseDuration(update.duration);
-          if (duration > 0) {
-            state._defaultTransitionTiming = {
-              duration: duration,
-              easing: typeof update.easing === "string" ? update.easing : "ease-in-out",
-            };
-            return state._defaultTransitionTiming;
-          }
-        }
-      }
-    }
-    // Also check environment
-    var bundle = state.out || state.source || {};
-    var env = bundle.environment;
-    if (env && sceneIsPlainObject(env.transition)) {
-      var envUpdate = env.transition.update || env.transition;
-      var envDuration = sceneCSSParseDuration(envUpdate.duration);
-      if (envDuration > 0) {
-        state._defaultTransitionTiming = {
-          duration: envDuration,
-          easing: typeof envUpdate.easing === "string" ? envUpdate.easing : "ease-in-out",
-        };
-        return state._defaultTransitionTiming;
-      }
+    // Read from the mount element where scene init stashed it
+    var mount = state._cssMount;
+    var timing = mount && mount.__gosxScene3DCSSVarTransition;
+    if (timing && typeof timing.duration === "number" && timing.duration > 0) {
+      state._defaultTransitionTiming = timing;
+      return timing;
     }
     state._defaultTransitionTiming = null;
     return null;

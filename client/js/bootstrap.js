@@ -11536,6 +11536,7 @@
       prevResolved,
       prevTransitions,
       nowMs: css.nowMs || Date.now(),
+      _cssMount: css.mount || null,
     };
     sceneCSSResolveExplicitVars(state, css);
     sceneCSSApplyComputedDefaults(state, css);
@@ -11596,35 +11597,11 @@
     if (state._defaultTransitionTiming !== undefined) {
       return state._defaultTransitionTiming;
     }
-    var materials = sceneCSSCurrentCollection(state, "materials");
-    if (Array.isArray(materials)) {
-      for (var i = 0; i < materials.length; i++) {
-        var m = materials[i];
-        if (m && sceneIsPlainObject(m.transition)) {
-          var update = m.transition.update || m.transition;
-          var duration = sceneCSSParseDuration(update.duration);
-          if (duration > 0) {
-            state._defaultTransitionTiming = {
-              duration: duration,
-              easing: typeof update.easing === "string" ? update.easing : "ease-in-out",
-            };
-            return state._defaultTransitionTiming;
-          }
-        }
-      }
-    }
-    var bundle = state.out || state.source || {};
-    var env = bundle.environment;
-    if (env && sceneIsPlainObject(env.transition)) {
-      var envUpdate = env.transition.update || env.transition;
-      var envDuration = sceneCSSParseDuration(envUpdate.duration);
-      if (envDuration > 0) {
-        state._defaultTransitionTiming = {
-          duration: envDuration,
-          easing: typeof envUpdate.easing === "string" ? envUpdate.easing : "ease-in-out",
-        };
-        return state._defaultTransitionTiming;
-      }
+    var mount = state._cssMount;
+    var timing = mount && mount.__gosxScene3DCSSVarTransition;
+    if (timing && typeof timing.duration === "number" && timing.duration > 0) {
+      state._defaultTransitionTiming = timing;
+      return timing;
     }
     state._defaultTransitionTiming = null;
     return null;
@@ -22851,6 +22828,33 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
     return null;
   }
 
+  function sceneExtractCSSVarTransitionTiming(props) {
+    var scene = props && props.scene;
+    if (!scene || typeof scene !== "object") return null;
+    var materials = Array.isArray(scene.materials) ? scene.materials : [];
+    for (var i = 0; i < materials.length; i++) {
+      var m = materials[i];
+      if (m && m.transition && typeof m.transition === "object") {
+        var update = m.transition.update || m.transition;
+        var duration = typeof update.duration === "number" ? update.duration
+          : typeof update.duration === "string" ? parseFloat(update.duration) * (update.duration.indexOf("ms") >= 0 ? 1 : 1000)
+          : 0;
+        if (duration > 0) {
+          return { duration: duration, easing: update.easing || "ease-in-out" };
+        }
+      }
+    }
+    var env = scene.environment;
+    if (env && env.transition && typeof env.transition === "object") {
+      var envUpdate = env.transition.update || env.transition;
+      var envDuration = typeof envUpdate.duration === "number" ? envUpdate.duration : 0;
+      if (envDuration > 0) {
+        return { duration: envDuration, easing: envUpdate.easing || "ease-in-out" };
+      }
+    }
+    return null;
+  }
+
   function sceneCapabilityProfile(props) {
     const requestedTier = normalizeSceneCapabilityTier(props && props.capabilityTier);
     const environment = sceneEnvironmentState();
@@ -24239,6 +24243,8 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
         sceneStateLabels(sceneState).some(sceneLabelAnimated) ||
         sceneStateSprites(sceneState).some(sceneSpriteAnimated);
     }
+
+    ctx.mount.__gosxScene3DCSSVarTransition = sceneExtractCSSVarTransitionTiming(props);
 
     clearChildren(ctx.mount);
     ctx.mount.setAttribute("data-gosx-scene3d-mounted", "true");

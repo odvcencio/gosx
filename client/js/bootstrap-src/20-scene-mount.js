@@ -713,6 +713,37 @@
     return null;
   }
 
+  // sceneExtractCSSVarTransitionTiming scans the original props for materials
+  // or environment with a transition config and returns the first timing found.
+  // This is stashed on the mount element so the planner can use it as a default
+  // when CSS var values change.
+  function sceneExtractCSSVarTransitionTiming(props) {
+    var scene = props && props.scene;
+    if (!scene || typeof scene !== "object") return null;
+    var materials = Array.isArray(scene.materials) ? scene.materials : [];
+    for (var i = 0; i < materials.length; i++) {
+      var m = materials[i];
+      if (m && m.transition && typeof m.transition === "object") {
+        var update = m.transition.update || m.transition;
+        var duration = typeof update.duration === "number" ? update.duration
+          : typeof update.duration === "string" ? parseFloat(update.duration) * (update.duration.indexOf("ms") >= 0 ? 1 : 1000)
+          : 0;
+        if (duration > 0) {
+          return { duration: duration, easing: update.easing || "ease-in-out" };
+        }
+      }
+    }
+    var env = scene.environment;
+    if (env && env.transition && typeof env.transition === "object") {
+      var envUpdate = env.transition.update || env.transition;
+      var envDuration = typeof envUpdate.duration === "number" ? envUpdate.duration : 0;
+      if (envDuration > 0) {
+        return { duration: envDuration, easing: envUpdate.easing || "ease-in-out" };
+      }
+    }
+    return null;
+  }
+
   function sceneCapabilityProfile(props) {
     const requestedTier = normalizeSceneCapabilityTier(props && props.capabilityTier);
     const environment = sceneEnvironmentState();
@@ -2109,6 +2140,12 @@
         sceneStateLabels(sceneState).some(sceneLabelAnimated) ||
         sceneStateSprites(sceneState).some(sceneSpriteAnimated);
     }
+
+    // Extract CSS var transition timing from materials/environment so the
+    // planner can interpolate when resolved var values change. The planner
+    // runs on the render bundle which no longer has the original materials
+    // array, so we stash the timing on the mount element.
+    ctx.mount.__gosxScene3DCSSVarTransition = sceneExtractCSSVarTransitionTiming(props);
 
     clearChildren(ctx.mount);
     ctx.mount.setAttribute("data-gosx-scene3d-mounted", "true");
