@@ -8,6 +8,46 @@ The editor helper bar now includes an `emoji` command that inserts Markdown++ sh
 
 Markdown rendering and the `/_gosx/emoji-codes.json` lookup now share a small compatibility alias layer for Slack-ish names such as `:simple_smile:`, `:slight_smile:`, `:thumbs_up:`, and `:red_heart:` while preserving the generated GitHub gemoji plus Unicode Emoji table as the canonical source.
 
+## v0.18.0-alpha.12
+
+Build and Scene3D runtime release for faster TinyGo output and CSS variable transitions.
+
+`gosx build` now compiles the shared WASM runtime and islands-only WASM runtime concurrently when TinyGo is available. The build path factors the repeated compile flow through a shared helper and collects goroutine results before processing errors, cutting wall-clock time for the two TinyGo runtime artifacts.
+
+Scene3D CSS-backed properties can now transition smoothly when CSS variables change. The browser planner tracks prior resolved values, parses transition timing from scene records, interpolates active numeric/color updates with easing, and keeps the scene dynamic while transitions are in flight so author-driven CSS state changes animate instead of jumping.
+
+## v0.18.0-alpha.11
+
+Patch release for Scene3D graph lowering and route panic diagnostics.
+
+The Scene3D graph lowerer now initializes its anchors map before use, fixing a runtime panic path during graph construction. Route panic recovery also prints stack traces, making server-side render failures and panics easier to diagnose from process output.
+
+## v0.18.0-alpha.10
+
+Diagnostics release for server render failures and panics.
+
+File page render errors now log with file path context, route handler panics log the route pattern and panic details, and page render recovery includes the request path. This keeps debugger and terminal output useful when a route fails before the response can carry enough context.
+
+## v0.18.0-alpha.9
+
+Scene3D compiler release for control-flow inside composable scene markup.
+
+The route compiler now supports `<Each>`, `<For>`, `<If>`, `<Show>`, and `<When>` inside `<Scene3D>` composable children. Scene3D child lowering was split into smaller helpers for child-list traversal, loop expansion, conditional recursion, and composable node processing, so typed scene markup can use normal GSX control-flow constructs.
+
+## v0.18.0-alpha.8
+
+Scene authoring release for typed mesh spread props.
+
+`scene.Mesh` now exposes `SpreadProps`, allowing typed mesh values to serialize directly into component attribute maps. This enables `<Each>` loops over typed mesh data in GSX templates without forcing a scene IR round trip before composable element rendering.
+
+## v0.18.0-alpha.7
+
+Hub and Scene3D resource-management release.
+
+The hub now has a per-topic latch API for join replay. Servers can latch the latest topic payload, new subscribers receive the current value without waiting for the next publish, and replay is non-blocking with tests for overwrite behavior, topic isolation, and empty-topic no-op handling.
+
+Scene3D now releases idle WebGL contexts after 30 seconds of inactivity. The runtime schedules context loss when a scene cannot render, restores rendering when activity resumes, clears timers on disposal, and marks the viewport dirty after restoration so the next frame redraws correctly.
+
 ## v0.18.0-alpha.6
 
 Patch release for Scene3D CSS invalidation and Firefox/Chromium scroll stability.
