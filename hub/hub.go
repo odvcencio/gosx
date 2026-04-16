@@ -50,6 +50,9 @@ type Hub struct {
 	syncDocName map[string]byte
 	nextSyncDoc byte
 
+	latched   map[string][]byte
+	latchedMu sync.RWMutex
+
 	// MaxClients limits the number of concurrent connections. 0 = unlimited.
 	MaxClients int
 }
@@ -126,6 +129,23 @@ func New(name string) *Hub {
 		presence:    &Presence{members: make(map[string]*ClientInfo)},
 		syncDocs:    make(map[byte]*syncedDoc),
 		syncDocName: make(map[string]byte),
+		latched:     make(map[string][]byte),
+	}
+}
+
+// Latch declares that this hub should remember the last payload
+// broadcast on the given topic and replay it to any client that joins
+// after the broadcast. Idempotent. Latch has no effect until the first
+// Broadcast on the topic fires.
+//
+// Latched payloads are in-memory only. They do not persist across
+// server restart. Latching an unbounded set of topic names grows
+// memory without bound — use Latch for fixed, known topics only.
+func (h *Hub) Latch(topic string) {
+	h.latchedMu.Lock()
+	defer h.latchedMu.Unlock()
+	if _, ok := h.latched[topic]; !ok {
+		h.latched[topic] = nil // declared, not yet populated
 	}
 }
 
@@ -157,6 +177,17 @@ func (h *Hub) Broadcast(event string, data any) {
 	if err != nil {
 		return
 	}
+
+	// Snapshot the message for latched topics so late joiners can
+	// replay it. Capture before fanout so zero-client broadcasts
+	// still populate the latch.
+	h.latchedMu.Lock()
+	if _, ok := h.latched[event]; ok {
+		clone := make([]byte, len(msg))
+		copy(clone, msg)
+		h.latched[event] = clone
+	}
+	h.latchedMu.Unlock()
 
 	h.mu.RLock()
 	defer h.mu.RUnlock()
@@ -289,6 +320,20 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	})
 	client.send <- welcome
 	h.initClientSync(client)
+
+	// Replay latched payloads to this client so it sees current state
+	// for any topic declared via Latch. Topic ordering doesn't matter —
+	// latched topics are independent of each other.
+	h.latchedMu.RLock()
+	for _, payload := range h.latched {
+		if payload == nil {
+			continue // declared but never broadcast
+		}
+		clone := make([]byte, len(payload))
+		copy(clone, payload)
+		client.send <- clone
+	}
+	h.latchedMu.RUnlock()
 
 	// Fire join handler (may broadcast to all clients including this one)
 	if handler, ok := h.handlers["join"]; ok {

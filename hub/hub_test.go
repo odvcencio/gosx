@@ -177,6 +177,33 @@ func TestHubMaxClients(t *testing.T) {
 	}
 }
 
+func TestLatchReplaysLastBroadcastToLateJoiners(t *testing.T) {
+	h := New("latch-test")
+	srv := httptest.NewServer(h)
+	defer srv.Close()
+
+	h.Latch("theme")
+	h.Broadcast("theme", map[string]any{"mode": "dark"})
+
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http")
+	c, _, err := websocket.DefaultDialer.Dial(wsURL, http.Header{})
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer c.Close()
+
+	readUntilEvent(t, c, "__welcome")
+	msg := readUntilEvent(t, c, "theme")
+
+	var payload map[string]any
+	if err := json.Unmarshal(msg.Data, &payload); err != nil {
+		t.Fatalf("unmarshal theme payload: %v", err)
+	}
+	if payload["mode"] != "dark" {
+		t.Fatalf("expected mode=dark, got %v", payload["mode"])
+	}
+}
+
 func TestHubBroadcast(t *testing.T) {
 	h := New("broadcast")
 
