@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.18.0-alpha.18
+
+GSX grammar and server app mounting release.
+
+GSX text parsing now handles text that begins immediately after a child closing tag, such as `<p>a<span>b</span>c</p>`, by moving the `jsx_text` CST token onto the GoSX external scanner. The scanner now treats literal `>` and `}` as valid GSX text, so inputs such as `<p>a > b</p>` and `<p>Result: }</p>` lower into full IR text instead of silently truncating at the punctuation. Scanner external symbol lookups now use named constants tied to the grammar external order rather than raw indexes.
+
+Server apps now expose `MountApp(prefix, child)` for composing child GoSX apps under a parent path. Non-root mounts strip the parent prefix before delegating, root mounts preserve the leading slash, and the child handler is built lazily so routes registered on the child after `MountApp` but before the first request are included.
+
+## v0.18.0-alpha.17
+
+Scene3D transition timing cache release.
+
+CSS-driven Scene3D transitions now cache resolved transition timing on the mount element. The planner no longer has to carry the same timing-resolution fields through every scene planner record, while mount updates retain the resolved duration and easing needed for CSS variable animations.
+
 ## v0.18.0-alpha.16
 
 Scene3D transition and capability release.
