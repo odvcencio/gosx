@@ -6934,12 +6934,16 @@
   function prepareScene(ir, camera, viewport, lastPrepared, cssContext) {
     const initialSource = ir && typeof ir === "object" ? ir : {};
     const css = sceneCSSResolverContext(cssContext);
+    css.nowMs = typeof cssContext === "object" && cssContext && cssContext.nowMs ? cssContext.nowMs : Date.now();
     const cssInputSignature = sceneCSSInputSignature(initialSource);
     const cssCache = lastPrepared && lastPrepared.cssCache;
+    css.prevCache = cssCache || null;
+    const hasActiveVarTransitions = cssCache && Array.isArray(cssCache.varTransitions) && cssCache.varTransitions.length > 0;
     const cssResolved = cssCache
       && cssCache.inputSignature === cssInputSignature
       && cssCache.revision === css.revision
       && cssCache.transitionFrame === css.transitionFrame
+      && !hasActiveVarTransitions
         ? sceneCSSApplyCachedResolution(initialSource, cssCache)
         : sceneResolveCSSBundleWithContext(initialSource, css, cssInputSignature);
     const source = cssResolved.ir;
@@ -6986,26 +6990,155 @@
   }
 
   function sceneResolveCSSBundleWithContext(source, css, inputSignature) {
+    const prevCache = css.prevCache || null;
+    const prevResolved = prevCache && prevCache.resolvedVars ? prevCache.resolvedVars : null;
+    const prevTransitions = prevCache && Array.isArray(prevCache.varTransitions) ? prevCache.varTransitions : [];
     const state = {
       source,
       out: source,
       dynamic: false,
       patches: [],
+      resolvedVars: {},
+      varTransitions: [],
+      prevResolved,
+      prevTransitions,
+      nowMs: css.nowMs || Date.now(),
     };
     sceneCSSResolveExplicitVars(state, css);
     sceneCSSApplyComputedDefaults(state, css);
+    sceneCSSAdvanceVarTransitions(state);
     const cache = {
       inputSignature,
       revision: css.revision,
       transitionFrame: css.transitionFrame,
-      dynamic: state.dynamic,
+      dynamic: state.dynamic || state.varTransitions.length > 0,
       patches: state.patches,
+      resolvedVars: state.resolvedVars,
+      varTransitions: state.varTransitions,
     };
     return {
       ir: state.out,
-      dynamic: state.dynamic,
+      dynamic: state.dynamic || state.varTransitions.length > 0,
       cache,
     };
+  }
+
+  function sceneCSSVarTransitionKey(kind, collectionKey, index, key) {
+    if (kind === "topObject") {
+      return collectionKey + ":" + key;
+    }
+    return collectionKey + ":" + index + ":" + key;
+  }
+
+  function sceneCSSRecordTransitionTiming(state, kind, collectionKey, index) {
+    var record = null;
+    if (kind === "topObject") {
+      var bundle = state.out || state.source || {};
+      record = bundle[collectionKey];
+    } else {
+      var collection = sceneCSSCurrentCollection(state, collectionKey);
+      record = Array.isArray(collection) ? collection[index] : null;
+    }
+    if (!record || !sceneIsPlainObject(record.transition)) {
+      return null;
+    }
+    var update = record.transition.update || record.transition;
+    var duration = sceneCSSParseDuration(update.duration);
+    if (duration <= 0) {
+      return null;
+    }
+    return {
+      duration: duration,
+      easing: typeof update.easing === "string" ? update.easing : "ease-in-out",
+    };
+  }
+
+  function sceneCSSParseDuration(value) {
+    if (typeof value === "number") {
+      return value;
+    }
+    if (typeof value !== "string") {
+      return 0;
+    }
+    var text = value.trim().toLowerCase();
+    if (text.endsWith("ms")) {
+      return parseFloat(text) || 0;
+    }
+    if (text.endsWith("s")) {
+      return (parseFloat(text) || 0) * 1000;
+    }
+    return parseFloat(text) || 0;
+  }
+
+  function sceneCSSMaybeTransitionValue(state, kind, collectionKey, index, key, newValue) {
+    var cacheKey = sceneCSSVarTransitionKey(kind, collectionKey, index, key);
+    state.resolvedVars[cacheKey] = newValue;
+    if (!state.prevResolved || !Object.prototype.hasOwnProperty.call(state.prevResolved, cacheKey)) {
+      return false;
+    }
+    var oldValue = state.prevResolved[cacheKey];
+    if (sceneCSSSameValue(oldValue, newValue)) {
+      return false;
+    }
+    var timing = sceneCSSRecordTransitionTiming(state, kind, collectionKey, index);
+    if (!timing) {
+      return false;
+    }
+    for (var i = state.varTransitions.length - 1; i >= 0; i--) {
+      if (state.varTransitions[i].cacheKey === cacheKey) {
+        state.varTransitions.splice(i, 1);
+      }
+    }
+    for (var j = state.prevTransitions.length - 1; j >= 0; j--) {
+      if (state.prevTransitions[j].cacheKey === cacheKey) {
+        var active = state.prevTransitions[j];
+        var elapsed = Math.max(0, state.nowMs - active.startTime);
+        var t = Math.min(1, elapsed / Math.max(1, active.duration));
+        oldValue = sceneTransitionLeafValue(active.from, active.to, sceneTransitionEase(active.easing, t), key);
+        state.prevTransitions.splice(j, 1);
+      }
+    }
+    state.varTransitions.push({
+      cacheKey: cacheKey,
+      kind: kind,
+      collectionKey: collectionKey,
+      index: index,
+      key: key,
+      from: sceneCloneData(oldValue),
+      to: sceneCloneData(newValue),
+      startTime: state.nowMs,
+      duration: timing.duration,
+      easing: timing.easing,
+    });
+    return true;
+  }
+
+  function sceneCSSAdvanceVarTransitions(state) {
+    var carried = state.prevTransitions;
+    var all = carried.concat(state.varTransitions);
+    var active = [];
+    for (var i = 0; i < all.length; i++) {
+      var transition = all[i];
+      var elapsed = Math.max(0, state.nowMs - transition.startTime);
+      var rawT = Math.min(1, elapsed / Math.max(1, transition.duration));
+      var eased = sceneTransitionEase(transition.easing, rawT);
+      var value = sceneTransitionLeafValue(transition.from, transition.to, eased, transition.key);
+      if (transition.kind === "topObject") {
+        sceneCSSSetTopObjectKey(state, transition.collectionKey, transition.key, value);
+      } else if (transition.kind === "nested") {
+        sceneCSSSetNestedKey(state, transition.collectionKey, transition.index, transition.childKey || "", transition.key, value);
+      } else {
+        sceneCSSSetRecordKey(state, transition.collectionKey, transition.index, transition.key, value);
+      }
+      if (rawT < 1) {
+        active.push(transition);
+      }
+      state.resolvedVars[transition.cacheKey] = transition.to;
+    }
+    state.varTransitions = active;
+    if (active.length > 0) {
+      state.dynamic = true;
+    }
   }
 
   function sceneCSSResolverContext(input) {
@@ -7320,6 +7453,9 @@
       }
       state.dynamic = true;
       if (resolved.hasValue) {
+        if (sceneCSSMaybeTransitionValue(state, "topObject", objectKey, 0, key, resolved.value)) {
+          continue;
+        }
         sceneCSSSetTopObjectKey(state, objectKey, key, resolved.value);
       }
     }
@@ -7344,6 +7480,9 @@
         }
         state.dynamic = true;
         if (resolved.hasValue) {
+          if (sceneCSSMaybeTransitionValue(state, "record", collectionKey, index, key, resolved.value)) {
+            continue;
+          }
           sceneCSSSetRecordKey(state, collectionKey, index, key, resolved.value);
         }
       }
