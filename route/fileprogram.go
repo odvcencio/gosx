@@ -2561,47 +2561,95 @@ func (r *fileProgramRenderer) applyScene3DComposableChildren(raw json.RawMessage
 func (r *fileProgramRenderer) lowerScene3DComposableChildren(children []ir.NodeID, env fileRenderEnv) map[string]any {
 	sceneMap := map[string]any{}
 	out := map[string]any{}
-	for _, childID := range children {
-		child := r.prog.NodeAt(childID)
-		if child == nil || child.Kind != ir.NodeComponent || !isScene3DComposableTag(child.Tag) {
-			continue
-		}
-		attrs := r.componentAttrMap(child.Attrs, env)
-		switch child.Tag {
-		case "Mesh":
-			appendScene3DSceneRecord(sceneMap, "objects", attrs)
-		case "Points":
-			appendScene3DSceneRecord(sceneMap, "points", attrs)
-		case "InstancedMesh":
-			appendScene3DSceneRecord(sceneMap, "instancedMeshes", attrs)
-		case "ComputeParticles":
-			appendScene3DSceneRecord(sceneMap, "computeParticles", attrs)
-		case "DirectionalLight", "PointLight", "AmbientLight", "SpotLight", "HemisphereLight":
-			attrs = cloneStringAnyMap(attrs)
-			if _, ok := attrs["kind"]; !ok {
-				attrs["kind"] = scene3DLightKind(child.Tag)
-			}
-			appendScene3DSceneRecord(sceneMap, "lights", attrs)
-		case "Environment":
-			mergeStringAnyMapValue(sceneMap, "environment", attrs)
-		case "Camera":
-			out["camera"] = attrs
-		case "Material":
-			appendScene3DSceneRecord(sceneMap, "materials", attrs)
-		case "PostFX.Bloom":
-			appendScene3DSceneRecord(sceneMap, "postEffects", withDefaultKind(attrs, "bloom"))
-		case "PostFX.Vignette":
-			appendScene3DSceneRecord(sceneMap, "postEffects", withDefaultKind(attrs, "vignette"))
-		case "PostFX.ColorGrading":
-			appendScene3DSceneRecord(sceneMap, "postEffects", withDefaultKind(attrs, "color-grade"))
-		case "PostFX.Tonemap":
-			appendScene3DSceneRecord(sceneMap, "postEffects", withDefaultKind(attrs, "tonemap"))
-		}
-	}
+	r.lowerScene3DChildList(children, env, sceneMap, out)
 	if len(sceneMap) > 0 {
 		out["scene"] = sceneMap
 	}
 	return out
+}
+
+func (r *fileProgramRenderer) lowerScene3DChildList(children []ir.NodeID, env fileRenderEnv, sceneMap, out map[string]any) {
+	for _, childID := range children {
+		child := r.prog.NodeAt(childID)
+		if child == nil {
+			continue
+		}
+		// Handle control-flow builtins by evaluating and recursing
+		// into their children so <Each>/<If> work inside <Scene3D>.
+		if child.Kind == ir.NodeComponent {
+			switch child.Tag {
+			case "Each", "For":
+				r.lowerScene3DEach(child, env, sceneMap, out)
+				continue
+			case "If", "Show", "When":
+				condition := attrValue(child.Attrs, env, "when", "if", "cond", "test")
+				if truthy(condition) {
+					r.lowerScene3DChildList(child.Children, env, sceneMap, out)
+				}
+				continue
+			}
+			if !isScene3DComposableTag(child.Tag) {
+				continue
+			}
+			r.lowerScene3DComposableNode(child, env, sceneMap, out)
+		}
+	}
+}
+
+func (r *fileProgramRenderer) lowerScene3DEach(node *ir.Node, env fileRenderEnv, sceneMap, out map[string]any) {
+	collection := attrValue(node.Attrs, env, "of", "each", "items")
+	if collection == nil {
+		return
+	}
+	itemName := strings.TrimSpace(stringValue(attrValue(node.Attrs, env, "as", "item")))
+	if itemName == "" {
+		itemName = "item"
+	}
+	indexName := strings.TrimSpace(stringValue(attrValue(node.Attrs, env, "index")))
+	for _, entry := range fileEachEntries(collection) {
+		scope := env.withValue(itemName, entry.Value)
+		if indexName != "" {
+			scope = scope.withValue(indexName, entry.Index)
+		}
+		if entry.Key != nil {
+			scope = scope.withValue(itemName+"Key", entry.Key)
+		}
+		r.lowerScene3DChildList(node.Children, scope, sceneMap, out)
+	}
+}
+
+func (r *fileProgramRenderer) lowerScene3DComposableNode(child *ir.Node, env fileRenderEnv, sceneMap, out map[string]any) {
+	attrs := r.componentAttrMap(child.Attrs, env)
+	switch child.Tag {
+	case "Mesh":
+		appendScene3DSceneRecord(sceneMap, "objects", attrs)
+	case "Points":
+		appendScene3DSceneRecord(sceneMap, "points", attrs)
+	case "InstancedMesh":
+		appendScene3DSceneRecord(sceneMap, "instancedMeshes", attrs)
+	case "ComputeParticles":
+		appendScene3DSceneRecord(sceneMap, "computeParticles", attrs)
+	case "DirectionalLight", "PointLight", "AmbientLight", "SpotLight", "HemisphereLight":
+		attrs = cloneStringAnyMap(attrs)
+		if _, ok := attrs["kind"]; !ok {
+			attrs["kind"] = scene3DLightKind(child.Tag)
+		}
+		appendScene3DSceneRecord(sceneMap, "lights", attrs)
+	case "Environment":
+		mergeStringAnyMapValue(sceneMap, "environment", attrs)
+	case "Camera":
+		out["camera"] = attrs
+	case "Material":
+		appendScene3DSceneRecord(sceneMap, "materials", attrs)
+	case "PostFX.Bloom":
+		appendScene3DSceneRecord(sceneMap, "postEffects", withDefaultKind(attrs, "bloom"))
+	case "PostFX.Vignette":
+		appendScene3DSceneRecord(sceneMap, "postEffects", withDefaultKind(attrs, "vignette"))
+	case "PostFX.ColorGrading":
+		appendScene3DSceneRecord(sceneMap, "postEffects", withDefaultKind(attrs, "color-grade"))
+	case "PostFX.Tonemap":
+		appendScene3DSceneRecord(sceneMap, "postEffects", withDefaultKind(attrs, "tonemap"))
+	}
 }
 
 func isScene3DComposableTag(tag string) bool {
