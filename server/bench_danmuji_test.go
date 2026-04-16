@@ -11,8 +11,8 @@
 package server
 
 import (
-    "net/http/httptest"
-    "testing"
+	"net/http/httptest"
+	"testing"
 )
 
 func BenchmarkRenderDocumentSimple(b *testing.B) {
@@ -25,7 +25,6 @@ func BenchmarkRenderDocumentSimple(b *testing.B) {
 	}
 }
 
-
 func BenchmarkRenderDocumentComplex(b *testing.B) {
 //line /home/draco/work/gosx/server/bench.dmj:26
 	ctx := benchComplexPageContext()
@@ -35,7 +34,6 @@ func BenchmarkRenderDocumentComplex(b *testing.B) {
 		_ = renderDocumentWithContext(ctx)
 	}
 }
-
 
 func BenchmarkWriteHtmlSimple(b *testing.B) {
 //line /home/draco/work/gosx/server/bench.dmj:36
@@ -48,7 +46,6 @@ func BenchmarkWriteHtmlSimple(b *testing.B) {
 	}
 }
 
-
 func BenchmarkWriteHtmlComplex(b *testing.B) {
 //line /home/draco/work/gosx/server/bench.dmj:47
 	node := benchComplexPageNode()
@@ -60,7 +57,6 @@ func BenchmarkWriteHtmlComplex(b *testing.B) {
 	}
 }
 
-
 func BenchmarkRenderDeferredChunk(b *testing.B) {
 //line /home/draco/work/gosx/server/bench.dmj:58
 	slotID := "stream-slot-12"
@@ -71,4 +67,3 @@ func BenchmarkRenderDeferredChunk(b *testing.B) {
 		_ = renderDeferredChunk(slotID, html)
 	}
 }
-

@@ -22,10 +22,10 @@
 package island
 
 import (
-    "testing"
+	"testing"
 
-    "github.com/odvcencio/gosx/client/vm"
-    "github.com/odvcencio/gosx/island/program"
+	"github.com/odvcencio/gosx/client/vm"
+	"github.com/odvcencio/gosx/island/program"
 )
 
 func BenchmarkCounterFullCycle(b *testing.B) {
@@ -39,7 +39,6 @@ func BenchmarkCounterFullCycle(b *testing.B) {
 	}
 }
 
-
 func BenchmarkCounterSsrRender(b *testing.B) {
 //line /home/draco/work/gosx/island/bench.dmj:41
 	prog := program.CounterProgram()
@@ -50,7 +49,6 @@ func BenchmarkCounterSsrRender(b *testing.B) {
 		_ = RenderResolvedHTML(prog, resolved)
 	}
 }
-
 
 func BenchmarkFormFullCycle(b *testing.B) {
 //line /home/draco/work/gosx/island/bench.dmj:52
@@ -63,7 +61,6 @@ func BenchmarkFormFullCycle(b *testing.B) {
 	}
 }
 
-
 func BenchmarkFormSsrRender(b *testing.B) {
 //line /home/draco/work/gosx/island/bench.dmj:63
 	prog := program.FormProgram()
@@ -74,7 +71,6 @@ func BenchmarkFormSsrRender(b *testing.B) {
 		_ = RenderResolvedHTML(prog, resolved)
 	}
 }
-
 
 func BenchmarkListSsrRender(b *testing.B) {
 //line /home/draco/work/gosx/island/bench.dmj:74
@@ -87,7 +83,6 @@ func BenchmarkListSsrRender(b *testing.B) {
 	}
 }
 
-
 func BenchmarkToggleFullCycle(b *testing.B) {
 //line /home/draco/work/gosx/island/bench.dmj:85
 	prog := program.ToggleProgram()
@@ -99,7 +94,6 @@ func BenchmarkToggleFullCycle(b *testing.B) {
 	}
 }
 
-
 func BenchmarkCounterTenDispatches(b *testing.B) {
 //line /home/draco/work/gosx/island/bench.dmj:96
 	prog := program.CounterProgram()
@@ -108,11 +102,10 @@ func BenchmarkCounterTenDispatches(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		for range 10 {
-            _ = island.Dispatch("increment", "{}")
-        }
+			_ = island.Dispatch("increment", "{}")
+		}
 	}
 }
-
 
 // SSR render of the toggle island — parity with counter/form/list
 // coverage. Toggles exercise the conditional-render branch of the
@@ -128,7 +121,6 @@ func BenchmarkToggleSsrRender(b *testing.B) {
 	}
 }
 
-
 // Multi-island page SSR: ten counter islands on one page, each with
 // its own state. This is the closest bench we have to "typical
 // production page" — most real pages have 5–15 islands. Also catches
@@ -143,11 +135,10 @@ func BenchmarkMultiIslandSsrRender(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		for range 10 {
-            _ = RenderResolvedHTML(prog, resolved)
-        }
+			_ = RenderResolvedHTML(prog, resolved)
+		}
 	}
 }
-
 
 // Form typing simulation — four rapid dispatches against a form
 // island (field-change, field-change, field-change, submit). Measures
@@ -168,7 +159,6 @@ func BenchmarkFormTypingBurst(b *testing.B) {
 	}
 }
 
-
 // Hydration round trip: NewIsland + Dispatch + second Dispatch +
 // Reconcile, the typical interaction sequence for a reactive
 // component. Each dispatch updates state, the second reconcile
@@ -185,4 +175,3 @@ func BenchmarkCounterHydrationRoundTrip(b *testing.B) {
 		_ = island.Reconcile()
 	}
 }
-

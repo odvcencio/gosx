@@ -10,10 +10,10 @@
 package ir_test
 
 import (
-    "testing"
+	"testing"
 
-    "github.com/odvcencio/gosx"
-    "github.com/odvcencio/gosx/ir"
+	"github.com/odvcencio/gosx"
+	"github.com/odvcencio/gosx/ir"
 )
 
 func BenchmarkLowerCounter(b *testing.B) {
@@ -21,60 +21,57 @@ func BenchmarkLowerCounter(b *testing.B) {
 	source := []byte(benchCounterSource)
 	tree, lang, err := gosx.Parse(source)
 	if err != nil {
-            panic(err)
-        }
+		panic(err)
+	}
 	root := tree.RootNode()
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_, err := ir.Lower(root, source, lang)
 		if err != nil {
-            panic(err)
-        }
+			panic(err)
+		}
 	}
 }
-
 
 func BenchmarkLowerForm(b *testing.B) {
 //line /home/draco/work/gosx/ir/bench.dmj:35
 	source := []byte(benchFormSource)
 	tree, lang, err := gosx.Parse(source)
 	if err != nil {
-            panic(err)
-        }
+		panic(err)
+	}
 	root := tree.RootNode()
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_, err := ir.Lower(root, source, lang)
 		if err != nil {
-            panic(err)
-        }
+			panic(err)
+		}
 	}
 }
-
 
 func BenchmarkLowerIslandCounter(b *testing.B) {
 //line /home/draco/work/gosx/ir/bench.dmj:53
 	source := []byte(benchCounterSource)
 	tree, lang, err := gosx.Parse(source)
 	if err != nil {
-            panic(err)
-        }
+		panic(err)
+	}
 	prog, err := ir.Lower(tree.RootNode(), source, lang)
 	if err != nil {
-            panic(err)
-        }
+		panic(err)
+	}
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_, err := ir.LowerIsland(prog, 0)
 		if err != nil {
-            panic(err)
-        }
+			panic(err)
+		}
 	}
 }
-
 
 func BenchmarkParseExprSimple(b *testing.B) {
 //line /home/draco/work/gosx/ir/bench.dmj:74
@@ -85,11 +82,10 @@ func BenchmarkParseExprSimple(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		_, _, err := ir.ParseExpr(src, scope)
 		if err != nil {
-            panic(err)
-        }
+			panic(err)
+		}
 	}
 }
-
 
 func BenchmarkParseExprComplex(b *testing.B) {
 //line /home/draco/work/gosx/ir/bench.dmj:88
@@ -100,8 +96,7 @@ func BenchmarkParseExprComplex(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		_, _, err := ir.ParseExpr(src, scope)
 		if err != nil {
-            panic(err)
-        }
+			panic(err)
+		}
 	}
 }
-

@@ -45,14 +45,14 @@ func cmdPerf() {
 	}
 
 	scenario := &perf.Scenario{
-		URLs:        urls,
-		Frames:      *frames,
-		Timeout:     *timeout,
-		Headless:    *headless,
-		RecordPath:  *record,
-		TracePath:   *trace,
-		CPUThrottle: *throttle,
-		MobileName:  *mobile,
+		URLs:             urls,
+		Frames:           *frames,
+		Timeout:          *timeout,
+		Headless:         *headless,
+		RecordPath:       *record,
+		TracePath:        *trace,
+		CPUThrottle:      *throttle,
+		MobileName:       *mobile,
 		Coverage:         *coverage,
 		HeapSnapshotPath: *heapSnap,
 	}
@@ -171,5 +171,5 @@ func cmdPerfCompare() {
 // stringSlice implements flag.Value for repeatable string flags.
 type stringSlice []string
 
-func (s *stringSlice) String() string    { return strings.Join(*s, ", ") }
+func (s *stringSlice) String() string     { return strings.Join(*s, ", ") }
 func (s *stringSlice) Set(v string) error { *s = append(*s, v); return nil }

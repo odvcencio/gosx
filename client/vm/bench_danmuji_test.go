@@ -11,9 +11,9 @@
 package vm
 
 import (
-    "testing"
+	"testing"
 
-    "github.com/odvcencio/gosx/island/program"
+	"github.com/odvcencio/gosx/island/program"
 )
 
 func BenchmarkResolveInitialTreeCounter(b *testing.B) {
@@ -26,7 +26,6 @@ func BenchmarkResolveInitialTreeCounter(b *testing.B) {
 	}
 }
 
-
 func BenchmarkResolveInitialTreeForm(b *testing.B) {
 //line /home/draco/work/gosx/client/vm/bench.dmj:27
 	prog := program.FormProgram()
@@ -36,7 +35,6 @@ func BenchmarkResolveInitialTreeForm(b *testing.B) {
 		_ = ResolveInitialTree(prog, `{}`)
 	}
 }
-
 
 func BenchmarkNewIslandCounter(b *testing.B) {
 //line /home/draco/work/gosx/client/vm/bench.dmj:37
@@ -48,7 +46,6 @@ func BenchmarkNewIslandCounter(b *testing.B) {
 	}
 }
 
-
 func BenchmarkDispatchIncrementCounter(b *testing.B) {
 //line /home/draco/work/gosx/client/vm/bench.dmj:47
 	prog := program.CounterProgram()
@@ -59,7 +56,6 @@ func BenchmarkDispatchIncrementCounter(b *testing.B) {
 		_ = island.Dispatch("increment", "{}")
 	}
 }
-
 
 func BenchmarkReconcileCounterAfterSet(b *testing.B) {
 //line /home/draco/work/gosx/client/vm/bench.dmj:58
@@ -73,7 +69,6 @@ func BenchmarkReconcileCounterAfterSet(b *testing.B) {
 	}
 }
 
-
 func BenchmarkValueIntToString(b *testing.B) {
 //line /home/draco/work/gosx/client/vm/bench.dmj:70
 	v := IntVal(42)
@@ -84,7 +79,6 @@ func BenchmarkValueIntToString(b *testing.B) {
 	}
 }
 
-
 func BenchmarkValueFloatToString(b *testing.B) {
 //line /home/draco/work/gosx/client/vm/bench.dmj:80
 	v := FloatVal(3.14159)
@@ -94,4 +88,3 @@ func BenchmarkValueFloatToString(b *testing.B) {
 		_ = v.String()
 	}
 }
-

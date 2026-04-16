@@ -22,7 +22,6 @@ func BenchmarkSignalSetNoSubscribers(b *testing.B) {
 	}
 }
 
-
 func BenchmarkSignalSetOneSubscriber(b *testing.B) {
 //line /home/draco/work/gosx/signal/bench.dmj:23
 	s := New(0)
@@ -33,7 +32,6 @@ func BenchmarkSignalSetOneSubscriber(b *testing.B) {
 		s.Set(42)
 	}
 }
-
 
 func BenchmarkSignalSetFourSubscribers(b *testing.B) {
 //line /home/draco/work/gosx/signal/bench.dmj:34
@@ -49,7 +47,6 @@ func BenchmarkSignalSetFourSubscribers(b *testing.B) {
 	}
 }
 
-
 func BenchmarkSignalGet(b *testing.B) {
 //line /home/draco/work/gosx/signal/bench.dmj:48
 	s := New(42)
@@ -59,4 +56,3 @@ func BenchmarkSignalGet(b *testing.B) {
 		_ = s.Get()
 	}
 }
-

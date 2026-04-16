@@ -179,7 +179,7 @@ type fakeClock struct {
 	now time.Time
 }
 
-func (f *fakeClock) Now() time.Time { return f.now }
+func (f *fakeClock) Now() time.Time          { return f.now }
 func (f *fakeClock) Advance(d time.Duration) { f.now = f.now.Add(d) }
 
 // newFakeClock returns a fakeClock starting at a fixed non-zero time.

@@ -135,7 +135,9 @@ func replIslands(d *Driver) {
 	if err != nil || raw == "" {
 		return
 	}
-	var islands []struct{ ID string `json:"id"` }
+	var islands []struct {
+		ID string `json:"id"`
+	}
 	if json.Unmarshal([]byte(raw), &islands) == nil {
 		for _, isl := range islands {
 			fmt.Printf("  %s\n", isl.ID)
@@ -158,7 +160,9 @@ func replEngines(d *Driver) {
 	if err != nil || raw == "" {
 		return
 	}
-	var engines []struct{ ID string `json:"id"` }
+	var engines []struct {
+		ID string `json:"id"`
+	}
 	if json.Unmarshal([]byte(raw), &engines) == nil {
 		for _, eng := range engines {
 			fmt.Printf("  %s\n", eng.ID)

@@ -8,8 +8,8 @@ import (
 
 // Assertion is a parsed perf gate expression.
 type Assertion struct {
-	Metric string  // e.g. "p95", "ttfb", "dropped_frames"
-	Op     string  // "<", ">", "<=", ">=", "=="
+	Metric string // e.g. "p95", "ttfb", "dropped_frames"
+	Op     string // "<", ">", "<=", ">=", "=="
 	Value  float64
 }
 

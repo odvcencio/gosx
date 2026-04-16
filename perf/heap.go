@@ -104,11 +104,11 @@ type MemoryStats struct {
 // aren't exposed.
 func QueryMemoryStats(d *Driver) (MemoryStats, error) {
 	var raw struct {
-		Used     float64 `json:"used"`
-		Total    float64 `json:"total"`
-		Limit    float64 `json:"limit"`
-		Nodes    int     `json:"nodes"`
-		Listen   int     `json:"listen"`
+		Used   float64 `json:"used"`
+		Total  float64 `json:"total"`
+		Limit  float64 `json:"limit"`
+		Nodes  int     `json:"nodes"`
+		Listen int     `json:"listen"`
 	}
 	err := d.Evaluate(`(function(){
 		var m = performance.memory || {};

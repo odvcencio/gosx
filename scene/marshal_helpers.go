@@ -96,4 +96,3 @@ func needsJSONEscape(s string) bool {
 	}
 	return false
 }
-

@@ -14,9 +14,7 @@ func Page() Node {
 			<p class="scene3d-showcase__tagline">
 				Cinematic PBR · ACES tonemap · HDR bloom
 			</p>
-			<p class="scene3d-showcase__controls">
-				DRAG ORBIT · SCROLL ZOOM
-			</p>
+			<p class="scene3d-showcase__controls">DRAG ORBIT · SCROLL ZOOM</p>
 		</div>
 	</section>
 }

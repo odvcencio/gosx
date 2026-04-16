@@ -11,92 +11,89 @@
 package island_test
 
 import (
-    "testing"
-    "time"
+	"testing"
+	"time"
 
-    "github.com/odvcencio/gosx/perf/perftest"
+	"github.com/odvcencio/gosx/perf/perftest"
 )
 
 func TestBrowserPageLifecycle(t *testing.T) {
 //line /home/draco/work/gosx/island/bench_browser.dmj:16
 	t.Parallel()
 	//line /home/draco/work/gosx/island/bench_browser.dmj:17
-t.Run("a running GoSX page", func(t *testing.T) {
-        //line /home/draco/work/gosx/island/bench_browser.dmj:18
-t.Run("profiling page load", func(t *testing.T) {
-            report := perftest.Run(t, "http://localhost:3000",
-                perftest.Timeout(15 * time.Second),
-            )
-            //line /home/draco/work/gosx/island/bench_browser.dmj:22
-t.Run("TTFB is positive", func(t *testing.T) {
-                ttfb := report.TTFBMs
-                if ttfb <= 0 {
-                    t.Fatalf("TTFB should be > 0, got %.2f", ttfb)
-                }
-            })
-            //line /home/draco/work/gosx/island/bench_browser.dmj:28
-t.Run("TTFB is under 500ms", func(t *testing.T) {
-                if report.TTFBMs > 500 {
-                    t.Fatalf("TTFB too slow: %.2fms", report.TTFBMs)
-                }
-            })
-        })
-    })
+	t.Run("a running GoSX page", func(t *testing.T) {
+		//line /home/draco/work/gosx/island/bench_browser.dmj:18
+		t.Run("profiling page load", func(t *testing.T) {
+			report := perftest.Run(t, "http://localhost:3000",
+				perftest.Timeout(15*time.Second),
+			)
+			//line /home/draco/work/gosx/island/bench_browser.dmj:22
+			t.Run("TTFB is positive", func(t *testing.T) {
+				ttfb := report.TTFBMs
+				if ttfb <= 0 {
+					t.Fatalf("TTFB should be > 0, got %.2f", ttfb)
+				}
+			})
+			//line /home/draco/work/gosx/island/bench_browser.dmj:28
+			t.Run("TTFB is under 500ms", func(t *testing.T) {
+				if report.TTFBMs > 500 {
+					t.Fatalf("TTFB too slow: %.2fms", report.TTFBMs)
+				}
+			})
+		})
+	})
 }
-
 
 func TestBrowserCounterDispatch(t *testing.T) {
 //line /home/draco/work/gosx/island/bench_browser.dmj:37
 	t.Parallel()
 	//line /home/draco/work/gosx/island/bench_browser.dmj:38
-t.Run("a page with a counter island", func(t *testing.T) {
-        //line /home/draco/work/gosx/island/bench_browser.dmj:39
-t.Run("clicking increment", func(t *testing.T) {
-            report := perftest.Run(t, "http://localhost:3000",
-                perftest.Click("[data-gosx-handler='increment']"),
-            )
-            //line /home/draco/work/gosx/island/bench_browser.dmj:43
-t.Run("produces an interaction", func(t *testing.T) {
-                count := len(report.Interactions)
-                if count == 0 {
-                    t.Fatal("no interactions recorded")
-                }
-            })
-            //line /home/draco/work/gosx/island/bench_browser.dmj:49
-t.Run("dispatch is under 50ms", func(t *testing.T) {
-                if len(report.Interactions) > 0 && report.Interactions[0].DispatchMs > 50 {
-                    t.Fatalf("dispatch too slow: %.2fms", report.Interactions[0].DispatchMs)
-                }
-            })
-        })
-    })
+	t.Run("a page with a counter island", func(t *testing.T) {
+		//line /home/draco/work/gosx/island/bench_browser.dmj:39
+		t.Run("clicking increment", func(t *testing.T) {
+			report := perftest.Run(t, "http://localhost:3000",
+				perftest.Click("[data-gosx-handler='increment']"),
+			)
+			//line /home/draco/work/gosx/island/bench_browser.dmj:43
+			t.Run("produces an interaction", func(t *testing.T) {
+				count := len(report.Interactions)
+				if count == 0 {
+					t.Fatal("no interactions recorded")
+				}
+			})
+			//line /home/draco/work/gosx/island/bench_browser.dmj:49
+			t.Run("dispatch is under 50ms", func(t *testing.T) {
+				if len(report.Interactions) > 0 && report.Interactions[0].DispatchMs > 50 {
+					t.Fatalf("dispatch too slow: %.2fms", report.Interactions[0].DispatchMs)
+				}
+			})
+		})
+	})
 }
-
 
 func TestBrowserScene3DFrameBudget(t *testing.T) {
 //line /home/draco/work/gosx/island/bench_browser.dmj:58
 	t.Parallel()
 	//line /home/draco/work/gosx/island/bench_browser.dmj:59
-t.Run("a page with Scene3D", func(t *testing.T) {
-        //line /home/draco/work/gosx/island/bench_browser.dmj:60
-t.Run("sampling 60 frames", func(t *testing.T) {
-            report := perftest.Run(t, "http://localhost:3000/demos/galaxy",
-                perftest.Frames(60),
-                perftest.Timeout(20 * time.Second),
-            )
-            //line /home/draco/work/gosx/island/bench_browser.dmj:65
-t.Run("scene is detected", func(t *testing.T) {
-                if report.Scene == nil {
-                    t.Skip("no scene detected")
-                }
-            })
-            //line /home/draco/work/gosx/island/bench_browser.dmj:70
-t.Run("p95 frame budget is under 16ms", func(t *testing.T) {
-                if report.Scene != nil && report.Scene.FrameStats.P95 > 16 {
-                    t.Fatalf("p95 exceeded: %.2fms", report.Scene.FrameStats.P95)
-                }
-            })
-        })
-    })
+	t.Run("a page with Scene3D", func(t *testing.T) {
+		//line /home/draco/work/gosx/island/bench_browser.dmj:60
+		t.Run("sampling 60 frames", func(t *testing.T) {
+			report := perftest.Run(t, "http://localhost:3000/demos/galaxy",
+				perftest.Frames(60),
+				perftest.Timeout(20*time.Second),
+			)
+			//line /home/draco/work/gosx/island/bench_browser.dmj:65
+			t.Run("scene is detected", func(t *testing.T) {
+				if report.Scene == nil {
+					t.Skip("no scene detected")
+				}
+			})
+			//line /home/draco/work/gosx/island/bench_browser.dmj:70
+			t.Run("p95 frame budget is under 16ms", func(t *testing.T) {
+				if report.Scene != nil && report.Scene.FrameStats.P95 > 16 {
+					t.Fatalf("p95 exceeded: %.2fms", report.Scene.FrameStats.P95)
+				}
+			})
+		})
+	})
 }
-

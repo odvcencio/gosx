@@ -57,10 +57,7 @@ func Page() Node {
 				<h2 class="cms-panel-label">Editor</h2>
 				<div class="cms-block-list">
 					<Each of={data.blocks} as="block">
-						<article
-							class={"cms-editor-block cms-editor-block--" + block.kind}
-							aria-label={block.kind + " block"}
-						>
+						<article class={"cms-editor-block cms-editor-block--" + block.kind} aria-label={block.kind + " block"}>
 							<div class="cms-editor-block__header">
 								<span class="cms-editor-block__type">{block.kind}</span>
 							</div>
@@ -72,13 +69,25 @@ func Page() Node {
 									</label>
 									<label class="cms-field">
 										<span>Subtitle</span>
-										<input class="cms-input" type="text" name="subtitle" value={block.subtitle} placeholder="Supporting subtitle" />
+										<input
+											class="cms-input"
+											type="text"
+											name="subtitle"
+											value={block.subtitle}
+											placeholder="Supporting subtitle"
+										 />
 									</label>
 								</If>
 								<If cond={block.kind == "feature"}>
 									<label class="cms-field">
 										<span>Title</span>
-										<input class="cms-input" type="text" name="title" value={block.title} placeholder="Feature title" />
+										<input
+											class="cms-input"
+											type="text"
+											name="title"
+											value={block.title}
+											placeholder="Feature title"
+										 />
 									</label>
 									<label class="cms-field">
 										<span>Body</span>
@@ -92,7 +101,13 @@ func Page() Node {
 									</label>
 									<label class="cms-field">
 										<span>Author</span>
-										<input class="cms-input" type="text" name="author" value={block.author} placeholder="Author name" />
+										<input
+											class="cms-input"
+											type="text"
+											name="author"
+											value={block.author}
+											placeholder="Author name"
+										 />
 									</label>
 								</If>
 							</div>
@@ -122,7 +137,10 @@ func Page() Node {
 								<figure class="cms-preview-quote">
 									<blockquote>{block.text}</blockquote>
 									<hr />
-									<figcaption>— {block.author}</figcaption>
+									<figcaption>
+										—
+										{block.author}
+									</figcaption>
 								</figure>
 							</If>
 						</div>
@@ -132,7 +150,8 @@ func Page() Node {
 		</div>
 		<footer class="cms-statusbar">
 			<span class="cms-statusbar__info">
-				<span>{len(data.blocks)}</span> blocks in document
+				<span>{len(data.blocks)}</span>
+				blocks in document
 			</span>
 		</footer>
 	</div>

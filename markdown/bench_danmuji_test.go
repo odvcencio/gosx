@@ -22,7 +22,6 @@ func BenchmarkParseShortDoc(b *testing.B) {
 	}
 }
 
-
 func BenchmarkRenderShortDoc(b *testing.B) {
 //line /home/draco/work/gosx/markdown/bench.dmj:23
 	doc := Parse([]byte(benchShortMarkdown))
@@ -33,7 +32,6 @@ func BenchmarkRenderShortDoc(b *testing.B) {
 		_ = r.Render(doc)
 	}
 }
-
 
 func BenchmarkRenderLongDoc(b *testing.B) {
 //line /home/draco/work/gosx/markdown/bench.dmj:34
@@ -46,7 +44,6 @@ func BenchmarkRenderLongDoc(b *testing.B) {
 	}
 }
 
-
 func BenchmarkParseAndRenderLongDoc(b *testing.B) {
 //line /home/draco/work/gosx/markdown/bench.dmj:45
 	src := []byte(benchLongMarkdown)
@@ -56,4 +53,3 @@ func BenchmarkParseAndRenderLongDoc(b *testing.B) {
 		_ = RenderString(string(src))
 	}
 }
-

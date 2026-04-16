@@ -4,12 +4,12 @@ import "fmt"
 
 // ResourceEntry represents a resource loading event from the Performance API.
 type ResourceEntry struct {
-	Name         string  `json:"name"`
-	InitiatorType string `json:"initiatorType"`
-	TransferSize float64 `json:"transferSize"`
-	Duration     float64 `json:"duration"`
-	StartTime    float64 `json:"startTime"`
-	ResponseEnd  float64 `json:"responseEnd"`
+	Name          string  `json:"name"`
+	InitiatorType string  `json:"initiatorType"`
+	TransferSize  float64 `json:"transferSize"`
+	Duration      float64 `json:"duration"`
+	StartTime     float64 `json:"startTime"`
+	ResponseEnd   float64 `json:"responseEnd"`
 }
 
 // QueryResourceWaterfall returns all resource entries sorted by start time.

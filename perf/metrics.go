@@ -8,10 +8,10 @@ import (
 
 // Report is the top-level profiling result.
 type Report struct {
-	URL       string       `json:"url"`
-	Timestamp time.Time    `json:"timestamp"`
-	Pages     []PageReport `json:"pages,omitempty"`
-	PageReport             // embedded for single-page backward compat
+	URL        string       `json:"url"`
+	Timestamp  time.Time    `json:"timestamp"`
+	Pages      []PageReport `json:"pages,omitempty"`
+	PageReport              // embedded for single-page backward compat
 }
 
 // PageReport holds metrics collected from a single page load.
@@ -27,9 +27,9 @@ type PageReport struct {
 	Interactions      []InteractionMetric `json:"interactions,omitempty"`
 
 	// Network resource waterfall (top-N slowest or largest)
-	Resources []ResourceEntry `json:"resources,omitempty"`
-	TotalBytesTransferred int64 `json:"totalBytesTransferred"`
-	BlockingResourceMs    float64 `json:"blockingResourceMs"`
+	Resources             []ResourceEntry `json:"resources,omitempty"`
+	TotalBytesTransferred int64           `json:"totalBytesTransferred"`
+	BlockingResourceMs    float64         `json:"blockingResourceMs"`
 
 	// Core Web Vitals
 	LargestContentfulPaintMs float64 `json:"lcpMs"`
@@ -37,17 +37,17 @@ type PageReport struct {
 	FirstInputDelayMs        float64 `json:"fidMs"`
 
 	// Main-thread blocking
-	LongTasks             []LongTaskMetric `json:"longTasks,omitempty"`
-	LongTaskCount         int              `json:"longTaskCount"`
-	LongTaskTotalMs       float64          `json:"longTaskTotalMs"`
-	TotalBlockingTimeMs   float64          `json:"totalBlockingTimeMs"`
+	LongTasks           []LongTaskMetric `json:"longTasks,omitempty"`
+	LongTaskCount       int              `json:"longTaskCount"`
+	LongTaskTotalMs     float64          `json:"longTaskTotalMs"`
+	TotalBlockingTimeMs float64          `json:"totalBlockingTimeMs"`
 
 	// GoSX runtime throughput
-	SignalWrites     int `json:"signalWrites"`
-	SignalReads      int `json:"signalReads"`
-	HubMessageCount  int `json:"hubMessageCount"`
-	HubMessageBytes  int `json:"hubMessageBytes"`
-	HubSendCount     int `json:"hubSendCount"`
+	SignalWrites    int `json:"signalWrites"`
+	SignalReads     int `json:"signalReads"`
+	HubMessageCount int `json:"hubMessageCount"`
+	HubMessageBytes int `json:"hubMessageBytes"`
+	HubSendCount    int `json:"hubSendCount"`
 
 	// WebGL context info (nil if no canvas detected)
 	WebGL *WebGLInfo `json:"webgl,omitempty"`
@@ -73,20 +73,20 @@ type LongTaskMetric struct {
 // WebGLInfo holds GPU context introspection results.
 // Tier is "webgpu" | "webgl2" | "webgl1" | "none".
 type WebGLInfo struct {
-	Tier                         string    `json:"tier"`
-	Version                      string    `json:"version"`
-	ShadingLanguageVersion       string    `json:"shadingLanguageVersion,omitempty"`
-	Vendor                       string    `json:"vendor"`
-	Renderer                     string    `json:"renderer"`
-	MaxTextureSize               int       `json:"maxTextureSize"`
-	MaxCubeMapSize               int       `json:"maxCubeMapSize,omitempty"`
-	MaxRenderbufferSize          int       `json:"maxRenderbufferSize,omitempty"`
-	MaxVertexAttribs             int       `json:"maxVertexAttribs,omitempty"`
-	MaxCombinedTextureImageUnits int       `json:"maxCombinedTextureImageUnits,omitempty"`
-	Antialiasing                 bool      `json:"antialiasing,omitempty"`
-	PreserveDrawingBuffer        bool      `json:"preserveDrawingBuffer,omitempty"`
-	Extensions                   []string  `json:"extensions,omitempty"`
-	Caps                         *GPUCaps  `json:"caps,omitempty"`
+	Tier                         string   `json:"tier"`
+	Version                      string   `json:"version"`
+	ShadingLanguageVersion       string   `json:"shadingLanguageVersion,omitempty"`
+	Vendor                       string   `json:"vendor"`
+	Renderer                     string   `json:"renderer"`
+	MaxTextureSize               int      `json:"maxTextureSize"`
+	MaxCubeMapSize               int      `json:"maxCubeMapSize,omitempty"`
+	MaxRenderbufferSize          int      `json:"maxRenderbufferSize,omitempty"`
+	MaxVertexAttribs             int      `json:"maxVertexAttribs,omitempty"`
+	MaxCombinedTextureImageUnits int      `json:"maxCombinedTextureImageUnits,omitempty"`
+	Antialiasing                 bool     `json:"antialiasing,omitempty"`
+	PreserveDrawingBuffer        bool     `json:"preserveDrawingBuffer,omitempty"`
+	Extensions                   []string `json:"extensions,omitempty"`
+	Caps                         *GPUCaps `json:"caps,omitempty"`
 }
 
 // IsSoftwareRendered reports whether the WebGL context is backed by a
@@ -275,14 +275,14 @@ func CollectPageReport(d *Driver, url string) (*PageReport, error) {
 
 	// Core Web Vitals + extended runtime counters
 	var vitals struct {
-		LCP              float64 `json:"lcp"`
-		CLS              float64 `json:"cls"`
-		FID              float64 `json:"fid"`
-		SignalWrites     int     `json:"signalWrites"`
-		SignalReads      int     `json:"signalReads"`
-		HubMessageCount  int     `json:"hubMessageCount"`
-		HubMessageBytes  int     `json:"hubMessageBytes"`
-		HubSendCount     int     `json:"hubSendCount"`
+		LCP             float64 `json:"lcp"`
+		CLS             float64 `json:"cls"`
+		FID             float64 `json:"fid"`
+		SignalWrites    int     `json:"signalWrites"`
+		SignalReads     int     `json:"signalReads"`
+		HubMessageCount int     `json:"hubMessageCount"`
+		HubMessageBytes int     `json:"hubMessageBytes"`
+		HubSendCount    int     `json:"hubSendCount"`
 	}
 	_ = d.Evaluate(`(function() {
 		var p = window.__gosx_perf || {};

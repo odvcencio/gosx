@@ -28,7 +28,7 @@ type Recorder struct {
 }
 
 type recordedFrame struct {
-	data      []byte  // JPEG bytes
+	data      []byte // JPEG bytes
 	timestamp float64
 }
 

@@ -4,7 +4,9 @@ func Page() Node {
 	return <section class="play" data-compile-url={actionPath("compile")} data-csrf-token={csrf.token}>
 		<header class="play__header">
 			<h1 class="play__title">GoSX Playground</h1>
-			<p class="play__subtitle">Edit gsx on the left. Preview hydrates on the right.</p>
+			<p class="play__subtitle">
+				Edit gsx on the left. Preview hydrates on the right.
+			</p>
 		</header>
 		<div class="play__body">
 			<div class="play__editor">
@@ -17,11 +19,7 @@ func Page() Node {
 					</select>
 					<button class="play__reset-btn" type="button" aria-label="Reset to selected preset">Reset</button>
 				</div>
-				<textarea
-					class="play__source"
-					spellcheck="false"
-					aria-label="gsx source"
-				>{data.source}</textarea>
+				<textarea class="play__source" spellcheck="false" aria-label="gsx source">{data.source}</textarea>
 				<div class="play__errors" aria-live="polite"></div>
 			</div>
 			<div class="play__preview">

@@ -11,11 +11,7 @@ func Page() Node {
 		<div class="demos-landing__grid">
 			<Each of={data.demos} as="demo">
 				<If cond={demo.Live}>
-					<a
-						class="demo-card demo-card--live"
-						href={"/demos/" + demo.Slug}
-						data-demo={demo.Slug}
-					>
+					<a class="demo-card demo-card--live" href={"/demos/" + demo.Slug} data-demo={demo.Slug}>
 						<div class="demo-card__swatch" style={"background: " + demo.Accent}></div>
 						<div class="demo-card__meta">
 							<span class="demo-card__chip demo-card__chip--live">Live</span>
@@ -26,11 +22,7 @@ func Page() Node {
 					</a>
 				</If>
 				<If cond={!demo.Live}>
-					<div
-						class="demo-card demo-card--soon"
-						data-demo={demo.Slug}
-						aria-disabled="true"
-					>
+					<div class="demo-card demo-card--soon" data-demo={demo.Slug} aria-disabled="true">
 						<div class="demo-card__swatch" style={"background: " + demo.Accent}></div>
 						<div class="demo-card__meta">
 							<span class="demo-card__chip demo-card__chip--soon">Soon</span>

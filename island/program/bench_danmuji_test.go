@@ -20,11 +20,10 @@ func BenchmarkEncodeBinaryCounter(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		_, err := EncodeBinary(prog)
 		if err != nil {
-            panic(err)
-        }
+			panic(err)
+		}
 	}
 }
-
 
 func BenchmarkEncodeBinaryForm(b *testing.B) {
 //line /home/draco/work/gosx/island/program/bench.dmj:26
@@ -34,11 +33,10 @@ func BenchmarkEncodeBinaryForm(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		_, err := EncodeBinary(prog)
 		if err != nil {
-            panic(err)
-        }
+			panic(err)
+		}
 	}
 }
-
 
 func BenchmarkEncodeJsonCounter(b *testing.B) {
 //line /home/draco/work/gosx/island/program/bench.dmj:39
@@ -48,26 +46,24 @@ func BenchmarkEncodeJsonCounter(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		_, err := EncodeJSON(prog)
 		if err != nil {
-            panic(err)
-        }
+			panic(err)
+		}
 	}
 }
-
 
 func BenchmarkDecodeBinaryCounter(b *testing.B) {
 //line /home/draco/work/gosx/island/program/bench.dmj:52
 	prog := benchCounterProgram()
 	data, err := EncodeBinary(prog)
 	if err != nil {
-            panic(err)
-        }
+		panic(err)
+	}
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_, err := DecodeBinary(data)
 		if err != nil {
-            panic(err)
-        }
+			panic(err)
+		}
 	}
 }
-

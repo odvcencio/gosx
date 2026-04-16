@@ -10,8 +10,8 @@
 package scene
 
 import (
-    "encoding/json"
-    "testing"
+	"encoding/json"
+	"testing"
 )
 
 func BenchmarkPropsSceneIr(b *testing.B) {
@@ -24,7 +24,6 @@ func BenchmarkPropsSceneIr(b *testing.B) {
 	}
 }
 
-
 func BenchmarkPropsLegacyProps(b *testing.B) {
 //line /home/draco/work/gosx/scene/bench.dmj:25
 	props := benchMixedScene()
@@ -35,7 +34,6 @@ func BenchmarkPropsLegacyProps(b *testing.B) {
 	}
 }
 
-
 func BenchmarkPropsMarshalJson(b *testing.B) {
 //line /home/draco/work/gosx/scene/bench.dmj:35
 	props := benchMixedScene()
@@ -44,36 +42,34 @@ func BenchmarkPropsMarshalJson(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		_, err := json.Marshal(props)
 		if err != nil {
-            panic(err)
-        }
+			panic(err)
+		}
 	}
 }
-
 
 func BenchmarkObjectIrLegacyProps(b *testing.B) {
 //line /home/draco/work/gosx/scene/bench.dmj:48
 	ir := ObjectIR{
-            ID:            "bench-object",
-            Kind:          "sphere",
-            Radius:        0.5,
-            Segments:      24,
-            MaterialKind:  "standard",
-            Color:         "#d4af37",
-            Roughness:     0.3,
-            Metalness:     0.9,
-            X:             1.5,
-            Y:             0.5,
-            Z:             0,
-            CastShadow:    true,
-            ReceiveShadow: true,
-        }
+		ID:            "bench-object",
+		Kind:          "sphere",
+		Radius:        0.5,
+		Segments:      24,
+		MaterialKind:  "standard",
+		Color:         "#d4af37",
+		Roughness:     0.3,
+		Metalness:     0.9,
+		X:             1.5,
+		Y:             0.5,
+		Z:             0,
+		CastShadow:    true,
+		ReceiveShadow: true,
+	}
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_ = ir.legacyProps()
 	}
 }
-
 
 // Exercises the fast-path SSR helper that GoSXSpreadProps (and, via
 // refactor, MarshalJSON / RawPropsJSON) now routes through. This is
@@ -91,7 +87,6 @@ func BenchmarkPropsSpreadPropsFast(b *testing.B) {
 	}
 }
 
-
 // Full GoSXSpreadProps: the public entry point the route file-spread
 // handler calls when lowering a `<Scene3D {...data.galaxy}>` component.
 // Includes the capabilities slice allocation and programRef trimming
@@ -106,7 +101,6 @@ func BenchmarkPropsGosxSpreadProps(b *testing.B) {
 		_ = props.GoSXSpreadProps()
 	}
 }
-
 
 // RawPropsJSON is the engine-manifest JSON emitter — it's what the
 // Go runtime writes to engine.Config.Props. Now routes through
@@ -123,7 +117,6 @@ func BenchmarkPropsRawJson(b *testing.B) {
 	}
 }
 
-
 // Larger fixture (80 spheres) stressing the lowerer and scene IR
 // construction to roughly the size of a production homepage galaxy
 // scene. Alloc growth here is linear in mesh count — the point is
@@ -136,11 +129,10 @@ func BenchmarkPropsMarshalGalaxy(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		_, err := json.Marshal(props)
 		if err != nil {
-            panic(err)
-        }
+			panic(err)
+		}
 	}
 }
-
 
 // Scene graph lowering in isolation — Graph → SceneIR — so bench
 // drift can be attributed to the lowerer vs. the downstream marshal.
@@ -153,4 +145,3 @@ func BenchmarkSceneIrGalaxy(b *testing.B) {
 		_ = props.SceneIR()
 	}
 }
-

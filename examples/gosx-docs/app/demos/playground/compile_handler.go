@@ -162,14 +162,14 @@ func renderPlaygroundSSR(componentName string) string {
 
 // CompileConfig configures a Compiler with safety and throughput knobs.
 type CompileConfig struct {
-	MaxSourceBytes int           // hard cap on input length; 0 = default 16 KB
-	MaxNodes       int           // cap on lowered island nodes; 0 = default 4096
-	MaxExprs       int           // cap on lowered island exprs; 0 = default 4096
-	ParseTimeout   time.Duration // 0 = default 250 ms
+	MaxSourceBytes int              // hard cap on input length; 0 = default 16 KB
+	MaxNodes       int              // cap on lowered island nodes; 0 = default 4096
+	MaxExprs       int              // cap on lowered island exprs; 0 = default 4096
+	ParseTimeout   time.Duration    // 0 = default 250 ms
 	RateLimit      *democtl.Limiter // required; nil = construction error
-	CacheCapacity  int           // 0 = default 256
-	CacheTTL       time.Duration // 0 = default 5 min
-	Clock          democtl.Clock // nil = real clock
+	CacheCapacity  int              // 0 = default 256
+	CacheTTL       time.Duration    // 0 = default 5 min
+	Clock          democtl.Clock    // nil = real clock
 }
 
 // DefaultCompileConfig returns a CompileConfig with production-sane defaults

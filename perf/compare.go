@@ -13,9 +13,9 @@ import (
 // Direction tells the formatter which way is "good" (lower is better for
 // timing, higher is better for coverage ratio).
 type Comparison struct {
-	Baseline string           `json:"baselinePath"`
-	Candidate string          `json:"candidatePath"`
-	Metrics  []ComparedMetric `json:"metrics"`
+	Baseline  string           `json:"baselinePath"`
+	Candidate string           `json:"candidatePath"`
+	Metrics   []ComparedMetric `json:"metrics"`
 }
 
 // Direction encodes which way improvement points for a metric.

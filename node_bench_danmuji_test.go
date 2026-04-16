@@ -22,51 +22,48 @@ func BenchmarkRenderHtmlSimple(b *testing.B) {
 	}
 }
 
-
 func BenchmarkRenderHtmlWithAttrs(b *testing.B) {
 //line /home/draco/work/gosx/node_bench.dmj:23
 	node := El("div",
-            Attrs(
-                Attr("id", "bench-element"),
-                Attr("class", "card card--primary chrome-surface"),
-                Attr("data-gosx-island", "counter"),
-                Attr("data-gosx-program", "counter-v2"),
-                Attr("aria-label", "Interactive counter"),
-                Attr("role", "region"),
-            ),
-            Text("body content"),
-        )
+		Attrs(
+			Attr("id", "bench-element"),
+			Attr("class", "card card--primary chrome-surface"),
+			Attr("data-gosx-island", "counter"),
+			Attr("data-gosx-program", "counter-v2"),
+			Attr("aria-label", "Interactive counter"),
+			Attr("role", "region"),
+		),
+		Text("body content"),
+	)
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_ = RenderHTML(node)
 	}
 }
-
 
 func BenchmarkRenderHtmlNested(b *testing.B) {
 //line /home/draco/work/gosx/node_bench.dmj:43
 	link := func(href, label string) Node {
-            return El("a", Attrs(Attr("href", href), Attr("class", "nav__link")), Text(label))
-        }
+		return El("a", Attrs(Attr("href", href), Attr("class", "nav__link")), Text(label))
+	}
 	node := El("header",
-            Attrs(Attr("class", "site-header"), Attr("role", "banner")),
-            El("div", Attrs(Attr("class", "site-header__brand")), Text("GoSX")),
-            El("nav",
-                Attrs(Attr("class", "site-header__nav"), Attr("aria-label", "Primary")),
-                El("ul", Attrs(Attr("class", "nav__list")),
-                    El("li", Attrs(Attr("class", "nav__item")), link("/", "Home")),
-                    El("li", Attrs(Attr("class", "nav__item")), link("/docs", "Docs")),
-                    El("li", Attrs(Attr("class", "nav__item")), link("/demos", "Demos")),
-                    El("li", Attrs(Attr("class", "nav__item")), link("/blog", "Blog")),
-                    El("li", Attrs(Attr("class", "nav__item")), link("/contact", "Contact")),
-                ),
-            ),
-        )
+		Attrs(Attr("class", "site-header"), Attr("role", "banner")),
+		El("div", Attrs(Attr("class", "site-header__brand")), Text("GoSX")),
+		El("nav",
+			Attrs(Attr("class", "site-header__nav"), Attr("aria-label", "Primary")),
+			El("ul", Attrs(Attr("class", "nav__list")),
+				El("li", Attrs(Attr("class", "nav__item")), link("/", "Home")),
+				El("li", Attrs(Attr("class", "nav__item")), link("/docs", "Docs")),
+				El("li", Attrs(Attr("class", "nav__item")), link("/demos", "Demos")),
+				El("li", Attrs(Attr("class", "nav__item")), link("/blog", "Blog")),
+				El("li", Attrs(Attr("class", "nav__item")), link("/contact", "Contact")),
+			),
+		),
+	)
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_ = RenderHTML(node)
 	}
 }
-

@@ -11,8 +11,8 @@
 package route
 
 import (
-    "net/http/httptest"
-    "testing"
+	"net/http/httptest"
+	"testing"
 )
 
 func BenchmarkRouterServeStatic(b *testing.B) {
@@ -27,7 +27,6 @@ func BenchmarkRouterServeStatic(b *testing.B) {
 	}
 }
 
-
 func BenchmarkRouterServeParam(b *testing.B) {
 //line /home/draco/work/gosx/route/bench.dmj:28
 	handler := benchParamRouter()
@@ -39,7 +38,6 @@ func BenchmarkRouterServeParam(b *testing.B) {
 		handler.ServeHTTP(w, req)
 	}
 }
-
 
 func BenchmarkRouterServeNestedLayouts(b *testing.B) {
 //line /home/draco/work/gosx/route/bench.dmj:40
@@ -53,7 +51,6 @@ func BenchmarkRouterServeNestedLayouts(b *testing.B) {
 	}
 }
 
-
 func BenchmarkPatternParamNames(b *testing.B) {
 //line /home/draco/work/gosx/route/bench.dmj:52
 	pattern := "/users/{userID}/posts/{slug}/comments/{commentID}"
@@ -63,7 +60,6 @@ func BenchmarkPatternParamNames(b *testing.B) {
 		_ = patternParamNames(pattern)
 	}
 }
-
 
 // End-to-end measure of what the file-route renderer does on every
 // <Scene3D {...data.galaxy}> SSR: take typed scene.Props → get the
@@ -87,7 +83,6 @@ func BenchmarkEnginePropsSceneSpread(b *testing.B) {
 	}
 }
 
-
 // Full GoSXSpreadProps → marshalEngineProps round trip (spread +
 // canonicalize + marshal), so the benchmark reflects the true
 // per-request cost of a Scene3D SSR render path end-to-end.
@@ -101,7 +96,6 @@ func BenchmarkEnginePropsSceneEndToEnd(b *testing.B) {
 		_ = marshalEngineProps(spread)
 	}
 }
-
 
 // Galaxy-scale variant — 80 point spheres, plane, shadow + post-fx
 // lights. This is the closest thing the bench suite has to the
@@ -117,7 +111,6 @@ func BenchmarkEnginePropsGalaxyEndToEnd(b *testing.B) {
 	}
 }
 
-
 // Graph lowering alone (Graph → SceneIR) for a galaxy-scale fixture.
 // Isolates the lowerer cost so bench drift can be attributed to the
 // graph walker vs. the downstream marshal/canonicalize steps.
@@ -130,7 +123,6 @@ func BenchmarkSceneIrGalaxyLower(b *testing.B) {
 		_ = props.SceneIR()
 	}
 }
-
 
 // Helpers imported from bench_helpers_test.go (route package).
 // These mirror scene.benchMixedScene / benchGalaxyScene without
