@@ -5,7 +5,7 @@
   var _childSet = new Set();
   var _mixerResults = new Map();
 
-  function sceneAnimBuildNodeTransforms(nodes, animatedTransforms) {
+  function sceneAnimBuildNodeTransforms(nodes, animatedTransforms, rootTransform) {
     _nodeTransforms.clear();
 
     function walkNode(nodeIndex, parentWorld) {
@@ -14,7 +14,7 @@
       var anim = animatedTransforms ? animatedTransforms.get(nodeIndex) : null;
 
       var local = sceneTRSToMat4(
-        anim && anim.position ? anim.position : (node.translation || [0, 0, 0]),
+        anim && (anim.translation || anim.position) ? (anim.translation || anim.position) : (node.translation || [0, 0, 0]),
         anim && anim.rotation ? anim.rotation : (node.rotation || [0, 0, 0, 1]),
         anim && anim.scale ? anim.scale : (node.scale || [1, 1, 1])
       );
@@ -36,7 +36,7 @@
       }
     }
     for (var i = 0; i < nodes.length; i++) {
-      if (!_childSet.has(i)) walkNode(i, null);
+      if (!_childSet.has(i)) walkNode(i, rootTransform || null);
     }
 
     return _nodeTransforms;
@@ -237,6 +237,9 @@
       if (clip && clip.channels) {
         for (var ci = 0; ci < clip.channels.length; ci++) {
           var ch = clip.channels[ci];
+          if (ch.targetID == null && ch.targetNode != null) {
+            ch.targetID = ch.targetNode;
+          }
           ch._key = ch.targetID + ":" + ch.property;
           ch._lastIndex = 0;
         }

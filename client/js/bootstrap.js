@@ -2912,6 +2912,207 @@
     onTextLayoutInvalidated,
   };
 
+  const GOSX_TELEMETRY_ENDPOINT = "/_gosx/client-events";
+  const GOSX_TELEMETRY_FLUSH_MS_DEFAULT = 2000;
+  const GOSX_TELEMETRY_BATCH_MAX_DEFAULT = 20;
+  const GOSX_TELEMETRY_QUEUE_MAX_DEFAULT = 200;
+  const GOSX_TELEMETRY_LEVELS = { debug: 1, info: 1, warn: 1, error: 1 };
+
+  function gosxTelemetryConfig() {
+    const cfg = (typeof window !== "undefined" && window.__gosx_telemetry_config) || {};
+    return {
+      endpoint: typeof cfg.endpoint === "string" && cfg.endpoint ? cfg.endpoint : GOSX_TELEMETRY_ENDPOINT,
+      flushInterval: Math.max(0, Number(cfg.flushInterval) || GOSX_TELEMETRY_FLUSH_MS_DEFAULT),
+      maxBatch: Math.max(1, Number(cfg.maxBatch) || GOSX_TELEMETRY_BATCH_MAX_DEFAULT),
+      maxQueue: Math.max(1, Number(cfg.maxQueue) || GOSX_TELEMETRY_QUEUE_MAX_DEFAULT),
+      enabled: cfg.enabled !== false,
+    };
+  }
+
+  function gosxTelemetrySessionID() {
+    const alphabet = "abcdefghijklmnopqrstuvwxyz0123456789";
+    let out = "s_";
+    for (let i = 0; i < 10; i += 1) {
+      out += alphabet[Math.floor(Math.random() * alphabet.length)];
+    }
+    return out;
+  }
+
+  function gosxTelemetryNormalizeLevel(level) {
+    const key = String(level || "").toLowerCase();
+    return GOSX_TELEMETRY_LEVELS[key] ? key : "info";
+  }
+
+  function gosxTelemetryCurrentURL() {
+    try {
+      if (typeof window !== "undefined" && window.location && window.location.pathname) {
+        return String(window.location.pathname);
+      }
+    } catch (_err) {
+      /* fall through */
+    }
+    return "";
+  }
+
+  function gosxTelemetryUserAgent() {
+    try {
+      if (typeof window !== "undefined" && window.navigator && typeof window.navigator.userAgent === "string") {
+        return String(window.navigator.userAgent);
+      }
+    } catch (_err) {
+      /* fall through */
+    }
+    return "";
+  }
+
+  function gosxInstallTelemetry() {
+    if (typeof window === "undefined") {
+      return;
+    }
+    if (window.__gosx_telemetry_installed) {
+      return;
+    }
+    window.__gosx_telemetry_installed = true;
+
+    const cfg = gosxTelemetryConfig();
+
+    if (!cfg.enabled) {
+      window.__gosx_emit = function () {};
+      window.__gosx_telemetry_flush = function () {};
+      return;
+    }
+
+    const sid = gosxTelemetrySessionID();
+    const queue = [];
+    let flushTimer = null;
+    let uaSent = false;
+
+    function emit(level, category, message, fields) {
+      if (queue.length >= cfg.maxQueue) {
+        return;
+      }
+      const event = {
+        ts: Date.now(),
+        lvl: gosxTelemetryNormalizeLevel(level),
+        cat: typeof category === "string" && category ? category : "unknown",
+        msg: typeof message === "string" ? message : String(message == null ? "" : message),
+        url: gosxTelemetryCurrentURL(),
+      };
+      if (!uaSent) {
+        event.ua = gosxTelemetryUserAgent();
+        uaSent = true;
+      }
+      if (fields && typeof fields === "object") {
+        event.fields = fields;
+      }
+      queue.push(event);
+      scheduleFlush();
+    }
+
+    function scheduleFlush() {
+      if (flushTimer != null || queue.length === 0) {
+        return;
+      }
+      const delay = Math.max(0, cfg.flushInterval);
+      flushTimer = setTimeout(function () {
+        flushTimer = null;
+        flushBatch(false);
+      }, delay);
+    }
+
+    function buildPayload(batch) {
+      return JSON.stringify({
+        sid: sid,
+        sent_at: Date.now(),
+        events: batch,
+      });
+    }
+
+    function flushBatch(preferBeacon) {
+      if (queue.length === 0) {
+        return;
+      }
+      const batch = queue.splice(0, cfg.maxBatch);
+      const body = buildPayload(batch);
+
+      if (preferBeacon) {
+        try {
+          const nav = window.navigator;
+          if (nav && typeof nav.sendBeacon === "function") {
+            if (nav.sendBeacon(cfg.endpoint, body)) {
+              return;
+            }
+          }
+        } catch (_err) {
+          /* fall through to fetch */
+        }
+      }
+
+      try {
+        if (typeof window.fetch === "function") {
+          const result = window.fetch(cfg.endpoint, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: body,
+            keepalive: true,
+            credentials: "omit",
+          });
+          if (result && typeof result.catch === "function") {
+            result.catch(function () { /* swallow — telemetry must never surface to users */ });
+          }
+        }
+      } catch (_err) {
+        /* swallow */
+      }
+
+      if (queue.length > 0) {
+        scheduleFlush();
+      }
+    }
+
+    try {
+      window.addEventListener("error", function (event) {
+        emit("error", "runtime", (event && event.message) || "uncaught error", {
+          filename: (event && event.filename) || "",
+          lineno: (event && event.lineno) || 0,
+          colno: (event && event.colno) || 0,
+          stack: (event && event.error && event.error.stack) || "",
+        });
+      });
+      window.addEventListener("unhandledrejection", function (event) {
+        const reason = event && event.reason;
+        const message = (reason && reason.message) || (typeof reason === "string" ? reason : "unhandledrejection");
+        emit("error", "runtime", String(message), {
+          stack: (reason && reason.stack) || "",
+        });
+      });
+    } catch (_err) {
+      /* older environments may not support addEventListener on window — skip */
+    }
+
+    try {
+      if (typeof document !== "undefined" && typeof document.addEventListener === "function") {
+        document.addEventListener("visibilitychange", function () {
+          if (document.visibilityState === "hidden") {
+            flushBatch(true);
+          }
+        });
+      }
+    } catch (_err) {
+      /* skip */
+    }
+
+    window.__gosx_emit = emit;
+    window.__gosx_telemetry_flush = function (opts) {
+      flushBatch(Boolean(opts && opts.beacon));
+    };
+    window.__gosx_telemetry_session = function () {
+      return sid;
+    };
+  }
+
+  gosxInstallTelemetry();
+
   const gosxEnvironmentListeners = new Set();
   const gosxDocumentListeners = new Set();
   const gosxPresentationRecordsByElement = new Map();
@@ -5673,6 +5874,10 @@
       castShadow: sceneBool(Object.prototype.hasOwnProperty.call(item, "castShadow") ? item.castShadow : current.castShadow, false),
       shadowBias: sceneNumber(item.shadowBias, sceneNumber(current.shadowBias, 0)),
       shadowSize: Math.max(0, Math.floor(sceneNumber(item.shadowSize, sceneNumber(current.shadowSize, 0)))),
+      shadowCascades: kind === "directional"
+        ? Math.max(0, Math.min(4, Math.floor(sceneNumber(item.shadowCascades, sceneNumber(current.shadowCascades, 0)))))
+        : 0,
+      shadowSoftness: Math.max(0, sceneNumber(item.shadowSoftness, sceneNumber(current.shadowSoftness, 0))),
       _transition: lifecycle.transition,
       _inState: lifecycle.inState,
       _outState: lifecycle.outState,
@@ -5856,6 +6061,8 @@
       scaleX: sceneNumber(current.scaleX, sceneNumber(scaleSource && scaleSource.x, sceneNumber(current.scale, 1))),
       scaleY: sceneNumber(current.scaleY, sceneNumber(scaleSource && scaleSource.y, sceneNumber(current.scale, 1))),
       scaleZ: sceneNumber(current.scaleZ, sceneNumber(scaleSource && scaleSource.z, sceneNumber(current.scale, 1))),
+      animation: typeof current.animation === "string" && current.animation.trim() ? current.animation.trim() : "",
+      loop: Object.prototype.hasOwnProperty.call(current, "loop") ? sceneBool(current.loop, true) : true,
       pickable: hasPickable ? sceneBool(current.pickable, false) : undefined,
       static: hasStatic ? sceneBool(current.static, false) : null,
       materialOverride: Object.keys(override).length > 0 ? override : null,
@@ -6269,6 +6476,9 @@
       skyIntensity: sceneClampNumberOrCSSVar(source.skyIntensity, sceneNumber(base.skyIntensity, 0), 0, 4),
       groundColor: typeof source.groundColor === "string" && source.groundColor ? source.groundColor : (typeof base.groundColor === "string" ? base.groundColor : ""),
       groundIntensity: sceneClampNumberOrCSSVar(source.groundIntensity, sceneNumber(base.groundIntensity, 0), 0, 4),
+      envMap: typeof source.envMap === "string" && source.envMap ? source.envMap : (typeof base.envMap === "string" ? base.envMap : ""),
+      envIntensity: sceneClampNumberOrCSSVar(Object.prototype.hasOwnProperty.call(source, "envIntensity") ? source.envIntensity : undefined, sceneNumber(base.envIntensity, 1) || 1, 0, 8),
+      envRotation: sceneClampNumberOrCSSVar(source.envRotation, sceneNumber(base.envRotation, 0), Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY),
       exposure: sceneClampNumberOrCSSVar(Object.prototype.hasOwnProperty.call(source, "exposure") ? source.exposure : undefined, sceneNumber(base.exposure, 1) || 1, 0.05, 4),
       toneMapping: typeof source.toneMapping === "string" && source.toneMapping ? source.toneMapping : (typeof base.toneMapping === "string" ? base.toneMapping : ""),
       fogColor: typeof source.fogColor === "string" && source.fogColor ? source.fogColor : (typeof base.fogColor === "string" ? base.fogColor : ""),
@@ -6286,6 +6496,9 @@
       environment.skyIntensity !== 0 ||
       environment.groundColor ||
       environment.groundIntensity !== 0 ||
+      environment.envMap ||
+      environment.envIntensity !== 1 ||
+      environment.envRotation !== 0 ||
       environment.fogColor ||
       environment.fogDensity !== 0 ||
       environment.toneMapping ||
@@ -6306,6 +6519,9 @@
         skyIntensity: sceneClampNumberOrCSSVar(environment.skyIntensity, 0, 0, 4),
         groundColor: typeof environment.groundColor === "string" ? environment.groundColor : "",
         groundIntensity: sceneClampNumberOrCSSVar(environment.groundIntensity, 0, 0, 4),
+        envMap: typeof environment.envMap === "string" ? environment.envMap : "",
+        envIntensity: sceneClampNumberOrCSSVar(environment.envIntensity, 1, 0, 8),
+        envRotation: sceneClampNumberOrCSSVar(environment.envRotation, 0, Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY),
         exposure: sceneClampNumberOrCSSVar(environment.exposure, 1, 0.05, 4),
         toneMapping: typeof environment.toneMapping === "string" ? environment.toneMapping : "",
         fogColor: typeof environment.fogColor === "string" ? environment.fogColor : "",
@@ -10857,6 +11073,15 @@
    * @property {string} [background]
    * @property {string} [ambientColor]
    * @property {number} [ambientIntensity]
+   * @property {string} [skyColor]
+   * @property {number} [skyIntensity]
+   * @property {string} [groundColor]
+   * @property {number} [groundIntensity]
+   * @property {string} [envMap]
+   * @property {number} [envIntensity]
+   * @property {number} [envRotation]
+   * @property {number} [exposure]
+   * @property {string} [toneMapping]
    * @property {string} [fogColor]
    * @property {number} [fogDensity]
    */
@@ -10890,6 +11115,11 @@
    * @property {string} kind
    * @property {string} [color]
    * @property {number} [intensity]
+   * @property {boolean} [castShadow]
+   * @property {number} [shadowBias]
+   * @property {number} [shadowSize]
+   * @property {number} [shadowCascades]
+   * @property {number} [shadowSoftness]
    */
 
   /**
@@ -13252,6 +13482,401 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
   return Math.max(1, Math.floor(size * factor));
 }
 
+var SCENE_TEXTURE_UNIT_MATERIALS = {
+  albedo: 0,
+  normal: 1,
+  roughness: 2,
+  metalness: 3,
+  emissive: 4,
+};
+var SCENE_TEXTURE_UNIT_FIRST_SHARED = 5;
+var SCENE_TEXTURE_UNIT_DEFAULT_MAX = 16;
+var SCENE_TEXTURE_BUDGET_DEFAULT_BYTES = 26 * 1024 * 1024;
+
+function sceneFiniteNumber(value, fallback) {
+  return typeof value === "number" && isFinite(value) ? value : fallback;
+}
+
+function sceneClampInteger(value, min, max) {
+  var next = Math.floor(sceneFiniteNumber(value, min));
+  if (next < min) return min;
+  if (next > max) return max;
+  return next;
+}
+
+function sceneAllocateTextureUnits(options) {
+  var opts = options || {};
+  var requestedMaxUnits = Object.prototype.hasOwnProperty.call(opts, "maxUnits")
+    ? opts.maxUnits
+    : SCENE_TEXTURE_UNIT_DEFAULT_MAX;
+  var maxUnits = sceneClampInteger(requestedMaxUnits, SCENE_TEXTURE_UNIT_FIRST_SHARED, 64);
+  var shadowCount = sceneClampInteger(opts.shadowCount || 0, 0, 32);
+  var needsIBL = Boolean(opts.ibl || opts.envMap);
+  var iblUnitCount = needsIBL ? 3 : 0;
+  var warnings = [];
+  var availableShared = Math.max(0, maxUnits - SCENE_TEXTURE_UNIT_FIRST_SHARED);
+  var availableForShadows = Math.max(0, availableShared - iblUnitCount);
+  if (shadowCount > availableForShadows) {
+    warnings.push("shadow texture units reduced from " + shadowCount + " to " + availableForShadows);
+    shadowCount = availableForShadows;
+  }
+
+  var units = {
+    material: {
+      albedo: SCENE_TEXTURE_UNIT_MATERIALS.albedo,
+      normal: SCENE_TEXTURE_UNIT_MATERIALS.normal,
+      roughness: SCENE_TEXTURE_UNIT_MATERIALS.roughness,
+      metalness: SCENE_TEXTURE_UNIT_MATERIALS.metalness,
+      emissive: SCENE_TEXTURE_UNIT_MATERIALS.emissive,
+    },
+    shadows: [],
+    ibl: null,
+    maxUnits: maxUnits,
+    warnings: warnings,
+  };
+
+  var unit = SCENE_TEXTURE_UNIT_FIRST_SHARED;
+  for (var i = 0; i < shadowCount; i++) {
+    units.shadows.push(unit++);
+  }
+
+  if (needsIBL) {
+    if (unit + 2 < maxUnits) {
+      units.ibl = {
+        irradiance: unit,
+        radiance: unit + 1,
+        brdfLUT: unit + 2,
+      };
+    } else {
+      warnings.push("IBL disabled because texture units are exhausted");
+    }
+  }
+
+  return units;
+}
+
+function sceneTextureMipBytes(baseSize, mipLevels, faceCount, bytesPerPixel) {
+  var total = 0;
+  var size = Math.max(1, Math.floor(baseSize || 1));
+  var levels = Math.max(1, Math.floor(mipLevels || 1));
+  var faces = Math.max(1, Math.floor(faceCount || 1));
+  var bpp = Math.max(1, Math.floor(bytesPerPixel || 1));
+  for (var level = 0; level < levels; level++) {
+    var mipSize = Math.max(1, Math.floor(size / Math.pow(2, level)));
+    total += mipSize * mipSize * faces * bpp;
+  }
+  return total;
+}
+
+function sceneNormalizeIBLProfile(profile) {
+  var source = profile || {};
+  return {
+    sourceFaceSize: sceneClampInteger(source.sourceFaceSize || 512, 16, 4096),
+    irradianceFaceSize: sceneClampInteger(source.irradianceFaceSize || 32, 8, 512),
+    radianceFaceSize: sceneClampInteger(source.radianceFaceSize || 128, 16, 1024),
+    radianceMipLevels: sceneClampInteger(source.radianceMipLevels || 5, 1, 12),
+    brdfSize: sceneClampInteger(source.brdfSize || 512, 16, 2048),
+    bytesPerPixel: sceneClampInteger(source.bytesPerPixel || 8, 1, 16),
+    brdfBytesPerPixel: sceneClampInteger(source.brdfBytesPerPixel || 4, 1, 16),
+  };
+}
+
+function sceneEstimateIBLTextureBytes(profile) {
+  var p = sceneNormalizeIBLProfile(profile);
+  return sceneTextureMipBytes(p.sourceFaceSize, 1, 6, p.bytesPerPixel)
+    + sceneTextureMipBytes(p.irradianceFaceSize, 1, 6, p.bytesPerPixel)
+    + sceneTextureMipBytes(p.radianceFaceSize, p.radianceMipLevels, 6, p.bytesPerPixel)
+    + sceneTextureMipBytes(p.brdfSize, 1, 1, p.brdfBytesPerPixel);
+}
+
+function sceneEstimateShadowTextureBytes(shadowSize, shadowCount) {
+  var size = Math.max(1, Math.floor(shadowSize || 1));
+  var count = Math.max(0, Math.floor(shadowCount || 0));
+  return size * size * 4 * count;
+}
+
+function sceneDownscaleIBLProfile(profile) {
+  var p = sceneNormalizeIBLProfile(profile);
+  var next = {
+    sourceFaceSize: Math.max(128, Math.floor(p.sourceFaceSize / 2)),
+    irradianceFaceSize: Math.max(16, Math.floor(p.irradianceFaceSize / 2)),
+    radianceFaceSize: Math.max(64, Math.floor(p.radianceFaceSize / 2)),
+    radianceMipLevels: p.radianceMipLevels,
+    brdfSize: Math.max(256, Math.floor(p.brdfSize / 2)),
+    bytesPerPixel: p.bytesPerPixel,
+    brdfBytesPerPixel: p.brdfBytesPerPixel,
+  };
+  var changed = next.sourceFaceSize !== p.sourceFaceSize
+    || next.irradianceFaceSize !== p.irradianceFaceSize
+    || next.radianceFaceSize !== p.radianceFaceSize
+    || next.brdfSize !== p.brdfSize;
+  return changed ? next : p;
+}
+
+function sceneResolveTextureMemoryBudget(options) {
+  var opts = options || {};
+  var maxBytes = Math.max(1, Math.floor(sceneFiniteNumber(opts.maxBytes, SCENE_TEXTURE_BUDGET_DEFAULT_BYTES)));
+  var shadowCount = sceneClampInteger(opts.shadowCount || 0, 0, 32);
+  var shadowSize = Math.max(1, Math.floor(sceneFiniteNumber(opts.shadowSize, 1024)));
+  var iblEnabled = Boolean(opts.ibl || opts.envMap);
+  var iblProfile = sceneNormalizeIBLProfile(opts.iblProfile);
+  var warnings = [];
+  var iblBytes = iblEnabled ? sceneEstimateIBLTextureBytes(iblProfile) : 0;
+  var shadowBytes = sceneEstimateShadowTextureBytes(shadowSize, shadowCount);
+
+  while (iblEnabled && shadowBytes + iblBytes > maxBytes) {
+    var nextProfile = sceneDownscaleIBLProfile(iblProfile);
+    var nextBytes = sceneEstimateIBLTextureBytes(nextProfile);
+    if (nextBytes >= iblBytes) break;
+    iblProfile = nextProfile;
+    iblBytes = nextBytes;
+    warnings.push("IBL profile downscaled for shared texture budget");
+  }
+
+  if (shadowBytes + iblBytes > maxBytes && shadowCount > 0) {
+    var remaining = Math.max(1, maxBytes - iblBytes);
+    var cappedShadowSize = Math.max(1, Math.floor(Math.sqrt(remaining / Math.max(1, shadowCount * 4))));
+    if (cappedShadowSize < shadowSize) {
+      shadowSize = cappedShadowSize;
+      shadowBytes = sceneEstimateShadowTextureBytes(shadowSize, shadowCount);
+      warnings.push("shadow map size downscaled for shared texture budget");
+    }
+  }
+
+  if (iblEnabled && shadowBytes + iblBytes > maxBytes) {
+    iblEnabled = false;
+    iblBytes = 0;
+    warnings.push("IBL disabled for shared texture budget");
+  }
+
+  return {
+    maxBytes: maxBytes,
+    shadowCount: shadowCount,
+    shadowSize: shadowSize,
+    shadowBytes: shadowBytes,
+    ibl: iblEnabled,
+    iblProfile: iblEnabled ? iblProfile : null,
+    iblBytes: iblBytes,
+    totalBytes: shadowBytes + iblBytes,
+    warnings: warnings,
+  };
+}
+
+function sceneResolveIBLRenderTargetMode(gl, options) {
+  var opts = options || {};
+  var ext = null;
+  if (gl && typeof gl.getExtension === "function") {
+    ext = gl.getExtension("EXT_color_buffer_half_float") || gl.getExtension("EXT_color_buffer_float");
+  }
+  if (ext) {
+    return {
+      mode: "half-float",
+      extension: ext,
+      profile: sceneNormalizeIBLProfile(opts.lowPower ? {
+        sourceFaceSize: 256,
+        irradianceFaceSize: 16,
+        radianceFaceSize: 64,
+        brdfSize: 256,
+      } : opts.profile),
+      reason: "",
+    };
+  }
+  if (opts.allowLDRFallback !== false) {
+    return {
+      mode: "ldr-fallback",
+      extension: null,
+      profile: sceneNormalizeIBLProfile({
+        sourceFaceSize: opts.lowPower ? 128 : 256,
+        irradianceFaceSize: 16,
+        radianceFaceSize: 64,
+        brdfSize: 256,
+        bytesPerPixel: 4,
+        brdfBytesPerPixel: 4,
+      }),
+      reason: "half-float-render-target-unavailable",
+    };
+  }
+  return {
+    mode: "disabled",
+    extension: null,
+    profile: null,
+    reason: "half-float-render-target-unavailable",
+  };
+}
+
+if (typeof window !== "undefined") {
+  window.__gosx_scene3d_resource_api = Object.assign(window.__gosx_scene3d_resource_api || {}, {
+    allocateTextureUnits: sceneAllocateTextureUnits,
+    estimateIBLTextureBytes: sceneEstimateIBLTextureBytes,
+    estimateShadowTextureBytes: sceneEstimateShadowTextureBytes,
+    resolveTextureMemoryBudget: sceneResolveTextureMemoryBudget,
+    resolveIBLRenderTargetMode: sceneResolveIBLRenderTargetMode,
+  });
+}
+
+  function sceneHDRReadLine(bytes, cursor) {
+    var start = cursor.offset;
+    while (cursor.offset < bytes.length && bytes[cursor.offset] !== 10) {
+      cursor.offset++;
+    }
+    var end = cursor.offset;
+    if (cursor.offset < bytes.length && bytes[cursor.offset] === 10) {
+      cursor.offset++;
+    }
+    if (end > start && bytes[end - 1] === 13) {
+      end--;
+    }
+    var out = "";
+    for (var i = start; i < end; i++) {
+      out += String.fromCharCode(bytes[i]);
+    }
+    return out;
+  }
+
+  function sceneHDRRGBEToFloat(out, outOffset, r, g, b, e) {
+    if (!e) {
+      out[outOffset] = 0;
+      out[outOffset + 1] = 0;
+      out[outOffset + 2] = 0;
+      return;
+    }
+    var scale = Math.pow(2, e - 136);
+    out[outOffset] = r * scale;
+    out[outOffset + 1] = g * scale;
+    out[outOffset + 2] = b * scale;
+  }
+
+  function sceneHDRParseResolution(line) {
+    var match = /^\s*([+-])Y\s+(\d+)\s+([+-])X\s+(\d+)\s*$/.exec(String(line || ""));
+    if (!match) {
+      match = /^\s*([+-])X\s+(\d+)\s+([+-])Y\s+(\d+)\s*$/.exec(String(line || ""));
+      if (!match) {
+        return null;
+      }
+      return {
+        width: Math.max(0, parseInt(match[2], 10) || 0),
+        height: Math.max(0, parseInt(match[4], 10) || 0),
+      };
+    }
+    return {
+      width: Math.max(0, parseInt(match[4], 10) || 0),
+      height: Math.max(0, parseInt(match[2], 10) || 0),
+    };
+  }
+
+  function sceneHDRDecodeRawRGBE(bytes, offset, width, height) {
+    var count = width * height;
+    if (bytes.length - offset < count * 4) {
+      throw new Error("Radiance HDR data is truncated");
+    }
+    var data = new Float32Array(count * 3);
+    for (var i = 0; i < count; i++) {
+      var src = offset + i * 4;
+      sceneHDRRGBEToFloat(data, i * 3, bytes[src], bytes[src + 1], bytes[src + 2], bytes[src + 3]);
+    }
+    return data;
+  }
+
+  function sceneHDRDecodeRLEScanlines(bytes, offset, width, height) {
+    var data = new Float32Array(width * height * 3);
+    var scanline = new Uint8Array(width * 4);
+    var cursor = offset;
+
+    for (var y = 0; y < height; y++) {
+      if (cursor + 4 > bytes.length) {
+        throw new Error("Radiance HDR scanline is truncated");
+      }
+      var b0 = bytes[cursor++];
+      var b1 = bytes[cursor++];
+      var b2 = bytes[cursor++];
+      var b3 = bytes[cursor++];
+      var scanWidth = (b2 << 8) | b3;
+      if (b0 !== 2 || b1 !== 2 || scanWidth !== width) {
+        return sceneHDRDecodeRawRGBE(bytes, offset, width, height);
+      }
+
+      for (var channel = 0; channel < 4; channel++) {
+        var x = 0;
+        while (x < width) {
+          if (cursor >= bytes.length) {
+            throw new Error("Radiance HDR RLE data is truncated");
+          }
+          var code = bytes[cursor++];
+          if (code > 128) {
+            var run = code - 128;
+            if (cursor >= bytes.length || x + run > width) {
+              throw new Error("Radiance HDR RLE run is invalid");
+            }
+            var value = bytes[cursor++];
+            for (var ri = 0; ri < run; ri++) {
+              scanline[(x + ri) * 4 + channel] = value;
+            }
+            x += run;
+          } else {
+            var literal = code;
+            if (literal === 0 || cursor + literal > bytes.length || x + literal > width) {
+              throw new Error("Radiance HDR RLE literal is invalid");
+            }
+            for (var li = 0; li < literal; li++) {
+              scanline[(x + li) * 4 + channel] = bytes[cursor++];
+            }
+            x += literal;
+          }
+        }
+      }
+
+      for (var px = 0; px < width; px++) {
+        var src = px * 4;
+        var dst = (y * width + px) * 3;
+        sceneHDRRGBEToFloat(data, dst, scanline[src], scanline[src + 1], scanline[src + 2], scanline[src + 3]);
+      }
+    }
+
+    return data;
+  }
+
+  function sceneParseRadianceHDR(arrayBuffer) {
+    var bytes = arrayBuffer instanceof Uint8Array
+      ? arrayBuffer
+      : new Uint8Array(arrayBuffer || []);
+    var cursor = { offset: 0 };
+    var first = sceneHDRReadLine(bytes, cursor);
+    if (first.indexOf("#?RADIANCE") !== 0 && first.indexOf("#?RGBE") !== 0) {
+      throw new Error("unsupported Radiance HDR header");
+    }
+
+    var resolution = null;
+    for (var guard = 0; guard < 128 && cursor.offset < bytes.length; guard++) {
+      var line = sceneHDRReadLine(bytes, cursor);
+      var parsed = sceneHDRParseResolution(line);
+      if (parsed) {
+        resolution = parsed;
+        break;
+      }
+    }
+    if (!resolution || resolution.width <= 0 || resolution.height <= 0) {
+      throw new Error("Radiance HDR resolution is missing");
+    }
+    if (resolution.width > 4096 || resolution.height > 2048) {
+      throw new Error("Radiance HDR exceeds Scene3D size limit");
+    }
+
+    var data = (resolution.width >= 8 && resolution.width <= 32767)
+      ? sceneHDRDecodeRLEScanlines(bytes, cursor.offset, resolution.width, resolution.height)
+      : sceneHDRDecodeRawRGBE(bytes, cursor.offset, resolution.width, resolution.height);
+    return {
+      width: resolution.width,
+      height: resolution.height,
+      data: data,
+    };
+  }
+
+  if (typeof window !== "undefined") {
+    window.__gosx_scene3d_resource_api = Object.assign(window.__gosx_scene3d_resource_api || {}, {
+      parseRadianceHDR: sceneParseRadianceHDR,
+    });
+  }
+
   var SCENE_POST_TONE_MAPPING = "toneMapping";
   var SCENE_POST_BLOOM = "bloom";
   var SCENE_POST_VIGNETTE = "vignette";
@@ -13304,6 +13929,7 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
     "",
     "// Camera",
     "uniform vec3 u_cameraPosition;",
+    "uniform mat4 u_viewMatrix;",
     "",
     "// Material",
     "uniform vec3 u_albedo;",
@@ -13345,17 +13971,37 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
     "uniform float u_skyIntensity;",
     "uniform vec3 u_groundColor;",
     "uniform float u_groundIntensity;",
+    "uniform sampler2D u_envMap;",
+    "uniform bool u_hasEnvMap;",
+    "uniform float u_envIntensity;",
+    "uniform float u_envRotation;",
     "",
-    "// Shadow maps (max 2 directional lights)",
-    "uniform sampler2D u_shadowMap0;",
-    "uniform mat4 u_lightSpaceMatrix0;",
+    "// Shadow maps (max 2 directional lights × up to 4 cascades each).",
+    "// CSM: the renderer picks a cascade per fragment via view-space depth",
+    "// against u_shadowCascadeSplits*[]. When u_shadowCascades* == 1 the",
+    "// extra cascade samplers are bound to the same texture as cascade 0 and",
+    "// the first branch always wins, matching the pre-CSM single-map path.",
+    "uniform sampler2D u_shadowMap0_0;",
+    "uniform sampler2D u_shadowMap0_1;",
+    "uniform sampler2D u_shadowMap0_2;",
+    "uniform sampler2D u_shadowMap0_3;",
+    "uniform mat4 u_lightSpaceMatrices0[4];",
+    "uniform float u_shadowCascadeSplits0[4];",
+    "uniform int u_shadowCascades0;",
     "uniform bool u_hasShadow0;",
     "uniform float u_shadowBias0;",
+    "uniform float u_shadowSoftness0;",
     "",
-    "uniform sampler2D u_shadowMap1;",
-    "uniform mat4 u_lightSpaceMatrix1;",
+    "uniform sampler2D u_shadowMap1_0;",
+    "uniform sampler2D u_shadowMap1_1;",
+    "uniform sampler2D u_shadowMap1_2;",
+    "uniform sampler2D u_shadowMap1_3;",
+    "uniform mat4 u_lightSpaceMatrices1[4];",
+    "uniform float u_shadowCascadeSplits1[4];",
+    "uniform int u_shadowCascades1;",
     "uniform bool u_hasShadow1;",
     "uniform float u_shadowBias1;",
+    "uniform float u_shadowSoftness1;",
     "",
     "// Per-object shadow receive control",
     "uniform bool u_receiveShadow;",
@@ -13377,28 +14023,108 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
     "",
     "const float PI = 3.14159265359;",
     "",
-    "// 4-tap Poisson disk PCF shadow sampling.",
-    "float shadowFactor(sampler2D shadowMap, mat4 lightSpaceMatrix, float bias) {",
+    "// Poisson disk taps used for both the PCSS blocker search and the final",
+    "// PCF filter. 8 taps provide a stable penumbra estimate without pushing",
+    "// WebGL2 fragment register pressure too high.",
+    "const vec2 kPoissonDisk8[8] = vec2[](",
+    "    vec2(-0.94201624, -0.39906216),",
+    "    vec2( 0.94558609, -0.76890725),",
+    "    vec2(-0.09418410, -0.92938870),",
+    "    vec2( 0.34495938,  0.29387760),",
+    "    vec2(-0.91588581,  0.45771432),",
+    "    vec2(-0.81544232, -0.87912464),",
+    "    vec2( 0.38277543,  0.27676845),",
+    "    vec2( 0.97484398,  0.75648379)",
+    ");",
+    "",
+    "// PCSS (Percentage-Closer Soft Shadows) with PCF fallback.",
+    "// The softness parameter is interpreted as a combined (light-size /",
+    "// world-units) hint: when > 0 we do a blocker search, estimate the",
+    "// penumbra from the receiver-to-blocker distance, and then PCF with a",
+    "// filter radius scaled to the penumbra. When softness is 0 we skip the",
+    "// extra samples and just return a hard comparison.",
+    "float shadowFactor(sampler2D shadowMap, mat4 lightSpaceMatrix, float bias, float softness) {",
     "    vec4 lightSpacePos = lightSpaceMatrix * vec4(v_worldPosition, 1.0);",
     "    vec3 projCoords = lightSpacePos.xyz / lightSpacePos.w;",
     "    projCoords = projCoords * 0.5 + 0.5;",
     "",
     "    if (projCoords.z > 1.0) return 1.0;",
     "",
-    "    float shadow = 0.0;",
+    "    float receiverDepth = projCoords.z;",
     "    float texelSize = 1.0 / float(textureSize(shadowMap, 0).x);",
-    "    vec2 poissonDisk[4] = vec2[](",
-    "        vec2(-0.94201624, -0.39906216),",
-    "        vec2(0.94558609, -0.76890725),",
-    "        vec2(-0.094184101, -0.92938870),",
-    "        vec2(0.34495938, 0.29387760)",
-    "    );",
     "",
-    "    for (int i = 0; i < 4; i++) {",
-    "        float depth = texture(shadowMap, projCoords.xy + poissonDisk[i] * texelSize).r;",
-    "        shadow += (projCoords.z - bias > depth) ? 0.0 : 1.0;",
+    "    // Hard-shadow fast path.",
+    "    if (softness <= 0.0001) {",
+    "        float depth = texture(shadowMap, projCoords.xy).r;",
+    "        return (receiverDepth - bias > depth) ? 0.0 : 1.0;",
     "    }",
-    "    return shadow / 4.0;",
+    "",
+    "    // --- Blocker search ---",
+    "    // Sample a disk sized by the light's shadow-space \"size\" (softness)",
+    "    // and average the depth of taps that are behind the receiver. These",
+    "    // are the occluders contributing to the penumbra.",
+    "    float blockerRadius = max(1.0, softness * 32.0);",
+    "    float blockerDepthSum = 0.0;",
+    "    float blockerCount = 0.0;",
+    "    for (int i = 0; i < 8; i++) {",
+    "        vec2 offset = kPoissonDisk8[i] * texelSize * blockerRadius;",
+    "        float d = texture(shadowMap, projCoords.xy + offset).r;",
+    "        if (receiverDepth - bias > d) {",
+    "            blockerDepthSum += d;",
+    "            blockerCount += 1.0;",
+    "        }",
+    "    }",
+    "",
+    "    // No blockers: fully lit.",
+    "    if (blockerCount < 0.5) {",
+    "        return 1.0;",
+    "    }",
+    "",
+    "    float avgBlockerDepth = blockerDepthSum / blockerCount;",
+    "",
+    "    // --- Penumbra estimate ---",
+    "    // penumbra = (receiver - blocker) / blocker * lightSize.",
+    "    // Guard blocker against zero to avoid division by near-plane epsilon.",
+    "    float penumbra = (receiverDepth - avgBlockerDepth) * softness / max(avgBlockerDepth, 1e-4);",
+    "",
+    "    // --- PCF with penumbra-scaled radius ---",
+    "    float filterRadius = max(1.0, clamp(penumbra * 128.0, 1.0, softness * 96.0));",
+    "    float shadow = 0.0;",
+    "    for (int i = 0; i < 8; i++) {",
+    "        vec2 offset = kPoissonDisk8[i] * texelSize * filterRadius;",
+    "        float d = texture(shadowMap, projCoords.xy + offset).r;",
+    "        shadow += (receiverDepth - bias > d) ? 0.0 : 1.0;",
+    "    }",
+    "    return shadow / 8.0;",
+    "}",
+    "",
+    "// Cascaded-shadow dispatchers for up to 4 cascades per slot.",
+    "// View-space positive depth is compared against u_shadowCascadeSplits*[c],",
+    "// where split[c] is the far plane of cascade c. Sampler selection is",
+    "// unrolled because GLSL ES 3.00 disallows dynamic uniform-int indexing of",
+    "// sampler arrays; mat4 and float arrays are indexed normally.",
+    "float shadowFactorSlot0(float viewDepth) {",
+    "    int c = 0;",
+    "    if (u_shadowCascades0 >= 2 && viewDepth >= u_shadowCascadeSplits0[0]) c = 1;",
+    "    if (u_shadowCascades0 >= 3 && viewDepth >= u_shadowCascadeSplits0[1]) c = 2;",
+    "    if (u_shadowCascades0 >= 4 && viewDepth >= u_shadowCascadeSplits0[2]) c = 3;",
+    "    mat4 ls = u_lightSpaceMatrices0[c];",
+    "    if (c == 1) return shadowFactor(u_shadowMap0_1, ls, u_shadowBias0, u_shadowSoftness0);",
+    "    if (c == 2) return shadowFactor(u_shadowMap0_2, ls, u_shadowBias0, u_shadowSoftness0);",
+    "    if (c == 3) return shadowFactor(u_shadowMap0_3, ls, u_shadowBias0, u_shadowSoftness0);",
+    "    return shadowFactor(u_shadowMap0_0, ls, u_shadowBias0, u_shadowSoftness0);",
+    "}",
+    "",
+    "float shadowFactorSlot1(float viewDepth) {",
+    "    int c = 0;",
+    "    if (u_shadowCascades1 >= 2 && viewDepth >= u_shadowCascadeSplits1[0]) c = 1;",
+    "    if (u_shadowCascades1 >= 3 && viewDepth >= u_shadowCascadeSplits1[1]) c = 2;",
+    "    if (u_shadowCascades1 >= 4 && viewDepth >= u_shadowCascadeSplits1[2]) c = 3;",
+    "    mat4 ls = u_lightSpaceMatrices1[c];",
+    "    if (c == 1) return shadowFactor(u_shadowMap1_1, ls, u_shadowBias1, u_shadowSoftness1);",
+    "    if (c == 2) return shadowFactor(u_shadowMap1_2, ls, u_shadowBias1, u_shadowSoftness1);",
+    "    if (c == 3) return shadowFactor(u_shadowMap1_3, ls, u_shadowBias1, u_shadowSoftness1);",
+    "    return shadowFactor(u_shadowMap1_0, ls, u_shadowBias1, u_shadowSoftness1);",
     "}",
     "",
     "// GGX/Trowbridge-Reitz normal distribution function.",
@@ -13429,6 +14155,21 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
     "// Schlick fresnel approximation.",
     "vec3 fresnelSchlick(float cosTheta, vec3 F0) {",
     "    return F0 + (1.0 - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);",
+    "}",
+    "",
+    "vec3 fresnelSchlickRoughness(float cosTheta, vec3 F0, float roughness) {",
+    "    return F0 + (max(vec3(1.0 - roughness), F0) - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);",
+    "}",
+    "",
+    "vec3 rotateEnvY(vec3 dir, float radians) {",
+    "    float c = cos(radians);",
+    "    float s = sin(radians);",
+    "    return vec3(dir.x * c + dir.z * s, dir.y, -dir.x * s + dir.z * c);",
+    "}",
+    "",
+    "vec2 envEquirectUV(vec3 dir) {",
+    "    vec3 d = normalize(dir);",
+    "    return vec2(atan(d.z, d.x) / (2.0 * PI) + 0.5, asin(clamp(d.y, -1.0, 1.0)) / PI + 0.5);",
     "}",
     "",
     "// Point light distance attenuation.",
@@ -13490,6 +14231,12 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
     "",
     "    // Accumulate direct lighting.",
     "    vec3 Lo = vec3(0.0);",
+    "",
+    "    // View-space positive depth of this fragment — used to pick a cascade",
+    "    // in shadowFactorSlot*(). Light-space transforms already happen per",
+    "    // cascade inside shadowFactor(); this extra multiply per fragment is",
+    "    // cheap and isolates CSM logic to the fragment shader.",
+    "    float viewDepth = -(u_viewMatrix * vec4(v_worldPosition, 1.0)).z;",
     "",
     "    for (int i = 0; i < 8; i++) {",
     "        if (i >= u_lightCount) break;",
@@ -13559,9 +14306,9 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
     "        float shadow = 1.0;",
     "        if (u_receiveShadow && lightType == 1) {",
     "            if (u_hasShadow0 && i == u_shadowLightIndex0) {",
-    "                shadow = shadowFactor(u_shadowMap0, u_lightSpaceMatrix0, u_shadowBias0);",
+    "                shadow = shadowFactorSlot0(viewDepth);",
     "            } else if (u_hasShadow1 && i == u_shadowLightIndex1) {",
-    "                shadow = shadowFactor(u_shadowMap1, u_lightSpaceMatrix1, u_shadowBias1);",
+    "                shadow = shadowFactorSlot1(viewDepth);",
     "            }",
     "        }",
     "",
@@ -13569,12 +14316,23 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
     "        Lo += (kD * albedo / PI + specular) * radiance * NdotL * shadow;",
     "    }",
     "",
-    "    // Environment hemisphere lighting.",
-    "    float hemi = N.y * 0.5 + 0.5;",
-    "    vec3 envDiffuse = u_ambientColor * u_ambientIntensity",
-    "                    + u_skyColor * u_skyIntensity * hemi",
-    "                    + u_groundColor * u_groundIntensity * (1.0 - hemi);",
-    "    vec3 ambient = envDiffuse * albedo;",
+    "    // Environment lighting: equirectangular envMap when loaded, hemisphere fallback otherwise.",
+    "    vec3 ambient;",
+    "    if (u_hasEnvMap) {",
+    "        vec3 Nr = rotateEnvY(N, u_envRotation);",
+    "        vec3 Rr = rotateEnvY(reflect(-V, N), u_envRotation);",
+    "        vec3 envDiffuse = texture(u_envMap, envEquirectUV(Nr)).rgb * albedo;",
+    "        vec3 envSpecular = texture(u_envMap, envEquirectUV(Rr)).rgb;",
+    "        vec3 Fenv = fresnelSchlickRoughness(max(dot(N, V), 0.0), F0, roughness);",
+    "        vec3 kDenv = (vec3(1.0) - Fenv) * (1.0 - metalness);",
+    "        ambient = (kDenv * envDiffuse + envSpecular * Fenv * (1.0 - roughness * 0.65)) * u_envIntensity;",
+    "    } else {",
+    "        float hemi = N.y * 0.5 + 0.5;",
+    "        vec3 envDiffuse = u_ambientColor * u_ambientIntensity",
+    "                        + u_skyColor * u_skyIntensity * hemi",
+    "                        + u_groundColor * u_groundIntensity * (1.0 - hemi);",
+    "        ambient = envDiffuse * albedo;",
+    "    }",
     "",
     "    // Emissive contribution.",
     "    vec3 emission = emissiveColor * emissiveStrength;",
@@ -13889,6 +14647,245 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
     return { framebuffer: framebuffer, depthTexture: depthTexture, size: size };
   }
 
+  function createSceneShadowSlot(gl, size, numCascades) {
+    var n = Math.max(1, Math.min(4, numCascades | 0));
+    var cascades = [];
+    for (var i = 0; i < n; i++) {
+      var res = createSceneShadowResources(gl, size);
+      cascades.push({
+        framebuffer: res.framebuffer,
+        depthTexture: res.depthTexture,
+        size: size,
+        cascadeIndex: i,
+        splitNear: 0,
+        splitFar: 0,
+        lightMatrix: null,
+        _lastPassHash: null,
+      });
+    }
+    return {
+      size: size,
+      numCascades: n,
+      cascades: cascades,
+    };
+  }
+
+  function disposeShadowSlot(gl, slot) {
+    if (!slot) return;
+    if (Array.isArray(slot.cascades)) {
+      for (var i = 0; i < slot.cascades.length; i++) {
+        var c = slot.cascades[i];
+        if (c && c.framebuffer) gl.deleteFramebuffer(c.framebuffer);
+        if (c && c.depthTexture) gl.deleteTexture(c.depthTexture);
+      }
+    } else {
+      if (slot.framebuffer) gl.deleteFramebuffer(slot.framebuffer);
+      if (slot.depthTexture) gl.deleteTexture(slot.depthTexture);
+    }
+  }
+
+  function computeShadowSlotCascadeMatrices(light, slot, sceneBounds, viewMatrix, fovDeg, aspect, camNear, camFar) {
+    var n = slot.numCascades;
+    if (n <= 1) {
+      var m = sceneShadowLightSpaceMatrix(light, sceneBounds);
+      slot.cascades[0].lightMatrix = m;
+      slot.cascades[0].splitNear = 0;
+      slot.cascades[0].splitFar = camFar || 100;
+      return;
+    }
+
+    var lambda = sceneNumber(light.shadowCascadeLambda, 0.5);
+    var splits = sceneShadowComputeCascadeSplits(camNear || 0.1, camFar || 100, n, lambda);
+
+    var dx = sceneNumber(light.directionX, 0);
+    var dy = sceneNumber(light.directionY, -1);
+    var dz = sceneNumber(light.directionZ, 0);
+    var len = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    if (len < 0.0001) { dx = 0; dy = -1; dz = 0; len = 1; }
+    dx /= len; dy /= len; dz /= len;
+
+    var ex = (sceneBounds.maxX - sceneBounds.minX) * 0.5;
+    var ey = (sceneBounds.maxY - sceneBounds.minY) * 0.5;
+    var ez = (sceneBounds.maxZ - sceneBounds.minZ) * 0.5;
+    var sceneRadius = Math.sqrt(ex * ex + ey * ey + ez * ez);
+
+    var prevSplit = camNear || 0.1;
+    for (var i = 0; i < n; i++) {
+      var splitFar = splits[i];
+      var corners = sceneShadowFrustumSubCorners(viewMatrix, fovDeg, aspect, prevSplit, splitFar);
+      var matrix = sceneShadowFitLightSpaceOrtho([dx, dy, dz], corners, sceneRadius, slot.size);
+      slot.cascades[i].lightMatrix = matrix;
+      slot.cascades[i].splitNear = prevSplit;
+      slot.cascades[i].splitFar = splitFar;
+      prevSplit = splitFar;
+    }
+  }
+
+  function sceneShadowComputeCascadeSplits(near, far, numCascades, lambda) {
+    var n = Math.max(0.0001, near || 0.1);
+    var f = Math.max(n + 0.0001, far || 100);
+    var count = Math.max(1, Math.min(4, numCascades | 0));
+    var lam = Math.max(0, Math.min(1, typeof lambda === "number" ? lambda : 0.5));
+    var ratio = f / n;
+    var splits = new Array(count);
+    for (var i = 0; i < count; i++) {
+      var p = (i + 1) / count;
+      var logSplit = n * Math.pow(ratio, p);
+      var uniSplit = n + (f - n) * p;
+      splits[i] = lam * logSplit + (1 - lam) * uniSplit;
+    }
+    return splits;
+  }
+
+  function sceneShadowFrustumSubCorners(viewMatrix, fovDeg, aspect, splitNear, splitFar) {
+    var fovY = (fovDeg * Math.PI) / 180;
+    var tanY = Math.tan(fovY * 0.5);
+    var tanX = tanY * (aspect || 1);
+
+    var hNearY = splitNear * tanY;
+    var hNearX = splitNear * tanX;
+    var hFarY = splitFar * tanY;
+    var hFarX = splitFar * tanX;
+
+    var viewCorners = [
+      -hNearX,  hNearY, -splitNear,
+       hNearX,  hNearY, -splitNear,
+      -hNearX, -hNearY, -splitNear,
+       hNearX, -hNearY, -splitNear,
+      -hFarX,   hFarY,  -splitFar,
+       hFarX,   hFarY,  -splitFar,
+      -hFarX,  -hFarY,  -splitFar,
+       hFarX,  -hFarY,  -splitFar,
+    ];
+
+    var invView = sceneInvertOrthonormalView(viewMatrix);
+
+    var corners = new Float32Array(24);
+    for (var i = 0; i < 8; i++) {
+      var x = viewCorners[i * 3];
+      var y = viewCorners[i * 3 + 1];
+      var z = viewCorners[i * 3 + 2];
+      corners[i * 3]     = invView[0] * x + invView[4] * y + invView[8]  * z + invView[12];
+      corners[i * 3 + 1] = invView[1] * x + invView[5] * y + invView[9]  * z + invView[13];
+      corners[i * 3 + 2] = invView[2] * x + invView[6] * y + invView[10] * z + invView[14];
+    }
+    return corners;
+  }
+
+  function sceneInvertOrthonormalView(view) {
+    var out = new Float32Array(16);
+    out[0]  = view[0];  out[1]  = view[4];  out[2]  = view[8];   out[3]  = 0;
+    out[4]  = view[1];  out[5]  = view[5];  out[6]  = view[9];   out[7]  = 0;
+    out[8]  = view[2];  out[9]  = view[6];  out[10] = view[10];  out[11] = 0;
+    var tx = view[12], ty = view[13], tz = view[14];
+    out[12] = -(out[0]  * tx + out[4]  * ty + out[8]  * tz);
+    out[13] = -(out[1]  * tx + out[5]  * ty + out[9]  * tz);
+    out[14] = -(out[2]  * tx + out[6]  * ty + out[10] * tz);
+    out[15] = 1;
+    return out;
+  }
+
+  function sceneShadowFitLightSpaceOrtho(lightDir, worldCorners, sceneBoundsRadius, shadowMapSize) {
+    var dx = lightDir[0], dy = lightDir[1], dz = lightDir[2];
+    var len = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    if (len < 0.0001) { dx = 0; dy = -1; dz = 0; len = 1; }
+    dx /= len; dy /= len; dz /= len;
+
+    var cx = 0, cy = 0, cz = 0;
+    for (var i = 0; i < 8; i++) {
+      cx += worldCorners[i * 3];
+      cy += worldCorners[i * 3 + 1];
+      cz += worldCorners[i * 3 + 2];
+    }
+    cx /= 8; cy /= 8; cz /= 8;
+
+    var fx = dx, fy = dy, fz = dz; // forward in view = lightDir
+
+    var upX = 0, upY = 1, upZ = 0;
+    if (Math.abs(fy) > 0.99) { upX = 0; upY = 0; upZ = 1; }
+
+    var rx = fy * upZ - fz * upY;
+    var ry = fz * upX - fx * upZ;
+    var rz = fx * upY - fy * upX;
+    var rLen = Math.sqrt(rx * rx + ry * ry + rz * rz);
+    if (rLen < 0.0001) rLen = 1;
+    rx /= rLen; ry /= rLen; rz /= rLen;
+    upX = ry * fz - rz * fy;
+    upY = rz * fx - rx * fz;
+    upZ = rx * fy - ry * fx;
+
+    var minR = Infinity, maxR = -Infinity;
+    var minU = Infinity, maxU = -Infinity;
+    var minF = Infinity, maxF = -Infinity;
+    for (var j = 0; j < 8; j++) {
+      var px = worldCorners[j * 3] - cx;
+      var py = worldCorners[j * 3 + 1] - cy;
+      var pz = worldCorners[j * 3 + 2] - cz;
+      var pr = rx * px + ry * py + rz * pz;
+      var pu = upX * px + upY * py + upZ * pz;
+      var pf = fx * px + fy * py + fz * pz;
+      if (pr < minR) minR = pr; if (pr > maxR) maxR = pr;
+      if (pu < minU) minU = pu; if (pu > maxU) maxU = pu;
+      if (pf < minF) minF = pf; if (pf > maxF) maxF = pf;
+    }
+
+    var snapSize = Math.max(0, shadowMapSize | 0);
+    if (snapSize > 0 && isFinite(minR) && isFinite(maxR) && isFinite(minU) && isFinite(maxU)) {
+      var width = maxR - minR;
+      var height = maxU - minU;
+      if (width > 0.000001 && height > 0.000001) {
+        var texelR = width / snapSize;
+        var texelU = height / snapSize;
+        var centerWorldR = rx * cx + ry * cy + rz * cz;
+        var centerWorldU = upX * cx + upY * cy + upZ * cz;
+        var centerR = (minR + maxR) * 0.5;
+        var centerU = (minU + maxU) * 0.5;
+        var snappedCenterR = Math.round((centerWorldR + centerR) / texelR) * texelR;
+        var snappedCenterU = Math.round((centerWorldU + centerU) / texelU) * texelU;
+        var halfR = width * 0.5 + texelR;
+        var halfU = height * 0.5 + texelU;
+        centerR = snappedCenterR - centerWorldR;
+        centerU = snappedCenterU - centerWorldU;
+        minR = centerR - halfR;
+        maxR = centerR + halfR;
+        minU = centerU - halfU;
+        maxU = centerU + halfU;
+      }
+    }
+
+    var extend = Math.max(0.0, sceneBoundsRadius || 0.0);
+    minF -= extend;
+
+    var eyeX = cx - fx * maxF;
+    var eyeY = cy - fy * maxF;
+    var eyeZ = cz - fz * maxF;
+
+    var tx = -(rx * eyeX + ry * eyeY + rz * eyeZ);
+    var ty = -(upX * eyeX + upY * eyeY + upZ * eyeZ);
+    var tz = -(-fx * eyeX + -fy * eyeY + -fz * eyeZ);
+
+    var view = new Float32Array([
+      rx,  upX, -fx, 0,
+      ry,  upY, -fy, 0,
+      rz,  upZ, -fz, 0,
+      tx,  ty,   tz, 1,
+    ]);
+
+    var l = minR, rr = maxR, b = minU, t = maxU;
+    var near = 0.0;
+    var far = (maxF - minF);
+    if (far <= near) far = near + 1;
+
+    var proj = new Float32Array([
+      2 / (rr - l),            0,                       0,                            0,
+      0,                       2 / (t - b),             0,                            0,
+      0,                       0,                       -2 / (far - near),            0,
+      -(rr + l) / (rr - l),   -(t + b) / (t - b),       -(far + near) / (far - near), 1,
+    ]);
+
+    return sceneMat4Multiply(proj, view);
+  }
+
   function sceneShadowLightSpaceMatrix(light, sceneBounds) {
     var dx = sceneNumber(light.directionX, 0);
     var dy = sceneNumber(light.directionY, -1);
@@ -13987,11 +14984,16 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
     return { minX: minX, minY: minY, minZ: minZ, maxX: maxX, maxY: maxY, maxZ: maxZ };
   }
 
-  function sceneShadowPassHash(lightMatrix, meshObjects) {
+  function sceneShadowPassHash(lightMatrix, meshObjects, options) {
+    var opts = options || {};
     var h = 0;
     if (lightMatrix) {
       for (var i = 0; i < 16; i++) h += lightMatrix[i] || 0;
     }
+    h += sceneFiniteNumber(opts.cascadeIndex, 0) * 101.0;
+    h += sceneFiniteNumber(opts.splitNear, 0) * 103.0;
+    h += sceneFiniteNumber(opts.splitFar, 0) * 107.0;
+    h += sceneFiniteNumber(opts.shadowSize, 0) * 109.0;
     var casterCount = 0;
     for (var j = 0; j < meshObjects.length; j++) {
       var o = meshObjects[j];
@@ -14006,7 +15008,12 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
 
   function renderSceneShadowPass(gl, shadowProgram, shadowResources, lightMatrix, bundle, shadowState) {
     var meshObjectsForHash = Array.isArray(bundle.meshObjects) ? bundle.meshObjects : [];
-    var passHash = sceneShadowPassHash(lightMatrix, meshObjectsForHash);
+    var passHash = sceneShadowPassHash(lightMatrix, meshObjectsForHash, {
+      cascadeIndex: shadowResources && typeof shadowResources.cascadeIndex === "number" ? shadowResources.cascadeIndex : 0,
+      splitNear: shadowResources && typeof shadowResources.splitNear === "number" ? shadowResources.splitNear : 0,
+      splitFar: shadowResources && typeof shadowResources.splitFar === "number" ? shadowResources.splitFar : 0,
+      shadowSize: shadowResources && typeof shadowResources.size === "number" ? shadowResources.size : 0,
+    });
     if (shadowResources._lastPassHash === passHash) {
       return;
     }
@@ -14531,6 +15538,57 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
     };
   }
 
+  function scenePBRTextureLooksHDR(url) {
+    var key = typeof url === "string" ? url.trim().toLowerCase() : "";
+    return key.endsWith(".hdr") || key.indexOf(".hdr?") >= 0 || key.indexOf(".hdr#") >= 0;
+  }
+
+  function scenePBRTonemapHDRPixels(parsed) {
+    var width = Math.max(1, Math.floor(sceneNumber(parsed && parsed.width, 1)));
+    var height = Math.max(1, Math.floor(sceneNumber(parsed && parsed.height, 1)));
+    var source = parsed && parsed.data;
+    var pixels = new Uint8Array(width * height * 4);
+    for (var i = 0, j = 0; i < width * height; i++, j += 3) {
+      var r = Math.max(0, sceneNumber(source && source[j], 0));
+      var g = Math.max(0, sceneNumber(source && source[j + 1], 0));
+      var b = Math.max(0, sceneNumber(source && source[j + 2], 0));
+      pixels[i * 4] = Math.max(0, Math.min(255, Math.round(Math.pow(r / (1 + r), 1 / 2.2) * 255)));
+      pixels[i * 4 + 1] = Math.max(0, Math.min(255, Math.round(Math.pow(g / (1 + g), 1 / 2.2) * 255)));
+      pixels[i * 4 + 2] = Math.max(0, Math.min(255, Math.round(Math.pow(b / (1 + b), 1 / 2.2) * 255)));
+      pixels[i * 4 + 3] = 255;
+    }
+    return { width: width, height: height, pixels: pixels };
+  }
+
+  function scenePBRLoadHDRTexture(gl, key, texture, record) {
+    if (typeof fetch !== "function" || typeof sceneParseRadianceHDR !== "function") {
+      return false;
+    }
+    fetch(key)
+      .then(function(response) {
+        if (!response || response.ok === false) {
+          throw new Error("failed to fetch HDR environment map");
+        }
+        return response.arrayBuffer();
+      })
+      .then(function(buffer) {
+        var parsed = sceneParseRadianceHDR(buffer);
+        var ldr = scenePBRTonemapHDRPixels(parsed);
+        gl.bindTexture(gl.TEXTURE_2D, texture);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, ldr.width, ldr.height, 0, gl.RGBA, gl.UNSIGNED_BYTE, ldr.pixels);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+        record.loaded = true;
+        record.width = ldr.width;
+        record.height = ldr.height;
+        record.hdr = true;
+      })
+      .catch(function() {
+        record.failed = true;
+      });
+    return true;
+  }
+
   function scenePBRLoadTexture(gl, url, cache) {
     if (!cache) return null;
     const textureMap = cache;
@@ -14553,13 +15611,21 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
 
+    if (scenePBRTextureLooksHDR(key) && scenePBRLoadHDRTexture(gl, key, texture, record)) {
+      return record;
+    }
+
     if (typeof Image === "function") {
       const image = new Image();
       image.onload = function() {
         gl.bindTexture(gl.TEXTURE_2D, texture);
         gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image);
-        gl.generateMipmap(gl.TEXTURE_2D);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+        if (typeof gl.generateMipmap === "function" && gl.LINEAR_MIPMAP_LINEAR !== undefined) {
+          gl.generateMipmap(gl.TEXTURE_2D);
+          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+        } else {
+          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+        }
         record.loaded = true;
       };
       image.onerror = function() {
@@ -14618,17 +15684,33 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
       skyIntensity: gl.getUniformLocation(program, "u_skyIntensity"),
       groundColor: gl.getUniformLocation(program, "u_groundColor"),
       groundIntensity: gl.getUniformLocation(program, "u_groundIntensity"),
+      envMap: gl.getUniformLocation(program, "u_envMap"),
+      hasEnvMap: gl.getUniformLocation(program, "u_hasEnvMap"),
+      envIntensity: gl.getUniformLocation(program, "u_envIntensity"),
+      envRotation: gl.getUniformLocation(program, "u_envRotation"),
 
-      shadowMap0: gl.getUniformLocation(program, "u_shadowMap0"),
-      lightSpaceMatrix0: gl.getUniformLocation(program, "u_lightSpaceMatrix0"),
+      shadowMap0_0: gl.getUniformLocation(program, "u_shadowMap0_0"),
+      shadowMap0_1: gl.getUniformLocation(program, "u_shadowMap0_1"),
+      shadowMap0_2: gl.getUniformLocation(program, "u_shadowMap0_2"),
+      shadowMap0_3: gl.getUniformLocation(program, "u_shadowMap0_3"),
+      lightSpaceMatrices0: gl.getUniformLocation(program, "u_lightSpaceMatrices0"),
+      shadowCascadeSplits0: gl.getUniformLocation(program, "u_shadowCascadeSplits0"),
+      shadowCascades0: gl.getUniformLocation(program, "u_shadowCascades0"),
       hasShadow0: gl.getUniformLocation(program, "u_hasShadow0"),
       shadowBias0: gl.getUniformLocation(program, "u_shadowBias0"),
+      shadowSoftness0: gl.getUniformLocation(program, "u_shadowSoftness0"),
       shadowLightIndex0: gl.getUniformLocation(program, "u_shadowLightIndex0"),
 
-      shadowMap1: gl.getUniformLocation(program, "u_shadowMap1"),
-      lightSpaceMatrix1: gl.getUniformLocation(program, "u_lightSpaceMatrix1"),
+      shadowMap1_0: gl.getUniformLocation(program, "u_shadowMap1_0"),
+      shadowMap1_1: gl.getUniformLocation(program, "u_shadowMap1_1"),
+      shadowMap1_2: gl.getUniformLocation(program, "u_shadowMap1_2"),
+      shadowMap1_3: gl.getUniformLocation(program, "u_shadowMap1_3"),
+      lightSpaceMatrices1: gl.getUniformLocation(program, "u_lightSpaceMatrices1"),
+      shadowCascadeSplits1: gl.getUniformLocation(program, "u_shadowCascadeSplits1"),
+      shadowCascades1: gl.getUniformLocation(program, "u_shadowCascades1"),
       hasShadow1: gl.getUniformLocation(program, "u_hasShadow1"),
       shadowBias1: gl.getUniformLocation(program, "u_shadowBias1"),
+      shadowSoftness1: gl.getUniformLocation(program, "u_shadowSoftness1"),
       shadowLightIndex1: gl.getUniformLocation(program, "u_shadowLightIndex1"),
 
       receiveShadow: gl.getUniformLocation(program, "u_receiveShadow"),
@@ -15001,6 +16083,10 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
     h = scenePBRLightsHashNumber(h, sceneNumber(l.angle, 0));
     h = scenePBRLightsHashNumber(h, sceneNumber(l.penumbra, 0));
     h = scenePBRLightsHashString(h, l.groundColor);
+    h = scenePBRLightsHashNumber(h, sceneNumber(l.shadowBias, 0));
+    h = scenePBRLightsHashNumber(h, sceneNumber(l.shadowSize, 0));
+    h = scenePBRLightsHashNumber(h, sceneNumber(l.shadowCascades, 0));
+    h = scenePBRLightsHashNumber(h, sceneNumber(l.shadowSoftness, 0));
     return h;
   }
 
@@ -15013,6 +16099,9 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
     h = scenePBRLightsHashNumber(h, sceneNumber(env.skyIntensity, 0));
     h = scenePBRLightsHashString(h, env.groundColor);
     h = scenePBRLightsHashNumber(h, sceneNumber(env.groundIntensity, 0));
+    h = scenePBRLightsHashString(h, env.envMap);
+    h = scenePBRLightsHashNumber(h, sceneNumber(env.envIntensity, 1));
+    h = scenePBRLightsHashNumber(h, sceneNumber(env.envRotation, 0));
     h = scenePBRLightsHashNumber(h, sceneNumber(env.fogDensity, 0));
     h = scenePBRLightsHashString(h, env.fogColor);
     return h;
@@ -15178,33 +16267,131 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
     gl.uniform1i(uniforms.toneMapMode, toneMapMode);
   }
 
-  function scenePBRUploadShadowUniforms(gl, uniforms, shadowSlots, shadowLightMatrices, shadowLightIndices, lights) {
-    var lightArray = Array.isArray(lights) ? lights : [];
+  var _scenePBRCascadeMatScratch = new Float32Array(64);
+  var _scenePBRCascadeSplitScratch = new Float32Array(4);
 
-    if (shadowSlots[0] && shadowLightMatrices[0]) {
-      scenePBRBindTexture(gl, 5, shadowSlots[0].depthTexture);
-      gl.uniform1i(uniforms.shadowMap0, 5);
-      gl.uniformMatrix4fv(uniforms.lightSpaceMatrix0, false, shadowLightMatrices[0]);
-      gl.uniform1i(uniforms.hasShadow0, 1);
-      var bias0 = sceneNumber(lightArray[shadowLightIndices[0]] && lightArray[shadowLightIndices[0]].shadowBias, 0.005);
-      gl.uniform1f(uniforms.shadowBias0, bias0);
-      gl.uniform1i(uniforms.shadowLightIndex0, shadowLightIndices[0]);
-    } else {
-      gl.uniform1i(uniforms.hasShadow0, 0);
-      gl.uniform1i(uniforms.shadowLightIndex0, -1);
+  function scenePBREnvironmentHasMap(environment) {
+    return Boolean(environment && typeof environment.envMap === "string" && environment.envMap.trim());
+  }
+
+  function scenePBRSlotCascadeCount(slot, lightIndex) {
+    if (!slot || lightIndex < 0) {
+      return 0;
+    }
+    return Math.max(1, Math.min(4, slot.numCascades | 0));
+  }
+
+  function scenePBRShadowTextureCount(shadowSlots, shadowLightIndices) {
+    var slots = Array.isArray(shadowSlots) ? shadowSlots : [];
+    var indices = Array.isArray(shadowLightIndices) ? shadowLightIndices : [];
+    var count = 0;
+    for (var i = 0; i < slots.length; i++) {
+      count += scenePBRSlotCascadeCount(slots[i], indices[i]);
+    }
+    return count;
+  }
+
+  function scenePBRTextureLayoutForFrame(shadowSlots, shadowLightIndices, environment) {
+    var shadowCount = scenePBRShadowTextureCount(shadowSlots, shadowLightIndices);
+    if (scenePBREnvironmentHasMap(environment)) {
+      shadowCount = Math.max(2, shadowCount);
+    }
+    return sceneAllocateTextureUnits({
+      shadowCount: shadowCount,
+      ibl: scenePBREnvironmentHasMap(environment),
+    });
+  }
+
+  function scenePBRUploadShadowUniforms(gl, uniforms, shadowSlots, shadowLightIndices, lights, environment) {
+    var lightArray = Array.isArray(lights) ? lights : [];
+    var layout = scenePBRTextureLayoutForFrame(shadowSlots, shadowLightIndices, environment);
+    var shadowUnits = layout.shadows;
+
+    var unitBase = 0;
+    uploadCascadedSlot(gl, uniforms, 0, shadowSlots[0], shadowLightIndices[0],
+      lightArray, shadowUnits, unitBase);
+    unitBase += scenePBRSlotCascadeCount(shadowSlots[0], shadowLightIndices[0]);
+    uploadCascadedSlot(gl, uniforms, 1, shadowSlots[1], shadowLightIndices[1],
+      lightArray, shadowUnits, unitBase);
+  }
+
+  function uploadCascadedSlot(gl, uniforms, slotIndex, slot, lightIndex, lightArray, shadowUnits, unitBase) {
+    var samplerKeys = slotIndex === 0
+      ? ["shadowMap0_0", "shadowMap0_1", "shadowMap0_2", "shadowMap0_3"]
+      : ["shadowMap1_0", "shadowMap1_1", "shadowMap1_2", "shadowMap1_3"];
+    var matricesKey = slotIndex === 0 ? "lightSpaceMatrices0" : "lightSpaceMatrices1";
+    var splitsKey = slotIndex === 0 ? "shadowCascadeSplits0" : "shadowCascadeSplits1";
+    var cascadesKey = slotIndex === 0 ? "shadowCascades0" : "shadowCascades1";
+    var hasKey = slotIndex === 0 ? "hasShadow0" : "hasShadow1";
+    var biasKey = slotIndex === 0 ? "shadowBias0" : "shadowBias1";
+    var softKey = slotIndex === 0 ? "shadowSoftness0" : "shadowSoftness1";
+    var indexKey = slotIndex === 0 ? "shadowLightIndex0" : "shadowLightIndex1";
+    var base = Math.max(0, unitBase | 0);
+
+    if (!slot || lightIndex < 0) {
+      gl.uniform1i(uniforms[hasKey], 0);
+      gl.uniform1f(uniforms[softKey], 0);
+      gl.uniform1i(uniforms[indexKey], -1);
+      gl.uniform1i(uniforms[cascadesKey], 1);
+      return;
     }
 
-    if (shadowSlots[1] && shadowLightMatrices[1]) {
-      scenePBRBindTexture(gl, 6, shadowSlots[1].depthTexture);
-      gl.uniform1i(uniforms.shadowMap1, 6);
-      gl.uniformMatrix4fv(uniforms.lightSpaceMatrix1, false, shadowLightMatrices[1]);
-      gl.uniform1i(uniforms.hasShadow1, 1);
-      var bias1 = sceneNumber(lightArray[shadowLightIndices[1]] && lightArray[shadowLightIndices[1]].shadowBias, 0.005);
-      gl.uniform1f(uniforms.shadowBias1, bias1);
-      gl.uniform1i(uniforms.shadowLightIndex1, shadowLightIndices[1]);
-    } else {
-      gl.uniform1i(uniforms.hasShadow1, 0);
-      gl.uniform1i(uniforms.shadowLightIndex1, -1);
+    var light = lightArray[lightIndex] || {};
+    var numCascades = Math.max(1, Math.min(4, slot.numCascades | 0));
+
+    for (var ci = 0; ci < 4; ci++) {
+      var effectiveCascade = ci < numCascades ? slot.cascades[ci] : slot.cascades[0];
+      var unit = shadowUnits[base + ci];
+      if (unit == null) unit = shadowUnits[base] || shadowUnits[0] || null;
+      if (unit == null) continue;
+      scenePBRBindTexture(gl, unit, effectiveCascade.depthTexture);
+      gl.uniform1i(uniforms[samplerKeys[ci]], unit);
+    }
+
+    for (var mi = 0; mi < 4; mi++) {
+      var src = (mi < numCascades ? slot.cascades[mi] : slot.cascades[0]).lightMatrix;
+      for (var k = 0; k < 16; k++) {
+        _scenePBRCascadeMatScratch[mi * 16 + k] = src ? src[k] : 0;
+      }
+    }
+    for (var si = 0; si < 4; si++) {
+      _scenePBRCascadeSplitScratch[si] = si < numCascades
+        ? (slot.cascades[si].splitFar || 0)
+        : Infinity;
+    }
+
+    gl.uniformMatrix4fv(uniforms[matricesKey], false, _scenePBRCascadeMatScratch);
+    gl.uniform1fv(uniforms[splitsKey], _scenePBRCascadeSplitScratch);
+    gl.uniform1i(uniforms[cascadesKey], numCascades);
+    gl.uniform1i(uniforms[hasKey], 1);
+    gl.uniform1f(uniforms[biasKey], sceneNumber(light.shadowBias, 0.005));
+    gl.uniform1f(uniforms[softKey], Math.max(0, sceneNumber(light.shadowSoftness, 0)));
+    gl.uniform1i(uniforms[indexKey], lightIndex);
+  }
+
+  function scenePBRUploadEnvironmentMap(gl, uniforms, environment, textureCache, shadowSlots, shadowLightIndices) {
+    var env = environment || {};
+    var envMap = typeof env.envMap === "string" ? env.envMap.trim() : "";
+    if (!envMap) {
+      gl.uniform1i(uniforms.hasEnvMap, 0);
+      gl.uniform1f(uniforms.envIntensity, 0);
+      gl.uniform1f(uniforms.envRotation, 0);
+      return;
+    }
+
+    var layout = scenePBRTextureLayoutForFrame(shadowSlots, shadowLightIndices, env);
+    var unit = layout && layout.ibl ? layout.ibl.irradiance : null;
+    var record = scenePBRLoadTexture(gl, envMap, textureCache);
+    var available = Boolean(record && record.texture && !record.failed);
+    gl.uniform1i(uniforms.hasEnvMap, available ? 1 : 0);
+    var envIntensity = Object.prototype.hasOwnProperty.call(env, "envIntensity")
+      ? sceneNumber(env.envIntensity, 1)
+      : 1;
+    gl.uniform1f(uniforms.envIntensity, Math.max(0, envIntensity));
+    gl.uniform1f(uniforms.envRotation, sceneNumber(env.envRotation, 0));
+    if (available && unit != null) {
+      scenePBRBindTexture(gl, unit, record.texture);
+      gl.uniform1i(uniforms.envMap, unit);
     }
   }
 
@@ -15226,7 +16413,6 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
 
     var postProcessor = null;
 
-    var shadowLightMatrices = [null, null];
     var shadowLightIndices = [-1, -1];
 
     const positionBuffer = gl.createBuffer();
@@ -15461,7 +16647,12 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
         }
       }
 
-      shadowLightMatrices[0] = null; shadowLightMatrices[1] = null;
+      sceneRenderCamera(bundle.camera, _frameCam);
+      const cam = _frameCam;
+      const aspect = Math.max(0.0001, canvas.width / Math.max(1, canvas.height));
+      const viewMatrix = scenePBRViewMatrix(cam, scratchViewMatrix);
+      const projMatrix = scenePBRProjectionMatrix(cam.fov, aspect, cam.near, cam.far, scratchProjMatrix);
+
       shadowLightIndices[0] = -1; shadowLightIndices[1] = -1;
       var activeShadowCount = 0;
 
@@ -15481,23 +16672,27 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
           }
 
           var slot = activeShadowCount;
+          var numCascades = Math.max(1, Math.min(4, (light.shadowCascades | 0) || 1));
           var shadowSize = sceneNumber(light.shadowSize, 1024);
           shadowSize = Math.max(256, Math.min(4096, shadowSize));
           shadowSize = resolveShadowSize(shadowSize, shadowMaxPixels);
 
-          if (!shadowSlots[slot] || shadowSlots[slot].size !== shadowSize) {
-            if (shadowSlots[slot]) {
-              gl.deleteFramebuffer(shadowSlots[slot].framebuffer);
-              gl.deleteTexture(shadowSlots[slot].depthTexture);
-            }
-            shadowSlots[slot] = createSceneShadowResources(gl, shadowSize);
+          if (!shadowSlots[slot] ||
+              shadowSlots[slot].size !== shadowSize ||
+              shadowSlots[slot].numCascades !== numCascades) {
+            disposeShadowSlot(gl, shadowSlots[slot]);
+            shadowSlots[slot] = createSceneShadowSlot(gl, shadowSize, numCascades);
           }
 
-          var lightMatrix = sceneShadowLightSpaceMatrix(light, sceneBounds);
-          shadowLightMatrices[slot] = lightMatrix;
           shadowLightIndices[slot] = li;
 
-          renderSceneShadowPass(gl, shadowProgram, shadowSlots[slot], lightMatrix, bundle, shadowState);
+          computeShadowSlotCascadeMatrices(light, shadowSlots[slot], sceneBounds,
+            viewMatrix, cam.fov, aspect, cam.near, cam.far);
+
+          for (var ci = 0; ci < shadowSlots[slot].numCascades; ci++) {
+            var cascade = shadowSlots[slot].cascades[ci];
+            renderSceneShadowPass(gl, shadowProgram, cascade, cascade.lightMatrix, bundle, shadowState);
+          }
           activeShadowCount++;
         }
       }
@@ -15526,12 +16721,6 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
       gl.clearDepth(1);
       gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
-      sceneRenderCamera(bundle.camera, _frameCam);
-      const cam = _frameCam;
-      const aspect = Math.max(0.0001, canvas.width / Math.max(1, canvas.height));
-      const viewMatrix = scenePBRViewMatrix(cam, scratchViewMatrix);
-      const projMatrix = scenePBRProjectionMatrix(cam.fov, aspect, cam.near, cam.far, scratchProjMatrix);
-
       _frameLightsHash = scenePBRLightsHash(bundle.lights, bundle.environment);
 
       if (hasPBRData) {
@@ -15543,8 +16732,9 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
       scenePBRUploadExposure(gl, uniforms, bundle.environment, usePostProcessing);
 
       scenePBRUploadLights(gl, uniforms, bundle.lights, bundle.environment, _frameLightsHash);
+      scenePBRUploadEnvironmentMap(gl, uniforms, bundle.environment, textureCache, shadowSlots, shadowLightIndices);
 
-      scenePBRUploadShadowUniforms(gl, uniforms, shadowSlots, shadowLightMatrices, shadowLightIndices, bundle.lights);
+      scenePBRUploadShadowUniforms(gl, uniforms, shadowSlots, shadowLightIndices, bundle.lights, bundle.environment);
 
       const drawList = preparedScene && preparedScene.pbrPasses
         ? preparedScene.pbrPasses
@@ -15635,8 +16825,9 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
             scenePBRUploadExposure(gl, currentUniforms, bundle.environment, postEffects.length > 0);
 
             scenePBRUploadLights(gl, currentUniforms, bundle.lights, bundle.environment, _frameLightsHash);
+            scenePBRUploadEnvironmentMap(gl, currentUniforms, bundle.environment, textureCache, shadowSlots, shadowLightIndices);
 
-            scenePBRUploadShadowUniforms(gl, currentUniforms, shadowSlots, shadowLightMatrices, shadowLightIndices, bundle.lights);
+            scenePBRUploadShadowUniforms(gl, currentUniforms, shadowSlots, shadowLightIndices, bundle.lights, bundle.environment);
 
             lastMaterialIndex = -1;
           }
@@ -16080,7 +17271,8 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
       scenePBRUploadExposure(gl, ip.uniforms, bundle.environment, postEffects.length > 0);
 
       scenePBRUploadLights(gl, ip.uniforms, bundle.lights, bundle.environment, _frameLightsHash);
-      scenePBRUploadShadowUniforms(gl, ip.uniforms, shadowSlots, shadowLightMatrices, shadowLightIndices, bundle.lights);
+      scenePBRUploadEnvironmentMap(gl, ip.uniforms, bundle.environment, textureCache, shadowSlots, shadowLightIndices);
+      scenePBRUploadShadowUniforms(gl, ip.uniforms, shadowSlots, shadowLightIndices, bundle.lights, bundle.environment);
 
       var materials = Array.isArray(bundle.materials) ? bundle.materials : [];
 
@@ -16180,11 +17372,8 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
       textureCache.clear();
 
       for (var si = 0; si < shadowSlots.length; si++) {
-        if (shadowSlots[si]) {
-          gl.deleteFramebuffer(shadowSlots[si].framebuffer);
-          gl.deleteTexture(shadowSlots[si].depthTexture);
-          shadowSlots[si] = null;
-        }
+        disposeShadowSlot(gl, shadowSlots[si]);
+        shadowSlots[si] = null;
       }
 
       if (postProcessor) {
@@ -16286,6 +17475,15 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
       return null;
     }
     return renderer;
+  }
+
+  if (typeof window !== "undefined") {
+    window.__gosx_scene3d_resource_api = Object.assign(window.__gosx_scene3d_resource_api || {}, {
+      shadowPassHash: sceneShadowPassHash,
+      computeCascadeSplits: sceneShadowComputeCascadeSplits,
+      frustumSubCorners: sceneShadowFrustumSubCorners,
+      fitLightSpaceOrtho: sceneShadowFitLightSpaceOrtho,
+    });
   }
 
   if (typeof sceneBackendRegistry !== "undefined" && sceneBackendRegistry) {
@@ -21205,12 +22403,14 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
     return tangents;
   }
 
-  function gltfExpandIndexed(positions, normals, uvs, tangents, indices) {
+  function gltfExpandIndexed(positions, normals, uvs, tangents, joints, weights, indices) {
     var count = indices.length;
     var outPos = new Float32Array(count * 3);
     var outNrm = new Float32Array(count * 3);
     var outUV  = new Float32Array(count * 2);
     var outTan = tangents ? new Float32Array(count * 4) : null;
+    var outJoints = joints ? new Float32Array(count * 4) : null;
+    var outWeights = weights ? new Float32Array(count * 4) : null;
 
     for (var i = 0; i < count; i++) {
       var idx = indices[i];
@@ -21231,9 +22431,30 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
         outTan[i * 4 + 2] = tangents[idx * 4 + 2];
         outTan[i * 4 + 3] = tangents[idx * 4 + 3];
       }
+
+      if (outJoints) {
+        outJoints[i * 4]     = joints[idx * 4];
+        outJoints[i * 4 + 1] = joints[idx * 4 + 1];
+        outJoints[i * 4 + 2] = joints[idx * 4 + 2];
+        outJoints[i * 4 + 3] = joints[idx * 4 + 3];
+      }
+
+      if (outWeights) {
+        outWeights[i * 4]     = weights[idx * 4];
+        outWeights[i * 4 + 1] = weights[idx * 4 + 1];
+        outWeights[i * 4 + 2] = weights[idx * 4 + 2];
+        outWeights[i * 4 + 3] = weights[idx * 4 + 3];
+      }
     }
 
-    return { positions: outPos, normals: outNrm, uvs: outUV, tangents: outTan };
+    return {
+      positions: outPos,
+      normals: outNrm,
+      uvs: outUV,
+      tangents: outTan,
+      joints: outJoints,
+      weights: outWeights,
+    };
   }
 
   function gltfExtractMeshPrimitive(gltf, primitive, binaryBuffer) {
@@ -21251,6 +22472,20 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
       ? gltfReadAccessor(gltf, primitive.attributes.TANGENT, binaryBuffer)
       : null;
 
+    var joints = primitive.attributes.JOINTS_0 != null
+      ? gltfReadAccessor(gltf, primitive.attributes.JOINTS_0, binaryBuffer)
+      : null;
+    if (joints && !(joints instanceof Float32Array)) {
+      joints = new Float32Array(joints);
+    }
+
+    var weights = primitive.attributes.WEIGHTS_0 != null
+      ? gltfReadAccessor(gltf, primitive.attributes.WEIGHTS_0, binaryBuffer)
+      : null;
+    if (weights && !(weights instanceof Float32Array)) {
+      weights = new Float32Array(weights);
+    }
+
     var indices = primitive.indices != null
       ? gltfReadAccessor(gltf, primitive.indices, binaryBuffer)
       : null;
@@ -21261,6 +22496,8 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
         normals || positions, // placeholder; we generate normals after expansion
         uvs || gltfGenerateDefaultUVs(positions.length / 3),
         tangentsRaw,
+        joints,
+        weights,
         indices
       );
       positions = expanded.positions;
@@ -21271,6 +22508,8 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
       }
       uvs = expanded.uvs;
       tangentsRaw = expanded.tangents;
+      joints = expanded.joints;
+      weights = expanded.weights;
     } else {
       if (!normals) {
         normals = gltfGenerateFlatNormals(positions);
@@ -21287,6 +22526,8 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
       normals: normals,
       uvs: uvs,
       tangents: tangents,
+      joints: joints,
+      weights: weights,
       count: positions.length / 3,
     };
   }
@@ -21456,13 +22697,15 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
     };
   }
 
-  function gltfExtractMeshNode(gltf, meshIndex, binaryBuffer, worldTransform, result) {
+  function gltfExtractMeshNode(gltf, meshIndex, binaryBuffer, worldTransform, result, skinIndex) {
     var mesh = gltf.meshes[meshIndex];
     if (!mesh) {
       return;
     }
 
     var normalMat = gltfNormalMatrix(worldTransform);
+    var skin = skinIndex != null && result.skins ? result.skins[skinIndex] : null;
+    var isSkinned = Boolean(skin);
 
     for (var p = 0; p < mesh.primitives.length; p++) {
       var primitive = mesh.primitives[p];
@@ -21474,40 +22717,51 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
       var geometry = gltfExtractMeshPrimitive(gltf, primitive, binaryBuffer);
       var material = gltfExtractMaterial(gltf, primitive.material, binaryBuffer);
       var vertCount = geometry.count;
+      var primitiveSkinned = isSkinned && geometry.joints && geometry.weights;
 
-      var worldPositions = new Float32Array(vertCount * 3);
-      var worldNormals = new Float32Array(vertCount * 3);
-      for (var v = 0; v < vertCount; v++) {
-        var px = geometry.positions[v * 3];
-        var py = geometry.positions[v * 3 + 1];
-        var pz = geometry.positions[v * 3 + 2];
-        var wp = gltfTransformPoint(worldTransform, px, py, pz);
-        worldPositions[v * 3]     = wp.x;
-        worldPositions[v * 3 + 1] = wp.y;
-        worldPositions[v * 3 + 2] = wp.z;
+      var objectPositions;
+      var objectNormals;
+      var objectTangents;
 
-        var tnx = geometry.normals[v * 3];
-        var tny = geometry.normals[v * 3 + 1];
-        var tnz = geometry.normals[v * 3 + 2];
-        var wn = gltfTransformNormal(normalMat, tnx, tny, tnz);
-        worldNormals[v * 3]     = wn.x;
-        worldNormals[v * 3 + 1] = wn.y;
-        worldNormals[v * 3 + 2] = wn.z;
-      }
+      if (primitiveSkinned) {
+        objectPositions = new Float32Array(geometry.positions);
+        objectNormals = new Float32Array(geometry.normals);
+        objectTangents = new Float32Array(geometry.tangents);
+      } else {
+        objectPositions = new Float32Array(vertCount * 3);
+        objectNormals = new Float32Array(vertCount * 3);
+        for (var v = 0; v < vertCount; v++) {
+          var px = geometry.positions[v * 3];
+          var py = geometry.positions[v * 3 + 1];
+          var pz = geometry.positions[v * 3 + 2];
+          var wp = gltfTransformPoint(worldTransform, px, py, pz);
+          objectPositions[v * 3]     = wp.x;
+          objectPositions[v * 3 + 1] = wp.y;
+          objectPositions[v * 3 + 2] = wp.z;
 
-      var worldTangents = new Float32Array(vertCount * 4);
-      for (var v = 0; v < vertCount; v++) {
-        var ttx = geometry.tangents[v * 4];
-        var tty = geometry.tangents[v * 4 + 1];
-        var ttz = geometry.tangents[v * 4 + 2];
-        var tw  = geometry.tangents[v * 4 + 3];
-        var wt = gltfTransformDirection(worldTransform, ttx, tty, ttz);
-        var tlen = Math.sqrt(wt.x * wt.x + wt.y * wt.y + wt.z * wt.z);
-        if (tlen > 1e-8) { wt.x /= tlen; wt.y /= tlen; wt.z /= tlen; }
-        worldTangents[v * 4]     = wt.x;
-        worldTangents[v * 4 + 1] = wt.y;
-        worldTangents[v * 4 + 2] = wt.z;
-        worldTangents[v * 4 + 3] = tw;
+          var tnx = geometry.normals[v * 3];
+          var tny = geometry.normals[v * 3 + 1];
+          var tnz = geometry.normals[v * 3 + 2];
+          var wn = gltfTransformNormal(normalMat, tnx, tny, tnz);
+          objectNormals[v * 3]     = wn.x;
+          objectNormals[v * 3 + 1] = wn.y;
+          objectNormals[v * 3 + 2] = wn.z;
+        }
+
+        objectTangents = new Float32Array(vertCount * 4);
+        for (var tv = 0; tv < vertCount; tv++) {
+          var ttx = geometry.tangents[tv * 4];
+          var tty = geometry.tangents[tv * 4 + 1];
+          var ttz = geometry.tangents[tv * 4 + 2];
+          var tw  = geometry.tangents[tv * 4 + 3];
+          var wt = gltfTransformDirection(worldTransform, ttx, tty, ttz);
+          var tlen = Math.sqrt(wt.x * wt.x + wt.y * wt.y + wt.z * wt.z);
+          if (tlen > 1e-8) { wt.x /= tlen; wt.y /= tlen; wt.z /= tlen; }
+          objectTangents[tv * 4]     = wt.x;
+          objectTangents[tv * 4 + 1] = wt.y;
+          objectTangents[tv * 4 + 2] = wt.z;
+          objectTangents[tv * 4 + 3] = tw;
+        }
       }
 
       var renderPass = "opaque";
@@ -21520,21 +22774,32 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
         objectID = mesh.name + "-prim-" + p;
       }
 
-      result.objects.push({
+      var vertices = {
+        positions: objectPositions,
+        normals: objectNormals,
+        uvs: geometry.uvs,
+        tangents: objectTangents,
+        count: vertCount,
+      };
+
+      var object = {
         id: objectID,
         kind: "gltf-mesh",
-        vertices: {
-          positions: worldPositions,
-          normals: worldNormals,
-          uvs: geometry.uvs,
-          tangents: worldTangents,
-          count: vertCount,
-        },
+        vertices: vertices,
         material: material,
         transform: worldTransform,
         renderPass: renderPass,
         doubleSided: material.doubleSided,
-      });
+      };
+
+      if (primitiveSkinned) {
+        vertices.joints = geometry.joints;
+        vertices.weights = geometry.weights;
+        object.skinIndex = skinIndex;
+        object.skin = skin;
+      }
+
+      result.objects.push(object);
 
       result.materials.push(material);
     }
@@ -21550,7 +22815,7 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
     var worldTransform = sceneMat4Multiply(parentTransform, localTransform);
 
     if (node.mesh != null) {
-      gltfExtractMeshNode(gltf, node.mesh, binaryBuffer, worldTransform, result);
+      gltfExtractMeshNode(gltf, node.mesh, binaryBuffer, worldTransform, result, node.skin != null ? node.skin : null);
     }
 
     var children = node.children || [];
@@ -21583,6 +22848,7 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
         }
 
         channels.push({
+          targetID: ch.target.node,
           targetNode: ch.target.node,
           property: ch.target.path,
           interpolation: sampler.interpolation || "LINEAR",
@@ -21605,11 +22871,27 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
       return null;
     }
     var skin = gltf.skins[skinIndex];
+    var joints = Array.isArray(skin.joints) ? skin.joints.slice() : [];
+    if (joints.length > 64) {
+      console.warn("[gosx] glTF skin has " + joints.length + " joints; max supported is 64. Rendering mesh as static:", skin.name || skinIndex);
+      return null;
+    }
     var ibm = skin.inverseBindMatrices != null
       ? new Float32Array(gltfReadAccessor(gltf, skin.inverseBindMatrices, binaryBuffer))
       : null;
+    if (!ibm || ibm.length < joints.length * 16) {
+      ibm = new Float32Array(joints.length * 16);
+      for (var i = 0; i < joints.length; i++) {
+        ibm[i * 16] = 1;
+        ibm[i * 16 + 5] = 1;
+        ibm[i * 16 + 10] = 1;
+        ibm[i * 16 + 15] = 1;
+      }
+    }
     return {
-      joints: skin.joints.slice(),
+      index: skinIndex,
+      name: skin.name || "",
+      joints: joints,
       inverseBindMatrices: ibm,
       skeleton: skin.skeleton != null ? skin.skeleton : null,
     };
@@ -21624,6 +22906,7 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
       sprites: [],
       animations: [],
       skins: [],
+      nodes: Array.isArray(gltf.nodes) ? gltf.nodes : [],
     };
 
     var sceneIndex = gltf.scene != null ? gltf.scene : 0;
@@ -21632,21 +22915,19 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
       return result;
     }
 
+    if (gltf.skins) {
+      for (var s = 0; s < gltf.skins.length; s++) {
+        var skin = gltfExtractSkin(gltf, s, binaryBuffer);
+        result.skins[s] = skin;
+      }
+    }
+
     var identity = new Float32Array(SCENE_IDENTITY_MAT4);
     for (var i = 0; i < scene.nodes.length; i++) {
       gltfWalkNode(gltf, scene.nodes[i], binaryBuffer, identity, result);
     }
 
     result.animations = gltfExtractAnimations(gltf, binaryBuffer);
-
-    if (gltf.skins) {
-      for (var s = 0; s < gltf.skins.length; s++) {
-        var skin = gltfExtractSkin(gltf, s, binaryBuffer);
-        if (skin) {
-          result.skins.push(skin);
-        }
-      }
-    }
 
     return result;
   }
@@ -21708,6 +22989,7 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
       lights: scene.lights || [],
       animations: scene.animations || [],
       skins: scene.skins || [],
+      nodes: scene.nodes || [],
     };
   }
 
@@ -21723,7 +23005,7 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
   var _childSet = new Set();
   var _mixerResults = new Map();
 
-  function sceneAnimBuildNodeTransforms(nodes, animatedTransforms) {
+  function sceneAnimBuildNodeTransforms(nodes, animatedTransforms, rootTransform) {
     _nodeTransforms.clear();
 
     function walkNode(nodeIndex, parentWorld) {
@@ -21732,7 +23014,7 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
       var anim = animatedTransforms ? animatedTransforms.get(nodeIndex) : null;
 
       var local = sceneTRSToMat4(
-        anim && anim.position ? anim.position : (node.translation || [0, 0, 0]),
+        anim && (anim.translation || anim.position) ? (anim.translation || anim.position) : (node.translation || [0, 0, 0]),
         anim && anim.rotation ? anim.rotation : (node.rotation || [0, 0, 0, 1]),
         anim && anim.scale ? anim.scale : (node.scale || [1, 1, 1])
       );
@@ -21754,7 +23036,7 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
       }
     }
     for (var i = 0; i < nodes.length; i++) {
-      if (!_childSet.has(i)) walkNode(i, null);
+      if (!_childSet.has(i)) walkNode(i, rootTransform || null);
     }
 
     return _nodeTransforms;
@@ -21955,6 +23237,9 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
       if (clip && clip.channels) {
         for (var ci = 0; ci < clip.channels.length; ci++) {
           var ch = clip.channels[ci];
+          if (ch.targetID == null && ch.targetNode != null) {
+            ch.targetID = ch.targetNode;
+          }
           ch._key = ch.targetID + ":" + ch.property;
           ch._lastIndex = 0;
         }
@@ -22140,6 +23425,16 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
     window.__gosx_scene3d_animation_loaded = true;
   }
 
+  function gosxSceneEmit(level, msg, fields) {
+    try {
+      if (typeof window !== "undefined" && typeof window.__gosx_emit === "function") {
+        window.__gosx_emit(level, "scene3d", msg, fields || {});
+      }
+    } catch (_err) {
+      /* telemetry must never surface to users */
+    }
+  }
+
   function createSceneRenderer(canvas, props, capability) {
     const registryResult = createSceneRendererFromRegistry(canvas, props, capability);
     if (registryResult) {
@@ -22314,6 +23609,86 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
     );
   }
 
+  function sceneModelTransformMatrix(model) {
+    const rx = sceneNumber(model && model.rotationX, 0);
+    const ry = sceneNumber(model && model.rotationY, 0);
+    const rz = sceneNumber(model && model.rotationZ, 0);
+    const basisX = sceneRotatePoint({ x: sceneNumber(model && model.scaleX, 1), y: 0, z: 0 }, rx, ry, rz);
+    const basisY = sceneRotatePoint({ x: 0, y: sceneNumber(model && model.scaleY, 1), z: 0 }, rx, ry, rz);
+    const basisZ = sceneRotatePoint({ x: 0, y: 0, z: sceneNumber(model && model.scaleZ, 1) }, rx, ry, rz);
+    return new Float32Array([
+      basisX.x, basisX.y, basisX.z, 0,
+      basisY.x, basisY.y, basisY.z, 0,
+      basisZ.x, basisZ.y, basisZ.z, 0,
+      sceneNumber(model && model.x, 0), sceneNumber(model && model.y, 0), sceneNumber(model && model.z, 0), 1,
+    ]);
+  }
+
+  function sceneModelIdentityBindMatrices(jointCount) {
+    const matrices = new Float32Array(Math.max(0, jointCount) * 16);
+    for (let index = 0; index < jointCount; index += 1) {
+      matrices[index * 16] = 1;
+      matrices[index * 16 + 5] = 1;
+      matrices[index * 16 + 10] = 1;
+      matrices[index * 16 + 15] = 1;
+    }
+    return matrices;
+  }
+
+  function sceneCloneModelSkin(skin) {
+    if (!skin || typeof skin !== "object") {
+      return null;
+    }
+    const joints = Array.isArray(skin.joints) ? skin.joints.slice() : [];
+    if (!joints.length || joints.length > 64) {
+      return null;
+    }
+    let inverseBindMatrices = skin.inverseBindMatrices instanceof Float32Array
+      ? new Float32Array(skin.inverseBindMatrices)
+      : sceneTypedFloatArray(skin.inverseBindMatrices);
+    if (inverseBindMatrices.length < joints.length * 16) {
+      inverseBindMatrices = sceneModelIdentityBindMatrices(joints.length);
+    } else if (inverseBindMatrices.length !== joints.length * 16) {
+      inverseBindMatrices = inverseBindMatrices.slice(0, joints.length * 16);
+    }
+    return {
+      index: typeof skin.index === "number" ? skin.index : null,
+      name: typeof skin.name === "string" ? skin.name : "",
+      joints,
+      inverseBindMatrices,
+      skeleton: skin.skeleton != null ? skin.skeleton : null,
+    };
+  }
+
+  function sceneCloneModelSkins(skins) {
+    return Array.isArray(skins) ? skins.map(sceneCloneModelSkin) : [];
+  }
+
+  function sceneCloneModelAnimations(animations) {
+    if (!Array.isArray(animations)) {
+      return [];
+    }
+    return animations.map(function(clip, index) {
+      const source = clip && typeof clip === "object" ? clip : {};
+      const channels = Array.isArray(source.channels) ? source.channels.map(function(channel) {
+        const ch = channel && typeof channel === "object" ? channel : {};
+        return {
+          targetID: ch.targetID != null ? ch.targetID : ch.targetNode,
+          targetNode: ch.targetNode != null ? ch.targetNode : ch.targetID,
+          property: typeof ch.property === "string" ? ch.property : "translation",
+          interpolation: typeof ch.interpolation === "string" && ch.interpolation ? ch.interpolation : "LINEAR",
+          times: ch.times instanceof Float32Array ? new Float32Array(ch.times) : sceneTypedFloatArray(ch.times),
+          values: ch.values instanceof Float32Array ? new Float32Array(ch.values) : sceneTypedFloatArray(ch.values),
+        };
+      }) : [];
+      return {
+        name: typeof source.name === "string" && source.name ? source.name : ("clip-" + index),
+        duration: sceneNumber(source.duration, 0),
+        channels,
+      };
+    });
+  }
+
   function sceneModelMaterialOverrideSource(model) {
     return model && model.materialOverride && typeof model.materialOverride === "object"
       ? model.materialOverride
@@ -22450,8 +23825,11 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
     }) : [];
   }
 
-  function sceneInstantiateModelObject(rawObject, model, prefix, index) {
+  function sceneInstantiateModelObject(rawObject, model, prefix, index, skinInstances) {
     const source = sceneApplyMaterialOverride(rawObject, model);
+    if (skinInstances && source && source.skinIndex != null && skinInstances[source.skinIndex]) {
+      source.skin = skinInstances[source.skinIndex];
+    }
     const normalized = normalizeSceneObject(source, index);
     if (normalized.vertices && normalized.vertices.positions && normalized.vertices.count > 0) {
       return sceneModelMeshObject(normalized, model, prefix);
@@ -22505,24 +23883,40 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
       driftSpeed: 0,
       driftPhase: 0,
     });
-    instanced.vertices = {
-      count: Math.max(0, Math.floor(sceneNumber(vertices.count, 0))),
-      positions: sceneModelTransformMeshFloats(vertices.positions, 3, function(x, y, z) {
-        return sceneModelTransformPoint({ x: x, y: y, z: z }, model);
-      }),
-      normals: sceneModelTransformMeshFloats(vertices.normals, 3, function(x, y, z) {
-        return sceneNormalizeDirection(sceneModelTransformVector({ x: x, y: y, z: z }, model));
-      }),
-      uvs: vertices.uvs instanceof Float32Array ? new Float32Array(vertices.uvs) : sceneTypedFloatArray(vertices.uvs),
-      tangents: sceneModelTransformMeshFloats(vertices.tangents, 4, function(x, y, z, w) {
-        const rotated = sceneNormalizeDirection(sceneModelTransformVector({ x: x, y: y, z: z }, model));
-        return { x: rotated.x, y: rotated.y, z: rotated.z, w: sceneNumber(w, 1) };
-      }),
-      joints: vertices.joints instanceof Float32Array ? new Float32Array(vertices.joints) : sceneTypedFloatArray(vertices.joints),
-      weights: vertices.weights instanceof Float32Array ? new Float32Array(vertices.weights) : sceneTypedFloatArray(vertices.weights),
-    };
+    const hasSkin = instanced.skin && typeof instanced.skin === "object";
+    if (hasSkin) {
+      instanced.vertices = {
+        count: Math.max(0, Math.floor(sceneNumber(vertices.count, 0))),
+        positions: vertices.positions instanceof Float32Array ? new Float32Array(vertices.positions) : sceneTypedFloatArray(vertices.positions),
+        normals: vertices.normals instanceof Float32Array ? new Float32Array(vertices.normals) : sceneTypedFloatArray(vertices.normals),
+        uvs: vertices.uvs instanceof Float32Array ? new Float32Array(vertices.uvs) : sceneTypedFloatArray(vertices.uvs),
+        tangents: vertices.tangents instanceof Float32Array ? new Float32Array(vertices.tangents) : sceneTypedFloatArray(vertices.tangents),
+        joints: vertices.joints instanceof Float32Array ? new Float32Array(vertices.joints) : sceneTypedFloatArray(vertices.joints),
+        weights: vertices.weights instanceof Float32Array ? new Float32Array(vertices.weights) : sceneTypedFloatArray(vertices.weights),
+      };
+    } else {
+      instanced.vertices = {
+        count: Math.max(0, Math.floor(sceneNumber(vertices.count, 0))),
+        positions: sceneModelTransformMeshFloats(vertices.positions, 3, function(x, y, z) {
+          return sceneModelTransformPoint({ x: x, y: y, z: z }, model);
+        }),
+        normals: sceneModelTransformMeshFloats(vertices.normals, 3, function(x, y, z) {
+          return sceneNormalizeDirection(sceneModelTransformVector({ x: x, y: y, z: z }, model));
+        }),
+        uvs: vertices.uvs instanceof Float32Array ? new Float32Array(vertices.uvs) : sceneTypedFloatArray(vertices.uvs),
+        tangents: sceneModelTransformMeshFloats(vertices.tangents, 4, function(x, y, z, w) {
+          const rotated = sceneNormalizeDirection(sceneModelTransformVector({ x: x, y: y, z: z }, model));
+          return { x: rotated.x, y: rotated.y, z: rotated.z, w: sceneNumber(w, 1) };
+        }),
+        joints: vertices.joints instanceof Float32Array ? new Float32Array(vertices.joints) : sceneTypedFloatArray(vertices.joints),
+        weights: vertices.weights instanceof Float32Array ? new Float32Array(vertices.weights) : sceneTypedFloatArray(vertices.weights),
+      };
+    }
     if (model && model.static !== null) {
       instanced.static = Boolean(model.static);
+    }
+    if (hasSkin && model && model.animation) {
+      instanced.static = false;
     }
     if (model && typeof model.pickable === "boolean") {
       instanced.pickable = model.pickable;
@@ -22626,6 +24020,9 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
       labels: Array.isArray(record.labels) ? record.labels : [],
       sprites,
       lights: Array.isArray(record.lights) ? record.lights : [],
+      animations: Array.isArray(record.animations) ? record.animations : [],
+      skins: Array.isArray(record.skins) ? record.skins : [],
+      nodes: Array.isArray(record.nodes) ? record.nodes : [],
     };
   }
 
@@ -22742,6 +24139,10 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
           return parseSceneModelAsset(await response.json(), key);
         } catch (error) {
           console.warn("[gosx] failed to load Scene3D model asset:", key, error && error.message ? error.message : error);
+          gosxSceneEmit("warn", "model-asset-load-failed", {
+            asset: String(key || ""),
+            error: error && error.message ? String(error.message) : String(error),
+          });
           return parseSceneModelAsset({}, key);
         }
       })());
@@ -22749,8 +24150,111 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
     return sceneModelAssetCache.get(key);
   }
 
+  function sceneModelHasSkins(skins) {
+    return Array.isArray(skins) && skins.some(function(skin) {
+      return Boolean(skin && skin.joints && skin.inverseBindMatrices);
+    });
+  }
+
+  function sceneApplyModelSkinPose(record, deltaTime) {
+    if (!record || !record.animationApi || !record.nodes || !record.skins) {
+      return;
+    }
+    const animatedTransforms = record.animatedTransforms;
+    if (animatedTransforms && typeof animatedTransforms.clear === "function") {
+      animatedTransforms.clear();
+    }
+    if (record.mixer) {
+      record.mixer.update(deltaTime, function(targetNode, property, value) {
+        let entry = animatedTransforms.get(targetNode);
+        if (!entry) {
+          entry = {};
+          animatedTransforms.set(targetNode, entry);
+        }
+        entry[property] = Array.isArray(value) ? value.slice() : Array.from(value || []);
+      });
+    }
+    const nodeTransforms = record.animationApi.buildNodeTransforms(record.nodes, animatedTransforms, record.rootTransform);
+    for (let index = 0; index < record.skins.length; index += 1) {
+      const skin = record.skins[index];
+      if (!skin) {
+        continue;
+      }
+      skin.jointMatrices = record.animationApi.computeJointMatrices(skin, nodeTransforms);
+    }
+  }
+
+  async function scenePrepareModelSkinPlayback(state, asset, model, skinInstances) {
+    if (!sceneModelHasSkins(skinInstances) || !Array.isArray(asset.nodes) || !asset.nodes.length) {
+      return;
+    }
+
+    let animationApi = null;
+    try {
+      animationApi = await ensureAnimationFeatureLoaded();
+    } catch (error) {
+      console.warn("[gosx] failed to load Scene3D animation support:", error && error.message ? error.message : error);
+      return;
+    }
+    if (!animationApi || typeof animationApi.buildNodeTransforms !== "function" || typeof animationApi.computeJointMatrices !== "function") {
+      return;
+    }
+
+    const record = {
+      nodes: asset.nodes,
+      skins: skinInstances,
+      animatedTransforms: new Map(),
+      rootTransform: sceneModelTransformMatrix(model),
+      animationApi,
+      mixer: null,
+      animation: "",
+    };
+
+    const requestedAnimation = typeof model.animation === "string" ? model.animation.trim() : "";
+    if (requestedAnimation && typeof animationApi.createMixer === "function") {
+      const clips = sceneCloneModelAnimations(asset.animations);
+      if (clips.length) {
+        const mixer = animationApi.createMixer();
+        for (let index = 0; index < clips.length; index += 1) {
+          const clip = clips[index];
+          mixer.addClip(clip.name, clip);
+        }
+        mixer.play(requestedAnimation, { loop: model.loop !== false, fadeIn: 0 });
+        if (mixer.isPlaying(requestedAnimation)) {
+          record.mixer = mixer;
+          record.animation = requestedAnimation;
+          if (!Array.isArray(state._modelAnimations)) {
+            state._modelAnimations = [];
+          }
+          state._modelAnimations.push(record);
+        }
+      }
+    }
+
+    sceneApplyModelSkinPose(record, 0);
+  }
+
+  function sceneHasActiveModelAnimations(state) {
+    const records = state && Array.isArray(state._modelAnimations) ? state._modelAnimations : [];
+    return records.some(function(record) {
+      return Boolean(record && record.mixer && record.animation && record.mixer.isPlaying(record.animation));
+    });
+  }
+
+  function sceneAdvanceModelAnimations(state, deltaTime) {
+    const records = state && Array.isArray(state._modelAnimations) ? state._modelAnimations : [];
+    for (let index = 0; index < records.length; index += 1) {
+      const record = records[index];
+      if (!record || !record.mixer || !record.animation || !record.mixer.isPlaying(record.animation)) {
+        continue;
+      }
+      sceneApplyModelSkinPose(record, deltaTime);
+    }
+  }
+
   async function hydrateSceneStateModels(state, props) {
     const models = sceneModels(props);
+    state._modelAnimations = [];
     if (!models.length) {
       return { models: 0, objects: 0, labels: 0, sprites: 0, lights: 0 };
     }
@@ -22761,8 +24265,9 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
     await Promise.all(models.map(async function(model, modelIndex) {
       const asset = await loadSceneModelAsset(model.src);
       const prefix = model.id || ("scene-model-" + modelIndex);
+      const skinInstances = sceneCloneModelSkins(asset.skins);
       for (let i = 0; i < asset.objects.length; i += 1) {
-        const object = sceneInstantiateModelObject(asset.objects[i], model, prefix, i);
+        const object = sceneInstantiateModelObject(asset.objects[i], model, prefix, i, skinInstances);
         if (!object) {
           continue;
         }
@@ -22793,6 +24298,7 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
         state.lights.set(light.id, light);
         lightCount += 1;
       }
+      await scenePrepareModelSkinPlayback(state, asset, model, skinInstances);
     }));
     return { models: models.length, objects: objectCount, labels: labelCount, sprites: spriteCount, lights: lightCount };
   }
@@ -24217,6 +25723,7 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
     const lifecycle = initialSceneLifecycleState();
     const motion = initialSceneMotionState(props);
     let sceneCSSAnimationUntil = 0;
+    let lastModelAnimationTimeSeconds = null;
 
     function sceneShouldAnimate() {
       if (motion.reducedMotion) {
@@ -24232,6 +25739,9 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
         return true;
       }
       if (Array.isArray(sceneState.computeParticles) && sceneState.computeParticles.length > 0) {
+        return true;
+      }
+      if (sceneHasActiveModelAnimations(sceneState)) {
         return true;
       }
       if (Array.isArray(sceneState.points) && sceneState.points.some(function(p) {
@@ -24450,6 +25960,9 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
       });
     }
 
+    let sceneRendererRecentlySwapped = false;
+    let sceneRendererLastSwapReason = "";
+
     function swapRenderer(nextRenderer, fallbackReason) {
       if (!nextRenderer) {
         return false;
@@ -24460,12 +25973,20 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
       if (previous && previous !== renderer && typeof previous.dispose === "function") {
         previous.dispose();
       }
+      sceneRendererRecentlySwapped = true;
+      sceneRendererLastSwapReason = fallbackReason || "";
+      gosxSceneEmit("info", "renderer-swap", {
+        from: previous && previous.kind ? previous.kind : "",
+        to: nextRenderer.kind || "",
+        reason: fallbackReason || "",
+      });
       return true;
     }
 
     function fallbackSceneRenderer(reason) {
       const ctx2d = typeof canvas.getContext === "function" ? canvas.getContext("2d") : null;
       if (!ctx2d) {
+        gosxSceneEmit("warn", "renderer-fallback-unavailable", { reason: reason || "" });
         return false;
       }
       return swapRenderer(createSceneCanvasRenderer(ctx2d, canvas), reason || "webgl-unavailable");
@@ -24493,13 +26014,25 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
       if (event && typeof event.preventDefault === "function") {
         event.preventDefault();
       }
-      fallbackSceneRenderer("webgl-context-lost");
+      gosxSceneEmit("warn", "webgl-context-lost", {
+        voluntary: contextVoluntarilyLost === true,
+      });
+      const swapped = fallbackSceneRenderer("webgl-context-lost");
       scheduleRender("webgl-context-lost");
+      if (!swapped) {
+        gosxSceneEmit("warn", "webgl-context-lost-no-fallback", {});
+      }
     }
 
     function onWebGLContextRestored() {
+      const voluntary = contextVoluntarilyLost === true;
       contextVoluntarilyLost = false;
-      if (restoreSceneWebGLRenderer("")) {
+      const swapped = restoreSceneWebGLRenderer("");
+      gosxSceneEmit(swapped ? "info" : "warn", "webgl-context-restored", {
+        swapped: swapped,
+        voluntary: voluntary,
+      });
+      if (swapped) {
         viewportDirty = true;
         scheduleRender("webgl-context-restored");
       }
@@ -24848,6 +26381,11 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
       }
       sceneAdvanceScrollCamera(sceneState._scrollCamera);
       const timeSeconds = now / 1000;
+      const modelAnimationDelta = lastModelAnimationTimeSeconds == null
+        ? 0
+        : Math.max(0, Math.min(0.1, timeSeconds - lastModelAnimationTimeSeconds));
+      lastModelAnimationTimeSeconds = timeSeconds;
+      sceneAdvanceModelAnimations(sceneState, modelAnimationDelta);
       if (runtimeScene && ctx.runtime && typeof ctx.runtime.renderFrame === "function") {
         const runtimeBundle = ctx.runtime.renderFrame(timeSeconds, viewport.cssWidth, viewport.cssHeight);
         if (runtimeBundle) {
@@ -24893,9 +26431,39 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
       );
       syncSceneNodeSentinels(latestBundle);
       renderer.render(latestBundle, viewport);
+      maybeEmitRenderEmpty(latestBundle);
       renderSceneLabels(labelLayer, latestBundle, labelLayoutCache, labelElements, viewport.cssWidth, viewport.cssHeight);
       renderSceneSprites(labelLayer, latestBundle, spriteElements, viewport.cssWidth, viewport.cssHeight);
       scheduleNextAnimationFrame();
+    }
+
+    function maybeEmitRenderEmpty(bundle) {
+      if (!sceneRendererRecentlySwapped) {
+        return;
+      }
+      sceneRendererRecentlySwapped = false;
+      const reason = sceneRendererLastSwapReason;
+      sceneRendererLastSwapReason = "";
+      const bundleVerts = Number((bundle && bundle.vertexCount) || 0);
+      const worldVerts = Number((bundle && bundle.worldVertexCount) || 0);
+      const surfaceCount = Array.isArray(bundle && bundle.surfaces) ? bundle.surfaces.length : 0;
+      if (bundleVerts > 0 || worldVerts > 0 || surfaceCount > 0) {
+        return;
+      }
+      const pointCount = Array.isArray(sceneState.points) ? sceneState.points.length : 0;
+      const objectCount = (sceneState.meshObjects ? sceneState.meshObjects.length : 0)
+        + (Array.isArray(sceneState.objects) ? sceneState.objects.length : 0);
+      const instanceCount = Array.isArray(sceneState.instancedMeshes) ? sceneState.instancedMeshes.length : 0;
+      if (pointCount + objectCount + instanceCount === 0) {
+        return;
+      }
+      gosxSceneEmit("error", "render-empty", {
+        rendererKind: renderer && renderer.kind ? renderer.kind : "",
+        lastSwapReason: reason,
+        scenePoints: pointCount,
+        sceneObjects: objectCount,
+        sceneInstances: instanceCount,
+      });
     }
 
     await sceneModelHydration;
@@ -26809,6 +28377,12 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
     if (typeof factory !== "function") {
       pendingEngineRuntimes.delete(entry.id);
       console.warn(`[gosx] no engine factory registered for ${entry.component}`);
+      if (typeof window !== "undefined" && typeof window.__gosx_emit === "function") {
+        window.__gosx_emit("warn", "engine", "no engine factory registered", {
+          component: String(entry.component || ""),
+          engineID: String(entry.id || ""),
+        });
+      }
       if (window.__gosx && typeof window.__gosx.reportIssue === "function") {
         window.__gosx.reportIssue({
           scope: "engine",
@@ -26834,6 +28408,14 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
         runtime.dispose();
       }
       console.error(`[gosx] failed to mount engine ${entry.id}:`, e);
+      if (typeof window !== "undefined" && typeof window.__gosx_emit === "function") {
+        window.__gosx_emit("error", "engine", "failed to mount engine", {
+          component: String(entry.component || ""),
+          engineID: String(entry.id || ""),
+          error: e && e.message ? String(e.message) : String(e),
+          stack: e && e.stack ? String(e.stack) : "",
+        });
+      }
       if (window.__gosx && typeof window.__gosx.reportIssue === "function") {
         window.__gosx.reportIssue({
           scope: "engine",
@@ -27195,6 +28777,12 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
     const programFormat = inferProgramFormat(entry);
     if (!entry.programRef) {
       console.error(`[gosx] skipping island ${entry.id} — missing programRef`);
+      if (typeof window !== "undefined" && typeof window.__gosx_emit === "function") {
+        window.__gosx_emit("error", "island", "missing programRef", {
+          islandID: String(entry.id || ""),
+          component: String(entry.component || ""),
+        });
+      }
       if (window.__gosx && typeof window.__gosx.reportIssue === "function") {
         window.__gosx.reportIssue({
           scope: "island",
@@ -27259,6 +28847,14 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
       );
       if (typeof result === "string" && result !== "") {
         console.error(`[gosx] failed to hydrate island ${entry.id}: ${result}`);
+        if (typeof window !== "undefined" && typeof window.__gosx_emit === "function") {
+          window.__gosx_emit("error", "island", "failed to hydrate island", {
+            islandID: String(entry.id || ""),
+            component: String(entry.component || ""),
+            programRef: String(entry.programRef || ""),
+            reason: String(result),
+          });
+        }
         if (window.__gosx && typeof window.__gosx.reportIssue === "function") {
           window.__gosx.reportIssue({
             scope: "island",
