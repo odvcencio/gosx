@@ -456,7 +456,9 @@ func (a *App) pageRouteHandler(route registeredPageRoute) http.Handler {
 		MarkObservedRequest(r, "page", pattern)
 		defer func() {
 			if recovered := recover(); recovered != nil {
-				a.renderError(w, r, panicError(recovered))
+				err := panicError(recovered)
+				log.Printf("[gosx] page render panic on %s: %v", r.URL.Path, err)
+				a.renderError(w, r, err)
 			}
 		}()
 		ctx := newContext(r)
@@ -911,6 +913,7 @@ func recoveryMiddleware() Middleware {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			defer func() {
 				if recovered := recover(); recovered != nil {
+					log.Printf("[gosx] unhandled panic on %s: %v", r.URL.Path, recovered)
 					writePanic(w, r, recovered)
 				}
 			}()

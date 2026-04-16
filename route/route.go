@@ -7,6 +7,7 @@ package route
 import (
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"path"
 	"strings"
@@ -362,7 +363,9 @@ func (r *Router) buildHandler(pattern string, route Route, layouts []LayoutFunc,
 
 		defer func() {
 			if recovered := recover(); recovered != nil {
-				r.renderError(w, ctx, layouts, errorHandler, errorLayout, panicError(recovered), pattern)
+				err := panicError(recovered)
+				log.Printf("[gosx] route render panic on %s: %v", pattern, err)
+				r.renderError(w, ctx, layouts, errorHandler, errorLayout, err, pattern)
 			}
 		}()
 

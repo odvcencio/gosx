@@ -2,6 +2,7 @@ package route
 
 import (
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -477,6 +478,7 @@ func (r *fileRouteRegistrar) buildRoute(page FilePage) (Route, error) {
 		Handler: func(ctx *RouteContext) gosx.Node {
 			node, err := renderFilePage(ctx, resolved.page, resolved.module, r.renderFn)
 			if err != nil {
+				log.Printf("[gosx] file page render error on %s: %v", resolved.page.FilePath, err)
 				ctx.SetHandlerError(err)
 				return gosx.Node{}
 			}
