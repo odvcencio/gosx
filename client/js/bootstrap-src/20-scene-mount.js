@@ -2257,6 +2257,59 @@
     let scheduledRenderHandle = null;
     let disposed = false;
 
+    // Idle context release: when the scene is not renderable (tab hidden
+    // or scrolled off-viewport) for longer than IDLE_CONTEXT_RELEASE_MS,
+    // voluntarily lose the WebGL context via WEBGL_lose_context. This
+    // releases GPU virtual memory that Firefox accumulates for long-lived
+    // WebGL contexts — measured at 88-116 GB virtual on a 32 GB machine
+    // when a tab with an autoRotate scene stays open for hours. The
+    // existing webglcontextrestored handler restores the renderer when
+    // the scene becomes renderable again.
+    const IDLE_CONTEXT_RELEASE_MS = 30000;
+    let idleContextTimer = null;
+    let contextVoluntarilyLost = false;
+
+    function scheduleIdleContextRelease() {
+      clearIdleContextRelease();
+      if (disposed || contextVoluntarilyLost) return;
+      idleContextTimer = setTimeout(function() {
+        idleContextTimer = null;
+        if (disposed || sceneCanRender()) return;
+        if (!renderer || renderer.kind !== "webgl") return;
+        try {
+          const gl = canvas.getContext("webgl2") || canvas.getContext("webgl");
+          if (gl) {
+            const ext = gl.getExtension("WEBGL_lose_context");
+            if (ext) {
+              contextVoluntarilyLost = true;
+              ext.loseContext();
+            }
+          }
+        } catch (_e) { /* context may already be lost */ }
+      }, IDLE_CONTEXT_RELEASE_MS);
+    }
+
+    function clearIdleContextRelease() {
+      if (idleContextTimer != null) {
+        clearTimeout(idleContextTimer);
+        idleContextTimer = null;
+      }
+    }
+
+    function restoreVoluntarilyLostContext() {
+      if (!contextVoluntarilyLost) return;
+      contextVoluntarilyLost = false;
+      try {
+        const gl = canvas.getContext("webgl2") || canvas.getContext("webgl");
+        if (gl) {
+          const ext = gl.getExtension("WEBGL_lose_context");
+          if (ext) {
+            ext.restoreContext();
+          }
+        }
+      } catch (_e) { /* let the browser handle it */ }
+    }
+
     // Viewport-dirty flag: when false, renderFrame skips the per-frame
     // sceneViewportFromMount + applySceneViewport calls and reuses the
     // cached `viewport` object. Both helpers are layout-flushing — they
@@ -2357,7 +2410,9 @@
     }
 
     function onWebGLContextRestored() {
+      contextVoluntarilyLost = false;
       if (restoreSceneWebGLRenderer("")) {
+        viewportDirty = true;
         scheduleRender("webgl-context-restored");
       }
     }
@@ -2702,10 +2757,19 @@
           cancelEngineFrame(labelRefreshHandle);
           labelRefreshHandle = null;
         }
+        scheduleIdleContextRelease();
         return;
       }
       // Visibility/viewport presence transition — the mount may have
       // been offscreen, so force a re-measure on resume.
+      clearIdleContextRelease();
+      if (contextVoluntarilyLost) {
+        restoreVoluntarilyLostContext();
+        // The webglcontextrestored event handler will call
+        // restoreSceneWebGLRenderer + scheduleRender once the
+        // browser finishes restoring the context.
+        return;
+      }
       scheduleRenderWithViewport(reason || "lifecycle");
     });
     const releaseMotionObserver = observeSceneMotion(ctx.mount, motion, function(reason) {
@@ -2920,6 +2984,7 @@
       },
       dispose() {
         disposed = true;
+        clearIdleContextRelease();
         if (scrollHandler) {
           window.removeEventListener("scroll", scrollHandler);
         }

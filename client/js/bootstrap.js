@@ -24172,6 +24172,51 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
     let scheduledRenderHandle = null;
     let disposed = false;
 
+    const IDLE_CONTEXT_RELEASE_MS = 30000;
+    let idleContextTimer = null;
+    let contextVoluntarilyLost = false;
+
+    function scheduleIdleContextRelease() {
+      clearIdleContextRelease();
+      if (disposed || contextVoluntarilyLost) return;
+      idleContextTimer = setTimeout(function() {
+        idleContextTimer = null;
+        if (disposed || sceneCanRender()) return;
+        if (!renderer || renderer.kind !== "webgl") return;
+        try {
+          const gl = canvas.getContext("webgl2") || canvas.getContext("webgl");
+          if (gl) {
+            const ext = gl.getExtension("WEBGL_lose_context");
+            if (ext) {
+              contextVoluntarilyLost = true;
+              ext.loseContext();
+            }
+          }
+        } catch (_e) { /* context may already be lost */ }
+      }, IDLE_CONTEXT_RELEASE_MS);
+    }
+
+    function clearIdleContextRelease() {
+      if (idleContextTimer != null) {
+        clearTimeout(idleContextTimer);
+        idleContextTimer = null;
+      }
+    }
+
+    function restoreVoluntarilyLostContext() {
+      if (!contextVoluntarilyLost) return;
+      contextVoluntarilyLost = false;
+      try {
+        const gl = canvas.getContext("webgl2") || canvas.getContext("webgl");
+        if (gl) {
+          const ext = gl.getExtension("WEBGL_lose_context");
+          if (ext) {
+            ext.restoreContext();
+          }
+        }
+      } catch (_e) { /* let the browser handle it */ }
+    }
+
     let viewportDirty = true;
 
     function scheduleNextAnimationFrame() {
@@ -24232,7 +24277,9 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
     }
 
     function onWebGLContextRestored() {
+      contextVoluntarilyLost = false;
       if (restoreSceneWebGLRenderer("")) {
+        viewportDirty = true;
         scheduleRender("webgl-context-restored");
       }
     }
@@ -24541,6 +24588,12 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
           cancelEngineFrame(labelRefreshHandle);
           labelRefreshHandle = null;
         }
+        scheduleIdleContextRelease();
+        return;
+      }
+      clearIdleContextRelease();
+      if (contextVoluntarilyLost) {
+        restoreVoluntarilyLostContext();
         return;
       }
       scheduleRenderWithViewport(reason || "lifecycle");
@@ -24696,6 +24749,7 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
       },
       dispose() {
         disposed = true;
+        clearIdleContextRelease();
         if (scrollHandler) {
           window.removeEventListener("scroll", scrollHandler);
         }
