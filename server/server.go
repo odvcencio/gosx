@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
@@ -91,8 +92,9 @@ type App struct {
 	redirects   map[string]registeredRedirectRoute
 	rewrites    map[string]registeredRewriteRoute
 	mounts      map[string]registeredMountedRoute
-	revalidator *Revalidator
-	operations  []OperationObserver
+	revalidator        *Revalidator
+	operations         []OperationObserver
+	clientEventsLogger *slog.Logger
 }
 
 // New creates a new GoSX server app.
@@ -496,6 +498,20 @@ func (a *App) registerBuiltinRoutes(mux *http.ServeMux) {
 	if !a.hasRoute("GET /_gosx/emoji-codes.json") {
 		mux.Handle("GET /_gosx/emoji-codes.json", EmojiCodesHandler())
 	}
+	if !a.hasRoute(ClientEventsRoute) {
+		mux.Handle(ClientEventsRoute, ClientEventsHandler(ClientEventsOptions{
+			Logger: a.clientEventsLogger,
+		}))
+	}
+}
+
+// SetClientEventsLogger overrides the slog.Logger used by the
+// /_gosx/client-events endpoint. A nil value falls back to Logger().
+func (a *App) SetClientEventsLogger(logger *slog.Logger) {
+	if a == nil {
+		return
+	}
+	a.clientEventsLogger = logger
 }
 
 func (a *App) registerPageRoutes(mux *http.ServeMux) {

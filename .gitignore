@@ -4,6 +4,9 @@ build/
 /gosx
 node_modules/
 
+# Local dev data (SQLite, uploads) — never commit
+data/
+
 # Specs and plans — never commit
 docs/specs/
 docs/superpowers/
