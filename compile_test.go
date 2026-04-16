@@ -274,6 +274,49 @@ func Page() Node {
 	}
 }
 
+func TestCompileTextWithLiteralGSXPunctuation(t *testing.T) {
+	cases := []struct {
+		name   string
+		source string
+		want   string
+	}{
+		{
+			name: "greater than",
+			source: `package main
+
+func Page() Node {
+	return <p>a > b</p>
+}
+`,
+			want: "a > b",
+		},
+		{
+			name: "closing brace",
+			source: `package main
+
+func Page() Node {
+	return <p>Result: }</p>
+}
+`,
+			want: "Result: }",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			prog, err := Compile([]byte(tc.source))
+			if err != nil {
+				t.Fatalf("Compile failed: %v", err)
+			}
+			for _, node := range prog.Nodes {
+				if node.Kind == ir.NodeText && node.Text == tc.want {
+					return
+				}
+			}
+			t.Fatalf("expected text node %q, got %#v", tc.want, prog.Nodes)
+		})
+	}
+}
+
 func TestCompileReturnsAllValidationDiagnostics(t *testing.T) {
 	source := []byte(`package main
 
