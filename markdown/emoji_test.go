@@ -52,6 +52,15 @@ func TestEmojiPlusOne(t *testing.T) {
 	}
 }
 
+func TestEmojiSlackishAliases(t *testing.T) {
+	html := NewRenderer().RenderString(":simple_smile: :thumbs_up: :red_heart:")
+	for _, want := range []string{"🙂", "👍", "❤️"} {
+		if !strings.Contains(html, want) {
+			t.Errorf("expected %q in rendered aliases, got: %s", want, html)
+		}
+	}
+}
+
 func TestEmojiInCodeSpanNotProcessed(t *testing.T) {
 	html := NewRenderer().RenderString("Use `:fire:` for flames")
 	// Inside code span, should remain as text

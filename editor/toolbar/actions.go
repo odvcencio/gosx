@@ -29,6 +29,8 @@ func (a Action) Snippet(selection string) (string, bool) {
 		return "[" + placeholder(selection, "text") + "](" + placeholder(a.Value, "url") + ")", true
 	case input.CmdImage:
 		return "![" + placeholder(selection, "alt") + "](" + placeholder(a.Value, "url") + ")", true
+	case input.CmdEmoji:
+		return ":" + emojiShortcode(a.Value, selection) + ":", true
 	case input.CmdH1:
 		return "\n# " + placeholder(selection, "Heading") + "\n", true
 	case input.CmdH2:
@@ -88,4 +90,28 @@ func placeholder(value, fallback string) string {
 		return trimmed
 	}
 	return fallback
+}
+
+func emojiShortcode(values ...string) string {
+	for _, value := range values {
+		if shortcode, ok := normalizeEmojiShortcode(value); ok {
+			return shortcode
+		}
+	}
+	return "smile"
+}
+
+func normalizeEmojiShortcode(value string) (string, bool) {
+	shortcode := strings.Trim(strings.TrimSpace(value), ":")
+	if shortcode == "" {
+		return "", false
+	}
+	shortcode = strings.ToLower(strings.Join(strings.Fields(shortcode), "_"))
+	for _, r := range shortcode {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '_' || r == '+' || r == '-' {
+			continue
+		}
+		return "", false
+	}
+	return shortcode, true
 }

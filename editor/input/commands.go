@@ -10,6 +10,7 @@ const (
 	CmdCode        Command = "code"
 	CmdLink        Command = "link"
 	CmdImage       Command = "image"
+	CmdEmoji       Command = "emoji"
 	CmdH1          Command = "h1"
 	CmdH2          Command = "h2"
 	CmdH3          Command = "h3"

@@ -4,11 +4,14 @@ import (
 	"bytes"
 	"compress/gzip"
 	_ "embed"
+	"encoding/json"
 	"net/http"
+	"sort"
 	"strings"
 	"sync"
 
 	"github.com/odvcencio/gosx"
+	"github.com/odvcencio/gosx/internal/emoji"
 )
 
 //go:embed emoji_complete.js
@@ -18,15 +21,51 @@ var emojiCompleteRuntime string
 var emojiCodesJSON []byte
 
 var (
+	emojiCodesJSONOnce sync.Once
+	emojiCodesJSONAll  []byte
 	emojiCodesGzipOnce sync.Once
 	emojiCodesGzip     []byte
 )
+
+func emojiCodesJSONBytes() []byte {
+	emojiCodesJSONOnce.Do(func() {
+		var rows [][]string
+		if err := json.Unmarshal(emojiCodesJSON, &rows); err != nil {
+			emojiCodesJSONAll = emojiCodesJSON
+			return
+		}
+
+		table := make(map[string]string, len(rows)+len(emoji.SlackishAliases))
+		for _, row := range rows {
+			if len(row) >= 2 {
+				table[row[0]] = row[1]
+			}
+		}
+		emoji.ApplyAliases(table)
+
+		rows = rows[:0]
+		for name, value := range table {
+			rows = append(rows, []string{name, value})
+		}
+		sort.Slice(rows, func(i, j int) bool {
+			return rows[i][0] < rows[j][0]
+		})
+
+		data, err := json.Marshal(rows)
+		if err != nil {
+			emojiCodesJSONAll = emojiCodesJSON
+			return
+		}
+		emojiCodesJSONAll = data
+	})
+	return emojiCodesJSONAll
+}
 
 func emojiCodesGzipped() []byte {
 	emojiCodesGzipOnce.Do(func() {
 		var buf bytes.Buffer
 		w, _ := gzip.NewWriterLevel(&buf, gzip.BestCompression)
-		w.Write(emojiCodesJSON)
+		w.Write(emojiCodesJSONBytes())
 		w.Close()
 		emojiCodesGzip = buf.Bytes()
 	})
@@ -35,7 +74,7 @@ func emojiCodesGzipped() []byte {
 
 // EmojiCompleteScript returns an inline script that enables emoji shortcode
 // autocomplete on any textarea or input with the `data-gosx-emoji-complete`
-// attribute. Type `:` followed by 2+ characters to trigger suggestions.
+// attribute. Type `:` followed by a shortcode character to trigger suggestions.
 //
 // Add to a page via ctx.AddHead(server.EmojiCompleteScript()).
 func EmojiCompleteScript() gosx.Node {
@@ -54,6 +93,6 @@ func EmojiCodesHandler() http.Handler {
 			w.Write(emojiCodesGzipped())
 			return
 		}
-		w.Write(emojiCodesJSON)
+		w.Write(emojiCodesJSONBytes())
 	})
 }

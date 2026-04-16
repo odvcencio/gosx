@@ -136,6 +136,7 @@ func (e *Editor) renderForm() gosx.Node {
 		gosx.Attr("id", "editor-content"),
 		gosx.Attr("placeholder", e.Options.Placeholder),
 		gosx.Attr("aria-label", e.ariaLabel()),
+		gosx.BoolAttr("data-gosx-emoji-complete"),
 	)
 	if e.Options.ReadOnly {
 		textareaAttrs = append(textareaAttrs, gosx.BoolAttr("readonly"))
@@ -306,7 +307,7 @@ func (e *Editor) renderTopbar() gosx.Node {
 func (e *Editor) renderToolbar() gosx.Node {
 	children := make([]gosx.Node, 0, 8)
 	for _, group := range [][]Command{
-		{CmdBold, CmdItalic, CmdStrike, CmdCode, CmdLink, CmdImage},
+		{CmdBold, CmdItalic, CmdStrike, CmdCode, CmdLink, CmdImage, CmdEmoji},
 		{CmdH1, CmdH2, CmdH3},
 		{CmdList, CmdOrderedList, CmdTaskList, CmdBlockquote},
 		{CmdNote, CmdWarning, CmdMath, CmdFootnote, CmdHR},
@@ -843,6 +844,8 @@ func toolbarButtonLabel(command Command, fallbackLabel string) string {
 		return "Link"
 	case CmdImage:
 		return "Img"
+	case CmdEmoji:
+		return "Emoji"
 	case CmdH1:
 		return "H1"
 	case CmdH2:

@@ -8,6 +8,8 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+
+	"github.com/odvcencio/gosx/internal/emoji"
 )
 
 var emojiPattern = regexp.MustCompile(`:([a-z0-9_+-]+):`)
@@ -63,6 +65,7 @@ func loadEmojiTable() map[string]string {
 				emojiTable[parts[0]] = parts[1]
 			}
 		}
+		emoji.ApplyAliases(emojiTable)
 	})
 	return emojiTable
 }

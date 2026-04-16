@@ -42,7 +42,7 @@
     dropdown.className = "gosx-emoji-dropdown";
     dropdown.setAttribute("role", "listbox");
     dropdown.setAttribute("aria-label", "Emoji suggestions");
-    dropdown.style.cssText = "position:fixed;z-index:10000;background:var(--bg,#1a1a18);border:1px solid var(--border,rgba(255,255,255,0.12));border-radius:0.5rem;padding:0.25rem;max-height:200px;overflow-y:auto;min-width:200px;box-shadow:0 4px 16px rgba(0,0,0,0.3);font-size:14px;display:none;";
+    dropdown.style.cssText = "position:fixed;z-index:10000;background:var(--bg,#1a1a18);border:1px solid var(--border,rgba(255,255,255,0.12));border-radius:0.5rem;padding:0.25rem;max-height:260px;overflow-y:auto;min-width:320px;box-shadow:0 4px 16px rgba(0,0,0,0.3);font-size:14px;display:none;";
     document.body.appendChild(dropdown);
     return dropdown;
   }
@@ -52,25 +52,32 @@
     el.innerHTML = "";
     selectedIndex = 0;
     if (results.length === 0) { el.style.display = "none"; return; }
+    var table = document.createElement("table");
+    table.className = "gosx-emoji-table";
+    table.style.cssText = "border-collapse:collapse;width:100%;table-layout:fixed;";
+    var body = document.createElement("tbody");
     for (var i = 0; i < results.length; i++) {
-      var item = document.createElement("div");
+      var item = document.createElement("tr");
       item.className = "gosx-emoji-item" + (i === 0 ? " gosx-emoji-selected" : "");
       item.setAttribute("role", "option");
       item.setAttribute("data-index", i);
-      item.style.cssText = "padding:0.35rem 0.5rem;cursor:pointer;display:flex;align-items:center;gap:0.5rem;border-radius:0.25rem;";
+      item.style.cssText = "cursor:pointer;";
+      var emojiCell = document.createElement("td");
+      emojiCell.style.cssText = "width:2.25rem;padding:0.35rem 0.5rem;border-radius:0.25rem 0 0 0.25rem;";
       var emoji = document.createElement("span");
       emoji.textContent = results[i][1];
       emoji.style.fontSize = "1.2em";
-      var label = document.createElement("span");
-      label.style.cssText = "color:var(--text-secondary,rgba(255,255,255,0.7));";
+      emojiCell.appendChild(emoji);
+      var label = document.createElement("td");
+      label.style.cssText = "padding:0.35rem 0.5rem;color:var(--text-secondary,rgba(255,255,255,0.7));font-family:var(--mono,ui-monospace,SFMono-Regular,Menlo,monospace);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;border-radius:0 0.25rem 0.25rem 0;";
       var name = results[i][0];
-      var qi = name.indexOf(query);
+      var qi = name.indexOf(query.toLowerCase());
       if (qi >= 0) {
         label.innerHTML = esc(name.slice(0, qi)) + "<strong style='color:var(--text-primary,rgba(255,255,255,0.92))'>" + esc(name.slice(qi, qi + query.length)) + "</strong>" + esc(name.slice(qi + query.length));
       } else {
         label.textContent = name;
       }
-      item.appendChild(emoji);
+      item.appendChild(emojiCell);
       item.appendChild(label);
       (function(idx) {
         item.addEventListener("mousedown", function(e) {
@@ -81,23 +88,33 @@
           selectItem(el, idx);
         });
       })(i);
-      el.appendChild(item);
+      body.appendChild(item);
     }
+    table.appendChild(body);
+    el.appendChild(table);
     // Position near caret
     var rect = input.getBoundingClientRect();
     el.style.left = rect.left + "px";
     el.style.top = (rect.bottom + 4) + "px";
     el.style.display = "block";
+    selectItem(el, 0);
   }
 
   function selectItem(el, idx) {
     var items = el.querySelectorAll(".gosx-emoji-item");
     for (var i = 0; i < items.length; i++) {
       items[i].className = "gosx-emoji-item" + (i === idx ? " gosx-emoji-selected" : "");
+      var cells = items[i].querySelectorAll("td");
       if (i === idx) {
         items[i].style.background = "var(--surface-hover,rgba(255,255,255,0.06))";
+        for (var c = 0; c < cells.length; c++) {
+          cells[c].style.background = "var(--surface-hover,rgba(255,255,255,0.06))";
+        }
       } else {
         items[i].style.background = "transparent";
+        for (var d = 0; d < cells.length; d++) {
+          cells[d].style.background = "transparent";
+        }
       }
     }
     selectedIndex = idx;
@@ -142,15 +159,15 @@
       return;
     }
     var query = val.slice(colonIdx + 1, pos);
-    // Must be at least 2 chars, no spaces, no closing colon
-    if (query.length < 2 || /\s/.test(query) || query.indexOf(":") >= 0) {
+    // Must be at least 1 shortcode char, no spaces, no closing colon.
+    if (query.length < 1 || /[^a-zA-Z0-9_+-]/.test(query) || query.indexOf(":") >= 0) {
       hideDropdown();
       return;
     }
     triggerStart = colonIdx;
     activeInput = input;
     ensureCodes(function() {
-      var results = search(query, 8);
+      var results = search(query, 24);
       showDropdown(input, results, query);
     });
   }
@@ -176,7 +193,7 @@
         var val = input.value;
         var pos = input.selectionStart;
         var query = val.slice(triggerStart + 1, pos);
-        var results = search(query, 8);
+        var results = search(query, 24);
         if (results[selectedIndex]) {
           insertEmoji(input, results[selectedIndex]);
         }

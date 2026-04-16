@@ -61,6 +61,7 @@ func TestRender_ProducesShell(t *testing.T) {
 	for _, want := range []string{
 		`class="editor-page"`,
 		`id="editor-form"`,
+		`data-gosx-emoji-complete`,
 		`id="form-slug"`,
 		`id="form-tags"`,
 		`id="form-cover-image"`,
@@ -73,6 +74,8 @@ func TestRender_ProducesShell(t *testing.T) {
 		`id="editor-title"`,
 		`id="editor-toolbar"`,
 		`role="toolbar"`,
+		`data-command="emoji"`,
+		`title="Emoji"`,
 		`aria-label="Post Editor"`,
 		`data-panel="preview"`,
 		`id="editor-metadata-panel"`,

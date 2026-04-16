@@ -26,3 +26,15 @@ func TestToolbar_Without(t *testing.T) {
 		t.Fatal("original toolbar should still have CmdMath")
 	}
 }
+
+func TestDefaultToolbar_IncludesEmoji(t *testing.T) {
+	for _, item := range DefaultToolbar.Items {
+		if item.Command == input.CmdEmoji {
+			if item.Label != "Emoji" {
+				t.Fatalf("emoji label = %q", item.Label)
+			}
+			return
+		}
+	}
+	t.Fatal("DefaultToolbar should include CmdEmoji")
+}

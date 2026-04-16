@@ -34,6 +34,7 @@ var DefaultToolbar = Toolbar{
 		{input.CmdCode, "Code", "icon-code"},
 		{input.CmdLink, "Link", "icon-link"},
 		{input.CmdImage, "Image", "icon-image"},
+		{input.CmdEmoji, "Emoji", "icon-emoji"},
 		{input.CmdH1, "H1", "icon-h1"},
 		{input.CmdH2, "H2", "icon-h2"},
 		{input.CmdH3, "H3", "icon-h3"},

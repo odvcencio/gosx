@@ -46,6 +46,7 @@ const (
 	CmdCode        Command = input.CmdCode
 	CmdLink        Command = input.CmdLink
 	CmdImage       Command = input.CmdImage
+	CmdEmoji       Command = input.CmdEmoji
 	CmdH1          Command = input.CmdH1
 	CmdH2          Command = input.CmdH2
 	CmdH3          Command = input.CmdH3

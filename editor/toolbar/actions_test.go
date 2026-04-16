@@ -29,6 +29,39 @@ func TestActionSnippet_UsesPayloadForImage(t *testing.T) {
 	}
 }
 
+func TestActionSnippet_EmojiUsesStandardShortcodePayload(t *testing.T) {
+	action := Action{Command: input.CmdEmoji, Value: ":t-rex:"}
+	got, ok := action.Snippet("")
+	if !ok {
+		t.Fatal("expected snippet")
+	}
+	if got != ":t-rex:" {
+		t.Fatalf("snippet = %q", got)
+	}
+}
+
+func TestActionSnippet_EmojiUsesSelectionAsShortcode(t *testing.T) {
+	action := Action{Command: input.CmdEmoji}
+	got, ok := action.Snippet("Face With Spiral Eyes")
+	if !ok {
+		t.Fatal("expected snippet")
+	}
+	if got != ":face_with_spiral_eyes:" {
+		t.Fatalf("snippet = %q", got)
+	}
+}
+
+func TestActionSnippet_EmojiDefaultsToSmile(t *testing.T) {
+	action := Action{Command: input.CmdEmoji}
+	got, ok := action.Snippet("")
+	if !ok {
+		t.Fatal("expected snippet")
+	}
+	if got != ":smile:" {
+		t.Fatalf("snippet = %q", got)
+	}
+}
+
 func TestActionSnippet_FootnotePrefersExplicitValue(t *testing.T) {
 	action := Action{Command: input.CmdFootnote, Value: "note-1"}
 	got, ok := action.Snippet("ignored")

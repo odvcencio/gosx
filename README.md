@@ -397,6 +397,8 @@ The renderer is configurable per-document (heading IDs, hard wraps, emoji wrappi
 
 The `editor` package is a set of Go-native building blocks for building text editors inside GoSX apps: a text model with rope-like document storage, input bindings (keyboard, IME, mouse, touch), a highlight layer, a toolbar model, a theme system, and a VS Code-grammar compatibility shim. It's the substrate for in-page editing experiences — code snippets, markdown drafts, inline content editors — without importing Monaco or CodeMirror.
 
+The default helper bar includes an `emoji` command. It inserts standard Markdown++ emoji shortcodes (`:rocket:`, `:+1:`, `:t-rex:`, `:face_with_spiral_eyes:`) so editor content stays portable and renders through the same GitHub gemoji plus Unicode Emoji table used by the markdown renderer. Slack-ish compatibility aliases such as `:simple_smile:`, `:slight_smile:`, `:thumbs_up:`, and `:red_heart:` are accepted too. Picker UIs can pass the selected shortcode as `ToolbarAction.Value`; without a value, selected text is normalized into a shortcode, then falls back to `:smile:`.
+
 ## CSS
 
 Classes and external CSS. No CSS-in-JS.
