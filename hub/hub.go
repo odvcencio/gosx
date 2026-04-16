@@ -50,7 +50,9 @@ type Hub struct {
 	syncDocName map[string]byte
 	nextSyncDoc byte
 
-	latched   map[string][]byte
+	latched map[string][]byte
+	// latchedMu protects latched. Never held while acquiring h.mu or any
+	// other hub-level mutex — release it before taking other locks.
 	latchedMu sync.RWMutex
 
 	// MaxClients limits the number of concurrent connections. 0 = unlimited.
@@ -324,16 +326,29 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Replay latched payloads to this client so it sees current state
 	// for any topic declared via Latch. Topic ordering doesn't matter —
 	// latched topics are independent of each other.
+	//
+	// Snapshot latched payload pointers under the read lock; send them
+	// after unlocking. Matches Broadcast's non-blocking-send pattern so
+	// a slow consumer can't deadlock the join path while holding
+	// latchedMu.
 	h.latchedMu.RLock()
+	payloads := make([][]byte, 0, len(h.latched))
 	for _, payload := range h.latched {
 		if payload == nil {
 			continue // declared but never broadcast
 		}
-		clone := make([]byte, len(payload))
-		copy(clone, payload)
-		client.send <- clone
+		payloads = append(payloads, payload)
 	}
 	h.latchedMu.RUnlock()
+
+	for _, payload := range payloads {
+		select {
+		case client.send <- payload:
+		default:
+			// Send buffer full — drop the replay for this topic.
+			// Consistent with Broadcast's behavior on a saturated client.
+		}
+	}
 
 	// Fire join handler (may broadcast to all clients including this one)
 	if handler, ok := h.handlers["join"]; ok {
