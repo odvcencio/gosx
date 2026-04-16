@@ -165,4 +165,12 @@ func TestEngineConfig_Validate(t *testing.T) {
 	if err := noName.Validate(); err == nil {
 		t.Fatal("expected error for missing Name, got nil")
 	}
+
+	badKind := Config{
+		Name: "UnknownEngine",
+		Kind: Kind("teleport"),
+	}
+	if err := badKind.Validate(); err == nil {
+		t.Fatal("expected error for unsupported engine kind, got nil")
+	}
 }

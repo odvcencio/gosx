@@ -1128,13 +1128,15 @@ func TestPropsSceneIRLowersShadowFields(t *testing.T) {
 	props := Props{
 		Graph: NewGraph(
 			DirectionalLight{
-				ID:         "sun",
-				Color:      "#ffffff",
-				Intensity:  1.5,
-				Direction:  Vec3(-1, -1, 0),
-				CastShadow: true,
-				ShadowBias: 0.001,
-				ShadowSize: 2048,
+				ID:             "sun",
+				Color:          "#ffffff",
+				Intensity:      1.5,
+				Direction:      Vec3(-1, -1, 0),
+				CastShadow:     true,
+				ShadowBias:     0.001,
+				ShadowSize:     2048,
+				ShadowCascades: 3,
+				ShadowSoftness: 0.04,
 			},
 			Mesh{
 				ID:            "floor",
@@ -1159,6 +1161,19 @@ func TestPropsSceneIRLowersShadowFields(t *testing.T) {
 	}
 	if light.ShadowSize != 2048 {
 		t.Fatalf("expected shadowSize 2048, got %v", light.ShadowSize)
+	}
+	if light.ShadowCascades != 3 {
+		t.Fatalf("expected shadowCascades 3, got %v", light.ShadowCascades)
+	}
+	if light.ShadowSoftness != 0.04 {
+		t.Fatalf("expected shadowSoftness 0.04, got %v", light.ShadowSoftness)
+	}
+	canonical := props.CanonicalIR()
+	if len(canonical.Lights) != 1 {
+		t.Fatalf("expected one canonical light, got %d", len(canonical.Lights))
+	}
+	if canonical.Lights[0].ShadowCascades != 3 || canonical.Lights[0].ShadowSoftness != 0.04 {
+		t.Fatalf("expected shadow polish in canonical IR, got %#v", canonical.Lights[0])
 	}
 
 	if len(ir.Objects) != 1 {
@@ -1190,6 +1205,39 @@ func TestPropsSceneIRLowersShadowFields(t *testing.T) {
 	if got := lights[0]["shadowSize"]; got != 2048 {
 		t.Fatalf("expected shadowSize in legacy light, got %#v", got)
 	}
+	if got := lights[0]["shadowCascades"]; got != 3 {
+		t.Fatalf("expected shadowCascades in legacy light, got %#v", got)
+	}
+	if got := lights[0]["shadowSoftness"]; got != 0.04 {
+		t.Fatalf("expected shadowSoftness in legacy light, got %#v", got)
+	}
+
+	data, err := json.Marshal(props)
+	if err != nil {
+		t.Fatalf("marshal props: %v", err)
+	}
+	var wire map[string]any
+	if err := json.Unmarshal(data, &wire); err != nil {
+		t.Fatalf("unmarshal props: %v", err)
+	}
+	sceneWire, ok := wire["scene"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected scene object in JSON, got %#v", wire["scene"])
+	}
+	wireLights, ok := sceneWire["lights"].([]any)
+	if !ok || len(wireLights) != 1 {
+		t.Fatalf("expected one JSON light, got %#v", sceneWire["lights"])
+	}
+	wireLight, ok := wireLights[0].(map[string]any)
+	if !ok {
+		t.Fatalf("expected JSON light object, got %#v", wireLights[0])
+	}
+	if got := wireLight["shadowCascades"]; got != float64(3) {
+		t.Fatalf("expected shadowCascades in JSON, got %#v", got)
+	}
+	if got := wireLight["shadowSoftness"]; got != 0.04 {
+		t.Fatalf("expected shadowSoftness in JSON, got %#v", got)
+	}
 	objects, ok := sceneValue["objects"].([]map[string]any)
 	if !ok || len(objects) != 1 {
 		t.Fatalf("expected one object in legacy props, got %#v", sceneValue["objects"])
@@ -1199,6 +1247,139 @@ func TestPropsSceneIRLowersShadowFields(t *testing.T) {
 	}
 	if got := objects[0]["receiveShadow"]; got != true {
 		t.Fatalf("expected receiveShadow true in legacy object, got %#v", got)
+	}
+}
+
+func TestPropsSceneIRLowersEnvironmentMapFields(t *testing.T) {
+	props := Props{
+		Background: "#08151f",
+		Environment: Environment{
+			AmbientColor:   "#f4fbff",
+			EnvironmentMap: " /hdri/studio.hdr ",
+			EnvIntensity:   1.25,
+			EnvRotation:    0.5,
+			Exposure:       1.1,
+		},
+	}
+
+	ir := props.SceneIR()
+	if ir.Environment.EnvMap != "/hdri/studio.hdr" {
+		t.Fatalf("expected envMap to be trimmed into SceneIR, got %#v", ir.Environment.EnvMap)
+	}
+	if ir.Environment.EnvIntensity != 1.25 {
+		t.Fatalf("expected envIntensity 1.25 in SceneIR, got %v", ir.Environment.EnvIntensity)
+	}
+	if ir.Environment.EnvRotation != 0.5 {
+		t.Fatalf("expected envRotation 0.5 in SceneIR, got %v", ir.Environment.EnvRotation)
+	}
+
+	canonical := props.CanonicalIR()
+	if canonical.Environment.EnvMap != "/hdri/studio.hdr" {
+		t.Fatalf("expected envMap in canonical IR, got %#v", canonical.Environment.EnvMap)
+	}
+	if canonical.Environment.EnvIntensity != 1.25 || canonical.Environment.EnvRotation != 0.5 {
+		t.Fatalf("expected IBL controls in canonical IR, got %#v", canonical.Environment)
+	}
+
+	legacy := props.LegacyProps()
+	sceneValue, ok := legacy["scene"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected scene map, got %#v", legacy["scene"])
+	}
+	environment, ok := sceneValue["environment"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected environment map, got %#v", sceneValue["environment"])
+	}
+	if got := environment["envMap"]; got != "/hdri/studio.hdr" {
+		t.Fatalf("expected envMap in legacy props, got %#v", got)
+	}
+	if got := environment["envIntensity"]; got != 1.25 {
+		t.Fatalf("expected envIntensity in legacy props, got %#v", got)
+	}
+	if got := environment["envRotation"]; got != 0.5 {
+		t.Fatalf("expected envRotation in legacy props, got %#v", got)
+	}
+
+	data, err := json.Marshal(props)
+	if err != nil {
+		t.Fatalf("marshal props: %v", err)
+	}
+	var wire map[string]any
+	if err := json.Unmarshal(data, &wire); err != nil {
+		t.Fatalf("unmarshal props: %v", err)
+	}
+	sceneWire, ok := wire["scene"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected scene object in JSON, got %#v", wire["scene"])
+	}
+	envWire, ok := sceneWire["environment"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected environment object in JSON, got %#v", sceneWire["environment"])
+	}
+	if got := envWire["envMap"]; got != "/hdri/studio.hdr" {
+		t.Fatalf("expected envMap in JSON, got %#v", got)
+	}
+	if got := envWire["envIntensity"]; got != 1.25 {
+		t.Fatalf("expected envIntensity in JSON, got %#v", got)
+	}
+	if got := envWire["envRotation"]; got != 0.5 {
+		t.Fatalf("expected envRotation in JSON, got %#v", got)
+	}
+}
+
+func TestShadowPolishClamps(t *testing.T) {
+	props := Props{
+		Graph: NewGraph(
+			DirectionalLight{
+				ID:             "negative-cascades",
+				ShadowCascades: -2,
+				ShadowSoftness: -0.5,
+			},
+			DirectionalLight{
+				ID:             "too-many-cascades",
+				ShadowCascades: 8,
+				ShadowSoftness: math.Inf(1),
+			},
+			SpotLight{
+				ID:             "soft-spot",
+				ShadowSoftness: -1,
+			},
+		),
+	}
+
+	ir := props.SceneIR()
+	if len(ir.Lights) != 3 {
+		t.Fatalf("expected three lights, got %d", len(ir.Lights))
+	}
+	if ir.Lights[0].ShadowCascades != 1 {
+		t.Fatalf("expected negative cascades to clamp to 1, got %v", ir.Lights[0].ShadowCascades)
+	}
+	if ir.Lights[0].ShadowSoftness != 0 {
+		t.Fatalf("expected negative softness to clamp to 0, got %v", ir.Lights[0].ShadowSoftness)
+	}
+	if ir.Lights[1].ShadowCascades != 4 {
+		t.Fatalf("expected high cascades to clamp to 4, got %v", ir.Lights[1].ShadowCascades)
+	}
+	if ir.Lights[1].ShadowSoftness != 0 {
+		t.Fatalf("expected non-finite softness to clamp to 0, got %v", ir.Lights[1].ShadowSoftness)
+	}
+	if ir.Lights[2].ShadowSoftness != 0 {
+		t.Fatalf("expected spot softness to clamp to 0, got %v", ir.Lights[2].ShadowSoftness)
+	}
+
+	legacy := ir.legacyProps()
+	lights, ok := legacy["lights"].([]map[string]any)
+	if !ok || len(lights) != 3 {
+		t.Fatalf("expected three legacy lights, got %#v", legacy["lights"])
+	}
+	if got := lights[0]["shadowCascades"]; got != 1 {
+		t.Fatalf("expected clamped shadowCascades in legacy props, got %#v", got)
+	}
+	if _, present := lights[0]["shadowSoftness"]; present {
+		t.Fatalf("expected clamped zero shadowSoftness to be omitted, got %#v", lights[0])
+	}
+	if got := lights[1]["shadowCascades"]; got != 4 {
+		t.Fatalf("expected clamped high shadowCascades in legacy props, got %#v", got)
 	}
 }
 
@@ -1723,18 +1904,19 @@ func TestPropsSceneIRLowersSpotLight(t *testing.T) {
 				Rotation: Rotate(0, 0, math.Pi/2),
 				Children: []Node{
 					SpotLight{
-						ID:         "stage",
-						Color:      "#ffe0a0",
-						Intensity:  2.5,
-						Position:   Vec3(1, 0, 0),
-						Direction:  Vec3(0, -1, 0),
-						Angle:      math.Pi / 6,
-						Penumbra:   0.3,
-						Range:      20,
-						Decay:      2,
-						CastShadow: true,
-						ShadowBias: 0.002,
-						ShadowSize: 1024,
+						ID:             "stage",
+						Color:          "#ffe0a0",
+						Intensity:      2.5,
+						Position:       Vec3(1, 0, 0),
+						Direction:      Vec3(0, -1, 0),
+						Angle:          math.Pi / 6,
+						Penumbra:       0.3,
+						Range:          20,
+						Decay:          2,
+						CastShadow:     true,
+						ShadowBias:     0.002,
+						ShadowSize:     1024,
+						ShadowSoftness: 0.08,
 					},
 				},
 			},
@@ -1768,7 +1950,7 @@ func TestPropsSceneIRLowersSpotLight(t *testing.T) {
 	if spot.Range != 20 || spot.Decay != 2 {
 		t.Fatalf("expected range=20 decay=2, got %v %v", spot.Range, spot.Decay)
 	}
-	if !spot.CastShadow || spot.ShadowBias != 0.002 || spot.ShadowSize != 1024 {
+	if !spot.CastShadow || spot.ShadowBias != 0.002 || spot.ShadowSize != 1024 || spot.ShadowSoftness != 0.08 {
 		t.Fatalf("expected shadow fields, got %#v", spot)
 	}
 
@@ -1790,6 +1972,9 @@ func TestPropsSceneIRLowersSpotLight(t *testing.T) {
 	}
 	if lights[0]["penumbra"] != 0.3 {
 		t.Fatalf("expected penumbra in legacy, got %#v", lights[0]["penumbra"])
+	}
+	if lights[0]["shadowSoftness"] != 0.08 {
+		t.Fatalf("expected shadowSoftness in legacy, got %#v", lights[0]["shadowSoftness"])
 	}
 }
 

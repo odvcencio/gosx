@@ -38,7 +38,8 @@ type EngineEntry struct {
 	// Component is the engine function name.
 	Component string `json:"component"`
 
-	// Kind is "worker" (background compute) or "surface" (owns a DOM mount point).
+	// Kind is "worker" (background compute), "surface" (owns a DOM mount
+	// point), or "video" (framework-owned managed video mount).
 	Kind string `json:"kind"`
 
 	// ProgramRef is the URL path to the engine's WASM bundle.

@@ -237,28 +237,30 @@ type SpriteIR struct {
 
 // LightIR is the typed compatibility record for one lowered scene light.
 type LightIR struct {
-	ID          string         `json:"id"`
-	Kind        string         `json:"kind"`
-	Color       string         `json:"color,omitempty"`
-	GroundColor string         `json:"groundColor,omitempty"`
-	Intensity   float64        `json:"intensity,omitempty"`
-	X           float64        `json:"x,omitempty"`
-	Y           float64        `json:"y,omitempty"`
-	Z           float64        `json:"z,omitempty"`
-	DirectionX  float64        `json:"directionX,omitempty"`
-	DirectionY  float64        `json:"directionY,omitempty"`
-	DirectionZ  float64        `json:"directionZ,omitempty"`
-	Angle       float64        `json:"angle,omitempty"`
-	Penumbra    float64        `json:"penumbra,omitempty"`
-	Range       float64        `json:"range,omitempty"`
-	Decay       float64        `json:"decay,omitempty"`
-	CastShadow  bool           `json:"castShadow,omitempty"`
-	ShadowBias  float64        `json:"shadowBias,omitempty"`
-	ShadowSize  int            `json:"shadowSize,omitempty"`
-	Transition  TransitionIR   `json:"transition,omitzero"`
-	InState     map[string]any `json:"inState,omitempty"`
-	OutState    map[string]any `json:"outState,omitempty"`
-	Live        []string       `json:"live,omitempty"`
+	ID             string         `json:"id"`
+	Kind           string         `json:"kind"`
+	Color          string         `json:"color,omitempty"`
+	GroundColor    string         `json:"groundColor,omitempty"`
+	Intensity      float64        `json:"intensity,omitempty"`
+	X              float64        `json:"x,omitempty"`
+	Y              float64        `json:"y,omitempty"`
+	Z              float64        `json:"z,omitempty"`
+	DirectionX     float64        `json:"directionX,omitempty"`
+	DirectionY     float64        `json:"directionY,omitempty"`
+	DirectionZ     float64        `json:"directionZ,omitempty"`
+	Angle          float64        `json:"angle,omitempty"`
+	Penumbra       float64        `json:"penumbra,omitempty"`
+	Range          float64        `json:"range,omitempty"`
+	Decay          float64        `json:"decay,omitempty"`
+	CastShadow     bool           `json:"castShadow,omitempty"`
+	ShadowBias     float64        `json:"shadowBias,omitempty"`
+	ShadowSize     int            `json:"shadowSize,omitempty"`
+	ShadowCascades int            `json:"shadowCascades,omitempty"`
+	ShadowSoftness float64        `json:"shadowSoftness,omitempty"`
+	Transition     TransitionIR   `json:"transition,omitzero"`
+	InState        map[string]any `json:"inState,omitempty"`
+	OutState       map[string]any `json:"outState,omitempty"`
+	Live           []string       `json:"live,omitempty"`
 }
 
 // PointsIR is the typed compatibility record for one lowered particle system.
@@ -410,6 +412,9 @@ type EnvironmentIR struct {
 	SkyIntensity     float64        `json:"skyIntensity,omitempty"`
 	GroundColor      string         `json:"groundColor,omitempty"`
 	GroundIntensity  float64        `json:"groundIntensity,omitempty"`
+	EnvMap           string         `json:"envMap,omitempty"`
+	EnvIntensity     float64        `json:"envIntensity,omitempty"`
+	EnvRotation      float64        `json:"envRotation,omitempty"`
 	Exposure         float64        `json:"exposure,omitempty"`
 	ToneMapping      string         `json:"toneMapping,omitempty"`
 	FogColor         string         `json:"fogColor,omitempty"`
@@ -1068,6 +1073,8 @@ func (item LightIR) legacyProps() map[string]any {
 	}
 	setNumeric(record, "shadowBias", item.ShadowBias)
 	setInt(record, "shadowSize", item.ShadowSize)
+	setInt(record, "shadowCascades", item.ShadowCascades)
+	setNumeric(record, "shadowSoftness", item.ShadowSoftness)
 	applySceneLifecycleRecord(record, item.Transition, item.InState, item.OutState, item.Live)
 	return record
 }
@@ -1082,6 +1089,9 @@ func (item EnvironmentIR) IsZero() bool {
 		item.SkyIntensity == 0 &&
 		item.GroundColor == "" &&
 		item.GroundIntensity == 0 &&
+		item.EnvMap == "" &&
+		item.EnvIntensity == 0 &&
+		item.EnvRotation == 0 &&
 		item.Exposure == 0 &&
 		item.ToneMapping == "" &&
 		item.FogColor == "" &&
@@ -1103,6 +1113,9 @@ func (item EnvironmentIR) legacyProps() map[string]any {
 	setNumeric(record, "skyIntensity", item.SkyIntensity)
 	setString(record, "groundColor", item.GroundColor)
 	setNumeric(record, "groundIntensity", item.GroundIntensity)
+	setString(record, "envMap", item.EnvMap)
+	setNumeric(record, "envIntensity", item.EnvIntensity)
+	setNumeric(record, "envRotation", item.EnvRotation)
 	setNumeric(record, "exposure", item.Exposure)
 	setString(record, "toneMapping", item.ToneMapping)
 	setString(record, "fogColor", item.FogColor)
@@ -1119,6 +1132,9 @@ func (environment Environment) sceneIR() EnvironmentIR {
 		SkyIntensity:     environment.SkyIntensity,
 		GroundColor:      strings.TrimSpace(environment.GroundColor),
 		GroundIntensity:  environment.GroundIntensity,
+		EnvMap:           strings.TrimSpace(environment.EnvironmentMap),
+		EnvIntensity:     environment.EnvIntensity,
+		EnvRotation:      environment.EnvRotation,
 		Exposure:         environment.Exposure,
 		ToneMapping:      strings.TrimSpace(environment.ToneMapping),
 		FogColor:         strings.TrimSpace(environment.FogColor),

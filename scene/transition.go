@@ -213,18 +213,19 @@ type ModelProps struct {
 
 // LightProps is a partial light prop bag used for transition states.
 type LightProps struct {
-	Color       *string
-	GroundColor *string
-	Intensity   *float64
-	Position    *Vector3
-	Direction   *Vector3
-	Range       *float64
-	Decay       *float64
-	Angle       *float64
-	Penumbra    *float64
-	CastShadow  *bool
-	ShadowBias  *float64
-	ShadowSize  *int
+	Color          *string
+	GroundColor    *string
+	Intensity      *float64
+	Position       *Vector3
+	Direction      *Vector3
+	Range          *float64
+	Decay          *float64
+	Angle          *float64
+	Penumbra       *float64
+	CastShadow     *bool
+	ShadowBias     *float64
+	ShadowSize     *int
+	ShadowSoftness *float64
 }
 
 // EnvironmentProps is a partial environment prop bag used for transition states.
@@ -235,6 +236,9 @@ type EnvironmentProps struct {
 	SkyIntensity     *float64
 	GroundColor      *string
 	GroundIntensity  *float64
+	EnvMap           *string
+	EnvIntensity     *float64
+	EnvRotation      *float64
 	Exposure         *float64
 	ToneMapping      *string
 	FogColor         *string
@@ -449,6 +453,10 @@ func (props *LightProps) legacyProps() map[string]any {
 	setBoolPtr(record, "castShadow", props.CastShadow)
 	setNumericPtr(record, "shadowBias", props.ShadowBias)
 	setIntPtr(record, "shadowSize", props.ShadowSize)
+	if props.ShadowSoftness != nil {
+		softness := normalizeShadowSoftness(*props.ShadowSoftness)
+		setNumericPtr(record, "shadowSoftness", &softness)
+	}
 	return trimEmptyRecord(record)
 }
 
@@ -463,6 +471,9 @@ func (props *EnvironmentProps) legacyProps() map[string]any {
 	setNumericPtr(record, "skyIntensity", props.SkyIntensity)
 	setStringPtr(record, "groundColor", props.GroundColor)
 	setNumericPtr(record, "groundIntensity", props.GroundIntensity)
+	setStringPtr(record, "envMap", props.EnvMap)
+	setNumericPtr(record, "envIntensity", props.EnvIntensity)
+	setNumericPtr(record, "envRotation", props.EnvRotation)
 	setNumericPtr(record, "exposure", props.Exposure)
 	setStringPtr(record, "toneMapping", props.ToneMapping)
 	setStringPtr(record, "fogColor", props.FogColor)

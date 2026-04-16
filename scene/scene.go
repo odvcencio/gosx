@@ -36,7 +36,7 @@ type PerspectiveCamera struct {
 	Far      float64
 }
 
-// Environment describes scene-wide ambient and hemisphere lighting.
+// Environment describes scene-wide ambient, hemisphere, and image-based lighting.
 type Environment struct {
 	AmbientColor     string
 	AmbientIntensity float64
@@ -44,6 +44,9 @@ type Environment struct {
 	SkyIntensity     float64
 	GroundColor      string
 	GroundIntensity  float64
+	EnvironmentMap   string
+	EnvIntensity     float64
+	EnvRotation      float64
 	Exposure         float64
 	ToneMapping      string // "aces", "reinhard", "linear", "" (default = aces)
 	FogColor         string
@@ -87,6 +90,7 @@ type Props struct {
 	Environment          Environment
 	PostFX               PostFX
 	Shadows              Shadows
+	Physics              PhysicsWorld
 	Graph                Graph
 }
 
@@ -189,11 +193,16 @@ type Mesh struct {
 	Drift         Vector3
 	DriftSpeed    float64
 	DriftPhase    float64
-	Transition    Transition
-	InState       *MeshProps
-	OutState      *MeshProps
-	Live          []string
-	Children      []Node
+	// RigidBody, when non-nil, attaches a physics body to this mesh. The
+	// body's initial pose is taken from Position/Rotation above; after
+	// simulation starts, the mesh's transform is driven by the physics
+	// runner's broadcasts (keyed by Mesh.ID, which becomes the body ID).
+	RigidBody  *RigidBody3D
+	Transition Transition
+	InState    *MeshProps
+	OutState   *MeshProps
+	Live       []string
+	Children   []Node
 }
 
 // SpreadProps serializes a Mesh into the attribute map that the composable
@@ -387,17 +396,19 @@ type AmbientLight struct {
 
 // DirectionalLight adds a directional scene light.
 type DirectionalLight struct {
-	ID         string
-	Color      string
-	Intensity  float64
-	Direction  Vector3
-	CastShadow bool
-	ShadowBias float64
-	ShadowSize int
-	Transition Transition
-	InState    *LightProps
-	OutState   *LightProps
-	Live       []string
+	ID             string
+	Color          string
+	Intensity      float64
+	Direction      Vector3
+	CastShadow     bool
+	ShadowBias     float64
+	ShadowSize     int
+	ShadowCascades int
+	ShadowSoftness float64
+	Transition     Transition
+	InState        *LightProps
+	OutState       *LightProps
+	Live           []string
 }
 
 // PointLight adds a positioned scene light with optional range falloff.
@@ -416,22 +427,23 @@ type PointLight struct {
 
 // SpotLight adds a positioned cone light with falloff.
 type SpotLight struct {
-	ID         string
-	Color      string
-	Intensity  float64
-	Position   Vector3
-	Direction  Vector3
-	Angle      float64 // outer cone angle in radians
-	Penumbra   float64 // 0 = hard edge, 1 = fully soft
-	Range      float64
-	Decay      float64
-	CastShadow bool
-	ShadowBias float64
-	ShadowSize int
-	Transition Transition
-	InState    *LightProps
-	OutState   *LightProps
-	Live       []string
+	ID             string
+	Color          string
+	Intensity      float64
+	Position       Vector3
+	Direction      Vector3
+	Angle          float64 // outer cone angle in radians
+	Penumbra       float64 // 0 = hard edge, 1 = fully soft
+	Range          float64
+	Decay          float64
+	CastShadow     bool
+	ShadowBias     float64
+	ShadowSize     int
+	ShadowSoftness float64
+	Transition     Transition
+	InState        *LightProps
+	OutState       *LightProps
+	Live           []string
 }
 
 // HemisphereLight adds sky/ground ambient lighting.
@@ -1391,20 +1403,22 @@ func (l *graphLowerer) lowerAmbientLight(light AmbientLight) {
 func (l *graphLowerer) lowerDirectionalLight(light DirectionalLight, parent worldTransform) {
 	direction := parent.Rotation.rotate(light.Direction)
 	l.lights = append(l.lights, LightIR{
-		ID:         l.nextSceneLightID("directional-light", light.ID),
-		Kind:       "directional",
-		Color:      strings.TrimSpace(light.Color),
-		Intensity:  light.Intensity,
-		DirectionX: direction.X,
-		DirectionY: direction.Y,
-		DirectionZ: direction.Z,
-		CastShadow: light.CastShadow,
-		ShadowBias: light.ShadowBias,
-		ShadowSize: light.ShadowSize,
-		Transition: lowerTransition(light.Transition),
-		InState:    light.InState.legacyProps(),
-		OutState:   light.OutState.legacyProps(),
-		Live:       normalizeLive(light.Live),
+		ID:             l.nextSceneLightID("directional-light", light.ID),
+		Kind:           "directional",
+		Color:          strings.TrimSpace(light.Color),
+		Intensity:      light.Intensity,
+		DirectionX:     direction.X,
+		DirectionY:     direction.Y,
+		DirectionZ:     direction.Z,
+		CastShadow:     light.CastShadow,
+		ShadowBias:     light.ShadowBias,
+		ShadowSize:     light.ShadowSize,
+		ShadowCascades: normalizeShadowCascades(light.ShadowCascades),
+		ShadowSoftness: normalizeShadowSoftness(light.ShadowSoftness),
+		Transition:     lowerTransition(light.Transition),
+		InState:        light.InState.legacyProps(),
+		OutState:       light.OutState.legacyProps(),
+		Live:           normalizeLive(light.Live),
 	})
 }
 
@@ -1431,27 +1445,28 @@ func (l *graphLowerer) lowerSpotLight(light SpotLight, parent worldTransform) {
 	world := combineTransforms(parent, localTransform(light.Position, Euler{}))
 	direction := parent.Rotation.rotate(light.Direction)
 	l.lights = append(l.lights, LightIR{
-		ID:         l.nextSceneLightID("spot-light", light.ID),
-		Kind:       "spot",
-		Color:      strings.TrimSpace(light.Color),
-		Intensity:  light.Intensity,
-		X:          world.Position.X,
-		Y:          world.Position.Y,
-		Z:          world.Position.Z,
-		DirectionX: direction.X,
-		DirectionY: direction.Y,
-		DirectionZ: direction.Z,
-		Angle:      light.Angle,
-		Penumbra:   light.Penumbra,
-		Range:      light.Range,
-		Decay:      light.Decay,
-		CastShadow: light.CastShadow,
-		ShadowBias: light.ShadowBias,
-		ShadowSize: light.ShadowSize,
-		Transition: lowerTransition(light.Transition),
-		InState:    light.InState.legacyProps(),
-		OutState:   light.OutState.legacyProps(),
-		Live:       normalizeLive(light.Live),
+		ID:             l.nextSceneLightID("spot-light", light.ID),
+		Kind:           "spot",
+		Color:          strings.TrimSpace(light.Color),
+		Intensity:      light.Intensity,
+		X:              world.Position.X,
+		Y:              world.Position.Y,
+		Z:              world.Position.Z,
+		DirectionX:     direction.X,
+		DirectionY:     direction.Y,
+		DirectionZ:     direction.Z,
+		Angle:          light.Angle,
+		Penumbra:       light.Penumbra,
+		Range:          light.Range,
+		Decay:          light.Decay,
+		CastShadow:     light.CastShadow,
+		ShadowBias:     light.ShadowBias,
+		ShadowSize:     light.ShadowSize,
+		ShadowSoftness: normalizeShadowSoftness(light.ShadowSoftness),
+		Transition:     lowerTransition(light.Transition),
+		InState:        light.InState.legacyProps(),
+		OutState:       light.OutState.legacyProps(),
+		Live:           normalizeLive(light.Live),
 	})
 }
 
@@ -2358,4 +2373,24 @@ func (s Shadows) resolveMaxPixels() int {
 		return ShadowMaxPixels1024
 	}
 	return s.MaxPixels
+}
+
+func normalizeShadowCascades(cascades int) int {
+	if cascades == 0 {
+		return 0
+	}
+	if cascades < 1 {
+		return 1
+	}
+	if cascades > 4 {
+		return 4
+	}
+	return cascades
+}
+
+func normalizeShadowSoftness(softness float64) float64 {
+	if softness <= 0 || math.IsNaN(softness) || math.IsInf(softness, 0) {
+		return 0
+	}
+	return softness
 }

@@ -55,6 +55,17 @@ func KindNeedsMount(kind Kind) bool {
 	return kind == KindSurface || kind == KindVideo
 }
 
+// KindSupported reports whether kind is one of the engine kinds understood by
+// the compiler, renderer, and bootstrap manifest contract.
+func KindSupported(kind Kind) bool {
+	switch kind {
+	case KindWorker, KindSurface, KindVideo:
+		return true
+	default:
+		return false
+	}
+}
+
 // ScalingMode controls how a logical pixel buffer maps to the display surface.
 type ScalingMode string
 
@@ -195,6 +206,9 @@ func (c Config) Validate() error {
 	}
 	if c.Kind == "" {
 		return fmt.Errorf("engine config requires a Kind")
+	}
+	if !KindSupported(c.Kind) {
+		return fmt.Errorf("unsupported engine kind: %q", c.Kind)
 	}
 	if KindNeedsMount(c.Kind) && c.MountID == "" {
 		return fmt.Errorf("engine kind %q requires a MountID", c.Kind)

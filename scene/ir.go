@@ -21,7 +21,66 @@ type IR struct {
 	Lights      []IRLight      `json:"lights,omitempty"`
 	Nodes       []IRNode       `json:"nodes,omitempty"`
 	PostFX      []IRPostEffect `json:"postFX,omitempty"`
+	Physics     *IRPhysics     `json:"physics,omitempty"`
 	Metadata    map[string]any `json:"metadata,omitempty"`
+}
+
+// IRPhysics is the world-level physics configuration plus declared bodies
+// and static colliders. Present only when the scene actually uses physics
+// (at least one PhysicsWorld field set or one Mesh with a RigidBody).
+type IRPhysics struct {
+	Gravity          IRVector3      `json:"gravity,omitzero"`
+	FixedTimestep    float64        `json:"fixedTimestep,omitempty"`
+	SolverIterations int            `json:"solverIterations,omitempty"`
+	BroadphaseCell   float64        `json:"broadphaseCell,omitempty"`
+	DisableWarmStart bool           `json:"disableWarmStart,omitempty"`
+	Topic            string         `json:"topic,omitempty"`
+	Bodies           []IRRigidBody  `json:"bodies,omitempty"`
+	Static           []IRCollider   `json:"static,omitempty"`
+	Constraints      []IRConstraint `json:"constraints,omitempty"`
+}
+
+// IRRigidBody is a physics body declared by a scene mesh. ID matches the
+// mesh ID so client-side renderers can bind WorldState body updates to the
+// corresponding scene node's transform.
+type IRRigidBody struct {
+	ID              string       `json:"id"`
+	Position        IRVector3    `json:"position,omitzero"`
+	Rotation        IRVector3    `json:"rotation,omitzero"`
+	Mass            float64      `json:"mass,omitempty"`
+	Restitution     float64      `json:"restitution,omitempty"`
+	Friction        float64      `json:"friction,omitempty"`
+	LinearDamping   float64      `json:"linearDamping,omitempty"`
+	AngularDamping  float64      `json:"angularDamping,omitempty"`
+	Velocity        IRVector3    `json:"velocity,omitzero"`
+	AngularVelocity IRVector3    `json:"angularVelocity,omitzero"`
+	Static          bool         `json:"static,omitempty"`
+	Colliders       []IRCollider `json:"colliders,omitempty"`
+}
+
+// IRCollider is a collision shape in the scene IR.
+type IRCollider struct {
+	Shape     string    `json:"shape"`
+	Offset    IRVector3 `json:"offset,omitzero"`
+	Rotation  IRVector3 `json:"rotation,omitzero"`
+	IsTrigger bool      `json:"isTrigger,omitempty"`
+	Width     float64   `json:"width,omitempty"`
+	Height    float64   `json:"height,omitempty"`
+	Depth     float64   `json:"depth,omitempty"`
+	Radius    float64   `json:"radius,omitempty"`
+	Normal    IRVector3 `json:"normal,omitzero"`
+	Distance  float64   `json:"distance,omitempty"`
+}
+
+// IRConstraint is a physics constraint between two rigid bodies.
+type IRConstraint struct {
+	Kind     string    `json:"kind"`
+	BodyA    string    `json:"bodyA"`
+	BodyB    string    `json:"bodyB"`
+	AttachA  IRVector3 `json:"attachA,omitzero"`
+	AttachB  IRVector3 `json:"attachB,omitzero"`
+	Distance float64   `json:"distance,omitempty"`
+	Softness float64   `json:"softness,omitempty"`
 }
 
 // IRCamera describes the camera used to prepare a scene.
@@ -46,6 +105,9 @@ type IREnvironment struct {
 	SkyIntensity     float64 `json:"skyIntensity,omitempty"`
 	GroundColor      string  `json:"groundColor,omitempty"`
 	GroundIntensity  float64 `json:"groundIntensity,omitempty"`
+	EnvMap           string  `json:"envMap,omitempty"`
+	EnvIntensity     float64 `json:"envIntensity,omitempty"`
+	EnvRotation      float64 `json:"envRotation,omitempty"`
 	Background       string  `json:"background,omitempty"`
 	Exposure         float64 `json:"exposure,omitempty"`
 	ToneMapping      string  `json:"toneMapping,omitempty"`
@@ -258,24 +320,26 @@ type IRVector3 struct {
 
 // IRLight describes one scene light.
 type IRLight struct {
-	ID          string  `json:"id,omitempty"`
-	Kind        string  `json:"kind"`
-	Color       string  `json:"color,omitempty"`
-	GroundColor string  `json:"groundColor,omitempty"`
-	Intensity   float64 `json:"intensity,omitempty"`
-	X           float64 `json:"x,omitempty"`
-	Y           float64 `json:"y,omitempty"`
-	Z           float64 `json:"z,omitempty"`
-	DirectionX  float64 `json:"directionX,omitempty"`
-	DirectionY  float64 `json:"directionY,omitempty"`
-	DirectionZ  float64 `json:"directionZ,omitempty"`
-	Angle       float64 `json:"angle,omitempty"`
-	Penumbra    float64 `json:"penumbra,omitempty"`
-	Range       float64 `json:"range,omitempty"`
-	Decay       float64 `json:"decay,omitempty"`
-	CastShadow  bool    `json:"castShadow,omitempty"`
-	ShadowBias  float64 `json:"shadowBias,omitempty"`
-	ShadowSize  int     `json:"shadowSize,omitempty"`
+	ID             string  `json:"id,omitempty"`
+	Kind           string  `json:"kind"`
+	Color          string  `json:"color,omitempty"`
+	GroundColor    string  `json:"groundColor,omitempty"`
+	Intensity      float64 `json:"intensity,omitempty"`
+	X              float64 `json:"x,omitempty"`
+	Y              float64 `json:"y,omitempty"`
+	Z              float64 `json:"z,omitempty"`
+	DirectionX     float64 `json:"directionX,omitempty"`
+	DirectionY     float64 `json:"directionY,omitempty"`
+	DirectionZ     float64 `json:"directionZ,omitempty"`
+	Angle          float64 `json:"angle,omitempty"`
+	Penumbra       float64 `json:"penumbra,omitempty"`
+	Range          float64 `json:"range,omitempty"`
+	Decay          float64 `json:"decay,omitempty"`
+	CastShadow     bool    `json:"castShadow,omitempty"`
+	ShadowBias     float64 `json:"shadowBias,omitempty"`
+	ShadowSize     int     `json:"shadowSize,omitempty"`
+	ShadowCascades int     `json:"shadowCascades,omitempty"`
+	ShadowSoftness float64 `json:"shadowSoftness,omitempty"`
 }
 
 // IRPostEffect describes one post-processing pass.
@@ -435,7 +499,130 @@ func (p Props) CanonicalIR() IR {
 	for _, label := range legacy.Labels {
 		out.Nodes = append(out.Nodes, labelToIRNode(label))
 	}
+	if physics := physicsToIR(p); physics != nil {
+		out.Physics = physics
+	}
 	return out
+}
+
+// physicsToIR lowers the typed PhysicsWorld config + per-mesh RigidBody3D
+// fields into a canonical IRPhysics node. Returns nil when the scene has no
+// physics intent (zero-value PhysicsWorld AND no Mesh with a RigidBody).
+func physicsToIR(p Props) *IRPhysics {
+	bodies := collectRigidBodyIRs(p.Graph.Nodes)
+	hasConfig := p.Physics.FixedTimestep != 0 ||
+		p.Physics.SolverIterations != 0 ||
+		p.Physics.BroadphaseCell != 0 ||
+		p.Physics.DisableWarmStart ||
+		strings.TrimSpace(p.Physics.Topic) != "" ||
+		len(p.Physics.Colliders) > 0 ||
+		len(p.Physics.Constraints) > 0 ||
+		p.Physics.Gravity.X != 0 || p.Physics.Gravity.Y != 0 || p.Physics.Gravity.Z != 0
+	if !hasConfig && len(bodies) == 0 {
+		return nil
+	}
+	ir := &IRPhysics{
+		Gravity:          IRVector3{X: p.Physics.Gravity.X, Y: p.Physics.Gravity.Y, Z: p.Physics.Gravity.Z},
+		FixedTimestep:    p.Physics.FixedTimestep,
+		SolverIterations: p.Physics.SolverIterations,
+		BroadphaseCell:   p.Physics.BroadphaseCell,
+		DisableWarmStart: p.Physics.DisableWarmStart,
+		Topic:            strings.TrimSpace(p.Physics.Topic),
+		Bodies:           bodies,
+	}
+	if len(p.Physics.Colliders) > 0 {
+		ir.Static = make([]IRCollider, 0, len(p.Physics.Colliders))
+		for _, c := range p.Physics.Colliders {
+			ir.Static = append(ir.Static, collider3DToIR(c))
+		}
+	}
+	if len(p.Physics.Constraints) > 0 {
+		ir.Constraints = make([]IRConstraint, 0, len(p.Physics.Constraints))
+		for _, c := range p.Physics.Constraints {
+			ir.Constraints = append(ir.Constraints, constraint3DToIR(c))
+		}
+	}
+	// Supply a sensible default gravity when any other config is set but
+	// gravity is left at the zero value (bodies would float without it).
+	if hasConfig && ir.Gravity == (IRVector3{}) && len(bodies) > 0 {
+		ir.Gravity = IRVector3{Y: -9.81}
+	}
+	return ir
+}
+
+// collectRigidBodyIRs walks the scene graph and harvests RigidBody3D
+// declarations from Mesh nodes. Group children are recursed but we do not
+// yet composite group transforms into the body's initial pose — bodies
+// should be declared at the top level or authored with world-space poses.
+func collectRigidBodyIRs(nodes []Node) []IRRigidBody {
+	var out []IRRigidBody
+	for _, node := range nodes {
+		switch n := node.(type) {
+		case Mesh:
+			if n.RigidBody == nil {
+				continue
+			}
+			out = append(out, meshRigidBodyToIR(n))
+		case Group:
+			out = append(out, collectRigidBodyIRs(n.Children)...)
+		}
+	}
+	return out
+}
+
+func meshRigidBodyToIR(m Mesh) IRRigidBody {
+	rb := m.RigidBody
+	body := IRRigidBody{
+		ID:              strings.TrimSpace(m.ID),
+		Position:        IRVector3{X: m.Position.X, Y: m.Position.Y, Z: m.Position.Z},
+		Rotation:        IRVector3{X: m.Rotation.X, Y: m.Rotation.Y, Z: m.Rotation.Z},
+		Mass:            rb.Mass,
+		Restitution:     rb.Restitution,
+		Friction:        rb.Friction,
+		LinearDamping:   rb.LinearDamping,
+		AngularDamping:  rb.AngularDamping,
+		Velocity:        IRVector3{X: rb.Velocity.X, Y: rb.Velocity.Y, Z: rb.Velocity.Z},
+		AngularVelocity: IRVector3{X: rb.AngularVelocity.X, Y: rb.AngularVelocity.Y, Z: rb.AngularVelocity.Z},
+		Static:          rb.Static,
+	}
+	if len(rb.Colliders) > 0 {
+		body.Colliders = make([]IRCollider, 0, len(rb.Colliders))
+		for _, c := range rb.Colliders {
+			body.Colliders = append(body.Colliders, collider3DToIR(c))
+		}
+	}
+	return body
+}
+
+func collider3DToIR(c Collider3D) IRCollider {
+	return IRCollider{
+		Shape:     strings.ToLower(strings.TrimSpace(c.Shape)),
+		Offset:    IRVector3{X: c.Offset.X, Y: c.Offset.Y, Z: c.Offset.Z},
+		Rotation:  IRVector3{X: c.Rotation.X, Y: c.Rotation.Y, Z: c.Rotation.Z},
+		IsTrigger: c.IsTrigger,
+		Width:     c.Width,
+		Height:    c.Height,
+		Depth:     c.Depth,
+		Radius:    c.Radius,
+		Normal:    IRVector3{X: c.Normal.X, Y: c.Normal.Y, Z: c.Normal.Z},
+		Distance:  c.Distance,
+	}
+}
+
+func constraint3DToIR(c Constraint3D) IRConstraint {
+	kind := strings.ToLower(strings.TrimSpace(c.Kind))
+	if kind == "" {
+		kind = "distance"
+	}
+	return IRConstraint{
+		Kind:     kind,
+		BodyA:    strings.TrimSpace(c.BodyA),
+		BodyB:    strings.TrimSpace(c.BodyB),
+		AttachA:  IRVector3{X: c.AttachA.X, Y: c.AttachA.Y, Z: c.AttachA.Z},
+		AttachB:  IRVector3{X: c.AttachB.X, Y: c.AttachB.Y, Z: c.AttachB.Z},
+		Distance: c.Distance,
+		Softness: c.Softness,
+	}
 }
 
 func (ir IR) MarshalJSON() ([]byte, error) {
@@ -469,6 +656,9 @@ func environmentToIR(background string, environment EnvironmentIR) IREnvironment
 		SkyIntensity:     environment.SkyIntensity,
 		GroundColor:      environment.GroundColor,
 		GroundIntensity:  environment.GroundIntensity,
+		EnvMap:           environment.EnvMap,
+		EnvIntensity:     environment.EnvIntensity,
+		EnvRotation:      environment.EnvRotation,
 		Background:       strings.TrimSpace(background),
 		Exposure:         environment.Exposure,
 		ToneMapping:      environment.ToneMapping,
@@ -484,24 +674,26 @@ func lightsToIR(items []LightIR) []IRLight {
 	out := make([]IRLight, 0, len(items))
 	for _, item := range items {
 		out = append(out, IRLight{
-			ID:          item.ID,
-			Kind:        item.Kind,
-			Color:       item.Color,
-			GroundColor: item.GroundColor,
-			Intensity:   item.Intensity,
-			X:           item.X,
-			Y:           item.Y,
-			Z:           item.Z,
-			DirectionX:  item.DirectionX,
-			DirectionY:  item.DirectionY,
-			DirectionZ:  item.DirectionZ,
-			Angle:       item.Angle,
-			Penumbra:    item.Penumbra,
-			Range:       item.Range,
-			Decay:       item.Decay,
-			CastShadow:  item.CastShadow,
-			ShadowBias:  item.ShadowBias,
-			ShadowSize:  item.ShadowSize,
+			ID:             item.ID,
+			Kind:           item.Kind,
+			Color:          item.Color,
+			GroundColor:    item.GroundColor,
+			Intensity:      item.Intensity,
+			X:              item.X,
+			Y:              item.Y,
+			Z:              item.Z,
+			DirectionX:     item.DirectionX,
+			DirectionY:     item.DirectionY,
+			DirectionZ:     item.DirectionZ,
+			Angle:          item.Angle,
+			Penumbra:       item.Penumbra,
+			Range:          item.Range,
+			Decay:          item.Decay,
+			CastShadow:     item.CastShadow,
+			ShadowBias:     item.ShadowBias,
+			ShadowSize:     item.ShadowSize,
+			ShadowCascades: item.ShadowCascades,
+			ShadowSoftness: item.ShadowSoftness,
 		})
 	}
 	return out

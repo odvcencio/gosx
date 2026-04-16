@@ -201,6 +201,64 @@ func TestRenderEngineRegistersManifestEntryAndMount(t *testing.T) {
 	}
 }
 
+func TestRenderVideoEngineRegistersBuiltinManifestContract(t *testing.T) {
+	r := NewRenderer("main")
+
+	node := r.RenderEngine(engine.Config{
+		Name:         "GoSXVideo",
+		Kind:         engine.KindVideo,
+		Capabilities: []engine.Capability{engine.CapVideo, engine.CapFetch, engine.CapAudio},
+		Props:        json.RawMessage(`{"src":"/media/promo.mp4"}`),
+	}, gosx.Text("loading video"))
+
+	html := gosx.RenderHTML(node)
+	for _, snippet := range []string{
+		`data-gosx-engine="GoSXVideo"`,
+		`data-gosx-engine-kind="video"`,
+		`data-gosx-enhance="video"`,
+		`data-gosx-engine-capabilities="video fetch audio"`,
+		`loading video`,
+	} {
+		if !strings.Contains(html, snippet) {
+			t.Fatalf("expected %q in video engine mount %s", snippet, html)
+		}
+	}
+
+	if len(r.Manifest().Engines) != 1 {
+		t.Fatalf("expected one engine entry, got %d", len(r.Manifest().Engines))
+	}
+	entry := r.Manifest().Engines[0]
+	if entry.Kind != string(engine.KindVideo) {
+		t.Fatalf("expected video kind, got %q", entry.Kind)
+	}
+	if entry.ProgramRef != "" {
+		t.Fatalf("built-in video engine should not require a program ref, got %q", entry.ProgramRef)
+	}
+	if entry.MountID == "" {
+		t.Fatal("expected generated mount id for video engine")
+	}
+	if string(entry.Props) != `{"src":"/media/promo.mp4"}` {
+		t.Fatalf("unexpected props: %s", entry.Props)
+	}
+}
+
+func TestRenderEngineRejectsUnsupportedKind(t *testing.T) {
+	r := NewRenderer("main")
+
+	node := r.RenderEngine(engine.Config{
+		Name: "Mystery",
+		Kind: engine.Kind("teleport"),
+	}, gosx.Text("loading"))
+
+	html := gosx.RenderHTML(node)
+	if !strings.Contains(html, `engine error: unsupported engine kind`) {
+		t.Fatalf("expected unsupported kind error, got %s", html)
+	}
+	if len(r.Manifest().Engines) != 0 {
+		t.Fatalf("expected no manifest entry for invalid engine, got %d", len(r.Manifest().Engines))
+	}
+}
+
 func TestRenderEnginePropagatesPixelSurfaceContract(t *testing.T) {
 	r := NewRenderer("main")
 	cfg := engine.PixelSurface("RetroBoard", 160, 144,

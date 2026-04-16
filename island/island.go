@@ -678,6 +678,9 @@ func (r *Renderer) RenderEngine(cfg engine.Config, fallback gosx.Node) gosx.Node
 	if cfg.Kind == "" {
 		return renderEngineError(fmt.Errorf("kind required"))
 	}
+	if !engine.KindSupported(cfg.Kind) {
+		return renderEngineError(fmt.Errorf("unsupported engine kind: %q", cfg.Kind))
+	}
 	if err := engine.ValidateCapabilities(cfg.Capabilities); err != nil {
 		return renderEngineError(err)
 	}
