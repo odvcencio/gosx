@@ -25992,6 +25992,19 @@ if (typeof window !== "undefined") {
       return swapRenderer(createSceneCanvasRenderer(ctx2d, canvas), reason || "webgl-unavailable");
     }
 
+    function renderLatestSceneBundle(reason) {
+      if (disposed || !latestBundle || !renderer || typeof renderer.render !== "function" || !sceneCanRender()) {
+        return false;
+      }
+      recordScenePerfCounter("render:" + (reason || "restore"));
+      syncSceneNodeSentinels(latestBundle);
+      renderer.render(latestBundle, viewport);
+      maybeEmitRenderEmpty(latestBundle);
+      renderSceneLabels(labelLayer, latestBundle, labelLayoutCache, labelElements, viewport.cssWidth, viewport.cssHeight);
+      renderSceneSprites(labelLayer, latestBundle, spriteElements, viewport.cssWidth, viewport.cssHeight);
+      return true;
+    }
+
     function restoreSceneWebGLRenderer(reason) {
       const webglPreference = sceneCapabilityWebGLPreference(props, capability);
       if (!(webglPreference === "prefer" || webglPreference === "force")) {
@@ -26004,7 +26017,11 @@ if (typeof window !== "undefined") {
       if (!webglRenderer) {
         return false;
       }
-      return swapRenderer(webglRenderer, reason || "");
+      if (!swapRenderer(webglRenderer, reason || "")) {
+        return false;
+      }
+      renderLatestSceneBundle(reason || "webgl-restore");
+      return true;
     }
 
     function onWebGLContextLost(event) {

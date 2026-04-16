@@ -7092,7 +7092,20 @@ test("bootstrap falls back from WebGL and restores Scene3D rendering after conte
   assert.equal(mount.getAttribute("data-gosx-scene3d-renderer-fallback"), "webgl-context-lost");
   assert.ok(ctx2d.ops.some((entry) => entry[0] === "fillRect"));
 
+  const lostGl = canvas.getContext("webgl");
+  canvas._webglContext = null;
   canvas.dispatchEvent({ type: "webglcontextrestored" });
+  const restoredGl = canvas.getContext("webgl");
+
+  assert.notEqual(restoredGl, lostGl);
+  assert.ok(
+    restoredGl.ops.some((entry) => entry[0] === "bufferData" && entry[3] > 0),
+    "restored renderer must upload geometry buffers to the new GL context",
+  );
+  assert.ok(
+    restoredGl.ops.some((entry) => entry[0] === "drawArrays" && entry[3] > 0),
+    "restored renderer must draw against the new GL context",
+  );
   await flushAsyncWork();
 
   assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "webgl");
