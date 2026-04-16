@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/odvcencio/gosx"
 	"github.com/odvcencio/gosx/buildmanifest"
@@ -233,8 +234,9 @@ func RunBuild(dir string, dev bool) error {
 
 	fmt.Println("\n  Runtime:")
 
-	// Build WASM — try TinyGo first (smaller binary), fall back to standard Go
-	wasmTmp := filepath.Join(distDir, "gosx-runtime.wasm.tmp")
+	// Build WASM — try TinyGo first (smaller binary), fall back to standard Go.
+	// When TinyGo is available, both the shared runtime and islands-only
+	// runtime build in parallel to cut wall-clock time in half.
 	gosxRoot, err := resolveGoSXModuleRoot(dir)
 	if err != nil {
 		return err
@@ -242,89 +244,117 @@ func RunBuild(dir string, dev bool) error {
 	if err := ensureWASMRuntimeDependencies(dir); err != nil {
 		return err
 	}
-	usedTinyGo := false
+
+	type wasmResult struct {
+		data     []byte
+		asset    HashedAsset
+		compiler string
+		label    string
+		err      error
+	}
 
 	tinygoPath, tinygoErr := exec.LookPath("tinygo")
-	if tinygoErr == nil && !dev {
-		// TinyGo available and prod mode — use it for smaller WASM
+	useTinyGo := tinygoErr == nil && !dev
+
+	if useTinyGo {
 		fmt.Println("    Using TinyGo for smaller WASM binary...")
-		if err := buildTinyGoWASM(dir, gosxRoot, wasmTmp, tinygoPath); err == nil {
-			usedTinyGo = true
-			optimized, err := optimizeWASMWithWasmOpt(wasmTmp)
-			if err != nil {
-				return err
+		fmt.Printf("    TinyGo toolchain: current Go\n")
+	}
+
+	// Build both WASM binaries in parallel when using TinyGo.
+	var wg sync.WaitGroup
+	runtimeResult := wasmResult{label: "runtime"}
+	islandsResult := wasmResult{label: "islands"}
+
+	buildOneWASM := func(result *wasmResult, name, outputName string, extraTags ...string) {
+		defer wg.Done()
+		tmpPath := filepath.Join(distDir, outputName+".wasm.tmp")
+
+		if useTinyGo {
+			if err := buildTinyGoWASM(dir, gosxRoot, tmpPath, tinygoPath, extraTags...); err != nil {
+				result.err = err
+				return
 			}
-			if optimized {
-				fmt.Println("    Applied wasm-opt -Oz")
+			result.compiler = "TinyGo"
+			if optimized, err := optimizeWASMWithWasmOpt(tmpPath); err != nil {
+				result.err = err
+				return
+			} else if optimized {
+				fmt.Printf("    Applied wasm-opt -Oz (%s)\n", name)
 			}
 		} else {
-			fmt.Printf("    TinyGo build failed, falling back to standard Go: %v\n", err)
+			cmd := exec.Command("go", "build", "-o", tmpPath, gosxModuleImportPath+"/client/wasm")
+			cmd.Env = append(os.Environ(), "GOOS=js", "GOARCH=wasm")
+			cmd.Dir = dir
+			cmd.Stderr = os.Stderr
+			if err := cmd.Run(); err != nil {
+				result.err = fmt.Errorf("go wasm build failed: %w", err)
+				return
+			}
+			result.compiler = "Go"
 		}
-	}
 
-	if !usedTinyGo {
-		cmd := exec.Command("go", "build", "-o", wasmTmp, gosxModuleImportPath+"/client/wasm")
-		cmd.Env = append(os.Environ(), "GOOS=js", "GOARCH=wasm")
-		cmd.Dir = dir
-		cmd.Stderr = os.Stderr
-		if err := cmd.Run(); err != nil {
-			return fmt.Errorf("go wasm build failed: %w", err)
+		data, err := os.ReadFile(tmpPath)
+		if err != nil {
+			result.err = fmt.Errorf("read compiled WASM: %w", err)
+			return
 		}
+		asset, err := writeHashed(runtimeDir, outputName, ".wasm", data)
+		if err != nil {
+			result.err = fmt.Errorf("write wasm asset: %w", err)
+			return
+		}
+		result.data = data
+		result.asset = asset
+		_ = os.Remove(tmpPath)
 	}
 
-	wasmData, err := os.ReadFile(wasmTmp)
-	if err != nil {
-		return fmt.Errorf("read compiled WASM: %w", err)
-	}
-	asset, err := writeHashed(runtimeDir, "gosx-runtime", ".wasm", wasmData)
-	if err != nil {
-		return fmt.Errorf("write wasm asset: %w", err)
-	}
-	manifest.Runtime.WASM = asset
-	compiler := "Go"
-	if usedTinyGo {
-		compiler = "TinyGo"
-	}
-	gzEst := gzip_c_len(wasmData)
-	fmt.Printf("    %s (%d bytes, %dKB gz, built with %s)\n", asset.File, asset.Size, gzEst/1024, compiler)
-	if err := os.Remove(wasmTmp); err != nil {
-		return fmt.Errorf("remove temporary WASM artifact: %w", err)
+	// Shared runtime — always built
+	wg.Add(1)
+	go buildOneWASM(&runtimeResult, "runtime", "gosx-runtime")
+
+	// Islands-only runtime — parallel with shared runtime
+	buildIslands := useTinyGo && !tinyGoFullRuntimeEnabled()
+	if buildIslands {
+		wg.Add(1)
+		go buildOneWASM(&islandsResult, "islands", "gosx-runtime-islands", "gosx_tiny_islands_only")
 	}
 
-	if usedTinyGo && !tinyGoFullRuntimeEnabled() {
-		islandsTmp := filepath.Join(distDir, "gosx-runtime-islands.wasm.tmp")
-		if err := buildTinyGoWASM(dir, gosxRoot, islandsTmp, tinygoPath, "gosx_tiny_islands_only"); err != nil {
-			fmt.Printf("    TinyGo islands-only runtime build failed, using shared runtime for islands: %v\n", err)
-			_ = os.Remove(islandsTmp)
+	wg.Wait()
+
+	// Process runtime result
+	if runtimeResult.err != nil {
+		if useTinyGo {
+			fmt.Printf("    TinyGo build failed, falling back to standard Go: %v\n", runtimeResult.err)
+			// Retry with standard Go
+			wg.Add(1)
+			go buildOneWASM(&runtimeResult, "runtime", "gosx-runtime")
+			wg.Wait()
+			if runtimeResult.err != nil {
+				return fmt.Errorf("wasm runtime build: %w", runtimeResult.err)
+			}
 		} else {
-			optimized, err := optimizeWASMWithWasmOpt(islandsTmp)
-			if err != nil {
-				return err
-			}
-			if optimized {
-				fmt.Println("    Applied wasm-opt -Oz (islands runtime)")
-			}
-			islandsData, err := os.ReadFile(islandsTmp)
-			if err != nil {
-				return fmt.Errorf("read compiled islands WASM: %w", err)
-			}
-			asset, err := writeHashed(runtimeDir, "gosx-runtime-islands", ".wasm", islandsData)
-			if err != nil {
-				return fmt.Errorf("write islands wasm asset: %w", err)
-			}
-			manifest.Runtime.WASMIslands = asset
-			gzEst := gzip_c_len(islandsData)
-			fmt.Printf("    %s (%d bytes, %dKB gz, built with TinyGo, islands-only)\n", asset.File, asset.Size, gzEst/1024)
-			if err := os.Remove(islandsTmp); err != nil {
-				return fmt.Errorf("remove temporary islands WASM artifact: %w", err)
-			}
+			return fmt.Errorf("wasm runtime build: %w", runtimeResult.err)
+		}
+	}
+	manifest.Runtime.WASM = runtimeResult.asset
+	gzEst := gzip_c_len(runtimeResult.data)
+	fmt.Printf("    %s (%d bytes, %dKB gz, built with %s)\n", runtimeResult.asset.File, runtimeResult.asset.Size, gzEst/1024, runtimeResult.compiler)
+
+	// Process islands result
+	if buildIslands {
+		if islandsResult.err != nil {
+			fmt.Printf("    TinyGo islands-only runtime build failed, using shared runtime for islands: %v\n", islandsResult.err)
+		} else {
+			manifest.Runtime.WASMIslands = islandsResult.asset
+			gzEst := gzip_c_len(islandsResult.data)
+			fmt.Printf("    %s (%d bytes, %dKB gz, built with TinyGo, islands-only)\n", islandsResult.asset.File, islandsResult.asset.Size, gzEst/1024)
 		}
 	}
 
 	// wasm_exec.js — use TinyGo's version if we built with TinyGo
 	wasmExecFound := false
-	if usedTinyGo {
-		// TinyGo has its own wasm_exec.js
+	if runtimeResult.compiler == "TinyGo" {
 		out, err := exec.Command(tinygoPath, "env", "TINYGOROOT").Output()
 		if err == nil {
 			tinygoRoot := strings.TrimSpace(string(out))
