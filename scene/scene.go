@@ -860,10 +860,41 @@ func (p Props) EngineCapabilities() []string {
 	for _, capability := range defaultCapabilities {
 		appendCapability(capability)
 	}
+	if p.Graph.requiresComputeCapability() {
+		appendCapability("webgpu")
+	}
 	for _, capability := range p.Capabilities {
 		appendCapability(capability)
 	}
 	return out
+}
+
+func (g Graph) requiresComputeCapability() bool {
+	return sceneNodesRequireComputeCapability(g.Nodes)
+}
+
+func sceneNodesRequireComputeCapability(nodes []Node) bool {
+	for _, node := range nodes {
+		if sceneNodeRequiresComputeCapability(node) {
+			return true
+		}
+	}
+	return false
+}
+
+func sceneNodeRequiresComputeCapability(node Node) bool {
+	switch current := node.(type) {
+	case ComputeParticles:
+		return true
+	case *ComputeParticles:
+		return current != nil
+	case Group:
+		return sceneNodesRequireComputeCapability(current.Children)
+	case *Group:
+		return current != nil && sceneNodesRequireComputeCapability(current.Children)
+	default:
+		return false
+	}
 }
 
 // EngineConfig builds the built-in Scene3D engine.Config for pure Go callsites.

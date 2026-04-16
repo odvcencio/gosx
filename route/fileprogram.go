@@ -2761,6 +2761,11 @@ func withDefaultKind(values map[string]any, kind string) map[string]any {
 }
 
 func spreadValue(value any, name string) (any, bool) {
+	if props := spreadProps(value); len(props) > 0 {
+		if item, ok := lookupTemplatePropValue(props, name); ok {
+			return item, true
+		}
+	}
 	for _, candidate := range []string{name, exportedPropAlias(name), unexportedPropAlias(name)} {
 		if candidate == "" {
 			continue

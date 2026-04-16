@@ -1013,6 +1013,47 @@ func Page() Node {
 	}
 }
 
+func TestDefaultFileRendererAllowsTypedScene3DComputeParticles(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "page.gsx")
+	source := `package docs
+
+func Page() Node {
+	return <Scene3D {...data.scene} />
+}
+`
+	if err := os.WriteFile(path, []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := &RouteContext{
+		Data: map[string]any{
+			"scene": scene.Props{
+				Graph: scene.NewGraph(
+					scene.ComputeParticles{
+						ID:    "spark-field",
+						Count: 128,
+					},
+				),
+			},
+		},
+	}
+	node, err := DefaultFileRenderer(ctx, FilePage{FilePath: path, Pattern: "/"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	html := gosx.RenderHTML(node)
+	if !strings.Contains(html, `data-gosx-engine="GoSXScene3D"`) {
+		t.Fatalf("expected Scene3D mount shell in %q", html)
+	}
+
+	head := gosx.RenderHTML(ctx.Runtime().Head())
+	if !strings.Contains(head, `"webgpu"`) {
+		t.Fatalf("expected typed compute Scene3D to declare webgpu capability in runtime head %q", head)
+	}
+}
+
 func TestDefaultFileRendererAppliesScene3DStyleSubset(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "page.gsx")

@@ -921,6 +921,26 @@ func TestPropsEngineConfigUsesBuiltInSceneContract(t *testing.T) {
 	}
 }
 
+func TestPropsEngineCapabilitiesIncludeWebGPUForComputeParticles(t *testing.T) {
+	props := Props{
+		Graph: NewGraph(
+			Group{
+				Children: []Node{
+					ComputeParticles{ID: "sparks", Count: 128},
+				},
+			},
+		),
+	}
+
+	cfg := props.EngineConfig()
+	if err := engine.ValidateCapabilities(cfg.Capabilities); err != nil {
+		t.Fatalf("expected generated capabilities to validate: %v", err)
+	}
+	if !slicesContainCapability(cfg.Capabilities, engine.CapWebGPU) {
+		t.Fatalf("expected webgpu capability for compute particles, got %#v", cfg.Capabilities)
+	}
+}
+
 func TestPropsSceneIRLowersStandardMaterial(t *testing.T) {
 	props := Props{
 		Graph: NewGraph(
@@ -1684,6 +1704,15 @@ func approxMapFloat(value any, want float64) bool {
 
 func contains(haystack, needle string) bool {
 	return strings.Contains(haystack, needle)
+}
+
+func slicesContainCapability(values []engine.Capability, want engine.Capability) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
 
 func TestPropsSceneIRLowersSpotLight(t *testing.T) {
