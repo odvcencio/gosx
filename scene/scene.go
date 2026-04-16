@@ -201,7 +201,7 @@ type Mesh struct {
 // in Go flow into gsx templates via <Each> without round-tripping through
 // the full scene IR.
 func (m Mesh) SpreadProps() map[string]any {
-	l := &graphLowerer{}
+	l := &graphLowerer{anchors: make(map[string]worldTransform)}
 	l.lowerMesh(m, identityTransform())
 	if len(l.objects) == 0 {
 		return nil

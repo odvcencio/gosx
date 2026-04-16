@@ -10,6 +10,7 @@ import (
 	"log"
 	"net/http"
 	"path"
+	"runtime"
 	"strings"
 
 	"github.com/odvcencio/gosx"
@@ -364,7 +365,9 @@ func (r *Router) buildHandler(pattern string, route Route, layouts []LayoutFunc,
 		defer func() {
 			if recovered := recover(); recovered != nil {
 				err := panicError(recovered)
-				log.Printf("[gosx] route render panic on %s: %v", pattern, err)
+				buf := make([]byte, 4096)
+				n := runtime.Stack(buf, false)
+				log.Printf("[gosx] route render panic on %s: %v\n%s", pattern, err, buf[:n])
 				r.renderError(w, ctx, layouts, errorHandler, errorLayout, err, pattern)
 			}
 		}()
