@@ -155,6 +155,9 @@
     state.resolvedVars[cacheKey] = newValue;
     // Check if there's a previous value to transition from
     if (!state.prevResolved || !Object.prototype.hasOwnProperty.call(state.prevResolved, cacheKey)) {
+      if (typeof console !== "undefined" && console.debug) {
+        console.debug("[gosx:css-transition] no prev for", cacheKey, "value=", newValue);
+      }
       return false;
     }
     var oldValue = state.prevResolved[cacheKey];
@@ -164,7 +167,13 @@
     // Check if this record has a transition config
     var timing = sceneCSSRecordTransitionTiming(state, kind, collectionKey, index);
     if (!timing) {
+      if (typeof console !== "undefined" && console.debug) {
+        console.debug("[gosx:css-transition] no timing for", cacheKey, "old=", oldValue, "new=", newValue);
+      }
       return false;
+    }
+    if (typeof console !== "undefined" && console.debug) {
+      console.debug("[gosx:css-transition] CREATING transition", cacheKey, oldValue, "→", newValue, "duration=", timing.duration);
     }
     // Cancel any existing transition for this key
     for (var i = state.varTransitions.length - 1; i >= 0; i--) {
