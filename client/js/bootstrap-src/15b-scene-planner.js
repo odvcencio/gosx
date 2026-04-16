@@ -107,8 +107,8 @@
   }
 
   // sceneCSSRecordTransitionTiming extracts the update transition config from
-  // a material, environment, or points record. For points/objects that reference
-  // a material by name or index, falls back to the material's transition config.
+  // a material, environment, or points record. Falls back to any material
+  // with a transition config as a scene-wide default.
   function sceneCSSRecordTransitionTiming(state, kind, collectionKey, index) {
     var record = null;
     if (kind === "topObject") {
@@ -119,17 +119,15 @@
       record = Array.isArray(collection) ? collection[index] : null;
     }
     if (record && sceneIsPlainObject(record.transition)) {
-      // Record has its own transition config — use it directly.
-    } else if (record) {
-      // No transition on the record itself — check the referenced material.
-      var materialRecord = sceneCSSFindMaterialForRecord(state, record);
-      if (materialRecord && sceneIsPlainObject(materialRecord.transition)) {
-        record = materialRecord;
+      // Record has its own transition config.
+    } else {
+      // Fall back to scene-wide default from any material with a transition.
+      var fallback = sceneCSSDefaultTransitionTiming(state);
+      if (fallback) {
+        record = { transition: { update: fallback } };
       } else {
         return null;
       }
-    } else {
-      return null;
     }
     var update = record.transition.update || record.transition;
     var duration = sceneCSSParseDuration(update.duration);
@@ -140,6 +138,47 @@
       duration: duration,
       easing: typeof update.easing === "string" ? update.easing : "ease-in-out",
     };
+  }
+
+  // sceneCSSDefaultTransitionTiming returns the first transition timing
+  // found on any material in the scene, cached per planner state.
+  function sceneCSSDefaultTransitionTiming(state) {
+    if (state._defaultTransitionTiming !== undefined) {
+      return state._defaultTransitionTiming;
+    }
+    var materials = sceneCSSCurrentCollection(state, "materials");
+    if (Array.isArray(materials)) {
+      for (var i = 0; i < materials.length; i++) {
+        var m = materials[i];
+        if (m && sceneIsPlainObject(m.transition)) {
+          var update = m.transition.update || m.transition;
+          var duration = sceneCSSParseDuration(update.duration);
+          if (duration > 0) {
+            state._defaultTransitionTiming = {
+              duration: duration,
+              easing: typeof update.easing === "string" ? update.easing : "ease-in-out",
+            };
+            return state._defaultTransitionTiming;
+          }
+        }
+      }
+    }
+    // Also check environment
+    var bundle = state.out || state.source || {};
+    var env = bundle.environment;
+    if (env && sceneIsPlainObject(env.transition)) {
+      var envUpdate = env.transition.update || env.transition;
+      var envDuration = sceneCSSParseDuration(envUpdate.duration);
+      if (envDuration > 0) {
+        state._defaultTransitionTiming = {
+          duration: envDuration,
+          easing: typeof envUpdate.easing === "string" ? envUpdate.easing : "ease-in-out",
+        };
+        return state._defaultTransitionTiming;
+      }
+    }
+    state._defaultTransitionTiming = null;
+    return null;
   }
 
   // sceneCSSFindMaterialForRecord looks up the material referenced by a

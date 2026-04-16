@@ -11573,15 +11573,13 @@
       record = Array.isArray(collection) ? collection[index] : null;
     }
     if (record && sceneIsPlainObject(record.transition)) {
-    } else if (record) {
-      var materialRecord = sceneCSSFindMaterialForRecord(state, record);
-      if (materialRecord && sceneIsPlainObject(materialRecord.transition)) {
-        record = materialRecord;
+    } else {
+      var fallback = sceneCSSDefaultTransitionTiming(state);
+      if (fallback) {
+        record = { transition: { update: fallback } };
       } else {
         return null;
       }
-    } else {
-      return null;
     }
     var update = record.transition.update || record.transition;
     var duration = sceneCSSParseDuration(update.duration);
@@ -11592,6 +11590,44 @@
       duration: duration,
       easing: typeof update.easing === "string" ? update.easing : "ease-in-out",
     };
+  }
+
+  function sceneCSSDefaultTransitionTiming(state) {
+    if (state._defaultTransitionTiming !== undefined) {
+      return state._defaultTransitionTiming;
+    }
+    var materials = sceneCSSCurrentCollection(state, "materials");
+    if (Array.isArray(materials)) {
+      for (var i = 0; i < materials.length; i++) {
+        var m = materials[i];
+        if (m && sceneIsPlainObject(m.transition)) {
+          var update = m.transition.update || m.transition;
+          var duration = sceneCSSParseDuration(update.duration);
+          if (duration > 0) {
+            state._defaultTransitionTiming = {
+              duration: duration,
+              easing: typeof update.easing === "string" ? update.easing : "ease-in-out",
+            };
+            return state._defaultTransitionTiming;
+          }
+        }
+      }
+    }
+    var bundle = state.out || state.source || {};
+    var env = bundle.environment;
+    if (env && sceneIsPlainObject(env.transition)) {
+      var envUpdate = env.transition.update || env.transition;
+      var envDuration = sceneCSSParseDuration(envUpdate.duration);
+      if (envDuration > 0) {
+        state._defaultTransitionTiming = {
+          duration: envDuration,
+          easing: typeof envUpdate.easing === "string" ? envUpdate.easing : "ease-in-out",
+        };
+        return state._defaultTransitionTiming;
+      }
+    }
+    state._defaultTransitionTiming = null;
+    return null;
   }
 
   function sceneCSSFindMaterialForRecord(state, record) {
