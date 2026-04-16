@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.18.0-alpha.13
+
+Editor release for Slack-style emoji shortcodes and picker suggestions.
+
+The editor helper bar now includes an `emoji` command that inserts Markdown++ shortcode text instead of raw emoji, keeping authored content portable across renderers and storage backends. The hidden editor textarea opts into the shared emoji autocomplete runtime, so typing `:` plus a shortcode character opens a scrollable suggestion table.
+
+Markdown rendering and the `/_gosx/emoji-codes.json` lookup now share a small compatibility alias layer for Slack-ish names such as `:simple_smile:`, `:slight_smile:`, `:thumbs_up:`, and `:red_heart:` while preserving the generated GitHub gemoji plus Unicode Emoji table as the canonical source.
+
 ## v0.18.0-alpha.6
 
 Patch release for Scene3D CSS invalidation and Firefox/Chromium scroll stability.
