@@ -12,6 +12,8 @@ Skinned GLB loading and playback plumbing is connected through the runtime: join
 
 The built-in video engine now owns the managed `<video>` element, shared `$video.*` signals, HLS.js runtime asset loading, source swaps, subtitle track normalization, and server-rendered fallback upgrades while still enforcing the one-video-per-page v1 constraint.
 
+A new client-event telemetry pipeline ships bootstrap-side `window.__gosx_emit(level, category, message, fields)` plus automatic capture of uncaught errors and unhandled rejections. Events are batched, flushed every 2 s (or via `navigator.sendBeacon` on `visibilitychange=hidden`), and POSTed to `/_gosx/client-events` where a new server-side handler logs each event through a package-level `slog.Logger`. The handler enforces a 64 KB body cap, per-remote-addr rate limit, and a `GOSX_TELEMETRY=off` kill switch. Scene3D now emits structured events for `webgl-context-lost`, `webgl-context-restored` (with `swapped`), `renderer-swap`, and a new `render-empty` diagnostic that fires when a renderer swap produces an empty bundle despite the scene having geometry — the exact signature of a silent WebGL-restore regression.
+
 ## v0.18.0-alpha.18
 
 GSX grammar and server app mounting release.
