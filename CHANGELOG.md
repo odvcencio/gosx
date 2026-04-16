@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.18.0-alpha.20
+
+Scene3D WebGL context-restore fix.
+
+On `webglcontextrestored`, the restore path now renders `latestBundle` synchronously against the freshly created renderer before returning — forcing the new GL context's vertex/color/material buffers to populate on the same tick. Previously, `restoreSceneWebGLRenderer` only queued a deferred `scheduleRender`, so the new renderer's `passBuffers` stayed empty until the next animation frame actually fired. On pages where the animation loop was gated (tab hidden, off-viewport, or reduced-motion), the scene stayed black despite the mount reporting `data-gosx-scene3d-renderer="webgl"` and `isContextLost: false`. The test at `client/js/runtime.test.js` now forces a new `FakeWebGLContext` on restore and asserts `bufferData` + `drawArrays` land on the new GL object.
+
 ## v0.18.0-alpha.19
 
 Scene3D rendering and physics integration release.
