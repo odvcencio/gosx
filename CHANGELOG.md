@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.18.0-alpha.19
+
+Scene3D rendering and physics integration release.
+
+The WebGL2 PBR renderer now supports environment-map lighting inputs, Radiance `.hdr` parsing in a dedicated helper, CSM depth passes for directional shadows, texel-snapped cascade projections, and PCSS-style soft shadow sampling from `shadowSoftness`. Shadow maps, cascades, and environment maps now share a single texture-unit allocation path, so four-cascade CSM no longer collides with IBL sampler units. Shared budget helpers also downscale IBL/shadow resources together under the 26 MB default target and expose a half-float/LDR fallback decision for mobile GPUs.
+
+The physics foundation now carries typed Scene3D physics declarations into canonical IR and then into `physics.WorldSpec`. Rigid bodies, colliders, static colliders, and distance constraints can be lowered into a runnable `physics.World`, while the existing `sim.Runner` path handles authoritative ticks and primitive input commands (`impulse`, `force`, `torque`) by body ID or index. Worlds also expose deterministic body/collider removal and closest-hit raycasts for sphere, plane, and oriented-box colliders.
+
+Skinned GLB loading and playback plumbing is connected through the runtime: joint/weight attributes are extracted, skins remain in bind space, animation mixers update model instances, and joint matrices are uploaded through the skinned PBR shader path. Runtime coverage now asserts the WebGL2 skinned program uploads `u_hasSkin`, `u_jointMatrices[]`, `a_joints`, and `a_weights`.
+
+The built-in video engine now owns the managed `<video>` element, shared `$video.*` signals, HLS.js runtime asset loading, source swaps, subtitle track normalization, and server-rendered fallback upgrades while still enforcing the one-video-per-page v1 constraint.
+
 ## v0.18.0-alpha.18
 
 GSX grammar and server app mounting release.
