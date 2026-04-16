@@ -196,6 +196,19 @@ type Mesh struct {
 	Children      []Node
 }
 
+// SpreadProps serializes a Mesh into the attribute map that the composable
+// <Mesh {...props} /> element accepts. This lets typed Mesh values generated
+// in Go flow into gsx templates via <Each> without round-tripping through
+// the full scene IR.
+func (m Mesh) SpreadProps() map[string]any {
+	l := &graphLowerer{}
+	l.lowerMesh(m, identityTransform())
+	if len(l.objects) == 0 {
+		return nil
+	}
+	return l.objects[0].legacyProps()
+}
+
 // Points renders a particle system using GL_POINTS.
 type Points struct {
 	ID          string
