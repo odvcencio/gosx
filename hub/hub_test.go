@@ -204,6 +204,97 @@ func TestLatchReplaysLastBroadcastToLateJoiners(t *testing.T) {
 	}
 }
 
+func TestLatchOverwritesWithLatestBroadcast(t *testing.T) {
+	h := New("latch-overwrite")
+	srv := httptest.NewServer(h)
+	defer srv.Close()
+
+	h.Latch("theme")
+	h.Broadcast("theme", map[string]any{"mode": "light"})
+	h.Broadcast("theme", map[string]any{"mode": "dark"})
+
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http")
+	c, _, err := websocket.DefaultDialer.Dial(wsURL, http.Header{})
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer c.Close()
+
+	readUntilEvent(t, c, "__welcome")
+	msg := readUntilEvent(t, c, "theme")
+
+	var payload map[string]any
+	if err := json.Unmarshal(msg.Data, &payload); err != nil {
+		t.Fatalf("unmarshal theme payload: %v", err)
+	}
+	if payload["mode"] != "dark" {
+		t.Fatalf("expected mode=dark (latest broadcast), got %v", payload["mode"])
+	}
+}
+
+func TestLatchPerTopicIsolation(t *testing.T) {
+	h := New("latch-isolation")
+	srv := httptest.NewServer(h)
+	defer srv.Close()
+
+	h.Latch("theme")
+	h.Broadcast("chat", map[string]any{"msg": "hi"})
+	h.Broadcast("theme", map[string]any{"mode": "dark"})
+
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http")
+	c, _, err := websocket.DefaultDialer.Dial(wsURL, http.Header{})
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer c.Close()
+
+	readUntilEvent(t, c, "__welcome")
+
+	if err := c.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
+		t.Fatalf("set read deadline: %v", err)
+	}
+	var next Message
+	if err := c.ReadJSON(&next); err != nil {
+		t.Fatalf("read next: %v", err)
+	}
+	if next.Event != "theme" {
+		t.Fatalf("expected next event after welcome to be theme (latched replay), got %q", next.Event)
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(next.Data, &payload); err != nil {
+		t.Fatalf("unmarshal theme payload: %v", err)
+	}
+	if payload["mode"] != "dark" {
+		t.Fatalf("expected mode=dark, got %v", payload["mode"])
+	}
+}
+
+func TestLatchNoReplayWhenNotBroadcast(t *testing.T) {
+	h := New("latch-empty")
+	srv := httptest.NewServer(h)
+	defer srv.Close()
+
+	h.Latch("theme")
+
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http")
+	c, _, err := websocket.DefaultDialer.Dial(wsURL, http.Header{})
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer c.Close()
+
+	readUntilEvent(t, c, "__welcome")
+
+	if err := c.SetReadDeadline(time.Now().Add(100 * time.Millisecond)); err != nil {
+		t.Fatalf("set deadline: %v", err)
+	}
+	var msg Message
+	if err := c.ReadJSON(&msg); err == nil {
+		t.Fatalf("expected no replay, got event %q", msg.Event)
+	}
+}
+
 func TestHubBroadcast(t *testing.T) {
 	h := New("broadcast")
 
