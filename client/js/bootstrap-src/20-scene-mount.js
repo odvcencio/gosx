@@ -2519,15 +2519,9 @@
     let scheduledRenderHandle = null;
     let disposed = false;
 
-    // Idle context release: when the scene is not renderable (tab hidden
-    // or scrolled off-viewport) for longer than IDLE_CONTEXT_RELEASE_MS,
-    // voluntarily lose the WebGL context via WEBGL_lose_context. This
-    // releases GPU virtual memory that Firefox accumulates for long-lived
-    // WebGL contexts — measured at 88-116 GB virtual on a 32 GB machine
-    // when a tab with an autoRotate scene stays open for hours. The
-    // existing webglcontextrestored handler restores the renderer when
-    // the scene becomes renderable again.
-    const IDLE_CONTEXT_RELEASE_MS = 30000;
+    // Do not voluntarily lose WebGL while the page is hidden/offscreen.
+    // A canvas that has owned WebGL generally cannot switch to a 2D context,
+    // so forced loss leaves no useful fallback and some browsers restore late.
     let idleContextTimer = null;
     let contextVoluntarilyLost = false;
     let voluntaryLoseContextExtension = null;
@@ -2535,22 +2529,6 @@
     function scheduleIdleContextRelease() {
       clearIdleContextRelease();
       if (disposed || contextVoluntarilyLost) return;
-      idleContextTimer = setTimeout(function() {
-        idleContextTimer = null;
-        if (disposed || sceneCanRender()) return;
-        if (!renderer || renderer.kind !== "webgl") return;
-        try {
-          const gl = canvas.getContext("webgl2") || canvas.getContext("webgl");
-          if (gl) {
-            const ext = gl.getExtension("WEBGL_lose_context");
-            if (ext) {
-              voluntaryLoseContextExtension = ext;
-              contextVoluntarilyLost = true;
-              ext.loseContext();
-            }
-          }
-        } catch (_e) { /* context may already be lost */ }
-      }, IDLE_CONTEXT_RELEASE_MS);
     }
 
     function clearIdleContextRelease() {

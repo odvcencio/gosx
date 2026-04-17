@@ -7380,9 +7380,9 @@ test("bootstrap scene3d emits telemetry for webgl context-lost and context-resto
   assert.ok(warmup.fields.bundleMeshObjects >= 0, "warmup reports mesh object count");
 });
 
-test("bootstrap restores voluntarily lost Scene3D WebGL contexts with the cached extension", async () => {
+test("bootstrap keeps hidden Scene3D WebGL contexts alive instead of voluntary loss", async () => {
   const mount = new FakeElement("div", null);
-  mount.id = "scene-voluntary-restore";
+  mount.id = "scene-hidden-webgl";
   let canvas = null;
   let lost = false;
   let loseCalls = 0;
@@ -7420,10 +7420,10 @@ test("bootstrap restores voluntarily lost Scene3D WebGL contexts with the cached
     manifest: {
       engines: [
         {
-          id: "gosx-engine-voluntary-restore",
+          id: "gosx-engine-hidden-webgl",
           component: "GoSXScene3D",
           kind: "surface",
-          mountId: "scene-voluntary-restore",
+          mountId: "scene-hidden-webgl",
           jsExport: "GoSXScene3D",
           props: {
             width: 480,
@@ -7450,25 +7450,22 @@ test("bootstrap restores voluntarily lost Scene3D WebGL contexts with the cached
   env.document.visibilityState = "hidden";
   env.document.dispatchEvent({ type: "visibilitychange" });
   await flushAsyncWork();
-  assert.equal(timers.runDelay(30000), 1);
+  assert.equal(timers.runDelay(30000), 0, "hidden scenes should not schedule voluntary WebGL loss");
   await flushAsyncWork();
 
-  assert.equal(loseCalls, 1);
-  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "lost");
+  assert.equal(loseCalls, 0);
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "webgl");
 
   env.document.visibilityState = "visible";
   env.document.dispatchEvent({ type: "visibilitychange" });
   await flushAsyncWork();
 
-  assert.equal(restoreCalls, 1, "restore must use the cached extension while lost-context extension requery fails");
-  canvas.dispatchEvent({ type: "webglcontextrestored" });
-  await flushAsyncWork();
-
+  assert.equal(restoreCalls, 0);
   assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "webgl");
   env.context.__gosx_telemetry_flush();
   await flushAsyncWork();
   const requested = telemetryEvents(env).find((ev) => ev.cat === "scene3d" && ev.msg === "webgl-voluntary-restore-requested");
-  assert.equal(requested && requested.fields && requested.fields.requested, true);
+  assert.equal(requested, undefined);
 });
 
 test("scene3d render-empty does NOT fire on restore when bundle has meshObjects (modern PBR path)", async () => {

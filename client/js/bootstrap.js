@@ -25941,7 +25941,6 @@ if (typeof window !== "undefined") {
     let scheduledRenderHandle = null;
     let disposed = false;
 
-    const IDLE_CONTEXT_RELEASE_MS = 30000;
     let idleContextTimer = null;
     let contextVoluntarilyLost = false;
     let voluntaryLoseContextExtension = null;
@@ -25949,22 +25948,6 @@ if (typeof window !== "undefined") {
     function scheduleIdleContextRelease() {
       clearIdleContextRelease();
       if (disposed || contextVoluntarilyLost) return;
-      idleContextTimer = setTimeout(function() {
-        idleContextTimer = null;
-        if (disposed || sceneCanRender()) return;
-        if (!renderer || renderer.kind !== "webgl") return;
-        try {
-          const gl = canvas.getContext("webgl2") || canvas.getContext("webgl");
-          if (gl) {
-            const ext = gl.getExtension("WEBGL_lose_context");
-            if (ext) {
-              voluntaryLoseContextExtension = ext;
-              contextVoluntarilyLost = true;
-              ext.loseContext();
-            }
-          }
-        } catch (_e) { /* context may already be lost */ }
-      }, IDLE_CONTEXT_RELEASE_MS);
     }
 
     function clearIdleContextRelease() {

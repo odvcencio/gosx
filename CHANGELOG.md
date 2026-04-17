@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.18.0-alpha.28
+
+Scene3D no longer voluntarily loses WebGL contexts when a scene is hidden or offscreen.
+
+The idle context release path was too aggressive for marketing/landing pages. It called `WEBGL_lose_context` after 30 seconds outside the renderable lifecycle, then tried to use the existing canvas as a 2D fallback while waiting for restore. Browsers generally do not allow switching an existing WebGL canvas to 2D, so production could report `webgl-context-lost-no-fallback` and leave the visual background black until the browser restored the context.
+
+Hidden/offscreen Scene3D mounts now pause scheduled rendering without forcing context loss. Browser-driven `webglcontextlost`/`webglcontextrestored` handling remains in place for real GPU resets.
+
 ## v0.18.0-alpha.27
 
 Scene3D voluntary WebGL restore fix.
