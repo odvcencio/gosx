@@ -13162,7 +13162,7 @@
 
   function scenePlannerHashMaterial(hash, material) {
     if (material && material.key) {
-      return scenePlannerHashString(hash, material.key);
+      hash = scenePlannerHashString(hash, material.key);
     }
     hash = scenePlannerHashString(hash, material && material.kind || "");
     hash = scenePlannerHashString(hash, material && material.color || "");

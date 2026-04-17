@@ -1505,8 +1505,18 @@
   }
 
   function scenePlannerHashMaterial(hash, material) {
+    // Historical shortcut: if a material has a stable `key`, hash only the key
+    // to avoid churn on unrelated fields. But that also excluded `color`/
+    // `opacity`/`emissive`/`roughness`/`metalness`/`texture` from the hash —
+    // which is wrong when CSS var resolution rewrites those fields per-bucket
+    // (m31labs palette swap: every 30 min, new hex colors resolved from
+    // --galaxy-* vars). Downstream the prepared-scene signature matched and
+    // `lastPrepared.passes` was reused with the previous bucket's baked
+    // colors, leaving the canvas visually frozen despite the IR updating.
+    // Hash the identity prefix AND the resolved appearance so signature
+    // invalidation catches palette rewrites on keyed materials too.
     if (material && material.key) {
-      return scenePlannerHashString(hash, material.key);
+      hash = scenePlannerHashString(hash, material.key);
     }
     hash = scenePlannerHashString(hash, material && material.kind || "");
     hash = scenePlannerHashString(hash, material && material.color || "");
