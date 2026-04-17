@@ -16760,6 +16760,7 @@ if (typeof window !== "undefined") {
     const IDLE_CONTEXT_RELEASE_MS = 30000;
     let idleContextTimer = null;
     let contextVoluntarilyLost = false;
+    let voluntaryLoseContextExtension = null;
 
     function scheduleIdleContextRelease() {
       clearIdleContextRelease();
@@ -16773,6 +16774,7 @@ if (typeof window !== "undefined") {
           if (gl) {
             const ext = gl.getExtension("WEBGL_lose_context");
             if (ext) {
+              voluntaryLoseContextExtension = ext;
               contextVoluntarilyLost = true;
               ext.loseContext();
             }
@@ -16805,14 +16807,18 @@ if (typeof window !== "undefined") {
       contextVoluntarilyLost = false;
       voluntaryRestorePending = true;
       let requested = false;
+      let restoreExt = voluntaryLoseContextExtension;
+      voluntaryLoseContextExtension = null;
       try {
-        const gl = canvas.getContext("webgl2") || canvas.getContext("webgl");
-        if (gl) {
-          const ext = gl.getExtension("WEBGL_lose_context");
-          if (ext) {
-            ext.restoreContext();
-            requested = true;
-          }
+        if (!restoreExt) {
+          const gl = canvas.getContext("webgl2") || canvas.getContext("webgl");
+          restoreExt = gl && typeof gl.getExtension === "function"
+            ? gl.getExtension("WEBGL_lose_context")
+            : null;
+        }
+        if (restoreExt && typeof restoreExt.restoreContext === "function") {
+          restoreExt.restoreContext();
+          requested = true;
         }
       } catch (_e) { /* let the browser handle it */ }
       gosxSceneEmit("info", "webgl-voluntary-restore-requested", {

@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.18.0-alpha.27
+
+Scene3D voluntary WebGL restore fix.
+
+`scheduleIdleContextRelease` now keeps the original `WEBGL_lose_context` extension object before calling `loseContext()` and `restoreVoluntarilyLostContext` uses that cached extension for `restoreContext()`. Chrome and Safari can refuse to reacquire `WEBGL_lose_context` from an already-lost canvas, which made prod report `webgl-voluntary-restore-requested requested=false`, left the renderer stubbed as `lost`, and forced the restore watchdog into `swapped=false`. Firefox tolerated the old reacquire path, which is why the failure skewed toward non-Firefox browsers.
+
 ## v0.18.0-alpha.26
 
 Managed form submitter action fix.

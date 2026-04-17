@@ -1767,6 +1767,41 @@ function installManualRAF(context) {
   };
 }
 
+function installManualTimers(context) {
+  let nextHandle = 1;
+  const timers = new Map();
+  context.setTimeout = (callback, delay, ...args) => {
+    const handle = nextHandle++;
+    timers.set(handle, {
+      callback,
+      delay: Number(delay || 0),
+      args,
+    });
+    return handle;
+  };
+  context.clearTimeout = (handle) => {
+    timers.delete(handle);
+  };
+  return {
+    count() {
+      return timers.size;
+    },
+    runDelay(delay) {
+      const targetDelay = Number(delay || 0);
+      const entries = Array.from(timers.entries())
+        .filter(([, timer]) => timer.delay === targetDelay);
+      for (const [handle, timer] of entries) {
+        if (!timers.has(handle)) {
+          continue;
+        }
+        timers.delete(handle);
+        timer.callback(...timer.args);
+      }
+      return entries.length;
+    },
+  };
+}
+
 function runScript(source, context, filename) {
   vm.runInContext(source, context, { filename });
 }
@@ -7343,6 +7378,97 @@ test("bootstrap scene3d emits telemetry for webgl context-lost and context-resto
   assert.ok(warmup, "renderer-warmup should fire after restore, events: " + JSON.stringify(events));
   assert.equal(warmup.fields.rendererKind, "webgl");
   assert.ok(warmup.fields.bundleMeshObjects >= 0, "warmup reports mesh object count");
+});
+
+test("bootstrap restores voluntarily lost Scene3D WebGL contexts with the cached extension", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-voluntary-restore";
+  let canvas = null;
+  let lost = false;
+  let loseCalls = 0;
+  let restoreCalls = 0;
+  const extension = {
+    loseContext() {
+      loseCalls += 1;
+      lost = true;
+      canvas.dispatchEvent({ type: "webglcontextlost", preventDefault() {} });
+    },
+    restoreContext() {
+      restoreCalls += 1;
+      lost = false;
+      canvas._webglContext = null;
+    },
+  };
+
+  const env = createContext({
+    elements: [mount],
+    enableWebGL: true,
+    disableCanvas2D: true,
+    createWebGLContext: () => {
+      const gl = new FakeWebGLContext();
+      gl.getExtension = (name) => {
+        if (name !== "WEBGL_lose_context") {
+          return null;
+        }
+        return lost ? null : extension;
+      };
+      return gl;
+    },
+    fetchRoutes: {
+      "/_gosx/client-events": { status: 204, text: "" },
+    },
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-voluntary-restore",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-voluntary-restore",
+          jsExport: "GoSXScene3D",
+          props: {
+            width: 480,
+            height: 300,
+            autoRotate: true,
+            scene: {
+              objects: [
+                { kind: "box", width: 1.4, height: 1.1, depth: 1.2, x: 0, y: 0, z: 0, color: "#8de1ff" },
+              ],
+            },
+          },
+        },
+      ],
+    },
+  });
+  env.context.__gosx_telemetry_config = { flushInterval: 0 };
+  const timers = installManualTimers(env.context);
+  installManualRAF(env.context);
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+  canvas = mount.children[0];
+
+  env.document.visibilityState = "hidden";
+  env.document.dispatchEvent({ type: "visibilitychange" });
+  await flushAsyncWork();
+  assert.equal(timers.runDelay(30000), 1);
+  await flushAsyncWork();
+
+  assert.equal(loseCalls, 1);
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "lost");
+
+  env.document.visibilityState = "visible";
+  env.document.dispatchEvent({ type: "visibilitychange" });
+  await flushAsyncWork();
+
+  assert.equal(restoreCalls, 1, "restore must use the cached extension while lost-context extension requery fails");
+  canvas.dispatchEvent({ type: "webglcontextrestored" });
+  await flushAsyncWork();
+
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "webgl");
+  env.context.__gosx_telemetry_flush();
+  await flushAsyncWork();
+  const requested = telemetryEvents(env).find((ev) => ev.cat === "scene3d" && ev.msg === "webgl-voluntary-restore-requested");
+  assert.equal(requested && requested.fields && requested.fields.requested, true);
 });
 
 test("scene3d render-empty does NOT fire on restore when bundle has meshObjects (modern PBR path)", async () => {
