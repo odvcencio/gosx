@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.18.0-alpha.23
+
+Scene3D voluntary-restore watchdog.
+
+Prod telemetry on Chrome caught a second restore-path failure mode distinct from the one alpha.22 fixed. After `scheduleIdleContextRelease` calls `ext.loseContext()` on a scene that has been off-viewport or backgrounded for 30 s, the canvas emits `webgl-context-lost` with `voluntary: true`. `restoreVoluntarilyLostContext` is supposed to pair with it by calling `ext.restoreContext()` on the next visibility/viewport transition, but Chrome does not always fire the matching `webglcontextrestored` event — the restore request is silently dropped and the stub renderer stays installed, leaving a permanently black canvas.
+
+`restoreVoluntarilyLostContext` now arms a 2000 ms watchdog after calling `ext.restoreContext()`. If `webglcontextrestored` lands naturally, the watchdog is cancelled. If it doesn't, the watchdog force-invokes `restoreSceneWebGLRenderer` directly, bypassing the missing browser event and recovering the scene. Three new telemetry events track the lifecycle: `webgl-voluntary-restore-requested`, `webgl-voluntary-restore-watchdog`, `webgl-voluntary-restore-forced` (info or error depending on whether the forced swap succeeded).
+
+`webgl-context-restored` now also reports `watchdogPending` so the server log can distinguish "browser fired on its own" from "watchdog was about to force-restore when the browser finally fired".
+
 ## v0.18.0-alpha.22
 
 Scene3D WebGL context-restore root-cause fix.
