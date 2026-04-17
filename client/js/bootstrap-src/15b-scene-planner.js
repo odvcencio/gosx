@@ -1,6 +1,15 @@
   // Scene planner — backend-agnostic preparation of render bundles into pass
   // buckets, cache keys, and shared upload-cache helpers.
 
+  function sceneCSSDebugLog() {
+    if (typeof window === "undefined" || window.__gosx_scene3d_css_debug !== true) {
+      return;
+    }
+    if (typeof console !== "undefined" && typeof console.debug === "function") {
+      console.debug.apply(console, arguments);
+    }
+  }
+
   function prepareScene(ir, camera, viewport, lastPrepared, cssContext) {
     const initialSource = ir && typeof ir === "object" ? ir : {};
     const css = sceneCSSResolverContext(cssContext);
@@ -61,9 +70,7 @@
   }
 
   function sceneResolveCSSBundleWithContext(source, css, inputSignature) {
-    if (typeof console !== "undefined") {
-      console.log("[gosx:css-transition] FRESH RESOLVE revision=" + css.revision + " prevCache=" + Boolean(css.prevCache));
-    }
+    sceneCSSDebugLog("[gosx:css-transition] FRESH RESOLVE revision=" + css.revision + " prevCache=" + Boolean(css.prevCache));
     const prevCache = css.prevCache || null;
     const prevResolved = prevCache && prevCache.resolvedVars ? prevCache.resolvedVars : null;
     const prevTransitions = prevCache && Array.isArray(prevCache.varTransitions) ? prevCache.varTransitions : [];
@@ -211,9 +218,7 @@
     state.resolvedVars[cacheKey] = newValue;
     // Check if there's a previous value to transition from
     if (!state.prevResolved || !Object.prototype.hasOwnProperty.call(state.prevResolved, cacheKey)) {
-      if (typeof console !== "undefined" && console.debug) {
-        console.log("[gosx:css-transition] no prev for", cacheKey, "value=", newValue);
-      }
+      sceneCSSDebugLog("[gosx:css-transition] no prev for", cacheKey, "value=", newValue);
       return false;
     }
     var oldValue = state.prevResolved[cacheKey];
@@ -223,14 +228,10 @@
     // Check if this record has a transition config
     var timing = sceneCSSRecordTransitionTiming(state, kind, collectionKey, index);
     if (!timing) {
-      if (typeof console !== "undefined" && console.debug) {
-        console.log("[gosx:css-transition] no timing for", cacheKey, "old=", oldValue, "new=", newValue);
-      }
+      sceneCSSDebugLog("[gosx:css-transition] no timing for", cacheKey, "old=", oldValue, "new=", newValue);
       return false;
     }
-    if (typeof console !== "undefined" && console.debug) {
-      console.log("[gosx:css-transition] CREATING transition", cacheKey, oldValue, "→", newValue, "duration=", timing.duration);
-    }
+    sceneCSSDebugLog("[gosx:css-transition] CREATING transition", cacheKey, oldValue, "->", newValue, "duration=", timing.duration);
     // Cancel any existing transition for this key
     for (var i = state.varTransitions.length - 1; i >= 0; i--) {
       if (state.varTransitions[i].cacheKey === cacheKey) {

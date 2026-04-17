@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.18.0-alpha.25
+
+Scene3D live point-palette buffer fix.
+
+Live Scene3D updates now apply large point buffer fields (`count`, `positions`, `sizes`, `colors`) immediately before building update-transition deltas. This keeps sparse palette-buffer swaps from being cloned into every transition frame while still allowing scalar fields such as opacity to tween normally. The patch also invalidates the paired cached GPU buffers through the existing transition-patch path so the next render uploads the new per-vertex colors.
+
+Scene3D CSS transition diagnostics are now opt-in behind `window.__gosx_scene3d_css_debug === true`. The alpha.14 diagnostic logs were still emitted on production CSS resolves and could flood Chrome/Edge during live palette debugging.
+
 ## v0.18.0-alpha.24
 
 Scene3D live palette/material swap fix.

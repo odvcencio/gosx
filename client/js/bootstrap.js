@@ -6980,6 +6980,42 @@
     }
   }
 
+  function sceneInstantLiveBufferKeys(kind) {
+    switch (kind) {
+      case "points":
+        return ["count", "positions", "sizes", "colors"];
+      case "instanced":
+        return ["count", "transforms"];
+      default:
+        return [];
+    }
+  }
+
+  function sceneApplyInstantLiveBufferPatch(kind, entry, target, payload) {
+    if (!sceneIsPlainObject(entry) || !sceneIsPlainObject(target) || !sceneIsPlainObject(payload)) {
+      return false;
+    }
+    const keys = sceneInstantLiveBufferKeys(kind);
+    if (!keys.length) {
+      return false;
+    }
+    let changed = false;
+    for (let i = 0; i < keys.length; i += 1) {
+      const key = keys[i];
+      if (!Object.prototype.hasOwnProperty.call(payload, key)) {
+        continue;
+      }
+      if (!sceneTransitionValuesEqual(entry[key], target[key])) {
+        const patch = {};
+        patch[key] = target[key];
+        sceneApplyTransitionPatch(entry, patch);
+        changed = true;
+      }
+      target[key] = entry[key];
+    }
+    return changed;
+  }
+
   function sceneTransitionKey(kind, entry) {
     return String(kind || "scene") + ":" + String(entry && entry.id ? entry.id : "__singleton");
   }
@@ -7140,8 +7176,9 @@
       return false;
     }
     const target = sceneNormalizeEntryByKind(kind, payload, entry);
+    const instantChanged = sceneApplyInstantLiveBufferPatch(kind, entry, target, payload);
     if (sceneTransitionValuesEqual(entry, target)) {
-      return false;
+      return instantChanged;
     }
     const timing = sceneTransitionTimingForPhase(entry, "update");
     sceneCancelEntryTransition(state, kind, entry);
@@ -7152,7 +7189,7 @@
     const current = sceneCloneData(entry);
     const delta = sceneTransitionBuildDelta(current, target, "");
     if (!delta) {
-      return false;
+      return instantChanged;
     }
     sceneStateTransitions(state).push({
       key: sceneTransitionKey(kind, entry),
@@ -11691,6 +11728,15 @@
     return hash;
   }
 
+  function sceneCSSDebugLog() {
+    if (typeof window === "undefined" || window.__gosx_scene3d_css_debug !== true) {
+      return;
+    }
+    if (typeof console !== "undefined" && typeof console.debug === "function") {
+      console.debug.apply(console, arguments);
+    }
+  }
+
   function prepareScene(ir, camera, viewport, lastPrepared, cssContext) {
     const initialSource = ir && typeof ir === "object" ? ir : {};
     const css = sceneCSSResolverContext(cssContext);
@@ -11750,9 +11796,7 @@
   }
 
   function sceneResolveCSSBundleWithContext(source, css, inputSignature) {
-    if (typeof console !== "undefined") {
-      console.log("[gosx:css-transition] FRESH RESOLVE revision=" + css.revision + " prevCache=" + Boolean(css.prevCache));
-    }
+    sceneCSSDebugLog("[gosx:css-transition] FRESH RESOLVE revision=" + css.revision + " prevCache=" + Boolean(css.prevCache));
     const prevCache = css.prevCache || null;
     const prevResolved = prevCache && prevCache.resolvedVars ? prevCache.resolvedVars : null;
     const prevTransitions = prevCache && Array.isArray(prevCache.varTransitions) ? prevCache.varTransitions : [];
@@ -11878,9 +11922,7 @@
     var cacheKey = sceneCSSVarTransitionKey(kind, collectionKey, index, key);
     state.resolvedVars[cacheKey] = newValue;
     if (!state.prevResolved || !Object.prototype.hasOwnProperty.call(state.prevResolved, cacheKey)) {
-      if (typeof console !== "undefined" && console.debug) {
-        console.log("[gosx:css-transition] no prev for", cacheKey, "value=", newValue);
-      }
+      sceneCSSDebugLog("[gosx:css-transition] no prev for", cacheKey, "value=", newValue);
       return false;
     }
     var oldValue = state.prevResolved[cacheKey];
@@ -11889,14 +11931,10 @@
     }
     var timing = sceneCSSRecordTransitionTiming(state, kind, collectionKey, index);
     if (!timing) {
-      if (typeof console !== "undefined" && console.debug) {
-        console.log("[gosx:css-transition] no timing for", cacheKey, "old=", oldValue, "new=", newValue);
-      }
+      sceneCSSDebugLog("[gosx:css-transition] no timing for", cacheKey, "old=", oldValue, "new=", newValue);
       return false;
     }
-    if (typeof console !== "undefined" && console.debug) {
-      console.log("[gosx:css-transition] CREATING transition", cacheKey, oldValue, "→", newValue, "duration=", timing.duration);
-    }
+    sceneCSSDebugLog("[gosx:css-transition] CREATING transition", cacheKey, oldValue, "->", newValue, "duration=", timing.duration);
     for (var i = state.varTransitions.length - 1; i >= 0; i--) {
       if (state.varTransitions[i].cacheKey === cacheKey) {
         state.varTransitions.splice(i, 1);

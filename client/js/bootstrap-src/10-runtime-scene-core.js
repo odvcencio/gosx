@@ -2326,6 +2326,44 @@
     }
   }
 
+  function sceneInstantLiveBufferKeys(kind) {
+    switch (kind) {
+      case "points":
+        return ["count", "positions", "sizes", "colors"];
+      case "instanced":
+        return ["count", "transforms"];
+      default:
+        return [];
+    }
+  }
+
+  function sceneApplyInstantLiveBufferPatch(kind, entry, target, payload) {
+    if (!sceneIsPlainObject(entry) || !sceneIsPlainObject(target) || !sceneIsPlainObject(payload)) {
+      return false;
+    }
+    const keys = sceneInstantLiveBufferKeys(kind);
+    if (!keys.length) {
+      return false;
+    }
+    let changed = false;
+    for (let i = 0; i < keys.length; i += 1) {
+      const key = keys[i];
+      if (!Object.prototype.hasOwnProperty.call(payload, key)) {
+        continue;
+      }
+      if (!sceneTransitionValuesEqual(entry[key], target[key])) {
+        const patch = {};
+        patch[key] = target[key];
+        sceneApplyTransitionPatch(entry, patch);
+        changed = true;
+      }
+      // Keep the transition target aligned to the just-applied buffer so
+      // sceneTransitionBuildDelta never captures large arrays into a tween.
+      target[key] = entry[key];
+    }
+    return changed;
+  }
+
   function sceneTransitionKey(kind, entry) {
     return String(kind || "scene") + ":" + String(entry && entry.id ? entry.id : "__singleton");
   }
@@ -2486,8 +2524,9 @@
       return false;
     }
     const target = sceneNormalizeEntryByKind(kind, payload, entry);
+    const instantChanged = sceneApplyInstantLiveBufferPatch(kind, entry, target, payload);
     if (sceneTransitionValuesEqual(entry, target)) {
-      return false;
+      return instantChanged;
     }
     const timing = sceneTransitionTimingForPhase(entry, "update");
     sceneCancelEntryTransition(state, kind, entry);
@@ -2498,7 +2537,7 @@
     const current = sceneCloneData(entry);
     const delta = sceneTransitionBuildDelta(current, target, "");
     if (!delta) {
-      return false;
+      return instantChanged;
     }
     sceneStateTransitions(state).push({
       key: sceneTransitionKey(kind, entry),

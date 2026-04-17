@@ -737,78 +737,6 @@
     return props && Array.isArray(props.instancedMeshes) ? props.instancedMeshes : [];
   }
 
-  // rawSceneInstancedGLBMeshes reads the instancedGLBMeshes array from props or
-  // from the nested scene payload (same convention as other raw* helpers).
-  function rawSceneInstancedGLBMeshes(props) {
-    const scene = sceneProps(props);
-    if (scene && Array.isArray(scene.instancedGLBMeshes)) {
-      return scene.instancedGLBMeshes;
-    }
-    return props && Array.isArray(props.instancedGLBMeshes) ? props.instancedGLBMeshes : [];
-  }
-
-  // expandInstancedGLBMeshesToModels flattens each InstancedGLBMesh batch into
-  // individual model records identical to those produced by normalizeSceneModel.
-  // Each instance gets its own ID (falling back to batchID + "#" + index) and
-  // inherits the batch's src, material, pickable, and static fields.
-  //
-  // This gives the existing model-hydration pipeline (hydrateSceneStateModels)
-  // one object per instance, each loaded from the same cached GLB asset — which
-  // costs one fetch per unique src regardless of how many instances exist.
-  function expandInstancedGLBMeshesToModels(props) {
-    const batches = rawSceneInstancedGLBMeshes(props);
-    if (!batches.length) return [];
-    var out = [];
-    for (var bi = 0; bi < batches.length; bi += 1) {
-      var batch = batches[bi];
-      if (!batch || typeof batch.src !== "string" || !batch.src.trim()) continue;
-      var batchID = typeof batch.id === "string" && batch.id.trim() ? batch.id.trim() : ("scene-instanced-glb-" + bi);
-      var batchSrc = batch.src.trim();
-      var hasPickable = Object.prototype.hasOwnProperty.call(batch, "pickable");
-      var hasStatic = Object.prototype.hasOwnProperty.call(batch, "static");
-      var materialOverride = null;
-      if (batch.color || batch.texture || batch.materialKind || batch.roughness || batch.metalness) {
-        materialOverride = {};
-        if (batch.materialKind) materialOverride.materialKind = batch.materialKind;
-        if (batch.color) materialOverride.color = batch.color;
-        if (batch.texture) materialOverride.texture = batch.texture;
-        if (batch.roughness) materialOverride.roughness = batch.roughness;
-        if (batch.metalness) materialOverride.metalness = batch.metalness;
-        if (Object.prototype.hasOwnProperty.call(batch, "opacity") && typeof batch.opacity === "number") {
-          materialOverride.opacity = batch.opacity;
-        }
-        if (batch.blendMode) materialOverride.blendMode = batch.blendMode;
-      }
-      var instances = Array.isArray(batch.instances) ? batch.instances : [];
-      for (var ii = 0; ii < instances.length; ii += 1) {
-        var inst = instances[ii] || {};
-        var instID = (typeof inst.id === "string" && inst.id.trim())
-          ? inst.id.trim()
-          : (batchID + "#" + ii);
-        out.push({
-          id: instID,
-          src: batchSrc,
-          x: sceneNumber(inst.x, 0),
-          y: sceneNumber(inst.y, 0),
-          z: sceneNumber(inst.z, 0),
-          rotationX: sceneNumber(inst.rotationX, 0),
-          rotationY: sceneNumber(inst.rotationY, 0),
-          rotationZ: sceneNumber(inst.rotationZ, 0),
-          scaleX: sceneNumber(inst.scaleX, 1),
-          scaleY: sceneNumber(inst.scaleY, 1),
-          scaleZ: sceneNumber(inst.scaleZ, 1),
-          animation: "",
-          loop: true,
-          pickable: hasPickable ? sceneBool(batch.pickable, false) : undefined,
-          static: hasStatic ? sceneBool(batch.static, false) : null,
-          materialOverride: materialOverride,
-          _fromInstancedGLB: true,
-        });
-      }
-    }
-    return out;
-  }
-
   function rawSceneComputeParticles(props) {
     const scene = sceneProps(props);
     if (scene && Array.isArray(scene.computeParticles)) {
@@ -1411,19 +1339,13 @@
   }
 
   function sceneModels(props) {
-    var normalized = rawSceneModels(props)
+    return rawSceneModels(props)
       .map(function(model, index) {
         return normalizeSceneModel(model, index);
       })
       .filter(function(model) {
         return Boolean(model && model.src);
       });
-    // Append pre-normalized records expanded from InstancedGLBMesh batches.
-    // These already have the right normalizeSceneModel shape (id, src, x/y/z,
-    // scaleX/Y/Z, rotationX/Y/Z, animation, loop, pickable, static,
-    // materialOverride) so they join the existing hydration pipeline unchanged.
-    var expanded = expandInstancedGLBMeshesToModels(props);
-    return expanded.length ? normalized.concat(expanded) : normalized;
   }
 
   function sceneLights(props) {
@@ -1809,67 +1731,6 @@
       fov: sceneNumber(raw.fov, sceneNumber(base.fov, 75)),
       near: sceneNumber(raw.near, sceneNumber(base.near, 0.05)),
       far: sceneNumber(raw.far, sceneNumber(base.far, 128)),
-      transitionMS: sceneNumber(raw.transitionMS, 0),
-    };
-  }
-
-  // Camera transition animation — interpolates between two camera states over
-  // transitionMS milliseconds using a quadratic ease-in-out curve.
-  // sceneState._cameraAnimation holds { from, to, startTime, duration } while
-  // active; null otherwise.
-
-  function sceneCameraEaseInOut(t) {
-    if (t <= 0) return 0;
-    if (t >= 1) return 1;
-    return t < 0.5 ? 2 * t * t : 1 - 2 * (1 - t) * (1 - t);
-  }
-
-  function sceneLerp(a, b, t) {
-    return a + (b - a) * t;
-  }
-
-  // Start a new camera transition from `from` to `to` over `durationMS` ms.
-  // `nowMs` is the current timestamp (Date.now() or performance.now()-aligned).
-  function sceneStartCameraTransition(state, from, to, durationMS, nowMs) {
-    state._cameraAnimation = {
-      from: {
-        x: from.x, y: from.y, z: from.z,
-        rotationX: from.rotationX, rotationY: from.rotationY, rotationZ: from.rotationZ,
-        fov: from.fov, near: from.near, far: from.far,
-      },
-      to: {
-        x: to.x, y: to.y, z: to.z,
-        rotationX: to.rotationX, rotationY: to.rotationY, rotationZ: to.rotationZ,
-        fov: to.fov, near: to.near, far: to.far,
-      },
-      startTime: nowMs,
-      duration: durationMS,
-    };
-  }
-
-  // Sample the in-progress camera animation at `nowMs`. Returns the interpolated
-  // camera, or null if no animation is active / it has completed.
-  function sceneTickCameraAnimation(state, nowMs) {
-    const anim = state && state._cameraAnimation;
-    if (!anim) return null;
-    const elapsed = nowMs - anim.startTime;
-    if (elapsed >= anim.duration) {
-      state._cameraAnimation = null;
-      return null;
-    }
-    const t = sceneCameraEaseInOut(elapsed / anim.duration);
-    const from = anim.from;
-    const to = anim.to;
-    return {
-      x: sceneLerp(from.x, to.x, t),
-      y: sceneLerp(from.y, to.y, t),
-      z: sceneLerp(from.z, to.z, t),
-      rotationX: sceneLerp(from.rotationX, to.rotationX, t),
-      rotationY: sceneLerp(from.rotationY, to.rotationY, t),
-      rotationZ: sceneLerp(from.rotationZ, to.rotationZ, t),
-      fov: sceneLerp(from.fov, to.fov, t),
-      near: sceneLerp(from.near, to.near, t),
-      far: sceneLerp(from.far, to.far, t),
     };
   }
 
@@ -1971,7 +1832,6 @@
       materials: sceneMaterials(props),
       postEffects: scenePostEffects(props),
       _transitions: [],
-      _cameraAnimation: null,
       _scrollCamera: (sceneNumber(props.scrollCameraStart, 0) !== 0 || sceneNumber(props.scrollCameraEnd, 0) !== 0)
         ? { start: sceneNumber(props.scrollCameraStart, 0), end: sceneNumber(props.scrollCameraEnd, 0) }
         : null,
@@ -2389,6 +2249,42 @@
     }
   }
 
+  function sceneInstantLiveBufferKeys(kind) {
+    switch (kind) {
+      case "points":
+        return ["count", "positions", "sizes", "colors"];
+      case "instanced":
+        return ["count", "transforms"];
+      default:
+        return [];
+    }
+  }
+
+  function sceneApplyInstantLiveBufferPatch(kind, entry, target, payload) {
+    if (!sceneIsPlainObject(entry) || !sceneIsPlainObject(target) || !sceneIsPlainObject(payload)) {
+      return false;
+    }
+    const keys = sceneInstantLiveBufferKeys(kind);
+    if (!keys.length) {
+      return false;
+    }
+    let changed = false;
+    for (let i = 0; i < keys.length; i += 1) {
+      const key = keys[i];
+      if (!Object.prototype.hasOwnProperty.call(payload, key)) {
+        continue;
+      }
+      if (!sceneTransitionValuesEqual(entry[key], target[key])) {
+        const patch = {};
+        patch[key] = target[key];
+        sceneApplyTransitionPatch(entry, patch);
+        changed = true;
+      }
+      target[key] = entry[key];
+    }
+    return changed;
+  }
+
   function sceneTransitionKey(kind, entry) {
     return String(kind || "scene") + ":" + String(entry && entry.id ? entry.id : "__singleton");
   }
@@ -2549,8 +2445,9 @@
       return false;
     }
     const target = sceneNormalizeEntryByKind(kind, payload, entry);
+    const instantChanged = sceneApplyInstantLiveBufferPatch(kind, entry, target, payload);
     if (sceneTransitionValuesEqual(entry, target)) {
-      return false;
+      return instantChanged;
     }
     const timing = sceneTransitionTimingForPhase(entry, "update");
     sceneCancelEntryTransition(state, kind, entry);
@@ -2561,7 +2458,7 @@
     const current = sceneCloneData(entry);
     const delta = sceneTransitionBuildDelta(current, target, "");
     if (!delta) {
-      return false;
+      return instantChanged;
     }
     sceneStateTransitions(state).push({
       key: sceneTransitionKey(kind, entry),
@@ -2667,16 +2564,9 @@
       case SCENE_CMD_SET_MATERIAL:
         applySceneObjectPatch(state, command.objectId, command.data);
         return;
-      case SCENE_CMD_SET_CAMERA: {
-        const prevCam = state.camera;
-        const nextCam = normalizeSceneCamera(command.data || {}, prevCam);
-        const duration = sceneNumber(nextCam.transitionMS, 0);
-        if (duration > 0 && prevCam && !sceneCameraEquivalent(prevCam, nextCam)) {
-          sceneStartCameraTransition(state, prevCam, nextCam, duration, sceneNowMilliseconds());
-        }
-        state.camera = nextCam;
+      case SCENE_CMD_SET_CAMERA:
+        state.camera = normalizeSceneCamera(command.data || {}, state.camera);
         return;
-      }
       case SCENE_CMD_SET_LIGHT:
         applySceneLightPatch(state, command.objectId, command.data);
         return;
@@ -2689,13 +2579,7 @@
   function applySceneCreateCommand(state, objectID, payload) {
     if (!payload || typeof payload !== "object") return;
     if (payload.kind === "camera") {
-      const prevCam = state.camera;
-      const nextCam = normalizeSceneCamera(payload.props || {}, prevCam);
-      const duration = sceneNumber(nextCam.transitionMS, 0);
-      if (duration > 0 && prevCam && !sceneCameraEquivalent(prevCam, nextCam)) {
-        sceneStartCameraTransition(state, prevCam, nextCam, duration, sceneNowMilliseconds());
-      }
-      state.camera = nextCam;
+      state.camera = normalizeSceneCamera(payload.props || {}, state.camera);
       return;
     }
     if (payload.kind === "light") {
@@ -7113,6 +6997,15 @@
     return hash;
   }
 
+  function sceneCSSDebugLog() {
+    if (typeof window === "undefined" || window.__gosx_scene3d_css_debug !== true) {
+      return;
+    }
+    if (typeof console !== "undefined" && typeof console.debug === "function") {
+      console.debug.apply(console, arguments);
+    }
+  }
+
   function prepareScene(ir, camera, viewport, lastPrepared, cssContext) {
     const initialSource = ir && typeof ir === "object" ? ir : {};
     const css = sceneCSSResolverContext(cssContext);
@@ -7172,9 +7065,7 @@
   }
 
   function sceneResolveCSSBundleWithContext(source, css, inputSignature) {
-    if (typeof console !== "undefined") {
-      console.log("[gosx:css-transition] FRESH RESOLVE revision=" + css.revision + " prevCache=" + Boolean(css.prevCache));
-    }
+    sceneCSSDebugLog("[gosx:css-transition] FRESH RESOLVE revision=" + css.revision + " prevCache=" + Boolean(css.prevCache));
     const prevCache = css.prevCache || null;
     const prevResolved = prevCache && prevCache.resolvedVars ? prevCache.resolvedVars : null;
     const prevTransitions = prevCache && Array.isArray(prevCache.varTransitions) ? prevCache.varTransitions : [];
@@ -7300,9 +7191,7 @@
     var cacheKey = sceneCSSVarTransitionKey(kind, collectionKey, index, key);
     state.resolvedVars[cacheKey] = newValue;
     if (!state.prevResolved || !Object.prototype.hasOwnProperty.call(state.prevResolved, cacheKey)) {
-      if (typeof console !== "undefined" && console.debug) {
-        console.log("[gosx:css-transition] no prev for", cacheKey, "value=", newValue);
-      }
+      sceneCSSDebugLog("[gosx:css-transition] no prev for", cacheKey, "value=", newValue);
       return false;
     }
     var oldValue = state.prevResolved[cacheKey];
@@ -7311,14 +7200,10 @@
     }
     var timing = sceneCSSRecordTransitionTiming(state, kind, collectionKey, index);
     if (!timing) {
-      if (typeof console !== "undefined" && console.debug) {
-        console.log("[gosx:css-transition] no timing for", cacheKey, "old=", oldValue, "new=", newValue);
-      }
+      sceneCSSDebugLog("[gosx:css-transition] no timing for", cacheKey, "old=", oldValue, "new=", newValue);
       return false;
     }
-    if (typeof console !== "undefined" && console.debug) {
-      console.log("[gosx:css-transition] CREATING transition", cacheKey, oldValue, "→", newValue, "duration=", timing.duration);
-    }
+    sceneCSSDebugLog("[gosx:css-transition] CREATING transition", cacheKey, oldValue, "->", newValue, "duration=", timing.duration);
     for (var i = state.varTransitions.length - 1; i >= 0; i--) {
       if (state.varTransitions[i].cacheKey === cacheKey) {
         state.varTransitions.splice(i, 1);
@@ -16701,9 +16586,6 @@ if (typeof window !== "undefined") {
       if (ctx.mount && ctx.mount.__gosxScene3DCSSDynamic && Date.now() < sceneCSSAnimationUntil) {
         return true;
       }
-      if (sceneState._cameraAnimation) {
-        return true;
-      }
       if (sceneHasActiveTransitions(sceneState)) {
         return true;
       }
@@ -17475,14 +17357,8 @@ if (typeof window !== "undefined") {
         applySceneCommands(sceneState, ctx.runtime.tick());
       }
       sceneAdvanceTransitions(sceneState, now);
-      // If a camera transition animation is in progress, overlay the interpolated
-      // camera on top of sceneState.camera for this frame only.
-      var animatedCamera = sceneTickCameraAnimation(sceneState, now);
-      var effectiveSourceCamera = animatedCamera
-        ? Object.assign({}, sceneState.camera, animatedCamera)
-        : sceneState.camera;
       if (typeof sceneApplyLOD === "function" && props.compression && props.compression.lod) {
-        var cam = sceneCurrentControlCamera(sceneControlHandle.controller, effectiveSourceCamera, sceneState._scrollCamera);
+        var cam = sceneCurrentControlCamera(sceneControlHandle.controller, sceneState.camera, sceneState._scrollCamera);
         var camX = cam.x || 0, camY = cam.y || 0, camZ = cam.z || 0;
         for (var li = 0; li < sceneState.points.length; li++) {
           sceneApplyLOD(sceneState.points[li], camX, camY, camZ);
@@ -17492,7 +17368,7 @@ if (typeof window !== "undefined") {
         viewport.cssWidth,
         viewport.cssHeight,
         sceneState.background,
-        sceneCurrentControlCamera(sceneControlHandle.controller, effectiveSourceCamera, sceneState._scrollCamera),
+        sceneCurrentControlCamera(sceneControlHandle.controller, sceneState.camera, sceneState._scrollCamera),
         sceneStateObjectsWithMaterials(sceneState),
         sceneStateLabels(sceneState),
         sceneStateSprites(sceneState),

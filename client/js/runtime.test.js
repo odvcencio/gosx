@@ -5484,6 +5484,49 @@ test("bootstrap applies named Scene3D materials to point layers", async () => {
   assert.equal(again[0], points[0]);
 });
 
+test("bootstrap applies Scene3D live point buffers outside update tweens", async () => {
+  const env = createContext({});
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const api = env.context.__gosx_scene3d_api;
+  const state = api.createSceneState({
+    scene: {
+      points: [
+        {
+          id: "galaxy",
+          count: 2,
+          positions: [0, 0, 0, 1, 0, 0],
+          sizes: [1, 1],
+          colors: ["#000000", "#111111"],
+          opacity: 0.5,
+          live: ["galaxy:node:galaxy"],
+          transition: { update: { duration: 1200, easing: "linear" } },
+        },
+      ],
+    },
+  });
+  const entry = state.points[0];
+  entry._cachedColors = new Float32Array([0, 0, 0, 1, 0.1, 0.1, 0.1, 1]);
+
+  const changed = api.sceneApplyLiveEvent(state, "galaxy:node:galaxy", {
+    colors: ["#ff0000", "#00ff00"],
+  }, false, 10);
+
+  assert.equal(changed, true);
+  assert.deepEqual(entry.colors, ["#ff0000", "#00ff00"]);
+  assert.equal(entry._cachedColors, null);
+  assert.equal(state._transitions.length, 0);
+});
+
+test("bootstrap keeps Scene3D CSS transition diagnostics opt-in", () => {
+  const source = fs.readFileSync(path.join(__dirname, "bootstrap-src", "15b-scene-planner.js"), "utf8");
+
+  assert.match(source, /function sceneCSSDebugLog\(\)/);
+  assert.match(source, /__gosx_scene3d_css_debug/);
+  assert.doesNotMatch(source, /console\.log\("\[gosx:css-transition\]/);
+});
+
 test("bootstrap observes inherited root CSS var mutations for Scene3D", () => {
   const source = fs.readFileSync(path.join(__dirname, "bootstrap-src", "20-scene-mount.js"), "utf8");
 
