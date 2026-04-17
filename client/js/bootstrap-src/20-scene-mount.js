@@ -2558,18 +2558,73 @@
       }
     }
 
+    // Watchdog for voluntary-restore: Chrome does NOT always fire
+    // `webglcontextrestored` after a voluntary `ext.restoreContext()` call,
+    // particularly when the tab was foregrounded but the scene was briefly
+    // off-viewport when the idle timer fired. The restore event never lands,
+    // the lost stub stays installed, and the canvas is permanently black
+    // until navigation. This watchdog force-invokes the restore path if the
+    // browser event hasn't fired within WEBGL_VOLUNTARY_RESTORE_WATCHDOG_MS.
+    const WEBGL_VOLUNTARY_RESTORE_WATCHDOG_MS = 2000;
+    let voluntaryRestoreWatchdogTimer = null;
+    let voluntaryRestorePending = false;
+
+    function clearVoluntaryRestoreWatchdog() {
+      if (voluntaryRestoreWatchdogTimer != null) {
+        clearTimeout(voluntaryRestoreWatchdogTimer);
+        voluntaryRestoreWatchdogTimer = null;
+      }
+      voluntaryRestorePending = false;
+    }
+
     function restoreVoluntarilyLostContext() {
       if (!contextVoluntarilyLost) return;
       contextVoluntarilyLost = false;
+      voluntaryRestorePending = true;
+      let requested = false;
       try {
         const gl = canvas.getContext("webgl2") || canvas.getContext("webgl");
         if (gl) {
           const ext = gl.getExtension("WEBGL_lose_context");
           if (ext) {
             ext.restoreContext();
+            requested = true;
           }
         }
       } catch (_e) { /* let the browser handle it */ }
+      gosxSceneEmit("info", "webgl-voluntary-restore-requested", {
+        requested: requested,
+      });
+      if (voluntaryRestoreWatchdogTimer != null) {
+        clearTimeout(voluntaryRestoreWatchdogTimer);
+      }
+      voluntaryRestoreWatchdogTimer = setTimeout(function () {
+        voluntaryRestoreWatchdogTimer = null;
+        if (!voluntaryRestorePending || disposed) {
+          return;
+        }
+        voluntaryRestorePending = false;
+        gosxSceneEmit("warn", "webgl-voluntary-restore-watchdog", {
+          rendererKind: renderer && renderer.kind ? renderer.kind : "",
+          forcing: true,
+        });
+        if (!renderer || renderer.kind === "webgl") {
+          // Either the event already fired and wired things up, or we lost
+          // the mount — either way, nothing to force.
+          return;
+        }
+        // Event didn't land. Force the restore path directly. Mirrors
+        // onWebGLContextRestored without touching contextVoluntarilyLost
+        // (already cleared above).
+        const swapped = restoreSceneWebGLRenderer("webgl-voluntary-restore-forced");
+        if (swapped) {
+          viewportDirty = true;
+          scheduleRender("webgl-voluntary-restore-forced");
+        }
+        gosxSceneEmit(swapped ? "info" : "error", "webgl-voluntary-restore-forced", {
+          swapped: swapped,
+        });
+      }, WEBGL_VOLUNTARY_RESTORE_WATCHDOG_MS);
     }
 
     // Viewport-dirty flag: when false, renderFrame skips the per-frame
@@ -2759,11 +2814,16 @@
 
     function onWebGLContextRestored() {
       const voluntary = contextVoluntarilyLost === true;
+      const watchdogPending = voluntaryRestorePending === true;
       contextVoluntarilyLost = false;
+      // Natural event landed — cancel any outstanding voluntary-restore
+      // watchdog so we don't force-restore on top of the browser's own work.
+      clearVoluntaryRestoreWatchdog();
       const swapped = restoreSceneWebGLRenderer("");
       gosxSceneEmit(swapped ? "info" : "warn", "webgl-context-restored", {
         swapped: swapped,
         voluntary: voluntary,
+        watchdogPending: watchdogPending,
       });
       if (swapped) {
         viewportDirty = true;
@@ -3449,6 +3509,7 @@
       dispose() {
         disposed = true;
         clearIdleContextRelease();
+        clearVoluntaryRestoreWatchdog();
         if (scrollHandler) {
           window.removeEventListener("scroll", scrollHandler);
         }

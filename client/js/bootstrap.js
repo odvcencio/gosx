@@ -25934,18 +25934,61 @@ if (typeof window !== "undefined") {
       }
     }
 
+    const WEBGL_VOLUNTARY_RESTORE_WATCHDOG_MS = 2000;
+    let voluntaryRestoreWatchdogTimer = null;
+    let voluntaryRestorePending = false;
+
+    function clearVoluntaryRestoreWatchdog() {
+      if (voluntaryRestoreWatchdogTimer != null) {
+        clearTimeout(voluntaryRestoreWatchdogTimer);
+        voluntaryRestoreWatchdogTimer = null;
+      }
+      voluntaryRestorePending = false;
+    }
+
     function restoreVoluntarilyLostContext() {
       if (!contextVoluntarilyLost) return;
       contextVoluntarilyLost = false;
+      voluntaryRestorePending = true;
+      let requested = false;
       try {
         const gl = canvas.getContext("webgl2") || canvas.getContext("webgl");
         if (gl) {
           const ext = gl.getExtension("WEBGL_lose_context");
           if (ext) {
             ext.restoreContext();
+            requested = true;
           }
         }
       } catch (_e) { /* let the browser handle it */ }
+      gosxSceneEmit("info", "webgl-voluntary-restore-requested", {
+        requested: requested,
+      });
+      if (voluntaryRestoreWatchdogTimer != null) {
+        clearTimeout(voluntaryRestoreWatchdogTimer);
+      }
+      voluntaryRestoreWatchdogTimer = setTimeout(function () {
+        voluntaryRestoreWatchdogTimer = null;
+        if (!voluntaryRestorePending || disposed) {
+          return;
+        }
+        voluntaryRestorePending = false;
+        gosxSceneEmit("warn", "webgl-voluntary-restore-watchdog", {
+          rendererKind: renderer && renderer.kind ? renderer.kind : "",
+          forcing: true,
+        });
+        if (!renderer || renderer.kind === "webgl") {
+          return;
+        }
+        const swapped = restoreSceneWebGLRenderer("webgl-voluntary-restore-forced");
+        if (swapped) {
+          viewportDirty = true;
+          scheduleRender("webgl-voluntary-restore-forced");
+        }
+        gosxSceneEmit(swapped ? "info" : "error", "webgl-voluntary-restore-forced", {
+          swapped: swapped,
+        });
+      }, WEBGL_VOLUNTARY_RESTORE_WATCHDOG_MS);
     }
 
     let viewportDirty = true;
@@ -26077,11 +26120,14 @@ if (typeof window !== "undefined") {
 
     function onWebGLContextRestored() {
       const voluntary = contextVoluntarilyLost === true;
+      const watchdogPending = voluntaryRestorePending === true;
       contextVoluntarilyLost = false;
+      clearVoluntaryRestoreWatchdog();
       const swapped = restoreSceneWebGLRenderer("");
       gosxSceneEmit(swapped ? "info" : "warn", "webgl-context-restored", {
         swapped: swapped,
         voluntary: voluntary,
+        watchdogPending: watchdogPending,
       });
       if (swapped) {
         viewportDirty = true;
@@ -26638,6 +26684,7 @@ if (typeof window !== "undefined") {
       dispose() {
         disposed = true;
         clearIdleContextRelease();
+        clearVoluntaryRestoreWatchdog();
         if (scrollHandler) {
           window.removeEventListener("scroll", scrollHandler);
         }
