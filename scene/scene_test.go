@@ -2345,8 +2345,8 @@ func TestInstancedGLBMeshLowersToSceneIR(t *testing.T) {
 		Camera: PerspectiveCamera{Position: Vec3(0, 6, 8), FOV: 45, Near: 0.1, Far: 40},
 		Graph: NewGraph(
 			InstancedGLBMesh{
-				ID:  "robot-batch",
-				Src: "/models/robot-scout.glb",
+				ID:       "robot-batch",
+				Src:      "/models/robot-scout.glb",
 				Material: StandardMaterial{Color: "#ff6600", Roughness: 0.5},
 				Instances: []MeshInstance{
 					{ID: "robot-1", Position: Vec3(1, 0, 2), Scale: Vec3(1, 1, 1)},

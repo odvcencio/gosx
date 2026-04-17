@@ -267,9 +267,9 @@ type InstancedMesh struct {
 // the geometry, and renders all instances using the instanced draw path — one
 // draw call per geometry/material pair instead of one per instance.
 type InstancedGLBMesh struct {
-	ID       string
-	Src      string // GLB file URL
-	Material Material
+	ID        string
+	Src       string // GLB file URL
+	Material  Material
 	Instances []MeshInstance
 	Pickable  *bool
 	Static    *bool
@@ -653,34 +653,34 @@ type pendingSprite struct {
 }
 
 type graphLowerer struct {
-	objects              []ObjectIR
-	models               []ModelIR
-	points               []PointsIR
-	instancedMeshes      []InstancedMeshIR
-	instancedGLBMeshes   []InstancedGLBMeshIR
-	computeParticles     []ComputeParticlesIR
-	animations           []AnimationClipIR
-	pending              []pendingLabel
-	pendingSprites       []pendingSprite
-	lights               []LightIR
-	anchors              map[string]worldTransform
-	nextObjectID         int
-	nextLabelID          int
-	nextSpriteID         int
-	nextLightID          int
-	nextModelID          int
-	nextPointsID         int
-	nextInstancedID      int
-	nextInstancedGLBID   int
-	nextParticlesID      int
+	objects            []ObjectIR
+	models             []ModelIR
+	points             []PointsIR
+	instancedMeshes    []InstancedMeshIR
+	instancedGLBMeshes []InstancedGLBMeshIR
+	computeParticles   []ComputeParticlesIR
+	animations         []AnimationClipIR
+	pending            []pendingLabel
+	pendingSprites     []pendingSprite
+	lights             []LightIR
+	anchors            map[string]worldTransform
+	nextObjectID       int
+	nextLabelID        int
+	nextSpriteID       int
+	nextLightID        int
+	nextModelID        int
+	nextPointsID       int
+	nextInstancedID    int
+	nextInstancedGLBID int
+	nextParticlesID    int
 }
 
-func (Group) sceneNode()             {}
-func (Mesh) sceneNode()              {}
-func (Points) sceneNode()            {}
-func (InstancedMesh) sceneNode()     {}
-func (InstancedGLBMesh) sceneNode()  {}
-func (ComputeParticles) sceneNode()  {}
+func (Group) sceneNode()            {}
+func (Mesh) sceneNode()             {}
+func (Points) sceneNode()           {}
+func (InstancedMesh) sceneNode()    {}
+func (InstancedGLBMesh) sceneNode() {}
+func (ComputeParticles) sceneNode() {}
 func (Label) sceneNode()            {}
 func (Sprite) sceneNode()           {}
 func (Model) sceneNode()            {}
@@ -1428,10 +1428,10 @@ func (l *graphLowerer) lowerInstancedGLBMesh(igm InstancedGLBMesh, parent worldT
 		})
 	}
 	record := InstancedGLBMeshIR{
-		ID:       id,
-		Src:      src,
-		Pickable: igm.Pickable,
-		Static:   igm.Static,
+		ID:        id,
+		Src:       src,
+		Pickable:  igm.Pickable,
+		Static:    igm.Static,
 		Instances: instances,
 	}
 	if mat != nil {

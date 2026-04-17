@@ -72,26 +72,26 @@ type statusCoder interface {
 
 // App is the GoSX server application.
 type App struct {
-	pageRoutes  map[string]registeredPageRoute
-	apiRoutes   map[string]registeredAPIRoute
-	layout      func(title string, body gosx.Node) gosx.Node
-	document    DocumentFunc
-	mux         *http.ServeMux
-	middleware  []Middleware
-	notFound    PageHandler
-	errorPage   ErrorHandler
-	publicDir   string
-	imageDir    string
-	runtimeRoot string
-	runtimeMeta *runtimeManifestCache
-	isr         *isrConfig
-	isrStore    ISRStore
-	navigation  bool
-	observers   []RequestObserver
-	readyChecks []namedReadyCheck
-	redirects   map[string]registeredRedirectRoute
-	rewrites    map[string]registeredRewriteRoute
-	mounts      map[string]registeredMountedRoute
+	pageRoutes         map[string]registeredPageRoute
+	apiRoutes          map[string]registeredAPIRoute
+	layout             func(title string, body gosx.Node) gosx.Node
+	document           DocumentFunc
+	mux                *http.ServeMux
+	middleware         []Middleware
+	notFound           PageHandler
+	errorPage          ErrorHandler
+	publicDir          string
+	imageDir           string
+	runtimeRoot        string
+	runtimeMeta        *runtimeManifestCache
+	isr                *isrConfig
+	isrStore           ISRStore
+	navigation         bool
+	observers          []RequestObserver
+	readyChecks        []namedReadyCheck
+	redirects          map[string]registeredRedirectRoute
+	rewrites           map[string]registeredRewriteRoute
+	mounts             map[string]registeredMountedRoute
 	revalidator        *Revalidator
 	operations         []OperationObserver
 	clientEventsLogger *slog.Logger

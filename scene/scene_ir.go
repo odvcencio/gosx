@@ -26,38 +26,38 @@ type CompressedArray struct {
 // reflection-based json.Marshal(sceneIR) produces the same wire shape
 // directly, and Props.MarshalJSON takes that fast path.
 type SceneIR struct {
-	Objects             []ObjectIR             `json:"objects,omitempty"`
-	Models              []ModelIR              `json:"models,omitempty"`
-	Points              []PointsIR             `json:"points,omitempty"`
-	InstancedMeshes     []InstancedMeshIR      `json:"instancedMeshes,omitempty"`
-	InstancedGLBMeshes  []InstancedGLBMeshIR   `json:"instancedGLBMeshes,omitempty"`
-	ComputeParticles    []ComputeParticlesIR   `json:"computeParticles,omitempty"`
-	Animations          []AnimationClipIR      `json:"animations,omitempty"`
-	Labels              []LabelIR              `json:"labels,omitempty"`
-	Sprites             []SpriteIR             `json:"sprites,omitempty"`
-	Lights              []LightIR              `json:"lights,omitempty"`
-	Environment         EnvironmentIR          `json:"environment,omitzero"`
-	PostEffects         []PostEffectIR         `json:"postEffects,omitempty"`
-	PostFXMaxPixels     int                    `json:"postFXMaxPixels,omitempty"`
-	ShadowMaxPixels     int                    `json:"shadowMaxPixels,omitempty"`
+	Objects            []ObjectIR           `json:"objects,omitempty"`
+	Models             []ModelIR            `json:"models,omitempty"`
+	Points             []PointsIR           `json:"points,omitempty"`
+	InstancedMeshes    []InstancedMeshIR    `json:"instancedMeshes,omitempty"`
+	InstancedGLBMeshes []InstancedGLBMeshIR `json:"instancedGLBMeshes,omitempty"`
+	ComputeParticles   []ComputeParticlesIR `json:"computeParticles,omitempty"`
+	Animations         []AnimationClipIR    `json:"animations,omitempty"`
+	Labels             []LabelIR            `json:"labels,omitempty"`
+	Sprites            []SpriteIR           `json:"sprites,omitempty"`
+	Lights             []LightIR            `json:"lights,omitempty"`
+	Environment        EnvironmentIR        `json:"environment,omitzero"`
+	PostEffects        []PostEffectIR       `json:"postEffects,omitempty"`
+	PostFXMaxPixels    int                  `json:"postFXMaxPixels,omitempty"`
+	ShadowMaxPixels    int                  `json:"shadowMaxPixels,omitempty"`
 }
 
 // InstancedGLBMeshIR is the typed compatibility record for one GLB-backed
 // instanced mesh batch — one wire node per (src, material) pair.
 type InstancedGLBMeshIR struct {
-	ID           string            `json:"id"`
-	Src          string            `json:"src"`
-	MaterialKind string            `json:"materialKind,omitempty"`
-	Color        string            `json:"color,omitempty"`
-	Texture      string            `json:"texture,omitempty"`
-	Opacity      *float64          `json:"opacity,omitempty"`
-	Emissive     *float64          `json:"emissive,omitempty"`
-	BlendMode    string            `json:"blendMode,omitempty"`
-	Roughness    float64           `json:"roughness,omitempty"`
-	Metalness    float64           `json:"metalness,omitempty"`
-	Instances    []MeshInstanceIR  `json:"instances"`
-	Pickable     *bool             `json:"pickable,omitempty"`
-	Static       *bool             `json:"static,omitempty"`
+	ID           string           `json:"id"`
+	Src          string           `json:"src"`
+	MaterialKind string           `json:"materialKind,omitempty"`
+	Color        string           `json:"color,omitempty"`
+	Texture      string           `json:"texture,omitempty"`
+	Opacity      *float64         `json:"opacity,omitempty"`
+	Emissive     *float64         `json:"emissive,omitempty"`
+	BlendMode    string           `json:"blendMode,omitempty"`
+	Roughness    float64          `json:"roughness,omitempty"`
+	Metalness    float64          `json:"metalness,omitempty"`
+	Instances    []MeshInstanceIR `json:"instances"`
+	Pickable     *bool            `json:"pickable,omitempty"`
+	Static       *bool            `json:"static,omitempty"`
 }
 
 // MeshInstanceIR holds the per-instance transform data for InstancedGLBMeshIR.
