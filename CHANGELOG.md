@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.18.0-alpha.24
+
+Scene3D live palette/material swap fix.
+
+`scenePlannerHashMaterial` in `15b-scene-planner.js` short-circuited to `key`-only when a material had a stable `key`, excluding `color`, `opacity`, `emissive`, `roughness`, `metalness`, `texture`, and `blendMode` from the hash. Downstream, `scenePreparedSignature` consumed that hash to detect whether the prepared scene could be reused, so CSS-var-resolved color rewrites on keyed materials (m31labs's `Material name="stars" color="var(--galaxy-star-color)"` pattern that drives the hourly/half-hourly palette shift) produced a new IR with new colors — but the signature matched the previous frame, `lastPrepared.passes` was reused with the previous bucket's baked colors, and the canvas never repainted. The mutation observer, CSS revision bump, fresh CSS resolve, and `scheduleRender` all fired correctly; the invalidation died at the signature check.
+
+`scenePlannerHashMaterial` now hashes identity (`key`) AND resolved appearance (`color`, `opacity`, `emissive`, etc.) together, so palette-swap cache invalidation propagates through the prepared-scene signature into the pass list, forcing a fresh upload on the next frame.
+
 ## v0.18.0-alpha.23
 
 Scene3D voluntary-restore watchdog.
