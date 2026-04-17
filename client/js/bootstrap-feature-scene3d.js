@@ -16859,6 +16859,12 @@ if (typeof window !== "undefined") {
       return true;
     }
 
+    const sceneRendererLostStub = {
+      kind: "lost",
+      render: function () {},
+      dispose: function () {},
+    };
+
     function onWebGLContextLost(event) {
       if (!renderer || renderer.kind !== "webgl") {
         return;
@@ -16869,6 +16875,15 @@ if (typeof window !== "undefined") {
       gosxSceneEmit("warn", "webgl-context-lost", {
         voluntary: contextVoluntarilyLost === true,
       });
+      try {
+        if (typeof renderer.dispose === "function") {
+          renderer.dispose();
+        }
+      } catch (_err) {
+        /* dispose errors on a lost context are expected */
+      }
+      renderer = sceneRendererLostStub;
+      applySceneRendererState(ctx.mount, renderer, "webgl-context-lost");
       const swapped = fallbackSceneRenderer("webgl-context-lost");
       scheduleRender("webgl-context-lost");
       if (!swapped) {
@@ -17339,40 +17354,28 @@ if (typeof window !== "undefined") {
           if (disposed || !renderer || renderer.kind !== "webgl") {
             return;
           }
-          const gl = typeof canvas.getContext === "function"
-            ? (canvas.getContext("webgl2") || canvas.getContext("webgl"))
-            : null;
-          if (!gl || gl.isContextLost()) {
-            return;
-          }
-          const probeSide = 32;
-          const pxBytes = probeSide * probeSide * 4;
-          const pixels = new Uint8Array(pxBytes);
-          const x0 = Math.max(0, ((canvas.width - probeSide) / 2) | 0);
-          const y0 = Math.max(0, ((canvas.height - probeSide) / 2) | 0);
+          let dataUrl = "";
           try {
-            gl.readPixels(x0, y0, probeSide, probeSide, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+            dataUrl = canvas.toDataURL("image/png");
           } catch (_err) {
             return;
           }
-          let nonBlack = 0;
-          for (let i = 0; i < pxBytes; i += 4) {
-            if (pixels[i] > 3 || pixels[i + 1] > 3 || pixels[i + 2] > 3 || pixels[i + 3] > 3) {
-              nonBlack++;
-            }
-          }
-          if (nonBlack > 0) {
+          const kCanvasBlankPNGBytesThreshold = 1800;
+          if (dataUrl.length > kCanvasBlankPNGBytesThreshold) {
             return;
           }
+          const gl = typeof canvas.getContext === "function"
+            ? (canvas.getContext("webgl2") || canvas.getContext("webgl"))
+            : null;
           gosxSceneEmit("error", "render-canvas-blank", {
             rendererKind: renderer && renderer.kind ? renderer.kind : "",
             lastSwapReason: reason || "",
             bundleMeshObjects: stats ? stats.bundleMeshObjects : 0,
             bundleInstancedMeshes: stats ? stats.bundleInstancedMeshes : 0,
             bundleVerts: stats ? stats.bundleVerts : 0,
-            probeWidth: probeSide,
-            probeHeight: probeSide,
-            glError: typeof gl.getError === "function" ? gl.getError() : 0,
+            canvasPngBytes: dataUrl.length,
+            canvasPngThreshold: kCanvasBlankPNGBytesThreshold,
+            glError: gl && typeof gl.getError === "function" ? gl.getError() : 0,
           });
         });
       });

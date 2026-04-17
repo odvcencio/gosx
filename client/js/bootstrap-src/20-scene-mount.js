@@ -2712,6 +2712,20 @@
       return true;
     }
 
+    // Renderer stub used between context-lost and context-restored. Any
+    // scheduleRender / rAF callbacks queued before the loss keep calling
+    // `renderer.render(...)` — if that still points at the old WebGL
+    // renderer, its cached program/buffer handles become stale the instant
+    // the browser restores the context (same `gl` object, but all resources
+    // invalidated), and every call raises GL_INVALID_OPERATION (1282),
+    // silently blacking the canvas. Swapping in this stub before the fallback
+    // runs means those queued callbacks harmlessly no-op instead.
+    const sceneRendererLostStub = {
+      kind: "lost",
+      render: function () {},
+      dispose: function () {},
+    };
+
     function onWebGLContextLost(event) {
       if (!renderer || renderer.kind !== "webgl") {
         return;
@@ -2722,6 +2736,20 @@
       gosxSceneEmit("warn", "webgl-context-lost", {
         voluntary: contextVoluntarilyLost === true,
       });
+      // Dispose the live WebGL renderer immediately so its closures release
+      // every handle (programs, FBOs, cascade textures, IBL cubemaps,
+      // post-fx pipeline) before the browser can re-attach a fresh context
+      // to the same canvas. Bypass swapRenderer/fallbackSceneRenderer's
+      // telemetry so we don't emit a spurious renderer-swap to the stub.
+      try {
+        if (typeof renderer.dispose === "function") {
+          renderer.dispose();
+        }
+      } catch (_err) {
+        /* dispose errors on a lost context are expected */
+      }
+      renderer = sceneRendererLostStub;
+      applySceneRendererState(ctx.mount, renderer, "webgl-context-lost");
       const swapped = fallbackSceneRenderer("webgl-context-lost");
       scheduleRender("webgl-context-lost");
       if (!swapped) {
@@ -3257,40 +3285,39 @@
           if (disposed || !renderer || renderer.kind !== "webgl") {
             return;
           }
-          const gl = typeof canvas.getContext === "function"
-            ? (canvas.getContext("webgl2") || canvas.getContext("webgl"))
-            : null;
-          if (!gl || gl.isContextLost()) {
-            return;
-          }
-          const probeSide = 32;
-          const pxBytes = probeSide * probeSide * 4;
-          const pixels = new Uint8Array(pxBytes);
-          const x0 = Math.max(0, ((canvas.width - probeSide) / 2) | 0);
-          const y0 = Math.max(0, ((canvas.height - probeSide) / 2) | 0);
+          // `canvas.toDataURL()` forces a sync readback that returns the
+          // drawing buffer content from the last paint, even with
+          // preserveDrawingBuffer:false — unlike gl.readPixels, which sees
+          // zero after the browser's composite clear. A truly-blank 800x461
+          // PNG compresses to well under 1 KB; any real galaxy/mesh frame
+          // is 8-30 KB. Using data-URL length as the probe keeps the check
+          // cheap (no getImageData decode) while staying robust to the
+          // compositor's timing.
+          let dataUrl = "";
           try {
-            gl.readPixels(x0, y0, probeSide, probeSide, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+            dataUrl = canvas.toDataURL("image/png");
           } catch (_err) {
             return;
           }
-          let nonBlack = 0;
-          for (let i = 0; i < pxBytes; i += 4) {
-            if (pixels[i] > 3 || pixels[i + 1] > 3 || pixels[i + 2] > 3 || pixels[i + 3] > 3) {
-              nonBlack++;
-            }
-          }
-          if (nonBlack > 0) {
+          // PNG data-URL threshold: a uniform-color 800x461 PNG is ~400-900
+          // bytes base64-encoded; set the floor generously to avoid false
+          // positives on genuinely sparse scenes that happen to compress well.
+          const kCanvasBlankPNGBytesThreshold = 1800;
+          if (dataUrl.length > kCanvasBlankPNGBytesThreshold) {
             return;
           }
+          const gl = typeof canvas.getContext === "function"
+            ? (canvas.getContext("webgl2") || canvas.getContext("webgl"))
+            : null;
           gosxSceneEmit("error", "render-canvas-blank", {
             rendererKind: renderer && renderer.kind ? renderer.kind : "",
             lastSwapReason: reason || "",
             bundleMeshObjects: stats ? stats.bundleMeshObjects : 0,
             bundleInstancedMeshes: stats ? stats.bundleInstancedMeshes : 0,
             bundleVerts: stats ? stats.bundleVerts : 0,
-            probeWidth: probeSide,
-            probeHeight: probeSide,
-            glError: typeof gl.getError === "function" ? gl.getError() : 0,
+            canvasPngBytes: dataUrl.length,
+            canvasPngThreshold: kCanvasBlankPNGBytesThreshold,
+            glError: gl && typeof gl.getError === "function" ? gl.getError() : 0,
           });
         });
       });
