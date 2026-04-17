@@ -36,7 +36,7 @@ func TestGoCommentHighlighting(t *testing.T) {
 func TestGoTypeHighlighting(t *testing.T) {
 	result := Go("var x MyType")
 	if !strings.Contains(result, "ts-type") {
-		t.Fatal("expected ts-type class for capitalized identifier")
+		t.Fatalf("expected ts-type class for capitalized identifier, got %q", result)
 	}
 }
 

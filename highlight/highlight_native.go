@@ -66,11 +66,7 @@ func bestGoParse(source string) (*parseResult, error) {
 	return bestParseAttempt(source, classifyGoNode, func(src string) (*gotreesitter.Tree, *gotreesitter.Language, error) {
 		lang := grammars.GoLanguage()
 		parser := gotreesitter.NewParser(lang)
-		tokenSource, err := grammars.NewGoTokenSource([]byte(src), lang)
-		if err != nil {
-			return nil, nil, err
-		}
-		tree, err := parser.ParseWithTokenSource([]byte(src), tokenSource)
+		tree, err := parseGoSource(parser, lang, []byte(src))
 		if err != nil {
 			return nil, nil, err
 		}
@@ -82,6 +78,17 @@ func bestGoParse(source string) (*parseResult, error) {
 			offset: uint32(len("package demo\n\nfunc _snippet() {\n")),
 		},
 	})
+}
+
+func parseGoSource(parser *gotreesitter.Parser, lang *gotreesitter.Language, source []byte) (*gotreesitter.Tree, error) {
+	if _, ok := lang.SymbolByName("source_file_token1"); !ok {
+		return parser.Parse(source)
+	}
+	tokenSource, err := grammars.NewGoTokenSource(source, lang)
+	if err != nil {
+		return nil, err
+	}
+	return parser.ParseWithTokenSource(source, tokenSource)
 }
 
 func bestGoSXParse(source string) (*parseResult, error) {
