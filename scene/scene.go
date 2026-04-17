@@ -259,6 +259,31 @@ type InstancedMesh struct {
 	Live          []string
 }
 
+// InstancedGLBMesh renders N copies of a GLB model via a single instanced draw
+// call. Each instance has its own position, scale, and rotation; all instances
+// share the same GLB source and optional material override.
+//
+// The JS runtime loads the GLB once (via the existing GLTF loader), extracts
+// the geometry, and renders all instances using the instanced draw path — one
+// draw call per geometry/material pair instead of one per instance.
+type InstancedGLBMesh struct {
+	ID       string
+	Src      string // GLB file URL
+	Material Material
+	Instances []MeshInstance
+	Pickable  *bool
+	Static    *bool
+}
+
+// MeshInstance describes the transform for a single instance within an
+// InstancedGLBMesh batch.
+type MeshInstance struct {
+	ID       string
+	Position Vector3
+	Scale    Vector3
+	Rotation Euler
+}
+
 // ComputeParticles declares a GPU-computed particle system.
 type ComputeParticles struct {
 	ID         string
@@ -628,31 +653,34 @@ type pendingSprite struct {
 }
 
 type graphLowerer struct {
-	objects          []ObjectIR
-	models           []ModelIR
-	points           []PointsIR
-	instancedMeshes  []InstancedMeshIR
-	computeParticles []ComputeParticlesIR
-	animations       []AnimationClipIR
-	pending          []pendingLabel
-	pendingSprites   []pendingSprite
-	lights           []LightIR
-	anchors          map[string]worldTransform
-	nextObjectID     int
-	nextLabelID      int
-	nextSpriteID     int
-	nextLightID      int
-	nextModelID      int
-	nextPointsID     int
-	nextInstancedID  int
-	nextParticlesID  int
+	objects              []ObjectIR
+	models               []ModelIR
+	points               []PointsIR
+	instancedMeshes      []InstancedMeshIR
+	instancedGLBMeshes   []InstancedGLBMeshIR
+	computeParticles     []ComputeParticlesIR
+	animations           []AnimationClipIR
+	pending              []pendingLabel
+	pendingSprites       []pendingSprite
+	lights               []LightIR
+	anchors              map[string]worldTransform
+	nextObjectID         int
+	nextLabelID          int
+	nextSpriteID         int
+	nextLightID          int
+	nextModelID          int
+	nextPointsID         int
+	nextInstancedID      int
+	nextInstancedGLBID   int
+	nextParticlesID      int
 }
 
-func (Group) sceneNode()            {}
-func (Mesh) sceneNode()             {}
-func (Points) sceneNode()           {}
-func (InstancedMesh) sceneNode()    {}
-func (ComputeParticles) sceneNode() {}
+func (Group) sceneNode()             {}
+func (Mesh) sceneNode()              {}
+func (Points) sceneNode()            {}
+func (InstancedMesh) sceneNode()     {}
+func (InstancedGLBMesh) sceneNode()  {}
+func (ComputeParticles) sceneNode()  {}
 func (Label) sceneNode()            {}
 func (Sprite) sceneNode()           {}
 func (Model) sceneNode()            {}
@@ -996,6 +1024,12 @@ func (l *graphLowerer) lowerNode(node Node, parent worldTransform) {
 	case *InstancedMesh:
 		if current != nil {
 			l.lowerInstancedMesh(*current, parent)
+		}
+	case InstancedGLBMesh:
+		l.lowerInstancedGLBMesh(current, parent)
+	case *InstancedGLBMesh:
+		if current != nil {
+			l.lowerInstancedGLBMesh(*current, parent)
 		}
 	case ComputeParticles:
 		l.lowerComputeParticles(current, parent)
@@ -1363,6 +1397,83 @@ func (l *graphLowerer) lowerModel(model Model, parent worldTransform) {
 	record.Loop = model.Loop
 	l.models = append(l.models, record)
 	l.anchors[id] = world
+}
+
+func (l *graphLowerer) lowerInstancedGLBMesh(igm InstancedGLBMesh, parent worldTransform) {
+	src := strings.TrimSpace(igm.Src)
+	if src == "" || len(igm.Instances) == 0 {
+		return
+	}
+	id := strings.TrimSpace(igm.ID)
+	if id == "" {
+		l.nextInstancedGLBID += 1
+		id = "scene-instanced-glb-" + intString(l.nextInstancedGLBID)
+	}
+	mat := legacyMaterial(igm.Material)
+	instances := make([]MeshInstanceIR, 0, len(igm.Instances))
+	for _, inst := range igm.Instances {
+		world := combineTransforms(parent, localTransform(inst.Position, inst.Rotation))
+		rotation := eulerFromQuaternion(world.Rotation)
+		instances = append(instances, MeshInstanceIR{
+			ID:        strings.TrimSpace(inst.ID),
+			X:         world.Position.X,
+			Y:         world.Position.Y,
+			Z:         world.Position.Z,
+			ScaleX:    inst.Scale.X,
+			ScaleY:    inst.Scale.Y,
+			ScaleZ:    inst.Scale.Z,
+			RotationX: rotation.X,
+			RotationY: rotation.Y,
+			RotationZ: rotation.Z,
+		})
+	}
+	record := InstancedGLBMeshIR{
+		ID:       id,
+		Src:      src,
+		Pickable: igm.Pickable,
+		Static:   igm.Static,
+		Instances: instances,
+	}
+	if mat != nil {
+		if s, ok := mapStringValue(mat["materialKind"]); ok {
+			record.MaterialKind = s
+		}
+		if s, ok := mapStringValue(mat["color"]); ok {
+			record.Color = s
+		}
+		if s, ok := mapStringValue(mat["texture"]); ok {
+			record.Texture = s
+		}
+		if s, ok := mapStringValue(mat["blendMode"]); ok {
+			record.BlendMode = s
+		}
+		record.Roughness = mapFloat64(mat["roughness"])
+		record.Metalness = mapFloat64(mat["metalness"])
+		if v, ok := mat["opacity"]; ok {
+			if f, ok2 := toFloat64(v); ok2 {
+				record.Opacity = &f
+			}
+		}
+		if v, ok := mat["emissive"]; ok {
+			if f, ok2 := toFloat64(v); ok2 {
+				record.Emissive = &f
+			}
+		}
+	}
+	l.instancedGLBMeshes = append(l.instancedGLBMeshes, record)
+}
+
+func toFloat64(v any) (float64, bool) {
+	switch f := v.(type) {
+	case float64:
+		return f, true
+	case float32:
+		return float64(f), true
+	case int:
+		return float64(f), true
+	default:
+		return 0, false
+	}
 }
 
 func (l *graphLowerer) resolveLabels() []LabelIR {

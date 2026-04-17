@@ -737,6 +737,78 @@
     return props && Array.isArray(props.instancedMeshes) ? props.instancedMeshes : [];
   }
 
+  // rawSceneInstancedGLBMeshes reads the instancedGLBMeshes array from props or
+  // from the nested scene payload (same convention as other raw* helpers).
+  function rawSceneInstancedGLBMeshes(props) {
+    const scene = sceneProps(props);
+    if (scene && Array.isArray(scene.instancedGLBMeshes)) {
+      return scene.instancedGLBMeshes;
+    }
+    return props && Array.isArray(props.instancedGLBMeshes) ? props.instancedGLBMeshes : [];
+  }
+
+  // expandInstancedGLBMeshesToModels flattens each InstancedGLBMesh batch into
+  // individual model records identical to those produced by normalizeSceneModel.
+  // Each instance gets its own ID (falling back to batchID + "#" + index) and
+  // inherits the batch's src, material, pickable, and static fields.
+  //
+  // This gives the existing model-hydration pipeline (hydrateSceneStateModels)
+  // one object per instance, each loaded from the same cached GLB asset — which
+  // costs one fetch per unique src regardless of how many instances exist.
+  function expandInstancedGLBMeshesToModels(props) {
+    const batches = rawSceneInstancedGLBMeshes(props);
+    if (!batches.length) return [];
+    var out = [];
+    for (var bi = 0; bi < batches.length; bi += 1) {
+      var batch = batches[bi];
+      if (!batch || typeof batch.src !== "string" || !batch.src.trim()) continue;
+      var batchID = typeof batch.id === "string" && batch.id.trim() ? batch.id.trim() : ("scene-instanced-glb-" + bi);
+      var batchSrc = batch.src.trim();
+      var hasPickable = Object.prototype.hasOwnProperty.call(batch, "pickable");
+      var hasStatic = Object.prototype.hasOwnProperty.call(batch, "static");
+      var materialOverride = null;
+      if (batch.color || batch.texture || batch.materialKind || batch.roughness || batch.metalness) {
+        materialOverride = {};
+        if (batch.materialKind) materialOverride.materialKind = batch.materialKind;
+        if (batch.color) materialOverride.color = batch.color;
+        if (batch.texture) materialOverride.texture = batch.texture;
+        if (batch.roughness) materialOverride.roughness = batch.roughness;
+        if (batch.metalness) materialOverride.metalness = batch.metalness;
+        if (Object.prototype.hasOwnProperty.call(batch, "opacity") && typeof batch.opacity === "number") {
+          materialOverride.opacity = batch.opacity;
+        }
+        if (batch.blendMode) materialOverride.blendMode = batch.blendMode;
+      }
+      var instances = Array.isArray(batch.instances) ? batch.instances : [];
+      for (var ii = 0; ii < instances.length; ii += 1) {
+        var inst = instances[ii] || {};
+        var instID = (typeof inst.id === "string" && inst.id.trim())
+          ? inst.id.trim()
+          : (batchID + "#" + ii);
+        out.push({
+          id: instID,
+          src: batchSrc,
+          x: sceneNumber(inst.x, 0),
+          y: sceneNumber(inst.y, 0),
+          z: sceneNumber(inst.z, 0),
+          rotationX: sceneNumber(inst.rotationX, 0),
+          rotationY: sceneNumber(inst.rotationY, 0),
+          rotationZ: sceneNumber(inst.rotationZ, 0),
+          scaleX: sceneNumber(inst.scaleX, 1),
+          scaleY: sceneNumber(inst.scaleY, 1),
+          scaleZ: sceneNumber(inst.scaleZ, 1),
+          animation: "",
+          loop: true,
+          pickable: hasPickable ? sceneBool(batch.pickable, false) : undefined,
+          static: hasStatic ? sceneBool(batch.static, false) : null,
+          materialOverride: materialOverride,
+          _fromInstancedGLB: true,
+        });
+      }
+    }
+    return out;
+  }
+
   function rawSceneComputeParticles(props) {
     const scene = sceneProps(props);
     if (scene && Array.isArray(scene.computeParticles)) {
@@ -1339,13 +1411,19 @@
   }
 
   function sceneModels(props) {
-    return rawSceneModels(props)
+    var normalized = rawSceneModels(props)
       .map(function(model, index) {
         return normalizeSceneModel(model, index);
       })
       .filter(function(model) {
         return Boolean(model && model.src);
       });
+    // Append pre-normalized records expanded from InstancedGLBMesh batches.
+    // These already have the right normalizeSceneModel shape (id, src, x/y/z,
+    // scaleX/Y/Z, rotationX/Y/Z, animation, loop, pickable, static,
+    // materialOverride) so they join the existing hydration pipeline unchanged.
+    var expanded = expandInstancedGLBMeshesToModels(props);
+    return expanded.length ? normalized.concat(expanded) : normalized;
   }
 
   function sceneLights(props) {

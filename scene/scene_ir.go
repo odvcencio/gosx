@@ -26,19 +26,52 @@ type CompressedArray struct {
 // reflection-based json.Marshal(sceneIR) produces the same wire shape
 // directly, and Props.MarshalJSON takes that fast path.
 type SceneIR struct {
-	Objects          []ObjectIR           `json:"objects,omitempty"`
-	Models           []ModelIR            `json:"models,omitempty"`
-	Points           []PointsIR           `json:"points,omitempty"`
-	InstancedMeshes  []InstancedMeshIR    `json:"instancedMeshes,omitempty"`
-	ComputeParticles []ComputeParticlesIR `json:"computeParticles,omitempty"`
-	Animations       []AnimationClipIR    `json:"animations,omitempty"`
-	Labels           []LabelIR            `json:"labels,omitempty"`
-	Sprites          []SpriteIR           `json:"sprites,omitempty"`
-	Lights           []LightIR            `json:"lights,omitempty"`
-	Environment      EnvironmentIR        `json:"environment,omitzero"`
-	PostEffects      []PostEffectIR       `json:"postEffects,omitempty"`
-	PostFXMaxPixels  int                  `json:"postFXMaxPixels,omitempty"`
-	ShadowMaxPixels  int                  `json:"shadowMaxPixels,omitempty"`
+	Objects             []ObjectIR             `json:"objects,omitempty"`
+	Models              []ModelIR              `json:"models,omitempty"`
+	Points              []PointsIR             `json:"points,omitempty"`
+	InstancedMeshes     []InstancedMeshIR      `json:"instancedMeshes,omitempty"`
+	InstancedGLBMeshes  []InstancedGLBMeshIR   `json:"instancedGLBMeshes,omitempty"`
+	ComputeParticles    []ComputeParticlesIR   `json:"computeParticles,omitempty"`
+	Animations          []AnimationClipIR      `json:"animations,omitempty"`
+	Labels              []LabelIR              `json:"labels,omitempty"`
+	Sprites             []SpriteIR             `json:"sprites,omitempty"`
+	Lights              []LightIR              `json:"lights,omitempty"`
+	Environment         EnvironmentIR          `json:"environment,omitzero"`
+	PostEffects         []PostEffectIR         `json:"postEffects,omitempty"`
+	PostFXMaxPixels     int                    `json:"postFXMaxPixels,omitempty"`
+	ShadowMaxPixels     int                    `json:"shadowMaxPixels,omitempty"`
+}
+
+// InstancedGLBMeshIR is the typed compatibility record for one GLB-backed
+// instanced mesh batch — one wire node per (src, material) pair.
+type InstancedGLBMeshIR struct {
+	ID           string            `json:"id"`
+	Src          string            `json:"src"`
+	MaterialKind string            `json:"materialKind,omitempty"`
+	Color        string            `json:"color,omitempty"`
+	Texture      string            `json:"texture,omitempty"`
+	Opacity      *float64          `json:"opacity,omitempty"`
+	Emissive     *float64          `json:"emissive,omitempty"`
+	BlendMode    string            `json:"blendMode,omitempty"`
+	Roughness    float64           `json:"roughness,omitempty"`
+	Metalness    float64           `json:"metalness,omitempty"`
+	Instances    []MeshInstanceIR  `json:"instances"`
+	Pickable     *bool             `json:"pickable,omitempty"`
+	Static       *bool             `json:"static,omitempty"`
+}
+
+// MeshInstanceIR holds the per-instance transform data for InstancedGLBMeshIR.
+type MeshInstanceIR struct {
+	ID        string  `json:"id,omitempty"`
+	X         float64 `json:"x,omitempty"`
+	Y         float64 `json:"y,omitempty"`
+	Z         float64 `json:"z,omitempty"`
+	ScaleX    float64 `json:"scaleX,omitempty"`
+	ScaleY    float64 `json:"scaleY,omitempty"`
+	ScaleZ    float64 `json:"scaleZ,omitempty"`
+	RotationX float64 `json:"rotationX,omitempty"`
+	RotationY float64 `json:"rotationY,omitempty"`
+	RotationZ float64 `json:"rotationZ,omitempty"`
 }
 
 // ObjectIR is the typed compatibility record for one lowered scene object.
@@ -483,20 +516,21 @@ func (g Graph) SceneIR() SceneIR {
 		lowerer.lowerNode(node, identityTransform())
 	}
 	return SceneIR{
-		Objects:          lowerer.objects,
-		Models:           lowerer.models,
-		Points:           lowerer.points,
-		InstancedMeshes:  lowerer.instancedMeshes,
-		ComputeParticles: lowerer.computeParticles,
-		Animations:       lowerer.animations,
-		Labels:           lowerer.resolveLabels(),
-		Sprites:          lowerer.resolveSprites(),
-		Lights:           lowerer.lights,
+		Objects:            lowerer.objects,
+		Models:             lowerer.models,
+		Points:             lowerer.points,
+		InstancedMeshes:    lowerer.instancedMeshes,
+		InstancedGLBMeshes: lowerer.instancedGLBMeshes,
+		ComputeParticles:   lowerer.computeParticles,
+		Animations:         lowerer.animations,
+		Labels:             lowerer.resolveLabels(),
+		Sprites:            lowerer.resolveSprites(),
+		Lights:             lowerer.lights,
 	}
 }
 
 func (ir SceneIR) isZero() bool {
-	return len(ir.Objects) == 0 && len(ir.Models) == 0 && len(ir.Points) == 0 && len(ir.InstancedMeshes) == 0 && len(ir.ComputeParticles) == 0 && len(ir.Animations) == 0 && len(ir.Labels) == 0 && len(ir.Sprites) == 0 && len(ir.Lights) == 0 && ir.Environment.IsZero() && len(ir.PostEffects) == 0
+	return len(ir.Objects) == 0 && len(ir.Models) == 0 && len(ir.Points) == 0 && len(ir.InstancedMeshes) == 0 && len(ir.InstancedGLBMeshes) == 0 && len(ir.ComputeParticles) == 0 && len(ir.Animations) == 0 && len(ir.Labels) == 0 && len(ir.Sprites) == 0 && len(ir.Lights) == 0 && ir.Environment.IsZero() && len(ir.PostEffects) == 0
 }
 
 func (ir SceneIR) legacyProps() map[string]any {
@@ -521,6 +555,9 @@ func (ir SceneIR) legacyProps() map[string]any {
 	}
 	if instancedMeshes := legacyInstancedMeshes(ir.InstancedMeshes); len(instancedMeshes) > 0 {
 		out["instancedMeshes"] = instancedMeshes
+	}
+	if instancedGLBMeshes := legacyInstancedGLBMeshes(ir.InstancedGLBMeshes); len(instancedGLBMeshes) > 0 {
+		out["instancedGLBMeshes"] = instancedGLBMeshes
 	}
 	if computeParticles := legacyComputeParticles(ir.ComputeParticles); len(computeParticles) > 0 {
 		out["computeParticles"] = computeParticles
@@ -809,6 +846,63 @@ func (item InstancedMeshIR) legacyProps() map[string]any {
 		record["receiveShadow"] = true
 	}
 	applySceneLifecycleRecord(record, item.Transition, item.InState, item.OutState, item.Live)
+	return record
+}
+
+func legacyInstancedGLBMeshes(items []InstancedGLBMeshIR) []map[string]any {
+	if len(items) == 0 {
+		return nil
+	}
+	out := make([]map[string]any, 0, len(items))
+	for _, item := range items {
+		out = append(out, item.legacyProps())
+	}
+	return out
+}
+
+func (item InstancedGLBMeshIR) legacyProps() map[string]any {
+	src := strings.TrimSpace(item.Src)
+	if src == "" {
+		return nil
+	}
+	record := map[string]any{
+		"id":  item.ID,
+		"src": src,
+	}
+	setString(record, "materialKind", item.MaterialKind)
+	setString(record, "color", item.Color)
+	setString(record, "texture", item.Texture)
+	setNumericPtr(record, "opacity", item.Opacity)
+	setNumericPtr(record, "emissive", item.Emissive)
+	setString(record, "blendMode", item.BlendMode)
+	setNumeric(record, "roughness", item.Roughness)
+	setNumeric(record, "metalness", item.Metalness)
+	if item.Pickable != nil {
+		record["pickable"] = *item.Pickable
+	}
+	if item.Static != nil {
+		record["static"] = *item.Static
+	}
+	if len(item.Instances) > 0 {
+		instances := make([]map[string]any, 0, len(item.Instances))
+		for _, inst := range item.Instances {
+			instRecord := map[string]any{}
+			if inst.ID != "" {
+				instRecord["id"] = inst.ID
+			}
+			setNumeric(instRecord, "x", inst.X)
+			setNumeric(instRecord, "y", inst.Y)
+			setNumeric(instRecord, "z", inst.Z)
+			setNumeric(instRecord, "scaleX", inst.ScaleX)
+			setNumeric(instRecord, "scaleY", inst.ScaleY)
+			setNumeric(instRecord, "scaleZ", inst.ScaleZ)
+			setNumeric(instRecord, "rotationX", inst.RotationX)
+			setNumeric(instRecord, "rotationY", inst.RotationY)
+			setNumeric(instRecord, "rotationZ", inst.RotationZ)
+			instances = append(instances, instRecord)
+		}
+		record["instances"] = instances
+	}
 	return record
 }
 

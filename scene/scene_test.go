@@ -2298,3 +2298,131 @@ func TestLinesGeometryWidthZeroOmitsProp(t *testing.T) {
 		t.Errorf("expected lineWidth absent when Width is zero, got %v", objects[0])
 	}
 }
+
+func TestPerspectiveCameraTransitionMSLegacyProps(t *testing.T) {
+	camera := PerspectiveCamera{
+		Position:     Vec3(0, 6, 8),
+		FOV:          45,
+		Near:         0.1,
+		Far:          40,
+		TransitionMS: 600,
+	}
+	out := camera.legacyProps()
+	if got, ok := out["transitionMS"]; !ok || got != 600.0 {
+		t.Fatalf("expected transitionMS 600, got %#v", out["transitionMS"])
+	}
+
+	// Zero TransitionMS must be omitted.
+	camera.TransitionMS = 0
+	out2 := camera.legacyProps()
+	if _, present := out2["transitionMS"]; present {
+		t.Fatalf("expected transitionMS absent when zero, got %#v", out2)
+	}
+}
+
+func TestPerspectiveCameraTransitionMSInSceneProps(t *testing.T) {
+	props := Props{
+		Camera: PerspectiveCamera{
+			Position:     Vec3(0, 12, 8),
+			FOV:          45,
+			Near:         0.1,
+			Far:          40,
+			TransitionMS: 600,
+		},
+	}
+	legacy := props.LegacyProps()
+	camera, ok := legacy["camera"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected camera map in legacy props, got %#v", legacy["camera"])
+	}
+	if got, present := camera["transitionMS"]; !present || got != 600.0 {
+		t.Fatalf("expected camera.transitionMS 600, got %#v", camera["transitionMS"])
+	}
+}
+
+func TestInstancedGLBMeshLowersToSceneIR(t *testing.T) {
+	props := Props{
+		Camera: PerspectiveCamera{Position: Vec3(0, 6, 8), FOV: 45, Near: 0.1, Far: 40},
+		Graph: NewGraph(
+			InstancedGLBMesh{
+				ID:  "robot-batch",
+				Src: "/models/robot-scout.glb",
+				Material: StandardMaterial{Color: "#ff6600", Roughness: 0.5},
+				Instances: []MeshInstance{
+					{ID: "robot-1", Position: Vec3(1, 0, 2), Scale: Vec3(1, 1, 1)},
+					{ID: "robot-2", Position: Vec3(3, 0, 4), Scale: Vec3(1.2, 1.2, 1.2)},
+				},
+				Pickable: Bool(true),
+				Static:   Bool(false),
+			},
+		),
+	}
+
+	ir := props.SceneIR()
+	if len(ir.InstancedGLBMeshes) != 1 {
+		t.Fatalf("expected 1 InstancedGLBMesh, got %d", len(ir.InstancedGLBMeshes))
+	}
+	batch := ir.InstancedGLBMeshes[0]
+	if batch.ID != "robot-batch" {
+		t.Fatalf("expected id robot-batch, got %q", batch.ID)
+	}
+	if batch.Src != "/models/robot-scout.glb" {
+		t.Fatalf("expected src /models/robot-scout.glb, got %q", batch.Src)
+	}
+	if len(batch.Instances) != 2 {
+		t.Fatalf("expected 2 instances, got %d", len(batch.Instances))
+	}
+	if batch.Instances[0].ID != "robot-1" {
+		t.Fatalf("expected first instance id robot-1, got %q", batch.Instances[0].ID)
+	}
+	if batch.Instances[1].ID != "robot-2" {
+		t.Fatalf("expected second instance id robot-2, got %q", batch.Instances[1].ID)
+	}
+	if batch.Pickable == nil || !*batch.Pickable {
+		t.Fatalf("expected pickable=true, got %v", batch.Pickable)
+	}
+	if batch.Color != "#ff6600" {
+		t.Fatalf("expected color #ff6600, got %q", batch.Color)
+	}
+
+	// Verify legacyProps wire shape.
+	legacy := ir.legacyProps()
+	batches, ok := legacy["instancedGLBMeshes"].([]map[string]any)
+	if !ok || len(batches) != 1 {
+		t.Fatalf("expected instancedGLBMeshes slice of length 1, got %#v", legacy["instancedGLBMeshes"])
+	}
+	batchMap := batches[0]
+	if got := batchMap["id"]; got != "robot-batch" {
+		t.Fatalf("expected batch id robot-batch, got %#v", got)
+	}
+	if got := batchMap["src"]; got != "/models/robot-scout.glb" {
+		t.Fatalf("expected batch src, got %#v", got)
+	}
+	instances, ok := batchMap["instances"].([]map[string]any)
+	if !ok || len(instances) != 2 {
+		t.Fatalf("expected 2 instance maps, got %#v", batchMap["instances"])
+	}
+}
+
+func TestInstancedGLBMeshAutoID(t *testing.T) {
+	props := Props{
+		Camera: PerspectiveCamera{Position: Vec3(0, 6, 8), FOV: 45, Near: 0.1, Far: 40},
+		Graph: NewGraph(
+			InstancedGLBMesh{
+				Src:       "/models/robot-scout.glb",
+				Instances: []MeshInstance{{Position: Vec3(1, 0, 2), Scale: Vec3(1, 1, 1)}},
+			},
+			InstancedGLBMesh{
+				Src:       "/models/robot-scout.glb",
+				Instances: []MeshInstance{{Position: Vec3(3, 0, 4), Scale: Vec3(1, 1, 1)}},
+			},
+		),
+	}
+	ir := props.SceneIR()
+	if len(ir.InstancedGLBMeshes) != 2 {
+		t.Fatalf("expected 2 InstancedGLBMeshes, got %d", len(ir.InstancedGLBMeshes))
+	}
+	if ir.InstancedGLBMeshes[0].ID == ir.InstancedGLBMeshes[1].ID {
+		t.Fatalf("expected distinct auto-IDs, got duplicate %q", ir.InstancedGLBMeshes[0].ID)
+	}
+}
