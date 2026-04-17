@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.18.0-alpha.22
+
+Scene3D WebGL context-restore root-cause fix.
+
+Root cause isolated via the alpha.21 telemetry probe: after `webglcontextlost` the mount still held the live WebGL renderer, and any `scheduleRender` already queued before the loss fired a rAF callback that called `renderer.render(...)` on that stale renderer. As soon as the browser restored the context (same `gl` object, but all resources invalidated), every `gl.useProgram`, `gl.bindFramebuffer`, and `gl.drawElements` on those cached handles raised `GL_INVALID_OPERATION` (1282), the PBR/post-fx chain produced a silently blank frame, and the canvas stayed black even though `data-gosx-scene3d-renderer="webgl"` and `isContextLost` agreed everything was fine.
+
+`onWebGLContextLost` now disposes the live renderer immediately and substitutes a no-op `sceneRendererLostStub` (`kind: "lost"`, `render()`/`dispose()` both empty) until `restoreSceneWebGLRenderer` installs a fresh renderer. Queued render callbacks between the two events land on the stub and harmlessly no-op, so no cached GL handles are touched across the loss/restore boundary. Local repro against Chrome + `WEBGL_lose_context.loseContext()` + `restoreContext()` now reports `glError: 0` post-restore (was 1282 in alpha.21).
+
+The `render-canvas-blank` probe itself also switched from `gl.readPixels` to `canvas.toDataURL("image/png")` length check: on `preserveDrawingBuffer: false` contexts (the gosx default), `readPixels` sees zeros after the browser's composite clear even when the drawing buffer held real content — a false positive. `toDataURL` forces a sync snapshot from the pre-clear buffer. A uniform black 800x461 PNG compresses to ~400-900 bytes; any real scene lands at 8-30 KB, so a 1800-byte floor is used as the blank threshold.
+
 ## v0.18.0-alpha.21
 
 Scene3D restore-path diagnostics.
