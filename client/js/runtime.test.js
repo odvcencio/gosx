@@ -8786,6 +8786,8 @@ test("navigation runtime honors submitter overrides and falls back with native s
   const submitter = new FakeElement("button", null);
   submitter.setAttribute("name", "intent");
   submitter.setAttribute("value", "preview");
+  submitter.setAttribute("formaction", "/preview");
+  submitter.setAttribute("formmethod", "get");
   submitter.formAction = "http://localhost:3000/preview";
   submitter.formMethod = "get";
   form.appendChild(submitter);
@@ -8832,6 +8834,8 @@ test("navigation runtime honors submitter overrides and falls back with native s
   assert.equal(env.document.dispatchedEvents.at(-1).detail.method, "GET");
 
   env.fetchCalls.length = 0;
+  submitter.setAttribute("formmethod", "post");
+  submitter.setAttribute("formaction", "/missing");
   submitter.formMethod = "post";
   submitter.formAction = "http://localhost:3000/missing";
 
@@ -8850,6 +8854,57 @@ test("navigation runtime honors submitter overrides and falls back with native s
   assert.equal(form.requestSubmitCalls[0][0], submitter);
   assert.equal(form.hasAttribute("data-gosx-form"), true);
   assert.equal(form.getAttribute("data-gosx-form-state"), "idle");
+});
+
+test("navigation runtime ignores default submitter action property when no override attribute exists", async () => {
+  const form = new FakeElement("form", null);
+  form.setAttribute("action", "/save");
+  form.setAttribute("method", "post");
+  form.setAttribute("data-gosx-form", "");
+  form.setAttribute("data-gosx-form-state", "idle");
+
+  const title = new FakeElement("input", null);
+  title.setAttribute("name", "title");
+  title.value = "hello";
+  form.appendChild(title);
+
+  const submitter = new FakeElement("button", null);
+  submitter.setAttribute("name", "intent");
+  submitter.setAttribute("value", "publish");
+  submitter.formAction = "http://localhost:3000/";
+  form.appendChild(submitter);
+
+  const env = createContext({
+    elements: [form],
+    fetchRoutes: {
+      "http://localhost:3000/save": {
+        text: '{"ok":true,"message":"saved"}',
+        url: "http://localhost:3000/save",
+      },
+    },
+  });
+
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+
+  const submitListener = env.document.eventListeners.get("submit")[0];
+  let prevented = false;
+  submitListener({
+    type: "submit",
+    target: form,
+    submitter,
+    defaultPrevented: false,
+    preventDefault() {
+      prevented = true;
+      this.defaultPrevented = true;
+    },
+  });
+  await flushAsyncWork();
+
+  assert.equal(prevented, true);
+  assert.equal(env.fetchCalls[0].url, "http://localhost:3000/save");
+  assert.equal(env.fetchCalls[0].init.method, "POST");
+  assert.equal(env.document.dispatchedEvents.at(-1).type, "gosx:form:result");
+  assert.equal(env.document.dispatchedEvents.at(-1).detail.action, "http://localhost:3000/save");
 });
 
 test("navigation runtime honors submitter override attributes without reflected props", async () => {

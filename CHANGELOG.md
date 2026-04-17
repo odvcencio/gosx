@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.18.0-alpha.26
+
+Managed form submitter action fix.
+
+GoSX managed form submissions now only honor `formaction`, `formmethod`, and `formtarget` when the submitter actually declares those attributes. Chromium exposes `button.formAction` as the current page URL even when no `formaction` override is present, which made managed POST forms submit to `/` instead of the form's own `action`. The navigation runtime now preserves native form semantics across browsers while still supporting explicit submitter overrides.
+
 ## v0.18.0-alpha.25
 
 Scene3D live point-palette buffer fix.

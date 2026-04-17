@@ -976,11 +976,14 @@
 
   function submitterAttribute(submitter, name) {
     if (!submitter) return "";
+    const attrName = submitterAttributeName(name);
+    if (!submitter.hasAttribute || !submitter.hasAttribute(attrName)) {
+      return "";
+    }
     const property = submitterProperty(submitter, name);
     if (property) {
       return property;
     }
-    const attrName = submitterAttributeName(name);
     return typeof submitter.getAttribute === "function" ? String(submitter.getAttribute(attrName) || "") : "";
   }
 
