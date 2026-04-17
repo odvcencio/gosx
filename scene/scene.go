@@ -29,11 +29,12 @@ type Euler struct {
 
 // PerspectiveCamera describes the current Scene3D camera contract.
 type PerspectiveCamera struct {
-	Position Vector3
-	Rotation Euler
-	FOV      float64
-	Near     float64
-	Far      float64
+	Position     Vector3
+	Rotation     Euler
+	FOV          float64
+	Near         float64
+	Far          float64
+	TransitionMS float64 // if > 0, client interpolates over this many milliseconds
 }
 
 // Environment describes scene-wide ambient, hemisphere, and image-based lighting.
@@ -960,11 +961,14 @@ func (c PerspectiveCamera) legacyProps() map[string]any {
 	if c.Far != 0 {
 		out["far"] = c.Far
 	}
+	if c.TransitionMS > 0 {
+		out["transitionMS"] = c.TransitionMS
+	}
 	return out
 }
 
 func (c PerspectiveCamera) isZero() bool {
-	return c.Position == (Vector3{}) && c.Rotation == (Euler{}) && c.FOV == 0 && c.Near == 0 && c.Far == 0
+	return c.Position == (Vector3{}) && c.Rotation == (Euler{}) && c.FOV == 0 && c.Near == 0 && c.Far == 0 && c.TransitionMS == 0
 }
 
 func (l *graphLowerer) lowerNode(node Node, parent worldTransform) {

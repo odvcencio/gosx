@@ -1731,6 +1731,67 @@
       fov: sceneNumber(raw.fov, sceneNumber(base.fov, 75)),
       near: sceneNumber(raw.near, sceneNumber(base.near, 0.05)),
       far: sceneNumber(raw.far, sceneNumber(base.far, 128)),
+      transitionMS: sceneNumber(raw.transitionMS, 0),
+    };
+  }
+
+  // Camera transition animation — interpolates between two camera states over
+  // transitionMS milliseconds using a quadratic ease-in-out curve.
+  // sceneState._cameraAnimation holds { from, to, startTime, duration } while
+  // active; null otherwise.
+
+  function sceneCameraEaseInOut(t) {
+    if (t <= 0) return 0;
+    if (t >= 1) return 1;
+    return t < 0.5 ? 2 * t * t : 1 - 2 * (1 - t) * (1 - t);
+  }
+
+  function sceneLerp(a, b, t) {
+    return a + (b - a) * t;
+  }
+
+  // Start a new camera transition from `from` to `to` over `durationMS` ms.
+  // `nowMs` is the current timestamp (Date.now() or performance.now()-aligned).
+  function sceneStartCameraTransition(state, from, to, durationMS, nowMs) {
+    state._cameraAnimation = {
+      from: {
+        x: from.x, y: from.y, z: from.z,
+        rotationX: from.rotationX, rotationY: from.rotationY, rotationZ: from.rotationZ,
+        fov: from.fov, near: from.near, far: from.far,
+      },
+      to: {
+        x: to.x, y: to.y, z: to.z,
+        rotationX: to.rotationX, rotationY: to.rotationY, rotationZ: to.rotationZ,
+        fov: to.fov, near: to.near, far: to.far,
+      },
+      startTime: nowMs,
+      duration: durationMS,
+    };
+  }
+
+  // Sample the in-progress camera animation at `nowMs`. Returns the interpolated
+  // camera, or null if no animation is active / it has completed.
+  function sceneTickCameraAnimation(state, nowMs) {
+    const anim = state && state._cameraAnimation;
+    if (!anim) return null;
+    const elapsed = nowMs - anim.startTime;
+    if (elapsed >= anim.duration) {
+      state._cameraAnimation = null;
+      return null;
+    }
+    const t = sceneCameraEaseInOut(elapsed / anim.duration);
+    const from = anim.from;
+    const to = anim.to;
+    return {
+      x: sceneLerp(from.x, to.x, t),
+      y: sceneLerp(from.y, to.y, t),
+      z: sceneLerp(from.z, to.z, t),
+      rotationX: sceneLerp(from.rotationX, to.rotationX, t),
+      rotationY: sceneLerp(from.rotationY, to.rotationY, t),
+      rotationZ: sceneLerp(from.rotationZ, to.rotationZ, t),
+      fov: sceneLerp(from.fov, to.fov, t),
+      near: sceneLerp(from.near, to.near, t),
+      far: sceneLerp(from.far, to.far, t),
     };
   }
 
@@ -1832,6 +1893,7 @@
       materials: sceneMaterials(props),
       postEffects: scenePostEffects(props),
       _transitions: [],
+      _cameraAnimation: null,
       _scrollCamera: (sceneNumber(props.scrollCameraStart, 0) !== 0 || sceneNumber(props.scrollCameraEnd, 0) !== 0)
         ? { start: sceneNumber(props.scrollCameraStart, 0), end: sceneNumber(props.scrollCameraEnd, 0) }
         : null,
@@ -2527,9 +2589,16 @@
       case SCENE_CMD_SET_MATERIAL:
         applySceneObjectPatch(state, command.objectId, command.data);
         return;
-      case SCENE_CMD_SET_CAMERA:
-        state.camera = normalizeSceneCamera(command.data || {}, state.camera);
+      case SCENE_CMD_SET_CAMERA: {
+        const prevCam = state.camera;
+        const nextCam = normalizeSceneCamera(command.data || {}, prevCam);
+        const duration = sceneNumber(nextCam.transitionMS, 0);
+        if (duration > 0 && prevCam && !sceneCameraEquivalent(prevCam, nextCam)) {
+          sceneStartCameraTransition(state, prevCam, nextCam, duration, sceneNowMilliseconds());
+        }
+        state.camera = nextCam;
         return;
+      }
       case SCENE_CMD_SET_LIGHT:
         applySceneLightPatch(state, command.objectId, command.data);
         return;
@@ -2542,7 +2611,13 @@
   function applySceneCreateCommand(state, objectID, payload) {
     if (!payload || typeof payload !== "object") return;
     if (payload.kind === "camera") {
-      state.camera = normalizeSceneCamera(payload.props || {}, state.camera);
+      const prevCam = state.camera;
+      const nextCam = normalizeSceneCamera(payload.props || {}, prevCam);
+      const duration = sceneNumber(nextCam.transitionMS, 0);
+      if (duration > 0 && prevCam && !sceneCameraEquivalent(prevCam, nextCam)) {
+        sceneStartCameraTransition(state, prevCam, nextCam, duration, sceneNowMilliseconds());
+      }
+      state.camera = nextCam;
       return;
     }
     if (payload.kind === "light") {
@@ -16548,6 +16623,9 @@ if (typeof window !== "undefined") {
       if (ctx.mount && ctx.mount.__gosxScene3DCSSDynamic && Date.now() < sceneCSSAnimationUntil) {
         return true;
       }
+      if (sceneState._cameraAnimation) {
+        return true;
+      }
       if (sceneHasActiveTransitions(sceneState)) {
         return true;
       }
@@ -17319,8 +17397,14 @@ if (typeof window !== "undefined") {
         applySceneCommands(sceneState, ctx.runtime.tick());
       }
       sceneAdvanceTransitions(sceneState, now);
+      // If a camera transition animation is in progress, overlay the interpolated
+      // camera on top of sceneState.camera for this frame only.
+      var animatedCamera = sceneTickCameraAnimation(sceneState, now);
+      var effectiveSourceCamera = animatedCamera
+        ? Object.assign({}, sceneState.camera, animatedCamera)
+        : sceneState.camera;
       if (typeof sceneApplyLOD === "function" && props.compression && props.compression.lod) {
-        var cam = sceneCurrentControlCamera(sceneControlHandle.controller, sceneState.camera, sceneState._scrollCamera);
+        var cam = sceneCurrentControlCamera(sceneControlHandle.controller, effectiveSourceCamera, sceneState._scrollCamera);
         var camX = cam.x || 0, camY = cam.y || 0, camZ = cam.z || 0;
         for (var li = 0; li < sceneState.points.length; li++) {
           sceneApplyLOD(sceneState.points[li], camX, camY, camZ);
@@ -17330,7 +17414,7 @@ if (typeof window !== "undefined") {
         viewport.cssWidth,
         viewport.cssHeight,
         sceneState.background,
-        sceneCurrentControlCamera(sceneControlHandle.controller, sceneState.camera, sceneState._scrollCamera),
+        sceneCurrentControlCamera(sceneControlHandle.controller, effectiveSourceCamera, sceneState._scrollCamera),
         sceneStateObjectsWithMaterials(sceneState),
         sceneStateLabels(sceneState),
         sceneStateSprites(sceneState),

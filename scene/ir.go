@@ -85,16 +85,17 @@ type IRConstraint struct {
 
 // IRCamera describes the camera used to prepare a scene.
 type IRCamera struct {
-	Kind      string  `json:"kind,omitempty"`
-	X         float64 `json:"x,omitempty"`
-	Y         float64 `json:"y,omitempty"`
-	Z         float64 `json:"z,omitempty"`
-	RotationX float64 `json:"rotationX,omitempty"`
-	RotationY float64 `json:"rotationY,omitempty"`
-	RotationZ float64 `json:"rotationZ,omitempty"`
-	FOV       float64 `json:"fov,omitempty"`
-	Near      float64 `json:"near,omitempty"`
-	Far       float64 `json:"far,omitempty"`
+	Kind         string  `json:"kind,omitempty"`
+	X            float64 `json:"x,omitempty"`
+	Y            float64 `json:"y,omitempty"`
+	Z            float64 `json:"z,omitempty"`
+	RotationX    float64 `json:"rotationX,omitempty"`
+	RotationY    float64 `json:"rotationY,omitempty"`
+	RotationZ    float64 `json:"rotationZ,omitempty"`
+	FOV          float64 `json:"fov,omitempty"`
+	Near         float64 `json:"near,omitempty"`
+	Far          float64 `json:"far,omitempty"`
+	TransitionMS float64 `json:"transitionMS,omitempty"`
 }
 
 // IREnvironment describes scene-wide lighting, atmosphere, and exposure.
@@ -635,16 +636,17 @@ func (ir IR) MarshalJSON() ([]byte, error) {
 
 func cameraToIR(camera PerspectiveCamera) IRCamera {
 	return IRCamera{
-		Kind:      "perspective",
-		X:         camera.Position.X,
-		Y:         camera.Position.Y,
-		Z:         camera.Position.Z,
-		RotationX: camera.Rotation.X,
-		RotationY: camera.Rotation.Y,
-		RotationZ: camera.Rotation.Z,
-		FOV:       camera.FOV,
-		Near:      camera.Near,
-		Far:       camera.Far,
+		Kind:         "perspective",
+		X:            camera.Position.X,
+		Y:            camera.Position.Y,
+		Z:            camera.Position.Z,
+		RotationX:    camera.Rotation.X,
+		RotationY:    camera.Rotation.Y,
+		RotationZ:    camera.Rotation.Z,
+		FOV:          camera.FOV,
+		Near:         camera.Near,
+		Far:          camera.Far,
+		TransitionMS: camera.TransitionMS,
 	}
 }
 
