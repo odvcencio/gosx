@@ -32,8 +32,8 @@ github.com/ledongthuc/pdf v0.0.0-20220302134840-0c2507a12d80 h1:6Yzfa6GP0rIo/kUL
 github.com/ledongthuc/pdf v0.0.0-20220302134840-0c2507a12d80/go.mod h1:imJHygn/1yfhB7XSJJKlFZKl/J+dCPAknuiaGOshXAs=
 github.com/odvcencio/gotreesitter v0.15.1 h1:wEjidfzPM2Al95tXtKZfvtyWKZdYXLcjjFCL3my38tI=
 github.com/odvcencio/gotreesitter v0.15.1/go.mod h1:Sx+iYJBfw5xSWkSttLSuFvguJctlH+ma1BTxZ0MPCqo=
-github.com/odvcencio/mdpp v0.1.4 h1:5OfIiVjQhBP8tOgDcY9y+XsRl/rNsVclDAj9/yi0/ZQ=
-github.com/odvcencio/mdpp v0.1.4/go.mod h1:JLr81ehAAdEUHN4SdJTN8+c4Wr+uMxJwVuw731J2M9o=
+github.com/odvcencio/mdpp v0.1.5 h1:P3ikZcvoJPZyq4E9kblyXZ6BBAhpuu4eMBViGhe9BXA=
+github.com/odvcencio/mdpp v0.1.5/go.mod h1:JLr81ehAAdEUHN4SdJTN8+c4Wr+uMxJwVuw731J2M9o=
 github.com/odvcencio/turboquant v0.1.0 h1:4dk7zt+T3Lu+jhqzTVQvFj77mrgDZ+ZzYIY5sUaz+qo=
 github.com/odvcencio/turboquant v0.1.0/go.mod h1:ty5h3EkX85p64iBnvWzUGvDuRr6kplOcCE2KBZLtAf8=
 github.com/orisano/pixelmatch v0.0.0-20220722002657-fb0b55479cde h1:x0TT0RDC7UhAVbbWWBzr41ElhJx5tXPWkIHA2HWPRuw=
