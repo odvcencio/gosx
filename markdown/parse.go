@@ -16,6 +16,11 @@ var (
 	inlineMarkdownLinkRe      = regexp.MustCompile(`\[([^\]\n]+)\]\(([^)\s][^)]*)\)`)
 )
 
+type headingTextRepair struct {
+	ordinal int
+	text    string
+}
+
 // Cached languages, initialised once.
 var (
 	mdLangOnce   sync.Once
@@ -50,6 +55,7 @@ func Parse(source []byte) *Document {
 	if len(source) > 0 && source[len(source)-1] != '\n' {
 		source = append(source, '\n')
 	}
+	parseSource, headingRepairs := protectSlowATXHeadingPunctuation(source)
 
 	lang := blockLang()
 	if lang == nil {
@@ -60,10 +66,10 @@ func Parse(source []byte) *Document {
 	var tree *gotreesitter.Tree
 	var err error
 	if mdEntry != nil && mdEntry.TokenSourceFactory != nil {
-		ts := mdEntry.TokenSourceFactory(source, lang)
-		tree, err = parser.ParseWithTokenSource(source, ts)
+		ts := mdEntry.TokenSourceFactory(parseSource, lang)
+		tree, err = parser.ParseWithTokenSource(parseSource, ts)
 	} else {
-		tree, err = parser.Parse(source)
+		tree, err = parser.Parse(parseSource)
 	}
 	if err != nil || tree == nil {
 		return &Document{Root: newNode(NodeDocument), Source: source}
@@ -75,6 +81,7 @@ func Parse(source []byte) *Document {
 	if root == nil {
 		root = newNode(NodeDocument)
 	}
+	repairProtectedHeadings(root, headingRepairs)
 	doc := &Document{Root: root, Source: source}
 	doc.extractFrontmatter()
 	postProcess(doc)
@@ -119,6 +126,178 @@ func lowerMarkdownPlusSource(source []byte) []byte {
 		out = append(out, line)
 	}
 	return []byte(strings.Join(out, "\n"))
+}
+
+func protectSlowATXHeadingPunctuation(source []byte) ([]byte, []headingTextRepair) {
+	var protected []byte
+	var repairs []headingTextRepair
+	inFence := false
+	headingOrdinal := 0
+	previousLineCanBeSetextHeading := false
+
+	for start := 0; start < len(source); {
+		end := start
+		for end < len(source) && source[end] != '\n' {
+			end++
+		}
+		line := source[start:end]
+		trimmed := strings.TrimSpace(string(line))
+
+		if isMarkdownFenceLine(trimmed) {
+			inFence = !inFence
+			previousLineCanBeSetextHeading = false
+		} else if inFence {
+			previousLineCanBeSetextHeading = false
+		} else if text, punctOffset, ok := slowATXHeadingPunctuation(line); ok {
+			if protected == nil {
+				protected = append([]byte(nil), source...)
+			}
+			protected[start+punctOffset] = '0'
+			repairs = append(repairs, headingTextRepair{ordinal: headingOrdinal, text: text})
+			headingOrdinal++
+			previousLineCanBeSetextHeading = false
+		} else if isATXHeadingLine(line) {
+			headingOrdinal++
+			previousLineCanBeSetextHeading = false
+		} else if isSetextUnderlineLine(line) && previousLineCanBeSetextHeading {
+			headingOrdinal++
+			previousLineCanBeSetextHeading = false
+		} else {
+			previousLineCanBeSetextHeading = trimmed != ""
+		}
+
+		if end == len(source) {
+			break
+		}
+		start = end + 1
+	}
+	if protected == nil {
+		return source, nil
+	}
+	return protected, repairs
+}
+
+func slowATXHeadingPunctuation(line []byte) (string, int, bool) {
+	textStart, textEnd, ok := atxHeadingTextRange(line)
+	if !ok || textStart >= textEnd {
+		return "", 0, false
+	}
+	punctOffset := textEnd - 1
+	switch line[punctOffset] {
+	case '.', '?', '!':
+	default:
+		return "", 0, false
+	}
+	text := string(line[textStart:textEnd])
+	if !strings.ContainsAny(text, " \t") {
+		return "", 0, false
+	}
+	return text, punctOffset, true
+}
+
+func isMarkdownFenceLine(line string) bool {
+	return strings.HasPrefix(line, "```") || strings.HasPrefix(line, "~~~")
+}
+
+func isATXHeadingLine(line []byte) bool {
+	_, _, ok := atxHeadingTextRange(line)
+	return ok
+}
+
+func atxHeadingTextRange(line []byte) (int, int, bool) {
+	lineEnd := len(line)
+	if lineEnd > 0 && line[lineEnd-1] == '\r' {
+		lineEnd--
+	}
+	i := 0
+	for i < lineEnd && line[i] == ' ' {
+		i++
+	}
+	if i > 3 {
+		return 0, 0, false
+	}
+	hashStart := i
+	for i < lineEnd && line[i] == '#' {
+		i++
+	}
+	hashes := i - hashStart
+	if hashes == 0 || hashes > 6 {
+		return 0, 0, false
+	}
+	if i < lineEnd && line[i] != ' ' && line[i] != '\t' {
+		return 0, 0, false
+	}
+	for i < lineEnd && (line[i] == ' ' || line[i] == '\t') {
+		i++
+	}
+	textStart := i
+	textEnd := trimRightSpaceBytes(line, textStart, lineEnd)
+	if textStart >= textEnd {
+		return 0, 0, false
+	}
+
+	j := textEnd - 1
+	for j >= textStart && line[j] == '#' {
+		j--
+	}
+	if j >= textStart && j < textEnd-1 && (line[j] == ' ' || line[j] == '\t') {
+		textEnd = trimRightSpaceBytes(line, textStart, j+1)
+	}
+	if textStart >= textEnd {
+		return 0, 0, false
+	}
+	return textStart, textEnd, true
+}
+
+func trimRightSpaceBytes(line []byte, start int, end int) int {
+	for end > start && (line[end-1] == ' ' || line[end-1] == '\t') {
+		end--
+	}
+	return end
+}
+
+func isSetextUnderlineLine(line []byte) bool {
+	lineEnd := len(line)
+	if lineEnd > 0 && line[lineEnd-1] == '\r' {
+		lineEnd--
+	}
+	i := 0
+	for i < lineEnd && line[i] == ' ' {
+		i++
+	}
+	if i > 3 {
+		return false
+	}
+	if i >= lineEnd || (line[i] != '=' && line[i] != '-') {
+		return false
+	}
+	marker := line[i]
+	for i < lineEnd && line[i] == marker {
+		i++
+	}
+	for i < lineEnd && (line[i] == ' ' || line[i] == '\t') {
+		i++
+	}
+	return i == lineEnd
+}
+
+func repairProtectedHeadings(root *Node, repairs []headingTextRepair) {
+	if root == nil || len(repairs) == 0 {
+		return
+	}
+	headingOrdinal := 0
+	repairIndex := 0
+	walkNodes(root, func(n *Node, parent *Node, index int) bool {
+		if n.Type != NodeHeading {
+			return true
+		}
+		if repairIndex < len(repairs) && repairs[repairIndex].ordinal == headingOrdinal {
+			n.Children = parseInline(repairs[repairIndex].text, nil)
+			repairIndex++
+		}
+		headingOrdinal++
+		return true
+	})
 }
 
 // convertBlock recursively converts a block-level tree-sitter node into an AST Node.

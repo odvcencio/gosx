@@ -75,6 +75,28 @@ func TestParseHeadingWithExclamation(t *testing.T) {
 	}
 }
 
+func TestParseHeadingWithTerminalPunctuationInLongDocument(t *testing.T) {
+	src := []byte(`# Hello World!
+
+A matter of origin, this didn't really exist before February 19th, 2026. That was the evening I would conceive of gotreesitter[^1]. Less than a week or so later, I would foolishly declare it ported and solved to HackerNews[^2] to mixed-ish reviews. I think the general sentiment was that maybe this could be useful to *someone*, *somewhere*, *eventually*-- but that this was simply too immature, too vibe-coded, and too much maintenance burden for a single person.
+
+[^1]: [gotreesitter](https://github.com/odvcencio/gotreesitter)
+[^2]: [Disaster, but lucky still](https://link-to-article)
+`)
+
+	doc := Parse(src)
+	if len(doc.Root.Children) == 0 {
+		t.Fatal("expected at least one child")
+	}
+	h := doc.Root.Children[0]
+	if h.Type != NodeHeading {
+		t.Fatalf("expected NodeHeading, got %d", h.Type)
+	}
+	if text := collectText(h); text != "Hello World!" {
+		t.Fatalf("expected heading text %q, got %q", "Hello World!", text)
+	}
+}
+
 func TestParseParagraph(t *testing.T) {
 	doc := Parse([]byte("Just some plain text."))
 	if len(doc.Root.Children) == 0 {
