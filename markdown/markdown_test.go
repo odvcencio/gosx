@@ -36,3 +36,25 @@ func TestCompatibilityParseAliasesTypes(t *testing.T) {
 		t.Fatalf("first child type = %v, want %v", doc.Root.Children[0].Type, NodeHeading)
 	}
 }
+
+func TestCompatibilityOrderedListAndAdmonitionTitle(t *testing.T) {
+	html := RenderString(`1) first
+2) second
+
+> [!WARNING] Deployment caveat
+> Be careful.
+`)
+	for _, want := range []string{
+		"<ol>",
+		"<li><p>first</p></li>",
+		`class="admonition admonition-warning"`,
+		`<p class="admonition-title">Deployment caveat</p>`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Fatalf("RenderString() missing %q in:\n%s", want, html)
+		}
+	}
+	if strings.Contains(html, "<ul>") {
+		t.Fatalf("RenderString() rendered ordered list as unordered:\n%s", html)
+	}
+}
