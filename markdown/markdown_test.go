@@ -58,3 +58,17 @@ func TestCompatibilityOrderedListAndAdmonitionTitle(t *testing.T) {
 		t.Fatalf("RenderString() rendered ordered list as unordered:\n%s", html)
 	}
 }
+
+func TestCompatibilityAdmonitionTitleEmoji(t *testing.T) {
+	html := NewRenderer(WithWrapEmoji(true)).RenderString(`> [!NOTE] Being Defensive on HN... :sweat_smile:
+> Let's just say it was a wake-up call
+`)
+	for _, want := range []string{
+		`<p class="admonition-title">Being Defensive on HN... <span class="emoji" role="img" aria-label="sweat_smile">😅</span></p>`,
+		"wake-up call",
+	} {
+		if !strings.Contains(html, want) {
+			t.Fatalf("RenderString() missing %q in:\n%s", want, html)
+		}
+	}
+}
