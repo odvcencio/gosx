@@ -35,6 +35,13 @@ func TestAdmonitionWarning(t *testing.T) {
 	assertContains(t, html, "Be careful")
 }
 
+func TestAdmonitionAllowsUnquotedBody(t *testing.T) {
+	html := NewRenderer().RenderString("> [!NOTE]\nThis belongs to the note.\n\nOutside.")
+	assertContains(t, html, `class="admonition admonition-note"`)
+	assertContains(t, html, "This belongs to the note.")
+	assertContains(t, html, "<p>Outside.</p>")
+}
+
 func TestAdmonitionTip(t *testing.T) {
 	html := NewRenderer().RenderString("> [!TIP]\n> A helpful tip")
 	assertContains(t, html, `admonition-tip`)
@@ -98,6 +105,33 @@ func TestFootnoteMultiple(t *testing.T) {
 	assertContains(t, html, `href="#fn-b"`)
 	assertContains(t, html, "First")
 	assertContains(t, html, "Second")
+}
+
+func TestFootnoteDefinitionMarkdownLink(t *testing.T) {
+	html := NewRenderer().RenderString("Text[^repo]\n\n[^repo]: [gotreesitter](https://github.com/odvcencio/gotreesitter)")
+	assertContains(t, html, `<a href="https://github.com/odvcencio/gotreesitter">gotreesitter</a>`)
+	assertNotContains(t, html, `[gotreesitter](https://github.com/odvcencio/gotreesitter)`)
+}
+
+func TestFootnoteAdjacentDefinitionsAndEmptyUnused(t *testing.T) {
+	html := NewRenderer().RenderString(strings.Join([]string{
+		"One[^one]. Two[^two].",
+		"",
+		"[^one]: [One](https://example.com/one)",
+		"[^two]: [Disaster, but lucky still](https://link-to-article)",
+		"[^unused]:",
+	}, "\n"))
+	assertContains(t, html, `<a href="https://example.com/one">One</a>`)
+	assertContains(t, html, `<a href="https://link-to-article">Disaster, but lucky still</a>`)
+	assertNotContains(t, html, `id="fn-unused"`)
+	assertNotContains(t, html, `3:`)
+}
+
+func TestFootnoteHyphenatedID(t *testing.T) {
+	html := NewRenderer().RenderString("Text[^note-one]\n\n[^note-one]: Hyphenated")
+	assertContains(t, html, `href="#fn-note-one"`)
+	assertContains(t, html, `id="fnref-note-one"`)
+	assertContains(t, html, "Hyphenated")
 }
 
 // --- Math ---

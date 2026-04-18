@@ -1,11 +1,19 @@
 package markdown
 
 import (
+	"regexp"
 	"strings"
 	"sync"
 
 	gotreesitter "github.com/odvcencio/gotreesitter"
 	"github.com/odvcencio/gotreesitter/grammars"
+)
+
+var (
+	admonitionMarkerLineRe    = regexp.MustCompile(`^(\s*>\s*)\[!(NOTE|WARNING|TIP|IMPORTANT|CAUTION)\]\s*$`)
+	footnoteDefinitionRawRe   = regexp.MustCompile(`^ {0,3}\[\^([A-Za-z0-9_-]+)\]:[ \t]*(.*)$`)
+	footnoteDefinitionLabelRe = regexp.MustCompile(`^\[\^([A-Za-z0-9_-]+)\]$`)
+	inlineMarkdownLinkRe      = regexp.MustCompile(`\[([^\]\n]+)\]\(([^)\s][^)]*)\)`)
 )
 
 // Cached languages, initialised once.
@@ -37,6 +45,7 @@ func inlineLang() *gotreesitter.Language {
 
 // Parse parses Markdown source into a Document AST.
 func Parse(source []byte) *Document {
+	source = lowerMarkdownPlusSource(source)
 	// tree-sitter markdown requires a trailing newline for correct parsing.
 	if len(source) > 0 && source[len(source)-1] != '\n' {
 		source = append(source, '\n')
@@ -70,6 +79,46 @@ func Parse(source []byte) *Document {
 	doc.extractFrontmatter()
 	postProcess(doc)
 	return doc
+}
+
+func lowerMarkdownPlusSource(source []byte) []byte {
+	if !strings.Contains(string(source), "[!") {
+		return source
+	}
+	lines := strings.Split(string(source), "\n")
+	out := make([]string, 0, len(lines))
+	inFence := false
+	inAdmonition := false
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "~~~") {
+			inFence = !inFence
+		}
+		if inFence {
+			out = append(out, line)
+			continue
+		}
+		if admonitionMarkerLineRe.MatchString(line) {
+			out = append(out, line)
+			inAdmonition = true
+			continue
+		}
+		if inAdmonition {
+			if trimmed == "" {
+				inAdmonition = false
+				out = append(out, line)
+				continue
+			}
+			if strings.HasPrefix(strings.TrimLeft(line, " \t"), ">") {
+				out = append(out, line)
+				continue
+			}
+			out = append(out, "> "+line)
+			continue
+		}
+		out = append(out, line)
+	}
+	return []byte(strings.Join(out, "\n"))
 }
 
 // convertBlock recursively converts a block-level tree-sitter node into an AST Node.
@@ -132,11 +181,13 @@ func convertBlock(bt *gotreesitter.BoundTree, n *gotreesitter.Node, source []byt
 		return heading
 
 	case "paragraph":
+		nodeText := strings.TrimRight(bt.NodeText(n), "\n")
+		if footnoteDefs := convertFootnoteDefinitionParagraph(nodeText, source); footnoteDefs != nil {
+			return footnoteDefs
+		}
+
 		para := newNode(NodeParagraph)
 		nodeStart := n.StartByte()
-		nodeText := bt.NodeText(n)
-		// Trim trailing newline from paragraph text
-		nodeText = strings.TrimRight(nodeText, "\n")
 
 		cursor := uint32(0) // relative to nodeStart
 		textLen := uint32(len(nodeText))
@@ -251,6 +302,16 @@ func convertBlock(bt *gotreesitter.BoundTree, n *gotreesitter.Node, source []byt
 		return block
 
 	case "link_reference_definition":
+		raw := strings.TrimRight(bt.NodeText(n), "\n")
+		if match := footnoteDefinitionRawRe.FindStringSubmatch(raw); match != nil {
+			fn := newNode(NodeFootnoteDef)
+			fn.Attrs = map[string]string{"id": match[1]}
+			if strings.TrimSpace(match[2]) != "" {
+				fn.Children = append(fn.Children, parseFootnoteDefinitionInline(match[2], source)...)
+			}
+			return fn
+		}
+
 		// Detect footnote definitions: [^id]: content
 		var label, dest string
 		for i := 0; i < n.ChildCount(); i++ {
@@ -264,11 +325,12 @@ func convertBlock(bt *gotreesitter.BoundTree, n *gotreesitter.Node, source []byt
 			}
 		}
 		// Footnote defs have labels like [^id]
-		if strings.HasPrefix(label, "[^") && strings.HasSuffix(label, "]") {
-			id := label[2 : len(label)-1]
+		if match := footnoteDefinitionLabelRe.FindStringSubmatch(label); match != nil {
 			fn := newNode(NodeFootnoteDef)
-			fn.Attrs = map[string]string{"id": id}
-			fn.Children = []*Node{textNode(dest)}
+			fn.Attrs = map[string]string{"id": match[1]}
+			if strings.TrimSpace(dest) != "" {
+				fn.Children = append(fn.Children, parseFootnoteDefinitionInline(dest, source)...)
+			}
 			return fn
 		}
 		// Regular link reference definitions — skip (handled by tree-sitter linking)
@@ -278,6 +340,62 @@ func convertBlock(bt *gotreesitter.BoundTree, n *gotreesitter.Node, source []byt
 		// Skip node types we don't map (block_continuation, markers, etc.)
 		return nil
 	}
+}
+
+func parseFootnoteDefinitionInline(text string, source []byte) []*Node {
+	matches := inlineMarkdownLinkRe.FindAllStringSubmatchIndex(text, -1)
+	if len(matches) == 0 {
+		return parseInline(text, source)
+	}
+
+	nodes := make([]*Node, 0, len(matches)*2+1)
+	cursor := 0
+	for _, match := range matches {
+		if match[0] > cursor {
+			nodes = append(nodes, parseInline(text[cursor:match[0]], source)...)
+		}
+		link := newNode(NodeLink)
+		link.Attrs = map[string]string{"href": text[match[4]:match[5]]}
+		link.Children = append(link.Children, textNode(text[match[2]:match[3]]))
+		nodes = append(nodes, link)
+		cursor = match[1]
+	}
+	if cursor < len(text) {
+		nodes = append(nodes, parseInline(text[cursor:], source)...)
+	}
+	return nodes
+}
+
+func convertFootnoteDefinitionParagraph(text string, source []byte) *Node {
+	if !strings.Contains(text, "[^") {
+		return nil
+	}
+	lines := strings.Split(text, "\n")
+	defs := make([]*Node, 0, len(lines))
+	for _, line := range lines {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		match := footnoteDefinitionRawRe.FindStringSubmatch(line)
+		if match == nil {
+			return nil
+		}
+		def := newNode(NodeFootnoteDef)
+		def.Attrs = map[string]string{"id": match[1]}
+		if strings.TrimSpace(match[2]) != "" {
+			def.Children = append(def.Children, parseFootnoteDefinitionInline(match[2], source)...)
+		}
+		defs = append(defs, def)
+	}
+	if len(defs) == 0 {
+		return nil
+	}
+	if len(defs) == 1 {
+		return defs[0]
+	}
+	doc := newNode(NodeDocument)
+	doc.Children = defs
+	return doc
 }
 
 // convertListItem converts a list_item node into a NodeListItem.

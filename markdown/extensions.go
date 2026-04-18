@@ -12,15 +12,37 @@ func postProcess(doc *Document) {
 	if doc == nil || doc.Root == nil {
 		return
 	}
+	flattenDocumentNodes(doc.Root)
 	processAdmonitions(doc.Root)
 	footnoteDefs := processFootnotes(doc.Root)
 	processInlineMath(doc.Root)
 	processSuperscripts(doc.Root)
 	processEmojiShortcodes(doc.Root)
 
-	// Append collected footnote definitions at the end of the document.
-	if len(footnoteDefs) > 0 {
-		doc.Root.Children = append(doc.Root.Children, footnoteDefs...)
+	// Append referenced footnote definitions at the end of the document.
+	for _, def := range footnoteDefs {
+		if def != nil {
+			doc.Root.Children = append(doc.Root.Children, def)
+		}
+	}
+}
+
+func flattenDocumentNodes(root *Node) {
+	if root == nil {
+		return
+	}
+	for i := 0; i < len(root.Children); i++ {
+		child := root.Children[i]
+		if child == nil {
+			continue
+		}
+		if child.Type == NodeDocument {
+			replacement := append([]*Node{}, child.Children...)
+			root.Children = append(root.Children[:i], append(replacement, root.Children[i+1:]...)...)
+			i--
+			continue
+		}
+		flattenDocumentNodes(child)
 	}
 }
 
@@ -106,7 +128,7 @@ func processAdmonitions(root *Node) {
 
 // --- Footnotes ---
 
-var footnoteRefRawRe = regexp.MustCompile(`^\[\^(\w+)\]$`)
+var footnoteRefRawRe = regexp.MustCompile(`^\[\^([A-Za-z0-9_-]+)\]$`)
 
 // processFootnotes scans for footnote references and definitions.
 // Definitions may be:
@@ -115,20 +137,27 @@ var footnoteRefRawRe = regexp.MustCompile(`^\[\^(\w+)\]$`)
 //
 // References are Link nodes with raw="[^id]".
 func processFootnotes(root *Node) []*Node {
-	var defs []*Node
+	defs := make(map[string]*Node)
+	var defOrder []string
 	var defIndices []int
 
 	// First pass: collect footnote definitions from document children.
 	for i, child := range root.Children {
 		// Case 1: already a NodeFootnoteDef from parser
 		if child.Type == NodeFootnoteDef {
-			defs = append(defs, child)
+			id := child.Attrs["id"]
+			if id != "" {
+				if _, exists := defs[id]; !exists {
+					defOrder = append(defOrder, id)
+				}
+				defs[id] = child
+			}
 			defIndices = append(defIndices, i)
 			continue
 		}
 
 		// Case 2: paragraph containing Link(raw="[^id]") + Text(": content")
-		if child.Type != NodeParagraph || len(child.Children) < 2 {
+		if child.Type != NodeParagraph || len(child.Children) == 0 {
 			continue
 		}
 		firstNode := child.Children[0]
@@ -143,17 +172,19 @@ func processFootnotes(root *Node) []*Node {
 		if match == nil {
 			continue
 		}
-		secondNode := child.Children[1]
-		if secondNode.Type != NodeText || !strings.HasPrefix(secondNode.Literal, ": ") {
+		defChildren, ok := footnoteDefinitionChildren(child.Children[1:])
+		if !ok {
 			continue
 		}
-		content := strings.TrimPrefix(secondNode.Literal, ": ")
 		defNode := &Node{
 			Type:     NodeFootnoteDef,
 			Attrs:    map[string]string{"id": match[1]},
-			Children: []*Node{textNode(content)},
+			Children: defChildren,
 		}
-		defs = append(defs, defNode)
+		if _, exists := defs[match[1]]; !exists {
+			defOrder = append(defOrder, match[1])
+		}
+		defs[match[1]] = defNode
 		defIndices = append(defIndices, i)
 	}
 
@@ -165,6 +196,8 @@ func processFootnotes(root *Node) []*Node {
 
 	// Second pass: convert footnote references in all nodes.
 	// Replace Link nodes with raw="[^id]" with FootnoteRef nodes.
+	var refOrder []string
+	seenRefs := make(map[string]struct{})
 	walkNodes(root, func(n *Node, parent *Node, index int) bool {
 		if len(n.Children) == 0 {
 			return true
@@ -181,15 +214,56 @@ func processFootnotes(root *Node) []*Node {
 			if match == nil {
 				continue
 			}
+			id := match[1]
+			if _, seen := seenRefs[id]; !seen {
+				refOrder = append(refOrder, id)
+				seenRefs[id] = struct{}{}
+			}
 			n.Children[i] = &Node{
 				Type:  NodeFootnoteRef,
-				Attrs: map[string]string{"id": match[1]},
+				Attrs: map[string]string{"id": id},
 			}
 		}
 		return true
 	})
 
-	return defs
+	ordered := make([]*Node, 0, len(refOrder))
+	for _, id := range refOrder {
+		if def := defs[id]; def != nil {
+			ordered = append(ordered, def)
+		}
+	}
+	if len(ordered) > 0 {
+		return ordered
+	}
+	for _, id := range defOrder {
+		if def := defs[id]; def != nil && len(def.Children) > 0 {
+			ordered = append(ordered, def)
+		}
+	}
+	return ordered
+}
+
+func footnoteDefinitionChildren(children []*Node) ([]*Node, bool) {
+	if len(children) == 0 {
+		return nil, false
+	}
+	first := children[0]
+	if first.Type != NodeText || !strings.HasPrefix(first.Literal, ":") {
+		return nil, false
+	}
+
+	out := make([]*Node, 0, len(children))
+	firstText := strings.TrimPrefix(first.Literal, ":")
+	firstText = strings.TrimPrefix(firstText, " ")
+	firstText = strings.TrimPrefix(firstText, "\t")
+	if firstText != "" {
+		clone := *first
+		clone.Literal = firstText
+		out = append(out, &clone)
+	}
+	out = append(out, children[1:]...)
+	return out, true
 }
 
 // --- Math ---
