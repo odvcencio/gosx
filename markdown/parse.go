@@ -199,6 +199,29 @@ func isMarkdownFenceLine(line string) bool {
 	return strings.HasPrefix(line, "```") || strings.HasPrefix(line, "~~~")
 }
 
+func convertCodeBlock(bt *gotreesitter.BoundTree, n *gotreesitter.Node, typ string) *Node {
+	cb := newNode(NodeCodeBlock)
+	cb.Attrs = make(map[string]string)
+	for i := 0; i < n.ChildCount(); i++ {
+		child := n.Child(i)
+		switch bt.NodeType(child) {
+		case "info_string":
+			langNode := findChild(bt, child, "language")
+			if langNode != nil {
+				cb.Attrs["language"] = strings.TrimSpace(bt.NodeText(langNode))
+			} else {
+				cb.Attrs["language"] = strings.TrimSpace(bt.NodeText(child))
+			}
+		case "code_fence_content":
+			cb.Literal = bt.NodeText(child)
+		}
+	}
+	if typ == "indented_code_block" {
+		cb.Literal = bt.NodeText(n)
+	}
+	return codeBlockToDiagram(cb)
+}
+
 func isATXHeadingLine(line []byte) bool {
 	_, _, ok := atxHeadingTextRange(line)
 	return ok
@@ -417,30 +440,7 @@ func convertBlock(bt *gotreesitter.BoundTree, n *gotreesitter.Node, source []byt
 		return para
 
 	case "fenced_code_block", "indented_code_block":
-		cb := newNode(NodeCodeBlock)
-		if cb.Attrs == nil {
-			cb.Attrs = make(map[string]string)
-		}
-		for i := 0; i < n.ChildCount(); i++ {
-			child := n.Child(i)
-			childType := bt.NodeType(child)
-			switch childType {
-			case "info_string":
-				// info_string may contain a language child
-				langNode := findChild(bt, child, "language")
-				if langNode != nil {
-					cb.Attrs["language"] = strings.TrimSpace(bt.NodeText(langNode))
-				} else {
-					cb.Attrs["language"] = strings.TrimSpace(bt.NodeText(child))
-				}
-			case "code_fence_content":
-				cb.Literal = bt.NodeText(child)
-			}
-		}
-		if typ == "indented_code_block" {
-			cb.Literal = bt.NodeText(n)
-		}
-		return cb
+		return convertCodeBlock(bt, n, typ)
 
 	case "block_quote":
 		bq := newNode(NodeBlockquote)
@@ -994,24 +994,7 @@ func synthesiseSectionContent(bt *gotreesitter.BoundTree, n *gotreesitter.Node, 
 		}
 	}
 	if hasFenceDelim {
-		cb := newNode(NodeCodeBlock)
-		cb.Attrs = make(map[string]string)
-		for i := 0; i < n.ChildCount(); i++ {
-			child := n.Child(i)
-			ct := childTypes[i]
-			switch ct {
-			case "info_string":
-				langNode := findChild(bt, child, "language")
-				if langNode != nil {
-					cb.Attrs["language"] = strings.TrimSpace(bt.NodeText(langNode))
-				} else {
-					cb.Attrs["language"] = strings.TrimSpace(bt.NodeText(child))
-				}
-			case "code_fence_content":
-				cb.Literal = bt.NodeText(child)
-			}
-		}
-		return cb
+		return convertCodeBlock(bt, n, "fenced_code_block")
 	}
 
 	// Pattern: pipe_table_header + pipe_table_delimiter_row + pipe_table_row = table

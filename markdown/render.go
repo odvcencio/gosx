@@ -81,6 +81,9 @@ func renderNodeInto(r *Renderer, b *strings.Builder, n *Node) {
 		b.WriteString(code)
 		b.WriteString("</code></pre>\n")
 
+	case NodeDiagram:
+		renderDiagramInto(b, n)
+
 	case NodeBlockquote:
 		b.WriteString("<blockquote>\n")
 		renderChildrenInto(r, b, n)
@@ -322,6 +325,57 @@ func renderTableInto(r *Renderer, b *strings.Builder, n *Node) {
 		}
 	}
 	b.WriteString("</tbody>\n</table>\n")
+}
+
+func renderDiagramInto(b *strings.Builder, n *Node) {
+	syntax := n.Attrs["syntax"]
+	if syntax == "" {
+		syntax = "diagram"
+	}
+	kind := n.Attrs["kind"]
+	if kind == "" {
+		kind = syntax
+	}
+	language := n.Attrs["language"]
+	if language == "" {
+		language = syntax
+	}
+	codeLanguage := normalizedFenceLanguage(language)
+	if codeLanguage == "" {
+		codeLanguage = syntax
+	}
+
+	b.WriteString(`<figure class="mdpp-diagram mdpp-diagram-`)
+	b.WriteString(classToken(syntax))
+	b.WriteString(` mdpp-diagram-`)
+	b.WriteString(classToken(kind))
+	b.WriteString(`" data-diagram-syntax="`)
+	b.WriteString(html.EscapeString(syntax))
+	b.WriteString(`" data-diagram-kind="`)
+	b.WriteString(html.EscapeString(kind))
+	b.WriteString(`">`)
+	b.WriteString(`<pre><code class="language-`)
+	b.WriteString(html.EscapeString(codeLanguage))
+	b.WriteString(`">`)
+	b.WriteString(html.EscapeString(n.Literal))
+	b.WriteString("</code></pre></figure>\n")
+}
+
+func classToken(value string) string {
+	var b strings.Builder
+	prevDash := false
+	for _, r := range strings.ToLower(value) {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			b.WriteRune(r)
+			prevDash = false
+			continue
+		}
+		if !prevDash && b.Len() > 0 {
+			b.WriteByte('-')
+			prevDash = true
+		}
+	}
+	return strings.TrimRight(b.String(), "-")
 }
 
 // collectNodeText recursively extracts plain text from a node tree.

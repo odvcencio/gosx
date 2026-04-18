@@ -62,6 +62,23 @@ func TestRenderCodeBlockNoLang(t *testing.T) {
 	}
 }
 
+func TestRenderMermaidDiagramFence(t *testing.T) {
+	src := "```mermaid\nflowchart TD\n  A[Start] --> B{Ship?}\n```"
+	out := NewRenderer().RenderString(src)
+	assertContains(t, out, `class="mdpp-diagram mdpp-diagram-mermaid mdpp-diagram-flowchart"`)
+	assertContains(t, out, `data-diagram-syntax="mermaid"`)
+	assertContains(t, out, `data-diagram-kind="flowchart"`)
+	assertContains(t, out, `<code class="language-mermaid">`)
+	assertContains(t, out, `A[Start] --&gt; B{Ship?}`)
+}
+
+func TestRenderDiagramAliasFence(t *testing.T) {
+	out := NewRenderer().RenderString("```erd\nUser ||--o{ Post : writes\n```")
+	assertContains(t, out, `mdpp-diagram-erd`)
+	assertContains(t, out, `data-diagram-kind="erd"`)
+	assertContains(t, out, `<code class="language-erd">`)
+}
+
 func TestRenderBlockquote(t *testing.T) {
 	out := NewRenderer().RenderString("> quoted text")
 	if !strings.Contains(out, "<blockquote>") {

@@ -25,6 +25,15 @@ func TestWordCountIgnoresCode(t *testing.T) {
 	}
 }
 
+func TestWordCountIgnoresDiagrams(t *testing.T) {
+	src := "Hello world\n\n```mermaid\nflowchart TD\n  Several Words --> More Words\n```\n\nGoodbye friend\n"
+	doc := Parse([]byte(src))
+	got := doc.WordCount()
+	if got != 4 {
+		t.Errorf("WordCount() = %d, want 4 (should ignore diagram block)", got)
+	}
+}
+
 func TestReadingTime(t *testing.T) {
 	// Build a document with ~200 words across multiple paragraphs.
 	var paragraphs []string

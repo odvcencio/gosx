@@ -17,7 +17,7 @@ type Heading struct {
 }
 
 // WordCount returns the number of words in the document's prose content,
-// excluding code blocks.
+// excluding code and diagram blocks.
 func (d *Document) WordCount() int {
 	if d.Root == nil {
 		return 0
@@ -25,13 +25,13 @@ func (d *Document) WordCount() int {
 	return countWords(d.Root)
 }
 
-// countWords recursively counts words in text nodes, skipping code blocks.
+// countWords recursively counts words in text nodes, skipping code and diagram blocks.
 func countWords(n *Node) int {
 	if n == nil {
 		return 0
 	}
-	// Skip code blocks entirely.
-	if n.Type == NodeCodeBlock {
+	// Skip code and diagram blocks entirely.
+	if n.Type == NodeCodeBlock || n.Type == NodeDiagram {
 		return 0
 	}
 	// Count words in text node literals.

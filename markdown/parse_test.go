@@ -1,6 +1,7 @@
 package markdown
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -127,6 +128,41 @@ func TestParseCodeBlock(t *testing.T) {
 	}
 	if cb.Literal == "" {
 		t.Fatal("expected non-empty code literal")
+	}
+}
+
+func TestParseDiagramFence(t *testing.T) {
+	src := "```mermaid\nflowchart TD\n  A --> B\n```"
+	doc := Parse([]byte(src))
+	if len(doc.Root.Children) == 0 {
+		t.Fatal("expected at least one child")
+	}
+	diagram := doc.Root.Children[0]
+	if diagram.Type != NodeDiagram {
+		t.Fatalf("expected NodeDiagram, got %d", diagram.Type)
+	}
+	if diagram.Attrs["syntax"] != "mermaid" {
+		t.Fatalf("expected syntax %q, got %q", "mermaid", diagram.Attrs["syntax"])
+	}
+	if diagram.Attrs["kind"] != "flowchart" {
+		t.Fatalf("expected kind %q, got %q", "flowchart", diagram.Attrs["kind"])
+	}
+	if !strings.Contains(diagram.Literal, "A --> B") {
+		t.Fatalf("expected diagram literal to contain edge, got %q", diagram.Literal)
+	}
+}
+
+func TestParseDiagramAliasFence(t *testing.T) {
+	doc := Parse([]byte("```erd\nUser ||--o{ Post : writes\n```"))
+	if len(doc.Root.Children) == 0 {
+		t.Fatal("expected at least one child")
+	}
+	diagram := doc.Root.Children[0]
+	if diagram.Type != NodeDiagram {
+		t.Fatalf("expected NodeDiagram, got %d", diagram.Type)
+	}
+	if diagram.Attrs["kind"] != "erd" {
+		t.Fatalf("expected kind %q, got %q", "erd", diagram.Attrs["kind"])
 	}
 }
 
