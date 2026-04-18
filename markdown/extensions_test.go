@@ -65,6 +65,15 @@ func TestBlockquoteNotAdmonition(t *testing.T) {
 	assertNotContains(t, html, "admonition")
 }
 
+func TestBlockquoteBracketHeadingIsNotLink(t *testing.T) {
+	html := NewRenderer().RenderString("> [Being Defensive on HN... :sweat_smile:]\nLet's just say it was a wake-up call")
+	assertContains(t, html, "<blockquote>")
+	assertContains(t, html, "<strong>Being Defensive on HN... 😅</strong>")
+	assertContains(t, html, "Let&#39;s just say it was a wake-up call")
+	assertNotContains(t, html, `<a href="">`)
+	assertNotContains(t, html, "[Being Defensive")
+}
+
 // --- Task Lists ---
 
 func TestTaskListChecked(t *testing.T) {

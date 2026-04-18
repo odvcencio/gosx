@@ -117,6 +117,14 @@ func renderNodeInto(r *Renderer, b *strings.Builder, n *Node) {
 
 	case NodeLink:
 		href := html.EscapeString(n.Attrs["href"])
+		if href == "" {
+			if raw := n.Attrs["raw"]; raw != "" {
+				b.WriteString(html.EscapeString(raw))
+			} else {
+				renderChildrenInto(r, b, n)
+			}
+			return
+		}
 		title := n.Attrs["title"]
 		b.WriteString(`<a href="`)
 		b.WriteString(href)

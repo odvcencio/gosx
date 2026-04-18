@@ -95,6 +95,16 @@ func TestRenderLink(t *testing.T) {
 	}
 }
 
+func TestRenderUnresolvedShortcutLinkAsText(t *testing.T) {
+	out := NewRenderer().RenderString("Keep [literal brackets] in prose")
+	if strings.Contains(out, `<a href="">`) {
+		t.Errorf("did not expect unresolved shortcut link anchor, got %q", out)
+	}
+	if !strings.Contains(out, "Keep [literal brackets] in prose") {
+		t.Errorf("expected bracketed text, got %q", out)
+	}
+}
+
 func TestRenderImageWithTitle(t *testing.T) {
 	out := NewRenderer().RenderString(`![alt text](image.png "My Title")`)
 	if !strings.Contains(out, "<figure>") {

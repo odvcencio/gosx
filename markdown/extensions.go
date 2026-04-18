@@ -14,6 +14,7 @@ func postProcess(doc *Document) {
 	}
 	flattenDocumentNodes(doc.Root)
 	processAdmonitions(doc.Root)
+	processBlockquoteHeadings(doc.Root)
 	footnoteDefs := processFootnotes(doc.Root)
 	processInlineMath(doc.Root)
 	processSuperscripts(doc.Root)
@@ -143,6 +144,32 @@ func cleanAdmonitionText(text string) string {
 		lines[i] = strings.TrimPrefix(lines[i], ">")
 	}
 	return strings.TrimSpace(strings.Join(lines, "\n"))
+}
+
+// --- Quote headings ---
+
+var bracketedQuoteHeadingRe = regexp.MustCompile(`^\[[^\^!][\s\S]*\]$`)
+
+func processBlockquoteHeadings(root *Node) {
+	walkNodes(root, func(n *Node, parent *Node, index int) bool {
+		if n.Type != NodeBlockquote || len(n.Children) == 0 {
+			return true
+		}
+		firstChild := n.Children[0]
+		if firstChild.Type != NodeParagraph || len(firstChild.Children) == 0 {
+			return true
+		}
+		firstNode := firstChild.Children[0]
+		if firstNode.Type != NodeLink || firstNode.Attrs["href"] != "" {
+			return true
+		}
+		raw := firstNode.Attrs["raw"]
+		if !bracketedQuoteHeadingRe.MatchString(raw) {
+			return true
+		}
+		firstChild.Children[0] = newNode(NodeStrong, firstNode.Children...)
+		return true
+	})
 }
 
 // --- Footnotes ---
