@@ -39,6 +39,7 @@ func TestAdmonitionAllowsUnquotedBody(t *testing.T) {
 	html := NewRenderer().RenderString("> [!NOTE]\nThis belongs to the note.\n\nOutside.")
 	assertContains(t, html, `class="admonition admonition-note"`)
 	assertContains(t, html, "This belongs to the note.")
+	assertNotContains(t, html, "&gt; This belongs")
 	assertContains(t, html, "<p>Outside.</p>")
 }
 

@@ -89,24 +89,7 @@ func processAdmonitions(root *Node) {
 		// Remove the Link node from the first paragraph's children
 		firstChild.Children = firstChild.Children[1:]
 
-		// The remaining text in the first paragraph may start with "\n> content".
-		// Clean up the leading newline and "> " prefix from text nodes.
-		if len(firstChild.Children) > 0 && firstChild.Children[0].Type == NodeText {
-			text := firstChild.Children[0].Literal
-			text = strings.TrimLeft(text, "\n")
-			lines := strings.Split(text, "\n")
-			for i, line := range lines {
-				lines[i] = strings.TrimPrefix(line, "> ")
-				lines[i] = strings.TrimPrefix(lines[i], ">")
-			}
-			text = strings.Join(lines, "\n")
-			text = strings.TrimSpace(text)
-			if text == "" {
-				firstChild.Children = firstChild.Children[1:]
-			} else {
-				firstChild.Children[0].Literal = text
-			}
-		}
+		firstChild.Children = cleanAdmonitionLeadingChildren(firstChild.Children)
 
 		// If first paragraph still has content, include it
 		startIdx := 0
@@ -124,6 +107,42 @@ func processAdmonitions(root *Node) {
 
 		return true
 	})
+}
+
+func cleanAdmonitionLeadingChildren(children []*Node) []*Node {
+	cleaned := make([]*Node, 0, len(children))
+	leading := true
+	for _, child := range children {
+		if child == nil {
+			continue
+		}
+		if leading && (child.Type == NodeSoftBreak || child.Type == NodeHardBreak) {
+			continue
+		}
+		if leading && child.Type == NodeText {
+			clone := *child
+			clone.Literal = cleanAdmonitionText(clone.Literal)
+			if clone.Literal == "" {
+				continue
+			}
+			cleaned = append(cleaned, &clone)
+			leading = false
+			continue
+		}
+		cleaned = append(cleaned, child)
+		leading = false
+	}
+	return cleaned
+}
+
+func cleanAdmonitionText(text string) string {
+	text = strings.TrimLeft(text, "\n")
+	lines := strings.Split(text, "\n")
+	for i, line := range lines {
+		lines[i] = strings.TrimPrefix(line, "> ")
+		lines[i] = strings.TrimPrefix(lines[i], ">")
+	}
+	return strings.TrimSpace(strings.Join(lines, "\n"))
 }
 
 // --- Footnotes ---
