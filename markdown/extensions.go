@@ -168,8 +168,38 @@ func processBlockquoteHeadings(root *Node) {
 			return true
 		}
 		firstChild.Children[0] = newNode(NodeStrong, firstNode.Children...)
+		firstChild.Children = cleanBlockquoteHeadingContinuation(firstChild.Children)
 		return true
 	})
+}
+
+func cleanBlockquoteHeadingContinuation(children []*Node) []*Node {
+	cleaned := make([]*Node, 0, len(children))
+	for i, child := range children {
+		if child == nil {
+			continue
+		}
+		if i == 0 || child.Type != NodeText {
+			cleaned = append(cleaned, child)
+			continue
+		}
+		clone := *child
+		clone.Literal = cleanBlockquoteContinuationText(clone.Literal)
+		if clone.Literal == "" {
+			continue
+		}
+		cleaned = append(cleaned, &clone)
+	}
+	return cleaned
+}
+
+func cleanBlockquoteContinuationText(text string) string {
+	lines := strings.Split(text, "\n")
+	for i, line := range lines {
+		lines[i] = strings.TrimPrefix(line, "> ")
+		lines[i] = strings.TrimPrefix(lines[i], ">")
+	}
+	return strings.Join(lines, "\n")
 }
 
 // --- Footnotes ---

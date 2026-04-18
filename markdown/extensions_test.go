@@ -74,6 +74,33 @@ func TestBlockquoteBracketHeadingIsNotLink(t *testing.T) {
 	assertNotContains(t, html, "[Being Defensive")
 }
 
+func TestBlockquoteBracketHeadingStripsQuotedContinuationMarkers(t *testing.T) {
+	html := NewRenderer().RenderString("> [Being Defensive on HN... :sweat_smile:]\n> Let's just say it was a wake-up call")
+	assertContains(t, html, "<blockquote>")
+	assertContains(t, html, "<strong>Being Defensive on HN... 😅</strong>")
+	assertContains(t, html, "Let&#39;s just say it was a wake-up call")
+	assertNotContains(t, html, "&gt; Let&#39;s")
+	assertNotContains(t, html, `<a href="">`)
+}
+
+func TestAdmonitionTypesEmitSemanticClasses(t *testing.T) {
+	for _, tc := range []struct {
+		source string
+		class  string
+		title  string
+	}{
+		{"> [!NOTE]\n> body", `class="admonition admonition-note"`, "NOTE"},
+		{"> [!TIP]\n> body", `class="admonition admonition-tip"`, "TIP"},
+		{"> [!IMPORTANT]\n> body", `class="admonition admonition-important"`, "IMPORTANT"},
+		{"> [!WARNING]\n> body", `class="admonition admonition-warning"`, "WARNING"},
+		{"> [!CAUTION]\n> body", `class="admonition admonition-caution"`, "CAUTION"},
+	} {
+		html := NewRenderer().RenderString(tc.source)
+		assertContains(t, html, tc.class)
+		assertContains(t, html, `<p class="admonition-title">`+tc.title+`</p>`)
+	}
+}
+
 // --- Task Lists ---
 
 func TestTaskListChecked(t *testing.T) {
