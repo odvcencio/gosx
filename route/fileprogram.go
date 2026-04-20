@@ -677,13 +677,71 @@ func (r *fileProgramRenderer) renderEngineFallbackChildren(node *ir.Node, env fi
 	if engineName != "GoSXScene3D" {
 		return r.renderChildren(node.Children, env)
 	}
+	return r.renderScene3DFallbackChildren(node.Children, env)
+}
+
+func (r *fileProgramRenderer) renderScene3DFallbackChildren(children []ir.NodeID, env fileRenderEnv) string {
 	var b strings.Builder
-	for _, childID := range node.Children {
+	for _, childID := range children {
 		child := r.prog.NodeAt(childID)
-		if child.Kind == ir.NodeComponent && isScene3DComposableTag(child.Tag) {
+		if child == nil {
 			continue
 		}
+		if child.Kind == ir.NodeComponent {
+			switch child.Tag {
+			case "Each", "For":
+				b.WriteString(r.renderScene3DFallbackEach(child, env))
+				continue
+			case "If", "Show", "When":
+				b.WriteString(r.renderScene3DFallbackConditional(child, env))
+				continue
+			}
+			if isScene3DComposableTag(child.Tag) {
+				continue
+			}
+		}
 		b.WriteString(r.renderNode(childID, env))
+	}
+	return b.String()
+}
+
+func (r *fileProgramRenderer) renderScene3DFallbackConditional(node *ir.Node, env fileRenderEnv) string {
+	condition := attrValue(node.Attrs, env, "when", "if", "cond", "test")
+	if truthy(condition) {
+		return r.renderScene3DFallbackChildren(node.Children, env)
+	}
+	fallback := attrValue(node.Attrs, env, "fallback", "else")
+	return renderFileEvaluatedExpr(fallback)
+}
+
+func (r *fileProgramRenderer) renderScene3DFallbackEach(node *ir.Node, env fileRenderEnv) string {
+	collection := attrValue(node.Attrs, env, "of", "each", "items")
+	if collection == nil {
+		return ""
+	}
+
+	itemName := strings.TrimSpace(stringValue(attrValue(node.Attrs, env, "as", "item")))
+	if itemName == "" {
+		itemName = "item"
+	}
+	indexName := strings.TrimSpace(stringValue(attrValue(node.Attrs, env, "index")))
+
+	items := fileEachEntries(collection)
+	if len(items) == 0 {
+		fallback := attrValue(node.Attrs, env, "fallback", "empty")
+		return renderFileEvaluatedExpr(fallback)
+	}
+
+	var b strings.Builder
+	for _, entry := range items {
+		scope := env.withValue(itemName, entry.Value)
+		if indexName != "" {
+			scope = scope.withValue(indexName, entry.Index)
+		}
+		if entry.Key != nil {
+			scope = scope.withValue(itemName+"Key", entry.Key)
+		}
+		b.WriteString(r.renderScene3DFallbackChildren(node.Children, scope))
 	}
 	return b.String()
 }

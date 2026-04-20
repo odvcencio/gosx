@@ -814,6 +814,12 @@ func Page() Node {
 		<PostFX.Tonemap mode="aces" exposure={1.0} />
 		<Mesh id="hero" kind="box" width={1.8} height={1.2} depth={0.8} color="#8de1ff" materialKind="flat" />
 		<Points id="stars" count={2} positions={data.positions} size={0.5} color="#ffffff" blendMode="additive" />
+		<Each as="mesh" of={data.meshes}>
+			<Mesh {...mesh} />
+		</Each>
+		<If when={data.showExtra}>
+			<Points id="extra-stars" count={1} positions={data.positions} size={0.4} color="#ffd48f" />
+		</If>
 		<div>Scene fallback</div>
 	</Scene3D>
 }
@@ -825,6 +831,15 @@ func Page() Node {
 	ctx := &RouteContext{
 		Data: map[string]any{
 			"positions": []float64{0, 0, 0, 1, 1, 1},
+			"showExtra": true,
+			"meshes": []map[string]any{
+				{
+					"id":    "dynamic-hero",
+					"kind":  "sphere",
+					"size":  1.4,
+					"color": "#ffd48f",
+				},
+			},
 		},
 	}
 	node, err := DefaultFileRenderer(ctx, FilePage{FilePath: path, Pattern: "/"})
@@ -839,8 +854,17 @@ func Page() Node {
 	if !strings.Contains(html, `Scene fallback`) {
 		t.Fatalf("expected non-Scene3D fallback children in %q", html)
 	}
-	if strings.Contains(html, `<Mesh`) || strings.Contains(html, `<Points`) {
-		t.Fatalf("did not expect composable Scene3D children to render as fallback HTML: %q", html)
+	for _, snippet := range []string{
+		`<Mesh`,
+		`<Points`,
+		`data-gosx-component="Mesh"`,
+		`data-gosx-component="Points"`,
+		`dynamic-hero`,
+		`extra-stars`,
+	} {
+		if strings.Contains(html, snippet) {
+			t.Fatalf("did not expect composable Scene3D fallback snippet %q in HTML: %q", snippet, html)
+		}
 	}
 
 	head := gosx.RenderHTML(ctx.Runtime().Head())
@@ -858,9 +882,11 @@ func Page() Node {
 		`"kind": "tonemap"`,
 		`"objects": [`,
 		`"id": "hero"`,
+		`"id": "dynamic-hero"`,
 		`"kind": "box"`,
 		`"points": [`,
 		`"id": "stars"`,
+		`"id": "extra-stars"`,
 		`"positions": [`,
 		`"blendMode": "additive"`,
 	} {
