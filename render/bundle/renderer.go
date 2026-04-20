@@ -72,6 +72,17 @@ type Renderer struct {
 	cullPipeline gpu.ComputePipeline
 	cullBGLayout gpu.BindGroupLayout
 
+	// Post-FX present pipeline + HDR intermediate. The main pass writes
+	// to hdrTex; the present pass tone-maps that into the swap chain.
+	presentPipeline gpu.RenderPipeline
+	presentBGLayout gpu.BindGroupLayout
+	presentBindGrp  gpu.BindGroup
+	presentSampler  gpu.Sampler
+	hdrTex          gpu.Texture
+	hdrView         gpu.TextureView
+	hdrWidth        int
+	hdrHeight       int
+
 	// Caches keyed by identity strings, reused across frames.
 	passCache      map[string]*passResources
 	primitiveCache map[string]*primitiveResources
@@ -155,6 +166,12 @@ func New(cfg Config) (*Renderer, error) {
 	if err := r.buildCullPipeline(); err != nil {
 		return nil, err
 	}
+	if err := r.buildPresentSampler(); err != nil {
+		return nil, err
+	}
+	if err := r.buildPresentPipeline(); err != nil {
+		return nil, err
+	}
 	if err := r.buildBindGroups(); err != nil {
 		return nil, err
 	}
@@ -190,6 +207,13 @@ func (r *Renderer) Destroy() {
 	r.cullCache = nil
 	if r.cullPipeline != nil {
 		r.cullPipeline.Destroy()
+	}
+	if r.hdrTex != nil {
+		r.hdrTex.Destroy()
+		r.hdrTex = nil
+	}
+	if r.presentPipeline != nil {
+		r.presentPipeline.Destroy()
 	}
 	if r.fallbackTexture != nil && r.fallbackTexture.tex != nil {
 		r.fallbackTexture.tex.Destroy()
@@ -287,14 +311,19 @@ func (r *Renderer) Frame(b engine.RenderBundle, width, height int, timeSeconds f
 		return err
 	}
 
-	// 2) Main pass — color + depth to the surface, lit + shadowed.
-	view, err := r.device.AcquireSurfaceView(r.surface)
+	// The main pass now writes into the HDR intermediate instead of the
+	// swap chain. A separate present pass tone-maps HDR → swap chain at
+	// the end of the frame.
+	hdrView, err := r.ensureHDR(width, height)
 	if err != nil {
-		return fmt.Errorf("bundle.Frame: acquire surface view: %w", err)
+		return err
 	}
+	_ = hdrView // main pass picks it up via r.hdrView below
+
+	// 3) Main pass — lit scene rendered to the HDR intermediate with depth.
 	mainPass := enc.BeginRenderPass(gpu.RenderPassDesc{
 		ColorAttachments: []gpu.RenderPassColorAttachment{{
-			View:       view,
+			View:       r.hdrView,
 			LoadOp:     gpu.LoadOpClear,
 			StoreOp:    gpu.StoreOpStore,
 			ClearValue: parseBackground(b.Background),
@@ -378,6 +407,14 @@ func (r *Renderer) Frame(b engine.RenderBundle, width, height int, timeSeconds f
 	}
 
 	mainPass.End()
+
+	// 4) Present pass — tone-map HDR to the swap chain with ACES filmic.
+	surfaceView, err := r.device.AcquireSurfaceView(r.surface)
+	if err != nil {
+		return fmt.Errorf("bundle.Frame: acquire surface view: %w", err)
+	}
+	r.recordPresentPass(enc, surfaceView)
+
 	r.device.Queue().Submit(enc.Finish())
 	return nil
 }
@@ -751,7 +788,7 @@ func (r *Renderer) buildUnlitPipeline() error {
 			Module:     shader,
 			EntryPoint: "fs_main",
 			Targets: []gpu.ColorTargetState{
-				{Format: r.surfaceFormat, WriteMask: gpu.ColorWriteAll},
+				{Format: hdrFormat, WriteMask: gpu.ColorWriteAll},
 			},
 		},
 		Primitive: gpu.PrimitiveState{
@@ -834,7 +871,7 @@ func (r *Renderer) buildLitPipeline() error {
 			Module:     shader,
 			EntryPoint: "fs_main",
 			Targets: []gpu.ColorTargetState{
-				{Format: r.surfaceFormat, WriteMask: gpu.ColorWriteAll},
+				{Format: hdrFormat, WriteMask: gpu.ColorWriteAll},
 			},
 		},
 		Primitive: gpu.PrimitiveState{
