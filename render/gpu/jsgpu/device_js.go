@@ -125,6 +125,29 @@ func (d *Device) CreateTexture(desc gpu.TextureDesc) (gpu.Texture, error) {
 	}, nil
 }
 
+// CreateSampler allocates a GPU sampler.
+func (d *Device) CreateSampler(desc gpu.SamplerDesc) (gpu.Sampler, error) {
+	dict := map[string]any{
+		"magFilter":    encodeFilterMode(desc.MagFilter),
+		"minFilter":    encodeFilterMode(desc.MinFilter),
+		"mipmapFilter": encodeFilterMode(desc.MipmapFilter),
+		"addressModeU": encodeAddressMode(desc.AddressU),
+		"addressModeV": encodeAddressMode(desc.AddressV),
+		"addressModeW": encodeAddressMode(desc.AddressW),
+	}
+	// WebGPU treats a sampler with a .compare property as a comparison
+	// sampler and expects the bind-group entry to be `comparison`. Only
+	// set the key when the caller actually wants one.
+	if desc.Compare != gpu.CompareAlways {
+		dict["compare"] = encodeCompare(desc.Compare)
+	}
+	if desc.Label != "" {
+		dict["label"] = desc.Label
+	}
+	js := d.dev.Call("createSampler", dict)
+	return &sampler{js: js}, nil
+}
+
 // CreateShaderModule compiles a WGSL source module.
 func (d *Device) CreateShaderModule(desc gpu.ShaderDesc) (gpu.ShaderModule, error) {
 	if desc.SourceWGSL == "" {
@@ -185,16 +208,27 @@ func (d *Device) CreateBindGroup(desc gpu.BindGroupDesc) (gpu.BindGroup, error) 
 	}
 	entries := make([]any, 0, len(desc.Entries))
 	for _, e := range desc.Entries {
-		if e.Buffer == nil {
-			return nil, fmt.Errorf("jsgpu: %w: bind-group entry missing buffer", gpu.ErrInvalidDesc)
-		}
-		b := e.Buffer.(*buffer)
-		res := map[string]any{"buffer": b.js}
-		if e.Offset > 0 {
-			res["offset"] = e.Offset
-		}
-		if e.Size > 0 {
-			res["size"] = e.Size
+		var res any
+		switch {
+		case e.Buffer != nil:
+			b := e.Buffer.(*buffer)
+			r := map[string]any{"buffer": b.js}
+			if e.Offset > 0 {
+				r["offset"] = e.Offset
+			}
+			if e.Size > 0 {
+				r["size"] = e.Size
+			}
+			res = r
+		case e.TextureView != nil:
+			tv := e.TextureView.(*textureView)
+			res = tv.js
+		case e.Sampler != nil:
+			s := e.Sampler.(*sampler)
+			res = s.js
+		default:
+			return nil, fmt.Errorf("jsgpu: %w: bind-group entry %d has no resource",
+				gpu.ErrInvalidDesc, e.Binding)
 		}
 		entries = append(entries, map[string]any{
 			"binding":  e.Binding,

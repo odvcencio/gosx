@@ -12,6 +12,7 @@ type fakeDevice struct {
 
 	buffers      []*fakeBuffer
 	textures     []*fakeTexture
+	samplers     []*fakeSampler
 	shaders      []*fakeShader
 	pipelines    []*fakePipeline
 	bindGroups   []*fakeBindGroup
@@ -40,6 +41,12 @@ func (d *fakeDevice) CreateTexture(desc gpu.TextureDesc) (gpu.Texture, error) {
 	t := &fakeTexture{desc: desc}
 	d.textures = append(d.textures, t)
 	return t, nil
+}
+
+func (d *fakeDevice) CreateSampler(desc gpu.SamplerDesc) (gpu.Sampler, error) {
+	s := &fakeSampler{desc: desc}
+	d.samplers = append(d.samplers, s)
+	return s, nil
 }
 
 func (d *fakeDevice) CreateShaderModule(desc gpu.ShaderDesc) (gpu.ShaderModule, error) {
@@ -179,6 +186,12 @@ func (t *fakeTexture) CreateView() gpu.TextureView {
 	return &fakeTextureView{}
 }
 func (t *fakeTexture) Destroy() {}
+
+type fakeSampler struct {
+	desc gpu.SamplerDesc
+}
+
+func (*fakeSampler) Destroy() {}
 
 // fakeSurface is a minimal Surface implementation for tests.
 type fakeSurface struct{}

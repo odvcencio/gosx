@@ -96,6 +96,15 @@ type textureView struct {
 	js js.Value
 }
 
+// sampler wraps a GPUSampler.
+type sampler struct {
+	js js.Value
+}
+
+func (*sampler) Destroy() {
+	// WebGPU has no explicit sampler destroy; GC handles it.
+}
+
 // texture wraps a GPUTexture.
 type texture struct {
 	js     js.Value

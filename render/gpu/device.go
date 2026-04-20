@@ -19,6 +19,7 @@ type Device interface {
 
 	CreateBuffer(BufferDesc) (Buffer, error)
 	CreateTexture(TextureDesc) (Texture, error)
+	CreateSampler(SamplerDesc) (Sampler, error)
 	CreateShaderModule(ShaderDesc) (ShaderModule, error)
 	CreateRenderPipeline(RenderPipelineDesc) (RenderPipeline, error)
 	CreateBindGroup(BindGroupDesc) (BindGroup, error)
@@ -88,13 +89,15 @@ type BindGroup interface {
 	Destroy()
 }
 
-// BindGroupEntry is one resource binding within a BindGroup.
+// BindGroupEntry is one resource binding within a BindGroup. Exactly one of
+// Buffer, TextureView, or Sampler should be set. Backends validate.
 type BindGroupEntry struct {
-	Binding int
-	Buffer  Buffer // for uniform / storage buffer bindings (nil if texture)
-	Offset  int
-	Size    int // 0 = rest of buffer
-	// Texture/Sampler bindings are deferred to R2.
+	Binding     int
+	Buffer      Buffer      // uniform / storage buffer binding
+	Offset      int         // buffer byte offset
+	Size        int         // 0 = rest of buffer
+	TextureView TextureView // sampled / depth / storage texture binding
+	Sampler     Sampler     // sampler binding (filtering or comparison)
 }
 
 // BindGroupDesc describes a set of bound resources.
@@ -188,6 +191,44 @@ type RenderPassDepthStencilAttachment struct {
 // TextureView is a view into a texture — the binding unit for render pass
 // attachments and shader texture bindings.
 type TextureView interface{}
+
+// Sampler is a texture sampling state object. Created once and reused across
+// bind groups.
+type Sampler interface {
+	Destroy()
+}
+
+// SamplerDesc configures a sampler at creation time. Zero-valued fields use
+// backend defaults (clamp-to-edge, nearest, non-comparison).
+type SamplerDesc struct {
+	MagFilter    FilterMode
+	MinFilter    FilterMode
+	MipmapFilter FilterMode
+	AddressU     AddressMode
+	AddressV     AddressMode
+	AddressW     AddressMode
+	// Compare, when set to anything other than zero, makes this a comparison
+	// sampler (sampler2DShadow in WGSL). Used for shadow map PCF.
+	Compare CompareFunc
+	Label   string
+}
+
+// FilterMode selects sample filtering.
+type FilterMode int
+
+const (
+	FilterNearest FilterMode = iota
+	FilterLinear
+)
+
+// AddressMode selects the wrap mode per UV axis.
+type AddressMode int
+
+const (
+	AddressClampToEdge AddressMode = iota
+	AddressRepeat
+	AddressMirrorRepeat
+)
 
 // Texture is a GPU-side image resource. Call CreateView to obtain a bindable
 // TextureView. Destroy frees the underlying memory.

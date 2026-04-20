@@ -7,6 +7,23 @@ package jsgpu
 
 import "github.com/odvcencio/gosx/render/gpu"
 
+func encodeFilterMode(f gpu.FilterMode) string {
+	if f == gpu.FilterLinear {
+		return "linear"
+	}
+	return "nearest"
+}
+
+func encodeAddressMode(a gpu.AddressMode) string {
+	switch a {
+	case gpu.AddressRepeat:
+		return "repeat"
+	case gpu.AddressMirrorRepeat:
+		return "mirror-repeat"
+	}
+	return "clamp-to-edge"
+}
+
 func encodeTextureUsage(u gpu.TextureUsage) int {
 	// WebGPU GPUTextureUsage numeric values (stable, part of the spec).
 	const (

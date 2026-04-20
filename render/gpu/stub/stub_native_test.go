@@ -31,6 +31,13 @@ func TestStubReturnsUnsupported(t *testing.T) {
 			}),
 		},
 		{
+			"CreateSampler",
+			mustErr(func() error {
+				_, err := d.CreateSampler(gpu.SamplerDesc{})
+				return err
+			}),
+		},
+		{
 			"CreateShaderModule",
 			mustErr(func() error { _, err := d.CreateShaderModule(gpu.ShaderDesc{SourceWGSL: ""}); return err }),
 		},
