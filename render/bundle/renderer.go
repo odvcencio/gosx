@@ -67,11 +67,17 @@ type Renderer struct {
 	// 1x1 white fallback texture bound when a material has no Texture URL.
 	fallbackTexture *textureResources
 
+	// GPU-driven culling pipeline + layout. Per-mesh resources live in
+	// cullCache.
+	cullPipeline gpu.ComputePipeline
+	cullBGLayout gpu.BindGroupLayout
+
 	// Caches keyed by identity strings, reused across frames.
 	passCache      map[string]*passResources
 	primitiveCache map[string]*primitiveResources
 	materialCache  map[materialFingerprint]*materialResources
 	textureCache   map[string]*textureResources
+	cullCache      map[string]*cullResources
 
 	// Reusable per-instance transform buffer. Grows one-way to fit the
 	// largest instance count seen. R2 uses a single buffer since instanced
@@ -123,6 +129,7 @@ func New(cfg Config) (*Renderer, error) {
 		primitiveCache: make(map[string]*primitiveResources),
 		materialCache:  make(map[materialFingerprint]*materialResources),
 		textureCache:   make(map[string]*textureResources),
+		cullCache:      make(map[string]*cullResources),
 	}
 	if err := r.buildUniformBuffers(); err != nil {
 		return nil, err
@@ -143,6 +150,9 @@ func New(cfg Config) (*Renderer, error) {
 		return nil, err
 	}
 	if err := r.buildShadowPipeline(); err != nil {
+		return nil, err
+	}
+	if err := r.buildCullPipeline(); err != nil {
 		return nil, err
 	}
 	if err := r.buildBindGroups(); err != nil {
@@ -174,6 +184,13 @@ func (r *Renderer) Destroy() {
 		}
 	}
 	r.textureCache = nil
+	for _, c := range r.cullCache {
+		destroyCullResources(c)
+	}
+	r.cullCache = nil
+	if r.cullPipeline != nil {
+		r.cullPipeline.Destroy()
+	}
 	if r.fallbackTexture != nil && r.fallbackTexture.tex != nil {
 		r.fallbackTexture.tex.Destroy()
 		r.fallbackTexture = nil
@@ -250,11 +267,24 @@ func (r *Renderer) Frame(b engine.RenderBundle, width, height int, timeSeconds f
 		r.device.Queue().WriteBuffer(r.shadowUniformBufs[i], 0, float32sToBytes(cascades.viewProjs[i][:]))
 	}
 
+	// Extract frustum planes once per frame for GPU-driven culling.
+	frustum := extractFrustumPlanes(viewProj)
+
 	enc := r.device.CreateCommandEncoder()
 
-	// 1) One shadow pass per cascade.
+	// 1) One shadow pass per cascade. Shadow passes intentionally don't run
+	// through culling — a shadow caster outside the main frustum can still
+	// cast into it. CSM cascades bound the shadow draw volume on their own.
 	for i := 0; i < cascadeCount; i++ {
 		r.recordShadowPass(enc, b, i)
+	}
+
+	// 2) GPU-driven culling: compute pass writes a compacted visible-
+	// transforms buffer + indirect draw args per InstancedMesh. Must run
+	// BEFORE the main render pass since compute + render can't interleave
+	// within the same pass encoder.
+	if err := r.recordCullPass(enc, b, frustum); err != nil {
+		return err
 	}
 
 	// 2) Main pass — color + depth to the surface, lit + shadowed.
@@ -332,8 +362,18 @@ func (r *Renderer) Frame(b engine.RenderBundle, width, height int, timeSeconds f
 			mainPass.SetVertexBuffer(1, prim.colors)
 			mainPass.SetVertexBuffer(2, prim.normals)
 			mainPass.SetVertexBuffer(3, prim.uvs)
-			mainPass.SetVertexBuffer(4, r.instanceBuf)
-			mainPass.Draw(prim.vertexCount, im.InstanceCount, 0, 0)
+			// Instance data is the cull pass's compacted output.
+			cull, _ := r.cullCache[instancedMeshKey(i, im)]
+			if cull != nil {
+				mainPass.SetVertexBuffer(4, cull.outputBuf)
+				mainPass.DrawIndirect(cull.drawArgsBuf, 0)
+			} else {
+				// Should never happen — recordCullPass populates the cache
+				// for every mesh before the main pass runs. Falling back to
+				// non-culled draw prevents a missing frame if it does.
+				mainPass.SetVertexBuffer(4, r.instanceBuf)
+				mainPass.Draw(prim.vertexCount, im.InstanceCount, 0, 0)
+			}
 		}
 	}
 
@@ -346,6 +386,84 @@ func (r *Renderer) Frame(b engine.RenderBundle, width, height int, timeSeconds f
 // cascade's layer of the shadow texture array. Called once per cascade index.
 // The instance-transform buffer is shared across cascades — it's written
 // once per Frame before any pass begins (outside this function).
+// instancedMeshKey returns the cull-cache key for one InstancedMesh slot.
+// Combines the bundle index with the Kind so different mesh entries using
+// the same Kind (e.g., two cube-only layers) don't share cull output.
+func instancedMeshKey(idx int, im engine.RenderInstancedMesh) string {
+	return fmt.Sprintf("%d:%s", idx, im.Kind)
+}
+
+// recordCullPass uploads per-mesh instance data, resets indirect-draw args,
+// and dispatches the culling compute shader for every InstancedMesh in the
+// bundle. The compacted output + draw args land in GPU buffers that the
+// main pass reads later via DrawIndirect.
+func (r *Renderer) recordCullPass(enc gpu.CommandEncoder, b engine.RenderBundle, frustum [6][4]float32) error {
+	if len(b.InstancedMeshes) == 0 {
+		return nil
+	}
+	// Upload instance transforms + reset draw args BEFORE beginning the
+	// compute pass — writeBuffer operations within an open pass are not
+	// allowed.
+	for i, im := range b.InstancedMeshes {
+		if im.InstanceCount <= 0 || len(im.Transforms) == 0 {
+			continue
+		}
+		prim, err := r.ensurePrimitive(im.Kind)
+		if err != nil {
+			return err
+		}
+		if prim == nil || prim.vertexCount == 0 {
+			continue
+		}
+		key := instancedMeshKey(i, im)
+		cull, err := r.ensureCullResources(key, im.InstanceCount)
+		if err != nil {
+			return err
+		}
+		transformBytes := float64sToFloat32Bytes(im.Transforms)
+		r.device.Queue().WriteBuffer(cull.inputBuf, 0, transformBytes)
+		r.device.Queue().WriteBuffer(cull.drawArgsBuf, 0, drawArgsResetBytes(uint32(prim.vertexCount)))
+		r.device.Queue().WriteBuffer(cull.cullUniform, 0,
+			cullUniformBytes(frustum, uint32(prim.vertexCount), defaultCullRadius(im.Kind)))
+	}
+
+	pass := enc.BeginComputePass()
+	pass.SetPipeline(r.cullPipeline)
+	for i, im := range b.InstancedMeshes {
+		if im.InstanceCount <= 0 || len(im.Transforms) == 0 {
+			continue
+		}
+		key := instancedMeshKey(i, im)
+		cull, ok := r.cullCache[key]
+		if !ok {
+			continue
+		}
+		pass.SetBindGroup(0, cull.bindGroup)
+		// workgroup_size is 64 in the shader; dispatch (N+63)/64 groups.
+		groups := (im.InstanceCount + 63) / 64
+		pass.DispatchWorkgroups(groups, 1, 1)
+	}
+	pass.End()
+	return nil
+}
+
+// defaultCullRadius returns a conservative bounding-sphere radius for a
+// primitive kind, accounting for a unit primitive scaled by the instance
+// transform. Per-instance uniform scale factors out into the diagonal of
+// the transform — a real implementation would read that in the shader —
+// but for R3's MVP we use a fixed padded radius per primitive kind.
+func defaultCullRadius(kind string) float32 {
+	switch kind {
+	case "plane", "planeGeometry":
+		return 8.0 // planes are often very large in world units
+	case "sphere", "sphereGeometry":
+		return 1.1
+	case "cube", "box", "boxGeometry":
+		return 1.8 // sqrt(3) padded
+	}
+	return 2.0
+}
+
 func (r *Renderer) recordShadowPass(enc gpu.CommandEncoder, b engine.RenderBundle, cascade int) {
 	pass := enc.BeginRenderPass(gpu.RenderPassDesc{
 		DepthStencilAttachment: &gpu.RenderPassDepthStencilAttachment{

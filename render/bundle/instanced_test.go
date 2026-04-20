@@ -42,10 +42,12 @@ func TestFrameInstancedMeshDispatches(t *testing.T) {
 	}
 
 	// Primitive geometry: positions + colors + normals + uvs = 4 buffers.
-	// Instance buffer = 1 buffer.
-	// Material uniform (resolved for the cube's default material) = 1 buffer.
-	if got := len(d.buffers) - buffersBefore; got != 6 {
-		t.Errorf("expected 6 new buffers (pos+col+nrm+uv+instance+material), got %d", got)
+	// Shared shadow-pass instance buffer = 1.
+	// Material uniform = 1.
+	// Cull resources (input + output + drawArgs + cullUniform) = 4.
+	// Total = 10.
+	if got := len(d.buffers) - buffersBefore; got != 10 {
+		t.Errorf("expected 10 new buffers (pos+col+nrm+uv+instance+material+4 cull), got %d", got)
 	}
 
 	if len(d.encoders) != 1 {
@@ -67,14 +69,13 @@ func TestFrameInstancedMeshDispatches(t *testing.T) {
 				i, passes[i].draws[0].instanceCount)
 		}
 	}
-	if len(mainPass.draws) != 1 {
-		t.Fatalf("main pass: expected 1 instanced draw, got %d", len(mainPass.draws))
+	// Main pass emits one indirect draw (cull compacted output) per mesh.
+	if mainPass.indirectDraws != 1 {
+		t.Errorf("main pass: expected 1 indirect draw, got %d", mainPass.indirectDraws)
 	}
-	if mainPass.draws[0].instanceCount != 3 {
-		t.Errorf("main pass: expected 3 instances, got %d", mainPass.draws[0].instanceCount)
-	}
-	if mainPass.draws[0].vertexCount != 36 {
-		t.Errorf("main pass: expected 36 verts (cube), got %d", mainPass.draws[0].vertexCount)
+	if len(mainPass.draws) != 0 {
+		t.Errorf("main pass: all draws should go via indirect, got %d direct",
+			len(mainPass.draws))
 	}
 
 	// Second frame — caches hit; no new buffers.

@@ -192,12 +192,13 @@ func (p *fakeComputePass) DispatchWorkgroups(x, y, z int) {
 func (p *fakeComputePass) End() { p.ended = true }
 
 type fakeRenderPass struct {
-	desc         gpu.RenderPassDesc
-	pipelineSet  bool
-	bindGroupSet bool
-	vbufSets     int
-	draws        []fakeDraw
-	ended        bool
+	desc          gpu.RenderPassDesc
+	pipelineSet   bool
+	bindGroupSet  bool
+	vbufSets      int
+	draws         []fakeDraw
+	indirectDraws int
+	ended         bool
 }
 
 type fakeDraw struct {
@@ -212,8 +213,12 @@ func (p *fakeRenderPass) Draw(vc, ic, fv, fi int) {
 	p.draws = append(p.draws, fakeDraw{vc, ic, fv, fi})
 }
 func (p *fakeRenderPass) DrawIndexed(int, int, int, int, int) {}
-func (p *fakeRenderPass) DrawIndirect(gpu.Buffer, int)        { p.draws = append(p.draws, fakeDraw{}) }
-func (p *fakeRenderPass) End()                                { p.ended = true }
+func (p *fakeRenderPass) DrawIndirect(gpu.Buffer, int) {
+	// Represents an indirect draw — we don't know instance count until the
+	// GPU reads the buffer, so record a sentinel the tests can spot.
+	p.indirectDraws++
+}
+func (p *fakeRenderPass) End() { p.ended = true }
 
 type fakeCommandBuffer struct{}
 type fakeTextureView struct{}
