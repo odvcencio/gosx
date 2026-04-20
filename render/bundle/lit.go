@@ -14,14 +14,17 @@ package bundle
 // the renderer defaults to baseColor=vertex-color, metal=0, roughness=0.6.
 const litWGSL = `
 struct Scene {
-  viewProj       : mat4x4<f32>,
-  lightViewProj  : mat4x4<f32>,
-  cameraPos      : vec4<f32>,
-  lightDir       : vec4<f32>,
-  lightColor     : vec4<f32>,
-  ambientColor   : vec4<f32>, // .a = hemisphere intensity
-  skyColor       : vec4<f32>, // dome-top color for hemisphere ambient
-  groundColor    : vec4<f32>, // dome-bottom color
+  viewProj         : mat4x4<f32>,
+  lightViewProj0   : mat4x4<f32>,
+  lightViewProj1   : mat4x4<f32>,
+  lightViewProj2   : mat4x4<f32>,
+  cameraPos        : vec4<f32>,
+  lightDir         : vec4<f32>,
+  lightColor       : vec4<f32>,
+  ambientColor     : vec4<f32>,
+  skyColor         : vec4<f32>,
+  groundColor      : vec4<f32>,
+  cascadeSplits    : vec4<f32>, // xyz = view-space far distances for cascades 0/1/2
 };
 
 struct Material {
@@ -31,7 +34,7 @@ struct Material {
 };
 
 @group(0) @binding(0) var<uniform> scene             : Scene;
-@group(0) @binding(1) var          shadowMap         : texture_depth_2d;
+@group(0) @binding(1) var          shadowMap         : texture_depth_2d_array;
 @group(0) @binding(2) var          shadowSampler     : sampler_comparison;
 @group(1) @binding(0) var<uniform> material          : Material;
 @group(1) @binding(1) var          baseColorTexture  : texture_2d<f32>;
@@ -42,7 +45,7 @@ struct VSOut {
   @location(0) color    : vec3<f32>,
   @location(1) worldPos : vec3<f32>,
   @location(2) worldNrm : vec3<f32>,
-  @location(3) lightUV  : vec4<f32>,
+  @location(3) viewZ    : f32,
   @location(4) uv       : vec2<f32>,
 };
 
@@ -66,20 +69,42 @@ fn vs_main(
   out.worldPos = world.xyz;
   out.worldNrm = worldNormal;
   out.color    = color;
-  out.lightUV  = scene.lightViewProj * world;
+  // viewZ is the camera-relative depth used for cascade selection in fs_main.
+  // We approximate it as the distance from the camera to the vertex — exact
+  // enough for picking the right cascade while the view matrix stays
+  // orthographic-approximated in R3.
+  let toCam = world.xyz - scene.cameraPos.xyz;
+  out.viewZ    = length(toCam);
   out.uv       = uv;
   return out;
 }
 
-fn sampleShadow(lightUV : vec4<f32>) -> f32 {
+fn cascadeLightMatrix(idx : i32) -> mat4x4<f32> {
+  if (idx == 0) { return scene.lightViewProj0; }
+  if (idx == 1) { return scene.lightViewProj1; }
+  return scene.lightViewProj2;
+}
+
+fn pickCascade(viewZ : f32) -> i32 {
+  if (viewZ < scene.cascadeSplits.x) { return 0; }
+  if (viewZ < scene.cascadeSplits.y) { return 1; }
+  return 2;
+}
+
+fn sampleShadow(worldPos : vec3<f32>, viewZ : f32) -> f32 {
+  let idx = pickCascade(viewZ);
+  let lm  = cascadeLightMatrix(idx);
+  let lightUV = lm * vec4<f32>(worldPos, 1.0);
   let proj = lightUV.xyz / lightUV.w;
   let uv   = vec2<f32>(proj.x * 0.5 + 0.5, 0.5 - proj.y * 0.5);
   if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) {
     return 1.0;
   }
-  let bias = 0.005;
+  // Tighter cascades need less bias; loosen it for cascade 2 which spans
+  // a larger volume per texel.
+  let bias = 0.003 + 0.003 * f32(idx);
   let depthRef = proj.z - bias;
-  return textureSampleCompare(shadowMap, shadowSampler, uv, depthRef);
+  return textureSampleCompareLevel(shadowMap, shadowSampler, uv, idx, depthRef);
 }
 
 // GGX / Trowbridge-Reitz normal distribution.
@@ -141,7 +166,7 @@ fn fs_main(in : VSOut) -> @location(0) vec4<f32> {
   let diffuse = kD * baseColor / 3.141592653589793;
 
   let radiance = scene.lightColor.rgb * scene.lightColor.a;
-  let shadow = sampleShadow(in.lightUV);
+  let shadow = sampleShadow(in.worldPos, in.viewZ);
   let direct = (diffuse + specular) * radiance * NdotL * shadow;
 
   // Hemisphere ambient: blend the sky/ground dome colors by the world

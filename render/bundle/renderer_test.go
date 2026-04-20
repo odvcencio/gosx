@@ -26,8 +26,8 @@ func TestNewBuildsAllPipelines(t *testing.T) {
 	if got := len(d.pipelines); got != 3 {
 		t.Errorf("expected 3 render pipelines (unlit+lit+shadow), got %d", got)
 	}
-	if got := len(d.buffers); got != 2 {
-		t.Errorf("expected 2 uniform buffers (scene + shadow), got %d", got)
+	if got := len(d.buffers); got != 4 {
+		t.Errorf("expected 4 uniform buffers (scene + 3 shadow cascades), got %d", got)
 	}
 	if got := len(d.textures); got != 2 {
 		t.Errorf("expected 2 textures at construction (shadow map + 1x1 fallback), got %d", got)
@@ -35,8 +35,8 @@ func TestNewBuildsAllPipelines(t *testing.T) {
 	if got := len(d.samplers); got != 2 {
 		t.Errorf("expected 2 samplers (shadow comparison + material linear), got %d", got)
 	}
-	if got := len(d.bindGroups); got != 3 {
-		t.Errorf("expected 3 bind groups (one per pipeline), got %d", got)
+	if got := len(d.bindGroups); got != 5 {
+		t.Errorf("expected 5 bind groups (unlit + lit + 3 shadow cascades), got %d", got)
 	}
 
 	// Shadow map is a depth32float render-attachment + texture-binding target.
@@ -86,10 +86,9 @@ func TestNewBuildsAllPipelines(t *testing.T) {
 	}
 }
 
-// TestFrameAlwaysEmitsTwoPasses confirms that every non-trivial frame records
-// both a shadow pass and a main pass — even if InstancedMeshes is empty.
-// The shadow pass is still recorded so depth is cleared between frames.
-func TestFrameAlwaysEmitsTwoPasses(t *testing.T) {
+// TestFrameAlwaysEmitsCSMPlusMainPass confirms every non-trivial frame
+// records N shadow passes (one per cascade) + a main pass.
+func TestFrameAlwaysEmitsCSMPlusMainPass(t *testing.T) {
 	d := newFakeDevice()
 	r, err := New(Config{Device: d, Surface: fakeSurface{}})
 	if err != nil {
@@ -106,22 +105,25 @@ func TestFrameAlwaysEmitsTwoPasses(t *testing.T) {
 	if len(d.encoders) != 1 {
 		t.Fatalf("expected 1 command encoder per frame, got %d", len(d.encoders))
 	}
-	if got := len(d.encoders[0].passes); got != 2 {
-		t.Errorf("expected 2 render passes per frame (shadow + main), got %d", got)
+	passes := d.encoders[0].passes
+	if got := len(passes); got != 4 {
+		t.Fatalf("expected 4 passes (3 shadow cascades + main), got %d", got)
 	}
 
-	// Shadow pass has only a depth attachment. Main pass has color + depth.
-	if d.encoders[0].passes[0].desc.ColorAttachments != nil &&
-		len(d.encoders[0].passes[0].desc.ColorAttachments) > 0 {
-		t.Error("shadow pass should have no color attachments")
+	// Shadow passes (indices 0..2) have only depth attachments.
+	for i := 0; i < 3; i++ {
+		if len(passes[i].desc.ColorAttachments) != 0 {
+			t.Errorf("shadow cascade %d: expected no color attachments", i)
+		}
+		if passes[i].desc.DepthStencilAttachment == nil {
+			t.Errorf("shadow cascade %d: expected depth attachment", i)
+		}
 	}
-	if d.encoders[0].passes[0].desc.DepthStencilAttachment == nil {
-		t.Error("shadow pass must have a depth attachment")
-	}
-	if len(d.encoders[0].passes[1].desc.ColorAttachments) != 1 {
+	mainPass := passes[3]
+	if len(mainPass.desc.ColorAttachments) != 1 {
 		t.Error("main pass must have one color attachment")
 	}
-	if d.encoders[0].passes[1].desc.DepthStencilAttachment == nil {
+	if mainPass.desc.DepthStencilAttachment == nil {
 		t.Error("main pass must have a depth attachment")
 	}
 }
@@ -149,13 +151,17 @@ func TestFrameUnlitPassDispatches(t *testing.T) {
 	if err := r.Frame(b, 400, 300, 0); err != nil {
 		t.Fatalf("Frame: %v", err)
 	}
-	shadowPass := d.encoders[0].passes[0]
-	mainPass := d.encoders[0].passes[1]
-
-	if len(shadowPass.draws) != 0 {
-		t.Errorf("shadow pass should have no draws when no instanced meshes, got %d",
-			len(shadowPass.draws))
+	passes := d.encoders[0].passes
+	if len(passes) != 4 {
+		t.Fatalf("expected 4 passes (3 shadow + main), got %d", len(passes))
 	}
+	// None of the shadow cascades should draw pass-data meshes (R3 limitation).
+	for i := 0; i < 3; i++ {
+		if got := len(passes[i].draws); got != 0 {
+			t.Errorf("shadow cascade %d should have no draws, got %d", i, got)
+		}
+	}
+	mainPass := passes[3]
 	if len(mainPass.draws) != 1 {
 		t.Fatalf("main pass: expected 1 draw, got %d", len(mainPass.draws))
 	}
@@ -194,7 +200,8 @@ func TestFrameClearColorFromBackground(t *testing.T) {
 	if err := r.Frame(engine.RenderBundle{Background: "#ff8000"}, 100, 100, 0); err != nil {
 		t.Fatalf("Frame: %v", err)
 	}
-	mainPass := d.encoders[0].passes[1]
+	// Main pass is the last one (after 3 shadow cascade passes).
+	mainPass := d.encoders[0].passes[3]
 	if len(mainPass.desc.ColorAttachments) != 1 {
 		t.Fatalf("expected 1 color attachment on main pass, got %d",
 			len(mainPass.desc.ColorAttachments))

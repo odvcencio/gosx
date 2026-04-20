@@ -243,6 +243,11 @@ type Texture interface {
 	Height() int
 	Format() TextureFormat
 	CreateView() TextureView
+	// CreateLayerView returns a view bound to a single array layer of the
+	// texture. Required for rendering into one slice of a depth texture
+	// array (cascaded shadow maps). Non-array textures should return a
+	// 2D view and ignore layer.
+	CreateLayerView(layer int) TextureView
 	Destroy()
 }
 

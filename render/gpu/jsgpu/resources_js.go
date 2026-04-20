@@ -145,6 +145,14 @@ func (t *texture) CreateView() gpu.TextureView {
 	return &textureView{js: t.js.Call("createView")}
 }
 
+func (t *texture) CreateLayerView(layer int) gpu.TextureView {
+	return &textureView{js: t.js.Call("createView", map[string]any{
+		"baseArrayLayer":  layer,
+		"arrayLayerCount": 1,
+		"dimension":       "2d",
+	})}
+}
+
 func (t *texture) Destroy() {
 	if !t.js.IsUndefined() {
 		t.js.Call("destroy")

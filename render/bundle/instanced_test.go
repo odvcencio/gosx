@@ -51,14 +51,21 @@ func TestFrameInstancedMeshDispatches(t *testing.T) {
 	if len(d.encoders) != 1 {
 		t.Fatalf("expected 1 command encoder, got %d", len(d.encoders))
 	}
-	shadowPass := d.encoders[0].passes[0]
-	mainPass := d.encoders[0].passes[1]
-
-	if len(shadowPass.draws) != 1 {
-		t.Fatalf("shadow pass: expected 1 instanced draw, got %d", len(shadowPass.draws))
+	passes := d.encoders[0].passes
+	if len(passes) != 4 {
+		t.Fatalf("expected 4 passes (3 shadow cascades + main), got %d", len(passes))
 	}
-	if shadowPass.draws[0].instanceCount != 3 {
-		t.Errorf("shadow pass: expected 3 instances, got %d", shadowPass.draws[0].instanceCount)
+	mainPass := passes[3]
+
+	// Each of the 3 cascades draws the instanced mesh once.
+	for i := 0; i < 3; i++ {
+		if len(passes[i].draws) != 1 {
+			t.Fatalf("shadow cascade %d: expected 1 draw, got %d", i, len(passes[i].draws))
+		}
+		if passes[i].draws[0].instanceCount != 3 {
+			t.Errorf("shadow cascade %d: expected 3 instances, got %d",
+				i, passes[i].draws[0].instanceCount)
+		}
 	}
 	if len(mainPass.draws) != 1 {
 		t.Fatalf("main pass: expected 1 instanced draw, got %d", len(mainPass.draws))

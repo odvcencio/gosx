@@ -9,10 +9,14 @@ import (
 	"github.com/odvcencio/gosx/render/gpu"
 )
 
-// shadowMapSize is the square resolution of the directional-light shadow map.
-// 2048 is a reasonable default for a single non-cascaded shadow; R3 replaces
-// this with cascaded shadow maps sized per-cascade.
+// shadowMapSize is the square resolution of each cascaded-shadow-map layer.
+// 2048² per cascade × 3 cascades = ~48 MB of depth memory on depth32float.
 const shadowMapSize = 2048
+
+// cascadeCount is the number of shadow cascades. Three covers near/mid/far
+// sensibly for common 100-unit scenes. Increasing costs linear memory + draw
+// time; decreasing leaves mid-range shadows banded. R4 can make this tunable.
+const cascadeCount = 3
 
 // Renderer consumes engine.RenderBundle values and issues draw calls against
 // a gpu.Device. One Renderer instance serves one canvas / one engine runtime.
@@ -32,15 +36,16 @@ type Renderer struct {
 	shadowPipeline     gpu.RenderPipeline
 	shadowBGLayout     gpu.BindGroupLayout
 
-	// Scene uniforms (viewProj + lightViewProj + camera + light). 192 bytes.
+	// Scene uniforms (viewProj + 3 lightViewProjs + camera + light + env).
 	sceneUniformBuf gpu.Buffer
-	// Shadow-pass uniforms: just lightViewProj. 64 bytes.
-	shadowUniformBuf gpu.Buffer
+	// Shadow-pass uniforms: one buffer per cascade, each holding the
+	// cascade's lightViewProj (64 bytes). Separate bind groups per buffer.
+	shadowUniformBufs [cascadeCount]gpu.Buffer
+	shadowBindGrps    [cascadeCount]gpu.BindGroup
 
-	// Per-pipeline bind groups. The lit group also holds shadow map + sampler.
-	unlitBindGrp  gpu.BindGroup
-	litBindGrp    gpu.BindGroup
-	shadowBindGrp gpu.BindGroup
+	// Per-pipeline bind groups.
+	unlitBindGrp gpu.BindGroup
+	litBindGrp   gpu.BindGroup
 
 	// Main-pass depth attachment, resized lazily to surface.
 	depthTex    gpu.Texture
@@ -48,10 +53,13 @@ type Renderer struct {
 	depthWidth  int
 	depthHeight int
 
-	// Shadow-map depth texture + view. Fixed size; content refreshed per frame.
-	shadowTex     gpu.Texture
-	shadowView    gpu.TextureView
-	shadowSampler gpu.Sampler
+	// Cascaded shadow map: one 3-layer depth texture array. Per-cascade
+	// layer views are used as depth render targets in the shadow passes; the
+	// full-array view is bound in the lit main pass for sampling.
+	shadowTex        gpu.Texture
+	shadowArrayView  gpu.TextureView
+	shadowLayerViews [cascadeCount]gpu.TextureView
+	shadowSampler    gpu.Sampler
 
 	// Shared material texture sampler (separate from the comparison sampler
 	// used for shadows; this one does anisotropic color lookup).
@@ -185,8 +193,10 @@ func (r *Renderer) Destroy() {
 	if r.sceneUniformBuf != nil {
 		r.sceneUniformBuf.Destroy()
 	}
-	if r.shadowUniformBuf != nil {
-		r.shadowUniformBuf.Destroy()
+	for i := range r.shadowUniformBufs {
+		if r.shadowUniformBufs[i] != nil {
+			r.shadowUniformBufs[i].Destroy()
+		}
 	}
 	if r.unlitPipeline != nil {
 		r.unlitPipeline.Destroy()
@@ -223,24 +233,29 @@ func (r *Renderer) Frame(b engine.RenderBundle, width, height int, timeSeconds f
 	viewProj := computeMVP(b.Camera, width, height)
 	lightDir, lightColor, ambientColor := resolveDirectionalLight(b)
 	skyColor, groundColor := resolveHemisphereAmbient(b)
-	lightViewProj := computeLightViewProj(lightDir)
+	cascades := computeCascades(b.Camera, lightDir)
 
 	r.device.Queue().WriteBuffer(r.sceneUniformBuf, 0, buildSceneUniformBytes(sceneUniformBlock{
-		viewProj:      viewProj,
-		lightViewProj: lightViewProj,
-		cameraPos:     [4]float32{float32(b.Camera.X), float32(b.Camera.Y), float32(b.Camera.Z), 1},
-		lightDir:      [4]float32{lightDir[0], lightDir[1], lightDir[2], 0},
-		lightColor:    lightColor,
-		ambientColor:  ambientColor,
-		skyColor:      skyColor,
-		groundColor:   groundColor,
+		viewProj:       viewProj,
+		lightViewProjs: cascades.viewProjs,
+		cameraPos:      [4]float32{float32(b.Camera.X), float32(b.Camera.Y), float32(b.Camera.Z), 1},
+		lightDir:       [4]float32{lightDir[0], lightDir[1], lightDir[2], 0},
+		lightColor:     lightColor,
+		ambientColor:   ambientColor,
+		skyColor:       skyColor,
+		groundColor:    groundColor,
+		cascadeSplits:  cascades.farSplits,
 	}))
-	r.device.Queue().WriteBuffer(r.shadowUniformBuf, 0, float32sToBytes(lightViewProj[:]))
+	for i := 0; i < cascadeCount; i++ {
+		r.device.Queue().WriteBuffer(r.shadowUniformBufs[i], 0, float32sToBytes(cascades.viewProjs[i][:]))
+	}
 
 	enc := r.device.CreateCommandEncoder()
 
-	// 1) Shadow pass — depth-only from the light's perspective.
-	r.recordShadowPass(enc, b)
+	// 1) One shadow pass per cascade.
+	for i := 0; i < cascadeCount; i++ {
+		r.recordShadowPass(enc, b, i)
+	}
 
 	// 2) Main pass — color + depth to the surface, lit + shadowed.
 	view, err := r.device.AcquireSurfaceView(r.surface)
@@ -327,40 +342,41 @@ func (r *Renderer) Frame(b engine.RenderBundle, width, height int, timeSeconds f
 	return nil
 }
 
-// recordShadowPass issues the depth-only instanced-mesh draws into the shadow
-// map. Runs before any uniform uploads the main pass depends on except for
-// the instance-transform buffer, which is shared.
-func (r *Renderer) recordShadowPass(enc gpu.CommandEncoder, b engine.RenderBundle) {
+// recordShadowPass renders cascade-specific depth-only draws into the
+// cascade's layer of the shadow texture array. Called once per cascade index.
+// The instance-transform buffer is shared across cascades — it's written
+// once per Frame before any pass begins (outside this function).
+func (r *Renderer) recordShadowPass(enc gpu.CommandEncoder, b engine.RenderBundle, cascade int) {
 	pass := enc.BeginRenderPass(gpu.RenderPassDesc{
 		DepthStencilAttachment: &gpu.RenderPassDepthStencilAttachment{
-			View:            r.shadowView,
+			View:            r.shadowLayerViews[cascade],
 			DepthLoadOp:     gpu.LoadOpClear,
 			DepthStoreOp:    gpu.StoreOpStore,
 			DepthClearValue: 1.0,
 		},
-		Label: "bundle.shadow",
+		Label: "bundle.shadow.cascade",
 	})
 	if len(b.InstancedMeshes) > 0 {
 		pass.SetPipeline(r.shadowPipeline)
-		pass.SetBindGroup(0, r.shadowBindGrp)
+		pass.SetBindGroup(0, r.shadowBindGrps[cascade])
 		for _, im := range b.InstancedMeshes {
 			if im.InstanceCount <= 0 || len(im.Transforms) == 0 {
 				continue
-			}
-			if im.CastShadow == false {
-				// The engine runtime defaults CastShadow=false in places;
-				// drawing anyway keeps the R2 demo visible. R3 honors the
-				// flag strictly.
 			}
 			prim, err := r.ensurePrimitive(im.Kind)
 			if err != nil || prim == nil || prim.vertexCount == 0 {
 				continue
 			}
-			transformBytes := float64sToFloat32Bytes(im.Transforms)
-			if err := r.ensureInstanceBuffer(len(transformBytes)); err != nil {
-				continue
+			// Instance buffer is populated once per frame on cascade 0 (or
+			// first pass to see instances). Writing on cascade 0 ensures it's
+			// ready before cascades 1 and 2 record their draws.
+			if cascade == 0 {
+				transformBytes := float64sToFloat32Bytes(im.Transforms)
+				if err := r.ensureInstanceBuffer(len(transformBytes)); err != nil {
+					continue
+				}
+				r.device.Queue().WriteBuffer(r.instanceBuf, 0, transformBytes)
 			}
-			r.device.Queue().WriteBuffer(r.instanceBuf, 0, transformBytes)
 			pass.SetVertexBuffer(0, prim.positions)
 			pass.SetVertexBuffer(1, r.instanceBuf)
 			pass.Draw(prim.vertexCount, im.InstanceCount, 0, 0)
@@ -528,8 +544,8 @@ func (r *Renderer) ensurePassBuffers(pb engine.RenderPassBundle) (*passResources
 	return res, nil
 }
 
-// buildUniformBuffers allocates the scene (192 bytes) and shadow (64 bytes)
-// uniform buffers. Shared by multiple pipelines via their own bind groups.
+// buildUniformBuffers allocates the scene uniform buffer and one shadow
+// uniform buffer per cascade.
 func (r *Renderer) buildUniformBuffers() error {
 	scene, err := r.device.CreateBuffer(gpu.BufferDesc{
 		Size:  sceneUniformSize,
@@ -539,29 +555,32 @@ func (r *Renderer) buildUniformBuffers() error {
 	if err != nil {
 		return fmt.Errorf("bundle.buildUniformBuffers (scene): %w", err)
 	}
-	shadow, err := r.device.CreateBuffer(gpu.BufferDesc{
-		Size:  64,
-		Usage: gpu.BufferUsageUniform | gpu.BufferUsageCopyDst,
-		Label: "bundle.shadow.uniforms",
-	})
-	if err != nil {
-		scene.Destroy()
-		return fmt.Errorf("bundle.buildUniformBuffers (shadow): %w", err)
-	}
 	r.sceneUniformBuf = scene
-	r.shadowUniformBuf = shadow
+	for i := 0; i < cascadeCount; i++ {
+		buf, err := r.device.CreateBuffer(gpu.BufferDesc{
+			Size:  64,
+			Usage: gpu.BufferUsageUniform | gpu.BufferUsageCopyDst,
+			Label: fmt.Sprintf("bundle.shadow.uniforms.cascade%d", i),
+		})
+		if err != nil {
+			return fmt.Errorf("bundle.buildUniformBuffers (shadow %d): %w", i, err)
+		}
+		r.shadowUniformBufs[i] = buf
+	}
 	return nil
 }
 
-// buildShadowResources creates the shadow map texture + view + comparison
-// sampler used for directional-light shadows.
+// buildShadowResources creates the cascaded shadow map (a depth texture
+// array), per-cascade layer views, and the comparison sampler used by the
+// lit pass to sample it.
 func (r *Renderer) buildShadowResources() error {
 	tex, err := r.device.CreateTexture(gpu.TextureDesc{
-		Width:  shadowMapSize,
-		Height: shadowMapSize,
-		Format: gpu.FormatDepth32Float,
-		Usage:  gpu.TextureUsageRenderAttachment | gpu.TextureUsageTextureBinding,
-		Label:  "bundle.shadow.map",
+		Width:              shadowMapSize,
+		Height:             shadowMapSize,
+		DepthOrArrayLayers: cascadeCount,
+		Format:             gpu.FormatDepth32Float,
+		Usage:              gpu.TextureUsageRenderAttachment | gpu.TextureUsageTextureBinding,
+		Label:              "bundle.shadow.cascades",
 	})
 	if err != nil {
 		return fmt.Errorf("bundle.buildShadowResources (texture): %w", err)
@@ -581,7 +600,10 @@ func (r *Renderer) buildShadowResources() error {
 		return fmt.Errorf("bundle.buildShadowResources (sampler): %w", err)
 	}
 	r.shadowTex = tex
-	r.shadowView = tex.CreateView()
+	r.shadowArrayView = tex.CreateView()
+	for i := 0; i < cascadeCount; i++ {
+		r.shadowLayerViews[i] = tex.CreateLayerView(i)
+	}
 	r.shadowSampler = samp
 	return nil
 }
@@ -783,7 +805,7 @@ func (r *Renderer) buildBindGroups() error {
 		Layout: r.litBGLayout,
 		Entries: []gpu.BindGroupEntry{
 			{Binding: 0, Buffer: r.sceneUniformBuf, Size: sceneUniformSize},
-			{Binding: 1, TextureView: r.shadowView},
+			{Binding: 1, TextureView: r.shadowArrayView},
 			{Binding: 2, Sampler: r.shadowSampler},
 		},
 		Label: "bundle.lit.bindgroup",
@@ -791,44 +813,57 @@ func (r *Renderer) buildBindGroups() error {
 	if err != nil {
 		return fmt.Errorf("bundle.buildBindGroups (lit): %w", err)
 	}
-	shadow, err := r.device.CreateBindGroup(gpu.BindGroupDesc{
-		Layout:  r.shadowBGLayout,
-		Entries: []gpu.BindGroupEntry{{Binding: 0, Buffer: r.shadowUniformBuf, Size: 64}},
-		Label:   "bundle.shadow.bindgroup",
-	})
-	if err != nil {
-		return fmt.Errorf("bundle.buildBindGroups (shadow): %w", err)
+	for i := 0; i < cascadeCount; i++ {
+		bg, err := r.device.CreateBindGroup(gpu.BindGroupDesc{
+			Layout: r.shadowBGLayout,
+			Entries: []gpu.BindGroupEntry{
+				{Binding: 0, Buffer: r.shadowUniformBufs[i], Size: 64},
+			},
+			Label: fmt.Sprintf("bundle.shadow.bindgroup.cascade%d", i),
+		})
+		if err != nil {
+			return fmt.Errorf("bundle.buildBindGroups (shadow %d): %w", i, err)
+		}
+		r.shadowBindGrps[i] = bg
 	}
 	r.unlitBindGrp = unlit
 	r.litBindGrp = lit
-	r.shadowBindGrp = shadow
 	return nil
 }
 
-// sceneUniformSize is the layout size of the Scene struct in WGSL. 224
-// bytes: two mat4 (128) + six vec4 (96).
-const sceneUniformSize = 224
+// sceneUniformSize is the layout size of the Scene struct in WGSL. 4 mat4
+// (viewProj + 3 cascade lightViewProjs) = 256, plus 7 vec4 = 112 → 368 bytes.
+const sceneUniformSize = 368
 
 type sceneUniformBlock struct {
-	viewProj, lightViewProj mat4
-	cameraPos               [4]float32
-	lightDir                [4]float32
-	lightColor              [4]float32
-	ambientColor            [4]float32
-	skyColor                [4]float32
-	groundColor             [4]float32
+	viewProj       mat4
+	lightViewProjs [cascadeCount]mat4
+	cameraPos      [4]float32
+	lightDir       [4]float32
+	lightColor     [4]float32
+	ambientColor   [4]float32
+	skyColor       [4]float32
+	groundColor    [4]float32
+	// cascadeSplits.xyz are the view-space far distances for cascades 0/1/2.
+	// Cascade i covers the frustum slice [split_{i-1}, split_i] (split_{-1} =
+	// camera near). Cascade 2 extends to the camera far plane regardless.
+	cascadeSplits [4]float32
 }
 
 func buildSceneUniformBytes(s sceneUniformBlock) []byte {
 	out := make([]byte, sceneUniformSize)
 	copy(out[0:64], float32sToBytes(s.viewProj[:]))
-	copy(out[64:128], float32sToBytes(s.lightViewProj[:]))
-	copy(out[128:144], float32sToBytes(s.cameraPos[:]))
-	copy(out[144:160], float32sToBytes(s.lightDir[:]))
-	copy(out[160:176], float32sToBytes(s.lightColor[:]))
-	copy(out[176:192], float32sToBytes(s.ambientColor[:]))
-	copy(out[192:208], float32sToBytes(s.skyColor[:]))
-	copy(out[208:224], float32sToBytes(s.groundColor[:]))
+	for i := 0; i < cascadeCount; i++ {
+		copy(out[64+i*64:64+(i+1)*64], float32sToBytes(s.lightViewProjs[i][:]))
+	}
+	base := 64 + cascadeCount*64
+	copy(out[base+0:base+16], float32sToBytes(s.cameraPos[:]))
+	copy(out[base+16:base+32], float32sToBytes(s.lightDir[:]))
+	copy(out[base+32:base+48], float32sToBytes(s.lightColor[:]))
+	copy(out[base+48:base+64], float32sToBytes(s.ambientColor[:]))
+	copy(out[base+64:base+80], float32sToBytes(s.skyColor[:]))
+	copy(out[base+80:base+96], float32sToBytes(s.groundColor[:]))
+	copy(out[base+96:base+112], float32sToBytes(s.cascadeSplits[:]))
 	return out
 }
 

@@ -189,6 +189,9 @@ func (t *fakeTexture) Format() gpu.TextureFormat { return t.desc.Format }
 func (t *fakeTexture) CreateView() gpu.TextureView {
 	return &fakeTextureView{}
 }
+func (t *fakeTexture) CreateLayerView(int) gpu.TextureView {
+	return &fakeTextureView{}
+}
 func (t *fakeTexture) Destroy() {}
 
 type fakeSampler struct {

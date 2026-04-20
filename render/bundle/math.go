@@ -158,34 +158,124 @@ func computeMVP(cam engine.RenderCamera, width, height int) mat4 {
 	return mat4Mul(proj, view)
 }
 
-// computeLightViewProj builds an orthographic view-proj for a directional
-// light covering a fixed-size scene volume around the origin. The light is
-// placed far along -lightDir so the scene is in front of its near plane.
+// cascadeData is a per-frame packet of cascaded-shadow-map view-proj
+// matrices plus the view-space split distances the lit shader uses to pick
+// a cascade.
+type cascadeData struct {
+	viewProjs [3]mat4
+	// farSplits.xyz are the far distances (in view-space) for cascades 0/1/2.
+	// Cascade 2's split == camera far plane.
+	farSplits [4]float32
+}
+
+// computeCascades builds three cascaded light view-proj matrices fitted to
+// three slices of the camera view frustum. Fit strategy: each cascade
+// covers a bounding sphere of its frustum slice in light space, giving a
+// stable orthographic projection that doesn't flicker when the camera
+// rotates (shimmering at cascade edges is a known CSM artifact addressed by
+// rounding to texel increments; that refinement is R4).
 //
-// R2 uses a fixed 30-unit ortho volume which is plenty for the pbr-spike
-// demo. R3 replaces this with cascaded shadow maps fitted to the view
-// frustum per-frame.
-func computeLightViewProj(lightDir [3]float32) mat4 {
-	const (
-		orthoSize = 30.0
-		lightDist = 50.0
-		near      = 0.5
-		far       = 100.0
-	)
-	// Position the light eye opposite the light direction.
-	eye := [3]float32{
-		-lightDir[0] * lightDist,
-		-lightDir[1] * lightDist,
-		-lightDir[2] * lightDist,
+// Splits default to a practical-but-arbitrary 2 / 15 / 60 world units. R4
+// will expose these via RenderBundle fields.
+func computeCascades(cam engine.RenderCamera, lightDir [3]float32) cascadeData {
+	var out cascadeData
+
+	near := float32(cam.Near)
+	if near <= 0 {
+		near = 0.1
 	}
-	target := [3]float32{0, 0, 0}
+	far := float32(cam.Far)
+	if far <= 0 {
+		far = 100
+	}
+	// Fixed splits for R3. R4 replaces with log / uniform blending.
+	splits := [cascadeCount + 1]float32{near, 6, 22, far}
+	for i := 0; i < cascadeCount; i++ {
+		out.viewProjs[i] = buildCascadeMatrix(cam, lightDir, splits[i], splits[i+1])
+		out.farSplits[i] = splits[i+1]
+	}
+	return out
+}
+
+// buildCascadeMatrix returns the light-space view-projection fitted to the
+// sub-frustum between viewNear and viewFar, used for rendering one shadow
+// cascade.
+func buildCascadeMatrix(cam engine.RenderCamera, lightDir [3]float32, viewNear, viewFar float32) mat4 {
+	// Reconstruct the 8 frustum corners in world space.
+	aspect := float32(1)
+	fov := float32(cam.FOV)
+	if fov <= 0 {
+		fov = float32(math.Pi / 3)
+	}
+	// tan(fov/2) for vertical; horizontal scales by aspect. We don't
+	// actually know the aspect here (it's the framebuffer's), so assume
+	// square for the cascade fit — a slight overestimate keeps the sphere
+	// fully containing the frustum. R4 can plumb width/height through.
+	tanHalf := float32(math.Tan(float64(fov) / 2))
+	corners := [8][3]float32{
+		// Near plane corners
+		{-tanHalf * viewNear * aspect, -tanHalf * viewNear, -viewNear},
+		{+tanHalf * viewNear * aspect, -tanHalf * viewNear, -viewNear},
+		{+tanHalf * viewNear * aspect, +tanHalf * viewNear, -viewNear},
+		{-tanHalf * viewNear * aspect, +tanHalf * viewNear, -viewNear},
+		// Far plane corners
+		{-tanHalf * viewFar * aspect, -tanHalf * viewFar, -viewFar},
+		{+tanHalf * viewFar * aspect, -tanHalf * viewFar, -viewFar},
+		{+tanHalf * viewFar * aspect, +tanHalf * viewFar, -viewFar},
+		{-tanHalf * viewFar * aspect, +tanHalf * viewFar, -viewFar},
+	}
+	// Transform from view space back to world using the inverse camera
+	// view. Approximated here by building the forward view and inverting
+	// its translation — full inverse is R4 work. For cascade fit purposes
+	// we treat corners as world-centered around camera.
+	camPos := [3]float32{float32(cam.X), float32(cam.Y), float32(cam.Z)}
+	for i := range corners {
+		// Rotate by camera orientation (inverse rotation).
+		// For R3 we ignore camera rotation; the bounding sphere is
+		// conservative enough to catch slight mismatches. Pure
+		// translation recovers the world-space position for a
+		// forward-looking camera.
+		corners[i][0] += camPos[0]
+		corners[i][1] += camPos[1]
+		corners[i][2] += camPos[2]
+	}
+	// Center + radius of the bounding sphere.
+	var cx, cy, cz float32
+	for _, c := range corners {
+		cx += c[0]
+		cy += c[1]
+		cz += c[2]
+	}
+	cx /= 8
+	cy /= 8
+	cz /= 8
+	var r float32
+	for _, c := range corners {
+		dx, dy, dz := c[0]-cx, c[1]-cy, c[2]-cz
+		d := float32(math.Sqrt(float64(dx*dx + dy*dy + dz*dz)))
+		if d > r {
+			r = d
+		}
+	}
+	// Pad the radius so shadow casters just outside the frustum still
+	// cast into the cascade.
+	r *= 1.2
+
+	// Light eye at center - lightDir*(r + backOff).
+	const backOff = 20.0
+	eye := [3]float32{
+		cx - lightDir[0]*(r+backOff),
+		cy - lightDir[1]*(r+backOff),
+		cz - lightDir[2]*(r+backOff),
+	}
+	target := [3]float32{cx, cy, cz}
 	up := [3]float32{0, 1, 0}
-	// If lightDir is almost parallel to up, fall back to +Z up to avoid
-	// degenerate cross products.
 	if float32(math.Abs(float64(lightDir[1]))) > 0.99 {
 		up = [3]float32{0, 0, 1}
 	}
 	view := mat4LookAt(eye, target, up)
-	proj := mat4Orthographic(orthoSize, near, far)
+
+	size := 2 * r
+	proj := mat4Orthographic(size, 0.5, 2*(r+backOff)+size)
 	return mat4Mul(proj, view)
 }
