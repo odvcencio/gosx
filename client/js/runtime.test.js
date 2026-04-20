@@ -630,10 +630,14 @@ class FakeElement {
     };
   }
 
-  getContext(kind) {
+  getContext(kind, options) {
     if (this.tagName !== "CANVAS") {
       return null;
     }
+    this.lastContextKind = kind;
+    this.lastContextOptions = options || null;
+    this.contextCalls = this.contextCalls || [];
+    this.contextCalls.push({ kind, options: options || null });
     if (kind === "2d") {
       if (this.ownerDocument && this.ownerDocument.disableCanvas2D) {
         return null;
@@ -4218,6 +4222,99 @@ test("bootstrap loads declarative Scene3D GLB model assets through the native re
   assert.ok(gl);
   assert.ok(gl.ops.some((entry) => entry[0] === "drawArrays" && entry[1] === gl.TRIANGLES && entry[3] >= 3));
   assert.equal(env.consoleLogs.error.length, 0);
+});
+
+test("bootstrap requests opaque WebGL canvas for opaque Scene3D backgrounds", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-opaque-canvas-root";
+
+  const env = createContext({
+    elements: [mount],
+    enableWebGL2: true,
+    disableCanvas2D: true,
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-opaque-canvas",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-opaque-canvas-root",
+          props: {
+            width: 640,
+            height: 360,
+            forceWebGL: true,
+            background: "#02030a",
+            camera: { z: 8 },
+            points: [
+              {
+                id: "stars",
+                count: 1,
+                positions: [{ x: 0, y: 0, z: 0 }],
+                sizes: [2],
+                colors: ["#ffffff"],
+              },
+            ],
+          },
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const canvas = mount.children[0];
+  const contextCall = canvas.contextCalls.find((call) => call.kind === "webgl2" && call.options && Object.prototype.hasOwnProperty.call(call.options, "alpha"));
+  assert.ok(contextCall);
+  assert.equal(contextCall.options.alpha, false);
+  assert.equal(contextCall.options.premultipliedAlpha, false);
+});
+
+test("bootstrap preserves transparent WebGL canvas when Scene3D asks for alpha", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-alpha-canvas-root";
+
+  const env = createContext({
+    elements: [mount],
+    enableWebGL2: true,
+    disableCanvas2D: true,
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-alpha-canvas",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-alpha-canvas-root",
+          props: {
+            width: 640,
+            height: 360,
+            forceWebGL: true,
+            canvasAlpha: true,
+            background: "#02030a",
+            camera: { z: 8 },
+            points: [
+              {
+                id: "stars",
+                count: 1,
+                positions: [{ x: 0, y: 0, z: 0 }],
+                sizes: [2],
+                colors: ["#ffffff"],
+              },
+            ],
+          },
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const canvas = mount.children[0];
+  const contextCall = canvas.contextCalls.find((call) => call.kind === "webgl2" && call.options && Object.prototype.hasOwnProperty.call(call.options, "alpha"));
+  assert.ok(contextCall);
+  assert.equal(contextCall.options.alpha, true);
+  assert.equal(contextCall.options.premultipliedAlpha, true);
 });
 
 test("bootstrap GLB loader extracts skin attributes and evaluates animation joint matrices", async () => {

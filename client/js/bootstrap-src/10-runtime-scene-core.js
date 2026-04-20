@@ -1758,6 +1758,16 @@
     });
   }
 
+  function sceneCanvasAlpha(props) {
+    if (props && typeof props.canvasAlpha === "boolean") {
+      return props.canvasAlpha;
+    }
+    const background = props && typeof props.background === "string"
+      ? props.background.trim().toLowerCase()
+      : "";
+    return background === "transparent" || background === "rgba(0,0,0,0)" || background === "rgba(0, 0, 0, 0)";
+  }
+
   function normalizeSceneCamera(raw, fallback) {
     const base = fallback || {};
     return {

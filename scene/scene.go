@@ -75,6 +75,7 @@ type Props struct {
 	PreferWebGL          *bool        `json:"preferWebGL,omitempty"`
 	ForceWebGL           *bool        `json:"forceWebGL,omitempty"`
 	PreferCanvas         *bool        `json:"preferCanvas,omitempty"`
+	CanvasAlpha          *bool        `json:"canvasAlpha,omitempty"`
 	DragToRotate         *bool        `json:"dragToRotate,omitempty"`
 	DeferPostFX          *bool        `json:"deferPostFX,omitempty"`
 	DeferPostFXDelayMS   int          `json:"deferPostFXDelayMS,omitempty"`
@@ -815,6 +816,7 @@ func (p Props) legacyBaseProps() map[string]any {
 	setBool(out, "preferWebGL", p.PreferWebGL)
 	setBool(out, "forceWebGL", p.ForceWebGL)
 	setBool(out, "preferCanvas", p.PreferCanvas)
+	setBool(out, "canvasAlpha", p.CanvasAlpha)
 	setBool(out, "dragToRotate", p.DragToRotate)
 	setBool(out, "deferPostFX", p.DeferPostFX)
 	setInt(out, "deferPostFXDelayMS", p.DeferPostFXDelayMS)

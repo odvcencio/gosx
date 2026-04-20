@@ -4258,9 +4258,10 @@
       create: function(canvas, props, capability) {
         const caps = capability || {};
         if (typeof createScenePBRRendererOrFallback === "function") {
+          const useCanvasAlpha = sceneCanvasAlpha(props);
           const gl = typeof canvas.getContext === "function" ? canvas.getContext("webgl2", {
-            alpha: true,
-            premultipliedAlpha: false,
+            alpha: useCanvasAlpha,
+            premultipliedAlpha: useCanvasAlpha,
             antialias: caps.tier === "full" && !caps.lowPower && !caps.reducedData,
             powerPreference: caps.lowPower || caps.tier === "constrained" ? "low-power" : "high-performance",
           }) : null;

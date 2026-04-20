@@ -6450,6 +6450,16 @@
     });
   }
 
+  function sceneCanvasAlpha(props) {
+    if (props && typeof props.canvasAlpha === "boolean") {
+      return props.canvasAlpha;
+    }
+    const background = props && typeof props.background === "string"
+      ? props.background.trim().toLowerCase()
+      : "";
+    return background === "transparent" || background === "rgba(0,0,0,0)" || background === "rgba(0, 0, 0, 0)";
+  }
+
   function normalizeSceneCamera(raw, fallback) {
     const base = fallback || {};
     return {
@@ -17533,9 +17543,10 @@ if (typeof window !== "undefined") {
       create: function(canvas, props, capability) {
         const caps = capability || {};
         if (typeof createScenePBRRendererOrFallback === "function") {
+          const useCanvasAlpha = sceneCanvasAlpha(props);
           const gl = typeof canvas.getContext === "function" ? canvas.getContext("webgl2", {
-            alpha: true,
-            premultipliedAlpha: false,
+            alpha: useCanvasAlpha,
+            premultipliedAlpha: useCanvasAlpha,
             antialias: caps.tier === "full" && !caps.lowPower && !caps.reducedData,
             powerPreference: caps.lowPower || caps.tier === "constrained" ? "low-power" : "high-performance",
           }) : null;
@@ -23494,9 +23505,10 @@ if (typeof window !== "undefined") {
         }
       }
       if (typeof createScenePBRRendererOrFallback === "function") {
+        const useCanvasAlpha = sceneCanvasAlpha(props);
         const gl = typeof canvas.getContext === "function" ? canvas.getContext("webgl2", {
-          alpha: true,
-          premultipliedAlpha: false,
+          alpha: useCanvasAlpha,
+          premultipliedAlpha: useCanvasAlpha,
           antialias: capability.tier === "full" && !capability.lowPower && !capability.reducedData,
           powerPreference: capability.lowPower || capability.tier === "constrained" ? "low-power" : "high-performance",
         }) : null;
