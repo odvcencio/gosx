@@ -3311,6 +3311,7 @@
         sceneState.instancedMeshes,
         sceneState.computeParticles,
         sceneState.postEffects,
+        sceneState.postFXMaxPixels,
       );
       syncSceneNodeSentinels(latestBundle);
       renderer.render(latestBundle, viewport);

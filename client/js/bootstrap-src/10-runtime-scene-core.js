@@ -1878,7 +1878,12 @@
     if (typeof sceneDecompressProps === "function") {
       sceneDecompressProps(props);
     }
+    const scene = sceneProps(props);
     const postEffects = scenePostEffects(props);
+    const postFXMaxPixels = Math.max(0, Math.floor(sceneNumber(
+      scene && scene.postFXMaxPixels,
+      sceneNumber(props && props.postFXMaxPixels, 0),
+    )));
     const deferPostFX = sceneBool(props && props.deferPostFX, sceneBool(props && props.progressivePostFX, false)) && postEffects.length > 0;
     const state = {
       background: typeof props.background === "string" && props.background ? props.background : "#08151f",
@@ -1892,6 +1897,7 @@
       computeParticles: sceneComputeParticles(props),
       materials: sceneMaterials(props),
       postEffects: deferPostFX ? [] : postEffects,
+      postFXMaxPixels: postFXMaxPixels,
       _deferredPostEffects: deferPostFX ? postEffects : null,
       _transitions: [],
       _scrollCamera: (sceneNumber(props.scrollCameraStart, 0) !== 0 || sceneNumber(props.scrollCameraEnd, 0) !== 0)
@@ -2974,7 +2980,7 @@
     return depth.far <= near || depth.near >= far;
   }
 
-  function createSceneRenderBundle(width, height, background, camera, objects, labels, sprites, lights, environment, timeSeconds, points, instancedMeshes, computeParticles, postEffects) {
+  function createSceneRenderBundle(width, height, background, camera, objects, labels, sprites, lights, environment, timeSeconds, points, instancedMeshes, computeParticles, postEffects, postFXMaxPixels) {
     const resolvedEnvironment = sceneResolveLightingEnvironment(environment, Array.isArray(lights) && lights.length > 0);
     const bundle = {
       bundleVersion: 1,
@@ -3021,6 +3027,10 @@
       worldMeshVertexCount: 0,
       objectCount: 0,
     };
+    const normalizedPostFXMaxPixels = Math.max(0, Math.floor(sceneNumber(postFXMaxPixels, 0)));
+    if (normalizedPostFXMaxPixels > 0) {
+      bundle.postFXMaxPixels = normalizedPostFXMaxPixels;
+    }
     const materialLookup = new Map();
     appendSceneGridToBundle(bundle, width, height);
     for (const object of objects) {

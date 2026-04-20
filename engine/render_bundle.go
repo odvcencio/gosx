@@ -320,4 +320,5 @@ type RenderBundle struct {
 	ObjectCount      int                      `json:"objectCount,omitempty"`
 	Animations       []RenderAnimation        `json:"animations,omitempty"`
 	PostEffects      []RenderPostEffect       `json:"postEffects,omitempty"`
+	PostFXMaxPixels  int                      `json:"postFXMaxPixels,omitempty"`
 }

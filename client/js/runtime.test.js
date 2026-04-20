@@ -5375,8 +5375,11 @@ test("bootstrap stamps and validates Scene3D IR bundles", async () => {
     [],
     [],
     [],
+    [],
+    921600,
   );
   assert.equal(bundle.bundleVersion, api.SCENE_RENDER_BUNDLE_VERSION);
+  assert.equal(bundle.postFXMaxPixels, 921600);
   assert.equal(JSON.stringify(api.validateSceneIR(bundle)), JSON.stringify({ valid: true, errors: [] }));
 
   const invalid = api.validateSceneIR({
