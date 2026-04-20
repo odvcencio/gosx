@@ -20,11 +20,11 @@ func TestNewBuildsAllPipelines(t *testing.T) {
 	}
 	defer r.Destroy()
 
-	if got := len(d.shaders); got != 5 {
-		t.Errorf("expected 5 shader modules (unlit+lit+shadow+cull+present), got %d", got)
+	if got := len(d.shaders); got != 7 {
+		t.Errorf("expected 7 shader modules (unlit+lit+shadow+cull+present+bright+blur), got %d", got)
 	}
-	if got := len(d.pipelines); got != 4 {
-		t.Errorf("expected 4 render pipelines (unlit+lit+shadow+present), got %d", got)
+	if got := len(d.pipelines); got != 6 {
+		t.Errorf("expected 6 render pipelines (unlit+lit+shadow+present+bright+blur), got %d", got)
 	}
 	if got := len(d.computePipelines); got != 1 {
 		t.Errorf("expected 1 compute pipeline (cull), got %d", got)
@@ -109,8 +109,8 @@ func TestFrameAlwaysEmitsCSMPlusMainPass(t *testing.T) {
 		t.Fatalf("expected 1 command encoder per frame, got %d", len(d.encoders))
 	}
 	passes := d.encoders[0].passes
-	if got := len(passes); got != 5 {
-		t.Fatalf("expected 5 passes (3 shadow + main HDR + present), got %d", got)
+	if got := len(passes); got != 8 {
+		t.Fatalf("expected 8 passes (3 shadow + main + 3 bloom + present), got %d", got)
 	}
 
 	// Shadow passes (indices 0..2) have only depth attachments.
@@ -130,7 +130,7 @@ func TestFrameAlwaysEmitsCSMPlusMainPass(t *testing.T) {
 		t.Error("main pass must have a depth attachment")
 	}
 	// Present pass tone-maps to the swap chain; color only, no depth.
-	present := passes[4]
+	present := passes[7]
 	if len(present.desc.ColorAttachments) != 1 {
 		t.Error("present pass must have one color attachment")
 	}
@@ -163,8 +163,8 @@ func TestFrameUnlitPassDispatches(t *testing.T) {
 		t.Fatalf("Frame: %v", err)
 	}
 	passes := d.encoders[0].passes
-	if len(passes) != 5 {
-		t.Fatalf("expected 5 passes (3 shadow + main HDR + present), got %d", len(passes))
+	if len(passes) != 8 {
+		t.Fatalf("expected 8 passes (3 shadow + main + 3 bloom + present), got %d", len(passes))
 	}
 	// None of the shadow cascades should draw pass-data meshes (R3 limitation).
 	for i := 0; i < 3; i++ {

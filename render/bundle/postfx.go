@@ -11,61 +11,10 @@ import (
 // native-compression tricks yet (R5 adds RGB9E5 / HDR10 compressed paths).
 const hdrFormat = gpu.FormatRGBA16Float
 
-// presentWGSL renders a full-screen triangle that samples the HDR
-// intermediate target, applies the Narkowicz ACES filmic curve as a tone
-// map, and writes the result to the swap chain.
-//
-// The full-screen triangle technique avoids the seam a fullscreen quad
-// would introduce at the diagonal and runs with zero vertex buffers.
-const presentWGSL = `
-struct VSOut {
-  @builtin(position) pos : vec4<f32>,
-  @location(0) uv : vec2<f32>,
-};
-
-@group(0) @binding(0) var hdrTexture : texture_2d<f32>;
-@group(0) @binding(1) var hdrSampler : sampler;
-
-@vertex
-fn vs_main(@builtin(vertex_index) vid : u32) -> VSOut {
-  // Oversized triangle: covers the [-1,1] viewport with a single primitive.
-  // UVs derived so texcoords map 0..1 across the visible rect.
-  var pos = array<vec2<f32>, 3>(
-    vec2<f32>(-1.0, -1.0),
-    vec2<f32>( 3.0, -1.0),
-    vec2<f32>(-1.0,  3.0),
-  );
-  var uv = array<vec2<f32>, 3>(
-    vec2<f32>(0.0, 1.0),
-    vec2<f32>(2.0, 1.0),
-    vec2<f32>(0.0, -1.0),
-  );
-  var out : VSOut;
-  out.pos = vec4<f32>(pos[vid], 0.0, 1.0);
-  out.uv = uv[vid];
-  return out;
-}
-
-// ACES filmic tone mapper — Narkowicz 2015 "ACES Filmic Tone Mapping Curve"
-// approximation. Good tradeoff of compute cost vs. match to reference ACES;
-// R5 can upgrade to the full Hill fit or RGB channel-independent shapers.
-fn acesFilmic(x : vec3<f32>) -> vec3<f32> {
-  let a = 2.51;
-  let b = 0.03;
-  let c = 2.43;
-  let d = 0.59;
-  let e = 0.14;
-  return clamp((x * (a * x + b)) / (x * (c * x + d) + e),
-               vec3<f32>(0.0), vec3<f32>(1.0));
-}
-
-@fragment
-fn fs_main(in : VSOut) -> @location(0) vec4<f32> {
-  let hdr = textureSample(hdrTexture, hdrSampler, in.uv).rgb;
-  let mapped = acesFilmic(hdr);
-  return vec4<f32>(mapped, 1.0);
-}
-`
+// presentWGSL — historically the ACES-only present shader. Now that bloom
+// is wired in, the actual present pipeline is built from composePresentWGSL
+// (see bloom.go). Kept here for reference + as a fallback if we ever want
+// to disable bloom via a config flag.
 
 // presentResources groups the HDR sampler and the present bind group that
 // binds the HDR texture view + sampler.
@@ -74,12 +23,13 @@ type presentResources struct {
 }
 
 // buildPresentPipeline constructs the tone-mapping composite pipeline. The
-// pipeline has no vertex buffers and two bind-group entries: the HDR
-// texture view (rebuilt on every resize) and the sampler (shared, stable).
+// pipeline has no vertex buffers and four bind-group entries: HDR view +
+// sampler, bloom view + sampler. The HDR and bloom views are rebuilt on
+// every surface resize.
 func (r *Renderer) buildPresentPipeline() error {
 	shader, err := r.device.CreateShaderModule(gpu.ShaderDesc{
-		SourceWGSL: presentWGSL,
-		Label:      "bundle.present",
+		SourceWGSL: composePresentWGSL,
+		Label:      "bundle.present.compose",
 	})
 	if err != nil {
 		return fmt.Errorf("bundle.buildPresentPipeline: %w", err)
@@ -156,20 +106,8 @@ func (r *Renderer) ensureHDR(width, height int) (gpu.TextureView, error) {
 	r.hdrWidth = width
 	r.hdrHeight = height
 
-	// Rebuild the present bind group every resize — views are frozen at
-	// creation time, so a new HDR texture demands a new bind group.
-	bg, err := r.device.CreateBindGroup(gpu.BindGroupDesc{
-		Layout: r.presentBGLayout,
-		Entries: []gpu.BindGroupEntry{
-			{Binding: 0, TextureView: r.hdrView},
-			{Binding: 1, Sampler: r.presentSampler},
-		},
-		Label: "bundle.present.bindgroup",
-	})
-	if err != nil {
-		return nil, fmt.Errorf("bundle.ensureHDR (bind group): %w", err)
-	}
-	r.presentBindGrp = bg
+	// Rebuilding the present bind group happens in ensureBloom because the
+	// bind group references BOTH the HDR view and the bloom chain's view.
 	return r.hdrView, nil
 }
 

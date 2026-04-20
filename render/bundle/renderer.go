@@ -83,6 +83,13 @@ type Renderer struct {
 	hdrWidth        int
 	hdrHeight       int
 
+	// Bloom chain (bright-pass + 2 blur passes → composited into present).
+	brightPipeline gpu.RenderPipeline
+	brightBGLayout gpu.BindGroupLayout
+	blurPipeline   gpu.RenderPipeline
+	blurBGLayout   gpu.BindGroupLayout
+	bloom          *bloomResources
+
 	// Caches keyed by identity strings, reused across frames.
 	passCache      map[string]*passResources
 	primitiveCache map[string]*primitiveResources
@@ -172,6 +179,9 @@ func New(cfg Config) (*Renderer, error) {
 	if err := r.buildPresentPipeline(); err != nil {
 		return nil, err
 	}
+	if err := r.buildBloomPipelines(); err != nil {
+		return nil, err
+	}
 	if err := r.buildBindGroups(); err != nil {
 		return nil, err
 	}
@@ -211,6 +221,16 @@ func (r *Renderer) Destroy() {
 	if r.hdrTex != nil {
 		r.hdrTex.Destroy()
 		r.hdrTex = nil
+	}
+	if r.bloom != nil {
+		destroyBloomResources(r.bloom)
+		r.bloom = nil
+	}
+	if r.brightPipeline != nil {
+		r.brightPipeline.Destroy()
+	}
+	if r.blurPipeline != nil {
+		r.blurPipeline.Destroy()
 	}
 	if r.presentPipeline != nil {
 		r.presentPipeline.Destroy()
@@ -312,13 +332,15 @@ func (r *Renderer) Frame(b engine.RenderBundle, width, height int, timeSeconds f
 	}
 
 	// The main pass now writes into the HDR intermediate instead of the
-	// swap chain. A separate present pass tone-maps HDR → swap chain at
-	// the end of the frame.
+	// swap chain. Bloom chain + present pass then tone-map HDR → swap chain.
 	hdrView, err := r.ensureHDR(width, height)
 	if err != nil {
 		return err
 	}
 	_ = hdrView // main pass picks it up via r.hdrView below
+	if err := r.ensureBloom(width, height); err != nil {
+		return err
+	}
 
 	// 3) Main pass — lit scene rendered to the HDR intermediate with depth.
 	mainPass := enc.BeginRenderPass(gpu.RenderPassDesc{
@@ -408,7 +430,10 @@ func (r *Renderer) Frame(b engine.RenderBundle, width, height int, timeSeconds f
 
 	mainPass.End()
 
-	// 4) Present pass — tone-map HDR to the swap chain with ACES filmic.
+	// 4) Bloom chain (bright-pass + horizontal + vertical Gaussian blurs).
+	r.recordBloomPasses(enc)
+
+	// 5) Present pass — HDR + bloom → ACES tone map → swap chain.
 	surfaceView, err := r.device.AcquireSurfaceView(r.surface)
 	if err != nil {
 		return fmt.Errorf("bundle.Frame: acquire surface view: %w", err)

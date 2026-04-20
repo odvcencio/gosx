@@ -44,17 +44,18 @@ func TestFrameInstancedMeshDispatches(t *testing.T) {
 	// Shared shadow-pass instance buffer = 1.
 	// Material uniform = 1.
 	// Cull resources (input + output + drawArgs + cullUniform) = 4.
-	// Total = 10.
-	if got := len(d.buffers) - buffersBefore; got != 10 {
-		t.Errorf("expected 10 new buffers (pos+col+nrm+uv+instance+material+4 cull), got %d", got)
+	// Bloom per-resize: blurH uniform + blurV uniform = 2.
+	// Total = 12.
+	if got := len(d.buffers) - buffersBefore; got != 12 {
+		t.Errorf("expected 12 new buffers (geometry + instance + material + cull + bloom), got %d", got)
 	}
 
 	if len(d.encoders) != 1 {
 		t.Fatalf("expected 1 command encoder, got %d", len(d.encoders))
 	}
 	passes := d.encoders[0].passes
-	if len(passes) != 5 {
-		t.Fatalf("expected 5 passes (3 shadow + main + present), got %d", len(passes))
+	if len(passes) != 8 {
+		t.Fatalf("expected 8 passes (3 shadow + main + 3 bloom + present), got %d", len(passes))
 	}
 	mainPass := passes[3]
 
@@ -136,24 +137,24 @@ func TestFrameDepthAttachmentResizes(t *testing.T) {
 	if err := r.Frame(empty, 400, 300, 0); err != nil {
 		t.Fatalf("Frame: %v", err)
 	}
-	// First frame adds the main-pass depth texture + HDR intermediate = +2.
-	if got := len(d.textures); got != baselineTextures+2 {
-		t.Fatalf("expected depth + HDR added on first frame, got %d total", got)
+	// First frame adds: depth + HDR + bloomA + bloomB = +4.
+	if got := len(d.textures); got != baselineTextures+4 {
+		t.Fatalf("expected depth + HDR + 2 bloom on first frame, got %d total", got)
 	}
 
 	// Same size — no allocation.
 	if err := r.Frame(empty, 400, 300, 0.016); err != nil {
 		t.Fatalf("Frame: %v", err)
 	}
-	if got := len(d.textures); got != baselineTextures+2 {
+	if got := len(d.textures); got != baselineTextures+4 {
 		t.Errorf("same-size reframe should reuse textures, got %d", got)
 	}
 
-	// Different size — both depth + HDR re-allocated = +2.
+	// Different size — depth + HDR + 2 bloom reallocated = +4.
 	if err := r.Frame(empty, 800, 600, 0.032); err != nil {
 		t.Fatalf("Frame: %v", err)
 	}
-	if got := len(d.textures); got != baselineTextures+4 {
-		t.Errorf("resize should add new depth + HDR, got %d total", got)
+	if got := len(d.textures); got != baselineTextures+8 {
+		t.Errorf("resize should add new depth + HDR + 2 bloom, got %d total", got)
 	}
 }
