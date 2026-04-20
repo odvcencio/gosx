@@ -13,24 +13,50 @@ import (
 // a gpu.Device. The Renderer is not safe for concurrent use; one instance
 // serves one canvas / one engine runtime.
 type Renderer struct {
-	device         gpu.Device
-	surface        gpu.Surface
-	surfaceFormat  gpu.TextureFormat
+	device        gpu.Device
+	surface       gpu.Surface
+	surfaceFormat gpu.TextureFormat
+	depthFormat   gpu.TextureFormat
 
-	unlitPipeline  gpu.RenderPipeline
-	unlitBGLayout  gpu.BindGroupLayout
+	// Pipelines created once and reused.
+	unlitPipeline      gpu.RenderPipeline
+	unlitBGLayout      gpu.BindGroupLayout
+	instancedPipeline  gpu.RenderPipeline
+	instancedBGLayout  gpu.BindGroupLayout
 
-	// Per-frame resources. Created lazily on first Frame and reused.
-	uniformBuf     gpu.Buffer
-	uniformBindGrp gpu.BindGroup
+	// Shared uniform buffer holding the MVP; bound by both pipelines.
+	uniformBuf             gpu.Buffer
+	unlitUniformBindGrp    gpu.BindGroup
+	instancedUniformBindGrp gpu.BindGroup
 
-	// Vertex buffer cache, keyed by RenderPassBundle.CacheKey. Entries with
-	// empty cache keys are not cached; they get a transient buffer each frame.
-	passCache map[string]*passResources
+	// Depth attachment, resized lazily to the surface dimensions.
+	depthTex      gpu.Texture
+	depthView     gpu.TextureView
+	depthWidth    int
+	depthHeight   int
+
+	// Caches keyed by identity strings. Entries created on first use and
+	// reused across frames; sizes never shrink.
+	passCache      map[string]*passResources
+	primitiveCache map[string]*primitiveResources
+
+	// A reusable per-instance transform buffer. Grows to fit the largest
+	// instance count seen so far; never shrinks. One buffer per renderer is
+	// fine for R1 since we draw instanced meshes sequentially.
+	instanceBuf      gpu.Buffer
+	instanceBufBytes int
 }
 
 // passResources holds the per-pass GPU buffers for a cached RenderPassBundle.
 type passResources struct {
+	positions   gpu.Buffer
+	colors      gpu.Buffer
+	vertexCount int
+}
+
+// primitiveResources holds the GPU vertex/color buffers for one instanced-mesh
+// Kind (e.g., "cube"). Uploaded once and reused across frames.
+type primitiveResources struct {
 	positions   gpu.Buffer
 	colors      gpu.Buffer
 	vertexCount int
@@ -44,8 +70,8 @@ type Config struct {
 	Surface gpu.Surface
 }
 
-// New constructs a Renderer. It immediately creates the unlit pipeline and
-// associated per-frame uniform resources.
+// New constructs a Renderer. It immediately creates both the unlit and
+// instanced pipelines plus the shared uniform bind groups.
 func New(cfg Config) (*Renderer, error) {
 	if cfg.Device == nil {
 		return nil, errors.New("bundle.New: device is required")
@@ -54,15 +80,23 @@ func New(cfg Config) (*Renderer, error) {
 		return nil, errors.New("bundle.New: surface is required")
 	}
 	r := &Renderer{
-		device:        cfg.Device,
-		surface:       cfg.Surface,
-		surfaceFormat: cfg.Device.PreferredSurfaceFormat(),
-		passCache:     make(map[string]*passResources),
+		device:         cfg.Device,
+		surface:        cfg.Surface,
+		surfaceFormat:  cfg.Device.PreferredSurfaceFormat(),
+		depthFormat:    gpu.FormatDepth24Plus,
+		passCache:      make(map[string]*passResources),
+		primitiveCache: make(map[string]*primitiveResources),
+	}
+	if err := r.buildUniformBuf(); err != nil {
+		return nil, err
 	}
 	if err := r.buildUnlitPipeline(); err != nil {
 		return nil, err
 	}
-	if err := r.buildUniforms(); err != nil {
+	if err := r.buildInstancedPipeline(); err != nil {
+		return nil, err
+	}
+	if err := r.buildBindGroups(); err != nil {
 		return nil, err
 	}
 	return r, nil
@@ -80,11 +114,31 @@ func (r *Renderer) Destroy() {
 		}
 	}
 	r.passCache = nil
+	for _, p := range r.primitiveCache {
+		if p.positions != nil {
+			p.positions.Destroy()
+		}
+		if p.colors != nil {
+			p.colors.Destroy()
+		}
+	}
+	r.primitiveCache = nil
+	if r.instanceBuf != nil {
+		r.instanceBuf.Destroy()
+		r.instanceBuf = nil
+	}
+	if r.depthTex != nil {
+		r.depthTex.Destroy()
+		r.depthTex = nil
+	}
 	if r.uniformBuf != nil {
 		r.uniformBuf.Destroy()
 	}
 	if r.unlitPipeline != nil {
 		r.unlitPipeline.Destroy()
+	}
+	if r.instancedPipeline != nil {
+		r.instancedPipeline.Destroy()
 	}
 }
 
@@ -102,6 +156,10 @@ func (r *Renderer) Frame(b engine.RenderBundle, width, height int, timeSeconds f
 	if err != nil {
 		return fmt.Errorf("bundle.Frame: acquire surface view: %w", err)
 	}
+	depthView, err := r.ensureDepth(width, height)
+	if err != nil {
+		return err
+	}
 
 	mvp := computeMVP(b.Camera, width, height)
 	r.device.Queue().WriteBuffer(r.uniformBuf, 0, float32sToBytes(mvp[:]))
@@ -116,28 +174,165 @@ func (r *Renderer) Frame(b engine.RenderBundle, width, height int, timeSeconds f
 			StoreOp:    gpu.StoreOpStore,
 			ClearValue: clear,
 		}},
-		Label: "bundle.unlit",
+		DepthStencilAttachment: &gpu.RenderPassDepthStencilAttachment{
+			View:            depthView,
+			DepthLoadOp:     gpu.LoadOpClear,
+			DepthStoreOp:    gpu.StoreOpStore,
+			DepthClearValue: 1.0,
+		},
+		Label: "bundle.frame",
 	})
-	pass.SetPipeline(r.unlitPipeline)
-	pass.SetBindGroup(0, r.uniformBindGrp)
 
-	// R1: iterate RenderPassBundle entries and draw with the unlit pipeline.
-	// Instanced meshes and finer-grained material dispatch land after this.
-	for _, pb := range b.Passes {
-		res, err := r.ensurePassBuffers(pb)
-		if err != nil {
-			return err
+	// Unlit pre-batched passes (existing scene Passes from the engine runtime).
+	if len(b.Passes) > 0 {
+		pass.SetPipeline(r.unlitPipeline)
+		pass.SetBindGroup(0, r.unlitUniformBindGrp)
+		for _, pb := range b.Passes {
+			res, err := r.ensurePassBuffers(pb)
+			if err != nil {
+				pass.End()
+				return err
+			}
+			if res == nil || res.vertexCount == 0 {
+				continue
+			}
+			pass.SetVertexBuffer(0, res.positions)
+			pass.SetVertexBuffer(1, res.colors)
+			pass.Draw(res.vertexCount, 1, 0, 0)
 		}
-		if res == nil || res.vertexCount == 0 {
-			continue
+	}
+
+	// Instanced meshes from the RenderInstancedMesh bundle entries.
+	if len(b.InstancedMeshes) > 0 {
+		pass.SetPipeline(r.instancedPipeline)
+		pass.SetBindGroup(0, r.instancedUniformBindGrp)
+		for _, im := range b.InstancedMeshes {
+			if im.InstanceCount <= 0 || len(im.Transforms) == 0 {
+				continue
+			}
+			prim, err := r.ensurePrimitive(im.Kind)
+			if err != nil {
+				pass.End()
+				return err
+			}
+			if prim == nil || prim.vertexCount == 0 {
+				continue
+			}
+			transformBytes := float64sToFloat32Bytes(im.Transforms)
+			if err := r.ensureInstanceBuffer(len(transformBytes)); err != nil {
+				pass.End()
+				return err
+			}
+			r.device.Queue().WriteBuffer(r.instanceBuf, 0, transformBytes)
+
+			pass.SetVertexBuffer(0, prim.positions)
+			pass.SetVertexBuffer(1, prim.colors)
+			pass.SetVertexBuffer(2, r.instanceBuf)
+			pass.Draw(prim.vertexCount, im.InstanceCount, 0, 0)
 		}
-		pass.SetVertexBuffer(0, res.positions)
-		pass.SetVertexBuffer(1, res.colors)
-		pass.Draw(res.vertexCount, 1, 0, 0)
 	}
 
 	pass.End()
 	r.device.Queue().Submit(enc.Finish())
+	return nil
+}
+
+// ensureDepth allocates or resizes the depth texture to match the surface.
+// The old texture is destroyed on size change; callers can call every frame
+// without worrying about leaks.
+func (r *Renderer) ensureDepth(width, height int) (gpu.TextureView, error) {
+	if r.depthTex != nil && r.depthWidth == width && r.depthHeight == height {
+		return r.depthView, nil
+	}
+	if r.depthTex != nil {
+		r.depthTex.Destroy()
+		r.depthTex = nil
+	}
+	tex, err := r.device.CreateTexture(gpu.TextureDesc{
+		Width:  width,
+		Height: height,
+		Format: r.depthFormat,
+		Usage:  gpu.TextureUsageRenderAttachment,
+		Label:  "bundle.depth",
+	})
+	if err != nil {
+		return nil, fmt.Errorf("bundle: create depth texture: %w", err)
+	}
+	r.depthTex = tex
+	r.depthView = tex.CreateView()
+	r.depthWidth = width
+	r.depthHeight = height
+	return r.depthView, nil
+}
+
+// ensurePrimitive uploads the geometry for an instanced-mesh Kind the first
+// time it's requested; subsequent calls reuse the cached GPU buffers.
+func (r *Renderer) ensurePrimitive(kind string) (*primitiveResources, error) {
+	if res, ok := r.primitiveCache[kind]; ok {
+		return res, nil
+	}
+	geo := primitiveForKind(kind)
+	if geo == nil {
+		// Unknown kind — skip silently. Future: log / diagnostic channel.
+		return nil, nil
+	}
+	posBytes := float32sToBytes(geo.positions)
+	colBytes := float32sToBytes(geo.colors)
+
+	posBuf, err := r.device.CreateBuffer(gpu.BufferDesc{
+		Size:  len(posBytes),
+		Usage: gpu.BufferUsageVertex | gpu.BufferUsageCopyDst,
+		Label: "bundle.primitive.positions:" + kind,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("bundle: create primitive position buffer: %w", err)
+	}
+	r.device.Queue().WriteBuffer(posBuf, 0, posBytes)
+
+	colBuf, err := r.device.CreateBuffer(gpu.BufferDesc{
+		Size:  len(colBytes),
+		Usage: gpu.BufferUsageVertex | gpu.BufferUsageCopyDst,
+		Label: "bundle.primitive.colors:" + kind,
+	})
+	if err != nil {
+		posBuf.Destroy()
+		return nil, fmt.Errorf("bundle: create primitive color buffer: %w", err)
+	}
+	r.device.Queue().WriteBuffer(colBuf, 0, colBytes)
+
+	res := &primitiveResources{
+		positions:   posBuf,
+		colors:      colBuf,
+		vertexCount: geo.vertexCount,
+	}
+	r.primitiveCache[kind] = res
+	return res, nil
+}
+
+// ensureInstanceBuffer grows the shared per-instance buffer to at least size
+// bytes. Growth is one-way — shrink is not worth the allocation churn.
+func (r *Renderer) ensureInstanceBuffer(size int) error {
+	if size <= r.instanceBufBytes {
+		return nil
+	}
+	if r.instanceBuf != nil {
+		r.instanceBuf.Destroy()
+		r.instanceBuf = nil
+	}
+	// Over-allocate 25% to absorb small growths without reallocating. The
+	// cost of the extra bytes is negligible; the cost of reallocating every
+	// frame when instance count oscillates is high.
+	grown := size + size/4
+	buf, err := r.device.CreateBuffer(gpu.BufferDesc{
+		Size:  grown,
+		Usage: gpu.BufferUsageVertex | gpu.BufferUsageCopyDst,
+		Label: "bundle.instance.transforms",
+	})
+	if err != nil {
+		return fmt.Errorf("bundle: create instance buffer: %w", err)
+	}
+	r.instanceBuf = buf
+	r.instanceBufBytes = grown
 	return nil
 }
 
@@ -234,6 +429,11 @@ func (r *Renderer) buildUnlitPipeline() error {
 			CullMode:  gpu.CullBack,
 			FrontFace: gpu.FrontFaceCCW,
 		},
+		DepthStencil: &gpu.DepthStencilState{
+			Format:            r.depthFormat,
+			DepthWriteEnabled: true,
+			DepthCompare:      gpu.CompareLess,
+		},
 		AutoLayout: true,
 		Label:      "bundle.unlit",
 	})
@@ -245,28 +445,111 @@ func (r *Renderer) buildUnlitPipeline() error {
 	return nil
 }
 
-func (r *Renderer) buildUniforms() error {
+// buildInstancedPipeline creates the per-instance-transform pipeline used
+// for RenderInstancedMesh entries. Slot 2 is a per-instance buffer carrying
+// a 4x4 matrix split across four vec4 attributes (locations 2..5).
+func (r *Renderer) buildInstancedPipeline() error {
+	shader, err := r.device.CreateShaderModule(gpu.ShaderDesc{
+		SourceWGSL: instancedWGSL,
+		Label:      "bundle.instanced",
+	})
+	if err != nil {
+		return fmt.Errorf("bundle.buildInstancedPipeline: %w", err)
+	}
+	pipeline, err := r.device.CreateRenderPipeline(gpu.RenderPipelineDesc{
+		Vertex: gpu.VertexStageDesc{
+			Module:     shader,
+			EntryPoint: "vs_main",
+			Buffers: []gpu.VertexBufferLayout{
+				{
+					ArrayStride: 12,
+					StepMode:    gpu.StepVertex,
+					Attributes: []gpu.VertexAttribute{
+						{ShaderLocation: 0, Offset: 0, Format: gpu.VertexFormatFloat32x3},
+					},
+				},
+				{
+					ArrayStride: 12,
+					StepMode:    gpu.StepVertex,
+					Attributes: []gpu.VertexAttribute{
+						{ShaderLocation: 1, Offset: 0, Format: gpu.VertexFormatFloat32x3},
+					},
+				},
+				{
+					ArrayStride: 64, // 4 vec4 = mat4
+					StepMode:    gpu.StepInstance,
+					Attributes: []gpu.VertexAttribute{
+						{ShaderLocation: 2, Offset: 0, Format: gpu.VertexFormatFloat32x4},
+						{ShaderLocation: 3, Offset: 16, Format: gpu.VertexFormatFloat32x4},
+						{ShaderLocation: 4, Offset: 32, Format: gpu.VertexFormatFloat32x4},
+						{ShaderLocation: 5, Offset: 48, Format: gpu.VertexFormatFloat32x4},
+					},
+				},
+			},
+		},
+		Fragment: gpu.FragmentStageDesc{
+			Module:     shader,
+			EntryPoint: "fs_main",
+			Targets: []gpu.ColorTargetState{
+				{Format: r.surfaceFormat, WriteMask: gpu.ColorWriteAll},
+			},
+		},
+		Primitive: gpu.PrimitiveState{
+			Topology:  gpu.TopologyTriangleList,
+			CullMode:  gpu.CullBack,
+			FrontFace: gpu.FrontFaceCCW,
+		},
+		DepthStencil: &gpu.DepthStencilState{
+			Format:            r.depthFormat,
+			DepthWriteEnabled: true,
+			DepthCompare:      gpu.CompareLess,
+		},
+		AutoLayout: true,
+		Label:      "bundle.instanced",
+	})
+	if err != nil {
+		return fmt.Errorf("bundle.buildInstancedPipeline: %w", err)
+	}
+	r.instancedPipeline = pipeline
+	r.instancedBGLayout = pipeline.GetBindGroupLayout(0)
+	return nil
+}
+
+func (r *Renderer) buildUniformBuf() error {
 	buf, err := r.device.CreateBuffer(gpu.BufferDesc{
 		Size:  64, // single mat4
 		Usage: gpu.BufferUsageUniform | gpu.BufferUsageCopyDst,
-		Label: "bundle.unlit.uniforms",
+		Label: "bundle.mvp",
 	})
 	if err != nil {
-		return fmt.Errorf("bundle.buildUniforms: %w", err)
-	}
-	bg, err := r.device.CreateBindGroup(gpu.BindGroupDesc{
-		Layout: r.unlitBGLayout,
-		Entries: []gpu.BindGroupEntry{
-			{Binding: 0, Buffer: buf, Offset: 0, Size: 64},
-		},
-		Label: "bundle.unlit.uniforms",
-	})
-	if err != nil {
-		buf.Destroy()
-		return fmt.Errorf("bundle.buildUniforms: %w", err)
+		return fmt.Errorf("bundle.buildUniformBuf: %w", err)
 	}
 	r.uniformBuf = buf
-	r.uniformBindGrp = bg
+	return nil
+}
+
+// buildBindGroups builds one bind group per pipeline, both pointing at the
+// shared MVP uniform buffer. WebGPU requires a bind group per pipeline
+// layout even when the underlying resource is identical.
+func (r *Renderer) buildBindGroups() error {
+	unlit, err := r.device.CreateBindGroup(gpu.BindGroupDesc{
+		Layout:  r.unlitBGLayout,
+		Entries: []gpu.BindGroupEntry{{Binding: 0, Buffer: r.uniformBuf, Size: 64}},
+		Label:   "bundle.unlit.bindgroup",
+	})
+	if err != nil {
+		return fmt.Errorf("bundle.buildBindGroups (unlit): %w", err)
+	}
+	inst, err := r.device.CreateBindGroup(gpu.BindGroupDesc{
+		Layout:  r.instancedBGLayout,
+		Entries: []gpu.BindGroupEntry{{Binding: 0, Buffer: r.uniformBuf, Size: 64}},
+		Label:   "bundle.instanced.bindgroup",
+	})
+	if err != nil {
+		return fmt.Errorf("bundle.buildBindGroups (instanced): %w", err)
+	}
+	r.unlitUniformBindGrp = unlit
+	r.instancedUniformBindGrp = inst
 	return nil
 }
 

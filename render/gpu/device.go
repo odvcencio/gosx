@@ -18,6 +18,7 @@ type Device interface {
 	PreferredSurfaceFormat() TextureFormat
 
 	CreateBuffer(BufferDesc) (Buffer, error)
+	CreateTexture(TextureDesc) (Texture, error)
 	CreateShaderModule(ShaderDesc) (ShaderModule, error)
 	CreateRenderPipeline(RenderPipelineDesc) (RenderPipeline, error)
 	CreateBindGroup(BindGroupDesc) (BindGroup, error)
@@ -187,3 +188,38 @@ type RenderPassDepthStencilAttachment struct {
 // TextureView is a view into a texture — the binding unit for render pass
 // attachments and shader texture bindings.
 type TextureView interface{}
+
+// Texture is a GPU-side image resource. Call CreateView to obtain a bindable
+// TextureView. Destroy frees the underlying memory.
+type Texture interface {
+	Width() int
+	Height() int
+	Format() TextureFormat
+	CreateView() TextureView
+	Destroy()
+}
+
+// TextureUsage is a bitset of usages a texture is valid for.
+type TextureUsage uint32
+
+const (
+	TextureUsageNone             TextureUsage = 0
+	TextureUsageCopySrc          TextureUsage = 1 << 0
+	TextureUsageCopyDst          TextureUsage = 1 << 1
+	TextureUsageTextureBinding   TextureUsage = 1 << 2
+	TextureUsageStorageBinding   TextureUsage = 1 << 3
+	TextureUsageRenderAttachment TextureUsage = 1 << 4
+)
+
+// Has reports whether u contains the requested bit.
+func (u TextureUsage) Has(bit TextureUsage) bool { return u&bit == bit }
+
+// TextureDesc configures a texture at creation time.
+type TextureDesc struct {
+	Width, Height        int
+	DepthOrArrayLayers   int // 0 or 1 = 2D single layer
+	Format               TextureFormat
+	Usage                TextureUsage
+	SampleCount          int // 0 or 1 = non-MSAA
+	Label                string
+}

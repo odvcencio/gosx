@@ -19,30 +19,43 @@ func TestNewBuildsPipeline(t *testing.T) {
 	}
 	defer r.Destroy()
 
-	if got := len(d.shaders); got != 1 {
-		t.Errorf("expected 1 shader module, got %d", got)
+	if got := len(d.shaders); got != 2 {
+		t.Errorf("expected 2 shader modules (unlit + instanced), got %d", got)
 	}
-	if got := len(d.pipelines); got != 1 {
-		t.Errorf("expected 1 render pipeline, got %d", got)
+	if got := len(d.pipelines); got != 2 {
+		t.Errorf("expected 2 render pipelines (unlit + instanced), got %d", got)
 	}
 	if got := len(d.buffers); got != 1 {
-		t.Errorf("expected 1 buffer (uniform), got %d", got)
+		t.Errorf("expected 1 buffer (shared mvp uniform), got %d", got)
 	}
-	if got := len(d.bindGroups); got != 1 {
-		t.Errorf("expected 1 bind group, got %d", got)
+	if got := len(d.bindGroups); got != 2 {
+		t.Errorf("expected 2 bind groups (one per pipeline layout), got %d", got)
 	}
 
-	if d.pipelines[0].desc.Vertex.EntryPoint != "vs_main" {
-		t.Errorf("expected vertex entry vs_main, got %q", d.pipelines[0].desc.Vertex.EntryPoint)
+	// Unlit pipeline = 2 vertex buffers (positions + colors).
+	unlit := d.pipelines[0]
+	if unlit.desc.Vertex.EntryPoint != "vs_main" {
+		t.Errorf("unlit: expected vertex entry vs_main, got %q", unlit.desc.Vertex.EntryPoint)
 	}
-	if d.pipelines[0].desc.Fragment.EntryPoint != "fs_main" {
-		t.Errorf("expected fragment entry fs_main, got %q", d.pipelines[0].desc.Fragment.EntryPoint)
+	if got := len(unlit.desc.Vertex.Buffers); got != 2 {
+		t.Errorf("unlit: expected 2 vertex buffers, got %d", got)
 	}
-	if got := len(d.pipelines[0].desc.Vertex.Buffers); got != 2 {
-		t.Errorf("expected 2 vertex buffers (positions + colors), got %d", got)
+	if unlit.desc.DepthStencil == nil {
+		t.Error("unlit: expected depth-stencil state to be attached")
+	} else if unlit.desc.DepthStencil.Format != gpu.FormatDepth24Plus {
+		t.Errorf("unlit: expected depth24plus, got %v", unlit.desc.DepthStencil.Format)
 	}
-	if d.pipelines[0].desc.Primitive.CullMode != gpu.CullBack {
-		t.Errorf("expected back-face culling, got %v", d.pipelines[0].desc.Primitive.CullMode)
+
+	// Instanced pipeline = 3 vertex buffers (positions + colors + instance mat4).
+	inst := d.pipelines[1]
+	if got := len(inst.desc.Vertex.Buffers); got != 3 {
+		t.Errorf("instanced: expected 3 vertex buffers, got %d", got)
+	}
+	if got := inst.desc.Vertex.Buffers[2].StepMode; got != gpu.StepInstance {
+		t.Errorf("instanced: slot 2 should be step-instance, got %v", got)
+	}
+	if got := len(inst.desc.Vertex.Buffers[2].Attributes); got != 4 {
+		t.Errorf("instanced: slot 2 should have 4 attributes (mat4 as 4x vec4), got %d", got)
 	}
 }
 

@@ -95,3 +95,25 @@ type surface struct {
 type textureView struct {
 	js js.Value
 }
+
+// texture wraps a GPUTexture.
+type texture struct {
+	js     js.Value
+	width  int
+	height int
+	format gpu.TextureFormat
+}
+
+func (t *texture) Width() int                { return t.width }
+func (t *texture) Height() int               { return t.height }
+func (t *texture) Format() gpu.TextureFormat { return t.format }
+
+func (t *texture) CreateView() gpu.TextureView {
+	return &textureView{js: t.js.Call("createView")}
+}
+
+func (t *texture) Destroy() {
+	if !t.js.IsUndefined() {
+		t.js.Call("destroy")
+	}
+}

@@ -7,6 +7,34 @@ package jsgpu
 
 import "github.com/odvcencio/gosx/render/gpu"
 
+func encodeTextureUsage(u gpu.TextureUsage) int {
+	// WebGPU GPUTextureUsage numeric values (stable, part of the spec).
+	const (
+		usageCopySrc          = 0x01
+		usageCopyDst          = 0x02
+		usageTextureBinding   = 0x04
+		usageStorageBinding   = 0x08
+		usageRenderAttachment = 0x10
+	)
+	var out int
+	if u.Has(gpu.TextureUsageCopySrc) {
+		out |= usageCopySrc
+	}
+	if u.Has(gpu.TextureUsageCopyDst) {
+		out |= usageCopyDst
+	}
+	if u.Has(gpu.TextureUsageTextureBinding) {
+		out |= usageTextureBinding
+	}
+	if u.Has(gpu.TextureUsageStorageBinding) {
+		out |= usageStorageBinding
+	}
+	if u.Has(gpu.TextureUsageRenderAttachment) {
+		out |= usageRenderAttachment
+	}
+	return out
+}
+
 func encodeBufferUsage(u gpu.BufferUsage) int {
 	// WebGPU GPUBufferUsage numeric values (stable, part of the spec).
 	const (

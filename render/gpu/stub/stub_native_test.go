@@ -24,6 +24,13 @@ func TestStubReturnsUnsupported(t *testing.T) {
 			mustErr(func() error { _, err := d.CreateBuffer(gpu.BufferDesc{Size: 16}); return err }),
 		},
 		{
+			"CreateTexture",
+			mustErr(func() error {
+				_, err := d.CreateTexture(gpu.TextureDesc{Width: 16, Height: 16})
+				return err
+			}),
+		},
+		{
 			"CreateShaderModule",
 			mustErr(func() error { _, err := d.CreateShaderModule(gpu.ShaderDesc{SourceWGSL: ""}); return err }),
 		},

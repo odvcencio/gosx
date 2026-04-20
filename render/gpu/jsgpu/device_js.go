@@ -90,6 +90,41 @@ func (d *Device) CreateBuffer(desc gpu.BufferDesc) (gpu.Buffer, error) {
 	return &buffer{js: js, size: desc.Size, usage: desc.Usage}, nil
 }
 
+// CreateTexture allocates a GPU texture.
+func (d *Device) CreateTexture(desc gpu.TextureDesc) (gpu.Texture, error) {
+	if desc.Width <= 0 || desc.Height <= 0 {
+		return nil, fmt.Errorf("jsgpu: %w: texture dimensions must be > 0", gpu.ErrInvalidDesc)
+	}
+	layers := desc.DepthOrArrayLayers
+	if layers == 0 {
+		layers = 1
+	}
+	sampleCount := desc.SampleCount
+	if sampleCount == 0 {
+		sampleCount = 1
+	}
+	dict := map[string]any{
+		"size": map[string]any{
+			"width":              desc.Width,
+			"height":             desc.Height,
+			"depthOrArrayLayers": layers,
+		},
+		"format":      encodeTextureFormat(desc.Format),
+		"usage":       encodeTextureUsage(desc.Usage),
+		"sampleCount": sampleCount,
+	}
+	if desc.Label != "" {
+		dict["label"] = desc.Label
+	}
+	js := d.dev.Call("createTexture", dict)
+	return &texture{
+		js:     js,
+		width:  desc.Width,
+		height: desc.Height,
+		format: desc.Format,
+	}, nil
+}
+
 // CreateShaderModule compiles a WGSL source module.
 func (d *Device) CreateShaderModule(desc gpu.ShaderDesc) (gpu.ShaderModule, error) {
 	if desc.SourceWGSL == "" {

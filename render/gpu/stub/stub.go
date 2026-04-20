@@ -21,6 +21,7 @@ func New() *Device { return &Device{} }
 func (*Device) Queue() gpu.Queue                                          { return stubQueue{} }
 func (*Device) PreferredSurfaceFormat() gpu.TextureFormat                 { return gpu.FormatUndefined }
 func (*Device) CreateBuffer(gpu.BufferDesc) (gpu.Buffer, error)           { return nil, gpu.ErrUnsupported }
+func (*Device) CreateTexture(gpu.TextureDesc) (gpu.Texture, error)        { return nil, gpu.ErrUnsupported }
 func (*Device) CreateShaderModule(gpu.ShaderDesc) (gpu.ShaderModule, error) {
 	return nil, gpu.ErrUnsupported
 }

@@ -33,3 +33,42 @@ fn fs_main(in : VSOut) -> @location(0) vec4<f32> {
   return vec4<f32>(in.color, 1.0);
 }
 `
+
+// instancedWGSL is the R1 instanced-mesh shader. Identical to unlitWGSL
+// except that the position is pre-multiplied by a per-instance mat4
+// assembled from four vec4 attributes (locations 2..5). Split across four
+// attributes because WebGPU doesn't allow mat4 as a vertex attribute
+// directly — the layout emits four consecutive float32x4 slots.
+const instancedWGSL = `
+struct Uniforms {
+  mvp : mat4x4<f32>,
+};
+
+@group(0) @binding(0) var<uniform> u : Uniforms;
+
+struct VSOut {
+  @builtin(position) pos : vec4<f32>,
+  @location(0) color : vec3<f32>,
+};
+
+@vertex
+fn vs_main(
+  @location(0) pos : vec3<f32>,
+  @location(1) color : vec3<f32>,
+  @location(2) m0 : vec4<f32>,
+  @location(3) m1 : vec4<f32>,
+  @location(4) m2 : vec4<f32>,
+  @location(5) m3 : vec4<f32>,
+) -> VSOut {
+  let instance : mat4x4<f32> = mat4x4<f32>(m0, m1, m2, m3);
+  var out : VSOut;
+  out.pos = u.mvp * instance * vec4<f32>(pos, 1.0);
+  out.color = color;
+  return out;
+}
+
+@fragment
+fn fs_main(in : VSOut) -> @location(0) vec4<f32> {
+  return vec4<f32>(in.color, 1.0);
+}
+`
