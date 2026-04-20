@@ -10,8 +10,9 @@ package bundle
 //     constant bias. Receiver-plane depth bias arrives with CSM in R3.
 //
 // Material inputs come from a per-mesh-entry MaterialUniforms (group 1):
-// baseColor, metalness, roughness, emissive. When no material is supplied
-// the renderer defaults to baseColor=vertex-color, metal=0, roughness=0.6.
+// baseColor, metalness, roughness, emissive, and texture flags. When no
+// material is supplied the renderer defaults to baseColor=vertex-color,
+// metal=0, roughness=0.6.
 const litWGSL = `
 struct Scene {
   viewProj         : mat4x4<f32>,
@@ -28,9 +29,11 @@ struct Scene {
 };
 
 struct Material {
-  baseColor    : vec4<f32>, // rgb + a  (a unused for R2, reserved for alpha)
-  pbrParams    : vec4<f32>, // x=metalness, y=roughness, z=emissiveStrength, w=useVertexColor
-  emissive     : vec4<f32>,
+  baseColor     : vec4<f32>, // rgb + a  (a unused for R2, reserved for alpha)
+  pbrParams     : vec4<f32>, // x=metalness, y=roughness, z=emissiveStrength, w=useVertexColor
+  emissive      : vec4<f32>,
+  textureParams : vec4<f32>, // x=hasBaseColor, y=hasNormal, z=hasRoughMap, w=hasMetalMap
+  textureParams2: vec4<f32>, // x=hasEmissiveMap
 };
 
 @group(0) @binding(0) var<uniform> scene             : Scene;
@@ -39,6 +42,11 @@ struct Material {
 @group(1) @binding(0) var<uniform> material          : Material;
 @group(1) @binding(1) var          baseColorTexture  : texture_2d<f32>;
 @group(1) @binding(2) var          baseColorSampler  : sampler;
+@group(1) @binding(3) var          normalMapTexture  : texture_2d<f32>;
+@group(1) @binding(4) var          normalMapSampler  : sampler;
+@group(1) @binding(5) var          roughnessMapTex   : texture_2d<f32>;
+@group(1) @binding(6) var          metalnessMapTex   : texture_2d<f32>;
+@group(1) @binding(7) var          emissiveMapTex    : texture_2d<f32>;
 
 struct VSOut {
   @builtin(position) pos : vec4<f32>,
@@ -134,9 +142,29 @@ fn fresnelSchlick(F0 : vec3<f32>, VdotH : f32) -> vec3<f32> {
   return F0 + (vec3<f32>(1.0) - F0) * k;
 }
 
+fn perturbNormal(geomN : vec3<f32>, worldPos : vec3<f32>, uv : vec2<f32>) -> vec3<f32> {
+  let q1 = dpdx(worldPos);
+  let q2 = dpdy(worldPos);
+  let st1 = dpdx(uv);
+  let st2 = dpdy(uv);
+  let det = st1.x * st2.y - st2.x * st1.y;
+  if (abs(det) < 1e-5) {
+    return geomN;
+  }
+
+  let tangentRaw = (q1 * st2.y - q2 * st1.y) / det;
+  let T = normalize(tangentRaw - geomN * dot(geomN, tangentRaw));
+  let B = normalize(cross(geomN, T));
+  let mapped = textureSample(normalMapTexture, normalMapSampler, uv).xyz * 2.0 - vec3<f32>(1.0);
+  return normalize(mat3x3<f32>(T, B, geomN) * mapped);
+}
+
 @fragment
 fn fs_main(in : VSOut) -> FSOut {
-  let N = normalize(in.worldNrm);
+  let geomN = normalize(in.worldNrm);
+  let mappedN = perturbNormal(geomN, in.worldPos, in.uv);
+  let hasNormalMap = step(0.5, material.textureParams.y);
+  let N = normalize(mix(geomN, mappedN, hasNormalMap));
   let V = normalize(scene.cameraPos.xyz - in.worldPos);
   let L = normalize(-scene.lightDir.xyz);
   let H = normalize(V + L);
@@ -154,8 +182,16 @@ fn fs_main(in : VSOut) -> FSOut {
   let solid = mix(material.baseColor.rgb, in.color, useVertex);
   let sampled = textureSample(baseColorTexture, baseColorSampler, in.uv).rgb;
   let baseColor = solid * sampled;
-  let metalness = clamp(material.pbrParams.x, 0.0, 1.0);
-  let roughness = clamp(material.pbrParams.y, 0.04, 1.0);
+
+  // Per-texel PBR inputs: each map's .r channel scales the corresponding
+  // uniform factor. hasRoughMap / hasMetalMap gates the lookup so materials
+  // without maps keep their flat factors.
+  let hasRoughMap = step(0.5, material.textureParams.z);
+  let hasMetalMap = step(0.5, material.textureParams.w);
+  let roughSample = textureSample(roughnessMapTex, baseColorSampler, in.uv).r;
+  let metalSample = textureSample(metalnessMapTex, baseColorSampler, in.uv).r;
+  let metalness = clamp(material.pbrParams.x * mix(1.0, metalSample, hasMetalMap), 0.0, 1.0);
+  let roughness = clamp(material.pbrParams.y * mix(1.0, roughSample, hasRoughMap), 0.04, 1.0);
 
   // F0: 0.04 for dielectrics, baseColor for metals, linearly interpolated.
   let F0 = mix(vec3<f32>(0.04), baseColor, metalness);
@@ -181,7 +217,11 @@ fn fs_main(in : VSOut) -> FSOut {
   // down with one scalar.
   let hemi = mix(scene.groundColor.rgb, scene.skyColor.rgb, N.y * 0.5 + 0.5);
   let ambient  = baseColor * hemi * scene.ambientColor.rgb * scene.ambientColor.a;
-  let emissive = material.emissive.rgb * material.pbrParams.z;
+  // Emissive: scalar strength × (emissive tint × optional emissive map sample).
+  let hasEmissiveMap = step(0.5, material.textureParams2.x);
+  let emissiveSample = textureSample(emissiveMapTex, baseColorSampler, in.uv).rgb;
+  let emissiveTint = material.emissive.rgb * mix(vec3<f32>(1.0), emissiveSample, hasEmissiveMap);
+  let emissive = emissiveTint * material.pbrParams.z;
   let color = direct + ambient + emissive;
   var out : FSOut;
   out.color  = vec4<f32>(color, 1.0);

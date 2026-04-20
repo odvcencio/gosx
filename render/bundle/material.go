@@ -21,6 +21,16 @@ type materialFingerprint struct {
 	// textureURL: "" means no texture; the fallback 1×1 white is bound so
 	// the bind group layout stays static.
 	textureURL string
+	// normalURL: "" means no normal map; the shader keeps the interpolated
+	// geometric normal and ignores the bound fallback texture.
+	normalURL string
+	// roughnessURL / metalnessURL / emissiveURL: separate glTF-PBR map
+	// slots. When set the shader samples the map's red channel and
+	// multiplies it against the scalar factor in pbrParams. Empty = fallback
+	// white, which degrades to the flat factor only (no tint).
+	roughnessURL string
+	metalnessURL string
+	emissiveURL  string
 	// useVertexColor = 1 when the renderer should mix in the per-vertex color
 	// as baseColor. Unlit-fallback legacy primitives (cube/plane/sphere)
 	// set this; explicit RenderMaterial entries clear it.
@@ -34,8 +44,9 @@ type materialResources struct {
 }
 
 // materialUniformSize is the std140-aligned size of the WGSL Material struct.
-// Three vec4 = 48 bytes; padded to 64 for safety against driver quirks.
-const materialUniformSize = 64
+// Five vec4 records = 80 bytes (baseColor + pbrParams + emissive + two
+// texture-flag vectors covering baseColor/normal/roughness/metal/emissive).
+const materialUniformSize = 80
 
 // resolveMaterialFingerprint picks the effective material for one instanced
 // mesh. Lookup prefers bundle.Materials[MaterialIndex]; out-of-range or
@@ -89,6 +100,10 @@ func materialFromRender(mat engine.RenderMaterial) materialFingerprint {
 		emissiveB:        quantize(base[2]),
 		emissiveStrength: quantize(emissiveStrength),
 		textureURL:       mat.Texture,
+		normalURL:        mat.NormalMap,
+		roughnessURL:     mat.RoughnessMap,
+		metalnessURL:     mat.MetalnessMap,
+		emissiveURL:      mat.EmissiveMap,
 		useVertexColor:   false,
 	}
 }
@@ -110,9 +125,9 @@ func dequantize(u uint16) float32 { return float32(u) / 1024 }
 
 // ensureMaterial vends a (uniform-buffer, bind-group) pair for this
 // fingerprint, creating + uploading on cache miss. The bind group includes
-// the material uniform buffer, a baseColor texture view, and a color
-// sampler — WebGPU bind-group layouts are fixed, so unspecified texture
-// URLs fall back to the 1×1 white texture.
+// the material uniform buffer, base-color texture view, normal-map texture
+// view, and shared color sampler — WebGPU bind-group layouts are fixed, so
+// unspecified texture URLs fall back to the 1×1 white texture.
 func (r *Renderer) ensureMaterial(fp materialFingerprint) (*materialResources, error) {
 	if r.litMaterialLayout == nil {
 		return nil, fmt.Errorf("bundle: material layout not built")
@@ -135,6 +150,26 @@ func (r *Renderer) ensureMaterial(fp materialFingerprint) (*materialResources, e
 		buf.Destroy()
 		return nil, fmt.Errorf("bundle: resolve material texture: %w", err)
 	}
+	normalTex, err := r.ensureMaterialTexture(fp.normalURL)
+	if err != nil {
+		buf.Destroy()
+		return nil, fmt.Errorf("bundle: resolve material normal map: %w", err)
+	}
+	roughTex, err := r.ensureMaterialTexture(fp.roughnessURL)
+	if err != nil {
+		buf.Destroy()
+		return nil, fmt.Errorf("bundle: resolve roughness map: %w", err)
+	}
+	metalTex, err := r.ensureMaterialTexture(fp.metalnessURL)
+	if err != nil {
+		buf.Destroy()
+		return nil, fmt.Errorf("bundle: resolve metalness map: %w", err)
+	}
+	emissiveTex, err := r.ensureMaterialTexture(fp.emissiveURL)
+	if err != nil {
+		buf.Destroy()
+		return nil, fmt.Errorf("bundle: resolve emissive map: %w", err)
+	}
 
 	bg, err := r.device.CreateBindGroup(gpu.BindGroupDesc{
 		Layout: r.litMaterialLayout,
@@ -142,6 +177,11 @@ func (r *Renderer) ensureMaterial(fp materialFingerprint) (*materialResources, e
 			{Binding: 0, Buffer: buf, Size: materialUniformSize},
 			{Binding: 1, TextureView: tex.view},
 			{Binding: 2, Sampler: r.materialSampler},
+			{Binding: 3, TextureView: normalTex.view},
+			{Binding: 4, Sampler: r.materialSampler},
+			{Binding: 5, TextureView: roughTex.view},
+			{Binding: 6, TextureView: metalTex.view},
+			{Binding: 7, TextureView: emissiveTex.view},
 		},
 		Label: "bundle.material.bindgroup",
 	})
@@ -155,12 +195,23 @@ func (r *Renderer) ensureMaterial(fp materialFingerprint) (*materialResources, e
 }
 
 // materialUniformBytes encodes the Material struct layout expected by
-// litWGSL: baseColor (vec4), pbrParams (vec4: metal/rough/emissiveK/useVertex),
-// emissive (vec4). 48 bytes padded to 64.
+// litWGSL. Layout in bytes:
+//
+//   0..16  baseColor     vec4 (rgba)
+//  16..32  pbrParams     vec4 (metalness, roughness, emissiveStrength, useVertexColor)
+//  32..48  emissive      vec4 (rgba)
+//  48..64  textureParams vec4 (hasBaseColor, hasNormal, hasRoughMap, hasMetalMap)
+//  64..80  textureParams2 vec4 (hasEmissiveMap, 0, 0, 0)
 func materialUniformBytes(fp materialFingerprint) []byte {
 	useVertex := float32(0)
 	if fp.useVertexColor {
 		useVertex = 1
+	}
+	flag := func(url string) float32 {
+		if url == "" {
+			return 0
+		}
+		return 1
 	}
 	values := []float32{
 		// baseColor (rgba)
@@ -169,6 +220,10 @@ func materialUniformBytes(fp materialFingerprint) []byte {
 		dequantize(fp.metalness), dequantize(fp.roughness), dequantize(fp.emissiveStrength), useVertex,
 		// emissive (rgba)
 		dequantize(fp.emissiveR), dequantize(fp.emissiveG), dequantize(fp.emissiveB), 1,
+		// textureParams (hasBaseColor, hasNormal, hasRough, hasMetal)
+		flag(fp.textureURL), flag(fp.normalURL), flag(fp.roughnessURL), flag(fp.metalnessURL),
+		// textureParams2 (hasEmissive, 0, 0, 0)
+		flag(fp.emissiveURL), 0, 0, 0,
 	}
 	out := make([]byte, materialUniformSize)
 	copy(out[:len(values)*4], float32sToBytes(values))
