@@ -24,12 +24,13 @@ type Renderer struct {
 	depthFormat   gpu.TextureFormat
 
 	// Pipelines created once and reused across frames.
-	unlitPipeline    gpu.RenderPipeline
-	unlitBGLayout    gpu.BindGroupLayout
-	litPipeline      gpu.RenderPipeline
-	litBGLayout      gpu.BindGroupLayout
-	shadowPipeline   gpu.RenderPipeline
-	shadowBGLayout   gpu.BindGroupLayout
+	unlitPipeline      gpu.RenderPipeline
+	unlitBGLayout      gpu.BindGroupLayout
+	litPipeline        gpu.RenderPipeline
+	litBGLayout        gpu.BindGroupLayout
+	litMaterialLayout  gpu.BindGroupLayout
+	shadowPipeline     gpu.RenderPipeline
+	shadowBGLayout     gpu.BindGroupLayout
 
 	// Scene uniforms (viewProj + lightViewProj + camera + light). 192 bytes.
 	sceneUniformBuf gpu.Buffer
@@ -55,6 +56,7 @@ type Renderer struct {
 	// Caches keyed by identity strings, reused across frames.
 	passCache      map[string]*passResources
 	primitiveCache map[string]*primitiveResources
+	materialCache  map[materialFingerprint]*materialResources
 
 	// Reusable per-instance transform buffer. Grows one-way to fit the
 	// largest instance count seen. R2 uses a single buffer since instanced
@@ -103,6 +105,7 @@ func New(cfg Config) (*Renderer, error) {
 		depthFormat:    gpu.FormatDepth24Plus,
 		passCache:      make(map[string]*passResources),
 		primitiveCache: make(map[string]*primitiveResources),
+		materialCache:  make(map[materialFingerprint]*materialResources),
 	}
 	if err := r.buildUniformBuffers(); err != nil {
 		return nil, err
@@ -136,6 +139,12 @@ func (r *Renderer) Destroy() {
 		destroyPrimitiveResources(p)
 	}
 	r.primitiveCache = nil
+	for _, m := range r.materialCache {
+		if m != nil && m.buf != nil {
+			m.buf.Destroy()
+		}
+	}
+	r.materialCache = nil
 	if r.instanceBuf != nil {
 		r.instanceBuf.Destroy()
 		r.instanceBuf = nil
@@ -245,11 +254,25 @@ func (r *Renderer) Frame(b engine.RenderBundle, width, height int, timeSeconds f
 		}
 	}
 
-	// Lit instanced meshes.
+	// Lit instanced meshes. Resolve each entry's material before binding
+	// because material bind groups are created lazily and may write their
+	// backing uniform buffer — writeBuffer is disallowed inside a pass, so
+	// this materialization happens between the two passes (shadow pass
+	// already ended) rather than mid-draw.
 	if len(b.InstancedMeshes) > 0 {
+		materials := make([]*materialResources, len(b.InstancedMeshes))
+		for i, im := range b.InstancedMeshes {
+			fp := resolveMaterialFingerprint(b, im)
+			mat, err := r.ensureMaterial(fp)
+			if err != nil {
+				mainPass.End()
+				return err
+			}
+			materials[i] = mat
+		}
 		mainPass.SetPipeline(r.litPipeline)
 		mainPass.SetBindGroup(0, r.litBindGrp)
-		for _, im := range b.InstancedMeshes {
+		for i, im := range b.InstancedMeshes {
 			if im.InstanceCount <= 0 || len(im.Transforms) == 0 {
 				continue
 			}
@@ -261,8 +284,7 @@ func (r *Renderer) Frame(b engine.RenderBundle, width, height int, timeSeconds f
 			if prim == nil || prim.vertexCount == 0 {
 				continue
 			}
-			// Instance buffer already uploaded in recordShadowPass; safe to
-			// reuse because the lit pass doesn't overwrite it.
+			mainPass.SetBindGroup(1, materials[i].bindGroup)
 			mainPass.SetVertexBuffer(0, prim.positions)
 			mainPass.SetVertexBuffer(1, prim.colors)
 			mainPass.SetVertexBuffer(2, prim.normals)
@@ -634,6 +656,7 @@ func (r *Renderer) buildLitPipeline() error {
 	}
 	r.litPipeline = pipeline
 	r.litBGLayout = pipeline.GetBindGroupLayout(0)
+	r.litMaterialLayout = pipeline.GetBindGroupLayout(1)
 	return nil
 }
 

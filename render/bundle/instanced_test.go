@@ -43,8 +43,9 @@ func TestFrameInstancedMeshDispatches(t *testing.T) {
 
 	// Primitive geometry: positions + colors + normals = 3 buffers.
 	// Instance buffer = 1 buffer.
-	if got := len(d.buffers) - buffersBefore; got != 4 {
-		t.Errorf("expected 4 new buffers (pos+col+nrm+instance), got %d", got)
+	// Material uniform (resolved for the cube's default material) = 1 buffer.
+	if got := len(d.buffers) - buffersBefore; got != 5 {
+		t.Errorf("expected 5 new buffers (pos+col+nrm+instance+material), got %d", got)
 	}
 
 	if len(d.encoders) != 1 {

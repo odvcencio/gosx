@@ -1,15 +1,17 @@
 package bundle
 
-// litWGSL is the R2 lit + shadowed shader used for RenderInstancedMesh draws.
+// litWGSL is the R2 physically-based lit + shadowed shader.
 //
-// It implements a pragmatic PBR approximation:
-//   - Lambertian diffuse scaled by per-vertex color (acting as baseColor)
-//   - Optional directional-light shadow sampling via a comparison sampler
-//   - A fixed metal=0 / roughness=0.7 bias until per-material uniforms land
+// Lighting model:
+//   - Direct: Cook-Torrance specular (GGX D, Smith V, Schlick F) plus
+//     energy-conserving Lambertian diffuse.
+//   - Indirect: constant ambient scaled by baseColor until IBL lands in R3.
+//   - Shadow: comparison-sampled directional shadow map with a conservative
+//     constant bias. Receiver-plane depth bias arrives with CSM in R3.
 //
-// The shadow bias is conservative (0.005) to avoid shadow acne on the
-// primitive geometry. Expect follow-up shadowing work to switch to
-// receiver-plane depth bias in R3 when CSM arrives.
+// Material inputs come from a per-mesh-entry MaterialUniforms (group 1):
+// baseColor, metalness, roughness, emissive. When no material is supplied
+// the renderer defaults to baseColor=vertex-color, metal=0, roughness=0.6.
 const litWGSL = `
 struct Scene {
   viewProj       : mat4x4<f32>,
@@ -20,9 +22,16 @@ struct Scene {
   ambientColor   : vec4<f32>,
 };
 
-@group(0) @binding(0) var<uniform> scene   : Scene;
-@group(0) @binding(1) var          shadowMap : texture_depth_2d;
+struct Material {
+  baseColor    : vec4<f32>, // rgb + a  (a unused for R2, reserved for alpha)
+  pbrParams    : vec4<f32>, // x=metalness, y=roughness, z=emissiveStrength, w=useVertexColor
+  emissive     : vec4<f32>,
+};
+
+@group(0) @binding(0) var<uniform> scene         : Scene;
+@group(0) @binding(1) var          shadowMap     : texture_depth_2d;
 @group(0) @binding(2) var          shadowSampler : sampler_comparison;
+@group(1) @binding(0) var<uniform> material      : Material;
 
 struct VSOut {
   @builtin(position) pos : vec4<f32>,
@@ -44,8 +53,6 @@ fn vs_main(
 ) -> VSOut {
   let model = mat4x4<f32>(m0, m1, m2, m3);
   let world = model * vec4<f32>(pos, 1.0);
-  // Assume uniform scaling for R2; generic inverse-transpose on the normal
-  // lives in R3 when per-instance scale diverges from 1:1:1 in practice.
   let worldNormal = normalize((model * vec4<f32>(normal, 0.0)).xyz);
 
   var out : VSOut;
@@ -58,7 +65,6 @@ fn vs_main(
 }
 
 fn sampleShadow(lightUV : vec4<f32>) -> f32 {
-  // NDC → [0,1] UV, flipping Y for texture space.
   let proj = lightUV.xyz / lightUV.w;
   let uv   = vec2<f32>(proj.x * 0.5 + 0.5, 0.5 - proj.y * 0.5);
   if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) {
@@ -69,17 +75,68 @@ fn sampleShadow(lightUV : vec4<f32>) -> f32 {
   return textureSampleCompare(shadowMap, shadowSampler, uv, depthRef);
 }
 
+// GGX / Trowbridge-Reitz normal distribution.
+fn distributionGGX(NdotH : f32, roughness : f32) -> f32 {
+  let a  = roughness * roughness;
+  let a2 = a * a;
+  let d  = NdotH * NdotH * (a2 - 1.0) + 1.0;
+  return a2 / (3.141592653589793 * d * d + 1e-7);
+}
+
+// Smith joint visibility approximation (Hammon 2017): cancels out the 4*NdotL*NdotV.
+fn geometrySmith(NdotV : f32, NdotL : f32, roughness : f32) -> f32 {
+  let a = roughness * roughness;
+  let ggxV = NdotL * (NdotV * (1.0 - a) + a);
+  let ggxL = NdotV * (NdotL * (1.0 - a) + a);
+  return 0.5 / max(ggxV + ggxL, 1e-5);
+}
+
+fn fresnelSchlick(F0 : vec3<f32>, VdotH : f32) -> vec3<f32> {
+  let k = pow(clamp(1.0 - VdotH, 0.0, 1.0), 5.0);
+  return F0 + (vec3<f32>(1.0) - F0) * k;
+}
+
 @fragment
 fn fs_main(in : VSOut) -> @location(0) vec4<f32> {
   let N = normalize(in.worldNrm);
+  let V = normalize(scene.cameraPos.xyz - in.worldPos);
   let L = normalize(-scene.lightDir.xyz);
-  let lambert = max(dot(N, L), 0.0);
+  let H = normalize(V + L);
 
+  let NdotL = max(dot(N, L), 0.0);
+  let NdotV = max(dot(N, V), 1e-4);
+  let NdotH = max(dot(N, H), 0.0);
+  let VdotH = max(dot(V, H), 0.0);
+
+  // Material resolution: vertex color acts as baseColor when the material
+  // flags it (useVertexColor = 1) so legacy primitives remain visible
+  // without per-material uniforms.
+  let useVertex = step(0.5, material.pbrParams.w);
+  let baseColor = mix(material.baseColor.rgb, in.color, useVertex);
+  let metalness = clamp(material.pbrParams.x, 0.0, 1.0);
+  let roughness = clamp(material.pbrParams.y, 0.04, 1.0);
+
+  // F0: 0.04 for dielectrics, baseColor for metals, linearly interpolated.
+  let F0 = mix(vec3<f32>(0.04), baseColor, metalness);
+
+  let D = distributionGGX(NdotH, roughness);
+  let G = geometrySmith(NdotV, NdotL, roughness);
+  let F = fresnelSchlick(F0, VdotH);
+
+  let specular = D * G * F;
+
+  // Energy-conserving diffuse (kD = (1 - F) * (1 - metalness)).
+  let kS = F;
+  let kD = (vec3<f32>(1.0) - kS) * (1.0 - metalness);
+  let diffuse = kD * baseColor / 3.141592653589793;
+
+  let radiance = scene.lightColor.rgb * scene.lightColor.a;
   let shadow = sampleShadow(in.lightUV);
+  let direct = (diffuse + specular) * radiance * NdotL * shadow;
 
-  let direct = in.color * scene.lightColor.rgb * scene.lightColor.a * lambert * shadow;
-  let ambient = in.color * scene.ambientColor.rgb * scene.ambientColor.a;
-  let color = direct + ambient;
+  let ambient  = baseColor * scene.ambientColor.rgb * scene.ambientColor.a;
+  let emissive = material.emissive.rgb * material.pbrParams.z;
+  let color = direct + ambient + emissive;
   return vec4<f32>(color, 1.0);
 }
 `
