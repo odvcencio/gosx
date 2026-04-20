@@ -10,14 +10,15 @@ import (
 type fakeDevice struct {
 	format gpu.TextureFormat
 
-	buffers      []*fakeBuffer
-	textures     []*fakeTexture
-	samplers     []*fakeSampler
-	shaders      []*fakeShader
-	pipelines    []*fakePipeline
-	bindGroups   []*fakeBindGroup
-	encoders     []*fakeEncoder
-	surfaceViews int
+	buffers          []*fakeBuffer
+	textures         []*fakeTexture
+	samplers         []*fakeSampler
+	shaders          []*fakeShader
+	pipelines        []*fakePipeline
+	computePipelines []*fakeComputePipeline
+	bindGroups       []*fakeBindGroup
+	encoders         []*fakeEncoder
+	surfaceViews     int
 
 	queue *fakeQueue
 }
@@ -71,6 +72,12 @@ func (d *fakeDevice) CreateCommandEncoder() gpu.CommandEncoder {
 	e := &fakeEncoder{}
 	d.encoders = append(d.encoders, e)
 	return e
+}
+
+func (d *fakeDevice) CreateComputePipeline(desc gpu.ComputePipelineDesc) (gpu.ComputePipeline, error) {
+	p := &fakeComputePipeline{desc: desc, layout: &fakeBindGroupLayout{}}
+	d.computePipelines = append(d.computePipelines, p)
+	return p, nil
 }
 
 func (d *fakeDevice) AcquireSurfaceView(gpu.Surface) (gpu.TextureView, error) {
@@ -142,7 +149,8 @@ func (b *fakeBindGroup) Destroy() {}
 
 // fakeEncoder and fakeRenderPass record calls.
 type fakeEncoder struct {
-	passes []*fakeRenderPass
+	passes        []*fakeRenderPass
+	computePasses []*fakeComputePass
 }
 
 func (e *fakeEncoder) BeginRenderPass(desc gpu.RenderPassDesc) gpu.RenderPassEncoder {
@@ -151,7 +159,37 @@ func (e *fakeEncoder) BeginRenderPass(desc gpu.RenderPassDesc) gpu.RenderPassEnc
 	return p
 }
 
+func (e *fakeEncoder) BeginComputePass() gpu.ComputePassEncoder {
+	p := &fakeComputePass{}
+	e.computePasses = append(e.computePasses, p)
+	return p
+}
+
 func (e *fakeEncoder) Finish() gpu.CommandBuffer { return &fakeCommandBuffer{} }
+
+type fakeComputePipeline struct {
+	desc   gpu.ComputePipelineDesc
+	layout *fakeBindGroupLayout
+}
+
+func (p *fakeComputePipeline) GetBindGroupLayout(int) gpu.BindGroupLayout { return p.layout }
+func (p *fakeComputePipeline) Destroy()                                   {}
+
+type fakeComputePass struct {
+	pipelineSet  bool
+	bindGroupSet bool
+	dispatches   []fakeDispatch
+	ended        bool
+}
+
+type fakeDispatch struct{ x, y, z int }
+
+func (p *fakeComputePass) SetPipeline(gpu.ComputePipeline) { p.pipelineSet = true }
+func (p *fakeComputePass) SetBindGroup(int, gpu.BindGroup) { p.bindGroupSet = true }
+func (p *fakeComputePass) DispatchWorkgroups(x, y, z int) {
+	p.dispatches = append(p.dispatches, fakeDispatch{x, y, z})
+}
+func (p *fakeComputePass) End() { p.ended = true }
 
 type fakeRenderPass struct {
 	desc         gpu.RenderPassDesc
@@ -174,6 +212,7 @@ func (p *fakeRenderPass) Draw(vc, ic, fv, fi int) {
 	p.draws = append(p.draws, fakeDraw{vc, ic, fv, fi})
 }
 func (p *fakeRenderPass) DrawIndexed(int, int, int, int, int) {}
+func (p *fakeRenderPass) DrawIndirect(gpu.Buffer, int)        { p.draws = append(p.draws, fakeDraw{}) }
 func (p *fakeRenderPass) End()                                { p.ended = true }
 
 type fakeCommandBuffer struct{}

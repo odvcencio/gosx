@@ -22,6 +22,7 @@ type Device interface {
 	CreateSampler(SamplerDesc) (Sampler, error)
 	CreateShaderModule(ShaderDesc) (ShaderModule, error)
 	CreateRenderPipeline(RenderPipelineDesc) (RenderPipeline, error)
+	CreateComputePipeline(ComputePipelineDesc) (ComputePipeline, error)
 	CreateBindGroup(BindGroupDesc) (BindGroup, error)
 	CreateCommandEncoder() CommandEncoder
 
@@ -144,10 +145,34 @@ type RenderPipelineDesc struct {
 	Label        string
 }
 
+// ComputePipeline is an immutable compiled compute pipeline state object.
+type ComputePipeline interface {
+	GetBindGroupLayout(group int) BindGroupLayout
+	Destroy()
+}
+
+// ComputePipelineDesc describes a compute pipeline. Only AutoLayout is
+// supported by the WebGPU backend for R3.
+type ComputePipelineDesc struct {
+	Module     ShaderModule
+	EntryPoint string
+	AutoLayout bool
+	Label      string
+}
+
 // CommandEncoder accumulates GPU commands into a CommandBuffer for submission.
 type CommandEncoder interface {
 	BeginRenderPass(RenderPassDesc) RenderPassEncoder
+	BeginComputePass() ComputePassEncoder
 	Finish() CommandBuffer
+}
+
+// ComputePassEncoder records dispatch commands within a single compute pass.
+type ComputePassEncoder interface {
+	SetPipeline(ComputePipeline)
+	SetBindGroup(group int, bg BindGroup)
+	DispatchWorkgroups(x, y, z int)
+	End()
 }
 
 // CommandBuffer is an immutable, submittable batch of GPU commands.
@@ -161,6 +186,11 @@ type RenderPassEncoder interface {
 	SetIndexBuffer(buf Buffer, format IndexFormat)
 	Draw(vertexCount, instanceCount, firstVertex, firstInstance int)
 	DrawIndexed(indexCount, instanceCount, firstIndex, baseVertex, firstInstance int)
+	// DrawIndirect pulls draw arguments from buf at offset bytes. The buffer
+	// must have been created with BufferUsageIndirect. Args layout is the
+	// WebGPU-standard [vertexCount, instanceCount, firstVertex, firstInstance]
+	// as 4× u32 little-endian.
+	DrawIndirect(buf Buffer, offset int)
 	End()
 }
 

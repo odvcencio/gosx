@@ -95,6 +95,19 @@ func (p *renderPipeline) Destroy() {
 	// WebGPU has no explicit pipeline destroy; GC handles it.
 }
 
+// computePipeline wraps a GPUComputePipeline.
+type computePipeline struct {
+	js js.Value
+}
+
+func (p *computePipeline) GetBindGroupLayout(group int) gpu.BindGroupLayout {
+	return &bindGroupLayout{js: p.js.Call("getBindGroupLayout", group)}
+}
+
+func (p *computePipeline) Destroy() {
+	// WebGPU has no explicit pipeline destroy; GC handles it.
+}
+
 // bindGroupLayout wraps a GPUBindGroupLayout.
 type bindGroupLayout struct {
 	js js.Value

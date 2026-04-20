@@ -29,6 +29,9 @@ func (*Device) CreateShaderModule(gpu.ShaderDesc) (gpu.ShaderModule, error) {
 func (*Device) CreateRenderPipeline(gpu.RenderPipelineDesc) (gpu.RenderPipeline, error) {
 	return nil, gpu.ErrUnsupported
 }
+func (*Device) CreateComputePipeline(gpu.ComputePipelineDesc) (gpu.ComputePipeline, error) {
+	return nil, gpu.ErrUnsupported
+}
 func (*Device) CreateBindGroup(gpu.BindGroupDesc) (gpu.BindGroup, error) {
 	return nil, gpu.ErrUnsupported
 }

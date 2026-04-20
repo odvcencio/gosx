@@ -199,6 +199,28 @@ func (d *Device) CreateRenderPipeline(desc gpu.RenderPipelineDesc) (gpu.RenderPi
 	return &renderPipeline{js: js}, nil
 }
 
+// CreateComputePipeline compiles a compute pipeline.
+func (d *Device) CreateComputePipeline(desc gpu.ComputePipelineDesc) (gpu.ComputePipeline, error) {
+	if desc.Module == nil {
+		return nil, fmt.Errorf("jsgpu: %w: nil compute shader module", gpu.ErrInvalidDesc)
+	}
+	if !desc.AutoLayout {
+		return nil, fmt.Errorf("jsgpu: %w: only AutoLayout compute pipelines in R3", gpu.ErrUnsupported)
+	}
+	dict := map[string]any{
+		"layout": "auto",
+		"compute": map[string]any{
+			"module":     desc.Module.(*shaderModule).js,
+			"entryPoint": desc.EntryPoint,
+		},
+	}
+	if desc.Label != "" {
+		dict["label"] = desc.Label
+	}
+	js := d.dev.Call("createComputePipeline", dict)
+	return &computePipeline{js: js}, nil
+}
+
 // CreateBindGroup creates a bind group. Layout must come from a pipeline's
 // GetBindGroupLayout for AutoLayout pipelines.
 func (d *Device) CreateBindGroup(desc gpu.BindGroupDesc) (gpu.BindGroup, error) {
