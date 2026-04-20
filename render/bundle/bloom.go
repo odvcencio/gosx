@@ -116,10 +116,19 @@ fn fs_main(in : VSOut) -> @location(0) vec4<f32> {
 }
 `
 
-// composePresentWGSL replaces the original present shader when bloom is
-// enabled: samples both HDR and bloom, adds them, then tone-maps the sum.
-// Bloom contributes additively (not energy-conserving — that's R5 with PBR
-// exposure + proper emissive authoring).
+// composePresentWGSL is the R4 present shader. In one pass it: (1) samples
+// the HDR target and bloom target at the center plus four neighbors, (2)
+// applies ACES tone mapping to each sample, and (3) runs a cheap
+// edge-detect-and-blend pseudo-FXAA on the tone-mapped samples, outputting
+// to the swap chain. Five fetches × five tone-maps per pixel — cheap on
+// any WebGPU-capable GPU and rounds out the R4 post-FX chain
+// (bloom + ACES + FXAA) in a single compose pass.
+//
+// The anti-aliasing here is a compact approximation, not full FXAA 3.11:
+// edges are detected by luma contrast, then the pixel is blended toward
+// the 5-tap average weighted by contrast. Fine detail is preserved in
+// low-contrast regions; jaggies soften on high-contrast edges. R5 can drop
+// in full FXAA 3.11 as a second pass if the quality gap matters.
 const composePresentWGSL = `
 struct VSOut {
   @builtin(position) pos : vec4<f32>,
@@ -159,13 +168,46 @@ fn acesFilmic(x : vec3<f32>) -> vec3<f32> {
                vec3<f32>(0.0), vec3<f32>(1.0));
 }
 
+fn luma(c : vec3<f32>) -> f32 {
+  return dot(c, vec3<f32>(0.2126, 0.7152, 0.0722));
+}
+
+// toneMapAt samples HDR + bloom at uv, sums them with the bloom intensity
+// dial, and tone-maps the result — so each FXAA tap operates on the final
+// visual luminance the viewer would see.
+fn toneMapAt(uv : vec2<f32>) -> vec3<f32> {
+  let hdr   = textureSample(hdrTexture, hdrSampler, uv).rgb;
+  let bloom = textureSample(bloomTexture, bloomSampler, uv).rgb;
+  return acesFilmic(hdr + bloom * 0.2);
+}
+
 @fragment
 fn fs_main(in : VSOut) -> @location(0) vec4<f32> {
-  let hdr   = textureSample(hdrTexture, hdrSampler, in.uv).rgb;
-  let bloom = textureSample(bloomTexture, bloomSampler, in.uv).rgb;
-  // Bloom intensity dial — 0.2 is a soft feathering, artist-tweakable in R5.
-  let mixed = hdr + bloom * 0.2;
-  return vec4<f32>(acesFilmic(mixed), 1.0);
+  let dims = vec2<f32>(textureDimensions(hdrTexture, 0));
+  let tx = 1.0 / dims;
+
+  let c = toneMapAt(in.uv);
+  let n = toneMapAt(in.uv + vec2<f32>(0.0, -tx.y));
+  let s = toneMapAt(in.uv + vec2<f32>(0.0,  tx.y));
+  let e = toneMapAt(in.uv + vec2<f32>( tx.x, 0.0));
+  let w = toneMapAt(in.uv + vec2<f32>(-tx.x, 0.0));
+
+  let lumaC = luma(c);
+  let lumaN = luma(n);
+  let lumaS = luma(s);
+  let lumaE = luma(e);
+  let lumaW = luma(w);
+
+  let lumaMin = min(lumaC, min(min(lumaN, lumaS), min(lumaE, lumaW)));
+  let lumaMax = max(lumaC, max(max(lumaN, lumaS), max(lumaE, lumaW)));
+  let contrast = lumaMax - lumaMin;
+
+  // smoothstep turns the binary edge test into a soft transition so we
+  // don't see AA "popping" around the contrast threshold.
+  let edgeWeight = smoothstep(0.05, 0.20, contrast);
+  let blur5 = (c + n + s + e + w) * 0.2;
+  let color = mix(c, blur5, edgeWeight);
+  return vec4<f32>(color, 1.0);
 }
 `
 
