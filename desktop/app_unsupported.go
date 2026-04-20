@@ -2,7 +2,10 @@
 
 package desktop
 
-import "fmt"
+import (
+	"fmt"
+	"net/http"
+)
 
 type unsupportedApp struct{}
 
@@ -54,5 +57,9 @@ func (unsupportedApp) Maximize() error { return ErrUnsupported }
 func (unsupportedApp) Restore() error  { return ErrUnsupported }
 func (unsupportedApp) Focus() error    { return ErrUnsupported }
 func (unsupportedApp) SetTitle(string) error {
+	return ErrUnsupported
+}
+
+func (unsupportedApp) Serve(string, http.Handler) error {
 	return ErrUnsupported
 }

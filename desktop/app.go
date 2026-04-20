@@ -3,6 +3,7 @@ package desktop
 import (
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 )
 
@@ -68,6 +69,7 @@ type platformApp interface {
 	Restore() error
 	Focus() error
 	SetTitle(title string) error
+	Serve(prefix string, handler http.Handler) error
 }
 
 // New validates options and constructs a platform desktop app.

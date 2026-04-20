@@ -4,9 +4,11 @@ package desktop
 
 import (
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"syscall"
 	"unsafe"
@@ -26,11 +28,18 @@ type windowsApp struct {
 	envHandler        *environmentCompletedHandler
 	controllerHandler *controllerCompletedHandler
 	webMsgHandler     *webMessageReceivedHandler
+	resHandler        *webResourceRequestedHandler
 
 	// Pending bootstrap script to register on the next controller creation.
 	// Cached because AddScriptToExecuteOnDocumentCreated requires a live
 	// webview; callers may queue before Run starts.
 	pendingBootstrap string
+
+	// Registered (prefix, handler) routes for the app:// (or any scheme)
+	// web-resource filter. Ordered list: first match wins. Initially
+	// empty; populated via App.Serve, consumed by the WebView2
+	// resource-requested event handler on every matching request.
+	servedRoutes []*servedRoute
 }
 
 func newPlatformApp(options Options) (platformApp, error) {
@@ -216,11 +225,31 @@ func (a *windowsApp) onControllerCreated(hr uintptr, controller *coreWebView2Con
 		return
 	}
 
+	// Register the resource-requested handler that powers App.Serve.
+	// Filter installation happens per-route as Serve is called; the
+	// event handler is shared across all filters.
+	resHandler := newWebResourceRequestedHandler(a)
+	if err := webview.addWebResourceRequested(resHandler); err != nil {
+		a.failRun(err)
+		return
+	}
+	// Replay any filters registered before the webview came up.
+	a.mu.Lock()
+	pendingRoutes := append([]*servedRoute(nil), a.servedRoutes...)
+	a.mu.Unlock()
+	for _, route := range pendingRoutes {
+		if err := webview.addWebResourceRequestedFilter(filterURI(route.prefix)); err != nil {
+			a.failRun(err)
+			return
+		}
+	}
+
 	a.mu.Lock()
 	a.controller = controller
 	a.webview = webview
 	a.settings = settings
 	a.webMsgHandler = msgHandler
+	a.resHandler = resHandler
 	html := a.options.HTML
 	url := a.options.URL
 	bootstrap := a.pendingBootstrap
@@ -450,6 +479,44 @@ func (a *windowsApp) SetTitle(title string) error {
 	a.options.Title = title
 	a.mu.Unlock()
 	return setWindowTitle(hwnd, title)
+}
+
+// Serve registers a handler for URIs whose scheme+host+path start with
+// prefix. Called any time during the app lifecycle — if invoked before
+// Run the filter is cached and replayed on webview creation; if after,
+// the filter is installed immediately.
+//
+// Prefix semantics match Go's http.ServeMux loosely: "app://assets/*"
+// matches everything rooted at "app://assets/". Registrations are
+// first-match-wins in insertion order, so specific prefixes should be
+// registered before generic ones.
+func (a *windowsApp) Serve(prefix string, handler http.Handler) error {
+	if strings.TrimSpace(prefix) == "" {
+		return fmt.Errorf("%w: serve prefix must be non-empty", ErrInvalidOptions)
+	}
+	if handler == nil {
+		return fmt.Errorf("%w: serve handler must be non-nil", ErrInvalidOptions)
+	}
+
+	a.mu.Lock()
+	webview := a.webview
+	route := &servedRoute{prefix: prefix, handler: handler}
+	a.servedRoutes = append(a.servedRoutes, route)
+	a.mu.Unlock()
+
+	if webview == nil {
+		return nil
+	}
+	return webview.addWebResourceRequestedFilter(filterURI(prefix))
+}
+
+// filterURI normalizes a Go-side prefix into WebView2's filter-string
+// format. WV2 matches on a URI with optional `*` wildcards; our "app://x/*"
+// style happens to work directly, but we still pass through a function so
+// future scheme mappings (like mapping Go's "/assets/" to "https://app/assets/*")
+// can land here without touching callers.
+func filterURI(prefix string) string {
+	return prefix
 }
 
 // onWebMessage dispatches an incoming JS→Go message to the user callback
