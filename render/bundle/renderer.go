@@ -90,12 +90,22 @@ type Renderer struct {
 	blurBGLayout   gpu.BindGroupLayout
 	bloom          *bloomResources
 
+	// Compute-particle pipelines. Per-system resources live in particleCache.
+	particleUpdatePipeline  gpu.ComputePipeline
+	particleUpdateBGLayout  gpu.BindGroupLayout
+	particleRenderPipeline  gpu.RenderPipeline
+	particleRenderBGLayout  gpu.BindGroupLayout
+
+	// Tracks the previous frame's time for particle dt integration.
+	lastFrameTime float64
+
 	// Caches keyed by identity strings, reused across frames.
 	passCache      map[string]*passResources
 	primitiveCache map[string]*primitiveResources
 	materialCache  map[materialFingerprint]*materialResources
 	textureCache   map[string]*textureResources
 	cullCache      map[string]*cullResources
+	particleCache  map[string]*particleResources
 
 	// Reusable per-instance transform buffer. Grows one-way to fit the
 	// largest instance count seen. R2 uses a single buffer since instanced
@@ -148,6 +158,7 @@ func New(cfg Config) (*Renderer, error) {
 		materialCache:  make(map[materialFingerprint]*materialResources),
 		textureCache:   make(map[string]*textureResources),
 		cullCache:      make(map[string]*cullResources),
+		particleCache:  make(map[string]*particleResources),
 	}
 	if err := r.buildUniformBuffers(); err != nil {
 		return nil, err
@@ -180,6 +191,9 @@ func New(cfg Config) (*Renderer, error) {
 		return nil, err
 	}
 	if err := r.buildBloomPipelines(); err != nil {
+		return nil, err
+	}
+	if err := r.buildParticlePipelines(); err != nil {
 		return nil, err
 	}
 	if err := r.buildBindGroups(); err != nil {
@@ -234,6 +248,16 @@ func (r *Renderer) Destroy() {
 	}
 	if r.presentPipeline != nil {
 		r.presentPipeline.Destroy()
+	}
+	for _, p := range r.particleCache {
+		destroyParticleResources(p)
+	}
+	r.particleCache = nil
+	if r.particleUpdatePipeline != nil {
+		r.particleUpdatePipeline.Destroy()
+	}
+	if r.particleRenderPipeline != nil {
+		r.particleRenderPipeline.Destroy()
 	}
 	if r.fallbackTexture != nil && r.fallbackTexture.tex != nil {
 		r.fallbackTexture.tex.Destroy()
@@ -328,6 +352,21 @@ func (r *Renderer) Frame(b engine.RenderBundle, width, height int, timeSeconds f
 	// BEFORE the main render pass since compute + render can't interleave
 	// within the same pass encoder.
 	if err := r.recordCullPass(enc, b, frustum); err != nil {
+		return err
+	}
+
+	// 2b) Advance particle state (compute pass). Runs before the main pass
+	// so the state storage buffer is ready to be read as vertex data.
+	dt := timeSeconds - r.lastFrameTime
+	if dt <= 0 || dt > 0.25 {
+		// First frame or a stall — clamp to a sensible default step.
+		dt = 1.0 / 60.0
+	}
+	r.lastFrameTime = timeSeconds
+	cameraPos := [4]float32{
+		float32(b.Camera.X), float32(b.Camera.Y), float32(b.Camera.Z), 1,
+	}
+	if err := r.recordParticleUpdates(enc, b, dt, timeSeconds, viewProj, cameraPos); err != nil {
 		return err
 	}
 
@@ -427,6 +466,10 @@ func (r *Renderer) Frame(b engine.RenderBundle, width, height int, timeSeconds f
 			}
 		}
 	}
+
+	// Particles last in the main pass so they composite additively over the
+	// opaque lit geometry, with depth test but no depth write.
+	r.drawParticles(mainPass, b)
 
 	mainPass.End()
 

@@ -20,14 +20,14 @@ func TestNewBuildsAllPipelines(t *testing.T) {
 	}
 	defer r.Destroy()
 
-	if got := len(d.shaders); got != 7 {
-		t.Errorf("expected 7 shader modules (unlit+lit+shadow+cull+present+bright+blur), got %d", got)
+	if got := len(d.shaders); got != 9 {
+		t.Errorf("expected 9 shader modules (unlit+lit+shadow+cull+present+bright+blur+particleUpdate+particleRender), got %d", got)
 	}
-	if got := len(d.pipelines); got != 6 {
-		t.Errorf("expected 6 render pipelines (unlit+lit+shadow+present+bright+blur), got %d", got)
+	if got := len(d.pipelines); got != 7 {
+		t.Errorf("expected 7 render pipelines (unlit+lit+shadow+present+bright+blur+particleRender), got %d", got)
 	}
-	if got := len(d.computePipelines); got != 1 {
-		t.Errorf("expected 1 compute pipeline (cull), got %d", got)
+	if got := len(d.computePipelines); got != 2 {
+		t.Errorf("expected 2 compute pipelines (cull + particleUpdate), got %d", got)
 	}
 	if got := len(d.buffers); got != 4 {
 		t.Errorf("expected 4 uniform buffers (scene + 3 shadow cascades), got %d", got)
