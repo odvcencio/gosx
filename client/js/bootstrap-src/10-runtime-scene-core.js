@@ -1868,6 +1868,8 @@
     if (typeof sceneDecompressProps === "function") {
       sceneDecompressProps(props);
     }
+    const postEffects = scenePostEffects(props);
+    const deferPostFX = sceneBool(props && props.deferPostFX, sceneBool(props && props.progressivePostFX, false)) && postEffects.length > 0;
     const state = {
       background: typeof props.background === "string" && props.background ? props.background : "#08151f",
       camera: sceneCamera(props),
@@ -1879,7 +1881,8 @@
       instancedMeshes: sceneInstancedMeshes(props),
       computeParticles: sceneComputeParticles(props),
       materials: sceneMaterials(props),
-      postEffects: scenePostEffects(props),
+      postEffects: deferPostFX ? [] : postEffects,
+      _deferredPostEffects: deferPostFX ? postEffects : null,
       _transitions: [],
       _scrollCamera: (sceneNumber(props.scrollCameraStart, 0) !== 0 || sceneNumber(props.scrollCameraEnd, 0) !== 0)
         ? { start: sceneNumber(props.scrollCameraStart, 0), end: sceneNumber(props.scrollCameraEnd, 0) }

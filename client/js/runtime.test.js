@@ -6953,6 +6953,63 @@ test("bootstrap prefers WebGL Scene3D rendering when available", async () => {
   assert.equal(env.consoleLogs.error.length, 0);
 });
 
+test("Scene3D defers postfx until idle delay", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-webgl-deferred-postfx";
+
+  const env = createContext({
+    elements: [mount],
+    enableWebGL: true,
+    disableCanvas2D: true,
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-webgl-deferred-postfx",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-webgl-deferred-postfx",
+          jsExport: "GoSXScene3D",
+          props: {
+            width: 480,
+            height: 300,
+            autoRotate: false,
+            deferPostFX: true,
+            deferPostFXDelayMS: 40,
+            scene: {
+              postEffects: [
+                { kind: "bloom", threshold: 0.7, intensity: 0.5 },
+                { kind: "toneMapping", mode: "aces", exposure: 1 },
+              ],
+              points: [
+                {
+                  id: "stars",
+                  count: 3,
+                  positions: [0, 0, 0, 1, 1, 0, -1, 1, 0],
+                  color: "#ffffff",
+                  size: 1,
+                },
+              ],
+            },
+          },
+          capabilities: ["canvas", "webgl", "animation"],
+        },
+      ],
+    },
+  });
+  const timers = installManualTimers(env.context);
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  assert.equal(mount.getAttribute("data-gosx-scene3d-postfx"), "deferred");
+
+  assert.equal(timers.runDelay(40), 1);
+  assert.equal(timers.runDelay(0), 1);
+  await flushAsyncWork();
+
+  assert.equal(mount.getAttribute("data-gosx-scene3d-postfx"), "enabled");
+});
+
 test("bootstrap keeps Scene3D responsive across resize and DPR changes", async () => {
   const mount = new FakeElement("div", null);
   mount.id = "scene-responsive";

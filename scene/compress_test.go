@@ -255,8 +255,9 @@ func TestProgressiveCompression(t *testing.T) {
 		Width:  800,
 		Height: 600,
 		Compression: &Compression{
-			BitWidth:    4,
-			Progressive: true,
+			BitWidth:           4,
+			Progressive:        true,
+			ProgressiveDelayMS: 750,
 			// PreviewBitWidth defaults to 2
 		},
 		Graph: NewGraph(
@@ -317,6 +318,15 @@ func TestProgressiveCompression(t *testing.T) {
 		t.Errorf("full resolution (err %.4f) should be better than preview (err %.4f)", fullErr, previewErr)
 	}
 	t.Logf("preview total error: %.2f, full total error: %.2f", previewErr, fullErr)
+
+	legacy := props.LegacyProps()
+	comp, ok := legacy["compression"].(map[string]any)
+	if !ok {
+		t.Fatal("expected compression in legacy props")
+	}
+	if comp["progressiveDelayMS"] != 750 {
+		t.Errorf("progressiveDelayMS = %v, want 750", comp["progressiveDelayMS"])
+	}
 }
 
 func TestLODCompression(t *testing.T) {

@@ -76,6 +76,8 @@ type Props struct {
 	ForceWebGL           *bool        `json:"forceWebGL,omitempty"`
 	PreferCanvas         *bool        `json:"preferCanvas,omitempty"`
 	DragToRotate         *bool        `json:"dragToRotate,omitempty"`
+	DeferPostFX          *bool        `json:"deferPostFX,omitempty"`
+	DeferPostFXDelayMS   int          `json:"deferPostFXDelayMS,omitempty"`
 	DragSignalNamespace  string       `json:"dragSignalNamespace,omitempty"`
 	PickSignalNamespace  string       `json:"pickSignalNamespace,omitempty"`
 	EventSignalNamespace string       `json:"eventSignalNamespace,omitempty"`
@@ -106,6 +108,10 @@ type Compression struct {
 	// upgrades when the full data is ready.
 	Progressive     bool `json:"progressive,omitempty"`
 	PreviewBitWidth int  `json:"previewBitWidth,omitempty"` // default 2 if Progressive is true
+	// ProgressiveDelayMS delays the full-quality client upgrade after first
+	// paint. This lets the scene show a cheap preview, then spend upgrade CPU
+	// during idle instead of competing with LCP and input setup.
+	ProgressiveDelayMS int `json:"progressiveDelayMS,omitempty"`
 
 	// LOD enables camera-distance-based level of detail. When true, the scene
 	// ships both preview and full resolution, and the client selects which to
@@ -810,6 +816,8 @@ func (p Props) legacyBaseProps() map[string]any {
 	setBool(out, "forceWebGL", p.ForceWebGL)
 	setBool(out, "preferCanvas", p.PreferCanvas)
 	setBool(out, "dragToRotate", p.DragToRotate)
+	setBool(out, "deferPostFX", p.DeferPostFX)
+	setInt(out, "deferPostFXDelayMS", p.DeferPostFXDelayMS)
 	setString(out, "dragSignalNamespace", p.DragSignalNamespace)
 	setString(out, "pickSignalNamespace", p.PickSignalNamespace)
 	setString(out, "eventSignalNamespace", p.EventSignalNamespace)
@@ -835,6 +843,9 @@ func (p Props) legacyBaseProps() map[string]any {
 				bw = 2
 			}
 			comp["previewBitWidth"] = bw
+			if p.Compression.ProgressiveDelayMS > 0 {
+				comp["progressiveDelayMS"] = p.Compression.ProgressiveDelayMS
+			}
 		}
 		if p.Compression.LOD {
 			comp["lod"] = true

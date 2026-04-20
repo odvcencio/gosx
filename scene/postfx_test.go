@@ -319,6 +319,25 @@ func TestPostFXMaxPixelsIRExplicit(t *testing.T) {
 	}
 }
 
+func TestPropsDeferPostFXRoundTrip(t *testing.T) {
+	props := Props{
+		DeferPostFX:        Bool(true),
+		DeferPostFXDelayMS: 900,
+		PostFX: PostFX{
+			Effects: []PostEffect{
+				Bloom{Threshold: 0.7},
+			},
+		},
+	}
+	legacy := props.LegacyProps()
+	if legacy["deferPostFX"] != true {
+		t.Fatalf("deferPostFX = %v, want true", legacy["deferPostFX"])
+	}
+	if legacy["deferPostFXDelayMS"] != 900 {
+		t.Fatalf("deferPostFXDelayMS = %v, want 900", legacy["deferPostFXDelayMS"])
+	}
+}
+
 func TestPostFXMaxPixelsIRDefault(t *testing.T) {
 	props := Props{
 		PostFX: PostFX{

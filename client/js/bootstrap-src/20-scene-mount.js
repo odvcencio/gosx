@@ -1134,6 +1134,52 @@
     };
   }
 
+  function scheduleSceneIdleTask(callback, delayMS) {
+    if (typeof callback !== "function") {
+      return;
+    }
+    const delay = Math.max(0, sceneNumber(delayMS, 0));
+    const runIdle = function() {
+      if (typeof requestIdleCallback === "function") {
+        requestIdleCallback(callback);
+      } else {
+        setTimeout(callback, 0);
+      }
+    };
+    if (delay > 0) {
+      setTimeout(runIdle, delay);
+      return;
+    }
+    runIdle();
+  }
+
+  function sceneCompressionProgressiveDelay(props) {
+    const comp = props && props.compression && typeof props.compression === "object" ? props.compression : null;
+    if (!comp) {
+      return 0;
+    }
+    return Math.max(0, sceneNumber(
+      comp.progressiveDelayMS != null ? comp.progressiveDelayMS : comp.upgradeDelayMS,
+      0,
+    ));
+  }
+
+  function sceneDeferredPostFXDelay(props) {
+    return Math.max(0, sceneNumber(
+      props && (props.deferPostFXDelayMS != null ? props.deferPostFXDelayMS : props.postFXDelayMS),
+      0,
+    ));
+  }
+
+  function applyScenePostFXState(mount, state) {
+    if (!mount || !state) {
+      return;
+    }
+    const deferred = Array.isArray(state._deferredPostEffects) && state._deferredPostEffects.length > 0;
+    const enabled = Array.isArray(state.postEffects) && state.postEffects.length > 0;
+    setAttrValue(mount, "data-gosx-scene3d-postfx", deferred ? "deferred" : (enabled ? "enabled" : "none"));
+  }
+
   function sceneViewportDevicePixelRatio(props, maxDevicePixelRatio) {
     const environment = sceneEnvironmentState();
     const preferred = sceneNumber(
@@ -2415,6 +2461,7 @@
     ctx.mount.__gosxScene3DCSSDynamic = false;
     ctx.mount.__gosxScene3DCSSRevision = 1;
     ctx.mount.__gosxScene3DCSSAnimationUntil = 0;
+    applyScenePostFXState(ctx.mount, sceneState);
 
     let viewport = applySceneViewport(ctx.mount, canvas, labelLayer, sceneViewportFromMount(ctx.mount, props, viewportBase, canvas, capability), viewportBase);
 
@@ -3422,8 +3469,7 @@
 
     // Progressive: upgrade from preview to full resolution after first paint.
     if (typeof sceneUpgradeProgressive === "function" && props.compression && props.compression.progressive) {
-      var upgradeTimer = typeof requestIdleCallback === "function" ? requestIdleCallback : setTimeout;
-      upgradeTimer(function() {
+      scheduleSceneIdleTask(function() {
         sceneUpgradeProgressive(props);
         // Force a re-render with upgraded data
         if (sceneWantsAnimation()) {
@@ -3431,7 +3477,20 @@
         } else {
           renderFrame(0);
         }
-      });
+      }, sceneCompressionProgressiveDelay(props));
+    }
+
+    if (Array.isArray(sceneState._deferredPostEffects) && sceneState._deferredPostEffects.length > 0) {
+      scheduleSceneIdleTask(function() {
+        sceneState.postEffects = sceneState._deferredPostEffects;
+        sceneState._deferredPostEffects = null;
+        applyScenePostFXState(ctx.mount, sceneState);
+        if (sceneWantsAnimation()) {
+          // Animation loop will render the upgraded chain.
+        } else {
+          renderFrame(0);
+        }
+      }, sceneDeferredPostFXDelay(props));
     }
 
     ctx.emit("mounted", {
