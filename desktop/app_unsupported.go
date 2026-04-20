@@ -32,3 +32,27 @@ func (unsupportedApp) Navigate(url string) error {
 func (unsupportedApp) SetHTML(string) error {
 	return ErrUnsupported
 }
+
+func (unsupportedApp) PostMessage(string) error {
+	return ErrUnsupported
+}
+
+func (unsupportedApp) ExecuteScript(string) error {
+	return ErrUnsupported
+}
+
+func (unsupportedApp) OpenDevTools() error {
+	return ErrUnsupported
+}
+
+func (unsupportedApp) PrependBootstrapScript(string) error {
+	return ErrUnsupported
+}
+
+func (unsupportedApp) Minimize() error { return ErrUnsupported }
+func (unsupportedApp) Maximize() error { return ErrUnsupported }
+func (unsupportedApp) Restore() error  { return ErrUnsupported }
+func (unsupportedApp) Focus() error    { return ErrUnsupported }
+func (unsupportedApp) SetTitle(string) error {
+	return ErrUnsupported
+}

@@ -17,13 +17,26 @@ const (
 
 	colorWindow = 5
 
-	swShowDefault = 10
+	// ShowWindow nCmdShow values.
+	swHide         = 0
+	swShowNormal   = 1
+	swShowMinimized = 2
+	swShowMaximized = 3
+	swShowNoActivate = 4
+	swShow         = 5
+	swMinimize     = 6
+	swShowDefault  = 10
+	swRestore      = 9
 
-	wmClose   = 0x0010
-	wmDestroy = 0x0002
-	wmSize    = 0x0005
+	wmClose       = 0x0010
+	wmDestroy     = 0x0002
+	wmSize        = 0x0005
+	wmGetMinMaxInfo = 0x0024
 
 	wsOverlappedWindow = 0x00CF0000
+
+	// Per-monitor DPI-aware v2 context. Matches DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2.
+	dpiAwarenessContextPerMonitorV2 = uintptr(0xFFFFFFFC) // ~3 as a uintptr (cast back to HANDLE)
 )
 
 var (
@@ -49,6 +62,13 @@ var (
 	procShowWindow       = modUser32.NewProc("ShowWindow")
 	procTranslateMessage = modUser32.NewProc("TranslateMessage")
 	procUpdateWindow     = modUser32.NewProc("UpdateWindow")
+	procSetWindowTextW   = modUser32.NewProc("SetWindowTextW")
+	procSetForegroundWindow = modUser32.NewProc("SetForegroundWindow")
+
+	// SetProcessDpiAwarenessContext is Win10 1703+. NewLazyProc resolves
+	// at first .Call(), so older systems silently no-op when the Find()
+	// probe fails in setDPIAware.
+	procSetProcessDpiAwarenessContext = modUser32.NewProc("SetProcessDpiAwarenessContext")
 )
 
 type point struct {
@@ -182,6 +202,57 @@ func moduleHandle() (uintptr, error) {
 func showWindow(hwnd uintptr) {
 	procShowWindow.Call(hwnd, swShowDefault)
 	procUpdateWindow.Call(hwnd)
+}
+
+// showWindowState drives the window into a specific show state — minimized,
+// maximized, restored, or hidden. Passing swRestore brings a minimized or
+// maximized window back to its previous bounds; swMinimize hides it in the
+// taskbar; swShowMaximized snaps it to monitor extents.
+func showWindowState(hwnd uintptr, state int) {
+	if hwnd == 0 {
+		return
+	}
+	procShowWindow.Call(hwnd, uintptr(state))
+}
+
+// focusWindow brings hwnd to the foreground. No-op when the OS refuses
+// activation due to foreground-lock rules — the caller has no recourse
+// except via AllowSetForegroundWindow from a partner process.
+func focusWindow(hwnd uintptr) error {
+	if hwnd == 0 {
+		return fmt.Errorf("%w: focus requires a live window", ErrInvalidOptions)
+	}
+	procSetForegroundWindow.Call(hwnd)
+	return nil
+}
+
+// setWindowTitle rewrites the window caption via SetWindowTextW. Short,
+// blocking call — fires a WM_SETTEXT message that the default window
+// procedure handles.
+func setWindowTitle(hwnd uintptr, title string) error {
+	if hwnd == 0 {
+		return fmt.Errorf("%w: title change requires a live window", ErrInvalidOptions)
+	}
+	ptr, err := syscall.UTF16PtrFromString(title)
+	if err != nil {
+		return fmt.Errorf("%w: title: %v", ErrInvalidOptions, err)
+	}
+	ret, _, callErr := procSetWindowTextW.Call(hwnd, uintptr(unsafe.Pointer(ptr)))
+	if ret == 0 {
+		return fmt.Errorf("SetWindowTextW: %w", callErr)
+	}
+	return nil
+}
+
+// setDPIAware opts the process into Per-Monitor-Aware v2 DPI semantics on
+// Windows 10 1703+. Falls back to a no-op on older systems — no hard
+// failure because the webview renders at the system DPI regardless; we
+// just get blurry scaling above 100%.
+func setDPIAware() {
+	if err := procSetProcessDpiAwarenessContext.Find(); err != nil {
+		return
+	}
+	procSetProcessDpiAwarenessContext.Call(dpiAwarenessContextPerMonitorV2)
 }
 
 func destroyWindow(hwnd uintptr) {

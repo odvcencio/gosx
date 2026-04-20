@@ -35,6 +35,17 @@ type Options struct {
 	HTML        string
 	Debug       bool
 	UserDataDir string
+
+	// OnWebMessage is invoked on each chrome.webview.postMessage call from
+	// JS. The callback runs on the platform's webview dispatcher thread —
+	// keep it short; hand off to a goroutine or a channel for anything
+	// expensive. Nil disables the JS→Go bridge.
+	OnWebMessage func(message string)
+
+	// OnClose fires once the native window has been closed by the user or
+	// the OS. Use it for graceful shutdown: flushing state, disposing
+	// background workers, etc. Nil disables the callback.
+	OnClose func()
 }
 
 // App is a native desktop host for a GoSX application or HTML document.
@@ -48,6 +59,15 @@ type platformApp interface {
 	Close() error
 	Navigate(url string) error
 	SetHTML(html string) error
+	PostMessage(message string) error
+	ExecuteScript(script string) error
+	OpenDevTools() error
+	PrependBootstrapScript(script string) error
+	Minimize() error
+	Maximize() error
+	Restore() error
+	Focus() error
+	SetTitle(title string) error
 }
 
 // New validates options and constructs a platform desktop app.
@@ -115,6 +135,53 @@ func (a *App) SetHTML(html string) error {
 		return fmt.Errorf("%w: nil app", ErrInvalidOptions)
 	}
 	return a.impl.SetHTML(html)
+}
+
+// PostMessage delivers a string payload to the webview via the
+// chrome.webview.onmessage event. The JS side receives it through:
+//
+//	window.chrome.webview.addEventListener("message", e => { ... e.data ... });
+//
+// Returns ErrWebView2Unavailable if the webview hasn't finished creation;
+// callers should await the first OnWebMessage callback from the page
+// before posting outbound messages if ordering matters.
+func (a *App) PostMessage(message string) error {
+	if a == nil || a.impl == nil {
+		return fmt.Errorf("%w: nil app", ErrInvalidOptions)
+	}
+	return a.impl.PostMessage(message)
+}
+
+// ExecuteScript runs arbitrary JavaScript in the hosted webview's top
+// frame. Use it sparingly — PostMessage is the preferred channel because
+// the JS side can intercept it with an event listener rather than relying
+// on mutable globals for side effects.
+func (a *App) ExecuteScript(script string) error {
+	if a == nil || a.impl == nil {
+		return fmt.Errorf("%w: nil app", ErrInvalidOptions)
+	}
+	return a.impl.ExecuteScript(script)
+}
+
+// OpenDevTools pops the Chromium inspector in a separate window. Only
+// works when Options.Debug = true, which toggles AreDevToolsEnabled on
+// the underlying settings object.
+func (a *App) OpenDevTools() error {
+	if a == nil || a.impl == nil {
+		return fmt.Errorf("%w: nil app", ErrInvalidOptions)
+	}
+	return a.impl.OpenDevTools()
+}
+
+// PrependBootstrapScript registers JS to run before every document load
+// in the hosted webview. Useful for injecting the postMessage event
+// subscription so the page code can assume a live Go↔JS channel from the
+// very first navigation. Successive calls replace the previous snippet.
+func (a *App) PrependBootstrapScript(script string) error {
+	if a == nil || a.impl == nil {
+		return fmt.Errorf("%w: nil app", ErrInvalidOptions)
+	}
+	return a.impl.PrependBootstrapScript(script)
 }
 
 func normalizeOptions(options Options) (Options, error) {
