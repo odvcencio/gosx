@@ -413,6 +413,7 @@ Classes and external CSS. No CSS-in-JS.
 ```bash
 gosx init [name] [--template docs]    # Scaffold a new app
 gosx dev [app]                        # Dev server with file watching and SSE reload
+gosx desktop [app]                    # Dev server inside a native desktop host
 gosx build [--prod] [app]             # Build with hashed assets, optional static prerender
 gosx export [app]                     # Pre-render static pages to dist/static/
 gosx compile [file.gsx]               # Compile .gsx to IR
@@ -421,6 +422,12 @@ gosx render [file.gsx]                # Render component to HTML
 gosx fmt [file.gsx]                   # Format source
 gosx lsp                              # Language server for editor integration
 ```
+
+`gosx desktop [app]` opens the dev server in the native desktop host. On Windows
+it uses WebView2 through the pure-Go `desktop` package; `gosx desktop --url
+https://example.com` opens a URL directly for host smoke checks. From WSL or
+CI, `make build-desktop-windows` emits `build/gosx-windows-amd64.exe` and
+`build/gosx-windows-arm64.exe` for handoff to a Windows host.
 
 `gosx build --prod` emits a deployable `dist/` bundle with a server binary, hashed assets, prerendered static pages, an ISR manifest, and edge worker support.
 
@@ -471,6 +478,7 @@ Three tiers:
 | `apptest` | HTTP testing helpers for pages, APIs, and forms |
 | `islandtest` | Island program testing helpers |
 | `dev` | Development server with file watching |
+| `desktop` | Native desktop host backed by Windows WebView2 |
 | `env` | `.env` file loading with mode support |
 | `cmd/gosx` | CLI tool |
 
@@ -482,6 +490,8 @@ make test-race     # Race detector enabled
 make test-js       # Bootstrap + patch under Node test runner
 make test-wasm     # WASM runtime through exported functions
 make test-e2e      # Playwright browser tests against gosx dev
+make test-desktop  # Desktop package tests plus Windows cross-compile guards
+make build-desktop-windows  # Windows desktop-capable CLI binaries
 make ci            # All of the above + build verification
 ```
 

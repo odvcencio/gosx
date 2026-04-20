@@ -4,6 +4,7 @@
 //
 //	gosx build <dir>             Build GoSX application
 //	gosx dev <dir>               Start development server with hot reload
+//	gosx desktop <dir>           Start development server in a native desktop host
 //	gosx export <dir>            Pre-render static GoSX pages
 //	gosx init [dir]              Scaffold a GoSX application or docs site
 //	gosx compile <file.gsx>      Compile GoSX to Go
@@ -39,6 +40,8 @@ func main() {
 		cmdBuild()
 	case "dev":
 		cmdDev()
+	case "desktop":
+		cmdDesktop()
 	case "export":
 		cmdExport()
 	case "init":
@@ -77,6 +80,7 @@ Usage:
 Commands:
   build <dir>          Build GoSX application
   dev <dir>            Start development server with hot reload
+  desktop <dir>        Start dev server in a native desktop host
   export <dir>         Pre-render static GoSX pages
   init [dir]           Scaffold a GoSX application or docs site
   compile <file>       Compile .gsx file to Go

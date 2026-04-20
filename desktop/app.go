@@ -63,6 +63,15 @@ func New(options Options) (*App, error) {
 	return &App{options: normalized, impl: impl}, nil
 }
 
+// Run constructs a desktop app and blocks until the native window closes.
+func Run(options Options) error {
+	app, err := New(options)
+	if err != nil {
+		return err
+	}
+	return app.Run()
+}
+
 // Available reports whether the current platform backend is available.
 func Available() error {
 	return platformAvailable()
@@ -113,6 +122,9 @@ func normalizeOptions(options Options) (Options, error) {
 	options.URL = strings.TrimSpace(options.URL)
 	options.UserDataDir = strings.TrimSpace(options.UserDataDir)
 
+	if options.URL != "" && options.HTML != "" {
+		return Options{}, fmt.Errorf("%w: url and html are mutually exclusive", ErrInvalidOptions)
+	}
 	if options.Title == "" {
 		options.Title = defaultTitle
 	}

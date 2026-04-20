@@ -32,6 +32,23 @@ func TestNormalizeOptionsRejectsNUL(t *testing.T) {
 	}
 }
 
+func TestNormalizeOptionsRejectsURLAndHTML(t *testing.T) {
+	_, err := normalizeOptions(Options{URL: "https://example.test", HTML: "<h1>ok</h1>"})
+	if !errors.Is(err, ErrInvalidOptions) {
+		t.Fatalf("error = %v, want ErrInvalidOptions", err)
+	}
+}
+
+func TestRunUnsupportedPlatform(t *testing.T) {
+	if runtime.GOOS == "windows" && (runtime.GOARCH == "amd64" || runtime.GOARCH == "arm64") {
+		t.Skip("windows desktop backend is supported on this architecture")
+	}
+	err := Run(Options{})
+	if !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("error = %v, want ErrUnsupported", err)
+	}
+}
+
 func TestNewUnsupportedPlatform(t *testing.T) {
 	if runtime.GOOS == "windows" && (runtime.GOARCH == "amd64" || runtime.GOARCH == "arm64") {
 		t.Skip("windows desktop backend is supported on this architecture")

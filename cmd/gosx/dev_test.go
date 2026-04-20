@@ -4,9 +4,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 )
@@ -123,10 +123,13 @@ func TestStageSidecarCSSPreservesRelativePaths(t *testing.T) {
 }
 
 func TestKillProcessTreeStopsChildProcess(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses Unix shell process-tree assertions")
+	}
 	cmd := exec.Command("sh", "-c", "sleep 30 & wait")
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.SysProcAttr = childProcessAttributes()
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
@@ -138,13 +141,13 @@ func TestKillProcessTreeStopsChildProcess(t *testing.T) {
 
 	childPID, err := waitForChildProcess(cmd.Process.Pid, 2*time.Second)
 	if err != nil {
-		_ = killProcessTree(cmd.Process.Pid)
+		_ = terminateProcessTree(cmd.Process.Pid)
 		<-done
 		t.Fatal(err)
 	}
 
-	if err := killProcessTree(cmd.Process.Pid); err != nil {
-		_ = killProcessTree(cmd.Process.Pid)
+	if err := terminateProcessTree(cmd.Process.Pid); err != nil {
+		_ = terminateProcessTree(cmd.Process.Pid)
 		<-done
 		t.Fatal(err)
 	}
@@ -152,7 +155,7 @@ func TestKillProcessTreeStopsChildProcess(t *testing.T) {
 	select {
 	case <-done:
 	case <-time.After(2 * time.Second):
-		_ = killProcessTree(cmd.Process.Pid)
+		_ = terminateProcessTree(cmd.Process.Pid)
 		t.Fatal("timed out waiting for process tree to stop")
 	}
 
