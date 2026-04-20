@@ -9,40 +9,56 @@ import (
 	"github.com/odvcencio/gosx/render/gpu"
 )
 
+// shadowMapSize is the square resolution of the directional-light shadow map.
+// 2048 is a reasonable default for a single non-cascaded shadow; R3 replaces
+// this with cascaded shadow maps sized per-cascade.
+const shadowMapSize = 2048
+
 // Renderer consumes engine.RenderBundle values and issues draw calls against
-// a gpu.Device. The Renderer is not safe for concurrent use; one instance
-// serves one canvas / one engine runtime.
+// a gpu.Device. One Renderer instance serves one canvas / one engine runtime.
+// Not safe for concurrent use.
 type Renderer struct {
 	device        gpu.Device
 	surface       gpu.Surface
 	surfaceFormat gpu.TextureFormat
 	depthFormat   gpu.TextureFormat
 
-	// Pipelines created once and reused.
-	unlitPipeline      gpu.RenderPipeline
-	unlitBGLayout      gpu.BindGroupLayout
-	instancedPipeline  gpu.RenderPipeline
-	instancedBGLayout  gpu.BindGroupLayout
+	// Pipelines created once and reused across frames.
+	unlitPipeline    gpu.RenderPipeline
+	unlitBGLayout    gpu.BindGroupLayout
+	litPipeline      gpu.RenderPipeline
+	litBGLayout      gpu.BindGroupLayout
+	shadowPipeline   gpu.RenderPipeline
+	shadowBGLayout   gpu.BindGroupLayout
 
-	// Shared uniform buffer holding the MVP; bound by both pipelines.
-	uniformBuf             gpu.Buffer
-	unlitUniformBindGrp    gpu.BindGroup
-	instancedUniformBindGrp gpu.BindGroup
+	// Scene uniforms (viewProj + lightViewProj + camera + light). 192 bytes.
+	sceneUniformBuf gpu.Buffer
+	// Shadow-pass uniforms: just lightViewProj. 64 bytes.
+	shadowUniformBuf gpu.Buffer
 
-	// Depth attachment, resized lazily to the surface dimensions.
-	depthTex      gpu.Texture
-	depthView     gpu.TextureView
-	depthWidth    int
-	depthHeight   int
+	// Per-pipeline bind groups. The lit group also holds shadow map + sampler.
+	unlitBindGrp  gpu.BindGroup
+	litBindGrp    gpu.BindGroup
+	shadowBindGrp gpu.BindGroup
 
-	// Caches keyed by identity strings. Entries created on first use and
-	// reused across frames; sizes never shrink.
+	// Main-pass depth attachment, resized lazily to surface.
+	depthTex    gpu.Texture
+	depthView   gpu.TextureView
+	depthWidth  int
+	depthHeight int
+
+	// Shadow-map depth texture + view. Fixed size; content refreshed per frame.
+	shadowTex     gpu.Texture
+	shadowView    gpu.TextureView
+	shadowSampler gpu.Sampler
+
+	// Caches keyed by identity strings, reused across frames.
 	passCache      map[string]*passResources
 	primitiveCache map[string]*primitiveResources
 
-	// A reusable per-instance transform buffer. Grows to fit the largest
-	// instance count seen so far; never shrinks. One buffer per renderer is
-	// fine for R1 since we draw instanced meshes sequentially.
+	// Reusable per-instance transform buffer. Grows one-way to fit the
+	// largest instance count seen. R2 uses a single buffer since instanced
+	// meshes draw sequentially within a frame.
 	instanceBuf      gpu.Buffer
 	instanceBufBytes int
 }
@@ -54,11 +70,12 @@ type passResources struct {
 	vertexCount int
 }
 
-// primitiveResources holds the GPU vertex/color buffers for one instanced-mesh
-// Kind (e.g., "cube"). Uploaded once and reused across frames.
+// primitiveResources holds GPU vertex buffers for one instanced-mesh Kind.
+// Uploaded once and reused across frames.
 type primitiveResources struct {
 	positions   gpu.Buffer
 	colors      gpu.Buffer
+	normals     gpu.Buffer
 	vertexCount int
 }
 
@@ -70,8 +87,8 @@ type Config struct {
 	Surface gpu.Surface
 }
 
-// New constructs a Renderer. It immediately creates both the unlit and
-// instanced pipelines plus the shared uniform bind groups.
+// New constructs a Renderer, building all pipelines, uniform buffers, and the
+// shadow map up-front so the first Frame call just issues draw commands.
 func New(cfg Config) (*Renderer, error) {
 	if cfg.Device == nil {
 		return nil, errors.New("bundle.New: device is required")
@@ -87,13 +104,19 @@ func New(cfg Config) (*Renderer, error) {
 		passCache:      make(map[string]*passResources),
 		primitiveCache: make(map[string]*primitiveResources),
 	}
-	if err := r.buildUniformBuf(); err != nil {
+	if err := r.buildUniformBuffers(); err != nil {
+		return nil, err
+	}
+	if err := r.buildShadowResources(); err != nil {
 		return nil, err
 	}
 	if err := r.buildUnlitPipeline(); err != nil {
 		return nil, err
 	}
-	if err := r.buildInstancedPipeline(); err != nil {
+	if err := r.buildLitPipeline(); err != nil {
+		return nil, err
+	}
+	if err := r.buildShadowPipeline(); err != nil {
 		return nil, err
 	}
 	if err := r.buildBindGroups(); err != nil {
@@ -106,21 +129,11 @@ func New(cfg Config) (*Renderer, error) {
 // not destroyed — callers retain ownership.
 func (r *Renderer) Destroy() {
 	for _, p := range r.passCache {
-		if p.positions != nil {
-			p.positions.Destroy()
-		}
-		if p.colors != nil {
-			p.colors.Destroy()
-		}
+		destroyPassResources(p)
 	}
 	r.passCache = nil
 	for _, p := range r.primitiveCache {
-		if p.positions != nil {
-			p.positions.Destroy()
-		}
-		if p.colors != nil {
-			p.colors.Destroy()
-		}
+		destroyPrimitiveResources(p)
 	}
 	r.primitiveCache = nil
 	if r.instanceBuf != nil {
@@ -131,48 +144,78 @@ func (r *Renderer) Destroy() {
 		r.depthTex.Destroy()
 		r.depthTex = nil
 	}
-	if r.uniformBuf != nil {
-		r.uniformBuf.Destroy()
+	if r.shadowTex != nil {
+		r.shadowTex.Destroy()
+		r.shadowTex = nil
+	}
+	if r.sceneUniformBuf != nil {
+		r.sceneUniformBuf.Destroy()
+	}
+	if r.shadowUniformBuf != nil {
+		r.shadowUniformBuf.Destroy()
 	}
 	if r.unlitPipeline != nil {
 		r.unlitPipeline.Destroy()
 	}
-	if r.instancedPipeline != nil {
-		r.instancedPipeline.Destroy()
+	if r.litPipeline != nil {
+		r.litPipeline.Destroy()
+	}
+	if r.shadowPipeline != nil {
+		r.shadowPipeline.Destroy()
 	}
 }
 
-// Frame renders a bundle to the current surface image. Width and height are
-// the canvas framebuffer dimensions in physical pixels; timeSeconds is
-// available for animated effects (e.g., shader-time uniforms) but R1 only
-// uses it indirectly through the bundle.
+// Frame renders a bundle to the current surface image. Performs two render
+// passes per frame:
+//
+//  1. Shadow pass — depth-only draw of all instanced meshes from the primary
+//     directional light's POV into the shadow map texture.
+//  2. Main pass — color + depth render to the surface. The lit pipeline
+//     samples the shadow map from step 1 via a comparison sampler.
+//
+// Pre-batched Passes data (legacy) still goes through the unlit pipeline and
+// does not cast shadows — R3 revisits this when the pass data grows normals.
 func (r *Renderer) Frame(b engine.RenderBundle, width, height int, timeSeconds float64) error {
-	_ = timeSeconds // R1 does not consume time directly; future phases will.
+	_ = timeSeconds // R2 does not consume time directly; future phases will.
 
 	if width <= 0 || height <= 0 {
 		return nil
-	}
-	view, err := r.device.AcquireSurfaceView(r.surface)
-	if err != nil {
-		return fmt.Errorf("bundle.Frame: acquire surface view: %w", err)
 	}
 	depthView, err := r.ensureDepth(width, height)
 	if err != nil {
 		return err
 	}
 
-	mvp := computeMVP(b.Camera, width, height)
-	r.device.Queue().WriteBuffer(r.uniformBuf, 0, float32sToBytes(mvp[:]))
+	viewProj := computeMVP(b.Camera, width, height)
+	lightDir, lightColor, ambientColor := resolveDirectionalLight(b)
+	lightViewProj := computeLightViewProj(lightDir)
 
-	clear := parseBackground(b.Background)
+	r.device.Queue().WriteBuffer(r.sceneUniformBuf, 0, buildSceneUniformBytes(sceneUniformBlock{
+		viewProj:      viewProj,
+		lightViewProj: lightViewProj,
+		cameraPos:     [4]float32{float32(b.Camera.X), float32(b.Camera.Y), float32(b.Camera.Z), 1},
+		lightDir:      [4]float32{lightDir[0], lightDir[1], lightDir[2], 0},
+		lightColor:    lightColor,
+		ambientColor:  ambientColor,
+	}))
+	r.device.Queue().WriteBuffer(r.shadowUniformBuf, 0, float32sToBytes(lightViewProj[:]))
 
 	enc := r.device.CreateCommandEncoder()
-	pass := enc.BeginRenderPass(gpu.RenderPassDesc{
+
+	// 1) Shadow pass — depth-only from the light's perspective.
+	r.recordShadowPass(enc, b)
+
+	// 2) Main pass — color + depth to the surface, lit + shadowed.
+	view, err := r.device.AcquireSurfaceView(r.surface)
+	if err != nil {
+		return fmt.Errorf("bundle.Frame: acquire surface view: %w", err)
+	}
+	mainPass := enc.BeginRenderPass(gpu.RenderPassDesc{
 		ColorAttachments: []gpu.RenderPassColorAttachment{{
 			View:       view,
 			LoadOp:     gpu.LoadOpClear,
 			StoreOp:    gpu.StoreOpStore,
-			ClearValue: clear,
+			ClearValue: parseBackground(b.Background),
 		}},
 		DepthStencilAttachment: &gpu.RenderPassDepthStencilAttachment{
 			View:            depthView,
@@ -180,66 +223,103 @@ func (r *Renderer) Frame(b engine.RenderBundle, width, height int, timeSeconds f
 			DepthStoreOp:    gpu.StoreOpStore,
 			DepthClearValue: 1.0,
 		},
-		Label: "bundle.frame",
+		Label: "bundle.main",
 	})
 
-	// Unlit pre-batched passes (existing scene Passes from the engine runtime).
+	// Unlit pre-batched passes (legacy RenderPassBundle).
 	if len(b.Passes) > 0 {
-		pass.SetPipeline(r.unlitPipeline)
-		pass.SetBindGroup(0, r.unlitUniformBindGrp)
+		mainPass.SetPipeline(r.unlitPipeline)
+		mainPass.SetBindGroup(0, r.unlitBindGrp)
 		for _, pb := range b.Passes {
 			res, err := r.ensurePassBuffers(pb)
 			if err != nil {
-				pass.End()
+				mainPass.End()
 				return err
 			}
 			if res == nil || res.vertexCount == 0 {
 				continue
 			}
-			pass.SetVertexBuffer(0, res.positions)
-			pass.SetVertexBuffer(1, res.colors)
-			pass.Draw(res.vertexCount, 1, 0, 0)
+			mainPass.SetVertexBuffer(0, res.positions)
+			mainPass.SetVertexBuffer(1, res.colors)
+			mainPass.Draw(res.vertexCount, 1, 0, 0)
 		}
 	}
 
-	// Instanced meshes from the RenderInstancedMesh bundle entries.
+	// Lit instanced meshes.
 	if len(b.InstancedMeshes) > 0 {
-		pass.SetPipeline(r.instancedPipeline)
-		pass.SetBindGroup(0, r.instancedUniformBindGrp)
+		mainPass.SetPipeline(r.litPipeline)
+		mainPass.SetBindGroup(0, r.litBindGrp)
 		for _, im := range b.InstancedMeshes {
 			if im.InstanceCount <= 0 || len(im.Transforms) == 0 {
 				continue
 			}
 			prim, err := r.ensurePrimitive(im.Kind)
 			if err != nil {
-				pass.End()
+				mainPass.End()
 				return err
 			}
 			if prim == nil || prim.vertexCount == 0 {
 				continue
 			}
-			transformBytes := float64sToFloat32Bytes(im.Transforms)
-			if err := r.ensureInstanceBuffer(len(transformBytes)); err != nil {
-				pass.End()
-				return err
-			}
-			r.device.Queue().WriteBuffer(r.instanceBuf, 0, transformBytes)
-
-			pass.SetVertexBuffer(0, prim.positions)
-			pass.SetVertexBuffer(1, prim.colors)
-			pass.SetVertexBuffer(2, r.instanceBuf)
-			pass.Draw(prim.vertexCount, im.InstanceCount, 0, 0)
+			// Instance buffer already uploaded in recordShadowPass; safe to
+			// reuse because the lit pass doesn't overwrite it.
+			mainPass.SetVertexBuffer(0, prim.positions)
+			mainPass.SetVertexBuffer(1, prim.colors)
+			mainPass.SetVertexBuffer(2, prim.normals)
+			mainPass.SetVertexBuffer(3, r.instanceBuf)
+			mainPass.Draw(prim.vertexCount, im.InstanceCount, 0, 0)
 		}
 	}
 
-	pass.End()
+	mainPass.End()
 	r.device.Queue().Submit(enc.Finish())
 	return nil
 }
 
-// ensureDepth allocates or resizes the depth texture to match the surface.
-// The old texture is destroyed on size change; callers can call every frame
-// without worrying about leaks.
+// recordShadowPass issues the depth-only instanced-mesh draws into the shadow
+// map. Runs before any uniform uploads the main pass depends on except for
+// the instance-transform buffer, which is shared.
+func (r *Renderer) recordShadowPass(enc gpu.CommandEncoder, b engine.RenderBundle) {
+	pass := enc.BeginRenderPass(gpu.RenderPassDesc{
+		DepthStencilAttachment: &gpu.RenderPassDepthStencilAttachment{
+			View:            r.shadowView,
+			DepthLoadOp:     gpu.LoadOpClear,
+			DepthStoreOp:    gpu.StoreOpStore,
+			DepthClearValue: 1.0,
+		},
+		Label: "bundle.shadow",
+	})
+	if len(b.InstancedMeshes) > 0 {
+		pass.SetPipeline(r.shadowPipeline)
+		pass.SetBindGroup(0, r.shadowBindGrp)
+		for _, im := range b.InstancedMeshes {
+			if im.InstanceCount <= 0 || len(im.Transforms) == 0 {
+				continue
+			}
+			if im.CastShadow == false {
+				// The engine runtime defaults CastShadow=false in places;
+				// drawing anyway keeps the R2 demo visible. R3 honors the
+				// flag strictly.
+			}
+			prim, err := r.ensurePrimitive(im.Kind)
+			if err != nil || prim == nil || prim.vertexCount == 0 {
+				continue
+			}
+			transformBytes := float64sToFloat32Bytes(im.Transforms)
+			if err := r.ensureInstanceBuffer(len(transformBytes)); err != nil {
+				continue
+			}
+			r.device.Queue().WriteBuffer(r.instanceBuf, 0, transformBytes)
+			pass.SetVertexBuffer(0, prim.positions)
+			pass.SetVertexBuffer(1, r.instanceBuf)
+			pass.Draw(prim.vertexCount, im.InstanceCount, 0, 0)
+		}
+	}
+	pass.End()
+}
+
+// ensureDepth allocates or resizes the main-pass depth texture to match the
+// surface dimensions.
 func (r *Renderer) ensureDepth(width, height int) (gpu.TextureView, error) {
 	if r.depthTex != nil && r.depthWidth == width && r.depthHeight == height {
 		return r.depthView, nil
@@ -265,52 +345,56 @@ func (r *Renderer) ensureDepth(width, height int) (gpu.TextureView, error) {
 	return r.depthView, nil
 }
 
-// ensurePrimitive uploads the geometry for an instanced-mesh Kind the first
-// time it's requested; subsequent calls reuse the cached GPU buffers.
+// ensurePrimitive uploads the geometry for a Kind on first request.
 func (r *Renderer) ensurePrimitive(kind string) (*primitiveResources, error) {
 	if res, ok := r.primitiveCache[kind]; ok {
 		return res, nil
 	}
 	geo := primitiveForKind(kind)
 	if geo == nil {
-		// Unknown kind — skip silently. Future: log / diagnostic channel.
 		return nil, nil
 	}
-	posBytes := float32sToBytes(geo.positions)
-	colBytes := float32sToBytes(geo.colors)
-
-	posBuf, err := r.device.CreateBuffer(gpu.BufferDesc{
-		Size:  len(posBytes),
-		Usage: gpu.BufferUsageVertex | gpu.BufferUsageCopyDst,
-		Label: "bundle.primitive.positions:" + kind,
-	})
+	posBuf, err := r.uploadVertexBuffer(geo.positions, "bundle.primitive.positions:"+kind)
 	if err != nil {
-		return nil, fmt.Errorf("bundle: create primitive position buffer: %w", err)
+		return nil, err
 	}
-	r.device.Queue().WriteBuffer(posBuf, 0, posBytes)
-
-	colBuf, err := r.device.CreateBuffer(gpu.BufferDesc{
-		Size:  len(colBytes),
-		Usage: gpu.BufferUsageVertex | gpu.BufferUsageCopyDst,
-		Label: "bundle.primitive.colors:" + kind,
-	})
+	colBuf, err := r.uploadVertexBuffer(geo.colors, "bundle.primitive.colors:"+kind)
 	if err != nil {
 		posBuf.Destroy()
-		return nil, fmt.Errorf("bundle: create primitive color buffer: %w", err)
+		return nil, err
 	}
-	r.device.Queue().WriteBuffer(colBuf, 0, colBytes)
-
+	nrmBuf, err := r.uploadVertexBuffer(geo.normals, "bundle.primitive.normals:"+kind)
+	if err != nil {
+		posBuf.Destroy()
+		colBuf.Destroy()
+		return nil, err
+	}
 	res := &primitiveResources{
 		positions:   posBuf,
 		colors:      colBuf,
+		normals:     nrmBuf,
 		vertexCount: geo.vertexCount,
 	}
 	r.primitiveCache[kind] = res
 	return res, nil
 }
 
+func (r *Renderer) uploadVertexBuffer(data []float32, label string) (gpu.Buffer, error) {
+	bytes := float32sToBytes(data)
+	buf, err := r.device.CreateBuffer(gpu.BufferDesc{
+		Size:  len(bytes),
+		Usage: gpu.BufferUsageVertex | gpu.BufferUsageCopyDst,
+		Label: label,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("bundle: create %s: %w", label, err)
+	}
+	r.device.Queue().WriteBuffer(buf, 0, bytes)
+	return buf, nil
+}
+
 // ensureInstanceBuffer grows the shared per-instance buffer to at least size
-// bytes. Growth is one-way — shrink is not worth the allocation churn.
+// bytes. Growth is one-way.
 func (r *Renderer) ensureInstanceBuffer(size int) error {
 	if size <= r.instanceBufBytes {
 		return nil
@@ -319,9 +403,6 @@ func (r *Renderer) ensureInstanceBuffer(size int) error {
 		r.instanceBuf.Destroy()
 		r.instanceBuf = nil
 	}
-	// Over-allocate 25% to absorb small growths without reallocating. The
-	// cost of the extra bytes is negligible; the cost of reallocating every
-	// frame when instance count oscillates is high.
 	grown := size + size/4
 	buf, err := r.device.CreateBuffer(gpu.BufferDesc{
 		Size:  grown,
@@ -388,6 +469,64 @@ func (r *Renderer) ensurePassBuffers(pb engine.RenderPassBundle) (*passResources
 	return res, nil
 }
 
+// buildUniformBuffers allocates the scene (192 bytes) and shadow (64 bytes)
+// uniform buffers. Shared by multiple pipelines via their own bind groups.
+func (r *Renderer) buildUniformBuffers() error {
+	scene, err := r.device.CreateBuffer(gpu.BufferDesc{
+		Size:  sceneUniformSize,
+		Usage: gpu.BufferUsageUniform | gpu.BufferUsageCopyDst,
+		Label: "bundle.scene.uniforms",
+	})
+	if err != nil {
+		return fmt.Errorf("bundle.buildUniformBuffers (scene): %w", err)
+	}
+	shadow, err := r.device.CreateBuffer(gpu.BufferDesc{
+		Size:  64,
+		Usage: gpu.BufferUsageUniform | gpu.BufferUsageCopyDst,
+		Label: "bundle.shadow.uniforms",
+	})
+	if err != nil {
+		scene.Destroy()
+		return fmt.Errorf("bundle.buildUniformBuffers (shadow): %w", err)
+	}
+	r.sceneUniformBuf = scene
+	r.shadowUniformBuf = shadow
+	return nil
+}
+
+// buildShadowResources creates the shadow map texture + view + comparison
+// sampler used for directional-light shadows.
+func (r *Renderer) buildShadowResources() error {
+	tex, err := r.device.CreateTexture(gpu.TextureDesc{
+		Width:  shadowMapSize,
+		Height: shadowMapSize,
+		Format: gpu.FormatDepth32Float,
+		Usage:  gpu.TextureUsageRenderAttachment | gpu.TextureUsageTextureBinding,
+		Label:  "bundle.shadow.map",
+	})
+	if err != nil {
+		return fmt.Errorf("bundle.buildShadowResources (texture): %w", err)
+	}
+	samp, err := r.device.CreateSampler(gpu.SamplerDesc{
+		MagFilter:    gpu.FilterLinear,
+		MinFilter:    gpu.FilterLinear,
+		MipmapFilter: gpu.FilterNearest,
+		AddressU:     gpu.AddressClampToEdge,
+		AddressV:     gpu.AddressClampToEdge,
+		AddressW:     gpu.AddressClampToEdge,
+		Compare:      gpu.CompareLessEqual,
+		Label:        "bundle.shadow.sampler",
+	})
+	if err != nil {
+		tex.Destroy()
+		return fmt.Errorf("bundle.buildShadowResources (sampler): %w", err)
+	}
+	r.shadowTex = tex
+	r.shadowView = tex.CreateView()
+	r.shadowSampler = samp
+	return nil
+}
+
 func (r *Renderer) buildUnlitPipeline() error {
 	shader, err := r.device.CreateShaderModule(gpu.ShaderDesc{
 		SourceWGSL: unlitWGSL,
@@ -401,20 +540,12 @@ func (r *Renderer) buildUnlitPipeline() error {
 			Module:     shader,
 			EntryPoint: "vs_main",
 			Buffers: []gpu.VertexBufferLayout{
-				{
-					ArrayStride: 12,
-					StepMode:    gpu.StepVertex,
-					Attributes: []gpu.VertexAttribute{
-						{ShaderLocation: 0, Offset: 0, Format: gpu.VertexFormatFloat32x3},
-					},
-				},
-				{
-					ArrayStride: 12,
-					StepMode:    gpu.StepVertex,
-					Attributes: []gpu.VertexAttribute{
-						{ShaderLocation: 1, Offset: 0, Format: gpu.VertexFormatFloat32x3},
-					},
-				},
+				{ArrayStride: 12, StepMode: gpu.StepVertex, Attributes: []gpu.VertexAttribute{
+					{ShaderLocation: 0, Offset: 0, Format: gpu.VertexFormatFloat32x3},
+				}},
+				{ArrayStride: 12, StepMode: gpu.StepVertex, Attributes: []gpu.VertexAttribute{
+					{ShaderLocation: 1, Offset: 0, Format: gpu.VertexFormatFloat32x3},
+				}},
 			},
 		},
 		Fragment: gpu.FragmentStageDesc{
@@ -445,46 +576,37 @@ func (r *Renderer) buildUnlitPipeline() error {
 	return nil
 }
 
-// buildInstancedPipeline creates the per-instance-transform pipeline used
-// for RenderInstancedMesh entries. Slot 2 is a per-instance buffer carrying
-// a 4x4 matrix split across four vec4 attributes (locations 2..5).
-func (r *Renderer) buildInstancedPipeline() error {
+// buildLitPipeline is the directional-lit + shadowed pipeline used for
+// RenderInstancedMesh entries. 4 vertex buffers: positions, colors, normals,
+// per-instance mat4 (as 4 vec4 attributes, locations 3..6).
+func (r *Renderer) buildLitPipeline() error {
 	shader, err := r.device.CreateShaderModule(gpu.ShaderDesc{
-		SourceWGSL: instancedWGSL,
-		Label:      "bundle.instanced",
+		SourceWGSL: litWGSL,
+		Label:      "bundle.lit",
 	})
 	if err != nil {
-		return fmt.Errorf("bundle.buildInstancedPipeline: %w", err)
+		return fmt.Errorf("bundle.buildLitPipeline: %w", err)
 	}
 	pipeline, err := r.device.CreateRenderPipeline(gpu.RenderPipelineDesc{
 		Vertex: gpu.VertexStageDesc{
 			Module:     shader,
 			EntryPoint: "vs_main",
 			Buffers: []gpu.VertexBufferLayout{
-				{
-					ArrayStride: 12,
-					StepMode:    gpu.StepVertex,
-					Attributes: []gpu.VertexAttribute{
-						{ShaderLocation: 0, Offset: 0, Format: gpu.VertexFormatFloat32x3},
-					},
-				},
-				{
-					ArrayStride: 12,
-					StepMode:    gpu.StepVertex,
-					Attributes: []gpu.VertexAttribute{
-						{ShaderLocation: 1, Offset: 0, Format: gpu.VertexFormatFloat32x3},
-					},
-				},
-				{
-					ArrayStride: 64, // 4 vec4 = mat4
-					StepMode:    gpu.StepInstance,
-					Attributes: []gpu.VertexAttribute{
-						{ShaderLocation: 2, Offset: 0, Format: gpu.VertexFormatFloat32x4},
-						{ShaderLocation: 3, Offset: 16, Format: gpu.VertexFormatFloat32x4},
-						{ShaderLocation: 4, Offset: 32, Format: gpu.VertexFormatFloat32x4},
-						{ShaderLocation: 5, Offset: 48, Format: gpu.VertexFormatFloat32x4},
-					},
-				},
+				{ArrayStride: 12, StepMode: gpu.StepVertex, Attributes: []gpu.VertexAttribute{
+					{ShaderLocation: 0, Offset: 0, Format: gpu.VertexFormatFloat32x3},
+				}},
+				{ArrayStride: 12, StepMode: gpu.StepVertex, Attributes: []gpu.VertexAttribute{
+					{ShaderLocation: 1, Offset: 0, Format: gpu.VertexFormatFloat32x3},
+				}},
+				{ArrayStride: 12, StepMode: gpu.StepVertex, Attributes: []gpu.VertexAttribute{
+					{ShaderLocation: 2, Offset: 0, Format: gpu.VertexFormatFloat32x3},
+				}},
+				{ArrayStride: 64, StepMode: gpu.StepInstance, Attributes: []gpu.VertexAttribute{
+					{ShaderLocation: 3, Offset: 0, Format: gpu.VertexFormatFloat32x4},
+					{ShaderLocation: 4, Offset: 16, Format: gpu.VertexFormatFloat32x4},
+					{ShaderLocation: 5, Offset: 32, Format: gpu.VertexFormatFloat32x4},
+					{ShaderLocation: 6, Offset: 48, Format: gpu.VertexFormatFloat32x4},
+				}},
 			},
 		},
 		Fragment: gpu.FragmentStageDesc{
@@ -505,57 +627,195 @@ func (r *Renderer) buildInstancedPipeline() error {
 			DepthCompare:      gpu.CompareLess,
 		},
 		AutoLayout: true,
-		Label:      "bundle.instanced",
+		Label:      "bundle.lit",
 	})
 	if err != nil {
-		return fmt.Errorf("bundle.buildInstancedPipeline: %w", err)
+		return fmt.Errorf("bundle.buildLitPipeline: %w", err)
 	}
-	r.instancedPipeline = pipeline
-	r.instancedBGLayout = pipeline.GetBindGroupLayout(0)
+	r.litPipeline = pipeline
+	r.litBGLayout = pipeline.GetBindGroupLayout(0)
 	return nil
 }
 
-func (r *Renderer) buildUniformBuf() error {
-	buf, err := r.device.CreateBuffer(gpu.BufferDesc{
-		Size:  64, // single mat4
-		Usage: gpu.BufferUsageUniform | gpu.BufferUsageCopyDst,
-		Label: "bundle.mvp",
+// buildShadowPipeline is the depth-only pipeline used during the shadow pass.
+// Positions + per-instance mat4. No color, no normal, no fragment output.
+func (r *Renderer) buildShadowPipeline() error {
+	shader, err := r.device.CreateShaderModule(gpu.ShaderDesc{
+		SourceWGSL: shadowWGSL,
+		Label:      "bundle.shadow",
 	})
 	if err != nil {
-		return fmt.Errorf("bundle.buildUniformBuf: %w", err)
+		return fmt.Errorf("bundle.buildShadowPipeline: %w", err)
 	}
-	r.uniformBuf = buf
+	pipeline, err := r.device.CreateRenderPipeline(gpu.RenderPipelineDesc{
+		Vertex: gpu.VertexStageDesc{
+			Module:     shader,
+			EntryPoint: "vs_main",
+			Buffers: []gpu.VertexBufferLayout{
+				{ArrayStride: 12, StepMode: gpu.StepVertex, Attributes: []gpu.VertexAttribute{
+					{ShaderLocation: 0, Offset: 0, Format: gpu.VertexFormatFloat32x3},
+				}},
+				{ArrayStride: 64, StepMode: gpu.StepInstance, Attributes: []gpu.VertexAttribute{
+					{ShaderLocation: 1, Offset: 0, Format: gpu.VertexFormatFloat32x4},
+					{ShaderLocation: 2, Offset: 16, Format: gpu.VertexFormatFloat32x4},
+					{ShaderLocation: 3, Offset: 32, Format: gpu.VertexFormatFloat32x4},
+					{ShaderLocation: 4, Offset: 48, Format: gpu.VertexFormatFloat32x4},
+				}},
+			},
+		},
+		// No fragment stage — depth-only.
+		Fragment: gpu.FragmentStageDesc{},
+		Primitive: gpu.PrimitiveState{
+			Topology:  gpu.TopologyTriangleList,
+			CullMode:  gpu.CullBack,
+			FrontFace: gpu.FrontFaceCCW,
+		},
+		DepthStencil: &gpu.DepthStencilState{
+			Format:            gpu.FormatDepth32Float,
+			DepthWriteEnabled: true,
+			DepthCompare:      gpu.CompareLess,
+		},
+		AutoLayout: true,
+		Label:      "bundle.shadow",
+	})
+	if err != nil {
+		return fmt.Errorf("bundle.buildShadowPipeline: %w", err)
+	}
+	r.shadowPipeline = pipeline
+	r.shadowBGLayout = pipeline.GetBindGroupLayout(0)
 	return nil
 }
 
-// buildBindGroups builds one bind group per pipeline, both pointing at the
-// shared MVP uniform buffer. WebGPU requires a bind group per pipeline
-// layout even when the underlying resource is identical.
+// buildBindGroups builds the per-pipeline bind groups. The lit bind group
+// holds three resources: scene uniforms, shadow map, shadow sampler.
 func (r *Renderer) buildBindGroups() error {
 	unlit, err := r.device.CreateBindGroup(gpu.BindGroupDesc{
 		Layout:  r.unlitBGLayout,
-		Entries: []gpu.BindGroupEntry{{Binding: 0, Buffer: r.uniformBuf, Size: 64}},
+		Entries: []gpu.BindGroupEntry{{Binding: 0, Buffer: r.sceneUniformBuf, Size: sceneUniformSize}},
 		Label:   "bundle.unlit.bindgroup",
 	})
 	if err != nil {
 		return fmt.Errorf("bundle.buildBindGroups (unlit): %w", err)
 	}
-	inst, err := r.device.CreateBindGroup(gpu.BindGroupDesc{
-		Layout:  r.instancedBGLayout,
-		Entries: []gpu.BindGroupEntry{{Binding: 0, Buffer: r.uniformBuf, Size: 64}},
-		Label:   "bundle.instanced.bindgroup",
+	lit, err := r.device.CreateBindGroup(gpu.BindGroupDesc{
+		Layout: r.litBGLayout,
+		Entries: []gpu.BindGroupEntry{
+			{Binding: 0, Buffer: r.sceneUniformBuf, Size: sceneUniformSize},
+			{Binding: 1, TextureView: r.shadowView},
+			{Binding: 2, Sampler: r.shadowSampler},
+		},
+		Label: "bundle.lit.bindgroup",
 	})
 	if err != nil {
-		return fmt.Errorf("bundle.buildBindGroups (instanced): %w", err)
+		return fmt.Errorf("bundle.buildBindGroups (lit): %w", err)
 	}
-	r.unlitUniformBindGrp = unlit
-	r.instancedUniformBindGrp = inst
+	shadow, err := r.device.CreateBindGroup(gpu.BindGroupDesc{
+		Layout:  r.shadowBGLayout,
+		Entries: []gpu.BindGroupEntry{{Binding: 0, Buffer: r.shadowUniformBuf, Size: 64}},
+		Label:   "bundle.shadow.bindgroup",
+	})
+	if err != nil {
+		return fmt.Errorf("bundle.buildBindGroups (shadow): %w", err)
+	}
+	r.unlitBindGrp = unlit
+	r.litBindGrp = lit
+	r.shadowBindGrp = shadow
 	return nil
 }
 
+// sceneUniformSize is the layout size of the Scene struct in WGSL. 192 bytes:
+// two mat4 (128) + four vec4 (64).
+const sceneUniformSize = 192
+
+type sceneUniformBlock struct {
+	viewProj, lightViewProj mat4
+	cameraPos               [4]float32
+	lightDir                [4]float32
+	lightColor              [4]float32
+	ambientColor            [4]float32
+}
+
+func buildSceneUniformBytes(s sceneUniformBlock) []byte {
+	out := make([]byte, sceneUniformSize)
+	copy(out[0:64], float32sToBytes(s.viewProj[:]))
+	copy(out[64:128], float32sToBytes(s.lightViewProj[:]))
+	copy(out[128:144], float32sToBytes(s.cameraPos[:]))
+	copy(out[144:160], float32sToBytes(s.lightDir[:]))
+	copy(out[160:176], float32sToBytes(s.lightColor[:]))
+	copy(out[176:192], float32sToBytes(s.ambientColor[:]))
+	return out
+}
+
+// resolveDirectionalLight picks a primary directional light from the bundle's
+// Lights + Environment. If none exist it falls back to a tasteful default —
+// unlit demos should still render usefully.
+func resolveDirectionalLight(b engine.RenderBundle) (dir [3]float32, color [4]float32, ambient [4]float32) {
+	dir = [3]float32{-0.4, -1.0, -0.3}
+	color = [4]float32{1, 0.96, 0.9, 1.0}    // w = intensity
+	ambient = [4]float32{0.35, 0.38, 0.45, 0.35}
+
+	for _, l := range b.Lights {
+		if l.Kind == "directional" {
+			dx, dy, dz := float32(l.DirectionX), float32(l.DirectionY), float32(l.DirectionZ)
+			if dx == 0 && dy == 0 && dz == 0 {
+				break
+			}
+			length := float32(math.Sqrt(float64(dx*dx + dy*dy + dz*dz)))
+			if length > 0 {
+				dir = [3]float32{dx / length, dy / length, dz / length}
+			}
+			lc := parseCSSColor(l.Color, [3]float32{1, 1, 1})
+			intensity := float32(l.Intensity)
+			if intensity == 0 {
+				intensity = 1.0
+			}
+			color = [4]float32{lc[0], lc[1], lc[2], intensity}
+			break
+		}
+	}
+
+	env := b.Environment
+	if env.AmbientColor != "" || env.AmbientIntensity != 0 {
+		ac := parseCSSColor(env.AmbientColor, [3]float32{0.5, 0.5, 0.5})
+		intensity := float32(env.AmbientIntensity)
+		if intensity == 0 {
+			intensity = 0.3
+		}
+		ambient = [4]float32{ac[0], ac[1], ac[2], intensity}
+	}
+	return dir, color, ambient
+}
+
+func destroyPassResources(p *passResources) {
+	if p == nil {
+		return
+	}
+	if p.positions != nil {
+		p.positions.Destroy()
+	}
+	if p.colors != nil {
+		p.colors.Destroy()
+	}
+}
+
+func destroyPrimitiveResources(p *primitiveResources) {
+	if p == nil {
+		return
+	}
+	if p.positions != nil {
+		p.positions.Destroy()
+	}
+	if p.colors != nil {
+		p.colors.Destroy()
+	}
+	if p.normals != nil {
+		p.normals.Destroy()
+	}
+}
+
 // float64sToFloat32Bytes reinterprets a slice of float64 as little-endian
-// float32 bytes. The bundle type uses float64 for readability on the server
-// side; GPU buffers want float32 to save bandwidth.
+// float32 bytes. The bundle uses float64 for server-side readability; GPU
+// buffers want float32.
 func float64sToFloat32Bytes(src []float64) []byte {
 	if len(src) == 0 {
 		return nil
@@ -599,20 +859,30 @@ func whiteColorsFor(vertexCount int) []byte {
 	return out
 }
 
-// parseBackground parses a simple #rrggbb string into a Color. Anything else
-// returns an opaque near-black default so frames render even with malformed
-// input — a visible wrong color is better than a silent crash.
+// parseBackground parses a #rrggbb clear-color string; malformed input falls
+// back to a visible near-black so bad data stays debuggable.
 func parseBackground(s string) gpu.Color {
+	if rgb, ok := tryParseCSSColor(s); ok {
+		return gpu.Color{R: float64(rgb[0]), G: float64(rgb[1]), B: float64(rgb[2]), A: 1}
+	}
+	return gpu.Color{R: 0.05, G: 0.06, B: 0.08, A: 1}
+}
+
+// parseCSSColor parses a #rrggbb string to a normalized RGB triplet; on
+// failure returns the provided fallback so call sites don't need to check.
+func parseCSSColor(s string, fallback [3]float32) [3]float32 {
+	if rgb, ok := tryParseCSSColor(s); ok {
+		return rgb
+	}
+	return fallback
+}
+
+func tryParseCSSColor(s string) ([3]float32, bool) {
 	if len(s) == 7 && s[0] == '#' {
 		var r, g, b byte
 		if _, err := fmt.Sscanf(s, "#%02x%02x%02x", &r, &g, &b); err == nil {
-			return gpu.Color{
-				R: float64(r) / 255,
-				G: float64(g) / 255,
-				B: float64(b) / 255,
-				A: 1,
-			}
+			return [3]float32{float32(r) / 255, float32(g) / 255, float32(b) / 255}, true
 		}
 	}
-	return gpu.Color{R: 0.05, G: 0.06, B: 0.08, A: 1}
+	return [3]float32{}, false
 }

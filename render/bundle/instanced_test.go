@@ -7,10 +7,8 @@ import (
 	"github.com/odvcencio/gosx/render/gpu"
 )
 
-// TestFrameInstancedMeshDispatches verifies that RenderInstancedMesh entries
-// result in (a) primitive geometry being created on demand, (b) an instance
-// transform buffer being uploaded, and (c) an instanced draw call against
-// the instanced pipeline.
+// TestFrameInstancedMeshDispatches verifies that a RenderInstancedMesh
+// produces draw calls on BOTH the shadow pass and the lit main pass.
 func TestFrameInstancedMeshDispatches(t *testing.T) {
 	d := newFakeDevice()
 	r, err := New(Config{Device: d, Surface: fakeSurface{}})
@@ -19,9 +17,7 @@ func TestFrameInstancedMeshDispatches(t *testing.T) {
 	}
 	defer r.Destroy()
 
-	// 3 instances — each needs 16 floats × 3 = 48 floats of transform data.
 	transforms := make([]float64, 16*3)
-	// Identity matrices: diag = 1.
 	for i := 0; i < 3; i++ {
 		base := i * 16
 		transforms[base+0] = 1
@@ -45,47 +41,46 @@ func TestFrameInstancedMeshDispatches(t *testing.T) {
 		t.Fatalf("Frame: %v", err)
 	}
 
-	// Primitive geometry created = position + color = 2 buffers.
-	// Instance buffer created = 1 buffer.
-	// Total new buffers = 3.
-	if got := len(d.buffers) - buffersBefore; got != 3 {
-		t.Errorf("expected 3 new buffers (primitive pos + col + instance), got %d", got)
+	// Primitive geometry: positions + colors + normals = 3 buffers.
+	// Instance buffer = 1 buffer.
+	if got := len(d.buffers) - buffersBefore; got != 4 {
+		t.Errorf("expected 4 new buffers (pos+col+nrm+instance), got %d", got)
 	}
 
 	if len(d.encoders) != 1 {
 		t.Fatalf("expected 1 command encoder, got %d", len(d.encoders))
 	}
-	pass := d.encoders[0].passes[0]
-	if pass.desc.DepthStencilAttachment == nil {
-		t.Error("pass should have a depth-stencil attachment in R1")
+	shadowPass := d.encoders[0].passes[0]
+	mainPass := d.encoders[0].passes[1]
+
+	if len(shadowPass.draws) != 1 {
+		t.Fatalf("shadow pass: expected 1 instanced draw, got %d", len(shadowPass.draws))
 	}
-	if len(pass.draws) != 1 {
-		t.Fatalf("expected 1 draw call, got %d", len(pass.draws))
+	if shadowPass.draws[0].instanceCount != 3 {
+		t.Errorf("shadow pass: expected 3 instances, got %d", shadowPass.draws[0].instanceCount)
 	}
-	draw := pass.draws[0]
-	if draw.vertexCount != 36 {
-		t.Errorf("expected cube 36 verts, got %d", draw.vertexCount)
+	if len(mainPass.draws) != 1 {
+		t.Fatalf("main pass: expected 1 instanced draw, got %d", len(mainPass.draws))
 	}
-	if draw.instanceCount != 3 {
-		t.Errorf("expected 3 instances, got %d", draw.instanceCount)
+	if mainPass.draws[0].instanceCount != 3 {
+		t.Errorf("main pass: expected 3 instances, got %d", mainPass.draws[0].instanceCount)
 	}
-	// Instanced path sets 3 vertex buffers: pos, col, instance.
-	if pass.vbufSets != 3 {
-		t.Errorf("expected 3 vertex-buffer sets for instanced draw, got %d", pass.vbufSets)
+	if mainPass.draws[0].vertexCount != 36 {
+		t.Errorf("main pass: expected 36 verts (cube), got %d", mainPass.draws[0].vertexCount)
 	}
 
-	// Second frame with the same Kind should not create new primitive buffers.
+	// Second frame — caches hit; no new buffers.
 	buffersBefore = len(d.buffers)
 	if err := r.Frame(b, 400, 300, 0.1); err != nil {
 		t.Fatalf("second Frame: %v", err)
 	}
 	if got := len(d.buffers) - buffersBefore; got != 0 {
-		t.Errorf("primitive cache should prevent new buffers on second frame, got %d new", got)
+		t.Errorf("cached frame should not allocate new buffers, got %d new", got)
 	}
 }
 
-// TestPrimitiveForKnownKinds verifies that the primitive library returns
-// non-empty geometry for each documented Kind and nil for unknown.
+// TestPrimitiveForKnownKinds verifies all documented primitive kinds yield
+// non-empty geometry with positions, colors, AND normals.
 func TestPrimitiveForKnownKinds(t *testing.T) {
 	for _, kind := range []string{"cube", "box", "plane", "sphere"} {
 		geo := primitiveForKind(kind)
@@ -102,14 +97,18 @@ func TestPrimitiveForKnownKinds(t *testing.T) {
 		if len(geo.colors) != geo.vertexCount*3 {
 			t.Errorf("%s: colors len %d, want %d", kind, len(geo.colors), geo.vertexCount*3)
 		}
+		if len(geo.normals) != geo.vertexCount*3 {
+			t.Errorf("%s: normals len %d, want %d", kind, len(geo.normals), geo.vertexCount*3)
+		}
 	}
 	if got := primitiveForKind("nosuchkind"); got != nil {
 		t.Error("unknown kind should return nil")
 	}
 }
 
-// TestFrameDepthAttachmentResizes verifies that successive frames at
-// different canvas sizes produce exactly one depth texture per unique size.
+// TestFrameDepthAttachmentResizes verifies the main-pass depth texture
+// resizes on canvas-size changes, while the shadow map (created at New)
+// stays at its fixed resolution.
 func TestFrameDepthAttachmentResizes(t *testing.T) {
 	d := newFakeDevice()
 	r, err := New(Config{Device: d, Surface: fakeSurface{}})
@@ -118,30 +117,39 @@ func TestFrameDepthAttachmentResizes(t *testing.T) {
 	}
 	defer r.Destroy()
 
+	// Shadow map (1 texture) created at New.
+	shadowMapCount := 1
+	if got := len(d.textures); got != shadowMapCount {
+		t.Fatalf("expected %d textures at construction (shadow map), got %d",
+			shadowMapCount, got)
+	}
+
 	empty := engine.RenderBundle{}
 	if err := r.Frame(empty, 400, 300, 0); err != nil {
 		t.Fatalf("Frame: %v", err)
 	}
-	if got := len(d.textures); got != 1 {
-		t.Fatalf("expected 1 depth texture after first frame, got %d", got)
+	// First frame adds the main-pass depth texture.
+	if got := len(d.textures); got != shadowMapCount+1 {
+		t.Fatalf("expected depth texture added on first frame, got %d total", got)
 	}
-	if t1 := d.textures[0]; t1.desc.Format != gpu.FormatDepth24Plus {
-		t.Errorf("expected depth24plus format, got %v", t1.desc.Format)
+	depth := d.textures[shadowMapCount]
+	if depth.desc.Format != gpu.FormatDepth24Plus {
+		t.Errorf("main depth format: want depth24plus, got %v", depth.desc.Format)
 	}
 
-	// Same size — should not reallocate.
+	// Same size — no allocation.
 	if err := r.Frame(empty, 400, 300, 0.016); err != nil {
 		t.Fatalf("Frame: %v", err)
 	}
-	if got := len(d.textures); got != 1 {
+	if got := len(d.textures); got != shadowMapCount+1 {
 		t.Errorf("same-size reframe should reuse depth texture, got %d", got)
 	}
 
-	// Different size — reallocates.
+	// Different size — new depth texture allocated.
 	if err := r.Frame(empty, 800, 600, 0.032); err != nil {
 		t.Fatalf("Frame: %v", err)
 	}
-	if got := len(d.textures); got != 2 {
-		t.Errorf("resize should trigger new depth texture, got %d total", got)
+	if got := len(d.textures); got != shadowMapCount+2 {
+		t.Errorf("resize should create new depth texture, got %d total", got)
 	}
 }

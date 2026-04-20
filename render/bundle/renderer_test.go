@@ -7,10 +7,11 @@ import (
 	"github.com/odvcencio/gosx/render/gpu"
 )
 
-// TestNewBuildsPipeline verifies that Renderer construction creates exactly
-// the expected GPU resources for the unlit pipeline: one shader, one
-// pipeline, one uniform buffer, one bind group.
-func TestNewBuildsPipeline(t *testing.T) {
+// TestNewBuildsAllPipelines verifies that Renderer construction creates the
+// expected GPU resources for R2: unlit + lit + shadow pipelines, scene +
+// shadow uniform buffers, shadow map texture, shadow sampler, and
+// per-pipeline bind groups.
+func TestNewBuildsAllPipelines(t *testing.T) {
 	d := newFakeDevice()
 
 	r, err := New(Config{Device: d, Surface: fakeSurface{}})
@@ -19,50 +20,76 @@ func TestNewBuildsPipeline(t *testing.T) {
 	}
 	defer r.Destroy()
 
-	if got := len(d.shaders); got != 2 {
-		t.Errorf("expected 2 shader modules (unlit + instanced), got %d", got)
+	if got := len(d.shaders); got != 3 {
+		t.Errorf("expected 3 shader modules (unlit+lit+shadow), got %d", got)
 	}
-	if got := len(d.pipelines); got != 2 {
-		t.Errorf("expected 2 render pipelines (unlit + instanced), got %d", got)
+	if got := len(d.pipelines); got != 3 {
+		t.Errorf("expected 3 render pipelines (unlit+lit+shadow), got %d", got)
 	}
-	if got := len(d.buffers); got != 1 {
-		t.Errorf("expected 1 buffer (shared mvp uniform), got %d", got)
+	if got := len(d.buffers); got != 2 {
+		t.Errorf("expected 2 uniform buffers (scene + shadow), got %d", got)
 	}
-	if got := len(d.bindGroups); got != 2 {
-		t.Errorf("expected 2 bind groups (one per pipeline layout), got %d", got)
+	if got := len(d.textures); got != 1 {
+		t.Errorf("expected 1 texture (shadow map) at construction, got %d", got)
 	}
-
-	// Unlit pipeline = 2 vertex buffers (positions + colors).
-	unlit := d.pipelines[0]
-	if unlit.desc.Vertex.EntryPoint != "vs_main" {
-		t.Errorf("unlit: expected vertex entry vs_main, got %q", unlit.desc.Vertex.EntryPoint)
+	if got := len(d.samplers); got != 1 {
+		t.Errorf("expected 1 sampler (shadow comparison), got %d", got)
 	}
-	if got := len(unlit.desc.Vertex.Buffers); got != 2 {
-		t.Errorf("unlit: expected 2 vertex buffers, got %d", got)
-	}
-	if unlit.desc.DepthStencil == nil {
-		t.Error("unlit: expected depth-stencil state to be attached")
-	} else if unlit.desc.DepthStencil.Format != gpu.FormatDepth24Plus {
-		t.Errorf("unlit: expected depth24plus, got %v", unlit.desc.DepthStencil.Format)
+	if got := len(d.bindGroups); got != 3 {
+		t.Errorf("expected 3 bind groups (one per pipeline), got %d", got)
 	}
 
-	// Instanced pipeline = 3 vertex buffers (positions + colors + instance mat4).
-	inst := d.pipelines[1]
-	if got := len(inst.desc.Vertex.Buffers); got != 3 {
-		t.Errorf("instanced: expected 3 vertex buffers, got %d", got)
+	// Shadow map is a depth32float render-attachment + texture-binding target.
+	shadow := d.textures[0]
+	if shadow.desc.Format != gpu.FormatDepth32Float {
+		t.Errorf("shadow map format: want depth32float, got %v", shadow.desc.Format)
 	}
-	if got := inst.desc.Vertex.Buffers[2].StepMode; got != gpu.StepInstance {
-		t.Errorf("instanced: slot 2 should be step-instance, got %v", got)
+	if !shadow.desc.Usage.Has(gpu.TextureUsageRenderAttachment) {
+		t.Error("shadow map must have RenderAttachment usage")
 	}
-	if got := len(inst.desc.Vertex.Buffers[2].Attributes); got != 4 {
-		t.Errorf("instanced: slot 2 should have 4 attributes (mat4 as 4x vec4), got %d", got)
+	if !shadow.desc.Usage.Has(gpu.TextureUsageTextureBinding) {
+		t.Error("shadow map must have TextureBinding usage so lit pass can sample it")
+	}
+
+	// Lit pipeline = 4 vertex buffers (positions + colors + normals + instance).
+	lit := d.pipelines[1]
+	if got := len(lit.desc.Vertex.Buffers); got != 4 {
+		t.Errorf("lit: expected 4 vertex buffers (pos+col+nrm+instance), got %d", got)
+	}
+	if got := lit.desc.Vertex.Buffers[3].StepMode; got != gpu.StepInstance {
+		t.Errorf("lit: slot 3 (instance) step mode should be Instance, got %v", got)
+	}
+
+	// Shadow pipeline = 2 vertex buffers (positions + instance only).
+	shadowPipe := d.pipelines[2]
+	if got := len(shadowPipe.desc.Vertex.Buffers); got != 2 {
+		t.Errorf("shadow: expected 2 vertex buffers (pos+instance), got %d", got)
+	}
+	// Shadow uses depth32float matching the shadow-map format.
+	if shadowPipe.desc.DepthStencil == nil {
+		t.Fatal("shadow pipeline must have depth-stencil state")
+	}
+	if shadowPipe.desc.DepthStencil.Format != gpu.FormatDepth32Float {
+		t.Errorf("shadow pipeline depth format: want depth32float, got %v",
+			shadowPipe.desc.DepthStencil.Format)
+	}
+
+	// Shadow sampler is a comparison sampler.
+	if d.samplers[0].desc.Compare == gpu.CompareAlways {
+		t.Error("shadow sampler should be a comparison sampler (Compare != Always)")
+	}
+
+	// Lit bind group has 3 entries: uniform + texture + sampler.
+	litBG := d.bindGroups[1]
+	if got := len(litBG.desc.Entries); got != 3 {
+		t.Errorf("lit bindgroup: expected 3 entries (uniform+texture+sampler), got %d", got)
 	}
 }
 
-// TestFrameSubmitsOnePassPerBundlePass verifies that each RenderPassBundle in
-// the input produces a draw call. Uses cache keys to confirm the buffer
-// cache hit path on the second frame.
-func TestFrameSubmitsOnePassPerBundlePass(t *testing.T) {
+// TestFrameAlwaysEmitsTwoPasses confirms that every non-trivial frame records
+// both a shadow pass and a main pass — even if InstancedMeshes is empty.
+// The shadow pass is still recorded so depth is cleared between frames.
+func TestFrameAlwaysEmitsTwoPasses(t *testing.T) {
 	d := newFakeDevice()
 	r, err := New(Config{Device: d, Surface: fakeSurface{}})
 	if err != nil {
@@ -71,62 +98,91 @@ func TestFrameSubmitsOnePassPerBundlePass(t *testing.T) {
 	defer r.Destroy()
 
 	b := engine.RenderBundle{
-		Background: "#112233",
-		Camera:     engine.RenderCamera{Z: 5, FOV: 1.0, Near: 0.1, Far: 100},
-		Passes: []engine.RenderPassBundle{
-			{
-				CacheKey:    "cube",
-				Positions:   []float64{0, 0, 0, 1, 0, 0, 0, 1, 0},
-				Colors:      []float64{1, 0, 0, 0, 1, 0, 0, 0, 1},
-				VertexCount: 3,
-			},
-		},
+		Camera: engine.RenderCamera{Z: 5, FOV: 1, Near: 0.1, Far: 100},
 	}
-
-	if err := r.Frame(b, 800, 600, 0.0); err != nil {
+	if err := r.Frame(b, 400, 300, 0); err != nil {
 		t.Fatalf("Frame: %v", err)
 	}
-
 	if len(d.encoders) != 1 {
-		t.Fatalf("expected 1 encoder, got %d", len(d.encoders))
+		t.Fatalf("expected 1 command encoder per frame, got %d", len(d.encoders))
 	}
-	if len(d.encoders[0].passes) != 1 {
-		t.Fatalf("expected 1 render pass, got %d", len(d.encoders[0].passes))
-	}
-	pass := d.encoders[0].passes[0]
-	if !pass.pipelineSet {
-		t.Error("pipeline was not set on the pass")
-	}
-	if !pass.bindGroupSet {
-		t.Error("bind group was not set on the pass")
-	}
-	if pass.vbufSets != 2 {
-		t.Errorf("expected 2 vertex buffer sets, got %d", pass.vbufSets)
-	}
-	if len(pass.draws) != 1 {
-		t.Fatalf("expected 1 draw call, got %d", len(pass.draws))
-	}
-	if pass.draws[0].vertexCount != 3 {
-		t.Errorf("expected vertexCount=3, got %d", pass.draws[0].vertexCount)
-	}
-	if !pass.ended {
-		t.Error("pass.End was not called")
+	if got := len(d.encoders[0].passes); got != 2 {
+		t.Errorf("expected 2 render passes per frame (shadow + main), got %d", got)
 	}
 
-	// Frame again. Cached pass should not allocate new buffers.
-	buffersBefore := len(d.buffers)
-	if err := r.Frame(b, 800, 600, 0.1); err != nil {
-		t.Fatalf("second Frame: %v", err)
+	// Shadow pass has only a depth attachment. Main pass has color + depth.
+	if d.encoders[0].passes[0].desc.ColorAttachments != nil &&
+		len(d.encoders[0].passes[0].desc.ColorAttachments) > 0 {
+		t.Error("shadow pass should have no color attachments")
 	}
-	buffersAfter := len(d.buffers)
-	if buffersAfter != buffersBefore {
-		t.Errorf("cached pass should not allocate new buffers: before=%d after=%d",
-			buffersBefore, buffersAfter)
+	if d.encoders[0].passes[0].desc.DepthStencilAttachment == nil {
+		t.Error("shadow pass must have a depth attachment")
+	}
+	if len(d.encoders[0].passes[1].desc.ColorAttachments) != 1 {
+		t.Error("main pass must have one color attachment")
+	}
+	if d.encoders[0].passes[1].desc.DepthStencilAttachment == nil {
+		t.Error("main pass must have a depth attachment")
 	}
 }
 
-// TestFrameClearColorFromBackground verifies that a valid #rrggbb background
-// string is parsed and drives the render pass clear value.
+// TestFrameUnlitPassDispatches verifies that a legacy RenderPassBundle entry
+// produces an unlit-pipeline draw call on the main pass only (shadow pass
+// does not draw pass-data meshes in R2).
+func TestFrameUnlitPassDispatches(t *testing.T) {
+	d := newFakeDevice()
+	r, err := New(Config{Device: d, Surface: fakeSurface{}})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer r.Destroy()
+
+	b := engine.RenderBundle{
+		Camera: engine.RenderCamera{Z: 5, FOV: 1, Near: 0.1, Far: 100},
+		Passes: []engine.RenderPassBundle{{
+			CacheKey:    "cube",
+			Positions:   []float64{0, 0, 0, 1, 0, 0, 0, 1, 0},
+			Colors:      []float64{1, 0, 0, 0, 1, 0, 0, 0, 1},
+			VertexCount: 3,
+		}},
+	}
+	if err := r.Frame(b, 400, 300, 0); err != nil {
+		t.Fatalf("Frame: %v", err)
+	}
+	shadowPass := d.encoders[0].passes[0]
+	mainPass := d.encoders[0].passes[1]
+
+	if len(shadowPass.draws) != 0 {
+		t.Errorf("shadow pass should have no draws when no instanced meshes, got %d",
+			len(shadowPass.draws))
+	}
+	if len(mainPass.draws) != 1 {
+		t.Fatalf("main pass: expected 1 draw, got %d", len(mainPass.draws))
+	}
+	if mainPass.draws[0].vertexCount != 3 {
+		t.Errorf("main draw: expected 3 verts, got %d", mainPass.draws[0].vertexCount)
+	}
+}
+
+// TestFrameZeroSizedNoOp confirms zero width/height short-circuits before
+// any encoder is created.
+func TestFrameZeroSizedNoOp(t *testing.T) {
+	d := newFakeDevice()
+	r, err := New(Config{Device: d, Surface: fakeSurface{}})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer r.Destroy()
+	if err := r.Frame(engine.RenderBundle{}, 0, 0, 0); err != nil {
+		t.Fatalf("Frame: %v", err)
+	}
+	if len(d.encoders) != 0 {
+		t.Errorf("zero-sized frame should not create encoder, got %d", len(d.encoders))
+	}
+}
+
+// TestFrameClearColorFromBackground verifies the main pass clear color is
+// parsed from RenderBundle.Background.
 func TestFrameClearColorFromBackground(t *testing.T) {
 	d := newFakeDevice()
 	r, err := New(Config{Device: d, Surface: fakeSurface{}})
@@ -138,33 +194,15 @@ func TestFrameClearColorFromBackground(t *testing.T) {
 	if err := r.Frame(engine.RenderBundle{Background: "#ff8000"}, 100, 100, 0); err != nil {
 		t.Fatalf("Frame: %v", err)
 	}
-
-	pass := d.encoders[0].passes[0]
-	if len(pass.desc.ColorAttachments) != 1 {
-		t.Fatalf("expected 1 color attachment, got %d", len(pass.desc.ColorAttachments))
+	mainPass := d.encoders[0].passes[1]
+	if len(mainPass.desc.ColorAttachments) != 1 {
+		t.Fatalf("expected 1 color attachment on main pass, got %d",
+			len(mainPass.desc.ColorAttachments))
 	}
-	clear := pass.desc.ColorAttachments[0].ClearValue
+	clear := mainPass.desc.ColorAttachments[0].ClearValue
 	const tol = 0.01
 	if abs(clear.R-1.0) > tol || abs(clear.G-128.0/255) > tol || abs(clear.B-0) > tol {
 		t.Errorf("unexpected clear color: %+v", clear)
-	}
-}
-
-// TestFrameZeroSizedNoOp confirms zero width/height is treated as a no-op
-// rather than spawning a pass.
-func TestFrameZeroSizedNoOp(t *testing.T) {
-	d := newFakeDevice()
-	r, err := New(Config{Device: d, Surface: fakeSurface{}})
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	defer r.Destroy()
-
-	if err := r.Frame(engine.RenderBundle{}, 0, 0, 0); err != nil {
-		t.Fatalf("Frame: %v", err)
-	}
-	if len(d.encoders) != 0 {
-		t.Errorf("zero-sized frame should not create a command encoder, got %d", len(d.encoders))
 	}
 }
 
