@@ -14,6 +14,9 @@ func registerEngineRuntime(b *bridge.Bridge) {
 	setRuntimeFunc("__gosx_tick_engine", tickEngineRuntimeFunc(b))
 	setRuntimeFunc("__gosx_render_engine", renderEngineRuntimeFunc(b))
 	setRuntimeFunc("__gosx_engine_dispose", disposeEngineRuntimeFunc(b))
+	// First-party GPU path: renders the engine's bundle into a canvas via
+	// render/bundle, bypassing the JS scene renderer.
+	registerRenderToCanvasRuntime(b)
 }
 
 func hydrateEngineRuntimeFunc(b *bridge.Bridge) js.Func {
@@ -70,7 +73,11 @@ func disposeEngineRuntimeFunc(b *bridge.Bridge) js.Func {
 		if len(args) < 1 {
 			return js.Null()
 		}
-		b.DisposeEngine(args[0].String())
+		engineID := args[0].String()
+		// Tear down the first-party renderer if this engine was using it.
+		// No-op when the engine rendered through the JS path.
+		disposeEngineRenderer(engineID)
+		b.DisposeEngine(engineID)
 		return js.Null()
 	})
 }
