@@ -222,6 +222,7 @@ func (r *Renderer) Frame(b engine.RenderBundle, width, height int, timeSeconds f
 
 	viewProj := computeMVP(b.Camera, width, height)
 	lightDir, lightColor, ambientColor := resolveDirectionalLight(b)
+	skyColor, groundColor := resolveHemisphereAmbient(b)
 	lightViewProj := computeLightViewProj(lightDir)
 
 	r.device.Queue().WriteBuffer(r.sceneUniformBuf, 0, buildSceneUniformBytes(sceneUniformBlock{
@@ -231,6 +232,8 @@ func (r *Renderer) Frame(b engine.RenderBundle, width, height int, timeSeconds f
 		lightDir:      [4]float32{lightDir[0], lightDir[1], lightDir[2], 0},
 		lightColor:    lightColor,
 		ambientColor:  ambientColor,
+		skyColor:      skyColor,
+		groundColor:   groundColor,
 	}))
 	r.device.Queue().WriteBuffer(r.shadowUniformBuf, 0, float32sToBytes(lightViewProj[:]))
 
@@ -802,9 +805,9 @@ func (r *Renderer) buildBindGroups() error {
 	return nil
 }
 
-// sceneUniformSize is the layout size of the Scene struct in WGSL. 192 bytes:
-// two mat4 (128) + four vec4 (64).
-const sceneUniformSize = 192
+// sceneUniformSize is the layout size of the Scene struct in WGSL. 224
+// bytes: two mat4 (128) + six vec4 (96).
+const sceneUniformSize = 224
 
 type sceneUniformBlock struct {
 	viewProj, lightViewProj mat4
@@ -812,6 +815,8 @@ type sceneUniformBlock struct {
 	lightDir                [4]float32
 	lightColor              [4]float32
 	ambientColor            [4]float32
+	skyColor                [4]float32
+	groundColor             [4]float32
 }
 
 func buildSceneUniformBytes(s sceneUniformBlock) []byte {
@@ -822,6 +827,8 @@ func buildSceneUniformBytes(s sceneUniformBlock) []byte {
 	copy(out[144:160], float32sToBytes(s.lightDir[:]))
 	copy(out[160:176], float32sToBytes(s.lightColor[:]))
 	copy(out[176:192], float32sToBytes(s.ambientColor[:]))
+	copy(out[192:208], float32sToBytes(s.skyColor[:]))
+	copy(out[208:224], float32sToBytes(s.groundColor[:]))
 	return out
 }
 
@@ -863,6 +870,26 @@ func resolveDirectionalLight(b engine.RenderBundle) (dir [3]float32, color [4]fl
 		ambient = [4]float32{ac[0], ac[1], ac[2], intensity}
 	}
 	return dir, color, ambient
+}
+
+// resolveHemisphereAmbient pulls sky + ground colors from the bundle's
+// Environment for the hemisphere-ambient IBL approximation. When unset,
+// defaults to a soft overcast (warm sky, cool ground) tuned to read well
+// with primitive geometry.
+func resolveHemisphereAmbient(b engine.RenderBundle) (sky [4]float32, ground [4]float32) {
+	env := b.Environment
+	skyRGB := parseCSSColor(env.SkyColor, [3]float32{0.80, 0.88, 1.00})
+	groundRGB := parseCSSColor(env.GroundColor, [3]float32{0.28, 0.24, 0.22})
+	skyI := float32(env.SkyIntensity)
+	if skyI == 0 {
+		skyI = 1.0
+	}
+	groundI := float32(env.GroundIntensity)
+	if groundI == 0 {
+		groundI = 1.0
+	}
+	return [4]float32{skyRGB[0] * skyI, skyRGB[1] * skyI, skyRGB[2] * skyI, 1},
+		[4]float32{groundRGB[0] * groundI, groundRGB[1] * groundI, groundRGB[2] * groundI, 1}
 }
 
 func destroyPassResources(p *passResources) {

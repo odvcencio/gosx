@@ -19,7 +19,9 @@ struct Scene {
   cameraPos      : vec4<f32>,
   lightDir       : vec4<f32>,
   lightColor     : vec4<f32>,
-  ambientColor   : vec4<f32>,
+  ambientColor   : vec4<f32>, // .a = hemisphere intensity
+  skyColor       : vec4<f32>, // dome-top color for hemisphere ambient
+  groundColor    : vec4<f32>, // dome-bottom color
 };
 
 struct Material {
@@ -142,7 +144,12 @@ fn fs_main(in : VSOut) -> @location(0) vec4<f32> {
   let shadow = sampleShadow(in.lightUV);
   let direct = (diffuse + specular) * radiance * NdotL * shadow;
 
-  let ambient  = baseColor * scene.ambientColor.rgb * scene.ambientColor.a;
+  // Hemisphere ambient: blend the sky/ground dome colors by the world
+  // normal's up-component. Modulated by a tinted ambient (.rgb) and an
+  // intensity (.a) so the artist can pull the whole ambient channel up or
+  // down with one scalar.
+  let hemi = mix(scene.groundColor.rgb, scene.skyColor.rgb, N.y * 0.5 + 0.5);
+  let ambient  = baseColor * hemi * scene.ambientColor.rgb * scene.ambientColor.a;
   let emissive = material.emissive.rgb * material.pbrParams.z;
   let color = direct + ambient + emissive;
   return vec4<f32>(color, 1.0);
