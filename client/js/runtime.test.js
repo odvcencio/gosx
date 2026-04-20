@@ -6997,6 +6997,7 @@ test("Scene3D defers postfx until idle delay", async () => {
     },
   });
   const timers = installManualTimers(env.context);
+  env.context.requestIdleCallback = () => 1;
 
   runScript(bootstrapSource, env.context, "bootstrap.js");
   await flushAsyncWork();
@@ -7004,7 +7005,8 @@ test("Scene3D defers postfx until idle delay", async () => {
   assert.equal(mount.getAttribute("data-gosx-scene3d-postfx"), "deferred");
 
   assert.equal(timers.runDelay(40), 1);
-  assert.equal(timers.runDelay(0), 1);
+  assert.equal(mount.getAttribute("data-gosx-scene3d-postfx"), "deferred");
+  assert.equal(timers.runDelay(1200), 1);
   await flushAsyncWork();
 
   assert.equal(mount.getAttribute("data-gosx-scene3d-postfx"), "enabled");

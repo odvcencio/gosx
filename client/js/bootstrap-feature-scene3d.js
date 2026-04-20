@@ -15394,7 +15394,16 @@ if (typeof window !== "undefined") {
     const delay = Math.max(0, sceneNumber(delayMS, 0));
     const runIdle = function() {
       if (typeof requestIdleCallback === "function") {
-        requestIdleCallback(callback);
+        let fired = false;
+        const invoke = function(deadline) {
+          if (fired) {
+            return;
+          }
+          fired = true;
+          callback(deadline);
+        };
+        requestIdleCallback(invoke, { timeout: 1000 });
+        setTimeout(invoke, 1200);
       } else {
         setTimeout(callback, 0);
       }
