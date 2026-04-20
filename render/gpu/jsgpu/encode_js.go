@@ -88,6 +88,12 @@ func encodeBufferUsage(u gpu.BufferUsage) int {
 	if u.Has(gpu.BufferUsageIndirect) {
 		out |= usageIndirect
 	}
+	if u.Has(gpu.BufferUsageMapRead) {
+		out |= usageMapRead
+	}
+	if u.Has(gpu.BufferUsageMapWrite) {
+		out |= usageMapWrite
+	}
 	return out
 }
 

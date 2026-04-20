@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"sync"
 
 	"github.com/odvcencio/gosx/engine"
 	"github.com/odvcencio/gosx/render/gpu"
@@ -84,11 +85,12 @@ type Renderer struct {
 	hdrHeight       int
 
 	// R4 GPU picking: per-pixel object ID as a second color attachment on
-	// the main pass. Readback wiring (Buffer.MapAsync, queue-side copy) is
-	// scheduled for R5 — the id-buffer output already lands here so the
-	// client bridge can bolt the readback on without a shader refactor.
+	// the main pass + the async readback state that ties QueuePick to the
+	// copy-to-buffer + map-async sequence.
 	idBufferTex  gpu.Texture
 	idBufferView gpu.TextureView
+	pickMu       sync.Mutex
+	pendingPick  *pickRequest
 
 	// Bloom chain (bright-pass + 2 blur passes → composited into present).
 	brightPipeline gpu.RenderPipeline
@@ -494,6 +496,12 @@ func (r *Renderer) Frame(b engine.RenderBundle, width, height int, timeSeconds f
 
 	mainPass.End()
 
+	// 3b) If a pick is queued, copy the requested pixel from the id buffer
+	// into a staging buffer for async readback after submission. Must run
+	// between the main pass (which writes the id buffer) and any later
+	// passes that might clobber it.
+	r.recordPickCopy(enc, width, height)
+
 	// 4) Bloom chain (bright-pass + horizontal + vertical Gaussian blurs).
 	r.recordBloomPasses(enc)
 
@@ -505,6 +513,10 @@ func (r *Renderer) Frame(b engine.RenderBundle, width, height int, timeSeconds f
 	r.recordPresentPass(enc, surfaceView)
 
 	r.device.Queue().Submit(enc.Finish())
+
+	// After submission, kick off the async pick readback if one was queued.
+	// Runs in a goroutine — the frame completes immediately.
+	r.finishPickReadback()
 	return nil
 }
 

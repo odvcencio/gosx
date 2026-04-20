@@ -47,14 +47,19 @@ func (f TextureFormat) HasStencil() bool {
 type BufferUsage uint32
 
 const (
-	BufferUsageNone    BufferUsage = 0
-	BufferUsageVertex  BufferUsage = 1 << 0
-	BufferUsageIndex   BufferUsage = 1 << 1
-	BufferUsageUniform BufferUsage = 1 << 2
-	BufferUsageStorage BufferUsage = 1 << 3
-	BufferUsageCopyDst BufferUsage = 1 << 4
-	BufferUsageCopySrc BufferUsage = 1 << 5
+	BufferUsageNone     BufferUsage = 0
+	BufferUsageVertex   BufferUsage = 1 << 0
+	BufferUsageIndex    BufferUsage = 1 << 1
+	BufferUsageUniform  BufferUsage = 1 << 2
+	BufferUsageStorage  BufferUsage = 1 << 3
+	BufferUsageCopyDst  BufferUsage = 1 << 4
+	BufferUsageCopySrc  BufferUsage = 1 << 5
 	BufferUsageIndirect BufferUsage = 1 << 6
+	// MapRead / MapWrite: required for CPU readback / upload via map. A
+	// buffer with MapRead may only also have CopyDst; MapWrite only with
+	// CopySrc. WebGPU validates at creation time.
+	BufferUsageMapRead  BufferUsage = 1 << 7
+	BufferUsageMapWrite BufferUsage = 1 << 8
 )
 
 // Has reports whether u contains the requested bit.

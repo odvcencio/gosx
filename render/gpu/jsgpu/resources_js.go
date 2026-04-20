@@ -73,6 +73,23 @@ func (b *buffer) Size() int              { return b.size }
 func (b *buffer) Usage() gpu.BufferUsage { return b.usage }
 func (b *buffer) Destroy()               { b.js.Call("destroy") }
 
+// ReadAsync maps the buffer for reading on the JS side, copies the mapped
+// range out as Go bytes, and unmaps. The caller goroutine blocks on
+// mapAsync — fine for the one-shot pick readback path; long-running
+// streaming readback is a future optimization using persistent mapping.
+func (b *buffer) ReadAsync(size int) ([]byte, error) {
+	const modeRead = 0x0001 // GPUMapMode.READ (WebGPU spec constant)
+	if _, err := jsutil.AwaitPromise(b.js.Call("mapAsync", modeRead)); err != nil {
+		return nil, err
+	}
+	mapped := b.js.Call("getMappedRange")
+	u8 := js.Global().Get("Uint8Array").New(mapped)
+	out := make([]byte, size)
+	js.CopyBytesToGo(out, u8)
+	b.js.Call("unmap")
+	return out, nil
+}
+
 // shaderModule wraps a GPUShaderModule.
 type shaderModule struct {
 	js js.Value

@@ -121,6 +121,9 @@ type fakeBuffer struct {
 func (b *fakeBuffer) Size() int              { return b.size }
 func (b *fakeBuffer) Usage() gpu.BufferUsage { return b.usage }
 func (b *fakeBuffer) Destroy()               {}
+func (b *fakeBuffer) ReadAsync(size int) ([]byte, error) {
+	return make([]byte, size), nil
+}
 
 // fakeShader holds the source for inspection.
 type fakeShader struct {
@@ -163,6 +166,9 @@ func (e *fakeEncoder) BeginComputePass() gpu.ComputePassEncoder {
 	p := &fakeComputePass{}
 	e.computePasses = append(e.computePasses, p)
 	return p
+}
+
+func (e *fakeEncoder) CopyTextureToBuffer(gpu.TextureCopyInfo, gpu.BufferCopyInfo, int, int, int) {
 }
 
 func (e *fakeEncoder) Finish() gpu.CommandBuffer { return &fakeCommandBuffer{} }

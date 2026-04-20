@@ -56,6 +56,11 @@ type Buffer interface {
 	Size() int
 	Usage() BufferUsage
 	Destroy()
+	// ReadAsync maps the buffer for reading, copies up to size bytes to a
+	// freshly allocated Go slice, and unmaps. Blocks the calling goroutine
+	// on the async map operation. Only valid on buffers created with
+	// BufferUsageMapRead.
+	ReadAsync(size int) ([]byte, error)
 }
 
 // BufferDesc configures a buffer at creation time.
@@ -164,7 +169,26 @@ type ComputePipelineDesc struct {
 type CommandEncoder interface {
 	BeginRenderPass(RenderPassDesc) RenderPassEncoder
 	BeginComputePass() ComputePassEncoder
+	// CopyTextureToBuffer enqueues a copy of a rectangular region of a
+	// texture into a byte-addressable buffer. bytesPerRow must satisfy the
+	// backend's row-alignment minimum (256 bytes for WebGPU).
+	CopyTextureToBuffer(src TextureCopyInfo, dst BufferCopyInfo, width, height, depth int)
 	Finish() CommandBuffer
+}
+
+// TextureCopyInfo describes the source of a texture copy.
+type TextureCopyInfo struct {
+	Texture  Texture
+	Origin   [3]int // x, y, z
+	MipLevel int
+}
+
+// BufferCopyInfo describes the destination of a copy into a buffer.
+type BufferCopyInfo struct {
+	Buffer       Buffer
+	Offset       int
+	BytesPerRow  int
+	RowsPerImage int
 }
 
 // ComputePassEncoder records dispatch commands within a single compute pass.

@@ -21,6 +21,38 @@ func (c *commandEncoder) BeginComputePass() gpu.ComputePassEncoder {
 	return &computePassEncoder{js: c.js.Call("beginComputePass")}
 }
 
+func (c *commandEncoder) CopyTextureToBuffer(src gpu.TextureCopyInfo, dst gpu.BufferCopyInfo, w, h, d int) {
+	st, ok := src.Texture.(*texture)
+	if !ok || st == nil {
+		return
+	}
+	db, ok := dst.Buffer.(*buffer)
+	if !ok || db == nil {
+		return
+	}
+	srcDict := map[string]any{
+		"texture": st.js,
+		"origin": map[string]any{
+			"x": src.Origin[0],
+			"y": src.Origin[1],
+			"z": src.Origin[2],
+		},
+		"mipLevel": src.MipLevel,
+	}
+	dstDict := map[string]any{
+		"buffer":       db.js,
+		"offset":       dst.Offset,
+		"bytesPerRow":  dst.BytesPerRow,
+		"rowsPerImage": dst.RowsPerImage,
+	}
+	size := map[string]any{
+		"width":              w,
+		"height":             h,
+		"depthOrArrayLayers": d,
+	}
+	c.js.Call("copyTextureToBuffer", srcDict, dstDict, size)
+}
+
 func (c *commandEncoder) Finish() gpu.CommandBuffer {
 	return &commandBuffer{js: c.js.Call("finish")}
 }
