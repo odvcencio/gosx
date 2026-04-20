@@ -18,6 +18,9 @@ type materialFingerprint struct {
 	metalness, roughness               uint16
 	emissiveR, emissiveG, emissiveB    uint16
 	emissiveStrength                   uint16
+	// textureURL: "" means no texture; the fallback 1×1 white is bound so
+	// the bind group layout stays static.
+	textureURL string
 	// useVertexColor = 1 when the renderer should mix in the per-vertex color
 	// as baseColor. Unlit-fallback legacy primitives (cube/plane/sphere)
 	// set this; explicit RenderMaterial entries clear it.
@@ -85,6 +88,7 @@ func materialFromRender(mat engine.RenderMaterial) materialFingerprint {
 		emissiveG:        quantize(base[1]),
 		emissiveB:        quantize(base[2]),
 		emissiveStrength: quantize(emissiveStrength),
+		textureURL:       mat.Texture,
 		useVertexColor:   false,
 	}
 }
@@ -105,9 +109,10 @@ func quantize(v float32) uint16 {
 func dequantize(u uint16) float32 { return float32(u) / 1024 }
 
 // ensureMaterial vends a (uniform-buffer, bind-group) pair for this
-// fingerprint, creating + uploading on cache miss. Material data is stable
-// across frames for the same fingerprint so we write the uniform buffer
-// once at creation time.
+// fingerprint, creating + uploading on cache miss. The bind group includes
+// the material uniform buffer, a baseColor texture view, and a color
+// sampler — WebGPU bind-group layouts are fixed, so unspecified texture
+// URLs fall back to the 1×1 white texture.
 func (r *Renderer) ensureMaterial(fp materialFingerprint) (*materialResources, error) {
 	if r.litMaterialLayout == nil {
 		return nil, fmt.Errorf("bundle: material layout not built")
@@ -125,10 +130,20 @@ func (r *Renderer) ensureMaterial(fp materialFingerprint) (*materialResources, e
 	}
 	r.device.Queue().WriteBuffer(buf, 0, materialUniformBytes(fp))
 
+	tex, err := r.ensureMaterialTexture(fp.textureURL)
+	if err != nil {
+		buf.Destroy()
+		return nil, fmt.Errorf("bundle: resolve material texture: %w", err)
+	}
+
 	bg, err := r.device.CreateBindGroup(gpu.BindGroupDesc{
-		Layout:  r.litMaterialLayout,
-		Entries: []gpu.BindGroupEntry{{Binding: 0, Buffer: buf, Size: materialUniformSize}},
-		Label:   "bundle.material.bindgroup",
+		Layout: r.litMaterialLayout,
+		Entries: []gpu.BindGroupEntry{
+			{Binding: 0, Buffer: buf, Size: materialUniformSize},
+			{Binding: 1, TextureView: tex.view},
+			{Binding: 2, Sampler: r.materialSampler},
+		},
+		Label: "bundle.material.bindgroup",
 	})
 	if err != nil {
 		buf.Destroy()

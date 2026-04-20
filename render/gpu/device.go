@@ -40,6 +40,12 @@ type Queue interface {
 	// immediately; buf does not reference data after the call returns.
 	WriteBuffer(buf Buffer, offset int, data []byte)
 
+	// WriteTexture uploads raw bytes into the 2D texture dst at mip level 0,
+	// origin (0,0). data is laid out tightly as bytesPerRow * height bytes;
+	// rows after the last image height are ignored. Format must match the
+	// texture's storage format (e.g., RGBA8 = 4 bytes per pixel).
+	WriteTexture(dst Texture, data []byte, bytesPerRow, width, height int)
+
 	// Submit runs all command buffers on the GPU. Order is preserved.
 	Submit(...CommandBuffer)
 }

@@ -23,6 +23,30 @@ func (q *queue) WriteBuffer(buf gpu.Buffer, offset int, data []byte) {
 	q.js.Call("writeBuffer", b.js, offset, u8)
 }
 
+func (q *queue) WriteTexture(dst gpu.Texture, data []byte, bytesPerRow, width, height int) {
+	t, ok := dst.(*texture)
+	if !ok || t == nil || len(data) == 0 {
+		return
+	}
+	u8 := jsutil.NewUint8ArrayFromBytes(data)
+	destination := map[string]any{
+		"texture":  t.js,
+		"mipLevel": 0,
+		"origin":   map[string]any{"x": 0, "y": 0, "z": 0},
+	}
+	dataLayout := map[string]any{
+		"offset":       0,
+		"bytesPerRow":  bytesPerRow,
+		"rowsPerImage": height,
+	}
+	size := map[string]any{
+		"width":              width,
+		"height":             height,
+		"depthOrArrayLayers": 1,
+	}
+	q.js.Call("writeTexture", destination, u8, dataLayout, size)
+}
+
 func (q *queue) Submit(cmds ...gpu.CommandBuffer) {
 	if len(cmds) == 0 {
 		return

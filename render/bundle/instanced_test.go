@@ -41,11 +41,11 @@ func TestFrameInstancedMeshDispatches(t *testing.T) {
 		t.Fatalf("Frame: %v", err)
 	}
 
-	// Primitive geometry: positions + colors + normals = 3 buffers.
+	// Primitive geometry: positions + colors + normals + uvs = 4 buffers.
 	// Instance buffer = 1 buffer.
 	// Material uniform (resolved for the cube's default material) = 1 buffer.
-	if got := len(d.buffers) - buffersBefore; got != 5 {
-		t.Errorf("expected 5 new buffers (pos+col+nrm+instance+material), got %d", got)
+	if got := len(d.buffers) - buffersBefore; got != 6 {
+		t.Errorf("expected 6 new buffers (pos+col+nrm+uv+instance+material), got %d", got)
 	}
 
 	if len(d.encoders) != 1 {
@@ -118,11 +118,11 @@ func TestFrameDepthAttachmentResizes(t *testing.T) {
 	}
 	defer r.Destroy()
 
-	// Shadow map (1 texture) created at New.
-	shadowMapCount := 1
-	if got := len(d.textures); got != shadowMapCount {
-		t.Fatalf("expected %d textures at construction (shadow map), got %d",
-			shadowMapCount, got)
+	// Two textures at construction: shadow map + 1x1 fallback baseColor.
+	const baselineTextures = 2
+	if got := len(d.textures); got != baselineTextures {
+		t.Fatalf("expected %d textures at construction (shadow + fallback), got %d",
+			baselineTextures, got)
 	}
 
 	empty := engine.RenderBundle{}
@@ -130,10 +130,10 @@ func TestFrameDepthAttachmentResizes(t *testing.T) {
 		t.Fatalf("Frame: %v", err)
 	}
 	// First frame adds the main-pass depth texture.
-	if got := len(d.textures); got != shadowMapCount+1 {
+	if got := len(d.textures); got != baselineTextures+1 {
 		t.Fatalf("expected depth texture added on first frame, got %d total", got)
 	}
-	depth := d.textures[shadowMapCount]
+	depth := d.textures[baselineTextures]
 	if depth.desc.Format != gpu.FormatDepth24Plus {
 		t.Errorf("main depth format: want depth24plus, got %v", depth.desc.Format)
 	}
@@ -142,7 +142,7 @@ func TestFrameDepthAttachmentResizes(t *testing.T) {
 	if err := r.Frame(empty, 400, 300, 0.016); err != nil {
 		t.Fatalf("Frame: %v", err)
 	}
-	if got := len(d.textures); got != shadowMapCount+1 {
+	if got := len(d.textures); got != baselineTextures+1 {
 		t.Errorf("same-size reframe should reuse depth texture, got %d", got)
 	}
 
@@ -150,7 +150,7 @@ func TestFrameDepthAttachmentResizes(t *testing.T) {
 	if err := r.Frame(empty, 800, 600, 0.032); err != nil {
 		t.Fatalf("Frame: %v", err)
 	}
-	if got := len(d.textures); got != shadowMapCount+2 {
+	if got := len(d.textures); got != baselineTextures+2 {
 		t.Errorf("resize should create new depth texture, got %d total", got)
 	}
 }

@@ -53,10 +53,17 @@ type Renderer struct {
 	shadowView    gpu.TextureView
 	shadowSampler gpu.Sampler
 
+	// Shared material texture sampler (separate from the comparison sampler
+	// used for shadows; this one does anisotropic color lookup).
+	materialSampler gpu.Sampler
+	// 1x1 white fallback texture bound when a material has no Texture URL.
+	fallbackTexture *textureResources
+
 	// Caches keyed by identity strings, reused across frames.
 	passCache      map[string]*passResources
 	primitiveCache map[string]*primitiveResources
 	materialCache  map[materialFingerprint]*materialResources
+	textureCache   map[string]*textureResources
 
 	// Reusable per-instance transform buffer. Grows one-way to fit the
 	// largest instance count seen. R2 uses a single buffer since instanced
@@ -78,6 +85,7 @@ type primitiveResources struct {
 	positions   gpu.Buffer
 	colors      gpu.Buffer
 	normals     gpu.Buffer
+	uvs         gpu.Buffer
 	vertexCount int
 }
 
@@ -106,11 +114,18 @@ func New(cfg Config) (*Renderer, error) {
 		passCache:      make(map[string]*passResources),
 		primitiveCache: make(map[string]*primitiveResources),
 		materialCache:  make(map[materialFingerprint]*materialResources),
+		textureCache:   make(map[string]*textureResources),
 	}
 	if err := r.buildUniformBuffers(); err != nil {
 		return nil, err
 	}
 	if err := r.buildShadowResources(); err != nil {
+		return nil, err
+	}
+	if err := r.buildMaterialSampler(); err != nil {
+		return nil, err
+	}
+	if _, err := r.ensureFallbackTexture(); err != nil {
 		return nil, err
 	}
 	if err := r.buildUnlitPipeline(); err != nil {
@@ -145,6 +160,16 @@ func (r *Renderer) Destroy() {
 		}
 	}
 	r.materialCache = nil
+	for _, tx := range r.textureCache {
+		if tx != nil && tx.tex != nil {
+			tx.tex.Destroy()
+		}
+	}
+	r.textureCache = nil
+	if r.fallbackTexture != nil && r.fallbackTexture.tex != nil {
+		r.fallbackTexture.tex.Destroy()
+		r.fallbackTexture = nil
+	}
 	if r.instanceBuf != nil {
 		r.instanceBuf.Destroy()
 		r.instanceBuf = nil
@@ -288,7 +313,8 @@ func (r *Renderer) Frame(b engine.RenderBundle, width, height int, timeSeconds f
 			mainPass.SetVertexBuffer(0, prim.positions)
 			mainPass.SetVertexBuffer(1, prim.colors)
 			mainPass.SetVertexBuffer(2, prim.normals)
-			mainPass.SetVertexBuffer(3, r.instanceBuf)
+			mainPass.SetVertexBuffer(3, prim.uvs)
+			mainPass.SetVertexBuffer(4, r.instanceBuf)
 			mainPass.Draw(prim.vertexCount, im.InstanceCount, 0, 0)
 		}
 	}
@@ -391,10 +417,18 @@ func (r *Renderer) ensurePrimitive(kind string) (*primitiveResources, error) {
 		colBuf.Destroy()
 		return nil, err
 	}
+	uvBuf, err := r.uploadVertexBuffer(geo.uvs, "bundle.primitive.uvs:"+kind)
+	if err != nil {
+		posBuf.Destroy()
+		colBuf.Destroy()
+		nrmBuf.Destroy()
+		return nil, err
+	}
 	res := &primitiveResources{
 		positions:   posBuf,
 		colors:      colBuf,
 		normals:     nrmBuf,
+		uvs:         uvBuf,
 		vertexCount: geo.vertexCount,
 	}
 	r.primitiveCache[kind] = res
@@ -598,9 +632,28 @@ func (r *Renderer) buildUnlitPipeline() error {
 	return nil
 }
 
+// buildMaterialSampler creates the shared linear-filtering sampler used for
+// baseColor texture reads on the material bind group.
+func (r *Renderer) buildMaterialSampler() error {
+	s, err := r.device.CreateSampler(gpu.SamplerDesc{
+		MagFilter:    gpu.FilterLinear,
+		MinFilter:    gpu.FilterLinear,
+		MipmapFilter: gpu.FilterLinear,
+		AddressU:     gpu.AddressRepeat,
+		AddressV:     gpu.AddressRepeat,
+		AddressW:     gpu.AddressRepeat,
+		Label:        "bundle.material.sampler",
+	})
+	if err != nil {
+		return fmt.Errorf("bundle.buildMaterialSampler: %w", err)
+	}
+	r.materialSampler = s
+	return nil
+}
+
 // buildLitPipeline is the directional-lit + shadowed pipeline used for
-// RenderInstancedMesh entries. 4 vertex buffers: positions, colors, normals,
-// per-instance mat4 (as 4 vec4 attributes, locations 3..6).
+// RenderInstancedMesh entries. 5 vertex buffers: positions, colors, normals,
+// uvs, per-instance mat4 (as 4 vec4 attributes).
 func (r *Renderer) buildLitPipeline() error {
 	shader, err := r.device.CreateShaderModule(gpu.ShaderDesc{
 		SourceWGSL: litWGSL,
@@ -623,11 +676,14 @@ func (r *Renderer) buildLitPipeline() error {
 				{ArrayStride: 12, StepMode: gpu.StepVertex, Attributes: []gpu.VertexAttribute{
 					{ShaderLocation: 2, Offset: 0, Format: gpu.VertexFormatFloat32x3},
 				}},
+				{ArrayStride: 8, StepMode: gpu.StepVertex, Attributes: []gpu.VertexAttribute{
+					{ShaderLocation: 3, Offset: 0, Format: gpu.VertexFormatFloat32x2},
+				}},
 				{ArrayStride: 64, StepMode: gpu.StepInstance, Attributes: []gpu.VertexAttribute{
-					{ShaderLocation: 3, Offset: 0, Format: gpu.VertexFormatFloat32x4},
-					{ShaderLocation: 4, Offset: 16, Format: gpu.VertexFormatFloat32x4},
-					{ShaderLocation: 5, Offset: 32, Format: gpu.VertexFormatFloat32x4},
-					{ShaderLocation: 6, Offset: 48, Format: gpu.VertexFormatFloat32x4},
+					{ShaderLocation: 4, Offset: 0, Format: gpu.VertexFormatFloat32x4},
+					{ShaderLocation: 5, Offset: 16, Format: gpu.VertexFormatFloat32x4},
+					{ShaderLocation: 6, Offset: 32, Format: gpu.VertexFormatFloat32x4},
+					{ShaderLocation: 7, Offset: 48, Format: gpu.VertexFormatFloat32x4},
 				}},
 			},
 		},

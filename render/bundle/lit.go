@@ -28,10 +28,12 @@ struct Material {
   emissive     : vec4<f32>,
 };
 
-@group(0) @binding(0) var<uniform> scene         : Scene;
-@group(0) @binding(1) var          shadowMap     : texture_depth_2d;
-@group(0) @binding(2) var          shadowSampler : sampler_comparison;
-@group(1) @binding(0) var<uniform> material      : Material;
+@group(0) @binding(0) var<uniform> scene             : Scene;
+@group(0) @binding(1) var          shadowMap         : texture_depth_2d;
+@group(0) @binding(2) var          shadowSampler     : sampler_comparison;
+@group(1) @binding(0) var<uniform> material          : Material;
+@group(1) @binding(1) var          baseColorTexture  : texture_2d<f32>;
+@group(1) @binding(2) var          baseColorSampler  : sampler;
 
 struct VSOut {
   @builtin(position) pos : vec4<f32>,
@@ -39,6 +41,7 @@ struct VSOut {
   @location(1) worldPos : vec3<f32>,
   @location(2) worldNrm : vec3<f32>,
   @location(3) lightUV  : vec4<f32>,
+  @location(4) uv       : vec2<f32>,
 };
 
 @vertex
@@ -46,10 +49,11 @@ fn vs_main(
   @location(0) pos    : vec3<f32>,
   @location(1) color  : vec3<f32>,
   @location(2) normal : vec3<f32>,
-  @location(3) m0     : vec4<f32>,
-  @location(4) m1     : vec4<f32>,
-  @location(5) m2     : vec4<f32>,
-  @location(6) m3     : vec4<f32>,
+  @location(3) uv     : vec2<f32>,
+  @location(4) m0     : vec4<f32>,
+  @location(5) m1     : vec4<f32>,
+  @location(6) m2     : vec4<f32>,
+  @location(7) m3     : vec4<f32>,
 ) -> VSOut {
   let model = mat4x4<f32>(m0, m1, m2, m3);
   let world = model * vec4<f32>(pos, 1.0);
@@ -61,6 +65,7 @@ fn vs_main(
   out.worldNrm = worldNormal;
   out.color    = color;
   out.lightUV  = scene.lightViewProj * world;
+  out.uv       = uv;
   return out;
 }
 
@@ -109,10 +114,13 @@ fn fs_main(in : VSOut) -> @location(0) vec4<f32> {
   let VdotH = max(dot(V, H), 0.0);
 
   // Material resolution: vertex color acts as baseColor when the material
-  // flags it (useVertexColor = 1) so legacy primitives remain visible
-  // without per-material uniforms.
+  // flags it (useVertexColor = 1). A per-material baseColor texture (white
+  // 1×1 fallback when none specified) modulates the resolved baseColor so
+  // textures tint rather than replace.
   let useVertex = step(0.5, material.pbrParams.w);
-  let baseColor = mix(material.baseColor.rgb, in.color, useVertex);
+  let solid = mix(material.baseColor.rgb, in.color, useVertex);
+  let sampled = textureSample(baseColorTexture, baseColorSampler, in.uv).rgb;
+  let baseColor = solid * sampled;
   let metalness = clamp(material.pbrParams.x, 0.0, 1.0);
   let roughness = clamp(material.pbrParams.y, 0.04, 1.0);
 

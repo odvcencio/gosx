@@ -38,5 +38,6 @@ func (*Device) Destroy()                                                   {}
 
 type stubQueue struct{}
 
-func (stubQueue) WriteBuffer(gpu.Buffer, int, []byte) {}
-func (stubQueue) Submit(...gpu.CommandBuffer)         {}
+func (stubQueue) WriteBuffer(gpu.Buffer, int, []byte)                  {}
+func (stubQueue) WriteTexture(gpu.Texture, []byte, int, int, int)      {}
+func (stubQueue) Submit(...gpu.CommandBuffer)                          {}

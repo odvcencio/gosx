@@ -96,6 +96,10 @@ func (q *fakeQueue) WriteBuffer(b gpu.Buffer, offset int, data []byte) {
 	q.writes = append(q.writes, queueWrite{buffer: b, offset: offset, bytes: len(data)})
 }
 
+func (q *fakeQueue) WriteTexture(gpu.Texture, []byte, int, int, int) {
+	// Recorded only if tests need it; current tests assert via textures slice.
+}
+
 func (q *fakeQueue) Submit(cmds ...gpu.CommandBuffer) {
 	q.submits = append(q.submits, cmds)
 }

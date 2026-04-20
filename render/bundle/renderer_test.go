@@ -29,11 +29,11 @@ func TestNewBuildsAllPipelines(t *testing.T) {
 	if got := len(d.buffers); got != 2 {
 		t.Errorf("expected 2 uniform buffers (scene + shadow), got %d", got)
 	}
-	if got := len(d.textures); got != 1 {
-		t.Errorf("expected 1 texture (shadow map) at construction, got %d", got)
+	if got := len(d.textures); got != 2 {
+		t.Errorf("expected 2 textures at construction (shadow map + 1x1 fallback), got %d", got)
 	}
-	if got := len(d.samplers); got != 1 {
-		t.Errorf("expected 1 sampler (shadow comparison), got %d", got)
+	if got := len(d.samplers); got != 2 {
+		t.Errorf("expected 2 samplers (shadow comparison + material linear), got %d", got)
 	}
 	if got := len(d.bindGroups); got != 3 {
 		t.Errorf("expected 3 bind groups (one per pipeline), got %d", got)
@@ -51,13 +51,13 @@ func TestNewBuildsAllPipelines(t *testing.T) {
 		t.Error("shadow map must have TextureBinding usage so lit pass can sample it")
 	}
 
-	// Lit pipeline = 4 vertex buffers (positions + colors + normals + instance).
+	// Lit pipeline = 5 vertex buffers (positions + colors + normals + uvs + instance).
 	lit := d.pipelines[1]
-	if got := len(lit.desc.Vertex.Buffers); got != 4 {
-		t.Errorf("lit: expected 4 vertex buffers (pos+col+nrm+instance), got %d", got)
+	if got := len(lit.desc.Vertex.Buffers); got != 5 {
+		t.Errorf("lit: expected 5 vertex buffers (pos+col+nrm+uv+instance), got %d", got)
 	}
-	if got := lit.desc.Vertex.Buffers[3].StepMode; got != gpu.StepInstance {
-		t.Errorf("lit: slot 3 (instance) step mode should be Instance, got %v", got)
+	if got := lit.desc.Vertex.Buffers[4].StepMode; got != gpu.StepInstance {
+		t.Errorf("lit: slot 4 (instance) step mode should be Instance, got %v", got)
 	}
 
 	// Shadow pipeline = 2 vertex buffers (positions + instance only).
@@ -79,10 +79,10 @@ func TestNewBuildsAllPipelines(t *testing.T) {
 		t.Error("shadow sampler should be a comparison sampler (Compare != Always)")
 	}
 
-	// Lit bind group has 3 entries: uniform + texture + sampler.
+	// Lit bind group (group 0) has 3 entries: scene uniform + shadow texture + shadow sampler.
 	litBG := d.bindGroups[1]
 	if got := len(litBG.desc.Entries); got != 3 {
-		t.Errorf("lit bindgroup: expected 3 entries (uniform+texture+sampler), got %d", got)
+		t.Errorf("lit group-0 bindgroup: expected 3 entries, got %d", got)
 	}
 }
 
