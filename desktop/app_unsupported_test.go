@@ -18,6 +18,10 @@ import (
 func TestUnsupportedAppRejectsAllBridgeAndWindowCalls(t *testing.T) {
 	stub := unsupportedApp{}
 
+	_, openErr := stub.OpenFileDialog(OpenFileOptions{})
+	_, saveErr := stub.SaveFileDialog(SaveFileOptions{})
+	_, clipErr := stub.Clipboard()
+
 	checks := []struct {
 		name string
 		err  error
@@ -32,6 +36,11 @@ func TestUnsupportedAppRejectsAllBridgeAndWindowCalls(t *testing.T) {
 		{"Focus", stub.Focus()},
 		{"SetTitle", stub.SetTitle("ok")},
 		{"Serve", stub.Serve("app://assets/*", http.NotFoundHandler())},
+		{"OpenFileDialog", openErr},
+		{"SaveFileDialog", saveErr},
+		{"Clipboard", clipErr},
+		{"SetClipboard", stub.SetClipboard("ok")},
+		{"OpenURL", stub.OpenURL("https://example.test")},
 	}
 	for _, c := range checks {
 		if !errors.Is(c.err, ErrUnsupported) {

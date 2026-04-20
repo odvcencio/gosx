@@ -70,6 +70,11 @@ type platformApp interface {
 	Focus() error
 	SetTitle(title string) error
 	Serve(prefix string, handler http.Handler) error
+	OpenFileDialog(opts OpenFileOptions) ([]string, error)
+	SaveFileDialog(opts SaveFileOptions) (string, error)
+	Clipboard() (string, error)
+	SetClipboard(text string) error
+	OpenURL(url string) error
 }
 
 // New validates options and constructs a platform desktop app.

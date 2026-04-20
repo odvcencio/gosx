@@ -63,3 +63,23 @@ func (unsupportedApp) SetTitle(string) error {
 func (unsupportedApp) Serve(string, http.Handler) error {
 	return ErrUnsupported
 }
+
+func (unsupportedApp) OpenFileDialog(OpenFileOptions) ([]string, error) {
+	return nil, ErrUnsupported
+}
+
+func (unsupportedApp) SaveFileDialog(SaveFileOptions) (string, error) {
+	return "", ErrUnsupported
+}
+
+func (unsupportedApp) Clipboard() (string, error) {
+	return "", ErrUnsupported
+}
+
+func (unsupportedApp) SetClipboard(string) error {
+	return ErrUnsupported
+}
+
+func (unsupportedApp) OpenURL(string) error {
+	return ErrUnsupported
+}
