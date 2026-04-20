@@ -75,6 +75,9 @@ type platformApp interface {
 	Clipboard() (string, error)
 	SetClipboard(text string) error
 	OpenURL(url string) error
+	SetFullscreen(enabled bool) error
+	SetMinSize(width, height int) error
+	SetMaxSize(width, height int) error
 }
 
 // New validates options and constructs a platform desktop app.

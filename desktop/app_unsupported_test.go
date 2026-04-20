@@ -41,6 +41,9 @@ func TestUnsupportedAppRejectsAllBridgeAndWindowCalls(t *testing.T) {
 		{"Clipboard", clipErr},
 		{"SetClipboard", stub.SetClipboard("ok")},
 		{"OpenURL", stub.OpenURL("https://example.test")},
+		{"SetFullscreen", stub.SetFullscreen(true)},
+		{"SetMinSize", stub.SetMinSize(320, 200)},
+		{"SetMaxSize", stub.SetMaxSize(2560, 1440)},
 	}
 	for _, c := range checks {
 		if !errors.Is(c.err, ErrUnsupported) {

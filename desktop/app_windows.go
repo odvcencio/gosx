@@ -40,6 +40,15 @@ type windowsApp struct {
 	// empty; populated via App.Serve, consumed by the WebView2
 	// resource-requested event handler on every matching request.
 	servedRoutes []*servedRoute
+
+	// Fullscreen + min/max-size state, all edited only from the
+	// WebView2-owning OS thread but read from app-public methods — hence
+	// guarded by the same mu as the rest of the struct.
+	fullscreen  fullscreenState
+	minWidth    int32
+	minHeight   int32
+	maxWidth    int32
+	maxHeight   int32
 }
 
 func newPlatformApp(options Options) (platformApp, error) {
@@ -517,6 +526,63 @@ func (a *windowsApp) Serve(prefix string, handler http.Handler) error {
 // can land here without touching callers.
 func filterURI(prefix string) string {
 	return prefix
+}
+
+// SetFullscreen toggles borderless-fullscreen mode for the hosted window.
+// On entry, saves the current chrome style + bounds so the reverse call
+// restores the user's pre-fullscreen window rect rather than a maximized
+// approximation.
+func (a *windowsApp) SetFullscreen(enabled bool) error {
+	a.mu.Lock()
+	hwnd := a.hwnd
+	state := &a.fullscreen
+	a.mu.Unlock()
+	return applyFullscreen(hwnd, state, enabled)
+}
+
+// SetMinSize configures the minimum resize dimensions the window enforces
+// via WM_GETMINMAXINFO. A zero value means "no minimum" for that axis.
+// Called before or after Run; takes effect the next time the user drags
+// a resize grip.
+func (a *windowsApp) SetMinSize(width, height int) error {
+	a.mu.Lock()
+	a.minWidth = int32(width)
+	a.minHeight = int32(height)
+	a.mu.Unlock()
+	return nil
+}
+
+// SetMaxSize caps the maximum resize dimensions. Zero = no cap on that
+// axis. As with SetMinSize, the constraint is applied by the default
+// window procedure on each resize event.
+func (a *windowsApp) SetMaxSize(width, height int) error {
+	a.mu.Lock()
+	a.maxWidth = int32(width)
+	a.maxHeight = int32(height)
+	a.mu.Unlock()
+	return nil
+}
+
+// applyMinMaxTo stamps the MINMAXINFO response with our cached constraints.
+// Runs on the UI thread from inside wndProc; the lock is short because
+// the values are cheap scalars.
+func (a *windowsApp) applyMinMaxTo(info *mINMAXINFO) {
+	a.mu.Lock()
+	minW, minH := a.minWidth, a.minHeight
+	maxW, maxH := a.maxWidth, a.maxHeight
+	a.mu.Unlock()
+	if minW > 0 {
+		info.ptMinTrackSize.X = minW
+	}
+	if minH > 0 {
+		info.ptMinTrackSize.Y = minH
+	}
+	if maxW > 0 {
+		info.ptMaxTrackSize.X = maxW
+	}
+	if maxH > 0 {
+		info.ptMaxTrackSize.Y = maxH
+	}
 }
 
 // onWebMessage dispatches an incoming JS→Go message to the user callback

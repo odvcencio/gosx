@@ -28,12 +28,32 @@ const (
 	swShowDefault  = 10
 	swRestore      = 9
 
-	wmClose       = 0x0010
-	wmDestroy     = 0x0002
-	wmSize        = 0x0005
+	wmClose         = 0x0010
+	wmDestroy       = 0x0002
+	wmSize          = 0x0005
 	wmGetMinMaxInfo = 0x0024
 
 	wsOverlappedWindow = 0x00CF0000
+	wsPopup            = 0x80000000
+
+	// GetWindowLongPtrW / SetWindowLongPtrW indices. Windows passes the
+	// index as an int that can be negative (GWL_STYLE == -16). We encode
+	// the two's-complement bit pattern so uintptr conversions don't
+	// overflow at compile time.
+	gwlStyle = uintptr(0xFFFFFFFFFFFFFFF0)
+
+	// SetWindowPos uFlags.
+	swpNoZOrder      = 0x0004
+	swpFrameChanged  = 0x0020
+	swpNoCopyBits    = 0x0100
+	swpShowWindow    = 0x0040
+
+	// MonitorFromWindow dwFlags.
+	monitorDefaultToNearest = 0x00000002
+
+	// GetSystemMetrics indices.
+	smCxScreen = 0
+	smCyScreen = 1
 
 	// Per-monitor DPI-aware v2 context. Matches DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2.
 	dpiAwarenessContextPerMonitorV2 = uintptr(0xFFFFFFFC) // ~3 as a uintptr (cast back to HANDLE)
@@ -69,6 +89,14 @@ var (
 	// at first .Call(), so older systems silently no-op when the Find()
 	// probe fails in setDPIAware.
 	procSetProcessDpiAwarenessContext = modUser32.NewProc("SetProcessDpiAwarenessContext")
+
+	procSetWindowLongPtrW = modUser32.NewProc("SetWindowLongPtrW")
+	procGetWindowLongPtrW = modUser32.NewProc("GetWindowLongPtrW")
+	procSetWindowPos      = modUser32.NewProc("SetWindowPos")
+	procGetWindowRect     = modUser32.NewProc("GetWindowRect")
+	procMonitorFromWindow = modUser32.NewProc("MonitorFromWindow")
+	procGetMonitorInfoW   = modUser32.NewProc("GetMonitorInfoW")
+	procGetSystemMetrics  = modUser32.NewProc("GetSystemMetrics")
 )
 
 type point struct {
@@ -255,6 +283,99 @@ func setDPIAware() {
 	procSetProcessDpiAwarenessContext.Call(dpiAwarenessContextPerMonitorV2)
 }
 
+// monitorInfo is the Win32 MONITORINFO used to query the current monitor's
+// working rect so fullscreen can cover it precisely.
+type monitorInfo struct {
+	cbSize    uint32
+	rcMonitor rect
+	rcWork    rect
+	dwFlags   uint32
+}
+
+// mINMAXINFO is the payload of a WM_GETMINMAXINFO message. We intercept
+// the message and write caller-configured min/max tracking sizes in place.
+type mINMAXINFO struct {
+	ptReserved     point
+	ptMaxSize      point
+	ptMaxPosition  point
+	ptMinTrackSize point
+	ptMaxTrackSize point
+}
+
+// currentMonitorWorkArea returns the work rect (excluding taskbar) of the
+// monitor hosting hwnd. Used to size the window during fullscreen.
+func currentMonitorWorkArea(hwnd uintptr) (rect, bool) {
+	hmonitor, _, _ := procMonitorFromWindow.Call(hwnd, monitorDefaultToNearest)
+	if hmonitor == 0 {
+		return rect{}, false
+	}
+	var mi monitorInfo
+	mi.cbSize = uint32(unsafe.Sizeof(mi))
+	ret, _, _ := procGetMonitorInfoW.Call(hmonitor, uintptr(unsafe.Pointer(&mi)))
+	if ret == 0 {
+		return rect{}, false
+	}
+	return mi.rcMonitor, true
+}
+
+// applyFullscreen switches hwnd between borderless-fullscreen and the
+// saved pre-fullscreen style+bounds. `enabled` drives the toggle.
+//
+// The saved style/bounds live on the caller-owned fullscreenState struct
+// so multiple toggle calls don't accumulate corrupted state.
+func applyFullscreen(hwnd uintptr, state *fullscreenState, enabled bool) error {
+	if hwnd == 0 {
+		return fmt.Errorf("%w: fullscreen requires a live window", ErrInvalidOptions)
+	}
+	if enabled {
+		if state.active {
+			return nil
+		}
+		style, _, _ := procGetWindowLongPtrW.Call(hwnd, uintptr(gwlStyle))
+		var r rect
+		procGetWindowRect.Call(hwnd, uintptr(unsafe.Pointer(&r)))
+		state.savedStyle = uint32(style)
+		state.savedBounds = r
+		state.active = true
+
+		procSetWindowLongPtrW.Call(hwnd, uintptr(gwlStyle), uintptr(wsPopup))
+
+		area, ok := currentMonitorWorkArea(hwnd)
+		if !ok {
+			// Fallback to the primary screen via GetSystemMetrics.
+			w, _, _ := procGetSystemMetrics.Call(smCxScreen)
+			h, _, _ := procGetSystemMetrics.Call(smCyScreen)
+			area = rect{Left: 0, Top: 0, Right: int32(w), Bottom: int32(h)}
+		}
+		procSetWindowPos.Call(hwnd, 0,
+			uintptr(area.Left), uintptr(area.Top),
+			uintptr(area.Right-area.Left), uintptr(area.Bottom-area.Top),
+			uintptr(swpNoZOrder|swpFrameChanged|swpShowWindow))
+		return nil
+	}
+
+	if !state.active {
+		return nil
+	}
+	procSetWindowLongPtrW.Call(hwnd, uintptr(gwlStyle), uintptr(state.savedStyle))
+	r := state.savedBounds
+	procSetWindowPos.Call(hwnd, 0,
+		uintptr(r.Left), uintptr(r.Top),
+		uintptr(r.Right-r.Left), uintptr(r.Bottom-r.Top),
+		uintptr(swpNoZOrder|swpFrameChanged|swpShowWindow))
+	state.active = false
+	return nil
+}
+
+// fullscreenState remembers pre-fullscreen chrome + placement so exiting
+// fullscreen restores the user's window instead of producing a maximized-
+// looking popup.
+type fullscreenState struct {
+	active      bool
+	savedStyle  uint32
+	savedBounds rect
+}
+
 func destroyWindow(hwnd uintptr) {
 	procDestroyWindow.Call(hwnd)
 }
@@ -296,6 +417,14 @@ func desktopWndProc(hwnd uintptr, message uint32, wparam, lparam uintptr) uintpt
 	case wmSize:
 		if app != nil {
 			_ = app.resizeWebView()
+		}
+	case wmGetMinMaxInfo:
+		// Let the caller clamp the resize range. The MINMAXINFO struct
+		// is at lparam; we mutate its MinTrackSize / MaxTrackSize fields
+		// with whatever the app has configured via SetMinSize / SetMaxSize.
+		if app != nil && lparam != 0 {
+			info := (*mINMAXINFO)(unsafe.Pointer(lparam))
+			app.applyMinMaxTo(info)
 		}
 	case wmClose:
 		if hwnd != 0 {

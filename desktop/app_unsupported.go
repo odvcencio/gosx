@@ -83,3 +83,7 @@ func (unsupportedApp) SetClipboard(string) error {
 func (unsupportedApp) OpenURL(string) error {
 	return ErrUnsupported
 }
+
+func (unsupportedApp) SetFullscreen(bool) error    { return ErrUnsupported }
+func (unsupportedApp) SetMinSize(int, int) error   { return ErrUnsupported }
+func (unsupportedApp) SetMaxSize(int, int) error   { return ErrUnsupported }
