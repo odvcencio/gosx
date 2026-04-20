@@ -320,6 +320,8 @@ func encodeTextureFormat(f gpu.TextureFormat) string {
 		return "depth24plus-stencil8"
 	case gpu.FormatDepth32Float:
 		return "depth32float"
+	case gpu.FormatR32Uint:
+		return "r32uint"
 	}
 	return ""
 }

@@ -28,9 +28,19 @@ fn vs_main(
   return out;
 }
 
+struct UnlitFSOut {
+  @location(0) color  : vec4<f32>,
+  @location(1) pickId : u32,
+};
+
 @fragment
-fn fs_main(in : VSOut) -> @location(0) vec4<f32> {
-  return vec4<f32>(in.color, 1.0);
+fn fs_main(in : VSOut) -> UnlitFSOut {
+  // Pre-batched pass data doesn't carry per-primitive pick IDs in R4;
+  // writing 0 means "background" so the pick lookup skips these surfaces.
+  var out : UnlitFSOut;
+  out.color  = vec4<f32>(in.color, 1.0);
+  out.pickId = 0u;
+  return out;
 }
 `
 

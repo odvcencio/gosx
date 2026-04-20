@@ -106,6 +106,24 @@ func (r *Renderer) ensureHDR(width, height int) (gpu.TextureView, error) {
 	r.hdrWidth = width
 	r.hdrHeight = height
 
+	// Allocate the GPU picking id buffer alongside HDR. R32Uint so a single
+	// readback yields an exact u32 pick ID with no alpha / unpacking.
+	if r.idBufferTex != nil {
+		r.idBufferTex.Destroy()
+	}
+	idTex, err := r.device.CreateTexture(gpu.TextureDesc{
+		Width:  width,
+		Height: height,
+		Format: gpu.FormatR32Uint,
+		Usage:  gpu.TextureUsageRenderAttachment | gpu.TextureUsageCopySrc,
+		Label:  "bundle.pickIdBuffer",
+	})
+	if err != nil {
+		return nil, fmt.Errorf("bundle.ensureHDR (idBuffer): %w", err)
+	}
+	r.idBufferTex = idTex
+	r.idBufferView = idTex.CreateView()
+
 	// Rebuilding the present bind group happens in ensureBloom because the
 	// bind group references BOTH the HDR view and the bloom chain's view.
 	return r.hdrView, nil

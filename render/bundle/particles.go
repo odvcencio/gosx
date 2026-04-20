@@ -150,14 +150,23 @@ fn vs_main(
   return out;
 }
 
+struct ParticleFSOut {
+  @location(0) color  : vec4<f32>,
+  @location(1) pickId : u32,
+};
+
 @fragment
-fn fs_main(in : VSOut) -> @location(0) vec4<f32> {
+fn fs_main(in : VSOut) -> ParticleFSOut {
   // Soft disc: radial falloff keeps the quad corners from looking blocky.
   let d = length(in.localUV);
   let softness = smoothstep(1.0, 0.0, d);
   let rgb = in.color.rgb * softness;
   let alpha = in.color.a * softness;
-  return vec4<f32>(rgb * alpha, alpha);
+  var out : ParticleFSOut;
+  out.color  = vec4<f32>(rgb * alpha, alpha);
+  // Particles aren't pickable in R4.
+  out.pickId = 0u;
+  return out;
 }
 `
 
@@ -218,15 +227,22 @@ func (r *Renderer) buildParticlePipelines() error {
 		Fragment: gpu.FragmentStageDesc{
 			Module:     renderShader,
 			EntryPoint: "fs_main",
-			Targets: []gpu.ColorTargetState{{
-				Format:    hdrFormat,
-				WriteMask: gpu.ColorWriteAll,
-				// Additive blend in HDR — particles glow when summed.
-				Blend: &gpu.BlendState{
-					Color: gpu.BlendComponent{SrcFactor: gpu.BlendOne, DstFactor: gpu.BlendOne, Operation: gpu.BlendOpAdd},
-					Alpha: gpu.BlendComponent{SrcFactor: gpu.BlendOne, DstFactor: gpu.BlendOne, Operation: gpu.BlendOpAdd},
+			Targets: []gpu.ColorTargetState{
+				{
+					Format:    hdrFormat,
+					WriteMask: gpu.ColorWriteAll,
+					// Additive blend in HDR — particles glow when summed.
+					Blend: &gpu.BlendState{
+						Color: gpu.BlendComponent{SrcFactor: gpu.BlendOne, DstFactor: gpu.BlendOne, Operation: gpu.BlendOpAdd},
+						Alpha: gpu.BlendComponent{SrcFactor: gpu.BlendOne, DstFactor: gpu.BlendOne, Operation: gpu.BlendOpAdd},
+					},
 				},
-			}},
+				{
+					// Pick target: particles aren't pickable, but the main
+					// pass requires matching attachments across pipelines.
+					Format: gpu.FormatR32Uint, WriteMask: gpu.ColorWriteAll,
+				},
+			},
 		},
 		Primitive: gpu.PrimitiveState{
 			Topology:  gpu.TopologyTriangleList,

@@ -23,6 +23,9 @@ const (
 	FormatDepth24Plus
 	FormatDepth24PlusStencil8
 	FormatDepth32Float
+
+	// Integer color — used for GPU picking (per-pixel object ID).
+	FormatR32Uint
 )
 
 // HasDepth reports whether f has a depth aspect.

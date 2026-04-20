@@ -47,6 +47,12 @@ struct VSOut {
   @location(2) worldNrm : vec3<f32>,
   @location(3) viewZ    : f32,
   @location(4) uv       : vec2<f32>,
+  @location(5) @interpolate(flat) pickId : u32,
+};
+
+struct FSOut {
+  @location(0) color  : vec4<f32>,
+  @location(1) pickId : u32,
 };
 
 @vertex
@@ -129,7 +135,7 @@ fn fresnelSchlick(F0 : vec3<f32>, VdotH : f32) -> vec3<f32> {
 }
 
 @fragment
-fn fs_main(in : VSOut) -> @location(0) vec4<f32> {
+fn fs_main(in : VSOut) -> FSOut {
   let N = normalize(in.worldNrm);
   let V = normalize(scene.cameraPos.xyz - in.worldPos);
   let L = normalize(-scene.lightDir.xyz);
@@ -177,7 +183,10 @@ fn fs_main(in : VSOut) -> @location(0) vec4<f32> {
   let ambient  = baseColor * hemi * scene.ambientColor.rgb * scene.ambientColor.a;
   let emissive = material.emissive.rgb * material.pbrParams.z;
   let color = direct + ambient + emissive;
-  return vec4<f32>(color, 1.0);
+  var out : FSOut;
+  out.color  = vec4<f32>(color, 1.0);
+  out.pickId = in.pickId;
+  return out;
 }
 `
 

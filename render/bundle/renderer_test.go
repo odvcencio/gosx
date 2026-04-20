@@ -123,8 +123,9 @@ func TestFrameAlwaysEmitsCSMPlusMainPass(t *testing.T) {
 		}
 	}
 	mainPass := passes[3]
-	if len(mainPass.desc.ColorAttachments) != 1 {
-		t.Error("main pass must have one color attachment")
+	if len(mainPass.desc.ColorAttachments) != 2 {
+		t.Errorf("main pass must have two color attachments (HDR + id), got %d",
+			len(mainPass.desc.ColorAttachments))
 	}
 	if mainPass.desc.DepthStencilAttachment == nil {
 		t.Error("main pass must have a depth attachment")
@@ -211,10 +212,10 @@ func TestFrameClearColorFromBackground(t *testing.T) {
 	if err := r.Frame(engine.RenderBundle{Background: "#ff8000"}, 100, 100, 0); err != nil {
 		t.Fatalf("Frame: %v", err)
 	}
-	// Main pass (HDR target) is at index 3; present is index 4.
+	// Main pass (HDR + id targets) is at index 3; present is index 7.
 	mainPass := d.encoders[0].passes[3]
-	if len(mainPass.desc.ColorAttachments) != 1 {
-		t.Fatalf("expected 1 color attachment on main pass, got %d",
+	if len(mainPass.desc.ColorAttachments) != 2 {
+		t.Fatalf("expected 2 color attachments on main pass (HDR + id), got %d",
 			len(mainPass.desc.ColorAttachments))
 	}
 	clear := mainPass.desc.ColorAttachments[0].ClearValue

@@ -137,24 +137,24 @@ func TestFrameDepthAttachmentResizes(t *testing.T) {
 	if err := r.Frame(empty, 400, 300, 0); err != nil {
 		t.Fatalf("Frame: %v", err)
 	}
-	// First frame adds: depth + HDR + bloomA + bloomB = +4.
-	if got := len(d.textures); got != baselineTextures+4 {
-		t.Fatalf("expected depth + HDR + 2 bloom on first frame, got %d total", got)
+	// First frame adds: depth + HDR + idBuffer + bloomA + bloomB = +5.
+	if got := len(d.textures); got != baselineTextures+5 {
+		t.Fatalf("expected depth + HDR + id + 2 bloom on first frame, got %d total", got)
 	}
 
 	// Same size — no allocation.
 	if err := r.Frame(empty, 400, 300, 0.016); err != nil {
 		t.Fatalf("Frame: %v", err)
 	}
-	if got := len(d.textures); got != baselineTextures+4 {
+	if got := len(d.textures); got != baselineTextures+5 {
 		t.Errorf("same-size reframe should reuse textures, got %d", got)
 	}
 
-	// Different size — depth + HDR + 2 bloom reallocated = +4.
+	// Different size — depth + HDR + id + 2 bloom reallocated = +5.
 	if err := r.Frame(empty, 800, 600, 0.032); err != nil {
 		t.Fatalf("Frame: %v", err)
 	}
-	if got := len(d.textures); got != baselineTextures+8 {
-		t.Errorf("resize should add new depth + HDR + 2 bloom, got %d total", got)
+	if got := len(d.textures); got != baselineTextures+10 {
+		t.Errorf("resize should add new depth + HDR + id + 2 bloom, got %d total", got)
 	}
 }

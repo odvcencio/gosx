@@ -83,6 +83,13 @@ type Renderer struct {
 	hdrWidth        int
 	hdrHeight       int
 
+	// R4 GPU picking: per-pixel object ID as a second color attachment on
+	// the main pass. Readback wiring (Buffer.MapAsync, queue-side copy) is
+	// scheduled for R5 — the id-buffer output already lands here so the
+	// client bridge can bolt the readback on without a shader refactor.
+	idBufferTex  gpu.Texture
+	idBufferView gpu.TextureView
+
 	// Bloom chain (bright-pass + 2 blur passes → composited into present).
 	brightPipeline gpu.RenderPipeline
 	brightBGLayout gpu.BindGroupLayout
@@ -236,6 +243,10 @@ func (r *Renderer) Destroy() {
 		r.hdrTex.Destroy()
 		r.hdrTex = nil
 	}
+	if r.idBufferTex != nil {
+		r.idBufferTex.Destroy()
+		r.idBufferTex = nil
+	}
 	if r.bloom != nil {
 		destroyBloomResources(r.bloom)
 		r.bloom = nil
@@ -381,14 +392,24 @@ func (r *Renderer) Frame(b engine.RenderBundle, width, height int, timeSeconds f
 		return err
 	}
 
-	// 3) Main pass — lit scene rendered to the HDR intermediate with depth.
+	// 3) Main pass — lit scene rendered to the HDR intermediate with depth,
+	// plus the GPU picking id buffer as a second color attachment.
 	mainPass := enc.BeginRenderPass(gpu.RenderPassDesc{
-		ColorAttachments: []gpu.RenderPassColorAttachment{{
-			View:       r.hdrView,
-			LoadOp:     gpu.LoadOpClear,
-			StoreOp:    gpu.StoreOpStore,
-			ClearValue: parseBackground(b.Background),
-		}},
+		ColorAttachments: []gpu.RenderPassColorAttachment{
+			{
+				View:       r.hdrView,
+				LoadOp:     gpu.LoadOpClear,
+				StoreOp:    gpu.StoreOpStore,
+				ClearValue: parseBackground(b.Background),
+			},
+			{
+				// pick ID = 0 means "background / not a pickable surface".
+				View:       r.idBufferView,
+				LoadOp:     gpu.LoadOpClear,
+				StoreOp:    gpu.StoreOpStore,
+				ClearValue: gpu.Color{R: 0, G: 0, B: 0, A: 0},
+			},
+		},
 		DepthStencilAttachment: &gpu.RenderPassDepthStencilAttachment{
 			View:            depthView,
 			DepthLoadOp:     gpu.LoadOpClear,
@@ -857,6 +878,7 @@ func (r *Renderer) buildUnlitPipeline() error {
 			EntryPoint: "fs_main",
 			Targets: []gpu.ColorTargetState{
 				{Format: hdrFormat, WriteMask: gpu.ColorWriteAll},
+				{Format: gpu.FormatR32Uint, WriteMask: gpu.ColorWriteAll},
 			},
 		},
 		Primitive: gpu.PrimitiveState{
@@ -940,6 +962,7 @@ func (r *Renderer) buildLitPipeline() error {
 			EntryPoint: "fs_main",
 			Targets: []gpu.ColorTargetState{
 				{Format: hdrFormat, WriteMask: gpu.ColorWriteAll},
+				{Format: gpu.FormatR32Uint, WriteMask: gpu.ColorWriteAll},
 			},
 		},
 		Primitive: gpu.PrimitiveState{
