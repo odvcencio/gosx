@@ -1,0 +1,165 @@
+package bundle
+
+import (
+	"github.com/odvcencio/gosx/render/gpu"
+)
+
+// fakeDevice is a gpu.Device test double that records every call against it
+// instead of issuing real GPU work. Tests assert on the recorded log to
+// verify the renderer's translation logic without needing a GPU backend.
+type fakeDevice struct {
+	format gpu.TextureFormat
+
+	buffers      []*fakeBuffer
+	shaders      []*fakeShader
+	pipelines    []*fakePipeline
+	bindGroups   []*fakeBindGroup
+	encoders     []*fakeEncoder
+	surfaceViews int
+
+	queue *fakeQueue
+}
+
+func newFakeDevice() *fakeDevice {
+	d := &fakeDevice{format: gpu.FormatBGRA8Unorm}
+	d.queue = &fakeQueue{}
+	return d
+}
+
+func (d *fakeDevice) Queue() gpu.Queue                        { return d.queue }
+func (d *fakeDevice) PreferredSurfaceFormat() gpu.TextureFormat { return d.format }
+
+func (d *fakeDevice) CreateBuffer(desc gpu.BufferDesc) (gpu.Buffer, error) {
+	b := &fakeBuffer{size: desc.Size, usage: desc.Usage, label: desc.Label}
+	d.buffers = append(d.buffers, b)
+	return b, nil
+}
+
+func (d *fakeDevice) CreateShaderModule(desc gpu.ShaderDesc) (gpu.ShaderModule, error) {
+	s := &fakeShader{src: desc.SourceWGSL, label: desc.Label}
+	d.shaders = append(d.shaders, s)
+	return s, nil
+}
+
+func (d *fakeDevice) CreateRenderPipeline(desc gpu.RenderPipelineDesc) (gpu.RenderPipeline, error) {
+	p := &fakePipeline{desc: desc, layout: &fakeBindGroupLayout{}}
+	d.pipelines = append(d.pipelines, p)
+	return p, nil
+}
+
+func (d *fakeDevice) CreateBindGroup(desc gpu.BindGroupDesc) (gpu.BindGroup, error) {
+	bg := &fakeBindGroup{desc: desc}
+	d.bindGroups = append(d.bindGroups, bg)
+	return bg, nil
+}
+
+func (d *fakeDevice) CreateCommandEncoder() gpu.CommandEncoder {
+	e := &fakeEncoder{}
+	d.encoders = append(d.encoders, e)
+	return e
+}
+
+func (d *fakeDevice) AcquireSurfaceView(gpu.Surface) (gpu.TextureView, error) {
+	d.surfaceViews++
+	return &fakeTextureView{}, nil
+}
+
+func (d *fakeDevice) Destroy() {}
+
+// fakeQueue records WriteBuffer + Submit calls.
+type fakeQueue struct {
+	writes  []queueWrite
+	submits [][]gpu.CommandBuffer
+}
+
+type queueWrite struct {
+	buffer gpu.Buffer
+	offset int
+	bytes  int
+}
+
+func (q *fakeQueue) WriteBuffer(b gpu.Buffer, offset int, data []byte) {
+	q.writes = append(q.writes, queueWrite{buffer: b, offset: offset, bytes: len(data)})
+}
+
+func (q *fakeQueue) Submit(cmds ...gpu.CommandBuffer) {
+	q.submits = append(q.submits, cmds)
+}
+
+// fakeBuffer is a zero-cost test Buffer.
+type fakeBuffer struct {
+	size  int
+	usage gpu.BufferUsage
+	label string
+}
+
+func (b *fakeBuffer) Size() int              { return b.size }
+func (b *fakeBuffer) Usage() gpu.BufferUsage { return b.usage }
+func (b *fakeBuffer) Destroy()               {}
+
+// fakeShader holds the source for inspection.
+type fakeShader struct {
+	src   string
+	label string
+}
+
+func (s *fakeShader) Destroy() {}
+
+// fakePipeline records its descriptor and vends a stub layout.
+type fakePipeline struct {
+	desc   gpu.RenderPipelineDesc
+	layout *fakeBindGroupLayout
+}
+
+func (p *fakePipeline) GetBindGroupLayout(int) gpu.BindGroupLayout { return p.layout }
+func (p *fakePipeline) Destroy()                                   {}
+
+type fakeBindGroupLayout struct{}
+
+type fakeBindGroup struct {
+	desc gpu.BindGroupDesc
+}
+
+func (b *fakeBindGroup) Destroy() {}
+
+// fakeEncoder and fakeRenderPass record calls.
+type fakeEncoder struct {
+	passes []*fakeRenderPass
+}
+
+func (e *fakeEncoder) BeginRenderPass(desc gpu.RenderPassDesc) gpu.RenderPassEncoder {
+	p := &fakeRenderPass{desc: desc}
+	e.passes = append(e.passes, p)
+	return p
+}
+
+func (e *fakeEncoder) Finish() gpu.CommandBuffer { return &fakeCommandBuffer{} }
+
+type fakeRenderPass struct {
+	desc         gpu.RenderPassDesc
+	pipelineSet  bool
+	bindGroupSet bool
+	vbufSets     int
+	draws        []fakeDraw
+	ended        bool
+}
+
+type fakeDraw struct {
+	vertexCount, instanceCount, firstVertex, firstInstance int
+}
+
+func (p *fakeRenderPass) SetPipeline(gpu.RenderPipeline)             { p.pipelineSet = true }
+func (p *fakeRenderPass) SetBindGroup(int, gpu.BindGroup)             { p.bindGroupSet = true }
+func (p *fakeRenderPass) SetVertexBuffer(int, gpu.Buffer)             { p.vbufSets++ }
+func (p *fakeRenderPass) SetIndexBuffer(gpu.Buffer, gpu.IndexFormat)  {}
+func (p *fakeRenderPass) Draw(vc, ic, fv, fi int) {
+	p.draws = append(p.draws, fakeDraw{vc, ic, fv, fi})
+}
+func (p *fakeRenderPass) DrawIndexed(int, int, int, int, int) {}
+func (p *fakeRenderPass) End()                                { p.ended = true }
+
+type fakeCommandBuffer struct{}
+type fakeTextureView struct{}
+
+// fakeSurface is a minimal Surface implementation for tests.
+type fakeSurface struct{}
