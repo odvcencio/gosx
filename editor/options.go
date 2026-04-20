@@ -59,6 +59,9 @@ const (
 	CmdMath        Command = input.CmdMath
 	CmdFootnote    Command = input.CmdFootnote
 	CmdHR          Command = input.CmdHR
+	CmdScene3D     Command = input.CmdScene3D
+	CmdIsland      Command = input.CmdIsland
+	CmdDiagram     Command = input.CmdDiagram
 	CmdUndo        Command = input.CmdUndo
 	CmdRedo        Command = input.CmdRedo
 	CmdSave        Command = input.CmdSave
@@ -126,6 +129,14 @@ const (
 	StatusPublished Status = "published"
 )
 
+// FormButton describes a submit button in the editor chrome.
+type FormButton struct {
+	Name  string
+	Value string
+	Label string
+	Class string
+}
+
 // DefaultPanels is the standard panel set exposed by the editor shell.
 var DefaultPanels = []Panel{
 	PanelPreview,
@@ -138,37 +149,48 @@ var DefaultPanels = []Panel{
 
 // Options configures the editor.
 type Options struct {
-	Content       string
-	Label         string
-	Title         string
-	Slug          string
-	Excerpt       string
-	Tags          string
-	CoverImage    string
-	PublishAt     string
-	Status        Status
-	Placeholder   string
-	BackHref      string
-	FormAction    string
-	UploadURL     string
-	StylesheetURL string
-	ScriptURL     string
-	CSRFToken     string
-	Mood          string       // LJ-style mood key
-	MoodChoices   []MoodChoice // available moods for dropdown
-	Music         string       // music URL (YouTube)
-	Scratch       string
-	ExtraFields   map[string]string
-	Language      Lang
-	Theme         Theme
-	Toolbar       Toolbar
-	Keymap        Keymap
-	Panels        []Panel
-	OnSave        func(doc Document) error
-	OnUpload      func(name string, data []byte) (url string, err error)
-	Hub           *hub.Hub
-	PostID        string
-	ReadOnly      bool
+	Content                   string
+	Label                     string
+	Title                     string
+	Slug                      string
+	Excerpt                   string
+	Tags                      string
+	CoverImage                string
+	PublishAt                 string
+	Status                    Status
+	Placeholder               string
+	BackHref                  string
+	FormAction                string
+	AutoSaveURL               string
+	PreviewURL                string
+	UploadURL                 string
+	ImagesURL                 string
+	StylesheetURL             string
+	DiagramScriptURL          string
+	ScriptURL                 string
+	CSRFToken                 string
+	Mood                      string       // LJ-style mood key
+	MoodChoices               []MoodChoice // available moods for dropdown
+	Music                     string       // music URL (YouTube)
+	Scratch                   string
+	ExtraFields               map[string]string
+	Language                  Lang
+	Theme                     Theme
+	Toolbar                   Toolbar
+	Keymap                    Keymap
+	Panels                    []Panel
+	Buttons                   []FormButton
+	ScheduleButtons           []FormButton
+	LoadingText               string
+	InitialPreviewHTML        string
+	InitialPreviewPlaceholder string
+	WordCount                 int
+	ReadingTime               int
+	OnSave                    func(doc Document) error
+	OnUpload                  func(name string, data []byte) (url string, err error)
+	Hub                       *hub.Hub
+	PostID                    string
+	ReadOnly                  bool
 }
 
 func (o *Options) defaults() {
@@ -187,6 +209,18 @@ func (o *Options) defaults() {
 	if o.BackHref == "" {
 		o.BackHref = "/"
 	}
+	if o.StylesheetURL == "" {
+		o.StylesheetURL = DefaultStylesheetURL
+	}
+	if o.DiagramScriptURL == "" {
+		o.DiagramScriptURL = DefaultDiagramScriptURL
+	}
+	if o.ScriptURL == "" {
+		o.ScriptURL = DefaultScriptURL
+	}
+	if o.LoadingText == "" {
+		o.LoadingText = "Saving..."
+	}
 	if o.ExtraFields == nil {
 		o.ExtraFields = map[string]string{}
 	}
@@ -198,6 +232,22 @@ func (o *Options) defaults() {
 	}
 	if o.Panels == nil {
 		o.Panels = clonePanels(DefaultPanels)
+	}
+	if len(o.Buttons) == 0 {
+		o.Buttons = []FormButton{{
+			Name:  "post_action",
+			Value: "save",
+			Label: "Save",
+			Class: "editor-button editor-button-secondary",
+		}}
+	}
+	if len(o.ScheduleButtons) == 0 {
+		o.ScheduleButtons = []FormButton{{
+			Name:  "post_action",
+			Value: "schedule",
+			Label: "Schedule",
+			Class: "editor-button editor-button-secondary",
+		}}
 	}
 }
 

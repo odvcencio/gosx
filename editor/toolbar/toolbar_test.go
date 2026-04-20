@@ -38,3 +38,22 @@ func TestDefaultToolbar_IncludesEmoji(t *testing.T) {
 	}
 	t.Fatal("DefaultToolbar should include CmdEmoji")
 }
+
+func TestDefaultToolbar_IncludesMdppEmbeds(t *testing.T) {
+	want := map[input.Command]string{
+		input.CmdScene3D: "Scene3D",
+		input.CmdIsland:  "Island",
+		input.CmdDiagram: "Diagram",
+	}
+	for _, item := range DefaultToolbar.Items {
+		if label, ok := want[item.Command]; ok {
+			if item.Label != label {
+				t.Fatalf("%s label = %q, want %q", item.Command, item.Label, label)
+			}
+			delete(want, item.Command)
+		}
+	}
+	if len(want) != 0 {
+		t.Fatalf("DefaultToolbar missing markdown++ embeds: %#v", want)
+	}
+}

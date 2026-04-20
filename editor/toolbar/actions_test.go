@@ -1,6 +1,7 @@
 package toolbar
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/odvcencio/gosx/editor/input"
@@ -59,6 +60,49 @@ func TestActionSnippet_EmojiDefaultsToSmile(t *testing.T) {
 	}
 	if got != ":smile:" {
 		t.Fatalf("snippet = %q", got)
+	}
+}
+
+func TestActionSnippet_Scene3D(t *testing.T) {
+	got, ok := Action{Command: input.CmdScene3D}.Snippet("title: Mini scene\nshape: sphere")
+	if !ok {
+		t.Fatal("expected snippet")
+	}
+	want := "\n```gosx-scene\ntitle: Mini scene\nshape: sphere\n```\n"
+	if got != want {
+		t.Fatalf("snippet = %q, want %q", got, want)
+	}
+}
+
+func TestActionSnippet_Island(t *testing.T) {
+	got, ok := Action{Command: input.CmdIsland}.Snippet("")
+	if !ok {
+		t.Fatal("expected snippet")
+	}
+	for _, want := range []string{"```gosx-island", "component: counter", "count: 0"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("snippet missing %q: %q", want, got)
+		}
+	}
+}
+
+func TestActionSnippet_DiagramIsEmptyMermaidFenceByDefault(t *testing.T) {
+	got, ok := Action{Command: input.CmdDiagram}.Snippet("")
+	if !ok {
+		t.Fatal("expected snippet")
+	}
+	want := "\n```mermaid\n\n```\n"
+	if got != want {
+		t.Fatalf("snippet = %q, want %q", got, want)
+	}
+
+	got, ok = Action{Command: input.CmdDiagram}.Snippet("flowchart TD\n  A --> B")
+	if !ok {
+		t.Fatal("expected snippet")
+	}
+	want = "\n```mermaid\nflowchart TD\n  A --> B\n```\n"
+	if got != want {
+		t.Fatalf("snippet = %q, want %q", got, want)
 	}
 }
 

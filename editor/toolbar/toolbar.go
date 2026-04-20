@@ -47,5 +47,8 @@ var DefaultToolbar = Toolbar{
 		{input.CmdMath, "Math", "icon-math"},
 		{input.CmdFootnote, "Footnote", "icon-footnote"},
 		{input.CmdHR, "Divider", "icon-hr"},
+		{input.CmdScene3D, "Scene3D", "icon-scene3d"},
+		{input.CmdIsland, "Island", "icon-island"},
+		{input.CmdDiagram, "Diagram", "icon-diagram"},
 	},
 }

@@ -48,17 +48,14 @@ func (e *Editor) Render() gosx.Node {
 		return gosx.Fragment()
 	}
 
-	return gosx.Fragment(
-		gosx.El(
-			"div",
-			gosx.Attrs(
-				gosx.Attr("class", "editor-page"),
-			),
-			e.renderLoader(),
-			e.renderForm(),
-			e.renderAppShell(),
+	return gosx.El(
+		"div",
+		gosx.Attrs(
+			gosx.Attr("class", "editor-page editor-page-native"),
+			gosx.Attr("id", e.Name),
 		),
 		gosx.Fragment(e.renderAssetTags()...),
+		e.renderNativeForm(),
 	)
 }
 
@@ -311,6 +308,7 @@ func (e *Editor) renderToolbar() gosx.Node {
 		{CmdH1, CmdH2, CmdH3},
 		{CmdList, CmdOrderedList, CmdTaskList, CmdBlockquote},
 		{CmdNote, CmdWarning, CmdMath, CmdFootnote, CmdHR},
+		{CmdScene3D, CmdIsland},
 	} {
 		groupNode := e.renderToolbarGroup(group)
 		if groupNode.IsZero() {
@@ -765,6 +763,12 @@ func (e *Editor) renderAssetTags() []gosx.Node {
 			gosx.Attr("href", e.Options.StylesheetURL),
 		)))
 	}
+	if strings.TrimSpace(e.Options.DiagramScriptURL) != "" {
+		nodes = append(nodes, gosx.El("script", gosx.Attrs(
+			gosx.Attr("src", e.Options.DiagramScriptURL),
+			gosx.Attr("defer", "defer"),
+		)))
+	}
 	if strings.TrimSpace(e.Options.ScriptURL) != "" {
 		nodes = append(nodes, gosx.El("script", gosx.Attrs(
 			gosx.Attr("src", e.Options.ScriptURL),
@@ -870,6 +874,12 @@ func toolbarButtonLabel(command Command, fallbackLabel string) string {
 		return "[^]"
 	case CmdHR:
 		return "—"
+	case CmdScene3D:
+		return "Scene"
+	case CmdIsland:
+		return "Island"
+	case CmdDiagram:
+		return "Diagram"
 	default:
 		return fallbackLabel
 	}
@@ -916,14 +926,24 @@ var (
 )
 
 func (e *Editor) wordCount() int {
+	if e.Options.WordCount > 0 {
+		return e.Options.WordCount
+	}
 	content := fencedCodeRE.ReplaceAllString(e.doc.Content(), " ")
 	content = inlineCodeRE.ReplaceAllString(content, " ")
 	return len(strings.Fields(content))
+}
+
+func (e *Editor) readingTime() int {
+	if e.Options.ReadingTime > 0 {
+		return e.Options.ReadingTime
+	}
+	return readingTimeMinutes(e.wordCount())
 }
 
 func readingTimeMinutes(words int) int {
 	if words <= 0 {
 		return 0
 	}
-	return (words + 199) / 200
+	return (words + 224) / 225
 }

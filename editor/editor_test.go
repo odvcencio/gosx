@@ -1,6 +1,8 @@
 package editor
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -59,32 +61,35 @@ func TestRender_ProducesShell(t *testing.T) {
 	html := gosx.RenderHTML(ed.Render())
 
 	for _, want := range []string{
-		`class="editor-page"`,
-		`id="editor-form"`,
-		`data-gosx-emoji-complete`,
-		`id="form-slug"`,
-		`id="form-tags"`,
-		`id="form-cover-image"`,
-		`id="form-publish-at"`,
+		`class="editor-page editor-page-native"`,
 		`id="post-editor"`,
-		`class="editor-app-shell gosx-editor gosx-editor--lang-markdown++ gosx-editor--theme-light gosx-editor--readonly"`,
-		`data-editor-language="markdown++"`,
-		`data-editor-theme="light"`,
-		`data-color-scheme="light"`,
+		`href="/editor/editor.css"`,
+		`src="/editor/mdpp-diagrams.js"`,
+		`src="/editor/native-editor.js"`,
+		`id="editor-native-form"`,
+		`data-editor-native="true"`,
+		`data-gosx-enhance="form"`,
+		`id="editor-panel-preview"`,
+		`class="editor-topbar editor-native-topbar"`,
 		`id="editor-title"`,
+		`name="title"`,
 		`id="editor-toolbar"`,
 		`role="toolbar"`,
 		`data-command="emoji"`,
+		`data-command="scene3d"`,
+		`data-command="island"`,
+		`data-command="diagram"`,
 		`title="Emoji"`,
+		`title="Scene3D"`,
 		`aria-label="Post Editor"`,
-		`data-panel="preview"`,
-		`id="editor-metadata-panel"`,
-		`id="editor-gallery-panel"`,
-		`id="editor-history-panel"`,
-		`role="complementary"`,
+		`id="editor-content"`,
+		`id="editor-preview-content"`,
+		`id="editor-gallery-grid"`,
+		`id="editor-outline-headings"`,
+		`id="editor-scratch"`,
 		`Read only`,
-		`id="meta-word-count">2</span>`,
-		`id="meta-reading-time">1</span>`,
+		`id="editor-word-count">2</strong>`,
+		`id="editor-reading-time">1</strong>`,
 		`readonly`,
 		`# Hello`,
 	} {
@@ -104,13 +109,27 @@ func TestRender_ComputesContentStatsAndStatuses(t *testing.T) {
 	html := gosx.RenderHTML(ed.Render())
 
 	for _, want := range []string{
-		`id="save-status" class="save-status saved">Saved</span>`,
-		`id="hub-status-dot" class="status-dot disconnected"`,
-		`id="meta-word-count">4</span>`,
-		`id="meta-reading-time">1</span>`,
+		`id="editor-save-status" class="editor-save-status editor-save-status-saved" aria-live="polite">Saved</span>`,
+		`id="editor-word-count">4</strong>`,
+		`id="editor-reading-time">1</strong>`,
 	} {
 		if !strings.Contains(html, want) {
 			t.Fatalf("rendered html missing %q: %s", want, html)
+		}
+	}
+}
+
+func TestAssetHandlerServesNativeAssets(t *testing.T) {
+	handler := AssetHandler()
+	for _, path := range []string{"/editor.css", "/mdpp-diagrams.js", "/native-editor.js"} {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("%s returned %d: %s", path, w.Code, w.Body.String())
+		}
+		if strings.TrimSpace(w.Body.String()) == "" {
+			t.Fatalf("%s returned an empty body", path)
 		}
 	}
 }

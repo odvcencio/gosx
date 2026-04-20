@@ -59,6 +59,12 @@ func (a Action) Snippet(selection string) (string, bool) {
 		return "[^" + id + "]", true
 	case input.CmdHR:
 		return "\n---\n", true
+	case input.CmdScene3D:
+		return "\n```gosx-scene\n" + placeholder(selection, "title: Inline orbit\nshape: cube\ncolor: \"#d4af37\"\nbackground: \"#080b10\"\nheight: 320") + "\n```\n", true
+	case input.CmdIsland:
+		return "\n```gosx-island\n" + placeholder(selection, "component: counter\ntitle: Counter island\ncount: 0") + "\n```\n", true
+	case input.CmdDiagram:
+		return "\n```mermaid\n" + strings.TrimSpace(selection) + "\n```\n", true
 	default:
 		return "", false
 	}
