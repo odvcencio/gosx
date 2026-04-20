@@ -286,6 +286,37 @@ func (d *Device) AcquireSurfaceView(s gpu.Surface) (gpu.TextureView, error) {
 	return &textureView{js: tex.Call("createView")}, nil
 }
 
+// OnLost subscribes to the WebGPU GPUDevice.lost promise. The callback is
+// invoked exactly once per device, in a goroutine, with the reason
+// ("destroyed" / "unknown") and the human-readable message reported by the
+// browser. Register BEFORE doing heavy work; a device can be lost at any
+// time on some platforms (Safari under memory pressure, driver resets).
+func (d *Device) OnLost(cb func(reason, message string)) {
+	if d.dev.IsUndefined() || cb == nil {
+		return
+	}
+	lostPromise := d.dev.Get("lost")
+	if lostPromise.IsUndefined() {
+		return
+	}
+	go func() {
+		v, err := jsutil.AwaitPromise(lostPromise)
+		if err != nil {
+			cb("", err.Error())
+			return
+		}
+		reason := ""
+		message := ""
+		if r := v.Get("reason"); r.Type() == js.TypeString {
+			reason = r.String()
+		}
+		if m := v.Get("message"); m.Type() == js.TypeString {
+			message = m.String()
+		}
+		cb(reason, message)
+	}()
+}
+
 // Destroy releases the device. Resources created through it become invalid.
 func (d *Device) Destroy() {
 	if !d.dev.IsUndefined() {

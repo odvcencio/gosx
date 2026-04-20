@@ -36,8 +36,11 @@ func (*Device) CreateBindGroup(gpu.BindGroupDesc) (gpu.BindGroup, error) {
 	return nil, gpu.ErrUnsupported
 }
 func (*Device) CreateCommandEncoder() gpu.CommandEncoder                   { return nil }
-func (*Device) AcquireSurfaceView(gpu.Surface) (gpu.TextureView, error)    { return nil, gpu.ErrUnsupported }
-func (*Device) Destroy()                                                   {}
+func (*Device) AcquireSurfaceView(gpu.Surface) (gpu.TextureView, error) {
+	return nil, gpu.ErrUnsupported
+}
+func (*Device) OnLost(func(string, string)) {}
+func (*Device) Destroy()                    {}
 
 type stubQueue struct{}
 

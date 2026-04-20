@@ -108,6 +108,9 @@ type Renderer struct {
 	// Tracks the previous frame's time for particle dt integration.
 	lastFrameTime float64
 
+	// R5 frame stats + device-lost state. Populated on every Frame call.
+	stats frameStatsRecorder
+
 	// Caches keyed by identity strings, reused across frames.
 	passCache      map[string]*passResources
 	primitiveCache map[string]*primitiveResources
@@ -208,7 +211,18 @@ func New(cfg Config) (*Renderer, error) {
 	if err := r.buildBindGroups(); err != nil {
 		return nil, err
 	}
+	// Subscribe to device-loss events so Frame can short-circuit once the
+	// backend reports that the GPU context is gone.
+	cfg.Device.OnLost(func(reason, message string) {
+		r.stats.markLost(reason, message)
+	})
 	return r, nil
+}
+
+// Stats returns a snapshot of the renderer's frame timing + device health.
+// Host apps typically call this every 10–30 frames to drive a perf panel.
+func (r *Renderer) Stats() FrameStats {
+	return r.stats.snapshot()
 }
 
 // Destroy releases all GPU resources owned by the Renderer. The device is
@@ -318,7 +332,12 @@ func (r *Renderer) Destroy() {
 // Pre-batched Passes data (legacy) still goes through the unlit pipeline and
 // does not cast shadows — R3 revisits this when the pass data grows normals.
 func (r *Renderer) Frame(b engine.RenderBundle, width, height int, timeSeconds float64) error {
-	_ = timeSeconds // R2 does not consume time directly; future phases will.
+	// Fast-path out of the frame loop when the device has been lost — the
+	// host is responsible for tearing down + rebuilding the Renderer on
+	// the next resize or lifecycle event.
+	if r.stats.isLost() {
+		return gpu.ErrDeviceLost
+	}
 
 	if width <= 0 || height <= 0 {
 		return nil
@@ -517,6 +536,10 @@ func (r *Renderer) Frame(b engine.RenderBundle, width, height int, timeSeconds f
 	// After submission, kick off the async pick readback if one was queued.
 	// Runs in a goroutine — the frame completes immediately.
 	r.finishPickReadback()
+
+	// Record frame timing for Stats(). dt was already computed above for
+	// particle integration; reuse it here so the numbers match.
+	r.stats.record(dt)
 	return nil
 }
 

@@ -31,6 +31,14 @@ type Device interface {
 	// configuration and lifecycle of the underlying swap chain.
 	AcquireSurfaceView(Surface) (TextureView, error)
 
+	// OnLost registers a callback invoked when the underlying device has
+	// been lost (driver reset, out-of-memory, tab backgrounded too long on
+	// some platforms). Passes the backend's reason + human-readable
+	// message. Implementations may call the callback from any goroutine;
+	// the callback must be safe to invoke concurrently with other code on
+	// the Device.
+	OnLost(func(reason, message string))
+
 	// Destroy releases the device. Resources created through it become invalid.
 	Destroy()
 }

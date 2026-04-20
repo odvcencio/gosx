@@ -85,7 +85,8 @@ func (d *fakeDevice) AcquireSurfaceView(gpu.Surface) (gpu.TextureView, error) {
 	return &fakeTextureView{}, nil
 }
 
-func (d *fakeDevice) Destroy() {}
+func (d *fakeDevice) OnLost(func(string, string)) {}
+func (d *fakeDevice) Destroy()                    {}
 
 // fakeQueue records WriteBuffer + Submit calls.
 type fakeQueue struct {
