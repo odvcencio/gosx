@@ -44,18 +44,18 @@ func TestFrameInstancedMeshDispatches(t *testing.T) {
 	// Shared shadow-pass instance buffer = 1.
 	// Material uniform = 1.
 	// Cull resources (input + output + drawArgs + cullUniform) = 4.
-	// Bloom per-resize: blurH uniform + blurV uniform = 2.
-	// Total = 12.
-	if got := len(d.buffers) - buffersBefore; got != 12 {
-		t.Errorf("expected 12 new buffers (geometry + instance + material + cull + bloom), got %d", got)
+	// Post-FX resources: bloom params + blurH + blurV uniforms = 3.
+	// Total = 13.
+	if got := len(d.buffers) - buffersBefore; got != 13 {
+		t.Errorf("expected 13 new buffers (geometry + instance + material + cull + post-fx), got %d", got)
 	}
 
 	if len(d.encoders) != 1 {
 		t.Fatalf("expected 1 command encoder, got %d", len(d.encoders))
 	}
 	passes := d.encoders[0].passes
-	if len(passes) != 8 {
-		t.Fatalf("expected 8 passes (3 shadow + main + 3 bloom + present), got %d", len(passes))
+	if len(passes) != 5 {
+		t.Fatalf("expected 5 passes (3 shadow + main + present), got %d", len(passes))
 	}
 	mainPass := passes[3]
 

@@ -19,20 +19,48 @@
 //   - Full gpu.Device interface implementation. A render/bundle.Renderer
 //     built on top of this device constructs all pipelines, uniforms,
 //     bind groups, and command encoders without error.
-//   - Clear operations are executed: color attachments with LoadOpClear
-//     fill the framebuffer with the clear value on pass begin. This is
-//     enough to validate the bundle pipeline and produce non-trivial
-//     thumbnails when scenes animate.
-//   - Resource tracking: buffers/textures record their size + usage so
-//     tests can assert without pixels.
+//   - Clear operations are executed: surface and offscreen color attachments
+//     with LoadOpClear retain their clear value on pass begin.
+//   - Texture uploads and copyTextureToBuffer readbacks preserve CPU-side
+//     bytes, including explicit mip levels, for the formats used by the
+//     render milestones.
+//   - The bundle present pass copies the retained HDR color target into the
+//     CPU framebuffer, so headless frames follow the same HDR -> present path
+//     as the browser renderer.
+//   - The R1 unlit RenderPassBundle path has a narrow software rasterizer:
+//     triangle-list position/color vertex buffers are transformed by the
+//     bound MVP uniform and written into the color attachment.
+//   - Instanced meshes can run through the renderer's cull compute pass and
+//     DrawIndirect path. Headless treats all uploaded instances as visible,
+//     then rasterizes the lit pipeline as a deterministic material/vertex-color
+//     approximation.
+//   - The lit approximation reads the same scene lighting uniform block and
+//     shadow-map binding as the WebGPU shader, applying Lambertian directional
+//     light, hemisphere ambient, and linear comparison cascaded-shadow
+//     sampling.
+//   - Lit materials read the material uniform block and base-color texture
+//     binding, including linear repeat-addressed UV sampling for deterministic
+//     texture-path validation.
+//   - Main-pass depth clears, compares, and writes are honored for the
+//     rasterized paths, so golden/thumbnail checks get the same nearest-pixel
+//     ordering as the GPU renderer for simple scenes.
+//   - Pipeline color write masks and the blend factors exposed by render/gpu
+//     are applied when writing rasterized color targets.
+//   - Fully near/far clipped geometry is rejected before rasterization.
+//   - Depth-only shadow passes execute the same instanced draw path and write
+//     into CPU-backed depth textures, including per-layer shadow views.
+//   - Compute-particle update and render passes execute deterministically on
+//     CPU: the update shader's state buffer advances, and the render pipeline
+//     draws small additive discs into the HDR target.
+//   - Resource tracking: buffers/textures record their size + usage so tests
+//     can assert without a GPU driver.
 //
 // # Explicitly deferred
 //
-//   - Real triangle rasterization. A proper software rasterizer is its
-//     own project — probably a sibling package at render/gpu/raster. For
-//     now draw calls are no-ops; the framebuffer shows clear color plus
-//     anything WriteTexture blitted in.
-//   - Multi-sample, mipmaps, cubemaps.
+//   - Full WebGPU-equivalent rasterization. Cook-Torrance PBR lighting,
+//     soft-shadow filtering, exact billboard axes, color-space parity, and
+//     triangle-edge clipping are still approximated or no-op in headless.
+//   - Multi-sample and cubemaps.
 //
 // # Breakout path
 //

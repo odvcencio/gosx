@@ -55,6 +55,12 @@ type Queue interface {
 	// texture's storage format (e.g., RGBA8 = 4 bytes per pixel).
 	WriteTexture(dst Texture, data []byte, bytesPerRow, width, height int)
 
+	// WriteTextureLevel uploads raw bytes into the 2D texture dst at the
+	// specified mip level, origin (0,0). Level 0 is the full-size texture;
+	// higher levels use the dimensions supplied by the caller and must fit
+	// within the texture's mip chain.
+	WriteTextureLevel(dst Texture, mipLevel int, data []byte, bytesPerRow, width, height int)
+
 	// Submit runs all command buffers on the GPU. Order is preserved.
 	Submit(...CommandBuffer)
 }
@@ -234,9 +240,9 @@ type Surface interface{}
 
 // RenderPassDesc configures a render pass.
 type RenderPassDesc struct {
-	ColorAttachments        []RenderPassColorAttachment
-	DepthStencilAttachment  *RenderPassDepthStencilAttachment
-	Label                   string
+	ColorAttachments       []RenderPassColorAttachment
+	DepthStencilAttachment *RenderPassDepthStencilAttachment
+	Label                  string
 }
 
 // RenderPassColorAttachment configures one color attachment of a render pass.
@@ -330,10 +336,11 @@ func (u TextureUsage) Has(bit TextureUsage) bool { return u&bit == bit }
 
 // TextureDesc configures a texture at creation time.
 type TextureDesc struct {
-	Width, Height        int
-	DepthOrArrayLayers   int // 0 or 1 = 2D single layer
-	Format               TextureFormat
-	Usage                TextureUsage
-	SampleCount          int // 0 or 1 = non-MSAA
-	Label                string
+	Width, Height      int
+	DepthOrArrayLayers int // 0 or 1 = 2D single layer
+	Format             TextureFormat
+	Usage              TextureUsage
+	SampleCount        int // 0 or 1 = non-MSAA
+	MipLevelCount      int // 0 = one mip level
+	Label              string
 }

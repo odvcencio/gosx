@@ -24,14 +24,21 @@ func (q *queue) WriteBuffer(buf gpu.Buffer, offset int, data []byte) {
 }
 
 func (q *queue) WriteTexture(dst gpu.Texture, data []byte, bytesPerRow, width, height int) {
+	q.WriteTextureLevel(dst, 0, data, bytesPerRow, width, height)
+}
+
+func (q *queue) WriteTextureLevel(dst gpu.Texture, mipLevel int, data []byte, bytesPerRow, width, height int) {
 	t, ok := dst.(*texture)
 	if !ok || t == nil || len(data) == 0 {
+		return
+	}
+	if mipLevel < 0 {
 		return
 	}
 	u8 := jsutil.NewUint8ArrayFromBytes(data)
 	destination := map[string]any{
 		"texture":  t.js,
-		"mipLevel": 0,
+		"mipLevel": mipLevel,
 		"origin":   map[string]any{"x": 0, "y": 0, "z": 0},
 	}
 	dataLayout := map[string]any{

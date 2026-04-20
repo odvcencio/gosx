@@ -17,17 +17,14 @@ import (
 //   - The WGSL snippet that consumes joint indices + weights and blends
 //     them into a world-space position + normal (applySkinning, below).
 //   - A BonePalette type tracking the max-palette-size constant + byte
-//     stride used by both the CPU clip evaluator (R5) and the vertex
-//     shader bindings.
+//     stride used by both the CPU clip evaluator and the vertex shader
+//     bindings.
 //   - An UploadBonePalette helper that pushes a flat []float32 of
 //     column-major mat4 values into a pre-allocated storage buffer.
 //
 // What's intentionally deferred to R5:
-//   - Animation clip evaluation (RenderAnimation channel sampling into
-//     a mutable bone palette). Needs a keyframe interpolator that the
-//     renderer doesn't own today.
-//   - A skinned variant of the lit pipeline. When clip evaluation lands
-//     it'll build a second RenderPipeline with the 3 extra vertex slots
+//   - A skinned variant of the lit pipeline. When that lands it'll build a
+//     second RenderPipeline with the 3 extra vertex slots
 //     (joints, weights, bind-pose transform) — buildLitPipeline's layout
 //     stays untouched.
 //   - Per-skeleton scratch space, instancing, morph targets. All slot
@@ -104,7 +101,7 @@ func SkinningSource() string { return skinningWGSL }
 
 // BonePalette describes a skeleton's bone-matrix storage buffer. One
 // instance per active skeleton; uploaded each frame from the CPU-side
-// clip evaluator (R5) via UploadBonePalette.
+// clip evaluator via UploadBonePalette.
 type BonePalette struct {
 	// Capacity is the number of bones allocated in the storage buffer
 	// (always ≤ MaxBonesPerPalette).

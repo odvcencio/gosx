@@ -29,13 +29,13 @@ type Renderer struct {
 	depthFormat   gpu.TextureFormat
 
 	// Pipelines created once and reused across frames.
-	unlitPipeline      gpu.RenderPipeline
-	unlitBGLayout      gpu.BindGroupLayout
-	litPipeline        gpu.RenderPipeline
-	litBGLayout        gpu.BindGroupLayout
-	litMaterialLayout  gpu.BindGroupLayout
-	shadowPipeline     gpu.RenderPipeline
-	shadowBGLayout     gpu.BindGroupLayout
+	unlitPipeline     gpu.RenderPipeline
+	unlitBGLayout     gpu.BindGroupLayout
+	litPipeline       gpu.RenderPipeline
+	litBGLayout       gpu.BindGroupLayout
+	litMaterialLayout gpu.BindGroupLayout
+	shadowPipeline    gpu.RenderPipeline
+	shadowBGLayout    gpu.BindGroupLayout
 
 	// Scene uniforms (viewProj + 3 lightViewProjs + camera + light + env).
 	sceneUniformBuf gpu.Buffer
@@ -100,10 +100,10 @@ type Renderer struct {
 	bloom          *bloomResources
 
 	// Compute-particle pipelines. Per-system resources live in particleCache.
-	particleUpdatePipeline  gpu.ComputePipeline
-	particleUpdateBGLayout  gpu.BindGroupLayout
-	particleRenderPipeline  gpu.RenderPipeline
-	particleRenderBGLayout  gpu.BindGroupLayout
+	particleUpdatePipeline gpu.ComputePipeline
+	particleUpdateBGLayout gpu.BindGroupLayout
+	particleRenderPipeline gpu.RenderPipeline
+	particleRenderBGLayout gpu.BindGroupLayout
 
 	// Tracks the previous frame's time for particle dt integration.
 	lastFrameTime float64
@@ -401,6 +401,7 @@ func (r *Renderer) Frame(b engine.RenderBundle, width, height int, timeSeconds f
 	if err := r.recordParticleUpdates(enc, b, dt, timeSeconds, viewProj, cameraPos); err != nil {
 		return err
 	}
+	bloom := resolveBloomConfig(b)
 
 	// The main pass now writes into the HDR intermediate instead of the
 	// swap chain. Bloom chain + present pass then tone-map HDR → swap chain.
@@ -409,9 +410,10 @@ func (r *Renderer) Frame(b engine.RenderBundle, width, height int, timeSeconds f
 		return err
 	}
 	_ = hdrView // main pass picks it up via r.hdrView below
-	if err := r.ensureBloom(width, height); err != nil {
+	if err := r.ensureBloom(width, height, bloom); err != nil {
 		return err
 	}
+	r.configureBloom(bloom)
 
 	// 3) Main pass — lit scene rendered to the HDR intermediate with depth,
 	// plus the GPU picking id buffer as a second color attachment.
@@ -521,10 +523,12 @@ func (r *Renderer) Frame(b engine.RenderBundle, width, height int, timeSeconds f
 	// passes that might clobber it.
 	r.recordPickCopy(enc, width, height)
 
-	// 4) Bloom chain (bright-pass + horizontal + vertical Gaussian blurs).
-	r.recordBloomPasses(enc)
+	// 4) Optional bloom chain (bright-pass + horizontal + vertical blurs).
+	if bloom.enabled {
+		r.recordBloomPasses(enc)
+	}
 
-	// 5) Present pass — HDR + bloom → ACES tone map → swap chain.
+	// 5) Present pass — HDR + optional bloom → ACES tone map → swap chain.
 	surfaceView, err := r.device.AcquireSurfaceView(r.surface)
 	if err != nil {
 		return fmt.Errorf("bundle.Frame: acquire surface view: %w", err)
@@ -1153,7 +1157,7 @@ func buildSceneUniformBytes(s sceneUniformBlock) []byte {
 // unlit demos should still render usefully.
 func resolveDirectionalLight(b engine.RenderBundle) (dir [3]float32, color [4]float32, ambient [4]float32) {
 	dir = [3]float32{-0.4, -1.0, -0.3}
-	color = [4]float32{1, 0.96, 0.9, 1.0}    // w = intensity
+	color = [4]float32{1, 0.96, 0.9, 1.0} // w = intensity
 	ambient = [4]float32{0.35, 0.38, 0.45, 0.35}
 
 	for _, l := range b.Lights {

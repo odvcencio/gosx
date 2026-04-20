@@ -2,15 +2,18 @@ package bundle
 
 import (
 	"fmt"
+	"strings"
 
+	"github.com/odvcencio/gosx/engine"
 	"github.com/odvcencio/gosx/render/gpu"
 )
 
-// bloomDownsample is how far the bloom chain is cut from the HDR resolution.
-// 2 = half-res bloom. Half-res is the common tradeoff: visibly-wide halos
-// without eating full-res fill-rate on blur. A full mip chain (R5) improves
-// quality at the cost of N more passes.
-const bloomDownsample = 2
+const (
+	defaultBloomThreshold = 0.8
+	defaultBloomIntensity = 0.5
+	defaultBloomRadius    = 5.0
+	defaultBloomScale     = 0.5
+)
 
 // brightPassWGSL does two things in one shader: threshold-filter the HDR
 // image (anything dimmer than 1.0 contributes zero) and downsample by
@@ -24,6 +27,11 @@ struct VSOut {
 
 @group(0) @binding(0) var srcTexture : texture_2d<f32>;
 @group(0) @binding(1) var srcSampler : sampler;
+
+struct BloomUniforms {
+  params : vec4<f32>, // x = threshold, y = intensity, z = scale
+};
+@group(0) @binding(2) var<uniform> bloom : BloomUniforms;
 
 @vertex
 fn vs_main(@builtin(vertex_index) vid : u32) -> VSOut {
@@ -50,9 +58,9 @@ fn luminance(c : vec3<f32>) -> f32 {
 @fragment
 fn fs_main(in : VSOut) -> @location(0) vec4<f32> {
   let c = textureSample(srcTexture, srcSampler, in.uv).rgb;
-  // Soft-knee threshold at 1.0 — anything above bleeds. Keeps bloom tied
-  // to scene intensity rather than a global artist dial for R4.
-  let thresholdedLum = max(luminance(c) - 1.0, 0.0);
+  // Soft-knee threshold — anything above bleeds. Keeps bloom tied to scene
+  // intensity while letting the bundle carry the artist dial.
+  let thresholdedLum = max(luminance(c) - bloom.params.x, 0.0);
   let soft = thresholdedLum / (thresholdedLum + 1.0);
   let bloomColor = c * soft;
   return vec4<f32>(bloomColor, 1.0);
@@ -140,6 +148,11 @@ struct VSOut {
 @group(0) @binding(2) var bloomTexture : texture_2d<f32>;
 @group(0) @binding(3) var bloomSampler : sampler;
 
+struct BloomUniforms {
+  params : vec4<f32>, // x = threshold, y = intensity, z = scale
+};
+@group(0) @binding(4) var<uniform> bloom : BloomUniforms;
+
 @vertex
 fn vs_main(@builtin(vertex_index) vid : u32) -> VSOut {
   var p = array<vec2<f32>, 3>(
@@ -177,8 +190,8 @@ fn luma(c : vec3<f32>) -> f32 {
 // visual luminance the viewer would see.
 fn toneMapAt(uv : vec2<f32>) -> vec3<f32> {
   let hdr   = textureSample(hdrTexture, hdrSampler, uv).rgb;
-  let bloom = textureSample(bloomTexture, bloomSampler, uv).rgb;
-  return acesFilmic(hdr + bloom * 0.2);
+  let glow = textureSample(bloomTexture, bloomSampler, uv).rgb;
+  return acesFilmic(hdr + glow * bloom.params.y);
 }
 
 @fragment
@@ -215,16 +228,26 @@ fn fs_main(in : VSOut) -> @location(0) vec4<f32> {
 // half-res render targets, their views, per-pass bind groups, and the tiny
 // blur uniforms.
 type bloomResources struct {
-	width, height int
-	texA, texB    gpu.Texture
-	viewA, viewB  gpu.TextureView
+	width, height               int
+	surfaceWidth, surfaceHeight int
+	texA, texB                  gpu.Texture
+	viewA, viewB                gpu.TextureView
 
 	brightBindGrp gpu.BindGroup // reads HDR → writes texA
 	blurHBindGrp  gpu.BindGroup // reads texA → writes texB
 	blurVBindGrp  gpu.BindGroup // reads texB → writes texA
 
-	blurHUniform gpu.Buffer // horizontal texel-offset uniform
-	blurVUniform gpu.Buffer // vertical texel-offset uniform
+	paramsUniform gpu.Buffer // threshold/intensity/scale shared by bloom + present
+	blurHUniform  gpu.Buffer // horizontal texel-offset uniform
+	blurVUniform  gpu.Buffer // vertical texel-offset uniform
+}
+
+type bloomConfig struct {
+	enabled   bool
+	threshold float64
+	intensity float64
+	radius    float64
+	scale     float64
 }
 
 // buildBloomPipelines constructs the three bloom pipelines (bright pass +
@@ -249,7 +272,7 @@ func (r *Renderer) buildBrightPassPipeline() error {
 		return fmt.Errorf("bundle.buildBrightPassPipeline: %w", err)
 	}
 	pipeline, err := r.device.CreateRenderPipeline(gpu.RenderPipelineDesc{
-		Vertex:   gpu.VertexStageDesc{Module: shader, EntryPoint: "vs_main"},
+		Vertex: gpu.VertexStageDesc{Module: shader, EntryPoint: "vs_main"},
 		Fragment: gpu.FragmentStageDesc{Module: shader, EntryPoint: "fs_main",
 			Targets: []gpu.ColorTargetState{
 				{Format: hdrFormat, WriteMask: gpu.ColorWriteAll},
@@ -275,7 +298,7 @@ func (r *Renderer) buildBlurPipeline() error {
 		return fmt.Errorf("bundle.buildBlurPipeline: %w", err)
 	}
 	pipeline, err := r.device.CreateRenderPipeline(gpu.RenderPipelineDesc{
-		Vertex:   gpu.VertexStageDesc{Module: shader, EntryPoint: "vs_main"},
+		Vertex: gpu.VertexStageDesc{Module: shader, EntryPoint: "vs_main"},
 		Fragment: gpu.FragmentStageDesc{Module: shader, EntryPoint: "fs_main",
 			Targets: []gpu.ColorTargetState{
 				{Format: hdrFormat, WriteMask: gpu.ColorWriteAll},
@@ -295,11 +318,11 @@ func (r *Renderer) buildBlurPipeline() error {
 // ensureBloom (re)allocates the bloom chain when the surface resizes. Two
 // half-res HDR textures + three bind groups + two tiny uniform buffers are
 // rebuilt; the old set is destroyed cleanly.
-func (r *Renderer) ensureBloom(surfaceWidth, surfaceHeight int) error {
-	w := max(1, surfaceWidth/bloomDownsample)
-	h := max(1, surfaceHeight/bloomDownsample)
+func (r *Renderer) ensureBloom(surfaceWidth, surfaceHeight int, cfg bloomConfig) error {
+	w := max(1, int(float64(surfaceWidth)*cfg.scale))
+	h := max(1, int(float64(surfaceHeight)*cfg.scale))
 
-	if r.bloom != nil && r.bloom.width == w && r.bloom.height == h {
+	if r.bloom != nil && r.bloom.width == w && r.bloom.height == h && r.bloom.surfaceWidth == surfaceWidth && r.bloom.surfaceHeight == surfaceHeight {
 		return nil
 	}
 	if r.bloom != nil {
@@ -324,6 +347,15 @@ func (r *Renderer) ensureBloom(surfaceWidth, surfaceHeight int) error {
 		texA.Destroy()
 		return fmt.Errorf("bundle.ensureBloom: %w", err)
 	}
+	paramsUniform, err := r.device.CreateBuffer(gpu.BufferDesc{
+		Size: 16, Usage: gpu.BufferUsageUniform | gpu.BufferUsageCopyDst,
+		Label: "bundle.bloom.params.uniform",
+	})
+	if err != nil {
+		texA.Destroy()
+		texB.Destroy()
+		return fmt.Errorf("bundle.ensureBloom: %w", err)
+	}
 	blurHUniform, err := r.device.CreateBuffer(gpu.BufferDesc{
 		Size: 16, Usage: gpu.BufferUsageUniform | gpu.BufferUsageCopyDst,
 		Label: "bundle.bloom.blurH.uniform",
@@ -331,6 +363,7 @@ func (r *Renderer) ensureBloom(surfaceWidth, surfaceHeight int) error {
 	if err != nil {
 		texA.Destroy()
 		texB.Destroy()
+		paramsUniform.Destroy()
 		return fmt.Errorf("bundle.ensureBloom: %w", err)
 	}
 	blurVUniform, err := r.device.CreateBuffer(gpu.BufferDesc{
@@ -340,14 +373,10 @@ func (r *Renderer) ensureBloom(surfaceWidth, surfaceHeight int) error {
 	if err != nil {
 		texA.Destroy()
 		texB.Destroy()
+		paramsUniform.Destroy()
 		blurHUniform.Destroy()
 		return fmt.Errorf("bundle.ensureBloom: %w", err)
 	}
-	// Write texel offsets once — they depend only on target dimensions.
-	dx := float32(1) / float32(w)
-	dy := float32(1) / float32(h)
-	r.device.Queue().WriteBuffer(blurHUniform, 0, float32sToBytes([]float32{dx, 0, 0, 0}))
-	r.device.Queue().WriteBuffer(blurVUniform, 0, float32sToBytes([]float32{0, dy, 0, 0}))
 
 	viewA := texA.CreateView()
 	viewB := texB.CreateView()
@@ -357,12 +386,14 @@ func (r *Renderer) ensureBloom(surfaceWidth, surfaceHeight int) error {
 		Entries: []gpu.BindGroupEntry{
 			{Binding: 0, TextureView: r.hdrView},
 			{Binding: 1, Sampler: r.presentSampler},
+			{Binding: 2, Buffer: paramsUniform, Size: 16},
 		},
 		Label: "bundle.bloom.bright.bg",
 	})
 	if err != nil {
 		texA.Destroy()
 		texB.Destroy()
+		paramsUniform.Destroy()
 		blurHUniform.Destroy()
 		blurVUniform.Destroy()
 		return fmt.Errorf("bundle.ensureBloom: %w", err)
@@ -379,6 +410,7 @@ func (r *Renderer) ensureBloom(surfaceWidth, surfaceHeight int) error {
 	if err != nil {
 		texA.Destroy()
 		texB.Destroy()
+		paramsUniform.Destroy()
 		blurHUniform.Destroy()
 		blurVUniform.Destroy()
 		return fmt.Errorf("bundle.ensureBloom: %w", err)
@@ -395,6 +427,7 @@ func (r *Renderer) ensureBloom(surfaceWidth, surfaceHeight int) error {
 	if err != nil {
 		texA.Destroy()
 		texB.Destroy()
+		paramsUniform.Destroy()
 		blurHUniform.Destroy()
 		blurVUniform.Destroy()
 		return fmt.Errorf("bundle.ensureBloom: %w", err)
@@ -402,11 +435,13 @@ func (r *Renderer) ensureBloom(surfaceWidth, surfaceHeight int) error {
 
 	r.bloom = &bloomResources{
 		width: w, height: h,
+		surfaceWidth: surfaceWidth, surfaceHeight: surfaceHeight,
 		texA: texA, texB: texB,
 		viewA: viewA, viewB: viewB,
 		brightBindGrp: brightBG,
 		blurHBindGrp:  blurHBG,
 		blurVBindGrp:  blurVBG,
+		paramsUniform: paramsUniform,
 		blurHUniform:  blurHUniform,
 		blurVUniform:  blurVUniform,
 	}
@@ -419,6 +454,7 @@ func (r *Renderer) ensureBloom(surfaceWidth, surfaceHeight int) error {
 			{Binding: 1, Sampler: r.presentSampler},
 			{Binding: 2, TextureView: viewA},
 			{Binding: 3, Sampler: r.presentSampler},
+			{Binding: 4, Buffer: paramsUniform, Size: 16},
 		},
 		Label: "bundle.present.compose.bg",
 	})
@@ -427,6 +463,78 @@ func (r *Renderer) ensureBloom(surfaceWidth, surfaceHeight int) error {
 	}
 	r.presentBindGrp = bg
 	return nil
+}
+
+func resolveBloomConfig(b engine.RenderBundle) bloomConfig {
+	cfg := bloomConfig{
+		threshold: defaultBloomThreshold,
+		intensity: 0,
+		radius:    defaultBloomRadius,
+		scale:     defaultBloomScale,
+	}
+	for _, effect := range b.PostEffects {
+		if !strings.EqualFold(strings.TrimSpace(effect.Kind), "bloom") {
+			continue
+		}
+		cfg.enabled = true
+		cfg.threshold = bloomEffectNumber(effect, "threshold", defaultBloomThreshold)
+		cfg.intensity = bloomEffectNumber(effect, "intensity", defaultBloomIntensity, "strength")
+		cfg.radius = bloomEffectNumber(effect, "radius", defaultBloomRadius)
+		cfg.scale = bloomEffectNumber(effect, "scale", defaultBloomScale)
+		if cfg.scale <= 0 || cfg.scale > 1 {
+			cfg.scale = defaultBloomScale
+		}
+		return cfg
+	}
+	return cfg
+}
+
+func bloomEffectNumber(effect engine.RenderPostEffect, name string, fallback float64, aliases ...string) float64 {
+	var direct float64
+	switch name {
+	case "threshold":
+		direct = effect.Threshold
+	case "intensity":
+		direct = effect.Intensity
+	case "radius":
+		direct = effect.Radius
+	case "scale":
+		direct = effect.Scale
+	}
+	if direct > 0 {
+		return direct
+	}
+	for _, key := range append([]string{name}, aliases...) {
+		if value, ok := effect.Params[key]; ok && value > 0 {
+			return value
+		}
+	}
+	return fallback
+}
+
+func (r *Renderer) configureBloom(cfg bloomConfig) {
+	if r.bloom == nil {
+		return
+	}
+	intensity := cfg.intensity
+	if !cfg.enabled {
+		intensity = 0
+	}
+	r.device.Queue().WriteBuffer(r.bloom.paramsUniform, 0, float32sToBytes([]float32{
+		float32(cfg.threshold),
+		float32(intensity),
+		float32(cfg.scale),
+		0,
+	}))
+
+	radiusScale := cfg.radius / defaultBloomRadius
+	if radiusScale <= 0 {
+		radiusScale = 1
+	}
+	dx := float32(radiusScale) / float32(r.bloom.width)
+	dy := float32(radiusScale) / float32(r.bloom.height)
+	r.device.Queue().WriteBuffer(r.bloom.blurHUniform, 0, float32sToBytes([]float32{dx, 0, 0, 0}))
+	r.device.Queue().WriteBuffer(r.bloom.blurVUniform, 0, float32sToBytes([]float32{0, dy, 0, 0}))
 }
 
 // recordBloomPasses runs the three bloom passes between the main HDR pass
@@ -486,6 +594,9 @@ func destroyBloomResources(b *bloomResources) {
 	}
 	if b.texB != nil {
 		b.texB.Destroy()
+	}
+	if b.paramsUniform != nil {
+		b.paramsUniform.Destroy()
 	}
 	if b.blurHUniform != nil {
 		b.blurHUniform.Destroy()

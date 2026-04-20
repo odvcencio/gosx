@@ -113,6 +113,9 @@ func (d *Device) CreateTexture(desc gpu.TextureDesc) (gpu.Texture, error) {
 		"usage":       encodeTextureUsage(desc.Usage),
 		"sampleCount": sampleCount,
 	}
+	if desc.MipLevelCount > 1 {
+		dict["mipLevelCount"] = desc.MipLevelCount
+	}
 	if desc.Label != "" {
 		dict["label"] = desc.Label
 	}

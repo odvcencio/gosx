@@ -3,18 +3,18 @@
 // payload produced by the engine runtime — and issues draw commands against
 // a render/gpu.Device.
 //
-// R1 scope: unlit pipeline only. The renderer accepts bundles containing
-// RenderPassBundle geometry plus RenderInstancedMesh entries, uploads the
-// vertex/instance/uniform data to GPU buffers, and draws them. Shadow maps,
-// PBR, textures, and post-FX land in R2–R4.
+// Current scope spans the R-series render path: legacy unlit pass bundles,
+// instanced lit meshes, PBR material uniforms/textures, cascaded shadows,
+// HDR present/post-FX, GPU picking, compute particles, skinning palette
+// helpers, and headless-testable resource uploads.
 //
 // The Renderer holds GPU resources keyed by lifecycle:
 //
 //   - Pipeline: created once, reused across frames.
 //   - Vertex buffers: cached by RenderPassBundle.CacheKey where provided;
 //     otherwise rebuilt each frame.
-//   - Uniform buffer: a single ring buffer slot per draw (R1) — R2
-//     revisits this with proper multi-frame in-flight uniforms.
+//   - Uniform/storage buffers: scene, shadow, material, cull, particle, and
+//     optional skinning state are uploaded as bundle data changes.
 //
 // Callers drive the renderer from the client/wasm engine runtime; a new
 // runtime entry point __gosx_render_engine_to_canvas will dispatch frames

@@ -18,9 +18,9 @@ type Device struct{}
 // in test harnesses or pure-Go validators.
 func New() *Device { return &Device{} }
 
-func (*Device) Queue() gpu.Queue                                          { return stubQueue{} }
-func (*Device) PreferredSurfaceFormat() gpu.TextureFormat                 { return gpu.FormatUndefined }
-func (*Device) CreateBuffer(gpu.BufferDesc) (gpu.Buffer, error)           { return nil, gpu.ErrUnsupported }
+func (*Device) Queue() gpu.Queue                                   { return stubQueue{} }
+func (*Device) PreferredSurfaceFormat() gpu.TextureFormat          { return gpu.FormatUndefined }
+func (*Device) CreateBuffer(gpu.BufferDesc) (gpu.Buffer, error)    { return nil, gpu.ErrUnsupported }
 func (*Device) CreateTexture(gpu.TextureDesc) (gpu.Texture, error) { return nil, gpu.ErrUnsupported }
 func (*Device) CreateSampler(gpu.SamplerDesc) (gpu.Sampler, error) { return nil, gpu.ErrUnsupported }
 func (*Device) CreateShaderModule(gpu.ShaderDesc) (gpu.ShaderModule, error) {
@@ -35,7 +35,7 @@ func (*Device) CreateComputePipeline(gpu.ComputePipelineDesc) (gpu.ComputePipeli
 func (*Device) CreateBindGroup(gpu.BindGroupDesc) (gpu.BindGroup, error) {
 	return nil, gpu.ErrUnsupported
 }
-func (*Device) CreateCommandEncoder() gpu.CommandEncoder                   { return nil }
+func (*Device) CreateCommandEncoder() gpu.CommandEncoder { return nil }
 func (*Device) AcquireSurfaceView(gpu.Surface) (gpu.TextureView, error) {
 	return nil, gpu.ErrUnsupported
 }
@@ -46,4 +46,6 @@ type stubQueue struct{}
 
 func (stubQueue) WriteBuffer(gpu.Buffer, int, []byte)             {}
 func (stubQueue) WriteTexture(gpu.Texture, []byte, int, int, int) {}
-func (stubQueue) Submit(...gpu.CommandBuffer)                     {}
+func (stubQueue) WriteTextureLevel(gpu.Texture, int, []byte, int, int, int) {
+}
+func (stubQueue) Submit(...gpu.CommandBuffer) {}

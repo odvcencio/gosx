@@ -230,6 +230,7 @@ type RenderPostEffect struct {
 	Intensity float64            `json:"intensity,omitempty"`
 	Threshold float64            `json:"threshold,omitempty"`
 	Radius    float64            `json:"radius,omitempty"`
+	Scale     float64            `json:"scale,omitempty"`
 	Params    map[string]float64 `json:"params,omitempty"`
 }
 

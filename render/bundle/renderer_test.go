@@ -90,7 +90,7 @@ func TestNewBuildsAllPipelines(t *testing.T) {
 }
 
 // TestFrameAlwaysEmitsCSMPlusMainPass confirms every non-trivial frame
-// records N shadow passes (one per cascade) + a main pass.
+// records N shadow passes (one per cascade), a main pass, and a present pass.
 func TestFrameAlwaysEmitsCSMPlusMainPass(t *testing.T) {
 	d := newFakeDevice()
 	r, err := New(Config{Device: d, Surface: fakeSurface{}})
@@ -109,8 +109,8 @@ func TestFrameAlwaysEmitsCSMPlusMainPass(t *testing.T) {
 		t.Fatalf("expected 1 command encoder per frame, got %d", len(d.encoders))
 	}
 	passes := d.encoders[0].passes
-	if got := len(passes); got != 8 {
-		t.Fatalf("expected 8 passes (3 shadow + main + 3 bloom + present), got %d", got)
+	if got := len(passes); got != 5 {
+		t.Fatalf("expected 5 passes (3 shadow + main + present), got %d", got)
 	}
 
 	// Shadow passes (indices 0..2) have only depth attachments.
@@ -131,12 +131,56 @@ func TestFrameAlwaysEmitsCSMPlusMainPass(t *testing.T) {
 		t.Error("main pass must have a depth attachment")
 	}
 	// Present pass tone-maps to the swap chain; color only, no depth.
-	present := passes[7]
+	present := passes[4]
 	if len(present.desc.ColorAttachments) != 1 {
 		t.Error("present pass must have one color attachment")
 	}
 	if present.desc.DepthStencilAttachment != nil {
 		t.Error("present pass must not have a depth attachment")
+	}
+}
+
+func TestFrameRunsBloomOnlyWhenPostEffectPresent(t *testing.T) {
+	d := newFakeDevice()
+	r, err := New(Config{Device: d, Surface: fakeSurface{}})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer r.Destroy()
+
+	b := engine.RenderBundle{
+		Camera: engine.RenderCamera{Z: 5, FOV: 1, Near: 0.1, Far: 100},
+		PostEffects: []engine.RenderPostEffect{{
+			Kind:      "bloom",
+			Threshold: 1.25,
+			Intensity: 0.75,
+			Radius:    10,
+			Scale:     0.25,
+		}},
+	}
+	if err := r.Frame(b, 400, 300, 0); err != nil {
+		t.Fatalf("Frame: %v", err)
+	}
+
+	passes := d.encoders[0].passes
+	if got := len(passes); got != 8 {
+		t.Fatalf("expected 8 passes (3 shadow + main + 3 bloom + present), got %d", got)
+	}
+	for idx, label := range map[int]string{
+		4: "bundle.bloom.bright",
+		5: "bundle.bloom.blurH",
+		6: "bundle.bloom.blurV",
+	} {
+		if passes[idx].desc.Label != label {
+			t.Fatalf("pass %d label = %q, want %q", idx, passes[idx].desc.Label, label)
+		}
+	}
+
+	if got := latestWriteBytes(d.queue, "bundle.bloom.params.uniform"); string(got) != string(float32sToBytes([]float32{1.25, 0.75, 0.25, 0})) {
+		t.Fatalf("unexpected bloom params uniform bytes: %v", got)
+	}
+	if got := latestWriteBytes(d.queue, "bundle.bloom.blurH.uniform"); string(got) != string(float32sToBytes([]float32{0.02, 0, 0, 0})) {
+		t.Fatalf("unexpected bloom horizontal blur uniform bytes: %v", got)
 	}
 }
 
@@ -164,8 +208,8 @@ func TestFrameUnlitPassDispatches(t *testing.T) {
 		t.Fatalf("Frame: %v", err)
 	}
 	passes := d.encoders[0].passes
-	if len(passes) != 8 {
-		t.Fatalf("expected 8 passes (3 shadow + main + 3 bloom + present), got %d", len(passes))
+	if len(passes) != 5 {
+		t.Fatalf("expected 5 passes (3 shadow + main + present), got %d", len(passes))
 	}
 	// None of the shadow cascades should draw pass-data meshes (R3 limitation).
 	for i := 0; i < 3; i++ {
@@ -212,7 +256,7 @@ func TestFrameClearColorFromBackground(t *testing.T) {
 	if err := r.Frame(engine.RenderBundle{Background: "#ff8000"}, 100, 100, 0); err != nil {
 		t.Fatalf("Frame: %v", err)
 	}
-	// Main pass (HDR + id targets) is at index 3; present is index 7.
+	// Main pass (HDR + id targets) is at index 3; present is index 4.
 	mainPass := d.encoders[0].passes[3]
 	if len(mainPass.desc.ColorAttachments) != 2 {
 		t.Fatalf("expected 2 color attachments on main pass (HDR + id), got %d",
@@ -223,6 +267,17 @@ func TestFrameClearColorFromBackground(t *testing.T) {
 	if abs(clear.R-1.0) > tol || abs(clear.G-128.0/255) > tol || abs(clear.B-0) > tol {
 		t.Errorf("unexpected clear color: %+v", clear)
 	}
+}
+
+func latestWriteBytes(q *fakeQueue, label string) []byte {
+	for i := len(q.writes) - 1; i >= 0; i-- {
+		buffer, ok := q.writes[i].buffer.(*fakeBuffer)
+		if !ok || buffer.label != label {
+			continue
+		}
+		return q.writes[i].data
+	}
+	return nil
 }
 
 func abs(f float64) float64 {

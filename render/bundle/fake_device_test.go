@@ -29,7 +29,7 @@ func newFakeDevice() *fakeDevice {
 	return d
 }
 
-func (d *fakeDevice) Queue() gpu.Queue                        { return d.queue }
+func (d *fakeDevice) Queue() gpu.Queue                          { return d.queue }
 func (d *fakeDevice) PreferredSurfaceFormat() gpu.TextureFormat { return d.format }
 
 func (d *fakeDevice) CreateBuffer(desc gpu.BufferDesc) (gpu.Buffer, error) {
@@ -90,26 +90,42 @@ func (d *fakeDevice) Destroy()                    {}
 
 // fakeQueue records WriteBuffer + Submit calls.
 type fakeQueue struct {
-	writes  []queueWrite
-	submits [][]gpu.CommandBuffer
+	writes        []queueWrite
+	textureWrites []textureWrite
+	submits       [][]gpu.CommandBuffer
 }
 
 type queueWrite struct {
 	buffer gpu.Buffer
 	offset int
 	bytes  int
+	data   []byte
 }
 
 func (q *fakeQueue) WriteBuffer(b gpu.Buffer, offset int, data []byte) {
-	q.writes = append(q.writes, queueWrite{buffer: b, offset: offset, bytes: len(data)})
+	q.writes = append(q.writes, queueWrite{
+		buffer: b,
+		offset: offset,
+		bytes:  len(data),
+		data:   append([]byte(nil), data...),
+	})
 }
 
 func (q *fakeQueue) WriteTexture(gpu.Texture, []byte, int, int, int) {
+	q.textureWrites = append(q.textureWrites, textureWrite{mipLevel: 0})
 	// Recorded only if tests need it; current tests assert via textures slice.
+}
+
+func (q *fakeQueue) WriteTextureLevel(_ gpu.Texture, mipLevel int, _ []byte, _ int, _ int, _ int) {
+	q.textureWrites = append(q.textureWrites, textureWrite{mipLevel: mipLevel})
 }
 
 func (q *fakeQueue) Submit(cmds ...gpu.CommandBuffer) {
 	q.submits = append(q.submits, cmds)
+}
+
+type textureWrite struct {
+	mipLevel int
 }
 
 // fakeBuffer is a zero-cost test Buffer.
@@ -213,9 +229,9 @@ type fakeDraw struct {
 }
 
 func (p *fakeRenderPass) SetPipeline(gpu.RenderPipeline)             { p.pipelineSet = true }
-func (p *fakeRenderPass) SetBindGroup(int, gpu.BindGroup)             { p.bindGroupSet = true }
-func (p *fakeRenderPass) SetVertexBuffer(int, gpu.Buffer)             { p.vbufSets++ }
-func (p *fakeRenderPass) SetIndexBuffer(gpu.Buffer, gpu.IndexFormat)  {}
+func (p *fakeRenderPass) SetBindGroup(int, gpu.BindGroup)            { p.bindGroupSet = true }
+func (p *fakeRenderPass) SetVertexBuffer(int, gpu.Buffer)            { p.vbufSets++ }
+func (p *fakeRenderPass) SetIndexBuffer(gpu.Buffer, gpu.IndexFormat) {}
 func (p *fakeRenderPass) Draw(vc, ic, fv, fi int) {
 	p.draws = append(p.draws, fakeDraw{vc, ic, fv, fi})
 }

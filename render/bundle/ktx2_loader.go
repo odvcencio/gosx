@@ -8,13 +8,8 @@ import (
 )
 
 // LoadKTX2Texture parses data as a KTX2 container, creates a matching GPU
-// texture, and uploads mip level 0 via Queue.WriteTexture. Returns the
-// texture + default view, ready to bind into a material group.
-//
-// Multi-level mipmap upload is a follow-up — the parser already hands
-// back all mip bytes, but gpu.Queue.WriteTexture currently only targets
-// mip level 0. When an explicit mip-level parameter lands on WriteTexture
-// in R5, this function will loop over img.Levels unchanged.
+// texture, and uploads every provided mip level. Returns the texture +
+// default view, ready to bind into a material group.
 func (r *Renderer) LoadKTX2Texture(data []byte) (*textureResources, error) {
 	img, err := ktx2.Parse(data)
 	if err != nil {
@@ -26,20 +21,22 @@ func (r *Renderer) LoadKTX2Texture(data []byte) (*textureResources, error) {
 	}
 
 	tex, err := r.device.CreateTexture(gpu.TextureDesc{
-		Width:  img.Width,
-		Height: img.Height,
-		Format: gpuFormat,
-		Usage:  gpu.TextureUsageTextureBinding | gpu.TextureUsageCopyDst,
-		Label:  "bundle.ktx2",
+		Width:         img.Width,
+		Height:        img.Height,
+		Format:        gpuFormat,
+		Usage:         gpu.TextureUsageTextureBinding | gpu.TextureUsageCopyDst,
+		MipLevelCount: max(1, len(img.Levels)),
+		Label:         "bundle.ktx2",
 	})
 	if err != nil {
 		return nil, fmt.Errorf("bundle.LoadKTX2Texture: create texture: %w", err)
 	}
 
 	bpp := ktx2.BytesPerPixel(img.Format)
-	if len(img.Levels) > 0 && bpp > 0 {
-		l0 := img.Levels[0]
-		r.device.Queue().WriteTexture(tex, l0.Bytes, l0.Width*bpp, l0.Width, l0.Height)
+	if bpp > 0 {
+		for level, mip := range img.Levels {
+			r.device.Queue().WriteTextureLevel(tex, level, mip.Bytes, mip.Width*bpp, mip.Width, mip.Height)
+		}
 	}
 
 	return &textureResources{tex: tex, view: tex.CreateView()}, nil

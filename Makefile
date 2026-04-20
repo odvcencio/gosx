@@ -36,6 +36,7 @@ test-wasm:
 
 test-e2e:
 	$(NODE) --test e2e/gosx_docs_e2e.test.mjs
+	$(GO) test ./e2e
 
 build-cli:
 	$(GO) build ./cmd/gosx

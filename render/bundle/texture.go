@@ -52,18 +52,78 @@ func (r *Renderer) createTextureFromRGBA(rgba []byte, width, height int, label s
 		return nil, fmt.Errorf("bundle.createTextureFromRGBA: data len %d != %dx%dx4",
 			len(rgba), width, height)
 	}
+	mips := generateRGBAMipChain(rgba, width, height)
 	tex, err := r.device.CreateTexture(gpu.TextureDesc{
-		Width:  width,
-		Height: height,
-		Format: gpu.FormatRGBA8UnormSRGB,
-		Usage:  gpu.TextureUsageTextureBinding | gpu.TextureUsageCopyDst,
-		Label:  label,
+		Width:         width,
+		Height:        height,
+		Format:        gpu.FormatRGBA8UnormSRGB,
+		Usage:         gpu.TextureUsageTextureBinding | gpu.TextureUsageCopyDst,
+		MipLevelCount: len(mips),
+		Label:         label,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("bundle.createTextureFromRGBA: %w", err)
 	}
-	r.device.Queue().WriteTexture(tex, rgba, width*4, width, height)
+	for level, mip := range mips {
+		r.device.Queue().WriteTextureLevel(tex, level, mip.Pixels, mip.Width*4, mip.Width, mip.Height)
+	}
 	return &textureResources{tex: tex, view: tex.CreateView()}, nil
+}
+
+type rgbaMipLevel struct {
+	Width, Height int
+	Pixels        []byte
+}
+
+func generateRGBAMipChain(base []byte, width, height int) []rgbaMipLevel {
+	if width <= 0 || height <= 0 || len(base) != width*height*4 {
+		return nil
+	}
+	out := []rgbaMipLevel{{Width: width, Height: height, Pixels: append([]byte(nil), base...)}}
+	for width > 1 || height > 1 {
+		prev := out[len(out)-1]
+		nextW := max(1, prev.Width/2)
+		nextH := max(1, prev.Height/2)
+		next := rgbaMipLevel{Width: nextW, Height: nextH, Pixels: make([]byte, nextW*nextH*4)}
+		for y := 0; y < nextH; y++ {
+			for x := 0; x < nextW; x++ {
+				writeDownsampledPixel(next.Pixels, x, y, nextW, prev.Pixels, prev.Width, prev.Height)
+			}
+		}
+		out = append(out, next)
+		width, height = nextW, nextH
+	}
+	return out
+}
+
+func writeDownsampledPixel(dst []byte, x, y, dstW int, src []byte, srcW, srcH int) {
+	srcX := x * 2
+	srcY := y * 2
+	var sum [4]int
+	var samples int
+	for oy := 0; oy < 2; oy++ {
+		sy := min(srcY+oy, srcH-1)
+		for ox := 0; ox < 2; ox++ {
+			sx := min(srcX+ox, srcW-1)
+			idx := (sy*srcW + sx) * 4
+			if idx+3 >= len(src) {
+				continue
+			}
+			sum[0] += int(src[idx+0])
+			sum[1] += int(src[idx+1])
+			sum[2] += int(src[idx+2])
+			sum[3] += int(src[idx+3])
+			samples++
+		}
+	}
+	if samples == 0 {
+		return
+	}
+	dstIdx := (y*dstW + x) * 4
+	dst[dstIdx+0] = uint8(sum[0] / samples)
+	dst[dstIdx+1] = uint8(sum[1] / samples)
+	dst[dstIdx+2] = uint8(sum[2] / samples)
+	dst[dstIdx+3] = uint8(sum[3] / samples)
 }
 
 // ensureFallbackTexture returns the shared 1×1 white texture used when a
