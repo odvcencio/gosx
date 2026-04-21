@@ -2,8 +2,8 @@
 
 // scene3d-spike proves the R1 rendering path end-to-end:
 //
-//   .gsx-shaped RenderBundle (synthesized here) → render/bundle.Renderer
-//   → render/gpu → render/gpu/jsgpu (syscall/js) → navigator.gpu → pixels
+//	.gsx-shaped RenderBundle (synthesized here) → render/bundle.Renderer
+//	→ render/gpu → render/gpu/jsgpu (syscall/js) → navigator.gpu → pixels
 //
 // Zero JS renderer code. The only JS in this example is the minimal host
 // page that loads wasm_exec.js and calls the Go-registered start function.
@@ -23,11 +23,11 @@ import (
 )
 
 const (
-	gridX     = 5
-	gridY     = 3
-	gridZ     = 5
-	spacing   = 3.0
-	cubeSize  = 0.6
+	gridX    = 5
+	gridY    = 3
+	gridZ    = 5
+	spacing  = 3.0
+	cubeSize = 0.6
 )
 
 // cubeTransforms builds the per-instance 4x4 transform matrices for a small

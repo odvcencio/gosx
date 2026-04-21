@@ -19,10 +19,10 @@ const pickRowAlignment = 256
 // pickRequest tracks one queued pick from QueuePick until its staging
 // buffer has been copied to + read back.
 type pickRequest struct {
-	x, y       int
-	cb         PickCallback
-	staging    gpu.Buffer
-	inFlight   bool
+	x, y        int
+	cb          PickCallback
+	staging     gpu.Buffer
+	inFlight    bool
 	submitFrame bool // flagged on the frame we enqueued the copy
 }
 

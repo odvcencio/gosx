@@ -198,9 +198,9 @@ func pickIDToString(id uint32) string {
 // pickAnalytics map so the signals mirror what the JS renderer used to
 // emit.
 var (
-	pickAnalyticsMu  sync.Mutex
-	pickAnalytics    = make(map[string]uint64)
-	pickRevisionSeq  uint64
+	pickAnalyticsMu sync.Mutex
+	pickAnalytics   = make(map[string]uint64)
+	pickRevisionSeq uint64
 )
 
 func nextPickRevision() uint64 {

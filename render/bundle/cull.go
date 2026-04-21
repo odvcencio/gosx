@@ -57,12 +57,12 @@ fn main(@builtin(global_invocation_id) gid : vec3<u32>) {
 // storage, output storage (bound as vertex for the main pass), and the
 // indirect-draw args buffer that the main pass reads via DrawIndirect.
 type cullResources struct {
-	capacity     int
-	cullUniform  gpu.Buffer
-	inputBuf     gpu.Buffer
-	outputBuf    gpu.Buffer
-	drawArgsBuf  gpu.Buffer
-	bindGroup    gpu.BindGroup
+	capacity    int
+	cullUniform gpu.Buffer
+	inputBuf    gpu.Buffer
+	outputBuf   gpu.Buffer
+	drawArgsBuf gpu.Buffer
+	bindGroup   gpu.BindGroup
 }
 
 // ensureCullResources grows or lazily creates the cull buffers for a given
@@ -228,12 +228,12 @@ func extractFrustumPlanes(vp mat4) [6][4]float32 {
 	r0, r1, r2, r3 := row(0), row(1), row(2), row(3)
 
 	planes := [6][4]float32{
-		addRow(r3, r0),  // left:   r3 + r0
-		subRow(r3, r0),  // right:  r3 - r0
-		addRow(r3, r1),  // bottom: r3 + r1
-		subRow(r3, r1),  // top:    r3 - r1
-		r2,              // near:   r2
-		subRow(r3, r2),  // far:    r3 - r2
+		addRow(r3, r0), // left:   r3 + r0
+		subRow(r3, r0), // right:  r3 - r0
+		addRow(r3, r1), // bottom: r3 + r1
+		subRow(r3, r1), // top:    r3 - r1
+		r2,             // near:   r2
+		subRow(r3, r2), // far:    r3 - r2
 	}
 	for i := range planes {
 		planes[i] = normalizePlane(planes[i])

@@ -38,7 +38,7 @@ const (
 )
 
 var (
-	modShlwapi          = syscall.NewLazyDLL("shlwapi.dll")
+	modShlwapi            = syscall.NewLazyDLL("shlwapi.dll")
 	procSHCreateMemStream = modShlwapi.NewProc("SHCreateMemStream")
 )
 

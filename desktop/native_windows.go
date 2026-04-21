@@ -15,18 +15,18 @@ import (
 // fit since they run on any thread and don't require CoInitialize on the
 // calling goroutine.
 var (
-	modComdlg32        = syscall.NewLazyDLL("comdlg32.dll")
-	procGetOpenFileNameW = modComdlg32.NewProc("GetOpenFileNameW")
-	procGetSaveFileNameW = modComdlg32.NewProc("GetSaveFileNameW")
+	modComdlg32              = syscall.NewLazyDLL("comdlg32.dll")
+	procGetOpenFileNameW     = modComdlg32.NewProc("GetOpenFileNameW")
+	procGetSaveFileNameW     = modComdlg32.NewProc("GetSaveFileNameW")
 	procCommDlgExtendedError = modComdlg32.NewProc("CommDlgExtendedError")
 
-	modShell32           = syscall.NewLazyDLL("shell32.dll")
-	procShellExecuteW    = modShell32.NewProc("ShellExecuteW")
+	modShell32        = syscall.NewLazyDLL("shell32.dll")
+	procShellExecuteW = modShell32.NewProc("ShellExecuteW")
 
 	// Clipboard surface lives in user32 + kernel32.
-	procOpenClipboard  = modUser32.NewProc("OpenClipboard")
-	procCloseClipboard = modUser32.NewProc("CloseClipboard")
-	procEmptyClipboard = modUser32.NewProc("EmptyClipboard")
+	procOpenClipboard    = modUser32.NewProc("OpenClipboard")
+	procCloseClipboard   = modUser32.NewProc("CloseClipboard")
+	procEmptyClipboard   = modUser32.NewProc("EmptyClipboard")
 	procSetClipboardData = modUser32.NewProc("SetClipboardData")
 	procGetClipboardData = modUser32.NewProc("GetClipboardData")
 

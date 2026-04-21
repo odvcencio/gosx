@@ -2,10 +2,10 @@
 
 // pbr-spike proves the R2 lit + shadowed render path end-to-end:
 //
-//   RenderBundle with a directional light and two instanced meshes
-//     → render/bundle.Renderer (shadow pass + lit main pass)
-//     → render/gpu/jsgpu (syscall/js)
-//     → navigator.gpu → pixels with a visible shadow
+//	RenderBundle with a directional light and two instanced meshes
+//	  → render/bundle.Renderer (shadow pass + lit main pass)
+//	  → render/gpu/jsgpu (syscall/js)
+//	  → navigator.gpu → pixels with a visible shadow
 //
 // The scene is deliberately minimal: a large ground plane and a sphere,
 // lit by an orbiting "sun" directional light. The sphere's shadow

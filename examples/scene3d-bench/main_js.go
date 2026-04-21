@@ -117,11 +117,11 @@ func synthesizeBundle(t float64) engine.RenderBundle {
 			Far:       250,
 		},
 		Environment: engine.RenderEnvironment{
-			SkyColor:        "#a6c7ff",
-			SkyIntensity:    1.0,
-			GroundColor:     "#2a2420",
-			GroundIntensity: 1.0,
-			AmbientColor:    "#8090a0",
+			SkyColor:         "#a6c7ff",
+			SkyIntensity:     1.0,
+			GroundColor:      "#2a2420",
+			GroundIntensity:  1.0,
+			AmbientColor:     "#8090a0",
 			AmbientIntensity: 0.35,
 		},
 		Lights: []engine.RenderLight{{
