@@ -346,18 +346,19 @@ func buildRenderBundle(props map[string]any, nodes []resolvedNode, width, height
 	}
 
 	bundle := rootengine.RenderBundle{
-		Background:     sceneBackground(props),
-		Materials:      []rootengine.RenderMaterial{},
-		Objects:        []rootengine.RenderObject{},
-		Surfaces:       []rootengine.RenderSurface{},
-		Lights:         []rootengine.RenderLight{},
-		Lines:          []rootengine.RenderLine{},
-		Labels:         []rootengine.RenderLabel{},
-		Sprites:        []rootengine.RenderSprite{},
-		Positions:      []float64{},
-		Colors:         []float64{},
-		WorldPositions: []float64{},
-		WorldColors:    []float64{},
+		Background:      sceneBackground(props),
+		Materials:       []rootengine.RenderMaterial{},
+		Objects:         []rootengine.RenderObject{},
+		Surfaces:        []rootengine.RenderSurface{},
+		Lights:          []rootengine.RenderLight{},
+		Lines:           []rootengine.RenderLine{},
+		Labels:          []rootengine.RenderLabel{},
+		Sprites:         []rootengine.RenderSprite{},
+		Positions:       []float64{},
+		Colors:          []float64{},
+		WorldPositions:  []float64{},
+		WorldColors:     []float64{},
+		PostFXMaxPixels: int(math.Max(0, math.Floor(numberFromAny(sceneValue(props, "postFXMaxPixels"), numberFromAny(propValue(props, "postFXMaxPixels"), 0))))),
 	}
 
 	camera := sceneCameraFromProps(props)

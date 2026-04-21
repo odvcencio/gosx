@@ -27,9 +27,10 @@
         }
       }
       if (typeof createScenePBRRendererOrFallback === "function") {
+        const useCanvasAlpha = sceneCanvasAlpha(props);
         const gl = typeof canvas.getContext === "function" ? canvas.getContext("webgl2", {
-          alpha: true,
-          premultipliedAlpha: false,
+          alpha: useCanvasAlpha,
+          premultipliedAlpha: useCanvasAlpha,
           antialias: capability.tier === "full" && !capability.lowPower && !capability.reducedData,
           powerPreference: capability.lowPower || capability.tier === "constrained" ? "low-power" : "high-performance",
         }) : null;
@@ -3310,6 +3311,7 @@
         sceneState.instancedMeshes,
         sceneState.computeParticles,
         sceneState.postEffects,
+        sceneState.postFXMaxPixels,
       );
       syncSceneNodeSentinels(latestBundle);
       renderer.render(latestBundle, viewport);

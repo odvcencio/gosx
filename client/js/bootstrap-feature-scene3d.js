@@ -1719,6 +1719,16 @@
     });
   }
 
+  function sceneCanvasAlpha(props) {
+    if (props && typeof props.canvasAlpha === "boolean") {
+      return props.canvasAlpha;
+    }
+    const background = props && typeof props.background === "string"
+      ? props.background.trim().toLowerCase()
+      : "";
+    return background === "transparent" || background === "rgba(0,0,0,0)" || background === "rgba(0, 0, 0, 0)";
+  }
+
   function normalizeSceneCamera(raw, fallback) {
     const base = fallback || {};
     return {
@@ -1819,7 +1829,12 @@
     if (typeof sceneDecompressProps === "function") {
       sceneDecompressProps(props);
     }
+    const scene = sceneProps(props);
     const postEffects = scenePostEffects(props);
+    const postFXMaxPixels = Math.max(0, Math.floor(sceneNumber(
+      scene && scene.postFXMaxPixels,
+      sceneNumber(props && props.postFXMaxPixels, 0),
+    )));
     const deferPostFX = sceneBool(props && props.deferPostFX, sceneBool(props && props.progressivePostFX, false)) && postEffects.length > 0;
     const state = {
       background: typeof props.background === "string" && props.background ? props.background : "#08151f",
@@ -1833,6 +1848,7 @@
       computeParticles: sceneComputeParticles(props),
       materials: sceneMaterials(props),
       postEffects: deferPostFX ? [] : postEffects,
+      postFXMaxPixels: postFXMaxPixels,
       _deferredPostEffects: deferPostFX ? postEffects : null,
       _transitions: [],
       _scrollCamera: (sceneNumber(props.scrollCameraStart, 0) !== 0 || sceneNumber(props.scrollCameraEnd, 0) !== 0)
@@ -2263,6 +2279,23 @@
     }
   }
 
+  function sceneCloneTransitionData(kind, value) {
+    if (!sceneIsPlainObject(value)) {
+      return sceneCloneData(value);
+    }
+    const bufferKeys = sceneInstantLiveBufferKeys(kind);
+    const clone = {};
+    const keys = Object.keys(value);
+    for (let i = 0; i < keys.length; i += 1) {
+      const key = keys[i];
+      if (sceneTransitionMetadataKey(key) || bufferKeys.indexOf(key) >= 0) {
+        continue;
+      }
+      clone[key] = sceneCloneData(value[key]);
+    }
+    return clone;
+  }
+
   function sceneApplyInstantLiveBufferPatch(kind, entry, target, payload) {
     if (!sceneIsPlainObject(entry) || !sceneIsPlainObject(target) || !sceneIsPlainObject(payload)) {
       return false;
@@ -2443,8 +2476,8 @@
     return entry._live.indexOf(eventName) >= 0;
   }
 
-  function sceneApplyLiveTransition(state, kind, entry, payload, reducedMotion, nowMs) {
-    if (!entry || !sceneEntryListensToEvent(entry, payload && payload.__eventName)) {
+  function sceneApplyLiveTransition(state, kind, entry, eventName, payload, reducedMotion, nowMs) {
+    if (!entry || !sceneEntryListensToEvent(entry, eventName)) {
       return false;
     }
     const target = sceneNormalizeEntryByKind(kind, payload, entry);
@@ -2454,19 +2487,20 @@
     }
     const timing = sceneTransitionTimingForPhase(entry, "update");
     sceneCancelEntryTransition(state, kind, entry);
+    const current = sceneCloneTransitionData(kind, entry);
+    const transitionTarget = sceneCloneTransitionData(kind, target);
     if (reducedMotion || timing.duration <= 0) {
-      sceneApplyTransitionPatch(entry, target);
+      sceneApplyTransitionPatch(entry, transitionTarget);
       return true;
     }
-    const current = sceneCloneData(entry);
-    const delta = sceneTransitionBuildDelta(current, target, "");
+    const delta = sceneTransitionBuildDelta(current, transitionTarget, "");
     if (!delta) {
       return instantChanged;
     }
     sceneStateTransitions(state).push({
       key: sceneTransitionKey(kind, entry),
       entry,
-      target,
+      target: transitionTarget,
       delta,
       startTime: nowMs,
       duration: Math.max(1, timing.duration),
@@ -2480,9 +2514,8 @@
     if (!event) {
       return false;
     }
-    const rawPayload = sceneIsPlainObject(payload) ? sceneCloneData(payload) : {};
-    rawPayload.__eventName = event;
-    let changed = sceneApplyLiveTransition(state, "environment", state && state.environment, rawPayload, reducedMotion, nowMs);
+    const rawPayload = sceneIsPlainObject(payload) ? payload : {};
+    let changed = sceneApplyLiveTransition(state, "environment", state && state.environment, event, rawPayload, reducedMotion, nowMs);
     const collections = [
       ["object", sceneStateObjects(state)],
       ["label", sceneStateLabels(state)],
@@ -2496,10 +2529,9 @@
       const kind = collections[ci][0];
       const entries = collections[ci][1];
       for (let i = 0; i < entries.length; i += 1) {
-        changed = sceneApplyLiveTransition(state, kind, entries[i], rawPayload, reducedMotion, nowMs) || changed;
+        changed = sceneApplyLiveTransition(state, kind, entries[i], event, rawPayload, reducedMotion, nowMs) || changed;
       }
     }
-    delete rawPayload.__eventName;
     return changed;
   }
 
@@ -2830,7 +2862,7 @@
     return depth.far <= near || depth.near >= far;
   }
 
-  function createSceneRenderBundle(width, height, background, camera, objects, labels, sprites, lights, environment, timeSeconds, points, instancedMeshes, computeParticles, postEffects) {
+  function createSceneRenderBundle(width, height, background, camera, objects, labels, sprites, lights, environment, timeSeconds, points, instancedMeshes, computeParticles, postEffects, postFXMaxPixels) {
     const resolvedEnvironment = sceneResolveLightingEnvironment(environment, Array.isArray(lights) && lights.length > 0);
     const bundle = {
       bundleVersion: 1,
@@ -2866,6 +2898,10 @@
       worldMeshVertexCount: 0,
       objectCount: 0,
     };
+    const normalizedPostFXMaxPixels = Math.max(0, Math.floor(sceneNumber(postFXMaxPixels, 0)));
+    if (normalizedPostFXMaxPixels > 0) {
+      bundle.postFXMaxPixels = normalizedPostFXMaxPixels;
+    }
     const materialLookup = new Map();
     appendSceneGridToBundle(bundle, width, height);
     for (const object of objects) {
@@ -11734,9 +11770,10 @@ if (typeof window !== "undefined") {
 
     var pointsProgram = null;
 
-    const staticPointsArrayVBOs = new WeakMap();
     const staticMeshArrayVBOs = new WeakMap();
     const pointsEntryBuffers = new Set();
+    const staticPointEntries = new Set();
+    const activeStaticPointEntries = new Set();
     var computeParticleSystems = new Map();
     var lastComputeParticleTimeSeconds = null;
     var lastPreparedScene = null;
@@ -11750,6 +11787,52 @@ if (typeof window !== "undefined") {
         gl.bindBuffer(gl.ARRAY_BUFFER, buf);
         gl.bufferData(gl.ARRAY_BUFFER, data, gl.STATIC_DRAW);
       });
+    }
+
+    function releaseEntryBufferSlot(entry, bufferSlot, keySlot) {
+      if (!entry) return;
+      var buf = entry[bufferSlot];
+      if (buf) {
+        gl.deleteBuffer(buf);
+        pointsEntryBuffers.delete(buf);
+        entry[bufferSlot] = null;
+      }
+      if (keySlot) {
+        entry[keySlot] = null;
+      }
+    }
+
+    function releaseStaticPointEntryBuffers(entry) {
+      if (!entry) return;
+      releaseEntryBufferSlot(entry, "_vboPos", "_vboPosSource");
+      releaseEntryBufferSlot(entry, "_vboSizes", "_vboSizesSource");
+      releaseEntryBufferSlot(entry, "_vboColors", "_vboColorsSource");
+      staticPointEntries.delete(entry);
+    }
+
+    function ensureStaticPointVBO(entry, bufferSlot, keySlot, typedArray) {
+      if (!entry || !typedArray) return null;
+      staticPointEntries.add(entry);
+      activeStaticPointEntries.add(entry);
+      if (entry[keySlot] !== typedArray || !entry[bufferSlot]) {
+        releaseEntryBufferSlot(entry, bufferSlot, keySlot);
+        var buf = gl.createBuffer();
+        pointsEntryBuffers.add(buf);
+        gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+        gl.bufferData(gl.ARRAY_BUFFER, typedArray, gl.STATIC_DRAW);
+        entry[bufferSlot] = buf;
+        entry[keySlot] = typedArray;
+      }
+      return entry[bufferSlot];
+    }
+
+    function releaseInactiveStaticPointBuffers() {
+      for (const entry of Array.from(staticPointEntries)) {
+        if (!activeStaticPointEntries.has(entry)) {
+          releaseStaticPointEntryBuffers(entry);
+        }
+      }
+      activeStaticPointEntries.clear();
     }
 
     function ensureDynamicPointsVBO(entry, slot, typedArray) {
@@ -12367,10 +12450,17 @@ if (typeof window !== "undefined") {
     }
 
     function drawPointsEntries(gl, pointsArray, environment, viewMatrix, projMatrix, timeSeconds, renderH) {
-      if (pointsArray.length === 0) return;
+      activeStaticPointEntries.clear();
+      if (pointsArray.length === 0) {
+        releaseInactiveStaticPointBuffers();
+        return;
+      }
 
       var pp = ensurePointsProgram();
-      if (!pp) return;
+      if (!pp) {
+        releaseInactiveStaticPointBuffers();
+        return;
+      }
 
       gl.useProgram(pp.program);
 
@@ -12494,7 +12584,7 @@ if (typeof window !== "undefined") {
         if (!entry._cachedPos) continue;
         var posBuf = entry._dynamic
           ? ensureDynamicPointsVBO(entry, "_vboPos", entry._cachedPos)
-          : ensureStaticArrayVBO(staticPointsArrayVBOs, entry._cachedPos);
+          : ensureStaticPointVBO(entry, "_vboPos", "_vboPosSource", entry._cachedPos);
         gl.bindBuffer(gl.ARRAY_BUFFER, posBuf);
         gl.enableVertexAttribArray(pp.attributes.position);
         gl.vertexAttribPointer(pp.attributes.position, 3, gl.FLOAT, false, 0, 0);
@@ -12504,7 +12594,7 @@ if (typeof window !== "undefined") {
         if (hasSizes && pp.attributes.size >= 0) {
           var sizeBuf = entry._dynamic
             ? ensureDynamicPointsVBO(entry, "_vboSizes", entry._cachedSizes)
-            : ensureStaticArrayVBO(staticPointsArrayVBOs, entry._cachedSizes);
+            : ensureStaticPointVBO(entry, "_vboSizes", "_vboSizesSource", entry._cachedSizes);
           gl.bindBuffer(gl.ARRAY_BUFFER, sizeBuf);
           gl.enableVertexAttribArray(pp.attributes.size);
           gl.vertexAttribPointer(pp.attributes.size, 1, gl.FLOAT, false, 0, 0);
@@ -12518,7 +12608,7 @@ if (typeof window !== "undefined") {
         if (hasColors && pp.attributes.color >= 0) {
           var colorBuf = entry._dynamic
             ? ensureDynamicPointsVBO(entry, "_vboColors", entry._cachedColors)
-            : ensureStaticArrayVBO(staticPointsArrayVBOs, entry._cachedColors);
+            : ensureStaticPointVBO(entry, "_vboColors", "_vboColorsSource", entry._cachedColors);
           gl.bindBuffer(gl.ARRAY_BUFFER, colorBuf);
           gl.enableVertexAttribArray(pp.attributes.color);
           gl.vertexAttribPointer(pp.attributes.color, 4, gl.FLOAT, false, 0, 0);
@@ -12532,6 +12622,7 @@ if (typeof window !== "undefined") {
 
       gl.depthMask(true);
       gl.disable(gl.BLEND);
+      releaseInactiveStaticPointBuffers();
 
       gl.useProgram(program);
     }
@@ -12667,6 +12758,8 @@ if (typeof window !== "undefined") {
         gl.deleteBuffer(buf);
       }
       pointsEntryBuffers.clear();
+      staticPointEntries.clear();
+      activeStaticPointEntries.clear();
       for (const record of computeParticleSystems.values()) {
         disposeComputeParticleSystemRecord(record);
       }
@@ -12802,9 +12895,10 @@ if (typeof window !== "undefined") {
       create: function(canvas, props, capability) {
         const caps = capability || {};
         if (typeof createScenePBRRendererOrFallback === "function") {
+          const useCanvasAlpha = sceneCanvasAlpha(props);
           const gl = typeof canvas.getContext === "function" ? canvas.getContext("webgl2", {
-            alpha: true,
-            premultipliedAlpha: false,
+            alpha: useCanvasAlpha,
+            premultipliedAlpha: useCanvasAlpha,
             antialias: caps.tier === "full" && !caps.lowPower && !caps.reducedData,
             powerPreference: caps.lowPower || caps.tier === "constrained" ? "low-power" : "high-performance",
           }) : null;
@@ -14310,9 +14404,10 @@ if (typeof window !== "undefined") {
         }
       }
       if (typeof createScenePBRRendererOrFallback === "function") {
+        const useCanvasAlpha = sceneCanvasAlpha(props);
         const gl = typeof canvas.getContext === "function" ? canvas.getContext("webgl2", {
-          alpha: true,
-          premultipliedAlpha: false,
+          alpha: useCanvasAlpha,
+          premultipliedAlpha: useCanvasAlpha,
           antialias: capability.tier === "full" && !capability.lowPower && !capability.reducedData,
           powerPreference: capability.lowPower || capability.tier === "constrained" ? "low-power" : "high-performance",
         }) : null;
@@ -17427,6 +17522,7 @@ if (typeof window !== "undefined") {
         sceneState.instancedMeshes,
         sceneState.computeParticles,
         sceneState.postEffects,
+        sceneState.postFXMaxPixels,
       );
       syncSceneNodeSentinels(latestBundle);
       renderer.render(latestBundle, viewport);
