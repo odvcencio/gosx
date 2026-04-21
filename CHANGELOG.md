@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.18.2
+
+Scene3D composable model convenience release.
+
+Composable Scene3D markup now lowers `<Model>` children into `scene.models`,
+matching the typed `scene.Model{}` API and the existing model runtime. Child
+model records merge with prop-spread scene models the same way meshes, points,
+lights, materials, and post effects already do.
+
+Sidecar `@scene3d` styles can now target `Model` records, so generated and
+hand-authored model nodes can share the compiler-owned Scene3D styling path.
+
 ## v0.18.1
 
 Scene3D GLB point-cloud release.
