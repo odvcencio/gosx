@@ -23460,8 +23460,29 @@ if (typeof window !== "undefined") {
     return await response.arrayBuffer();
   }
 
+  function sceneGLTFAssetFormat(url) {
+    var raw = typeof url === "string" ? url.trim() : "";
+    if (!raw) {
+      return "";
+    }
+    var pathname = raw;
+    try {
+      pathname = new URL(raw, window.location.href).pathname;
+    } catch (_error) {
+      pathname = raw.split(/[?#]/, 1)[0];
+    }
+    var normalized = pathname.toLowerCase();
+    if (normalized.endsWith(".glb")) {
+      return "glb";
+    }
+    if (normalized.endsWith(".gltf")) {
+      return "gltf";
+    }
+    return "";
+  }
+
   async function sceneLoadGLTFModel(url) {
-    var isGLB = url.toLowerCase().endsWith(".glb");
+    var isGLB = sceneGLTFAssetFormat(url) === "glb";
     var response;
 
     if (isGLB) {

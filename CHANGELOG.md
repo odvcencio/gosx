@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.18.3
+
+Scene3D GLB URL compatibility patch.
+
+The split glTF/GLB runtime now classifies model URLs by pathname before
+choosing the binary GLB parser, matching the main Scene3D model loader. This
+keeps cache-busted GLB URLs such as `/scene.glb?bucket=...` on the binary path
+instead of falling back to JSON parsing.
+
 ## v0.18.2
 
 Scene3D composable model convenience release.

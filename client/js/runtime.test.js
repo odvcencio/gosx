@@ -4403,6 +4403,26 @@ test("bootstrap GLB loader extracts Scene3D POINTS and LINES primitives", async 
   assert.equal(env.consoleLogs.error.length, 0);
 });
 
+test("bootstrap GLB loader accepts query-stringed GLB model URLs", async () => {
+  const env = createContext({
+    fetchRoutes: {
+      "/models/points-lines.glb?bucket=202604211430": {
+        bytes: buildPointLineGLBBytes(),
+      },
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  const scene = await env.context.__gosx_scene3d_gltf_api.sceneLoadGLTFModel("/models/points-lines.glb?bucket=202604211430");
+
+  assert.equal(scene.points.length, 1);
+  assert.equal(scene.points[0].id, "sparks");
+  assert.equal(scene.objects.length, 1);
+  assert.equal(env.fetchCalls.some((call) => call.url === "/models/points-lines.glb?bucket=202604211430"), true);
+  assert.equal(env.consoleLogs.warn.length, 0);
+  assert.equal(env.consoleLogs.error.length, 0);
+});
+
 test("bootstrap hydrates Scene3D model POINTS from GLB assets", async () => {
   const mount = new FakeElement("div", null);
   mount.id = "scene-model-glb-points-root";
