@@ -18,3 +18,14 @@
 
 (function() {
   "use strict";
+
+  var sceneApi = window.__gosx_scene3d_api || {};
+  var SCENE_IDENTITY_MAT4 = sceneApi.SCENE_IDENTITY_MAT4;
+  var sceneMat4Multiply = sceneApi.sceneMat4Multiply;
+  var sceneMat4MultiplyInto = sceneApi.sceneMat4MultiplyInto;
+  var sceneTRSToMat4 = sceneApi.sceneTRSToMat4;
+  var sceneTRSToMat4Into = sceneApi.sceneTRSToMat4Into;
+  var _sceneMat4ScratchA = sceneApi._sceneMat4ScratchA || new Float32Array(16);
+  var _sceneMat4ScratchB = sceneApi._sceneMat4ScratchB || new Float32Array(16);
+  var _animScratch3 = sceneApi._animScratch3 || [0, 0, 0];
+  var _animScratch4 = sceneApi._animScratch4 || [0, 0, 0, 0];

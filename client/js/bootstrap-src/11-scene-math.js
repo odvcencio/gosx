@@ -440,6 +440,22 @@
   var _animScratch3 = [0, 0, 0];
   var _animScratch4 = [0, 0, 0, 0];
 
+  // Lazy Scene3D sub-feature chunks run in their own IIFEs. Publish the
+  // matrix helpers they need after the math module has initialized.
+  if (typeof window !== "undefined" && window.__gosx_scene3d_api) {
+    Object.assign(window.__gosx_scene3d_api, {
+      SCENE_IDENTITY_MAT4,
+      sceneMat4Multiply,
+      sceneMat4MultiplyInto,
+      sceneTRSToMat4,
+      sceneTRSToMat4Into,
+      _sceneMat4ScratchA,
+      _sceneMat4ScratchB,
+      _animScratch3,
+      _animScratch4,
+    });
+  }
+
   function sceneScreenToRay(pointerX, pointerY, width, height, camera) {
     // Unproject screen coordinates into a world-space ray, consistent with sceneProjectPoint.
     var cam = sceneRenderCamera(camera);
