@@ -598,3 +598,94 @@ func TestRuntimeHydrateTickAndDisposeEngine(t *testing.T) {
 		t.Fatalf("expected 0 engines after dispose, got %d", b.EngineCount())
 	}
 }
+
+func TestRuntimeSceneEventSignalsDriveHydratedEngine(t *testing.T) {
+	setGlobalValue(t, "__gosx_runtime_ready", js.Undefined())
+
+	b := bridge.New()
+	registerRuntime(b)
+
+	prog := &rootengine.Program{
+		Name: "KilnPickInteraction",
+		Nodes: []rootengine.Node{
+			{
+				Kind:     "mesh",
+				Geometry: "box",
+				Material: "flat",
+				Props: map[string]program.ExprID{
+					"x":        0,
+					"id":       1,
+					"pickable": 2,
+				},
+			},
+		},
+		Exprs: []program.Expr{
+			{Op: program.OpSignalGet, Value: "$scene.event.clickCount", Type: program.TypeInt},
+			{Op: program.OpSignalGet, Value: "$scene.event.selectedID", Type: program.TypeString},
+			{Op: program.OpSignalGet, Value: "$scene.event.selected", Type: program.TypeBool},
+			{Op: program.OpLitInt, Value: "0", Type: program.TypeInt},
+			{Op: program.OpLitString, Value: "", Type: program.TypeString},
+			{Op: program.OpLitBool, Value: "false", Type: program.TypeBool},
+		},
+		Signals: []program.SignalDef{
+			{Name: "$scene.event.clickCount", Type: program.TypeInt, Init: 3},
+			{Name: "$scene.event.selectedID", Type: program.TypeString, Init: 4},
+			{Name: "$scene.event.selected", Type: program.TypeBool, Init: 5},
+		},
+	}
+
+	data, err := rootengine.EncodeProgramJSON(prog)
+	if err != nil {
+		t.Fatalf("encode engine program: %v", err)
+	}
+
+	hydrateRet := js.Global().Get("__gosx_hydrate_engine").Invoke("engine-kiln", prog.Name, `{}`, string(data), "json")
+	if got := hydrateRet.String(); !strings.Contains(got, `"kind":0`) {
+		t.Fatalf("expected create-object command result, got %q", got)
+	}
+
+	batchRet := js.Global().Get("__gosx_set_input_batch").Invoke(`{
+		"$scene.event.clickCount": 3,
+		"$scene.event.selectedID": "kiln-door",
+		"$scene.event.selected": true
+	}`)
+	if !batchRet.IsNull() {
+		t.Fatalf("expected null input batch result, got %q", batchRet.String())
+	}
+
+	tickRet := js.Global().Get("__gosx_tick_engine").Invoke("engine-kiln")
+	var commands []rootengine.Command
+	if err := json.Unmarshal([]byte(tickRet.String()), &commands); err != nil {
+		t.Fatalf("decode tick commands %q: %v", tickRet.String(), err)
+	}
+
+	var sawClickCount, sawSelectedID bool
+	for _, cmd := range commands {
+		switch cmd.Kind {
+		case rootengine.CommandSetTransform:
+			var data map[string]any
+			if err := json.Unmarshal(cmd.Data, &data); err != nil {
+				t.Fatalf("decode transform command: %v", err)
+			}
+			if data["x"] == float64(3) {
+				sawClickCount = true
+			}
+		case rootengine.CommandCreateObject:
+			var data struct {
+				Props map[string]any `json:"props"`
+			}
+			if err := json.Unmarshal(cmd.Data, &data); err != nil {
+				t.Fatalf("decode create command: %v", err)
+			}
+			if data.Props["id"] == "kiln-door" && data.Props["pickable"] == true {
+				sawSelectedID = true
+			}
+		}
+	}
+	if !sawClickCount {
+		t.Fatalf("expected clickCount to drive transform x=3, got commands %q", tickRet.String())
+	}
+	if !sawSelectedID {
+		t.Fatalf("expected selected scene event data to drive object props, got commands %q", tickRet.String())
+	}
+}

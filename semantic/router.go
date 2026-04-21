@@ -67,7 +67,7 @@ func (r *Router) HandleWithEmbedding(name string, embedding []float32, handler f
 	defer r.mu.Unlock()
 	r.routes[name] = SemanticRoute{
 		Handler:   handler,
-		Embedding: embedding,
+		Embedding: cloneFloat32s(embedding),
 	}
 	r.index.Add(name, embedding)
 }
@@ -84,17 +84,29 @@ func (r *Router) Match(query string) (func(string) (any, error), string, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
-	results := r.index.Search(vec, 1)
+	results := r.index.Search(vec, len(r.routes))
 	if len(results) == 0 {
 		return nil, "", false
 	}
-	best := results[0]
-	if best.Score < r.threshold {
+	var bestRoute SemanticRoute
+	var bestName string
+	var bestScore float32
+	var matched bool
+	for _, result := range results {
+		route, ok := r.routes[result.ID]
+		if !ok {
+			continue
+		}
+		score := cosineSimilarity(vec, route.Embedding)
+		if !matched || score > bestScore || (score == bestScore && result.ID < bestName) {
+			bestRoute = route
+			bestName = result.ID
+			bestScore = score
+			matched = true
+		}
+	}
+	if !matched || bestScore < r.threshold {
 		return nil, "", false
 	}
-	route, ok := r.routes[best.ID]
-	if !ok {
-		return nil, "", false
-	}
-	return route.Handler, best.ID, true
+	return bestRoute.Handler, bestName, true
 }

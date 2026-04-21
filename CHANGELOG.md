@@ -1,5 +1,63 @@
 # Changelog
 
+## v0.18.0
+
+R/D series closeout: first-party WebGPU bundle rendering reaches R5 feature
+parity, and the Windows desktop host reaches the D release gate.
+
+### Render R1-R5
+
+The new `render/bundle` pipeline is now the first-party WebGPU Scene3D backend
+instead of a spike path. It covers lit and skinned meshes, instancing, CSM
+shadow passes, material textures, block-compressed KTX2 upload paths, cubemap
+IBL, compute particles, picking, bloom/tonemapping, FXAA 3.11, HDR intermediate
+format selection, HDR10 presentation encoding when the surface supports it, and
+device capability gating across `jsgpu`, `headless`, and stub backends.
+
+The content pipeline gained KTX2 geometry metadata for layers/faces/depth,
+cube-view texture registration, compressed-format support hooks, and cubemap
+environment sampling in the lit shader. The post-FX path now splits HDR compose
+from the final anti-aliasing pass, chooses RGB9E5/RGBA16F/RGB10A2-style formats
+by device capability and memory budget, and preserves the headless test surface
+for server-side validation.
+
+Headless rendering is no longer limited to the early unlit path. The CPU
+backend now covers deterministic lit shading approximation, depth-only shadow
+passes, material texture sampling, compute-particle update/render, and a
+scene3d-bench-style deterministic frame test. New examples exercise skinned
+rendering and cubemap IBL in `examples/skinned-glb-spike` and
+`examples/cubemap-ibl-spike`.
+
+### Windows Desktop D Series
+
+The Windows desktop host now has a real app surface around WebView2:
+`gosx desktop dev` hot-reloads through the dev proxy, F12/devtools are gated by
+CLI/runtime options, and the bridge uses typed request/response envelopes with
+limits, errors, and streaming response support.
+
+Shell and lifecycle integration landed for single-instance locking,
+second-instance argument forwarding, deep-link registration, file associations,
+per-user registry writes, lifecycle callbacks, `App.NewWindow`, and
+`OnWindowCreated` / suspend / resume hooks. Native UI support now includes tray
+icons, tray/context/menu-bar menus, shell notifications, file-drop callbacks,
+per-monitor-v2 DPI awareness, AppUserModelID setup, and a minimal accessibility
+surface. `gosx desktop --native-smoke` and `test/desktop/run.sh phase-5` cover
+the manual Windows acceptance path.
+
+Runtime resilience and release tooling now include `gosx build --offline`, a
+versioned offline asset manifest, `CrashReporterOptions` for Go panic capture
+plus Windows minidumps and optional user-consented upload, MSIX manifest/package
+staging through `gosx build --msix`, signtool integration through `--sign`, and
+AppInstaller feed generation through `--appinstaller`. The desktop API exposes
+`App.UpdateCheck()` and `App.UpdateApply()` for AppInstaller-based updates.
+
+### Release Gate
+
+Linux and cross-compile validation passes across the renderer, desktop, CLI,
+and examples. The remaining gate before cutting the public `v0.18.0` tag is the
+manual Windows host smoke: install the MSIX, sign it with the real certificate,
+publish a second AppInstaller package, and verify the update flow.
+
 ## v0.18.0-alpha.28
 
 Scene3D no longer voluntarily loses WebGL contexts when a scene is hidden or offscreen.

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -73,6 +74,56 @@ func TestCSSAssetBaseNameUsesRelativePath(t *testing.T) {
 		if got := cssAssetBaseName(input); got != want {
 			t.Fatalf("%s: expected %q, got %q", input, want, got)
 		}
+	}
+}
+
+func TestStageOfflineAssetBundleWritesVersionedManifest(t *testing.T) {
+	projectDir := t.TempDir()
+	distDir := filepath.Join(t.TempDir(), "dist")
+	mustWriteFile(t, filepath.Join(projectDir, "app", "page.gsx"), "package app\n")
+	mustWriteFile(t, filepath.Join(projectDir, "public", "logo.svg"), "<svg />\n")
+	mustWriteFile(t, filepath.Join(distDir, "assets", "runtime", "bootstrap.abc.js"), "runtime")
+	mustWriteFile(t, filepath.Join(distDir, "build.json"), `{"runtime":{}}`)
+
+	if err := stageOfflineAssetBundle(projectDir, distDir); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, rel := range []string{
+		"assets/runtime/bootstrap.abc.js",
+		"app/page.gsx",
+		"public/logo.svg",
+		"build.json",
+		"offline-manifest.json",
+	} {
+		if _, err := os.Stat(filepath.Join(distDir, "offline", rel)); err != nil {
+			t.Fatalf("expected offline artifact %s: %v", rel, err)
+		}
+	}
+
+	var manifest offlineAssetManifest
+	data := readFile(t, filepath.Join(distDir, "offline", "offline-manifest.json"))
+	if err := json.Unmarshal([]byte(data), &manifest); err != nil {
+		t.Fatalf("decode offline manifest: %v", err)
+	}
+	if manifest.SchemaVersion != 1 || manifest.CacheVersion == "" {
+		t.Fatalf("unexpected offline manifest header: %#v", manifest)
+	}
+	policies := map[string]string{}
+	for _, record := range manifest.Files {
+		policies[record.Path] = record.CachePolicy
+		if record.SHA256 == "" || record.Size <= 0 {
+			t.Fatalf("record missing hash/size: %#v", record)
+		}
+	}
+	if policies["assets/runtime/bootstrap.abc.js"] != "immutable" {
+		t.Fatalf("runtime asset policy = %q", policies["assets/runtime/bootstrap.abc.js"])
+	}
+	if policies["build.json"] != "versioned" {
+		t.Fatalf("build manifest policy = %q", policies["build.json"])
+	}
+	if policies["app/page.gsx"] != "first-launch" {
+		t.Fatalf("app asset policy = %q", policies["app/page.gsx"])
 	}
 }
 

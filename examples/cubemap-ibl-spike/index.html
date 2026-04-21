@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>GoSX Cubemap IBL Spike</title>
+    <style>
+      :root { color-scheme: dark; font-family: Inter, system-ui, sans-serif; }
+      body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #080a0f; color: #f5f7fb; }
+      main { width: min(960px, calc(100vw - 32px)); }
+      canvas { width: 100%; aspect-ratio: 16 / 10; display: block; background: #020308; border: 1px solid #29313d; }
+      header { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; margin-bottom: 12px; }
+      h1 { margin: 0; font-size: 20px; font-weight: 650; }
+      #status { font-size: 13px; color: #b8c6d8; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <h1>Cubemap IBL Spike</h1>
+        <div id="status">Loading wasm...</div>
+      </header>
+      <canvas id="stage" width="1280" height="800"></canvas>
+    </main>
+    <script src="/wasm_exec.js"></script>
+    <script type="module">
+      const status = document.getElementById("status");
+      try {
+        const go = new Go();
+        const wasm = await WebAssembly.instantiateStreaming(fetch("./main.wasm"), go.importObject);
+        go.run(wasm.instance);
+        for (let i = 0; i < 400 && typeof window.gosxCubemapIBLSpikeStart !== "function"; i += 1) {
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+        await window.gosxCubemapIBLSpikeStart("stage");
+        status.textContent = "Running";
+      } catch (err) {
+        status.textContent = err instanceof Error ? err.message : String(err);
+      }
+    </script>
+  </body>
+</html>
+

@@ -1,0 +1,433 @@
+package gpu
+
+// Device is the entry-point interface into a GPU backend. Callers obtain a
+// Device from a backend package (render/gpu/jsgpu.Open, etc.) and never
+// construct one directly.
+//
+// All resource constructors may return ErrUnsupported if the backend cannot
+// provide the feature, ErrInvalidDesc if the descriptor is malformed, or
+// backend-specific errors for GPU-side failures.
+type Device interface {
+	// Queue returns the device's default submission queue. A Device has
+	// exactly one default queue. Multi-queue support is deferred.
+	Queue() Queue
+
+	// PreferredSurfaceFormat returns the color format recommended by the
+	// platform for the primary render surface. On WebGPU this is the result
+	// of navigator.gpu.getPreferredCanvasFormat().
+	PreferredSurfaceFormat() TextureFormat
+
+	CreateBuffer(BufferDesc) (Buffer, error)
+	CreateTexture(TextureDesc) (Texture, error)
+	CreateSampler(SamplerDesc) (Sampler, error)
+	CreateShaderModule(ShaderDesc) (ShaderModule, error)
+	CreateRenderPipeline(RenderPipelineDesc) (RenderPipeline, error)
+	CreateComputePipeline(ComputePipelineDesc) (ComputePipeline, error)
+	CreateBindGroup(BindGroupDesc) (BindGroup, error)
+	CreateCommandEncoder() CommandEncoder
+
+	// AcquireSurfaceView returns a texture view for the current swap-chain
+	// image, binding the passed Surface if needed. Implementations own
+	// configuration and lifecycle of the underlying swap chain.
+	AcquireSurfaceView(Surface) (TextureView, error)
+
+	// OnLost registers a callback invoked when the underlying device has
+	// been lost (driver reset, out-of-memory, tab backgrounded too long on
+	// some platforms). Passes the backend's reason + human-readable
+	// message. Implementations may call the callback from any goroutine;
+	// the callback must be safe to invoke concurrently with other code on
+	// the Device.
+	OnLost(func(reason, message string))
+
+	// Destroy releases the device. Resources created through it become invalid.
+	Destroy()
+}
+
+// TextureFormatSupporter is an optional Device capability interface for
+// renderers that need to pick storage formats before allocating resources.
+// SupportsTextureFormat should mean the backend can create, sample, and, when
+// applicable, render to the format through this abstraction.
+type TextureFormatSupporter interface {
+	SupportsTextureFormat(TextureFormat) bool
+}
+
+// TextureFormatSupported reports whether d advertises support for f. Backends
+// that predate this capability interface fall back to the baseline formats the
+// bundle renderer has historically relied on.
+func TextureFormatSupported(d Device, f TextureFormat) bool {
+	if d != nil {
+		if supporter, ok := d.(TextureFormatSupporter); ok {
+			return supporter.SupportsTextureFormat(f)
+		}
+	}
+	return baselineTextureFormatSupported(f)
+}
+
+func FormatRGBA16FloatSupported(d Device) bool {
+	return TextureFormatSupported(d, FormatRGBA16Float)
+}
+
+func FormatRGB9E5UfloatSupported(d Device) bool {
+	return TextureFormatSupported(d, FormatRGB9E5Ufloat)
+}
+
+func FormatRGB10A2UnormSupported(d Device) bool {
+	return TextureFormatSupported(d, FormatRGB10A2Unorm)
+}
+
+func baselineTextureFormatSupported(f TextureFormat) bool {
+	switch f {
+	case FormatRGBA8Unorm, FormatRGBA8UnormSRGB,
+		FormatBGRA8Unorm, FormatBGRA8UnormSRGB,
+		FormatRGBA16Float,
+		FormatDepth16Unorm, FormatDepth24Plus,
+		FormatDepth24PlusStencil8, FormatDepth32Float,
+		FormatR32Uint:
+		return true
+	}
+	return false
+}
+
+// Queue is the command submission and resource-upload interface.
+type Queue interface {
+	// WriteBuffer copies data into buf at offset. The data is copied
+	// immediately; buf does not reference data after the call returns.
+	WriteBuffer(buf Buffer, offset int, data []byte)
+
+	// WriteTexture uploads raw bytes into the 2D texture dst at mip level 0,
+	// origin (0,0). data is laid out tightly as bytesPerRow * height bytes;
+	// rows after the last image height are ignored. Format must match the
+	// texture's storage format (e.g., RGBA8 = 4 bytes per pixel).
+	WriteTexture(dst Texture, data []byte, bytesPerRow, width, height int)
+
+	// WriteTextureLevel uploads raw bytes into the 2D texture dst at the
+	// specified mip level, origin (0,0). Level 0 is the full-size texture;
+	// higher levels use the dimensions supplied by the caller and must fit
+	// within the texture's mip chain.
+	WriteTextureLevel(dst Texture, mipLevel int, data []byte, bytesPerRow, width, height int)
+
+	// WriteTextureLevelLayer uploads raw bytes into one array layer or 3D
+	// z-slice of dst at the specified mip level. rowsPerImage is expressed
+	// in texel-block rows; for uncompressed textures this is normally height.
+	WriteTextureLevelLayer(dst Texture, mipLevel, layer int, data []byte, bytesPerRow, rowsPerImage, width, height int)
+
+	// Submit runs all command buffers on the GPU. Order is preserved.
+	Submit(...CommandBuffer)
+}
+
+// Buffer is a GPU-side byte range.
+type Buffer interface {
+	Size() int
+	Usage() BufferUsage
+	Destroy()
+	// ReadAsync maps the buffer for reading, copies up to size bytes to a
+	// freshly allocated Go slice, and unmaps. Blocks the calling goroutine
+	// on the async map operation. Only valid on buffers created with
+	// BufferUsageMapRead.
+	ReadAsync(size int) ([]byte, error)
+}
+
+// BufferDesc configures a buffer at creation time.
+type BufferDesc struct {
+	Size  int
+	Usage BufferUsage
+	Label string
+}
+
+// ShaderModule holds a compiled shader (e.g. a WGSL module containing one or
+// more entry points).
+type ShaderModule interface {
+	Destroy()
+}
+
+// ShaderDesc is the source form of a shader module. Only SourceWGSL is
+// supported by the WebGPU backend for R1. Future backends may accept other
+// source languages or pre-compiled bytecode.
+type ShaderDesc struct {
+	SourceWGSL string
+	Label      string
+}
+
+// RenderPipeline is an immutable compiled pipeline state object.
+type RenderPipeline interface {
+	// GetBindGroupLayout returns the auto-generated layout for a given group
+	// slot. Only valid when the pipeline was created with AutoLayout: true.
+	GetBindGroupLayout(group int) BindGroupLayout
+	Destroy()
+}
+
+// BindGroupLayout describes the resource layout expected by a bind group slot.
+type BindGroupLayout interface{}
+
+// BindGroup is a bound set of resources (buffers, textures, samplers) for a
+// single group slot in a pipeline.
+type BindGroup interface {
+	Destroy()
+}
+
+// BindGroupEntry is one resource binding within a BindGroup. Exactly one of
+// Buffer, TextureView, or Sampler should be set. Backends validate.
+type BindGroupEntry struct {
+	Binding     int
+	Buffer      Buffer      // uniform / storage buffer binding
+	Offset      int         // buffer byte offset
+	Size        int         // 0 = rest of buffer
+	TextureView TextureView // sampled / depth / storage texture binding
+	Sampler     Sampler     // sampler binding (filtering or comparison)
+}
+
+// BindGroupDesc describes a set of bound resources.
+type BindGroupDesc struct {
+	Layout  BindGroupLayout
+	Entries []BindGroupEntry
+	Label   string
+}
+
+// VertexStageDesc configures the vertex stage of a pipeline.
+type VertexStageDesc struct {
+	Module     ShaderModule
+	EntryPoint string
+	Buffers    []VertexBufferLayout
+}
+
+// FragmentStageDesc configures the fragment stage of a pipeline.
+type FragmentStageDesc struct {
+	Module     ShaderModule
+	EntryPoint string
+	Targets    []ColorTargetState
+}
+
+// PrimitiveState controls rasterization.
+type PrimitiveState struct {
+	Topology  PrimitiveTopology
+	CullMode  CullMode
+	FrontFace FrontFace
+}
+
+// RenderPipelineDesc describes a render pipeline.
+type RenderPipelineDesc struct {
+	Vertex       VertexStageDesc
+	Fragment     FragmentStageDesc
+	Primitive    PrimitiveState
+	DepthStencil *DepthStencilState
+	AutoLayout   bool // true: use "auto" pipeline layout (R1 default)
+	Label        string
+}
+
+// ComputePipeline is an immutable compiled compute pipeline state object.
+type ComputePipeline interface {
+	GetBindGroupLayout(group int) BindGroupLayout
+	Destroy()
+}
+
+// ComputePipelineDesc describes a compute pipeline. Only AutoLayout is
+// supported by the WebGPU backend for R3.
+type ComputePipelineDesc struct {
+	Module     ShaderModule
+	EntryPoint string
+	AutoLayout bool
+	Label      string
+}
+
+// CommandEncoder accumulates GPU commands into a CommandBuffer for submission.
+type CommandEncoder interface {
+	BeginRenderPass(RenderPassDesc) RenderPassEncoder
+	BeginComputePass() ComputePassEncoder
+	// CopyTextureToBuffer enqueues a copy of a rectangular region of a
+	// texture into a byte-addressable buffer. bytesPerRow must satisfy the
+	// backend's row-alignment minimum (256 bytes for WebGPU).
+	CopyTextureToBuffer(src TextureCopyInfo, dst BufferCopyInfo, width, height, depth int)
+	Finish() CommandBuffer
+}
+
+// TextureCopyInfo describes the source of a texture copy.
+type TextureCopyInfo struct {
+	Texture  Texture
+	Origin   [3]int // x, y, z
+	MipLevel int
+}
+
+// BufferCopyInfo describes the destination of a copy into a buffer.
+type BufferCopyInfo struct {
+	Buffer       Buffer
+	Offset       int
+	BytesPerRow  int
+	RowsPerImage int
+}
+
+// ComputePassEncoder records dispatch commands within a single compute pass.
+type ComputePassEncoder interface {
+	SetPipeline(ComputePipeline)
+	SetBindGroup(group int, bg BindGroup)
+	DispatchWorkgroups(x, y, z int)
+	End()
+}
+
+// CommandBuffer is an immutable, submittable batch of GPU commands.
+type CommandBuffer interface{}
+
+// RenderPassEncoder records draw commands within a single render pass.
+type RenderPassEncoder interface {
+	SetPipeline(RenderPipeline)
+	SetBindGroup(group int, bg BindGroup)
+	SetVertexBuffer(slot int, buf Buffer)
+	SetIndexBuffer(buf Buffer, format IndexFormat)
+	Draw(vertexCount, instanceCount, firstVertex, firstInstance int)
+	DrawIndexed(indexCount, instanceCount, firstIndex, baseVertex, firstInstance int)
+	// DrawIndirect pulls draw arguments from buf at offset bytes. The buffer
+	// must have been created with BufferUsageIndirect. Args layout is the
+	// WebGPU-standard [vertexCount, instanceCount, firstVertex, firstInstance]
+	// as 4× u32 little-endian.
+	DrawIndirect(buf Buffer, offset int)
+	End()
+}
+
+// Surface is a presentable render target, typically a canvas. Backends own
+// surface configuration; callers pass a Surface to AcquireSurfaceView per
+// frame. Opaque from the abstraction's perspective — each backend defines
+// its own concrete Surface type and type-asserts on the way in.
+type Surface interface{}
+
+// RenderPassDesc configures a render pass.
+type RenderPassDesc struct {
+	ColorAttachments       []RenderPassColorAttachment
+	DepthStencilAttachment *RenderPassDepthStencilAttachment
+	Label                  string
+}
+
+// RenderPassColorAttachment configures one color attachment of a render pass.
+type RenderPassColorAttachment struct {
+	View       TextureView
+	LoadOp     LoadOp
+	StoreOp    StoreOp
+	ClearValue Color
+}
+
+// RenderPassDepthStencilAttachment configures the depth/stencil attachment
+// of a render pass.
+type RenderPassDepthStencilAttachment struct {
+	View            TextureView
+	DepthLoadOp     LoadOp
+	DepthStoreOp    StoreOp
+	DepthClearValue float64
+}
+
+// TextureView is a view into a texture — the binding unit for render pass
+// attachments and shader texture bindings.
+type TextureView interface{}
+
+// TextureDimension describes the dimensionality of a texture allocation.
+// The zero value lets backends choose their default, which is a 2D texture.
+type TextureDimension int
+
+const (
+	TextureDimensionUndefined TextureDimension = iota
+	TextureDimension2D
+	TextureDimension3D
+)
+
+// TextureViewDimension describes how shader and attachment bindings see a
+// texture view. The zero value leaves the backend default in place.
+type TextureViewDimension int
+
+const (
+	TextureViewDimensionUndefined TextureViewDimension = iota
+	TextureViewDimension2D
+	TextureViewDimension2DArray
+	TextureViewDimensionCube
+	TextureViewDimensionCubeArray
+	TextureViewDimension3D
+)
+
+// TextureViewDesc configures a view into a texture. Zero-valued fields are
+// omitted so existing CreateView behavior is preserved by CreateViewDesc({}).
+type TextureViewDesc struct {
+	Format          TextureFormat
+	Dimension       TextureViewDimension
+	BaseMipLevel    int
+	MipLevelCount   int
+	BaseArrayLayer  int
+	ArrayLayerCount int
+	Label           string
+}
+
+// Sampler is a texture sampling state object. Created once and reused across
+// bind groups.
+type Sampler interface {
+	Destroy()
+}
+
+// SamplerDesc configures a sampler at creation time. Zero-valued fields use
+// backend defaults (clamp-to-edge, nearest, non-comparison).
+type SamplerDesc struct {
+	MagFilter    FilterMode
+	MinFilter    FilterMode
+	MipmapFilter FilterMode
+	AddressU     AddressMode
+	AddressV     AddressMode
+	AddressW     AddressMode
+	// Compare, when set to anything other than zero, makes this a comparison
+	// sampler (sampler2DShadow in WGSL). Used for shadow map PCF.
+	Compare CompareFunc
+	Label   string
+}
+
+// FilterMode selects sample filtering.
+type FilterMode int
+
+const (
+	FilterNearest FilterMode = iota
+	FilterLinear
+)
+
+// AddressMode selects the wrap mode per UV axis.
+type AddressMode int
+
+const (
+	AddressClampToEdge AddressMode = iota
+	AddressRepeat
+	AddressMirrorRepeat
+)
+
+// Texture is a GPU-side image resource. Call CreateView to obtain a bindable
+// TextureView. Destroy frees the underlying memory.
+type Texture interface {
+	Width() int
+	Height() int
+	Format() TextureFormat
+	CreateView() TextureView
+	CreateViewDesc(TextureViewDesc) TextureView
+	// CreateLayerView returns a view bound to a single array layer of the
+	// texture. Required for rendering into one slice of a depth texture
+	// array (cascaded shadow maps). Non-array textures should return a
+	// 2D view and ignore layer.
+	CreateLayerView(layer int) TextureView
+	Destroy()
+}
+
+// TextureUsage is a bitset of usages a texture is valid for.
+type TextureUsage uint32
+
+const (
+	TextureUsageNone             TextureUsage = 0
+	TextureUsageCopySrc          TextureUsage = 1 << 0
+	TextureUsageCopyDst          TextureUsage = 1 << 1
+	TextureUsageTextureBinding   TextureUsage = 1 << 2
+	TextureUsageStorageBinding   TextureUsage = 1 << 3
+	TextureUsageRenderAttachment TextureUsage = 1 << 4
+)
+
+// Has reports whether u contains the requested bit.
+func (u TextureUsage) Has(bit TextureUsage) bool { return u&bit == bit }
+
+// TextureDesc configures a texture at creation time.
+type TextureDesc struct {
+	Width, Height      int
+	DepthOrArrayLayers int // 0 or 1 = 2D single layer
+	Dimension          TextureDimension
+	Format             TextureFormat
+	Usage              TextureUsage
+	SampleCount        int // 0 or 1 = non-MSAA
+	MipLevelCount      int // 0 = one mip level
+	Label              string
+}

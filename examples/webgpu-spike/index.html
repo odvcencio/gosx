@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>GoSX WebGPU Spike — shaded cube from Go/WASM</title>
+    <style>
+      :root { color-scheme: dark; font-family: "IBM Plex Sans", system-ui, sans-serif; }
+      body { margin: 0; min-height: 100vh; display: grid; place-items: center;
+             background: #0f1720; color: #f3f1ec; padding: 24px; }
+      main { text-align: center; }
+      canvas { width: 640px; height: 480px; border-radius: 14px;
+               box-shadow: 0 20px 60px rgba(0,0,0,0.5); background: #000; }
+      .status { margin: 16px 0; padding: 8px 14px; border-radius: 999px;
+                background: rgba(255,255,255,0.08); display: inline-block; font-weight: 600; }
+      .pass { background: rgba(52, 199, 89, 0.18); color: #c1f3cf; }
+      .fail { background: rgba(255, 69, 58, 0.18);  color: #ffb8b2; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>GoSX WebGPU Spike</h1>
+      <p>
+        Rotating cube rendered by a Go/WASM module calling
+        <code>navigator.gpu</code> directly. No JS renderer. No three.js.
+      </p>
+      <div id="status" class="status">Booting wasm runtime…</div>
+      <br />
+      <canvas id="stage" width="1280" height="960"></canvas>
+    </main>
+    <script src="/wasm_exec.js"></script>
+    <script type="module">
+      const statusEl = document.getElementById("status");
+      const setStatus = (msg, cls = "") => {
+        statusEl.textContent = msg;
+        statusEl.className = `status ${cls}`.trim();
+      };
+
+      if (!("gpu" in navigator)) {
+        setStatus("WebGPU is not available in this browser.", "fail");
+        throw new Error("WebGPU unavailable");
+      }
+
+      const go = new Go();
+      const wasm = await WebAssembly.instantiateStreaming(fetch("./main.wasm"), go.importObject);
+      go.run(wasm.instance);
+
+      const waitForEntry = async () => {
+        for (let i = 0; i < 400; i += 1) {
+          if (typeof window.gosxWebGPUSpikeStart === "function") return;
+          await new Promise((r) => setTimeout(r, 10));
+        }
+        throw new Error("gosxWebGPUSpikeStart was not registered");
+      };
+
+      try {
+        await waitForEntry();
+        setStatus("Initializing WebGPU…");
+        const result = await window.gosxWebGPUSpikeStart("stage");
+        setStatus(`Running — format: ${result.format}`, "pass");
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        setStatus(`Failed: ${msg}`, "fail");
+      }
+    </script>
+  </body>
+</html>
