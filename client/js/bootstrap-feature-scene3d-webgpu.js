@@ -2213,15 +2213,17 @@
         puF[28] = fogColorRGBA[1];
         puF[29] = fogColorRGBA[2];
 
-        if (!entry._cachedPos && Array.isArray(entry.positions) && entry.positions.length >= count * 3) {
-          entry._cachedPos = new Float32Array(entry.positions);
+        var rawPositions = entry.positions;
+        if (!entry._cachedPos && rawPositions && (Array.isArray(rawPositions) || sceneIsNumericTypedArray(rawPositions)) && rawPositions.length >= count * 3) {
+          entry._cachedPos = rawPositions instanceof Float32Array ? rawPositions : new Float32Array(rawPositions);
         }
-        if (!entry._cachedSizes && Array.isArray(entry.sizes) && entry.sizes.length >= count) {
-          entry._cachedSizes = new Float32Array(entry.sizes);
+        var rawSizes = entry.sizes;
+        if (!entry._cachedSizes && rawSizes && (Array.isArray(rawSizes) || sceneIsNumericTypedArray(rawSizes)) && rawSizes.length >= count) {
+          entry._cachedSizes = rawSizes instanceof Float32Array ? rawSizes : new Float32Array(rawSizes);
         }
-        if (!entry._cachedColors && Array.isArray(entry.colors) && entry.colors.length >= count) {
-          var rawColors = entry.colors;
-          if (typeof rawColors[0] === "string") {
+        var rawColors = entry.colors;
+        if (!entry._cachedColors && rawColors && (Array.isArray(rawColors) || sceneIsNumericTypedArray(rawColors)) && rawColors.length >= count) {
+          if (Array.isArray(rawColors) && typeof rawColors[0] === "string") {
             entry._cachedColors = new Float32Array(count * 4);
             for (var ci = 0; ci < count; ci++) {
               var crgba = sceneColorRGBA(rawColors[ci], [1, 1, 1, 1]);

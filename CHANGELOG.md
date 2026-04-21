@@ -1,5 +1,27 @@
 # Changelog
 
+## v0.18.1
+
+Scene3D GLB point-cloud release.
+
+The GLB loader now extracts glTF `POINTS`, `LINES`, `LINE_LOOP`, and
+`LINE_STRIP` primitives instead of skipping every non-triangle mesh primitive.
+Point primitives hydrate into native Scene3D point layers with typed position,
+size, and color buffers; line primitives hydrate into Scene3D `lines` objects.
+`COLOR_0` normalized accessors are decoded into RGBA float buffers, and
+point-size attributes such as `_POINT_SIZE` can carry per-point sizing.
+
+Model assets can now include `points` alongside objects, labels, sprites, and
+lights, so a `.glb` file can serve binary point-cloud data without inflating
+the initial JSON scene manifest. `extras.gosx` / `extras.scene3d` metadata on
+nodes, meshes, or primitives can carry Scene3D IDs, point style, blend mode,
+live event names, transition metadata, and related render settings.
+
+The WebGL and WebGPU point paths now preserve typed arrays when normalizing
+point entries, avoiding the old JSON-array-only path and its extra copy before
+GPU upload. Runtime coverage now asserts GLB point/line extraction and model
+hydration for GLB-backed point layers.
+
 ## v0.18.0
 
 R/D series closeout: first-party WebGPU bundle rendering reaches R5 feature

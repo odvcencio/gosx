@@ -400,6 +400,85 @@
     }) : [];
   }
 
+  function sceneScaleModelPointPositions(positions, scaleX, scaleY, scaleZ) {
+    const source = positions instanceof Float32Array ? positions : sceneTypedFloatArray(positions);
+    if (!source.length) {
+      return source;
+    }
+    if (Math.abs(scaleX - 1) < 0.000001 && Math.abs(scaleY - 1) < 0.000001 && Math.abs(scaleZ - 1) < 0.000001) {
+      return source;
+    }
+    const scaled = new Float32Array(source.length);
+    for (let i = 0; i + 2 < source.length; i += 3) {
+      scaled[i] = source[i] * scaleX;
+      scaled[i + 1] = source[i + 1] * scaleY;
+      scaled[i + 2] = source[i + 2] * scaleZ;
+    }
+    return scaled;
+  }
+
+  function sceneApplyModelPointOverride(point, model) {
+    const override = Object.assign({}, point);
+    if (!model || typeof model !== "object") {
+      return override;
+    }
+    if (typeof model.material === "string" && model.material.trim()) {
+      override.material = model.material.trim();
+    }
+    if (typeof model.color === "string" && model.color) {
+      override.color = model.color;
+    }
+    if (typeof model.style === "string" && model.style) {
+      override.style = model.style;
+    }
+    if (model.size != null) {
+      override.size = model.size;
+    }
+    if (model.opacity != null) {
+      override.opacity = model.opacity;
+    }
+    if (typeof model.blendMode === "string" && model.blendMode) {
+      override.blendMode = model.blendMode;
+    }
+    if (model.depthWrite != null) {
+      override.depthWrite = model.depthWrite;
+    }
+    if (model.attenuation != null) {
+      override.attenuation = model.attenuation;
+    }
+    return override;
+  }
+
+  function sceneInstantiateModelPointsEntry(rawPoint, model, prefix, index) {
+    const source = sceneApplyModelPointOverride(rawPoint, model);
+    const normalized = normalizeScenePointsEntry(source, index, null);
+    const scaleX = sceneNumber(model && model.scaleX, 1);
+    const scaleY = sceneNumber(model && model.scaleY, 1);
+    const scaleZ = sceneNumber(model && model.scaleZ, 1);
+    const positions = sceneScaleModelPointPositions(normalized._cachedPos || normalized.positions, scaleX, scaleY, scaleZ);
+    const positioned = sceneModelTransformPoint({ x: normalized.x, y: normalized.y, z: normalized.z }, model);
+    const instanced = Object.assign({}, normalized, {
+      id: prefix + "/" + normalized.id,
+      positions,
+      x: positioned.x,
+      y: positioned.y,
+      z: positioned.z,
+      rotationX: sceneNumber(normalized.rotationX, 0) + sceneNumber(model && model.rotationX, 0),
+      rotationY: sceneNumber(normalized.rotationY, 0) + sceneNumber(model && model.rotationY, 0),
+      rotationZ: sceneNumber(normalized.rotationZ, 0) + sceneNumber(model && model.rotationZ, 0),
+    });
+    if (positions instanceof Float32Array) {
+      instanced._cachedPos = positions;
+    }
+    if (normalized._cachedSizes) {
+      instanced._cachedSizes = normalized._cachedSizes;
+    }
+    if (normalized._cachedColors) {
+      instanced._cachedColors = normalized._cachedColors;
+    }
+    return normalizeScenePointsEntry(instanced, instanced.id, normalized);
+  }
+
   function sceneInstantiateModelObject(rawObject, model, prefix, index, skinInstances) {
     const source = sceneApplyMaterialOverride(rawObject, model);
     if (skinInstances && source && source.skinIndex != null && skinInstances[source.skinIndex]) {
@@ -598,6 +677,7 @@
       objects: Array.isArray(record.objects) ? record.objects.map(function(object) {
         return resolveSceneModelObjectURLs(src, object);
       }) : [],
+      points: Array.isArray(record.points) ? record.points : [],
       labels: Array.isArray(record.labels) ? record.labels : [],
       sprites,
       lights: Array.isArray(record.lights) ? record.lights : [],
@@ -857,9 +937,10 @@
     const models = sceneModels(props);
     state._modelAnimations = [];
     if (!models.length) {
-      return { models: 0, objects: 0, labels: 0, sprites: 0, lights: 0 };
+      return { models: 0, objects: 0, points: 0, labels: 0, sprites: 0, lights: 0 };
     }
     let objectCount = 0;
+    let pointCount = 0;
     let labelCount = 0;
     let spriteCount = 0;
     let lightCount = 0;
@@ -874,6 +955,14 @@
         }
         state.objects.set(object.id, object);
         objectCount += 1;
+      }
+      for (let i = 0; i < asset.points.length; i += 1) {
+        const point = sceneInstantiateModelPointsEntry(asset.points[i], model, prefix, i);
+        if (!point || point.count <= 0) {
+          continue;
+        }
+        state.points.push(point);
+        pointCount += 1;
       }
       for (let i = 0; i < asset.labels.length; i += 1) {
         const label = sceneInstantiateModelLabel(asset.labels[i], model, prefix, i);
@@ -901,7 +990,7 @@
       }
       await scenePrepareModelSkinPlayback(state, asset, model, skinInstances);
     }));
-    return { models: models.length, objects: objectCount, labels: labelCount, sprites: spriteCount, lights: lightCount };
+    return { models: models.length, objects: objectCount, points: pointCount, labels: labelCount, sprites: spriteCount, lights: lightCount };
   }
 
   function normalizeSceneCapabilityTier(value) {

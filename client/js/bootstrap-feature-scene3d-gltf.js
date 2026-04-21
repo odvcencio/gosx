@@ -83,6 +83,29 @@
     }
   }
 
+  function gltfNormalizeAccessorValues(values, componentType) {
+    var normalized = new Float32Array(values.length);
+    var divisor = 1;
+    var signed = false;
+    switch (componentType) {
+      case 5120: divisor = 127; signed = true; break;
+      case 5121: divisor = 255; break;
+      case 5122: divisor = 32767; signed = true; break;
+      case 5123: divisor = 65535; break;
+      case 5125: divisor = 4294967295; break;
+      default:
+        for (var f = 0; f < values.length; f++) {
+          normalized[f] = values[f];
+        }
+        return normalized;
+    }
+    for (var i = 0; i < values.length; i++) {
+      var value = values[i] / divisor;
+      normalized[i] = signed && value < -1 ? -1 : value;
+    }
+    return normalized;
+  }
+
   function gltfReadAccessor(gltf, accessorIndex, binaryBuffer) {
     var accessor = gltf.accessors[accessorIndex];
     var bufferView = gltf.bufferViews[accessor.bufferView];
@@ -95,7 +118,8 @@
     var totalElements = accessor.count * componentCount;
 
     if (!stride || stride === componentCount * componentSize) {
-      return gltfTypedArrayView(buffer, byteOffset, accessor.componentType, totalElements);
+      var packed = gltfTypedArrayView(buffer, byteOffset, accessor.componentType, totalElements);
+      return accessor.normalized ? gltfNormalizeAccessorValues(packed, accessor.componentType) : packed;
     }
 
     var result = new Float32Array(totalElements);
@@ -115,7 +139,7 @@
         }
       }
     }
-    return result;
+    return accessor.normalized ? gltfNormalizeAccessorValues(result, accessor.componentType) : result;
   }
 
   function gltfGenerateFlatNormals(positions) {
@@ -272,6 +296,200 @@
       weights: outWeights,
     };
   }
+
+  function gltfReadPrimitiveAttribute(gltf, primitive, names, binaryBuffer) {
+    var attrs = primitive && primitive.attributes ? primitive.attributes : {};
+    for (var i = 0; i < names.length; i++) {
+      var name = names[i];
+      if (!Object.prototype.hasOwnProperty.call(attrs, name)) {
+        continue;
+      }
+      var accessorIndex = attrs[name];
+      var accessor = gltf.accessors && gltf.accessors[accessorIndex];
+      if (!accessor) {
+        return null;
+      }
+      return {
+        accessor: accessor,
+        values: gltfReadAccessor(gltf, accessorIndex, binaryBuffer),
+      };
+    }
+    return null;
+  }
+
+  function gltfTransformPositions(positions, worldTransform) {
+    var count = Math.floor(positions.length / 3);
+    var transformed = new Float32Array(count * 3);
+    for (var i = 0; i < count; i++) {
+      var point = gltfTransformPoint(
+        worldTransform,
+        positions[i * 3],
+        positions[i * 3 + 1],
+        positions[i * 3 + 2]
+      );
+      transformed[i * 3] = point.x;
+      transformed[i * 3 + 1] = point.y;
+      transformed[i * 3 + 2] = point.z;
+    }
+    return transformed;
+  }
+
+  function gltfPositionsToLinePoints(positions) {
+    var count = Math.floor(positions.length / 3);
+    var points = new Array(count);
+    for (var i = 0; i < count; i++) {
+      points[i] = {
+        x: positions[i * 3],
+        y: positions[i * 3 + 1],
+        z: positions[i * 3 + 2],
+      };
+    }
+    return points;
+  }
+
+  function gltfLineSegments(mode, pointCount, indices) {
+    var order = [];
+    if (indices && indices.length) {
+      for (var i = 0; i < indices.length; i++) {
+        order.push(Math.floor(indices[i]));
+      }
+    } else {
+      for (var p = 0; p < pointCount; p++) {
+        order.push(p);
+      }
+    }
+
+    var segments = [];
+    if (mode === 1) {
+      for (var pair = 0; pair + 1 < order.length; pair += 2) {
+        segments.push([order[pair], order[pair + 1]]);
+      }
+      return segments;
+    }
+
+    for (var s = 0; s + 1 < order.length; s++) {
+      segments.push([order[s], order[s + 1]]);
+    }
+    if (mode === 2 && order.length > 2) {
+      segments.push([order[order.length - 1], order[0]]);
+    }
+    return segments;
+  }
+
+  function gltfColorComponent(value, componentType) {
+    var n = Number(value) || 0;
+    if (n > 1 && componentType === 5121) {
+      n = n / 255;
+    } else if (n > 1 && componentType === 5123) {
+      n = n / 65535;
+    } else if (n > 1 && componentType === 5125) {
+      n = n / 4294967295;
+    }
+    return Math.max(0, Math.min(1, n));
+  }
+
+  function gltfPointColorBuffer(gltf, primitive, binaryBuffer, count) {
+    var record = gltfReadPrimitiveAttribute(gltf, primitive, ["COLOR_0"], binaryBuffer);
+    if (!record || !record.values || !record.values.length) {
+      return null;
+    }
+    var componentCount = gltfAccessorTypeCount(record.accessor.type);
+    if (componentCount < 3) {
+      return null;
+    }
+    var colors = new Float32Array(count * 4);
+    for (var i = 0; i < count; i++) {
+      var src = i * componentCount;
+      colors[i * 4] = gltfColorComponent(record.values[src], record.accessor.componentType);
+      colors[i * 4 + 1] = gltfColorComponent(record.values[src + 1], record.accessor.componentType);
+      colors[i * 4 + 2] = gltfColorComponent(record.values[src + 2], record.accessor.componentType);
+      colors[i * 4 + 3] = componentCount > 3
+        ? gltfColorComponent(record.values[src + 3], record.accessor.componentType)
+        : 1;
+    }
+    return colors;
+  }
+
+  function gltfPointSizeBuffer(gltf, primitive, binaryBuffer, count) {
+    var record = gltfReadPrimitiveAttribute(gltf, primitive, [
+      "_POINT_SIZE",
+      "_POINTSIZE",
+      "_SIZE",
+      "POINT_SIZE",
+      "POINTSIZE",
+      "SIZE",
+      "PSIZE",
+    ], binaryBuffer);
+    if (!record || !record.values || !record.values.length) {
+      return null;
+    }
+    var componentCount = gltfAccessorTypeCount(record.accessor.type);
+    var sizes = new Float32Array(count);
+    for (var i = 0; i < count; i++) {
+      sizes[i] = Math.max(0, Number(record.values[i * componentCount]) || 0);
+    }
+    return sizes;
+  }
+
+  function gltfMergeScene3DExtraObject(target, extras) {
+    if (!extras || typeof extras !== "object") {
+      return;
+    }
+    var keys = Object.keys(extras);
+    for (var i = 0; i < keys.length; i++) {
+      var key = keys[i];
+      if (key === "gosx" || key === "scene3d" || key === "scene3D") {
+        continue;
+      }
+      target[key] = extras[key];
+    }
+  }
+
+  function gltfCollectScene3DExtras(node, mesh, primitive) {
+    var target = {};
+    function mergeRecord(record) {
+      var extras = record && record.extras;
+      if (!extras || typeof extras !== "object") {
+        return;
+      }
+      gltfMergeScene3DExtraObject(target, extras);
+      gltfMergeScene3DExtraObject(target, extras.gosx);
+      gltfMergeScene3DExtraObject(target, extras.scene3d);
+      gltfMergeScene3DExtraObject(target, extras.scene3D);
+    }
+    mergeRecord(node);
+    mergeRecord(mesh);
+    mergeRecord(primitive);
+    return target;
+  }
+
+  function gltfApplyScene3DExtras(target, extras, allowedKeys) {
+    if (!extras || typeof extras !== "object") {
+      return target;
+    }
+    for (var i = 0; i < allowedKeys.length; i++) {
+      var key = allowedKeys[i];
+      if (Object.prototype.hasOwnProperty.call(extras, key)) {
+        target[key] = extras[key];
+      }
+    }
+    return target;
+  }
+
+  var GLTF_POINT_EXTRA_KEYS = [
+    "id", "material", "color", "style", "size", "opacity", "blendMode",
+    "depthWrite", "attenuation", "x", "y", "z", "rotationX", "rotationY",
+    "rotationZ", "spinX", "spinY", "spinZ", "transition", "inState",
+    "outState", "live",
+  ];
+
+  var GLTF_OBJECT_EXTRA_KEYS = [
+    "id", "material", "materialKind", "color", "texture", "opacity",
+    "emissive", "roughness", "metalness", "blendMode", "renderPass",
+    "wireframe", "depthWrite", "x", "y", "z", "rotationX", "rotationY",
+    "rotationZ", "spinX", "spinY", "spinZ", "transition", "inState",
+    "outState", "live", "static", "pickable", "castShadow", "receiveShadow",
+  ];
 
   function gltfExtractMeshPrimitive(gltf, primitive, binaryBuffer) {
     var positions = gltfReadAccessor(gltf, primitive.attributes.POSITION, binaryBuffer);
@@ -513,7 +731,7 @@
     };
   }
 
-  function gltfExtractMeshNode(gltf, meshIndex, binaryBuffer, worldTransform, result, skinIndex) {
+  function gltfExtractMeshNode(gltf, meshIndex, binaryBuffer, worldTransform, result, skinIndex, node) {
     var mesh = gltf.meshes[meshIndex];
     if (!mesh) {
       return;
@@ -526,12 +744,76 @@
     for (var p = 0; p < mesh.primitives.length; p++) {
       var primitive = mesh.primitives[p];
       var mode = primitive.mode != null ? primitive.mode : 4;
+      var material = gltfExtractMaterial(gltf, primitive.material, binaryBuffer);
+      var extras = gltfCollectScene3DExtras(node, mesh, primitive);
+
+      if (mode === 0) {
+        var positionRecord = gltfReadPrimitiveAttribute(gltf, primitive, ["POSITION"], binaryBuffer);
+        if (!positionRecord || !positionRecord.values || positionRecord.values.length < 3) {
+          continue;
+        }
+        var pointPositions = gltfTransformPositions(positionRecord.values, worldTransform);
+        var pointCount = Math.floor(pointPositions.length / 3);
+        var pointColors = gltfPointColorBuffer(gltf, primitive, binaryBuffer, pointCount);
+        var pointSizes = gltfPointSizeBuffer(gltf, primitive, binaryBuffer, pointCount);
+        var pointID = mesh.name ? (mesh.name + "-points-" + p) : ("mesh-" + meshIndex + "-points-" + p);
+        var pointEntry = {
+          id: pointID,
+          count: pointCount,
+          positions: pointPositions,
+          sizes: pointSizes || [],
+          colors: pointColors || [],
+          color: material.color || "#ffffff",
+          size: 1,
+          opacity: material.opacity != null ? material.opacity : 1,
+          blendMode: (material.alphaMode === "BLEND" || material.opacity < 0.999) ? "alpha" : "",
+          depthWrite: material.alphaMode !== "BLEND",
+          attenuation: false,
+        };
+        pointEntry._cachedPos = pointPositions;
+        if (pointSizes) {
+          pointEntry._cachedSizes = pointSizes;
+        }
+        if (pointColors) {
+          pointEntry._cachedColors = pointColors;
+        }
+        gltfApplyScene3DExtras(pointEntry, extras, GLTF_POINT_EXTRA_KEYS);
+        result.points.push(pointEntry);
+        continue;
+      }
+
+      if (mode === 1 || mode === 2 || mode === 3) {
+        var linePositionRecord = gltfReadPrimitiveAttribute(gltf, primitive, ["POSITION"], binaryBuffer);
+        if (!linePositionRecord || !linePositionRecord.values || linePositionRecord.values.length < 6) {
+          continue;
+        }
+        var linePositions = gltfTransformPositions(linePositionRecord.values, worldTransform);
+        var lineCount = Math.floor(linePositions.length / 3);
+        var lineIndices = primitive.indices != null
+          ? gltfReadAccessor(gltf, primitive.indices, binaryBuffer)
+          : null;
+        var lineID = mesh.name ? (mesh.name + "-lines-" + p) : ("mesh-" + meshIndex + "-lines-" + p);
+        var lineObject = {
+          id: lineID,
+          kind: "lines",
+          points: gltfPositionsToLinePoints(linePositions),
+          lineSegments: gltfLineSegments(mode, lineCount, lineIndices),
+          material: material,
+          color: material.color || "#cccccc",
+          opacity: material.opacity != null ? material.opacity : 1,
+          blendMode: (material.alphaMode === "BLEND" || material.opacity < 0.999) ? "alpha" : "",
+        };
+        gltfApplyScene3DExtras(lineObject, extras, GLTF_OBJECT_EXTRA_KEYS);
+        result.objects.push(lineObject);
+        result.materials.push(material);
+        continue;
+      }
+
       if (mode !== 4) {
         continue;
       }
 
       var geometry = gltfExtractMeshPrimitive(gltf, primitive, binaryBuffer);
-      var material = gltfExtractMaterial(gltf, primitive.material, binaryBuffer);
       var vertCount = geometry.count;
       var primitiveSkinned = isSkinned && geometry.joints && geometry.weights;
 
@@ -615,6 +897,7 @@
         object.skin = skin;
       }
 
+      gltfApplyScene3DExtras(object, extras, GLTF_OBJECT_EXTRA_KEYS);
       result.objects.push(object);
 
       result.materials.push(material);
@@ -631,7 +914,7 @@
     var worldTransform = sceneMat4Multiply(parentTransform, localTransform);
 
     if (node.mesh != null) {
-      gltfExtractMeshNode(gltf, node.mesh, binaryBuffer, worldTransform, result, node.skin != null ? node.skin : null);
+      gltfExtractMeshNode(gltf, node.mesh, binaryBuffer, worldTransform, result, node.skin != null ? node.skin : null, node);
     }
 
     var children = node.children || [];
@@ -716,6 +999,7 @@
   function gltfExtractScene(gltf, binaryBuffer) {
     var result = {
       objects: [],
+      points: [],
       materials: [],
       lights: [],
       labels: [],
@@ -800,6 +1084,7 @@
     return {
       src: src || "",
       objects: scene.objects || [],
+      points: scene.points || [],
       labels: scene.labels || [],
       sprites: scene.sprites || [],
       lights: scene.lights || [],

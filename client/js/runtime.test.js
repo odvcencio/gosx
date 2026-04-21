@@ -138,6 +138,7 @@ class FakeWebGLContext {
     this._nextTextureID = 1;
     this._boundArrayBuffer = null;
     this._boundTexture = null;
+    this.POINTS = 0x0000;
     this.ARRAY_BUFFER = 0x8892;
     this.STATIC_DRAW = 0x88E4;
     this.DYNAMIC_DRAW = 0x88E8;
@@ -1149,6 +1150,136 @@ function buildMinimalGLBBytes() {
   glb.writeUInt32LE(bin.length, offset); offset += 4;
   glb.writeUInt32LE(0x004E4942, offset); offset += 4;
   bin.copy(glb, offset);
+  return Array.from(glb);
+}
+
+function buildPointLineGLBBytes() {
+  const chunks = [];
+  const bufferViews = [];
+  let byteOffset = 0;
+
+  function alignBuffer() {
+    const pad = (4 - (byteOffset % 4)) % 4;
+    if (pad > 0) {
+      chunks.push(Buffer.alloc(pad));
+      byteOffset += pad;
+    }
+  }
+
+  function appendTypedArray(typed, target) {
+    alignBuffer();
+    const bytes = Buffer.from(typed.buffer, typed.byteOffset, typed.byteLength);
+    const view = { buffer: 0, byteOffset, byteLength: bytes.length };
+    if (target) {
+      view.target = target;
+    }
+    const viewIndex = bufferViews.length;
+    bufferViews.push(view);
+    chunks.push(bytes);
+    byteOffset += bytes.length;
+    return viewIndex;
+  }
+
+  const pointPositions = new Float32Array([
+    0, 0, 0,
+    1, 0, 0,
+    0, 1, 0,
+  ]);
+  const pointColors = new Uint8Array([
+    255, 0, 0, 255,
+    0, 255, 0, 192,
+    0, 0, 255, 128,
+  ]);
+  const pointSizes = new Float32Array([2, 3, 4]);
+  const linePositions = new Float32Array([
+    -1, -1, 0,
+    0, 1, 0,
+    1, -1, 0,
+  ]);
+  const lineIndices = new Uint16Array([0, 1, 1, 2]);
+
+  const pointPositionView = appendTypedArray(pointPositions, 34962);
+  const pointColorView = appendTypedArray(pointColors, 34962);
+  const pointSizeView = appendTypedArray(pointSizes, 34962);
+  const linePositionView = appendTypedArray(linePositions, 34962);
+  const lineIndexView = appendTypedArray(lineIndices, 34963);
+  alignBuffer();
+
+  const bin = Buffer.concat(chunks);
+  const gltf = {
+    asset: { version: "2.0", generator: "runtime-test-points-lines" },
+    scene: 0,
+    scenes: [{ nodes: [0, 1] }],
+    nodes: [
+      { name: "point-node", mesh: 0, translation: [1, 0.5, 0] },
+      { name: "line-node", mesh: 1 },
+    ],
+    meshes: [
+      {
+        name: "spark-field",
+        primitives: [{
+          mode: 0,
+          attributes: { POSITION: 0, COLOR_0: 1, _POINT_SIZE: 2 },
+          material: 0,
+          extras: {
+            gosx: {
+              id: "sparks",
+              style: "glow",
+              opacity: 0.75,
+              blendMode: "additive",
+              live: ["palette"],
+            },
+          },
+        }],
+      },
+      {
+        name: "filament",
+        primitives: [{
+          mode: 1,
+          attributes: { POSITION: 3 },
+          indices: 4,
+          material: 0,
+          extras: { gosx: { id: "filament-lines" } },
+        }],
+      },
+    ],
+    materials: [{
+      pbrMetallicRoughness: {
+        baseColorFactor: [0.5, 0.75, 1, 0.8],
+        metallicFactor: 0,
+        roughnessFactor: 0.6,
+      },
+      alphaMode: "BLEND",
+    }],
+    accessors: [
+      { bufferView: pointPositionView, componentType: 5126, count: 3, type: "VEC3" },
+      { bufferView: pointColorView, componentType: 5121, count: 3, type: "VEC4", normalized: true },
+      { bufferView: pointSizeView, componentType: 5126, count: 3, type: "SCALAR" },
+      { bufferView: linePositionView, componentType: 5126, count: 3, type: "VEC3" },
+      { bufferView: lineIndexView, componentType: 5123, count: 4, type: "SCALAR" },
+    ],
+    bufferViews,
+    buffers: [{ byteLength: bin.length }],
+  };
+
+  let json = Buffer.from(JSON.stringify(gltf), "utf8");
+  while (json.length % 4 !== 0) {
+    json = Buffer.concat([json, Buffer.from(" ")]);
+  }
+
+  const totalLength = 12 + 8 + json.length + 8 + bin.length;
+  const glb = Buffer.alloc(totalLength);
+  let offset = 0;
+  glb.writeUInt32LE(0x46546c67, offset); offset += 4;
+  glb.writeUInt32LE(2, offset); offset += 4;
+  glb.writeUInt32LE(totalLength, offset); offset += 4;
+  glb.writeUInt32LE(json.length, offset); offset += 4;
+  glb.writeUInt32LE(0x4E4F534A, offset); offset += 4;
+  json.copy(glb, offset); offset += json.length;
+  glb.writeUInt32LE(bin.length, offset); offset += 4;
+  glb.writeUInt32LE(0x004E4942, offset); offset += 4;
+  bin.copy(glb, offset);
+
   return Array.from(glb);
 }
 
@@ -4228,6 +4359,102 @@ test("bootstrap loads declarative Scene3D GLB model assets through the native re
   const gl = mount.children[0].getContext("webgl2");
   assert.ok(gl);
   assert.ok(gl.ops.some((entry) => entry[0] === "drawArrays" && entry[1] === gl.TRIANGLES && entry[3] >= 3));
+  assert.equal(env.consoleLogs.error.length, 0);
+});
+
+test("bootstrap GLB loader extracts Scene3D POINTS and LINES primitives", async () => {
+  const env = createContext({
+    fetchRoutes: {
+      "/models/points-lines.glb": {
+        bytes: buildPointLineGLBBytes(),
+      },
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  const scene = await env.context.__gosx_scene3d_gltf_api.sceneLoadGLTFModel("/models/points-lines.glb");
+
+  assert.equal(scene.points.length, 1);
+  assert.equal(scene.objects.length, 1);
+
+  const points = scene.points[0];
+  assert.equal(points.id, "sparks");
+  assert.equal(points.count, 3);
+  assert.equal(points.style, "glow");
+  assert.equal(points.blendMode, "additive");
+  assert.deepEqual(points.live, ["palette"]);
+  assert.equal(ArrayBuffer.isView(points.positions), true);
+  assert.equal(ArrayBuffer.isView(points.sizes), true);
+  assert.equal(ArrayBuffer.isView(points.colors), true);
+  assert.deepEqual(Array.from(points.sizes), [2, 3, 4]);
+  assert.equal(points.positions[0], 1);
+  assert.equal(points.positions[1], 0.5);
+  assert.equal(points.colors[0], 1);
+  assert.equal(points.colors[1], 0);
+  assert.equal(points.colors[2], 0);
+  assert.equal(points.colors[3], 1);
+  assert.ok(Math.abs(points.colors[7] - (192 / 255)) < 0.00001);
+
+  const lines = scene.objects[0];
+  assert.equal(lines.id, "filament-lines");
+  assert.equal(lines.kind, "lines");
+  assert.equal(lines.points.length, 3);
+  assert.equal(JSON.stringify(lines.lineSegments), JSON.stringify([[0, 1], [1, 2]]));
+  assert.equal(env.consoleLogs.error.length, 0);
+});
+
+test("bootstrap hydrates Scene3D model POINTS from GLB assets", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-model-glb-points-root";
+
+  const env = createContext({
+    elements: [mount],
+    enableWebGL2: true,
+    disableCanvas2D: true,
+    fetchRoutes: {
+      "/models/points-lines.glb": {
+        bytes: buildPointLineGLBBytes(),
+      },
+    },
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-model-glb-points",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-model-glb-points-root",
+          props: {
+            width: 640,
+            height: 360,
+            background: "#08151f",
+            camera: { z: 5 },
+            models: [
+              {
+                id: "galaxy",
+                src: "/models/points-lines.glb",
+                scaleX: 1.25,
+                scaleY: 1.25,
+                scaleZ: 1.25,
+                static: true,
+              },
+            ],
+          },
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  assert.equal(env.fetchCalls.some((call) => call.url === "/models/points-lines.glb"), true);
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "webgl");
+  const gl = mount.children[0].getContext("webgl2");
+  const sentinelIDs = mount.__gosxScene3DSentinels
+    ? Array.from(mount.__gosxScene3DSentinels.keys())
+    : [];
+  assert.equal(sentinelIDs.includes("galaxy/sparks"), true);
+  assert.ok(gl.ops.some((entry) => entry[0] === "drawArrays" && entry[1] === gl.LINES && entry[3] >= 4));
   assert.equal(env.consoleLogs.error.length, 0);
 });
 

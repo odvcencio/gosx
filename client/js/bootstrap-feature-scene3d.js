@@ -1446,16 +1446,73 @@
     return 0;
   }
 
+  function sceneIsNumericTypedArray(value) {
+    return value &&
+      typeof value === "object" &&
+      typeof value.length === "number" &&
+      typeof ArrayBuffer !== "undefined" &&
+      typeof ArrayBuffer.isView === "function" &&
+      ArrayBuffer.isView(value) &&
+      Object.prototype.toString.call(value) !== "[object DataView]";
+  }
+
+  function scenePointDataBuffer(value, cloneArrays) {
+    if (Array.isArray(value)) {
+      return cloneArrays ? value.slice() : value;
+    }
+    if (sceneIsNumericTypedArray(value)) {
+      return value;
+    }
+    return null;
+  }
+
+  function scenePointDataLength(value) {
+    return value && typeof value.length === "number" ? value.length : 0;
+  }
+
+  function sceneFloat32PointData(value) {
+    if (!sceneIsNumericTypedArray(value)) {
+      return null;
+    }
+    return value instanceof Float32Array ? value : new Float32Array(value);
+  }
+
+  function sceneRGBAFloat32PointColors(value, count) {
+    if (!sceneIsNumericTypedArray(value)) {
+      return null;
+    }
+    if (value.length >= count * 4) {
+      return value instanceof Float32Array ? value : new Float32Array(value);
+    }
+    if (value.length < count * 3) {
+      return null;
+    }
+    const colors = new Float32Array(count * 4);
+    for (let i = 0; i < count; i += 1) {
+      colors[i * 4] = value[i * 3];
+      colors[i * 4 + 1] = value[i * 3 + 1];
+      colors[i * 4 + 2] = value[i * 3 + 2];
+      colors[i * 4 + 3] = 1;
+    }
+    return colors;
+  }
+
   function normalizeScenePointsEntry(entry, index, fallback) {
     const current = sceneIsPlainObject(fallback) ? fallback : {};
     const item = sceneIsPlainObject(entry) ? entry : {};
     const lifecycle = sceneNormalizeLifecycle(item, current);
-    const positions = Array.isArray(item.positions) ? item.positions.slice() : (Array.isArray(current.positions) ? current.positions : []);
-    const sizes = Array.isArray(item.sizes) ? item.sizes.slice() : (Array.isArray(current.sizes) ? current.sizes : []);
-    const colors = Array.isArray(item.colors) ? item.colors.slice() : (Array.isArray(current.colors) ? current.colors : []);
+    const itemPositions = scenePointDataBuffer(item.positions, true);
+    const currentPositions = scenePointDataBuffer(current.positions, false);
+    const itemSizes = scenePointDataBuffer(item.sizes, true);
+    const currentSizes = scenePointDataBuffer(current.sizes, false);
+    const itemColors = scenePointDataBuffer(item.colors, true);
+    const currentColors = scenePointDataBuffer(current.colors, false);
+    const positions = itemPositions !== null ? itemPositions : (currentPositions !== null ? currentPositions : []);
+    const sizes = itemSizes !== null ? itemSizes : (currentSizes !== null ? currentSizes : []);
+    const colors = itemColors !== null ? itemColors : (currentColors !== null ? currentColors : []);
     const normalized = {
       id: item.id || current.id || ("scene-points-" + index),
-      count: Math.max(0, Math.floor(sceneNumber(item.count, sceneNumber(current.count, positions.length >= 3 ? Math.floor(positions.length / 3) : 0)))),
+      count: Math.max(0, Math.floor(sceneNumber(item.count, sceneNumber(current.count, scenePointDataLength(positions) >= 3 ? Math.floor(scenePointDataLength(positions) / 3) : 0)))),
       positions,
       sizes,
       colors,
@@ -1489,6 +1546,15 @@
     }
     if (colors === current.colors && current._cachedColors) {
       normalized._cachedColors = current._cachedColors;
+    }
+    if (!normalized._cachedPos && sceneIsNumericTypedArray(positions) && scenePointDataLength(positions) >= normalized.count * 3) {
+      normalized._cachedPos = sceneFloat32PointData(positions);
+    }
+    if (!normalized._cachedSizes && sceneIsNumericTypedArray(sizes) && scenePointDataLength(sizes) >= normalized.count) {
+      normalized._cachedSizes = sceneFloat32PointData(sizes);
+    }
+    if (!normalized._cachedColors && sceneIsNumericTypedArray(colors)) {
+      normalized._cachedColors = sceneRGBAFloat32PointColors(colors, normalized.count);
     }
     if (Array.isArray(item.previewPositions)) {
       normalized.previewPositions = item.previewPositions.slice();
@@ -12566,15 +12632,17 @@ if (typeof window !== "undefined") {
         gl.uniform1i(pp.uniforms.sizeAttenuation, entry.attenuation ? 1 : 0);
         gl.uniform1i(pp.uniforms.pointStyle, scenePointStyleCode(entry.style));
 
-        if (!entry._cachedPos && Array.isArray(entry.positions) && entry.positions.length >= count * 3) {
-          entry._cachedPos = new Float32Array(entry.positions);
+        var rawPositions = entry.positions;
+        if (!entry._cachedPos && rawPositions && (Array.isArray(rawPositions) || sceneIsNumericTypedArray(rawPositions)) && rawPositions.length >= count * 3) {
+          entry._cachedPos = rawPositions instanceof Float32Array ? rawPositions : new Float32Array(rawPositions);
         }
-        if (!entry._cachedSizes && Array.isArray(entry.sizes) && entry.sizes.length >= count) {
-          entry._cachedSizes = new Float32Array(entry.sizes);
+        var rawSizes = entry.sizes;
+        if (!entry._cachedSizes && rawSizes && (Array.isArray(rawSizes) || sceneIsNumericTypedArray(rawSizes)) && rawSizes.length >= count) {
+          entry._cachedSizes = rawSizes instanceof Float32Array ? rawSizes : new Float32Array(rawSizes);
         }
-        if (!entry._cachedColors && Array.isArray(entry.colors) && entry.colors.length >= count) {
-          var rawColors = entry.colors;
-          if (typeof rawColors[0] === "string") {
+        var rawColors = entry.colors;
+        if (!entry._cachedColors && rawColors && (Array.isArray(rawColors) || sceneIsNumericTypedArray(rawColors)) && rawColors.length >= count) {
+          if (Array.isArray(rawColors) && typeof rawColors[0] === "string") {
             entry._cachedColors = new Float32Array(count * 4);
             for (var ci = 0; ci < count; ci++) {
               var crgba = sceneColorRGBA(rawColors[ci], [1, 1, 1, 1]);
@@ -14791,6 +14859,85 @@ if (typeof window !== "undefined") {
     }) : [];
   }
 
+  function sceneScaleModelPointPositions(positions, scaleX, scaleY, scaleZ) {
+    const source = positions instanceof Float32Array ? positions : sceneTypedFloatArray(positions);
+    if (!source.length) {
+      return source;
+    }
+    if (Math.abs(scaleX - 1) < 0.000001 && Math.abs(scaleY - 1) < 0.000001 && Math.abs(scaleZ - 1) < 0.000001) {
+      return source;
+    }
+    const scaled = new Float32Array(source.length);
+    for (let i = 0; i + 2 < source.length; i += 3) {
+      scaled[i] = source[i] * scaleX;
+      scaled[i + 1] = source[i + 1] * scaleY;
+      scaled[i + 2] = source[i + 2] * scaleZ;
+    }
+    return scaled;
+  }
+
+  function sceneApplyModelPointOverride(point, model) {
+    const override = Object.assign({}, point);
+    if (!model || typeof model !== "object") {
+      return override;
+    }
+    if (typeof model.material === "string" && model.material.trim()) {
+      override.material = model.material.trim();
+    }
+    if (typeof model.color === "string" && model.color) {
+      override.color = model.color;
+    }
+    if (typeof model.style === "string" && model.style) {
+      override.style = model.style;
+    }
+    if (model.size != null) {
+      override.size = model.size;
+    }
+    if (model.opacity != null) {
+      override.opacity = model.opacity;
+    }
+    if (typeof model.blendMode === "string" && model.blendMode) {
+      override.blendMode = model.blendMode;
+    }
+    if (model.depthWrite != null) {
+      override.depthWrite = model.depthWrite;
+    }
+    if (model.attenuation != null) {
+      override.attenuation = model.attenuation;
+    }
+    return override;
+  }
+
+  function sceneInstantiateModelPointsEntry(rawPoint, model, prefix, index) {
+    const source = sceneApplyModelPointOverride(rawPoint, model);
+    const normalized = normalizeScenePointsEntry(source, index, null);
+    const scaleX = sceneNumber(model && model.scaleX, 1);
+    const scaleY = sceneNumber(model && model.scaleY, 1);
+    const scaleZ = sceneNumber(model && model.scaleZ, 1);
+    const positions = sceneScaleModelPointPositions(normalized._cachedPos || normalized.positions, scaleX, scaleY, scaleZ);
+    const positioned = sceneModelTransformPoint({ x: normalized.x, y: normalized.y, z: normalized.z }, model);
+    const instanced = Object.assign({}, normalized, {
+      id: prefix + "/" + normalized.id,
+      positions,
+      x: positioned.x,
+      y: positioned.y,
+      z: positioned.z,
+      rotationX: sceneNumber(normalized.rotationX, 0) + sceneNumber(model && model.rotationX, 0),
+      rotationY: sceneNumber(normalized.rotationY, 0) + sceneNumber(model && model.rotationY, 0),
+      rotationZ: sceneNumber(normalized.rotationZ, 0) + sceneNumber(model && model.rotationZ, 0),
+    });
+    if (positions instanceof Float32Array) {
+      instanced._cachedPos = positions;
+    }
+    if (normalized._cachedSizes) {
+      instanced._cachedSizes = normalized._cachedSizes;
+    }
+    if (normalized._cachedColors) {
+      instanced._cachedColors = normalized._cachedColors;
+    }
+    return normalizeScenePointsEntry(instanced, instanced.id, normalized);
+  }
+
   function sceneInstantiateModelObject(rawObject, model, prefix, index, skinInstances) {
     const source = sceneApplyMaterialOverride(rawObject, model);
     if (skinInstances && source && source.skinIndex != null && skinInstances[source.skinIndex]) {
@@ -14983,6 +15130,7 @@ if (typeof window !== "undefined") {
       objects: Array.isArray(record.objects) ? record.objects.map(function(object) {
         return resolveSceneModelObjectURLs(src, object);
       }) : [],
+      points: Array.isArray(record.points) ? record.points : [],
       labels: Array.isArray(record.labels) ? record.labels : [],
       sprites,
       lights: Array.isArray(record.lights) ? record.lights : [],
@@ -15222,9 +15370,10 @@ if (typeof window !== "undefined") {
     const models = sceneModels(props);
     state._modelAnimations = [];
     if (!models.length) {
-      return { models: 0, objects: 0, labels: 0, sprites: 0, lights: 0 };
+      return { models: 0, objects: 0, points: 0, labels: 0, sprites: 0, lights: 0 };
     }
     let objectCount = 0;
+    let pointCount = 0;
     let labelCount = 0;
     let spriteCount = 0;
     let lightCount = 0;
@@ -15239,6 +15388,14 @@ if (typeof window !== "undefined") {
         }
         state.objects.set(object.id, object);
         objectCount += 1;
+      }
+      for (let i = 0; i < asset.points.length; i += 1) {
+        const point = sceneInstantiateModelPointsEntry(asset.points[i], model, prefix, i);
+        if (!point || point.count <= 0) {
+          continue;
+        }
+        state.points.push(point);
+        pointCount += 1;
       }
       for (let i = 0; i < asset.labels.length; i += 1) {
         const label = sceneInstantiateModelLabel(asset.labels[i], model, prefix, i);
@@ -15266,7 +15423,7 @@ if (typeof window !== "undefined") {
       }
       await scenePrepareModelSkinPlayback(state, asset, model, skinInstances);
     }));
-    return { models: models.length, objects: objectCount, labels: labelCount, sprites: spriteCount, lights: lightCount };
+    return { models: models.length, objects: objectCount, points: pointCount, labels: labelCount, sprites: spriteCount, lights: lightCount };
   }
 
   function normalizeSceneCapabilityTier(value) {

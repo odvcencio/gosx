@@ -1479,16 +1479,73 @@
     return 0;
   }
 
+  function sceneIsNumericTypedArray(value) {
+    return value &&
+      typeof value === "object" &&
+      typeof value.length === "number" &&
+      typeof ArrayBuffer !== "undefined" &&
+      typeof ArrayBuffer.isView === "function" &&
+      ArrayBuffer.isView(value) &&
+      Object.prototype.toString.call(value) !== "[object DataView]";
+  }
+
+  function scenePointDataBuffer(value, cloneArrays) {
+    if (Array.isArray(value)) {
+      return cloneArrays ? value.slice() : value;
+    }
+    if (sceneIsNumericTypedArray(value)) {
+      return value;
+    }
+    return null;
+  }
+
+  function scenePointDataLength(value) {
+    return value && typeof value.length === "number" ? value.length : 0;
+  }
+
+  function sceneFloat32PointData(value) {
+    if (!sceneIsNumericTypedArray(value)) {
+      return null;
+    }
+    return value instanceof Float32Array ? value : new Float32Array(value);
+  }
+
+  function sceneRGBAFloat32PointColors(value, count) {
+    if (!sceneIsNumericTypedArray(value)) {
+      return null;
+    }
+    if (value.length >= count * 4) {
+      return value instanceof Float32Array ? value : new Float32Array(value);
+    }
+    if (value.length < count * 3) {
+      return null;
+    }
+    const colors = new Float32Array(count * 4);
+    for (let i = 0; i < count; i += 1) {
+      colors[i * 4] = value[i * 3];
+      colors[i * 4 + 1] = value[i * 3 + 1];
+      colors[i * 4 + 2] = value[i * 3 + 2];
+      colors[i * 4 + 3] = 1;
+    }
+    return colors;
+  }
+
   function normalizeScenePointsEntry(entry, index, fallback) {
     const current = sceneIsPlainObject(fallback) ? fallback : {};
     const item = sceneIsPlainObject(entry) ? entry : {};
     const lifecycle = sceneNormalizeLifecycle(item, current);
-    const positions = Array.isArray(item.positions) ? item.positions.slice() : (Array.isArray(current.positions) ? current.positions : []);
-    const sizes = Array.isArray(item.sizes) ? item.sizes.slice() : (Array.isArray(current.sizes) ? current.sizes : []);
-    const colors = Array.isArray(item.colors) ? item.colors.slice() : (Array.isArray(current.colors) ? current.colors : []);
+    const itemPositions = scenePointDataBuffer(item.positions, true);
+    const currentPositions = scenePointDataBuffer(current.positions, false);
+    const itemSizes = scenePointDataBuffer(item.sizes, true);
+    const currentSizes = scenePointDataBuffer(current.sizes, false);
+    const itemColors = scenePointDataBuffer(item.colors, true);
+    const currentColors = scenePointDataBuffer(current.colors, false);
+    const positions = itemPositions !== null ? itemPositions : (currentPositions !== null ? currentPositions : []);
+    const sizes = itemSizes !== null ? itemSizes : (currentSizes !== null ? currentSizes : []);
+    const colors = itemColors !== null ? itemColors : (currentColors !== null ? currentColors : []);
     const normalized = {
       id: item.id || current.id || ("scene-points-" + index),
-      count: Math.max(0, Math.floor(sceneNumber(item.count, sceneNumber(current.count, positions.length >= 3 ? Math.floor(positions.length / 3) : 0)))),
+      count: Math.max(0, Math.floor(sceneNumber(item.count, sceneNumber(current.count, scenePointDataLength(positions) >= 3 ? Math.floor(scenePointDataLength(positions) / 3) : 0)))),
       positions,
       sizes,
       colors,
@@ -1522,6 +1579,15 @@
     }
     if (colors === current.colors && current._cachedColors) {
       normalized._cachedColors = current._cachedColors;
+    }
+    if (!normalized._cachedPos && sceneIsNumericTypedArray(positions) && scenePointDataLength(positions) >= normalized.count * 3) {
+      normalized._cachedPos = sceneFloat32PointData(positions);
+    }
+    if (!normalized._cachedSizes && sceneIsNumericTypedArray(sizes) && scenePointDataLength(sizes) >= normalized.count) {
+      normalized._cachedSizes = sceneFloat32PointData(sizes);
+    }
+    if (!normalized._cachedColors && sceneIsNumericTypedArray(colors)) {
+      normalized._cachedColors = sceneRGBAFloat32PointColors(colors, normalized.count);
     }
     if (Array.isArray(item.previewPositions)) {
       normalized.previewPositions = item.previewPositions.slice();
