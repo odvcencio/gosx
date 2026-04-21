@@ -395,12 +395,19 @@ class FakeWebGLContext {
     this.ops.push(["cullFace", face]);
   }
 
-  deleteBuffer(_buffer) {
-    this.ops.push(["deleteBuffer"]);
+  deleteBuffer(buffer) {
+    if (buffer && buffer.id != null) {
+      this.bufferUploads.delete(buffer.id);
+    }
+    this.ops.push(["deleteBuffer", buffer && buffer.id]);
   }
 
   deleteProgram(_program) {
     this.ops.push(["deleteProgram"]);
+  }
+
+  deleteShader(shader) {
+    this.ops.push(["deleteShader", shader && shader.type]);
   }
 
   deleteFramebuffer(framebuffer) {
@@ -5654,6 +5661,60 @@ test("bootstrap applies Scene3D live point buffers outside update tweens", async
   assert.equal(state._transitions.length, 0);
 });
 
+test("bootstrap keeps Scene3D live point buffers out of scalar update transitions", async () => {
+  const env = createContext({});
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const api = env.context.__gosx_scene3d_api;
+  const state = api.createSceneState({
+    scene: {
+      points: [
+        {
+          id: "galaxy",
+          count: 2,
+          positions: [0, 0, 0, 1, 0, 0],
+          sizes: [1, 1],
+          colors: ["#000000", "#111111"],
+          opacity: 0.5,
+          live: ["galaxy:node:galaxy"],
+          transition: { update: { duration: 1200, easing: "linear" } },
+        },
+      ],
+    },
+  });
+  const entry = state.points[0];
+  entry._cachedColors = new Float32Array([0, 0, 0, 1, 0.1, 0.1, 0.1, 1]);
+  const payload = {
+    colors: ["#ff0000", "#00ff00"],
+    opacity: 0.9,
+  };
+
+  const changed = api.sceneApplyLiveEvent(state, "galaxy:node:galaxy", payload, false, 10);
+
+  assert.equal(changed, true);
+  assert.deepEqual(entry.colors, ["#ff0000", "#00ff00"]);
+  assert.equal(entry._cachedColors, null);
+  assert.equal(entry.opacity, 0.5);
+  assert.equal(Object.prototype.hasOwnProperty.call(payload, "__eventName"), false);
+  assert.equal(state._transitions.length, 1);
+  const transition = state._transitions[0];
+  assert.equal(Object.prototype.hasOwnProperty.call(transition.target, "colors"), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(transition.target, "positions"), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(transition.target, "sizes"), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(transition.target, "_cachedColors"), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(transition.delta, "colors"), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(transition.delta, "positions"), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(transition.delta, "sizes"), false);
+  assert.equal(transition.delta.opacity.__from, 0.5);
+  assert.equal(transition.delta.opacity.__to, 0.9);
+  assert.equal(transition.delta.opacity.__key, "opacity");
+
+  api.sceneAdvanceTransitions(state, 1210);
+  assert.equal(entry.opacity, 0.9);
+  assert.deepEqual(entry.colors, ["#ff0000", "#00ff00"]);
+});
+
 test("bootstrap keeps Scene3D CSS transition diagnostics opt-in", () => {
   const source = fs.readFileSync(path.join(__dirname, "bootstrap-src", "15b-scene-planner.js"), "utf8");
 
@@ -5753,6 +5814,90 @@ test("bootstrap registers and selects Scene3D backends through registry", async 
   registry.dispose("foo");
   assert.equal(registry.list().some((entry) => entry.kind === "foo"), false);
   assert.equal(registry.select({ canvas: false, canvas2d: false, webgl: false, webgl2: false, webgpu: false }), null);
+});
+
+test("bootstrap releases replaced static point WebGL buffers on live updates", async () => {
+  const env = createContext({
+    enableWebGL2: true,
+    disableCanvas2D: true,
+  });
+  env.context.WebGL2RenderingContext = FakeWebGLContext;
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const api = env.context.__gosx_scene3d_api;
+  const registry = api.sceneBackendRegistry;
+  const backend = registry.select({
+    webgl: true,
+    webgl2: true,
+    webgpu: false,
+    canvas: false,
+    canvas2d: false,
+  });
+  const canvas = env.document.createElement("canvas");
+  canvas.width = 320;
+  canvas.height = 180;
+  const renderer = backend.create(canvas, { background: "#000000" }, { tier: "full" });
+  assert.equal(renderer && renderer.type, "webgl-pbr");
+
+  const point = {
+    id: "stars",
+    count: 2,
+    positions: [0, 0, 0, 1, 0, 0],
+    sizes: [1, 1],
+    colors: ["#ffffff", "#88ccff"],
+    style: "focus",
+    size: 1,
+    opacity: 1,
+    blendMode: "additive",
+    depthWrite: false,
+    attenuation: true,
+  };
+  const bundle = {
+    bundleVersion: api.SCENE_RENDER_BUNDLE_VERSION,
+    background: "#000000",
+    camera: { x: 0, y: 0, z: 6, fov: 72, near: 0.05, far: 128 },
+    environment: {},
+    points: [point],
+    instancedMeshes: [],
+    computeParticles: [],
+    objects: [],
+    meshObjects: [],
+    materials: [],
+    labels: [],
+    sprites: [],
+    lights: [],
+    positions: new Float32Array(0),
+    colors: new Float32Array(0),
+    worldPositions: new Float32Array(0),
+    worldColors: new Float32Array(0),
+    worldLineWidths: new Float32Array(0),
+    worldMeshPositions: new Float32Array(0),
+    worldMeshColors: new Float32Array(0),
+    worldMeshNormals: new Float32Array(0),
+    worldMeshUVs: new Float32Array(0),
+    worldMeshTangents: new Float32Array(0),
+    vertexCount: 0,
+    worldVertexCount: 0,
+    postEffects: [],
+  };
+  const viewport = { cssWidth: 320, cssHeight: 180, pixelWidth: 320, pixelHeight: 180, pixelRatio: 1 };
+
+  renderer.render(bundle, viewport);
+  point.colors = ["#ff6677", "#66ffee"];
+  point._cachedColors = null;
+  renderer.render(bundle, viewport);
+
+  const colorUploads = canvas.getContext("webgl2").ops.filter((entry) => (
+    entry[0] === "bufferData" &&
+    entry[3] === 8 &&
+    entry[4] === canvas.getContext("webgl2").STATIC_DRAW
+  ));
+  const deletes = canvas.getContext("webgl2").ops.filter((entry) => entry[0] === "deleteBuffer");
+  assert.equal(colorUploads.length, 2);
+  assert.ok(deletes.some((entry) => entry[1] === colorUploads[0][2]));
+
+  renderer.dispose();
 });
 
 test("bootstrap reuses static opaque Scene3D buffers across dynamic-only runtime updates", async () => {

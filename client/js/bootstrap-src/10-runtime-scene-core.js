@@ -2356,6 +2356,23 @@
     }
   }
 
+  function sceneCloneTransitionData(kind, value) {
+    if (!sceneIsPlainObject(value)) {
+      return sceneCloneData(value);
+    }
+    const bufferKeys = sceneInstantLiveBufferKeys(kind);
+    const clone = {};
+    const keys = Object.keys(value);
+    for (let i = 0; i < keys.length; i += 1) {
+      const key = keys[i];
+      if (sceneTransitionMetadataKey(key) || bufferKeys.indexOf(key) >= 0) {
+        continue;
+      }
+      clone[key] = sceneCloneData(value[key]);
+    }
+    return clone;
+  }
+
   function sceneApplyInstantLiveBufferPatch(kind, entry, target, payload) {
     if (!sceneIsPlainObject(entry) || !sceneIsPlainObject(target) || !sceneIsPlainObject(payload)) {
       return false;
@@ -2538,8 +2555,8 @@
     return entry._live.indexOf(eventName) >= 0;
   }
 
-  function sceneApplyLiveTransition(state, kind, entry, payload, reducedMotion, nowMs) {
-    if (!entry || !sceneEntryListensToEvent(entry, payload && payload.__eventName)) {
+  function sceneApplyLiveTransition(state, kind, entry, eventName, payload, reducedMotion, nowMs) {
+    if (!entry || !sceneEntryListensToEvent(entry, eventName)) {
       return false;
     }
     const target = sceneNormalizeEntryByKind(kind, payload, entry);
@@ -2549,19 +2566,20 @@
     }
     const timing = sceneTransitionTimingForPhase(entry, "update");
     sceneCancelEntryTransition(state, kind, entry);
+    const current = sceneCloneTransitionData(kind, entry);
+    const transitionTarget = sceneCloneTransitionData(kind, target);
     if (reducedMotion || timing.duration <= 0) {
-      sceneApplyTransitionPatch(entry, target);
+      sceneApplyTransitionPatch(entry, transitionTarget);
       return true;
     }
-    const current = sceneCloneData(entry);
-    const delta = sceneTransitionBuildDelta(current, target, "");
+    const delta = sceneTransitionBuildDelta(current, transitionTarget, "");
     if (!delta) {
       return instantChanged;
     }
     sceneStateTransitions(state).push({
       key: sceneTransitionKey(kind, entry),
       entry,
-      target,
+      target: transitionTarget,
       delta,
       startTime: nowMs,
       duration: Math.max(1, timing.duration),
@@ -2575,9 +2593,8 @@
     if (!event) {
       return false;
     }
-    const rawPayload = sceneIsPlainObject(payload) ? sceneCloneData(payload) : {};
-    rawPayload.__eventName = event;
-    let changed = sceneApplyLiveTransition(state, "environment", state && state.environment, rawPayload, reducedMotion, nowMs);
+    const rawPayload = sceneIsPlainObject(payload) ? payload : {};
+    let changed = sceneApplyLiveTransition(state, "environment", state && state.environment, event, rawPayload, reducedMotion, nowMs);
     const collections = [
       ["object", sceneStateObjects(state)],
       ["label", sceneStateLabels(state)],
@@ -2591,10 +2608,9 @@
       const kind = collections[ci][0];
       const entries = collections[ci][1];
       for (let i = 0; i < entries.length; i += 1) {
-        changed = sceneApplyLiveTransition(state, kind, entries[i], rawPayload, reducedMotion, nowMs) || changed;
+        changed = sceneApplyLiveTransition(state, kind, entries[i], event, rawPayload, reducedMotion, nowMs) || changed;
       }
     }
-    delete rawPayload.__eventName;
     return changed;
   }
 
