@@ -43,6 +43,51 @@ type Device interface {
 	Destroy()
 }
 
+// TextureFormatSupporter is an optional Device capability interface for
+// renderers that need to pick storage formats before allocating resources.
+// SupportsTextureFormat should mean the backend can create, sample, and, when
+// applicable, render to the format through this abstraction.
+type TextureFormatSupporter interface {
+	SupportsTextureFormat(TextureFormat) bool
+}
+
+// TextureFormatSupported reports whether d advertises support for f. Backends
+// that predate this capability interface fall back to the baseline formats the
+// bundle renderer has historically relied on.
+func TextureFormatSupported(d Device, f TextureFormat) bool {
+	if d != nil {
+		if supporter, ok := d.(TextureFormatSupporter); ok {
+			return supporter.SupportsTextureFormat(f)
+		}
+	}
+	return baselineTextureFormatSupported(f)
+}
+
+func FormatRGBA16FloatSupported(d Device) bool {
+	return TextureFormatSupported(d, FormatRGBA16Float)
+}
+
+func FormatRGB9E5UfloatSupported(d Device) bool {
+	return TextureFormatSupported(d, FormatRGB9E5Ufloat)
+}
+
+func FormatRGB10A2UnormSupported(d Device) bool {
+	return TextureFormatSupported(d, FormatRGB10A2Unorm)
+}
+
+func baselineTextureFormatSupported(f TextureFormat) bool {
+	switch f {
+	case FormatRGBA8Unorm, FormatRGBA8UnormSRGB,
+		FormatBGRA8Unorm, FormatBGRA8UnormSRGB,
+		FormatRGBA16Float,
+		FormatDepth16Unorm, FormatDepth24Plus,
+		FormatDepth24PlusStencil8, FormatDepth32Float,
+		FormatR32Uint:
+		return true
+	}
+	return false
+}
+
 // Queue is the command submission and resource-upload interface.
 type Queue interface {
 	// WriteBuffer copies data into buf at offset. The data is copied
@@ -60,6 +105,11 @@ type Queue interface {
 	// higher levels use the dimensions supplied by the caller and must fit
 	// within the texture's mip chain.
 	WriteTextureLevel(dst Texture, mipLevel int, data []byte, bytesPerRow, width, height int)
+
+	// WriteTextureLevelLayer uploads raw bytes into one array layer or 3D
+	// z-slice of dst at the specified mip level. rowsPerImage is expressed
+	// in texel-block rows; for uncompressed textures this is normally height.
+	WriteTextureLevelLayer(dst Texture, mipLevel, layer int, data []byte, bytesPerRow, rowsPerImage, width, height int)
 
 	// Submit runs all command buffers on the GPU. Order is preserved.
 	Submit(...CommandBuffer)
@@ -266,6 +316,41 @@ type RenderPassDepthStencilAttachment struct {
 // attachments and shader texture bindings.
 type TextureView interface{}
 
+// TextureDimension describes the dimensionality of a texture allocation.
+// The zero value lets backends choose their default, which is a 2D texture.
+type TextureDimension int
+
+const (
+	TextureDimensionUndefined TextureDimension = iota
+	TextureDimension2D
+	TextureDimension3D
+)
+
+// TextureViewDimension describes how shader and attachment bindings see a
+// texture view. The zero value leaves the backend default in place.
+type TextureViewDimension int
+
+const (
+	TextureViewDimensionUndefined TextureViewDimension = iota
+	TextureViewDimension2D
+	TextureViewDimension2DArray
+	TextureViewDimensionCube
+	TextureViewDimensionCubeArray
+	TextureViewDimension3D
+)
+
+// TextureViewDesc configures a view into a texture. Zero-valued fields are
+// omitted so existing CreateView behavior is preserved by CreateViewDesc({}).
+type TextureViewDesc struct {
+	Format          TextureFormat
+	Dimension       TextureViewDimension
+	BaseMipLevel    int
+	MipLevelCount   int
+	BaseArrayLayer  int
+	ArrayLayerCount int
+	Label           string
+}
+
 // Sampler is a texture sampling state object. Created once and reused across
 // bind groups.
 type Sampler interface {
@@ -311,6 +396,7 @@ type Texture interface {
 	Height() int
 	Format() TextureFormat
 	CreateView() TextureView
+	CreateViewDesc(TextureViewDesc) TextureView
 	// CreateLayerView returns a view bound to a single array layer of the
 	// texture. Required for rendering into one slice of a depth texture
 	// array (cascaded shadow maps). Non-array textures should return a
@@ -338,6 +424,7 @@ func (u TextureUsage) Has(bit TextureUsage) bool { return u&bit == bit }
 type TextureDesc struct {
 	Width, Height      int
 	DepthOrArrayLayers int // 0 or 1 = 2D single layer
+	Dimension          TextureDimension
 	Format             TextureFormat
 	Usage              TextureUsage
 	SampleCount        int // 0 or 1 = non-MSAA

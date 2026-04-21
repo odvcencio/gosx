@@ -17,6 +17,22 @@ const (
 	// Color, higher precision.
 	FormatRGBA16Float
 	FormatRGBA32Float
+	FormatRGB9E5Ufloat
+	FormatRGB10A2Unorm
+
+	// Color, compressed block formats.
+	FormatBC7RGBAUnorm
+	FormatBC7RGBAUnormSRGB
+	FormatASTC4x4Unorm
+	FormatASTC4x4UnormSRGB
+	FormatASTC6x6Unorm
+	FormatASTC6x6UnormSRGB
+	FormatASTC8x8Unorm
+	FormatASTC8x8UnormSRGB
+	FormatETC2RGB8Unorm
+	FormatETC2RGB8UnormSRGB
+	FormatETC2RGBA8Unorm
+	FormatETC2RGBA8UnormSRGB
 
 	// Depth / stencil.
 	FormatDepth16Unorm

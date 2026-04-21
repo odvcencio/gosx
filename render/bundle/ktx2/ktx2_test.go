@@ -10,8 +10,12 @@ import (
 
 // buildKTX2 generates a minimal valid KTX2 byte stream for testing the
 // parser. Everything past the level data is left empty — real KTX2 files
-// have DFDs + KVDs but the parser doesn't consume them in R3.
+// have DFDs + KVDs but the parser doesn't consume them here.
 func buildKTX2(vkFormat uint32, scheme uint32, width, height uint32, levelData [][]byte, uncompressedLengths []uint64) []byte {
+	return buildKTX2WithMetadata(vkFormat, scheme, width, height, 0, 0, 1, levelData, uncompressedLengths)
+}
+
+func buildKTX2WithMetadata(vkFormat uint32, scheme uint32, width, height, depth, layers, faces uint32, levelData [][]byte, uncompressedLengths []uint64) []byte {
 	var buf bytes.Buffer
 	buf.Write(identifier)
 
@@ -20,12 +24,12 @@ func buildKTX2(vkFormat uint32, scheme uint32, width, height uint32, levelData [
 	put32 := func(off int, v uint32) { binary.LittleEndian.PutUint32(h[off:], v) }
 	put64 := func(off int, v uint64) { binary.LittleEndian.PutUint64(h[off:], v) }
 	put32(0, vkFormat)
-	put32(4, 1)              // typeSize
-	put32(8, width)          // pixelWidth
-	put32(12, height)        // pixelHeight
-	put32(16, 0)             // pixelDepth
-	put32(20, 0)             // layerCount (0 = 1)
-	put32(24, 1)             // faceCount
+	put32(4, 1)       // typeSize
+	put32(8, width)   // pixelWidth
+	put32(12, height) // pixelHeight
+	put32(16, depth)  // pixelDepth (0 = 1)
+	put32(20, layers) // layerCount (0 = 1)
+	put32(24, faces)  // faceCount
 	put32(28, uint32(len(levelData)))
 	put32(32, scheme)
 	put32(36, 0) // dfdByteOffset
@@ -78,6 +82,9 @@ func TestParseUncompressedRGBA(t *testing.T) {
 	if img.Width != 2 || img.Height != 2 {
 		t.Errorf("dims: want 2x2, got %dx%d", img.Width, img.Height)
 	}
+	if img.Depth != 1 || img.Layers != 1 || img.Faces != 1 {
+		t.Errorf("metadata: want depth=1 layers=1 faces=1, got depth=%d layers=%d faces=%d", img.Depth, img.Layers, img.Faces)
+	}
 	if img.Format != VkFormatR8G8B8A8Unorm {
 		t.Errorf("format: want %d, got %d", VkFormatR8G8B8A8Unorm, img.Format)
 	}
@@ -86,6 +93,9 @@ func TestParseUncompressedRGBA(t *testing.T) {
 	}
 	if !bytes.Equal(img.Levels[0].Bytes, pixels) {
 		t.Errorf("level 0 bytes do not round-trip")
+	}
+	if got := img.Levels[0].RowPitch(img.Format); got != 8 {
+		t.Errorf("row pitch: want 8, got %d", got)
 	}
 }
 
@@ -133,12 +143,85 @@ func TestParseTruncated(t *testing.T) {
 // TestParseUnsupportedFormat raises ErrUnsupportedFormat rather than
 // silently passing through bytes the renderer doesn't know how to upload.
 func TestParseUnsupportedFormat(t *testing.T) {
-	const vkFormatASTC4x4 = 157
+	const vkFormatBC1RGBUnormBlock = 131
 	payload := make([]byte, 16)
-	ktx := buildKTX2(vkFormatASTC4x4, schemeNone, 4, 4, [][]byte{payload}, []uint64{16})
+	ktx := buildKTX2(vkFormatBC1RGBUnormBlock, schemeNone, 4, 4, [][]byte{payload}, []uint64{16})
 	_, err := Parse(ktx)
 	if !errors.Is(err, ErrUnsupportedFormat) {
 		t.Errorf("want ErrUnsupportedFormat, got %v", err)
+	}
+}
+
+func TestParsePreservesGeometryMetadata(t *testing.T) {
+	level0 := make([]byte, 4*4*4*2*6*4)
+	level1 := make([]byte, 2*2*2*2*6*4)
+	ktx := buildKTX2WithMetadata(VkFormatR8G8B8A8Unorm, schemeNone, 4, 4, 4, 2, 6,
+		[][]byte{level0, level1}, []uint64{uint64(len(level0)), uint64(len(level1))})
+
+	img, err := Parse(ktx)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if img.Width != 4 || img.Height != 4 || img.Depth != 4 || img.Layers != 2 || img.Faces != 6 {
+		t.Fatalf("image metadata: got %dx%dx%d layers=%d faces=%d", img.Width, img.Height, img.Depth, img.Layers, img.Faces)
+	}
+	if got := img.Levels[1]; got.Width != 2 || got.Height != 2 || got.Depth != 2 || got.Layers != 2 || got.Faces != 6 {
+		t.Fatalf("level 1 metadata: got %dx%dx%d layers=%d faces=%d", got.Width, got.Height, got.Depth, got.Layers, got.Faces)
+	}
+	if !bytes.Equal(img.Levels[0].Bytes, level0) || !bytes.Equal(img.Levels[1].Bytes, level1) {
+		t.Fatal("level payloads do not round-trip")
+	}
+}
+
+func TestCompressedPassThroughFormats(t *testing.T) {
+	tests := []struct {
+		name       string
+		format     int
+		width      uint32
+		height     uint32
+		payloadLen int
+		rowPitch   int
+		blocksX    int
+		blocksY    int
+	}{
+		{"BC7", VkFormatBC7UnormBlock, 8, 4, 32, 32, 2, 1},
+		{"ASTC4x4", VkFormatASTC4x4SRGBBlock, 4, 4, 16, 16, 1, 1},
+		{"ASTC6x6", VkFormatASTC6x6UnormBlock, 7, 6, 32, 32, 2, 1},
+		{"ASTC8x8", VkFormatASTC8x8SRGBBlock, 9, 9, 64, 32, 2, 2},
+		{"ETC2RGB", VkFormatETC2R8G8B8SRGBBlock, 5, 4, 16, 16, 2, 1},
+		{"ETC2RGBA8", VkFormatETC2R8G8B8A8UnormBlock, 5, 4, 32, 32, 2, 1},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if !IsSupportedFormat(tc.format) {
+				t.Fatalf("format %d should be supported", tc.format)
+			}
+			payload := make([]byte, tc.payloadLen)
+			for i := range payload {
+				payload[i] = byte(i)
+			}
+			ktx := buildKTX2(uint32(tc.format), schemeNone, tc.width, tc.height,
+				[][]byte{payload}, []uint64{uint64(len(payload))})
+
+			img, err := Parse(ktx)
+			if err != nil {
+				t.Fatalf("Parse: %v", err)
+			}
+			level := img.Levels[0]
+			if !bytes.Equal(level.Bytes, payload) {
+				t.Fatal("compressed bytes do not pass through")
+			}
+			if got := level.RowPitch(tc.format); got != tc.rowPitch {
+				t.Errorf("row pitch: want %d, got %d", tc.rowPitch, got)
+			}
+			if got := level.BlockColumns(tc.format); got != tc.blocksX {
+				t.Errorf("block columns: want %d, got %d", tc.blocksX, got)
+			}
+			if got := level.BlockRows(tc.format); got != tc.blocksY {
+				t.Errorf("block rows: want %d, got %d", tc.blocksY, got)
+			}
+		})
 	}
 }
 

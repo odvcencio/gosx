@@ -8,19 +8,19 @@
 //
 // # Scope today
 //
-// Supported in R3:
-//   - Uncompressed RGBA8 / sRGB formats (VkFormat 37, 43).
+// Supported:
+//   - Uncompressed RGBA8 / BGRA8, including sRGB variants.
+//   - Block-compressed pass-through formats: BC7, ASTC 4x4 / 6x6 / 8x8,
+//     and ETC2 RGB/RGBA8, including sRGB variants.
 //   - Zlib (DEFLATE) supercompression (scheme 3), via compress/zlib.
 //   - Arbitrary mip level counts.
-//   - Single-layer 2D textures.
+//   - 2D, 2D array, cubemap, cubemap-array, and 3D texture metadata.
 //
 // Explicitly unsupported (raised as ErrUnsupportedFormat):
 //   - Basis Universal supercompression (scheme 1) — a transcoder can be
 //     supplied via RegisterBasisTranscoder when/if a Basis Go port lands;
 //     the parser hands raw BasisLZ payloads to it unchanged.
 //   - Zstandard (scheme 2) — pure-Go zstd isn't in stdlib; bring-your-own.
-//   - Block-compressed formats (BC7, ASTC, ETC2) — R4/R5 work.
-//   - 3D, cubemap, array textures — R5 work.
 //
 // # Breakout contract
 //

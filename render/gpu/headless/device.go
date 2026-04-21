@@ -62,6 +62,20 @@ type Surface struct {
 
 func (d *Device) Queue() gpu.Queue                          { return d.queue }
 func (d *Device) PreferredSurfaceFormat() gpu.TextureFormat { return gpu.FormatRGBA8UnormSRGB }
+func (d *Device) SupportsTextureFormat(format gpu.TextureFormat) bool {
+	switch format {
+	case gpu.FormatRGBA8Unorm, gpu.FormatRGBA8UnormSRGB,
+		gpu.FormatBGRA8Unorm, gpu.FormatBGRA8UnormSRGB,
+		gpu.FormatRGBA16Float, gpu.FormatRGBA32Float,
+		gpu.FormatRGB9E5Ufloat, gpu.FormatRGB10A2Unorm,
+		gpu.FormatDepth16Unorm, gpu.FormatDepth24Plus,
+		gpu.FormatDepth24PlusStencil8, gpu.FormatDepth32Float,
+		gpu.FormatR32Uint:
+		return true
+	default:
+		return false
+	}
+}
 
 func (d *Device) CreateBuffer(desc gpu.BufferDesc) (gpu.Buffer, error) {
 	return &Buffer{size: desc.Size, usage: desc.Usage, label: desc.Label,
@@ -86,6 +100,10 @@ func (d *Device) CreateTexture(desc gpu.TextureDesc) (gpu.Texture, error) {
 		mips = 1
 	}
 	t := &Texture{width: w, height: h, layers: layers, format: desc.Format, mipLevels: mips}
+	t.dimension = desc.Dimension
+	if t.dimension == gpu.TextureDimensionUndefined {
+		t.dimension = gpu.TextureDimension2D
+	}
 	if bpp := bytesPerPixel(desc.Format); bpp > 0 {
 		t.mipData = make([][]byte, mips)
 		for level := 0; level < mips; level++ {
@@ -168,14 +186,18 @@ func (q *Queue) WriteTexture(t gpu.Texture, data []byte, bytesPerRow, width, hei
 }
 
 func (q *Queue) WriteTextureLevel(t gpu.Texture, mipLevel int, data []byte, bytesPerRow, width, height int) {
+	q.WriteTextureLevelLayer(t, mipLevel, 0, data, bytesPerRow, height, width, height)
+}
+
+func (q *Queue) WriteTextureLevelLayer(t gpu.Texture, mipLevel, layer int, data []byte, bytesPerRow, rowsPerImage, width, height int) {
 	tex, ok := t.(*Texture)
 	if !ok || tex == nil {
 		return
 	}
-	if bytesPerRow <= 0 || width <= 0 || height <= 0 || mipLevel < 0 || mipLevel >= tex.mipLevels {
+	if bytesPerRow <= 0 || rowsPerImage <= 0 || width <= 0 || height <= 0 || mipLevel < 0 || mipLevel >= tex.mipLevels || layer < 0 {
 		return
 	}
-	tex.lastWriteSize = bytesPerRow * height
+	tex.lastWriteSize = bytesPerRow * rowsPerImage
 	tex.lastWriteMipLevel = mipLevel
 	bpp := bytesPerPixel(tex.format)
 	if bpp == 0 {
@@ -185,9 +207,10 @@ func (q *Queue) WriteTextureLevel(t gpu.Texture, mipLevel int, data []byte, byte
 	dst := tex.levelData(mipLevel)
 	copyW := min(width, lw)
 	copyH := min(height, lh)
+	layer = textureLayer(tex, layer)
 	for y := 0; y < copyH; y++ {
 		srcOff := y * bytesPerRow
-		dstOff := y * lw * bpp
+		dstOff := ((layer*lh + y) * lw) * bpp
 		if srcOff >= len(data) || dstOff >= len(dst) {
 			continue
 		}
@@ -227,6 +250,7 @@ type Texture struct {
 	width, height     int
 	layers            int
 	mipLevels         int
+	dimension         gpu.TextureDimension
 	format            gpu.TextureFormat
 	lastWriteSize     int
 	lastWriteMipLevel int
@@ -241,8 +265,15 @@ func (t *Texture) Width() int                  { return t.width }
 func (t *Texture) Height() int                 { return t.height }
 func (t *Texture) Format() gpu.TextureFormat   { return t.format }
 func (t *Texture) CreateView() gpu.TextureView { return &TextureView{owner: t, layer: -1} }
+func (t *Texture) CreateViewDesc(desc gpu.TextureViewDesc) gpu.TextureView {
+	return &TextureView{owner: t, layer: textureViewLayer(desc), desc: desc}
+}
 func (t *Texture) CreateLayerView(layer int) gpu.TextureView {
-	return &TextureView{owner: t, layer: layer}
+	return t.CreateViewDesc(gpu.TextureViewDesc{
+		Dimension:       gpu.TextureViewDimension2D,
+		BaseArrayLayer:  layer,
+		ArrayLayerCount: 1,
+	})
 }
 func (t *Texture) Destroy() {}
 
@@ -275,7 +306,16 @@ func (t *Texture) levelRGBA(level int) []byte {
 type TextureView struct {
 	owner *Texture
 	layer int
+	desc  gpu.TextureViewDesc
 }
+
+func textureViewLayer(desc gpu.TextureViewDesc) int {
+	if desc.ArrayLayerCount == 1 {
+		return desc.BaseArrayLayer
+	}
+	return -1
+}
+
 type SurfaceView struct{ device *Device }
 
 type Sampler struct{}
@@ -421,7 +461,7 @@ func (r *RenderPassEncoder) SetVertexBuffer(slot int, b gpu.Buffer) {
 }
 func (r *RenderPassEncoder) SetIndexBuffer(gpu.Buffer, gpu.IndexFormat) {}
 func (r *RenderPassEncoder) Draw(vertexCount, instanceCount, firstVertex, firstInstance int) {
-	if r.desc.Label != "bundle.present" || r.bindGroup == nil {
+	if !isFullscreenCopyPass(r.desc.Label) || r.bindGroup == nil {
 		r.rasterizeDraw(vertexCount, instanceCount, firstVertex, firstInstance)
 		return
 	}
@@ -443,6 +483,10 @@ func (r *RenderPassEncoder) Draw(vertexCount, instanceCount, firstVertex, firstI
 			copyTextureToFramebuffer(src, r.device.framebuffer)
 			return
 		}
+		if view, ok := att.View.(*TextureView); ok && view.owner != nil && att.StoreOp != gpu.StoreOpDiscard {
+			copyTextureToTexture(src, view.owner)
+			return
+		}
 	}
 }
 func (r *RenderPassEncoder) DrawIndexed(int, int, int, int, int) {}
@@ -458,6 +502,15 @@ func (r *RenderPassEncoder) DrawIndirect(b gpu.Buffer, offset int) {
 	r.Draw(vertexCount, instanceCount, firstVertex, firstInstance)
 }
 func (r *RenderPassEncoder) End() {}
+
+func isFullscreenCopyPass(label string) bool {
+	switch label {
+	case "bundle.present", "bundle.present.compose", "bundle.fxaa311":
+		return true
+	default:
+		return false
+	}
+}
 
 type ComputePassEncoder struct {
 	pipeline   *ComputePipeline
@@ -546,6 +599,11 @@ func clearTexture(t *Texture, c gpu.Color) {
 			t.data[i+1] = g
 			t.data[i+2] = r
 			t.data[i+3] = a
+		}
+	case gpu.FormatRGB9E5Ufloat, gpu.FormatRGB10A2Unorm:
+		packed := packRGB10A2(r, g, b, a)
+		for i := 0; i+3 < len(t.data); i += bpp {
+			binary.LittleEndian.PutUint32(t.data[i:i+4], packed)
 		}
 	case gpu.FormatR32Uint:
 		v := uint32(math.Round(clampNonNegative(c.R)))
@@ -642,6 +700,25 @@ func copyTextureToFramebuffer(src *Texture, dst *image.RGBA) {
 	}
 }
 
+func copyTextureToTexture(src, dst *Texture) {
+	if src == nil || dst == nil || len(src.rgba) == 0 {
+		return
+	}
+	w := min(src.width, dst.width)
+	h := min(src.height, dst.height)
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			srcOff := (y*src.width + x) * 4
+			writeTextureRGBA(dst, -1, x, y, color.RGBA{
+				R: src.rgba[srcOff+0],
+				G: src.rgba[srcOff+1],
+				B: src.rgba[srcOff+2],
+				A: src.rgba[srcOff+3],
+			})
+		}
+	}
+}
+
 func textureLayer(t *Texture, layer int) int {
 	if t == nil || t.layers <= 1 || layer < 0 {
 		return 0
@@ -729,25 +806,26 @@ func runParticleUpdate(bg *BindGroup, maxInvocations int) {
 			particles, _ = entry.Buffer.(*Buffer)
 		}
 	}
-	if uniforms == nil || particles == nil || len(uniforms.data) < 64 {
+	if uniforms == nil || particles == nil || len(uniforms.data) < headlessParticleUniformSize {
 		return
 	}
 	dt := readFloat32(uniforms.data, 0)
 	tSeconds := readFloat32(uniforms.data, 4)
 	lifetime := readFloat32(uniforms.data, 8)
-	drag := readFloat32(uniforms.data, 12)
+	forceCount := int(readFloat32(uniforms.data, 12) + 0.5)
+	if forceCount < 0 {
+		forceCount = 0
+	}
+	if forceCount > headlessParticleMaxForces {
+		forceCount = headlessParticleMaxForces
+	}
 	emitter := [4]float32{
 		readFloat32(uniforms.data, 16),
 		readFloat32(uniforms.data, 20),
 		readFloat32(uniforms.data, 24),
 		readFloat32(uniforms.data, 28),
 	}
-	gravity := [3]float32{
-		readFloat32(uniforms.data, 32),
-		readFloat32(uniforms.data, 36),
-		readFloat32(uniforms.data, 40),
-	}
-	initialSpeed := readFloat32(uniforms.data, 48)
+	initialSpeed := readFloat32(uniforms.data, 32)
 	count := min(len(particles.data)/32, maxInvocations)
 	for i := 0; i < count; i++ {
 		off := i * 32
@@ -767,10 +845,28 @@ func runParticleUpdate(bg *BindGroup, maxInvocations int) {
 		if newAge >= vel[3] || vel[3] <= 0 {
 			pos, vel = respawnParticle(i, tSeconds, emitter, lifetime, initialSpeed)
 		} else {
+			acceleration := [3]float32{}
+			drag := float32(0)
+			for fi := 0; fi < forceCount; fi++ {
+				forceOff := headlessParticleUniformForceOffset + fi*headlessParticleForceStride
+				kind := int(readFloat32(uniforms.data, forceOff+0) + 0.5)
+				strength := readFloat32(uniforms.data, forceOff+4)
+				frequency := readFloat32(uniforms.data, forceOff+8)
+				vector := [3]float32{
+					readFloat32(uniforms.data, forceOff+16),
+					readFloat32(uniforms.data, forceOff+20),
+					readFloat32(uniforms.data, forceOff+24),
+				}
+				if kind == headlessParticleForceDrag {
+					drag += strength
+					continue
+				}
+				acceleration = addVec3(acceleration, headlessParticleForceAcceleration(kind, strength, frequency, vector, [3]float32{pos[0], pos[1], pos[2]}, tSeconds))
+			}
 			dragFactor := clamp01f(1 - drag*dt)
-			vel[0] = vel[0]*dragFactor + gravity[0]*dt
-			vel[1] = vel[1]*dragFactor + gravity[1]*dt
-			vel[2] = vel[2]*dragFactor + gravity[2]*dt
+			vel[0] = vel[0]*dragFactor + acceleration[0]*dt
+			vel[1] = vel[1]*dragFactor + acceleration[1]*dt
+			vel[2] = vel[2]*dragFactor + acceleration[2]*dt
 			pos[0] += vel[0] * dt
 			pos[1] += vel[1] * dt
 			pos[2] += vel[2] * dt
@@ -787,6 +883,94 @@ func runParticleUpdate(bg *BindGroup, maxInvocations int) {
 	}
 	particles.lastWriteOffset = 0
 	particles.lastWriteSize = count * 32
+}
+
+const (
+	headlessParticleMaxForces          = 8
+	headlessParticleForceStride        = 32
+	headlessParticleUniformForceOffset = 48
+	headlessParticleUniformSize        = headlessParticleUniformForceOffset + headlessParticleMaxForces*headlessParticleForceStride
+
+	headlessParticleForceGravity = 1
+	headlessParticleForceDrag    = 2
+	headlessParticleForceWind    = 3
+	headlessParticleForceAttract = 4
+	headlessParticleForceVortex  = 5
+	headlessParticleForceNoise   = 6
+)
+
+func headlessParticleForceAcceleration(kind int, strength, frequency float32, vector, pos [3]float32, tSeconds float32) [3]float32 {
+	switch kind {
+	case headlessParticleForceGravity:
+		return scaleVec3(vec3OrDefault(vector, [3]float32{0, -1, 0}), strength)
+	case headlessParticleForceWind:
+		return scaleVec3(vec3OrDefault(vector, [3]float32{1, 0, 0}), strength)
+	case headlessParticleForceAttract:
+		delta := subVec3(vector, pos)
+		if lengthVec3(delta) <= 0.0001 {
+			return [3]float32{}
+		}
+		return scaleVec3(normalizeVec3(delta), strength)
+	case headlessParticleForceVortex:
+		axis := normalizeVec3(vec3OrDefault(vector, [3]float32{0, 1, 0}))
+		radial := subVec3(pos, scaleVec3(axis, dotVec3(pos, axis)))
+		if lengthVec3(radial) <= 0.0001 {
+			return [3]float32{}
+		}
+		return scaleVec3(normalizeVec3(crossVec3(radial, axis)), strength)
+	case headlessParticleForceNoise:
+		if frequency == 0 {
+			frequency = 1
+		}
+		nx := float32(math.Sin(float64(pos[0]*frequency+tSeconds*1.3)) * math.Cos(float64(pos[2]*frequency+tSeconds*0.7)))
+		ny := float32(math.Sin(float64(pos[1]*frequency+tSeconds*0.9)) * math.Cos(float64(pos[0]*frequency+tSeconds*1.1)))
+		nz := float32(math.Sin(float64(pos[2]*frequency+tSeconds*1.7)) * math.Cos(float64(pos[1]*frequency+tSeconds*0.5)))
+		return scaleVec3([3]float32{nx, ny, nz}, strength)
+	}
+	return [3]float32{}
+}
+
+func vec3OrDefault(v, fallback [3]float32) [3]float32 {
+	if dotVec3(v, v) <= 0.00000001 {
+		return fallback
+	}
+	return v
+}
+
+func addVec3(a, b [3]float32) [3]float32 {
+	return [3]float32{a[0] + b[0], a[1] + b[1], a[2] + b[2]}
+}
+
+func subVec3(a, b [3]float32) [3]float32 {
+	return [3]float32{a[0] - b[0], a[1] - b[1], a[2] - b[2]}
+}
+
+func scaleVec3(v [3]float32, s float32) [3]float32 {
+	return [3]float32{v[0] * s, v[1] * s, v[2] * s}
+}
+
+func dotVec3(a, b [3]float32) float32 {
+	return a[0]*b[0] + a[1]*b[1] + a[2]*b[2]
+}
+
+func crossVec3(a, b [3]float32) [3]float32 {
+	return [3]float32{
+		a[1]*b[2] - a[2]*b[1],
+		a[2]*b[0] - a[0]*b[2],
+		a[0]*b[1] - a[1]*b[0],
+	}
+}
+
+func lengthVec3(v [3]float32) float32 {
+	return float32(math.Sqrt(float64(dotVec3(v, v))))
+}
+
+func normalizeVec3(v [3]float32) [3]float32 {
+	l := lengthVec3(v)
+	if l <= 0.000001 {
+		return [3]float32{}
+	}
+	return scaleVec3(v, 1/l)
 }
 
 func respawnParticle(i int, tSeconds float32, emitter [4]float32, lifetime, initialSpeed float32) ([4]float32, [4]float32) {
@@ -1885,6 +2069,8 @@ func readTextureRGBA(t *Texture, layer, x, y int) color.RGBA {
 		return color.RGBA{R: t.data[dataOff+0], G: t.data[dataOff+1], B: t.data[dataOff+2], A: t.data[dataOff+3]}
 	case gpu.FormatBGRA8Unorm, gpu.FormatBGRA8UnormSRGB:
 		return color.RGBA{R: t.data[dataOff+2], G: t.data[dataOff+1], B: t.data[dataOff+0], A: t.data[dataOff+3]}
+	case gpu.FormatRGB9E5Ufloat, gpu.FormatRGB10A2Unorm:
+		return unpackRGB10A2(binary.LittleEndian.Uint32(t.data[dataOff : dataOff+4]))
 	}
 	return color.RGBA{}
 }
@@ -1917,6 +2103,8 @@ func writeTextureRGBA(t *Texture, layer, x, y int, col color.RGBA) {
 		t.data[dataOff+1] = col.G
 		t.data[dataOff+2] = col.R
 		t.data[dataOff+3] = col.A
+	case gpu.FormatRGB9E5Ufloat, gpu.FormatRGB10A2Unorm:
+		binary.LittleEndian.PutUint32(t.data[dataOff:dataOff+4], packRGB10A2(col.R, col.G, col.B, col.A))
 	case gpu.FormatRGBA16Float:
 		vals := [4]uint16{
 			float32ToHalf(float32(col.R) / 255),
@@ -2046,6 +2234,23 @@ func clampByte(v float32) uint8 {
 	return uint8(v*255 + 0.5)
 }
 
+func packRGB10A2(r, g, b, a uint8) uint32 {
+	rr := uint32(r) * 1023 / 255
+	gg := uint32(g) * 1023 / 255
+	bb := uint32(b) * 1023 / 255
+	aa := uint32(a) * 3 / 255
+	return rr | (gg << 10) | (bb << 20) | (aa << 30)
+}
+
+func unpackRGB10A2(v uint32) color.RGBA {
+	return color.RGBA{
+		R: uint8((v & 0x3ff) * 255 / 1023),
+		G: uint8(((v >> 10) & 0x3ff) * 255 / 1023),
+		B: uint8(((v >> 20) & 0x3ff) * 255 / 1023),
+		A: uint8(((v >> 30) & 0x3) * 255 / 3),
+	}
+}
+
 func (t *Texture) refreshRGBA() {
 	t.refreshRGBALevel(0)
 }
@@ -2068,6 +2273,14 @@ func (t *Texture) refreshRGBALevel(level int) {
 			rgba[i+2] = data[i+0]
 			rgba[i+3] = data[i+3]
 		}
+	case gpu.FormatRGB9E5Ufloat, gpu.FormatRGB10A2Unorm:
+		for i := 0; i+3 < len(data) && i+3 < len(rgba); i += 4 {
+			col := unpackRGB10A2(binary.LittleEndian.Uint32(data[i : i+4]))
+			rgba[i+0] = col.R
+			rgba[i+1] = col.G
+			rgba[i+2] = col.B
+			rgba[i+3] = col.A
+		}
 	case gpu.FormatR32Uint:
 		for i := 0; i+3 < len(data) && i+3 < len(rgba); i += 4 {
 			v := data[i]
@@ -2083,6 +2296,7 @@ func bytesPerPixel(f gpu.TextureFormat) int {
 	switch f {
 	case gpu.FormatRGBA8Unorm, gpu.FormatRGBA8UnormSRGB,
 		gpu.FormatBGRA8Unorm, gpu.FormatBGRA8UnormSRGB,
+		gpu.FormatRGB9E5Ufloat, gpu.FormatRGB10A2Unorm,
 		gpu.FormatR32Uint, gpu.FormatDepth24Plus, gpu.FormatDepth32Float:
 		return 4
 	case gpu.FormatDepth16Unorm:

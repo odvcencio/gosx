@@ -8,7 +8,8 @@ import (
 // instead of issuing real GPU work. Tests assert on the recorded log to
 // verify the renderer's translation logic without needing a GPU backend.
 type fakeDevice struct {
-	format gpu.TextureFormat
+	format        gpu.TextureFormat
+	formatSupport map[gpu.TextureFormat]bool
 
 	buffers          []*fakeBuffer
 	textures         []*fakeTexture
@@ -31,6 +32,26 @@ func newFakeDevice() *fakeDevice {
 
 func (d *fakeDevice) Queue() gpu.Queue                          { return d.queue }
 func (d *fakeDevice) PreferredSurfaceFormat() gpu.TextureFormat { return d.format }
+func (d *fakeDevice) SupportsTextureFormat(format gpu.TextureFormat) bool {
+	if d.formatSupport != nil {
+		supported, ok := d.formatSupport[format]
+		if ok {
+			return supported
+		}
+	}
+	switch format {
+	case gpu.FormatRGBA8Unorm, gpu.FormatRGBA8UnormSRGB,
+		gpu.FormatBGRA8Unorm, gpu.FormatBGRA8UnormSRGB,
+		gpu.FormatRGBA16Float, gpu.FormatRGBA32Float,
+		gpu.FormatRGB10A2Unorm,
+		gpu.FormatDepth16Unorm, gpu.FormatDepth24Plus,
+		gpu.FormatDepth24PlusStencil8, gpu.FormatDepth32Float,
+		gpu.FormatR32Uint:
+		return true
+	default:
+		return false
+	}
+}
 
 func (d *fakeDevice) CreateBuffer(desc gpu.BufferDesc) (gpu.Buffer, error) {
 	b := &fakeBuffer{size: desc.Size, usage: desc.Usage, label: desc.Label}
@@ -111,13 +132,39 @@ func (q *fakeQueue) WriteBuffer(b gpu.Buffer, offset int, data []byte) {
 	})
 }
 
-func (q *fakeQueue) WriteTexture(gpu.Texture, []byte, int, int, int) {
-	q.textureWrites = append(q.textureWrites, textureWrite{mipLevel: 0})
+func (q *fakeQueue) WriteTexture(_ gpu.Texture, data []byte, bytesPerRow, width, height int) {
+	q.textureWrites = append(q.textureWrites, textureWrite{
+		mipLevel:     0,
+		bytes:        len(data),
+		bytesPerRow:  bytesPerRow,
+		rowsPerImage: height,
+		width:        width,
+		height:       height,
+	})
 	// Recorded only if tests need it; current tests assert via textures slice.
 }
 
-func (q *fakeQueue) WriteTextureLevel(_ gpu.Texture, mipLevel int, _ []byte, _ int, _ int, _ int) {
-	q.textureWrites = append(q.textureWrites, textureWrite{mipLevel: mipLevel})
+func (q *fakeQueue) WriteTextureLevel(_ gpu.Texture, mipLevel int, data []byte, bytesPerRow, width, height int) {
+	q.textureWrites = append(q.textureWrites, textureWrite{
+		mipLevel:     mipLevel,
+		bytes:        len(data),
+		bytesPerRow:  bytesPerRow,
+		rowsPerImage: height,
+		width:        width,
+		height:       height,
+	})
+}
+
+func (q *fakeQueue) WriteTextureLevelLayer(_ gpu.Texture, mipLevel, layer int, data []byte, bytesPerRow, rowsPerImage, width, height int) {
+	q.textureWrites = append(q.textureWrites, textureWrite{
+		mipLevel:     mipLevel,
+		layer:        layer,
+		bytes:        len(data),
+		bytesPerRow:  bytesPerRow,
+		rowsPerImage: rowsPerImage,
+		width:        width,
+		height:       height,
+	})
 }
 
 func (q *fakeQueue) Submit(cmds ...gpu.CommandBuffer) {
@@ -125,7 +172,13 @@ func (q *fakeQueue) Submit(cmds ...gpu.CommandBuffer) {
 }
 
 type textureWrite struct {
-	mipLevel int
+	mipLevel     int
+	layer        int
+	bytes        int
+	bytesPerRow  int
+	rowsPerImage int
+	width        int
+	height       int
 }
 
 // fakeBuffer is a zero-cost test Buffer.
@@ -244,7 +297,9 @@ func (p *fakeRenderPass) DrawIndirect(gpu.Buffer, int) {
 func (p *fakeRenderPass) End() { p.ended = true }
 
 type fakeCommandBuffer struct{}
-type fakeTextureView struct{}
+type fakeTextureView struct {
+	desc gpu.TextureViewDesc
+}
 
 type fakeTexture struct {
 	desc gpu.TextureDesc
@@ -256,8 +311,15 @@ func (t *fakeTexture) Format() gpu.TextureFormat { return t.desc.Format }
 func (t *fakeTexture) CreateView() gpu.TextureView {
 	return &fakeTextureView{}
 }
-func (t *fakeTexture) CreateLayerView(int) gpu.TextureView {
-	return &fakeTextureView{}
+func (t *fakeTexture) CreateViewDesc(desc gpu.TextureViewDesc) gpu.TextureView {
+	return &fakeTextureView{desc: desc}
+}
+func (t *fakeTexture) CreateLayerView(layer int) gpu.TextureView {
+	return t.CreateViewDesc(gpu.TextureViewDesc{
+		Dimension:       gpu.TextureViewDimension2D,
+		BaseArrayLayer:  layer,
+		ArrayLayerCount: 1,
+	})
 }
 func (t *fakeTexture) Destroy() {}
 

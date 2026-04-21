@@ -27,27 +27,48 @@ const (
 	VkFormatR8G8B8A8SRGB  = 43
 	VkFormatB8G8R8A8Unorm = 44
 	VkFormatB8G8R8A8SRGB  = 50
+
+	VkFormatBC7UnormBlock = 145
+	VkFormatBC7SRGBBlock  = 146
+
+	VkFormatETC2R8G8B8UnormBlock   = 147
+	VkFormatETC2R8G8B8SRGBBlock    = 148
+	VkFormatETC2R8G8B8A8UnormBlock = 151
+	VkFormatETC2R8G8B8A8SRGBBlock  = 152
+
+	VkFormatASTC4x4UnormBlock = 157
+	VkFormatASTC4x4SRGBBlock  = 158
+	VkFormatASTC6x6UnormBlock = 165
+	VkFormatASTC6x6SRGBBlock  = 166
+	VkFormatASTC8x8UnormBlock = 171
+	VkFormatASTC8x8SRGBBlock  = 172
 )
 
 // Errors the parser can return.
 var (
-	ErrInvalidIdentifier   = errors.New("ktx2: invalid file identifier")
-	ErrTruncated           = errors.New("ktx2: data truncated")
-	ErrUnsupportedFormat   = errors.New("ktx2: unsupported VkFormat")
-	ErrUnsupportedScheme   = errors.New("ktx2: unsupported supercompression scheme")
+	ErrInvalidIdentifier = errors.New("ktx2: invalid file identifier")
+	ErrTruncated         = errors.New("ktx2: data truncated")
+	ErrUnsupportedFormat = errors.New("ktx2: unsupported VkFormat")
+	ErrUnsupportedScheme = errors.New("ktx2: unsupported supercompression scheme")
+	// ErrUnsupportedGeometry is retained for callers that match older
+	// parser errors. Parse now preserves KTX2 layer/face/depth metadata.
 	ErrUnsupportedGeometry = errors.New("ktx2: unsupported geometry (layers/faces/depth)")
 )
 
 // Image is a parsed KTX2 asset ready for GPU upload. Levels are ordered
-// from highest (level 0 = full size) to lowest (smallest mip). All bytes
-// are the uncompressed pixel payload in the VkFormat reported by Format.
+// from highest (level 0 = full size) to lowest (smallest mip). Level bytes
+// are ready-to-upload payloads in the VkFormat reported by Format.
 type Image struct {
 	// Format is the KTX2 VkFormat value — map to gpu.TextureFormat at
 	// upload time via FormatToGPU.
 	Format int
 
 	// Width, Height are the dimensions of mip level 0 in pixels.
-	Width, Height int
+	Width, Height, Depth int
+
+	// Layers and Faces are normalized KTX2 metadata counts. A KTX2
+	// layerCount or pixelDepth of 0 is reported as 1 here.
+	Layers, Faces int
 
 	// Levels holds per-mip pixel data. len(Levels) == original KTX2
 	// levelCount; levels are pre-decompressed if a supercompression
@@ -55,10 +76,20 @@ type Image struct {
 	Levels []Level
 }
 
-// Level describes one mip level's uncompressed pixel bytes + dimensions.
+// Level describes one mip level's ready-to-upload bytes + dimensions.
 type Level struct {
+	Width, Height, Depth int
+	Layers, Faces        int
+	Bytes                []byte
+}
+
+// BlockInfo describes how a VkFormat is arranged for upload. For
+// uncompressed formats, block dimensions are 1x1 and BytesPerBlock is the
+// per-pixel stride.
+type BlockInfo struct {
 	Width, Height int
-	Bytes         []byte
+	BytesPerBlock int
+	Compressed    bool
 }
 
 // BasisTranscoder decodes a BasisLZ payload into uncompressed pixels for
@@ -87,13 +118,12 @@ func Parse(data []byte) (*Image, error) {
 	}
 
 	h := parseHeader(data[12:80])
-	if h.faceCount > 1 || h.layerCount > 1 || h.pixelDepth > 1 {
-		return nil, fmt.Errorf("%w: faces=%d layers=%d depth=%d",
-			ErrUnsupportedGeometry, h.faceCount, h.layerCount, h.pixelDepth)
-	}
 	if h.levelCount == 0 {
 		h.levelCount = 1
 	}
+	baseDepth := normalizedCount(h.pixelDepth)
+	layers := normalizedCount(h.layerCount)
+	faces := normalizedCount(h.faceCount)
 
 	// Level index: 24 bytes per level, starting at byte 80.
 	indexStart := 80
@@ -115,12 +145,16 @@ func Parse(data []byte) (*Image, error) {
 		Format: int(h.vkFormat),
 		Width:  int(h.pixelWidth),
 		Height: int(h.pixelHeight),
+		Depth:  baseDepth,
+		Layers: layers,
+		Faces:  faces,
 		Levels: make([]Level, h.levelCount),
 	}
 
 	for i, entry := range levels {
 		lvlWidth := max1(int(h.pixelWidth) >> i)
 		lvlHeight := max1(int(h.pixelHeight) >> i)
+		lvlDepth := max1(baseDepth >> i)
 
 		if uint64(len(data)) < entry.byteOffset+entry.byteLength {
 			return nil, fmt.Errorf("%w: level %d data out of range", ErrTruncated, i)
@@ -134,6 +168,9 @@ func Parse(data []byte) (*Image, error) {
 		img.Levels[i] = Level{
 			Width:  lvlWidth,
 			Height: lvlHeight,
+			Depth:  lvlDepth,
+			Layers: layers,
+			Faces:  faces,
 			Bytes:  decoded,
 		}
 	}
@@ -153,31 +190,83 @@ func BytesPerPixel(vkFormat int) int {
 }
 
 // IsSupportedFormat reports whether the parser returns ready-to-upload
-// pixel bytes for the given VkFormat. Formats that require transcoding
-// (Basis, BC7, ASTC) currently report false even when a transcoder is
-// registered — clients route those through the transcoder directly.
+// bytes for the given VkFormat without format transcoding.
 func IsSupportedFormat(vkFormat int) bool {
-	return BytesPerPixel(vkFormat) > 0
+	_, ok := FormatBlockInfo(vkFormat)
+	return ok
+}
+
+// FormatBlockInfo reports the upload block geometry for supported
+// uncompressed and block-compressed pass-through formats.
+func FormatBlockInfo(vkFormat int) (BlockInfo, bool) {
+	if bpp := BytesPerPixel(vkFormat); bpp > 0 {
+		return BlockInfo{Width: 1, Height: 1, BytesPerBlock: bpp}, true
+	}
+
+	switch vkFormat {
+	case VkFormatBC7UnormBlock, VkFormatBC7SRGBBlock,
+		VkFormatETC2R8G8B8A8UnormBlock, VkFormatETC2R8G8B8A8SRGBBlock,
+		VkFormatASTC4x4UnormBlock, VkFormatASTC4x4SRGBBlock:
+		return BlockInfo{Width: 4, Height: 4, BytesPerBlock: 16, Compressed: true}, true
+
+	case VkFormatETC2R8G8B8UnormBlock, VkFormatETC2R8G8B8SRGBBlock:
+		return BlockInfo{Width: 4, Height: 4, BytesPerBlock: 8, Compressed: true}, true
+
+	case VkFormatASTC6x6UnormBlock, VkFormatASTC6x6SRGBBlock:
+		return BlockInfo{Width: 6, Height: 6, BytesPerBlock: 16, Compressed: true}, true
+
+	case VkFormatASTC8x8UnormBlock, VkFormatASTC8x8SRGBBlock:
+		return BlockInfo{Width: 8, Height: 8, BytesPerBlock: 16, Compressed: true}, true
+	}
+	return BlockInfo{}, false
+}
+
+// RowPitch returns the number of bytes in one row of texel blocks for
+// this level and format. It returns 0 for unknown formats.
+func (l Level) RowPitch(vkFormat int) int {
+	info, ok := FormatBlockInfo(vkFormat)
+	if !ok {
+		return 0
+	}
+	return divCeil(l.Width, info.Width) * info.BytesPerBlock
+}
+
+// BlockColumns returns the number of texel blocks across this level.
+func (l Level) BlockColumns(vkFormat int) int {
+	info, ok := FormatBlockInfo(vkFormat)
+	if !ok {
+		return 0
+	}
+	return divCeil(l.Width, info.Width)
+}
+
+// BlockRows returns the number of texel blocks down this level.
+func (l Level) BlockRows(vkFormat int) int {
+	info, ok := FormatBlockInfo(vkFormat)
+	if !ok {
+		return 0
+	}
+	return divCeil(l.Height, info.Height)
 }
 
 // --- internal ---
 
 type header struct {
-	vkFormat                uint32
-	typeSize                uint32
-	pixelWidth              uint32
-	pixelHeight             uint32
-	pixelDepth              uint32
-	layerCount              uint32
-	faceCount               uint32
-	levelCount              uint32
-	supercompressionScheme  uint32
-	dfdByteOffset           uint32
-	dfdByteLength           uint32
-	kvdByteOffset           uint32
-	kvdByteLength           uint32
-	sgdByteOffset           uint64
-	sgdByteLength           uint64
+	vkFormat               uint32
+	typeSize               uint32
+	pixelWidth             uint32
+	pixelHeight            uint32
+	pixelDepth             uint32
+	layerCount             uint32
+	faceCount              uint32
+	levelCount             uint32
+	supercompressionScheme uint32
+	dfdByteOffset          uint32
+	dfdByteLength          uint32
+	kvdByteOffset          uint32
+	kvdByteLength          uint32
+	sgdByteOffset          uint64
+	sgdByteLength          uint64
 }
 
 func parseHeader(b []byte) header {
@@ -250,4 +339,15 @@ func max1(v int) int {
 		return 1
 	}
 	return v
+}
+
+func normalizedCount(v uint32) int {
+	return max1(int(v))
+}
+
+func divCeil(n, d int) int {
+	if d <= 0 {
+		return 0
+	}
+	return (n + d - 1) / d
 }

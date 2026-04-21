@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/odvcencio/gosx/engine"
+	"github.com/odvcencio/gosx/render/gpu"
 )
 
 func TestMaterialBindGroupIncludesNormalMap(t *testing.T) {
@@ -60,5 +61,46 @@ func TestMaterialUniformFlagsNormalMap(t *testing.T) {
 	want := float32sToBytes([]float32{1, 1, 0, 0})
 	if string(got) != string(want) {
 		t.Fatalf("textureParams bytes = %v, want %v", got, want)
+	}
+}
+
+func TestEnvironmentMapRebuildsLitBindGroupWithCubeView(t *testing.T) {
+	d := newFakeDevice()
+	r, err := New(Config{Device: d, Surface: fakeSurface{}})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer r.Destroy()
+
+	if err := r.ensureEnvironmentBindGroups(engine.RenderEnvironment{
+		EnvMap:       "/env/studio.ktx2",
+		EnvIntensity: 1.25,
+		EnvRotation:  0.5,
+	}); err != nil {
+		t.Fatalf("ensureEnvironmentBindGroups: %v", err)
+	}
+
+	bg := r.litBindGrp.(*fakeBindGroup)
+	if len(bg.desc.Entries) != 5 {
+		t.Fatalf("lit bind group entries = %d, want 5", len(bg.desc.Entries))
+	}
+	view := bg.desc.Entries[3].TextureView.(*fakeTextureView)
+	if view.desc.Dimension != gpu.TextureViewDimensionCube {
+		t.Fatalf("environment view dimension = %v, want cube", view.desc.Dimension)
+	}
+}
+
+func TestEnvironmentParamsEncodeCubemapControls(t *testing.T) {
+	got := environmentParams(engine.RenderEnvironment{
+		EnvMap:       "studio.ktx2",
+		EnvIntensity: 1.25,
+		EnvRotation:  0.5,
+	})
+	want := [4]float32{1.25, 0.5, 1, 0}
+	if got != want {
+		t.Fatalf("environment params = %#v, want %#v", got, want)
+	}
+	if empty := environmentParams(engine.RenderEnvironment{}); empty != ([4]float32{}) {
+		t.Fatalf("empty environment params = %#v, want zero", empty)
 	}
 }

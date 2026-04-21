@@ -29,13 +29,17 @@ type Renderer struct {
 	depthFormat   gpu.TextureFormat
 
 	// Pipelines created once and reused across frames.
-	unlitPipeline     gpu.RenderPipeline
-	unlitBGLayout     gpu.BindGroupLayout
-	litPipeline       gpu.RenderPipeline
-	litBGLayout       gpu.BindGroupLayout
-	litMaterialLayout gpu.BindGroupLayout
-	shadowPipeline    gpu.RenderPipeline
-	shadowBGLayout    gpu.BindGroupLayout
+	unlitPipeline            gpu.RenderPipeline
+	unlitBGLayout            gpu.BindGroupLayout
+	litPipeline              gpu.RenderPipeline
+	litBGLayout              gpu.BindGroupLayout
+	litMaterialLayout        gpu.BindGroupLayout
+	skinnedLitPipeline       gpu.RenderPipeline
+	skinnedLitBGLayout       gpu.BindGroupLayout
+	skinnedLitMaterialLayout gpu.BindGroupLayout
+	skinnedPaletteLayout     gpu.BindGroupLayout
+	shadowPipeline           gpu.RenderPipeline
+	shadowBGLayout           gpu.BindGroupLayout
 
 	// Scene uniforms (viewProj + 3 lightViewProjs + camera + light + env).
 	sceneUniformBuf gpu.Buffer
@@ -45,8 +49,9 @@ type Renderer struct {
 	shadowBindGrps    [cascadeCount]gpu.BindGroup
 
 	// Per-pipeline bind groups.
-	unlitBindGrp gpu.BindGroup
-	litBindGrp   gpu.BindGroup
+	unlitBindGrp      gpu.BindGroup
+	litBindGrp        gpu.BindGroup
+	skinnedLitBindGrp gpu.BindGroup
 
 	// Main-pass depth attachment, resized lazily to surface.
 	depthTex    gpu.Texture
@@ -66,7 +71,9 @@ type Renderer struct {
 	// used for shadows; this one does anisotropic color lookup).
 	materialSampler gpu.Sampler
 	// 1x1 white fallback texture bound when a material has no Texture URL.
-	fallbackTexture *textureResources
+	fallbackTexture     *textureResources
+	fallbackCubeTexture *textureResources
+	envBindGroupKey     string
 
 	// GPU-driven culling pipeline + layout. Per-mesh resources live in
 	// cullCache.
@@ -79,10 +86,18 @@ type Renderer struct {
 	presentBGLayout gpu.BindGroupLayout
 	presentBindGrp  gpu.BindGroup
 	presentSampler  gpu.Sampler
+	fxaaPipeline    gpu.RenderPipeline
+	fxaaBGLayout    gpu.BindGroupLayout
+	fxaaBindGrp     gpu.BindGroup
+	hdrFormat       gpu.TextureFormat
 	hdrTex          gpu.Texture
 	hdrView         gpu.TextureView
 	hdrWidth        int
 	hdrHeight       int
+	postFXTex       gpu.Texture
+	postFXView      gpu.TextureView
+	postFXWidth     int
+	postFXHeight    int
 
 	// R4 GPU picking: per-pixel object ID as a second color attachment on
 	// the main pass + the async readback state that ties QueuePick to the
@@ -108,16 +123,19 @@ type Renderer struct {
 	// Tracks the previous frame's time for particle dt integration.
 	lastFrameTime float64
 
-	// R5 frame stats + device-lost state. Populated on every Frame call.
+	// Frame stats + device-lost state. Populated on every Frame call.
 	stats frameStatsRecorder
 
 	// Caches keyed by identity strings, reused across frames.
-	passCache      map[string]*passResources
-	primitiveCache map[string]*primitiveResources
-	materialCache  map[materialFingerprint]*materialResources
-	textureCache   map[string]*textureResources
-	cullCache      map[string]*cullResources
-	particleCache  map[string]*particleResources
+	passCache          map[string]*passResources
+	primitiveCache     map[string]*primitiveResources
+	materialCache      map[materialFingerprint]*materialResources
+	textureCache       map[string]*textureResources
+	cullCache          map[string]*cullResources
+	particleCache      map[string]*particleResources
+	skinCache          map[string]*skinResources
+	bonePalettes       map[string]*BonePalette
+	defaultBonePalette *BonePalette
 
 	// Reusable per-instance transform buffer. Grows one-way to fit the
 	// largest instance count seen. R2 uses a single buffer since instanced
@@ -143,12 +161,23 @@ type primitiveResources struct {
 	vertexCount int
 }
 
+type skinResources struct {
+	joints   gpu.Buffer
+	weights  gpu.Buffer
+	bindPose gpu.Buffer
+}
+
 // Config configures a Renderer.
 type Config struct {
 	// Device is the GPU device to draw on. Required.
 	Device gpu.Device
 	// Surface is the render surface (typically a canvas). Required.
 	Surface gpu.Surface
+	// HDRFormat overrides automatic HDR intermediate selection when set.
+	HDRFormat gpu.TextureFormat
+	// HDRMemoryBudgetBytes controls automatic HDR format selection. Zero uses
+	// the renderer default budget.
+	HDRMemoryBudgetBytes int
 }
 
 // New constructs a Renderer, building all pipelines, uniform buffers, and the
@@ -160,17 +189,26 @@ func New(cfg Config) (*Renderer, error) {
 	if cfg.Surface == nil {
 		return nil, errors.New("bundle.New: surface is required")
 	}
+	hdrFormat := cfg.HDRFormat
+	if hdrFormat == gpu.FormatUndefined {
+		hdrFormat = selectHDRFormat(cfg.Device, cfg.HDRMemoryBudgetBytes)
+	} else if !gpu.TextureFormatSupported(cfg.Device, hdrFormat) {
+		return nil, fmt.Errorf("bundle.New: HDR format %v is not supported by device", hdrFormat)
+	}
 	r := &Renderer{
 		device:         cfg.Device,
 		surface:        cfg.Surface,
 		surfaceFormat:  cfg.Device.PreferredSurfaceFormat(),
 		depthFormat:    gpu.FormatDepth24Plus,
+		hdrFormat:      hdrFormat,
 		passCache:      make(map[string]*passResources),
 		primitiveCache: make(map[string]*primitiveResources),
 		materialCache:  make(map[materialFingerprint]*materialResources),
 		textureCache:   make(map[string]*textureResources),
 		cullCache:      make(map[string]*cullResources),
 		particleCache:  make(map[string]*particleResources),
+		skinCache:      make(map[string]*skinResources),
+		bonePalettes:   make(map[string]*BonePalette),
 	}
 	if err := r.buildUniformBuffers(); err != nil {
 		return nil, err
@@ -190,6 +228,12 @@ func New(cfg Config) (*Renderer, error) {
 	if err := r.buildLitPipeline(); err != nil {
 		return nil, err
 	}
+	if err := r.buildSkinnedLitPipeline(); err != nil {
+		return nil, err
+	}
+	if err := r.buildDefaultBonePalette(); err != nil {
+		return nil, err
+	}
 	if err := r.buildShadowPipeline(); err != nil {
 		return nil, err
 	}
@@ -200,6 +244,9 @@ func New(cfg Config) (*Renderer, error) {
 		return nil, err
 	}
 	if err := r.buildPresentPipeline(); err != nil {
+		return nil, err
+	}
+	if err := r.buildFXAAPipeline(); err != nil {
 		return nil, err
 	}
 	if err := r.buildBloomPipelines(); err != nil {
@@ -240,6 +287,12 @@ func (r *Renderer) Destroy() {
 		if m != nil && m.buf != nil {
 			m.buf.Destroy()
 		}
+		if m != nil && m.bindGroup != nil {
+			m.bindGroup.Destroy()
+		}
+		if m != nil && m.skinnedBindGroup != nil {
+			m.skinnedBindGroup.Destroy()
+		}
 	}
 	r.materialCache = nil
 	for _, tx := range r.textureCache {
@@ -259,6 +312,10 @@ func (r *Renderer) Destroy() {
 		r.hdrTex.Destroy()
 		r.hdrTex = nil
 	}
+	if r.postFXTex != nil {
+		r.postFXTex.Destroy()
+		r.postFXTex = nil
+	}
 	if r.idBufferTex != nil {
 		r.idBufferTex.Destroy()
 		r.idBufferTex = nil
@@ -276,10 +333,21 @@ func (r *Renderer) Destroy() {
 	if r.presentPipeline != nil {
 		r.presentPipeline.Destroy()
 	}
+	if r.fxaaPipeline != nil {
+		r.fxaaPipeline.Destroy()
+	}
 	for _, p := range r.particleCache {
 		destroyParticleResources(p)
 	}
 	r.particleCache = nil
+	for _, s := range r.skinCache {
+		destroySkinResources(s)
+	}
+	r.skinCache = nil
+	if r.defaultBonePalette != nil {
+		r.DestroyBonePalette(r.defaultBonePalette)
+		r.defaultBonePalette = nil
+	}
 	if r.particleUpdatePipeline != nil {
 		r.particleUpdatePipeline.Destroy()
 	}
@@ -289,6 +357,10 @@ func (r *Renderer) Destroy() {
 	if r.fallbackTexture != nil && r.fallbackTexture.tex != nil {
 		r.fallbackTexture.tex.Destroy()
 		r.fallbackTexture = nil
+	}
+	if r.fallbackCubeTexture != nil && r.fallbackCubeTexture.tex != nil {
+		r.fallbackCubeTexture.tex.Destroy()
+		r.fallbackCubeTexture = nil
 	}
 	if r.instanceBuf != nil {
 		r.instanceBuf.Destroy()
@@ -315,6 +387,9 @@ func (r *Renderer) Destroy() {
 	}
 	if r.litPipeline != nil {
 		r.litPipeline.Destroy()
+	}
+	if r.skinnedLitPipeline != nil {
+		r.skinnedLitPipeline.Destroy()
 	}
 	if r.shadowPipeline != nil {
 		r.shadowPipeline.Destroy()
@@ -362,6 +437,7 @@ func (r *Renderer) Frame(b engine.RenderBundle, width, height int, timeSeconds f
 		skyColor:       skyColor,
 		groundColor:    groundColor,
 		cascadeSplits:  cascades.farSplits,
+		envParams:      environmentParams(b.Environment),
 	}))
 	for i := 0; i < cascadeCount; i++ {
 		r.device.Queue().WriteBuffer(r.shadowUniformBufs[i], 0, float32sToBytes(cascades.viewProjs[i][:]))
@@ -414,6 +490,12 @@ func (r *Renderer) Frame(b engine.RenderBundle, width, height int, timeSeconds f
 		return err
 	}
 	r.configureBloom(bloom)
+	if err := r.ensurePostFX(width, height); err != nil {
+		return err
+	}
+	if err := r.ensureEnvironmentBindGroups(b.Environment); err != nil {
+		return err
+	}
 
 	// 3) Main pass — lit scene rendered to the HDR intermediate with depth,
 	// plus the GPU picking id buffer as a second color attachment.
@@ -480,7 +562,7 @@ func (r *Renderer) Frame(b engine.RenderBundle, width, height int, timeSeconds f
 		mainPass.SetPipeline(r.litPipeline)
 		mainPass.SetBindGroup(0, r.litBindGrp)
 		for i, im := range b.InstancedMeshes {
-			if im.InstanceCount <= 0 || len(im.Transforms) == 0 {
+			if isSkinnedMesh(im) || im.InstanceCount <= 0 || len(im.Transforms) == 0 {
 				continue
 			}
 			prim, err := r.ensurePrimitive(im.Kind)
@@ -496,7 +578,49 @@ func (r *Renderer) Frame(b engine.RenderBundle, width, height int, timeSeconds f
 			mainPass.SetVertexBuffer(1, prim.colors)
 			mainPass.SetVertexBuffer(2, prim.normals)
 			mainPass.SetVertexBuffer(3, prim.uvs)
-			// Instance data is the cull pass's compacted output.
+			cull, _ := r.cullCache[instancedMeshKey(i, im)]
+			if cull != nil {
+				mainPass.SetVertexBuffer(4, cull.outputBuf)
+				mainPass.DrawIndirect(cull.drawArgsBuf, 0)
+			} else {
+				mainPass.SetVertexBuffer(4, r.instanceBuf)
+				mainPass.Draw(prim.vertexCount, im.InstanceCount, 0, 0)
+			}
+		}
+
+		mainPass.SetPipeline(r.skinnedLitPipeline)
+		mainPass.SetBindGroup(0, r.skinnedLitBindGrp)
+		for i, im := range b.InstancedMeshes {
+			if !isSkinnedMesh(im) || im.InstanceCount <= 0 || len(im.Transforms) == 0 {
+				continue
+			}
+			prim, err := r.ensurePrimitive(im.Kind)
+			if err != nil {
+				mainPass.End()
+				return err
+			}
+			if prim == nil || prim.vertexCount == 0 {
+				continue
+			}
+			skin, err := r.ensureSkinBuffers(instancedMeshKey(i, im), prim.vertexCount, im)
+			if err != nil {
+				mainPass.End()
+				return err
+			}
+			palette := r.bonePaletteForMesh(im)
+			if palette == nil || palette.bindGroup == nil {
+				mainPass.End()
+				return fmt.Errorf("bundle.Frame: skinned mesh %q has no bone palette", im.ID)
+			}
+			mainPass.SetBindGroup(1, materials[i].skinnedBindGroup)
+			mainPass.SetBindGroup(2, palette.bindGroup)
+			mainPass.SetVertexBuffer(0, prim.positions)
+			mainPass.SetVertexBuffer(1, prim.colors)
+			mainPass.SetVertexBuffer(2, prim.normals)
+			mainPass.SetVertexBuffer(3, prim.uvs)
+			mainPass.SetVertexBuffer(5, skin.joints)
+			mainPass.SetVertexBuffer(6, skin.weights)
+			mainPass.SetVertexBuffer(7, skin.bindPose)
 			cull, _ := r.cullCache[instancedMeshKey(i, im)]
 			if cull != nil {
 				mainPass.SetVertexBuffer(4, cull.outputBuf)
@@ -528,12 +652,15 @@ func (r *Renderer) Frame(b engine.RenderBundle, width, height int, timeSeconds f
 		r.recordBloomPasses(enc)
 	}
 
-	// 5) Present pass — HDR + optional bloom → ACES tone map → swap chain.
+	// 5) Present compose — HDR + optional bloom → ACES tone map → LDR post-FX.
+	r.recordPresentPass(enc)
+
+	// 6) Dedicated FXAA 3.11 pass — final LDR image → swap chain.
 	surfaceView, err := r.device.AcquireSurfaceView(r.surface)
 	if err != nil {
 		return fmt.Errorf("bundle.Frame: acquire surface view: %w", err)
 	}
-	r.recordPresentPass(enc, surfaceView)
+	r.recordFXAAPass(enc, surfaceView)
 
 	r.device.Queue().Submit(enc.Finish())
 
@@ -751,6 +878,100 @@ func (r *Renderer) uploadVertexBuffer(data []float32, label string) (gpu.Buffer,
 	return buf, nil
 }
 
+func (r *Renderer) uploadVertexBytes(data []byte, label string) (gpu.Buffer, error) {
+	buf, err := r.device.CreateBuffer(gpu.BufferDesc{
+		Size:  len(data),
+		Usage: gpu.BufferUsageVertex | gpu.BufferUsageCopyDst,
+		Label: label,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("bundle: create %s: %w", label, err)
+	}
+	r.device.Queue().WriteBuffer(buf, 0, data)
+	return buf, nil
+}
+
+func isSkinnedMesh(im engine.RenderInstancedMesh) bool {
+	return im.SkinID != "" || len(im.JointIndices) > 0 || len(im.Weights) > 0 || len(im.BindPose) > 0
+}
+
+func (r *Renderer) ensureSkinBuffers(key string, vertexCount int, im engine.RenderInstancedMesh) (*skinResources, error) {
+	if res, ok := r.skinCache[key]; ok {
+		return res, nil
+	}
+	joints, err := r.uploadVertexBytes(skinJointBytes(im.JointIndices, vertexCount), "bundle.skin.joints:"+key)
+	if err != nil {
+		return nil, err
+	}
+	weights, err := r.uploadVertexBytes(skinWeightBytes(im.Weights, vertexCount), "bundle.skin.weights:"+key)
+	if err != nil {
+		joints.Destroy()
+		return nil, err
+	}
+	bindPose, err := r.uploadVertexBytes(skinBindPoseBytes(im.BindPose, vertexCount), "bundle.skin.bindpose:"+key)
+	if err != nil {
+		joints.Destroy()
+		weights.Destroy()
+		return nil, err
+	}
+	res := &skinResources{joints: joints, weights: weights, bindPose: bindPose}
+	r.skinCache[key] = res
+	return res, nil
+}
+
+func skinJointBytes(src []uint32, vertexCount int) []byte {
+	out := make([]byte, vertexCount*16)
+	needed := min(len(src), vertexCount*4)
+	for i := 0; i < needed; i++ {
+		putUint32LE(out[i*4:i*4+4], src[i])
+	}
+	return out
+}
+
+func skinWeightBytes(src []float64, vertexCount int) []byte {
+	values := make([]float32, vertexCount*4)
+	if len(src) == 0 {
+		for i := 0; i < vertexCount; i++ {
+			values[i*4] = 1
+		}
+	} else {
+		needed := min(len(src), vertexCount*4)
+		for i := 0; i < needed; i++ {
+			values[i] = float32(src[i])
+		}
+	}
+	return float32sToBytes(values)
+}
+
+func skinBindPoseBytes(src []float64, vertexCount int) []byte {
+	if len(src) > 0 {
+		values := make([]float32, vertexCount*16)
+		needed := min(len(src), vertexCount*16)
+		for i := 0; i < needed; i++ {
+			values[i] = float32(src[i])
+		}
+		return float32sToBytes(values)
+	}
+	values := make([]float32, vertexCount*16)
+	for i := 0; i < vertexCount; i++ {
+		base := i * 16
+		values[base+0] = 1
+		values[base+5] = 1
+		values[base+10] = 1
+		values[base+15] = 1
+	}
+	return float32sToBytes(values)
+}
+
+func (r *Renderer) bonePaletteForMesh(im engine.RenderInstancedMesh) *BonePalette {
+	if im.SkinID != "" {
+		if palette := r.bonePalettes[im.SkinID]; palette != nil {
+			return palette
+		}
+	}
+	return r.defaultBonePalette
+}
+
 // ensureInstanceBuffer grows the shared per-instance buffer to at least size
 // bytes. Growth is one-way.
 func (r *Renderer) ensureInstanceBuffer(size int) error {
@@ -916,7 +1137,7 @@ func (r *Renderer) buildUnlitPipeline() error {
 			Module:     shader,
 			EntryPoint: "fs_main",
 			Targets: []gpu.ColorTargetState{
-				{Format: hdrFormat, WriteMask: gpu.ColorWriteAll},
+				{Format: r.hdrFormat, WriteMask: gpu.ColorWriteAll},
 				{Format: gpu.FormatR32Uint, WriteMask: gpu.ColorWriteAll},
 			},
 		},
@@ -1000,7 +1221,7 @@ func (r *Renderer) buildLitPipeline() error {
 			Module:     shader,
 			EntryPoint: "fs_main",
 			Targets: []gpu.ColorTargetState{
-				{Format: hdrFormat, WriteMask: gpu.ColorWriteAll},
+				{Format: r.hdrFormat, WriteMask: gpu.ColorWriteAll},
 				{Format: gpu.FormatR32Uint, WriteMask: gpu.ColorWriteAll},
 			},
 		},
@@ -1023,6 +1244,86 @@ func (r *Renderer) buildLitPipeline() error {
 	r.litPipeline = pipeline
 	r.litBGLayout = pipeline.GetBindGroupLayout(0)
 	r.litMaterialLayout = pipeline.GetBindGroupLayout(1)
+	return nil
+}
+
+// buildSkinnedLitPipeline is the skeletal-animation variant of the lit
+// pipeline. It keeps group 0/1 compatible with the rigid lit path and adds
+// group 2 for the bone palette plus three vertex streams: joints, weights,
+// and per-vertex bind-pose transforms.
+func (r *Renderer) buildSkinnedLitPipeline() error {
+	shader, err := r.device.CreateShaderModule(gpu.ShaderDesc{
+		SourceWGSL: skinnedLitWGSL(),
+		Label:      "bundle.lit.skinned",
+	})
+	if err != nil {
+		return fmt.Errorf("bundle.buildSkinnedLitPipeline: %w", err)
+	}
+	pipeline, err := r.device.CreateRenderPipeline(gpu.RenderPipelineDesc{
+		Vertex: gpu.VertexStageDesc{
+			Module:     shader,
+			EntryPoint: "vs_main",
+			Buffers: []gpu.VertexBufferLayout{
+				{ArrayStride: 12, StepMode: gpu.StepVertex, Attributes: []gpu.VertexAttribute{
+					{ShaderLocation: 0, Offset: 0, Format: gpu.VertexFormatFloat32x3},
+				}},
+				{ArrayStride: 12, StepMode: gpu.StepVertex, Attributes: []gpu.VertexAttribute{
+					{ShaderLocation: 1, Offset: 0, Format: gpu.VertexFormatFloat32x3},
+				}},
+				{ArrayStride: 12, StepMode: gpu.StepVertex, Attributes: []gpu.VertexAttribute{
+					{ShaderLocation: 2, Offset: 0, Format: gpu.VertexFormatFloat32x3},
+				}},
+				{ArrayStride: 8, StepMode: gpu.StepVertex, Attributes: []gpu.VertexAttribute{
+					{ShaderLocation: 3, Offset: 0, Format: gpu.VertexFormatFloat32x2},
+				}},
+				{ArrayStride: 64, StepMode: gpu.StepInstance, Attributes: []gpu.VertexAttribute{
+					{ShaderLocation: 4, Offset: 0, Format: gpu.VertexFormatFloat32x4},
+					{ShaderLocation: 5, Offset: 16, Format: gpu.VertexFormatFloat32x4},
+					{ShaderLocation: 6, Offset: 32, Format: gpu.VertexFormatFloat32x4},
+					{ShaderLocation: 7, Offset: 48, Format: gpu.VertexFormatFloat32x4},
+				}},
+				{ArrayStride: 16, StepMode: gpu.StepVertex, Attributes: []gpu.VertexAttribute{
+					{ShaderLocation: 8, Offset: 0, Format: gpu.VertexFormatUint32x4},
+				}},
+				{ArrayStride: 16, StepMode: gpu.StepVertex, Attributes: []gpu.VertexAttribute{
+					{ShaderLocation: 9, Offset: 0, Format: gpu.VertexFormatFloat32x4},
+				}},
+				{ArrayStride: 64, StepMode: gpu.StepVertex, Attributes: []gpu.VertexAttribute{
+					{ShaderLocation: 10, Offset: 0, Format: gpu.VertexFormatFloat32x4},
+					{ShaderLocation: 11, Offset: 16, Format: gpu.VertexFormatFloat32x4},
+					{ShaderLocation: 12, Offset: 32, Format: gpu.VertexFormatFloat32x4},
+					{ShaderLocation: 13, Offset: 48, Format: gpu.VertexFormatFloat32x4},
+				}},
+			},
+		},
+		Fragment: gpu.FragmentStageDesc{
+			Module:     shader,
+			EntryPoint: "fs_main",
+			Targets: []gpu.ColorTargetState{
+				{Format: r.hdrFormat, WriteMask: gpu.ColorWriteAll},
+				{Format: gpu.FormatR32Uint, WriteMask: gpu.ColorWriteAll},
+			},
+		},
+		Primitive: gpu.PrimitiveState{
+			Topology:  gpu.TopologyTriangleList,
+			CullMode:  gpu.CullBack,
+			FrontFace: gpu.FrontFaceCCW,
+		},
+		DepthStencil: &gpu.DepthStencilState{
+			Format:            r.depthFormat,
+			DepthWriteEnabled: true,
+			DepthCompare:      gpu.CompareLess,
+		},
+		AutoLayout: true,
+		Label:      "bundle.lit.skinned",
+	})
+	if err != nil {
+		return fmt.Errorf("bundle.buildSkinnedLitPipeline: %w", err)
+	}
+	r.skinnedLitPipeline = pipeline
+	r.skinnedLitBGLayout = pipeline.GetBindGroupLayout(0)
+	r.skinnedLitMaterialLayout = pipeline.GetBindGroupLayout(1)
+	r.skinnedPaletteLayout = pipeline.GetBindGroupLayout(2)
 	return nil
 }
 
@@ -1076,7 +1377,7 @@ func (r *Renderer) buildShadowPipeline() error {
 }
 
 // buildBindGroups builds the per-pipeline bind groups. The lit bind group
-// holds three resources: scene uniforms, shadow map, shadow sampler.
+// holds scene uniforms, shadow resources, and the environment cubemap.
 func (r *Renderer) buildBindGroups() error {
 	unlit, err := r.device.CreateBindGroup(gpu.BindGroupDesc{
 		Layout:  r.unlitBGLayout,
@@ -1086,17 +1387,17 @@ func (r *Renderer) buildBindGroups() error {
 	if err != nil {
 		return fmt.Errorf("bundle.buildBindGroups (unlit): %w", err)
 	}
-	lit, err := r.device.CreateBindGroup(gpu.BindGroupDesc{
-		Layout: r.litBGLayout,
-		Entries: []gpu.BindGroupEntry{
-			{Binding: 0, Buffer: r.sceneUniformBuf, Size: sceneUniformSize},
-			{Binding: 1, TextureView: r.shadowArrayView},
-			{Binding: 2, Sampler: r.shadowSampler},
-		},
-		Label: "bundle.lit.bindgroup",
-	})
+	envTex, err := r.ensureFallbackCubeTexture()
+	if err != nil {
+		return fmt.Errorf("bundle.buildBindGroups (environment): %w", err)
+	}
+	lit, err := r.createLitSceneBindGroup(r.litBGLayout, envTex, "bundle.lit.bindgroup")
 	if err != nil {
 		return fmt.Errorf("bundle.buildBindGroups (lit): %w", err)
+	}
+	skinnedLit, err := r.createLitSceneBindGroup(r.skinnedLitBGLayout, envTex, "bundle.lit.skinned.bindgroup")
+	if err != nil {
+		return fmt.Errorf("bundle.buildBindGroups (skinned lit): %w", err)
 	}
 	for i := 0; i < cascadeCount; i++ {
 		bg, err := r.device.CreateBindGroup(gpu.BindGroupDesc{
@@ -1113,12 +1414,28 @@ func (r *Renderer) buildBindGroups() error {
 	}
 	r.unlitBindGrp = unlit
 	r.litBindGrp = lit
+	r.skinnedLitBindGrp = skinnedLit
+	r.envBindGroupKey = fallbackEnvironmentKey
 	return nil
 }
 
+func (r *Renderer) createLitSceneBindGroup(layout gpu.BindGroupLayout, envTex *textureResources, label string) (gpu.BindGroup, error) {
+	return r.device.CreateBindGroup(gpu.BindGroupDesc{
+		Layout: layout,
+		Entries: []gpu.BindGroupEntry{
+			{Binding: 0, Buffer: r.sceneUniformBuf, Size: sceneUniformSize},
+			{Binding: 1, TextureView: r.shadowArrayView},
+			{Binding: 2, Sampler: r.shadowSampler},
+			{Binding: 3, TextureView: envTex.view},
+			{Binding: 4, Sampler: r.materialSampler},
+		},
+		Label: label,
+	})
+}
+
 // sceneUniformSize is the layout size of the Scene struct in WGSL. 4 mat4
-// (viewProj + 3 cascade lightViewProjs) = 256, plus 7 vec4 = 112 → 368 bytes.
-const sceneUniformSize = 368
+// (viewProj + 3 cascade lightViewProjs) = 256, plus 8 vec4 = 128 -> 384 bytes.
+const sceneUniformSize = 384
 
 type sceneUniformBlock struct {
 	viewProj       mat4
@@ -1133,6 +1450,8 @@ type sceneUniformBlock struct {
 	// Cascade i covers the frustum slice [split_{i-1}, split_i] (split_{-1} =
 	// camera near). Cascade 2 extends to the camera far plane regardless.
 	cascadeSplits [4]float32
+	// envParams.x = cubemap intensity, y = Y rotation radians, z = has env.
+	envParams [4]float32
 }
 
 func buildSceneUniformBytes(s sceneUniformBlock) []byte {
@@ -1149,6 +1468,7 @@ func buildSceneUniformBytes(s sceneUniformBlock) []byte {
 	copy(out[base+64:base+80], float32sToBytes(s.skyColor[:]))
 	copy(out[base+80:base+96], float32sToBytes(s.groundColor[:]))
 	copy(out[base+96:base+112], float32sToBytes(s.cascadeSplits[:]))
+	copy(out[base+112:base+128], float32sToBytes(s.envParams[:]))
 	return out
 }
 
@@ -1239,6 +1559,21 @@ func destroyPrimitiveResources(p *primitiveResources) {
 	}
 }
 
+func destroySkinResources(s *skinResources) {
+	if s == nil {
+		return
+	}
+	if s.joints != nil {
+		s.joints.Destroy()
+	}
+	if s.weights != nil {
+		s.weights.Destroy()
+	}
+	if s.bindPose != nil {
+		s.bindPose.Destroy()
+	}
+}
+
 // float64sToFloat32Bytes reinterprets a slice of float64 as little-endian
 // float32 bytes. The bundle uses float64 for server-side readability; GPU
 // buffers want float32.
@@ -1271,6 +1606,13 @@ func float32sToBytes(src []float32) []byte {
 		out[i*4+3] = byte(bits >> 24)
 	}
 	return out
+}
+
+func putUint32LE(dst []byte, v uint32) {
+	dst[0] = byte(v)
+	dst[1] = byte(v >> 8)
+	dst[2] = byte(v >> 16)
+	dst[3] = byte(v >> 24)
 }
 
 func whiteColorsFor(vertexCount int) []byte {

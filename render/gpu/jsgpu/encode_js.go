@@ -318,6 +318,34 @@ func encodeTextureFormat(f gpu.TextureFormat) string {
 		return "rgba16float"
 	case gpu.FormatRGBA32Float:
 		return "rgba32float"
+	case gpu.FormatRGB9E5Ufloat:
+		return "rgb9e5ufloat"
+	case gpu.FormatRGB10A2Unorm:
+		return "rgb10a2unorm"
+	case gpu.FormatBC7RGBAUnorm:
+		return "bc7-rgba-unorm"
+	case gpu.FormatBC7RGBAUnormSRGB:
+		return "bc7-rgba-unorm-srgb"
+	case gpu.FormatASTC4x4Unorm:
+		return "astc-4x4-unorm"
+	case gpu.FormatASTC4x4UnormSRGB:
+		return "astc-4x4-unorm-srgb"
+	case gpu.FormatASTC6x6Unorm:
+		return "astc-6x6-unorm"
+	case gpu.FormatASTC6x6UnormSRGB:
+		return "astc-6x6-unorm-srgb"
+	case gpu.FormatASTC8x8Unorm:
+		return "astc-8x8-unorm"
+	case gpu.FormatASTC8x8UnormSRGB:
+		return "astc-8x8-unorm-srgb"
+	case gpu.FormatETC2RGB8Unorm:
+		return "etc2-rgb8unorm"
+	case gpu.FormatETC2RGB8UnormSRGB:
+		return "etc2-rgb8unorm-srgb"
+	case gpu.FormatETC2RGBA8Unorm:
+		return "etc2-rgba8unorm"
+	case gpu.FormatETC2RGBA8UnormSRGB:
+		return "etc2-rgba8unorm-srgb"
 	case gpu.FormatDepth16Unorm:
 		return "depth16unorm"
 	case gpu.FormatDepth24Plus:
@@ -332,6 +360,55 @@ func encodeTextureFormat(f gpu.TextureFormat) string {
 	return ""
 }
 
+func encodeTextureDimension(d gpu.TextureDimension) string {
+	if d == gpu.TextureDimension3D {
+		return "3d"
+	}
+	return "2d"
+}
+
+func encodeTextureViewDimension(d gpu.TextureViewDimension) string {
+	switch d {
+	case gpu.TextureViewDimension2D:
+		return "2d"
+	case gpu.TextureViewDimension2DArray:
+		return "2d-array"
+	case gpu.TextureViewDimensionCube:
+		return "cube"
+	case gpu.TextureViewDimensionCubeArray:
+		return "cube-array"
+	case gpu.TextureViewDimension3D:
+		return "3d"
+	}
+	return ""
+}
+
+func encodeTextureViewDesc(desc gpu.TextureViewDesc) map[string]any {
+	out := map[string]any{}
+	if desc.Format != gpu.FormatUndefined {
+		out["format"] = encodeTextureFormat(desc.Format)
+	}
+	if dim := encodeTextureViewDimension(desc.Dimension); dim != "" {
+		out["dimension"] = dim
+	}
+	if desc.BaseMipLevel > 0 {
+		out["baseMipLevel"] = desc.BaseMipLevel
+	}
+	if desc.MipLevelCount > 0 {
+		out["mipLevelCount"] = desc.MipLevelCount
+	}
+	if desc.BaseArrayLayer > 0 {
+		out["baseArrayLayer"] = desc.BaseArrayLayer
+	}
+	if desc.ArrayLayerCount > 0 {
+		out["arrayLayerCount"] = desc.ArrayLayerCount
+	}
+	if desc.Label != "" {
+		out["label"] = desc.Label
+	}
+	return out
+}
+
 // parseCanvasFormat is the reverse of encodeTextureFormat for the limited set
 // of formats navigator.gpu.getPreferredCanvasFormat() actually returns.
 func parseCanvasFormat(s string) gpu.TextureFormat {
@@ -340,6 +417,8 @@ func parseCanvasFormat(s string) gpu.TextureFormat {
 		return gpu.FormatRGBA8Unorm
 	case "bgra8unorm":
 		return gpu.FormatBGRA8Unorm
+	case "rgb10a2unorm":
+		return gpu.FormatRGB10A2Unorm
 	}
 	return gpu.FormatBGRA8Unorm // sensible default
 }

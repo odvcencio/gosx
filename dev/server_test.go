@@ -123,6 +123,49 @@ func TestSnapshotChangedDetectsDeletion(t *testing.T) {
 	}
 }
 
+func TestProjectSnapshotWatchesOnlyDevSourceFiles(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, "app", "page.gsx"), []byte("<Page />"))
+	writeTestFile(t, filepath.Join(dir, "app", "page.go"), []byte("package app"))
+	writeTestFile(t, filepath.Join(dir, "public", "site.css"), []byte("body{}"))
+	writeTestFile(t, filepath.Join(dir, "public", "app.js"), []byte("console.log('ok')"))
+	writeTestFile(t, filepath.Join(dir, "README.md"), []byte("# ignored"))
+	writeTestFile(t, filepath.Join(dir, "build", "bootstrap.js"), []byte("ignored"))
+
+	snapshot, err := projectSnapshot(dir)
+	if err != nil {
+		t.Fatalf("snapshot: %v", err)
+	}
+	for _, path := range []string{
+		"app/page.gsx",
+		"app/page.go",
+		"public/site.css",
+		"public/app.js",
+	} {
+		if _, ok := snapshot[path]; !ok {
+			t.Fatalf("expected watched path %s in snapshot %#v", path, snapshot)
+		}
+	}
+	for _, path := range []string{"README.md", "build/bootstrap.js"} {
+		if _, ok := snapshot[path]; ok {
+			t.Fatalf("did not expect ignored path %s in snapshot", path)
+		}
+	}
+}
+
+func TestShouldWatchProjectFile(t *testing.T) {
+	for _, path := range []string{"page.gsx", "main.go", "style.CSS", "app.JS"} {
+		if !shouldWatchProjectFile(path) {
+			t.Fatalf("%s should be watched", path)
+		}
+	}
+	for _, path := range []string{"README.md", "data.json", "image.png"} {
+		if shouldWatchProjectFile(path) {
+			t.Fatalf("%s should not be watched", path)
+		}
+	}
+}
+
 func writeTestFile(t *testing.T, path string, data []byte) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {

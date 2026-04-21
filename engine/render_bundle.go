@@ -104,6 +104,9 @@ type RenderEnvironment struct {
 	GroundIntensity  float64 `json:"groundIntensity,omitempty"`
 	Exposure         float64 `json:"exposure,omitempty"`
 	ToneMapping      string  `json:"toneMapping,omitempty"`
+	EnvMap           string  `json:"envMap,omitempty"`
+	EnvIntensity     float64 `json:"envIntensity,omitempty"`
+	EnvRotation      float64 `json:"envRotation,omitempty"`
 	FogColor         string  `json:"fogColor,omitempty"`
 	FogDensity       float64 `json:"fogDensity,omitempty"`
 }
@@ -242,6 +245,10 @@ type RenderInstancedMesh struct {
 	VertexCount   int       `json:"vertexCount"`
 	InstanceCount int       `json:"instanceCount"`
 	Transforms    []float64 `json:"transforms"`
+	SkinID        string    `json:"skinID,omitempty"`
+	JointIndices  []uint32  `json:"jointIndices,omitempty"`
+	Weights       []float64 `json:"weights,omitempty"`
+	BindPose      []float64 `json:"bindPose,omitempty"`
 	CastShadow    bool      `json:"castShadow,omitempty"`
 	ReceiveShadow bool      `json:"receiveShadow,omitempty"`
 }

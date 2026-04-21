@@ -54,8 +54,8 @@ func TestFrameInstancedMeshDispatches(t *testing.T) {
 		t.Fatalf("expected 1 command encoder, got %d", len(d.encoders))
 	}
 	passes := d.encoders[0].passes
-	if len(passes) != 5 {
-		t.Fatalf("expected 5 passes (3 shadow + main + present), got %d", len(passes))
+	if len(passes) != 6 {
+		t.Fatalf("expected 6 passes (3 shadow + main + compose + fxaa), got %d", len(passes))
 	}
 	mainPass := passes[3]
 
@@ -85,6 +85,48 @@ func TestFrameInstancedMeshDispatches(t *testing.T) {
 	}
 	if got := len(d.buffers) - buffersBefore; got != 0 {
 		t.Errorf("cached frame should not allocate new buffers, got %d new", got)
+	}
+}
+
+func TestFrameSkinnedInstancedMeshUsesSkinnedPipelineInputs(t *testing.T) {
+	d := newFakeDevice()
+	r, err := New(Config{Device: d, Surface: fakeSurface{}})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer r.Destroy()
+
+	transforms := make([]float64, 16)
+	transforms[0] = 1
+	transforms[5] = 1
+	transforms[10] = 1
+	transforms[15] = 1
+
+	b := engine.RenderBundle{
+		Camera: engine.RenderCamera{Z: 5, FOV: 1, Near: 0.1, Far: 100},
+		InstancedMeshes: []engine.RenderInstancedMesh{{
+			ID:            "skinned-cube",
+			Kind:          "cube",
+			VertexCount:   36,
+			InstanceCount: 1,
+			Transforms:    transforms,
+			SkinID:        "default",
+		}},
+	}
+
+	buffersBefore := len(d.buffers)
+	if err := r.Frame(b, 400, 300, 0); err != nil {
+		t.Fatalf("Frame: %v", err)
+	}
+	if got := len(d.buffers) - buffersBefore; got != 16 {
+		t.Fatalf("expected 16 new buffers (geometry + instance + material + cull + skin + post-fx), got %d", got)
+	}
+	mainPass := d.encoders[0].passes[3]
+	if mainPass.indirectDraws != 1 {
+		t.Fatalf("main pass indirect draws = %d, want 1", mainPass.indirectDraws)
+	}
+	if mainPass.vbufSets < 8 {
+		t.Fatalf("main pass vertex buffer sets = %d, want at least 8 for skinned inputs", mainPass.vbufSets)
 	}
 }
 
@@ -126,10 +168,10 @@ func TestFrameDepthAttachmentResizes(t *testing.T) {
 	}
 	defer r.Destroy()
 
-	// Two textures at construction: shadow map + 1x1 fallback baseColor.
-	const baselineTextures = 2
+	// Three textures at construction: shadow map + 1x1 fallback + fallback env cube.
+	const baselineTextures = 3
 	if got := len(d.textures); got != baselineTextures {
-		t.Fatalf("expected %d textures at construction (shadow + fallback), got %d",
+		t.Fatalf("expected %d textures at construction (shadow + fallback + env cube), got %d",
 			baselineTextures, got)
 	}
 
@@ -137,24 +179,24 @@ func TestFrameDepthAttachmentResizes(t *testing.T) {
 	if err := r.Frame(empty, 400, 300, 0); err != nil {
 		t.Fatalf("Frame: %v", err)
 	}
-	// First frame adds: depth + HDR + idBuffer + bloomA + bloomB = +5.
-	if got := len(d.textures); got != baselineTextures+5 {
-		t.Fatalf("expected depth + HDR + id + 2 bloom on first frame, got %d total", got)
+	// First frame adds: depth + HDR + idBuffer + bloomA + bloomB + postFX = +6.
+	if got := len(d.textures); got != baselineTextures+6 {
+		t.Fatalf("expected depth + HDR + id + 2 bloom + postFX on first frame, got %d total", got)
 	}
 
 	// Same size — no allocation.
 	if err := r.Frame(empty, 400, 300, 0.016); err != nil {
 		t.Fatalf("Frame: %v", err)
 	}
-	if got := len(d.textures); got != baselineTextures+5 {
+	if got := len(d.textures); got != baselineTextures+6 {
 		t.Errorf("same-size reframe should reuse textures, got %d", got)
 	}
 
-	// Different size — depth + HDR + id + 2 bloom reallocated = +5.
+	// Different size — depth + HDR + id + 2 bloom + postFX reallocated = +6.
 	if err := r.Frame(empty, 800, 600, 0.032); err != nil {
 		t.Fatalf("Frame: %v", err)
 	}
-	if got := len(d.textures); got != baselineTextures+10 {
-		t.Errorf("resize should add new depth + HDR + id + 2 bloom, got %d total", got)
+	if got := len(d.textures); got != baselineTextures+12 {
+		t.Errorf("resize should add new depth + HDR + id + 2 bloom + postFX, got %d total", got)
 	}
 }

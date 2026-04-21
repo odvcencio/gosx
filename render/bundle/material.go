@@ -39,8 +39,9 @@ type materialFingerprint struct {
 
 // materialResources holds the GPU-side material record.
 type materialResources struct {
-	buf       gpu.Buffer
-	bindGroup gpu.BindGroup
+	buf              gpu.Buffer
+	bindGroup        gpu.BindGroup
+	skinnedBindGroup gpu.BindGroup
 }
 
 // materialUniformSize is the std140-aligned size of the WGSL Material struct.
@@ -80,9 +81,8 @@ func materialFromRender(mat engine.RenderMaterial) materialFingerprint {
 	metal := float32(mat.Metalness)
 	rough := float32(mat.Roughness)
 	if rough <= 0 {
-		// 0 roughness mirrors to a near-perfect mirror which looks broken
-		// without IBL. Clamp to a sensible default until R3 ships environment
-		// maps.
+		// 0 roughness mirrors to a near-perfect mirror. Clamp unspecified
+		// materials to a practical default while preserving explicit values.
 		rough = 0.4
 	}
 	// RenderMaterial.Emissive is a scalar strength in the bundle schema; we
@@ -189,7 +189,26 @@ func (r *Renderer) ensureMaterial(fp materialFingerprint) (*materialResources, e
 		buf.Destroy()
 		return nil, fmt.Errorf("bundle: create material bind group: %w", err)
 	}
-	res := &materialResources{buf: buf, bindGroup: bg}
+	skinnedBG, err := r.device.CreateBindGroup(gpu.BindGroupDesc{
+		Layout: r.skinnedLitMaterialLayout,
+		Entries: []gpu.BindGroupEntry{
+			{Binding: 0, Buffer: buf, Size: materialUniformSize},
+			{Binding: 1, TextureView: tex.view},
+			{Binding: 2, Sampler: r.materialSampler},
+			{Binding: 3, TextureView: normalTex.view},
+			{Binding: 4, Sampler: r.materialSampler},
+			{Binding: 5, TextureView: roughTex.view},
+			{Binding: 6, TextureView: metalTex.view},
+			{Binding: 7, TextureView: emissiveTex.view},
+		},
+		Label: "bundle.material.skinned.bindgroup",
+	})
+	if err != nil {
+		buf.Destroy()
+		bg.Destroy()
+		return nil, fmt.Errorf("bundle: create skinned material bind group: %w", err)
+	}
+	res := &materialResources{buf: buf, bindGroup: bg, skinnedBindGroup: skinnedBG}
 	r.materialCache[fp] = res
 	return res, nil
 }
@@ -197,11 +216,11 @@ func (r *Renderer) ensureMaterial(fp materialFingerprint) (*materialResources, e
 // materialUniformBytes encodes the Material struct layout expected by
 // litWGSL. Layout in bytes:
 //
-//   0..16  baseColor     vec4 (rgba)
-//  16..32  pbrParams     vec4 (metalness, roughness, emissiveStrength, useVertexColor)
-//  32..48  emissive      vec4 (rgba)
-//  48..64  textureParams vec4 (hasBaseColor, hasNormal, hasRoughMap, hasMetalMap)
-//  64..80  textureParams2 vec4 (hasEmissiveMap, 0, 0, 0)
+//	 0..16  baseColor     vec4 (rgba)
+//	16..32  pbrParams     vec4 (metalness, roughness, emissiveStrength, useVertexColor)
+//	32..48  emissive      vec4 (rgba)
+//	48..64  textureParams vec4 (hasBaseColor, hasNormal, hasRoughMap, hasMetalMap)
+//	64..80  textureParams2 vec4 (hasEmissiveMap, 0, 0, 0)
 func materialUniformBytes(fp materialFingerprint) []byte {
 	useVertex := float32(0)
 	if fp.useVertexColor {

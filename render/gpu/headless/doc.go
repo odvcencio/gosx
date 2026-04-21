@@ -14,7 +14,7 @@
 // Both need "the render/bundle.Renderer runs, produces pixels." Neither
 // needs a physically-correct PBR image. This package delivers pixels.
 //
-// # Current scope (R5 scaffold)
+// # Current scope
 //
 //   - Full gpu.Device interface implementation. A render/bundle.Renderer
 //     built on top of this device constructs all pipelines, uniforms,
@@ -55,12 +55,12 @@
 //   - Resource tracking: buffers/textures record their size + usage so tests
 //     can assert without a GPU driver.
 //
-// # Explicitly deferred
+// # Approximation limits
 //
 //   - Full WebGPU-equivalent rasterization. Cook-Torrance PBR lighting,
 //     soft-shadow filtering, exact billboard axes, color-space parity, and
 //     triangle-edge clipping are still approximated or no-op in headless.
-//   - Multi-sample and cubemaps.
+//   - Multi-sample rasterization.
 //
 // # Breakout path
 //

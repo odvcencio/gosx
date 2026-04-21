@@ -28,23 +28,27 @@ func (q *queue) WriteTexture(dst gpu.Texture, data []byte, bytesPerRow, width, h
 }
 
 func (q *queue) WriteTextureLevel(dst gpu.Texture, mipLevel int, data []byte, bytesPerRow, width, height int) {
+	q.WriteTextureLevelLayer(dst, mipLevel, 0, data, bytesPerRow, height, width, height)
+}
+
+func (q *queue) WriteTextureLevelLayer(dst gpu.Texture, mipLevel, layer int, data []byte, bytesPerRow, rowsPerImage, width, height int) {
 	t, ok := dst.(*texture)
 	if !ok || t == nil || len(data) == 0 {
 		return
 	}
-	if mipLevel < 0 {
+	if mipLevel < 0 || layer < 0 || bytesPerRow <= 0 || rowsPerImage <= 0 || width <= 0 || height <= 0 {
 		return
 	}
 	u8 := jsutil.NewUint8ArrayFromBytes(data)
 	destination := map[string]any{
 		"texture":  t.js,
 		"mipLevel": mipLevel,
-		"origin":   map[string]any{"x": 0, "y": 0, "z": 0},
+		"origin":   map[string]any{"x": 0, "y": 0, "z": layer},
 	}
 	dataLayout := map[string]any{
 		"offset":       0,
 		"bytesPerRow":  bytesPerRow,
-		"rowsPerImage": height,
+		"rowsPerImage": rowsPerImage,
 	}
 	size := map[string]any{
 		"width":              width,
@@ -182,12 +186,20 @@ func (t *texture) CreateView() gpu.TextureView {
 	return &textureView{js: t.js.Call("createView")}
 }
 
+func (t *texture) CreateViewDesc(desc gpu.TextureViewDesc) gpu.TextureView {
+	dict := encodeTextureViewDesc(desc)
+	if len(dict) == 0 {
+		return t.CreateView()
+	}
+	return &textureView{js: t.js.Call("createView", dict)}
+}
+
 func (t *texture) CreateLayerView(layer int) gpu.TextureView {
-	return &textureView{js: t.js.Call("createView", map[string]any{
-		"baseArrayLayer":  layer,
-		"arrayLayerCount": 1,
-		"dimension":       "2d",
-	})}
+	return t.CreateViewDesc(gpu.TextureViewDesc{
+		Dimension:       gpu.TextureViewDimension2D,
+		BaseArrayLayer:  layer,
+		ArrayLayerCount: 1,
+	})
 }
 
 func (t *texture) Destroy() {

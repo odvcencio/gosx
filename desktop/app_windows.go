@@ -24,6 +24,7 @@ type windowsApp struct {
 	webview    *coreWebView2
 	settings   *coreWebView2Settings
 	runErr     error
+	singleLock *singleInstanceLock
 
 	envHandler        *environmentCompletedHandler
 	controllerHandler *controllerCompletedHandler
@@ -44,11 +45,21 @@ type windowsApp struct {
 	// Fullscreen + min/max-size state, all edited only from the
 	// WebView2-owning OS thread but read from app-public methods — hence
 	// guarded by the same mu as the rest of the struct.
-	fullscreen  fullscreenState
-	minWidth    int32
-	minHeight   int32
-	maxWidth    int32
-	maxHeight   int32
+	fullscreen fullscreenState
+	minWidth   int32
+	minHeight  int32
+	maxWidth   int32
+	maxHeight  int32
+
+	// Native UI integration owned by the UI thread. The maps are guarded
+	// by mu because public App methods may install menus before Run.
+	pendingMenuBar      *Menu
+	menuBar             uintptr
+	contextMenus        map[uintptr]uintptr
+	pendingTray         *TrayOptions
+	tray                *windowsTray
+	nextNativeCommandID uint16
+	menuActions         map[uint16]func()
 }
 
 func newPlatformApp(options Options) (platformApp, error) {
@@ -66,9 +77,35 @@ func (a *windowsApp) Run() error {
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
 
-	// DPI awareness must be set before the window is created so the HWND
-	// participates in per-monitor scaling.
-	setDPIAware()
+	if a.options.SingleInstance {
+		lock, owned, err := acquireSingleInstanceLock(a.options.AppID)
+		if err != nil {
+			return err
+		}
+		if !owned {
+			defer lock.Close()
+			return forwardCurrentLaunch(a.options.AppID)
+		}
+		a.mu.Lock()
+		a.singleLock = lock
+		a.mu.Unlock()
+		defer func() {
+			a.mu.Lock()
+			lock := a.singleLock
+			a.singleLock = nil
+			a.mu.Unlock()
+			if lock != nil {
+				_ = lock.Close()
+			}
+		}()
+	}
+
+	// DPI awareness and AppUserModelID must be set before native shell
+	// surfaces are created.
+	setDPIAwareness(a.options.DPIAwareness)
+	if err := setCurrentProcessAppUserModelID(a.options.AppID); err != nil {
+		return err
+	}
 
 	if err := platformAvailable(); err != nil {
 		return err
@@ -85,6 +122,16 @@ func (a *windowsApp) Run() error {
 	a.mu.Lock()
 	a.hwnd = hwnd
 	a.mu.Unlock()
+	enableFileDrop(hwnd, true)
+	if err := applyWindowAccessibility(hwnd, a.options); err != nil {
+		destroyWindow(hwnd)
+		return err
+	}
+	if err := a.installPendingNativeUI(hwnd); err != nil {
+		destroyWindow(hwnd)
+		return err
+	}
+	a.fireWindowCreated(hwnd)
 
 	showWindow(hwnd)
 	if err := a.createWebView(); err != nil {
@@ -359,10 +406,10 @@ func configureDefaultSettings(s *coreWebView2Settings, o Options) error {
 	if err := s.setBool(settingsPutIsWebMessageEnabled, "Settings.put_IsWebMessageEnabled", true); err != nil {
 		return err
 	}
-	// Dev tools follow Options.Debug — F12 + "Inspect Element" both require
-	// this flag to be true. The dev host leaves it off in production builds
-	// to hide the UA and reduce attack surface.
-	if err := s.setBool(settingsPutAreDevToolsEnabled, "Settings.put_AreDevToolsEnabled", o.Debug); err != nil {
+	// Dev tools follow Options.Debug or the narrower Options.DevTools flag.
+	// The dev host leaves this off by default in production builds to hide
+	// the UA and reduce attack surface while still allowing field diagnosis.
+	if err := s.setBool(settingsPutAreDevToolsEnabled, "Settings.put_AreDevToolsEnabled", devToolsEnabled(o)); err != nil {
 		return err
 	}
 	// Default context menu (right-click → Reload, Inspect, etc). Disabled
@@ -403,11 +450,11 @@ func (a *windowsApp) ExecuteScript(script string) error {
 }
 
 // OpenDevTools pops the Chromium dev-tools inspector in a separate
-// window. Requires Options.Debug = true; otherwise returns an error
-// because the underlying setting disables the call.
+// window. Requires Options.Debug or Options.DevTools; otherwise returns
+// an error because the underlying setting disables the call.
 func (a *windowsApp) OpenDevTools() error {
-	if !a.options.Debug {
-		return fmt.Errorf("%w: Options.Debug must be true to open dev tools",
+	if !devToolsEnabled(a.options) {
+		return fmt.Errorf("%w: Options.Debug or Options.DevTools must be true to open dev tools",
 			ErrInvalidOptions)
 	}
 	a.mu.Lock()
@@ -417,6 +464,13 @@ func (a *windowsApp) OpenDevTools() error {
 		return fmt.Errorf("%w: webview not ready", ErrWebView2Unavailable)
 	}
 	return webview.openDevToolsWindow()
+}
+
+func (a *windowsApp) openDevToolsFromShortcut() {
+	if !devToolsEnabled(a.options) {
+		return
+	}
+	_ = a.OpenDevTools()
 }
 
 // PrependBootstrapScript queues a JS snippet that will run before every
@@ -563,6 +617,11 @@ func (a *windowsApp) SetMaxSize(width, height int) error {
 	return nil
 }
 
+func (a *windowsApp) NewWindow(WindowOptions) (*Window, error) {
+	return nil, fmt.Errorf("%w: multiple windows are not implemented by the Windows backend",
+		ErrUnsupported)
+}
+
 // applyMinMaxTo stamps the MINMAXINFO response with our cached constraints.
 // Runs on the UI thread from inside wndProc; the lock is short because
 // the values are cheap scalars.
@@ -596,6 +655,36 @@ func (a *windowsApp) onWebMessage(message string) {
 		return
 	}
 	cb(message)
+}
+
+func (a *windowsApp) fireWindowCreated(hwnd uintptr) {
+	a.mu.Lock()
+	cb := a.options.OnWindowCreated
+	options := a.options
+	a.mu.Unlock()
+	if cb != nil {
+		cb(newPrimaryWindow(hwnd, options, func(menu Menu) error {
+			return a.setWindowContextMenu(hwnd, menu)
+		}))
+	}
+}
+
+func (a *windowsApp) onSuspend() {
+	a.mu.Lock()
+	cb := a.options.OnSuspend
+	a.mu.Unlock()
+	if cb != nil {
+		cb()
+	}
+}
+
+func (a *windowsApp) onResume() {
+	a.mu.Lock()
+	cb := a.options.OnResume
+	a.mu.Unlock()
+	if cb != nil {
+		cb()
+	}
 }
 
 func optionalUTF16Ptr(value string) (*uint16, error) {

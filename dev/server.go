@@ -456,7 +456,11 @@ func projectSnapshot(dir string) (map[string]snapshotEntry, error) {
 		if err != nil {
 			return err
 		}
-		out[filepath.ToSlash(rel)] = snapshotEntry{
+		rel = filepath.ToSlash(rel)
+		if !shouldWatchProjectFile(rel) {
+			return nil
+		}
+		out[rel] = snapshotEntry{
 			ModTime: info.ModTime(),
 			Size:    info.Size(),
 		}
@@ -479,6 +483,15 @@ func snapshotChanged(prev map[string]snapshotEntry, next map[string]snapshotEntr
 		}
 	}
 	return false
+}
+
+func shouldWatchProjectFile(path string) bool {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".gsx", ".go", ".css", ".js":
+		return true
+	default:
+		return false
+	}
 }
 
 func shouldSkipDir(name string) bool {

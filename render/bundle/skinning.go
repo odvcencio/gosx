@@ -6,33 +6,13 @@ import (
 	"github.com/odvcencio/gosx/render/gpu"
 )
 
-// # GPU skinning scaffold (R3.5)
+// # GPU skinning
 //
-// This file lays down the architecture for hardware-accelerated skeletal
-// animation — the per-frame vertex transforms read a bone-matrix palette
-// from a storage buffer, blend up to 4 weighted bones per vertex, and
-// feed the result into the existing lit pipeline.
-//
-// What's in this commit:
-//   - The WGSL snippet that consumes joint indices + weights and blends
-//     them into a world-space position + normal (applySkinning, below).
-//   - A BonePalette type tracking the max-palette-size constant + byte
-//     stride used by both the CPU clip evaluator and the vertex shader
-//     bindings.
-//   - An UploadBonePalette helper that pushes a flat []float32 of
-//     column-major mat4 values into a pre-allocated storage buffer.
-//
-// What's intentionally deferred to R5:
-//   - A skinned variant of the lit pipeline. When that lands it'll build a
-//     second RenderPipeline with the 3 extra vertex slots
-//     (joints, weights, bind-pose transform) — buildLitPipeline's layout
-//     stays untouched.
-//   - Per-skeleton scratch space, instancing, morph targets. All slot
-//     naturally onto the pattern below.
-//
-// The shader snippet and palette helpers are callable from outside the
-// package so a sibling animator (possibly in render/bundle/anim/) can
-// drive the pipeline without yanking internals.
+// The renderer owns a skinned lit pipeline variant whose vertex stage reads
+// joint indices, weights, a bind-pose transform stream, and a bone-matrix
+// palette storage buffer. The palette helpers here are callable from outside
+// the package so render/bundle/anim or a glTF loader can drive the pipeline
+// without yanking internals.
 
 // MaxBonesPerPalette caps one skeleton at 128 bones. That's generous for
 // any humanoid rig and small enough to keep the palette binding under
@@ -109,14 +89,19 @@ type BonePalette struct {
 
 	// Buffer is the backing storage buffer, usage = storage | copy_dst.
 	Buffer gpu.Buffer
+
+	bindGroup gpu.BindGroup
 }
 
-// CreateBonePalette allocates a storage buffer sized for capacity bones.
-// A skinned pipeline will bind Buffer as @group(2) @binding(0).
+// CreateBonePalette allocates a storage buffer sized for capacity bones and
+// a bind group for the skinned lit pipeline's @group(2) palette slot.
 func (r *Renderer) CreateBonePalette(capacity int) (*BonePalette, error) {
 	if capacity <= 0 || capacity > MaxBonesPerPalette {
 		return nil, fmt.Errorf("bundle.CreateBonePalette: capacity %d out of range (1..%d)",
 			capacity, MaxBonesPerPalette)
+	}
+	if r.skinnedPaletteLayout == nil {
+		return nil, fmt.Errorf("bundle.CreateBonePalette: skinned pipeline not built")
 	}
 	buf, err := r.device.CreateBuffer(gpu.BufferDesc{
 		Size:  capacity * BonePaletteSize,
@@ -126,7 +111,35 @@ func (r *Renderer) CreateBonePalette(capacity int) (*BonePalette, error) {
 	if err != nil {
 		return nil, fmt.Errorf("bundle.CreateBonePalette: %w", err)
 	}
-	return &BonePalette{Capacity: capacity, Buffer: buf}, nil
+	bg, err := r.device.CreateBindGroup(gpu.BindGroupDesc{
+		Layout: r.skinnedPaletteLayout,
+		Entries: []gpu.BindGroupEntry{
+			{Binding: 0, Buffer: buf, Size: capacity * BonePaletteSize},
+		},
+		Label: fmt.Sprintf("bundle.bonePalette(%d).bindgroup", capacity),
+	})
+	if err != nil {
+		buf.Destroy()
+		return nil, fmt.Errorf("bundle.CreateBonePalette: bind group: %w", err)
+	}
+	return &BonePalette{Capacity: capacity, Buffer: buf, bindGroup: bg}, nil
+}
+
+// RegisterBonePalette makes palette available to RenderInstancedMesh entries
+// whose SkinID matches id. Passing nil removes an existing registration.
+func (r *Renderer) RegisterBonePalette(id string, palette *BonePalette) error {
+	if id == "" {
+		return fmt.Errorf("bundle.RegisterBonePalette: id is required")
+	}
+	if palette == nil {
+		delete(r.bonePalettes, id)
+		return nil
+	}
+	if palette.Buffer == nil || palette.bindGroup == nil {
+		return fmt.Errorf("bundle.RegisterBonePalette: incomplete palette %q", id)
+	}
+	r.bonePalettes[id] = palette
+	return nil
 }
 
 // UploadBonePalette writes a fresh palette into the storage buffer. matrices
@@ -153,6 +166,29 @@ func (r *Renderer) DestroyBonePalette(palette *BonePalette) {
 	if palette == nil || palette.Buffer == nil {
 		return
 	}
+	if palette.bindGroup != nil {
+		palette.bindGroup.Destroy()
+		palette.bindGroup = nil
+	}
 	palette.Buffer.Destroy()
 	palette.Buffer = nil
+}
+
+func (r *Renderer) buildDefaultBonePalette() error {
+	palette, err := r.CreateBonePalette(1)
+	if err != nil {
+		return err
+	}
+	identity := []float32{
+		1, 0, 0, 0,
+		0, 1, 0, 0,
+		0, 0, 1, 0,
+		0, 0, 0, 1,
+	}
+	if err := r.UploadBonePalette(palette, identity); err != nil {
+		r.DestroyBonePalette(palette)
+		return err
+	}
+	r.defaultBonePalette = palette
+	return nil
 }

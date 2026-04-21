@@ -13,10 +13,11 @@ import (
 
 // Device is the WebGPU-backed gpu.Device. Construct via Open.
 type Device struct {
-	gpuNS  js.Value // navigator.gpu
-	dev    js.Value // GPUDevice
-	queue  *queue
-	format gpu.TextureFormat
+	gpuNS    js.Value // navigator.gpu
+	dev      js.Value // GPUDevice
+	queue    *queue
+	format   gpu.TextureFormat
+	features map[string]bool
 }
 
 // Open finds the canvas by ID, acquires an adapter + device, and returns a
@@ -41,7 +42,16 @@ func Open(canvasID string) (*Device, gpu.Surface, error) {
 		return nil, nil, errors.New("jsgpu: no adapter available")
 	}
 
-	devVal, err := jsutil.AwaitPromise(adapter.Call("requestDevice"))
+	features := supportedCompressionFeatures(adapter)
+	request := map[string]any{}
+	if len(features) > 0 {
+		required := make([]any, 0, len(features))
+		for name := range features {
+			required = append(required, name)
+		}
+		request["requiredFeatures"] = required
+	}
+	devVal, err := jsutil.AwaitPromise(adapter.Call("requestDevice", request))
 	if err != nil {
 		return nil, nil, fmt.Errorf("jsgpu: requestDevice: %w", err)
 	}
@@ -59,9 +69,10 @@ func Open(canvasID string) (*Device, gpu.Surface, error) {
 	})
 
 	d := &Device{
-		gpuNS:  gpuNS,
-		dev:    devVal,
-		format: format,
+		gpuNS:    gpuNS,
+		dev:      devVal,
+		format:   format,
+		features: features,
 	}
 	d.queue = &queue{js: devVal.Get("queue")}
 
@@ -73,6 +84,24 @@ func (d *Device) Queue() gpu.Queue { return d.queue }
 
 // PreferredSurfaceFormat returns the format the swap chain was configured with.
 func (d *Device) PreferredSurfaceFormat() gpu.TextureFormat { return d.format }
+
+func (d *Device) SupportsTextureFormat(format gpu.TextureFormat) bool {
+	switch format {
+	case gpu.FormatRGBA8Unorm, gpu.FormatRGBA8UnormSRGB,
+		gpu.FormatBGRA8Unorm, gpu.FormatBGRA8UnormSRGB,
+		gpu.FormatRGBA16Float, gpu.FormatRGBA32Float,
+		gpu.FormatRGB9E5Ufloat, gpu.FormatRGB10A2Unorm,
+		gpu.FormatDepth16Unorm, gpu.FormatDepth24Plus,
+		gpu.FormatDepth24PlusStencil8, gpu.FormatDepth32Float,
+		gpu.FormatR32Uint:
+		return true
+	default:
+		if feature := textureCompressionFeature(format); feature != "" {
+			return d.features[feature]
+		}
+		return false
+	}
+}
 
 // CreateBuffer allocates a GPU buffer.
 func (d *Device) CreateBuffer(desc gpu.BufferDesc) (gpu.Buffer, error) {
@@ -95,6 +124,10 @@ func (d *Device) CreateTexture(desc gpu.TextureDesc) (gpu.Texture, error) {
 	if desc.Width <= 0 || desc.Height <= 0 {
 		return nil, fmt.Errorf("jsgpu: %w: texture dimensions must be > 0", gpu.ErrInvalidDesc)
 	}
+	if feature := textureCompressionFeature(desc.Format); feature != "" && !d.features[feature] {
+		return nil, fmt.Errorf("jsgpu: %w: texture format %s requires %s",
+			gpu.ErrUnsupported, encodeTextureFormat(desc.Format), feature)
+	}
 	layers := desc.DepthOrArrayLayers
 	if layers == 0 {
 		layers = 1
@@ -113,6 +146,9 @@ func (d *Device) CreateTexture(desc gpu.TextureDesc) (gpu.Texture, error) {
 		"usage":       encodeTextureUsage(desc.Usage),
 		"sampleCount": sampleCount,
 	}
+	if desc.Dimension != gpu.TextureDimensionUndefined {
+		dict["dimension"] = encodeTextureDimension(desc.Dimension)
+	}
 	if desc.MipLevelCount > 1 {
 		dict["mipLevelCount"] = desc.MipLevelCount
 	}
@@ -126,6 +162,40 @@ func (d *Device) CreateTexture(desc gpu.TextureDesc) (gpu.Texture, error) {
 		height: desc.Height,
 		format: desc.Format,
 	}, nil
+}
+
+func supportedCompressionFeatures(adapter js.Value) map[string]bool {
+	const (
+		bc   = "texture-compression-bc"
+		astc = "texture-compression-astc"
+		etc2 = "texture-compression-etc2"
+	)
+	features := map[string]bool{}
+	adapterFeatures := adapter.Get("features")
+	if adapterFeatures.IsUndefined() || adapterFeatures.IsNull() {
+		return features
+	}
+	for _, name := range []string{bc, astc, etc2} {
+		if adapterFeatures.Call("has", name).Bool() {
+			features[name] = true
+		}
+	}
+	return features
+}
+
+func textureCompressionFeature(format gpu.TextureFormat) string {
+	switch format {
+	case gpu.FormatBC7RGBAUnorm, gpu.FormatBC7RGBAUnormSRGB:
+		return "texture-compression-bc"
+	case gpu.FormatASTC4x4Unorm, gpu.FormatASTC4x4UnormSRGB,
+		gpu.FormatASTC6x6Unorm, gpu.FormatASTC6x6UnormSRGB,
+		gpu.FormatASTC8x8Unorm, gpu.FormatASTC8x8UnormSRGB:
+		return "texture-compression-astc"
+	case gpu.FormatETC2RGB8Unorm, gpu.FormatETC2RGB8UnormSRGB,
+		gpu.FormatETC2RGBA8Unorm, gpu.FormatETC2RGBA8UnormSRGB:
+		return "texture-compression-etc2"
+	}
+	return ""
 }
 
 // CreateSampler allocates a GPU sampler.

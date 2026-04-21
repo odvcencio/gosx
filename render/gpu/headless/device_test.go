@@ -161,6 +161,86 @@ func TestTextureWriteCopyRoundTripFromMipLevel(t *testing.T) {
 	}
 }
 
+func TestTextureWriteLayerRoundTrip(t *testing.T) {
+	d, _ := New(1, 1)
+	tex, err := d.CreateTexture(gpu.TextureDesc{
+		Width:              2,
+		Height:             2,
+		DepthOrArrayLayers: 3,
+		Format:             gpu.FormatRGBA8Unorm,
+		Usage:              gpu.TextureUsageCopyDst | gpu.TextureUsageCopySrc,
+	})
+	if err != nil {
+		t.Fatalf("CreateTexture: %v", err)
+	}
+	layer2 := []byte{
+		41, 42, 43, 44, 45, 46, 47, 48,
+		49, 50, 51, 52, 53, 54, 55, 56,
+	}
+	d.Queue().WriteTextureLevelLayer(tex, 0, 2, layer2, 8, 2, 2, 2)
+
+	buf, err := d.CreateBuffer(gpu.BufferDesc{
+		Size:  256,
+		Usage: gpu.BufferUsageMapRead | gpu.BufferUsageCopyDst,
+	})
+	if err != nil {
+		t.Fatalf("CreateBuffer: %v", err)
+	}
+	enc := d.CreateCommandEncoder()
+	enc.CopyTextureToBuffer(
+		gpu.TextureCopyInfo{Texture: tex, Origin: [3]int{0, 1, 2}},
+		gpu.BufferCopyInfo{Buffer: buf, BytesPerRow: 256, RowsPerImage: 1},
+		1, 1, 1,
+	)
+	d.Queue().Submit(enc.Finish())
+
+	got, err := buf.ReadAsync(4)
+	if err != nil {
+		t.Fatalf("ReadAsync: %v", err)
+	}
+	want := []byte{49, 50, 51, 52}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("byte %d: want %d, got %d", i, want[i], got[i])
+		}
+	}
+}
+
+func TestTextureViewDescriptors(t *testing.T) {
+	d, _ := New(1, 1)
+	tex, err := d.CreateTexture(gpu.TextureDesc{
+		Width:              8,
+		Height:             8,
+		DepthOrArrayLayers: 6,
+		Format:             gpu.FormatRGBA8Unorm,
+		Usage:              gpu.TextureUsageTextureBinding,
+	})
+	if err != nil {
+		t.Fatalf("CreateTexture: %v", err)
+	}
+
+	cube := tex.CreateViewDesc(gpu.TextureViewDesc{
+		Dimension:       gpu.TextureViewDimensionCube,
+		BaseArrayLayer:  0,
+		ArrayLayerCount: 6,
+		MipLevelCount:   1,
+	}).(*TextureView)
+	if cube.desc.Dimension != gpu.TextureViewDimensionCube {
+		t.Fatalf("cube view dimension = %v, want %v", cube.desc.Dimension, gpu.TextureViewDimensionCube)
+	}
+	if cube.layer != -1 {
+		t.Fatalf("cube view layer = %d, want full texture", cube.layer)
+	}
+
+	layer := tex.CreateLayerView(3).(*TextureView)
+	if layer.layer != 3 {
+		t.Fatalf("layer view layer = %d, want 3", layer.layer)
+	}
+	if layer.desc.Dimension != gpu.TextureViewDimension2D || layer.desc.ArrayLayerCount != 1 {
+		t.Fatalf("layer view desc = %+v, want 2D single-layer view", layer.desc)
+	}
+}
+
 // TestOffscreenIntegerClearReadback verifies color clears on offscreen
 // R32Uint attachments are observable through texture readback. This is the
 // same format the bundle renderer uses for GPU picking IDs.
@@ -208,9 +288,9 @@ func TestOffscreenIntegerClearReadback(t *testing.T) {
 	}
 }
 
-// TestBundleFramePresentsBackground verifies the R5 headless backend follows
-// the bundle renderer's HDR -> present path instead of leaving the CPU
-// framebuffer at the present pass clear color.
+// TestBundleFramePresentsBackground verifies the headless backend follows the
+// bundle renderer's HDR -> present path instead of leaving the CPU framebuffer
+// at the present pass clear color.
 func TestBundleFramePresentsBackground(t *testing.T) {
 	d, surface := New(4, 4)
 	r, err := bundle.New(bundle.Config{Device: d, Surface: surface})
@@ -699,6 +779,44 @@ func TestBundleFrameRendersComputeParticles(t *testing.T) {
 	center := d.Framebuffer().RGBAAt(16, 16)
 	if center.G == 0 || center.B <= 0x20 {
 		t.Fatalf("center pixel should include additive teal particle energy over background, got %+v", center)
+	}
+}
+
+func TestParticleForceGraphWindMovesCPUState(t *testing.T) {
+	uniforms := &Buffer{data: make([]byte, headlessParticleUniformSize)}
+	particles := &Buffer{data: make([]byte, 32)}
+
+	writeFloat32(uniforms.data, 0, 1)  // dt
+	writeFloat32(uniforms.data, 4, 0)  // time
+	writeFloat32(uniforms.data, 8, 10) // lifetime
+	writeFloat32(uniforms.data, 12, 3) // gravity + drag + wind
+	writeFloat32(uniforms.data, 32, 0) // initial speed, unused for alive particle
+
+	forceOff := headlessParticleUniformForceOffset
+	writeFloat32(uniforms.data, forceOff+0, headlessParticleForceGravity)
+	writeFloat32(uniforms.data, forceOff+4, 0)
+	forceOff += headlessParticleForceStride
+	writeFloat32(uniforms.data, forceOff+0, headlessParticleForceDrag)
+	writeFloat32(uniforms.data, forceOff+4, 0)
+	forceOff += headlessParticleForceStride
+	writeFloat32(uniforms.data, forceOff+0, headlessParticleForceWind)
+	writeFloat32(uniforms.data, forceOff+4, 2)
+	writeFloat32(uniforms.data, forceOff+16, 1)
+
+	writeFloat32(particles.data, 12, 1)  // current age: alive, not respawned
+	writeFloat32(particles.data, 28, 10) // lifetime
+
+	bg := &BindGroup{desc: gpu.BindGroupDesc{Entries: []gpu.BindGroupEntry{
+		{Binding: 0, Buffer: uniforms},
+		{Binding: 1, Buffer: particles},
+	}}}
+	runParticleUpdate(bg, 1)
+
+	if got := readFloat32(particles.data, 16); got != 2 {
+		t.Fatalf("velocity x = %v, want 2", got)
+	}
+	if got := readFloat32(particles.data, 0); got != 2 {
+		t.Fatalf("position x = %v, want 2", got)
 	}
 }
 

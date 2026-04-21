@@ -1,11 +1,13 @@
 package bundle
 
+import "strings"
+
 // litWGSL is the R2 physically-based lit + shadowed shader.
 //
 // Lighting model:
 //   - Direct: Cook-Torrance specular (GGX D, Smith V, Schlick F) plus
 //     energy-conserving Lambertian diffuse.
-//   - Indirect: constant ambient scaled by baseColor until IBL lands in R3.
+//   - Indirect: hemisphere ambient from RenderEnvironment, scaled by baseColor.
 //   - Shadow: comparison-sampled directional shadow map with a conservative
 //     constant bias. Receiver-plane depth bias arrives with CSM in R3.
 //
@@ -26,6 +28,7 @@ struct Scene {
   skyColor         : vec4<f32>,
   groundColor      : vec4<f32>,
   cascadeSplits    : vec4<f32>, // xyz = view-space far distances for cascades 0/1/2
+  envParams        : vec4<f32>, // x = cubemap intensity, y = Y rotation, z = has cubemap
 };
 
 struct Material {
@@ -39,6 +42,8 @@ struct Material {
 @group(0) @binding(0) var<uniform> scene             : Scene;
 @group(0) @binding(1) var          shadowMap         : texture_depth_2d_array;
 @group(0) @binding(2) var          shadowSampler     : sampler_comparison;
+@group(0) @binding(3) var          envCubeTexture    : texture_cube<f32>;
+@group(0) @binding(4) var          envCubeSampler    : sampler;
 @group(1) @binding(0) var<uniform> material          : Material;
 @group(1) @binding(1) var          baseColorTexture  : texture_2d<f32>;
 @group(1) @binding(2) var          baseColorSampler  : sampler;
@@ -142,6 +147,16 @@ fn fresnelSchlick(F0 : vec3<f32>, VdotH : f32) -> vec3<f32> {
   return F0 + (vec3<f32>(1.0) - F0) * k;
 }
 
+fn rotateEnvY(v : vec3<f32>, radians : f32) -> vec3<f32> {
+  let c = cos(radians);
+  let s = sin(radians);
+  return vec3<f32>(
+    v.x * c - v.z * s,
+    v.y,
+    v.x * s + v.z * c,
+  );
+}
+
 fn perturbNormal(geomN : vec3<f32>, worldPos : vec3<f32>, uv : vec2<f32>) -> vec3<f32> {
   let q1 = dpdx(worldPos);
   let q2 = dpdy(worldPos);
@@ -217,18 +232,63 @@ fn fs_main(in : VSOut) -> FSOut {
   // down with one scalar.
   let hemi = mix(scene.groundColor.rgb, scene.skyColor.rgb, N.y * 0.5 + 0.5);
   let ambient  = baseColor * hemi * scene.ambientColor.rgb * scene.ambientColor.a;
+  let envDiffuse = textureSample(envCubeTexture, envCubeSampler, rotateEnvY(N, scene.envParams.y)).rgb * baseColor * kD;
+  let envReflect = rotateEnvY(reflect(-V, N), scene.envParams.y);
+  let envSpecular = textureSample(envCubeTexture, envCubeSampler, envReflect).rgb * F * (1.0 - roughness * 0.65);
+  let cubeIBL = (envDiffuse + envSpecular) * scene.envParams.x * scene.envParams.z;
   // Emissive: scalar strength × (emissive tint × optional emissive map sample).
   let hasEmissiveMap = step(0.5, material.textureParams2.x);
   let emissiveSample = textureSample(emissiveMapTex, baseColorSampler, in.uv).rgb;
   let emissiveTint = material.emissive.rgb * mix(vec3<f32>(1.0), emissiveSample, hasEmissiveMap);
   let emissive = emissiveTint * material.pbrParams.z;
-  let color = direct + ambient + emissive;
+  let color = direct + ambient + cubeIBL + emissive;
   var out : FSOut;
   out.color  = vec4<f32>(color, 1.0);
   out.pickId = in.pickId;
   return out;
 }
 `
+
+func skinnedLitWGSL() string {
+	const signature = `fn vs_main(
+  @location(0) pos    : vec3<f32>,
+  @location(1) color  : vec3<f32>,
+  @location(2) normal : vec3<f32>,
+  @location(3) uv     : vec2<f32>,
+  @location(4) m0     : vec4<f32>,
+  @location(5) m1     : vec4<f32>,
+  @location(6) m2     : vec4<f32>,
+  @location(7) m3     : vec4<f32>,
+) -> VSOut {`
+	const skinnedSignature = `fn vs_main(
+  @location(0) pos     : vec3<f32>,
+  @location(1) color   : vec3<f32>,
+  @location(2) normal  : vec3<f32>,
+  @location(3) uv      : vec2<f32>,
+  @location(4) m0      : vec4<f32>,
+  @location(5) m1      : vec4<f32>,
+  @location(6) m2      : vec4<f32>,
+  @location(7) m3      : vec4<f32>,
+  @location(8) joints  : vec4<u32>,
+  @location(9) weights : vec4<f32>,
+  @location(10) b0     : vec4<f32>,
+  @location(11) b1     : vec4<f32>,
+  @location(12) b2     : vec4<f32>,
+  @location(13) b3     : vec4<f32>,
+) -> VSOut {`
+	const rigidTransform = `  let model = mat4x4<f32>(m0, m1, m2, m3);
+  let world = model * vec4<f32>(pos, 1.0);
+  let worldNormal = normalize((model * vec4<f32>(normal, 0.0)).xyz);`
+	const skinnedTransform = `  let model = mat4x4<f32>(m0, m1, m2, m3);
+  let bindPose = mat4x4<f32>(b0, b1, b2, b3);
+  let skinnedLocal = bindPose * applySkinning(pos, joints, weights);
+  let skinnedNormal = normalize((bindPose * vec4<f32>(applySkinningNormal(normal, joints, weights), 0.0)).xyz);
+  let world = model * skinnedLocal;
+  let worldNormal = normalize((model * vec4<f32>(skinnedNormal, 0.0)).xyz);`
+	src := strings.Replace(litWGSL, signature, skinnedSignature, 1)
+	src = strings.Replace(src, rigidTransform, skinnedTransform, 1)
+	return skinningWGSL + "\n" + src
+}
 
 // shadowWGSL is the depth-only shader that populates the directional-light
 // shadow map. It takes only positions and per-instance transforms — no

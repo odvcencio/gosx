@@ -27,6 +27,14 @@ type IslandAsset = buildmanifest.IslandAsset
 type CSSAsset = buildmanifest.CSSAsset
 type HashedAsset = buildmanifest.HashedAsset
 
+type BuildOptions struct {
+	Dev             bool
+	Offline         bool
+	MSIX            bool
+	Sign            bool
+	AppInstallerURI string
+}
+
 // contentHash returns the first 8 hex chars of sha256.
 func contentHash(data []byte) string {
 	h := sha256.Sum256(data)
@@ -70,6 +78,10 @@ func writeHashed(dir, name, ext string, data []byte) (HashedAsset, error) {
 // Deploy: server binary rolls often. Runtime/island/CSS assets are
 // content-hashed and CDN-cached with Cache-Control: immutable.
 func RunBuild(dir string, dev bool) error {
+	return RunBuildWithOptions(dir, BuildOptions{Dev: dev})
+}
+
+func RunBuildWithOptions(dir string, opts BuildOptions) error {
 	absDir, err := filepath.Abs(dir)
 	if err != nil {
 		return fmt.Errorf("resolve %s: %w", dir, err)
@@ -103,7 +115,7 @@ func RunBuild(dir string, dev bool) error {
 
 	manifest := BuildManifest{}
 	mode := "prod"
-	if dev {
+	if opts.Dev {
 		mode = "dev"
 	}
 
@@ -170,14 +182,14 @@ func RunBuild(dir string, dev bool) error {
 	fmt.Println("\n  Islands:")
 	islandFormat := "json"
 	islandExt := ".gxi" // GoSX Island — binary prod format
-	if dev {
+	if opts.Dev {
 		islandExt = ".json"
 	}
 
 	for _, prog := range islandProgs {
 		var data []byte
 		var err error
-		if dev {
+		if opts.Dev {
 			data, err = program.EncodeJSON(prog)
 			islandFormat = "json"
 		} else {
@@ -254,7 +266,7 @@ func RunBuild(dir string, dev bool) error {
 	}
 
 	tinygoPath, tinygoErr := exec.LookPath("tinygo")
-	useTinyGo := tinygoErr == nil && !dev
+	useTinyGo := tinygoErr == nil && !opts.Dev
 
 	if useTinyGo {
 		fmt.Println("    Using TinyGo for smaller WASM binary...")
@@ -440,7 +452,7 @@ func RunBuild(dir string, dev bool) error {
 	}
 
 	// Build the application binary when the target directory is a runnable app.
-	serverBinaryPath := filepath.Join(distDir, "server", "app")
+	serverBinaryPath := filepath.Join(distDir, "server", "app"+targetExecutableExt())
 	builtServer, err := buildServerBinaryIfPresent(dir, serverBinaryPath)
 	if err != nil {
 		return fmt.Errorf("build server binary: %w", err)
@@ -449,7 +461,7 @@ func RunBuild(dir string, dev bool) error {
 		return fmt.Errorf("stage deployment bundle: %w", err)
 	}
 	staticPages := 0
-	if !dev && builtServer {
+	if !opts.Dev && builtServer {
 		exportManifest, err := prerenderStaticBundle(staticExportOptions{
 			AppRoot:    distDir,
 			OutputDir:  filepath.Join(distDir, "static"),
@@ -469,6 +481,19 @@ func RunBuild(dir string, dev bool) error {
 			return fmt.Errorf("write edge bundle: %w", err)
 		}
 	}
+	if opts.Offline {
+		if err := stageOfflineAssetBundle(dir, distDir); err != nil {
+			return fmt.Errorf("stage offline asset bundle: %w", err)
+		}
+	}
+	releaseArtifacts := msixReleaseArtifacts{}
+	if opts.MSIX || opts.Sign || strings.TrimSpace(opts.AppInstallerURI) != "" {
+		artifacts, err := stageMSIXReleaseBundle(dir, distDir, builtServer, serverBinaryPath, opts)
+		if err != nil {
+			return fmt.Errorf("stage MSIX release bundle: %w", err)
+		}
+		releaseArtifacts = artifacts
+	}
 
 	// ── Summary ─────────────────────────────────────────────────────────
 
@@ -478,7 +503,7 @@ func RunBuild(dir string, dev bool) error {
 	if builtServer {
 		fmt.Printf("  Server binary: %s\n", serverBinaryPath)
 		fmt.Printf("  Launch script: %s\n", filepath.Join(distDir, "run.sh"))
-		if !dev && staticPages > 0 {
+		if !opts.Dev && staticPages > 0 {
 			fmt.Printf("  Static export: %s (%d prerendered pages)\n", filepath.Join(distDir, "static"), staticPages)
 		}
 	} else {
@@ -500,13 +525,19 @@ func RunBuild(dir string, dev bool) error {
 	fmt.Printf("  Tier 3 (islands): %d programs + %d CSS, immutable CDN\n",
 		len(manifest.Islands), len(manifest.CSS))
 	fmt.Printf("  Manifest: %s\n", manifestPath)
+	if releaseArtifacts.Package != "" {
+		fmt.Printf("  MSIX: %s\n", releaseArtifacts.Package)
+	}
+	if releaseArtifacts.AppInstaller != "" {
+		fmt.Printf("  AppInstaller: %s\n", releaseArtifacts.AppInstaller)
+	}
 	fmt.Println("\nDeploy strategy:")
 	fmt.Println("  • Server binary rolls often (Tier 1)")
 	fmt.Println("  • Runtime assets cached forever with content hashes (Tier 2)")
 	fmt.Println("  • Island programs cached forever, invalidated by hash (Tier 3)")
 	fmt.Println("  • Manifest tells the server which hashed URLs to reference")
 	fmt.Println("  • dist/ includes app/ and public/ for file-routed runtime deployment")
-	if !dev && builtServer {
+	if !opts.Dev && builtServer {
 		fmt.Println("  • dist/edge/worker.js can serve prerendered HTML at the edge and proxy dynamic requests to origin")
 		fmt.Println("  • dist/platform/ contains deployment metadata and cache headers for hosted platforms")
 	}

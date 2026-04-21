@@ -3,6 +3,7 @@ package bundle
 import (
 	"fmt"
 	"math"
+	"strings"
 
 	"github.com/odvcencio/gosx/engine"
 	"github.com/odvcencio/gosx/render/gpu"
@@ -10,29 +11,43 @@ import (
 
 // particleState is the GPU-side layout of one particle: 32 bytes total.
 // Matches the WGSL Particle struct in particleUpdateWGSL.
-//   position : vec4<f32>  — xyz = world position, w = age in seconds
-//   velocity : vec4<f32>  — xyz = velocity, w = lifetime in seconds
+//
+//	position : vec4<f32>  — xyz = world position, w = age in seconds
+//	velocity : vec4<f32>  — xyz = velocity, w = lifetime in seconds
 const particleStride = 32
 
 // particleUpdateWGSL integrates particle state each frame. New particles
 // and respawns (when age ≥ lifetime) emit at the configured emitter
 // position with a pseudo-random velocity scaled by the emitter radius.
-// Gravity + drag forces are applied every tick.
+// A compact force graph is applied every tick.
 const particleUpdateWGSL = `
 struct Particle {
   position : vec4<f32>,
   velocity : vec4<f32>,
 };
 
+struct ParticleForce {
+  meta   : vec4<f32>, // x kind, y strength, z frequency, w unused
+  vector : vec4<f32>, // xyz direction/target/axis, w unused
+};
+
 struct ParticleUniforms {
   dt          : f32,
   time        : f32,
   lifetime    : f32,
-  drag        : f32,
+  forceCount  : f32,
   emitterPos  : vec4<f32>, // xyz pos, w radius
-  gravity     : vec4<f32>, // xyz gravity, w unused
   initialSpeed: vec4<f32>, // x initialSpeed, yzw pad
+  forces      : array<ParticleForce, 8>,
 };
+
+const PARTICLE_MAX_FORCES : u32 = 8u;
+const PARTICLE_FORCE_GRAVITY : u32 = 1u;
+const PARTICLE_FORCE_DRAG : u32 = 2u;
+const PARTICLE_FORCE_WIND : u32 = 3u;
+const PARTICLE_FORCE_ATTRACTOR : u32 = 4u;
+const PARTICLE_FORCE_VORTEX : u32 = 5u;
+const PARTICLE_FORCE_TURBULENCE : u32 = 6u;
 
 @group(0) @binding(0) var<uniform> u : ParticleUniforms;
 @group(0) @binding(1) var<storage, read_write> particles : array<Particle>;
@@ -42,6 +57,55 @@ fn hash13(p : vec3<f32>) -> f32 {
   var p3 = fract(p * 0.1031);
   p3 = p3 + dot(p3, p3.yzx + 33.33);
   return fract((p3.x + p3.y) * p3.z);
+}
+
+fn forceVectorOrDefault(v : vec3<f32>, fallback : vec3<f32>) -> vec3<f32> {
+  if (dot(v, v) <= 0.00000001) {
+    return fallback;
+  }
+  return v;
+}
+
+fn particleForceAcceleration(f : ParticleForce, pos : vec3<f32>, time : f32) -> vec3<f32> {
+  let kind = u32(f.meta.x + 0.5);
+  let strength = f.meta.y;
+  let v = f.vector.xyz;
+  if (kind == PARTICLE_FORCE_GRAVITY) {
+    let g = forceVectorOrDefault(v, vec3<f32>(0.0, -1.0, 0.0));
+    return g * strength;
+  }
+  if (kind == PARTICLE_FORCE_WIND) {
+    let wind = forceVectorOrDefault(v, vec3<f32>(1.0, 0.0, 0.0));
+    return wind * strength;
+  }
+  if (kind == PARTICLE_FORCE_ATTRACTOR) {
+    let delta = v - pos;
+    let dist = length(delta);
+    if (dist <= 0.0001) {
+      return vec3<f32>(0.0);
+    }
+    return (delta / dist) * strength;
+  }
+  if (kind == PARTICLE_FORCE_VORTEX) {
+    let axis = normalize(forceVectorOrDefault(v, vec3<f32>(0.0, 1.0, 0.0)));
+    let radial = pos - axis * dot(pos, axis);
+    let dist = length(radial);
+    if (dist <= 0.0001) {
+      return vec3<f32>(0.0);
+    }
+    return normalize(cross(radial, axis)) * strength;
+  }
+  if (kind == PARTICLE_FORCE_TURBULENCE) {
+    var freq = abs(f.meta.z);
+    if (freq <= 0.000001) {
+      freq = 1.0;
+    }
+    let nx = sin(pos.x * freq + time * 1.3) * cos(pos.z * freq + time * 0.7);
+    let ny = sin(pos.y * freq + time * 0.9) * cos(pos.x * freq + time * 1.1);
+    let nz = sin(pos.z * freq + time * 1.7) * cos(pos.y * freq + time * 0.5);
+    return vec3<f32>(nx, ny, nz) * strength;
+  }
+  return vec3<f32>(0.0);
 }
 
 @compute @workgroup_size(64)
@@ -62,8 +126,22 @@ fn main(@builtin(global_invocation_id) gid : vec3<u32>) {
     p.position = vec4<f32>(u.emitterPos.xyz + offset, 0.0);
     p.velocity = vec4<f32>(dir * u.initialSpeed.x, u.lifetime);
   } else {
-    let dragFactor = clamp(1.0 - u.drag * u.dt, 0.0, 1.0);
-    let newVel = p.velocity.xyz * dragFactor + u.gravity.xyz * u.dt;
+    var acceleration = vec3<f32>(0.0);
+    var drag = 0.0;
+    for (var fi = 0u; fi < PARTICLE_MAX_FORCES; fi = fi + 1u) {
+      if (f32(fi) >= u.forceCount) {
+        break;
+      }
+      let force = u.forces[fi];
+      let kind = u32(force.meta.x + 0.5);
+      if (kind == PARTICLE_FORCE_DRAG) {
+        drag = drag + force.meta.y;
+      } else {
+        acceleration = acceleration + particleForceAcceleration(force, p.position.xyz, u.time);
+      }
+    }
+    let dragFactor = clamp(1.0 - drag * u.dt, 0.0, 1.0);
+    let newVel = p.velocity.xyz * dragFactor + acceleration * u.dt;
     let newPos = p.position.xyz + newVel * u.dt;
     p.position = vec4<f32>(newPos, newAge);
     p.velocity = vec4<f32>(newVel, p.velocity.w);
@@ -170,9 +248,25 @@ fn fs_main(in : VSOut) -> ParticleFSOut {
 }
 `
 
+const (
+	particleMaxForces          = 8
+	particleForceStride        = 32
+	particleUniformForceOffset = 48
+)
+
 // particleUniformSize matches ParticleUniforms in particleUpdateWGSL.
-// 4 scalars (16) + 3 vec4 (48) = 64 bytes.
-const particleUniformSize = 64
+// 3 vec4 blocks (48) + 8 force records (256) = 304 bytes.
+const particleUniformSize = particleUniformForceOffset + particleMaxForces*particleForceStride
+
+const (
+	particleForceNone = iota
+	particleForceGravity
+	particleForceDrag
+	particleForceWind
+	particleForceAttractor
+	particleForceVortex
+	particleForceTurbulence
+)
 
 // particleSceneUniformSize matches ParticleSceneUniforms. mat4 (64) + 4
 // vec4 (64) = 128 bytes.
@@ -180,12 +274,12 @@ const particleSceneUniformSize = 128
 
 // particleResources holds a system's GPU state.
 type particleResources struct {
-	count             int
-	particleBuf       gpu.Buffer // storage buffer of Particle[]
-	updateUniformBuf  gpu.Buffer // ParticleUniforms
-	sceneUniformBuf   gpu.Buffer // ParticleSceneUniforms
-	updateBindGrp     gpu.BindGroup
-	renderBindGrp     gpu.BindGroup
+	count            int
+	particleBuf      gpu.Buffer // storage buffer of Particle[]
+	updateUniformBuf gpu.Buffer // ParticleUniforms
+	sceneUniformBuf  gpu.Buffer // ParticleSceneUniforms
+	updateBindGrp    gpu.BindGroup
+	renderBindGrp    gpu.BindGroup
 	// initialized flag so the first-frame respawn logic seeds lifetimes.
 	initialized bool
 }
@@ -229,7 +323,7 @@ func (r *Renderer) buildParticlePipelines() error {
 			EntryPoint: "fs_main",
 			Targets: []gpu.ColorTargetState{
 				{
-					Format:    hdrFormat,
+					Format:    r.hdrFormat,
 					WriteMask: gpu.ColorWriteAll,
 					// Additive blend in HDR — particles glow when summed.
 					Blend: &gpu.BlendState{
@@ -392,23 +486,7 @@ func (r *Renderer) recordParticleUpdates(enc gpu.CommandEncoder, b engine.Render
 			continue
 		}
 
-		// Update-pass uniforms. Gravity + drag picked out of the first
-		// "gravity" / "drag" entries; more complex force graphs land in R5.
-		gx, gy, gz := float32(0), float32(-9.8), float32(0)
-		drag := float32(0.1)
-		for _, f := range cp.Forces {
-			switch f.Kind {
-			case "gravity":
-				gx = float32(f.X * f.Strength)
-				gy = float32(f.Y * f.Strength)
-				gz = float32(f.Z * f.Strength)
-				if f.X == 0 && f.Y == 0 && f.Z == 0 {
-					gy = float32(-f.Strength) // default: negative Y
-				}
-			case "drag":
-				drag = float32(f.Strength)
-			}
-		}
+		forces := particleForcesFromRender(cp.Forces)
 		lifetime := float32(cp.Emitter.Lifetime)
 		if lifetime <= 0 {
 			lifetime = 2.5
@@ -423,10 +501,10 @@ func (r *Renderer) recordParticleUpdates(enc gpu.CommandEncoder, b engine.Render
 		}
 
 		r.device.Queue().WriteBuffer(res.updateUniformBuf, 0, encodeParticleUpdateUniforms(
-			float32(dt), float32(tSeconds), lifetime, drag,
+			float32(dt), float32(tSeconds), lifetime,
 			[4]float32{float32(cp.Emitter.X), float32(cp.Emitter.Y), float32(cp.Emitter.Z), radius},
-			[4]float32{gx, gy, gz, 0},
 			[4]float32{initialSpeed, 0, 0, 0},
+			forces,
 		))
 
 		// Render-pass uniforms. Colors from RenderParticleMaterial with
@@ -497,14 +575,104 @@ func (r *Renderer) drawParticles(pass gpu.RenderPassEncoder, b engine.RenderBund
 	}
 }
 
-func encodeParticleUpdateUniforms(dt, time, lifetime, drag float32,
-	emitterPos, gravity, initialSpeed [4]float32) []byte {
+type particleForceUniform struct {
+	kind      int
+	strength  float32
+	vector    [3]float32
+	frequency float32
+}
+
+func encodeParticleUpdateUniforms(dt, time, lifetime float32,
+	emitterPos, initialSpeed [4]float32, forces []particleForceUniform) []byte {
 	out := make([]byte, particleUniformSize)
-	copy(out[0:16], float32sToBytes([]float32{dt, time, lifetime, drag}))
+	forceCount := len(forces)
+	if forceCount > particleMaxForces {
+		forceCount = particleMaxForces
+	}
+	copy(out[0:16], float32sToBytes([]float32{dt, time, lifetime, float32(forceCount)}))
 	copy(out[16:32], float32sToBytes(emitterPos[:]))
-	copy(out[32:48], float32sToBytes(gravity[:]))
-	copy(out[48:64], float32sToBytes(initialSpeed[:]))
+	copy(out[32:48], float32sToBytes(initialSpeed[:]))
+	for i := 0; i < forceCount; i++ {
+		force := forces[i]
+		off := particleUniformForceOffset + i*particleForceStride
+		copy(out[off:off+16], float32sToBytes([]float32{
+			float32(force.kind),
+			force.strength,
+			force.frequency,
+			0,
+		}))
+		copy(out[off+16:off+32], float32sToBytes([]float32{
+			force.vector[0],
+			force.vector[1],
+			force.vector[2],
+			0,
+		}))
+	}
 	return out
+}
+
+func particleForcesFromRender(src []engine.RenderParticleForce) []particleForceUniform {
+	gravity := particleForceUniform{kind: particleForceGravity, strength: 9.8}
+	drag := particleForceUniform{kind: particleForceDrag, strength: 0.1}
+	extras := make([]particleForceUniform, 0, len(src))
+
+	for _, f := range src {
+		kind := particleForceKind(f.Kind)
+		if kind == particleForceNone {
+			continue
+		}
+		force := particleForceFromRender(kind, f)
+		switch kind {
+		case particleForceGravity:
+			gravity = force
+		case particleForceDrag:
+			drag = force
+		default:
+			extras = append(extras, force)
+		}
+	}
+
+	out := make([]particleForceUniform, 0, particleMaxForces)
+	out = append(out, gravity, drag)
+	for _, force := range extras {
+		if len(out) >= particleMaxForces {
+			break
+		}
+		out = append(out, force)
+	}
+	return out
+}
+
+func particleForceFromRender(kind int, f engine.RenderParticleForce) particleForceUniform {
+	frequency := float32(f.Frequency)
+	if frequency == 0 {
+		frequency = 1
+	}
+	return particleForceUniform{
+		kind:      kind,
+		strength:  float32(f.Strength),
+		vector:    [3]float32{float32(f.X), float32(f.Y), float32(f.Z)},
+		frequency: frequency,
+	}
+}
+
+func particleForceKind(kind string) int {
+	switch strings.ToLower(strings.TrimSpace(kind)) {
+	case "gravity":
+		return particleForceGravity
+	case "drag":
+		return particleForceDrag
+	case "wind":
+		return particleForceWind
+	case "attractor", "attract":
+		return particleForceAttractor
+	case "vortex", "orbit":
+		return particleForceVortex
+	case "turbulence":
+		return particleForceTurbulence
+	default:
+		return particleForceNone
+	}
 }
 
 func encodeParticleSceneUniforms(viewProj mat4, cameraPos, colorStart, colorEnd, sizeStartEnd [4]float32) []byte {

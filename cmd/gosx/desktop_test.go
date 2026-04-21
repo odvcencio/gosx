@@ -58,6 +58,36 @@ func TestDesktopDirectMode(t *testing.T) {
 	}
 }
 
+func TestDesktopArgsBeforeParseConsumesDevAlias(t *testing.T) {
+	args, dev := desktopArgsBeforeParse([]string{"dev", "--devtools", "examples/app"})
+	if !dev {
+		t.Fatal("expected leading dev alias to be detected")
+	}
+	if got := strings.Join(args, " "); got != "--devtools examples/app" {
+		t.Fatalf("args = %q", got)
+	}
+}
+
+func TestDesktopArgsBeforeParseLeavesFlagsFirst(t *testing.T) {
+	args, dev := desktopArgsBeforeParse([]string{"--devtools", "dev", "examples/app"})
+	if dev {
+		t.Fatal("did not expect dev alias before flag parsing")
+	}
+	if got := strings.Join(args, " "); got != "--devtools dev examples/app" {
+		t.Fatalf("args = %q", got)
+	}
+}
+
+func TestDesktopArgsAfterParseConsumesDevAlias(t *testing.T) {
+	args, dev := desktopArgsAfterParse([]string{"dev", "examples/app"})
+	if !dev {
+		t.Fatal("expected parsed dev alias")
+	}
+	if got := strings.Join(args, " "); got != "examples/app" {
+		t.Fatalf("args = %q", got)
+	}
+}
+
 func TestWaitForDesktopProxyReady(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/gosx/dev/info" {

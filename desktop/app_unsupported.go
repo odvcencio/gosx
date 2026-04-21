@@ -84,6 +84,38 @@ func (unsupportedApp) OpenURL(string) error {
 	return ErrUnsupported
 }
 
-func (unsupportedApp) SetFullscreen(bool) error    { return ErrUnsupported }
-func (unsupportedApp) SetMinSize(int, int) error   { return ErrUnsupported }
-func (unsupportedApp) SetMaxSize(int, int) error   { return ErrUnsupported }
+func (unsupportedApp) SetFullscreen(bool) error  { return ErrUnsupported }
+func (unsupportedApp) SetMinSize(int, int) error { return ErrUnsupported }
+func (unsupportedApp) SetMaxSize(int, int) error { return ErrUnsupported }
+
+func (unsupportedApp) NewWindow(WindowOptions) (*Window, error) {
+	return nil, ErrUnsupported
+}
+
+func (unsupportedApp) RegisterProtocol(string) error {
+	return ErrUnsupported
+}
+
+func (unsupportedApp) RegisterFileType(string, string, string) error {
+	return ErrUnsupported
+}
+
+func (unsupportedApp) SetMenuBar(Menu) error {
+	return ErrUnsupported
+}
+
+func (unsupportedApp) SetTray(TrayOptions) error {
+	return ErrUnsupported
+}
+
+func (unsupportedApp) CloseTray() error {
+	return ErrUnsupported
+}
+
+func (unsupportedApp) Notify(Notification) error {
+	return ErrUnsupported
+}
+
+func (unsupportedApp) SetFileDropHandler(func([]string)) error {
+	return ErrUnsupported
+}

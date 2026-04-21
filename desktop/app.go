@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+
+	"github.com/odvcencio/gosx/desktop/bridge"
 )
 
 const (
@@ -29,19 +31,57 @@ var (
 
 // Options configures a native desktop window.
 type Options struct {
-	Title       string
-	Width       int
-	Height      int
-	URL         string
-	HTML        string
-	Debug       bool
-	UserDataDir string
+	Title          string
+	Width          int
+	Height         int
+	AppID          string
+	Version        string
+	UpdateFeed     string
+	URL            string
+	HTML           string
+	Debug          bool
+	UserDataDir    string
+	SingleInstance bool
+	DPIAwareness   DPIAwareness
+	Accessibility  AccessibilityOptions
+	CrashReporter  CrashReporterOptions
 
-	// OnWebMessage is invoked on each chrome.webview.postMessage call from
-	// JS. The callback runs on the platform's webview dispatcher thread —
-	// keep it short; hand off to a goroutine or a channel for anything
-	// expensive. Nil disables the JS→Go bridge.
+	// DevTools enables the Chromium inspector. Independent of Debug so a
+	// production build can temporarily flip dev-tools on for field
+	// diagnosis without enabling the rest of the Debug surface (default
+	// context menus, relaxed UA, etc.). When Debug is true, DevTools is
+	// implicitly on.
+	DevTools bool
+
+	// BridgeLimit caps inbound message rate and size for the typed IPC
+	// bridge. The zero value applies bridge.DefaultLimit (64 KiB / 200
+	// msgs/s / burst 400). Set any field to use a custom partial limit;
+	// in that mode zero fields disable their corresponding checks.
+	BridgeLimit bridge.Limit
+
+	// OnWebMessage receives every chrome.webview.postMessage payload as
+	// a raw string, after the typed bridge has had a chance to dispatch
+	// it. Prefer App.Bridge().Register for typed IPC; OnWebMessage is a
+	// lower-level escape hatch for inspection or legacy message shapes.
+	// Runs on the platform's webview dispatcher thread — keep it short.
 	OnWebMessage func(message string)
+
+	// OnSecondInstance fires in the already-running process when
+	// SingleInstance is true and a later launch forwards its argv payload.
+	OnSecondInstance func(message InstanceMessage)
+
+	// OnSuspend and OnResume mirror OS lifecycle notifications where the
+	// backend exposes them. Windows wires these to WM_POWERBROADCAST.
+	OnSuspend func()
+	OnResume  func()
+
+	// OnWindowCreated fires after a native window handle has been created.
+	// The initial Windows backend invokes it for the primary window.
+	OnWindowCreated func(window *Window)
+
+	// OnFileDrop fires when the platform backend receives shell file-drop
+	// paths for the native window.
+	OnFileDrop func(paths []string)
 
 	// OnClose fires once the native window has been closed by the user or
 	// the OS. Use it for graceful shutdown: flushing state, disposing
@@ -53,6 +93,7 @@ type Options struct {
 type App struct {
 	options Options
 	impl    platformApp
+	bridge  *bridge.Router
 }
 
 type platformApp interface {
@@ -78,6 +119,14 @@ type platformApp interface {
 	SetFullscreen(enabled bool) error
 	SetMinSize(width, height int) error
 	SetMaxSize(width, height int) error
+	NewWindow(options WindowOptions) (*Window, error)
+	RegisterProtocol(scheme string) error
+	RegisterFileType(ext, icon, handler string) error
+	SetMenuBar(menu Menu) error
+	SetTray(options TrayOptions) error
+	CloseTray() error
+	Notify(notification Notification) error
+	SetFileDropHandler(handler func([]string)) error
 }
 
 // New validates options and constructs a platform desktop app.
@@ -86,11 +135,37 @@ func New(options Options) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	// Keep the caller's raw-message callback so the bridge can chain to
+	// it after the typed router has had a chance to dispatch.
+	userCallback := normalized.OnWebMessage
+
+	app := &App{options: normalized}
+
+	// Install the preprocessor wrapper. The wrapper is what the platform
+	// impl actually invokes; it fans the message out through the bridge
+	// router first, then into the user's raw callback.
+	normalized.OnWebMessage = func(msg string) {
+		if app.bridge != nil {
+			_ = app.bridge.Dispatch(msg)
+		}
+		if userCallback != nil {
+			userCallback(msg)
+		}
+	}
+	app.options = normalized
+
 	impl, err := newPlatformApp(normalized)
 	if err != nil {
 		return nil, err
 	}
-	return &App{options: normalized, impl: impl}, nil
+	app.impl = impl
+
+	app.bridge = bridge.NewRouter(func(raw string) error {
+		return impl.PostMessage(raw)
+	}, normalized.BridgeLimit)
+
+	return app, nil
 }
 
 // Run constructs a desktop app and blocks until the native window closes.
@@ -115,10 +190,26 @@ func (a *App) Options() Options {
 	return a.options
 }
 
+// Bridge returns the typed IPC router for this app. Handlers register
+// via Bridge().Register; host→page events go out via Bridge().Emit.
+// Inbound chrome.webview.postMessage payloads are dispatched through
+// this router before the legacy OnWebMessage raw callback fires.
+func (a *App) Bridge() *bridge.Router {
+	if a == nil {
+		return nil
+	}
+	return a.bridge
+}
+
 // Run starts the native event loop and blocks until the window closes.
 func (a *App) Run() error {
 	if a == nil || a.impl == nil {
 		return fmt.Errorf("%w: nil app", ErrInvalidOptions)
+	}
+	if a.options.CrashReporter.Enabled {
+		return runWithCrashReporter(a.options.CrashReporter, func() error {
+			return a.impl.Run()
+		})
 	}
 	return a.impl.Run()
 }
@@ -173,9 +264,9 @@ func (a *App) ExecuteScript(script string) error {
 	return a.impl.ExecuteScript(script)
 }
 
-// OpenDevTools pops the Chromium inspector in a separate window. Only
-// works when Options.Debug = true, which toggles AreDevToolsEnabled on
-// the underlying settings object.
+// OpenDevTools pops the Chromium inspector in a separate window. It works
+// when Options.Debug or Options.DevTools is true, which toggles
+// AreDevToolsEnabled on the underlying settings object.
 func (a *App) OpenDevTools() error {
 	if a == nil || a.impl == nil {
 		return fmt.Errorf("%w: nil app", ErrInvalidOptions)
@@ -194,16 +285,141 @@ func (a *App) PrependBootstrapScript(script string) error {
 	return a.impl.PrependBootstrapScript(script)
 }
 
+// NewWindow requests an additional native window. The public API shape is
+// available for apps to compile against; the current Windows backend returns
+// ErrUnsupported until shared WebView2-environment multi-window support lands.
+func (a *App) NewWindow(options WindowOptions) (*Window, error) {
+	if a == nil || a.impl == nil {
+		return nil, fmt.Errorf("%w: nil app", ErrInvalidOptions)
+	}
+	normalized, err := normalizeWindowOptions(a.options, options)
+	if err != nil {
+		return nil, err
+	}
+	return a.impl.NewWindow(normalized)
+}
+
+// SetMenuBar installs or replaces the native menu bar for the app window.
+func (a *App) SetMenuBar(menu Menu) error {
+	if a == nil || a.impl == nil {
+		return fmt.Errorf("%w: nil app", ErrInvalidOptions)
+	}
+	if _, err := BuildMenuPlan(menu); err != nil {
+		return err
+	}
+	return a.impl.SetMenuBar(menu)
+}
+
+// Tray registers a shell tray icon for the app. The returned Tray can remove
+// the registration with Close.
+func (a *App) Tray(options TrayOptions) (*Tray, error) {
+	if a == nil || a.impl == nil {
+		return nil, fmt.Errorf("%w: nil app", ErrInvalidOptions)
+	}
+	if _, err := BuildTrayRegistration(a.options.AppID, options); err != nil {
+		return nil, err
+	}
+	if err := a.impl.SetTray(options); err != nil {
+		return nil, err
+	}
+	return &Tray{app: a}, nil
+}
+
+func (a *App) closeTray() error {
+	if a == nil || a.impl == nil {
+		return fmt.Errorf("%w: nil app", ErrInvalidOptions)
+	}
+	return a.impl.CloseTray()
+}
+
+// Notify sends a native notification through the platform backend.
+func (a *App) Notify(notification Notification) error {
+	if a == nil || a.impl == nil {
+		return fmt.Errorf("%w: nil app", ErrInvalidOptions)
+	}
+	if _, err := BuildToastPayload(notification); err != nil {
+		return err
+	}
+	return a.impl.Notify(notification)
+}
+
+// OnFileDrop replaces the file-drop callback after app construction.
+func (a *App) OnFileDrop(handler func([]string)) error {
+	if a == nil || a.impl == nil {
+		return fmt.Errorf("%w: nil app", ErrInvalidOptions)
+	}
+	a.options.OnFileDrop = handler
+	return a.impl.SetFileDropHandler(handler)
+}
+
+// UpdateCheck reads the configured AppInstaller feed and compares its main
+// package version against Options.Version. It does not install anything.
+func (a *App) UpdateCheck() (UpdateInfo, error) {
+	if a == nil {
+		return UpdateInfo{}, fmt.Errorf("%w: nil app", ErrInvalidOptions)
+	}
+	return CheckAppInstallerUpdate(a.options.UpdateFeed, a.options.Version)
+}
+
+// UpdateApply opens the configured AppInstaller feed with the platform shell.
+// On Windows this hands control to App Installer for the user-approved update.
+func (a *App) UpdateApply() error {
+	if a == nil || a.impl == nil {
+		return fmt.Errorf("%w: nil app", ErrInvalidOptions)
+	}
+	feed := strings.TrimSpace(a.options.UpdateFeed)
+	if feed == "" {
+		return fmt.Errorf("%w: update feed is empty", ErrInvalidOptions)
+	}
+	return a.impl.OpenURL(feed)
+}
+
+// RegisterProtocol registers scheme as a per-user URL protocol for the
+// current application executable.
+func (a *App) RegisterProtocol(scheme string) error {
+	if a == nil || a.impl == nil {
+		return fmt.Errorf("%w: nil app", ErrInvalidOptions)
+	}
+	return a.impl.RegisterProtocol(scheme)
+}
+
+// RegisterFileType registers ext as a per-user file association for the
+// current application executable. icon is optional. handler is used as the
+// file type description; pass an empty string for the default description.
+func (a *App) RegisterFileType(ext, icon, handler string) error {
+	if a == nil || a.impl == nil {
+		return fmt.Errorf("%w: nil app", ErrInvalidOptions)
+	}
+	return a.impl.RegisterFileType(ext, icon, handler)
+}
+
+func devToolsEnabled(options Options) bool {
+	return options.Debug || options.DevTools
+}
+
 func normalizeOptions(options Options) (Options, error) {
 	options.Title = strings.TrimSpace(options.Title)
+	options.AppID = strings.TrimSpace(options.AppID)
+	options.Version = strings.TrimSpace(options.Version)
+	options.UpdateFeed = strings.TrimSpace(options.UpdateFeed)
 	options.URL = strings.TrimSpace(options.URL)
 	options.UserDataDir = strings.TrimSpace(options.UserDataDir)
+	options.CrashReporter.DumpDir = strings.TrimSpace(options.CrashReporter.DumpDir)
+	options.CrashReporter.UploadEndpoint = strings.TrimSpace(options.CrashReporter.UploadEndpoint)
+	options.Accessibility.Name = strings.TrimSpace(options.Accessibility.Name)
+	options.Accessibility.Description = strings.TrimSpace(options.Accessibility.Description)
 
 	if options.URL != "" && options.HTML != "" {
 		return Options{}, fmt.Errorf("%w: url and html are mutually exclusive", ErrInvalidOptions)
 	}
 	if options.Title == "" {
 		options.Title = defaultTitle
+	}
+	if options.AppID == "" {
+		options.AppID = defaultAppID(options.Title)
+	}
+	if err := validateAppID(options.AppID); err != nil {
+		return Options{}, err
 	}
 	if options.Width <= 0 {
 		options.Width = defaultWidth
@@ -214,12 +430,27 @@ func normalizeOptions(options Options) (Options, error) {
 	if options.URL == "" {
 		options.URL = defaultURL
 	}
+	dpi, err := normalizeDPIAwareness(options.DPIAwareness)
+	if err != nil {
+		return Options{}, err
+	}
+	options.DPIAwareness = dpi
+	if options.Accessibility.Enabled && options.Accessibility.Name == "" {
+		options.Accessibility.Name = options.Title
+	}
 
 	for name, value := range map[string]string{
-		"title":       options.Title,
-		"url":         options.URL,
-		"html":        options.HTML,
-		"userDataDir": options.UserDataDir,
+		"title":                        options.Title,
+		"appID":                        options.AppID,
+		"version":                      options.Version,
+		"updateFeed":                   options.UpdateFeed,
+		"url":                          options.URL,
+		"html":                         options.HTML,
+		"userDataDir":                  options.UserDataDir,
+		"crashReporter.dumpDir":        options.CrashReporter.DumpDir,
+		"crashReporter.uploadEndpoint": options.CrashReporter.UploadEndpoint,
+		"accessibility.name":           options.Accessibility.Name,
+		"accessibility.description":    options.Accessibility.Description,
 	} {
 		if strings.ContainsRune(value, '\x00') {
 			return Options{}, fmt.Errorf("%w: %s contains NUL", ErrInvalidOptions, name)

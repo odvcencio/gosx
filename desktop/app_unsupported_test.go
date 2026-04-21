@@ -44,10 +44,20 @@ func TestUnsupportedAppRejectsAllBridgeAndWindowCalls(t *testing.T) {
 		{"SetFullscreen", stub.SetFullscreen(true)},
 		{"SetMinSize", stub.SetMinSize(320, 200)},
 		{"SetMaxSize", stub.SetMaxSize(2560, 1440)},
+		{"RegisterProtocol", stub.RegisterProtocol("gosx-test")},
+		{"RegisterFileType", stub.RegisterFileType(".gsx", "", "GoSX Component")},
+		{"SetMenuBar", stub.SetMenuBar(Menu{})},
+		{"SetTray", stub.SetTray(TrayOptions{})},
+		{"CloseTray", stub.CloseTray()},
+		{"Notify", stub.Notify(Notification{Title: "hello"})},
+		{"SetFileDropHandler", stub.SetFileDropHandler(func([]string) {})},
 	}
 	for _, c := range checks {
 		if !errors.Is(c.err, ErrUnsupported) {
 			t.Errorf("%s: err = %v, want ErrUnsupported", c.name, c.err)
 		}
+	}
+	if _, err := stub.NewWindow(WindowOptions{}); !errors.Is(err, ErrUnsupported) {
+		t.Errorf("NewWindow: err = %v, want ErrUnsupported", err)
 	}
 }

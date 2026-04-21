@@ -18,20 +18,30 @@ const (
 	colorWindow = 5
 
 	// ShowWindow nCmdShow values.
-	swHide         = 0
-	swShowNormal   = 1
-	swShowMinimized = 2
-	swShowMaximized = 3
+	swHide           = 0
+	swShowNormal     = 1
+	swShowMinimized  = 2
+	swShowMaximized  = 3
 	swShowNoActivate = 4
-	swShow         = 5
-	swMinimize     = 6
-	swShowDefault  = 10
-	swRestore      = 9
+	swShow           = 5
+	swMinimize       = 6
+	swShowDefault    = 10
+	swRestore        = 9
 
-	wmClose         = 0x0010
-	wmDestroy       = 0x0002
-	wmSize          = 0x0005
-	wmGetMinMaxInfo = 0x0024
+	wmClose          = 0x0010
+	wmDestroy        = 0x0002
+	wmCommand        = 0x0111
+	wmContextMenu    = 0x007B
+	wmCopyData       = 0x004A
+	wmDropFiles      = 0x0233
+	wmGetObject      = 0x003D
+	wmSize           = 0x0005
+	wmGetMinMaxInfo  = 0x0024
+	wmKeyDown        = 0x0100
+	wmPowerBroadcast = 0x0218
+	wmAppTray        = 0x8001
+
+	vkF12 = 0x7B
 
 	wsOverlappedWindow = 0x00CF0000
 	wsPopup            = 0x80000000
@@ -43,10 +53,10 @@ const (
 	gwlStyle = uintptr(0xFFFFFFFFFFFFFFF0)
 
 	// SetWindowPos uFlags.
-	swpNoZOrder      = 0x0004
-	swpFrameChanged  = 0x0020
-	swpNoCopyBits    = 0x0100
-	swpShowWindow    = 0x0040
+	swpNoZOrder     = 0x0004
+	swpFrameChanged = 0x0020
+	swpNoCopyBits   = 0x0100
+	swpShowWindow   = 0x0040
 
 	// MonitorFromWindow dwFlags.
 	monitorDefaultToNearest = 0x00000002
@@ -69,26 +79,32 @@ var (
 
 	procGetModuleHandleW = modKernel.NewProc("GetModuleHandleW")
 
-	procRegisterClassExW = modUser32.NewProc("RegisterClassExW")
-	procCreateWindowExW  = modUser32.NewProc("CreateWindowExW")
-	procDefWindowProcW   = modUser32.NewProc("DefWindowProcW")
-	procDestroyWindow    = modUser32.NewProc("DestroyWindow")
-	procDispatchMessageW = modUser32.NewProc("DispatchMessageW")
-	procGetClientRect    = modUser32.NewProc("GetClientRect")
-	procGetMessageW      = modUser32.NewProc("GetMessageW")
-	procLoadCursorW      = modUser32.NewProc("LoadCursorW")
-	procPostMessageW     = modUser32.NewProc("PostMessageW")
-	procPostQuitMessage  = modUser32.NewProc("PostQuitMessage")
-	procShowWindow       = modUser32.NewProc("ShowWindow")
-	procTranslateMessage = modUser32.NewProc("TranslateMessage")
-	procUpdateWindow     = modUser32.NewProc("UpdateWindow")
-	procSetWindowTextW   = modUser32.NewProc("SetWindowTextW")
+	procRegisterClassExW    = modUser32.NewProc("RegisterClassExW")
+	procCreateWindowExW     = modUser32.NewProc("CreateWindowExW")
+	procDefWindowProcW      = modUser32.NewProc("DefWindowProcW")
+	procDestroyWindow       = modUser32.NewProc("DestroyWindow")
+	procDispatchMessageW    = modUser32.NewProc("DispatchMessageW")
+	procGetClientRect       = modUser32.NewProc("GetClientRect")
+	procGetMessageW         = modUser32.NewProc("GetMessageW")
+	procLoadCursorW         = modUser32.NewProc("LoadCursorW")
+	procPostMessageW        = modUser32.NewProc("PostMessageW")
+	procPostQuitMessage     = modUser32.NewProc("PostQuitMessage")
+	procShowWindow          = modUser32.NewProc("ShowWindow")
+	procTranslateMessage    = modUser32.NewProc("TranslateMessage")
+	procUpdateWindow        = modUser32.NewProc("UpdateWindow")
+	procSetWindowTextW      = modUser32.NewProc("SetWindowTextW")
 	procSetForegroundWindow = modUser32.NewProc("SetForegroundWindow")
+	procSetPropW            = modUser32.NewProc("SetPropW")
+	procRemovePropW         = modUser32.NewProc("RemovePropW")
+	procGetPropW            = modUser32.NewProc("GetPropW")
+	procEnumWindows         = modUser32.NewProc("EnumWindows")
+	procSendMessageTimeoutW = modUser32.NewProc("SendMessageTimeoutW")
 
 	// SetProcessDpiAwarenessContext is Win10 1703+. NewLazyProc resolves
-	// at first .Call(), so older systems silently no-op when the Find()
-	// probe fails in setDPIAware.
+	// at first .Call(), so older systems silently fall back when the Find()
+	// probe fails in setDPIAwareness.
 	procSetProcessDpiAwarenessContext = modUser32.NewProc("SetProcessDpiAwarenessContext")
+	procSetProcessDPIAware            = modUser32.NewProc("SetProcessDPIAware")
 
 	procSetWindowLongPtrW = modUser32.NewProc("SetWindowLongPtrW")
 	procGetWindowLongPtrW = modUser32.NewProc("GetWindowLongPtrW")
@@ -192,6 +208,10 @@ func createDesktopWindow(title string, width, height int, app *windowsApp) (uint
 	windowMu.Lock()
 	windowApps[hwnd] = app
 	windowMu.Unlock()
+	if err := setAppWindowProperty(hwnd, app.options.AppID); err != nil {
+		destroyWindow(hwnd)
+		return 0, err
+	}
 	return hwnd, nil
 }
 
@@ -272,15 +292,22 @@ func setWindowTitle(hwnd uintptr, title string) error {
 	return nil
 }
 
-// setDPIAware opts the process into Per-Monitor-Aware v2 DPI semantics on
-// Windows 10 1703+. Falls back to a no-op on older systems — no hard
-// failure because the webview renders at the system DPI regardless; we
-// just get blurry scaling above 100%.
-func setDPIAware() {
-	if err := procSetProcessDpiAwarenessContext.Find(); err != nil {
+// setDPIAwareness opts the process into the requested DPI semantics before
+// the first HWND is created. Per-monitor-v2 falls back to system-DPI aware
+// when older Windows builds do not expose the v2 context API.
+func setDPIAwareness(mode DPIAwareness) {
+	switch mode {
+	case DPIAwarenessUnaware:
 		return
+	case DPIAwarenessSystem:
+		procSetProcessDPIAware.Call()
+	default:
+		if err := procSetProcessDpiAwarenessContext.Find(); err == nil {
+			procSetProcessDpiAwarenessContext.Call(dpiAwarenessContextPerMonitorV2)
+			return
+		}
+		procSetProcessDPIAware.Call()
 	}
-	procSetProcessDpiAwarenessContext.Call(dpiAwarenessContextPerMonitorV2)
 }
 
 // monitorInfo is the Win32 MONITORINFO used to query the current monitor's
@@ -414,6 +441,38 @@ func desktopWndProc(hwnd uintptr, message uint32, wparam, lparam uintptr) uintpt
 	windowMu.Unlock()
 
 	switch message {
+	case wmCommand:
+		if app != nil && app.handleMenuCommand(wparam) {
+			return 0
+		}
+	case wmContextMenu:
+		if app != nil && app.showContextMenu(hwnd, lparam) {
+			return 0
+		}
+	case wmCopyData:
+		if app != nil && app.handleCopyData(lparam) {
+			return 1
+		}
+	case wmDropFiles:
+		if app != nil {
+			app.handleDropFiles(wparam)
+			return 0
+		}
+	case wmAppTray:
+		if app != nil && app.handleTrayMessage(lparam) {
+			return 0
+		}
+	case wmKeyDown:
+		if app != nil && wparam == vkF12 {
+			app.openDevToolsFromShortcut()
+			return 0
+		}
+	case wmGetObject:
+		if app != nil {
+			if ret := app.handleAccessibilityObject(wparam, lparam); ret != 0 {
+				return ret
+			}
+		}
 	case wmSize:
 		if app != nil {
 			_ = app.resizeWebView()
@@ -426,6 +485,16 @@ func desktopWndProc(hwnd uintptr, message uint32, wparam, lparam uintptr) uintpt
 			info := (*mINMAXINFO)(unsafe.Pointer(lparam))
 			app.applyMinMaxTo(info)
 		}
+	case wmPowerBroadcast:
+		if app != nil {
+			switch uint32(wparam) {
+			case pbtAPMSuspend:
+				app.onSuspend()
+			case pbtAPMResumeAutomatic, pbtAPMResumeSuspend:
+				app.onResume()
+			}
+			return 1
+		}
 	case wmClose:
 		if hwnd != 0 {
 			destroyWindow(hwnd)
@@ -433,6 +502,8 @@ func desktopWndProc(hwnd uintptr, message uint32, wparam, lparam uintptr) uintpt
 		}
 	case wmDestroy:
 		if app != nil {
+			removeAppWindowProperty(hwnd, app.options.AppID)
+			app.disposeNativeUI()
 			app.releaseWebView()
 		}
 		windowMu.Lock()

@@ -9,8 +9,9 @@ import (
 // textureResources holds a GPU texture + its default view. Samplers are
 // shared at the Renderer level, not per-texture.
 type textureResources struct {
-	tex  gpu.Texture
-	view gpu.TextureView
+	tex           gpu.Texture
+	view          gpu.TextureView
+	viewDimension gpu.TextureViewDimension
 }
 
 // checkerBytes generates a size×size sRGB checkerboard as RGBA8 bytes. Used
@@ -67,7 +68,7 @@ func (r *Renderer) createTextureFromRGBA(rgba []byte, width, height int, label s
 	for level, mip := range mips {
 		r.device.Queue().WriteTextureLevel(tex, level, mip.Pixels, mip.Width*4, mip.Width, mip.Height)
 	}
-	return &textureResources{tex: tex, view: tex.CreateView()}, nil
+	return &textureResources{tex: tex, view: tex.CreateView(), viewDimension: gpu.TextureViewDimension2D}, nil
 }
 
 type rgbaMipLevel struct {
@@ -141,10 +142,8 @@ func (r *Renderer) ensureFallbackTexture() (*textureResources, error) {
 }
 
 // ensureMaterialTexture vends a textureResources for a material's Texture URL.
-// R2 substitutes a procedurally-generated checkerboard keyed by the URL string
-// so the texture path is exercised end-to-end without image decode
-// dependencies. Real image loading via ImageBitmap + copyExternalImageToTexture
-// lands in R3 alongside KTX2.
+// Procedural URL-keyed checkerboards keep the material texture path exercised
+// in pure-Go tests; KTX2 payloads enter through LoadKTX2Texture.
 func (r *Renderer) ensureMaterialTexture(url string) (*textureResources, error) {
 	if url == "" {
 		return r.ensureFallbackTexture()
