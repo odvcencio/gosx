@@ -813,6 +813,7 @@ func Page() Node {
 		<PostFX.Bloom threshold={0.65} intensity={0.6} radius={8.0} />
 		<PostFX.Tonemap mode="aces" exposure={1.0} />
 		<Mesh id="hero" kind="box" width={1.8} height={1.2} depth={0.8} color="#8de1ff" materialKind="flat" />
+		<Model id="ship" src="/models/ship.glb" x={1.5} static={true} animation="idle" />
 		<Points id="stars" count={2} positions={data.positions} size={0.5} color="#ffffff" blendMode="additive" />
 		<Each as="mesh" of={data.meshes}>
 			<Mesh {...mesh} />
@@ -856,8 +857,10 @@ func Page() Node {
 	}
 	for _, snippet := range []string{
 		`<Mesh`,
+		`<Model`,
 		`<Points`,
 		`data-gosx-component="Mesh"`,
+		`data-gosx-component="Model"`,
 		`data-gosx-component="Points"`,
 		`dynamic-hero`,
 		`extra-stars`,
@@ -884,6 +887,11 @@ func Page() Node {
 		`"id": "hero"`,
 		`"id": "dynamic-hero"`,
 		`"kind": "box"`,
+		`"models": [`,
+		`"id": "ship"`,
+		`"src": "/models/ship.glb"`,
+		`"animation": "idle"`,
+		`"static": true`,
 		`"points": [`,
 		`"id": "stars"`,
 		`"id": "extra-stars"`,
@@ -1088,6 +1096,7 @@ func TestDefaultFileRendererAppliesScene3DStyleSubset(t *testing.T) {
 func Page() Node {
 	return <Scene3D class="hero-scene" width={640} height={360}>
 		<Mesh id="hero" class="primary" kind="box" />
+		<Model id="ship" class="hero-model" src="/models/ship.glb" />
 		<Points id="stars" class="stars" count={2} positions={data.positions} />
 		<DirectionalLight id="sun" />
 	</Scene3D>
@@ -1111,6 +1120,9 @@ func Page() Node {
 		material-roughness: 0.42;
 		cast-shadow: true;
 		x: 1.5;
+	}
+	Model.hero-model {
+		x: 2;
 	}
 	Points.stars {
 		point-size: 0.5;
@@ -1153,6 +1165,10 @@ func Page() Node {
 		`"roughness": 0.42`,
 		`"castShadow": true`,
 		`"x": 1.5`,
+		`"models": [`,
+		`"id": "ship"`,
+		`"src": "/models/ship.glb"`,
+		`"x": 2`,
 		`"id": "stars"`,
 		`"size": 0.5`,
 		`"blendMode": "additive"`,

@@ -2004,6 +2004,7 @@ type scene3DStyleTarget struct {
 func scene3DStyleTargets(sceneMap map[string]any) []scene3DStyleTarget {
 	return []scene3DStyleTarget{
 		{key: "objects", tags: func(map[string]any) []string { return []string{"Mesh"} }},
+		{key: "models", tags: func(map[string]any) []string { return []string{"Model"} }},
 		{key: "points", tags: func(map[string]any) []string { return []string{"Points"} }},
 		{key: "instancedMeshes", tags: func(map[string]any) []string { return []string{"InstancedMesh"} }},
 		{key: "computeParticles", tags: func(map[string]any) []string { return []string{"ComputeParticles"} }},
@@ -2681,6 +2682,8 @@ func (r *fileProgramRenderer) lowerScene3DComposableNode(child *ir.Node, env fil
 	switch child.Tag {
 	case "Mesh":
 		appendScene3DSceneRecord(sceneMap, "objects", attrs)
+	case "Model":
+		appendScene3DSceneRecord(sceneMap, "models", attrs)
 	case "Points":
 		appendScene3DSceneRecord(sceneMap, "points", attrs)
 	case "InstancedMesh":
@@ -2712,7 +2715,7 @@ func (r *fileProgramRenderer) lowerScene3DComposableNode(child *ir.Node, env fil
 
 func isScene3DComposableTag(tag string) bool {
 	switch tag {
-	case "Mesh", "Points", "InstancedMesh", "ComputeParticles",
+	case "Mesh", "Model", "Points", "InstancedMesh", "ComputeParticles",
 		"DirectionalLight", "PointLight", "AmbientLight", "SpotLight", "HemisphereLight",
 		"Environment", "Camera", "Material",
 		"PostFX.Bloom", "PostFX.Vignette", "PostFX.ColorGrading", "PostFX.Tonemap":
@@ -2760,7 +2763,7 @@ func appendScene3DSceneRecord(sceneMap map[string]any, key string, record map[st
 func mergeScene3DSceneMap(dst, src map[string]any) {
 	for key, value := range src {
 		switch key {
-		case "objects", "points", "instancedMeshes", "computeParticles", "lights", "materials", "postEffects":
+		case "objects", "models", "points", "instancedMeshes", "computeParticles", "lights", "materials", "postEffects":
 			for _, item := range scene3DRecordList(value) {
 				appendScene3DSceneRecord(dst, key, item)
 			}
