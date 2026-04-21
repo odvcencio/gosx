@@ -2,8 +2,10 @@
 //
 // Usage:
 //
-//	gosx build <dir>             Build GoSX application
+//	gosx build [--offline|--msix|--sign] <dir>
+//	                              Build GoSX application
 //	gosx dev <dir>               Start development server with hot reload
+//	gosx desktop [dev] <dir>     Start development server in a native desktop host
 //	gosx export <dir>            Pre-render static GoSX pages
 //	gosx init [dir]              Scaffold a GoSX application or docs site
 //	gosx compile <file.gsx>      Compile GoSX to Go
@@ -19,6 +21,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/odvcencio/gosx"
 	"github.com/odvcencio/gosx/format"
@@ -39,6 +42,8 @@ func main() {
 		cmdBuild()
 	case "dev":
 		cmdDev()
+	case "desktop":
+		cmdDesktop()
 	case "export":
 		cmdExport()
 	case "init":
@@ -60,7 +65,7 @@ func main() {
 	case "repl":
 		cmdRepl()
 	case "version":
-		fmt.Println("gosx v0.1.0")
+		fmt.Printf("gosx v%s\n", gosx.Version)
 	case "help", "-h", "--help":
 		usage()
 	default:
@@ -75,8 +80,10 @@ Usage:
   gosx <command> [arguments]
 
 Commands:
-  build <dir>          Build GoSX application
+  build [--offline|--msix|--sign] [--appinstaller <uri>] <dir>
+                       Build GoSX application
   dev <dir>            Start development server with hot reload
+  desktop [dev] <dir>  Start dev server in a native desktop host
   export <dir>         Pre-render static GoSX pages
   init [dir]           Scaffold a GoSX application or docs site
   compile <file>       Compile .gsx file to Go
@@ -98,22 +105,49 @@ Init templates:
 
 func cmdBuild() {
 	if len(os.Args) < 3 {
-		fmt.Fprintln(os.Stderr, "Usage: gosx build [--dev|--prod] <dir>")
+		fmt.Fprintln(os.Stderr, "Usage: gosx build [--dev|--prod|--offline|--msix|--sign] [--appinstaller <uri>] <dir>")
 		os.Exit(1)
 	}
-	dev := true
-	dir := os.Args[2]
-	for _, arg := range os.Args[2:] {
+	opts := BuildOptions{Dev: true}
+	dir := ""
+	for i := 2; i < len(os.Args); i++ {
+		arg := os.Args[i]
 		switch arg {
 		case "--dev":
-			dev = true
+			opts.Dev = true
 		case "--prod":
-			dev = false
+			opts.Dev = false
+		case "--offline":
+			opts.Offline = true
+		case "--msix":
+			opts.MSIX = true
+		case "--sign":
+			opts.Sign = true
+			opts.MSIX = true
+		case "--appinstaller":
+			i++
+			if i >= len(os.Args) {
+				fmt.Fprintln(os.Stderr, "build error: --appinstaller requires a URI")
+				os.Exit(1)
+			}
+			opts.AppInstallerURI = os.Args[i]
 		default:
+			if strings.HasPrefix(arg, "--appinstaller=") {
+				opts.AppInstallerURI = strings.TrimPrefix(arg, "--appinstaller=")
+				continue
+			}
+			if strings.HasPrefix(arg, "--") {
+				fmt.Fprintf(os.Stderr, "build error: unknown flag %s\n", arg)
+				os.Exit(1)
+			}
 			dir = arg
 		}
 	}
-	if err := RunBuild(dir, dev); err != nil {
+	if dir == "" {
+		fmt.Fprintln(os.Stderr, "build error: missing app directory")
+		os.Exit(1)
+	}
+	if err := RunBuildWithOptions(dir, opts); err != nil {
 		fmt.Fprintf(os.Stderr, "build error: %v\n", err)
 		os.Exit(1)
 	}

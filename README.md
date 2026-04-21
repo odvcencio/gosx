@@ -2,7 +2,7 @@
 
 A Go-native web platform. Write components in `.gsx` — Go with embedded markup — compile through a real compiler pipeline, render on the server by default, hydrate interactive islands with WebAssembly. No JavaScript toolchain. No CGo. Six dependencies.
 
-Current release: **v0.18.0-alpha.13**. Pre-1.0; breaking changes are documented in [CHANGELOG.md](./CHANGELOG.md).
+Current release: **v0.18.0**. Pre-1.0; breaking changes are documented in [CHANGELOG.md](./CHANGELOG.md).
 
 ## What if you never had to leave Go?
 
@@ -319,14 +319,14 @@ scene.Props{
 - **glTF / GLB** — `scene.Model{Src: "/assets/thing.glb"}` loads binary or JSON glTF 2.0 through the in-runtime pure-JS loader (`19-scene-gltf.js`), including animations
 - **Animation** — `AnimationClip` / `AnimationChannel` for node-level keyframe animation, `Spin` convenience for auto-rotation, glTF animation playback
 - **Particles** — GPU-computed particle systems via `ComputeParticles` with emitter, forces, and material
-- **Environment** — ambient, hemisphere, sky/ground, exposure, fog, tonemapping
-- **Post-processing** — `Bloom`, `Tonemap` (ACES / Reinhard / Filmic), `Vignette`, `ColorGrade`, composable chain, runs on both WebGL and WebGPU. v0.15.0 adds `PostFX.MaxPixels` framebuffer cap (default 1080p) and `Bloom.Scale` for bloom-internal downscaling
+- **Environment** — ambient, hemisphere, sky/ground, cubemap IBL, exposure, fog, tonemapping
+- **Post-processing** — `Bloom`, `Tonemap` (ACES / Reinhard / Filmic), `Vignette`, `ColorGrade`, FXAA 3.11, RGB9E5/HDR intermediate selection, HDR10 presentation when supported, composable chain, runs on both WebGL and WebGPU
 - **Shadow pixel cap** — v0.15.0's `Shadows.MaxPixels` caps each shadow map (default 1024²), preventing multi-megabyte-per-light allocations when individual lights request large shadow sizes
 - **Compression & LOD** — per-component scalar quantization with delta encoding, progressive streaming, camera-distance-based LOD switching via `scene.Compression`
 - **Transitions** — declarative enter/exit/state transitions on any scene node via `InState` / `OutState` / `Live`
 - **Camera controls** — `orbit`, `drag-to-rotate`, focus targets, pick signals, drag signals, event signals exposed as `$`-signals consumable by surrounding islands
 - **Capability tiers** — graceful degradation across WebGPU → WebGL → canvas fallbacks
-- **Backends at parity** — both the WebGL and WebGPU renderers honor the same IR, the same post-processing chain, and the same memory-cap semantics
+- **Backends at parity** — WebGL, first-party WebGPU bundle rendering, and the headless backend honor the same IR, lighting, post-processing, shadow, and particle contracts where their target surface supports it
 - **CSS-stylable 3D** — composable materials, lights, environment, point layers, and post-FX can read `var(--scene-*)` custom properties through the planner, so class changes, media queries, and CSS transitions can drive scene state without authored JavaScript animation code
 
 The scene graph is inspectable Go code. The IR is serializable. The renderer is reproducible. You can hold the whole thing in your head, and when something goes wrong you read Go and JavaScript — not a black box.
@@ -413,7 +413,13 @@ Classes and external CSS. No CSS-in-JS.
 ```bash
 gosx init [name] [--template docs]    # Scaffold a new app
 gosx dev [app]                        # Dev server with file watching and SSE reload
+gosx desktop [dev] [app]              # Dev server inside a native desktop host
+gosx desktop --url <url>              # Direct native desktop host smoke
 gosx build [--prod] [app]             # Build with hashed assets, optional static prerender
+gosx build --offline [app]            # Stage a versioned offline asset bundle
+gosx build --msix [app]               # Stage and package Windows MSIX output
+gosx build --sign --msix [app]        # Sign MSIX via signtool
+gosx build --appinstaller <uri> [app] # Emit AppInstaller update feed XML
 gosx export [app]                     # Pre-render static pages to dist/static/
 gosx compile [file.gsx]               # Compile .gsx to IR
 gosx check [file.gsx]                 # Parse and validate
@@ -422,7 +428,28 @@ gosx fmt [file.gsx]                   # Format source
 gosx lsp                              # Language server for editor integration
 ```
 
-`gosx build --prod` emits a deployable `dist/` bundle with a server binary, hashed assets, prerendered static pages, an ISR manifest, and edge worker support.
+`gosx desktop [app]` opens the dev server in the native desktop host. On Windows
+it uses WebView2 through the pure-Go `desktop` package; `gosx desktop --url
+https://example.com` opens a URL directly for host smoke checks. The Windows
+host supports hot reload, typed IPC envelopes, devtools, single-instance
+forwarding, deep links, file associations, lifecycle callbacks, multi-window
+construction, tray icons, native menus, context menus, notifications, file
+drop, per-monitor DPI awareness, and a minimal accessibility surface. From WSL
+or CI, `make build-desktop-windows` emits `build/gosx-windows-amd64.exe` and
+`build/gosx-windows-arm64.exe` for handoff to a Windows host.
+
+The `desktop` package also exposes release-time hooks: `App.UpdateCheck()` /
+`App.UpdateApply()` consume MSIX AppInstaller feeds, and
+`CrashReporterOptions` captures Go panics plus Windows minidumps with optional
+user-consented upload.
+
+`gosx build --prod` emits a deployable `dist/` bundle with a server binary,
+hashed assets, prerendered static pages, an ISR manifest, and edge worker
+support. Add `--offline` to stage `dist/offline/` with a versioned asset
+manifest, `--msix` to generate `dist/msix/package/AppxManifest.xml` and
+`dist/app.msix` through MakeAppx, `--sign` to run signtool with
+`GOSX_CODESIGN_CERT` / `GOSX_CODESIGN_KEY`, and `--appinstaller <uri>` to emit
+`dist/app.appinstaller` for AppInstaller-based updates.
 
 ## Deploy
 
@@ -471,6 +498,7 @@ Three tiers:
 | `apptest` | HTTP testing helpers for pages, APIs, and forms |
 | `islandtest` | Island program testing helpers |
 | `dev` | Development server with file watching |
+| `desktop` | Native desktop host backed by Windows WebView2, shell integration, native UI, crash reports, and update feed helpers |
 | `env` | `.env` file loading with mode support |
 | `cmd/gosx` | CLI tool |
 
@@ -482,6 +510,8 @@ make test-race     # Race detector enabled
 make test-js       # Bootstrap + patch under Node test runner
 make test-wasm     # WASM runtime through exported functions
 make test-e2e      # Playwright browser tests against gosx dev
+make test-desktop  # Desktop package tests plus Windows cross-compile guards
+make build-desktop-windows  # Windows desktop-capable CLI binaries
 make ci            # All of the above + build verification
 ```
 
@@ -508,7 +538,7 @@ The same compiler infrastructure powers [Arbiter](https://github.com/odvcencio/a
 
 ## Status
 
-GoSX is pre-1.0. The current release is **v0.17.24**. The five primitives (Server, Action, Island, Engine, Hub) are stable in shape — we do not expect their top-level API to change before 1.0. Subsystems like `scene`, `field`, `sim`, `workspace`, and `semantic` are still under active development and may take breaking changes; each such change is called out explicitly in [CHANGELOG.md](./CHANGELOG.md) with a migration path.
+GoSX is pre-1.0. The current release is **v0.18.0**. The five primitives (Server, Action, Island, Engine, Hub) are stable in shape — we do not expect their top-level API to change before 1.0. Subsystems like `scene`, `desktop`, `field`, `sim`, `workspace`, and `semantic` are still under active development and may take breaking changes; each such change is called out explicitly in [CHANGELOG.md](./CHANGELOG.md) with a migration path.
 
 If you're evaluating GoSX for production work, the server + island + route + engine + scene stack has been used in production. The semantic, workspace, and sim layers have production users but are newer.
 

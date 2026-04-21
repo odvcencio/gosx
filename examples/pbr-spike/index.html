@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>GoSX PBR Spike — R2 Lit + Shadowed</title>
+    <style>
+      :root { color-scheme: dark; font-family: "IBM Plex Sans", system-ui, sans-serif; }
+      body { margin: 0; min-height: 100vh; display: grid; place-items: center;
+             background: #07101f; color: #f3f1ec; padding: 24px; }
+      main { text-align: center; max-width: 860px; }
+      canvas { width: 820px; max-width: 100%; height: 560px; border-radius: 14px;
+               box-shadow: 0 20px 60px rgba(0,0,0,0.55); background: #000; display: block; margin: 0 auto; }
+      .status { margin: 16px 0; padding: 8px 14px; border-radius: 999px;
+                background: rgba(255,255,255,0.08); display: inline-block; font-weight: 600; }
+      .pass { background: rgba(52, 199, 89, 0.18); color: #c1f3cf; }
+      .fail { background: rgba(255, 69, 58, 0.18);  color: #ffb8b2; }
+      p { line-height: 1.5; opacity: 0.88; }
+      code { background: rgba(255,255,255,0.08); padding: 1px 6px; border-radius: 4px; font-size: 0.9em; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>GoSX PBR Spike</h1>
+      <p>
+        R2 directional-light rendering with real-time shadow mapping.
+        Sphere + plane, Lambertian response, 2048² shadow map,
+        comparison-sampled PCF. All Go/WASM, no JS renderer.
+      </p>
+      <div id="status" class="status">Booting wasm runtime…</div>
+      <br />
+      <canvas id="stage" width="1640" height="1120"></canvas>
+    </main>
+    <script src="/wasm_exec.js"></script>
+    <script type="module">
+      const statusEl = document.getElementById("status");
+      const setStatus = (msg, cls = "") => {
+        statusEl.textContent = msg;
+        statusEl.className = `status ${cls}`.trim();
+      };
+
+      if (!("gpu" in navigator)) {
+        setStatus("WebGPU is not available in this browser.", "fail");
+        throw new Error("WebGPU unavailable");
+      }
+
+      const go = new Go();
+      const wasm = await WebAssembly.instantiateStreaming(fetch("./main.wasm"), go.importObject);
+      go.run(wasm.instance);
+
+      const waitForEntry = async () => {
+        for (let i = 0; i < 400; i += 1) {
+          if (typeof window.gosxPBRSpikeStart === "function") return;
+          await new Promise((r) => setTimeout(r, 10));
+        }
+        throw new Error("gosxPBRSpikeStart was not registered");
+      };
+
+      try {
+        await waitForEntry();
+        setStatus("Initializing WebGPU…");
+        await window.gosxPBRSpikeStart("stage");
+        setStatus("Running — lit sphere + shadow map", "pass");
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        setStatus(`Failed: ${msg}`, "fail");
+      }
+    </script>
+  </body>
+</html>

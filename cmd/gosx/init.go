@@ -118,6 +118,9 @@ require github.com/odvcencio/gosx v%s
 `, module, gosx.Version)
 	if replacePath := localGoSXReplacePath(); replacePath != "" {
 		template += fmt.Sprintf("\nreplace github.com/odvcencio/gosx => %s\n", replacePath)
+		for _, line := range localGoSXDependencyReplaceLines(replacePath) {
+			template += line
+		}
 	}
 	return template
 }
@@ -143,6 +146,37 @@ func localGoSXReplacePath() string {
 		}
 	}
 	return filepath.ToSlash(repoRoot)
+}
+
+func localGoSXDependencyReplaceLines(repoRoot string) []string {
+	data, err := os.ReadFile(filepath.Join(repoRoot, "go.mod"))
+	if err != nil {
+		return nil
+	}
+	lines := strings.Split(string(data), "\n")
+	out := make([]string, 0, 2)
+	for _, line := range lines {
+		fields := strings.Fields(strings.TrimSpace(line))
+		if len(fields) < 4 || fields[0] != "replace" || fields[2] != "=>" {
+			continue
+		}
+		modulePath := fields[1]
+		if modulePath == "github.com/odvcencio/gosx" {
+			continue
+		}
+		target := fields[3]
+		if strings.Contains(target, "@") {
+			continue
+		}
+		if !filepath.IsAbs(target) {
+			target = filepath.Join(repoRoot, target)
+		}
+		if info, err := os.Stat(target); err != nil || !info.IsDir() {
+			continue
+		}
+		out = append(out, fmt.Sprintf("replace %s => %s\n", modulePath, filepath.ToSlash(target)))
+	}
+	return out
 }
 
 func mainTemplate(module string) string {

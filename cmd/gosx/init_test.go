@@ -113,6 +113,11 @@ func TestRunInitAddsLocalGoSXReplaceWhenRepoRootIsAvailable(t *testing.T) {
 	if !strings.Contains(goMod, replaceLine) {
 		t.Fatalf("expected go.mod to contain %q, got:\n%s", replaceLine, goMod)
 	}
+	for _, line := range localGoSXDependencyReplaceLines(testRepoRoot(t)) {
+		if !strings.Contains(goMod, strings.TrimSpace(line)) {
+			t.Fatalf("expected go.mod to contain local dependency replace %q, got:\n%s", strings.TrimSpace(line), goMod)
+		}
+	}
 }
 
 func TestRunInitFailsWhenFileAlreadyExists(t *testing.T) {
