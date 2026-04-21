@@ -10,8 +10,8 @@
 //     deliberate version bump stays explicit.
 //   - corkscrewdb: slated to replace vecdb/ + workspace/semantic/ flat
 //     search with persistent versioned collections.
-//   - manta: slated to replace embed/ with .mll-backed tokenize + embed
-//     entry points once the tagged module path is corrected upstream.
+//   - manta/runtime: slated to replace embed/ with .mll-backed tokenize
+//     and embed entry points.
 //
 // The `tools` build tag keeps these imports out of every normal build
 // but visible to `go mod tidy`, so the dependencies survive cleanup.
@@ -19,6 +19,6 @@ package gosx
 
 import (
 	_ "github.com/odvcencio/corkscrewdb"
-	_ "github.com/odvcencio/manta"
+	_ "github.com/odvcencio/manta/runtime"
 	_ "github.com/odvcencio/turboquant"
 )

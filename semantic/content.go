@@ -1,6 +1,7 @@
 package semantic
 
 import (
+	"sort"
 	"sync"
 
 	"github.com/odvcencio/gosx/embed"
@@ -33,10 +34,11 @@ type ContentResult struct {
 // It enables "related pages" and semantic search over a collection of
 // documents. Safe for concurrent use.
 type ContentIndex struct {
-	index   *vecdb.Index
-	encoder *embed.Encoder
-	meta    map[string]ContentMeta
-	mu      sync.RWMutex
+	index      *vecdb.Index
+	encoder    *embed.Encoder
+	meta       map[string]ContentMeta
+	embeddings map[string][]float32
+	mu         sync.RWMutex
 }
 
 // NewContentIndex creates a content index backed by the given encoder.
@@ -45,9 +47,10 @@ func NewContentIndex(encoder *embed.Encoder, opts ContentOptions) *ContentIndex 
 		opts.BitWidth = 3
 	}
 	return &ContentIndex{
-		index:   vecdb.New(encoder.Dim(), opts.BitWidth),
-		meta:    make(map[string]ContentMeta),
-		encoder: encoder,
+		index:      vecdb.New(encoder.Dim(), opts.BitWidth),
+		meta:       make(map[string]ContentMeta),
+		embeddings: make(map[string][]float32),
+		encoder:    encoder,
 	}
 }
 
@@ -62,6 +65,7 @@ func (ci *ContentIndex) Add(id string, content string, meta ContentMeta) {
 	ci.mu.Lock()
 	defer ci.mu.Unlock()
 	ci.meta[id] = meta
+	ci.embeddings[id] = cloneFloat32s(vec)
 	ci.index.Add(id, vec)
 }
 
@@ -87,21 +91,37 @@ func (ci *ContentIndex) Search(query string, k int) []ContentResult {
 }
 
 func (ci *ContentIndex) searchVec(vec []float32, k int) []ContentResult {
+	if k <= 0 {
+		return nil
+	}
 	ci.mu.RLock()
 	defer ci.mu.RUnlock()
 
-	results := ci.index.Search(vec, k)
+	results := ci.index.Search(vec, len(ci.meta))
 	out := make([]ContentResult, 0, len(results))
 	for _, r := range results {
 		meta, ok := ci.meta[r.ID]
 		if !ok {
 			continue
 		}
+		embedding, ok := ci.embeddings[r.ID]
+		if !ok {
+			continue
+		}
 		out = append(out, ContentResult{
 			ID:    r.ID,
 			Meta:  meta,
-			Score: r.Score,
+			Score: cosineSimilarity(vec, embedding),
 		})
+	}
+	sort.Slice(out, func(left, right int) bool {
+		if out[left].Score == out[right].Score {
+			return out[left].ID < out[right].ID
+		}
+		return out[left].Score > out[right].Score
+	})
+	if len(out) > k {
+		out = out[:k]
 	}
 	return out
 }

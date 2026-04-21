@@ -68,22 +68,35 @@ func (c *Cache) Get(query string) (any, bool) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
-	results := c.index.Search(vec, 1)
+	results := c.index.Search(vec, len(c.store))
 	if len(results) == 0 {
 		return nil, false
 	}
-	best := results[0]
-	if best.Score < c.threshold {
+	now := time.Now()
+	var bestValue any
+	var bestKey string
+	var bestScore float32
+	var matched bool
+	for _, result := range results {
+		entry, ok := c.store[result.ID]
+		if !ok {
+			continue
+		}
+		if entry.TTL > 0 && now.Sub(entry.CreatedAt) > entry.TTL {
+			continue
+		}
+		score := cosineSimilarity(vec, entry.Embedding)
+		if !matched || score > bestScore || (score == bestScore && entry.Key < bestKey) {
+			bestKey = entry.Key
+			bestScore = score
+			bestValue = entry.Value
+			matched = true
+		}
+	}
+	if !matched || bestScore < c.threshold {
 		return nil, false
 	}
-	entry, ok := c.store[best.ID]
-	if !ok {
-		return nil, false
-	}
-	if entry.TTL > 0 && time.Since(entry.CreatedAt) > entry.TTL {
-		return nil, false
-	}
-	return entry.Value, true
+	return bestValue, true
 }
 
 // Set stores a value with its text key, embedding it automatically.
@@ -103,7 +116,7 @@ func (c *Cache) SetWithEmbedding(key string, value any, embedding []float32, ttl
 	c.store[key] = CacheEntry{
 		Key:       key,
 		Value:     value,
-		Embedding: embedding,
+		Embedding: cloneFloat32s(embedding),
 		CreatedAt: time.Now(),
 		TTL:       ttl,
 	}

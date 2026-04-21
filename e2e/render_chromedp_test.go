@@ -103,6 +103,7 @@ func newChromeContext(t *testing.T, chrome string) (context.Context, context.Can
 		chromedp.Headless,
 		chromedp.NoFirstRun,
 		chromedp.NoDefaultBrowserCheck,
+		chromedp.Flag("no-sandbox", true),
 		chromedp.Flag("use-angle", "swiftshader"),
 		chromedp.Flag("enable-webgl", true),
 	)
