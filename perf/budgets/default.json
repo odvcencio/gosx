@@ -1,0 +1,48 @@
+{
+  "defaultProfile": "basic-island",
+  "profiles": {
+    "static": {
+      "description": "Server-rendered route with no external client runtime.",
+      "assertions": [
+        "js_total_kb == 0",
+        "lcp <= 1500",
+        "long_tasks == 0",
+        "tbt <= 0"
+      ]
+    },
+    "basic-island": {
+      "description": "Server-first route with navigation, forms, or small islands.",
+      "assertions": [
+        "js_total_kb <= 120",
+        "lcp <= 2500",
+        "long_tasks <= 2",
+        "tbt <= 150"
+      ]
+    },
+    "wasm-island": {
+      "description": "Route that intentionally loads the GoSX WASM island runtime.",
+      "assertions": [
+        "js_total_kb <= 180",
+        "lcp <= 2500",
+        "long_tasks <= 3",
+        "tbt <= 200"
+      ]
+    },
+    "scene3d": {
+      "description": "Interactive Scene3D route profiled on a throttled mobile-class browser.",
+      "assertions": [
+        "lcp <= 3000",
+        "long_tasks <= 3",
+        "tbt <= 250",
+        "scene_p95 <= 33",
+        "scene_p99 <= 50"
+      ]
+    }
+  },
+  "routes": [
+    {
+      "url": "/",
+      "profile": "basic-island"
+    }
+  ]
+}

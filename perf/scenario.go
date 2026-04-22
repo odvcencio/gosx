@@ -168,7 +168,8 @@ func RunScenario(s *Scenario) (*Report, error) {
 		console.Clear()
 
 		// Attach coverage if captured for this (first) page.
-		if len(coverageEntries) > 0 {
+		if s.Coverage && i == 0 {
+			page.CoverageCaptured = true
 			page.Coverage = coverageEntries
 		}
 

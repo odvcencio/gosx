@@ -3,9 +3,13 @@ GOFMT ?= gofmt
 GO_WASM_EXEC ?= $(shell $(GO) env GOROOT)/lib/wasm/go_js_wasm_exec
 NODE ?= node
 TMPDIR ?= /tmp
+PERF_URLS ?= http://localhost:8080/
+PERF_BUDGET ?= perf/budgets/default.json
+PERF_OUT ?= build/perf-report.json
+PERF_FLAGS ?= --mobile pixel7 --throttle 4 --coverage
 GOFILES := $(shell find . -name '*.go' -not -path './dist/*' -not -path './build/*')
 
-.PHONY: fmt fmt-check verify-fmt test test-race test-js test-wasm test-e2e test-desktop build-cli build-desktop-windows build-runtime ci
+.PHONY: fmt fmt-check verify-fmt test test-race test-js test-wasm test-e2e test-desktop perf-budget build-cli build-desktop-windows build-runtime ci
 
 fmt:
 	$(GOFMT) -w $(GOFILES)
@@ -45,6 +49,10 @@ test-desktop:
 	GOOS=windows GOARCH=arm64 $(GO) test -c -o $(TMPDIR)/gosx-desktop-windows-arm64.test.exe ./desktop
 	GOOS=windows GOARCH=amd64 $(GO) test -c -o $(TMPDIR)/gosx-cmd-windows-amd64.test.exe ./cmd/gosx
 	GOOS=windows GOARCH=arm64 $(GO) test -c -o $(TMPDIR)/gosx-cmd-windows-arm64.test.exe ./cmd/gosx
+
+perf-budget:
+	mkdir -p $(dir $(PERF_OUT))
+	$(GO) run ./cmd/gosx perf $(PERF_FLAGS) --budget $(PERF_BUDGET) --json $(PERF_URLS) > $(PERF_OUT)
 
 build-cli:
 	$(GO) build ./cmd/gosx

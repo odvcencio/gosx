@@ -51,6 +51,7 @@ func scaffoldFilesForTemplate(module, template string) ([]scaffoldFile, error) {
 			{Path: "app/error.gsx", Contents: appErrorTemplate()},
 			{Path: "modules/modules.go", Contents: modulesTemplate(module)},
 			{Path: "public/styles.css", Contents: stylesTemplate()},
+			{Path: "perf-budget.json", Contents: starterPerfBudgetTemplate()},
 		}, nil
 	case initTemplateDocs:
 		return docsTemplateFiles(module)
@@ -105,5 +106,27 @@ func docsEnvTemplate() string {
 	return `PORT=8080
 SESSION_SECRET=change-me-in-production
 GOSX_ENV=development
+`
+}
+
+func starterPerfBudgetTemplate() string {
+	return `{
+  "defaultProfile": "starter",
+  "profiles": {
+    "starter": {
+      "description": "Default budget for the scaffolded server-first starter app.",
+      "assertions": [
+        "lcp <= 2500",
+        "long_tasks <= 2",
+        "tbt <= 150",
+        "js_total_kb <= 120"
+      ]
+    }
+  },
+  "routes": [
+    {"url": "/", "profile": "starter"},
+    {"url": "/stack", "profile": "starter"}
+  ]
+}
 `
 }

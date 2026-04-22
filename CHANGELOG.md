@@ -1,5 +1,27 @@
 # Changelog
 
+## v0.18.6
+
+Performance budgets and route capability manifests.
+
+`gosx perf` can now enforce a JSON budget during profiling via
+`--budget perf-budget.json`, with `--budget-profile` for applying one profile
+across all measured URLs. The existing saved-report flow remains available as
+`gosx perf budget report.json budget.json`, and `make perf-budget` wraps the
+same gate for CI or local release checks.
+
+Budget assertions now cover vitals, lifecycle timing, long tasks, TBT, network
+bytes, island hydration, heap, hub bytes, JS coverage totals, and Scene3D frame
+percentiles. Coverage reports now distinguish "coverage captured and no
+external scripts shipped" from "coverage was not captured", so true zero-JS
+routes can assert `js_total_kb == 0`.
+
+Production static exports now write per-route capability metadata into
+`dist/export.json`, recording whether each rendered route actually shipped
+navigation, bootstrap, WASM, islands, engines, hubs, Scene3D, managed video, or
+motion. New `gosx init` apps include starter `perf-budget.json` files, and the
+repository includes `perf/budgets/default.json` as a ready-to-use budget gate.
+
 ## v0.18.5
 
 Scene3D WebGL point-buffer cache patch.

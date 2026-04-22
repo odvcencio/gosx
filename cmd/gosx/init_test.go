@@ -31,6 +31,7 @@ func TestRunInitCreatesStarterProject(t *testing.T) {
 		"app/error.gsx",
 		"modules/modules.go",
 		"public/styles.css",
+		"perf-budget.json",
 	} {
 		if _, err := os.Stat(filepath.Join(dir, rel)); err != nil {
 			t.Fatalf("expected %s: %v", rel, err)
@@ -74,6 +75,11 @@ func TestRunInitCreatesStarterProject(t *testing.T) {
 	}
 
 	assertAllGSXCompile(t, dir)
+
+	perfBudget := readFile(t, filepath.Join(dir, "perf-budget.json"))
+	if !strings.Contains(perfBudget, `"js_total_kb <= 120"`) {
+		t.Fatalf("expected starter perf budget, got:\n%s", perfBudget)
+	}
 }
 
 func TestRunInitStarterProjectBuilds(t *testing.T) {
@@ -166,6 +172,7 @@ func TestRunInitCreatesDocsTemplate(t *testing.T) {
 		"app/docs/runtime/page.server.go",
 		"public/docs.css",
 		"public/runtime/watch-transport.js",
+		"perf-budget.json",
 	} {
 		if _, err := os.Stat(filepath.Join(dir, rel)); err != nil {
 			t.Fatalf("expected %s: %v", rel, err)
@@ -219,6 +226,11 @@ func TestRunInitCreatesDocsTemplate(t *testing.T) {
 		if !strings.Contains(modulesGo, snippet) {
 			t.Fatalf("expected docs module imports in modules/modules.go to contain %q", snippet)
 		}
+	}
+
+	perfBudget := readFile(t, filepath.Join(dir, "perf-budget.json"))
+	if !strings.Contains(perfBudget, `"/docs/runtime"`) || !strings.Contains(perfBudget, `"js_total_kb <= 160"`) {
+		t.Fatalf("expected docs perf budget, got:\n%s", perfBudget)
 	}
 }
 

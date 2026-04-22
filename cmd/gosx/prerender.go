@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/odvcencio/gosx/buildmanifest"
+	"github.com/odvcencio/gosx/hydrate"
 	"github.com/odvcencio/gosx/route"
 	"golang.org/x/net/html"
 )
@@ -25,10 +26,24 @@ type exportManifest struct {
 }
 
 type exportRoute struct {
-	Path              string   `json:"path"`
-	File              string   `json:"file"`
-	RevalidateSeconds int64    `json:"revalidateSeconds,omitempty"`
-	Tags              []string `json:"tags,omitempty"`
+	Path              string            `json:"path"`
+	File              string            `json:"file"`
+	RevalidateSeconds int64             `json:"revalidateSeconds,omitempty"`
+	Tags              []string          `json:"tags,omitempty"`
+	Capabilities      routeCapabilities `json:"capabilities"`
+}
+
+type routeCapabilities struct {
+	Navigation    bool   `json:"navigation"`
+	Bootstrap     bool   `json:"bootstrap"`
+	BootstrapMode string `json:"bootstrapMode,omitempty"`
+	WASM          bool   `json:"wasm"`
+	Islands       int    `json:"islands,omitempty"`
+	Engines       int    `json:"engines,omitempty"`
+	Hubs          int    `json:"hubs,omitempty"`
+	Scene3D       bool   `json:"scene3d,omitempty"`
+	Video         bool   `json:"video,omitempty"`
+	Motion        bool   `json:"motion,omitempty"`
 }
 
 type staticExportOptions struct {
@@ -109,11 +124,12 @@ func prerenderStaticBundle(opts staticExportOptions) (exportManifest, error) {
 	}
 
 	client := &http.Client{Timeout: 10 * time.Second}
-	for _, entry := range routes {
+	for i, entry := range routes {
 		pageHTML, err := fetchExportPage(client, baseURL+entry.Path)
 		if err != nil {
 			return exportManifest{}, fmt.Errorf("export %s: %w", entry.Path, err)
 		}
+		routes[i].Capabilities = routeCapabilitiesFromHTML(pageHTML)
 		pageHTML, err = rewriteStaticExportHTML(entry.Path, pageHTML)
 		if err != nil {
 			return exportManifest{}, fmt.Errorf("rewrite %s: %w", entry.Path, err)
@@ -134,6 +150,110 @@ func prerenderStaticBundle(opts staticExportOptions) (exportManifest, error) {
 	}
 
 	return exportManifest{Pages: pages, Routes: routes}, nil
+}
+
+func routeCapabilitiesFromHTML(input string) routeCapabilities {
+	root, err := html.Parse(strings.NewReader(input))
+	if err != nil {
+		return routeCapabilities{}
+	}
+	caps := routeCapabilities{}
+	var walk func(*html.Node)
+	walk = func(node *html.Node) {
+		if node.Type == html.ElementNode {
+			applyRouteCapabilityElement(&caps, node)
+		}
+		for child := node.FirstChild; child != nil; child = child.NextSibling {
+			walk(child)
+		}
+	}
+	walk(root)
+	return caps
+}
+
+func applyRouteCapabilityElement(caps *routeCapabilities, node *html.Node) {
+	attrs := nodeAttrMap(node.Attr)
+	if _, ok := attrs["data-gosx-navigation"]; ok {
+		caps.Navigation = true
+	}
+	if _, ok := attrs["data-gosx-motion"]; ok {
+		caps.Motion = true
+	}
+	if value := attrs["data-gosx-enhance"]; strings.EqualFold(value, "motion") {
+		caps.Motion = true
+	}
+	if engineName := strings.TrimSpace(attrs["data-gosx-engine"]); engineName != "" {
+		if strings.EqualFold(engineName, "GoSXScene3D") {
+			caps.Scene3D = true
+		}
+	}
+	if _, ok := attrs["data-gosx-scene3d"]; ok {
+		caps.Scene3D = true
+	}
+	if strings.EqualFold(strings.TrimSpace(attrs["data-gosx-engine-kind"]), "video") {
+		caps.Video = true
+	}
+	if script := strings.TrimSpace(attrs["data-gosx-script"]); script != "" {
+		caps.Bootstrap = caps.Bootstrap || script == "bootstrap"
+		switch script {
+		case "bootstrap":
+			caps.BootstrapMode = strings.TrimSpace(attrs["data-gosx-bootstrap-mode"])
+		case "wasm-exec":
+			caps.WASM = true
+		case "feature-scene3d":
+			caps.Scene3D = true
+		}
+	}
+	if node.Data == "script" && attrs["id"] == "gosx-manifest" {
+		applyRouteCapabilityManifest(caps, nodeText(node))
+	}
+}
+
+func applyRouteCapabilityManifest(caps *routeCapabilities, raw string) {
+	var manifest hydrate.Manifest
+	if err := json.Unmarshal([]byte(raw), &manifest); err != nil {
+		return
+	}
+	caps.Islands = len(manifest.Islands)
+	caps.Engines = max(caps.Engines, len(manifest.Engines))
+	caps.Hubs = len(manifest.Hubs)
+	if strings.TrimSpace(manifest.Runtime.Path) != "" {
+		caps.WASM = true
+	}
+	if len(manifest.Islands) > 0 || len(manifest.Engines) > 0 || len(manifest.Hubs) > 0 {
+		caps.Bootstrap = true
+	}
+	for _, entry := range manifest.Engines {
+		if strings.EqualFold(strings.TrimSpace(entry.Component), "GoSXScene3D") {
+			caps.Scene3D = true
+		}
+		if strings.EqualFold(strings.TrimSpace(entry.Kind), "video") {
+			caps.Video = true
+		}
+	}
+}
+
+func nodeAttrMap(attrs []html.Attribute) map[string]string {
+	out := make(map[string]string, len(attrs))
+	for _, attr := range attrs {
+		out[strings.ToLower(strings.TrimSpace(attr.Key))] = attr.Val
+	}
+	return out
+}
+
+func nodeText(node *html.Node) string {
+	var b strings.Builder
+	var walk func(*html.Node)
+	walk = func(n *html.Node) {
+		if n.Type == html.TextNode {
+			b.WriteString(n.Data)
+		}
+		for child := n.FirstChild; child != nil; child = child.NextSibling {
+			walk(child)
+		}
+	}
+	walk(node)
+	return b.String()
 }
 
 func writeExportManifest(path string, manifest exportManifest) error {

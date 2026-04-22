@@ -2,7 +2,7 @@
 
 A Go-native web platform. Write components in `.gsx` — Go with embedded markup — compile through a real compiler pipeline, render on the server by default, hydrate interactive islands with WebAssembly. No JavaScript toolchain. No CGo. Six dependencies.
 
-Current release: **v0.18.4**. Pre-1.0; breaking changes are documented in [CHANGELOG.md](./CHANGELOG.md).
+Current release: **v0.18.6**. Pre-1.0; breaking changes are documented in [CHANGELOG.md](./CHANGELOG.md).
 
 ## What if you never had to leave Go?
 
@@ -42,6 +42,7 @@ GoSX is opinionated about a small number of things and flexible about everything
 
 - **The browser is a render target.** Server components are the baseline. Client-side JavaScript is something you opt into, feature by feature, not a default ambient runtime.
 - **One language, one toolchain.** You write Go. `go build` produces the server, the CLI, the WASM binary, and the client bundle. There is no Node, no npm, no webpack, no bundler config. `gosx dev` is a Go binary watching Go files.
+- **No JavaScript toolchain is not zero browser cost.** GoSX still ships a measured browser bootstrap, feature chunks, and WASM runtime only when a route needs them. The performance contract is that the compiler and build pipeline justify every shipped runtime slice.
 - **No CGo, anywhere.** Every package compiles to WASM and cross-compiles cleanly. The 3D engine runs in pure Go. The vector store runs in pure Go. The CRDT sync protocol runs in pure Go. This is not a portability footnote — it is the design constraint that lets Scene3D, `field`, `vecdb`, and `crdt` ship as ordinary Go libraries that also happen to run in a browser tab.
 - **Primitives, not frameworks-within-frameworks.** A form submission is not a canvas game is not a collaborative document. GoSX gives you five distinct execution primitives and enforces the distinction; none of them try to be the others.
 - **You pay for what you use.** Static pages are static. Islands ship only when a page has an island. Engines are opt-in. The shared WASM VM is lazy-loaded. An app with no islands has no client VM; an app with no engines has no engine bundle.
@@ -426,7 +427,69 @@ gosx check [file.gsx]                 # Parse and validate
 gosx render [file.gsx]                # Render component to HTML
 gosx fmt [file.gsx]                   # Format source
 gosx lsp                              # Language server for editor integration
+gosx perf --json [url...]             # Profile browser runtime performance
+gosx perf --budget perf-budget.json [url...]
+                                      # Profile and fail when a route exceeds budgets
+gosx perf compare base.json next.json # Fail on perf regressions
+gosx perf budget perf.json budget.json # Check a saved report
 ```
+
+## Performance Budgets
+
+GoSX treats performance as a framework contract, not a dashboard you check after release. `gosx perf` already records TTFB, DCL, LCP, CLS, long tasks, TBT, network bytes, JS coverage, hub bytes, island hydration, Scene3D frame percentiles, and GPU context information. `gosx perf budget` turns those measurements into a CI gate.
+
+```bash
+gosx perf \
+  --mobile pixel7 --throttle 4 --coverage \
+  --budget perf-budget.json \
+  --json \
+  http://localhost:3000/ \
+  http://localhost:3000/dashboard \
+  http://localhost:3000/scene > perf.json
+
+gosx perf budget perf.json perf-budget.json
+make perf-budget PERF_URLS="http://localhost:3000/ http://localhost:3000/scene"
+```
+
+Example `perf-budget.json`:
+
+```json
+{
+  "defaultProfile": "basic-island",
+  "profiles": {
+    "static": {
+      "assertions": [
+        "js_total_kb == 0",
+        "lcp <= 1500",
+        "long_tasks == 0"
+      ]
+    },
+    "basic-island": {
+      "assertions": [
+        "js_total_kb <= 35",
+        "lcp <= 1500",
+        "tbt <= 50"
+      ]
+    },
+    "scene3d": {
+      "assertions": [
+        "lcp <= 1500",
+        "long_tasks == 0",
+        "scene_p95 <= 33",
+        "scene_p99 <= 50"
+      ]
+    }
+  },
+  "routes": [
+    {"url": "/", "profile": "static"},
+    {"url": "/scene", "profile": "scene3d", "assertions": ["network_kb <= 250"]}
+  ]
+}
+```
+
+Budget metrics include lifecycle and vitals (`ttfb`, `dcl`, `lcp`, `cls`, `tbt`), main-thread blocking (`long_tasks`, `long_task_total`), network (`network_kb`, `requests`), island/runtime (`island_count`, `hydration_total`, `heap_mb`, `hub_bytes`), JS coverage (`js_total_kb`, `js_used_kb`, `js_unused_kb`, `js_used_pct`), and Scene3D (`scene_p50`, `scene_p95`, `scene_p99`, `scene_dropped_frames`). JS coverage budgets require profiling with `--coverage`. New `gosx init` apps include a starter `perf-budget.json`, and the repository default lives at `perf/budgets/default.json`.
+
+Production builds and static exports also write route capability metadata into `dist/export.json`. Each route records whether the rendered page actually shipped navigation, bootstrap, WASM, islands, engines, hubs, Scene3D, managed video, or motion. That makes the "pay for what you use" contract inspectable from the build artifact, not just from source assumptions.
 
 `gosx desktop [app]` opens the dev server in the native desktop host. On Windows
 it uses WebView2 through the pure-Go `desktop` package; `gosx desktop --url
@@ -538,7 +601,7 @@ The same compiler infrastructure powers [Arbiter](https://github.com/odvcencio/a
 
 ## Status
 
-GoSX is pre-1.0. The current release is **v0.18.4**. The five primitives (Server, Action, Island, Engine, Hub) are stable in shape — we do not expect their top-level API to change before 1.0. Subsystems like `scene`, `desktop`, `field`, `sim`, `workspace`, and `semantic` are still under active development and may take breaking changes; each such change is called out explicitly in [CHANGELOG.md](./CHANGELOG.md) with a migration path.
+GoSX is pre-1.0. The current release is **v0.18.6**. The five primitives (Server, Action, Island, Engine, Hub) are stable in shape — we do not expect their top-level API to change before 1.0. Subsystems like `scene`, `desktop`, `field`, `sim`, `workspace`, and `semantic` are still under active development and may take breaking changes; each such change is called out explicitly in [CHANGELOG.md](./CHANGELOG.md) with a migration path.
 
 If you're evaluating GoSX for production work, the server + island + route + engine + scene stack has been used in production. The semantic, workspace, and sim layers have production users but are newer.
 

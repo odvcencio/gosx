@@ -1,0 +1,28 @@
+{
+  "defaultProfile": "docs",
+  "profiles": {
+    "docs": {
+      "description": "Default budget for the scaffolded GoSX docs app.",
+      "assertions": [
+        "lcp <= 2500",
+        "long_tasks <= 2",
+        "tbt <= 150",
+        "js_total_kb <= 160"
+      ]
+    },
+    "streaming": {
+      "description": "Docs route with deferred streaming content.",
+      "assertions": [
+        "lcp <= 3000",
+        "long_tasks <= 2",
+        "tbt <= 150",
+        "js_total_kb <= 160"
+      ]
+    }
+  },
+  "routes": [
+    {"url": "/", "profile": "docs"},
+    {"url": "/docs/runtime", "profile": "docs"},
+    {"url": "/labs/stream", "profile": "streaming"}
+  ]
+}

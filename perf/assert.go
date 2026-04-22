@@ -65,17 +65,71 @@ func EvalAssertions(assertions []Assertion, r *Report) []AssertionResult {
 // ResolveMetric extracts a named metric value from a Report.
 func ResolveMetric(name string, r *Report) (float64, bool) {
 	p := &r.PageReport
+	return ResolvePageMetric(name, p)
+}
+
+// ResolvePageMetric extracts a named metric value from one page report.
+func ResolvePageMetric(name string, p *PageReport) (float64, bool) {
 	switch name {
 	case "ttfb":
 		return p.TTFBMs, true
 	case "dcl":
 		return p.DCLMs, true
+	case "fully_loaded":
+		return p.FullyLoadedMs, true
+	case "lcp", "lcp_ms":
+		return p.LargestContentfulPaintMs, true
+	case "cls":
+		return p.CumulativeLayoutShift, true
+	case "fid", "fid_ms":
+		return p.FirstInputDelayMs, true
+	case "long_tasks":
+		return float64(p.LongTaskCount), true
+	case "long_task_total", "long_task_total_ms":
+		return p.LongTaskTotalMs, true
+	case "tbt", "tbt_ms":
+		return p.TotalBlockingTimeMs, true
 	case "hydration_total":
 		return p.IslandHydrationMs, true
 	case "heap_mb":
 		return p.JSHeapSizeMB, true
 	case "island_count":
 		return float64(len(p.Islands)), true
+	case "network_kb":
+		return float64(p.TotalBytesTransferred) / 1024, true
+	case "requests":
+		return float64(len(p.Resources)), true
+	case "hub_messages":
+		return float64(p.HubMessageCount), true
+	case "hub_bytes":
+		return float64(p.HubMessageBytes), true
+	case "hub_sends":
+		return float64(p.HubSendCount), true
+	case "js_used_kb":
+		if !hasCoverageMetric(p) {
+			return 0, false
+		}
+		return coverageUsedKB(p.Coverage), true
+	case "js_total_kb":
+		if !hasCoverageMetric(p) {
+			return 0, false
+		}
+		return coverageTotalKB(p.Coverage), true
+	case "js_unused_kb":
+		if !hasCoverageMetric(p) {
+			return 0, false
+		}
+		return coverageUnusedKB(p.Coverage), true
+	case "js_used_ratio":
+		if !hasCoverageMetric(p) {
+			return 0, false
+		}
+		return coverageRatio(p.Coverage), true
+	case "js_used_pct":
+		if !hasCoverageMetric(p) {
+			return 0, false
+		}
+		return coverageRatio(p.Coverage) * 100, true
 	}
 
 	// Scene-dependent metrics
@@ -83,23 +137,27 @@ func ResolveMetric(name string, r *Report) (float64, bool) {
 		return 0, false
 	}
 	switch name {
-	case "first_frame":
+	case "first_frame", "scene_first_frame":
 		return p.Scene.FirstFrameMs, true
-	case "p50":
+	case "p50", "scene_p50":
 		return p.Scene.FrameStats.P50, true
-	case "p95":
+	case "p95", "scene_p95":
 		return p.Scene.FrameStats.P95, true
-	case "p99":
+	case "p99", "scene_p99":
 		return p.Scene.FrameStats.P99, true
-	case "frame_max":
+	case "frame_max", "scene_frame_max":
 		return p.Scene.FrameStats.Max, true
-	case "dropped_frames":
+	case "dropped_frames", "scene_dropped_frames":
 		return float64(p.Scene.DroppedFrames), true
-	case "frame_count":
+	case "frame_count", "scene_frame_count":
 		return float64(p.Scene.FrameCount), true
 	}
 
 	return 0, false
+}
+
+func hasCoverageMetric(p *PageReport) bool {
+	return p.CoverageCaptured || len(p.Coverage) > 0
 }
 
 func compare(actual float64, op string, target float64) bool {

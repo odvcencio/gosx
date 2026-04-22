@@ -13,6 +13,10 @@
 //	gosx render <file.gsx>       Render component HTML to stdout
 //	gosx fmt <file.gsx|dir>      Format GoSX source files
 //	gosx lsp                     Start the GoSX language server over stdio
+//	gosx perf [--budget file] <url>
+//	                              Profile browser runtime performance
+//	gosx perf budget <report> <budget>
+//	                              Check saved perf output against budgets
 package main
 
 import (
@@ -91,7 +95,10 @@ Commands:
   render <file> [comp] Render component to HTML
   fmt <path>           Format GoSX source files
   lsp                  Start the GoSX language server
-  perf <url>           Profile browser runtime performance
+  perf [--budget file] <url>
+                       Profile browser runtime performance
+  perf budget <report> <budget>
+                       Check saved perf output against budgets
   visual <url>         Pixel-level visual regression testing
   repl <url>           Interactive browser runtime explorer
   version              Print version

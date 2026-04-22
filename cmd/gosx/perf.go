@@ -19,6 +19,10 @@ func cmdPerf() {
 		cmdPerfCompare()
 		return
 	}
+	if len(os.Args) > 2 && os.Args[2] == "budget" {
+		cmdPerfBudget()
+		return
+	}
 
 	fs := flag.NewFlagSet("perf", flag.ExitOnError)
 	frames := fs.Int("frames", 120, "scene3D frames to sample")
@@ -37,7 +41,9 @@ func cmdPerf() {
 	heapSnap := fs.String("heap-snapshot", "", "write a .heapsnapshot file (load in DevTools Memory panel)")
 	var asserts stringSlice
 	fs.Var(&asserts, "assert", "assertion expression (repeatable)")
-	fs.Parse(os.Args[2:])
+	budgetPath := fs.String("budget", "", "perf budget JSON to evaluate after profiling")
+	budgetProfile := fs.String("budget-profile", "", "budget profile to apply to every page")
+	fs.Parse(interspersedPerfArgs(os.Args[2:]))
 
 	urls := fs.Args()
 	if len(urls) == 0 {
@@ -125,6 +131,21 @@ func cmdPerf() {
 			os.Exit(1)
 		}
 	}
+
+	if strings.TrimSpace(*budgetPath) != "" {
+		budget, err := perf.LoadBudgetFile(*budgetPath)
+		if err != nil {
+			fatal("gosx perf: load budget: %v", err)
+		}
+		result, err := perf.EvaluateBudget(report, budget, *budgetProfile)
+		if err != nil {
+			fatal("gosx perf: budget: %v", err)
+		}
+		fmt.Fprint(os.Stderr, perf.FormatBudgetResult(result))
+		if !result.Passed {
+			os.Exit(1)
+		}
+	}
 }
 
 // cmdPerfCompare implements `gosx perf compare baseline.json candidate.json`.
@@ -168,8 +189,98 @@ func cmdPerfCompare() {
 	}
 }
 
+// cmdPerfBudget implements `gosx perf budget report.json budget.json`.
+// It evaluates a saved perf report against named budget profiles and exits
+// nonzero when any assertion fails.
+func cmdPerfBudget() {
+	fs := flag.NewFlagSet("perf budget", flag.ExitOnError)
+	profile := fs.String("profile", "", "budget profile to apply to every page, ignoring route mappings")
+	jsonOut := fs.Bool("json", false, "output as JSON")
+	fs.Parse(os.Args[3:])
+
+	if fs.NArg() != 2 {
+		fatal("usage: gosx perf budget <report.json> <budget.json> [--profile name] [--json]")
+	}
+
+	report, err := perf.LoadReport(fs.Arg(0))
+	if err != nil {
+		fatal("gosx perf budget: load report: %v", err)
+	}
+	budget, err := perf.LoadBudgetFile(fs.Arg(1))
+	if err != nil {
+		fatal("gosx perf budget: load budget: %v", err)
+	}
+
+	result, err := perf.EvaluateBudget(report, budget, *profile)
+	if err != nil {
+		fatal("gosx perf budget: %v", err)
+	}
+
+	if *jsonOut {
+		enc, err := json.MarshalIndent(result, "", "  ")
+		if err != nil {
+			fatal("gosx perf budget: json: %v", err)
+		}
+		fmt.Println(string(enc))
+	} else {
+		fmt.Print(perf.FormatBudgetResult(result))
+	}
+
+	if !result.Passed {
+		os.Exit(1)
+	}
+}
+
 // stringSlice implements flag.Value for repeatable string flags.
 type stringSlice []string
 
 func (s *stringSlice) String() string     { return strings.Join(*s, ", ") }
 func (s *stringSlice) Set(v string) error { *s = append(*s, v); return nil }
+
+func interspersedPerfArgs(args []string) []string {
+	if len(args) == 0 {
+		return nil
+	}
+	valueFlags := map[string]bool{
+		"assert":         true,
+		"budget":         true,
+		"budget-profile": true,
+		"click":          true,
+		"frames":         true,
+		"heap-snapshot":  true,
+		"mobile":         true,
+		"record":         true,
+		"scroll":         true,
+		"throttle":       true,
+		"timeout":        true,
+		"trace":          true,
+		"type":           true,
+	}
+	flags := make([]string, 0, len(args))
+	positionals := make([]string, 0, len(args))
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if arg == "--" {
+			positionals = append(positionals, args[i+1:]...)
+			break
+		}
+		if !strings.HasPrefix(arg, "-") || arg == "-" {
+			positionals = append(positionals, arg)
+			continue
+		}
+
+		flags = append(flags, arg)
+		name := strings.TrimLeft(arg, "-")
+		if eq := strings.IndexByte(name, '='); eq >= 0 {
+			name = name[:eq]
+		}
+		if valueFlags[name] && !strings.Contains(arg, "=") && i+1 < len(args) {
+			i++
+			flags = append(flags, args[i])
+		}
+	}
+	out := make([]string, 0, len(args))
+	out = append(out, flags...)
+	out = append(out, positionals...)
+	return out
+}

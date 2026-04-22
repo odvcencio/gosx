@@ -77,6 +77,9 @@ func TestRunExportWritesStaticBundleForStarterApp(t *testing.T) {
 	if manifest.Routes[0].Path != "/" || manifest.Routes[0].File != "index.html" {
 		t.Fatalf("unexpected root export route %#v", manifest.Routes[0])
 	}
+	if manifest.Routes[0].Capabilities.Navigation || manifest.Routes[0].Capabilities.Bootstrap || manifest.Routes[0].Capabilities.WASM {
+		t.Fatalf("expected exported starter route to stay zero-runtime, got %#v", manifest.Routes[0].Capabilities)
+	}
 }
 
 func TestCopyExportRuntimeCopiesSelectiveBootstrap(t *testing.T) {
@@ -138,6 +141,47 @@ func TestRewriteStaticExportHTMLRewritesRootAssetsAndImageOptimizerURLs(t *testi
 		if !strings.Contains(output, snippet) {
 			t.Fatalf("expected %q in rewritten html %q", snippet, output)
 		}
+	}
+}
+
+func TestRouteCapabilitiesFromHTMLReadsRuntimeManifestAndEnhancements(t *testing.T) {
+	input := `<!DOCTYPE html><html><head>
+<script data-gosx-navigation="true"></script>
+<script data-gosx-script="wasm-exec" src="/gosx/wasm_exec.js"></script>
+<script data-gosx-script="bootstrap" data-gosx-bootstrap-mode="full" src="/gosx/bootstrap-runtime.js"></script>
+<script defer data-gosx-script="feature-scene3d" src="/gosx/bootstrap-feature-scene3d.js"></script>
+<script id="gosx-manifest" type="application/json">{
+  "version": "0.1.0",
+  "islands": [{"id":"gosx-island-0","component":"Counter","bundleId":"main","props":{}}],
+  "engines": [
+    {"id":"gosx-engine-0","component":"GoSXScene3D","kind":"surface","programRef":"","props":{}},
+    {"id":"gosx-engine-1","component":"GoSXVideo","kind":"video","programRef":"","props":{}}
+  ],
+  "hubs": [{"id":"hub-0","name":"docs","path":"/hub"}],
+  "bundles": {},
+  "runtime": {"path": "/gosx/runtime.wasm"}
+}</script>
+</head><body>
+<div data-gosx-motion data-gosx-enhance="motion"></div>
+<div data-gosx-engine="GoSXVideo" data-gosx-engine-kind="video"></div>
+</body></html>`
+
+	caps := routeCapabilitiesFromHTML(input)
+	if !caps.Navigation || !caps.Bootstrap || caps.BootstrapMode != "full" || !caps.WASM {
+		t.Fatalf("unexpected runtime capabilities: %#v", caps)
+	}
+	if caps.Islands != 1 || caps.Engines != 2 || caps.Hubs != 1 {
+		t.Fatalf("unexpected manifest counts: %#v", caps)
+	}
+	if !caps.Scene3D || !caps.Video || !caps.Motion {
+		t.Fatalf("expected scene/video/motion capabilities: %#v", caps)
+	}
+}
+
+func TestRouteCapabilitiesFromStaticHTMLStayZeroCost(t *testing.T) {
+	caps := routeCapabilitiesFromHTML(`<!DOCTYPE html><html><body><main>Static</main></body></html>`)
+	if caps.Navigation || caps.Bootstrap || caps.WASM || caps.Islands != 0 || caps.Engines != 0 || caps.Hubs != 0 || caps.Scene3D || caps.Video || caps.Motion {
+		t.Fatalf("expected zero-cost static capabilities, got %#v", caps)
 	}
 }
 
