@@ -725,6 +725,75 @@
     return fallback;
   }
 
+  // Cached promise for the WebGPU sub-feature chunk. Scene3D now treats
+  // WebGPU as the default accelerated backend when the browser exposes it,
+  // so the first mount awaits this before choosing its renderer. Failed or
+  // unsupported probes still fall through to WebGL/canvas.
+  var sceneWebGPUFeaturePromise = null;
+
+  function sceneHasNavigatorWebGPU() {
+    return typeof navigator !== "undefined"
+      && navigator.gpu
+      && typeof navigator.gpu.requestAdapter === "function";
+  }
+
+  function ensureWebGPUFeatureLoaded() {
+    if (!sceneHasNavigatorWebGPU()) {
+      return Promise.resolve(null);
+    }
+    if (window.__gosx_scene3d_webgpu_api) {
+      return Promise.resolve(window.__gosx_scene3d_webgpu_api);
+    }
+    if (window.__gosx_scene3d_webgpu_feature_promise) {
+      return window.__gosx_scene3d_webgpu_feature_promise;
+    }
+    if (sceneWebGPUFeaturePromise) {
+      return sceneWebGPUFeaturePromise;
+    }
+    sceneWebGPUFeaturePromise = new Promise(function(resolve, reject) {
+      var s = document.createElement("script");
+      s.async = false;
+      s.dataset.gosxScript = "feature-scene3d-webgpu";
+      s.src = resolveSceneSubFeatureURL("gosxScene3dWebgpuUrl", "/gosx/bootstrap-feature-scene3d-webgpu.js");
+      s.onload = function() {
+        if (window.__gosx_scene3d_webgpu_api) {
+          resolve(window.__gosx_scene3d_webgpu_api);
+        } else {
+          sceneWebGPUFeaturePromise = null;
+          window.__gosx_scene3d_webgpu_feature_promise = null;
+          reject(new Error("scene3d-webgpu chunk loaded but did not publish API"));
+        }
+      };
+      s.onerror = function() {
+        sceneWebGPUFeaturePromise = null;
+        window.__gosx_scene3d_webgpu_feature_promise = null;
+        reject(new Error("failed to load scene3d-webgpu chunk"));
+      };
+      document.head.appendChild(s);
+    });
+    window.__gosx_scene3d_webgpu_feature_promise = sceneWebGPUFeaturePromise;
+    return sceneWebGPUFeaturePromise;
+  }
+
+  async function ensurePreferredWebGPUBackend(props, capability) {
+    if (sceneCapabilityWebGLPreference(props, capability) !== "prefer") {
+      return false;
+    }
+    try {
+      var api = await ensureWebGPUFeatureLoaded();
+      if (!api) {
+        return false;
+      }
+      if (typeof window.__gosx_scene3d_webgpu_probe_ready === "function") {
+        await window.__gosx_scene3d_webgpu_probe_ready();
+      }
+      return typeof sceneWebGPUAvailable === "function" && sceneWebGPUAvailable();
+    } catch (error) {
+      console.warn("[gosx] failed to prepare Scene3D WebGPU backend:", error && error.message ? error.message : error);
+      return false;
+    }
+  }
+
   // Cached promise for the GLTF sub-feature chunk. First call starts the
   // fetch; subsequent calls await the same promise. See 26f-feature-
   // scene3d-gltf-prefix.js for the split rationale.
@@ -2564,6 +2633,7 @@
 
     let viewport = applySceneViewport(ctx.mount, canvas, labelLayer, sceneViewportFromMount(ctx.mount, props, viewportBase, canvas, capability), viewportBase);
 
+    await ensurePreferredWebGPUBackend(props, capability);
     const initialRenderer = createSceneRenderer(canvas, props, capability);
     if (!initialRenderer || !initialRenderer.renderer) {
       console.warn("[gosx] Scene3D could not acquire a renderer");
@@ -2883,14 +2953,15 @@
       if (!(webglPreference === "prefer" || webglPreference === "force")) {
         return false;
       }
-      const webglRenderer = createSceneWebGLRenderer(canvas, {
-        antialias: capability.tier === "full" && !capability.lowPower && !capability.reducedData,
-        powerPreference: capability.lowPower || capability.tier === "constrained" ? "low-power" : "high-performance",
-      });
-      if (!webglRenderer) {
+      const restoredRenderer = createSceneRenderer(canvas, props, capability);
+      const webglRenderer = restoredRenderer && restoredRenderer.renderer;
+      if (!webglRenderer || webglRenderer.kind !== "webgl") {
+        if (webglRenderer && typeof webglRenderer.dispose === "function") {
+          webglRenderer.dispose();
+        }
         return false;
       }
-      if (!swapRenderer(webglRenderer, reason || "")) {
+      if (!swapRenderer(webglRenderer, reason || restoredRenderer.fallbackReason || "")) {
         return false;
       }
       renderLatestSceneBundle(reason || "webgl-restore");

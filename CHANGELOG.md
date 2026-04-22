@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.18.4
+
+Scene3D restore and backend selection patch.
+
+WebGL context restores now rebuild Scene3D through the normal renderer selector
+instead of directly instantiating the legacy WebGL renderer. This keeps
+WebGL2/PBR features such as GLB point layers, point shaders, and model-backed
+scene metadata active after a context loss or browser refresh recovery.
+
+Selective Scene3D bootstrap now preloads the split WebGPU backend when WebGPU is
+available, so capable browsers can choose that backend before the first renderer
+is created while still falling through to WebGL/canvas when unsupported.
+
 ## v0.18.3
 
 Scene3D GLB URL compatibility patch.

@@ -10,6 +10,7 @@ const bootstrapRuntimeSource = fs.readFileSync(path.join(__dirname, "bootstrap-r
 const bootstrapFeatureIslandsSource = fs.readFileSync(path.join(__dirname, "bootstrap-feature-islands.js"), "utf8");
 const bootstrapFeatureEnginesSource = fs.readFileSync(path.join(__dirname, "bootstrap-feature-engines.js"), "utf8");
 const bootstrapFeatureHubsSource = fs.readFileSync(path.join(__dirname, "bootstrap-feature-hubs.js"), "utf8");
+const bootstrapFeatureScene3DSource = fs.readFileSync(path.join(__dirname, "bootstrap-feature-scene3d.js"), "utf8");
 const patchSource = fs.readFileSync(path.join(__dirname, "patch.js"), "utf8");
 const navigationSource = fs.readFileSync(path.join(__dirname, "..", "..", "server", "navigation_runtime.js"), "utf8");
 
@@ -428,6 +429,7 @@ class FakeElement {
     this.parentNode = null;
     this.childNodes = [];
     this.attributes = new Map();
+    this.dataset = {};
     this.listeners = new Map();
     this.value = "";
     this.selectionStart = 0;
@@ -571,6 +573,12 @@ class FakeElement {
 
   setAttribute(name, value) {
     this.attributes.set(name, String(value));
+    if (String(name).startsWith("data-")) {
+      const datasetKey = String(name)
+        .slice(5)
+        .replace(/-([a-z])/g, (_match, letter) => letter.toUpperCase());
+      this.dataset[datasetKey] = String(value);
+    }
     if (name === "id" && this.ownerDocument) {
       this.ownerDocument.indexNode(this);
     }
@@ -1789,6 +1797,18 @@ function createContext(options) {
       instantiateStreaming: async () => ({ instance: {} }),
     },
   };
+  if (options.enableWebGPU) {
+    const webgpuDevice = options.webgpuDevice || {
+      lost: new Promise(() => {}),
+    };
+    const webgpuAdapter = options.webgpuAdapter || {
+      requestDevice: async () => webgpuDevice,
+    };
+    context.navigator.gpu = options.navigatorGPU || {
+      requestAdapter: async () => webgpuAdapter,
+      getPreferredCanvasFormat: () => "rgba8unorm",
+    };
+  }
   if (visualViewport) {
     context.visualViewport = visualViewport;
   }
@@ -4478,6 +4498,77 @@ test("bootstrap hydrates Scene3D model POINTS from GLB assets", async () => {
   assert.equal(env.consoleLogs.error.length, 0);
 });
 
+test("bootstrap restores GLB Scene3D point layers through the WebGL2 renderer", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-model-glb-points-restore-root";
+
+  const env = createContext({
+    elements: [mount],
+    enableWebGL2: true,
+    fetchRoutes: {
+      "/models/points-lines.glb": {
+        bytes: buildPointLineGLBBytes(),
+      },
+    },
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-model-glb-points-restore",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-model-glb-points-restore-root",
+          props: {
+            width: 640,
+            height: 360,
+            forceWebGL: true,
+            autoRotate: false,
+            background: "#08151f",
+            camera: { z: 5 },
+            models: [
+              {
+                id: "galaxy",
+                src: "/models/points-lines.glb",
+                static: true,
+              },
+            ],
+          },
+        },
+      ],
+    },
+  });
+  env.context.WebGL2RenderingContext = FakeWebGLContext;
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const canvas = mount.children[0];
+  const initialGl = canvas.getContext("webgl2");
+  assert.ok(
+    initialGl.ops.some((entry) => entry[0] === "drawArrays" && entry[1] === initialGl.POINTS && entry[3] === 3),
+    "initial WebGL2 renderer must draw GLB point layers",
+  );
+
+  canvas.dispatchEvent({ type: "webglcontextlost", preventDefault() {} });
+  await flushAsyncWork();
+  canvas._webglContext = null;
+  canvas.dispatchEvent({ type: "webglcontextrestored" });
+  await flushAsyncWork();
+
+  const restoredGl = canvas.getContext("webgl2");
+  assert.notEqual(restoredGl, initialGl);
+  assert.ok(
+    restoredGl.ops.some((entry) => entry[0] === "getUniformLocation" && entry[1] === "u_defaultSize"),
+    "restored renderer must use the WebGL2 point shader path",
+  );
+  assert.ok(
+    restoredGl.ops.some((entry) => entry[0] === "drawArrays" && entry[1] === restoredGl.POINTS && entry[3] === 3),
+    "restored renderer must draw GLB point layers",
+  );
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "webgl");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer-fallback"), null);
+  assert.equal(env.consoleLogs.error.length, 0);
+});
+
 test("bootstrap requests opaque WebGL canvas for opaque Scene3D backgrounds", async () => {
   const mount = new FakeElement("div", null);
   mount.id = "scene-opaque-canvas-root";
@@ -6061,6 +6152,75 @@ test("bootstrap registers and selects Scene3D backends through registry", async 
   registry.dispose("foo");
   assert.equal(registry.list().some((entry) => entry.kind === "foo"), false);
   assert.equal(registry.select({ canvas: false, canvas2d: false, webgl: false, webgl2: false, webgpu: false }), null);
+});
+
+test("selective Scene3D bootstrap prefers WebGPU before first renderer selection", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-webgpu-default";
+  const env = createContext({
+    elements: [mount],
+    enableWebGPU: true,
+    enableWebGL2: true,
+    fetchRoutes: {
+      "/gosx/bootstrap-feature-engines.js": {
+        text: bootstrapFeatureEnginesSource,
+      },
+      "/gosx/bootstrap-feature-scene3d-webgpu.js": {
+        text: `
+          window.__gosx_scene3d_webgpu_api = {
+            createRenderer: function() {
+              return {
+                kind: "webgpu",
+                render: function() {},
+                dispose: function() {}
+              };
+            }
+          };
+          window.__gosx_scene3d_webgpu_loaded = true;
+        `,
+      },
+    },
+    manifest: {
+      runtime: { path: "/gosx/runtime.wasm" },
+      engines: [
+        {
+          id: "gosx-engine-webgpu-default",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-webgpu-default",
+          jsExport: "GoSXScene3D",
+          props: {
+            width: 360,
+            height: 220,
+            autoRotate: false,
+            scene: {
+              objects: [
+                { kind: "box", width: 1, height: 1, depth: 1, color: "#8de1ff" },
+              ],
+            },
+          },
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+  runScript(bootstrapFeatureScene3DSource, env.context, "bootstrap-feature-scene3d.js");
+  await flushAsyncWork();
+
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgl-preference"), "prefer");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "webgpu", JSON.stringify({
+    fetchCalls: env.fetchCalls,
+    hasWebGPUAPI: Boolean(env.context.__gosx_scene3d_webgpu_api),
+    webgpuProbe: env.context.__gosx_scene3d_webgpu_probe && env.context.__gosx_scene3d_webgpu_probe(),
+    backends: env.context.__gosx_scene3d_api.sceneBackendRegistry.list().map((entry) => entry.kind),
+  }));
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer-fallback"), null);
+  assert.equal(
+    env.fetchCalls.some((call) => call.url === "/gosx/bootstrap-feature-scene3d-webgpu.js"),
+    true,
+  );
+  assert.equal((mount.children[0].contextCalls || []).some((call) => call.kind === "webgl" || call.kind === "webgl2"), false);
 });
 
 test("bootstrap releases replaced static point WebGL buffers on live updates", async () => {

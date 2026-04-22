@@ -30,6 +30,7 @@
   var _webgpuAdapterProbe = null; // null = unprobed, false = unavailable, GPUAdapter = ready
   var _webgpuDeviceProbe = null;  // null = unprobed, false = unavailable, GPUDevice = ready
   var _webgpuAdapterReady = false;
+  var _webgpuProbePromise = Promise.resolve(false);
 
   // Shared probe helper. Callers in 16a-scene-webgpu.js use this to read
   // the current probe state without re-running the async adapter/device
@@ -48,13 +49,33 @@
     return { adapter: null, device: null, ready: false };
   }
 
+  function _publishWebGPUProbeGlobals() {
+    if (typeof window === "undefined") {
+      return;
+    }
+    window.__gosx_scene3d_webgpu_probe = function() {
+      return {
+        adapter: _webgpuAdapterProbe,
+        device: _webgpuDeviceProbe,
+        ready: _webgpuAdapterReady,
+      };
+    };
+    window.__gosx_scene3d_webgpu_probe_ready = function() {
+      return _webgpuProbePromise.then(function() {
+        return _webgpuAdapterReady;
+      }).catch(function() {
+        return false;
+      });
+    };
+  }
+
   if (typeof navigator !== "undefined" && navigator.gpu && typeof navigator.gpu.requestAdapter === "function") {
     // No powerPreference: on some backends (SwiftShader in headless
     // Chrome, certain Linux Mesa/ANGLE builds) the 'high-performance'
     // hint produces null where the unbounded request succeeds. We
     // don't have a discrete-vs-integrated GPU selection need here —
     // any working device is better than none.
-    navigator.gpu.requestAdapter().then(function(adapter) {
+    _webgpuProbePromise = navigator.gpu.requestAdapter().then(function(adapter) {
       if (!adapter) {
         console.warn("[gosx] WebGPU probe: requestAdapter returned null");
         _webgpuAdapterProbe = false;
@@ -85,25 +106,22 @@
         _webgpuAdapterReady = false;
         _webgpuDeviceProbe = false;
       }).catch(function() {});
+      return true;
     }).catch(function(err) {
       console.warn("[gosx] WebGPU probe failed:", err && (err.message || err));
       _webgpuAdapterProbe = false;
       _webgpuDeviceProbe = false;
+      return false;
     });
-    // Share the probe (including the pre-obtained device) with the
-    // sub-feature chunk so it doesn't re-probe and can skip its own
-    // async device creation entirely.
-    window.__gosx_scene3d_webgpu_probe = function() {
-      return {
-        adapter: _webgpuAdapterProbe,
-        device: _webgpuDeviceProbe,
-        ready: _webgpuAdapterReady,
-      };
-    };
   } else {
     _webgpuAdapterProbe = false;
     _webgpuDeviceProbe = false;
   }
+  // Share the probe (including the pre-obtained device) with the
+  // sub-feature chunk so it doesn't re-probe and can skip its own
+  // async device creation entirely. The ready promise lets the mount
+  // path wait for WebGPU before falling through to WebGL.
+  _publishWebGPUProbeGlobals();
 
   // sceneWebGPUAvailable returns true only when BOTH the adapter+device
   // probe succeeded AND the sub-feature chunk has loaded its factory.

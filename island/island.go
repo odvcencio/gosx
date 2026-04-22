@@ -611,6 +611,11 @@ func (r *Renderer) BootstrapScript() gosx.Node {
 			b.WriteString(html.EscapeString(animPath))
 			b.WriteByte('"')
 		}
+		if webgpuPath := r.bootstrapFeatureScene3dWebGPUPath; webgpuPath != "" {
+			b.WriteString(` data-gosx-scene3d-webgpu-url="`)
+			b.WriteString(html.EscapeString(webgpuPath))
+			b.WriteByte('"')
+		}
 		b.WriteString(` src="`)
 		b.WriteString(html.EscapeString(scene3dPath))
 		b.WriteString("\">\x3c/script>")
@@ -642,9 +647,9 @@ func (r *Renderer) BootstrapScript() gosx.Node {
 			// using `\x3c/script>` inside a raw-string literal produced
 			// a literal "\x3c/script>" in the HTML, which JS parsed as
 			// a syntax error, silently dropping the entire inline loader.
-			b.WriteString(`<script>if(navigator.gpu){var _w=function(){var s=document.createElement('script');s.async=false;s.dataset.gosxScript='feature-scene3d-webgpu';s.src=`)
+			b.WriteString(`<script>if(navigator.gpu&&!window.__gosx_scene3d_webgpu_api&&!window.__gosx_scene3d_webgpu_feature_promise){var _w=function(){if(window.__gosx_scene3d_webgpu_api||window.__gosx_scene3d_webgpu_feature_promise)return;window.__gosx_scene3d_webgpu_feature_promise=new Promise(function(r,j){var s=document.createElement('script');s.async=false;s.dataset.gosxScript='feature-scene3d-webgpu';s.onload=function(){if(window.__gosx_scene3d_webgpu_api){r(window.__gosx_scene3d_webgpu_api)}else{window.__gosx_scene3d_webgpu_feature_promise=null;j(new Error('scene3d-webgpu chunk loaded but did not publish API'))}};s.onerror=function(){window.__gosx_scene3d_webgpu_feature_promise=null;j(new Error('failed to load scene3d-webgpu chunk'))};s.src=`)
 			b.WriteString(htmlJSStringLiteral(webgpuPath))
-			b.WriteString(";document.head.appendChild(s);};")
+			b.WriteString(";document.head.appendChild(s);});};")
 			b.WriteString("if(document.readyState==='loading'){document.addEventListener('DOMContentLoaded',_w);}else{_w();}}")
 			b.WriteString("\x3c/script>")
 		}

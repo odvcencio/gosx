@@ -2807,6 +2807,7 @@
     if (initFailed) return null;
 
     return {
+      kind: "webgpu",
       type: "webgpu",
       render: render,
       dispose: dispose,

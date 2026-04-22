@@ -17733,6 +17733,7 @@ if (typeof window !== "undefined") {
   var _webgpuAdapterProbe = null; // null = unprobed, false = unavailable, GPUAdapter = ready
   var _webgpuDeviceProbe = null;  // null = unprobed, false = unavailable, GPUDevice = ready
   var _webgpuAdapterReady = false;
+  var _webgpuProbePromise = Promise.resolve(false);
 
   function _externalProbe() {
     if (typeof window !== "undefined" && typeof window.__gosx_scene3d_webgpu_probe === "function") {
@@ -17741,8 +17742,28 @@ if (typeof window !== "undefined") {
     return { adapter: null, device: null, ready: false };
   }
 
+  function _publishWebGPUProbeGlobals() {
+    if (typeof window === "undefined") {
+      return;
+    }
+    window.__gosx_scene3d_webgpu_probe = function() {
+      return {
+        adapter: _webgpuAdapterProbe,
+        device: _webgpuDeviceProbe,
+        ready: _webgpuAdapterReady,
+      };
+    };
+    window.__gosx_scene3d_webgpu_probe_ready = function() {
+      return _webgpuProbePromise.then(function() {
+        return _webgpuAdapterReady;
+      }).catch(function() {
+        return false;
+      });
+    };
+  }
+
   if (typeof navigator !== "undefined" && navigator.gpu && typeof navigator.gpu.requestAdapter === "function") {
-    navigator.gpu.requestAdapter().then(function(adapter) {
+    _webgpuProbePromise = navigator.gpu.requestAdapter().then(function(adapter) {
       if (!adapter) {
         console.warn("[gosx] WebGPU probe: requestAdapter returned null");
         _webgpuAdapterProbe = false;
@@ -17767,22 +17788,18 @@ if (typeof window !== "undefined") {
         _webgpuAdapterReady = false;
         _webgpuDeviceProbe = false;
       }).catch(function() {});
+      return true;
     }).catch(function(err) {
       console.warn("[gosx] WebGPU probe failed:", err && (err.message || err));
       _webgpuAdapterProbe = false;
       _webgpuDeviceProbe = false;
+      return false;
     });
-    window.__gosx_scene3d_webgpu_probe = function() {
-      return {
-        adapter: _webgpuAdapterProbe,
-        device: _webgpuDeviceProbe,
-        ready: _webgpuAdapterReady,
-      };
-    };
   } else {
     _webgpuAdapterProbe = false;
     _webgpuDeviceProbe = false;
   }
+  _publishWebGPUProbeGlobals();
 
   function sceneWebGPUAvailable() {
     return _webgpuAdapterReady
@@ -20358,6 +20375,7 @@ if (typeof window !== "undefined") {
     if (initFailed) return null;
 
     return {
+      kind: "webgpu",
       type: "webgpu",
       render: render,
       dispose: dispose,
@@ -24663,6 +24681,71 @@ if (typeof window !== "undefined") {
     return fallback;
   }
 
+  var sceneWebGPUFeaturePromise = null;
+
+  function sceneHasNavigatorWebGPU() {
+    return typeof navigator !== "undefined"
+      && navigator.gpu
+      && typeof navigator.gpu.requestAdapter === "function";
+  }
+
+  function ensureWebGPUFeatureLoaded() {
+    if (!sceneHasNavigatorWebGPU()) {
+      return Promise.resolve(null);
+    }
+    if (window.__gosx_scene3d_webgpu_api) {
+      return Promise.resolve(window.__gosx_scene3d_webgpu_api);
+    }
+    if (window.__gosx_scene3d_webgpu_feature_promise) {
+      return window.__gosx_scene3d_webgpu_feature_promise;
+    }
+    if (sceneWebGPUFeaturePromise) {
+      return sceneWebGPUFeaturePromise;
+    }
+    sceneWebGPUFeaturePromise = new Promise(function(resolve, reject) {
+      var s = document.createElement("script");
+      s.async = false;
+      s.dataset.gosxScript = "feature-scene3d-webgpu";
+      s.src = resolveSceneSubFeatureURL("gosxScene3dWebgpuUrl", "/gosx/bootstrap-feature-scene3d-webgpu.js");
+      s.onload = function() {
+        if (window.__gosx_scene3d_webgpu_api) {
+          resolve(window.__gosx_scene3d_webgpu_api);
+        } else {
+          sceneWebGPUFeaturePromise = null;
+          window.__gosx_scene3d_webgpu_feature_promise = null;
+          reject(new Error("scene3d-webgpu chunk loaded but did not publish API"));
+        }
+      };
+      s.onerror = function() {
+        sceneWebGPUFeaturePromise = null;
+        window.__gosx_scene3d_webgpu_feature_promise = null;
+        reject(new Error("failed to load scene3d-webgpu chunk"));
+      };
+      document.head.appendChild(s);
+    });
+    window.__gosx_scene3d_webgpu_feature_promise = sceneWebGPUFeaturePromise;
+    return sceneWebGPUFeaturePromise;
+  }
+
+  async function ensurePreferredWebGPUBackend(props, capability) {
+    if (sceneCapabilityWebGLPreference(props, capability) !== "prefer") {
+      return false;
+    }
+    try {
+      var api = await ensureWebGPUFeatureLoaded();
+      if (!api) {
+        return false;
+      }
+      if (typeof window.__gosx_scene3d_webgpu_probe_ready === "function") {
+        await window.__gosx_scene3d_webgpu_probe_ready();
+      }
+      return typeof sceneWebGPUAvailable === "function" && sceneWebGPUAvailable();
+    } catch (error) {
+      console.warn("[gosx] failed to prepare Scene3D WebGPU backend:", error && error.message ? error.message : error);
+      return false;
+    }
+  }
+
   var sceneGLTFFeaturePromise = null;
 
   function ensureGLTFFeatureLoaded() {
@@ -26473,6 +26556,7 @@ if (typeof window !== "undefined") {
 
     let viewport = applySceneViewport(ctx.mount, canvas, labelLayer, sceneViewportFromMount(ctx.mount, props, viewportBase, canvas, capability), viewportBase);
 
+    await ensurePreferredWebGPUBackend(props, capability);
     const initialRenderer = createSceneRenderer(canvas, props, capability);
     if (!initialRenderer || !initialRenderer.renderer) {
       console.warn("[gosx] Scene3D could not acquire a renderer");
@@ -26732,14 +26816,15 @@ if (typeof window !== "undefined") {
       if (!(webglPreference === "prefer" || webglPreference === "force")) {
         return false;
       }
-      const webglRenderer = createSceneWebGLRenderer(canvas, {
-        antialias: capability.tier === "full" && !capability.lowPower && !capability.reducedData,
-        powerPreference: capability.lowPower || capability.tier === "constrained" ? "low-power" : "high-performance",
-      });
-      if (!webglRenderer) {
+      const restoredRenderer = createSceneRenderer(canvas, props, capability);
+      const webglRenderer = restoredRenderer && restoredRenderer.renderer;
+      if (!webglRenderer || webglRenderer.kind !== "webgl") {
+        if (webglRenderer && typeof webglRenderer.dispose === "function") {
+          webglRenderer.dispose();
+        }
         return false;
       }
-      if (!swapRenderer(webglRenderer, reason || "")) {
+      if (!swapRenderer(webglRenderer, reason || restoredRenderer.fallbackReason || "")) {
         return false;
       }
       renderLatestSceneBundle(reason || "webgl-restore");
