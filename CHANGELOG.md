@@ -1,5 +1,21 @@
 # Changelog
 
+## v0.18.8
+
+Static export runtime payload pruning.
+
+`gosx export` and production static builds now copy only the GoSX runtime
+assets referenced by prerendered HTML and document contracts. Zero-runtime
+routes no longer carry `dist/static/gosx`, WASM, bootstrap, feature chunks, HLS,
+or patch assets just because the framework can serve them.
+
+The static prerender manifest now keeps a non-public referenced-asset list while
+rendering routes, and the staging path uses that list to copy exact compat
+assets such as `/gosx/bootstrap-runtime.js` and exact hashed assets such as
+`/gosx/assets/runtime/bootstrap-runtime.<hash>.js`. This tightens the "load what
+you use" contract for exported sites and prevents static deployments from
+shipping dead runtime payload alongside fully static pages.
+
 ## v0.18.7
 
 Scene3D perf budget sampling patch.

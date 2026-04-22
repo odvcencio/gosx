@@ -27,21 +27,14 @@ func TestRunExportWritesStaticBundleForStarterApp(t *testing.T) {
 		"dist/static/stack/index.html",
 		"dist/static/404.html",
 		"dist/static/styles.css",
-		"dist/static/gosx/runtime.wasm",
-		"dist/static/gosx/wasm_exec.js",
-		"dist/static/gosx/bootstrap.js",
-		"dist/static/gosx/bootstrap-lite.js",
-		"dist/static/gosx/bootstrap-runtime.js",
-		"dist/static/gosx/bootstrap-feature-islands.js",
-		"dist/static/gosx/bootstrap-feature-engines.js",
-		"dist/static/gosx/bootstrap-feature-hubs.js",
-		"dist/static/gosx/patch.js",
-		"dist/static/gosx/hls.min.js",
 		"dist/export.json",
 	} {
 		if _, err := os.Stat(filepath.Join(dir, rel)); err != nil {
 			t.Fatalf("expected export artifact %s: %v", rel, err)
 		}
+	}
+	if _, err := os.Stat(filepath.Join(dir, "dist", "static", "gosx")); !os.IsNotExist(err) {
+		t.Fatalf("expected zero-runtime starter export to omit dist/static/gosx, got %v", err)
 	}
 
 	indexHTML := readFile(t, filepath.Join(dir, "dist", "static", "index.html"))
@@ -82,45 +75,67 @@ func TestRunExportWritesStaticBundleForStarterApp(t *testing.T) {
 	}
 }
 
-func TestCopyExportRuntimeCopiesSelectiveBootstrap(t *testing.T) {
+func TestCopyExportRuntimeCopiesOnlyReferencedAssets(t *testing.T) {
 	buildDir := t.TempDir()
 	outputDir := t.TempDir()
 
 	for rel, contents := range map[string]string{
-		"gosx-runtime.wasm":            "wasm",
-		"gosx-runtime-islands.wasm":    "wasm-islands",
-		"wasm_exec.js":                 "wasm-exec",
-		"bootstrap.js":                 "bootstrap",
-		"bootstrap-lite.js":            "bootstrap-lite",
-		"bootstrap-runtime.js":         "bootstrap-runtime",
-		"bootstrap-feature-islands.js": "bootstrap-feature-islands",
-		"bootstrap-feature-engines.js": "bootstrap-feature-engines",
-		"bootstrap-feature-hubs.js":    "bootstrap-feature-hubs",
-		"patch.js":                     "patch",
-		"hls.min.js":                   "hls",
+		"gosx-runtime.wasm":                      "wasm",
+		"gosx-runtime-islands.wasm":              "wasm-islands",
+		"wasm_exec.js":                           "wasm-exec",
+		"bootstrap.js":                           "bootstrap",
+		"bootstrap-lite.js":                      "bootstrap-lite",
+		"bootstrap-runtime.js":                   "bootstrap-runtime",
+		"bootstrap-feature-islands.js":           "bootstrap-feature-islands",
+		"bootstrap-feature-engines.js":           "bootstrap-feature-engines",
+		"bootstrap-feature-hubs.js":              "bootstrap-feature-hubs",
+		"bootstrap-feature-scene3d.js":           "bootstrap-feature-scene3d",
+		"bootstrap-feature-scene3d-webgpu.js":    "bootstrap-feature-scene3d-webgpu",
+		"bootstrap-feature-scene3d-gltf.js":      "bootstrap-feature-scene3d-gltf",
+		"bootstrap-feature-scene3d-animation.js": "bootstrap-feature-scene3d-animation",
+		"patch.js":                               "patch",
+		"hls.min.js":                             "hls",
+		"islands/Counter.gxi":                    "counter",
+		"css/counter.css":                        "counter-css",
 	} {
 		mustWriteFile(t, filepath.Join(buildDir, rel), contents)
 	}
 
-	if err := copyExportRuntime(buildDir, outputDir); err != nil {
+	manifest := exportManifest{AssetRefs: []string{
+		"/gosx/bootstrap-runtime.js",
+		"/gosx/bootstrap-feature-engines.js",
+		"/gosx/hls.min.js",
+		"/gosx/islands/Counter.gxi",
+		"/gosx/css/counter.css",
+	}}
+	if err := copyExportRuntime(buildDir, outputDir, manifest); err != nil {
 		t.Fatal(err)
 	}
 
+	for _, rel := range []string{
+		"gosx/bootstrap-runtime.js",
+		"gosx/bootstrap-feature-engines.js",
+		"gosx/hls.min.js",
+		"gosx/islands/Counter.gxi",
+		"gosx/css/counter.css",
+	} {
+		if _, err := os.Stat(filepath.Join(outputDir, rel)); err != nil {
+			t.Fatalf("expected copied export runtime file %s: %v", rel, err)
+		}
+	}
 	for _, rel := range []string{
 		"gosx/runtime.wasm",
 		"gosx/runtime-islands.wasm",
 		"gosx/wasm_exec.js",
 		"gosx/bootstrap.js",
 		"gosx/bootstrap-lite.js",
-		"gosx/bootstrap-runtime.js",
 		"gosx/bootstrap-feature-islands.js",
-		"gosx/bootstrap-feature-engines.js",
 		"gosx/bootstrap-feature-hubs.js",
+		"gosx/bootstrap-feature-scene3d.js",
 		"gosx/patch.js",
-		"gosx/hls.min.js",
 	} {
-		if _, err := os.Stat(filepath.Join(outputDir, rel)); err != nil {
-			t.Fatalf("expected copied export runtime file %s: %v", rel, err)
+		if _, err := os.Stat(filepath.Join(outputDir, rel)); !os.IsNotExist(err) {
+			t.Fatalf("did not expect unreferenced runtime file %s: %v", rel, err)
 		}
 	}
 }
@@ -182,6 +197,26 @@ func TestRouteCapabilitiesFromStaticHTMLStayZeroCost(t *testing.T) {
 	caps := routeCapabilitiesFromHTML(`<!DOCTYPE html><html><body><main>Static</main></body></html>`)
 	if caps.Navigation || caps.Bootstrap || caps.WASM || caps.Islands != 0 || caps.Engines != 0 || caps.Hubs != 0 || caps.Scene3D || caps.Video || caps.Motion {
 		t.Fatalf("expected zero-cost static capabilities, got %#v", caps)
+	}
+}
+
+func TestExportRuntimeAssetRefsCollectAttrsAndContracts(t *testing.T) {
+	refs := map[string]struct{}{}
+	addExportRuntimeAssetRefs(refs, `<!DOCTYPE html><html><head>
+<script src="/gosx/assets/runtime/bootstrap-runtime.1234.js?v=1234"></script>
+<script id="gosx-document" type="application/json">{"assets":{"bootstrapFeatureEnginesPath":"/gosx/assets/runtime/bootstrap-feature-engines.5678.js"}}</script>
+<script id="gosx-manifest" type="application/json">{"runtime":{"path":"/gosx/assets/runtime/runtime.abcd.wasm"}}</script>
+<script src="/analytics.js"></script>
+</head></html>`)
+
+	got := sortedExportRuntimeAssetRefs(refs)
+	want := []string{
+		"/gosx/assets/runtime/bootstrap-feature-engines.5678.js",
+		"/gosx/assets/runtime/bootstrap-runtime.1234.js",
+		"/gosx/assets/runtime/runtime.abcd.wasm",
+	}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("runtime refs = %#v, want %#v", got, want)
 	}
 }
 

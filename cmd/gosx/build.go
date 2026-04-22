@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -466,8 +467,8 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 			AppRoot:    distDir,
 			OutputDir:  filepath.Join(distDir, "static"),
 			BinaryPath: serverBinaryPath,
-			StageAssets: func(outputDir string) error {
-				return stageStaticBuildAssets(distDir, &manifest, outputDir)
+			StageAssets: func(outputDir string, exportManifest exportManifest) error {
+				return stageStaticBuildAssets(distDir, &manifest, outputDir, exportManifest)
 			},
 		})
 		if err != nil {
@@ -656,76 +657,99 @@ func stageDeploymentBundle(projectDir, distDir string, builtServer bool, serverB
 	return nil
 }
 
-func stageStaticBuildAssets(distDir string, manifest *BuildManifest, outputDir string) error {
-	if err := copyDirIfPresent(filepath.Join(distDir, "assets"), filepath.Join(outputDir, "assets")); err != nil {
-		return err
-	}
+func stageStaticBuildAssets(distDir string, manifest *BuildManifest, outputDir string, exportManifest exportManifest) error {
 	if manifest == nil {
 		return nil
 	}
-	return stageManifestCompatibilityRuntime(distDir, manifest, outputDir)
+	return stageManifestCompatibilityRuntime(distDir, manifest, outputDir, exportManifest.AssetRefs)
 }
 
-func stageManifestCompatibilityRuntime(distDir string, manifest *BuildManifest, outputDir string) error {
-	gosxDir := filepath.Join(outputDir, "gosx")
-	runtimeDir := filepath.Join(distDir, "assets", "runtime")
-	islandDir := filepath.Join(distDir, "assets", "islands")
-	cssDir := filepath.Join(distDir, "assets", "css")
-	if err := os.MkdirAll(filepath.Join(gosxDir, "islands"), 0755); err != nil {
-		return err
-	}
-	if err := os.MkdirAll(filepath.Join(gosxDir, "css"), 0755); err != nil {
-		return err
-	}
-
-	for _, asset := range []struct {
-		file string
-		dst  string
-	}{
-		{file: manifest.Runtime.WASM.File, dst: filepath.Join(gosxDir, "runtime.wasm")},
-		{file: manifest.Runtime.WASMIslands.File, dst: filepath.Join(gosxDir, "runtime-islands.wasm")},
-		{file: manifest.Runtime.WASMExec.File, dst: filepath.Join(gosxDir, "wasm_exec.js")},
-		{file: manifest.Runtime.Bootstrap.File, dst: filepath.Join(gosxDir, "bootstrap.js")},
-		{file: manifest.Runtime.BootstrapLite.File, dst: filepath.Join(gosxDir, "bootstrap-lite.js")},
-		{file: manifest.Runtime.BootstrapRuntime.File, dst: filepath.Join(gosxDir, "bootstrap-runtime.js")},
-		{file: manifest.Runtime.BootstrapFeatureIslands.File, dst: filepath.Join(gosxDir, "bootstrap-feature-islands.js")},
-		{file: manifest.Runtime.BootstrapFeatureEngines.File, dst: filepath.Join(gosxDir, "bootstrap-feature-engines.js")},
-		{file: manifest.Runtime.BootstrapFeatureHubs.File, dst: filepath.Join(gosxDir, "bootstrap-feature-hubs.js")},
-		{file: manifest.Runtime.BootstrapFeatureScene3D.File, dst: filepath.Join(gosxDir, "bootstrap-feature-scene3d.js")},
-		{file: manifest.Runtime.BootstrapFeatureScene3DWebGPU.File, dst: filepath.Join(gosxDir, "bootstrap-feature-scene3d-webgpu.js")},
-		{file: manifest.Runtime.BootstrapFeatureScene3DGLTF.File, dst: filepath.Join(gosxDir, "bootstrap-feature-scene3d-gltf.js")},
-		{file: manifest.Runtime.BootstrapFeatureScene3DAnimation.File, dst: filepath.Join(gosxDir, "bootstrap-feature-scene3d-animation.js")},
-		{file: manifest.Runtime.Patch.File, dst: filepath.Join(gosxDir, "patch.js")},
-		{file: manifest.Runtime.VideoHLS.File, dst: filepath.Join(gosxDir, "hls.min.js")},
-	} {
-		if strings.TrimSpace(asset.file) == "" {
+func stageManifestCompatibilityRuntime(distDir string, manifest *BuildManifest, outputDir string, refs []string) error {
+	for _, ref := range refs {
+		src, ok := manifestRuntimeRefSourcePath(distDir, manifest, ref)
+		if !ok {
 			continue
 		}
-		if err := copyFile(asset.dst, filepath.Join(runtimeDir, asset.file)); err != nil {
-			return err
-		}
-	}
-
-	for _, asset := range manifest.Islands {
-		ext := ".gxi"
-		if asset.Format == "json" {
-			ext = ".json"
-		}
-		if err := copyFile(filepath.Join(gosxDir, "islands", asset.Name+ext), filepath.Join(islandDir, asset.File)); err != nil {
-			return err
-		}
-	}
-
-	for _, asset := range manifest.CSS {
-		name := cssCompatFilename(asset)
-		if name == "" {
+		dst, ok := exportRuntimeOutputPath(outputDir, ref)
+		if !ok {
 			continue
 		}
-		if err := copyFile(filepath.Join(gosxDir, "css", name), filepath.Join(cssDir, asset.File)); err != nil {
+		if err := copyFile(dst, src); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func manifestRuntimeRefSourcePath(distDir string, manifest *BuildManifest, ref string) (string, bool) {
+	ref = path.Clean("/" + strings.TrimLeft(strings.TrimSpace(ref), "/"))
+	if rel, ok := strings.CutPrefix(ref, "/gosx/assets/"); ok && rel != "" {
+		return filepath.Join(distDir, "assets", filepath.FromSlash(rel)), true
+	}
+	if manifest == nil {
+		return "", false
+	}
+	runtimeDir := filepath.Join(distDir, "assets", "runtime")
+	switch ref {
+	case "/gosx/runtime.wasm":
+		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.WASM.File)
+	case "/gosx/runtime-islands.wasm":
+		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.WASMIslands.File)
+	case "/gosx/wasm_exec.js":
+		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.WASMExec.File)
+	case "/gosx/bootstrap.js":
+		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.Bootstrap.File)
+	case "/gosx/bootstrap-lite.js":
+		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.BootstrapLite.File)
+	case "/gosx/bootstrap-runtime.js":
+		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.BootstrapRuntime.File)
+	case "/gosx/bootstrap-feature-islands.js":
+		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.BootstrapFeatureIslands.File)
+	case "/gosx/bootstrap-feature-engines.js":
+		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.BootstrapFeatureEngines.File)
+	case "/gosx/bootstrap-feature-hubs.js":
+		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.BootstrapFeatureHubs.File)
+	case "/gosx/bootstrap-feature-scene3d.js":
+		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.BootstrapFeatureScene3D.File)
+	case "/gosx/bootstrap-feature-scene3d-webgpu.js":
+		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.BootstrapFeatureScene3DWebGPU.File)
+	case "/gosx/bootstrap-feature-scene3d-gltf.js":
+		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.BootstrapFeatureScene3DGLTF.File)
+	case "/gosx/bootstrap-feature-scene3d-animation.js":
+		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.BootstrapFeatureScene3DAnimation.File)
+	case "/gosx/patch.js":
+		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.Patch.File)
+	case "/gosx/hls.min.js":
+		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.VideoHLS.File)
+	}
+	if rel, ok := strings.CutPrefix(ref, "/gosx/islands/"); ok && rel != "" {
+		name := filepath.Base(rel)
+		for _, asset := range manifest.Islands {
+			ext := ".gxi"
+			if asset.Format == "json" {
+				ext = ".json"
+			}
+			if asset.Name+ext == name {
+				return filepath.Join(distDir, "assets", "islands", asset.File), true
+			}
+		}
+	}
+	if rel, ok := strings.CutPrefix(ref, "/gosx/css/"); ok && rel != "" {
+		name := filepath.Base(rel)
+		for _, asset := range manifest.CSS {
+			if cssCompatFilename(asset) == name {
+				return filepath.Join(distDir, "assets", "css", asset.File), true
+			}
+		}
+	}
+	return "", false
+}
+
+func manifestRuntimeFilePath(runtimeDir, file string) (string, bool) {
+	if strings.TrimSpace(file) == "" {
+		return "", false
+	}
+	return filepath.Join(runtimeDir, file), true
 }
 
 func cssCompatFilename(asset CSSAsset) string {

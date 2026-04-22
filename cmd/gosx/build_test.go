@@ -161,7 +161,7 @@ func TestProjectBuildHooksLoadAndRun(t *testing.T) {
 	}
 }
 
-func TestStageManifestCompatibilityRuntimeCopiesSelectiveBootstrap(t *testing.T) {
+func TestStageManifestCompatibilityRuntimeCopiesOnlyReferencedAssets(t *testing.T) {
 	distDir := t.TempDir()
 	outputDir := t.TempDir()
 
@@ -177,6 +177,8 @@ func TestStageManifestCompatibilityRuntimeCopiesSelectiveBootstrap(t *testing.T)
 		filepath.Join(distDir, "assets", "runtime", "bootstrap-feature-hubs.8888.js"):    "bootstrap-feature-hubs",
 		filepath.Join(distDir, "assets", "runtime", "patch.9999.js"):                     "patch",
 		filepath.Join(distDir, "assets", "runtime", "hls.min.aaaa.js"):                   "hls",
+		filepath.Join(distDir, "assets", "islands", "Counter.abcd.gxi"):                  "counter",
+		filepath.Join(distDir, "assets", "css", "counter.dcba.css"):                      "counter-css",
 	}
 	for path, contents := range files {
 		mustWriteFile(t, path, contents)
@@ -196,12 +198,32 @@ func TestStageManifestCompatibilityRuntimeCopiesSelectiveBootstrap(t *testing.T)
 			Patch:                   HashedAsset{File: "patch.9999.js"},
 			VideoHLS:                HashedAsset{File: "hls.min.aaaa.js"},
 		},
+		Islands: []IslandAsset{{Name: "Counter", Format: "bin", HashedAsset: HashedAsset{File: "Counter.abcd.gxi"}}},
+		CSS:     []CSSAsset{{Component: "Counter", Source: "counter.css", HashedAsset: HashedAsset{File: "counter.dcba.css"}}},
 	}
 
-	if err := stageManifestCompatibilityRuntime(distDir, manifest, outputDir); err != nil {
+	refs := []string{
+		"/gosx/assets/runtime/bootstrap-runtime.5555.js",
+		"/gosx/bootstrap-feature-engines.js",
+		"/gosx/hls.min.js",
+		"/gosx/islands/Counter.gxi",
+		"/gosx/css/counter.css",
+	}
+	if err := stageManifestCompatibilityRuntime(distDir, manifest, outputDir, refs); err != nil {
 		t.Fatal(err)
 	}
 
+	for _, rel := range []string{
+		"gosx/assets/runtime/bootstrap-runtime.5555.js",
+		"gosx/bootstrap-feature-engines.js",
+		"gosx/hls.min.js",
+		"gosx/islands/Counter.gxi",
+		"gosx/css/counter.css",
+	} {
+		if _, err := os.Stat(filepath.Join(outputDir, rel)); err != nil {
+			t.Fatalf("expected staged compat runtime file %s: %v", rel, err)
+		}
+	}
 	for _, rel := range []string{
 		"gosx/runtime.wasm",
 		"gosx/runtime-islands.wasm",
@@ -210,13 +232,11 @@ func TestStageManifestCompatibilityRuntimeCopiesSelectiveBootstrap(t *testing.T)
 		"gosx/bootstrap-lite.js",
 		"gosx/bootstrap-runtime.js",
 		"gosx/bootstrap-feature-islands.js",
-		"gosx/bootstrap-feature-engines.js",
 		"gosx/bootstrap-feature-hubs.js",
 		"gosx/patch.js",
-		"gosx/hls.min.js",
 	} {
-		if _, err := os.Stat(filepath.Join(outputDir, rel)); err != nil {
-			t.Fatalf("expected staged compat runtime file %s: %v", rel, err)
+		if _, err := os.Stat(filepath.Join(outputDir, rel)); !os.IsNotExist(err) {
+			t.Fatalf("did not expect unreferenced runtime file %s: %v", rel, err)
 		}
 	}
 }
@@ -242,17 +262,17 @@ func TestRunBuildProdWritesHybridStaticBundleForStarterApp(t *testing.T) {
 		"dist/server/app",
 		"dist/static/index.html",
 		"dist/static/stack/index.html",
-		"dist/static/assets/runtime",
-		"dist/static/gosx/runtime.wasm",
-		"dist/static/gosx/bootstrap-lite.js",
-		"dist/static/gosx/bootstrap-runtime.js",
-		"dist/static/gosx/bootstrap-feature-islands.js",
-		"dist/static/gosx/bootstrap-feature-engines.js",
-		"dist/static/gosx/bootstrap-feature-hubs.js",
-		"dist/static/gosx/hls.min.js",
 	} {
 		if _, err := os.Stat(filepath.Join(dir, rel)); err != nil {
 			t.Fatalf("expected build artifact %s: %v", rel, err)
+		}
+	}
+	for _, rel := range []string{
+		"dist/static/assets/runtime",
+		"dist/static/gosx",
+	} {
+		if _, err := os.Stat(filepath.Join(dir, rel)); !os.IsNotExist(err) {
+			t.Fatalf("did not expect zero-runtime static build artifact %s: %v", rel, err)
 		}
 	}
 

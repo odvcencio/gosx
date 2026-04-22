@@ -3,7 +3,9 @@ package main
 import (
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
+	"strings"
 
 	"github.com/odvcencio/gosx/env"
 )
@@ -55,8 +57,8 @@ func RunExport(dir string) error {
 		AppRoot:    absDir,
 		OutputDir:  filepath.Join(absDir, "dist", "static"),
 		BinaryPath: binaryPath,
-		StageAssets: func(outputDir string) error {
-			return copyExportRuntime(filepath.Join(absDir, "build"), outputDir)
+		StageAssets: func(outputDir string, manifest exportManifest) error {
+			return copyExportRuntime(filepath.Join(absDir, "build"), outputDir, manifest)
 		},
 	})
 	if err != nil {
@@ -70,43 +72,70 @@ func RunExport(dir string) error {
 	return nil
 }
 
-func copyExportRuntime(buildDir, outputDir string) error {
-	gosxDir := filepath.Join(outputDir, "gosx")
-	if err := os.MkdirAll(gosxDir, 0755); err != nil {
-		return err
-	}
-	for _, asset := range []struct {
-		src      string
-		dst      string
-		optional bool
-	}{
-		{src: filepath.Join(buildDir, "gosx-runtime.wasm"), dst: filepath.Join(gosxDir, "runtime.wasm")},
-		{src: filepath.Join(buildDir, "gosx-runtime-islands.wasm"), dst: filepath.Join(gosxDir, "runtime-islands.wasm"), optional: true},
-		{src: filepath.Join(buildDir, "wasm_exec.js"), dst: filepath.Join(gosxDir, "wasm_exec.js")},
-		{src: filepath.Join(buildDir, "bootstrap.js"), dst: filepath.Join(gosxDir, "bootstrap.js")},
-		{src: filepath.Join(buildDir, "bootstrap-lite.js"), dst: filepath.Join(gosxDir, "bootstrap-lite.js")},
-		{src: filepath.Join(buildDir, "bootstrap-runtime.js"), dst: filepath.Join(gosxDir, "bootstrap-runtime.js")},
-		{src: filepath.Join(buildDir, "bootstrap-feature-islands.js"), dst: filepath.Join(gosxDir, "bootstrap-feature-islands.js")},
-		{src: filepath.Join(buildDir, "bootstrap-feature-engines.js"), dst: filepath.Join(gosxDir, "bootstrap-feature-engines.js")},
-		{src: filepath.Join(buildDir, "bootstrap-feature-hubs.js"), dst: filepath.Join(gosxDir, "bootstrap-feature-hubs.js")},
-		{src: filepath.Join(buildDir, "patch.js"), dst: filepath.Join(gosxDir, "patch.js")},
-		{src: filepath.Join(buildDir, "hls.min.js"), dst: filepath.Join(gosxDir, "hls.min.js")},
-	} {
-		if asset.optional {
-			if err := copyFileIfPresent(asset.src, asset.dst); err != nil {
-				return err
-			}
+func copyExportRuntime(buildDir, outputDir string, manifest exportManifest) error {
+	for _, ref := range manifest.AssetRefs {
+		src, ok := exportRuntimeBuildPath(buildDir, ref)
+		if !ok {
 			continue
 		}
-		if err := copyFile(asset.dst, asset.src); err != nil {
+		dst, ok := exportRuntimeOutputPath(outputDir, ref)
+		if !ok {
+			continue
+		}
+		if err := copyFile(dst, src); err != nil {
 			return err
 		}
 	}
-	if err := copyDirIfPresent(filepath.Join(buildDir, "islands"), filepath.Join(gosxDir, "islands")); err != nil {
-		return err
-	}
-	if err := copyDirIfPresent(filepath.Join(buildDir, "css"), filepath.Join(gosxDir, "css")); err != nil {
-		return err
-	}
 	return nil
+}
+
+func exportRuntimeBuildPath(buildDir, ref string) (string, bool) {
+	ref = path.Clean("/" + strings.TrimLeft(strings.TrimSpace(ref), "/"))
+	switch ref {
+	case "/gosx/runtime.wasm":
+		return filepath.Join(buildDir, "gosx-runtime.wasm"), true
+	case "/gosx/runtime-islands.wasm":
+		return filepath.Join(buildDir, "gosx-runtime-islands.wasm"), true
+	case "/gosx/wasm_exec.js":
+		return filepath.Join(buildDir, "wasm_exec.js"), true
+	case "/gosx/bootstrap.js":
+		return filepath.Join(buildDir, "bootstrap.js"), true
+	case "/gosx/bootstrap-lite.js":
+		return filepath.Join(buildDir, "bootstrap-lite.js"), true
+	case "/gosx/bootstrap-runtime.js":
+		return filepath.Join(buildDir, "bootstrap-runtime.js"), true
+	case "/gosx/bootstrap-feature-islands.js":
+		return filepath.Join(buildDir, "bootstrap-feature-islands.js"), true
+	case "/gosx/bootstrap-feature-engines.js":
+		return filepath.Join(buildDir, "bootstrap-feature-engines.js"), true
+	case "/gosx/bootstrap-feature-hubs.js":
+		return filepath.Join(buildDir, "bootstrap-feature-hubs.js"), true
+	case "/gosx/bootstrap-feature-scene3d.js":
+		return filepath.Join(buildDir, "bootstrap-feature-scene3d.js"), true
+	case "/gosx/bootstrap-feature-scene3d-webgpu.js":
+		return filepath.Join(buildDir, "bootstrap-feature-scene3d-webgpu.js"), true
+	case "/gosx/bootstrap-feature-scene3d-gltf.js":
+		return filepath.Join(buildDir, "bootstrap-feature-scene3d-gltf.js"), true
+	case "/gosx/bootstrap-feature-scene3d-animation.js":
+		return filepath.Join(buildDir, "bootstrap-feature-scene3d-animation.js"), true
+	case "/gosx/patch.js":
+		return filepath.Join(buildDir, "patch.js"), true
+	case "/gosx/hls.min.js":
+		return filepath.Join(buildDir, "hls.min.js"), true
+	}
+	if rel, ok := strings.CutPrefix(ref, "/gosx/islands/"); ok && rel != "" {
+		return filepath.Join(buildDir, "islands", filepath.FromSlash(rel)), true
+	}
+	if rel, ok := strings.CutPrefix(ref, "/gosx/css/"); ok && rel != "" {
+		return filepath.Join(buildDir, "css", filepath.FromSlash(rel)), true
+	}
+	return "", false
+}
+
+func exportRuntimeOutputPath(outputDir, ref string) (string, bool) {
+	ref = path.Clean("/" + strings.TrimLeft(strings.TrimSpace(ref), "/"))
+	if !strings.HasPrefix(ref, "/gosx/") {
+		return "", false
+	}
+	return filepath.Join(outputDir, filepath.FromSlash(strings.TrimPrefix(ref, "/"))), true
 }

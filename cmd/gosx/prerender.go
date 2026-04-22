@@ -21,8 +21,9 @@ import (
 )
 
 type exportManifest struct {
-	Pages  []string      `json:"pages"`
-	Routes []exportRoute `json:"routes,omitempty"`
+	Pages     []string      `json:"pages"`
+	Routes    []exportRoute `json:"routes,omitempty"`
+	AssetRefs []string      `json:"-"`
 }
 
 type exportRoute struct {
@@ -50,7 +51,7 @@ type staticExportOptions struct {
 	AppRoot     string
 	OutputDir   string
 	BinaryPath  string
-	StageAssets func(outputDir string) error
+	StageAssets func(outputDir string, manifest exportManifest) error
 }
 
 func prerenderStaticBundle(opts staticExportOptions) (exportManifest, error) {
@@ -117,19 +118,15 @@ func prerenderStaticBundle(opts staticExportOptions) (exportManifest, error) {
 	if err := copyDirIfPresent(filepath.Join(appRoot, "public"), outputDir); err != nil {
 		return exportManifest{}, fmt.Errorf("copy public assets: %w", err)
 	}
-	if opts.StageAssets != nil {
-		if err := opts.StageAssets(outputDir); err != nil {
-			return exportManifest{}, err
-		}
-	}
-
 	client := &http.Client{Timeout: 10 * time.Second}
+	assetRefs := map[string]struct{}{}
 	for i, entry := range routes {
 		pageHTML, err := fetchExportPage(client, baseURL+entry.Path)
 		if err != nil {
 			return exportManifest{}, fmt.Errorf("export %s: %w", entry.Path, err)
 		}
 		routes[i].Capabilities = routeCapabilitiesFromHTML(pageHTML)
+		addExportRuntimeAssetRefs(assetRefs, pageHTML)
 		pageHTML, err = rewriteStaticExportHTML(entry.Path, pageHTML)
 		if err != nil {
 			return exportManifest{}, fmt.Errorf("rewrite %s: %w", entry.Path, err)
@@ -140,6 +137,7 @@ func prerenderStaticBundle(opts staticExportOptions) (exportManifest, error) {
 	}
 
 	if missingHTML, status, err := fetchExportPageWithStatus(client, baseURL+"/__gosx_export_missing__"); err == nil && status == http.StatusNotFound {
+		addExportRuntimeAssetRefs(assetRefs, missingHTML)
 		missingHTML, err = rewriteStaticExportHTML("/__gosx_export_missing__", missingHTML)
 		if err != nil {
 			return exportManifest{}, fmt.Errorf("rewrite 404 page: %w", err)
@@ -149,7 +147,78 @@ func prerenderStaticBundle(opts staticExportOptions) (exportManifest, error) {
 		}
 	}
 
-	return exportManifest{Pages: pages, Routes: routes}, nil
+	manifest := exportManifest{Pages: pages, Routes: routes, AssetRefs: sortedExportRuntimeAssetRefs(assetRefs)}
+	if opts.StageAssets != nil {
+		if err := opts.StageAssets(outputDir, manifest); err != nil {
+			return exportManifest{}, err
+		}
+	}
+
+	return manifest, nil
+}
+
+func addExportRuntimeAssetRefs(refs map[string]struct{}, input string) {
+	if refs == nil || input == "" {
+		return
+	}
+	for {
+		idx := strings.Index(input, "/gosx/")
+		if idx < 0 {
+			return
+		}
+		input = input[idx:]
+		end := 0
+		for end < len(input) && isExportRuntimeAssetURLByte(input[end]) {
+			end++
+		}
+		addExportRuntimeAssetRef(refs, input[:end])
+		input = input[end:]
+	}
+}
+
+func isExportRuntimeAssetURLByte(ch byte) bool {
+	switch {
+	case ch >= 'a' && ch <= 'z':
+		return true
+	case ch >= 'A' && ch <= 'Z':
+		return true
+	case ch >= '0' && ch <= '9':
+		return true
+	}
+	switch ch {
+	case '/', '.', '_', '-', '~', '%', '?', '&', '=', ':', '+', '#', ';', ',', '@', '!', '$', '\'', '(', ')', '*':
+		return true
+	default:
+		return false
+	}
+}
+
+func addExportRuntimeAssetRef(refs map[string]struct{}, raw string) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return
+	}
+	parsed, err := neturl.Parse(raw)
+	if err != nil || parsed == nil || parsed.Scheme != "" || parsed.Host != "" {
+		return
+	}
+	targetPath := path.Clean("/" + strings.TrimLeft(parsed.Path, "/"))
+	if !strings.HasPrefix(targetPath, "/gosx/") {
+		return
+	}
+	refs[targetPath] = struct{}{}
+}
+
+func sortedExportRuntimeAssetRefs(refs map[string]struct{}) []string {
+	if len(refs) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(refs))
+	for ref := range refs {
+		out = append(out, ref)
+	}
+	sort.Strings(out)
+	return out
 }
 
 func routeCapabilitiesFromHTML(input string) routeCapabilities {
