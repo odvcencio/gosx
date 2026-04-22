@@ -16802,13 +16802,16 @@ if (typeof window !== "undefined") {
     return Math.max(1, scrollHeight - sceneScrollViewportHeight());
   }
 
-  function sceneUpdateScrollCameraMetrics(scrollCamera, includeMax) {
+  function sceneUpdateScrollCameraMetrics(scrollCamera, includeMax, activeInput) {
     if (!scrollCamera) {
       return;
     }
     scrollCamera._scrollTop = sceneScrollTop();
     if (includeMax || !Number.isFinite(sceneNumber(scrollCamera._scrollMax, NaN))) {
       scrollCamera._scrollMax = sceneScrollMax();
+    }
+    if (activeInput) {
+      scrollCamera._activeInputUntil = sceneNowMilliseconds() + 180;
     }
   }
 
@@ -16821,7 +16824,9 @@ if (typeof window !== "undefined") {
     scrollCamera._progress = Math.pow(Math.min(1, Math.max(0, scrollTop / scrollMax)), 0.5);
     var target = scrollCamera._progress || 0;
     var current = sceneNumber(scrollCamera._smoothProgress, target);
-    if (Math.abs(target - current) < 0.0005) {
+    if (sceneNumber(scrollCamera._activeInputUntil, 0) >= sceneNowMilliseconds()) {
+      current = target;
+    } else if (Math.abs(target - current) < 0.0005) {
       current = target;
     } else {
       current += (target - current) * 0.08;
@@ -17976,10 +17981,8 @@ if (typeof window !== "undefined") {
       sceneState._scrollCamera._smoothProgress = 0;
       sceneUpdateScrollCameraMetrics(sceneState._scrollCamera, true);
       scrollHandler = function() {
-        sceneUpdateScrollCameraMetrics(sceneState._scrollCamera, false);
-        if (!sceneWantsAnimation()) {
-          scheduleRender("scroll");
-        }
+        sceneUpdateScrollCameraMetrics(sceneState._scrollCamera, false, true);
+        scheduleRender("scroll");
       };
       window.addEventListener("scroll", scrollHandler, { passive: true });
       var isTouchDevice =
@@ -17991,10 +17994,8 @@ if (typeof window !== "undefined") {
         typeof window.visualViewport.addEventListener === "function"
       ) {
         visualViewportScrollHandler = function() {
-          sceneUpdateScrollCameraMetrics(sceneState._scrollCamera, true);
-          if (!sceneWantsAnimation()) {
-            scheduleRender("visual-viewport");
-          }
+          sceneUpdateScrollCameraMetrics(sceneState._scrollCamera, true, true);
+          scheduleRender("visual-viewport");
         };
         window.visualViewport.addEventListener("scroll", visualViewportScrollHandler, { passive: true });
         window.visualViewport.addEventListener("resize", visualViewportScrollHandler, { passive: true });

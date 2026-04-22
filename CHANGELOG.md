@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.18.9
+
+Scene3D scroll camera responsiveness patch.
+
+Animated Scene3D surfaces now treat real scroll and visual-viewport input as
+immediate camera input even when the scene already has an active animation loop.
+Scroll handlers mark a short active-input window, schedule an explicit scroll
+render, and snap the scroll-camera interpolation to the target during that
+window instead of easing at the idle 8% rate. This removes the draggy lag on
+fixed animated backgrounds while preserving the smoother catch-up path for
+non-interactive camera changes.
+
 ## v0.18.8
 
 Static export runtime payload pruning.

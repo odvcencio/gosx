@@ -8431,6 +8431,67 @@ test("bootstrap respects prefers-reduced-motion for Scene3D animation loops", as
   assert.equal(raf.count(), 1);
 });
 
+test("animated Scene3D scroll camera renders immediately on scroll input", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-scroll-camera-active";
+  mount.width = 640;
+  mount.height = 360;
+
+  const env = createContext({
+    elements: [mount],
+    enableWebGL: true,
+    visualViewport: false,
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-scroll-camera-active",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-scroll-camera-active",
+          jsExport: "GoSXScene3D",
+          props: {
+            width: 640,
+            height: 360,
+            autoRotate: true,
+            scrollCameraStart: 10,
+            scrollCameraEnd: 4,
+            scene: {
+              objects: [
+                { kind: "box", width: 1.4, height: 1.1, depth: 1.2, x: 0, y: 0, z: 0, color: "#8de1ff" },
+              ],
+            },
+          },
+          capabilities: ["canvas", "animation"],
+        },
+      ],
+    },
+  });
+  env.context.__gosx_scene3d_perf = true;
+  env.context.innerHeight = 1000;
+  env.document.documentElement.scrollHeight = 2000;
+  const raf = installManualRAF(env.context);
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const canvas = mount.children[0];
+  const gl = canvas.getContext("webgl");
+  const cameraZ = () => {
+    const calls = gl.ops.filter((entry) => entry[0] === "uniform4f" && entry[1] === "u_camera");
+    return calls[calls.length - 1][4];
+  };
+  assert.equal(cameraZ(), 10);
+
+  env.context.scrollY = 900;
+  env.context.dispatchEvent({ type: "scroll" });
+  assert.equal(mount.__gosxScene3DScheduleCounts["schedule:scroll"], 1);
+
+  raf.flush(32);
+  await flushAsyncWork();
+
+  assert.ok(cameraZ() < 5, "scroll camera should jump near target instead of easing slowly; z=" + cameraZ());
+});
+
 test("bootstrap rerenders shared-runtime Scene3D with responsive viewport dimensions", async () => {
   const mount = new FakeElement("div", null);
   mount.id = "scene-runtime-responsive";
