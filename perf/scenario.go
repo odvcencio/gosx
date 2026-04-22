@@ -142,6 +142,15 @@ func RunScenario(s *Scenario) (*Report, error) {
 			return nil, err
 		}
 
+		// Scene3D engines can initialize after the generic GoSX ready mark,
+		// especially when large model/runtime chunks are involved. If the
+		// route declared a Scene3D surface, wait for the requested render sample
+		// before the first collection so missing scene metrics mean "no frames",
+		// not "sampled too early".
+		if scene3DSurfacePresent(d) {
+			waitForSceneFrames(d, frames)
+		}
+
 		page, err := CollectPageReport(d, url)
 		if err != nil {
 			return nil, fmt.Errorf("collect %s: %w", url, err)
@@ -238,6 +247,27 @@ func waitForSceneFrames(d *Driver, target int) {
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
+}
+
+func scene3DSurfacePresent(d *Driver) bool {
+	var present bool
+	err := d.Evaluate(`(function(){
+		if (document.querySelector('[data-gosx-scene3d], [data-gosx-scene3d-mounted="true"], [data-gosx-scene3d-canvas="true"]')) {
+			return true;
+		}
+		var engines = window.__gosx && window.__gosx.engines;
+		if (!engines || typeof engines.forEach !== "function") {
+			return false;
+		}
+		var found = false;
+		engines.forEach(function(engine) {
+			if (engine && (engine.component === "GoSXScene3D" || engine.name === "GoSXScene3D")) {
+				found = true;
+			}
+		});
+		return found;
+	})()`, &present)
+	return err == nil && present
 }
 
 func runInteraction(d *Driver, inter Interaction) (*InteractionMetric, error) {

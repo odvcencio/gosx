@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.18.7
+
+Scene3D perf budget sampling patch.
+
+`gosx perf` now waits for declared Scene3D surfaces to produce the requested
+frame sample before collecting page metrics. This keeps Scene3D budget checks
+from failing as "metric not found" when the generic GoSX ready mark fires
+before split Scene3D runtime chunks, GLB model loads, or renderer warmup have
+finished.
+
 ## v0.18.6
 
 Performance budgets and route capability manifests.
