@@ -2951,11 +2951,14 @@
     //   - Static geometry data: WeakMap keyed by the typed-array
     //     reference. Upload once with STATIC_DRAW, reuse the buffer
     //     forever.
-    //   - Static point data: persistent VBO slots on each point entry.
-    //     When a live update replaces positions/sizes/colors, the slot
-    //     deletes its old GL buffer before uploading the replacement.
-    //     This keeps long-lived tabs from accumulating one stale color
-    //     buffer per palette tick.
+    //   - Static point data: persistent VBO slots keyed by stable point id
+    //     plus attribute slot. Scene preparation may hand the renderer fresh
+    //     point wrapper objects while preserving the same id and source
+    //     buffers; keeping the GPU handle at renderer scope avoids treating
+    //     that wrapper churn as new geometry. When a live update replaces
+    //     positions/sizes/colors, the keyed slot deletes its old GL buffer
+    //     before uploading the replacement. This keeps long-lived tabs from
+    //     accumulating one stale color buffer per palette tick.
     //   - Dynamic data (compute particle systems): persistent per-entry
     //     buffer with bufferSubData each frame into DYNAMIC_DRAW storage.
     //     Still avoids the bufferData reallocation churn of the old path;
@@ -2968,6 +2971,8 @@
     const pointsEntryBuffers = new Set();
     const staticPointEntries = new Set();
     const activeStaticPointEntries = new Set();
+    const staticPointKeyedVBOs = new Map();
+    const activeStaticPointKeys = new Set();
     var computeParticleSystems = new Map();
     var lastComputeParticleTimeSeconds = null;
     var lastPreparedScene = null;
@@ -3004,8 +3009,61 @@
       staticPointEntries.delete(entry);
     }
 
+    function staticPointVBOKey(entry, bufferSlot) {
+      var id = entry && typeof entry.id === "string" ? entry.id.trim() : "";
+      return id ? id + ":" + String(bufferSlot || "") : "";
+    }
+
+    function staticPointSourceToken(entry, keySlot, typedArray) {
+      if (!entry) return typedArray;
+      if (keySlot === "_vboPosSource" && entry.positions) return entry.positions;
+      if (keySlot === "_vboSizesSource" && entry.sizes) return entry.sizes;
+      if (keySlot === "_vboColorsSource" && entry.colors) return entry.colors;
+      return typedArray;
+    }
+
+    function releaseStaticPointKeyedBuffer(key, record) {
+      if (record && record.buffer) {
+        gl.deleteBuffer(record.buffer);
+        pointsEntryBuffers.delete(record.buffer);
+      }
+      if (key) {
+        staticPointKeyedVBOs.delete(key);
+      }
+    }
+
+    function ensureKeyedStaticPointVBO(entry, bufferSlot, keySlot, typedArray) {
+      var key = staticPointVBOKey(entry, bufferSlot);
+      if (!key) return null;
+      activeStaticPointKeys.add(key);
+      var source = staticPointSourceToken(entry, keySlot, typedArray);
+      var byteLength = typedArray && Number.isFinite(typedArray.byteLength) ? typedArray.byteLength : 0;
+      var record = staticPointKeyedVBOs.get(key);
+      if (
+        !record ||
+        !record.buffer ||
+        record.source !== source ||
+        record.byteLength !== byteLength
+      ) {
+        releaseStaticPointKeyedBuffer(key, record);
+        var buf = gl.createBuffer();
+        pointsEntryBuffers.add(buf);
+        gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+        gl.bufferData(gl.ARRAY_BUFFER, typedArray, gl.STATIC_DRAW);
+        record = {
+          buffer: buf,
+          source: source,
+          byteLength: byteLength,
+        };
+        staticPointKeyedVBOs.set(key, record);
+      }
+      return record.buffer;
+    }
+
     function ensureStaticPointVBO(entry, bufferSlot, keySlot, typedArray) {
       if (!entry || !typedArray) return null;
+      var keyed = ensureKeyedStaticPointVBO(entry, bufferSlot, keySlot, typedArray);
+      if (keyed) return keyed;
       staticPointEntries.add(entry);
       activeStaticPointEntries.add(entry);
       if (entry[keySlot] !== typedArray || !entry[bufferSlot]) {
@@ -3027,6 +3085,12 @@
         }
       }
       activeStaticPointEntries.clear();
+      for (const key of Array.from(staticPointKeyedVBOs.keys())) {
+        if (!activeStaticPointKeys.has(key)) {
+          releaseStaticPointKeyedBuffer(key, staticPointKeyedVBOs.get(key));
+        }
+      }
+      activeStaticPointKeys.clear();
     }
 
     // Dynamic path: used by compute particle systems whose backing
@@ -3455,8 +3519,11 @@
 
       // Draw points entries (after meshes, before post-processing).
       var frameTimeSeconds = performance.now() / 1000;
+      activeStaticPointEntries.clear();
+      activeStaticPointKeys.clear();
       drawPointsEntries(gl, Array.isArray(bundle.points) ? bundle.points : [], bundle.environment, viewMatrix, projMatrix, frameTimeSeconds, renderH);
       drawPointsEntries(gl, buildComputePointsEntries(bundle.computeParticles, frameTimeSeconds), bundle.environment, viewMatrix, projMatrix, frameTimeSeconds, renderH);
+      releaseInactiveStaticPointBuffers();
 
       // Restore state.
       gl.depthMask(true);
@@ -3797,15 +3864,12 @@
 
     // Draw all points entries from the render bundle.
     function drawPointsEntries(gl, pointsArray, environment, viewMatrix, projMatrix, timeSeconds, renderH) {
-      activeStaticPointEntries.clear();
       if (pointsArray.length === 0) {
-        releaseInactiveStaticPointBuffers();
         return;
       }
 
       var pp = ensurePointsProgram();
       if (!pp) {
-        releaseInactiveStaticPointBuffers();
         return;
       }
 
@@ -3990,7 +4054,6 @@
       // Restore state.
       gl.depthMask(true);
       gl.disable(gl.BLEND);
-      releaseInactiveStaticPointBuffers();
 
       // Switch back to PBR program.
       gl.useProgram(program);
@@ -4160,6 +4223,8 @@
       pointsEntryBuffers.clear();
       staticPointEntries.clear();
       activeStaticPointEntries.clear();
+      staticPointKeyedVBOs.clear();
+      activeStaticPointKeys.clear();
       for (const record of computeParticleSystems.values()) {
         disposeComputeParticleSystemRecord(record);
       }

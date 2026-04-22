@@ -1,5 +1,22 @@
 # Changelog
 
+## v0.18.5
+
+Scene3D WebGL point-buffer cache patch.
+
+The WebGL renderer now keeps static point VBOs in renderer-scoped slots keyed
+by stable Scene3D point id and attribute slot. Scene preparation can hand the
+renderer fresh point wrapper objects while preserving the same GLB-backed source
+buffers; those wrapper objects no longer force a fresh `gl.bufferData` upload on
+every animated frame.
+
+Static point cleanup now runs once after both declarative point layers and
+compute-particle point layers are drawn. The previous per-pass cleanup meant an
+empty compute-particle pass could immediately release the static point VBOs that
+the declarative point pass had just used, causing particle-heavy WebGL scenes to
+re-upload all point buffers every frame. Live palette/color updates still
+replace the stale color buffer once when the source changes.
+
 ## v0.18.4
 
 Scene3D restore and backend selection patch.

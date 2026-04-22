@@ -6307,6 +6307,106 @@ test("bootstrap releases replaced static point WebGL buffers on live updates", a
   renderer.dispose();
 });
 
+test("bootstrap reuses static point WebGL buffers across transient point records", async () => {
+  const env = createContext({
+    enableWebGL2: true,
+    disableCanvas2D: true,
+  });
+  env.context.WebGL2RenderingContext = FakeWebGLContext;
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const api = env.context.__gosx_scene3d_api;
+  const registry = api.sceneBackendRegistry;
+  const backend = registry.select({
+    webgl: true,
+    webgl2: true,
+    webgpu: false,
+    canvas: false,
+    canvas2d: false,
+  });
+  const canvas = env.document.createElement("canvas");
+  canvas.width = 320;
+  canvas.height = 180;
+  const renderer = backend.create(canvas, { background: "#000000" }, { tier: "full" });
+  assert.equal(renderer && renderer.type, "webgl-pbr");
+
+  const positions = new Float32Array([0, 0, 0, 1, 0, 0]);
+  const sizes = new Float32Array([1, 1]);
+  const colors = new Float32Array([1, 1, 1, 1, 0.5, 0.8, 1, 1]);
+  const nextColors = new Float32Array([1, 0.4, 0.5, 1, 0.4, 1, 0.9, 1]);
+  const viewport = { cssWidth: 320, cssHeight: 180, pixelWidth: 320, pixelHeight: 180, pixelRatio: 1 };
+
+  function bundleWith(pointColors) {
+    return {
+      bundleVersion: api.SCENE_RENDER_BUNDLE_VERSION,
+      background: "#000000",
+      camera: { x: 0, y: 0, z: 6, fov: 72, near: 0.05, far: 128 },
+      environment: {},
+      points: [{
+        id: "stars",
+        count: 2,
+        positions,
+        sizes,
+        colors: pointColors || colors,
+        style: "focus",
+        size: 1,
+        opacity: 1,
+        blendMode: "additive",
+        depthWrite: false,
+        attenuation: true,
+      }],
+      instancedMeshes: [],
+      computeParticles: [],
+      objects: [],
+      meshObjects: [],
+      materials: [],
+      labels: [],
+      sprites: [],
+      lights: [],
+      positions: new Float32Array(0),
+      colors: new Float32Array(0),
+      worldPositions: new Float32Array(0),
+      worldColors: new Float32Array(0),
+      worldLineWidths: new Float32Array(0),
+      worldMeshPositions: new Float32Array(0),
+      worldMeshColors: new Float32Array(0),
+      worldMeshNormals: new Float32Array(0),
+      worldMeshUVs: new Float32Array(0),
+      worldMeshTangents: new Float32Array(0),
+      vertexCount: 0,
+      worldVertexCount: 0,
+      postEffects: [],
+    };
+  }
+
+  const gl = canvas.getContext("webgl2");
+  const staticUploadCount = () => gl.ops.filter((entry) => entry[0] === "bufferData" && entry[4] === gl.STATIC_DRAW).length;
+  const colorUploads = () => gl.ops.filter((entry) => (
+    entry[0] === "bufferData" &&
+    entry[3] === 8 &&
+    entry[4] === gl.STATIC_DRAW
+  ));
+
+  renderer.render(bundleWith(colors), viewport);
+  const firstUploadCount = staticUploadCount();
+  const firstColorBufferID = colorUploads()[0][2];
+
+  renderer.render(bundleWith(colors), viewport);
+  renderer.render(bundleWith(colors), viewport);
+  assert.equal(staticUploadCount(), firstUploadCount);
+
+  renderer.render(bundleWith(nextColors), viewport);
+  assert.equal(staticUploadCount(), firstUploadCount + 1);
+  assert.ok(gl.ops.some((entry) => entry[0] === "deleteBuffer" && entry[1] === firstColorBufferID));
+
+  const afterPaletteUploadCount = staticUploadCount();
+  renderer.render(bundleWith(nextColors), viewport);
+  assert.equal(staticUploadCount(), afterPaletteUploadCount);
+
+  renderer.dispose();
+});
+
 test("bootstrap reuses static opaque Scene3D buffers across dynamic-only runtime updates", async () => {
   const mount = new FakeElement("div", null);
   mount.id = "scene-static-cache-root";
