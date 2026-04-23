@@ -51,15 +51,32 @@
     return {};
   }
 
+  function runtimeFeaturePreloadPath(fileName) {
+    const head = document && document.head;
+    const nodes = head && head.children ? Array.from(head.children) : [];
+    for (const node of nodes) {
+      if (!node || String(node.tagName || "").toUpperCase() !== "LINK") {
+        continue;
+      }
+      const rel = String((node.getAttribute && node.getAttribute("rel")) || node.rel || "").toLowerCase();
+      const as = String((node.getAttribute && node.getAttribute("as")) || node.as || "").toLowerCase();
+      const href = String((node.getAttribute && node.getAttribute("href")) || node.href || "");
+      if (rel === "preload" && as === "script" && href.includes(fileName)) {
+        return href;
+      }
+    }
+    return "";
+  }
+
   function bootstrapFeatureURL(name) {
     const assets = runtimeFeatureAssets();
     switch (name) {
       case "islands":
-        return String(assets.bootstrapFeatureIslandsPath || "/gosx/bootstrap-feature-islands.js").trim();
+        return String(assets.bootstrapFeatureIslandsPath || runtimeFeaturePreloadPath("bootstrap-feature-islands") || "/gosx/bootstrap-feature-islands.js").trim();
       case "engines":
-        return String(assets.bootstrapFeatureEnginesPath || "/gosx/bootstrap-feature-engines.js").trim();
+        return String(assets.bootstrapFeatureEnginesPath || runtimeFeaturePreloadPath("bootstrap-feature-engines") || "/gosx/bootstrap-feature-engines.js").trim();
       case "hubs":
-        return String(assets.bootstrapFeatureHubsPath || "/gosx/bootstrap-feature-hubs.js").trim();
+        return String(assets.bootstrapFeatureHubsPath || runtimeFeaturePreloadPath("bootstrap-feature-hubs") || "/gosx/bootstrap-feature-hubs.js").trim();
       case "scene3d":
         return assets && assets.bootstrapFeatureScene3dPath;
       default:

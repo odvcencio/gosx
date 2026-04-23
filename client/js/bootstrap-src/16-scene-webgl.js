@@ -631,10 +631,11 @@
   //   3: a_tangent   (vec4)
   //   4-7: a_instanceMatrix (mat4, 4 × vec4 with divisor 1)
 
-  const SCENE_PBR_INSTANCED_VERTEX_SOURCE = [
-    "#version 300 es",
-    "precision highp float;",
-    "",
+	  const SCENE_PBR_INSTANCED_VERTEX_SOURCE = [
+	    "#version 300 es",
+	    "precision highp float;",
+	    "precision highp int;",
+	    "",
     "in vec3 a_position;",
     "in vec3 a_normal;",
     "in vec2 a_uv;",
@@ -671,10 +672,11 @@
   // When u_hasSkin is false, the shader behaves identically to the static PBR
   // vertex shader so it can be used as a universal fallback.
 
-  const SCENE_PBR_SKINNED_VERTEX_SOURCE = [
-    "#version 300 es",
-    "precision highp float;",
-    "",
+	  const SCENE_PBR_SKINNED_VERTEX_SOURCE = [
+	    "#version 300 es",
+	    "precision highp float;",
+	    "precision highp int;",
+	    "",
     "in vec3 a_position;",
     "in vec3 a_normal;",
     "in vec2 a_uv;",
@@ -682,10 +684,11 @@
     "in vec4 a_joints;",
     "in vec4 a_weights;",
     "",
-    "uniform mat4 u_viewMatrix;",
-    "uniform mat4 u_projectionMatrix;",
-    "uniform mat4 u_jointMatrices[64];",
-    "uniform bool u_hasSkin;",
+	    "uniform mat4 u_viewMatrix;",
+	    "uniform mat4 u_projectionMatrix;",
+	    "uniform mat4 u_modelMatrix;",
+	    "uniform mat4 u_jointMatrices[64];",
+	    "uniform bool u_hasSkin;",
     "",
     "out vec3 v_worldPosition;",
     "out vec3 v_normal;",
@@ -710,17 +713,19 @@
     "        tang = mat3(skinMatrix) * tang;",
     "    }",
     "",
-    "    v_worldPosition = pos.xyz;",
-    "    v_normal = normalize(norm);",
-    "    v_uv = a_uv;",
-    "",
-    "    vec3 T = normalize(tang);",
-    "    vec3 N = v_normal;",
+	    "    vec4 worldPos = u_modelMatrix * pos;",
+	    "    mat3 normalMatrix = mat3(u_modelMatrix);",
+	    "    v_worldPosition = worldPos.xyz;",
+	    "    v_normal = normalize(normalMatrix * norm);",
+	    "    v_uv = a_uv;",
+	    "",
+	    "    vec3 T = normalize(normalMatrix * tang);",
+	    "    vec3 N = v_normal;",
     "    vec3 B = cross(N, T) * a_tangent.w;",
     "    v_tangent = T;",
     "    v_bitangent = B;",
     "",
-    "    gl_Position = u_projectionMatrix * u_viewMatrix * pos;",
+	    "    gl_Position = u_projectionMatrix * u_viewMatrix * worldPos;",
     "}",
   ].join("\n");
 
@@ -1233,6 +1238,7 @@
     for (var i = 0; i < objects.length; i++) {
       var obj = objects[i];
       if (!obj || obj.viewCulled) continue;
+      if (obj.directVertices) continue;
       var offset = obj.vertexOffset;
       var count = obj.vertexCount;
       if (!Number.isFinite(offset) || !Number.isFinite(count) || count <= 0) continue;
@@ -1340,6 +1346,7 @@
     for (var i = 0; i < objects.length; i++) {
       var obj = objects[i];
       if (!obj || obj.viewCulled) continue;
+      if (obj.directVertices) continue;
       if (!obj.castShadow) continue;
       if (!Number.isFinite(obj.vertexOffset) || !Number.isFinite(obj.vertexCount) || obj.vertexCount <= 0) continue;
 
@@ -1646,13 +1653,23 @@
       return prog;
     }
 
-    // Bind a target FBO, set viewport, activate a program, and bind the
-    // input texture to unit 0 as u_texture. Callers set effect-specific
-    // uniforms afterwards, then call drawSceneFullscreenQuad.
-    function beginPostPass(prog, inputTex, targetFBO, w, h) {
-      gl.bindFramebuffer(gl.FRAMEBUFFER, targetFBO);
-      gl.viewport(0, 0, w, h);
-      gl.useProgram(prog.program);
+	    // Bind a target FBO, set viewport, activate a program, and bind the
+	    // input texture to unit 0 as u_texture. Callers set effect-specific
+	    // uniforms afterwards, then call drawSceneFullscreenQuad.
+	    function clearPostTextureBindings() {
+	      for (var unit = 0; unit < 4; unit++) {
+	        gl.activeTexture(gl.TEXTURE0 + unit);
+	        gl.bindTexture(gl.TEXTURE_2D, null);
+	      }
+	    }
+
+	    function beginPostPass(prog, inputTex, targetFBO, w, h) {
+	      if (targetFBO) {
+	        clearPostTextureBindings();
+	      }
+	      gl.bindFramebuffer(gl.FRAMEBUFFER, targetFBO);
+	      gl.viewport(0, 0, w, h);
+	      gl.useProgram(prog.program);
       gl.activeTexture(gl.TEXTURE0);
       gl.bindTexture(gl.TEXTURE_2D, inputTex);
       gl.uniform1i(gl.getUniformLocation(prog.program, "u_texture"), 0);
@@ -1784,7 +1801,7 @@
       // Returns { width, height, factor } — the scaled render target dims plus
       // the scale factor applied. Callers must use these dims for gl.viewport,
       // uniforms like u_viewportHeight, and the apply() call.
-      begin: function(canvasW, canvasH, maxPixels) {
+	      begin: function(canvasW, canvasH, maxPixels) {
         var factor = resolvePostFXFactor(maxPixels, canvasW * canvasH);
         var sw = Math.max(1, Math.floor(canvasW * factor));
         var sh = Math.max(1, Math.floor(canvasH * factor));
@@ -1799,9 +1816,10 @@
           currentWidth = sw;
           currentHeight = sh;
         }
-        gl.bindFramebuffer(gl.FRAMEBUFFER, sceneFBO.fbo);
-        return { width: sw, height: sh, factor: factor };
-      },
+	        clearPostTextureBindings();
+	        gl.bindFramebuffer(gl.FRAMEBUFFER, sceneFBO.fbo);
+	        return { width: sw, height: sh, factor: factor };
+	      },
 
       // Process the effect chain and output to the screen. Takes the scaled
       // dims (for intermediate FBO writes) and the canvas dims (for the final
@@ -2174,15 +2192,14 @@
       weights: gl.getAttribLocation(program, "a_weights"),
     };
 
-    // Cache uniform locations — base set plus skinning extras.
+    // Cache uniform locations — base set plus skinning extras. The joint
+    // matrix array is uploaded from its first slot in one call per skinned
+    // draw; caching 64 individual locations made every fighter pay 64
+    // lookups at compile time and 64 uniform uploads per frame.
     var uniforms = scenePBRCacheBaseUniforms(gl, program);
+    uniforms.modelMatrix = gl.getUniformLocation(program, "u_modelMatrix");
     uniforms.hasSkin = gl.getUniformLocation(program, "u_hasSkin");
-    uniforms.jointMatrices = [];
-
-    // Populate per-joint matrix uniform locations (max 64 joints).
-    for (var j = 0; j < 64; j++) {
-      uniforms.jointMatrices.push(gl.getUniformLocation(program, "u_jointMatrices[" + j + "]"));
-    }
+    uniforms.jointMatrices = gl.getUniformLocation(program, "u_jointMatrices[0]");
 
     return {
       program: program,
@@ -2906,8 +2923,9 @@
     const attribs = pbrProgram.attributes;
     const uniforms = pbrProgram.uniforms;
 
-    // Skinned PBR program — compiled lazily on first skinned object.
-    var skinnedProgram = null;
+	    // Skinned PBR program — compiled lazily on first skinned object.
+	    var skinnedProgram = null;
+	    var skinnedProgramFailed = false;
 
     // Shadow program (depth-only shader for shadow pass).
     const shadowProgram = createSceneShadowProgram(gl);
@@ -3112,8 +3130,9 @@
       }, { slot: slot, dynamic: true });
     }
 
-    // Instanced PBR program — compiled lazily on first instanced mesh.
-    var instancedProgram = null;
+	    // Instanced PBR program — compiled lazily on first instanced mesh.
+	    var instancedProgram = null;
+	    var instancedProgramFailed = false;
 
     // Geometry cache: maps "kind:w:h:d:r:s" to generated geometry data.
     var instancedGeometryCache = {};
@@ -3125,9 +3144,15 @@
     // Float32Array across all objects and lights, grown as needed.
     var shadowState = { buffer: gl.createBuffer(), scratch: null };
 
-    // Pre-allocated scratch buffers for view/projection matrices (Fix 8).
-    var scratchViewMatrix = new Float32Array(16);
-    var scratchProjMatrix = new Float32Array(16);
+	    // Pre-allocated scratch buffers for view/projection matrices (Fix 8).
+	    var scratchViewMatrix = new Float32Array(16);
+	    var scratchProjMatrix = new Float32Array(16);
+	    var identityModelMatrix = new Float32Array([
+	      1, 0, 0, 0,
+	      0, 1, 0, 0,
+	      0, 0, 1, 0,
+	      0, 0, 0, 1,
+	    ]);
 
     // Per-frame camera cache — set once in render(), reused in
     // drawPBRObjectList and drawInstancedMeshes. Pre-allocated so
@@ -3556,14 +3581,74 @@
       );
     }
 
-    // Ensure the skinned PBR program is compiled (lazy init).
-    function ensureSkinnedProgram() {
-      if (skinnedProgram) return skinnedProgram;
-      skinnedProgram = createScenePBRSkinnedProgram(gl);
-      if (!skinnedProgram) {
-        console.warn("[gosx] Skinned PBR shader compilation failed; skinned objects will use static path.");
+	    // Ensure the skinned PBR program is compiled (lazy init).
+	    function ensureSkinnedProgram() {
+	      if (skinnedProgram) return skinnedProgram;
+	      if (skinnedProgramFailed) return null;
+	      skinnedProgram = createScenePBRSkinnedProgram(gl);
+	      if (!skinnedProgram) {
+	        skinnedProgramFailed = true;
+	        console.warn("[gosx] Skinned PBR shader compilation failed; skinned objects will use static path.");
+	      }
+	      return skinnedProgram;
+	    }
+
+	    function scenePBRDirectAttribute(vertices, key, count, tupleSize) {
+	      const data = vertices && vertices[key];
+	      const required = Math.max(0, Math.floor(sceneNumber(count, 0))) * tupleSize;
+	      if (!(data instanceof Float32Array) || data.length < required) {
+	        return null;
+	      }
+	      if (data.length === required) {
+	        return data;
+	      }
+	      let views = vertices._pbrAttributeViews;
+	      if (!views) {
+	        views = Object.create(null);
+	        vertices._pbrAttributeViews = views;
+	      }
+	      let record = views[key];
+	      if (!record || record.source !== data || record.length !== required) {
+	        record = {
+	          source: data,
+	          length: required,
+	          view: data.subarray(0, required),
+	        };
+	        views[key] = record;
+	      }
+	      return record.view;
+	    }
+
+    function bindScenePBRDirectAttribute(vertices, key, attrib, size, data) {
+      if (!vertices || !Number.isFinite(attrib) || attrib < 0 || !(data instanceof Float32Array)) {
+        return false;
       }
-      return skinnedProgram;
+      let buffers = vertices._pbrAttributeBuffers;
+      if (!buffers) {
+        buffers = Object.create(null);
+        vertices._pbrAttributeBuffers = buffers;
+      }
+	      let record = buffers[key];
+	      if (!record || record.gl !== gl || record.data !== data) {
+	        if (record && record.buffer && record.gl === gl) {
+	          gl.deleteBuffer(record.buffer);
+	          pointsEntryBuffers.delete(record.buffer);
+	        }
+	        record = {
+	          gl,
+	          data,
+	          buffer: gl.createBuffer(),
+	        };
+	        pointsEntryBuffers.add(record.buffer);
+        buffers[key] = record;
+        gl.bindBuffer(gl.ARRAY_BUFFER, record.buffer);
+        gl.bufferData(gl.ARRAY_BUFFER, data, gl.STATIC_DRAW);
+      } else {
+        gl.bindBuffer(gl.ARRAY_BUFFER, record.buffer);
+      }
+      gl.enableVertexAttribArray(attrib);
+      gl.vertexAttribPointer(attrib, size, gl.FLOAT, false, 0, 0);
+      return true;
     }
 
     function drawPBRObjectList(gl, objectList, bundle, materials) {
@@ -3633,18 +3718,36 @@
           gl.depthMask(obj.depthWrite !== false);
         }
 
-        // Skinning: upload joint matrices and enable skin flag.
-        if (isSkinned) {
-          gl.uniform1i(currentUniforms.hasSkin, 1);
+	        // Skinning: upload joint matrices and enable skin flag.
+	        if (isSkinned) {
+	          gl.uniform1i(currentUniforms.hasSkin, 1);
+	          if (currentUniforms.modelMatrix) {
+	            gl.uniformMatrix4fv(currentUniforms.modelMatrix, false, obj.modelMatrix || identityModelMatrix);
+	          }
 
           var jointMatrices = obj.skin.jointMatrices;
           if (jointMatrices) {
             var jointCount = Math.min(Math.floor(jointMatrices.length / 16), 64);
-            for (var ji = 0; ji < jointCount; ji++) {
-              gl.uniformMatrix4fv(
-                currentUniforms.jointMatrices[ji], false,
-                jointMatrices.subarray(ji * 16, ji * 16 + 16)
-              );
+            if (jointCount > 0 && currentUniforms.jointMatrices) {
+              var jointUpload = jointMatrices;
+              var requiredJointFloats = jointCount * 16;
+              if (jointMatrices.length !== requiredJointFloats) {
+                var jointViews = obj.skin._jointMatrixUploadViews;
+                if (!jointViews) {
+                  jointViews = Object.create(null);
+                  obj.skin._jointMatrixUploadViews = jointViews;
+                }
+                var jointView = jointViews[requiredJointFloats];
+                if (!jointView || jointView.source !== jointMatrices) {
+                  jointView = {
+                    source: jointMatrices,
+                    view: jointMatrices.subarray(0, requiredJointFloats),
+                  };
+                  jointViews[requiredJointFloats] = jointView;
+                }
+                jointUpload = jointView.view;
+              }
+              gl.uniformMatrix4fv(currentUniforms.jointMatrices, false, jointUpload);
             }
           }
         } else if (currentUniforms.hasSkin) {
@@ -3654,23 +3757,34 @@
         // Upload vertex data for this object.
         const offset = obj.vertexOffset;
         const count = obj.vertexCount;
+        const directVertices = Boolean(obj.directVertices && obj.vertices);
+        const directPositions = directVertices ? scenePBRDirectAttribute(obj.vertices, "positions", count, 3) : null;
+        const directNormals = directVertices ? scenePBRDirectAttribute(obj.vertices, "normals", count, 3) : null;
+        const directUVs = directVertices ? scenePBRDirectAttribute(obj.vertices, "uvs", count, 2) : null;
+        const directTangents = directVertices ? scenePBRDirectAttribute(obj.vertices, "tangents", count, 4) : null;
 
         // Positions (vec3).
-        const positions = sliceToFloat32(bundle.worldMeshPositions, offset, count, 3, "positions");
-        gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
-        gl.bufferData(gl.ARRAY_BUFFER, positions, gl.DYNAMIC_DRAW);
-        gl.enableVertexAttribArray(currentAttribs.position);
-        gl.vertexAttribPointer(currentAttribs.position, 3, gl.FLOAT, false, 0, 0);
+        if (!bindScenePBRDirectAttribute(obj.vertices, "positions", currentAttribs.position, 3, directPositions)) {
+          const positions = sliceToFloat32(bundle.worldMeshPositions, offset, count, 3, "positions");
+          gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+          gl.bufferData(gl.ARRAY_BUFFER, positions, gl.DYNAMIC_DRAW);
+          gl.enableVertexAttribArray(currentAttribs.position);
+          gl.vertexAttribPointer(currentAttribs.position, 3, gl.FLOAT, false, 0, 0);
+        }
 
         // Normals (vec3).
-        const normals = sliceToFloat32(bundle.worldMeshNormals, offset, count, 3, "normals");
-        gl.bindBuffer(gl.ARRAY_BUFFER, normalBuffer);
-        gl.bufferData(gl.ARRAY_BUFFER, normals, gl.DYNAMIC_DRAW);
-        gl.enableVertexAttribArray(currentAttribs.normal);
-        gl.vertexAttribPointer(currentAttribs.normal, 3, gl.FLOAT, false, 0, 0);
+        if (!bindScenePBRDirectAttribute(obj.vertices, "normals", currentAttribs.normal, 3, directNormals)) {
+          const normals = sliceToFloat32(bundle.worldMeshNormals, offset, count, 3, "normals");
+          gl.bindBuffer(gl.ARRAY_BUFFER, normalBuffer);
+          gl.bufferData(gl.ARRAY_BUFFER, normals, gl.DYNAMIC_DRAW);
+          gl.enableVertexAttribArray(currentAttribs.normal);
+          gl.vertexAttribPointer(currentAttribs.normal, 3, gl.FLOAT, false, 0, 0);
+        }
 
         // UVs (vec2).
-        if (bundle.worldMeshUVs) {
+        if (bindScenePBRDirectAttribute(obj.vertices, "uvs", currentAttribs.uv, 2, directUVs)) {
+          // Cached direct attribute bound.
+        } else if (bundle.worldMeshUVs && !directVertices) {
           const uvs = sliceToFloat32(bundle.worldMeshUVs, offset, count, 2, "uvs");
           gl.bindBuffer(gl.ARRAY_BUFFER, uvBuffer);
           gl.bufferData(gl.ARRAY_BUFFER, uvs, gl.DYNAMIC_DRAW);
@@ -3682,7 +3796,9 @@
         }
 
         // Tangents (vec4).
-        if (bundle.worldMeshTangents) {
+        if (bindScenePBRDirectAttribute(obj.vertices, "tangents", currentAttribs.tangent, 4, directTangents)) {
+          // Cached direct attribute bound.
+        } else if (bundle.worldMeshTangents && !directVertices) {
           const tangents = sliceToFloat32(bundle.worldMeshTangents, offset, count, 4, "tangents");
           gl.bindBuffer(gl.ARRAY_BUFFER, tangentBuffer);
           gl.bufferData(gl.ARRAY_BUFFER, tangents, gl.DYNAMIC_DRAW);
@@ -3698,15 +3814,21 @@
           var joints = obj.vertices.joints;
           var weights = obj.vertices.weights;
 
-          gl.bindBuffer(gl.ARRAY_BUFFER, jointsBuffer);
-          gl.bufferData(gl.ARRAY_BUFFER, joints instanceof Float32Array ? joints : new Float32Array(joints), gl.DYNAMIC_DRAW);
-          gl.enableVertexAttribArray(currentAttribs.joints);
-          gl.vertexAttribPointer(currentAttribs.joints, 4, gl.FLOAT, false, 0, 0);
+          const directJoints = directVertices ? scenePBRDirectAttribute(obj.vertices, "joints", count, 4) : null;
+          const directWeights = directVertices ? scenePBRDirectAttribute(obj.vertices, "weights", count, 4) : null;
+          if (!bindScenePBRDirectAttribute(obj.vertices, "joints", currentAttribs.joints, 4, directJoints)) {
+            gl.bindBuffer(gl.ARRAY_BUFFER, jointsBuffer);
+            gl.bufferData(gl.ARRAY_BUFFER, joints instanceof Float32Array ? joints : new Float32Array(joints), gl.DYNAMIC_DRAW);
+            gl.enableVertexAttribArray(currentAttribs.joints);
+            gl.vertexAttribPointer(currentAttribs.joints, 4, gl.FLOAT, false, 0, 0);
+          }
 
-          gl.bindBuffer(gl.ARRAY_BUFFER, weightsBuffer);
-          gl.bufferData(gl.ARRAY_BUFFER, weights instanceof Float32Array ? weights : new Float32Array(weights), gl.DYNAMIC_DRAW);
-          gl.enableVertexAttribArray(currentAttribs.weights);
-          gl.vertexAttribPointer(currentAttribs.weights, 4, gl.FLOAT, false, 0, 0);
+          if (!bindScenePBRDirectAttribute(obj.vertices, "weights", currentAttribs.weights, 4, directWeights)) {
+            gl.bindBuffer(gl.ARRAY_BUFFER, weightsBuffer);
+            gl.bufferData(gl.ARRAY_BUFFER, weights instanceof Float32Array ? weights : new Float32Array(weights), gl.DYNAMIC_DRAW);
+            gl.enableVertexAttribArray(currentAttribs.weights);
+            gl.vertexAttribPointer(currentAttribs.weights, 4, gl.FLOAT, false, 0, 0);
+          }
         } else if (currentAttribs.joints >= 0) {
           gl.disableVertexAttribArray(currentAttribs.joints);
           gl.vertexAttrib4f(currentAttribs.joints, 0, 0, 0, 0);
@@ -4059,15 +4181,17 @@
       gl.useProgram(program);
     }
 
-    // Ensure the instanced PBR program is compiled (lazy init).
-    function ensureInstancedProgram() {
-      if (instancedProgram) return instancedProgram;
-      instancedProgram = createScenePBRInstancedProgram(gl);
-      if (!instancedProgram) {
-        console.warn("[gosx] Instanced PBR shader compilation failed; instanced meshes will not render.");
-      }
-      return instancedProgram;
-    }
+	    // Ensure the instanced PBR program is compiled (lazy init).
+	    function ensureInstancedProgram() {
+	      if (instancedProgram) return instancedProgram;
+	      if (instancedProgramFailed) return null;
+	      instancedProgram = createScenePBRInstancedProgram(gl);
+	      if (!instancedProgram) {
+	        instancedProgramFailed = true;
+	        console.warn("[gosx] Instanced PBR shader compilation failed; instanced meshes will not render.");
+	      }
+	      return instancedProgram;
+	    }
 
     // Look up or generate geometry for an instanced mesh entry.
     function getInstancedGeometry(mesh) {

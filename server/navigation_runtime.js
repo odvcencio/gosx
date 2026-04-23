@@ -650,6 +650,131 @@
     }
   }
 
+  function submitAction(action, fields, options) {
+    const opts = options || {};
+    const host = actionFormHost(opts);
+    const form = document.createElement("form");
+    const method = normalizeManagedFormMode(opts.method) || "post";
+    form.setAttribute("method", method);
+    form.setAttribute("action", String(action || window.location.href));
+    form.setAttribute(FORM_ATTR, "");
+    form.setAttribute(FORM_STATE_ATTR, "idle");
+    form.setAttribute("hidden", "");
+    form.hidden = true;
+
+    const entries = actionFieldEntries(fields);
+    for (const entry of entries) {
+      appendActionField(form, entry[0], entry[1]);
+    }
+
+    if (!entries.some(function(entry) { return entry[0] === "csrf_token"; })) {
+      const csrfToken = resolveActionCSRFToken(host, opts);
+      if (csrfToken) {
+        appendActionField(form, "csrf_token", csrfToken);
+      }
+    }
+
+    host.appendChild(form);
+    refreshManagedForms();
+
+    const done = submitForm(form, null).finally(function() {
+      if (opts.keepForm === true) {
+        return;
+      }
+      if (form.parentNode && typeof form.parentNode.removeChild === "function") {
+        form.parentNode.removeChild(form);
+      }
+    });
+    form.__gosxSubmitPromise = done;
+    return form;
+  }
+
+  function actionFormHost(options) {
+    const root = options && options.root;
+    if (root && typeof root.appendChild === "function") {
+      return root;
+    }
+    return resolveMainTarget(document.body) || document.body;
+  }
+
+  function actionFieldEntries(fields) {
+    const entries = [];
+    if (!fields) {
+      return entries;
+    }
+    if (typeof fields.forEach === "function") {
+      fields.forEach(function(value, key) {
+        entries.push([String(key), value]);
+      });
+      return entries;
+    }
+    if (Array.isArray(fields)) {
+      for (const entry of fields) {
+        if (!entry || entry.length < 1) continue;
+        entries.push([String(entry[0]), entry.length > 1 ? entry[1] : ""]);
+      }
+      return entries;
+    }
+    for (const key of Object.keys(fields)) {
+      entries.push([String(key), fields[key]]);
+    }
+    return entries;
+  }
+
+  function appendActionField(form, name, value) {
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        appendActionField(form, name, item);
+      }
+      return;
+    }
+    const input = document.createElement("input");
+    input.setAttribute("type", "hidden");
+    input.setAttribute("name", String(name));
+    input.value = value == null ? "" : String(value);
+    input.setAttribute("value", input.value);
+    form.appendChild(input);
+  }
+
+  function resolveActionCSRFToken(host, options) {
+    if (options && options.csrf != null) {
+      return String(options.csrf);
+    }
+    return csrfTokenFromElement(host)
+      || csrfTokenFromElement(document.documentElement)
+      || csrfTokenFromInput(host)
+      || csrfTokenFromInput(document.body)
+      || csrfTokenFromMeta();
+  }
+
+  function csrfTokenFromElement(element) {
+    if (!element || !element.getAttribute) {
+      return "";
+    }
+    return String(
+      element.getAttribute("data-gosx-csrf-token")
+      || element.getAttribute("data-csrf-token")
+      || element.getAttribute("data-csrf")
+      || ""
+    );
+  }
+
+  function csrfTokenFromInput(root) {
+    const input = findElement(root, function(node) {
+      return isElement(node, "INPUT") && node.getAttribute && node.getAttribute("name") === "csrf_token";
+    });
+    return input ? String(input.value || input.getAttribute("value") || "") : "";
+  }
+
+  function csrfTokenFromMeta() {
+    const meta = findElement(document.head, function(node) {
+      return isElement(node, "META")
+        && node.getAttribute
+        && (node.getAttribute("name") === "csrf-token" || node.getAttribute("name") === "gosx-csrf-token");
+    });
+    return meta ? String(meta.getAttribute("content") || "") : "";
+  }
+
   function prefetchManagedLinks(trigger) {
     for (const anchor of managedLinks(document.body)) {
       prefetchLink(anchor, trigger);
@@ -1394,10 +1519,12 @@
 
   window.__gosx_page_nav = {
     navigate: navigate,
+    submitAction: submitAction,
     getState: currentNavigationSnapshot,
     refresh: function() {
       applyNavigationState();
       return currentNavigationSnapshot();
     },
   };
+  window.__gosx_submit_action = submitAction;
 })();

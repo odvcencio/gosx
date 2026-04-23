@@ -684,10 +684,17 @@
   // PBR material extraction
   // ---------------------------------------------------------------------------
 
+  function gltfLinearToSRGB(value) {
+    value = Math.max(0, Math.min(1, value || 0));
+    return value <= 0.0031308
+      ? value * 12.92
+      : 1.055 * Math.pow(value, 1 / 2.4) - 0.055;
+  }
+
   function gltfBaseColorToHex(factor) {
-    var r = Math.round(Math.max(0, Math.min(1, factor[0])) * 255);
-    var g = Math.round(Math.max(0, Math.min(1, factor[1])) * 255);
-    var b = Math.round(Math.max(0, Math.min(1, factor[2])) * 255);
+    var r = Math.round(gltfLinearToSRGB(factor[0]) * 255);
+    var g = Math.round(gltfLinearToSRGB(factor[1]) * 255);
+    var b = Math.round(gltfLinearToSRGB(factor[2]) * 255);
     return "#" +
       (r < 16 ? "0" : "") + r.toString(16) +
       (g < 16 ? "0" : "") + g.toString(16) +
@@ -1212,6 +1219,7 @@
       labels: scene.labels || [],
       sprites: scene.sprites || [],
       lights: scene.lights || [],
+      materials: scene.materials || [],
       animations: scene.animations || [],
       skins: scene.skins || [],
       nodes: scene.nodes || [],

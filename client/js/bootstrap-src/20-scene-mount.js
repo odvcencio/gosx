@@ -8,6 +8,96 @@
     }
   }
 
+  function sceneReadWebGLRendererMetadata(gl) {
+    if (!gl || typeof gl.getParameter !== "function") {
+      return { vendor: "", renderer: "" };
+    }
+    let vendor = "";
+    let renderer = "";
+    try {
+      const debugInfo = typeof gl.getExtension === "function"
+        ? gl.getExtension("WEBGL_debug_renderer_info")
+        : null;
+      if (debugInfo) {
+        vendor = String(gl.getParameter(debugInfo.UNMASKED_VENDOR_WEBGL) || "");
+        renderer = String(gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL) || "");
+      }
+    } catch (_error) {
+      vendor = "";
+      renderer = "";
+    }
+    if (!vendor) {
+      try {
+        vendor = String(gl.getParameter(gl.VENDOR) || "");
+      } catch (_error) {
+        vendor = "";
+      }
+    }
+    if (!renderer) {
+      try {
+        renderer = String(gl.getParameter(gl.RENDERER) || "");
+      } catch (_error) {
+        renderer = "";
+      }
+    }
+    return {
+      vendor: vendor.trim(),
+      renderer: renderer.trim(),
+    };
+  }
+
+  function sceneWebGLRendererLooksSoftware(metadata) {
+    const vendor = metadata && typeof metadata.vendor === "string" ? metadata.vendor : "";
+    const renderer = metadata && typeof metadata.renderer === "string" ? metadata.renderer : "";
+    const text = (vendor + " " + renderer).trim().toLowerCase();
+    if (!text) {
+      return false;
+    }
+    return text.indexOf("swiftshader") !== -1
+      || text.indexOf("llvmpipe") !== -1
+      || text.indexOf("softpipe") !== -1
+      || text.indexOf("lavapipe") !== -1
+      || text.indexOf("software") !== -1
+      || text.indexOf("microsoft basic render") !== -1
+      || text.indexOf("basic render driver") !== -1;
+  }
+
+  function sceneProbeWebGLRenderer() {
+    if (typeof window === "undefined" || typeof document === "undefined" || !document || typeof document.createElement !== "function") {
+      return { available: false, software: false, vendor: "", renderer: "" };
+    }
+    window.__gosx = window.__gosx || {};
+    if (window.__gosx.scene3dWebGLProbe) {
+      return window.__gosx.scene3dWebGLProbe;
+    }
+    const probeCanvas = document.createElement("canvas");
+    let gl = null;
+    try {
+      if (probeCanvas && typeof probeCanvas.getContext === "function") {
+        const probeOptions = {
+          alpha: false,
+          antialias: false,
+          preserveDrawingBuffer: false,
+          powerPreference: "low-power",
+        };
+        gl =
+          probeCanvas.getContext("webgl2", probeOptions) ||
+          probeCanvas.getContext("webgl", probeOptions) ||
+          probeCanvas.getContext("experimental-webgl", probeOptions);
+      }
+      const metadata = sceneReadWebGLRendererMetadata(gl);
+      window.__gosx.scene3dWebGLProbe = {
+        available: Boolean(gl),
+        software: sceneWebGLRendererLooksSoftware(metadata),
+        vendor: metadata.vendor,
+        renderer: metadata.renderer,
+      };
+    } catch (_error) {
+      window.__gosx.scene3dWebGLProbe = { available: false, software: false, vendor: "", renderer: "" };
+    }
+    return window.__gosx.scene3dWebGLProbe;
+  }
+
   function createSceneRenderer(canvas, props, capability) {
     const registryResult = createSceneRendererFromRegistry(canvas, props, capability);
     if (registryResult) {
@@ -265,9 +355,19 @@
   }
 
   function sceneModelMaterialOverrideSource(model) {
-    return model && model.materialOverride && typeof model.materialOverride === "object"
-      ? model.materialOverride
-      : null;
+    if (!model || typeof model !== "object") {
+      return null;
+    }
+    if (model.materialOverride && typeof model.materialOverride === "object") {
+      return model.materialOverride;
+    }
+    const keys = ["materialKind", "color", "texture", "opacity", "emissive", "blendMode", "renderPass", "wireframe", "roughness", "metalness"];
+    for (let index = 0; index < keys.length; index += 1) {
+      if (Object.prototype.hasOwnProperty.call(model, keys[index])) {
+        return model;
+      }
+    }
+    return null;
   }
 
   function sceneAssignMaterialOverride(next, material, sourceKey, targetKey, override) {
@@ -306,6 +406,8 @@
     sceneAssignMaterialOverride(next, material, "blendMode", "blendMode", override);
     sceneAssignMaterialOverride(next, material, "renderPass", "renderPass", override);
     sceneAssignMaterialOverride(next, material, "wireframe", "wireframe", override);
+    sceneAssignMaterialOverride(next, material, "roughness", "roughness", override);
+    sceneAssignMaterialOverride(next, material, "metalness", "metalness", override);
     if (material) {
       next.material = material;
     }
@@ -576,6 +678,40 @@
       instanced.pickable = model.pickable;
     }
     return normalizeSceneObject(instanced, prefix);
+  }
+
+  function sceneSkinnedModelLocalBounds(vertices) {
+    if (!vertices || !vertices.positions || !vertices.count) {
+      return null;
+    }
+    const cached = vertices._skinnedLocalBounds;
+    if (cached) {
+      return cached;
+    }
+    const positions = vertices.positions instanceof Float32Array ? vertices.positions : sceneTypedFloatArray(vertices.positions);
+    let minX = Infinity;
+    let minY = Infinity;
+    let minZ = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    let maxZ = -Infinity;
+    const limit = Math.min(positions.length, Math.max(0, Math.floor(sceneNumber(vertices.count, 0))) * 3);
+    for (let index = 0; index + 2 < limit; index += 3) {
+      const x = positions[index];
+      const y = positions[index + 1];
+      const z = positions[index + 2];
+      if (x < minX) minX = x;
+      if (y < minY) minY = y;
+      if (z < minZ) minZ = z;
+      if (x > maxX) maxX = x;
+      if (y > maxY) maxY = y;
+      if (z > maxZ) maxZ = z;
+    }
+    const bounds = Number.isFinite(minX)
+      ? { minX, minY, minZ, maxX, maxY, maxZ }
+      : { minX: -1, minY: -1, minZ: -1, maxX: 1, maxY: 1, maxZ: 1 };
+    vertices._skinnedLocalBounds = bounds;
+    return bounds;
   }
 
   function sceneInstantiateModelLabel(rawLabel, model, prefix, index) {
@@ -906,6 +1042,29 @@
     });
   }
 
+  function sceneModelRootNodes(nodes) {
+    if (!Array.isArray(nodes) || !nodes.length) {
+      return [];
+    }
+    const childSet = new Set();
+    for (let index = 0; index < nodes.length; index += 1) {
+      const children = nodes[index] && nodes[index].children;
+      if (!Array.isArray(children)) {
+        continue;
+      }
+      for (let childIndex = 0; childIndex < children.length; childIndex += 1) {
+        childSet.add(children[childIndex]);
+      }
+    }
+    const roots = [];
+    for (let index = 0; index < nodes.length; index += 1) {
+      if (!childSet.has(index)) {
+        roots.push(index);
+      }
+    }
+    return roots;
+  }
+
   function sceneApplyModelSkinPose(record, deltaTime) {
     if (!record || !record.animationApi || !record.nodes || !record.skins) {
       return;
@@ -924,7 +1083,7 @@
         entry[property] = Array.isArray(value) ? value.slice() : Array.from(value || []);
       });
     }
-    const nodeTransforms = record.animationApi.buildNodeTransforms(record.nodes, animatedTransforms, record.rootTransform);
+    const nodeTransforms = record.animationApi.buildNodeTransforms(record.nodes, animatedTransforms, record.rootTransform, record.rootNodes);
     for (let index = 0; index < record.skins.length; index += 1) {
       const skin = record.skins[index];
       if (!skin) {
@@ -951,14 +1110,23 @@
     }
 
     const record = {
+      id: typeof model.id === "string" ? model.id : "",
+      model: Object.assign({}, model || {}),
+      live: Array.isArray(model && model._live) ? model._live.slice() : [],
       nodes: asset.nodes,
+      rootNodes: sceneModelRootNodes(asset.nodes),
       skins: skinInstances,
       animatedTransforms: new Map(),
       rootTransform: sceneModelTransformMatrix(model),
       animationApi,
       mixer: null,
       animation: "",
+      poseDirty: false,
     };
+    if (!Array.isArray(state._modelSkins)) {
+      state._modelSkins = [];
+    }
+    state._modelSkins.push(record);
 
     const requestedAnimation = typeof model.animation === "string" ? model.animation.trim() : "";
     if (requestedAnimation && typeof animationApi.createMixer === "function") {
@@ -995,16 +1163,116 @@
     const records = state && Array.isArray(state._modelAnimations) ? state._modelAnimations : [];
     for (let index = 0; index < records.length; index += 1) {
       const record = records[index];
-      if (!record || !record.mixer || !record.animation || !record.mixer.isPlaying(record.animation)) {
+      if (!record) {
         continue;
       }
+      const playing = Boolean(record && record.mixer && record.animation && record.mixer.isPlaying(record.animation));
+      if (!playing && !record.poseDirty) {
+        continue;
+      }
+      record.poseDirty = false;
       sceneApplyModelSkinPose(record, deltaTime);
     }
+  }
+
+  function sceneModelRecordListensToEvent(record, eventName) {
+    return Boolean(record && Array.isArray(record.live) && record.live.indexOf(eventName) >= 0);
+  }
+
+  function sceneModelLivePatchForRecord(record, payload) {
+    if (!sceneIsPlainObject(payload)) {
+      return null;
+    }
+    if (record && record.id && sceneIsPlainObject(payload[record.id])) {
+      return payload[record.id];
+    }
+    return payload;
+  }
+
+  function sceneApplyModelLivePatch(record, patch) {
+    if (!record || !record.model || !sceneIsPlainObject(patch)) {
+      return false;
+    }
+    const keys = ["x", "y", "z", "rotationX", "rotationY", "rotationZ", "scaleX", "scaleY", "scaleZ"];
+    let changed = false;
+    for (let index = 0; index < keys.length; index += 1) {
+      const key = keys[index];
+      if (!Object.prototype.hasOwnProperty.call(patch, key)) {
+        continue;
+      }
+      const next = sceneNumber(patch[key], sceneNumber(record.model[key], key.indexOf("scale") === 0 ? 1 : 0));
+      if (record.model[key] === next) {
+        continue;
+      }
+      record.model[key] = next;
+      changed = true;
+    }
+    if (!changed) {
+      return false;
+    }
+    record.rootTransform = sceneModelTransformMatrix(record.model);
+    record.poseDirty = true;
+    return true;
+  }
+
+  function sceneApplyModelLiveAnimation(record, patch) {
+    if (!record || !record.mixer || !sceneIsPlainObject(patch) || !Object.prototype.hasOwnProperty.call(patch, "animation")) {
+      return false;
+    }
+    const animation = typeof patch.animation === "string" ? patch.animation.trim() : "";
+    if (!animation || (record.animation === animation && record.mixer.isPlaying(animation))) {
+      return false;
+    }
+    if (record.animation && record.mixer.isPlaying(record.animation)) {
+      record.mixer.stop(record.animation, { fadeOut: 0.05 });
+    }
+    record.mixer.play(animation, {
+      loop: Object.prototype.hasOwnProperty.call(patch, "loop") ? patch.loop !== false : true,
+      fadeIn: 0.04,
+    });
+    if (!record.mixer.isPlaying(animation)) {
+      return false;
+    }
+    record.animation = animation;
+    record.poseDirty = true;
+    return true;
+  }
+
+  function sceneApplyModelLiveEvent(state, eventName, payload) {
+    const event = typeof eventName === "string" ? eventName.trim() : "";
+    if (!event) {
+      return false;
+    }
+    const records = state && Array.isArray(state._modelSkins) ? state._modelSkins : [];
+    let changed = false;
+    for (let index = 0; index < records.length; index += 1) {
+      const record = records[index];
+      if (!sceneModelRecordListensToEvent(record, event)) {
+        continue;
+      }
+      const patch = sceneModelLivePatchForRecord(record, payload);
+      changed = sceneApplyModelLivePatch(record, patch) || changed;
+      changed = sceneApplyModelLiveAnimation(record, patch) || changed;
+    }
+    return changed;
+  }
+
+  function sceneApplyCameraLiveEvent(state, payload) {
+    if (!state || !sceneIsPlainObject(payload) || !sceneIsPlainObject(payload.camera)) {
+      return false;
+    }
+    const nextCamera = normalizeSceneCamera(payload.camera, state.camera);
+    if (sceneCameraEquivalent(state.camera, nextCamera)) {
+      return false;
+    }
+    state.camera = nextCamera;
+    return true;
   }
 
   async function hydrateSceneStateModels(state, props) {
     const models = sceneModels(props);
     state._modelAnimations = [];
+    state._modelSkins = [];
     if (!models.length) {
       return { models: 0, objects: 0, points: 0, labels: 0, sprites: 0, lights: 0 };
     }
@@ -1128,10 +1396,12 @@
     const requestedTier = normalizeSceneCapabilityTier(props && props.capabilityTier);
     const environment = sceneEnvironmentState();
     const navigatorRef = window && window.navigator ? window.navigator : {};
+    const webglProbe = sceneBool(props && props.preferWebGL, true) ? sceneProbeWebGLRenderer() : null;
+    const softwareWebGL = Boolean(webglProbe && webglProbe.available && webglProbe.software);
     const coarsePointer = environment ? Boolean(environment.coarsePointer) : (sceneMediaQueryMatches("(pointer: coarse)") || sceneMediaQueryMatches("(any-pointer: coarse)"));
     const hover = environment ? Boolean(environment.hover) : (sceneMediaQueryMatches("(hover: hover)") || sceneMediaQueryMatches("(any-hover: hover)"));
     const reducedData = environment ? Boolean(environment.reducedData) : sceneMediaQueryMatches("(prefers-reduced-data: reduce)");
-    const lowPower = environment ? Boolean(environment.lowPower) : false;
+    const lowPower = (environment ? Boolean(environment.lowPower) : false) || softwareWebGL;
     const visualViewportActive = environment ? Boolean(environment.visualViewportActive) : Boolean(window.visualViewport);
     const deviceMemory = sceneNumber(environment && environment.deviceMemory, sceneNumber(navigatorRef && navigatorRef.deviceMemory, 0));
     const hardwareConcurrency = Math.max(0, Math.floor(sceneNumber(environment && environment.hardwareConcurrency, sceneNumber(navigatorRef && navigatorRef.hardwareConcurrency, 0))));
@@ -1154,6 +1424,7 @@
       hover,
       reducedData,
       lowPower,
+      softwareWebGL,
       visualViewportActive,
       deviceMemory,
       hardwareConcurrency,
@@ -1205,6 +1476,7 @@
       || prev.hover !== next.hover
       || prev.reducedData !== next.reducedData
       || prev.lowPower !== next.lowPower
+      || prev.softwareWebGL !== next.softwareWebGL
       || prev.visualViewportActive !== next.visualViewportActive
       || prev.deviceMemory !== next.deviceMemory
       || prev.hardwareConcurrency !== next.hardwareConcurrency;
@@ -1240,6 +1512,7 @@
     setAttrValue(mount, "data-gosx-scene3d-hover", capability.hover ? "true" : "false");
     setAttrValue(mount, "data-gosx-scene3d-reduced-data", capability.reducedData ? "true" : "false");
     setAttrValue(mount, "data-gosx-scene3d-low-power", capability.lowPower ? "true" : "false");
+    setAttrValue(mount, "data-gosx-scene3d-software-webgl", capability.softwareWebGL ? "true" : "false");
     setAttrValue(mount, "data-gosx-scene3d-visual-viewport", capability.visualViewportActive ? "true" : "false");
     setAttrValue(mount, "data-gosx-scene3d-webgl-preference", sceneCapabilityWebGLPreference(props, capability));
     setAttrValue(mount, "data-gosx-scene3d-device-memory", capability.deviceMemory > 0 ? capability.deviceMemory : "");
@@ -1272,6 +1545,7 @@
       capability.hover = next.hover;
       capability.reducedData = next.reducedData;
       capability.lowPower = next.lowPower;
+      capability.softwareWebGL = next.softwareWebGL;
       capability.visualViewportActive = next.visualViewportActive;
       capability.deviceMemory = next.deviceMemory;
       capability.hardwareConcurrency = next.hardwareConcurrency;
@@ -3331,6 +3605,29 @@
     }, function(detail) {
       ctx.emit("scene-interaction", detail);
     });
+    let pendingMotionData = null;
+    let pendingMotionHandle = null;
+
+    function applySceneHubEvent(eventName, data, reason) {
+      const cameraChanged = sceneApplyCameraLiveEvent(sceneState, data);
+      const modelChanged = sceneApplyModelLiveEvent(sceneState, eventName, data);
+      const liveChanged = sceneApplyLiveEvent(sceneState, eventName, data, motion.reducedMotion, sceneNowMilliseconds());
+      if (cameraChanged || modelChanged || liveChanged) {
+        scheduleRender(reason || "hub-event");
+      }
+    }
+
+    function flushPendingMotionEvent() {
+      pendingMotionHandle = null;
+      if (disposed || !pendingMotionData) {
+        pendingMotionData = null;
+        return;
+      }
+      const data = pendingMotionData;
+      pendingMotionData = null;
+      applySceneHubEvent("motion", data, "hub-motion");
+    }
+
     const sceneHubListener = function(event) {
       if (disposed) {
         return;
@@ -3339,9 +3636,14 @@
       if (!detail || typeof detail.event !== "string") {
         return;
       }
-      if (sceneApplyLiveEvent(sceneState, detail.event, detail.data, motion.reducedMotion, sceneNowMilliseconds())) {
-        scheduleRender("hub-event");
+      if (detail.event === "motion") {
+        pendingMotionData = detail.data;
+        if (pendingMotionHandle == null) {
+          pendingMotionHandle = engineFrame(flushPendingMotionEvent);
+        }
+        return;
       }
+      applySceneHubEvent(detail.event, detail.data, "hub-event");
     };
     document.addEventListener("gosx:hub:event", sceneHubListener);
 
@@ -3409,9 +3711,10 @@
       }
     }
 
-    function renderFrame(now, reason) {
-      if (disposed) return;
-      recordScenePerfCounter("render:" + (reason || "animation"));
+	    function renderFrame(now, reason) {
+	      if (disposed) return;
+	      const perfEnabled = typeof window !== "undefined" && window.__gosx_scene3d_perf === true;
+	      recordScenePerfCounter("render:" + (reason || "animation"));
       // Only re-measure the viewport when something has actually
       // invalidated it. Static frames (the common case during continuous
       // animation without DOM changes) reuse the cached `viewport` and
@@ -3432,7 +3735,14 @@
         ? 0
         : Math.max(0, Math.min(0.1, timeSeconds - lastModelAnimationTimeSeconds));
       lastModelAnimationTimeSeconds = timeSeconds;
-      sceneAdvanceModelAnimations(sceneState, modelAnimationDelta);
+	      if (perfEnabled) performance.mark("scene3d-model-animations-start");
+	      sceneAdvanceModelAnimations(sceneState, modelAnimationDelta);
+	      if (perfEnabled) {
+	        performance.mark("scene3d-model-animations-end");
+	        performance.measure("scene3d-model-animations", "scene3d-model-animations-start", "scene3d-model-animations-end");
+	        performance.clearMarks("scene3d-model-animations-start");
+	        performance.clearMarks("scene3d-model-animations-end");
+	      }
       if (runtimeScene && ctx.runtime && typeof ctx.runtime.renderFrame === "function") {
         const runtimeBundle = ctx.runtime.renderFrame(timeSeconds, viewport.cssWidth, viewport.cssHeight);
         if (runtimeBundle) {
@@ -3461,8 +3771,9 @@
           sceneApplyLOD(sceneState.points[li], camX, camY, camZ);
         }
       }
-      latestBundle = createSceneRenderBundle(
-        viewport.cssWidth,
+	      if (perfEnabled) performance.mark("scene3d-bundle-start");
+	      latestBundle = createSceneRenderBundle(
+	        viewport.cssWidth,
         viewport.cssHeight,
         sceneState.background,
         sceneCurrentControlCamera(sceneControlHandle.controller, sceneState.camera, sceneState._scrollCamera),
@@ -3476,8 +3787,14 @@
         sceneState.instancedMeshes,
         sceneState.computeParticles,
         sceneState.postEffects,
-        sceneState.postFXMaxPixels,
-      );
+	        sceneState.postFXMaxPixels,
+	      );
+	      if (perfEnabled) {
+	        performance.mark("scene3d-bundle-end");
+	        performance.measure("scene3d-bundle", "scene3d-bundle-start", "scene3d-bundle-end");
+	        performance.clearMarks("scene3d-bundle-start");
+	        performance.clearMarks("scene3d-bundle-end");
+	      }
       syncSceneNodeSentinels(latestBundle);
       renderer.render(latestBundle, viewport);
       maybeEmitRenderEmpty(latestBundle);
@@ -3530,18 +3847,13 @@
       });
     }
 
-    // scheduleCanvasBlankProbe: after a renderer-swap produced a non-empty
-    // bundle, wait one animation-frame boundary and sample a 32x32 center
-    // region of the drawing buffer via gl.readPixels. If every sampled pixel
-    // is (0,0,0,0) while sceneState still has drawable geometry, emit a
-    // render-canvas-blank event. This catches the class of bug where the
-    // renderer claims success, the bundle has geometry, drawElements fires,
-    // but the canvas silently stays black — the pattern seen in Chrome after
-    // a WebGL context-restore that invalidates PBR framebuffer attachments
-    // without signaling failure upstream.
+    // scheduleCanvasBlankProbe: readback-based blank-canvas diagnostics are
+    // deliberately opt-in. Canvas serialization/readPixels can force GPU
+    // synchronization and has caused context loss in active scenes.
     function scheduleCanvasBlankProbe(reason, stats) {
       if (typeof window === "undefined" || !window.__gosx_telemetry_config
-          || window.__gosx_telemetry_config.probeCanvasBlank !== true) {
+          || window.__gosx_telemetry_config.probeCanvasBlank !== true
+          || window.__gosx_telemetry_config.allowCanvasReadbackProbe !== true) {
         return;
       }
       if (typeof window.requestAnimationFrame !== "function") {
@@ -3552,40 +3864,34 @@
           if (disposed || !renderer || renderer.kind !== "webgl") {
             return;
           }
-          // `canvas.toDataURL()` forces a sync readback that returns the
-          // drawing buffer content from the last paint, even with
-          // preserveDrawingBuffer:false — unlike gl.readPixels, which sees
-          // zero after the browser's composite clear. A truly-blank 800x461
-          // PNG compresses to well under 1 KB; any real galaxy/mesh frame
-          // is 8-30 KB. Using data-URL length as the probe keeps the check
-          // cheap (no getImageData decode) while staying robust to the
-          // compositor's timing.
-          let dataUrl = "";
-          try {
-            dataUrl = canvas.toDataURL("image/png");
-          } catch (_err) {
+          if (typeof canvas.toBlob !== "function") {
             return;
           }
-          // PNG data-URL threshold: a uniform-color 800x461 PNG is ~400-900
-          // bytes base64-encoded; set the floor generously to avoid false
-          // positives on genuinely sparse scenes that happen to compress well.
-          const kCanvasBlankPNGBytesThreshold = 1800;
-          if (dataUrl.length > kCanvasBlankPNGBytesThreshold) {
-            return;
-          }
-          const gl = typeof canvas.getContext === "function"
-            ? (canvas.getContext("webgl2") || canvas.getContext("webgl"))
-            : null;
-          gosxSceneEmit("error", "render-canvas-blank", {
-            rendererKind: renderer && renderer.kind ? renderer.kind : "",
-            lastSwapReason: reason || "",
-            bundleMeshObjects: stats ? stats.bundleMeshObjects : 0,
-            bundleInstancedMeshes: stats ? stats.bundleInstancedMeshes : 0,
-            bundleVerts: stats ? stats.bundleVerts : 0,
-            canvasPngBytes: dataUrl.length,
-            canvasPngThreshold: kCanvasBlankPNGBytesThreshold,
-            glError: gl && typeof gl.getError === "function" ? gl.getError() : 0,
-          });
+          canvas.toBlob(function (blob) {
+            if (disposed || !renderer || renderer.kind !== "webgl") {
+              return;
+            }
+            // PNG threshold: a uniform-color 800x461 PNG is ~400-900 bytes;
+            // set the floor generously to avoid false positives on sparse scenes.
+            const kCanvasBlankPNGBytesThreshold = 1800;
+            const byteSize = blob && typeof blob.size === "number" ? blob.size : 0;
+            if (byteSize > kCanvasBlankPNGBytesThreshold) {
+              return;
+            }
+            const gl = typeof canvas.getContext === "function"
+              ? (canvas.getContext("webgl2") || canvas.getContext("webgl"))
+              : null;
+            gosxSceneEmit("error", "render-canvas-blank", {
+              rendererKind: renderer && renderer.kind ? renderer.kind : "",
+              lastSwapReason: reason || "",
+              bundleMeshObjects: stats ? stats.bundleMeshObjects : 0,
+              bundleInstancedMeshes: stats ? stats.bundleInstancedMeshes : 0,
+              bundleVerts: stats ? stats.bundleVerts : 0,
+              canvasPngBytes: byteSize,
+              canvasPngThreshold: kCanvasBlankPNGBytesThreshold,
+              glError: gl && typeof gl.getError === "function" ? gl.getError() : 0,
+            });
+          }, "image/png");
         });
       });
     }
@@ -3669,6 +3975,7 @@
       }, sceneDeferredPostFXDelay(props));
     }
 
+    setAttrValue(ctx.mount, "data-gosx-scene3d-ready", "true");
     ctx.emit("mounted", {
       width: viewport.cssWidth,
       height: viewport.cssHeight,
@@ -3748,6 +4055,10 @@
         renderer.dispose();
         cancelFrame();
         cancelScheduledRender();
+        if (pendingMotionHandle != null) {
+          cancelEngineFrame(pendingMotionHandle);
+          pendingMotionHandle = null;
+        }
         if (labelRefreshHandle != null) {
           cancelEngineFrame(labelRefreshHandle);
         }

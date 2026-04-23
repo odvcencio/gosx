@@ -175,6 +175,17 @@ func (h *Hub) SetState(key string, value any) {
 
 // Broadcast sends a message to all connected clients.
 func (h *Hub) Broadcast(event string, data any) {
+	h.latchedMu.RLock()
+	_, latched := h.latched[event]
+	h.latchedMu.RUnlock()
+
+	h.mu.RLock()
+	hasClients := len(h.clients) > 0
+	h.mu.RUnlock()
+	if !hasClients && !latched {
+		return
+	}
+
 	msg, err := encodeMessage(event, data)
 	if err != nil {
 		return

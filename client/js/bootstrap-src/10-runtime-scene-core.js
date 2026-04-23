@@ -1326,6 +1326,7 @@
     const hasStatic = Object.prototype.hasOwnProperty.call(current, "static");
     const hasPickable = Object.prototype.hasOwnProperty.call(current, "pickable");
     const override = {};
+    const lifecycle = sceneNormalizeLifecycle(current, null);
     const materialKind = sceneObjectMaterialKindValue(current);
     if (materialKind) {
       override.materialKind = normalizeSceneMaterialKind(materialKind);
@@ -1341,6 +1342,12 @@
     }
     if (sceneObjectMaterialHasValue(current, "emissive")) {
       override.emissive = sceneObjectMaterialValue(current, "emissive");
+    }
+    if (sceneObjectMaterialHasValue(current, "roughness")) {
+      override.roughness = sceneObjectMaterialValue(current, "roughness");
+    }
+    if (sceneObjectMaterialHasValue(current, "metalness")) {
+      override.metalness = sceneObjectMaterialValue(current, "metalness");
     }
     if (sceneObjectBlendModeHasValue(current)) {
       override.blendMode = sceneObjectBlendModeValue(current);
@@ -1368,6 +1375,10 @@
       pickable: hasPickable ? sceneBool(current.pickable, false) : undefined,
       static: hasStatic ? sceneBool(current.static, false) : null,
       materialOverride: Object.keys(override).length > 0 ? override : null,
+      _transition: lifecycle.transition,
+      _inState: lifecycle.inState,
+      _outState: lifecycle.outState,
+      _live: lifecycle.live,
     };
   }
 
@@ -3211,10 +3222,44 @@
   // before the next iteration's translate.
   const _lineSegmentFromScratch = { x: 0, y: 0, z: 0 };
   const _lineSegmentToScratch = { x: 0, y: 0, z: 0 };
-  const _meshTriangleP0Scratch = { x: 0, y: 0, z: 0 };
-  const _meshTriangleP1Scratch = { x: 0, y: 0, z: 0 };
-  const _meshTriangleP2Scratch = { x: 0, y: 0, z: 0 };
-  const _meshTrianglePoints = [_meshTriangleP0Scratch, _meshTriangleP1Scratch, _meshTriangleP2Scratch];
+	  const _meshTriangleP0Scratch = { x: 0, y: 0, z: 0 };
+	  const _meshTriangleP1Scratch = { x: 0, y: 0, z: 0 };
+	  const _meshTriangleP2Scratch = { x: 0, y: 0, z: 0 };
+	  const _meshTrianglePoints = [_meshTriangleP0Scratch, _meshTriangleP1Scratch, _meshTriangleP2Scratch];
+	  const _objectMatrixOriginScratch = { x: 0, y: 0, z: 0 };
+	  const _objectMatrixXScratch = { x: 0, y: 0, z: 0 };
+	  const _objectMatrixYScratch = { x: 0, y: 0, z: 0 };
+	  const _objectMatrixZScratch = { x: 0, y: 0, z: 0 };
+
+	  function sceneObjectModelMatrix(object, timeSeconds) {
+	    const origin = _objectMatrixOriginScratch;
+	    const axisX = _objectMatrixXScratch;
+	    const axisY = _objectMatrixYScratch;
+	    const axisZ = _objectMatrixZScratch;
+	    translateScenePointInto(origin, 0, 0, 0, object, timeSeconds);
+	    translateScenePointInto(axisX, 1, 0, 0, object, timeSeconds);
+	    translateScenePointInto(axisY, 0, 1, 0, object, timeSeconds);
+	    translateScenePointInto(axisZ, 0, 0, 1, object, timeSeconds);
+
+	    const out = new Float32Array(16);
+	    out[0] = axisX.x - origin.x;
+	    out[1] = axisX.y - origin.y;
+	    out[2] = axisX.z - origin.z;
+	    out[3] = 0;
+	    out[4] = axisY.x - origin.x;
+	    out[5] = axisY.y - origin.y;
+	    out[6] = axisY.z - origin.z;
+	    out[7] = 0;
+	    out[8] = axisZ.x - origin.x;
+	    out[9] = axisZ.y - origin.y;
+	    out[10] = axisZ.z - origin.z;
+	    out[11] = 0;
+	    out[12] = origin.x;
+	    out[13] = origin.y;
+	    out[14] = origin.z;
+	    out[15] = 1;
+	    return out;
+	  }
 
   function appendSceneGridToBundle(bundle, width, height) {
     for (let x = 0; x <= width; x += 48) {
@@ -3450,6 +3495,33 @@
     }
     const material = sceneObjectMaterialProfile(object);
     const materialIndex = sceneBundleMaterialIndex(bundle, materialLookup, material);
+    if (object.skin && vertices.joints && vertices.weights) {
+      const bounds = vertices._skinnedLocalBounds || object.bounds || { minX: -1, minY: -1, minZ: -1, maxX: 1, maxY: 2, maxZ: 1 };
+      bundle.meshObjects.push({
+        id: object.id,
+        kind: object.kind,
+        pickable: typeof object.pickable === "boolean" ? object.pickable : undefined,
+        materialIndex: materialIndex,
+        renderPass: sceneWorldObjectRenderPass(object, material),
+        static: false,
+        castShadow: false,
+        receiveShadow: Boolean(object.receiveShadow),
+        depthWrite: object.depthWrite,
+        bounds: bounds,
+        depthNear: 0,
+        depthFar: 0,
+        depthCenter: 0,
+        viewCulled: false,
+        doubleSided: Boolean(object.doubleSided),
+        skin: object.skin,
+        vertices: vertices,
+        directVertices: true,
+        modelMatrix: sceneObjectModelMatrix(object, timeSeconds),
+        vertexOffset: 0,
+        vertexCount: Math.max(0, Math.floor(sceneNumber(vertices.count, 0))),
+      });
+      return;
+    }
     const wireVertexOffset = bundle.worldPositions.length / 3;
     const meshVertexOffset = bundle.worldMeshPositions.length / 3;
     let wireVertexCount = 0;
@@ -5299,6 +5371,10 @@
     createSceneRenderBundle,
     SCENE_IR_VERSION: 1,
     SCENE_RENDER_BUNDLE_VERSION: 1,
+    SCENE_POST_TONE_MAPPING: "toneMapping",
+    SCENE_POST_BLOOM: "bloom",
+    SCENE_POST_VIGNETTE: "vignette",
+    SCENE_POST_COLOR_GRADE: "colorGrade",
     validateSceneIR: typeof validateSceneIR === "function" ? validateSceneIR : undefined,
     prepareScene: typeof prepareScene === "function" ? prepareScene : undefined,
     scenePreparedCommandSequence: typeof scenePreparedCommandSequence === "function" ? scenePreparedCommandSequence : undefined,
@@ -5328,6 +5404,7 @@
     sceneBoundsViewCulled,
     sceneBundleNeedsThickLines,
     sceneCameraEquivalent,
+    clamp01,
     sceneHasActiveTransitions,
     sceneLabelAnimated,
     sceneMeshMaterialArray,

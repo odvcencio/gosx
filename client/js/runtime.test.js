@@ -131,7 +131,7 @@ class FakeCanvasContext2D {
 }
 
 class FakeWebGLContext {
-  constructor() {
+  constructor(options = {}) {
     this.ops = [];
     this.bufferUploads = new Map();
     this.textureUploads = new Map();
@@ -139,6 +139,9 @@ class FakeWebGLContext {
     this._nextTextureID = 1;
     this._boundArrayBuffer = null;
     this._boundTexture = null;
+    this._vendor = typeof options.vendor === "string" ? options.vendor : "FakeGPU Inc.";
+    this._renderer = typeof options.renderer === "string" ? options.renderer : "FakeGPU Renderer";
+    this._disableDebugRendererInfo = options.debugRendererInfo === false;
     this.POINTS = 0x0000;
     this.ARRAY_BUFFER = 0x8892;
     this.STATIC_DRAW = 0x88E4;
@@ -176,6 +179,8 @@ class FakeWebGLContext {
     this.FRAGMENT_SHADER = 0x8B30;
     this.COMPILE_STATUS = 0x8B81;
     this.LINK_STATUS = 0x8B82;
+    this.VENDOR = 0x1F00;
+    this.RENDERER = 0x1F01;
   }
 
   createShader(type) {
@@ -418,6 +423,33 @@ class FakeWebGLContext {
 
   deleteTexture(texture) {
     this.ops.push(["deleteTexture", texture && texture.id]);
+  }
+
+  getExtension(name) {
+    if (name === "WEBGL_debug_renderer_info" && !this._disableDebugRendererInfo) {
+      return {
+        UNMASKED_VENDOR_WEBGL: 0x9245,
+        UNMASKED_RENDERER_WEBGL: 0x9246,
+      };
+    }
+    if (name === "WEBGL_lose_context") {
+      return {
+        loseContext: () => {
+          this.ops.push(["loseContext"]);
+        },
+      };
+    }
+    return null;
+  }
+
+  getParameter(param) {
+    if (param === 0x9245 || param === this.VENDOR) {
+      return this._vendor;
+    }
+    if (param === 0x9246 || param === this.RENDERER) {
+      return this._renderer;
+    }
+    return null;
   }
 }
 
@@ -1461,6 +1493,11 @@ class FakeFormData {
 
   has(name) {
     return this.values.some((entry) => entry[0] === name);
+  }
+
+  get(name) {
+    const found = this.values.find((entry) => entry[0] === name);
+    return found ? found[1] : null;
   }
 
   forEach(callback, thisArg) {
@@ -4802,8 +4839,8 @@ test("bootstrap uploads skinned GLB joint matrices through WebGL PBR", async () 
   assert.ok(gl.ops.some((entry) => entry[0] === "getAttribLocation" && entry[1] === "a_joints"));
   assert.ok(gl.ops.some((entry) => entry[0] === "getAttribLocation" && entry[1] === "a_weights"));
   assert.ok(gl.ops.some((entry) => entry[0] === "uniform1i" && entry[1] === "u_hasSkin" && entry[2] === 1));
-  assert.ok(gl.ops.some((entry) => entry[0] === "uniformMatrix4fv" && entry[1] === "u_jointMatrices[0]" && entry[3] === 16));
-  assert.ok(gl.ops.some((entry) => entry[0] === "uniformMatrix4fv" && entry[1] === "u_jointMatrices[1]" && entry[3] === 16));
+  assert.ok(gl.ops.some((entry) => entry[0] === "uniformMatrix4fv" && entry[1] === "u_modelMatrix" && entry[3] === 16));
+  assert.ok(gl.ops.some((entry) => entry[0] === "uniformMatrix4fv" && entry[1] === "u_jointMatrices[0]" && entry[3] === 32));
   assert.ok(gl.ops.some((entry) => entry[0] === "vertexAttribPointer" && entry[1] === 7 && entry[2] === 4));
   assert.ok(gl.ops.some((entry) => entry[0] === "vertexAttribPointer" && entry[1] === 8 && entry[2] === 4));
   assert.equal(env.consoleLogs.error.length, 0);
@@ -5935,6 +5972,22 @@ test("bootstrap keeps WebGPU Scene3D points on per-entry cached GPU buffers", ()
   assert.match(source, /ensurePointsParticleGPUBuffer\(entry,\s*particleData\)/);
   assert.doesNotMatch(source, /var\s+pointsUniformBuffer\s*=\s*device\.createBuffer/);
   assert.doesNotMatch(source, /device\.queue\.writeBuffer\(pointsUniformBuffer,\s*0/);
+});
+
+test("bootstrap bridges clamp01 into the WebGPU Scene3D sub-feature", () => {
+  const prefix = fs.readFileSync(path.join(__dirname, "bootstrap-src", "26e-feature-scene3d-webgpu-prefix.js"), "utf8");
+  const core = fs.readFileSync(path.join(__dirname, "bootstrap-src", "10-runtime-scene-core.js"), "utf8");
+
+  assert.match(prefix, /var clamp01 = sceneApi\.clamp01/);
+  assert.match(prefix, /var SCENE_POST_TONE_MAPPING = sceneApi\.SCENE_POST_TONE_MAPPING/);
+  assert.match(prefix, /var SCENE_POST_BLOOM = sceneApi\.SCENE_POST_BLOOM/);
+  assert.match(prefix, /var SCENE_POST_VIGNETTE = sceneApi\.SCENE_POST_VIGNETTE/);
+  assert.match(prefix, /var SCENE_POST_COLOR_GRADE = sceneApi\.SCENE_POST_COLOR_GRADE/);
+  assert.match(core, /\n    clamp01,\n/);
+  assert.match(core, /\n    SCENE_POST_TONE_MAPPING: "toneMapping",\n/);
+  assert.match(core, /\n    SCENE_POST_BLOOM: "bloom",\n/);
+  assert.match(core, /\n    SCENE_POST_VIGNETTE: "vignette",\n/);
+  assert.match(core, /\n    SCENE_POST_COLOR_GRADE: "colorGrade",\n/);
 });
 
 test("bootstrap applies named Scene3D materials to point layers", async () => {
@@ -7705,6 +7758,52 @@ test("bootstrap prefers WebGL Scene3D rendering when available", async () => {
   assert.equal(env.consoleLogs.error.length, 0);
 });
 
+test("bootstrap prefers canvas Scene3D rendering on software WebGL backends", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-software-webgl";
+
+  const env = createContext({
+    elements: [mount],
+    enableWebGL: true,
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-software-webgl",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-software-webgl",
+          jsExport: "GoSXScene3D",
+          props: {
+            width: 480,
+            height: 300,
+            autoRotate: false,
+            scene: {
+              objects: [
+                { kind: "box", width: 1.4, height: 1.1, depth: 1.2, x: 0, y: 0, z: 0, color: "#8de1ff" },
+              ],
+            },
+          },
+          capabilities: ["canvas", "webgl", "animation"],
+        },
+      ],
+    },
+    createWebGLContext: () => new FakeWebGLContext({
+      vendor: "Google Inc. (Google)",
+      renderer: "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+    }),
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  assert.equal(mount.getAttribute("data-gosx-scene3d-capability-tier"), "constrained");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-low-power"), "true");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-software-webgl"), "true");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgl-preference"), "avoid");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "canvas");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer-fallback"), "environment-constrained");
+});
+
 test("Scene3D defers postfx until idle delay", async () => {
   const mount = new FakeElement("div", null);
   mount.id = "scene-webgl-deferred-postfx";
@@ -8840,6 +8939,24 @@ test("bootstrap connects hubs and forwards events into shared signals", async ()
   assert.deepEqual(env.sharedSignalCalls, [
     ["$presence", '{"count":2}'],
   ]);
+  assert.equal(env.sockets[0].binaryType, "arraybuffer");
+
+  env.sockets[0].onmessage({
+    data: {
+      text: async () => JSON.stringify({ event: "snapshot", data: { count: 3 } }),
+    },
+  });
+  await flushAsyncWork();
+
+  env.sockets[0].onmessage({
+    data: new Uint8Array([1, 2, 3]).buffer,
+  });
+  await flushAsyncWork();
+
+  assert.deepEqual(env.sharedSignalCalls, [
+    ["$presence", '{"count":2}'],
+    ["$presence", '{"count":3}'],
+  ]);
 
   env.context.__gosx_disconnect_hub("gosx-hub-0");
   assert.equal(env.context.__gosx.hubs.size, 0);
@@ -9635,6 +9752,48 @@ test("navigation runtime intercepts managed form submissions and forwards action
   assert.equal(env.document.dispatchedEvents.at(-1).type, "gosx:form:result");
   assert.equal(form.getAttribute("data-gosx-pending"), null);
   assert.equal(form.getAttribute("data-gosx-form-state"), "idle");
+});
+
+test("navigation runtime exposes programmatic managed action submission", async () => {
+  const main = new FakeElement("main", null);
+  main.setAttribute("data-gosx-main", "");
+  main.setAttribute("data-gosx-csrf-token", "root-token");
+
+  const env = createContext({
+    elements: [main],
+    fetchRoutes: {
+      "http://localhost:3000/play/__actions/pilot": {
+        text: '{"ok":true}',
+        url: "http://localhost:3000/play/__actions/pilot",
+      },
+    },
+  });
+
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+
+  assert.equal(typeof env.context.__gosx_submit_action, "function");
+  assert.equal(typeof env.context.__gosx_page_nav.submitAction, "function");
+
+  const form = env.context.__gosx_submit_action("/play/__actions/pilot", {
+    unitId: "robot-1",
+    mode: "manual",
+  }, { root: main, keepForm: true });
+  await form.__gosxSubmitPromise;
+
+  assert.equal(form.parentNode, main);
+  assert.equal(form.getAttribute("action"), "/play/__actions/pilot");
+  assert.equal(form.getAttribute("method"), "post");
+  assert.equal(form.getAttribute("data-gosx-form"), "");
+  assert.equal(form.getAttribute("data-gosx-form-state"), "idle");
+  assert.equal(env.fetchCalls[0].url, "http://localhost:3000/play/__actions/pilot");
+  assert.equal(env.fetchCalls[0].init.method, "POST");
+  assert.equal(env.fetchCalls[0].init.headers["X-CSRF-Token"], "root-token");
+  assert.deepEqual(env.fetchCalls[0].init.body.values, [
+    ["unitId", "robot-1"],
+    ["mode", "manual"],
+    ["csrf_token", "root-token"],
+  ]);
+  assert.equal(env.document.dispatchedEvents.at(-1).type, "gosx:form:result");
 });
 
 test("navigation runtime intercepts managed GET forms and navigates with query params", async () => {
@@ -10437,6 +10596,9 @@ test("selective runtime mounts native JS engines without loading the shared wasm
 
 test("selective runtime connects hubs without loading the shared wasm runtime", async () => {
   const sockets = [];
+  const fetchRoutes = {
+    "/gosx/assets/runtime/bootstrap-feature-hubs.hashed.js": { text: bootstrapFeatureHubsSource },
+  };
   const env = createContext({
     createWebSocket(url) {
       const socket = {
@@ -10449,9 +10611,7 @@ test("selective runtime connects hubs without loading the shared wasm runtime", 
       sockets.push(socket);
       return socket;
     },
-    fetchRoutes: {
-      "/gosx/bootstrap-feature-hubs.js": { text: bootstrapFeatureHubsSource },
-    },
+    fetchRoutes,
     manifest: {
       hubs: [
         {
@@ -10463,12 +10623,18 @@ test("selective runtime connects hubs without loading the shared wasm runtime", 
       ],
     },
   });
+  const preload = env.document.createElement("link");
+  preload.setAttribute("rel", "preload");
+  preload.setAttribute("as", "script");
+  preload.setAttribute("href", "/gosx/assets/runtime/bootstrap-feature-hubs.hashed.js");
+  env.document.head.appendChild(preload);
 
   runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
   await flushAsyncWork();
 
   assert.equal(env.fetchCalls.some((entry) => entry.url === "/runtime.wasm"), false);
-  assert.equal(env.fetchCalls.some((entry) => entry.url === "/gosx/bootstrap-feature-hubs.js"), true);
+  assert.equal(env.fetchCalls.some((entry) => entry.url === "/gosx/assets/runtime/bootstrap-feature-hubs.hashed.js"), true);
+  assert.equal(env.fetchCalls.some((entry) => entry.url === "/gosx/bootstrap-feature-hubs.js"), false);
   assert.equal(sockets.length, 1);
   assert.equal(String(sockets[0].url).includes("/gosx/hub/presence"), true);
 });

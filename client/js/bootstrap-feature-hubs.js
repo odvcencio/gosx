@@ -83,8 +83,21 @@
   function attachHubSocketHandlers(record) {
     const entry = record.entry;
     const socket = record.socket;
+    try {
+      socket.binaryType = "arraybuffer";
+    } catch (_e) {
+    }
     socket.onmessage = function(evt) {
-      const message = decodeHubMessage(entry, evt.data);
+      const decoded = decodeHubMessage(entry, evt.data);
+      if (decoded && typeof decoded.then === "function") {
+        decoded.then(function(message) {
+          if (!message) return;
+          applyHubBindings(entry, message);
+          emitHubEvent(entry, message);
+        });
+        return;
+      }
+      const message = decoded;
       if (!message) return;
 
       applyHubBindings(entry, message);
@@ -101,8 +114,30 @@
   }
 
   function decodeHubMessage(entry, raw) {
+    if (typeof raw === "string") {
+      return parseHubMessage(entry, raw, false);
+    }
+    if (raw instanceof ArrayBuffer || ArrayBuffer.isView(raw)) {
+      return null;
+    }
+    if (raw && typeof raw.text === "function") {
+      return raw.text().then(function(text) {
+        return parseHubMessage(entry, text, true);
+      }, function() {
+        return null;
+      });
+    }
+    return null;
+  }
+
+  function parseHubMessage(entry, raw, quietNonJSON) {
+    const text = String(raw == null ? "" : raw);
+    const trimmed = text.trim();
+    if (quietNonJSON && trimmed && trimmed[0] !== "{" && trimmed[0] !== "[") {
+      return null;
+    }
     try {
-      return JSON.parse(raw);
+      return JSON.parse(text);
     } catch (e) {
       console.error(`[gosx] failed to decode hub message for ${entry.id}:`, e);
       return null;

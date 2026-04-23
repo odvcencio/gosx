@@ -19,7 +19,7 @@
   // animatedTransforms: Map<nodeIndex, { translation, position, rotation, scale }> from mixer.
   // rootTransform: optional model-instance transform prepended to root nodes.
   // Returns Map<nodeIndex, Float32Array(16)> of world transforms (reused map).
-  function sceneAnimBuildNodeTransforms(nodes, animatedTransforms, rootTransform) {
+  function sceneAnimBuildNodeTransforms(nodes, animatedTransforms, rootTransform, rootNodes) {
     _nodeTransforms.clear();
 
     function walkNode(nodeIndex, parentWorld) {
@@ -42,16 +42,22 @@
       }
     }
 
-    // Find root nodes (not referenced as a child of any other node).
-    _childSet.clear();
-    for (var n = 0; n < nodes.length; n++) {
-      var ch = nodes[n] && nodes[n].children;
-      if (ch) {
-        for (var ci = 0; ci < ch.length; ci++) _childSet.add(ch[ci]);
+    if (Array.isArray(rootNodes) && rootNodes.length) {
+      for (var ri = 0; ri < rootNodes.length; ri++) {
+        walkNode(rootNodes[ri], rootTransform || null);
       }
-    }
-    for (var i = 0; i < nodes.length; i++) {
-      if (!_childSet.has(i)) walkNode(i, rootTransform || null);
+    } else {
+      // Find root nodes (not referenced as a child of any other node).
+      _childSet.clear();
+      for (var n = 0; n < nodes.length; n++) {
+        var ch = nodes[n] && nodes[n].children;
+        if (ch) {
+          for (var ci = 0; ci < ch.length; ci++) _childSet.add(ch[ci]);
+        }
+      }
+      for (var i = 0; i < nodes.length; i++) {
+        if (!_childSet.has(i)) walkNode(i, rootTransform || null);
+      }
     }
 
     return _nodeTransforms;

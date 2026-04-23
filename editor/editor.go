@@ -21,6 +21,7 @@ type Editor struct {
 
 // New creates an editor component with the given options.
 func New(name string, opts Options) *Editor {
+	opts.applyFrontMatter()
 	opts.defaults()
 
 	var doc Document = textmodel.NewDocument(opts.Content)

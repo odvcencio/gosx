@@ -35,6 +35,11 @@
   // and fall back to webgl — that's the intended failure mode.
   var sceneBool = sceneApi.sceneBool || function(v, d) { return v == null ? d : !!v; };
   var sceneNumber = sceneApi.sceneNumber || function(v, d) { var n = Number(v); return Number.isFinite(n) ? n : d; };
+  var clamp01 = sceneApi.clamp01 || function(v) { return Math.max(0, Math.min(1, Number(v) || 0)); };
+  var SCENE_POST_TONE_MAPPING = sceneApi.SCENE_POST_TONE_MAPPING || "toneMapping";
+  var SCENE_POST_BLOOM = sceneApi.SCENE_POST_BLOOM || "bloom";
+  var SCENE_POST_VIGNETTE = sceneApi.SCENE_POST_VIGNETTE || "vignette";
+  var SCENE_POST_COLOR_GRADE = sceneApi.SCENE_POST_COLOR_GRADE || "colorGrade";
   var sceneColorRGBA = sceneApi.sceneColorRGBA || function() { return [0, 0, 0, 1]; };
   var scenePointStyleCode = sceneApi.scenePointStyleCode || function() { return 0; };
   var sceneRenderCamera = sceneApi.sceneRenderCamera || function(c) { return c; };

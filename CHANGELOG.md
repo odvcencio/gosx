@@ -1,5 +1,34 @@
 # Changelog
 
+## v0.18.10
+
+Scene3D runtime polish release.
+
+Scene3D now detects software WebGL backends such as SwiftShader, llvmpipe, and
+other software renderers during capability profiling and prefers the existing
+canvas fallback in those environments. This keeps real GPU browsers on the
+WebGL/PBR path while preventing headless and constrained software-rendered
+contexts from dragging scene-heavy pages below their frame-budget gates.
+
+The native Scene3D runtime also picked up a bundle of model and renderer
+polish: object-level material overrides now carry roughness and metalness,
+model lifecycle metadata flows through to the runtime, skinned model bounds and
+root-node transforms are tracked explicitly, skinned draws upload a single
+batched joint-matrix uniform block plus a per-object model matrix, and the
+post-FX path clears stale texture bindings before hopping between offscreen
+framebuffers. The split Scene3D feature bundles and tests were regenerated in
+lockstep.
+
+The managed runtime now has a programmatic `submitAction()` path for synthesized
+managed form posts, feature-chunk loading can resolve hashed runtime preload
+URLs from the document head, and hub sockets now tolerate Blob-backed text
+frames while ignoring raw binary payloads they cannot decode.
+
+The editor also gained lightweight YAML-style front-matter parsing at
+construction time. `editor.New()` can now lift common metadata fields such as
+title, slug, excerpt, tags, cover image, schedule state, and extra fields out
+of a leading `---` block without overriding explicit option values.
+
 ## v0.18.9
 
 Scene3D scroll camera responsiveness patch.

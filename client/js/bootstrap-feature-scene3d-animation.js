@@ -16,7 +16,7 @@
   var _childSet = new Set();
   var _mixerResults = new Map();
 
-  function sceneAnimBuildNodeTransforms(nodes, animatedTransforms, rootTransform) {
+  function sceneAnimBuildNodeTransforms(nodes, animatedTransforms, rootTransform, rootNodes) {
     _nodeTransforms.clear();
 
     function walkNode(nodeIndex, parentWorld) {
@@ -39,15 +39,21 @@
       }
     }
 
-    _childSet.clear();
-    for (var n = 0; n < nodes.length; n++) {
-      var ch = nodes[n] && nodes[n].children;
-      if (ch) {
-        for (var ci = 0; ci < ch.length; ci++) _childSet.add(ch[ci]);
+    if (Array.isArray(rootNodes) && rootNodes.length) {
+      for (var ri = 0; ri < rootNodes.length; ri++) {
+        walkNode(rootNodes[ri], rootTransform || null);
       }
-    }
-    for (var i = 0; i < nodes.length; i++) {
-      if (!_childSet.has(i)) walkNode(i, rootTransform || null);
+    } else {
+      _childSet.clear();
+      for (var n = 0; n < nodes.length; n++) {
+        var ch = nodes[n] && nodes[n].children;
+        if (ch) {
+          for (var ci = 0; ci < ch.length; ci++) _childSet.add(ch[ci]);
+        }
+      }
+      for (var i = 0; i < nodes.length; i++) {
+        if (!_childSet.has(i)) walkNode(i, rootTransform || null);
+      }
     }
 
     return _nodeTransforms;
