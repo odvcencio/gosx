@@ -586,14 +586,14 @@ func (r *Renderer) BootstrapScript() gosx.Node {
 		mode = "lite"
 	}
 	if (len(r.manifest.Islands) > 0 || r.hasWASMEngines() || r.needsSharedRuntimeEngineBridge()) && r.wasmExecPath != "" {
-		b.WriteString(fmt.Sprintf(`<script data-gosx-script="wasm-exec" src="%s"></script>`, html.EscapeString(r.wasmExecPath)))
+		b.WriteString(fmt.Sprintf(`<script defer data-gosx-script="wasm-exec" src="%s"></script>`, html.EscapeString(r.wasmExecPath)))
 		b.WriteByte('\n')
 	}
 	if len(r.manifest.Islands) > 0 && r.patchPath != "" {
-		b.WriteString(fmt.Sprintf(`<script data-gosx-script="patch" src="%s"></script>`, html.EscapeString(r.patchPath)))
+		b.WriteString(fmt.Sprintf(`<script defer data-gosx-script="patch" src="%s"></script>`, html.EscapeString(r.patchPath)))
 		b.WriteByte('\n')
 	}
-	b.WriteString(fmt.Sprintf(`<script data-gosx-script="bootstrap" data-gosx-bootstrap-mode="%s" src="%s"></script>`, mode, html.EscapeString(r.selectedBootstrapPath())))
+	b.WriteString(fmt.Sprintf(`<script defer data-gosx-script="bootstrap" data-gosx-bootstrap-mode="%s" src="%s"></script>`, mode, html.EscapeString(r.selectedBootstrapPath())))
 	if scene3dPath := r.selectedBootstrapFeaturePath("scene3d"); scene3dPath != "" {
 		b.WriteByte('\n')
 		b.WriteString(`<script defer data-gosx-script="feature-scene3d"`)

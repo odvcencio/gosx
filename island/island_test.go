@@ -103,6 +103,9 @@ func TestPageHeadWithBootstrapOnlyUsesLiteRuntime(t *testing.T) {
 	if !strings.Contains(head, `data-gosx-bootstrap-mode="lite"`) {
 		t.Fatal("bootstrap-only page should mark the lite bootstrap mode")
 	}
+	if !strings.Contains(head, `<script defer data-gosx-script="bootstrap"`) {
+		t.Fatalf("bootstrap-only page should defer the bootstrap runtime, got %s", head)
+	}
 	if strings.Contains(head, "wasm_exec.js") || strings.Contains(head, "patch.js") {
 		t.Fatal("bootstrap-only page should not load wasm_exec or patch runtime assets")
 	}
@@ -124,6 +127,15 @@ func TestPageHeadWithIslands(t *testing.T) {
 	}
 	if !strings.Contains(html, `data-gosx-script="bootstrap"`) {
 		t.Fatal("missing bootstrap script role marker")
+	}
+	for _, snippet := range []string{
+		`<script defer data-gosx-script="wasm-exec"`,
+		`<script defer data-gosx-script="patch"`,
+		`<script defer data-gosx-script="bootstrap"`,
+	} {
+		if !strings.Contains(html, snippet) {
+			t.Fatalf("expected deferred runtime script %q in PageHead %s", snippet, html)
+		}
 	}
 }
 
@@ -156,6 +168,14 @@ func TestPageHeadWithEnginesOnly(t *testing.T) {
 	}
 	if !strings.Contains(head, `data-gosx-script="wasm-exec"`) {
 		t.Fatal("missing wasm_exec role marker")
+	}
+	for _, snippet := range []string{
+		`<script defer data-gosx-script="wasm-exec"`,
+		`<script defer data-gosx-script="bootstrap"`,
+	} {
+		if !strings.Contains(head, snippet) {
+			t.Fatalf("expected deferred runtime script %q in engine PageHead %s", snippet, head)
+		}
 	}
 	if strings.Contains(head, "patch.js") {
 		t.Fatal("engine-only page should not load patch.js")

@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.18.12
+
+Runtime bootstrap parser-blocking fix.
+
+GoSX now emits managed `wasm_exec`, patch, and bootstrap runtime scripts with
+`defer` when they are placed in the document head. The scripts still execute in
+document order, so the runtime dependency chain is preserved, but server-rendered
+HTML can continue parsing before the shared runtime bundle downloads. This keeps
+engine-heavy pages interactive on slow networks instead of hiding SSR controls
+behind a parser-blocking bootstrap request.
+
 ## v0.18.11
 
 Scene3D required-renderer contract release.

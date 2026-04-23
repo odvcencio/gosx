@@ -162,8 +162,8 @@ func TestRewriteStaticExportHTMLRewritesRootAssetsAndImageOptimizerURLs(t *testi
 func TestRouteCapabilitiesFromHTMLReadsRuntimeManifestAndEnhancements(t *testing.T) {
 	input := `<!DOCTYPE html><html><head>
 <script data-gosx-navigation="true"></script>
-<script data-gosx-script="wasm-exec" src="/gosx/wasm_exec.js"></script>
-<script data-gosx-script="bootstrap" data-gosx-bootstrap-mode="full" src="/gosx/bootstrap-runtime.js"></script>
+<script defer data-gosx-script="wasm-exec" src="/gosx/wasm_exec.js"></script>
+<script defer data-gosx-script="bootstrap" data-gosx-bootstrap-mode="full" src="/gosx/bootstrap-runtime.js"></script>
 <script defer data-gosx-script="feature-scene3d" src="/gosx/bootstrap-feature-scene3d.js"></script>
 <script id="gosx-manifest" type="application/json">{
   "version": "0.1.0",
