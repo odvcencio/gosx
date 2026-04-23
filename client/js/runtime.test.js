@@ -7804,6 +7804,96 @@ test("bootstrap prefers canvas Scene3D rendering on software WebGL backends", as
   assert.equal(mount.getAttribute("data-gosx-scene3d-renderer-fallback"), "environment-constrained");
 });
 
+test("bootstrap requires WebGL for Scene3D when requested", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-required-webgl";
+
+  const env = createContext({
+    elements: [mount],
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-required-webgl",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-required-webgl",
+          jsExport: "GoSXScene3D",
+          props: {
+            width: 480,
+            height: 300,
+            autoRotate: false,
+            requireWebGL: true,
+            unsupportedMessage: "Update your browser or enable hardware acceleration.",
+            scene: {
+              objects: [
+                { kind: "box", width: 1.4, height: 1.1, depth: 1.2, x: 0, y: 0, z: 0, color: "#8de1ff" },
+              ],
+            },
+          },
+          capabilities: ["canvas", "webgl", "animation"],
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  assert.equal(mount.getAttribute("data-gosx-scene3d-require-webgl"), "true");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "unsupported");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer-fallback"), "webgl-required");
+  assert.equal(mount.children.length, 1);
+  assert.equal(mount.children[0].getAttribute("data-gosx-scene3d-unsupported"), "true");
+  assert.equal(mount.children[0].textContent, "Update your browser or enable hardware acceleration.");
+});
+
+test("bootstrap honors required WebGL over software-renderer canvas preference", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-required-software-webgl";
+
+  const env = createContext({
+    elements: [mount],
+    enableWebGL: true,
+    disableCanvas2D: true,
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-required-software-webgl",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-required-software-webgl",
+          jsExport: "GoSXScene3D",
+          props: {
+            width: 480,
+            height: 300,
+            autoRotate: false,
+            requireWebGL: true,
+            scene: {
+              objects: [
+                { kind: "box", width: 1.4, height: 1.1, depth: 1.2, x: 0, y: 0, z: 0, color: "#8de1ff" },
+              ],
+            },
+          },
+          capabilities: ["canvas", "webgl", "animation"],
+        },
+      ],
+    },
+    createWebGLContext: () => new FakeWebGLContext({
+      vendor: "Google Inc. (Google)",
+      renderer: "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+    }),
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  assert.equal(mount.getAttribute("data-gosx-scene3d-software-webgl"), "true");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-require-webgl"), "true");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgl-preference"), "force");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "webgl");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer-fallback"), null);
+});
+
 test("Scene3D defers postfx until idle delay", async () => {
   const mount = new FakeElement("div", null);
   mount.id = "scene-webgl-deferred-postfx";

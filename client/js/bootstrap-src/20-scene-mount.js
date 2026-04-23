@@ -98,6 +98,10 @@
     return window.__gosx.scene3dWebGLProbe;
   }
 
+  function sceneRequiresWebGL(props) {
+    return sceneBool(props && props.requireWebGL, false);
+  }
+
   function createSceneRenderer(canvas, props, capability) {
     const registryResult = createSceneRendererFromRegistry(canvas, props, capability);
     if (registryResult) {
@@ -145,6 +149,9 @@
         };
       }
     }
+    if (sceneRequiresWebGL(props)) {
+      return null;
+    }
     const ctx2d = typeof canvas.getContext === "function" ? canvas.getContext("2d") : null;
     if (!ctx2d) {
       return null;
@@ -160,13 +167,14 @@
       return null;
     }
     const webglPreference = sceneCapabilityWebGLPreference(props, capability);
+    const requireWebGL = sceneRequiresWebGL(props);
     const request = {
       props,
       capability,
       webgpu: webglPreference === "prefer",
       webgl: webglPreference === "prefer" || webglPreference === "force",
       webgl2: webglPreference === "prefer" || webglPreference === "force",
-      canvas2d: true,
+      canvas2d: !requireWebGL,
       preferWebGPU: webglPreference === "prefer",
       forceWebGL: webglPreference === "force",
     };
@@ -1432,11 +1440,11 @@
   }
 
   function sceneCapabilityWebGLPreference(props, capability) {
+    if (sceneRequiresWebGL(props) || sceneBool(props && props.forceWebGL, false)) {
+      return "force";
+    }
     if (!sceneBool(props && props.preferWebGL, true)) {
       return "disabled";
-    }
-    if (sceneBool(props && props.forceWebGL, false)) {
-      return "force";
     }
     if (sceneBool(props && props.preferCanvas, false)) {
       return "avoid";
@@ -1513,6 +1521,7 @@
     setAttrValue(mount, "data-gosx-scene3d-reduced-data", capability.reducedData ? "true" : "false");
     setAttrValue(mount, "data-gosx-scene3d-low-power", capability.lowPower ? "true" : "false");
     setAttrValue(mount, "data-gosx-scene3d-software-webgl", capability.softwareWebGL ? "true" : "false");
+    setAttrValue(mount, "data-gosx-scene3d-require-webgl", sceneRequiresWebGL(props) ? "true" : "false");
     setAttrValue(mount, "data-gosx-scene3d-visual-viewport", capability.visualViewportActive ? "true" : "false");
     setAttrValue(mount, "data-gosx-scene3d-webgl-preference", sceneCapabilityWebGLPreference(props, capability));
     setAttrValue(mount, "data-gosx-scene3d-device-memory", capability.deviceMemory > 0 ? capability.deviceMemory : "");
@@ -1525,6 +1534,29 @@
     }
     setAttrValue(mount, "data-gosx-scene3d-renderer", renderer && renderer.kind ? renderer.kind : "");
     setAttrValue(mount, "data-gosx-scene3d-renderer-fallback", fallbackReason || "");
+  }
+
+  function showSceneRequiredRendererMessage(mount, props, reason) {
+    if (!mount || typeof document === "undefined" || !document || typeof document.createElement !== "function") {
+      return;
+    }
+    const defaultMessage = sceneRequiresWebGL(props)
+      ? "Accelerated WebGL is required. Update your browser or enable hardware acceleration."
+      : "Scene rendering is unavailable in this browser.";
+    const message = String(
+      props && props.unsupportedMessage
+        ? props.unsupportedMessage
+        : defaultMessage
+    );
+    const wrapper = document.createElement("div");
+    wrapper.setAttribute("class", "gosx-scene3d-unsupported");
+    wrapper.setAttribute("data-gosx-scene3d-unsupported", "true");
+    wrapper.setAttribute("data-gosx-scene3d-unsupported-reason", reason || "webgl-required");
+    wrapper.setAttribute("role", "status");
+    const text = document.createElement("p");
+    text.textContent = message;
+    wrapper.appendChild(text);
+    mount.appendChild(wrapper);
   }
 
   function observeSceneCapability(mount, props, capability, onChange) {
@@ -2916,21 +2948,31 @@
     const initialRenderer = createSceneRenderer(canvas, props, capability);
     if (!initialRenderer || !initialRenderer.renderer) {
       console.warn("[gosx] Scene3D could not acquire a renderer");
+      const unsupportedReason = sceneRequiresWebGL(props) ? "webgl-required" : "renderer-unavailable";
+      applySceneRendererState(ctx.mount, { kind: "unsupported" }, unsupportedReason);
+      setAttrValue(ctx.mount, "data-gosx-scene3d-ready", "false");
+      if (canvas.parentNode === ctx.mount) {
+        ctx.mount.removeChild(canvas);
+      }
+      if (labelLayer.parentNode === ctx.mount) {
+        ctx.mount.removeChild(labelLayer);
+      }
+      if (sentinelLayer.parentNode === ctx.mount) {
+        sentinelLayer.parentNode.removeChild(sentinelLayer);
+      }
+      delete ctx.mount.__gosxScene3DSentinels;
+      delete ctx.mount.__gosxScene3DCSSDynamic;
+      delete ctx.mount.__gosxScene3DCSSRevision;
+      delete ctx.mount.__gosxScene3DCSSAnimationUntil;
+      showSceneRequiredRendererMessage(ctx.mount, props, unsupportedReason);
       return {
         dispose() {
-          if (canvas.parentNode === ctx.mount) {
-            ctx.mount.removeChild(canvas);
+          const unsupported = ctx.mount.querySelector
+            ? ctx.mount.querySelector("[data-gosx-scene3d-unsupported]")
+            : null;
+          if (unsupported && unsupported.parentNode === ctx.mount) {
+            ctx.mount.removeChild(unsupported);
           }
-          if (labelLayer.parentNode === ctx.mount) {
-            ctx.mount.removeChild(labelLayer);
-          }
-          if (sentinelLayer.parentNode === ctx.mount) {
-            ctx.mount.removeChild(sentinelLayer);
-          }
-          delete ctx.mount.__gosxScene3DSentinels;
-          delete ctx.mount.__gosxScene3DCSSDynamic;
-          delete ctx.mount.__gosxScene3DCSSRevision;
-          delete ctx.mount.__gosxScene3DCSSAnimationUntil;
         },
       };
     }
@@ -3182,6 +3224,11 @@
     }
 
     function fallbackSceneRenderer(reason) {
+      if (sceneRequiresWebGL(props)) {
+        gosxSceneEmit("warn", "renderer-fallback-disabled", { reason: reason || "" });
+        applySceneRendererState(ctx.mount, renderer, reason || "webgl-required");
+        return false;
+      }
       const ctx2d = typeof canvas.getContext === "function" ? canvas.getContext("2d") : null;
       if (!ctx2d) {
         gosxSceneEmit("warn", "renderer-fallback-unavailable", { reason: reason || "" });

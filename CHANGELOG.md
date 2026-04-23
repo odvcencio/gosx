@@ -1,5 +1,21 @@
 # Changelog
 
+## v0.18.11
+
+Scene3D required-renderer contract release.
+
+Scene3D surfaces can now set `requireWebGL` to stay on the WebGL path instead
+of falling back to canvas rendering. Required scenes publish
+`data-gosx-scene3d-require-webgl`, force the WebGL renderer preference, remove
+canvas fallback candidates, and render an explicit unsupported-browser status
+message when no WebGL renderer can be acquired. Context-loss fallback attempts
+now emit `renderer-fallback-disabled` for required scenes instead of silently
+swapping to canvas.
+
+The default Scene3D behavior remains unchanged for non-required scenes, so
+software-renderer and constrained-browser canvas selection still works unless a
+route explicitly opts into the required WebGL contract.
+
 ## v0.18.10
 
 Scene3D runtime polish release.
