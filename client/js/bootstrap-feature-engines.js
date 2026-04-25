@@ -570,6 +570,31 @@
     }).filter(function(label) {
       return label.text.trim() !== "";
     }) : [];
+    bundle.html = Array.isArray(bundle.html) ? bundle.html.map(function(entry, index) {
+      const item = entry && typeof entry === "object" ? entry : {};
+      return {
+        id: item.id || ("scene-html-" + index),
+        html: typeof item.html === "string" ? item.html : (typeof item.markup === "string" ? item.markup : ""),
+        className: sceneLabelClassName(item),
+        position: {
+          x: sceneNumber(item.position && item.position.x, 0),
+          y: sceneNumber(item.position && item.position.y, 0),
+        },
+        depth: sceneNumber(item.depth, 0),
+        priority: sceneNumber(item.priority, 0),
+        width: Math.max(1, sceneNumber(item.width, 180)),
+        height: Math.max(1, sceneNumber(item.height, 72)),
+        opacity: clamp01(sceneNumber(item.opacity, 1)),
+        offsetX: sceneNumber(item.offsetX, 0),
+        offsetY: sceneNumber(item.offsetY, 0),
+        anchorX: Math.max(0, Math.min(1, sceneNumber(item.anchorX, 0.5))),
+        anchorY: Math.max(0, Math.min(1, sceneNumber(item.anchorY, 0.5))),
+        occlude: sceneBool(item.occlude, false),
+        pointerEvents: normalizeSceneHTMLPointerEvents(item.pointerEvents, "none"),
+      };
+    }).filter(function(entry) {
+      return entry.html.trim() !== "";
+    }) : [];
     bundle.positions = sceneFloatArray(bundle.positions);
     bundle.colors = sceneFloatArray(bundle.colors);
     bundle.worldPositions = sceneFloatArray(bundle.worldPositions);

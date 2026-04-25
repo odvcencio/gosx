@@ -799,6 +799,27 @@
     });
   }
 
+  function sceneInstantiateModelHTML(rawHTML, model, prefix, index) {
+    const normalized = normalizeSceneHTML(rawHTML, index);
+    if (!normalized || !normalized.html.trim()) {
+      return null;
+    }
+    const position = sceneModelTransformPoint({ x: normalized.x, y: normalized.y, z: normalized.z }, model);
+    const shift = sceneModelTransformVector({ x: normalized.shiftX, y: normalized.shiftY, z: normalized.shiftZ }, model);
+    const modelScale = sceneModelMaxScale(model);
+    return Object.assign({}, normalized, {
+      id: prefix + "/" + normalized.id,
+      x: position.x,
+      y: position.y,
+      z: position.z,
+      shiftX: shift.x,
+      shiftY: shift.y,
+      shiftZ: shift.z,
+      width: normalized.width * modelScale,
+      height: normalized.height * modelScale,
+    });
+  }
+
   function parseSceneModelAsset(raw, src) {
     let payload = raw;
     if (payload && typeof payload === "object" && payload.scene && typeof payload.scene === "object") {
@@ -824,6 +845,7 @@
       points: Array.isArray(record.points) ? record.points : [],
       labels: Array.isArray(record.labels) ? record.labels : [],
       sprites,
+      html: Array.isArray(record.html) ? record.html : (Array.isArray(record.htmlOverlays) ? record.htmlOverlays : []),
       lights: Array.isArray(record.lights) ? record.lights : [],
       animations: Array.isArray(record.animations) ? record.animations : [],
       skins: Array.isArray(record.skins) ? record.skins : [],
@@ -1307,12 +1329,13 @@
     state._modelAnimations = [];
     state._modelSkins = [];
     if (!models.length) {
-      return { models: 0, objects: 0, points: 0, labels: 0, sprites: 0, lights: 0 };
+      return { models: 0, objects: 0, points: 0, labels: 0, sprites: 0, html: 0, lights: 0 };
     }
     let objectCount = 0;
     let pointCount = 0;
     let labelCount = 0;
     let spriteCount = 0;
+    let htmlCount = 0;
     let lightCount = 0;
     await Promise.all(models.map(async function(model, modelIndex) {
       const asset = await loadSceneModelAsset(model.src);
@@ -1352,6 +1375,14 @@
         state.sprites.set(sprite.id, sprite);
         spriteCount += 1;
       }
+      for (let i = 0; i < asset.html.length; i += 1) {
+        const entry = sceneInstantiateModelHTML(asset.html[i], model, prefix, i);
+        if (!entry) {
+          continue;
+        }
+        state.html.set(entry.id, entry);
+        htmlCount += 1;
+      }
       for (let i = 0; i < asset.lights.length; i += 1) {
         const light = sceneInstantiateModelLight(asset.lights[i], model, prefix, i);
         if (!light) {
@@ -1362,7 +1393,7 @@
       }
       await scenePrepareModelSkinPlayback(state, asset, model, skinInstances, objectIDs);
     }));
-    return { models: models.length, objects: objectCount, points: pointCount, labels: labelCount, sprites: spriteCount, lights: lightCount };
+    return { models: models.length, objects: objectCount, points: pointCount, labels: labelCount, sprites: spriteCount, html: htmlCount, lights: lightCount };
   }
 
   function normalizeSceneCapabilityTier(value) {
@@ -2337,6 +2368,7 @@
     const zIndex = Math.max(1, 1000 + Math.round(sceneNumber(label.priority, 0) * 10) - Math.round(sceneNumber(label.depth, 0) * 10));
 
     element.setAttribute("data-gosx-scene-label", label.id || "");
+    setAttrValue(element, "aria-hidden", "true");
     setAttrValue(element, "class", label.className ? ("gosx-scene-label " + label.className) : "gosx-scene-label");
     setAttrValue(element, "data-gosx-scene-label-collision", normalizeSceneLabelCollision(label.collision));
     setAttrValue(element, "data-gosx-scene-label-occlude", label.occlude ? "true" : "false");
@@ -2431,6 +2463,7 @@
   function renderSceneSpriteElement(element, sprite, box, hidden, occluded) {
     const zIndex = Math.max(1, 1000 + Math.round(sceneNumber(sprite.priority, 0) * 10) - Math.round(sceneNumber(sprite.depth, 0) * 10));
     element.setAttribute("data-gosx-scene-sprite", sprite.id || "");
+    setAttrValue(element, "aria-hidden", "true");
     setAttrValue(element, "class", sprite.className ? ("gosx-scene-sprite " + sprite.className) : "gosx-scene-sprite");
     setAttrValue(element, "data-gosx-scene-sprite-fit", normalizeSceneSpriteFit(sprite.fit));
     setAttrValue(element, "data-gosx-scene-sprite-occlude", sprite.occlude ? "true" : "false");
@@ -2479,6 +2512,123 @@
         elements.set(id, element);
       }
       renderSceneSpriteElement(element, entry.sprite, entry.box, entry.hidden, entry.occluded);
+    }
+    for (const [id, element] of elements.entries()) {
+      if (active.has(id)) {
+        continue;
+      }
+      if (element.parentNode === layer) {
+        layer.removeChild(element);
+      }
+      elements.delete(id);
+    }
+  }
+
+  function sceneHTMLBounds(entry) {
+    const anchorX = sceneNumber(entry.anchorX, 0.5);
+    const anchorY = sceneNumber(entry.anchorY, 0.5);
+    const htmlWidth = Math.max(1, sceneNumber(entry.width, 1));
+    const htmlHeight = Math.max(1, sceneNumber(entry.height, 1));
+    const anchorPointX = sceneNumber(entry.position && entry.position.x, 0) + sceneNumber(entry.offsetX, 0);
+    const anchorPointY = sceneNumber(entry.position && entry.position.y, 0) + sceneNumber(entry.offsetY, 0);
+    const left = anchorPointX - (anchorX * htmlWidth);
+    const top = anchorPointY - (anchorY * htmlHeight);
+    return {
+      left,
+      top,
+      right: left + htmlWidth,
+      bottom: top + htmlHeight,
+      anchor: { x: anchorPointX, y: anchorPointY },
+      center: { x: left + (htmlWidth / 2), y: top + (htmlHeight / 2) },
+    };
+  }
+
+  function sceneHTMLPriorityCompare(a, b) {
+    const priorityDiff = sceneNumber(b && b.html && b.html.priority, 0) - sceneNumber(a && a.html && a.html.priority, 0);
+    if (Math.abs(priorityDiff) > 0.001) {
+      return priorityDiff;
+    }
+    const depthDiff = sceneNumber(a && a.html && a.html.depth, 0) - sceneNumber(b && b.html && b.html.depth, 0);
+    if (Math.abs(depthDiff) > 0.001) {
+      return depthDiff;
+    }
+    return sceneNumber(a && a.order, 0) - sceneNumber(b && b.order, 0);
+  }
+
+  function prepareSceneHTMLEntries(bundle, width, height) {
+    const htmlEntries = bundle && Array.isArray(bundle.html) ? bundle.html : [];
+    const occluders = buildSceneLabelOccluders(bundle, width, height);
+    const entries = [];
+    for (let index = 0; index < htmlEntries.length; index += 1) {
+      const htmlEntry = htmlEntries[index];
+      if (!htmlEntry || typeof htmlEntry.html !== "string" || htmlEntry.html.trim() === "") {
+        continue;
+      }
+      const box = sceneHTMLBounds(htmlEntry);
+      entries.push({
+        id: htmlEntry.id || ("scene-html-" + index),
+        order: index,
+        html: htmlEntry,
+        depth: sceneNumber(htmlEntry.depth, 0),
+        box,
+        occluded: false,
+        hidden: false,
+      });
+    }
+    const sorted = entries.slice().sort(sceneHTMLPriorityCompare);
+    for (const entry of sorted) {
+      entry.occluded = sceneOverlayOccluded(entry, occluders, entry.html && entry.html.occlude);
+      if (entry.occluded) {
+        entry.hidden = true;
+      }
+    }
+    return entries;
+  }
+
+  function renderSceneHTMLElement(element, htmlEntry, box, hidden, occluded) {
+    const zIndex = Math.max(1, 1000 + Math.round(sceneNumber(htmlEntry.priority, 0) * 10) - Math.round(sceneNumber(htmlEntry.depth, 0) * 10));
+    element.setAttribute("data-gosx-scene-html", htmlEntry.id || "");
+    setAttrValue(element, "class", htmlEntry.className ? ("gosx-scene-html " + htmlEntry.className) : "gosx-scene-html");
+    setAttrValue(element, "data-gosx-scene-html-occlude", htmlEntry.occlude ? "true" : "false");
+    setAttrValue(element, "data-gosx-scene-html-occluded", occluded ? "true" : "false");
+    setAttrValue(element, "data-gosx-scene-html-visibility", hidden ? "hidden" : "visible");
+    setAttrValue(element, "aria-hidden", hidden ? "true" : "false");
+    setAttrValue(element, "data-gosx-scene-html-priority", sceneNumber(htmlEntry.priority, 0));
+    setAttrValue(element, "data-gosx-scene-html-depth", sceneNumber(htmlEntry.depth, 0));
+    setAttrValue(element, "data-gosx-scene-html-pointer-events", normalizeSceneHTMLPointerEvents(htmlEntry.pointerEvents, "none"));
+    setStyleValue(element.style, "--gosx-scene-html-left", box.anchor.x + "px");
+    setStyleValue(element.style, "--gosx-scene-html-top", box.anchor.y + "px");
+    setStyleValue(element.style, "--gosx-scene-html-anchor-x", String(sceneNumber(htmlEntry.anchorX, 0.5)));
+    setStyleValue(element.style, "--gosx-scene-html-anchor-y", String(sceneNumber(htmlEntry.anchorY, 0.5)));
+    setStyleValue(element.style, "--gosx-scene-html-width", Math.max(1, sceneNumber(htmlEntry.width, 1)) + "px");
+    setStyleValue(element.style, "--gosx-scene-html-min-height", Math.max(1, sceneNumber(htmlEntry.height, 1)) + "px");
+    setStyleValue(element.style, "--gosx-scene-html-opacity", String(clamp01(sceneNumber(htmlEntry.opacity, 1))));
+    setStyleValue(element.style, "--gosx-scene-html-z-index", String(zIndex));
+    setStyleValue(element.style, "--gosx-scene-html-depth", String(sceneNumber(htmlEntry.depth, 0)));
+    setStyleValue(element.style, "--gosx-scene-html-pointer-events", normalizeSceneHTMLPointerEvents(htmlEntry.pointerEvents, "none"));
+    if (element.__gosxHTMLMarkup !== htmlEntry.html) {
+      element.innerHTML = htmlEntry.html;
+      element.__gosxHTMLMarkup = htmlEntry.html;
+    }
+  }
+
+  function renderSceneHTML(layer, bundle, elements, width, height) {
+    if (!layer) {
+      return;
+    }
+    const entries = prepareSceneHTMLEntries(bundle, width, height);
+    setAttrValue(layer, "aria-hidden", entries.length > 0 ? "false" : "true");
+    const active = new Set();
+    for (const entry of entries) {
+      const id = entry.id;
+      active.add(id);
+      let element = elements.get(id);
+      if (!element) {
+        element = document.createElement("div");
+        layer.appendChild(element);
+        elements.set(id, element);
+      }
+      renderSceneHTMLElement(element, entry.html, entry.box, entry.hidden, entry.occluded);
     }
     for (const [id, element] of elements.entries()) {
       if (active.has(id)) {
@@ -2915,7 +3065,8 @@
       }
       return sceneStateObjects(sceneState).some(sceneObjectAnimated) ||
         sceneStateLabels(sceneState).some(sceneLabelAnimated) ||
-        sceneStateSprites(sceneState).some(sceneSpriteAnimated);
+        sceneStateSprites(sceneState).some(sceneSpriteAnimated) ||
+        sceneStateHTML(sceneState).some(sceneHTMLAnimated);
     }
 
     // Extract CSS var transition timing from materials/environment so the
@@ -3009,6 +3160,7 @@
     const labelLayoutCache = new Map();
     const labelElements = new Map();
     const spriteElements = new Map();
+    const htmlElements = new Map();
     let labelRefreshHandle = null;
 
     function syncSceneNodeSentinels(bundle) {
@@ -3021,6 +3173,7 @@
       collectSceneNodeSentinelIDs(next, bundle && bundle.lights);
       collectSceneNodeSentinelIDs(next, bundle && bundle.labels);
       collectSceneNodeSentinelIDs(next, bundle && bundle.sprites);
+      collectSceneNodeSentinelIDs(next, bundle && bundle.html);
       next.forEach(function(id) {
         if (sceneNodeSentinels.has(id)) {
           return;
@@ -3076,6 +3229,7 @@
         }
         renderSceneLabels(labelLayer, latestBundle, labelLayoutCache, labelElements, viewport.cssWidth, viewport.cssHeight);
         renderSceneSprites(labelLayer, latestBundle, spriteElements, viewport.cssWidth, viewport.cssHeight);
+        renderSceneHTML(labelLayer, latestBundle, htmlElements, viewport.cssWidth, viewport.cssHeight);
       });
     });
 
@@ -3275,6 +3429,7 @@
       maybeEmitRenderEmpty(latestBundle);
       renderSceneLabels(labelLayer, latestBundle, labelLayoutCache, labelElements, viewport.cssWidth, viewport.cssHeight);
       renderSceneSprites(labelLayer, latestBundle, spriteElements, viewport.cssWidth, viewport.cssHeight);
+      renderSceneHTML(labelLayer, latestBundle, htmlElements, viewport.cssWidth, viewport.cssHeight);
       return true;
     }
 
@@ -3785,10 +3940,10 @@
       }
     }
 
-	    function renderFrame(now, reason) {
-	      if (disposed) return;
-	      const perfEnabled = typeof window !== "undefined" && window.__gosx_scene3d_perf === true;
-	      recordScenePerfCounter("render:" + (reason || "animation"));
+    function renderFrame(now, reason) {
+      if (disposed) return;
+      const perfEnabled = typeof window !== "undefined" && window.__gosx_scene3d_perf === true;
+      recordScenePerfCounter("render:" + (reason || "animation"));
       // Only re-measure the viewport when something has actually
       // invalidated it. Static frames (the common case during continuous
       // animation without DOM changes) reuse the cached `viewport` and
@@ -3809,14 +3964,14 @@
         ? 0
         : Math.max(0, Math.min(0.1, timeSeconds - lastModelAnimationTimeSeconds));
       lastModelAnimationTimeSeconds = timeSeconds;
-	      if (perfEnabled) performance.mark("scene3d-model-animations-start");
-	      sceneAdvanceModelAnimations(sceneState, modelAnimationDelta);
-	      if (perfEnabled) {
-	        performance.mark("scene3d-model-animations-end");
-	        performance.measure("scene3d-model-animations", "scene3d-model-animations-start", "scene3d-model-animations-end");
-	        performance.clearMarks("scene3d-model-animations-start");
-	        performance.clearMarks("scene3d-model-animations-end");
-	      }
+      if (perfEnabled) performance.mark("scene3d-model-animations-start");
+      sceneAdvanceModelAnimations(sceneState, modelAnimationDelta);
+      if (perfEnabled) {
+        performance.mark("scene3d-model-animations-end");
+        performance.measure("scene3d-model-animations", "scene3d-model-animations-start", "scene3d-model-animations-end");
+        performance.clearMarks("scene3d-model-animations-start");
+        performance.clearMarks("scene3d-model-animations-end");
+      }
       if (runtimeScene && ctx.runtime && typeof ctx.runtime.renderFrame === "function") {
         const runtimeBundle = ctx.runtime.renderFrame(timeSeconds, viewport.cssWidth, viewport.cssHeight);
         if (runtimeBundle) {
@@ -3829,6 +3984,7 @@
           renderer.render(effectiveBundle, viewport);
           renderSceneLabels(labelLayer, effectiveBundle, labelLayoutCache, labelElements, viewport.cssWidth, viewport.cssHeight);
           renderSceneSprites(labelLayer, effectiveBundle, spriteElements, viewport.cssWidth, viewport.cssHeight);
+          renderSceneHTML(labelLayer, effectiveBundle, htmlElements, viewport.cssWidth, viewport.cssHeight);
           scheduleNextAnimationFrame();
           return;
         }
@@ -3845,15 +4001,16 @@
           sceneApplyLOD(sceneState.points[li], camX, camY, camZ);
         }
       }
-	      if (perfEnabled) performance.mark("scene3d-bundle-start");
-	      latestBundle = createSceneRenderBundle(
-	        viewport.cssWidth,
+      if (perfEnabled) performance.mark("scene3d-bundle-start");
+      latestBundle = createSceneRenderBundle(
+        viewport.cssWidth,
         viewport.cssHeight,
         sceneState.background,
         sceneCurrentControlCamera(sceneControlHandle.controller, sceneState.camera, sceneState._scrollCamera),
         sceneStateObjectsWithMaterials(sceneState),
         sceneStateLabels(sceneState),
         sceneStateSprites(sceneState),
+        sceneStateHTML(sceneState),
         sceneStateLights(sceneState),
         sceneState.environment,
         timeSeconds,
@@ -3861,19 +4018,20 @@
         sceneState.instancedMeshes,
         sceneState.computeParticles,
         sceneState.postEffects,
-	        sceneState.postFXMaxPixels,
-	      );
-	      if (perfEnabled) {
-	        performance.mark("scene3d-bundle-end");
-	        performance.measure("scene3d-bundle", "scene3d-bundle-start", "scene3d-bundle-end");
-	        performance.clearMarks("scene3d-bundle-start");
-	        performance.clearMarks("scene3d-bundle-end");
-	      }
+        sceneState.postFXMaxPixels,
+      );
+      if (perfEnabled) {
+        performance.mark("scene3d-bundle-end");
+        performance.measure("scene3d-bundle", "scene3d-bundle-start", "scene3d-bundle-end");
+        performance.clearMarks("scene3d-bundle-start");
+        performance.clearMarks("scene3d-bundle-end");
+      }
       syncSceneNodeSentinels(latestBundle);
       renderer.render(latestBundle, viewport);
       maybeEmitRenderEmpty(latestBundle);
       renderSceneLabels(labelLayer, latestBundle, labelLayoutCache, labelElements, viewport.cssWidth, viewport.cssHeight);
       renderSceneSprites(labelLayer, latestBundle, spriteElements, viewport.cssWidth, viewport.cssHeight);
+      renderSceneHTML(labelLayer, latestBundle, htmlElements, viewport.cssWidth, viewport.cssHeight);
       scheduleNextAnimationFrame();
     }
 
@@ -4056,6 +4214,7 @@
       objects: sceneStateObjects(sceneState).length,
       labels: sceneStateLabels(sceneState).length,
       sprites: sceneStateSprites(sceneState).length,
+      html: sceneStateHTML(sceneState).length,
       lights: sceneStateLights(sceneState).length,
       models: sceneModels(props).length,
     });

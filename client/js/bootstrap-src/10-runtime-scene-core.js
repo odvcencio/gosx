@@ -921,6 +921,23 @@
     return props && Array.isArray(props.sprites) ? props.sprites : [];
   }
 
+  function rawSceneHTML(props) {
+    const scene = sceneProps(props);
+    if (scene && Array.isArray(scene.html)) {
+      return scene.html;
+    }
+    if (scene && Array.isArray(scene.htmlOverlays)) {
+      return scene.htmlOverlays;
+    }
+    if (scene && Array.isArray(scene.htmls)) {
+      return scene.htmls;
+    }
+    if (props && Array.isArray(props.html)) {
+      return props.html;
+    }
+    return props && Array.isArray(props.htmlOverlays) ? props.htmlOverlays : [];
+  }
+
   function rawSceneLights(props) {
     const scene = sceneProps(props);
     if (scene && Array.isArray(scene.lights)) {
@@ -1485,6 +1502,72 @@
     };
   }
 
+  function sceneHTMLMarkup(item, current) {
+    for (const key of ["html", "markup", "content"]) {
+      if (typeof item[key] === "string") {
+        return item[key];
+      }
+    }
+    for (const key of ["html", "markup", "content"]) {
+      if (typeof current[key] === "string") {
+        return current[key];
+      }
+    }
+    return "";
+  }
+
+  function normalizeSceneHTMLPointerEvents(value, fallback) {
+    const raw = typeof value === "string" ? value.trim().toLowerCase() : "";
+    switch (raw) {
+      case "auto":
+      case "true":
+      case "interactive":
+        return "auto";
+      case "none":
+      case "false":
+        return "none";
+      default:
+        return fallback || "none";
+    }
+  }
+
+  function normalizeSceneHTML(entry, index, fallback) {
+    const current = sceneIsPlainObject(fallback) ? fallback : {};
+    const item = sceneIsPlainObject(entry) ? entry : {};
+    const width = Math.max(0.05, sceneNumber(item.width, sceneNumber(current.width, 1.8)));
+    const height = Math.max(0.05, sceneNumber(item.height, sceneNumber(current.height, 0.72)));
+    const scale = Math.max(0.05, sceneNumber(item.scale, sceneNumber(current.scale, 1)));
+    const lifecycle = sceneNormalizeLifecycle(item, current);
+    return {
+      id: item.id || current.id || ("scene-html-" + index),
+      html: sceneHTMLMarkup(item, current),
+      className: sceneLabelClassName(item) || sceneLabelClassName(current),
+      x: sceneNumber(item.x, sceneNumber(current.x, 0)),
+      y: sceneNumber(item.y, sceneNumber(current.y, 0)),
+      z: sceneNumber(item.z, sceneNumber(current.z, 0)),
+      priority: sceneNumber(item.priority, sceneNumber(current.priority, 0)),
+      shiftX: sceneNumber(item.shiftX, sceneNumber(current.shiftX, 0)),
+      shiftY: sceneNumber(item.shiftY, sceneNumber(current.shiftY, 0)),
+      shiftZ: sceneNumber(item.shiftZ, sceneNumber(current.shiftZ, 0)),
+      driftSpeed: sceneNumber(item.driftSpeed, sceneNumber(current.driftSpeed, 0)),
+      driftPhase: sceneNumber(item.driftPhase, sceneNumber(current.driftPhase, 0)),
+      width,
+      height,
+      scale,
+      opacity: clamp01(sceneNumber(item.opacity, sceneNumber(current.opacity, 1))),
+      offsetX: sceneNumber(item.offsetX, sceneNumber(current.offsetX, 0)),
+      offsetY: sceneNumber(item.offsetY, sceneNumber(current.offsetY, 0)),
+      anchorX: sceneClamp(sceneNumber(item.anchorX, sceneNumber(current.anchorX, 0.5)), 0, 1),
+      anchorY: sceneClamp(sceneNumber(item.anchorY, sceneNumber(current.anchorY, 0.5)), 0, 1),
+      occlude: sceneBool(Object.prototype.hasOwnProperty.call(item, "occlude") ? item.occlude : current.occlude, false),
+      pointerEvents: normalizeSceneHTMLPointerEvents(item.pointerEvents, normalizeSceneHTMLPointerEvents(current.pointerEvents, "none")),
+      _transition: lifecycle.transition,
+      _inState: lifecycle.inState,
+      _outState: lifecycle.outState,
+      _live: lifecycle.live,
+    };
+  }
+
   function sceneLabelClassName(item) {
     if (!item || typeof item !== "object") {
       return "";
@@ -1656,6 +1739,16 @@
       })
       .filter(function(sprite) {
         return sprite.src !== "";
+      });
+  }
+
+  function sceneHTML(props) {
+    return rawSceneHTML(props)
+      .map(function(entry, index) {
+        return normalizeSceneHTML(entry, index, null);
+      })
+      .filter(function(entry) {
+        return entry.html.trim() !== "";
       });
   }
 
@@ -2168,6 +2261,7 @@
       objects: new Map(),
       labels: new Map(),
       sprites: new Map(),
+      html: new Map(),
       lights: new Map(),
       points: scenePoints(props),
       instancedMeshes: sceneInstancedMeshes(props),
@@ -2190,6 +2284,9 @@
     }
     for (const sprite of sceneSprites(props)) {
       state.sprites.set(sprite.id, sprite);
+    }
+    for (const entry of sceneHTML(props)) {
+      state.html.set(entry.id, entry);
     }
     for (const light of sceneLights(props)) {
       state.lights.set(light.id, light);
@@ -2339,6 +2436,10 @@
 
   function sceneStateSprites(state) {
     return Array.from(state.sprites.values());
+  }
+
+  function sceneStateHTML(state) {
+    return Array.from(state.html.values());
   }
 
   function sceneStateLights(state) {
@@ -2699,6 +2800,8 @@
         return normalizeSceneLabel(raw, fallback && fallback.id ? fallback.id : 0, fallback);
       case "sprite":
         return normalizeSceneSprite(raw, fallback && fallback.id ? fallback.id : 0, fallback);
+      case "html":
+        return normalizeSceneHTML(raw, fallback && fallback.id ? fallback.id : 0, fallback);
       case "light":
         return normalizeSceneLight(raw, fallback && fallback.id ? fallback.id : 0, fallback);
       case "points":
@@ -2719,6 +2822,7 @@
       case "object":
       case "points":
       case "sprite":
+      case "html":
         return { opacity: 0 };
       case "light":
         return { intensity: 0 };
@@ -2785,6 +2889,7 @@
       ["object", sceneStateObjects(state)],
       ["label", sceneStateLabels(state)],
       ["sprite", sceneStateSprites(state)],
+      ["html", sceneStateHTML(state)],
       ["light", sceneStateLights(state)],
       ["points", Array.isArray(state && state.points) ? state.points : []],
       ["instanced", Array.isArray(state && state.instancedMeshes) ? state.instancedMeshes : []],
@@ -2876,6 +2981,7 @@
       ["object", sceneStateObjects(state)],
       ["label", sceneStateLabels(state)],
       ["sprite", sceneStateSprites(state)],
+      ["html", sceneStateHTML(state)],
       ["light", sceneStateLights(state)],
       ["points", Array.isArray(state && state.points) ? state.points : []],
       ["instanced", Array.isArray(state && state.instancedMeshes) ? state.instancedMeshes : []],
@@ -2924,6 +3030,16 @@
     return sceneNumber(sprite.shiftX, 0) !== 0 || sceneNumber(sprite.shiftY, 0) !== 0 || sceneNumber(sprite.shiftZ, 0) !== 0;
   }
 
+  function sceneHTMLAnimated(entry) {
+    if (!entry || typeof entry !== "object") {
+      return false;
+    }
+    if (sceneNumber(entry.driftSpeed, 0) === 0) {
+      return false;
+    }
+    return sceneNumber(entry.shiftX, 0) !== 0 || sceneNumber(entry.shiftY, 0) !== 0 || sceneNumber(entry.shiftZ, 0) !== 0;
+  }
+
   const SCENE_CMD_CREATE_OBJECT = 0;
   const SCENE_CMD_REMOVE_OBJECT = 1;
   const SCENE_CMD_SET_TRANSFORM = 2;
@@ -2949,6 +3065,7 @@
         state.objects.delete(sceneObjectKey(command.objectId));
         state.labels.delete(sceneObjectKey(command.objectId));
         state.sprites.delete(sceneObjectKey(command.objectId));
+        state.html.delete(sceneObjectKey(command.objectId));
         state.lights.delete(sceneObjectKey(command.objectId));
         return;
       case SCENE_CMD_SET_TRANSFORM:
@@ -2997,6 +3114,13 @@
       }
       return;
     }
+    if (payload.kind === "html") {
+      const entry = sceneHTMLFromPayload(objectID, payload, state.html.get(sceneObjectKey(objectID)));
+      if (entry) {
+        state.html.set(sceneObjectKey(objectID), entry);
+      }
+      return;
+    }
     const key = sceneObjectKey(objectID);
     const next = sceneObjectFromPayload(objectID, payload, state.objects.get(key));
     if (next) {
@@ -3028,12 +3152,23 @@
       return;
     }
     const currentSprite = state.sprites.get(key);
-    if (!currentSprite) return;
-    const nextSprite = sceneSpriteFromPayload(objectID, {
-      props: Object.assign({}, currentSprite, patch || {}),
-    }, currentSprite);
-    if (nextSprite) {
-      state.sprites.set(key, nextSprite);
+    if (currentSprite) {
+      const nextSprite = sceneSpriteFromPayload(objectID, {
+        props: Object.assign({}, currentSprite, patch || {}),
+      }, currentSprite);
+      if (nextSprite) {
+        state.sprites.set(key, nextSprite);
+      }
+      return;
+    }
+    const currentHTML = state.html.get(key);
+    if (currentHTML) {
+      const nextHTML = sceneHTMLFromPayload(objectID, {
+        props: Object.assign({}, currentHTML, patch || {}),
+      }, currentHTML);
+      if (nextHTML) {
+        state.html.set(key, nextHTML);
+      }
     }
   }
 
@@ -3073,6 +3208,18 @@
       return null;
     }
     return sprite;
+  }
+
+  function sceneHTMLFromPayload(objectID, payload, fallback) {
+    const current = fallback && typeof fallback === "object" ? fallback : {};
+    const props = payload && payload.props && typeof payload.props === "object" ? payload.props : {};
+    const merged = Object.assign({}, current, props);
+    merged.id = current.id || merged.id || ("scene-html-" + objectID);
+    const entry = normalizeSceneHTML(merged, objectID, current);
+    if (!entry.html.trim()) {
+      return null;
+    }
+    return entry;
   }
 
   function applySceneLightPatch(state, objectID, patch) {
@@ -3273,7 +3420,7 @@
     return depth.far <= near || depth.near >= far;
   }
 
-  function createSceneRenderBundle(width, height, background, camera, objects, labels, sprites, lights, environment, timeSeconds, points, instancedMeshes, computeParticles, postEffects, postFXMaxPixels) {
+  function createSceneRenderBundle(width, height, background, camera, objects, labels, sprites, html, lights, environment, timeSeconds, points, instancedMeshes, computeParticles, postEffects, postFXMaxPixels) {
     const resolvedEnvironment = sceneResolveLightingEnvironment(environment, Array.isArray(lights) && lights.length > 0);
     const bundle = {
       bundleVersion: 1,
@@ -3288,6 +3435,7 @@
       surfaces: [],
       labels: [],
       sprites: [],
+      html: [],
       lines: [],
       points: Array.isArray(points) ? points : [],
       instancedMeshes: Array.isArray(instancedMeshes) ? instancedMeshes : [],
@@ -3334,6 +3482,9 @@
     }
     for (const sprite of sprites || []) {
       appendSceneSpriteToBundle(bundle, camera, width, height, sprite, timeSeconds);
+    }
+    for (const entry of html || []) {
+      appendSceneHTMLToBundle(bundle, camera, width, height, entry, timeSeconds);
     }
     bundle.positions = new Float32Array(bundle.positions);
     bundle.colors = new Float32Array(bundle.colors);
@@ -3979,6 +4130,40 @@
       anchorY: sceneNumber(sprite.anchorY, 0.5),
       occlude: Boolean(sprite.occlude),
       fit: normalizeSceneSpriteFit(sprite.fit),
+    });
+  }
+
+  function appendSceneHTMLToBundle(bundle, camera, width, height, entry, timeSeconds) {
+    const point = sceneSpritePoint(entry, timeSeconds);
+    const projected = sceneProjectPoint(point, camera, width, height);
+    if (!projected) {
+      return;
+    }
+    const size = sceneProjectedSpriteSize(camera, width, height, entry, projected.depth);
+    if (size.width <= 0 || size.height <= 0) {
+      return;
+    }
+    const marginX = Math.max(24, size.width);
+    const marginY = Math.max(24, size.height);
+    if (projected.x < -marginX || projected.x > width + marginX || projected.y < -marginY || projected.y > height + marginY) {
+      return;
+    }
+    bundle.html.push({
+      id: entry.id,
+      html: entry.html,
+      className: entry.className,
+      position: { x: projected.x, y: projected.y },
+      depth: projected.depth,
+      priority: sceneNumber(entry.priority, 0),
+      width: size.width,
+      height: size.height,
+      opacity: clamp01(sceneNumber(entry.opacity, 1)),
+      offsetX: sceneNumber(entry.offsetX, 0),
+      offsetY: sceneNumber(entry.offsetY, 0),
+      anchorX: sceneNumber(entry.anchorX, 0.5),
+      anchorY: sceneNumber(entry.anchorY, 0.5),
+      occlude: Boolean(entry.occlude),
+      pointerEvents: normalizeSceneHTMLPointerEvents(entry.pointerEvents, "none"),
     });
   }
 
@@ -5587,6 +5772,7 @@
     createSceneWebGLRenderer,
     engineFrame,
     normalizeSceneEnvironment,
+    normalizeSceneHTML,
     normalizeSceneLabel,
     normalizeSceneLabelAlign,
     normalizeSceneLabelCollision,
@@ -5606,6 +5792,7 @@
     sceneCameraEquivalent,
     clamp01,
     sceneHasActiveTransitions,
+    sceneHTMLAnimated,
     sceneLabelAnimated,
     sceneMeshMaterialArray,
     sceneModels,
@@ -5620,6 +5807,7 @@
     sceneResolveLightingEnvironment,
     sceneSpriteAnimated,
     sceneStateLabels,
+    sceneStateHTML,
     sceneStateLights,
     sceneStateObjects,
     sceneStateSprites,

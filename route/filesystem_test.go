@@ -831,6 +831,9 @@ func Page() Node {
 		<If when={data.showExtra}>
 			<Points id="extra-stars" count={1} positions={data.positions} size={0.4} color="#ffd48f" />
 		</If>
+		<Html id="hud-card" x={0} y={1.1} z={0.2} width={1.6} height={0.8} pointerEvents="auto" class="scene-hud">
+			<aside class="scene-hud__card"><strong>Hull</strong><span>{data.hull}</span></aside>
+		</Html>
 		<div>Scene fallback</div>
 	</Scene3D>
 }
@@ -843,6 +846,7 @@ func Page() Node {
 		Data: map[string]any{
 			"positions": []float64{0, 0, 0, 1, 1, 1},
 			"showExtra": true,
+			"hull":      "stable",
 			"meshes": []map[string]any{
 				{
 					"id":    "dynamic-hero",
@@ -872,6 +876,8 @@ func Page() Node {
 		`data-gosx-component="Mesh"`,
 		`data-gosx-component="Model"`,
 		`data-gosx-component="Points"`,
+		`data-gosx-component="Html"`,
+		`<Html`,
 		`dynamic-hero`,
 		`extra-stars`,
 	} {
@@ -907,6 +913,13 @@ func Page() Node {
 		`"id": "extra-stars"`,
 		`"positions": [`,
 		`"blendMode": "additive"`,
+		`"html": [`,
+		`"id": "hud-card"`,
+		`"class": "scene-hud"`,
+		`"pointerEvents": "auto"`,
+		`scene-hud__card`,
+		`Hull`,
+		`stable`,
 	} {
 		if !strings.Contains(head, snippet) {
 			t.Fatalf("expected %q in composable Scene3D runtime head %q", snippet, head)

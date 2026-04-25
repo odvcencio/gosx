@@ -1,10 +1,34 @@
   // Scene canvas — Canvas 2D fallback renderer.
 
-  function strokeLine(ctx2d, from, to) {
-    ctx2d.beginPath();
-    ctx2d.moveTo(from.x, from.y);
-    ctx2d.lineTo(to.x, to.y);
-    ctx2d.stroke();
+  function createSceneCanvasLineBatch(ctx2d) {
+    let active = false;
+    let strokeStyle = "";
+    let lineWidth = 0;
+    function flush() {
+      if (!active) {
+        return;
+      }
+      ctx2d.stroke();
+      active = false;
+    }
+    return {
+      line(from, to, color, width) {
+        const nextStrokeStyle = color || "#8de1ff";
+        const nextLineWidth = Math.max(0.1, sceneNumber(width, 1.8));
+        if (!active || nextStrokeStyle !== strokeStyle || nextLineWidth !== lineWidth) {
+          flush();
+          strokeStyle = nextStrokeStyle;
+          lineWidth = nextLineWidth;
+          ctx2d.strokeStyle = strokeStyle;
+          ctx2d.lineWidth = lineWidth;
+          ctx2d.beginPath();
+          active = true;
+        }
+        ctx2d.moveTo(from.x, from.y);
+        ctx2d.lineTo(to.x, to.y);
+      },
+      flush,
+    };
   }
 
   function sceneBundleUsesWorldProjection(bundle) {
@@ -28,6 +52,7 @@
     // 1.8px default so pre-v0.15.1 scenes render unchanged.
     const widths = bundle && bundle.worldLineWidths;
     const vertexCount = Math.max(0, Math.floor(sceneNumber(bundle && bundle.worldVertexCount, 0)));
+    const batch = createSceneCanvasLineBatch(ctx2d);
     for (let index = 0; index + 1 < vertexCount; index += 2) {
       const fromWorld = sceneWorldPointAt(positions, index);
       const toWorld = sceneWorldPointAt(positions, index + 1);
@@ -40,7 +65,7 @@
         continue;
       }
       const colorOffset = index * 4;
-      ctx2d.strokeStyle = sceneRGBAString([
+      const color = sceneRGBAString([
         sceneNumber(colors && colors[colorOffset], 0.55),
         sceneNumber(colors && colors[colorOffset + 1], 0.88),
         sceneNumber(colors && colors[colorOffset + 2], 1),
@@ -48,9 +73,9 @@
       ]);
       const segmentIndex = index / 2;
       const segmentWidth = widths && segmentIndex < widths.length ? widths[segmentIndex] : 0;
-      ctx2d.lineWidth = segmentWidth > 0 ? segmentWidth : 1.8;
-      strokeLine(ctx2d, from, to);
+      batch.line(from, to, color, segmentWidth > 0 ? segmentWidth : 1.8);
     }
+    batch.flush();
   }
 
   function createSceneCanvasRenderer(ctx2d, canvas) {
@@ -71,11 +96,11 @@
         if (sceneBundleUsesWorldProjection(bundle)) {
           renderSceneCanvasWorldBundle(ctx2d, bundle, sceneViewportValue(viewport, "cssWidth", canvas.width), sceneViewportValue(viewport, "cssHeight", canvas.height));
         } else {
+          const batch = createSceneCanvasLineBatch(ctx2d);
           for (const line of lines) {
-            ctx2d.strokeStyle = line.color;
-            ctx2d.lineWidth = line.lineWidth;
-            strokeLine(ctx2d, line.from, line.to);
+            batch.line(line.from, line.to, line.color, line.lineWidth);
           }
+          batch.flush();
         }
         if (typeof ctx2d.restore === "function") {
           ctx2d.restore();

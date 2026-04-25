@@ -316,7 +316,7 @@ scene.Props{
 
 ### Feature surface
 
-- **Scene graph** — `Group`, `Mesh`, `InstancedMesh`, `Points`, `Label`, `Sprite`, `Model`, `ComputeParticles`, per-node transforms, nesting, world-transform lowering
+- **Scene graph** — `Group`, `Mesh`, `InstancedMesh`, `Points`, `Label`, `Sprite`, `Html`, `Model`, `ComputeParticles`, per-node transforms, nesting, world-transform lowering
 - **Geometry** — `Box`, `Cube`, `Plane`, `Pyramid`, `Sphere`, `Lines`, `Cylinder`, `Torus`, plus arbitrary geometry from loaded models
 - **Materials** — `StandardMaterial` (PBR with roughness/metalness workflow), `FlatMaterial`, `GhostMaterial`, `GlassMaterial`, `GlowMaterial`, `MatteMaterial`, configurable blend modes and render passes
 - **Lights** — `AmbientLight`, `DirectionalLight`, `PointLight`, `SpotLight`, `HemisphereLight`; shadows on directional and spot with per-light `ShadowSize` and a scene-wide `Shadows.MaxPixels` cap

@@ -80,6 +80,19 @@ class FakeDocumentFragment {
   }
 }
 
+function fakeHTMLText(value) {
+  return String(value == null ? "" : value)
+    .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, "")
+    .replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, "")
+    .replace(/<[^>]*>/g, "")
+    .replace(/&nbsp;/g, "\u00a0")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'");
+}
+
 class FakeCanvasContext2D {
   constructor(ownerDocument) {
     this.ownerDocument = ownerDocument;
@@ -482,6 +495,7 @@ class FakeElement {
     this.pauseCalls = [];
     this.fullscreenCalls = [];
     this.animateCalls = [];
+    this._innerHTML = null;
     this.paused = true;
     this.ended = false;
     this.muted = false;
@@ -528,10 +542,29 @@ class FakeElement {
   }
 
   set textContent(value) {
+    this._innerHTML = null;
     this.childNodes = [];
     const textNode = new FakeTextNode(value, this.ownerDocument);
     textNode.parentNode = this;
     this.childNodes.push(textNode);
+  }
+
+  get innerHTML() {
+    if (this._innerHTML != null) {
+      return this._innerHTML;
+    }
+    return this.childNodes.map((child) => child.textContent).join("");
+  }
+
+  set innerHTML(value) {
+    this._innerHTML = String(value == null ? "" : value);
+    this.childNodes = [];
+    const text = fakeHTMLText(this._innerHTML);
+    if (text !== "") {
+      const textNode = new FakeTextNode(text, this.ownerDocument);
+      textNode.parentNode = this;
+      this.childNodes.push(textNode);
+    }
   }
 
   appendChild(node) {
@@ -547,6 +580,7 @@ class FakeElement {
     }
 
     node.parentNode = this;
+    this._innerHTML = null;
     if (this.ownerDocument) {
       adoptNode(node, this.ownerDocument);
     }
@@ -577,6 +611,7 @@ class FakeElement {
     if (idx >= 0) {
       this.childNodes.splice(idx, 1);
       node.parentNode = null;
+      this._innerHTML = null;
     }
     return node;
   }
@@ -593,6 +628,7 @@ class FakeElement {
       return this.appendChild(node);
     }
     node.parentNode = this;
+    this._innerHTML = null;
     if (this.ownerDocument) {
       adoptNode(node, this.ownerDocument);
     }
@@ -5486,6 +5522,69 @@ test("bootstrap renders declarative Scene3D sprite billboards without authored J
   assert.equal(env.consoleLogs.error.length, 0);
 });
 
+test("bootstrap renders declarative Scene3D HTML overlays on the canvas backend", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-html-root";
+
+  const env = createContext({
+    elements: [mount],
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-html",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-html-root",
+          props: {
+            width: 640,
+            height: 360,
+            background: "#08151f",
+            autoRotate: false,
+            scene: {
+              objects: [
+                { id: "hero", kind: "box", width: 1.4, height: 1.1, depth: 0.9, x: 0, y: 0, z: 0.3, color: "#8de1ff" },
+              ],
+              html: [
+                {
+                  id: "hud-card",
+                  className: "hud-card",
+                  html: '<section class="hud"><strong>HTML</strong> <span>scene</span></section>',
+                  x: 0,
+                  y: 1.2,
+                  z: 0.2,
+                  width: 1.6,
+                  height: 0.8,
+                  pointerEvents: "auto",
+                  priority: 4,
+                },
+              ],
+            },
+            camera: { x: 0, y: 0, z: 6, fov: 72 },
+          },
+          capabilities: ["canvas"],
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const labelLayer = mount.children[1];
+  const html = labelLayer.children.find((child) => child.getAttribute("data-gosx-scene-html") === "hud-card");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "canvas");
+  assert.equal(labelLayer.getAttribute("data-gosx-scene3d-label-layer"), "true");
+  assert.equal(labelLayer.getAttribute("aria-hidden"), "false");
+  assert.ok(html);
+  assert.equal(html.getAttribute("class"), "gosx-scene-html hud-card");
+  assert.equal(html.getAttribute("data-gosx-scene-html-pointer-events"), "auto");
+  assert.equal(html.getAttribute("aria-hidden"), "false");
+  assert.equal(html.innerHTML, '<section class="hud"><strong>HTML</strong> <span>scene</span></section>');
+  assert.equal(html.textContent, "HTML scene");
+  assert.equal(html.style["--gosx-scene-html-pointer-events"], "auto");
+  assert.equal(env.consoleLogs.error.length, 0);
+});
+
 test("bootstrap emits declarative Scene3D pick signals without authored JS", async () => {
   const mount = new FakeElement("div", null);
   mount.id = "scene-pick-root";
@@ -5748,6 +5847,7 @@ test("bootstrap stamps and validates Scene3D IR bundles", async () => {
     180,
     "#08151f",
     { x: 0, y: 0, z: 6, fov: 72, near: 0.05, far: 128 },
+    [],
     [],
     [],
     [],
@@ -7323,6 +7423,7 @@ test("bootstrap renders mixed native Scene3D primitives", async () => {
 
   const ctx2d = canvas.getContext("2d");
   const strokeCount = ctx2d.ops.filter((entry) => entry[0] === "stroke").length;
+  const lineCount = ctx2d.ops.filter((entry) => entry[0] === "lineTo").length;
   const labelLayer = mount.children[1];
   assert.equal(canvas.getAttribute("width"), "520");
   assert.equal(canvas.getAttribute("height"), "320");
@@ -7336,7 +7437,8 @@ test("bootstrap renders mixed native Scene3D primitives", async () => {
   assert.equal(labelLayer.children[0].children.length >= 2, true);
   assert.equal(labelLayer.children[0].textContent, "Geometry zooBrowser-measured overlay copy");
   assert.equal(env.context.__gosx.textLayout.read(labelLayer.children[0]).lineCount >= 2, true);
-  assert.ok(strokeCount >= 12);
+  assert.ok(lineCount >= 12);
+  assert.ok(strokeCount >= 1);
   assert.equal(env.consoleLogs.warn.length, 0);
   assert.equal(env.consoleLogs.error.length, 0);
 });

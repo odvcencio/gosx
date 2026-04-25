@@ -27,6 +27,7 @@
    * @property {object[]} [points]
    * @property {object[]} [instancedMeshes]
    * @property {object[]} [computeParticles]
+   * @property {object[]} [html]
    */
 
   /**
@@ -231,7 +232,8 @@
     validateSceneIRArray(bundle, "computeParticles", errors);
     validateSceneIRArray(bundle, "labels", errors);
     validateSceneIRArray(bundle, "sprites", errors);
-    if (!bundle.objects && !bundle.meshObjects && !bundle.points && !bundle.instancedMeshes && !bundle.computeParticles && !bundle.labels && !bundle.sprites) {
+    validateSceneIRArray(bundle, "html", errors);
+    if (!bundle.objects && !bundle.meshObjects && !bundle.points && !bundle.instancedMeshes && !bundle.computeParticles && !bundle.labels && !bundle.sprites && !bundle.html) {
       errors.push("scene IR must include nodes or render-bundle arrays");
     }
   }

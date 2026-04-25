@@ -2726,6 +2726,18 @@ func (r *fileProgramRenderer) lowerScene3DComposableNode(child *ir.Node, env fil
 		appendScene3DSceneRecord(sceneMap, "instancedMeshes", attrs)
 	case "ComputeParticles":
 		appendScene3DSceneRecord(sceneMap, "computeParticles", attrs)
+	case "Html", "HTML":
+		attrs = cloneStringAnyMap(attrs)
+		if _, ok := attrs["html"]; !ok {
+			if _, ok := attrs["markup"]; !ok {
+				if _, ok := attrs["content"]; !ok {
+					if childrenHTML := strings.TrimSpace(r.renderChildren(child.Children, env)); childrenHTML != "" {
+						attrs["html"] = childrenHTML
+					}
+				}
+			}
+		}
+		appendScene3DSceneRecord(sceneMap, "html", attrs)
 	case "DirectionalLight", "PointLight", "AmbientLight", "SpotLight", "HemisphereLight":
 		attrs = cloneStringAnyMap(attrs)
 		if _, ok := attrs["kind"]; !ok {
@@ -2752,6 +2764,7 @@ func (r *fileProgramRenderer) lowerScene3DComposableNode(child *ir.Node, env fil
 func isScene3DComposableTag(tag string) bool {
 	switch tag {
 	case "Mesh", "Model", "Points", "InstancedMesh", "ComputeParticles",
+		"Html", "HTML",
 		"DirectionalLight", "PointLight", "AmbientLight", "SpotLight", "HemisphereLight",
 		"Environment", "Camera", "Material",
 		"PostFX.Bloom", "PostFX.Vignette", "PostFX.ColorGrading", "PostFX.Tonemap":
