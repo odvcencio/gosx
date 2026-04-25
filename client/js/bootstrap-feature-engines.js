@@ -14,6 +14,9 @@
     const engineFrame = api.engineFrame;
     const cancelEngineFrame = api.cancelEngineFrame;
     const capabilityList = api.capabilityList;
+    const requiredCapabilityList = api.requiredCapabilityList;
+    const engineCapabilityStatus = api.engineCapabilityStatus;
+    const applyRuntimeCapabilityState = api.applyRuntimeCapabilityState;
     const activateInputProviders = api.activateInputProviders;
     const releaseInputProviders = api.releaseInputProviders;
     const clearChildren = api.clearChildren;
@@ -1668,7 +1671,57 @@
     };
   }
 
-  function createEngineContext(entry, mount, runtime) {
+  function engineCapabilityUnsupportedMessage(entry, status) {
+    const custom = entry && entry.props && entry.props.unsupportedMessage;
+    if (typeof custom === "string" && custom.trim() !== "") {
+      return custom.trim();
+    }
+    const missing = status && status.missing && status.missing.length > 0
+      ? status.missing.join(", ")
+      : "required browser APIs";
+    return `This experience requires ${missing} support. Use a current browser with hardware acceleration enabled.`;
+  }
+
+  function showEngineCapabilityUnsupported(mount, entry, status) {
+    if (!mount || !document || typeof document.createElement !== "function") {
+      return;
+    }
+    clearChildren(mount);
+    const wrapper = document.createElement("div");
+    wrapper.setAttribute("class", "gosx-engine-unsupported");
+    wrapper.setAttribute("data-gosx-engine-unsupported", "true");
+    wrapper.setAttribute("data-gosx-engine-unsupported-reason", "missing-capability");
+    wrapper.setAttribute("role", "alert");
+    wrapper.textContent = engineCapabilityUnsupportedMessage(entry, status);
+    mount.appendChild(wrapper);
+  }
+
+  function reportMissingEngineCapabilities(entry, mount, status) {
+    const missing = status.missing.join(", ");
+    console.error(`[gosx] missing required engine capabilities for ${entry.id}: ${missing}`);
+    if (typeof window !== "undefined" && typeof window.__gosx_emit === "function") {
+      window.__gosx_emit("error", "engine", "missing required engine capabilities", {
+        component: String(entry.component || ""),
+        engineID: String(entry.id || ""),
+        missingCapabilities: status.missing.slice(),
+        requiredCapabilities: status.required.slice(),
+      });
+    }
+    if (window.__gosx && typeof window.__gosx.reportIssue === "function") {
+      window.__gosx.reportIssue({
+        scope: "engine",
+        type: "capability",
+        component: entry.component,
+        source: entry.id,
+        ref: status.missing.join(" "),
+        element: mount,
+        message: `missing required engine capabilities: ${missing}`,
+        fallback: "unsupported",
+      });
+    }
+  }
+
+  function createEngineContext(entry, mount, runtime, capabilityStatus) {
     return {
       id: entry.id,
       kind: entry.kind,
@@ -1676,6 +1729,8 @@
       mount: mount,
       props: entry.props || {},
       capabilities: entry.capabilities || [],
+      requiredCapabilities: requiredCapabilityList(entry),
+      capabilityStatus: capabilityStatus || engineCapabilityStatus(entry),
       programRef: entry.programRef || "",
       runtimeMode: entry.runtime || "",
       runtime: runtime,
@@ -1701,8 +1756,15 @@
 
     const mount = resolveEngineMount(entry);
     if (engineKindNeedsMount(entry.kind) && !mount) return;
+    const capabilityStatus = engineCapabilityStatus(entry);
+    applyRuntimeCapabilityState(mount, "engine", capabilityStatus);
+    if (!capabilityStatus.ok) {
+      showEngineCapabilityUnsupported(mount, entry, capabilityStatus);
+      reportMissingEngineCapabilities(entry, mount, capabilityStatus);
+      return;
+    }
     const runtime = createEngineRuntime(entry, mount);
-    const ctx = createEngineContext(entry, mount, runtime);
+    const ctx = createEngineContext(entry, mount, runtime, capabilityStatus);
     pendingEngineRuntimes.set(entry.id, runtime);
 
     const factory = await resolveMountedEngineFactory(entry);
@@ -1812,6 +1874,8 @@
       component: entry.component,
       kind: entry.kind,
       capabilities: capabilityList(entry),
+      requiredCapabilities: requiredCapabilityList(entry),
+      capabilityStatus: context.capabilityStatus || engineCapabilityStatus(entry),
       runtime: context.runtime,
       mount: mount,
       handle: handle,

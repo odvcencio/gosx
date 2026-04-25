@@ -723,7 +723,7 @@ func TestDefaultFileRendererSupportsEngineBuiltins(t *testing.T) {
 
 func Page() Node {
 	return <main>
-		<Surface name="Whiteboard" jsExport="Whiteboard" class="board" props={data.board}>
+		<Surface name="Whiteboard" jsExport="Whiteboard" class="board" requiredCapabilities="canvas" props={data.board}>
 			<div>Board fallback</div>
 		</Surface>
 		<Worker name="SearchIndexer" jsExport="SearchIndexer" props={data.job} />
@@ -746,8 +746,9 @@ func Page() Node {
 				"index": "posts",
 			},
 			"scene": map[string]any{
-				"width":  640,
-				"height": 360,
+				"width":        640,
+				"height":       360,
+				"requireWebGL": true,
 				"scene": map[string]any{
 					"objects": []map[string]any{
 						{
@@ -775,10 +776,12 @@ func Page() Node {
 		`data-gosx-enhance="engine"`,
 		`data-gosx-enhance-layer="runtime"`,
 		`data-gosx-engine-kind="surface"`,
+		`data-gosx-engine-required-capabilities="canvas"`,
 		`class="scene-shell"`,
 		`data-gosx-engine="GoSXScene3D"`,
 		`data-gosx-enhance="scene3d"`,
 		`data-gosx-scene3d`,
+		`data-gosx-engine-required-capabilities="canvas webgl"`,
 		`Scene fallback`,
 	} {
 		if !strings.Contains(html, snippet) {
@@ -792,6 +795,13 @@ func Page() Node {
 		`Whiteboard`,
 		`SearchIndexer`,
 		`GoSXScene3D`,
+		`"requiredCapabilities": [
+        "canvas"
+      ]`,
+		`"requiredCapabilities": [
+        "canvas",
+        "webgl"
+      ]`,
 		`bootstrap-runtime.js`,
 	} {
 		if !strings.Contains(head, snippet) {

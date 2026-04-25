@@ -10,3 +10,5 @@
   registerFeature("islands", function(api) {
     const fetchProgram = api.fetchProgram;
     const inferProgramFormat = api.inferProgramFormat;
+    const runtimeCapabilityStatus = api.runtimeCapabilityStatus;
+    const applyRuntimeCapabilityState = api.applyRuntimeCapabilityState;

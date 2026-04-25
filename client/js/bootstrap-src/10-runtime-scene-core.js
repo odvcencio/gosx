@@ -247,6 +247,206 @@
     return Array.isArray(entry && entry.capabilities) ? entry.capabilities : [];
   }
 
+  const browserCapabilityCache = Object.create(null);
+
+  function normalizeCapabilityName(value) {
+    return String(value == null ? "" : value).trim().toLowerCase();
+  }
+
+  function appendCapabilityValues(value, append) {
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        append(item);
+      }
+      return;
+    }
+    if (typeof value === "string") {
+      for (const item of value.replace(/[,|]/g, " ").split(/\s+/)) {
+        append(item);
+      }
+      return;
+    }
+    if (value != null) {
+      append(value);
+    }
+  }
+
+  function requiredCapabilityList(entry) {
+    const out = [];
+    const seen = Object.create(null);
+    const append = function(raw) {
+      const capability = normalizeCapabilityName(raw);
+      if (!capability || seen[capability]) {
+        return;
+      }
+      seen[capability] = true;
+      out.push(capability);
+    };
+    appendCapabilityValues(entry && entry.requiredCapabilities, append);
+    appendCapabilityValues(entry && entry.requires, append);
+    if (entry && (entry.runtime === "shared" || entry.programRef)) {
+      append("wasm");
+    }
+    return out;
+  }
+
+  function runtimeCapabilityStatus(entry) {
+    const required = requiredCapabilityList(entry);
+    const supported = [];
+    const missing = [];
+    for (const capability of required) {
+      if (browserCapabilitySupported(capability)) {
+        supported.push(capability);
+      } else {
+        missing.push(capability);
+      }
+    }
+    return {
+      ok: missing.length === 0,
+      requested: capabilityList(entry).slice(),
+      required,
+      supported,
+      missing,
+    };
+  }
+
+  function engineCapabilityStatus(entry) {
+    return runtimeCapabilityStatus(entry);
+  }
+
+  function browserCapabilitySupported(capability) {
+    const name = normalizeCapabilityName(capability);
+    if (!name) {
+      return true;
+    }
+    if (Object.prototype.hasOwnProperty.call(browserCapabilityCache, name)) {
+      return browserCapabilityCache[name];
+    }
+    let supported = false;
+    try {
+      supported = detectBrowserCapability(name);
+    } catch (_e) {
+      supported = false;
+    }
+    browserCapabilityCache[name] = Boolean(supported);
+    return browserCapabilityCache[name];
+  }
+
+  function detectBrowserCapability(name) {
+    switch (name) {
+      case "animation":
+        return typeof requestAnimationFrame === "function";
+      case "audio":
+        return typeof AudioContext === "function" || typeof webkitAudioContext === "function" || canCreateElement("audio");
+      case "canvas":
+        return canCreateCanvas();
+      case "canvas2d":
+      case "pixel-surface":
+        return canCreateCanvasContext("2d");
+      case "compute":
+        return browserCapabilitySupported("webgpu") || browserCapabilitySupported("webgl2");
+      case "fetch":
+        return typeof fetch === "function";
+      case "gamepad":
+        return Boolean(typeof navigator !== "undefined" && navigator && typeof navigator.getGamepads === "function");
+      case "keyboard":
+      case "pointer":
+        return Boolean(document && typeof document.addEventListener === "function");
+      case "storage":
+        return canUseLocalStorage();
+      case "text-input":
+        return canCreateTextInput();
+      case "video":
+        return canCreateVideo();
+      case "wasm":
+        return Boolean(typeof WebAssembly === "object" && WebAssembly && (
+          typeof WebAssembly.instantiate === "function" ||
+          typeof WebAssembly.instantiateStreaming === "function"
+        ));
+      case "webgl":
+        return canCreateCanvasContext("webgl") || canCreateCanvasContext("experimental-webgl") || canCreateCanvasContext("webgl2");
+      case "webgl2":
+        return canCreateCanvasContext("webgl2");
+      case "webgpu":
+        return Boolean(typeof navigator !== "undefined" && navigator && navigator.gpu);
+      case "worker":
+        return typeof Worker === "function";
+      default:
+        return false;
+    }
+  }
+
+  function canCreateElement(tagName) {
+    if (!document || typeof document.createElement !== "function") {
+      return false;
+    }
+    return Boolean(document.createElement(tagName));
+  }
+
+  function canCreateCanvas() {
+    if (!document || typeof document.createElement !== "function") {
+      return false;
+    }
+    const canvas = document.createElement("canvas");
+    return Boolean(canvas && typeof canvas.getContext === "function");
+  }
+
+  function canCreateCanvasContext(kind) {
+    if (!document || typeof document.createElement !== "function") {
+      return false;
+    }
+    const canvas = document.createElement("canvas");
+    if (!canvas || typeof canvas.getContext !== "function") {
+      return false;
+    }
+    return Boolean(canvas.getContext(kind));
+  }
+
+  function canCreateTextInput() {
+    if (!document || typeof document.createElement !== "function") {
+      return false;
+    }
+    const input = document.createElement("input");
+    return Boolean(input && typeof input.focus === "function");
+  }
+
+  function canCreateVideo() {
+    if (!document || typeof document.createElement !== "function") {
+      return false;
+    }
+    const video = document.createElement("video");
+    return Boolean(video && typeof video.canPlayType === "function");
+  }
+
+  function canUseLocalStorage() {
+    try {
+      if (!window || !window.localStorage) {
+        return false;
+      }
+      const key = "__gosx_capability_probe__";
+      window.localStorage.setItem(key, "1");
+      window.localStorage.removeItem(key);
+      return true;
+    } catch (_e) {
+      return false;
+    }
+  }
+
+  function applyRuntimeCapabilityState(element, scope, status) {
+    if (!element || !status) {
+      return;
+    }
+    const prefix = "data-gosx-" + (scope || "runtime") + "-";
+    element.setAttribute(prefix + "capability-state", status.ok ? "ready" : "unsupported");
+    element.setAttribute(prefix + "required-capabilities", status.required.join(" "));
+    element.setAttribute(prefix + "supported-capabilities", status.supported.join(" "));
+    if (status.missing.length > 0) {
+      element.setAttribute(prefix + "missing-capabilities", status.missing.join(" "));
+    } else if (typeof element.removeAttribute === "function") {
+      element.removeAttribute(prefix + "missing-capabilities");
+    }
+  }
+
   function activateInputProviders(entry) {
     for (const capability of capabilityList(entry)) {
       activateInputProvider(capability, entry);

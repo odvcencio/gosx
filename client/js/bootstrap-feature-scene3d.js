@@ -236,6 +236,206 @@
     return Array.isArray(entry && entry.capabilities) ? entry.capabilities : [];
   }
 
+  const browserCapabilityCache = Object.create(null);
+
+  function normalizeCapabilityName(value) {
+    return String(value == null ? "" : value).trim().toLowerCase();
+  }
+
+  function appendCapabilityValues(value, append) {
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        append(item);
+      }
+      return;
+    }
+    if (typeof value === "string") {
+      for (const item of value.replace(/[,|]/g, " ").split(/\s+/)) {
+        append(item);
+      }
+      return;
+    }
+    if (value != null) {
+      append(value);
+    }
+  }
+
+  function requiredCapabilityList(entry) {
+    const out = [];
+    const seen = Object.create(null);
+    const append = function(raw) {
+      const capability = normalizeCapabilityName(raw);
+      if (!capability || seen[capability]) {
+        return;
+      }
+      seen[capability] = true;
+      out.push(capability);
+    };
+    appendCapabilityValues(entry && entry.requiredCapabilities, append);
+    appendCapabilityValues(entry && entry.requires, append);
+    if (entry && (entry.runtime === "shared" || entry.programRef)) {
+      append("wasm");
+    }
+    return out;
+  }
+
+  function runtimeCapabilityStatus(entry) {
+    const required = requiredCapabilityList(entry);
+    const supported = [];
+    const missing = [];
+    for (const capability of required) {
+      if (browserCapabilitySupported(capability)) {
+        supported.push(capability);
+      } else {
+        missing.push(capability);
+      }
+    }
+    return {
+      ok: missing.length === 0,
+      requested: capabilityList(entry).slice(),
+      required,
+      supported,
+      missing,
+    };
+  }
+
+  function engineCapabilityStatus(entry) {
+    return runtimeCapabilityStatus(entry);
+  }
+
+  function browserCapabilitySupported(capability) {
+    const name = normalizeCapabilityName(capability);
+    if (!name) {
+      return true;
+    }
+    if (Object.prototype.hasOwnProperty.call(browserCapabilityCache, name)) {
+      return browserCapabilityCache[name];
+    }
+    let supported = false;
+    try {
+      supported = detectBrowserCapability(name);
+    } catch (_e) {
+      supported = false;
+    }
+    browserCapabilityCache[name] = Boolean(supported);
+    return browserCapabilityCache[name];
+  }
+
+  function detectBrowserCapability(name) {
+    switch (name) {
+      case "animation":
+        return typeof requestAnimationFrame === "function";
+      case "audio":
+        return typeof AudioContext === "function" || typeof webkitAudioContext === "function" || canCreateElement("audio");
+      case "canvas":
+        return canCreateCanvas();
+      case "canvas2d":
+      case "pixel-surface":
+        return canCreateCanvasContext("2d");
+      case "compute":
+        return browserCapabilitySupported("webgpu") || browserCapabilitySupported("webgl2");
+      case "fetch":
+        return typeof fetch === "function";
+      case "gamepad":
+        return Boolean(typeof navigator !== "undefined" && navigator && typeof navigator.getGamepads === "function");
+      case "keyboard":
+      case "pointer":
+        return Boolean(document && typeof document.addEventListener === "function");
+      case "storage":
+        return canUseLocalStorage();
+      case "text-input":
+        return canCreateTextInput();
+      case "video":
+        return canCreateVideo();
+      case "wasm":
+        return Boolean(typeof WebAssembly === "object" && WebAssembly && (
+          typeof WebAssembly.instantiate === "function" ||
+          typeof WebAssembly.instantiateStreaming === "function"
+        ));
+      case "webgl":
+        return canCreateCanvasContext("webgl") || canCreateCanvasContext("experimental-webgl") || canCreateCanvasContext("webgl2");
+      case "webgl2":
+        return canCreateCanvasContext("webgl2");
+      case "webgpu":
+        return Boolean(typeof navigator !== "undefined" && navigator && navigator.gpu);
+      case "worker":
+        return typeof Worker === "function";
+      default:
+        return false;
+    }
+  }
+
+  function canCreateElement(tagName) {
+    if (!document || typeof document.createElement !== "function") {
+      return false;
+    }
+    return Boolean(document.createElement(tagName));
+  }
+
+  function canCreateCanvas() {
+    if (!document || typeof document.createElement !== "function") {
+      return false;
+    }
+    const canvas = document.createElement("canvas");
+    return Boolean(canvas && typeof canvas.getContext === "function");
+  }
+
+  function canCreateCanvasContext(kind) {
+    if (!document || typeof document.createElement !== "function") {
+      return false;
+    }
+    const canvas = document.createElement("canvas");
+    if (!canvas || typeof canvas.getContext !== "function") {
+      return false;
+    }
+    return Boolean(canvas.getContext(kind));
+  }
+
+  function canCreateTextInput() {
+    if (!document || typeof document.createElement !== "function") {
+      return false;
+    }
+    const input = document.createElement("input");
+    return Boolean(input && typeof input.focus === "function");
+  }
+
+  function canCreateVideo() {
+    if (!document || typeof document.createElement !== "function") {
+      return false;
+    }
+    const video = document.createElement("video");
+    return Boolean(video && typeof video.canPlayType === "function");
+  }
+
+  function canUseLocalStorage() {
+    try {
+      if (!window || !window.localStorage) {
+        return false;
+      }
+      const key = "__gosx_capability_probe__";
+      window.localStorage.setItem(key, "1");
+      window.localStorage.removeItem(key);
+      return true;
+    } catch (_e) {
+      return false;
+    }
+  }
+
+  function applyRuntimeCapabilityState(element, scope, status) {
+    if (!element || !status) {
+      return;
+    }
+    const prefix = "data-gosx-" + (scope || "runtime") + "-";
+    element.setAttribute(prefix + "capability-state", status.ok ? "ready" : "unsupported");
+    element.setAttribute(prefix + "required-capabilities", status.required.join(" "));
+    element.setAttribute(prefix + "supported-capabilities", status.supported.join(" "));
+    if (status.missing.length > 0) {
+      element.setAttribute(prefix + "missing-capabilities", status.missing.join(" "));
+    } else if (typeof element.removeAttribute === "function") {
+      element.removeAttribute(prefix + "missing-capabilities");
+    }
+  }
+
   function activateInputProviders(entry) {
     for (const capability of capabilityList(entry)) {
       activateInputProvider(capability, entry);
@@ -15806,7 +16006,7 @@ if (typeof window !== "undefined") {
     }
   }
 
-  async function scenePrepareModelSkinPlayback(state, asset, model, skinInstances) {
+  async function scenePrepareModelSkinPlayback(state, asset, model, skinInstances, objectIDs) {
     if (!sceneModelHasSkins(skinInstances) || !Array.isArray(asset.nodes) || !asset.nodes.length) {
       return;
     }
@@ -15826,6 +16026,7 @@ if (typeof window !== "undefined") {
       id: typeof model.id === "string" ? model.id : "",
       model: Object.assign({}, model || {}),
       live: Array.isArray(model && model._live) ? model._live.slice() : [],
+      objectIDs: Array.isArray(objectIDs) ? objectIDs.slice() : [],
       nodes: asset.nodes,
       rootNodes: sceneModelRootNodes(asset.nodes),
       skins: skinInstances,
@@ -15902,12 +16103,36 @@ if (typeof window !== "undefined") {
     return payload;
   }
 
-  function sceneApplyModelLivePatch(record, patch) {
+  function sceneApplyModelLiveOpacity(state, record, patch) {
+    if (!state || !record || !sceneIsPlainObject(patch) || !Object.prototype.hasOwnProperty.call(patch, "opacity")) {
+      return false;
+    }
+    const opacity = Math.max(0, Math.min(1, sceneNumber(patch.opacity, sceneNumber(record.model && record.model.opacity, 1))));
+    if (record.model) {
+      record.model.opacity = opacity;
+    }
+    const objectIDs = Array.isArray(record.objectIDs) ? record.objectIDs : [];
+    let changed = false;
+    for (let index = 0; index < objectIDs.length; index += 1) {
+      const object = state.objects && state.objects.get ? state.objects.get(objectIDs[index]) : null;
+      if (!object || object.opacity === opacity) {
+        continue;
+      }
+      object.opacity = opacity;
+      if (opacity < 1 && (!object.blendMode || object.blendMode === "opaque")) {
+        object.blendMode = "alpha";
+      }
+      changed = true;
+    }
+    return changed;
+  }
+
+  function sceneApplyModelLivePatch(state, record, patch) {
     if (!record || !record.model || !sceneIsPlainObject(patch)) {
       return false;
     }
     const keys = ["x", "y", "z", "rotationX", "rotationY", "rotationZ", "scaleX", "scaleY", "scaleZ"];
-    let changed = false;
+    let changed = sceneApplyModelLiveOpacity(state, record, patch);
     for (let index = 0; index < keys.length; index += 1) {
       const key = keys[index];
       if (!Object.prototype.hasOwnProperty.call(patch, key)) {
@@ -15964,7 +16189,7 @@ if (typeof window !== "undefined") {
         continue;
       }
       const patch = sceneModelLivePatchForRecord(record, payload);
-      changed = sceneApplyModelLivePatch(record, patch) || changed;
+      changed = sceneApplyModelLivePatch(state, record, patch) || changed;
       changed = sceneApplyModelLiveAnimation(record, patch) || changed;
     }
     return changed;
@@ -15998,12 +16223,14 @@ if (typeof window !== "undefined") {
       const asset = await loadSceneModelAsset(model.src);
       const prefix = model.id || ("scene-model-" + modelIndex);
       const skinInstances = sceneCloneModelSkins(asset.skins);
+      const objectIDs = [];
       for (let i = 0; i < asset.objects.length; i += 1) {
         const object = sceneInstantiateModelObject(asset.objects[i], model, prefix, i, skinInstances);
         if (!object) {
           continue;
         }
         state.objects.set(object.id, object);
+        objectIDs.push(object.id);
         objectCount += 1;
       }
       for (let i = 0; i < asset.points.length; i += 1) {
@@ -16038,7 +16265,7 @@ if (typeof window !== "undefined") {
         state.lights.set(light.id, light);
         lightCount += 1;
       }
-      await scenePrepareModelSkinPlayback(state, asset, model, skinInstances);
+      await scenePrepareModelSkinPlayback(state, asset, model, skinInstances, objectIDs);
     }));
     return { models: models.length, objects: objectCount, points: pointCount, labels: labelCount, sprites: spriteCount, lights: lightCount };
   }

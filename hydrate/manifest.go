@@ -16,6 +16,9 @@ type Manifest struct {
 	// Islands lists every island instance on the page.
 	Islands []IslandEntry `json:"islands"`
 
+	// ComputeIslands lists headless shared-runtime islands on the page.
+	ComputeIslands []ComputeIslandEntry `json:"computeIslands,omitempty"`
+
 	// Engines lists every engine instance on the page.
 	Engines []EngineEntry `json:"engines,omitempty"`
 
@@ -54,8 +57,12 @@ type EngineEntry struct {
 	// Props is the JSON-serialized props snapshot.
 	Props json.RawMessage `json:"props"`
 
-	// Capabilities declares what browser APIs the engine needs.
+	// Capabilities declares what browser APIs the engine can use.
 	Capabilities []string `json:"capabilities,omitempty"`
+
+	// RequiredCapabilities declares browser APIs that must be present before
+	// the client runtime mounts the engine.
+	RequiredCapabilities []string `json:"requiredCapabilities,omitempty"`
 
 	// PixelSurface carries the managed pixel framebuffer config when the engine
 	// declares CapPixelSurface. The client runtime uses this to create the
@@ -118,6 +125,38 @@ type IslandEntry struct {
 
 	// Checksum is a hash of the component source for cache invalidation.
 	Checksum string `json:"checksum,omitempty"`
+
+	// ProgramRef is the URL path to the IslandProgram asset.
+	ProgramRef string `json:"programRef,omitempty"`
+
+	// ProgramFormat is "json" (dev) or "bin" (prod).
+	ProgramFormat string `json:"programFormat,omitempty"`
+
+	// ProgramHash is a content hash for cache busting.
+	ProgramHash string `json:"programHash,omitempty"`
+}
+
+// ComputeIslandEntry describes a headless shared-runtime island.
+// Compute islands use the island VM and shared-signal bridge without owning a
+// DOM root or an engine factory.
+type ComputeIslandEntry struct {
+	// ID is the stable compute island ID (e.g., "gosx-compute-0").
+	ID string `json:"id"`
+
+	// Component is the fully qualified component name.
+	Component string `json:"component"`
+
+	// BundleID references an entry in Manifest.Bundles.
+	BundleID string `json:"bundleId,omitempty"`
+
+	// Props is the JSON-serialized props snapshot.
+	Props json.RawMessage `json:"props"`
+
+	// Capabilities declares browser APIs the compute island can use.
+	Capabilities []string `json:"capabilities,omitempty"`
+
+	// RequiredCapabilities hard-gates browser APIs before hydration.
+	RequiredCapabilities []string `json:"requiredCapabilities,omitempty"`
 
 	// ProgramRef is the URL path to the IslandProgram asset.
 	ProgramRef string `json:"programRef,omitempty"`
@@ -198,6 +237,26 @@ func (m *Manifest) AddIsland(component string, bundleID string, props any) (stri
 	return id, nil
 }
 
+// AddComputeIsland adds a headless shared-runtime island entry and returns its
+// assigned ID.
+func (m *Manifest) AddComputeIsland(component string, bundleID string, props any, capabilities, requiredCapabilities []string) (string, error) {
+	propsJSON, err := json.Marshal(props)
+	if err != nil {
+		return "", err
+	}
+	id := computeIslandID(len(m.ComputeIslands))
+	entry := ComputeIslandEntry{
+		ID:                   id,
+		Component:            component,
+		BundleID:             bundleID,
+		Props:                propsJSON,
+		Capabilities:         capabilities,
+		RequiredCapabilities: requiredCapabilities,
+	}
+	m.ComputeIslands = append(m.ComputeIslands, entry)
+	return id, nil
+}
+
 // AddEngine adds an engine entry and returns the assigned ID.
 func (m *Manifest) AddEngine(component, kind, programRef string, props any, capabilities []string) (string, error) {
 	return m.AddEngineWithRuntime(component, kind, programRef, "", "", props, capabilities, nil)
@@ -206,21 +265,29 @@ func (m *Manifest) AddEngine(component, kind, programRef string, props any, capa
 // AddEngineWithRuntime adds an engine entry with optional DOM mount, runtime
 // selection, and pixel surface configuration.
 func (m *Manifest) AddEngineWithRuntime(component, kind, programRef, mountID, runtime string, props any, capabilities []string, pixelSurface *engine.PixelSurfaceConfig) (string, error) {
+	return m.AddEngineWithRuntimeRequirements(component, kind, programRef, mountID, runtime, props, capabilities, nil, pixelSurface)
+}
+
+// AddEngineWithRuntimeRequirements adds an engine entry with optional DOM
+// mount, runtime selection, hard runtime capability requirements, and pixel
+// surface configuration.
+func (m *Manifest) AddEngineWithRuntimeRequirements(component, kind, programRef, mountID, runtime string, props any, capabilities, requiredCapabilities []string, pixelSurface *engine.PixelSurfaceConfig) (string, error) {
 	propsJSON, err := json.Marshal(props)
 	if err != nil {
 		return "", err
 	}
 	id := engineID(len(m.Engines))
 	entry := EngineEntry{
-		ID:           id,
-		Component:    component,
-		Kind:         kind,
-		ProgramRef:   programRef,
-		MountID:      mountID,
-		Runtime:      runtime,
-		Props:        propsJSON,
-		Capabilities: capabilities,
-		PixelSurface: pixelSurface,
+		ID:                   id,
+		Component:            component,
+		Kind:                 kind,
+		ProgramRef:           programRef,
+		MountID:              mountID,
+		Runtime:              runtime,
+		Props:                propsJSON,
+		Capabilities:         capabilities,
+		RequiredCapabilities: requiredCapabilities,
+		PixelSurface:         pixelSurface,
 	}
 	m.Engines = append(m.Engines, entry)
 	return id, nil
@@ -244,6 +311,10 @@ func engineID(n int) string {
 
 func hubID(n int) string {
 	return "gosx-hub-" + itoa(n)
+}
+
+func computeIslandID(n int) string {
+	return "gosx-compute-" + itoa(n)
 }
 
 func islandID(n int) string {

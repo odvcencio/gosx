@@ -76,8 +76,22 @@ type Summary struct {
 	BootstrapFeatureScene3DPath string
 	HLSPath                     string
 	Islands                     int
+	ComputeIslands              int
 	Engines                     int
 	Hubs                        int
+}
+
+// ComputeIslandConfig describes a headless shared-runtime island. It uses the
+// island VM and shared signal bridge, but does not render or patch a DOM root.
+type ComputeIslandConfig struct {
+	Name                 string
+	BundleID             string
+	Props                any
+	Capabilities         []engine.Capability
+	RequiredCapabilities []engine.Capability
+	ProgramRef           string
+	ProgramFormat        string
+	ProgramHash          string
 }
 
 func enhancementKindForEngine(cfg engine.Config) string {
@@ -689,6 +703,10 @@ func (r *Renderer) RenderEngine(cfg engine.Config, fallback gosx.Node) gosx.Node
 	if err := engine.ValidateCapabilities(cfg.Capabilities); err != nil {
 		return renderEngineError(err)
 	}
+	requiredCapabilities := engineRequiredCapabilities(cfg)
+	if err := engine.ValidateCapabilities(stringCapabilities(requiredCapabilities)); err != nil {
+		return renderEngineError(err)
+	}
 
 	props, err := engineProps(cfg.Props)
 	if err != nil {
@@ -700,7 +718,7 @@ func (r *Renderer) RenderEngine(cfg engine.Config, fallback gosx.Node) gosx.Node
 		mountID = fmt.Sprintf("gosx-engine-mount-%d", len(r.manifest.Engines))
 	}
 
-	id, err := r.manifest.AddEngineWithRuntime(
+	id, err := r.manifest.AddEngineWithRuntimeRequirements(
 		cfg.Name,
 		string(cfg.Kind),
 		cfg.WASMPath,
@@ -708,6 +726,7 @@ func (r *Renderer) RenderEngine(cfg engine.Config, fallback gosx.Node) gosx.Node
 		string(cfg.Runtime),
 		props,
 		engineCapabilities(cfg.Capabilities),
+		requiredCapabilities,
 		cfg.PixelSurface,
 	)
 	if err != nil {
@@ -733,13 +752,16 @@ func (r *Renderer) RenderEngine(cfg engine.Config, fallback gosx.Node) gosx.Node
 			continue
 		}
 		switch name {
-		case "id", "data-gosx-engine", "data-gosx-engine-id", "data-gosx-engine-kind", "data-gosx-engine-capabilities":
+		case "id", "data-gosx-engine", "data-gosx-engine-id", "data-gosx-engine-kind", "data-gosx-engine-capabilities", "data-gosx-engine-required-capabilities", "data-gosx-engine-capability-state", "data-gosx-engine-missing-capabilities":
 			continue
 		}
 		attrs = append(attrs, gosx.Attr(name, value))
 	}
 	if len(cfg.Capabilities) > 0 {
 		attrs = append(attrs, gosx.Attr("data-gosx-engine-capabilities", strings.Join(engineCapabilities(cfg.Capabilities), " ")))
+	}
+	if len(requiredCapabilities) > 0 {
+		attrs = append(attrs, gosx.Attr("data-gosx-engine-required-capabilities", strings.Join(requiredCapabilities, " ")))
 	}
 	if ps := cfg.PixelSurface; ps != nil {
 		attrs = append(attrs,
@@ -1317,6 +1339,49 @@ func engineCapabilities(caps []engine.Capability) []string {
 	out := make([]string, len(caps))
 	for i := range caps {
 		out[i] = string(caps[i])
+	}
+	return out
+}
+
+func engineRequiredCapabilities(cfg engine.Config) []string {
+	caps := append([]engine.Capability(nil), cfg.RequiredCapabilities...)
+	if strings.TrimSpace(cfg.WASMPath) != "" || cfg.Runtime != engine.RuntimeNone {
+		caps = append(caps, engine.CapWASM)
+	}
+	if len(caps) == 0 {
+		return nil
+	}
+
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(caps))
+	for _, cap := range caps {
+		name := strings.TrimSpace(string(cap))
+		if name == "" {
+			continue
+		}
+		if _, exists := seen[name]; exists {
+			continue
+		}
+		seen[name] = struct{}{}
+		out = append(out, name)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func stringCapabilities(caps []string) []engine.Capability {
+	if len(caps) == 0 {
+		return nil
+	}
+	out := make([]engine.Capability, 0, len(caps))
+	for _, cap := range caps {
+		cap = strings.TrimSpace(cap)
+		if cap == "" {
+			continue
+		}
+		out = append(out, engine.Capability(cap))
 	}
 	return out
 }

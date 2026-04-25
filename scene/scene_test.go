@@ -941,6 +941,22 @@ func TestPropsEngineCapabilitiesIncludeWebGPUForComputeParticles(t *testing.T) {
 	}
 }
 
+func TestPropsEngineConfigCarriesRequiredWebGLContract(t *testing.T) {
+	props := Props{
+		RequireWebGL:       Bool(true),
+		UnsupportedMessage: "Use a current browser with hardware acceleration enabled.",
+	}
+
+	cfg := props.EngineConfig()
+	if got := cfg.RequiredCapabilities; len(got) != 2 || got[0] != engine.CapCanvas || got[1] != engine.CapWebGL {
+		t.Fatalf("unexpected required capabilities: %#v", got)
+	}
+	raw := string(cfg.Props)
+	if !contains(raw, `"requireWebGL":true`) || !contains(raw, `"unsupportedMessage":"Use a current browser with hardware acceleration enabled."`) {
+		t.Fatalf("expected required WebGL props in engine payload, got %s", raw)
+	}
+}
+
 func TestPropsSceneIRLowersStandardMaterial(t *testing.T) {
 	props := Props{
 		Graph: NewGraph(

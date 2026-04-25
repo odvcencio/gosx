@@ -237,3 +237,37 @@ func TestManifestAddEngineWithPixelSurface(t *testing.T) {
 		t.Fatal("expected vsync disabled")
 	}
 }
+
+func TestManifestAddEngineWithRequiredCapabilities(t *testing.T) {
+	m := NewManifest()
+
+	id, err := m.AddEngineWithRuntimeRequirements(
+		"StrictScene",
+		"surface",
+		"/gosx/engines/strict.wasm",
+		"strict-root",
+		"shared",
+		map[string]any{"mode": "pbr"},
+		[]string{"canvas", "webgl"},
+		[]string{"wasm", "webgl"},
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("AddEngineWithRuntimeRequirements failed: %v", err)
+	}
+	if id != "gosx-engine-0" {
+		t.Fatalf("expected gosx-engine-0, got %s", id)
+	}
+
+	data, err := m.Marshal()
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	decoded, err := Unmarshal(data)
+	if err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if got := decoded.Engines[0].RequiredCapabilities; len(got) != 2 || got[0] != "wasm" || got[1] != "webgl" {
+		t.Fatalf("unexpected required capabilities: %#v", got)
+	}
+}

@@ -201,6 +201,9 @@ func TestRenderEngineRegistersManifestEntryAndMount(t *testing.T) {
 	if !strings.Contains(html, `data-gosx-enhance="engine"`) || !strings.Contains(html, `data-gosx-fallback="server"`) {
 		t.Fatalf("expected engine enhancement contract, got %s", html)
 	}
+	if !strings.Contains(html, `data-gosx-engine-required-capabilities="wasm"`) {
+		t.Fatalf("expected wasm requirement in engine mount markup, got %s", html)
+	}
 	if !strings.Contains(html, `loading`) {
 		t.Fatalf("expected fallback content, got %s", html)
 	}
@@ -218,6 +221,9 @@ func TestRenderEngineRegistersManifestEntryAndMount(t *testing.T) {
 	}
 	if string(entry.Props) != `{"room":"abc","stroke":2}` {
 		t.Fatalf("unexpected props: %s", entry.Props)
+	}
+	if len(entry.RequiredCapabilities) != 1 || entry.RequiredCapabilities[0] != "wasm" {
+		t.Fatalf("unexpected required capabilities: %#v", entry.RequiredCapabilities)
 	}
 }
 
@@ -299,6 +305,9 @@ func TestRenderEnginePropagatesPixelSurfaceContract(t *testing.T) {
 	if !strings.Contains(html, `data-gosx-pixel-scaling="fill"`) {
 		t.Fatalf("expected pixel scaling contract, got %s", html)
 	}
+	if !strings.Contains(html, `data-gosx-engine-required-capabilities="pixel-surface canvas wasm"`) {
+		t.Fatalf("expected pixel surface required capabilities, got %s", html)
+	}
 
 	if len(r.Manifest().Engines) != 1 {
 		t.Fatalf("expected one engine entry, got %d", len(r.Manifest().Engines))
@@ -315,6 +324,9 @@ func TestRenderEnginePropagatesPixelSurfaceContract(t *testing.T) {
 	}
 	if entry.PixelSurface.VSyncEnabled() {
 		t.Fatal("expected pixel surface vsync disabled")
+	}
+	if got := entry.RequiredCapabilities; len(got) != 3 || got[0] != "pixel-surface" || got[1] != "canvas" || got[2] != "wasm" {
+		t.Fatalf("unexpected required capabilities: %#v", got)
 	}
 }
 

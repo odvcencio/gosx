@@ -14,6 +14,9 @@
     const engineFrame = api.engineFrame;
     const cancelEngineFrame = api.cancelEngineFrame;
     const capabilityList = api.capabilityList;
+    const requiredCapabilityList = api.requiredCapabilityList;
+    const engineCapabilityStatus = api.engineCapabilityStatus;
+    const applyRuntimeCapabilityState = api.applyRuntimeCapabilityState;
     const activateInputProviders = api.activateInputProviders;
     const releaseInputProviders = api.releaseInputProviders;
     const clearChildren = api.clearChildren;

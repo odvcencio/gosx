@@ -7,11 +7,12 @@ import (
 
 func TestEngineConfig(t *testing.T) {
 	cfg := Config{
-		Name:         "Whiteboard",
-		Kind:         KindSurface,
-		WASMPath:     "/assets/engines/Whiteboard.abc123.wasm",
-		MountID:      "canvas-root",
-		Capabilities: []Capability{CapCanvas, CapAnimation},
+		Name:                 "Whiteboard",
+		Kind:                 KindSurface,
+		WASMPath:             "/assets/engines/Whiteboard.abc123.wasm",
+		MountID:              "canvas-root",
+		Capabilities:         []Capability{CapCanvas, CapAnimation},
+		RequiredCapabilities: []Capability{CapWASM, CapCanvas},
 	}
 
 	data, err := json.Marshal(cfg)
@@ -29,6 +30,9 @@ func TestEngineConfig(t *testing.T) {
 	}
 	if len(decoded.Capabilities) != 2 {
 		t.Fatal("wrong capabilities count")
+	}
+	if len(decoded.RequiredCapabilities) != 2 {
+		t.Fatal("wrong required capabilities count")
 	}
 }
 
@@ -104,7 +108,7 @@ func TestValidateCapabilities_TextInput(t *testing.T) {
 
 func TestValidateCapabilities(t *testing.T) {
 	// Valid
-	err := ValidateCapabilities([]Capability{CapVideo, CapCanvas, CapWebGL, CapWebGPU, CapPixelSurface, CapPointer, CapKeyboard, CapGamepad})
+	err := ValidateCapabilities([]Capability{CapVideo, CapCanvas, CapWebGL, CapWebGL2, CapWebGPU, CapCompute, CapWASM, CapPixelSurface, CapPointer, CapKeyboard, CapGamepad})
 	if err != nil {
 		t.Fatal(err)
 	}

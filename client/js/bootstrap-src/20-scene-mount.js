@@ -1101,7 +1101,7 @@
     }
   }
 
-  async function scenePrepareModelSkinPlayback(state, asset, model, skinInstances) {
+  async function scenePrepareModelSkinPlayback(state, asset, model, skinInstances, objectIDs) {
     if (!sceneModelHasSkins(skinInstances) || !Array.isArray(asset.nodes) || !asset.nodes.length) {
       return;
     }
@@ -1121,6 +1121,7 @@
       id: typeof model.id === "string" ? model.id : "",
       model: Object.assign({}, model || {}),
       live: Array.isArray(model && model._live) ? model._live.slice() : [],
+      objectIDs: Array.isArray(objectIDs) ? objectIDs.slice() : [],
       nodes: asset.nodes,
       rootNodes: sceneModelRootNodes(asset.nodes),
       skins: skinInstances,
@@ -1197,12 +1198,36 @@
     return payload;
   }
 
-  function sceneApplyModelLivePatch(record, patch) {
+  function sceneApplyModelLiveOpacity(state, record, patch) {
+    if (!state || !record || !sceneIsPlainObject(patch) || !Object.prototype.hasOwnProperty.call(patch, "opacity")) {
+      return false;
+    }
+    const opacity = Math.max(0, Math.min(1, sceneNumber(patch.opacity, sceneNumber(record.model && record.model.opacity, 1))));
+    if (record.model) {
+      record.model.opacity = opacity;
+    }
+    const objectIDs = Array.isArray(record.objectIDs) ? record.objectIDs : [];
+    let changed = false;
+    for (let index = 0; index < objectIDs.length; index += 1) {
+      const object = state.objects && state.objects.get ? state.objects.get(objectIDs[index]) : null;
+      if (!object || object.opacity === opacity) {
+        continue;
+      }
+      object.opacity = opacity;
+      if (opacity < 1 && (!object.blendMode || object.blendMode === "opaque")) {
+        object.blendMode = "alpha";
+      }
+      changed = true;
+    }
+    return changed;
+  }
+
+  function sceneApplyModelLivePatch(state, record, patch) {
     if (!record || !record.model || !sceneIsPlainObject(patch)) {
       return false;
     }
     const keys = ["x", "y", "z", "rotationX", "rotationY", "rotationZ", "scaleX", "scaleY", "scaleZ"];
-    let changed = false;
+    let changed = sceneApplyModelLiveOpacity(state, record, patch);
     for (let index = 0; index < keys.length; index += 1) {
       const key = keys[index];
       if (!Object.prototype.hasOwnProperty.call(patch, key)) {
@@ -1259,7 +1284,7 @@
         continue;
       }
       const patch = sceneModelLivePatchForRecord(record, payload);
-      changed = sceneApplyModelLivePatch(record, patch) || changed;
+      changed = sceneApplyModelLivePatch(state, record, patch) || changed;
       changed = sceneApplyModelLiveAnimation(record, patch) || changed;
     }
     return changed;
@@ -1293,12 +1318,14 @@
       const asset = await loadSceneModelAsset(model.src);
       const prefix = model.id || ("scene-model-" + modelIndex);
       const skinInstances = sceneCloneModelSkins(asset.skins);
+      const objectIDs = [];
       for (let i = 0; i < asset.objects.length; i += 1) {
         const object = sceneInstantiateModelObject(asset.objects[i], model, prefix, i, skinInstances);
         if (!object) {
           continue;
         }
         state.objects.set(object.id, object);
+        objectIDs.push(object.id);
         objectCount += 1;
       }
       for (let i = 0; i < asset.points.length; i += 1) {
@@ -1333,7 +1360,7 @@
         state.lights.set(light.id, light);
         lightCount += 1;
       }
-      await scenePrepareModelSkinPlayback(state, asset, model, skinInstances);
+      await scenePrepareModelSkinPlayback(state, asset, model, skinInstances, objectIDs);
     }));
     return { models: models.length, objects: objectCount, points: pointCount, labels: labelCount, sprites: spriteCount, lights: lightCount };
   }

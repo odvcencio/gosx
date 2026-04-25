@@ -589,19 +589,21 @@ func (r *fileProgramRenderer) renderStylesheet(node *ir.Node, env fileRenderEnv)
 }
 
 type fileEngineDefaults struct {
-	Name         string
-	WASMPath     string
-	Capabilities []engine.Capability
-	Runtime      engine.Runtime
-	MountAttrs   map[string]any
+	Name                 string
+	WASMPath             string
+	Capabilities         []engine.Capability
+	RequiredCapabilities []engine.Capability
+	Runtime              engine.Runtime
+	MountAttrs           map[string]any
 }
 
 type fileEngineTransport struct {
-	Name         any
-	WASMPath     any
-	MountID      any
-	Capabilities any
-	Runtime      any
+	Name                 any
+	WASMPath             any
+	MountID              any
+	Capabilities         any
+	RequiredCapabilities any
+	Runtime              any
 }
 
 func (r *fileProgramRenderer) renderSurface(node *ir.Node, env fileRenderEnv) string {
@@ -632,6 +634,7 @@ func (r *fileProgramRenderer) renderEngineComponent(node *ir.Node, env fileRende
 		cfg.Props = r.applyScene3DComposableChildren(cfg.Props, node, env)
 		cfg.Props = defaultScene3DProps(cfg.Props, cfg.WASMPath)
 		cfg.Props = r.applyScene3DStyles(cfg.Props, node, env)
+		cfg.RequiredCapabilities = scene3DRequiredCapabilities(cfg.Props, cfg.RequiredCapabilities)
 		if err := validateScene3DCompilerCapabilities(cfg.Props, cfg.Capabilities); err != nil {
 			return r.renderError(err)
 		}
@@ -779,7 +782,11 @@ func engineComponentConfigValue(attrs []ir.Attr, env fileRenderEnv, kind engine.
 		MountAttrs:   mountAttrs,
 		Props:        marshalEngineProps(props),
 		Capabilities: engineCapabilitiesValue(firstNonEmptyValue(attrValue(attrs, env, "capabilities"), transport.Capabilities), defaults.Capabilities),
-		Runtime:      engine.Runtime(firstNonEmptyString(stringValue(attrValue(attrs, env, "runtime")), stringValue(transport.Runtime), string(defaults.Runtime))),
+		RequiredCapabilities: engineCapabilitiesValue(firstNonEmptyValue(
+			attrValue(attrs, env, "requiredCapabilities", "requireCapabilities", "requires"),
+			transport.RequiredCapabilities,
+		), defaults.RequiredCapabilities),
+		Runtime: engine.Runtime(firstNonEmptyString(stringValue(attrValue(attrs, env, "runtime")), stringValue(transport.Runtime), string(defaults.Runtime))),
 	}
 }
 
@@ -790,11 +797,12 @@ func splitEngineTransportProps(props map[string]any) (map[string]any, fileEngine
 
 	clean := cloneSpreadProps(props)
 	transport := fileEngineTransport{
-		Name:         extractEngineTransportValue(clean, "name", "component"),
-		WASMPath:     extractEngineTransportValue(clean, "wasmPath", "wasm", "programRef", "program"),
-		MountID:      extractEngineTransportValue(clean, "mountId", "id"),
-		Capabilities: extractEngineTransportValue(clean, "capabilities"),
-		Runtime:      extractEngineTransportValue(clean, "runtime"),
+		Name:                 extractEngineTransportValue(clean, "name", "component"),
+		WASMPath:             extractEngineTransportValue(clean, "wasmPath", "wasm", "programRef", "program"),
+		MountID:              extractEngineTransportValue(clean, "mountId", "id"),
+		Capabilities:         extractEngineTransportValue(clean, "capabilities"),
+		RequiredCapabilities: extractEngineTransportValue(clean, "requiredCapabilities", "requireCapabilities", "requires"),
+		Runtime:              extractEngineTransportValue(clean, "runtime"),
 	}
 	if len(clean) == 0 {
 		clean = nil
@@ -1572,7 +1580,7 @@ func sortedStringAnyMap(values map[string]any) []fileStringAnyEntry {
 
 func isEngineReservedAttr(name string) bool {
 	switch strings.TrimSpace(name) {
-	case "name", "component", "kind", "wasmPath", "wasm", "programRef", "program", "mountId", "capabilities", "runtime", "props", "id":
+	case "name", "component", "kind", "wasmPath", "wasm", "programRef", "program", "mountId", "capabilities", "requiredCapabilities", "requireCapabilities", "requires", "runtime", "props", "id":
 		return true
 	default:
 		return false
@@ -2524,6 +2532,34 @@ func defaultScene3DProps(raw json.RawMessage, programRef string) json.RawMessage
 		}
 	}
 	return marshalEngineProps(props)
+}
+
+func scene3DRequiredCapabilities(raw json.RawMessage, existing []engine.Capability) []engine.Capability {
+	props := map[string]any{}
+	if len(raw) > 0 {
+		_ = json.Unmarshal(raw, &props)
+	}
+	requireWebGL := false
+	if value, ok := lookupTemplatePropValue(props, "requireWebGL"); ok {
+		requireWebGL = truthy(value)
+	}
+	if !requireWebGL {
+		return existing
+	}
+
+	out := append([]engine.Capability(nil), existing...)
+	seen := map[engine.Capability]struct{}{}
+	for _, capability := range out {
+		seen[capability] = struct{}{}
+	}
+	for _, capability := range []engine.Capability{engine.CapCanvas, engine.CapWebGL} {
+		if _, exists := seen[capability]; exists {
+			continue
+		}
+		seen[capability] = struct{}{}
+		out = append(out, capability)
+	}
+	return out
 }
 
 func validateScene3DCompilerCapabilities(raw json.RawMessage, capabilities []engine.Capability) error {

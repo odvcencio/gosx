@@ -10684,6 +10684,95 @@ test("selective runtime mounts native JS engines without loading the shared wasm
   assert.equal(mount.getAttribute("data-disposed"), "true");
 });
 
+test("bootstrap blocks engines when required browser capabilities are missing", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "strict-engine-root";
+  let factoryCalls = 0;
+
+  const env = createContext({
+    elements: [mount],
+    engineFactories: {
+      StrictRenderer() {
+        factoryCalls += 1;
+        return { dispose() {} };
+      },
+    },
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-strict",
+          component: "StrictRenderer",
+          kind: "surface",
+          mountId: "strict-engine-root",
+          props: {},
+          capabilities: ["canvas", "webgl"],
+          requiredCapabilities: ["webgl"],
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  assert.equal(factoryCalls, 0);
+  assert.equal(env.context.__gosx.engines.size, 0);
+  assert.equal(mount.getAttribute("data-gosx-engine-capability-state"), "unsupported");
+  assert.equal(mount.getAttribute("data-gosx-engine-required-capabilities"), "webgl");
+  assert.equal(mount.getAttribute("data-gosx-engine-missing-capabilities"), "webgl");
+  assert.equal(mount.getAttribute("data-gosx-runtime-issue"), "capability");
+  assert.equal(mount.getAttribute("data-gosx-fallback-active"), "unsupported");
+  assert.equal(mount.children.length, 1);
+  assert.equal(mount.children[0].getAttribute("data-gosx-engine-unsupported"), "true");
+  assert.ok(mount.children[0].textContent.includes("current browser"));
+
+  const issues = env.context.__gosx.listIssues();
+  assert.equal(issues.some((issue) => issue.scope === "engine" && issue.type === "capability" && issue.source === "gosx-engine-strict"), true);
+});
+
+test("bootstrap exposes required capability status to mounted engines", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "strict-ready-root";
+  const captured = {};
+
+  const env = createContext({
+    elements: [mount],
+    enableWebGL: true,
+    engineFactories: {
+      StrictReady(ctx) {
+        captured.requiredCapabilities = ctx.requiredCapabilities.slice();
+        captured.capabilityStatus = ctx.capabilityStatus;
+        return { dispose() {} };
+      },
+    },
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-strict-ready",
+          component: "StrictReady",
+          kind: "surface",
+          mountId: "strict-ready-root",
+          props: {},
+          capabilities: ["canvas", "webgl"],
+          requiredCapabilities: ["webgl"],
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  assert.equal(env.context.__gosx.engines.size, 1);
+  assert.equal(mount.getAttribute("data-gosx-engine-capability-state"), "ready");
+  assert.equal(mount.getAttribute("data-gosx-engine-supported-capabilities"), "webgl");
+  assert.equal(mount.getAttribute("data-gosx-engine-missing-capabilities"), null);
+  assert.deepEqual(Array.from(captured.requiredCapabilities), ["webgl"]);
+  assert.deepEqual(Array.from(captured.capabilityStatus.required), ["webgl"]);
+  assert.deepEqual(Array.from(captured.capabilityStatus.missing), []);
+  assert.deepEqual(Array.from(env.context.__gosx.engines.get("gosx-engine-strict-ready").requiredCapabilities), ["webgl"]);
+});
+
 test("selective runtime connects hubs without loading the shared wasm runtime", async () => {
   const sockets = [];
   const fetchRoutes = {

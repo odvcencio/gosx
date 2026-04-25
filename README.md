@@ -216,10 +216,11 @@ For work that doesn't fit the island model — canvas rendering, WebGL, backgrou
 
 ```go
 ctx.Engine(engine.Config{
-    Name:         "visualizer",
-    Kind:         engine.KindSurface,
-    Capabilities: []engine.Capability{engine.CapCanvas, engine.CapAnimation},
-    WASMPath:     "/engines/visualizer.wasm",
+    Name:                 "visualizer",
+    Kind:                 engine.KindSurface,
+    Capabilities:         []engine.Capability{engine.CapCanvas, engine.CapAnimation},
+    RequiredCapabilities: []engine.Capability{engine.CapCanvas, engine.CapWASM},
+    WASMPath:             "/engines/visualizer.wasm",
 }, fallbackNode)
 ```
 
@@ -228,6 +229,8 @@ Engines come in three kinds:
 - `surface` — owns a DOM mount for canvas, WebGL, WebGPU, or managed pixel surfaces
 - `worker` — background compute with no DOM mount
 - `video` — framework-owned managed video playback
+
+`Capabilities` declares what the engine can use. `RequiredCapabilities` is the hard browser gate: if a required API like `webgl`, `webgpu`, or `wasm` is missing, GoSX marks the mount unsupported and does not run the engine factory.
 
 The managed video path also has first-class helpers:
 

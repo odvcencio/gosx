@@ -74,7 +74,9 @@ type Props struct {
 	FillHeight           *bool        `json:"fillHeight,omitempty"`
 	PreferWebGL          *bool        `json:"preferWebGL,omitempty"`
 	ForceWebGL           *bool        `json:"forceWebGL,omitempty"`
+	RequireWebGL         *bool        `json:"requireWebGL,omitempty"`
 	PreferCanvas         *bool        `json:"preferCanvas,omitempty"`
+	UnsupportedMessage   string       `json:"unsupportedMessage,omitempty"`
 	CanvasAlpha          *bool        `json:"canvasAlpha,omitempty"`
 	DragToRotate         *bool        `json:"dragToRotate,omitempty"`
 	DeferPostFX          *bool        `json:"deferPostFX,omitempty"`
@@ -815,7 +817,9 @@ func (p Props) legacyBaseProps() map[string]any {
 	setBool(out, "fillHeight", p.FillHeight)
 	setBool(out, "preferWebGL", p.PreferWebGL)
 	setBool(out, "forceWebGL", p.ForceWebGL)
+	setBool(out, "requireWebGL", p.RequireWebGL)
 	setBool(out, "preferCanvas", p.PreferCanvas)
+	setString(out, "unsupportedMessage", p.UnsupportedMessage)
 	setBool(out, "canvasAlpha", p.CanvasAlpha)
 	setBool(out, "dragToRotate", p.DragToRotate)
 	setBool(out, "deferPostFX", p.DeferPostFX)
@@ -966,6 +970,9 @@ func (p Props) EngineConfig() engine.Config {
 		for _, capability := range capabilities {
 			cfg.Capabilities = append(cfg.Capabilities, engine.Capability(capability))
 		}
+	}
+	if p.RequireWebGL != nil && *p.RequireWebGL {
+		cfg.RequiredCapabilities = []engine.Capability{engine.CapCanvas, engine.CapWebGL}
 	}
 	if cfg.WASMPath != "" {
 		cfg.Runtime = engine.RuntimeShared

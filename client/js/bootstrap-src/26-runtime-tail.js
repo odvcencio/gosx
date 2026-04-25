@@ -28,6 +28,11 @@
       engineFrame,
       cancelEngineFrame,
       capabilityList,
+      requiredCapabilityList,
+      runtimeCapabilityStatus,
+      engineCapabilityStatus,
+      browserCapabilitySupported,
+      applyRuntimeCapabilityState,
       activateInputProviders,
       releaseInputProviders,
       clearChildren,
@@ -147,7 +152,7 @@
     if (manifestHasEntries(manifest, "hubs")) {
       names.push("hubs");
     }
-    if (manifestHasEntries(manifest, "islands")) {
+    if (manifestHasEntries(manifest, "islands") || manifestHasEntries(manifest, "computeIslands")) {
       names.push("islands");
     }
     return names;
@@ -158,7 +163,7 @@
   }
 
   function manifestNeedsWASMRuntime(manifest) {
-    return manifestHasEntries(manifest, "islands") || manifestNeedsSharedEngineRuntime(manifest);
+    return manifestHasEntries(manifest, "islands") || manifestHasEntries(manifest, "computeIslands") || manifestNeedsSharedEngineRuntime(manifest);
   }
 
   function manifestNeedsSharedEngineRuntime(manifest) {

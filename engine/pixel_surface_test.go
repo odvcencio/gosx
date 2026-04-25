@@ -19,6 +19,9 @@ func TestPixelSurface(t *testing.T) {
 	if cfg.PixelSurface == nil {
 		t.Fatal("expected pixel surface config")
 	}
+	if len(cfg.RequiredCapabilities) != 2 || cfg.RequiredCapabilities[0] != CapPixelSurface || cfg.RequiredCapabilities[1] != CapCanvas {
+		t.Fatalf("unexpected required capabilities: %#v", cfg.RequiredCapabilities)
+	}
 	if cfg.PixelSurface.Width != 320 || cfg.PixelSurface.Height != 240 {
 		t.Fatalf("expected 320x240, got %dx%d", cfg.PixelSurface.Width, cfg.PixelSurface.Height)
 	}

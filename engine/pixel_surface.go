@@ -29,12 +29,13 @@ func PixelSurface(name string, width, height int, opts ...PixelSurfaceOption) Co
 	})
 
 	return Config{
-		Name:         name,
-		Kind:         KindSurface,
-		MountID:      "gosx-pixel-" + name,
-		Capabilities: caps,
-		PixelSurface: ps,
-		Props:        propsJSON,
+		Name:                 name,
+		Kind:                 KindSurface,
+		MountID:              "gosx-pixel-" + name,
+		Capabilities:         caps,
+		RequiredCapabilities: caps,
+		PixelSurface:         ps,
+		Props:                propsJSON,
 	}
 }
 

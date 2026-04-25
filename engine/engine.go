@@ -37,7 +37,10 @@ const (
 	CapVideo        Capability = "video"
 	CapCanvas       Capability = "canvas"
 	CapWebGL        Capability = "webgl"
+	CapWebGL2       Capability = "webgl2"
 	CapWebGPU       Capability = "webgpu"
+	CapCompute      Capability = "compute"
+	CapWASM         Capability = "wasm"
 	CapPixelSurface Capability = "pixel-surface"
 	CapAnimation    Capability = "animation"
 	CapStorage      Capability = "storage"
@@ -145,8 +148,13 @@ type Config struct {
 	// Props is the initial props for the engine.
 	Props json.RawMessage `json:"props,omitempty"`
 
-	// Capabilities lists required browser APIs.
+	// Capabilities declares browser APIs the engine can use.
 	Capabilities []Capability `json:"capabilities,omitempty"`
+
+	// RequiredCapabilities hard-gates browser APIs before the runtime mounts
+	// the engine. Missing requirements surface as an unsupported runtime issue
+	// instead of a silent downgrade.
+	RequiredCapabilities []Capability `json:"requiredCapabilities,omitempty"`
 
 	// Runtime selects an optional shared GoSX client runtime for program-driven
 	// engines. Empty means the engine is mounted entirely by its JS factory.
@@ -213,7 +221,10 @@ func (c Config) Validate() error {
 	if KindNeedsMount(c.Kind) && c.MountID == "" {
 		return fmt.Errorf("engine kind %q requires a MountID", c.Kind)
 	}
-	return ValidateCapabilities(c.Capabilities)
+	if err := ValidateCapabilities(c.Capabilities); err != nil {
+		return err
+	}
+	return ValidateCapabilities(c.RequiredCapabilities)
 }
 
 // Factory is a function that creates an engine instance.
@@ -253,7 +264,7 @@ func ClearFactories() {
 // ValidateCapabilities checks if the requested capabilities are supported.
 func ValidateCapabilities(requested []Capability) error {
 	supported := map[Capability]bool{
-		CapVideo: true, CapCanvas: true, CapWebGL: true, CapWebGPU: true, CapPixelSurface: true,
+		CapVideo: true, CapCanvas: true, CapWebGL: true, CapWebGL2: true, CapWebGPU: true, CapCompute: true, CapWASM: true, CapPixelSurface: true,
 		CapAnimation: true, CapStorage: true, CapFetch: true, CapAudio: true,
 		CapWorker: true, CapGamepad: true, CapKeyboard: true, CapPointer: true, CapTextInput: true,
 	}
