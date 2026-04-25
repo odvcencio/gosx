@@ -1,5 +1,26 @@
 # Changelog
 
+## v0.18.13
+
+Scene3D HTML overlay and canvas fallback release.
+
+Scene3D now accepts first-class HTML scene overlays through `scene.html`,
+`scene.htmlOverlays`, and composable `<Html>` / `<HTML>` children. These overlays
+are not text labels: the runtime carries rich markup as its own scene collection,
+projects it through the camera, preserves authored classes, supports pointer
+event opt-in, model-relative transforms, occlusion state, live transitions, and
+renders the DOM overlay alongside the canvas/WebGL scene.
+
+The Canvas2D fallback now batches line strokes by color and width instead of
+stroking every segment independently. Wireframe-heavy and primitive fallback
+scenes keep the same visual output with fewer Canvas2D calls per frame.
+
+Engine manifests also picked up required-capability gates. Engines can declare
+hard requirements such as `webgl`; unsupported mounts now publish capability
+state and render an explicit fallback instead of invoking factories that cannot
+run in the current browser. Canopy indexing now ignores generated bootstrap
+bundles and maps so source searches stay focused on `bootstrap-src`.
+
 ## v0.18.12
 
 Runtime bootstrap parser-blocking fix.
