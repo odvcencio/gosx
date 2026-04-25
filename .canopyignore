@@ -1,0 +1,4 @@
+# Generated bootstrap bundles; keep client/js/bootstrap-src indexed.
+bootstrap*.js
+*.map
+vendor/
