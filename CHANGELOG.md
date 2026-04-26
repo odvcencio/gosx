@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.18.14
+
+gotreesitter v0.15.3 dependency release.
+
+GoSX now builds against gotreesitter v0.15.3, pulling in the parser-layer fixes
+released for the JS bundle/bootstrap search path and the broader Canopy
+analysis workflow. That includes JavaScript/TypeScript full-parse merge survivor
+capping, markdown retry/node-budget tuning, and external scanner adaptation that
+tolerates source/target external-symbol count drift.
+
 ## v0.18.13
 
 Scene3D HTML overlay and canvas fallback release.
