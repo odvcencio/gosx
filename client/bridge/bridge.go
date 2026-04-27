@@ -14,13 +14,14 @@ import (
 
 // Bridge manages active island instances and shared state.
 type Bridge struct {
-	islands     map[string]*vm.Island
-	engines     map[string]*enginevm.Runtime
-	store       *Store
-	patchFn     func(islandID, patchJSON string) // callback to push patches to JS
-	signalFn    func(name, valueJSON string)     // callback to notify JS of shared signal changes
-	dispatching string                           // ID of the island currently dispatching
-	unsubs      map[string][]func()              // per-island unsubscribe handles for shared signals
+	islands        map[string]*vm.Island
+	computeIslands map[string]struct{}
+	engines        map[string]*enginevm.Runtime
+	store          *Store
+	patchFn        func(islandID, patchJSON string) // callback to push patches to JS
+	signalFn       func(name, valueJSON string)     // callback to notify JS of shared signal changes
+	dispatching    string                           // ID of the island currently dispatching
+	unsubs         map[string][]func()              // per-island unsubscribe handles for shared signals
 }
 
 // SetPatchCallback registers the function called when shared signal changes
@@ -105,10 +106,11 @@ func (s *Store) Signal(name string, init vm.Value) *signal.Signal[vm.Value] {
 // New creates a new bridge with an empty shared store.
 func New() *Bridge {
 	b := &Bridge{
-		islands: make(map[string]*vm.Island),
-		engines: make(map[string]*enginevm.Runtime),
-		store:   NewStore(),
-		unsubs:  make(map[string][]func()),
+		islands:        make(map[string]*vm.Island),
+		computeIslands: make(map[string]struct{}),
+		engines:        make(map[string]*enginevm.Runtime),
+		store:          NewStore(),
+		unsubs:         make(map[string][]func()),
 	}
 	b.store.SetObserver(func(name string, value vm.Value) {
 		b.notifySharedSignal(name, value)
@@ -129,6 +131,16 @@ func (b *Bridge) SetSharedSignalCallback(fn func(name, valueJSON string)) {
 // HydrateIsland creates and registers an island from a program and props.
 // Shared signals (prefixed with "$") are connected to the bridge's store.
 func (b *Bridge) HydrateIsland(id, componentName, propsJSON string, programData []byte, format string) error {
+	return b.hydrateIsland(id, componentName, propsJSON, programData, format, false)
+}
+
+// HydrateComputeIsland creates a headless island from a program and props.
+// It participates in shared signals but never pushes DOM patches.
+func (b *Bridge) HydrateComputeIsland(id, componentName, propsJSON string, programData []byte, format string) error {
+	return b.hydrateIsland(id, componentName, propsJSON, programData, format, true)
+}
+
+func (b *Bridge) hydrateIsland(id, componentName, propsJSON string, programData []byte, format string, compute bool) error {
 	prog, err := DecodeProgram(programData, format)
 	if err != nil {
 		return fmt.Errorf("decode program %q: %w", componentName, err)
@@ -147,6 +159,11 @@ func (b *Bridge) HydrateIsland(id, componentName, propsJSON string, programData 
 	b.unsubs[id] = b.subscribeSharedSignals(id, defs)
 
 	b.islands[id] = island
+	if compute {
+		b.computeIslands[id] = struct{}{}
+	} else {
+		delete(b.computeIslands, id)
+	}
 	return nil
 }
 
@@ -281,6 +298,7 @@ func (b *Bridge) DisposeIsland(id string) {
 		island.Dispose()
 		delete(b.islands, id)
 	}
+	delete(b.computeIslands, id)
 }
 
 // DisposeEngine removes a live engine runtime from the bridge.
@@ -294,6 +312,11 @@ func (b *Bridge) DisposeEngine(id string) {
 // IslandCount returns the number of active islands.
 func (b *Bridge) IslandCount() int {
 	return len(b.islands)
+}
+
+// ComputeIslandCount returns the number of active headless compute islands.
+func (b *Bridge) ComputeIslandCount() int {
+	return len(b.computeIslands)
 }
 
 // EngineCount returns the number of active engine runtimes.
@@ -389,6 +412,9 @@ func (b *Bridge) reconcileSharedIsland(islandID string) {
 }
 
 func (b *Bridge) pushPatches(islandID string, patches []vm.PatchOp) {
+	if _, compute := b.computeIslands[islandID]; compute {
+		return
+	}
 	if len(patches) == 0 || b.patchFn == nil {
 		return
 	}

@@ -1942,6 +1942,12 @@
     const item = sceneIsPlainObject(entry) ? entry : {};
     const lifecycle = sceneNormalizeLifecycle(item, current);
     const transforms = Array.isArray(item.transforms) ? item.transforms.slice() : (Array.isArray(current.transforms) ? current.transforms : []);
+    const colors = Object.prototype.hasOwnProperty.call(item, "colors")
+      ? sceneCloneData(item.colors)
+      : (Object.prototype.hasOwnProperty.call(current, "colors") ? current.colors : []);
+    const attributes = Object.prototype.hasOwnProperty.call(item, "attributes")
+      ? sceneCloneData(item.attributes)
+      : (Object.prototype.hasOwnProperty.call(current, "attributes") ? current.attributes : undefined);
     const normalized = {
       id: item.id || current.id || ("scene-instanced-" + index),
       count: Math.max(0, Math.floor(sceneNumber(item.count, sceneNumber(current.count, 0)))),
@@ -1956,6 +1962,8 @@
       roughness: sceneNumberOrCSSVar(item.roughness, sceneNumber(current.roughness, 0)),
       metalness: sceneNumberOrCSSVar(item.metalness, sceneNumber(current.metalness, 0)),
       transforms,
+      colors,
+      attributes,
       castShadow: sceneBool(Object.prototype.hasOwnProperty.call(item, "castShadow") ? item.castShadow : current.castShadow, false),
       receiveShadow: sceneBool(Object.prototype.hasOwnProperty.call(item, "receiveShadow") ? item.receiveShadow : current.receiveShadow, false),
       _transition: lifecycle.transition,
@@ -1965,6 +1973,9 @@
     };
     if (transforms === current.transforms && current._cachedTransforms) {
       normalized._cachedTransforms = current._cachedTransforms;
+    }
+    if (colors === current.colors && current._cachedInstanceColors) {
+      normalized._cachedInstanceColors = current._cachedInstanceColors;
     }
     return normalized;
   }
@@ -2726,8 +2737,13 @@
         sceneApplyTransitionPatch(target[key], value);
       } else {
         target[key] = sceneCloneData(value);
-        if (key === "colors" && Object.prototype.hasOwnProperty.call(target, "_cachedColors")) {
-          target._cachedColors = null;
+        if (key === "colors") {
+          if (Object.prototype.hasOwnProperty.call(target, "_cachedColors")) {
+            target._cachedColors = null;
+          }
+          if (Object.prototype.hasOwnProperty.call(target, "_cachedInstanceColors")) {
+            target._cachedInstanceColors = null;
+          }
         } else if (key === "positions" && Object.prototype.hasOwnProperty.call(target, "_cachedPos")) {
           target._cachedPos = null;
         } else if (key === "sizes" && Object.prototype.hasOwnProperty.call(target, "_cachedSizes")) {
@@ -10393,6 +10409,7 @@ if (typeof window !== "undefined") {
     "out vec2 v_uv;",
     "out vec3 v_tangent;",
     "out vec3 v_bitangent;",
+    "out vec4 v_instanceColor;",
     "",
     "void gosxApplyCustomVertex(inout vec3 position, inout vec3 normal, inout vec2 uv) {}",
     "",
@@ -10410,6 +10427,7 @@ if (typeof window !== "undefined") {
     "    vec3 B = cross(N, T) * a_tangent.w;",
     "    v_tangent = T;",
     "    v_bitangent = B;",
+    "    v_instanceColor = vec4(1.0);",
     "",
     "    gl_Position = u_projectionMatrix * u_viewMatrix * vec4(gosxPosition, 1.0);",
     "}",
@@ -10425,6 +10443,7 @@ if (typeof window !== "undefined") {
     "in vec2 v_uv;",
     "in vec3 v_tangent;",
     "in vec3 v_bitangent;",
+    "in vec4 v_instanceColor;",
     "",
     "// Camera",
     "uniform vec3 u_cameraPosition;",
@@ -10690,6 +10709,7 @@ if (typeof window !== "undefined") {
     "void main() {",
     "    // Resolve material properties, sampling textures when available.",
     "    vec3 albedo = u_albedo;",
+    "    albedo *= v_instanceColor.rgb;",
     "    if (u_hasAlbedoMap) {",
     "        vec4 texAlbedo = texture(u_albedoMap, v_uv);",
     "        albedo *= texAlbedo.rgb;",
@@ -10719,7 +10739,7 @@ if (typeof window !== "undefined") {
     "        vec3 color = albedo + emissiveColor * emissiveStrength;",
     "        float opacity = u_opacity;",
     "        gosxApplyCustomFragment(color, opacity, normalize(v_normal), v_worldPosition, v_uv);",
-    "        fragColor = vec4(color, opacity);",
+    "        fragColor = vec4(color, opacity * v_instanceColor.a);",
     "        return;",
     "    }",
     "",
@@ -10898,7 +10918,7 @@ if (typeof window !== "undefined") {
     "",
     "    float opacity = u_opacity;",
     "    gosxApplyCustomFragment(color, opacity, N, v_worldPosition, v_uv);",
-    "    fragColor = vec4(color, opacity);",
+    "    fragColor = vec4(color, opacity * v_instanceColor.a);",
     "}",
   ].join("\n");
 
@@ -11032,15 +11052,18 @@ if (typeof window !== "undefined") {
     "in vec2 a_uv;",
     "in vec4 a_tangent;",
     "in mat4 a_instanceMatrix;",
+    "in vec4 a_instanceColor;",
     "",
     "uniform mat4 u_viewMatrix;",
     "uniform mat4 u_projectionMatrix;",
+    "uniform bool u_hasInstanceColor;",
     "",
     "out vec3 v_worldPosition;",
     "out vec3 v_normal;",
     "out vec2 v_uv;",
     "out vec3 v_tangent;",
     "out vec3 v_bitangent;",
+    "out vec4 v_instanceColor;",
     "",
     "void main() {",
     "    vec4 worldPos = a_instanceMatrix * vec4(a_position, 1.0);",
@@ -11052,6 +11075,7 @@ if (typeof window !== "undefined") {
     "    vec3 N = v_normal;",
     "    v_bitangent = cross(N, T) * a_tangent.w;",
     "    v_tangent = T;",
+    "    v_instanceColor = u_hasInstanceColor ? a_instanceColor : vec4(1.0);",
     "    gl_Position = u_projectionMatrix * u_viewMatrix * worldPos;",
     "}",
   ].join("\n");
@@ -11079,6 +11103,7 @@ if (typeof window !== "undefined") {
     "out vec2 v_uv;",
     "out vec3 v_tangent;",
     "out vec3 v_bitangent;",
+    "out vec4 v_instanceColor;",
     "",
     "void main() {",
     "    vec4 pos = vec4(a_position, 1.0);",
@@ -11108,6 +11133,7 @@ if (typeof window !== "undefined") {
     "    vec3 B = cross(N, T) * a_tangent.w;",
     "    v_tangent = T;",
     "    v_bitangent = B;",
+    "    v_instanceColor = vec4(1.0);",
     "",
 	    "    gl_Position = u_projectionMatrix * u_viewMatrix * worldPos;",
     "}",
@@ -12723,9 +12749,11 @@ if (typeof window !== "undefined") {
       uv: gl.getAttribLocation(program, "a_uv"),
       tangent: gl.getAttribLocation(program, "a_tangent"),
       instanceMatrix: gl.getAttribLocation(program, "a_instanceMatrix"),
+      instanceColor: gl.getAttribLocation(program, "a_instanceColor"),
     };
 
     var uniforms = scenePBRCacheBaseUniforms(gl, program);
+    uniforms.hasInstanceColor = gl.getUniformLocation(program, "u_hasInstanceColor");
 
     return {
       program: program,
@@ -14400,6 +14428,45 @@ if (typeof window !== "undefined") {
       return geom;
     }
 
+    function sceneInstancedColorBuffer(mesh, count) {
+      if (!mesh || count <= 0) {
+        return null;
+      }
+      if (mesh._cachedInstanceColors) {
+        return mesh._cachedInstanceColors;
+      }
+      var rawColors = mesh.colors;
+      if (!rawColors || typeof rawColors.length !== "number") {
+        return null;
+      }
+      if (Array.isArray(rawColors) && typeof rawColors[0] === "string") {
+        mesh._cachedInstanceColors = new Float32Array(count * 4);
+        for (var ci = 0; ci < count; ci++) {
+          var rgba = sceneColorRGBA(rawColors[ci] || rawColors[rawColors.length - 1], [1, 1, 1, 1]);
+          mesh._cachedInstanceColors[ci * 4] = rgba[0];
+          mesh._cachedInstanceColors[ci * 4 + 1] = rgba[1];
+          mesh._cachedInstanceColors[ci * 4 + 2] = rgba[2];
+          mesh._cachedInstanceColors[ci * 4 + 3] = rgba[3];
+        }
+        return mesh._cachedInstanceColors;
+      }
+      if (rawColors.length >= count * 4) {
+        mesh._cachedInstanceColors = rawColors instanceof Float32Array ? rawColors : new Float32Array(rawColors);
+        return mesh._cachedInstanceColors;
+      }
+      if (rawColors.length >= count * 3) {
+        mesh._cachedInstanceColors = new Float32Array(count * 4);
+        for (var ni = 0; ni < count; ni++) {
+          mesh._cachedInstanceColors[ni * 4] = rawColors[ni * 3];
+          mesh._cachedInstanceColors[ni * 4 + 1] = rawColors[ni * 3 + 1];
+          mesh._cachedInstanceColors[ni * 4 + 2] = rawColors[ni * 3 + 2];
+          mesh._cachedInstanceColors[ni * 4 + 3] = 1;
+        }
+        return mesh._cachedInstanceColors;
+      }
+      return null;
+    }
+
     function drawInstancedMeshes(gl, bundle, viewMatrix, projMatrix) {
       var meshes = Array.isArray(bundle.instancedMeshes) ? bundle.instancedMeshes : [];
       if (meshes.length === 0) return;
@@ -14475,6 +14542,12 @@ if (typeof window !== "undefined") {
         var transformData = mesh._cachedTransforms;
         if (!transformData) continue;
 
+        var instanceColorData = sceneInstancedColorBuffer(mesh, instanceCount);
+        var hasInstanceColor = !!(instanceColorData && ip.attributes.instanceColor >= 0);
+        if (ip.uniforms.hasInstanceColor) {
+          gl.uniform1i(ip.uniforms.hasInstanceColor, hasInstanceColor ? 1 : 0);
+        }
+
         gl.bindBuffer(gl.ARRAY_BUFFER, ensureStaticArrayVBO(staticMeshArrayVBOs, transformData));
 
         var baseLoc = ip.attributes.instanceMatrix;
@@ -14485,7 +14558,19 @@ if (typeof window !== "undefined") {
           gl.vertexAttribDivisor(loc, 1);
         }
 
+        if (hasInstanceColor) {
+          gl.bindBuffer(gl.ARRAY_BUFFER, ensureStaticArrayVBO(staticMeshArrayVBOs, instanceColorData));
+          gl.enableVertexAttribArray(ip.attributes.instanceColor);
+          gl.vertexAttribPointer(ip.attributes.instanceColor, 4, gl.FLOAT, false, 0, 0);
+          gl.vertexAttribDivisor(ip.attributes.instanceColor, 1);
+        }
+
         gl.drawArraysInstanced(gl.TRIANGLES, 0, geom.vertexCount, instanceCount);
+
+        if (hasInstanceColor) {
+          gl.vertexAttribDivisor(ip.attributes.instanceColor, 0);
+          gl.disableVertexAttribArray(ip.attributes.instanceColor);
+        }
 
         for (var col = 0; col < 4; col++) {
           var loc2 = baseLoc + col;
@@ -16067,6 +16152,12 @@ if (typeof window !== "undefined") {
       },
     };
   }
+
+  if (window.__gosx_scene3d_api) {
+    window.__gosx_scene3d_api.sceneRaycastPick = sceneRaycastPick;
+    window.__gosx_scene3d_api.sceneRaycastPickGroup = sceneRaycastPickGroup;
+  }
+  window.__gosx_scene3d_raycast = sceneRaycastPick;
 
   function createSceneCanvasLineBatch(ctx2d) {
     let active = false;
@@ -18876,6 +18967,14 @@ if (typeof window !== "undefined") {
     switch (String(value || "").trim().toLowerCase()) {
       case "orbit":
         return "orbit";
+      case "first-person":
+      case "firstperson":
+      case "fps":
+        return "first-person";
+      case "fly":
+      case "free":
+      case "free-camera":
+        return "fly";
       default:
         return "";
     }
@@ -18898,12 +18997,61 @@ if (typeof window !== "undefined") {
     return Math.max(0.05, sceneNumber(props && props.controlZoomSpeed, 1));
   }
 
+  function sceneControlsLookSpeed(props) {
+    return Math.max(0.05, sceneNumber(props && props.controlLookSpeed, sceneNumber(props && props.controlRotateSpeed, 1)));
+  }
+
+  function sceneControlsMoveSpeed(props) {
+    return Math.max(0.01, sceneNumber(props && props.controlMoveSpeed, 4));
+  }
+
   function sceneWorldCameraPosition(camera) {
     const normalized = sceneRenderCamera(camera);
     return {
       x: normalized.x,
       y: normalized.y,
       z: -normalized.z,
+    };
+  }
+
+  function sceneFlyStateFromCamera(camera) {
+    const normalized = sceneRenderCamera(camera);
+    return {
+      position: sceneWorldCameraPosition(normalized),
+      yaw: sceneNumber(normalized.rotationY, 0),
+      pitch: sceneClamp(sceneNumber(normalized.rotationX, 0), -1.52, 1.52),
+      kind: normalized.kind,
+      fov: normalized.fov,
+      left: normalized.left,
+      right: normalized.right,
+      top: normalized.top,
+      bottom: normalized.bottom,
+      zoom: normalized.zoom,
+      near: normalized.near,
+      far: normalized.far,
+    };
+  }
+
+  function sceneFlyCamera(state, fallbackCamera) {
+    const base = sceneRenderCamera(fallbackCamera);
+    const fly = state || sceneFlyStateFromCamera(base);
+    const position = fly.position || { x: 0, y: 0, z: -6 };
+    return {
+      x: sceneNumber(position.x, base.x),
+      y: sceneNumber(position.y, base.y),
+      z: -sceneNumber(position.z, -base.z),
+      kind: base.kind,
+      rotationX: sceneClamp(sceneNumber(fly.pitch, base.rotationX), -1.52, 1.52),
+      rotationY: sceneNumber(fly.yaw, base.rotationY),
+      rotationZ: 0,
+      fov: sceneNumber(fly.fov, base.fov),
+      left: sceneNumber(fly.left, base.left),
+      right: sceneNumber(fly.right, base.right),
+      top: sceneNumber(fly.top, base.top),
+      bottom: sceneNumber(fly.bottom, base.bottom),
+      zoom: sceneNumber(fly.zoom, base.zoom),
+      near: sceneNumber(fly.near, base.near),
+      far: sceneNumber(fly.far, base.far),
     };
   }
 
@@ -18988,16 +19136,24 @@ if (typeof window !== "undefined") {
       lastY: 0,
       rotateSpeed: sceneControlsRotateSpeed(props),
       zoomSpeed: sceneControlsZoomSpeed(props),
+      lookSpeed: sceneControlsLookSpeed(props),
+      moveSpeed: sceneControlsMoveSpeed(props),
       orbit: null,
+      fly: null,
+      keys: new Set(),
       target: sceneControlsTarget(props),
     };
   }
 
   function syncSceneControlsFromCamera(controls, camera) {
-    if (!controls || controls.mode !== "orbit" || controls.active || controls.touched) {
+    if (!controls || controls.active || controls.touched) {
       return;
     }
-    controls.orbit = sceneOrbitStateFromCamera(camera, controls.target);
+    if (controls.mode === "orbit") {
+      controls.orbit = sceneOrbitStateFromCamera(camera, controls.target);
+    } else if (controls.mode === "first-person" || controls.mode === "fly") {
+      controls.fly = sceneFlyStateFromCamera(camera);
+    }
   }
 
   function sceneScrollViewportHeight() {
@@ -19069,6 +19225,9 @@ if (typeof window !== "undefined") {
     if (controls && controls.mode === "orbit") {
       syncSceneControlsFromCamera(controls, sourceCamera);
       cam = controls.orbit ? sceneOrbitCamera(controls.orbit, sourceCamera) : sceneRenderCamera(sourceCamera);
+    } else if (controls && (controls.mode === "first-person" || controls.mode === "fly")) {
+      syncSceneControlsFromCamera(controls, sourceCamera);
+      cam = controls.fly ? sceneFlyCamera(controls.fly, sourceCamera) : sceneRenderCamera(sourceCamera);
     } else {
       cam = sceneRenderCamera(sourceCamera);
     }
@@ -19195,9 +19354,173 @@ if (typeof window !== "undefined") {
     scheduleRender("controls");
   }
 
+  function sceneFlyEnsureState(controls, readSourceCamera) {
+    if (!controls.fly) {
+      syncSceneControlsFromSource(controls, readSourceCamera);
+    }
+    if (!controls.fly) {
+      controls.fly = sceneFlyStateFromCamera(null);
+    }
+    if (!controls.fly.position) {
+      controls.fly.position = { x: 0, y: 0, z: -6 };
+    }
+    return controls.fly;
+  }
+
+  function sceneFlyStartDrag(controls, canvas, props, readViewport, readSourceCamera, attachDocumentListeners, event) {
+    if (controls.active || !scenePointerCanStartDrag(controls, event)) {
+      return;
+    }
+    sceneFlyEnsureState(controls, readSourceCamera);
+    controls.active = true;
+    controls.touched = true;
+    controls.pointerId = event.pointerId;
+    const metrics = sceneControlsMetrics(readViewport, props);
+    const point = sceneLocalPointerPoint(event, canvas, metrics.width, metrics.height);
+    controls.lastX = point.x;
+    controls.lastY = point.y;
+    canvas.style.cursor = "grabbing";
+    if (typeof canvas.focus === "function") {
+      canvas.focus({ preventScroll: true });
+    }
+    attachDocumentListeners();
+    if (typeof canvas.setPointerCapture === "function" && event.pointerId != null) {
+      canvas.setPointerCapture(event.pointerId);
+    }
+    if (typeof event.preventDefault === "function") {
+      event.preventDefault();
+    }
+    if (typeof event.stopPropagation === "function") {
+      event.stopPropagation();
+    }
+  }
+
+  function sceneFlyMoveDrag(controls, canvas, props, readViewport, readSourceCamera, scheduleRender, event) {
+    if (!sceneDragMatchesActivePointer(controls, event)) {
+      return;
+    }
+    const metrics = sceneControlsMetrics(readViewport, props);
+    const sample = sceneLocalPointerSample(event, canvas, metrics.width, metrics.height, controls, "move");
+    const fly = sceneFlyEnsureState(controls, readSourceCamera);
+    fly.yaw += (sample.deltaX / Math.max(metrics.width, 1)) * Math.PI * controls.lookSpeed;
+    fly.pitch = sceneClamp(
+      fly.pitch + (sample.deltaY / Math.max(metrics.height, 1)) * Math.PI * controls.lookSpeed,
+      -1.52,
+      1.52,
+    );
+    if (typeof event.preventDefault === "function") {
+      event.preventDefault();
+    }
+    if (typeof event.stopPropagation === "function") {
+      event.stopPropagation();
+    }
+    scheduleRender("controls");
+  }
+
+  function sceneFlyFinishDrag(controls, canvas, detachDocumentListeners, event) {
+    if (!sceneDragMatchesActivePointer(controls, event)) {
+      return;
+    }
+    const pointerId = controls.pointerId;
+    controls.active = false;
+    controls.pointerId = null;
+    canvas.style.cursor = "crosshair";
+    detachDocumentListeners();
+    if (pointerId != null && typeof canvas.releasePointerCapture === "function") {
+      try {
+        canvas.releasePointerCapture(pointerId);
+      } catch (_error) {}
+    }
+    if (event && typeof event.preventDefault === "function") {
+      event.preventDefault();
+    }
+    if (event && typeof event.stopPropagation === "function") {
+      event.stopPropagation();
+    }
+  }
+
+  function sceneFlyKeyCode(event) {
+    const code = String(event && (event.code || event.key) || "").toLowerCase();
+    switch (code) {
+      case "keyw":
+      case "w":
+      case "arrowup":
+        return "forward";
+      case "keys":
+      case "s":
+      case "arrowdown":
+        return "back";
+      case "keya":
+      case "a":
+      case "arrowleft":
+        return "left";
+      case "keyd":
+      case "d":
+      case "arrowright":
+        return "right";
+      case "space":
+      case " ":
+        return "up";
+      case "shiftleft":
+      case "shiftright":
+      case "controlleft":
+      case "controlright":
+        return "down";
+      default:
+        return "";
+    }
+  }
+
+  function sceneFlyApplyMovement(controls, readSourceCamera, deltaSeconds) {
+    if (!controls || !controls.keys || controls.keys.size === 0) {
+      return false;
+    }
+    const fly = sceneFlyEnsureState(controls, readSourceCamera);
+    const speed = controls.moveSpeed * Math.max(0.001, deltaSeconds || 1 / 60);
+    const yaw = sceneNumber(fly.yaw, 0);
+    const pitch = controls.mode === "fly" ? sceneNumber(fly.pitch, 0) : 0;
+    const cosPitch = Math.cos(pitch);
+    const forward = {
+      x: Math.sin(yaw) * cosPitch,
+      y: -Math.sin(pitch),
+      z: -Math.cos(yaw) * cosPitch,
+    };
+    const right = { x: Math.cos(yaw), y: 0, z: Math.sin(yaw) };
+    let dx = 0;
+    let dy = 0;
+    let dz = 0;
+    if (controls.keys.has("forward")) {
+      dx += forward.x; dy += forward.y; dz += forward.z;
+    }
+    if (controls.keys.has("back")) {
+      dx -= forward.x; dy -= forward.y; dz -= forward.z;
+    }
+    if (controls.keys.has("right")) {
+      dx += right.x; dz += right.z;
+    }
+    if (controls.keys.has("left")) {
+      dx -= right.x; dz -= right.z;
+    }
+    if (controls.keys.has("up")) {
+      dy += 1;
+    }
+    if (controls.keys.has("down")) {
+      dy -= 1;
+    }
+    const length = Math.hypot(dx, dy, dz);
+    if (length <= 0.0001) {
+      return false;
+    }
+    fly.position.x += (dx / length) * speed;
+    fly.position.y += (dy / length) * speed;
+    fly.position.z += (dz / length) * speed;
+    controls.touched = true;
+    return true;
+  }
+
   function setupSceneBuiltInControls(canvas, props, readViewport, readSourceCamera, scheduleRender) {
     const controls = createSceneControls(props);
-    if (!canvas || !controls || controls.mode !== "orbit") {
+    if (!canvas || !controls) {
       return {
         controller: controls,
         dispose() {},
@@ -19205,8 +19528,14 @@ if (typeof window !== "undefined") {
     }
 
     let documentListenersAttached = false;
-    canvas.style.cursor = "grab";
+    let flyFrame = 0;
+    let flyLastFrameMS = 0;
+    const flyMode = controls.mode === "first-person" || controls.mode === "fly";
+    canvas.style.cursor = flyMode ? "crosshair" : "grab";
     canvas.style.touchAction = "none";
+    if (flyMode && !canvas.hasAttribute("tabindex")) {
+      canvas.setAttribute("tabindex", "0");
+    }
 
     function attachDocumentListeners() {
       if (documentListenersAttached) {
@@ -19229,19 +19558,84 @@ if (typeof window !== "undefined") {
     }
 
     function onPointerDown(event) {
-      sceneOrbitStartDrag(controls, canvas, props, readViewport, readSourceCamera, attachDocumentListeners, event);
+      if (flyMode) {
+        sceneFlyStartDrag(controls, canvas, props, readViewport, readSourceCamera, attachDocumentListeners, event);
+      } else {
+        sceneOrbitStartDrag(controls, canvas, props, readViewport, readSourceCamera, attachDocumentListeners, event);
+      }
     }
 
     function onPointerMove(event) {
-      sceneOrbitMoveDrag(controls, canvas, props, readViewport, readSourceCamera, scheduleRender, event);
+      if (flyMode) {
+        sceneFlyMoveDrag(controls, canvas, props, readViewport, readSourceCamera, scheduleRender, event);
+      } else {
+        sceneOrbitMoveDrag(controls, canvas, props, readViewport, readSourceCamera, scheduleRender, event);
+      }
     }
 
     function finishPointerDrag(event) {
-      sceneOrbitFinishDrag(controls, canvas, detachDocumentListeners, event);
+      if (flyMode) {
+        sceneFlyFinishDrag(controls, canvas, detachDocumentListeners, event);
+      } else {
+        sceneOrbitFinishDrag(controls, canvas, detachDocumentListeners, event);
+      }
     }
 
     function onWheel(event) {
-      sceneOrbitApplyWheel(controls, readSourceCamera, scheduleRender, event);
+      if (!flyMode) {
+        sceneOrbitApplyWheel(controls, readSourceCamera, scheduleRender, event);
+      }
+    }
+
+    function scheduleFlyMovement() {
+      if (!flyMode || flyFrame || controls.keys.size === 0) {
+        return;
+      }
+      flyLastFrameMS = sceneNowMilliseconds();
+      const step = function(now) {
+        flyFrame = 0;
+        const current = sceneNumber(now, sceneNowMilliseconds());
+        const delta = Math.min(0.05, Math.max(0.001, (current - flyLastFrameMS) / 1000));
+        flyLastFrameMS = current;
+        if (sceneFlyApplyMovement(controls, readSourceCamera, delta)) {
+          scheduleRender("controls");
+        }
+        if (controls.keys.size > 0) {
+          flyFrame = requestAnimationFrame(step);
+        }
+      };
+      flyFrame = requestAnimationFrame(step);
+    }
+
+    function onKeyDown(event) {
+      if (!flyMode || (document.activeElement !== canvas && !controls.touched)) {
+        return;
+      }
+      const key = sceneFlyKeyCode(event);
+      if (!key) {
+        return;
+      }
+      controls.keys.add(key);
+      sceneFlyApplyMovement(controls, readSourceCamera, 1 / 60);
+      scheduleFlyMovement();
+      scheduleRender("controls");
+      if (typeof event.preventDefault === "function") {
+        event.preventDefault();
+      }
+    }
+
+    function onKeyUp(event) {
+      if (!flyMode) {
+        return;
+      }
+      const key = sceneFlyKeyCode(event);
+      if (!key) {
+        return;
+      }
+      controls.keys.delete(key);
+      if (typeof event.preventDefault === "function") {
+        event.preventDefault();
+      }
     }
 
     canvas.addEventListener("pointerdown", onPointerDown);
@@ -19250,17 +19644,29 @@ if (typeof window !== "undefined") {
     canvas.addEventListener("pointercancel", finishPointerDrag);
     canvas.addEventListener("lostpointercapture", finishPointerDrag);
     canvas.addEventListener("wheel", onWheel);
+    if (flyMode) {
+      document.addEventListener("keydown", onKeyDown);
+      document.addEventListener("keyup", onKeyUp);
+    }
 
     return {
       controller: controls,
       dispose() {
         detachDocumentListeners();
+        if (flyFrame) {
+          cancelAnimationFrame(flyFrame);
+          flyFrame = 0;
+        }
         canvas.removeEventListener("pointerdown", onPointerDown);
         canvas.removeEventListener("pointermove", onPointerMove);
         canvas.removeEventListener("pointerup", finishPointerDrag);
         canvas.removeEventListener("pointercancel", finishPointerDrag);
         canvas.removeEventListener("lostpointercapture", finishPointerDrag);
         canvas.removeEventListener("wheel", onWheel);
+        if (flyMode) {
+          document.removeEventListener("keydown", onKeyDown);
+          document.removeEventListener("keyup", onKeyUp);
+        }
       },
     };
   }

@@ -31,6 +31,7 @@
     "out vec2 v_uv;",
     "out vec3 v_tangent;",
     "out vec3 v_bitangent;",
+    "out vec4 v_instanceColor;",
     "",
     "void gosxApplyCustomVertex(inout vec3 position, inout vec3 normal, inout vec2 uv) {}",
     "",
@@ -48,6 +49,7 @@
     "    vec3 B = cross(N, T) * a_tangent.w;",
     "    v_tangent = T;",
     "    v_bitangent = B;",
+    "    v_instanceColor = vec4(1.0);",
     "",
     "    gl_Position = u_projectionMatrix * u_viewMatrix * vec4(gosxPosition, 1.0);",
     "}",
@@ -63,6 +65,7 @@
     "in vec2 v_uv;",
     "in vec3 v_tangent;",
     "in vec3 v_bitangent;",
+    "in vec4 v_instanceColor;",
     "",
     "// Camera",
     "uniform vec3 u_cameraPosition;",
@@ -328,6 +331,7 @@
     "void main() {",
     "    // Resolve material properties, sampling textures when available.",
     "    vec3 albedo = u_albedo;",
+    "    albedo *= v_instanceColor.rgb;",
     "    if (u_hasAlbedoMap) {",
     "        vec4 texAlbedo = texture(u_albedoMap, v_uv);",
     "        albedo *= texAlbedo.rgb;",
@@ -357,7 +361,7 @@
     "        vec3 color = albedo + emissiveColor * emissiveStrength;",
     "        float opacity = u_opacity;",
     "        gosxApplyCustomFragment(color, opacity, normalize(v_normal), v_worldPosition, v_uv);",
-    "        fragColor = vec4(color, opacity);",
+    "        fragColor = vec4(color, opacity * v_instanceColor.a);",
     "        return;",
     "    }",
     "",
@@ -536,7 +540,7 @@
     "",
     "    float opacity = u_opacity;",
     "    gosxApplyCustomFragment(color, opacity, N, v_worldPosition, v_uv);",
-    "    fragColor = vec4(color, opacity);",
+    "    fragColor = vec4(color, opacity * v_instanceColor.a);",
     "}",
   ].join("\n");
 
@@ -674,6 +678,7 @@
   //   2: a_uv        (vec2)
   //   3: a_tangent   (vec4)
   //   4-7: a_instanceMatrix (mat4, 4 × vec4 with divisor 1)
+  //   8: a_instanceColor (vec4 with divisor 1, optional)
 
 	  const SCENE_PBR_INSTANCED_VERTEX_SOURCE = [
 	    "#version 300 es",
@@ -685,15 +690,18 @@
     "in vec2 a_uv;",
     "in vec4 a_tangent;",
     "in mat4 a_instanceMatrix;",
+    "in vec4 a_instanceColor;",
     "",
     "uniform mat4 u_viewMatrix;",
     "uniform mat4 u_projectionMatrix;",
+    "uniform bool u_hasInstanceColor;",
     "",
     "out vec3 v_worldPosition;",
     "out vec3 v_normal;",
     "out vec2 v_uv;",
     "out vec3 v_tangent;",
     "out vec3 v_bitangent;",
+    "out vec4 v_instanceColor;",
     "",
     "void main() {",
     "    vec4 worldPos = a_instanceMatrix * vec4(a_position, 1.0);",
@@ -705,6 +713,7 @@
     "    vec3 N = v_normal;",
     "    v_bitangent = cross(N, T) * a_tangent.w;",
     "    v_tangent = T;",
+    "    v_instanceColor = u_hasInstanceColor ? a_instanceColor : vec4(1.0);",
     "    gl_Position = u_projectionMatrix * u_viewMatrix * worldPos;",
     "}",
   ].join("\n");
@@ -739,6 +748,7 @@
     "out vec2 v_uv;",
     "out vec3 v_tangent;",
     "out vec3 v_bitangent;",
+    "out vec4 v_instanceColor;",
     "",
     "void main() {",
     "    vec4 pos = vec4(a_position, 1.0);",
@@ -768,6 +778,7 @@
     "    vec3 B = cross(N, T) * a_tangent.w;",
     "    v_tangent = T;",
     "    v_bitangent = B;",
+    "    v_instanceColor = vec4(1.0);",
     "",
 	    "    gl_Position = u_projectionMatrix * u_viewMatrix * worldPos;",
     "}",
@@ -2626,9 +2637,11 @@
       uv: gl.getAttribLocation(program, "a_uv"),
       tangent: gl.getAttribLocation(program, "a_tangent"),
       instanceMatrix: gl.getAttribLocation(program, "a_instanceMatrix"),
+      instanceColor: gl.getAttribLocation(program, "a_instanceColor"),
     };
 
     var uniforms = scenePBRCacheBaseUniforms(gl, program);
+    uniforms.hasInstanceColor = gl.getUniformLocation(program, "u_hasInstanceColor");
 
     return {
       program: program,
@@ -4632,6 +4645,45 @@
     }
 
     // Draw all instanced meshes from the render bundle.
+    function sceneInstancedColorBuffer(mesh, count) {
+      if (!mesh || count <= 0) {
+        return null;
+      }
+      if (mesh._cachedInstanceColors) {
+        return mesh._cachedInstanceColors;
+      }
+      var rawColors = mesh.colors;
+      if (!rawColors || typeof rawColors.length !== "number") {
+        return null;
+      }
+      if (Array.isArray(rawColors) && typeof rawColors[0] === "string") {
+        mesh._cachedInstanceColors = new Float32Array(count * 4);
+        for (var ci = 0; ci < count; ci++) {
+          var rgba = sceneColorRGBA(rawColors[ci] || rawColors[rawColors.length - 1], [1, 1, 1, 1]);
+          mesh._cachedInstanceColors[ci * 4] = rgba[0];
+          mesh._cachedInstanceColors[ci * 4 + 1] = rgba[1];
+          mesh._cachedInstanceColors[ci * 4 + 2] = rgba[2];
+          mesh._cachedInstanceColors[ci * 4 + 3] = rgba[3];
+        }
+        return mesh._cachedInstanceColors;
+      }
+      if (rawColors.length >= count * 4) {
+        mesh._cachedInstanceColors = rawColors instanceof Float32Array ? rawColors : new Float32Array(rawColors);
+        return mesh._cachedInstanceColors;
+      }
+      if (rawColors.length >= count * 3) {
+        mesh._cachedInstanceColors = new Float32Array(count * 4);
+        for (var ni = 0; ni < count; ni++) {
+          mesh._cachedInstanceColors[ni * 4] = rawColors[ni * 3];
+          mesh._cachedInstanceColors[ni * 4 + 1] = rawColors[ni * 3 + 1];
+          mesh._cachedInstanceColors[ni * 4 + 2] = rawColors[ni * 3 + 2];
+          mesh._cachedInstanceColors[ni * 4 + 3] = 1;
+        }
+        return mesh._cachedInstanceColors;
+      }
+      return null;
+    }
+
     function drawInstancedMeshes(gl, bundle, viewMatrix, projMatrix) {
       var meshes = Array.isArray(bundle.instancedMeshes) ? bundle.instancedMeshes : [];
       if (meshes.length === 0) return;
@@ -4724,6 +4776,12 @@
         var transformData = mesh._cachedTransforms;
         if (!transformData) continue;
 
+        var instanceColorData = sceneInstancedColorBuffer(mesh, instanceCount);
+        var hasInstanceColor = !!(instanceColorData && ip.attributes.instanceColor >= 0);
+        if (ip.uniforms.hasInstanceColor) {
+          gl.uniform1i(ip.uniforms.hasInstanceColor, hasInstanceColor ? 1 : 0);
+        }
+
         // Bind cached transforms VBO.
         gl.bindBuffer(gl.ARRAY_BUFFER, ensureStaticArrayVBO(staticMeshArrayVBOs, transformData));
 
@@ -4737,8 +4795,20 @@
           gl.vertexAttribDivisor(loc, 1);
         }
 
+        if (hasInstanceColor) {
+          gl.bindBuffer(gl.ARRAY_BUFFER, ensureStaticArrayVBO(staticMeshArrayVBOs, instanceColorData));
+          gl.enableVertexAttribArray(ip.attributes.instanceColor);
+          gl.vertexAttribPointer(ip.attributes.instanceColor, 4, gl.FLOAT, false, 0, 0);
+          gl.vertexAttribDivisor(ip.attributes.instanceColor, 1);
+        }
+
         // Draw instanced.
         gl.drawArraysInstanced(gl.TRIANGLES, 0, geom.vertexCount, instanceCount);
+
+        if (hasInstanceColor) {
+          gl.vertexAttribDivisor(ip.attributes.instanceColor, 0);
+          gl.disableVertexAttribArray(ip.attributes.instanceColor);
+        }
 
         // Reset divisors and disable instance attribute slots.
         for (var col = 0; col < 4; col++) {

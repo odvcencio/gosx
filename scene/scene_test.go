@@ -724,6 +724,8 @@ func TestPropsLegacyPropsLowerCameraRotationAndControls(t *testing.T) {
 		ControlTarget:      Vec3(1.5, 0.25, 0.8),
 		ControlRotateSpeed: 1.4,
 		ControlZoomSpeed:   0.85,
+		ControlLookSpeed:   1.2,
+		ControlMoveSpeed:   6.5,
 		Camera: PerspectiveCamera{
 			Position: Vec3(0.2, 0.6, 6),
 			Rotation: Rotate(0.18, -0.32, 0.05),
@@ -749,6 +751,12 @@ func TestPropsLegacyPropsLowerCameraRotationAndControls(t *testing.T) {
 	}
 	if got := legacy["controlZoomSpeed"]; got != 0.85 {
 		t.Fatalf("expected zoom speed 0.85, got %#v", got)
+	}
+	if got := legacy["controlLookSpeed"]; got != 1.2 {
+		t.Fatalf("expected look speed 1.2, got %#v", got)
+	}
+	if got := legacy["controlMoveSpeed"]; got != 6.5 {
+		t.Fatalf("expected move speed 6.5, got %#v", got)
 	}
 
 	camera, ok := legacy["camera"].(map[string]any)
@@ -1724,6 +1732,8 @@ func TestPropsSceneIRLowersInstancedMesh(t *testing.T) {
 					Vec3(2, 2, 2),
 					Vec3(1, 1.5, 1),
 				},
+				Colors:        []string{"#ff0000", "#00ff00", "#0000ff"},
+				Attributes:    map[string][]float64{"heat": []float64{0.1, 0.5, 1}},
 				CastShadow:    true,
 				ReceiveShadow: true,
 			},
@@ -1749,6 +1759,12 @@ func TestPropsSceneIRLowersInstancedMesh(t *testing.T) {
 	}
 	if im.Color != "#33aa55" {
 		t.Fatalf("expected color #33aa55, got %q", im.Color)
+	}
+	if len(im.Colors) != 3 || im.Colors[1] != "#00ff00" {
+		t.Fatalf("expected per-instance colors, got %#v", im.Colors)
+	}
+	if len(im.Attributes["heat"]) != 3 || im.Attributes["heat"][2] != 1 {
+		t.Fatalf("expected per-instance heat attribute, got %#v", im.Attributes)
 	}
 	if !im.CastShadow {
 		t.Fatalf("expected castShadow true")
@@ -1802,6 +1818,12 @@ func TestPropsSceneIRLowersInstancedMesh(t *testing.T) {
 	}
 	if got := instancedMeshes[0]["kind"]; got != "box" {
 		t.Fatalf("expected kind in legacy props, got %#v", got)
+	}
+	if got := instancedMeshes[0]["colors"]; got == nil {
+		t.Fatalf("expected colors in legacy props, got %#v", instancedMeshes[0])
+	}
+	if got := instancedMeshes[0]["attributes"]; got == nil {
+		t.Fatalf("expected attributes in legacy props, got %#v", instancedMeshes[0])
 	}
 }
 

@@ -260,8 +260,10 @@ class FakeWebGLContext {
     if (name === "a_color") return 1;
     if (name === "a_material") return 2;
     if (name === "a_uv") return 3;
+    if (name === "a_instanceMatrix") return 4;
     if (name === "a_joints") return 7;
     if (name === "a_weights") return 8;
+    if (name === "a_instanceColor") return 9;
     return -1;
   }
 
@@ -1612,6 +1614,7 @@ function createContext(options) {
   }
   const consoleSpy = createConsoleSpy();
   const hydrateCalls = [];
+  const computeHydrateCalls = [];
   const actionCalls = [];
   const disposeCalls = [];
   const engineHydrateCalls = [];
@@ -1769,6 +1772,13 @@ function createContext(options) {
           hydrateCalls.push(args);
           if (typeof options.onHydrate === "function") {
             return options.onHydrate(...args);
+          }
+          return null;
+        };
+        context.__gosx_hydrate_compute = (...args) => {
+          computeHydrateCalls.push(args);
+          if (typeof options.onHydrateCompute === "function") {
+            return options.onHydrateCompute(...args);
           }
           return null;
         };
@@ -1948,6 +1958,7 @@ function createContext(options) {
 
   return {
     actionCalls,
+    computeHydrateCalls,
     consoleLogs: consoleSpy.logs,
     context,
     disposeCalls,
@@ -2142,6 +2153,46 @@ test("bootstrap hydrates, delegates click events, and disposes islands", async (
   assert.equal(wrapper.listenerCount("click"), 0);
   assert.deepEqual(env.disposeCalls, [["gosx-island-1"]]);
   assert.equal(env.consoleLogs.error.length, 0);
+});
+
+test("bootstrap hydrates compute islands without a DOM root", async () => {
+  const env = createContext({
+    fetchRoutes: {
+      "/runtime.wasm": { bytes: [0, 97, 115, 109] },
+      "/fight-controller.json": { text: '{"name":"FightController"}' },
+    },
+    manifest: {
+      runtime: { path: "/runtime.wasm" },
+      computeIslands: [
+        {
+          id: "gosx-compute-0",
+          component: "FightController",
+          props: { match: "abc" },
+          programRef: "/fight-controller.json",
+          capabilities: ["keyboard"],
+          requiredCapabilities: ["wasm"],
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  assert.equal(env.hydrateCalls.length, 0);
+  assert.equal(env.computeHydrateCalls.length, 1);
+  assert.deepEqual(env.computeHydrateCalls[0].slice(0, 3), [
+    "gosx-compute-0",
+    "FightController",
+    '{"match":"abc"}',
+  ]);
+  assert.equal(env.context.__gosx.islands.size, 0);
+  assert.equal(env.context.__gosx.computeIslands.size, 1);
+  assert.ok(env.context.__gosx.input.providers.keyboard);
+
+  env.context.__gosx_dispose_compute_island("gosx-compute-0");
+  assert.equal(env.context.__gosx.computeIslands.size, 0);
+  assert.deepEqual(env.disposeCalls, [["gosx-compute-0"]]);
 });
 
 test("bootstrap records island hydration failures and keeps the server fallback active", async () => {
@@ -4251,6 +4302,168 @@ test("bootstrap drives shared-runtime Scene3D orbit controls without authored JS
   assert.equal(zoomedCamera[5], 72);
   assert.notEqual(zoomedCamera[4], initialCamera[4]);
   assert.equal(mount.getAttribute("data-gosx-scene3d-controls"), "orbit");
+  assert.equal(env.consoleLogs.warn.length, 0);
+  assert.equal(env.consoleLogs.error.length, 0);
+});
+
+test("bootstrap drives shared-runtime Scene3D first-person controls without authored JS", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-shared-fps-root";
+
+  const env = createContext({
+    elements: [mount],
+    enableWebGL: true,
+    disableCanvas2D: true,
+    fetchRoutes: {
+      "/runtime.wasm": { bytes: [0, 97, 115, 109] },
+      "/scene-fps-program.json": { text: '{"name":"SceneFPS"}' },
+    },
+    manifest: {
+      runtime: { path: "/runtime.wasm" },
+      engines: [
+        {
+          id: "gosx-engine-fps",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-shared-fps-root",
+          runtime: "shared",
+          programRef: "/scene-fps-program.json",
+          props: {
+            width: 640,
+            height: 360,
+            background: "#08151f",
+            autoRotate: false,
+            controls: "first-person",
+            controlMoveSpeed: 6,
+            controlLookSpeed: 1,
+            camera: { x: 0, y: 1.6, z: 6, fov: 72, near: 0.05, far: 128 },
+          },
+        },
+      ],
+    },
+    onHydrateEngine: () => "[]",
+    onRenderEngine: () => JSON.stringify({
+      background: "#08151f",
+      camera: { x: 0, y: 1.6, z: 6, fov: 72, near: 0.05, far: 128 },
+      positions: [],
+      colors: [],
+      vertexCount: 0,
+      worldPositions: [
+        -1.2, -0.7, 0.1, 1.2, -0.7, 0.1,
+        0.1, -0.2, 0.1, 0.1, 1.4, 1.5,
+      ],
+      worldColors: [
+        0.55, 0.88, 1, 1, 0.55, 0.88, 1, 1,
+        0.78, 0.92, 1, 1, 0.78, 0.92, 1, 1,
+      ],
+      worldVertexCount: 4,
+      materials: [
+        { kind: "flat", color: "#8de1ff", opacity: 1, wireframe: true, blendMode: "opaque", renderPass: "opaque", emissive: 0 },
+      ],
+      objects: [
+        {
+          id: "frame",
+          kind: "box",
+          materialIndex: 0,
+          renderPass: "opaque",
+          vertexOffset: 0,
+          vertexCount: 4,
+          static: true,
+          bounds: { minX: -1.2, minY: -0.7, minZ: 0.1, maxX: 1.2, maxY: 1.4, maxZ: 1.5 },
+          depthNear: 6.1,
+          depthFar: 7.5,
+          depthCenter: 6.8,
+        },
+      ],
+      passes: [
+        {
+          name: "staticOpaque",
+          blend: "opaque",
+          depth: "opaque",
+          static: true,
+          cacheKey: "fps-static",
+          positions: [
+            -1.2, -0.7, 0.1, 1.2, -0.7, 0.1,
+            0.1, -0.2, 0.1, 0.1, 1.4, 1.5,
+          ],
+          colors: [
+            0.55, 0.88, 1, 1, 0.55, 0.88, 1, 1,
+            0.78, 0.92, 1, 1, 0.78, 0.92, 1, 1,
+          ],
+          materials: [
+            0, 0, 1,
+            0, 0, 1,
+            0, 0, 1,
+            0, 0, 1,
+          ],
+          vertexCount: 4,
+        },
+      ],
+      objectCount: 1,
+    }),
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const canvas = mount.firstElementChild;
+  const gl = canvas.getContext("webgl");
+  const initialCamera = gl.ops.filter((entry) => entry[0] === "uniform4f" && entry[1] === "u_camera").at(-1);
+  const initialRotation = gl.ops.filter((entry) => entry[0] === "uniform3f" && entry[1] === "u_camera_rotation").at(-1);
+  assert.ok(initialCamera);
+  assert.ok(initialRotation);
+
+  canvas.dispatchEvent({
+    type: "pointerdown",
+    button: 0,
+    pointerId: 4,
+    clientX: 320,
+    clientY: 180,
+    preventDefault() {},
+    stopPropagation() {},
+  });
+  canvas.dispatchEvent({
+    type: "pointermove",
+    button: 0,
+    buttons: 1,
+    pointerId: 4,
+    clientX: 390,
+    clientY: 160,
+    preventDefault() {},
+    stopPropagation() {},
+  });
+  canvas.dispatchEvent({
+    type: "pointerup",
+    button: 0,
+    pointerId: 4,
+    clientX: 390,
+    clientY: 160,
+    preventDefault() {},
+    stopPropagation() {},
+  });
+  await flushAsyncWork();
+
+  const draggedRotation = gl.ops.filter((entry) => entry[0] === "uniform3f" && entry[1] === "u_camera_rotation").at(-1);
+  assert.ok(draggedRotation);
+  assert.notDeepEqual(draggedRotation, initialRotation);
+
+  env.document.dispatchEvent({
+    type: "keydown",
+    code: "KeyW",
+    preventDefault() {},
+  });
+  env.document.dispatchEvent({
+    type: "keyup",
+    code: "KeyW",
+    preventDefault() {},
+  });
+  await flushAsyncWork();
+
+  const movedCamera = gl.ops.filter((entry) => entry[0] === "uniform4f" && entry[1] === "u_camera").at(-1);
+  assert.ok(movedCamera);
+  assert.notEqual(movedCamera[4], initialCamera[4]);
+  assert.equal(mount.getAttribute("data-gosx-scene3d-controls"), "first-person");
+  assert.equal(canvas.getAttribute("tabindex"), "0");
   assert.equal(env.consoleLogs.warn.length, 0);
   assert.equal(env.consoleLogs.error.length, 0);
 });
@@ -6428,6 +6641,8 @@ test("bootstrap keeps WebGL and WebGPU Scene3D command logs in parity", async ()
   const api = env.context.__gosx_scene3d_api;
   assert.equal(typeof api.sceneWebGLCommandSequence, "function");
   assert.equal(typeof api.sceneWebGPUCommandSequence, "function");
+  assert.equal(typeof api.sceneRaycastPick, "function");
+  assert.equal(env.context.__gosx_scene3d_raycast, api.sceneRaycastPick);
 
   const bundle = {
     bundleVersion: api.SCENE_RENDER_BUNDLE_VERSION,
@@ -6462,6 +6677,32 @@ test("bootstrap keeps WebGL and WebGPU Scene3D command logs in parity", async ()
   assert.deepEqual(api.sceneWebGLCommandSequence(bundle, viewport), expected);
   assert.deepEqual(api.sceneWebGPUCommandSequence(bundle, viewport), expected);
   assert.deepEqual(api.sceneWebGPUCommandSequence(bundle, viewport), api.sceneWebGLCommandSequence(bundle, viewport));
+});
+
+test("bootstrap preserves Scene3D instanced colors and custom attributes", async () => {
+  const env = createContext({});
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const api = env.context.__gosx_scene3d_api;
+  const state = api.createSceneState({
+    scene: {
+      instancedMeshes: [
+        {
+          id: "muzzle-flashes",
+          kind: "sphere",
+          count: 2,
+          transforms: new Array(32).fill(0),
+          colors: ["#ffcc66", "#66ccff"],
+          attributes: { heat: [1, 0.35] },
+        },
+      ],
+    },
+  });
+
+  assert.equal(state.instancedMeshes.length, 1);
+  assert.deepEqual(state.instancedMeshes[0].colors, ["#ffcc66", "#66ccff"]);
+  assert.deepEqual(state.instancedMeshes[0].attributes.heat, [1, 0.35]);
 });
 
 test("bootstrap registers and selects Scene3D backends through registry", async () => {
@@ -10594,6 +10835,57 @@ test("bootstrap mounts builtin video engines and bridges shared signals", async 
   assert.equal(video.currentTime, 42);
 });
 
+test("bootstrap registers audio manifests and plays clips", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "audio-root";
+
+  const env = createContext({
+    elements: [mount],
+    engineFactories: {
+      AudioProbe: () => ({}),
+    },
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-audio",
+          component: "AudioProbe",
+          kind: "surface",
+          mountId: "audio-root",
+          capabilities: ["audio"],
+          props: {
+            audio: {
+              masterVolume: 0.5,
+              buses: [{ id: "sfx", volume: 0.8 }],
+              clips: [
+                { id: "hit", uri: "/audio/hit.ogg", bus: "sfx", volume: 0.75, rate: 1.1 },
+              ],
+            },
+          },
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const audio = env.context.__gosx.audio;
+  assert.equal(typeof audio.play, "function");
+  let snapshot = audio.snapshot();
+  assert.equal(snapshot.clips.length, 1);
+  assert.equal(snapshot.clips[0].id, "hit");
+  assert.equal(snapshot.clips[0].bus, "sfx");
+  assert.ok(snapshot.buses.some((bus) => bus.id === "master" && bus.volume === 0.5));
+  assert.ok(snapshot.buses.some((bus) => bus.id === "sfx" && bus.volume === 0.8));
+
+  const handle = await audio.play("hit", { handle: "hit-1", volume: 0.5, pan: -0.25 });
+  assert.equal(handle, "hit-1");
+  snapshot = audio.snapshot();
+  assert.deepEqual(snapshot.handles, ["hit-1"]);
+  assert.equal(audio.stop("hit"), true);
+  assert.deepEqual(audio.snapshot().handles, []);
+});
+
 test("bootstrap mounts only the first video engine on a page", async () => {
   const firstMount = new FakeElement("div", null);
   firstMount.id = "video-root-a";
@@ -10916,6 +11208,36 @@ test("selective runtime loads islands feature and shared wasm only when islands 
   assert.equal(env.fetchCalls.some((entry) => entry.url === "/gosx/bootstrap-feature-engines.js"), false);
   assert.equal(env.fetchCalls.some((entry) => entry.url === "/gosx/bootstrap-feature-hubs.js"), false);
   assert.equal(env.context.__gosx.islands.size, 1);
+});
+
+test("selective runtime loads islands feature for compute islands", async () => {
+  const env = createContext({
+    fetchRoutes: {
+      "/runtime.wasm": { bytes: [0, 97, 115, 109] },
+      "/fight-controller.json": { text: '{"name":"FightController"}' },
+      "/gosx/bootstrap-feature-islands.js": { text: bootstrapFeatureIslandsSource },
+    },
+    manifest: {
+      runtime: { path: "/runtime.wasm" },
+      computeIslands: [
+        {
+          id: "gosx-compute-runtime",
+          component: "FightController",
+          props: { match: "abc" },
+          programRef: "/fight-controller.json",
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+  await flushAsyncWork();
+
+  assert.equal(env.computeHydrateCalls.length, 1);
+  assert.equal(env.fetchCalls.some((entry) => entry.url === "/runtime.wasm"), true);
+  assert.equal(env.fetchCalls.some((entry) => entry.url === "/gosx/bootstrap-feature-islands.js"), true);
+  assert.equal(env.fetchCalls.some((entry) => entry.url === "/gosx/bootstrap-feature-engines.js"), false);
+  assert.equal(env.context.__gosx.computeIslands.size, 1);
 });
 
 test("selective runtime mounts native JS engines without loading the shared wasm runtime", async () => {

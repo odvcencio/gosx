@@ -53,6 +53,43 @@ func TestManifestAddIsland(t *testing.T) {
 	}
 }
 
+func TestManifestAddComputeIsland(t *testing.T) {
+	m := NewManifest()
+	id, err := m.AddComputeIsland(
+		"FightController",
+		"main",
+		map[string]string{"match": "abc"},
+		[]string{"keyboard", "gamepad"},
+		[]string{"wasm"},
+	)
+	if err != nil {
+		t.Fatalf("AddComputeIsland failed: %v", err)
+	}
+	if id != "gosx-compute-0" {
+		t.Fatalf("expected gosx-compute-0, got %s", id)
+	}
+	if len(m.ComputeIslands) != 1 {
+		t.Fatalf("expected 1 compute island, got %d", len(m.ComputeIslands))
+	}
+	entry := m.ComputeIslands[0]
+	if entry.Component != "FightController" {
+		t.Fatalf("unexpected component: %s", entry.Component)
+	}
+	if entry.Capabilities[1] != "gamepad" {
+		t.Fatalf("unexpected capabilities: %#v", entry.Capabilities)
+	}
+	if entry.RequiredCapabilities[0] != "wasm" {
+		t.Fatalf("unexpected required capabilities: %#v", entry.RequiredCapabilities)
+	}
+	var props map[string]string
+	if err := json.Unmarshal(entry.Props, &props); err != nil {
+		t.Fatalf("unmarshal props: %v", err)
+	}
+	if props["match"] != "abc" {
+		t.Fatalf("unexpected props: %#v", props)
+	}
+}
+
 func TestManifestMarshal(t *testing.T) {
 	m := NewManifest()
 	m.Bundles["main"] = BundleRef{Path: "/app.wasm", Hash: "abc123"}

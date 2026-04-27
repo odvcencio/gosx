@@ -2,7 +2,7 @@ package game
 
 import (
 	"reflect"
-	"sort"
+	"slices"
 	"strings"
 )
 
@@ -133,14 +133,21 @@ func (w *World) Entity(name string) (EntityID, bool) {
 
 // Entities returns all live entities in spawn order.
 func (w *World) Entities() []EntityID {
+	return EntitiesInto(w, nil)
+}
+
+// EntitiesInto appends all live entities to dst in spawn order. The returned
+// slice reuses dst's backing array when capacity allows, which avoids per-frame
+// allocations in fixed-step game loops.
+func EntitiesInto(w *World, dst []EntityID) []EntityID {
+	out := dst[:0]
 	if w == nil || len(w.alive) == 0 {
-		return nil
+		return out
 	}
-	out := make([]EntityID, 0, len(w.alive))
 	for id := range w.alive {
 		out = append(out, id)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	slices.Sort(out)
 	return out
 }
 
@@ -250,27 +257,38 @@ type ComponentRef[T any] struct {
 
 // Query returns all live entities carrying component T.
 func Query[T any](w *World) []ComponentRef[T] {
+	return QueryInto[T](w, nil)
+}
+
+// QueryInto appends all live entities carrying component T to dst. The returned
+// slice is sorted by entity ID and reuses dst's backing array when possible.
+// Prefer this in hot systems that run every fixed frame.
+func QueryInto[T any](w *World, dst []ComponentRef[T]) []ComponentRef[T] {
+	out := dst[:0]
 	if w == nil {
-		return nil
+		return out
 	}
 	bucket := w.components[componentType[T]()]
 	if len(bucket) == 0 {
-		return nil
+		return out
 	}
-	ids := make([]EntityID, 0, len(bucket))
-	for id := range bucket {
-		if w.Alive(id) {
-			ids = append(ids, id)
+	for id, raw := range bucket {
+		if !w.Alive(id) {
+			continue
 		}
-	}
-	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
-	out := make([]ComponentRef[T], 0, len(ids))
-	for _, id := range ids {
-		value, ok := bucket[id].(T)
-		if ok {
+		if value, ok := raw.(T); ok {
 			out = append(out, ComponentRef[T]{Entity: id, Value: value})
 		}
 	}
+	slices.SortFunc(out, func(a, b ComponentRef[T]) int {
+		if a.Entity < b.Entity {
+			return -1
+		}
+		if a.Entity > b.Entity {
+			return 1
+		}
+		return 0
+	})
 	return out
 }
 

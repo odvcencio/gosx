@@ -65,6 +65,54 @@ func TestBridgeHydrateBinary(t *testing.T) {
 	}
 }
 
+func TestBridgeHydrateComputeIslandDoesNotPushPatches(t *testing.T) {
+	b := New()
+	prog := &program.Program{
+		Name: "ComputeReader",
+		Nodes: []program.Node{
+			{Kind: program.NodeExpr, Expr: 0},
+		},
+		Root: 0,
+		Exprs: []program.Expr{
+			{Op: program.OpSignalGet, Value: "$shared.count", Type: program.TypeInt},
+			{Op: program.OpLitInt, Value: "0", Type: program.TypeInt},
+		},
+		Signals: []program.SignalDef{
+			{Name: "$shared.count", Type: program.TypeInt, Init: 1},
+		},
+	}
+	data, err := program.EncodeJSON(prog)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var patches int
+	b.SetPatchCallback(func(string, string) {
+		patches++
+	})
+
+	if err := b.HydrateComputeIsland("compute-0", "Counter", `{}`, data, "json"); err != nil {
+		t.Fatalf("hydrate compute island: %v", err)
+	}
+	if b.IslandCount() != 1 {
+		t.Fatalf("expected compute island to use island VM, got %d islands", b.IslandCount())
+	}
+	if b.ComputeIslandCount() != 1 {
+		t.Fatalf("expected 1 compute island, got %d", b.ComputeIslandCount())
+	}
+	if err := b.SetSharedSignalJSON("$shared.count", `7`); err != nil {
+		t.Fatalf("set shared signal: %v", err)
+	}
+	if patches != 0 {
+		t.Fatalf("compute island should suppress DOM patches, got %d callback(s)", patches)
+	}
+
+	b.DisposeIsland("compute-0")
+	if b.ComputeIslandCount() != 0 {
+		t.Fatalf("expected disposed compute island, got %d", b.ComputeIslandCount())
+	}
+}
+
 func TestBridgeDispose(t *testing.T) {
 	b := New()
 	prog := program.CounterProgram()

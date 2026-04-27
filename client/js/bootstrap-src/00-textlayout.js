@@ -35,6 +35,7 @@
   window.__gosx = {
     version: GOSX_VERSION,
     islands: new Map(),   // islandID -> { component, listeners, root }
+    computeIslands: new Map(), // compute island ID -> { component }
     engines: new Map(),   // engineID -> { component, kind, mount, handle }
     hubs: new Map(),      // hubID -> { entry, socket, reconnectTimer }
     textLayouts: new Map(), // textLayoutID -> { element, result, config }

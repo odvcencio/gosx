@@ -23,6 +23,7 @@
   window.__gosx = {
     version: GOSX_VERSION,
     islands: new Map(),   // islandID -> { component, listeners, root }
+    computeIslands: new Map(), // compute island ID -> { component }
     engines: new Map(),   // engineID -> { component, kind, mount, handle }
     hubs: new Map(),      // hubID -> { entry, socket, reconnectTimer }
     textLayouts: new Map(), // textLayoutID -> { element, result, config }
@@ -3605,6 +3606,321 @@
     return Number.isFinite(number) ? number : fallback;
   }
 
+  const gosxAudioState = {
+    clips: new Map(),
+    buses: new Map([["master", { id: "master", volume: 1, muted: false }]]),
+    handles: new Map(),
+    nextHandle: 0,
+    context: null,
+  };
+
+  function gosxAudioClamp01(value, fallback) {
+    return Math.max(0, Math.min(1, gosxNumber(value, fallback)));
+  }
+
+  function gosxAudioContextConstructor() {
+    return (window && (window.AudioContext || window.webkitAudioContext)) || null;
+  }
+
+  function gosxAudioEnsureContext() {
+    const Ctor = gosxAudioContextConstructor();
+    if (!Ctor) {
+      return null;
+    }
+    if (!gosxAudioState.context) {
+      try {
+        gosxAudioState.context = new Ctor();
+      } catch (_error) {
+        gosxAudioState.context = null;
+      }
+    }
+    return gosxAudioState.context;
+  }
+
+  function gosxAudioNormalizeBus(raw) {
+    const item = raw && typeof raw === "object" ? raw : {};
+    const id = String(item.id || "").trim();
+    if (!id) {
+      return null;
+    }
+    return {
+      id,
+      parent: String(item.parent || "").trim(),
+      volume: gosxAudioClamp01(item.volume, 1),
+      muted: Boolean(item.muted),
+    };
+  }
+
+  function gosxAudioNormalizeClip(raw, index) {
+    const item = raw && typeof raw === "object" ? raw : {};
+    const id = String(item.id || item.name || ("clip-" + index)).trim();
+    const src = String(item.uri || item.src || item.url || "").trim();
+    if (!id || !src) {
+      return null;
+    }
+    return {
+      id,
+      src,
+      contentType: String(item.contentType || item.type || "").trim(),
+      bus: String(item.bus || "master").trim() || "master",
+      preload: Boolean(item.preload),
+      loop: Boolean(item.loop),
+      volume: gosxAudioClamp01(item.volume, 1),
+      rate: Math.max(0.05, gosxNumber(item.rate, 1)),
+      metadata: item.metadata && typeof item.metadata === "object" ? Object.assign({}, item.metadata) : {},
+      _bufferPromise: null,
+    };
+  }
+
+  function gosxAudioRegisterBus(raw) {
+    const bus = gosxAudioNormalizeBus(raw);
+    if (!bus) {
+      return null;
+    }
+    gosxAudioState.buses.set(bus.id, bus);
+    return bus;
+  }
+
+  function gosxAudioRegisterClip(raw, index) {
+    const clip = gosxAudioNormalizeClip(raw, index || 0);
+    if (!clip) {
+      return null;
+    }
+    const previous = gosxAudioState.clips.get(clip.id);
+    if (previous && previous._bufferPromise && previous.src === clip.src) {
+      clip._bufferPromise = previous._bufferPromise;
+    }
+    gosxAudioState.clips.set(clip.id, clip);
+    return clip;
+  }
+
+  function gosxAudioRegisterManifest(manifest) {
+    const raw = manifest && typeof manifest === "object" ? manifest : {};
+    if (Array.isArray(raw.buses)) {
+      raw.buses.forEach(gosxAudioRegisterBus);
+    }
+    if (Object.prototype.hasOwnProperty.call(raw, "masterVolume")) {
+      gosxAudioRegisterBus({ id: "master", volume: raw.masterVolume, muted: Boolean(raw.muted) });
+    }
+    if (Array.isArray(raw.clips)) {
+      raw.clips.forEach(gosxAudioRegisterClip);
+    }
+    return gosxAudioSnapshot();
+  }
+
+  function gosxAudioResolveClip(idOrSrc, options) {
+    if (idOrSrc && typeof idOrSrc === "object") {
+      return gosxAudioRegisterClip(idOrSrc, gosxAudioState.clips.size);
+    }
+    const key = String(idOrSrc || "").trim();
+    if (!key) {
+      return null;
+    }
+    if (gosxAudioState.clips.has(key)) {
+      return gosxAudioState.clips.get(key);
+    }
+    return gosxAudioRegisterClip(Object.assign({}, options || {}, { id: key, src: key }), gosxAudioState.clips.size);
+  }
+
+  function gosxAudioBusVolume(busID) {
+    const bus = gosxAudioState.buses.get(String(busID || "master").trim() || "master") || gosxAudioState.buses.get("master");
+    const master = gosxAudioState.buses.get("master") || { volume: 1, muted: false };
+    if ((bus && bus.muted) || master.muted) {
+      return 0;
+    }
+    const busVolume = bus ? gosxAudioClamp01(bus.volume, 1) : 1;
+    return busVolume * gosxAudioClamp01(master.volume, 1);
+  }
+
+  function gosxAudioPlaybackVolume(clip, options) {
+    const opts = options && typeof options === "object" ? options : {};
+    const clipVolume = gosxAudioClamp01(clip && clip.volume, 1);
+    const requested = Object.prototype.hasOwnProperty.call(opts, "volume") ? gosxAudioClamp01(opts.volume, 1) : 1;
+    return clipVolume * requested * gosxAudioBusVolume(opts.bus || (clip && clip.bus) || "master");
+  }
+
+  function gosxAudioLoadBuffer(clip) {
+    if (!clip) {
+      return Promise.resolve(null);
+    }
+    const audioContext = gosxAudioEnsureContext();
+    if (!audioContext || typeof fetch !== "function" || typeof audioContext.decodeAudioData !== "function") {
+      return Promise.resolve(null);
+    }
+    if (!clip._bufferPromise) {
+      clip._bufferPromise = fetch(clip.src)
+        .then(function(response) {
+          if (!response || !response.ok) {
+            throw new Error("audio fetch failed: " + clip.src);
+          }
+          return response.arrayBuffer();
+        })
+        .then(function(data) {
+          return audioContext.decodeAudioData(data);
+        });
+    }
+    return clip._bufferPromise;
+  }
+
+  function gosxAudioPreload(idOrSrc, options) {
+    const clip = gosxAudioResolveClip(idOrSrc, options);
+    return gosxAudioLoadBuffer(clip).then(function() {
+      return clip;
+    });
+  }
+
+  function gosxAudioPlayWebAudio(audioContext, clip, options, handleID) {
+    return gosxAudioLoadBuffer(clip).then(function(buffer) {
+      if (!buffer || !audioContext || typeof audioContext.createBufferSource !== "function") {
+        return null;
+      }
+      const source = audioContext.createBufferSource();
+      source.buffer = buffer;
+      source.loop = Boolean((options && options.loop) || clip.loop);
+      source.playbackRate.value = Math.max(0.05, gosxNumber(options && options.rate, clip.rate || 1));
+      const gain = typeof audioContext.createGain === "function" ? audioContext.createGain() : null;
+      if (gain && gain.gain) {
+        gain.gain.value = gosxAudioPlaybackVolume(clip, options);
+      }
+      let tail = gain || source;
+      if (typeof audioContext.createStereoPanner === "function" && options && Object.prototype.hasOwnProperty.call(options, "pan")) {
+        const panner = audioContext.createStereoPanner();
+        panner.pan.value = Math.max(-1, Math.min(1, gosxNumber(options.pan, 0)));
+        tail.connect(panner);
+        tail = panner;
+      }
+      tail.connect(audioContext.destination);
+      source.start(0);
+      gosxAudioState.handles.set(handleID, { kind: "webaudio", clip: clip.id, source, gain, options: Object.assign({}, options || {}) });
+      source.onended = function() {
+        gosxAudioState.handles.delete(handleID);
+      };
+      return handleID;
+    });
+  }
+
+  function gosxAudioPlayElement(clip, options, handleID) {
+    if (!document || typeof document.createElement !== "function") {
+      return Promise.resolve("");
+    }
+    const audio = document.createElement("audio");
+    audio.src = clip.src;
+    audio.loop = Boolean((options && options.loop) || clip.loop);
+    audio.volume = gosxAudioPlaybackVolume(clip, options);
+    audio.playbackRate = Math.max(0.05, gosxNumber(options && options.rate, clip.rate || 1));
+    audio.preload = "auto";
+    gosxAudioState.handles.set(handleID, { kind: "element", clip: clip.id, element: audio, options: Object.assign({}, options || {}) });
+    if (typeof audio.addEventListener === "function") {
+      audio.addEventListener("ended", function() {
+        gosxAudioState.handles.delete(handleID);
+      });
+    }
+    const result = typeof audio.play === "function" ? audio.play() : null;
+    if (result && typeof result.catch === "function") {
+      result.catch(function(error) {
+        console.warn("[gosx] audio playback failed", error);
+      });
+    }
+    return Promise.resolve(handleID);
+  }
+
+  function gosxAudioPlay(idOrSrc, options) {
+    const clip = gosxAudioResolveClip(idOrSrc, options);
+    if (!clip) {
+      return Promise.resolve("");
+    }
+    const handleID = String(options && options.handle ? options.handle : "audio-" + (++gosxAudioState.nextHandle));
+    const audioContext = gosxAudioEnsureContext();
+    if (audioContext && typeof audioContext.createBufferSource === "function") {
+      return gosxAudioPlayWebAudio(audioContext, clip, options || {}, handleID).then(function(handle) {
+        return handle || gosxAudioPlayElement(clip, options || {}, handleID);
+      });
+    }
+    return gosxAudioPlayElement(clip, options || {}, handleID);
+  }
+
+  function gosxAudioStop(target) {
+    const key = String(target || "").trim();
+    let stopped = false;
+    for (const [handleID, handle] of Array.from(gosxAudioState.handles.entries())) {
+      if (key && handleID !== key && handle.clip !== key) {
+        continue;
+      }
+      if (handle.source && typeof handle.source.stop === "function") {
+        try {
+          handle.source.stop(0);
+        } catch (_error) {}
+      }
+      if (handle.element && typeof handle.element.pause === "function") {
+        handle.element.pause();
+      }
+      gosxAudioState.handles.delete(handleID);
+      stopped = true;
+    }
+    return stopped;
+  }
+
+  function gosxAudioSetBusVolume(busID, volume) {
+    const bus = gosxAudioRegisterBus({ id: busID || "master", volume: volume });
+    for (const handle of gosxAudioState.handles.values()) {
+      const clip = gosxAudioState.clips.get(handle.clip);
+      if (handle.element) {
+        handle.element.volume = gosxAudioPlaybackVolume(clip, handle.options);
+      }
+      if (handle.gain && handle.gain.gain) {
+        handle.gain.gain.value = gosxAudioPlaybackVolume(clip, handle.options);
+      }
+    }
+    return bus;
+  }
+
+  function gosxAudioSnapshot() {
+    return {
+      clips: Array.from(gosxAudioState.clips.values()).map(function(clip) {
+        return {
+          id: clip.id,
+          src: clip.src,
+          contentType: clip.contentType,
+          bus: clip.bus,
+          preload: clip.preload,
+          loop: clip.loop,
+          volume: clip.volume,
+          rate: clip.rate,
+        };
+      }),
+      buses: Array.from(gosxAudioState.buses.values()).map(function(bus) {
+        return Object.assign({}, bus);
+      }),
+      handles: Array.from(gosxAudioState.handles.keys()),
+    };
+  }
+
+  function gosxAudioUnlock() {
+    const audioContext = gosxAudioEnsureContext();
+    if (audioContext && typeof audioContext.resume === "function") {
+      return audioContext.resume();
+    }
+    return Promise.resolve();
+  }
+
+  const gosxAudioAPI = {
+    load: function(idOrClip, src, options) {
+      if (typeof idOrClip === "string" && typeof src === "string") {
+        return gosxAudioRegisterClip(Object.assign({}, options || {}, { id: idOrClip, src: src }), gosxAudioState.clips.size);
+      }
+      return gosxAudioRegisterClip(idOrClip, gosxAudioState.clips.size);
+    },
+    preload: gosxAudioPreload,
+    play: gosxAudioPlay,
+    stop: gosxAudioStop,
+    setBusVolume: gosxAudioSetBusVolume,
+    registerManifest: gosxAudioRegisterManifest,
+    unlock: gosxAudioUnlock,
+    snapshot: gosxAudioSnapshot,
+  };
+  window.__gosx.audio = gosxAudioAPI;
+  window.__gosx_audio = gosxAudioAPI;
+
   function gosxPointerMode() {
     if (gosxMediaQueryMatches("(pointer: fine)")) {
       return "fine";
@@ -3901,6 +4217,7 @@
     const hasRuntime = Boolean(
       typeof window.__gosx_hydrate === "function"
       || (window.__gosx && window.__gosx.islands && window.__gosx.islands.size > 0)
+      || (window.__gosx && window.__gosx.computeIslands && window.__gosx.computeIslands.size > 0)
       || (window.__gosx && window.__gosx.engines && window.__gosx.engines.size > 0)
       || (window.__gosx && window.__gosx.hubs && window.__gosx.hubs.size > 0)
     );

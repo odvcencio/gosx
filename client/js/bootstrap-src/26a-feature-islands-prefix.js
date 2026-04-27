@@ -12,3 +12,6 @@
     const inferProgramFormat = api.inferProgramFormat;
     const runtimeCapabilityStatus = api.runtimeCapabilityStatus;
     const applyRuntimeCapabilityState = api.applyRuntimeCapabilityState;
+    const activateInputProviders = api.activateInputProviders;
+    const releaseInputProviders = api.releaseInputProviders;
+    const capabilityList = api.capabilityList;

@@ -18,6 +18,7 @@ func init() {
 					"tags":        []string{"3d", "webgl", "webgpu", "pbr", "scene-graph"},
 					"toc": []map[string]string{
 						{"href": "#scene-graph", "label": "Scene Graph"},
+						{"href": "#full-stack-3d", "label": "Full-Stack 3D"},
 						{"href": "#camera-controls", "label": "Camera & Controls"},
 						{"href": "#geometries", "label": "Geometries"},
 						{"href": "#materials", "label": "Materials"},

@@ -34,6 +34,7 @@ type PageRuntimeSummary struct {
 	BootstrapFeatureScene3DPath string
 	HLSPath                     string
 	Islands                     int
+	ComputeIslands              int
 	Engines                     int
 	Hubs                        int
 }
@@ -75,6 +76,20 @@ func (r *PageRuntime) Island(prog *islandprogram.Program, props any) gosx.Node {
 	}
 	r.active = true
 	return r.renderer.RenderIslandFromProgram(prog, props)
+}
+
+// ComputeIsland registers a headless island program for page-scoped client
+// compute. It shares the island VM and signal bridge without owning a DOM root.
+func (r *PageRuntime) ComputeIsland(cfg island.ComputeIslandConfig) string {
+	if r == nil {
+		return ""
+	}
+	id, err := r.renderer.RegisterComputeIsland(cfg)
+	if err != nil {
+		return ""
+	}
+	r.active = true
+	return id
 }
 
 // BindHub registers a realtime hub connection for the current page.
@@ -171,6 +186,7 @@ func (r *PageRuntime) Summary() PageRuntimeSummary {
 		BootstrapFeatureScene3DPath: summary.BootstrapFeatureScene3DPath,
 		HLSPath:                     summary.HLSPath,
 		Islands:                     summary.Islands,
+		ComputeIslands:              summary.ComputeIslands,
 		Engines:                     summary.Engines,
 		Hubs:                        summary.Hubs,
 	}

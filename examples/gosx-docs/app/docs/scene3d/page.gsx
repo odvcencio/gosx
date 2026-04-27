@@ -54,6 +54,42 @@ func Page() Node {
 		<section id="scene3d-demo" class="scene3d-demo-well" aria-label="PBR demo scene">
 			<Scene3D {...data.demoScene} />
 		</section>
+		<section id="full-stack-3d">
+			<h2>Full-Stack 3D</h2>
+			<p>
+				Scene3D is part of the GoSX page model. A route can server-render the shell, stream or mutate data through hubs, hydrate island HUDs and controls, and mount the 3D surface from the same loader/runtime contract used by the rest of the app.
+			</p>
+			<p>
+				Compute islands fill the headless controller role: they hydrate through the island VM and shared-signal bridge without owning DOM, which makes them a good place for route-local orchestration, input normalization, and Scene3D state derivation.
+			</p>
+			{CodeBlock("go", `rt := game.New(game.Config{
+	    Profile: game.Web3DProfile(),
+	    Assets: assets,
+	    Scene: func(ctx *game.Context) scene.Props {
+	        return ProductScene(ctx.Assets)
+		    },
+		})
+	func Load(ctx *route.RouteContext, page route.FilePage) (any, error) {
+	    ctx.Runtime().BindHub("inventory", "/ws/inventory", nil)
+	    ctx.Runtime().ComputeIsland(island.ComputeIslandConfig{
+	        Name: "ProductSceneController",
+	        Props: map[string]any{"assetManifest": rt.Assets().Manifest()},
+	        Capabilities: []engine.Capability{engine.CapFetch, engine.CapStorage},
+	    })
+	    sceneProps, _ := rt.BuildScene()
+	    return map[string]any{
+	        "scene": sceneProps,
+	        "assets": rt.Assets().Manifest(),
+	    }, nil
+	}`)}
+			<p>
+				Use
+				<span class="inline-code">game.Web3DProfile()</span>
+				for product configurators, maps, simulation dashboards, and other web-native 3D interfaces. Use
+				<span class="inline-code">game.FightingProfile()</span>
+				or a custom profile when the page is a deterministic game surface.
+			</p>
+		</section>
 		<section id="camera-controls">
 			<h2>Camera &amp; Controls</h2>
 			<p>

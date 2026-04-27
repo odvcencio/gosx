@@ -131,6 +131,8 @@ type PointsProps struct {
 type InstancedMeshProps struct {
 	Count         *int
 	Color         *string
+	Colors        []string
+	Attributes    map[string][]float64
 	CastShadow    *bool
 	ReceiveShadow *bool
 }
@@ -303,6 +305,12 @@ func (props *InstancedMeshProps) legacyProps() map[string]any {
 	record := map[string]any{}
 	setIntPtr(record, "count", props.Count)
 	setStringPtr(record, "color", props.Color)
+	if len(props.Colors) > 0 {
+		record["colors"] = append([]string(nil), props.Colors...)
+	}
+	if len(props.Attributes) > 0 {
+		record["attributes"] = cloneFloat64Slices(props.Attributes)
+	}
 	setBoolPtr(record, "castShadow", props.CastShadow)
 	setBoolPtr(record, "receiveShadow", props.ReceiveShadow)
 	return trimEmptyRecord(record)

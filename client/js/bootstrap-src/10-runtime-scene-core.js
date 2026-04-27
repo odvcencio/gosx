@@ -1975,6 +1975,12 @@
     const item = sceneIsPlainObject(entry) ? entry : {};
     const lifecycle = sceneNormalizeLifecycle(item, current);
     const transforms = Array.isArray(item.transforms) ? item.transforms.slice() : (Array.isArray(current.transforms) ? current.transforms : []);
+    const colors = Object.prototype.hasOwnProperty.call(item, "colors")
+      ? sceneCloneData(item.colors)
+      : (Object.prototype.hasOwnProperty.call(current, "colors") ? current.colors : []);
+    const attributes = Object.prototype.hasOwnProperty.call(item, "attributes")
+      ? sceneCloneData(item.attributes)
+      : (Object.prototype.hasOwnProperty.call(current, "attributes") ? current.attributes : undefined);
     const normalized = {
       id: item.id || current.id || ("scene-instanced-" + index),
       count: Math.max(0, Math.floor(sceneNumber(item.count, sceneNumber(current.count, 0)))),
@@ -1989,6 +1995,8 @@
       roughness: sceneNumberOrCSSVar(item.roughness, sceneNumber(current.roughness, 0)),
       metalness: sceneNumberOrCSSVar(item.metalness, sceneNumber(current.metalness, 0)),
       transforms,
+      colors,
+      attributes,
       castShadow: sceneBool(Object.prototype.hasOwnProperty.call(item, "castShadow") ? item.castShadow : current.castShadow, false),
       receiveShadow: sceneBool(Object.prototype.hasOwnProperty.call(item, "receiveShadow") ? item.receiveShadow : current.receiveShadow, false),
       _transition: lifecycle.transition,
@@ -2004,6 +2012,9 @@
     // instanced meshes — defeating the static VBO cache in 16-scene-webgl.
     if (transforms === current.transforms && current._cachedTransforms) {
       normalized._cachedTransforms = current._cachedTransforms;
+    }
+    if (colors === current.colors && current._cachedInstanceColors) {
+      normalized._cachedInstanceColors = current._cachedInstanceColors;
     }
     return normalized;
   }
@@ -2789,8 +2800,13 @@
         // the client receives them via the gosx:hub:event chain, the
         // patch correctly mutates entry.colors — but the galaxy never
         // actually re-paints because _cachedColors is never invalidated.
-        if (key === "colors" && Object.prototype.hasOwnProperty.call(target, "_cachedColors")) {
-          target._cachedColors = null;
+        if (key === "colors") {
+          if (Object.prototype.hasOwnProperty.call(target, "_cachedColors")) {
+            target._cachedColors = null;
+          }
+          if (Object.prototype.hasOwnProperty.call(target, "_cachedInstanceColors")) {
+            target._cachedInstanceColors = null;
+          }
         } else if (key === "positions" && Object.prototype.hasOwnProperty.call(target, "_cachedPos")) {
           target._cachedPos = null;
         } else if (key === "sizes" && Object.prototype.hasOwnProperty.call(target, "_cachedSizes")) {

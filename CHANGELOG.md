@@ -1,5 +1,46 @@
 # Changelog
 
+## v0.18.24
+
+Full-stack 3D and game capability release.
+
+This release keeps GoSX anchored as a batteries-included web framework while
+making game-grade Scene3D surfaces first-class. The goal is not a separate game
+engine bolted onto GoSX; it is one full-stack route/runtime model where server
+rendering, islands, compute islands, hubs, engines, Scene3D, physics, and game
+simulation compose cleanly.
+
+Compute islands now fill the headless controller tier for 3D/game pages. They
+hydrate through the island VM and shared-signal bridge without owning DOM,
+which lets route-local orchestration, input normalization, and Scene3D state
+derivation live beside ordinary island UI.
+
+The `game` package gains production-facing profiles and asset helpers:
+`Web3DProfile`, `FightingProfile`, model/texture/audio/font asset constructors,
+batch registration, preload metadata, runtime audio manifests, and JSON sim
+state encoding for authoritative tick streams that already produce JSON.
+
+The game-capability gap pass closes the main objections to web-native game
+surfaces:
+
+- Low-GC ECS hot paths with `QueryInto`, `EntitiesInto`, reusable `Scratch`,
+  and 10k-entity benchmarks that show the reuse path at 0 B/op.
+- First-class audio manifests/events plus the browser `__gosx.audio` runtime
+  with HTMLAudio fallback and WebAudio buffer playback when available.
+- Scene3D ray queries on both the Go scene graph (`Raycast`, `RaycastGraph`)
+  and browser runtime API for hitscan/picking workflows.
+- Built-in `first-person` and `fly` Scene3D controls with pointer look and
+  keyboard movement, alongside the existing orbit controls.
+- Per-instance instanced mesh colors and custom numeric attributes through
+  typed scene structs, canonical IR, render bundles, runtime normalization,
+  and WebGL instanced rendering.
+- `gosx size [--json] <dist|build.json>` for cold-start/runtime bundle
+  reporting, so bundle weight is part of the release workflow.
+
+Docs now call out full-stack Scene3D architecture, compute-island controller
+patterns, audio/runtime assets, reusable ECS query buffers, and runtime size
+reporting.
+
 ## v0.18.23
 
 Game/runtime foundation release.

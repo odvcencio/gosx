@@ -292,7 +292,7 @@
 
     if (manifestNeedsWASMRuntime(manifest)) {
       if (!manifest.runtime || !manifest.runtime.path) {
-        console.error("[gosx] islands and shared runtime engines require manifest.runtime.path");
+        console.error("[gosx] islands, compute islands, and shared runtime engines require manifest.runtime.path");
         window.__gosx_runtime_ready();
         return;
       }

@@ -107,6 +107,8 @@ type Props struct {
 	ControlTarget        Vector3
 	ControlRotateSpeed   float64 `json:"controlRotateSpeed,omitempty"`
 	ControlZoomSpeed     float64 `json:"controlZoomSpeed,omitempty"`
+	ControlLookSpeed     float64 `json:"controlLookSpeed,omitempty"`
+	ControlMoveSpeed     float64 `json:"controlMoveSpeed,omitempty"`
 	ScrollCameraStart    float64 `json:"scrollCameraStart,omitempty"`
 	ScrollCameraEnd      float64 `json:"scrollCameraEnd,omitempty"`
 	MaxDevicePixelRatio  float64 `json:"maxDevicePixelRatio,omitempty"`
@@ -301,6 +303,8 @@ type InstancedMesh struct {
 	Positions     []Vector3
 	Rotations     []Euler
 	Scales        []Vector3
+	Colors        []string
+	Attributes    map[string][]float64
 	CastShadow    bool
 	ReceiveShadow bool
 	Transition    Transition
@@ -935,6 +939,24 @@ func cloneSceneAnyMap(values map[string]any) map[string]any {
 	return out
 }
 
+func cloneFloat64Slices(values map[string][]float64) map[string][]float64 {
+	if len(values) == 0 {
+		return nil
+	}
+	out := make(map[string][]float64, len(values))
+	for key, value := range values {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		out[key] = append([]float64(nil), value...)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
 // Vec3 builds a Vector3 without forcing struct literals at callsites.
 func Vec3(x, y, z float64) Vector3 {
 	return Vector3{X: x, Y: y, Z: z}
@@ -1046,6 +1068,8 @@ func (p Props) legacyBaseProps() map[string]any {
 	}
 	setNumeric(out, "controlRotateSpeed", p.ControlRotateSpeed)
 	setNumeric(out, "controlZoomSpeed", p.ControlZoomSpeed)
+	setNumeric(out, "controlLookSpeed", p.ControlLookSpeed)
+	setNumeric(out, "controlMoveSpeed", p.ControlMoveSpeed)
 	setNumeric(out, "scrollCameraStart", p.ScrollCameraStart)
 	setNumeric(out, "scrollCameraEnd", p.ScrollCameraEnd)
 	setNumeric(out, "maxDevicePixelRatio", p.MaxDevicePixelRatio)
@@ -1836,6 +1860,8 @@ func (l *graphLowerer) lowerInstancedMesh(im InstancedMesh, parent worldTransfor
 		InState:       im.InState.legacyProps(),
 		OutState:      im.OutState.legacyProps(),
 		Live:          normalizeLive(im.Live),
+		Colors:        append([]string(nil), im.Colors...),
+		Attributes:    cloneFloat64Slices(im.Attributes),
 	}
 	// Apply geometry dimensions.
 	if geometryProps != nil {

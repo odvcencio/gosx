@@ -21,6 +21,7 @@ func registerRuntime(b *bridge.Bridge) {
 		js.Global().Call("__gosx_apply_patches", islandID, patchJSON)
 	})
 	setRuntimeFunc("__gosx_hydrate", hydrateRuntimeFunc(b))
+	setRuntimeFunc("__gosx_hydrate_compute", hydrateComputeRuntimeFunc(b))
 	setRuntimeFunc("__gosx_action", actionRuntimeFunc(b))
 	setRuntimeFunc("__gosx_dispose", disposeRuntimeFunc(b))
 	registerEngineRuntime(b)
@@ -43,6 +44,19 @@ func hydrateRuntimeFunc(b *bridge.Bridge) js.Func {
 			return jsError(err)
 		}
 		if err := b.HydrateIsland(call.islandID, call.componentName, call.propsJSON, call.programData, call.format); err != nil {
+			return jsError(err)
+		}
+		return js.Null()
+	})
+}
+
+func hydrateComputeRuntimeFunc(b *bridge.Bridge) js.Func {
+	return js.FuncOf(func(this js.Value, args []js.Value) any {
+		call, err := parseHydrateCall(args)
+		if err != nil {
+			return jsError(err)
+		}
+		if err := b.HydrateComputeIsland(call.islandID, call.componentName, call.propsJSON, call.programData, call.format); err != nil {
 			return jsError(err)
 		}
 		return js.Null()

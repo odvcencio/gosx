@@ -98,6 +98,7 @@ func (r *Runtime) EngineConfig() engine.Config {
 	} else {
 		cfg = r.genericEngineConfig()
 	}
+	cfg = r.withRuntimeProps(cfg)
 	cfg.Capabilities = mergeCapabilities(cfg.Capabilities, r.profile.Capabilities)
 	cfg.RequiredCapabilities = mergeCapabilities(cfg.RequiredCapabilities, r.profile.RequiredCapabilities)
 	if cfg.MountAttrs == nil {
@@ -130,6 +131,34 @@ func (r *Runtime) genericEngineConfig() engine.Config {
 			"data-gosx-game": true,
 		},
 	}
+}
+
+func (r *Runtime) withRuntimeProps(cfg engine.Config) engine.Config {
+	if r == nil {
+		return cfg
+	}
+	props := map[string]any{}
+	if len(cfg.Props) > 0 {
+		_ = json.Unmarshal(cfg.Props, &props)
+	}
+	if props == nil {
+		props = map[string]any{}
+	}
+	props["gameProfile"] = r.profile.Name
+	props["fixedStepSeconds"] = r.FixedStep().Seconds()
+	if assets := r.assets.Manifest(); len(assets) > 0 {
+		props["assets"] = assets
+	}
+	audio := r.AudioManifest()
+	if len(audio.Clips) > 0 || len(audio.Buses) > 0 {
+		props["audio"] = audio
+		cfg.Capabilities = mergeCapabilities(cfg.Capabilities, []engine.Capability{engine.CapAudio})
+	}
+	raw, err := json.Marshal(props)
+	if err == nil {
+		cfg.Props = raw
+	}
+	return cfg
 }
 
 // Mount registers the runtime's engine config with a page/runtime mount target.

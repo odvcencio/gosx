@@ -1281,3 +1281,9 @@
       },
     };
   }
+
+  if (window.__gosx_scene3d_api) {
+    window.__gosx_scene3d_api.sceneRaycastPick = sceneRaycastPick;
+    window.__gosx_scene3d_api.sceneRaycastPickGroup = sceneRaycastPickGroup;
+  }
+  window.__gosx_scene3d_raycast = sceneRaycastPick;

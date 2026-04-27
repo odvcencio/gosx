@@ -2,7 +2,7 @@
 
 A Go-native web platform. Write components in `.gsx` — Go with embedded markup — compile through a real compiler pipeline, render on the server by default, hydrate interactive islands with WebAssembly. No JavaScript toolchain. No CGo. A deliberately small dependency budget.
 
-Current release: **v0.18.23**. Pre-1.0; breaking changes are documented in [CHANGELOG.md](./CHANGELOG.md).
+Current release: **v0.18.24**. Pre-1.0; breaking changes are documented in [CHANGELOG.md](./CHANGELOG.md).
 
 ## What if you never had to leave Go?
 
@@ -462,6 +462,7 @@ gosx perf --budget perf-budget.json [url...]
                                       # Profile and fail when a route exceeds budgets
 gosx perf compare base.json next.json # Fail on perf regressions
 gosx perf budget perf.json budget.json # Check a saved report
+gosx size [--json] dist               # Report runtime cold-start and feature chunk sizes
 ```
 
 ## Performance Budgets

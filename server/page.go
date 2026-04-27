@@ -184,6 +184,7 @@ type documentContractAssets struct {
 	BootstrapFeatureScene3DPath string `json:"bootstrapFeatureScene3dPath,omitempty"`
 	HLSPath                     string `json:"hlsPath,omitempty"`
 	Islands                     int    `json:"islands,omitempty"`
+	ComputeIslands              int    `json:"computeIslands,omitempty"`
 	Engines                     int    `json:"engines,omitempty"`
 	Hubs                        int    `json:"hubs,omitempty"`
 }
@@ -220,6 +221,7 @@ func documentContractNode(doc *DocumentContext) gosx.Node {
 			BootstrapFeatureScene3DPath: doc.Runtime.BootstrapFeatureScene3DPath,
 			HLSPath:                     doc.Runtime.HLSPath,
 			Islands:                     doc.Runtime.Islands,
+			ComputeIslands:              doc.Runtime.ComputeIslands,
 			Engines:                     doc.Runtime.Engines,
 			Hubs:                        doc.Runtime.Hubs,
 		},

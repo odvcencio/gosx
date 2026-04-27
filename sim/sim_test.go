@@ -2,7 +2,9 @@ package sim
 
 import (
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -65,6 +67,37 @@ func TestRunnerCollectsInputs(t *testing.T) {
 	after := r.DrainInputs()
 	if len(after) != 0 {
 		t.Fatalf("expected 0 inputs after drain, got %d", len(after))
+	}
+}
+
+func TestRunnerJSONStateEncodingEmbedsValidJSON(t *testing.T) {
+	h := hub.New("test-json")
+	s := &mockSim{}
+	r := New(h, s, Options{StateEncoding: StateEncodingJSON})
+
+	payload := r.tickPayload(12, []byte(`{"hp":100,"phase":"fight"}`))
+	wire, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(wire)
+	if !strings.Contains(got, `"state":{"hp":100,"phase":"fight"}`) {
+		t.Fatalf("expected raw JSON state, got %s", got)
+	}
+}
+
+func TestRunnerJSONStateEncodingFallsBackForBinaryState(t *testing.T) {
+	h := hub.New("test-binary")
+	s := &mockSim{}
+	r := New(h, s, Options{StateEncoding: StateEncodingJSON})
+
+	payload := r.tickPayload(1, []byte{0, 1, 2})
+	wire, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(wire), `"state":"AAEC"`) {
+		t.Fatalf("expected binary state fallback to base64, got %s", wire)
 	}
 }
 

@@ -10,6 +10,11 @@ import (
 const (
 	// ProfileInteractive is the default game/runtime profile.
 	ProfileInteractive = "interactive"
+	// ProfileWeb3D is tuned for app/product/lab surfaces where Scene3D is a
+	// first-class web UI primitive, not necessarily a game loop.
+	ProfileWeb3D = "web3d"
+	// ProfileFighting is tuned for frame-accurate, input-heavy versus games.
+	ProfileFighting = "fighting"
 	// ProfileScientific trims gamepad/audio affordances and favors compute and
 	// storage for academic and scientific visualization workloads.
 	ProfileScientific = "scientific"
@@ -55,6 +60,89 @@ func InteractiveProfile() Profile {
 			Key("move.down", "ArrowDown"),
 			Key("confirm", "Enter"),
 			Key("cancel", "Escape"),
+		},
+	}
+}
+
+// Web3DProfile returns a profile for full-stack web pages that use Scene3D as
+// a primary interface surface: product configurators, maps, operational
+// dashboards, visualization tools, and immersive content sections.
+func Web3DProfile() Profile {
+	return Profile{
+		Name:        ProfileWeb3D,
+		FixedStep:   time.Second / 60,
+		MaxDelta:    250 * time.Millisecond,
+		MaxSubsteps: 5,
+		Capabilities: []engine.Capability{
+			engine.CapCanvas,
+			engine.CapWebGL,
+			engine.CapWebGL2,
+			engine.CapAnimation,
+			engine.CapWASM,
+			engine.CapPointer,
+			engine.CapKeyboard,
+			engine.CapFetch,
+			engine.CapStorage,
+		},
+		RequiredCapabilities: []engine.Capability{
+			engine.CapCanvas,
+			engine.CapWebGL,
+			engine.CapAnimation,
+		},
+		Bindings: []Binding{
+			Key("inspect", "Enter"),
+			Key("cancel", "Escape"),
+			Key("camera.left", "ArrowLeft"),
+			Key("camera.right", "ArrowRight"),
+			Key("camera.up", "ArrowUp"),
+			Key("camera.down", "ArrowDown"),
+		},
+	}
+}
+
+// FightingProfile returns a profile for deterministic, server-authoritative
+// versus games that need low-latency keyboard/gamepad input, animation, audio,
+// and GPU-backed scene rendering.
+func FightingProfile() Profile {
+	return Profile{
+		Name:        ProfileFighting,
+		FixedStep:   time.Second / 60,
+		MaxDelta:    100 * time.Millisecond,
+		MaxSubsteps: 3,
+		Capabilities: []engine.Capability{
+			engine.CapCanvas,
+			engine.CapWebGL,
+			engine.CapWebGL2,
+			engine.CapAnimation,
+			engine.CapWASM,
+			engine.CapKeyboard,
+			engine.CapPointer,
+			engine.CapGamepad,
+			engine.CapAudio,
+		},
+		RequiredCapabilities: []engine.Capability{
+			engine.CapCanvas,
+			engine.CapWebGL,
+			engine.CapAnimation,
+			engine.CapKeyboard,
+		},
+		Bindings: []Binding{
+			Key("move.left", "ArrowLeft"),
+			Key("move.right", "ArrowRight"),
+			Key("move.up", "ArrowUp"),
+			Key("move.down", "ArrowDown"),
+			Key("attack.light_punch", "KeyU"),
+			Key("attack.heavy_punch", "KeyI"),
+			Key("attack.light_kick", "KeyJ"),
+			Key("attack.heavy_kick", "KeyK"),
+			Key("guard", "KeyL"),
+			Key("confirm", "Enter"),
+			Key("cancel", "Escape"),
+			Button("attack.light_punch", "button0"),
+			Button("attack.heavy_punch", "button1"),
+			Button("attack.light_kick", "button2"),
+			Button("attack.heavy_kick", "button3"),
+			Button("guard", "button5"),
 		},
 	}
 }

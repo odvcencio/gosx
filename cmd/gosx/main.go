@@ -17,6 +17,8 @@
 //	                              Profile browser runtime performance
 //	gosx perf budget <report> <budget>
 //	                              Check saved perf output against budgets
+//	gosx size [--json] <dist|build.json>
+//	                              Report runtime bundle sizes
 package main
 
 import (
@@ -64,6 +66,8 @@ func main() {
 		cmdLSP()
 	case "perf":
 		cmdPerf()
+	case "size", "size-report":
+		cmdSizeReport()
 	case "visual":
 		cmdVisual()
 	case "repl":
@@ -99,6 +103,8 @@ Commands:
                        Profile browser runtime performance
   perf budget <report> <budget>
                        Check saved perf output against budgets
+  size [--json] <dist|build.json>
+                       Report runtime bundle sizes
   visual <url>         Pixel-level visual regression testing
   repl <url>           Interactive browser runtime explorer
   version              Print version

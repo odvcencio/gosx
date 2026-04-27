@@ -355,27 +355,29 @@ type PointsIR struct {
 
 // InstancedMeshIR is the typed compatibility record for one instanced mesh.
 type InstancedMeshIR struct {
-	ID                   string            `json:"id"`
-	Count                int               `json:"count"`
-	Kind                 string            `json:"kind"`
-	Width                float64           `json:"width,omitempty"`
-	Height               float64           `json:"height,omitempty"`
-	Depth                float64           `json:"depth,omitempty"`
-	Radius               float64           `json:"radius,omitempty"`
-	Segments             int               `json:"segments,omitempty"`
-	MaterialKind         string            `json:"materialKind,omitempty"`
-	Color                string            `json:"color,omitempty"`
-	Roughness            float64           `json:"roughness,omitempty"`
-	Metalness            float64           `json:"metalness,omitempty"`
-	Transforms           []float64         `json:"transforms"`
-	CastShadow           bool              `json:"castShadow,omitempty"`
-	ReceiveShadow        bool              `json:"receiveShadow,omitempty"`
-	CompressedTransforms []CompressedArray `json:"compressedTransforms,omitempty"`
-	PreviewTransforms    []CompressedArray `json:"previewTransforms,omitempty"`
-	Transition           TransitionIR      `json:"transition,omitzero"`
-	InState              map[string]any    `json:"inState,omitempty"`
-	OutState             map[string]any    `json:"outState,omitempty"`
-	Live                 []string          `json:"live,omitempty"`
+	ID                   string               `json:"id"`
+	Count                int                  `json:"count"`
+	Kind                 string               `json:"kind"`
+	Width                float64              `json:"width,omitempty"`
+	Height               float64              `json:"height,omitempty"`
+	Depth                float64              `json:"depth,omitempty"`
+	Radius               float64              `json:"radius,omitempty"`
+	Segments             int                  `json:"segments,omitempty"`
+	MaterialKind         string               `json:"materialKind,omitempty"`
+	Color                string               `json:"color,omitempty"`
+	Roughness            float64              `json:"roughness,omitempty"`
+	Metalness            float64              `json:"metalness,omitempty"`
+	Transforms           []float64            `json:"transforms"`
+	Colors               []string             `json:"colors,omitempty"`
+	Attributes           map[string][]float64 `json:"attributes,omitempty"`
+	CastShadow           bool                 `json:"castShadow,omitempty"`
+	ReceiveShadow        bool                 `json:"receiveShadow,omitempty"`
+	CompressedTransforms []CompressedArray    `json:"compressedTransforms,omitempty"`
+	PreviewTransforms    []CompressedArray    `json:"previewTransforms,omitempty"`
+	Transition           TransitionIR         `json:"transition,omitzero"`
+	InState              map[string]any       `json:"inState,omitempty"`
+	OutState             map[string]any       `json:"outState,omitempty"`
+	Live                 []string             `json:"live,omitempty"`
 }
 
 // ComputeParticlesIR is the typed compatibility record for one GPU particle system.
@@ -899,6 +901,12 @@ func (item InstancedMeshIR) legacyProps() map[string]any {
 		record["compressedTransforms"] = item.CompressedTransforms
 	} else if len(item.Transforms) > 0 {
 		record["transforms"] = item.Transforms
+	}
+	if len(item.Colors) > 0 {
+		record["colors"] = item.Colors
+	}
+	if len(item.Attributes) > 0 {
+		record["attributes"] = item.Attributes
 	}
 	if len(item.PreviewTransforms) > 0 {
 		record["previewTransforms"] = item.PreviewTransforms

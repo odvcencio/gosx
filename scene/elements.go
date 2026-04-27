@@ -64,6 +64,8 @@ type InstancedMeshElementProps struct {
 	Radius        float64
 	Segments      int
 	Transforms    []float64
+	Colors        []string
+	Attributes    map[string][]float64
 	CastShadow    bool
 	ReceiveShadow bool
 }
@@ -162,6 +164,8 @@ func LowerInstancedMesh(props InstancedMeshElementProps) IRNode {
 			Radius:        props.Radius,
 			Segments:      props.Segments,
 			Transforms:    append([]float64(nil), props.Transforms...),
+			Colors:        append([]string(nil), props.Colors...),
+			Attributes:    cloneFloat64Slices(props.Attributes),
 			CastShadow:    props.CastShadow,
 			ReceiveShadow: props.ReceiveShadow,
 		},

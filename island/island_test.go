@@ -139,6 +139,60 @@ func TestPageHeadWithIslands(t *testing.T) {
 	}
 }
 
+func TestRegisterComputeIslandUsesSharedRuntimeWithoutDOMPatch(t *testing.T) {
+	r := NewRenderer("main")
+	r.SetBundle("main", "/gosx/runtime.wasm")
+	r.SetRuntime("/gosx/runtime.wasm", "", 0)
+	r.SetProgramDir("/gosx/islands")
+
+	id, err := r.RegisterComputeIsland(ComputeIslandConfig{
+		Name:                 "FightController",
+		Props:                map[string]string{"match": "abc"},
+		Capabilities:         []engine.Capability{engine.CapKeyboard, engine.CapGamepad},
+		RequiredCapabilities: []engine.Capability{engine.CapWASM},
+	})
+	if err != nil {
+		t.Fatalf("register compute island: %v", err)
+	}
+	if id != "gosx-compute-0" {
+		t.Fatalf("unexpected compute island id: %s", id)
+	}
+	if len(r.Manifest().ComputeIslands) != 1 {
+		t.Fatalf("expected one compute island, got %d", len(r.Manifest().ComputeIslands))
+	}
+	entry := r.Manifest().ComputeIslands[0]
+	if entry.ProgramRef != "/gosx/islands/FightController.json" {
+		t.Fatalf("expected inferred program ref, got %s", entry.ProgramRef)
+	}
+	if entry.Capabilities[1] != "gamepad" {
+		t.Fatalf("unexpected capabilities: %#v", entry.Capabilities)
+	}
+
+	head := gosx.RenderHTML(r.PageHead())
+	if !strings.Contains(head, "gosx-manifest") {
+		t.Fatalf("compute island page should emit manifest: %s", head)
+	}
+	if !strings.Contains(head, "wasm_exec.js") {
+		t.Fatalf("compute island page should load wasm runtime: %s", head)
+	}
+	if strings.Contains(head, "patch.js") {
+		t.Fatalf("compute-only page should not load DOM patch runtime: %s", head)
+	}
+
+	preloads := gosx.RenderHTML(r.PreloadHints())
+	if !strings.Contains(preloads, "bootstrap-feature-islands.js") {
+		t.Fatalf("compute island page should preload islands feature chunk: %s", preloads)
+	}
+	if !strings.Contains(preloads, "/gosx/islands/FightController.json") {
+		t.Fatalf("compute island program should be prefetched: %s", preloads)
+	}
+
+	summary := r.Summary()
+	if summary.ComputeIslands != 1 || summary.Islands != 0 {
+		t.Fatalf("unexpected summary counts: %#v", summary)
+	}
+}
+
 func TestPageHeadWithEnginesOnly(t *testing.T) {
 	r := NewRenderer("main")
 	r.SetClientAssetPaths("/gosx/wasm_exec.js", "/gosx/patch.js", "/gosx/bootstrap.js")

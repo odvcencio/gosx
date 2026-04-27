@@ -236,16 +236,18 @@ type IRPointsNode struct {
 
 // IRInstancedMesh describes one instanced primitive batch.
 type IRInstancedMesh struct {
-	Count         int       `json:"count"`
-	Kind          string    `json:"kind"`
-	Width         float64   `json:"width,omitempty"`
-	Height        float64   `json:"height,omitempty"`
-	Depth         float64   `json:"depth,omitempty"`
-	Radius        float64   `json:"radius,omitempty"`
-	Segments      int       `json:"segments,omitempty"`
-	Transforms    []float64 `json:"transforms"`
-	CastShadow    bool      `json:"castShadow,omitempty"`
-	ReceiveShadow bool      `json:"receiveShadow,omitempty"`
+	Count         int                  `json:"count"`
+	Kind          string               `json:"kind"`
+	Width         float64              `json:"width,omitempty"`
+	Height        float64              `json:"height,omitempty"`
+	Depth         float64              `json:"depth,omitempty"`
+	Radius        float64              `json:"radius,omitempty"`
+	Segments      int                  `json:"segments,omitempty"`
+	Transforms    []float64            `json:"transforms"`
+	Colors        []string             `json:"colors,omitempty"`
+	Attributes    map[string][]float64 `json:"attributes,omitempty"`
+	CastShadow    bool                 `json:"castShadow,omitempty"`
+	ReceiveShadow bool                 `json:"receiveShadow,omitempty"`
 }
 
 // IRComputeNode describes a GPU particle system.
@@ -892,6 +894,8 @@ func instancedToIRNode(mesh InstancedMeshIR, materialIndex int) IRNode {
 			Radius:        mesh.Radius,
 			Segments:      mesh.Segments,
 			Transforms:    append([]float64(nil), mesh.Transforms...),
+			Colors:        append([]string(nil), mesh.Colors...),
+			Attributes:    cloneFloat64Slices(mesh.Attributes),
 			CastShadow:    mesh.CastShadow,
 			ReceiveShadow: mesh.ReceiveShadow,
 		},

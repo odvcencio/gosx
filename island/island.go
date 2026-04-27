@@ -794,6 +794,55 @@ func (r *Renderer) BindHub(name, path string, bindings []hydrate.HubBinding) str
 	return r.manifest.AddHub(name, path, bindings)
 }
 
+// RegisterComputeIsland registers a headless island program in the hydration
+// manifest. Compute islands share the island VM and signal bridge but do not
+// render, own, or patch a DOM root.
+func (r *Renderer) RegisterComputeIsland(cfg ComputeIslandConfig) (string, error) {
+	if r == nil || r.manifest == nil {
+		return "", fmt.Errorf("renderer required")
+	}
+	name := strings.TrimSpace(cfg.Name)
+	if name == "" {
+		return "", fmt.Errorf("compute island name required")
+	}
+	if err := engine.ValidateCapabilities(cfg.Capabilities); err != nil {
+		return "", err
+	}
+	if err := engine.ValidateCapabilities(cfg.RequiredCapabilities); err != nil {
+		return "", err
+	}
+
+	bundleID := strings.TrimSpace(cfg.BundleID)
+	if bundleID == "" {
+		bundleID = r.bundleID
+	}
+	id, err := r.manifest.AddComputeIsland(
+		name,
+		bundleID,
+		cfg.Props,
+		engineCapabilities(cfg.Capabilities),
+		engineCapabilities(cfg.RequiredCapabilities),
+	)
+	if err != nil {
+		return "", err
+	}
+
+	lastIdx := len(r.manifest.ComputeIslands) - 1
+	r.applyComputeProgramRef(&r.manifest.ComputeIslands[lastIdx], cfg)
+	r.counter++
+	return id, nil
+}
+
+// RenderComputeIsland is a convenience wrapper for callers that mirror the
+// visual island API and only need the assigned manifest ID.
+func (r *Renderer) RenderComputeIsland(cfg ComputeIslandConfig) string {
+	id, err := r.RegisterComputeIsland(cfg)
+	if err != nil {
+		return ""
+	}
+	return id
+}
+
 // RenderIslandFromProgram renders an island entirely from its compiled IslandProgram.
 // No manual event wiring needed — events are extracted from the program's node tree.
 // Server HTML is generated with data-gosx-on-* attributes plus the legacy
@@ -1037,6 +1086,33 @@ func (r *Renderer) applyProgramRef(entry *hydrate.IslandEntry, componentName str
 	entry.ProgramRef = r.programDir + "/" + componentName + programFileExt(r.programFormat)
 }
 
+func (r *Renderer) applyComputeProgramRef(entry *hydrate.ComputeIslandEntry, cfg ComputeIslandConfig) {
+	if ref := strings.TrimSpace(cfg.ProgramRef); ref != "" {
+		entry.ProgramRef = ref
+		entry.ProgramFormat = strings.TrimSpace(cfg.ProgramFormat)
+		if entry.ProgramFormat == "" {
+			entry.ProgramFormat = r.programFormat
+		}
+		entry.ProgramHash = strings.TrimSpace(cfg.ProgramHash)
+		return
+	}
+
+	componentName := strings.TrimSpace(entry.Component)
+	if asset, ok := r.programAssets[componentName]; ok {
+		entry.ProgramRef = asset.path
+		entry.ProgramFormat = asset.format
+		entry.ProgramHash = asset.hash
+		return
+	}
+
+	if r.programDir == "" {
+		return
+	}
+
+	entry.ProgramFormat = r.programFormat
+	entry.ProgramRef = r.programDir + "/" + componentName + programFileExt(r.programFormat)
+}
+
 func programFileExt(format string) string {
 	if format == "bin" {
 		return ".gxi"
@@ -1079,6 +1155,13 @@ func (r *Renderer) PreloadHints() gosx.Node {
 
 	// Prefetch island programs — downloaded during WASM compile.
 	for _, island := range r.manifest.Islands {
+		if island.ProgramRef != "" {
+			b.WriteString(fmt.Sprintf(`<link rel="prefetch" href="%s">`, island.ProgramRef))
+			b.WriteByte('\n')
+		}
+	}
+
+	for _, island := range r.manifest.ComputeIslands {
 		if island.ProgramRef != "" {
 			b.WriteString(fmt.Sprintf(`<link rel="prefetch" href="%s">`, island.ProgramRef))
 			b.WriteByte('\n')
@@ -1166,14 +1249,15 @@ func (r *Renderer) clientRuntimePlan() clientRuntimePlan {
 		return clientRuntimePlan{Mode: "none"}
 	}
 	islands := len(r.manifest.Islands)
+	computeIslands := len(r.manifest.ComputeIslands)
 	engines := len(r.manifest.Engines)
 	hubs := len(r.manifest.Hubs)
-	bootstrap := r.bootstrapOnly || islands > 0 || engines > 0 || hubs > 0
+	bootstrap := r.bootstrapOnly || islands > 0 || computeIslands > 0 || engines > 0 || hubs > 0
 	mode := "none"
 	if bootstrap {
 		mode = "full"
 	}
-	if r.bootstrapOnly && islands == 0 && engines == 0 && hubs == 0 {
+	if r.bootstrapOnly && islands == 0 && computeIslands == 0 && engines == 0 && hubs == 0 {
 		mode = "lite"
 	}
 	sharedEngine := r.needsSharedRuntimeEngineBridge()
@@ -1182,8 +1266,8 @@ func (r *Renderer) clientRuntimePlan() clientRuntimePlan {
 		Mode:          mode,
 		Manifest:      bootstrap && mode != "lite",
 		Selective:     bootstrap && mode != "lite",
-		SharedRuntime: islands > 0 || sharedEngine,
-		WASMExec:      islands > 0 || r.hasWASMEngines() || sharedEngine,
+		SharedRuntime: islands > 0 || computeIslands > 0 || sharedEngine,
+		WASMExec:      islands > 0 || computeIslands > 0 || r.hasWASMEngines() || sharedEngine,
 		Patch:         islands > 0,
 	}
 }
@@ -1195,15 +1279,16 @@ func (r *Renderer) Summary() Summary {
 	}
 	plan := r.clientRuntimePlan()
 	summary := Summary{
-		Bootstrap:     plan.Bootstrap,
-		BootstrapMode: plan.Mode,
-		Manifest:      plan.Manifest,
-		RuntimePath:   r.selectedRuntimePath(),
-		WASMExecPath:  r.selectedWASMExecPath(),
-		BootstrapPath: r.selectedBootstrapPath(),
-		Islands:       len(r.manifest.Islands),
-		Engines:       len(r.manifest.Engines),
-		Hubs:          len(r.manifest.Hubs),
+		Bootstrap:      plan.Bootstrap,
+		BootstrapMode:  plan.Mode,
+		Manifest:       plan.Manifest,
+		RuntimePath:    r.selectedRuntimePath(),
+		WASMExecPath:   r.selectedWASMExecPath(),
+		BootstrapPath:  r.selectedBootstrapPath(),
+		Islands:        len(r.manifest.Islands),
+		ComputeIslands: len(r.manifest.ComputeIslands),
+		Engines:        len(r.manifest.Engines),
+		Hubs:           len(r.manifest.Hubs),
 	}
 	if plan.Patch {
 		summary.PatchPath = r.patchPath
@@ -1245,7 +1330,7 @@ func (r *Renderer) selectedBootstrapFeaturePath(name string) string {
 	}
 	switch name {
 	case "islands":
-		if len(r.manifest.Islands) == 0 {
+		if len(r.manifest.Islands) == 0 && len(r.manifest.ComputeIslands) == 0 {
 			return ""
 		}
 		return r.bootstrapFeatureIslandsPath
@@ -1289,7 +1374,7 @@ func (r *Renderer) selectedRuntimeRef() hydrate.RuntimeRef {
 	if r == nil {
 		return hydrate.RuntimeRef{}
 	}
-	if len(r.manifest.Islands) > 0 && !r.needsSharedRuntimeEngineBridge() && strings.TrimSpace(r.islandRuntime.Path) != "" {
+	if (len(r.manifest.Islands) > 0 || len(r.manifest.ComputeIslands) > 0) && !r.needsSharedRuntimeEngineBridge() && strings.TrimSpace(r.islandRuntime.Path) != "" {
 		return r.islandRuntime
 	}
 	return r.manifest.Runtime

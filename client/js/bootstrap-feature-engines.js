@@ -1790,6 +1790,9 @@
     }
     const runtime = createEngineRuntime(entry, mount);
     const ctx = createEngineContext(entry, mount, runtime, capabilityStatus);
+    if (entry.props && entry.props.audio && window.__gosx && window.__gosx.audio && typeof window.__gosx.audio.registerManifest === "function") {
+      window.__gosx.audio.registerManifest(entry.props.audio);
+    }
     pendingEngineRuntimes.set(entry.id, runtime);
 
     const factory = await resolveMountedEngineFactory(entry);

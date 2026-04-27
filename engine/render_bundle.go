@@ -239,18 +239,20 @@ type RenderPostEffect struct {
 
 // RenderInstancedMesh is a GPU-ready instanced mesh entry for the render bundle.
 type RenderInstancedMesh struct {
-	ID            string    `json:"id,omitempty"`
-	Kind          string    `json:"kind"`
-	MaterialIndex int       `json:"materialIndex"`
-	VertexCount   int       `json:"vertexCount"`
-	InstanceCount int       `json:"instanceCount"`
-	Transforms    []float64 `json:"transforms"`
-	SkinID        string    `json:"skinID,omitempty"`
-	JointIndices  []uint32  `json:"jointIndices,omitempty"`
-	Weights       []float64 `json:"weights,omitempty"`
-	BindPose      []float64 `json:"bindPose,omitempty"`
-	CastShadow    bool      `json:"castShadow,omitempty"`
-	ReceiveShadow bool      `json:"receiveShadow,omitempty"`
+	ID            string               `json:"id,omitempty"`
+	Kind          string               `json:"kind"`
+	MaterialIndex int                  `json:"materialIndex"`
+	VertexCount   int                  `json:"vertexCount"`
+	InstanceCount int                  `json:"instanceCount"`
+	Transforms    []float64            `json:"transforms"`
+	Colors        []float64            `json:"colors,omitempty"`
+	Attributes    map[string][]float64 `json:"attributes,omitempty"`
+	SkinID        string               `json:"skinID,omitempty"`
+	JointIndices  []uint32             `json:"jointIndices,omitempty"`
+	Weights       []float64            `json:"weights,omitempty"`
+	BindPose      []float64            `json:"bindPose,omitempty"`
+	CastShadow    bool                 `json:"castShadow,omitempty"`
+	ReceiveShadow bool                 `json:"receiveShadow,omitempty"`
 }
 
 // RenderParticleEmitter describes an emitter for the render bundle particle system.

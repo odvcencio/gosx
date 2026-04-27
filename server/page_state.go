@@ -6,6 +6,7 @@ import (
 
 	"github.com/odvcencio/gosx"
 	"github.com/odvcencio/gosx/engine"
+	"github.com/odvcencio/gosx/island"
 )
 
 // PageState carries shared request-scoped page response state used by both
@@ -225,6 +226,14 @@ func (s *PageState) Engine(cfg engine.Config, fallback gosx.Node) gosx.Node {
 		return fallback
 	}
 	return s.Runtime().Engine(cfg, fallback)
+}
+
+// ComputeIsland registers a headless island program for the current page.
+func (s *PageState) ComputeIsland(cfg island.ComputeIslandConfig) string {
+	if s == nil {
+		return ""
+	}
+	return s.Runtime().ComputeIsland(cfg)
 }
 
 // TextBlock renders a managed text-layout node for the current page.
