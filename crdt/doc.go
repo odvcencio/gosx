@@ -411,7 +411,7 @@ func (d *Doc) GenerateSyncMessage(state *crdtsync.State) ([]byte, bool) {
 	)
 	for _, change := range d.changes {
 		hash := [32]byte(change.Hash)
-		if state.HasKnown(hash) || state.HasSent(hash) {
+		if !state.HasPeerNeed(hash) && (state.HasKnown(hash) || state.HasSent(hash)) {
 			continue
 		}
 		chunk, _, err := EncodeChangeChunk(change)
@@ -429,6 +429,7 @@ func (d *Doc) GenerateSyncMessage(state *crdtsync.State) ([]byte, bool) {
 	data, err := crdtsync.EncodeMessage(crdtsync.Message{
 		Version: crdtsync.MessageTypeV1,
 		Heads:   heads,
+		Need:    state.Needed(),
 		Changes: changes,
 	})
 	if err != nil {
@@ -472,7 +473,16 @@ func (d *Doc) ReceiveSyncMessage(state *crdtsync.State, msg []byte) error {
 		patches = append(patches, applied...)
 	}
 	for _, head := range decoded.Heads {
-		state.MarkKnown(head)
+		if _, ok := d.changeIndex[ChangeHash(head).String()]; ok {
+			state.MarkKnown(head)
+			continue
+		}
+		state.MarkNeed(head)
+	}
+	for _, need := range decoded.Need {
+		if _, ok := d.changeIndex[ChangeHash(need).String()]; ok {
+			state.MarkPeerNeed(need)
+		}
 	}
 	hooks = append([]func([]Patch){}, d.changeHooks...)
 	d.mu.Unlock()

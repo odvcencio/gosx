@@ -151,6 +151,78 @@ func TestDocSyncMessagesConverge(t *testing.T) {
 	}
 }
 
+func TestDocSyncNeedRecoversMissingHeadChange(t *testing.T) {
+	server := NewDoc()
+	client := NewDoc()
+	serverState := crdtsync.NewState()
+	clientState := crdtsync.NewState()
+
+	if err := server.Put(Root, "title", StringValue("server")); err != nil {
+		t.Fatalf("server seed put: %v", err)
+	}
+	hash, err := server.Commit("seed")
+	if err != nil {
+		t.Fatalf("commit seed: %v", err)
+	}
+
+	full, ok := server.GenerateSyncMessage(serverState)
+	if !ok {
+		t.Fatal("expected initial server sync message")
+	}
+	decoded, err := crdtsync.DecodeMessage(full)
+	if err != nil {
+		t.Fatalf("decode initial sync: %v", err)
+	}
+	headOnly, err := crdtsync.EncodeMessage(crdtsync.Message{
+		Version: crdtsync.MessageTypeV1,
+		Heads:   decoded.Heads,
+	})
+	if err != nil {
+		t.Fatalf("encode head-only sync: %v", err)
+	}
+	if err := client.ReceiveSyncMessage(clientState, headOnly); err != nil {
+		t.Fatalf("client receive head-only sync: %v", err)
+	}
+
+	needMsg, ok := client.GenerateSyncMessage(clientState)
+	if !ok {
+		t.Fatal("expected client to request missing head")
+	}
+	need, err := crdtsync.DecodeMessage(needMsg)
+	if err != nil {
+		t.Fatalf("decode need sync: %v", err)
+	}
+	if len(need.Need) != 1 || need.Need[0] != [32]byte(hash) {
+		t.Fatalf("need = %#v, want committed hash %#v", need.Need, hash)
+	}
+
+	if err := server.ReceiveSyncMessage(serverState, needMsg); err != nil {
+		t.Fatalf("server receive need sync: %v", err)
+	}
+	retry, ok := server.GenerateSyncMessage(serverState)
+	if !ok {
+		t.Fatal("expected server to resend requested change")
+	}
+	retryDecoded, err := crdtsync.DecodeMessage(retry)
+	if err != nil {
+		t.Fatalf("decode retry sync: %v", err)
+	}
+	if len(retryDecoded.Changes) != 1 {
+		t.Fatalf("retry changes = %d, want 1", len(retryDecoded.Changes))
+	}
+	if err := client.ReceiveSyncMessage(clientState, retry); err != nil {
+		t.Fatalf("client receive retry sync: %v", err)
+	}
+
+	clientValue, _, err := client.Get(Root, "title")
+	if err != nil {
+		t.Fatalf("client synced title: %v", err)
+	}
+	if clientValue.Str != "server" {
+		t.Fatalf("expected client title server, got %q", clientValue.Str)
+	}
+}
+
 func TestDocListMergeConvergesAcrossForks(t *testing.T) {
 	base := NewDoc()
 	items, err := base.MakeList(Root, "items")

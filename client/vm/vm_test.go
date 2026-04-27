@@ -822,6 +822,39 @@ func TestValueEachEntriesObjectOrderIsStable(t *testing.T) {
 	}
 }
 
+func TestResolveConditionalUsesTruthyExpressionAndFallback(t *testing.T) {
+	prog := &program.Program{
+		Name: "Conditional",
+		Nodes: []program.Node{
+			{
+				Kind:     program.NodeConditional,
+				Expr:     0,
+				Attrs:    []program.Attr{{Kind: program.AttrExpr, Name: "fallback", Expr: 2}},
+				Children: []program.NodeID{1},
+			},
+			{Kind: program.NodeText, Text: "visible"},
+		},
+		Root: 0,
+		Exprs: []program.Expr{
+			{Op: program.OpPropGet, Value: "shown", Type: program.TypeBool},
+			{Op: program.OpLitString, Value: "unused", Type: program.TypeString},
+			{Op: program.OpLitString, Value: "hidden", Type: program.TypeString},
+		},
+	}
+
+	vm := NewVM(prog, map[string]Value{"shown": BoolVal(true)})
+	tree := vm.EvalTree()
+	if len(tree.Nodes) != 1 || tree.Nodes[0].Text != "visible" {
+		t.Fatalf("expected visible child, got %#v", tree.Nodes)
+	}
+
+	vm = NewVM(prog, map[string]Value{"shown": BoolVal(false)})
+	tree = vm.EvalTree()
+	if len(tree.Nodes) != 1 || tree.Nodes[0].Text != "hidden" {
+		t.Fatalf("expected fallback text, got %#v", tree.Nodes)
+	}
+}
+
 func TestResolveForEachRestoresScopedProps(t *testing.T) {
 	prog := &program.Program{
 		Name: "ForEachRestore",

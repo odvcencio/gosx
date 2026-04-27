@@ -63,3 +63,57 @@ func TestStateMarkKnownClearsSentHashes(t *testing.T) {
 		t.Fatal("expected marking a hash known to clear sent state")
 	}
 }
+
+func TestStateMarkKnownClearsNeedState(t *testing.T) {
+	state := NewState()
+	hash := hashByte(9)
+
+	state.MarkNeed(hash)
+	state.MarkPeerNeed(hash)
+	state.MarkKnown(hash)
+
+	if len(state.Needed()) != 0 {
+		t.Fatal("expected marking a hash known to clear local need state")
+	}
+	if state.HasPeerNeed(hash) {
+		t.Fatal("expected marking a hash known to clear peer need state")
+	}
+}
+
+func TestStateNeedForcesSendAndClonesSortedNeeds(t *testing.T) {
+	state := NewState()
+	heads := [][32]byte{hashByte(1)}
+	state.NoteHeads(heads)
+	if state.ShouldSend(heads, false) {
+		t.Fatal("expected quiet state before needs are recorded")
+	}
+
+	state.MarkNeed(hashByte(9))
+	state.MarkNeed(hashByte(3))
+	if !state.ShouldSend(heads, false) {
+		t.Fatal("expected local need to force a sync message")
+	}
+	needs := state.Needed()
+	if len(needs) != 2 || needs[0] != hashByte(3) || needs[1] != hashByte(9) {
+		t.Fatalf("needs = %#v, want sorted hashes 3,9", needs)
+	}
+	needs[0] = hashByte(1)
+	if state.Needed()[0] != hashByte(3) {
+		t.Fatal("expected Needed to return a cloned snapshot")
+	}
+}
+
+func TestStatePeerNeedOverridesKnownAndSentState(t *testing.T) {
+	state := NewState()
+	hash := hashByte(7)
+	state.MarkKnown(hash)
+	state.MarkSent(hash)
+
+	state.MarkPeerNeed(hash)
+	if !state.HasPeerNeed(hash) {
+		t.Fatal("expected peer need to be tracked")
+	}
+	if state.HasKnown(hash) || state.HasSent(hash) {
+		t.Fatal("expected peer need to clear stale known/sent assumptions")
+	}
+}

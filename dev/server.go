@@ -17,12 +17,14 @@ import (
 	"sync"
 	"time"
 
+	"github.com/fsnotify/fsnotify"
 	"github.com/odvcencio/gosx"
 )
 
 const (
-	defaultPollInterval = 500 * time.Millisecond
-	defaultListenAddr   = ":3000"
+	defaultPollInterval  = 500 * time.Millisecond
+	defaultWatchDebounce = 75 * time.Millisecond
+	defaultListenAddr    = ":3000"
 )
 
 type snapshotEntry struct {
@@ -337,7 +339,16 @@ func (s *Server) watchLoop(stop <-chan struct{}) {
 	if strings.TrimSpace(s.Dir) == "" || s.OnChange == nil {
 		return
 	}
+	if err := s.watchWithFSNotify(stop); err == nil {
+		return
+	} else {
+		s.logf("fsnotify watcher unavailable, falling back to polling: %v", err)
+	}
 
+	s.watchWithPolling(stop)
+}
+
+func (s *Server) watchWithPolling(stop <-chan struct{}) {
 	snapshot, err := projectSnapshot(s.Dir)
 	if err != nil {
 		s.logf("initial snapshot failed: %v", err)
@@ -367,29 +378,112 @@ func (s *Server) watchLoop(stop <-chan struct{}) {
 			}
 			snapshot = next
 
-			if err := s.OnChange(); err != nil {
-				s.mu.Lock()
-				s.lastError = err.Error()
-				s.mu.Unlock()
-				s.logf("change handling failed: %v", err)
-				s.broadcast("build-error", map[string]any{
-					"error": err.Error(),
-					"time":  time.Now().Format(time.RFC3339Nano),
-				})
-				continue
-			}
-
-			s.mu.Lock()
-			s.lastBuild = time.Now()
-			s.lastError = ""
-			s.mu.Unlock()
-			s.logf("change detected, reloading clients")
-			s.broadcast("reload", map[string]any{
-				"reason": "file_change",
-				"time":   time.Now().Format(time.RFC3339Nano),
-			})
+			s.handleProjectChange("file_change")
 		}
 	}
+}
+
+func (s *Server) watchWithFSNotify(stop <-chan struct{}) error {
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		return err
+	}
+	defer watcher.Close()
+
+	if err := addProjectWatchDirs(s.Dir, watcher.Add); err != nil {
+		return err
+	}
+
+	var (
+		timer   *time.Timer
+		timerC  <-chan time.Time
+		pending bool
+	)
+	stopTimer := func() {
+		if timer == nil {
+			return
+		}
+		if !timer.Stop() {
+			select {
+			case <-timer.C:
+			default:
+			}
+		}
+		timer = nil
+		timerC = nil
+	}
+	resetTimer := func() {
+		stopTimer()
+		timer = time.NewTimer(defaultWatchDebounce)
+		timerC = timer.C
+	}
+	defer stopTimer()
+
+	for {
+		select {
+		case <-stop:
+			return nil
+		case err, ok := <-watcher.Errors:
+			if !ok {
+				return nil
+			}
+			s.logf("watcher error: %v", err)
+		case event, ok := <-watcher.Events:
+			if !ok {
+				return nil
+			}
+			if event.Op&fsnotify.Create != 0 {
+				s.watchCreatedDirs(event.Name, watcher.Add)
+			}
+			if !isProjectWatchEvent(s.Dir, event) {
+				continue
+			}
+			pending = true
+			resetTimer()
+		case <-timerC:
+			timer = nil
+			timerC = nil
+			if !pending {
+				continue
+			}
+			pending = false
+			s.handleProjectChange("file_change")
+		}
+	}
+}
+
+func (s *Server) watchCreatedDirs(path string, add func(string) error) {
+	info, err := os.Stat(path)
+	if err != nil || !info.IsDir() || shouldSkipDir(info.Name()) || pathHasSkippedDir(s.Dir, path) {
+		return
+	}
+	if err := addProjectWatchDirs(path, add); err != nil {
+		s.logf("watch new directory failed: %v", err)
+	}
+}
+
+func (s *Server) handleProjectChange(reason string) {
+	if err := s.OnChange(); err != nil {
+		s.mu.Lock()
+		s.lastError = err.Error()
+		s.mu.Unlock()
+		s.logf("change handling failed: %v", err)
+		s.broadcast("build-error", map[string]any{
+			"error": err.Error(),
+			"time":  time.Now().Format(time.RFC3339Nano),
+		})
+		return
+	}
+
+	s.mu.Lock()
+	s.lastBuild = time.Now()
+	s.lastError = ""
+	s.mu.Unlock()
+	s.logf("change detected, reloading clients")
+	s.broadcast("reload", map[string]any{
+		"reason": reason,
+		"time":   time.Now().Format(time.RFC3339Nano),
+	})
 }
 
 func (s *Server) broadcast(name string, payload any) {
@@ -432,6 +526,40 @@ func marshalSSEPayload(payload any) string {
 		return `{"error":"marshal_failure"}`
 	}
 	return string(data)
+}
+
+func addProjectWatchDirs(dir string, add func(string) error) error {
+	return filepath.WalkDir(dir, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if !entry.IsDir() {
+			return nil
+		}
+		if path != dir && shouldSkipDir(entry.Name()) {
+			return filepath.SkipDir
+		}
+		return add(path)
+	})
+}
+
+func isProjectWatchEvent(root string, event fsnotify.Event) bool {
+	if event.Name == "" || !isRelevantWatchOp(event.Op) || pathHasSkippedDir(root, event.Name) {
+		return false
+	}
+	info, err := os.Stat(event.Name)
+	if err == nil && info.IsDir() {
+		return false
+	}
+	rel, err := filepath.Rel(root, event.Name)
+	if err != nil || relOutsideRoot(rel) {
+		return false
+	}
+	return shouldWatchProjectFile(filepath.ToSlash(rel))
+}
+
+func isRelevantWatchOp(op fsnotify.Op) bool {
+	return op&(fsnotify.Create|fsnotify.Write|fsnotify.Remove|fsnotify.Rename) != 0
 }
 
 func setDevNoCache(headers http.Header) {
@@ -492,6 +620,25 @@ func shouldWatchProjectFile(path string) bool {
 	default:
 		return false
 	}
+}
+
+func pathHasSkippedDir(root, path string) bool {
+	rel, err := filepath.Rel(root, path)
+	if err != nil || relOutsideRoot(rel) {
+		return true
+	}
+	parts := strings.Split(filepath.ToSlash(rel), "/")
+	for i := 0; i < len(parts)-1; i++ {
+		if shouldSkipDir(parts[i]) {
+			return true
+		}
+	}
+	return false
+}
+
+func relOutsideRoot(rel string) bool {
+	rel = filepath.ToSlash(rel)
+	return rel == ".." || strings.HasPrefix(rel, "../")
 }
 
 func shouldSkipDir(name string) bool {

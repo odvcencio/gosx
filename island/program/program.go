@@ -18,11 +18,12 @@ type ExprID = uint16
 type NodeKind uint8
 
 const (
-	NodeElement  NodeKind = iota // HTML element
-	NodeText                     // Static text
-	NodeExpr                     // Expression (dynamic content)
-	NodeFragment                 // Fragment (no wrapper element)
-	NodeForEach                  // Iteration
+	NodeElement     NodeKind = iota // HTML element
+	NodeText                        // Static text
+	NodeExpr                        // Expression (dynamic content)
+	NodeFragment                    // Fragment (no wrapper element)
+	NodeForEach                     // Iteration
+	NodeConditional                 // Conditional children
 )
 
 // String returns a human-readable name for the node kind.
@@ -38,6 +39,8 @@ func (k NodeKind) String() string {
 		return "Fragment"
 	case NodeForEach:
 		return "ForEach"
+	case NodeConditional:
+		return "Conditional"
 	default:
 		return fmt.Sprintf("NodeKind(%d)", k)
 	}

@@ -288,6 +288,14 @@ func (l *islandLowerer) lowerNode(srcID NodeID) (program.NodeID, error) {
 			}
 			break
 		}
+		if isConditionalComponent(srcNode.Tag) {
+			var err error
+			node, err = l.lowerConditionalNode(srcNode)
+			if err != nil {
+				return 0, err
+			}
+			break
+		}
 		return 0, fmt.Errorf("component <%s> is not supported inside island components yet", srcNode.Tag)
 	case NodeText:
 		node.Kind = program.NodeText
@@ -372,6 +380,26 @@ func (l *islandLowerer) lowerEachNode(srcNode *Node) (program.Node, error) {
 	return node, nil
 }
 
+func (l *islandLowerer) lowerConditionalNode(srcNode *Node) (program.Node, error) {
+	conditionExpr := islandAttrSource(srcNode.Attrs, "when", "if", "cond", "test")
+	if conditionExpr == "" {
+		return program.Node{}, fmt.Errorf("%s requires a when/if/cond/test attribute", srcNode.Tag)
+	}
+
+	node := program.Node{
+		Kind: program.NodeConditional,
+		Expr: l.addExpr(conditionExpr),
+	}
+	if fallbackSource := islandAttrSource(srcNode.Attrs, "fallback", "else"); fallbackSource != "" {
+		node.Attrs = append(node.Attrs, program.Attr{
+			Kind: program.AttrExpr,
+			Name: "fallback",
+			Expr: l.addExpr(fallbackSource),
+		})
+	}
+	return node, nil
+}
+
 func (l *islandLowerer) scopeForEach(node program.Node) *ExprScope {
 	scope := cloneExprScope(l.scope)
 	itemName := forEachStaticAttr(node.Attrs, "as")
@@ -435,7 +463,20 @@ func isEachComponent(tag string) bool {
 	}
 }
 
+func isConditionalComponent(tag string) bool {
+	switch tag {
+	case "If", "Show", "When":
+		return true
+	default:
+		return false
+	}
+}
+
 func eachAttrSource(attrs []Attr, names ...string) string {
+	return islandAttrSource(attrs, names...)
+}
+
+func islandAttrSource(attrs []Attr, names ...string) string {
 	for _, name := range names {
 		for _, attr := range attrs {
 			if attr.Name != name {
@@ -448,6 +489,8 @@ func eachAttrSource(attrs []Attr, names ...string) string {
 				if attr.Value != "" {
 					return strconv.Quote(attr.Value)
 				}
+			case AttrBool:
+				return "true"
 			}
 		}
 	}

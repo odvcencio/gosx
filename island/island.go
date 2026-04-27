@@ -81,6 +81,16 @@ type Summary struct {
 	Hubs                        int
 }
 
+type clientRuntimePlan struct {
+	Bootstrap     bool
+	Mode          string
+	Manifest      bool
+	Selective     bool
+	SharedRuntime bool
+	WASMExec      bool
+	Patch         bool
+}
+
 // ComputeIslandConfig describes a headless shared-runtime island. It uses the
 // island VM and shared signal bridge, but does not render or patch a DOM root.
 type ComputeIslandConfig struct {
@@ -595,19 +605,16 @@ func (r *Renderer) BootstrapScript() gosx.Node {
 	}
 
 	var b strings.Builder
-	mode := "full"
-	if r.needsLiteBootstrap() {
-		mode = "lite"
-	}
-	if (len(r.manifest.Islands) > 0 || r.hasWASMEngines() || r.needsSharedRuntimeEngineBridge()) && r.wasmExecPath != "" {
+	plan := r.clientRuntimePlan()
+	if plan.WASMExec && r.wasmExecPath != "" {
 		b.WriteString(fmt.Sprintf(`<script defer data-gosx-script="wasm-exec" src="%s"></script>`, html.EscapeString(r.wasmExecPath)))
 		b.WriteByte('\n')
 	}
-	if len(r.manifest.Islands) > 0 && r.patchPath != "" {
+	if plan.Patch && r.patchPath != "" {
 		b.WriteString(fmt.Sprintf(`<script defer data-gosx-script="patch" src="%s"></script>`, html.EscapeString(r.patchPath)))
 		b.WriteByte('\n')
 	}
-	b.WriteString(fmt.Sprintf(`<script defer data-gosx-script="bootstrap" data-gosx-bootstrap-mode="%s" src="%s"></script>`, mode, html.EscapeString(r.selectedBootstrapPath())))
+	b.WriteString(fmt.Sprintf(`<script defer data-gosx-script="bootstrap" data-gosx-bootstrap-mode="%s" src="%s"></script>`, plan.Mode, html.EscapeString(r.selectedBootstrapPath())))
 	if scene3dPath := r.selectedBootstrapFeaturePath("scene3d"); scene3dPath != "" {
 		b.WriteByte('\n')
 		b.WriteString(`<script defer data-gosx-script="feature-scene3d"`)
@@ -1147,11 +1154,38 @@ func SerializeProps(props any) (json.RawMessage, error) {
 }
 
 func (r *Renderer) needsClientBootstrap() bool {
-	return r.bootstrapOnly || len(r.manifest.Islands) > 0 || len(r.manifest.Engines) > 0 || len(r.manifest.Hubs) > 0
+	return r.clientRuntimePlan().Bootstrap
 }
 
 func (r *Renderer) needsLiteBootstrap() bool {
-	return r != nil && r.bootstrapOnly && len(r.manifest.Islands) == 0 && len(r.manifest.Engines) == 0 && len(r.manifest.Hubs) == 0
+	return r.clientRuntimePlan().Mode == "lite"
+}
+
+func (r *Renderer) clientRuntimePlan() clientRuntimePlan {
+	if r == nil {
+		return clientRuntimePlan{Mode: "none"}
+	}
+	islands := len(r.manifest.Islands)
+	engines := len(r.manifest.Engines)
+	hubs := len(r.manifest.Hubs)
+	bootstrap := r.bootstrapOnly || islands > 0 || engines > 0 || hubs > 0
+	mode := "none"
+	if bootstrap {
+		mode = "full"
+	}
+	if r.bootstrapOnly && islands == 0 && engines == 0 && hubs == 0 {
+		mode = "lite"
+	}
+	sharedEngine := r.needsSharedRuntimeEngineBridge()
+	return clientRuntimePlan{
+		Bootstrap:     bootstrap,
+		Mode:          mode,
+		Manifest:      bootstrap && mode != "lite",
+		Selective:     bootstrap && mode != "lite",
+		SharedRuntime: islands > 0 || sharedEngine,
+		WASMExec:      islands > 0 || r.hasWASMEngines() || sharedEngine,
+		Patch:         islands > 0,
+	}
 }
 
 // Summary reports the client-facing bootstrap/runtime requirements for the renderer.
@@ -1159,16 +1193,11 @@ func (r *Renderer) Summary() Summary {
 	if r == nil {
 		return Summary{BootstrapMode: "none"}
 	}
-	mode := "none"
-	if r.needsLiteBootstrap() {
-		mode = "lite"
-	} else if r.needsClientBootstrap() {
-		mode = "full"
-	}
+	plan := r.clientRuntimePlan()
 	summary := Summary{
-		Bootstrap:     r.needsClientBootstrap(),
-		BootstrapMode: mode,
-		Manifest:      r.needsClientBootstrap() && !r.needsLiteBootstrap(),
+		Bootstrap:     plan.Bootstrap,
+		BootstrapMode: plan.Mode,
+		Manifest:      plan.Manifest,
 		RuntimePath:   r.selectedRuntimePath(),
 		WASMExecPath:  r.selectedWASMExecPath(),
 		BootstrapPath: r.selectedBootstrapPath(),
@@ -1176,19 +1205,19 @@ func (r *Renderer) Summary() Summary {
 		Engines:       len(r.manifest.Engines),
 		Hubs:          len(r.manifest.Hubs),
 	}
-	if len(r.manifest.Islands) > 0 {
+	if plan.Patch {
 		summary.PatchPath = r.patchPath
 	}
 	if r.hasVideoEngines() {
 		summary.HLSPath = r.videoHLSPath
 	}
-	if r.usesSelectiveRuntimeBootstrap() {
+	if plan.Selective {
 		summary.BootstrapFeatureIslandsPath = r.selectedBootstrapFeaturePath("islands")
 		summary.BootstrapFeatureEnginesPath = r.selectedBootstrapFeaturePath("engines")
 		summary.BootstrapFeatureHubsPath = r.selectedBootstrapFeaturePath("hubs")
 		summary.BootstrapFeatureScene3DPath = r.selectedBootstrapFeaturePath("scene3d")
 	}
-	if r.needsLiteBootstrap() {
+	if plan.Mode == "lite" {
 		summary.PatchPath = ""
 		summary.HLSPath = ""
 	}
@@ -1196,12 +1225,13 @@ func (r *Renderer) Summary() Summary {
 }
 
 func (r *Renderer) selectedBootstrapPath() string {
-	if r.needsLiteBootstrap() {
+	plan := r.clientRuntimePlan()
+	if plan.Mode == "lite" {
 		if strings.TrimSpace(r.bootstrapLitePath) != "" {
 			return r.bootstrapLitePath
 		}
 	}
-	if r.usesSelectiveRuntimeBootstrap() {
+	if plan.Selective {
 		if strings.TrimSpace(r.bootstrapRuntimePath) != "" {
 			return r.bootstrapRuntimePath
 		}
@@ -1249,7 +1279,7 @@ func (r *Renderer) selectedBootstrapFeaturePath(name string) string {
 }
 
 func (r *Renderer) selectedRuntimePath() string {
-	if r == nil || !r.needsSharedRuntime() {
+	if !r.clientRuntimePlan().SharedRuntime {
 		return ""
 	}
 	return r.selectedRuntimeRef().Path
@@ -1266,21 +1296,18 @@ func (r *Renderer) selectedRuntimeRef() hydrate.RuntimeRef {
 }
 
 func (r *Renderer) selectedWASMExecPath() string {
-	if r == nil {
-		return ""
-	}
-	if len(r.manifest.Islands) > 0 || r.hasWASMEngines() || r.needsSharedRuntimeEngineBridge() {
+	if r.clientRuntimePlan().WASMExec {
 		return r.wasmExecPath
 	}
 	return ""
 }
 
 func (r *Renderer) usesSelectiveRuntimeBootstrap() bool {
-	return r != nil && r.needsClientBootstrap() && !r.needsLiteBootstrap()
+	return r.clientRuntimePlan().Selective
 }
 
 func (r *Renderer) needsSharedRuntime() bool {
-	return r != nil && (len(r.manifest.Islands) > 0 || r.needsSharedRuntimeEngineBridge())
+	return r.clientRuntimePlan().SharedRuntime
 }
 
 func (r *Renderer) hasWASMEngines() bool {

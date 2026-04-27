@@ -1,5 +1,29 @@
 # Changelog
 
+## v0.18.17
+
+Runtime gap hardening release.
+
+The client runtime bootstrap decision is now centralized behind one
+capability-style runtime plan. Page head generation, summary reporting,
+selective feature chunk selection, shared runtime loading, wasm_exec loading,
+and patch loading all read from that plan instead of repeating overlapping
+island/engine/hub heuristics.
+
+Island programs now support reactive conditional children for `<If>`,
+`<Show>`, and `<When>`. Those components lower to a new VM conditional node, so
+conditioned island children can appear and disappear during hydration instead
+of being blocked at validation time.
+
+CRDT sync now wires the `Need` protocol field into the state machine. Peers
+that receive a head without the referenced change now advertise the missing
+hash, and the other side resends a requested change even if it was previously
+marked known or sent.
+
+The dev server now prefers `fsnotify` for source watching, with a short debounce
+and the previous snapshot poller retained as a fallback. It also watches new
+directories recursively and ignores generated, vendor, and temporary trees.
+
 ## v0.18.16
 
 Desktop service binding release.

@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/fsnotify/fsnotify"
 )
 
 func TestServerProxyInjectsReloadScriptIntoHTML(t *testing.T) {
@@ -153,6 +155,68 @@ func TestProjectSnapshotWatchesOnlyDevSourceFiles(t *testing.T) {
 	}
 }
 
+func TestAddProjectWatchDirsSkipsGeneratedAndVendorDirs(t *testing.T) {
+	dir := t.TempDir()
+	for _, path := range []string{
+		filepath.Join(dir, "app"),
+		filepath.Join(dir, "public", "nested"),
+		filepath.Join(dir, "build", "generated"),
+		filepath.Join(dir, "node_modules", "pkg"),
+		filepath.Join(dir, ".tmp-cache", "work"),
+	} {
+		if err := os.MkdirAll(path, 0755); err != nil {
+			t.Fatalf("mkdir %s: %v", path, err)
+		}
+	}
+
+	var watched []string
+	err := addProjectWatchDirs(dir, func(path string) error {
+		rel, err := filepath.Rel(dir, path)
+		if err != nil {
+			return err
+		}
+		watched = append(watched, filepath.ToSlash(rel))
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("add watch dirs: %v", err)
+	}
+
+	for _, path := range []string{".", "app", "public", "public/nested"} {
+		if !containsString(watched, path) {
+			t.Fatalf("expected watched dir %s in %#v", path, watched)
+		}
+	}
+	for _, path := range []string{"build", "build/generated", "node_modules", "node_modules/pkg", ".tmp-cache", ".tmp-cache/work"} {
+		if containsString(watched, path) {
+			t.Fatalf("did not expect skipped dir %s in %#v", path, watched)
+		}
+	}
+}
+
+func TestIsProjectWatchEventFiltersSourceFiles(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "app", "page.gsx")
+	readme := filepath.Join(dir, "README.md")
+	generated := filepath.Join(dir, "build", "bootstrap.js")
+	writeTestFile(t, source, []byte("<Page />"))
+	writeTestFile(t, readme, []byte("# docs"))
+	writeTestFile(t, generated, []byte("ignored"))
+
+	if !isProjectWatchEvent(dir, fsnotify.Event{Name: source, Op: fsnotify.Write}) {
+		t.Fatal("expected source write event to be watched")
+	}
+	if isProjectWatchEvent(dir, fsnotify.Event{Name: source, Op: fsnotify.Chmod}) {
+		t.Fatal("chmod-only event should not trigger rebuild")
+	}
+	if isProjectWatchEvent(dir, fsnotify.Event{Name: readme, Op: fsnotify.Write}) {
+		t.Fatal("markdown write event should not trigger rebuild")
+	}
+	if isProjectWatchEvent(dir, fsnotify.Event{Name: generated, Op: fsnotify.Write}) {
+		t.Fatal("generated build output should not trigger rebuild")
+	}
+}
+
 func TestShouldWatchProjectFile(t *testing.T) {
 	for _, path := range []string{"page.gsx", "main.go", "style.CSS", "app.JS"} {
 		if !shouldWatchProjectFile(path) {
@@ -164,6 +228,15 @@ func TestShouldWatchProjectFile(t *testing.T) {
 			t.Fatalf("%s should not be watched", path)
 		}
 	}
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
 
 func writeTestFile(t *testing.T, path string, data []byte) {

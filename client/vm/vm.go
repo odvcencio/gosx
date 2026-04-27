@@ -571,6 +571,8 @@ func (vm *VM) appendNodeRefs(tree *ResolvedTree, out []int, nodeID program.NodeI
 		return out
 	case program.NodeForEach:
 		return vm.appendForEach(tree, out, int(nodeID), node)
+	case program.NodeConditional:
+		return vm.appendConditional(tree, out, int(nodeID), node)
 	default:
 		idx := vm.appendResolvedNode(tree, int(nodeID), node)
 		return append(out, idx)
@@ -757,6 +759,35 @@ func (vm *VM) appendForEach(tree *ResolvedTree, out []int, source int, node prog
 	return out
 }
 
+func (vm *VM) appendConditional(tree *ResolvedTree, out []int, source int, node program.Node) []int {
+	if valueTruthy(vm.Eval(node.Expr)) {
+		for _, child := range node.Children {
+			out = vm.appendNodeRefs(tree, out, child)
+		}
+		return out
+	}
+	return append(out, vm.resolveConditionalFallback(tree, source, node.Attrs)...)
+}
+
+func valueTruthy(value Value) bool {
+	if value.Items != nil {
+		return len(value.Items) > 0
+	}
+	if value.Fields != nil {
+		return len(value.Fields) > 0
+	}
+	switch value.Type {
+	case program.TypeBool:
+		return value.Bool
+	case program.TypeString:
+		return value.Str != "" && value.Str != "0" && value.Str != "false"
+	case program.TypeInt, program.TypeFloat:
+		return value.Num != 0
+	default:
+		return value.Bool || value.Num != 0 || value.Str != ""
+	}
+}
+
 func valueEachEntries(value Value) []eachEntry {
 	if value.Items != nil {
 		return arrayEachEntries(value.Items)
@@ -847,10 +878,22 @@ func (vm *VM) appendForEachChildren(out []int, tree *ResolvedTree, children []pr
 }
 
 func (vm *VM) resolveForEachFallback(tree *ResolvedTree, source int, attrs []program.Attr) []int {
-	fallbackID, ok := forEachFallbackExpr(attrs)
+	fallbackID, ok := fallbackExpr(attrs)
 	if !ok {
 		return nil
 	}
+	return vm.resolveFallbackText(tree, source, fallbackID)
+}
+
+func (vm *VM) resolveConditionalFallback(tree *ResolvedTree, source int, attrs []program.Attr) []int {
+	fallbackID, ok := fallbackExpr(attrs)
+	if !ok {
+		return nil
+	}
+	return vm.resolveFallbackText(tree, source, fallbackID)
+}
+
+func (vm *VM) resolveFallbackText(tree *ResolvedTree, source int, fallbackID program.ExprID) []int {
 	text := vm.Eval(fallbackID).String()
 	if text == "" {
 		return nil
@@ -898,6 +941,10 @@ func forEachStaticAttr(attrs []program.Attr, name string) string {
 }
 
 func forEachFallbackExpr(attrs []program.Attr) (program.ExprID, bool) {
+	return fallbackExpr(attrs)
+}
+
+func fallbackExpr(attrs []program.Attr) (program.ExprID, bool) {
 	for _, attr := range attrs {
 		if attr.Kind == program.AttrExpr && attr.Name == "fallback" {
 			return attr.Expr, true

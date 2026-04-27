@@ -16,6 +16,7 @@ require (
 	github.com/alicebob/miniredis/v2 v2.37.0
 	github.com/chromedp/cdproto v0.0.0-20260321001828-e3e3800016bc
 	github.com/chromedp/chromedp v0.15.1
+	github.com/fsnotify/fsnotify v1.9.0
 	github.com/odvcencio/corkscrewdb v0.2.0
 	github.com/odvcencio/manta v0.0.13
 	github.com/orisano/pixelmatch v0.0.0-20220722002657-fb0b55479cde

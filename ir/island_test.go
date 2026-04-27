@@ -225,11 +225,30 @@ func TestValidateIslandChannelRejected(t *testing.T) {
 	}
 }
 
-func TestValidateIslandComponentRefRejected(t *testing.T) {
+func TestValidateIslandConditionalComponentRefsAccepted(t *testing.T) {
+	prog := &Program{}
+	prog.Nodes = append(prog.Nodes, Node{
+		Kind:     NodeComponent,
+		Tag:      "If",
+		Attrs:    []Attr{{Kind: AttrExpr, Name: "when", Expr: "visible"}},
+		Children: []NodeID{1},
+	})
+	prog.Nodes = append(prog.Nodes, Node{Kind: NodeText, Text: "visible"})
+	prog.Components = append(prog.Components, Component{Name: "Good", Root: 0, IsIsland: true})
+
+	diags := Validate(prog)
+	for _, d := range diags {
+		if strings.Contains(d.Message, "not supported inside island components") {
+			t.Fatalf("conditional component should validate inside islands, got %q", d.Message)
+		}
+	}
+}
+
+func TestValidateIslandUnsupportedComponentRefRejected(t *testing.T) {
 	prog := &Program{}
 	prog.Nodes = append(prog.Nodes, Node{
 		Kind: NodeComponent,
-		Tag:  "If",
+		Tag:  "Scene3D",
 	})
 	prog.Components = append(prog.Components, Component{Name: "Bad", Root: 0, IsIsland: true})
 
@@ -241,7 +260,7 @@ func TestValidateIslandComponentRefRejected(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Fatal("expected diagnostic about component refs inside islands")
+		t.Fatal("expected diagnostic about unsupported component refs inside islands")
 	}
 }
 
@@ -332,6 +351,35 @@ func TestLowerIslandEachComponent(t *testing.T) {
 	}
 	if island.Nodes[2].Kind != program.NodeExpr || island.Nodes[3].Kind != program.NodeText || island.Nodes[4].Kind != program.NodeExpr {
 		t.Fatalf("expected li children to lower through each scope, got %+v %+v %+v", island.Nodes[2], island.Nodes[3], island.Nodes[4])
+	}
+}
+
+func TestLowerIslandConditionalComponent(t *testing.T) {
+	prog := &Program{}
+	prog.Nodes = append(prog.Nodes,
+		Node{
+			Kind:     NodeComponent,
+			Tag:      "Show",
+			Attrs:    []Attr{{Kind: AttrExpr, Name: "when", Expr: "visible"}, {Kind: AttrStatic, Name: "fallback", Value: "hidden"}},
+			Children: []NodeID{1},
+		},
+		Node{Kind: NodeText, Text: "visible"},
+	)
+	prog.Components = append(prog.Components, Component{Name: "Conditional", Root: 0, IsIsland: true})
+
+	island, err := LowerIsland(prog, 0)
+	if err != nil {
+		t.Fatalf("LowerIsland failed: %v", err)
+	}
+	root := island.Nodes[island.Root]
+	if root.Kind != program.NodeConditional {
+		t.Fatalf("expected conditional root, got %s", root.Kind)
+	}
+	if len(root.Children) != 1 {
+		t.Fatalf("expected one conditional child, got %#v", root.Children)
+	}
+	if len(root.Attrs) != 1 || root.Attrs[0].Name != "fallback" {
+		t.Fatalf("expected fallback attr, got %#v", root.Attrs)
 	}
 }
 

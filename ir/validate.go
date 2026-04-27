@@ -259,7 +259,7 @@ func islandValidationMessage(err error, source string) string {
 
 func isUnsupportedIslandComponentRef(tag string) bool {
 	switch strings.TrimSpace(tag) {
-	case "If", "Show", "When", "Link", "Image", "TextBlock", "Stylesheet", "Surface", "Worker", "Scene3D":
+	case "Link", "Image", "TextBlock", "Stylesheet", "Surface", "Worker", "Scene3D":
 		return true
 	default:
 		return false

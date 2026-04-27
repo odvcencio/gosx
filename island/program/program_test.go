@@ -81,6 +81,7 @@ func TestNodeKinds(t *testing.T) {
 		{NodeExpr, "Expr"},
 		{NodeFragment, "Fragment"},
 		{NodeForEach, "ForEach"},
+		{NodeConditional, "Conditional"},
 	}
 	for _, tt := range tests {
 		got := tt.kind.String()

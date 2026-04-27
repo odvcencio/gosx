@@ -1,8 +1,8 @@
 # GoSX
 
-A Go-native web platform. Write components in `.gsx` — Go with embedded markup — compile through a real compiler pipeline, render on the server by default, hydrate interactive islands with WebAssembly. No JavaScript toolchain. No CGo. Six dependencies.
+A Go-native web platform. Write components in `.gsx` — Go with embedded markup — compile through a real compiler pipeline, render on the server by default, hydrate interactive islands with WebAssembly. No JavaScript toolchain. No CGo. A deliberately small dependency budget.
 
-Current release: **v0.18.16**. Pre-1.0; breaking changes are documented in [CHANGELOG.md](./CHANGELOG.md).
+Current release: **v0.18.17**. Pre-1.0; breaking changes are documented in [CHANGELOG.md](./CHANGELOG.md).
 
 ## What if you never had to leave Go?
 
@@ -46,8 +46,8 @@ GoSX is opinionated about a small number of things and flexible about everything
 - **No CGo, anywhere.** Every package compiles to WASM and cross-compiles cleanly. The 3D engine runs in pure Go. The vector store runs in pure Go. The CRDT sync protocol runs in pure Go. This is not a portability footnote — it is the design constraint that lets Scene3D, `field`, `vecdb`, and `crdt` ship as ordinary Go libraries that also happen to run in a browser tab.
 - **Primitives, not frameworks-within-frameworks.** A form submission is not a canvas game is not a collaborative document. GoSX gives you five distinct execution primitives and enforces the distinction; none of them try to be the others.
 - **You pay for what you use.** Static pages are static. Islands ship only when a page has an island. Engines are opt-in. The shared WASM VM is lazy-loaded. An app with no islands has no client VM; an app with no engines has no engine bundle.
-- **No hidden magic in the hot path.** The compiler pipeline is inspectable (`gosx compile`, `gosx check`). The IR is a flat-array data structure. The island VM is ~40 opcodes. The client JS host is ~940 lines. You can read all of it.
-- **Six dependencies.** That's not marketing — it's a design budget. Every new transitive dep is a bug surface, a license to audit, and a supply-chain risk. We take that budget seriously.
+- **No hidden magic in the hot path.** The compiler pipeline is inspectable (`gosx compile`, `gosx check`). The IR is a flat-array data structure. The island VM is ~50 opcodes. The patch applier and island hook are under 1k lines of JS. You can read all of it. (The Scene3D feature chunk is larger — see the build manifest for the exact bytes a route ships.)
+- **Small dependency budget.** That's not marketing — it's a design constraint. Every new transitive dep is a bug surface, a license to audit, and a supply-chain risk. We take that budget seriously.
 
 ## Five Primitives
 
@@ -271,7 +271,7 @@ Kinds choose the mount model. Capabilities declare which browser APIs the engine
 
 ## Scene3D — 3D Engine
 
-The `scene` package is a full 3D engine authored entirely in Go. You describe the scene as a typed Go struct tree; the runtime lowers it to a compact IR, streams it to the client, and renders it through a pair of pure-Go-authored backends (WebGL and WebGPU) that reach the browser as part of the standard bootstrap bundle. There is no separate engine binary. There is no three.js. There is no JavaScript scene graph.
+The `scene` package is a full 3D engine authored in Go. You describe the scene as a typed Go struct tree; the runtime lowers it to a compact IR, streams it to the client, and renders it through two backends that reach the browser as part of the standard bootstrap bundle: a hand-written JS WebGL backend, and a pure-Go WebGPU pipeline (`render/gpu` + `render/bundle` with hand-written WGSL) compiled to WASM. Both backends consume the same SceneIR; the planner picks at runtime based on capability. There is no separate engine binary. There is no three.js. There is no JavaScript scene graph.
 
 ```go
 scene.Props{
@@ -324,13 +324,13 @@ scene.Props{
 - **Animation** — `AnimationClip` / `AnimationChannel` for node-level keyframe animation, `Spin` convenience for auto-rotation, glTF animation playback
 - **Particles** — GPU-computed particle systems via `ComputeParticles` with emitter, forces, and material
 - **Environment** — ambient, hemisphere, sky/ground, cubemap IBL, exposure, fog, tonemapping
-- **Post-processing** — `Bloom`, `Tonemap` (ACES / Reinhard / Filmic), `Vignette`, `ColorGrade`, FXAA 3.11, RGB9E5/HDR intermediate selection, HDR10 presentation when supported, composable chain, runs on both WebGL and WebGPU
+- **Post-processing** — `Bloom`, `Tonemap` (ACES / Reinhard / Filmic), `Vignette`, `ColorGrade`, FXAA 3.11, RGB9E5/HDR intermediate selection, HDR10 presentation when supported, composable chain, runs on both backends
 - **Shadow pixel cap** — v0.15.0's `Shadows.MaxPixels` caps each shadow map (default 1024²), preventing multi-megabyte-per-light allocations when individual lights request large shadow sizes
 - **Compression & LOD** — per-component scalar quantization with delta encoding, progressive streaming, camera-distance-based LOD switching via `scene.Compression`
 - **Transitions** — declarative enter/exit/state transitions on any scene node via `InState` / `OutState` / `Live`
 - **Camera controls** — `orbit`, `drag-to-rotate`, focus targets, pick signals, drag signals, event signals exposed as `$`-signals consumable by surrounding islands
 - **Capability tiers** — graceful degradation across WebGPU → WebGL → canvas fallbacks
-- **Backends at parity** — WebGL, first-party WebGPU bundle rendering, and the headless backend honor the same IR, lighting, post-processing, shadow, and particle contracts where their target surface supports it
+- **Shared IR across backends** — the JS WebGL backend, the pure-Go WebGPU pipeline, and the headless test backend consume the same SceneIR, with feature parity gated by what each target surface actually supports
 - **CSS-stylable 3D** — composable materials, lights, environment, point layers, and post-FX can read `var(--scene-*)` custom properties through the planner, so class changes, media queries, and CSS transitions can drive scene state without authored JavaScript animation code
 
 The scene graph is inspectable Go code. The IR is serializable. The renderer is reproducible. You can hold the whole thing in your head, and when something goes wrong you read Go and JavaScript — not a black box.
@@ -399,7 +399,7 @@ The renderer is configurable per-document (heading IDs, hard wraps, emoji wrappi
 
 ## Editor
 
-The `editor` package is a set of Go-native building blocks for building text editors inside GoSX apps: a text model with rope-like document storage, input bindings (keyboard, IME, mouse, touch), a highlight layer, a toolbar model, a theme system, and a VS Code-grammar compatibility shim. It's the substrate for in-page editing experiences — code snippets, markdown drafts, inline content editors — without importing Monaco or CodeMirror.
+The `editor` package is a set of Go-native building blocks for building text editors inside GoSX apps: a line-array text model (with a CRDT-backed implementation planned), input bindings (keyboard, IME, mouse, touch), a tree-sitter-driven highlight layer, a toolbar model, a theme system, and a VS Code-grammar compatibility shim. It's the substrate for in-page editing experiences — code snippets, markdown drafts, inline content editors — without importing Monaco or CodeMirror.
 
 The default helper bar includes an `emoji` command. It inserts standard Markdown++ emoji shortcodes (`:rocket:`, `:+1:`, `:t-rex:`, `:face_with_spiral_eyes:`) so editor content stays portable and renders through the same GitHub gemoji plus Unicode Emoji table used by the markdown renderer. Slack-ish compatibility aliases such as `:simple_smile:`, `:slight_smile:`, `:thumbs_up:`, and `:red_heart:` are accepted too. Picker UIs can pass the selected shortcode as `ToolbarAction.Value`; without a value, selected text is normalized into a shortcode, then falls back to `:smile:`.
 
@@ -588,7 +588,7 @@ Three tiers:
 | `client/bridge` | WASM bridge for island/engine lifecycle |
 | `client/enginevm` | Lightweight VM for engine scripting |
 | `client/wasm` | WASM entry point |
-| `client/js` | Bootstrap + patch applier (~940 lines total) |
+| `client/js` | Browser runtime: bootstrap (lite/runtime/full), patch applier, feature chunks (islands, hubs, engines, Scene3D WebGL/WebGPU/glTF/animation) |
 | `render` | Server-side HTML rendering from IR |
 | `css` | Component-scoped CSS with `:where()` selectors |
 | `textlayout` | Text measurement, line breaking, ellipsis |
@@ -637,7 +637,7 @@ The same compiler infrastructure powers [Arbiter](https://github.com/odvcencio/a
 
 ## Status
 
-GoSX is pre-1.0. The current release is **v0.18.16**. The five primitives (Server, Action, Island, Engine, Hub) are stable in shape — we do not expect their top-level API to change before 1.0. Subsystems like `scene`, `desktop`, `field`, `sim`, `workspace`, and `semantic` are still under active development and may take breaking changes; each such change is called out explicitly in [CHANGELOG.md](./CHANGELOG.md) with a migration path.
+GoSX is pre-1.0. The current release is **v0.18.17**. The five primitives (Server, Action, Island, Engine, Hub) are stable in shape — we do not expect their top-level API to change before 1.0. Subsystems like `scene`, `desktop`, `field`, `sim`, `workspace`, and `semantic` are still under active development and may take breaking changes; each such change is called out explicitly in [CHANGELOG.md](./CHANGELOG.md) with a migration path.
 
 If you're evaluating GoSX for production work, the server + island + route + engine + scene stack has been used in production. The semantic, workspace, and sim layers have production users but are newer.
 
