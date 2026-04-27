@@ -1,5 +1,29 @@
 # Changelog
 
+## v0.18.23
+
+Game/runtime foundation release.
+
+GoSX now has a first-class `game` package for interactive simulations, games,
+and academic/scientific visualization. It sits above the existing primitives
+instead of hiding inside Scene3D: `engine` still owns browser/native surfaces,
+`scene` owns Scene3D authoring and IR, `physics` owns rigid bodies, and `hub` +
+`sim` own server-authoritative realtime transport.
+
+The runtime adds a bounded fixed-step clock with explicit `Update`,
+`FixedUpdate`, `LateUpdate`, and `Render` phases, ECS-style entity/component
+storage, typed singleton resources, per-frame input action mapping, stable asset
+manifests, and default interactive/scientific capability profiles.
+
+Scene3D integration includes `Runtime.EngineConfig`, `Runtime.Mount`,
+`Runtime.SceneIR`, and `game.PhysicsFromScene`, so a runtime can mount as an
+ordinary GoSX engine surface and build a `physics.World` from Scene3D-declared
+rigid bodies. `Runtime` also implements `sim.Simulation`, and `game.NewRunner`
+wires it into the existing hub-backed authoritative tick loop.
+
+This release is the reusable runtime substrate for apps that need deterministic
+interaction, simulation, or scientific visualization.
+
 ## v0.18.22
 
 Scene3D tier-two parity release.

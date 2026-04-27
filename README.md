@@ -2,7 +2,7 @@
 
 A Go-native web platform. Write components in `.gsx` — Go with embedded markup — compile through a real compiler pipeline, render on the server by default, hydrate interactive islands with WebAssembly. No JavaScript toolchain. No CGo. A deliberately small dependency budget.
 
-Current release: **v0.18.20**. Pre-1.0; breaking changes are documented in [CHANGELOG.md](./CHANGELOG.md).
+Current release: **v0.18.23**. Pre-1.0; breaking changes are documented in [CHANGELOG.md](./CHANGELOG.md).
 
 ## What if you never had to leave Go?
 
@@ -63,7 +63,7 @@ GoSX provides five execution primitives. A form submission is not a canvas game 
 
 Use what you need. A static marketing page uses only Server. A dashboard adds Islands. A game adds an Engine. A collaborative editor adds a Hub. You never pay for what you don't use.
 
-Scene3D is the built-in 3D engine primitive: prop-based scenes and composable `<Scene3D><Mesh /><Points /></Scene3D>` authoring both lower toward the same versioned SceneIR contract.
+Scene3D is the built-in 3D engine primitive: prop-based scenes and composable `<Scene3D><Mesh /><Points /></Scene3D>` authoring both lower toward the same versioned SceneIR contract. The `game` package layers deterministic fixed-step simulation, input actions, ECS-style state, assets, physics, and Scene3D mounting on top of Engine + Hub when an app needs an interactive simulation/game runtime.
 
 ## Quick Start
 
@@ -384,7 +384,27 @@ The `workspace` package layers a distributed semantic collaboration space on top
 
 **`sim`** — Server-authoritative game simulation. Games implement the `Simulation` interface; a `Runner` drives it at a fixed tick rate, collects per-client inputs from a hub, broadcasts state snapshots, and handles replay and spectator sync. The server is the source of truth; clients submit inputs and render the authoritative state they receive back.
 
-Together these three packages (`field`, `sim`, `hub`) give you a complete server-authoritative multiplayer stack in pure Go, with no third-party real-time engine.
+**`game`** — First-class interactive runtime orchestration for games, scientific simulations, and academic visualization. It provides a bounded fixed-step loop, `Update` / `FixedUpdate` / `LateUpdate` / `Render` system phases, ECS-style entity/component storage, input action mapping, asset manifests, Scene3D engine configs, Scene3D-declared physics world construction, and a `sim.Runner` adapter.
+
+```go
+rt := game.New(game.Config{
+    Profile: game.ScientificProfile(),
+    Scene: func(ctx *game.Context) scene.Props {
+        return scene.Props{
+            Width:  960,
+            Height: 540,
+            Graph: scene.NewGraph(scene.Mesh{
+                ID:       "sample",
+                Geometry: scene.SphereGeometry{Radius: 1},
+                Material: scene.StandardMaterial{Color: "#77c6ff"},
+            }),
+        }
+    },
+})
+node := rt.Mount(ctx, gosx.Text("Loading simulation"))
+```
+
+Together these packages (`field`, `game`, `sim`, `hub`) give you a complete server-authoritative interactive simulation stack in pure Go, with no third-party real-time engine.
 
 ## Semantic Layer
 
