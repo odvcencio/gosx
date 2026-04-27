@@ -156,11 +156,94 @@ const bootstrapScript = `(function () {
     receive(event.data);
   }
 
+  function asString(value) {
+    return value == null ? "" : String(value);
+  }
+
+  function asSize(width, height) {
+    return {
+      width: Number(width) || 0,
+      height: Number(height) || 0
+    };
+  }
+
+  var appAPI = Object.freeze({
+    info: function () {
+      return call("gosx.desktop.app.info");
+    },
+    close: function () {
+      return call("gosx.desktop.app.close");
+    }
+  });
+
+  var windowAPI = Object.freeze({
+    minimize: function () {
+      return call("gosx.desktop.window.minimize");
+    },
+    maximize: function () {
+      return call("gosx.desktop.window.maximize");
+    },
+    restore: function () {
+      return call("gosx.desktop.window.restore");
+    },
+    focus: function () {
+      return call("gosx.desktop.window.focus");
+    },
+    setTitle: function (title) {
+      return call("gosx.desktop.window.setTitle", { title: asString(title) });
+    },
+    setFullscreen: function (enabled) {
+      return call("gosx.desktop.window.setFullscreen", { enabled: !!enabled });
+    },
+    setMinSize: function (width, height) {
+      return call("gosx.desktop.window.setMinSize", asSize(width, height));
+    },
+    setMaxSize: function (width, height) {
+      return call("gosx.desktop.window.setMaxSize", asSize(width, height));
+    }
+  });
+
+  var dialogAPI = Object.freeze({
+    openFile: function (options) {
+      return call("gosx.desktop.dialog.openFile", options || {});
+    },
+    saveFile: function (options) {
+      return call("gosx.desktop.dialog.saveFile", options || {});
+    }
+  });
+
+  var clipboardAPI = Object.freeze({
+    readText: function () {
+      return call("gosx.desktop.clipboard.readText");
+    },
+    writeText: function (text) {
+      return call("gosx.desktop.clipboard.writeText", { text: asString(text) });
+    }
+  });
+
+  var shellAPI = Object.freeze({
+    openExternal: function (url) {
+      return call("gosx.desktop.shell.openExternal", { url: asString(url) });
+    }
+  });
+
+  var notificationAPI = Object.freeze({
+    show: function (options) {
+      return call("gosx.desktop.notification.show", options || {});
+    }
+  });
+
   var api = Object.freeze({
     __gosxDesktopBridge: true,
     call: call,
     emit: emit,
-    on: on
+    on: on,
+    app: appAPI,
+    window: windowAPI,
+    dialog: dialogAPI,
+    clipboard: clipboardAPI,
+    shell: shellAPI,
+    notification: notificationAPI
   });
 
   Object.defineProperty(root, "gosxDesktop", {

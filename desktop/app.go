@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 
 	"github.com/odvcencio/gosx/desktop/bridge"
 )
@@ -59,6 +60,12 @@ type Options struct {
 	// in that mode zero fields disable their corresponding checks.
 	BridgeLimit bridge.Limit
 
+	// NativeBridge registers built-in window, dialog, clipboard, shell, and
+	// notification methods on the typed desktop bridge. Keep this off for
+	// arbitrary remote URLs; enable it for trusted app content such as a
+	// packaged app://gosx bundle.
+	NativeBridge bool
+
 	// OnWebMessage receives every chrome.webview.postMessage payload as
 	// a raw string, after the typed bridge has had a chance to dispatch
 	// it. Prefer App.Bridge().Register for typed IPC; OnWebMessage is a
@@ -91,9 +98,11 @@ type Options struct {
 
 // App is a native desktop host for a GoSX application or HTML document.
 type App struct {
-	options Options
-	impl    platformApp
-	bridge  *bridge.Router
+	options        Options
+	impl           platformApp
+	bridge         *bridge.Router
+	preloadMu      sync.Mutex
+	preloadScripts []string
 }
 
 type platformApp interface {
@@ -164,6 +173,13 @@ func New(options Options) (*App, error) {
 	app.bridge = bridge.NewRouter(func(raw string) error {
 		return impl.PostMessage(raw)
 	}, normalized.BridgeLimit)
+	if normalized.NativeBridge {
+		app.registerNativeBridgeMethods()
+	}
+
+	if err := app.addPreloadScript(bridge.BootstrapScript()); err != nil {
+		return nil, err
+	}
 
 	return app, nil
 }
@@ -275,14 +291,292 @@ func (a *App) OpenDevTools() error {
 }
 
 // PrependBootstrapScript registers JS to run before every document load
-// in the hosted webview. Useful for injecting the postMessage event
-// subscription so the page code can assume a live Go↔JS channel from the
-// very first navigation. Successive calls replace the previous snippet.
+// in the hosted webview. The built-in desktop bridge preload is installed
+// automatically by New; additional calls append app-owned preload code after
+// that bridge so page code can assume window.gosxDesktop is available from the
+// first navigation.
 func (a *App) PrependBootstrapScript(script string) error {
 	if a == nil || a.impl == nil {
 		return fmt.Errorf("%w: nil app", ErrInvalidOptions)
 	}
-	return a.impl.PrependBootstrapScript(script)
+	return a.addPreloadScript(script)
+}
+
+func (a *App) addPreloadScript(script string) error {
+	if strings.TrimSpace(script) == "" {
+		return nil
+	}
+	a.preloadMu.Lock()
+	for _, existing := range a.preloadScripts {
+		if existing == script {
+			a.preloadMu.Unlock()
+			return nil
+		}
+	}
+	a.preloadScripts = append(a.preloadScripts, script)
+	combined := strings.Join(a.preloadScripts, "\n;\n")
+	a.preloadMu.Unlock()
+	return a.impl.PrependBootstrapScript(combined)
+}
+
+func (a *App) registerNativeBridgeMethods() {
+	if a == nil || a.bridge == nil {
+		return
+	}
+	a.bridge.Register("gosx.desktop.app.info", func(ctx *bridge.Context) error {
+		opts := a.Options()
+		return ctx.Respond(map[string]any{
+			"title":          opts.Title,
+			"width":          opts.Width,
+			"height":         opts.Height,
+			"appID":          opts.AppID,
+			"version":        opts.Version,
+			"url":            opts.URL,
+			"debug":          opts.Debug,
+			"devTools":       opts.DevTools,
+			"singleInstance": opts.SingleInstance,
+			"nativeBridge":   opts.NativeBridge,
+		})
+	})
+	a.bridge.Register("gosx.desktop.app.close", func(ctx *bridge.Context) error {
+		if err := ctx.Respond(nil); err != nil {
+			return err
+		}
+		return a.Close()
+	})
+	a.bridge.Register("gosx.desktop.window.minimize", func(ctx *bridge.Context) error {
+		return bridgeVoid(ctx, a.Minimize())
+	})
+	a.bridge.Register("gosx.desktop.window.maximize", func(ctx *bridge.Context) error {
+		return bridgeVoid(ctx, a.Maximize())
+	})
+	a.bridge.Register("gosx.desktop.window.restore", func(ctx *bridge.Context) error {
+		return bridgeVoid(ctx, a.Restore())
+	})
+	a.bridge.Register("gosx.desktop.window.focus", func(ctx *bridge.Context) error {
+		return bridgeVoid(ctx, a.Focus())
+	})
+	a.bridge.Register("gosx.desktop.window.setTitle", func(ctx *bridge.Context) error {
+		var req struct {
+			Title string `json:"title"`
+		}
+		if err := ctx.Decode(&req); err != nil {
+			return err
+		}
+		return bridgeVoid(ctx, a.SetTitle(req.Title))
+	})
+	a.bridge.Register("gosx.desktop.window.setFullscreen", func(ctx *bridge.Context) error {
+		var req struct {
+			Enabled bool `json:"enabled"`
+		}
+		if err := ctx.Decode(&req); err != nil {
+			return err
+		}
+		return bridgeVoid(ctx, a.SetFullscreen(req.Enabled))
+	})
+	a.bridge.Register("gosx.desktop.window.setMinSize", func(ctx *bridge.Context) error {
+		var req struct {
+			Width  int `json:"width"`
+			Height int `json:"height"`
+		}
+		if err := ctx.Decode(&req); err != nil {
+			return err
+		}
+		return bridgeVoid(ctx, a.SetMinSize(req.Width, req.Height))
+	})
+	a.bridge.Register("gosx.desktop.window.setMaxSize", func(ctx *bridge.Context) error {
+		var req struct {
+			Width  int `json:"width"`
+			Height int `json:"height"`
+		}
+		if err := ctx.Decode(&req); err != nil {
+			return err
+		}
+		return bridgeVoid(ctx, a.SetMaxSize(req.Width, req.Height))
+	})
+	a.bridge.Register("gosx.desktop.dialog.openFile", func(ctx *bridge.Context) error {
+		var opts OpenFileOptions
+		if err := ctx.Decode(&opts); err != nil {
+			return err
+		}
+		paths, err := a.OpenFileDialog(opts)
+		if err != nil {
+			return err
+		}
+		return ctx.Respond(paths)
+	})
+	a.bridge.Register("gosx.desktop.dialog.saveFile", func(ctx *bridge.Context) error {
+		var opts SaveFileOptions
+		if err := ctx.Decode(&opts); err != nil {
+			return err
+		}
+		path, err := a.SaveFileDialog(opts)
+		if err != nil {
+			return err
+		}
+		return ctx.Respond(path)
+	})
+	a.bridge.Register("gosx.desktop.clipboard.readText", func(ctx *bridge.Context) error {
+		text, err := a.Clipboard()
+		if err != nil {
+			return err
+		}
+		return ctx.Respond(text)
+	})
+	a.bridge.Register("gosx.desktop.clipboard.writeText", func(ctx *bridge.Context) error {
+		var req struct {
+			Text string `json:"text"`
+		}
+		if err := ctx.Decode(&req); err != nil {
+			return err
+		}
+		return bridgeVoid(ctx, a.SetClipboard(req.Text))
+	})
+	a.bridge.Register("gosx.desktop.shell.openExternal", func(ctx *bridge.Context) error {
+		var req struct {
+			URL string `json:"url"`
+		}
+		if err := ctx.Decode(&req); err != nil {
+			return err
+		}
+		return bridgeVoid(ctx, a.OpenURL(req.URL))
+	})
+	a.bridge.Register("gosx.desktop.notification.show", func(ctx *bridge.Context) error {
+		var notification Notification
+		if err := ctx.Decode(&notification); err != nil {
+			return err
+		}
+		return bridgeVoid(ctx, a.Notify(notification))
+	})
+}
+
+func bridgeVoid(ctx *bridge.Context, err error) error {
+	if err != nil {
+		return err
+	}
+	return ctx.Respond(nil)
+}
+
+// Minimize hides the native window without destroying the hosted webview.
+func (a *App) Minimize() error {
+	if a == nil || a.impl == nil {
+		return fmt.Errorf("%w: nil app", ErrInvalidOptions)
+	}
+	return a.impl.Minimize()
+}
+
+// Maximize snaps the native window to the platform's maximized state.
+func (a *App) Maximize() error {
+	if a == nil || a.impl == nil {
+		return fmt.Errorf("%w: nil app", ErrInvalidOptions)
+	}
+	return a.impl.Maximize()
+}
+
+// Restore returns the native window from minimized, maximized, or fullscreen
+// state to its normal state where the backend supports it.
+func (a *App) Restore() error {
+	if a == nil || a.impl == nil {
+		return fmt.Errorf("%w: nil app", ErrInvalidOptions)
+	}
+	return a.impl.Restore()
+}
+
+// Focus asks the OS to bring the native window to the foreground.
+func (a *App) Focus() error {
+	if a == nil || a.impl == nil {
+		return fmt.Errorf("%w: nil app", ErrInvalidOptions)
+	}
+	return a.impl.Focus()
+}
+
+// SetTitle updates the native window title and the app's cached options.
+func (a *App) SetTitle(title string) error {
+	if a == nil || a.impl == nil {
+		return fmt.Errorf("%w: nil app", ErrInvalidOptions)
+	}
+	title = strings.TrimSpace(title)
+	if strings.ContainsRune(title, '\x00') {
+		return fmt.Errorf("%w: title contains NUL", ErrInvalidOptions)
+	}
+	if title == "" {
+		title = defaultTitle
+	}
+	a.options.Title = title
+	return a.impl.SetTitle(title)
+}
+
+// Serve registers handler for requests whose webview URI starts with prefix,
+// such as app://gosx/* for packaged local assets.
+func (a *App) Serve(prefix string, handler http.Handler) error {
+	if a == nil || a.impl == nil {
+		return fmt.Errorf("%w: nil app", ErrInvalidOptions)
+	}
+	return a.impl.Serve(prefix, handler)
+}
+
+// OpenFileDialog shows a native open-file picker.
+func (a *App) OpenFileDialog(opts OpenFileOptions) ([]string, error) {
+	if a == nil || a.impl == nil {
+		return nil, fmt.Errorf("%w: nil app", ErrInvalidOptions)
+	}
+	return a.impl.OpenFileDialog(opts)
+}
+
+// SaveFileDialog shows a native save-file picker.
+func (a *App) SaveFileDialog(opts SaveFileOptions) (string, error) {
+	if a == nil || a.impl == nil {
+		return "", fmt.Errorf("%w: nil app", ErrInvalidOptions)
+	}
+	return a.impl.SaveFileDialog(opts)
+}
+
+// Clipboard returns the current text clipboard contents.
+func (a *App) Clipboard() (string, error) {
+	if a == nil || a.impl == nil {
+		return "", fmt.Errorf("%w: nil app", ErrInvalidOptions)
+	}
+	return a.impl.Clipboard()
+}
+
+// SetClipboard replaces the text clipboard contents.
+func (a *App) SetClipboard(text string) error {
+	if a == nil || a.impl == nil {
+		return fmt.Errorf("%w: nil app", ErrInvalidOptions)
+	}
+	return a.impl.SetClipboard(text)
+}
+
+// OpenURL asks the platform shell to open url externally.
+func (a *App) OpenURL(url string) error {
+	if a == nil || a.impl == nil {
+		return fmt.Errorf("%w: nil app", ErrInvalidOptions)
+	}
+	return a.impl.OpenURL(url)
+}
+
+// SetFullscreen toggles native fullscreen mode where supported.
+func (a *App) SetFullscreen(enabled bool) error {
+	if a == nil || a.impl == nil {
+		return fmt.Errorf("%w: nil app", ErrInvalidOptions)
+	}
+	return a.impl.SetFullscreen(enabled)
+}
+
+// SetMinSize configures the native window's minimum resize dimensions.
+func (a *App) SetMinSize(width, height int) error {
+	if a == nil || a.impl == nil {
+		return fmt.Errorf("%w: nil app", ErrInvalidOptions)
+	}
+	return a.impl.SetMinSize(width, height)
+}
+
+// SetMaxSize configures the native window's maximum resize dimensions.
+func (a *App) SetMaxSize(width, height int) error {
+	if a == nil || a.impl == nil {
+		return fmt.Errorf("%w: nil app", ErrInvalidOptions)
+	}
+	return a.impl.SetMaxSize(width, height)
 }
 
 // NewWindow requests an additional native window. The public API shape is

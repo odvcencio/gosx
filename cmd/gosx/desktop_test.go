@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
@@ -53,8 +55,14 @@ func TestDesktopDirectMode(t *testing.T) {
 	if !desktopDirectMode(DesktopRunOptions{HTML: "<h1>ok</h1>"}) {
 		t.Fatal("expected HTML option to enable direct mode")
 	}
+	if !desktopDirectMode(DesktopRunOptions{BundleDir: "dist/offline"}) {
+		t.Fatal("expected bundle option to enable direct mode")
+	}
 	if desktopDirectMode(DesktopRunOptions{}) {
 		t.Fatal("did not expect empty options to enable direct mode")
+	}
+	if got := desktopDirectModeConflictCount(DesktopRunOptions{URL: "https://example.test", BundleDir: "dist/offline"}); got != 2 {
+		t.Fatalf("conflict count = %d, want 2", got)
 	}
 }
 
@@ -120,6 +128,85 @@ func TestWaitForDesktopProxyReadyRequiresDevInfoOK(t *testing.T) {
 	err := waitForDesktopProxyReady(server.URL, errs, 120*time.Millisecond)
 	if err == nil || !strings.Contains(err.Error(), "timed out") {
 		t.Fatalf("err = %v, want readiness timeout", err)
+	}
+}
+
+func TestDesktopBundleTargetPrefersOfflineBundle(t *testing.T) {
+	dir := t.TempDir()
+	offline := filepath.Join(dir, "offline")
+	if err := os.MkdirAll(filepath.Join(offline, "static"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(offline, "offline-manifest.json"), []byte("{}"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(offline, "static", "index.html"), []byte("<h1>offline</h1>"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	root, entry, err := desktopBundleTarget(DesktopRunOptions{BundleDir: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if root != offline {
+		t.Fatalf("root = %q, want %q", root, offline)
+	}
+	if entry != "app://gosx/static/" {
+		t.Fatalf("entry = %q, want app://gosx/static/", entry)
+	}
+}
+
+func TestDesktopBundleTargetRequiresAppScheme(t *testing.T) {
+	dir := t.TempDir()
+	_, _, err := desktopBundleTarget(DesktopRunOptions{
+		BundleDir: dir,
+		BundleURL: "https://example.test/",
+	})
+	if err == nil || !strings.Contains(err.Error(), "app://gosx/") {
+		t.Fatalf("err = %v, want app scheme validation", err)
+	}
+}
+
+func TestDesktopBundleHandlerServesStaticIndexWithoutListing(t *testing.T) {
+	root := t.TempDir()
+	staticDir := filepath.Join(root, "static")
+	if err := os.MkdirAll(staticDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(staticDir, "index.html"), []byte("<h1>desktop</h1>"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	handler := desktopBundleHandler(root)
+	req := httptest.NewRequest(http.MethodGet, "app://gosx/", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "desktop") {
+		t.Fatalf("body = %q, want desktop page", rec.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "app://gosx/static/", nil)
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "desktop") {
+		t.Fatalf("directory index status/body = %d %q", rec.Code, rec.Body.String())
+	}
+}
+
+func TestDesktopBundleHandlerRejectsUnsupportedMethods(t *testing.T) {
+	root := t.TempDir()
+	handler := desktopBundleHandler(root)
+	req := httptest.NewRequest(http.MethodPost, "app://gosx/", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("status = %d, want 405", rec.Code)
+	}
+	if got := rec.Header().Get("Allow"); got != "GET, HEAD" {
+		t.Fatalf("Allow = %q, want GET, HEAD", got)
 	}
 }
 

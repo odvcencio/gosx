@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -15,7 +16,6 @@ import (
 	"time"
 
 	"github.com/odvcencio/gosx/desktop"
-	desktopbridge "github.com/odvcencio/gosx/desktop/bridge"
 	"github.com/odvcencio/gosx/dev"
 	"github.com/odvcencio/gosx/env"
 )
@@ -29,9 +29,12 @@ type DesktopRunOptions struct {
 	Addr           string
 	URL            string
 	HTML           string
+	BundleDir      string
+	BundleURL      string
 	UserDataDir    string
 	Debug          bool
 	DevTools       bool
+	NativeBridge   bool
 	SingleInstance bool
 	NativeSmoke    bool
 }
@@ -47,9 +50,12 @@ func cmdDesktop() {
 	fs.StringVar(&options.Addr, "addr", "", "desktop dev proxy listen address")
 	fs.StringVar(&options.URL, "url", "", "open a URL directly instead of running a GoSX app")
 	fs.StringVar(&options.HTML, "html", "", "open an inline HTML document directly instead of running a GoSX app")
+	fs.StringVar(&options.BundleDir, "bundle", "", "open a built GoSX offline/static bundle through app://gosx")
+	fs.StringVar(&options.BundleURL, "bundle-url", "", "entry URL for --bundle (default app://gosx/static/)")
 	fs.StringVar(&options.UserDataDir, "user-data-dir", "", "WebView2 user data directory")
 	fs.BoolVar(&options.Debug, "debug", false, "enable backend debug mode where supported")
 	fs.BoolVar(&options.DevTools, "devtools", false, "enable Chromium devtools and the F12 inspector shortcut")
+	fs.BoolVar(&options.NativeBridge, "native-bridge", false, "enable built-in desktop native APIs on window.gosxDesktop")
 	fs.BoolVar(&options.SingleInstance, "single-instance", false, "forward later launches to the first instance")
 	fs.BoolVar(&options.NativeSmoke, "native-smoke", false, "enable tray, notification, menu, and file-drop smoke hooks")
 	parseArgs, devAlias := desktopArgsBeforeParse(os.Args[2:])
@@ -62,8 +68,8 @@ func cmdDesktop() {
 		fmt.Fprintln(os.Stderr, "Usage: gosx desktop [flags] [dev [dir]]")
 		os.Exit(1)
 	}
-	if strings.TrimSpace(options.URL) != "" && options.HTML != "" {
-		fmt.Fprintln(os.Stderr, "gosx desktop: --url and --html are mutually exclusive")
+	if desktopDirectModeConflictCount(options) > 1 {
+		fmt.Fprintln(os.Stderr, "gosx desktop: --url, --html, and --bundle are mutually exclusive")
 		os.Exit(1)
 	}
 	dir := "."
@@ -203,6 +209,7 @@ func RunDesktop(dir string, options DesktopRunOptions) error {
 		URL:              publicURL,
 		Debug:            options.Debug,
 		DevTools:         options.DevTools,
+		NativeBridge:     options.NativeBridge,
 		UserDataDir:      options.UserDataDir,
 		SingleInstance:   options.SingleInstance,
 		OnSecondInstance: desktopSecondInstanceCallback(getDesktopApp),
@@ -212,10 +219,6 @@ func RunDesktop(dir string, options DesktopRunOptions) error {
 	}
 	app, err := desktop.New(desktopOptions)
 	if err != nil {
-		shutdownDesktopDevServer(devServer)
-		return err
-	}
-	if err := app.PrependBootstrapScript(desktopbridge.BootstrapScript()); err != nil {
 		shutdownDesktopDevServer(devServer)
 		return err
 	}
@@ -272,15 +275,24 @@ func RunDesktop(dir string, options DesktopRunOptions) error {
 func runDesktopHost(options DesktopRunOptions) error {
 	var app *desktop.App
 	getApp := func() *desktop.App { return app }
+	bundleRoot, bundleURL, err := desktopBundleTarget(options)
+	if err != nil {
+		return err
+	}
+	url := strings.TrimSpace(options.URL)
+	if bundleRoot != "" {
+		url = bundleURL
+	}
 	desktopOptions := desktop.Options{
 		Title:            options.Title,
 		Width:            options.Width,
 		Height:           options.Height,
 		AppID:            options.AppID,
-		URL:              strings.TrimSpace(options.URL),
+		URL:              url,
 		HTML:             options.HTML,
 		Debug:            options.Debug,
 		DevTools:         options.DevTools,
+		NativeBridge:     options.NativeBridge || bundleRoot != "",
 		UserDataDir:      options.UserDataDir,
 		SingleInstance:   options.SingleInstance,
 		OnSecondInstance: desktopSecondInstanceCallback(getApp),
@@ -288,12 +300,14 @@ func runDesktopHost(options DesktopRunOptions) error {
 	if options.NativeSmoke {
 		configureDesktopNativeSmokeOptions(&desktopOptions, getApp)
 	}
-	app, err := desktop.New(desktopOptions)
+	app, err = desktop.New(desktopOptions)
 	if err != nil {
 		return err
 	}
-	if err := app.PrependBootstrapScript(desktopbridge.BootstrapScript()); err != nil {
-		return err
+	if bundleRoot != "" {
+		if err := app.Serve("app://gosx/*", desktopBundleHandler(bundleRoot)); err != nil {
+			return err
+		}
 	}
 	if options.NativeSmoke {
 		if err := installDesktopNativeSmoke(app); err != nil {
@@ -453,7 +467,118 @@ func emitDesktopDevReload(app *desktop.App, reason string) error {
 }
 
 func desktopDirectMode(options DesktopRunOptions) bool {
-	return strings.TrimSpace(options.URL) != "" || options.HTML != ""
+	return desktopDirectModeConflictCount(options) > 0
+}
+
+func desktopDirectModeConflictCount(options DesktopRunOptions) int {
+	count := 0
+	if strings.TrimSpace(options.URL) != "" {
+		count++
+	}
+	if options.HTML != "" {
+		count++
+	}
+	if strings.TrimSpace(options.BundleDir) != "" {
+		count++
+	}
+	return count
+}
+
+func desktopBundleTarget(options DesktopRunOptions) (root string, entryURL string, err error) {
+	configured := strings.TrimSpace(options.BundleDir)
+	if configured == "" {
+		return "", "", nil
+	}
+	root, err = resolveDesktopBundleRoot(configured)
+	if err != nil {
+		return "", "", err
+	}
+	entryURL = strings.TrimSpace(options.BundleURL)
+	if entryURL == "" {
+		entryURL = defaultDesktopBundleURL(root)
+	}
+	if !strings.HasPrefix(strings.ToLower(entryURL), "app://gosx/") {
+		return "", "", fmt.Errorf("gosx desktop: --bundle-url must start with app://gosx/")
+	}
+	return root, entryURL, nil
+}
+
+func resolveDesktopBundleRoot(configured string) (string, error) {
+	abs, err := filepath.Abs(configured)
+	if err != nil {
+		return "", fmt.Errorf("resolve bundle dir %s: %w", configured, err)
+	}
+	info, err := os.Stat(abs)
+	if err != nil {
+		return "", fmt.Errorf("stat bundle dir %s: %w", abs, err)
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("gosx desktop: bundle path is not a directory: %s", abs)
+	}
+	offline := filepath.Join(abs, "offline")
+	if isDir(offline) && isFile(filepath.Join(offline, "offline-manifest.json")) {
+		return offline, nil
+	}
+	return abs, nil
+}
+
+func defaultDesktopBundleURL(root string) string {
+	if isFile(filepath.Join(root, "static", "index.html")) {
+		return "app://gosx/static/"
+	}
+	return "app://gosx/"
+}
+
+func desktopBundleHandler(root string) http.Handler {
+	root = filepath.Clean(root)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			w.Header().Set("Allow", "GET, HEAD")
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		rel := path.Clean("/" + strings.TrimLeft(r.URL.Path, "/"))
+		if rel == "/" && isFile(filepath.Join(root, "static", "index.html")) {
+			rel = "/static/index.html"
+		}
+		target := filepath.Join(root, filepath.FromSlash(strings.TrimPrefix(rel, "/")))
+		if !isPathInside(root, target) {
+			http.NotFound(w, r)
+			return
+		}
+		info, err := os.Stat(target)
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		if info.IsDir() {
+			index := filepath.Join(target, "index.html")
+			if !isFile(index) {
+				http.NotFound(w, r)
+				return
+			}
+			target = index
+		}
+		http.ServeFile(w, r, target)
+	})
+}
+
+func isPathInside(root, target string) bool {
+	rel, err := filepath.Rel(root, target)
+	if err != nil {
+		return false
+	}
+	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))
+}
+
+func isDir(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
+}
+
+func isFile(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
 }
 
 func desktopListenAddr(configured string) (string, error) {

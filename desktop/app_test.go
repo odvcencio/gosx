@@ -2,8 +2,12 @@ package desktop
 
 import (
 	"errors"
+	"net/http"
 	"runtime"
+	"strings"
 	"testing"
+
+	"github.com/odvcencio/gosx/desktop/bridge"
 )
 
 func TestNormalizeOptionsDefaults(t *testing.T) {
@@ -81,6 +85,41 @@ func TestDevToolsEnabled(t *testing.T) {
 	}
 }
 
+func TestNativeBridgeMethodsDispatchToApp(t *testing.T) {
+	var sent []string
+	impl := &recordingPlatformApp{clipboard: "clipboard text"}
+	app := &App{
+		options: Options{Title: "Native", Width: 640, Height: 480, NativeBridge: true},
+		impl:    impl,
+	}
+	app.bridge = bridge.NewRouter(func(raw string) error {
+		sent = append(sent, raw)
+		return nil
+	}, bridge.Limit{})
+	app.registerNativeBridgeMethods()
+
+	if err := app.bridge.Dispatch(`{"op":"req","id":"info","method":"gosx.desktop.app.info"}`); err != nil {
+		t.Fatalf("dispatch app info: %v", err)
+	}
+	if len(sent) != 1 || !strings.Contains(sent[0], `"nativeBridge":true`) {
+		t.Fatalf("app info response = %#v, want nativeBridge true", sent)
+	}
+
+	if err := app.bridge.Dispatch(`{"op":"req","id":"title","method":"gosx.desktop.window.setTitle","payload":{"title":"Renamed"}}`); err != nil {
+		t.Fatalf("dispatch set title: %v", err)
+	}
+	if impl.title != "Renamed" || app.options.Title != "Renamed" {
+		t.Fatalf("title impl/app = %q/%q, want Renamed", impl.title, app.options.Title)
+	}
+
+	if err := app.bridge.Dispatch(`{"op":"req","id":"clip","method":"gosx.desktop.clipboard.writeText","payload":{"text":"copied"}}`); err != nil {
+		t.Fatalf("dispatch clipboard write: %v", err)
+	}
+	if impl.clipboard != "copied" {
+		t.Fatalf("clipboard = %q, want copied", impl.clipboard)
+	}
+}
+
 func TestRunUnsupportedPlatform(t *testing.T) {
 	if runtime.GOOS == "windows" && (runtime.GOARCH == "amd64" || runtime.GOARCH == "arm64") {
 		t.Skip("windows desktop backend is supported on this architecture")
@@ -90,6 +129,42 @@ func TestRunUnsupportedPlatform(t *testing.T) {
 		t.Fatalf("error = %v, want ErrUnsupported", err)
 	}
 }
+
+type recordingPlatformApp struct {
+	title     string
+	clipboard string
+}
+
+func (a *recordingPlatformApp) Run() error                                       { return nil }
+func (a *recordingPlatformApp) Close() error                                     { return nil }
+func (a *recordingPlatformApp) Navigate(string) error                            { return nil }
+func (a *recordingPlatformApp) SetHTML(string) error                             { return nil }
+func (a *recordingPlatformApp) PostMessage(string) error                         { return nil }
+func (a *recordingPlatformApp) ExecuteScript(string) error                       { return nil }
+func (a *recordingPlatformApp) OpenDevTools() error                              { return nil }
+func (a *recordingPlatformApp) PrependBootstrapScript(string) error              { return nil }
+func (a *recordingPlatformApp) Minimize() error                                  { return nil }
+func (a *recordingPlatformApp) Maximize() error                                  { return nil }
+func (a *recordingPlatformApp) Restore() error                                   { return nil }
+func (a *recordingPlatformApp) Focus() error                                     { return nil }
+func (a *recordingPlatformApp) SetTitle(title string) error                      { a.title = title; return nil }
+func (a *recordingPlatformApp) Serve(string, http.Handler) error                 { return nil }
+func (a *recordingPlatformApp) OpenFileDialog(OpenFileOptions) ([]string, error) { return nil, nil }
+func (a *recordingPlatformApp) SaveFileDialog(SaveFileOptions) (string, error)   { return "", nil }
+func (a *recordingPlatformApp) Clipboard() (string, error)                       { return a.clipboard, nil }
+func (a *recordingPlatformApp) SetClipboard(text string) error                   { a.clipboard = text; return nil }
+func (a *recordingPlatformApp) OpenURL(string) error                             { return nil }
+func (a *recordingPlatformApp) SetFullscreen(bool) error                         { return nil }
+func (a *recordingPlatformApp) SetMinSize(int, int) error                        { return nil }
+func (a *recordingPlatformApp) SetMaxSize(int, int) error                        { return nil }
+func (a *recordingPlatformApp) NewWindow(WindowOptions) (*Window, error)         { return nil, ErrUnsupported }
+func (a *recordingPlatformApp) RegisterProtocol(string) error                    { return nil }
+func (a *recordingPlatformApp) RegisterFileType(string, string, string) error    { return nil }
+func (a *recordingPlatformApp) SetMenuBar(Menu) error                            { return nil }
+func (a *recordingPlatformApp) SetTray(TrayOptions) error                        { return nil }
+func (a *recordingPlatformApp) CloseTray() error                                 { return nil }
+func (a *recordingPlatformApp) Notify(Notification) error                        { return nil }
+func (a *recordingPlatformApp) SetFileDropHandler(func([]string)) error          { return nil }
 
 func TestNewUnsupportedPlatform(t *testing.T) {
 	if runtime.GOOS == "windows" && (runtime.GOARCH == "amd64" || runtime.GOARCH == "arm64") {

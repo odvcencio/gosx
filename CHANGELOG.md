@@ -1,5 +1,28 @@
 # Changelog
 
+## v0.18.15
+
+Windows desktop app surface release.
+
+`desktop.New` now installs the typed WebView2 bootstrap bridge by default, so
+page code can rely on `window.gosxDesktop` from the first navigation without the
+CLI manually injecting it. Trusted desktop content can opt into
+`desktop.Options.NativeBridge` and get Electron-style helpers for app info,
+window controls, dialogs, clipboard, external URLs, and notifications through
+`window.gosxDesktop.app/window/dialog/clipboard/shell/notification`.
+
+`gosx desktop --bundle <dir>` now serves a built offline/static bundle through
+`app://gosx/*`, prefers `dist/offline` when an offline manifest is present, and
+enables the native bridge by default for that packaged-app path. Direct URL and
+inline HTML modes keep native bridge access off unless `--native-bridge` is set.
+
+The public `desktop.App` API now exposes the native methods already implemented
+by the Windows backend: window minimize/maximize/restore/focus/title/size/fullscreen,
+dialogs, clipboard, external URL opening, and custom protocol serving. README
+desktop wording was corrected to mark extra-window construction as an exposed
+API shape with the Windows backend still returning `desktop.ErrUnsupported`
+until multi-window WebView2 environment sharing lands.
+
 ## v0.18.14
 
 gotreesitter v0.15.3 dependency release.

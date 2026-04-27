@@ -2,7 +2,7 @@
 
 A Go-native web platform. Write components in `.gsx` — Go with embedded markup — compile through a real compiler pipeline, render on the server by default, hydrate interactive islands with WebAssembly. No JavaScript toolchain. No CGo. Six dependencies.
 
-Current release: **v0.18.14**. Pre-1.0; breaking changes are documented in [CHANGELOG.md](./CHANGELOG.md).
+Current release: **v0.18.15**. Pre-1.0; breaking changes are documented in [CHANGELOG.md](./CHANGELOG.md).
 
 ## What if you never had to leave Go?
 
@@ -419,6 +419,9 @@ gosx init [name] [--template docs]    # Scaffold a new app
 gosx dev [app]                        # Dev server with file watching and SSE reload
 gosx desktop [dev] [app]              # Dev server inside a native desktop host
 gosx desktop --url <url>              # Direct native desktop host smoke
+gosx desktop --bundle dist/offline    # Run a packaged app://gosx bundle
+gosx desktop --url <url> --native-bridge
+                                      # Direct trusted host with built-in desktop APIs
 gosx build [--prod] [app]             # Build with hashed assets, optional static prerender
 gosx build --offline [app]            # Stage a versioned offline asset bundle
 gosx build --msix [app]               # Stage and package Windows MSIX output
@@ -496,13 +499,23 @@ Production builds and static exports also write route capability metadata into `
 
 `gosx desktop [app]` opens the dev server in the native desktop host. On Windows
 it uses WebView2 through the pure-Go `desktop` package; `gosx desktop --url
-https://example.com` opens a URL directly for host smoke checks. The Windows
-host supports hot reload, typed IPC envelopes, devtools, single-instance
-forwarding, deep links, file associations, lifecycle callbacks, multi-window
-construction, tray icons, native menus, context menus, notifications, file
-drop, per-monitor DPI awareness, and a minimal accessibility surface. From WSL
-or CI, `make build-desktop-windows` emits `build/gosx-windows-amd64.exe` and
+https://example.com` opens a URL directly for host smoke checks. `gosx desktop
+--bundle dist/offline` serves a packaged offline/static bundle from `app://gosx`
+and enables the trusted native bridge by default. The Windows host supports hot
+reload, typed IPC envelopes, devtools, single-instance forwarding, deep links,
+file associations, lifecycle callbacks, tray icons, native menus, context menus,
+notifications, file drop, per-monitor DPI awareness, and a minimal accessibility
+surface. Multi-window construction has a public API shape, but the current
+Windows backend still returns `desktop.ErrUnsupported` for extra windows until
+shared WebView2-environment support lands. From WSL or CI, `make
+build-desktop-windows` emits `build/gosx-windows-amd64.exe` and
 `build/gosx-windows-arm64.exe` for handoff to a Windows host.
+
+Trusted desktop content can call `window.gosxDesktop.app`,
+`window.gosxDesktop.window`, `window.gosxDesktop.dialog`,
+`window.gosxDesktop.clipboard`, `window.gosxDesktop.shell`, and
+`window.gosxDesktop.notification` when `desktop.Options.NativeBridge` or
+`gosx desktop --native-bridge` is enabled.
 
 The `desktop` package also exposes release-time hooks: `App.UpdateCheck()` /
 `App.UpdateApply()` consume MSIX AppInstaller feeds, and
@@ -604,7 +617,7 @@ The same compiler infrastructure powers [Arbiter](https://github.com/odvcencio/a
 
 ## Status
 
-GoSX is pre-1.0. The current release is **v0.18.14**. The five primitives (Server, Action, Island, Engine, Hub) are stable in shape — we do not expect their top-level API to change before 1.0. Subsystems like `scene`, `desktop`, `field`, `sim`, `workspace`, and `semantic` are still under active development and may take breaking changes; each such change is called out explicitly in [CHANGELOG.md](./CHANGELOG.md) with a migration path.
+GoSX is pre-1.0. The current release is **v0.18.15**. The five primitives (Server, Action, Island, Engine, Hub) are stable in shape — we do not expect their top-level API to change before 1.0. Subsystems like `scene`, `desktop`, `field`, `sim`, `workspace`, and `semantic` are still under active development and may take breaking changes; each such change is called out explicitly in [CHANGELOG.md](./CHANGELOG.md) with a migration path.
 
 If you're evaluating GoSX for production work, the server + island + route + engine + scene stack has been used in production. The semantic, workspace, and sim layers have production users but are newer.
 
