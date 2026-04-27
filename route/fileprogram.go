@@ -2719,6 +2719,8 @@ func (r *fileProgramRenderer) lowerScene3DComposableNode(child *ir.Node, env fil
 	switch child.Tag {
 	case "Mesh":
 		appendScene3DSceneRecord(sceneMap, "objects", attrs)
+	case "Decal":
+		appendScene3DSceneRecord(sceneMap, "objects", scene3DDecalAttrs(attrs))
 	case "Model":
 		appendScene3DSceneRecord(sceneMap, "models", attrs)
 	case "Points":
@@ -2739,7 +2741,7 @@ func (r *fileProgramRenderer) lowerScene3DComposableNode(child *ir.Node, env fil
 			}
 		}
 		appendScene3DSceneRecord(sceneMap, "html", attrs)
-	case "DirectionalLight", "PointLight", "AmbientLight", "SpotLight", "HemisphereLight":
+	case "DirectionalLight", "PointLight", "AmbientLight", "SpotLight", "HemisphereLight", "RectAreaLight", "LightProbe":
 		attrs = cloneStringAnyMap(attrs)
 		if _, ok := attrs["kind"]; !ok {
 			attrs["kind"] = scene3DLightKind(child.Tag)
@@ -2771,6 +2773,8 @@ func (r *fileProgramRenderer) lowerScene3DComposableNode(child *ir.Node, env fil
 		lowerScene3DTransformControls(sceneMap, attrs)
 	case "PostFX.SSAO":
 		appendScene3DSceneRecord(sceneMap, "postEffects", withDefaultKind(attrs, "ssao"))
+	case "PostFX.DOF":
+		appendScene3DSceneRecord(sceneMap, "postEffects", withDefaultKind(attrs, "dof"))
 	case "PostFX.Bloom":
 		appendScene3DSceneRecord(sceneMap, "postEffects", withDefaultKind(attrs, "bloom"))
 	case "PostFX.Vignette":
@@ -2784,16 +2788,45 @@ func (r *fileProgramRenderer) lowerScene3DComposableNode(child *ir.Node, env fil
 
 func isScene3DComposableTag(tag string) bool {
 	switch tag {
-	case "Mesh", "Model", "Points", "InstancedMesh", "ComputeParticles",
+	case "Mesh", "Decal", "Model", "Points", "InstancedMesh", "ComputeParticles",
 		"Html", "HTML",
-		"DirectionalLight", "PointLight", "AmbientLight", "SpotLight", "HemisphereLight",
+		"DirectionalLight", "PointLight", "AmbientLight", "SpotLight", "HemisphereLight", "RectAreaLight", "LightProbe",
 		"Environment", "Camera", "Material", "LineBasicMaterial", "LineDashedMaterial", "CustomMaterial",
 		"AxesHelper", "GridHelper", "BoxHelper", "BoundingBoxHelper", "SkeletonHelper", "TransformControls",
-		"PostFX.SSAO", "PostFX.Bloom", "PostFX.Vignette", "PostFX.ColorGrading", "PostFX.Tonemap":
+		"PostFX.SSAO", "PostFX.DOF", "PostFX.Bloom", "PostFX.Vignette", "PostFX.ColorGrading", "PostFX.Tonemap":
 		return true
 	default:
 		return false
 	}
+}
+
+func scene3DDecalAttrs(attrs map[string]any) map[string]any {
+	out := cloneStringAnyMap(attrs)
+	out["kind"] = "plane"
+	if _, ok := out["texture"]; !ok {
+		if src, ok := out["src"]; ok {
+			out["texture"] = src
+		}
+	}
+	if _, ok := out["materialKind"]; !ok {
+		out["materialKind"] = "flat"
+	}
+	if _, ok := out["color"]; !ok {
+		out["color"] = "#ffffff"
+	}
+	if _, ok := out["opacity"]; !ok {
+		out["opacity"] = 1
+	}
+	if _, ok := out["blendMode"]; !ok {
+		out["blendMode"] = "alpha"
+	}
+	if _, ok := out["renderPass"]; !ok {
+		out["renderPass"] = "alpha"
+	}
+	if _, ok := out["depthWrite"]; !ok {
+		out["depthWrite"] = false
+	}
+	return out
 }
 
 func scene3DMaterialAttrs(attrs map[string]any, kind string) map[string]any {
@@ -3189,6 +3222,10 @@ func scene3DLightKind(tag string) string {
 		return "spot"
 	case "HemisphereLight":
 		return "hemisphere"
+	case "RectAreaLight":
+		return "rect-area"
+	case "LightProbe":
+		return "light-probe"
 	default:
 		return ""
 	}

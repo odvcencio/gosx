@@ -560,15 +560,17 @@
     ], css.mount);
     sceneCSSResolveCollectionKeys(state, css, "materials", [
       "color", "opacity", "emissive", "roughness", "metalness",
+      "clearcoat", "sheen", "transmission", "iridescence", "anisotropy",
       "normalMap", "roughnessMap", "metalnessMap", "emissiveMap",
     ], null);
     sceneCSSResolveCollectionKeys(state, css, "lights", [
       "color", "groundColor", "intensity", "x", "y", "z",
       "directionX", "directionY", "directionZ", "angle", "penumbra",
-      "range", "decay", "shadowBias", "shadowSize",
+      "range", "decay", "width", "height", "shadowBias", "shadowSize",
     ], sceneCSSRecordElement);
     sceneCSSResolveCollectionKeys(state, css, "objects", [
-      "color", "opacity", "emissive", "roughness", "metalness", "lineWidth",
+      "color", "opacity", "emissive", "roughness", "metalness",
+      "clearcoat", "sheen", "transmission", "iridescence", "anisotropy", "lineWidth",
       "x", "y", "z", "rotationX", "rotationY", "rotationZ",
       "spinX", "spinY", "spinZ",
     ], sceneCSSRecordElement);
@@ -589,10 +591,10 @@
       "width", "height", "scale", "opacity", "offsetX", "offsetY",
     ], sceneCSSRecordElement);
     sceneCSSResolveCollectionKeys(state, css, "postEffects", [
-      "threshold", "intensity", "radius", "scale", "bias", "saturation", "contrast", "exposure",
+      "threshold", "intensity", "radius", "scale", "bias", "saturation", "contrast", "exposure", "focusDistance", "aperture", "maxBlur",
     ], null);
     sceneCSSResolveCollectionKeys(state, css, "postFX", [
-      "threshold", "intensity", "radius", "scale", "bias", "saturation", "contrast", "exposure",
+      "threshold", "intensity", "radius", "scale", "bias", "saturation", "contrast", "exposure", "focusDistance", "aperture", "maxBlur",
     ], null);
     sceneCSSResolveComputeParticleVars(state, css);
   }

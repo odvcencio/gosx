@@ -1,5 +1,31 @@
 # Changelog
 
+## v0.18.22
+
+Scene3D tier-two parity release.
+
+Scene3D now has conventional discrete `LODGroup` authoring alongside the
+existing TurboQuant progressive LOD path. LOD groups lower to distance-threshold
+metadata in the IR and the runtime selects the active mesh/model level during
+bundle construction.
+
+The material surface now includes first-pass physical extensions:
+`clearcoat`, `sheen`, `transmission`, `iridescence`, and `anisotropy`. These
+flow through typed Go materials, named material profiles, composable Scene3D
+children, CSS variable resolution, WebGL PBR uniforms, and canvas fallback
+lighting.
+
+Lighting adds `RectAreaLight` and `LightProbe` records, including composable
+`<RectAreaLight>` / `<LightProbe>` lowering. Rect-area lights currently render
+as finite point emitters while preserving width/height in the IR for a later
+LTC-backed implementation; probes contribute ambient lighting and preserve SH
+coefficient slots.
+
+Post-processing adds `scene.DOF`, `<PostFX.DOF>`, runtime normalization, CSS
+variable support, and a WebGL depth-texture post pass. Scene3D also gains a
+first-pass `Decal` surface that lowers to an alpha-blended projected plane for
+texture markers, annotations, and hotspots.
+
 ## v0.18.21
 
 Scene3D parity release.

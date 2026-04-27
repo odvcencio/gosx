@@ -3,6 +3,7 @@ package scene
 import (
 	"encoding/json"
 	"math"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -237,6 +238,24 @@ type Mesh struct {
 	Children   []Node
 }
 
+// LODLevel describes one level inside a discrete LODGroup. Distance is the
+// minimum camera distance at which Node becomes active; the next level's
+// Distance becomes this level's maximum distance.
+type LODLevel struct {
+	Distance float64
+	Node     Node
+}
+
+// LODGroup lowers conventional distance-threshold level-of-detail groups. It
+// complements Compression.LOD: discrete groups swap authored meshes/models,
+// while TurboQuant LOD swaps compressed vertex payload quality.
+type LODGroup struct {
+	ID       string
+	Position Vector3
+	Rotation Euler
+	Levels   []LODLevel
+}
+
 // SpreadProps serializes a Mesh into the attribute map that the composable
 // <Mesh {...props} /> element accepts. This lets typed Mesh values generated
 // in Go flow into gsx templates via <Each> without round-tripping through
@@ -440,6 +459,22 @@ type Model struct {
 	Live       []string
 }
 
+// Decal projects a planar texture or color marker into the scene. The initial
+// renderer surface is a thin alpha-blended plane so decals work across WebGL
+// and canvas fallbacks without introducing a geometry clipping pass.
+type Decal struct {
+	ID         string
+	Src        string
+	Color      string
+	Position   Vector3
+	Rotation   Euler
+	Width      float64
+	Height     float64
+	Opacity    float64
+	Pickable   *bool
+	DepthWrite *bool
+}
+
 // AmbientLight adds untargeted scene illumination.
 type AmbientLight struct {
 	ID         string
@@ -513,6 +548,39 @@ type HemisphereLight struct {
 	InState     *LightProps
 	OutState    *LightProps
 	Live        []string
+}
+
+// RectAreaLight approximates a rectangular emitter. WebGL treats it as a
+// finite area-shaped point light today, preserving width/height in the IR so a
+// later LTC implementation can use the same authoring surface.
+type RectAreaLight struct {
+	ID         string
+	Color      string
+	Intensity  float64
+	Position   Vector3
+	Direction  Vector3
+	Width      float64
+	Height     float64
+	Range      float64
+	Decay      float64
+	Transition Transition
+	InState    *LightProps
+	OutState   *LightProps
+	Live       []string
+}
+
+// LightProbe contributes ambient probe lighting. Coefficients are reserved for
+// spherical-harmonics probes; current renderers use Color/Intensity as a
+// first-order ambient probe.
+type LightProbe struct {
+	ID           string
+	Color        string
+	Intensity    float64
+	Coefficients []Vector3
+	Transition   Transition
+	InState      *LightProps
+	OutState     *LightProps
+	Live         []string
 }
 
 // AnimationClip defines a procedural animation clip with keyframe channels.
@@ -741,6 +809,11 @@ type StandardMaterial struct {
 	Color        string
 	Roughness    float64
 	Metalness    float64
+	Clearcoat    float64
+	Sheen        float64
+	Transmission float64
+	Iridescence  float64
+	Anisotropy   float64
 	NormalMap    string
 	RoughnessMap string
 	MetalnessMap string
@@ -798,6 +871,8 @@ type graphLowerer struct {
 
 func (Group) sceneNode()             {}
 func (Mesh) sceneNode()              {}
+func (LODGroup) sceneNode()          {}
+func (Decal) sceneNode()             {}
 func (Points) sceneNode()            {}
 func (InstancedMesh) sceneNode()     {}
 func (InstancedGLBMesh) sceneNode()  {}
@@ -810,6 +885,8 @@ func (DirectionalLight) sceneNode()  {}
 func (PointLight) sceneNode()        {}
 func (SpotLight) sceneNode()         {}
 func (HemisphereLight) sceneNode()   {}
+func (RectAreaLight) sceneNode()     {}
+func (LightProbe) sceneNode()        {}
 func (AnimationClip) sceneNode()     {}
 func (AxesHelper) sceneNode()        {}
 func (GridHelper) sceneNode()        {}
@@ -1079,6 +1156,23 @@ func sceneNodeRequiresComputeCapability(node Node) bool {
 		return true
 	case *ComputeParticles:
 		return current != nil
+	case LODGroup:
+		for _, level := range current.Levels {
+			if sceneNodeRequiresComputeCapability(level.Node) {
+				return true
+			}
+		}
+		return false
+	case *LODGroup:
+		if current == nil {
+			return false
+		}
+		for _, level := range current.Levels {
+			if sceneNodeRequiresComputeCapability(level.Node) {
+				return true
+			}
+		}
+		return false
 	case Group:
 		return sceneNodesRequireComputeCapability(current.Children)
 	case *Group:
@@ -1227,6 +1321,18 @@ func (l *graphLowerer) lowerNode(node Node, parent worldTransform) {
 		if current != nil {
 			l.lowerMesh(*current, parent)
 		}
+	case LODGroup:
+		l.lowerLODGroup(current, parent)
+	case *LODGroup:
+		if current != nil {
+			l.lowerLODGroup(*current, parent)
+		}
+	case Decal:
+		l.lowerDecal(current, parent)
+	case *Decal:
+		if current != nil {
+			l.lowerDecal(*current, parent)
+		}
 	case Points:
 		l.lowerPoints(current, parent)
 	case *Points:
@@ -1299,6 +1405,18 @@ func (l *graphLowerer) lowerNode(node Node, parent worldTransform) {
 		if current != nil {
 			l.lowerHemisphereLight(*current)
 		}
+	case RectAreaLight:
+		l.lowerRectAreaLight(current, parent)
+	case *RectAreaLight:
+		if current != nil {
+			l.lowerRectAreaLight(*current, parent)
+		}
+	case LightProbe:
+		l.lowerLightProbe(current)
+	case *LightProbe:
+		if current != nil {
+			l.lowerLightProbe(*current)
+		}
 	case AnimationClip:
 		l.lowerAnimationClip(current)
 	case *AnimationClip:
@@ -1352,6 +1470,97 @@ func (l *graphLowerer) lowerGroup(group Group, parent worldTransform) {
 	for _, child := range group.Children {
 		l.lowerNode(child, world)
 	}
+}
+
+func (l *graphLowerer) lowerLODGroup(group LODGroup, parent worldTransform) {
+	if len(group.Levels) == 0 {
+		return
+	}
+	world := combineTransforms(parent, localTransform(group.Position, group.Rotation))
+	id := strings.TrimSpace(group.ID)
+	if id == "" {
+		l.nextObjectID++
+		id = "scene-lod-group-" + intString(l.nextObjectID)
+	}
+	l.anchors[id] = world
+	levels := append([]LODLevel(nil), group.Levels...)
+	sort.SliceStable(levels, func(i, j int) bool {
+		return levels[i].Distance < levels[j].Distance
+	})
+	for index, level := range levels {
+		if level.Node == nil {
+			continue
+		}
+		startObjects := len(l.objects)
+		startModels := len(l.models)
+		l.lowerNode(level.Node, world)
+		minDistance := level.Distance
+		if minDistance < 0 {
+			minDistance = 0
+		}
+		maxDistance := 0.0
+		if index+1 < len(levels) {
+			maxDistance = levels[index+1].Distance
+			if maxDistance < minDistance {
+				maxDistance = 0
+			}
+		}
+		l.annotateLODRecords(startObjects, startModels, id, index, minDistance, maxDistance)
+	}
+}
+
+func (l *graphLowerer) annotateLODRecords(startObjects, startModels int, group string, level int, minDistance, maxDistance float64) {
+	for i := startObjects; i < len(l.objects); i++ {
+		l.objects[i].LODGroup = group
+		l.objects[i].LODLevel = level
+		l.objects[i].LODMinDistance = minDistance
+		l.objects[i].LODMaxDistance = maxDistance
+	}
+	for i := startModels; i < len(l.models); i++ {
+		l.models[i].LODGroup = group
+		l.models[i].LODLevel = level
+		l.models[i].LODMinDistance = minDistance
+		l.models[i].LODMaxDistance = maxDistance
+	}
+}
+
+func (l *graphLowerer) lowerDecal(decal Decal, parent worldTransform) {
+	width := decal.Width
+	if width <= 0 {
+		width = 1
+	}
+	height := decal.Height
+	if height <= 0 {
+		height = width
+	}
+	opacity := decal.Opacity
+	if opacity <= 0 {
+		opacity = 1
+	}
+	color := strings.TrimSpace(decal.Color)
+	if color == "" {
+		color = "#ffffff"
+	}
+	depthWrite := decal.DepthWrite
+	if depthWrite == nil {
+		depthWrite = Bool(false)
+	}
+	material := FlatMaterial{
+		Color:      color,
+		Texture:    strings.TrimSpace(decal.Src),
+		Opacity:    Float(opacity),
+		BlendMode:  BlendAlpha,
+		RenderPass: RenderAlpha,
+	}
+	l.lowerMesh(Mesh{
+		ID:         decal.ID,
+		Geometry:   PlaneGeometry{Width: width, Height: height},
+		Material:   material,
+		Position:   decal.Position,
+		Rotation:   decal.Rotation,
+		Pickable:   decal.Pickable,
+		DepthWrite: depthWrite,
+	}, parent)
 }
 
 func (l *graphLowerer) lowerAxesHelper(helper AxesHelper, parent worldTransform) {
@@ -2011,6 +2220,45 @@ func (l *graphLowerer) lowerHemisphereLight(light HemisphereLight) {
 	})
 }
 
+func (l *graphLowerer) lowerRectAreaLight(light RectAreaLight, parent worldTransform) {
+	world := combineTransforms(parent, localTransform(light.Position, Euler{}))
+	direction := parent.Rotation.rotate(light.Direction)
+	l.lights = append(l.lights, LightIR{
+		ID:         l.nextSceneLightID("rect-area-light", light.ID),
+		Kind:       "rect-area",
+		Color:      strings.TrimSpace(light.Color),
+		Intensity:  light.Intensity,
+		X:          world.Position.X,
+		Y:          world.Position.Y,
+		Z:          world.Position.Z,
+		DirectionX: direction.X,
+		DirectionY: direction.Y,
+		DirectionZ: direction.Z,
+		Width:      light.Width,
+		Height:     light.Height,
+		Range:      light.Range,
+		Decay:      light.Decay,
+		Transition: lowerTransition(light.Transition),
+		InState:    light.InState.legacyProps(),
+		OutState:   light.OutState.legacyProps(),
+		Live:       normalizeLive(light.Live),
+	})
+}
+
+func (l *graphLowerer) lowerLightProbe(light LightProbe) {
+	l.lights = append(l.lights, LightIR{
+		ID:           l.nextSceneLightID("light-probe", light.ID),
+		Kind:         "light-probe",
+		Color:        strings.TrimSpace(light.Color),
+		Intensity:    light.Intensity,
+		Coefficients: append([]Vector3(nil), light.Coefficients...),
+		Transition:   lowerTransition(light.Transition),
+		InState:      light.InState.legacyProps(),
+		OutState:     light.OutState.legacyProps(),
+		Live:         normalizeLive(light.Live),
+	})
+}
+
 func (l *graphLowerer) lowerAnimationClip(clip AnimationClip) {
 	name := strings.TrimSpace(clip.Name)
 	if name == "" || len(clip.Channels) == 0 {
@@ -2257,6 +2505,11 @@ func applyMaterialProps(record *ObjectIR, props map[string]any) {
 	}
 	record.Roughness = mapFloat64(props["roughness"])
 	record.Metalness = mapFloat64(props["metalness"])
+	record.Clearcoat = mapFloat64(props["clearcoat"])
+	record.Sheen = mapFloat64(props["sheen"])
+	record.Transmission = mapFloat64(props["transmission"])
+	record.Iridescence = mapFloat64(props["iridescence"])
+	record.Anisotropy = mapFloat64(props["anisotropy"])
 	if normalMap, ok := mapStringValue(props["normalMap"]); ok {
 		record.NormalMap = normalMap
 	}
@@ -2526,6 +2779,11 @@ func applyMaterialToObjectIR(record *ObjectIR, material Material) {
 		record.Color = strings.TrimSpace(m.Color)
 		record.Roughness = m.Roughness
 		record.Metalness = m.Metalness
+		record.Clearcoat = m.Clearcoat
+		record.Sheen = m.Sheen
+		record.Transmission = m.Transmission
+		record.Iridescence = m.Iridescence
+		record.Anisotropy = m.Anisotropy
 		record.NormalMap = strings.TrimSpace(m.NormalMap)
 		record.RoughnessMap = strings.TrimSpace(m.RoughnessMap)
 		record.MetalnessMap = strings.TrimSpace(m.MetalnessMap)
@@ -2560,6 +2818,11 @@ func applyMaterialToObjectIR(record *ObjectIR, material Material) {
 		record.Color = strings.TrimSpace(m.Color)
 		record.Roughness = m.Roughness
 		record.Metalness = m.Metalness
+		record.Clearcoat = m.Clearcoat
+		record.Sheen = m.Sheen
+		record.Transmission = m.Transmission
+		record.Iridescence = m.Iridescence
+		record.Anisotropy = m.Anisotropy
 		record.NormalMap = strings.TrimSpace(m.NormalMap)
 		record.RoughnessMap = strings.TrimSpace(m.RoughnessMap)
 		record.MetalnessMap = strings.TrimSpace(m.MetalnessMap)
@@ -2639,6 +2902,11 @@ func (m StandardMaterial) legacyMaterial() map[string]any {
 	setString(out, "color", m.Color)
 	setNumeric(out, "roughness", m.Roughness)
 	setNumeric(out, "metalness", m.Metalness)
+	setNumeric(out, "clearcoat", m.Clearcoat)
+	setNumeric(out, "sheen", m.Sheen)
+	setNumeric(out, "transmission", m.Transmission)
+	setNumeric(out, "iridescence", m.Iridescence)
+	setNumeric(out, "anisotropy", m.Anisotropy)
 	setString(out, "normalMap", m.NormalMap)
 	setString(out, "roughnessMap", m.RoughnessMap)
 	setString(out, "metalnessMap", m.MetalnessMap)

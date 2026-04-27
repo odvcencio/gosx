@@ -6084,15 +6084,17 @@ test("bootstrap bridges clamp01 into the WebGPU Scene3D sub-feature", () => {
   assert.match(prefix, /var SCENE_POST_VIGNETTE = sceneApi\.SCENE_POST_VIGNETTE/);
   assert.match(prefix, /var SCENE_POST_COLOR_GRADE = sceneApi\.SCENE_POST_COLOR_GRADE/);
   assert.match(prefix, /var SCENE_POST_SSAO = sceneApi\.SCENE_POST_SSAO/);
+  assert.match(prefix, /var SCENE_POST_DOF = sceneApi\.SCENE_POST_DOF/);
   assert.match(core, /\n    clamp01,\n/);
   assert.match(core, /\n    SCENE_POST_TONE_MAPPING: "toneMapping",\n/);
   assert.match(core, /\n    SCENE_POST_BLOOM: "bloom",\n/);
   assert.match(core, /\n    SCENE_POST_VIGNETTE: "vignette",\n/);
   assert.match(core, /\n    SCENE_POST_COLOR_GRADE: "colorGrade",\n/);
   assert.match(core, /\n    SCENE_POST_SSAO: "ssao",\n/);
+  assert.match(core, /\n    SCENE_POST_DOF: "dof",\n/);
 });
 
-test("bootstrap normalizes orthographic Scene3D cameras and custom line materials", async () => {
+test("bootstrap normalizes orthographic Scene3D cameras, LOD, lights, and custom line materials", async () => {
   const env = createContext({});
   runScript(bootstrapSource, env.context, "bootstrap.js");
   await flushAsyncWork();
@@ -6128,31 +6130,61 @@ test("bootstrap normalizes orthographic Scene3D cameras and custom line material
     points: [{ x: 0, y: 0, z: 0 }, { x: 1, y: 0, z: 0 }],
     lineSegments: [[0, 1]],
   }, 0, null);
+  const nearLOD = api.normalizeSceneObject({
+    id: "near-lod",
+    kind: "box",
+    lodGroup: "ship-lod",
+    lodLevel: 0,
+    lodMinDistance: 0,
+    lodMaxDistance: 4,
+    clearcoat: 0.6,
+    sheen: 0.3,
+  }, 1, null);
+  const farLOD = api.normalizeSceneObject({
+    id: "far-lod",
+    kind: "box",
+    lodGroup: "ship-lod",
+    lodLevel: 1,
+    lodMinDistance: 4,
+    lodMaxDistance: 0,
+    transmission: 0.25,
+    iridescence: 0.5,
+    anisotropy: -0.2,
+  }, 2, null);
+  const rectLight = api.normalizeSceneLight({ kind: "rect-area", width: 3, height: 2, intensity: 1.2 }, 0, null);
+  const probe = api.normalizeSceneLight({ kind: "light-probe", color: "#ddeeff", intensity: 0.4 }, 1, null);
   const bundle = api.createSceneRenderBundle(
     320,
     180,
     "#08151f",
     camera,
-    [object],
+    [object, nearLOD, farLOD],
     [],
     [],
     [],
-    [],
+    [rectLight, probe],
     {},
     0,
     [],
     [],
     [],
-    [{ kind: "ssao", radius: 5, intensity: 0.6 }],
+    [{ kind: "dof", focusDistance: 8, aperture: 0.05, maxBlur: 7 }],
     0,
   );
 
   assert.equal(bundle.camera.kind, "orthographic");
   assert.equal(bundle.materials[0].kind, "line-dashed");
   assert.equal(bundle.materials[0].lineDash, true);
+  assert.equal(bundle.materials.some((material) => material.clearcoat === 0.6), false);
+  assert.equal(bundle.materials.some((material) => material.transmission === 0.25), true);
   assert.equal(bundle.worldLineWidths[0], 3);
   assert.equal(bundle.worldLineDashes[0], true);
-  assert.deepEqual(bundle.postEffects, [{ kind: "ssao", radius: 5, intensity: 0.6 }]);
+  assert.equal(rectLight.kind, "rect-area");
+  assert.equal(rectLight.width, 3);
+  assert.equal(probe.kind, "light-probe");
+  assert.equal(bundle.objects.some((entry) => entry.id === "near-lod"), false);
+  assert.equal(bundle.objects.some((entry) => entry.id === "far-lod"), true);
+  assert.deepEqual(bundle.postEffects, [{ kind: "dof", focusDistance: 8, aperture: 0.05, maxBlur: 7 }]);
 });
 
 test("bootstrap applies named Scene3D materials to point layers", async () => {

@@ -263,6 +263,60 @@ func (ir SSAOIR) MarshalJSON() ([]byte, error) {
 	return []byte(b.String()), nil
 }
 
+// DOFIR lowers DOF.
+type DOFIR struct {
+	FocusDistance float64
+	Aperture      float64
+	MaxBlur       float64
+}
+
+func (ir DOFIR) legacyProps() map[string]any {
+	focusDistance := ir.FocusDistance
+	if focusDistance == 0 {
+		focusDistance = 8.0
+	}
+	aperture := ir.Aperture
+	if aperture == 0 {
+		aperture = 0.04
+	}
+	maxBlur := ir.MaxBlur
+	if maxBlur == 0 {
+		maxBlur = 8.0
+	}
+	return map[string]any{
+		"kind":          "dof",
+		"focusDistance": focusDistance,
+		"aperture":      aperture,
+		"maxBlur":       maxBlur,
+	}
+}
+
+// MarshalJSON encodes the IR shape directly.
+func (ir DOFIR) MarshalJSON() ([]byte, error) {
+	focusDistance := ir.FocusDistance
+	if focusDistance == 0 {
+		focusDistance = 8.0
+	}
+	aperture := ir.Aperture
+	if aperture == 0 {
+		aperture = 0.04
+	}
+	maxBlur := ir.MaxBlur
+	if maxBlur == 0 {
+		maxBlur = 8.0
+	}
+	var b strings.Builder
+	b.Grow(104)
+	b.WriteString(`{"kind":"dof","focusDistance":`)
+	b.WriteString(strconv.FormatFloat(focusDistance, 'f', -1, 64))
+	b.WriteString(`,"aperture":`)
+	b.WriteString(strconv.FormatFloat(aperture, 'f', -1, 64))
+	b.WriteString(`,"maxBlur":`)
+	b.WriteString(strconv.FormatFloat(maxBlur, 'f', -1, 64))
+	b.WriteByte('}')
+	return []byte(b.String()), nil
+}
+
 // sceneIR converts the typed PostFX into the IR slice consumed by SceneIR.
 func (pfx PostFX) sceneIR() []PostEffectIR {
 	if len(pfx.Effects) == 0 {
@@ -298,6 +352,12 @@ func (pfx PostFX) sceneIR() []PostEffectIR {
 				Radius:    float64(ev.Radius),
 				Intensity: float64(ev.Intensity),
 				Bias:      float64(ev.Bias),
+			})
+		case DOF:
+			out = append(out, DOFIR{
+				FocusDistance: float64(ev.FocusDistance),
+				Aperture:      float64(ev.Aperture),
+				MaxBlur:       float64(ev.MaxBlur),
 			})
 		}
 	}

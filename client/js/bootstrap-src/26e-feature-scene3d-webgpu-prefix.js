@@ -41,6 +41,7 @@
   var SCENE_POST_VIGNETTE = sceneApi.SCENE_POST_VIGNETTE || "vignette";
   var SCENE_POST_COLOR_GRADE = sceneApi.SCENE_POST_COLOR_GRADE || "colorGrade";
   var SCENE_POST_SSAO = sceneApi.SCENE_POST_SSAO || "ssao";
+  var SCENE_POST_DOF = sceneApi.SCENE_POST_DOF || "dof";
   var sceneColorRGBA = sceneApi.sceneColorRGBA || function() { return [0, 0, 0, 1]; };
   var scenePointStyleCode = sceneApi.scenePointStyleCode || function() { return 0; };
   var sceneRenderCamera = sceneApi.sceneRenderCamera || function(c) { return c; };

@@ -820,13 +820,17 @@ func Page() Node {
 		<Camera z={7} fov={64} near={0.1} far={96} />
 		<Environment ambientColor="#f4fbff" ambientIntensity={0.2} fogColor="#050008" fogDensity={0.001} />
 		<DirectionalLight id="sun" color="#fff1d6" intensity={1.2} directionX={0.3} directionY={-1} directionZ={-0.4} />
+		<RectAreaLight id="softbox" color="#dbeafe" intensity={0.8} x={0} y={2} z={2} width={2.5} height={1.5} />
+		<LightProbe id="probe" color="#dbeafe" intensity={0.25} />
 		<PostFX.SSAO radius={3} intensity={0.4} bias={0.02} />
+		<PostFX.DOF focusDistance={7} aperture={0.05} maxBlur={6} />
 		<PostFX.Bloom threshold={0.65} intensity={0.6} radius={8.0} />
 		<PostFX.Tonemap mode="aces" exposure={1.0} />
 		<LineBasicMaterial name="guide-line" color="#93c5fd" width={2} />
 		<LineDashedMaterial name="dash-line" color="#facc15" width={2} dashSize={6} gapSize={4} />
-		<CustomMaterial name="heat" color="#ff8844" fragmentGLSL="color *= 0.5;" />
+		<CustomMaterial name="heat" color="#ff8844" fragmentGLSL="color *= 0.5;" clearcoat={0.4} sheen={0.2} />
 		<Mesh id="hero" kind="box" width={1.8} height={1.2} depth={0.8} color="#8de1ff" materialKind="flat" />
+		<Decal id="badge" src="/textures/badge.png" x={0} y={0.9} z={0.42} width={0.8} height={0.35} opacity={0.85} />
 		<Mesh id="custom-hero" kind="sphere" size={0.8} x={-1.5} material="heat" selected={true} outlineColor="#ffcc00" outlineWidth={3} />
 		<AxesHelper id="axes" size={2} />
 		<GridHelper id="grid" size={8} divisions={8} />
@@ -912,8 +916,15 @@ func Page() Node {
 		`"lights": [`,
 		`"kind": "directional"`,
 		`"id": "sun"`,
+		`"id": "softbox"`,
+		`"kind": "rect-area"`,
+		`"width": 2.5`,
+		`"id": "probe"`,
+		`"kind": "light-probe"`,
 		`"postEffects": [`,
 		`"kind": "ssao"`,
+		`"kind": "dof"`,
+		`"focusDistance": 7`,
 		`"kind": "bloom"`,
 		`"kind": "tonemap"`,
 		`"materials": [`,
@@ -922,8 +933,12 @@ func Page() Node {
 		`"lineDash": true`,
 		`"kind": "custom"`,
 		`"customFragment": "color *= 0.5;"`,
+		`"clearcoat": 0.4`,
 		`"objects": [`,
 		`"id": "hero"`,
+		`"id": "badge"`,
+		`"texture": "/textures/badge.png"`,
+		`"depthWrite": false`,
 		`"id": "custom-hero"`,
 		`"selected": true`,
 		`"outlineColor": "#ffcc00"`,

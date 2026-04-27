@@ -9,6 +9,7 @@
   var SCENE_POST_VIGNETTE = "vignette";
   var SCENE_POST_COLOR_GRADE = "colorGrade";
   var SCENE_POST_SSAO = "ssao";
+  var SCENE_POST_DOF = "dof";
 
   // --- PBR Shader Sources ---
 
@@ -71,6 +72,11 @@
     "uniform vec3 u_albedo;",
     "uniform float u_roughness;",
     "uniform float u_metalness;",
+    "uniform float u_clearcoat;",
+    "uniform float u_sheen;",
+    "uniform float u_transmission;",
+    "uniform float u_iridescence;",
+    "uniform float u_anisotropy;",
     "uniform float u_emissive;",
     "uniform float u_opacity;",
     "uniform bool u_unlit;",
@@ -332,6 +338,7 @@
     "        roughness *= texture(u_roughnessMap, v_uv).g;",
     "    }",
     "    roughness = clamp(roughness, 0.04, 1.0);",
+    "    roughness = clamp(roughness * (1.0 - abs(u_anisotropy) * 0.28), 0.04, 1.0);",
     "",
     "    float metalness = u_metalness;",
     "    if (u_hasMetalnessMap) {",
@@ -365,6 +372,7 @@
     "    }",
     "",
     "    vec3 V = normalize(u_cameraPosition - v_worldPosition);",
+    "    float NoV = max(dot(N, V), 0.0);",
     "",
     "    // Fresnel reflectance at normal incidence — dielectric vs metallic blend.",
     "    vec3 F0 = mix(vec3(0.04), albedo, metalness);",
@@ -478,6 +486,29 @@
     "    vec3 emission = emissiveColor * emissiveStrength;",
     "",
     "    vec3 color = ambient + Lo + emission;",
+    "",
+    "    float clearcoat = clamp(u_clearcoat, 0.0, 1.0);",
+    "    if (clearcoat > 0.0001) {",
+    "        float cc = pow(NoV, mix(12.0, 96.0, 1.0 - roughness)) * clearcoat;",
+    "        color += vec3(cc * 0.28);",
+    "    }",
+    "",
+    "    float sheen = clamp(u_sheen, 0.0, 1.0);",
+    "    if (sheen > 0.0001) {",
+    "        float velvet = pow(1.0 - NoV, 3.0) * sheen;",
+    "        color += albedo * velvet * 0.55;",
+    "    }",
+    "",
+    "    float iridescence = clamp(u_iridescence, 0.0, 1.0);",
+    "    if (iridescence > 0.0001) {",
+    "        vec3 iri = 0.5 + 0.5 * cos(vec3(0.0, 2.1, 4.2) + NoV * 8.0);",
+    "        color = mix(color, color * (0.65 + iri * 0.7), iridescence * pow(1.0 - NoV, 2.0));",
+    "    }",
+    "",
+    "    float transmission = clamp(u_transmission, 0.0, 1.0) * (1.0 - metalness);",
+    "    if (transmission > 0.0001) {",
+    "        color = mix(color, ambient + albedo * 0.1, transmission * 0.55);",
+    "    }",
     "",
     "    // Exponential fog.",
     "    if (u_hasFog != 0) {",
@@ -1592,6 +1623,41 @@
     "}",
   ].join("\n");
 
+  const SCENE_POST_DOF_SOURCE = [
+    "#version 300 es",
+    "precision highp float;",
+    "in vec2 v_uv;",
+    "uniform sampler2D u_texture;",
+    "uniform sampler2D u_depthTexture;",
+    "uniform float u_focusDistance;",
+    "uniform float u_aperture;",
+    "uniform float u_maxBlur;",
+    "uniform float u_near;",
+    "uniform float u_far;",
+    "out vec4 fragColor;",
+    "",
+    "float linearDepth(float depth) {",
+    "    float z = depth * 2.0 - 1.0;",
+    "    return (2.0 * u_near * u_far) / max(0.0001, u_far + u_near - z * (u_far - u_near));",
+    "}",
+    "",
+    "void main() {",
+    "    vec2 texel = 1.0 / vec2(textureSize(u_texture, 0));",
+    "    float depth = linearDepth(texture(u_depthTexture, v_uv).r);",
+    "    float blur = clamp(abs(depth - u_focusDistance) * u_aperture * u_maxBlur, 0.0, u_maxBlur);",
+    "    vec3 color = texture(u_texture, v_uv).rgb * 0.22;",
+    "    color += texture(u_texture, v_uv + texel * vec2( blur,  0.0)).rgb * 0.10;",
+    "    color += texture(u_texture, v_uv + texel * vec2(-blur,  0.0)).rgb * 0.10;",
+    "    color += texture(u_texture, v_uv + texel * vec2(0.0,  blur)).rgb * 0.10;",
+    "    color += texture(u_texture, v_uv + texel * vec2(0.0, -blur)).rgb * 0.10;",
+    "    color += texture(u_texture, v_uv + texel * vec2( blur,  blur)).rgb * 0.095;",
+    "    color += texture(u_texture, v_uv + texel * vec2(-blur,  blur)).rgb * 0.095;",
+    "    color += texture(u_texture, v_uv + texel * vec2( blur, -blur)).rgb * 0.095;",
+    "    color += texture(u_texture, v_uv + texel * vec2(-blur, -blur)).rgb * 0.095;",
+    "    fragColor = vec4(color, 1.0);",
+    "}",
+  ].join("\n");
+
   // Color grading — exposure, contrast, and saturation adjustments.
   const SCENE_POST_COLORGRADE_SOURCE = [
     "#version 300 es",
@@ -1613,9 +1679,9 @@
     "}",
   ].join("\n");
 
-  // Create an offscreen framebuffer with HDR color texture and depth renderbuffer.
+  // Create an offscreen framebuffer with HDR color texture and optional depth texture.
   // Uses RGBA16F when EXT_color_buffer_float is available, RGBA8 otherwise.
-  function createScenePostFBO(gl, width, height) {
+  function createScenePostFBO(gl, width, height, depthTexture) {
     var hdrSupported = Boolean(gl.getExtension("EXT_color_buffer_float"));
     var internalFormat = hdrSupported ? gl.RGBA16F : gl.RGBA8;
     var dataType = hdrSupported ? gl.FLOAT : gl.UNSIGNED_BYTE;
@@ -1629,16 +1695,32 @@
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
 
-    var depthRB = gl.createRenderbuffer();
-    gl.bindRenderbuffer(gl.RENDERBUFFER, depthRB);
-    gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT24, width, height);
+    var depthRB = null;
+    var depthTex = null;
+    if (depthTexture) {
+      depthTex = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, depthTex);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.DEPTH_COMPONENT24, width, height, 0, gl.DEPTH_COMPONENT, gl.UNSIGNED_INT, null);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    } else {
+      depthRB = gl.createRenderbuffer();
+      gl.bindRenderbuffer(gl.RENDERBUFFER, depthRB);
+      gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT24, width, height);
+    }
 
     gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
     gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, colorTex, 0);
-    gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, depthRB);
+    if (depthTex) {
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.TEXTURE_2D, depthTex, 0);
+    } else {
+      gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, depthRB);
+    }
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
 
-    return { fbo: fbo, colorTex: colorTex, depthRB: depthRB, width: width, height: height };
+    return { fbo: fbo, colorTex: colorTex, depthRB: depthRB, depthTex: depthTex, width: width, height: height };
   }
 
   // Create a ping-pong FBO pair for multi-pass effect processing.
@@ -1698,6 +1780,7 @@
   function disposeScenePostFBO(gl, fboObj) {
     if (!fboObj) return;
     if (fboObj.colorTex) gl.deleteTexture(fboObj.colorTex);
+    if (fboObj.depthTex) gl.deleteTexture(fboObj.depthTex);
     if (fboObj.depthRB) gl.deleteRenderbuffer(fboObj.depthRB);
     if (fboObj.fbo) gl.deleteFramebuffer(fboObj.fbo);
   }
@@ -1708,6 +1791,7 @@
     var quad = createSceneFullscreenQuad(gl);
     var sceneFBO = null;
     var auxFBO = null;
+    var scratchFBO = null;
     var pingPong = null;
     var currentWidth = 0;
     var currentHeight = 0;
@@ -1854,6 +1938,23 @@
       return targetFBO ? targetFBO.colorTex : null;
     }
 
+    function applyDOF(inputTex, effect, targetFBO, w, h, camera) {
+      if (!sceneFBO || !sceneFBO.depthTex) return inputTex;
+      var prog = getProgram("dof", SCENE_POST_DOF_SOURCE);
+      if (!prog) return inputTex;
+      beginPostPass(prog, inputTex, targetFBO ? targetFBO.fbo : null, w, h);
+      gl.activeTexture(gl.TEXTURE1);
+      gl.bindTexture(gl.TEXTURE_2D, sceneFBO.depthTex);
+      gl.uniform1i(gl.getUniformLocation(prog.program, "u_depthTexture"), 1);
+      gl.uniform1f(gl.getUniformLocation(prog.program, "u_focusDistance"), sceneNumber(effect.focusDistance, 8.0));
+      gl.uniform1f(gl.getUniformLocation(prog.program, "u_aperture"), sceneNumber(effect.aperture, 0.04));
+      gl.uniform1f(gl.getUniformLocation(prog.program, "u_maxBlur"), sceneNumber(effect.maxBlur, 8.0));
+      gl.uniform1f(gl.getUniformLocation(prog.program, "u_near"), Math.max(0.0001, sceneNumber(camera && camera.near, 0.05)));
+      gl.uniform1f(gl.getUniformLocation(prog.program, "u_far"), Math.max(0.1, sceneNumber(camera && camera.far, 128)));
+      drawSceneFullscreenQuad(gl, quad.vao);
+      return targetFBO ? targetFBO.colorTex : null;
+    }
+
     // Simple blit — copy a texture to the screen without any processing.
     var blitProg = null;
     var SCENE_POST_BLIT_SOURCE = [
@@ -1890,9 +1991,11 @@
         // change trigger reallocation.
         if (sw !== currentWidth || sh !== currentHeight) {
           if (sceneFBO) disposeScenePostFBO(gl, sceneFBO);
-          sceneFBO = createScenePostFBO(gl, sw, sh);
+          sceneFBO = createScenePostFBO(gl, sw, sh, true);
           if (auxFBO) disposeScenePostFBO(gl, auxFBO);
           auxFBO = null;
+          if (scratchFBO) disposeScenePostFBO(gl, scratchFBO);
+          scratchFBO = null;
           currentWidth = sw;
           currentHeight = sh;
         }
@@ -1904,7 +2007,7 @@
       // Process the effect chain and output to the screen. Takes the scaled
       // dims (for intermediate FBO writes) and the canvas dims (for the final
       // blit to the default framebuffer).
-      apply: function(effects, scaledW, scaledH, canvasW, canvasH) {
+      apply: function(effects, scaledW, scaledH, canvasW, canvasH, camera) {
         gl.bindFramebuffer(gl.FRAMEBUFFER, null);
         gl.disable(gl.DEPTH_TEST);
 
@@ -1923,6 +2026,13 @@
           var targetFBO = null;
           if (!isLast) {
             targetFBO = (currentTexture === sceneFBO.colorTex) ? auxFBO : sceneFBO;
+            if (effect.kind === SCENE_POST_DOF && targetFBO === sceneFBO) {
+              if (!scratchFBO || scratchFBO.width !== scaledW || scratchFBO.height !== scaledH) {
+                if (scratchFBO) disposeScenePostFBO(gl, scratchFBO);
+                scratchFBO = createScenePostFBO(gl, scaledW, scaledH);
+              }
+              targetFBO = scratchFBO;
+            }
           }
 
           // Intermediate passes run at scaled dims; the final pass targets
@@ -1945,6 +2055,9 @@
               break;
             case SCENE_POST_SSAO:
               currentTexture = applySSAO(currentTexture, effect, targetFBO, passW, passH);
+              break;
+            case SCENE_POST_DOF:
+              currentTexture = applyDOF(currentTexture, effect, targetFBO, passW, passH, camera);
               break;
             default:
               // Unknown effect — skip.
@@ -1972,6 +2085,10 @@
         if (auxFBO) {
           disposeScenePostFBO(gl, auxFBO);
           auxFBO = null;
+        }
+        if (scratchFBO) {
+          disposeScenePostFBO(gl, scratchFBO);
+          scratchFBO = null;
         }
         if (pingPong) {
           disposeScenePostFBO(gl, pingPong.a);
@@ -2125,6 +2242,11 @@
       albedo: gl.getUniformLocation(program, "u_albedo"),
       roughness: gl.getUniformLocation(program, "u_roughness"),
       metalness: gl.getUniformLocation(program, "u_metalness"),
+      clearcoat: gl.getUniformLocation(program, "u_clearcoat"),
+      sheen: gl.getUniformLocation(program, "u_sheen"),
+      transmission: gl.getUniformLocation(program, "u_transmission"),
+      iridescence: gl.getUniformLocation(program, "u_iridescence"),
+      anisotropy: gl.getUniformLocation(program, "u_anisotropy"),
       emissive: gl.getUniformLocation(program, "u_emissive"),
       opacity: gl.getUniformLocation(program, "u_opacity"),
       unlit: gl.getUniformLocation(program, "u_unlit"),
@@ -2752,6 +2874,8 @@
     h = scenePBRLightsHashNumber(h, sceneNumber(l.decay, 2));
     h = scenePBRLightsHashNumber(h, sceneNumber(l.angle, 0));
     h = scenePBRLightsHashNumber(h, sceneNumber(l.penumbra, 0));
+    h = scenePBRLightsHashNumber(h, sceneNumber(l.width, 0));
+    h = scenePBRLightsHashNumber(h, sceneNumber(l.height, 0));
     h = scenePBRLightsHashString(h, l.groundColor);
     h = scenePBRLightsHashNumber(h, sceneNumber(l.shadowBias, 0));
     h = scenePBRLightsHashNumber(h, sceneNumber(l.shadowSize, 0));
@@ -2858,6 +2982,10 @@
         lightType = 3;
       } else if (kind === "hemisphere") {
         lightType = 4;
+      } else if (kind === "rect-area") {
+        lightType = 2;
+      } else if (kind === "light-probe") {
+        lightType = 0;
       }
 
       gl.uniform1i(uniforms.lightTypes[i], lightType);
@@ -3499,6 +3627,11 @@
       gl.uniform3f(uniforms.albedo, albedoRGBA[0], albedoRGBA[1], albedoRGBA[2]);
       gl.uniform1f(uniforms.roughness, sceneNumber(mat.roughness, 0.5));
       gl.uniform1f(uniforms.metalness, sceneNumber(mat.metalness, 0));
+      gl.uniform1f(uniforms.clearcoat, clamp01(sceneNumber(mat.clearcoat, 0)));
+      gl.uniform1f(uniforms.sheen, clamp01(sceneNumber(mat.sheen, 0)));
+      gl.uniform1f(uniforms.transmission, clamp01(sceneNumber(mat.transmission, 0)));
+      gl.uniform1f(uniforms.iridescence, clamp01(sceneNumber(mat.iridescence, 0)));
+      gl.uniform1f(uniforms.anisotropy, Math.max(-1, Math.min(1, sceneNumber(mat.anisotropy, 0))));
       gl.uniform1f(uniforms.emissive, sceneNumber(mat.emissive, 0));
       gl.uniform1f(uniforms.opacity, clamp01(sceneNumber(mat.opacity, 1)));
       gl.uniform1i(uniforms.unlit, mat.unlit ? 1 : 0);
@@ -3822,7 +3955,7 @@
 
       // Apply post-processing chain if active.
       if (usePostProcessing && postProcessor) {
-        postProcessor.apply(postEffects, renderW, renderH, canvas.width, canvas.height);
+        postProcessor.apply(postEffects, renderW, renderH, canvas.width, canvas.height, bundle.camera);
         // Re-activate the PBR program for the next frame since post-processing
         // switches to its own shader programs.
         gl.useProgram(program);

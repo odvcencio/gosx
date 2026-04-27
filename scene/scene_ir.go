@@ -117,10 +117,19 @@ type ObjectIR struct {
 	DepthWrite         *bool          `json:"depthWrite,omitempty"`
 	Roughness          float64        `json:"roughness,omitempty"`
 	Metalness          float64        `json:"metalness,omitempty"`
+	Clearcoat          float64        `json:"clearcoat,omitempty"`
+	Sheen              float64        `json:"sheen,omitempty"`
+	Transmission       float64        `json:"transmission,omitempty"`
+	Iridescence        float64        `json:"iridescence,omitempty"`
+	Anisotropy         float64        `json:"anisotropy,omitempty"`
 	NormalMap          string         `json:"normalMap,omitempty"`
 	RoughnessMap       string         `json:"roughnessMap,omitempty"`
 	MetalnessMap       string         `json:"metalnessMap,omitempty"`
 	EmissiveMap        string         `json:"emissiveMap,omitempty"`
+	LODGroup           string         `json:"lodGroup,omitempty"`
+	LODLevel           int            `json:"lodLevel,omitempty"`
+	LODMinDistance     float64        `json:"lodMinDistance,omitempty"`
+	LODMaxDistance     float64        `json:"lodMaxDistance,omitempty"`
 	X                  float64        `json:"x,omitempty"`
 	Y                  float64        `json:"y,omitempty"`
 	Z                  float64        `json:"z,omitempty"`
@@ -296,6 +305,9 @@ type LightIR struct {
 	Penumbra       float64        `json:"penumbra,omitempty"`
 	Range          float64        `json:"range,omitempty"`
 	Decay          float64        `json:"decay,omitempty"`
+	Width          float64        `json:"width,omitempty"`
+	Height         float64        `json:"height,omitempty"`
+	Coefficients   []Vector3      `json:"coefficients,omitempty"`
 	CastShadow     bool           `json:"castShadow,omitempty"`
 	ShadowBias     float64        `json:"shadowBias,omitempty"`
 	ShadowSize     int            `json:"shadowSize,omitempty"`
@@ -679,10 +691,19 @@ func (item ObjectIR) legacyProps() map[string]any {
 	}
 	setNumeric(record, "roughness", item.Roughness)
 	setNumeric(record, "metalness", item.Metalness)
+	setNumeric(record, "clearcoat", item.Clearcoat)
+	setNumeric(record, "sheen", item.Sheen)
+	setNumeric(record, "transmission", item.Transmission)
+	setNumeric(record, "iridescence", item.Iridescence)
+	setNumeric(record, "anisotropy", item.Anisotropy)
 	setString(record, "normalMap", item.NormalMap)
 	setString(record, "roughnessMap", item.RoughnessMap)
 	setString(record, "metalnessMap", item.MetalnessMap)
 	setString(record, "emissiveMap", item.EmissiveMap)
+	setString(record, "lodGroup", item.LODGroup)
+	setInt(record, "lodLevel", item.LODLevel)
+	setNumeric(record, "lodMinDistance", item.LODMinDistance)
+	setNumeric(record, "lodMaxDistance", item.LODMaxDistance)
 	setNumeric(record, "x", item.X)
 	setNumeric(record, "y", item.Y)
 	setNumeric(record, "z", item.Z)
@@ -750,6 +771,17 @@ func (item ModelIR) legacyProps() map[string]any {
 	if item.Emissive != nil {
 		record["emissive"] = *item.Emissive
 	}
+	setNumeric(record, "roughness", item.Roughness)
+	setNumeric(record, "metalness", item.Metalness)
+	setNumeric(record, "clearcoat", item.Clearcoat)
+	setNumeric(record, "sheen", item.Sheen)
+	setNumeric(record, "transmission", item.Transmission)
+	setNumeric(record, "iridescence", item.Iridescence)
+	setNumeric(record, "anisotropy", item.Anisotropy)
+	setString(record, "normalMap", item.NormalMap)
+	setString(record, "roughnessMap", item.RoughnessMap)
+	setString(record, "metalnessMap", item.MetalnessMap)
+	setString(record, "emissiveMap", item.EmissiveMap)
 	if item.BlendMode != "" {
 		record["blendMode"] = item.BlendMode
 	}
@@ -769,6 +801,10 @@ func (item ModelIR) legacyProps() map[string]any {
 	if item.Loop != nil {
 		record["loop"] = *item.Loop
 	}
+	setString(record, "lodGroup", item.LODGroup)
+	setInt(record, "lodLevel", item.LODLevel)
+	setNumeric(record, "lodMinDistance", item.LODMinDistance)
+	setNumeric(record, "lodMaxDistance", item.LODMaxDistance)
 	applySceneLifecycleRecord(record, item.Transition, item.InState, item.OutState, item.Live)
 	return record
 }
@@ -1190,6 +1226,11 @@ func (item LightIR) legacyProps() map[string]any {
 	setNumeric(record, "penumbra", item.Penumbra)
 	setNumeric(record, "range", item.Range)
 	setNumeric(record, "decay", item.Decay)
+	setNumeric(record, "width", item.Width)
+	setNumeric(record, "height", item.Height)
+	if coefficients := legacyLinePoints(item.Coefficients); len(coefficients) > 0 {
+		record["coefficients"] = coefficients
+	}
 	if item.CastShadow {
 		record["castShadow"] = true
 	}

@@ -131,6 +131,11 @@ type IRMaterial struct {
 	Emissive           float64        `json:"emissive,omitempty"`
 	Roughness          float64        `json:"roughness,omitempty"`
 	Metalness          float64        `json:"metalness,omitempty"`
+	Clearcoat          float64        `json:"clearcoat,omitempty"`
+	Sheen              float64        `json:"sheen,omitempty"`
+	Transmission       float64        `json:"transmission,omitempty"`
+	Iridescence        float64        `json:"iridescence,omitempty"`
+	Anisotropy         float64        `json:"anisotropy,omitempty"`
 	Texture            string         `json:"texture,omitempty"`
 	NormalMap          string         `json:"normalMap,omitempty"`
 	RoughnessMap       string         `json:"roughnessMap,omitempty"`
@@ -204,6 +209,10 @@ type IRMeshNode struct {
 	CastShadow      bool        `json:"castShadow,omitempty"`
 	ReceiveShadow   bool        `json:"receiveShadow,omitempty"`
 	Pickable        *bool       `json:"pickable,omitempty"`
+	LODGroup        string      `json:"lodGroup,omitempty"`
+	LODLevel        int         `json:"lodLevel,omitempty"`
+	LODMinDistance  float64     `json:"lodMinDistance,omitempty"`
+	LODMaxDistance  float64     `json:"lodMaxDistance,omitempty"`
 	Static          *bool       `json:"static,omitempty"`
 	Animation       string      `json:"animation,omitempty"`
 	Loop            *bool       `json:"loop,omitempty"`
@@ -334,40 +343,46 @@ type IRVector3 struct {
 
 // IRLight describes one scene light.
 type IRLight struct {
-	ID             string  `json:"id,omitempty"`
-	Kind           string  `json:"kind"`
-	Color          string  `json:"color,omitempty"`
-	GroundColor    string  `json:"groundColor,omitempty"`
-	Intensity      float64 `json:"intensity,omitempty"`
-	X              float64 `json:"x,omitempty"`
-	Y              float64 `json:"y,omitempty"`
-	Z              float64 `json:"z,omitempty"`
-	DirectionX     float64 `json:"directionX,omitempty"`
-	DirectionY     float64 `json:"directionY,omitempty"`
-	DirectionZ     float64 `json:"directionZ,omitempty"`
-	Angle          float64 `json:"angle,omitempty"`
-	Penumbra       float64 `json:"penumbra,omitempty"`
-	Range          float64 `json:"range,omitempty"`
-	Decay          float64 `json:"decay,omitempty"`
-	CastShadow     bool    `json:"castShadow,omitempty"`
-	ShadowBias     float64 `json:"shadowBias,omitempty"`
-	ShadowSize     int     `json:"shadowSize,omitempty"`
-	ShadowCascades int     `json:"shadowCascades,omitempty"`
-	ShadowSoftness float64 `json:"shadowSoftness,omitempty"`
+	ID             string      `json:"id,omitempty"`
+	Kind           string      `json:"kind"`
+	Color          string      `json:"color,omitempty"`
+	GroundColor    string      `json:"groundColor,omitempty"`
+	Intensity      float64     `json:"intensity,omitempty"`
+	X              float64     `json:"x,omitempty"`
+	Y              float64     `json:"y,omitempty"`
+	Z              float64     `json:"z,omitempty"`
+	DirectionX     float64     `json:"directionX,omitempty"`
+	DirectionY     float64     `json:"directionY,omitempty"`
+	DirectionZ     float64     `json:"directionZ,omitempty"`
+	Angle          float64     `json:"angle,omitempty"`
+	Penumbra       float64     `json:"penumbra,omitempty"`
+	Range          float64     `json:"range,omitempty"`
+	Decay          float64     `json:"decay,omitempty"`
+	Width          float64     `json:"width,omitempty"`
+	Height         float64     `json:"height,omitempty"`
+	Coefficients   []IRVector3 `json:"coefficients,omitempty"`
+	CastShadow     bool        `json:"castShadow,omitempty"`
+	ShadowBias     float64     `json:"shadowBias,omitempty"`
+	ShadowSize     int         `json:"shadowSize,omitempty"`
+	ShadowCascades int         `json:"shadowCascades,omitempty"`
+	ShadowSoftness float64     `json:"shadowSoftness,omitempty"`
 }
 
 // IRPostEffect describes one post-processing pass.
 type IRPostEffect struct {
-	Kind       string             `json:"kind"`
-	Threshold  float64            `json:"threshold,omitempty"`
-	Intensity  float64            `json:"intensity,omitempty"`
-	Radius     float64            `json:"radius,omitempty"`
-	Scale      float64            `json:"scale,omitempty"`
-	Saturation float64            `json:"saturation,omitempty"`
-	Contrast   float64            `json:"contrast,omitempty"`
-	Exposure   float64            `json:"exposure,omitempty"`
-	Mode       string             `json:"mode,omitempty"`
-	Props      map[string]float64 `json:"props,omitempty"`
+	Kind          string             `json:"kind"`
+	Threshold     float64            `json:"threshold,omitempty"`
+	Intensity     float64            `json:"intensity,omitempty"`
+	Radius        float64            `json:"radius,omitempty"`
+	Scale         float64            `json:"scale,omitempty"`
+	Saturation    float64            `json:"saturation,omitempty"`
+	Contrast      float64            `json:"contrast,omitempty"`
+	Exposure      float64            `json:"exposure,omitempty"`
+	Mode          string             `json:"mode,omitempty"`
+	FocusDistance float64            `json:"focusDistance,omitempty"`
+	Aperture      float64            `json:"aperture,omitempty"`
+	MaxBlur       float64            `json:"maxBlur,omitempty"`
+	Props         map[string]float64 `json:"props,omitempty"`
 }
 
 // Validate checks the schema invariants that do not require a GPU backend.
@@ -728,6 +743,9 @@ func lightsToIR(items []LightIR) []IRLight {
 			Penumbra:       item.Penumbra,
 			Range:          item.Range,
 			Decay:          item.Decay,
+			Width:          item.Width,
+			Height:         item.Height,
+			Coefficients:   vector3ListToIR(item.Coefficients),
 			CastShadow:     item.CastShadow,
 			ShadowBias:     item.ShadowBias,
 			ShadowSize:     item.ShadowSize,
@@ -759,6 +777,11 @@ func materialFromObjectIR(object ObjectIR) IRMaterial {
 		Emissive:           derefFloat64(object.Emissive),
 		Roughness:          object.Roughness,
 		Metalness:          object.Metalness,
+		Clearcoat:          object.Clearcoat,
+		Sheen:              object.Sheen,
+		Transmission:       object.Transmission,
+		Iridescence:        object.Iridescence,
+		Anisotropy:         object.Anisotropy,
 		NormalMap:          object.NormalMap,
 		RoughnessMap:       object.RoughnessMap,
 		MetalnessMap:       object.MetalnessMap,
@@ -812,6 +835,10 @@ func objectToIRNode(object ObjectIR, materialIndex int) IRNode {
 			CastShadow:      object.CastShadow,
 			ReceiveShadow:   object.ReceiveShadow,
 			Pickable:        object.Pickable,
+			LODGroup:        object.LODGroup,
+			LODLevel:        object.LODLevel,
+			LODMinDistance:  object.LODMinDistance,
+			LODMaxDistance:  object.LODMaxDistance,
 		},
 	}
 }

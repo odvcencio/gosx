@@ -9,6 +9,7 @@ func TestPostEffectInterfaceImplementations(t *testing.T) {
 	var _ PostEffect = Vignette{}
 	var _ PostEffect = ColorGrade{}
 	var _ PostEffect = SSAO{}
+	var _ PostEffect = DOF{}
 }
 
 func TestPostFXZeroValueIsEmpty(t *testing.T) {
@@ -98,20 +99,41 @@ func TestSSAOIRLegacyProps(t *testing.T) {
 	}
 }
 
+func TestDOFIRLegacyProps(t *testing.T) {
+	ir := DOFIR{FocusDistance: 7, Aperture: 0.05, MaxBlur: 6}
+	got := ir.legacyProps()
+	if got["kind"] != "dof" {
+		t.Fatalf("expected dof kind, got %#v", got["kind"])
+	}
+	if got["focusDistance"] != 7.0 {
+		t.Fatalf("expected focusDistance 7, got %#v", got["focusDistance"])
+	}
+	if got["aperture"] != 0.05 {
+		t.Fatalf("expected aperture 0.05, got %#v", got["aperture"])
+	}
+	if got["maxBlur"] != 6.0 {
+		t.Fatalf("expected maxBlur 6, got %#v", got["maxBlur"])
+	}
+}
+
 func TestPostFXSceneIR(t *testing.T) {
 	pfx := PostFX{Effects: []PostEffect{
 		Bloom{Threshold: 0.7, Strength: 0.6, Radius: 12},
+		DOF{FocusDistance: 7, Aperture: 0.05, MaxBlur: 6},
 		Tonemap{Mode: TonemapACES, Exposure: 1.1},
 	}}
 	irs := pfx.sceneIR()
-	if len(irs) != 2 {
-		t.Fatalf("got %d IRs, want 2", len(irs))
+	if len(irs) != 3 {
+		t.Fatalf("got %d IRs, want 3", len(irs))
 	}
 	if _, ok := irs[0].(BloomIR); !ok {
 		t.Errorf("irs[0] = %T, want BloomIR", irs[0])
 	}
-	if _, ok := irs[1].(TonemapIR); !ok {
-		t.Errorf("irs[1] = %T, want TonemapIR", irs[1])
+	if _, ok := irs[1].(DOFIR); !ok {
+		t.Errorf("irs[1] = %T, want DOFIR", irs[1])
+	}
+	if _, ok := irs[2].(TonemapIR); !ok {
+		t.Errorf("irs[2] = %T, want TonemapIR", irs[2])
 	}
 }
 

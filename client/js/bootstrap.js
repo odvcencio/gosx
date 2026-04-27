@@ -6018,6 +6018,11 @@
       emissive: sceneClampNumberOrCSSVar(sceneObjectMaterialValue(item, "emissive"), sceneNumber(current.emissive, sceneDefaultMaterialEmissive(materialKind)), 0, 1),
       roughness: sceneNumberOrCSSVar(sceneObjectMaterialValue(item, "roughness"), sceneNumber(current.roughness, 0.5)),
       metalness: sceneNumberOrCSSVar(sceneObjectMaterialValue(item, "metalness"), sceneNumber(current.metalness, 0)),
+      clearcoat: sceneClampNumberOrCSSVar(sceneObjectMaterialValue(item, "clearcoat"), sceneNumber(current.clearcoat, 0), 0, 1),
+      sheen: sceneClampNumberOrCSSVar(sceneObjectMaterialValue(item, "sheen"), sceneNumber(current.sheen, 0), 0, 1),
+      transmission: sceneClampNumberOrCSSVar(sceneObjectMaterialValue(item, "transmission"), sceneNumber(current.transmission, 0), 0, 1),
+      iridescence: sceneClampNumberOrCSSVar(sceneObjectMaterialValue(item, "iridescence"), sceneNumber(current.iridescence, 0), 0, 1),
+      anisotropy: sceneClampNumberOrCSSVar(sceneObjectMaterialValue(item, "anisotropy"), sceneNumber(current.anisotropy, 0), -1, 1),
       lineDash: sceneBool(sceneObjectMaterialHasValue(item, "lineDash") ? sceneObjectMaterialValue(item, "lineDash") : current.lineDash, false),
       dashSize: sceneNumber(sceneObjectMaterialValue(item, "dashSize"), sceneNumber(current.dashSize, 0)),
       gapSize: sceneNumber(sceneObjectMaterialValue(item, "gapSize"), sceneNumber(current.gapSize, 0)),
@@ -6061,6 +6066,10 @@
       receiveShadow: sceneBool(Object.prototype.hasOwnProperty.call(item, "receiveShadow") ? item.receiveShadow : current.receiveShadow, false),
       doubleSided: sceneBool(Object.prototype.hasOwnProperty.call(item, "doubleSided") ? item.doubleSided : current.doubleSided, false),
       depthWrite: Object.prototype.hasOwnProperty.call(item, "depthWrite") ? sceneBool(item.depthWrite, true) : current.depthWrite,
+      lodGroup: typeof item.lodGroup === "string" && item.lodGroup ? item.lodGroup : (typeof current.lodGroup === "string" ? current.lodGroup : ""),
+      lodLevel: Math.max(0, Math.floor(sceneNumber(item.lodLevel, sceneNumber(current.lodLevel, 0)))),
+      lodMinDistance: Math.max(0, sceneNumber(item.lodMinDistance, sceneNumber(current.lodMinDistance, 0))),
+      lodMaxDistance: Math.max(0, sceneNumber(item.lodMaxDistance, sceneNumber(current.lodMaxDistance, 0))),
       skin: item.skin && typeof item.skin === "object" ? item.skin : (current.skin && typeof current.skin === "object" ? current.skin : null),
       _transition: lifecycle.transition,
       _inState: lifecycle.inState,
@@ -6084,6 +6093,24 @@
         return "directional";
       case "point":
         return "point";
+      case "spot":
+      case "spotlight":
+        return "spot";
+      case "hemisphere":
+      case "hemi":
+      case "hemispherelight":
+        return "hemisphere";
+      case "rect":
+      case "area":
+      case "rectarea":
+      case "rect-area":
+      case "rectarealight":
+      case "rect-area-light":
+        return "rect-area";
+      case "probe":
+      case "lightprobe":
+      case "light-probe":
+        return "light-probe";
       default:
         return "";
     }
@@ -6097,6 +6124,10 @@
         return 1;
       case "point":
         return 1.1;
+      case "rect-area":
+        return 1.4;
+      case "light-probe":
+        return 0.25;
       default:
         return 1;
     }
@@ -6124,8 +6155,11 @@
       directionZ: sceneNumber(item.directionZ, sceneNumber(current.directionZ, 0)),
       angle: Math.max(0, Math.min(Math.PI, sceneNumber(item.angle, sceneNumber(current.angle, 0)))),
       penumbra: sceneClamp(sceneNumber(item.penumbra, sceneNumber(current.penumbra, 0)), 0, 1),
-      range: Math.max(0, Math.min(256, sceneNumber(item.range, sceneNumber(current.range, kind === "point" ? 6.5 : 0)))),
-      decay: Math.max(0.1, Math.min(8, sceneNumber(item.decay, sceneNumber(current.decay, kind === "point" ? 1.35 : 1)))),
+      range: Math.max(0, Math.min(256, sceneNumber(item.range, sceneNumber(current.range, (kind === "point" || kind === "spot" || kind === "rect-area") ? 6.5 : 0)))),
+      decay: Math.max(0.1, Math.min(8, sceneNumber(item.decay, sceneNumber(current.decay, (kind === "point" || kind === "spot" || kind === "rect-area") ? 1.35 : 1)))),
+      width: Math.max(0, sceneNumber(item.width, sceneNumber(current.width, kind === "rect-area" ? 1 : 0))),
+      height: Math.max(0, sceneNumber(item.height, sceneNumber(current.height, kind === "rect-area" ? 1 : 0))),
+      coefficients: Array.isArray(item.coefficients) ? item.coefficients.slice() : (Array.isArray(current.coefficients) ? current.coefficients.slice() : []),
       castShadow: sceneBool(Object.prototype.hasOwnProperty.call(item, "castShadow") ? item.castShadow : current.castShadow, false),
       shadowBias: sceneNumber(item.shadowBias, sceneNumber(current.shadowBias, 0)),
       shadowSize: Math.max(0, Math.floor(sceneNumber(item.shadowSize, sceneNumber(current.shadowSize, 0)))),
@@ -6142,6 +6176,9 @@
       normalized.directionX = 0.35;
       normalized.directionY = -1;
       normalized.directionZ = -0.4;
+    }
+    if ((normalized.kind === "spot" || normalized.kind === "rect-area") && normalized.directionX === 0 && normalized.directionY === 0 && normalized.directionZ === 0) {
+      normalized.directionY = -1;
     }
     if (typeof hashLightContent === "function") {
       normalized._lightHash = hashLightContent(normalized);
@@ -6368,6 +6405,11 @@
     if (sceneObjectMaterialHasValue(current, "metalness")) {
       override.metalness = sceneObjectMaterialValue(current, "metalness");
     }
+    for (const key of ["clearcoat", "sheen", "transmission", "iridescence", "anisotropy"]) {
+      if (sceneObjectMaterialHasValue(current, key)) {
+        override[key] = sceneObjectMaterialValue(current, key);
+      }
+    }
     if (sceneObjectBlendModeHasValue(current)) {
       override.blendMode = sceneObjectBlendModeValue(current);
     }
@@ -6393,6 +6435,10 @@
       loop: Object.prototype.hasOwnProperty.call(current, "loop") ? sceneBool(current.loop, true) : true,
       pickable: hasPickable ? sceneBool(current.pickable, false) : undefined,
       static: hasStatic ? sceneBool(current.static, false) : null,
+      lodGroup: typeof current.lodGroup === "string" && current.lodGroup ? current.lodGroup : "",
+      lodLevel: Math.max(0, Math.floor(sceneNumber(current.lodLevel, 0))),
+      lodMinDistance: Math.max(0, sceneNumber(current.lodMinDistance, 0)),
+      lodMaxDistance: Math.max(0, sceneNumber(current.lodMaxDistance, 0)),
       materialOverride: Object.keys(override).length > 0 ? override : null,
       _transition: lifecycle.transition,
       _inState: lifecycle.inState,
@@ -6789,6 +6835,11 @@
       emissive: sceneClampNumberOrCSSVar(item.emissive, sceneNumber(current.emissive, sceneDefaultMaterialEmissive(kind)), 0, 1),
       roughness: sceneNumberOrCSSVar(item.roughness, sceneNumber(current.roughness, 0.5)),
       metalness: sceneNumberOrCSSVar(item.metalness, sceneNumber(current.metalness, 0)),
+      clearcoat: sceneClampNumberOrCSSVar(item.clearcoat, sceneNumber(current.clearcoat, 0), 0, 1),
+      sheen: sceneClampNumberOrCSSVar(item.sheen, sceneNumber(current.sheen, 0), 0, 1),
+      transmission: sceneClampNumberOrCSSVar(item.transmission, sceneNumber(current.transmission, 0), 0, 1),
+      iridescence: sceneClampNumberOrCSSVar(item.iridescence, sceneNumber(current.iridescence, 0), 0, 1),
+      anisotropy: sceneClampNumberOrCSSVar(item.anisotropy, sceneNumber(current.anisotropy, 0), -1, 1),
       normalMap: typeof item.normalMap === "string" ? item.normalMap.trim() : (typeof current.normalMap === "string" ? current.normalMap : ""),
       roughnessMap: typeof item.roughnessMap === "string" ? item.roughnessMap.trim() : (typeof current.roughnessMap === "string" ? current.roughnessMap : ""),
       metalnessMap: typeof item.metalnessMap === "string" ? item.metalnessMap.trim() : (typeof current.metalnessMap === "string" ? current.metalnessMap : ""),
@@ -6838,6 +6889,9 @@
       saturation: sceneNumberOrCSSVar(item.saturation, sceneNumber(current.saturation, 0)),
       contrast: sceneNumberOrCSSVar(item.contrast, sceneNumber(current.contrast, 0)),
       exposure: sceneNumberOrCSSVar(item.exposure, sceneNumber(current.exposure, 0)),
+      focusDistance: sceneNumberOrCSSVar(item.focusDistance, sceneNumber(current.focusDistance, 0)),
+      aperture: sceneNumberOrCSSVar(item.aperture, sceneNumber(current.aperture, 0)),
+      maxBlur: sceneNumberOrCSSVar(item.maxBlur, sceneNumber(current.maxBlur, 0)),
       mode: typeof item.mode === "string" ? item.mode : (typeof current.mode === "string" ? current.mode : ""),
       id: typeof item.id === "string" && item.id ? item.id : (typeof current.id === "string" ? current.id : ("scene-postfx-" + index)),
     };
@@ -7111,6 +7165,11 @@
       emissive: material.emissive != null ? material.emissive : object.emissive,
       roughness: material.roughness != null ? material.roughness : object.roughness,
       metalness: material.metalness != null ? material.metalness : object.metalness,
+      clearcoat: material.clearcoat != null ? material.clearcoat : object.clearcoat,
+      sheen: material.sheen != null ? material.sheen : object.sheen,
+      transmission: material.transmission != null ? material.transmission : object.transmission,
+      iridescence: material.iridescence != null ? material.iridescence : object.iridescence,
+      anisotropy: material.anisotropy != null ? material.anisotropy : object.anisotropy,
       normalMap: material.normalMap || object.normalMap,
       roughnessMap: material.roughnessMap || object.roughnessMap,
       metalnessMap: material.metalnessMap || object.metalnessMap,
@@ -8134,13 +8193,89 @@
     return depth.far <= near || depth.near >= far;
   }
 
+  function sceneLODDistance(object, camera) {
+    const dx = sceneNumber(object && object.x, 0) - sceneNumber(camera && camera.x, 0);
+    const dy = sceneNumber(object && object.y, 0) - sceneNumber(camera && camera.y, 0);
+    const dz = sceneNumber(object && object.z, 0) - sceneNumber(camera && camera.z, 0);
+    return Math.sqrt(dx * dx + dy * dy + dz * dz);
+  }
+
+  function sceneLODLevelActive(entries, distance) {
+    let best = null;
+    let bestMin = -1;
+    for (const entry of entries) {
+      const minDistance = Math.max(0, sceneNumber(entry && entry.lodMinDistance, 0));
+      const maxDistance = Math.max(0, sceneNumber(entry && entry.lodMaxDistance, 0));
+      if (distance + 0.0001 < minDistance) {
+        continue;
+      }
+      if (maxDistance > 0 && distance >= maxDistance) {
+        continue;
+      }
+      if (minDistance >= bestMin) {
+        best = entry;
+        bestMin = minDistance;
+      }
+    }
+    return best;
+  }
+
+  function sceneSelectLODObjects(objects, camera) {
+    const source = Array.isArray(objects) ? objects : [];
+    if (!source.length) {
+      return source;
+    }
+    const plain = [];
+    const groups = new Map();
+    for (const object of source) {
+      const group = object && typeof object.lodGroup === "string" ? object.lodGroup.trim() : "";
+      if (!group) {
+        plain.push(object);
+        continue;
+      }
+      let levels = groups.get(group);
+      if (!levels) {
+        levels = new Map();
+        groups.set(group, levels);
+      }
+      const level = Math.max(0, Math.floor(sceneNumber(object && object.lodLevel, 0)));
+      let entries = levels.get(level);
+      if (!entries) {
+        entries = [];
+        levels.set(level, entries);
+      }
+      entries.push(object);
+    }
+    if (!groups.size) {
+      return source;
+    }
+    const selected = plain.slice();
+    for (const levels of groups.values()) {
+      const candidates = [];
+      for (const entries of levels.values()) {
+        if (entries.length) {
+          candidates.push(entries[0]);
+        }
+      }
+      const distance = sceneLODDistance(candidates[0], camera);
+      const active = sceneLODLevelActive(candidates, distance) || candidates[0];
+      const activeLevel = Math.max(0, Math.floor(sceneNumber(active && active.lodLevel, 0)));
+      const activeEntries = levels.get(activeLevel);
+      if (activeEntries && activeEntries.length) {
+        selected.push.apply(selected, activeEntries);
+      }
+    }
+    return selected;
+  }
+
   function createSceneRenderBundle(width, height, background, camera, objects, labels, sprites, html, lights, environment, timeSeconds, points, instancedMeshes, computeParticles, postEffects, postFXMaxPixels) {
     const resolvedEnvironment = sceneResolveLightingEnvironment(environment, Array.isArray(lights) && lights.length > 0);
+    const renderCamera = sceneRenderCamera(camera);
     const bundle = {
       bundleVersion: 1,
       background: background,
       timeSeconds: sceneNumber(timeSeconds, 0),
-      camera: sceneRenderCamera(camera),
+      camera: renderCamera,
       lights: Array.isArray(lights) ? lights.slice() : [],
       environment: resolvedEnvironment,
       postEffects: Array.isArray(postEffects) ? postEffects.slice() : [],
@@ -8180,8 +8315,8 @@
     }
     const materialLookup = new Map();
     appendSceneGridToBundle(bundle, width, height);
-    for (const object of objects) {
-      appendSceneObjectToBundle(bundle, materialLookup, camera, width, height, object, bundle.lights, resolvedEnvironment, timeSeconds);
+    for (const object of sceneSelectLODObjects(objects, renderCamera)) {
+      appendSceneObjectToBundle(bundle, materialLookup, renderCamera, width, height, object, bundle.lights, resolvedEnvironment, timeSeconds);
     }
     for (const label of labels || []) {
       appendSceneLabelToBundle(bundle, camera, width, height, label, timeSeconds);
@@ -10383,6 +10518,7 @@
     cancelEngineFrame,
     clearChildren,
     createSceneRenderBundle,
+    sceneSelectLODObjects,
     SCENE_IR_VERSION: 1,
     SCENE_RENDER_BUNDLE_VERSION: 1,
     SCENE_POST_TONE_MAPPING: "toneMapping",
@@ -10390,6 +10526,7 @@
     SCENE_POST_VIGNETTE: "vignette",
     SCENE_POST_COLOR_GRADE: "colorGrade",
     SCENE_POST_SSAO: "ssao",
+    SCENE_POST_DOF: "dof",
     validateSceneIR: typeof validateSceneIR === "function" ? validateSceneIR : undefined,
     prepareScene: typeof prepareScene === "function" ? prepareScene : undefined,
     scenePreparedCommandSequence: typeof scenePreparedCommandSequence === "function" ? scenePreparedCommandSequence : undefined,
@@ -11745,6 +11882,11 @@
       emissive: sceneCSSVarReference(object && object.emissive) ? String(object.emissive).trim() : clamp01(sceneNumber(object && object.emissive, sceneDefaultMaterialEmissive(kind))),
       roughness: sceneNumberOrCSSVar(object && object.roughness, 0.5),
       metalness: sceneNumberOrCSSVar(object && object.metalness, 0),
+      clearcoat: sceneNumberOrCSSVar(object && object.clearcoat, 0),
+      sheen: sceneNumberOrCSSVar(object && object.sheen, 0),
+      transmission: sceneNumberOrCSSVar(object && object.transmission, 0),
+      iridescence: sceneNumberOrCSSVar(object && object.iridescence, 0),
+      anisotropy: sceneNumberOrCSSVar(object && object.anisotropy, 0),
       lineDash: sceneBool(object && object.lineDash, false),
       dashSize: sceneNumber(object && object.dashSize, 0),
       gapSize: sceneNumber(object && object.gapSize, 0),
@@ -11777,6 +11919,11 @@
       sceneCSSVarReference(profile && profile.emissive) ? String(profile.emissive).trim() : clamp01(sceneNumber(profile && profile.emissive, 0)).toFixed(3),
       sceneCSSVarReference(profile && profile.roughness) ? String(profile.roughness).trim() : sceneNumber(profile && profile.roughness, 0.5).toFixed(3),
       sceneCSSVarReference(profile && profile.metalness) ? String(profile.metalness).trim() : sceneNumber(profile && profile.metalness, 0).toFixed(3),
+      sceneCSSVarReference(profile && profile.clearcoat) ? String(profile.clearcoat).trim() : sceneNumber(profile && profile.clearcoat, 0).toFixed(3),
+      sceneCSSVarReference(profile && profile.sheen) ? String(profile.sheen).trim() : sceneNumber(profile && profile.sheen, 0).toFixed(3),
+      sceneCSSVarReference(profile && profile.transmission) ? String(profile.transmission).trim() : sceneNumber(profile && profile.transmission, 0).toFixed(3),
+      sceneCSSVarReference(profile && profile.iridescence) ? String(profile.iridescence).trim() : sceneNumber(profile && profile.iridescence, 0).toFixed(3),
+      sceneCSSVarReference(profile && profile.anisotropy) ? String(profile.anisotropy).trim() : sceneNumber(profile && profile.anisotropy, 0).toFixed(3),
       String(sceneBool(profile && profile.lineDash, false)),
       sceneNumber(profile && profile.dashSize, 0).toFixed(3),
       sceneNumber(profile && profile.gapSize, 0).toFixed(3),
@@ -11967,14 +12114,55 @@
     );
   }
 
+  function sceneSpotLightContribution(baseColor, worldPoint, normal, light) {
+    const offset = {
+      x: sceneNumber(light && light.x, 0) - sceneNumber(worldPoint && worldPoint.x, 0),
+      y: sceneNumber(light && light.y, 0) - sceneNumber(worldPoint && worldPoint.y, 0),
+      z: sceneNumber(light && light.z, 0) - sceneNumber(worldPoint && worldPoint.z, 0),
+    };
+    const distance = Math.max(0.0001, scenePointLength(offset));
+    const lightDir = sceneScalePoint(offset, 1 / distance);
+    const spotDir = sceneNormalizePoint({
+      x: sceneNumber(light && light.directionX, 0),
+      y: sceneNumber(light && light.directionY, -1),
+      z: sceneNumber(light && light.directionZ, 0),
+    });
+    const angle = sceneNumber(light && light.angle, Math.PI / 4);
+    const penumbra = clamp01(sceneNumber(light && light.penumbra, 0));
+    const outer = Math.cos(angle);
+    const inner = Math.cos(angle * (1 - penumbra));
+    const cone = clamp01((sceneDotPoint(sceneScalePoint(lightDir, -1), spotDir) - outer) / Math.max(0.001, inner - outer));
+    if (cone <= 0) {
+      return { x: 0, y: 0, z: 0 };
+    }
+    const point = scenePointLightContribution(baseColor, worldPoint, normal, light);
+    return sceneScalePoint(point, cone);
+  }
+
+  function sceneHemisphereLightContribution(baseColor, normal, light) {
+    const hemi = clamp01((normal.y * 0.5) + 0.5);
+    const sky = sceneScalePoint(sceneColorPoint(light && light.color, { x: 0.88, y: 0.94, z: 1 }), hemi);
+    const ground = sceneScalePoint(sceneColorPoint(light && light.groundColor, { x: 0.12, y: 0.16, z: 0.22 }), 1 - hemi);
+    return sceneMultiplyPoint(
+      baseColor,
+      sceneScalePoint(sceneAddPoint(sky, ground), sceneNumber(light && light.intensity, 0)),
+    );
+  }
+
   function sceneLightContribution(baseColor, worldPoint, normal, light) {
     switch (light && light.kind) {
       case "ambient":
+      case "light-probe":
         return sceneAmbientLightContribution(baseColor, light);
       case "directional":
         return sceneDirectionalLightContribution(baseColor, normal, light);
       case "point":
+      case "rect-area":
         return scenePointLightContribution(baseColor, worldPoint, normal, light);
+      case "spot":
+        return sceneSpotLightContribution(baseColor, worldPoint, normal, light);
+      case "hemisphere":
+        return sceneHemisphereLightContribution(baseColor, normal, light);
       default:
         return { x: 0, y: 0, z: 0 };
     }
@@ -13267,15 +13455,17 @@
     ], css.mount);
     sceneCSSResolveCollectionKeys(state, css, "materials", [
       "color", "opacity", "emissive", "roughness", "metalness",
+      "clearcoat", "sheen", "transmission", "iridescence", "anisotropy",
       "normalMap", "roughnessMap", "metalnessMap", "emissiveMap",
     ], null);
     sceneCSSResolveCollectionKeys(state, css, "lights", [
       "color", "groundColor", "intensity", "x", "y", "z",
       "directionX", "directionY", "directionZ", "angle", "penumbra",
-      "range", "decay", "shadowBias", "shadowSize",
+      "range", "decay", "width", "height", "shadowBias", "shadowSize",
     ], sceneCSSRecordElement);
     sceneCSSResolveCollectionKeys(state, css, "objects", [
-      "color", "opacity", "emissive", "roughness", "metalness", "lineWidth",
+      "color", "opacity", "emissive", "roughness", "metalness",
+      "clearcoat", "sheen", "transmission", "iridescence", "anisotropy", "lineWidth",
       "x", "y", "z", "rotationX", "rotationY", "rotationZ",
       "spinX", "spinY", "spinZ",
     ], sceneCSSRecordElement);
@@ -13296,10 +13486,10 @@
       "width", "height", "scale", "opacity", "offsetX", "offsetY",
     ], sceneCSSRecordElement);
     sceneCSSResolveCollectionKeys(state, css, "postEffects", [
-      "threshold", "intensity", "radius", "scale", "bias", "saturation", "contrast", "exposure",
+      "threshold", "intensity", "radius", "scale", "bias", "saturation", "contrast", "exposure", "focusDistance", "aperture", "maxBlur",
     ], null);
     sceneCSSResolveCollectionKeys(state, css, "postFX", [
-      "threshold", "intensity", "radius", "scale", "bias", "saturation", "contrast", "exposure",
+      "threshold", "intensity", "radius", "scale", "bias", "saturation", "contrast", "exposure", "focusDistance", "aperture", "maxBlur",
     ], null);
     sceneCSSResolveComputeParticleVars(state, css);
   }
@@ -14940,6 +15130,7 @@ if (typeof window !== "undefined") {
   var SCENE_POST_VIGNETTE = "vignette";
   var SCENE_POST_COLOR_GRADE = "colorGrade";
   var SCENE_POST_SSAO = "ssao";
+  var SCENE_POST_DOF = "dof";
 
   const SCENE_PBR_VERTEX_SOURCE = [
     "#version 300 es",
@@ -15000,6 +15191,11 @@ if (typeof window !== "undefined") {
     "uniform vec3 u_albedo;",
     "uniform float u_roughness;",
     "uniform float u_metalness;",
+    "uniform float u_clearcoat;",
+    "uniform float u_sheen;",
+    "uniform float u_transmission;",
+    "uniform float u_iridescence;",
+    "uniform float u_anisotropy;",
     "uniform float u_emissive;",
     "uniform float u_opacity;",
     "uniform bool u_unlit;",
@@ -15261,6 +15457,7 @@ if (typeof window !== "undefined") {
     "        roughness *= texture(u_roughnessMap, v_uv).g;",
     "    }",
     "    roughness = clamp(roughness, 0.04, 1.0);",
+    "    roughness = clamp(roughness * (1.0 - abs(u_anisotropy) * 0.28), 0.04, 1.0);",
     "",
     "    float metalness = u_metalness;",
     "    if (u_hasMetalnessMap) {",
@@ -15294,6 +15491,7 @@ if (typeof window !== "undefined") {
     "    }",
     "",
     "    vec3 V = normalize(u_cameraPosition - v_worldPosition);",
+    "    float NoV = max(dot(N, V), 0.0);",
     "",
     "    // Fresnel reflectance at normal incidence — dielectric vs metallic blend.",
     "    vec3 F0 = mix(vec3(0.04), albedo, metalness);",
@@ -15407,6 +15605,29 @@ if (typeof window !== "undefined") {
     "    vec3 emission = emissiveColor * emissiveStrength;",
     "",
     "    vec3 color = ambient + Lo + emission;",
+    "",
+    "    float clearcoat = clamp(u_clearcoat, 0.0, 1.0);",
+    "    if (clearcoat > 0.0001) {",
+    "        float cc = pow(NoV, mix(12.0, 96.0, 1.0 - roughness)) * clearcoat;",
+    "        color += vec3(cc * 0.28);",
+    "    }",
+    "",
+    "    float sheen = clamp(u_sheen, 0.0, 1.0);",
+    "    if (sheen > 0.0001) {",
+    "        float velvet = pow(1.0 - NoV, 3.0) * sheen;",
+    "        color += albedo * velvet * 0.55;",
+    "    }",
+    "",
+    "    float iridescence = clamp(u_iridescence, 0.0, 1.0);",
+    "    if (iridescence > 0.0001) {",
+    "        vec3 iri = 0.5 + 0.5 * cos(vec3(0.0, 2.1, 4.2) + NoV * 8.0);",
+    "        color = mix(color, color * (0.65 + iri * 0.7), iridescence * pow(1.0 - NoV, 2.0));",
+    "    }",
+    "",
+    "    float transmission = clamp(u_transmission, 0.0, 1.0) * (1.0 - metalness);",
+    "    if (transmission > 0.0001) {",
+    "        color = mix(color, ambient + albedo * 0.1, transmission * 0.55);",
+    "    }",
     "",
     "    // Exponential fog.",
     "    if (u_hasFog != 0) {",
@@ -16335,6 +16556,41 @@ if (typeof window !== "undefined") {
     "}",
   ].join("\n");
 
+  const SCENE_POST_DOF_SOURCE = [
+    "#version 300 es",
+    "precision highp float;",
+    "in vec2 v_uv;",
+    "uniform sampler2D u_texture;",
+    "uniform sampler2D u_depthTexture;",
+    "uniform float u_focusDistance;",
+    "uniform float u_aperture;",
+    "uniform float u_maxBlur;",
+    "uniform float u_near;",
+    "uniform float u_far;",
+    "out vec4 fragColor;",
+    "",
+    "float linearDepth(float depth) {",
+    "    float z = depth * 2.0 - 1.0;",
+    "    return (2.0 * u_near * u_far) / max(0.0001, u_far + u_near - z * (u_far - u_near));",
+    "}",
+    "",
+    "void main() {",
+    "    vec2 texel = 1.0 / vec2(textureSize(u_texture, 0));",
+    "    float depth = linearDepth(texture(u_depthTexture, v_uv).r);",
+    "    float blur = clamp(abs(depth - u_focusDistance) * u_aperture * u_maxBlur, 0.0, u_maxBlur);",
+    "    vec3 color = texture(u_texture, v_uv).rgb * 0.22;",
+    "    color += texture(u_texture, v_uv + texel * vec2( blur,  0.0)).rgb * 0.10;",
+    "    color += texture(u_texture, v_uv + texel * vec2(-blur,  0.0)).rgb * 0.10;",
+    "    color += texture(u_texture, v_uv + texel * vec2(0.0,  blur)).rgb * 0.10;",
+    "    color += texture(u_texture, v_uv + texel * vec2(0.0, -blur)).rgb * 0.10;",
+    "    color += texture(u_texture, v_uv + texel * vec2( blur,  blur)).rgb * 0.095;",
+    "    color += texture(u_texture, v_uv + texel * vec2(-blur,  blur)).rgb * 0.095;",
+    "    color += texture(u_texture, v_uv + texel * vec2( blur, -blur)).rgb * 0.095;",
+    "    color += texture(u_texture, v_uv + texel * vec2(-blur, -blur)).rgb * 0.095;",
+    "    fragColor = vec4(color, 1.0);",
+    "}",
+  ].join("\n");
+
   const SCENE_POST_COLORGRADE_SOURCE = [
     "#version 300 es",
     "precision highp float;",
@@ -16355,7 +16611,7 @@ if (typeof window !== "undefined") {
     "}",
   ].join("\n");
 
-  function createScenePostFBO(gl, width, height) {
+  function createScenePostFBO(gl, width, height, depthTexture) {
     var hdrSupported = Boolean(gl.getExtension("EXT_color_buffer_float"));
     var internalFormat = hdrSupported ? gl.RGBA16F : gl.RGBA8;
     var dataType = hdrSupported ? gl.FLOAT : gl.UNSIGNED_BYTE;
@@ -16369,16 +16625,32 @@ if (typeof window !== "undefined") {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
 
-    var depthRB = gl.createRenderbuffer();
-    gl.bindRenderbuffer(gl.RENDERBUFFER, depthRB);
-    gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT24, width, height);
+    var depthRB = null;
+    var depthTex = null;
+    if (depthTexture) {
+      depthTex = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, depthTex);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.DEPTH_COMPONENT24, width, height, 0, gl.DEPTH_COMPONENT, gl.UNSIGNED_INT, null);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    } else {
+      depthRB = gl.createRenderbuffer();
+      gl.bindRenderbuffer(gl.RENDERBUFFER, depthRB);
+      gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT24, width, height);
+    }
 
     gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
     gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, colorTex, 0);
-    gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, depthRB);
+    if (depthTex) {
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.TEXTURE_2D, depthTex, 0);
+    } else {
+      gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, depthRB);
+    }
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
 
-    return { fbo: fbo, colorTex: colorTex, depthRB: depthRB, width: width, height: height };
+    return { fbo: fbo, colorTex: colorTex, depthRB: depthRB, depthTex: depthTex, width: width, height: height };
   }
 
   function createScenePostPingPong(gl, width, height) {
@@ -16431,6 +16703,7 @@ if (typeof window !== "undefined") {
   function disposeScenePostFBO(gl, fboObj) {
     if (!fboObj) return;
     if (fboObj.colorTex) gl.deleteTexture(fboObj.colorTex);
+    if (fboObj.depthTex) gl.deleteTexture(fboObj.depthTex);
     if (fboObj.depthRB) gl.deleteRenderbuffer(fboObj.depthRB);
     if (fboObj.fbo) gl.deleteFramebuffer(fboObj.fbo);
   }
@@ -16439,6 +16712,7 @@ if (typeof window !== "undefined") {
     var quad = createSceneFullscreenQuad(gl);
     var sceneFBO = null;
     var auxFBO = null;
+    var scratchFBO = null;
     var pingPong = null;
     var currentWidth = 0;
     var currentHeight = 0;
@@ -16562,6 +16836,23 @@ if (typeof window !== "undefined") {
       return targetFBO ? targetFBO.colorTex : null;
     }
 
+    function applyDOF(inputTex, effect, targetFBO, w, h, camera) {
+      if (!sceneFBO || !sceneFBO.depthTex) return inputTex;
+      var prog = getProgram("dof", SCENE_POST_DOF_SOURCE);
+      if (!prog) return inputTex;
+      beginPostPass(prog, inputTex, targetFBO ? targetFBO.fbo : null, w, h);
+      gl.activeTexture(gl.TEXTURE1);
+      gl.bindTexture(gl.TEXTURE_2D, sceneFBO.depthTex);
+      gl.uniform1i(gl.getUniformLocation(prog.program, "u_depthTexture"), 1);
+      gl.uniform1f(gl.getUniformLocation(prog.program, "u_focusDistance"), sceneNumber(effect.focusDistance, 8.0));
+      gl.uniform1f(gl.getUniformLocation(prog.program, "u_aperture"), sceneNumber(effect.aperture, 0.04));
+      gl.uniform1f(gl.getUniformLocation(prog.program, "u_maxBlur"), sceneNumber(effect.maxBlur, 8.0));
+      gl.uniform1f(gl.getUniformLocation(prog.program, "u_near"), Math.max(0.0001, sceneNumber(camera && camera.near, 0.05)));
+      gl.uniform1f(gl.getUniformLocation(prog.program, "u_far"), Math.max(0.1, sceneNumber(camera && camera.far, 128)));
+      drawSceneFullscreenQuad(gl, quad.vao);
+      return targetFBO ? targetFBO.colorTex : null;
+    }
+
     var blitProg = null;
     var SCENE_POST_BLIT_SOURCE = [
       "#version 300 es",
@@ -16590,9 +16881,11 @@ if (typeof window !== "undefined") {
 
         if (sw !== currentWidth || sh !== currentHeight) {
           if (sceneFBO) disposeScenePostFBO(gl, sceneFBO);
-          sceneFBO = createScenePostFBO(gl, sw, sh);
+          sceneFBO = createScenePostFBO(gl, sw, sh, true);
           if (auxFBO) disposeScenePostFBO(gl, auxFBO);
           auxFBO = null;
+          if (scratchFBO) disposeScenePostFBO(gl, scratchFBO);
+          scratchFBO = null;
           currentWidth = sw;
           currentHeight = sh;
         }
@@ -16601,7 +16894,7 @@ if (typeof window !== "undefined") {
 	        return { width: sw, height: sh, factor: factor };
 	      },
 
-      apply: function(effects, scaledW, scaledH, canvasW, canvasH) {
+      apply: function(effects, scaledW, scaledH, canvasW, canvasH, camera) {
         gl.bindFramebuffer(gl.FRAMEBUFFER, null);
         gl.disable(gl.DEPTH_TEST);
 
@@ -16618,6 +16911,13 @@ if (typeof window !== "undefined") {
           var targetFBO = null;
           if (!isLast) {
             targetFBO = (currentTexture === sceneFBO.colorTex) ? auxFBO : sceneFBO;
+            if (effect.kind === SCENE_POST_DOF && targetFBO === sceneFBO) {
+              if (!scratchFBO || scratchFBO.width !== scaledW || scratchFBO.height !== scaledH) {
+                if (scratchFBO) disposeScenePostFBO(gl, scratchFBO);
+                scratchFBO = createScenePostFBO(gl, scaledW, scaledH);
+              }
+              targetFBO = scratchFBO;
+            }
           }
 
           var passW = isLast ? canvasW : scaledW;
@@ -16638,6 +16938,9 @@ if (typeof window !== "undefined") {
               break;
             case SCENE_POST_SSAO:
               currentTexture = applySSAO(currentTexture, effect, targetFBO, passW, passH);
+              break;
+            case SCENE_POST_DOF:
+              currentTexture = applyDOF(currentTexture, effect, targetFBO, passW, passH, camera);
               break;
             default:
               break;
@@ -16663,6 +16966,10 @@ if (typeof window !== "undefined") {
         if (auxFBO) {
           disposeScenePostFBO(gl, auxFBO);
           auxFBO = null;
+        }
+        if (scratchFBO) {
+          disposeScenePostFBO(gl, scratchFBO);
+          scratchFBO = null;
         }
         if (pingPong) {
           disposeScenePostFBO(gl, pingPong.a);
@@ -16806,6 +17113,11 @@ if (typeof window !== "undefined") {
       albedo: gl.getUniformLocation(program, "u_albedo"),
       roughness: gl.getUniformLocation(program, "u_roughness"),
       metalness: gl.getUniformLocation(program, "u_metalness"),
+      clearcoat: gl.getUniformLocation(program, "u_clearcoat"),
+      sheen: gl.getUniformLocation(program, "u_sheen"),
+      transmission: gl.getUniformLocation(program, "u_transmission"),
+      iridescence: gl.getUniformLocation(program, "u_iridescence"),
+      anisotropy: gl.getUniformLocation(program, "u_anisotropy"),
       emissive: gl.getUniformLocation(program, "u_emissive"),
       opacity: gl.getUniformLocation(program, "u_opacity"),
       unlit: gl.getUniformLocation(program, "u_unlit"),
@@ -17379,6 +17691,8 @@ if (typeof window !== "undefined") {
     h = scenePBRLightsHashNumber(h, sceneNumber(l.decay, 2));
     h = scenePBRLightsHashNumber(h, sceneNumber(l.angle, 0));
     h = scenePBRLightsHashNumber(h, sceneNumber(l.penumbra, 0));
+    h = scenePBRLightsHashNumber(h, sceneNumber(l.width, 0));
+    h = scenePBRLightsHashNumber(h, sceneNumber(l.height, 0));
     h = scenePBRLightsHashString(h, l.groundColor);
     h = scenePBRLightsHashNumber(h, sceneNumber(l.shadowBias, 0));
     h = scenePBRLightsHashNumber(h, sceneNumber(l.shadowSize, 0));
@@ -17450,6 +17764,10 @@ if (typeof window !== "undefined") {
         lightType = 3;
       } else if (kind === "hemisphere") {
         lightType = 4;
+      } else if (kind === "rect-area") {
+        lightType = 2;
+      } else if (kind === "light-probe") {
+        lightType = 0;
       }
 
       gl.uniform1i(uniforms.lightTypes[i], lightType);
@@ -17972,6 +18290,11 @@ if (typeof window !== "undefined") {
       gl.uniform3f(uniforms.albedo, albedoRGBA[0], albedoRGBA[1], albedoRGBA[2]);
       gl.uniform1f(uniforms.roughness, sceneNumber(mat.roughness, 0.5));
       gl.uniform1f(uniforms.metalness, sceneNumber(mat.metalness, 0));
+      gl.uniform1f(uniforms.clearcoat, clamp01(sceneNumber(mat.clearcoat, 0)));
+      gl.uniform1f(uniforms.sheen, clamp01(sceneNumber(mat.sheen, 0)));
+      gl.uniform1f(uniforms.transmission, clamp01(sceneNumber(mat.transmission, 0)));
+      gl.uniform1f(uniforms.iridescence, clamp01(sceneNumber(mat.iridescence, 0)));
+      gl.uniform1f(uniforms.anisotropy, Math.max(-1, Math.min(1, sceneNumber(mat.anisotropy, 0))));
       gl.uniform1f(uniforms.emissive, sceneNumber(mat.emissive, 0));
       gl.uniform1f(uniforms.opacity, clamp01(sceneNumber(mat.opacity, 1)));
       gl.uniform1i(uniforms.unlit, mat.unlit ? 1 : 0);
@@ -18223,7 +18546,7 @@ if (typeof window !== "undefined") {
       gl.disable(gl.BLEND);
 
       if (usePostProcessing && postProcessor) {
-        postProcessor.apply(postEffects, renderW, renderH, canvas.width, canvas.height);
+        postProcessor.apply(postEffects, renderW, renderH, canvas.width, canvas.height, bundle.camera);
         gl.useProgram(program);
       }
 
@@ -25961,7 +26284,7 @@ if (typeof window !== "undefined") {
     if (model.materialOverride && typeof model.materialOverride === "object") {
       return model.materialOverride;
     }
-    const keys = ["materialKind", "color", "texture", "opacity", "emissive", "blendMode", "renderPass", "wireframe", "roughness", "metalness"];
+    const keys = ["materialKind", "color", "texture", "opacity", "emissive", "blendMode", "renderPass", "wireframe", "roughness", "metalness", "clearcoat", "sheen", "transmission", "iridescence", "anisotropy"];
     for (let index = 0; index < keys.length; index += 1) {
       if (Object.prototype.hasOwnProperty.call(model, keys[index])) {
         return model;
@@ -26008,10 +26331,25 @@ if (typeof window !== "undefined") {
     sceneAssignMaterialOverride(next, material, "wireframe", "wireframe", override);
     sceneAssignMaterialOverride(next, material, "roughness", "roughness", override);
     sceneAssignMaterialOverride(next, material, "metalness", "metalness", override);
+    sceneAssignMaterialOverride(next, material, "clearcoat", "clearcoat", override);
+    sceneAssignMaterialOverride(next, material, "sheen", "sheen", override);
+    sceneAssignMaterialOverride(next, material, "transmission", "transmission", override);
+    sceneAssignMaterialOverride(next, material, "iridescence", "iridescence", override);
+    sceneAssignMaterialOverride(next, material, "anisotropy", "anisotropy", override);
     if (material) {
       next.material = material;
     }
     return next;
+  }
+
+  function sceneApplyModelLOD(instanced, model) {
+    if (!instanced || !model || !model.lodGroup) {
+      return;
+    }
+    instanced.lodGroup = model.lodGroup;
+    instanced.lodLevel = model.lodLevel;
+    instanced.lodMinDistance = model.lodMinDistance;
+    instanced.lodMaxDistance = model.lodMaxDistance;
   }
 
   function sceneModelPrimitiveObject(object, model, prefix) {
@@ -26057,6 +26395,7 @@ if (typeof window !== "undefined") {
     if (model && typeof model.pickable === "boolean") {
       instanced.pickable = model.pickable;
     }
+    sceneApplyModelLOD(instanced, model);
     return normalizeSceneObject(instanced, prefix);
   }
 
@@ -26083,6 +26422,7 @@ if (typeof window !== "undefined") {
     if (model && typeof model.pickable === "boolean") {
       instanced.pickable = model.pickable;
     }
+    sceneApplyModelLOD(instanced, model);
     return normalizeSceneObject(instanced, prefix);
   }
 
@@ -26277,6 +26617,7 @@ if (typeof window !== "undefined") {
     if (model && typeof model.pickable === "boolean") {
       instanced.pickable = model.pickable;
     }
+    sceneApplyModelLOD(instanced, model);
     return normalizeSceneObject(instanced, prefix);
   }
 

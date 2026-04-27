@@ -674,6 +674,50 @@ func TestPropsSceneIRLowersLightsAndEnvironment(t *testing.T) {
 	}
 }
 
+func TestPropsSceneIRLowersLODDecalsAndProbeLights(t *testing.T) {
+	props := Props{
+		PostFX: PostFX{Effects: []PostEffect{
+			DOF{FocusDistance: 7, Aperture: 0.05, MaxBlur: 6},
+		}},
+		Graph: NewGraph(
+			LODGroup{
+				ID: "ship-lod",
+				Levels: []LODLevel{
+					{Distance: 12, Node: Mesh{ID: "ship-low", Geometry: BoxGeometry{Width: 1, Height: 1, Depth: 1}}},
+					{Distance: 0, Node: Mesh{ID: "ship-high", Geometry: SphereGeometry{Radius: 0.5}}},
+				},
+			},
+			Decal{ID: "badge", Src: "/textures/badge.png", Width: 0.8, Height: 0.35, Opacity: 0.85},
+			RectAreaLight{ID: "softbox", Color: "#dbeafe", Intensity: 0.8, Width: 2.5, Height: 1.5, Position: Vec3(0, 2, 2)},
+			LightProbe{ID: "probe", Color: "#dbeafe", Intensity: 0.25, Coefficients: []Vector3{{X: 1}}},
+		),
+	}
+
+	ir := props.SceneIR()
+	if len(ir.Objects) != 3 {
+		t.Fatalf("expected two LOD objects plus decal, got %#v", ir.Objects)
+	}
+	if ir.Objects[0].ID != "ship-high" || ir.Objects[0].LODGroup != "ship-lod" || ir.Objects[0].LODMinDistance != 0 || ir.Objects[0].LODMaxDistance != 12 {
+		t.Fatalf("expected first LOD level metadata, got %#v", ir.Objects[0])
+	}
+	if ir.Objects[1].ID != "ship-low" || ir.Objects[1].LODGroup != "ship-lod" || ir.Objects[1].LODLevel != 1 || ir.Objects[1].LODMinDistance != 12 || ir.Objects[1].LODMaxDistance != 0 {
+		t.Fatalf("expected second LOD level metadata, got %#v", ir.Objects[1])
+	}
+	decal := ir.Objects[2]
+	if decal.ID != "badge" || decal.Kind != "plane" || decal.Texture != "/textures/badge.png" || decal.DepthWrite == nil || *decal.DepthWrite {
+		t.Fatalf("expected alpha plane decal, got %#v", decal)
+	}
+	if len(ir.Lights) != 2 || ir.Lights[0].Kind != "rect-area" || ir.Lights[0].Width != 2.5 || ir.Lights[1].Kind != "light-probe" {
+		t.Fatalf("expected rect area and probe lights, got %#v", ir.Lights)
+	}
+	if len(ir.PostEffects) != 1 {
+		t.Fatalf("expected one post effect, got %#v", ir.PostEffects)
+	}
+	if dof, ok := ir.PostEffects[0].(DOFIR); !ok || dof.FocusDistance != 7 || math.Abs(dof.Aperture-0.05) > 1e-6 || dof.MaxBlur != 6 {
+		t.Fatalf("expected DOF post effect, got %#v", ir.PostEffects[0])
+	}
+}
+
 func TestPropsLegacyPropsLowerCameraRotationAndControls(t *testing.T) {
 	props := Props{
 		Controls:           "orbit",
@@ -967,6 +1011,11 @@ func TestPropsSceneIRLowersStandardMaterial(t *testing.T) {
 					Color:        "#c0a070",
 					Roughness:    0.45,
 					Metalness:    0.9,
+					Clearcoat:    0.35,
+					Sheen:        0.2,
+					Transmission: 0.12,
+					Iridescence:  0.18,
+					Anisotropy:   -0.25,
 					NormalMap:    "/maps/normal.png",
 					RoughnessMap: "/maps/roughness.png",
 					MetalnessMap: "/maps/metalness.png",
@@ -1000,6 +1049,9 @@ func TestPropsSceneIRLowersStandardMaterial(t *testing.T) {
 	}
 	if obj.Metalness != 0.9 {
 		t.Fatalf("expected metalness 0.9, got %v", obj.Metalness)
+	}
+	if obj.Clearcoat != 0.35 || obj.Sheen != 0.2 || obj.Transmission != 0.12 || obj.Iridescence != 0.18 || obj.Anisotropy != -0.25 {
+		t.Fatalf("expected physical extension fields, got %#v", obj)
 	}
 	if obj.NormalMap != "/maps/normal.png" {
 		t.Fatalf("expected normalMap, got %q", obj.NormalMap)
@@ -1044,6 +1096,21 @@ func TestPropsSceneIRLowersStandardMaterial(t *testing.T) {
 	}
 	if got := record["metalness"]; got != 0.9 {
 		t.Fatalf("expected metalness in legacy props, got %#v", got)
+	}
+	if got := record["clearcoat"]; got != 0.35 {
+		t.Fatalf("expected clearcoat in legacy props, got %#v", got)
+	}
+	if got := record["sheen"]; got != 0.2 {
+		t.Fatalf("expected sheen in legacy props, got %#v", got)
+	}
+	if got := record["transmission"]; got != 0.12 {
+		t.Fatalf("expected transmission in legacy props, got %#v", got)
+	}
+	if got := record["iridescence"]; got != 0.18 {
+		t.Fatalf("expected iridescence in legacy props, got %#v", got)
+	}
+	if got := record["anisotropy"]; got != -0.25 {
+		t.Fatalf("expected anisotropy in legacy props, got %#v", got)
 	}
 	if got := record["normalMap"]; got != "/maps/normal.png" {
 		t.Fatalf("expected normalMap in legacy props, got %#v", got)

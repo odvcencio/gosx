@@ -369,7 +369,7 @@
     if (model.materialOverride && typeof model.materialOverride === "object") {
       return model.materialOverride;
     }
-    const keys = ["materialKind", "color", "texture", "opacity", "emissive", "blendMode", "renderPass", "wireframe", "roughness", "metalness"];
+    const keys = ["materialKind", "color", "texture", "opacity", "emissive", "blendMode", "renderPass", "wireframe", "roughness", "metalness", "clearcoat", "sheen", "transmission", "iridescence", "anisotropy"];
     for (let index = 0; index < keys.length; index += 1) {
       if (Object.prototype.hasOwnProperty.call(model, keys[index])) {
         return model;
@@ -416,10 +416,25 @@
     sceneAssignMaterialOverride(next, material, "wireframe", "wireframe", override);
     sceneAssignMaterialOverride(next, material, "roughness", "roughness", override);
     sceneAssignMaterialOverride(next, material, "metalness", "metalness", override);
+    sceneAssignMaterialOverride(next, material, "clearcoat", "clearcoat", override);
+    sceneAssignMaterialOverride(next, material, "sheen", "sheen", override);
+    sceneAssignMaterialOverride(next, material, "transmission", "transmission", override);
+    sceneAssignMaterialOverride(next, material, "iridescence", "iridescence", override);
+    sceneAssignMaterialOverride(next, material, "anisotropy", "anisotropy", override);
     if (material) {
       next.material = material;
     }
     return next;
+  }
+
+  function sceneApplyModelLOD(instanced, model) {
+    if (!instanced || !model || !model.lodGroup) {
+      return;
+    }
+    instanced.lodGroup = model.lodGroup;
+    instanced.lodLevel = model.lodLevel;
+    instanced.lodMinDistance = model.lodMinDistance;
+    instanced.lodMaxDistance = model.lodMaxDistance;
   }
 
   function sceneModelPrimitiveObject(object, model, prefix) {
@@ -465,6 +480,7 @@
     if (model && typeof model.pickable === "boolean") {
       instanced.pickable = model.pickable;
     }
+    sceneApplyModelLOD(instanced, model);
     return normalizeSceneObject(instanced, prefix);
   }
 
@@ -491,6 +507,7 @@
     if (model && typeof model.pickable === "boolean") {
       instanced.pickable = model.pickable;
     }
+    sceneApplyModelLOD(instanced, model);
     return normalizeSceneObject(instanced, prefix);
   }
 
@@ -685,6 +702,7 @@
     if (model && typeof model.pickable === "boolean") {
       instanced.pickable = model.pickable;
     }
+    sceneApplyModelLOD(instanced, model);
     return normalizeSceneObject(instanced, prefix);
   }
 

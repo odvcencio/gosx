@@ -61,7 +61,7 @@ type PostFX struct {
 }
 
 // PostEffect is the interface satisfied by every post-processing effect.
-// Concrete types include Tonemap, Bloom, Vignette, and ColorGrade.
+// Concrete types include Tonemap, Bloom, Vignette, ColorGrade, SSAO, and DOF.
 //
 // The interface is sealed via an unexported method so external packages
 // cannot define their own effects without coordination with the renderer.
@@ -143,6 +143,15 @@ type SSAO struct {
 }
 
 func (SSAO) isPostEffect() {}
+
+// DOF applies a depth-of-field blur around the camera focus plane.
+type DOF struct {
+	FocusDistance float32 // world-space distance from camera (default 8)
+	Aperture      float32 // blur strength multiplier (default 0.04)
+	MaxBlur       float32 // max blur radius in pixels (default 8)
+}
+
+func (DOF) isPostEffect() {}
 
 // resolveMaxPixels normalizes the field for IR emission. Zero or negative
 // values become the default 1080p cap; positive values pass through.

@@ -70,14 +70,55 @@
     );
   }
 
+  function sceneSpotLightContribution(baseColor, worldPoint, normal, light) {
+    const offset = {
+      x: sceneNumber(light && light.x, 0) - sceneNumber(worldPoint && worldPoint.x, 0),
+      y: sceneNumber(light && light.y, 0) - sceneNumber(worldPoint && worldPoint.y, 0),
+      z: sceneNumber(light && light.z, 0) - sceneNumber(worldPoint && worldPoint.z, 0),
+    };
+    const distance = Math.max(0.0001, scenePointLength(offset));
+    const lightDir = sceneScalePoint(offset, 1 / distance);
+    const spotDir = sceneNormalizePoint({
+      x: sceneNumber(light && light.directionX, 0),
+      y: sceneNumber(light && light.directionY, -1),
+      z: sceneNumber(light && light.directionZ, 0),
+    });
+    const angle = sceneNumber(light && light.angle, Math.PI / 4);
+    const penumbra = clamp01(sceneNumber(light && light.penumbra, 0));
+    const outer = Math.cos(angle);
+    const inner = Math.cos(angle * (1 - penumbra));
+    const cone = clamp01((sceneDotPoint(sceneScalePoint(lightDir, -1), spotDir) - outer) / Math.max(0.001, inner - outer));
+    if (cone <= 0) {
+      return { x: 0, y: 0, z: 0 };
+    }
+    const point = scenePointLightContribution(baseColor, worldPoint, normal, light);
+    return sceneScalePoint(point, cone);
+  }
+
+  function sceneHemisphereLightContribution(baseColor, normal, light) {
+    const hemi = clamp01((normal.y * 0.5) + 0.5);
+    const sky = sceneScalePoint(sceneColorPoint(light && light.color, { x: 0.88, y: 0.94, z: 1 }), hemi);
+    const ground = sceneScalePoint(sceneColorPoint(light && light.groundColor, { x: 0.12, y: 0.16, z: 0.22 }), 1 - hemi);
+    return sceneMultiplyPoint(
+      baseColor,
+      sceneScalePoint(sceneAddPoint(sky, ground), sceneNumber(light && light.intensity, 0)),
+    );
+  }
+
   function sceneLightContribution(baseColor, worldPoint, normal, light) {
     switch (light && light.kind) {
       case "ambient":
+      case "light-probe":
         return sceneAmbientLightContribution(baseColor, light);
       case "directional":
         return sceneDirectionalLightContribution(baseColor, normal, light);
       case "point":
+      case "rect-area":
         return scenePointLightContribution(baseColor, worldPoint, normal, light);
+      case "spot":
+        return sceneSpotLightContribution(baseColor, worldPoint, normal, light);
+      case "hemisphere":
+        return sceneHemisphereLightContribution(baseColor, normal, light);
       default:
         return { x: 0, y: 0, z: 0 };
     }
