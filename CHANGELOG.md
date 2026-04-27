@@ -1,5 +1,25 @@
 # Changelog
 
+## v0.18.20
+
+GoSX UI and canonical content-source release.
+
+The new `ui` package seeds GoSX UI, a Go-native component library layer built
+on ordinary server components. It includes layout primitives, typography,
+buttons, cards, badges, form controls, tabs, tables, a default stylesheet, and
+registry bindings so the same primitives can be composed directly from Go or
+surfaced through file-route component bindings.
+
+The `content` package now uses mdpp as the canonical Markdown++ content-source
+layer. Documents keep compatibility frontmatter strings while also exposing
+typed `Metadata`, parsed mdpp documents, mdpp diagnostics, and mdpp render
+options. Nil document renderers now default to mdpp HTML rendering, so content
+collections have a useful renderer without every app wiring one by hand.
+
+GoSX now depends on `github.com/odvcencio/mdpp v0.2.5`, which rolled out the
+released parser/renderer API needed by the content layer along with incremental
+parser cache work in mdpp itself.
+
 ## v0.18.19
 
 Framework parity gap release.

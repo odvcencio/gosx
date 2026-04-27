@@ -2,7 +2,7 @@
 
 A Go-native web platform. Write components in `.gsx` — Go with embedded markup — compile through a real compiler pipeline, render on the server by default, hydrate interactive islands with WebAssembly. No JavaScript toolchain. No CGo. A deliberately small dependency budget.
 
-Current release: **v0.18.19**. Pre-1.0; breaking changes are documented in [CHANGELOG.md](./CHANGELOG.md).
+Current release: **v0.18.20**. Pre-1.0; breaking changes are documented in [CHANGELOG.md](./CHANGELOG.md).
 
 ## What if you never had to leave Go?
 
@@ -206,7 +206,7 @@ count    // local to the declaring island
 
 **Routing and Edge** — Server middleware can be annotated with `app.UseEdge`, and `app.UseI18n` adds locale-prefix routing that composes with both `server.App` and file routing.
 
-**Content and Components** — `content` loads `.md`, `.mdx`, and `.mdpp` collections with frontmatter and renderer hooks. `components` provides a small registry for reusable server component libraries and file-route bindings.
+**Content and Components** — `content` uses mdpp as the canonical Markdown++ content-source layer for `.md`, `.mdx`, and `.mdpp` collections, with typed frontmatter, diagnostics, renderer hooks, and slug indexes. `components` provides a registry for reusable server component libraries and file-route bindings, and `ui` seeds GoSX UI: layout, typography, form, card, tab, table, badge, and stylesheet primitives users can copy from or compose directly.
 
 **Text Layout** — `TextBlock` supports both server-measured native rendering with no JavaScript and bootstrap-managed browser refinement. Font, width, line-height, locale, clamping, and ellipsis stay in one framework-level contract.
 
@@ -393,7 +393,7 @@ The `editor` package is a set of Go-native building blocks for building text edi
 
 The default helper bar includes an `emoji` command backed by the in-tree `internal/emoji` table (GitHub gemoji plus Unicode Emoji), with Slack-ish aliases (`:simple_smile:`, `:slight_smile:`, `:thumbs_up:`, `:red_heart:`) accepted too. Picker UIs can pass the selected shortcode as `ToolbarAction.Value`; without a value, selected text is normalized into a shortcode, then falls back to `:smile:`.
 
-For full CommonMark + Markdown++ rendering (admonitions, footnotes, math, sup/sub, task lists, emoji, syntax-highlighted code fences), GoSX-adjacent apps use [mdpp](https://github.com/odvcencio/mdpp), a separate pure-Go sibling module. mdpp is not bundled into the framework — apps that need markdown rendering import it directly.
+For full CommonMark + Markdown++ rendering (admonitions, footnotes, math, sup/sub, task lists, emoji, syntax-highlighted code fences), the `content` package uses [mdpp](https://github.com/odvcencio/mdpp) as the canonical parser/renderer. Apps can still import mdpp directly when they need lower-level renderer control.
 
 ## CSS
 
@@ -560,8 +560,9 @@ Three tiers:
 | `signal` | Reactive state: `Signal[T]`, `Computed[T]`, `Effect`, `Batch` |
 | `server` | HTTP server, page rendering, caching, streaming, i18n, edge annotations, assets |
 | `route` | File-based routing, layouts, data loaders, modules |
-| `content` | Markdown/MDX/Markdown++ collection loading with renderer hooks |
+| `content` | mdpp-backed Markdown/MDX/Markdown++ collection loading with typed metadata, diagnostics, and renderer hooks |
 | `components` | Registry and binding adapters for server component libraries |
+| `ui` | GoSX UI primitives and registry-backed component library seed |
 | `action` | Named mutation handlers with validation |
 | `session` | Signed cookie sessions, CSRF, flash state |
 | `auth` | Auth middleware, OAuth, magic links, WebAuthn |

@@ -5,8 +5,8 @@ This repository contains independently versioned Go modules:
 - `github.com/odvcencio/gosx`: the core framework.
 - `github.com/odvcencio/gosx/editor`: the optional browser editor shell and assets.
 
-Keep Markdown++ rendering out of the core framework and editor dependency
-graph. Applications should import and upgrade `github.com/odvcencio/mdpp`
-directly without waiting for a framework or editor release. The core
-`content` package exposes renderer hooks so apps can wire mdpp into content
-collections without adding mdpp to the core module graph.
+Markdown++ rendering is the canonical content-source layer for the core
+`content` package through `github.com/odvcencio/mdpp`. The framework owns the
+collection-loading contract: mdpp handles parsing/rendering, typed frontmatter,
+diagnostics, and renderer options, while applications can still import mdpp
+directly for lower-level renderer control.
