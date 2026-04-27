@@ -6117,6 +6117,86 @@ test("bootstrap applies named Scene3D materials to point layers", async () => {
   assert.equal(again[0], points[0]);
 });
 
+test("bootstrap registers Scene3D material profiles through the shared API", async () => {
+  const env = createContext({});
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const api = env.context.__gosx_scene3d_api;
+  assert.equal(typeof api.registerSceneMaterialProfile, "function");
+  assert.equal(typeof api.unregisterSceneMaterialProfile, "function");
+
+  const registered = api.registerSceneMaterialProfile("cloth", {
+    opacity: 0.64,
+    emissive: 0.19,
+    blendMode: "alpha",
+    shaderData: [7, 0.19, 0.44],
+    key: "cloth-v1",
+  });
+  assert.equal(registered.kind, "cloth");
+  assert.equal(api.listSceneMaterialProfiles().some((profile) => profile.kind === "cloth"), true);
+
+  const object = api.normalizeSceneObject({
+    id: "panel",
+    kind: "box",
+    materialKind: "cloth",
+    color: "#d8b4fe",
+    size: 1,
+  }, 0, null);
+  const bundle = api.createSceneRenderBundle(
+    320,
+    180,
+    "#08151f",
+    { x: 0, y: 0, z: 6, fov: 72, near: 0.05, far: 128 },
+    [object],
+    [],
+    [],
+    [],
+    [],
+    {},
+    0,
+    [],
+    [],
+    [],
+    [],
+    0,
+  );
+
+  const material = bundle.materials.find((entry) => entry.kind === "cloth");
+  assert.ok(material, JSON.stringify(bundle.materials));
+  assert.equal(material.opacity, 0.64);
+  assert.equal(material.blendMode, "alpha");
+  assert.equal(material.renderPass, "alpha");
+  assert.equal(material.emissive, 0.19);
+  assert.deepEqual(Array.from(material.shaderData), [7, 0.19, 0.44]);
+
+  assert.equal(api.unregisterSceneMaterialProfile("cloth"), true);
+});
+
+test("bootstrap registers Scene3D CPU particle force handlers through the shared API", async () => {
+  const env = createContext({});
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const api = env.context.__gosx_scene3d_api;
+  assert.equal(typeof api.registerSceneParticleForce, "function");
+  assert.equal(typeof api.createSceneParticleSystem, "function");
+
+  assert.equal(api.registerSceneParticleForce("lift", (ctx) => ({ y: ctx.force.strength * ctx.deltaTime })), true);
+  const system = api.createSceneParticleSystem(null, {
+    id: "spark",
+    count: 1,
+    emitter: { kind: "point", lifetime: 10 },
+    forces: [{ kind: "lift", strength: 2 }],
+    material: {},
+  });
+  system.update(1, 1);
+
+  assert.ok(system.positions[1] > 1.9, Array.from(system.positions).join(","));
+  assert.equal(api.listSceneParticleForces().some((force) => force.kind === "lift" && force.handler), true);
+  assert.equal(api.unregisterSceneParticleForce("lift"), true);
+});
+
 test("bootstrap applies Scene3D live point buffers outside update tweens", async () => {
   const env = createContext({});
   runScript(bootstrapSource, env.context, "bootstrap.js");

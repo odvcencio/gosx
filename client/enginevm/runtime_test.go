@@ -662,6 +662,58 @@ func TestRuntimeRenderBundleResolvesMaterialPresets(t *testing.T) {
 	}
 }
 
+func TestRuntimeRenderBundleUsesRegisteredMaterialProfile(t *testing.T) {
+	cleanup := RegisterMaterialProfile("cloth", MaterialProfile{
+		Opacity:      0.64,
+		HasOpacity:   true,
+		BlendMode:    "alpha",
+		HasBlendMode: true,
+		Emissive:     0.18,
+		HasEmissive:  true,
+		ShaderData:   []float64{7, 0.18, 0.44},
+	})
+	defer cleanup()
+
+	prog := &rootengine.Program{
+		Name: "CustomMaterialProfile",
+		Nodes: []rootengine.Node{
+			{
+				Kind: "camera",
+				Props: map[string]islandprogram.ExprID{
+					"z": 0,
+				},
+			},
+			{
+				Kind:     "mesh",
+				Geometry: "box",
+				Material: "cloth",
+				Props: map[string]islandprogram.ExprID{
+					"size":  1,
+					"color": 2,
+				},
+			},
+		},
+		Exprs: []islandprogram.Expr{
+			{Op: islandprogram.OpLitFloat, Value: "6", Type: islandprogram.TypeFloat},
+			{Op: islandprogram.OpLitFloat, Value: "1.2", Type: islandprogram.TypeFloat},
+			{Op: islandprogram.OpLitString, Value: "#d8b4fe", Type: islandprogram.TypeString},
+		},
+	}
+
+	rt := New(prog, "")
+	bundle := rt.RenderBundle(640, 360, 0)
+	if len(bundle.Materials) != 1 {
+		t.Fatalf("expected one material, got %#v", bundle.Materials)
+	}
+	material := bundle.Materials[0]
+	if material.Kind != "cloth" || material.Opacity != 0.64 || material.BlendMode != "alpha" || material.RenderPass != "alpha" || material.Emissive != 0.18 {
+		t.Fatalf("expected registered cloth defaults, got %#v", material)
+	}
+	if len(material.ShaderData) != 3 || material.ShaderData[0] != 7 || material.ShaderData[2] != 0.44 {
+		t.Fatalf("expected registered cloth shader data, got %#v", material.ShaderData)
+	}
+}
+
 func TestRuntimeRenderBundleEmitsTexturedPlaneSurfaces(t *testing.T) {
 	prog := &rootengine.Program{
 		Name: "TexturedPlane",

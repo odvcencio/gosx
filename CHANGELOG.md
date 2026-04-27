@@ -1,5 +1,36 @@
 # Changelog
 
+## v0.18.18
+
+Runtime gap closure release.
+
+CRDT sync now publishes a Bloom filter of local change hashes in each sync
+message and records the peer filter in sync state. Outbound sync uses that
+filter to avoid resending changes the peer probably already has, while the
+wired `Need` path still wins on false positives and missing dependencies.
+Remote changes whose dependencies are absent are held back and requested
+instead of being applied out of order.
+
+Island components now accept `<Link>` and `<Image>` inside reactive island
+subtrees by lowering them to ordinary `a` and `img` elements. The remaining
+blocked island built-ins are still the ones that need document-head, worker, or
+engine/runtime integration rather than simple DOM lowering.
+
+Scene3D material and particle systems now have real extension surfaces instead
+of sealed kind switches. Browser Scene3D exposes
+`registerSceneMaterialProfile`, `listSceneMaterialProfiles`,
+`registerSceneParticleForceKind`, and `registerSceneParticleForce` on
+`window.__gosx_scene3d_api`; registered material profiles participate in
+normalization, render-pass defaults, cache keys, and shader data. Particle force
+aliases map custom names onto existing GPU shader forces, while custom force
+handlers run in the CPU fallback path so they do not pretend to inject WGSL.
+
+The shared Go engine VM mirrors the material profile seam with
+`enginevm.RegisterMaterialProfile`, and the native GPU bundle path can alias
+particle force names with `bundle.RegisterParticleForceKind`. Runtime docs also
+now point Markdown++ rendering at the separate `mdpp` sibling module instead of
+describing it as a bundled core package.
+
 ## v0.18.17
 
 Runtime gap hardening release.

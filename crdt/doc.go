@@ -404,6 +404,10 @@ func (d *Doc) GenerateSyncMessage(state *crdtsync.State) ([]byte, bool) {
 	for i, dep := range d.deps {
 		heads[i] = [32]byte(dep)
 	}
+	allHashes := make([][32]byte, len(d.changes))
+	for i, change := range d.changes {
+		allHashes[i] = [32]byte(change.Hash)
+	}
 
 	var (
 		changes [][]byte
@@ -411,7 +415,7 @@ func (d *Doc) GenerateSyncMessage(state *crdtsync.State) ([]byte, bool) {
 	)
 	for _, change := range d.changes {
 		hash := [32]byte(change.Hash)
-		if !state.HasPeerNeed(hash) && (state.HasKnown(hash) || state.HasSent(hash)) {
+		if !state.HasPeerNeed(hash) && (state.HasKnown(hash) || state.HasSent(hash) || state.PeerMayHave(hash)) {
 			continue
 		}
 		chunk, _, err := EncodeChangeChunk(change)
@@ -430,6 +434,7 @@ func (d *Doc) GenerateSyncMessage(state *crdtsync.State) ([]byte, bool) {
 		Version: crdtsync.MessageTypeV1,
 		Heads:   heads,
 		Need:    state.Needed(),
+		Bloom:   crdtsync.NewBloomFilterForHashes(allHashes),
 		Changes: changes,
 	})
 	if err != nil {
@@ -453,16 +458,26 @@ func (d *Doc) ReceiveSyncMessage(state *crdtsync.State, msg []byte) error {
 
 	var patches []Patch
 	var hooks []func([]Patch)
-
-	d.mu.Lock()
+	decodedChanges := make([]Change, 0, len(decoded.Changes))
 	for _, chunk := range decoded.Changes {
 		change, err := DecodeChangeChunk(chunk)
 		if err != nil {
-			d.mu.Unlock()
 			return err
 		}
-		state.MarkKnown([32]byte(change.Hash))
+		decodedChanges = append(decodedChanges, change)
+	}
+
+	d.mu.Lock()
+	for _, change := range decodedChanges {
 		if _, ok := d.changeIndex[change.Hash.String()]; ok {
+			state.MarkKnown([32]byte(change.Hash))
+			continue
+		}
+		if missing := d.missingDepsLocked(change); len(missing) > 0 {
+			for _, dep := range missing {
+				state.MarkNeed([32]byte(dep))
+			}
+			state.MarkNeed([32]byte(change.Hash))
 			continue
 		}
 		applied, err := d.applyRemoteChangeLocked(change)
@@ -470,6 +485,7 @@ func (d *Doc) ReceiveSyncMessage(state *crdtsync.State, msg []byte) error {
 			d.mu.Unlock()
 			return err
 		}
+		state.MarkKnown([32]byte(change.Hash))
 		patches = append(patches, applied...)
 	}
 	for _, head := range decoded.Heads {
@@ -484,6 +500,7 @@ func (d *Doc) ReceiveSyncMessage(state *crdtsync.State, msg []byte) error {
 			state.MarkPeerNeed(need)
 		}
 	}
+	state.MarkPeerBloom(decoded.Bloom)
 	hooks = append([]func([]Patch){}, d.changeHooks...)
 	d.mu.Unlock()
 
@@ -565,6 +582,19 @@ func (d *Doc) applyRemoteChangeLocked(change Change) ([]Patch, error) {
 	d.changeIndex[change.Hash.String()] = change
 	d.deps = d.mergeHeadsLocked(change)
 	return patches, nil
+}
+
+func (d *Doc) missingDepsLocked(change Change) []ChangeHash {
+	if len(change.Deps) == 0 {
+		return nil
+	}
+	missing := make([]ChangeHash, 0, len(change.Deps))
+	for _, dep := range change.Deps {
+		if _, ok := d.changeIndex[dep.String()]; !ok {
+			missing = append(missing, dep)
+		}
+	}
+	return missing
 }
 
 func (d *Doc) mergeHeadsLocked(change Change) []ChangeHash {

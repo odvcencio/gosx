@@ -14,6 +14,7 @@ type State struct {
 	SentHashes     map[string]struct{}
 	NeedHashes     map[string]struct{}
 	PeerNeedHashes map[string]struct{}
+	PeerBloom      *BloomFilter
 }
 
 func NewState() *State {
@@ -85,6 +86,24 @@ func (s *State) HasPeerNeed(hash [32]byte) bool {
 	}
 	_, ok := s.PeerNeedHashes[hex.EncodeToString(hash[:])]
 	return ok
+}
+
+func (s *State) MarkPeerBloom(filter *BloomFilter) {
+	if s == nil {
+		return
+	}
+	if filter == nil {
+		s.PeerBloom = nil
+		return
+	}
+	s.PeerBloom = NewBloomFilterFromBytes(filter.Bytes(), filter.Size())
+}
+
+func (s *State) PeerMayHave(hash [32]byte) bool {
+	if s == nil || s.PeerBloom == nil {
+		return false
+	}
+	return s.PeerBloom.MaybeContains(hash)
 }
 
 func (s *State) Needed() [][32]byte {

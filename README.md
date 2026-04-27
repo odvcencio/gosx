@@ -2,7 +2,7 @@
 
 A Go-native web platform. Write components in `.gsx` — Go with embedded markup — compile through a real compiler pipeline, render on the server by default, hydrate interactive islands with WebAssembly. No JavaScript toolchain. No CGo. A deliberately small dependency budget.
 
-Current release: **v0.18.17**. Pre-1.0; breaking changes are documented in [CHANGELOG.md](./CHANGELOG.md).
+Current release: **v0.18.18**. Pre-1.0; breaking changes are documented in [CHANGELOG.md](./CHANGELOG.md).
 
 ## What if you never had to leave Go?
 
@@ -160,9 +160,9 @@ GSX syntax is parsed by [gotreesitter](https://github.com/odvcencio/gotreesitter
   -> server components: render to HTML directly
   -> island components:
        -> extract signals, computeds, handlers from Go source
-       -> compile expressions to VM opcodes (40+ operations)
+       -> compile expressions to VM opcodes (~50 operations)
        -> serialize as IslandProgram (JSON dev / binary prod)
-       -> browser: shared WASM VM + thin JS host (~940 lines)
+       -> browser: shared WASM VM + JS patch applier and island hook (under 1k lines)
        -> per-island programs are 1-10KB each
 ```
 
@@ -383,25 +383,13 @@ GoSX ships a vector-native semantic layer for content routing, similarity search
 
 The math for MSE-optimal quantization lives in [TurboQuant](https://github.com/odvcencio/turboquant), a standalone pure-Go module that GoSX consumes as a dependency. You get the compression ratio of an engineered quantizer without taking on a C library.
 
-## Markdown++
-
-The `markdown` package is a pure-Go CommonMark parser with an extension set we call Markdown++:
-
-- **Admonitions** — `:::note`, `:::warning`, `:::tip` blocks with optional titles
-- **Footnotes** — Pandoc-style `[^ref]` with automatic back-references
-- **Math** — inline `$...$` and display `$$...$$` with MathML output
-- **Superscript / subscript** — `^like this^` and `~like this~`
-- **Task lists** — GitHub-flavored checkboxes
-- **Emoji shortcodes** — `:rocket:` → 🚀
-- **Syntax highlighting** — per-language via the `highlight` package, with both native Go and WASM-dispatched highlighters
-
-The renderer is configurable per-document (heading IDs, hard wraps, emoji wrapping, unsafe HTML passthrough, custom image resolvers) and integrates with the `highlight` package for code fences.
-
 ## Editor
 
 The `editor` package is a set of Go-native building blocks for building text editors inside GoSX apps: a line-array text model (with a CRDT-backed implementation planned), input bindings (keyboard, IME, mouse, touch), a tree-sitter-driven highlight layer, a toolbar model, a theme system, and a VS Code-grammar compatibility shim. It's the substrate for in-page editing experiences — code snippets, markdown drafts, inline content editors — without importing Monaco or CodeMirror.
 
-The default helper bar includes an `emoji` command. It inserts standard Markdown++ emoji shortcodes (`:rocket:`, `:+1:`, `:t-rex:`, `:face_with_spiral_eyes:`) so editor content stays portable and renders through the same GitHub gemoji plus Unicode Emoji table used by the markdown renderer. Slack-ish compatibility aliases such as `:simple_smile:`, `:slight_smile:`, `:thumbs_up:`, and `:red_heart:` are accepted too. Picker UIs can pass the selected shortcode as `ToolbarAction.Value`; without a value, selected text is normalized into a shortcode, then falls back to `:smile:`.
+The default helper bar includes an `emoji` command backed by the in-tree `internal/emoji` table (GitHub gemoji plus Unicode Emoji), with Slack-ish aliases (`:simple_smile:`, `:slight_smile:`, `:thumbs_up:`, `:red_heart:`) accepted too. Picker UIs can pass the selected shortcode as `ToolbarAction.Value`; without a value, selected text is normalized into a shortcode, then falls back to `:smile:`.
+
+For full CommonMark + Markdown++ rendering (admonitions, footnotes, math, sup/sub, task lists, emoji, syntax-highlighted code fences), GoSX-adjacent apps use [mdpp](https://github.com/odvcencio/mdpp), a separate pure-Go sibling module. mdpp is not bundled into the framework — apps that need markdown rendering import it directly.
 
 ## CSS
 
@@ -581,7 +569,6 @@ Three tiers:
 | `embed` | Embedding provider abstraction |
 | `semantic` | Semantic router, similarity cache, content index |
 | `engine` | Worker/surface model with capability declarations |
-| `markdown` | CommonMark + Markdown++ extensions (admonitions, footnotes, math, sup/sub) |
 | `editor` | Go-native text editor building blocks (textmodel, input, highlight, toolbar, vscode shim) |
 | `highlight` | Syntax highlighting for Go, GSX, JavaScript, JSON, and Bash |
 | `client/vm` | Expression VM, tree reconciler, patch generation |
@@ -637,7 +624,7 @@ The same compiler infrastructure powers [Arbiter](https://github.com/odvcencio/a
 
 ## Status
 
-GoSX is pre-1.0. The current release is **v0.18.17**. The five primitives (Server, Action, Island, Engine, Hub) are stable in shape — we do not expect their top-level API to change before 1.0. Subsystems like `scene`, `desktop`, `field`, `sim`, `workspace`, and `semantic` are still under active development and may take breaking changes; each such change is called out explicitly in [CHANGELOG.md](./CHANGELOG.md) with a migration path.
+GoSX is pre-1.0. The current release is **v0.18.18**. The five primitives (Server, Action, Island, Engine, Hub) are stable in shape — we do not expect their top-level API to change before 1.0. Subsystems like `scene`, `desktop`, `field`, `sim`, `workspace`, and `semantic` are still under active development and may take breaking changes; each such change is called out explicitly in [CHANGELOG.md](./CHANGELOG.md) with a migration path.
 
 If you're evaluating GoSX for production work, the server + island + route + engine + scene stack has been used in production. The semantic, workspace, and sim layers have production users but are newer.
 

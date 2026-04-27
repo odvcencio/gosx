@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"strings"
+	"sync"
 
 	"github.com/odvcencio/gosx/engine"
 	"github.com/odvcencio/gosx/render/gpu"
@@ -267,6 +268,50 @@ const (
 	particleForceVortex
 	particleForceTurbulence
 )
+
+var (
+	particleForceKindsMu sync.RWMutex
+	particleForceAliases = map[string]int{}
+)
+
+// RegisterParticleForceKind maps a custom force kind to an existing particle
+// shader force. It returns a cleanup function that restores the previous alias.
+func RegisterParticleForceKind(kind string, target string) func() {
+	key := particleForceKindKey(kind)
+	targetKind := particleForceKind(target)
+	if key == "" || targetKind == particleForceNone {
+		return func() {}
+	}
+
+	particleForceKindsMu.Lock()
+	previous, hadPrevious := particleForceAliases[key]
+	particleForceAliases[key] = targetKind
+	particleForceKindsMu.Unlock()
+
+	return func() {
+		particleForceKindsMu.Lock()
+		if hadPrevious {
+			particleForceAliases[key] = previous
+		} else {
+			delete(particleForceAliases, key)
+		}
+		particleForceKindsMu.Unlock()
+	}
+}
+
+func particleForceKindKey(kind string) string {
+	key := strings.ToLower(strings.TrimSpace(kind))
+	if key == "" {
+		return ""
+	}
+	for _, r := range key {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '_' || r == '-' {
+			continue
+		}
+		return ""
+	}
+	return key
+}
 
 // particleSceneUniformSize matches ParticleSceneUniforms. mat4 (64) + 4
 // vec4 (64) = 128 bytes.
@@ -657,7 +702,8 @@ func particleForceFromRender(kind int, f engine.RenderParticleForce) particleFor
 }
 
 func particleForceKind(kind string) int {
-	switch strings.ToLower(strings.TrimSpace(kind)) {
+	key := particleForceKindKey(kind)
+	switch key {
 	case "gravity":
 		return particleForceGravity
 	case "drag":
@@ -671,7 +717,10 @@ func particleForceKind(kind string) int {
 	case "turbulence":
 		return particleForceTurbulence
 	default:
-		return particleForceNone
+		particleForceKindsMu.RLock()
+		alias := particleForceAliases[key]
+		particleForceKindsMu.RUnlock()
+		return alias
 	}
 }
 

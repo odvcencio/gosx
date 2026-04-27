@@ -13,22 +13,27 @@ type Message struct {
 	Version byte
 	Heads   [][32]byte
 	Need    [][32]byte
+	Bloom   *BloomFilter
 	Changes [][]byte
 }
 
 type messageEnvelope struct {
-	Version byte     `json:"version"`
-	Heads   []string `json:"heads,omitempty"`
-	Need    []string `json:"need,omitempty"`
-	Changes [][]byte `json:"changes,omitempty"`
+	Version   byte     `json:"version"`
+	Heads     []string `json:"heads,omitempty"`
+	Need      []string `json:"need,omitempty"`
+	Bloom     []byte   `json:"bloom,omitempty"`
+	BloomSize uint32   `json:"bloomSize,omitempty"`
+	Changes   [][]byte `json:"changes,omitempty"`
 }
 
 func EncodeMessage(message Message) ([]byte, error) {
 	env := messageEnvelope{
-		Version: message.Version,
-		Heads:   encodeHashes(message.Heads),
-		Need:    encodeHashes(message.Need),
-		Changes: message.Changes,
+		Version:   message.Version,
+		Heads:     encodeHashes(message.Heads),
+		Need:      encodeHashes(message.Need),
+		Bloom:     message.Bloom.Bytes(),
+		BloomSize: message.Bloom.Size(),
+		Changes:   message.Changes,
 	}
 	body, err := json.Marshal(env)
 	if err != nil {
@@ -61,6 +66,7 @@ func DecodeMessage(data []byte) (Message, error) {
 		Version: version,
 		Heads:   heads,
 		Need:    need,
+		Bloom:   NewBloomFilterFromBytes(env.Bloom, env.BloomSize),
 		Changes: env.Changes,
 	}, nil
 }

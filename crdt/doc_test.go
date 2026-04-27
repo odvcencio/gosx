@@ -223,6 +223,111 @@ func TestDocSyncNeedRecoversMissingHeadChange(t *testing.T) {
 	}
 }
 
+func TestDocSyncBloomSkipsLikelyKnownChangeAndNeedRecovers(t *testing.T) {
+	server := NewDoc()
+	client := NewDoc()
+	serverState := crdtsync.NewState()
+	clientState := crdtsync.NewState()
+
+	if err := server.Put(Root, "title", StringValue("server")); err != nil {
+		t.Fatalf("server seed put: %v", err)
+	}
+	hash, err := server.Commit("seed")
+	if err != nil {
+		t.Fatalf("commit seed: %v", err)
+	}
+	serverState.MarkPeerBloom(crdtsync.NewBloomFilterForHashes([][32]byte{[32]byte(hash)}))
+
+	headOnly, ok := server.GenerateSyncMessage(serverState)
+	if !ok {
+		t.Fatal("expected initial server sync message")
+	}
+	headOnlyDecoded, err := crdtsync.DecodeMessage(headOnly)
+	if err != nil {
+		t.Fatalf("decode head-only sync: %v", err)
+	}
+	if len(headOnlyDecoded.Changes) != 0 {
+		t.Fatalf("expected bloom to suppress change body, got %d changes", len(headOnlyDecoded.Changes))
+	}
+	if headOnlyDecoded.Bloom == nil || !headOnlyDecoded.Bloom.MaybeContains([32]byte(hash)) {
+		t.Fatal("expected sync message to advertise local bloom membership")
+	}
+	if err := client.ReceiveSyncMessage(clientState, headOnly); err != nil {
+		t.Fatalf("client receive head-only sync: %v", err)
+	}
+
+	needMsg, ok := client.GenerateSyncMessage(clientState)
+	if !ok {
+		t.Fatal("expected client to request missing head")
+	}
+	if err := server.ReceiveSyncMessage(serverState, needMsg); err != nil {
+		t.Fatalf("server receive need: %v", err)
+	}
+	retry, ok := server.GenerateSyncMessage(serverState)
+	if !ok {
+		t.Fatal("expected requested change resend despite bloom")
+	}
+	retryDecoded, err := crdtsync.DecodeMessage(retry)
+	if err != nil {
+		t.Fatalf("decode retry: %v", err)
+	}
+	if len(retryDecoded.Changes) != 1 {
+		t.Fatalf("retry changes = %d, want 1", len(retryDecoded.Changes))
+	}
+}
+
+func TestDocSyncRequestsMissingDepsInsteadOfApplyingOutOfOrderChange(t *testing.T) {
+	server := NewDoc()
+	client := NewDoc()
+	clientState := crdtsync.NewState()
+
+	if err := server.Put(Root, "title", StringValue("one")); err != nil {
+		t.Fatalf("server first put: %v", err)
+	}
+	first, err := server.Commit("first")
+	if err != nil {
+		t.Fatalf("commit first: %v", err)
+	}
+	if err := server.Put(Root, "subtitle", StringValue("two")); err != nil {
+		t.Fatalf("server second put: %v", err)
+	}
+	second, err := server.Commit("second")
+	if err != nil {
+		t.Fatalf("commit second: %v", err)
+	}
+	if len(server.changes) != 2 {
+		t.Fatalf("server changes = %d, want 2", len(server.changes))
+	}
+
+	secondChunk, _, err := EncodeChangeChunk(server.changes[1])
+	if err != nil {
+		t.Fatalf("encode second change: %v", err)
+	}
+	msg, err := crdtsync.EncodeMessage(crdtsync.Message{
+		Version: crdtsync.MessageTypeV1,
+		Heads:   [][32]byte{[32]byte(second)},
+		Changes: [][]byte{secondChunk},
+	})
+	if err != nil {
+		t.Fatalf("encode out-of-order sync: %v", err)
+	}
+	if err := client.ReceiveSyncMessage(clientState, msg); err != nil {
+		t.Fatalf("client receive out-of-order sync: %v", err)
+	}
+	if _, _, err := client.Get(Root, "subtitle"); err == nil {
+		t.Fatal("expected out-of-order change not to apply before deps arrive")
+	}
+
+	needed := clientState.Needed()
+	neededSet := map[[32]byte]bool{}
+	for _, hash := range needed {
+		neededSet[hash] = true
+	}
+	if len(needed) != 2 || !neededSet[[32]byte(first)] || !neededSet[[32]byte(second)] {
+		t.Fatalf("needed = %#v, want first and second hashes", needed)
+	}
+}
+
 func TestDocListMergeConvergesAcrossForks(t *testing.T) {
 	base := NewDoc()
 	items, err := base.MakeList(Root, "items")

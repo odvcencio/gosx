@@ -20,6 +20,28 @@ func NewBloomFilter(entries int) *BloomFilter {
 	}
 }
 
+func NewBloomFilterFromBytes(bits []byte, size uint32) *BloomFilter {
+	if len(bits) == 0 || size == 0 {
+		return nil
+	}
+	maxSize := uint32(len(bits) * 8)
+	if size > maxSize {
+		size = maxSize
+	}
+	return &BloomFilter{
+		bits: append([]byte(nil), bits...),
+		size: size,
+	}
+}
+
+func NewBloomFilterForHashes(hashes [][32]byte) *BloomFilter {
+	filter := NewBloomFilter(len(hashes))
+	for _, hash := range hashes {
+		filter.Add(hash)
+	}
+	return filter
+}
+
 func (f *BloomFilter) Add(hash [32]byte) {
 	if f == nil || f.size == 0 {
 		return
@@ -50,6 +72,13 @@ func (f *BloomFilter) Bytes() []byte {
 		return nil
 	}
 	return append([]byte(nil), f.bits...)
+}
+
+func (f *BloomFilter) Size() uint32 {
+	if f == nil {
+		return 0
+	}
+	return f.size
 }
 
 func (f *BloomFilter) probes(hash [32]byte) [7]uint32 {

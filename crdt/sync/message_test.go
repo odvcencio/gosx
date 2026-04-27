@@ -12,6 +12,9 @@ func TestMessageRoundTripPreservesNeedAndChanges(t *testing.T) {
 		Need: [][32]byte{
 			hashByte(3),
 		},
+		Bloom: NewBloomFilterForHashes([][32]byte{
+			hashByte(4),
+		}),
 		Changes: [][]byte{
 			[]byte("change-a"),
 			[]byte("change-b"),
@@ -35,6 +38,9 @@ func TestMessageRoundTripPreservesNeedAndChanges(t *testing.T) {
 	}
 	if len(decoded.Need) != len(message.Need) {
 		t.Fatalf("expected %d need hashes, got %d", len(message.Need), len(decoded.Need))
+	}
+	if decoded.Bloom == nil || !decoded.Bloom.MaybeContains(hashByte(4)) {
+		t.Fatal("expected decoded bloom filter to contain advertised hash")
 	}
 	if len(decoded.Changes) != len(message.Changes) {
 		t.Fatalf("expected %d changes, got %d", len(message.Changes), len(decoded.Changes))

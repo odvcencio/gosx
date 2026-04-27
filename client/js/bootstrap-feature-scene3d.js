@@ -1266,6 +1266,7 @@
         sceneObjectMaterialHasValue(item, "renderPass") ? sceneObjectMaterialValue(item, "renderPass") : current.renderPass,
         blendMode,
         numericOpacity,
+        materialKind,
       ),
       wireframe: sceneBool(
         sceneObjectMaterialHasValue(item, "wireframe") ? sceneObjectMaterialValue(item, "wireframe") : current.wireframe,
@@ -2025,7 +2026,7 @@
       metalnessMap: typeof item.metalnessMap === "string" ? item.metalnessMap.trim() : (typeof current.metalnessMap === "string" ? current.metalnessMap : ""),
       emissiveMap: typeof item.emissiveMap === "string" ? item.emissiveMap.trim() : (typeof current.emissiveMap === "string" ? current.emissiveMap : ""),
       blendMode,
-      renderPass: normalizeSceneMaterialRenderPass(item.renderPass || current.renderPass, blendMode, numericOpacity),
+      renderPass: normalizeSceneMaterialRenderPass(item.renderPass || current.renderPass, blendMode, numericOpacity, kind),
       wireframe: sceneBool(Object.prototype.hasOwnProperty.call(item, "wireframe") ? item.wireframe : current.wireframe, false),
       depthWrite: Object.prototype.hasOwnProperty.call(item, "depthWrite") ? sceneBool(item.depthWrite, true) : current.depthWrite,
       _colorSpecified: colorSpecified || current._colorSpecified === true,
@@ -5460,6 +5461,7 @@
     sceneWebGPUCommandSequence: typeof sceneWebGPUCommandSequence === "function" ? sceneWebGPUCommandSequence : undefined,
     sceneBackendRegistry: undefined,
     createSceneState,
+    createSceneParticleSystem: typeof createSceneParticleSystem === "function" ? createSceneParticleSystem : undefined,
     sceneStatePointsWithMaterials,
     createSceneWebGLRenderer,
     engineFrame,
@@ -5473,6 +5475,15 @@
     normalizeSceneObject,
     normalizeSceneSprite,
     normalizeSceneSpriteFit,
+    listSceneMaterialProfiles: typeof listSceneMaterialProfiles === "function" ? listSceneMaterialProfiles : undefined,
+    listSceneParticleForces: typeof listSceneParticleForces === "function" ? listSceneParticleForces : undefined,
+    registerSceneMaterialProfile: typeof registerSceneMaterialProfile === "function" ? registerSceneMaterialProfile : undefined,
+    registerSceneParticleForce: typeof registerSceneParticleForce === "function" ? registerSceneParticleForce : undefined,
+    registerSceneParticleForceKind: typeof registerSceneParticleForceKind === "function" ? registerSceneParticleForceKind : undefined,
+    sceneComputeSystemSignature: typeof sceneComputeSystemSignature === "function" ? sceneComputeSystemSignature : undefined,
+    sceneMaterialShaderData: typeof sceneMaterialShaderData === "function" ? sceneMaterialShaderData : undefined,
+    unregisterSceneMaterialProfile: typeof unregisterSceneMaterialProfile === "function" ? unregisterSceneMaterialProfile : undefined,
+    unregisterSceneParticleForce: typeof unregisterSceneParticleForce === "function" ? unregisterSceneParticleForce : undefined,
     publishPointerSignals,
     queueInputSignal,
     sceneAdvanceTransitions,
@@ -6444,20 +6455,144 @@
     ];
   }
 
+  var sceneMaterialProfileRegistry = Object.create(null);
+  var sceneMaterialProfileRegistryVersion = 0;
+
+  function sceneMaterialProfileKindKey(value) {
+    const key = typeof value === "string" ? value.trim().toLowerCase() : "";
+    return key && /^[a-z][a-z0-9_-]*$/.test(key) ? key : "";
+  }
+
+  function sceneMaterialProfileBlendMode(value) {
+    const mode = typeof value === "string" ? value.trim().toLowerCase() : "";
+    switch (mode) {
+      case "opaque":
+      case "solid":
+        return "opaque";
+      case "alpha":
+      case "transparent":
+      case "translucent":
+        return "alpha";
+      case "add":
+      case "additive":
+      case "glow":
+      case "emissive":
+        return "additive";
+      default:
+        return "";
+    }
+  }
+
+  function sceneMaterialProfileRenderPass(value) {
+    const pass = typeof value === "string" ? value.trim().toLowerCase() : "";
+    switch (pass) {
+      case "opaque":
+      case "alpha":
+      case "additive":
+        return pass;
+      case "add":
+        return "additive";
+      case "transparent":
+      case "translucent":
+        return "alpha";
+      default:
+        return "";
+    }
+  }
+
+  function sceneNormalizeMaterialShaderData(values, fallback) {
+    if (values && typeof values.length === "number" && values.length >= 3) {
+      return [
+        sceneNumber(values[0], fallback ? fallback[0] : 0),
+        sceneNumber(values[1], fallback ? fallback[1] : 0),
+        sceneNumber(values[2], fallback ? fallback[2] : 1),
+      ];
+    }
+    return fallback ? fallback.slice(0, 3) : null;
+  }
+
+  function sceneRegisteredMaterialProfile(kind) {
+    const key = sceneMaterialProfileKindKey(kind);
+    return key && sceneMaterialProfileRegistry[key] || null;
+  }
+
+  function sceneMaterialProfileSnapshot(profile) {
+    if (!profile) {
+      return null;
+    }
+    return {
+      kind: profile.kind,
+      version: profile.version,
+      opacity: profile.opacity,
+      emissive: profile.emissive,
+      blendMode: profile.blendMode,
+      renderPass: profile.renderPass,
+      shaderData: profile.shaderData ? profile.shaderData.slice(0, 3) : undefined,
+      key: profile.key,
+      dynamicShaderData: typeof profile.shaderDataFactory === "function",
+    };
+  }
+
+  function registerSceneMaterialProfile(kind, profile) {
+    const key = sceneMaterialProfileKindKey(kind);
+    if (!key) {
+      return null;
+    }
+    const src = profile && typeof profile === "object" ? profile : {};
+    const record = {
+      kind: key,
+      version: sceneMaterialProfileRegistryVersion + 1,
+      opacity: Object.prototype.hasOwnProperty.call(src, "opacity") ? clamp01(sceneNumber(src.opacity, 1)) : undefined,
+      emissive: Object.prototype.hasOwnProperty.call(src, "emissive") ? clamp01(sceneNumber(src.emissive, 0)) : undefined,
+      blendMode: sceneMaterialProfileBlendMode(src.blendMode),
+      renderPass: sceneMaterialProfileRenderPass(src.renderPass),
+      shaderData: typeof src.shaderData === "function" ? null : sceneNormalizeMaterialShaderData(src.shaderData, null),
+      shaderDataFactory: typeof src.shaderData === "function" ? src.shaderData : null,
+      key: typeof src.key === "string" ? src.key : "",
+    };
+    sceneMaterialProfileRegistryVersion = record.version;
+    sceneMaterialProfileRegistry[key] = record;
+    return sceneMaterialProfileSnapshot(record);
+  }
+
+  function unregisterSceneMaterialProfile(kind) {
+    const key = sceneMaterialProfileKindKey(kind);
+    if (!key || !sceneMaterialProfileRegistry[key]) {
+      return false;
+    }
+    delete sceneMaterialProfileRegistry[key];
+    sceneMaterialProfileRegistryVersion += 1;
+    return true;
+  }
+
+  function listSceneMaterialProfiles() {
+    return Object.keys(sceneMaterialProfileRegistry).sort().map(function(kind) {
+      return sceneMaterialProfileSnapshot(sceneMaterialProfileRegistry[kind]);
+    });
+  }
+
   function normalizeSceneMaterialKind(value) {
     const kind = typeof value === "string" ? value.trim().toLowerCase() : "";
     switch (kind) {
+      case "flat":
       case "ghost":
       case "glass":
       case "glow":
       case "matte":
         return kind;
       default:
+        if (sceneRegisteredMaterialProfile(kind)) {
+          return kind;
+        }
         return "flat";
     }
   }
 
   function sceneDefaultMaterialOpacity(kind) {
+    const profile = sceneRegisteredMaterialProfile(kind);
+    if (profile && profile.opacity !== undefined) {
+      return profile.opacity;
+    }
     switch (normalizeSceneMaterialKind(kind)) {
       case "ghost":
         return 0.42;
@@ -6471,6 +6606,10 @@
   }
 
   function sceneDefaultMaterialEmissive(kind) {
+    const profile = sceneRegisteredMaterialProfile(kind);
+    if (profile && profile.emissive !== undefined) {
+      return profile.emissive;
+    }
     switch (normalizeSceneMaterialKind(kind)) {
       case "ghost":
         return 0.12;
@@ -6484,6 +6623,10 @@
   }
 
   function sceneDefaultMaterialBlendMode(kind) {
+    const profile = sceneRegisteredMaterialProfile(kind);
+    if (profile && profile.blendMode) {
+      return profile.blendMode;
+    }
     switch (normalizeSceneMaterialKind(kind)) {
       case "ghost":
       case "glass":
@@ -6520,7 +6663,7 @@
     }
   }
 
-  function normalizeSceneMaterialRenderPass(value, blendMode, opacity) {
+  function normalizeSceneMaterialRenderPass(value, blendMode, opacity, kind) {
     const pass = typeof value === "string" ? value.trim().toLowerCase() : "";
     switch (pass) {
       case "opaque":
@@ -6535,6 +6678,10 @@
       default:
         if (blendMode === "additive") {
           return "additive";
+        }
+        const profile = sceneRegisteredMaterialProfile(kind);
+        if (profile && profile.renderPass) {
+          return profile.renderPass;
         }
         return blendMode === "alpha" || opacity < 0.999 ? "alpha" : "opaque";
     }
@@ -6627,14 +6774,15 @@
       metalnessMap: object && typeof object.metalnessMap === "string" ? object.metalnessMap.trim() : "",
       emissiveMap: object && typeof object.emissiveMap === "string" ? object.emissiveMap.trim() : "",
     };
-    profile.renderPass = normalizeSceneMaterialRenderPass(object && object.renderPass, profile.blendMode, profile.opacity);
+    profile.renderPass = normalizeSceneMaterialRenderPass(object && object.renderPass, profile.blendMode, profile.opacity, kind);
     profile.key = sceneMaterialProfileKey(profile);
     profile.shaderData = sceneMaterialShaderData(profile);
     return profile;
   }
 
   function sceneMaterialProfileKey(profile) {
-    return [
+    const registryProfile = sceneRegisteredMaterialProfile(profile && profile.kind);
+    const parts = [
       normalizeSceneMaterialKind(profile && profile.kind),
       String(profile && profile.color || ""),
       String(profile && profile.texture || ""),
@@ -6649,7 +6797,11 @@
       String(profile && profile.roughnessMap || ""),
       String(profile && profile.metalnessMap || ""),
       String(profile && profile.emissiveMap || ""),
-    ].join("|");
+    ];
+    if (registryProfile) {
+      parts.push("profile:" + registryProfile.version + ":" + String(registryProfile.key || ""));
+    }
+    return parts.join("|");
   }
 
   function sceneBundleMaterialIndex(bundle, materialLookup, profile) {
@@ -6722,6 +6874,15 @@
       return [0, 0, 1];
     }
     const kind = String(material.kind || "").toLowerCase();
+    const profile = sceneRegisteredMaterialProfile(kind);
+    if (profile) {
+      if (profile.shaderDataFactory) {
+        return sceneNormalizeMaterialShaderData(profile.shaderDataFactory(material), [0, sceneMaterialEmissive(material), 1]);
+      }
+      if (profile.shaderData) {
+        return sceneNormalizeMaterialShaderData(profile.shaderData, [0, sceneMaterialEmissive(material), 1]);
+      }
+    }
     switch (kind) {
     case "ghost":
       return [1, sceneMaterialEmissive(material), 0.3];

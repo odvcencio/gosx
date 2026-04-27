@@ -2818,6 +2818,137 @@
     "}",
   ].join("\n");
 
+  var sceneParticleForceBuiltins = { gravity: 0, wind: 1, turbulence: 2, orbit: 3, drag: 4 };
+  var sceneParticleForceAliases = Object.create(null);
+  var sceneParticleForceHandlers = Object.create(null);
+  var sceneParticleForceRegistryVersion = 0;
+
+  function sceneParticleForceKindKey(value) {
+    var key = typeof value === "string" ? value.trim().toLowerCase() : "";
+    return key && /^[a-z][a-z0-9_-]*$/.test(key) ? key : "";
+  }
+
+  function sceneParticleForceKindCode(kind) {
+    var key = sceneParticleForceKindKey(kind);
+    if (Object.prototype.hasOwnProperty.call(sceneParticleForceBuiltins, key)) {
+      return sceneParticleForceBuiltins[key];
+    }
+    if (Object.prototype.hasOwnProperty.call(sceneParticleForceAliases, key)) {
+      return sceneParticleForceAliases[key];
+    }
+    return 0;
+  }
+
+  function registerSceneParticleForceKind(kind, targetKind) {
+    var key = sceneParticleForceKindKey(kind);
+    var target = sceneParticleForceKindKey(targetKind);
+    if (!key) {
+      return false;
+    }
+    var code;
+    if (Object.prototype.hasOwnProperty.call(sceneParticleForceBuiltins, target)) {
+      code = sceneParticleForceBuiltins[target];
+    } else if (Object.prototype.hasOwnProperty.call(sceneParticleForceAliases, target)) {
+      code = sceneParticleForceAliases[target];
+    } else {
+      return false;
+    }
+    sceneParticleForceAliases[key] = code;
+    sceneParticleForceRegistryVersion += 1;
+    return true;
+  }
+
+  function registerSceneParticleForce(kind, force) {
+    var key = sceneParticleForceKindKey(kind);
+    if (!key) {
+      return false;
+    }
+    if (typeof force === "function") {
+      sceneParticleForceHandlers[key] = force;
+      sceneParticleForceRegistryVersion += 1;
+      return true;
+    }
+    if (force && typeof force === "object") {
+      var handler = typeof force.apply === "function" ? force.apply : (typeof force.update === "function" ? force.update : null);
+      var aliasRegistered = false;
+      if (typeof force.kind === "string") {
+        aliasRegistered = registerSceneParticleForceKind(key, force.kind);
+      }
+      if (typeof force.kind === "string" && !aliasRegistered) {
+        return false;
+      }
+      if (handler) {
+        sceneParticleForceHandlers[key] = handler;
+        sceneParticleForceRegistryVersion += 1;
+        return true;
+      }
+      if (aliasRegistered) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function unregisterSceneParticleForce(kind) {
+    var key = sceneParticleForceKindKey(kind);
+    var removed = false;
+    if (Object.prototype.hasOwnProperty.call(sceneParticleForceAliases, key)) {
+      delete sceneParticleForceAliases[key];
+      removed = true;
+    }
+    if (Object.prototype.hasOwnProperty.call(sceneParticleForceHandlers, key)) {
+      delete sceneParticleForceHandlers[key];
+      removed = true;
+    }
+    if (removed) {
+      sceneParticleForceRegistryVersion += 1;
+    }
+    return removed;
+  }
+
+  function listSceneParticleForces() {
+    var keys = Object.keys(sceneParticleForceBuiltins)
+      .concat(Object.keys(sceneParticleForceAliases))
+      .concat(Object.keys(sceneParticleForceHandlers));
+    return Array.from(new Set(keys)).sort().map(function(kind) {
+      return {
+        kind: kind,
+        builtin: Object.prototype.hasOwnProperty.call(sceneParticleForceBuiltins, kind),
+        alias: Object.prototype.hasOwnProperty.call(sceneParticleForceAliases, kind),
+        handler: Object.prototype.hasOwnProperty.call(sceneParticleForceHandlers, kind),
+      };
+    });
+  }
+
+  function sceneParticleForceHandler(kind) {
+    var key = sceneParticleForceKindKey(kind);
+    return key && sceneParticleForceHandlers[key] || null;
+  }
+
+  function sceneApplyParticleForceHandler(handler, context) {
+    var result = handler(context);
+    if (!result) {
+      return context.velocity;
+    }
+    if (Array.isArray(result) || (result && typeof result.length === "number")) {
+      context.velocity.x += sceneNumber(result[0], 0);
+      context.velocity.y += sceneNumber(result[1], 0);
+      context.velocity.z += sceneNumber(result[2], 0);
+      return context.velocity;
+    }
+    var nextVelocity = result.velocity && typeof result.velocity === "object" ? result.velocity : null;
+    if (nextVelocity) {
+      context.velocity.x = sceneNumber(nextVelocity.x, context.velocity.x);
+      context.velocity.y = sceneNumber(nextVelocity.y, context.velocity.y);
+      context.velocity.z = sceneNumber(nextVelocity.z, context.velocity.z);
+      return context.velocity;
+    }
+    context.velocity.x += sceneNumber(Object.prototype.hasOwnProperty.call(result, "x") ? result.x : result.vx, 0);
+    context.velocity.y += sceneNumber(Object.prototype.hasOwnProperty.call(result, "y") ? result.y : result.vy, 0);
+    context.velocity.z += sceneNumber(Object.prototype.hasOwnProperty.call(result, "z") ? result.z : result.vz, 0);
+    return context.velocity;
+  }
+
   function sceneComputeUploadSimParams(device, buffer, entry, deltaTime, totalTime) {
     var emitter = entry.emitter || {};
     var material = entry.material || {};
@@ -2873,7 +3004,6 @@
   }
 
   function sceneComputeUploadForces(device, buffer, forces) {
-    var kindMap = { gravity: 0, wind: 1, turbulence: 2, orbit: 3, drag: 4 };
     var byteLen = Math.max(32, forces.length * 32);
     var buf = new ArrayBuffer(byteLen);
     var view = new DataView(buf);
@@ -2881,7 +3011,7 @@
     for (var i = 0; i < forces.length; i++) {
       var f = forces[i];
       var off = i * 32;
-      view.setUint32(off, kindMap[f.kind] || 0, true);
+      view.setUint32(off, sceneParticleForceKindCode(f && f.kind), true);
       view.setFloat32(off + 4, sceneNumber(f.strength, 0), true);
       view.setFloat32(off + 8, sceneNumber(f.x, 0), true);
       view.setFloat32(off + 12, sceneNumber(f.y, 0), true);
@@ -3031,8 +3161,6 @@
 
     var kindMap = { point: 0, sphere: 1, disc: 2, spiral: 3 };
 
-    var forceKindMap = { gravity: 0, wind: 1, turbulence: 2, orbit: 3, drag: 4 };
-
     function currentEmitterConfig() {
       var emitter = entry && entry.emitter && typeof entry.emitter === "object" ? entry.emitter : {};
       return {
@@ -3123,6 +3251,7 @@
         var emitterConfig = currentEmitterConfig();
         var materialConfig = currentMaterialConfig();
         var forces = currentForces();
+        var customForceContext = null;
         for (var i = 0; i < count; i++) {
           var base = i * 8;
 
@@ -3163,7 +3292,39 @@
 
           for (var fi = 0; fi < forces.length; fi++) {
             var f = forces[fi];
-            var fKind = forceKindMap[f.kind] || 0;
+            var handler = sceneParticleForceHandler(f && f.kind);
+            if (handler) {
+              if (!customForceContext) {
+                customForceContext = {
+                  index: 0,
+                  deltaTime: 0,
+                  totalTime: 0,
+                  age: 0,
+                  lifetime: 0,
+                  force: null,
+                  position: { x: 0, y: 0, z: 0 },
+                  velocity: { x: 0, y: 0, z: 0 },
+                };
+              }
+              customForceContext.index = i;
+              customForceContext.deltaTime = deltaTime;
+              customForceContext.totalTime = totalTime;
+              customForceContext.age = age;
+              customForceContext.lifetime = lifetime;
+              customForceContext.force = f;
+              customForceContext.position.x = posX;
+              customForceContext.position.y = posY;
+              customForceContext.position.z = posZ;
+              customForceContext.velocity.x = velX;
+              customForceContext.velocity.y = velY;
+              customForceContext.velocity.z = velZ;
+              var customVelocity = sceneApplyParticleForceHandler(handler, customForceContext);
+              velX = customVelocity.x;
+              velY = customVelocity.y;
+              velZ = customVelocity.z;
+              continue;
+            }
+            var fKind = sceneParticleForceKindCode(f && f.kind);
             var str = sceneNumber(f.strength, 0);
             var fx = sceneNumber(f.x, 0);
             var fy = sceneNumber(f.y, 0);
@@ -3256,6 +3417,18 @@
     return JSON.stringify({
       count: Math.max(0, Math.floor(sceneNumber(entry && entry.count, 0))),
       forces: Array.isArray(entry && entry.forces) ? entry.forces : [],
+      forceRegistryVersion: sceneParticleForceRegistryVersion,
+    });
+  }
+
+  if (typeof window !== "undefined" && window.__gosx_scene3d_api) {
+    Object.assign(window.__gosx_scene3d_api, {
+      createSceneParticleSystem,
+      listSceneParticleForces,
+      registerSceneParticleForce,
+      registerSceneParticleForceKind,
+      sceneComputeSystemSignature,
+      unregisterSceneParticleForce,
     });
   }
 

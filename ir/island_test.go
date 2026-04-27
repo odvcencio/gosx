@@ -244,6 +244,25 @@ func TestValidateIslandConditionalComponentRefsAccepted(t *testing.T) {
 	}
 }
 
+func TestValidateIslandElementAliasComponentRefsAccepted(t *testing.T) {
+	prog := &Program{}
+	prog.Nodes = append(prog.Nodes, Node{
+		Kind: NodeComponent,
+		Tag:  "Link",
+		Attrs: []Attr{
+			{Kind: AttrStatic, Name: "href", Value: "/docs"},
+		},
+	})
+	prog.Components = append(prog.Components, Component{Name: "Good", Root: 0, IsIsland: true})
+
+	diags := Validate(prog)
+	for _, d := range diags {
+		if strings.Contains(d.Message, "not supported inside island components") {
+			t.Fatalf("element alias component should validate inside islands, got %q", d.Message)
+		}
+	}
+}
+
 func TestValidateIslandUnsupportedComponentRefRejected(t *testing.T) {
 	prog := &Program{}
 	prog.Nodes = append(prog.Nodes, Node{
@@ -380,6 +399,44 @@ func TestLowerIslandConditionalComponent(t *testing.T) {
 	}
 	if len(root.Attrs) != 1 || root.Attrs[0].Name != "fallback" {
 		t.Fatalf("expected fallback attr, got %#v", root.Attrs)
+	}
+}
+
+func TestLowerIslandElementAliasComponents(t *testing.T) {
+	prog := &Program{}
+	prog.Nodes = append(prog.Nodes,
+		Node{
+			Kind: NodeComponent,
+			Tag:  "Link",
+			Attrs: []Attr{
+				{Kind: AttrStatic, Name: "href", Value: "/docs"},
+			},
+			Children: []NodeID{1},
+		},
+		Node{Kind: NodeText, Text: "Docs"},
+		Node{
+			Kind: NodeComponent,
+			Tag:  "Image",
+			Attrs: []Attr{
+				{Kind: AttrStatic, Name: "src", Value: "/hero.png"},
+				{Kind: AttrStatic, Name: "alt", Value: "Hero"},
+			},
+		},
+	)
+	prog.Nodes[0].Children = append(prog.Nodes[0].Children, 2)
+	prog.Components = append(prog.Components, Component{Name: "Aliases", Root: 0, IsIsland: true})
+
+	island, err := LowerIsland(prog, 0)
+	if err != nil {
+		t.Fatalf("LowerIsland failed: %v", err)
+	}
+	root := island.Nodes[island.Root]
+	if root.Kind != program.NodeElement || root.Tag != "a" {
+		t.Fatalf("expected Link to lower to <a>, got kind=%s tag=%q", root.Kind, root.Tag)
+	}
+	image := island.Nodes[root.Children[1]]
+	if image.Kind != program.NodeElement || image.Tag != "img" {
+		t.Fatalf("expected Image to lower to <img>, got kind=%s tag=%q", image.Kind, image.Tag)
 	}
 }
 

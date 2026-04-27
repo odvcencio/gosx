@@ -117,3 +117,22 @@ func TestStatePeerNeedOverridesKnownAndSentState(t *testing.T) {
 		t.Fatal("expected peer need to clear stale known/sent assumptions")
 	}
 }
+
+func TestStatePeerBloomIsClonedAndQueryable(t *testing.T) {
+	state := NewState()
+	hash := hashByte(4)
+	filter := NewBloomFilterForHashes([][32]byte{hash})
+	state.MarkPeerBloom(filter)
+
+	if !state.PeerMayHave(hash) {
+		t.Fatal("expected peer bloom to report inserted hash")
+	}
+	filter = NewBloomFilterForHashes([][32]byte{hashByte(9)})
+	if !state.PeerMayHave(hash) {
+		t.Fatal("expected peer bloom to be cloned")
+	}
+	state.MarkPeerBloom(nil)
+	if state.PeerMayHave(hash) {
+		t.Fatal("expected clearing peer bloom to reset membership")
+	}
+}

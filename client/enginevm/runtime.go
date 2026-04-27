@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/odvcencio/gosx/client/vm"
 	rootengine "github.com/odvcencio/gosx/engine"
@@ -235,6 +236,88 @@ type sceneObject struct {
 	HasBlendMode bool
 	HasEmissive  bool
 	Static       bool
+}
+
+// MaterialProfile registers a render-material preset for the shared engine VM.
+// It lets embedders add material kinds without editing the engine VM switch.
+type MaterialProfile struct {
+	Opacity      float64
+	HasOpacity   bool
+	Wireframe    bool
+	HasWireframe bool
+	BlendMode    string
+	HasBlendMode bool
+	Emissive     float64
+	HasEmissive  bool
+	ShaderData   []float64
+}
+
+var (
+	materialProfilesMu sync.RWMutex
+	materialProfiles   = map[string]MaterialProfile{}
+)
+
+// RegisterMaterialProfile installs or replaces a material profile and returns a
+// cleanup function that restores the previous profile for that kind.
+func RegisterMaterialProfile(kind string, profile MaterialProfile) func() {
+	key := materialProfileKey(kind)
+	if key == "" {
+		return func() {}
+	}
+	profile.ShaderData = cloneMaterialShaderData(profile.ShaderData)
+
+	materialProfilesMu.Lock()
+	previous, hadPrevious := materialProfiles[key]
+	materialProfiles[key] = profile
+	materialProfilesMu.Unlock()
+
+	return func() {
+		materialProfilesMu.Lock()
+		if hadPrevious {
+			materialProfiles[key] = previous
+		} else {
+			delete(materialProfiles, key)
+		}
+		materialProfilesMu.Unlock()
+	}
+}
+
+func materialProfileKey(kind string) string {
+	key := strings.ToLower(strings.TrimSpace(kind))
+	if key == "" {
+		return ""
+	}
+	for _, r := range key {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '_' || r == '-' {
+			continue
+		}
+		return ""
+	}
+	return key
+}
+
+func materialProfileForKind(kind string) (MaterialProfile, bool) {
+	key := materialProfileKey(kind)
+	if key == "" {
+		return MaterialProfile{}, false
+	}
+	materialProfilesMu.RLock()
+	profile, ok := materialProfiles[key]
+	materialProfilesMu.RUnlock()
+	if !ok {
+		return MaterialProfile{}, false
+	}
+	profile.ShaderData = cloneMaterialShaderData(profile.ShaderData)
+	return profile, true
+}
+
+func cloneMaterialShaderData(values []float64) []float64 {
+	if len(values) < 3 {
+		return nil
+	}
+	out := make([]float64, 3)
+	copy(out, values[:3])
+	return out
 }
 
 type sceneLabel struct {
@@ -1217,21 +1300,47 @@ func resolveRenderMaterial(object sceneObject) rootengine.RenderMaterial {
 		Emissive:  0,
 	}
 
-	switch strings.ToLower(strings.TrimSpace(profile.Kind)) {
+	kindKey := strings.ToLower(strings.TrimSpace(profile.Kind))
+	customProfile, hasCustomProfile := materialProfileForKind(kindKey)
+	if hasCustomProfile {
+		profile.Kind = kindKey
+		if customProfile.HasOpacity {
+			profile.Opacity = customProfile.Opacity
+		}
+		if customProfile.HasWireframe {
+			profile.Wireframe = customProfile.Wireframe
+		}
+		if customProfile.HasBlendMode && strings.TrimSpace(customProfile.BlendMode) != "" {
+			profile.BlendMode = customProfile.BlendMode
+		}
+		if customProfile.HasEmissive {
+			profile.Emissive = customProfile.Emissive
+		}
+	}
+
+	switch kindKey {
 	case "ghost":
-		profile.Opacity = 0.42
-		profile.BlendMode = "alpha"
-		profile.Emissive = 0.12
+		if !hasCustomProfile {
+			profile.Opacity = 0.42
+			profile.BlendMode = "alpha"
+			profile.Emissive = 0.12
+		}
 	case "glass":
-		profile.Opacity = 0.28
-		profile.BlendMode = "alpha"
-		profile.Emissive = 0.08
+		if !hasCustomProfile {
+			profile.Opacity = 0.28
+			profile.BlendMode = "alpha"
+			profile.Emissive = 0.08
+		}
 	case "glow":
-		profile.Opacity = 0.92
-		profile.BlendMode = "additive"
-		profile.Emissive = 0.42
+		if !hasCustomProfile {
+			profile.Opacity = 0.92
+			profile.BlendMode = "additive"
+			profile.Emissive = 0.42
+		}
 	case "matte":
-		profile.Wireframe = true
+		if !hasCustomProfile {
+			profile.Wireframe = true
+		}
 	case "flat":
 	}
 
@@ -1255,7 +1364,11 @@ func resolveRenderMaterial(object sceneObject) rootengine.RenderMaterial {
 	}
 	profile.RenderPass = renderPassFromMaterialProfile(profile)
 	profile.Key = renderMaterialKey(profile)
-	profile.ShaderData = renderMaterialShaderData(profile)
+	if hasCustomProfile && len(customProfile.ShaderData) >= 3 {
+		profile.ShaderData = cloneMaterialShaderData(customProfile.ShaderData)
+	} else {
+		profile.ShaderData = renderMaterialShaderData(profile)
+	}
 	return profile
 }
 

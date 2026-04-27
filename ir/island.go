@@ -296,6 +296,18 @@ func (l *islandLowerer) lowerNode(srcID NodeID) (program.NodeID, error) {
 			}
 			break
 		}
+		if tag, ok := islandElementAlias(srcNode.Tag); ok {
+			node.Kind = program.NodeElement
+			node.Tag = tag
+			for _, attr := range srcNode.Attrs {
+				dstAttr, err := l.lowerAttr(attr)
+				if err != nil {
+					return 0, err
+				}
+				node.Attrs = append(node.Attrs, dstAttr)
+			}
+			break
+		}
 		return 0, fmt.Errorf("component <%s> is not supported inside island components yet", srcNode.Tag)
 	case NodeText:
 		node.Kind = program.NodeText
@@ -469,6 +481,17 @@ func isConditionalComponent(tag string) bool {
 		return true
 	default:
 		return false
+	}
+}
+
+func islandElementAlias(tag string) (string, bool) {
+	switch tag {
+	case "Link":
+		return "a", true
+	case "Image":
+		return "img", true
+	default:
+		return "", false
 	}
 }
 
