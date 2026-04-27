@@ -4,6 +4,7 @@
     let active = false;
     let strokeStyle = "";
     let lineWidth = 0;
+    let lineDashKey = "";
     function flush() {
       if (!active) {
         return;
@@ -12,15 +13,23 @@
       active = false;
     }
     return {
-      line(from, to, color, width) {
+      line(from, to, color, width, dash) {
         const nextStrokeStyle = color || "#8de1ff";
         const nextLineWidth = Math.max(0.1, sceneNumber(width, 1.8));
-        if (!active || nextStrokeStyle !== strokeStyle || nextLineWidth !== lineWidth) {
+        const dashed = dash && dash.dashed;
+        const dashSize = Math.max(0.1, sceneNumber(dash && dash.dashSize, nextLineWidth * 2.5));
+        const gapSize = Math.max(0.1, sceneNumber(dash && dash.gapSize, dashSize));
+        const nextDashKey = dashed ? (dashSize + ":" + gapSize) : "";
+        if (!active || nextStrokeStyle !== strokeStyle || nextLineWidth !== lineWidth || nextDashKey !== lineDashKey) {
           flush();
           strokeStyle = nextStrokeStyle;
           lineWidth = nextLineWidth;
+          lineDashKey = nextDashKey;
           ctx2d.strokeStyle = strokeStyle;
           ctx2d.lineWidth = lineWidth;
+          if (typeof ctx2d.setLineDash === "function") {
+            ctx2d.setLineDash(dashed ? [dashSize, gapSize] : []);
+          }
           ctx2d.beginPath();
           active = true;
         }
@@ -51,6 +60,9 @@
     // segment is two vertices. Undefined/zero falls back to the legacy
     // 1.8px default so pre-v0.15.1 scenes render unchanged.
     const widths = bundle && bundle.worldLineWidths;
+    const dashes = bundle && bundle.worldLineDashes;
+    const dashSizes = bundle && bundle.worldLineDashSizes;
+    const gapSizes = bundle && bundle.worldLineGapSizes;
     const vertexCount = Math.max(0, Math.floor(sceneNumber(bundle && bundle.worldVertexCount, 0)));
     const batch = createSceneCanvasLineBatch(ctx2d);
     for (let index = 0; index + 1 < vertexCount; index += 2) {
@@ -73,7 +85,11 @@
       ]);
       const segmentIndex = index / 2;
       const segmentWidth = widths && segmentIndex < widths.length ? widths[segmentIndex] : 0;
-      batch.line(from, to, color, segmentWidth > 0 ? segmentWidth : 1.8);
+      batch.line(from, to, color, segmentWidth > 0 ? segmentWidth : 1.8, {
+        dashed: Boolean(dashes && dashes[segmentIndex]),
+        dashSize: dashSizes && segmentIndex < dashSizes.length ? dashSizes[segmentIndex] : 0,
+        gapSize: gapSizes && segmentIndex < gapSizes.length ? gapSizes[segmentIndex] : 0,
+      });
     }
     batch.flush();
   }
@@ -98,7 +114,11 @@
         } else {
           const batch = createSceneCanvasLineBatch(ctx2d);
           for (const line of lines) {
-            batch.line(line.from, line.to, line.color, line.lineWidth);
+            batch.line(line.from, line.to, line.color, line.lineWidth, {
+              dashed: Boolean(line.lineDash),
+              dashSize: line.dashSize,
+              gapSize: line.gapSize,
+            });
           }
           batch.flush();
         }

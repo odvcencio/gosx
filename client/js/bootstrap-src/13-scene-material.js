@@ -124,6 +124,10 @@
       case "glass":
       case "glow":
       case "matte":
+      case "standard":
+      case "custom":
+      case "line-basic":
+      case "line-dashed":
         return kind;
       default:
         if (sceneRegisteredMaterialProfile(kind)) {
@@ -314,6 +318,14 @@
       emissive: sceneCSSVarReference(object && object.emissive) ? String(object.emissive).trim() : clamp01(sceneNumber(object && object.emissive, sceneDefaultMaterialEmissive(kind))),
       roughness: sceneNumberOrCSSVar(object && object.roughness, 0.5),
       metalness: sceneNumberOrCSSVar(object && object.metalness, 0),
+      lineDash: sceneBool(object && object.lineDash, false),
+      dashSize: sceneNumber(object && object.dashSize, 0),
+      gapSize: sceneNumber(object && object.gapSize, 0),
+      customVertex: typeof (object && object.customVertex) === "string" ? object.customVertex : "",
+      customFragment: typeof (object && object.customFragment) === "string" ? object.customFragment : "",
+      customVertexWGSL: typeof (object && object.customVertexWGSL) === "string" ? object.customVertexWGSL : "",
+      customFragmentWGSL: typeof (object && object.customFragmentWGSL) === "string" ? object.customFragmentWGSL : "",
+      customUniforms: object && object.customUniforms && typeof object.customUniforms === "object" ? Object.assign({}, object.customUniforms) : null,
       normalMap: object && typeof object.normalMap === "string" ? object.normalMap.trim() : "",
       roughnessMap: object && typeof object.roughnessMap === "string" ? object.roughnessMap.trim() : "",
       metalnessMap: object && typeof object.metalnessMap === "string" ? object.metalnessMap.trim() : "",
@@ -338,6 +350,14 @@
       sceneCSSVarReference(profile && profile.emissive) ? String(profile.emissive).trim() : clamp01(sceneNumber(profile && profile.emissive, 0)).toFixed(3),
       sceneCSSVarReference(profile && profile.roughness) ? String(profile.roughness).trim() : sceneNumber(profile && profile.roughness, 0.5).toFixed(3),
       sceneCSSVarReference(profile && profile.metalness) ? String(profile.metalness).trim() : sceneNumber(profile && profile.metalness, 0).toFixed(3),
+      String(sceneBool(profile && profile.lineDash, false)),
+      sceneNumber(profile && profile.dashSize, 0).toFixed(3),
+      sceneNumber(profile && profile.gapSize, 0).toFixed(3),
+      String(profile && profile.customVertex || ""),
+      String(profile && profile.customFragment || ""),
+      String(profile && profile.customVertexWGSL || ""),
+      String(profile && profile.customFragmentWGSL || ""),
+      JSON.stringify(profile && profile.customUniforms || null),
       String(profile && profile.normalMap || ""),
       String(profile && profile.roughnessMap || ""),
       String(profile && profile.metalnessMap || ""),

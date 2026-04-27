@@ -93,6 +93,11 @@ type IRCamera struct {
 	RotationY    float64 `json:"rotationY,omitempty"`
 	RotationZ    float64 `json:"rotationZ,omitempty"`
 	FOV          float64 `json:"fov,omitempty"`
+	Left         float64 `json:"left,omitempty"`
+	Right        float64 `json:"right,omitempty"`
+	Top          float64 `json:"top,omitempty"`
+	Bottom       float64 `json:"bottom,omitempty"`
+	Zoom         float64 `json:"zoom,omitempty"`
 	Near         float64 `json:"near,omitempty"`
 	Far          float64 `json:"far,omitempty"`
 	TransitionMS float64 `json:"transitionMS,omitempty"`
@@ -118,23 +123,31 @@ type IREnvironment struct {
 
 // IRMaterial is a reusable material profile referenced by node materialIndex.
 type IRMaterial struct {
-	Name         string    `json:"name,omitempty"`
-	Kind         string    `json:"kind,omitempty"`
-	Color        string    `json:"color,omitempty"`
-	Albedo       []float64 `json:"albedo,omitempty"`
-	Opacity      float64   `json:"opacity,omitempty"`
-	Emissive     float64   `json:"emissive,omitempty"`
-	Roughness    float64   `json:"roughness,omitempty"`
-	Metalness    float64   `json:"metalness,omitempty"`
-	Texture      string    `json:"texture,omitempty"`
-	NormalMap    string    `json:"normalMap,omitempty"`
-	RoughnessMap string    `json:"roughnessMap,omitempty"`
-	MetalnessMap string    `json:"metalnessMap,omitempty"`
-	EmissiveMap  string    `json:"emissiveMap,omitempty"`
-	BlendMode    string    `json:"blendMode,omitempty"`
-	RenderPass   string    `json:"renderPass,omitempty"`
-	Wireframe    *bool     `json:"wireframe,omitempty"`
-	DepthWrite   *bool     `json:"depthWrite,omitempty"`
+	Name               string         `json:"name,omitempty"`
+	Kind               string         `json:"kind,omitempty"`
+	Color              string         `json:"color,omitempty"`
+	Albedo             []float64      `json:"albedo,omitempty"`
+	Opacity            float64        `json:"opacity,omitempty"`
+	Emissive           float64        `json:"emissive,omitempty"`
+	Roughness          float64        `json:"roughness,omitempty"`
+	Metalness          float64        `json:"metalness,omitempty"`
+	Texture            string         `json:"texture,omitempty"`
+	NormalMap          string         `json:"normalMap,omitempty"`
+	RoughnessMap       string         `json:"roughnessMap,omitempty"`
+	MetalnessMap       string         `json:"metalnessMap,omitempty"`
+	EmissiveMap        string         `json:"emissiveMap,omitempty"`
+	BlendMode          string         `json:"blendMode,omitempty"`
+	RenderPass         string         `json:"renderPass,omitempty"`
+	Wireframe          *bool          `json:"wireframe,omitempty"`
+	DepthWrite         *bool          `json:"depthWrite,omitempty"`
+	LineDash           *bool          `json:"lineDash,omitempty"`
+	DashSize           float64        `json:"dashSize,omitempty"`
+	GapSize            float64        `json:"gapSize,omitempty"`
+	CustomVertex       string         `json:"customVertex,omitempty"`
+	CustomFragment     string         `json:"customFragment,omitempty"`
+	CustomVertexWGSL   string         `json:"customVertexWGSL,omitempty"`
+	CustomFragmentWGSL string         `json:"customFragmentWGSL,omitempty"`
+	CustomUniforms     map[string]any `json:"customUniforms,omitempty"`
 }
 
 // IRNode is a discriminated union over Kind. Exactly one payload should be set
@@ -470,7 +483,7 @@ func (p Props) CanonicalIR() IR {
 	legacy := p.SceneIR()
 	out := IR{
 		Version:     IRVersion,
-		Camera:      cameraToIR(p.Camera),
+		Camera:      p.cameraToIR(),
 		Environment: environmentToIR(p.Background, legacy.Environment),
 		Lights:      lightsToIR(legacy.Lights),
 		Nodes:       make([]IRNode, 0, len(legacy.Objects)+len(legacy.Models)+len(legacy.Points)+len(legacy.InstancedMeshes)+len(legacy.ComputeParticles)+len(legacy.Sprites)+len(legacy.Labels)),
@@ -650,6 +663,30 @@ func cameraToIR(camera PerspectiveCamera) IRCamera {
 	}
 }
 
+func (p Props) cameraToIR() IRCamera {
+	if p.OrthographicCamera != nil && !p.OrthographicCamera.isZero() {
+		camera := p.OrthographicCamera
+		return IRCamera{
+			Kind:         "orthographic",
+			X:            camera.Position.X,
+			Y:            camera.Position.Y,
+			Z:            camera.Position.Z,
+			RotationX:    camera.Rotation.X,
+			RotationY:    camera.Rotation.Y,
+			RotationZ:    camera.Rotation.Z,
+			Left:         camera.Left,
+			Right:        camera.Right,
+			Top:          camera.Top,
+			Bottom:       camera.Bottom,
+			Zoom:         camera.Zoom,
+			Near:         camera.Near,
+			Far:          camera.Far,
+			TransitionMS: camera.TransitionMS,
+		}
+	}
+	return cameraToIR(p.Camera)
+}
+
 func environmentToIR(background string, environment EnvironmentIR) IREnvironment {
 	return IREnvironment{
 		AmbientColor:     environment.AmbientColor,
@@ -715,21 +752,29 @@ func appendIRMaterial(materials *[]IRMaterial, indexes map[string]int, material 
 
 func materialFromObjectIR(object ObjectIR) IRMaterial {
 	return IRMaterial{
-		Kind:         firstNonEmptySceneString(object.MaterialKind, "standard"),
-		Color:        object.Color,
-		Texture:      object.Texture,
-		Opacity:      derefFloat64(object.Opacity),
-		Emissive:     derefFloat64(object.Emissive),
-		Roughness:    object.Roughness,
-		Metalness:    object.Metalness,
-		NormalMap:    object.NormalMap,
-		RoughnessMap: object.RoughnessMap,
-		MetalnessMap: object.MetalnessMap,
-		EmissiveMap:  object.EmissiveMap,
-		BlendMode:    object.BlendMode,
-		RenderPass:   object.RenderPass,
-		Wireframe:    object.Wireframe,
-		DepthWrite:   object.DepthWrite,
+		Kind:               firstNonEmptySceneString(object.MaterialKind, "standard"),
+		Color:              object.Color,
+		Texture:            object.Texture,
+		Opacity:            derefFloat64(object.Opacity),
+		Emissive:           derefFloat64(object.Emissive),
+		Roughness:          object.Roughness,
+		Metalness:          object.Metalness,
+		NormalMap:          object.NormalMap,
+		RoughnessMap:       object.RoughnessMap,
+		MetalnessMap:       object.MetalnessMap,
+		EmissiveMap:        object.EmissiveMap,
+		BlendMode:          object.BlendMode,
+		RenderPass:         object.RenderPass,
+		Wireframe:          object.Wireframe,
+		DepthWrite:         object.DepthWrite,
+		LineDash:           object.LineDash,
+		DashSize:           object.DashSize,
+		GapSize:            object.GapSize,
+		CustomVertex:       object.CustomVertex,
+		CustomFragment:     object.CustomFragment,
+		CustomVertexWGSL:   object.CustomVertexWGSL,
+		CustomFragmentWGSL: object.CustomFragmentWGSL,
+		CustomUniforms:     cloneSceneAnyMap(object.CustomUniforms),
 	}
 }
 

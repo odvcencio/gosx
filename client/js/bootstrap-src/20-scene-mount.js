@@ -1712,6 +1712,56 @@
     setAttrValue(mount, "data-gosx-scene3d-postfx", deferred ? "deferred" : (enabled ? "enabled" : "none"));
   }
 
+  function createSceneStatsOverlay(mount, enabled) {
+    if (!mount || !enabled || typeof document.createElement !== "function") {
+      return null;
+    }
+    const element = document.createElement("div");
+    element.setAttribute("data-gosx-scene3d-stats", "true");
+    element.setAttribute("aria-hidden", "true");
+    element.style.position = "absolute";
+    element.style.left = "8px";
+    element.style.top = "8px";
+    element.style.zIndex = "8";
+    element.style.pointerEvents = "none";
+    element.style.font = "11px/1.35 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace";
+    element.style.color = "#d9f7ff";
+    element.style.background = "rgba(4, 10, 16, 0.72)";
+    element.style.border = "1px solid rgba(141, 225, 255, 0.22)";
+    element.style.borderRadius = "6px";
+    element.style.padding = "6px 7px";
+    element.style.whiteSpace = "pre";
+    element.style.backdropFilter = "blur(6px)";
+    mount.appendChild(element);
+    return {
+      element,
+      update(bundle, frameStart, renderer, viewport) {
+        const now = typeof performance !== "undefined" && performance.now ? performance.now() : Date.now();
+        const frameMS = Math.max(0, now - sceneNumber(frameStart, now));
+        const fps = frameMS > 0 ? Math.min(999, 1000 / frameMS) : 0;
+        const meshes = Array.isArray(bundle && bundle.meshObjects) ? bundle.meshObjects.length : 0;
+        const world = Array.isArray(bundle && bundle.objects) ? bundle.objects.length : 0;
+        const points = Array.isArray(bundle && bundle.points) ? bundle.points.length : 0;
+        const instanced = Array.isArray(bundle && bundle.instancedMeshes) ? bundle.instancedMeshes.length : 0;
+        const surfaces = Array.isArray(bundle && bundle.surfaces) ? bundle.surfaces.length : 0;
+        const drawCalls = meshes + world + points + instanced + surfaces;
+        const materialCount = Array.isArray(bundle && bundle.materials) ? bundle.materials.length : 0;
+        element.textContent =
+          "fps " + fps.toFixed(0) + "  ms " + frameMS.toFixed(1) + "\n" +
+          "draw " + drawCalls + "  mat " + materialCount + "\n" +
+          "meshV " + Math.floor(sceneNumber(bundle && bundle.worldMeshVertexCount, 0)) +
+          "  lineV " + Math.floor(sceneNumber(bundle && bundle.worldVertexCount, 0)) + "\n" +
+          String(renderer && (renderer.type || renderer.kind) || "renderer") +
+          "  " + Math.floor(sceneNumber(viewport && viewport.cssWidth, 0)) + "x" + Math.floor(sceneNumber(viewport && viewport.cssHeight, 0));
+      },
+      dispose() {
+        if (element.parentNode === mount) {
+          mount.removeChild(element);
+        }
+      },
+    };
+  }
+
   function sceneViewportDevicePixelRatio(props, maxDevicePixelRatio) {
     const environment = sceneEnvironmentState();
     const preferred = sceneNumber(
@@ -2693,7 +2743,13 @@
       radius,
       yaw: Math.atan2(offsetX, -offsetZ),
       pitch: Math.asin(sceneClamp(offsetY / radius, -0.98, 0.98)),
+      kind: normalized.kind,
       fov: normalized.fov,
+      left: normalized.left,
+      right: normalized.right,
+      top: normalized.top,
+      bottom: normalized.bottom,
+      zoom: normalized.zoom,
       near: normalized.near,
       far: normalized.far,
     };
@@ -2722,10 +2778,16 @@
       x: worldPosition.x,
       y: worldPosition.y,
       z: -worldPosition.z,
+      kind: base.kind,
       rotationX: -Math.atan2(forward.y, horizontal),
       rotationY: Math.atan2(forward.x, forward.z),
       rotationZ: 0,
       fov: sceneNumber(orbit.fov, base.fov),
+      left: sceneNumber(orbit.left, base.left),
+      right: sceneNumber(orbit.right, base.right),
+      top: sceneNumber(orbit.top, base.top),
+      bottom: sceneNumber(orbit.bottom, base.bottom),
+      zoom: sceneNumber(orbit.zoom, base.zoom),
       near: sceneNumber(orbit.near, base.near),
       far: sceneNumber(orbit.far, base.far),
     };
@@ -3101,6 +3163,7 @@
     labelLayer.setAttribute("data-gosx-scene3d-label-layer", "true");
     labelLayer.setAttribute("aria-hidden", "true");
     ctx.mount.appendChild(labelLayer);
+    const statsOverlay = createSceneStatsOverlay(ctx.mount, sceneBool(props.stats, false));
 
     const sentinelLayer = document.createElement("div");
     sentinelLayer.setAttribute("data-gosx-scene-node-layer", "true");
@@ -3134,6 +3197,9 @@
       }
       if (labelLayer.parentNode === ctx.mount) {
         ctx.mount.removeChild(labelLayer);
+      }
+      if (statsOverlay) {
+        statsOverlay.dispose();
       }
       if (sentinelLayer.parentNode === ctx.mount) {
         sentinelLayer.parentNode.removeChild(sentinelLayer);
@@ -3942,6 +4008,7 @@
 
     function renderFrame(now, reason) {
       if (disposed) return;
+      const frameStart = typeof performance !== "undefined" && performance.now ? performance.now() : Date.now();
       const perfEnabled = typeof window !== "undefined" && window.__gosx_scene3d_perf === true;
       recordScenePerfCounter("render:" + (reason || "animation"));
       // Only re-measure the viewport when something has actually
@@ -3985,6 +4052,9 @@
           renderSceneLabels(labelLayer, effectiveBundle, labelLayoutCache, labelElements, viewport.cssWidth, viewport.cssHeight);
           renderSceneSprites(labelLayer, effectiveBundle, spriteElements, viewport.cssWidth, viewport.cssHeight);
           renderSceneHTML(labelLayer, effectiveBundle, htmlElements, viewport.cssWidth, viewport.cssHeight);
+          if (statsOverlay) {
+            statsOverlay.update(effectiveBundle, frameStart, renderer, viewport);
+          }
           scheduleNextAnimationFrame();
           return;
         }
@@ -4032,6 +4102,9 @@
       renderSceneLabels(labelLayer, latestBundle, labelLayoutCache, labelElements, viewport.cssWidth, viewport.cssHeight);
       renderSceneSprites(labelLayer, latestBundle, spriteElements, viewport.cssWidth, viewport.cssHeight);
       renderSceneHTML(labelLayer, latestBundle, htmlElements, viewport.cssWidth, viewport.cssHeight);
+      if (statsOverlay) {
+        statsOverlay.update(latestBundle, frameStart, renderer, viewport);
+      }
       scheduleNextAnimationFrame();
     }
 
@@ -4300,6 +4373,9 @@
         }
         if (labelLayer.parentNode === ctx.mount) {
           ctx.mount.removeChild(labelLayer);
+        }
+        if (statsOverlay) {
+          statsOverlay.dispose();
         }
         if (sentinelLayer.parentNode === ctx.mount) {
           ctx.mount.removeChild(sentinelLayer);

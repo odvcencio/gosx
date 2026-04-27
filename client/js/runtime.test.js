@@ -6083,11 +6083,76 @@ test("bootstrap bridges clamp01 into the WebGPU Scene3D sub-feature", () => {
   assert.match(prefix, /var SCENE_POST_BLOOM = sceneApi\.SCENE_POST_BLOOM/);
   assert.match(prefix, /var SCENE_POST_VIGNETTE = sceneApi\.SCENE_POST_VIGNETTE/);
   assert.match(prefix, /var SCENE_POST_COLOR_GRADE = sceneApi\.SCENE_POST_COLOR_GRADE/);
+  assert.match(prefix, /var SCENE_POST_SSAO = sceneApi\.SCENE_POST_SSAO/);
   assert.match(core, /\n    clamp01,\n/);
   assert.match(core, /\n    SCENE_POST_TONE_MAPPING: "toneMapping",\n/);
   assert.match(core, /\n    SCENE_POST_BLOOM: "bloom",\n/);
   assert.match(core, /\n    SCENE_POST_VIGNETTE: "vignette",\n/);
   assert.match(core, /\n    SCENE_POST_COLOR_GRADE: "colorGrade",\n/);
+  assert.match(core, /\n    SCENE_POST_SSAO: "ssao",\n/);
+});
+
+test("bootstrap normalizes orthographic Scene3D cameras and custom line materials", async () => {
+  const env = createContext({});
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const api = env.context.__gosx_scene3d_api;
+  const camera = api.sceneRenderCamera({
+    kind: "orthographic",
+    x: 1,
+    y: 2,
+    z: 8,
+    left: -4,
+    right: 4,
+    top: 3,
+    bottom: -3,
+    zoom: 2,
+    near: 0.1,
+    far: 90,
+  });
+
+  assert.equal(camera.kind, "orthographic");
+  assert.equal(camera.left, -4);
+  assert.equal(camera.zoom, 2);
+
+  const object = api.normalizeSceneObject({
+    id: "path",
+    kind: "lines",
+    materialKind: "line-dashed",
+    color: "#ffffff",
+    lineDash: true,
+    dashSize: 6,
+    gapSize: 2,
+    lineWidth: 3,
+    points: [{ x: 0, y: 0, z: 0 }, { x: 1, y: 0, z: 0 }],
+    lineSegments: [[0, 1]],
+  }, 0, null);
+  const bundle = api.createSceneRenderBundle(
+    320,
+    180,
+    "#08151f",
+    camera,
+    [object],
+    [],
+    [],
+    [],
+    [],
+    {},
+    0,
+    [],
+    [],
+    [],
+    [{ kind: "ssao", radius: 5, intensity: 0.6 }],
+    0,
+  );
+
+  assert.equal(bundle.camera.kind, "orthographic");
+  assert.equal(bundle.materials[0].kind, "line-dashed");
+  assert.equal(bundle.materials[0].lineDash, true);
+  assert.equal(bundle.worldLineWidths[0], 3);
+  assert.equal(bundle.worldLineDashes[0], true);
+  assert.deepEqual(bundle.postEffects, [{ kind: "ssao", radius: 5, intensity: 0.6 }]);
 });
 
 test("bootstrap applies named Scene3D materials to point layers", async () => {

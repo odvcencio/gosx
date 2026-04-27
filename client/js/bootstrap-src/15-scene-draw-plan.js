@@ -347,6 +347,7 @@
   }
 
   function sceneHashCamera(hash, camera) {
+    hash = sceneHashString(hash, camera && camera.kind || "perspective");
     hash = sceneHashNumber(hash, sceneNumber(camera && camera.x, 0));
     hash = sceneHashNumber(hash, sceneNumber(camera && camera.y, 0));
     hash = sceneHashNumber(hash, sceneNumber(camera && camera.z, 6));
@@ -354,6 +355,11 @@
     hash = sceneHashNumber(hash, sceneNumber(camera && camera.rotationY, 0));
     hash = sceneHashNumber(hash, sceneNumber(camera && camera.rotationZ, 0));
     hash = sceneHashNumber(hash, sceneNumber(camera && camera.fov, 75));
+    hash = sceneHashNumber(hash, sceneNumber(camera && camera.left, 0));
+    hash = sceneHashNumber(hash, sceneNumber(camera && camera.right, 0));
+    hash = sceneHashNumber(hash, sceneNumber(camera && camera.top, 0));
+    hash = sceneHashNumber(hash, sceneNumber(camera && camera.bottom, 0));
+    hash = sceneHashNumber(hash, sceneNumber(camera && camera.zoom, 1));
     hash = sceneHashNumber(hash, sceneNumber(camera && camera.near, 0.05));
     return sceneHashNumber(hash, sceneNumber(camera && camera.far, 128));
   }

@@ -110,8 +110,10 @@
   // because sceneProjectPoint consumes the scratch fields inline and
   // returns before any downstream code can observe the scratch state.
   const _sceneProjectCameraScratch = {
+    kind: "perspective",
     x: 0, y: 0, z: 0,
     rotationX: 0, rotationY: 0, rotationZ: 0,
+    left: 0, right: 0, top: 0, bottom: 0, zoom: 1,
     fov: 0, near: 0, far: 0,
   };
 
@@ -154,6 +156,17 @@
 
     // Step 3: perspective clip test.
     if (lz <= cam.near || lz >= cam.far) return null;
+
+    if (cam.kind === "orthographic") {
+      const bounds = sceneOrthographicBounds(cam, width, height);
+      const spanX = Math.max(0.000001, bounds.right - bounds.left);
+      const spanY = Math.max(0.000001, bounds.top - bounds.bottom);
+      return {
+        x: ((lx - bounds.left) / spanX) * width,
+        y: ((bounds.top - ly) / spanY) * height,
+        depth: lz,
+      };
+    }
 
     // Step 4: perspective divide.
     const focal = (Math.min(width, height) / 2) / Math.tan((cam.fov * Math.PI) / 360);
@@ -462,6 +475,26 @@
 
     // Camera world position (z is negated, matching sceneCameraLocalPoint).
     var origin = { x: cam.x, y: cam.y, z: -cam.z };
+    if (cam.kind === "orthographic") {
+      var bounds = sceneOrthographicBounds(cam, width, height);
+      var spanX = Math.max(0.000001, bounds.right - bounds.left);
+      var spanY = Math.max(0.000001, bounds.top - bounds.bottom);
+      var localOrigin = {
+        x: bounds.left + (pointerX / Math.max(1, width)) * spanX,
+        y: bounds.top - (pointerY / Math.max(1, height)) * spanY,
+        z: 0,
+      };
+      var localDir = { x: 0, y: 0, z: 1 };
+      var worldOffset = sceneRotatePoint(localOrigin, cam.rotationX, cam.rotationY, cam.rotationZ);
+      var worldDir = sceneRotatePoint(localDir, cam.rotationX, cam.rotationY, cam.rotationZ);
+      var lenOrtho = Math.sqrt(worldDir.x * worldDir.x + worldDir.y * worldDir.y + worldDir.z * worldDir.z);
+      return {
+        origin: { x: origin.x + worldOffset.x, y: origin.y + worldOffset.y, z: origin.z + worldOffset.z },
+        dir: lenOrtho < 1e-12
+          ? { x: 0, y: 0, z: 1 }
+          : { x: worldDir.x / lenOrtho, y: worldDir.y / lenOrtho, z: worldDir.z / lenOrtho },
+      };
+    }
 
     // Compute direction in camera-local space, matching the projection focal length.
     var halfFov = (cam.fov * Math.PI) / 360;

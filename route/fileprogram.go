@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"html"
+	"math"
 	"net/http"
 	"reflect"
 	"sort"
@@ -2750,6 +2751,26 @@ func (r *fileProgramRenderer) lowerScene3DComposableNode(child *ir.Node, env fil
 		out["camera"] = attrs
 	case "Material":
 		appendScene3DSceneRecord(sceneMap, "materials", attrs)
+	case "LineBasicMaterial":
+		appendScene3DSceneRecord(sceneMap, "materials", scene3DMaterialAttrs(attrs, "line-basic"))
+	case "LineDashedMaterial":
+		appendScene3DSceneRecord(sceneMap, "materials", scene3DMaterialAttrs(attrs, "line-dashed"))
+	case "CustomMaterial":
+		appendScene3DSceneRecord(sceneMap, "materials", scene3DMaterialAttrs(attrs, "custom"))
+	case "AxesHelper":
+		lowerScene3DAxesHelper(sceneMap, attrs)
+	case "GridHelper":
+		lowerScene3DGridHelper(sceneMap, attrs)
+	case "BoxHelper":
+		lowerScene3DBoxHelper(sceneMap, attrs)
+	case "BoundingBoxHelper":
+		lowerScene3DBoundingBoxHelper(sceneMap, attrs)
+	case "SkeletonHelper":
+		lowerScene3DSkeletonHelper(sceneMap, attrs)
+	case "TransformControls":
+		lowerScene3DTransformControls(sceneMap, attrs)
+	case "PostFX.SSAO":
+		appendScene3DSceneRecord(sceneMap, "postEffects", withDefaultKind(attrs, "ssao"))
 	case "PostFX.Bloom":
 		appendScene3DSceneRecord(sceneMap, "postEffects", withDefaultKind(attrs, "bloom"))
 	case "PostFX.Vignette":
@@ -2766,12 +2787,394 @@ func isScene3DComposableTag(tag string) bool {
 	case "Mesh", "Model", "Points", "InstancedMesh", "ComputeParticles",
 		"Html", "HTML",
 		"DirectionalLight", "PointLight", "AmbientLight", "SpotLight", "HemisphereLight",
-		"Environment", "Camera", "Material",
-		"PostFX.Bloom", "PostFX.Vignette", "PostFX.ColorGrading", "PostFX.Tonemap":
+		"Environment", "Camera", "Material", "LineBasicMaterial", "LineDashedMaterial", "CustomMaterial",
+		"AxesHelper", "GridHelper", "BoxHelper", "BoundingBoxHelper", "SkeletonHelper", "TransformControls",
+		"PostFX.SSAO", "PostFX.Bloom", "PostFX.Vignette", "PostFX.ColorGrading", "PostFX.Tonemap":
 		return true
 	default:
 		return false
 	}
+}
+
+func scene3DMaterialAttrs(attrs map[string]any, kind string) map[string]any {
+	out := withDefaultKind(attrs, kind)
+	if kind == "line-basic" || kind == "line-dashed" {
+		if _, ok := out["lineWidth"]; !ok {
+			if width, ok := out["width"]; ok {
+				out["lineWidth"] = width
+			}
+		}
+	}
+	if kind == "line-dashed" {
+		if _, ok := out["lineDash"]; !ok {
+			out["lineDash"] = true
+		}
+	}
+	if kind == "custom" {
+		if _, ok := out["customVertex"]; !ok {
+			if value, ok := out["vertexGLSL"]; ok {
+				out["customVertex"] = value
+			} else if value, ok := out["vertex"]; ok {
+				out["customVertex"] = value
+			}
+		}
+		if _, ok := out["customFragment"]; !ok {
+			if value, ok := out["fragmentGLSL"]; ok {
+				out["customFragment"] = value
+			} else if value, ok := out["fragment"]; ok {
+				out["customFragment"] = value
+			}
+		}
+		if _, ok := out["customUniforms"]; !ok {
+			if value, ok := out["uniforms"]; ok {
+				out["customUniforms"] = value
+			}
+		}
+	}
+	return out
+}
+
+func lowerScene3DAxesHelper(sceneMap map[string]any, attrs map[string]any) {
+	size := scene3DNumber(attrs, 1, "size")
+	width := scene3DNumber(attrs, 1.5, "lineWidth", "widthPx", "width")
+	base := scene3DHelperID(attrs, "scene-axes-helper")
+	appendScene3DSceneRecord(sceneMap, "objects", scene3DLineObject(attrs, base+"-x", "#ef4444", width,
+		[]map[string]any{scene3DPoint(0, 0, 0), scene3DPoint(size, 0, 0)}, [][2]int{{0, 1}}))
+	appendScene3DSceneRecord(sceneMap, "objects", scene3DLineObject(attrs, base+"-y", "#22c55e", width,
+		[]map[string]any{scene3DPoint(0, 0, 0), scene3DPoint(0, size, 0)}, [][2]int{{0, 1}}))
+	appendScene3DSceneRecord(sceneMap, "objects", scene3DLineObject(attrs, base+"-z", "#3b82f6", width,
+		[]map[string]any{scene3DPoint(0, 0, 0), scene3DPoint(0, 0, size)}, [][2]int{{0, 1}}))
+}
+
+func lowerScene3DGridHelper(sceneMap map[string]any, attrs map[string]any) {
+	size := scene3DNumber(attrs, 10, "size")
+	divisions := int(scene3DNumber(attrs, 10, "divisions"))
+	if divisions <= 0 {
+		divisions = 10
+	}
+	half := size / 2
+	step := size / float64(divisions)
+	points := make([]map[string]any, 0, (divisions+1)*4)
+	segments := make([][2]int, 0, (divisions+1)*2)
+	for i := 0; i <= divisions; i++ {
+		offset := -half + float64(i)*step
+		base := len(points)
+		points = append(points,
+			scene3DPoint(-half, 0, offset),
+			scene3DPoint(half, 0, offset),
+			scene3DPoint(offset, 0, -half),
+			scene3DPoint(offset, 0, half),
+		)
+		segments = append(segments, [2]int{base, base + 1}, [2]int{base + 2, base + 3})
+	}
+	width := scene3DNumber(attrs, 1, "lineWidth", "widthPx", "width")
+	color := scene3DString(attrs, "#9ca3af", "color")
+	record := scene3DLineObject(attrs, scene3DHelperID(attrs, "scene-grid-helper"), color, width, points, segments)
+	if _, ok := record["opacity"]; !ok {
+		record["opacity"] = 0.72
+	}
+	if _, ok := record["blendMode"]; !ok {
+		record["blendMode"] = "alpha"
+	}
+	appendScene3DSceneRecord(sceneMap, "objects", record)
+}
+
+func lowerScene3DBoxHelper(sceneMap map[string]any, attrs map[string]any) {
+	width := scene3DNumber(attrs, 1, "width")
+	height := scene3DNumber(attrs, width, "height")
+	depth := scene3DNumber(attrs, width, "depth")
+	lineWidth := scene3DNumber(attrs, 0, "lineWidth", "widthPx")
+	points, segments := scene3DBoxLineGeometry(width, height, depth)
+	appendScene3DSceneRecord(sceneMap, "objects", scene3DLineObject(attrs, scene3DHelperID(attrs, "scene-box-helper"),
+		scene3DString(attrs, "#f59e0b", "color"), lineWidth, points, segments))
+}
+
+func lowerScene3DBoundingBoxHelper(sceneMap map[string]any, attrs map[string]any) {
+	min := scene3DVectorFromAttrs(attrs, "min", scene3DPointValue(attrs["min"]))
+	max := scene3DVectorFromAttrs(attrs, "max", scene3DPointValue(attrs["max"]))
+	width := math.Abs(max[0] - min[0])
+	height := math.Abs(max[1] - min[1])
+	depth := math.Abs(max[2] - min[2])
+	points, segments := scene3DBoxLineGeometry(width, height, depth)
+	record := scene3DLineObject(attrs, scene3DHelperID(attrs, "scene-bounds-helper"),
+		scene3DString(attrs, "#f59e0b", "color"), scene3DNumber(attrs, 0, "lineWidth", "widthPx"), points, segments)
+	record["x"] = (min[0] + max[0]) / 2
+	record["y"] = (min[1] + max[1]) / 2
+	record["z"] = (min[2] + max[2]) / 2
+	appendScene3DSceneRecord(sceneMap, "objects", record)
+}
+
+func lowerScene3DSkeletonHelper(sceneMap map[string]any, attrs map[string]any) {
+	points := scene3DPointListValue(firstNonEmptyValue(attrs["joints"], attrs["points"]))
+	segments := scene3DSegmentListValue(firstNonEmptyValue(attrs["bones"], attrs["segments"]))
+	if len(points) == 0 || len(segments) == 0 {
+		return
+	}
+	appendScene3DSceneRecord(sceneMap, "objects", scene3DLineObject(attrs, scene3DHelperID(attrs, "scene-skeleton-helper"),
+		scene3DString(attrs, "#e879f9", "color"), scene3DNumber(attrs, 1.25, "lineWidth", "widthPx", "width"), points, segments))
+}
+
+func lowerScene3DTransformControls(sceneMap map[string]any, attrs map[string]any) {
+	positioned := cloneStringAnyMap(attrs)
+	if target := strings.TrimSpace(stringValue(attrs["target"])); target != "" {
+		if targetAttrs := scene3DFindObject(sceneMap, target); targetAttrs != nil {
+			for _, key := range []string{"x", "y", "z"} {
+				if _, ok := positioned[key]; !ok {
+					if value, exists := targetAttrs[key]; exists && value != nil {
+						positioned[key] = value
+					}
+				}
+			}
+		}
+	}
+	lowerScene3DAxesHelper(sceneMap, positioned)
+	if strings.EqualFold(strings.TrimSpace(stringValue(attrs["mode"])), "rotate") {
+		size := scene3DNumber(attrs, 1.25, "size")
+		lineWidth := scene3DNumber(attrs, 2, "lineWidth", "widthPx", "width")
+		points, segments := scene3DRingLineGeometry(size, 48)
+		appendScene3DSceneRecord(sceneMap, "objects", scene3DLineObject(positioned, scene3DHelperID(attrs, "scene-transform-controls")+"-ring",
+			"#facc15", lineWidth, points, segments))
+	}
+}
+
+func scene3DLineObject(attrs map[string]any, id, color string, width float64, points []map[string]any, segments [][2]int) map[string]any {
+	record := scene3DTransformAttrs(attrs)
+	record["id"] = id
+	record["kind"] = "lines"
+	record["materialKind"] = "line-basic"
+	record["color"] = color
+	record["points"] = points
+	record["segments"] = segments
+	if width > 0 {
+		record["lineWidth"] = width
+	}
+	return record
+}
+
+func scene3DTransformAttrs(attrs map[string]any) map[string]any {
+	out := map[string]any{}
+	for _, key := range []string{
+		"x", "y", "z",
+		"rotationX", "rotationY", "rotationZ",
+		"scaleX", "scaleY", "scaleZ",
+		"spinX", "spinY", "spinZ",
+		"pickable", "selected", "outlineColor", "outlineWidth",
+	} {
+		if value, ok := attrs[key]; ok {
+			out[key] = value
+		}
+	}
+	return out
+}
+
+func scene3DHelperID(attrs map[string]any, fallback string) string {
+	if id := strings.TrimSpace(stringValue(attrs["id"])); id != "" {
+		return id
+	}
+	return fallback
+}
+
+func scene3DNumber(attrs map[string]any, fallback float64, names ...string) float64 {
+	for _, name := range names {
+		if value, ok := attrs[name]; ok {
+			return numericValue(value)
+		}
+	}
+	return fallback
+}
+
+func scene3DString(attrs map[string]any, fallback string, names ...string) string {
+	for _, name := range names {
+		if value, ok := attrs[name]; ok {
+			if text := strings.TrimSpace(stringValue(value)); text != "" {
+				return text
+			}
+		}
+	}
+	return fallback
+}
+
+func scene3DPoint(x, y, z float64) map[string]any {
+	return map[string]any{"x": x, "y": y, "z": z}
+}
+
+func scene3DBoxLineGeometry(width, height, depth float64) ([]map[string]any, [][2]int) {
+	if width <= 0 {
+		width = 1
+	}
+	if height <= 0 {
+		height = 1
+	}
+	if depth <= 0 {
+		depth = 1
+	}
+	x := width / 2
+	y := height / 2
+	z := depth / 2
+	return []map[string]any{
+			scene3DPoint(-x, -y, -z), scene3DPoint(x, -y, -z), scene3DPoint(x, y, -z), scene3DPoint(-x, y, -z),
+			scene3DPoint(-x, -y, z), scene3DPoint(x, -y, z), scene3DPoint(x, y, z), scene3DPoint(-x, y, z),
+		}, [][2]int{
+			{0, 1}, {1, 2}, {2, 3}, {3, 0},
+			{4, 5}, {5, 6}, {6, 7}, {7, 4},
+			{0, 4}, {1, 5}, {2, 6}, {3, 7},
+		}
+}
+
+func scene3DRingLineGeometry(radius float64, count int) ([]map[string]any, [][2]int) {
+	if radius <= 0 {
+		radius = 1
+	}
+	if count < 8 {
+		count = 32
+	}
+	points := make([]map[string]any, 0, count)
+	segments := make([][2]int, 0, count)
+	for i := 0; i < count; i++ {
+		angle := (float64(i) / float64(count)) * math.Pi * 2
+		points = append(points, scene3DPoint(math.Cos(angle)*radius, math.Sin(angle)*radius, 0))
+		segments = append(segments, [2]int{i, (i + 1) % count})
+	}
+	return points, segments
+}
+
+func scene3DPointValue(value any) [3]float64 {
+	switch current := value.(type) {
+	case gosxscene.Vector3:
+		return [3]float64{current.X, current.Y, current.Z}
+	case map[string]any:
+		return [3]float64{numericValue(firstNonEmptyValue(current["x"], current["X"])), numericValue(firstNonEmptyValue(current["y"], current["Y"])), numericValue(firstNonEmptyValue(current["z"], current["Z"]))}
+	}
+	mapped := mapStringAnyValue(value)
+	if mapped != nil {
+		return [3]float64{numericValue(firstNonEmptyValue(mapped["x"], mapped["X"])), numericValue(firstNonEmptyValue(mapped["y"], mapped["Y"])), numericValue(firstNonEmptyValue(mapped["z"], mapped["Z"]))}
+	}
+	rv := reflect.ValueOf(value)
+	for rv.IsValid() && rv.Kind() == reflect.Pointer {
+		if rv.IsNil() {
+			return [3]float64{}
+		}
+		rv = rv.Elem()
+	}
+	if rv.IsValid() && rv.Kind() == reflect.Struct {
+		return [3]float64{
+			numericValue(fieldValueByName(rv, "X")),
+			numericValue(fieldValueByName(rv, "Y")),
+			numericValue(fieldValueByName(rv, "Z")),
+		}
+	}
+	return [3]float64{}
+}
+
+func scene3DVectorFromAttrs(attrs map[string]any, prefix string, fallback [3]float64) [3]float64 {
+	out := fallback
+	for index, key := range []string{"X", "Y", "Z"} {
+		if value, ok := attrs[prefix+key]; ok {
+			out[index] = numericValue(value)
+		}
+		if value, ok := attrs[prefix+strings.ToLower(key)]; ok {
+			out[index] = numericValue(value)
+		}
+	}
+	return out
+}
+
+func scene3DPointListValue(value any) []map[string]any {
+	rv := reflect.ValueOf(value)
+	for rv.IsValid() && rv.Kind() == reflect.Pointer {
+		if rv.IsNil() {
+			return nil
+		}
+		rv = rv.Elem()
+	}
+	if !rv.IsValid() || (rv.Kind() != reflect.Slice && rv.Kind() != reflect.Array) {
+		return nil
+	}
+	if rv.Len() > 0 {
+		first := scene3DIndirectReflectValue(rv.Index(0))
+		if first.IsValid() && isNumericKind(first.Kind()) && rv.Len()%3 == 0 {
+			out := make([]map[string]any, 0, rv.Len()/3)
+			for i := 0; i+2 < rv.Len(); i += 3 {
+				out = append(out, scene3DPoint(numericValue(rv.Index(i).Interface()), numericValue(rv.Index(i+1).Interface()), numericValue(rv.Index(i+2).Interface())))
+			}
+			return out
+		}
+	}
+	out := make([]map[string]any, 0, rv.Len())
+	for i := 0; i < rv.Len(); i++ {
+		point := scene3DPointValue(rv.Index(i).Interface())
+		out = append(out, scene3DPoint(point[0], point[1], point[2]))
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func scene3DSegmentListValue(value any) [][2]int {
+	rv := reflect.ValueOf(value)
+	for rv.IsValid() && rv.Kind() == reflect.Pointer {
+		if rv.IsNil() {
+			return nil
+		}
+		rv = rv.Elem()
+	}
+	if !rv.IsValid() || (rv.Kind() != reflect.Slice && rv.Kind() != reflect.Array) {
+		return nil
+	}
+	out := make([][2]int, 0, rv.Len())
+	for i := 0; i < rv.Len(); i++ {
+		item := scene3DIndirectReflectValue(rv.Index(i))
+		if !item.IsValid() || (item.Kind() != reflect.Slice && item.Kind() != reflect.Array) || item.Len() < 2 {
+			continue
+		}
+		out = append(out, [2]int{int(numericValue(item.Index(0).Interface())), int(numericValue(item.Index(1).Interface()))})
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func isNumericKind(kind reflect.Kind) bool {
+	switch kind {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64,
+		reflect.Float32, reflect.Float64:
+		return true
+	default:
+		return false
+	}
+}
+
+func scene3DIndirectReflectValue(value reflect.Value) reflect.Value {
+	for value.IsValid() && (value.Kind() == reflect.Pointer || value.Kind() == reflect.Interface) {
+		if value.IsNil() {
+			return reflect.Value{}
+		}
+		value = value.Elem()
+	}
+	return value
+}
+
+func fieldValueByName(value reflect.Value, name string) any {
+	if !value.IsValid() || value.Kind() != reflect.Struct {
+		return nil
+	}
+	field := value.FieldByName(name)
+	if !field.IsValid() || !field.CanInterface() {
+		return nil
+	}
+	return field.Interface()
+}
+
+func scene3DFindObject(sceneMap map[string]any, id string) map[string]any {
+	for _, record := range scene3DRecordList(sceneMap["objects"]) {
+		if strings.TrimSpace(stringValue(record["id"])) == id {
+			return record
+		}
+	}
+	return nil
 }
 
 func scene3DLightKind(tag string) string {

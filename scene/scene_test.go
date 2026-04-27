@@ -2315,6 +2315,117 @@ func TestLinesGeometryWidthZeroOmitsProp(t *testing.T) {
 	}
 }
 
+func TestOrthographicCameraReachesLegacyAndCanonicalIR(t *testing.T) {
+	camera := OrthographicCamera{
+		Position:     Vec3(1, 2, 8),
+		Left:         -4,
+		Right:        4,
+		Top:          3,
+		Bottom:       -3,
+		Zoom:         1.5,
+		Near:         0.2,
+		Far:          90,
+		TransitionMS: 250,
+	}
+	props := Props{OrthographicCamera: &camera}
+	legacy := props.LegacyProps()
+	gotCamera, ok := legacy["camera"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected legacy camera map, got %#v", legacy["camera"])
+	}
+	if gotCamera["kind"] != "orthographic" {
+		t.Fatalf("expected orthographic legacy camera, got %#v", gotCamera)
+	}
+	if gotCamera["left"] != -4.0 || gotCamera["right"] != 4.0 || gotCamera["zoom"] != 1.5 {
+		t.Fatalf("expected orthographic bounds in legacy camera, got %#v", gotCamera)
+	}
+	ir := props.CanonicalIR()
+	if ir.Camera.Kind != "orthographic" {
+		t.Fatalf("expected orthographic canonical camera, got %#v", ir.Camera)
+	}
+	if ir.Camera.Left != -4 || ir.Camera.Right != 4 || ir.Camera.Top != 3 || ir.Camera.Bottom != -3 || ir.Camera.Zoom != 1.5 {
+		t.Fatalf("expected orthographic canonical bounds, got %#v", ir.Camera)
+	}
+}
+
+func TestScene3DHelperNodesLowerToLineObjects(t *testing.T) {
+	props := Props{
+		Graph: NewGraph(
+			AxesHelper{ID: "axes", Size: 2},
+			GridHelper{ID: "grid", Size: 4, Divisions: 2},
+			BoxHelper{ID: "box", Width: 2, Height: 3, Depth: 4},
+			BoundingBoxHelper{ID: "bounds", Min: Vec3(-1, -2, -3), Max: Vec3(1, 2, 3)},
+			SkeletonHelper{ID: "skeleton", Joints: []Vector3{Vec3(0, 0, 0), Vec3(0, 1, 0)}, Bones: [][2]int{{0, 1}}},
+			TransformControls{ID: "gizmo", Mode: "rotate", Size: 1},
+		),
+	}
+	ir := props.SceneIR()
+	if len(ir.Objects) < 9 {
+		t.Fatalf("expected helpers to lower to line objects, got %d: %#v", len(ir.Objects), ir.Objects)
+	}
+	for _, object := range ir.Objects {
+		if object.Kind != "lines" {
+			t.Fatalf("expected helper object %q to be lines, got %q", object.ID, object.Kind)
+		}
+		if object.MaterialKind != "line-basic" {
+			t.Fatalf("expected helper object %q line-basic material, got %q", object.ID, object.MaterialKind)
+		}
+	}
+}
+
+func TestScene3DLineCustomAndOutlineMaterialsReachObjectIR(t *testing.T) {
+	props := Props{
+		Graph: NewGraph(
+			Mesh{
+				ID: "path",
+				Geometry: LinesGeometry{
+					Points:   []Vector3{Vec3(0, 0, 0), Vec3(1, 0, 0)},
+					Segments: [][2]int{{0, 1}},
+				},
+				Material: LineDashedMaterial{
+					MaterialStyle: MaterialStyle{Color: "#ffffff"},
+					Width:         2,
+					DashSize:      4,
+					GapSize:       2,
+				},
+			},
+			Mesh{
+				ID:           "shader-box",
+				Geometry:     BoxGeometry{Width: 1, Height: 1, Depth: 1},
+				Selected:     true,
+				OutlineColor: "#ffcc00",
+				OutlineWidth: 4,
+				Material: CustomMaterial{
+					StandardMaterial: StandardMaterial{Color: "#8de1ff", Roughness: 0.4},
+					FragmentGLSL:     "color.rgb = vec3(1.0, 0.0, 0.0);",
+					Uniforms:         map[string]any{"u_gain": 0.75},
+				},
+			},
+		),
+	}
+	ir := props.SceneIR()
+	if len(ir.Objects) != 2 {
+		t.Fatalf("expected two objects, got %#v", ir.Objects)
+	}
+	line := ir.Objects[0]
+	if line.MaterialKind != "line-dashed" || line.LineDash == nil || !*line.LineDash {
+		t.Fatalf("expected dashed line material, got %#v", line)
+	}
+	if line.LineWidth != 2 || line.DashSize != 4 || line.GapSize != 2 {
+		t.Fatalf("expected dashed line sizing fields, got %#v", line)
+	}
+	custom := ir.Objects[1]
+	if custom.MaterialKind != "custom" || custom.CustomFragment == "" {
+		t.Fatalf("expected custom shader material, got %#v", custom)
+	}
+	if custom.CustomUniforms["u_gain"] != 0.75 {
+		t.Fatalf("expected custom uniform to round trip, got %#v", custom.CustomUniforms)
+	}
+	if !custom.Selected || custom.OutlineColor != "#ffcc00" || custom.OutlineWidth != 4 {
+		t.Fatalf("expected selected outline fields, got %#v", custom)
+	}
+}
+
 func TestPerspectiveCameraTransitionMSLegacyProps(t *testing.T) {
 	camera := PerspectiveCamera{
 		Position:     Vec3(0, 6, 8),

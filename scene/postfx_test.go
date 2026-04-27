@@ -8,6 +8,7 @@ func TestPostEffectInterfaceImplementations(t *testing.T) {
 	var _ PostEffect = Bloom{}
 	var _ PostEffect = Vignette{}
 	var _ PostEffect = ColorGrade{}
+	var _ PostEffect = SSAO{}
 }
 
 func TestPostFXZeroValueIsEmpty(t *testing.T) {
@@ -77,6 +78,23 @@ func TestColorGradeIRLegacyProps(t *testing.T) {
 	}
 	if got["saturation"] != 0.9 {
 		t.Errorf("saturation = %v, want 0.9", got["saturation"])
+	}
+}
+
+func TestSSAOIRLegacyProps(t *testing.T) {
+	ir := SSAOIR{Radius: 6, Intensity: 0.7, Bias: 0.03}
+	got := ir.legacyProps()
+	if got["kind"] != "ssao" {
+		t.Fatalf("expected ssao kind, got %#v", got["kind"])
+	}
+	if got["radius"] != 6.0 {
+		t.Fatalf("expected radius 6, got %#v", got["radius"])
+	}
+	if got["intensity"] != 0.7 {
+		t.Fatalf("expected intensity 0.7, got %#v", got["intensity"])
+	}
+	if got["bias"] != 0.03 {
+		t.Fatalf("expected bias 0.03, got %#v", got["bias"])
 	}
 }
 

@@ -820,9 +820,20 @@ func Page() Node {
 		<Camera z={7} fov={64} near={0.1} far={96} />
 		<Environment ambientColor="#f4fbff" ambientIntensity={0.2} fogColor="#050008" fogDensity={0.001} />
 		<DirectionalLight id="sun" color="#fff1d6" intensity={1.2} directionX={0.3} directionY={-1} directionZ={-0.4} />
+		<PostFX.SSAO radius={3} intensity={0.4} bias={0.02} />
 		<PostFX.Bloom threshold={0.65} intensity={0.6} radius={8.0} />
 		<PostFX.Tonemap mode="aces" exposure={1.0} />
+		<LineBasicMaterial name="guide-line" color="#93c5fd" width={2} />
+		<LineDashedMaterial name="dash-line" color="#facc15" width={2} dashSize={6} gapSize={4} />
+		<CustomMaterial name="heat" color="#ff8844" fragmentGLSL="color *= 0.5;" />
 		<Mesh id="hero" kind="box" width={1.8} height={1.2} depth={0.8} color="#8de1ff" materialKind="flat" />
+		<Mesh id="custom-hero" kind="sphere" size={0.8} x={-1.5} material="heat" selected={true} outlineColor="#ffcc00" outlineWidth={3} />
+		<AxesHelper id="axes" size={2} />
+		<GridHelper id="grid" size={8} divisions={8} />
+		<BoxHelper id="box-helper" width={2} height={1} depth={3} />
+		<BoundingBoxHelper id="bounds-helper" minX={-1} minY={-0.5} minZ={-1.5} maxX={1} maxY={0.5} maxZ={1.5} />
+		<SkeletonHelper id="bones-helper" joints={data.joints} bones={data.bones} />
+		<TransformControls id="gizmo" target="hero" mode="rotate" size={1.4} />
 		<Model id="ship" src="/models/ship.glb" x={1.5} static={true} animation="idle" />
 		<Points id="stars" count={2} positions={data.positions} size={0.5} color="#ffffff" blendMode="additive" />
 		<Each as="mesh" of={data.meshes}>
@@ -847,6 +858,8 @@ func Page() Node {
 			"positions": []float64{0, 0, 0, 1, 1, 1},
 			"showExtra": true,
 			"hull":      "stable",
+			"joints":    []scene.Vector3{{X: 0, Y: 0, Z: 0}, {X: 0, Y: 1, Z: 0}},
+			"bones":     [][2]int{{0, 1}},
 			"meshes": []map[string]any{
 				{
 					"id":    "dynamic-hero",
@@ -873,6 +886,9 @@ func Page() Node {
 		`<Mesh`,
 		`<Model`,
 		`<Points`,
+		`<AxesHelper`,
+		`<GridHelper`,
+		`<TransformControls`,
 		`data-gosx-component="Mesh"`,
 		`data-gosx-component="Model"`,
 		`data-gosx-component="Points"`,
@@ -897,10 +913,27 @@ func Page() Node {
 		`"kind": "directional"`,
 		`"id": "sun"`,
 		`"postEffects": [`,
+		`"kind": "ssao"`,
 		`"kind": "bloom"`,
 		`"kind": "tonemap"`,
+		`"materials": [`,
+		`"kind": "line-basic"`,
+		`"kind": "line-dashed"`,
+		`"lineDash": true`,
+		`"kind": "custom"`,
+		`"customFragment": "color *= 0.5;"`,
 		`"objects": [`,
 		`"id": "hero"`,
+		`"id": "custom-hero"`,
+		`"selected": true`,
+		`"outlineColor": "#ffcc00"`,
+		`"id": "axes-x"`,
+		`"id": "grid"`,
+		`"id": "box-helper"`,
+		`"id": "bounds-helper"`,
+		`"id": "bones-helper"`,
+		`"id": "gizmo-ring"`,
+		`"materialKind": "line-basic"`,
 		`"id": "dynamic-hero"`,
 		`"kind": "box"`,
 		`"models": [`,

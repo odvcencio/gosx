@@ -1261,6 +1261,14 @@
       emissive: sceneClampNumberOrCSSVar(sceneObjectMaterialValue(item, "emissive"), sceneNumber(current.emissive, sceneDefaultMaterialEmissive(materialKind)), 0, 1),
       roughness: sceneNumberOrCSSVar(sceneObjectMaterialValue(item, "roughness"), sceneNumber(current.roughness, 0.5)),
       metalness: sceneNumberOrCSSVar(sceneObjectMaterialValue(item, "metalness"), sceneNumber(current.metalness, 0)),
+      lineDash: sceneBool(sceneObjectMaterialHasValue(item, "lineDash") ? sceneObjectMaterialValue(item, "lineDash") : current.lineDash, false),
+      dashSize: sceneNumber(sceneObjectMaterialValue(item, "dashSize"), sceneNumber(current.dashSize, 0)),
+      gapSize: sceneNumber(sceneObjectMaterialValue(item, "gapSize"), sceneNumber(current.gapSize, 0)),
+      customVertex: typeof sceneObjectMaterialValue(item, "customVertex") === "string" ? sceneObjectMaterialValue(item, "customVertex") : (typeof current.customVertex === "string" ? current.customVertex : ""),
+      customFragment: typeof sceneObjectMaterialValue(item, "customFragment") === "string" ? sceneObjectMaterialValue(item, "customFragment") : (typeof current.customFragment === "string" ? current.customFragment : ""),
+      customVertexWGSL: typeof sceneObjectMaterialValue(item, "customVertexWGSL") === "string" ? sceneObjectMaterialValue(item, "customVertexWGSL") : (typeof current.customVertexWGSL === "string" ? current.customVertexWGSL : ""),
+      customFragmentWGSL: typeof sceneObjectMaterialValue(item, "customFragmentWGSL") === "string" ? sceneObjectMaterialValue(item, "customFragmentWGSL") : (typeof current.customFragmentWGSL === "string" ? current.customFragmentWGSL : ""),
+      customUniforms: sceneIsPlainObject(sceneObjectMaterialValue(item, "customUniforms")) ? Object.assign({}, sceneObjectMaterialValue(item, "customUniforms")) : (sceneIsPlainObject(current.customUniforms) ? Object.assign({}, current.customUniforms) : null),
       blendMode,
       renderPass: normalizeSceneMaterialRenderPass(
         sceneObjectMaterialHasValue(item, "renderPass") ? sceneObjectMaterialValue(item, "renderPass") : current.renderPass,
@@ -1288,6 +1296,9 @@
       driftSpeed: sceneNumber(item.driftSpeed, sceneNumber(current.driftSpeed, 0)),
       driftPhase: sceneNumber(item.driftPhase, sceneNumber(current.driftPhase, 0)),
       lineWidth: sceneNumber(item.lineWidth, sceneNumber(current.lineWidth, 0)),
+      selected: sceneBool(Object.prototype.hasOwnProperty.call(item, "selected") ? item.selected : current.selected, false),
+      outlineColor: typeof item.outlineColor === "string" && item.outlineColor ? item.outlineColor : (typeof current.outlineColor === "string" ? current.outlineColor : ""),
+      outlineWidth: sceneNumber(item.outlineWidth, sceneNumber(current.outlineWidth, 0)),
       viewCulled: sceneBool(Object.prototype.hasOwnProperty.call(item, "viewCulled") ? item.viewCulled : current.viewCulled, false),
       castShadow: sceneBool(Object.prototype.hasOwnProperty.call(item, "castShadow") ? item.castShadow : current.castShadow, false),
       receiveShadow: sceneBool(Object.prototype.hasOwnProperty.call(item, "receiveShadow") ? item.receiveShadow : current.receiveShadow, false),
@@ -2028,6 +2039,14 @@
       blendMode,
       renderPass: normalizeSceneMaterialRenderPass(item.renderPass || current.renderPass, blendMode, numericOpacity, kind),
       wireframe: sceneBool(Object.prototype.hasOwnProperty.call(item, "wireframe") ? item.wireframe : current.wireframe, false),
+      lineDash: sceneBool(Object.prototype.hasOwnProperty.call(item, "lineDash") ? item.lineDash : current.lineDash, false),
+      dashSize: sceneNumber(item.dashSize, sceneNumber(current.dashSize, 0)),
+      gapSize: sceneNumber(item.gapSize, sceneNumber(current.gapSize, 0)),
+      customVertex: typeof item.customVertex === "string" ? item.customVertex : (typeof current.customVertex === "string" ? current.customVertex : ""),
+      customFragment: typeof item.customFragment === "string" ? item.customFragment : (typeof current.customFragment === "string" ? current.customFragment : ""),
+      customVertexWGSL: typeof item.customVertexWGSL === "string" ? item.customVertexWGSL : (typeof current.customVertexWGSL === "string" ? current.customVertexWGSL : ""),
+      customFragmentWGSL: typeof item.customFragmentWGSL === "string" ? item.customFragmentWGSL : (typeof current.customFragmentWGSL === "string" ? current.customFragmentWGSL : ""),
+      customUniforms: sceneIsPlainObject(item.customUniforms) ? Object.assign({}, item.customUniforms) : (sceneIsPlainObject(current.customUniforms) ? Object.assign({}, current.customUniforms) : null),
       depthWrite: Object.prototype.hasOwnProperty.call(item, "depthWrite") ? sceneBool(item.depthWrite, true) : current.depthWrite,
       _colorSpecified: colorSpecified || current._colorSpecified === true,
       _opacitySpecified: opacitySpecified || current._opacitySpecified === true,
@@ -2058,6 +2077,7 @@
       intensity: sceneNumberOrCSSVar(item.intensity, sceneNumber(current.intensity, 0)),
       radius: sceneNumberOrCSSVar(item.radius, sceneNumber(current.radius, 0)),
       scale: sceneNumberOrCSSVar(item.scale, sceneNumber(current.scale, 0)),
+      bias: sceneNumberOrCSSVar(item.bias, sceneNumber(current.bias, 0)),
       saturation: sceneNumberOrCSSVar(item.saturation, sceneNumber(current.saturation, 0)),
       contrast: sceneNumberOrCSSVar(item.contrast, sceneNumber(current.contrast, 0)),
       exposure: sceneNumberOrCSSVar(item.exposure, sceneNumber(current.exposure, 0)),
@@ -2081,6 +2101,7 @@
   function sceneCamera(props) {
     const raw = props && props.camera && typeof props.camera === "object" ? props.camera : {};
     return normalizeSceneCamera(raw, {
+      kind: "perspective",
       x: 0,
       y: 0,
       z: 6,
@@ -2088,6 +2109,17 @@
       near: 0.05,
       far: 128,
     });
+  }
+
+  function normalizeSceneCameraKind(value, fallback) {
+    const kind = typeof value === "string" ? value.trim().toLowerCase() : "";
+    if (kind === "orthographic" || kind === "ortho") {
+      return "orthographic";
+    }
+    if (kind === "perspective" || kind === "persp") {
+      return "perspective";
+    }
+    return fallback === "orthographic" ? "orthographic" : "perspective";
   }
 
   function sceneCanvasAlpha(props) {
@@ -2102,7 +2134,9 @@
 
   function normalizeSceneCamera(raw, fallback) {
     const base = fallback || {};
+    const kind = normalizeSceneCameraKind(raw.kind, base.kind);
     return {
+      kind,
       x: sceneNumber(raw.x, sceneNumber(base.x, 0)),
       y: sceneNumber(raw.y, sceneNumber(base.y, 0)),
       z: sceneNumber(raw.z, sceneNumber(base.z, 6)),
@@ -2110,6 +2144,11 @@
       rotationY: sceneNumber(raw.rotationY, sceneNumber(base.rotationY, 0)),
       rotationZ: sceneNumber(raw.rotationZ, sceneNumber(base.rotationZ, 0)),
       fov: sceneNumber(raw.fov, sceneNumber(base.fov, 75)),
+      left: sceneNumber(raw.left, sceneNumber(base.left, 0)),
+      right: sceneNumber(raw.right, sceneNumber(base.right, 0)),
+      top: sceneNumber(raw.top, sceneNumber(base.top, 0)),
+      bottom: sceneNumber(raw.bottom, sceneNumber(base.bottom, 0)),
+      zoom: sceneNumber(raw.zoom, sceneNumber(base.zoom, 1)),
       near: sceneNumber(raw.near, sceneNumber(base.near, 0.05)),
       far: sceneNumber(raw.far, sceneNumber(base.far, 128)),
     };
@@ -3171,7 +3210,15 @@
   }
 
   function sceneRenderCamera(camera, out) {
-    const target = out || { x: 0, y: 0, z: 0, rotationX: 0, rotationY: 0, rotationZ: 0, fov: 0, near: 0, far: 0 };
+    const target = out || {
+      kind: "perspective",
+      x: 0, y: 0, z: 0,
+      rotationX: 0, rotationY: 0, rotationZ: 0,
+      fov: 0,
+      left: 0, right: 0, top: 0, bottom: 0, zoom: 1,
+      near: 0, far: 0,
+    };
+    target.kind = normalizeSceneCameraKind(camera && camera.kind, "perspective");
     target.x = sceneNumber(camera && camera.x, 0);
     target.y = sceneNumber(camera && camera.y, 0);
     target.z = sceneNumber(camera && camera.z, 6);
@@ -3179,28 +3226,69 @@
     target.rotationY = sceneNumber(camera && camera.rotationY, 0);
     target.rotationZ = sceneNumber(camera && camera.rotationZ, 0);
     target.fov = sceneNumber(camera && camera.fov, 75);
+    target.left = sceneNumber(camera && camera.left, 0);
+    target.right = sceneNumber(camera && camera.right, 0);
+    target.top = sceneNumber(camera && camera.top, 0);
+    target.bottom = sceneNumber(camera && camera.bottom, 0);
+    target.zoom = Math.max(0.0001, sceneNumber(camera && camera.zoom, 1));
     target.near = sceneNumber(camera && camera.near, 0.05);
     target.far = sceneNumber(camera && camera.far, 128);
     return target;
   }
 
+  function sceneOrthographicBounds(camera, width, height) {
+    const cam = sceneRenderCamera(camera);
+    const aspect = Math.max(0.0001, sceneNumber(width, 1) / Math.max(1, sceneNumber(height, 1)));
+    let left = sceneNumber(cam.left, 0);
+    let right = sceneNumber(cam.right, 0);
+    let top = sceneNumber(cam.top, 0);
+    let bottom = sceneNumber(cam.bottom, 0);
+    if (Math.abs(right - left) <= 0.000001 || Math.abs(top - bottom) <= 0.000001) {
+      const halfHeight = 3;
+      const halfWidth = halfHeight * aspect;
+      left = -halfWidth;
+      right = halfWidth;
+      top = halfHeight;
+      bottom = -halfHeight;
+    }
+    const zoom = Math.max(0.0001, sceneNumber(cam.zoom, 1));
+    const centerX = (left + right) * 0.5;
+    const centerY = (top + bottom) * 0.5;
+    const halfWidth = Math.max(0.000001, Math.abs(right - left) * 0.5 / zoom);
+    const halfHeight = Math.max(0.000001, Math.abs(top - bottom) * 0.5 / zoom);
+    return {
+      left: centerX - halfWidth,
+      right: centerX + halfWidth,
+      top: centerY + halfHeight,
+      bottom: centerY - halfHeight,
+    };
+  }
+
   function sceneCameraEquivalent(left, right) {
     const a = sceneRenderCamera(left);
     const b = sceneRenderCamera(right);
-    return Math.abs(a.x - b.x) <= 0.0001 &&
+    return a.kind === b.kind &&
+      Math.abs(a.x - b.x) <= 0.0001 &&
       Math.abs(a.y - b.y) <= 0.0001 &&
       Math.abs(a.z - b.z) <= 0.0001 &&
       Math.abs(a.rotationX - b.rotationX) <= 0.0001 &&
       Math.abs(a.rotationY - b.rotationY) <= 0.0001 &&
       Math.abs(a.rotationZ - b.rotationZ) <= 0.0001 &&
       Math.abs(a.fov - b.fov) <= 0.0001 &&
+      Math.abs(a.left - b.left) <= 0.0001 &&
+      Math.abs(a.right - b.right) <= 0.0001 &&
+      Math.abs(a.top - b.top) <= 0.0001 &&
+      Math.abs(a.bottom - b.bottom) <= 0.0001 &&
+      Math.abs(a.zoom - b.zoom) <= 0.0001 &&
       Math.abs(a.near - b.near) <= 0.0001 &&
       Math.abs(a.far - b.far) <= 0.0001;
   }
 
   const _sceneBoundsDepthCameraScratch = {
+    kind: "perspective",
     x: 0, y: 0, z: 0,
     rotationX: 0, rotationY: 0, rotationZ: 0,
+    left: 0, right: 0, top: 0, bottom: 0, zoom: 1,
     fov: 0, near: 0, far: 0,
   };
 
@@ -3216,7 +3304,9 @@
       cacheHash = sceneNumber(bounds.minX, 0) + sceneNumber(bounds.minY, 0) + sceneNumber(bounds.minZ, 0)
         + sceneNumber(bounds.maxX, 0) + sceneNumber(bounds.maxY, 0) + sceneNumber(bounds.maxZ, 0)
         + cam.x + cam.y + cam.z
-        + cam.rotationX + cam.rotationY + cam.rotationZ;
+        + cam.rotationX + cam.rotationY + cam.rotationZ
+        + (cam.kind === "orthographic" ? 17 : 0)
+        + cam.left + cam.right + cam.top + cam.bottom + cam.zoom;
       if (cacheOwner._depthCacheHash === cacheHash && cacheOwner._depthCacheResult) {
         return cacheOwner._depthCacheResult;
       }
@@ -3312,6 +3402,9 @@
       worldPositions: [],
       worldColors: [],
       worldLineWidths: [],
+      worldLineDashes: [],
+      worldLineDashSizes: [],
+      worldLineGapSizes: [],
       worldLinePasses: [],
       meshObjects: [],
       worldMeshPositions: [],
@@ -3487,6 +3580,9 @@
           toLighting[0], toLighting[1], toLighting[2], toLighting[3],
         );
         bundle.worldLineWidths.push(rawLineWidth);
+        bundle.worldLineDashes.push(Boolean(material && material.lineDash));
+        bundle.worldLineDashSizes.push(sceneNumber(material && material.dashSize, 0));
+        bundle.worldLineGapSizes.push(sceneNumber(material && material.gapSize, 0));
         bundle.worldLinePasses.push(objectPassIndex);
         bounds = sceneExpandWorldBounds(bounds, fromWorld);
         bounds = sceneExpandWorldBounds(bounds, toWorld);
@@ -3496,7 +3592,11 @@
         if (!from || !to) continue;
         const stroke = sceneMixRGBA(fromLighting, toLighting);
         stroke[3] = clamp01(stroke[3] * sceneMaterialOpacity(material));
-        appendSceneLine(bundle, width, height, from, to, sceneRGBAString(stroke), objectLineWidth);
+        appendSceneLine(bundle, width, height, from, to, sceneRGBAString(stroke), objectLineWidth, {
+          dashed: Boolean(material && material.lineDash),
+          dashSize: sceneNumber(material && material.dashSize, 0),
+          gapSize: sceneNumber(material && material.gapSize, 0),
+        });
       }
     } else if (sceneObjectHasTexturedSurface(object, material)) {
       const corners = scenePlaneSurfaceCorners(object, timeSeconds);
@@ -3631,19 +3731,24 @@
     };
   }
 
-  function appendSceneMeshWireSegment(bundle, camera, width, height, fromWorld, toWorld, fromLighting, toLighting) {
+  function appendSceneMeshWireSegment(bundle, camera, width, height, fromWorld, toWorld, fromLighting, toLighting, lineWidth, passIndex) {
     bundle.worldPositions.push(fromWorld.x, fromWorld.y, fromWorld.z, toWorld.x, toWorld.y, toWorld.z);
     bundle.worldColors.push(
       fromLighting[0], fromLighting[1], fromLighting[2], fromLighting[3],
       toLighting[0], toLighting[1], toLighting[2], toLighting[3],
     );
+    bundle.worldLineWidths.push(lineWidth > 0 ? lineWidth : 0);
+    bundle.worldLineDashes.push(false);
+    bundle.worldLineDashSizes.push(0);
+    bundle.worldLineGapSizes.push(0);
+    bundle.worldLinePasses.push(passIndex || 0);
     const from = sceneProjectPoint(fromWorld, camera, width, height);
     const to = sceneProjectPoint(toWorld, camera, width, height);
     if (!from || !to) {
       return 2;
     }
     const stroke = sceneMixRGBA(fromLighting, toLighting);
-    appendSceneLine(bundle, width, height, from, to, sceneRGBAString(stroke), 1.6);
+    appendSceneLine(bundle, width, height, from, to, sceneRGBAString(stroke), lineWidth > 0 ? lineWidth : 1.6);
     return 2;
   }
 
@@ -3654,6 +3759,11 @@
     }
     const material = sceneObjectMaterialProfile(object);
     const materialIndex = sceneBundleMaterialIndex(bundle, materialLookup, material);
+    const outlineColor = object && object.selected ? (object.outlineColor || "#facc15") : "";
+    const outlineWidth = object && object.selected ? Math.max(2, sceneNumber(object.outlineWidth, 3)) : 0;
+    const outlineLighting = outlineColor ? sceneColorRGBA(outlineColor, [1, 0.8, 0.15, 1]) : null;
+    const objectPassString = sceneWorldObjectRenderPass(object, material);
+    const objectPassIndex = objectPassString === "alpha" ? 1 : (objectPassString === "additive" ? 2 : 0);
     if (object.skin && vertices.joints && vertices.weights) {
       const bounds = vertices._skinnedLocalBounds || object.bounds || { minX: -1, minY: -1, minZ: -1, maxX: 1, maxY: 2, maxZ: 1 };
       bundle.meshObjects.push({
@@ -3733,9 +3843,12 @@
         meshVertexCount += 1;
       }
 
-      wireVertexCount += appendSceneMeshWireSegment(bundle, camera, width, height, points[0], points[1], lighting[0], lighting[1]);
-      wireVertexCount += appendSceneMeshWireSegment(bundle, camera, width, height, points[1], points[2], lighting[1], lighting[2]);
-      wireVertexCount += appendSceneMeshWireSegment(bundle, camera, width, height, points[2], points[0], lighting[2], lighting[0]);
+      const line0 = outlineLighting || lighting[0];
+      const line1 = outlineLighting || lighting[1];
+      const line2 = outlineLighting || lighting[2];
+      wireVertexCount += appendSceneMeshWireSegment(bundle, camera, width, height, points[0], points[1], line0, line1, outlineWidth, objectPassIndex);
+      wireVertexCount += appendSceneMeshWireSegment(bundle, camera, width, height, points[1], points[2], line1, line2, outlineWidth, objectPassIndex);
+      wireVertexCount += appendSceneMeshWireSegment(bundle, camera, width, height, points[2], points[0], line2, line0, outlineWidth, objectPassIndex);
     }
 
     if (!bounds || meshVertexCount <= 0) {
@@ -3849,6 +3962,18 @@
       return { width: 0, height: 0 };
     }
     const normalizedCamera = sceneRenderCamera(camera);
+    if (normalizedCamera.kind === "orthographic") {
+      const bounds = sceneOrthographicBounds(normalizedCamera, width, height);
+      const spanX = Math.max(0.000001, bounds.right - bounds.left);
+      const spanY = Math.max(0.000001, bounds.top - bounds.bottom);
+      const scale = Math.max(0.05, sceneNumber(sprite && sprite.scale, 1));
+      const worldWidth = Math.max(0.05, sceneNumber(sprite && sprite.width, 1.25));
+      const worldHeight = Math.max(0.05, sceneNumber(sprite && sprite.height, worldWidth));
+      return {
+        width: Math.max(1, worldWidth * scale * (width / spanX)),
+        height: Math.max(1, worldHeight * scale * (height / spanY)),
+      };
+    }
     const focal = (Math.min(width, height) / 2) / Math.tan((normalizedCamera.fov * Math.PI) / 360);
     const scale = Math.max(0.05, sceneNumber(sprite && sprite.scale, 1));
     const worldWidth = Math.max(0.05, sceneNumber(sprite && sprite.width, 1.25));
@@ -3984,16 +4109,20 @@
     return next;
   }
 
-  function appendSceneLine(bundle, width, height, from, to, color, lineWidth) {
+  function appendSceneLine(bundle, width, height, from, to, color, lineWidth, options) {
     if (!from || !to) return;
     const rgba = sceneColorRGBA(color, [0.55, 0.88, 1, 1]);
     const fromClip = sceneClipPoint(from, width, height);
     const toClip = sceneClipPoint(to, width, height);
+    const dashOptions = options && typeof options === "object" ? options : null;
     bundle.lines.push({
       from: from,
       to: to,
       color: color,
       lineWidth: lineWidth,
+      lineDash: Boolean(dashOptions && dashOptions.dashed),
+      dashSize: sceneNumber(dashOptions && dashOptions.dashSize, 0),
+      gapSize: sceneNumber(dashOptions && dashOptions.gapSize, 0),
     });
     bundle.positions.push(fromClip.x, fromClip.y, toClip.x, toClip.y);
     bundle.colors.push(rgba[0], rgba[1], rgba[2], rgba[3], rgba[0], rgba[1], rgba[2], rgba[3]);
@@ -4074,12 +4203,16 @@
       cameraRotationLocation: gl.getUniformLocation(program, "u_camera_rotation"),
       aspectLocation: gl.getUniformLocation(program, "u_aspect"),
       perspectiveLocation: gl.getUniformLocation(program, "u_use_perspective"),
+      cameraModeLocation: gl.getUniformLocation(program, "u_camera_mode"),
+      orthoLocation: gl.getUniformLocation(program, "u_ortho"),
       surfaceBuffers: createSceneWebGLSurfaceBufferSet(gl),
       surfacePositionLocation: surfaceProgram ? gl.getAttribLocation(surfaceProgram, "a_position") : -1,
       surfaceUVLocation: surfaceProgram ? gl.getAttribLocation(surfaceProgram, "a_uv") : -1,
       surfaceCameraLocation: surfaceProgram ? gl.getUniformLocation(surfaceProgram, "u_camera") : null,
       surfaceCameraRotationLocation: surfaceProgram ? gl.getUniformLocation(surfaceProgram, "u_camera_rotation") : null,
       surfaceAspectLocation: surfaceProgram ? gl.getUniformLocation(surfaceProgram, "u_aspect") : null,
+      surfaceCameraModeLocation: surfaceProgram ? gl.getUniformLocation(surfaceProgram, "u_camera_mode") : null,
+      surfaceOrthoLocation: surfaceProgram ? gl.getUniformLocation(surfaceProgram, "u_ortho") : null,
       surfaceTintLocation: surfaceProgram ? gl.getUniformLocation(surfaceProgram, "u_tint") : null,
       surfaceEmissiveLocation: surfaceProgram ? gl.getUniformLocation(surfaceProgram, "u_emissive") : null,
       surfaceTextureLocation: surfaceProgram ? gl.getUniformLocation(surfaceProgram, "u_texture") : null,
@@ -4118,7 +4251,8 @@
   function sceneWebGLBundleGeometry(bundle) {
     const hasWorldLines = Boolean(bundle && bundle.worldVertexCount > 0 && bundle.worldPositions && bundle.worldColors);
     const hasSurfaces = Boolean(bundle && Array.isArray(bundle.surfaces) && bundle.surfaces.length > 0);
-    const usePerspective = hasWorldLines || hasSurfaces;
+    const camera = sceneRenderCamera(bundle && bundle.camera);
+    const usePerspective = (hasWorldLines || hasSurfaces) && !(camera.kind === "orthographic" && !hasSurfaces);
     return {
       usePerspective,
       positions: usePerspective ? bundle.worldPositions : bundle && bundle.positions,
@@ -4162,6 +4296,13 @@
     }
     if (typeof gl.uniform1f === "function" && resources.perspectiveLocation) {
       gl.uniform1f(resources.perspectiveLocation, usePerspective ? 1 : 0);
+    }
+    if (typeof gl.uniform1f === "function" && resources.cameraModeLocation) {
+      gl.uniform1f(resources.cameraModeLocation, camera.kind === "orthographic" ? 1 : 0);
+    }
+    if (typeof gl.uniform4f === "function" && resources.orthoLocation) {
+      const bounds = sceneOrthographicBounds(camera, canvas.width, canvas.height);
+      gl.uniform4f(resources.orthoLocation, bounds.left, bounds.right, bounds.top, bounds.bottom);
     }
   }
 
@@ -4393,6 +4534,13 @@
     }
     if (typeof gl.uniform1f === "function" && resources.surfaceAspectLocation) {
       gl.uniform1f(resources.surfaceAspectLocation, aspect);
+    }
+    if (typeof gl.uniform1f === "function" && resources.surfaceCameraModeLocation) {
+      gl.uniform1f(resources.surfaceCameraModeLocation, camera.kind === "orthographic" ? 1 : 0);
+    }
+    if (typeof gl.uniform4f === "function" && resources.surfaceOrthoLocation) {
+      const bounds = sceneOrthographicBounds(camera, canvas.width, canvas.height);
+      gl.uniform4f(resources.surfaceOrthoLocation, bounds.left, bounds.right, bounds.top, bounds.bottom);
     }
   }
 
@@ -4879,6 +5027,8 @@
       "uniform vec3 u_camera_rotation;",
       "uniform float u_aspect;",
       "uniform float u_use_perspective;",
+      "uniform float u_camera_mode;",
+      "uniform vec4 u_ortho;",
       "varying vec4 v_color;",
       "varying vec3 v_material;",
       "vec3 inverseRotatePoint(vec3 point, vec3 rotation) {",
@@ -4905,6 +5055,11 @@
       "    float depth = local.z;",
       "    if (depth <= 0.001) {",
       "      clip = vec4(2.0, 2.0, 0.0, 1.0);",
+      "    } else if (u_camera_mode > 0.5) {",
+      "      float ox = ((local.x - u_ortho.x) / max(u_ortho.y - u_ortho.x, 0.0001)) * 2.0 - 1.0;",
+      "      float oy = ((local.y - u_ortho.w) / max(u_ortho.z - u_ortho.w, 0.0001)) * 2.0 - 1.0;",
+      "      float clipDepth = clamp(depth / max(u_camera.z + 128.0, 0.0001), 0.0, 1.0) * 2.0 - 1.0;",
+      "      clip = vec4(ox, oy, clipDepth, 1.0);",
       "    } else {",
       "      float focal = 1.0 / tan(radians(u_camera.w) * 0.5);",
       "      vec2 projected = vec2(local.x * focal / depth, local.y * focal / depth);",
@@ -4968,6 +5123,8 @@
       "uniform vec4 u_camera;",
       "uniform vec3 u_camera_rotation;",
       "uniform float u_aspect;",
+      "uniform float u_camera_mode;",
+      "uniform vec4 u_ortho;",
       "varying vec2 v_uv;",
       "vec3 inverseRotatePoint(vec3 point, vec3 rotation) {",
       "  float sinZ = sin(-rotation.z);",
@@ -4991,6 +5148,11 @@
       "  float depth = local.z;",
       "  if (depth <= 0.001) {",
       "    gl_Position = vec4(2.0, 2.0, 0.0, 1.0);",
+      "  } else if (u_camera_mode > 0.5) {",
+      "    float ox = ((local.x - u_ortho.x) / max(u_ortho.y - u_ortho.x, 0.0001)) * 2.0 - 1.0;",
+      "    float oy = ((local.y - u_ortho.w) / max(u_ortho.z - u_ortho.w, 0.0001)) * 2.0 - 1.0;",
+      "    float clipDepth = clamp(depth / max(u_camera.z + 128.0, 0.0001), 0.0, 1.0) * 2.0 - 1.0;",
+      "    gl_Position = vec4(ox, oy, clipDepth, 1.0);",
       "  } else {",
       "    float focal = 1.0 / tan(radians(u_camera.w) * 0.5);",
       "    vec2 projected = vec2(local.x * focal / depth, local.y * focal / depth);",
@@ -5056,6 +5218,8 @@
       "uniform vec3 u_camera_rotation;",
       "uniform float u_aspect;",
       "uniform vec2 u_viewport;",
+      "uniform float u_camera_mode;",
+      "uniform vec4 u_ortho;",
       "varying vec4 v_color;",
       "vec3 inverseRotatePoint(vec3 point, vec3 rotation) {",
       "  float sinZ = sin(-rotation.z);",
@@ -5079,6 +5243,12 @@
       "  float depth = local.z;",
       "  if (depth <= 0.001) {",
       "    return vec4(2.0, 2.0, 0.0, 1.0);",
+      "  }",
+      "  if (u_camera_mode > 0.5) {",
+      "    float ox = ((local.x - u_ortho.x) / max(u_ortho.y - u_ortho.x, 0.0001)) * 2.0 - 1.0;",
+      "    float oy = ((local.y - u_ortho.w) / max(u_ortho.z - u_ortho.w, 0.0001)) * 2.0 - 1.0;",
+      "    float clipDepth = clamp(depth / max(u_camera.z + 128.0, 0.0001), 0.0, 1.0) * 2.0 - 1.0;",
+      "    return vec4(ox, oy, clipDepth, 1.0);",
       "  }",
       "  float focal = 1.0 / tan(radians(u_camera.w) * 0.5);",
       "  vec2 projected = vec2(local.x * focal / depth, local.y * focal / depth);",
@@ -5144,6 +5314,8 @@
       cameraRotationLocation: gl.getUniformLocation(program, "u_camera_rotation"),
       aspectLocation: gl.getUniformLocation(program, "u_aspect"),
       viewportLocation: gl.getUniformLocation(program, "u_viewport"),
+      cameraModeLocation: gl.getUniformLocation(program, "u_camera_mode"),
+      orthoLocation: gl.getUniformLocation(program, "u_ortho"),
     };
   }
 
@@ -5370,6 +5542,13 @@
     if (thickProgram.viewportLocation && typeof gl.uniform2f === "function") {
       gl.uniform2f(thickProgram.viewportLocation, canvas.width, canvas.height);
     }
+    if (thickProgram.cameraModeLocation && typeof gl.uniform1f === "function") {
+      gl.uniform1f(thickProgram.cameraModeLocation, camera.kind === "orthographic" ? 1 : 0);
+    }
+    if (thickProgram.orthoLocation && typeof gl.uniform4f === "function") {
+      const bounds = sceneOrthographicBounds(camera, canvas.width, canvas.height);
+      gl.uniform4f(thickProgram.orthoLocation, bounds.left, bounds.right, bounds.top, bounds.bottom);
+    }
 
     const arrayBuffer = resources.arrayBuffer;
     const floatType = resources.floatType;
@@ -5453,6 +5632,7 @@
     SCENE_POST_BLOOM: "bloom",
     SCENE_POST_VIGNETTE: "vignette",
     SCENE_POST_COLOR_GRADE: "colorGrade",
+    SCENE_POST_SSAO: "ssao",
     validateSceneIR: typeof validateSceneIR === "function" ? validateSceneIR : undefined,
     prepareScene: typeof prepareScene === "function" ? prepareScene : undefined,
     scenePreparedCommandSequence: typeof scenePreparedCommandSequence === "function" ? scenePreparedCommandSequence : undefined,
@@ -5493,6 +5673,7 @@
     sceneBoundsViewCulled,
     sceneBundleNeedsThickLines,
     sceneCameraEquivalent,
+    sceneOrthographicBounds,
     clamp01,
     sceneHasActiveTransitions,
     sceneHTMLAnimated,
@@ -5520,6 +5701,7 @@
     scenePBRDepthSort: typeof scenePBRDepthSort === "function" ? scenePBRDepthSort : undefined,
     scenePBRObjectRenderPass: typeof scenePBRObjectRenderPass === "function" ? scenePBRObjectRenderPass : undefined,
     scenePBRProjectionMatrix: typeof scenePBRProjectionMatrix === "function" ? scenePBRProjectionMatrix : undefined,
+    scenePBRProjectionMatrixForCamera: typeof scenePBRProjectionMatrixForCamera === "function" ? scenePBRProjectionMatrixForCamera : undefined,
     scenePBRViewMatrix: typeof scenePBRViewMatrix === "function" ? scenePBRViewMatrix : undefined,
     sceneShadowLightSpaceMatrix: typeof sceneShadowLightSpaceMatrix === "function" ? sceneShadowLightSpaceMatrix : undefined,
     sceneShadowComputeBounds: typeof sceneShadowComputeBounds === "function" ? sceneShadowComputeBounds : undefined,
@@ -5635,8 +5817,10 @@
   }
 
   const _sceneProjectCameraScratch = {
+    kind: "perspective",
     x: 0, y: 0, z: 0,
     rotationX: 0, rotationY: 0, rotationZ: 0,
+    left: 0, right: 0, top: 0, bottom: 0, zoom: 1,
     fov: 0, near: 0, far: 0,
   };
 
@@ -5669,6 +5853,17 @@
     lz = nextZ;
 
     if (lz <= cam.near || lz >= cam.far) return null;
+
+    if (cam.kind === "orthographic") {
+      const bounds = sceneOrthographicBounds(cam, width, height);
+      const spanX = Math.max(0.000001, bounds.right - bounds.left);
+      const spanY = Math.max(0.000001, bounds.top - bounds.bottom);
+      return {
+        x: ((lx - bounds.left) / spanX) * width,
+        y: ((bounds.top - ly) / spanY) * height,
+        depth: lz,
+      };
+    }
 
     const focal = (Math.min(width, height) / 2) / Math.tan((cam.fov * Math.PI) / 360);
     return {
@@ -5945,6 +6140,26 @@
     var cam = sceneRenderCamera(camera);
 
     var origin = { x: cam.x, y: cam.y, z: -cam.z };
+    if (cam.kind === "orthographic") {
+      var bounds = sceneOrthographicBounds(cam, width, height);
+      var spanX = Math.max(0.000001, bounds.right - bounds.left);
+      var spanY = Math.max(0.000001, bounds.top - bounds.bottom);
+      var localOrigin = {
+        x: bounds.left + (pointerX / Math.max(1, width)) * spanX,
+        y: bounds.top - (pointerY / Math.max(1, height)) * spanY,
+        z: 0,
+      };
+      var localDir = { x: 0, y: 0, z: 1 };
+      var worldOffset = sceneRotatePoint(localOrigin, cam.rotationX, cam.rotationY, cam.rotationZ);
+      var worldDir = sceneRotatePoint(localDir, cam.rotationX, cam.rotationY, cam.rotationZ);
+      var lenOrtho = Math.sqrt(worldDir.x * worldDir.x + worldDir.y * worldDir.y + worldDir.z * worldDir.z);
+      return {
+        origin: { x: origin.x + worldOffset.x, y: origin.y + worldOffset.y, z: origin.z + worldOffset.z },
+        dir: lenOrtho < 1e-12
+          ? { x: 0, y: 0, z: 1 }
+          : { x: worldDir.x / lenOrtho, y: worldDir.y / lenOrtho, z: worldDir.z / lenOrtho },
+      };
+    }
 
     var halfFov = (cam.fov * Math.PI) / 360;
     var tanHalf = Math.tan(halfFov);
@@ -6579,6 +6794,10 @@
       case "glass":
       case "glow":
       case "matte":
+      case "standard":
+      case "custom":
+      case "line-basic":
+      case "line-dashed":
         return kind;
       default:
         if (sceneRegisteredMaterialProfile(kind)) {
@@ -6769,6 +6988,14 @@
       emissive: sceneCSSVarReference(object && object.emissive) ? String(object.emissive).trim() : clamp01(sceneNumber(object && object.emissive, sceneDefaultMaterialEmissive(kind))),
       roughness: sceneNumberOrCSSVar(object && object.roughness, 0.5),
       metalness: sceneNumberOrCSSVar(object && object.metalness, 0),
+      lineDash: sceneBool(object && object.lineDash, false),
+      dashSize: sceneNumber(object && object.dashSize, 0),
+      gapSize: sceneNumber(object && object.gapSize, 0),
+      customVertex: typeof (object && object.customVertex) === "string" ? object.customVertex : "",
+      customFragment: typeof (object && object.customFragment) === "string" ? object.customFragment : "",
+      customVertexWGSL: typeof (object && object.customVertexWGSL) === "string" ? object.customVertexWGSL : "",
+      customFragmentWGSL: typeof (object && object.customFragmentWGSL) === "string" ? object.customFragmentWGSL : "",
+      customUniforms: object && object.customUniforms && typeof object.customUniforms === "object" ? Object.assign({}, object.customUniforms) : null,
       normalMap: object && typeof object.normalMap === "string" ? object.normalMap.trim() : "",
       roughnessMap: object && typeof object.roughnessMap === "string" ? object.roughnessMap.trim() : "",
       metalnessMap: object && typeof object.metalnessMap === "string" ? object.metalnessMap.trim() : "",
@@ -6793,6 +7020,14 @@
       sceneCSSVarReference(profile && profile.emissive) ? String(profile.emissive).trim() : clamp01(sceneNumber(profile && profile.emissive, 0)).toFixed(3),
       sceneCSSVarReference(profile && profile.roughness) ? String(profile.roughness).trim() : sceneNumber(profile && profile.roughness, 0.5).toFixed(3),
       sceneCSSVarReference(profile && profile.metalness) ? String(profile.metalness).trim() : sceneNumber(profile && profile.metalness, 0).toFixed(3),
+      String(sceneBool(profile && profile.lineDash, false)),
+      sceneNumber(profile && profile.dashSize, 0).toFixed(3),
+      sceneNumber(profile && profile.gapSize, 0).toFixed(3),
+      String(profile && profile.customVertex || ""),
+      String(profile && profile.customFragment || ""),
+      String(profile && profile.customVertexWGSL || ""),
+      String(profile && profile.customFragmentWGSL || ""),
+      JSON.stringify(profile && profile.customUniforms || null),
       String(profile && profile.normalMap || ""),
       String(profile && profile.roughnessMap || ""),
       String(profile && profile.metalnessMap || ""),
@@ -7651,6 +7886,7 @@
   }
 
   function sceneHashCamera(hash, camera) {
+    hash = sceneHashString(hash, camera && camera.kind || "perspective");
     hash = sceneHashNumber(hash, sceneNumber(camera && camera.x, 0));
     hash = sceneHashNumber(hash, sceneNumber(camera && camera.y, 0));
     hash = sceneHashNumber(hash, sceneNumber(camera && camera.z, 6));
@@ -7658,6 +7894,11 @@
     hash = sceneHashNumber(hash, sceneNumber(camera && camera.rotationY, 0));
     hash = sceneHashNumber(hash, sceneNumber(camera && camera.rotationZ, 0));
     hash = sceneHashNumber(hash, sceneNumber(camera && camera.fov, 75));
+    hash = sceneHashNumber(hash, sceneNumber(camera && camera.left, 0));
+    hash = sceneHashNumber(hash, sceneNumber(camera && camera.right, 0));
+    hash = sceneHashNumber(hash, sceneNumber(camera && camera.top, 0));
+    hash = sceneHashNumber(hash, sceneNumber(camera && camera.bottom, 0));
+    hash = sceneHashNumber(hash, sceneNumber(camera && camera.zoom, 1));
     hash = sceneHashNumber(hash, sceneNumber(camera && camera.near, 0.05));
     return sceneHashNumber(hash, sceneNumber(camera && camera.far, 128));
   }
@@ -8086,10 +8327,10 @@
     ]);
     hash = sceneCSSHashComputeParticles(hash, bundle && bundle.computeParticles);
     hash = sceneCSSHashCollection(hash, bundle && bundle.postEffects, [
-      "kind", "threshold", "intensity", "radius", "scale", "saturation", "contrast", "exposure",
+      "kind", "threshold", "intensity", "radius", "scale", "bias", "saturation", "contrast", "exposure",
     ]);
     hash = sceneCSSHashCollection(hash, bundle && bundle.postFX, [
-      "kind", "threshold", "intensity", "radius", "scale", "saturation", "contrast", "exposure",
+      "kind", "threshold", "intensity", "radius", "scale", "bias", "saturation", "contrast", "exposure",
     ]);
     return String(hash);
   }
@@ -8298,10 +8539,10 @@
       "width", "height", "scale", "opacity", "offsetX", "offsetY",
     ], sceneCSSRecordElement);
     sceneCSSResolveCollectionKeys(state, css, "postEffects", [
-      "threshold", "intensity", "radius", "scale", "saturation", "contrast", "exposure",
+      "threshold", "intensity", "radius", "scale", "bias", "saturation", "contrast", "exposure",
     ], null);
     sceneCSSResolveCollectionKeys(state, css, "postFX", [
-      "threshold", "intensity", "radius", "scale", "saturation", "contrast", "exposure",
+      "threshold", "intensity", "radius", "scale", "bias", "saturation", "contrast", "exposure",
     ], null);
     sceneCSSResolveComputeParticleVars(state, css);
   }
@@ -9161,6 +9402,7 @@
   }
 
   function scenePlannerHashCamera(hash, camera) {
+    hash = scenePlannerHashString(hash, camera && camera.kind);
     hash = scenePlannerHashNumber(hash, sceneNumber(camera && camera.x, 0));
     hash = scenePlannerHashNumber(hash, sceneNumber(camera && camera.y, 0));
     hash = scenePlannerHashNumber(hash, sceneNumber(camera && camera.z, 0));
@@ -9168,6 +9410,11 @@
     hash = scenePlannerHashNumber(hash, sceneNumber(camera && camera.rotationY, 0));
     hash = scenePlannerHashNumber(hash, sceneNumber(camera && camera.rotationZ, 0));
     hash = scenePlannerHashNumber(hash, sceneNumber(camera && camera.fov, 0));
+    hash = scenePlannerHashNumber(hash, sceneNumber(camera && camera.left, 0));
+    hash = scenePlannerHashNumber(hash, sceneNumber(camera && camera.right, 0));
+    hash = scenePlannerHashNumber(hash, sceneNumber(camera && camera.top, 0));
+    hash = scenePlannerHashNumber(hash, sceneNumber(camera && camera.bottom, 0));
+    hash = scenePlannerHashNumber(hash, sceneNumber(camera && camera.zoom, 1));
     hash = scenePlannerHashNumber(hash, sceneNumber(camera && camera.near, 0));
     return scenePlannerHashNumber(hash, sceneNumber(camera && camera.far, 0));
   }
@@ -9935,6 +10182,7 @@ if (typeof window !== "undefined") {
   var SCENE_POST_BLOOM = "bloom";
   var SCENE_POST_VIGNETTE = "vignette";
   var SCENE_POST_COLOR_GRADE = "colorGrade";
+  var SCENE_POST_SSAO = "ssao";
 
   const SCENE_PBR_VERTEX_SOURCE = [
     "#version 300 es",
@@ -9955,10 +10203,16 @@ if (typeof window !== "undefined") {
     "out vec3 v_tangent;",
     "out vec3 v_bitangent;",
     "",
+    "void gosxApplyCustomVertex(inout vec3 position, inout vec3 normal, inout vec2 uv) {}",
+    "",
     "void main() {",
-    "    v_worldPosition = a_position;",
-    "    v_normal = normalize(a_normal);",
-    "    v_uv = a_uv;",
+    "    vec3 gosxPosition = a_position;",
+    "    vec3 gosxNormal = a_normal;",
+    "    vec2 gosxUV = a_uv;",
+    "    gosxApplyCustomVertex(gosxPosition, gosxNormal, gosxUV);",
+    "    v_worldPosition = gosxPosition;",
+    "    v_normal = normalize(gosxNormal);",
+    "    v_uv = gosxUV;",
     "",
     "    vec3 T = normalize(a_tangent.xyz);",
     "    vec3 N = v_normal;",
@@ -9966,7 +10220,7 @@ if (typeof window !== "undefined") {
     "    v_tangent = T;",
     "    v_bitangent = B;",
     "",
-    "    gl_Position = u_projectionMatrix * u_viewMatrix * vec4(a_position, 1.0);",
+    "    gl_Position = u_projectionMatrix * u_viewMatrix * vec4(gosxPosition, 1.0);",
     "}",
   ].join("\n");
 
@@ -10076,6 +10330,8 @@ if (typeof window !== "undefined") {
     "out vec4 fragColor;",
     "",
     "const float PI = 3.14159265359;",
+    "",
+    "void gosxApplyCustomFragment(inout vec3 color, inout float opacity, vec3 normal, vec3 worldPosition, vec2 uv) {}",
     "",
     "// Poisson disk taps used for both the PCSS blocker search and the final",
     "// PCF filter. 8 taps provide a stable penumbra estimate without pushing",
@@ -10264,7 +10520,9 @@ if (typeof window !== "undefined") {
     "    // Unlit path: output albedo directly.",
     "    if (u_unlit) {",
     "        vec3 color = albedo + emissiveColor * emissiveStrength;",
-    "        fragColor = vec4(color, u_opacity);",
+    "        float opacity = u_opacity;",
+    "        gosxApplyCustomFragment(color, opacity, normalize(v_normal), v_worldPosition, v_uv);",
+    "        fragColor = vec4(color, opacity);",
     "        return;",
     "    }",
     "",
@@ -10417,7 +10675,9 @@ if (typeof window !== "undefined") {
     "    // Gamma correction.",
     "    color = pow(color, vec3(1.0 / 2.2));",
     "",
-    "    fragColor = vec4(color, u_opacity);",
+    "    float opacity = u_opacity;",
+    "    gosxApplyCustomFragment(color, opacity, N, v_worldPosition, v_uv);",
+    "    fragColor = vec4(color, opacity);",
     "}",
   ].join("\n");
 
@@ -10680,6 +10940,27 @@ if (typeof window !== "undefined") {
     m[8] = 0; m[9] = 0; m[10] = (near + far) * rangeInv; m[11] = -1;
     m[12] = 0; m[13] = 0; m[14] = 2 * near * far * rangeInv; m[15] = 0;
     return m;
+  }
+
+  function scenePBROrthographicProjectionMatrix(left, right, top, bottom, near, far, out) {
+    var m = out || new Float32Array(16);
+    const width = Math.max(0.000001, right - left);
+    const height = Math.max(0.000001, top - bottom);
+    const depth = Math.max(0.000001, far - near);
+    m[0] = 2 / width; m[1] = 0; m[2] = 0; m[3] = 0;
+    m[4] = 0; m[5] = 2 / height; m[6] = 0; m[7] = 0;
+    m[8] = 0; m[9] = 0; m[10] = -2 / depth; m[11] = 0;
+    m[12] = -(right + left) / width; m[13] = -(top + bottom) / height; m[14] = -(far + near) / depth; m[15] = 1;
+    return m;
+  }
+
+  function scenePBRProjectionMatrixForCamera(camera, aspect, out) {
+    const cam = sceneRenderCamera(camera);
+    if (cam.kind === "orthographic") {
+      const bounds = sceneOrthographicBounds(cam, Math.max(1, aspect * 1000), 1000);
+      return scenePBROrthographicProjectionMatrix(bounds.left, bounds.right, bounds.top, bounds.bottom, cam.near, cam.far, out);
+    }
+    return scenePBRProjectionMatrix(cam.fov, aspect, cam.near, cam.far, out);
   }
 
   function createSceneShadowResources(gl, size) {
@@ -11265,6 +11546,38 @@ if (typeof window !== "undefined") {
     "}",
   ].join("\n");
 
+  const SCENE_POST_SSAO_SOURCE = [
+    "#version 300 es",
+    "precision highp float;",
+    "in vec2 v_uv;",
+    "uniform sampler2D u_texture;",
+    "uniform float u_radius;",
+    "uniform float u_intensity;",
+    "out vec4 fragColor;",
+    "",
+    "float luminance(vec3 color) { return dot(color, vec3(0.2126, 0.7152, 0.0722)); }",
+    "",
+    "void main() {",
+    "    vec2 texel = 1.0 / vec2(textureSize(u_texture, 0));",
+    "    vec3 color = texture(u_texture, v_uv).rgb;",
+    "    float center = luminance(color);",
+    "    float r = max(1.0, u_radius);",
+    "    float neighbor = 0.0;",
+    "    neighbor += luminance(texture(u_texture, v_uv + texel * vec2( r,  0.0)).rgb);",
+    "    neighbor += luminance(texture(u_texture, v_uv + texel * vec2(-r,  0.0)).rgb);",
+    "    neighbor += luminance(texture(u_texture, v_uv + texel * vec2(0.0,  r)).rgb);",
+    "    neighbor += luminance(texture(u_texture, v_uv + texel * vec2(0.0, -r)).rgb);",
+    "    neighbor += luminance(texture(u_texture, v_uv + texel * vec2( r,  r)).rgb);",
+    "    neighbor += luminance(texture(u_texture, v_uv + texel * vec2(-r,  r)).rgb);",
+    "    neighbor += luminance(texture(u_texture, v_uv + texel * vec2( r, -r)).rgb);",
+    "    neighbor += luminance(texture(u_texture, v_uv + texel * vec2(-r, -r)).rgb);",
+    "    neighbor *= 0.125;",
+    "    float crease = clamp((neighbor - center) * 2.25, 0.0, 1.0);",
+    "    float occlusion = 1.0 - crease * clamp(u_intensity, 0.0, 2.0);",
+    "    fragColor = vec4(color * occlusion, 1.0);",
+    "}",
+  ].join("\n");
+
   const SCENE_POST_COLORGRADE_SOURCE = [
     "#version 300 es",
     "precision highp float;",
@@ -11482,6 +11795,16 @@ if (typeof window !== "undefined") {
       return targetFBO ? targetFBO.colorTex : null;
     }
 
+    function applySSAO(inputTex, effect, targetFBO, w, h) {
+      var prog = getProgram("ssao", SCENE_POST_SSAO_SOURCE);
+      if (!prog) return inputTex;
+      beginPostPass(prog, inputTex, targetFBO ? targetFBO.fbo : null, w, h);
+      gl.uniform1f(gl.getUniformLocation(prog.program, "u_radius"), sceneNumber(effect.radius, 4.0));
+      gl.uniform1f(gl.getUniformLocation(prog.program, "u_intensity"), sceneNumber(effect.intensity, 0.55));
+      drawSceneFullscreenQuad(gl, quad.vao);
+      return targetFBO ? targetFBO.colorTex : null;
+    }
+
     var blitProg = null;
     var SCENE_POST_BLIT_SOURCE = [
       "#version 300 es",
@@ -11555,6 +11878,9 @@ if (typeof window !== "undefined") {
               break;
             case SCENE_POST_COLOR_GRADE:
               currentTexture = applyColorGrade(currentTexture, effect, targetFBO, passW, passH);
+              break;
+            case SCENE_POST_SSAO:
+              currentTexture = applySSAO(currentTexture, effect, targetFBO, passW, passH);
               break;
             default:
               break;
@@ -11811,6 +12137,120 @@ if (typeof window !== "undefined") {
     return uniforms;
   }
 
+  function scenePBRCustomUniformName(name) {
+    const value = typeof name === "string" ? name.trim() : "";
+    return /^[A-Za-z_][A-Za-z0-9_]*$/.test(value) ? value : "";
+  }
+
+  function scenePBRCustomUniformDeclaration(name, value) {
+    const uniformName = scenePBRCustomUniformName(name);
+    if (!uniformName) {
+      return "";
+    }
+    if (typeof value === "number" || typeof value === "boolean") {
+      return "uniform float " + uniformName + ";";
+    }
+    if (Array.isArray(value) || (value && typeof value.length === "number")) {
+      const len = Math.max(0, Math.floor(sceneNumber(value.length, 0)));
+      if (len >= 4) return "uniform vec4 " + uniformName + ";";
+      if (len === 3) return "uniform vec3 " + uniformName + ";";
+      if (len === 2) return "uniform vec2 " + uniformName + ";";
+    }
+    return "";
+  }
+
+  function scenePBRCustomUniformDeclarations(uniforms) {
+    if (!uniforms || typeof uniforms !== "object") {
+      return "";
+    }
+    const lines = [];
+    const names = Object.keys(uniforms).sort();
+    for (var i = 0; i < names.length; i++) {
+      const declaration = scenePBRCustomUniformDeclaration(names[i], uniforms[names[i]]);
+      if (declaration) {
+        lines.push(declaration);
+      }
+    }
+    return lines.join("\n");
+  }
+
+  function scenePBRCustomHookSource(source, functionName, signature) {
+    const body = typeof source === "string" ? source.trim() : "";
+    if (!body) {
+      return "";
+    }
+    if (body.indexOf(functionName) >= 0) {
+      return body;
+    }
+    return "void " + functionName + signature + " {\n" + body + "\n}";
+  }
+
+  function scenePBRBuildCustomVertexSource(material) {
+    const uniforms = scenePBRCustomUniformDeclarations(material && material.customUniforms);
+    const custom = scenePBRCustomHookSource(
+      material && material.customVertex,
+      "gosxApplyCustomVertex",
+      "(inout vec3 position, inout vec3 normal, inout vec2 uv)",
+    );
+    if (!uniforms && !custom) {
+      return SCENE_PBR_VERTEX_SOURCE;
+    }
+    const hook = custom || "void gosxApplyCustomVertex(inout vec3 position, inout vec3 normal, inout vec2 uv) {}";
+    return SCENE_PBR_VERTEX_SOURCE.replace(
+      "void gosxApplyCustomVertex(inout vec3 position, inout vec3 normal, inout vec2 uv) {}",
+      [uniforms, hook].filter(Boolean).join("\n\n"),
+    );
+  }
+
+  function scenePBRBuildCustomFragmentSource(material) {
+    const uniforms = scenePBRCustomUniformDeclarations(material && material.customUniforms);
+    const custom = scenePBRCustomHookSource(
+      material && material.customFragment,
+      "gosxApplyCustomFragment",
+      "(inout vec3 color, inout float opacity, vec3 normal, vec3 worldPosition, vec2 uv)",
+    );
+    if (!uniforms && !custom) {
+      return SCENE_PBR_FRAGMENT_SOURCE;
+    }
+    const hook = custom || "void gosxApplyCustomFragment(inout vec3 color, inout float opacity, vec3 normal, vec3 worldPosition, vec2 uv) {}";
+    const replacement = [uniforms, hook].filter(Boolean).join("\n\n");
+    return SCENE_PBR_FRAGMENT_SOURCE.replace(
+      "void gosxApplyCustomFragment(inout vec3 color, inout float opacity, vec3 normal, vec3 worldPosition, vec2 uv) {}",
+      replacement,
+    );
+  }
+
+  function scenePBRCustomUniformLocations(gl, program, values) {
+    const out = {};
+    if (!values || typeof values !== "object") {
+      return out;
+    }
+    const names = Object.keys(values);
+    for (var i = 0; i < names.length; i++) {
+      const name = scenePBRCustomUniformName(names[i]);
+      if (!name) {
+        continue;
+      }
+      const location = gl.getUniformLocation(program, name);
+      if (location) {
+        out[name] = location;
+      }
+    }
+    return out;
+  }
+
+  function scenePBRHasCustomHooks(material) {
+    return Boolean(
+      material &&
+      normalizeSceneMaterialKind(material.kind) === "custom" &&
+      (
+        (typeof material.customVertex === "string" && material.customVertex.trim()) ||
+        (typeof material.customFragment === "string" && material.customFragment.trim()) ||
+        (material.customUniforms && typeof material.customUniforms === "object" && Object.keys(material.customUniforms).length > 0)
+      )
+    );
+  }
+
   function createScenePBRProgram(gl) {
     const vertexShader = scenePBRCompileShader(gl, gl.VERTEX_SHADER, SCENE_PBR_VERTEX_SOURCE);
     if (!vertexShader) {
@@ -11834,6 +12274,37 @@ if (typeof window !== "undefined") {
 
     const uniforms = scenePBRCacheBaseUniforms(gl, program);
 
+    return {
+      program: program,
+      vertexShader: vertexShader,
+      fragmentShader: fragmentShader,
+      attributes: attributes,
+      uniforms: uniforms,
+    };
+  }
+
+  function createScenePBRCustomProgram(gl, material) {
+    const vertexSource = scenePBRBuildCustomVertexSource(material);
+    const fragmentSource = scenePBRBuildCustomFragmentSource(material);
+    const vertexShader = scenePBRCompileShader(gl, gl.VERTEX_SHADER, vertexSource);
+    if (!vertexShader) {
+      return null;
+    }
+    const fragmentShader = scenePBRCompileShader(gl, gl.FRAGMENT_SHADER, fragmentSource);
+    if (!fragmentShader) {
+      gl.deleteShader(vertexShader);
+      return null;
+    }
+    const program = scenePBRLinkProgram(gl, vertexShader, fragmentShader, "Custom PBR shader");
+    if (!program) return null;
+    const attributes = {
+      position: gl.getAttribLocation(program, "a_position"),
+      normal: gl.getAttribLocation(program, "a_normal"),
+      uv: gl.getAttribLocation(program, "a_uv"),
+      tangent: gl.getAttribLocation(program, "a_tangent"),
+    };
+    const uniforms = scenePBRCacheBaseUniforms(gl, program);
+    uniforms.customUniforms = scenePBRCustomUniformLocations(gl, program, material && material.customUniforms);
     return {
       program: program,
       vertexShader: vertexShader,
@@ -12473,9 +12944,14 @@ if (typeof window !== "undefined") {
     const program = pbrProgram.program;
     const attribs = pbrProgram.attributes;
     const uniforms = pbrProgram.uniforms;
+    const lineProgram = typeof createSceneWebGLProgram === "function" ? createSceneWebGLProgram(gl) : null;
+    const lineResources = lineProgram && typeof createSceneWebGLResources === "function"
+      ? createSceneWebGLResources(gl, lineProgram, null)
+      : null;
 
 	    var skinnedProgram = null;
 	    var skinnedProgramFailed = false;
+    var customProgramCache = new Map();
 
     const shadowProgram = createSceneShadowProgram(gl);
 
@@ -12703,9 +13179,35 @@ if (typeof window !== "undefined") {
       return buf.subarray(0, length);
     }
 
+    function uploadCustomUniforms(gl, uniforms, values) {
+      const locations = uniforms && uniforms.customUniforms;
+      if (!locations || !values || typeof values !== "object") {
+        return;
+      }
+      const names = Object.keys(locations);
+      for (var i = 0; i < names.length; i++) {
+        const name = names[i];
+        const loc = locations[name];
+        if (!loc) {
+          continue;
+        }
+        const value = values[name];
+        if (typeof value === "number" || typeof value === "boolean") {
+          gl.uniform1f(loc, sceneNumber(value, 0));
+        } else if ((Array.isArray(value) || (value && typeof value.length === "number")) && value.length >= 4) {
+          gl.uniform4f(loc, sceneNumber(value[0], 0), sceneNumber(value[1], 0), sceneNumber(value[2], 0), sceneNumber(value[3], 0));
+        } else if ((Array.isArray(value) || (value && typeof value.length === "number")) && value.length === 3) {
+          gl.uniform3f(loc, sceneNumber(value[0], 0), sceneNumber(value[1], 0), sceneNumber(value[2], 0));
+        } else if ((Array.isArray(value) || (value && typeof value.length === "number")) && value.length === 2) {
+          gl.uniform2f(loc, sceneNumber(value[0], 0), sceneNumber(value[1], 0));
+        }
+      }
+    }
+
     function uploadMaterial(gl, uniforms, material, textureCache) {
       const mat = material || {};
       if (uniforms._lastMaterial === material) {
+        uploadCustomUniforms(gl, uniforms, mat.customUniforms);
         return;
       }
       uniforms._lastMaterial = material;
@@ -12734,6 +13236,7 @@ if (typeof window !== "undefined") {
           gl.uniform1i(uniforms[tm.sampler], tm.unit);
         }
       }
+      uploadCustomUniforms(gl, uniforms, mat.customUniforms);
     }
 
     function applyBlendMode(gl, renderPass) {
@@ -12815,7 +13318,9 @@ if (typeof window !== "undefined") {
       const hasPointsData = (Array.isArray(bundle.points) && bundle.points.length > 0) ||
         (Array.isArray(bundle.computeParticles) && bundle.computeParticles.length > 0);
       const hasInstancedData = Array.isArray(bundle.instancedMeshes) && bundle.instancedMeshes.length > 0;
-      if (!hasPBRData && !hasPointsData && !hasInstancedData) {
+      const hasLineData = bundle.worldVertexCount > 0 ||
+        (Array.isArray(bundle.surfaces) && bundle.surfaces.length > 0);
+      if (!hasPBRData && !hasPointsData && !hasInstancedData && !hasLineData) {
         return;
       }
       const preparedScene = typeof prepareScene === "function"
@@ -12836,7 +13341,7 @@ if (typeof window !== "undefined") {
       const cam = _frameCam;
       const aspect = Math.max(0.0001, canvas.width / Math.max(1, canvas.height));
       const viewMatrix = scenePBRViewMatrix(cam, scratchViewMatrix);
-      const projMatrix = scenePBRProjectionMatrix(cam.fov, aspect, cam.near, cam.far, scratchProjMatrix);
+      const projMatrix = scenePBRProjectionMatrixForCamera(cam, aspect, scratchProjMatrix);
 
       shadowLightIndices[0] = -1; shadowLightIndices[1] = -1;
       var activeShadowCount = 0;
@@ -12944,6 +13449,10 @@ if (typeof window !== "undefined") {
 
       } // end if (hasPBRData)
 
+      if (lineResources && bundle.worldVertexCount > 0) {
+        renderSceneWebGLWorldBundle(gl, bundle, canvas, lineResources);
+      }
+
       drawInstancedMeshes(gl, bundle, viewMatrix, projMatrix);
 
       var frameTimeSeconds = performance.now() / 1000;
@@ -12986,6 +13495,23 @@ if (typeof window !== "undefined") {
 	      }
 	      return skinnedProgram;
 	    }
+
+    function ensureCustomProgram(material) {
+      if (!scenePBRHasCustomHooks(material)) {
+        return null;
+      }
+      const key = material && material.key ? material.key : sceneMaterialProfileKey(material);
+      const cached = customProgramCache.get(key);
+      if (cached) {
+        return cached.failed ? null : cached.program;
+      }
+      const customProgram = createScenePBRCustomProgram(gl, material);
+      customProgramCache.set(key, customProgram ? { program: customProgram } : { failed: true });
+      if (!customProgram) {
+        console.warn("[gosx] CustomMaterial shader compilation failed; object will use the standard PBR shader.");
+      }
+      return customProgram;
+    }
 
 	    function scenePBRDirectAttribute(vertices, key, count, tupleSize) {
 	      const data = vertices && vertices[key];
@@ -13051,32 +13577,43 @@ if (typeof window !== "undefined") {
       var currentAttribs = attribs;
       var currentUniforms = uniforms;
 
+      function uploadFrameUniformsForProgram(targetUniforms) {
+        gl.uniformMatrix4fv(targetUniforms.viewMatrix, false, scratchViewMatrix);
+        gl.uniformMatrix4fv(targetUniforms.projectionMatrix, false, scratchProjMatrix);
+        gl.uniform3f(targetUniforms.cameraPosition, _frameCam.x, _frameCam.y, -_frameCam.z);
+
+        var postEffects = Array.isArray(bundle.postEffects) ? bundle.postEffects : [];
+        scenePBRUploadExposure(gl, targetUniforms, bundle.environment, postEffects.length > 0);
+
+        scenePBRUploadLights(gl, targetUniforms, bundle.lights, bundle.environment, _frameLightsHash);
+        scenePBRUploadEnvironmentMap(gl, targetUniforms, bundle.environment, textureCache, shadowSlots, shadowLightIndices);
+        scenePBRUploadShadowUniforms(gl, targetUniforms, shadowSlots, shadowLightIndices, bundle.lights, bundle.environment);
+      }
+
       for (var i = 0; i < objectList.length; i++) {
         const obj = objectList[i];
         const matIndex = sceneNumber(obj.materialIndex, 0);
         const mat = materials[matIndex] || null;
         var isSkinned = objectIsSkinned(obj);
+        var customProgram = !isSkinned ? ensureCustomProgram(mat) : null;
 
-        if (isSkinned) {
+        if (customProgram) {
+          if (currentProgram !== customProgram.program) {
+            gl.useProgram(customProgram.program);
+            currentProgram = customProgram.program;
+            currentAttribs = customProgram.attributes;
+            currentUniforms = customProgram.uniforms;
+            uploadFrameUniformsForProgram(currentUniforms);
+            lastMaterialIndex = -1;
+          }
+        } else if (isSkinned) {
           var sp = ensureSkinnedProgram();
           if (sp && currentProgram !== sp.program) {
             gl.useProgram(sp.program);
             currentProgram = sp.program;
             currentAttribs = sp.attributes;
             currentUniforms = sp.uniforms;
-
-            gl.uniformMatrix4fv(currentUniforms.viewMatrix, false, scratchViewMatrix);
-            gl.uniformMatrix4fv(currentUniforms.projectionMatrix, false, scratchProjMatrix);
-            gl.uniform3f(currentUniforms.cameraPosition, _frameCam.x, _frameCam.y, -_frameCam.z);
-
-            var postEffects = Array.isArray(bundle.postEffects) ? bundle.postEffects : [];
-            scenePBRUploadExposure(gl, currentUniforms, bundle.environment, postEffects.length > 0);
-
-            scenePBRUploadLights(gl, currentUniforms, bundle.lights, bundle.environment, _frameLightsHash);
-            scenePBRUploadEnvironmentMap(gl, currentUniforms, bundle.environment, textureCache, shadowSlots, shadowLightIndices);
-
-            scenePBRUploadShadowUniforms(gl, currentUniforms, shadowSlots, shadowLightIndices, bundle.lights, bundle.environment);
-
+            uploadFrameUniformsForProgram(currentUniforms);
             lastMaterialIndex = -1;
           }
           if (!sp) isSkinned = false;
@@ -13703,6 +14240,20 @@ if (typeof window !== "undefined") {
         instancedProgram = null;
       }
       instancedGeometryCache = {};
+
+      for (const record of customProgramCache.values()) {
+        const cp = record && record.program;
+        if (cp) {
+          gl.deleteShader(cp.vertexShader);
+          gl.deleteShader(cp.fragmentShader);
+          gl.deleteProgram(cp.program);
+        }
+      }
+      customProgramCache.clear();
+
+      if (lineProgram && lineResources) {
+        disposeSceneWebGLRenderer(gl, lineProgram, lineResources);
+      }
 
       gl.deleteShader(pbrProgram.vertexShader);
       gl.deleteShader(pbrProgram.fragmentShader);
@@ -15198,6 +15749,7 @@ if (typeof window !== "undefined") {
     let active = false;
     let strokeStyle = "";
     let lineWidth = 0;
+    let lineDashKey = "";
     function flush() {
       if (!active) {
         return;
@@ -15206,15 +15758,23 @@ if (typeof window !== "undefined") {
       active = false;
     }
     return {
-      line(from, to, color, width) {
+      line(from, to, color, width, dash) {
         const nextStrokeStyle = color || "#8de1ff";
         const nextLineWidth = Math.max(0.1, sceneNumber(width, 1.8));
-        if (!active || nextStrokeStyle !== strokeStyle || nextLineWidth !== lineWidth) {
+        const dashed = dash && dash.dashed;
+        const dashSize = Math.max(0.1, sceneNumber(dash && dash.dashSize, nextLineWidth * 2.5));
+        const gapSize = Math.max(0.1, sceneNumber(dash && dash.gapSize, dashSize));
+        const nextDashKey = dashed ? (dashSize + ":" + gapSize) : "";
+        if (!active || nextStrokeStyle !== strokeStyle || nextLineWidth !== lineWidth || nextDashKey !== lineDashKey) {
           flush();
           strokeStyle = nextStrokeStyle;
           lineWidth = nextLineWidth;
+          lineDashKey = nextDashKey;
           ctx2d.strokeStyle = strokeStyle;
           ctx2d.lineWidth = lineWidth;
+          if (typeof ctx2d.setLineDash === "function") {
+            ctx2d.setLineDash(dashed ? [dashSize, gapSize] : []);
+          }
           ctx2d.beginPath();
           active = true;
         }
@@ -15241,6 +15801,9 @@ if (typeof window !== "undefined") {
     const positions = bundle && bundle.worldPositions;
     const colors = bundle && bundle.worldColors;
     const widths = bundle && bundle.worldLineWidths;
+    const dashes = bundle && bundle.worldLineDashes;
+    const dashSizes = bundle && bundle.worldLineDashSizes;
+    const gapSizes = bundle && bundle.worldLineGapSizes;
     const vertexCount = Math.max(0, Math.floor(sceneNumber(bundle && bundle.worldVertexCount, 0)));
     const batch = createSceneCanvasLineBatch(ctx2d);
     for (let index = 0; index + 1 < vertexCount; index += 2) {
@@ -15263,7 +15826,11 @@ if (typeof window !== "undefined") {
       ]);
       const segmentIndex = index / 2;
       const segmentWidth = widths && segmentIndex < widths.length ? widths[segmentIndex] : 0;
-      batch.line(from, to, color, segmentWidth > 0 ? segmentWidth : 1.8);
+      batch.line(from, to, color, segmentWidth > 0 ? segmentWidth : 1.8, {
+        dashed: Boolean(dashes && dashes[segmentIndex]),
+        dashSize: dashSizes && segmentIndex < dashSizes.length ? dashSizes[segmentIndex] : 0,
+        gapSize: gapSizes && segmentIndex < gapSizes.length ? gapSizes[segmentIndex] : 0,
+      });
     }
     batch.flush();
   }
@@ -15288,7 +15855,11 @@ if (typeof window !== "undefined") {
         } else {
           const batch = createSceneCanvasLineBatch(ctx2d);
           for (const line of lines) {
-            batch.line(line.from, line.to, line.color, line.lineWidth);
+            batch.line(line.from, line.to, line.color, line.lineWidth, {
+              dashed: Boolean(line.lineDash),
+              dashSize: line.dashSize,
+              gapSize: line.gapSize,
+            });
           }
           batch.flush();
         }
@@ -16989,6 +17560,56 @@ if (typeof window !== "undefined") {
     setAttrValue(mount, "data-gosx-scene3d-postfx", deferred ? "deferred" : (enabled ? "enabled" : "none"));
   }
 
+  function createSceneStatsOverlay(mount, enabled) {
+    if (!mount || !enabled || typeof document.createElement !== "function") {
+      return null;
+    }
+    const element = document.createElement("div");
+    element.setAttribute("data-gosx-scene3d-stats", "true");
+    element.setAttribute("aria-hidden", "true");
+    element.style.position = "absolute";
+    element.style.left = "8px";
+    element.style.top = "8px";
+    element.style.zIndex = "8";
+    element.style.pointerEvents = "none";
+    element.style.font = "11px/1.35 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace";
+    element.style.color = "#d9f7ff";
+    element.style.background = "rgba(4, 10, 16, 0.72)";
+    element.style.border = "1px solid rgba(141, 225, 255, 0.22)";
+    element.style.borderRadius = "6px";
+    element.style.padding = "6px 7px";
+    element.style.whiteSpace = "pre";
+    element.style.backdropFilter = "blur(6px)";
+    mount.appendChild(element);
+    return {
+      element,
+      update(bundle, frameStart, renderer, viewport) {
+        const now = typeof performance !== "undefined" && performance.now ? performance.now() : Date.now();
+        const frameMS = Math.max(0, now - sceneNumber(frameStart, now));
+        const fps = frameMS > 0 ? Math.min(999, 1000 / frameMS) : 0;
+        const meshes = Array.isArray(bundle && bundle.meshObjects) ? bundle.meshObjects.length : 0;
+        const world = Array.isArray(bundle && bundle.objects) ? bundle.objects.length : 0;
+        const points = Array.isArray(bundle && bundle.points) ? bundle.points.length : 0;
+        const instanced = Array.isArray(bundle && bundle.instancedMeshes) ? bundle.instancedMeshes.length : 0;
+        const surfaces = Array.isArray(bundle && bundle.surfaces) ? bundle.surfaces.length : 0;
+        const drawCalls = meshes + world + points + instanced + surfaces;
+        const materialCount = Array.isArray(bundle && bundle.materials) ? bundle.materials.length : 0;
+        element.textContent =
+          "fps " + fps.toFixed(0) + "  ms " + frameMS.toFixed(1) + "\n" +
+          "draw " + drawCalls + "  mat " + materialCount + "\n" +
+          "meshV " + Math.floor(sceneNumber(bundle && bundle.worldMeshVertexCount, 0)) +
+          "  lineV " + Math.floor(sceneNumber(bundle && bundle.worldVertexCount, 0)) + "\n" +
+          String(renderer && (renderer.type || renderer.kind) || "renderer") +
+          "  " + Math.floor(sceneNumber(viewport && viewport.cssWidth, 0)) + "x" + Math.floor(sceneNumber(viewport && viewport.cssHeight, 0));
+      },
+      dispose() {
+        if (element.parentNode === mount) {
+          mount.removeChild(element);
+        }
+      },
+    };
+  }
+
   function sceneViewportDevicePixelRatio(props, maxDevicePixelRatio) {
     const environment = sceneEnvironmentState();
     const preferred = sceneNumber(
@@ -17962,7 +18583,13 @@ if (typeof window !== "undefined") {
       radius,
       yaw: Math.atan2(offsetX, -offsetZ),
       pitch: Math.asin(sceneClamp(offsetY / radius, -0.98, 0.98)),
+      kind: normalized.kind,
       fov: normalized.fov,
+      left: normalized.left,
+      right: normalized.right,
+      top: normalized.top,
+      bottom: normalized.bottom,
+      zoom: normalized.zoom,
       near: normalized.near,
       far: normalized.far,
     };
@@ -17991,10 +18618,16 @@ if (typeof window !== "undefined") {
       x: worldPosition.x,
       y: worldPosition.y,
       z: -worldPosition.z,
+      kind: base.kind,
       rotationX: -Math.atan2(forward.y, horizontal),
       rotationY: Math.atan2(forward.x, forward.z),
       rotationZ: 0,
       fov: sceneNumber(orbit.fov, base.fov),
+      left: sceneNumber(orbit.left, base.left),
+      right: sceneNumber(orbit.right, base.right),
+      top: sceneNumber(orbit.top, base.top),
+      bottom: sceneNumber(orbit.bottom, base.bottom),
+      zoom: sceneNumber(orbit.zoom, base.zoom),
       near: sceneNumber(orbit.near, base.near),
       far: sceneNumber(orbit.far, base.far),
     };
@@ -18366,6 +18999,7 @@ if (typeof window !== "undefined") {
     labelLayer.setAttribute("data-gosx-scene3d-label-layer", "true");
     labelLayer.setAttribute("aria-hidden", "true");
     ctx.mount.appendChild(labelLayer);
+    const statsOverlay = createSceneStatsOverlay(ctx.mount, sceneBool(props.stats, false));
 
     const sentinelLayer = document.createElement("div");
     sentinelLayer.setAttribute("data-gosx-scene-node-layer", "true");
@@ -18399,6 +19033,9 @@ if (typeof window !== "undefined") {
       }
       if (labelLayer.parentNode === ctx.mount) {
         ctx.mount.removeChild(labelLayer);
+      }
+      if (statsOverlay) {
+        statsOverlay.dispose();
       }
       if (sentinelLayer.parentNode === ctx.mount) {
         sentinelLayer.parentNode.removeChild(sentinelLayer);
@@ -19089,6 +19726,7 @@ if (typeof window !== "undefined") {
 
     function renderFrame(now, reason) {
       if (disposed) return;
+      const frameStart = typeof performance !== "undefined" && performance.now ? performance.now() : Date.now();
       const perfEnabled = typeof window !== "undefined" && window.__gosx_scene3d_perf === true;
       recordScenePerfCounter("render:" + (reason || "animation"));
       if (viewportDirty) {
@@ -19127,6 +19765,9 @@ if (typeof window !== "undefined") {
           renderSceneLabels(labelLayer, effectiveBundle, labelLayoutCache, labelElements, viewport.cssWidth, viewport.cssHeight);
           renderSceneSprites(labelLayer, effectiveBundle, spriteElements, viewport.cssWidth, viewport.cssHeight);
           renderSceneHTML(labelLayer, effectiveBundle, htmlElements, viewport.cssWidth, viewport.cssHeight);
+          if (statsOverlay) {
+            statsOverlay.update(effectiveBundle, frameStart, renderer, viewport);
+          }
           scheduleNextAnimationFrame();
           return;
         }
@@ -19173,6 +19814,9 @@ if (typeof window !== "undefined") {
       renderSceneLabels(labelLayer, latestBundle, labelLayoutCache, labelElements, viewport.cssWidth, viewport.cssHeight);
       renderSceneSprites(labelLayer, latestBundle, spriteElements, viewport.cssWidth, viewport.cssHeight);
       renderSceneHTML(labelLayer, latestBundle, htmlElements, viewport.cssWidth, viewport.cssHeight);
+      if (statsOverlay) {
+        statsOverlay.update(latestBundle, frameStart, renderer, viewport);
+      }
       scheduleNextAnimationFrame();
     }
 
@@ -19374,6 +20018,9 @@ if (typeof window !== "undefined") {
         }
         if (labelLayer.parentNode === ctx.mount) {
           ctx.mount.removeChild(labelLayer);
+        }
+        if (statsOverlay) {
+          statsOverlay.dispose();
         }
         if (sentinelLayer.parentNode === ctx.mount) {
           ctx.mount.removeChild(sentinelLayer);

@@ -1,5 +1,29 @@
 # Changelog
 
+## v0.18.21
+
+Scene3D parity release.
+
+Scene3D now carries a broader three.js-style authoring surface through the Go
+API, canonical IR, WebGL runtime, and fallback renderer. New orthographic
+cameras cover CAD, editor, schematic, and 2D-in-3D views while preserving the
+existing perspective camera contract.
+
+Materials now include `LineBasicMaterial`, `LineDashedMaterial`, and
+`CustomMaterial`. Custom materials carry GLSL/WGSL shader hooks and uniforms
+through the IR, with WebGL GLSL hooks compiled into the PBR shader path and
+fallback behavior when a custom program fails to compile.
+
+Scene helpers now include `AxesHelper`, `GridHelper`, `BoxHelper`,
+`BoundingBoxHelper`, `SkeletonHelper`, and a first-pass visual
+`TransformControls` gizmo. Line geometry, dashed line metadata, selected mesh
+outline styling, and wire overlays flow through the renderer so editor and
+debug views have usable primitives.
+
+Post-processing adds an `SSAO` effect, and `scene.Props.Stats` enables an
+in-page development overlay with FPS, frame time, draw/material counts, buffer
+counts, renderer type, and viewport metrics.
+
 ## v0.18.20
 
 GoSX UI and canonical content-source release.

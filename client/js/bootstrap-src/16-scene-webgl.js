@@ -8,6 +8,7 @@
   var SCENE_POST_BLOOM = "bloom";
   var SCENE_POST_VIGNETTE = "vignette";
   var SCENE_POST_COLOR_GRADE = "colorGrade";
+  var SCENE_POST_SSAO = "ssao";
 
   // --- PBR Shader Sources ---
 
@@ -30,10 +31,16 @@
     "out vec3 v_tangent;",
     "out vec3 v_bitangent;",
     "",
+    "void gosxApplyCustomVertex(inout vec3 position, inout vec3 normal, inout vec2 uv) {}",
+    "",
     "void main() {",
-    "    v_worldPosition = a_position;",
-    "    v_normal = normalize(a_normal);",
-    "    v_uv = a_uv;",
+    "    vec3 gosxPosition = a_position;",
+    "    vec3 gosxNormal = a_normal;",
+    "    vec2 gosxUV = a_uv;",
+    "    gosxApplyCustomVertex(gosxPosition, gosxNormal, gosxUV);",
+    "    v_worldPosition = gosxPosition;",
+    "    v_normal = normalize(gosxNormal);",
+    "    v_uv = gosxUV;",
     "",
     "    vec3 T = normalize(a_tangent.xyz);",
     "    vec3 N = v_normal;",
@@ -41,7 +48,7 @@
     "    v_tangent = T;",
     "    v_bitangent = B;",
     "",
-    "    gl_Position = u_projectionMatrix * u_viewMatrix * vec4(a_position, 1.0);",
+    "    gl_Position = u_projectionMatrix * u_viewMatrix * vec4(gosxPosition, 1.0);",
     "}",
   ].join("\n");
 
@@ -151,6 +158,8 @@
     "out vec4 fragColor;",
     "",
     "const float PI = 3.14159265359;",
+    "",
+    "void gosxApplyCustomFragment(inout vec3 color, inout float opacity, vec3 normal, vec3 worldPosition, vec2 uv) {}",
     "",
     "// Poisson disk taps used for both the PCSS blocker search and the final",
     "// PCF filter. 8 taps provide a stable penumbra estimate without pushing",
@@ -339,7 +348,9 @@
     "    // Unlit path: output albedo directly.",
     "    if (u_unlit) {",
     "        vec3 color = albedo + emissiveColor * emissiveStrength;",
-    "        fragColor = vec4(color, u_opacity);",
+    "        float opacity = u_opacity;",
+    "        gosxApplyCustomFragment(color, opacity, normalize(v_normal), v_worldPosition, v_uv);",
+    "        fragColor = vec4(color, opacity);",
     "        return;",
     "    }",
     "",
@@ -492,7 +503,9 @@
     "    // Gamma correction.",
     "    color = pow(color, vec3(1.0 / 2.2));",
     "",
-    "    fragColor = vec4(color, u_opacity);",
+    "    float opacity = u_opacity;",
+    "    gosxApplyCustomFragment(color, opacity, N, v_worldPosition, v_uv);",
+    "    fragColor = vec4(color, opacity);",
     "}",
   ].join("\n");
 
@@ -801,6 +814,27 @@
     m[8] = 0; m[9] = 0; m[10] = (near + far) * rangeInv; m[11] = -1;
     m[12] = 0; m[13] = 0; m[14] = 2 * near * far * rangeInv; m[15] = 0;
     return m;
+  }
+
+  function scenePBROrthographicProjectionMatrix(left, right, top, bottom, near, far, out) {
+    var m = out || new Float32Array(16);
+    const width = Math.max(0.000001, right - left);
+    const height = Math.max(0.000001, top - bottom);
+    const depth = Math.max(0.000001, far - near);
+    m[0] = 2 / width; m[1] = 0; m[2] = 0; m[3] = 0;
+    m[4] = 0; m[5] = 2 / height; m[6] = 0; m[7] = 0;
+    m[8] = 0; m[9] = 0; m[10] = -2 / depth; m[11] = 0;
+    m[12] = -(right + left) / width; m[13] = -(top + bottom) / height; m[14] = -(far + near) / depth; m[15] = 1;
+    return m;
+  }
+
+  function scenePBRProjectionMatrixForCamera(camera, aspect, out) {
+    const cam = sceneRenderCamera(camera);
+    if (cam.kind === "orthographic") {
+      const bounds = sceneOrthographicBounds(cam, Math.max(1, aspect * 1000), 1000);
+      return scenePBROrthographicProjectionMatrix(bounds.left, bounds.right, bounds.top, bounds.bottom, cam.near, cam.far, out);
+    }
+    return scenePBRProjectionMatrix(cam.fov, aspect, cam.near, cam.far, out);
   }
 
   // --- Shadow Map Infrastructure ---
@@ -1522,6 +1556,42 @@
     "}",
   ].join("\n");
 
+  // Depthless SSAO-style contrast pass. It samples a local luminance ring and
+  // darkens pixels whose neighborhood suggests contact/creases; when a future
+  // depth texture is threaded through postfx this shader can swap to true
+  // depth reconstruction without changing the public effect kind.
+  const SCENE_POST_SSAO_SOURCE = [
+    "#version 300 es",
+    "precision highp float;",
+    "in vec2 v_uv;",
+    "uniform sampler2D u_texture;",
+    "uniform float u_radius;",
+    "uniform float u_intensity;",
+    "out vec4 fragColor;",
+    "",
+    "float luminance(vec3 color) { return dot(color, vec3(0.2126, 0.7152, 0.0722)); }",
+    "",
+    "void main() {",
+    "    vec2 texel = 1.0 / vec2(textureSize(u_texture, 0));",
+    "    vec3 color = texture(u_texture, v_uv).rgb;",
+    "    float center = luminance(color);",
+    "    float r = max(1.0, u_radius);",
+    "    float neighbor = 0.0;",
+    "    neighbor += luminance(texture(u_texture, v_uv + texel * vec2( r,  0.0)).rgb);",
+    "    neighbor += luminance(texture(u_texture, v_uv + texel * vec2(-r,  0.0)).rgb);",
+    "    neighbor += luminance(texture(u_texture, v_uv + texel * vec2(0.0,  r)).rgb);",
+    "    neighbor += luminance(texture(u_texture, v_uv + texel * vec2(0.0, -r)).rgb);",
+    "    neighbor += luminance(texture(u_texture, v_uv + texel * vec2( r,  r)).rgb);",
+    "    neighbor += luminance(texture(u_texture, v_uv + texel * vec2(-r,  r)).rgb);",
+    "    neighbor += luminance(texture(u_texture, v_uv + texel * vec2( r, -r)).rgb);",
+    "    neighbor += luminance(texture(u_texture, v_uv + texel * vec2(-r, -r)).rgb);",
+    "    neighbor *= 0.125;",
+    "    float crease = clamp((neighbor - center) * 2.25, 0.0, 1.0);",
+    "    float occlusion = 1.0 - crease * clamp(u_intensity, 0.0, 2.0);",
+    "    fragColor = vec4(color * occlusion, 1.0);",
+    "}",
+  ].join("\n");
+
   // Color grading — exposure, contrast, and saturation adjustments.
   const SCENE_POST_COLORGRADE_SOURCE = [
     "#version 300 es",
@@ -1774,6 +1844,16 @@
       return targetFBO ? targetFBO.colorTex : null;
     }
 
+    function applySSAO(inputTex, effect, targetFBO, w, h) {
+      var prog = getProgram("ssao", SCENE_POST_SSAO_SOURCE);
+      if (!prog) return inputTex;
+      beginPostPass(prog, inputTex, targetFBO ? targetFBO.fbo : null, w, h);
+      gl.uniform1f(gl.getUniformLocation(prog.program, "u_radius"), sceneNumber(effect.radius, 4.0));
+      gl.uniform1f(gl.getUniformLocation(prog.program, "u_intensity"), sceneNumber(effect.intensity, 0.55));
+      drawSceneFullscreenQuad(gl, quad.vao);
+      return targetFBO ? targetFBO.colorTex : null;
+    }
+
     // Simple blit — copy a texture to the screen without any processing.
     var blitProg = null;
     var SCENE_POST_BLIT_SOURCE = [
@@ -1862,6 +1942,9 @@
               break;
             case SCENE_POST_COLOR_GRADE:
               currentTexture = applyColorGrade(currentTexture, effect, targetFBO, passW, passH);
+              break;
+            case SCENE_POST_SSAO:
+              currentTexture = applySSAO(currentTexture, effect, targetFBO, passW, passH);
               break;
             default:
               // Unknown effect — skip.
@@ -2130,6 +2213,120 @@
     return uniforms;
   }
 
+  function scenePBRCustomUniformName(name) {
+    const value = typeof name === "string" ? name.trim() : "";
+    return /^[A-Za-z_][A-Za-z0-9_]*$/.test(value) ? value : "";
+  }
+
+  function scenePBRCustomUniformDeclaration(name, value) {
+    const uniformName = scenePBRCustomUniformName(name);
+    if (!uniformName) {
+      return "";
+    }
+    if (typeof value === "number" || typeof value === "boolean") {
+      return "uniform float " + uniformName + ";";
+    }
+    if (Array.isArray(value) || (value && typeof value.length === "number")) {
+      const len = Math.max(0, Math.floor(sceneNumber(value.length, 0)));
+      if (len >= 4) return "uniform vec4 " + uniformName + ";";
+      if (len === 3) return "uniform vec3 " + uniformName + ";";
+      if (len === 2) return "uniform vec2 " + uniformName + ";";
+    }
+    return "";
+  }
+
+  function scenePBRCustomUniformDeclarations(uniforms) {
+    if (!uniforms || typeof uniforms !== "object") {
+      return "";
+    }
+    const lines = [];
+    const names = Object.keys(uniforms).sort();
+    for (var i = 0; i < names.length; i++) {
+      const declaration = scenePBRCustomUniformDeclaration(names[i], uniforms[names[i]]);
+      if (declaration) {
+        lines.push(declaration);
+      }
+    }
+    return lines.join("\n");
+  }
+
+  function scenePBRCustomHookSource(source, functionName, signature) {
+    const body = typeof source === "string" ? source.trim() : "";
+    if (!body) {
+      return "";
+    }
+    if (body.indexOf(functionName) >= 0) {
+      return body;
+    }
+    return "void " + functionName + signature + " {\n" + body + "\n}";
+  }
+
+  function scenePBRBuildCustomVertexSource(material) {
+    const uniforms = scenePBRCustomUniformDeclarations(material && material.customUniforms);
+    const custom = scenePBRCustomHookSource(
+      material && material.customVertex,
+      "gosxApplyCustomVertex",
+      "(inout vec3 position, inout vec3 normal, inout vec2 uv)",
+    );
+    if (!uniforms && !custom) {
+      return SCENE_PBR_VERTEX_SOURCE;
+    }
+    const hook = custom || "void gosxApplyCustomVertex(inout vec3 position, inout vec3 normal, inout vec2 uv) {}";
+    return SCENE_PBR_VERTEX_SOURCE.replace(
+      "void gosxApplyCustomVertex(inout vec3 position, inout vec3 normal, inout vec2 uv) {}",
+      [uniforms, hook].filter(Boolean).join("\n\n"),
+    );
+  }
+
+  function scenePBRBuildCustomFragmentSource(material) {
+    const uniforms = scenePBRCustomUniformDeclarations(material && material.customUniforms);
+    const custom = scenePBRCustomHookSource(
+      material && material.customFragment,
+      "gosxApplyCustomFragment",
+      "(inout vec3 color, inout float opacity, vec3 normal, vec3 worldPosition, vec2 uv)",
+    );
+    if (!uniforms && !custom) {
+      return SCENE_PBR_FRAGMENT_SOURCE;
+    }
+    const hook = custom || "void gosxApplyCustomFragment(inout vec3 color, inout float opacity, vec3 normal, vec3 worldPosition, vec2 uv) {}";
+    const replacement = [uniforms, hook].filter(Boolean).join("\n\n");
+    return SCENE_PBR_FRAGMENT_SOURCE.replace(
+      "void gosxApplyCustomFragment(inout vec3 color, inout float opacity, vec3 normal, vec3 worldPosition, vec2 uv) {}",
+      replacement,
+    );
+  }
+
+  function scenePBRCustomUniformLocations(gl, program, values) {
+    const out = {};
+    if (!values || typeof values !== "object") {
+      return out;
+    }
+    const names = Object.keys(values);
+    for (var i = 0; i < names.length; i++) {
+      const name = scenePBRCustomUniformName(names[i]);
+      if (!name) {
+        continue;
+      }
+      const location = gl.getUniformLocation(program, name);
+      if (location) {
+        out[name] = location;
+      }
+    }
+    return out;
+  }
+
+  function scenePBRHasCustomHooks(material) {
+    return Boolean(
+      material &&
+      normalizeSceneMaterialKind(material.kind) === "custom" &&
+      (
+        (typeof material.customVertex === "string" && material.customVertex.trim()) ||
+        (typeof material.customFragment === "string" && material.customFragment.trim()) ||
+        (material.customUniforms && typeof material.customUniforms === "object" && Object.keys(material.customUniforms).length > 0)
+      )
+    );
+  }
+
   // Compile PBR vertex + fragment shaders and return a program object with
   // cached uniform locations. Returns null on compile/link failure so the
   // caller can fall back to the legacy renderer.
@@ -2158,6 +2355,37 @@
     // Cache uniform locations.
     const uniforms = scenePBRCacheBaseUniforms(gl, program);
 
+    return {
+      program: program,
+      vertexShader: vertexShader,
+      fragmentShader: fragmentShader,
+      attributes: attributes,
+      uniforms: uniforms,
+    };
+  }
+
+  function createScenePBRCustomProgram(gl, material) {
+    const vertexSource = scenePBRBuildCustomVertexSource(material);
+    const fragmentSource = scenePBRBuildCustomFragmentSource(material);
+    const vertexShader = scenePBRCompileShader(gl, gl.VERTEX_SHADER, vertexSource);
+    if (!vertexShader) {
+      return null;
+    }
+    const fragmentShader = scenePBRCompileShader(gl, gl.FRAGMENT_SHADER, fragmentSource);
+    if (!fragmentShader) {
+      gl.deleteShader(vertexShader);
+      return null;
+    }
+    const program = scenePBRLinkProgram(gl, vertexShader, fragmentShader, "Custom PBR shader");
+    if (!program) return null;
+    const attributes = {
+      position: gl.getAttribLocation(program, "a_position"),
+      normal: gl.getAttribLocation(program, "a_normal"),
+      uv: gl.getAttribLocation(program, "a_uv"),
+      tangent: gl.getAttribLocation(program, "a_tangent"),
+    };
+    const uniforms = scenePBRCacheBaseUniforms(gl, program);
+    uniforms.customUniforms = scenePBRCustomUniformLocations(gl, program, material && material.customUniforms);
     return {
       program: program,
       vertexShader: vertexShader,
@@ -2922,10 +3150,15 @@
     const program = pbrProgram.program;
     const attribs = pbrProgram.attributes;
     const uniforms = pbrProgram.uniforms;
+    const lineProgram = typeof createSceneWebGLProgram === "function" ? createSceneWebGLProgram(gl) : null;
+    const lineResources = lineProgram && typeof createSceneWebGLResources === "function"
+      ? createSceneWebGLResources(gl, lineProgram, null)
+      : null;
 
 	    // Skinned PBR program — compiled lazily on first skinned object.
 	    var skinnedProgram = null;
 	    var skinnedProgramFailed = false;
+    var customProgramCache = new Map();
 
     // Shadow program (depth-only shader for shadow pass).
     const shadowProgram = createSceneShadowProgram(gl);
@@ -3216,6 +3449,31 @@
       return buf.subarray(0, length);
     }
 
+    function uploadCustomUniforms(gl, uniforms, values) {
+      const locations = uniforms && uniforms.customUniforms;
+      if (!locations || !values || typeof values !== "object") {
+        return;
+      }
+      const names = Object.keys(locations);
+      for (var i = 0; i < names.length; i++) {
+        const name = names[i];
+        const loc = locations[name];
+        if (!loc) {
+          continue;
+        }
+        const value = values[name];
+        if (typeof value === "number" || typeof value === "boolean") {
+          gl.uniform1f(loc, sceneNumber(value, 0));
+        } else if ((Array.isArray(value) || (value && typeof value.length === "number")) && value.length >= 4) {
+          gl.uniform4f(loc, sceneNumber(value[0], 0), sceneNumber(value[1], 0), sceneNumber(value[2], 0), sceneNumber(value[3], 0));
+        } else if ((Array.isArray(value) || (value && typeof value.length === "number")) && value.length === 3) {
+          gl.uniform3f(loc, sceneNumber(value[0], 0), sceneNumber(value[1], 0), sceneNumber(value[2], 0));
+        } else if ((Array.isArray(value) || (value && typeof value.length === "number")) && value.length === 2) {
+          gl.uniform2f(loc, sceneNumber(value[0], 0), sceneNumber(value[1], 0));
+        }
+      }
+    }
+
     function uploadMaterial(gl, uniforms, material, textureCache) {
       const mat = material || {};
       // Global material cache on the program's uniforms object. Skip the
@@ -3233,6 +3491,7 @@
       // the bundle's materialIndex, which gives a different reference
       // and naturally triggers a re-upload.
       if (uniforms._lastMaterial === material) {
+        uploadCustomUniforms(gl, uniforms, mat.customUniforms);
         return;
       }
       uniforms._lastMaterial = material;
@@ -3262,6 +3521,7 @@
           gl.uniform1i(uniforms[tm.sampler], tm.unit);
         }
       }
+      uploadCustomUniforms(gl, uniforms, mat.customUniforms);
     }
 
     function applyBlendMode(gl, renderPass) {
@@ -3362,7 +3622,9 @@
       const hasPointsData = (Array.isArray(bundle.points) && bundle.points.length > 0) ||
         (Array.isArray(bundle.computeParticles) && bundle.computeParticles.length > 0);
       const hasInstancedData = Array.isArray(bundle.instancedMeshes) && bundle.instancedMeshes.length > 0;
-      if (!hasPBRData && !hasPointsData && !hasInstancedData) {
+      const hasLineData = bundle.worldVertexCount > 0 ||
+        (Array.isArray(bundle.surfaces) && bundle.surfaces.length > 0);
+      if (!hasPBRData && !hasPointsData && !hasInstancedData && !hasLineData) {
         return;
       }
       const preparedScene = typeof prepareScene === "function"
@@ -3387,7 +3649,7 @@
       const cam = _frameCam;
       const aspect = Math.max(0.0001, canvas.width / Math.max(1, canvas.height));
       const viewMatrix = scenePBRViewMatrix(cam, scratchViewMatrix);
-      const projMatrix = scenePBRProjectionMatrix(cam.fov, aspect, cam.near, cam.far, scratchProjMatrix);
+      const projMatrix = scenePBRProjectionMatrixForCamera(cam, aspect, scratchProjMatrix);
 
       // --- Shadow Pass ---
       // Identify shadow-casting directional lights (max 2) and render per-
@@ -3539,6 +3801,10 @@
 
       } // end if (hasPBRData)
 
+      if (lineResources && bundle.worldVertexCount > 0) {
+        renderSceneWebGLWorldBundle(gl, bundle, canvas, lineResources);
+      }
+
       // Draw instanced meshes (after regular meshes, before points).
       drawInstancedMeshes(gl, bundle, viewMatrix, projMatrix);
 
@@ -3592,6 +3858,23 @@
 	      }
 	      return skinnedProgram;
 	    }
+
+    function ensureCustomProgram(material) {
+      if (!scenePBRHasCustomHooks(material)) {
+        return null;
+      }
+      const key = material && material.key ? material.key : sceneMaterialProfileKey(material);
+      const cached = customProgramCache.get(key);
+      if (cached) {
+        return cached.failed ? null : cached.program;
+      }
+      const customProgram = createScenePBRCustomProgram(gl, material);
+      customProgramCache.set(key, customProgram ? { program: customProgram } : { failed: true });
+      if (!customProgram) {
+        console.warn("[gosx] CustomMaterial shader compilation failed; object will use the standard PBR shader.");
+      }
+      return customProgram;
+    }
 
 	    function scenePBRDirectAttribute(vertices, key, count, tupleSize) {
 	      const data = vertices && vertices[key];
@@ -3659,37 +3942,44 @@
       var currentAttribs = attribs;
       var currentUniforms = uniforms;
 
+      function uploadFrameUniformsForProgram(targetUniforms) {
+        gl.uniformMatrix4fv(targetUniforms.viewMatrix, false, scratchViewMatrix);
+        gl.uniformMatrix4fv(targetUniforms.projectionMatrix, false, scratchProjMatrix);
+        gl.uniform3f(targetUniforms.cameraPosition, _frameCam.x, _frameCam.y, -_frameCam.z);
+
+        var postEffects = Array.isArray(bundle.postEffects) ? bundle.postEffects : [];
+        scenePBRUploadExposure(gl, targetUniforms, bundle.environment, postEffects.length > 0);
+
+        scenePBRUploadLights(gl, targetUniforms, bundle.lights, bundle.environment, _frameLightsHash);
+        scenePBRUploadEnvironmentMap(gl, targetUniforms, bundle.environment, textureCache, shadowSlots, shadowLightIndices);
+        scenePBRUploadShadowUniforms(gl, targetUniforms, shadowSlots, shadowLightIndices, bundle.lights, bundle.environment);
+      }
+
       for (var i = 0; i < objectList.length; i++) {
         const obj = objectList[i];
         const matIndex = sceneNumber(obj.materialIndex, 0);
         const mat = materials[matIndex] || null;
         var isSkinned = objectIsSkinned(obj);
+        var customProgram = !isSkinned ? ensureCustomProgram(mat) : null;
 
         // Switch to skinned program if this object has skin data.
-        if (isSkinned) {
+        if (customProgram) {
+          if (currentProgram !== customProgram.program) {
+            gl.useProgram(customProgram.program);
+            currentProgram = customProgram.program;
+            currentAttribs = customProgram.attributes;
+            currentUniforms = customProgram.uniforms;
+            uploadFrameUniformsForProgram(currentUniforms);
+            lastMaterialIndex = -1;
+          }
+        } else if (isSkinned) {
           var sp = ensureSkinnedProgram();
           if (sp && currentProgram !== sp.program) {
             gl.useProgram(sp.program);
             currentProgram = sp.program;
             currentAttribs = sp.attributes;
             currentUniforms = sp.uniforms;
-
-            // Re-upload per-frame uniforms to the skinned program.
-            // Reuse the pre-computed camera and matrices from the main render pass.
-            gl.uniformMatrix4fv(currentUniforms.viewMatrix, false, scratchViewMatrix);
-            gl.uniformMatrix4fv(currentUniforms.projectionMatrix, false, scratchProjMatrix);
-            gl.uniform3f(currentUniforms.cameraPosition, _frameCam.x, _frameCam.y, -_frameCam.z);
-
-            var postEffects = Array.isArray(bundle.postEffects) ? bundle.postEffects : [];
-            scenePBRUploadExposure(gl, currentUniforms, bundle.environment, postEffects.length > 0);
-
-            scenePBRUploadLights(gl, currentUniforms, bundle.lights, bundle.environment, _frameLightsHash);
-            scenePBRUploadEnvironmentMap(gl, currentUniforms, bundle.environment, textureCache, shadowSlots, shadowLightIndices);
-
-            // Re-upload shadow uniforms.
-            scenePBRUploadShadowUniforms(gl, currentUniforms, shadowSlots, shadowLightIndices, bundle.lights, bundle.environment);
-
-            // Force material re-upload since we switched programs.
+            uploadFrameUniformsForProgram(currentUniforms);
             lastMaterialIndex = -1;
           }
           // Fall back to static if skinned program failed to compile.
@@ -4405,6 +4695,20 @@
         instancedProgram = null;
       }
       instancedGeometryCache = {};
+
+      for (const record of customProgramCache.values()) {
+        const cp = record && record.program;
+        if (cp) {
+          gl.deleteShader(cp.vertexShader);
+          gl.deleteShader(cp.fragmentShader);
+          gl.deleteProgram(cp.program);
+        }
+      }
+      customProgramCache.clear();
+
+      if (lineProgram && lineResources) {
+        disposeSceneWebGLRenderer(gl, lineProgram, lineResources);
+      }
 
       gl.deleteShader(pbrProgram.vertexShader);
       gl.deleteShader(pbrProgram.fragmentShader);

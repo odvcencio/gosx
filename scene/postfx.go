@@ -135,6 +135,15 @@ type ColorGrade struct {
 
 func (ColorGrade) isPostEffect() {}
 
+// SSAO applies a screen-space ambient-occlusion style darkening pass.
+type SSAO struct {
+	Radius    float32 // sample radius in pixels (default 4)
+	Intensity float32 // 0..2, default 0.55
+	Bias      float32 // reserved for the depth-backed SSAO path
+}
+
+func (SSAO) isPostEffect() {}
+
 // resolveMaxPixels normalizes the field for IR emission. Zero or negative
 // values become the default 1080p cap; positive values pass through.
 func (p PostFX) resolveMaxPixels() int {

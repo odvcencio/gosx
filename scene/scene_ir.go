@@ -76,58 +76,69 @@ type MeshInstanceIR struct {
 
 // ObjectIR is the typed compatibility record for one lowered scene object.
 type ObjectIR struct {
-	ID              string         `json:"id"`
-	Kind            string         `json:"kind"`
-	Size            float64        `json:"size,omitempty"`
-	Width           float64        `json:"width,omitempty"`
-	Height          float64        `json:"height,omitempty"`
-	Depth           float64        `json:"depth,omitempty"`
-	Radius          float64        `json:"radius,omitempty"`
-	Segments        int            `json:"segments,omitempty"`
-	Points          []Vector3      `json:"points,omitempty"`
-	LineSegments    [][2]int       `json:"lineSegments,omitempty"`
-	LineWidth       float64        `json:"lineWidth,omitempty"`
-	RadiusTop       float64        `json:"radiusTop,omitempty"`
-	RadiusBottom    float64        `json:"radiusBottom,omitempty"`
-	Tube            float64        `json:"tube,omitempty"`
-	RadialSegments  int            `json:"radialSegments,omitempty"`
-	TubularSegments int            `json:"tubularSegments,omitempty"`
-	MaterialKind    string         `json:"materialKind,omitempty"`
-	Color           string         `json:"color,omitempty"`
-	Texture         string         `json:"texture,omitempty"`
-	Opacity         *float64       `json:"opacity,omitempty"`
-	Emissive        *float64       `json:"emissive,omitempty"`
-	BlendMode       string         `json:"blendMode,omitempty"`
-	RenderPass      string         `json:"renderPass,omitempty"`
-	Wireframe       *bool          `json:"wireframe,omitempty"`
-	Pickable        *bool          `json:"pickable,omitempty"`
-	CastShadow      bool           `json:"castShadow,omitempty"`
-	ReceiveShadow   bool           `json:"receiveShadow,omitempty"`
-	DepthWrite      *bool          `json:"depthWrite,omitempty"`
-	Roughness       float64        `json:"roughness,omitempty"`
-	Metalness       float64        `json:"metalness,omitempty"`
-	NormalMap       string         `json:"normalMap,omitempty"`
-	RoughnessMap    string         `json:"roughnessMap,omitempty"`
-	MetalnessMap    string         `json:"metalnessMap,omitempty"`
-	EmissiveMap     string         `json:"emissiveMap,omitempty"`
-	X               float64        `json:"x,omitempty"`
-	Y               float64        `json:"y,omitempty"`
-	Z               float64        `json:"z,omitempty"`
-	RotationX       float64        `json:"rotationX,omitempty"`
-	RotationY       float64        `json:"rotationY,omitempty"`
-	RotationZ       float64        `json:"rotationZ,omitempty"`
-	SpinX           float64        `json:"spinX,omitempty"`
-	SpinY           float64        `json:"spinY,omitempty"`
-	SpinZ           float64        `json:"spinZ,omitempty"`
-	ShiftX          float64        `json:"shiftX,omitempty"`
-	ShiftY          float64        `json:"shiftY,omitempty"`
-	ShiftZ          float64        `json:"shiftZ,omitempty"`
-	DriftSpeed      float64        `json:"driftSpeed,omitempty"`
-	DriftPhase      float64        `json:"driftPhase,omitempty"`
-	Transition      TransitionIR   `json:"transition,omitzero"`
-	InState         map[string]any `json:"inState,omitempty"`
-	OutState        map[string]any `json:"outState,omitempty"`
-	Live            []string       `json:"live,omitempty"`
+	ID                 string         `json:"id"`
+	Kind               string         `json:"kind"`
+	Size               float64        `json:"size,omitempty"`
+	Width              float64        `json:"width,omitempty"`
+	Height             float64        `json:"height,omitempty"`
+	Depth              float64        `json:"depth,omitempty"`
+	Radius             float64        `json:"radius,omitempty"`
+	Segments           int            `json:"segments,omitempty"`
+	Points             []Vector3      `json:"points,omitempty"`
+	LineSegments       [][2]int       `json:"lineSegments,omitempty"`
+	LineWidth          float64        `json:"lineWidth,omitempty"`
+	RadiusTop          float64        `json:"radiusTop,omitempty"`
+	RadiusBottom       float64        `json:"radiusBottom,omitempty"`
+	Tube               float64        `json:"tube,omitempty"`
+	RadialSegments     int            `json:"radialSegments,omitempty"`
+	TubularSegments    int            `json:"tubularSegments,omitempty"`
+	MaterialKind       string         `json:"materialKind,omitempty"`
+	Color              string         `json:"color,omitempty"`
+	Texture            string         `json:"texture,omitempty"`
+	Opacity            *float64       `json:"opacity,omitempty"`
+	Emissive           *float64       `json:"emissive,omitempty"`
+	BlendMode          string         `json:"blendMode,omitempty"`
+	RenderPass         string         `json:"renderPass,omitempty"`
+	Wireframe          *bool          `json:"wireframe,omitempty"`
+	LineDash           *bool          `json:"lineDash,omitempty"`
+	DashSize           float64        `json:"dashSize,omitempty"`
+	GapSize            float64        `json:"gapSize,omitempty"`
+	CustomVertex       string         `json:"customVertex,omitempty"`
+	CustomFragment     string         `json:"customFragment,omitempty"`
+	CustomVertexWGSL   string         `json:"customVertexWGSL,omitempty"`
+	CustomFragmentWGSL string         `json:"customFragmentWGSL,omitempty"`
+	CustomUniforms     map[string]any `json:"customUniforms,omitempty"`
+	Pickable           *bool          `json:"pickable,omitempty"`
+	Selected           bool           `json:"selected,omitempty"`
+	OutlineColor       string         `json:"outlineColor,omitempty"`
+	OutlineWidth       float64        `json:"outlineWidth,omitempty"`
+	CastShadow         bool           `json:"castShadow,omitempty"`
+	ReceiveShadow      bool           `json:"receiveShadow,omitempty"`
+	DepthWrite         *bool          `json:"depthWrite,omitempty"`
+	Roughness          float64        `json:"roughness,omitempty"`
+	Metalness          float64        `json:"metalness,omitempty"`
+	NormalMap          string         `json:"normalMap,omitempty"`
+	RoughnessMap       string         `json:"roughnessMap,omitempty"`
+	MetalnessMap       string         `json:"metalnessMap,omitempty"`
+	EmissiveMap        string         `json:"emissiveMap,omitempty"`
+	X                  float64        `json:"x,omitempty"`
+	Y                  float64        `json:"y,omitempty"`
+	Z                  float64        `json:"z,omitempty"`
+	RotationX          float64        `json:"rotationX,omitempty"`
+	RotationY          float64        `json:"rotationY,omitempty"`
+	RotationZ          float64        `json:"rotationZ,omitempty"`
+	SpinX              float64        `json:"spinX,omitempty"`
+	SpinY              float64        `json:"spinY,omitempty"`
+	SpinZ              float64        `json:"spinZ,omitempty"`
+	ShiftX             float64        `json:"shiftX,omitempty"`
+	ShiftY             float64        `json:"shiftY,omitempty"`
+	ShiftZ             float64        `json:"shiftZ,omitempty"`
+	DriftSpeed         float64        `json:"driftSpeed,omitempty"`
+	DriftPhase         float64        `json:"driftPhase,omitempty"`
+	Transition         TransitionIR   `json:"transition,omitzero"`
+	InState            map[string]any `json:"inState,omitempty"`
+	OutState           map[string]any `json:"outState,omitempty"`
+	Live               []string       `json:"live,omitempty"`
 }
 
 // MarshalJSON encodes ObjectIR via the standard reflection path but
@@ -637,9 +648,26 @@ func (item ObjectIR) legacyProps() map[string]any {
 	if item.Wireframe != nil {
 		record["wireframe"] = *item.Wireframe
 	}
+	if item.LineDash != nil {
+		record["lineDash"] = *item.LineDash
+	}
+	setNumeric(record, "dashSize", item.DashSize)
+	setNumeric(record, "gapSize", item.GapSize)
+	setString(record, "customVertex", item.CustomVertex)
+	setString(record, "customFragment", item.CustomFragment)
+	setString(record, "customVertexWGSL", item.CustomVertexWGSL)
+	setString(record, "customFragmentWGSL", item.CustomFragmentWGSL)
+	if len(item.CustomUniforms) > 0 {
+		record["customUniforms"] = cloneSceneAnyMap(item.CustomUniforms)
+	}
 	if item.Pickable != nil {
 		record["pickable"] = *item.Pickable
 	}
+	if item.Selected {
+		record["selected"] = true
+	}
+	setString(record, "outlineColor", item.OutlineColor)
+	setNumeric(record, "outlineWidth", item.OutlineWidth)
 	if item.CastShadow {
 		record["castShadow"] = true
 	}

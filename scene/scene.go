@@ -37,6 +37,23 @@ type PerspectiveCamera struct {
 	TransitionMS float64 // if > 0, client interpolates over this many milliseconds
 }
 
+// OrthographicCamera describes a non-perspective camera for CAD, editor, and
+// 2D-in-3D views. Left/Right/Top/Bottom are world-space view bounds before
+// Zoom. If all bounds are zero the runtime derives a 6-unit-tall view from the
+// current viewport aspect ratio.
+type OrthographicCamera struct {
+	Position     Vector3
+	Rotation     Euler
+	Left         float64
+	Right        float64
+	Top          float64
+	Bottom       float64
+	Zoom         float64
+	Near         float64
+	Far          float64
+	TransitionMS float64
+}
+
 // Environment describes scene-wide ambient, hemisphere, and image-based lighting.
 type Environment struct {
 	AmbientColor     string
@@ -93,6 +110,8 @@ type Props struct {
 	ScrollCameraEnd      float64 `json:"scrollCameraEnd,omitempty"`
 	MaxDevicePixelRatio  float64 `json:"maxDevicePixelRatio,omitempty"`
 	Camera               PerspectiveCamera
+	OrthographicCamera   *OrthographicCamera
+	Stats                *bool `json:"stats,omitempty"`
 	Environment          Environment
 	PostFX               PostFX
 	Shadows              Shadows
@@ -196,6 +215,9 @@ type Mesh struct {
 	Position      Vector3
 	Rotation      Euler
 	Pickable      *bool
+	Selected      bool
+	OutlineColor  string
+	OutlineWidth  float64
 	CastShadow    bool
 	ReceiveShadow bool
 	DepthWrite    *bool // nil = default (true), false = no depth writes
@@ -518,6 +540,71 @@ type Geometry interface {
 	legacyGeometry() (string, map[string]any)
 }
 
+// AxesHelper renders colored XYZ axes as line geometry.
+type AxesHelper struct {
+	ID       string
+	Size     float64
+	Position Vector3
+	Rotation Euler
+	Width    float64
+}
+
+// GridHelper renders an XZ-plane reference grid as line geometry.
+type GridHelper struct {
+	ID        string
+	Size      float64
+	Divisions int
+	Color     string
+	Position  Vector3
+	Rotation  Euler
+	Width     float64
+}
+
+// BoxHelper renders a wire box using Width/Height/Depth extents.
+type BoxHelper struct {
+	ID       string
+	Width    float64
+	Height   float64
+	Depth    float64
+	Color    string
+	Position Vector3
+	Rotation Euler
+	WidthPx  float64
+}
+
+// BoundingBoxHelper renders a wire bounding box from min/max corners.
+type BoundingBoxHelper struct {
+	ID      string
+	Min     Vector3
+	Max     Vector3
+	Color   string
+	WidthPx float64
+}
+
+// SkeletonHelper renders a bone graph as line segments between joints.
+type SkeletonHelper struct {
+	ID       string
+	Joints   []Vector3
+	Bones    [][2]int
+	Color    string
+	Position Vector3
+	Rotation Euler
+	Width    float64
+}
+
+// TransformControls renders editor-style translate/rotate/scale handles.
+// The first implementation is a visual helper surface; interactive pointer
+// mutation is handled by the browser controls layer.
+type TransformControls struct {
+	ID       string
+	Target   string
+	Mode     string // "translate", "rotate", "scale"
+	Size     float64
+	Position Vector3
+	Rotation Euler
+	Width    float64
+}
+
 // Material describes one supported legacy material adapter.
 type Material interface {
 	sceneMaterial()
@@ -566,6 +653,31 @@ type MaterialStyle struct {
 	BlendMode  MaterialBlendMode
 	RenderPass MaterialRenderPass
 	Wireframe  *bool
+}
+
+// LineBasicMaterial styles line and helper geometry.
+type LineBasicMaterial struct {
+	MaterialStyle
+	Width float64
+}
+
+// LineDashedMaterial styles line geometry with a repeating dash pattern.
+type LineDashedMaterial struct {
+	MaterialStyle
+	Width    float64
+	DashSize float64
+	GapSize  float64
+}
+
+// CustomMaterial carries authored shader hooks and uniforms through Scene3D.
+// WebGL custom shaders use GLSL ES snippets; WebGPU custom shaders use WGSL.
+type CustomMaterial struct {
+	StandardMaterial
+	VertexGLSL   string
+	FragmentGLSL string
+	VertexWGSL   string
+	FragmentWGSL string
+	Uniforms     map[string]any
 }
 
 type CubeGeometry struct {
@@ -684,21 +796,27 @@ type graphLowerer struct {
 	nextParticlesID    int
 }
 
-func (Group) sceneNode()            {}
-func (Mesh) sceneNode()             {}
-func (Points) sceneNode()           {}
-func (InstancedMesh) sceneNode()    {}
-func (InstancedGLBMesh) sceneNode() {}
-func (ComputeParticles) sceneNode() {}
-func (Label) sceneNode()            {}
-func (Sprite) sceneNode()           {}
-func (Model) sceneNode()            {}
-func (AmbientLight) sceneNode()     {}
-func (DirectionalLight) sceneNode() {}
-func (PointLight) sceneNode()       {}
-func (SpotLight) sceneNode()        {}
-func (HemisphereLight) sceneNode()  {}
-func (AnimationClip) sceneNode()    {}
+func (Group) sceneNode()             {}
+func (Mesh) sceneNode()              {}
+func (Points) sceneNode()            {}
+func (InstancedMesh) sceneNode()     {}
+func (InstancedGLBMesh) sceneNode()  {}
+func (ComputeParticles) sceneNode()  {}
+func (Label) sceneNode()             {}
+func (Sprite) sceneNode()            {}
+func (Model) sceneNode()             {}
+func (AmbientLight) sceneNode()      {}
+func (DirectionalLight) sceneNode()  {}
+func (PointLight) sceneNode()        {}
+func (SpotLight) sceneNode()         {}
+func (HemisphereLight) sceneNode()   {}
+func (AnimationClip) sceneNode()     {}
+func (AxesHelper) sceneNode()        {}
+func (GridHelper) sceneNode()        {}
+func (BoxHelper) sceneNode()         {}
+func (BoundingBoxHelper) sceneNode() {}
+func (SkeletonHelper) sceneNode()    {}
+func (TransformControls) sceneNode() {}
 
 func (CubeGeometry) sceneGeometry()     {}
 func (BoxGeometry) sceneGeometry()      {}
@@ -709,12 +827,15 @@ func (LinesGeometry) sceneGeometry()    {}
 func (CylinderGeometry) sceneGeometry() {}
 func (TorusGeometry) sceneGeometry()    {}
 
-func (FlatMaterial) sceneMaterial()     {}
-func (GhostMaterial) sceneMaterial()    {}
-func (GlassMaterial) sceneMaterial()    {}
-func (GlowMaterial) sceneMaterial()     {}
-func (MatteMaterial) sceneMaterial()    {}
-func (StandardMaterial) sceneMaterial() {}
+func (FlatMaterial) sceneMaterial()       {}
+func (GhostMaterial) sceneMaterial()      {}
+func (GlassMaterial) sceneMaterial()      {}
+func (GlowMaterial) sceneMaterial()       {}
+func (MatteMaterial) sceneMaterial()      {}
+func (StandardMaterial) sceneMaterial()   {}
+func (LineBasicMaterial) sceneMaterial()  {}
+func (LineDashedMaterial) sceneMaterial() {}
+func (CustomMaterial) sceneMaterial()     {}
 
 // Bool allocates a bool for opt-in Scene3D flags.
 func Bool(value bool) *bool {
@@ -724,6 +845,17 @@ func Bool(value bool) *bool {
 // Float allocates a float64 for optional Scene3D numeric fields.
 func Float(value float64) *float64 {
 	return &value
+}
+
+func cloneSceneAnyMap(values map[string]any) map[string]any {
+	if len(values) == 0 {
+		return nil
+	}
+	out := make(map[string]any, len(values))
+	for key, value := range values {
+		out[key] = value
+	}
+	return out
 }
 
 // Vec3 builds a Vector3 without forcing struct literals at callsites.
@@ -840,6 +972,7 @@ func (p Props) legacyBaseProps() map[string]any {
 	setNumeric(out, "scrollCameraStart", p.ScrollCameraStart)
 	setNumeric(out, "scrollCameraEnd", p.ScrollCameraEnd)
 	setNumeric(out, "maxDevicePixelRatio", p.MaxDevicePixelRatio)
+	setBool(out, "stats", p.Stats)
 	if p.Compression != nil {
 		comp := map[string]any{"bitWidth": p.Compression.BitWidth}
 		if p.Compression.Progressive {
@@ -863,8 +996,8 @@ func (p Props) legacyBaseProps() map[string]any {
 		}
 		out["compression"] = comp
 	}
-	if !p.Camera.isZero() {
-		out["camera"] = p.Camera.legacyProps()
+	if camera := p.cameraLegacyProps(); len(camera) > 0 {
+		out["camera"] = camera
 	}
 	return out
 }
@@ -1019,6 +1152,67 @@ func (c PerspectiveCamera) isZero() bool {
 	return c.Position == (Vector3{}) && c.Rotation == (Euler{}) && c.FOV == 0 && c.Near == 0 && c.Far == 0 && c.TransitionMS == 0
 }
 
+func (c OrthographicCamera) legacyProps() map[string]any {
+	out := map[string]any{"kind": "orthographic"}
+	if c.Position.X != 0 {
+		out["x"] = c.Position.X
+	}
+	if c.Position.Y != 0 {
+		out["y"] = c.Position.Y
+	}
+	if c.Position.Z != 0 {
+		out["z"] = c.Position.Z
+	}
+	if c.Rotation.X != 0 {
+		out["rotationX"] = c.Rotation.X
+	}
+	if c.Rotation.Y != 0 {
+		out["rotationY"] = c.Rotation.Y
+	}
+	if c.Rotation.Z != 0 {
+		out["rotationZ"] = c.Rotation.Z
+	}
+	if c.Left != 0 {
+		out["left"] = c.Left
+	}
+	if c.Right != 0 {
+		out["right"] = c.Right
+	}
+	if c.Top != 0 {
+		out["top"] = c.Top
+	}
+	if c.Bottom != 0 {
+		out["bottom"] = c.Bottom
+	}
+	if c.Zoom != 0 {
+		out["zoom"] = c.Zoom
+	}
+	if c.Near != 0 {
+		out["near"] = c.Near
+	}
+	if c.Far != 0 {
+		out["far"] = c.Far
+	}
+	if c.TransitionMS > 0 {
+		out["transitionMS"] = c.TransitionMS
+	}
+	return out
+}
+
+func (c OrthographicCamera) isZero() bool {
+	return c.Position == (Vector3{}) && c.Rotation == (Euler{}) && c.Left == 0 && c.Right == 0 && c.Top == 0 && c.Bottom == 0 && c.Zoom == 0 && c.Near == 0 && c.Far == 0 && c.TransitionMS == 0
+}
+
+func (p Props) cameraLegacyProps() map[string]any {
+	if p.OrthographicCamera != nil && !p.OrthographicCamera.isZero() {
+		return p.OrthographicCamera.legacyProps()
+	}
+	if !p.Camera.isZero() {
+		return p.Camera.legacyProps()
+	}
+	return nil
+}
+
 func (l *graphLowerer) lowerNode(node Node, parent worldTransform) {
 	switch current := node.(type) {
 	case Group:
@@ -1111,6 +1305,42 @@ func (l *graphLowerer) lowerNode(node Node, parent worldTransform) {
 		if current != nil {
 			l.lowerAnimationClip(*current)
 		}
+	case AxesHelper:
+		l.lowerAxesHelper(current, parent)
+	case *AxesHelper:
+		if current != nil {
+			l.lowerAxesHelper(*current, parent)
+		}
+	case GridHelper:
+		l.lowerGridHelper(current, parent)
+	case *GridHelper:
+		if current != nil {
+			l.lowerGridHelper(*current, parent)
+		}
+	case BoxHelper:
+		l.lowerBoxHelper(current, parent)
+	case *BoxHelper:
+		if current != nil {
+			l.lowerBoxHelper(*current, parent)
+		}
+	case BoundingBoxHelper:
+		l.lowerBoundingBoxHelper(current, parent)
+	case *BoundingBoxHelper:
+		if current != nil {
+			l.lowerBoundingBoxHelper(*current, parent)
+		}
+	case SkeletonHelper:
+		l.lowerSkeletonHelper(current, parent)
+	case *SkeletonHelper:
+		if current != nil {
+			l.lowerSkeletonHelper(*current, parent)
+		}
+	case TransformControls:
+		l.lowerTransformControls(current, parent)
+	case *TransformControls:
+		if current != nil {
+			l.lowerTransformControls(*current, parent)
+		}
 	}
 }
 
@@ -1121,6 +1351,165 @@ func (l *graphLowerer) lowerGroup(group Group, parent worldTransform) {
 	}
 	for _, child := range group.Children {
 		l.lowerNode(child, world)
+	}
+}
+
+func (l *graphLowerer) lowerAxesHelper(helper AxesHelper, parent worldTransform) {
+	size := helper.Size
+	if size <= 0 {
+		size = 1
+	}
+	width := helper.Width
+	if width <= 0 {
+		width = 1.5
+	}
+	base := strings.TrimSpace(helper.ID)
+	if base == "" {
+		l.nextObjectID++
+		base = "scene-axes-helper-" + intString(l.nextObjectID)
+	}
+	lowerLineHelper := func(suffix, color string, points []Vector3) {
+		l.lowerMesh(Mesh{
+			ID:       base + "-" + suffix,
+			Geometry: LinesGeometry{Points: points, Segments: [][2]int{{0, 1}}, Width: width},
+			Material: LineBasicMaterial{MaterialStyle: MaterialStyle{Color: color}, Width: width},
+			Position: helper.Position,
+			Rotation: helper.Rotation,
+		}, parent)
+	}
+	lowerLineHelper("x", "#ef4444", []Vector3{{}, {X: size}})
+	lowerLineHelper("y", "#22c55e", []Vector3{{}, {Y: size}})
+	lowerLineHelper("z", "#3b82f6", []Vector3{{}, {Z: size}})
+}
+
+func (l *graphLowerer) lowerGridHelper(helper GridHelper, parent worldTransform) {
+	size := helper.Size
+	if size <= 0 {
+		size = 10
+	}
+	divisions := helper.Divisions
+	if divisions <= 0 {
+		divisions = 10
+	}
+	half := size / 2
+	step := size / float64(divisions)
+	points := make([]Vector3, 0, (divisions+1)*4)
+	segments := make([][2]int, 0, (divisions+1)*2)
+	for i := 0; i <= divisions; i++ {
+		offset := -half + float64(i)*step
+		base := len(points)
+		points = append(points,
+			Vector3{X: -half, Z: offset},
+			Vector3{X: half, Z: offset},
+			Vector3{X: offset, Z: -half},
+			Vector3{X: offset, Z: half},
+		)
+		segments = append(segments, [2]int{base, base + 1}, [2]int{base + 2, base + 3})
+	}
+	color := strings.TrimSpace(helper.Color)
+	if color == "" {
+		color = "#9ca3af"
+	}
+	width := helper.Width
+	if width <= 0 {
+		width = 1
+	}
+	id := l.nextSceneHelperID("scene-grid-helper", helper.ID)
+	l.lowerMesh(Mesh{
+		ID:       id,
+		Geometry: LinesGeometry{Points: points, Segments: segments, Width: width},
+		Material: LineBasicMaterial{MaterialStyle: MaterialStyle{Color: color, Opacity: Float(0.72), BlendMode: BlendAlpha}, Width: width},
+		Position: helper.Position,
+		Rotation: helper.Rotation,
+	}, parent)
+}
+
+func (l *graphLowerer) lowerBoxHelper(helper BoxHelper, parent worldTransform) {
+	width := helper.Width
+	if width <= 0 {
+		width = 1
+	}
+	height := helper.Height
+	if height <= 0 {
+		height = width
+	}
+	depth := helper.Depth
+	if depth <= 0 {
+		depth = width
+	}
+	id := l.nextSceneHelperID("scene-box-helper", helper.ID)
+	l.lowerMesh(Mesh{
+		ID:       id,
+		Geometry: boxHelperGeometry(width, height, depth, helper.WidthPx),
+		Material: LineBasicMaterial{MaterialStyle: MaterialStyle{Color: firstNonEmptySceneString(helper.Color, "#f59e0b")}, Width: helper.WidthPx},
+		Position: helper.Position,
+		Rotation: helper.Rotation,
+	}, parent)
+}
+
+func (l *graphLowerer) lowerBoundingBoxHelper(helper BoundingBoxHelper, parent worldTransform) {
+	min := helper.Min
+	max := helper.Max
+	center := Vector3{
+		X: (min.X + max.X) / 2,
+		Y: (min.Y + max.Y) / 2,
+		Z: (min.Z + max.Z) / 2,
+	}
+	id := l.nextSceneHelperID("scene-bounds-helper", helper.ID)
+	l.lowerMesh(Mesh{
+		ID:       id,
+		Geometry: boxHelperGeometry(math.Abs(max.X-min.X), math.Abs(max.Y-min.Y), math.Abs(max.Z-min.Z), helper.WidthPx),
+		Material: LineBasicMaterial{MaterialStyle: MaterialStyle{Color: firstNonEmptySceneString(helper.Color, "#f59e0b")}, Width: helper.WidthPx},
+		Position: center,
+	}, parent)
+}
+
+func (l *graphLowerer) lowerSkeletonHelper(helper SkeletonHelper, parent worldTransform) {
+	width := helper.Width
+	if width <= 0 {
+		width = 1.25
+	}
+	id := l.nextSceneHelperID("scene-skeleton-helper", helper.ID)
+	l.lowerMesh(Mesh{
+		ID:       id,
+		Geometry: LinesGeometry{Points: append([]Vector3(nil), helper.Joints...), Segments: append([][2]int(nil), helper.Bones...), Width: width},
+		Material: LineBasicMaterial{MaterialStyle: MaterialStyle{Color: firstNonEmptySceneString(helper.Color, "#e879f9")}, Width: width},
+		Position: helper.Position,
+		Rotation: helper.Rotation,
+	}, parent)
+}
+
+func (l *graphLowerer) lowerTransformControls(control TransformControls, parent worldTransform) {
+	size := control.Size
+	if size <= 0 {
+		size = 1.25
+	}
+	width := control.Width
+	if width <= 0 {
+		width = 2
+	}
+	position := control.Position
+	if target := strings.TrimSpace(control.Target); target != "" {
+		if anchor, ok := l.anchors[target]; ok {
+			position = anchor.Position
+		}
+	}
+	id := l.nextSceneHelperID("scene-transform-controls", control.ID)
+	l.lowerAxesHelper(AxesHelper{
+		ID:       id,
+		Size:     size,
+		Position: position,
+		Rotation: control.Rotation,
+		Width:    width,
+	}, parent)
+	if strings.EqualFold(strings.TrimSpace(control.Mode), "rotate") {
+		l.lowerMesh(Mesh{
+			ID:       id + "-ring",
+			Geometry: helperRingGeometry(size, 48, width),
+			Material: LineBasicMaterial{MaterialStyle: MaterialStyle{Color: "#facc15"}, Width: width},
+			Position: position,
+			Rotation: control.Rotation,
+		}, parent)
 	}
 }
 
@@ -1147,6 +1536,9 @@ func (l *graphLowerer) lowerMesh(mesh Mesh, parent worldTransform) {
 	record.SpinY = mesh.Spin.Y
 	record.SpinZ = mesh.Spin.Z
 	record.Pickable = mesh.Pickable
+	record.Selected = mesh.Selected
+	record.OutlineColor = strings.TrimSpace(mesh.OutlineColor)
+	record.OutlineWidth = mesh.OutlineWidth
 	record.CastShadow = mesh.CastShadow
 	record.ReceiveShadow = mesh.ReceiveShadow
 	record.DepthWrite = mesh.DepthWrite
@@ -1783,6 +2175,15 @@ func (l *graphLowerer) nextSceneModelID(raw string) string {
 	return "scene-model-" + intString(l.nextModelID)
 }
 
+func (l *graphLowerer) nextSceneHelperID(prefix, raw string) string {
+	id := strings.TrimSpace(raw)
+	if id != "" {
+		return id
+	}
+	l.nextObjectID += 1
+	return prefix + "-" + intString(l.nextObjectID)
+}
+
 func applyGeometryProps(record *ObjectIR, props map[string]any) {
 	if record == nil || len(props) == 0 {
 		return
@@ -1830,6 +2231,29 @@ func applyMaterialProps(record *ObjectIR, props map[string]any) {
 	}
 	if wireframe, ok := mapBool(props["wireframe"]); ok {
 		record.Wireframe = Bool(wireframe)
+	}
+	if lineDash, ok := mapBool(props["lineDash"]); ok {
+		record.LineDash = Bool(lineDash)
+	}
+	if lineWidth, ok := mapFloat64OK(props["lineWidth"]); ok {
+		record.LineWidth = lineWidth
+	}
+	record.DashSize = mapFloat64(props["dashSize"])
+	record.GapSize = mapFloat64(props["gapSize"])
+	if customVertex, ok := mapStringValue(props["customVertex"]); ok {
+		record.CustomVertex = customVertex
+	}
+	if customFragment, ok := mapStringValue(props["customFragment"]); ok {
+		record.CustomFragment = customFragment
+	}
+	if customVertexWGSL, ok := mapStringValue(props["customVertexWGSL"]); ok {
+		record.CustomVertexWGSL = customVertexWGSL
+	}
+	if customFragmentWGSL, ok := mapStringValue(props["customFragmentWGSL"]); ok {
+		record.CustomFragmentWGSL = customFragmentWGSL
+	}
+	if uniforms, ok := props["customUniforms"].(map[string]any); ok {
+		record.CustomUniforms = cloneSceneAnyMap(uniforms)
 	}
 	record.Roughness = mapFloat64(props["roughness"])
 	record.Metalness = mapFloat64(props["metalness"])
@@ -1927,6 +2351,50 @@ func applyGeometryToObjectIR(record *ObjectIR, geometry Geometry) string {
 	kind, props := geometry.legacyGeometry()
 	applyGeometryProps(record, props)
 	return kind
+}
+
+func boxHelperGeometry(width, height, depth, lineWidth float64) LinesGeometry {
+	if width <= 0 {
+		width = 1
+	}
+	if height <= 0 {
+		height = 1
+	}
+	if depth <= 0 {
+		depth = 1
+	}
+	x := width / 2
+	y := height / 2
+	z := depth / 2
+	return LinesGeometry{
+		Points: []Vector3{
+			{X: -x, Y: -y, Z: -z}, {X: x, Y: -y, Z: -z}, {X: x, Y: y, Z: -z}, {X: -x, Y: y, Z: -z},
+			{X: -x, Y: -y, Z: z}, {X: x, Y: -y, Z: z}, {X: x, Y: y, Z: z}, {X: -x, Y: y, Z: z},
+		},
+		Segments: [][2]int{
+			{0, 1}, {1, 2}, {2, 3}, {3, 0},
+			{4, 5}, {5, 6}, {6, 7}, {7, 4},
+			{0, 4}, {1, 5}, {2, 6}, {3, 7},
+		},
+		Width: lineWidth,
+	}
+}
+
+func helperRingGeometry(radius float64, segments int, lineWidth float64) LinesGeometry {
+	if radius <= 0 {
+		radius = 1
+	}
+	if segments < 8 {
+		segments = 32
+	}
+	points := make([]Vector3, 0, segments)
+	links := make([][2]int, 0, segments)
+	for i := 0; i < segments; i++ {
+		angle := (float64(i) / float64(segments)) * math.Pi * 2
+		points = append(points, Vector3{X: math.Cos(angle) * radius, Y: math.Sin(angle) * radius})
+		links = append(links, [2]int{i, (i + 1) % segments})
+	}
+	return LinesGeometry{Points: points, Segments: links, Width: lineWidth}
 }
 
 func (g CubeGeometry) legacyGeometry() (string, map[string]any) {
@@ -2074,6 +2542,45 @@ func applyMaterialToObjectIR(record *ObjectIR, material Material) {
 		if m.Wireframe != nil {
 			record.Wireframe = m.Wireframe
 		}
+	case LineBasicMaterial:
+		applyMaterialStyleToObjectIR(record, "line-basic", m.MaterialStyle)
+		if m.Width > 0 {
+			record.LineWidth = m.Width
+		}
+	case LineDashedMaterial:
+		applyMaterialStyleToObjectIR(record, "line-dashed", m.MaterialStyle)
+		record.LineDash = Bool(true)
+		if m.Width > 0 {
+			record.LineWidth = m.Width
+		}
+		record.DashSize = m.DashSize
+		record.GapSize = m.GapSize
+	case CustomMaterial:
+		record.MaterialKind = "custom"
+		record.Color = strings.TrimSpace(m.Color)
+		record.Roughness = m.Roughness
+		record.Metalness = m.Metalness
+		record.NormalMap = strings.TrimSpace(m.NormalMap)
+		record.RoughnessMap = strings.TrimSpace(m.RoughnessMap)
+		record.MetalnessMap = strings.TrimSpace(m.MetalnessMap)
+		record.EmissiveMap = strings.TrimSpace(m.EmissiveMap)
+		if m.Emissive != 0 {
+			record.Emissive = Float(m.Emissive)
+		}
+		if m.Opacity != nil {
+			record.Opacity = m.Opacity
+		}
+		if m.BlendMode != "" {
+			record.BlendMode = string(m.BlendMode)
+		}
+		if m.Wireframe != nil {
+			record.Wireframe = m.Wireframe
+		}
+		record.CustomVertex = strings.TrimSpace(m.VertexGLSL)
+		record.CustomFragment = strings.TrimSpace(m.FragmentGLSL)
+		record.CustomVertexWGSL = strings.TrimSpace(m.VertexWGSL)
+		record.CustomFragmentWGSL = strings.TrimSpace(m.FragmentWGSL)
+		record.CustomUniforms = cloneSceneAnyMap(m.Uniforms)
 	default:
 		// Fallback for any Material implementation not enumerated above —
 		// use the legacy map round-trip so correctness is preserved.
@@ -2142,6 +2649,46 @@ func (m StandardMaterial) legacyMaterial() map[string]any {
 	setBool(out, "wireframe", m.Wireframe)
 	if len(out) == 0 {
 		return nil
+	}
+	return out
+}
+
+func (m LineBasicMaterial) legacyMaterial() map[string]any {
+	out := legacySceneMaterial("line-basic", m.MaterialStyle)
+	if out == nil {
+		out = map[string]any{}
+	}
+	setNumeric(out, "lineWidth", m.Width)
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func (m LineDashedMaterial) legacyMaterial() map[string]any {
+	out := legacySceneMaterial("line-dashed", m.MaterialStyle)
+	if out == nil {
+		out = map[string]any{}
+	}
+	out["lineDash"] = true
+	setNumeric(out, "lineWidth", m.Width)
+	setNumeric(out, "dashSize", m.DashSize)
+	setNumeric(out, "gapSize", m.GapSize)
+	return out
+}
+
+func (m CustomMaterial) legacyMaterial() map[string]any {
+	out := StandardMaterial(m.StandardMaterial).legacyMaterial()
+	if out == nil {
+		out = map[string]any{}
+	}
+	out["materialKind"] = "custom"
+	setString(out, "customVertex", m.VertexGLSL)
+	setString(out, "customFragment", m.FragmentGLSL)
+	setString(out, "customVertexWGSL", m.VertexWGSL)
+	setString(out, "customFragmentWGSL", m.FragmentWGSL)
+	if len(m.Uniforms) > 0 {
+		out["customUniforms"] = cloneSceneAnyMap(m.Uniforms)
 	}
 	return out
 }

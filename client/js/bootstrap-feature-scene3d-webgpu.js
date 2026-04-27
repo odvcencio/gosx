@@ -16,6 +16,7 @@
   var SCENE_POST_BLOOM = sceneApi.SCENE_POST_BLOOM || "bloom";
   var SCENE_POST_VIGNETTE = sceneApi.SCENE_POST_VIGNETTE || "vignette";
   var SCENE_POST_COLOR_GRADE = sceneApi.SCENE_POST_COLOR_GRADE || "colorGrade";
+  var SCENE_POST_SSAO = sceneApi.SCENE_POST_SSAO || "ssao";
   var sceneColorRGBA = sceneApi.sceneColorRGBA || function() { return [0, 0, 0, 1]; };
   var scenePointStyleCode = sceneApi.scenePointStyleCode || function() { return 0; };
   var sceneRenderCamera = sceneApi.sceneRenderCamera || function(c) { return c; };
@@ -25,6 +26,7 @@
   var scenePreparedCommandSequence = sceneApi.scenePreparedCommandSequence || function() { return []; };
   var sceneCachedBuffer = sceneApi.sceneCachedBuffer;
   var scenePBRProjectionMatrix = sceneApi.scenePBRProjectionMatrix;
+  var scenePBRProjectionMatrixForCamera = sceneApi.scenePBRProjectionMatrixForCamera;
   var scenePBRViewMatrix = sceneApi.scenePBRViewMatrix;
   var sceneShadowLightSpaceMatrix = sceneApi.sceneShadowLightSpaceMatrix;
   var sceneShadowComputeBounds = sceneApi.sceneShadowComputeBounds;
@@ -1780,7 +1782,11 @@
       var cam = sceneRenderCamera(camera);
       var aspect = Math.max(0.0001, width / Math.max(1, height));
       scenePBRViewMatrix(cam, scratchViewMatrix);
-      scenePBRProjectionMatrix(cam.fov, aspect, cam.near, cam.far, scratchProjMatrix);
+      if (typeof scenePBRProjectionMatrixForCamera === "function") {
+        scenePBRProjectionMatrixForCamera(cam, aspect, scratchProjMatrix);
+      } else {
+        scenePBRProjectionMatrix(cam.fov, aspect, cam.near, cam.far, scratchProjMatrix);
+      }
 
       var data = new ArrayBuffer(160);
       var f = new Float32Array(data);

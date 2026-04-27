@@ -212,6 +212,57 @@ func (ir ColorGradeIR) MarshalJSON() ([]byte, error) {
 	return []byte(b.String()), nil
 }
 
+// SSAOIR lowers SSAO.
+type SSAOIR struct {
+	Radius    float64
+	Intensity float64
+	Bias      float64
+}
+
+func (ir SSAOIR) legacyProps() map[string]any {
+	radius := ir.Radius
+	if radius == 0 {
+		radius = 4.0
+	}
+	intensity := ir.Intensity
+	if intensity == 0 {
+		intensity = 0.55
+	}
+	out := map[string]any{
+		"kind":      "ssao",
+		"radius":    radius,
+		"intensity": intensity,
+	}
+	if ir.Bias != 0 {
+		out["bias"] = ir.Bias
+	}
+	return out
+}
+
+// MarshalJSON encodes the IR shape directly.
+func (ir SSAOIR) MarshalJSON() ([]byte, error) {
+	radius := ir.Radius
+	if radius == 0 {
+		radius = 4.0
+	}
+	intensity := ir.Intensity
+	if intensity == 0 {
+		intensity = 0.55
+	}
+	var b strings.Builder
+	b.Grow(96)
+	b.WriteString(`{"kind":"ssao","radius":`)
+	b.WriteString(strconv.FormatFloat(radius, 'f', -1, 64))
+	b.WriteString(`,"intensity":`)
+	b.WriteString(strconv.FormatFloat(intensity, 'f', -1, 64))
+	if ir.Bias != 0 {
+		b.WriteString(`,"bias":`)
+		b.WriteString(strconv.FormatFloat(ir.Bias, 'f', -1, 64))
+	}
+	b.WriteByte('}')
+	return []byte(b.String()), nil
+}
+
 // sceneIR converts the typed PostFX into the IR slice consumed by SceneIR.
 func (pfx PostFX) sceneIR() []PostEffectIR {
 	if len(pfx.Effects) == 0 {
@@ -241,6 +292,12 @@ func (pfx PostFX) sceneIR() []PostEffectIR {
 				Exposure:   float64(ev.Exposure),
 				Contrast:   float64(ev.Contrast),
 				Saturation: float64(ev.Saturation),
+			})
+		case SSAO:
+			out = append(out, SSAOIR{
+				Radius:    float64(ev.Radius),
+				Intensity: float64(ev.Intensity),
+				Bias:      float64(ev.Bias),
 			})
 		}
 	}

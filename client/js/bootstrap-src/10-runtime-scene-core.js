@@ -1287,6 +1287,14 @@
       emissive: sceneClampNumberOrCSSVar(sceneObjectMaterialValue(item, "emissive"), sceneNumber(current.emissive, sceneDefaultMaterialEmissive(materialKind)), 0, 1),
       roughness: sceneNumberOrCSSVar(sceneObjectMaterialValue(item, "roughness"), sceneNumber(current.roughness, 0.5)),
       metalness: sceneNumberOrCSSVar(sceneObjectMaterialValue(item, "metalness"), sceneNumber(current.metalness, 0)),
+      lineDash: sceneBool(sceneObjectMaterialHasValue(item, "lineDash") ? sceneObjectMaterialValue(item, "lineDash") : current.lineDash, false),
+      dashSize: sceneNumber(sceneObjectMaterialValue(item, "dashSize"), sceneNumber(current.dashSize, 0)),
+      gapSize: sceneNumber(sceneObjectMaterialValue(item, "gapSize"), sceneNumber(current.gapSize, 0)),
+      customVertex: typeof sceneObjectMaterialValue(item, "customVertex") === "string" ? sceneObjectMaterialValue(item, "customVertex") : (typeof current.customVertex === "string" ? current.customVertex : ""),
+      customFragment: typeof sceneObjectMaterialValue(item, "customFragment") === "string" ? sceneObjectMaterialValue(item, "customFragment") : (typeof current.customFragment === "string" ? current.customFragment : ""),
+      customVertexWGSL: typeof sceneObjectMaterialValue(item, "customVertexWGSL") === "string" ? sceneObjectMaterialValue(item, "customVertexWGSL") : (typeof current.customVertexWGSL === "string" ? current.customVertexWGSL : ""),
+      customFragmentWGSL: typeof sceneObjectMaterialValue(item, "customFragmentWGSL") === "string" ? sceneObjectMaterialValue(item, "customFragmentWGSL") : (typeof current.customFragmentWGSL === "string" ? current.customFragmentWGSL : ""),
+      customUniforms: sceneIsPlainObject(sceneObjectMaterialValue(item, "customUniforms")) ? Object.assign({}, sceneObjectMaterialValue(item, "customUniforms")) : (sceneIsPlainObject(current.customUniforms) ? Object.assign({}, current.customUniforms) : null),
       blendMode,
       renderPass: normalizeSceneMaterialRenderPass(
         sceneObjectMaterialHasValue(item, "renderPass") ? sceneObjectMaterialValue(item, "renderPass") : current.renderPass,
@@ -1317,6 +1325,9 @@
       // fallback). Non-zero values come from scene.LinesGeometry.Width on the
       // Go side and flow into per-segment width buffers at bundle build time.
       lineWidth: sceneNumber(item.lineWidth, sceneNumber(current.lineWidth, 0)),
+      selected: sceneBool(Object.prototype.hasOwnProperty.call(item, "selected") ? item.selected : current.selected, false),
+      outlineColor: typeof item.outlineColor === "string" && item.outlineColor ? item.outlineColor : (typeof current.outlineColor === "string" ? current.outlineColor : ""),
+      outlineWidth: sceneNumber(item.outlineWidth, sceneNumber(current.outlineWidth, 0)),
       viewCulled: sceneBool(Object.prototype.hasOwnProperty.call(item, "viewCulled") ? item.viewCulled : current.viewCulled, false),
       castShadow: sceneBool(Object.prototype.hasOwnProperty.call(item, "castShadow") ? item.castShadow : current.castShadow, false),
       receiveShadow: sceneBool(Object.prototype.hasOwnProperty.call(item, "receiveShadow") ? item.receiveShadow : current.receiveShadow, false),
@@ -2067,6 +2078,14 @@
       blendMode,
       renderPass: normalizeSceneMaterialRenderPass(item.renderPass || current.renderPass, blendMode, numericOpacity, kind),
       wireframe: sceneBool(Object.prototype.hasOwnProperty.call(item, "wireframe") ? item.wireframe : current.wireframe, false),
+      lineDash: sceneBool(Object.prototype.hasOwnProperty.call(item, "lineDash") ? item.lineDash : current.lineDash, false),
+      dashSize: sceneNumber(item.dashSize, sceneNumber(current.dashSize, 0)),
+      gapSize: sceneNumber(item.gapSize, sceneNumber(current.gapSize, 0)),
+      customVertex: typeof item.customVertex === "string" ? item.customVertex : (typeof current.customVertex === "string" ? current.customVertex : ""),
+      customFragment: typeof item.customFragment === "string" ? item.customFragment : (typeof current.customFragment === "string" ? current.customFragment : ""),
+      customVertexWGSL: typeof item.customVertexWGSL === "string" ? item.customVertexWGSL : (typeof current.customVertexWGSL === "string" ? current.customVertexWGSL : ""),
+      customFragmentWGSL: typeof item.customFragmentWGSL === "string" ? item.customFragmentWGSL : (typeof current.customFragmentWGSL === "string" ? current.customFragmentWGSL : ""),
+      customUniforms: sceneIsPlainObject(item.customUniforms) ? Object.assign({}, item.customUniforms) : (sceneIsPlainObject(current.customUniforms) ? Object.assign({}, current.customUniforms) : null),
       depthWrite: Object.prototype.hasOwnProperty.call(item, "depthWrite") ? sceneBool(item.depthWrite, true) : current.depthWrite,
       _colorSpecified: colorSpecified || current._colorSpecified === true,
       _opacitySpecified: opacitySpecified || current._opacitySpecified === true,
@@ -2097,6 +2116,7 @@
       intensity: sceneNumberOrCSSVar(item.intensity, sceneNumber(current.intensity, 0)),
       radius: sceneNumberOrCSSVar(item.radius, sceneNumber(current.radius, 0)),
       scale: sceneNumberOrCSSVar(item.scale, sceneNumber(current.scale, 0)),
+      bias: sceneNumberOrCSSVar(item.bias, sceneNumber(current.bias, 0)),
       saturation: sceneNumberOrCSSVar(item.saturation, sceneNumber(current.saturation, 0)),
       contrast: sceneNumberOrCSSVar(item.contrast, sceneNumber(current.contrast, 0)),
       exposure: sceneNumberOrCSSVar(item.exposure, sceneNumber(current.exposure, 0)),
@@ -2120,6 +2140,7 @@
   function sceneCamera(props) {
     const raw = props && props.camera && typeof props.camera === "object" ? props.camera : {};
     return normalizeSceneCamera(raw, {
+      kind: "perspective",
       x: 0,
       y: 0,
       z: 6,
@@ -2127,6 +2148,17 @@
       near: 0.05,
       far: 128,
     });
+  }
+
+  function normalizeSceneCameraKind(value, fallback) {
+    const kind = typeof value === "string" ? value.trim().toLowerCase() : "";
+    if (kind === "orthographic" || kind === "ortho") {
+      return "orthographic";
+    }
+    if (kind === "perspective" || kind === "persp") {
+      return "perspective";
+    }
+    return fallback === "orthographic" ? "orthographic" : "perspective";
   }
 
   function sceneCanvasAlpha(props) {
@@ -2141,7 +2173,9 @@
 
   function normalizeSceneCamera(raw, fallback) {
     const base = fallback || {};
+    const kind = normalizeSceneCameraKind(raw.kind, base.kind);
     return {
+      kind,
       x: sceneNumber(raw.x, sceneNumber(base.x, 0)),
       y: sceneNumber(raw.y, sceneNumber(base.y, 0)),
       z: sceneNumber(raw.z, sceneNumber(base.z, 6)),
@@ -2149,6 +2183,11 @@
       rotationY: sceneNumber(raw.rotationY, sceneNumber(base.rotationY, 0)),
       rotationZ: sceneNumber(raw.rotationZ, sceneNumber(base.rotationZ, 0)),
       fov: sceneNumber(raw.fov, sceneNumber(base.fov, 75)),
+      left: sceneNumber(raw.left, sceneNumber(base.left, 0)),
+      right: sceneNumber(raw.right, sceneNumber(base.right, 0)),
+      top: sceneNumber(raw.top, sceneNumber(base.top, 0)),
+      bottom: sceneNumber(raw.bottom, sceneNumber(base.bottom, 0)),
+      zoom: sceneNumber(raw.zoom, sceneNumber(base.zoom, 1)),
       near: sceneNumber(raw.near, sceneNumber(base.near, 0.05)),
       far: sceneNumber(raw.far, sceneNumber(base.far, 128)),
     };
@@ -3269,7 +3308,15 @@
   // reads calls sceneRenderCamera with a DIFFERENT camera object that
   // would clobber the scratch.
   function sceneRenderCamera(camera, out) {
-    const target = out || { x: 0, y: 0, z: 0, rotationX: 0, rotationY: 0, rotationZ: 0, fov: 0, near: 0, far: 0 };
+    const target = out || {
+      kind: "perspective",
+      x: 0, y: 0, z: 0,
+      rotationX: 0, rotationY: 0, rotationZ: 0,
+      fov: 0,
+      left: 0, right: 0, top: 0, bottom: 0, zoom: 1,
+      near: 0, far: 0,
+    };
+    target.kind = normalizeSceneCameraKind(camera && camera.kind, "perspective");
     target.x = sceneNumber(camera && camera.x, 0);
     target.y = sceneNumber(camera && camera.y, 0);
     target.z = sceneNumber(camera && camera.z, 6);
@@ -3277,21 +3324,60 @@
     target.rotationY = sceneNumber(camera && camera.rotationY, 0);
     target.rotationZ = sceneNumber(camera && camera.rotationZ, 0);
     target.fov = sceneNumber(camera && camera.fov, 75);
+    target.left = sceneNumber(camera && camera.left, 0);
+    target.right = sceneNumber(camera && camera.right, 0);
+    target.top = sceneNumber(camera && camera.top, 0);
+    target.bottom = sceneNumber(camera && camera.bottom, 0);
+    target.zoom = Math.max(0.0001, sceneNumber(camera && camera.zoom, 1));
     target.near = sceneNumber(camera && camera.near, 0.05);
     target.far = sceneNumber(camera && camera.far, 128);
     return target;
   }
 
+  function sceneOrthographicBounds(camera, width, height) {
+    const cam = sceneRenderCamera(camera);
+    const aspect = Math.max(0.0001, sceneNumber(width, 1) / Math.max(1, sceneNumber(height, 1)));
+    let left = sceneNumber(cam.left, 0);
+    let right = sceneNumber(cam.right, 0);
+    let top = sceneNumber(cam.top, 0);
+    let bottom = sceneNumber(cam.bottom, 0);
+    if (Math.abs(right - left) <= 0.000001 || Math.abs(top - bottom) <= 0.000001) {
+      const halfHeight = 3;
+      const halfWidth = halfHeight * aspect;
+      left = -halfWidth;
+      right = halfWidth;
+      top = halfHeight;
+      bottom = -halfHeight;
+    }
+    const zoom = Math.max(0.0001, sceneNumber(cam.zoom, 1));
+    const centerX = (left + right) * 0.5;
+    const centerY = (top + bottom) * 0.5;
+    const halfWidth = Math.max(0.000001, Math.abs(right - left) * 0.5 / zoom);
+    const halfHeight = Math.max(0.000001, Math.abs(top - bottom) * 0.5 / zoom);
+    return {
+      left: centerX - halfWidth,
+      right: centerX + halfWidth,
+      top: centerY + halfHeight,
+      bottom: centerY - halfHeight,
+    };
+  }
+
   function sceneCameraEquivalent(left, right) {
     const a = sceneRenderCamera(left);
     const b = sceneRenderCamera(right);
-    return Math.abs(a.x - b.x) <= 0.0001 &&
+    return a.kind === b.kind &&
+      Math.abs(a.x - b.x) <= 0.0001 &&
       Math.abs(a.y - b.y) <= 0.0001 &&
       Math.abs(a.z - b.z) <= 0.0001 &&
       Math.abs(a.rotationX - b.rotationX) <= 0.0001 &&
       Math.abs(a.rotationY - b.rotationY) <= 0.0001 &&
       Math.abs(a.rotationZ - b.rotationZ) <= 0.0001 &&
       Math.abs(a.fov - b.fov) <= 0.0001 &&
+      Math.abs(a.left - b.left) <= 0.0001 &&
+      Math.abs(a.right - b.right) <= 0.0001 &&
+      Math.abs(a.top - b.top) <= 0.0001 &&
+      Math.abs(a.bottom - b.bottom) <= 0.0001 &&
+      Math.abs(a.zoom - b.zoom) <= 0.0001 &&
       Math.abs(a.near - b.near) <= 0.0001 &&
       Math.abs(a.far - b.far) <= 0.0001;
   }
@@ -3303,8 +3389,10 @@
   // from the bundle builder (projection + bounds) don't clobber each
   // other even though both are single-threaded.
   const _sceneBoundsDepthCameraScratch = {
+    kind: "perspective",
     x: 0, y: 0, z: 0,
     rotationX: 0, rotationY: 0, rotationZ: 0,
+    left: 0, right: 0, top: 0, bottom: 0, zoom: 1,
     fov: 0, near: 0, far: 0,
   };
 
@@ -3346,7 +3434,9 @@
       cacheHash = sceneNumber(bounds.minX, 0) + sceneNumber(bounds.minY, 0) + sceneNumber(bounds.minZ, 0)
         + sceneNumber(bounds.maxX, 0) + sceneNumber(bounds.maxY, 0) + sceneNumber(bounds.maxZ, 0)
         + cam.x + cam.y + cam.z
-        + cam.rotationX + cam.rotationY + cam.rotationZ;
+        + cam.rotationX + cam.rotationY + cam.rotationZ
+        + (cam.kind === "orthographic" ? 17 : 0)
+        + cam.left + cam.right + cam.top + cam.bottom + cam.zoom;
       if (cacheOwner._depthCacheHash === cacheHash && cacheOwner._depthCacheResult) {
         return cacheOwner._depthCacheResult;
       }
@@ -3451,6 +3541,9 @@
       // to honor LinesGeometry.Width. Absent values fall back to the runtime
       // default (1.8px) at the read site.
       worldLineWidths: [],
+      worldLineDashes: [],
+      worldLineDashSizes: [],
+      worldLineGapSizes: [],
       // Parallel to worldLineWidths: per-segment render-pass index mapping
       // to the draw plan's pass buckets (0=opaque, 1=alpha, 2=additive).
       // The WebGL thick-line path honors per-pass blend/depth state by
@@ -3680,6 +3773,9 @@
         // distinguish "default width" (0 → fall back at read time) from
         // "user explicitly asked for width N" (N > 0 → honor on both paths).
         bundle.worldLineWidths.push(rawLineWidth);
+        bundle.worldLineDashes.push(Boolean(material && material.lineDash));
+        bundle.worldLineDashSizes.push(sceneNumber(material && material.dashSize, 0));
+        bundle.worldLineGapSizes.push(sceneNumber(material && material.gapSize, 0));
         bundle.worldLinePasses.push(objectPassIndex);
         bounds = sceneExpandWorldBounds(bounds, fromWorld);
         bounds = sceneExpandWorldBounds(bounds, toWorld);
@@ -3689,7 +3785,11 @@
         if (!from || !to) continue;
         const stroke = sceneMixRGBA(fromLighting, toLighting);
         stroke[3] = clamp01(stroke[3] * sceneMaterialOpacity(material));
-        appendSceneLine(bundle, width, height, from, to, sceneRGBAString(stroke), objectLineWidth);
+        appendSceneLine(bundle, width, height, from, to, sceneRGBAString(stroke), objectLineWidth, {
+          dashed: Boolean(material && material.lineDash),
+          dashSize: sceneNumber(material && material.dashSize, 0),
+          gapSize: sceneNumber(material && material.gapSize, 0),
+        });
       }
     } else if (sceneObjectHasTexturedSurface(object, material)) {
       const corners = scenePlaneSurfaceCorners(object, timeSeconds);
@@ -3824,19 +3924,24 @@
     };
   }
 
-  function appendSceneMeshWireSegment(bundle, camera, width, height, fromWorld, toWorld, fromLighting, toLighting) {
+  function appendSceneMeshWireSegment(bundle, camera, width, height, fromWorld, toWorld, fromLighting, toLighting, lineWidth, passIndex) {
     bundle.worldPositions.push(fromWorld.x, fromWorld.y, fromWorld.z, toWorld.x, toWorld.y, toWorld.z);
     bundle.worldColors.push(
       fromLighting[0], fromLighting[1], fromLighting[2], fromLighting[3],
       toLighting[0], toLighting[1], toLighting[2], toLighting[3],
     );
+    bundle.worldLineWidths.push(lineWidth > 0 ? lineWidth : 0);
+    bundle.worldLineDashes.push(false);
+    bundle.worldLineDashSizes.push(0);
+    bundle.worldLineGapSizes.push(0);
+    bundle.worldLinePasses.push(passIndex || 0);
     const from = sceneProjectPoint(fromWorld, camera, width, height);
     const to = sceneProjectPoint(toWorld, camera, width, height);
     if (!from || !to) {
       return 2;
     }
     const stroke = sceneMixRGBA(fromLighting, toLighting);
-    appendSceneLine(bundle, width, height, from, to, sceneRGBAString(stroke), 1.6);
+    appendSceneLine(bundle, width, height, from, to, sceneRGBAString(stroke), lineWidth > 0 ? lineWidth : 1.6);
     return 2;
   }
 
@@ -3847,6 +3952,11 @@
     }
     const material = sceneObjectMaterialProfile(object);
     const materialIndex = sceneBundleMaterialIndex(bundle, materialLookup, material);
+    const outlineColor = object && object.selected ? (object.outlineColor || "#facc15") : "";
+    const outlineWidth = object && object.selected ? Math.max(2, sceneNumber(object.outlineWidth, 3)) : 0;
+    const outlineLighting = outlineColor ? sceneColorRGBA(outlineColor, [1, 0.8, 0.15, 1]) : null;
+    const objectPassString = sceneWorldObjectRenderPass(object, material);
+    const objectPassIndex = objectPassString === "alpha" ? 1 : (objectPassString === "additive" ? 2 : 0);
     if (object.skin && vertices.joints && vertices.weights) {
       const bounds = vertices._skinnedLocalBounds || object.bounds || { minX: -1, minY: -1, minZ: -1, maxX: 1, maxY: 2, maxZ: 1 };
       bundle.meshObjects.push({
@@ -3934,9 +4044,12 @@
         meshVertexCount += 1;
       }
 
-      wireVertexCount += appendSceneMeshWireSegment(bundle, camera, width, height, points[0], points[1], lighting[0], lighting[1]);
-      wireVertexCount += appendSceneMeshWireSegment(bundle, camera, width, height, points[1], points[2], lighting[1], lighting[2]);
-      wireVertexCount += appendSceneMeshWireSegment(bundle, camera, width, height, points[2], points[0], lighting[2], lighting[0]);
+      const line0 = outlineLighting || lighting[0];
+      const line1 = outlineLighting || lighting[1];
+      const line2 = outlineLighting || lighting[2];
+      wireVertexCount += appendSceneMeshWireSegment(bundle, camera, width, height, points[0], points[1], line0, line1, outlineWidth, objectPassIndex);
+      wireVertexCount += appendSceneMeshWireSegment(bundle, camera, width, height, points[1], points[2], line1, line2, outlineWidth, objectPassIndex);
+      wireVertexCount += appendSceneMeshWireSegment(bundle, camera, width, height, points[2], points[0], line2, line0, outlineWidth, objectPassIndex);
     }
 
     if (!bounds || meshVertexCount <= 0) {
@@ -4051,6 +4164,18 @@
       return { width: 0, height: 0 };
     }
     const normalizedCamera = sceneRenderCamera(camera);
+    if (normalizedCamera.kind === "orthographic") {
+      const bounds = sceneOrthographicBounds(normalizedCamera, width, height);
+      const spanX = Math.max(0.000001, bounds.right - bounds.left);
+      const spanY = Math.max(0.000001, bounds.top - bounds.bottom);
+      const scale = Math.max(0.05, sceneNumber(sprite && sprite.scale, 1));
+      const worldWidth = Math.max(0.05, sceneNumber(sprite && sprite.width, 1.25));
+      const worldHeight = Math.max(0.05, sceneNumber(sprite && sprite.height, worldWidth));
+      return {
+        width: Math.max(1, worldWidth * scale * (width / spanX)),
+        height: Math.max(1, worldHeight * scale * (height / spanY)),
+      };
+    }
     const focal = (Math.min(width, height) / 2) / Math.tan((normalizedCamera.fov * Math.PI) / 360);
     const scale = Math.max(0.05, sceneNumber(sprite && sprite.scale, 1));
     const worldWidth = Math.max(0.05, sceneNumber(sprite && sprite.width, 1.25));
@@ -4186,16 +4311,20 @@
     return next;
   }
 
-  function appendSceneLine(bundle, width, height, from, to, color, lineWidth) {
+  function appendSceneLine(bundle, width, height, from, to, color, lineWidth, options) {
     if (!from || !to) return;
     const rgba = sceneColorRGBA(color, [0.55, 0.88, 1, 1]);
     const fromClip = sceneClipPoint(from, width, height);
     const toClip = sceneClipPoint(to, width, height);
+    const dashOptions = options && typeof options === "object" ? options : null;
     bundle.lines.push({
       from: from,
       to: to,
       color: color,
       lineWidth: lineWidth,
+      lineDash: Boolean(dashOptions && dashOptions.dashed),
+      dashSize: sceneNumber(dashOptions && dashOptions.dashSize, 0),
+      gapSize: sceneNumber(dashOptions && dashOptions.gapSize, 0),
     });
     bundle.positions.push(fromClip.x, fromClip.y, toClip.x, toClip.y);
     bundle.colors.push(rgba[0], rgba[1], rgba[2], rgba[3], rgba[0], rgba[1], rgba[2], rgba[3]);
@@ -4284,12 +4413,16 @@
       cameraRotationLocation: gl.getUniformLocation(program, "u_camera_rotation"),
       aspectLocation: gl.getUniformLocation(program, "u_aspect"),
       perspectiveLocation: gl.getUniformLocation(program, "u_use_perspective"),
+      cameraModeLocation: gl.getUniformLocation(program, "u_camera_mode"),
+      orthoLocation: gl.getUniformLocation(program, "u_ortho"),
       surfaceBuffers: createSceneWebGLSurfaceBufferSet(gl),
       surfacePositionLocation: surfaceProgram ? gl.getAttribLocation(surfaceProgram, "a_position") : -1,
       surfaceUVLocation: surfaceProgram ? gl.getAttribLocation(surfaceProgram, "a_uv") : -1,
       surfaceCameraLocation: surfaceProgram ? gl.getUniformLocation(surfaceProgram, "u_camera") : null,
       surfaceCameraRotationLocation: surfaceProgram ? gl.getUniformLocation(surfaceProgram, "u_camera_rotation") : null,
       surfaceAspectLocation: surfaceProgram ? gl.getUniformLocation(surfaceProgram, "u_aspect") : null,
+      surfaceCameraModeLocation: surfaceProgram ? gl.getUniformLocation(surfaceProgram, "u_camera_mode") : null,
+      surfaceOrthoLocation: surfaceProgram ? gl.getUniformLocation(surfaceProgram, "u_ortho") : null,
       surfaceTintLocation: surfaceProgram ? gl.getUniformLocation(surfaceProgram, "u_tint") : null,
       surfaceEmissiveLocation: surfaceProgram ? gl.getUniformLocation(surfaceProgram, "u_emissive") : null,
       surfaceTextureLocation: surfaceProgram ? gl.getUniformLocation(surfaceProgram, "u_texture") : null,
@@ -4328,7 +4461,8 @@
   function sceneWebGLBundleGeometry(bundle) {
     const hasWorldLines = Boolean(bundle && bundle.worldVertexCount > 0 && bundle.worldPositions && bundle.worldColors);
     const hasSurfaces = Boolean(bundle && Array.isArray(bundle.surfaces) && bundle.surfaces.length > 0);
-    const usePerspective = hasWorldLines || hasSurfaces;
+    const camera = sceneRenderCamera(bundle && bundle.camera);
+    const usePerspective = (hasWorldLines || hasSurfaces) && !(camera.kind === "orthographic" && !hasSurfaces);
     return {
       usePerspective,
       positions: usePerspective ? bundle.worldPositions : bundle && bundle.positions,
@@ -4375,6 +4509,13 @@
     }
     if (typeof gl.uniform1f === "function" && resources.perspectiveLocation) {
       gl.uniform1f(resources.perspectiveLocation, usePerspective ? 1 : 0);
+    }
+    if (typeof gl.uniform1f === "function" && resources.cameraModeLocation) {
+      gl.uniform1f(resources.cameraModeLocation, camera.kind === "orthographic" ? 1 : 0);
+    }
+    if (typeof gl.uniform4f === "function" && resources.orthoLocation) {
+      const bounds = sceneOrthographicBounds(camera, canvas.width, canvas.height);
+      gl.uniform4f(resources.orthoLocation, bounds.left, bounds.right, bounds.top, bounds.bottom);
     }
   }
 
@@ -4616,6 +4757,13 @@
     }
     if (typeof gl.uniform1f === "function" && resources.surfaceAspectLocation) {
       gl.uniform1f(resources.surfaceAspectLocation, aspect);
+    }
+    if (typeof gl.uniform1f === "function" && resources.surfaceCameraModeLocation) {
+      gl.uniform1f(resources.surfaceCameraModeLocation, camera.kind === "orthographic" ? 1 : 0);
+    }
+    if (typeof gl.uniform4f === "function" && resources.surfaceOrthoLocation) {
+      const bounds = sceneOrthographicBounds(camera, canvas.width, canvas.height);
+      gl.uniform4f(resources.surfaceOrthoLocation, bounds.left, bounds.right, bounds.top, bounds.bottom);
     }
   }
 
@@ -5109,6 +5257,8 @@
       "uniform vec3 u_camera_rotation;",
       "uniform float u_aspect;",
       "uniform float u_use_perspective;",
+      "uniform float u_camera_mode;",
+      "uniform vec4 u_ortho;",
       "varying vec4 v_color;",
       "varying vec3 v_material;",
       "vec3 inverseRotatePoint(vec3 point, vec3 rotation) {",
@@ -5135,6 +5285,11 @@
       "    float depth = local.z;",
       "    if (depth <= 0.001) {",
       "      clip = vec4(2.0, 2.0, 0.0, 1.0);",
+      "    } else if (u_camera_mode > 0.5) {",
+      "      float ox = ((local.x - u_ortho.x) / max(u_ortho.y - u_ortho.x, 0.0001)) * 2.0 - 1.0;",
+      "      float oy = ((local.y - u_ortho.w) / max(u_ortho.z - u_ortho.w, 0.0001)) * 2.0 - 1.0;",
+      "      float clipDepth = clamp(depth / max(u_camera.z + 128.0, 0.0001), 0.0, 1.0) * 2.0 - 1.0;",
+      "      clip = vec4(ox, oy, clipDepth, 1.0);",
       "    } else {",
       "      float focal = 1.0 / tan(radians(u_camera.w) * 0.5);",
       "      vec2 projected = vec2(local.x * focal / depth, local.y * focal / depth);",
@@ -5198,6 +5353,8 @@
       "uniform vec4 u_camera;",
       "uniform vec3 u_camera_rotation;",
       "uniform float u_aspect;",
+      "uniform float u_camera_mode;",
+      "uniform vec4 u_ortho;",
       "varying vec2 v_uv;",
       "vec3 inverseRotatePoint(vec3 point, vec3 rotation) {",
       "  float sinZ = sin(-rotation.z);",
@@ -5221,6 +5378,11 @@
       "  float depth = local.z;",
       "  if (depth <= 0.001) {",
       "    gl_Position = vec4(2.0, 2.0, 0.0, 1.0);",
+      "  } else if (u_camera_mode > 0.5) {",
+      "    float ox = ((local.x - u_ortho.x) / max(u_ortho.y - u_ortho.x, 0.0001)) * 2.0 - 1.0;",
+      "    float oy = ((local.y - u_ortho.w) / max(u_ortho.z - u_ortho.w, 0.0001)) * 2.0 - 1.0;",
+      "    float clipDepth = clamp(depth / max(u_camera.z + 128.0, 0.0001), 0.0, 1.0) * 2.0 - 1.0;",
+      "    gl_Position = vec4(ox, oy, clipDepth, 1.0);",
       "  } else {",
       "    float focal = 1.0 / tan(radians(u_camera.w) * 0.5);",
       "    vec2 projected = vec2(local.x * focal / depth, local.y * focal / depth);",
@@ -5299,6 +5461,8 @@
       "uniform vec3 u_camera_rotation;",
       "uniform float u_aspect;",
       "uniform vec2 u_viewport;",
+      "uniform float u_camera_mode;",
+      "uniform vec4 u_ortho;",
       "varying vec4 v_color;",
       "vec3 inverseRotatePoint(vec3 point, vec3 rotation) {",
       "  float sinZ = sin(-rotation.z);",
@@ -5322,6 +5486,12 @@
       "  float depth = local.z;",
       "  if (depth <= 0.001) {",
       "    return vec4(2.0, 2.0, 0.0, 1.0);",
+      "  }",
+      "  if (u_camera_mode > 0.5) {",
+      "    float ox = ((local.x - u_ortho.x) / max(u_ortho.y - u_ortho.x, 0.0001)) * 2.0 - 1.0;",
+      "    float oy = ((local.y - u_ortho.w) / max(u_ortho.z - u_ortho.w, 0.0001)) * 2.0 - 1.0;",
+      "    float clipDepth = clamp(depth / max(u_camera.z + 128.0, 0.0001), 0.0, 1.0) * 2.0 - 1.0;",
+      "    return vec4(ox, oy, clipDepth, 1.0);",
       "  }",
       "  float focal = 1.0 / tan(radians(u_camera.w) * 0.5);",
       "  vec2 projected = vec2(local.x * focal / depth, local.y * focal / depth);",
@@ -5392,6 +5562,8 @@
       cameraRotationLocation: gl.getUniformLocation(program, "u_camera_rotation"),
       aspectLocation: gl.getUniformLocation(program, "u_aspect"),
       viewportLocation: gl.getUniformLocation(program, "u_viewport"),
+      cameraModeLocation: gl.getUniformLocation(program, "u_camera_mode"),
+      orthoLocation: gl.getUniformLocation(program, "u_ortho"),
     };
   }
 
@@ -5666,6 +5838,13 @@
     if (thickProgram.viewportLocation && typeof gl.uniform2f === "function") {
       gl.uniform2f(thickProgram.viewportLocation, canvas.width, canvas.height);
     }
+    if (thickProgram.cameraModeLocation && typeof gl.uniform1f === "function") {
+      gl.uniform1f(thickProgram.cameraModeLocation, camera.kind === "orthographic" ? 1 : 0);
+    }
+    if (thickProgram.orthoLocation && typeof gl.uniform4f === "function") {
+      const bounds = sceneOrthographicBounds(camera, canvas.width, canvas.height);
+      gl.uniform4f(thickProgram.orthoLocation, bounds.left, bounds.right, bounds.top, bounds.bottom);
+    }
 
     const arrayBuffer = resources.arrayBuffer;
     const floatType = resources.floatType;
@@ -5761,6 +5940,7 @@
     SCENE_POST_BLOOM: "bloom",
     SCENE_POST_VIGNETTE: "vignette",
     SCENE_POST_COLOR_GRADE: "colorGrade",
+    SCENE_POST_SSAO: "ssao",
     validateSceneIR: typeof validateSceneIR === "function" ? validateSceneIR : undefined,
     prepareScene: typeof prepareScene === "function" ? prepareScene : undefined,
     scenePreparedCommandSequence: typeof scenePreparedCommandSequence === "function" ? scenePreparedCommandSequence : undefined,
@@ -5801,6 +5981,7 @@
     sceneBoundsViewCulled,
     sceneBundleNeedsThickLines,
     sceneCameraEquivalent,
+    sceneOrthographicBounds,
     clamp01,
     sceneHasActiveTransitions,
     sceneHTMLAnimated,
@@ -5832,6 +6013,7 @@
     scenePBRDepthSort: typeof scenePBRDepthSort === "function" ? scenePBRDepthSort : undefined,
     scenePBRObjectRenderPass: typeof scenePBRObjectRenderPass === "function" ? scenePBRObjectRenderPass : undefined,
     scenePBRProjectionMatrix: typeof scenePBRProjectionMatrix === "function" ? scenePBRProjectionMatrix : undefined,
+    scenePBRProjectionMatrixForCamera: typeof scenePBRProjectionMatrixForCamera === "function" ? scenePBRProjectionMatrixForCamera : undefined,
     scenePBRViewMatrix: typeof scenePBRViewMatrix === "function" ? scenePBRViewMatrix : undefined,
     sceneShadowLightSpaceMatrix: typeof sceneShadowLightSpaceMatrix === "function" ? sceneShadowLightSpaceMatrix : undefined,
     sceneShadowComputeBounds: typeof sceneShadowComputeBounds === "function" ? sceneShadowComputeBounds : undefined,

@@ -1915,7 +1915,11 @@
       var cam = sceneRenderCamera(camera);
       var aspect = Math.max(0.0001, width / Math.max(1, height));
       scenePBRViewMatrix(cam, scratchViewMatrix);
-      scenePBRProjectionMatrix(cam.fov, aspect, cam.near, cam.far, scratchProjMatrix);
+      if (typeof scenePBRProjectionMatrixForCamera === "function") {
+        scenePBRProjectionMatrixForCamera(cam, aspect, scratchProjMatrix);
+      } else {
+        scenePBRProjectionMatrix(cam.fov, aspect, cam.near, cam.far, scratchProjMatrix);
+      }
 
       // FrameUniforms layout (std140):
       // mat4x4f viewMatrix:  0  (64 bytes)

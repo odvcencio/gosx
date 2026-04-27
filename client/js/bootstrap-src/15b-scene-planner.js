@@ -377,10 +377,10 @@
     ]);
     hash = sceneCSSHashComputeParticles(hash, bundle && bundle.computeParticles);
     hash = sceneCSSHashCollection(hash, bundle && bundle.postEffects, [
-      "kind", "threshold", "intensity", "radius", "scale", "saturation", "contrast", "exposure",
+      "kind", "threshold", "intensity", "radius", "scale", "bias", "saturation", "contrast", "exposure",
     ]);
     hash = sceneCSSHashCollection(hash, bundle && bundle.postFX, [
-      "kind", "threshold", "intensity", "radius", "scale", "saturation", "contrast", "exposure",
+      "kind", "threshold", "intensity", "radius", "scale", "bias", "saturation", "contrast", "exposure",
     ]);
     return String(hash);
   }
@@ -589,10 +589,10 @@
       "width", "height", "scale", "opacity", "offsetX", "offsetY",
     ], sceneCSSRecordElement);
     sceneCSSResolveCollectionKeys(state, css, "postEffects", [
-      "threshold", "intensity", "radius", "scale", "saturation", "contrast", "exposure",
+      "threshold", "intensity", "radius", "scale", "bias", "saturation", "contrast", "exposure",
     ], null);
     sceneCSSResolveCollectionKeys(state, css, "postFX", [
-      "threshold", "intensity", "radius", "scale", "saturation", "contrast", "exposure",
+      "threshold", "intensity", "radius", "scale", "bias", "saturation", "contrast", "exposure",
     ], null);
     sceneCSSResolveComputeParticleVars(state, css);
   }
@@ -1452,6 +1452,7 @@
   }
 
   function scenePlannerHashCamera(hash, camera) {
+    hash = scenePlannerHashString(hash, camera && camera.kind);
     hash = scenePlannerHashNumber(hash, sceneNumber(camera && camera.x, 0));
     hash = scenePlannerHashNumber(hash, sceneNumber(camera && camera.y, 0));
     hash = scenePlannerHashNumber(hash, sceneNumber(camera && camera.z, 0));
@@ -1459,6 +1460,11 @@
     hash = scenePlannerHashNumber(hash, sceneNumber(camera && camera.rotationY, 0));
     hash = scenePlannerHashNumber(hash, sceneNumber(camera && camera.rotationZ, 0));
     hash = scenePlannerHashNumber(hash, sceneNumber(camera && camera.fov, 0));
+    hash = scenePlannerHashNumber(hash, sceneNumber(camera && camera.left, 0));
+    hash = scenePlannerHashNumber(hash, sceneNumber(camera && camera.right, 0));
+    hash = scenePlannerHashNumber(hash, sceneNumber(camera && camera.top, 0));
+    hash = scenePlannerHashNumber(hash, sceneNumber(camera && camera.bottom, 0));
+    hash = scenePlannerHashNumber(hash, sceneNumber(camera && camera.zoom, 1));
     hash = scenePlannerHashNumber(hash, sceneNumber(camera && camera.near, 0));
     return scenePlannerHashNumber(hash, sceneNumber(camera && camera.far, 0));
   }

@@ -290,9 +290,11 @@ scene.Props{
         AmbientIntensity: 0.2,
     },
     Shadows: scene.Shadows{MaxPixels: scene.ShadowMaxPixels1024},
+    Stats: scene.Bool(true),
     PostFX: scene.PostFX{
         MaxPixels: scene.PostFXMaxPixels1080p,
         Effects: []scene.PostEffect{
+            scene.SSAO{Radius: 3, Intensity: 0.35},
             scene.Bloom{Threshold: 0.8, Strength: 0.5, Radius: 6, Scale: 0.25},
             scene.Tonemap{Mode: scene.TonemapACES, Exposure: 1.1},
         },
@@ -313,6 +315,8 @@ scene.Props{
             CastShadow:    true,
             ReceiveShadow: true,
         },
+        scene.AxesHelper{ID: "axes", Size: 2},
+        scene.GridHelper{ID: "grid", Size: 8, Divisions: 8},
         scene.Model{Src: "/assets/ship.glb", Animation: "idle"},
     ),
 }
@@ -321,14 +325,16 @@ scene.Props{
 ### Feature surface
 
 - **Scene graph** — `Group`, `Mesh`, `InstancedMesh`, `Points`, `Label`, `Sprite`, `Html`, `Model`, `ComputeParticles`, per-node transforms, nesting, world-transform lowering
-- **Geometry** — `Box`, `Cube`, `Plane`, `Pyramid`, `Sphere`, `Lines`, `Cylinder`, `Torus`, plus arbitrary geometry from loaded models
-- **Materials** — `StandardMaterial` (PBR with roughness/metalness workflow), `FlatMaterial`, `GhostMaterial`, `GlassMaterial`, `GlowMaterial`, `MatteMaterial`, configurable blend modes and render passes
+- **Geometry** — `Box`, `Cube`, `Plane`, `Pyramid`, `Sphere`, `Lines`, `Cylinder`, `Torus`, helper-generated axes/grids/boxes/skeletons/gizmos, plus arbitrary geometry from loaded models
+- **Materials** — `StandardMaterial` (PBR with roughness/metalness workflow), `FlatMaterial`, `GhostMaterial`, `GlassMaterial`, `GlowMaterial`, `MatteMaterial`, `LineBasicMaterial`, `LineDashedMaterial`, `CustomMaterial` shader hooks, configurable blend modes and render passes
 - **Lights** — `AmbientLight`, `DirectionalLight`, `PointLight`, `SpotLight`, `HemisphereLight`; shadows on directional and spot with per-light `ShadowSize` and a scene-wide `Shadows.MaxPixels` cap
+- **Cameras** — perspective and orthographic cameras with orbit/drag controls, transition hints, picking, and projection-aware sprites/HTML overlays
 - **glTF / GLB** — `scene.Model{Src: "/assets/thing.glb"}` loads binary or JSON glTF 2.0 through the in-runtime pure-JS loader (`19-scene-gltf.js`), including animations
 - **Animation** — `AnimationClip` / `AnimationChannel` for node-level keyframe animation, `Spin` convenience for auto-rotation, glTF animation playback
 - **Particles** — GPU-computed particle systems via `ComputeParticles` with emitter, forces, and material
 - **Environment** — ambient, hemisphere, sky/ground, cubemap IBL, exposure, fog, tonemapping
-- **Post-processing** — `Bloom`, `Tonemap` (ACES / Reinhard / Filmic), `Vignette`, `ColorGrade`, FXAA 3.11, RGB9E5/HDR intermediate selection, HDR10 presentation when supported, composable chain, runs on both backends
+- **Post-processing** — `SSAO`, `Bloom`, `Tonemap` (ACES / Reinhard / Filmic), `Vignette`, `ColorGrade`, FXAA 3.11, RGB9E5/HDR intermediate selection, HDR10 presentation when supported, composable chain, runs on both backends
+- **Editor/debug surfaces** — `AxesHelper`, `GridHelper`, `BoxHelper`, `BoundingBoxHelper`, `SkeletonHelper`, visual `TransformControls`, selected mesh outline styling, dashed/solid line materials, and opt-in `Stats` overlay
 - **Shadow pixel cap** — v0.15.0's `Shadows.MaxPixels` caps each shadow map (default 1024²), preventing multi-megabyte-per-light allocations when individual lights request large shadow sizes
 - **Compression & LOD** — per-component scalar quantization with delta encoding, progressive streaming, camera-distance-based LOD switching via `scene.Compression`
 - **Transitions** — declarative enter/exit/state transitions on any scene node via `InState` / `OutState` / `Live`
