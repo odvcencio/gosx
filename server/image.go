@@ -39,10 +39,12 @@ type ImageProps struct {
 	Width         int
 	Height        int
 	Widths        []int
+	Responsive    bool
 	Sizes         string
 	Loading       string
 	Decoding      string
 	FetchPriority string
+	Priority      bool
 	Quality       int
 	Format        string
 	Resolver      string
@@ -59,6 +61,9 @@ func Image(props ImageProps, args ...any) gosx.Node {
 	props.Src = AssetURL(props.Src)
 	src := props.Src
 	widths := normalizeResponsiveWidths(props.Widths)
+	if props.Responsive && len(widths) == 0 {
+		widths = AutoImageWidths(props.Width)
+	}
 	shouldOptimize := shouldOptimizeImageSource(src) || strings.TrimSpace(props.Resolver) != ""
 
 	if shouldOptimize {
@@ -98,8 +103,12 @@ func Image(props ImageProps, args ...any) gosx.Node {
 			}), width))
 		}
 		baseAttrs = append(baseAttrs, gosx.Attrs(gosx.Attr("srcset", strings.Join(srcset, ", "))))
-		if props.Sizes != "" {
-			baseAttrs = append(baseAttrs, gosx.Attrs(gosx.Attr("sizes", props.Sizes)))
+		sizes := strings.TrimSpace(props.Sizes)
+		if sizes == "" && props.Responsive {
+			sizes = "100vw"
+		}
+		if sizes != "" {
+			baseAttrs = append(baseAttrs, gosx.Attrs(gosx.Attr("sizes", sizes)))
 		}
 	}
 
@@ -111,6 +120,8 @@ func Image(props ImageProps, args ...any) gosx.Node {
 	}
 	if loading := strings.TrimSpace(props.Loading); loading != "" {
 		baseAttrs = append(baseAttrs, gosx.Attrs(gosx.Attr("loading", loading)))
+	} else if props.Priority {
+		baseAttrs = append(baseAttrs, gosx.Attrs(gosx.Attr("loading", "eager")))
 	} else {
 		baseAttrs = append(baseAttrs, gosx.Attrs(gosx.Attr("loading", "lazy")))
 	}
@@ -121,6 +132,8 @@ func Image(props ImageProps, args ...any) gosx.Node {
 	}
 	if priority := strings.TrimSpace(props.FetchPriority); priority != "" {
 		baseAttrs = append(baseAttrs, gosx.Attrs(gosx.Attr("fetchpriority", priority)))
+	} else if props.Priority {
+		baseAttrs = append(baseAttrs, gosx.Attrs(gosx.Attr("fetchpriority", "high")))
 	}
 
 	baseAttrs = append(baseAttrs, args...)
@@ -376,6 +389,25 @@ func normalizeResponsiveWidths(widths []int) []int {
 	}
 	sort.Ints(out)
 	return out
+}
+
+// AutoImageWidths returns a deterministic responsive width ladder up to maxWidth.
+// A maxWidth of zero returns the full default ladder.
+func AutoImageWidths(maxWidth int) []int {
+	candidates := []int{320, 480, 640, 750, 828, 1080, 1200, 1920, 2048, 3840}
+	if maxWidth <= 0 {
+		return append([]int(nil), candidates...)
+	}
+	widths := make([]int, 0, len(candidates)+1)
+	for _, width := range candidates {
+		if width <= maxWidth {
+			widths = append(widths, width)
+		}
+	}
+	if len(widths) == 0 || widths[len(widths)-1] != maxWidth {
+		widths = append(widths, maxWidth)
+	}
+	return normalizeResponsiveWidths(widths)
 }
 
 func normalizeImageFormat(format string) string {

@@ -73,9 +73,10 @@ type DeferredResolver func() (gosx.Node, error)
 
 // DeferredOptions configures a streamed placeholder region.
 type DeferredOptions struct {
-	ID    string
-	Tag   string
-	Class string
+	ID       string
+	Tag      string
+	Class    string
+	Boundary string
 }
 
 type deferredBlock struct {
@@ -288,6 +289,21 @@ func (r *DeferredRegistry) Defer(fallback gosx.Node, resolve DeferredResolver) g
 	return r.DeferWithOptions(DeferredOptions{}, fallback, resolve)
 }
 
+// Suspense renders a component-level streaming boundary. It is equivalent to
+// Defer, but marks the boundary explicitly for tooling and client diagnostics.
+func (r *DeferredRegistry) Suspense(fallback gosx.Node, resolve DeferredResolver) gosx.Node {
+	return r.SuspenseWithOptions(DeferredOptions{}, fallback, resolve)
+}
+
+// SuspenseWithOptions renders a component-level streaming boundary with
+// explicit placeholder options.
+func (r *DeferredRegistry) SuspenseWithOptions(opts DeferredOptions, fallback gosx.Node, resolve DeferredResolver) gosx.Node {
+	if opts.Boundary == "" {
+		opts.Boundary = "component"
+	}
+	return r.DeferWithOptions(opts, fallback, resolve)
+}
+
 // DeferWithOptions renders fallback content immediately, then streams the
 // resolved node into place once the resolver finishes.
 func (r *DeferredRegistry) DeferWithOptions(opts DeferredOptions, fallback gosx.Node, resolve DeferredResolver) gosx.Node {
@@ -319,6 +335,9 @@ func (r *DeferredRegistry) DeferWithOptions(opts DeferredOptions, fallback gosx.
 			gosx.Attr("id", id),
 			gosx.BoolAttr("data-gosx-deferred"),
 		),
+	}
+	if boundary := strings.TrimSpace(opts.Boundary); boundary != "" {
+		attrs = append(attrs, gosx.Attrs(gosx.Attr("data-gosx-stream-boundary", boundary)))
 	}
 	if opts.Class != "" {
 		attrs = append(attrs, gosx.Attrs(gosx.Attr("class", opts.Class)))

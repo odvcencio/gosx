@@ -1,5 +1,35 @@
 # Changelog
 
+## v0.18.19
+
+Framework parity gap release.
+
+Streaming now has an explicit component-level API with `ctx.Suspense()` and
+`DeferredRegistry.Suspense()`. These boundaries reuse the existing concurrent
+streaming path, so each component fallback can flush immediately and resolve in
+completion order, while the rendered placeholder carries
+`data-gosx-stream-boundary="component"` for tooling and diagnostics.
+
+Image ergonomics now include responsive auto-width generation and priority
+markup. `server.Image` accepts `Responsive` to build a deterministic `srcset`
+ladder from the target width and default `sizes="100vw"`, while `Priority`
+maps to eager loading and high fetch priority unless callers override those
+attributes. `server.Font` adds a FOUT-resistant font helper that emits preload
+metadata and an `@font-face` block with `font-display: optional` by default.
+
+Edge and i18n routing now have first-class server APIs. `app.UseEdge` records
+edge-capable middleware descriptors while still installing the middleware on the
+origin path, and `server.IsEdgeRequest` recognizes requests proxied by the GoSX
+edge worker. `app.UseI18n` adds locale-prefix routing, `RequestLocale`, and
+`LocalePath` helpers that compose with existing server and file routes.
+
+Content collections and component libraries now have small core surfaces.
+`content.Load` discovers `.md`, `.mdx`, and `.mdpp` files, parses simple
+frontmatter, indexes slugs, and exposes a renderer hook so applications can
+wire mdpp without making Markdown++ a core dependency. The new `components`
+package provides a registry for reusable server components, namespaced library
+imports, metadata, and file-route binding adapters.
+
 ## v0.18.18
 
 Runtime gap closure release.

@@ -78,6 +78,7 @@ type App struct {
 	document           DocumentFunc
 	mux                *http.ServeMux
 	middleware         []Middleware
+	edgeMiddleware     []EdgeMiddleware
 	notFound           PageHandler
 	errorPage          ErrorHandler
 	publicDir          string

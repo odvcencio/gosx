@@ -2,7 +2,7 @@
 
 A Go-native web platform. Write components in `.gsx` — Go with embedded markup — compile through a real compiler pipeline, render on the server by default, hydrate interactive islands with WebAssembly. No JavaScript toolchain. No CGo. A deliberately small dependency budget.
 
-Current release: **v0.18.18**. Pre-1.0; breaking changes are documented in [CHANGELOG.md](./CHANGELOG.md).
+Current release: **v0.18.19**. Pre-1.0; breaking changes are documented in [CHANGELOG.md](./CHANGELOG.md).
 
 ## What if you never had to leave Go?
 
@@ -200,9 +200,13 @@ count    // local to the declaring island
 
 **Navigation** — Opt-in client-side page transitions via `app.EnableNavigation()` with managed head swaps and intent-prefetching. Pages render server-first, enhance progressively.
 
-**Streaming** — Deferred page regions via `ctx.Defer()` render fallback content immediately, then stream resolved content into place.
+**Streaming** — Deferred page regions via `ctx.Defer()` and component-level `ctx.Suspense()` boundaries render fallback content immediately, then stream resolved content into place as each boundary completes.
 
-**Image Optimization** — Local image handler at `/_gosx/image` with resize, format conversion, and immutable caching.
+**Image and Font Optimization** — Local image handler at `/_gosx/image` with resize, format conversion, immutable caching, auto responsive `server.Image` markup, and a `server.Font` helper for preload plus `@font-face`.
+
+**Routing and Edge** — Server middleware can be annotated with `app.UseEdge`, and `app.UseI18n` adds locale-prefix routing that composes with both `server.App` and file routing.
+
+**Content and Components** — `content` loads `.md`, `.mdx`, and `.mdpp` collections with frontmatter and renderer hooks. `components` provides a small registry for reusable server component libraries and file-route bindings.
 
 **Text Layout** — `TextBlock` supports both server-measured native rendering with no JavaScript and bootstrap-managed browser refinement. Font, width, line-height, locale, clamping, and ellipsis stay in one framework-level contract.
 
@@ -554,8 +558,10 @@ Three tiers:
 | `ir` | Intermediate representation, lowering, validation, expression parser |
 | `island` | Island renderer, manifest generation, program serialization |
 | `signal` | Reactive state: `Signal[T]`, `Computed[T]`, `Effect`, `Batch` |
-| `server` | HTTP server, page rendering, caching, streaming, assets |
+| `server` | HTTP server, page rendering, caching, streaming, i18n, edge annotations, assets |
 | `route` | File-based routing, layouts, data loaders, modules |
+| `content` | Markdown/MDX/Markdown++ collection loading with renderer hooks |
+| `components` | Registry and binding adapters for server component libraries |
 | `action` | Named mutation handlers with validation |
 | `session` | Signed cookie sessions, CSRF, flash state |
 | `auth` | Auth middleware, OAuth, magic links, WebAuthn |
@@ -624,7 +630,7 @@ The same compiler infrastructure powers [Arbiter](https://github.com/odvcencio/a
 
 ## Status
 
-GoSX is pre-1.0. The current release is **v0.18.18**. The five primitives (Server, Action, Island, Engine, Hub) are stable in shape — we do not expect their top-level API to change before 1.0. Subsystems like `scene`, `desktop`, `field`, `sim`, `workspace`, and `semantic` are still under active development and may take breaking changes; each such change is called out explicitly in [CHANGELOG.md](./CHANGELOG.md) with a migration path.
+GoSX is pre-1.0. The current release is **v0.18.19**. The five primitives (Server, Action, Island, Engine, Hub) are stable in shape — we do not expect their top-level API to change before 1.0. Subsystems like `scene`, `desktop`, `field`, `sim`, `workspace`, and `semantic` are still under active development and may take breaking changes; each such change is called out explicitly in [CHANGELOG.md](./CHANGELOG.md) with a migration path.
 
 If you're evaluating GoSX for production work, the server + island + route + engine + scene stack has been used in production. The semantic, workspace, and sim layers have production users but are newer.
 

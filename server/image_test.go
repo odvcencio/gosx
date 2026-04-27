@@ -98,6 +98,31 @@ func TestImageHelperSupportsCustomResolver(t *testing.T) {
 	}
 }
 
+func TestImageHelperBuildsAutomaticResponsiveMarkup(t *testing.T) {
+	html := gosx.RenderHTML(Image(ImageProps{
+		Src:        "/hero.jpg",
+		Alt:        "Hero",
+		Width:      960,
+		Height:     540,
+		Responsive: true,
+		Priority:   true,
+	}))
+
+	for _, snippet := range []string{
+		`srcset="/_gosx/image?`,
+		`w=320`,
+		`w=828`,
+		`w=960`,
+		`sizes="100vw"`,
+		`loading="eager"`,
+		`fetchpriority="high"`,
+	} {
+		if !strings.Contains(html, snippet) {
+			t.Fatalf("expected %q in %q", snippet, html)
+		}
+	}
+}
+
 func TestImageHelperBypassesOptimizerDuringStaticExport(t *testing.T) {
 	if err := os.Setenv("GOSX_STATIC_EXPORT", "1"); err != nil {
 		t.Fatal(err)

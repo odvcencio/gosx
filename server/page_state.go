@@ -258,6 +258,21 @@ func (s *PageState) Defer(fallback gosx.Node, resolve DeferredResolver) gosx.Nod
 	return s.DeferWithOptions(DeferredOptions{}, fallback, resolve)
 }
 
+// Suspense renders a component-level streaming boundary. It streams with the
+// same completion-order behavior as Defer while marking the boundary for tools.
+func (s *PageState) Suspense(fallback gosx.Node, resolve DeferredResolver) gosx.Node {
+	return s.SuspenseWithOptions(DeferredOptions{}, fallback, resolve)
+}
+
+// SuspenseWithOptions renders a component-level streaming boundary with
+// explicit placeholder options.
+func (s *PageState) SuspenseWithOptions(opts DeferredOptions, fallback gosx.Node, resolve DeferredResolver) gosx.Node {
+	if s == nil {
+		return fallback
+	}
+	return s.DeferredRegistry().SuspenseWithOptions(opts, fallback, resolve)
+}
+
 // DeferWithOptions renders fallback content immediately, then streams the
 // resolved node into place once the resolver finishes.
 func (s *PageState) DeferWithOptions(opts DeferredOptions, fallback gosx.Node, resolve DeferredResolver) gosx.Node {

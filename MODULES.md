@@ -7,4 +7,6 @@ This repository contains independently versioned Go modules:
 
 Keep Markdown++ rendering out of the core framework and editor dependency
 graph. Applications should import and upgrade `github.com/odvcencio/mdpp`
-directly without waiting for a framework or editor release.
+directly without waiting for a framework or editor release. The core
+`content` package exposes renderer hooks so apps can wire mdpp into content
+collections without adding mdpp to the core module graph.
