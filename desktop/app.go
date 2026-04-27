@@ -103,6 +103,8 @@ type App struct {
 	bridge         *bridge.Router
 	preloadMu      sync.Mutex
 	preloadScripts []string
+	serviceMu      sync.RWMutex
+	services       map[string]ServiceBinding
 }
 
 type platformApp interface {
@@ -173,6 +175,7 @@ func New(options Options) (*App, error) {
 	app.bridge = bridge.NewRouter(func(raw string) error {
 		return impl.PostMessage(raw)
 	}, normalized.BridgeLimit)
+	app.registerServiceBridgeMethods()
 	if normalized.NativeBridge {
 		app.registerNativeBridgeMethods()
 	}

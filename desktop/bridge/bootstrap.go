@@ -11,6 +11,7 @@ const bootstrapScript = `(function () {
 
   var pending = new Map();
   var listeners = new Map();
+  var serviceCache = new Map();
   var nextID = 1;
 
   function nextRequestID() {
@@ -167,6 +168,60 @@ const bootstrapScript = `(function () {
     };
   }
 
+  function serviceMethod(name, method) {
+    name = asString(name);
+    method = asString(method);
+    if (!name) {
+      throw new TypeError("gosxDesktop service name must be a non-empty string");
+    }
+    if (!method) {
+      throw new TypeError("gosxDesktop service method must be a non-empty string");
+    }
+    return "gosx.desktop.service." + name + "." + method;
+  }
+
+  function callService(name, method, payload, options) {
+    return call(serviceMethod(name, method), payload, options);
+  }
+
+  function makeServiceProxy(name) {
+    var target = Object.freeze({
+      call: function (method, payload, options) {
+        return callService(name, method, payload, options);
+      }
+    });
+    if (typeof Proxy !== "function") {
+      return target;
+    }
+    return new Proxy(target, {
+      get: function (obj, prop) {
+        if (prop in obj) {
+          return obj[prop];
+        }
+        if (prop === "then" || typeof prop !== "string") {
+          return undefined;
+        }
+        return function (payload, options) {
+          return callService(name, prop, payload, options);
+        };
+      }
+    });
+  }
+
+  function service(name) {
+    name = asString(name);
+    if (!name) {
+      throw new TypeError("gosxDesktop service name must be a non-empty string");
+    }
+    var existing = serviceCache.get(name);
+    if (existing) {
+      return existing;
+    }
+    var proxy = makeServiceProxy(name);
+    serviceCache.set(name, proxy);
+    return proxy;
+  }
+
   var appAPI = Object.freeze({
     info: function () {
       return call("gosx.desktop.app.info");
@@ -233,11 +288,20 @@ const bootstrapScript = `(function () {
     }
   });
 
+  var servicesAPI = Object.freeze({
+    list: function () {
+      return call("gosx.desktop.services.list");
+    },
+    call: callService
+  });
+
   var api = Object.freeze({
     __gosxDesktopBridge: true,
     call: call,
     emit: emit,
     on: on,
+    service: service,
+    services: servicesAPI,
     app: appAPI,
     window: windowAPI,
     dialog: dialogAPI,

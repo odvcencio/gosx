@@ -2,7 +2,7 @@
 
 A Go-native web platform. Write components in `.gsx` — Go with embedded markup — compile through a real compiler pipeline, render on the server by default, hydrate interactive islands with WebAssembly. No JavaScript toolchain. No CGo. Six dependencies.
 
-Current release: **v0.18.15**. Pre-1.0; breaking changes are documented in [CHANGELOG.md](./CHANGELOG.md).
+Current release: **v0.18.16**. Pre-1.0; breaking changes are documented in [CHANGELOG.md](./CHANGELOG.md).
 
 ## What if you never had to leave Go?
 
@@ -517,6 +517,26 @@ Trusted desktop content can call `window.gosxDesktop.app`,
 `window.gosxDesktop.notification` when `desktop.Options.NativeBridge` or
 `gosx desktop --native-bridge` is enabled.
 
+App-owned Go services can be bound onto the same typed bridge without a
+JavaScript build step:
+
+```go
+type Preferences struct{}
+
+func (Preferences) Load(ctx context.Context, req LoadPrefsRequest) (LoadPrefsResponse, error) {
+	return LoadPrefsResponse{Theme: "system"}, nil
+}
+
+app, _ := desktop.New(desktop.Options{URL: "app://gosx/static/"})
+_, _ = app.Bind("prefs", Preferences{})
+```
+
+Trusted desktop content can then call:
+
+```js
+const prefs = await window.gosxDesktop.service("prefs").load({ scope: "user" });
+```
+
 The `desktop` package also exposes release-time hooks: `App.UpdateCheck()` /
 `App.UpdateApply()` consume MSIX AppInstaller feeds, and
 `CrashReporterOptions` captures Go panics plus Windows minidumps with optional
@@ -617,7 +637,7 @@ The same compiler infrastructure powers [Arbiter](https://github.com/odvcencio/a
 
 ## Status
 
-GoSX is pre-1.0. The current release is **v0.18.15**. The five primitives (Server, Action, Island, Engine, Hub) are stable in shape — we do not expect their top-level API to change before 1.0. Subsystems like `scene`, `desktop`, `field`, `sim`, `workspace`, and `semantic` are still under active development and may take breaking changes; each such change is called out explicitly in [CHANGELOG.md](./CHANGELOG.md) with a migration path.
+GoSX is pre-1.0. The current release is **v0.18.16**. The five primitives (Server, Action, Island, Engine, Hub) are stable in shape — we do not expect their top-level API to change before 1.0. Subsystems like `scene`, `desktop`, `field`, `sim`, `workspace`, and `semantic` are still under active development and may take breaking changes; each such change is called out explicitly in [CHANGELOG.md](./CHANGELOG.md) with a migration path.
 
 If you're evaluating GoSX for production work, the server + island + route + engine + scene stack has been used in production. The semantic, workspace, and sim layers have production users but are newer.
 

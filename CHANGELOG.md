@@ -1,5 +1,27 @@
 # Changelog
 
+## v0.18.16
+
+Desktop service binding release.
+
+GoSX desktop apps can now bind app-owned Go services directly onto the typed
+desktop bridge with `App.Bind("name", service)`. Exported methods with common
+shapes such as `func(Payload) (Result, error)` and
+`func(context.Context, Payload) error` are reflected into bridge methods under
+`gosx.desktop.service.<name>.<method>`, with JSON payload decoding, error
+propagation, stable service metadata, and `App.Unbind` for lifecycle cleanup.
+
+The desktop bootstrap now exposes `window.gosxDesktop.service("name")` as a
+cached JS proxy, so trusted packaged content can call
+`await gosxDesktop.service("prefs").load({ ... })` without hand-writing bridge
+method strings. `window.gosxDesktop.services.call()` and `.list()` remain
+available for dynamic callers and diagnostics.
+
+This is the deeper desktop-app layer after v0.18.15: built-in native shell APIs
+cover the Electron-style host affordances, while service bindings cover the
+Wails-style app backend surface without introducing a JavaScript build step or
+giving remote content ambient native access by default.
+
 ## v0.18.15
 
 Windows desktop app surface release.

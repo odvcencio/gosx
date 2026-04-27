@@ -17,6 +17,8 @@ func TestBootstrapScriptExposesDesktopAPI(t *testing.T) {
 		"call: call",
 		"emit: emit",
 		"on: on",
+		"service: service",
+		"services: servicesAPI",
 		"app: appAPI",
 		"window: windowAPI",
 		"dialog: dialogAPI",
@@ -28,6 +30,23 @@ func TestBootstrapScriptExposesDesktopAPI(t *testing.T) {
 	} {
 		if !strings.Contains(script, want) {
 			t.Fatalf("BootstrapScript missing %q", want)
+		}
+	}
+}
+
+func TestBootstrapScriptExposesServiceProxyHelpers(t *testing.T) {
+	script := BootstrapScript()
+	for _, want := range []string{
+		"var serviceCache = new Map()",
+		`"gosx.desktop.service." + name + "." + method`,
+		`call("gosx.desktop.services.list"`,
+		"function service(name)",
+		"function callService(name, method, payload, options)",
+		"new Proxy(target",
+		`prop === "then"`,
+	} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("BootstrapScript missing service proxy helper %q", want)
 		}
 	}
 }
