@@ -37,32 +37,7 @@ type Diagnostic struct {
 
 // Analyze parses and validates GoSX source, returning editor diagnostics.
 func Analyze(path string, source []byte) []Diagnostic {
-	tree, lang, err := gosx.Parse(source)
-	if err != nil {
-		return diagnosticsForError(err)
-	}
-
-	root := tree.RootNode()
-	if root.HasError() {
-		return diagnosticsForError(gosx.DescribeParseError(root, source, lang))
-	}
-
-	prog, err := ir.Lower(root, source, lang)
-	if err != nil {
-		return diagnosticsForError(err)
-	}
-
-	raw := ir.Validate(prog)
-	diags := make([]Diagnostic, 0, len(raw))
-	for _, diag := range raw {
-		diags = append(diags, Diagnostic{
-			Range:    rangeFromSpan(diag.Span),
-			Severity: SeverityError,
-			Source:   diagnosticSource(path),
-			Message:  diagnosticMessage(diag),
-		})
-	}
-
+	_, diags := indexSource(path, source)
 	return diags
 }
 

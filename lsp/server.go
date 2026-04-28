@@ -76,6 +76,19 @@ type formattingParams struct {
 	} `json:"textDocument"`
 }
 
+type documentSymbolParams struct {
+	TextDocument struct {
+		URI string `json:"uri"`
+	} `json:"textDocument"`
+}
+
+type textDocumentPositionParams struct {
+	TextDocument struct {
+		URI string `json:"uri"`
+	} `json:"textDocument"`
+	Position Position `json:"position"`
+}
+
 type textEdit struct {
 	Range   Range  `json:"range"`
 	NewText string `json:"newText"`
@@ -118,6 +131,9 @@ func (s *server) handle(req request) error {
 			"capabilities": map[string]any{
 				"textDocumentSync":           textDocumentSyncFull,
 				"documentFormattingProvider": true,
+				"documentSymbolProvider":     true,
+				"hoverProvider":              true,
+				"definitionProvider":         true,
 			},
 			"serverInfo": map[string]any{
 				"name":    "gosx-lsp",
@@ -178,6 +194,36 @@ func (s *server) handle(req request) error {
 			},
 			NewText: string(formatted),
 		}})
+	case "textDocument/documentSymbol":
+		var params documentSymbolParams
+		if err := json.Unmarshal(req.Params, &params); err != nil {
+			return s.respondError(req.ID, -32602, err.Error())
+		}
+		source, ok := s.docs[params.TextDocument.URI]
+		if !ok {
+			return s.respond(req.ID, []DocumentSymbol{})
+		}
+		return s.respond(req.ID, DocumentSymbols(URIToPath(params.TextDocument.URI), []byte(source)))
+	case "textDocument/hover":
+		var params textDocumentPositionParams
+		if err := json.Unmarshal(req.Params, &params); err != nil {
+			return s.respondError(req.ID, -32602, err.Error())
+		}
+		source, ok := s.docs[params.TextDocument.URI]
+		if !ok {
+			return s.respond(req.ID, nil)
+		}
+		return s.respond(req.ID, HoverAt(URIToPath(params.TextDocument.URI), []byte(source), params.Position))
+	case "textDocument/definition":
+		var params textDocumentPositionParams
+		if err := json.Unmarshal(req.Params, &params); err != nil {
+			return s.respondError(req.ID, -32602, err.Error())
+		}
+		source, ok := s.docs[params.TextDocument.URI]
+		if !ok {
+			return s.respond(req.ID, nil)
+		}
+		return s.respond(req.ID, DefinitionAt(params.TextDocument.URI, URIToPath(params.TextDocument.URI), []byte(source), params.Position))
 	default:
 		if len(req.ID) == 0 {
 			return nil
