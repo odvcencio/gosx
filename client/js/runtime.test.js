@@ -17,6 +17,31 @@ const navigationSource = fs.readFileSync(path.join(__dirname, "..", "..", "serve
 const ELEMENT_NODE = 1;
 const TEXT_NODE = 3;
 const DOCUMENT_FRAGMENT_NODE = 11;
+const activeTestContexts = new Set();
+
+test.afterEach(async () => {
+  const contexts = Array.from(activeTestContexts);
+  activeTestContexts.clear();
+  for (const env of contexts) {
+    await disposeRuntimeTestContext(env);
+  }
+});
+
+async function disposeRuntimeTestContext(env) {
+  const context = env && env.context;
+  if (!context) {
+    return;
+  }
+  if (typeof context.__gosx_dispose_page === "function") {
+    await context.__gosx_dispose_page();
+    return;
+  }
+  if (context.__gosx && context.__gosx.engines && typeof context.__gosx_dispose_engine === "function") {
+    for (const engineID of Array.from(context.__gosx.engines.keys())) {
+      context.__gosx_dispose_engine(engineID);
+    }
+  }
+}
 
 class FakeTextNode {
   constructor(text, ownerDocument) {
@@ -1956,7 +1981,7 @@ function createContext(options) {
     document.body.appendChild(element);
   }
 
-  return {
+  const env = {
     actionCalls,
     computeHydrateCalls,
     consoleLogs: consoleSpy.logs,
@@ -1986,6 +2011,8 @@ function createContext(options) {
     visualViewport,
     windowListeners,
   };
+  activeTestContexts.add(env);
+  return env;
 }
 
 function installManualRAF(context) {
@@ -5647,7 +5674,6 @@ test("bootstrap renders model-relative Scene3D textures without authored JS", as
   await flushAsyncWork();
   await flushAsyncWork();
 
-  console.log("scene-logs", JSON.stringify(env.consoleLogs.log));
   assert.equal(env.fetchCalls.some((call) => call.url === "/models/panel.gosx3d.json"), true);
   assert.equal(env.imageLoads.includes("http://localhost:3000/models/paper-card.png"), true);
   assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "webgl");
@@ -5658,7 +5684,6 @@ test("bootstrap renders model-relative Scene3D textures without authored JS", as
   assert.ok(gl.ops.some((entry) => entry[0] === "texImage2D" && entry[2] === 9));
   assert.ok(gl.ops.some((entry) => entry[0] === "texImage2D" && entry[2] === 6));
   assert.ok(gl.ops.some((entry) => entry[0] === "drawArrays" && entry[1] === gl.TRIANGLES && entry[3] === 6));
-  console.log("texture-draws", JSON.stringify(gl.ops.filter((entry) => entry[0] === "drawArrays")));
   assert.equal(env.consoleLogs.warn.length, 0);
   assert.equal(env.consoleLogs.error.length, 0);
 });
@@ -9128,15 +9153,18 @@ test("bootstrap telemetry flushes via sendBeacon on visibility hidden", async ()
     return true;
   };
   env.context.__gosx_telemetry_config = { flushInterval: 30000 };
+  const timers = installManualTimers(env.context);
 
   runScript(bootstrapSource, env.context, "bootstrap.js");
   await flushAsyncWork();
 
   env.context.__gosx_emit("info", "visibility-test", "bye", {});
+  assert.equal(timers.count(), 1, "telemetry emit should schedule one delayed flush");
   env.document.visibilityState = "hidden";
   env.document.dispatchEvent({ type: "visibilitychange" });
   await flushAsyncWork();
 
+  assert.equal(timers.count(), 0, "visibility beacon flush should clear the delayed flush timer");
   assert.equal(beaconCalls.length, 1, "expected one beacon call, got: " + JSON.stringify(beaconCalls));
   assert.equal(beaconCalls[0].url, "/_gosx/client-events");
   const parsed = JSON.parse(beaconCalls[0].body);
@@ -11571,11 +11599,15 @@ test("engine factory context does not receive activateInputProviders even with i
       ],
     },
   });
+  const raf = installManualRAF(env.context);
 
   runScript(bootstrapSource, env.context, "bootstrap.js");
   await flushAsyncWork();
 
   assert.equal(env.context.__gosx.engines.size, 1);
+  assert.equal(raf.count(), 1, "gamepad input provider should poll while the engine is mounted");
   assert.deepEqual(capturedCtx.capabilities, ["keyboard", "pointer", "gamepad"]);
   assert.equal(capturedCtx.hasActivateInputProviders, false, "ctx must not expose activateInputProviders even with input capabilities");
+  await env.context.__gosx_dispose_page();
+  assert.equal(raf.count(), 0, "page disposal should release the gamepad input provider RAF");
 });

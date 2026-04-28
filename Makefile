@@ -74,7 +74,7 @@ test-fuzz-smoke:
 
 test-js:
 	$(NODE) ./client/js/build-bootstrap.mjs --check
-	$(NODE) --test --test-force-exit ./client/js/*.test.js
+	$(NODE) --test ./client/js/*.test.js
 
 test-wasm:
 	GOOS=js GOARCH=wasm $(GO) test -exec="$(GO_WASM_EXEC)" ./client/wasm

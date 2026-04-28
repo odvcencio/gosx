@@ -13,9 +13,10 @@
 
   function gosxTelemetryConfig() {
     const cfg = (typeof window !== "undefined" && window.__gosx_telemetry_config) || {};
+    const rawFlushInterval = Number(cfg.flushInterval);
     return {
       endpoint: typeof cfg.endpoint === "string" && cfg.endpoint ? cfg.endpoint : GOSX_TELEMETRY_ENDPOINT,
-      flushInterval: Math.max(0, Number(cfg.flushInterval) || GOSX_TELEMETRY_FLUSH_MS_DEFAULT),
+      flushInterval: Math.max(0, Number.isFinite(rawFlushInterval) ? rawFlushInterval : GOSX_TELEMETRY_FLUSH_MS_DEFAULT),
       maxBatch: Math.max(1, Number(cfg.maxBatch) || GOSX_TELEMETRY_BATCH_MAX_DEFAULT),
       maxQueue: Math.max(1, Number(cfg.maxQueue) || GOSX_TELEMETRY_QUEUE_MAX_DEFAULT),
       enabled: cfg.enabled !== false,
@@ -113,6 +114,13 @@
       }, delay);
     }
 
+    function clearFlushTimer() {
+      if (flushTimer != null) {
+        clearTimeout(flushTimer);
+        flushTimer = null;
+      }
+    }
+
     function buildPayload(batch) {
       return JSON.stringify({
         sid: sid,
@@ -122,6 +130,7 @@
     }
 
     function flushBatch(preferBeacon) {
+      clearFlushTimer();
       if (queue.length === 0) {
         return;
       }
