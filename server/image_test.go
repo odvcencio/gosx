@@ -98,6 +98,17 @@ func TestImageHelperSupportsCustomResolver(t *testing.T) {
 	}
 }
 
+func TestMustRegisterImageResolverReturnsErrorInsteadOfPanicking(t *testing.T) {
+	if err := MustRegisterImageResolver("", ImageResolverFunc(func(string, ImageTransform) (string, bool) {
+		return "", false
+	})); err == nil {
+		t.Fatal("expected missing resolver name error")
+	}
+	if err := MustRegisterImageResolver("nil-resolver", nil); err == nil {
+		t.Fatal("expected nil resolver error")
+	}
+}
+
 func TestImageHelperBuildsAutomaticResponsiveMarkup(t *testing.T) {
 	html := gosx.RenderHTML(Image(ImageProps{
 		Src:        "/hero.jpg",

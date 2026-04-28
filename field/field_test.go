@@ -91,6 +91,33 @@ func TestSampleGeneric(t *testing.T) {
 	}
 }
 
+func TestFieldValidationReturnsErrorsInsteadOfPanics(t *testing.T) {
+	if got, err := NewChecked([3]int{0, 4, 4}, 1, AABB{}); err == nil || got != nil {
+		t.Fatalf("NewChecked invalid shape = %#v, %v; want nil error", got, err)
+	}
+	if got, err := FromFuncChecked([3]int{1, 1, 1}, 2, AABB{}, func(float32, float32, float32) []float32 {
+		return []float32{1}
+	}); err == nil || got != nil {
+		t.Fatalf("FromFuncChecked invalid callback = %#v, %v; want nil error", got, err)
+	}
+
+	scalar := New([3]int{2, 2, 2}, 1, AABB{Max: [3]float32{1, 1, 1}})
+	vec3 := New([3]int{2, 2, 2}, 3, AABB{Max: [3]float32{1, 1, 1}})
+
+	if _, err := vec3.SampleScalarChecked(0, 0, 0); err == nil {
+		t.Fatal("SampleScalarChecked accepted a vec3 field")
+	}
+	if _, err := scalar.SampleVec3Checked(0, 0, 0); err == nil {
+		t.Fatal("SampleVec3Checked accepted a scalar field")
+	}
+	if got := vec3.SampleScalar(0, 0, 0); got != 0 {
+		t.Fatalf("SampleScalar invalid wrapper = %f, want zero", got)
+	}
+	if got := scalar.SampleVec3(0, 0, 0); got != ([3]float32{}) {
+		t.Fatalf("SampleVec3 invalid wrapper = %#v, want zero", got)
+	}
+}
+
 func TestFloor32(t *testing.T) {
 	cases := []struct {
 		in, want float32

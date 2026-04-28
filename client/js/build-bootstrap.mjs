@@ -26,6 +26,12 @@ function sourceExtract(rel, id, start, end) {
 }
 
 const TAIL_FILE = "bootstrap-src/30-tail.js";
+const RUNTIME_SCENE_CORE_FILE = "bootstrap-src/10-runtime-scene-core.js";
+const RUNTIME_PRIMITIVES_FILE = "bootstrap-src/10-runtime-primitives.js";
+const RUNTIME_UTILS_START = `  // Pending manifest reference, set during init, consumed when runtime is ready.
+`;
+const RUNTIME_UTILS_END = `  function sceneCSSVarReference(value) {
+`;
 const SECTION_ENGINE_MOUNTING = `  // --------------------------------------------------------------------------
   // Engine mounting
   // --------------------------------------------------------------------------
@@ -58,7 +64,8 @@ const outputs = [
       sourceFile("bootstrap-src/00-textlayout.js"),
       sourceFile("bootstrap-src/04-telemetry.js"),
       sourceFile("bootstrap-src/05-document-env.js"),
-      sourceFile("bootstrap-src/10-runtime-scene-core.js"),
+      sourceFile(RUNTIME_PRIMITIVES_FILE),
+      sourceFile(RUNTIME_SCENE_CORE_FILE),
       sourceFile("bootstrap-src/11-scene-math.js"),
       sourceFile("bootstrap-src/11a-scene-decompress.js"),
       sourceFile("bootstrap-src/12-scene-geometry.js"),
@@ -103,7 +110,8 @@ const outputs = [
       sourceFile("bootstrap-src/00-textlayout.js"),
       sourceFile("bootstrap-src/04-telemetry.js"),
       sourceFile("bootstrap-src/05-document-env.js"),
-      sourceFile("bootstrap-src/10a-runtime-utils.js"),
+      sourceExtract(RUNTIME_SCENE_CORE_FILE, "runtime-utils", RUNTIME_UTILS_START, RUNTIME_UTILS_END),
+      sourceFile(RUNTIME_PRIMITIVES_FILE),
       sourceFile("bootstrap-src/26-runtime-tail.js"),
     ],
   },
@@ -148,7 +156,8 @@ const outputs = [
     path: path.join(__dirname, "bootstrap-feature-scene3d.js"),
     sources: [
       sourceFile("bootstrap-src/26d-feature-scene3d-prefix.js"),
-      sourceFile("bootstrap-src/10-runtime-scene-core.js"),
+      sourceFile(RUNTIME_PRIMITIVES_FILE),
+      sourceFile(RUNTIME_SCENE_CORE_FILE),
       sourceFile("bootstrap-src/11-scene-math.js"),
       sourceFile("bootstrap-src/11a-scene-decompress.js"),
       sourceFile("bootstrap-src/12-scene-geometry.js"),

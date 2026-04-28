@@ -15,7 +15,9 @@ func TestPublishSubscribeField(t *testing.T) {
 		AABB{Max: [3]float32{1, 1, 1}},
 		func(x, y, z float32) []float32 { return []float32{1, 0, 0} },
 	)
-	PublishField(h, "wind", source, QuantizeOptions{BitWidth: 6})
+	if err := PublishField(h, "wind", source, QuantizeOptions{BitWidth: 6}); err != nil {
+		t.Fatal(err)
+	}
 
 	select {
 	case got := <-ch:
@@ -47,9 +49,13 @@ func TestPublishSubscribeDelta(t *testing.T) {
 		func(x, y, z float32) []float32 { return []float32{0.6} },
 	)
 
-	PublishField(h, "wind", first, QuantizeOptions{BitWidth: 8})
+	if err := PublishField(h, "wind", first, QuantizeOptions{BitWidth: 8}); err != nil {
+		t.Fatal(err)
+	}
 	<-ch // drain first
-	PublishField(h, "wind", second, QuantizeOptions{BitWidth: 8})
+	if err := PublishField(h, "wind", second, QuantizeOptions{BitWidth: 8}); err != nil {
+		t.Fatal(err)
+	}
 
 	select {
 	case got := <-ch:
@@ -59,5 +65,16 @@ func TestPublishSubscribeDelta(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("timed out waiting for delta update")
+	}
+}
+
+func TestPublishFieldValidationReturnsError(t *testing.T) {
+	h := hub.New("test-fields-invalid")
+	if err := PublishField(h, "wind", nil, QuantizeOptions{BitWidth: 8}); err == nil {
+		t.Fatal("PublishField accepted nil field")
+	}
+	source := New([3]int{2, 2, 2}, 1, AABB{Max: [3]float32{1, 1, 1}})
+	if err := PublishField(h, "wind", source, QuantizeOptions{BitWidth: 3}); err == nil {
+		t.Fatal("PublishField accepted invalid quantize options")
 	}
 }

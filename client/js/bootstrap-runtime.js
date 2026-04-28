@@ -5902,11 +5902,6 @@
     return Number.isFinite(num) ? num : fallback;
   }
 
-  function sceneSegmentResolution(value) {
-    const segments = Math.round(sceneNumber(value, 12));
-    return Math.max(6, Math.min(24, segments));
-  }
-
   function sceneBool(value, fallback) {
     if (typeof value === "boolean") return value;
     if (typeof value === "string") {

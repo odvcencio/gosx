@@ -9,9 +9,9 @@ import "math"
 // The velocity field's Components must equal 3. Callers must ensure
 // len(particles) is a multiple of 3; trailing 1 or 2 elements are
 // silently ignored.
-func Advect(velocity *Field, particles []float32, dt float32) {
-	if velocity.Components != 3 {
-		panic("field.Advect: velocity field must have Components == 3")
+func Advect(velocity *Field, particles []float32, dt float32) error {
+	if err := validateFieldComponents("field.Advect", velocity, 3); err != nil {
+		return err
 	}
 	half := dt * 0.5
 	for i := 0; i+2 < len(particles); i += 3 {
@@ -23,6 +23,7 @@ func Advect(velocity *Field, particles []float32, dt float32) {
 		particles[i+1] = y + v2[1]*dt
 		particles[i+2] = z + v2[2]*dt
 	}
+	return nil
 }
 
 // atClamp is like at but clamps voxel indices to bounds.
@@ -35,15 +36,27 @@ func (f *Field) atClamp(i, j, k, c int) float32 {
 
 // Gradient returns a vec3 field equal to the gradient of a scalar field,
 // computed via central differences. Edge voxels use one-sided differences.
+// Invalid input returns nil; callers that need diagnostics should use
+// GradientChecked.
 func Gradient(scalar *Field) *Field {
-	if scalar.Components != 1 {
-		panic("field.Gradient: input must have Components == 1")
+	out, _ := GradientChecked(scalar)
+	return out
+}
+
+// GradientChecked returns the gradient or a validation error when scalar is
+// not a scalar field.
+func GradientChecked(scalar *Field) (*Field, error) {
+	if err := validateFieldComponents("field.Gradient", scalar, 1); err != nil {
+		return nil, err
 	}
 	rx, ry, rz := scalar.Resolution[0], scalar.Resolution[1], scalar.Resolution[2]
 	dx := (scalar.Bounds.Max[0] - scalar.Bounds.Min[0]) / float32(rx)
 	dy := (scalar.Bounds.Max[1] - scalar.Bounds.Min[1]) / float32(ry)
 	dz := (scalar.Bounds.Max[2] - scalar.Bounds.Min[2]) / float32(rz)
-	out := New(scalar.Resolution, 3, scalar.Bounds)
+	out, err := NewChecked(scalar.Resolution, 3, scalar.Bounds)
+	if err != nil {
+		return nil, err
+	}
 	for k := 0; k < rz; k++ {
 		for j := 0; j < ry; j++ {
 			for i := 0; i < rx; i++ {
@@ -57,7 +70,7 @@ func Gradient(scalar *Field) *Field {
 			}
 		}
 	}
-	return out
+	return out, nil
 }
 
 // centralDiff returns f[neighbor+] - f[neighbor-] of component 0 along axis (0=x,1=y,2=z).
@@ -82,15 +95,27 @@ func centralDiff(f *Field, i, j, k, axis, n int) float32 {
 }
 
 // Divergence returns a scalar field equal to the divergence of a vec3 field.
+// Invalid input returns nil; callers that need diagnostics should use
+// DivergenceChecked.
 func Divergence(velocity *Field) *Field {
-	if velocity.Components != 3 {
-		panic("field.Divergence: input must have Components == 3")
+	out, _ := DivergenceChecked(velocity)
+	return out
+}
+
+// DivergenceChecked returns the divergence or a validation error when velocity
+// is not a vec3 field.
+func DivergenceChecked(velocity *Field) (*Field, error) {
+	if err := validateFieldComponents("field.Divergence", velocity, 3); err != nil {
+		return nil, err
 	}
 	rx, ry, rz := velocity.Resolution[0], velocity.Resolution[1], velocity.Resolution[2]
 	dx := (velocity.Bounds.Max[0] - velocity.Bounds.Min[0]) / float32(rx)
 	dy := (velocity.Bounds.Max[1] - velocity.Bounds.Min[1]) / float32(ry)
 	dz := (velocity.Bounds.Max[2] - velocity.Bounds.Min[2]) / float32(rz)
-	out := New(velocity.Resolution, 1, velocity.Bounds)
+	out, err := NewChecked(velocity.Resolution, 1, velocity.Bounds)
+	if err != nil {
+		return nil, err
+	}
 	for k := 0; k < rz; k++ {
 		for j := 0; j < ry; j++ {
 			for i := 0; i < rx; i++ {
@@ -102,7 +127,7 @@ func Divergence(velocity *Field) *Field {
 			}
 		}
 	}
-	return out
+	return out, nil
 }
 
 // componentDiff returns the central difference of component c along axis,
@@ -127,16 +152,27 @@ func componentDiff(f *Field, i, j, k, c, axis, n int) float32 {
 }
 
 // Curl returns a vec3 field equal to the curl of a vec3 input field,
-// computed via central differences.
+// computed via central differences. Invalid input returns nil; callers that
+// need diagnostics should use CurlChecked.
 func Curl(velocity *Field) *Field {
-	if velocity.Components != 3 {
-		panic("field.Curl: input must have Components == 3")
+	out, _ := CurlChecked(velocity)
+	return out
+}
+
+// CurlChecked returns the curl or a validation error when velocity is not a
+// vec3 field.
+func CurlChecked(velocity *Field) (*Field, error) {
+	if err := validateFieldComponents("field.Curl", velocity, 3); err != nil {
+		return nil, err
 	}
 	rx, ry, rz := velocity.Resolution[0], velocity.Resolution[1], velocity.Resolution[2]
 	dx := (velocity.Bounds.Max[0] - velocity.Bounds.Min[0]) / float32(rx)
 	dy := (velocity.Bounds.Max[1] - velocity.Bounds.Min[1]) / float32(ry)
 	dz := (velocity.Bounds.Max[2] - velocity.Bounds.Min[2]) / float32(rz)
-	out := New(velocity.Resolution, 3, velocity.Bounds)
+	out, err := NewChecked(velocity.Resolution, 3, velocity.Bounds)
+	if err != nil {
+		return nil, err
+	}
 	for k := 0; k < rz; k++ {
 		for j := 0; j < ry; j++ {
 			for i := 0; i < rx; i++ {
@@ -153,7 +189,7 @@ func Curl(velocity *Field) *Field {
 			}
 		}
 	}
-	return out
+	return out, nil
 }
 
 // Blur applies a separable Gaussian blur with the given radius (in voxels).

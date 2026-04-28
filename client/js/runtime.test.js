@@ -6673,6 +6673,21 @@ test("bootstrap skips redundant runtime style and attribute writes", () => {
   assert.match(source, /element\.setAttribute\(name,\s*next\)/);
 });
 
+test("bootstrap derives selective runtime utilities from the Scene3D core source", () => {
+  const builder = fs.readFileSync(path.join(__dirname, "build-bootstrap.mjs"), "utf8");
+  const core = fs.readFileSync(path.join(__dirname, "bootstrap-src", "10-runtime-scene-core.js"), "utf8");
+  const primitives = fs.readFileSync(path.join(__dirname, "bootstrap-src", "10-runtime-primitives.js"), "utf8");
+
+  assert.match(builder, /sourceExtract\(RUNTIME_SCENE_CORE_FILE,\s*"runtime-utils"/);
+  assert.doesNotMatch(builder, /10a-runtime-utils/);
+  assert.doesNotMatch(core, /function sceneBool\(/);
+  assert.doesNotMatch(core, /function clearChildren\(/);
+  assert.match(primitives, /function sceneBool\(/);
+  assert.match(primitives, /function clearChildren\(/);
+  assert.equal((bootstrapSource.match(/function sceneSegmentResolution\(/g) || []).length, 1);
+  assert.equal((bootstrapFeatureScene3DSource.match(/function sceneSegmentResolution\(/g) || []).length, 1);
+});
+
 test("bootstrap keeps WebGL and WebGPU Scene3D command logs in parity", async () => {
   const env = createContext({});
   runScript(bootstrapSource, env.context, "bootstrap.js");

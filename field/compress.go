@@ -30,17 +30,28 @@ type Quantized struct {
 	IsDelta     bool // true when Packed encodes deltas instead of values
 }
 
-// Quantize compresses a Field to its wire form.
+// Quantize compresses a Field to its wire form. Invalid input returns nil;
+// callers that need diagnostics should use QuantizeChecked.
 func (f *Field) Quantize(opts QuantizeOptions) *Quantized {
+	q, _ := f.QuantizeChecked(opts)
+	return q
+}
+
+// QuantizeChecked compresses a Field to its wire form or returns a validation
+// error for invalid options or mismatched delta bases.
+func (f *Field) QuantizeChecked(opts QuantizeOptions) (*Quantized, error) {
+	if err := validateField("field.Quantize", f); err != nil {
+		return nil, err
+	}
 	if opts.BitWidth < 4 || opts.BitWidth > 8 {
-		panic("field.Quantize: BitWidth must be 4..8")
+		return nil, fieldError("field.Quantize", "BitWidth must be 4..8, got %d", opts.BitWidth)
 	}
 
 	source := f
 	isDelta := false
 	if opts.DeltaAgainst != nil {
-		if opts.DeltaAgainst.Resolution != f.Resolution || opts.DeltaAgainst.Components != f.Components {
-			panic("field.Quantize: DeltaAgainst shape mismatch")
+		if err := validateSameShape("field.Quantize", f, opts.DeltaAgainst); err != nil {
+			return nil, err
 		}
 		source = subtractFields(f, opts.DeltaAgainst)
 		isDelta = true
@@ -65,18 +76,44 @@ func (f *Field) Quantize(opts QuantizeOptions) *Quantized {
 		q.Preview = packBits(previewIdx, opts.PreviewBits)
 		q.PreviewBits = opts.PreviewBits
 	}
-	return q
+	return q, nil
 }
 
 // Decompress reconstructs a Field from a Quantized wire form.
 // For delta-encoded Quantized values, callers must apply the delta to the
 // reference field separately via ApplyDelta.
 func (q *Quantized) Decompress() *Field {
+	f, _ := q.DecompressChecked()
+	return f
+}
+
+// DecompressChecked reconstructs a Field from a Quantized wire form or returns
+// an error when the wire shape is invalid.
+func (q *Quantized) DecompressChecked() (*Field, error) {
+	if q == nil {
+		return nil, fieldError("field.Decompress", "quantized field is nil")
+	}
+	if err := validateNewArgs("field.Decompress", q.Resolution, q.Components); err != nil {
+		return nil, err
+	}
+	if q.BitWidth < 4 || q.BitWidth > 8 {
+		return nil, fieldError("field.Decompress", "BitWidth must be 4..8, got %d", q.BitWidth)
+	}
+	if len(q.Mins) < q.Components || len(q.Maxs) < q.Components {
+		return nil, fieldError("field.Decompress", "mins/maxs length must be at least components (%d/%d < %d)", len(q.Mins), len(q.Maxs), q.Components)
+	}
 	totalVoxels := q.Resolution[0] * q.Resolution[1] * q.Resolution[2]
+	requiredBits := totalVoxels * q.Components * q.BitWidth
+	if len(q.Packed)*8 < requiredBits {
+		return nil, fieldError("field.Decompress", "packed payload has %d bits, need %d", len(q.Packed)*8, requiredBits)
+	}
 	indices := unpackBits(q.Packed, totalVoxels*q.Components, q.BitWidth)
-	out := New(q.Resolution, q.Components, q.Bounds)
+	out, err := NewChecked(q.Resolution, q.Components, q.Bounds)
+	if err != nil {
+		return nil, err
+	}
 	dequantize(indices, q.Mins, q.Maxs, q.BitWidth, q.Components, out.Data)
-	return out
+	return out, nil
 }
 
 // WireSize returns the total bytes consumed by the packed payload (excluding
@@ -86,21 +123,40 @@ func (q *Quantized) WireSize() int {
 }
 
 // ApplyDelta reconstructs the current field by adding a delta-encoded
-// Quantized to a reference field. Panics if shapes mismatch or q is not
-// a delta.
+// Quantized to a reference field. Invalid input returns nil; callers that need
+// diagnostics should use ApplyDeltaChecked.
 func ApplyDelta(reference *Field, q *Quantized) *Field {
+	out, _ := ApplyDeltaChecked(reference, q)
+	return out
+}
+
+// ApplyDeltaChecked reconstructs the current field by adding a delta-encoded
+// Quantized to a reference field or returns a validation error.
+func ApplyDeltaChecked(reference *Field, q *Quantized) (*Field, error) {
+	if q == nil {
+		return nil, fieldError("field.ApplyDelta", "quantized field is nil")
+	}
 	if !q.IsDelta {
-		panic("field.ApplyDelta: Quantized is not a delta")
+		return nil, fieldError("field.ApplyDelta", "quantized field is not a delta")
+	}
+	if err := validateField("field.ApplyDelta", reference); err != nil {
+		return nil, err
 	}
 	if reference.Resolution != q.Resolution || reference.Components != q.Components {
-		panic("field.ApplyDelta: shape mismatch")
+		return nil, fieldError("field.ApplyDelta", "shape mismatch: %v/%d != %v/%d", reference.Resolution, reference.Components, q.Resolution, q.Components)
 	}
-	delta := q.Decompress()
-	out := New(reference.Resolution, reference.Components, reference.Bounds)
+	delta, err := q.DecompressChecked()
+	if err != nil {
+		return nil, err
+	}
+	out, err := NewChecked(reference.Resolution, reference.Components, reference.Bounds)
+	if err != nil {
+		return nil, err
+	}
 	for i := range out.Data {
 		out.Data[i] = reference.Data[i] + delta.Data[i]
 	}
-	return out
+	return out, nil
 }
 
 // perComponentRange returns the min and max for each component across the field.

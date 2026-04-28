@@ -12,6 +12,22 @@
   var applyTextLayoutPresentation = runtimeApi.applyTextLayoutPresentation || function() {};
   var onTextLayoutInvalidated = runtimeApi.onTextLayoutInvalidated || function() { return function() {}; };
 
+  function sceneBool(value, fallback) {
+    if (typeof value === "boolean") return value;
+    if (typeof value === "string") {
+      const lowered = value.trim().toLowerCase();
+      if (lowered === "true") return true;
+      if (lowered === "false") return false;
+    }
+    return fallback;
+  }
+
+  function clearChildren(node) {
+    while (node && node.firstChild) {
+      node.removeChild(node.firstChild);
+    }
+  }
+
   let pendingManifest = null;
 
   function runtimeReady() {
@@ -832,21 +848,6 @@
       return value.trim();
     }
     return Math.max(min, Math.min(max, sceneNumber(value, fallback)));
-  }
-
-  function sceneSegmentResolution(value) {
-    const segments = Math.round(sceneNumber(value, 12));
-    return Math.max(6, Math.min(24, segments));
-  }
-
-  function sceneBool(value, fallback) {
-    if (typeof value === "boolean") return value;
-    if (typeof value === "string") {
-      const lowered = value.trim().toLowerCase();
-      if (lowered === "true") return true;
-      if (lowered === "false") return false;
-    }
-    return fallback;
   }
 
   function defaultSceneObjects() {
@@ -3276,12 +3277,6 @@
     const merged = Object.assign({}, current, props);
     merged.id = current.id || merged.id || ("scene-light-" + objectID);
     return normalizeSceneLight(merged, objectID, current);
-  }
-
-  function clearChildren(node) {
-    while (node && node.firstChild) {
-      node.removeChild(node.firstChild);
-    }
   }
 
   function sceneRenderCamera(camera, out) {

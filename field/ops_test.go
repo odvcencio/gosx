@@ -11,12 +11,35 @@ func TestAdvectConstantVelocity(t *testing.T) {
 		func(x, y, z float32) []float32 { return []float32{1, 0, 0} },
 	)
 	particles := []float32{0.5, 0.5, 0.5}
-	Advect(v, particles, 0.1)
+	if err := Advect(v, particles, 0.1); err != nil {
+		t.Fatal(err)
+	}
 	if particles[0] < 0.55 || particles[0] > 0.65 {
 		t.Errorf("particle x = %f, want ~0.6", particles[0])
 	}
 	if math.Abs(float64(particles[1]-0.5)) > 0.01 {
 		t.Errorf("particle y drifted: %f", particles[1])
+	}
+}
+
+func TestFieldOperatorsReturnErrorsInsteadOfPanics(t *testing.T) {
+	scalar := New([3]int{4, 4, 4}, 1, AABB{Max: [3]float32{1, 1, 1}})
+	vec3 := New([3]int{4, 4, 4}, 3, AABB{Max: [3]float32{1, 1, 1}})
+
+	if err := Advect(scalar, []float32{0, 0, 0}, 0.1); err == nil {
+		t.Fatal("Advect accepted scalar velocity field")
+	}
+	if got, err := GradientChecked(vec3); err == nil || got != nil {
+		t.Fatalf("GradientChecked invalid input = %#v, %v; want nil error", got, err)
+	}
+	if got, err := DivergenceChecked(scalar); err == nil || got != nil {
+		t.Fatalf("DivergenceChecked invalid input = %#v, %v; want nil error", got, err)
+	}
+	if got, err := CurlChecked(scalar); err == nil || got != nil {
+		t.Fatalf("CurlChecked invalid input = %#v, %v; want nil error", got, err)
+	}
+	if got := Gradient(vec3); got != nil {
+		t.Fatalf("Gradient invalid wrapper = %#v, want nil", got)
 	}
 }
 

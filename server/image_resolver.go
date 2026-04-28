@@ -47,11 +47,12 @@ func RegisterImageResolver(name string, resolver ImageResolver) error {
 	return nil
 }
 
-// MustRegisterImageResolver registers a named image URL resolver or panics.
-func MustRegisterImageResolver(name string, resolver ImageResolver) {
-	if err := RegisterImageResolver(name, resolver); err != nil {
-		panic(err)
-	}
+// MustRegisterImageResolver registers a named image URL resolver.
+//
+// Deprecated: use RegisterImageResolver and check the returned error. This
+// method no longer panics so resolver configuration cannot crash requests.
+func MustRegisterImageResolver(name string, resolver ImageResolver) error {
+	return RegisterImageResolver(name, resolver)
 }
 
 // ImageURLWithResolver resolves an optimized image URL through a named backend.

@@ -131,13 +131,12 @@ func (a *Assets) Register(ref AssetRef) (AssetRef, error) {
 	return ref, nil
 }
 
-// MustRegister inserts an asset reference and panics on invalid input.
-func (a *Assets) MustRegister(ref AssetRef) AssetRef {
-	out, err := a.Register(ref)
-	if err != nil {
-		panic(err)
-	}
-	return out
+// MustRegister inserts an asset reference.
+//
+// Deprecated: use Register and check the returned error. This method no
+// longer panics so invalid asset manifests cannot crash production requests.
+func (a *Assets) MustRegister(ref AssetRef) (AssetRef, error) {
+	return a.Register(ref)
 }
 
 // RegisterAll inserts or replaces multiple asset references.
@@ -150,12 +149,12 @@ func (a *Assets) RegisterAll(refs ...AssetRef) error {
 	return nil
 }
 
-// MustRegisterAll inserts multiple asset references and panics on invalid
-// input.
-func (a *Assets) MustRegisterAll(refs ...AssetRef) {
-	if err := a.RegisterAll(refs...); err != nil {
-		panic(err)
-	}
+// MustRegisterAll inserts multiple asset references.
+//
+// Deprecated: use RegisterAll and check the returned error. This method no
+// longer panics so invalid asset manifests cannot crash production requests.
+func (a *Assets) MustRegisterAll(refs ...AssetRef) error {
+	return a.RegisterAll(refs...)
 }
 
 // Resolve looks up an asset by ID.

@@ -858,21 +858,6 @@
     return Math.max(min, Math.min(max, sceneNumber(value, fallback)));
   }
 
-  function sceneSegmentResolution(value) {
-    const segments = Math.round(sceneNumber(value, 12));
-    return Math.max(6, Math.min(24, segments));
-  }
-
-  function sceneBool(value, fallback) {
-    if (typeof value === "boolean") return value;
-    if (typeof value === "string") {
-      const lowered = value.trim().toLowerCase();
-      if (lowered === "true") return true;
-      if (lowered === "false") return false;
-    }
-    return fallback;
-  }
-
   function defaultSceneObjects() {
     return [
       {
@@ -3356,18 +3341,6 @@
     merged.id = current.id || merged.id || ("scene-light-" + objectID);
     return normalizeSceneLight(merged, objectID, current);
   }
-
-  function clearChildren(node) {
-    while (node && node.firstChild) {
-      node.removeChild(node.firstChild);
-    }
-  }
-
-
-
-
-
-
 
   // sceneRenderCamera normalizes a raw camera (partial, may be missing
   // fields) into a full PBR camera struct. Hot callers that want to avoid

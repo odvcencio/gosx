@@ -62,6 +62,29 @@ func TestDeltaEncodingRoundTrip(t *testing.T) {
 	}
 }
 
+func TestQuantizeAndDeltaValidationReturnsErrorsInsteadOfPanics(t *testing.T) {
+	f := New([3]int{2, 2, 2}, 1, AABB{Max: [3]float32{1, 1, 1}})
+	other := New([3]int{3, 2, 2}, 1, AABB{Max: [3]float32{1, 1, 1}})
+
+	if got, err := f.QuantizeChecked(QuantizeOptions{BitWidth: 3}); err == nil || got != nil {
+		t.Fatalf("QuantizeChecked invalid bit width = %#v, %v; want nil error", got, err)
+	}
+	if got, err := f.QuantizeChecked(QuantizeOptions{BitWidth: 8, DeltaAgainst: other}); err == nil || got != nil {
+		t.Fatalf("QuantizeChecked shape mismatch = %#v, %v; want nil error", got, err)
+	}
+	if got := f.Quantize(QuantizeOptions{BitWidth: 3}); got != nil {
+		t.Fatalf("Quantize invalid wrapper = %#v, want nil", got)
+	}
+
+	q := f.Quantize(QuantizeOptions{BitWidth: 8})
+	if got, err := ApplyDeltaChecked(f, q); err == nil || got != nil {
+		t.Fatalf("ApplyDeltaChecked non-delta = %#v, %v; want nil error", got, err)
+	}
+	if got, err := (&Quantized{Resolution: [3]int{1, 1, 1}, Components: 1, BitWidth: 8}).DecompressChecked(); err == nil || got != nil {
+		t.Fatalf("DecompressChecked short payload = %#v, %v; want nil error", got, err)
+	}
+}
+
 func TestWireSizeWithPreview(t *testing.T) {
 	f := New([3]int{16, 16, 16}, 1, AABB{Max: [3]float32{1, 1, 1}})
 	q := f.Quantize(QuantizeOptions{BitWidth: 8, PreviewBits: 4})

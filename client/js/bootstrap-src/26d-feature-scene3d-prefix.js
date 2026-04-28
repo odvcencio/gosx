@@ -4,9 +4,9 @@
 // (scene-mount with the GoSXScene3D engine factory). This IIFE is
 // self-contained — all scene functions are defined within it.
 //
-// A few functions from the runtime (00-textlayout.js, 10a-runtime-utils.js)
-// are needed by the scene code. These are bridged from window.__gosx_runtime_api
-// and duplicated declarations from the runtime-utils extraction.
+// A few functions from the runtime (00-textlayout.js and the selective
+// runtime utility extraction) are needed by the scene code. These are bridged
+// from window.__gosx_runtime_api.
 
 (function() {
   "use strict";

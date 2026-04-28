@@ -26,13 +26,17 @@ type Field struct {
 	Time       float64 // optional timestamp for streaming/replay
 }
 
-// New allocates an uninitialized field.
+// New allocates an uninitialized field. Invalid shapes return nil; callers
+// that need diagnostics should use NewChecked.
 func New(resolution [3]int, components int, bounds AABB) *Field {
-	if components < 1 || components > 4 {
-		panic("field: components must be 1..4")
-	}
-	if resolution[0] < 1 || resolution[1] < 1 || resolution[2] < 1 {
-		panic("field: resolution must be >= 1 on every axis")
+	f, _ := NewChecked(resolution, components, bounds)
+	return f
+}
+
+// NewChecked allocates an uninitialized field or returns a validation error.
+func NewChecked(resolution [3]int, components int, bounds AABB) (*Field, error) {
+	if err := validateNewArgs("field.New", resolution, components); err != nil {
+		return nil, err
 	}
 	n := resolution[0] * resolution[1] * resolution[2] * components
 	return &Field{
@@ -40,14 +44,28 @@ func New(resolution [3]int, components int, bounds AABB) *Field {
 		Components: components,
 		Bounds:     bounds,
 		Data:       make([]float32, n),
-	}
+	}, nil
 }
 
 // FromFunc samples fn at every voxel center and stores the result.
 // fn must return a slice of length components.
 func FromFunc(resolution [3]int, components int, bounds AABB,
 	fn func(x, y, z float32) []float32) *Field {
-	f := New(resolution, components, bounds)
+	f, _ := FromFuncChecked(resolution, components, bounds, fn)
+	return f
+}
+
+// FromFuncChecked samples fn at every voxel center and stores the result, or
+// returns a validation error for invalid shapes or callback output.
+func FromFuncChecked(resolution [3]int, components int, bounds AABB,
+	fn func(x, y, z float32) []float32) (*Field, error) {
+	if fn == nil {
+		return nil, fieldError("field.FromFunc", "fn must not be nil")
+	}
+	f, err := NewChecked(resolution, components, bounds)
+	if err != nil {
+		return nil, err
+	}
 	dx := (bounds.Max[0] - bounds.Min[0]) / float32(resolution[0])
 	dy := (bounds.Max[1] - bounds.Min[1]) / float32(resolution[1])
 	dz := (bounds.Max[2] - bounds.Min[2]) / float32(resolution[2])
@@ -60,7 +78,7 @@ func FromFunc(resolution [3]int, components int, bounds AABB,
 				xc := bounds.Min[0] + (float32(i)+0.5)*dx
 				v := fn(xc, yc, zc)
 				if len(v) != components {
-					panic("field: fn returned wrong component count")
+					return nil, fieldError("field.FromFunc", "fn returned %d components, want %d", len(v), components)
 				}
 				for c := 0; c < components; c++ {
 					f.Data[idx] = v[c]
@@ -69,17 +87,25 @@ func FromFunc(resolution [3]int, components int, bounds AABB,
 			}
 		}
 	}
-	return f
+	return f, nil
 }
 
 // SampleScalar returns the trilinearly interpolated scalar value at world (x,y,z).
-// Panics if Components != 1. Out-of-bounds samples are clamped to the nearest
+// Invalid receivers return zero; callers that need diagnostics should use
+// SampleScalarChecked. Out-of-bounds samples are clamped to the nearest
 // in-bounds voxel.
 func (f *Field) SampleScalar(x, y, z float32) float32 {
-	if f.Components != 1 {
-		panic("field: SampleScalar requires Components == 1")
+	value, _ := f.SampleScalarChecked(x, y, z)
+	return value
+}
+
+// SampleScalarChecked returns the trilinearly interpolated scalar value or a
+// validation error when the field is not scalar.
+func (f *Field) SampleScalarChecked(x, y, z float32) (float32, error) {
+	if err := validateFieldComponents("field.SampleScalar", f, 1); err != nil {
+		return 0, err
 	}
-	return f.sampleAt(x, y, z, 0)
+	return f.sampleAt(x, y, z, 0), nil
 }
 
 // sampleAt returns the trilinearly interpolated value of component c at (x,y,z).
@@ -159,6 +185,9 @@ func floor32(x float32) float32 {
 // The returned slice has length f.Components. Out-of-bounds samples
 // are clamped to the nearest edge.
 func (f *Field) Sample(x, y, z float32) []float32 {
+	if err := validateField("field.Sample", f); err != nil {
+		return nil
+	}
 	out := make([]float32, f.Components)
 	for c := 0; c < f.Components; c++ {
 		out[c] = f.sampleAt(x, y, z, c)
@@ -167,14 +196,22 @@ func (f *Field) Sample(x, y, z float32) []float32 {
 }
 
 // SampleVec3 returns the vec3 at (x,y,z) for Components==3 fields.
-// Panics if Components != 3.
+// Invalid receivers return the zero vector; callers that need diagnostics
+// should use SampleVec3Checked.
 func (f *Field) SampleVec3(x, y, z float32) [3]float32 {
-	if f.Components != 3 {
-		panic("field: SampleVec3 requires Components == 3")
+	value, _ := f.SampleVec3Checked(x, y, z)
+	return value
+}
+
+// SampleVec3Checked returns the vec3 at (x,y,z) or a validation error when
+// the field is not a vec3 field.
+func (f *Field) SampleVec3Checked(x, y, z float32) ([3]float32, error) {
+	if err := validateFieldComponents("field.SampleVec3", f, 3); err != nil {
+		return [3]float32{}, err
 	}
 	return [3]float32{
 		f.sampleAt(x, y, z, 0),
 		f.sampleAt(x, y, z, 1),
 		f.sampleAt(x, y, z, 2),
-	}
+	}, nil
 }

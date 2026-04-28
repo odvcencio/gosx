@@ -92,3 +92,27 @@ func TestRenderMetaTagKeepsDeterministicOrder(t *testing.T) {
 		t.Fatalf("expected %q, got %q", want, html)
 	}
 }
+
+func TestMetadataHeadCheckedReturnsValidationErrorsInsteadOfPanics(t *testing.T) {
+	t.Setenv("GOSX_ENV", "development")
+
+	meta := Metadata{
+		MetadataBase: "://bad",
+		Description:  "still render what can be rendered",
+	}
+	node, err := meta.HeadChecked()
+	if err == nil {
+		t.Fatal("expected metadata validation error")
+	}
+	html := gosx.RenderHTML(node)
+	if !strings.Contains(html, `name="description"`) {
+		t.Fatalf("expected best-effort metadata head, got %q", html)
+	}
+
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			t.Fatalf("Metadata.Head panicked: %v", recovered)
+		}
+	}()
+	_ = meta.Head()
+}

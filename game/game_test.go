@@ -440,11 +440,13 @@ func TestFightingProfileDeclaresVersusGameDefaults(t *testing.T) {
 
 func TestAssetsConstructorsBatchRegistrationAndPreloads(t *testing.T) {
 	assets := NewAssets()
-	assets.MustRegisterAll(
+	if err := assets.MustRegisterAll(
 		WithPreload(WithContentType(GLB("fighter", "/models/fighter.glb"), "model/gltf-binary")),
 		Texture("albedo", "/textures/fighter.png"),
 		WithMetadata(Audio("hit", "/audio/hit.ogg"), "role", "sfx"),
-	)
+	); err != nil {
+		t.Fatal(err)
+	}
 
 	preloads := assets.Preloads()
 	if len(preloads) != 1 || preloads[0].ID != "fighter" || preloads[0].ContentType != "model/gltf-binary" {
@@ -460,9 +462,19 @@ func TestAssetsConstructorsBatchRegistrationAndPreloads(t *testing.T) {
 	}
 }
 
+func TestAssetMustHelpersReturnErrorsInsteadOfPanics(t *testing.T) {
+	assets := NewAssets()
+	if got, err := assets.MustRegister(AssetRef{}); err == nil || got.ID != "" || got.Kind != "" || got.URI != "" {
+		t.Fatalf("MustRegister invalid asset = %#v, %v; want zero error", got, err)
+	}
+	if err := assets.MustRegisterAll(Texture("", "/textures/fighter.png")); err == nil {
+		t.Fatal("MustRegisterAll accepted asset without an id")
+	}
+}
+
 func TestRuntimeAudioManifestAndEvents(t *testing.T) {
 	assets := NewAssets()
-	assets.MustRegister(
+	if _, err := assets.MustRegister(
 		WithMetadata(
 			WithMetadata(
 				WithMetadata(WithPreload(Audio("hit", "/audio/hit.ogg")), "bus", "sfx"),
@@ -470,7 +482,9 @@ func TestRuntimeAudioManifestAndEvents(t *testing.T) {
 			),
 			"loop", "true",
 		),
-	)
+	); err != nil {
+		t.Fatal(err)
+	}
 	var emitted []Event
 	rt := New(Config{
 		Profile: FightingProfile(),
@@ -505,7 +519,9 @@ func TestRuntimeAudioManifestAndEvents(t *testing.T) {
 
 func TestRuntimeEngineConfigCarriesAudioManifest(t *testing.T) {
 	assets := NewAssets()
-	assets.MustRegister(WithPreload(Audio("hit", "/audio/hit.ogg")))
+	if _, err := assets.MustRegister(WithPreload(Audio("hit", "/audio/hit.ogg"))); err != nil {
+		t.Fatal(err)
+	}
 	rt := New(Config{
 		Profile: FightingProfile(),
 		Assets:  assets,

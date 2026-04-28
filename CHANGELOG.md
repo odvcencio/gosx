@@ -94,6 +94,20 @@ through `scripts/canopy-safe.sh`, which caps `GOMAXPROCS`, sets `GOMEMLIMIT`,
 applies a timeout, and keeps a hard VM ceiling so index attempts fail locally
 instead of threatening the whole machine.
 
+General framework hygiene tightened around runtime shape and production error
+surfaces. The selective JS runtime now derives its shared utility block from
+the Scene3D core source and keeps cross-bundle primitives in one small source
+file, removing the stale `10a-runtime-utils.js` copy and duplicate generated
+helper definitions. `field` now exposes checked constructors, sampling,
+operators, quantization, decompression, delta application, and publishing paths
+that return errors instead of panicking on malformed shapes or wire payloads.
+`game.Assets` and image resolver registration likewise return errors from the
+legacy Must helpers, and metadata head rendering has a `HeadChecked` path while
+the default `Head` logs validation failures and renders best-effort metadata
+instead of crashing. Metadata rendering helpers also moved into
+`server/metadata_render.go`, trimming `server/metadata.go` into a more focused
+resolution/validation file.
+
 ## v0.18.24
 
 Full-stack 3D and game capability release.

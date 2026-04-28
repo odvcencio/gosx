@@ -50,24 +50,38 @@ func (s *streamState) get(h *hub.Hub, topic string) *topicState {
 //
 // If opts.DeltaAgainst is nil and a previous field exists for this topic,
 // PublishField automatically uses the previous field as the delta base.
-func PublishField(h *hub.Hub, topic string, f *Field, opts QuantizeOptions) {
+func PublishField(h *hub.Hub, topic string, f *Field, opts QuantizeOptions) error {
 	streams.mu.Lock()
 	state := streams.get(h, topic)
 	if opts.DeltaAgainst == nil {
 		opts.DeltaAgainst = state.last
 	}
-	state.last = f
 	subs := make([]chan<- *Field, len(state.subscribers))
 	copy(subs, state.subscribers)
 	streams.mu.Unlock()
 
-	q := f.Quantize(opts)
+	q, err := f.QuantizeChecked(opts)
+	if err != nil {
+		return err
+	}
+
+	var decoded *Field
+	if len(subs) > 0 {
+		decoded, err = decodeForSubscriber(q, opts.DeltaAgainst)
+		if err != nil {
+			return err
+		}
+	}
+
+	streams.mu.Lock()
+	state = streams.get(h, topic)
+	state.last = f
+	streams.mu.Unlock()
 
 	// 1. Local dispatch — decode once and share the decoded *Field across all
 	// local subscribers. Subscribers must treat the received *Field as
 	// read-only; this is the documented contract for SubscribeField.
 	if len(subs) > 0 {
-		decoded := decodeForSubscriber(q, opts.DeltaAgainst)
 		for _, ch := range subs {
 			select {
 			case ch <- decoded:
@@ -80,9 +94,12 @@ func PublishField(h *hub.Hub, topic string, f *Field, opts QuantizeOptions) {
 	// 2. WebSocket broadcast — JSON-encode and ship to connected clients.
 	payload, err := json.Marshal(q)
 	if err != nil {
-		return
+		return err
 	}
-	h.Broadcast(fieldEventPrefix+topic, json.RawMessage(payload))
+	if h != nil {
+		h.Broadcast(fieldEventPrefix+topic, json.RawMessage(payload))
+	}
+	return nil
 }
 
 // decodeForSubscriber reconstructs the *Field that PublishField just emitted,
@@ -90,11 +107,11 @@ func PublishField(h *hub.Hub, topic string, f *Field, opts QuantizeOptions) {
 // round-trip through the codec rather than handing out the original *Field,
 // because the codec is lossy and subscribers should observe the same data
 // the wire format will produce. This guarantees server and client agreement.
-func decodeForSubscriber(q *Quantized, base *Field) *Field {
+func decodeForSubscriber(q *Quantized, base *Field) (*Field, error) {
 	if q.IsDelta && base != nil {
-		return ApplyDelta(base, q)
+		return ApplyDeltaChecked(base, q)
 	}
-	return q.Decompress()
+	return q.DecompressChecked()
 }
 
 // SubscribeField returns a channel that receives every field published to
