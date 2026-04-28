@@ -1,5 +1,58 @@
 # Changelog
 
+## Unreleased
+
+Proof-hardening pass for the red/yellow risk zones.
+
+Runtime cold-start proof tightened for island-heavy apps: production builds and
+`make build-runtime` now emit a standard-Go `gosx-runtime-islands.wasm` variant,
+not only the TinyGo path. The build applies the same slim tags used by TinyGo
+(`gosx_tiny_runtime` plus `gosx_tiny_islands_only`) so island-only and
+compute-island-only routes can select a smaller WASM runtime from the build
+manifest while shared-engine routes continue to receive the full runtime.
+Standard-Go WASM builds now use `-trimpath` and stripped linker flags, and build
+outputs write `.gz` sidecars for immutable hashed assets when compression wins.
+The GoSX runtime asset server serves those sidecars when clients advertise
+gzip, preserving the original content type and avoiding dynamic compression on
+hot runtime files. For maximal standard-Go size reduction, `GOSX_GO_WASM_OPT=1`
+enables an additional `wasm-opt -Oz` pass with Go's required WASM feature flags.
+`gosx size` now reports exact gzip bytes and separate full-runtime versus
+islands-runtime cold-start profiles so the split is visible in CI/release
+artifacts instead of hand-measured after the fact.
+
+Auth/session now makes the documented encrypted-cookie and key-rotation contract
+real: sessions can be AES-GCM encrypted, previous secrets are accepted for
+zero-downtime rotation, legacy signed cookies are refreshed onto the current
+encrypted format, tampered cookies are rejected, and CSRF/OAuth/WebAuthn secret
+comparisons use fixed-size constant-time hash comparisons. The session tests
+now cover tamper rejection, encrypted payload opacity, previous-secret refresh,
+JSON CSRF header failures, and a fuzz entrypoint for malformed cookie decoding.
+Danmuji specs now add scenario coverage for legacy/encrypted/rotated cookie
+envelopes and a generated native Go fuzz harness for arbitrary cookie values.
+
+CRDT list ordering now normalizes from the causal insert tree instead of remote
+arrival order, fixing a partition convergence bug for concurrent sequence
+chains. New tests cover partitioned concurrent text edits, large partitioned
+history sync, and tombstone persistence across save/load followed by future
+merges. Danmuji adds table-driven partition-size scenarios, a bounded
+property check for two-actor insert convergence, and a generated fuzz harness
+for arbitrary saved-document bytes.
+
+Physics adds conservative CCD for fast sphere/capsule bodies against static
+plane/sphere/box colliders. The physics suite now proves the tunneling baseline
+when CCD is disabled, the fixed default behavior, warm-started stacks, and
+10k-collider raycast selection. Danmuji adds CCD scenarios across dynamic
+shape/speed combinations and a generated raycast fuzz harness for bounded
+numeric inputs.
+
+The yellow-zone proof surface also expands: route tests cover
+static/dynamic/catch-all specificity, Scene3D tests cover 1000-level hierarchy
+transform propagation, UI form helpers wire generated help/error IDs into
+`aria-describedby`, tabs expose `tablist` semantics, and the docs E2E suite
+checks landmarks, named controls, duplicate IDs, and broken ARIA references.
+Route also gains Danmuji-authored specificity scenarios plus a generated
+escaped-path fuzz harness.
+
 ## v0.18.24
 
 Full-stack 3D and game capability release.
