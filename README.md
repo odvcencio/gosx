@@ -336,7 +336,7 @@ scene.Props{
 - **Lights** — `AmbientLight`, `DirectionalLight`, `PointLight`, `SpotLight`, `HemisphereLight`, `RectAreaLight`, `LightProbe`; shadows on directional and spot with per-light `ShadowSize` and a scene-wide `Shadows.MaxPixels` cap
 - **Cameras** — perspective and orthographic cameras with orbit/drag controls, transition hints, picking, and projection-aware sprites/HTML overlays
 - **glTF / GLB** — `scene.Model{Src: "/assets/thing.glb"}` loads binary or JSON glTF 2.0 through the in-runtime pure-JS loader (`19-scene-gltf.js`), including animations
-- **Animation** — `AnimationClip` / `AnimationChannel` for node-level keyframe animation, `Spin` convenience for auto-rotation, glTF animation playback
+- **Animation** — `AnimationClip` / `AnimationChannel` for node-level keyframe animation, `Spin` convenience for auto-rotation, glTF animation playback; scene-level `autoRotate` is opt-in and static scenes do not keep a RAF loop alive by default
 - **Particles** — GPU-computed particle systems via `ComputeParticles` with emitter, forces, and material
 - **Environment** — ambient, hemisphere, sky/ground, cubemap IBL, exposure, fog, tonemapping
 - **Post-processing** — `SSAO`, `DOF`, `Bloom`, `Tonemap` (ACES / Reinhard / Filmic), `Vignette`, `ColorGrade`, FXAA 3.11, RGB9E5/HDR intermediate selection, HDR10 presentation when supported, composable chain, with backend-specific passes skipped gracefully when unavailable

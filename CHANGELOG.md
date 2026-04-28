@@ -65,6 +65,14 @@ checks landmarks, named controls, duplicate IDs, and broken ARIA references.
 Route also gains Danmuji-authored specificity scenarios plus a generated
 escaped-path fuzz harness.
 
+Scene3D now treats scene-level `autoRotate` as opt-in instead of default motion.
+Static scenes render once and do not keep an animation-frame loop alive unless
+the author sets `autoRotate: true` or the scene has active runtime data,
+transitions, particles, spinning nodes, or model animations. The route compiler
+also stops injecting motion into the default demo scene, and the route/JS
+runtime tests cover omitted-prop static defaults and explicit animation-loop
+opt-in.
+
 ## v0.18.24
 
 Full-stack 3D and game capability release.

@@ -1053,6 +1053,41 @@ func Page() Node {
 	}
 }
 
+func TestDefaultFileRendererKeepsDefaultScene3DStatic(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "page.gsx")
+	source := `package docs
+
+func Page() Node {
+	return <Scene3D class="scene-shell" />
+}
+`
+	if err := os.WriteFile(path, []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := &RouteContext{}
+	_, err := DefaultFileRenderer(ctx, FilePage{FilePath: path, Pattern: "/"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	head := gosx.RenderHTML(ctx.Runtime().Head())
+	if !strings.Contains(head, `"kind": "cube"`) {
+		t.Fatalf("expected default Scene3D demo objects in %q", head)
+	}
+	for _, snippet := range []string{
+		`"autoRotate"`,
+		`"spinX"`,
+		`"spinY"`,
+		`"spinZ"`,
+	} {
+		if strings.Contains(head, snippet) {
+			t.Fatalf("did not expect default Scene3D motion prop %q in runtime head %q", snippet, head)
+		}
+	}
+}
+
 func TestDefaultFileRendererDoesNotInjectDefaultSceneObjectsForProgramRef(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "page.gsx")

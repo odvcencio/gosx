@@ -9172,6 +9172,44 @@ test("bootstrap telemetry flushes via sendBeacon on visibility hidden", async ()
   assert.equal(telemetryPostBodies(env).length, 0, "should prefer beacon over fetch when available");
 });
 
+test("bootstrap keeps Scene3D static when autoRotate is omitted", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-static-default";
+
+  const env = createContext({
+    elements: [mount],
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-static-default",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-static-default",
+          jsExport: "GoSXScene3D",
+          props: {
+            width: 480,
+            height: 300,
+            scene: {
+              objects: [
+                { kind: "box", width: 1.4, height: 1.1, depth: 1.2, x: 0, y: 0, z: 0, color: "#8de1ff" },
+              ],
+            },
+          },
+          capabilities: ["canvas", "animation"],
+        },
+      ],
+    },
+  });
+  const raf = installManualRAF(env.context);
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  assert.equal(mount.getAttribute("data-gosx-scene3d-mounted"), "true");
+  assert.equal(mount.firstElementChild.tagName, "CANVAS");
+  assert.equal(raf.count(), 0, "omitted autoRotate should not start a continuous animation loop");
+});
+
 test("bootstrap respects prefers-reduced-motion for Scene3D animation loops", async () => {
   const mount = new FakeElement("div", null);
   mount.id = "scene-reduced-motion";

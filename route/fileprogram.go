@@ -2495,9 +2495,6 @@ func defaultScene3DProps(raw json.RawMessage, programRef string) json.RawMessage
 	if _, ok := lookupTemplatePropValue(props, "background"); !ok {
 		props["background"] = "#08151f"
 	}
-	if _, ok := lookupTemplatePropValue(props, "autoRotate"); !ok {
-		props["autoRotate"] = true
-	}
 	if _, ok := lookupTemplatePropValue(props, "camera"); !ok {
 		props["camera"] = map[string]any{
 			"z":   6,
@@ -2514,9 +2511,6 @@ func defaultScene3DProps(raw json.RawMessage, programRef string) json.RawMessage
 					"y":     0.2,
 					"z":     0,
 					"color": "#8de1ff",
-					"spinX": 0.42,
-					"spinY": 0.74,
-					"spinZ": 0.18,
 				},
 				{
 					"kind":  "cube",
@@ -2525,9 +2519,6 @@ func defaultScene3DProps(raw json.RawMessage, programRef string) json.RawMessage
 					"y":     -0.8,
 					"z":     1.4,
 					"color": "#ffd48f",
-					"spinX": -0.22,
-					"spinY": 0.46,
-					"spinZ": 0.12,
 				},
 			},
 		}

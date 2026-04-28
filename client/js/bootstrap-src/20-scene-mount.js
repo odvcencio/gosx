@@ -3444,7 +3444,7 @@
       if (sceneHasActiveTransitions(sceneState)) {
         return true;
       }
-      if (runtimeScene || sceneBool(props.autoRotate, true)) {
+      if (runtimeScene || sceneBool(props.autoRotate, false)) {
         return true;
       }
       if (Array.isArray(sceneState.computeParticles) && sceneState.computeParticles.length > 0) {
