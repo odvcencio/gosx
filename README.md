@@ -651,8 +651,15 @@ make test-desktop-macos # macOS desktop/cmd cross-compile guardrails
 make build-desktop-windows  # Windows desktop-capable CLI binaries
 make build-desktop-macos    # macOS CLI binaries; native backend still unsupported
 make build-runtime # TinyGo production full + island-only WASM runtime builds
+make canopy-index  # Memory-bounded structural index in .canopy/index.json
+make canopy-stats  # Inspect the cached structural index
 make ci            # All of the above + build verification
 ```
+
+Use the Make targets for repo-wide canopy work. They apply `.canopyignore`,
+limit Go scheduler width, set a Go memory target, and keep a hard timeout/VM
+ceiling around the process so generated bundles, `node_modules`, build output,
+and the index cache itself cannot turn structural analysis into an OOM risk.
 
 Client correctness is verified at four layers: pure Go VM/bridge tests, JS runtime contract tests under Node, compiler-to-bridge integration tests, and live Playwright browser tests against the docs app. The high-risk domains have explicit proof tests: auth/session tamper rejection, encrypted cookie rotation, and CSRF JSON/header paths; CRDT partition convergence, large-history sync, and tombstone persistence; physics CCD, warm-started stacks, and 10k-collider raycast scale; route specificity across static/dynamic/catch-all patterns; Scene3D 1000-level hierarchy transform propagation; and docs accessibility invariants for landmarks, named controls, duplicate IDs, and ARIA references. Danmuji `.dmj` specs add scenario/property coverage plus generated native Go fuzz harnesses for session cookie decoding, CRDT document loading, physics raycasts, and escaped router paths.
 

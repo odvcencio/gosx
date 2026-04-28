@@ -4,6 +4,12 @@ GO_WASM_EXEC ?= $(shell $(GO) env GOROOT)/lib/wasm/go_js_wasm_exec
 NODE ?= node
 GZIP ?= gzip
 DANMUJI ?= danmuji
+CANOPY ?= canopy
+CANOPY_CACHE ?= .canopy/index.json
+CANOPY_TIMEOUT ?= 120s
+CANOPY_GOMAXPROCS ?= 2
+CANOPY_GOMEMLIMIT ?= 1536MiB
+CANOPY_MAX_VMEM_KB ?= 4194304
 TMPDIR ?= /tmp
 PERF_URLS ?= http://localhost:8080/
 PERF_BUDGET ?= perf/budgets/default.json
@@ -16,7 +22,7 @@ GOFILES := $(shell find . -name '*.go' -not -path './dist/*' -not -path './build
 DMJFILES := $(shell find . -name '*.dmj' -not -path './dist/*' -not -path './build/*')
 DMJGOFILES := $(patsubst %.dmj,%_danmuji_test.go,$(DMJFILES))
 
-.PHONY: fmt fmt-check verify-fmt verify-danmuji test test-race test-fuzz-smoke test-js test-wasm test-wasm-islands test-e2e test-desktop test-desktop-macos perf-budget build-cli build-desktop-windows build-desktop-macos build-runtime ci
+.PHONY: fmt fmt-check verify-fmt verify-danmuji canopy-index canopy-stats canopy-clean test test-race test-fuzz-smoke test-js test-wasm test-wasm-islands test-e2e test-desktop test-desktop-macos perf-budget build-cli build-desktop-windows build-desktop-macos build-runtime ci
 
 fmt:
 	$(GOFMT) -w $(GOFILES)
@@ -59,6 +65,24 @@ verify-danmuji:
 			exit 1; \
 		fi; \
 	fi
+
+canopy-index:
+	mkdir -p $(dir $(CANOPY_CACHE))
+	CANOPY=$(CANOPY) CANOPY_TIMEOUT=$(CANOPY_TIMEOUT) CANOPY_MAX_VMEM_KB=$(CANOPY_MAX_VMEM_KB) \
+		CANOPY_GOMAXPROCS=$(CANOPY_GOMAXPROCS) CANOPY_GOMEMLIMIT=$(CANOPY_GOMEMLIMIT) \
+		./scripts/canopy-safe.sh index build . --out $(CANOPY_CACHE)
+
+canopy-stats:
+	@if [ ! -f "$(CANOPY_CACHE)" ]; then \
+		echo "$(CANOPY_CACHE) is missing; run: make canopy-index"; \
+		exit 1; \
+	fi
+	CANOPY=$(CANOPY) CANOPY_TIMEOUT=$(CANOPY_TIMEOUT) CANOPY_MAX_VMEM_KB=$(CANOPY_MAX_VMEM_KB) \
+		CANOPY_GOMAXPROCS=$(CANOPY_GOMAXPROCS) CANOPY_GOMEMLIMIT=$(CANOPY_GOMEMLIMIT) \
+		./scripts/canopy-safe.sh index stats --cache $(CANOPY_CACHE)
+
+canopy-clean:
+	rm -rf .canopy
 
 test:
 	$(GO) test ./...

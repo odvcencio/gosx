@@ -86,6 +86,14 @@ mismatch path proves diff/current artifact creation. The package-level JS test
 script no longer uses Node's `--test-force-exit`; the runtime suite must exit
 cleanly on its own.
 
+Canopy structural indexing is now a guarded workflow instead of an ad hoc
+repo-root command. `.canopyignore` excludes generated bootstrap bundles,
+`node_modules`, build outputs, local binaries, top-level ignored docs/data, and
+the `.canopy` cache itself. `make canopy-index` and `make canopy-stats` run
+through `scripts/canopy-safe.sh`, which caps `GOMAXPROCS`, sets `GOMEMLIMIT`,
+applies a timeout, and keeps a hard VM ceiling so index attempts fail locally
+instead of threatening the whole machine.
+
 ## v0.18.24
 
 Full-stack 3D and game capability release.

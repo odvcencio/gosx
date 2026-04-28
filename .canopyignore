@@ -1,4 +1,25 @@
-# Generated bootstrap bundles; keep client/js/bootstrap-src indexed.
-bootstrap*.js
+# Local VCS/tool caches. Never index the index.
+.git/
+.canopy/
+.graft/
+.gts/
+
+# Dependency and generated output directories.
+/node_modules/
+/build/
+/dist/
+/data/
+/docs/
+**/build/
+
+# Local binaries and compiled/browser artifacts.
+/gosx
+/dashboard
+*.exe
+*.wasm
+*.blob
 *.map
-vendor/
+
+# Generated bootstrap bundles; keep client/js/bootstrap-src indexed.
+client/js/bootstrap*.js
+client/js/vendor/
