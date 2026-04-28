@@ -2,6 +2,8 @@ package game
 
 import (
 	"encoding/json"
+	"errors"
+	"strconv"
 	"testing"
 	"time"
 
@@ -217,6 +219,137 @@ func TestRuntimeRunsSystemsPhysicsAndScene(t *testing.T) {
 	}
 	if _, ok := rt.Scene(); !ok {
 		t.Fatal("expected latest scene")
+	}
+}
+
+func TestRuntimePhaseOrderAndFirstError(t *testing.T) {
+	updateErr := errors.New("update failed")
+	var phases []string
+	rt := New(Config{
+		FixedStep:   10 * time.Millisecond,
+		MaxSubsteps: 4,
+		Systems: []System{
+			Func("update", PhaseUpdate, func(ctx *Context) error {
+				phases = append(phases, string(ctx.Phase))
+				return updateErr
+			}),
+			Func("fixed", PhaseFixedUpdate, func(ctx *Context) error {
+				phases = append(phases, "fixed-"+strconv.Itoa(ctx.FixedStep))
+				return nil
+			}),
+			Func("late", PhaseLateUpdate, func(ctx *Context) error {
+				phases = append(phases, string(ctx.Phase))
+				return errors.New("late failed")
+			}),
+			Func("render", PhaseRender, func(ctx *Context) error {
+				phases = append(phases, string(ctx.Phase))
+				return nil
+			}),
+		},
+	})
+
+	frame, err := rt.Step(25 * time.Millisecond)
+	if !errors.Is(err, updateErr) {
+		t.Fatalf("expected first update error, got %v", err)
+	}
+	if frame.FixedSteps != 2 || frame.Alpha != 0.5 {
+		t.Fatalf("expected two fixed steps and alpha 0.5, got %#v", frame)
+	}
+	want := []string{"update", "fixed-0", "fixed-1", "late-update", "render"}
+	if len(phases) != len(want) {
+		t.Fatalf("phase count = %d, want %d: %#v", len(phases), len(want), phases)
+	}
+	for i := range want {
+		if phases[i] != want[i] {
+			t.Fatalf("phase[%d] = %q, want %q; all=%#v", i, phases[i], want[i], phases)
+		}
+	}
+}
+
+func TestRuntimeManualPhysicsSkipsAutomaticStep(t *testing.T) {
+	phys := physics.NewWorld(physics.WorldConfig{FixedTimestep: 1.0 / 60.0, Gravity: physics.Vec3{}})
+	body := phys.AddBody(physics.BodyConfig{Mass: 1, Velocity: physics.Vec3{X: 1}})
+	rt := New(Config{
+		Physics:       phys,
+		ManualPhysics: true,
+	})
+
+	frame, err := rt.Step(time.Second / 60)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if frame.FixedSteps != 1 {
+		t.Fatalf("expected one fixed step, got %d", frame.FixedSteps)
+	}
+	if body.Position.X != 0 {
+		t.Fatalf("manual physics should not auto-step body, got position %#v", body.Position)
+	}
+}
+
+func TestRuntimeNetworkInputsAreFrameLocalCopies(t *testing.T) {
+	payload, err := json.Marshal(InputEvent{Kind: EventActionDown, Action: "fire"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	inputs := map[string]sim.Input{"p1": {Data: payload}}
+	var seen []byte
+	var pressed bool
+	rt := New(Config{
+		Systems: []System{
+			Func("input", PhaseUpdate, func(ctx *Context) error {
+				seen = append([]byte(nil), ctx.NetworkInputs["p1"].Data...)
+				pressed = ctx.Input.Pressed("fire")
+				ctx.NetworkInputs["p1"] = sim.Input{Data: []byte("mutated")}
+				return nil
+			}),
+		},
+	})
+
+	rt.ApplyNetworkInputs(inputs)
+	payload[0] = 'X'
+	if _, err := rt.Step(rt.FixedStep()); err != nil {
+		t.Fatal(err)
+	}
+	if string(seen) == string(payload) || !json.Valid(seen) {
+		t.Fatalf("expected frame-local network input copy, got %q after caller mutation %q", seen, payload)
+	}
+	if !pressed {
+		t.Fatal("expected action event from network input to be applied before systems run")
+	}
+	if got := rt.Frame().Index; got != 1 {
+		t.Fatalf("expected frame 1, got %d", got)
+	}
+}
+
+func TestRuntimeDefaultSnapshotRestoresPhysicsState(t *testing.T) {
+	phys := physics.NewWorld(physics.WorldConfig{FixedTimestep: 1.0 / 60.0, Gravity: physics.Vec3{}})
+	body := phys.AddBody(physics.BodyConfig{ID: "ball", Mass: 1, Velocity: physics.Vec3{X: 3}})
+	rt := New(Config{Physics: phys})
+
+	if _, err := rt.Step(time.Second / 60); err != nil {
+		t.Fatal(err)
+	}
+	snapshot := rt.Snapshot()
+	if len(snapshot) == 0 {
+		t.Fatal("expected default snapshot")
+	}
+	firstPosition := body.Position.X
+	if firstPosition <= 0 {
+		t.Fatalf("expected body to advance before snapshot, got %#v", body.Position)
+	}
+	if _, err := rt.Step(time.Second / 60); err != nil {
+		t.Fatal(err)
+	}
+	if body.Position.X <= firstPosition {
+		t.Fatalf("expected body to advance after second step, got %#v", body.Position)
+	}
+
+	rt.Restore(snapshot)
+	if got := rt.Frame().Index; got != 1 {
+		t.Fatalf("expected restored frame 1, got %d", got)
+	}
+	if body.Position.X != firstPosition {
+		t.Fatalf("expected physics body restore to x=%v, got %#v", firstPosition, body.Position)
 	}
 }
 
