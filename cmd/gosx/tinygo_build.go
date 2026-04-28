@@ -42,6 +42,20 @@ type tinyGoBuildEnv struct {
 	env   []string
 }
 
+func resolveWASMCompiler(opts BuildOptions, lookPath func(string) (string, error)) (wasmCompiler, string, error) {
+	if opts.Dev {
+		return wasmCompilerGo, "", nil
+	}
+	if lookPath == nil {
+		lookPath = exec.LookPath
+	}
+	tinygoPath, err := lookPath("tinygo")
+	if err != nil {
+		return "", "", fmt.Errorf("production GoSX builds require TinyGo on PATH: %w", err)
+	}
+	return wasmCompilerTinyGo, tinygoPath, nil
+}
+
 func buildTinyGoWASM(projectDir, gosxRoot, outputPath, tinygoPath string, extraTags ...string) error {
 	scratchDir, cleanup, err := prepareTinyGoWASMModule(projectDir, gosxRoot)
 	if err != nil {
@@ -94,6 +108,29 @@ func tinyGoBuildArgs(outputPath string, extraTags ...string) []string {
 		gosxModuleImportPath+"/client/wasm",
 	)
 	return args
+}
+
+func writeTinyGoWASMExec(tinygoPath, runtimeDir string) (HashedAsset, error) {
+	if strings.TrimSpace(tinygoPath) == "" {
+		return HashedAsset{}, fmt.Errorf("tinygo path required for TinyGo wasm_exec.js")
+	}
+	out, err := exec.Command(tinygoPath, "env", "TINYGOROOT").Output()
+	if err != nil {
+		return HashedAsset{}, fmt.Errorf("locate TinyGo wasm_exec.js: tinygo env TINYGOROOT: %w", err)
+	}
+	tinygoRoot := strings.TrimSpace(string(out))
+	if tinygoRoot == "" {
+		return HashedAsset{}, fmt.Errorf("locate TinyGo wasm_exec.js: TINYGOROOT is empty")
+	}
+	data, err := os.ReadFile(filepath.Join(tinygoRoot, "targets", "wasm_exec.js"))
+	if err != nil {
+		return HashedAsset{}, fmt.Errorf("read TinyGo wasm_exec.js: %w", err)
+	}
+	asset, err := writeHashed(runtimeDir, "wasm_exec", ".js", data)
+	if err != nil {
+		return HashedAsset{}, fmt.Errorf("write TinyGo wasm_exec.js: %w", err)
+	}
+	return asset, nil
 }
 
 func tinyGoFullRuntimeEnabled() bool {

@@ -106,10 +106,6 @@ build-desktop-windows:
 	GOOS=windows GOARCH=arm64 $(GO) build -o build/gosx-windows-arm64.exe ./cmd/gosx
 
 build-runtime:
-	mkdir -p build
-	GOOS=js GOARCH=wasm $(GO) build -trimpath -ldflags='-s -w' -o build/gosx-runtime.wasm ./client/wasm
-	GOOS=js GOARCH=wasm $(GO) build -trimpath -ldflags='-s -w' -tags='gosx_tiny_runtime gosx_tiny_islands_only' -o build/gosx-runtime-islands.wasm ./client/wasm
-	$(GZIP) -9 -c build/gosx-runtime.wasm > build/gosx-runtime.wasm.gz
-	$(GZIP) -9 -c build/gosx-runtime-islands.wasm > build/gosx-runtime-islands.wasm.gz
+	$(GO) run ./cmd/gosx build-runtime build
 
 ci: fmt-check verify-danmuji test test-race test-fuzz-smoke test-js test-wasm test-wasm-islands test-e2e test-desktop build-cli build-desktop-windows build-runtime

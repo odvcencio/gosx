@@ -1,6 +1,53 @@
 package main
 
-import "testing"
+import (
+	"errors"
+	"strings"
+	"testing"
+)
+
+func TestResolveWASMCompilerRequiresTinyGoForProduction(t *testing.T) {
+	compiler, path, err := resolveWASMCompiler(BuildOptions{Dev: false}, func(string) (string, error) {
+		return "", errors.New("not found")
+	})
+	if err == nil {
+		t.Fatal("expected production build to require TinyGo")
+	}
+	if compiler != "" || path != "" {
+		t.Fatalf("expected no compiler/path on failure, got %q %q", compiler, path)
+	}
+	if !strings.Contains(err.Error(), "production GoSX builds require TinyGo") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestResolveWASMCompilerKeepsGoForDevBuilds(t *testing.T) {
+	compiler, path, err := resolveWASMCompiler(BuildOptions{Dev: true}, func(string) (string, error) {
+		t.Fatal("dev builds should not look for TinyGo")
+		return "", nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if compiler != wasmCompilerGo || path != "" {
+		t.Fatalf("expected dev Go compiler, got %q path=%q", compiler, path)
+	}
+}
+
+func TestResolveWASMCompilerUsesTinyGoForProduction(t *testing.T) {
+	compiler, path, err := resolveWASMCompiler(BuildOptions{Dev: false}, func(name string) (string, error) {
+		if name != "tinygo" {
+			t.Fatalf("unexpected lookup %q", name)
+		}
+		return "/usr/local/bin/tinygo", nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if compiler != wasmCompilerTinyGo || path != "/usr/local/bin/tinygo" {
+		t.Fatalf("expected TinyGo compiler, got %q path=%q", compiler, path)
+	}
+}
 
 func TestTinyGoBuildArgsUseSlimRuntimeByDefault(t *testing.T) {
 	t.Setenv("GOSX_TINYGO_FULL_RUNTIME", "")

@@ -281,9 +281,8 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 
 	fmt.Println("\n  Runtime:")
 
-	// Build WASM — try TinyGo first (smaller binary), fall back to standard Go.
-	// When TinyGo is available, both the shared runtime and islands-only
-	// runtime build in parallel to cut wall-clock time in half.
+	// Build WASM. Production builds require TinyGo so runtime size is not an
+	// optional best effort; dev builds keep the standard Go toolchain loop.
 	gosxRoot, err := resolveGoSXModuleRoot(dir)
 	if err != nil {
 		return err
@@ -300,17 +299,13 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 		err      error
 	}
 
-	tinygoPath, tinygoErr := exec.LookPath("tinygo")
-	useTinyGo := tinygoErr == nil && !opts.Dev
-
-	if useTinyGo {
+	compiler, tinygoPath, err := resolveWASMCompiler(opts, exec.LookPath)
+	if err != nil {
+		return err
+	}
+	if compiler == wasmCompilerTinyGo {
 		fmt.Println("    Using TinyGo for smaller WASM binary...")
 		fmt.Printf("    TinyGo toolchain: current Go\n")
-	}
-
-	compiler := wasmCompilerGo
-	if useTinyGo {
-		compiler = wasmCompilerTinyGo
 	}
 
 	// Build both WASM binaries in parallel. The islands-only runtime is a
@@ -384,21 +379,9 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 
 	wg.Wait()
 
-	// Process runtime result
+	// Process runtime result.
 	if runtimeResult.err != nil {
-		if compiler == wasmCompilerTinyGo {
-			fmt.Printf("    TinyGo build failed, falling back to standard Go: %v\n", runtimeResult.err)
-			// Retry with standard Go
-			runtimeResult = wasmResult{label: "runtime"}
-			wg.Add(1)
-			go buildOneWASM(&runtimeResult, wasmCompilerGo, "runtime", "gosx-runtime")
-			wg.Wait()
-			if runtimeResult.err != nil {
-				return fmt.Errorf("wasm runtime build: %w", runtimeResult.err)
-			}
-		} else {
-			return fmt.Errorf("wasm runtime build: %w", runtimeResult.err)
-		}
+		return fmt.Errorf("wasm runtime build with %s: %w", compiler, runtimeResult.err)
 	}
 	manifest.Runtime.WASM = runtimeResult.asset
 	gzEst := gzip_c_len(runtimeResult.data)
@@ -406,20 +389,8 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 
 	// Process islands result
 	if buildIslands {
-		activeCompiler := wasmCompiler(runtimeResult.compiler)
-		if activeCompiler == wasmCompilerGo && islandsResult.compiler != string(wasmCompilerGo) {
-			if compiler == wasmCompilerTinyGo && islandsResult.err != nil {
-				fmt.Printf("    TinyGo islands-only runtime build failed, falling back to standard Go: %v\n", islandsResult.err)
-			} else if islandsResult.compiler == string(wasmCompilerTinyGo) {
-				fmt.Println("    Runtime fell back to standard Go; rebuilding islands-only runtime with standard Go for matching wasm_exec.js")
-			}
-			islandsResult = wasmResult{label: "islands"}
-			wg.Add(1)
-			go buildOneWASM(&islandsResult, wasmCompilerGo, "islands", "gosx-runtime-islands", islandOnlyWASMTags(wasmCompilerGo)...)
-			wg.Wait()
-		}
 		if islandsResult.err != nil {
-			fmt.Printf("    Islands-only runtime build failed, using shared runtime for islands: %v\n", islandsResult.err)
+			return fmt.Errorf("wasm islands-only runtime build with %s: %w", compiler, islandsResult.err)
 		} else {
 			manifest.Runtime.WASMIslands = islandsResult.asset
 			gzEst := gzip_c_len(islandsResult.data)
@@ -430,20 +401,13 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 	// wasm_exec.js — use TinyGo's version if we built with TinyGo
 	wasmExecFound := false
 	if runtimeResult.compiler == "TinyGo" {
-		out, err := exec.Command(tinygoPath, "env", "TINYGOROOT").Output()
-		if err == nil {
-			tinygoRoot := strings.TrimSpace(string(out))
-			tryPath := filepath.Join(tinygoRoot, "targets", "wasm_exec.js")
-			if data, err := os.ReadFile(tryPath); err == nil {
-				asset, err := writeHashed(runtimeDir, "wasm_exec", ".js", data)
-				if err != nil {
-					return fmt.Errorf("write wasm_exec.js: %w", err)
-				}
-				manifest.Runtime.WASMExec = asset
-				fmt.Printf("    %s (%d bytes, TinyGo)\n", asset.File, asset.Size)
-				wasmExecFound = true
-			}
+		asset, err := writeTinyGoWASMExec(tinygoPath, runtimeDir)
+		if err != nil {
+			return err
 		}
+		manifest.Runtime.WASMExec = asset
+		fmt.Printf("    %s (%d bytes, TinyGo)\n", asset.File, asset.Size)
+		wasmExecFound = true
 	}
 	if !wasmExecFound {
 		goroot := getGOROOT()

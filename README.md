@@ -41,7 +41,7 @@ The `//gosx:island` directive marks a component for client-side hydration. The c
 GoSX is opinionated about a small number of things and flexible about everything else.
 
 - **The browser is a render target.** Server components are the baseline. Client-side JavaScript is something you opt into, feature by feature, not a default ambient runtime.
-- **One language, one toolchain.** You write Go. `go build` produces the server, the CLI, the WASM binary, and the client bundle. There is no Node, no npm, no webpack, no bundler config. `gosx dev` is a Go binary watching Go files.
+- **One language, explicit browser compiler.** You write Go. `go build` produces the server and CLI, `gosx dev` keeps the standard Go WASM loop for local iteration, and production `gosx build --prod` requires TinyGo for browser runtime output. There is no app-side Node, npm, webpack, or bundler config.
 - **No JavaScript toolchain is not zero browser cost.** GoSX still ships a measured browser bootstrap, feature chunks, and WASM runtime only when a route needs them. The performance contract is that the compiler and build pipeline justify every shipped runtime slice.
 - **No CGo, anywhere.** Every package compiles to WASM and cross-compiles cleanly. The 3D engine runs in pure Go. The vector store runs in pure Go. The CRDT sync protocol runs in pure Go. This is not a portability footnote — it is the design constraint that lets Scene3D, `field`, `vecdb`, and `crdt` ship as ordinary Go libraries that also happen to run in a browser tab.
 - **Primitives, not frameworks-within-frameworks.** A form submission is not a canvas game is not a collaborative document. GoSX gives you five distinct execution primitives and enforces the distinction; none of them try to be the others.
@@ -465,12 +465,11 @@ gosx perf budget perf.json budget.json # Check a saved report
 gosx size [--json] dist               # Report exact gzip sizes for full/island runtime profiles and feature chunks
 ```
 
-Production builds link standard-Go WASM with `-trimpath` and stripped symbols,
-emit a route-selected `runtime-islands.wasm` for island-only and compute-island
-routes, and write `.gz` sidecars for immutable runtime assets when compression
-wins. Set `GOSX_GO_WASM_OPT=1` during `gosx build` for an additional
-`wasm-opt -Oz` pass on standard-Go WASM; TinyGo builds use the optimizer when it
-is available.
+Production builds require TinyGo on `PATH`, emit a route-selected
+`runtime-islands.wasm` for island-only and compute-island routes, and write
+`.gz` sidecars for immutable runtime assets when compression wins. Dev builds
+still use standard-Go WASM so local iteration does not depend on the production
+compiler.
 
 ## Performance Budgets
 
@@ -649,6 +648,7 @@ make test-wasm-islands # Slim island-only WASM runtime through exported function
 make test-e2e      # Playwright browser tests against gosx dev
 make test-desktop  # Desktop package tests plus Windows cross-compile guards
 make build-desktop-windows  # Windows desktop-capable CLI binaries
+make build-runtime # TinyGo production full + island-only WASM runtime builds
 make ci            # All of the above + build verification
 ```
 

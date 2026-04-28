@@ -4,6 +4,7 @@
 //
 //	gosx build [--offline|--msix|--sign] <dir>
 //	                              Build GoSX application
+//	gosx build-runtime [outdir]   Build TinyGo production WASM runtimes
 //	gosx dev <dir>               Start development server with hot reload
 //	gosx desktop [dev] <dir>     Start development server in a native desktop host
 //	gosx export <dir>            Pre-render static GoSX pages
@@ -46,6 +47,8 @@ func main() {
 	switch cmd {
 	case "build":
 		cmdBuild()
+	case "build-runtime":
+		cmdBuildRuntime()
 	case "dev":
 		cmdDev()
 	case "desktop":
@@ -90,6 +93,8 @@ Usage:
 Commands:
   build [--offline|--msix|--sign] [--appinstaller <uri>] <dir>
                        Build GoSX application
+  build-runtime [outdir]
+                       Build TinyGo production WASM runtimes
   dev <dir>            Start development server with hot reload
   desktop [dev] <dir>  Start dev server in a native desktop host
   export <dir>         Pre-render static GoSX pages

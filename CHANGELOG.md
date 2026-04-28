@@ -4,21 +4,26 @@
 
 Proof-hardening pass for the red/yellow risk zones.
 
-Runtime cold-start proof tightened for island-heavy apps: production builds and
-`make build-runtime` now emit a standard-Go `gosx-runtime-islands.wasm` variant,
-not only the TinyGo path. The build applies the same slim tags used by TinyGo
-(`gosx_tiny_runtime` plus `gosx_tiny_islands_only`) so island-only and
-compute-island-only routes can select a smaller WASM runtime from the build
-manifest while shared-engine routes continue to receive the full runtime.
-Standard-Go WASM builds now use `-trimpath` and stripped linker flags, and build
-outputs write `.gz` sidecars for immutable hashed assets when compression wins.
-The GoSX runtime asset server serves those sidecars when clients advertise
-gzip, preserving the original content type and avoiding dynamic compression on
-hot runtime files. For maximal standard-Go size reduction, `GOSX_GO_WASM_OPT=1`
-enables an additional `wasm-opt -Oz` pass with Go's required WASM feature flags.
-`gosx size` now reports exact gzip bytes and separate full-runtime versus
-islands-runtime cold-start profiles so the split is visible in CI/release
-artifacts instead of hand-measured after the fact.
+Production runtime builds now require TinyGo instead of treating it as a
+best-effort optimizer. `gosx build --prod` fails fast when `tinygo` is not on
+`PATH`, no longer falls back to standard-Go WASM after TinyGo compile failures,
+and requires TinyGo's own `wasm_exec.js` when the runtime was TinyGo-built.
+Development builds keep the standard-Go WASM loop for fast local iteration.
+`make build-runtime` now uses TinyGo for both the full and island-only runtime
+artifacts, and CI installs TinyGo before exercising that production build gate.
+
+Runtime cold-start proof tightened for island-heavy apps: production builds now
+emit a TinyGo `gosx-runtime-islands.wasm` variant alongside the full runtime.
+The build applies the slim tags (`gosx_tiny_runtime` plus
+`gosx_tiny_islands_only`) so island-only and compute-island-only routes can
+select a smaller WASM runtime from the build manifest while shared-engine routes
+continue to receive the full runtime. Build outputs write `.gz` sidecars for
+immutable hashed assets when compression wins. The GoSX runtime asset server
+serves those sidecars when clients advertise gzip, preserving the original
+content type and avoiding dynamic compression on hot runtime files. `gosx size`
+now reports exact gzip bytes and separate full-runtime versus islands-runtime
+cold-start profiles so the split is visible in CI/release artifacts instead of
+hand-measured after the fact.
 
 Auth/session now makes the documented encrypted-cookie and key-rotation contract
 real: sessions can be AES-GCM encrypted, previous secrets are accepted for
