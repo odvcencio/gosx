@@ -200,6 +200,78 @@ func TestWorldTwoBoxesStackOnPlane(t *testing.T) {
 	}
 }
 
+func TestWorldContinuousCollisionPreventsSphereTunnelingThroughPlane(t *testing.T) {
+	world := NewWorld(WorldConfig{Gravity: Vec3{}, FixedTimestep: 1.0 / 60.0, SolverIter: 8})
+	world.AddCollider(ColliderConfig{Shape: ShapePlane, Normal: Vec3{Y: 1}})
+	bullet := world.AddBody(BodyConfig{
+		Mass:        1,
+		Position:    Vec3{Y: 1},
+		Velocity:    Vec3{Y: -240},
+		Restitution: 0,
+	})
+	bullet.AddCollider(ColliderConfig{Shape: ShapeSphere, Radius: 0.05})
+
+	world.Step(1.0 / 60.0)
+
+	if bullet.Position.Y < 0.049 {
+		t.Fatalf("ccd failed: bullet tunneled through plane to y=%v", bullet.Position.Y)
+	}
+	if bullet.Velocity.Y < -epsilon {
+		t.Fatalf("ccd failed to remove inward velocity: %+v", bullet.Velocity)
+	}
+}
+
+func TestWorldContinuousCollisionCanBeDisabledForColdSolverTests(t *testing.T) {
+	world := NewWorld(WorldConfig{
+		Gravity:       Vec3{},
+		FixedTimestep: 1.0 / 60.0,
+		SolverIter:    1,
+		DisableCCD:    true,
+	})
+	world.AddCollider(ColliderConfig{Shape: ShapePlane, Normal: Vec3{Y: 1}})
+	bullet := world.AddBody(BodyConfig{
+		Mass:     1,
+		Position: Vec3{Y: 1},
+		Velocity: Vec3{Y: -240},
+	})
+	bullet.AddCollider(ColliderConfig{Shape: ShapeSphere, Radius: 0.05})
+
+	world.Step(1.0 / 60.0)
+
+	if bullet.Position.Y >= 0 {
+		t.Fatalf("expected disabled CCD to expose discrete tunneling baseline, got y=%v", bullet.Position.Y)
+	}
+}
+
+func TestWorldRaycastFindsClosestColliderAtScale(t *testing.T) {
+	world := NewWorld(WorldConfig{Gravity: Vec3{}, FixedTimestep: 1.0 / 60.0})
+	for i := 0; i < 10000; i++ {
+		world.AddCollider(ColliderConfig{
+			Shape:  ShapeBox,
+			Offset: Vec3{X: 10 + float64(i%100), Y: float64(i / 100), Z: 0},
+			Width:  0.5,
+			Height: 0.5,
+			Depth:  0.5,
+		})
+	}
+	closest := world.AddCollider(ColliderConfig{
+		Shape:  ShapeSphere,
+		Offset: Vec3{X: 2, Y: 0, Z: 0},
+		Radius: 0.25,
+	})
+
+	hit, ok := world.Raycast(Ray{Origin: Vec3{}, Direction: Vec3{X: 1}}, 0)
+	if !ok {
+		t.Fatal("expected ray hit")
+	}
+	if hit.Collider != closest {
+		t.Fatalf("raycast hit collider index %d, want closest index %d", colliderIndex(hit.Collider), colliderIndex(closest))
+	}
+	if hit.Distance < 1.74 || hit.Distance > 1.76 {
+		t.Fatalf("raycast distance = %v, want near 1.75", hit.Distance)
+	}
+}
+
 func TestWorldImplementsSimSimulation(t *testing.T) {
 	var _ sim.Simulation = (*World)(nil)
 }

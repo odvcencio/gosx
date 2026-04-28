@@ -6,6 +6,9 @@ type WorldConfig struct {
 	SolverIter       int
 	SolverIterations int
 	BroadPhaseCell   float64
+	// DisableCCD turns off conservative swept collision checks for fast
+	// dynamic bodies against static colliders. CCD is enabled by default.
+	DisableCCD bool
 	// DisableWarmStart turns off contact impulse caching across frames. Warm
 	// starting is on by default; disabling is only useful for tests or
 	// deterministic replay scenarios that must reproduce a cold solver.
@@ -40,9 +43,10 @@ type World struct {
 	nextBodyIndex     int
 	nextColliderIndex int
 
-	warmStart    bool
-	contactCache map[contactCacheKey]cachedManifold
-	constraints  []Constraint
+	continuousCollision bool
+	warmStart           bool
+	contactCache        map[contactCacheKey]cachedManifold
+	constraints         []Constraint
 }
 
 func DefaultWorldConfig() WorldConfig {
@@ -72,11 +76,12 @@ func NewWorld(config WorldConfig) *World {
 		config.BroadPhaseCell = 2
 	}
 	w := &World{
-		gravity:          config.Gravity,
-		fixedTimestep:    config.FixedTimestep,
-		solverIterations: iterations,
-		broadphase:       NewSpatialHash(config.BroadPhaseCell),
-		warmStart:        !config.DisableWarmStart,
+		gravity:             config.Gravity,
+		fixedTimestep:       config.FixedTimestep,
+		solverIterations:    iterations,
+		broadphase:          NewSpatialHash(config.BroadPhaseCell),
+		continuousCollision: !config.DisableCCD,
+		warmStart:           !config.DisableWarmStart,
 	}
 	if w.warmStart {
 		w.contactCache = make(map[contactCacheKey]cachedManifold)
@@ -351,7 +356,17 @@ func (w *World) integrateVelocities(dt float64) {
 		if !body.IsDynamic() || body.IsSleeping() {
 			continue
 		}
-		body.Position = body.Position.Add(body.Velocity.Mul(dt))
+		displacement := body.Velocity.Mul(dt)
+		if w.continuousCollision {
+			if hit, ok := w.sweepBody(body, displacement); ok {
+				body.Position = body.Position.Add(displacement.Normalize().Mul(maxFloat(0, hit.Distance-ccdSlop)))
+				resolveCCDVelocity(body, hit)
+			} else {
+				body.Position = body.Position.Add(displacement)
+			}
+		} else {
+			body.Position = body.Position.Add(displacement)
+		}
 		angularSpeed := body.AngularVelocity.Len()
 		if angularSpeed > epsilon {
 			delta := QuatFromAxisAngle(body.AngularVelocity.Div(angularSpeed), angularSpeed*dt)

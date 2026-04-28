@@ -1,0 +1,77 @@
+// Physics CCD and raycast scenarios. Compiled by danmuji into
+// physics/ccd_scenarios_danmuji_test.go.
+//
+// Rebuild after editing:
+//     danmuji build physics/ccd_scenarios.dmj
+
+package physics
+
+import (
+	"math"
+	"testing"
+)
+
+unit "continuous collision dynamic shape scenarios" {
+	each "fast collider" {
+		defaults { shape: "sphere", radius: 0.05, height: 0.0, velocity: -120.0, min_y: 0.049 }
+		{ name: "sphere moderate speed", shape: "sphere", radius: 0.05, height: 0.0, velocity: -120.0, min_y: 0.049 }
+		{ name: "sphere high speed", shape: "sphere", radius: 0.05, height: 0.0, velocity: -240.0, min_y: 0.049 }
+		{ name: "capsule high speed", shape: "capsule", height: 0.2, velocity: -240.0, min_y: 0.149 }
+	} do {
+		world := NewWorld(WorldConfig{Gravity: Vec3{}, FixedTimestep: 1.0 / 60.0, SolverIter: 8})
+		world.AddCollider(ColliderConfig{Shape: ShapePlane, Normal: Vec3{Y: 1}})
+		body := world.AddBody(BodyConfig{
+			Mass:        1,
+			Position:    Vec3{Y: 1},
+			Velocity:    Vec3{Y: scenario.velocity.(float64)},
+			Restitution: 0,
+		})
+		if scenario.shape.(string) == "capsule" {
+			body.AddCollider(ColliderConfig{
+				Shape:  ShapeCapsule,
+				Radius: scenario.radius.(float64),
+				Height: scenario.height.(float64),
+			})
+		} else {
+			body.AddCollider(ColliderConfig{
+				Shape:  ShapeSphere,
+				Radius: scenario.radius.(float64),
+			})
+		}
+
+		world.Step(1.0 / 60.0)
+
+		then "does not tunnel through the plane" {
+			if body.Position.Y < scenario.min_y.(float64) {
+				t.Fatalf("body y = %v, want >= %v", body.Position.Y, scenario.min_y)
+			}
+		}
+
+		then "removes inward velocity" {
+			if body.Velocity.Y < -epsilon {
+				t.Fatalf("body velocity = %+v, want no inward velocity", body.Velocity)
+			}
+		}
+	}
+}
+
+func FuzzDanmujiRaycastHandlesBoundedNumericInputs(f *testing.F) {
+	f.Add(float64(0), float64(0), float64(0), float64(0))
+	f.Add(float64(12), float64(-4), float64(3), float64(200))
+	f.Fuzz(func(t *testing.T, x float64, y float64, z float64, maxDistance float64) {
+	if math.IsNaN(x) || math.IsNaN(y) || math.IsNaN(z) || math.IsNaN(maxDistance) {
+		return
+	}
+	if math.IsInf(x, 0) || math.IsInf(y, 0) || math.IsInf(z, 0) || math.IsInf(maxDistance, 0) {
+		return
+	}
+	x = math.Mod(x, 100)
+	y = math.Mod(y, 100)
+	z = math.Mod(z, 100)
+	maxDistance = math.Abs(math.Mod(maxDistance, 250))
+	world := NewWorld(WorldConfig{Gravity: Vec3{}, FixedTimestep: 1.0 / 60.0})
+	world.AddCollider(ColliderConfig{Shape: ShapeSphere, Offset: Vec3{X: 2, Y: 0, Z: 0}, Radius: 0.25})
+	world.AddCollider(ColliderConfig{Shape: ShapeBox, Offset: Vec3{X: -2, Y: 0, Z: 0}, Width: 1, Height: 1, Depth: 1})
+	_, _ = world.Raycast(Ray{Origin: Vec3{X: x, Y: y, Z: z}, Direction: Vec3{X: 1 - x, Y: -y, Z: -z}}, maxDistance)
+	})
+}
