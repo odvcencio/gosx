@@ -73,6 +73,19 @@ also stops injecting motion into the default demo scene, and the route/JS
 runtime tests cover omitted-prop static defaults and explicit animation-loop
 opt-in.
 
+Scene3D post-processing tone mapping now honors the authored `Tonemap.Mode`
+instead of carrying dead API surface: WebGL and WebGPU postfx passes branch for
+ACES, Reinhard, and compact filmic modes, with raw IR support for
+linear/no-tonemap mode. The stale placeholder comments were removed, and JS
+runtime tests assert both backends keep the mode path wired.
+
+Visual regression testing also moved from documentary placeholder to executable
+proof. `visual.Assert` now has a test seam for deterministic capture injection,
+the update path writes and verifies baselines without requiring Chrome, and the
+mismatch path proves diff/current artifact creation. The package-level JS test
+script no longer uses Node's `--test-force-exit`; the runtime suite must exit
+cleanly on its own.
+
 ## v0.18.24
 
 Full-stack 3D and game capability release.

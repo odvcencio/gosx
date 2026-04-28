@@ -75,19 +75,13 @@ type TonemapMode int
 const (
 	// TonemapACES is the ACES filmic curve. Default.
 	TonemapACES TonemapMode = iota
-	// TonemapReinhard is the simple Reinhard operator (placeholder; the
-	// JS-side implementation currently uses ACES regardless of mode and a
-	// future task will branch on mode).
+	// TonemapReinhard is the simple Reinhard operator.
 	TonemapReinhard
-	// TonemapFilmic is a filmic curve placeholder.
+	// TonemapFilmic is a compact filmic curve with a softer shoulder.
 	TonemapFilmic
 )
 
 // Tonemap maps HDR scene colors into the displayable [0,1] range.
-//
-// The JS-side implementation in client/js/bootstrap-src/16-scene-webgl.js
-// uses an ACES filmic curve. The Mode field is reserved for future
-// per-mode shader branches; today all modes route through ACES.
 type Tonemap struct {
 	Mode     TonemapMode
 	Exposure float32 // multiplier applied before the curve (default 1.0)

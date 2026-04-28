@@ -16784,6 +16784,7 @@ if (typeof window !== "undefined") {
     "in vec2 v_uv;",
     "uniform sampler2D u_texture;",
     "uniform float u_exposure;",
+    "uniform int u_toneMapMode;",
     "out vec4 fragColor;",
     "",
     "vec3 aces(vec3 x) {",
@@ -16795,10 +16796,27 @@ if (typeof window !== "undefined") {
     "    return clamp((x * (a * x + b)) / (x * (c * x + d) + e), 0.0, 1.0);",
     "}",
     "",
+    "vec3 reinhard(vec3 x) {",
+    "    return x / (x + vec3(1.0));",
+    "}",
+    "",
+    "vec3 filmic(vec3 x) {",
+    "    x = max(vec3(0.0), x - vec3(0.004));",
+    "    return clamp((x * (6.2 * x + 0.5)) / (x * (6.2 * x + 1.7) + 0.06), 0.0, 1.0);",
+    "}",
+    "",
     "void main() {",
     "    vec3 color = texture(u_texture, v_uv).rgb;",
     "    color *= u_exposure;",
-    "    color = aces(color);",
+    "    if (u_toneMapMode == 0) {",
+    "        color = clamp(color, 0.0, 1.0);",
+    "    } else if (u_toneMapMode == 2) {",
+    "        color = reinhard(color);",
+    "    } else if (u_toneMapMode == 3) {",
+    "        color = filmic(color);",
+    "    } else {",
+    "        color = aces(color);",
+    "    }",
     "    fragColor = vec4(color, 1.0);",
     "}",
   ].join("\n");
@@ -17103,11 +17121,22 @@ if (typeof window !== "undefined") {
       return targetFBO ? targetFBO.colorTex : null;
     }
 
+    function scenePostToneMapMode(mode) {
+      if (typeof mode === "string") {
+        var normalized = mode.trim().toLowerCase();
+        if (normalized === "linear" || normalized === "none") return 0;
+        if (normalized === "reinhard") return 2;
+        if (normalized === "filmic") return 3;
+      }
+      return 1;
+    }
+
     function applyToneMapping(inputTex, effect, targetFBO, w, h) {
       var prog = getProgram("toneMapping", SCENE_POST_TONEMAPPING_SOURCE);
       if (!prog) return inputTex;
       beginPostPass(prog, inputTex, targetFBO ? targetFBO.fbo : null, w, h);
       gl.uniform1f(gl.getUniformLocation(prog.program, "u_exposure"), sceneNumber(effect.exposure, 1.0));
+      gl.uniform1i(gl.getUniformLocation(prog.program, "u_toneMapMode"), scenePostToneMapMode(effect.mode));
       drawSceneFullscreenQuad(gl, quad.vao);
       return targetFBO ? targetFBO.colorTex : null;
     }
@@ -20524,7 +20553,7 @@ if (typeof window !== "undefined") {
   var WGSL_POST_TONEMAPPING_FRAGMENT = [
     "struct ToneMappingParams {",
     "    exposure: f32,",
-    "    _pad0: f32,",
+    "    toneMapMode: f32,",
     "    _pad1: f32,",
     "    _pad2: f32,",
     "};",
@@ -20542,13 +20571,41 @@ if (typeof window !== "undefined") {
     "    return clamp((x * (a * x + b)) / (x * (c * x + d) + e), vec3f(0.0), vec3f(1.0));",
     "}",
     "",
+    "fn reinhard(x: vec3f) -> vec3f {",
+    "    return x / (x + vec3f(1.0));",
+    "}",
+    "",
+    "fn filmic(x: vec3f) -> vec3f {",
+    "    let y = max(vec3f(0.0), x - vec3f(0.004));",
+    "    return clamp((y * (6.2 * y + vec3f(0.5))) / (y * (6.2 * y + vec3f(1.7)) + vec3f(0.06)), vec3f(0.0), vec3f(1.0));",
+    "}",
+    "",
     "@fragment fn fragmentMain(@location(0) uv: vec2f) -> @location(0) vec4f {",
     "    var color = textureSample(inputTex, inputSamp, uv).rgb;",
     "    color = color * params.exposure;",
-    "    color = aces(color);",
+    "    let mode = i32(params.toneMapMode);",
+    "    if (mode == 0) {",
+    "        color = clamp(color, vec3f(0.0), vec3f(1.0));",
+    "    } else if (mode == 2) {",
+    "        color = reinhard(color);",
+    "    } else if (mode == 3) {",
+    "        color = filmic(color);",
+    "    } else {",
+    "        color = aces(color);",
+    "    }",
     "    return vec4f(color, 1.0);",
     "}",
   ].join("\n");
+
+  function sceneWebGPUToneMapMode(mode) {
+    if (typeof mode === "string") {
+      var normalized = mode.trim().toLowerCase();
+      if (normalized === "linear" || normalized === "none") return 0;
+      if (normalized === "reinhard") return 2;
+      if (normalized === "filmic") return 3;
+    }
+    return 1;
+  }
 
   var WGSL_POST_BLOOM_BRIGHT_FRAGMENT = [
     "struct BloomBrightParams {",
@@ -21105,7 +21162,7 @@ if (typeof window !== "undefined") {
             case SCENE_POST_TONE_MAPPING: {
               var pipeline = getPipeline("toneMapping", WGSL_POST_TONEMAPPING_FRAGMENT, getPostParamsLayout());
               var buf = getParamBuffer("toneMapping", 16);
-              device.queue.writeBuffer(buf, 0, new Float32Array([sceneNumber(effect.exposure, 1.0), 0, 0, 0]));
+              device.queue.writeBuffer(buf, 0, new Float32Array([sceneNumber(effect.exposure, 1.0), sceneWebGPUToneMapMode(effect.mode), 0, 0]));
               var bg = device.createBindGroup({
                 layout: getPostParamsLayout(),
                 entries: [

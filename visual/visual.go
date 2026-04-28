@@ -155,6 +155,8 @@ func Capture(ctx context.Context, url string, opts CaptureOptions) ([]byte, erro
 	return buf, nil
 }
 
+var captureForAssert = Capture
+
 // newAllocator picks between a remote CHROME_WS_URL and a local Chrome
 // launch. Remote is preferred because it's the single-source-of-truth for
 // browser environment in CI and k8s clusters.
@@ -336,7 +338,7 @@ func Assert(ctx context.Context, url string, opts AssertOptions) error {
 		opts.DiffOutPath = strings.TrimSuffix(opts.BaselinePath, ".png") + ".diff.png"
 	}
 
-	current, err := Capture(ctx, url, opts.CaptureOptions)
+	current, err := captureForAssert(ctx, url, opts.CaptureOptions)
 	if err != nil {
 		return err
 	}

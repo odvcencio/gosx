@@ -2,6 +2,8 @@ package visual
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"image"
 	"image/color"
 	"image/png"
@@ -77,11 +79,76 @@ func TestDiffDimensionMismatch(t *testing.T) {
 }
 
 func TestAssertUpdateCreatesBaseline(t *testing.T) {
-	if _, skip := os.LookupEnv("CHROME_PATH"); !skip {
-		t.Skip("CHROME_PATH not set; visual.Assert requires a browser")
+	oldCapture := captureForAssert
+	captureForAssert = func(ctx context.Context, url string, opts CaptureOptions) ([]byte, error) {
+		if url != "https://example.test/update" {
+			t.Fatalf("url = %q, want update URL", url)
+		}
+		if opts.Viewport.Width != 640 || opts.Viewport.Height != 360 {
+			t.Fatalf("viewport = %#v, want 640x360", opts.Viewport)
+		}
+		return solidPNG(t, 8, 8, color.RGBA{G: 255, A: 255}), nil
 	}
-	// This test is a placeholder to document the Update workflow.
-	// It is skipped when no browser is available.
+	t.Cleanup(func() { captureForAssert = oldCapture })
+
+	baseline := filepath.Join(t.TempDir(), "baseline.png")
+	err := Assert(context.Background(), "https://example.test/update", AssertOptions{
+		BaselinePath: baseline,
+		Update:       true,
+		CaptureOptions: CaptureOptions{
+			Viewport: Viewport{Width: 640, Height: 360, Scale: 1},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Assert update: %v", err)
+	}
+
+	data, err := os.ReadFile(baseline)
+	if err != nil {
+		t.Fatalf("read baseline: %v", err)
+	}
+	result, err := Diff(data, solidPNG(t, 8, 8, color.RGBA{G: 255, A: 255}))
+	if err != nil {
+		t.Fatalf("Diff written baseline: %v", err)
+	}
+	if result.Mismatched != 0 {
+		t.Fatalf("written baseline mismatched = %d, want 0", result.Mismatched)
+	}
+}
+
+func TestAssertWritesDiffAndCurrentOnMismatch(t *testing.T) {
+	oldCapture := captureForAssert
+	captureForAssert = func(context.Context, string, CaptureOptions) ([]byte, error) {
+		return solidPNG(t, 6, 6, color.RGBA{B: 255, A: 255}), nil
+	}
+	t.Cleanup(func() { captureForAssert = oldCapture })
+
+	dir := t.TempDir()
+	baseline := filepath.Join(dir, "baseline.png")
+	diffPath := filepath.Join(dir, "baseline.diff.png")
+	if err := os.WriteFile(baseline, solidPNG(t, 6, 6, color.RGBA{R: 255, A: 255}), 0o644); err != nil {
+		t.Fatalf("write baseline: %v", err)
+	}
+
+	err := Assert(context.Background(), "https://example.test/mismatch", AssertOptions{
+		BaselinePath: baseline,
+		DiffOutPath:  diffPath,
+		Threshold:    0,
+	})
+	var mismatch *AssertMismatch
+	if !errors.As(err, &mismatch) {
+		t.Fatalf("Assert error = %v, want *AssertMismatch", err)
+	}
+	if mismatch.Result.DiffPct != 100 {
+		t.Fatalf("DiffPct = %f, want 100", mismatch.Result.DiffPct)
+	}
+	if _, err := os.Stat(diffPath); err != nil {
+		t.Fatalf("stat diff: %v", err)
+	}
+	currentPath := filepath.Join(dir, "baseline.current.png")
+	if _, err := os.Stat(currentPath); err != nil {
+		t.Fatalf("stat current: %v", err)
+	}
 }
 
 func TestDefaultBaselinePath(t *testing.T) {

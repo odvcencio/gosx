@@ -606,7 +606,7 @@
   var WGSL_POST_TONEMAPPING_FRAGMENT = [
     "struct ToneMappingParams {",
     "    exposure: f32,",
-    "    _pad0: f32,",
+    "    toneMapMode: f32,",
     "    _pad1: f32,",
     "    _pad2: f32,",
     "};",
@@ -624,13 +624,41 @@
     "    return clamp((x * (a * x + b)) / (x * (c * x + d) + e), vec3f(0.0), vec3f(1.0));",
     "}",
     "",
+    "fn reinhard(x: vec3f) -> vec3f {",
+    "    return x / (x + vec3f(1.0));",
+    "}",
+    "",
+    "fn filmic(x: vec3f) -> vec3f {",
+    "    let y = max(vec3f(0.0), x - vec3f(0.004));",
+    "    return clamp((y * (6.2 * y + vec3f(0.5))) / (y * (6.2 * y + vec3f(1.7)) + vec3f(0.06)), vec3f(0.0), vec3f(1.0));",
+    "}",
+    "",
     "@fragment fn fragmentMain(@location(0) uv: vec2f) -> @location(0) vec4f {",
     "    var color = textureSample(inputTex, inputSamp, uv).rgb;",
     "    color = color * params.exposure;",
-    "    color = aces(color);",
+    "    let mode = i32(params.toneMapMode);",
+    "    if (mode == 0) {",
+    "        color = clamp(color, vec3f(0.0), vec3f(1.0));",
+    "    } else if (mode == 2) {",
+    "        color = reinhard(color);",
+    "    } else if (mode == 3) {",
+    "        color = filmic(color);",
+    "    } else {",
+    "        color = aces(color);",
+    "    }",
     "    return vec4f(color, 1.0);",
     "}",
   ].join("\n");
+
+  function sceneWebGPUToneMapMode(mode) {
+    if (typeof mode === "string") {
+      var normalized = mode.trim().toLowerCase();
+      if (normalized === "linear" || normalized === "none") return 0;
+      if (normalized === "reinhard") return 2;
+      if (normalized === "filmic") return 3;
+    }
+    return 1;
+  }
 
   var WGSL_POST_BLOOM_BRIGHT_FRAGMENT = [
     "struct BloomBrightParams {",
@@ -1187,7 +1215,7 @@
             case SCENE_POST_TONE_MAPPING: {
               var pipeline = getPipeline("toneMapping", WGSL_POST_TONEMAPPING_FRAGMENT, getPostParamsLayout());
               var buf = getParamBuffer("toneMapping", 16);
-              device.queue.writeBuffer(buf, 0, new Float32Array([sceneNumber(effect.exposure, 1.0), 0, 0, 0]));
+              device.queue.writeBuffer(buf, 0, new Float32Array([sceneNumber(effect.exposure, 1.0), sceneWebGPUToneMapMode(effect.mode), 0, 0]));
               var bg = device.createBindGroup({
                 layout: getPostParamsLayout(),
                 entries: [

@@ -6332,6 +6332,21 @@ test("bootstrap bridges clamp01 into the WebGPU Scene3D sub-feature", () => {
   assert.match(core, /\n    SCENE_POST_DOF: "dof",\n/);
 });
 
+test("Scene3D postfx tonemap modes are honored by WebGL and WebGPU", () => {
+  const webgl = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16-scene-webgl.js"), "utf8");
+  const webgpu = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+
+  assert.match(webgl, /uniform int u_toneMapMode/);
+  assert.match(webgl, /u_toneMapMode == 2[\s\S]*reinhard\(color\)/);
+  assert.match(webgl, /u_toneMapMode == 3[\s\S]*filmic\(color\)/);
+  assert.match(webgl, /scenePostToneMapMode\(effect\.mode\)/);
+
+  assert.match(webgpu, /toneMapMode: f32/);
+  assert.match(webgpu, /mode == 2[\s\S]*reinhard\(color\)/);
+  assert.match(webgpu, /mode == 3[\s\S]*filmic\(color\)/);
+  assert.match(webgpu, /sceneWebGPUToneMapMode\(effect\.mode\)/);
+});
+
 test("bootstrap normalizes orthographic Scene3D cameras, LOD, lights, and custom line materials", async () => {
   const env = createContext({});
   runScript(bootstrapSource, env.context, "bootstrap.js");

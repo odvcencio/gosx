@@ -11701,6 +11701,7 @@ if (typeof window !== "undefined") {
     "in vec2 v_uv;",
     "uniform sampler2D u_texture;",
     "uniform float u_exposure;",
+    "uniform int u_toneMapMode;",
     "out vec4 fragColor;",
     "",
     "vec3 aces(vec3 x) {",
@@ -11712,10 +11713,27 @@ if (typeof window !== "undefined") {
     "    return clamp((x * (a * x + b)) / (x * (c * x + d) + e), 0.0, 1.0);",
     "}",
     "",
+    "vec3 reinhard(vec3 x) {",
+    "    return x / (x + vec3(1.0));",
+    "}",
+    "",
+    "vec3 filmic(vec3 x) {",
+    "    x = max(vec3(0.0), x - vec3(0.004));",
+    "    return clamp((x * (6.2 * x + 0.5)) / (x * (6.2 * x + 1.7) + 0.06), 0.0, 1.0);",
+    "}",
+    "",
     "void main() {",
     "    vec3 color = texture(u_texture, v_uv).rgb;",
     "    color *= u_exposure;",
-    "    color = aces(color);",
+    "    if (u_toneMapMode == 0) {",
+    "        color = clamp(color, 0.0, 1.0);",
+    "    } else if (u_toneMapMode == 2) {",
+    "        color = reinhard(color);",
+    "    } else if (u_toneMapMode == 3) {",
+    "        color = filmic(color);",
+    "    } else {",
+    "        color = aces(color);",
+    "    }",
     "    fragColor = vec4(color, 1.0);",
     "}",
   ].join("\n");
@@ -12020,11 +12038,22 @@ if (typeof window !== "undefined") {
       return targetFBO ? targetFBO.colorTex : null;
     }
 
+    function scenePostToneMapMode(mode) {
+      if (typeof mode === "string") {
+        var normalized = mode.trim().toLowerCase();
+        if (normalized === "linear" || normalized === "none") return 0;
+        if (normalized === "reinhard") return 2;
+        if (normalized === "filmic") return 3;
+      }
+      return 1;
+    }
+
     function applyToneMapping(inputTex, effect, targetFBO, w, h) {
       var prog = getProgram("toneMapping", SCENE_POST_TONEMAPPING_SOURCE);
       if (!prog) return inputTex;
       beginPostPass(prog, inputTex, targetFBO ? targetFBO.fbo : null, w, h);
       gl.uniform1f(gl.getUniformLocation(prog.program, "u_exposure"), sceneNumber(effect.exposure, 1.0));
+      gl.uniform1i(gl.getUniformLocation(prog.program, "u_toneMapMode"), scenePostToneMapMode(effect.mode));
       drawSceneFullscreenQuad(gl, quad.vao);
       return targetFBO ? targetFBO.colorTex : null;
     }
