@@ -1,0 +1,126 @@
+// CRDT convergence scenarios. Compiled by danmuji into
+// crdt/convergence_scenarios_danmuji_test.go.
+//
+// Rebuild after editing:
+//     danmuji build crdt/convergence_scenarios.dmj
+
+package crdt
+
+import (
+	"fmt"
+	"strings"
+	"testing"
+)
+
+unit "partitioned list convergence scenarios" {
+	each "partition size" {
+		defaults { left_count: 3, right_count: 3 }
+		{ name: "small symmetric partition", left_count: 3, right_count: 3 }
+		{ name: "left-heavy partition", left_count: 17, right_count: 4 }
+		{ name: "right-heavy partition", left_count: 4, right_count: 17 }
+	} do {
+		base := NewDoc()
+		items, err := base.MakeList(Root, "items")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := base.Commit("seed list"); err != nil {
+			t.Fatal(err)
+		}
+
+		left := forkWithActor(t, base, 31)
+		right := forkWithActor(t, base, 32)
+		for i := 0; i < scenario.left_count.(int); i++ {
+			if err := left.InsertAt(items, uint64(i), StringValue(fmt.Sprintf("left-%02d", i))); err != nil {
+				t.Fatal(err)
+			}
+		}
+		for i := 0; i < scenario.right_count.(int); i++ {
+			if err := right.InsertAt(items, uint64(i), StringValue(fmt.Sprintf("right-%02d", i))); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if _, err := left.Commit("left partition"); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := right.Commit("right partition"); err != nil {
+			t.Fatal(err)
+		}
+		if err := left.Merge(right); err != nil {
+			t.Fatal(err)
+		}
+		if err := right.Merge(left); err != nil {
+			t.Fatal(err)
+		}
+
+		leftValues := listStrings(t, left, items)
+		rightValues := listStrings(t, right, items)
+
+		then "converges to a deterministic order" {
+			if strings.Join(leftValues, "|") != strings.Join(rightValues, "|") {
+				t.Fatalf("list order diverged: left=%#v right=%#v", leftValues, rightValues)
+			}
+		}
+
+		then "keeps every concurrent insert" {
+			want := scenario.left_count.(int) + scenario.right_count.(int)
+			if len(leftValues) != want {
+				t.Fatalf("list len = %d, want %d", len(leftValues), want)
+			}
+		}
+	}
+
+	property "bounded two actor list inserts converge" for all (leftRaw uint8, rightRaw uint8) up to 60 {
+		leftCount := int(leftRaw%24) + 1
+		rightCount := int(rightRaw%24) + 1
+		base := NewDoc()
+		items, err := base.MakeList(Root, "items")
+		if err != nil {
+			return false
+		}
+		if _, err := base.Commit("seed list"); err != nil {
+			return false
+		}
+		left := forkWithActor(t, base, 41)
+		right := forkWithActor(t, base, 42)
+		for i := 0; i < leftCount; i++ {
+			if err := left.InsertAt(items, uint64(i), StringValue(fmt.Sprintf("left-%02d", i))); err != nil {
+				return false
+			}
+		}
+		for i := 0; i < rightCount; i++ {
+			if err := right.InsertAt(items, uint64(i), StringValue(fmt.Sprintf("right-%02d", i))); err != nil {
+				return false
+			}
+		}
+		if _, err := left.Commit("left partition"); err != nil {
+			return false
+		}
+		if _, err := right.Commit("right partition"); err != nil {
+			return false
+		}
+		if err := left.Merge(right); err != nil {
+			return false
+		}
+		if err := right.Merge(left); err != nil {
+			return false
+		}
+		leftValues := listStrings(t, left, items)
+		rightValues := listStrings(t, right, items)
+		if strings.Join(leftValues, "|") != strings.Join(rightValues, "|") {
+			return false
+		}
+		return len(leftValues) == leftCount+rightCount
+	}
+}
+
+func FuzzDanmujiLoadDocumentNeverPanics(f *testing.F) {
+	f.Add([]byte{})
+	f.Add([]byte("not a gosx crdt document"))
+	f.Fuzz(func(t *testing.T, payload []byte) {
+	if len(payload) > 65536 {
+		return
+	}
+	_, _ = Load(payload)
+	})
+}

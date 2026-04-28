@@ -742,20 +742,13 @@ func (d *Doc) applyInsertLocked(target *object, op Op) (Patch, error) {
 	if target.Kind != objectKindList && target.Kind != objectKindText {
 		return Patch{}, fmt.Errorf("insert is only supported on list-like objects")
 	}
-	insertPos := len(target.List)
-	if op.After != "" {
-		insertPos = d.findInsertPositionLocked(target, op.After, op.ID)
-	} else {
-		insertPos = d.findInsertPositionLocked(target, "", op.ID)
-	}
 	elem := listElem{
 		ID:    op.ID,
 		After: op.After,
 		Value: op.Value.Clone(),
 	}
-	target.List = append(target.List, listElem{})
-	copy(target.List[insertPos+1:], target.List[insertPos:])
-	target.List[insertPos] = elem
+	target.List = append(target.List, elem)
+	normalizeListOrder(target)
 
 	index := d.visibleIndexLocked(target, op.ID.String())
 	return Patch{
@@ -825,6 +818,60 @@ func newMapObject() *object {
 		Kind: objectKindMap,
 		Map:  make(map[string]mapEntry),
 	}
+}
+
+func normalizeListOrder(target *object) {
+	if target == nil || len(target.List) < 2 {
+		return
+	}
+	children := make(map[string][]listElem, len(target.List))
+	for _, elem := range target.List {
+		children[elem.After] = append(children[elem.After], elem)
+	}
+	for after := range children {
+		sort.Slice(children[after], func(i, j int) bool {
+			return children[after][i].ID.Less(children[after][j].ID)
+		})
+	}
+
+	ordered := make([]listElem, 0, len(target.List))
+	visited := make(map[string]bool, len(target.List))
+	var walk func(after string)
+	walk = func(after string) {
+		for _, child := range children[after] {
+			id := child.ID.String()
+			if visited[id] {
+				continue
+			}
+			visited[id] = true
+			ordered = append(ordered, child)
+			walk(id)
+		}
+	}
+	walk("")
+	if len(ordered) != len(target.List) {
+		remaining := make([]listElem, 0, len(target.List)-len(ordered))
+		for _, elem := range target.List {
+			if !visited[elem.ID.String()] {
+				remaining = append(remaining, elem)
+			}
+		}
+		sort.Slice(remaining, func(i, j int) bool {
+			if remaining[i].After != remaining[j].After {
+				return remaining[i].After < remaining[j].After
+			}
+			return remaining[i].ID.Less(remaining[j].ID)
+		})
+		for _, elem := range remaining {
+			if visited[elem.ID.String()] {
+				continue
+			}
+			visited[elem.ID.String()] = true
+			ordered = append(ordered, elem)
+			walk(elem.ID.String())
+		}
+	}
+	target.List = ordered
 }
 
 func newListObject(kind objectKind) *object {
