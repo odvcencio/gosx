@@ -6679,6 +6679,55 @@ test("bootstrap keeps WebGL and WebGPU Scene3D command logs in parity", async ()
   assert.deepEqual(api.sceneWebGPUCommandSequence(bundle, viewport), api.sceneWebGLCommandSequence(bundle, viewport));
 });
 
+test("bootstrap raycasts Scene3D mesh triangles and returns the nearest hit", async () => {
+  const env = createContext({});
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const api = env.context.__gosx_scene3d_api;
+  const positions = new Float32Array([
+    -1, -1, 0,
+    1, -1, 0,
+    0, 1, 0,
+    -1, -1, 2,
+    1, -1, 2,
+    0, 1, 2,
+  ]);
+  const bundle = {
+    camera: { x: 0, y: 0, z: 6, fov: 90, near: 0.1, far: 100 },
+    meshObjects: [
+      {
+        id: "far-triangle",
+        kind: "mesh",
+        pickable: true,
+        vertexOffset: 3,
+        vertexCount: 3,
+        bounds: { minX: -1, minY: -1, minZ: 1.9, maxX: 1, maxY: 1, maxZ: 2.1 },
+      },
+      {
+        id: "near-triangle",
+        kind: "mesh",
+        pickable: true,
+        vertexOffset: 0,
+        vertexCount: 3,
+        bounds: { minX: -1, minY: -1, minZ: -0.1, maxX: 1, maxY: 1, maxZ: 0.1 },
+      },
+    ],
+    worldMeshPositions: positions,
+    objects: [],
+    worldPositions: new Float32Array(0),
+  };
+
+  const hit = api.sceneRaycastPick(100, 100, 200, 200, bundle.camera, bundle);
+  assert.ok(hit, "expected raycast hit");
+  assert.equal(hit.object.id, "near-triangle");
+  assert.equal(hit.index, 1);
+  assert.ok(Math.abs(hit.distance - 6) < 1e-6, "expected near triangle distance, got " + hit.distance);
+  assert.equal(hit.point.x, 0);
+  assert.equal(hit.point.y, 0);
+  assert.equal(hit.point.z, 0);
+});
+
 test("bootstrap preserves Scene3D instanced colors and custom attributes", async () => {
   const env = createContext({});
   runScript(bootstrapSource, env.context, "bootstrap.js");
