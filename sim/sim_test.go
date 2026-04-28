@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -31,6 +32,55 @@ func (m *mockSim) State() []byte {
 	return nil
 }
 
+type mutatingInputSim struct{}
+
+func (m *mutatingInputSim) Tick(inputs map[string]Input) {
+	if input, ok := inputs["p1"]; ok && len(input.Data) > 0 {
+		input.Data[0] = 'X'
+		inputs["p1"] = input
+	}
+}
+
+func (m *mutatingInputSim) Snapshot() []byte {
+	return []byte(`{"snapshot":true}`)
+}
+
+func (m *mutatingInputSim) Restore(snapshot []byte) {}
+
+func (m *mutatingInputSim) State() []byte {
+	return []byte(`{"state":true}`)
+}
+
+type blockingSim struct {
+	entered chan struct{}
+	release chan struct{}
+	ticks   atomic.Int32
+}
+
+func newBlockingSim() *blockingSim {
+	return &blockingSim{
+		entered: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+}
+
+func (b *blockingSim) Tick(inputs map[string]Input) {
+	if b.ticks.Add(1) == 1 {
+		close(b.entered)
+	}
+	<-b.release
+}
+
+func (b *blockingSim) Snapshot() []byte {
+	return nil
+}
+
+func (b *blockingSim) Restore(snapshot []byte) {}
+
+func (b *blockingSim) State() []byte {
+	return nil
+}
+
 func TestNewRunner(t *testing.T) {
 	h := hub.New("test")
 	s := &mockSim{}
@@ -49,8 +99,10 @@ func TestRunnerCollectsInputs(t *testing.T) {
 	s := &mockSim{}
 	r := New(h, s, Options{})
 
-	r.ReceiveInput("p1", Input{Data: []byte("attack")})
+	p1Input := []byte("attack")
+	r.ReceiveInput("p1", Input{Data: p1Input})
 	r.ReceiveInput("p2", Input{Data: []byte("block")})
+	p1Input[0] = 'X'
 
 	inputs := r.DrainInputs()
 	if len(inputs) != 2 {
@@ -67,6 +119,73 @@ func TestRunnerCollectsInputs(t *testing.T) {
 	after := r.DrainInputs()
 	if len(after) != 0 {
 		t.Fatalf("expected 0 inputs after drain, got %d", len(after))
+	}
+}
+
+func TestRunnerTickOnceRecordsOriginalInputs(t *testing.T) {
+	h := hub.New("test-input-ownership")
+	r := New(h, &mutatingInputSim{}, Options{StateEncoding: StateEncodingJSON})
+
+	payload := []byte("attack")
+	r.ReceiveInput("p1", Input{Data: payload})
+	payload[0] = 'X'
+
+	r.tickOnce()
+
+	if r.Frame() != 1 {
+		t.Fatalf("expected frame 1, got %d", r.Frame())
+	}
+	log := r.Replay()
+	if len(log.Frames) != 1 {
+		t.Fatalf("expected one replay frame, got %d", len(log.Frames))
+	}
+	if got := string(log.Frames[0].Inputs["p1"].Data); got != "attack" {
+		t.Fatalf("expected replay to preserve original input, got %q", got)
+	}
+
+	log.Frames[0].Inputs["p1"] = Input{Data: []byte("mutated")}
+	again := r.Replay()
+	if got := string(again.Frames[0].Inputs["p1"].Data); got != "attack" {
+		t.Fatalf("expected replay result copy, got %q", got)
+	}
+}
+
+func TestRunnerStartIsIdempotentAndStopWaits(t *testing.T) {
+	h := hub.New("test-lifecycle")
+	s := newBlockingSim()
+	r := New(h, s, Options{TickRate: 1000})
+
+	r.Start()
+	r.Start()
+
+	select {
+	case <-s.entered:
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("expected first tick to start")
+	}
+	time.Sleep(20 * time.Millisecond)
+	if got := s.ticks.Load(); got != 1 {
+		close(s.release)
+		r.Stop()
+		t.Fatalf("expected idempotent Start to run one loop, got %d active ticks", got)
+	}
+
+	stopped := make(chan struct{})
+	go func() {
+		r.Stop()
+		close(stopped)
+	}()
+	select {
+	case <-stopped:
+		t.Fatal("Stop returned while a tick was still in flight")
+	case <-time.After(20 * time.Millisecond):
+	}
+
+	close(s.release)
+	select {
+	case <-stopped:
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("Stop did not return after in-flight tick completed")
 	}
 }
 
@@ -151,6 +270,14 @@ func TestSnapshotRing(t *testing.T) {
 	}
 	if string(data) != "mutable" {
 		t.Fatalf("expected 'mutable' (copy), got %q", string(data))
+	}
+	data[0] = 'X'
+	data, ok = ring.Get(4)
+	if !ok {
+		t.Fatal("expected to find frame 4")
+	}
+	if string(data) != "mutable" {
+		t.Fatalf("expected Get to return a copy, got %q", string(data))
 	}
 }
 

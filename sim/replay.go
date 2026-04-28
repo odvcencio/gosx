@@ -26,21 +26,18 @@ func newReplayRecorder() *replayRecorder {
 
 // Record stores a deep copy of the inputs for the given frame.
 func (r *replayRecorder) Record(frame uint64, inputs map[string]Input) {
-	cp := make(map[string]Input, len(inputs))
-	for k, v := range inputs {
-		dataCopy := make([]byte, len(v.Data))
-		copy(dataCopy, v.Data)
-		cp[k] = Input{Data: dataCopy}
-	}
-
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.frames = append(r.frames, ReplayFrame{Frame: frame, Inputs: cp})
+	r.frames = append(r.frames, ReplayFrame{Frame: frame, Inputs: cloneInputs(inputs)})
 }
 
 // Finish returns the complete replay log.
 func (r *replayRecorder) Finish() ReplayLog {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return ReplayLog{Frames: r.frames}
+	frames := make([]ReplayFrame, len(r.frames))
+	for i, frame := range r.frames {
+		frames[i] = ReplayFrame{Frame: frame.Frame, Inputs: cloneInputs(frame.Inputs)}
+	}
+	return ReplayLog{Frames: frames}
 }

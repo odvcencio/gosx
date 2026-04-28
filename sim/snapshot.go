@@ -39,7 +39,9 @@ func (r *snapshotRing) Get(frame uint64) ([]byte, bool) {
 	for i := 0; i < r.size; i++ {
 		idx := (r.head - 1 - i + r.cap) % r.cap
 		if r.entries[idx].frame == frame {
-			return r.entries[idx].data, true
+			data := make([]byte, len(r.entries[idx].data))
+			copy(data, r.entries[idx].data)
+			return data, true
 		}
 	}
 	return nil, false

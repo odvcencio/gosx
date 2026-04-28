@@ -56,6 +56,7 @@ type Runner struct {
 	sim       Simulation
 	tickRate  int
 	mu        sync.Mutex
+	wg        sync.WaitGroup
 	inputs    map[string]Input
 	running   atomic.Bool
 	frame     atomic.Uint64
@@ -104,14 +105,14 @@ func (r *Runner) RegisterHandlers() {
 func (r *Runner) ReceiveInput(playerID string, input Input) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.inputs[playerID] = input
+	r.inputs[playerID] = cloneInput(input)
 }
 
 // DrainInputs returns all collected inputs and clears the buffer.
 func (r *Runner) DrainInputs() map[string]Input {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	out := r.inputs
+	out := cloneInputs(r.inputs)
 	r.inputs = make(map[string]Input)
 	return out
 }
@@ -152,4 +153,24 @@ func encodeStateData(encoding StateEncoding, data []byte) any {
 		return []byte(nil)
 	}
 	return data
+}
+
+func cloneInput(input Input) Input {
+	if input.Data == nil {
+		return Input{}
+	}
+	data := make([]byte, len(input.Data))
+	copy(data, input.Data)
+	return Input{Data: data}
+}
+
+func cloneInputs(inputs map[string]Input) map[string]Input {
+	if len(inputs) == 0 {
+		return map[string]Input{}
+	}
+	out := make(map[string]Input, len(inputs))
+	for playerID, input := range inputs {
+		out[playerID] = cloneInput(input)
+	}
+	return out
 }

@@ -4,13 +4,22 @@ import "time"
 
 // Start begins the fixed-rate tick loop in a background goroutine.
 func (r *Runner) Start() {
-	r.running.Store(true)
-	go r.tickLoop()
+	if r == nil || !r.running.CompareAndSwap(false, true) {
+		return
+	}
+	r.wg.Add(1)
+	go func() {
+		defer r.wg.Done()
+		r.tickLoop()
+	}()
 }
 
 // Stop signals the tick loop to end.
 func (r *Runner) Stop() {
-	r.running.Store(false)
+	if r == nil || !r.running.Swap(false) {
+		return
+	}
+	r.wg.Wait()
 }
 
 // Frame returns the current frame number.
@@ -29,14 +38,19 @@ func (r *Runner) tickLoop() {
 			break
 		}
 
-		inputs := r.DrainInputs()
-		r.sim.Tick(inputs)
-
-		frame := r.frame.Add(1)
-		r.snapshots.Push(frame, r.sim.Snapshot())
-		r.recorder.Record(frame, inputs)
-
-		state := r.sim.State()
-		r.hub.Broadcast("sim:tick", r.tickPayload(frame, state))
+		r.tickOnce()
 	}
+}
+
+func (r *Runner) tickOnce() {
+	inputs := r.DrainInputs()
+	replayInputs := cloneInputs(inputs)
+	r.sim.Tick(inputs)
+
+	frame := r.frame.Add(1)
+	r.snapshots.Push(frame, r.sim.Snapshot())
+	r.recorder.Record(frame, replayInputs)
+
+	state := r.sim.State()
+	r.hub.Broadcast("sim:tick", r.tickPayload(frame, state))
 }
