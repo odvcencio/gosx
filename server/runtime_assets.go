@@ -110,7 +110,7 @@ func (a *App) serveRuntimeAsset(w http.ResponseWriter, r *http.Request) {
 	if fsPath, ok := runtimeManifestDirectAssetPath(root, name); ok {
 		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 		MarkObservedRequest(r, "runtime", "/gosx/"+name)
-		http.ServeFile(w, r, fsPath)
+		serveRuntimeFile(w, r, fsPath)
 		return
 	}
 
@@ -118,7 +118,7 @@ func (a *App) serveRuntimeAsset(w http.ResponseWriter, r *http.Request) {
 		if fsPath, ok := a.runtimeCompatBuiltPath(root, name); ok {
 			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 			MarkObservedRequest(r, "runtime", "/gosx/"+name)
-			http.ServeFile(w, r, fsPath)
+			serveRuntimeFile(w, r, fsPath)
 			return
 		}
 	}
@@ -126,14 +126,14 @@ func (a *App) serveRuntimeAsset(w http.ResponseWriter, r *http.Request) {
 	if fsPath, ok := runtimeCompatSourcePath(root, name); ok {
 		w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
 		MarkObservedRequest(r, "runtime", "/gosx/"+name)
-		http.ServeFile(w, r, fsPath)
+		serveRuntimeFile(w, r, fsPath)
 		return
 	}
 
 	if fsPath, ok := a.runtimeCompatBuiltPath(root, name); ok {
 		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 		MarkObservedRequest(r, "runtime", "/gosx/"+name)
-		http.ServeFile(w, r, fsPath)
+		serveRuntimeFile(w, r, fsPath)
 		return
 	}
 
@@ -146,6 +146,39 @@ func (a *App) serveRuntimeAsset(w http.ResponseWriter, r *http.Request) {
 	}
 
 	http.NotFound(w, r)
+}
+
+func serveRuntimeFile(w http.ResponseWriter, r *http.Request, fsPath string) {
+	if requestAcceptsGzip(r) {
+		if gzPath := fsPath + ".gz"; isFile(gzPath) {
+			w.Header().Set("Content-Encoding", "gzip")
+			w.Header().Add("Vary", "Accept-Encoding")
+			setRuntimeContentType(w.Header(), fsPath)
+			http.ServeFile(w, r, gzPath)
+			return
+		}
+	}
+	http.ServeFile(w, r, fsPath)
+}
+
+func requestAcceptsGzip(r *http.Request) bool {
+	return r != nil && strings.Contains(r.Header.Get("Accept-Encoding"), "gzip")
+}
+
+func setRuntimeContentType(h http.Header, fsPath string) {
+	if h.Get("Content-Type") != "" {
+		return
+	}
+	switch strings.ToLower(filepath.Ext(fsPath)) {
+	case ".wasm":
+		h.Set("Content-Type", "application/wasm")
+	case ".js":
+		h.Set("Content-Type", "application/javascript; charset=utf-8")
+	case ".css":
+		h.Set("Content-Type", "text/css; charset=utf-8")
+	case ".json":
+		h.Set("Content-Type", "application/json; charset=utf-8")
+	}
 }
 
 func runtimeManifestDirectAssetPath(root, name string) (string, bool) {

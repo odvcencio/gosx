@@ -34,8 +34,14 @@ jobs:
       - name: Install Node dependencies
         run: npm ci
 
+      - name: Install Danmuji
+        run: go install github.com/odvcencio/danmuji/cmd/danmuji@v0.3.2
+
       - name: Format check
         run: make fmt-check
+
+      - name: Danmuji generated spec check
+        run: make verify-danmuji
 
       - name: Unit and integration tests
         run: make test
@@ -43,11 +49,17 @@ jobs:
       - name: Race tests
         run: make test-race
 
+      - name: Fuzz smoke tests
+        run: make test-fuzz-smoke
+
       - name: JavaScript runtime contract tests
         run: make test-js
 
       - name: WASM runtime tests
         run: make test-wasm
+
+      - name: Island-only WASM runtime tests
+        run: make test-wasm-islands
 
       - name: Browser docs E2E gate
         env:

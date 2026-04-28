@@ -2,14 +2,21 @@ GO ?= go
 GOFMT ?= gofmt
 GO_WASM_EXEC ?= $(shell $(GO) env GOROOT)/lib/wasm/go_js_wasm_exec
 NODE ?= node
+GZIP ?= gzip
+DANMUJI ?= danmuji
 TMPDIR ?= /tmp
 PERF_URLS ?= http://localhost:8080/
 PERF_BUDGET ?= perf/budgets/default.json
 PERF_OUT ?= build/perf-report.json
 PERF_FLAGS ?= --mobile pixel7 --throttle 4 --coverage
+FUZZTIME ?= 5s
+FUZZ_TIMEOUT ?= 45s
+FUZZ_PARALLEL ?= 2
 GOFILES := $(shell find . -name '*.go' -not -path './dist/*' -not -path './build/*')
+DMJFILES := $(shell find . -name '*.dmj' -not -path './dist/*' -not -path './build/*')
+DMJGOFILES := $(patsubst %.dmj,%_danmuji_test.go,$(DMJFILES))
 
-.PHONY: fmt fmt-check verify-fmt test test-race test-js test-wasm test-e2e test-desktop perf-budget build-cli build-desktop-windows build-runtime ci
+.PHONY: fmt fmt-check verify-fmt verify-danmuji test test-race test-fuzz-smoke test-js test-wasm test-wasm-islands test-e2e test-desktop perf-budget build-cli build-desktop-windows build-runtime ci
 
 fmt:
 	$(GOFMT) -w $(GOFILES)
@@ -26,11 +33,44 @@ fmt-check:
 
 verify-fmt: fmt-check
 
+verify-danmuji:
+	@command -v $(DANMUJI) >/dev/null 2>&1 || { echo "danmuji not found; install with: go install github.com/odvcencio/danmuji/cmd/danmuji@v0.3.2"; exit 1; }
+	@before="$$(mktemp)"; after="$$(mktemp)"; \
+	trap 'rm -f "$$before" "$$after"' EXIT; \
+	for f in $(DMJGOFILES); do \
+		if [ -f "$$f" ]; then sha256sum "$$f"; else echo "MISSING  $$f"; fi; \
+	done | sort > "$$before"; \
+	echo "$(DANMUJI) build ."; \
+	$(DANMUJI) build .; \
+	echo "$(GOFMT) -w $(DMJGOFILES)"; \
+	$(GOFMT) -w $(DMJGOFILES); \
+	for f in $(DMJGOFILES); do \
+		if [ -f "$$f" ]; then sha256sum "$$f"; else echo "MISSING  $$f"; fi; \
+	done | sort > "$$after"; \
+	if ! diff -u "$$before" "$$after"; then \
+		echo "danmuji generated files are stale; rebuild with: make verify-danmuji"; \
+		exit 1; \
+	fi; \
+	if [ "$$CI" = "true" ]; then \
+		untracked="$$(git status --porcelain -- $(DMJGOFILES) | awk '/^\?\?/ {print}')"; \
+		if [ -n "$$untracked" ]; then \
+			echo "danmuji generated files are missing from git:"; \
+			echo "$$untracked"; \
+			exit 1; \
+		fi; \
+	fi
+
 test:
 	$(GO) test ./...
 
 test-race:
 	$(GO) test -race ./...
+
+test-fuzz-smoke:
+	GOMAXPROCS=$(FUZZ_PARALLEL) $(GO) test ./session -run '^$$' -fuzz FuzzDanmujiDecodeSessionCookieNeverPanics -fuzztime=$(FUZZTIME) -parallel=$(FUZZ_PARALLEL) -timeout=$(FUZZ_TIMEOUT)
+	GOMAXPROCS=$(FUZZ_PARALLEL) $(GO) test ./crdt -run '^$$' -fuzz FuzzDanmujiLoadDocumentNeverPanics -fuzztime=$(FUZZTIME) -parallel=$(FUZZ_PARALLEL) -timeout=$(FUZZ_TIMEOUT)
+	GOMAXPROCS=$(FUZZ_PARALLEL) $(GO) test ./physics -run '^$$' -fuzz FuzzDanmujiRaycastHandlesBoundedNumericInputs -fuzztime=$(FUZZTIME) -parallel=$(FUZZ_PARALLEL) -timeout=$(FUZZ_TIMEOUT)
+	GOMAXPROCS=$(FUZZ_PARALLEL) $(GO) test ./route -run '^$$' -fuzz FuzzDanmujiRouterHandlesArbitraryEscapedPaths -fuzztime=$(FUZZTIME) -parallel=$(FUZZ_PARALLEL) -timeout=$(FUZZ_TIMEOUT)
 
 test-js:
 	$(NODE) ./client/js/build-bootstrap.mjs --check
@@ -38,6 +78,9 @@ test-js:
 
 test-wasm:
 	GOOS=js GOARCH=wasm $(GO) test -exec="$(GO_WASM_EXEC)" ./client/wasm
+
+test-wasm-islands:
+	GOOS=js GOARCH=wasm $(GO) test -tags='gosx_tiny_runtime gosx_tiny_islands_only' -exec="$(GO_WASM_EXEC)" ./client/wasm
 
 test-e2e:
 	$(NODE) --test e2e/gosx_docs_e2e.test.mjs
@@ -64,6 +107,9 @@ build-desktop-windows:
 
 build-runtime:
 	mkdir -p build
-	GOOS=js GOARCH=wasm $(GO) build -o build/gosx-runtime.wasm ./client/wasm
+	GOOS=js GOARCH=wasm $(GO) build -trimpath -ldflags='-s -w' -o build/gosx-runtime.wasm ./client/wasm
+	GOOS=js GOARCH=wasm $(GO) build -trimpath -ldflags='-s -w' -tags='gosx_tiny_runtime gosx_tiny_islands_only' -o build/gosx-runtime-islands.wasm ./client/wasm
+	$(GZIP) -9 -c build/gosx-runtime.wasm > build/gosx-runtime.wasm.gz
+	$(GZIP) -9 -c build/gosx-runtime-islands.wasm > build/gosx-runtime-islands.wasm.gz
 
-ci: fmt-check test test-race test-js test-wasm test-e2e test-desktop build-cli build-desktop-windows build-runtime
+ci: fmt-check verify-danmuji test test-race test-fuzz-smoke test-js test-wasm test-wasm-islands test-e2e test-desktop build-cli build-desktop-windows build-runtime

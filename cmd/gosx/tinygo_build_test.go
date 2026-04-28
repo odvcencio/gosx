@@ -41,6 +41,43 @@ func TestTinyGoBuildArgsAppendVariantTags(t *testing.T) {
 	}
 }
 
+func TestGoWASMBuildArgsAppendVariantTags(t *testing.T) {
+	args := goWASMBuildArgs("runtime-islands.wasm", islandOnlyWASMTags(wasmCompilerGo)...)
+	if !stringSliceContains(args, "-trimpath") {
+		t.Fatalf("expected trimpath in args: %v", args)
+	}
+	if !stringSliceContains(args, "-ldflags=-s -w") {
+		t.Fatalf("expected stripped linker flags in args: %v", args)
+	}
+	if !stringSliceContains(args, "-tags=gosx_tiny_runtime gosx_tiny_islands_only") {
+		t.Fatalf("expected combined Go runtime tags in args: %v", args)
+	}
+	if !stringSliceContains(args, "github.com/odvcencio/gosx/client/wasm") {
+		t.Fatalf("expected wasm package in args: %v", args)
+	}
+}
+
+func TestTinyGoIslandOnlyTagsRelyOnTinyRuntimeDefault(t *testing.T) {
+	args := islandOnlyWASMTags(wasmCompilerTinyGo)
+	if stringSliceContains(args, "gosx_tiny_runtime") {
+		t.Fatalf("did not expect duplicate TinyGo slim runtime tag: %v", args)
+	}
+	if !stringSliceContains(args, "gosx_tiny_islands_only") {
+		t.Fatalf("expected islands-only tag: %v", args)
+	}
+}
+
+func TestStandardGoWASMOptIsOptIn(t *testing.T) {
+	t.Setenv("GOSX_GO_WASM_OPT", "")
+	if standardGoWASMOptEnabled() {
+		t.Fatal("did not expect standard Go wasm-opt by default")
+	}
+	t.Setenv("GOSX_GO_WASM_OPT", "1")
+	if !standardGoWASMOptEnabled() {
+		t.Fatal("expected standard Go wasm-opt when enabled")
+	}
+}
+
 func stringSliceContains(values []string, want string) bool {
 	for _, value := range values {
 		if value == want {

@@ -1,7 +1,7 @@
 // Browser runtime behavior tests for GoSX islands.
 // Uses perftest.Run to drive headless Chrome.
 //
-// Run:   go test -tags browser ./island/ -run TestBrowser -v
+// Run:   go test -tags e2e ./island/ -run TestBrowser -v
 // Build: danmuji build island/bench_browser.dmj
 
 package island_test
@@ -13,7 +13,7 @@ import (
     "github.com/odvcencio/gosx/perf/perftest"
 )
 
-unit "BrowserPageLifecycle" {
+e2e "BrowserPageLifecycle" {
     given "a running GoSX page" {
         when "profiling page load" {
             report := perftest.Run(t, "http://localhost:3000",
@@ -34,7 +34,7 @@ unit "BrowserPageLifecycle" {
     }
 }
 
-unit "BrowserCounterDispatch" {
+e2e "BrowserCounterDispatch" {
     given "a page with a counter island" {
         when "clicking increment" {
             report := perftest.Run(t, "http://localhost:3000",
@@ -55,7 +55,7 @@ unit "BrowserCounterDispatch" {
     }
 }
 
-unit "BrowserScene3DFrameBudget" {
+e2e "BrowserScene3DFrameBudget" {
     given "a page with Scene3D" {
         when "sampling 60 frames" {
             report := perftest.Run(t, "http://localhost:3000/demos/galaxy",

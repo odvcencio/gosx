@@ -1,10 +1,12 @@
 package server
 
 import (
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -1256,6 +1258,70 @@ func TestAppServesCompatIslandRuntimeAssetFromBuildManifest(t *testing.T) {
 	}
 }
 
+func TestAppServesPrecompressedRuntimeAssetWhenAccepted(t *testing.T) {
+	root := t.TempDir()
+	assetsDir := filepath.Join(root, "assets", "runtime")
+	if err := os.MkdirAll(assetsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	rawPath := filepath.Join(assetsDir, "gosx-runtime-islands.3333.wasm")
+	if err := os.WriteFile(rawPath, []byte("island runtime island runtime island runtime"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeTestGzip(rawPath+".gz", []byte("island runtime island runtime island runtime")); err != nil {
+		t.Fatal(err)
+	}
+	manifest := buildmanifest.Manifest{
+		Runtime: buildmanifest.RuntimeAssets{
+			WASMIslands: buildmanifest.HashedAsset{
+				File: "gosx-runtime-islands.3333.wasm",
+				Hash: "3333",
+				Size: 43,
+			},
+		},
+	}
+	data, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "build.json"), data, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	app := New()
+	app.SetRuntimeRoot(root)
+	handler := app.Build()
+
+	req := httptest.NewRequest(http.MethodGet, "/gosx/runtime-islands.wasm", nil)
+	req.Header.Set("Accept-Encoding", "gzip")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	if got := w.Header().Get("Content-Encoding"); got != "gzip" {
+		t.Fatalf("expected gzip content encoding, got %q", got)
+	}
+	if got := w.Header().Get("Content-Type"); got != "application/wasm" {
+		t.Fatalf("expected wasm content type, got %q", got)
+	}
+	zr, err := gzip.NewReader(w.Body)
+	if err != nil {
+		t.Fatalf("gzip reader: %v", err)
+	}
+	body, err := io.ReadAll(zr)
+	if err != nil {
+		t.Fatalf("read gzip body: %v", err)
+	}
+	if err := zr.Close(); err != nil {
+		t.Fatalf("close gzip body: %v", err)
+	}
+	if string(body) != "island runtime island runtime island runtime" {
+		t.Fatalf("unexpected decompressed body %q", body)
+	}
+}
+
 func TestAppServesCompatRuntimeHLSAssetFromBuildManifest(t *testing.T) {
 	root := t.TempDir()
 	assetsDir := filepath.Join(root, "assets", "runtime")
@@ -1968,6 +2034,24 @@ func writeRuntimeManifest(t *testing.T, root string, bootstrapFile string) {
 	if err := os.WriteFile(filepath.Join(root, "build.json"), data, 0644); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func writeTestGzip(path string, data []byte) error {
+	f, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	zw := gzip.NewWriter(f)
+	if _, err := zw.Write(data); err != nil {
+		_ = zw.Close()
+		_ = f.Close()
+		return err
+	}
+	if err := zw.Close(); err != nil {
+		_ = f.Close()
+		return err
+	}
+	return f.Close()
 }
 
 func TestAppServesPublicFilesAtRoot(t *testing.T) {

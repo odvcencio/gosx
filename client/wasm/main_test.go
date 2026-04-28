@@ -1,4 +1,4 @@
-//go:build js && wasm
+//go:build js && wasm && !gosx_tiny_islands_only
 
 package main
 

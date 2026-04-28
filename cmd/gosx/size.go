@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"compress/gzip"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -17,7 +19,15 @@ type sizeReport struct {
 	ColdStartGzip  int64            `json:"coldStartGzipBytes"`
 	TotalBytes     int64            `json:"totalBytes"`
 	TotalGzip      int64            `json:"totalGzipBytes"`
+	Profiles       []sizeProfile    `json:"profiles,omitempty"`
 	Assets         []sizeReportFile `json:"assets"`
+}
+
+type sizeProfile struct {
+	Name      string   `json:"name"`
+	Bytes     int64    `json:"bytes"`
+	GzipBytes int64    `json:"gzipBytes"`
+	Assets    []string `json:"assets"`
 }
 
 type sizeReportFile struct {
@@ -99,6 +109,7 @@ func buildSizeReport(target string) (sizeReport, error) {
 			report.ColdStartGzip += entry.GzipBytes
 		}
 	}
+	report.Profiles = sizeProfiles(report.Assets)
 	return report, nil
 }
 
@@ -150,20 +161,67 @@ func sizeReportEntry(runtimeDir string, asset runtimeSizeAsset) (sizeReportFile,
 	if err != nil {
 		return sizeReportFile{}, fmt.Errorf("read runtime asset %s: %w", path, err)
 	}
+	gzipBytes := gzipLength(data)
+	if sidecar, err := os.ReadFile(path + ".gz"); err == nil && int64(len(sidecar)) < gzipBytes {
+		gzipBytes = int64(len(sidecar))
+	}
 	return sizeReportFile{
 		Name:      asset.name,
 		File:      asset.file,
 		Role:      asset.role,
 		Bytes:     int64(len(data)),
-		GzipBytes: int64(gzip_c_len(data)),
+		GzipBytes: gzipBytes,
 		ColdStart: asset.coldStart,
 	}, nil
+}
+
+func gzipLength(data []byte) int64 {
+	var buf bytes.Buffer
+	zw, _ := gzip.NewWriterLevel(&buf, gzip.BestCompression)
+	_, _ = zw.Write(data)
+	_ = zw.Close()
+	return int64(buf.Len())
+}
+
+func sizeProfiles(assets []sizeReportFile) []sizeProfile {
+	byName := make(map[string]sizeReportFile, len(assets))
+	for _, asset := range assets {
+		byName[asset.Name] = asset
+	}
+	candidates := []struct {
+		name  string
+		names []string
+	}{
+		{name: "full-runtime", names: []string{"runtime.wasm", "wasm_exec.js", "bootstrap-runtime.js"}},
+		{name: "islands-runtime", names: []string{"runtime-islands.wasm", "wasm_exec.js", "bootstrap-runtime.js", "bootstrap-feature-islands.js"}},
+	}
+	profiles := make([]sizeProfile, 0, len(candidates))
+	for _, candidate := range candidates {
+		profile := sizeProfile{Name: candidate.name}
+		for _, name := range candidate.names {
+			asset, ok := byName[name]
+			if !ok {
+				profile = sizeProfile{}
+				break
+			}
+			profile.Assets = append(profile.Assets, asset.File)
+			profile.Bytes += asset.Bytes
+			profile.GzipBytes += asset.GzipBytes
+		}
+		if profile.Name != "" {
+			profiles = append(profiles, profile)
+		}
+	}
+	return profiles
 }
 
 func printSizeReport(report sizeReport) {
 	fmt.Printf("GoSX runtime size report\n")
 	fmt.Printf("  Manifest: %s\n", report.Manifest)
 	fmt.Printf("  Cold start: %s raw, %s gzip\n", humanBytes(report.ColdStartBytes), humanBytes(report.ColdStartGzip))
+	for _, profile := range report.Profiles {
+		fmt.Printf("  Profile %-16s %8s raw %8s gzip\n", profile.Name+":", humanBytes(profile.Bytes), humanBytes(profile.GzipBytes))
+	}
 	fmt.Printf("  Runtime total: %s raw, %s gzip\n", humanBytes(report.TotalBytes), humanBytes(report.TotalGzip))
 	for _, asset := range report.Assets {
 		marker := " "

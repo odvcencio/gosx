@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"compress/gzip"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -36,6 +38,13 @@ type BuildOptions struct {
 	AppInstallerURI string
 }
 
+type wasmCompiler string
+
+const (
+	wasmCompilerGo     wasmCompiler = "Go"
+	wasmCompilerTinyGo wasmCompiler = "TinyGo"
+)
+
 // contentHash returns the first 8 hex chars of sha256.
 func contentHash(data []byte) string {
 	h := sha256.Sum256(data)
@@ -50,11 +59,36 @@ func writeHashed(dir, name, ext string, data []byte) (HashedAsset, error) {
 	if err := os.WriteFile(path, data, 0644); err != nil {
 		return HashedAsset{}, err
 	}
+	if err := writeGzipSidecarIfSmaller(path, data); err != nil {
+		return HashedAsset{}, err
+	}
 	return HashedAsset{
 		File: filename,
 		Hash: hash,
 		Size: int64(len(data)),
 	}, nil
+}
+
+func writeGzipSidecarIfSmaller(path string, data []byte) error {
+	if len(data) == 0 {
+		return nil
+	}
+	var buf bytes.Buffer
+	zw, err := gzip.NewWriterLevel(&buf, gzip.BestCompression)
+	if err != nil {
+		return err
+	}
+	if _, err := zw.Write(data); err != nil {
+		_ = zw.Close()
+		return err
+	}
+	if err := zw.Close(); err != nil {
+		return err
+	}
+	if buf.Len() >= len(data) {
+		return nil
+	}
+	return os.WriteFile(path+".gz", buf.Bytes(), 0644)
 }
 
 // RunBuild orchestrates the full GoSX build pipeline.
@@ -274,21 +308,28 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 		fmt.Printf("    TinyGo toolchain: current Go\n")
 	}
 
-	// Build both WASM binaries in parallel when using TinyGo.
+	compiler := wasmCompilerGo
+	if useTinyGo {
+		compiler = wasmCompilerTinyGo
+	}
+
+	// Build both WASM binaries in parallel. The islands-only runtime is a
+	// route-selected Go WASM variant that drops shared engine, CRDT, syntax
+	// highlighting, and text-layout exports for pages that only hydrate islands.
 	var wg sync.WaitGroup
 	runtimeResult := wasmResult{label: "runtime"}
 	islandsResult := wasmResult{label: "islands"}
 
-	buildOneWASM := func(result *wasmResult, name, outputName string, extraTags ...string) {
+	buildOneWASM := func(result *wasmResult, compiler wasmCompiler, name, outputName string, extraTags ...string) {
 		defer wg.Done()
 		tmpPath := filepath.Join(distDir, outputName+".wasm.tmp")
 
-		if useTinyGo {
+		if compiler == wasmCompilerTinyGo {
 			if err := buildTinyGoWASM(dir, gosxRoot, tmpPath, tinygoPath, extraTags...); err != nil {
 				result.err = err
 				return
 			}
-			result.compiler = "TinyGo"
+			result.compiler = string(wasmCompilerTinyGo)
 			if optimized, err := optimizeWASMWithWasmOpt(tmpPath); err != nil {
 				result.err = err
 				return
@@ -296,7 +337,7 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 				fmt.Printf("    Applied wasm-opt -Oz (%s)\n", name)
 			}
 		} else {
-			cmd := exec.Command("go", "build", "-o", tmpPath, gosxModuleImportPath+"/client/wasm")
+			cmd := exec.Command("go", goWASMBuildArgs(tmpPath, extraTags...)...)
 			cmd.Env = append(execEnvWithoutGoFlags(), "GOOS=js", "GOARCH=wasm", "GOWORK=off", "GOFLAGS=-mod=mod")
 			cmd.Dir = dir
 			cmd.Stderr = os.Stderr
@@ -304,7 +345,15 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 				result.err = fmt.Errorf("go wasm build failed: %w", err)
 				return
 			}
-			result.compiler = "Go"
+			result.compiler = string(wasmCompilerGo)
+			if standardGoWASMOptEnabled() {
+				if optimized, err := optimizeWASMWithWasmOpt(tmpPath); err != nil {
+					result.err = err
+					return
+				} else if optimized {
+					fmt.Printf("    Applied wasm-opt -Oz (%s, Go)\n", name)
+				}
+			}
 		}
 
 		data, err := os.ReadFile(tmpPath)
@@ -324,24 +373,25 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 
 	// Shared runtime — always built
 	wg.Add(1)
-	go buildOneWASM(&runtimeResult, "runtime", "gosx-runtime")
+	go buildOneWASM(&runtimeResult, compiler, "runtime", "gosx-runtime")
 
-	// Islands-only runtime — parallel with shared runtime
-	buildIslands := useTinyGo && !tinyGoFullRuntimeEnabled()
+	// Islands-only runtime — parallel with shared runtime.
+	buildIslands := !tinyGoFullRuntimeEnabled()
 	if buildIslands {
 		wg.Add(1)
-		go buildOneWASM(&islandsResult, "islands", "gosx-runtime-islands", "gosx_tiny_islands_only")
+		go buildOneWASM(&islandsResult, compiler, "islands", "gosx-runtime-islands", islandOnlyWASMTags(compiler)...)
 	}
 
 	wg.Wait()
 
 	// Process runtime result
 	if runtimeResult.err != nil {
-		if useTinyGo {
+		if compiler == wasmCompilerTinyGo {
 			fmt.Printf("    TinyGo build failed, falling back to standard Go: %v\n", runtimeResult.err)
 			// Retry with standard Go
+			runtimeResult = wasmResult{label: "runtime"}
 			wg.Add(1)
-			go buildOneWASM(&runtimeResult, "runtime", "gosx-runtime")
+			go buildOneWASM(&runtimeResult, wasmCompilerGo, "runtime", "gosx-runtime")
 			wg.Wait()
 			if runtimeResult.err != nil {
 				return fmt.Errorf("wasm runtime build: %w", runtimeResult.err)
@@ -356,12 +406,24 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 
 	// Process islands result
 	if buildIslands {
+		activeCompiler := wasmCompiler(runtimeResult.compiler)
+		if activeCompiler == wasmCompilerGo && islandsResult.compiler != string(wasmCompilerGo) {
+			if compiler == wasmCompilerTinyGo && islandsResult.err != nil {
+				fmt.Printf("    TinyGo islands-only runtime build failed, falling back to standard Go: %v\n", islandsResult.err)
+			} else if islandsResult.compiler == string(wasmCompilerTinyGo) {
+				fmt.Println("    Runtime fell back to standard Go; rebuilding islands-only runtime with standard Go for matching wasm_exec.js")
+			}
+			islandsResult = wasmResult{label: "islands"}
+			wg.Add(1)
+			go buildOneWASM(&islandsResult, wasmCompilerGo, "islands", "gosx-runtime-islands", islandOnlyWASMTags(wasmCompilerGo)...)
+			wg.Wait()
+		}
 		if islandsResult.err != nil {
-			fmt.Printf("    TinyGo islands-only runtime build failed, using shared runtime for islands: %v\n", islandsResult.err)
+			fmt.Printf("    Islands-only runtime build failed, using shared runtime for islands: %v\n", islandsResult.err)
 		} else {
 			manifest.Runtime.WASMIslands = islandsResult.asset
 			gzEst := gzip_c_len(islandsResult.data)
-			fmt.Printf("    %s (%d bytes, %dKB gz, built with TinyGo, islands-only)\n", islandsResult.asset.File, islandsResult.asset.Size, gzEst/1024)
+			fmt.Printf("    %s (%d bytes, %dKB gz, built with %s, islands-only)\n", islandsResult.asset.File, islandsResult.asset.Size, gzEst/1024, islandsResult.compiler)
 		}
 	}
 
@@ -550,9 +612,48 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 	return nil
 }
 
-// gzip_c_len estimates gzipped size.
+// gzip_c_len returns the best-compression gzip transfer size.
 func gzip_c_len(data []byte) int {
-	return int(float64(len(data)) * 0.35)
+	return int(gzipLength(data))
+}
+
+func goWASMBuildArgs(outputPath string, extraTags ...string) []string {
+	args := []string{"build", "-trimpath", "-ldflags=-s -w", "-o", outputPath}
+	if tags := normalizeBuildTags(extraTags...); len(tags) > 0 {
+		args = append(args, "-tags="+strings.Join(tags, " "))
+	}
+	return append(args, gosxModuleImportPath+"/client/wasm")
+}
+
+func islandOnlyWASMTags(compiler wasmCompiler) []string {
+	if compiler == wasmCompilerTinyGo {
+		return []string{"gosx_tiny_islands_only"}
+	}
+	return []string{"gosx_tiny_runtime", "gosx_tiny_islands_only"}
+}
+
+func normalizeBuildTags(tags ...string) []string {
+	normalized := make([]string, 0, len(tags))
+	seen := map[string]struct{}{}
+	for _, tagList := range tags {
+		for _, tag := range strings.Fields(tagList) {
+			if _, ok := seen[tag]; ok {
+				continue
+			}
+			seen[tag] = struct{}{}
+			normalized = append(normalized, tag)
+		}
+	}
+	return normalized
+}
+
+func standardGoWASMOptEnabled() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("GOSX_GO_WASM_OPT"))) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
 }
 
 func optimizeWASMWithWasmOpt(path string) (bool, error) {
@@ -561,7 +662,7 @@ func optimizeWASMWithWasmOpt(path string) (bool, error) {
 		return false, nil
 	}
 	optTmp := path + ".opt"
-	optCmd := exec.Command(woptPath, "-Oz", "--strip-debug", "--strip-producers", path, "-o", optTmp)
+	optCmd := exec.Command(woptPath, "-Oz", "--enable-bulk-memory", "--enable-nontrapping-float-to-int", "--strip-debug", "--strip-producers", path, "-o", optTmp)
 	if optCmd.Run() != nil {
 		return false, nil
 	}
@@ -676,6 +777,11 @@ func stageManifestCompatibilityRuntime(distDir string, manifest *BuildManifest, 
 		}
 		if err := copyFile(dst, src); err != nil {
 			return err
+		}
+		if isFile(src + ".gz") {
+			if err := copyFile(dst+".gz", src+".gz"); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
