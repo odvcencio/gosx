@@ -565,6 +565,52 @@ func TestRendererUsesIslandOnlyRuntimeForIslandPages(t *testing.T) {
 	}
 }
 
+func TestRendererUsesIslandOnlyRuntimeForComputeIslandPages(t *testing.T) {
+	r := NewRenderer("main")
+	manifest := &buildmanifest.Manifest{
+		Runtime: buildmanifest.RuntimeAssets{
+			WASM:        buildmanifest.HashedAsset{File: "gosx-runtime.full.wasm", Hash: "full", Size: 100},
+			WASMIslands: buildmanifest.HashedAsset{File: "gosx-runtime-islands.slim.wasm", Hash: "slim", Size: 50},
+			WASMExec:    buildmanifest.HashedAsset{File: "wasm_exec.js", Hash: "exec", Size: 20},
+			Bootstrap:   buildmanifest.HashedAsset{File: "bootstrap.js", Hash: "boot", Size: 30},
+			Patch:       buildmanifest.HashedAsset{File: "patch.js", Hash: "patch", Size: 40},
+		},
+	}
+	if err := r.ApplyBuildManifest(manifest, "/gosx/assets"); err != nil {
+		t.Fatalf("apply build manifest: %v", err)
+	}
+	if _, err := r.RegisterComputeIsland(ComputeIslandConfig{
+		Name:                 "AIMatchmaker",
+		Capabilities:         []engine.Capability{engine.CapCompute, engine.CapKeyboard},
+		RequiredCapabilities: []engine.Capability{engine.CapWASM},
+	}); err != nil {
+		t.Fatalf("register compute island: %v", err)
+	}
+
+	manifestJSON, err := r.ManifestJSON()
+	if err != nil {
+		t.Fatalf("manifest json: %v", err)
+	}
+	if !strings.Contains(manifestJSON, `/gosx/assets/runtime/gosx-runtime-islands.slim.wasm`) {
+		t.Fatalf("expected island-only runtime in compute manifest: %s", manifestJSON)
+	}
+	if strings.Contains(manifestJSON, `/gosx/assets/runtime/gosx-runtime.full.wasm`) {
+		t.Fatalf("did not expect full runtime in compute-only manifest: %s", manifestJSON)
+	}
+
+	headHTML := gosx.RenderHTML(r.PageHead())
+	if strings.Contains(headHTML, `/gosx/assets/runtime/patch.patch.js`) {
+		t.Fatalf("compute-only page should not load DOM patch runtime: %s", headHTML)
+	}
+	summary := r.Summary()
+	if summary.RuntimePath != "/gosx/assets/runtime/gosx-runtime-islands.slim.wasm" {
+		t.Fatalf("expected slim compute runtime path, got %#v", summary)
+	}
+	if summary.PatchPath != "" {
+		t.Fatalf("compute-only summary should not require patch runtime, got %#v", summary)
+	}
+}
+
 func TestRendererKeepsFullRuntimeForSharedEnginePages(t *testing.T) {
 	r := NewRenderer("main")
 	manifest := &buildmanifest.Manifest{
