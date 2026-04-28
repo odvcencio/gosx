@@ -12,6 +12,13 @@ Development builds keep the standard-Go WASM loop for fast local iteration.
 `make build-runtime` now uses TinyGo for both the full and island-only runtime
 artifacts, and CI installs TinyGo before exercising that production build gate.
 
+Desktop remains Windows-first, but macOS now has explicit cross-compile proof:
+`make test-desktop-macos` compiles the `desktop` package and `cmd/gosx` tests for
+darwin/amd64 and darwin/arm64, `make build-desktop-macos` emits macOS CLI
+binaries, and `make ci` includes both gates. The macOS native webview backend
+still returns `desktop.ErrUnsupported`; this change is a portability guardrail,
+not a support claim.
+
 Runtime cold-start proof tightened for island-heavy apps: production builds now
 emit a TinyGo `gosx-runtime-islands.wasm` variant alongside the full runtime.
 The build applies the slim tags (`gosx_tiny_runtime` plus

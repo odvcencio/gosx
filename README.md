@@ -647,7 +647,9 @@ make test-wasm     # WASM runtime through exported functions
 make test-wasm-islands # Slim island-only WASM runtime through exported functions
 make test-e2e      # Playwright browser tests against gosx dev
 make test-desktop  # Desktop package tests plus Windows cross-compile guards
+make test-desktop-macos # macOS desktop/cmd cross-compile guardrails
 make build-desktop-windows  # Windows desktop-capable CLI binaries
+make build-desktop-macos    # macOS CLI binaries; native backend still unsupported
 make build-runtime # TinyGo production full + island-only WASM runtime builds
 make ci            # All of the above + build verification
 ```

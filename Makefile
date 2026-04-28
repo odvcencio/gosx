@@ -16,7 +16,7 @@ GOFILES := $(shell find . -name '*.go' -not -path './dist/*' -not -path './build
 DMJFILES := $(shell find . -name '*.dmj' -not -path './dist/*' -not -path './build/*')
 DMJGOFILES := $(patsubst %.dmj,%_danmuji_test.go,$(DMJFILES))
 
-.PHONY: fmt fmt-check verify-fmt verify-danmuji test test-race test-fuzz-smoke test-js test-wasm test-wasm-islands test-e2e test-desktop perf-budget build-cli build-desktop-windows build-runtime ci
+.PHONY: fmt fmt-check verify-fmt verify-danmuji test test-race test-fuzz-smoke test-js test-wasm test-wasm-islands test-e2e test-desktop test-desktop-macos perf-budget build-cli build-desktop-windows build-desktop-macos build-runtime ci
 
 fmt:
 	$(GOFMT) -w $(GOFILES)
@@ -93,6 +93,13 @@ test-desktop:
 	GOOS=windows GOARCH=amd64 $(GO) test -c -o $(TMPDIR)/gosx-cmd-windows-amd64.test.exe ./cmd/gosx
 	GOOS=windows GOARCH=arm64 $(GO) test -c -o $(TMPDIR)/gosx-cmd-windows-arm64.test.exe ./cmd/gosx
 
+test-desktop-macos:
+	mkdir -p build/desktop-test
+	GOOS=darwin GOARCH=amd64 $(GO) test -c -o build/desktop-test/desktop-darwin-amd64.test ./desktop
+	GOOS=darwin GOARCH=arm64 $(GO) test -c -o build/desktop-test/desktop-darwin-arm64.test ./desktop
+	GOOS=darwin GOARCH=amd64 $(GO) test -c -o build/desktop-test/gosx-darwin-amd64.test ./cmd/gosx
+	GOOS=darwin GOARCH=arm64 $(GO) test -c -o build/desktop-test/gosx-darwin-arm64.test ./cmd/gosx
+
 perf-budget:
 	mkdir -p $(dir $(PERF_OUT))
 	$(GO) run ./cmd/gosx perf $(PERF_FLAGS) --budget $(PERF_BUDGET) --json $(PERF_URLS) > $(PERF_OUT)
@@ -105,7 +112,12 @@ build-desktop-windows:
 	GOOS=windows GOARCH=amd64 $(GO) build -o build/gosx-windows-amd64.exe ./cmd/gosx
 	GOOS=windows GOARCH=arm64 $(GO) build -o build/gosx-windows-arm64.exe ./cmd/gosx
 
+build-desktop-macos:
+	mkdir -p build
+	GOOS=darwin GOARCH=amd64 $(GO) build -o build/gosx-darwin-amd64 ./cmd/gosx
+	GOOS=darwin GOARCH=arm64 $(GO) build -o build/gosx-darwin-arm64 ./cmd/gosx
+
 build-runtime:
 	$(GO) run ./cmd/gosx build-runtime build
 
-ci: fmt-check verify-danmuji test test-race test-fuzz-smoke test-js test-wasm test-wasm-islands test-e2e test-desktop build-cli build-desktop-windows build-runtime
+ci: fmt-check verify-danmuji test test-race test-fuzz-smoke test-js test-wasm test-wasm-islands test-e2e test-desktop test-desktop-macos build-cli build-desktop-windows build-desktop-macos build-runtime
