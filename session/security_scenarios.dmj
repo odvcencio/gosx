@@ -1,0 +1,96 @@
+// Session security scenarios. Compiled by danmuji into
+// session/security_scenarios_danmuji_test.go.
+//
+// Rebuild after editing:
+//     danmuji build session/security_scenarios.dmj
+
+package session
+
+import (
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+)
+
+unit "session cookie hardening scenarios" {
+	each "cookie mode" {
+		defaults { encrypted: false, rotated: false, want_v2: false }
+		{ name: "legacy signed cookie", encrypted: false, rotated: false, want_v2: false }
+		{ name: "encrypted current secret", encrypted: true, want_v2: true }
+		{ name: "legacy cookie rotates into encrypted current secret", encrypted: true, rotated: true, want_v2: true }
+	} do {
+		currentSecret := "session-dmj-current-secret-value"
+		previousSecret := "session-dmj-previous-secret-value"
+		current := MustNew(currentSecret, Options{
+			Encrypt:         scenario.encrypted.(bool),
+			PreviousSecrets: []string{previousSecret},
+		})
+		writer := current
+		if scenario.rotated.(bool) {
+			writer = MustNew(previousSecret, Options{})
+		}
+
+		writeHandler := writer.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			Current(r).Set("team", "platform")
+			w.WriteHeader(http.StatusNoContent)
+		}))
+		writeRes := httptest.NewRecorder()
+		writeHandler.ServeHTTP(writeRes, httptest.NewRequest(http.MethodGet, "/set", nil))
+		cookie := writeRes.Result().Cookies()[0]
+
+		readHandler := current.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_, _ = w.Write([]byte(Current(r).String("team")))
+		}))
+		readReq := httptest.NewRequest(http.MethodGet, "/read", nil)
+		readReq.AddCookie(cookie)
+		readRes := httptest.NewRecorder()
+		readHandler.ServeHTTP(readRes, readReq)
+		refreshed := cookie
+		if cookies := readRes.Result().Cookies(); len(cookies) > 0 {
+			refreshed = cookies[0]
+		}
+
+		then "loads the signed payload" {
+			if readRes.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200", readRes.Code)
+			}
+			if readRes.Body.String() != "platform" {
+				t.Fatalf("body = %q, want platform", readRes.Body.String())
+			}
+		}
+
+		then "uses the expected cookie envelope" {
+			gotV2 := strings.HasPrefix(refreshed.Value, "v2.")
+			if gotV2 != scenario.want_v2.(bool) {
+				t.Fatalf("v2 envelope = %v, want %v", gotV2, scenario.want_v2)
+			}
+		}
+
+		then "rejects tampered values" {
+			corrupted := strings.Replace(refreshed.Value, ".", "x.", 1)
+			if corrupted == refreshed.Value {
+				corrupted = refreshed.Value + "x"
+			}
+			_, err := current.decode(corrupted)
+			if err == nil {
+				t.Fatal("tampered cookie decoded successfully")
+			}
+		}
+	}
+}
+
+func FuzzDanmujiDecodeSessionCookieNeverPanics(f *testing.F) {
+	f.Add("")
+	f.Add("not.a.cookie")
+	f.Fuzz(func(t *testing.T, value string) {
+	if len(value) > 8192 {
+		return
+	}
+	manager := MustNew("session-dmj-probe-secret-value", Options{
+		Encrypt:         true,
+		PreviousSecrets: []string{"session-dmj-probe-previous"},
+	})
+	_, _ = manager.decode(value)
+	})
+}

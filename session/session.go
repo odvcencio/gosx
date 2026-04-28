@@ -2,7 +2,10 @@ package session
 
 import (
 	"bufio"
+	"bytes"
 	"context"
+	"crypto/aes"
+	"crypto/cipher"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
@@ -27,19 +30,22 @@ const (
 
 // Options configures a cookie-backed session manager.
 type Options struct {
-	CookieName string
-	Path       string
-	Domain     string
-	MaxAge     time.Duration
-	Secure     bool
-	HTTPOnly   bool
-	SameSite   http.SameSite
+	CookieName      string
+	Path            string
+	Domain          string
+	MaxAge          time.Duration
+	Secure          bool
+	HTTPOnly        bool
+	SameSite        http.SameSite
+	Encrypt         bool
+	PreviousSecrets []string
 }
 
 // Manager loads and persists signed cookie sessions.
 type Manager struct {
-	secret []byte
-	opts   Options
+	secret          []byte
+	previousSecrets [][]byte
+	opts            Options
 }
 
 type sessionEnvelope struct {
@@ -78,8 +84,9 @@ func New(secret string, opts Options) (*Manager, error) {
 		opts.SameSite = http.SameSiteLaxMode
 	}
 	return &Manager{
-		secret: []byte(secret),
-		opts:   opts,
+		secret:          []byte(secret),
+		previousSecrets: normalizePreviousSecrets(opts.PreviousSecrets),
+		opts:            opts,
 	}, nil
 }
 
@@ -130,7 +137,7 @@ func (m *Manager) Protect(next http.Handler) http.Handler {
 			_ = r.ParseForm()
 			actual = r.Form.Get(defaultCSRFField)
 		}
-		if subtle.ConstantTimeCompare([]byte(expected), []byte(actual)) != 1 {
+		if !constantTimeSessionStringEqual(expected, actual) {
 			writeCSRFFailure(w, r)
 			return
 		}
@@ -360,7 +367,7 @@ func (m *Manager) load(r *http.Request) *Store {
 		return store
 	}
 
-	envelope, err := m.decode(cookie.Value)
+	envelope, refresh, err := m.decodeCookie(cookie.Value)
 	if err != nil {
 		return store
 	}
@@ -375,6 +382,9 @@ func (m *Manager) load(r *http.Request) *Store {
 	if len(store.incomingFlashes) > 0 {
 		store.dirty = true
 	}
+	if refresh {
+		store.dirty = true
+	}
 	return store
 }
 
@@ -387,35 +397,169 @@ func (m *Manager) encode(store *Store) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	mac := hmac.New(sha256.New, m.secret)
-	mac.Write(payload)
-	signature := mac.Sum(nil)
-	return base64.RawURLEncoding.EncodeToString(payload) + "." + base64.RawURLEncoding.EncodeToString(signature), nil
+	if m.opts.Encrypt {
+		encrypted, err := encryptSessionPayload(m.secret, payload)
+		if err != nil {
+			return "", err
+		}
+		body := base64.RawURLEncoding.EncodeToString(encrypted)
+		signature := sessionSignature(m.secret, []byte("v2."+body))
+		return "v2." + body + "." + base64.RawURLEncoding.EncodeToString(signature), nil
+	}
+	body := base64.RawURLEncoding.EncodeToString(payload)
+	signature := sessionSignature(m.secret, payload)
+	return body + "." + base64.RawURLEncoding.EncodeToString(signature), nil
 }
 
 func (m *Manager) decode(value string) (sessionEnvelope, error) {
+	envelope, _, err := m.decodeCookie(value)
+	return envelope, err
+}
+
+func (m *Manager) decodeCookie(value string) (sessionEnvelope, bool, error) {
 	parts := strings.Split(value, ".")
-	if len(parts) != 2 {
-		return sessionEnvelope{}, fmt.Errorf("invalid session cookie format")
+	switch {
+	case len(parts) == 2:
+		return m.decodeLegacyCookie(parts[0], parts[1])
+	case len(parts) == 3 && parts[0] == "v2":
+		return m.decodeEncryptedCookie(parts[1], parts[2])
+	default:
+		return sessionEnvelope{}, false, fmt.Errorf("invalid session cookie format")
 	}
-	payload, err := base64.RawURLEncoding.DecodeString(parts[0])
+}
+
+func (m *Manager) decodeLegacyCookie(payloadPart, signaturePart string) (sessionEnvelope, bool, error) {
+	payload, err := base64.RawURLEncoding.DecodeString(payloadPart)
 	if err != nil {
-		return sessionEnvelope{}, err
+		return sessionEnvelope{}, false, err
 	}
-	signature, err := base64.RawURLEncoding.DecodeString(parts[1])
+	signature, err := base64.RawURLEncoding.DecodeString(signaturePart)
 	if err != nil {
-		return sessionEnvelope{}, err
+		return sessionEnvelope{}, false, err
 	}
-	mac := hmac.New(sha256.New, m.secret)
-	mac.Write(payload)
-	if subtle.ConstantTimeCompare(mac.Sum(nil), signature) != 1 {
-		return sessionEnvelope{}, fmt.Errorf("invalid session signature")
+	keyIndex, ok := m.matchingSecret(payload, signature)
+	if !ok {
+		return sessionEnvelope{}, false, fmt.Errorf("invalid session signature")
 	}
+	envelope, err := decodeSessionEnvelope(payload)
+	return envelope, keyIndex != 0 || m.opts.Encrypt, err
+}
+
+func (m *Manager) decodeEncryptedCookie(bodyPart, signaturePart string) (sessionEnvelope, bool, error) {
+	ciphertext, err := base64.RawURLEncoding.DecodeString(bodyPart)
+	if err != nil {
+		return sessionEnvelope{}, false, err
+	}
+	signature, err := base64.RawURLEncoding.DecodeString(signaturePart)
+	if err != nil {
+		return sessionEnvelope{}, false, err
+	}
+	signed := []byte("v2." + bodyPart)
+	keyIndex, ok := m.matchingSecret(signed, signature)
+	if !ok {
+		return sessionEnvelope{}, false, fmt.Errorf("invalid session signature")
+	}
+	payload, err := decryptSessionPayload(m.secretAt(keyIndex), ciphertext)
+	if err != nil {
+		return sessionEnvelope{}, false, err
+	}
+	envelope, err := decodeSessionEnvelope(payload)
+	return envelope, keyIndex != 0, err
+}
+
+func decodeSessionEnvelope(payload []byte) (sessionEnvelope, error) {
 	var envelope sessionEnvelope
 	if err := json.Unmarshal(payload, &envelope); err != nil {
 		return sessionEnvelope{}, err
 	}
 	return envelope, nil
+}
+
+func (m *Manager) matchingSecret(message []byte, signature []byte) (int, bool) {
+	for i := 0; i < 1+len(m.previousSecrets); i++ {
+		if subtle.ConstantTimeCompare(sessionSignature(m.secretAt(i), message), signature) == 1 {
+			return i, true
+		}
+	}
+	return 0, false
+}
+
+func (m *Manager) secretAt(index int) []byte {
+	if index == 0 {
+		return m.secret
+	}
+	return m.previousSecrets[index-1]
+}
+
+func sessionSignature(secret []byte, message []byte) []byte {
+	mac := hmac.New(sha256.New, secret)
+	mac.Write(message)
+	return mac.Sum(nil)
+}
+
+func constantTimeSessionStringEqual(a, b string) bool {
+	aHash := sha256.Sum256([]byte(a))
+	bHash := sha256.Sum256([]byte(b))
+	return subtle.ConstantTimeCompare(aHash[:], bHash[:]) == 1 && len(a) == len(b)
+}
+
+func encryptSessionPayload(secret []byte, payload []byte) ([]byte, error) {
+	block, err := aes.NewCipher(sessionEncryptionKey(secret))
+	if err != nil {
+		return nil, err
+	}
+	aead, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, err
+	}
+	nonce := make([]byte, aead.NonceSize())
+	if _, err := rand.Read(nonce); err != nil {
+		return nil, err
+	}
+	out := make([]byte, 0, len(nonce)+len(payload)+aead.Overhead())
+	out = append(out, nonce...)
+	out = aead.Seal(out, nonce, payload, nil)
+	return out, nil
+}
+
+func decryptSessionPayload(secret []byte, ciphertext []byte) ([]byte, error) {
+	block, err := aes.NewCipher(sessionEncryptionKey(secret))
+	if err != nil {
+		return nil, err
+	}
+	aead, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, err
+	}
+	if len(ciphertext) < aead.NonceSize() {
+		return nil, fmt.Errorf("encrypted session payload is too short")
+	}
+	nonce := ciphertext[:aead.NonceSize()]
+	body := ciphertext[aead.NonceSize():]
+	return aead.Open(nil, nonce, body, nil)
+}
+
+func sessionEncryptionKey(secret []byte) []byte {
+	sum := sha256.Sum256(secret)
+	return sum[:]
+}
+
+func normalizePreviousSecrets(values []string) [][]byte {
+	if len(values) == 0 {
+		return nil
+	}
+	out := make([][]byte, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if len(value) < 16 {
+			continue
+		}
+		secret := []byte(value)
+		if len(out) == 0 || !bytes.Equal(out[len(out)-1], secret) {
+			out = append(out, secret)
+		}
+	}
+	return out
 }
 
 func (m *Manager) writeCookie(w http.ResponseWriter, store *Store) {

@@ -1,7 +1,6 @@
 package auth
 
 import (
-	"bytes"
 	"context"
 	"crypto"
 	"crypto/ecdsa"
@@ -873,7 +872,7 @@ func parseAuthenticatorData(raw []byte) (parsedAuthenticatorData, error) {
 
 func verifyAuthenticatorData(data parsedAuthenticatorData, rpID string, userVerification string) error {
 	sum := sha256.Sum256([]byte(rpID))
-	if !bytes.Equal(data.RPIDHash[:], sum[:]) {
+	if !constantTimeBytesEqual(data.RPIDHash[:], sum[:]) {
 		return ErrWebAuthnVerificationFailed
 	}
 	if data.Flags&0x01 == 0 {
@@ -996,9 +995,9 @@ func equalWebAuthnChallenge(a, b string) bool {
 	aBytes, errA := decodeWebAuthnBytes(a)
 	bBytes, errB := decodeWebAuthnBytes(b)
 	if errA == nil && errB == nil {
-		return bytes.Equal(aBytes, bBytes)
+		return constantTimeBytesEqual(aBytes, bBytes)
 	}
-	return strings.TrimSpace(a) == strings.TrimSpace(b)
+	return constantTimeStringEqual(strings.TrimSpace(a), strings.TrimSpace(b))
 }
 
 func containsString(values []string, target string) bool {

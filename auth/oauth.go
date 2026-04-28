@@ -340,7 +340,9 @@ func (o *OAuth) consumeState(r *http.Request, providerName, stateParam string) (
 		return oauthState{}, ErrOAuthStateInvalid
 	}
 	store.Delete(o.sessionKey)
-	if state.Provider != providerName || strings.TrimSpace(state.State) == "" || strings.TrimSpace(state.State) != strings.TrimSpace(stateParam) {
+	stateValue := strings.TrimSpace(state.State)
+	stateParam = strings.TrimSpace(stateParam)
+	if state.Provider != providerName || stateValue == "" || !constantTimeStringEqual(stateValue, stateParam) {
 		return oauthState{}, ErrOAuthStateInvalid
 	}
 	if !state.ExpiresAt.IsZero() && o.now().After(state.ExpiresAt) {
