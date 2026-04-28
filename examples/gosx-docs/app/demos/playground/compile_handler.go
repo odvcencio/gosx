@@ -299,6 +299,13 @@ func NewCompileAction(compiler *Compiler) func(*action.Context) error {
 		var req struct {
 			Source string `json:"source"`
 		}
+		if compiler == nil {
+			return ctx.Success("", map[string]any{
+				"html":        "",
+				"program":     "",
+				"diagnostics": []Diagnostic{{Message: "compiler unavailable"}},
+			})
+		}
 		rateKey := clientIPFromRequest(ctx.Request)
 		if err := json.Unmarshal(ctx.Payload, &req); err != nil {
 			return ctx.Success("", map[string]any{

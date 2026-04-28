@@ -1,13 +1,15 @@
 package settings
 
 import (
+	"log"
+
 	"github.com/odvcencio/gosx/action"
 	"github.com/odvcencio/gosx/route"
 	"github.com/odvcencio/gosx/server"
 )
 
 func init() {
-	route.MustRegisterFileModuleHere(route.FileModuleOptions{
+	if err := route.RegisterFileModuleHere(route.FileModuleOptions{
 		Metadata: func(ctx *route.RouteContext, page route.FilePage, data any) (server.Metadata, error) {
 			return server.Metadata{Title: server.Title{Absolute: "Settings"}}, nil
 		},
@@ -16,5 +18,7 @@ func init() {
 				return ctx.Success("Settings saved.", nil)
 			},
 		},
-	})
+	}); err != nil {
+		log.Fatal(err)
+	}
 }

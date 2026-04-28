@@ -2,6 +2,7 @@ package watch
 
 import (
 	"fmt"
+	"log"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -14,7 +15,7 @@ func init() {
 	_, thisFile, _, _ := runtime.Caller(0)
 	source := filepath.Join(filepath.Dir(thisFile), "[code]", "page.gsx")
 
-	route.MustRegisterFileModule(route.FileModuleFor(source, route.FileModuleOptions{
+	if err := route.RegisterFileModule(route.FileModuleFor(source, route.FileModuleOptions{
 		Load: func(ctx *route.RouteContext, page route.FilePage) (any, error) {
 			code := strings.TrimSpace(ctx.Param("code"))
 			if code == "" {
@@ -32,7 +33,9 @@ func init() {
 				Description: "Server-rendered room snapshot with normalized queue titles and cached subtitle state.",
 			}, nil
 		},
-	}))
+	})); err != nil {
+		log.Fatal(err)
+	}
 }
 
 func watchSnapshot(code string) map[string]any {

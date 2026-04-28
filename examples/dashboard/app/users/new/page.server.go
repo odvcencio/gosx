@@ -1,6 +1,7 @@
 package new
 
 import (
+	"log"
 	"strings"
 
 	"github.com/odvcencio/gosx/action"
@@ -9,7 +10,7 @@ import (
 )
 
 func init() {
-	route.MustRegisterFileModuleHere(route.FileModuleOptions{
+	if err := route.RegisterFileModuleHere(route.FileModuleOptions{
 		Metadata: func(ctx *route.RouteContext, page route.FilePage, data any) (server.Metadata, error) {
 			return server.Metadata{Title: server.Title{Absolute: "New User"}}, nil
 		},
@@ -30,5 +31,7 @@ func init() {
 				return ctx.Success("User created.", nil)
 			},
 		},
-	})
+	}); err != nil {
+		log.Fatal(err)
+	}
 }

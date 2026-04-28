@@ -90,11 +90,14 @@ func New(secret string, opts Options) (*Manager, error) {
 	}, nil
 }
 
-// MustNew creates a new session manager or panics.
+// MustNew creates a new session manager.
+//
+// Deprecated: use New and handle the returned error. MustNew returns nil when
+// configuration is invalid.
 func MustNew(secret string, opts Options) *Manager {
 	manager, err := New(secret, opts)
 	if err != nil {
-		panic(err)
+		return nil
 	}
 	return manager
 }
@@ -103,6 +106,11 @@ func MustNew(secret string, opts Options) *Manager {
 func (m *Manager) Middleware(next http.Handler) http.Handler {
 	if next == nil {
 		next = http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})
+	}
+	if m == nil {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Error(w, "session manager is not configured", http.StatusInternalServerError)
+		})
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		store := m.load(r)
@@ -120,6 +128,11 @@ func (m *Manager) Middleware(next http.Handler) http.Handler {
 func (m *Manager) Protect(next http.Handler) http.Handler {
 	if next == nil {
 		next = http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})
+	}
+	if m == nil {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Error(w, "session manager is not configured", http.StatusInternalServerError)
+		})
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !csrfProtectedMethod(r.Method) {
@@ -147,6 +160,9 @@ func (m *Manager) Protect(next http.Handler) http.Handler {
 
 // Get returns the request-scoped store for the manager.
 func (m *Manager) Get(r *http.Request) *Store {
+	if m == nil {
+		return nil
+	}
 	store := Current(r)
 	if store == nil || store.manager != m {
 		return nil

@@ -49,14 +49,15 @@ func TestRunInitCreatesStarterProject(t *testing.T) {
 		`_, thisFile, _, _ := runtime.Caller(0)`,
 		`root := server.ResolveAppRoot(thisFile)`,
 		`env.LoadDir(root, "")`,
-		`session.MustNew(getenv("SESSION_SECRET", "gosx-app-session-secret"), session.Options{})`,
+		`sessions, err := session.New(getenv("SESSION_SECRET", "gosx-app-session-secret"), session.Options{})`,
 		`router.AddDir(filepath.Join(root, "app"), route.FileRoutesOptions{})`,
 		`app.EnableNavigation()`,
 		`app.Use(sessions.Middleware)`,
 		`app.Use(sessions.Protect)`,
 		`app.SetPublicDir(filepath.Join(root, "public"))`,
 		`app.API("GET /api/health"`,
-		`app.Mount("/", router.Build())`,
+		`rootHandler, err := router.BuildChecked()`,
+		`app.Mount("/", rootHandler)`,
 		`server.HTMLDocument(ctx.Title(appName), ctx.Head(), body)`,
 	} {
 		if !strings.Contains(mainGo, snippet) {
@@ -185,7 +186,7 @@ func TestRunInitCreatesDocsTemplate(t *testing.T) {
 		`_ "example.com/docs/modules"`,
 		`_, thisFile, _, _ := runtime.Caller(0)`,
 		`root := server.ResolveAppRoot(thisFile)`,
-		`session.MustNew(getenv("SESSION_SECRET", "gosx-docs-session-secret"), session.Options{})`,
+		`sessions, err := session.New(getenv("SESSION_SECRET", "gosx-docs-session-secret"), session.Options{})`,
 		`docsapp.BindAuth(authn)`,
 		`route.FileLayout(filepath.Join(root, "app", "layout.gsx"))`,
 		`return server.HTMLDocument(ctx.Title("GoSX Docs"), ctx.Head(), body)`,
@@ -198,7 +199,8 @@ func TestRunInitCreatesDocsTemplate(t *testing.T) {
 		`app.Rewrite("GET /runtime", "/docs/runtime")`,
 		`app.API("GET /api/meta"`,
 		`app.HandleAPI(server.APIRoute{`,
-		`app.Mount("/", router.Build())`,
+		`rootHandler, err := router.BuildChecked()`,
+		`app.Mount("/", rootHandler)`,
 		`ensureDocsSampleAssets(root)`,
 	} {
 		if !strings.Contains(mainGo, snippet) {

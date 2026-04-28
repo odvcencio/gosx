@@ -12,12 +12,9 @@ var playgroundCompiler *Compiler
 
 func init() {
 	c, err := NewCompiler(DefaultCompileConfig())
-	if err != nil {
-		// Invariant violation — DefaultCompileConfig is supposed to
-		// return a valid config. Fail loud.
-		panic("playground: NewCompiler with default config: " + err.Error())
+	if err == nil {
+		playgroundCompiler = c
 	}
-	playgroundCompiler = c
 
 	docsapp.RegisterStaticDocsPage(
 		"Playground",

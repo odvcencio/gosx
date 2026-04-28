@@ -9,6 +9,20 @@ import (
 	"testing"
 )
 
+func TestMustNewInvalidSecretReturnsNilManager(t *testing.T) {
+	manager := MustNew("short", Options{})
+	if manager != nil {
+		t.Fatal("expected nil manager for invalid secret")
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	w := httptest.NewRecorder()
+	manager.Middleware(nil).ServeHTTP(w, req)
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("nil manager middleware status = %d, want %d", w.Code, http.StatusInternalServerError)
+	}
+}
+
 func TestMiddlewarePersistsValuesAndFlashes(t *testing.T) {
 	manager := MustNew("session-test-secret-value", Options{})
 	handler := manager.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

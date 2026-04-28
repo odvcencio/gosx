@@ -2,6 +2,7 @@ package democtl
 
 import (
 	"errors"
+	"fmt"
 	"sync"
 	"time"
 )
@@ -12,6 +13,13 @@ var ErrRegistryFull = errors.New("democtl: room registry full")
 
 // ErrRoomNotFound is returned by WithRoom when the named room does not exist.
 var ErrRoomNotFound = errors.New("democtl: room not found")
+
+// ErrRegistryNotConfigured is returned when a nil registry is used.
+var ErrRegistryNotConfigured = errors.New("democtl: room registry not configured")
+
+// ErrInvalidRegistryConfig is returned by NewRegistryChecked for invalid
+// capacity or idleTTL values.
+var ErrInvalidRegistryConfig = errors.New("democtl: invalid room registry config")
 
 // Room represents an ephemeral in-memory room. Callers may store demo-specific
 // state by reading/writing Room.Data, which is an untyped slot guarded by the
@@ -43,13 +51,20 @@ type Registry struct {
 
 // NewRegistry constructs a Registry with the given capacity (max live rooms)
 // and idleTTL (how long an empty room may sit before Sweep removes it).
-// Panics if capacity <= 0 or idleTTL <= 0.
+// Returns nil if capacity <= 0 or idleTTL <= 0. Use NewRegistryChecked when
+// callers need the validation error.
 func NewRegistry(capacity int, idleTTL time.Duration, opts ...RegistryOption) *Registry {
+	registry, _ := NewRegistryChecked(capacity, idleTTL, opts...)
+	return registry
+}
+
+// NewRegistryChecked constructs a Registry and reports invalid configuration.
+func NewRegistryChecked(capacity int, idleTTL time.Duration, opts ...RegistryOption) (*Registry, error) {
 	if capacity <= 0 {
-		panic("democtl: NewRegistry capacity must be > 0")
+		return nil, fmt.Errorf("%w: capacity must be > 0", ErrInvalidRegistryConfig)
 	}
 	if idleTTL <= 0 {
-		panic("democtl: NewRegistry idleTTL must be > 0")
+		return nil, fmt.Errorf("%w: idleTTL must be > 0", ErrInvalidRegistryConfig)
 	}
 	r := &Registry{
 		rooms:   make(map[string]*Room),
@@ -60,13 +75,16 @@ func NewRegistry(capacity int, idleTTL time.Duration, opts ...RegistryOption) *R
 	for _, o := range opts {
 		o(r)
 	}
-	return r
+	return r, nil
 }
 
 // Join atomically looks up or creates a room with the given id, increments its
 // Presence, and updates its LastActive. Returns ErrRegistryFull if a new room
 // would exceed capacity (existing rooms are always allowed to grow presence).
 func (r *Registry) Join(id string) (*Room, error) {
+	if r == nil {
+		return nil, ErrRegistryNotConfigured
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -93,6 +111,9 @@ func (r *Registry) Join(id string) (*Room, error) {
 // Leave decrements the room's Presence and bumps LastActive. No-op if the room
 // doesn't exist. Presence does not go below zero.
 func (r *Registry) Leave(id string) {
+	if r == nil {
+		return
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -110,6 +131,9 @@ func (r *Registry) Leave(id string) {
 // in. fn may return an error, which WithRoom returns unchanged. Returns
 // ErrRoomNotFound if the room doesn't exist.
 func (r *Registry) WithRoom(id string, fn func(*Room) error) error {
+	if r == nil {
+		return ErrRegistryNotConfigured
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -123,6 +147,9 @@ func (r *Registry) WithRoom(id string, fn func(*Room) error) error {
 // Sweep removes empty rooms (Presence == 0) whose LastActive is older than
 // idleTTL. Returns the count removed.
 func (r *Registry) Sweep() int {
+	if r == nil {
+		return 0
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -140,6 +167,9 @@ func (r *Registry) Sweep() int {
 
 // Len returns the current number of rooms in the registry.
 func (r *Registry) Len() int {
+	if r == nil {
+		return 0
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return len(r.rooms)

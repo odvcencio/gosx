@@ -1,10 +1,13 @@
 package crdt
 
 import (
+	"crypto/sha256"
 	"fmt"
+	"os"
 	"sort"
 	"strconv"
 	stdsync "sync"
+	"sync/atomic"
 	"time"
 
 	enc "github.com/odvcencio/gosx/crdt/encoding"
@@ -61,12 +64,38 @@ type Doc struct {
 	changeHooks    []func([]Patch)
 }
 
+var fallbackActorSeq atomic.Uint64
+
+// NewDoc creates a document with a fresh actor id. If the platform random
+// source is unavailable, it falls back to a process-local hash; callers that
+// need to reject that case should use NewDocChecked.
 func NewDoc() *Doc {
+	doc, err := NewDocChecked()
+	if err != nil {
+		return newDocWithActor(fallbackActorID())
+	}
+	return doc
+}
+
+// NewDocChecked creates a document with a fresh actor id and reports random
+// source failures.
+func NewDocChecked() (*Doc, error) {
 	actor, err := NewActorID()
 	if err != nil {
-		panic(err)
+		return nil, err
 	}
-	return newDocWithActor(actor)
+	return newDocWithActor(actor), nil
+}
+
+func fallbackActorID() ActorID {
+	seed := fmt.Sprintf("%d:%d:%d", time.Now().UnixNano(), os.Getpid(), fallbackActorSeq.Add(1))
+	if hostname, err := os.Hostname(); err == nil && hostname != "" {
+		seed += ":" + hostname
+	}
+	sum := sha256.Sum256([]byte(seed))
+	var actor ActorID
+	copy(actor[:], sum[:16])
+	return actor
 }
 
 func newDocWithActor(actor ActorID) *Doc {

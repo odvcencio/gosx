@@ -236,14 +236,20 @@ var (
 )
 
 // RegisterFactory registers an engine factory by name at init time.
-// Panics on duplicate registration.
-func RegisterFactory(name string, factory Factory) {
+func RegisterFactory(name string, factory Factory) error {
+	if name == "" {
+		return fmt.Errorf("engine factory name is required")
+	}
+	if factory == nil {
+		return fmt.Errorf("engine factory %q is nil", name)
+	}
 	factoryMu.Lock()
 	defer factoryMu.Unlock()
 	if _, exists := factories[name]; exists {
-		panic(fmt.Sprintf("engine factory %q already registered", name))
+		return fmt.Errorf("engine factory %q already registered", name)
 	}
 	factories[name] = factory
+	return nil
 }
 
 // HasFactory reports whether a factory is registered under the given name.

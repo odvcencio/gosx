@@ -122,7 +122,9 @@ func TestValidateCapabilities(t *testing.T) {
 
 func TestRegisterFactory(t *testing.T) {
 	ClearFactories()
-	RegisterFactory("test-surface", func() any { return nil })
+	if err := RegisterFactory("test-surface", func() any { return nil }); err != nil {
+		t.Fatal(err)
+	}
 	if !HasFactory("test-surface") {
 		t.Fatal("factory not registered")
 	}
@@ -130,13 +132,22 @@ func TestRegisterFactory(t *testing.T) {
 
 func TestRegisterFactory_RejectsDuplicate(t *testing.T) {
 	ClearFactories()
-	RegisterFactory("dup", func() any { return nil })
-	defer func() {
-		if r := recover(); r == nil {
-			t.Fatal("expected panic on duplicate registration")
-		}
-	}()
-	RegisterFactory("dup", func() any { return nil })
+	if err := RegisterFactory("dup", func() any { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if err := RegisterFactory("dup", func() any { return nil }); err == nil {
+		t.Fatal("expected duplicate registration to fail")
+	}
+}
+
+func TestRegisterFactory_RejectsInvalidInput(t *testing.T) {
+	ClearFactories()
+	if err := RegisterFactory("", func() any { return nil }); err == nil {
+		t.Fatal("expected empty factory name to fail")
+	}
+	if err := RegisterFactory("nil-factory", nil); err == nil {
+		t.Fatal("expected nil factory to fail")
+	}
 }
 
 func TestEngineConfig_Validate(t *testing.T) {

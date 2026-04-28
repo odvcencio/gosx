@@ -2,13 +2,14 @@ package watch
 
 import (
 	"fmt"
+	"log"
 
 	"github.com/odvcencio/gosx/route"
 	"github.com/odvcencio/gosx/server"
 )
 
 func init() {
-	route.MustRegisterFileModuleHere(route.FileModuleOptions{
+	if err := route.RegisterFileModuleHere(route.FileModuleOptions{
 		Load: func(ctx *route.RouteContext, page route.FilePage) (any, error) {
 			return landingSnapshot(), nil
 		},
@@ -18,7 +19,9 @@ func init() {
 				Description: "An isolated, server-driven prototype for the Goetrope viewer on GoSX.",
 			}, nil
 		},
-	})
+	}); err != nil {
+		log.Fatal(err)
+	}
 }
 
 func landingSnapshot() map[string]any {

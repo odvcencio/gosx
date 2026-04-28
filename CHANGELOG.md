@@ -4,6 +4,16 @@
 
 Proof-hardening pass for the red/yellow risk zones.
 
+Production error surfaces are now checked instead of panic-first for the
+remaining framework hygiene gaps. File/dir route module helpers, component
+registry helpers, engine factory registration, desktop bridge registration,
+CRDT document construction, session `MustNew`, docs-demo room/presence helpers,
+and route mux registration now return errors or inert fallbacks instead of
+crashing. `route.BuildChecked` exposes route-pattern conflicts directly, while
+`Build` degrades to a 500 handler for compatibility. Starters, docs templates,
+examples, README snippets, and apptest helpers now use the checked startup path
+where build/configuration failures should stop the app before serving traffic.
+
 Production runtime builds now require TinyGo instead of treating it as a
 best-effort optimizer. `gosx build --prod` fails fast when `tinygo` is not on
 `PATH`, no longer falls back to standard-Go WASM after TinyGo compile failures,

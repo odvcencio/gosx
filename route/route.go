@@ -270,8 +270,23 @@ func (r *Router) Handle(pattern string, handler http.Handler, middleware ...Midd
 	})
 }
 
-// Build compiles the router into an http.Handler.
+// Build compiles the router into an http.Handler. If route registration fails,
+// the returned handler reports the build error as HTTP 500 instead of crashing
+// the process.
 func (r *Router) Build() http.Handler {
+	handler, err := r.BuildChecked()
+	if err != nil {
+		return buildErrorHandler(err)
+	}
+	return handler
+}
+
+// BuildChecked compiles the router into an http.Handler and returns route
+// registration errors such as invalid or conflicting patterns.
+func (r *Router) BuildChecked() (http.Handler, error) {
+	if r == nil {
+		return nil, fmt.Errorf("route router is nil")
+	}
 	mux := http.NewServeMux()
 	for _, extra := range r.handlers {
 		var h http.Handler = extra.handler
@@ -283,13 +298,17 @@ func (r *Router) Build() http.Handler {
 		}
 		pattern := extra.pattern
 		handler := h
-		safeHandle(mux, normalizePattern(extra.pattern), http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if err := safeHandle(mux, normalizePattern(extra.pattern), http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 			server.MarkObservedRequest(req, "mount", pattern)
 			handler.ServeHTTP(w, req)
-		}))
+		})); err != nil {
+			return nil, err
+		}
 	}
 	for _, route := range r.routes {
-		r.registerRoute(mux, "", route, nil, nil, r.errorHandler, r.errorLayout)
+		if err := r.registerRoute(mux, "", route, nil, nil, r.errorHandler, r.errorLayout); err != nil {
+			return nil, err
+		}
 	}
 
 	root := http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
@@ -308,12 +327,18 @@ func (r *Router) Build() http.Handler {
 		r.renderNotFound(w, req)
 	})
 	if len(r.observers) > 0 {
-		return server.ObserveHandler(root, append([]server.RequestObserver(nil), r.observers...))
+		return server.ObserveHandler(root, append([]server.RequestObserver(nil), r.observers...)), nil
 	}
-	return root
+	return root, nil
 }
 
-func (r *Router) registerRoute(mux *http.ServeMux, prefix string, route Route, parentLayouts []LayoutFunc, parentMiddleware []Middleware, parentError ErrorHandler, parentErrorLayout LayoutFunc) {
+func buildErrorHandler(err error) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	})
+}
+
+func (r *Router) registerRoute(mux *http.ServeMux, prefix string, route Route, parentLayouts []LayoutFunc, parentMiddleware []Middleware, parentError ErrorHandler, parentErrorLayout LayoutFunc) error {
 	pattern := joinPattern(prefix, route.Pattern)
 	matchPattern := normalizePattern(pattern)
 
@@ -344,12 +369,17 @@ func (r *Router) registerRoute(mux *http.ServeMux, prefix string, route Route, p
 			h = middleware[i](h)
 		}
 
-		safeHandle(mux, matchPattern, h)
+		if err := safeHandle(mux, matchPattern, h); err != nil {
+			return err
+		}
 	}
 
 	for _, child := range route.Children {
-		r.registerRoute(mux, pattern, child, layouts, middleware, errorHandler, errorLayout)
+		if err := r.registerRoute(mux, pattern, child, layouts, middleware, errorHandler, errorLayout); err != nil {
+			return err
+		}
 	}
+	return nil
 }
 
 func (r *Router) buildHandler(pattern string, route Route, layouts []LayoutFunc, errorHandler ErrorHandler, errorLayout LayoutFunc) http.HandlerFunc {
@@ -740,19 +770,24 @@ func (w *interceptResponseWriter) commit(dst http.ResponseWriter) {
 	_, _ = dst.Write([]byte(w.body.String()))
 }
 
-// safeHandle registers a handler on the mux, recovering panics from
-// conflicting patterns and re-panicking with a clear diagnostic message.
+// safeHandle registers a handler on the mux, recovering mux failures as errors.
 // Go 1.22+'s ServeMux panics when two patterns overlap without one being
 // strictly more specific. This commonly happens when a page has actions
 // (e.g. POST /blog/__actions/{action}) and a sibling [slug] directory
 // creates a wildcard route (e.g. /blog/{slug}/...) that also matches
 // the __actions segment.
-func safeHandle(mux *http.ServeMux, pattern string, handler http.Handler) {
+func safeHandle(mux *http.ServeMux, pattern string, handler http.Handler) (err error) {
+	if mux == nil {
+		return fmt.Errorf("gosx: route registration failed for %q: mux is nil", pattern)
+	}
+	if handler == nil {
+		return fmt.Errorf("gosx: route registration failed for %q: handler is nil", pattern)
+	}
 	defer func() {
-		if r := recover(); r != nil {
-			msg := fmt.Sprint(r)
+		if recovered := recover(); recovered != nil {
+			msg := fmt.Sprint(recovered)
 			if strings.Contains(msg, "conflicts with") || strings.Contains(msg, "already registered") {
-				panic(fmt.Sprintf(
+				err = fmt.Errorf(
 					"gosx: route conflict registering %q: %s\n\n"+
 						"This typically happens when a page with server actions sits next to a [param]\n"+
 						"directory. The __actions sub-path collides with the wildcard segment.\n\n"+
@@ -760,10 +795,12 @@ func safeHandle(mux *http.ServeMux, pattern string, handler http.Handler) {
 						"level with a dynamic [param] segment. For example, nest the dynamic routes\n"+
 						"under a sub-directory (e.g. /blog/posts/[slug] instead of /blog/[slug]).",
 					pattern, msg,
-				))
+				)
+				return
 			}
-			panic(r)
+			err = fmt.Errorf("gosx: route registration failed for %q: %v", pattern, recovered)
 		}
 	}()
 	mux.Handle(pattern, handler)
+	return nil
 }

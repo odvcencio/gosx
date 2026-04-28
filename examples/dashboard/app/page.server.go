@@ -1,12 +1,14 @@
 package app
 
 import (
+	"log"
+
 	"github.com/odvcencio/gosx/route"
 	"github.com/odvcencio/gosx/server"
 )
 
 func init() {
-	route.MustRegisterFileModuleHere(route.FileModuleOptions{
+	if err := route.RegisterFileModuleHere(route.FileModuleOptions{
 		Load: func(ctx *route.RouteContext, page route.FilePage) (any, error) {
 			return map[string]string{
 				"users":   "1,247",
@@ -18,5 +20,7 @@ func init() {
 		Metadata: func(ctx *route.RouteContext, page route.FilePage, data any) (server.Metadata, error) {
 			return server.Metadata{Title: server.Title{Absolute: "Dashboard"}}, nil
 		},
-	})
+	}); err != nil {
+		log.Fatal(err)
+	}
 }

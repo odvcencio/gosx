@@ -33,7 +33,11 @@ func main() {
 	router.SetRevalidator(app.Revalidator())
 	app.EnableNavigation()
 	app.SetPublicDir(filepath.Join(root, "public"))
-	app.Mount("/", router.Build())
+	rootHandler, err := router.BuildChecked()
+	if err != nil {
+		log.Fatal(err)
+	}
+	app.Mount("/", rootHandler)
 
 	log.Printf("goetrope-watch prototype at http://localhost:8080")
 	log.Fatal(app.ListenAndServe(":8080"))

@@ -219,7 +219,11 @@ func main() {
 	mux.HandleFunc("GET /gosx/islands/Editor.json", noCacheJSON(editorJSON))
 	mux.HandleFunc("GET /gosx/islands/List.json", noCacheJSON(listJSON))
 
-	mux.Handle("/", router.Build())
+	rootHandler, err := router.BuildChecked()
+	if err != nil {
+		log.Fatal(err)
+	}
+	mux.Handle("/", rootHandler)
 
 	addr := ":3000"
 	fmt.Printf("GoSX dashboard at http://localhost%s\n", addr)

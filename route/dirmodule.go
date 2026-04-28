@@ -43,8 +43,10 @@ func DirModuleHere(opts DirModuleOptions) DirModule {
 
 // MustRegisterDirModuleHere infers the route directory from the calling file
 // and registers the module in the shared registry.
-func MustRegisterDirModuleHere(opts DirModuleOptions) {
-	MustRegisterDirModule(DirModuleFor(dirModuleSourceHere(1), opts))
+//
+// Deprecated: use RegisterDirModuleHere and handle the returned error.
+func MustRegisterDirModuleHere(opts DirModuleOptions) error {
+	return MustRegisterDirModule(DirModuleFor(dirModuleSourceHere(1), opts))
 }
 
 // DirModuleCaller infers the route directory from a caller higher in the stack.
@@ -57,11 +59,13 @@ func DirModuleCaller(skip int, opts DirModuleOptions) DirModule {
 
 // MustRegisterDirModuleCaller registers a directory module using a caller
 // higher in the stack.
-func MustRegisterDirModuleCaller(skip int, opts DirModuleOptions) {
+//
+// Deprecated: use RegisterDirModuleCaller and handle the returned error.
+func MustRegisterDirModuleCaller(skip int, opts DirModuleOptions) error {
 	if skip < 0 {
 		skip = 0
 	}
-	MustRegisterDirModule(DirModuleFor(dirModuleSourceHere(skip+1), opts))
+	return MustRegisterDirModule(DirModuleFor(dirModuleSourceHere(skip+1), opts))
 }
 
 // DirModuleRegistry stores directory-scoped route modules keyed by source path.
@@ -102,11 +106,11 @@ func RegisterDirModuleCaller(skip int, opts DirModuleOptions) error {
 	return RegisterDirModule(DirModuleFor(dirModuleSourceHere(skip+1), opts))
 }
 
-// MustRegisterDirModule adds a directory module to the shared registry or panics.
-func MustRegisterDirModule(module DirModule) {
-	if err := RegisterDirModule(module); err != nil {
-		panic(err)
-	}
+// MustRegisterDirModule adds a directory module to the shared registry.
+//
+// Deprecated: use RegisterDirModule and handle the returned error.
+func MustRegisterDirModule(module DirModule) error {
+	return RegisterDirModule(module)
 }
 
 // Register adds a directory module to the registry.
@@ -144,12 +148,11 @@ func (r *DirModuleRegistry) RegisterHere(opts DirModuleOptions) error {
 	return r.Register(DirModuleFor(dirModuleSourceHere(1), opts))
 }
 
-// MustRegisterHere registers a directory module inferred from the calling file
-// or panics on error.
-func (r *DirModuleRegistry) MustRegisterHere(opts DirModuleOptions) {
-	if err := r.Register(DirModuleFor(dirModuleSourceHere(1), opts)); err != nil {
-		panic(err)
-	}
+// MustRegisterHere registers a directory module inferred from the calling file.
+//
+// Deprecated: use RegisterHere and handle the returned error.
+func (r *DirModuleRegistry) MustRegisterHere(opts DirModuleOptions) error {
+	return r.Register(DirModuleFor(dirModuleSourceHere(1), opts))
 }
 
 // RegisterCaller registers a directory module using a caller higher in the
@@ -162,14 +165,14 @@ func (r *DirModuleRegistry) RegisterCaller(skip int, opts DirModuleOptions) erro
 }
 
 // MustRegisterCaller registers a directory module using a caller higher in the
-// stack or panics on error.
-func (r *DirModuleRegistry) MustRegisterCaller(skip int, opts DirModuleOptions) {
+// stack.
+//
+// Deprecated: use RegisterCaller and handle the returned error.
+func (r *DirModuleRegistry) MustRegisterCaller(skip int, opts DirModuleOptions) error {
 	if skip < 0 {
 		skip = 0
 	}
-	if err := r.Register(DirModuleFor(dirModuleSourceHere(skip+1), opts)); err != nil {
-		panic(err)
-	}
+	return r.Register(DirModuleFor(dirModuleSourceHere(skip+1), opts))
 }
 
 // Lookup finds a registered directory module by source path.

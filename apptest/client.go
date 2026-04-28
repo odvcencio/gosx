@@ -41,7 +41,11 @@ func NewRouterClient(router *route.Router) *Client {
 	if router == nil {
 		return &Client{}
 	}
-	return NewClient(router.Build())
+	handler, err := router.BuildChecked()
+	if err != nil {
+		return &Client{}
+	}
+	return NewClient(handler)
 }
 
 // Do executes a request while automatically applying and persisting cookies.

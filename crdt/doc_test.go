@@ -7,6 +7,19 @@ import (
 	crdtsync "github.com/odvcencio/gosx/crdt/sync"
 )
 
+func TestNewDocChecked(t *testing.T) {
+	doc, err := NewDocChecked()
+	if err != nil {
+		t.Fatalf("NewDocChecked: %v", err)
+	}
+	if doc == nil {
+		t.Fatal("expected document")
+	}
+	if doc.actorID == (ActorID{}) {
+		t.Fatal("expected non-zero actor id")
+	}
+}
+
 func TestDocPutCommitSaveLoad(t *testing.T) {
 	doc := NewDoc()
 	if err := doc.Put(Root, "title", StringValue("hello")); err != nil {

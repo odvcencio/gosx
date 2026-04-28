@@ -30,7 +30,10 @@ func main() {
 	}
 	port := getenv("PORT", "8080")
 	publicBase := strings.TrimRight(getenv("PUBLIC_URL", "http://localhost:"+port), "/")
-	sessions := session.MustNew(getenv("SESSION_SECRET", "gosx-docs-session-secret"), session.Options{})
+	sessions, err := session.New(getenv("SESSION_SECRET", "gosx-docs-session-secret"), session.Options{})
+	if err != nil {
+		log.Fatal(err)
+	}
 	authn := auth.New(sessions, auth.Options{LoginPath: "/docs/auth"})
 	docsapp.BindAuth(authn)
 	magicLinks := authn.MagicLinks(auth.MagicLinkOptions{
@@ -86,7 +89,11 @@ func main() {
 	app.Mount("/demos/collab/ws", collab.Hub)
 	app.Mount("/demos/fluid/ws", fluid.Hub)
 	app.Mount("/demos/livesim/ws", livesim.Hub)
-	app.Mount("/", router.Build())
+	rootHandler, err := router.BuildChecked()
+	if err != nil {
+		log.Fatal(err)
+	}
+	app.Mount("/", rootHandler)
 
 	log.Printf("gosx-docs at http://localhost:%s", port)
 	log.Fatal(app.ListenAndServe(":" + port))

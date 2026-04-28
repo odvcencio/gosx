@@ -396,7 +396,7 @@ func Styles() gosx.Node {
 func Registry() *components.Registry {
 	registry := components.NewRegistry()
 	for _, def := range definitions() {
-		registry.MustRegister(def)
+		_ = registry.Register(def)
 	}
 	return registry
 }

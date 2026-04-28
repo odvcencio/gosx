@@ -1,6 +1,9 @@
 package democtl
 
-import "math/rand"
+import (
+	"errors"
+	"math/rand"
+)
 
 // Identity is a display-name + accent-color pair suitable for presence UI.
 type Identity struct {
@@ -23,17 +26,27 @@ var colorPool = []string{
 	"#ec4899", "#14b8a6", "#f97316", "#84cc16", "#06b6d4",
 }
 
+// ErrNilRNG is returned when a caller asks for a deterministic identity without
+// providing a random source.
+var ErrNilRNG = errors.New("democtl: rng must not be nil")
+
 // Pick returns an Identity drawn from the fixed name+color pools using the
-// supplied *rand.Rand. Callers control seeding. Pick never blocks and never
-// panics on a non-nil rng. Passing nil panics (programmer error).
+// supplied *rand.Rand. Callers control seeding. Pick never blocks; passing nil
+// returns the zero Identity.
 func Pick(rng *rand.Rand) Identity {
+	identity, _ := PickChecked(rng)
+	return identity
+}
+
+// PickChecked returns a deterministic Identity or an error for invalid input.
+func PickChecked(rng *rand.Rand) (Identity, error) {
 	if rng == nil {
-		panic("democtl.Pick: rng must not be nil")
+		return Identity{}, ErrNilRNG
 	}
 	return Identity{
 		Name:  namePool[rng.Intn(len(namePool))],
 		Color: colorPool[rng.Intn(len(colorPool))],
-	}
+	}, nil
 }
 
 // NamePool returns a defensive copy of the internal name pool. Primarily for

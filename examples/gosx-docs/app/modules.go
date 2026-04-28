@@ -1,6 +1,8 @@
 package docs
 
 import (
+	"log"
+
 	"github.com/odvcencio/gosx/auth"
 	"github.com/odvcencio/gosx/route"
 	"github.com/odvcencio/gosx/server"
@@ -85,7 +87,9 @@ func RegisterDocsPage(title, description string, opts route.FileModuleOptions) {
 		}
 		return mergeDocsBindings(bound, bindings(ctx, page, data))
 	}
-	route.MustRegisterFileModuleCaller(1, opts)
+	if err := route.RegisterFileModuleCaller(1, opts); err != nil {
+		log.Fatal(err)
+	}
 }
 
 func RegisterStaticDocsPage(title, description string, opts route.FileModuleOptions) {
@@ -112,7 +116,9 @@ func RegisterStaticDocsPage(title, description string, opts route.FileModuleOpti
 		}
 		return mergeDocsBindings(bound, bindings(ctx, page, data))
 	}
-	route.MustRegisterFileModuleCaller(1, opts)
+	if err := route.RegisterFileModuleCaller(1, opts); err != nil {
+		log.Fatal(err)
+	}
 }
 
 func mergeDocsMetadata(base, extra server.Metadata) server.Metadata {

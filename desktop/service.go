@@ -74,7 +74,9 @@ func (a *App) Bind(name string, service any) (ServiceBinding, error) {
 		return ServiceBinding{}, fmt.Errorf("%w: service %q has no supported exported methods", ErrInvalidOptions, name)
 	}
 
-	a.registerServiceBridgeMethods()
+	if err := a.registerServiceBridgeMethods(); err != nil {
+		return ServiceBinding{}, err
+	}
 	a.serviceMu.Lock()
 	if a.services == nil {
 		a.services = make(map[string]ServiceBinding)
@@ -87,9 +89,12 @@ func (a *App) Bind(name string, service any) (ServiceBinding, error) {
 	binding := ServiceBinding{Name: name, Methods: serviceMethodInfos(methods)}
 	for _, method := range methods {
 		method := method
-		a.bridge.Register(method.info.Method, func(ctx *bridge.Context) error {
+		if err := a.bridge.Register(method.info.Method, func(ctx *bridge.Context) error {
 			return method.invoke(ctx)
-		})
+		}); err != nil {
+			a.serviceMu.Unlock()
+			return ServiceBinding{}, err
+		}
 	}
 	a.services[name] = binding
 	a.serviceMu.Unlock()
@@ -141,11 +146,11 @@ func (a *App) ServiceBindings() []ServiceBinding {
 	return bindings
 }
 
-func (a *App) registerServiceBridgeMethods() {
+func (a *App) registerServiceBridgeMethods() error {
 	if a == nil || a.bridge == nil {
-		return
+		return nil
 	}
-	a.bridge.Register(servicesListMethod, func(ctx *bridge.Context) error {
+	return a.bridge.Register(servicesListMethod, func(ctx *bridge.Context) error {
 		return ctx.Respond(a.ServiceBindings())
 	})
 }

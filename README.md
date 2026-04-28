@@ -130,7 +130,7 @@ app/
 Server modules wire Go logic to `.gsx` pages without touching the template:
 
 ```go
-route.MustRegisterFileModuleHere(route.FileModuleOptions{
+if err := route.RegisterFileModuleHere(route.FileModuleOptions{
     Load: func(ctx *route.RouteContext, page route.FilePage) (any, error) {
         post, err := db.GetPost(ctx.Param("slug"))
         if err != nil {
@@ -145,7 +145,9 @@ route.MustRegisterFileModuleHere(route.FileModuleOptions{
     Actions: route.FileActions{
         "comment": handleComment,
     },
-})
+}); err != nil {
+    log.Fatal(err)
+}
 ```
 
 ## Compilation Pipeline

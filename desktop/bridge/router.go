@@ -196,14 +196,18 @@ func NewRouter(send Sender, limit Limit) *Router {
 }
 
 // Register binds fn to a method name. Calling Register twice for the
-// same name replaces the prior binding. Panics if name is empty.
-func (r *Router) Register(name string, fn MethodFunc) {
+// same name replaces the prior binding.
+func (r *Router) Register(name string, fn MethodFunc) error {
 	if name == "" {
-		panic("bridge: Register name must be non-empty")
+		return fmt.Errorf("bridge: Register name must be non-empty")
+	}
+	if fn == nil {
+		return fmt.Errorf("bridge: Register method %q handler must not be nil", name)
 	}
 	r.mu.Lock()
 	r.methods[name] = fn
 	r.mu.Unlock()
+	return nil
 }
 
 // Unregister removes a previously registered method. No-op if not

@@ -296,26 +296,43 @@ func TestRegistryWithRoomPropagatesError(t *testing.T) {
 	}
 }
 
-// TestNewRegistryPanicsOnBadArgs verifies that NewRegistry panics for
-// non-positive capacity or idleTTL.
-func TestNewRegistryPanicsOnBadArgs(t *testing.T) {
+// TestNewRegistryCheckedRejectsBadArgs verifies that invalid construction
+// reports errors instead of crashing.
+func TestNewRegistryCheckedRejectsBadArgs(t *testing.T) {
 	t.Run("zero capacity", func(t *testing.T) {
-		defer func() {
-			if r := recover(); r == nil {
-				t.Error("expected panic for capacity=0")
-			}
-		}()
-		NewRegistry(0, time.Second)
+		if got := NewRegistry(0, time.Second); got != nil {
+			t.Fatalf("NewRegistry returned %+v, want nil", got)
+		}
+		if _, err := NewRegistryChecked(0, time.Second); !errors.Is(err, ErrInvalidRegistryConfig) {
+			t.Fatalf("NewRegistryChecked error = %v, want %v", err, ErrInvalidRegistryConfig)
+		}
 	})
 
 	t.Run("zero idleTTL", func(t *testing.T) {
-		defer func() {
-			if r := recover(); r == nil {
-				t.Error("expected panic for idleTTL=0")
-			}
-		}()
-		NewRegistry(1, 0)
+		if got := NewRegistry(1, 0); got != nil {
+			t.Fatalf("NewRegistry returned %+v, want nil", got)
+		}
+		if _, err := NewRegistryChecked(1, 0); !errors.Is(err, ErrInvalidRegistryConfig) {
+			t.Fatalf("NewRegistryChecked error = %v, want %v", err, ErrInvalidRegistryConfig)
+		}
 	})
+}
+
+func TestNilRegistryIsInert(t *testing.T) {
+	var reg *Registry
+	if _, err := reg.Join("room"); !errors.Is(err, ErrRegistryNotConfigured) {
+		t.Fatalf("Join error = %v, want %v", err, ErrRegistryNotConfigured)
+	}
+	if err := reg.WithRoom("room", func(*Room) error { return nil }); !errors.Is(err, ErrRegistryNotConfigured) {
+		t.Fatalf("WithRoom error = %v, want %v", err, ErrRegistryNotConfigured)
+	}
+	reg.Leave("room")
+	if got := reg.Sweep(); got != 0 {
+		t.Fatalf("Sweep = %d, want 0", got)
+	}
+	if got := reg.Len(); got != 0 {
+		t.Fatalf("Len = %d, want 0", got)
+	}
 }
 
 // TestRegistryConcurrent validates thread safety under the race detector.

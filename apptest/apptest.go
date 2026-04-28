@@ -180,5 +180,9 @@ func Router(t testing.TB, router *route.Router, req *http.Request) *Response {
 	if router == nil {
 		t.Fatal("apptest.Router requires a non-nil router")
 	}
-	return Do(t, router.Build(), req)
+	handler, err := router.BuildChecked()
+	if err != nil {
+		t.Fatalf("apptest.Router build failed: %v", err)
+	}
+	return Do(t, handler, req)
 }

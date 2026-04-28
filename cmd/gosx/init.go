@@ -206,7 +206,10 @@ func main() {
 
 	appName := getenv("APP_NAME", "My GoSX App")
 	port := getenv("PORT", "8080")
-	sessions := session.MustNew(getenv("SESSION_SECRET", "gosx-app-session-secret"), session.Options{})
+	sessions, err := session.New(getenv("SESSION_SECRET", "gosx-app-session-secret"), session.Options{})
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	router := route.NewRouter()
 	router.SetLayout(func(ctx *route.RouteContext, body gosx.Node) gosx.Node {
@@ -237,7 +240,11 @@ func main() {
 			"time":    time.Now().Format(time.RFC3339),
 		}, nil
 	})
-	app.Mount("/", router.Build())
+	rootHandler, err := router.BuildChecked()
+	if err != nil {
+		log.Fatal(err)
+	}
+	app.Mount("/", rootHandler)
 
 	log.Printf("%s listening on http://localhost:%s", appName, port)
 	log.Fatal(app.ListenAndServe(":" + port))
@@ -285,6 +292,7 @@ func appHomeServerTemplate() string {
 	return `package app
 
 import (
+	"log"
 	"os"
 	"strings"
 
@@ -295,7 +303,7 @@ import (
 )
 
 func init() {
-	route.MustRegisterFileModuleHere(route.FileModuleOptions{
+	if err := route.RegisterFileModuleHere(route.FileModuleOptions{
 		Load: func(ctx *route.RouteContext, page route.FilePage) (any, error) {
 			appName := os.Getenv("APP_NAME")
 			if appName == "" {
@@ -328,7 +336,9 @@ func init() {
 				return ctx.Success("Form submission completed without leaving the server-first model.", nil)
 			},
 		},
-	})
+	}); err != nil {
+		log.Fatal(err)
+	}
 }
 `
 }
@@ -424,6 +434,7 @@ func appStackServerTemplate() string {
 	return `package app
 
 import (
+	"log"
 	"os"
 
 	"github.com/odvcencio/gosx/route"
@@ -431,7 +442,7 @@ import (
 )
 
 func init() {
-	route.MustRegisterFileModuleHere(route.FileModuleOptions{
+	if err := route.RegisterFileModuleHere(route.FileModuleOptions{
 		Metadata: func(ctx *route.RouteContext, page route.FilePage, data any) (server.Metadata, error) {
 			appName := os.Getenv("APP_NAME")
 			if appName == "" {
@@ -442,7 +453,9 @@ func init() {
 				Description: "A second page rendered through the GoSX navigation runtime and declared through a file-route server module.",
 			}, nil
 		},
-	})
+	}); err != nil {
+		log.Fatal(err)
+	}
 }
 `
 }

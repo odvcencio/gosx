@@ -175,9 +175,13 @@ func New(options Options) (*App, error) {
 	app.bridge = bridge.NewRouter(func(raw string) error {
 		return impl.PostMessage(raw)
 	}, normalized.BridgeLimit)
-	app.registerServiceBridgeMethods()
+	if err := app.registerServiceBridgeMethods(); err != nil {
+		return nil, err
+	}
 	if normalized.NativeBridge {
-		app.registerNativeBridgeMethods()
+		if err := app.registerNativeBridgeMethods(); err != nil {
+			return nil, err
+		}
 	}
 
 	if err := app.addPreloadScript(bridge.BootstrapScript()); err != nil {
@@ -322,11 +326,18 @@ func (a *App) addPreloadScript(script string) error {
 	return a.impl.PrependBootstrapScript(combined)
 }
 
-func (a *App) registerNativeBridgeMethods() {
+func (a *App) registerNativeBridgeMethods() error {
 	if a == nil || a.bridge == nil {
-		return
+		return nil
 	}
-	a.bridge.Register("gosx.desktop.app.info", func(ctx *bridge.Context) error {
+	var firstErr error
+	register := func(name string, fn bridge.MethodFunc) {
+		if firstErr != nil {
+			return
+		}
+		firstErr = a.bridge.Register(name, fn)
+	}
+	register("gosx.desktop.app.info", func(ctx *bridge.Context) error {
 		opts := a.Options()
 		return ctx.Respond(map[string]any{
 			"title":          opts.Title,
@@ -341,25 +352,25 @@ func (a *App) registerNativeBridgeMethods() {
 			"nativeBridge":   opts.NativeBridge,
 		})
 	})
-	a.bridge.Register("gosx.desktop.app.close", func(ctx *bridge.Context) error {
+	register("gosx.desktop.app.close", func(ctx *bridge.Context) error {
 		if err := ctx.Respond(nil); err != nil {
 			return err
 		}
 		return a.Close()
 	})
-	a.bridge.Register("gosx.desktop.window.minimize", func(ctx *bridge.Context) error {
+	register("gosx.desktop.window.minimize", func(ctx *bridge.Context) error {
 		return bridgeVoid(ctx, a.Minimize())
 	})
-	a.bridge.Register("gosx.desktop.window.maximize", func(ctx *bridge.Context) error {
+	register("gosx.desktop.window.maximize", func(ctx *bridge.Context) error {
 		return bridgeVoid(ctx, a.Maximize())
 	})
-	a.bridge.Register("gosx.desktop.window.restore", func(ctx *bridge.Context) error {
+	register("gosx.desktop.window.restore", func(ctx *bridge.Context) error {
 		return bridgeVoid(ctx, a.Restore())
 	})
-	a.bridge.Register("gosx.desktop.window.focus", func(ctx *bridge.Context) error {
+	register("gosx.desktop.window.focus", func(ctx *bridge.Context) error {
 		return bridgeVoid(ctx, a.Focus())
 	})
-	a.bridge.Register("gosx.desktop.window.setTitle", func(ctx *bridge.Context) error {
+	register("gosx.desktop.window.setTitle", func(ctx *bridge.Context) error {
 		var req struct {
 			Title string `json:"title"`
 		}
@@ -368,7 +379,7 @@ func (a *App) registerNativeBridgeMethods() {
 		}
 		return bridgeVoid(ctx, a.SetTitle(req.Title))
 	})
-	a.bridge.Register("gosx.desktop.window.setFullscreen", func(ctx *bridge.Context) error {
+	register("gosx.desktop.window.setFullscreen", func(ctx *bridge.Context) error {
 		var req struct {
 			Enabled bool `json:"enabled"`
 		}
@@ -377,7 +388,7 @@ func (a *App) registerNativeBridgeMethods() {
 		}
 		return bridgeVoid(ctx, a.SetFullscreen(req.Enabled))
 	})
-	a.bridge.Register("gosx.desktop.window.setMinSize", func(ctx *bridge.Context) error {
+	register("gosx.desktop.window.setMinSize", func(ctx *bridge.Context) error {
 		var req struct {
 			Width  int `json:"width"`
 			Height int `json:"height"`
@@ -387,7 +398,7 @@ func (a *App) registerNativeBridgeMethods() {
 		}
 		return bridgeVoid(ctx, a.SetMinSize(req.Width, req.Height))
 	})
-	a.bridge.Register("gosx.desktop.window.setMaxSize", func(ctx *bridge.Context) error {
+	register("gosx.desktop.window.setMaxSize", func(ctx *bridge.Context) error {
 		var req struct {
 			Width  int `json:"width"`
 			Height int `json:"height"`
@@ -397,7 +408,7 @@ func (a *App) registerNativeBridgeMethods() {
 		}
 		return bridgeVoid(ctx, a.SetMaxSize(req.Width, req.Height))
 	})
-	a.bridge.Register("gosx.desktop.dialog.openFile", func(ctx *bridge.Context) error {
+	register("gosx.desktop.dialog.openFile", func(ctx *bridge.Context) error {
 		var opts OpenFileOptions
 		if err := ctx.Decode(&opts); err != nil {
 			return err
@@ -408,7 +419,7 @@ func (a *App) registerNativeBridgeMethods() {
 		}
 		return ctx.Respond(paths)
 	})
-	a.bridge.Register("gosx.desktop.dialog.saveFile", func(ctx *bridge.Context) error {
+	register("gosx.desktop.dialog.saveFile", func(ctx *bridge.Context) error {
 		var opts SaveFileOptions
 		if err := ctx.Decode(&opts); err != nil {
 			return err
@@ -419,14 +430,14 @@ func (a *App) registerNativeBridgeMethods() {
 		}
 		return ctx.Respond(path)
 	})
-	a.bridge.Register("gosx.desktop.clipboard.readText", func(ctx *bridge.Context) error {
+	register("gosx.desktop.clipboard.readText", func(ctx *bridge.Context) error {
 		text, err := a.Clipboard()
 		if err != nil {
 			return err
 		}
 		return ctx.Respond(text)
 	})
-	a.bridge.Register("gosx.desktop.clipboard.writeText", func(ctx *bridge.Context) error {
+	register("gosx.desktop.clipboard.writeText", func(ctx *bridge.Context) error {
 		var req struct {
 			Text string `json:"text"`
 		}
@@ -435,7 +446,7 @@ func (a *App) registerNativeBridgeMethods() {
 		}
 		return bridgeVoid(ctx, a.SetClipboard(req.Text))
 	})
-	a.bridge.Register("gosx.desktop.shell.openExternal", func(ctx *bridge.Context) error {
+	register("gosx.desktop.shell.openExternal", func(ctx *bridge.Context) error {
 		var req struct {
 			URL string `json:"url"`
 		}
@@ -444,13 +455,14 @@ func (a *App) registerNativeBridgeMethods() {
 		}
 		return bridgeVoid(ctx, a.OpenURL(req.URL))
 	})
-	a.bridge.Register("gosx.desktop.notification.show", func(ctx *bridge.Context) error {
+	register("gosx.desktop.notification.show", func(ctx *bridge.Context) error {
 		var notification Notification
 		if err := ctx.Decode(&notification); err != nil {
 			return err
 		}
 		return bridgeVoid(ctx, a.Notify(notification))
 	})
+	return firstErr
 }
 
 func bridgeVoid(ctx *bridge.Context, err error) error {

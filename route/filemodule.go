@@ -79,8 +79,10 @@ func FileModuleHere(opts FileModuleOptions) FileModule {
 
 // MustRegisterFileModuleHere infers the sibling page source path from the
 // calling file and registers the module in the shared registry.
-func MustRegisterFileModuleHere(opts FileModuleOptions) {
-	MustRegisterFileModule(FileModuleFor(fileModuleSourceHere(1), opts))
+//
+// Deprecated: use RegisterFileModuleHere and handle the returned error.
+func MustRegisterFileModuleHere(opts FileModuleOptions) error {
+	return MustRegisterFileModule(FileModuleFor(fileModuleSourceHere(1), opts))
 }
 
 // FileModuleCaller infers the sibling page source path from a caller higher in
@@ -96,11 +98,13 @@ func FileModuleCaller(skip int, opts FileModuleOptions) FileModule {
 // MustRegisterFileModuleCaller registers a file module using a caller higher in
 // the stack. `skip=0` means the immediate caller, `skip=1` skips one wrapper,
 // and so on.
-func MustRegisterFileModuleCaller(skip int, opts FileModuleOptions) {
+//
+// Deprecated: use RegisterFileModuleCaller and handle the returned error.
+func MustRegisterFileModuleCaller(skip int, opts FileModuleOptions) error {
 	if skip < 0 {
 		skip = 0
 	}
-	MustRegisterFileModule(FileModuleFor(fileModuleSourceHere(skip+1), opts))
+	return MustRegisterFileModule(FileModuleFor(fileModuleSourceHere(skip+1), opts))
 }
 
 // FileModuleRegistry stores file-route server modules keyed by source path.
@@ -141,11 +145,11 @@ func RegisterFileModuleCaller(skip int, opts FileModuleOptions) error {
 	return RegisterFileModule(FileModuleFor(fileModuleSourceHere(skip+1), opts))
 }
 
-// MustRegisterFileModule adds a file-route module to the shared registry or panics.
-func MustRegisterFileModule(module FileModule) {
-	if err := RegisterFileModule(module); err != nil {
-		panic(err)
-	}
+// MustRegisterFileModule adds a file-route module to the shared registry.
+//
+// Deprecated: use RegisterFileModule and handle the returned error.
+func MustRegisterFileModule(module FileModule) error {
+	return RegisterFileModule(module)
 }
 
 // Register adds a file-route module to the registry.
@@ -183,12 +187,11 @@ func (r *FileModuleRegistry) RegisterHere(opts FileModuleOptions) error {
 	return r.Register(FileModuleFor(fileModuleSourceHere(1), opts))
 }
 
-// MustRegisterHere registers a file module inferred from the calling file or
-// panics on error.
-func (r *FileModuleRegistry) MustRegisterHere(opts FileModuleOptions) {
-	if err := r.Register(FileModuleFor(fileModuleSourceHere(1), opts)); err != nil {
-		panic(err)
-	}
+// MustRegisterHere registers a file module inferred from the calling file.
+//
+// Deprecated: use RegisterHere and handle the returned error.
+func (r *FileModuleRegistry) MustRegisterHere(opts FileModuleOptions) error {
+	return r.Register(FileModuleFor(fileModuleSourceHere(1), opts))
 }
 
 // RegisterCaller registers a file module inferred from a caller higher in the
@@ -201,14 +204,14 @@ func (r *FileModuleRegistry) RegisterCaller(skip int, opts FileModuleOptions) er
 }
 
 // MustRegisterCaller registers a file module inferred from a caller higher in
-// the stack or panics on error.
-func (r *FileModuleRegistry) MustRegisterCaller(skip int, opts FileModuleOptions) {
+// the stack.
+//
+// Deprecated: use RegisterCaller and handle the returned error.
+func (r *FileModuleRegistry) MustRegisterCaller(skip int, opts FileModuleOptions) error {
 	if skip < 0 {
 		skip = 0
 	}
-	if err := r.Register(FileModuleFor(fileModuleSourceHere(skip+1), opts)); err != nil {
-		panic(err)
-	}
+	return r.Register(FileModuleFor(fileModuleSourceHere(skip+1), opts))
 }
 
 // Lookup finds a registered file-route module by source path.

@@ -328,14 +328,18 @@ func TestRouterUnregister(t *testing.T) {
 	}
 }
 
-func TestRouterRegisterEmptyNamePanics(t *testing.T) {
-	defer func() {
-		if r := recover(); r == nil {
-			t.Fatal("expected panic on empty method name")
-		}
-	}()
+func TestRouterRegisterEmptyNameFails(t *testing.T) {
 	r := NewRouter(func(string) error { return nil }, Limit{})
-	r.Register("", func(*Context) error { return nil })
+	if err := r.Register("", func(*Context) error { return nil }); err == nil {
+		t.Fatal("expected error on empty method name")
+	}
+}
+
+func TestRouterRegisterNilHandlerFails(t *testing.T) {
+	r := NewRouter(func(string) error { return nil }, Limit{})
+	if err := r.Register("empty", nil); err == nil {
+		t.Fatal("expected error on nil handler")
+	}
 }
 
 func TestLimitWithDefaults(t *testing.T) {

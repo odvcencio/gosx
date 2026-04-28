@@ -46,6 +46,31 @@ func TestRouterBasic(t *testing.T) {
 	}
 }
 
+func TestRouterBuildCheckedReturnsRegistrationError(t *testing.T) {
+	router := NewRouter()
+	handler := http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})
+	router.Handle("GET /{tenant}/settings", handler)
+	router.Handle("GET /admin/{page}", handler)
+
+	built, err := router.BuildChecked()
+	if err == nil {
+		t.Fatal("expected route registration conflict")
+	}
+	if built != nil {
+		t.Fatal("expected nil handler on registration error")
+	}
+	if !strings.Contains(err.Error(), "route conflict") {
+		t.Fatalf("expected route conflict message, got %v", err)
+	}
+
+	req := httptest.NewRequest("GET", "/admin/settings", nil)
+	w := httptest.NewRecorder()
+	router.Build().ServeHTTP(w, req)
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("Build fallback status = %d, want %d", w.Code, http.StatusInternalServerError)
+	}
+}
+
 func TestRouterDataLoader(t *testing.T) {
 	router := NewRouter()
 	router.SetLayout(func(ctx *RouteContext, body gosx.Node) gosx.Node {

@@ -74,11 +74,11 @@ func (r *Registry) RegisterFunc(name string, render RenderFunc, meta Metadata) e
 	return r.Register(Definition{Name: name, Render: render, Metadata: meta})
 }
 
-// MustRegister adds a component definition or panics.
-func (r *Registry) MustRegister(def Definition) {
-	if err := r.Register(def); err != nil {
-		panic(err)
-	}
+// MustRegister adds a component definition.
+//
+// Deprecated: use Register and handle the returned error.
+func (r *Registry) MustRegister(def Definition) error {
+	return r.Register(def)
 }
 
 // RegisterLibrary imports another registry under an optional namespace prefix.

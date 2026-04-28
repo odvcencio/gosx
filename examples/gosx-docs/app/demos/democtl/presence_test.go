@@ -68,14 +68,14 @@ func TestPickDistribution(t *testing.T) {
 	}
 }
 
-// TestPickPanicsOnNilRng confirms that Pick(nil) panics.
-func TestPickPanicsOnNilRng(t *testing.T) {
-	defer func() {
-		if r := recover(); r == nil {
-			t.Fatal("expected Pick(nil) to panic, but it did not")
-		}
-	}()
-	Pick(nil) //nolint:staticcheck // intentional nil to test panic
+// TestPickCheckedRejectsNilRNG confirms that callers can validate nil input.
+func TestPickCheckedRejectsNilRNG(t *testing.T) {
+	if got := Pick(nil); got != (Identity{}) {
+		t.Fatalf("Pick(nil) = %+v, want zero identity", got)
+	}
+	if _, err := PickChecked(nil); err != ErrNilRNG {
+		t.Fatalf("PickChecked(nil) error = %v, want %v", err, ErrNilRNG)
+	}
 }
 
 // TestNamePoolIsDefensiveCopy verifies that mutating the returned slice does
