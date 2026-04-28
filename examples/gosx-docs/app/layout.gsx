@@ -70,7 +70,7 @@ func Layout() Node {
 				</div>
 				<div class="site-footer__a11y">
 					<p>
-						GoSX is committed to accessibility. This site targets WCAG 2.2 AA compliance.
+						GoSX accessibility is backed by semantic landmarks, named controls, reduced-motion defaults, and CI checks for duplicate IDs and broken ARIA references.
 					</p>
 				</div>
 			</div>

@@ -85,3 +85,29 @@ func TestRaycastGraphUsesGroupTransforms(t *testing.T) {
 		t.Fatalf("expected world-space hit point to include group transform, got %#v", hit.Point)
 	}
 }
+
+func TestSceneIRPropagatesDeepHierarchyTransforms(t *testing.T) {
+	var node Node = Mesh{
+		ID:       "leaf",
+		Geometry: CubeGeometry{Size: 1},
+		Position: Vec3(1, 0, -3),
+	}
+	for i := 0; i < 1000; i++ {
+		node = Group{
+			Position: Vec3(0.001, 0, 0),
+			Children: []Node{node},
+		}
+	}
+
+	ir := NewGraph(node).SceneIR()
+	if len(ir.Objects) != 1 {
+		t.Fatalf("objects = %d, want 1", len(ir.Objects))
+	}
+	obj := ir.Objects[0]
+	if obj.ID != "leaf" {
+		t.Fatalf("object ID = %q, want leaf", obj.ID)
+	}
+	if math.Abs(obj.X-2) > 1e-9 || math.Abs(obj.Z+3) > 1e-9 {
+		t.Fatalf("deep hierarchy world transform = (%v,%v,%v), want near (2,0,-3)", obj.X, obj.Y, obj.Z)
+	}
+}

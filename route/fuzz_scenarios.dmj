@@ -1,0 +1,99 @@
+// Router scenario probes. Compiled by danmuji into
+// route/fuzz_scenarios_danmuji_test.go.
+//
+// Rebuild after editing:
+//     danmuji build route/fuzz_scenarios.dmj
+
+package route
+
+import (
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"strings"
+	"testing"
+
+	"github.com/odvcencio/gosx"
+)
+
+unit "router specificity danmuji scenarios" {
+	router := NewRouter()
+	router.Add(
+		Route{
+			Pattern: "/docs/settings",
+			Handler: func(ctx *RouteContext) gosx.Node {
+				return gosx.Text("static")
+			},
+		},
+		Route{
+			Pattern: "/docs/{slug}",
+			Handler: func(ctx *RouteContext) gosx.Node {
+				return gosx.Text("dynamic:" + ctx.Param("slug"))
+			},
+		},
+		Route{
+			Pattern: "/docs/{path...}",
+			Handler: func(ctx *RouteContext) gosx.Node {
+				return gosx.Text("catch:" + ctx.Param("path"))
+			},
+		},
+	)
+	handler := router.Build()
+
+	each "path" {
+		defaults { body: "static" }
+		{ name: "static route wins", path: "/docs/settings" }
+		{ name: "dynamic route captures one segment", path: "/docs/routing", body: "dynamic:routing" }
+		{ name: "catch all captures nested tail", path: "/docs/guides/routing/nested", body: "catch:guides/routing/nested" }
+	} do {
+		req := httptest.NewRequest(http.MethodGet, scenario.path.(string), nil)
+		res := httptest.NewRecorder()
+		handler.ServeHTTP(res, req)
+
+		then "returns the expected route body" {
+			if res.Body.String() != scenario.body.(string) {
+				t.Fatalf("body = %q, want %q", res.Body.String(), scenario.body)
+			}
+		}
+	}
+}
+
+func FuzzDanmujiRouterHandlesArbitraryEscapedPaths(f *testing.F) {
+	f.Add("")
+	f.Add("/docs/settings")
+	f.Add("/docs/guides/routing/nested")
+	f.Fuzz(func(t *testing.T, rawPath string) {
+	if len(rawPath) > 2048 {
+		return
+	}
+	router := NewRouter()
+	router.Add(
+		Route{
+			Pattern: "/docs/settings",
+			Handler: func(ctx *RouteContext) gosx.Node {
+				return gosx.Text("static")
+			},
+		},
+		Route{
+			Pattern: "/docs/{slug}",
+			Handler: func(ctx *RouteContext) gosx.Node {
+				return gosx.Text("dynamic")
+			},
+		},
+		Route{
+			Pattern: "/docs/{path...}",
+			Handler: func(ctx *RouteContext) gosx.Node {
+				return gosx.Text("catch")
+			},
+		},
+	)
+		requestPath := "/" + url.PathEscape(strings.TrimLeft(rawPath, "/"))
+		parsed, err := url.ParseRequestURI(requestPath)
+		if err != nil {
+			return
+		}
+		req := &http.Request{Method: http.MethodGet, URL: parsed, Header: make(http.Header)}
+	res := httptest.NewRecorder()
+	router.Build().ServeHTTP(res, req)
+	})
+}

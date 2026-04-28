@@ -178,6 +178,48 @@ func TestRouterMultipleRoutes(t *testing.T) {
 	}
 }
 
+func TestRouterSpecificityAcrossStaticDynamicAndCatchAll(t *testing.T) {
+	router := NewRouter()
+	router.Add(
+		Route{
+			Pattern: "/docs/settings",
+			Handler: func(ctx *RouteContext) gosx.Node {
+				return gosx.Text("static")
+			},
+		},
+		Route{
+			Pattern: "/docs/{slug}",
+			Handler: func(ctx *RouteContext) gosx.Node {
+				return gosx.Text("dynamic:" + ctx.Param("slug"))
+			},
+		},
+		Route{
+			Pattern: "/docs/{path...}",
+			Handler: func(ctx *RouteContext) gosx.Node {
+				return gosx.Text("catch:" + ctx.Param("path"))
+			},
+		},
+	)
+	handler := router.Build()
+
+	cases := []struct {
+		path string
+		want string
+	}{
+		{"/docs/settings", "static"},
+		{"/docs/routing", "dynamic:routing"},
+		{"/docs/guides/routing/nested", "catch:guides/routing/nested"},
+	}
+	for _, tc := range cases {
+		req := httptest.NewRequest(http.MethodGet, tc.path, nil)
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, req)
+		if got := w.Body.String(); got != tc.want {
+			t.Fatalf("%s: body = %q, want %q", tc.path, got, tc.want)
+		}
+	}
+}
+
 func TestRouterCustomNotFoundWinsOverRootRoute(t *testing.T) {
 	router := NewRouter()
 	router.Add(Route{

@@ -23,7 +23,7 @@ func init() {
 						},
 						{
 							"headline": "Accessible by design.",
-							"body":     "WCAG 2.2 AA from the ground up. Server-measured text, reduced-motion support, semantic HTML, keyboard navigation.",
+							"body":     "Semantic landmarks, named controls, reduced-motion support, server-measured text, and CI checks for duplicate IDs and ARIA references.",
 						},
 					},
 					"proofPoints": []map[string]string{

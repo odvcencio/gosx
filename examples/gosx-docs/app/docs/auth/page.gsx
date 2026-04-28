@@ -119,7 +119,7 @@ func Page() Node {
 			<div class="callout">
 				<strong>Note</strong>
 				<p>
-					OAuth provider login is deferred to v2. The same session and callback infrastructure will carry it when it lands.
+					OAuth provider login is built on the same session and callback infrastructure, with GitHub and Google presets plus custom provider/resolver hooks.
 				</p>
 			</div>
 		</section>

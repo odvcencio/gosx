@@ -77,8 +77,10 @@ type InputProps struct {
 	Type        string
 	Value       string
 	Placeholder string
+	DescribedBy string
 	Required    bool
 	Disabled    bool
+	Invalid     bool
 }
 
 // TextareaProps configures Textarea.
@@ -246,12 +248,31 @@ func Field(props FieldProps, control gosx.Node) gosx.Node {
 	}
 	children = append(children, control)
 	if props.Help != "" {
-		children = append(children, gosx.El("p", gosx.Attrs(gosx.Attr("class", "gosx-ui-field-help")), gosx.Text(props.Help)))
+		attrs := gosx.Attrs(gosx.Attr("class", "gosx-ui-field-help"))
+		appendAttrIf(&attrs, "id", fieldHelpID(id))
+		children = append(children, gosx.El("p", attrs, gosx.Text(props.Help)))
 	}
 	if props.Error != "" {
-		children = append(children, gosx.El("p", gosx.Attrs(gosx.Attr("class", "gosx-ui-field-error"), gosx.Attr("role", "alert")), gosx.Text(props.Error)))
+		attrs := gosx.Attrs(gosx.Attr("class", "gosx-ui-field-error"), gosx.Attr("role", "alert"))
+		appendAttrIf(&attrs, "id", fieldErrorID(id))
+		children = append(children, gosx.El("p", attrs, gosx.Text(props.Error)))
 	}
 	return Stack(LayoutProps{BaseProps: props.BaseProps, Gap: "xs"}, children...)
+}
+
+// FieldInput renders a labeled input with generated accessible description
+// links for help and error text.
+func FieldInput(field FieldProps, input InputProps) gosx.Node {
+	if input.ID == "" {
+		input.ID = field.ID
+	}
+	if input.Name == "" {
+		input.Name = input.ID
+	}
+	input.Required = input.Required || field.Required
+	input.Invalid = input.Invalid || field.Error != ""
+	input.DescribedBy = mergeIDRefs(input.DescribedBy, fieldDescriptionIDs(field)...)
+	return Field(field, Input(input))
 }
 
 // Input renders an input control.
@@ -336,7 +357,9 @@ func Tabs(props TabsProps) gosx.Node {
 		attrs = append(attrs, gosx.Attr("type", "button"))
 		items = append(items, gosx.El("button", attrs, gosx.Text(item.Label)))
 	}
-	return gosx.El("div", nodeArgs(baseAttrs(props.BaseProps, "gosx-ui-tabs"), items...)...)
+	attrs := baseAttrs(props.BaseProps, "gosx-ui-tabs")
+	attrs = append(attrs, gosx.Attr("role", "tablist"))
+	return gosx.El("div", nodeArgs(attrs, items...)...)
 }
 
 // Table renders a simple data table.
@@ -425,6 +448,9 @@ func definitions() []components.Definition {
 		definition("Field", meta("Form field wrapper", "form"), func(props components.Props, children ...gosx.Node) gosx.Node {
 			return Field(fieldProps(props), gosx.Fragment(children...))
 		}),
+		definition("FieldInput", meta("Labeled input with accessible help/error wiring", "form"), func(props components.Props, children ...gosx.Node) gosx.Node {
+			return FieldInput(fieldProps(props), inputProps(props))
+		}),
 		definition("Input", meta("Text input control", "form"), func(props components.Props, children ...gosx.Node) gosx.Node {
 			return Input(inputProps(props))
 		}),
@@ -491,6 +517,10 @@ func formAttrs(props InputProps, className string) gosx.AttrList {
 	appendAttrIf(&attrs, "name", props.Name)
 	appendAttrIf(&attrs, "value", props.Value)
 	appendAttrIf(&attrs, "placeholder", props.Placeholder)
+	appendAttrIf(&attrs, "aria-describedby", props.DescribedBy)
+	if props.Invalid {
+		attrs = append(attrs, gosx.Attr("aria-invalid", "true"))
+	}
 	if props.Required {
 		attrs = append(attrs, gosx.BoolAttr("required"))
 	}
@@ -505,6 +535,49 @@ func appendAttrIf(attrs *gosx.AttrList, name, value string) {
 		return
 	}
 	*attrs = append(*attrs, gosx.Attr(name, value))
+}
+
+func fieldDescriptionIDs(props FieldProps) []string {
+	id := strings.TrimSpace(props.ID)
+	if id == "" {
+		return nil
+	}
+	ids := []string{}
+	if strings.TrimSpace(props.Help) != "" {
+		ids = append(ids, fieldHelpID(id))
+	}
+	if strings.TrimSpace(props.Error) != "" {
+		ids = append(ids, fieldErrorID(id))
+	}
+	return ids
+}
+
+func fieldHelpID(id string) string {
+	if strings.TrimSpace(id) == "" {
+		return ""
+	}
+	return id + "-help"
+}
+
+func fieldErrorID(id string) string {
+	if strings.TrimSpace(id) == "" {
+		return ""
+	}
+	return id + "-error"
+}
+
+func mergeIDRefs(existing string, ids ...string) string {
+	seen := make(map[string]bool)
+	out := []string{}
+	for _, raw := range append(strings.Fields(existing), ids...) {
+		id := strings.TrimSpace(raw)
+		if id == "" || seen[id] {
+			continue
+		}
+		seen[id] = true
+		out = append(out, id)
+	}
+	return strings.Join(out, " ")
 }
 
 func elementTag(value, fallback string) string {
@@ -660,8 +733,13 @@ func inputProps(props components.Props) InputProps {
 		Type:        stringProp(props, "type", "Type"),
 		Value:       stringProp(props, "value", "Value"),
 		Placeholder: stringProp(props, "placeholder", "Placeholder"),
-		Required:    boolProp(props, "required", "Required"),
-		Disabled:    boolProp(props, "disabled", "Disabled"),
+		DescribedBy: firstNonEmpty(
+			stringProp(props, "describedBy", "DescribedBy"),
+			stringProp(props, "aria-describedby", "AriaDescribedBy"),
+		),
+		Required: boolProp(props, "required", "Required"),
+		Disabled: boolProp(props, "disabled", "Disabled"),
+		Invalid:  boolProp(props, "invalid", "Invalid", "aria-invalid", "AriaInvalid"),
 	}
 }
 

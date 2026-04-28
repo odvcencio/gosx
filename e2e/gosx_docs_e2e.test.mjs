@@ -96,6 +96,52 @@ test("gosx dev serves the redesigned docs site", { timeout: 90000 }, async () =>
   }
 });
 
+test("docs site preserves baseline accessibility invariants", { timeout: 90000 }, async () => {
+  const res = await page.goto(`${baseURL}/docs/forms`, { waitUntil: "domcontentloaded" });
+  assert.ok(res.ok(), `/docs/forms returned ${res.status()}\n\nLogs:\n${logs}`);
+
+  const report = await page.evaluate(() => {
+    const ids = new Map();
+    for (const el of document.querySelectorAll("[id]")) {
+      const id = el.getAttribute("id");
+      ids.set(id, (ids.get(id) || 0) + 1);
+    }
+    const duplicateIds = [...ids.entries()].filter(([, count]) => count > 1).map(([id]) => id);
+    const unnamedControls = [...document.querySelectorAll("button, a[href], input, select, textarea")]
+      .filter((el) => {
+        if (el.matches("input[type=hidden]")) return false;
+        const labelledBy = el.getAttribute("aria-labelledby");
+        const label = el.id ? document.querySelector(`label[for="${CSS.escape(el.id)}"]`) : null;
+        const name = [
+          el.getAttribute("aria-label"),
+          labelledBy && labelledBy.split(/\s+/).map((id) => document.getElementById(id)?.textContent || "").join(" "),
+          label?.textContent,
+          el.textContent,
+          el.getAttribute("title"),
+          el.getAttribute("placeholder"),
+        ].filter(Boolean).join(" ").trim();
+        return name === "";
+      })
+      .map((el) => el.outerHTML.slice(0, 160));
+    const brokenDescriptions = [...document.querySelectorAll("[aria-describedby]")]
+      .filter((el) => el.getAttribute("aria-describedby").split(/\s+/).some((id) => id && !document.getElementById(id)))
+      .map((el) => el.outerHTML.slice(0, 160));
+    return {
+      hasMain: !!document.querySelector("main#main-content"),
+      hasContentInfo: !!document.querySelector('[role="contentinfo"]'),
+      duplicateIds,
+      unnamedControls,
+      brokenDescriptions,
+    };
+  });
+
+  assert.equal(report.hasMain, true, "expected main#main-content landmark");
+  assert.equal(report.hasContentInfo, true, "expected contentinfo landmark");
+  assert.deepEqual(report.duplicateIds, [], `duplicate ids: ${report.duplicateIds.join(", ")}`);
+  assert.deepEqual(report.unnamedControls, [], `unnamed controls: ${report.unnamedControls.join("\n")}`);
+  assert.deepEqual(report.brokenDescriptions, [], `broken aria-describedby refs: ${report.brokenDescriptions.join("\n")}`);
+});
+
 async function waitForHealthy(url, timeoutMs) {
   const deadline = Date.now() + timeoutMs;
   let lastError = "";

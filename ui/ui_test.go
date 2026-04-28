@@ -34,8 +34,50 @@ func TestFieldComposesLabelControlAndMessages(t *testing.T) {
 	for _, want := range []string{
 		`<label class="gosx-ui-field-label" for="email">Email<span aria-hidden="true"> *</span></label>`,
 		`<input class="gosx-ui gosx-ui-input" id="email" name="email" type="email" />`,
-		`<p class="gosx-ui-field-help">Used for billing.</p>`,
-		`<p class="gosx-ui-field-error" role="alert">Required.</p>`,
+		`<p class="gosx-ui-field-help" id="email-help">Used for billing.</p>`,
+		`<p class="gosx-ui-field-error" role="alert" id="email-error">Required.</p>`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Fatalf("expected %q in %q", want, html)
+		}
+	}
+}
+
+func TestFieldInputWiresAccessibleDescriptions(t *testing.T) {
+	node := FieldInput(FieldProps{
+		ID:       "email",
+		Label:    "Email",
+		Help:     "Used for billing.",
+		Error:    "Required.",
+		Required: true,
+	}, InputProps{Type: "email", DescribedBy: "external-note"})
+	html := gosx.RenderHTML(node)
+	for _, want := range []string{
+		`<input class="gosx-ui gosx-ui-input" id="email" name="email" aria-describedby="external-note email-help email-error" aria-invalid="true" required type="email" />`,
+		`<p class="gosx-ui-field-help" id="email-help">Used for billing.</p>`,
+		`<p class="gosx-ui-field-error" role="alert" id="email-error">Required.</p>`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Fatalf("expected %q in %q", want, html)
+		}
+	}
+}
+
+func TestTabsExposeTabListSemantics(t *testing.T) {
+	node := Tabs(TabsProps{
+		Active: "settings",
+		Items: []TabItem{
+			{ID: "overview", Label: "Overview", Href: "/overview"},
+			{ID: "settings", Label: "Settings"},
+			{ID: "disabled", Label: "Disabled", Disabled: true},
+		},
+	})
+	html := gosx.RenderHTML(node)
+	for _, want := range []string{
+		`role="tablist"`,
+		`href="/overview">Overview</a>`,
+		`role="tab" aria-selected="true" type="button">Settings</button>`,
+		`aria-disabled="true" tabindex="-1"`,
 	} {
 		if !strings.Contains(html, want) {
 			t.Fatalf("expected %q in %q", want, html)
@@ -52,7 +94,7 @@ func TestStylesReturnsDefaultStylesheet(t *testing.T) {
 
 func TestRegistrySurfacesCorePrimitives(t *testing.T) {
 	registry := Registry()
-	for _, name := range []string{"Box", "Stack", "Heading", "Button", "Card", "Field", "Select", "Tabs", "Table", "Styles"} {
+	for _, name := range []string{"Box", "Stack", "Heading", "Button", "Card", "Field", "FieldInput", "Select", "Tabs", "Table", "Styles"} {
 		if _, ok := registry.Lookup(name); !ok {
 			t.Fatalf("expected %s in registry; got %#v", name, sortedDefinitionNames(registry))
 		}
