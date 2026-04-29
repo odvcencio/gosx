@@ -133,4 +133,8 @@ func TestSidecarCSSExists(t *testing.T) {
 	if err != nil {
 		t.Fatal("counter.css missing — sidecar CSS not demonstrated")
 	}
+	_, err = os.Stat("../examples/counter/main.go")
+	if err != nil {
+		t.Fatal("counter main.go missing — example should be runnable")
+	}
 }
