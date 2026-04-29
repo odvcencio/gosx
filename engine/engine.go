@@ -385,29 +385,38 @@ func webGPUCapabilitySupported(cap Capability) bool {
 	if webGPULimitCapabilitySupported(cap) {
 		return true
 	}
-	switch cap {
-	case CapWebGPUTimestampQuery,
-		CapWebGPUIndirectFirstInstance,
-		CapWebGPUShaderF16,
-		CapWebGPUTextureCompressionBC,
-		CapWebGPUTextureCompressionETC2,
-		CapWebGPUTextureCompressionASTC,
-		CapWebGPUSubgroups,
-		CapWebGPUTextureCompressionBCSliced3D,
-		CapWebGPUTextureCompressionASTCSliced3D,
-		CapWebGPUDepthClipControl,
-		CapWebGPUDepth32FloatStencil8,
-		CapWebGPUFloat32Filterable,
-		CapWebGPUFloat32Blendable,
-		CapWebGPURG11B10UFloatRenderable,
-		CapWebGPUBGRA8UnormStorage,
-		CapWebGPUClipDistances,
-		CapWebGPUDualSourceBlending,
-		CapWebGPUSubgroupsF16:
+	if webGPUFeatureCapabilitySupported(cap) {
 		return true
-	default:
+	}
+	return false
+}
+
+func webGPUFeatureCapabilitySupported(cap Capability) bool {
+	value := string(cap)
+	for _, prefix := range []string{
+		"webgpu-feature:",
+		"webgpu:",
+	} {
+		if !strings.HasPrefix(value, prefix) {
+			continue
+		}
+		feature := strings.TrimSpace(strings.TrimPrefix(value, prefix))
+		if feature == "" || strings.HasPrefix(feature, "limit:") || strings.HasPrefix(feature, "device-limit:") || strings.HasPrefix(feature, "adapter-limit:") {
+			return false
+		}
+		return validWebGPUFeatureName(feature)
+	}
+	return false
+}
+
+func validWebGPUFeatureName(feature string) bool {
+	for _, ch := range feature {
+		if (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') || ch == '-' {
+			continue
+		}
 		return false
 	}
+	return true
 }
 
 func webGPULimitCapabilitySupported(cap Capability) bool {

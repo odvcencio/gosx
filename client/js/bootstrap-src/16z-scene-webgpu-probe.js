@@ -33,6 +33,7 @@
   var _webgpuProbePromise = Promise.resolve(false);
   var _webgpuSupportedFeatures = [];
   var _webgpuRequestedFeatures = [];
+  var _webgpuRequiredFeatures = [];
   var _webgpuRequiredLimits = {};
   var _webgpuAdapterLimits = {};
   var _webgpuDeviceLimits = {};
@@ -137,6 +138,26 @@
     return out;
   }
 
+  function sceneWebGPUMergeFeatureLists() {
+    var out = [];
+    var seen = {};
+    for (var listIndex = 0; listIndex < arguments.length; listIndex++) {
+      var list = arguments[listIndex];
+      if (!Array.isArray(list)) {
+        continue;
+      }
+      for (var i = 0; i < list.length; i++) {
+        var feature = sceneWebGPUNormalizeFeatureName(list[i]);
+        if (!feature || seen[feature]) {
+          continue;
+        }
+        seen[feature] = true;
+        out.push(feature);
+      }
+    }
+    return out;
+  }
+
   function sceneWebGPULimitsSnapshot(limits) {
     var out = {};
     if (!limits) return out;
@@ -174,6 +195,7 @@
       deviceAvailable: _webgpuDeviceProbe !== false && _webgpuDeviceProbe !== null,
       supportedFeatures: _webgpuSupportedFeatures.slice(),
       requestedFeatures: _webgpuRequestedFeatures.slice(),
+      requiredFeatures: _webgpuRequiredFeatures.slice(),
       deviceFeatures: sceneWebGPUFeatureList(_webgpuDeviceProbe && _webgpuDeviceProbe.features),
       requiredLimits: Object.assign({}, _webgpuRequiredLimits),
       adapterLimits: Object.assign({}, _webgpuAdapterLimits),
@@ -217,6 +239,7 @@
         ready: _webgpuAdapterReady,
         supportedFeatures: _webgpuSupportedFeatures.slice(),
         requestedFeatures: _webgpuRequestedFeatures.slice(),
+        requiredFeatures: _webgpuRequiredFeatures.slice(),
         requiredLimits: Object.assign({}, _webgpuRequiredLimits),
         limits: Object.assign({}, _webgpuAdapterLimits),
         adapterInfo: Object.assign({}, _webgpuAdapterInfo),
@@ -294,6 +317,57 @@
       }
     }
     return limits;
+  }
+
+  function sceneWebGPURequiredFeaturesFromManifest(adapter) {
+    var manifest = sceneWebGPUManifest();
+    var out = [];
+    var seen = {};
+    var groups = [
+      manifest && Array.isArray(manifest.engines) ? manifest.engines : [],
+      manifest && Array.isArray(manifest.computeIslands) ? manifest.computeIslands : [],
+      manifest && Array.isArray(manifest.islands) ? manifest.islands : [],
+    ];
+    for (var groupIndex = 0; groupIndex < groups.length; groupIndex++) {
+      var group = groups[groupIndex];
+      for (var i = 0; i < group.length; i++) {
+        var entry = group[i];
+        var required = entry && Array.isArray(entry.requiredCapabilities) ? entry.requiredCapabilities : [];
+        for (var j = 0; j < required.length; j++) {
+          var feature = sceneWebGPUFeatureFromCapability(required[j]);
+          if (!feature || seen[feature] || !sceneWebGPUFeatureSupported(adapter, feature)) {
+            continue;
+          }
+          seen[feature] = true;
+          out.push(feature);
+        }
+      }
+    }
+    out.sort();
+    return out;
+  }
+
+  function sceneWebGPUFeatureFromCapability(capability) {
+    var raw = String(capability || "").trim();
+    var lower = raw.toLowerCase();
+    var feature = "";
+    if (lower.indexOf("webgpu-feature:") === 0) {
+      feature = raw.slice("webgpu-feature:".length);
+    } else if (lower.indexOf("webgpu:") === 0) {
+      feature = raw.slice("webgpu:".length);
+    } else {
+      return "";
+    }
+    feature = sceneWebGPUNormalizeFeatureName(feature);
+    if (!feature || feature === "webgpu" || feature.indexOf("limit:") === 0 || feature.indexOf("device-limit:") === 0 || feature.indexOf("adapter-limit:") === 0) {
+      return "";
+    }
+    return feature;
+  }
+
+  function sceneWebGPUNormalizeFeatureName(feature) {
+    var normalized = String(feature || "").trim().toLowerCase();
+    return /^[a-z0-9-]+$/.test(normalized) ? normalized : "";
   }
 
   function sceneWebGPUCollectRequiredLimits(required, out) {
@@ -396,7 +470,8 @@
       }
       _webgpuAdapterProbe = adapter;
       _webgpuSupportedFeatures = sceneWebGPUFeatureList(adapter.features);
-      _webgpuRequestedFeatures = sceneWebGPURequestedFeatureList(adapter);
+      _webgpuRequiredFeatures = sceneWebGPURequiredFeaturesFromManifest(adapter);
+      _webgpuRequestedFeatures = sceneWebGPUMergeFeatureLists(sceneWebGPURequestedFeatureList(adapter), _webgpuRequiredFeatures);
       _webgpuRequiredLimits = sceneWebGPURequiredLimitsFromManifest();
       _webgpuAdapterLimits = sceneWebGPULimitsSnapshot(adapter.limits);
       _webgpuAdapterInfo = sceneWebGPUAdapterInfoSnapshot(adapter);

@@ -57,11 +57,14 @@
       deviceAvailable: !!(probe && probe.device),
       supportedFeatures: Array.isArray(probe && probe.supportedFeatures) ? probe.supportedFeatures.slice() : [],
       requestedFeatures: Array.isArray(probe && probe.requestedFeatures) ? probe.requestedFeatures.slice() : [],
+      requiredFeatures: Array.isArray(probe && probe.requiredFeatures) ? probe.requiredFeatures.slice() : [],
+      requiredLimits: probe && probe.requiredLimits || {},
       adapterLimits: probe && probe.limits || {},
       deviceLimits: {},
       adapterInfo: probe && probe.adapterInfo || {},
       error: probe && probe.error || "",
       lost: probe && probe.lost || null,
+      probeOptions: probe && probe.probeOptions || {},
     };
   }
 

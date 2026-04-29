@@ -108,7 +108,7 @@ func TestValidateCapabilities_TextInput(t *testing.T) {
 
 func TestValidateCapabilities(t *testing.T) {
 	// Valid
-	err := ValidateCapabilities([]Capability{CapVideo, CapCanvas, CapWebGL, CapWebGL2, CapWebGPU, CapCompute, CapWASM, CapPixelSurface, CapPointer, CapPointerLock, CapKeyboard, CapGamepad, CapWebGPUTimestampQuery, CapWebGPUShaderF16, CapWebGPUTextureCompressionBC, CapWebGPUTextureCompressionBCSliced3D, CapWebGPUDualSourceBlending, CapWebGPUSubgroupsF16, "webgpu:limit:maxTextureDimension2D>=4096", "webgpu:adapter-limit:maxBufferSize>=1048576"})
+	err := ValidateCapabilities([]Capability{CapVideo, CapCanvas, CapWebGL, CapWebGL2, CapWebGPU, CapCompute, CapWASM, CapPixelSurface, CapPointer, CapPointerLock, CapKeyboard, CapGamepad, CapWebGPUTimestampQuery, CapWebGPUShaderF16, CapWebGPUTextureCompressionBC, CapWebGPUTextureCompressionBCSliced3D, CapWebGPUDualSourceBlending, CapWebGPUSubgroupsF16, "webgpu:limit:maxTextureDimension2D>=4096", "webgpu:adapter-limit:maxBufferSize>=1048576", "webgpu-feature:future-rendering-mode"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,6 +117,10 @@ func TestValidateCapabilities(t *testing.T) {
 	err = ValidateCapabilities([]Capability{"teleport"})
 	if err == nil {
 		t.Fatal("expected error for unsupported capability")
+	}
+	err = ValidateCapabilities([]Capability{"webgpu:bad_feature"})
+	if err == nil {
+		t.Fatal("expected error for malformed WebGPU feature capability")
 	}
 }
 

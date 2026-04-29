@@ -51,7 +51,7 @@ func Page() Node {
 				The live demo above is a full PBR scene declared in Go and rendered by the engine. Drag to orbit, scroll to zoom.
 			</p>
 			<p>
-				WebGPU is the primary path for modern Scene3D rendering: PBR meshes, instanced meshes, compute particles, helper lines, thick line overlays, wire overlays, clip-space guides, textured plane surfaces, and tier-aware MSAA render targets all stay on the WebGPU backend when the browser exposes it. The probe negotiates optional adapter features and manifest-declared device limits up front, then exposes diagnostics for tooling instead of treating WebGPU as a plain boolean.
+				WebGPU is the primary path for modern Scene3D rendering: PBR meshes, instanced meshes, compute particles, helper lines, thick line overlays, wire overlays, clip-space guides, textured plane surfaces, and tier-aware MSAA render targets all stay on the WebGPU backend when the browser exposes it. The probe negotiates optional adapter features, manifest-declared required features, and manifest-declared device limits up front, then exposes diagnostics for tooling instead of treating WebGPU as a plain boolean.
 			</p>
 			{CodeBlock("go", `props.RequiredCapabilities = scene.RequireWebGPU(
 	    engine.CapWebGPUTimestampQuery,
