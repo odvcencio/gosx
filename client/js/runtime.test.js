@@ -6469,6 +6469,26 @@ test("Scene3D postfx tonemap modes are honored by WebGL and WebGPU", () => {
   assert.match(webgpu, /sceneWebGPUToneMapMode\(effect\.mode\)/);
 });
 
+test("Scene3D WebGPU material uniforms cover physical PBR fields", () => {
+  const webgpu = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+
+  for (const field of ["clearcoat", "sheen", "transmission", "iridescence", "anisotropy"]) {
+    assert.match(webgpu, new RegExp(`${field}: f32`));
+    assert.match(webgpu, new RegExp(`material\\.${field}`));
+  }
+  assert.match(webgpu, /new ArrayBuffer\(80\)/);
+  assert.match(webgpu, /f\[7\] = clamp01\(sceneNumber\(mat\.clearcoat, 0\)\)/);
+  assert.match(webgpu, /f\[8\] = clamp01\(sceneNumber\(mat\.sheen, 0\)\)/);
+  assert.match(webgpu, /f\[9\] = clamp01\(sceneNumber\(mat\.transmission, 0\)\)/);
+  assert.match(webgpu, /f\[10\] = clamp01\(sceneNumber\(mat\.iridescence, 0\)\)/);
+  assert.match(webgpu, /f\[11\] = Math\.max\(-1, Math\.min\(1, sceneNumber\(mat\.anisotropy, 0\)\)\)/);
+  assert.match(webgpu, /roughness = clamp\(roughness \* \(1\.0 - abs\(material\.anisotropy\) \* 0\.28\), 0\.04, 1\.0\)/);
+  assert.match(webgpu, /let clearcoat = clamp\(material\.clearcoat, 0\.0, 1\.0\)/);
+  assert.match(webgpu, /let sheen = clamp\(material\.sheen, 0\.0, 1\.0\)/);
+  assert.match(webgpu, /let iridescence = clamp\(material\.iridescence, 0\.0, 1\.0\)/);
+  assert.match(webgpu, /let transmission = clamp\(material\.transmission, 0\.0, 1\.0\) \* \(1\.0 - metalness\)/);
+});
+
 test("Scene3D instanced meshes are WebGPU-native", () => {
   const webgpu = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
   const mount = fs.readFileSync(path.join(__dirname, "bootstrap-src", "20-scene-mount.js"), "utf8");

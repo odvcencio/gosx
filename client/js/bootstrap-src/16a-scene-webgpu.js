@@ -75,6 +75,11 @@
     "    metalness: f32,",
     "    emissive: f32,",
     "    opacity: f32,",
+    "    clearcoat: f32,",
+    "    sheen: f32,",
+    "    transmission: f32,",
+    "    iridescence: f32,",
+    "    anisotropy: f32,",
     "    unlit: u32,",
     "    hasAlbedoMap: u32,",
     "    hasNormalMap: u32,",
@@ -83,7 +88,6 @@
     "    hasEmissiveMap: u32,",
     "    receiveShadow: u32,",
     "    _pad0: u32,",
-    "    _pad1: u32,",
     "};",
   ].join("\n");
 
@@ -313,6 +317,7 @@
     "        roughness = roughness * textureSample(roughnessTex, roughnessSamp, in.uv).g;",
     "    }",
     "    roughness = clamp(roughness, 0.04, 1.0);",
+    "    roughness = clamp(roughness * (1.0 - abs(material.anisotropy) * 0.28), 0.04, 1.0);",
     "",
     "    var metalness = material.metalness;",
     "    if (material.hasMetalnessMap != 0u) {",
@@ -343,6 +348,7 @@
     "    }",
     "",
     "    let V = normalize(frame.cameraPos - in.worldPos);",
+    "    let NoV = max(dot(N, V), 0.0);",
     "",
     "    // Fresnel reflectance at normal incidence.",
     "    let F0 = mix(vec3f(0.04), albedo, metalness);",
@@ -388,7 +394,7 @@
     "        let F = fresnelSchlick(max(dot(H, V), 0.0), F0);",
     "",
     "        let numerator = D * G * F;",
-    "        let denominator = 4.0 * max(dot(N, V), 0.0) * NdotL + 0.0001;",
+    "        let denominator = 4.0 * NoV * NdotL + 0.0001;",
     "        let specular = numerator / denominator;",
     "",
     "        // Energy conservation: diffuse complement of specular.",
@@ -419,6 +425,29 @@
     "    let emission = emissiveColor * emissiveStrength;",
     "",
     "    var color = ambient + Lo + emission;",
+    "",
+    "    let clearcoat = clamp(material.clearcoat, 0.0, 1.0);",
+    "    if (clearcoat > 0.0001) {",
+    "        let cc = pow(NoV, mix(12.0, 96.0, 1.0 - roughness)) * clearcoat;",
+    "        color = color + vec3f(cc * 0.28);",
+    "    }",
+    "",
+    "    let sheen = clamp(material.sheen, 0.0, 1.0);",
+    "    if (sheen > 0.0001) {",
+    "        let velvet = pow(1.0 - NoV, 3.0) * sheen;",
+    "        color = color + albedo * velvet * 0.55;",
+    "    }",
+    "",
+    "    let iridescence = clamp(material.iridescence, 0.0, 1.0);",
+    "    if (iridescence > 0.0001) {",
+    "        let iri = vec3f(0.5) + vec3f(0.5) * cos(vec3f(0.0, 2.1, 4.2) + vec3f(NoV * 8.0));",
+    "        color = mix(color, color * (vec3f(0.65) + iri * 0.7), iridescence * pow(1.0 - NoV, 2.0));",
+    "    }",
+    "",
+    "    let transmission = clamp(material.transmission, 0.0, 1.0) * (1.0 - metalness);",
+    "    if (transmission > 0.0001) {",
+    "        color = mix(color, ambient + albedo * 0.1, transmission * 0.55);",
+    "    }",
     "",
     "    // Exponential fog.",
     "    if (fog.hasFog != 0u) {",
@@ -2686,8 +2715,8 @@
       var mat = material || {};
       var albedoRGBA = sceneColorRGBA(mat.color, [0.8, 0.8, 0.8, 1]);
 
-      // MaterialUniforms: vec3f(12) + f32 + f32 + f32 + f32 + 8*u32(32) = 64 bytes.
-      var data = new ArrayBuffer(64);
+      // MaterialUniforms: vec3f + 9*f32 + 8*u32 = 80 bytes.
+      var data = new ArrayBuffer(80);
       var f = new Float32Array(data);
       var u = new Uint32Array(data);
 
@@ -2696,11 +2725,15 @@
       f[4] = sceneNumber(mat.metalness, 0);
       f[5] = sceneNumber(mat.emissive, 0);
       f[6] = clamp01(sceneNumber(mat.opacity, 1));
-      u[7] = mat.unlit ? 1 : 0;
+      f[7] = clamp01(sceneNumber(mat.clearcoat, 0));
+      f[8] = clamp01(sceneNumber(mat.sheen, 0));
+      f[9] = clamp01(sceneNumber(mat.transmission, 0));
+      f[10] = clamp01(sceneNumber(mat.iridescence, 0));
+      f[11] = Math.max(-1, Math.min(1, sceneNumber(mat.anisotropy, 0)));
+      u[12] = mat.unlit ? 1 : 0;
 
-      u[13] = receiveShadow ? 1 : 0;
-      u[14] = 0;
-      u[15] = 0;
+      u[18] = receiveShadow ? 1 : 0;
+      u[19] = 0;
       return { data: new Float32Array(data), u: u };
     }
 
@@ -2710,11 +2743,11 @@
       var u = uniform.u;
       // Texture records.
       var textureMaps = [
-        { prop: "texture",      index: 8 },
-        { prop: "normalMap",    index: 9 },
-        { prop: "roughnessMap", index: 10 },
-        { prop: "metalnessMap", index: 11 },
-        { prop: "emissiveMap",  index: 12 },
+        { prop: "texture",      index: 13 },
+        { prop: "normalMap",    index: 14 },
+        { prop: "roughnessMap", index: 15 },
+        { prop: "metalnessMap", index: 16 },
+        { prop: "emissiveMap",  index: 17 },
       ];
 
       var texViews = [];
