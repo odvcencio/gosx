@@ -4,6 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import zlib from "node:zlib";
+import * as esbuild from "esbuild";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -387,7 +388,45 @@ function sidecarsMatch(filePath, code) {
   return true;
 }
 
-function buildBootstrapBundle(entry) {
+function sourceMapDataURL(map) {
+  return `data:application/json;base64,${Buffer.from(map, "utf8").toString("base64")}`;
+}
+
+function normalizeGeneratedCode(code, mapPath) {
+  let next = String(code || "").replace(/\r\n?/g, "\n");
+  if (!next.endsWith("\n")) {
+    next += "\n";
+  }
+  if (DEBUG_SOURCEMAPS) {
+    next += `//# sourceMappingURL=${path.basename(mapPath)}\n`;
+  }
+  return next;
+}
+
+function normalizeGeneratedMap(map, fileName) {
+  const parsed = JSON.parse(map);
+  parsed.file = fileName;
+  return JSON.stringify(parsed);
+}
+
+async function minifyBootstrapBundle(entry, built) {
+  const input = `${built.code}\n//# sourceMappingURL=${sourceMapDataURL(built.map)}`;
+  const result = await esbuild.transform(input, {
+    charset: "utf8",
+    legalComments: "none",
+    loader: "js",
+    minify: true,
+    sourcefile: path.basename(entry.path),
+    sourcemap: "external",
+    target: "es2020",
+  });
+  return {
+    code: normalizeGeneratedCode(result.code, entry.mapPath),
+    map: normalizeGeneratedMap(result.map, path.basename(entry.path)),
+  };
+}
+
+function buildCompactedBootstrapBundle(entry) {
   const sections = entry.sources.map((descriptor) => {
     const source = readSource(descriptor.file);
     const resolved = descriptor.kind === "extract" ? extractSource(source, descriptor) : source;
@@ -417,10 +456,7 @@ function buildBootstrapBundle(entry) {
     }
   }
 
-  if (DEBUG_SOURCEMAPS) {
-    code += `//# sourceMappingURL=${path.basename(entry.mapPath)}\n`;
-    lines.push(null);
-  } else if (!code.endsWith("\n")) {
+  if (!code.endsWith("\n")) {
     code += "\n";
   }
 
@@ -437,15 +473,22 @@ function buildBootstrapBundle(entry) {
   };
 }
 
-function main(argv) {
+async function buildBootstrapBundle(entry) {
+  return minifyBootstrapBundle(entry, buildCompactedBootstrapBundle(entry));
+}
+
+async function main(argv) {
   const args = new Set(argv.slice(2));
   if (args.has("--check")) {
-    const stale = outputs.filter((entry) => {
-      const next = buildBootstrapBundle(entry);
+    const stale = [];
+    for (const entry of outputs) {
+      const next = await buildBootstrapBundle(entry);
       const currentCode = fs.existsSync(entry.path) ? fs.readFileSync(entry.path, "utf8") : "";
       const currentMap = fs.existsSync(entry.mapPath) ? fs.readFileSync(entry.mapPath, "utf8") : "";
-      return currentCode !== next.code || currentMap !== next.map || !sidecarsMatch(entry.path, next.code);
-    });
+      if (currentCode !== next.code || currentMap !== next.map || !sidecarsMatch(entry.path, next.code)) {
+        stale.push(entry);
+      }
+    }
     if (stale.length > 0) {
       process.stderr.write("bootstrap runtime assets are out of date. Run `npm run build:bootstrap`.\n");
       process.exit(1);
@@ -453,11 +496,14 @@ function main(argv) {
     return;
   }
   for (const entry of outputs) {
-    const built = buildBootstrapBundle(entry);
+    const built = await buildBootstrapBundle(entry);
     fs.writeFileSync(entry.path, built.code, "utf8");
     fs.writeFileSync(entry.mapPath, built.map, "utf8");
     writeCompressedSidecars(entry.path, built.code);
   }
 }
 
-main(process.argv);
+main(process.argv).catch((err) => {
+  process.stderr.write(`${err && err.stack ? err.stack : err}\n`);
+  process.exit(1);
+});

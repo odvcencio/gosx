@@ -14,6 +14,13 @@ const bootstrapFeatureScene3DSource = fs.readFileSync(path.join(__dirname, "boot
 const patchSource = fs.readFileSync(path.join(__dirname, "patch.js"), "utf8");
 const navigationSource = fs.readFileSync(path.join(__dirname, "..", "..", "server", "navigation_runtime.js"), "utf8");
 
+function bootstrapSourceMapSource(mapName, sourceName) {
+  const sourceMap = JSON.parse(fs.readFileSync(path.join(__dirname, mapName), "utf8"));
+  const index = sourceMap.sources.indexOf(sourceName);
+  assert.notEqual(index, -1, `${sourceName} missing from ${mapName}`);
+  return String(sourceMap.sourcesContent[index] || "");
+}
+
 const ELEMENT_NODE = 1;
 const TEXT_NODE = 3;
 const DOCUMENT_FRAGMENT_NODE = 11;
@@ -6916,8 +6923,14 @@ test("bootstrap derives selective runtime utilities from the Scene3D core source
   assert.doesNotMatch(core, /function clearChildren\(/);
   assert.match(primitives, /function sceneBool\(/);
   assert.match(primitives, /function clearChildren\(/);
-  assert.equal((bootstrapSource.match(/function sceneSegmentResolution\(/g) || []).length, 1);
-  assert.equal((bootstrapFeatureScene3DSource.match(/function sceneSegmentResolution\(/g) || []).length, 1);
+  assert.equal(
+    (bootstrapSourceMapSource("bootstrap.js.map", "bootstrap-src/12-scene-geometry.js").match(/function sceneSegmentResolution\(/g) || []).length,
+    1,
+  );
+  assert.equal(
+    (bootstrapSourceMapSource("bootstrap-feature-scene3d.js.map", "bootstrap-src/12-scene-geometry.js").match(/function sceneSegmentResolution\(/g) || []).length,
+    1,
+  );
 });
 
 test("bootstrap keeps WebGL and WebGPU Scene3D command logs in parity", async () => {
