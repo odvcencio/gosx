@@ -52,18 +52,47 @@ Use the asset constructors to keep model/audio/texture manifests structured:
 
 ```go
 assets := game.NewAssets()
-assets.MustRegisterAll(
-    game.WithPreload(game.GLB("hero", "/assets/hero.glb")),
-    game.Texture("hero-albedo", "/assets/hero.png"),
+if err := assets.RegisterAll(
+    game.WithVariant(
+        game.WithPreload(game.GLB("hero", "/assets/hero.glb")),
+        game.VariantCapabilities(
+            game.VariantCompression(game.Variant("/assets/hero.meshopt.glb"), "meshopt"),
+            "webgl2", "meshopt",
+        ),
+    ),
+    game.WithVariant(
+        game.Texture("hero-albedo", "/assets/hero.png"),
+        game.VariantCapabilities(
+            game.VariantContentType(
+                game.VariantCompression(game.Variant("/assets/hero-albedo.ktx2"), "ktx2"),
+                "image/ktx2",
+            ),
+            "webgpu", "ktx2",
+        ),
+    ),
     game.Audio("hit", "/assets/hit.ogg"),
-)
+); err != nil {
+    log.Fatal(err)
+}
 ```
+
+Use `assets.ManifestFor("webgpu", "ktx2")` or `assets.ResolveFor(...)` when
+you want the server to collapse a manifest to the best representation for a
+known capability tier. Otherwise the base `Manifest()` keeps variants so the
+client/runtime can choose later.
 
 Audio assets become a client audio manifest on `Runtime.EngineConfig()`, and
 systems can emit playback events without hand-written browser glue:
 
 ```go
 ctx.PlayAudio("hit", game.AudioPlayback{Bus: "sfx", Volume: 0.8})
+ctx.PlayAudio("thud", game.AudioAt(game.Vec3{X: 2, Y: 1, Z: -4}, game.AudioPlayback{
+    Bus:           "sfx",
+    Volume:        0.9,
+    RefDistance:   2,
+    MaxDistance:   64,
+    RolloffFactor: 0.75,
+}))
 ```
 
 For 60Hz/120Hz loops, prefer reusable query buffers in hot systems:

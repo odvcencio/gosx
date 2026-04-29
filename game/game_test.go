@@ -167,6 +167,35 @@ func TestInputActionEdges(t *testing.T) {
 	}
 }
 
+func TestInputPointerButtonBinding(t *testing.T) {
+	input := NewInput(PointerButton("attack.primary", "Mouse0"))
+	input.Apply(InputEvent{Kind: EventPointerDown, Code: "Mouse0", X: 10, Y: 12})
+	if !input.Down("attack.primary") || !input.Pressed("attack.primary") {
+		t.Fatalf("expected primary attack down+pressed, got %#v", input.Action("attack.primary"))
+	}
+	input.EndFrame()
+	input.Apply(InputEvent{Kind: EventPointerUp, Code: "Mouse0"})
+	if input.Down("attack.primary") || !input.Released("attack.primary") {
+		t.Fatalf("expected primary attack released, got %#v", input.Action("attack.primary"))
+	}
+}
+
+func TestFirstPersonProfileCapabilitiesAndBindings(t *testing.T) {
+	profile := FirstPersonProfile()
+	if profile.Name != ProfileFirstPerson {
+		t.Fatalf("unexpected profile name %q", profile.Name)
+	}
+	if !hasCapability(profile.Capabilities, engine.CapPointerLock) {
+		t.Fatalf("expected pointer lock capability, got %#v", profile.Capabilities)
+	}
+	if hasCapability(profile.RequiredCapabilities, engine.CapPointerLock) {
+		t.Fatalf("pointer lock should be optional for drag-look fallback, got %#v", profile.RequiredCapabilities)
+	}
+	if len(profile.Bindings) == 0 {
+		t.Fatal("expected first-person bindings")
+	}
+}
+
 func TestRuntimeRunsSystemsPhysicsAndScene(t *testing.T) {
 	phys := physics.NewWorld(physics.WorldConfig{FixedTimestep: 1.0 / 60.0, Gravity: physics.Vec3{}})
 	body := phys.AddBody(physics.BodyConfig{ID: "ball", Mass: 1, Velocity: physics.Vec3{X: 1}})
@@ -440,8 +469,24 @@ func TestFightingProfileDeclaresVersusGameDefaults(t *testing.T) {
 
 func TestAssetsConstructorsBatchRegistrationAndPreloads(t *testing.T) {
 	assets := NewAssets()
-	if err := assets.MustRegisterAll(
-		WithPreload(WithContentType(GLB("fighter", "/models/fighter.glb"), "model/gltf-binary")),
+	if err := assets.RegisterAll(
+		WithVariant(
+			WithPreload(WithContentType(GLB("fighter", "/models/fighter.glb"), "model/gltf-binary")),
+			VariantCapabilities(
+				VariantBytes(
+					VariantCompression(
+						VariantQuality(
+							VariantContentType(Variant("/models/fighter.meshopt.glb"), "model/gltf-binary"),
+							"high",
+						),
+						"meshopt",
+					),
+					640_000,
+				),
+				"webgl2",
+				"meshopt",
+			),
+		),
 		Texture("albedo", "/textures/fighter.png"),
 		WithMetadata(Audio("hit", "/audio/hit.ogg"), "role", "sfx"),
 	); err != nil {
@@ -452,6 +497,9 @@ func TestAssetsConstructorsBatchRegistrationAndPreloads(t *testing.T) {
 	if len(preloads) != 1 || preloads[0].ID != "fighter" || preloads[0].ContentType != "model/gltf-binary" {
 		t.Fatalf("unexpected preloads %#v", preloads)
 	}
+	if len(preloads[0].Variants) != 1 || preloads[0].Variants[0].Compression != "meshopt" || preloads[0].Variants[0].RequiredCapabilities[0] != "webgl2" {
+		t.Fatalf("unexpected preload variants %#v", preloads[0].Variants)
+	}
 	textures := assets.ByKind(AssetTexture)
 	if len(textures) != 1 || textures[0].ID != "albedo" {
 		t.Fatalf("unexpected texture assets %#v", textures)
@@ -459,6 +507,46 @@ func TestAssetsConstructorsBatchRegistrationAndPreloads(t *testing.T) {
 	audio, ok := assets.Resolve("hit")
 	if !ok || audio.Metadata["role"] != "sfx" {
 		t.Fatalf("unexpected audio asset %#v ok=%v", audio, ok)
+	}
+}
+
+func TestAssetVariantSelection(t *testing.T) {
+	base := WithVariant(
+		WithVariant(Texture("terrain", "/textures/terrain.png"),
+			VariantCapabilities(
+				VariantCompression(
+					VariantContentType(Variant("/textures/terrain.ktx2"), "image/ktx2"),
+					"ktx2",
+				),
+				"webgpu",
+				"ktx2",
+			),
+		),
+		VariantCapabilities(
+			VariantCompression(
+				VariantContentType(Variant("/textures/terrain-basis.ktx2"), "image/ktx2"),
+				"basis",
+			),
+			"webgl2",
+			"basis",
+		),
+	)
+	assets := NewAssets()
+	if _, err := assets.Register(base); err != nil {
+		t.Fatal(err)
+	}
+
+	fallback, ok := assets.ResolveFor("terrain", "webgl")
+	if !ok || fallback.URI != "/textures/terrain.png" || len(fallback.Variants) != 0 {
+		t.Fatalf("expected base fallback without variants, got %#v ok=%v", fallback, ok)
+	}
+	webgl2, ok := assets.ResolveFor("terrain", "webgl2", "basis")
+	if !ok || webgl2.URI != "/textures/terrain-basis.ktx2" || webgl2.ContentType != "image/ktx2" || webgl2.Metadata["compression"] != "basis" {
+		t.Fatalf("expected basis variant, got %#v ok=%v", webgl2, ok)
+	}
+	webgpu := assets.ManifestFor("webgpu", "ktx2")
+	if len(webgpu) != 1 || webgpu[0].URI != "/textures/terrain.ktx2" || webgpu[0].Metadata["compression"] != "ktx2" {
+		t.Fatalf("expected ktx2 manifest variant, got %#v", webgpu)
 	}
 }
 
@@ -474,7 +562,7 @@ func TestAssetMustHelpersReturnErrorsInsteadOfPanics(t *testing.T) {
 
 func TestRuntimeAudioManifestAndEvents(t *testing.T) {
 	assets := NewAssets()
-	if _, err := assets.MustRegister(
+	if _, err := assets.Register(
 		WithMetadata(
 			WithMetadata(
 				WithMetadata(WithPreload(Audio("hit", "/audio/hit.ogg")), "bus", "sfx"),
@@ -491,7 +579,13 @@ func TestRuntimeAudioManifestAndEvents(t *testing.T) {
 		Assets:  assets,
 		Systems: []System{
 			Func("audio", PhaseUpdate, func(ctx *Context) error {
-				ctx.PlayAudio("hit", AudioPlayback{Volume: 0.5, Pan: -0.25})
+				ctx.PlayAudio("hit", AudioAt(Vec3{X: 2, Y: 1.5, Z: -4}, AudioPlayback{
+					Volume:        0.5,
+					Pan:           -0.25,
+					RefDistance:   2,
+					MaxDistance:   64,
+					RolloffFactor: 0.75,
+				}))
 				ctx.StopAudio("hit")
 				emitted = append(emitted, ctx.Runtime.events...)
 				return nil
@@ -515,11 +609,15 @@ func TestRuntimeAudioManifestAndEvents(t *testing.T) {
 	if len(emitted) != 2 || emitted[0].Type != EventAudioPlay || emitted[1].Type != EventAudioStop {
 		t.Fatalf("unexpected audio events %#v", emitted)
 	}
+	playback, ok := emitted[0].Data.(AudioPlayback)
+	if !ok || playback.Position == nil || playback.Position.X != 2 || playback.RefDistance != 2 || playback.MaxDistance != 64 || playback.RolloffFactor != 0.75 {
+		t.Fatalf("expected spatial audio playback payload, got %#v", emitted[0].Data)
+	}
 }
 
 func TestRuntimeEngineConfigCarriesAudioManifest(t *testing.T) {
 	assets := NewAssets()
-	if _, err := assets.MustRegister(WithPreload(Audio("hit", "/audio/hit.ogg"))); err != nil {
+	if _, err := assets.Register(WithPreload(Audio("hit", "/audio/hit.ogg"))); err != nil {
 		t.Fatal(err)
 	}
 	rt := New(Config{
@@ -578,6 +676,67 @@ func TestPhysicsFromScene(t *testing.T) {
 	}
 	if len(world.Bodies()) != 1 {
 		t.Fatalf("expected one body, got %d", len(world.Bodies()))
+	}
+}
+
+func TestRuntimeRefreshesScenePhysicsWhenDeclarationChanges(t *testing.T) {
+	stage := 0
+	rt := New(Config{
+		Scene: func(ctx *Context) scene.Props {
+			id := "crate"
+			x := 0.0
+			if stage == 1 {
+				x = 3
+			} else if stage > 1 {
+				id = "crate-b"
+			}
+			return scene.Props{
+				Physics: scene.PhysicsWorld{FixedTimestep: 1.0 / 60.0},
+				Graph: scene.NewGraph(scene.Mesh{
+					ID:       id,
+					Position: scene.Vec3(x, 0, 0),
+					Geometry: scene.BoxGeometry{Width: 1, Height: 1, Depth: 1},
+					Material: scene.FlatMaterial{Color: "#fff"},
+					RigidBody: &scene.RigidBody3D{
+						Mass: 1,
+						Colliders: []scene.Collider3D{{
+							Shape:  "box",
+							Width:  1,
+							Height: 1,
+							Depth:  1,
+						}},
+					},
+				}),
+			}
+		},
+	})
+
+	if _, ok := rt.BuildScene(); !ok {
+		t.Fatal("expected initial scene")
+	}
+	first := rt.Physics()
+	if first == nil || len(first.Bodies()) != 1 || first.Bodies()[0].ID != "crate" {
+		t.Fatalf("expected initial scene physics body crate, got %#v", first)
+	}
+
+	stage = 1
+	if _, ok := rt.BuildScene(); !ok {
+		t.Fatal("expected transform-only refreshed scene")
+	}
+	if rt.Physics() != first {
+		t.Fatal("dynamic body transform changes should not rebuild the scene-derived physics world")
+	}
+
+	stage = 2
+	if _, ok := rt.BuildScene(); !ok {
+		t.Fatal("expected refreshed scene")
+	}
+	second := rt.Physics()
+	if second == nil || len(second.Bodies()) != 1 || second.Bodies()[0].ID != "crate-b" {
+		t.Fatalf("expected refreshed scene physics body crate-b, got %#v", second)
+	}
+	if second == first {
+		t.Fatal("expected scene physics world to be rebuilt after declaration change")
 	}
 }
 

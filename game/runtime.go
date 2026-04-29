@@ -206,17 +206,18 @@ type Config struct {
 
 // Runtime coordinates input, systems, physics, assets, and scene output.
 type Runtime struct {
-	name          string
-	profile       Profile
-	world         *World
-	input         *Input
-	assets        *Assets
-	physics       *physics.World
-	clock         *Clock
-	systems       []System
-	sceneBuilder  SceneBuilder
-	snapshot      SnapshotCodec
-	manualPhysics bool
+	name             string
+	profile          Profile
+	world            *World
+	input            *Input
+	assets           *Assets
+	physics          *physics.World
+	clock            *Clock
+	systems          []System
+	sceneBuilder     SceneBuilder
+	snapshot         SnapshotCodec
+	manualPhysics    bool
+	physicsFromScene bool
 
 	frame         Frame
 	events        []Event
@@ -252,17 +253,18 @@ func New(cfg Config) *Runtime {
 		assets = NewAssets()
 	}
 	return &Runtime{
-		name:          cfg.Name,
-		profile:       profile,
-		world:         world,
-		input:         input,
-		assets:        assets,
-		physics:       cfg.Physics,
-		clock:         NewClock(LoopConfig{FixedStep: fixedStep, MaxDelta: maxDelta, MaxSubsteps: maxSubsteps}),
-		systems:       append([]System(nil), cfg.Systems...),
-		sceneBuilder:  cfg.Scene,
-		snapshot:      cfg.Snapshot,
-		manualPhysics: cfg.ManualPhysics,
+		name:             cfg.Name,
+		profile:          profile,
+		world:            world,
+		input:            input,
+		assets:           assets,
+		physics:          cfg.Physics,
+		clock:            NewClock(LoopConfig{FixedStep: fixedStep, MaxDelta: maxDelta, MaxSubsteps: maxSubsteps}),
+		systems:          append([]System(nil), cfg.Systems...),
+		sceneBuilder:     cfg.Scene,
+		snapshot:         cfg.Snapshot,
+		manualPhysics:    cfg.ManualPhysics,
+		physicsFromScene: cfg.Physics == nil && !cfg.ManualPhysics,
 	}
 }
 

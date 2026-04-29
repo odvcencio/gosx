@@ -1,6 +1,7 @@
 package fluid
 
 import (
+	"log"
 	"math"
 	"sync"
 	"sync/atomic"
@@ -78,6 +79,8 @@ func (s *Sim) tickLoop() {
 		}
 		t := float32(time.Since(s.startTime).Seconds())
 		f := s.computeFrame(t)
-		field.PublishField(s.hub, topic, f, field.QuantizeOptions{BitWidth: bitWidth})
+		if err := field.PublishField(s.hub, topic, f, field.QuantizeOptions{BitWidth: bitWidth}); err != nil {
+			log.Printf("fluid demo publish failed: %v", err)
+		}
 	}
 }

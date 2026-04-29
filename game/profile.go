@@ -15,6 +15,8 @@ const (
 	ProfileWeb3D = "web3d"
 	// ProfileFighting is tuned for frame-accurate, input-heavy versus games.
 	ProfileFighting = "fighting"
+	// ProfileFirstPerson is tuned for pointer-lock Scene3D/FPS-style games.
+	ProfileFirstPerson = "first-person"
 	// ProfileScientific trims gamepad/audio affordances and favors compute and
 	// storage for academic and scientific visualization workloads.
 	ProfileScientific = "scientific"
@@ -143,6 +145,56 @@ func FightingProfile() Profile {
 			Button("attack.light_kick", "button2"),
 			Button("attack.heavy_kick", "button3"),
 			Button("guard", "button5"),
+		},
+	}
+}
+
+// FirstPersonProfile returns a profile for FPS-style Scene3D games and
+// immersive simulations. Pointer lock is advertised as an optional capability;
+// keyboard, pointer, WebGL, and animation remain the hard requirements so
+// scenes can still fall back to drag-look on browsers without pointer lock.
+func FirstPersonProfile() Profile {
+	return Profile{
+		Name:        ProfileFirstPerson,
+		FixedStep:   time.Second / 60,
+		MaxDelta:    100 * time.Millisecond,
+		MaxSubsteps: 4,
+		Capabilities: []engine.Capability{
+			engine.CapCanvas,
+			engine.CapWebGL,
+			engine.CapWebGL2,
+			engine.CapAnimation,
+			engine.CapWASM,
+			engine.CapKeyboard,
+			engine.CapPointer,
+			engine.CapPointerLock,
+			engine.CapGamepad,
+			engine.CapAudio,
+		},
+		RequiredCapabilities: []engine.Capability{
+			engine.CapCanvas,
+			engine.CapWebGL,
+			engine.CapAnimation,
+			engine.CapKeyboard,
+			engine.CapPointer,
+		},
+		Bindings: []Binding{
+			Key("move.forward", "KeyW"),
+			Key("move.back", "KeyS"),
+			Key("move.left", "KeyA"),
+			Key("move.right", "KeyD"),
+			Key("move.up", "Space"),
+			Key("move.down", "ControlLeft"),
+			PointerButton("attack.primary", "Mouse0"),
+			PointerButton("attack.secondary", "Mouse1"),
+			Key("interact", "KeyE"),
+			Key("reload", "KeyR"),
+			Key("sprint", "ShiftLeft"),
+			Key("cancel", "Escape"),
+			Button("attack.primary", "button7"),
+			Button("attack.secondary", "button6"),
+			Button("jump", "button0"),
+			Button("interact", "button2"),
 		},
 	}
 }

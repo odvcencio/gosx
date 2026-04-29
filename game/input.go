@@ -52,6 +52,11 @@ func Button(action, code string) Binding {
 	return Binding{Action: action, Kind: EventGamepad, Code: code, Scale: 1}
 }
 
+// PointerButton maps a pointer button code such as "Mouse0" onto an action.
+func PointerButton(action, code string) Binding {
+	return Binding{Action: action, Kind: EventPointerDown, Code: code, Scale: 1}
+}
+
 // ActionState is the per-frame state for one logical action.
 type ActionState struct {
 	Down     bool    `json:"down,omitempty"`
@@ -145,6 +150,14 @@ func (in *Input) Apply(event InputEvent) {
 		case EventGamepad:
 			if binding.Kind == EventGamepad {
 				in.value(binding.Action, event.Value*binding.Scale, event)
+			}
+		case EventPointerDown:
+			if binding.Kind == EventPointerDown {
+				in.trigger(binding.Action, true, binding.Scale, event)
+			}
+		case EventPointerUp:
+			if binding.Kind == EventPointerDown || binding.Kind == EventPointerUp {
+				in.trigger(binding.Action, false, 0, event)
 			}
 		}
 	}

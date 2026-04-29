@@ -44,13 +44,24 @@ type AudioManifest struct {
 
 // AudioPlayback configures one play request.
 type AudioPlayback struct {
-	Clip   AssetID `json:"clip"`
-	Bus    string  `json:"bus,omitempty"`
-	Handle string  `json:"handle,omitempty"`
-	Volume float64 `json:"volume,omitempty"`
-	Rate   float64 `json:"rate,omitempty"`
-	Pan    float64 `json:"pan,omitempty"`
-	Loop   bool    `json:"loop,omitempty"`
+	Clip          AssetID `json:"clip"`
+	Bus           string  `json:"bus,omitempty"`
+	Handle        string  `json:"handle,omitempty"`
+	Volume        float64 `json:"volume,omitempty"`
+	Rate          float64 `json:"rate,omitempty"`
+	Pan           float64 `json:"pan,omitempty"`
+	Loop          bool    `json:"loop,omitempty"`
+	Position      *Vec3   `json:"position,omitempty"`
+	Velocity      *Vec3   `json:"velocity,omitempty"`
+	RefDistance   float64 `json:"refDistance,omitempty"`
+	MaxDistance   float64 `json:"maxDistance,omitempty"`
+	RolloffFactor float64 `json:"rolloffFactor,omitempty"`
+}
+
+// AudioAt returns playback configured for positional WebAudio output.
+func AudioAt(position Vec3, playback AudioPlayback) AudioPlayback {
+	playback.Position = &position
+	return playback
 }
 
 // AudioManifestFromAssets converts registered audio assets into the client

@@ -1,6 +1,8 @@
 package game
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"strings"
 
@@ -14,8 +16,9 @@ import (
 type SceneBuilder func(*Context) scene.Props
 
 type latestScene struct {
-	props scene.Props
-	ok    bool
+	props       scene.Props
+	physicsHash string
+	ok          bool
 }
 
 // EngineMount is implemented by server.PageState and server.PageRuntime.
@@ -65,8 +68,10 @@ func (r *Runtime) rebuildScene(ctx *Context) {
 		return
 	}
 	props := r.sceneBuilder(ctx)
-	r.latestScene = latestScene{props: props, ok: true}
-	if r.physics == nil {
+	physicsHash := scenePhysicsHash(props)
+	previousPhysicsHash := r.latestScene.physicsHash
+	r.latestScene = latestScene{props: props, physicsHash: physicsHash, ok: true}
+	if r.physicsFromScene && physicsHash != previousPhysicsHash {
 		r.physics = PhysicsFromScene(props)
 	}
 }
@@ -78,6 +83,32 @@ func PhysicsFromScene(props scene.Props) *physics.World {
 		return nil
 	}
 	return physics.BuildWorld(ir.PhysicsSpec())
+}
+
+func scenePhysicsHash(props scene.Props) string {
+	ir := props.CanonicalIR()
+	if ir.Physics == nil {
+		return ""
+	}
+	declaration := *ir.Physics
+	if len(ir.Physics.Bodies) > 0 {
+		declaration.Bodies = append([]scene.IRRigidBody(nil), ir.Physics.Bodies...)
+		for i := range declaration.Bodies {
+			body := &declaration.Bodies[i]
+			body.Velocity = scene.IRVector3{}
+			body.AngularVelocity = scene.IRVector3{}
+			if !body.Static && body.Mass > 0 {
+				body.Position = scene.IRVector3{}
+				body.Rotation = scene.IRVector3{}
+			}
+		}
+	}
+	data, err := json.Marshal(declaration)
+	if err != nil {
+		return ""
+	}
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
 }
 
 // EngineConfig returns the engine surface config for mounting this runtime.
