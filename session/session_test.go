@@ -1,13 +1,21 @@
 package session
 
 import (
+	"crypto/rand"
 	"encoding/base64"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 )
+
+type failingRandReader struct{}
+
+func (failingRandReader) Read([]byte) (int, error) {
+	return 0, errors.New("entropy unavailable")
+}
 
 func TestMustNewInvalidSecretReturnsNilManager(t *testing.T) {
 	manager := MustNew("short", Options{})
@@ -137,6 +145,21 @@ func TestProtectRejectsMissingOrInvalidToken(t *testing.T) {
 	if got := jsonMissingRes.Header().Get("Content-Type"); !strings.Contains(got, "application/json") {
 		t.Fatalf("expected json csrf failure, got content-type %q", got)
 	}
+}
+
+func TestRandomTokenPanicsWhenCryptoRandFails(t *testing.T) {
+	original := rand.Reader
+	rand.Reader = failingRandReader{}
+	t.Cleanup(func() {
+		rand.Reader = original
+	})
+
+	defer func() {
+		if recover() == nil {
+			t.Fatal("expected randomToken to panic when crypto/rand fails")
+		}
+	}()
+	_ = randomToken(32)
 }
 
 func TestSessionRejectsTamperedCookie(t *testing.T) {

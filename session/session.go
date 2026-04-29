@@ -13,6 +13,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"strings"
@@ -711,8 +712,8 @@ func writeCSRFFailure(w http.ResponseWriter, r *http.Request) {
 
 func randomToken(size int) string {
 	buf := make([]byte, size)
-	if _, err := rand.Read(buf); err != nil {
-		return fmt.Sprintf("%d", time.Now().UnixNano())
+	if _, err := io.ReadFull(rand.Reader, buf); err != nil {
+		panic(fmt.Sprintf("session: crypto/rand failed while generating token: %v", err))
 	}
 	return base64.RawURLEncoding.EncodeToString(buf)
 }
