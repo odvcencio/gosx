@@ -53,6 +53,16 @@ func Page() Node {
 			<p>
 				WebGPU is the primary path for modern Scene3D rendering: PBR meshes, instanced meshes, compute particles, helper lines, thick line overlays, wire overlays, clip-space guides, textured plane surfaces, and tier-aware MSAA render targets all stay on the WebGPU backend when the browser exposes it. The probe negotiates optional adapter features up front and exposes diagnostics for tooling instead of treating WebGPU as a plain boolean.
 			</p>
+			{CodeBlock("go", `props.RequiredCapabilities = scene.RequireWebGPU(
+	    engine.CapWebGPUTimestampQuery,
+	    engine.CapWebGPUShaderF16,
+	    engine.WebGPULimit("maxTextureDimension2D", 4096),
+	    engine.WebGPUAdapterLimit("maxTextureDimension2D", 8192),
+	)`)}
+			{CodeBlock("gosx", `<Scene3D
+	  {...data.scene}
+	  requiredCapabilities="webgpu webgpu:timestamp-query webgpu:adapter-limit:maxTextureDimension2D>=8192"
+	/>`)}
 		</section>
 		<section id="scene3d-demo" class="scene3d-demo-well" aria-label="PBR demo scene">
 			<Scene3D {...data.demoScene} />

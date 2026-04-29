@@ -14,6 +14,7 @@ import (
 
 	"github.com/odvcencio/gosx"
 	"github.com/odvcencio/gosx/action"
+	"github.com/odvcencio/gosx/engine"
 	"github.com/odvcencio/gosx/scene"
 	"github.com/odvcencio/gosx/server"
 	"github.com/odvcencio/gosx/session"
@@ -1153,6 +1154,45 @@ func Page() Node {
 	}
 }
 
+func TestDefaultFileRendererAllowsScene3DRequiredWebGPUCapabilities(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "page.gsx")
+	source := `package docs
+
+func Page() Node {
+	return <Scene3D requiredCapabilities="webgpu webgpu:timestamp-query webgpu:adapter-limit:maxTextureDimension2D>=8192">
+		<ComputeParticles id="spark-field" count={128} />
+	</Scene3D>
+}
+`
+	if err := os.WriteFile(path, []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := &RouteContext{}
+	node, err := DefaultFileRenderer(ctx, FilePage{FilePath: path, Pattern: "/"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	html := gosx.RenderHTML(node)
+	if !strings.Contains(html, `data-gosx-engine-required-capabilities="webgpu webgpu:timestamp-query webgpu:adapter-limit:maxTextureDimension2D&gt;=8192"`) {
+		t.Fatalf("expected required WebGPU capabilities in Scene3D mount shell %q", html)
+	}
+
+	head := gosx.RenderHTML(ctx.Runtime().Head())
+	for _, snippet := range []string{
+		`"webgpu"`,
+		`"webgpu:timestamp-query"`,
+		`"webgpu:adapter-limit:maxTextureDimension2D\u003e=8192"`,
+		`"computeParticles": [`,
+	} {
+		if !strings.Contains(head, snippet) {
+			t.Fatalf("expected %q in Scene3D runtime head %q", snippet, head)
+		}
+	}
+}
+
 func TestDefaultFileRendererAllowsTypedScene3DComputeParticles(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "page.gsx")
@@ -1169,6 +1209,10 @@ func Page() Node {
 	ctx := &RouteContext{
 		Data: map[string]any{
 			"scene": scene.Props{
+				RequiredCapabilities: scene.RequireWebGPU(
+					engine.CapWebGPUTimestampQuery,
+					engine.WebGPULimit("maxTextureDimension2D", 4096),
+				),
 				Graph: scene.NewGraph(
 					scene.ComputeParticles{
 						ID:    "spark-field",
@@ -1191,6 +1235,15 @@ func Page() Node {
 	head := gosx.RenderHTML(ctx.Runtime().Head())
 	if !strings.Contains(head, `"webgpu"`) {
 		t.Fatalf("expected typed compute Scene3D to declare webgpu capability in runtime head %q", head)
+	}
+	for _, snippet := range []string{
+		`"requiredCapabilities": [`,
+		`"webgpu:timestamp-query"`,
+		`"webgpu:limit:maxTextureDimension2D\u003e=4096"`,
+	} {
+		if !strings.Contains(head, snippet) {
+			t.Fatalf("expected %q in typed compute Scene3D runtime head %q", snippet, head)
+		}
 	}
 }
 

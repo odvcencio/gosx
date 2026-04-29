@@ -54,14 +54,101 @@ const (
 	CapPointerLock  Capability = "pointer-lock"
 	CapTextInput    Capability = "text-input"
 
-	CapWebGPUTimestampQuery         Capability = "webgpu:timestamp-query"
-	CapWebGPUIndirectFirstInstance  Capability = "webgpu:indirect-first-instance"
-	CapWebGPUShaderF16              Capability = "webgpu:shader-f16"
-	CapWebGPUTextureCompressionBC   Capability = "webgpu:texture-compression-bc"
-	CapWebGPUTextureCompressionETC2 Capability = "webgpu:texture-compression-etc2"
-	CapWebGPUTextureCompressionASTC Capability = "webgpu:texture-compression-astc"
-	CapWebGPUSubgroups              Capability = "webgpu:subgroups"
+	CapWebGPUTimestampQuery                 Capability = "webgpu:timestamp-query"
+	CapWebGPUIndirectFirstInstance          Capability = "webgpu:indirect-first-instance"
+	CapWebGPUShaderF16                      Capability = "webgpu:shader-f16"
+	CapWebGPUTextureCompressionBC           Capability = "webgpu:texture-compression-bc"
+	CapWebGPUTextureCompressionETC2         Capability = "webgpu:texture-compression-etc2"
+	CapWebGPUTextureCompressionASTC         Capability = "webgpu:texture-compression-astc"
+	CapWebGPUSubgroups                      Capability = "webgpu:subgroups"
+	CapWebGPUTextureCompressionBCSliced3D   Capability = "webgpu:texture-compression-bc-sliced-3d"
+	CapWebGPUTextureCompressionASTCSliced3D Capability = "webgpu:texture-compression-astc-sliced-3d"
+	CapWebGPUDepthClipControl               Capability = "webgpu:depth-clip-control"
+	CapWebGPUDepth32FloatStencil8           Capability = "webgpu:depth32float-stencil8"
+	CapWebGPUFloat32Filterable              Capability = "webgpu:float32-filterable"
+	CapWebGPUFloat32Blendable               Capability = "webgpu:float32-blendable"
+	CapWebGPURG11B10UFloatRenderable        Capability = "webgpu:rg11b10ufloat-renderable"
+	CapWebGPUBGRA8UnormStorage              Capability = "webgpu:bgra8unorm-storage"
+	CapWebGPUClipDistances                  Capability = "webgpu:clip-distances"
+	CapWebGPUDualSourceBlending             Capability = "webgpu:dual-source-blending"
+	CapWebGPUSubgroupsF16                   Capability = "webgpu:subgroups-f16"
 )
+
+// WebGPUFeature returns a normalized WebGPU optional-feature capability such as
+// "webgpu:timestamp-query".
+func WebGPUFeature(feature string) Capability {
+	feature = strings.TrimSpace(strings.ToLower(feature))
+	feature = strings.TrimPrefix(feature, "webgpu-feature:")
+	feature = strings.TrimPrefix(feature, "webgpu:")
+	if feature == "" {
+		return CapWebGPU
+	}
+	return Capability("webgpu:" + feature)
+}
+
+// WebGPULimit requires a negotiated WebGPU device limit to be at least minimum.
+func WebGPULimit(name string, minimum int) Capability {
+	return webGPULimitCapability("webgpu:limit:", name, minimum)
+}
+
+// WebGPUDeviceLimit requires a negotiated WebGPU device limit to be at least minimum.
+func WebGPUDeviceLimit(name string, minimum int) Capability {
+	return webGPULimitCapability("webgpu:device-limit:", name, minimum)
+}
+
+// WebGPUAdapterLimit requires the probed WebGPU adapter ceiling to be at least minimum.
+func WebGPUAdapterLimit(name string, minimum int) Capability {
+	return webGPULimitCapability("webgpu:adapter-limit:", name, minimum)
+}
+
+// RequireWebGPU builds a hard-gate capability set that always includes webgpu.
+func RequireWebGPU(capabilities ...Capability) []Capability {
+	out := []Capability{CapWebGPU}
+	seen := map[Capability]struct{}{CapWebGPU: {}}
+	for _, capability := range capabilities {
+		value := strings.TrimSpace(string(capability))
+		normalized := Capability(strings.ToLower(value))
+		if strings.HasPrefix(string(normalized), "webgpu-feature:") {
+			capability = WebGPUFeature(value)
+			value = string(capability)
+			normalized = Capability(strings.ToLower(value))
+		}
+		if normalized == "" {
+			continue
+		}
+		if _, exists := seen[normalized]; exists {
+			continue
+		}
+		seen[normalized] = struct{}{}
+		out = append(out, Capability(value))
+	}
+	return out
+}
+
+func webGPULimitCapability(prefix, name string, minimum int) Capability {
+	name = webGPULimitName(name)
+	return Capability(fmt.Sprintf("%s%s>=%d", prefix, name, minimum))
+}
+
+func webGPULimitName(name string) string {
+	text := strings.TrimSpace(name)
+	lower := strings.ToLower(text)
+	for _, prefix := range []string{
+		"webgpu:adapter-limit:",
+		"webgpu:device-limit:",
+		"webgpu:limit:",
+		"webgpu-limit:",
+	} {
+		if strings.HasPrefix(lower, prefix) {
+			text = strings.TrimSpace(text[len(prefix):])
+			break
+		}
+	}
+	if parsed, _, ok := splitWebGPULimitRequirement(text); ok {
+		return parsed
+	}
+	return text
+}
 
 // KindNeedsMount reports whether an engine kind attaches to a DOM mount.
 func KindNeedsMount(kind Kind) bool {
@@ -306,17 +393,17 @@ func webGPUCapabilitySupported(cap Capability) bool {
 		CapWebGPUTextureCompressionETC2,
 		CapWebGPUTextureCompressionASTC,
 		CapWebGPUSubgroups,
-		"webgpu:texture-compression-bc-sliced-3d",
-		"webgpu:texture-compression-astc-sliced-3d",
-		"webgpu:depth-clip-control",
-		"webgpu:depth32float-stencil8",
-		"webgpu:float32-filterable",
-		"webgpu:float32-blendable",
-		"webgpu:rg11b10ufloat-renderable",
-		"webgpu:bgra8unorm-storage",
-		"webgpu:clip-distances",
-		"webgpu:dual-source-blending",
-		"webgpu:subgroups-f16":
+		CapWebGPUTextureCompressionBCSliced3D,
+		CapWebGPUTextureCompressionASTCSliced3D,
+		CapWebGPUDepthClipControl,
+		CapWebGPUDepth32FloatStencil8,
+		CapWebGPUFloat32Filterable,
+		CapWebGPUFloat32Blendable,
+		CapWebGPURG11B10UFloatRenderable,
+		CapWebGPUBGRA8UnormStorage,
+		CapWebGPUClipDistances,
+		CapWebGPUDualSourceBlending,
+		CapWebGPUSubgroupsF16:
 		return true
 	default:
 		return false

@@ -287,6 +287,9 @@ func TestScene3DElementLoweringAndCapabilityGate(t *testing.T) {
 	if err := ValidateCapabilities(ir, []string{"webgl2"}); err != nil {
 		t.Fatalf("expected webgl2 capability to satisfy compute gate: %v", err)
 	}
+	if err := ValidateCapabilities(ir, []string{"webgpu:timestamp-query"}); err != nil {
+		t.Fatalf("expected WebGPU feature capability to imply WebGPU for compute gate: %v", err)
+	}
 
 	generic := IR{
 		Version: IRVersion,

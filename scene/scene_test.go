@@ -787,9 +787,10 @@ func TestPropsLegacyPropsLowerCameraRotationAndControls(t *testing.T) {
 
 func TestPropsMarshalJSONOmitsEngineTransportFields(t *testing.T) {
 	props := Props{
-		ProgramRef:   "/api/runtime/scene-program",
-		Capabilities: []string{"pointer", "keyboard"},
-		Background:   "#08151f",
+		ProgramRef:           "/api/runtime/scene-program",
+		Capabilities:         []string{"pointer", "keyboard"},
+		RequiredCapabilities: RequireWebGPU(engine.CapWebGPUTimestampQuery),
+		Background:           "#08151f",
 		Graph: NewGraph(
 			Mesh{
 				ID:       "hero",
@@ -808,6 +809,9 @@ func TestPropsMarshalJSONOmitsEngineTransportFields(t *testing.T) {
 	}
 	if contains(text, "capabilities") {
 		t.Fatalf("did not expect capabilities in props json: %s", text)
+	}
+	if contains(text, "requiredCapabilities") {
+		t.Fatalf("did not expect requiredCapabilities in props json: %s", text)
 	}
 	if !contains(text, `"background":"#08151f"`) {
 		t.Fatalf("expected background in props json: %s", text)
@@ -1017,6 +1021,38 @@ func TestPropsEngineConfigCarriesRequiredWebGLContract(t *testing.T) {
 	raw := string(cfg.Props)
 	if !contains(raw, `"requireWebGL":true`) || !contains(raw, `"unsupportedMessage":"Use a current browser with hardware acceleration enabled."`) {
 		t.Fatalf("expected required WebGL props in engine payload, got %s", raw)
+	}
+}
+
+func TestPropsEngineConfigCarriesRequiredWebGPUContract(t *testing.T) {
+	props := Props{
+		RequiredCapabilities: RequireWebGPU(
+			engine.CapWebGPUTimestampQuery,
+			engine.WebGPULimit("maxTextureDimension2D", 4096),
+			engine.WebGPUAdapterLimit("maxBufferSize", 1048576),
+		),
+	}
+
+	cfg := props.EngineConfig()
+	want := []engine.Capability{
+		engine.CapWebGPU,
+		engine.CapWebGPUTimestampQuery,
+		"webgpu:limit:maxTextureDimension2D>=4096",
+		"webgpu:adapter-limit:maxBufferSize>=1048576",
+	}
+	if len(cfg.RequiredCapabilities) != len(want) {
+		t.Fatalf("expected %d required capabilities, got %#v", len(want), cfg.RequiredCapabilities)
+	}
+	for i := range want {
+		if cfg.RequiredCapabilities[i] != want[i] {
+			t.Fatalf("unexpected required capability %d: got %q want %q", i, cfg.RequiredCapabilities[i], want[i])
+		}
+	}
+	if err := engine.ValidateCapabilities(cfg.RequiredCapabilities); err != nil {
+		t.Fatalf("expected required WebGPU Scene3D config to validate: %v", err)
+	}
+	if contains(string(cfg.Props), "requiredCapabilities") {
+		t.Fatalf("did not expect required capabilities in scene props json: %s", string(cfg.Props))
 	}
 }
 

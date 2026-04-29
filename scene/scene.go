@@ -92,6 +92,7 @@ type Environment struct {
 type Props struct {
 	ProgramRef           string       `json:"-"`
 	Capabilities         []string     `json:"-"`
+	RequiredCapabilities []string     `json:"-"`
 	Width                int          `json:"width,omitempty"`
 	Height               int          `json:"height,omitempty"`
 	Label                string       `json:"label,omitempty"`
@@ -941,6 +942,16 @@ func Float(value float64) *float64 {
 	return &value
 }
 
+// RequireWebGPU builds Scene3D requiredCapabilities for a WebGPU-only surface.
+func RequireWebGPU(capabilities ...engine.Capability) []string {
+	required := engine.RequireWebGPU(capabilities...)
+	out := make([]string, 0, len(required))
+	for _, capability := range required {
+		out = append(out, string(capability))
+	}
+	return out
+}
+
 func cloneSceneAnyMap(values map[string]any) map[string]any {
 	if len(values) == 0 {
 		return nil
@@ -1006,6 +1017,9 @@ func (p Props) GoSXSpreadProps() map[string]any {
 		values["programRef"] = ref
 	}
 	values["capabilities"] = p.EngineCapabilities()
+	if required := p.EngineRequiredCapabilities(); len(required) > 0 {
+		values["requiredCapabilities"] = required
+	}
 	return values
 }
 
@@ -1179,6 +1193,32 @@ func (p Props) EngineCapabilities() []string {
 	return out
 }
 
+// EngineRequiredCapabilities returns hard browser gates declared by the scene.
+func (p Props) EngineRequiredCapabilities() []string {
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(p.RequiredCapabilities)+2)
+	appendCapability := func(raw string) {
+		value := strings.TrimSpace(raw)
+		key := strings.ToLower(value)
+		if key == "" {
+			return
+		}
+		if _, exists := seen[key]; exists {
+			return
+		}
+		seen[key] = struct{}{}
+		out = append(out, value)
+	}
+	for _, capability := range p.RequiredCapabilities {
+		appendCapability(capability)
+	}
+	if p.RequireWebGL != nil && *p.RequireWebGL {
+		appendCapability("canvas")
+		appendCapability("webgl")
+	}
+	return out
+}
+
 func (g Graph) requiresComputeCapability() bool {
 	return sceneNodesRequireComputeCapability(g.Nodes)
 }
@@ -1240,8 +1280,11 @@ func (p Props) EngineConfig() engine.Config {
 			cfg.Capabilities = append(cfg.Capabilities, engine.Capability(capability))
 		}
 	}
-	if p.RequireWebGL != nil && *p.RequireWebGL {
-		cfg.RequiredCapabilities = []engine.Capability{engine.CapCanvas, engine.CapWebGL}
+	if required := p.EngineRequiredCapabilities(); len(required) > 0 {
+		cfg.RequiredCapabilities = make([]engine.Capability, 0, len(required))
+		for _, capability := range required {
+			cfg.RequiredCapabilities = append(cfg.RequiredCapabilities, engine.Capability(capability))
+		}
 	}
 	if cfg.WASMPath != "" {
 		cfg.Runtime = engine.RuntimeShared

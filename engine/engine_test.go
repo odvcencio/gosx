@@ -108,7 +108,7 @@ func TestValidateCapabilities_TextInput(t *testing.T) {
 
 func TestValidateCapabilities(t *testing.T) {
 	// Valid
-	err := ValidateCapabilities([]Capability{CapVideo, CapCanvas, CapWebGL, CapWebGL2, CapWebGPU, CapCompute, CapWASM, CapPixelSurface, CapPointer, CapPointerLock, CapKeyboard, CapGamepad, CapWebGPUTimestampQuery, CapWebGPUShaderF16, CapWebGPUTextureCompressionBC, "webgpu:limit:maxTextureDimension2D>=4096", "webgpu:adapter-limit:maxBufferSize>=1048576"})
+	err := ValidateCapabilities([]Capability{CapVideo, CapCanvas, CapWebGL, CapWebGL2, CapWebGPU, CapCompute, CapWASM, CapPixelSurface, CapPointer, CapPointerLock, CapKeyboard, CapGamepad, CapWebGPUTimestampQuery, CapWebGPUShaderF16, CapWebGPUTextureCompressionBC, CapWebGPUTextureCompressionBCSliced3D, CapWebGPUDualSourceBlending, CapWebGPUSubgroupsF16, "webgpu:limit:maxTextureDimension2D>=4096", "webgpu:adapter-limit:maxBufferSize>=1048576"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,6 +117,37 @@ func TestValidateCapabilities(t *testing.T) {
 	err = ValidateCapabilities([]Capability{"teleport"})
 	if err == nil {
 		t.Fatal("expected error for unsupported capability")
+	}
+}
+
+func TestWebGPUCapabilityHelpers(t *testing.T) {
+	required := RequireWebGPU(
+		WebGPUFeature("timestamp-query"),
+		WebGPUFeature("webgpu-feature:shader-f16"),
+		WebGPULimit("maxTextureDimension2D", 4096),
+		WebGPUAdapterLimit("webgpu:adapter-limit:maxBufferSize>=1048576", 1048576),
+		CapWebGPU,
+	)
+	want := []Capability{
+		CapWebGPU,
+		CapWebGPUTimestampQuery,
+		CapWebGPUShaderF16,
+		"webgpu:limit:maxTextureDimension2D>=4096",
+		"webgpu:adapter-limit:maxBufferSize>=1048576",
+	}
+	if len(required) != len(want) {
+		t.Fatalf("expected %d required capabilities, got %#v", len(want), required)
+	}
+	for i := range want {
+		if required[i] != want[i] {
+			t.Fatalf("unexpected required capability %d: got %q want %q", i, required[i], want[i])
+		}
+	}
+	if err := ValidateCapabilities(required); err != nil {
+		t.Fatalf("expected helper output to validate: %v", err)
+	}
+	if err := ValidateCapabilities([]Capability{WebGPUDeviceLimit("", 1)}); err == nil {
+		t.Fatal("expected empty WebGPU limit helper input to remain invalid")
 	}
 }
 

@@ -7031,6 +7031,18 @@ test("selective Scene3D bootstrap prefers WebGPU before first renderer selection
                     requestedFeatures: ["timestamp-query", "shader-f16"],
                     deviceFeatures: ["timestamp-query"],
                     activeSampleCount: 4,
+                    adapterLimits: {
+                      maxTextureDimension2D: 8192,
+                      maxBufferSize: 268435456,
+                      maxComputeWorkgroupSizeX: 256,
+                      maxComputeWorkgroupsPerDimension: 65535
+                    },
+                    deviceLimits: {
+                      maxTextureDimension2D: 4096,
+                      maxBufferSize: 134217728,
+                      maxComputeWorkgroupSizeX: 128,
+                      maxComputeWorkgroupsPerDimension: 32768
+                    },
                     adapterInfo: { vendor: "gosx-test", architecture: "unit" }
                   };
                 },
@@ -7081,6 +7093,16 @@ test("selective Scene3D bootstrap prefers WebGPU before first renderer selection
   assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-features"), "timestamp-query,shader-f16");
   assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-device-features"), "timestamp-query");
   assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-sample-count"), "4");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-adapter-limits"), "maxBufferSize=268435456,maxComputeWorkgroupSizeX=256,maxComputeWorkgroupsPerDimension=65535,maxTextureDimension2D=8192");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-device-limits"), "maxBufferSize=134217728,maxComputeWorkgroupSizeX=128,maxComputeWorkgroupsPerDimension=32768,maxTextureDimension2D=4096");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-adapter-max-texture-2d"), "8192");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-device-max-texture-2d"), "4096");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-adapter-max-buffer-size"), "268435456");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-device-max-buffer-size"), "134217728");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-adapter-max-compute-workgroup-size-x"), "256");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-device-max-compute-workgroup-size-x"), "128");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-adapter-max-compute-workgroups-per-dimension"), "65535");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-device-max-compute-workgroups-per-dimension"), "32768");
   assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-adapter"), "gosx-test unit");
   assert.equal(mount.getAttribute("data-gosx-scene3d-renderer-fallback"), null);
   assert.equal(

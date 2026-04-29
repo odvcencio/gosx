@@ -636,7 +636,7 @@ func (r *fileProgramRenderer) renderEngineComponent(node *ir.Node, env fileRende
 		cfg.Props = defaultScene3DProps(cfg.Props, cfg.WASMPath)
 		cfg.Props = r.applyScene3DStyles(cfg.Props, node, env)
 		cfg.RequiredCapabilities = scene3DRequiredCapabilities(cfg.Props, cfg.RequiredCapabilities)
-		if err := validateScene3DCompilerCapabilities(cfg.Props, cfg.Capabilities); err != nil {
+		if err := validateScene3DCompilerCapabilities(cfg.Props, mergedEngineCapabilities(cfg.Capabilities, cfg.RequiredCapabilities)); err != nil {
 			return r.renderError(err)
 		}
 	}
@@ -2550,6 +2550,32 @@ func scene3DRequiredCapabilities(raw json.RawMessage, existing []engine.Capabili
 		}
 		seen[capability] = struct{}{}
 		out = append(out, capability)
+	}
+	return out
+}
+
+func mergedEngineCapabilities(primary, secondary []engine.Capability) []engine.Capability {
+	if len(primary) == 0 && len(secondary) == 0 {
+		return nil
+	}
+	out := make([]engine.Capability, 0, len(primary)+len(secondary))
+	seen := map[engine.Capability]struct{}{}
+	appendCapability := func(capability engine.Capability) {
+		normalized := engine.Capability(strings.ToLower(strings.TrimSpace(string(capability))))
+		if normalized == "" {
+			return
+		}
+		if _, exists := seen[normalized]; exists {
+			return
+		}
+		seen[normalized] = struct{}{}
+		out = append(out, normalized)
+	}
+	for _, capability := range primary {
+		appendCapability(capability)
+	}
+	for _, capability := range secondary {
+		appendCapability(capability)
 	}
 	return out
 }

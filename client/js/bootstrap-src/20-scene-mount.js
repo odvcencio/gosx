@@ -1688,6 +1688,35 @@
     setAttrValue(mount, "data-gosx-scene3d-hardware-concurrency", capability.hardwareConcurrency > 0 ? capability.hardwareConcurrency : "");
   }
 
+  function sceneWebGPULimitKey(name) {
+    return String(name || "").trim().toLowerCase().replace(/[^a-z0-9]/g, "");
+  }
+
+  function sceneWebGPULimitValue(limits, name) {
+    if (!limits || typeof limits !== "object") {
+      return "";
+    }
+    const wanted = sceneWebGPULimitKey(name);
+    for (const key of Object.keys(limits)) {
+      if (sceneWebGPULimitKey(key) !== wanted) {
+        continue;
+      }
+      const value = Number(limits[key]);
+      return Number.isFinite(value) ? value : "";
+    }
+    return "";
+  }
+
+  function sceneWebGPULimitList(limits) {
+    if (!limits || typeof limits !== "object") {
+      return "";
+    }
+    return Object.keys(limits).sort().map(function(key) {
+      const value = Number(limits[key]);
+      return Number.isFinite(value) ? key + "=" + value : "";
+    }).filter(Boolean).join(",");
+  }
+
   function applySceneRendererState(mount, renderer, fallbackReason) {
     if (!mount) {
       return;
@@ -1697,9 +1726,21 @@
     const webgpuDiagnostics = renderer && renderer.kind === "webgpu" && typeof renderer.diagnostics === "function"
       ? renderer.diagnostics()
       : null;
+    const webgpuAdapterLimits = webgpuDiagnostics && webgpuDiagnostics.adapterLimits ? webgpuDiagnostics.adapterLimits : null;
+    const webgpuDeviceLimits = webgpuDiagnostics && webgpuDiagnostics.deviceLimits ? webgpuDiagnostics.deviceLimits : null;
     setAttrValue(mount, "data-gosx-scene3d-webgpu-features", webgpuDiagnostics && Array.isArray(webgpuDiagnostics.requestedFeatures) ? webgpuDiagnostics.requestedFeatures.join(",") : "");
     setAttrValue(mount, "data-gosx-scene3d-webgpu-device-features", webgpuDiagnostics && Array.isArray(webgpuDiagnostics.deviceFeatures) ? webgpuDiagnostics.deviceFeatures.join(",") : "");
     setAttrValue(mount, "data-gosx-scene3d-webgpu-sample-count", webgpuDiagnostics && webgpuDiagnostics.activeSampleCount > 0 ? webgpuDiagnostics.activeSampleCount : "");
+    setAttrValue(mount, "data-gosx-scene3d-webgpu-adapter-limits", sceneWebGPULimitList(webgpuAdapterLimits));
+    setAttrValue(mount, "data-gosx-scene3d-webgpu-device-limits", sceneWebGPULimitList(webgpuDeviceLimits));
+    setAttrValue(mount, "data-gosx-scene3d-webgpu-adapter-max-texture-2d", sceneWebGPULimitValue(webgpuAdapterLimits, "maxTextureDimension2D"));
+    setAttrValue(mount, "data-gosx-scene3d-webgpu-device-max-texture-2d", sceneWebGPULimitValue(webgpuDeviceLimits, "maxTextureDimension2D"));
+    setAttrValue(mount, "data-gosx-scene3d-webgpu-adapter-max-buffer-size", sceneWebGPULimitValue(webgpuAdapterLimits, "maxBufferSize"));
+    setAttrValue(mount, "data-gosx-scene3d-webgpu-device-max-buffer-size", sceneWebGPULimitValue(webgpuDeviceLimits, "maxBufferSize"));
+    setAttrValue(mount, "data-gosx-scene3d-webgpu-adapter-max-compute-workgroup-size-x", sceneWebGPULimitValue(webgpuAdapterLimits, "maxComputeWorkgroupSizeX"));
+    setAttrValue(mount, "data-gosx-scene3d-webgpu-device-max-compute-workgroup-size-x", sceneWebGPULimitValue(webgpuDeviceLimits, "maxComputeWorkgroupSizeX"));
+    setAttrValue(mount, "data-gosx-scene3d-webgpu-adapter-max-compute-workgroups-per-dimension", sceneWebGPULimitValue(webgpuAdapterLimits, "maxComputeWorkgroupsPerDimension"));
+    setAttrValue(mount, "data-gosx-scene3d-webgpu-device-max-compute-workgroups-per-dimension", sceneWebGPULimitValue(webgpuDeviceLimits, "maxComputeWorkgroupsPerDimension"));
     setAttrValue(mount, "data-gosx-scene3d-webgpu-adapter", webgpuDiagnostics && webgpuDiagnostics.adapterInfo ? [
       webgpuDiagnostics.adapterInfo.vendor || "",
       webgpuDiagnostics.adapterInfo.architecture || "",

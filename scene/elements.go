@@ -209,7 +209,14 @@ func LowerLabel(props LabelElementProps) IRNode {
 func ValidateCapabilities(ir IR, capabilities []string) error {
 	have := map[string]bool{}
 	for _, capability := range capabilities {
-		have[strings.ToLower(strings.TrimSpace(capability))] = true
+		capability = strings.ToLower(strings.TrimSpace(capability))
+		if capability == "" {
+			continue
+		}
+		have[capability] = true
+		if strings.HasPrefix(capability, "webgpu:") || strings.HasPrefix(capability, "webgpu-feature:") {
+			have["webgpu"] = true
+		}
 	}
 	for _, node := range ir.Nodes {
 		if node.Kind == "compute-particles" && !(have["webgpu"] || have["webgl2"] || have["compute"]) {
