@@ -1773,8 +1773,10 @@
       : null;
     const webgpuAdapterLimits = webgpuDiagnostics && webgpuDiagnostics.adapterLimits ? webgpuDiagnostics.adapterLimits : null;
     const webgpuDeviceLimits = webgpuDiagnostics && webgpuDiagnostics.deviceLimits ? webgpuDiagnostics.deviceLimits : null;
+    const webgpuRequiredLimits = webgpuDiagnostics && webgpuDiagnostics.requiredLimits ? webgpuDiagnostics.requiredLimits : null;
     setAttrValue(mount, "data-gosx-scene3d-webgpu-features", webgpuDiagnostics && Array.isArray(webgpuDiagnostics.requestedFeatures) ? webgpuDiagnostics.requestedFeatures.join(",") : "");
     setAttrValue(mount, "data-gosx-scene3d-webgpu-device-features", webgpuDiagnostics && Array.isArray(webgpuDiagnostics.deviceFeatures) ? webgpuDiagnostics.deviceFeatures.join(",") : "");
+    setAttrValue(mount, "data-gosx-scene3d-webgpu-required-limits", sceneWebGPULimitList(webgpuRequiredLimits));
     setAttrValue(mount, "data-gosx-scene3d-webgpu-sample-count", webgpuDiagnostics && webgpuDiagnostics.activeSampleCount > 0 ? webgpuDiagnostics.activeSampleCount : "");
     setAttrValue(mount, "data-gosx-scene3d-webgpu-target-format", webgpuDiagnostics && webgpuDiagnostics.targetFormat ? webgpuDiagnostics.targetFormat : "");
     setAttrValue(mount, "data-gosx-scene3d-webgpu-presentation-alpha-mode", webgpuDiagnostics && webgpuDiagnostics.presentationAlphaMode ? webgpuDiagnostics.presentationAlphaMode : "");

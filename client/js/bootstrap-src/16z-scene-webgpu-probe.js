@@ -33,6 +33,7 @@
   var _webgpuProbePromise = Promise.resolve(false);
   var _webgpuSupportedFeatures = [];
   var _webgpuRequestedFeatures = [];
+  var _webgpuRequiredLimits = {};
   var _webgpuAdapterLimits = {};
   var _webgpuDeviceLimits = {};
   var _webgpuAdapterInfo = {};
@@ -174,6 +175,7 @@
       supportedFeatures: _webgpuSupportedFeatures.slice(),
       requestedFeatures: _webgpuRequestedFeatures.slice(),
       deviceFeatures: sceneWebGPUFeatureList(_webgpuDeviceProbe && _webgpuDeviceProbe.features),
+      requiredLimits: Object.assign({}, _webgpuRequiredLimits),
       adapterLimits: Object.assign({}, _webgpuAdapterLimits),
       deviceLimits: Object.assign({}, _webgpuDeviceLimits),
       adapterInfo: Object.assign({}, _webgpuAdapterInfo),
@@ -215,6 +217,7 @@
         ready: _webgpuAdapterReady,
         supportedFeatures: _webgpuSupportedFeatures.slice(),
         requestedFeatures: _webgpuRequestedFeatures.slice(),
+        requiredLimits: Object.assign({}, _webgpuRequiredLimits),
         limits: Object.assign({}, _webgpuAdapterLimits),
         adapterInfo: Object.assign({}, _webgpuAdapterInfo),
         error: _webgpuProbeError,
@@ -241,10 +244,7 @@
   }
 
   function sceneWebGPUProbeOptionsFromManifest() {
-    var manifest = null;
-    if (typeof loadManifest === "function") {
-      manifest = loadManifest();
-    }
+    var manifest = sceneWebGPUManifest();
     var engines = manifest && Array.isArray(manifest.engines) ? manifest.engines : [];
     var powerPreference = "";
     for (var i = 0; i < engines.length; i++) {
@@ -270,6 +270,114 @@
     return powerPreference ? { powerPreference: powerPreference } : {};
   }
 
+  function sceneWebGPUManifest() {
+    if (typeof loadManifest === "function") {
+      return loadManifest();
+    }
+    return null;
+  }
+
+  function sceneWebGPURequiredLimitsFromManifest() {
+    var manifest = sceneWebGPUManifest();
+    var limits = {};
+    var groups = [
+      manifest && Array.isArray(manifest.engines) ? manifest.engines : [],
+      manifest && Array.isArray(manifest.computeIslands) ? manifest.computeIslands : [],
+      manifest && Array.isArray(manifest.islands) ? manifest.islands : [],
+    ];
+    for (var groupIndex = 0; groupIndex < groups.length; groupIndex++) {
+      var group = groups[groupIndex];
+      for (var i = 0; i < group.length; i++) {
+        var entry = group[i];
+        var required = entry && Array.isArray(entry.requiredCapabilities) ? entry.requiredCapabilities : [];
+        sceneWebGPUCollectRequiredLimits(required, limits);
+      }
+    }
+    return limits;
+  }
+
+  function sceneWebGPUCollectRequiredLimits(required, out) {
+    for (var i = 0; i < required.length; i++) {
+      var raw = String(required[i] || "").trim();
+      var lower = raw.toLowerCase();
+      var body = "";
+      if (lower.indexOf("webgpu:device-limit:") === 0) {
+        body = raw.slice("webgpu:device-limit:".length);
+      } else if (lower.indexOf("webgpu:limit:") === 0) {
+        body = raw.slice("webgpu:limit:".length);
+      } else if (lower.indexOf("webgpu-limit:") === 0) {
+        body = raw.slice("webgpu-limit:".length);
+      } else {
+        continue;
+      }
+      var parsed = sceneWebGPUParseLimitRequirement(body);
+      if (!parsed) {
+        continue;
+      }
+      var name = sceneWebGPUCanonicalLimitName(parsed.name);
+      if (!name) {
+        continue;
+      }
+      var value = sceneWebGPURequiredLimitValue(parsed);
+      if (!Number.isFinite(value)) {
+        continue;
+      }
+      if (!Number.isFinite(Number(out[name])) || value > Number(out[name])) {
+        out[name] = value;
+      }
+    }
+  }
+
+  function sceneWebGPUParseLimitRequirement(requirement) {
+    var text = String(requirement || "").trim();
+    var match = text.match(/^([a-z0-9_.:-]+)\s*(>=|<=|==|>|<|=|:)\s*([0-9]+(?:\.[0-9]+)?)$/i);
+    if (!match) {
+      return null;
+    }
+    var value = Number(match[3]);
+    if (!Number.isFinite(value)) {
+      return null;
+    }
+    return {
+      name: match[1],
+      operator: match[2] === ":" ? ">=" : match[2],
+      value: value,
+    };
+  }
+
+  function sceneWebGPURequiredLimitValue(parsed) {
+    if (!parsed) {
+      return NaN;
+    }
+    switch (parsed.operator) {
+      case ">":
+        return Math.floor(parsed.value) + 1;
+      case "<":
+      case "<=":
+        return NaN;
+      default:
+        return Math.ceil(parsed.value);
+    }
+  }
+
+  function sceneWebGPUCanonicalLimitName(name) {
+    var wanted = sceneWebGPUNormalizedLimitName(name);
+    if (!wanted) {
+      return "";
+    }
+    for (var i = 0; i < WEBGPU_LIMIT_NAMES.length; i++) {
+      var candidate = WEBGPU_LIMIT_NAMES[i];
+      if (sceneWebGPUNormalizedLimitName(candidate) === wanted) {
+        return candidate;
+      }
+    }
+    return "";
+  }
+
+  function sceneWebGPUNormalizedLimitName(name) {
+    return String(name || "").trim().toLowerCase().replace(/[^a-z0-9]/g, "");
+  }
+
   if (typeof navigator !== "undefined" && navigator.gpu && typeof navigator.gpu.requestAdapter === "function") {
     // The default stays unbounded because some backends (SwiftShader in
     // headless Chrome, certain Linux Mesa/ANGLE builds) return null when
@@ -289,15 +397,20 @@
       _webgpuAdapterProbe = adapter;
       _webgpuSupportedFeatures = sceneWebGPUFeatureList(adapter.features);
       _webgpuRequestedFeatures = sceneWebGPURequestedFeatureList(adapter);
+      _webgpuRequiredLimits = sceneWebGPURequiredLimitsFromManifest();
       _webgpuAdapterLimits = sceneWebGPULimitsSnapshot(adapter.limits);
       _webgpuAdapterInfo = sceneWebGPUAdapterInfoSnapshot(adapter);
       // Verify device creation actually succeeds — this is where
       // partial implementations (SwiftShader WebGPU, constrained
       // mobile GPUs, broken ANGLE backends) fail. We don't mark
       // WebGPU "ready" until the device itself is in hand.
-      var descriptor = _webgpuRequestedFeatures.length > 0
-        ? { requiredFeatures: _webgpuRequestedFeatures }
-        : {};
+      var descriptor = {};
+      if (_webgpuRequestedFeatures.length > 0) {
+        descriptor.requiredFeatures = _webgpuRequestedFeatures;
+      }
+      if (Object.keys(_webgpuRequiredLimits).length > 0) {
+        descriptor.requiredLimits = Object.assign({}, _webgpuRequiredLimits);
+      }
       return adapter.requestDevice(descriptor);
     }).then(function(device) {
       if (device === false) {

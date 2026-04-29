@@ -6449,6 +6449,8 @@ test("Scene3D WebGPU supports tiered MSAA render targets", () => {
   assert.match(mount, /powerPreference: sceneWebGPUPowerPreference/);
   assert.match(mount, /presentation: sceneWebGPUPresentationOptions\(props\)/);
   assert.match(probe, /sceneWebGPUProbeOptionsFromManifest/);
+  assert.match(probe, /sceneWebGPURequiredLimitsFromManifest/);
+  assert.match(probe, /descriptor\.requiredLimits = Object\.assign/);
   assert.match(probe, /requestAdapter\(adapterRequest\)/);
 });
 
@@ -6516,6 +6518,12 @@ test("Scene3D WebGPU probe negotiates optional features and exposes diagnostics"
           component: "GoSXScene3D",
           kind: "surface",
           mountId: "probe-scene",
+          requiredCapabilities: [
+            "webgpu",
+            "webgpu:limit:maxComputeWorkgroupSizeX>=128",
+            "webgpu:device-limit:maxTextureDimension2D>=4096",
+            "webgpu:adapter-limit:maxTextureDimension2D>=8192",
+          ],
           props: {
             webgpuPowerPreference: "high-performance",
           },
@@ -6539,6 +6547,8 @@ test("Scene3D WebGPU probe negotiates optional features and exposes diagnostics"
     "subgroups",
     "subgroups-f16",
   ]);
+  assert.equal(requestedDescriptor.requiredLimits.maxComputeWorkgroupSizeX, 128);
+  assert.equal(requestedDescriptor.requiredLimits.maxTextureDimension2D, 4096);
   const diagnostics = env.context.__gosx_scene3d_webgpu_diagnostics();
   assert.equal(diagnostics.ready, true);
   assert.equal(diagnostics.adapterAvailable, true);
@@ -6551,6 +6561,8 @@ test("Scene3D WebGPU probe negotiates optional features and exposes diagnostics"
   assert.equal(diagnostics.adapterInfo.vendor, "gosx-test");
   assert.equal(diagnostics.adapterInfo.subgroupMaxSize, 32);
   assert.equal(diagnostics.probeOptions.powerPreference, "high-performance");
+  assert.equal(diagnostics.requiredLimits.maxComputeWorkgroupSizeX, 128);
+  assert.equal(diagnostics.requiredLimits.maxTextureDimension2D, 4096);
   assert.equal(typeof env.context.__gosx_scene3d_api.sceneWebGPUDiagnostics, "function");
   assert.equal(env.context.__gosx_runtime_api.browserCapabilitySupported("webgpu:timestamp-query"), true);
   assert.equal(env.context.__gosx_runtime_api.browserCapabilitySupported("webgpu:texture-compression-astc-sliced-3d"), false);
@@ -7057,6 +7069,11 @@ test("selective Scene3D bootstrap prefers WebGPU before first renderer selection
         return {
           requestDevice: async () => ({
             lost: new Promise(() => {}),
+            features: new Set(["timestamp-query"]),
+            limits: {
+              maxTextureDimension2D: 4096,
+              maxComputeWorkgroupSizeX: 128,
+            },
           }),
         };
       },
@@ -7078,6 +7095,10 @@ test("selective Scene3D bootstrap prefers WebGPU before first renderer selection
                   return {
                     requestedFeatures: ["timestamp-query", "shader-f16"],
                     deviceFeatures: ["timestamp-query"],
+                    requiredLimits: {
+                      maxTextureDimension2D: 4096,
+                      maxComputeWorkgroupSizeX: 128
+                    },
                     activeSampleCount: 4,
                     targetFormat: "rgba16float",
                     presentationAlphaMode: presentation.alphaMode,
@@ -7117,6 +7138,11 @@ test("selective Scene3D bootstrap prefers WebGPU before first renderer selection
           kind: "surface",
           mountId: "scene-webgpu-default",
           jsExport: "GoSXScene3D",
+          requiredCapabilities: [
+            "webgpu",
+            "webgpu:limit:maxComputeWorkgroupSizeX>=128",
+            "webgpu:device-limit:maxTextureDimension2D>=4096",
+          ],
           props: {
             width: 360,
             height: 220,
@@ -7149,6 +7175,7 @@ test("selective Scene3D bootstrap prefers WebGPU before first renderer selection
   }));
   assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-features"), "timestamp-query,shader-f16");
   assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-device-features"), "timestamp-query");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-required-limits"), "maxComputeWorkgroupSizeX=128,maxTextureDimension2D=4096");
   assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-sample-count"), "4");
   assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-target-format"), "rgba16float");
   assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-presentation-alpha-mode"), "opaque");
