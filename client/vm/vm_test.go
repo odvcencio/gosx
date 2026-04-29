@@ -15,6 +15,66 @@ func progFromExprs(exprs []program.Expr) *program.Program {
 	}
 }
 
+func TestVMDiagnosticsExposeZeroValueFallbacks(t *testing.T) {
+	prog := progFromExprs([]program.Expr{
+		{Op: program.OpLitInt, Value: "not-an-int", Type: program.TypeInt},
+		{Op: program.OpAdd, Operands: []program.ExprID{0}, Type: program.TypeInt},
+		{Op: program.OpCode(250), Type: program.TypeAny},
+	})
+	vm := NewVM(prog, nil)
+
+	if v, diags := vm.EvalWithDiagnostics(8); v.Type != program.TypeAny || len(diags) != 1 || diags[0].Code != "expr_out_of_range" {
+		t.Fatalf("EvalWithDiagnostics out-of-range: value=%+v diagnostics=%+v", v, diags)
+	}
+	if _, diags := vm.EvalWithDiagnostics(0); len(diags) != 1 || diags[0].Code != "invalid_int_literal" {
+		t.Fatalf("invalid int diagnostics = %+v", diags)
+	}
+	if _, diags := vm.EvalWithDiagnostics(1); len(diags) != 1 || diags[0].Code != "missing_operands" {
+		t.Fatalf("missing operand diagnostics = %+v", diags)
+	}
+	if _, diags := vm.EvalWithDiagnostics(2); len(diags) != 1 || diags[0].Code != "unknown_opcode" {
+		t.Fatalf("unknown opcode diagnostics = %+v", diags)
+	}
+
+	all := vm.Diagnostics()
+	if len(all) != 4 {
+		t.Fatalf("Diagnostics length = %d, want 4: %+v", len(all), all)
+	}
+	all[0].Code = "mutated"
+	if got := vm.Diagnostics()[0].Code; got != "expr_out_of_range" {
+		t.Fatalf("Diagnostics returned mutable backing slice, got first code %q", got)
+	}
+	vm.ClearDiagnostics()
+	if got := vm.Diagnostics(); len(got) != 0 {
+		t.Fatalf("ClearDiagnostics left diagnostics: %+v", got)
+	}
+}
+
+func TestVMDiagnosticSinkReceivesDiagnostics(t *testing.T) {
+	prog := progFromExprs([]program.Expr{
+		{Op: program.OpSignalSet, Value: "missing", Operands: []program.ExprID{1}},
+		{Op: program.OpLitInt, Value: "1", Type: program.TypeInt},
+	})
+	vm := NewVM(prog, nil)
+	var got []Diagnostic
+	vm.SetDiagnosticSink(func(d Diagnostic) {
+		got = append(got, d)
+	})
+
+	vm.Eval(0)
+	if len(got) != 1 || got[0].Code != "missing_signal" {
+		t.Fatalf("diagnostic sink = %+v", got)
+	}
+}
+
+func TestNewVMNilProgramRecordsDiagnostic(t *testing.T) {
+	vm := NewVM(nil, nil)
+	diags := vm.Diagnostics()
+	if len(diags) != 1 || diags[0].Code != "nil_program" {
+		t.Fatalf("nil program diagnostics = %+v", diags)
+	}
+}
+
 // --- Literal evaluation ---
 
 func TestVMLitInt(t *testing.T) {

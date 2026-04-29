@@ -11,11 +11,13 @@ import (
 
 // VM evaluates island expressions against props and signal state.
 type VM struct {
-	program   *program.Program
-	props     map[string]Value
-	signals   map[string]*signal.Signal[Value]
-	exprs     []program.Expr
-	eventData map[string]string // current event data (set during handler dispatch)
+	program        *program.Program
+	props          map[string]Value
+	signals        map[string]*signal.Signal[Value]
+	exprs          []program.Expr
+	eventData      map[string]string // current event data (set during handler dispatch)
+	diagnostics    []Diagnostic
+	diagnosticSink DiagnosticSink
 }
 
 type iterationContext struct {
@@ -44,12 +46,22 @@ func NewVM(prog *program.Program, props map[string]Value) *VM {
 	if props == nil {
 		props = make(map[string]Value)
 	}
-	return &VM{
+	vm := &VM{
 		program: prog,
 		props:   props,
 		signals: make(map[string]*signal.Signal[Value]),
-		exprs:   prog.Exprs,
 	}
+	if prog == nil {
+		vm.program = &program.Program{}
+		vm.recordDiagnostic(Diagnostic{
+			Severity: DiagnosticError,
+			Code:     "nil_program",
+			Message:  "island VM created with a nil program",
+		})
+		return vm
+	}
+	vm.exprs = prog.Exprs
+	return vm
 }
 
 // SetSignal registers a signal by name.
@@ -57,10 +69,17 @@ func (vm *VM) SetSignal(name string, sig *signal.Signal[Value]) {
 	vm.signals[name] = sig
 }
 
-// Eval evaluates an expression by ID and returns its value.
-// The VM never panics — errors produce zero values.
+// Eval evaluates an expression by ID and returns its value. The VM keeps its
+// panic-free contract: malformed programs produce zero values and structured
+// diagnostics instead of panics.
 func (vm *VM) Eval(id program.ExprID) Value {
 	if int(id) >= len(vm.exprs) {
+		vm.recordDiagnostic(Diagnostic{
+			Severity: DiagnosticError,
+			Code:     "expr_out_of_range",
+			Message:  fmt.Sprintf("expression %d is outside the expression table length %d", id, len(vm.exprs)),
+			ExprID:   diagnosticExprID(id),
+		})
 		return ZeroValue(program.TypeAny)
 	}
 	return vm.evalExpr(vm.exprs[id])
@@ -100,6 +119,12 @@ func (vm *VM) evalExpr(e program.Expr) Value {
 	if value, ok := vm.evalConversionExpr(e); ok {
 		return value
 	}
+	vm.recordExprDiagnostic(
+		"unknown_opcode",
+		fmt.Sprintf("unknown island VM opcode %d", e.Op),
+		e.Op,
+		e.Value,
+	)
 	return ZeroValue(program.TypeAny)
 }
 
@@ -108,10 +133,18 @@ func (vm *VM) evalLiteralExpr(e program.Expr) (Value, bool) {
 	case program.OpLitString:
 		return StringVal(e.Value), true
 	case program.OpLitInt:
-		n, _ := strconv.ParseInt(e.Value, 10, 64)
+		n, err := strconv.ParseInt(e.Value, 10, 64)
+		if err != nil {
+			vm.recordExprDiagnostic("invalid_int_literal", fmt.Sprintf("invalid integer literal %q: %v", e.Value, err), e.Op, e.Value)
+			return ZeroValue(program.TypeInt), true
+		}
 		return IntVal(int(n)), true
 	case program.OpLitFloat:
-		f, _ := strconv.ParseFloat(e.Value, 64)
+		f, err := strconv.ParseFloat(e.Value, 64)
+		if err != nil {
+			vm.recordExprDiagnostic("invalid_float_literal", fmt.Sprintf("invalid float literal %q: %v", e.Value, err), e.Op, e.Value)
+			return ZeroValue(program.TypeFloat), true
+		}
 		return FloatVal(f), true
 	case program.OpLitBool:
 		return BoolVal(e.Value == "true"), true
@@ -293,8 +326,13 @@ func (vm *VM) signalValue(name string, typ program.ExprType) Value {
 }
 
 func (vm *VM) updateSignal(e program.Expr) Value {
-	if sig, ok := vm.signals[e.Value]; ok && len(e.Operands) > 0 {
+	if !vm.requireOperands(e, 1) {
+		return ZeroValue(program.TypeAny)
+	}
+	if sig, ok := vm.signals[e.Value]; ok {
 		sig.Set(vm.Eval(e.Operands[0]))
+	} else {
+		vm.recordExprDiagnostic("missing_signal", fmt.Sprintf("signal %q is not registered", e.Value), e.Op, e.Value)
 	}
 	return ZeroValue(program.TypeAny)
 }
@@ -309,28 +347,28 @@ func (vm *VM) eventValue(name string) Value {
 }
 
 func (vm *VM) evalUnary(e program.Expr, fn func(Value) Value, fallback program.ExprType) Value {
-	if len(e.Operands) > 0 {
+	if vm.requireOperands(e, 1) {
 		return fn(vm.Eval(e.Operands[0]))
 	}
 	return ZeroValue(fallback)
 }
 
 func (vm *VM) stringUnary(e program.Expr, fn func(Value) Value, fallback Value) Value {
-	if len(e.Operands) > 0 {
+	if vm.requireOperands(e, 1) {
 		return fn(vm.Eval(e.Operands[0]))
 	}
 	return fallback
 }
 
 func (vm *VM) intUnary(e program.Expr, fn func(Value) Value) Value {
-	if len(e.Operands) > 0 {
+	if vm.requireOperands(e, 1) {
 		return fn(vm.Eval(e.Operands[0]))
 	}
 	return IntVal(0)
 }
 
 func (vm *VM) floatUnary(e program.Expr, fn func(Value) Value) Value {
-	if len(e.Operands) > 0 {
+	if vm.requireOperands(e, 1) {
 		return fn(vm.Eval(e.Operands[0]))
 	}
 	return FloatVal(0)
@@ -345,7 +383,7 @@ func (vm *VM) formatValue(e program.Expr) Value {
 }
 
 func (vm *VM) conditionalValue(e program.Expr) Value {
-	if len(e.Operands) < 3 {
+	if !vm.requireOperands(e, 3) {
 		return ZeroValue(program.TypeAny)
 	}
 	if vm.Eval(e.Operands[0]).Bool {
@@ -355,21 +393,21 @@ func (vm *VM) conditionalValue(e program.Expr) Value {
 }
 
 func (vm *VM) indexValue(e program.Expr) Value {
-	if len(e.Operands) >= 2 {
+	if vm.requireOperands(e, 2) {
 		return vm.Eval(e.Operands[0]).IndexVal(vm.Eval(e.Operands[1]))
 	}
 	return ZeroValue(program.TypeAny)
 }
 
 func (vm *VM) lenValue(e program.Expr) Value {
-	if len(e.Operands) > 0 {
+	if vm.requireOperands(e, 1) {
 		return IntVal(vm.Eval(e.Operands[0]).Len())
 	}
 	return IntVal(0)
 }
 
 func (vm *VM) mapValue(e program.Expr) Value {
-	if len(e.Operands) < 2 {
+	if !vm.requireOperands(e, 2) {
 		return ArrayVal(nil)
 	}
 	coll := vm.Eval(e.Operands[0])
@@ -377,7 +415,7 @@ func (vm *VM) mapValue(e program.Expr) Value {
 }
 
 func (vm *VM) filterValue(e program.Expr) Value {
-	if len(e.Operands) < 2 {
+	if !vm.requireOperands(e, 2) {
 		return ArrayVal(nil)
 	}
 	coll := vm.Eval(e.Operands[0])
@@ -385,7 +423,7 @@ func (vm *VM) filterValue(e program.Expr) Value {
 }
 
 func (vm *VM) findValue(e program.Expr) Value {
-	if len(e.Operands) < 2 {
+	if !vm.requireOperands(e, 2) {
 		return ZeroValue(program.TypeAny)
 	}
 	coll := vm.Eval(e.Operands[0])
@@ -396,7 +434,7 @@ func (vm *VM) findValue(e program.Expr) Value {
 }
 
 func (vm *VM) sliceValue(e program.Expr) Value {
-	if len(e.Operands) >= 3 {
+	if vm.requireOperands(e, 3) {
 		coll := vm.Eval(e.Operands[0])
 		start := int(vm.Eval(e.Operands[1]).Num)
 		end := int(vm.Eval(e.Operands[2]).Num)
@@ -406,28 +444,28 @@ func (vm *VM) sliceValue(e program.Expr) Value {
 }
 
 func (vm *VM) appendValue(e program.Expr) Value {
-	if len(e.Operands) >= 2 {
+	if vm.requireOperands(e, 2) {
 		return vm.Eval(e.Operands[0]).AppendVal(vm.Eval(e.Operands[1]))
 	}
 	return ArrayVal(nil)
 }
 
 func (vm *VM) containsValue(e program.Expr) Value {
-	if len(e.Operands) >= 2 {
+	if vm.requireOperands(e, 2) {
 		return vm.Eval(e.Operands[0]).ContainsVal(vm.Eval(e.Operands[1]))
 	}
 	return BoolVal(false)
 }
 
 func (vm *VM) splitValue(e program.Expr) Value {
-	if len(e.Operands) == 0 {
+	if !vm.requireOperands(e, 1) {
 		return ArrayVal(nil)
 	}
 	return vm.Eval(e.Operands[0]).SplitVal(vm.separatorValue(e))
 }
 
 func (vm *VM) joinValue(e program.Expr) Value {
-	if len(e.Operands) == 0 {
+	if !vm.requireOperands(e, 1) {
 		return StringVal("")
 	}
 	return vm.Eval(e.Operands[0]).JoinVal(vm.separatorValue(e))
@@ -442,28 +480,28 @@ func (vm *VM) separatorValue(e program.Expr) string {
 }
 
 func (vm *VM) replaceValue(e program.Expr) Value {
-	if len(e.Operands) >= 3 {
+	if vm.requireOperands(e, 3) {
 		return vm.Eval(e.Operands[0]).ReplaceVal(vm.Eval(e.Operands[1]).Str, vm.Eval(e.Operands[2]).Str)
 	}
 	return StringVal("")
 }
 
 func (vm *VM) substringValue(e program.Expr) Value {
-	if len(e.Operands) >= 3 {
+	if vm.requireOperands(e, 3) {
 		return vm.Eval(e.Operands[0]).SubstringVal(int(vm.Eval(e.Operands[1]).Num), int(vm.Eval(e.Operands[2]).Num))
 	}
 	return StringVal("")
 }
 
 func (vm *VM) startsWithValue(e program.Expr) Value {
-	if len(e.Operands) >= 2 {
+	if vm.requireOperands(e, 2) {
 		return vm.Eval(e.Operands[0]).StartsWithVal(vm.Eval(e.Operands[1]))
 	}
 	return BoolVal(false)
 }
 
 func (vm *VM) endsWithValue(e program.Expr) Value {
-	if len(e.Operands) >= 2 {
+	if vm.requireOperands(e, 2) {
 		return vm.Eval(e.Operands[0]).EndsWithVal(vm.Eval(e.Operands[1]))
 	}
 	return BoolVal(false)
@@ -509,7 +547,7 @@ func (vm *VM) findItem(items []Value, exprID program.ExprID) (Value, bool) {
 }
 
 func (vm *VM) evalBinary(e program.Expr, fn func(Value, Value) Value) Value {
-	if len(e.Operands) >= 2 {
+	if vm.requireOperands(e, 2) {
 		return fn(vm.Eval(e.Operands[0]), vm.Eval(e.Operands[1]))
 	}
 	return ZeroValue(program.TypeAny)
@@ -560,6 +598,12 @@ func (vm *VM) resolveNodeWithSource(source int, node program.Node) ResolvedNode 
 // []int{idx} allocation the previous implementation incurred.
 func (vm *VM) appendNodeRefs(tree *ResolvedTree, out []int, nodeID program.NodeID) []int {
 	if int(nodeID) >= len(vm.program.Nodes) {
+		vm.recordDiagnostic(Diagnostic{
+			Severity: DiagnosticError,
+			Code:     "node_out_of_range",
+			Message:  fmt.Sprintf("node %d is outside the node table length %d", nodeID, len(vm.program.Nodes)),
+			NodeID:   diagnosticNodeID(nodeID),
+		})
 		return out
 	}
 	node := vm.program.Nodes[nodeID]
