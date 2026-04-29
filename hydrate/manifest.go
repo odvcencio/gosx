@@ -129,6 +129,10 @@ type HubInputConfig struct {
 	// Local mirrors both players from one browser using pad 0/1 plus keyboard.
 	Local bool `json:"local,omitempty"`
 
+	// Spectator joins the realtime hub and sends ready/training events without
+	// forwarding player input. This is useful for CPU-vs-CPU showcases.
+	Spectator bool `json:"spectator,omitempty"`
+
 	// SlotToken is included in ready/input/training payloads when present.
 	SlotToken string `json:"slotToken,omitempty"`
 

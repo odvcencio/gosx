@@ -1829,6 +1829,63 @@
     var initFailed = false;
     var initStarted = true;
     var targetFormat = navigator.gpu.getPreferredCanvasFormat();
+    var presentationOptions = rendererOptions.presentation && typeof rendererOptions.presentation === "object" ? rendererOptions.presentation : {};
+    var probeOptions = probe.probeOptions && typeof probe.probeOptions === "object" ? probe.probeOptions : {};
+    var activePowerPreference = sceneWebGPUCanvasPowerPreference(probeOptions.powerPreference);
+    var activePresentation = {
+      alphaMode: sceneWebGPUCanvasAlphaMode(presentationOptions.alphaMode),
+      colorSpace: sceneWebGPUCanvasColorSpace(presentationOptions.colorSpace),
+      toneMappingMode: sceneWebGPUCanvasToneMappingMode(presentationOptions.toneMappingMode),
+    };
+
+    function sceneWebGPUCanvasAlphaMode(value) {
+      var normalized = String(value || "").trim().toLowerCase();
+      if (normalized === "opaque" || normalized === "premultiplied") {
+        return normalized;
+      }
+      return "premultiplied";
+    }
+
+    function sceneWebGPUCanvasColorSpace(value) {
+      var normalized = String(value || "").trim().toLowerCase();
+      if (normalized === "display-p3" || normalized === "srgb") {
+        return normalized;
+      }
+      return "srgb";
+    }
+
+    function sceneWebGPUCanvasToneMappingMode(value) {
+      var normalized = String(value || "").trim().toLowerCase();
+      if (normalized === "extended" || normalized === "standard") {
+        return normalized;
+      }
+      return "";
+    }
+
+    function sceneWebGPUCanvasPowerPreference(value) {
+      var normalized = String(value || "").trim().toLowerCase();
+      if (normalized === "high-performance" || normalized === "low-power") {
+        return normalized;
+      }
+      return "";
+    }
+
+    function sceneWebGPUCanvasConfiguration() {
+      var config = {
+        device: device,
+        format: targetFormat,
+        alphaMode: activePresentation.alphaMode,
+        colorSpace: activePresentation.colorSpace,
+      };
+      if (activePresentation.toneMappingMode) {
+        config.toneMapping = { mode: activePresentation.toneMappingMode };
+      }
+      return config;
+    }
+
+    function configureWebGPUCanvas() {
+      gpuCtx.configure(sceneWebGPUCanvasConfiguration());
+    }
 
     var frameBindGroupLayout = null;
     var materialBindGroupLayout = null;
@@ -2096,11 +2153,7 @@
           initFailed = true;
         }).catch(function() {});
 
-        gpuCtx.configure({
-          device: device,
-          format: targetFormat,
-          alphaMode: "premultiplied",
-        });
+        configureWebGPUCanvas();
 
         frameBindGroupLayout = wgpuCreateFrameBindGroupLayout(device);
         materialBindGroupLayout = wgpuCreateMaterialBindGroupLayout(device);
@@ -3553,11 +3606,7 @@
         performance.mark("scene3d-render-start");
       }
 
-      gpuCtx.configure({
-        device: device,
-        format: targetFormat,
-        alphaMode: "premultiplied",
-      });
+      configureWebGPUCanvas();
 
       var postEffects = Array.isArray(bundle.postEffects) ? bundle.postEffects : [];
       var usePostProcessing = postEffects.length > 0;
@@ -3844,6 +3893,10 @@
       out.renderer = "webgpu";
       out.targetFormat = targetFormat;
       out.activeSampleCount = activeSampleCount;
+      out.presentationAlphaMode = activePresentation.alphaMode;
+      out.presentationColorSpace = activePresentation.colorSpace;
+      out.presentationToneMappingMode = activePresentation.toneMappingMode;
+      out.powerPreference = activePowerPreference;
       out.postProcessing = !!postProcessor;
       return out;
     }

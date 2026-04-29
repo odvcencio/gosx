@@ -6441,13 +6441,20 @@ test("Scene3D WebGPU supports tiered MSAA render targets", () => {
   assert.match(webgpu, /multisample: \{ count: Math\.max\(1, Math\.floor\(sampleCount \|\| 1\)\) \}/);
   assert.match(webgpu, /activeSampleCount = sampleCount/);
   assert.match(webgpu, /mainColorAttachment\.resolveTarget = mainResolveView/);
+  assert.match(webgpu, /function sceneWebGPUCanvasConfiguration\(\)/);
+  assert.match(webgpu, /colorSpace: activePresentation\.colorSpace/);
+  assert.match(webgpu, /config\.toneMapping = \{ mode: activePresentation\.toneMappingMode \}/);
   assert.match(mount, /function sceneWebGPUOptions\(props, capability\)/);
   assert.match(mount, /msaaSamples: requestedSamples > 1 \? 4 : \(antialias \? 4 : 1\)/);
-  assert.match(probe, /createRenderer\(canvas, options \|\| \{\}\)/);
+  assert.match(mount, /powerPreference: sceneWebGPUPowerPreference/);
+  assert.match(mount, /presentation: sceneWebGPUPresentationOptions\(props\)/);
+  assert.match(probe, /sceneWebGPUProbeOptionsFromManifest/);
+  assert.match(probe, /requestAdapter\(adapterRequest\)/);
 });
 
 test("Scene3D WebGPU probe negotiates optional features and exposes diagnostics", async () => {
   let requestedDescriptor = null;
+  let requestedAdapterOptions = null;
   const deviceFeatures = new Set();
   const adapterLimits = {
     maxTextureDimension2D: 8192,
@@ -6458,37 +6465,62 @@ test("Scene3D WebGPU probe negotiates optional features and exposes diagnostics"
     maxTextureDimension2D: 4096,
     maxComputeWorkgroupSizeX: 128,
   };
+  const adapter = {
+    features: new Set([
+      "timestamp-query",
+      "indirect-first-instance",
+      "shader-f16",
+      "texture-compression-bc",
+      "texture-compression-bc-sliced-3d",
+      "texture-compression-astc-sliced-3d",
+      "subgroups",
+      "subgroups-f16",
+    ]),
+    limits: adapterLimits,
+    info: {
+      vendor: "gosx-test",
+      architecture: "test-gpu",
+      subgroupMinSize: 4,
+      subgroupMaxSize: 32,
+    },
+    requestDevice: async (descriptor = {}) => {
+      requestedDescriptor = descriptor;
+      for (const feature of descriptor.requiredFeatures || []) {
+        deviceFeatures.add(feature);
+      }
+      return {
+        lost: new Promise(() => {}),
+        features: deviceFeatures,
+        limits: deviceLimits,
+      };
+    },
+  };
   const env = createContext({
     enableWebGPU: true,
-    webgpuAdapter: {
-      features: new Set([
-        "timestamp-query",
-        "indirect-first-instance",
-        "shader-f16",
-        "texture-compression-bc",
-        "texture-compression-bc-sliced-3d",
-        "texture-compression-astc-sliced-3d",
-        "subgroups",
-        "subgroups-f16",
-      ]),
-      limits: adapterLimits,
-      info: {
-        vendor: "gosx-test",
-        architecture: "test-gpu",
-        subgroupMinSize: 4,
-        subgroupMaxSize: 32,
+    fetchRoutes: {
+      "/gosx/bootstrap-feature-engines.js": {
+        text: bootstrapFeatureEnginesSource,
       },
-      requestDevice: async (descriptor = {}) => {
-        requestedDescriptor = descriptor;
-        for (const feature of descriptor.requiredFeatures || []) {
-          deviceFeatures.add(feature);
-        }
-        return {
-          lost: new Promise(() => {}),
-          features: deviceFeatures,
-          limits: deviceLimits,
-        };
+    },
+    navigatorGPU: {
+      requestAdapter: async (options) => {
+        requestedAdapterOptions = options;
+        return adapter;
       },
+      getPreferredCanvasFormat: () => "rgba8unorm",
+    },
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-webgpu-probe",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "probe-scene",
+          props: {
+            webgpuPowerPreference: "high-performance",
+          },
+        },
+      ],
     },
   });
 
@@ -6497,6 +6529,7 @@ test("Scene3D WebGPU probe negotiates optional features and exposes diagnostics"
   await flushAsyncWork();
   assert.equal(await env.context.__gosx_scene3d_webgpu_probe_ready(), true);
 
+  assert.equal(requestedAdapterOptions.powerPreference, "high-performance");
   assert.deepEqual(Array.from(requestedDescriptor.requiredFeatures), [
     "timestamp-query",
     "indirect-first-instance",
@@ -6517,6 +6550,7 @@ test("Scene3D WebGPU probe negotiates optional features and exposes diagnostics"
   assert.equal(diagnostics.deviceLimits.maxComputeWorkgroupSizeX, 128);
   assert.equal(diagnostics.adapterInfo.vendor, "gosx-test");
   assert.equal(diagnostics.adapterInfo.subgroupMaxSize, 32);
+  assert.equal(diagnostics.probeOptions.powerPreference, "high-performance");
   assert.equal(typeof env.context.__gosx_scene3d_api.sceneWebGPUDiagnostics, "function");
   assert.equal(env.context.__gosx_runtime_api.browserCapabilitySupported("webgpu:timestamp-query"), true);
   assert.equal(env.context.__gosx_runtime_api.browserCapabilitySupported("webgpu:texture-compression-astc-sliced-3d"), false);
@@ -7012,10 +7046,22 @@ test("bootstrap registers and selects Scene3D backends through registry", async 
 test("selective Scene3D bootstrap prefers WebGPU before first renderer selection", async () => {
   const mount = new FakeElement("div", null);
   mount.id = "scene-webgpu-default";
+  let requestedAdapterOptions = null;
   const env = createContext({
     elements: [mount],
     enableWebGPU: true,
     enableWebGL2: true,
+    navigatorGPU: {
+      requestAdapter: async (options) => {
+        requestedAdapterOptions = options;
+        return {
+          requestDevice: async () => ({
+            lost: new Promise(() => {}),
+          }),
+        };
+      },
+      getPreferredCanvasFormat: () => "rgba8unorm",
+    },
     fetchRoutes: {
       "/gosx/bootstrap-feature-engines.js": {
         text: bootstrapFeatureEnginesSource,
@@ -7023,14 +7069,21 @@ test("selective Scene3D bootstrap prefers WebGPU before first renderer selection
       "/gosx/bootstrap-feature-scene3d-webgpu.js": {
         text: `
           window.__gosx_scene3d_webgpu_api = {
-            createRenderer: function() {
+            createRenderer: function(canvas, options) {
+              window.__gosx_scene3d_webgpu_options = options;
               return {
                 kind: "webgpu",
                 diagnostics: function() {
+                  var presentation = options && options.presentation || {};
                   return {
                     requestedFeatures: ["timestamp-query", "shader-f16"],
                     deviceFeatures: ["timestamp-query"],
                     activeSampleCount: 4,
+                    targetFormat: "rgba16float",
+                    presentationAlphaMode: presentation.alphaMode,
+                    presentationColorSpace: presentation.colorSpace,
+                    presentationToneMappingMode: presentation.toneMappingMode,
+                    powerPreference: options && options.powerPreference,
                     adapterLimits: {
                       maxTextureDimension2D: 8192,
                       maxBufferSize: 268435456,
@@ -7068,6 +7121,10 @@ test("selective Scene3D bootstrap prefers WebGPU before first renderer selection
             width: 360,
             height: 220,
             autoRotate: false,
+            webgpuAlphaMode: "opaque",
+            webgpuColorSpace: "display-p3",
+            webgpuToneMapping: "extended",
+            webgpuPowerPreference: "high-performance",
             scene: {
               objects: [
                 { kind: "box", width: 1, height: 1, depth: 1, color: "#8de1ff" },
@@ -7093,6 +7150,11 @@ test("selective Scene3D bootstrap prefers WebGPU before first renderer selection
   assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-features"), "timestamp-query,shader-f16");
   assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-device-features"), "timestamp-query");
   assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-sample-count"), "4");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-target-format"), "rgba16float");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-presentation-alpha-mode"), "opaque");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-presentation-color-space"), "display-p3");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-presentation-tone-mapping"), "extended");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-power-preference"), "high-performance");
   assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-adapter-limits"), "maxBufferSize=268435456,maxComputeWorkgroupSizeX=256,maxComputeWorkgroupsPerDimension=65535,maxTextureDimension2D=8192");
   assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-device-limits"), "maxBufferSize=134217728,maxComputeWorkgroupSizeX=128,maxComputeWorkgroupsPerDimension=32768,maxTextureDimension2D=4096");
   assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-adapter-max-texture-2d"), "8192");
@@ -7104,6 +7166,11 @@ test("selective Scene3D bootstrap prefers WebGPU before first renderer selection
   assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-adapter-max-compute-workgroups-per-dimension"), "65535");
   assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-device-max-compute-workgroups-per-dimension"), "32768");
   assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-adapter"), "gosx-test unit");
+  assert.equal(env.context.__gosx_scene3d_webgpu_options.presentation.alphaMode, "opaque");
+  assert.equal(env.context.__gosx_scene3d_webgpu_options.presentation.colorSpace, "display-p3");
+  assert.equal(env.context.__gosx_scene3d_webgpu_options.presentation.toneMappingMode, "extended");
+  assert.equal(env.context.__gosx_scene3d_webgpu_options.powerPreference, "high-performance");
+  assert.equal(requestedAdapterOptions.powerPreference, "high-performance");
   assert.equal(mount.getAttribute("data-gosx-scene3d-renderer-fallback"), null);
   assert.equal(
     env.fetchCalls.some((call) => call.url === "/gosx/bootstrap-feature-scene3d-webgpu.js"),
@@ -10067,6 +10134,65 @@ test("bootstrap hub input sends fighting game snapshots", async () => {
   assert.equal(input.data.player, 1);
   assert.equal(input.data.slotToken, "slot-one");
   assert.ok(env.sharedSignalCalls.some((call) => call[0] === "$fightInput" && call[1].includes("GAMEPAD LINKED")));
+
+  env.context.__gosx_disconnect_hub("gosx-hub-0");
+  assert.equal(env.sockets[0].closeCalled, true);
+});
+
+test("bootstrap hub input spectator mode readies without sending fighter inputs", async () => {
+  const sent = [];
+  function makeSocket(url) {
+    return {
+      url,
+      readyState: 1,
+      closeCalled: false,
+      send(raw) {
+        sent.push(JSON.parse(raw));
+      },
+      close() {
+        this.closeCalled = true;
+      },
+    };
+  }
+
+  const env = createContext({
+    createWebSocket: makeSocket,
+    getGamepads: () => [{
+      connected: true,
+      axes: [1, 0, 0, 0],
+      buttons: [{ pressed: true }, { pressed: false }, { pressed: false }, { pressed: false }],
+    }],
+    fetchRoutes: {
+      "/runtime.wasm": { bytes: [0, 97, 115, 109] },
+    },
+    manifest: {
+      runtime: { path: "/runtime.wasm" },
+      hubs: [
+        {
+          id: "gosx-hub-0",
+          name: "fight",
+          path: "/ws/fight/cpu-duel",
+          bindings: [],
+          input: {
+            mode: "fighting",
+            event: "input",
+            readyEvent: "ready",
+            signal: "$fightInput",
+            player: 1,
+            slotToken: "spectator-slot",
+            spectator: true,
+            sendEveryMs: 16,
+          },
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  assert.deepEqual(sent, [{ event: "ready", data: { player: 1, slotToken: "spectator-slot" } }]);
+  assert.ok(env.sharedSignalCalls.some((call) => call[0] === "$fightInput" && call[1].includes("CPU DUEL")));
 
   env.context.__gosx_disconnect_hub("gosx-hub-0");
   assert.equal(env.sockets[0].closeCalled, true);

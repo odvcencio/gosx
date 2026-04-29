@@ -14948,6 +14948,7 @@ if (typeof window !== "undefined") {
   var _webgpuAdapterInfo = {};
   var _webgpuProbeError = "";
   var _webgpuDeviceLostInfo = null;
+  var _webgpuProbeOptions = {};
 
   var WEBGPU_OPTIONAL_FEATURES = [
     "timestamp-query",
@@ -15088,6 +15089,7 @@ if (typeof window !== "undefined") {
       adapterInfo: Object.assign({}, _webgpuAdapterInfo),
       error: _webgpuProbeError,
       lost: _webgpuDeviceLostInfo,
+      probeOptions: Object.assign({}, _webgpuProbeOptions),
     };
   }
 
@@ -15117,6 +15119,7 @@ if (typeof window !== "undefined") {
         adapterInfo: Object.assign({}, _webgpuAdapterInfo),
         error: _webgpuProbeError,
         lost: _webgpuDeviceLostInfo,
+        probeOptions: Object.assign({}, _webgpuProbeOptions),
       };
     };
     window.__gosx_scene3d_webgpu_diagnostics = sceneWebGPUDiagnostics;
@@ -15129,8 +15132,48 @@ if (typeof window !== "undefined") {
     };
   }
 
+  function sceneWebGPUPowerPreference(value) {
+    var normalized = String(value || "").trim().toLowerCase();
+    if (normalized === "high-performance" || normalized === "low-power") {
+      return normalized;
+    }
+    return "";
+  }
+
+  function sceneWebGPUProbeOptionsFromManifest() {
+    var manifest = null;
+    if (typeof loadManifest === "function") {
+      manifest = loadManifest();
+    }
+    var engines = manifest && Array.isArray(manifest.engines) ? manifest.engines : [];
+    var powerPreference = "";
+    for (var i = 0; i < engines.length; i++) {
+      var entry = engines[i];
+      if (!entry || entry.component !== "GoSXScene3D") {
+        continue;
+      }
+      var props = entry.props && typeof entry.props === "object" ? entry.props : {};
+      var requested = sceneWebGPUPowerPreference(
+        props.webgpuPowerPreference ||
+        props.webGPUPowerPreference ||
+        props.webgpuAdapterPowerPreference ||
+        props.webGPUAdapterPowerPreference
+      );
+      if (requested === "high-performance") {
+        powerPreference = requested;
+        break;
+      }
+      if (requested === "low-power") {
+        powerPreference = requested;
+      }
+    }
+    return powerPreference ? { powerPreference: powerPreference } : {};
+  }
+
   if (typeof navigator !== "undefined" && navigator.gpu && typeof navigator.gpu.requestAdapter === "function") {
-    _webgpuProbePromise = navigator.gpu.requestAdapter().then(function(adapter) {
+    _webgpuProbeOptions = sceneWebGPUProbeOptionsFromManifest();
+    var adapterRequest = _webgpuProbeOptions && _webgpuProbeOptions.powerPreference ? _webgpuProbeOptions : undefined;
+    _webgpuProbePromise = navigator.gpu.requestAdapter(adapterRequest).then(function(adapter) {
       if (!adapter) {
         _webgpuProbeError = "requestAdapter returned null";
         console.warn("[gosx] WebGPU probe: " + _webgpuProbeError);
@@ -16758,7 +16801,52 @@ if (typeof window !== "undefined") {
     return {
       antialias,
       msaaSamples: requestedSamples > 1 ? 4 : (antialias ? 4 : 1),
+      powerPreference: sceneWebGPUPowerPreference(props && (props.webgpuPowerPreference || props.webGPUPowerPreference || props.webgpuAdapterPowerPreference || props.webGPUAdapterPowerPreference)),
+      presentation: sceneWebGPUPresentationOptions(props),
     };
+  }
+
+  function sceneWebGPUPresentationOptions(props) {
+    const alphaMode = sceneWebGPUAlphaMode(props && (props.webgpuAlphaMode || props.webGPUAlphaMode || props.webgpuCanvasAlphaMode || props.webGPUCanvasAlphaMode));
+    const colorSpace = sceneWebGPUColorSpace(props && (props.webgpuColorSpace || props.webGPUColorSpace));
+    const toneMappingMode = sceneWebGPUToneMappingMode(props && (props.webgpuToneMapping || props.webGPUToneMapping || props.webgpuToneMappingMode || props.webGPUToneMappingMode));
+    return {
+      alphaMode,
+      colorSpace,
+      toneMappingMode,
+    };
+  }
+
+  function sceneWebGPUAlphaMode(value) {
+    const normalized = String(value || "").trim().toLowerCase();
+    if (normalized === "opaque" || normalized === "premultiplied") {
+      return normalized;
+    }
+    return "premultiplied";
+  }
+
+  function sceneWebGPUColorSpace(value) {
+    const normalized = String(value || "").trim().toLowerCase();
+    if (normalized === "display-p3" || normalized === "srgb") {
+      return normalized;
+    }
+    return "srgb";
+  }
+
+  function sceneWebGPUToneMappingMode(value) {
+    const normalized = String(value || "").trim().toLowerCase();
+    if (normalized === "extended" || normalized === "standard") {
+      return normalized;
+    }
+    return "";
+  }
+
+  function sceneWebGPUPowerPreference(value) {
+    const normalized = String(value || "").trim().toLowerCase();
+    if (normalized === "high-performance" || normalized === "low-power") {
+      return normalized;
+    }
+    return "";
   }
 
   function sceneWebGPUUnsupportedLineStyle(entry) {
@@ -18342,6 +18430,11 @@ if (typeof window !== "undefined") {
     setAttrValue(mount, "data-gosx-scene3d-webgpu-features", webgpuDiagnostics && Array.isArray(webgpuDiagnostics.requestedFeatures) ? webgpuDiagnostics.requestedFeatures.join(",") : "");
     setAttrValue(mount, "data-gosx-scene3d-webgpu-device-features", webgpuDiagnostics && Array.isArray(webgpuDiagnostics.deviceFeatures) ? webgpuDiagnostics.deviceFeatures.join(",") : "");
     setAttrValue(mount, "data-gosx-scene3d-webgpu-sample-count", webgpuDiagnostics && webgpuDiagnostics.activeSampleCount > 0 ? webgpuDiagnostics.activeSampleCount : "");
+    setAttrValue(mount, "data-gosx-scene3d-webgpu-target-format", webgpuDiagnostics && webgpuDiagnostics.targetFormat ? webgpuDiagnostics.targetFormat : "");
+    setAttrValue(mount, "data-gosx-scene3d-webgpu-presentation-alpha-mode", webgpuDiagnostics && webgpuDiagnostics.presentationAlphaMode ? webgpuDiagnostics.presentationAlphaMode : "");
+    setAttrValue(mount, "data-gosx-scene3d-webgpu-presentation-color-space", webgpuDiagnostics && webgpuDiagnostics.presentationColorSpace ? webgpuDiagnostics.presentationColorSpace : "");
+    setAttrValue(mount, "data-gosx-scene3d-webgpu-presentation-tone-mapping", webgpuDiagnostics && webgpuDiagnostics.presentationToneMappingMode ? webgpuDiagnostics.presentationToneMappingMode : "");
+    setAttrValue(mount, "data-gosx-scene3d-webgpu-power-preference", webgpuDiagnostics && webgpuDiagnostics.powerPreference ? webgpuDiagnostics.powerPreference : "");
     setAttrValue(mount, "data-gosx-scene3d-webgpu-adapter-limits", sceneWebGPULimitList(webgpuAdapterLimits));
     setAttrValue(mount, "data-gosx-scene3d-webgpu-device-limits", sceneWebGPULimitList(webgpuDeviceLimits));
     setAttrValue(mount, "data-gosx-scene3d-webgpu-adapter-max-texture-2d", sceneWebGPULimitValue(webgpuAdapterLimits, "maxTextureDimension2D"));

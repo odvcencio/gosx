@@ -90,50 +90,54 @@ type Environment struct {
 // Props is the typed Go-side Scene3D surface. It lowers into the current
 // Scene3D compatibility prop bag while preserving room for a real scene graph.
 type Props struct {
-	ProgramRef           string       `json:"-"`
-	Capabilities         []string     `json:"-"`
-	RequiredCapabilities []string     `json:"-"`
-	Width                int          `json:"width,omitempty"`
-	Height               int          `json:"height,omitempty"`
-	Label                string       `json:"label,omitempty"`
-	AriaLabel            string       `json:"ariaLabel,omitempty"`
-	Background           string       `json:"background,omitempty"`
-	Controls             string       `json:"controls,omitempty"`
-	AutoRotate           *bool        `json:"autoRotate,omitempty"`
-	Responsive           *bool        `json:"responsive,omitempty"`
-	FillHeight           *bool        `json:"fillHeight,omitempty"`
-	PreferWebGL          *bool        `json:"preferWebGL,omitempty"`
-	ForceWebGL           *bool        `json:"forceWebGL,omitempty"`
-	RequireWebGL         *bool        `json:"requireWebGL,omitempty"`
-	PreferCanvas         *bool        `json:"preferCanvas,omitempty"`
-	UnsupportedMessage   string       `json:"unsupportedMessage,omitempty"`
-	CanvasAlpha          *bool        `json:"canvasAlpha,omitempty"`
-	DragToRotate         *bool        `json:"dragToRotate,omitempty"`
-	PointerLock          *bool        `json:"pointerLock,omitempty"`
-	DeferPostFX          *bool        `json:"deferPostFX,omitempty"`
-	DeferPostFXDelayMS   int          `json:"deferPostFXDelayMS,omitempty"`
-	DragSignalNamespace  string       `json:"dragSignalNamespace,omitempty"`
-	PickSignalNamespace  string       `json:"pickSignalNamespace,omitempty"`
-	EventSignalNamespace string       `json:"eventSignalNamespace,omitempty"`
-	CapabilityTier       string       `json:"capabilityTier,omitempty"`
-	Compression          *Compression `json:"compression,omitempty"`
-	ControlTarget        Vector3
-	ControlRotateSpeed   float64 `json:"controlRotateSpeed,omitempty"`
-	ControlZoomSpeed     float64 `json:"controlZoomSpeed,omitempty"`
-	ControlLookSpeed     float64 `json:"controlLookSpeed,omitempty"`
-	ControlMoveSpeed     float64 `json:"controlMoveSpeed,omitempty"`
-	ScrollCameraStart    float64 `json:"scrollCameraStart,omitempty"`
-	ScrollCameraEnd      float64 `json:"scrollCameraEnd,omitempty"`
-	MaxDevicePixelRatio  float64 `json:"maxDevicePixelRatio,omitempty"`
-	MSAASamples          int     `json:"msaaSamples,omitempty"`
-	Camera               PerspectiveCamera
-	OrthographicCamera   *OrthographicCamera
-	Stats                *bool `json:"stats,omitempty"`
-	Environment          Environment
-	PostFX               PostFX
-	Shadows              Shadows
-	Physics              PhysicsWorld
-	Graph                Graph
+	ProgramRef            string       `json:"-"`
+	Capabilities          []string     `json:"-"`
+	RequiredCapabilities  []string     `json:"-"`
+	Width                 int          `json:"width,omitempty"`
+	Height                int          `json:"height,omitempty"`
+	Label                 string       `json:"label,omitempty"`
+	AriaLabel             string       `json:"ariaLabel,omitempty"`
+	Background            string       `json:"background,omitempty"`
+	Controls              string       `json:"controls,omitempty"`
+	AutoRotate            *bool        `json:"autoRotate,omitempty"`
+	Responsive            *bool        `json:"responsive,omitempty"`
+	FillHeight            *bool        `json:"fillHeight,omitempty"`
+	PreferWebGL           *bool        `json:"preferWebGL,omitempty"`
+	ForceWebGL            *bool        `json:"forceWebGL,omitempty"`
+	RequireWebGL          *bool        `json:"requireWebGL,omitempty"`
+	PreferCanvas          *bool        `json:"preferCanvas,omitempty"`
+	UnsupportedMessage    string       `json:"unsupportedMessage,omitempty"`
+	CanvasAlpha           *bool        `json:"canvasAlpha,omitempty"`
+	DragToRotate          *bool        `json:"dragToRotate,omitempty"`
+	PointerLock           *bool        `json:"pointerLock,omitempty"`
+	DeferPostFX           *bool        `json:"deferPostFX,omitempty"`
+	DeferPostFXDelayMS    int          `json:"deferPostFXDelayMS,omitempty"`
+	DragSignalNamespace   string       `json:"dragSignalNamespace,omitempty"`
+	PickSignalNamespace   string       `json:"pickSignalNamespace,omitempty"`
+	EventSignalNamespace  string       `json:"eventSignalNamespace,omitempty"`
+	CapabilityTier        string       `json:"capabilityTier,omitempty"`
+	Compression           *Compression `json:"compression,omitempty"`
+	ControlTarget         Vector3
+	ControlRotateSpeed    float64 `json:"controlRotateSpeed,omitempty"`
+	ControlZoomSpeed      float64 `json:"controlZoomSpeed,omitempty"`
+	ControlLookSpeed      float64 `json:"controlLookSpeed,omitempty"`
+	ControlMoveSpeed      float64 `json:"controlMoveSpeed,omitempty"`
+	ScrollCameraStart     float64 `json:"scrollCameraStart,omitempty"`
+	ScrollCameraEnd       float64 `json:"scrollCameraEnd,omitempty"`
+	MaxDevicePixelRatio   float64 `json:"maxDevicePixelRatio,omitempty"`
+	MSAASamples           int     `json:"msaaSamples,omitempty"`
+	WebGPUAlphaMode       string  `json:"webgpuAlphaMode,omitempty"`
+	WebGPUColorSpace      string  `json:"webgpuColorSpace,omitempty"`
+	WebGPUToneMapping     string  `json:"webgpuToneMapping,omitempty"`
+	WebGPUPowerPreference string  `json:"webgpuPowerPreference,omitempty"`
+	Camera                PerspectiveCamera
+	OrthographicCamera    *OrthographicCamera
+	Stats                 *bool `json:"stats,omitempty"`
+	Environment           Environment
+	PostFX                PostFX
+	Shadows               Shadows
+	Physics               PhysicsWorld
+	Graph                 Graph
 }
 
 // Compression configures TurboQuant compression for Scene3D vertex data.
@@ -1102,6 +1106,10 @@ func (p Props) legacyBaseProps() map[string]any {
 	setNumeric(out, "scrollCameraEnd", p.ScrollCameraEnd)
 	setNumeric(out, "maxDevicePixelRatio", p.MaxDevicePixelRatio)
 	setInt(out, "msaaSamples", p.MSAASamples)
+	setString(out, "webgpuAlphaMode", p.WebGPUAlphaMode)
+	setString(out, "webgpuColorSpace", p.WebGPUColorSpace)
+	setString(out, "webgpuToneMapping", p.WebGPUToneMapping)
+	setString(out, "webgpuPowerPreference", p.WebGPUPowerPreference)
 	setBool(out, "stats", p.Stats)
 	if p.Compression != nil {
 		comp := map[string]any{"bitWidth": p.Compression.BitWidth}

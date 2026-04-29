@@ -38,6 +38,7 @@
   var _webgpuAdapterInfo = {};
   var _webgpuProbeError = "";
   var _webgpuDeviceLostInfo = null;
+  var _webgpuProbeOptions = {};
 
   var WEBGPU_OPTIONAL_FEATURES = [
     "timestamp-query",
@@ -178,6 +179,7 @@
       adapterInfo: Object.assign({}, _webgpuAdapterInfo),
       error: _webgpuProbeError,
       lost: _webgpuDeviceLostInfo,
+      probeOptions: Object.assign({}, _webgpuProbeOptions),
     };
   }
 
@@ -217,6 +219,7 @@
         adapterInfo: Object.assign({}, _webgpuAdapterInfo),
         error: _webgpuProbeError,
         lost: _webgpuDeviceLostInfo,
+        probeOptions: Object.assign({}, _webgpuProbeOptions),
       };
     };
     window.__gosx_scene3d_webgpu_diagnostics = sceneWebGPUDiagnostics;
@@ -229,13 +232,53 @@
     };
   }
 
+  function sceneWebGPUPowerPreference(value) {
+    var normalized = String(value || "").trim().toLowerCase();
+    if (normalized === "high-performance" || normalized === "low-power") {
+      return normalized;
+    }
+    return "";
+  }
+
+  function sceneWebGPUProbeOptionsFromManifest() {
+    var manifest = null;
+    if (typeof loadManifest === "function") {
+      manifest = loadManifest();
+    }
+    var engines = manifest && Array.isArray(manifest.engines) ? manifest.engines : [];
+    var powerPreference = "";
+    for (var i = 0; i < engines.length; i++) {
+      var entry = engines[i];
+      if (!entry || entry.component !== "GoSXScene3D") {
+        continue;
+      }
+      var props = entry.props && typeof entry.props === "object" ? entry.props : {};
+      var requested = sceneWebGPUPowerPreference(
+        props.webgpuPowerPreference ||
+        props.webGPUPowerPreference ||
+        props.webgpuAdapterPowerPreference ||
+        props.webGPUAdapterPowerPreference
+      );
+      if (requested === "high-performance") {
+        powerPreference = requested;
+        break;
+      }
+      if (requested === "low-power") {
+        powerPreference = requested;
+      }
+    }
+    return powerPreference ? { powerPreference: powerPreference } : {};
+  }
+
   if (typeof navigator !== "undefined" && navigator.gpu && typeof navigator.gpu.requestAdapter === "function") {
-    // No powerPreference: on some backends (SwiftShader in headless
-    // Chrome, certain Linux Mesa/ANGLE builds) the 'high-performance'
-    // hint produces null where the unbounded request succeeds. We
-    // don't have a discrete-vs-integrated GPU selection need here —
-    // any working device is better than none.
-    _webgpuProbePromise = navigator.gpu.requestAdapter().then(function(adapter) {
+    // The default stays unbounded because some backends (SwiftShader in
+    // headless Chrome, certain Linux Mesa/ANGLE builds) return null when
+    // forced to "high-performance". Pages that need an adapter class can
+    // opt in through Scene3D's webgpuPowerPreference prop; the manifest is
+    // already in the document before this deferred feature script runs.
+    _webgpuProbeOptions = sceneWebGPUProbeOptionsFromManifest();
+    var adapterRequest = _webgpuProbeOptions && _webgpuProbeOptions.powerPreference ? _webgpuProbeOptions : undefined;
+    _webgpuProbePromise = navigator.gpu.requestAdapter(adapterRequest).then(function(adapter) {
       if (!adapter) {
         _webgpuProbeError = "requestAdapter returned null";
         console.warn("[gosx] WebGPU probe: " + _webgpuProbeError);

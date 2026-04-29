@@ -59,9 +59,17 @@ func Page() Node {
 	    engine.WebGPULimit("maxTextureDimension2D", 4096),
 	    engine.WebGPUAdapterLimit("maxTextureDimension2D", 8192),
 	)`)}
+			{CodeBlock("go", `props.WebGPUAlphaMode = "opaque"
+	props.WebGPUColorSpace = "display-p3"
+	props.WebGPUToneMapping = "extended"
+	props.WebGPUPowerPreference = "high-performance"`)}
 			{CodeBlock("gosx", `<Scene3D
 	  {...data.scene}
 	  requiredCapabilities="webgpu webgpu:timestamp-query webgpu:adapter-limit:maxTextureDimension2D>=8192"
+	  webgpuAlphaMode="opaque"
+	  webgpuColorSpace="display-p3"
+	  webgpuToneMapping="extended"
+	  webgpuPowerPreference="high-performance"
 	/>`)}
 		</section>
 		<section id="scene3d-demo" class="scene3d-demo-well" aria-label="PBR demo scene">

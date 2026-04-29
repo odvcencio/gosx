@@ -2259,6 +2259,7 @@
       touchRoot: String(input.touchRoot || ""),
       player: Math.max(1, Math.min(2, Math.floor(hubInputNumber(input.player, 1)))),
       local: Boolean(input.local),
+      spectator: Boolean(input.spectator),
       slotToken: String(input.slotToken || ""),
       sendEveryMS: every,
       root: String(input.root || ""),
@@ -2556,10 +2557,10 @@
         pads: pads.length,
         padCount: pads.length,
         player: config.player,
-        state: connected ? "pad" : "touch",
-        title: connected ? "GAMEPAD LINKED" : "GRAB A GAMEPAD",
-        copy: connected ? "Pad mapped: A/B/X/Y, shoulders guard." : "Keyboard and touch are live until a pad is connected.",
-        mode: config.local ? "LOCAL VS" : "ONLINE",
+        state: config.spectator ? "ready" : (connected ? "pad" : "touch"),
+        title: config.spectator ? "CPU DUEL" : (connected ? "GAMEPAD LINKED" : "GRAB A GAMEPAD"),
+        copy: config.spectator ? "Bots are driving both fighters." : (connected ? "Pad mapped: A/B/X/Y, shoulders guard." : "Keyboard and touch are live until a pad is connected."),
+        mode: config.spectator ? "SPECTATE" : (config.local ? "LOCAL VS" : "ONLINE"),
         perf: "",
       };
       const signature = JSON.stringify(cue);
@@ -2599,7 +2600,7 @@
       sendReady();
       const pads = gamepads();
       publishCue(pads);
-      if (socketOpen()) {
+      if (socketOpen() && !config.spectator) {
         if (config.local) {
           sendInput(1, readInput(pads[0], true, 1));
           sendInput(2, readInput(pads[1], false, 2));

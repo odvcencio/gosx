@@ -821,6 +821,31 @@ func TestPropsMarshalJSONOmitsEngineTransportFields(t *testing.T) {
 	}
 }
 
+func TestPropsMarshalJSONCarriesWebGPUPresentationHints(t *testing.T) {
+	props := Props{
+		WebGPUAlphaMode:       "opaque",
+		WebGPUColorSpace:      "display-p3",
+		WebGPUToneMapping:     "extended",
+		WebGPUPowerPreference: "high-performance",
+	}
+
+	data, err := json.Marshal(props)
+	if err != nil {
+		t.Fatalf("marshal props: %v", err)
+	}
+	text := string(data)
+	for _, snippet := range []string{
+		`"webgpuAlphaMode":"opaque"`,
+		`"webgpuColorSpace":"display-p3"`,
+		`"webgpuToneMapping":"extended"`,
+		`"webgpuPowerPreference":"high-performance"`,
+	} {
+		if !contains(text, snippet) {
+			t.Fatalf("expected %q in props json: %s", snippet, text)
+		}
+	}
+}
+
 func TestPropsSceneIRLowersModelInstancesAndLineGeometry(t *testing.T) {
 	props := Props{
 		PickSignalNamespace: "$scene.pick",
