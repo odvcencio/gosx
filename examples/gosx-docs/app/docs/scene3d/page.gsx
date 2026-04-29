@@ -50,6 +50,9 @@ func Page() Node {
 			<p>
 				The live demo above is a full PBR scene declared in Go and rendered by the engine. Drag to orbit, scroll to zoom.
 			</p>
+			<p>
+				WebGPU is the primary path for modern Scene3D rendering: PBR meshes, instanced meshes, compute particles, helper lines, thick line overlays, wire overlays, clip-space guides, textured plane surfaces, and tier-aware MSAA render targets all stay on the WebGPU backend when the browser exposes it. The probe negotiates optional adapter features up front and exposes diagnostics for tooling instead of treating WebGPU as a plain boolean.
+			</p>
 		</section>
 		<section id="scene3d-demo" class="scene3d-demo-well" aria-label="PBR demo scene">
 			<Scene3D {...data.demoScene} />
@@ -76,7 +79,10 @@ func Page() Node {
 	        Props: map[string]any{"assetManifest": rt.Assets().Manifest()},
 	        Capabilities: []engine.Capability{engine.CapFetch, engine.CapStorage},
 	    })
-	    sceneProps, _ := rt.BuildScene()
+	    sceneProps, ok := rt.BuildScene()
+	    if !ok {
+	        return nil, fmt.Errorf("scene runtime did not produce props")
+	    }
 	    return map[string]any{
 	        "scene": sceneProps,
 	        "assets": rt.Assets().Manifest(),
@@ -88,6 +94,11 @@ func Page() Node {
 				for product configurators, maps, simulation dashboards, and other web-native 3D interfaces. Use
 				<span class="inline-code">game.FightingProfile()</span>
 				or a custom profile when the page is a deterministic game surface.
+			</p>
+			<p>
+				Asset manifests stay simple until you opt into variants. Register a base GLB or texture for every browser, then add capability-gated variants for compressed or high-end representations and collapse them with
+				<span class="inline-code">assets.ManifestFor("webgpu", "ktx2")</span>
+				when the route already knows its target tier.
 			</p>
 		</section>
 		<section id="camera-controls">
@@ -115,14 +126,24 @@ func Page() Node {
 				The
 				<span class="inline-code">Controls</span>
 				field accepts
-				<span class="inline-code">"orbit"</span>
-				for standard drag-to-orbit behaviour. Omit it for a static camera. The engine handles pointer, touch, and wheel events natively.
+				<span class="inline-code">scene.ControlOrbit</span>
+				for inspectable objects,
+				<span class="inline-code">scene.ControlFirstPerson</span>
+				for horizon-locked FPS movement, and
+				<span class="inline-code">scene.ControlFly</span>
+				for free-flight cameras. Omit it for a static camera. The engine handles pointer, touch, keyboard, wheel, and optional pointer-lock events natively.
 			</p>
 			{CodeBlock("go", `// Orbit controls with custom speed
-	Controls:           "orbit",
+	Controls:           scene.ControlOrbit,
 	ControlRotateSpeed: 1.0,
 	ControlZoomSpeed:   1.2,
-	
+
+	// Swap to first-person for games and immersive walkthroughs:
+	// Controls:         scene.ControlFirstPerson,
+	// PointerLock:      scene.Bool(true),
+	// ControlLookSpeed: 0.9,
+	// ControlMoveSpeed: 6,
+
 	// Scroll-driven camera (for parallax hero sections)
 	ScrollCameraStart: 0.0,  // camera position lerp start (0 = top of page)
 	ScrollCameraEnd:   1.0,  // lerp end (1 = bottom of page)`)}
@@ -344,7 +365,7 @@ func Page() Node {
 			<h2>Particles</h2>
 			<p>
 				<span class="inline-code">scene.ComputeParticles</span>
-				drives a GPU compute particle system. On WebGPU the full simulation runs in WGSL compute shaders; on WebGL2 it falls back to a CPU-updated vertex buffer. Both paths produce the same visual at 100 K+ particles.
+				drives a particle system with a WebGPU compute path when available. WebGL2 uses a degraded CPU-updated vertex-buffer path for compatibility, so large particle counts should be capability-gated or profiled on the target device.
 			</p>
 			{CodeBlock("go", `scene.ComputeParticles{
 	    Count: 5000,
@@ -409,7 +430,7 @@ func Page() Node {
 			<p>
 				Model assets are served from the
 				<span class="inline-code">public/models/</span>
-				directory. The engine handles binary glTF, embedded textures, and Draco-compressed geometry automatically.
+				directory. The engine handles binary glTF and embedded textures at runtime. Preprocess Draco-compressed assets into standard GLB during your asset pipeline until a Draco decoder is explicitly registered.
 			</p>
 		</section>
 		<section id="instancing">
@@ -417,6 +438,9 @@ func Page() Node {
 			<p>
 				<span class="inline-code">scene.InstancedMesh</span>
 				renders N copies of a single geometry with per-instance transforms in a single draw call. Use it for particle fields, foliage, crowds, or any repeated geometry where instancing yields order-of-magnitude GPU savings.
+			</p>
+			<p>
+				WebGPU uses instance-rate vertex buffers for the transform matrix and color stream; WebGL2 uses the matching instanced draw path. Both paths share the same SceneIR, material pass ordering, and shadow flags.
 			</p>
 			{CodeBlock("go", `positions := make([]scene.Vector3, 500)
 	for i := range positions {

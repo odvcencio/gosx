@@ -36,22 +36,26 @@ func Page() Node {
 		</pre>
 		<pre class="code-block">
 			{`func init() {
-		  route.MustRegisterFileModuleHere(route.FileModuleOptions{
+		  if err := route.RegisterFileModuleHere(route.FileModuleOptions{
 		    Load:     ...,
 		    Metadata: ...,
 		    Actions:  ...,
-		  })
+		  }); err != nil {
+		    log.Fatal(err)
+		  }
 		}`}
 		</pre>
 		<pre class="code-block">
 			{`func init() {
-		  route.MustRegisterDirModuleHere(route.DirModuleOptions{
+		  if err := route.RegisterDirModuleHere(route.DirModuleOptions{
 		    Middleware: []route.Middleware{...},
 		    Configure: func(ctx *route.RouteContext, page route.FilePage) error {
 		      ctx.Header().Set("X-Docs-Section", "true")
 		      return nil
 		    },
-		  })
+		  }); err != nil {
+		    log.Fatal(err)
+		  }
 		}`}
 		</pre>
 		<section class="note-grid">
@@ -67,7 +71,7 @@ func Page() Node {
 			<div class="note">
 				<strong>Dynamic pages</strong>
 				<p>
-					<span class="inline-code">app/blog/[slug]/page.html</span>
+					<span class="inline-code">app/blog/[slug]/page.gsx</span>
 					maps to
 					<span class="inline-code">{`/blog/{slug}`}</span>
 					.

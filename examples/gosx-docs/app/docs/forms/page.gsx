@@ -24,7 +24,7 @@ func Page() Node {
 				<span class="inline-code">*action.Context</span>
 				with the parsed form data and the original HTTP request.
 			</p>
-			{CodeBlock("go", "route.MustRegisterFileModuleHere(route.FileModuleOptions{\n\tActions: route.FileActions{\n\t\t\"subscribe\": func(ctx *action.Context) error {\n\t\t\temail := ctx.FormData[\"email\"]\n\t\t\tif email == \"\" {\n\t\t\t\tctx.ValidationFailure(\"Email is required.\", map[string]string{\n\t\t\t\t\t\"email\": \"Please enter an email address.\",\n\t\t\t\t})\n\t\t\t\treturn nil\n\t\t\t}\n\t\t\treturn ctx.Success(\"Subscribed!\", nil)\n\t\t},\n\t},\n})")}
+			{CodeBlock("go", "func init() {\n\tif err := route.RegisterFileModuleHere(route.FileModuleOptions{\n\t\tActions: route.FileActions{\n\t\t\t\"subscribe\": func(ctx *action.Context) error {\n\t\t\t\temail := ctx.FormData[\"email\"]\n\t\t\t\tif email == \"\" {\n\t\t\t\t\tctx.ValidationFailure(\"Email is required.\", map[string]string{\n\t\t\t\t\t\t\"email\": \"Please enter an email address.\",\n\t\t\t\t\t})\n\t\t\t\t\treturn nil\n\t\t\t\t}\n\t\t\t\treturn ctx.Success(\"Subscribed!\", nil)\n\t\t\t},\n\t\t},\n\t}); err != nil {\n\t\tlog.Fatal(err)\n\t}\n}")}
 			<p>
 				The action URL is constructed at render time by
 				<span class="inline-code">actionPath("name")</span>

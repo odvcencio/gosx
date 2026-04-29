@@ -7,15 +7,18 @@ func Page() Node {
 			<p>
 				Sessions are the base layer. Every auth primitive in GoSX operates through a session store, so the current user and flash state are available to any file-routed page without extra plumbing.
 			</p>
-			{CodeBlock("go", `sessions := session.MustNew(os.Getenv("SESSION_SECRET"), session.Options{
+			{CodeBlock("go", `sessions, err := session.New(os.Getenv("SESSION_SECRET"), session.Options{
 	    Encrypt:         true,
 	    PreviousSecrets: strings.Fields(os.Getenv("SESSION_PREVIOUS_SECRETS")),
 	})
+	if err != nil {
+	    log.Fatal(err)
+	}
 	app.Use(sessions.Middleware)
 	app.Use(sessions.Protect)`)}
 			<p>
-				<span class="inline-code">session.MustNew</span>
-				creates a cookie-backed session store. By default it signs cookies for integrity; with
+				<span class="inline-code">session.New</span>
+				creates a cookie-backed session store and returns configuration errors instead of crashing the process. By default it signs cookies for integrity; with
 				<span class="inline-code">Encrypt: true</span>
 				it also encrypts them for confidentiality, and
 				<span class="inline-code">PreviousSecrets</span>

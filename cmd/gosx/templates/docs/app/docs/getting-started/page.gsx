@@ -37,7 +37,9 @@ func Page() Node {
 		  _ "your/module/app"
 		)
 		
-		route.MustRegisterFileModuleHere(route.FileModuleOptions{ ... })`}
+		if err := route.RegisterFileModuleHere(route.FileModuleOptions{ ... }); err != nil {
+		  log.Fatal(err)
+		}`}
 			</pre>
 		</section>
 		<div class="feature-grid">

@@ -32,7 +32,9 @@ decoded := q.Decompress()
 
 // Advect particles for one tick.
 particles := []float32{0.5, 0, 0, 0, 0.5, 0}
-field.Advect(decoded, particles, 0.016)
+if err := field.Advect(decoded, particles, 0.016); err != nil {
+    log.Fatal(err)
+}
 ```
 
 ## Wire format
@@ -62,7 +64,9 @@ A 64³ scalar field at 6 bits packs to ~200 KB. A 64³ vec3 field at 6 bits pack
 
 ```go
 // Producer
-field.PublishField(hub, "wind", currentWind, field.QuantizeOptions{BitWidth: 6})
+if err := field.PublishField(hub, "wind", currentWind, field.QuantizeOptions{BitWidth: 6}); err != nil {
+    log.Fatal(err)
+}
 
 // Subscriber (any goroutine)
 ch := field.SubscribeField(hub, "wind")

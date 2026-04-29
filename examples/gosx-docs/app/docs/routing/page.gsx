@@ -35,7 +35,7 @@ func Page() Node {
 				binding.
 			</p>
 			{CodeBlock("text", "app/\n└── blog/\n    └── [slug]/\n        ├── page.gsx\n        └── page.server.go")}
-			{CodeBlock("go", "// app/blog/[slug]/page.server.go\nfunc init() {\n\troute.MustRegisterFileModuleHere(route.FileModuleOptions{\n\t\tLoad: func(ctx *route.RouteContext, page route.FilePage) (any, error) {\n\t\t\tslug := ctx.Params[\"slug\"]\n\t\t\tpost, err := db.FindPost(slug)\n\t\t\tif err != nil {\n\t\t\t\treturn nil, err\n\t\t\t}\n\t\t\treturn map[string]any{\"post\": post}, nil\n\t\t},\n\t})\n}")}
+			{CodeBlock("go", "// app/blog/[slug]/page.server.go\nfunc init() {\n\tif err := route.RegisterFileModuleHere(route.FileModuleOptions{\n\t\tLoad: func(ctx *route.RouteContext, page route.FilePage) (any, error) {\n\t\t\tslug := ctx.Params[\"slug\"]\n\t\t\tpost, err := db.FindPost(slug)\n\t\t\tif err != nil {\n\t\t\t\treturn nil, err\n\t\t\t}\n\t\t\treturn map[string]any{\"post\": post}, nil\n\t\t},\n\t}); err != nil {\n\t\tlog.Fatal(err)\n\t}\n}")}
 			{CodeBlock("gsx", "<h1>{data.post.title}</h1>\n<p>{params.slug}</p>")}
 			<p>
 				Use
@@ -72,7 +72,7 @@ func Page() Node {
 				<span class="inline-code">data</span>
 				.
 			</p>
-			{CodeBlock("go", "func init() {\n\troute.MustRegisterFileModuleHere(route.FileModuleOptions{\n\t\tLoad: func(ctx *route.RouteContext, page route.FilePage) (any, error) {\n\t\t\titems, err := db.ListItems()\n\t\t\tif err != nil {\n\t\t\t\treturn nil, err\n\t\t\t}\n\t\t\treturn map[string]any{\n\t\t\t\t\"items\": items,\n\t\t\t\t\"count\": len(items),\n\t\t\t}, nil\n\t\t},\n\t})\n}")}
+			{CodeBlock("go", "func init() {\n\tif err := route.RegisterFileModuleHere(route.FileModuleOptions{\n\t\tLoad: func(ctx *route.RouteContext, page route.FilePage) (any, error) {\n\t\t\titems, err := db.ListItems()\n\t\t\tif err != nil {\n\t\t\t\treturn nil, err\n\t\t\t}\n\t\t\treturn map[string]any{\n\t\t\t\t\"items\": items,\n\t\t\t\t\"count\": len(items),\n\t\t\t}, nil\n\t\t},\n\t}); err != nil {\n\t\tlog.Fatal(err)\n\t}\n}")}
 			<p>
 				Return any Go value — a struct, a map, a slice. The template binds it as
 				<span class="inline-code">data</span>
