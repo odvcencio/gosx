@@ -1,6 +1,9 @@
 package vm
 
 import (
+	"fmt"
+	"math/rand"
+	"strconv"
 	"testing"
 
 	"github.com/odvcencio/gosx/island/program"
@@ -456,6 +459,285 @@ func TestReconcileKeyedStableUpdate(t *testing.T) {
 			t.Fatalf("expected SetText, got kind %d", op.Kind)
 		}
 	}
+}
+
+func TestReconcileRandomizedKeyedListInvariants(t *testing.T) {
+	rng := rand.New(rand.NewSource(20260429))
+	pool := make([]string, 24)
+	for i := range pool {
+		pool[i] = "key-" + strconv.Itoa(i)
+	}
+
+	for caseID := 0; caseID < 600; caseID++ {
+		prevItems := randomPrevItems(rng, pool)
+		nextItems := randomNextItems(rng, pool, prevItems)
+
+		prev := resolvedKeyedList(prevItems)
+		next := resolvedKeyedList(nextItems)
+		ops := ReconcileTrees(prev, next, nil)
+		applied, err := applyRootKeyedListPatches(prevItems, nextItems, ops)
+		if err != nil {
+			t.Fatalf("case %d failed to apply ops: %v\nprev=%+v\nnext=%+v\nops=%+v", caseID, err, prevItems, nextItems, ops)
+		}
+		if !keyedItemsEqual(applied, nextItems) {
+			t.Fatalf("case %d did not converge\nprev=%+v\nnext=%+v\napplied=%+v\nops=%+v", caseID, prevItems, nextItems, applied, ops)
+		}
+		if hasPatchKind(ops, PatchReplaceElement) {
+			t.Fatalf("case %d replaced same-tag unique keyed children\nprev=%+v\nnext=%+v\nops=%+v", caseID, prevItems, nextItems, ops)
+		}
+
+		created := len(keysOnly(nextItems)) - intersectionSize(prevItems, nextItems)
+		removed := len(keysOnly(prevItems)) - intersectionSize(prevItems, nextItems)
+		if got := countPatchKind(ops, PatchCreateElement); got != created {
+			t.Fatalf("case %d create count = %d, want %d\nprev=%+v\nnext=%+v\nops=%+v", caseID, got, created, prevItems, nextItems, ops)
+		}
+		if got := countPatchKind(ops, PatchRemoveElement); got != removed {
+			t.Fatalf("case %d remove count = %d, want %d\nprev=%+v\nnext=%+v\nops=%+v", caseID, got, removed, prevItems, nextItems, ops)
+		}
+		if sameKeySet(prevItems, nextItems) && !sameKeyOrder(prevItems, nextItems) && !hasPatchKind(ops, PatchReorder) {
+			t.Fatalf("case %d changed order without PatchReorder\nprev=%+v\nnext=%+v\nops=%+v", caseID, prevItems, nextItems, ops)
+		}
+	}
+}
+
+type reconcilerKeyedItem struct {
+	Key  string
+	Text string
+}
+
+func randomPrevItems(rng *rand.Rand, pool []string) []reconcilerKeyedItem {
+	keys := append([]string(nil), pool...)
+	rng.Shuffle(len(keys), func(i, j int) {
+		keys[i], keys[j] = keys[j], keys[i]
+	})
+	n := 1 + rng.Intn(12)
+	out := make([]reconcilerKeyedItem, n)
+	for i := range out {
+		out[i] = reconcilerKeyedItem{Key: keys[i], Text: "text-" + keys[i]}
+	}
+	return out
+}
+
+func randomNextItems(rng *rand.Rand, pool []string, prev []reconcilerKeyedItem) []reconcilerKeyedItem {
+	seenPrev := make(map[string]struct{}, len(prev))
+	var kept []reconcilerKeyedItem
+	for _, item := range prev {
+		seenPrev[item.Key] = struct{}{}
+		if rng.Intn(100) < 72 {
+			next := item
+			if rng.Intn(100) < 35 {
+				next.Text = "updated-" + item.Key + "-" + strconv.Itoa(rng.Intn(1000))
+			}
+			kept = append(kept, next)
+		}
+	}
+	rng.Shuffle(len(kept), func(i, j int) {
+		kept[i], kept[j] = kept[j], kept[i]
+	})
+
+	availableNewKeys := make([]string, 0, len(pool))
+	for _, key := range pool {
+		if _, exists := seenPrev[key]; !exists {
+			availableNewKeys = append(availableNewKeys, key)
+		}
+	}
+	rng.Shuffle(len(availableNewKeys), func(i, j int) {
+		availableNewKeys[i], availableNewKeys[j] = availableNewKeys[j], availableNewKeys[i]
+	})
+	newCount := rng.Intn(5)
+	if newCount > len(availableNewKeys) {
+		newCount = len(availableNewKeys)
+	}
+	next := append([]reconcilerKeyedItem(nil), kept...)
+	for i := 0; i < newCount; i++ {
+		item := reconcilerKeyedItem{Key: availableNewKeys[i], Text: "new-" + availableNewKeys[i]}
+		insertAt := 0
+		if len(next) > 0 {
+			insertAt = rng.Intn(len(next) + 1)
+		}
+		next = append(next, reconcilerKeyedItem{})
+		copy(next[insertAt+1:], next[insertAt:])
+		next[insertAt] = item
+	}
+	if len(next) == 0 {
+		item := prev[rng.Intn(len(prev))]
+		next = append(next, item)
+	}
+	return next
+}
+
+func resolvedKeyedList(items []reconcilerKeyedItem) *ResolvedTree {
+	nodes := make([]ResolvedNode, 1, len(items)+1)
+	nodes[0] = ResolvedNode{Tag: "ul", Children: make([]int, len(items))}
+	for i, item := range items {
+		nodes[0].Children[i] = i + 1
+		nodes = append(nodes, ResolvedNode{
+			Tag:  "li",
+			Key:  item.Key,
+			Text: item.Text,
+		})
+	}
+	return &ResolvedTree{Nodes: nodes}
+}
+
+func applyRootKeyedListPatches(prev, next []reconcilerKeyedItem, ops []PatchOp) ([]reconcilerKeyedItem, error) {
+	items := append([]reconcilerKeyedItem(nil), prev...)
+	for _, op := range ops {
+		switch op.Kind {
+		case PatchRemoveElement:
+			idx, err := rootChildPatchIndex(op.Path)
+			if err != nil {
+				return nil, err
+			}
+			if idx < 0 || idx >= len(items) {
+				return nil, errPatchIndex(op, idx, len(items))
+			}
+			items = append(items[:idx], items[idx+1:]...)
+		case PatchCreateElement:
+			if op.Path != "" {
+				return nil, errPatchPath(op)
+			}
+			if len(op.Children) != 1 {
+				return nil, errPatchChildren(op)
+			}
+			idx := op.Children[0]
+			if idx < 0 || idx > len(items) || idx >= len(next) {
+				return nil, errPatchIndex(op, idx, len(items))
+			}
+			items = append(items, reconcilerKeyedItem{})
+			copy(items[idx+1:], items[idx:])
+			items[idx] = next[idx]
+		case PatchReorder:
+			if op.Path != "" {
+				return nil, errPatchPath(op)
+			}
+			if len(op.Children) != len(items) {
+				return nil, errPatchChildren(op)
+			}
+			reordered := make([]reconcilerKeyedItem, len(items))
+			for i, from := range op.Children {
+				if from < 0 || from >= len(items) {
+					return nil, errPatchIndex(op, from, len(items))
+				}
+				reordered[i] = items[from]
+			}
+			items = reordered
+		case PatchSetText:
+			idx, err := rootChildPatchIndex(op.Path)
+			if err != nil {
+				return nil, err
+			}
+			if idx < 0 || idx >= len(items) {
+				return nil, errPatchIndex(op, idx, len(items))
+			}
+			items[idx].Text = op.Text
+		case PatchSetAttr, PatchRemoveAttr, PatchSetValue:
+			continue
+		default:
+			return nil, errUnexpectedPatch(op)
+		}
+	}
+	return items, nil
+}
+
+func rootChildPatchIndex(path string) (int, error) {
+	if path == "" {
+		return 0, nil
+	}
+	for i := range path {
+		if path[i] < '0' || path[i] > '9' {
+			return 0, errPathNotRootChild(path)
+		}
+	}
+	return strconv.Atoi(path)
+}
+
+func keyedItemsEqual(left, right []reconcilerKeyedItem) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for i := range left {
+		if left[i] != right[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func keysOnly(items []reconcilerKeyedItem) map[string]struct{} {
+	keys := make(map[string]struct{}, len(items))
+	for _, item := range items {
+		keys[item.Key] = struct{}{}
+	}
+	return keys
+}
+
+func intersectionSize(left, right []reconcilerKeyedItem) int {
+	rightKeys := keysOnly(right)
+	count := 0
+	for _, item := range left {
+		if _, ok := rightKeys[item.Key]; ok {
+			count++
+		}
+	}
+	return count
+}
+
+func sameKeySet(left, right []reconcilerKeyedItem) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	return intersectionSize(left, right) == len(left)
+}
+
+func sameKeyOrder(left, right []reconcilerKeyedItem) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for i := range left {
+		if left[i].Key != right[i].Key {
+			return false
+		}
+	}
+	return true
+}
+
+func countPatchKind(ops []PatchOp, kind PatchKind) int {
+	count := 0
+	for _, op := range ops {
+		if op.Kind == kind {
+			count++
+		}
+	}
+	return count
+}
+
+func hasPatchKind(ops []PatchOp, kind PatchKind) bool {
+	return countPatchKind(ops, kind) > 0
+}
+
+func errPatchIndex(op PatchOp, idx, size int) error {
+	return testErr("patch %v index %d outside size %d", op, idx, size)
+}
+
+func errPatchPath(op PatchOp) error {
+	return testErr("unexpected patch path for root list: %v", op)
+}
+
+func errPatchChildren(op PatchOp) error {
+	return testErr("unexpected patch children for root list: %v", op)
+}
+
+func errUnexpectedPatch(op PatchOp) error {
+	return testErr("unexpected patch for keyed root list: %v", op)
+}
+
+func errPathNotRootChild(path string) error {
+	return testErr("patch path %q is not a root child path", path)
+}
+
+func testErr(format string, args ...any) error {
+	return fmt.Errorf(format, args...)
 }
 
 func TestReconcileAutoKeysFromIteration(t *testing.T) {
