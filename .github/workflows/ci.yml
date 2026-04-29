@@ -66,6 +66,12 @@ jobs:
           PLAYWRIGHT_CHROMIUM_EXECUTABLE: ${{ steps.chrome.outputs.chrome-path }}
         run: make test-e2e
 
+      - name: Perf budget gate
+        env:
+          CHROME_PATH: ${{ steps.chrome.outputs.chrome-path }}
+          PLAYWRIGHT_CHROMIUM_EXECUTABLE: ${{ steps.chrome.outputs.chrome-path }}
+        run: make perf-budget-ci
+
       - name: Build CLI
         run: make build-cli
 

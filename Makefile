@@ -22,7 +22,7 @@ GOFILES := $(shell find . -name '*.go' -not -path './dist/*' -not -path './build
 DMJFILES := $(shell find . -name '*.dmj' -not -path './dist/*' -not -path './build/*')
 DMJGOFILES := $(patsubst %.dmj,%_danmuji_test.go,$(DMJFILES))
 
-.PHONY: fmt fmt-check verify-fmt verify-danmuji canopy-index canopy-stats canopy-clean test test-race test-fuzz-smoke test-js test-wasm test-wasm-islands test-e2e test-desktop test-desktop-macos perf-budget build-cli build-desktop-windows build-desktop-macos build-runtime ci
+.PHONY: fmt fmt-check verify-fmt verify-danmuji canopy-index canopy-stats canopy-clean test test-race test-fuzz-smoke test-js test-wasm test-wasm-islands test-e2e test-desktop test-desktop-macos perf-budget perf-budget-ci build-cli build-desktop-windows build-desktop-macos build-runtime ci
 
 fmt:
 	$(GOFMT) -w $(GOFILES)
@@ -128,6 +128,9 @@ perf-budget:
 	mkdir -p $(dir $(PERF_OUT))
 	$(GO) run ./cmd/gosx perf $(PERF_FLAGS) --budget $(PERF_BUDGET) --json $(PERF_URLS) > $(PERF_OUT)
 
+perf-budget-ci:
+	$(SHELL) ./scripts/perf-budget-ci.sh
+
 build-cli:
 	$(GO) build ./cmd/gosx
 
@@ -144,4 +147,4 @@ build-desktop-macos:
 build-runtime:
 	$(GO) run ./cmd/gosx build-runtime build
 
-ci: fmt-check verify-danmuji test test-race test-fuzz-smoke test-js test-wasm test-wasm-islands test-e2e test-desktop test-desktop-macos build-cli build-desktop-windows build-desktop-macos build-runtime
+ci: fmt-check verify-danmuji test test-race test-fuzz-smoke test-js test-wasm test-wasm-islands test-e2e perf-budget-ci test-desktop test-desktop-macos build-cli build-desktop-windows build-desktop-macos build-runtime
