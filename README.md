@@ -2,7 +2,7 @@
 
 A Go-native web platform. Write components in `.gsx` — Go with embedded markup — compile through a real compiler pipeline, render on the server by default, hydrate interactive islands with WebAssembly. No JavaScript toolchain. No CGo. A deliberately small dependency budget.
 
-Current release: **v0.18.24**. Pre-1.0; breaking changes are documented in [CHANGELOG.md](./CHANGELOG.md).
+Current release: **v0.18.25**. Pre-1.0; breaking changes are documented in [CHANGELOG.md](./CHANGELOG.md).
 
 ## What if you never had to leave Go?
 
@@ -236,7 +236,7 @@ Engines come in three kinds:
 - `worker` — background compute with no DOM mount
 - `video` — framework-owned managed video playback
 
-`Capabilities` declares what the engine can use. `RequiredCapabilities` is the hard browser gate: if a required API like `webgl`, `webgpu`, or `wasm` is missing, GoSX marks the mount unsupported and does not run the engine factory.
+`Capabilities` declares what the engine can use. `RequiredCapabilities` is the hard browser gate: if a required API like `webgl`, `webgpu`, or `wasm` is missing, GoSX marks the mount unsupported and does not run the engine factory. WebGPU features can be required precisely with names like `webgpu:timestamp-query`, `webgpu:shader-f16`, `webgpu:indirect-first-instance`, `webgpu:texture-compression-bc`, or `webgpu:subgroups`; the runtime checks the negotiated WebGPU device feature set rather than only checking `navigator.gpu`. WebGPU limit gates use the same contract: `webgpu:limit:maxTextureDimension2D>=4096` checks the created device limits, while `webgpu:adapter-limit:maxTextureDimension2D>=8192` checks the probed adapter ceiling.
 
 The managed video path also has first-class helpers:
 
@@ -332,21 +332,24 @@ scene.Props{
 
 ### Feature surface
 
-- **Scene graph** — `Group`, `Mesh`, `LODGroup`, `Decal`, `InstancedMesh`, `Points`, `Label`, `Sprite`, `Html`, `Model`, `ComputeParticles`, per-node transforms, nesting, world-transform lowering
+- **Scene graph** — `Group`, `Mesh`, `LODGroup`, `Decal`, `InstancedMesh`, `Points`, `Label`, `Sprite`, `Model`, `ComputeParticles`, per-node transforms, nesting, world-transform lowering
 - **Geometry** — `Box`, `Cube`, `Plane`, `Pyramid`, `Sphere`, `Lines`, `Cylinder`, `Torus`, helper-generated axes/grids/boxes/skeletons/gizmos, plus arbitrary geometry from loaded models
 - **Materials** — `StandardMaterial` (PBR with roughness/metalness plus clearcoat, sheen, transmission, iridescence, and anisotropy), `FlatMaterial`, `GhostMaterial`, `GlassMaterial`, `GlowMaterial`, `MatteMaterial`, `LineBasicMaterial`, `LineDashedMaterial`, `CustomMaterial` shader hooks, configurable blend modes and render passes
 - **Lights** — `AmbientLight`, `DirectionalLight`, `PointLight`, `SpotLight`, `HemisphereLight`, `RectAreaLight`, `LightProbe`; shadows on directional and spot with per-light `ShadowSize` and a scene-wide `Shadows.MaxPixels` cap
-- **Cameras** — perspective and orthographic cameras with orbit/drag controls, transition hints, picking, and projection-aware sprites/HTML overlays
+- **Cameras** — perspective and orthographic cameras with orbit, first-person, fly, drag, pointer-lock, and transition hints plus picking and projection-aware sprites/labels
 - **glTF / GLB** — `scene.Model{Src: "/assets/thing.glb"}` loads binary or JSON glTF 2.0 through the in-runtime pure-JS loader (`19-scene-gltf.js`), including animations
 - **Animation** — `AnimationClip` / `AnimationChannel` for node-level keyframe animation, `Spin` convenience for auto-rotation, glTF animation playback; scene-level `autoRotate` is opt-in and static scenes do not keep a RAF loop alive by default
+- **Instancing** — `InstancedMesh` renders repeated geometry through WebGPU instance-rate vertex buffers and WebGL2 `drawArraysInstanced`, with per-instance transforms, colors, material passes, receive shadows, and WebGPU instanced shadow casters
+- **World primitives** — helper lines, thick world lines, wire overlays, grids, axes, clip-space guides, and textured plane surfaces render on WebGPU through dedicated color, screen-space line-expansion, and surface-texture pipelines; dashed line styles remain the explicit WebGL2 compatibility escape hatch
 - **Particles** — GPU-computed particle systems via `ComputeParticles` with emitter, forces, and material
 - **Environment** — ambient, hemisphere, sky/ground, cubemap IBL, exposure, fog, tonemapping
+- **WebGPU presentation** — tier-aware 4x MSAA render targets with resolve-to-canvas/post-FX targets, adapter feature/limit negotiation for timestamp queries, shader-f16, indirect first-instance, compressed textures, subgroups, and diagnostics exposed for tooling, plus shared SceneIR parity across WebGPU, WebGL2, and headless backends
 - **Post-processing** — `SSAO`, `DOF`, `Bloom`, `Tonemap` (ACES / Reinhard / Filmic), `Vignette`, `ColorGrade`, FXAA 3.11, RGB9E5/HDR intermediate selection, HDR10 presentation when supported, composable chain, with backend-specific passes skipped gracefully when unavailable
 - **Editor/debug surfaces** — `AxesHelper`, `GridHelper`, `BoxHelper`, `BoundingBoxHelper`, `SkeletonHelper`, visual `TransformControls`, selected mesh outline styling, dashed/solid line materials, and opt-in `Stats` overlay
 - **Shadow pixel cap** — v0.15.0's `Shadows.MaxPixels` caps each shadow map (default 1024²), preventing multi-megabyte-per-light allocations when individual lights request large shadow sizes
 - **Compression & LOD** — per-component scalar quantization with delta encoding, progressive streaming, camera-distance-based LOD switching via `scene.Compression`, plus conventional discrete mesh/model swaps via `scene.LODGroup`
 - **Transitions** — declarative enter/exit/state transitions on any scene node via `InState` / `OutState` / `Live`
-- **Camera controls** — `orbit`, `drag-to-rotate`, focus targets, pick signals, drag signals, event signals exposed as `$`-signals consumable by surrounding islands
+- **Camera controls** — `orbit`, `first-person`, `fly`, pointer lock, drag-to-rotate, focus targets, pick signals, drag signals, event signals exposed as `$`-signals consumable by surrounding islands
 - **Capability tiers** — graceful degradation across WebGPU → WebGL → canvas fallbacks
 - **Shared IR across backends** — the JS WebGL backend, the pure-Go WebGPU pipeline, and the headless test backend consume the same SceneIR, with feature parity gated by what each target surface actually supports
 - **CSS-stylable 3D** — composable materials, lights, environment, point layers, and post-FX can read `var(--scene-*)` custom properties through the planner, so class changes, media queries, and CSS transitions can drive scene state without authored JavaScript animation code
@@ -386,7 +389,7 @@ The `workspace` package layers a distributed semantic collaboration space on top
 
 **`sim`** — Server-authoritative game simulation. Games implement the `Simulation` interface; a `Runner` drives it at a fixed tick rate, collects per-client inputs from a hub, broadcasts state snapshots, and handles replay and spectator sync. The server is the source of truth; clients submit inputs and render the authoritative state they receive back.
 
-**`game`** — First-class interactive runtime orchestration for games, scientific simulations, and academic visualization. It provides a bounded fixed-step loop, `Update` / `FixedUpdate` / `LateUpdate` / `Render` system phases, ECS-style entity/component storage, input action mapping, asset manifests, Scene3D engine configs, Scene3D-declared physics world construction, and a `sim.Runner` adapter. The physics bridge includes warm-started contact solving, raycasts, distance constraints, and conservative CCD for fast sphere/capsule bodies against static colliders.
+**`game`** — First-class interactive runtime orchestration for games, scientific simulations, and academic visualization. It provides a bounded fixed-step loop, `Update` / `FixedUpdate` / `LateUpdate` / `Render` system phases, ECS-style entity/component storage, input action mapping, asset manifests with capability-gated variants, Scene3D engine configs, positional audio playback events, Scene3D-declared physics world construction, and a `sim.Runner` adapter. The physics bridge includes warm-started contact solving, raycasts, distance constraints, and conservative CCD for fast sphere/capsule bodies against static colliders.
 
 ```go
 rt := game.New(game.Config{
@@ -686,7 +689,7 @@ The same compiler infrastructure powers [Arbiter](https://github.com/odvcencio/a
 
 ## Status
 
-GoSX is pre-1.0. The current release is **v0.18.24**. The five primitives (Server, Action, Island, Engine, Hub) are stable in shape — we do not expect their top-level API to change before 1.0. Subsystems like `scene`, `desktop`, `field`, `sim`, `workspace`, and `semantic` are still under active development and may take breaking changes; each such change is called out explicitly in [CHANGELOG.md](./CHANGELOG.md) with a migration path.
+GoSX is pre-1.0. The current release is **v0.18.25**. The five primitives (Server, Action, Island, Engine, Hub) are stable in shape — we do not expect their top-level API to change before 1.0. Subsystems like `scene`, `desktop`, `field`, `sim`, `workspace`, and `semantic` are still under active development and may take breaking changes; each such change is called out explicitly in [CHANGELOG.md](./CHANGELOG.md) with a migration path.
 
 If you're evaluating GoSX for production work, the server + island + route + engine + scene stack has been used in production. The semantic, workspace, and sim layers have production users but are newer.
 

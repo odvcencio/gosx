@@ -2,6 +2,47 @@
 
 ## Unreleased
 
+## v0.18.25
+
+Professional WebGPU and production-hardening release.
+
+This release buckets the current sweep into five concrete outcomes: WebGPU is
+now a first-class capability contract, Scene3D has more WebGPU-native
+presentation coverage, the game/runtime layer has more production-oriented
+assets/input/audio affordances, high-risk framework subsystems have executable
+proof instead of confidence claims, and the repo has safer tooling around large
+structural analysis.
+
+WebGPU moves from a backend preference to a negotiated runtime surface.
+Scene3D now performs an adapter plus device probe, negotiates optional features
+up front, snapshots adapter/device limits, listens for device loss, and exposes
+diagnostics for tooling and mount-state inspection. Engines and compute
+islands can require precise WebGPU capabilities such as
+`webgpu:timestamp-query`, `webgpu:shader-f16`,
+`webgpu:texture-compression-bc`, and `webgpu:subgroups`, and can also gate on
+limits such as `webgpu:limit:maxTextureDimension2D>=4096` or
+`webgpu:adapter-limit:maxTextureDimension2D>=8192`. The selective runtime now
+waits for the async WebGPU probe before judging those requirements, and the
+split engine/island chunks share the same capability helper path.
+
+Scene3D's WebGPU path now covers more of the real presentation surface instead
+of falling back for common professional scenes. Instanced meshes render through
+instance-rate matrix/color buffers, instanced shadow casters use WebGPU-native
+shadow pipelines, world/clip-space lines use dedicated color pipelines, thick
+world lines expand on-GPU into screen-space quads, textured plane surfaces stay
+on WebGPU, and tier-aware MSAA render targets resolve cleanly through both
+direct canvas and post-processing paths. Mounts expose renderer diagnostics via
+`data-gosx-scene3d-webgpu-*` attributes, and tests assert WebGL/WebGPU command
+parity for the shared SceneIR.
+
+The game layer picks up reusable production affordances for interactive 3D
+experiences, not just toy game loops. Asset manifests now support ordered,
+capability-gated variants so an app can prefer WebGPU/KTX2/high-quality assets
+while retaining WebGL/mobile fallbacks. Audio playback events carry positional
+WebAudio fields, input bindings include pointer buttons, game profiles expose
+Web3D/fighting-game defaults, and Scene3D mount helpers carry the same runtime
+asset/audio/capability metadata into engine configs.
+
 Proof-hardening pass for the red/yellow risk zones.
 
 Production error surfaces are now checked instead of panic-first for the
