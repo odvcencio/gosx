@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/andybalholm/brotli"
 	"github.com/odvcencio/gosx"
 	"github.com/odvcencio/gosx/buildmanifest"
 	"github.com/odvcencio/gosx/engine"
@@ -1271,6 +1272,9 @@ func TestAppServesPrecompressedRuntimeAssetWhenAccepted(t *testing.T) {
 	if err := writeTestGzip(rawPath+".gz", []byte("island runtime island runtime island runtime")); err != nil {
 		t.Fatal(err)
 	}
+	if err := writeTestBrotli(rawPath+".br", []byte("island runtime island runtime island runtime")); err != nil {
+		t.Fatal(err)
+	}
 	manifest := buildmanifest.Manifest{
 		Runtime: buildmanifest.RuntimeAssets{
 			WASMIslands: buildmanifest.HashedAsset{
@@ -1319,6 +1323,37 @@ func TestAppServesPrecompressedRuntimeAssetWhenAccepted(t *testing.T) {
 	}
 	if string(body) != "island runtime island runtime island runtime" {
 		t.Fatalf("unexpected decompressed body %q", body)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/gosx/runtime-islands.wasm", nil)
+	req.Header.Set("Accept-Encoding", "gzip, br")
+	w = httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 for brotli, got %d", w.Code)
+	}
+	if got := w.Header().Get("Content-Encoding"); got != "br" {
+		t.Fatalf("expected brotli content encoding, got %q", got)
+	}
+	body, err = io.ReadAll(brotli.NewReader(w.Body))
+	if err != nil {
+		t.Fatalf("read brotli body: %v", err)
+	}
+	if string(body) != "island runtime island runtime island runtime" {
+		t.Fatalf("unexpected brotli body %q", body)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/gosx/runtime-islands.wasm", nil)
+	req.Header.Set("Accept-Encoding", "br;q=0, gzip;q=0")
+	w = httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if got := w.Header().Get("Content-Encoding"); got != "" {
+		t.Fatalf("expected uncompressed response when encodings are disabled, got %q", got)
+	}
+	if body := w.Body.String(); body != "island runtime island runtime island runtime" {
+		t.Fatalf("unexpected uncompressed body %q", body)
 	}
 }
 
@@ -2048,6 +2083,24 @@ func writeTestGzip(path string, data []byte) error {
 		return err
 	}
 	if err := zw.Close(); err != nil {
+		_ = f.Close()
+		return err
+	}
+	return f.Close()
+}
+
+func writeTestBrotli(path string, data []byte) error {
+	f, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	bw := brotli.NewWriter(f)
+	if _, err := bw.Write(data); err != nil {
+		_ = bw.Close()
+		_ = f.Close()
+		return err
+	}
+	if err := bw.Close(); err != nil {
 		_ = f.Close()
 		return err
 	}

@@ -48,8 +48,8 @@ func RunBuildRuntime(outDir string) error {
 		if err != nil {
 			return fmt.Errorf("read %s runtime: %w", target.label, err)
 		}
-		if err := writeGzipSidecarIfSmaller(outputPath, data); err != nil {
-			return fmt.Errorf("write %s runtime gzip sidecar: %w", target.label, err)
+		if err := writeCompressedSidecarsIfSmaller(outputPath, data); err != nil {
+			return fmt.Errorf("write %s runtime compression sidecars: %w", target.label, err)
 		}
 		fmt.Printf("%s (%d bytes)\n", target.file, len(data))
 	}

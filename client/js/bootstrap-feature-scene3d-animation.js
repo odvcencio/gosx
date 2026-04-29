@@ -451,4 +451,3 @@
   window.__gosx_scene3d_animation_loaded = true;
 
 })();
-//# sourceMappingURL=bootstrap-feature-scene3d-animation.js.map

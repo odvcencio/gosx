@@ -9,34 +9,39 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/andybalholm/brotli"
 	"github.com/odvcencio/gosx/buildmanifest"
 )
 
 type sizeReport struct {
-	Manifest       string           `json:"manifest"`
-	RuntimeDir     string           `json:"runtimeDir"`
-	ColdStartBytes int64            `json:"coldStartBytes"`
-	ColdStartGzip  int64            `json:"coldStartGzipBytes"`
-	TotalBytes     int64            `json:"totalBytes"`
-	TotalGzip      int64            `json:"totalGzipBytes"`
-	Profiles       []sizeProfile    `json:"profiles,omitempty"`
-	Assets         []sizeReportFile `json:"assets"`
+	Manifest        string           `json:"manifest"`
+	RuntimeDir      string           `json:"runtimeDir"`
+	ColdStartBytes  int64            `json:"coldStartBytes"`
+	ColdStartGzip   int64            `json:"coldStartGzipBytes"`
+	ColdStartBrotli int64            `json:"coldStartBrotliBytes"`
+	TotalBytes      int64            `json:"totalBytes"`
+	TotalGzip       int64            `json:"totalGzipBytes"`
+	TotalBrotli     int64            `json:"totalBrotliBytes"`
+	Profiles        []sizeProfile    `json:"profiles,omitempty"`
+	Assets          []sizeReportFile `json:"assets"`
 }
 
 type sizeProfile struct {
-	Name      string   `json:"name"`
-	Bytes     int64    `json:"bytes"`
-	GzipBytes int64    `json:"gzipBytes"`
-	Assets    []string `json:"assets"`
+	Name        string   `json:"name"`
+	Bytes       int64    `json:"bytes"`
+	GzipBytes   int64    `json:"gzipBytes"`
+	BrotliBytes int64    `json:"brotliBytes"`
+	Assets      []string `json:"assets"`
 }
 
 type sizeReportFile struct {
-	Name      string `json:"name"`
-	File      string `json:"file"`
-	Role      string `json:"role"`
-	Bytes     int64  `json:"bytes"`
-	GzipBytes int64  `json:"gzipBytes"`
-	ColdStart bool   `json:"coldStart"`
+	Name        string `json:"name"`
+	File        string `json:"file"`
+	Role        string `json:"role"`
+	Bytes       int64  `json:"bytes"`
+	GzipBytes   int64  `json:"gzipBytes"`
+	BrotliBytes int64  `json:"brotliBytes"`
+	ColdStart   bool   `json:"coldStart"`
 }
 
 func cmdSizeReport() {
@@ -104,9 +109,11 @@ func buildSizeReport(target string) (sizeReport, error) {
 		report.Assets = append(report.Assets, entry)
 		report.TotalBytes += entry.Bytes
 		report.TotalGzip += entry.GzipBytes
+		report.TotalBrotli += entry.BrotliBytes
 		if entry.ColdStart {
 			report.ColdStartBytes += entry.Bytes
 			report.ColdStartGzip += entry.GzipBytes
+			report.ColdStartBrotli += entry.BrotliBytes
 		}
 	}
 	report.Profiles = sizeProfiles(report.Assets)
@@ -165,19 +172,32 @@ func sizeReportEntry(runtimeDir string, asset runtimeSizeAsset) (sizeReportFile,
 	if sidecar, err := os.ReadFile(path + ".gz"); err == nil && int64(len(sidecar)) < gzipBytes {
 		gzipBytes = int64(len(sidecar))
 	}
+	brotliBytes := brotliLength(data)
+	if sidecar, err := os.ReadFile(path + ".br"); err == nil && int64(len(sidecar)) < brotliBytes {
+		brotliBytes = int64(len(sidecar))
+	}
 	return sizeReportFile{
-		Name:      asset.name,
-		File:      asset.file,
-		Role:      asset.role,
-		Bytes:     int64(len(data)),
-		GzipBytes: gzipBytes,
-		ColdStart: asset.coldStart,
+		Name:        asset.name,
+		File:        asset.file,
+		Role:        asset.role,
+		Bytes:       int64(len(data)),
+		GzipBytes:   gzipBytes,
+		BrotliBytes: brotliBytes,
+		ColdStart:   asset.coldStart,
 	}, nil
 }
 
 func gzipLength(data []byte) int64 {
 	var buf bytes.Buffer
 	zw, _ := gzip.NewWriterLevel(&buf, gzip.BestCompression)
+	_, _ = zw.Write(data)
+	_ = zw.Close()
+	return int64(buf.Len())
+}
+
+func brotliLength(data []byte) int64 {
+	var buf bytes.Buffer
+	zw := brotli.NewWriterLevel(&buf, brotli.BestCompression)
 	_, _ = zw.Write(data)
 	_ = zw.Close()
 	return int64(buf.Len())
@@ -207,6 +227,7 @@ func sizeProfiles(assets []sizeReportFile) []sizeProfile {
 			profile.Assets = append(profile.Assets, asset.File)
 			profile.Bytes += asset.Bytes
 			profile.GzipBytes += asset.GzipBytes
+			profile.BrotliBytes += asset.BrotliBytes
 		}
 		if profile.Name != "" {
 			profiles = append(profiles, profile)
@@ -218,17 +239,17 @@ func sizeProfiles(assets []sizeReportFile) []sizeProfile {
 func printSizeReport(report sizeReport) {
 	fmt.Printf("GoSX runtime size report\n")
 	fmt.Printf("  Manifest: %s\n", report.Manifest)
-	fmt.Printf("  Cold start: %s raw, %s gzip\n", humanBytes(report.ColdStartBytes), humanBytes(report.ColdStartGzip))
+	fmt.Printf("  Cold start: %s raw, %s gzip, %s brotli\n", humanBytes(report.ColdStartBytes), humanBytes(report.ColdStartGzip), humanBytes(report.ColdStartBrotli))
 	for _, profile := range report.Profiles {
-		fmt.Printf("  Profile %-16s %8s raw %8s gzip\n", profile.Name+":", humanBytes(profile.Bytes), humanBytes(profile.GzipBytes))
+		fmt.Printf("  Profile %-16s %8s raw %8s gzip %8s brotli\n", profile.Name+":", humanBytes(profile.Bytes), humanBytes(profile.GzipBytes), humanBytes(profile.BrotliBytes))
 	}
-	fmt.Printf("  Runtime total: %s raw, %s gzip\n", humanBytes(report.TotalBytes), humanBytes(report.TotalGzip))
+	fmt.Printf("  Runtime total: %s raw, %s gzip, %s brotli\n", humanBytes(report.TotalBytes), humanBytes(report.TotalGzip), humanBytes(report.TotalBrotli))
 	for _, asset := range report.Assets {
 		marker := " "
 		if asset.ColdStart {
 			marker = "*"
 		}
-		fmt.Printf("  %s %-42s %8s raw %8s gzip  %s\n", marker, asset.File, humanBytes(asset.Bytes), humanBytes(asset.GzipBytes), asset.Role)
+		fmt.Printf("  %s %-42s %8s raw %8s gzip %8s brotli  %s\n", marker, asset.File, humanBytes(asset.Bytes), humanBytes(asset.GzipBytes), humanBytes(asset.BrotliBytes), asset.Role)
 	}
 }
 

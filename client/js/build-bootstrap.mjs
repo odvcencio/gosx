@@ -3,9 +3,17 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import zlib from "node:zlib";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const DEBUG_SOURCEMAPS = process.env.GOSX_BUNDLE_DEBUG === "1";
+const BROTLI_OPTIONS = {
+  params: {
+    [zlib.constants.BROTLI_PARAM_QUALITY]: zlib.constants.BROTLI_MAX_QUALITY,
+    [zlib.constants.BROTLI_PARAM_MODE]: zlib.constants.BROTLI_MODE_TEXT,
+  },
+};
 
 function sourceFile(rel) {
   return {
@@ -331,6 +339,54 @@ function encodeMappings(lines) {
   return segments.join(";");
 }
 
+function compressedSidecars(filePath, code) {
+  const raw = Buffer.from(code, "utf8");
+  if (raw.length === 0) {
+    return [];
+  }
+  return [
+    {
+      path: `${filePath}.gz`,
+      bytes: zlib.gzipSync(raw, { level: zlib.constants.Z_BEST_COMPRESSION }),
+    },
+    {
+      path: `${filePath}.br`,
+      bytes: zlib.brotliCompressSync(raw, BROTLI_OPTIONS),
+    },
+  ].map((sidecar) => ({
+    ...sidecar,
+    bytes: sidecar.bytes.length < raw.length ? sidecar.bytes : null,
+  }));
+}
+
+function writeCompressedSidecars(filePath, code) {
+  for (const sidecar of compressedSidecars(filePath, code)) {
+    if (sidecar.bytes) {
+      fs.writeFileSync(sidecar.path, sidecar.bytes);
+      continue;
+    }
+    if (fs.existsSync(sidecar.path)) {
+      fs.rmSync(sidecar.path);
+    }
+  }
+}
+
+function sidecarsMatch(filePath, code) {
+  for (const sidecar of compressedSidecars(filePath, code)) {
+    const current = fs.existsSync(sidecar.path) ? fs.readFileSync(sidecar.path) : null;
+    if (!sidecar.bytes) {
+      if (current) {
+        return false;
+      }
+      continue;
+    }
+    if (!current || !current.equals(sidecar.bytes)) {
+      return false;
+    }
+  }
+  return true;
+}
+
 function buildBootstrapBundle(entry) {
   const sections = entry.sources.map((descriptor) => {
     const source = readSource(descriptor.file);
@@ -361,8 +417,12 @@ function buildBootstrapBundle(entry) {
     }
   }
 
-  code += `//# sourceMappingURL=${path.basename(entry.mapPath)}\n`;
-  lines.push(null);
+  if (DEBUG_SOURCEMAPS) {
+    code += `//# sourceMappingURL=${path.basename(entry.mapPath)}\n`;
+    lines.push(null);
+  } else if (!code.endsWith("\n")) {
+    code += "\n";
+  }
 
   return {
     code,
@@ -384,7 +444,7 @@ function main(argv) {
       const next = buildBootstrapBundle(entry);
       const currentCode = fs.existsSync(entry.path) ? fs.readFileSync(entry.path, "utf8") : "";
       const currentMap = fs.existsSync(entry.mapPath) ? fs.readFileSync(entry.mapPath, "utf8") : "";
-      return currentCode !== next.code || currentMap !== next.map;
+      return currentCode !== next.code || currentMap !== next.map || !sidecarsMatch(entry.path, next.code);
     });
     if (stale.length > 0) {
       process.stderr.write("bootstrap runtime assets are out of date. Run `npm run build:bootstrap`.\n");
@@ -396,6 +456,7 @@ function main(argv) {
     const built = buildBootstrapBundle(entry);
     fs.writeFileSync(entry.path, built.code, "utf8");
     fs.writeFileSync(entry.mapPath, built.map, "utf8");
+    writeCompressedSidecars(entry.path, built.code);
   }
 }
 

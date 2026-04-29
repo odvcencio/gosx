@@ -85,6 +85,9 @@ func copyExportRuntime(buildDir, outputDir string, manifest exportManifest) erro
 		if err := copyFile(dst, src); err != nil {
 			return err
 		}
+		if err := copyCompressedSidecars(dst, src); err != nil {
+			return err
+		}
 	}
 	return nil
 }

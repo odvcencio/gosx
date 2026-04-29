@@ -4776,4 +4776,3 @@
   window.__gosx_scene3d_webgpu_loaded = true;
 
 })();
-//# sourceMappingURL=bootstrap-feature-scene3d-webgpu.js.map

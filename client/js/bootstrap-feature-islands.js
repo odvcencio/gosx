@@ -483,4 +483,3 @@
     };
   });
 })();
-//# sourceMappingURL=bootstrap-feature-islands.js.map

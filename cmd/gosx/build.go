@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path"
@@ -15,6 +16,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/andybalholm/brotli"
 	"github.com/odvcencio/gosx"
 	"github.com/odvcencio/gosx/buildmanifest"
 	"github.com/odvcencio/gosx/ir"
@@ -59,7 +61,7 @@ func writeHashed(dir, name, ext string, data []byte) (HashedAsset, error) {
 	if err := os.WriteFile(path, data, 0644); err != nil {
 		return HashedAsset{}, err
 	}
-	if err := writeGzipSidecarIfSmaller(path, data); err != nil {
+	if err := writeCompressedSidecarsIfSmaller(path, data); err != nil {
 		return HashedAsset{}, err
 	}
 	return HashedAsset{
@@ -70,11 +72,34 @@ func writeHashed(dir, name, ext string, data []byte) (HashedAsset, error) {
 }
 
 func writeGzipSidecarIfSmaller(path string, data []byte) error {
+	return writeCompressedSidecarIfSmaller(path+".gz", data, func(w io.Writer) (io.WriteCloser, error) {
+		zw, err := gzip.NewWriterLevel(w, gzip.BestCompression)
+		if err != nil {
+			return nil, err
+		}
+		return zw, nil
+	})
+}
+
+func writeBrotliSidecarIfSmaller(path string, data []byte) error {
+	return writeCompressedSidecarIfSmaller(path+".br", data, func(w io.Writer) (io.WriteCloser, error) {
+		return brotli.NewWriterLevel(w, brotli.BestCompression), nil
+	})
+}
+
+func writeCompressedSidecarsIfSmaller(path string, data []byte) error {
+	if err := writeGzipSidecarIfSmaller(path, data); err != nil {
+		return err
+	}
+	return writeBrotliSidecarIfSmaller(path, data)
+}
+
+func writeCompressedSidecarIfSmaller(path string, data []byte, newWriter func(io.Writer) (io.WriteCloser, error)) error {
 	if len(data) == 0 {
-		return nil
+		return removeFileIfExists(path)
 	}
 	var buf bytes.Buffer
-	zw, err := gzip.NewWriterLevel(&buf, gzip.BestCompression)
+	zw, err := newWriter(&buf)
 	if err != nil {
 		return err
 	}
@@ -86,9 +111,16 @@ func writeGzipSidecarIfSmaller(path string, data []byte) error {
 		return err
 	}
 	if buf.Len() >= len(data) {
-		return nil
+		return removeFileIfExists(path)
 	}
-	return os.WriteFile(path+".gz", buf.Bytes(), 0644)
+	return os.WriteFile(path, buf.Bytes(), 0644)
+}
+
+func removeFileIfExists(path string) error {
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
 }
 
 // RunBuild orchestrates the full GoSX build pipeline.
@@ -742,8 +774,17 @@ func stageManifestCompatibilityRuntime(distDir string, manifest *BuildManifest, 
 		if err := copyFile(dst, src); err != nil {
 			return err
 		}
-		if isFile(src + ".gz") {
-			if err := copyFile(dst+".gz", src+".gz"); err != nil {
+		if err := copyCompressedSidecars(dst, src); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func copyCompressedSidecars(dst, src string) error {
+	for _, ext := range []string{".gz", ".br"} {
+		if isFile(src + ext) {
+			if err := copyFile(dst+ext, src+ext); err != nil {
 				return err
 			}
 		}

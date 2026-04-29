@@ -77,7 +77,7 @@ func TestCSSAssetBaseNameUsesRelativePath(t *testing.T) {
 	}
 }
 
-func TestWriteHashedWritesGzipSidecarWhenSmaller(t *testing.T) {
+func TestWriteHashedWritesCompressedSidecarsWhenSmaller(t *testing.T) {
 	dir := t.TempDir()
 	data := []byte(strings.Repeat("runtime island payload ", 64))
 
@@ -85,13 +85,15 @@ func TestWriteHashedWritesGzipSidecarWhenSmaller(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sidecar := filepath.Join(dir, asset.File+".gz")
-	info, err := os.Stat(sidecar)
-	if err != nil {
-		t.Fatalf("expected gzip sidecar: %v", err)
-	}
-	if info.Size() >= int64(len(data)) {
-		t.Fatalf("expected sidecar smaller than raw data, raw=%d gzip=%d", len(data), info.Size())
+	for _, ext := range []string{".gz", ".br"} {
+		sidecar := filepath.Join(dir, asset.File+ext)
+		info, err := os.Stat(sidecar)
+		if err != nil {
+			t.Fatalf("expected %s sidecar: %v", ext, err)
+		}
+		if info.Size() >= int64(len(data)) {
+			t.Fatalf("expected %s sidecar smaller than raw data, raw=%d compressed=%d", ext, len(data), info.Size())
+		}
 	}
 }
 
@@ -191,6 +193,7 @@ func TestStageManifestCompatibilityRuntimeCopiesOnlyReferencedAssets(t *testing.
 		filepath.Join(distDir, "assets", "runtime", "bootstrap-lite.4444.js"):            "bootstrap-lite",
 		filepath.Join(distDir, "assets", "runtime", "bootstrap-runtime.5555.js"):         "bootstrap-runtime",
 		filepath.Join(distDir, "assets", "runtime", "bootstrap-runtime.5555.js.gz"):      "bootstrap-runtime-gzip",
+		filepath.Join(distDir, "assets", "runtime", "bootstrap-runtime.5555.js.br"):      "bootstrap-runtime-br",
 		filepath.Join(distDir, "assets", "runtime", "bootstrap-feature-islands.6666.js"): "bootstrap-feature-islands",
 		filepath.Join(distDir, "assets", "runtime", "bootstrap-feature-engines.7777.js"): "bootstrap-feature-engines",
 		filepath.Join(distDir, "assets", "runtime", "bootstrap-feature-hubs.8888.js"):    "bootstrap-feature-hubs",
@@ -235,6 +238,7 @@ func TestStageManifestCompatibilityRuntimeCopiesOnlyReferencedAssets(t *testing.
 	for _, rel := range []string{
 		"gosx/assets/runtime/bootstrap-runtime.5555.js",
 		"gosx/assets/runtime/bootstrap-runtime.5555.js.gz",
+		"gosx/assets/runtime/bootstrap-runtime.5555.js.br",
 		"gosx/bootstrap-feature-engines.js",
 		"gosx/hls.min.js",
 		"gosx/islands/Counter.gxi",

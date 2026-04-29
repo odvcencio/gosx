@@ -5,6 +5,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -149,6 +150,15 @@ func (a *App) serveRuntimeAsset(w http.ResponseWriter, r *http.Request) {
 }
 
 func serveRuntimeFile(w http.ResponseWriter, r *http.Request, fsPath string) {
+	if requestAcceptsBrotli(r) {
+		if brPath := fsPath + ".br"; isFile(brPath) {
+			w.Header().Set("Content-Encoding", "br")
+			w.Header().Add("Vary", "Accept-Encoding")
+			setRuntimeContentType(w.Header(), fsPath)
+			http.ServeFile(w, r, brPath)
+			return
+		}
+	}
 	if requestAcceptsGzip(r) {
 		if gzPath := fsPath + ".gz"; isFile(gzPath) {
 			w.Header().Set("Content-Encoding", "gzip")
@@ -161,8 +171,41 @@ func serveRuntimeFile(w http.ResponseWriter, r *http.Request, fsPath string) {
 	http.ServeFile(w, r, fsPath)
 }
 
+func requestAcceptsBrotli(r *http.Request) bool {
+	return requestAcceptsEncoding(r, "br")
+}
+
 func requestAcceptsGzip(r *http.Request) bool {
-	return r != nil && strings.Contains(r.Header.Get("Accept-Encoding"), "gzip")
+	return requestAcceptsEncoding(r, "gzip")
+}
+
+func requestAcceptsEncoding(r *http.Request, encoding string) bool {
+	if r == nil {
+		return false
+	}
+	encoding = strings.ToLower(strings.TrimSpace(encoding))
+	for _, part := range strings.Split(r.Header.Get("Accept-Encoding"), ",") {
+		fields := strings.Split(part, ";")
+		token := strings.ToLower(strings.TrimSpace(fields[0]))
+		if token == "" {
+			continue
+		}
+		if token != encoding {
+			continue
+		}
+		for _, param := range fields[1:] {
+			key, value, ok := strings.Cut(strings.TrimSpace(param), "=")
+			if !ok || !strings.EqualFold(strings.TrimSpace(key), "q") {
+				continue
+			}
+			q, err := strconv.ParseFloat(strings.TrimSpace(value), 64)
+			if err == nil && q <= 0 {
+				return false
+			}
+		}
+		return true
+	}
+	return false
 }
 
 func setRuntimeContentType(h http.Header, fsPath string) {

@@ -86,6 +86,8 @@ func TestCopyExportRuntimeCopiesOnlyReferencedAssets(t *testing.T) {
 		"bootstrap.js":                           "bootstrap",
 		"bootstrap-lite.js":                      "bootstrap-lite",
 		"bootstrap-runtime.js":                   "bootstrap-runtime",
+		"bootstrap-runtime.js.gz":                "bootstrap-runtime-gzip",
+		"bootstrap-runtime.js.br":                "bootstrap-runtime-br",
 		"bootstrap-feature-islands.js":           "bootstrap-feature-islands",
 		"bootstrap-feature-engines.js":           "bootstrap-feature-engines",
 		"bootstrap-feature-hubs.js":              "bootstrap-feature-hubs",
@@ -114,6 +116,8 @@ func TestCopyExportRuntimeCopiesOnlyReferencedAssets(t *testing.T) {
 
 	for _, rel := range []string{
 		"gosx/bootstrap-runtime.js",
+		"gosx/bootstrap-runtime.js.gz",
+		"gosx/bootstrap-runtime.js.br",
 		"gosx/bootstrap-feature-engines.js",
 		"gosx/hls.min.js",
 		"gosx/islands/Counter.gxi",

@@ -21674,4 +21674,3 @@ if (typeof window !== "undefined") {
     window.__gosx_scene3d_loaded();
   }
 })();
-//# sourceMappingURL=bootstrap-feature-scene3d.js.map
