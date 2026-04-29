@@ -252,6 +252,14 @@
     let trainingVisible = false;
     let lastCue = "";
     let lastFeedbackSeq = 0;
+    let lastPhaseCue = "";
+    const lastFightAudioState = {
+      initialized: false,
+      p1Beast: false,
+      p2Beast: false,
+      p1Ready: false,
+      p2Ready: false,
+    };
 
     function addListener(target, type, listener, options) {
       if (!target || typeof target.addEventListener !== "function") return;
@@ -332,6 +340,7 @@
       if (event.code) keys[event.code] = active;
       if (event.key) keys[String(event.key).toLowerCase()] = active;
       if (!active) return;
+      unlockArcadeAudio();
 
       if (event.code === "F2") {
         trainingVisible = !trainingVisible;
@@ -403,6 +412,7 @@
       if (!control) return;
       const key = touchKey(control);
       if (!key) return;
+      unlockArcadeAudio();
       activePointers.set(event.pointerId, key);
       updateTouch(key, true);
       if (control.setPointerCapture && event.pointerId != null) {
@@ -507,6 +517,131 @@
       send(config.event, payload);
     }
 
+    function fightAudioFallbackCue(kind, event) {
+      const cueKind = String(kind || "").trim().toLowerCase();
+      if (!cueKind || cueKind === "none") return "none";
+      if (cueKind === "block") return "block";
+      if (cueKind === "just_guard") return "just_guard";
+      if (cueKind === "guard_cancel") return "guard_cancel";
+      if (cueKind === "armor") return "armor";
+      if (cueKind === "throw_tech") return "throw_tech";
+      if (cueKind === "throw") return "throw";
+      if (cueKind === "hit") {
+        if (event && event.punish) return "punish";
+        if (event && event.counter) return "counter";
+        if (event && event.launcher) return "launcher";
+        const damage = Math.max(0, hubInputNumber(event && event.damage, 0));
+        const move = Math.max(0, Math.floor(hubInputNumber(event && event.moveId, 0)));
+        if (damage >= 95 || move === 1 || move === 3) return "hit_heavy";
+        return "hit_light";
+      }
+      return cueKind;
+    }
+
+    function fightAudioPlayer(data, player) {
+      if (Number(player) === 2) return data && data.p2;
+      if (Number(player) === 1) return data && data.p1;
+      return null;
+    }
+
+    function fightAudioPositionValue(player, field, fallback) {
+      if (!player || typeof player !== "object") return fallback;
+      if (field === "x" && player.hurtbox && Object.prototype.hasOwnProperty.call(player.hurtbox, "x")) {
+        return hubInputNumber(player.hurtbox.x, fallback);
+      }
+      if (Object.prototype.hasOwnProperty.call(player, field)) {
+        return hubInputNumber(player[field], fallback);
+      }
+      return fallback;
+    }
+
+    function fightAudioPan(data, event, cue) {
+      if (cue && Object.prototype.hasOwnProperty.call(cue, "pan")) {
+        return arcadeClamp(cue.pan, -0.95, 0.95, 0);
+      }
+      const attacker = fightAudioPlayer(data, event && event.attacker);
+      const defender = fightAudioPlayer(data, event && event.defender);
+      if (attacker && defender) {
+        const x = (fightAudioPositionValue(attacker, "x", 0) + fightAudioPositionValue(defender, "x", 0)) * 0.5;
+        return arcadeClamp(x / 3.4, -0.85, 0.85, 0);
+      }
+      if (attacker) return arcadeClamp(fightAudioPositionValue(attacker, "x", 0) / 3.4, -0.85, 0.85, 0);
+      if (defender) return arcadeClamp(fightAudioPositionValue(defender, "x", 0) / 3.4, -0.85, 0.85, 0);
+      return 0;
+    }
+
+    function fightAudioDepth(data, event, cue) {
+      if (cue && Object.prototype.hasOwnProperty.call(cue, "depth")) {
+        return arcadeClamp(cue.depth, -0.75, 0.75, 0);
+      }
+      const attacker = fightAudioPlayer(data, event && event.attacker);
+      const defender = fightAudioPlayer(data, event && event.defender);
+      if (attacker && defender) {
+        return arcadeClamp((fightAudioPositionValue(attacker, "z", 0) + fightAudioPositionValue(defender, "z", 0)) * 0.5, -0.75, 0.75, 0);
+      }
+      if (attacker) return arcadeClamp(fightAudioPositionValue(attacker, "z", 0), -0.75, 0.75, 0);
+      if (defender) return arcadeClamp(fightAudioPositionValue(defender, "z", 0), -0.75, 0.75, 0);
+      return 0;
+    }
+
+    function fightAudioIntensity(kind, event, cue) {
+      if (cue && Object.prototype.hasOwnProperty.call(cue, "intensity")) {
+        return arcadeClamp(cue.intensity, 0.05, 1.25, 0.3);
+      }
+      const damage = Math.max(0, hubInputNumber(event && event.damage, 0));
+      const blocked = Boolean(event && event.blocked) || kind === "block";
+      const special = Boolean(event && (event.counter || event.punish || event.launcher || event.guardCancel || event.justGuard || event.armor))
+        || kind === "throw" || kind === "throw_tech";
+      let intensity = blocked ? 0.18 : Math.min(0.85, 0.24 + damage / 260);
+      if (special) intensity = Math.min(1, intensity + 0.22);
+      return intensity;
+    }
+
+    function inferFightPhaseCue(data) {
+      if (!data || typeof data !== "object") return "";
+      if (data.matchOver) return "match";
+      const phase = String(data.phase || "").trim().toLowerCase();
+      if (phase === "countdown") return "round";
+      if (phase === "fight") return "fight";
+      if (phase === "ko") return "ko";
+      if (phase === "roundend") return "roundend";
+      return "";
+    }
+
+    function playFightPhaseAudio(data) {
+      const cue = data && data.audio && typeof data.audio === "object" ? data.audio : {};
+      const phaseCue = String(cue.phaseCue || inferFightPhaseCue(data)).trim().toLowerCase();
+      if (!phaseCue || phaseCue === "none") return;
+      const key = [data && data.round, data && data.phase, data && data.matchOver, data && data.winner, phaseCue].join(":");
+      if (key === lastPhaseCue) return;
+      lastPhaseCue = key;
+      playArcadeSFX(phaseCue, {
+        intensity: phaseCue === "fight" ? 0.62 : 0.55,
+        pan: 0,
+        depth: 0,
+      });
+    }
+
+    function playFightStateAudio(data) {
+      const p1 = data && data.p1 || {};
+      const p2 = data && data.p2 || {};
+      const next = {
+        p1Beast: Boolean(p1.beastActive),
+        p2Beast: Boolean(p2.beastActive),
+        p1Ready: hubInputNumber(p1.beast, 0) >= 100,
+        p2Ready: hubInputNumber(p2.beast, 0) >= 100,
+      };
+      if (!lastFightAudioState.initialized) {
+        Object.assign(lastFightAudioState, next, { initialized: true });
+        return;
+      }
+      if (next.p1Beast && !lastFightAudioState.p1Beast) playArcadeSFX("surge", { intensity: 0.86, pan: -0.42 });
+      if (next.p2Beast && !lastFightAudioState.p2Beast) playArcadeSFX("surge", { intensity: 0.86, pan: 0.42 });
+      if (next.p1Ready && !lastFightAudioState.p1Ready) playArcadeSFX("surge_ready", { intensity: 0.55, pan: -0.36 });
+      if (next.p2Ready && !lastFightAudioState.p2Ready) playArcadeSFX("surge_ready", { intensity: 0.55, pan: 0.36 });
+      Object.assign(lastFightAudioState, next);
+    }
+
     function publishCue(pads) {
       const connected = pads.length > 0;
       const cue = {
@@ -531,25 +666,26 @@
       if (!message || message.event !== "tick") return;
       const data = message.data || {};
       const event = data.event || {};
-      const seq = Math.floor(hubInputNumber(event.seq, 0));
+      playFightPhaseAudio(data);
+      playFightStateAudio(data);
+      const cue = data.audio && typeof data.audio === "object" ? data.audio : {};
+      const seq = Math.floor(hubInputNumber(cue.seq, hubInputNumber(event.seq, 0)));
       if (!seq || seq === lastFeedbackSeq) return;
       lastFeedbackSeq = seq;
       const kind = String(event.kind || "");
       if (!kind || kind === "none") return;
 
-      const damage = Math.max(0, hubInputNumber(event.damage, 0));
-      const blocked = Boolean(event.blocked) || kind === "block";
+      let feedback = String(cue.cue || "").trim().toLowerCase();
+      if (!feedback || feedback === "none") feedback = fightAudioFallbackCue(kind, event);
+      if (!feedback || feedback === "none") return;
+      const intensity = fightAudioIntensity(kind, event, cue);
       const special = Boolean(event.counter || event.punish || event.launcher || event.guardCancel || event.justGuard || event.armor)
-        || kind === "throw" || kind === "throw_tech";
-      let intensity = blocked ? 0.18 : Math.min(0.85, 0.24 + damage / 260);
-      if (special) intensity = Math.min(1, intensity + 0.22);
-
-      let feedback = "hit";
-      if (kind === "block") feedback = "block";
-      if (kind === "just_guard" || kind === "guard_cancel") feedback = "guard";
-      if (kind === "armor") feedback = "armor";
-      if (kind === "throw" || kind === "throw_tech") feedback = "throw";
-      playArcadeSFX(feedback);
+        || kind === "throw" || kind === "throw_tech" || feedback === "counter" || feedback === "punish" || feedback === "launcher";
+      playArcadeSFX(feedback, {
+        intensity: intensity,
+        pan: fightAudioPan(data, event, cue),
+        depth: fightAudioDepth(data, event, cue),
+      });
       vibrateGamepads(feedback, intensity, special ? 130 : 75);
     }
 
@@ -1241,8 +1377,9 @@
     const duration = Math.max(20, Math.min(160, Math.floor(hubInputNumber(durationMS, 75))));
     const strong = Math.max(0, Math.min(1, hubInputNumber(intensity, 0.25)));
     let weak = Math.max(0.06, strong * 0.45);
-    if (kind === "block" || kind === "guard") weak = Math.min(0.8, strong * 0.85);
-    if (kind === "armor" || kind === "throw") weak = Math.min(0.7, strong * 0.55);
+    if (kind === "block" || kind === "guard" || kind === "just_guard" || kind === "guard_cancel") weak = Math.min(0.8, strong * 0.85);
+    if (kind === "armor" || kind === "throw" || kind === "throw_tech") weak = Math.min(0.7, strong * 0.55);
+    if (kind === "hit_heavy" || kind === "counter" || kind === "punish" || kind === "launcher" || kind === "ko") weak = Math.min(0.9, strong * 0.62);
     for (const pad of pads) {
       const actuator = gamepadActuator(pad);
       if (actuator && typeof actuator.playEffect === "function") {
@@ -1299,7 +1436,13 @@
     window.location.href = url;
   }
 
-  const arcadeAudioState = { context: null, active: [] };
+  const arcadeAudioState = {
+    context: null,
+    active: [],
+    master: null,
+    compressor: null,
+    voiceLimit: 28,
+  };
 
   function arcadeAudioContext() {
     const Ctor = window.AudioContext || window.webkitAudioContext;
@@ -1307,6 +1450,7 @@
     if (!arcadeAudioState.context) {
       try {
         arcadeAudioState.context = new Ctor();
+        arcadeConfigureOutput(arcadeAudioState.context);
       } catch (_e) {
         arcadeAudioState.context = null;
       }
@@ -1314,66 +1458,288 @@
     return arcadeAudioState.context;
   }
 
-  function playArcadeSFX(kind) {
+  function arcadeConfigureOutput(audio) {
+    if (!audio || arcadeAudioState.master) return;
+    const destination = audio.destination;
+    if (!destination || typeof audio.createGain !== "function") return;
+    const master = audio.createGain();
+    master.gain.value = 0.82;
+    let tail = master;
+    if (typeof audio.createDynamicsCompressor === "function") {
+      const compressor = audio.createDynamicsCompressor();
+      if (compressor.threshold) compressor.threshold.value = -18;
+      if (compressor.knee) compressor.knee.value = 18;
+      if (compressor.ratio) compressor.ratio.value = 4;
+      if (compressor.attack) compressor.attack.value = 0.003;
+      if (compressor.release) compressor.release.value = 0.12;
+      master.connect(compressor);
+      tail = compressor;
+      arcadeAudioState.compressor = compressor;
+    }
+    tail.connect(destination);
+    arcadeAudioState.master = master;
+  }
+
+  function arcadeOutput(audio) {
+    arcadeConfigureOutput(audio);
+    return arcadeAudioState.master || audio.destination;
+  }
+
+  function unlockArcadeAudio() {
     const audio = arcadeAudioContext();
     if (!audio || typeof audio.createOscillator !== "function" || typeof audio.createGain !== "function") return;
     if (typeof audio.resume === "function") audio.resume();
-    if (kind === "confirm") {
-      arcadeTone(audio, 220, 0.055, 0.08, "square");
-      arcadeTone(audio, 880, 0.09, 0.08, "square", 18);
-      return;
-    }
-    if (kind === "hit") {
-      arcadeTone(audio, 96, 0.045, 0.08, "square");
-      arcadeTone(audio, 640, 0.035, 0.06, "triangle", 8);
-      arcadeTone(audio, 1380, 0.025, 0.04, "square", 18);
-      return;
-    }
-    if (kind === "block") {
-      arcadeTone(audio, 150, 0.035, 0.055, "square");
-      arcadeTone(audio, 270, 0.04, 0.035, "triangle", 10);
-      return;
-    }
-    if (kind === "guard") {
-      arcadeTone(audio, 420, 0.04, 0.05, "triangle");
-      arcadeTone(audio, 980, 0.035, 0.045, "square", 14);
-      return;
-    }
-    if (kind === "armor") {
-      arcadeTone(audio, 72, 0.08, 0.075, "square");
-      arcadeTone(audio, 144, 0.06, 0.05, "sawtooth", 18);
-      return;
-    }
-    if (kind === "throw") {
-      arcadeTone(audio, 110, 0.065, 0.08, "square");
-      arcadeTone(audio, 520, 0.05, 0.055, "square", 12);
-      return;
-    }
-    arcadeTone(audio, 440, 0.035, 0.045, "square");
-    arcadeTone(audio, 660, 0.04, 0.035, "triangle", 12);
+    return audio;
   }
 
-  function arcadeTone(audio, freq, duration, volume, type, detuneMS) {
+  function arcadeClamp(value, min, max, fallback) {
+    return Math.max(min, Math.min(max, hubInputNumber(value, fallback)));
+  }
+
+  function arcadeSoundOptions(options) {
+    if (typeof options === "number") {
+      return { delayMS: Math.max(0, hubInputNumber(options, 0)), intensity: 1, pan: 0, depth: 0 };
+    }
+    const raw = options && typeof options === "object" ? options : {};
+    return {
+      delayMS: Math.max(0, hubInputNumber(raw.delayMS, 0)),
+      intensity: arcadeClamp(raw.intensity, 0.05, 1.35, 1),
+      pan: arcadeClamp(raw.pan, -0.95, 0.95, 0),
+      depth: arcadeClamp(raw.depth, -0.75, 0.75, 0),
+      rate: arcadeClamp(raw.rate, 0.25, 2, 1),
+    };
+  }
+
+  function playArcadeSFX(kind, options) {
+    const audio = unlockArcadeAudio();
+    if (!audio) return;
+    const cue = String(kind || "move").trim().toLowerCase();
+    const opts = arcadeSoundOptions(options);
+    const heavy = Math.max(0.65, opts.intensity);
+    if (cue === "confirm") {
+      arcadeTone(audio, 220, 0.055, 0.08, "square", opts);
+      arcadeTone(audio, 880, 0.09, 0.08, "square", Object.assign({}, opts, { delayMS: opts.delayMS + 18 }));
+      return;
+    }
+    if (cue === "round") {
+      arcadeTone(audio, 196, 0.12, 0.075, "square", opts);
+      arcadeTone(audio, 294, 0.12, 0.055, "triangle", Object.assign({}, opts, { delayMS: opts.delayMS + 46 }));
+      arcadeTone(audio, 392, 0.16, 0.05, "square", Object.assign({}, opts, { delayMS: opts.delayMS + 92 }));
+      return;
+    }
+    if (cue === "fight") {
+      arcadeTone(audio, 330, 0.06, 0.075, "square", opts);
+      arcadeTone(audio, 660, 0.075, 0.075, "square", Object.assign({}, opts, { delayMS: opts.delayMS + 42 }));
+      arcadeNoise(audio, 0.055, 0.04, "highpass", 1500, Object.assign({}, opts, { delayMS: opts.delayMS + 22 }));
+      return;
+    }
+    if (cue === "ko" || cue === "match") {
+      arcadeNoise(audio, 0.16, 0.095, "lowpass", 720, opts);
+      arcadeSweep(audio, 190, 62, 0.32, 0.07, "sawtooth", opts);
+      arcadeTone(audio, 82, 0.18, 0.08, "square", Object.assign({}, opts, { delayMS: opts.delayMS + 65 }));
+      return;
+    }
+    if (cue === "hit_light" || cue === "hit") {
+      arcadeNoise(audio, 0.052, 0.075 * opts.intensity, "bandpass", 1900, opts);
+      arcadeTone(audio, 118, 0.035, 0.05 * opts.intensity, "square", opts);
+      arcadeTone(audio, 720, 0.026, 0.038 * opts.intensity, "triangle", Object.assign({}, opts, { delayMS: opts.delayMS + 7 }));
+      return;
+    }
+    if (cue === "hit_heavy") {
+      arcadeNoise(audio, 0.082, 0.1 * heavy, "lowpass", 1100, opts);
+      arcadeTone(audio, 74, 0.055, 0.075 * heavy, "square", opts);
+      arcadeTone(audio, 540, 0.04, 0.054 * heavy, "triangle", Object.assign({}, opts, { delayMS: opts.delayMS + 10 }));
+      arcadeTone(audio, 1260, 0.024, 0.034 * heavy, "square", Object.assign({}, opts, { delayMS: opts.delayMS + 22 }));
+      return;
+    }
+    if (cue === "counter" || cue === "punish") {
+      playArcadeSFX("hit_heavy", Object.assign({}, opts, { intensity: Math.min(1.25, opts.intensity + 0.12) }));
+      arcadeTone(audio, cue === "punish" ? 990 : 1180, 0.075, 0.052, "square", Object.assign({}, opts, { delayMS: opts.delayMS + 42 }));
+      arcadeTone(audio, cue === "punish" ? 1320 : 1480, 0.05, 0.04, "triangle", Object.assign({}, opts, { delayMS: opts.delayMS + 74 }));
+      return;
+    }
+    if (cue === "launcher") {
+      arcadeNoise(audio, 0.06, 0.07 * heavy, "highpass", 1100, opts);
+      arcadeSweep(audio, 240, 980, 0.16, 0.06 * heavy, "sawtooth", opts);
+      arcadeTone(audio, 1560, 0.04, 0.035, "square", Object.assign({}, opts, { delayMS: opts.delayMS + 80 }));
+      return;
+    }
+    if (cue === "block") {
+      arcadeNoise(audio, 0.045, 0.058 * opts.intensity, "bandpass", 820, opts);
+      arcadeTone(audio, 150, 0.035, 0.055 * opts.intensity, "square", opts);
+      arcadeTone(audio, 270, 0.04, 0.035 * opts.intensity, "triangle", Object.assign({}, opts, { delayMS: opts.delayMS + 10 }));
+      return;
+    }
+    if (cue === "guard" || cue === "just_guard") {
+      arcadeTone(audio, 420, 0.04, 0.05 * opts.intensity, "triangle", opts);
+      arcadeTone(audio, 980, 0.035, 0.045 * opts.intensity, "square", Object.assign({}, opts, { delayMS: opts.delayMS + 14 }));
+      arcadeTone(audio, 1540, 0.04, 0.03, "triangle", Object.assign({}, opts, { delayMS: opts.delayMS + 34 }));
+      return;
+    }
+    if (cue === "guard_cancel") {
+      playArcadeSFX("just_guard", opts);
+      arcadeSweep(audio, 520, 1120, 0.12, 0.045, "square", Object.assign({}, opts, { delayMS: opts.delayMS + 44 }));
+      return;
+    }
+    if (cue === "armor") {
+      arcadeNoise(audio, 0.09, 0.07 * heavy, "lowpass", 420, opts);
+      arcadeTone(audio, 72, 0.08, 0.075 * heavy, "square", opts);
+      arcadeTone(audio, 144, 0.06, 0.05 * heavy, "sawtooth", Object.assign({}, opts, { delayMS: opts.delayMS + 18 }));
+      return;
+    }
+    if (cue === "throw") {
+      arcadeNoise(audio, 0.075, 0.06 * heavy, "bandpass", 620, opts);
+      arcadeSweep(audio, 420, 120, 0.11, 0.052 * heavy, "sawtooth", opts);
+      arcadeTone(audio, 110, 0.065, 0.08 * heavy, "square", Object.assign({}, opts, { delayMS: opts.delayMS + 24 }));
+      return;
+    }
+    if (cue === "throw_tech") {
+      arcadeTone(audio, 560, 0.035, 0.055, "square", opts);
+      arcadeTone(audio, 1120, 0.05, 0.05, "triangle", Object.assign({}, opts, { delayMS: opts.delayMS + 20 }));
+      arcadeNoise(audio, 0.035, 0.045, "highpass", 1800, Object.assign({}, opts, { delayMS: opts.delayMS + 10 }));
+      return;
+    }
+    if (cue === "surge" || cue === "surge_ready") {
+      arcadeSweep(audio, cue === "surge" ? 160 : 320, cue === "surge" ? 920 : 1280, cue === "surge" ? 0.34 : 0.12, cue === "surge" ? 0.07 : 0.045, "sawtooth", opts);
+      arcadeTone(audio, cue === "surge" ? 80 : 640, cue === "surge" ? 0.24 : 0.06, cue === "surge" ? 0.055 : 0.035, "square", Object.assign({}, opts, { delayMS: opts.delayMS + 38 }));
+      return;
+    }
+    arcadeTone(audio, 440, 0.035, 0.045, "square", opts);
+    arcadeTone(audio, 660, 0.04, 0.035, "triangle", Object.assign({}, opts, { delayMS: opts.delayMS + 12 }));
+  }
+
+  function arcadeConnectToOutput(audio, node, opts, nodes) {
+    let tail = node;
+    if (typeof audio.createStereoPanner === "function" && Math.abs(opts.pan) > 0.001) {
+      const panner = audio.createStereoPanner();
+      panner.pan.value = opts.pan;
+      tail.connect(panner);
+      tail = panner;
+      nodes.push(panner);
+    }
+    tail.connect(arcadeOutput(audio));
+  }
+
+  function arcadeSetParam(param, value, time) {
+    if (param && typeof param.setValueAtTime === "function") {
+      param.setValueAtTime(value, time || 0);
+      return;
+    }
+    if (param && Object.prototype.hasOwnProperty.call(param, "value")) {
+      param.value = value;
+    }
+  }
+
+  function arcadeRampParam(param, value, time, exponential) {
+    if (param && exponential && typeof param.exponentialRampToValueAtTime === "function") {
+      param.exponentialRampToValueAtTime(Math.max(0.0001, value), time);
+      return;
+    }
+    if (param && typeof param.linearRampToValueAtTime === "function") {
+      param.linearRampToValueAtTime(value, time);
+      return;
+    }
+    arcadeSetParam(param, value, time);
+  }
+
+  function arcadeEnvelope(gain, now, volume, duration) {
+    if (!gain || !gain.gain) return;
+    arcadeSetParam(gain.gain, 0.0001, now);
+    arcadeRampParam(gain.gain, Math.max(0.0001, volume), now + 0.006, true);
+    arcadeRampParam(gain.gain, 0.0001, now + duration + 0.04, true);
+  }
+
+  function arcadeTrackVoice(record) {
+    arcadeAudioState.active.push(record);
+    while (arcadeAudioState.active.length > arcadeAudioState.voiceLimit) {
+      releaseArcadeAudio(arcadeAudioState.active[0], true);
+    }
+  }
+
+  function arcadeTone(audio, freq, duration, volume, type, options) {
+    const opts = arcadeSoundOptions(options);
     const now = audio.currentTime || 0;
     const osc = audio.createOscillator();
     const gain = audio.createGain();
     osc.type = type || "square";
-    osc.frequency.value = freq;
-    gain.gain.setValueAtTime(0.0001, now);
-    gain.gain.exponentialRampToValueAtTime(Math.max(0.0001, volume), now + 0.006);
-    gain.gain.exponentialRampToValueAtTime(0.0001, now + duration + 0.04);
+    arcadeSetParam(osc.frequency, freq * opts.rate, now);
+    arcadeEnvelope(gain, now, volume * opts.intensity, duration);
     osc.connect(gain);
-    gain.connect(audio.destination);
+    const nodes = [osc, gain];
+    arcadeConnectToOutput(audio, gain, opts, nodes);
     const record = { source: osc, nodes: [osc, gain] };
-    arcadeAudioState.active.push(record);
+    record.nodes = nodes;
+    arcadeTrackVoice(record);
     osc.onended = function() {
       releaseArcadeAudio(record, false);
     };
-    while (arcadeAudioState.active.length > 16) {
-      releaseArcadeAudio(arcadeAudioState.active[0], true);
+    const startAt = now + opts.delayMS / 1000;
+    osc.start(startAt);
+    osc.stop(startAt + duration + 0.08);
+  }
+
+  function arcadeSweep(audio, startFreq, endFreq, duration, volume, type, options) {
+    const opts = arcadeSoundOptions(options);
+    const now = audio.currentTime || 0;
+    const osc = audio.createOscillator();
+    const gain = audio.createGain();
+    osc.type = type || "sawtooth";
+    const startAt = now + opts.delayMS / 1000;
+    arcadeSetParam(osc.frequency, Math.max(20, startFreq * opts.rate), startAt);
+    arcadeRampParam(osc.frequency, Math.max(20, endFreq * opts.rate), startAt + duration, false);
+    arcadeEnvelope(gain, startAt, volume * opts.intensity, duration);
+    osc.connect(gain);
+    const nodes = [osc, gain];
+    arcadeConnectToOutput(audio, gain, opts, nodes);
+    const record = { source: osc, nodes: nodes };
+    arcadeTrackVoice(record);
+    osc.onended = function() {
+      releaseArcadeAudio(record, false);
+    };
+    osc.start(startAt);
+    osc.stop(startAt + duration + 0.08);
+  }
+
+  function arcadeNoise(audio, duration, volume, filterType, frequency, options) {
+    if (typeof audio.createBuffer !== "function" || typeof audio.createBufferSource !== "function") {
+      arcadeTone(audio, frequency || 440, duration, volume * 0.7, "square", options);
+      return;
     }
-    osc.start(now + Math.max(0, hubInputNumber(detuneMS, 0)) / 1000);
-    osc.stop(now + duration + 0.08 + Math.max(0, hubInputNumber(detuneMS, 0)) / 1000);
+    const opts = arcadeSoundOptions(options);
+    const sampleRate = Math.max(8000, audio.sampleRate || 44100);
+    const length = Math.max(1, Math.floor(sampleRate * duration));
+    const buffer = audio.createBuffer(1, length, sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < length; i += 1) {
+      const falloff = 1 - i / length;
+      data[i] = (Math.random() * 2 - 1) * falloff;
+    }
+    const source = audio.createBufferSource();
+    const gain = audio.createGain();
+    source.buffer = buffer;
+    let tail = source;
+    const nodes = [source, gain];
+    if (typeof audio.createBiquadFilter === "function") {
+      const filter = audio.createBiquadFilter();
+      filter.type = filterType || "bandpass";
+      if (filter.frequency) filter.frequency.value = Math.max(40, frequency || 1200);
+      if (filter.Q) filter.Q.value = filter.type === "lowpass" ? 0.75 : 4.5;
+      source.connect(filter);
+      tail = filter;
+      nodes.push(filter);
+    }
+    const now = audio.currentTime || 0;
+    const startAt = now + opts.delayMS / 1000;
+    arcadeEnvelope(gain, startAt, volume * opts.intensity, duration);
+    tail.connect(gain);
+    arcadeConnectToOutput(audio, gain, opts, nodes);
+    const record = { source: source, nodes: nodes };
+    arcadeTrackVoice(record);
+    source.onended = function() {
+      releaseArcadeAudio(record, false);
+    };
+    source.start(startAt);
+    source.stop(startAt + duration + 0.08);
   }
 
   function releaseArcadeAudio(record, stop) {

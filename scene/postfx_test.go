@@ -378,6 +378,43 @@ func TestPropsDeferPostFXRoundTrip(t *testing.T) {
 	}
 }
 
+func TestPropsAdaptiveQualityRoundTrip(t *testing.T) {
+	props := Props{
+		MaxDevicePixelRatio:   1.5,
+		MinDevicePixelRatio:   1.0,
+		AdaptiveQuality:       Bool(true),
+		AdaptiveTargetFrameMS: 17.5,
+		AdaptiveWarmupFrames:  18,
+		AdaptivePostFX:        Bool(true),
+		PostFX: PostFX{
+			MaxPixels: PostFXMaxPixels720p,
+			Effects: []PostEffect{
+				Bloom{Threshold: 0.8, Strength: 0.4},
+			},
+		},
+	}
+
+	legacy := props.LegacyProps()
+	if legacy["maxDevicePixelRatio"] != 1.5 {
+		t.Fatalf("maxDevicePixelRatio = %v, want 1.5", legacy["maxDevicePixelRatio"])
+	}
+	if legacy["minDevicePixelRatio"] != 1.0 {
+		t.Fatalf("minDevicePixelRatio = %v, want 1.0", legacy["minDevicePixelRatio"])
+	}
+	if legacy["adaptiveQuality"] != true {
+		t.Fatalf("adaptiveQuality = %v, want true", legacy["adaptiveQuality"])
+	}
+	if legacy["adaptiveTargetFrameMS"] != 17.5 {
+		t.Fatalf("adaptiveTargetFrameMS = %v, want 17.5", legacy["adaptiveTargetFrameMS"])
+	}
+	if legacy["adaptiveWarmupFrames"] != 18 {
+		t.Fatalf("adaptiveWarmupFrames = %v, want 18", legacy["adaptiveWarmupFrames"])
+	}
+	if legacy["adaptivePostFX"] != true {
+		t.Fatalf("adaptivePostFX = %v, want true", legacy["adaptivePostFX"])
+	}
+}
+
 func TestPostFXMaxPixelsIRDefault(t *testing.T) {
 	props := Props{
 		PostFX: PostFX{

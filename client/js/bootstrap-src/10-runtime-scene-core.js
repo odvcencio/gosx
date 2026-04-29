@@ -2494,6 +2494,7 @@
       postEffects: deferPostFX ? [] : postEffects,
       postFXMaxPixels: postFXMaxPixels,
       _deferredPostEffects: deferPostFX ? postEffects : null,
+      _adaptiveSourcePostEffects: postEffects,
       _transitions: [],
       _scrollCamera: (sceneNumber(props.scrollCameraStart, 0) !== 0 || sceneNumber(props.scrollCameraEnd, 0) !== 0)
         ? { start: sceneNumber(props.scrollCameraStart, 0), end: sceneNumber(props.scrollCameraEnd, 0) }

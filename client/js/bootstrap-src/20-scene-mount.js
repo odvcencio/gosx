@@ -1910,6 +1910,175 @@
     ));
   }
 
+  function createSceneAdaptiveQualityState(props, base, capability) {
+    const adaptiveValue = props && (props.adaptiveQuality != null
+      ? props.adaptiveQuality
+      : (props.adaptivePerformance != null ? props.adaptivePerformance : props.dynamicQuality));
+    const enabled = sceneBool(adaptiveValue, false);
+    const targetFrameMS = Math.max(8, Math.min(50, sceneNumber(
+      props && (props.adaptiveTargetFrameMS != null ? props.adaptiveTargetFrameMS : props.targetFrameMS),
+      capability && capability.tier === "constrained" ? 20 : 16.7,
+    )));
+    const minProp = props && (props.minDevicePixelRatio != null ? props.minDevicePixelRatio : props.minPixelRatio);
+    const minDevicePixelRatio = Math.max(1, Math.min(2, sceneNumber(minProp, 1)));
+    const warmupFrames = Math.max(0, Math.floor(sceneNumber(props && props.adaptiveWarmupFrames, 24)));
+    const adaptivePostFX = sceneBool(props && props.adaptivePostFX, true);
+    return {
+      enabled,
+      targetFrameMS,
+      minDevicePixelRatio,
+      warmupFrames,
+      adaptivePostFX,
+      frameCount: 0,
+      badFrames: 0,
+      goodFrames: 0,
+      ewmaFrameMS: 0,
+      lastFrameMS: 0,
+      currentMaxDevicePixelRatio: 0,
+      postFXSuppressed: false,
+      tier: enabled ? "full" : "fixed",
+      baseExplicitMaxDevicePixelRatio: sceneNumber(base && base.explicitMaxDevicePixelRatio, 0),
+    };
+  }
+
+  function sceneAdaptivePostFXSource(sceneState) {
+    return Array.isArray(sceneState && sceneState._adaptiveSourcePostEffects)
+      ? sceneState._adaptiveSourcePostEffects
+      : [];
+  }
+
+  function applySceneAdaptiveQualityState(mount, state) {
+    if (!mount || !state) {
+      return;
+    }
+    setAttrValue(mount, "data-gosx-scene3d-adaptive-quality", state.enabled ? "true" : "false");
+    setAttrValue(mount, "data-gosx-scene3d-quality-tier", state.tier || (state.enabled ? "full" : "fixed"));
+    setAttrValue(mount, "data-gosx-scene3d-quality-dpr-cap", state.currentMaxDevicePixelRatio > 0 ? state.currentMaxDevicePixelRatio.toFixed(3) : "");
+    setAttrValue(mount, "data-gosx-scene3d-quality-frame-ms", state.lastFrameMS > 0 ? state.lastFrameMS.toFixed(1) : "");
+    setAttrValue(mount, "data-gosx-scene3d-quality-postfx-suppressed", state.postFXSuppressed ? "true" : "false");
+  }
+
+  function scenePrimeAdaptiveQuality(state, viewport, mount) {
+    if (!state || !state.enabled) {
+      applySceneAdaptiveQualityState(mount, state);
+      return;
+    }
+    if (!(state.currentMaxDevicePixelRatio > 0)) {
+      state.currentMaxDevicePixelRatio = Math.max(
+        state.minDevicePixelRatio,
+        sceneNumber(viewport && viewport.devicePixelRatio, 1),
+      );
+    }
+    applySceneAdaptiveQualityState(mount, state);
+  }
+
+  function sceneApplyAdaptivePostFX(sceneState, adaptiveQuality) {
+    if (!sceneState || !adaptiveQuality || !adaptiveQuality.enabled) {
+      return false;
+    }
+    const source = sceneAdaptivePostFXSource(sceneState);
+    if (Array.isArray(sceneState._deferredPostEffects) && sceneState._deferredPostEffects.length > 0) {
+      sceneState.postEffects = [];
+      return false;
+    }
+    const suppress = adaptiveQuality.adaptivePostFX && adaptiveQuality.postFXSuppressed && source.length > 0;
+    const next = suppress ? [] : source;
+    const current = Array.isArray(sceneState.postEffects) ? sceneState.postEffects : [];
+    if (current.length === next.length && current.every(function(effect, index) { return effect === next[index]; })) {
+      return false;
+    }
+    sceneState.postEffects = next;
+    return true;
+  }
+
+  function sceneQualityTierForDPR(state) {
+    if (!state || !state.enabled) {
+      return "fixed";
+    }
+    if (state.postFXSuppressed) {
+      return "survival";
+    }
+    const current = sceneNumber(state.currentMaxDevicePixelRatio, 1);
+    const min = sceneNumber(state.minDevicePixelRatio, 1);
+    if (current <= min + 0.01) {
+      return "lean";
+    }
+    if (state.badFrames > 0 || current < sceneNumber(state.baseExplicitMaxDevicePixelRatio, current)) {
+      return "balanced";
+    }
+    return "full";
+  }
+
+  function sceneUpdateAdaptiveQuality(state, mount, sceneState, viewport, frameStart) {
+    if (!state || !state.enabled) {
+      return false;
+    }
+    const now = typeof performance !== "undefined" && performance.now ? performance.now() : Date.now();
+    const frameMS = Math.max(0, now - sceneNumber(frameStart, now));
+    if (!isFinite(frameMS)) {
+      return false;
+    }
+    state.frameCount += 1;
+    state.lastFrameMS = frameMS;
+    state.ewmaFrameMS = state.ewmaFrameMS > 0
+      ? state.ewmaFrameMS * 0.84 + frameMS * 0.16
+      : frameMS;
+
+    if (state.frameCount <= state.warmupFrames) {
+      applySceneAdaptiveQualityState(mount, state);
+      return false;
+    }
+
+    const target = Math.max(8, sceneNumber(state.targetFrameMS, 16.7));
+    const missesBudget = frameMS > target * 1.35 || state.ewmaFrameMS > target * 1.18;
+    const severeMiss = frameMS > target * 2.4;
+    if (missesBudget) {
+      state.badFrames += severeMiss ? 4 : 1;
+      state.goodFrames = 0;
+    } else if (state.ewmaFrameMS < target * 0.9) {
+      state.goodFrames += 1;
+      state.badFrames = 0;
+    }
+
+    let changed = false;
+    let reason = "";
+    if (severeMiss || state.badFrames >= 10) {
+      const minDPR = Math.max(1, sceneNumber(state.minDevicePixelRatio, 1));
+      const currentDPR = state.currentMaxDevicePixelRatio > 0
+        ? state.currentMaxDevicePixelRatio
+        : sceneNumber(viewport && viewport.devicePixelRatio, 1);
+      if (currentDPR > minDPR + 0.01) {
+        const step = severeMiss ? 0.25 : 0.125;
+        state.currentMaxDevicePixelRatio = Math.max(minDPR, Math.round((currentDPR - step) * 1000) / 1000);
+        state.badFrames = 0;
+        changed = true;
+        reason = "dpr";
+      } else if (state.adaptivePostFX && !state.postFXSuppressed && sceneAdaptivePostFXSource(sceneState).length > 0) {
+        state.postFXSuppressed = true;
+        state.badFrames = 0;
+        changed = true;
+        reason = "postfx";
+      }
+    }
+    state.tier = sceneQualityTierForDPR(state);
+    if (changed) {
+      sceneApplyAdaptivePostFX(sceneState, state);
+      applyScenePostFXState(mount, sceneState);
+      applySceneAdaptiveQualityState(mount, state);
+      gosxSceneEmit("warn", "adaptive-quality-downshift", {
+        reason,
+        frameMS,
+        ewmaFrameMS: state.ewmaFrameMS,
+        targetFrameMS: state.targetFrameMS,
+        dprCap: state.currentMaxDevicePixelRatio,
+        postFXSuppressed: state.postFXSuppressed,
+      });
+      return true;
+    }
+    applySceneAdaptiveQualityState(mount, state);
+    return false;
+  }
+
   function applyScenePostFXState(mount, state) {
     if (!mount || !state) {
       return;
@@ -1978,7 +2147,7 @@
     return Math.max(1, Math.min(Math.max(1, maxDevicePixelRatio || 1), preferred));
   }
 
-  function sceneViewportFromMount(mount, props, base, canvas, capability) {
+  function sceneViewportFromMount(mount, props, base, canvas, capability, adaptiveQuality) {
     let cssWidth = base.baseWidth;
     let cssHeight = base.baseHeight;
     const useMeasuredHeight = sceneBool(props && (props.fillHeight || props.responsiveHeight), false);
@@ -2008,12 +2177,18 @@
     cssWidth = Math.max(1, Math.round(cssWidth));
     cssHeight = Math.max(1, Math.round(cssHeight));
     const capabilityMaxDevicePixelRatio = defaultSceneMaxDevicePixelRatio(capability);
-    const maxDevicePixelRatio = Math.max(
+    let maxDevicePixelRatio = Math.max(
       1,
       base.explicitMaxDevicePixelRatio > 0
         ? Math.min(base.explicitMaxDevicePixelRatio, capabilityMaxDevicePixelRatio)
         : capabilityMaxDevicePixelRatio,
     );
+    if (adaptiveQuality && adaptiveQuality.enabled && adaptiveQuality.currentMaxDevicePixelRatio > 0) {
+      maxDevicePixelRatio = Math.max(
+        1,
+        Math.min(maxDevicePixelRatio, adaptiveQuality.currentMaxDevicePixelRatio),
+      );
+    }
     const devicePixelRatio = sceneViewportDevicePixelRatio(props, maxDevicePixelRatio);
     return {
       cssWidth,
@@ -3706,6 +3881,7 @@
     const props = ctx.props || {};
     const capability = sceneCapabilityProfile(props);
     const viewportBase = sceneViewportBase(props);
+    const adaptiveQuality = createSceneAdaptiveQualityState(props, viewportBase, capability);
     const sceneState = createSceneState(props);
     const sceneModelHydration = hydrateSceneStateModels(sceneState, props);
     const runtimeScene = ctx.runtimeMode === "shared" && Boolean(ctx.programRef);
@@ -3796,7 +3972,8 @@
     ctx.mount.__gosxScene3DCSSAnimationUntil = 0;
     applyScenePostFXState(ctx.mount, sceneState);
 
-    let viewport = applySceneViewport(ctx.mount, canvas, labelLayer, sceneViewportFromMount(ctx.mount, props, viewportBase, canvas, capability), viewportBase);
+    let viewport = applySceneViewport(ctx.mount, canvas, labelLayer, sceneViewportFromMount(ctx.mount, props, viewportBase, canvas, capability, adaptiveQuality), viewportBase);
+    scenePrimeAdaptiveQuality(adaptiveQuality, viewport, ctx.mount);
 
     await ensurePreferredWebGPUBackend(props, capability);
     const initialRenderer = createSceneRenderer(canvas, props, capability);
@@ -4651,7 +4828,7 @@
       // skip the 4 getBoundingClientRect layout flushes that used to
       // run every frame.
       if (viewportDirty) {
-        const nextViewport = sceneViewportFromMount(ctx.mount, props, viewportBase, canvas, capability);
+        const nextViewport = sceneViewportFromMount(ctx.mount, props, viewportBase, canvas, capability, adaptiveQuality);
         viewport = applySceneViewport(ctx.mount, canvas, labelLayer, nextViewport, viewportBase);
         viewportDirty = false;
       }
@@ -4692,6 +4869,9 @@
           renderSceneHTML(labelLayer, effectiveBundle, htmlElements, viewport.cssWidth, viewport.cssHeight);
           if (statsOverlay) {
             statsOverlay.update(effectiveBundle, frameStart, renderer, viewport);
+          }
+          if (sceneUpdateAdaptiveQuality(adaptiveQuality, ctx.mount, sceneState, viewport, frameStart)) {
+            viewportDirty = true;
           }
           scheduleNextAnimationFrame();
           return;
@@ -4746,6 +4926,9 @@
       renderSceneHTML(labelLayer, latestBundle, htmlElements, viewport.cssWidth, viewport.cssHeight);
       if (statsOverlay) {
         statsOverlay.update(latestBundle, frameStart, renderer, viewport);
+      }
+      if (sceneUpdateAdaptiveQuality(adaptiveQuality, ctx.mount, sceneState, viewport, frameStart)) {
+        viewportDirty = true;
       }
       scheduleNextAnimationFrame();
     }
@@ -4913,6 +5096,7 @@
       scheduleSceneIdleTask(function() {
         sceneState.postEffects = sceneState._deferredPostEffects;
         sceneState._deferredPostEffects = null;
+        sceneApplyAdaptivePostFX(sceneState, adaptiveQuality);
         applyScenePostFXState(ctx.mount, sceneState);
         if (sceneWantsAnimation()) {
           // Animation loop will render the upgraded chain.

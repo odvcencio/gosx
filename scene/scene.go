@@ -125,6 +125,11 @@ type Props struct {
 	ScrollCameraStart     float64 `json:"scrollCameraStart,omitempty"`
 	ScrollCameraEnd       float64 `json:"scrollCameraEnd,omitempty"`
 	MaxDevicePixelRatio   float64 `json:"maxDevicePixelRatio,omitempty"`
+	MinDevicePixelRatio   float64 `json:"minDevicePixelRatio,omitempty"`
+	AdaptiveQuality       *bool   `json:"adaptiveQuality,omitempty"`
+	AdaptiveTargetFrameMS float64 `json:"adaptiveTargetFrameMS,omitempty"`
+	AdaptiveWarmupFrames  int     `json:"adaptiveWarmupFrames,omitempty"`
+	AdaptivePostFX        *bool   `json:"adaptivePostFX,omitempty"`
 	MSAASamples           int     `json:"msaaSamples,omitempty"`
 	WebGPUAlphaMode       string  `json:"webgpuAlphaMode,omitempty"`
 	WebGPUColorSpace      string  `json:"webgpuColorSpace,omitempty"`
@@ -1105,6 +1110,11 @@ func (p Props) legacyBaseProps() map[string]any {
 	setNumeric(out, "scrollCameraStart", p.ScrollCameraStart)
 	setNumeric(out, "scrollCameraEnd", p.ScrollCameraEnd)
 	setNumeric(out, "maxDevicePixelRatio", p.MaxDevicePixelRatio)
+	setNumeric(out, "minDevicePixelRatio", p.MinDevicePixelRatio)
+	setBool(out, "adaptiveQuality", p.AdaptiveQuality)
+	setNumeric(out, "adaptiveTargetFrameMS", p.AdaptiveTargetFrameMS)
+	setInt(out, "adaptiveWarmupFrames", p.AdaptiveWarmupFrames)
+	setBool(out, "adaptivePostFX", p.AdaptivePostFX)
 	setInt(out, "msaaSamples", p.MSAASamples)
 	setString(out, "webgpuAlphaMode", p.WebGPUAlphaMode)
 	setString(out, "webgpuColorSpace", p.WebGPUColorSpace)

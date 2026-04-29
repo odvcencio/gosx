@@ -8967,6 +8967,70 @@ test("Scene3D defers postfx until idle delay", async () => {
   assert.equal(mount.getAttribute("data-gosx-scene3d-postfx"), "enabled");
 });
 
+test("Scene3D adaptive quality downshifts DPR before shedding postfx", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-adaptive-quality";
+  let perfNow = 0;
+
+  const env = createContext({
+    elements: [mount],
+    devicePixelRatio: 2,
+    performanceNow: () => {
+      perfNow += 60;
+      return perfNow;
+    },
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-adaptive-quality",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-adaptive-quality",
+          jsExport: "GoSXScene3D",
+          props: {
+            width: 480,
+            height: 300,
+            autoRotate: true,
+            maxDevicePixelRatio: 2,
+            minDevicePixelRatio: 1,
+            adaptiveQuality: true,
+            adaptiveTargetFrameMS: 16,
+            adaptiveWarmupFrames: 0,
+            adaptivePostFX: true,
+            scene: {
+              postEffects: [
+                { kind: "bloom", threshold: 0.7, intensity: 0.5 },
+              ],
+              objects: [
+                { kind: "box", width: 1.4, height: 1.1, depth: 1.2, x: 0, y: 0, z: 0, color: "#8de1ff" },
+              ],
+            },
+          },
+          capabilities: ["canvas", "animation"],
+        },
+      ],
+    },
+  });
+  const raf = installManualRAF(env.context);
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  assert.equal(mount.getAttribute("data-gosx-scene3d-adaptive-quality"), "true");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-postfx"), "enabled");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-pixel-ratio"), "2");
+
+  for (let i = 0; i < 5; i += 1) {
+    assert.equal(raf.count(), 1);
+    raf.flush((i + 1) * 16);
+    await flushAsyncWork();
+  }
+
+  assert.equal(mount.getAttribute("data-gosx-scene3d-pixel-ratio"), "1");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-quality-postfx-suppressed"), "true");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-postfx"), "none");
+});
+
 test("bootstrap keeps Scene3D responsive across resize and DPR changes", async () => {
   const mount = new FakeElement("div", null);
   mount.id = "scene-responsive";
@@ -10236,6 +10300,66 @@ test("bootstrap hub input spectator mode readies without sending fighter inputs"
 test("bootstrap hub input turns fight events into bounded gamepad feedback", async () => {
   const sent = [];
   const effects = [];
+  let audioStarts = 0;
+  let forcedStops = 0;
+  const panValues = [];
+  class FakeAudioNode {
+    constructor(kind) {
+      this.kind = kind;
+      this.connections = [];
+    }
+
+    connect(target) {
+      this.connections.push(target);
+      return target;
+    }
+
+    disconnect() {}
+  }
+  class FakeArcadeAudioContext {
+    constructor() {
+      this.currentTime = 0;
+      this.destination = new FakeAudioNode("destination");
+    }
+
+    resume() {
+      return Promise.resolve();
+    }
+
+    createOscillator() {
+      const source = new FakeAudioNode("oscillator");
+      source.frequency = { value: 0 };
+      source.start = () => {
+        audioStarts++;
+      };
+      source.stop = (when) => {
+        if (when === 0) forcedStops++;
+      };
+      return source;
+    }
+
+    createGain() {
+      const gain = new FakeAudioNode("gain");
+      gain.gain = { value: 1 };
+      return gain;
+    }
+
+    createStereoPanner() {
+      const panner = new FakeAudioNode("panner");
+      let value = 0;
+      panner.pan = {};
+      Object.defineProperty(panner.pan, "value", {
+        get() {
+          return value;
+        },
+        set(next) {
+          value = next;
+          panValues.push(next);
+        },
+      });
+      return panner;
+    }
+  }
   const pad = {
     connected: true,
     axes: [0, 0, 0, 0],
@@ -10262,6 +10386,7 @@ test("bootstrap hub input turns fight events into bounded gamepad feedback", asy
   }
 
   const env = createContext({
+    AudioContext: FakeArcadeAudioContext,
     createWebSocket: makeSocket,
     getGamepads: () => [pad],
     fetchRoutes: {
@@ -10292,7 +10417,13 @@ test("bootstrap hub input turns fight events into bounded gamepad feedback", asy
   await flushAsyncWork();
 
   env.sockets[0].onmessage({
-    data: JSON.stringify({ event: "tick", data: { event: { seq: 1, kind: "hit", damage: 120, counter: true } } }),
+    data: JSON.stringify({
+      event: "tick",
+      data: {
+        event: { seq: 1, kind: "hit", damage: 120, counter: true, attacker: 1, defender: 2 },
+        audio: { seq: 1, cue: "counter", intensity: 0.95, pan: 0.5, depth: 0.2, phaseCue: "fight" },
+      },
+    }),
   });
   await flushAsyncWork();
 
@@ -10300,12 +10431,22 @@ test("bootstrap hub input turns fight events into bounded gamepad feedback", asy
   assert.equal(effects[0].type, "dual-rumble");
   assert.ok(effects[0].options.duration <= 160);
   assert.ok(effects[0].options.strongMagnitude > effects[0].options.weakMagnitude);
+  assert.ok(audioStarts > 0, "expected fight audio to start voices");
+  assert.ok(panValues.some((value) => Math.abs(value - 0.5) < 0.000001), "expected server-provided pan to drive audio");
+  const startsAfterFirst = audioStarts;
 
   env.sockets[0].onmessage({
-    data: JSON.stringify({ event: "tick", data: { event: { seq: 1, kind: "hit", damage: 120, counter: true } } }),
+    data: JSON.stringify({
+      event: "tick",
+      data: {
+        event: { seq: 1, kind: "hit", damage: 120, counter: true },
+        audio: { seq: 1, cue: "counter", intensity: 0.95, pan: 0.5, phaseCue: "fight" },
+      },
+    }),
   });
   await flushAsyncWork();
   assert.equal(effects.length, 1, "same server event seq should not replay haptics");
+  assert.equal(audioStarts, startsAfterFirst, "same server event seq should not replay audio");
 
   env.sockets[0].onmessage({
     data: JSON.stringify({ event: "tick", data: { event: { seq: 2, kind: "block", damage: 0, blocked: true } } }),
@@ -10313,6 +10454,20 @@ test("bootstrap hub input turns fight events into bounded gamepad feedback", asy
   await flushAsyncWork();
   assert.equal(effects.length, 2);
   assert.ok(effects[1].options.weakMagnitude >= effects[1].options.strongMagnitude * 0.8);
+
+  for (let seq = 3; seq < 18; seq += 1) {
+    env.sockets[0].onmessage({
+      data: JSON.stringify({
+        event: "tick",
+        data: {
+          event: { seq, kind: "hit", damage: 140, punish: true },
+          audio: { seq, cue: "punish", intensity: 1, pan: -0.35 },
+        },
+      }),
+    });
+  }
+  await flushAsyncWork();
+  assert.ok(forcedStops > 0, "audio voice cap should cull older arcade voices");
 
   env.context.__gosx_disconnect_hub("gosx-hub-0");
   assert.equal(env.sockets[0].closeCalled, true);
