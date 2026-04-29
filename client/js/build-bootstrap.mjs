@@ -48,6 +48,8 @@ const SECTION_HYDRATION = `  // ------------------------------------------------
   // Hydration
   // --------------------------------------------------------------------------
 `;
+const SECTION_RUNTIME_CAPABILITY_PROBE = `  function entryRequiresAsyncWebGPUProbe(entry) {
+`;
 const SECTION_RUNTIME_READY = `  // --------------------------------------------------------------------------
   // Runtime ready callback
   // --------------------------------------------------------------------------
@@ -132,6 +134,8 @@ const outputs = [
     path: path.join(__dirname, "bootstrap-feature-engines.js"),
     sources: [
       sourceFile("bootstrap-src/26b-feature-engines-prefix.js"),
+      sourceExtract(TAIL_FILE, "runtime-capability-probe", SECTION_RUNTIME_CAPABILITY_PROBE, `  async function hydrateIsland(entry) {
+`),
       sourceExtract(TAIL_FILE, "engines-mounting", SECTION_ENGINE_MOUNTING, SECTION_HUB_CONNECTIONS),
       sourceExtract(TAIL_FILE, "engines-dispose", `  window.__gosx_dispose_engine = function(engineID) {
 `, `

@@ -3748,6 +3748,65 @@
     return clipVolume * requested * gosxAudioBusVolume(opts.bus || (clip && clip.bus) || "master");
   }
 
+  function gosxAudioVector3(raw) {
+    if (Array.isArray(raw)) {
+      return {
+        x: gosxNumber(raw[0], 0),
+        y: gosxNumber(raw[1], 0),
+        z: gosxNumber(raw[2], 0),
+      };
+    }
+    if (raw && typeof raw === "object") {
+      return {
+        x: gosxNumber(raw.x, 0),
+        y: gosxNumber(raw.y, 0),
+        z: gosxNumber(raw.z, 0),
+      };
+    }
+    return null;
+  }
+
+  function gosxAudioSetParam(param, value) {
+    if (param && typeof param.setValueAtTime === "function") {
+      param.setValueAtTime(value, 0);
+      return;
+    }
+    if (param && Object.prototype.hasOwnProperty.call(param, "value")) {
+      param.value = value;
+    }
+  }
+
+  function gosxAudioApplyPannerPosition(panner, position) {
+    if (!panner || !position) {
+      return;
+    }
+    if (typeof panner.setPosition === "function") {
+      panner.setPosition(position.x, position.y, position.z);
+      return;
+    }
+    gosxAudioSetParam(panner.positionX, position.x);
+    gosxAudioSetParam(panner.positionY, position.y);
+    gosxAudioSetParam(panner.positionZ, position.z);
+  }
+
+  function gosxAudioCreateSpatialPanner(audioContext, options) {
+    const position = gosxAudioVector3(options && options.position);
+    if (!position || !audioContext || typeof audioContext.createPanner !== "function") {
+      return null;
+    }
+    const panner = audioContext.createPanner();
+    if (!panner) {
+      return null;
+    }
+    panner.panningModel = String(options.panningModel || "HRTF");
+    panner.distanceModel = String(options.distanceModel || "inverse");
+    panner.refDistance = Math.max(0.001, gosxNumber(options.refDistance, 1));
+    panner.maxDistance = Math.max(panner.refDistance, gosxNumber(options.maxDistance, 10000));
+    panner.rolloffFactor = Math.max(0, gosxNumber(options.rolloffFactor, 1));
+    gosxAudioApplyPannerPosition(panner, position);
+    return panner;
+  }
+
   function gosxAudioLoadBuffer(clip) {
     if (!clip) {
       return Promise.resolve(null);
@@ -3792,7 +3851,11 @@
         gain.gain.value = gosxAudioPlaybackVolume(clip, options);
       }
       let tail = gain || source;
-      if (typeof audioContext.createStereoPanner === "function" && options && Object.prototype.hasOwnProperty.call(options, "pan")) {
+      const spatialPanner = gosxAudioCreateSpatialPanner(audioContext, options || {});
+      if (spatialPanner) {
+        tail.connect(spatialPanner);
+        tail = spatialPanner;
+      } else if (typeof audioContext.createStereoPanner === "function" && options && Object.prototype.hasOwnProperty.call(options, "pan")) {
         const panner = audioContext.createStereoPanner();
         panner.pan.value = Math.max(-1, Math.min(1, gosxNumber(options.pan, 0)));
         tail.connect(panner);
@@ -3800,7 +3863,7 @@
       }
       tail.connect(audioContext.destination);
       source.start(0);
-      gosxAudioState.handles.set(handleID, { kind: "webaudio", clip: clip.id, source, gain, options: Object.assign({}, options || {}) });
+      gosxAudioState.handles.set(handleID, { kind: "webaudio", clip: clip.id, source, gain, panner: spatialPanner, options: Object.assign({}, options || {}) });
       source.onended = function() {
         gosxAudioState.handles.delete(handleID);
       };
@@ -5391,7 +5454,8 @@
     if (!name) {
       return true;
     }
-    if (Object.prototype.hasOwnProperty.call(browserCapabilityCache, name)) {
+    const dynamicWebGPUFeature = name.indexOf("webgpu:") === 0 || name.indexOf("webgpu-feature:") === 0;
+    if (!dynamicWebGPUFeature && Object.prototype.hasOwnProperty.call(browserCapabilityCache, name)) {
       return browserCapabilityCache[name];
     }
     let supported = false;
@@ -5400,11 +5464,32 @@
     } catch (_e) {
       supported = false;
     }
+    if (dynamicWebGPUFeature) {
+      return Boolean(supported);
+    }
     browserCapabilityCache[name] = Boolean(supported);
     return browserCapabilityCache[name];
   }
 
   function detectBrowserCapability(name) {
+    if (name.indexOf("webgpu:adapter-limit:") === 0) {
+      return detectWebGPULimitCapability(name.slice("webgpu:adapter-limit:".length), "adapter");
+    }
+    if (name.indexOf("webgpu:device-limit:") === 0) {
+      return detectWebGPULimitCapability(name.slice("webgpu:device-limit:".length), "device");
+    }
+    if (name.indexOf("webgpu:limit:") === 0) {
+      return detectWebGPULimitCapability(name.slice("webgpu:limit:".length), "device");
+    }
+    if (name.indexOf("webgpu-limit:") === 0) {
+      return detectWebGPULimitCapability(name.slice("webgpu-limit:".length), "device");
+    }
+    if (name.indexOf("webgpu:") === 0) {
+      return detectWebGPUFeatureCapability(name.slice("webgpu:".length));
+    }
+    if (name.indexOf("webgpu-feature:") === 0) {
+      return detectWebGPUFeatureCapability(name.slice("webgpu-feature:".length));
+    }
     switch (name) {
       case "animation":
         return typeof requestAnimationFrame === "function";
@@ -5424,6 +5509,13 @@
       case "keyboard":
       case "pointer":
         return Boolean(document && typeof document.addEventListener === "function");
+      case "pointer-lock":
+        return Boolean(
+          document &&
+          (typeof document.exitPointerLock === "function" || "pointerLockElement" in document) &&
+          typeof document.createElement === "function" &&
+          typeof document.createElement("canvas").requestPointerLock === "function"
+        );
       case "storage":
         return canUseLocalStorage();
       case "text-input":
@@ -5446,6 +5538,97 @@
       default:
         return false;
     }
+  }
+
+  function detectWebGPUFeatureCapability(feature) {
+    const normalized = normalizeCapabilityName(feature);
+    if (!normalized || !browserCapabilitySupported("webgpu")) {
+      return false;
+    }
+    const diagnostics = typeof window !== "undefined" && typeof window.__gosx_scene3d_webgpu_diagnostics === "function"
+      ? window.__gosx_scene3d_webgpu_diagnostics()
+      : null;
+    if (!diagnostics || diagnostics.ready !== true) {
+      return false;
+    }
+    const deviceFeatures = Array.isArray(diagnostics.deviceFeatures) ? diagnostics.deviceFeatures : [];
+    const requestedFeatures = Array.isArray(diagnostics.requestedFeatures) ? diagnostics.requestedFeatures : [];
+    return deviceFeatures.indexOf(normalized) >= 0 || requestedFeatures.indexOf(normalized) >= 0;
+  }
+
+  function detectWebGPULimitCapability(requirement, scope) {
+    if (!browserCapabilitySupported("webgpu")) {
+      return false;
+    }
+    const diagnostics = typeof window !== "undefined" && typeof window.__gosx_scene3d_webgpu_diagnostics === "function"
+      ? window.__gosx_scene3d_webgpu_diagnostics()
+      : null;
+    if (!diagnostics || diagnostics.ready !== true) {
+      return false;
+    }
+    const parsed = parseWebGPULimitRequirement(requirement);
+    if (!parsed) {
+      return false;
+    }
+    const primary = scope === "adapter" ? diagnostics.adapterLimits : diagnostics.deviceLimits;
+    const fallback = scope === "adapter" ? diagnostics.deviceLimits : diagnostics.adapterLimits;
+    let actual = lookupWebGPULimit(primary, parsed.name);
+    if (!Number.isFinite(actual)) {
+      actual = lookupWebGPULimit(fallback, parsed.name);
+    }
+    if (!Number.isFinite(actual)) {
+      return false;
+    }
+    switch (parsed.operator) {
+      case ">":
+        return actual > parsed.value;
+      case "<":
+        return actual < parsed.value;
+      case "<=":
+        return actual <= parsed.value;
+      case "=":
+      case "==":
+        return actual === parsed.value;
+      case ">=":
+      default:
+        return actual >= parsed.value;
+    }
+  }
+
+  function parseWebGPULimitRequirement(requirement) {
+    const text = String(requirement || "").trim();
+    const match = text.match(/^([a-z0-9_.:-]+)\s*(>=|<=|==|>|<|=|:)\s*([0-9]+(?:\.[0-9]+)?)$/i);
+    if (!match) {
+      return null;
+    }
+    const value = Number(match[3]);
+    if (!Number.isFinite(value)) {
+      return null;
+    }
+    return {
+      name: match[1],
+      operator: match[2] === ":" ? ">=" : match[2],
+      value,
+    };
+  }
+
+  function lookupWebGPULimit(limits, name) {
+    if (!limits || typeof limits !== "object") {
+      return NaN;
+    }
+    const wanted = normalizeWebGPULimitName(name);
+    for (const key of Object.keys(limits)) {
+      if (normalizeWebGPULimitName(key) !== wanted) {
+        continue;
+      }
+      const value = Number(limits[key]);
+      return Number.isFinite(value) ? value : NaN;
+    }
+    return NaN;
+  }
+
+  function normalizeWebGPULimitName(name) {
+    return String(name || "").trim().toLowerCase().replace(/[^a-z0-9]/g, "");
   }
 
   function canCreateElement(tagName) {
@@ -5636,12 +5819,17 @@
       const navigatorRef = window.navigator;
       if (navigatorRef && typeof navigatorRef.getGamepads === "function") {
         const pads = navigatorRef.getGamepads() || [];
-        const pad = pads[0];
-        if (pad) {
-          publishGamepadSignals(pad);
-        } else {
-          queueInputSignal("$input.gamepad0.connected", false);
+        let connected = 0;
+        for (let i = 0; i < 2; i++) {
+          const pad = pads[i];
+          if (pad && pad.connected !== false) {
+            connected += 1;
+            publishGamepadSignals(pad, i);
+          } else {
+            queueInputSignal("$input.gamepad" + i + ".connected", false);
+          }
         }
+        queueInputSignal("$input.gamepad.count", connected);
       }
       frameHandle = engineFrame(pollGamepad);
     }
@@ -5882,15 +6070,24 @@
     queueInputSignal("$input.pointer.buttons", 0);
   }
 
-  function publishGamepadSignals(pad) {
+  function publishGamepadSignals(pad, slot) {
+    const prefix = "$input.gamepad" + Math.max(0, Math.floor(sceneNumber(slot, 0)));
     const axes = Array.isArray(pad.axes) ? pad.axes : [];
-    queueInputSignal("$input.gamepad0.connected", true);
-    queueInputSignal("$input.gamepad0.leftX", sceneNumber(axes[0], 0));
-    queueInputSignal("$input.gamepad0.leftY", sceneNumber(axes[1], 0));
-    queueInputSignal("$input.gamepad0.rightX", sceneNumber(axes[2], 0));
-    queueInputSignal("$input.gamepad0.rightY", sceneNumber(axes[3], 0));
-    queueInputSignal("$input.gamepad0.buttonA", gamepadButtonPressed(pad, 0));
-    queueInputSignal("$input.gamepad0.buttonB", gamepadButtonPressed(pad, 1));
+    queueInputSignal(prefix + ".connected", true);
+    queueInputSignal(prefix + ".leftX", sceneNumber(axes[0], 0));
+    queueInputSignal(prefix + ".leftY", sceneNumber(axes[1], 0));
+    queueInputSignal(prefix + ".rightX", sceneNumber(axes[2], 0));
+    queueInputSignal(prefix + ".rightY", sceneNumber(axes[3], 0));
+    queueInputSignal(prefix + ".dpadUp", gamepadButtonPressed(pad, 12));
+    queueInputSignal(prefix + ".dpadDown", gamepadButtonPressed(pad, 13));
+    queueInputSignal(prefix + ".dpadLeft", gamepadButtonPressed(pad, 14));
+    queueInputSignal(prefix + ".dpadRight", gamepadButtonPressed(pad, 15));
+    queueInputSignal(prefix + ".buttonA", gamepadButtonPressed(pad, 0));
+    queueInputSignal(prefix + ".buttonB", gamepadButtonPressed(pad, 1));
+    queueInputSignal(prefix + ".buttonX", gamepadButtonPressed(pad, 2));
+    queueInputSignal(prefix + ".buttonY", gamepadButtonPressed(pad, 3));
+    queueInputSignal(prefix + ".buttonLB", gamepadButtonPressed(pad, 4));
+    queueInputSignal(prefix + ".buttonRB", gamepadButtonPressed(pad, 5));
   }
 
   function gamepadButtonPressed(pad, index) {

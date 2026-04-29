@@ -8,8 +8,10 @@
     createRenderer: createSceneWebGPURenderer,
     available: sceneWebGPUAvailable,
     commandSequence: sceneWebGPUCommandSequence,
+    diagnostics: sceneWebGPUDiagnostics,
   };
   window.__gosx_scene3d_api.sceneWebGPUCommandSequence = sceneWebGPUCommandSequence;
+  window.__gosx_scene3d_api.sceneWebGPUDiagnostics = sceneWebGPUDiagnostics;
 
   // Mark chunk loaded for dev tooling / coverage inspection.
   window.__gosx_scene3d_webgpu_loaded = true;

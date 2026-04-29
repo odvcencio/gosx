@@ -720,12 +720,14 @@ func TestPropsSceneIRLowersLODDecalsAndProbeLights(t *testing.T) {
 
 func TestPropsLegacyPropsLowerCameraRotationAndControls(t *testing.T) {
 	props := Props{
-		Controls:           "orbit",
+		Controls:           ControlFirstPerson,
 		ControlTarget:      Vec3(1.5, 0.25, 0.8),
 		ControlRotateSpeed: 1.4,
 		ControlZoomSpeed:   0.85,
 		ControlLookSpeed:   1.2,
 		ControlMoveSpeed:   6.5,
+		PointerLock:        Bool(true),
+		MSAASamples:        4,
 		Camera: PerspectiveCamera{
 			Position: Vec3(0.2, 0.6, 6),
 			Rotation: Rotate(0.18, -0.32, 0.05),
@@ -736,8 +738,11 @@ func TestPropsLegacyPropsLowerCameraRotationAndControls(t *testing.T) {
 	}
 
 	legacy := props.LegacyProps()
-	if got := legacy["controls"]; got != "orbit" {
-		t.Fatalf("expected controls orbit, got %#v", got)
+	if got := legacy["controls"]; got != ControlFirstPerson {
+		t.Fatalf("expected controls first-person, got %#v", got)
+	}
+	if got := legacy["pointerLock"]; got != true {
+		t.Fatalf("expected pointerLock true, got %#v", got)
 	}
 	controlTarget, ok := legacy["controlTarget"].(map[string]any)
 	if !ok {
@@ -757,6 +762,12 @@ func TestPropsLegacyPropsLowerCameraRotationAndControls(t *testing.T) {
 	}
 	if got := legacy["controlMoveSpeed"]; got != 6.5 {
 		t.Fatalf("expected move speed 6.5, got %#v", got)
+	}
+	if got := legacy["msaaSamples"]; got != 4 {
+		t.Fatalf("expected msaa samples 4, got %#v", got)
+	}
+	if !slicesContainCapability(props.EngineConfig().Capabilities, engine.CapPointerLock) {
+		t.Fatalf("expected pointer lock capability, got %#v", props.EngineConfig().Capabilities)
 	}
 
 	camera, ok := legacy["camera"].(map[string]any)

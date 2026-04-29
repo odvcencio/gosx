@@ -2,6 +2,7 @@ package bundle
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/odvcencio/gosx/engine"
 	"github.com/odvcencio/gosx/render/gpu"
@@ -12,12 +13,12 @@ import (
 // fingerprint share a single uniform buffer + bind group; subsequent frames
 // with the same bundle reuse both without re-uploading.
 type materialFingerprint struct {
-	// baseColor packs to vec4 (rgb, a unused). Stored as quantized uint16
+	// baseColor packs to vec4 (rgba). Stored as quantized uint16
 	// so the type stays comparable with == and usable as a map key.
-	baseColorR, baseColorG, baseColorB uint16
-	metalness, roughness               uint16
-	emissiveR, emissiveG, emissiveB    uint16
-	emissiveStrength                   uint16
+	baseColorR, baseColorG, baseColorB, opacity uint16
+	metalness, roughness                        uint16
+	emissiveR, emissiveG, emissiveB             uint16
+	emissiveStrength                            uint16
 	// textureURL: "" means no texture; the fallback 1×1 white is bound so
 	// the bind group layout stays static.
 	textureURL string
@@ -66,6 +67,7 @@ func defaultVertexColorMaterial() materialFingerprint {
 		baseColorR:       quantize(0.8),
 		baseColorG:       quantize(0.8),
 		baseColorB:       quantize(0.8),
+		opacity:          quantize(1),
 		metalness:        quantize(0.0),
 		roughness:        quantize(0.6),
 		emissiveR:        0,
@@ -78,6 +80,7 @@ func defaultVertexColorMaterial() materialFingerprint {
 
 func materialFromRender(mat engine.RenderMaterial) materialFingerprint {
 	base := parseCSSColor(mat.Color, [3]float32{0.8, 0.8, 0.8})
+	opacity := materialOpacity(mat)
 	metal := float32(mat.Metalness)
 	rough := float32(mat.Roughness)
 	if rough <= 0 {
@@ -93,6 +96,7 @@ func materialFromRender(mat engine.RenderMaterial) materialFingerprint {
 		baseColorR:       quantize(base[0]),
 		baseColorG:       quantize(base[1]),
 		baseColorB:       quantize(base[2]),
+		opacity:          quantize(opacity),
 		metalness:        quantize(metal),
 		roughness:        quantize(rough),
 		emissiveR:        quantize(base[0]),
@@ -106,6 +110,23 @@ func materialFromRender(mat engine.RenderMaterial) materialFingerprint {
 		emissiveURL:      mat.EmissiveMap,
 		useVertexColor:   false,
 	}
+}
+
+func materialOpacity(mat engine.RenderMaterial) float32 {
+	mode := strings.ToLower(strings.TrimSpace(mat.BlendMode))
+	pass := strings.ToLower(strings.TrimSpace(mat.RenderPass))
+	explicitTransparentPass := mode == "alpha" || mode == "additive" || pass == "alpha" || pass == "additive"
+	if mat.Opacity <= 0 && !explicitTransparentPass {
+		return 1
+	}
+	opacity := float32(mat.Opacity)
+	if opacity < 0 {
+		return 0
+	}
+	if opacity > 1 {
+		return 1
+	}
+	return opacity
 }
 
 // quantize folds a float in a reasonable range ([0, 4]) down to a uint16 for
@@ -234,7 +255,7 @@ func materialUniformBytes(fp materialFingerprint) []byte {
 	}
 	values := []float32{
 		// baseColor (rgba)
-		dequantize(fp.baseColorR), dequantize(fp.baseColorG), dequantize(fp.baseColorB), 1,
+		dequantize(fp.baseColorR), dequantize(fp.baseColorG), dequantize(fp.baseColorB), dequantize(fp.opacity),
 		// pbrParams (metal, rough, emissiveStrength, useVertexColor)
 		dequantize(fp.metalness), dequantize(fp.roughness), dequantize(fp.emissiveStrength), useVertex,
 		// emissive (rgba)

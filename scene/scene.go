@@ -14,6 +14,17 @@ const DefaultEngineName = "GoSXScene3D"
 
 var defaultCapabilities = []string{"canvas", "webgl", "animation"}
 
+const (
+	// ControlOrbit enables pointer-drag orbit and wheel zoom around ControlTarget.
+	ControlOrbit = "orbit"
+	// ControlFirstPerson enables FPS-style look and WASD movement with a
+	// horizon-locked vertical axis.
+	ControlFirstPerson = "first-person"
+	// ControlFly enables free-flight look and movement, including vertical pitch
+	// in the forward vector.
+	ControlFly = "fly"
+)
+
 // Vector3 is a basic 3D point or direction.
 type Vector3 struct {
 	X float64 `json:"x,omitempty"`
@@ -97,6 +108,7 @@ type Props struct {
 	UnsupportedMessage   string       `json:"unsupportedMessage,omitempty"`
 	CanvasAlpha          *bool        `json:"canvasAlpha,omitempty"`
 	DragToRotate         *bool        `json:"dragToRotate,omitempty"`
+	PointerLock          *bool        `json:"pointerLock,omitempty"`
 	DeferPostFX          *bool        `json:"deferPostFX,omitempty"`
 	DeferPostFXDelayMS   int          `json:"deferPostFXDelayMS,omitempty"`
 	DragSignalNamespace  string       `json:"dragSignalNamespace,omitempty"`
@@ -112,6 +124,7 @@ type Props struct {
 	ScrollCameraStart    float64 `json:"scrollCameraStart,omitempty"`
 	ScrollCameraEnd      float64 `json:"scrollCameraEnd,omitempty"`
 	MaxDevicePixelRatio  float64 `json:"maxDevicePixelRatio,omitempty"`
+	MSAASamples          int     `json:"msaaSamples,omitempty"`
 	Camera               PerspectiveCamera
 	OrthographicCamera   *OrthographicCamera
 	Stats                *bool `json:"stats,omitempty"`
@@ -1053,6 +1066,7 @@ func (p Props) legacyBaseProps() map[string]any {
 	setString(out, "unsupportedMessage", p.UnsupportedMessage)
 	setBool(out, "canvasAlpha", p.CanvasAlpha)
 	setBool(out, "dragToRotate", p.DragToRotate)
+	setBool(out, "pointerLock", p.PointerLock)
 	setBool(out, "deferPostFX", p.DeferPostFX)
 	setInt(out, "deferPostFXDelayMS", p.DeferPostFXDelayMS)
 	setString(out, "dragSignalNamespace", p.DragSignalNamespace)
@@ -1073,6 +1087,7 @@ func (p Props) legacyBaseProps() map[string]any {
 	setNumeric(out, "scrollCameraStart", p.ScrollCameraStart)
 	setNumeric(out, "scrollCameraEnd", p.ScrollCameraEnd)
 	setNumeric(out, "maxDevicePixelRatio", p.MaxDevicePixelRatio)
+	setInt(out, "msaaSamples", p.MSAASamples)
 	setBool(out, "stats", p.Stats)
 	if p.Compression != nil {
 		comp := map[string]any{"bitWidth": p.Compression.BitWidth}
@@ -1154,6 +1169,9 @@ func (p Props) EngineCapabilities() []string {
 	}
 	if p.Graph.requiresComputeCapability() {
 		appendCapability("webgpu")
+	}
+	if p.PointerLock != nil && *p.PointerLock {
+		appendCapability("pointer-lock")
 	}
 	for _, capability := range p.Capabilities {
 		appendCapability(capability)

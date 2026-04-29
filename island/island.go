@@ -794,6 +794,21 @@ func (r *Renderer) BindHub(name, path string, bindings []hydrate.HubBinding) str
 	return r.manifest.AddHub(name, path, bindings)
 }
 
+// BindHubInput registers a realtime hub connection with bootstrap-owned input
+// forwarding.
+func (r *Renderer) BindHubInput(name, path string, bindings []hydrate.HubBinding, input hydrate.HubInputConfig) string {
+	return r.manifest.AddHubWithInput(name, path, bindings, &input)
+}
+
+// SetClientIdentity configures bootstrap-owned client identity state for the
+// page manifest.
+func (r *Renderer) SetClientIdentity(config hydrate.ClientIdentityConfig) {
+	if r == nil || r.manifest == nil {
+		return
+	}
+	r.manifest.SetClientIdentity(config)
+}
+
 // RegisterComputeIsland registers a headless island program in the hydration
 // manifest. Compute islands share the island VM and signal bridge but do not
 // render, own, or patch a DOM root.

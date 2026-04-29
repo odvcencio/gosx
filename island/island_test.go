@@ -426,6 +426,44 @@ func TestBindHubAddsManifestEntryAndBootstrapsPage(t *testing.T) {
 	}
 }
 
+func TestBindHubInputAddsManifestInput(t *testing.T) {
+	r := NewRenderer("main")
+	r.BindHubInput("fight", "/ws/fight/abc", []hydrate.HubBinding{
+		{Event: "tick", Signal: "$fight"},
+	}, hydrate.HubInputConfig{
+		Mode:        "fighting",
+		Event:       "input",
+		Player:      1,
+		SendEveryMS: 16,
+	})
+
+	if len(r.Manifest().Hubs) != 1 {
+		t.Fatalf("expected one hub entry, got %d", len(r.Manifest().Hubs))
+	}
+	if r.Manifest().Hubs[0].Input == nil {
+		t.Fatal("missing hub input config")
+	}
+	if r.Manifest().Hubs[0].Input.Mode != "fighting" {
+		t.Fatalf("unexpected hub input config %#v", r.Manifest().Hubs[0].Input)
+	}
+}
+
+func TestSetClientIdentityAddsManifestConfig(t *testing.T) {
+	r := NewRenderer("main")
+	r.SetClientIdentity(hydrate.ClientIdentityConfig{
+		CookieName: "test_client",
+		HeaderName: "X-Test-Client",
+		Prefix:     "tc-",
+	})
+
+	if r.Manifest().ClientIdentity == nil {
+		t.Fatal("missing client identity config")
+	}
+	if r.Manifest().ClientIdentity.HeaderName != "X-Test-Client" {
+		t.Fatalf("unexpected identity config %#v", r.Manifest().ClientIdentity)
+	}
+}
+
 func TestChecksum(t *testing.T) {
 	sum1 := Checksum([]byte("hello"))
 	sum2 := Checksum([]byte("hello"))

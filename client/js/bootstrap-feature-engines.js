@@ -26,6 +26,20 @@
     const gosxNotifySharedSignal = api.gosxNotifySharedSignal;
     const gosxSubscribeSharedSignal = api.gosxSubscribeSharedSignal;
 
+  function entryRequiresAsyncWebGPUProbe(entry) {
+    const required = requiredCapabilityList(entry);
+    return required.some((capability) => capability.indexOf("webgpu:") === 0 || capability.indexOf("webgpu-feature:") === 0);
+  }
+
+  async function prepareRuntimeCapabilityProbe(entry) {
+    if (!entryRequiresAsyncWebGPUProbe(entry)) {
+      return;
+    }
+    if (typeof window !== "undefined" && typeof window.__gosx_scene3d_webgpu_probe_ready === "function") {
+      await window.__gosx_scene3d_webgpu_probe_ready();
+    }
+  }
+
   function resolveEngineFactory(entry) {
     const builtin = resolveBuiltinEngineFactory(entry);
     if (builtin) {
@@ -1781,6 +1795,7 @@
 
     const mount = resolveEngineMount(entry);
     if (engineKindNeedsMount(entry.kind) && !mount) return;
+    await prepareRuntimeCapabilityProbe(entry);
     const capabilityStatus = engineCapabilityStatus(entry);
     applyRuntimeCapabilityState(mount, "engine", capabilityStatus);
     if (!capabilityStatus.ok) {

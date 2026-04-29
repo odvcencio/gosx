@@ -64,6 +64,72 @@ func TestMaterialUniformFlagsNormalMap(t *testing.T) {
 	}
 }
 
+func TestMaterialUniformEncodesOpacity(t *testing.T) {
+	fp := materialFromRender(engine.RenderMaterial{
+		Color:   "#ffffff",
+		Opacity: 0.42,
+	})
+	got := materialUniformBytes(fp)[0:16]
+	want := float32sToBytes([]float32{1, 1, 1, dequantize(quantize(0.42))})
+	if string(got) != string(want) {
+		t.Fatalf("baseColor bytes = %v, want %v", got, want)
+	}
+
+	defaultFP := materialFromRender(engine.RenderMaterial{Color: "#ffffff"})
+	if got := materialUniformBytes(defaultFP)[0:16]; string(got) != string(float32sToBytes([]float32{1, 1, 1, 1})) {
+		t.Fatalf("default opacity bytes = %v, want alpha 1", got)
+	}
+
+	invisibleFP := materialFromRender(engine.RenderMaterial{
+		Color:     "#ffffff",
+		BlendMode: "alpha",
+		Opacity:   0,
+	})
+	if got := materialUniformBytes(invisibleFP)[0:16]; string(got) != string(float32sToBytes([]float32{1, 1, 1, 0})) {
+		t.Fatalf("explicit zero opacity bytes = %v, want alpha 0", got)
+	}
+}
+
+func TestLitPipelinesEnableSourceAlphaBlend(t *testing.T) {
+	d := newFakeDevice()
+	r, err := New(Config{Device: d, Surface: fakeSurface{}})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer r.Destroy()
+
+	for _, label := range []string{"bundle.lit", "bundle.lit.skinned"} {
+		pipeline := findRenderPipeline(t, d, label)
+		if len(pipeline.desc.Fragment.Targets) < 2 {
+			t.Fatalf("%s targets = %d, want at least 2", label, len(pipeline.desc.Fragment.Targets))
+		}
+		blend := pipeline.desc.Fragment.Targets[0].Blend
+		if blend == nil {
+			t.Fatalf("%s color target blend = nil", label)
+		}
+		if blend.Color.SrcFactor != gpu.BlendSrcAlpha || blend.Color.DstFactor != gpu.BlendOneMinusSrcAlpha || blend.Color.Operation != gpu.BlendOpAdd {
+			t.Fatalf("%s color blend = %#v", label, blend.Color)
+		}
+		if blend.Alpha.SrcFactor != gpu.BlendOne || blend.Alpha.DstFactor != gpu.BlendOneMinusSrcAlpha || blend.Alpha.Operation != gpu.BlendOpAdd {
+			t.Fatalf("%s alpha blend = %#v", label, blend.Alpha)
+		}
+		if pipeline.desc.Fragment.Targets[1].Blend != nil {
+			t.Fatalf("%s pick target unexpectedly blends", label)
+		}
+	}
+}
+
+func findRenderPipeline(t *testing.T, d *fakeDevice, label string) *fakePipeline {
+	t.Helper()
+	for _, pipeline := range d.pipelines {
+		if pipeline.desc.Label == label {
+			return pipeline
+		}
+	}
+	t.Fatalf("pipeline %q not found", label)
+	return nil
+}
+
 func TestEnvironmentMapRebuildsLitBindGroupWithCubeView(t *testing.T) {
 	d := newFakeDevice()
 	r, err := New(Config{Device: d, Surface: fakeSurface{}})

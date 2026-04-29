@@ -543,6 +543,24 @@ func TestActiveMaterialSamplesBaseColorTexture(t *testing.T) {
 	}
 }
 
+func TestActiveMaterialCarriesOpacity(t *testing.T) {
+	uniforms := &Buffer{data: make([]byte, 64)}
+	writeFloat32(uniforms.data, 0, 1)
+	writeFloat32(uniforms.data, 4, 1)
+	writeFloat32(uniforms.data, 8, 1)
+	writeFloat32(uniforms.data, 12, 0.5)
+
+	pass := &RenderPassEncoder{bindGroups: map[int]*BindGroup{1: &BindGroup{
+		desc: gpu.BindGroupDesc{Entries: []gpu.BindGroupEntry{
+			{Binding: 0, Buffer: uniforms},
+		}},
+	}}}
+	got := pass.activeMaterial().resolve([3]float32{1, 1, 1}, [2]float32{})
+	if got[3] != 0.5 {
+		t.Fatalf("material opacity = %v, want 0.5", got[3])
+	}
+}
+
 // TestBundleFrameLitRespondsToDirectionalLight verifies the D-series
 // approximation still follows scene lighting uniforms instead of rendering
 // all lit geometry at material color.

@@ -102,6 +102,85 @@
     return sceneBool(props && props.requireWebGL, false);
   }
 
+  function sceneWebGPUOptions(props, capability) {
+    const caps = capability && typeof capability === "object" ? capability : {};
+    const requestedSamples = Math.max(0, Math.floor(sceneNumber(props && props.msaaSamples, 0)));
+    const tierAllowsMSAA = caps.tier === "full" && !caps.lowPower && !caps.reducedData;
+    const antialias = requestedSamples > 1
+      ? true
+      : sceneBool(props && props.antialias, tierAllowsMSAA);
+    return {
+      antialias,
+      msaaSamples: requestedSamples > 1 ? 4 : (antialias ? 4 : 1),
+    };
+  }
+
+  function sceneWebGPUUnsupportedLineStyle(entry) {
+    if (!entry || typeof entry !== "object") {
+      return false;
+    }
+    const material = entry.material && typeof entry.material === "object" ? entry.material : null;
+    const materialKind = String(entry.materialKind || entry.kind || material && material.kind || "").toLowerCase();
+    return entry.lineDash === true ||
+      material && material.lineDash === true ||
+      materialKind === "line-dashed" ||
+      materialKind === "dashed";
+  }
+
+  function sceneWebGPUUnsupportedLineCollection(list) {
+    if (!Array.isArray(list)) {
+      return false;
+    }
+    for (let i = 0; i < list.length; i += 1) {
+      const entry = list[i];
+      if (!entry || typeof entry !== "object") {
+        continue;
+      }
+      if (sceneWebGPUUnsupportedLineStyle(entry)) {
+        return true;
+      }
+      if (Array.isArray(entry.children) && sceneWebGPUUnsupportedLineCollection(entry.children)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function sceneWebGPUUnsupportedLineBundle(source) {
+    const dashes = source && source.worldLineDashes;
+    if (dashes && typeof dashes.length === "number") {
+      for (let i = 0; i < dashes.length; i += 1) {
+        if (dashes[i]) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  function sceneWebGPUFeatureGap(source) {
+    const root = source && typeof source === "object" ? source : {};
+    const scene = root.scene && typeof root.scene === "object" ? root.scene : null;
+    const candidates = scene ? [root, scene] : [root];
+    if (sceneWebGPUUnsupportedLineBundle(root)) {
+      return "line-styles";
+    }
+    for (let i = 0; i < candidates.length; i += 1) {
+      const item = candidates[i] || {};
+      if (
+        sceneWebGPUUnsupportedLineCollection(item.lines) ||
+        sceneWebGPUUnsupportedLineCollection(item.objects)
+      ) {
+        return "line-styles";
+      }
+    }
+    return "";
+  }
+
+  function sceneNeedsWebGLForWebGPUCoverage(source) {
+    return sceneWebGPUFeatureGap(source) !== "";
+  }
+
   function createSceneRenderer(canvas, props, capability) {
     const registryResult = createSceneRendererFromRegistry(canvas, props, capability);
     if (registryResult) {
@@ -109,10 +188,11 @@
     }
 
     const webglPreference = sceneCapabilityWebGLPreference(props, capability);
+    const webgpuFeatureGap = sceneNeedsWebGLForWebGPUCoverage(props);
     if (webglPreference === "prefer" || webglPreference === "force") {
       // forceWebGL must stay on the WebGL stack instead of probing WebGPU first.
-      if (webglPreference !== "force" && typeof sceneWebGPUAvailable === "function" && sceneWebGPUAvailable()) {
-        var gpuRenderer = createSceneWebGPURendererOrFallback(canvas);
+      if (!webgpuFeatureGap && webglPreference !== "force" && typeof sceneWebGPUAvailable === "function" && sceneWebGPUAvailable()) {
+        var gpuRenderer = createSceneWebGPURendererOrFallback(canvas, sceneWebGPUOptions(props, capability));
         if (gpuRenderer) {
           return {
             renderer: gpuRenderer,
@@ -133,7 +213,7 @@
           if (pbrRenderer) {
             return {
               renderer: pbrRenderer,
-              fallbackReason: "",
+              fallbackReason: webgpuFeatureGap ? "webgpu-feature-gap" : "",
             };
           }
         }
@@ -145,7 +225,7 @@
       if (webglRenderer) {
         return {
           renderer: webglRenderer,
-          fallbackReason: "",
+          fallbackReason: webgpuFeatureGap ? "webgpu-feature-gap" : "",
         };
       }
     }
@@ -168,14 +248,15 @@
     }
     const webglPreference = sceneCapabilityWebGLPreference(props, capability);
     const requireWebGL = sceneRequiresWebGL(props);
+    const webgpuFeatureGap = sceneNeedsWebGLForWebGPUCoverage(props);
     const request = {
       props,
       capability,
-      webgpu: webglPreference === "prefer",
+      webgpu: webglPreference === "prefer" && !webgpuFeatureGap,
       webgl: webglPreference === "prefer" || webglPreference === "force",
       webgl2: webglPreference === "prefer" || webglPreference === "force",
       canvas2d: !requireWebGL,
-      preferWebGPU: webglPreference === "prefer",
+      preferWebGPU: webglPreference === "prefer" && !webgpuFeatureGap,
       forceWebGL: webglPreference === "force",
     };
     const candidates = sceneBackendRegistry.candidates(request);
@@ -189,7 +270,7 @@
           renderer,
           fallbackReason: entry.kind === "canvas2d" || renderer.kind === "canvas"
             ? sceneRendererFallbackReason(props, capability, "canvas")
-            : "",
+            : (webgpuFeatureGap && renderer.kind === "webgl" ? "webgpu-feature-gap" : ""),
         };
       }
     }
@@ -963,6 +1044,9 @@
     if (sceneCapabilityWebGLPreference(props, capability) !== "prefer") {
       return false;
     }
+    if (sceneNeedsWebGLForWebGPUCoverage(props)) {
+      return false;
+    }
     try {
       var api = await ensureWebGPUFeatureLoaded();
       if (!api) {
@@ -1610,6 +1694,17 @@
     }
     setAttrValue(mount, "data-gosx-scene3d-renderer", renderer && renderer.kind ? renderer.kind : "");
     setAttrValue(mount, "data-gosx-scene3d-renderer-fallback", fallbackReason || "");
+    const webgpuDiagnostics = renderer && renderer.kind === "webgpu" && typeof renderer.diagnostics === "function"
+      ? renderer.diagnostics()
+      : null;
+    setAttrValue(mount, "data-gosx-scene3d-webgpu-features", webgpuDiagnostics && Array.isArray(webgpuDiagnostics.requestedFeatures) ? webgpuDiagnostics.requestedFeatures.join(",") : "");
+    setAttrValue(mount, "data-gosx-scene3d-webgpu-device-features", webgpuDiagnostics && Array.isArray(webgpuDiagnostics.deviceFeatures) ? webgpuDiagnostics.deviceFeatures.join(",") : "");
+    setAttrValue(mount, "data-gosx-scene3d-webgpu-sample-count", webgpuDiagnostics && webgpuDiagnostics.activeSampleCount > 0 ? webgpuDiagnostics.activeSampleCount : "");
+    setAttrValue(mount, "data-gosx-scene3d-webgpu-adapter", webgpuDiagnostics && webgpuDiagnostics.adapterInfo ? [
+      webgpuDiagnostics.adapterInfo.vendor || "",
+      webgpuDiagnostics.adapterInfo.architecture || "",
+      webgpuDiagnostics.adapterInfo.device || "",
+    ].filter(Boolean).join(" ") : "");
   }
 
   function showSceneRequiredRendererMessage(mount, props, reason) {
@@ -2751,6 +2846,54 @@
     return Math.max(0.01, sceneNumber(props && props.controlMoveSpeed, 4));
   }
 
+  function scenePointerLockRequested(props) {
+    return sceneBool(props && props.pointerLock, false);
+  }
+
+  function scenePointerLockElement() {
+    if (typeof document === "undefined" || !document) {
+      return null;
+    }
+    return document.pointerLockElement ||
+      document.mozPointerLockElement ||
+      document.webkitPointerLockElement ||
+      null;
+  }
+
+  function scenePointerLockActive(canvas) {
+    return Boolean(canvas && scenePointerLockElement() === canvas);
+  }
+
+  function sceneRequestPointerLock(canvas) {
+    if (!canvas || typeof canvas.requestPointerLock !== "function") {
+      return false;
+    }
+    try {
+      canvas.requestPointerLock({ unadjustedMovement: true });
+      return true;
+    } catch (_unadjustedError) {
+      try {
+        canvas.requestPointerLock();
+        return true;
+      } catch (_error) {
+        return false;
+      }
+    }
+  }
+
+  function sceneExitPointerLock(canvas) {
+    if (!scenePointerLockActive(canvas)) {
+      return;
+    }
+    const exit = document.exitPointerLock || document.mozExitPointerLock || document.webkitExitPointerLock;
+    if (typeof exit !== "function") {
+      return;
+    }
+    try {
+      exit.call(document);
+    } catch (_error) {}
+  }
+
   function sceneWorldCameraPosition(camera) {
     const normalized = sceneRenderCamera(camera);
     return {
@@ -2884,6 +3027,8 @@
       zoomSpeed: sceneControlsZoomSpeed(props),
       lookSpeed: sceneControlsLookSpeed(props),
       moveSpeed: sceneControlsMoveSpeed(props),
+      pointerLock: mode !== "orbit" && scenePointerLockRequested(props),
+      pointerLocked: false,
       orbit: null,
       fly: null,
       keys: new Set(),
@@ -3130,6 +3275,10 @@
       canvas.focus({ preventScroll: true });
     }
     attachDocumentListeners();
+    if (controls.pointerLock) {
+      sceneRequestPointerLock(canvas);
+      controls.pointerLocked = scenePointerLockActive(canvas);
+    }
     if (typeof canvas.setPointerCapture === "function" && event.pointerId != null) {
       canvas.setPointerCapture(event.pointerId);
     }
@@ -3146,7 +3295,12 @@
       return;
     }
     const metrics = sceneControlsMetrics(readViewport, props);
-    const sample = sceneLocalPointerSample(event, canvas, metrics.width, metrics.height, controls, "move");
+    const pointerLocked = controls.pointerLock && scenePointerLockActive(canvas);
+    controls.pointerLocked = pointerLocked;
+    const sample = pointerLocked ? {
+      deltaX: sceneNumber(event && event.movementX, 0),
+      deltaY: sceneNumber(event && event.movementY, 0),
+    } : sceneLocalPointerSample(event, canvas, metrics.width, metrics.height, controls, "move");
     const fly = sceneFlyEnsureState(controls, readSourceCamera);
     fly.yaw += (sample.deltaX / Math.max(metrics.width, 1)) * Math.PI * controls.lookSpeed;
     fly.pitch = sceneClamp(
@@ -3167,9 +3321,19 @@
     if (!sceneDragMatchesActivePointer(controls, event)) {
       return;
     }
+    if (controls.pointerLock && scenePointerLockActive(canvas) && event && event.type !== "pointerlockchange") {
+      if (typeof event.preventDefault === "function") {
+        event.preventDefault();
+      }
+      if (typeof event.stopPropagation === "function") {
+        event.stopPropagation();
+      }
+      return;
+    }
     const pointerId = controls.pointerId;
     controls.active = false;
     controls.pointerId = null;
+    controls.pointerLocked = false;
     canvas.style.cursor = "crosshair";
     detachDocumentListeners();
     if (pointerId != null && typeof canvas.releasePointerCapture === "function") {
@@ -3283,6 +3447,17 @@
       canvas.setAttribute("tabindex", "0");
     }
 
+    function onPointerLockChange(event) {
+      if (!flyMode || !controls.pointerLock) {
+        return;
+      }
+      const locked = scenePointerLockActive(canvas);
+      controls.pointerLocked = locked;
+      if (!locked && controls.active) {
+        sceneFlyFinishDrag(controls, canvas, detachDocumentListeners, event || { type: "pointerlockchange" });
+      }
+    }
+
     function attachDocumentListeners() {
       if (documentListenersAttached) {
         return;
@@ -3393,6 +3568,11 @@
     if (flyMode) {
       document.addEventListener("keydown", onKeyDown);
       document.addEventListener("keyup", onKeyUp);
+      if (controls.pointerLock) {
+        document.addEventListener("pointerlockchange", onPointerLockChange);
+        document.addEventListener("mozpointerlockchange", onPointerLockChange);
+        document.addEventListener("webkitpointerlockchange", onPointerLockChange);
+      }
     }
 
     return {
@@ -3410,8 +3590,14 @@
         canvas.removeEventListener("lostpointercapture", finishPointerDrag);
         canvas.removeEventListener("wheel", onWheel);
         if (flyMode) {
+          sceneExitPointerLock(canvas);
           document.removeEventListener("keydown", onKeyDown);
           document.removeEventListener("keyup", onKeyUp);
+          if (controls.pointerLock) {
+            document.removeEventListener("pointerlockchange", onPointerLockChange);
+            document.removeEventListener("mozpointerlockchange", onPointerLockChange);
+            document.removeEventListener("webkitpointerlockchange", onPointerLockChange);
+          }
         }
       },
     };
@@ -3817,8 +4003,29 @@
       return swapRenderer(createSceneCanvasRenderer(ctx2d, canvas), reason || "webgl-unavailable");
     }
 
+    function ensureRendererCanCoverBundle(bundle) {
+      if (!renderer || !bundle) {
+        return true;
+      }
+      let feature = "";
+      if (typeof renderer.supportsBundle === "function" && renderer.supportsBundle(bundle) === false) {
+        feature = "backend-declared";
+      }
+      if (!feature) {
+        return true;
+      }
+      gosxSceneEmit("warn", "renderer-feature-gap", {
+        rendererKind: renderer.kind || "",
+        feature,
+      });
+      return fallbackSceneRenderer("webgpu-feature-gap");
+    }
+
     function renderLatestSceneBundle(reason) {
       if (disposed || !latestBundle || !renderer || typeof renderer.render !== "function" || !sceneCanRender()) {
+        return false;
+      }
+      if (!ensureRendererCanCoverBundle(latestBundle)) {
         return false;
       }
       recordScenePerfCounter("render:" + (reason || "restore"));
@@ -4380,6 +4587,10 @@
             sceneCurrentControlCamera(sceneControlHandle.controller, runtimeBundle.camera || sceneState.camera, sceneState._scrollCamera),
           );
           latestBundle = effectiveBundle;
+          if (!ensureRendererCanCoverBundle(effectiveBundle)) {
+            scheduleNextAnimationFrame();
+            return;
+          }
           syncSceneNodeSentinels(effectiveBundle);
           renderer.render(effectiveBundle, viewport);
           renderSceneLabels(labelLayer, effectiveBundle, labelLayoutCache, labelElements, viewport.cssWidth, viewport.cssHeight);
@@ -4428,6 +4639,10 @@
         performance.measure("scene3d-bundle", "scene3d-bundle-start", "scene3d-bundle-end");
         performance.clearMarks("scene3d-bundle-start");
         performance.clearMarks("scene3d-bundle-end");
+      }
+      if (!ensureRendererCanCoverBundle(latestBundle)) {
+        scheduleNextAnimationFrame();
+        return;
       }
       syncSceneNodeSentinels(latestBundle);
       renderer.render(latestBundle, viewport);

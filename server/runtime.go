@@ -101,6 +101,26 @@ func (r *PageRuntime) BindHub(name, path string, bindings []hydrate.HubBinding) 
 	return r.renderer.BindHub(name, path, bindings)
 }
 
+// BindHubInput registers a realtime hub and asks the GoSX bootstrap to forward
+// browser input snapshots to it.
+func (r *PageRuntime) BindHubInput(name, path string, bindings []hydrate.HubBinding, input hydrate.HubInputConfig) string {
+	if r == nil || strings.TrimSpace(name) == "" || strings.TrimSpace(path) == "" {
+		return ""
+	}
+	r.active = true
+	return r.renderer.BindHubInput(name, path, bindings, input)
+}
+
+// ClientIdentity asks the GoSX bootstrap to maintain a stable anonymous client
+// identity for this page.
+func (r *PageRuntime) ClientIdentity(config hydrate.ClientIdentityConfig) {
+	if r == nil {
+		return
+	}
+	r.active = true
+	r.renderer.SetClientIdentity(config)
+}
+
 // TextBlock renders a text-layout node and enables the shared bootstrap
 // runtime only when client-side refinement is requested.
 func (r *PageRuntime) TextBlock(props TextBlockProps, args ...any) gosx.Node {

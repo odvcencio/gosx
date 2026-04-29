@@ -319,7 +319,8 @@
     if (!name) {
       return true;
     }
-    if (Object.prototype.hasOwnProperty.call(browserCapabilityCache, name)) {
+    const dynamicWebGPUFeature = name.indexOf("webgpu:") === 0 || name.indexOf("webgpu-feature:") === 0;
+    if (!dynamicWebGPUFeature && Object.prototype.hasOwnProperty.call(browserCapabilityCache, name)) {
       return browserCapabilityCache[name];
     }
     let supported = false;
@@ -328,11 +329,32 @@
     } catch (_e) {
       supported = false;
     }
+    if (dynamicWebGPUFeature) {
+      return Boolean(supported);
+    }
     browserCapabilityCache[name] = Boolean(supported);
     return browserCapabilityCache[name];
   }
 
   function detectBrowserCapability(name) {
+    if (name.indexOf("webgpu:adapter-limit:") === 0) {
+      return detectWebGPULimitCapability(name.slice("webgpu:adapter-limit:".length), "adapter");
+    }
+    if (name.indexOf("webgpu:device-limit:") === 0) {
+      return detectWebGPULimitCapability(name.slice("webgpu:device-limit:".length), "device");
+    }
+    if (name.indexOf("webgpu:limit:") === 0) {
+      return detectWebGPULimitCapability(name.slice("webgpu:limit:".length), "device");
+    }
+    if (name.indexOf("webgpu-limit:") === 0) {
+      return detectWebGPULimitCapability(name.slice("webgpu-limit:".length), "device");
+    }
+    if (name.indexOf("webgpu:") === 0) {
+      return detectWebGPUFeatureCapability(name.slice("webgpu:".length));
+    }
+    if (name.indexOf("webgpu-feature:") === 0) {
+      return detectWebGPUFeatureCapability(name.slice("webgpu-feature:".length));
+    }
     switch (name) {
       case "animation":
         return typeof requestAnimationFrame === "function";
@@ -352,6 +374,13 @@
       case "keyboard":
       case "pointer":
         return Boolean(document && typeof document.addEventListener === "function");
+      case "pointer-lock":
+        return Boolean(
+          document &&
+          (typeof document.exitPointerLock === "function" || "pointerLockElement" in document) &&
+          typeof document.createElement === "function" &&
+          typeof document.createElement("canvas").requestPointerLock === "function"
+        );
       case "storage":
         return canUseLocalStorage();
       case "text-input":
@@ -374,6 +403,97 @@
       default:
         return false;
     }
+  }
+
+  function detectWebGPUFeatureCapability(feature) {
+    const normalized = normalizeCapabilityName(feature);
+    if (!normalized || !browserCapabilitySupported("webgpu")) {
+      return false;
+    }
+    const diagnostics = typeof window !== "undefined" && typeof window.__gosx_scene3d_webgpu_diagnostics === "function"
+      ? window.__gosx_scene3d_webgpu_diagnostics()
+      : null;
+    if (!diagnostics || diagnostics.ready !== true) {
+      return false;
+    }
+    const deviceFeatures = Array.isArray(diagnostics.deviceFeatures) ? diagnostics.deviceFeatures : [];
+    const requestedFeatures = Array.isArray(diagnostics.requestedFeatures) ? diagnostics.requestedFeatures : [];
+    return deviceFeatures.indexOf(normalized) >= 0 || requestedFeatures.indexOf(normalized) >= 0;
+  }
+
+  function detectWebGPULimitCapability(requirement, scope) {
+    if (!browserCapabilitySupported("webgpu")) {
+      return false;
+    }
+    const diagnostics = typeof window !== "undefined" && typeof window.__gosx_scene3d_webgpu_diagnostics === "function"
+      ? window.__gosx_scene3d_webgpu_diagnostics()
+      : null;
+    if (!diagnostics || diagnostics.ready !== true) {
+      return false;
+    }
+    const parsed = parseWebGPULimitRequirement(requirement);
+    if (!parsed) {
+      return false;
+    }
+    const primary = scope === "adapter" ? diagnostics.adapterLimits : diagnostics.deviceLimits;
+    const fallback = scope === "adapter" ? diagnostics.deviceLimits : diagnostics.adapterLimits;
+    let actual = lookupWebGPULimit(primary, parsed.name);
+    if (!Number.isFinite(actual)) {
+      actual = lookupWebGPULimit(fallback, parsed.name);
+    }
+    if (!Number.isFinite(actual)) {
+      return false;
+    }
+    switch (parsed.operator) {
+      case ">":
+        return actual > parsed.value;
+      case "<":
+        return actual < parsed.value;
+      case "<=":
+        return actual <= parsed.value;
+      case "=":
+      case "==":
+        return actual === parsed.value;
+      case ">=":
+      default:
+        return actual >= parsed.value;
+    }
+  }
+
+  function parseWebGPULimitRequirement(requirement) {
+    const text = String(requirement || "").trim();
+    const match = text.match(/^([a-z0-9_.:-]+)\s*(>=|<=|==|>|<|=|:)\s*([0-9]+(?:\.[0-9]+)?)$/i);
+    if (!match) {
+      return null;
+    }
+    const value = Number(match[3]);
+    if (!Number.isFinite(value)) {
+      return null;
+    }
+    return {
+      name: match[1],
+      operator: match[2] === ":" ? ">=" : match[2],
+      value,
+    };
+  }
+
+  function lookupWebGPULimit(limits, name) {
+    if (!limits || typeof limits !== "object") {
+      return NaN;
+    }
+    const wanted = normalizeWebGPULimitName(name);
+    for (const key of Object.keys(limits)) {
+      if (normalizeWebGPULimitName(key) !== wanted) {
+        continue;
+      }
+      const value = Number(limits[key]);
+      return Number.isFinite(value) ? value : NaN;
+    }
+    return NaN;
+  }
+
+  function normalizeWebGPULimitName(name) {
+    return String(name || "").trim().toLowerCase().replace(/[^a-z0-9]/g, "");
   }
 
   function canCreateElement(tagName) {
@@ -564,12 +684,17 @@
       const navigatorRef = window.navigator;
       if (navigatorRef && typeof navigatorRef.getGamepads === "function") {
         const pads = navigatorRef.getGamepads() || [];
-        const pad = pads[0];
-        if (pad) {
-          publishGamepadSignals(pad);
-        } else {
-          queueInputSignal("$input.gamepad0.connected", false);
+        let connected = 0;
+        for (let i = 0; i < 2; i++) {
+          const pad = pads[i];
+          if (pad && pad.connected !== false) {
+            connected += 1;
+            publishGamepadSignals(pad, i);
+          } else {
+            queueInputSignal("$input.gamepad" + i + ".connected", false);
+          }
         }
+        queueInputSignal("$input.gamepad.count", connected);
       }
       frameHandle = engineFrame(pollGamepad);
     }
@@ -823,15 +948,24 @@
     queueInputSignal("$input.pointer.buttons", 0);
   }
 
-  function publishGamepadSignals(pad) {
+  function publishGamepadSignals(pad, slot) {
+    const prefix = "$input.gamepad" + Math.max(0, Math.floor(sceneNumber(slot, 0)));
     const axes = Array.isArray(pad.axes) ? pad.axes : [];
-    queueInputSignal("$input.gamepad0.connected", true);
-    queueInputSignal("$input.gamepad0.leftX", sceneNumber(axes[0], 0));
-    queueInputSignal("$input.gamepad0.leftY", sceneNumber(axes[1], 0));
-    queueInputSignal("$input.gamepad0.rightX", sceneNumber(axes[2], 0));
-    queueInputSignal("$input.gamepad0.rightY", sceneNumber(axes[3], 0));
-    queueInputSignal("$input.gamepad0.buttonA", gamepadButtonPressed(pad, 0));
-    queueInputSignal("$input.gamepad0.buttonB", gamepadButtonPressed(pad, 1));
+    queueInputSignal(prefix + ".connected", true);
+    queueInputSignal(prefix + ".leftX", sceneNumber(axes[0], 0));
+    queueInputSignal(prefix + ".leftY", sceneNumber(axes[1], 0));
+    queueInputSignal(prefix + ".rightX", sceneNumber(axes[2], 0));
+    queueInputSignal(prefix + ".rightY", sceneNumber(axes[3], 0));
+    queueInputSignal(prefix + ".dpadUp", gamepadButtonPressed(pad, 12));
+    queueInputSignal(prefix + ".dpadDown", gamepadButtonPressed(pad, 13));
+    queueInputSignal(prefix + ".dpadLeft", gamepadButtonPressed(pad, 14));
+    queueInputSignal(prefix + ".dpadRight", gamepadButtonPressed(pad, 15));
+    queueInputSignal(prefix + ".buttonA", gamepadButtonPressed(pad, 0));
+    queueInputSignal(prefix + ".buttonB", gamepadButtonPressed(pad, 1));
+    queueInputSignal(prefix + ".buttonX", gamepadButtonPressed(pad, 2));
+    queueInputSignal(prefix + ".buttonY", gamepadButtonPressed(pad, 3));
+    queueInputSignal(prefix + ".buttonLB", gamepadButtonPressed(pad, 4));
+    queueInputSignal(prefix + ".buttonRB", gamepadButtonPressed(pad, 5));
   }
 
   function gamepadButtonPressed(pad, index) {
@@ -6046,6 +6180,12 @@
     return false;
   }
 
+  if (typeof window !== "undefined" && window.__gosx_runtime_api) {
+    window.__gosx_runtime_api.browserCapabilitySupported = browserCapabilitySupported;
+    window.__gosx_runtime_api.runtimeCapabilityStatus = runtimeCapabilityStatus;
+    window.__gosx_runtime_api.engineCapabilityStatus = engineCapabilityStatus;
+  }
+
   // Scene3D shared API — exposed for the async bootstrap-feature-scene3d.js
   // chunk. Files 11-20 (scene-math through scene-mount) depend on these
   // functions via closure capture in the monolithic bootstrap.js. When
@@ -6105,6 +6245,10 @@
     sceneBool,
     sceneBoundsDepthMetrics,
     sceneBoundsViewCulled,
+    buildSceneWorldDrawPlan: typeof buildSceneWorldDrawPlan === "function" ? buildSceneWorldDrawPlan : undefined,
+    createSceneWorldDrawScratch: typeof createSceneWorldDrawScratch === "function" ? createSceneWorldDrawScratch : undefined,
+    createSceneThickLineScratch: typeof createSceneThickLineScratch === "function" ? createSceneThickLineScratch : undefined,
+    expandSceneThickLineIntoScratch: typeof expandSceneThickLineIntoScratch === "function" ? expandSceneThickLineIntoScratch : undefined,
     sceneBundleNeedsThickLines,
     sceneCameraEquivalent,
     sceneOrthographicBounds,
@@ -6143,6 +6287,7 @@
     scenePBRViewMatrix: typeof scenePBRViewMatrix === "function" ? scenePBRViewMatrix : undefined,
     sceneShadowLightSpaceMatrix: typeof sceneShadowLightSpaceMatrix === "function" ? sceneShadowLightSpaceMatrix : undefined,
     sceneShadowComputeBounds: typeof sceneShadowComputeBounds === "function" ? sceneShadowComputeBounds : undefined,
+    generateInstancedGeometry: typeof generateInstancedGeometry === "function" ? generateInstancedGeometry : undefined,
 
     // Post-fx helpers from 15a-scene-postfx-shared.js.
     resolvePostFXFactor: typeof resolvePostFXFactor === "function" ? resolvePostFXFactor : undefined,

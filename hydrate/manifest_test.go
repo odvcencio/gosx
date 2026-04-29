@@ -219,6 +219,54 @@ func TestManifestAddHub(t *testing.T) {
 	}
 }
 
+func TestManifestAddHubWithInput(t *testing.T) {
+	m := NewManifest()
+	id := m.AddHubWithInput("fight", "/ws/fight/abc", []HubBinding{
+		{Event: "tick", Signal: "$fight"},
+	}, &HubInputConfig{
+		Mode:           "fighting",
+		Event:          "input",
+		ReadyEvent:     "ready",
+		TrainingEvent:  "training",
+		Signal:         "$fightInput",
+		TrainingSignal: "$fightTrainingUI",
+		TouchRoot:      "#touch-controls",
+		Player:         2,
+		Local:          true,
+		SlotToken:      "slot-two",
+		SendEveryMS:    16,
+	})
+
+	if id != "gosx-hub-0" {
+		t.Fatalf("expected gosx-hub-0, got %s", id)
+	}
+	if len(m.Hubs) != 1 || m.Hubs[0].Input == nil {
+		t.Fatalf("expected hub input config, got %#v", m.Hubs)
+	}
+	if m.Hubs[0].Input.Mode != "fighting" || m.Hubs[0].Input.Player != 2 {
+		t.Fatalf("unexpected hub input config %#v", m.Hubs[0].Input)
+	}
+}
+
+func TestManifestClientIdentity(t *testing.T) {
+	m := NewManifest()
+	m.SetClientIdentity(ClientIdentityConfig{
+		StorageKey:        "test.client",
+		CookieName:        "test_client",
+		LegacyCookieNames: []string{"old_client"},
+		HeaderName:        "X-Test-Client",
+		GlobalName:        "__testIdentity",
+		Prefix:            "tc-",
+	})
+
+	if m.ClientIdentity == nil {
+		t.Fatal("expected client identity config")
+	}
+	if m.ClientIdentity.CookieName != "test_client" || m.ClientIdentity.Prefix != "tc-" {
+		t.Fatalf("unexpected client identity config %#v", m.ClientIdentity)
+	}
+}
+
 func TestManifestAddEngineWithPixelSurface(t *testing.T) {
 	m := NewManifest()
 	vsync := false

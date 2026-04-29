@@ -18,6 +18,7 @@ package engine
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 )
 
@@ -50,7 +51,16 @@ const (
 	CapGamepad      Capability = "gamepad"
 	CapKeyboard     Capability = "keyboard"
 	CapPointer      Capability = "pointer"
+	CapPointerLock  Capability = "pointer-lock"
 	CapTextInput    Capability = "text-input"
+
+	CapWebGPUTimestampQuery         Capability = "webgpu:timestamp-query"
+	CapWebGPUIndirectFirstInstance  Capability = "webgpu:indirect-first-instance"
+	CapWebGPUShaderF16              Capability = "webgpu:shader-f16"
+	CapWebGPUTextureCompressionBC   Capability = "webgpu:texture-compression-bc"
+	CapWebGPUTextureCompressionETC2 Capability = "webgpu:texture-compression-etc2"
+	CapWebGPUTextureCompressionASTC Capability = "webgpu:texture-compression-astc"
+	CapWebGPUSubgroups              Capability = "webgpu:subgroups"
 )
 
 // KindNeedsMount reports whether an engine kind attaches to a DOM mount.
@@ -272,12 +282,91 @@ func ValidateCapabilities(requested []Capability) error {
 	supported := map[Capability]bool{
 		CapVideo: true, CapCanvas: true, CapWebGL: true, CapWebGL2: true, CapWebGPU: true, CapCompute: true, CapWASM: true, CapPixelSurface: true,
 		CapAnimation: true, CapStorage: true, CapFetch: true, CapAudio: true,
-		CapWorker: true, CapGamepad: true, CapKeyboard: true, CapPointer: true, CapTextInput: true,
+		CapWorker: true, CapGamepad: true, CapKeyboard: true, CapPointer: true, CapPointerLock: true, CapTextInput: true,
 	}
 	for _, cap := range requested {
-		if !supported[cap] {
-			return fmt.Errorf("unsupported engine capability: %q", cap)
+		normalized := Capability(strings.ToLower(strings.TrimSpace(string(cap))))
+		if supported[normalized] || webGPUCapabilitySupported(normalized) {
+			continue
 		}
+		return fmt.Errorf("unsupported engine capability: %q", cap)
 	}
 	return nil
+}
+
+func webGPUCapabilitySupported(cap Capability) bool {
+	if webGPULimitCapabilitySupported(cap) {
+		return true
+	}
+	switch cap {
+	case CapWebGPUTimestampQuery,
+		CapWebGPUIndirectFirstInstance,
+		CapWebGPUShaderF16,
+		CapWebGPUTextureCompressionBC,
+		CapWebGPUTextureCompressionETC2,
+		CapWebGPUTextureCompressionASTC,
+		CapWebGPUSubgroups,
+		"webgpu:texture-compression-bc-sliced-3d",
+		"webgpu:texture-compression-astc-sliced-3d",
+		"webgpu:depth-clip-control",
+		"webgpu:depth32float-stencil8",
+		"webgpu:float32-filterable",
+		"webgpu:float32-blendable",
+		"webgpu:rg11b10ufloat-renderable",
+		"webgpu:bgra8unorm-storage",
+		"webgpu:clip-distances",
+		"webgpu:dual-source-blending",
+		"webgpu:subgroups-f16":
+		return true
+	default:
+		return false
+	}
+}
+
+func webGPULimitCapabilitySupported(cap Capability) bool {
+	value := string(cap)
+	for _, prefix := range []string{
+		"webgpu:limit:",
+		"webgpu:device-limit:",
+		"webgpu:adapter-limit:",
+		"webgpu-limit:",
+	} {
+		if strings.HasPrefix(value, prefix) {
+			return validWebGPULimitRequirement(strings.TrimPrefix(value, prefix))
+		}
+	}
+	return false
+}
+
+func validWebGPULimitRequirement(requirement string) bool {
+	name, rest, ok := splitWebGPULimitRequirement(requirement)
+	if !ok || name == "" || rest == "" {
+		return false
+	}
+	for _, ch := range name {
+		if (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') || ch == '_' || ch == '-' || ch == '.' {
+			continue
+		}
+		return false
+	}
+	hasDigit := false
+	for _, ch := range rest {
+		if (ch >= '0' && ch <= '9') || ch == '.' {
+			if ch >= '0' && ch <= '9' {
+				hasDigit = true
+			}
+			continue
+		}
+		return false
+	}
+	return hasDigit && strings.Count(rest, ".") <= 1
+}
+
+func splitWebGPULimitRequirement(requirement string) (name, value string, ok bool) {
+	for _, op := range []string{">=", "<=", "==", ">", "<", "=", ":"} {
+		if idx := strings.Index(requirement, op); idx >= 0 {
+			return strings.TrimSpace(requirement[:idx]), strings.TrimSpace(requirement[idx+len(op):]), true
+		}
+	}
+	return "", "", false
 }

@@ -25,6 +25,9 @@ type Manifest struct {
 	// Hubs lists realtime hub connections the client should establish.
 	Hubs []HubEntry `json:"hubs,omitempty"`
 
+	// ClientIdentity describes optional browser-owned client identity state.
+	ClientIdentity *ClientIdentityConfig `json:"clientIdentity,omitempty"`
+
 	// Bundles maps bundle IDs to WASM asset paths.
 	Bundles map[string]BundleRef `json:"bundles"`
 
@@ -83,12 +86,97 @@ type HubEntry struct {
 
 	// Bindings map hub events to shared island signals.
 	Bindings []HubBinding `json:"bindings,omitempty"`
+
+	// Input describes optional browser input forwarding owned by the GoSX
+	// bootstrap rather than page-authored JavaScript.
+	Input *HubInputConfig `json:"input,omitempty"`
 }
 
 // HubBinding maps a hub event to a shared signal name.
 type HubBinding struct {
 	Event  string `json:"event"`
 	Signal string `json:"signal"`
+}
+
+// HubInputConfig lets the browser bootstrap forward bounded, page-declared
+// input state to a realtime hub.
+type HubInputConfig struct {
+	// Mode selects the input translator. Empty uses a raw browser profile;
+	// "fighting" maps keyboard, touch controls, and gamepads to fight inputs.
+	Mode string `json:"mode,omitempty"`
+
+	// Event is the hub event used for input snapshots. Defaults to "input".
+	Event string `json:"event,omitempty"`
+
+	// ReadyEvent is sent once the socket opens. Defaults to "ready".
+	ReadyEvent string `json:"readyEvent,omitempty"`
+
+	// TrainingEvent is used for bootstrap-owned training shortcuts.
+	TrainingEvent string `json:"trainingEvent,omitempty"`
+
+	// Signal receives local input/cue state for islands.
+	Signal string `json:"signal,omitempty"`
+
+	// TrainingSignal receives local training overlay state for islands.
+	TrainingSignal string `json:"trainingSignal,omitempty"`
+
+	// TouchRoot limits data-dir/data-btn touch controls to a page region.
+	TouchRoot string `json:"touchRoot,omitempty"`
+
+	// Player is the local player number for online play.
+	Player int `json:"player,omitempty"`
+
+	// Local mirrors both players from one browser using pad 0/1 plus keyboard.
+	Local bool `json:"local,omitempty"`
+
+	// SlotToken is included in ready/input/training payloads when present.
+	SlotToken string `json:"slotToken,omitempty"`
+
+	// SendEveryMS clamps the input send cadence. Defaults to 16ms.
+	SendEveryMS int `json:"sendEveryMs,omitempty"`
+
+	// Root scopes page-level input controllers.
+	Root string `json:"root,omitempty"`
+
+	// Username is included in lobby/join payloads for menu controllers.
+	Username string `json:"username,omitempty"`
+
+	// FightPath is the navigation target after a match is locked.
+	FightPath string `json:"fightPath,omitempty"`
+
+	// CPUEndpoint starts a solo match for arcade-select controllers.
+	CPUEndpoint string `json:"cpuEndpoint,omitempty"`
+
+	// LocalEndpoint starts a same-browser versus match.
+	LocalEndpoint string `json:"localEndpoint,omitempty"`
+
+	// FightCurrentEndpoint stores the current match before navigation.
+	FightCurrentEndpoint string `json:"fightCurrentEndpoint,omitempty"`
+
+	// MinLocalGamepads is required before same-browser versus can start.
+	MinLocalGamepads int `json:"minLocalGamepads,omitempty"`
+
+	// AttractSignal receives attract-mode state.
+	AttractSignal string `json:"attractSignal,omitempty"`
+
+	// LobbySignal receives lobby status snapshots.
+	LobbySignal string `json:"lobbySignal,omitempty"`
+
+	// VSSignal receives pre-fight transition state.
+	VSSignal string `json:"vsSignal,omitempty"`
+}
+
+// ClientIdentityConfig lets the GoSX bootstrap maintain a stable anonymous
+// browser identity without app-authored JavaScript.
+type ClientIdentityConfig struct {
+	StorageKey        string   `json:"storageKey,omitempty"`
+	CookieName        string   `json:"cookieName,omitempty"`
+	LegacyCookieNames []string `json:"legacyCookieNames,omitempty"`
+	HeaderName        string   `json:"headerName,omitempty"`
+	GlobalName        string   `json:"globalName,omitempty"`
+	Prefix            string   `json:"prefix,omitempty"`
+	MaxAgeSeconds     int      `json:"maxAgeSeconds,omitempty"`
+	SameSite          string   `json:"sameSite,omitempty"`
 }
 
 // RuntimeRef points to the shared WASM runtime.
@@ -295,14 +383,26 @@ func (m *Manifest) AddEngineWithRuntimeRequirements(component, kind, programRef,
 
 // AddHub registers a realtime hub connection and returns the assigned ID.
 func (m *Manifest) AddHub(name, path string, bindings []HubBinding) string {
+	return m.AddHubWithInput(name, path, bindings, nil)
+}
+
+// AddHubWithInput registers a realtime hub connection with optional
+// bootstrap-owned browser input forwarding.
+func (m *Manifest) AddHubWithInput(name, path string, bindings []HubBinding, input *HubInputConfig) string {
 	id := hubID(len(m.Hubs))
 	m.Hubs = append(m.Hubs, HubEntry{
 		ID:       id,
 		Name:     name,
 		Path:     path,
 		Bindings: bindings,
+		Input:    input,
 	})
 	return id
+}
+
+// SetClientIdentity configures bootstrap-owned client identity state.
+func (m *Manifest) SetClientIdentity(config ClientIdentityConfig) {
+	m.ClientIdentity = &config
 }
 
 func engineID(n int) string {

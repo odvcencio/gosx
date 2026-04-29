@@ -32,7 +32,7 @@ struct Scene {
 };
 
 struct Material {
-  baseColor     : vec4<f32>, // rgb + a  (a unused for R2, reserved for alpha)
+  baseColor     : vec4<f32>, // rgba
   pbrParams     : vec4<f32>, // x=metalness, y=roughness, z=emissiveStrength, w=useVertexColor
   emissive      : vec4<f32>,
   textureParams : vec4<f32>, // x=hasBaseColor, y=hasNormal, z=hasRoughMap, w=hasMetalMap
@@ -243,7 +243,7 @@ fn fs_main(in : VSOut) -> FSOut {
   let emissive = emissiveTint * material.pbrParams.z;
   let color = direct + ambient + cubeIBL + emissive;
   var out : FSOut;
-  out.color  = vec4<f32>(color, 1.0);
+  out.color  = vec4<f32>(color, clamp(material.baseColor.a, 0.0, 1.0));
   out.pickId = in.pickId;
   return out;
 }

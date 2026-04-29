@@ -15,6 +15,7 @@
     const activateInputProviders = api.activateInputProviders;
     const releaseInputProviders = api.releaseInputProviders;
     const capabilityList = api.capabilityList;
+    const requiredCapabilityList = api.requiredCapabilityList;
 
   const DELEGATED_EVENTS = [
     "click", "input", "change", "submit",
@@ -164,6 +165,20 @@
     window.__gosx.computeIslands.delete(islandID);
   };
 
+  function entryRequiresAsyncWebGPUProbe(entry) {
+    const required = requiredCapabilityList(entry);
+    return required.some((capability) => capability.indexOf("webgpu:") === 0 || capability.indexOf("webgpu-feature:") === 0);
+  }
+
+  async function prepareRuntimeCapabilityProbe(entry) {
+    if (!entryRequiresAsyncWebGPUProbe(entry)) {
+      return;
+    }
+    if (typeof window !== "undefined" && typeof window.__gosx_scene3d_webgpu_probe_ready === "function") {
+      await window.__gosx_scene3d_webgpu_probe_ready();
+    }
+  }
+
   async function hydrateIsland(entry) {
     const root = islandRoot(entry);
     if (!root) return;
@@ -178,6 +193,7 @@
 
   async function hydrateComputeIsland(entry) {
     if (!entry || entry.static) return;
+    await prepareRuntimeCapabilityProbe(entry);
     const capabilityStatus = runtimeCapabilityStatus(entry);
     if (!capabilityStatus.ok) {
       reportMissingComputeIslandCapabilities(entry, capabilityStatus);

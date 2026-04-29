@@ -284,10 +284,6 @@ func (r *Renderer) ensureBloom(surfaceWidth, surfaceHeight int, cfg bloomConfig)
 	if r.bloom != nil && r.bloom.width == w && r.bloom.height == h && r.bloom.surfaceWidth == surfaceWidth && r.bloom.surfaceHeight == surfaceHeight {
 		return nil
 	}
-	if r.bloom != nil {
-		destroyBloomResources(r.bloom)
-		r.bloom = nil
-	}
 
 	texA, err := r.device.CreateTexture(gpu.TextureDesc{
 		Width: w, Height: h, Format: r.hdrFormat,
@@ -339,6 +335,17 @@ func (r *Renderer) ensureBloom(surfaceWidth, surfaceHeight int, cfg bloomConfig)
 
 	viewA := texA.CreateView()
 	viewB := texB.CreateView()
+	next := &bloomResources{
+		width: w, height: h,
+		surfaceWidth: surfaceWidth, surfaceHeight: surfaceHeight,
+		texA:          texA,
+		texB:          texB,
+		viewA:         viewA,
+		viewB:         viewB,
+		paramsUniform: paramsUniform,
+		blurHUniform:  blurHUniform,
+		blurVUniform:  blurVUniform,
+	}
 
 	brightBG, err := r.device.CreateBindGroup(gpu.BindGroupDesc{
 		Layout: r.brightBGLayout,
@@ -350,13 +357,10 @@ func (r *Renderer) ensureBloom(surfaceWidth, surfaceHeight int, cfg bloomConfig)
 		Label: "bundle.bloom.bright.bg",
 	})
 	if err != nil {
-		texA.Destroy()
-		texB.Destroy()
-		paramsUniform.Destroy()
-		blurHUniform.Destroy()
-		blurVUniform.Destroy()
+		destroyBloomResources(next)
 		return fmt.Errorf("bundle.ensureBloom: %w", err)
 	}
+	next.brightBindGrp = brightBG
 	blurHBG, err := r.device.CreateBindGroup(gpu.BindGroupDesc{
 		Layout: r.blurBGLayout,
 		Entries: []gpu.BindGroupEntry{
@@ -367,13 +371,10 @@ func (r *Renderer) ensureBloom(surfaceWidth, surfaceHeight int, cfg bloomConfig)
 		Label: "bundle.bloom.blurH.bg",
 	})
 	if err != nil {
-		texA.Destroy()
-		texB.Destroy()
-		paramsUniform.Destroy()
-		blurHUniform.Destroy()
-		blurVUniform.Destroy()
+		destroyBloomResources(next)
 		return fmt.Errorf("bundle.ensureBloom: %w", err)
 	}
+	next.blurHBindGrp = blurHBG
 	blurVBG, err := r.device.CreateBindGroup(gpu.BindGroupDesc{
 		Layout: r.blurBGLayout,
 		Entries: []gpu.BindGroupEntry{
@@ -384,26 +385,10 @@ func (r *Renderer) ensureBloom(surfaceWidth, surfaceHeight int, cfg bloomConfig)
 		Label: "bundle.bloom.blurV.bg",
 	})
 	if err != nil {
-		texA.Destroy()
-		texB.Destroy()
-		paramsUniform.Destroy()
-		blurHUniform.Destroy()
-		blurVUniform.Destroy()
+		destroyBloomResources(next)
 		return fmt.Errorf("bundle.ensureBloom: %w", err)
 	}
-
-	r.bloom = &bloomResources{
-		width: w, height: h,
-		surfaceWidth: surfaceWidth, surfaceHeight: surfaceHeight,
-		texA: texA, texB: texB,
-		viewA: viewA, viewB: viewB,
-		brightBindGrp: brightBG,
-		blurHBindGrp:  blurHBG,
-		blurVBindGrp:  blurVBG,
-		paramsUniform: paramsUniform,
-		blurHUniform:  blurHUniform,
-		blurVUniform:  blurVUniform,
-	}
+	next.blurVBindGrp = blurVBG
 
 	// Rebuild the compose present bind group to reference the new viewA.
 	bg, err := r.device.CreateBindGroup(gpu.BindGroupDesc{
@@ -418,8 +403,16 @@ func (r *Renderer) ensureBloom(surfaceWidth, surfaceHeight int, cfg bloomConfig)
 		Label: "bundle.present.compose.bg",
 	})
 	if err != nil {
+		destroyBloomResources(next)
 		return fmt.Errorf("bundle.ensureBloom (compose bg): %w", err)
 	}
+	if r.bloom != nil {
+		destroyBloomResources(r.bloom)
+	}
+	if r.presentBindGrp != nil {
+		r.presentBindGrp.Destroy()
+	}
+	r.bloom = next
 	r.presentBindGrp = bg
 	return nil
 }
@@ -562,5 +555,14 @@ func destroyBloomResources(b *bloomResources) {
 	}
 	if b.blurVUniform != nil {
 		b.blurVUniform.Destroy()
+	}
+	if b.brightBindGrp != nil {
+		b.brightBindGrp.Destroy()
+	}
+	if b.blurHBindGrp != nil {
+		b.blurHBindGrp.Destroy()
+	}
+	if b.blurVBindGrp != nil {
+		b.blurVBindGrp.Destroy()
 	}
 }

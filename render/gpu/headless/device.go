@@ -1044,7 +1044,7 @@ func (r *RenderPassEncoder) rasterizeDraw(vertexCount, instanceCount, firstVerte
 		for base := 0; base+2 < vertexCount; base += 3 {
 			var pts [3][2]float32
 			var depths [3]float32
-			var cols [3][3]float32
+			var cols [3][4]float32
 			valid := true
 			for i := 0; i < 3; i++ {
 				vertex := firstVertex + base + i
@@ -1070,9 +1070,11 @@ func (r *RenderPassEncoder) rasterizeDraw(vertexCount, instanceCount, firstVerte
 					if instanceBuf != nil {
 						normal = transformDirection(model, normal)
 					}
-					cols[i] = lighting.shade(baseColor, normal, worldPos)
+					lit := lighting.shade([3]float32{baseColor[0], baseColor[1], baseColor[2]}, normal, worldPos)
+					cols[i] = [4]float32{lit[0], lit[1], lit[2], baseColor[3]}
 				} else {
-					cols[i] = readColor(colorBuf, vertex)
+					color := readColor(colorBuf, vertex)
+					cols[i] = [4]float32{color[0], color[1], color[2], 1}
 				}
 			}
 			if valid {
@@ -1448,6 +1450,7 @@ func readUV(buf *Buffer, vertex int) [2]float32 {
 
 type materialState struct {
 	baseColor        [3]float32
+	opacity          float32
 	emissive         [3]float32
 	emissiveScale    float32
 	useVertexColor   bool
@@ -1458,6 +1461,7 @@ type materialState struct {
 func defaultMaterialState() materialState {
 	return materialState{
 		baseColor:      [3]float32{1, 1, 1},
+		opacity:        1,
 		useVertexColor: true,
 		baseColorLayer: -1,
 	}
@@ -1485,6 +1489,7 @@ func (r *RenderPassEncoder) activeMaterial() materialState {
 				readFloat32(buf.data, offset+4),
 				readFloat32(buf.data, offset+8),
 			}
+			state.opacity = clamp01f(readFloat32(buf.data, offset+12))
 			state.emissiveScale = readFloat32(buf.data, offset+24)
 			state.useVertexColor = readFloat32(buf.data, offset+28) >= 0.5
 			state.emissive = [3]float32{
@@ -1504,7 +1509,7 @@ func (r *RenderPassEncoder) activeMaterial() materialState {
 	return state
 }
 
-func (m materialState) resolve(vertex [3]float32, uv [2]float32) [3]float32 {
+func (m materialState) resolve(vertex [3]float32, uv [2]float32) [4]float32 {
 	base := [3]float32{
 		clamp01f(m.baseColor[0] + m.emissive[0]*m.emissiveScale),
 		clamp01f(m.baseColor[1] + m.emissive[1]*m.emissiveScale),
@@ -1514,10 +1519,11 @@ func (m materialState) resolve(vertex [3]float32, uv [2]float32) [3]float32 {
 		base = vertex
 	}
 	sample := sampleTextureRGB(m.baseColorTexture, m.baseColorLayer, uv)
-	return [3]float32{
+	return [4]float32{
 		clamp01f(base[0] * sample[0]),
 		clamp01f(base[1] * sample[1]),
 		clamp01f(base[2] * sample[2]),
+		m.opacity,
 	}
 }
 
@@ -1710,7 +1716,7 @@ func writeFloat32(data []byte, offset int, v float32) {
 	binary.LittleEndian.PutUint32(data[offset:offset+4], math.Float32bits(v))
 }
 
-func rasterizeTriangle(target rasterTarget, pts [3][2]float32, depths [3]float32, cols [3][3]float32) {
+func rasterizeTriangle(target rasterTarget, pts [3][2]float32, depths [3]float32, cols [3][4]float32) {
 	area := edge(pts[0], pts[1], pts[2])
 	if math.Abs(float64(area)) < 1e-6 {
 		return
@@ -1742,7 +1748,7 @@ func rasterizeTriangle(target rasterTarget, pts [3][2]float32, depths [3]float32
 				R: clampByte(cols[0][0]*w0 + cols[1][0]*w1 + cols[2][0]*w2),
 				G: clampByte(cols[0][1]*w0 + cols[1][1]*w1 + cols[2][1]*w2),
 				B: clampByte(cols[0][2]*w0 + cols[1][2]*w1 + cols[2][2]*w2),
-				A: 255,
+				A: clampByte(cols[0][3]*w0 + cols[1][3]*w1 + cols[2][3]*w2),
 			})
 			if target.id != nil {
 				writeTextureUint32(target.id, target.idLayer, x, y, target.pickID)

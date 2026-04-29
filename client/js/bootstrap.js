@@ -3748,6 +3748,65 @@
     return clipVolume * requested * gosxAudioBusVolume(opts.bus || (clip && clip.bus) || "master");
   }
 
+  function gosxAudioVector3(raw) {
+    if (Array.isArray(raw)) {
+      return {
+        x: gosxNumber(raw[0], 0),
+        y: gosxNumber(raw[1], 0),
+        z: gosxNumber(raw[2], 0),
+      };
+    }
+    if (raw && typeof raw === "object") {
+      return {
+        x: gosxNumber(raw.x, 0),
+        y: gosxNumber(raw.y, 0),
+        z: gosxNumber(raw.z, 0),
+      };
+    }
+    return null;
+  }
+
+  function gosxAudioSetParam(param, value) {
+    if (param && typeof param.setValueAtTime === "function") {
+      param.setValueAtTime(value, 0);
+      return;
+    }
+    if (param && Object.prototype.hasOwnProperty.call(param, "value")) {
+      param.value = value;
+    }
+  }
+
+  function gosxAudioApplyPannerPosition(panner, position) {
+    if (!panner || !position) {
+      return;
+    }
+    if (typeof panner.setPosition === "function") {
+      panner.setPosition(position.x, position.y, position.z);
+      return;
+    }
+    gosxAudioSetParam(panner.positionX, position.x);
+    gosxAudioSetParam(panner.positionY, position.y);
+    gosxAudioSetParam(panner.positionZ, position.z);
+  }
+
+  function gosxAudioCreateSpatialPanner(audioContext, options) {
+    const position = gosxAudioVector3(options && options.position);
+    if (!position || !audioContext || typeof audioContext.createPanner !== "function") {
+      return null;
+    }
+    const panner = audioContext.createPanner();
+    if (!panner) {
+      return null;
+    }
+    panner.panningModel = String(options.panningModel || "HRTF");
+    panner.distanceModel = String(options.distanceModel || "inverse");
+    panner.refDistance = Math.max(0.001, gosxNumber(options.refDistance, 1));
+    panner.maxDistance = Math.max(panner.refDistance, gosxNumber(options.maxDistance, 10000));
+    panner.rolloffFactor = Math.max(0, gosxNumber(options.rolloffFactor, 1));
+    gosxAudioApplyPannerPosition(panner, position);
+    return panner;
+  }
+
   function gosxAudioLoadBuffer(clip) {
     if (!clip) {
       return Promise.resolve(null);
@@ -3792,7 +3851,11 @@
         gain.gain.value = gosxAudioPlaybackVolume(clip, options);
       }
       let tail = gain || source;
-      if (typeof audioContext.createStereoPanner === "function" && options && Object.prototype.hasOwnProperty.call(options, "pan")) {
+      const spatialPanner = gosxAudioCreateSpatialPanner(audioContext, options || {});
+      if (spatialPanner) {
+        tail.connect(spatialPanner);
+        tail = spatialPanner;
+      } else if (typeof audioContext.createStereoPanner === "function" && options && Object.prototype.hasOwnProperty.call(options, "pan")) {
         const panner = audioContext.createStereoPanner();
         panner.pan.value = Math.max(-1, Math.min(1, gosxNumber(options.pan, 0)));
         tail.connect(panner);
@@ -3800,7 +3863,7 @@
       }
       tail.connect(audioContext.destination);
       source.start(0);
-      gosxAudioState.handles.set(handleID, { kind: "webaudio", clip: clip.id, source, gain, options: Object.assign({}, options || {}) });
+      gosxAudioState.handles.set(handleID, { kind: "webaudio", clip: clip.id, source, gain, panner: spatialPanner, options: Object.assign({}, options || {}) });
       source.onended = function() {
         gosxAudioState.handles.delete(handleID);
       };
@@ -5407,7 +5470,8 @@
     if (!name) {
       return true;
     }
-    if (Object.prototype.hasOwnProperty.call(browserCapabilityCache, name)) {
+    const dynamicWebGPUFeature = name.indexOf("webgpu:") === 0 || name.indexOf("webgpu-feature:") === 0;
+    if (!dynamicWebGPUFeature && Object.prototype.hasOwnProperty.call(browserCapabilityCache, name)) {
       return browserCapabilityCache[name];
     }
     let supported = false;
@@ -5416,11 +5480,32 @@
     } catch (_e) {
       supported = false;
     }
+    if (dynamicWebGPUFeature) {
+      return Boolean(supported);
+    }
     browserCapabilityCache[name] = Boolean(supported);
     return browserCapabilityCache[name];
   }
 
   function detectBrowserCapability(name) {
+    if (name.indexOf("webgpu:adapter-limit:") === 0) {
+      return detectWebGPULimitCapability(name.slice("webgpu:adapter-limit:".length), "adapter");
+    }
+    if (name.indexOf("webgpu:device-limit:") === 0) {
+      return detectWebGPULimitCapability(name.slice("webgpu:device-limit:".length), "device");
+    }
+    if (name.indexOf("webgpu:limit:") === 0) {
+      return detectWebGPULimitCapability(name.slice("webgpu:limit:".length), "device");
+    }
+    if (name.indexOf("webgpu-limit:") === 0) {
+      return detectWebGPULimitCapability(name.slice("webgpu-limit:".length), "device");
+    }
+    if (name.indexOf("webgpu:") === 0) {
+      return detectWebGPUFeatureCapability(name.slice("webgpu:".length));
+    }
+    if (name.indexOf("webgpu-feature:") === 0) {
+      return detectWebGPUFeatureCapability(name.slice("webgpu-feature:".length));
+    }
     switch (name) {
       case "animation":
         return typeof requestAnimationFrame === "function";
@@ -5440,6 +5525,13 @@
       case "keyboard":
       case "pointer":
         return Boolean(document && typeof document.addEventListener === "function");
+      case "pointer-lock":
+        return Boolean(
+          document &&
+          (typeof document.exitPointerLock === "function" || "pointerLockElement" in document) &&
+          typeof document.createElement === "function" &&
+          typeof document.createElement("canvas").requestPointerLock === "function"
+        );
       case "storage":
         return canUseLocalStorage();
       case "text-input":
@@ -5462,6 +5554,97 @@
       default:
         return false;
     }
+  }
+
+  function detectWebGPUFeatureCapability(feature) {
+    const normalized = normalizeCapabilityName(feature);
+    if (!normalized || !browserCapabilitySupported("webgpu")) {
+      return false;
+    }
+    const diagnostics = typeof window !== "undefined" && typeof window.__gosx_scene3d_webgpu_diagnostics === "function"
+      ? window.__gosx_scene3d_webgpu_diagnostics()
+      : null;
+    if (!diagnostics || diagnostics.ready !== true) {
+      return false;
+    }
+    const deviceFeatures = Array.isArray(diagnostics.deviceFeatures) ? diagnostics.deviceFeatures : [];
+    const requestedFeatures = Array.isArray(diagnostics.requestedFeatures) ? diagnostics.requestedFeatures : [];
+    return deviceFeatures.indexOf(normalized) >= 0 || requestedFeatures.indexOf(normalized) >= 0;
+  }
+
+  function detectWebGPULimitCapability(requirement, scope) {
+    if (!browserCapabilitySupported("webgpu")) {
+      return false;
+    }
+    const diagnostics = typeof window !== "undefined" && typeof window.__gosx_scene3d_webgpu_diagnostics === "function"
+      ? window.__gosx_scene3d_webgpu_diagnostics()
+      : null;
+    if (!diagnostics || diagnostics.ready !== true) {
+      return false;
+    }
+    const parsed = parseWebGPULimitRequirement(requirement);
+    if (!parsed) {
+      return false;
+    }
+    const primary = scope === "adapter" ? diagnostics.adapterLimits : diagnostics.deviceLimits;
+    const fallback = scope === "adapter" ? diagnostics.deviceLimits : diagnostics.adapterLimits;
+    let actual = lookupWebGPULimit(primary, parsed.name);
+    if (!Number.isFinite(actual)) {
+      actual = lookupWebGPULimit(fallback, parsed.name);
+    }
+    if (!Number.isFinite(actual)) {
+      return false;
+    }
+    switch (parsed.operator) {
+      case ">":
+        return actual > parsed.value;
+      case "<":
+        return actual < parsed.value;
+      case "<=":
+        return actual <= parsed.value;
+      case "=":
+      case "==":
+        return actual === parsed.value;
+      case ">=":
+      default:
+        return actual >= parsed.value;
+    }
+  }
+
+  function parseWebGPULimitRequirement(requirement) {
+    const text = String(requirement || "").trim();
+    const match = text.match(/^([a-z0-9_.:-]+)\s*(>=|<=|==|>|<|=|:)\s*([0-9]+(?:\.[0-9]+)?)$/i);
+    if (!match) {
+      return null;
+    }
+    const value = Number(match[3]);
+    if (!Number.isFinite(value)) {
+      return null;
+    }
+    return {
+      name: match[1],
+      operator: match[2] === ":" ? ">=" : match[2],
+      value,
+    };
+  }
+
+  function lookupWebGPULimit(limits, name) {
+    if (!limits || typeof limits !== "object") {
+      return NaN;
+    }
+    const wanted = normalizeWebGPULimitName(name);
+    for (const key of Object.keys(limits)) {
+      if (normalizeWebGPULimitName(key) !== wanted) {
+        continue;
+      }
+      const value = Number(limits[key]);
+      return Number.isFinite(value) ? value : NaN;
+    }
+    return NaN;
+  }
+
+  function normalizeWebGPULimitName(name) {
+    return String(name || "").trim().toLowerCase().replace(/[^a-z0-9]/g, "");
   }
 
   function canCreateElement(tagName) {
@@ -5652,12 +5835,17 @@
       const navigatorRef = window.navigator;
       if (navigatorRef && typeof navigatorRef.getGamepads === "function") {
         const pads = navigatorRef.getGamepads() || [];
-        const pad = pads[0];
-        if (pad) {
-          publishGamepadSignals(pad);
-        } else {
-          queueInputSignal("$input.gamepad0.connected", false);
+        let connected = 0;
+        for (let i = 0; i < 2; i++) {
+          const pad = pads[i];
+          if (pad && pad.connected !== false) {
+            connected += 1;
+            publishGamepadSignals(pad, i);
+          } else {
+            queueInputSignal("$input.gamepad" + i + ".connected", false);
+          }
         }
+        queueInputSignal("$input.gamepad.count", connected);
       }
       frameHandle = engineFrame(pollGamepad);
     }
@@ -5898,15 +6086,24 @@
     queueInputSignal("$input.pointer.buttons", 0);
   }
 
-  function publishGamepadSignals(pad) {
+  function publishGamepadSignals(pad, slot) {
+    const prefix = "$input.gamepad" + Math.max(0, Math.floor(sceneNumber(slot, 0)));
     const axes = Array.isArray(pad.axes) ? pad.axes : [];
-    queueInputSignal("$input.gamepad0.connected", true);
-    queueInputSignal("$input.gamepad0.leftX", sceneNumber(axes[0], 0));
-    queueInputSignal("$input.gamepad0.leftY", sceneNumber(axes[1], 0));
-    queueInputSignal("$input.gamepad0.rightX", sceneNumber(axes[2], 0));
-    queueInputSignal("$input.gamepad0.rightY", sceneNumber(axes[3], 0));
-    queueInputSignal("$input.gamepad0.buttonA", gamepadButtonPressed(pad, 0));
-    queueInputSignal("$input.gamepad0.buttonB", gamepadButtonPressed(pad, 1));
+    queueInputSignal(prefix + ".connected", true);
+    queueInputSignal(prefix + ".leftX", sceneNumber(axes[0], 0));
+    queueInputSignal(prefix + ".leftY", sceneNumber(axes[1], 0));
+    queueInputSignal(prefix + ".rightX", sceneNumber(axes[2], 0));
+    queueInputSignal(prefix + ".rightY", sceneNumber(axes[3], 0));
+    queueInputSignal(prefix + ".dpadUp", gamepadButtonPressed(pad, 12));
+    queueInputSignal(prefix + ".dpadDown", gamepadButtonPressed(pad, 13));
+    queueInputSignal(prefix + ".dpadLeft", gamepadButtonPressed(pad, 14));
+    queueInputSignal(prefix + ".dpadRight", gamepadButtonPressed(pad, 15));
+    queueInputSignal(prefix + ".buttonA", gamepadButtonPressed(pad, 0));
+    queueInputSignal(prefix + ".buttonB", gamepadButtonPressed(pad, 1));
+    queueInputSignal(prefix + ".buttonX", gamepadButtonPressed(pad, 2));
+    queueInputSignal(prefix + ".buttonY", gamepadButtonPressed(pad, 3));
+    queueInputSignal(prefix + ".buttonLB", gamepadButtonPressed(pad, 4));
+    queueInputSignal(prefix + ".buttonRB", gamepadButtonPressed(pad, 5));
   }
 
   function gamepadButtonPressed(pad, index) {
@@ -10848,6 +11045,12 @@
     return false;
   }
 
+  if (typeof window !== "undefined" && window.__gosx_runtime_api) {
+    window.__gosx_runtime_api.browserCapabilitySupported = browserCapabilitySupported;
+    window.__gosx_runtime_api.runtimeCapabilityStatus = runtimeCapabilityStatus;
+    window.__gosx_runtime_api.engineCapabilityStatus = engineCapabilityStatus;
+  }
+
   window.__gosx_scene3d_api = {
     appendSceneObjectToBundle,
     appendSceneSurfaceToBundle,
@@ -10902,6 +11105,10 @@
     sceneBool,
     sceneBoundsDepthMetrics,
     sceneBoundsViewCulled,
+    buildSceneWorldDrawPlan: typeof buildSceneWorldDrawPlan === "function" ? buildSceneWorldDrawPlan : undefined,
+    createSceneWorldDrawScratch: typeof createSceneWorldDrawScratch === "function" ? createSceneWorldDrawScratch : undefined,
+    createSceneThickLineScratch: typeof createSceneThickLineScratch === "function" ? createSceneThickLineScratch : undefined,
+    expandSceneThickLineIntoScratch: typeof expandSceneThickLineIntoScratch === "function" ? expandSceneThickLineIntoScratch : undefined,
     sceneBundleNeedsThickLines,
     sceneCameraEquivalent,
     sceneOrthographicBounds,
@@ -10936,6 +11143,7 @@
     scenePBRViewMatrix: typeof scenePBRViewMatrix === "function" ? scenePBRViewMatrix : undefined,
     sceneShadowLightSpaceMatrix: typeof sceneShadowLightSpaceMatrix === "function" ? sceneShadowLightSpaceMatrix : undefined,
     sceneShadowComputeBounds: typeof sceneShadowComputeBounds === "function" ? sceneShadowComputeBounds : undefined,
+    generateInstancedGeometry: typeof generateInstancedGeometry === "function" ? generateInstancedGeometry : undefined,
 
     resolvePostFXFactor: typeof resolvePostFXFactor === "function" ? resolvePostFXFactor : undefined,
     resolveShadowSize: typeof resolveShadowSize === "function" ? resolveShadowSize : undefined,
@@ -19879,6 +20087,159 @@ if (typeof window !== "undefined") {
   var _webgpuDeviceProbe = null;  // null = unprobed, false = unavailable, GPUDevice = ready
   var _webgpuAdapterReady = false;
   var _webgpuProbePromise = Promise.resolve(false);
+  var _webgpuSupportedFeatures = [];
+  var _webgpuRequestedFeatures = [];
+  var _webgpuAdapterLimits = {};
+  var _webgpuDeviceLimits = {};
+  var _webgpuAdapterInfo = {};
+  var _webgpuProbeError = "";
+  var _webgpuDeviceLostInfo = null;
+
+  var WEBGPU_OPTIONAL_FEATURES = [
+    "timestamp-query",
+    "indirect-first-instance",
+    "shader-f16",
+    "texture-compression-bc",
+    "texture-compression-bc-sliced-3d",
+    "texture-compression-etc2",
+    "texture-compression-astc",
+    "texture-compression-astc-sliced-3d",
+    "depth-clip-control",
+    "depth32float-stencil8",
+    "float32-filterable",
+    "float32-blendable",
+    "rg11b10ufloat-renderable",
+    "bgra8unorm-storage",
+    "clip-distances",
+    "dual-source-blending",
+    "subgroups",
+    "subgroups-f16",
+  ];
+
+  var WEBGPU_LIMIT_NAMES = [
+    "maxTextureDimension1D",
+    "maxTextureDimension2D",
+    "maxTextureDimension3D",
+    "maxTextureArrayLayers",
+    "maxBindGroups",
+    "maxBindGroupsPlusVertexBuffers",
+    "maxBindingsPerBindGroup",
+    "maxDynamicUniformBuffersPerPipelineLayout",
+    "maxDynamicStorageBuffersPerPipelineLayout",
+    "maxSampledTexturesPerShaderStage",
+    "maxSamplersPerShaderStage",
+    "maxStorageBuffersPerShaderStage",
+    "maxStorageTexturesPerShaderStage",
+    "maxUniformBuffersPerShaderStage",
+    "maxUniformBufferBindingSize",
+    "maxStorageBufferBindingSize",
+    "minUniformBufferOffsetAlignment",
+    "minStorageBufferOffsetAlignment",
+    "maxVertexBuffers",
+    "maxBufferSize",
+    "maxVertexAttributes",
+    "maxVertexBufferArrayStride",
+    "maxInterStageShaderComponents",
+    "maxInterStageShaderVariables",
+    "maxColorAttachments",
+    "maxColorAttachmentBytesPerSample",
+    "maxComputeWorkgroupStorageSize",
+    "maxComputeInvocationsPerWorkgroup",
+    "maxComputeWorkgroupSizeX",
+    "maxComputeWorkgroupSizeY",
+    "maxComputeWorkgroupSizeZ",
+    "maxComputeWorkgroupsPerDimension",
+  ];
+
+  function sceneWebGPUFeatureList(features) {
+    var out = [];
+    if (!features) return out;
+    if (typeof features.forEach === "function") {
+      features.forEach(function(value) {
+        if (typeof value === "string") out.push(value);
+      });
+    } else if (typeof features[Symbol.iterator] === "function") {
+      for (var entry of features) {
+        if (typeof entry === "string") out.push(entry);
+      }
+    } else if (Array.isArray(features)) {
+      out = features.filter(function(value) { return typeof value === "string"; });
+    }
+    out.sort();
+    return out.filter(function(value, index) { return index === 0 || out[index - 1] !== value; });
+  }
+
+  function sceneWebGPUFeatureSupported(adapter, feature) {
+    var features = adapter && adapter.features;
+    if (!features) return false;
+    if (typeof features.has === "function") {
+      return features.has(feature);
+    }
+    return sceneWebGPUFeatureList(features).indexOf(feature) >= 0;
+  }
+
+  function sceneWebGPURequestedFeatureList(adapter) {
+    var out = [];
+    for (var i = 0; i < WEBGPU_OPTIONAL_FEATURES.length; i++) {
+      var feature = WEBGPU_OPTIONAL_FEATURES[i];
+      if (!sceneWebGPUFeatureSupported(adapter, feature)) continue;
+      if (feature === "texture-compression-bc-sliced-3d" && !sceneWebGPUFeatureSupported(adapter, "texture-compression-bc")) continue;
+      if (feature === "texture-compression-astc-sliced-3d" && !sceneWebGPUFeatureSupported(adapter, "texture-compression-astc")) continue;
+      if (feature === "subgroups-f16" && (!sceneWebGPUFeatureSupported(adapter, "subgroups") || !sceneWebGPUFeatureSupported(adapter, "shader-f16"))) continue;
+      out.push(feature);
+    }
+    return out;
+  }
+
+  function sceneWebGPULimitsSnapshot(limits) {
+    var out = {};
+    if (!limits) return out;
+    for (var i = 0; i < WEBGPU_LIMIT_NAMES.length; i++) {
+      var name = WEBGPU_LIMIT_NAMES[i];
+      var value = limits[name];
+      if (Number.isFinite(Number(value))) {
+        out[name] = Number(value);
+      }
+    }
+    return out;
+  }
+
+  function sceneWebGPUAdapterInfoSnapshot(adapter) {
+    var info = adapter && adapter.info;
+    var out = {};
+    if (!info || typeof info !== "object") return out;
+    var keys = ["vendor", "architecture", "device", "description", "subgroupMinSize", "subgroupMaxSize"];
+    for (var i = 0; i < keys.length; i++) {
+      var key = keys[i];
+      var value = info[key];
+      if (typeof value === "string" && value) {
+        out[key] = value;
+      } else if (Number.isFinite(Number(value))) {
+        out[key] = Number(value);
+      }
+    }
+    return out;
+  }
+
+  function sceneWebGPUProbeSnapshot() {
+    return {
+      ready: !!_webgpuAdapterReady,
+      adapterAvailable: _webgpuAdapterProbe !== false && _webgpuAdapterProbe !== null,
+      deviceAvailable: _webgpuDeviceProbe !== false && _webgpuDeviceProbe !== null,
+      supportedFeatures: _webgpuSupportedFeatures.slice(),
+      requestedFeatures: _webgpuRequestedFeatures.slice(),
+      deviceFeatures: sceneWebGPUFeatureList(_webgpuDeviceProbe && _webgpuDeviceProbe.features),
+      adapterLimits: Object.assign({}, _webgpuAdapterLimits),
+      deviceLimits: Object.assign({}, _webgpuDeviceLimits),
+      adapterInfo: Object.assign({}, _webgpuAdapterInfo),
+      error: _webgpuProbeError,
+      lost: _webgpuDeviceLostInfo,
+    };
+  }
+
+  function sceneWebGPUDiagnostics() {
+    return sceneWebGPUProbeSnapshot();
+  }
 
   function _externalProbe() {
     if (typeof window !== "undefined" && typeof window.__gosx_scene3d_webgpu_probe === "function") {
@@ -19896,8 +20257,15 @@ if (typeof window !== "undefined") {
         adapter: _webgpuAdapterProbe,
         device: _webgpuDeviceProbe,
         ready: _webgpuAdapterReady,
+        supportedFeatures: _webgpuSupportedFeatures.slice(),
+        requestedFeatures: _webgpuRequestedFeatures.slice(),
+        limits: Object.assign({}, _webgpuAdapterLimits),
+        adapterInfo: Object.assign({}, _webgpuAdapterInfo),
+        error: _webgpuProbeError,
+        lost: _webgpuDeviceLostInfo,
       };
     };
+    window.__gosx_scene3d_webgpu_diagnostics = sceneWebGPUDiagnostics;
     window.__gosx_scene3d_webgpu_probe_ready = function() {
       return _webgpuProbePromise.then(function() {
         return _webgpuAdapterReady;
@@ -19910,32 +20278,47 @@ if (typeof window !== "undefined") {
   if (typeof navigator !== "undefined" && navigator.gpu && typeof navigator.gpu.requestAdapter === "function") {
     _webgpuProbePromise = navigator.gpu.requestAdapter().then(function(adapter) {
       if (!adapter) {
-        console.warn("[gosx] WebGPU probe: requestAdapter returned null");
+        _webgpuProbeError = "requestAdapter returned null";
+        console.warn("[gosx] WebGPU probe: " + _webgpuProbeError);
         _webgpuAdapterProbe = false;
         _webgpuDeviceProbe = false;
         return false;
       }
       _webgpuAdapterProbe = adapter;
-      return adapter.requestDevice();
+      _webgpuSupportedFeatures = sceneWebGPUFeatureList(adapter.features);
+      _webgpuRequestedFeatures = sceneWebGPURequestedFeatureList(adapter);
+      _webgpuAdapterLimits = sceneWebGPULimitsSnapshot(adapter.limits);
+      _webgpuAdapterInfo = sceneWebGPUAdapterInfoSnapshot(adapter);
+      var descriptor = _webgpuRequestedFeatures.length > 0
+        ? { requiredFeatures: _webgpuRequestedFeatures }
+        : {};
+      return adapter.requestDevice(descriptor);
     }).then(function(device) {
       if (device === false) {
         return;
       }
       if (!device) {
-        console.warn("[gosx] WebGPU probe: requestDevice returned null");
+        _webgpuProbeError = "requestDevice returned null";
+        console.warn("[gosx] WebGPU probe: " + _webgpuProbeError);
         _webgpuDeviceProbe = false;
         return;
       }
       _webgpuDeviceProbe = device;
+      _webgpuDeviceLimits = sceneWebGPULimitsSnapshot(device.limits);
       _webgpuAdapterReady = true;
       device.lost.then(function(info) {
+        _webgpuDeviceLostInfo = {
+          reason: info && info.reason || "",
+          message: info && info.message || "",
+        };
         console.warn("[gosx] WebGPU probe device lost:", info && info.message);
         _webgpuAdapterReady = false;
         _webgpuDeviceProbe = false;
       }).catch(function() {});
       return true;
     }).catch(function(err) {
-      console.warn("[gosx] WebGPU probe failed:", err && (err.message || err));
+      _webgpuProbeError = String(err && (err.message || err) || "unknown error");
+      console.warn("[gosx] WebGPU probe failed:", _webgpuProbeError);
       _webgpuAdapterProbe = false;
       _webgpuDeviceProbe = false;
       return false;
@@ -19956,11 +20339,11 @@ if (typeof window !== "undefined") {
         && typeof window.__gosx_scene3d_webgpu_api.createRenderer === "function");
   }
 
-  function createSceneWebGPURendererOrFallback(canvas) {
+  function createSceneWebGPURendererOrFallback(canvas, options) {
     if (!sceneWebGPUAvailable()) return null;
     if (!canvas || typeof canvas.getContext !== "function") return null;
     try {
-      var renderer = window.__gosx_scene3d_webgpu_api.createRenderer(canvas);
+      var renderer = window.__gosx_scene3d_webgpu_api.createRenderer(canvas, options || {});
       if (!renderer) {
         console.warn("[gosx] WebGPU factory returned null after probe success; canvas may be tainted");
       }
@@ -19977,10 +20360,15 @@ if (typeof window !== "undefined") {
       available: function() {
         return sceneWebGPUAvailable();
       },
-      create: function(canvas) {
-        return createSceneWebGPURendererOrFallback(canvas);
+      create: function(canvas, props, capability) {
+        var options = typeof sceneWebGPUOptions === "function" ? sceneWebGPUOptions(props, capability) : {};
+        return createSceneWebGPURendererOrFallback(canvas, options);
       },
     });
+  }
+
+  if (typeof window !== "undefined" && window.__gosx_scene3d_api) {
+    window.__gosx_scene3d_api.sceneWebGPUDiagnostics = sceneWebGPUDiagnostics;
   }
 
   var WGSL_COMMON_CONSTANTS = [
@@ -20075,6 +20463,7 @@ if (typeof window !== "undefined") {
     "    @location(2) uv: vec2f,",
     "    @location(3) tangent: vec3f,",
     "    @location(4) bitangent: vec3f,",
+    "    @location(5) instanceColor: vec4f,",
     "};",
     "",
     "@group(0) @binding(0) var<uniform> frame: FrameUniforms;",
@@ -20088,7 +20477,52 @@ if (typeof window !== "undefined") {
     "    let N = out.normal;",
     "    out.tangent = T;",
     "    out.bitangent = cross(N, T) * in.tangent.w;",
+    "    out.instanceColor = vec4f(1.0, 1.0, 1.0, 1.0);",
     "    out.clipPos = frame.projMatrix * frame.viewMatrix * vec4f(in.position, 1.0);",
+    "    return out;",
+    "}",
+  ].join("\n");
+
+  var WGSL_PBR_INSTANCED_VERTEX = [
+    WGSL_FRAME_STRUCTS,
+    "",
+    "struct VertexInput {",
+    "    @location(0) position: vec3f,",
+    "    @location(1) normal: vec3f,",
+    "    @location(2) uv: vec2f,",
+    "    @location(3) tangent: vec4f,",
+    "    @location(4) instanceMatrix0: vec4f,",
+    "    @location(5) instanceMatrix1: vec4f,",
+    "    @location(6) instanceMatrix2: vec4f,",
+    "    @location(7) instanceMatrix3: vec4f,",
+    "    @location(8) instanceColor: vec4f,",
+    "};",
+    "",
+    "struct VertexOutput {",
+    "    @builtin(position) clipPos: vec4f,",
+    "    @location(0) worldPos: vec3f,",
+    "    @location(1) normal: vec3f,",
+    "    @location(2) uv: vec2f,",
+    "    @location(3) tangent: vec3f,",
+    "    @location(4) bitangent: vec3f,",
+    "    @location(5) instanceColor: vec4f,",
+    "};",
+    "",
+    "@group(0) @binding(0) var<uniform> frame: FrameUniforms;",
+    "",
+    "@vertex fn vertexMain(in: VertexInput) -> VertexOutput {",
+    "    var out: VertexOutput;",
+    "    let model = mat4x4f(in.instanceMatrix0, in.instanceMatrix1, in.instanceMatrix2, in.instanceMatrix3);",
+    "    let world = model * vec4f(in.position, 1.0);",
+    "    out.worldPos = world.xyz;",
+    "    out.normal = normalize((model * vec4f(in.normal, 0.0)).xyz);",
+    "    out.uv = in.uv;",
+    "    let T = normalize((model * vec4f(in.tangent.xyz, 0.0)).xyz);",
+    "    let N = out.normal;",
+    "    out.tangent = T;",
+    "    out.bitangent = cross(N, T) * in.tangent.w;",
+    "    out.instanceColor = in.instanceColor;",
+    "    out.clipPos = frame.projMatrix * frame.viewMatrix * world;",
     "    return out;",
     "}",
   ].join("\n");
@@ -20107,6 +20541,7 @@ if (typeof window !== "undefined") {
     "    @location(2) uv: vec2f,",
     "    @location(3) tangent: vec3f,",
     "    @location(4) bitangent: vec3f,",
+    "    @location(5) instanceColor: vec4f,",
     "};",
     "",
     "// Group 0: per-frame",
@@ -20221,6 +20656,8 @@ if (typeof window !== "undefined") {
     "        let texAlbedo = textureSample(albedoTex, albedoSamp, in.uv);",
     "        albedo = albedo * texAlbedo.rgb;",
     "    }",
+    "    albedo = albedo * in.instanceColor.rgb;",
+    "    let finalOpacity = material.opacity * clamp(in.instanceColor.a, 0.0, 1.0);",
     "",
     "    var roughness = material.roughness;",
     "    if (material.hasRoughnessMap != 0u) {",
@@ -20243,7 +20680,7 @@ if (typeof window !== "undefined") {
     "    // Unlit path: output albedo directly.",
     "    if (material.unlit != 0u) {",
     "        let color = albedo + emissiveColor * emissiveStrength;",
-    "        return vec4f(color, material.opacity);",
+    "        return vec4f(color, finalOpacity);",
     "    }",
     "",
     "    // Resolve per-pixel normal via TBN matrix.",
@@ -20347,7 +20784,7 @@ if (typeof window !== "undefined") {
     "        color = pow(color, vec3f(1.0 / 2.2));",
     "    }",
     "",
-    "    return vec4f(color, material.opacity);",
+    "    return vec4f(color, finalOpacity);",
     "}",
   ].join("\n");
 
@@ -20363,8 +20800,208 @@ if (typeof window !== "undefined") {
     "}",
   ].join("\n");
 
+  var WGSL_SHADOW_INSTANCED_VERTEX = [
+    "struct ShadowFrameUniforms {",
+    "    lightViewProjection: mat4x4f,",
+    "};",
+    "",
+    "struct VertexInput {",
+    "    @location(0) position: vec3f,",
+    "    @location(4) instanceMatrix0: vec4f,",
+    "    @location(5) instanceMatrix1: vec4f,",
+    "    @location(6) instanceMatrix2: vec4f,",
+    "    @location(7) instanceMatrix3: vec4f,",
+    "};",
+    "",
+    "@group(0) @binding(0) var<uniform> shadowFrame: ShadowFrameUniforms;",
+    "",
+    "@vertex fn vertexMain(in: VertexInput) -> @builtin(position) vec4f {",
+    "    let model = mat4x4f(in.instanceMatrix0, in.instanceMatrix1, in.instanceMatrix2, in.instanceMatrix3);",
+    "    return shadowFrame.lightViewProjection * model * vec4f(in.position, 1.0);",
+    "}",
+  ].join("\n");
+
   var WGSL_SHADOW_FRAGMENT = [
     "@fragment fn fragmentMain() {}",
+  ].join("\n");
+
+  var WGSL_SCENE_COLOR_FRAGMENT = [
+    "struct ColorOutput {",
+    "    @builtin(position) clipPos: vec4f,",
+    "    @location(0) color: vec4f,",
+    "    @location(1) material: vec3f,",
+    "};",
+    "",
+    "@fragment fn fragmentMain(in: ColorOutput) -> @location(0) vec4f {",
+    "    var color = in.color;",
+    "    let kind = floor(in.material.x + 0.5);",
+    "    let emissive = max(in.material.y, 0.0);",
+    "    let tone = clamp(in.material.z, 0.0, 1.0);",
+    "    if (kind > 3.5) {",
+    "        color.rgb = color.rgb * mix(0.78, 1.0, tone);",
+    "    } else if (kind > 2.5) {",
+    "        color.rgb = color.rgb * (1.0 + emissive * 0.75);",
+    "    } else if (kind > 1.5) {",
+    "        color.rgb = mix(color.rgb, vec3f(0.92, 0.98, 1.0), 0.28 + tone * 0.16);",
+    "        color.a = color.a * 0.84;",
+    "    } else if (kind > 0.5) {",
+    "        color.rgb = mix(color.rgb, vec3f(0.84, 0.94, 1.0), 0.18 + tone * 0.12);",
+    "        color.a = color.a * 0.9;",
+    "    } else {",
+    "        color.rgb = color.rgb * mix(0.9, 1.0, tone);",
+    "    }",
+    "    return vec4f(clamp(color.rgb, vec3f(0.0), vec3f(1.0)), clamp(color.a, 0.0, 1.0));",
+    "}",
+  ].join("\n");
+
+  var WGSL_SCENE_WORLD_COLOR_VERTEX = [
+    WGSL_FRAME_STRUCTS,
+    "",
+    "struct ColorInput {",
+    "    @location(0) position: vec3f,",
+    "    @location(1) color: vec4f,",
+    "    @location(2) material: vec3f,",
+    "};",
+    "",
+    "struct ColorOutput {",
+    "    @builtin(position) clipPos: vec4f,",
+    "    @location(0) color: vec4f,",
+    "    @location(1) material: vec3f,",
+    "};",
+    "",
+    "@group(0) @binding(0) var<uniform> frame: FrameUniforms;",
+    "",
+    "@vertex fn vertexMain(in: ColorInput) -> ColorOutput {",
+    "    var out: ColorOutput;",
+    "    out.clipPos = frame.projMatrix * frame.viewMatrix * vec4f(in.position, 1.0);",
+    "    out.color = in.color;",
+    "    out.material = in.material;",
+    "    return out;",
+    "}",
+  ].join("\n");
+
+  var WGSL_SCENE_CLIP_COLOR_VERTEX = [
+    "struct ColorInput {",
+    "    @location(0) position: vec3f,",
+    "    @location(1) color: vec4f,",
+    "    @location(2) material: vec3f,",
+    "};",
+    "",
+    "struct ColorOutput {",
+    "    @builtin(position) clipPos: vec4f,",
+    "    @location(0) color: vec4f,",
+    "    @location(1) material: vec3f,",
+    "};",
+    "",
+    "@vertex fn vertexMain(in: ColorInput) -> ColorOutput {",
+    "    var out: ColorOutput;",
+    "    out.clipPos = vec4f(in.position.xy, in.position.z, 1.0);",
+    "    out.color = in.color;",
+    "    out.material = in.material;",
+    "    return out;",
+    "}",
+  ].join("\n");
+
+  var WGSL_SURFACE_VERTEX = [
+    WGSL_FRAME_STRUCTS,
+    "",
+    "struct SurfaceInput {",
+    "    @location(0) position: vec3f,",
+    "    @location(1) uv: vec2f,",
+    "};",
+    "",
+    "struct SurfaceOutput {",
+    "    @builtin(position) clipPos: vec4f,",
+    "    @location(0) uv: vec2f,",
+    "};",
+    "",
+    "@group(0) @binding(0) var<uniform> frame: FrameUniforms;",
+    "",
+    "@vertex fn vertexMain(in: SurfaceInput) -> SurfaceOutput {",
+    "    var out: SurfaceOutput;",
+    "    out.clipPos = frame.projMatrix * frame.viewMatrix * vec4f(in.position, 1.0);",
+    "    out.uv = in.uv;",
+    "    return out;",
+    "}",
+  ].join("\n");
+
+  var WGSL_SURFACE_FRAGMENT = [
+    WGSL_MATERIAL_STRUCT,
+    "",
+    "struct SurfaceOutput {",
+    "    @builtin(position) clipPos: vec4f,",
+    "    @location(0) uv: vec2f,",
+    "};",
+    "",
+    "@group(1) @binding(0) var<uniform> material: MaterialUniforms;",
+    "@group(1) @binding(1) var albedoTex: texture_2d<f32>;",
+    "@group(1) @binding(2) var albedoSamp: sampler;",
+    "",
+    "@fragment fn fragmentMain(in: SurfaceOutput) -> @location(0) vec4f {",
+    "    let sampleColor = textureSample(albedoTex, albedoSamp, in.uv);",
+    "    var rgb = sampleColor.rgb * material.albedo;",
+    "    rgb = rgb * (1.0 + max(material.emissive, 0.0) * 0.5);",
+    "    return vec4f(clamp(rgb, vec3f(0.0), vec3f(1.0)), clamp(sampleColor.a * material.opacity, 0.0, 1.0));",
+    "}",
+  ].join("\n");
+
+  var WGSL_THICK_LINE_VERTEX = [
+    WGSL_FRAME_STRUCTS,
+    "",
+    "struct ThickLineInput {",
+    "    @location(0) positionA: vec3f,",
+    "    @location(1) positionB: vec3f,",
+    "    @location(2) colorA: vec4f,",
+    "    @location(3) colorB: vec4f,",
+    "    @location(4) side: f32,",
+    "    @location(5) endpoint: f32,",
+    "    @location(6) width: f32,",
+    "};",
+    "",
+    "struct ThickLineOutput {",
+    "    @builtin(position) clipPos: vec4f,",
+    "    @location(0) color: vec4f,",
+    "};",
+    "",
+    "@group(0) @binding(0) var<uniform> frame: FrameUniforms;",
+    "",
+    "fn safeNDC(clip: vec4f) -> vec2f {",
+    "    return clip.xy / max(clip.w, 0.0001);",
+    "}",
+    "",
+    "@vertex fn vertexMain(in: ThickLineInput) -> ThickLineOutput {",
+    "    var out: ThickLineOutput;",
+    "    let clipA = frame.projMatrix * frame.viewMatrix * vec4f(in.positionA, 1.0);",
+    "    let clipB = frame.projMatrix * frame.viewMatrix * vec4f(in.positionB, 1.0);",
+    "    let base = mix(clipA, clipB, clamp(in.endpoint, 0.0, 1.0));",
+    "    let viewport = max(vec2f(frame.viewportWidth, frame.viewportHeight), vec2f(1.0));",
+    "    let screenA = safeNDC(clipA) * (viewport * 0.5);",
+    "    let screenB = safeNDC(clipB) * (viewport * 0.5);",
+    "    var dir = screenB - screenA;",
+    "    let len = length(dir);",
+    "    if (len < 0.0001) {",
+    "        dir = vec2f(1.0, 0.0);",
+    "    } else {",
+    "        dir = dir / len;",
+    "    }",
+    "    let normal = vec2f(-dir.y, dir.x);",
+    "    let pixelOffset = normal * (in.side * max(in.width, 1.0) * 0.5);",
+    "    let ndcOffset = pixelOffset / max(viewport * 0.5, vec2f(0.0001));",
+    "    out.clipPos = base + vec4f(ndcOffset * base.w, 0.0, 0.0);",
+    "    out.color = mix(in.colorA, in.colorB, clamp(in.endpoint, 0.0, 1.0));",
+    "    return out;",
+    "}",
+  ].join("\n");
+
+  var WGSL_THICK_LINE_FRAGMENT = [
+    "struct ThickLineOutput {",
+    "    @builtin(position) clipPos: vec4f,",
+    "    @location(0) color: vec4f,",
+    "};",
+    "",
+    "@fragment fn fragmentMain(in: ThickLineOutput) -> @location(0) vec4f {",
+    "    return vec4f(clamp(in.color.rgb, vec3f(0.0), vec3f(1.0)), clamp(in.color.a, 0.0, 1.0));",
+    "}",
   ].join("\n");
 
   var WGSL_POINTS_VERTEX = [
@@ -20751,8 +21388,8 @@ if (typeof window !== "undefined") {
     return wgpuCreateBuffer(device, usage, data);
   }
 
-  function wgpuPipelineKey(shaderVariant, blendMode, depthWrite, targetFormat, depthFormat) {
-    return shaderVariant + "|" + blendMode + "|" + (depthWrite ? "1" : "0") + "|" + targetFormat + "|" + (depthFormat || "");
+  function wgpuPipelineKey(shaderVariant, blendMode, depthWrite, targetFormat, depthFormat, sampleCount) {
+    return shaderVariant + "|" + blendMode + "|" + (depthWrite ? "1" : "0") + "|" + targetFormat + "|" + (depthFormat || "") + "|" + Math.max(1, Math.floor(sampleCount || 1));
   }
 
   function wgpuLoadTexture(device, url, cache) {
@@ -20910,8 +21547,56 @@ if (typeof window !== "undefined") {
     { arrayStride: 16, stepMode: "vertex", attributes: [{ format: "float32x4", offset: 0, shaderLocation: 3 }] },
   ];
 
+  var WGPU_PBR_INSTANCED_VERTEX_LAYOUT = WGPU_PBR_VERTEX_LAYOUT.concat([
+    {
+      arrayStride: 64,
+      stepMode: "instance",
+      attributes: [
+        { format: "float32x4", offset: 0,  shaderLocation: 4 },
+        { format: "float32x4", offset: 16, shaderLocation: 5 },
+        { format: "float32x4", offset: 32, shaderLocation: 6 },
+        { format: "float32x4", offset: 48, shaderLocation: 7 },
+      ],
+    },
+    { arrayStride: 16, stepMode: "instance", attributes: [{ format: "float32x4", offset: 0, shaderLocation: 8 }] },
+  ]);
+
   var WGPU_SHADOW_VERTEX_LAYOUT = [
     { arrayStride: 12, stepMode: "vertex", attributes: [{ format: "float32x3", offset: 0, shaderLocation: 0 }] },
+  ];
+
+  var WGPU_SHADOW_INSTANCED_VERTEX_LAYOUT = WGPU_SHADOW_VERTEX_LAYOUT.concat([
+    {
+      arrayStride: 64,
+      stepMode: "instance",
+      attributes: [
+        { format: "float32x4", offset: 0,  shaderLocation: 4 },
+        { format: "float32x4", offset: 16, shaderLocation: 5 },
+        { format: "float32x4", offset: 32, shaderLocation: 6 },
+        { format: "float32x4", offset: 48, shaderLocation: 7 },
+      ],
+    },
+  ]);
+
+  var WGPU_SCENE_COLOR_VERTEX_LAYOUT = [
+    { arrayStride: 12, stepMode: "vertex", attributes: [{ format: "float32x3", offset: 0, shaderLocation: 0 }] },
+    { arrayStride: 16, stepMode: "vertex", attributes: [{ format: "float32x4", offset: 0, shaderLocation: 1 }] },
+    { arrayStride: 12, stepMode: "vertex", attributes: [{ format: "float32x3", offset: 0, shaderLocation: 2 }] },
+  ];
+
+  var WGPU_SURFACE_VERTEX_LAYOUT = [
+    { arrayStride: 12, stepMode: "vertex", attributes: [{ format: "float32x3", offset: 0, shaderLocation: 0 }] },
+    { arrayStride: 8, stepMode: "vertex", attributes: [{ format: "float32x2", offset: 0, shaderLocation: 1 }] },
+  ];
+
+  var WGPU_THICK_LINE_VERTEX_LAYOUT = [
+    { arrayStride: 12, stepMode: "vertex", attributes: [{ format: "float32x3", offset: 0, shaderLocation: 0 }] },
+    { arrayStride: 12, stepMode: "vertex", attributes: [{ format: "float32x3", offset: 0, shaderLocation: 1 }] },
+    { arrayStride: 16, stepMode: "vertex", attributes: [{ format: "float32x4", offset: 0, shaderLocation: 2 }] },
+    { arrayStride: 16, stepMode: "vertex", attributes: [{ format: "float32x4", offset: 0, shaderLocation: 3 }] },
+    { arrayStride: 4, stepMode: "vertex", attributes: [{ format: "float32", offset: 0, shaderLocation: 4 }] },
+    { arrayStride: 4, stepMode: "vertex", attributes: [{ format: "float32", offset: 0, shaderLocation: 5 }] },
+    { arrayStride: 4, stepMode: "vertex", attributes: [{ format: "float32", offset: 0, shaderLocation: 6 }] },
   ];
 
   function wgpuBlendState(mode) {
@@ -20930,7 +21615,7 @@ if (typeof window !== "undefined") {
     return undefined; // opaque -- no blending
   }
 
-  function wgpuCreatePBRPipeline(device, pipelineLayout, vertexModule, fragmentModule, blendMode, depthWrite, targetFormat) {
+  function wgpuCreatePBRPipeline(device, pipelineLayout, vertexModule, fragmentModule, blendMode, depthWrite, targetFormat, sampleCount) {
     return device.createRenderPipeline({
       label: "gosx-pbr-" + blendMode,
       layout: pipelineLayout,
@@ -20948,6 +21633,34 @@ if (typeof window !== "undefined") {
         }],
       },
       primitive: { topology: "triangle-list", cullMode: "back" },
+      multisample: { count: Math.max(1, Math.floor(sampleCount || 1)) },
+      depthStencil: {
+        format: "depth24plus",
+        depthWriteEnabled: depthWrite,
+        depthCompare: "less-equal",
+      },
+    });
+  }
+
+  function wgpuCreatePBRInstancedPipeline(device, pipelineLayout, vertexModule, fragmentModule, blendMode, depthWrite, targetFormat, sampleCount) {
+    return device.createRenderPipeline({
+      label: "gosx-pbr-instanced-" + blendMode,
+      layout: pipelineLayout,
+      vertex: {
+        module: vertexModule,
+        entryPoint: "vertexMain",
+        buffers: WGPU_PBR_INSTANCED_VERTEX_LAYOUT,
+      },
+      fragment: {
+        module: fragmentModule,
+        entryPoint: "fragmentMain",
+        targets: [{
+          format: targetFormat,
+          blend: wgpuBlendState(blendMode),
+        }],
+      },
+      primitive: { topology: "triangle-list", cullMode: "back" },
+      multisample: { count: Math.max(1, Math.floor(sampleCount || 1)) },
       depthStencil: {
         format: "depth24plus",
         depthWriteEnabled: depthWrite,
@@ -20974,7 +21687,106 @@ if (typeof window !== "undefined") {
     });
   }
 
-  function wgpuCreatePointsPipeline(device, pipelineLayout, vertexModule, fragmentModule, blendMode, depthWrite, targetFormat) {
+  function wgpuCreateShadowInstancedPipeline(device, shadowLayout, vertexModule) {
+    return device.createRenderPipeline({
+      label: "gosx-shadow-instanced",
+      layout: device.createPipelineLayout({ bindGroupLayouts: [shadowLayout] }),
+      vertex: {
+        module: vertexModule,
+        entryPoint: "vertexMain",
+        buffers: WGPU_SHADOW_INSTANCED_VERTEX_LAYOUT,
+      },
+      primitive: { topology: "triangle-list", cullMode: "front" },
+      depthStencil: {
+        format: "depth24plus",
+        depthWriteEnabled: true,
+        depthCompare: "less-equal",
+      },
+    });
+  }
+
+  function wgpuCreateSceneColorPipeline(device, pipelineLayout, vertexModule, fragmentModule, topology, blendMode, depthWrite, targetFormat, sampleCount) {
+    return device.createRenderPipeline({
+      label: "gosx-scene-color-" + topology + "-" + blendMode,
+      layout: pipelineLayout,
+      vertex: {
+        module: vertexModule,
+        entryPoint: "vertexMain",
+        buffers: WGPU_SCENE_COLOR_VERTEX_LAYOUT,
+      },
+      fragment: {
+        module: fragmentModule,
+        entryPoint: "fragmentMain",
+        targets: [{
+          format: targetFormat,
+          blend: wgpuBlendState(blendMode),
+        }],
+      },
+      primitive: { topology: topology },
+      multisample: { count: Math.max(1, Math.floor(sampleCount || 1)) },
+      depthStencil: {
+        format: "depth24plus",
+        depthWriteEnabled: depthWrite,
+        depthCompare: "less-equal",
+      },
+    });
+  }
+
+  function wgpuCreateSurfacePipeline(device, pipelineLayout, vertexModule, fragmentModule, blendMode, depthWrite, targetFormat, sampleCount) {
+    return device.createRenderPipeline({
+      label: "gosx-surface-" + blendMode,
+      layout: pipelineLayout,
+      vertex: {
+        module: vertexModule,
+        entryPoint: "vertexMain",
+        buffers: WGPU_SURFACE_VERTEX_LAYOUT,
+      },
+      fragment: {
+        module: fragmentModule,
+        entryPoint: "fragmentMain",
+        targets: [{
+          format: targetFormat,
+          blend: wgpuBlendState(blendMode),
+        }],
+      },
+      primitive: { topology: "triangle-list", cullMode: "none" },
+      multisample: { count: Math.max(1, Math.floor(sampleCount || 1)) },
+      depthStencil: {
+        format: "depth24plus",
+        depthWriteEnabled: depthWrite,
+        depthCompare: "less-equal",
+      },
+    });
+  }
+
+  function wgpuCreateThickLinePipeline(device, pipelineLayout, vertexModule, fragmentModule, blendMode, depthWrite, targetFormat, sampleCount) {
+    return device.createRenderPipeline({
+      label: "gosx-thick-line-" + blendMode,
+      layout: pipelineLayout,
+      vertex: {
+        module: vertexModule,
+        entryPoint: "vertexMain",
+        buffers: WGPU_THICK_LINE_VERTEX_LAYOUT,
+      },
+      fragment: {
+        module: fragmentModule,
+        entryPoint: "fragmentMain",
+        targets: [{
+          format: targetFormat,
+          blend: wgpuBlendState(blendMode),
+        }],
+      },
+      primitive: { topology: "triangle-list", cullMode: "none" },
+      multisample: { count: Math.max(1, Math.floor(sampleCount || 1)) },
+      depthStencil: {
+        format: "depth24plus",
+        depthWriteEnabled: depthWrite,
+        depthCompare: "less-equal",
+      },
+    });
+  }
+
+  function wgpuCreatePointsPipeline(device, pipelineLayout, vertexModule, fragmentModule, blendMode, depthWrite, targetFormat, sampleCount) {
     return device.createRenderPipeline({
       label: "gosx-points-" + blendMode,
       layout: pipelineLayout,
@@ -20992,6 +21804,7 @@ if (typeof window !== "undefined") {
         }],
       },
       primitive: { topology: "triangle-list" },
+      multisample: { count: Math.max(1, Math.floor(sampleCount || 1)) },
       depthStencil: {
         format: "depth24plus",
         depthWriteEnabled: depthWrite,
@@ -21306,7 +22119,7 @@ if (typeof window !== "undefined") {
     };
   }
 
-  function createSceneWebGPURenderer(canvas) {
+  function createSceneWebGPURenderer(canvas, options) {
     if (typeof navigator === "undefined" || !navigator.gpu) return null;
     if (typeof canvas.getContext !== "function") return null;
 
@@ -21314,6 +22127,7 @@ if (typeof window !== "undefined") {
     if (!probe || !probe.ready || !probe.adapter || !probe.device) return null;
     var adapter = probe.adapter;
     var device = probe.device;
+    var rendererOptions = options && typeof options === "object" ? options : {};
 
     var gpuCtx = canvas.getContext("webgpu");
     if (!gpuCtx) return null;
@@ -21330,13 +22144,23 @@ if (typeof window !== "undefined") {
     var pointsPipelineLayout = null;
 
     var pbrVertexModule = null;
+    var pbrInstancedVertexModule = null;
     var pbrFragmentModule = null;
     var shadowVertexModule = null;
+    var shadowInstancedVertexModule = null;
     var shadowFragmentModule = null;
+    var sceneWorldColorVertexModule = null;
+    var sceneClipColorVertexModule = null;
+    var sceneColorFragmentModule = null;
+    var surfaceVertexModule = null;
+    var surfaceFragmentModule = null;
+    var thickLineVertexModule = null;
+    var thickLineFragmentModule = null;
     var pointsVertexModule = null;
     var pointsFragmentModule = null;
 
     var pipelineCache = {};
+    var activeSampleCount = 1;
 
     var shadowSlots = [null, null];
 
@@ -21345,11 +22169,16 @@ if (typeof window !== "undefined") {
     var fogUniformBuffer = null;
     var envUniformBuffer = null;
     var shadowUniformBuffer = null;
-    var materialUniformBuffer = null;
     var positionBuffer = null;
     var normalBuffer = null;
     var uvBuffer = null;
     var tangentBuffer = null;
+    var defaultMaterialOwner = {};
+    var instancedGeometryCache = {};
+    var worldDrawScratch = typeof createSceneWorldDrawScratch === "function" ? createSceneWorldDrawScratch() : null;
+    var thickLineScratch = typeof createSceneThickLineScratch === "function" ? createSceneThickLineScratch() : null;
+    var thickLineOwner = {};
+    var screenLineOwner = {};
 
     var pointsEntryGPUBuffers = new Set(); // all allocated GPUBuffers for dispose()
     var pointsUniformScratch = new ArrayBuffer(128);
@@ -21366,6 +22195,12 @@ if (typeof window !== "undefined") {
     var mainDepthView = null;
     var mainDepthWidth = 0;
     var mainDepthHeight = 0;
+    var mainDepthSampleCount = 1;
+    var mainMSAATexture = null;
+    var mainMSAAView = null;
+    var mainMSAAWidth = 0;
+    var mainMSAAHeight = 0;
+    var mainMSAASampleCount = 1;
 
     var dummyShadowTex = null;
     var dummyShadowView = null;
@@ -21586,9 +22421,18 @@ if (typeof window !== "undefined") {
         });
 
         pbrVertexModule = device.createShaderModule({ label: "pbr-vert", code: WGSL_PBR_VERTEX });
+        pbrInstancedVertexModule = device.createShaderModule({ label: "pbr-instanced-vert", code: WGSL_PBR_INSTANCED_VERTEX });
         pbrFragmentModule = device.createShaderModule({ label: "pbr-frag", code: WGSL_PBR_FRAGMENT });
         shadowVertexModule = device.createShaderModule({ label: "shadow-vert", code: WGSL_SHADOW_VERTEX });
+        shadowInstancedVertexModule = device.createShaderModule({ label: "shadow-instanced-vert", code: WGSL_SHADOW_INSTANCED_VERTEX });
         shadowFragmentModule = device.createShaderModule({ label: "shadow-frag", code: WGSL_SHADOW_FRAGMENT });
+        sceneWorldColorVertexModule = device.createShaderModule({ label: "scene-world-color-vert", code: WGSL_SCENE_WORLD_COLOR_VERTEX });
+        sceneClipColorVertexModule = device.createShaderModule({ label: "scene-clip-color-vert", code: WGSL_SCENE_CLIP_COLOR_VERTEX });
+        sceneColorFragmentModule = device.createShaderModule({ label: "scene-color-frag", code: WGSL_SCENE_COLOR_FRAGMENT });
+        surfaceVertexModule = device.createShaderModule({ label: "surface-vert", code: WGSL_SURFACE_VERTEX });
+        surfaceFragmentModule = device.createShaderModule({ label: "surface-frag", code: WGSL_SURFACE_FRAGMENT });
+        thickLineVertexModule = device.createShaderModule({ label: "thick-line-vert", code: WGSL_THICK_LINE_VERTEX });
+        thickLineFragmentModule = device.createShaderModule({ label: "thick-line-frag", code: WGSL_THICK_LINE_FRAGMENT });
         pointsVertexModule = device.createShaderModule({ label: "points-vert", code: WGSL_POINTS_VERTEX });
         pointsFragmentModule = device.createShaderModule({ label: "points-frag", code: WGSL_POINTS_FRAGMENT });
 
@@ -21597,7 +22441,6 @@ if (typeof window !== "undefined") {
         fogUniformBuffer = device.createBuffer({ size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
         envUniformBuffer = device.createBuffer({ size: 48, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
         shadowUniformBuffer = device.createBuffer({ size: 256, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
-        materialUniformBuffer = device.createBuffer({ size: 64, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
         shadowFrameBuffer = device.createBuffer({ size: 64, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
 
         linearSampler = device.createSampler({
@@ -21650,23 +22493,86 @@ if (typeof window !== "undefined") {
       }
     })();
 
-    function ensureMainDepth(width, height) {
-      if (mainDepthTexture && mainDepthWidth === width && mainDepthHeight === height) return;
+    function ensureMainDepth(width, height, sampleCount) {
+      sampleCount = Math.max(1, Math.floor(sampleCount || 1));
+      if (mainDepthTexture && mainDepthWidth === width && mainDepthHeight === height && mainDepthSampleCount === sampleCount) return;
       if (mainDepthTexture) mainDepthTexture.destroy();
       mainDepthTexture = device.createTexture({
         size: [width, height, 1],
         format: "depth24plus",
+        sampleCount: sampleCount,
         usage: GPUTextureUsage.RENDER_ATTACHMENT,
       });
       mainDepthView = mainDepthTexture.createView();
       mainDepthWidth = width;
       mainDepthHeight = height;
+      mainDepthSampleCount = sampleCount;
+    }
+
+    function ensureMSAAColor(width, height, sampleCount) {
+      sampleCount = Math.max(1, Math.floor(sampleCount || 1));
+      if (sampleCount <= 1) return null;
+      if (
+        mainMSAATexture &&
+        mainMSAAWidth === width &&
+        mainMSAAHeight === height &&
+        mainMSAASampleCount === sampleCount
+      ) {
+        return mainMSAAView;
+      }
+      if (mainMSAATexture) mainMSAATexture.destroy();
+      mainMSAATexture = device.createTexture({
+        size: [width, height, 1],
+        format: targetFormat,
+        sampleCount: sampleCount,
+        usage: GPUTextureUsage.RENDER_ATTACHMENT,
+      });
+      mainMSAAView = mainMSAATexture.createView();
+      mainMSAAWidth = width;
+      mainMSAAHeight = height;
+      mainMSAASampleCount = sampleCount;
+      return mainMSAAView;
     }
 
     function getPBRPipeline(blendMode, depthWrite) {
-      var key = wgpuPipelineKey("pbr", blendMode, depthWrite, targetFormat, "depth24plus");
+      var key = wgpuPipelineKey("pbr", blendMode, depthWrite, targetFormat, "depth24plus", activeSampleCount);
       if (pipelineCache[key]) return pipelineCache[key];
-      var pipeline = wgpuCreatePBRPipeline(device, pbrPipelineLayout, pbrVertexModule, pbrFragmentModule, blendMode, depthWrite, targetFormat);
+      var pipeline = wgpuCreatePBRPipeline(device, pbrPipelineLayout, pbrVertexModule, pbrFragmentModule, blendMode, depthWrite, targetFormat, activeSampleCount);
+      pipelineCache[key] = pipeline;
+      return pipeline;
+    }
+
+    function getPBRInstancedPipeline(blendMode, depthWrite) {
+      var key = wgpuPipelineKey("pbr-instanced", blendMode, depthWrite, targetFormat, "depth24plus", activeSampleCount);
+      if (pipelineCache[key]) return pipelineCache[key];
+      var pipeline = wgpuCreatePBRInstancedPipeline(device, pbrPipelineLayout, pbrInstancedVertexModule, pbrFragmentModule, blendMode, depthWrite, targetFormat, activeSampleCount);
+      pipelineCache[key] = pipeline;
+      return pipeline;
+    }
+
+    function getSceneColorPipeline(space, topology, blendMode, depthWrite) {
+      var normalizedSpace = space === "clip" ? "clip" : "world";
+      var normalizedTopology = topology === "triangle-list" ? "triangle-list" : "line-list";
+      var key = wgpuPipelineKey("scene-color-" + normalizedSpace + "-" + normalizedTopology, blendMode, depthWrite, targetFormat, "depth24plus", activeSampleCount);
+      if (pipelineCache[key]) return pipelineCache[key];
+      var vertexModule = normalizedSpace === "clip" ? sceneClipColorVertexModule : sceneWorldColorVertexModule;
+      var pipeline = wgpuCreateSceneColorPipeline(device, device.createPipelineLayout({ bindGroupLayouts: [frameBindGroupLayout] }), vertexModule, sceneColorFragmentModule, normalizedTopology, blendMode, depthWrite, targetFormat, activeSampleCount);
+      pipelineCache[key] = pipeline;
+      return pipeline;
+    }
+
+    function getSurfacePipeline(blendMode, depthWrite) {
+      var key = wgpuPipelineKey("surface", blendMode, depthWrite, targetFormat, "depth24plus", activeSampleCount);
+      if (pipelineCache[key]) return pipelineCache[key];
+      var pipeline = wgpuCreateSurfacePipeline(device, pbrPipelineLayout, surfaceVertexModule, surfaceFragmentModule, blendMode, depthWrite, targetFormat, activeSampleCount);
+      pipelineCache[key] = pipeline;
+      return pipeline;
+    }
+
+    function getThickLinePipeline(blendMode, depthWrite) {
+      var key = wgpuPipelineKey("thick-line", blendMode, depthWrite, targetFormat, "depth24plus", activeSampleCount);
+      if (pipelineCache[key]) return pipelineCache[key];
+      var pipeline = wgpuCreateThickLinePipeline(device, device.createPipelineLayout({ bindGroupLayouts: [frameBindGroupLayout] }), thickLineVertexModule, thickLineFragmentModule, blendMode, depthWrite, targetFormat, activeSampleCount);
       pipelineCache[key] = pipeline;
       return pipeline;
     }
@@ -21678,10 +22584,17 @@ if (typeof window !== "undefined") {
       return shadowPipeline;
     }
 
+    var shadowInstancedPipeline = null;
+    function getShadowInstancedPipeline() {
+      if (shadowInstancedPipeline) return shadowInstancedPipeline;
+      shadowInstancedPipeline = wgpuCreateShadowInstancedPipeline(device, shadowBindGroupLayout, shadowInstancedVertexModule);
+      return shadowInstancedPipeline;
+    }
+
     function getPointsPipeline(blendMode, depthWrite) {
-      var key = wgpuPipelineKey("points", blendMode, depthWrite, targetFormat, "depth24plus");
+      var key = wgpuPipelineKey("points", blendMode, depthWrite, targetFormat, "depth24plus", activeSampleCount);
       if (pipelineCache[key]) return pipelineCache[key];
-      var pipeline = wgpuCreatePointsPipeline(device, pointsPipelineLayout, pointsVertexModule, pointsFragmentModule, blendMode, depthWrite, targetFormat);
+      var pipeline = wgpuCreatePointsPipeline(device, pointsPipelineLayout, pointsVertexModule, pointsFragmentModule, blendMode, depthWrite, targetFormat, activeSampleCount);
       pipelineCache[key] = pipeline;
       return pipeline;
     }
@@ -21896,7 +22809,7 @@ if (typeof window !== "undefined") {
       device.queue.writeBuffer(shadowUniformBuffer, 0, new Float32Array(data));
     }
 
-    function uploadMaterialUniforms(material) {
+    function materialUniformData(material, receiveShadow) {
       var mat = material || {};
       var albedoRGBA = sceneColorRGBA(mat.color, [0.8, 0.8, 0.8, 1]);
 
@@ -21911,24 +22824,16 @@ if (typeof window !== "undefined") {
       f[6] = clamp01(sceneNumber(mat.opacity, 1));
       u[7] = mat.unlit ? 1 : 0;
 
-      device.queue.writeBuffer(materialUniformBuffer, 0, new Float32Array(data));
+      u[13] = receiveShadow ? 1 : 0;
+      u[14] = 0;
+      u[15] = 0;
+      return { data: new Float32Array(data), u: u };
     }
 
-    function createMaterialBindGroup(material, receiveShadow) {
+    function createMaterialBindGroup(material, receiveShadow, cacheOwner) {
       var mat = material || {};
-      var albedoRGBA = sceneColorRGBA(mat.color, [0.8, 0.8, 0.8, 1]);
-
-      var data = new ArrayBuffer(64);
-      var f = new Float32Array(data);
-      var u = new Uint32Array(data);
-
-      f[0] = albedoRGBA[0]; f[1] = albedoRGBA[1]; f[2] = albedoRGBA[2];
-      f[3] = sceneNumber(mat.roughness, 0.5);
-      f[4] = sceneNumber(mat.metalness, 0);
-      f[5] = sceneNumber(mat.emissive, 0);
-      f[6] = clamp01(sceneNumber(mat.opacity, 1));
-      u[7] = mat.unlit ? 1 : 0;
-
+      var uniform = materialUniformData(mat, receiveShadow);
+      var u = uniform.u;
       var textureMaps = [
         { prop: "texture",      index: 8 },
         { prop: "normalMap",    index: 9 },
@@ -21946,16 +22851,22 @@ if (typeof window !== "undefined") {
         texViews.push(loaded ? record.view : placeholderView);
       }
 
-      u[13] = receiveShadow ? 1 : 0;
-      u[14] = 0;
-      u[15] = 0;
-
-      device.queue.writeBuffer(materialUniformBuffer, 0, new Float32Array(data));
+      var owner = (cacheOwner && typeof cacheOwner === "object")
+        ? cacheOwner
+        : ((material && typeof material === "object") ? material : defaultMaterialOwner);
+      var slot = receiveShadow ? "_gosxWGPUMaterialShadowUniform" : "_gosxWGPUMaterialUniform";
+      var materialBuffer = wgpuCachedTrackedBuffer(
+        owner,
+        slot,
+        uniform.data,
+        GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+        true
+      );
 
       return device.createBindGroup({
         layout: materialBindGroupLayout,
         entries: [
-          { binding: 0, resource: { buffer: materialUniformBuffer } },
+          { binding: 0, resource: { buffer: materialBuffer } },
           { binding: 1, resource: texViews[0] },
           { binding: 2, resource: linearSampler },
           { binding: 3, resource: texViews[1] },
@@ -22055,6 +22966,7 @@ if (typeof window !== "undefined") {
         pass.draw(obj.vertexCount);
       }
 
+      drawInstancedShadowMeshes(pass, bundle);
       pass.end();
     }
 
@@ -22069,7 +22981,7 @@ if (typeof window !== "undefined") {
         var receiveShadow = !!obj.receiveShadow;
 
         if (matIndex !== lastMaterialIndex || receiveShadow !== lastReceiveShadow) {
-          var matBG = createMaterialBindGroup(mat, receiveShadow);
+          var matBG = createMaterialBindGroup(mat, receiveShadow, mat || obj);
           pass.setBindGroup(1, matBG);
           lastMaterialIndex = matIndex;
           lastReceiveShadow = receiveShadow;
@@ -22113,6 +23025,582 @@ if (typeof window !== "undefined") {
 
         pass.draw(count);
       }
+    }
+
+    function instancedMeshCount(mesh) {
+      if (!mesh) return 0;
+      return Math.max(0, Math.floor(sceneNumber(mesh.instanceCount, sceneNumber(mesh.count, 0))));
+    }
+
+    function instancedMeshMaterial(mesh, materials) {
+      var mat = materials[sceneNumber(mesh && mesh.materialIndex, 0)] || null;
+      if (mat) return mat;
+      return {
+        color: mesh && mesh.color || "#8de1ff",
+        roughness: sceneNumber(mesh && mesh.roughness, 0.5),
+        metalness: sceneNumber(mesh && mesh.metalness, 0),
+        emissive: sceneNumber(mesh && mesh.emissive, 0),
+        opacity: clamp01(sceneNumber(mesh && mesh.opacity, 1)),
+        unlit: mesh && mesh.materialKind === "flat",
+        renderPass: mesh && mesh.renderPass,
+      };
+    }
+
+    function instancedMeshTransformData(mesh, count) {
+      if (!mesh || count <= 0 || !mesh.transforms) return null;
+      if (!mesh._cachedTransforms) {
+        if (mesh.transforms instanceof Float32Array) {
+          mesh._cachedTransforms = mesh.transforms;
+        } else if (Array.isArray(mesh.transforms)) {
+          mesh._cachedTransforms = new Float32Array(mesh.transforms);
+        }
+      }
+      var data = mesh._cachedTransforms;
+      return data && data.length >= count * 16 ? data : null;
+    }
+
+    function instancedMeshColorData(mesh, count) {
+      if (!mesh || count <= 0) return null;
+      var rawColors = mesh.colors;
+      var source = rawColors || null;
+      if (
+        mesh._cachedWGPUInstanceColors &&
+        mesh._cachedWGPUInstanceColorCount === count &&
+        mesh._cachedWGPUInstanceColorSource === source
+      ) {
+        return mesh._cachedWGPUInstanceColors;
+      }
+
+      var data = null;
+      if (rawColors && typeof rawColors.length === "number" && rawColors.length > 0) {
+        if (Array.isArray(rawColors) && typeof rawColors[0] === "string") {
+          data = new Float32Array(count * 4);
+          for (var ci = 0; ci < count; ci++) {
+            var rgba = sceneColorRGBA(rawColors[ci] || rawColors[rawColors.length - 1], [1, 1, 1, 1]);
+            data[ci * 4] = rgba[0];
+            data[ci * 4 + 1] = rgba[1];
+            data[ci * 4 + 2] = rgba[2];
+            data[ci * 4 + 3] = rgba[3];
+          }
+        } else if (rawColors.length >= count * 4) {
+          data = rawColors instanceof Float32Array ? rawColors : new Float32Array(rawColors);
+        } else if (rawColors.length >= count * 3) {
+          data = new Float32Array(count * 4);
+          for (var ni = 0; ni < count; ni++) {
+            data[ni * 4] = rawColors[ni * 3];
+            data[ni * 4 + 1] = rawColors[ni * 3 + 1];
+            data[ni * 4 + 2] = rawColors[ni * 3 + 2];
+            data[ni * 4 + 3] = 1;
+          }
+        }
+      }
+
+      if (!data) {
+        data = new Float32Array(count * 4);
+        for (var di = 0; di < count; di++) {
+          data[di * 4] = 1;
+          data[di * 4 + 1] = 1;
+          data[di * 4 + 2] = 1;
+          data[di * 4 + 3] = 1;
+        }
+      }
+
+      mesh._cachedWGPUInstanceColors = data;
+      mesh._cachedWGPUInstanceColorCount = count;
+      mesh._cachedWGPUInstanceColorSource = source;
+      return data;
+    }
+
+    function getInstancedGeometry(mesh) {
+      if (typeof generateInstancedGeometry !== "function") return null;
+      var kind = typeof mesh.kind === "string" ? mesh.kind.toLowerCase() : "box";
+      var w = sceneNumber(mesh.width, 1);
+      var h = sceneNumber(mesh.height, 1);
+      var d = sceneNumber(mesh.depth, 1);
+      var r = sceneNumber(mesh.radius, 0.5);
+      var s = sceneNumber(mesh.segments, 16);
+      var key = kind + ":" + w + ":" + h + ":" + d + ":" + r + ":" + s;
+      if (instancedGeometryCache[key]) return instancedGeometryCache[key];
+      var geom = generateInstancedGeometry(kind, { width: w, height: h, depth: d, radius: r, segments: s });
+      instancedGeometryCache[key] = geom;
+      return geom;
+    }
+
+    function ensureInstancedGeometryGPUBuffer(geom, slot, data) {
+      return wgpuCachedTrackedBuffer(geom, slot, data, GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, false);
+    }
+
+    function ensureInstancedTransformGPUBuffer(mesh, data) {
+      return wgpuCachedTrackedBuffer(mesh, "_gosxWGPUInstanceTransformBuffer", data, GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, true);
+    }
+
+    function ensureInstancedColorGPUBuffer(mesh, data) {
+      return wgpuCachedTrackedBuffer(mesh, "_gosxWGPUInstanceColorBuffer", data, GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, true);
+    }
+
+    function buildInstancedDrawList(bundle, materials) {
+      var meshes = Array.isArray(bundle && bundle.instancedMeshes) ? bundle.instancedMeshes : [];
+      var opaque = [];
+      var alpha = [];
+      var additive = [];
+      for (var i = 0; i < meshes.length; i++) {
+        var mesh = meshes[i];
+        if (!mesh || mesh.viewCulled) continue;
+        if (instancedMeshCount(mesh) <= 0) continue;
+        if (!instancedMeshTransformData(mesh, instancedMeshCount(mesh))) continue;
+        var mat = instancedMeshMaterial(mesh, materials);
+        var pass = scenePBRObjectRenderPass(mesh, mat);
+        if (pass === "alpha") alpha.push(mesh);
+        else if (pass === "additive") additive.push(mesh);
+        else opaque.push(mesh);
+      }
+      alpha.sort(scenePBRDepthSort);
+      additive.sort(scenePBRDepthSort);
+      return { opaque: opaque, alpha: alpha, additive: additive };
+    }
+
+    function drawInstancedMeshes(pass, meshList, materials) {
+      for (var i = 0; i < meshList.length; i++) {
+        var mesh = meshList[i];
+        var instanceCount = instancedMeshCount(mesh);
+        var transformData = instancedMeshTransformData(mesh, instanceCount);
+        if (!transformData) continue;
+
+        var geom = getInstancedGeometry(mesh);
+        if (!geom || geom.vertexCount <= 0) continue;
+
+        var mat = instancedMeshMaterial(mesh, materials);
+        pass.setBindGroup(1, createMaterialBindGroup(mat, !!mesh.receiveShadow, mesh));
+
+        pass.setVertexBuffer(0, ensureInstancedGeometryGPUBuffer(geom, "_gosxWGPUInstancedPositionBuffer", geom.positions));
+        pass.setVertexBuffer(1, ensureInstancedGeometryGPUBuffer(geom, "_gosxWGPUInstancedNormalBuffer", geom.normals));
+        pass.setVertexBuffer(2, ensureInstancedGeometryGPUBuffer(geom, "_gosxWGPUInstancedUVBuffer", geom.uvs));
+        pass.setVertexBuffer(3, ensureInstancedGeometryGPUBuffer(geom, "_gosxWGPUInstancedTangentBuffer", geom.tangents));
+        pass.setVertexBuffer(4, ensureInstancedTransformGPUBuffer(mesh, transformData));
+        pass.setVertexBuffer(5, ensureInstancedColorGPUBuffer(mesh, instancedMeshColorData(mesh, instanceCount)));
+        pass.draw(geom.vertexCount, instanceCount);
+      }
+    }
+
+    function instancedLocalBounds(mesh) {
+      var kind = typeof mesh.kind === "string" ? mesh.kind.toLowerCase() : "box";
+      if (kind === "sphere") {
+        var radius = Math.max(0.0001, sceneNumber(mesh.radius, 0.5));
+        return { minX: -radius, minY: -radius, minZ: -radius, maxX: radius, maxY: radius, maxZ: radius };
+      }
+      var w = Math.max(0.0001, sceneNumber(mesh.width, 1));
+      var h = kind === "plane" ? 0 : Math.max(0.0001, sceneNumber(mesh.height, 1));
+      var d = Math.max(0.0001, sceneNumber(mesh.depth, 1));
+      return { minX: -w * 0.5, minY: -h * 0.5, minZ: -d * 0.5, maxX: w * 0.5, maxY: h * 0.5, maxZ: d * 0.5 };
+    }
+
+    function expandBoundsPoint(bounds, x, y, z) {
+      if (!bounds) return { minX: x, minY: y, minZ: z, maxX: x, maxY: y, maxZ: z };
+      if (x < bounds.minX) bounds.minX = x;
+      if (y < bounds.minY) bounds.minY = y;
+      if (z < bounds.minZ) bounds.minZ = z;
+      if (x > bounds.maxX) bounds.maxX = x;
+      if (y > bounds.maxY) bounds.maxY = y;
+      if (z > bounds.maxZ) bounds.maxZ = z;
+      return bounds;
+    }
+
+    function expandInstancedBounds(bounds, mesh, transformData, count) {
+      var b = instancedLocalBounds(mesh);
+      var xs = [b.minX, b.maxX];
+      var ys = [b.minY, b.maxY];
+      var zs = [b.minZ, b.maxZ];
+      for (var ii = 0; ii < count; ii++) {
+        var base = ii * 16;
+        for (var xi = 0; xi < 2; xi++) {
+          for (var yi = 0; yi < 2; yi++) {
+            for (var zi = 0; zi < 2; zi++) {
+              var x = xs[xi], y = ys[yi], z = zs[zi];
+              bounds = expandBoundsPoint(bounds,
+                transformData[base + 0] * x + transformData[base + 4] * y + transformData[base + 8] * z + transformData[base + 12],
+                transformData[base + 1] * x + transformData[base + 5] * y + transformData[base + 9] * z + transformData[base + 13],
+                transformData[base + 2] * x + transformData[base + 6] * y + transformData[base + 10] * z + transformData[base + 14]
+              );
+            }
+          }
+        }
+      }
+      return bounds;
+    }
+
+    function webGPUShadowComputeBounds(bundle) {
+      var bounds = typeof sceneShadowComputeBounds === "function" ? sceneShadowComputeBounds(bundle) : null;
+      var meshes = Array.isArray(bundle && bundle.instancedMeshes) ? bundle.instancedMeshes : [];
+      for (var i = 0; i < meshes.length; i++) {
+        var mesh = meshes[i];
+        if (!mesh || mesh.viewCulled) continue;
+        var count = instancedMeshCount(mesh);
+        var transforms = instancedMeshTransformData(mesh, count);
+        if (!transforms) continue;
+        bounds = expandInstancedBounds(bounds, mesh, transforms, count);
+      }
+      return bounds || { minX: -10, minY: -10, minZ: -10, maxX: 10, maxY: 10, maxZ: 10 };
+    }
+
+    function drawInstancedShadowMeshes(pass, bundle) {
+      var meshes = Array.isArray(bundle && bundle.instancedMeshes) ? bundle.instancedMeshes : [];
+      var drew = false;
+      for (var i = 0; i < meshes.length; i++) {
+        var mesh = meshes[i];
+        if (!mesh || mesh.viewCulled || !mesh.castShadow) continue;
+        var instanceCount = instancedMeshCount(mesh);
+        var transformData = instancedMeshTransformData(mesh, instanceCount);
+        if (!transformData) continue;
+        var geom = getInstancedGeometry(mesh);
+        if (!geom || geom.vertexCount <= 0) continue;
+        if (!drew) {
+          pass.setPipeline(getShadowInstancedPipeline());
+          drew = true;
+        }
+        pass.setVertexBuffer(0, ensureInstancedGeometryGPUBuffer(geom, "_gosxWGPUInstancedShadowPositionBuffer", geom.positions));
+        pass.setVertexBuffer(1, ensureInstancedTransformGPUBuffer(mesh, transformData));
+        pass.draw(geom.vertexCount, instanceCount);
+      }
+    }
+
+    function toSceneFloat32Array(values) {
+      if (values instanceof Float32Array) return values;
+      if (!values || typeof values.length !== "number") return new Float32Array(0);
+      return new Float32Array(values);
+    }
+
+    function webGPUUnsupportedLineStyles(bundle) {
+      var dashes = bundle && bundle.worldLineDashes;
+      if (dashes && typeof dashes.length === "number") {
+        for (var di = 0; di < dashes.length; di++) {
+          if (dashes[di]) return true;
+        }
+      }
+      var lines = Array.isArray(bundle && bundle.lines) ? bundle.lines : [];
+      for (var li = 0; li < lines.length; li++) {
+        var line = lines[li];
+        if (!line) continue;
+        if (line.lineDash) return true;
+        var material = line.material && typeof line.material === "object" ? line.material : null;
+        var materialKind = String(line.materialKind || line.kind || material && material.kind || "").toLowerCase();
+        if (material && material.lineDash) return true;
+        if (materialKind === "line-dashed" || materialKind === "dashed") return true;
+      }
+      return false;
+    }
+
+    function webGPUWorldLineSegmentCount(bundle) {
+      return Math.max(0, Math.floor(sceneNumber(bundle && bundle.worldVertexCount, 0) / 2));
+    }
+
+    function webGPUHasThickWorldLines(bundle) {
+      var widths = bundle && bundle.worldLineWidths;
+      if (widths && typeof widths.length === "number") {
+        for (var i = 0; i < widths.length; i++) {
+          if (sceneNumber(widths[i], 0) > 1) return true;
+        }
+      }
+      var lines = Array.isArray(bundle && bundle.lines) ? bundle.lines : [];
+      for (var li = 0; li < lines.length; li++) {
+        if (sceneNumber(lines[li] && lines[li].lineWidth, 0) > 1) return true;
+      }
+      return false;
+    }
+
+    function webGPUCanUseThickWorldLines(bundle) {
+      if (!webGPUHasThickWorldLines(bundle)) return true;
+      if (typeof createSceneThickLineScratch !== "function" || typeof expandSceneThickLineIntoScratch !== "function") return false;
+      var segmentCount = webGPUWorldLineSegmentCount(bundle);
+      return segmentCount > 0 && segmentCount <= 16384;
+    }
+
+    function hasWorldLineData(bundle) {
+      return Boolean(
+        bundle &&
+        !webGPUUnsupportedLineStyles(bundle) &&
+        webGPUCanUseThickWorldLines(bundle) &&
+        bundle.worldPositions &&
+        bundle.worldColors &&
+        Number(bundle.worldVertexCount || 0) > 0
+      );
+    }
+
+    function hasScreenLineData(bundle) {
+      return Boolean(
+        bundle &&
+        !hasWorldLineData(bundle) &&
+        !webGPUUnsupportedLineStyles(bundle) &&
+        bundle.positions &&
+        bundle.colors &&
+        Number(bundle.vertexCount || 0) > 0
+      );
+    }
+
+    function hasSurfaceData(bundle) {
+      var surfaces = Array.isArray(bundle && bundle.surfaces) ? bundle.surfaces : [];
+      for (var i = 0; i < surfaces.length; i++) {
+        var surface = surfaces[i];
+        if (surface && !surface.viewCulled && sceneNumber(surface.vertexCount, 0) > 0) return true;
+      }
+      return false;
+    }
+
+    function fallbackMaterialData(owner, vertexCount) {
+      var count = Math.max(0, Math.floor(sceneNumber(vertexCount, 0)));
+      if (
+        owner &&
+        owner._gosxWGPUFallbackMaterialData &&
+        owner._gosxWGPUFallbackMaterialCount === count
+      ) {
+        return owner._gosxWGPUFallbackMaterialData;
+      }
+      var data = new Float32Array(count * 3);
+      for (var i = 0; i < count; i++) {
+        data[i * 3] = 0;
+        data[i * 3 + 1] = 0;
+        data[i * 3 + 2] = 1;
+      }
+      if (owner) {
+        owner._gosxWGPUFallbackMaterialData = data;
+        owner._gosxWGPUFallbackMaterialCount = count;
+      }
+      return data;
+    }
+
+    function screenLinePositionData(bundle) {
+      var source = bundle && bundle.positions;
+      var count = Math.max(0, Math.floor(sceneNumber(bundle && bundle.vertexCount, 0)));
+      if (
+        bundle &&
+        bundle._gosxWGPUScreenLineSource === source &&
+        bundle._gosxWGPUScreenLineCount === count &&
+        bundle._gosxWGPUScreenLinePositions
+      ) {
+        return bundle._gosxWGPUScreenLinePositions;
+      }
+      var src = toSceneFloat32Array(source);
+      var data = new Float32Array(count * 3);
+      for (var i = 0; i < count; i++) {
+        data[i * 3] = src[i * 2] || 0;
+        data[i * 3 + 1] = src[i * 2 + 1] || 0;
+        data[i * 3 + 2] = 0;
+      }
+      if (bundle) {
+        bundle._gosxWGPUScreenLineSource = source;
+        bundle._gosxWGPUScreenLineCount = count;
+        bundle._gosxWGPUScreenLinePositions = data;
+      }
+      return data;
+    }
+
+    function primitiveVertexCount(positions, colors, materials, requested) {
+      var positionCount = Math.floor((positions && positions.length || 0) / 3);
+      var colorCount = Math.floor((colors && colors.length || 0) / 4);
+      var materialCount = Math.floor((materials && materials.length || 0) / 3);
+      var maxCount = Math.max(0, Math.min(positionCount, colorCount, materialCount));
+      var count = Math.max(0, Math.floor(sceneNumber(requested, maxCount)));
+      return Math.min(count, maxCount);
+    }
+
+    function linePassDepthWrite(blendMode) {
+      return blendMode !== "alpha" && blendMode !== "additive";
+    }
+
+    function colorPrimitiveOwner(name) {
+      if (!screenLineOwner[name]) screenLineOwner[name] = {};
+      return screenLineOwner[name];
+    }
+
+    function drawColorPrimitive(renderPass, entry, frameBindGroup) {
+      if (!entry || !entry.vertexCount) return false;
+      var owner = entry.owner || colorPrimitiveOwner(entry.name || "primitive");
+      var positions = toSceneFloat32Array(entry.positions);
+      var colors = toSceneFloat32Array(entry.colors);
+      var materials = entry.materials ? toSceneFloat32Array(entry.materials) : fallbackMaterialData(owner, entry.vertexCount);
+      var vertexCount = primitiveVertexCount(positions, colors, materials, entry.vertexCount);
+      if (vertexCount <= 0) return false;
+
+      var blend = entry.blend === "alpha" || entry.blend === "additive" ? entry.blend : "opaque";
+      var topology = entry.topology === "triangle-list" ? "triangle-list" : "line-list";
+      var depthWrite = typeof entry.depthWrite === "boolean" ? entry.depthWrite : linePassDepthWrite(blend);
+      renderPass.setPipeline(getSceneColorPipeline(entry.space === "clip" ? "clip" : "world", topology, blend, depthWrite));
+      renderPass.setBindGroup(0, frameBindGroup);
+      renderPass.setVertexBuffer(0, wgpuCachedTrackedBuffer(owner, "_gosxWGPUPrimitivePositions", positions, GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, true));
+      renderPass.setVertexBuffer(1, wgpuCachedTrackedBuffer(owner, "_gosxWGPUPrimitiveColors", colors, GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, true));
+      renderPass.setVertexBuffer(2, wgpuCachedTrackedBuffer(owner, "_gosxWGPUPrimitiveMaterials", materials, GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, true));
+      renderPass.draw(vertexCount);
+      return true;
+    }
+
+    function webGPUWorldLinePasses(bundle) {
+      if (!hasWorldLineData(bundle)) return [];
+      if (typeof buildSceneWorldDrawPlan === "function") {
+        if (!worldDrawScratch && typeof createSceneWorldDrawScratch === "function") {
+          worldDrawScratch = createSceneWorldDrawScratch();
+        }
+        var drawPlan = buildSceneWorldDrawPlan(bundle, worldDrawScratch);
+        if (drawPlan) {
+          return [
+            { name: "world-static-opaque", owner: drawPlan, positions: drawPlan.staticOpaquePositions, colors: drawPlan.staticOpaqueColors, materials: drawPlan.staticOpaqueMaterials, vertexCount: drawPlan.staticOpaqueVertexCount, blend: "opaque", space: "world", topology: "line-list" },
+            { name: "world-dynamic-opaque", owner: drawPlan, positions: drawPlan.dynamicOpaquePositions, colors: drawPlan.dynamicOpaqueColors, materials: drawPlan.dynamicOpaqueMaterials, vertexCount: drawPlan.dynamicOpaqueVertexCount, blend: "opaque", space: "world", topology: "line-list" },
+            { name: "world-alpha", owner: drawPlan.alphaPositions ? drawPlan : null, positions: drawPlan.alphaPositions, colors: drawPlan.alphaColors, materials: drawPlan.alphaMaterials, vertexCount: drawPlan.alphaVertexCount, blend: "alpha", space: "world", topology: "line-list", depthWrite: false },
+            { name: "world-additive", owner: drawPlan.additivePositions ? drawPlan : null, positions: drawPlan.additivePositions, colors: drawPlan.additiveColors, materials: drawPlan.additiveMaterials, vertexCount: drawPlan.additiveVertexCount, blend: "additive", space: "world", topology: "line-list", depthWrite: false },
+          ];
+        }
+      }
+      var vertexCount = Math.max(0, Math.floor(sceneNumber(bundle.worldVertexCount, 0)));
+      return [{
+        name: "world-fallback",
+        owner: bundle,
+        positions: bundle.worldPositions,
+        colors: bundle.worldColors,
+        materials: fallbackMaterialData(bundle, vertexCount),
+        vertexCount: vertexCount,
+        blend: "alpha",
+        space: "world",
+        topology: "line-list",
+        depthWrite: false,
+      }];
+    }
+
+    function drawWorldLineEntries(renderPass, entries, passName, frameBindGroup) {
+      var drew = false;
+      for (var i = 0; i < entries.length; i++) {
+        var entry = entries[i];
+        if (!entry || entry.blend !== passName) continue;
+        drew = drawColorPrimitive(renderPass, entry, frameBindGroup) || drew;
+      }
+      return drew;
+    }
+
+    function webGPUThickLineRecord(bundle) {
+      if (!webGPUHasThickWorldLines(bundle) || !webGPUCanUseThickWorldLines(bundle)) return null;
+      if (!bundle.worldPositions || !bundle.worldColors) return null;
+      if (!thickLineScratch && typeof createSceneThickLineScratch === "function") {
+        thickLineScratch = createSceneThickLineScratch();
+      }
+      if (!thickLineScratch || typeof expandSceneThickLineIntoScratch !== "function") return null;
+      var segmentCount = webGPUWorldLineSegmentCount(bundle);
+      if (segmentCount <= 0 || segmentCount > 16384) return null;
+      var usedSegments = expandSceneThickLineIntoScratch(
+        thickLineScratch,
+        bundle.worldPositions,
+        bundle.worldColors,
+        bundle.worldLineWidths,
+        bundle.worldLinePasses,
+        segmentCount
+      );
+      if (usedSegments <= 0) return null;
+      return {
+        scratch: thickLineScratch,
+        usedVerts: usedSegments * 4,
+        owner: thickLineOwner,
+      };
+    }
+
+    function thickLinePassIndexData(record, passName) {
+      var scratch = record && record.scratch;
+      if (!scratch) return null;
+      if (passName === "additive") {
+        return { slot: "_gosxWGPUThickLineAdditiveIndex", data: scratch.additiveIndices.subarray(0, scratch.additiveIndexCount), count: scratch.additiveIndexCount };
+      }
+      if (passName === "alpha") {
+        return { slot: "_gosxWGPUThickLineAlphaIndex", data: scratch.alphaIndices.subarray(0, scratch.alphaIndexCount), count: scratch.alphaIndexCount };
+      }
+      return { slot: "_gosxWGPUThickLineOpaqueIndex", data: scratch.opaqueIndices.subarray(0, scratch.opaqueIndexCount), count: scratch.opaqueIndexCount };
+    }
+
+    function drawThickWorldLineEntries(renderPass, record, passName, frameBindGroup) {
+      var scratch = record && record.scratch;
+      var usedVerts = record && record.usedVerts || 0;
+      if (!scratch || usedVerts <= 0) return false;
+      var indexData = thickLinePassIndexData(record, passName);
+      if (!indexData || indexData.count <= 0) return false;
+      var owner = record.owner || thickLineOwner;
+      var blend = passName === "alpha" || passName === "additive" ? passName : "opaque";
+      renderPass.setPipeline(getThickLinePipeline(blend, linePassDepthWrite(blend)));
+      renderPass.setBindGroup(0, frameBindGroup);
+      renderPass.setVertexBuffer(0, wgpuCachedTrackedBuffer(owner, "_gosxWGPUThickLinePositionA", scratch.positionsA.subarray(0, usedVerts * 3), GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, true));
+      renderPass.setVertexBuffer(1, wgpuCachedTrackedBuffer(owner, "_gosxWGPUThickLinePositionB", scratch.positionsB.subarray(0, usedVerts * 3), GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, true));
+      renderPass.setVertexBuffer(2, wgpuCachedTrackedBuffer(owner, "_gosxWGPUThickLineColorA", scratch.colorsA.subarray(0, usedVerts * 4), GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, true));
+      renderPass.setVertexBuffer(3, wgpuCachedTrackedBuffer(owner, "_gosxWGPUThickLineColorB", scratch.colorsB.subarray(0, usedVerts * 4), GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, true));
+      renderPass.setVertexBuffer(4, wgpuCachedTrackedBuffer(owner, "_gosxWGPUThickLineSide", scratch.sides.subarray(0, usedVerts), GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, true));
+      renderPass.setVertexBuffer(5, wgpuCachedTrackedBuffer(owner, "_gosxWGPUThickLineEndpoint", scratch.endpoints.subarray(0, usedVerts), GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, true));
+      renderPass.setVertexBuffer(6, wgpuCachedTrackedBuffer(owner, "_gosxWGPUThickLineWidth", scratch.widths.subarray(0, usedVerts), GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, true));
+      var indexBuffer = wgpuCachedTrackedBuffer(owner, indexData.slot, indexData.data, GPUBufferUsage.INDEX | GPUBufferUsage.COPY_DST, true);
+      renderPass.setIndexBuffer(indexBuffer, "uint16");
+      renderPass.drawIndexed(indexData.count);
+      return true;
+    }
+
+    function drawScreenLines(renderPass, bundle, frameBindGroup) {
+      if (!hasScreenLineData(bundle)) return false;
+      var vertexCount = Math.max(0, Math.floor(sceneNumber(bundle.vertexCount, 0)));
+      return drawColorPrimitive(renderPass, {
+        name: "screen-lines",
+        owner: bundle,
+        positions: screenLinePositionData(bundle),
+        colors: bundle.colors,
+        materials: fallbackMaterialData(bundle, vertexCount),
+        vertexCount: vertexCount,
+        blend: "alpha",
+        space: "clip",
+        topology: "line-list",
+        depthWrite: false,
+      }, frameBindGroup);
+    }
+
+    function surfaceEntries(bundle, renderPass) {
+      var surfaces = Array.isArray(bundle && bundle.surfaces) ? bundle.surfaces.slice() : [];
+      var filtered = [];
+      for (var i = 0; i < surfaces.length; i++) {
+        var surface = surfaces[i];
+        if (!surface || surface.viewCulled) continue;
+        if (Math.max(0, Math.floor(sceneNumber(surface.vertexCount, 0))) <= 0) continue;
+        if (String(surface.renderPass || "opaque") !== renderPass) continue;
+        filtered.push(surface);
+      }
+      if (renderPass !== "opaque") {
+        filtered.sort(function(left, right) {
+          var leftDepth = sceneNumber(left && left.depthCenter, 0);
+          var rightDepth = sceneNumber(right && right.depthCenter, 0);
+          if (leftDepth !== rightDepth) return rightDepth - leftDepth;
+          return String(left && left.id || "").localeCompare(String(right && right.id || ""));
+        });
+      }
+      return filtered;
+    }
+
+    function drawSurfaceEntries(renderPass, bundle, materials, passName, frameBindGroup) {
+      var entries = surfaceEntries(bundle, passName);
+      if (!entries.length) return false;
+      var blend = passName === "alpha" || passName === "additive" ? passName : "opaque";
+      renderPass.setPipeline(getSurfacePipeline(blend, blend === "opaque"));
+      renderPass.setBindGroup(0, frameBindGroup);
+      var drew = false;
+      for (var i = 0; i < entries.length; i++) {
+        var surface = entries[i];
+        var mat = materials[sceneNumber(surface.materialIndex, 0)] || null;
+        var positions = toSceneFloat32Array(surface.positions);
+        var uvs = toSceneFloat32Array(surface.uv);
+        var vertexCount = Math.min(Math.floor(positions.length / 3), Math.floor(uvs.length / 2), Math.max(0, Math.floor(sceneNumber(surface.vertexCount, 0))));
+        if (vertexCount <= 0) continue;
+        renderPass.setBindGroup(1, createMaterialBindGroup(mat, false, surface));
+        renderPass.setVertexBuffer(0, wgpuCachedTrackedBuffer(surface, "_gosxWGPUSurfacePositions", positions, GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, true));
+        renderPass.setVertexBuffer(1, wgpuCachedTrackedBuffer(surface, "_gosxWGPUSurfaceUVs", uvs, GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, true));
+        renderPass.draw(vertexCount);
+        drew = true;
+      }
+      return drew;
+    }
+
+    function resolveWebGPUSampleCount(bundle) {
+      var requested = sceneNumber(bundle && (bundle.msaaSamples != null ? bundle.msaaSamples : bundle.sampleCount), sceneNumber(rendererOptions.msaaSamples, 0));
+      if (requested <= 1 && (rendererOptions.antialias === true || sceneBool(bundle && bundle.antialias, false) || sceneBool(bundle && bundle.msaa, false))) {
+        requested = 4;
+      }
+      if (requested >= 4) return 4;
+      return 1;
     }
 
     function drawPointsEntries(pass, bundle, cam, timeSeconds) {
@@ -22331,7 +23819,11 @@ if (typeof window !== "undefined") {
       );
       var hasPointsData = (Array.isArray(bundle.points) && bundle.points.length > 0) ||
         (Array.isArray(bundle.computeParticles) && bundle.computeParticles.length > 0);
-      if (!hasPBRData && !hasPointsData) return;
+      var hasInstancedData = Array.isArray(bundle.instancedMeshes) && bundle.instancedMeshes.length > 0;
+      var hasWorldLines = hasWorldLineData(bundle);
+      var hasScreenLines = hasScreenLineData(bundle);
+      var hasSurfaces = hasSurfaceData(bundle);
+      if (!hasPBRData && !hasPointsData && !hasInstancedData && !hasWorldLines && !hasScreenLines && !hasSurfaces) return;
       var preparedScene = typeof prepareScene === "function"
         ? prepareScene(bundle, bundle.camera, viewport, lastPreparedScene, {
           mount: canvas && canvas.parentNode || null,
@@ -22344,6 +23836,18 @@ if (typeof window !== "undefined") {
         if (canvas && canvas.parentNode) {
           canvas.parentNode.__gosxScene3DCSSDynamic = Boolean(preparedScene.cssDynamic);
         }
+        hasPBRData = Boolean(
+          bundle.worldMeshPositions &&
+          bundle.worldMeshNormals &&
+          Array.isArray(bundle.meshObjects) &&
+          bundle.meshObjects.length > 0
+        );
+        hasPointsData = (Array.isArray(bundle.points) && bundle.points.length > 0) ||
+          (Array.isArray(bundle.computeParticles) && bundle.computeParticles.length > 0);
+        hasInstancedData = Array.isArray(bundle.instancedMeshes) && bundle.instancedMeshes.length > 0;
+        hasWorldLines = hasWorldLineData(bundle);
+        hasScreenLines = hasScreenLineData(bundle);
+        hasSurfaces = hasSurfaceData(bundle);
       }
 
       var width = canvas.width;
@@ -22370,6 +23874,8 @@ if (typeof window !== "undefined") {
         : 1;
       var scaledW = Math.max(1, Math.floor(width * postfxFactor));
       var scaledH = Math.max(1, Math.floor(height * postfxFactor));
+      var sampleCount = resolveWebGPUSampleCount(bundle);
+      activeSampleCount = sampleCount;
 
       var cam = uploadFrameUniforms(bundle.camera, scaledW, scaledH, !usePostProcessing);
       uploadLights(bundle.lights);
@@ -22394,7 +23900,7 @@ if (typeof window !== "undefined") {
         var kind = typeof light.kind === "string" ? light.kind.toLowerCase() : "";
         if (kind !== "directional") continue;
 
-        if (!sceneBounds) sceneBounds = sceneShadowComputeBounds(bundle);
+        if (!sceneBounds) sceneBounds = webGPUShadowComputeBounds(bundle);
 
         var slot = activeShadowCount;
         var shadowSize = sceneNumber(light.shadowSize, 1024);
@@ -22421,31 +23927,50 @@ if (typeof window !== "undefined") {
       var frameBindGroup = createFrameBindGroup(shadowView0, shadowView1);
 
       var mainColorView;
+      var mainResolveView = null;
       var mainDepthTargetView;
       var postTarget = null;
 
       if (usePostProcessing) {
         if (!postProcessor) postProcessor = wgpuCreatePostProcessor(device, targetFormat);
         postTarget = postProcessor.getSceneTarget(scaledW, scaledH);
-        mainColorView = postTarget.colorView;
-        mainDepthTargetView = postTarget.depthView;
+        if (sampleCount > 1) {
+          mainColorView = ensureMSAAColor(scaledW, scaledH, sampleCount);
+          mainResolveView = postTarget.colorView;
+          ensureMainDepth(scaledW, scaledH, sampleCount);
+          mainDepthTargetView = mainDepthView;
+        } else {
+          mainColorView = postTarget.colorView;
+          mainDepthTargetView = postTarget.depthView;
+        }
       } else {
         var currentTexture = gpuCtx.getCurrentTexture();
-        mainColorView = currentTexture.createView();
-        ensureMainDepth(width, height);
+        var currentView = currentTexture.createView();
+        if (sampleCount > 1) {
+          mainColorView = ensureMSAAColor(width, height, sampleCount);
+          mainResolveView = currentView;
+        } else {
+          mainColorView = currentView;
+        }
+        ensureMainDepth(width, height, sampleCount);
         mainDepthTargetView = mainDepthView;
       }
 
       var bgStr = typeof bundle.background === "string" ? bundle.background.trim().toLowerCase() : "";
       var bg = bgStr === "transparent" ? [0, 0, 0, 0] : sceneColorRGBA(bundle.background, [0.03, 0.08, 0.12, 1]);
 
+      var mainColorAttachment = {
+        view: mainColorView,
+        loadOp: "clear",
+        storeOp: "store",
+        clearValue: { r: bg[0], g: bg[1], b: bg[2], a: bg[3] },
+      };
+      if (mainResolveView) {
+        mainColorAttachment.resolveTarget = mainResolveView;
+      }
+
       var mainPass = encoder.beginRenderPass({
-        colorAttachments: [{
-          view: mainColorView,
-          loadOp: "clear",
-          storeOp: "store",
-          clearValue: { r: bg[0], g: bg[1], b: bg[2], a: bg[3] },
-        }],
+        colorAttachments: [mainColorAttachment],
         depthStencilAttachment: {
           view: mainDepthTargetView,
           depthLoadOp: "clear",
@@ -22454,17 +23979,36 @@ if (typeof window !== "undefined") {
         },
       });
 
-      if (hasPBRData) {
-        var drawList = preparedScene && preparedScene.pbrPasses
-          ? preparedScene.pbrPasses
-          : buildDrawList(bundle);
-        var materials = Array.isArray(bundle.materials) ? bundle.materials : [];
+      var materials = Array.isArray(bundle.materials) ? bundle.materials : [];
+      var instancedDrawList = hasInstancedData
+        ? buildInstancedDrawList(bundle, materials)
+        : { opaque: [], alpha: [], additive: [] };
+      var drawList = hasPBRData
+        ? (preparedScene && preparedScene.pbrPasses ? preparedScene.pbrPasses : buildDrawList(bundle))
+        : { opaque: [], alpha: [], additive: [] };
+      var thickLineRecord = hasWorldLines ? webGPUThickLineRecord(bundle) : null;
+      var worldLineEntries = hasWorldLines && !thickLineRecord ? webGPUWorldLinePasses(bundle) : [];
 
+      if (hasPBRData || hasInstancedData || hasWorldLines || hasSurfaces) {
         if (drawList.opaque.length > 0) {
           var opaquePipeline = getPBRPipeline("opaque", true);
           mainPass.setPipeline(opaquePipeline);
           mainPass.setBindGroup(0, frameBindGroup);
           drawPBRObjects(mainPass, drawList.opaque, bundle, materials, frameBindGroup);
+        }
+        if (instancedDrawList.opaque.length > 0) {
+          var opaqueInstancedPipeline = getPBRInstancedPipeline("opaque", true);
+          mainPass.setPipeline(opaqueInstancedPipeline);
+          mainPass.setBindGroup(0, frameBindGroup);
+          drawInstancedMeshes(mainPass, instancedDrawList.opaque, materials);
+        }
+        if (hasSurfaces) {
+          drawSurfaceEntries(mainPass, bundle, materials, "opaque", frameBindGroup);
+        }
+        if (thickLineRecord) {
+          drawThickWorldLineEntries(mainPass, thickLineRecord, "opaque", frameBindGroup);
+        } else if (worldLineEntries.length > 0) {
+          drawWorldLineEntries(mainPass, worldLineEntries, "opaque", frameBindGroup);
         }
 
         if (drawList.alpha.length > 0) {
@@ -22473,6 +24017,20 @@ if (typeof window !== "undefined") {
           mainPass.setBindGroup(0, frameBindGroup);
           drawPBRObjects(mainPass, drawList.alpha, bundle, materials, frameBindGroup);
         }
+        if (instancedDrawList.alpha.length > 0) {
+          var alphaInstancedPipeline = getPBRInstancedPipeline("alpha", false);
+          mainPass.setPipeline(alphaInstancedPipeline);
+          mainPass.setBindGroup(0, frameBindGroup);
+          drawInstancedMeshes(mainPass, instancedDrawList.alpha, materials);
+        }
+        if (hasSurfaces) {
+          drawSurfaceEntries(mainPass, bundle, materials, "alpha", frameBindGroup);
+        }
+        if (thickLineRecord) {
+          drawThickWorldLineEntries(mainPass, thickLineRecord, "alpha", frameBindGroup);
+        } else if (worldLineEntries.length > 0) {
+          drawWorldLineEntries(mainPass, worldLineEntries, "alpha", frameBindGroup);
+        }
 
         if (drawList.additive.length > 0) {
           var additivePipeline = getPBRPipeline("additive", false);
@@ -22480,11 +24038,29 @@ if (typeof window !== "undefined") {
           mainPass.setBindGroup(0, frameBindGroup);
           drawPBRObjects(mainPass, drawList.additive, bundle, materials, frameBindGroup);
         }
+        if (instancedDrawList.additive.length > 0) {
+          var additiveInstancedPipeline = getPBRInstancedPipeline("additive", false);
+          mainPass.setPipeline(additiveInstancedPipeline);
+          mainPass.setBindGroup(0, frameBindGroup);
+          drawInstancedMeshes(mainPass, instancedDrawList.additive, materials);
+        }
+        if (hasSurfaces) {
+          drawSurfaceEntries(mainPass, bundle, materials, "additive", frameBindGroup);
+        }
+        if (thickLineRecord) {
+          drawThickWorldLineEntries(mainPass, thickLineRecord, "additive", frameBindGroup);
+        } else if (worldLineEntries.length > 0) {
+          drawWorldLineEntries(mainPass, worldLineEntries, "additive", frameBindGroup);
+        }
+      }
+
+      if (hasScreenLines) {
+        drawScreenLines(mainPass, bundle, frameBindGroup);
       }
 
       if (hasPointsData) {
         mainPass.setBindGroup(0, frameBindGroup);
-        var dummyMatBG = createMaterialBindGroup(null, false);
+        var dummyMatBG = createMaterialBindGroup(null, false, defaultMaterialOwner);
         mainPass.setBindGroup(1, dummyMatBG);
         drawPointsEntries(mainPass, bundle, cam, frameTimeSeconds);
         drawComputeParticleEntries(mainPass, computeParticleRecords, bundle.environment);
@@ -22515,7 +24091,6 @@ if (typeof window !== "undefined") {
       if (fogUniformBuffer) fogUniformBuffer.destroy();
       if (envUniformBuffer) envUniformBuffer.destroy();
       if (shadowUniformBuffer) shadowUniformBuffer.destroy();
-      if (materialUniformBuffer) materialUniformBuffer.destroy();
       if (positionBuffer) positionBuffer.destroy();
       if (normalBuffer) normalBuffer.destroy();
       if (uvBuffer) uvBuffer.destroy();
@@ -22529,6 +24104,7 @@ if (typeof window !== "undefined") {
       disposeComputeParticleSystems();
 
       if (mainDepthTexture) mainDepthTexture.destroy();
+      if (mainMSAATexture) mainMSAATexture.destroy();
       if (dummyShadowTex) dummyShadowTex.destroy();
       if (placeholderTex) placeholderTex.destroy();
 
@@ -22551,9 +24127,38 @@ if (typeof window !== "undefined") {
 
     if (initFailed) return null;
 
+    function supportsBundle(bundle) {
+      if (webGPUUnsupportedLineStyles(bundle)) {
+        return false;
+      }
+      if (!webGPUCanUseThickWorldLines(bundle)) {
+        return false;
+      }
+      return true;
+    }
+
+    function diagnostics() {
+      var base = typeof sceneWebGPUDiagnostics === "function"
+        ? sceneWebGPUDiagnostics()
+        : {};
+      var out = {};
+      for (var key in base) {
+        if (Object.prototype.hasOwnProperty.call(base, key)) {
+          out[key] = base[key];
+        }
+      }
+      out.renderer = "webgpu";
+      out.targetFormat = targetFormat;
+      out.activeSampleCount = activeSampleCount;
+      out.postProcessing = !!postProcessor;
+      return out;
+    }
+
     return {
       kind: "webgpu",
       type: "webgpu",
+      supportsBundle: supportsBundle,
+      diagnostics: diagnostics,
       render: render,
       dispose: dispose,
     };
@@ -26487,6 +28092,85 @@ if (typeof window !== "undefined") {
     return sceneBool(props && props.requireWebGL, false);
   }
 
+  function sceneWebGPUOptions(props, capability) {
+    const caps = capability && typeof capability === "object" ? capability : {};
+    const requestedSamples = Math.max(0, Math.floor(sceneNumber(props && props.msaaSamples, 0)));
+    const tierAllowsMSAA = caps.tier === "full" && !caps.lowPower && !caps.reducedData;
+    const antialias = requestedSamples > 1
+      ? true
+      : sceneBool(props && props.antialias, tierAllowsMSAA);
+    return {
+      antialias,
+      msaaSamples: requestedSamples > 1 ? 4 : (antialias ? 4 : 1),
+    };
+  }
+
+  function sceneWebGPUUnsupportedLineStyle(entry) {
+    if (!entry || typeof entry !== "object") {
+      return false;
+    }
+    const material = entry.material && typeof entry.material === "object" ? entry.material : null;
+    const materialKind = String(entry.materialKind || entry.kind || material && material.kind || "").toLowerCase();
+    return entry.lineDash === true ||
+      material && material.lineDash === true ||
+      materialKind === "line-dashed" ||
+      materialKind === "dashed";
+  }
+
+  function sceneWebGPUUnsupportedLineCollection(list) {
+    if (!Array.isArray(list)) {
+      return false;
+    }
+    for (let i = 0; i < list.length; i += 1) {
+      const entry = list[i];
+      if (!entry || typeof entry !== "object") {
+        continue;
+      }
+      if (sceneWebGPUUnsupportedLineStyle(entry)) {
+        return true;
+      }
+      if (Array.isArray(entry.children) && sceneWebGPUUnsupportedLineCollection(entry.children)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function sceneWebGPUUnsupportedLineBundle(source) {
+    const dashes = source && source.worldLineDashes;
+    if (dashes && typeof dashes.length === "number") {
+      for (let i = 0; i < dashes.length; i += 1) {
+        if (dashes[i]) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  function sceneWebGPUFeatureGap(source) {
+    const root = source && typeof source === "object" ? source : {};
+    const scene = root.scene && typeof root.scene === "object" ? root.scene : null;
+    const candidates = scene ? [root, scene] : [root];
+    if (sceneWebGPUUnsupportedLineBundle(root)) {
+      return "line-styles";
+    }
+    for (let i = 0; i < candidates.length; i += 1) {
+      const item = candidates[i] || {};
+      if (
+        sceneWebGPUUnsupportedLineCollection(item.lines) ||
+        sceneWebGPUUnsupportedLineCollection(item.objects)
+      ) {
+        return "line-styles";
+      }
+    }
+    return "";
+  }
+
+  function sceneNeedsWebGLForWebGPUCoverage(source) {
+    return sceneWebGPUFeatureGap(source) !== "";
+  }
+
   function createSceneRenderer(canvas, props, capability) {
     const registryResult = createSceneRendererFromRegistry(canvas, props, capability);
     if (registryResult) {
@@ -26494,9 +28178,10 @@ if (typeof window !== "undefined") {
     }
 
     const webglPreference = sceneCapabilityWebGLPreference(props, capability);
+    const webgpuFeatureGap = sceneNeedsWebGLForWebGPUCoverage(props);
     if (webglPreference === "prefer" || webglPreference === "force") {
-      if (webglPreference !== "force" && typeof sceneWebGPUAvailable === "function" && sceneWebGPUAvailable()) {
-        var gpuRenderer = createSceneWebGPURendererOrFallback(canvas);
+      if (!webgpuFeatureGap && webglPreference !== "force" && typeof sceneWebGPUAvailable === "function" && sceneWebGPUAvailable()) {
+        var gpuRenderer = createSceneWebGPURendererOrFallback(canvas, sceneWebGPUOptions(props, capability));
         if (gpuRenderer) {
           return {
             renderer: gpuRenderer,
@@ -26517,7 +28202,7 @@ if (typeof window !== "undefined") {
           if (pbrRenderer) {
             return {
               renderer: pbrRenderer,
-              fallbackReason: "",
+              fallbackReason: webgpuFeatureGap ? "webgpu-feature-gap" : "",
             };
           }
         }
@@ -26529,7 +28214,7 @@ if (typeof window !== "undefined") {
       if (webglRenderer) {
         return {
           renderer: webglRenderer,
-          fallbackReason: "",
+          fallbackReason: webgpuFeatureGap ? "webgpu-feature-gap" : "",
         };
       }
     }
@@ -26552,14 +28237,15 @@ if (typeof window !== "undefined") {
     }
     const webglPreference = sceneCapabilityWebGLPreference(props, capability);
     const requireWebGL = sceneRequiresWebGL(props);
+    const webgpuFeatureGap = sceneNeedsWebGLForWebGPUCoverage(props);
     const request = {
       props,
       capability,
-      webgpu: webglPreference === "prefer",
+      webgpu: webglPreference === "prefer" && !webgpuFeatureGap,
       webgl: webglPreference === "prefer" || webglPreference === "force",
       webgl2: webglPreference === "prefer" || webglPreference === "force",
       canvas2d: !requireWebGL,
-      preferWebGPU: webglPreference === "prefer",
+      preferWebGPU: webglPreference === "prefer" && !webgpuFeatureGap,
       forceWebGL: webglPreference === "force",
     };
     const candidates = sceneBackendRegistry.candidates(request);
@@ -26573,7 +28259,7 @@ if (typeof window !== "undefined") {
           renderer,
           fallbackReason: entry.kind === "canvas2d" || renderer.kind === "canvas"
             ? sceneRendererFallbackReason(props, capability, "canvas")
-            : "",
+            : (webgpuFeatureGap && renderer.kind === "webgl" ? "webgpu-feature-gap" : ""),
         };
       }
     }
@@ -27330,6 +29016,9 @@ if (typeof window !== "undefined") {
     if (sceneCapabilityWebGLPreference(props, capability) !== "prefer") {
       return false;
     }
+    if (sceneNeedsWebGLForWebGPUCoverage(props)) {
+      return false;
+    }
     try {
       var api = await ensureWebGPUFeatureLoaded();
       if (!api) {
@@ -27960,6 +29649,17 @@ if (typeof window !== "undefined") {
     }
     setAttrValue(mount, "data-gosx-scene3d-renderer", renderer && renderer.kind ? renderer.kind : "");
     setAttrValue(mount, "data-gosx-scene3d-renderer-fallback", fallbackReason || "");
+    const webgpuDiagnostics = renderer && renderer.kind === "webgpu" && typeof renderer.diagnostics === "function"
+      ? renderer.diagnostics()
+      : null;
+    setAttrValue(mount, "data-gosx-scene3d-webgpu-features", webgpuDiagnostics && Array.isArray(webgpuDiagnostics.requestedFeatures) ? webgpuDiagnostics.requestedFeatures.join(",") : "");
+    setAttrValue(mount, "data-gosx-scene3d-webgpu-device-features", webgpuDiagnostics && Array.isArray(webgpuDiagnostics.deviceFeatures) ? webgpuDiagnostics.deviceFeatures.join(",") : "");
+    setAttrValue(mount, "data-gosx-scene3d-webgpu-sample-count", webgpuDiagnostics && webgpuDiagnostics.activeSampleCount > 0 ? webgpuDiagnostics.activeSampleCount : "");
+    setAttrValue(mount, "data-gosx-scene3d-webgpu-adapter", webgpuDiagnostics && webgpuDiagnostics.adapterInfo ? [
+      webgpuDiagnostics.adapterInfo.vendor || "",
+      webgpuDiagnostics.adapterInfo.architecture || "",
+      webgpuDiagnostics.adapterInfo.device || "",
+    ].filter(Boolean).join(" ") : "");
   }
 
   function showSceneRequiredRendererMessage(mount, props, reason) {
@@ -29093,6 +30793,54 @@ if (typeof window !== "undefined") {
     return Math.max(0.01, sceneNumber(props && props.controlMoveSpeed, 4));
   }
 
+  function scenePointerLockRequested(props) {
+    return sceneBool(props && props.pointerLock, false);
+  }
+
+  function scenePointerLockElement() {
+    if (typeof document === "undefined" || !document) {
+      return null;
+    }
+    return document.pointerLockElement ||
+      document.mozPointerLockElement ||
+      document.webkitPointerLockElement ||
+      null;
+  }
+
+  function scenePointerLockActive(canvas) {
+    return Boolean(canvas && scenePointerLockElement() === canvas);
+  }
+
+  function sceneRequestPointerLock(canvas) {
+    if (!canvas || typeof canvas.requestPointerLock !== "function") {
+      return false;
+    }
+    try {
+      canvas.requestPointerLock({ unadjustedMovement: true });
+      return true;
+    } catch (_unadjustedError) {
+      try {
+        canvas.requestPointerLock();
+        return true;
+      } catch (_error) {
+        return false;
+      }
+    }
+  }
+
+  function sceneExitPointerLock(canvas) {
+    if (!scenePointerLockActive(canvas)) {
+      return;
+    }
+    const exit = document.exitPointerLock || document.mozExitPointerLock || document.webkitExitPointerLock;
+    if (typeof exit !== "function") {
+      return;
+    }
+    try {
+      exit.call(document);
+    } catch (_error) {}
+  }
+
   function sceneWorldCameraPosition(camera) {
     const normalized = sceneRenderCamera(camera);
     return {
@@ -29226,6 +30974,8 @@ if (typeof window !== "undefined") {
       zoomSpeed: sceneControlsZoomSpeed(props),
       lookSpeed: sceneControlsLookSpeed(props),
       moveSpeed: sceneControlsMoveSpeed(props),
+      pointerLock: mode !== "orbit" && scenePointerLockRequested(props),
+      pointerLocked: false,
       orbit: null,
       fly: null,
       keys: new Set(),
@@ -29472,6 +31222,10 @@ if (typeof window !== "undefined") {
       canvas.focus({ preventScroll: true });
     }
     attachDocumentListeners();
+    if (controls.pointerLock) {
+      sceneRequestPointerLock(canvas);
+      controls.pointerLocked = scenePointerLockActive(canvas);
+    }
     if (typeof canvas.setPointerCapture === "function" && event.pointerId != null) {
       canvas.setPointerCapture(event.pointerId);
     }
@@ -29488,7 +31242,12 @@ if (typeof window !== "undefined") {
       return;
     }
     const metrics = sceneControlsMetrics(readViewport, props);
-    const sample = sceneLocalPointerSample(event, canvas, metrics.width, metrics.height, controls, "move");
+    const pointerLocked = controls.pointerLock && scenePointerLockActive(canvas);
+    controls.pointerLocked = pointerLocked;
+    const sample = pointerLocked ? {
+      deltaX: sceneNumber(event && event.movementX, 0),
+      deltaY: sceneNumber(event && event.movementY, 0),
+    } : sceneLocalPointerSample(event, canvas, metrics.width, metrics.height, controls, "move");
     const fly = sceneFlyEnsureState(controls, readSourceCamera);
     fly.yaw += (sample.deltaX / Math.max(metrics.width, 1)) * Math.PI * controls.lookSpeed;
     fly.pitch = sceneClamp(
@@ -29509,9 +31268,19 @@ if (typeof window !== "undefined") {
     if (!sceneDragMatchesActivePointer(controls, event)) {
       return;
     }
+    if (controls.pointerLock && scenePointerLockActive(canvas) && event && event.type !== "pointerlockchange") {
+      if (typeof event.preventDefault === "function") {
+        event.preventDefault();
+      }
+      if (typeof event.stopPropagation === "function") {
+        event.stopPropagation();
+      }
+      return;
+    }
     const pointerId = controls.pointerId;
     controls.active = false;
     controls.pointerId = null;
+    controls.pointerLocked = false;
     canvas.style.cursor = "crosshair";
     detachDocumentListeners();
     if (pointerId != null && typeof canvas.releasePointerCapture === "function") {
@@ -29625,6 +31394,17 @@ if (typeof window !== "undefined") {
       canvas.setAttribute("tabindex", "0");
     }
 
+    function onPointerLockChange(event) {
+      if (!flyMode || !controls.pointerLock) {
+        return;
+      }
+      const locked = scenePointerLockActive(canvas);
+      controls.pointerLocked = locked;
+      if (!locked && controls.active) {
+        sceneFlyFinishDrag(controls, canvas, detachDocumentListeners, event || { type: "pointerlockchange" });
+      }
+    }
+
     function attachDocumentListeners() {
       if (documentListenersAttached) {
         return;
@@ -29735,6 +31515,11 @@ if (typeof window !== "undefined") {
     if (flyMode) {
       document.addEventListener("keydown", onKeyDown);
       document.addEventListener("keyup", onKeyUp);
+      if (controls.pointerLock) {
+        document.addEventListener("pointerlockchange", onPointerLockChange);
+        document.addEventListener("mozpointerlockchange", onPointerLockChange);
+        document.addEventListener("webkitpointerlockchange", onPointerLockChange);
+      }
     }
 
     return {
@@ -29752,8 +31537,14 @@ if (typeof window !== "undefined") {
         canvas.removeEventListener("lostpointercapture", finishPointerDrag);
         canvas.removeEventListener("wheel", onWheel);
         if (flyMode) {
+          sceneExitPointerLock(canvas);
           document.removeEventListener("keydown", onKeyDown);
           document.removeEventListener("keyup", onKeyUp);
+          if (controls.pointerLock) {
+            document.removeEventListener("pointerlockchange", onPointerLockChange);
+            document.removeEventListener("mozpointerlockchange", onPointerLockChange);
+            document.removeEventListener("webkitpointerlockchange", onPointerLockChange);
+          }
         }
       },
     };
@@ -30100,8 +31891,29 @@ if (typeof window !== "undefined") {
       return swapRenderer(createSceneCanvasRenderer(ctx2d, canvas), reason || "webgl-unavailable");
     }
 
+    function ensureRendererCanCoverBundle(bundle) {
+      if (!renderer || !bundle) {
+        return true;
+      }
+      let feature = "";
+      if (typeof renderer.supportsBundle === "function" && renderer.supportsBundle(bundle) === false) {
+        feature = "backend-declared";
+      }
+      if (!feature) {
+        return true;
+      }
+      gosxSceneEmit("warn", "renderer-feature-gap", {
+        rendererKind: renderer.kind || "",
+        feature,
+      });
+      return fallbackSceneRenderer("webgpu-feature-gap");
+    }
+
     function renderLatestSceneBundle(reason) {
       if (disposed || !latestBundle || !renderer || typeof renderer.render !== "function" || !sceneCanRender()) {
+        return false;
+      }
+      if (!ensureRendererCanCoverBundle(latestBundle)) {
         return false;
       }
       recordScenePerfCounter("render:" + (reason || "restore"));
@@ -30595,6 +32407,10 @@ if (typeof window !== "undefined") {
             sceneCurrentControlCamera(sceneControlHandle.controller, runtimeBundle.camera || sceneState.camera, sceneState._scrollCamera),
           );
           latestBundle = effectiveBundle;
+          if (!ensureRendererCanCoverBundle(effectiveBundle)) {
+            scheduleNextAnimationFrame();
+            return;
+          }
           syncSceneNodeSentinels(effectiveBundle);
           renderer.render(effectiveBundle, viewport);
           renderSceneLabels(labelLayer, effectiveBundle, labelLayoutCache, labelElements, viewport.cssWidth, viewport.cssHeight);
@@ -30642,6 +32458,10 @@ if (typeof window !== "undefined") {
         performance.measure("scene3d-bundle", "scene3d-bundle-start", "scene3d-bundle-end");
         performance.clearMarks("scene3d-bundle-start");
         performance.clearMarks("scene3d-bundle-end");
+      }
+      if (!ensureRendererCanCoverBundle(latestBundle)) {
+        scheduleNextAnimationFrame();
+        return;
       }
       syncSceneNodeSentinels(latestBundle);
       renderer.render(latestBundle, viewport);
@@ -32733,6 +34553,7 @@ if (typeof window !== "undefined") {
 
     const mount = resolveEngineMount(entry);
     if (engineKindNeedsMount(entry.kind) && !mount) return;
+    await prepareRuntimeCapabilityProbe(entry);
     const capabilityStatus = engineCapabilityStatus(entry);
     applyRuntimeCapabilityState(mount, "engine", capabilityStatus);
     if (!capabilityStatus.ok) {
@@ -32944,6 +34765,1371 @@ if (typeof window !== "undefined") {
     }
   }
 
+  function initializeClientIdentity(config) {
+    const cfg = normalizeClientIdentityConfig(config);
+    if (!cfg) return null;
+    const current = window.__gosx.identity;
+    if (current && current.configKey === cfg.configKey) {
+      return current;
+    }
+    const clientId = ensureClientIdentity(cfg);
+    const identity = {
+      clientId: clientId,
+      headerName: cfg.headerName,
+      cookieName: cfg.cookieName,
+      configKey: cfg.configKey,
+      applyHeaders: function(headers) {
+        const next = Object.assign({}, headers || {});
+        if (cfg.headerName) next[cfg.headerName] = clientId;
+        return next;
+      },
+    };
+    window.__gosx.identity = identity;
+    if (cfg.globalName && /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(cfg.globalName)) {
+      window[cfg.globalName] = identity;
+    }
+    return identity;
+  }
+
+  function normalizeClientIdentityConfig(raw) {
+    if (!raw || typeof raw !== "object") return null;
+    const cookieName = String(raw.cookieName || "gosx_client_id").trim();
+    const storageKey = String(raw.storageKey || cookieName).trim();
+    const headerName = String(raw.headerName || "X-GoSX-Client-ID").trim();
+    if (!cookieName || !storageKey) return null;
+    const legacy = Array.isArray(raw.legacyCookieNames)
+      ? raw.legacyCookieNames.map(function(value) { return String(value || "").trim(); }).filter(Boolean)
+      : [];
+    const maxAge = Math.max(60, Math.floor(hubInputNumber(raw.maxAgeSeconds, 31536000)));
+    return {
+      cookieName: cookieName,
+      legacyCookieNames: legacy,
+      storageKey: storageKey,
+      headerName: headerName,
+      globalName: String(raw.globalName || "").trim(),
+      prefix: String(raw.prefix || "gosx-"),
+      maxAgeSeconds: maxAge,
+      sameSite: String(raw.sameSite || "Lax").trim() || "Lax",
+      configKey: [cookieName, storageKey, headerName].join("|"),
+    };
+  }
+
+  function ensureClientIdentity(config) {
+    const id = normalizeClientIdentity(readIdentityCookie(config))
+      || normalizeClientIdentity(readIdentityStorage(config.storageKey))
+      || randomClientIdentity(config.prefix);
+    writeIdentityStorage(config.storageKey, id);
+    writeIdentityCookie(config, id);
+    return id;
+  }
+
+  function normalizeClientIdentity(value) {
+    const id = String(value || "").trim();
+    return /^[A-Za-z0-9_-]{6,96}$/.test(id) ? id : "";
+  }
+
+  function readIdentityCookie(config) {
+    const cookieText = String(document && document.cookie || "");
+    if (!cookieText) return "";
+    const names = [config.cookieName].concat(config.legacyCookieNames || []);
+    const parts = cookieText.split(";");
+    for (const name of names) {
+      const prefix = name + "=";
+      for (const part of parts) {
+        const item = String(part || "").trim();
+        if (item.indexOf(prefix) !== 0) continue;
+        try {
+          return decodeURIComponent(item.slice(prefix.length));
+        } catch (_e) {
+          return "";
+        }
+      }
+    }
+    return "";
+  }
+
+  function writeIdentityCookie(config, id) {
+    if (!document) return;
+    try {
+      document.cookie = config.cookieName + "=" + encodeURIComponent(id)
+        + "; Path=/; Max-Age=" + config.maxAgeSeconds
+        + "; SameSite=" + config.sameSite;
+    } catch (_e) {}
+  }
+
+  function readIdentityStorage(key) {
+    try {
+      return window.localStorage ? window.localStorage.getItem(key) || "" : "";
+    } catch (_e) {
+      return "";
+    }
+  }
+
+  function writeIdentityStorage(key, id) {
+    try {
+      if (window.localStorage) window.localStorage.setItem(key, id);
+    } catch (_e) {}
+  }
+
+  function randomClientIdentity(prefix) {
+    const safePrefix = String(prefix || "gosx-");
+    if (window.crypto && typeof window.crypto.randomUUID === "function") {
+      return safePrefix + window.crypto.randomUUID().replace(/-/g, "");
+    }
+    const bytes = new Uint8Array(16);
+    if (window.crypto && typeof window.crypto.getRandomValues === "function") {
+      window.crypto.getRandomValues(bytes);
+    } else {
+      for (let i = 0; i < bytes.length; i++) bytes[i] = Math.floor(Math.random() * 256);
+    }
+    return safePrefix + Array.prototype.map.call(bytes, function(byte) {
+      return byte.toString(16).padStart(2, "0");
+    }).join("");
+  }
+
+  function gosxClientIdentity() {
+    return window.__gosx && window.__gosx.identity ? window.__gosx.identity : null;
+  }
+
+  function gosxClientID() {
+    const identity = gosxClientIdentity();
+    if (identity && identity.clientId) return String(identity.clientId);
+    const feral = window.__feralIdentity;
+    return feral && feral.clientId ? String(feral.clientId) : "";
+  }
+
+  function gosxIdentityHeaders(headers) {
+    const identity = gosxClientIdentity();
+    if (identity && typeof identity.applyHeaders === "function") {
+      return identity.applyHeaders(headers);
+    }
+    const feral = window.__feralIdentity;
+    if (feral && typeof feral.applyHeaders === "function") {
+      return feral.applyHeaders(headers);
+    }
+    return Object.assign({}, headers || {});
+  }
+
+  function normalizeHubInputConfig(entry) {
+    const input = entry && entry.input;
+    if (!input || typeof input !== "object") return null;
+    const every = Math.max(8, Math.min(100, hubInputNumber(input.sendEveryMs, 16)));
+    return {
+      mode: String(input.mode || "").trim().toLowerCase(),
+      event: String(input.event || "input"),
+      readyEvent: String(input.readyEvent || "ready"),
+      trainingEvent: String(input.trainingEvent || "training"),
+      signal: String(input.signal || ""),
+      trainingSignal: String(input.trainingSignal || ""),
+      touchRoot: String(input.touchRoot || ""),
+      player: Math.max(1, Math.min(2, Math.floor(hubInputNumber(input.player, 1)))),
+      local: Boolean(input.local),
+      slotToken: String(input.slotToken || ""),
+      sendEveryMS: every,
+      root: String(input.root || ""),
+      username: String(input.username || ""),
+      fightPath: String(input.fightPath || "/fight"),
+      cpuEndpoint: String(input.cpuEndpoint || "/api/cpu-match/start"),
+      localEndpoint: String(input.localEndpoint || "/api/local-match/start"),
+      fightCurrentEndpoint: String(input.fightCurrentEndpoint || "/api/fight/current"),
+      minLocalGamepads: Math.max(0, Math.floor(hubInputNumber(input.minLocalGamepads, 2))),
+      attractSignal: String(input.attractSignal || "$attract"),
+      lobbySignal: String(input.lobbySignal || "$lobby"),
+      vsSignal: String(input.vsSignal || "$vs"),
+    };
+  }
+
+  function createHubInputController(record) {
+    const config = normalizeHubInputConfig(record && record.entry);
+    if (!config) return null;
+    if (config.mode === "arcade-select") {
+      return createArcadeSelectHubController(record, config);
+    }
+
+    const keys = Object.create(null);
+    const touch = { up: false, down: false, left: false, right: false, lp: false, hp: false, lk: false, hk: false, guard: false };
+    const touchCounts = Object.create(null);
+    const activePointers = new Map();
+    const listeners = [];
+    let disposed = false;
+    let timer = 0;
+    let readySent = false;
+    let trainingVisible = false;
+    let lastCue = "";
+    let lastFeedbackSeq = 0;
+
+    function addListener(target, type, listener, options) {
+      if (!target || typeof target.addEventListener !== "function") return;
+      target.addEventListener(type, listener, options);
+      listeners.push([target, type, listener, options]);
+    }
+
+    function disposeListeners() {
+      for (const binding of listeners) {
+        binding[0].removeEventListener(binding[1], binding[2], binding[3]);
+      }
+      listeners.length = 0;
+    }
+
+    function socketOpen() {
+      const socket = record && record.socket;
+      return Boolean(socket && typeof socket.send === "function" && (socket.readyState === 1 || socket.readyState == null));
+    }
+
+    function send(event, data) {
+      if (!socketOpen()) return false;
+      try {
+        record.socket.send(JSON.stringify({ event: event, data: data || {} }));
+        return true;
+      } catch (e) {
+        console.error(`[gosx] hub input send error for ${record.entry.id}:`, e);
+        return false;
+      }
+    }
+
+    function clientID() {
+      return gosxClientID();
+    }
+
+    function basePayload(player) {
+      const payload = { player: player || config.player };
+      if (config.slotToken) payload.slotToken = config.slotToken;
+      const id = clientID();
+      if (id) payload.clientId = id;
+      return payload;
+    }
+
+    function sendReady() {
+      if (readySent || !socketOpen()) return;
+      readySent = send(config.readyEvent, basePayload(config.player));
+    }
+
+    function publishJSON(signal, data) {
+      if (!signal) return;
+      try {
+        const result = setSharedSignalJSON(signal, JSON.stringify(data || {}));
+        if (typeof result === "string" && result !== "") {
+          console.error(`[gosx] hub input signal error (${record.entry.id}/${signal}):`, result);
+        }
+      } catch (e) {
+        console.error(`[gosx] hub input signal error (${record.entry.id}/${signal}):`, e);
+      }
+    }
+
+    function publishTrainingState(extra) {
+      publishJSON(config.trainingSignal, Object.assign({
+        enabled: trainingVisible,
+        paused: false,
+        recording: false,
+      }, extra || {}));
+    }
+
+    function sendTraining(action) {
+      trainingVisible = true;
+      publishTrainingState({ action: action });
+      const payload = basePayload(config.player);
+      payload.action = action;
+      send(config.trainingEvent, payload);
+    }
+
+    function setKey(event, active) {
+      if (!event) return;
+      if (event.code) keys[event.code] = active;
+      if (event.key) keys[String(event.key).toLowerCase()] = active;
+      if (!active) return;
+
+      if (event.code === "F2") {
+        trainingVisible = !trainingVisible;
+        publishTrainingState();
+        event.preventDefault();
+        return;
+      }
+      if (event.code === "F3") {
+        event.preventDefault();
+        sendTraining("pause");
+        return;
+      }
+      if (event.code === "F4") {
+        event.preventDefault();
+        sendTraining("step");
+        return;
+      }
+      if (event.code === "F5") {
+        event.preventDefault();
+        sendTraining("dummy");
+        return;
+      }
+      if (hubInputCapturesKey(event)) {
+        event.preventDefault();
+      }
+    }
+
+    function keyDown() {
+      for (let i = 0; i < arguments.length; i++) {
+        const name = arguments[i];
+        if (keys[name] || keys[String(name).toLowerCase()]) return true;
+      }
+      return false;
+    }
+
+    function touchControl(event) {
+      const target = event && event.target;
+      const node = target && target.closest ? target : target && target.parentElement;
+      const control = node && node.closest ? node.closest("[data-dir],[data-btn]") : null;
+      if (!control) return null;
+      if (config.touchRoot && (!control.closest || !control.closest(config.touchRoot))) {
+        return null;
+      }
+      return control;
+    }
+
+    function touchKey(control) {
+      if (!control || !control.dataset) return "";
+      if (control.dataset.dir) return "dir:" + control.dataset.dir;
+      if (control.dataset.btn) return "btn:" + control.dataset.btn;
+      return "";
+    }
+
+    function updateTouch(key, active) {
+      if (!key) return;
+      const next = Math.max(0, (touchCounts[key] || 0) + (active ? 1 : -1));
+      touchCounts[key] = next;
+      const value = next > 0;
+      const parts = key.split(":");
+      if (parts[0] === "dir" && Object.prototype.hasOwnProperty.call(touch, parts[1])) {
+        touch[parts[1]] = value;
+      } else if (parts[0] === "btn" && Object.prototype.hasOwnProperty.call(touch, parts[1])) {
+        touch[parts[1]] = value;
+      }
+    }
+
+    function onPointerDown(event) {
+      const control = touchControl(event);
+      if (!control) return;
+      const key = touchKey(control);
+      if (!key) return;
+      activePointers.set(event.pointerId, key);
+      updateTouch(key, true);
+      if (control.setPointerCapture && event.pointerId != null) {
+        try {
+          control.setPointerCapture(event.pointerId);
+        } catch (_e) {
+        }
+      }
+      event.preventDefault();
+    }
+
+    function onPointerUp(event) {
+      const fallback = touchKey(touchControl(event));
+      const key = activePointers.get(event.pointerId) || fallback;
+      activePointers.delete(event.pointerId);
+      updateTouch(key, false);
+      if (key) event.preventDefault();
+    }
+
+    function onBlur() {
+      for (const key of Object.keys(keys)) keys[key] = false;
+      for (const key of Object.keys(touchCounts)) {
+        touchCounts[key] = 0;
+        updateTouch(key, false);
+      }
+      activePointers.clear();
+    }
+
+    function gamepads() {
+      const nav = window.navigator;
+      if (!nav || typeof nav.getGamepads !== "function") return [];
+      try {
+        return Array.prototype.slice.call(nav.getGamepads() || []).filter(Boolean);
+      } catch (_e) {
+        return [];
+      }
+    }
+
+    function readDirection(pad, includePrimary, player) {
+      let up = includePrimary && (keyDown("KeyW", "w", "ArrowUp", "arrowup") || touch.up);
+      let down = includePrimary && (keyDown("KeyS", "s", "ArrowDown", "arrowdown") || touch.down);
+      let left = includePrimary && (keyDown("KeyA", "a", "ArrowLeft", "arrowleft") || touch.left);
+      let right = includePrimary && (keyDown("KeyD", "d", "ArrowRight", "arrowright") || touch.right);
+
+      if (pad) {
+        up = up || gamepadPressed(pad, 12);
+        down = down || gamepadPressed(pad, 13);
+        left = left || gamepadPressed(pad, 14);
+        right = right || gamepadPressed(pad, 15);
+        const axes = Array.isArray(pad.axes) ? pad.axes : [];
+        if (hubInputNumber(axes[1], 0) < -0.5) up = true;
+        if (hubInputNumber(axes[1], 0) > 0.5) down = true;
+        if (hubInputNumber(axes[0], 0) < -0.5) left = true;
+        if (hubInputNumber(axes[0], 0) > 0.5) right = true;
+      }
+
+      const p2 = Number(player) === 2;
+      const forward = p2 ? left : right;
+      const back = p2 ? right : left;
+
+      if (up && forward) return 2;
+      if (up && back) return 8;
+      if (down && forward) return 4;
+      if (down && back) return 6;
+      if (up) return 1;
+      if (forward) return 3;
+      if (down) return 5;
+      if (back) return 7;
+      return 0;
+    }
+
+    function readButtons(pad, includePrimary) {
+      let buttons = 0;
+      if (includePrimary) {
+        if (keyDown("KeyU", "u") || touch.lp) buttons |= 1;
+        if (keyDown("KeyI", "i") || touch.hp) buttons |= 2;
+        if (keyDown("KeyJ", "j") || touch.lk) buttons |= 4;
+        if (keyDown("KeyK", "k") || touch.hk) buttons |= 8;
+        if (keyDown("KeyL", "l", "Space", " ") || touch.guard) buttons |= 16;
+      }
+      if (pad) {
+        if (gamepadPressed(pad, 0)) buttons |= 1;
+        if (gamepadPressed(pad, 1)) buttons |= 2;
+        if (gamepadPressed(pad, 2)) buttons |= 4;
+        if (gamepadPressed(pad, 3)) buttons |= 8;
+        if (gamepadPressed(pad, 4) || gamepadPressed(pad, 5)) buttons |= 16;
+      }
+      return buttons;
+    }
+
+    function readInput(pad, includePrimary, player) {
+      return {
+        dir: readDirection(pad, includePrimary, player),
+        btn: readButtons(pad, includePrimary),
+      };
+    }
+
+    function sendInput(player, input) {
+      const payload = basePayload(player);
+      payload.dir = input.dir;
+      payload.btn = input.btn;
+      send(config.event, payload);
+    }
+
+    function publishCue(pads) {
+      const connected = pads.length > 0;
+      const cue = {
+        connected: connected,
+        active: true,
+        pads: pads.length,
+        padCount: pads.length,
+        player: config.player,
+        state: connected ? "pad" : "touch",
+        title: connected ? "GAMEPAD LINKED" : "GRAB A GAMEPAD",
+        copy: connected ? "Pad mapped: A/B/X/Y, shoulders guard." : "Keyboard and touch are live until a pad is connected.",
+        mode: config.local ? "LOCAL VS" : "ONLINE",
+        perf: "",
+      };
+      const signature = JSON.stringify(cue);
+      if (signature === lastCue) return;
+      lastCue = signature;
+      publishJSON(config.signal, cue);
+    }
+
+    function onHubMessage(message) {
+      if (!message || message.event !== "tick") return;
+      const data = message.data || {};
+      const event = data.event || {};
+      const seq = Math.floor(hubInputNumber(event.seq, 0));
+      if (!seq || seq === lastFeedbackSeq) return;
+      lastFeedbackSeq = seq;
+      const kind = String(event.kind || "");
+      if (!kind || kind === "none") return;
+
+      const damage = Math.max(0, hubInputNumber(event.damage, 0));
+      const blocked = Boolean(event.blocked) || kind === "block";
+      const special = Boolean(event.counter || event.punish || event.launcher || event.guardCancel || event.justGuard || event.armor)
+        || kind === "throw" || kind === "throw_tech";
+      let intensity = blocked ? 0.18 : Math.min(0.85, 0.24 + damage / 260);
+      if (special) intensity = Math.min(1, intensity + 0.22);
+
+      let feedback = "hit";
+      if (kind === "block") feedback = "block";
+      if (kind === "just_guard" || kind === "guard_cancel") feedback = "guard";
+      if (kind === "armor") feedback = "armor";
+      if (kind === "throw" || kind === "throw_tech") feedback = "throw";
+      playArcadeSFX(feedback);
+      vibrateGamepads(feedback, intensity, special ? 130 : 75);
+    }
+
+    function pump() {
+      if (disposed) return;
+      sendReady();
+      const pads = gamepads();
+      publishCue(pads);
+      if (socketOpen()) {
+        if (config.local) {
+          sendInput(1, readInput(pads[0], true, 1));
+          sendInput(2, readInput(pads[1], false, 2));
+        } else {
+          sendInput(config.player, readInput(pads[0], true, config.player));
+        }
+      }
+    }
+
+    function tick() {
+      if (disposed) return;
+      pump();
+      timer = setTimeout(tick, config.sendEveryMS);
+    }
+
+    addListener(document, "keydown", function(event) { setKey(event, true); }, { passive: false });
+    addListener(document, "keyup", function(event) { setKey(event, false); }, { passive: false });
+    addListener(document, "pointerdown", onPointerDown, { passive: false });
+    addListener(document, "pointerup", onPointerUp, { passive: false });
+    addListener(document, "pointercancel", onPointerUp, { passive: false });
+    addListener(window, "blur", onBlur);
+    publishTrainingState();
+    tick();
+
+    return {
+      flush: pump,
+      onMessage: onHubMessage,
+      dispose: function() {
+        disposed = true;
+        if (timer) {
+          clearTimeout(timer);
+          timer = 0;
+        }
+        disposeListeners();
+        onBlur();
+        publishJSON(config.signal, { connected: false, active: false, pads: 0 });
+        publishJSON(config.trainingSignal, { enabled: false, paused: false, recording: false });
+      },
+    };
+  }
+
+  function createArcadeSelectHubController(record, config) {
+    const root = controllerQuery(config.root || ".landing") || document.body || document.documentElement;
+    const state = {
+      selectedChar: 0,
+      selectedAction: "cpu",
+      inputMode: "touch",
+      padState: "touch",
+      padTitle: "TAP START",
+      padCopy: "Gamepad recommended",
+      padStatus: "TOUCH READY",
+      localSub: "2 PADS",
+      selectVisible: false,
+      actionState: "ready",
+      actionTitle: "READY",
+      actionCopy: "Pick fast. Fight faster.",
+      onlineLabel: "FIND MATCH",
+      onlineSub: "ONLINE",
+      queued: false,
+      busy: false,
+      prompt: "PICK A FIGHTER",
+      pressStart: "TAP START",
+    };
+    const attract = { phase: "title", paradeIndex: 0, active: true };
+    const vs = {
+      active: false,
+      left: { name: "FIGHTER", beast: "SURGE FORM", accent: "#f25f5c" },
+      right: { name: "FIGHTER", beast: "SURGE FORM", accent: "#5ce1e6" },
+    };
+    const actionOrder = ["cpu", "local", "online"];
+    const listeners = [];
+    const timers = [];
+    const intervals = [];
+    let disposed = false;
+    let readySent = false;
+    let previousButtons = Object.create(null);
+    let previousDirection = 0;
+    let paradeInterval = 0;
+
+    function addListener(target, type, listener, options) {
+      if (!target || typeof target.addEventListener !== "function") return;
+      target.addEventListener(type, listener, options);
+      listeners.push([target, type, listener, options]);
+    }
+
+    function schedule(fn, ms) {
+      const timer = setTimeout(function() {
+        const index = timers.indexOf(timer);
+        if (index >= 0) timers.splice(index, 1);
+        if (!disposed) fn();
+      }, ms);
+      timers.push(timer);
+      return timer;
+    }
+
+    function every(fn, ms) {
+      const timer = setInterval(function() {
+        if (!disposed) fn();
+      }, ms);
+      intervals.push(timer);
+      return timer;
+    }
+
+    function clearParadeInterval() {
+      if (!paradeInterval) return;
+      clearInterval(paradeInterval);
+      const index = intervals.indexOf(paradeInterval);
+      if (index >= 0) intervals.splice(index, 1);
+      paradeInterval = 0;
+    }
+
+    function publish(signal, value) {
+      publishSharedJSON(signal, value, record.entry.id);
+    }
+
+    function publishState() {
+      publish(config.signal || "$landing", state);
+      publish(config.attractSignal, attract);
+      publish(config.vsSignal, vs);
+      applyArcadeDOMState(root, state, attract);
+    }
+
+    function publishLobby(players, queueSize) {
+      publish(config.lobbySignal, { players: players || 0, queue: { size: queueSize || 0 } });
+    }
+
+    function socketOpen() {
+      const socket = record && record.socket;
+      return Boolean(socket && typeof socket.send === "function" && (socket.readyState === 1 || socket.readyState == null));
+    }
+
+    function send(event, data) {
+      if (!socketOpen()) return false;
+      try {
+        record.socket.send(JSON.stringify({ event: event, data: data || {} }));
+        return true;
+      } catch (e) {
+        console.error(`[gosx] arcade-select send error for ${record.entry.id}:`, e);
+        return false;
+      }
+    }
+
+    function basePayload() {
+      const payload = { clientId: gosxClientID() || "local-player" };
+      if (config.username) payload.name = config.username;
+      return payload;
+    }
+
+    function sendReady() {
+      if (readySent || !socketOpen()) return;
+      readySent = send(config.readyEvent || "join", basePayload());
+    }
+
+    function actionStatus(action) {
+      const confirm = state.inputMode === "gamepad" ? "A" : "Tap";
+      if (action === "local" && connectedGamepads().length < config.minLocalGamepads) {
+        return { title: "2 PADS NEEDED", copy: "Local versus is gamepad-only." };
+      }
+      if (action === "local") return { title: "VERSUS READY", copy: confirm + " starts same-screen versus." };
+      if (action === "online") return { title: "ONLINE READY", copy: confirm + " searches for a match." };
+      return { title: "CPU READY", copy: confirm + " starts a solo fight." };
+    }
+
+    function setActionStatus(kind, title, copy) {
+      state.actionState = kind || "ready";
+      state.actionTitle = title || "READY";
+      state.actionCopy = copy || "";
+      state.prompt = state.actionTitle;
+      publishState();
+    }
+
+    function updateReadyStatus() {
+      if (state.busy || state.queued) return;
+      const status = actionStatus(state.selectedAction);
+      setActionStatus("ready", status.title, status.copy);
+    }
+
+    function setQueued(queued) {
+      state.queued = Boolean(queued);
+      state.onlineLabel = state.queued ? "CANCEL QUEUE" : "FIND MATCH";
+      state.onlineSub = state.queued ? "SEARCHING" : "ONLINE";
+      state.busy = false;
+      publishState();
+    }
+
+    function setBusy(busy) {
+      state.busy = Boolean(busy);
+      publishState();
+    }
+
+    function setInputMode(mode, pads) {
+      const nextPads = pads || connectedGamepads();
+      state.inputMode = mode === "gamepad" ? "gamepad" : "touch";
+      state.pressStart = state.inputMode === "gamepad" ? "PRESS START" : "TAP START";
+      const count = nextPads.length;
+      state.padState = count ? "ready" : "touch";
+      state.padTitle = count > 1 ? count + " PADS READY" : (count === 1 ? "PAD 1 READY" : "TAP START");
+      state.padCopy = count > 1 ? "LOCAL 1V1" : (count === 1 ? "A / START" : "Gamepad recommended");
+      state.padStatus = count > 1 ? count + " PADS READY" : (count === 1 ? "PAD 1 READY" : "TOUCH READY");
+      state.localSub = count > 1 ? "VERSUS" : "2 PADS";
+      publishState();
+      updateReadyStatus();
+    }
+
+    function updateInputModeFromGamepads() {
+      const pads = connectedGamepads();
+      setInputMode(pads.length ? "gamepad" : "touch", pads);
+    }
+
+    function characterIDs() {
+      const ids = [];
+      for (const card of controllerQueryAll(".select-screen .char-card")) {
+        const id = Number(card.dataset && card.dataset.char);
+        if (Number.isFinite(id)) ids.push(id);
+      }
+      return ids.length ? ids : [0, 1, 2, 3];
+    }
+
+    function selectCharacter(charID) {
+      const id = Math.max(0, Math.floor(hubInputNumber(charID, 0)));
+      const changed = state.selectedChar !== id;
+      state.selectedChar = id;
+      publishState();
+      if (changed) playArcadeSFX("move");
+    }
+
+    function cycleCharacter(delta) {
+      const ids = characterIDs();
+      let index = ids.indexOf(state.selectedChar);
+      if (index < 0) index = 0;
+      selectCharacter(ids[(index + delta + ids.length) % ids.length]);
+    }
+
+    function setSelectedAction(action) {
+      if (actionOrder.indexOf(action) < 0) return;
+      const changed = state.selectedAction !== action;
+      state.selectedAction = action;
+      if (changed) playArcadeSFX("move");
+      publishState();
+      updateReadyStatus();
+    }
+
+    function cycleAction(delta) {
+      let index = actionOrder.indexOf(state.selectedAction);
+      if (index < 0) index = 0;
+      setSelectedAction(actionOrder[(index + delta + actionOrder.length) % actionOrder.length]);
+    }
+
+    function cancelQueue() {
+      if (!state.queued) return false;
+      send(config.trainingEvent || "dequeue", { clientId: gosxClientID() || "local-player" });
+      setQueued(false);
+      setActionStatus("ready", "QUEUE CANCELED", "Pick another fight.");
+      return true;
+    }
+
+    function breakAttract() {
+      if (!attract.active) return;
+      playArcadeSFX("confirm");
+      attract.active = false;
+      state.selectVisible = true;
+      selectCharacter(0);
+      setSelectedAction("cpu");
+      publishState();
+      updateReadyStatus();
+      sendReady();
+    }
+
+    function setAttractPhase(phase) {
+      attract.phase = phase;
+      publishState();
+    }
+
+    function setParadeIndex(index) {
+      attract.paradeIndex = index;
+      publishState();
+    }
+
+    function startAttractLoop() {
+      clearParadeInterval();
+      setAttractPhase("title");
+      schedule(function() {
+        if (!attract.active) return;
+        setAttractPhase("parade");
+        setParadeIndex(0);
+        paradeInterval = every(function() {
+          if (!attract.active || attract.phase !== "parade") return;
+          setParadeIndex((attract.paradeIndex + 1) % 4);
+        }, 2600);
+        schedule(function() {
+          if (!attract.active) return;
+          clearParadeInterval();
+          setAttractPhase("pressstart");
+          schedule(startAttractLoop, 2600);
+        }, 10400);
+      }, 2600);
+    }
+
+    function onAttractInput(event) {
+      if (!attract.active) return;
+      event.__gosxArcadeConsumed = true;
+      setInputMode("touch");
+      if (event && typeof event.preventDefault === "function") event.preventDefault();
+      breakAttract();
+    }
+
+    function onSelectKey(event) {
+      if (event.__gosxArcadeConsumed || attract.active || state.busy) return;
+      const target = event.target;
+      if (target && /^(input|textarea|select)$/i.test(target.tagName || "")) return;
+      let handled = true;
+      switch (event.code) {
+        case "ArrowLeft":
+        case "KeyA":
+          cycleCharacter(-1);
+          break;
+        case "ArrowRight":
+        case "KeyD":
+          cycleCharacter(1);
+          break;
+        case "ArrowUp":
+        case "KeyW":
+          cycleAction(-1);
+          break;
+        case "ArrowDown":
+        case "KeyS":
+          cycleAction(1);
+          break;
+        case "Digit1":
+          selectCharacter(0);
+          break;
+        case "Digit2":
+          selectCharacter(1);
+          break;
+        case "Digit3":
+          selectCharacter(2);
+          break;
+        case "Digit4":
+          selectCharacter(3);
+          break;
+        case "KeyC":
+          setSelectedAction("cpu");
+          break;
+        case "KeyL":
+          setSelectedAction("local");
+          break;
+        case "KeyO":
+          setSelectedAction("online");
+          break;
+        case "Enter":
+        case "Space":
+          triggerAction(state.selectedAction);
+          break;
+        case "Escape":
+          handled = cancelQueue();
+          break;
+        default:
+          handled = false;
+      }
+      if (handled && event && typeof event.preventDefault === "function") event.preventDefault();
+    }
+
+    function onRootClick(event) {
+      const target = event && event.target;
+      const card = closestElement(target, ".char-card");
+      if (card && card.dataset && card.dataset.char != null) {
+        selectCharacter(Number(card.dataset.char));
+        return;
+      }
+      const action = closestElement(target, "[data-action]");
+      if (action && action.dataset && action.dataset.action) {
+        triggerAction(action.dataset.action);
+      }
+    }
+
+    function onRootFocus(event) {
+      const action = closestElement(event && event.target, "[data-action]");
+      if (action && action.dataset && action.dataset.action) {
+        setSelectedAction(action.dataset.action);
+      }
+    }
+
+    function triggerAction(action) {
+      if (state.busy) return;
+      if (action === "local" && connectedGamepads().length < config.minLocalGamepads) {
+        setSelectedAction("local");
+        setActionStatus("error", "2 PADS NEEDED", "Local versus is gamepad-only.");
+        playArcadeSFX("move");
+        return;
+      }
+      if (action === "online") {
+        playArcadeSFX("confirm");
+        if (state.queued) {
+          if (socketOpen()) {
+            setBusy(true);
+            send(config.trainingEvent || "dequeue", { clientId: gosxClientID() || "local-player" });
+          } else {
+            setQueued(false);
+            setActionStatus("ready", "QUEUE CANCELED", "Pick another fight.");
+          }
+          return;
+        }
+        if (socketOpen()) {
+          setBusy(true);
+          setActionStatus("loading", "JOINING QUEUE", "Opening the lobby channel.");
+          send(config.event || "queue", Object.assign(basePayload(), { characterId: state.selectedChar }));
+        } else {
+          setActionStatus("error", "LOBBY CONNECTING", "Try online again in a moment.");
+        }
+        return;
+      }
+      if (action === "local") {
+        startAPIMatch(config.localEndpoint, {
+          playerId: gosxClientID() || "local-player",
+          playerName: config.username || "Fighter",
+          p1CharacterId: state.selectedChar,
+          p2CharacterId: localOpponentChar(),
+        }, "STARTING LOCAL 1V1", "Loading both fighters.");
+        return;
+      }
+      startAPIMatch(config.cpuEndpoint, {
+        playerId: gosxClientID() || "local-player",
+        playerName: config.username || "Fighter",
+        characterId: state.selectedChar,
+      }, "STARTING CPU FIGHT", "Locking in the matchup.");
+    }
+
+    function startAPIMatch(endpoint, payload, title, copy) {
+      playArcadeSFX("confirm");
+      setBusy(true);
+      setActionStatus("loading", title, copy);
+      fetch(endpoint, {
+        method: "POST",
+        headers: gosxIdentityHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify(payload),
+      }).then(function(response) {
+        if (!response || !response.ok) throw new Error("match start failed");
+        return response.json();
+      }).then(startFightTransition, function() {
+        setBusy(false);
+        setActionStatus("error", "START FAILED", "Try again.");
+      });
+    }
+
+    function startFightTransition(data) {
+      const payload = data || {};
+      setBusy(true);
+      setActionStatus("loading", "MATCH LOCKED", "Entering the arena.");
+      const playerNo = payload.playerNo || 1;
+      let p1Char = payload.p1CharId;
+      let p2Char = payload.p2CharId;
+      if (p1Char == null) p1Char = playerNo === 2 ? (payload.opponentCharId || 0) : state.selectedChar;
+      if (p2Char == null) p2Char = playerNo === 2 ? state.selectedChar : (payload.opponentCharId || 0);
+      const opponentChar = playerNo === 2 ? p1Char : p2Char;
+      const current = {
+        clientId: gosxClientID() || "local-player",
+        matchId: payload.matchId || "",
+        mode: payload.mode || "online",
+        playerNo: playerNo,
+        slotToken: payload.slotToken || payload.token || "",
+        p1CharId: p1Char,
+        p2CharId: p2Char,
+      };
+      fetch(config.fightCurrentEndpoint, {
+        method: "POST",
+        headers: gosxIdentityHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify(current),
+      }).catch(function() {}).finally(function() {
+        showVS(opponentChar);
+        schedule(function() {
+          navigateManaged(config.fightPath || "/fight");
+        }, 760);
+      });
+    }
+
+    function showVS(opponentChar) {
+      vs.left = characterMeta(state.selectedChar);
+      vs.right = characterMeta(opponentChar || 0);
+      vs.active = true;
+      publishState();
+      schedule(function() {
+        vs.active = false;
+        publishState();
+      }, 740);
+    }
+
+    function localOpponentChar() {
+      const ids = characterIDs();
+      let index = ids.indexOf(state.selectedChar);
+      if (index < 0) index = 0;
+      return ids[(index + 1 + ids.length) % ids.length];
+    }
+
+    function characterMeta(charID) {
+      const card = controllerQuery('.select-screen .char-card[data-char="' + String(charID) + '"]');
+      if (!card || !card.dataset) {
+        return { name: "FIGHTER", beast: "SURGE FORM", accent: "#f25f5c" };
+      }
+      return {
+        name: card.dataset.name || "FIGHTER",
+        beast: card.dataset.beast || "SURGE FORM",
+        accent: card.dataset.accent || "#f25f5c",
+      };
+    }
+
+    function onHubMessage(message) {
+      if (!message) return;
+      const data = message.data || {};
+      if (message.event === "lobby_state") {
+        publishLobby(data.count || data.playerCount || 0, data.queueSize || 0);
+      } else if (message.event === "match_found") {
+        startFightTransition(data);
+      } else if (message.event === "queued") {
+        setQueued(true);
+        setActionStatus("queued", "MATCHMAKING", "Waiting for a challenger.");
+        publishLobby(data.count || data.playerCount || 0, data.queueSize || 0);
+      } else if (message.event === "dequeued") {
+        setQueued(false);
+        setActionStatus("ready", "QUEUE CANCELED", "Pick another fight.");
+        publishLobby(0, 0);
+      }
+    }
+
+    function pollGamepad() {
+      const pads = connectedGamepads();
+      if (!pads.length) {
+        setInputMode("touch", pads);
+        previousButtons = Object.create(null);
+        previousDirection = 0;
+        return;
+      }
+      const pad = pads[0];
+      setInputMode("gamepad", pads);
+      if (attract.active) {
+        if (gamepadButtonEdge(pad, 9) || gamepadButtonEdge(pad, 0)) breakAttract();
+        return;
+      }
+      const dir = gamepadDirectionEdge(pad);
+      if (dir === 7) cycleCharacter(-1);
+      if (dir === 3) cycleCharacter(1);
+      if (dir === 1) cycleAction(-1);
+      if (dir === 5) cycleAction(1);
+      if (gamepadButtonEdge(pad, 4)) cycleCharacter(-1);
+      if (gamepadButtonEdge(pad, 5)) cycleCharacter(1);
+      if (gamepadButtonEdge(pad, 6)) cycleAction(-1);
+      if (gamepadButtonEdge(pad, 7)) cycleAction(1);
+      if (gamepadButtonEdge(pad, 1) || gamepadButtonEdge(pad, 8)) cancelQueue();
+      if (gamepadButtonEdge(pad, 0) || gamepadButtonEdge(pad, 9)) triggerAction(state.selectedAction);
+    }
+
+    function gamepadButtonEdge(pad, index) {
+      const key = String(pad && pad.index != null ? pad.index : 0) + ":" + index;
+      const pressed = gamepadPressed(pad, index);
+      const wasPressed = Boolean(previousButtons[key]);
+      previousButtons[key] = pressed;
+      return pressed && !wasPressed;
+    }
+
+    function gamepadDirectionEdge(pad) {
+      const dir = gamepadMenuDirection(pad);
+      const edge = dir && dir !== previousDirection ? dir : 0;
+      previousDirection = dir;
+      return edge;
+    }
+
+    addListener(document, "keydown", onAttractInput, { passive: false });
+    addListener(document, "pointerdown", onAttractInput, { passive: false });
+    addListener(document, "touchstart", onAttractInput, { passive: false });
+    addListener(document, "keydown", onSelectKey, { passive: false });
+    addListener(root, "click", onRootClick);
+    addListener(root, "focus", onRootFocus, true);
+    addListener(window, "gamepadconnected", updateInputModeFromGamepads);
+    addListener(window, "gamepaddisconnected", updateInputModeFromGamepads);
+    every(pollGamepad, 90);
+    updateInputModeFromGamepads();
+    startAttractLoop();
+    publishState();
+    sendReady();
+
+    return {
+      flush: sendReady,
+      onMessage: onHubMessage,
+      dispose: function() {
+        disposed = true;
+        clearParadeInterval();
+        for (const timer of timers.splice(0)) clearTimeout(timer);
+        for (const timer of intervals.splice(0)) clearInterval(timer);
+        for (const binding of listeners.splice(0)) {
+          binding[0].removeEventListener(binding[1], binding[2], binding[3]);
+        }
+        stopArcadeSFX();
+      },
+    };
+  }
+
+  function publishSharedJSON(signal, value, scope) {
+    if (!signal) return;
+    try {
+      const result = setSharedSignalJSON(signal, JSON.stringify(value || {}));
+      if (typeof result === "string" && result !== "") {
+        console.error(`[gosx] shared signal error (${scope || "runtime"}/${signal}):`, result);
+      }
+    } catch (e) {
+      console.error(`[gosx] shared signal error (${scope || "runtime"}/${signal}):`, e);
+    }
+  }
+
+  function controllerQuery(selector) {
+    if (!selector || !document || typeof document.querySelector !== "function") return null;
+    try {
+      return document.querySelector(selector);
+    } catch (_e) {
+      return null;
+    }
+  }
+
+  function controllerQueryAll(selector) {
+    if (!selector || !document || typeof document.querySelectorAll !== "function") return [];
+    try {
+      return Array.from(document.querySelectorAll(selector) || []);
+    } catch (_e) {
+      return [];
+    }
+  }
+
+  function closestElement(target, selector) {
+    let current = target && target.nodeType === 1 ? target : null;
+    while (current) {
+      if (elementMatches(current, selector)) return current;
+      current = current.parentNode && current.parentNode.nodeType === 1 ? current.parentNode : null;
+    }
+    return null;
+  }
+
+  function elementMatches(element, selector) {
+    if (!element || !selector) return false;
+    if (typeof element.matches === "function") {
+      try {
+        return element.matches(selector);
+      } catch (_e) {
+        return false;
+      }
+    }
+    if (selector === ".char-card") {
+      return String(element.getAttribute && element.getAttribute("class") || "").split(/\s+/).includes("char-card");
+    }
+    if (selector === "[data-action]") {
+      return Boolean(element.dataset && element.dataset.action);
+    }
+    return false;
+  }
+
+  function applyArcadeDOMState(root, state, attract) {
+    const target = root || controllerQuery(".landing");
+    if (target && target.dataset) {
+      target.dataset.inputMode = state.inputMode;
+      target.dataset.padStatus = state.padState;
+    }
+    const backdrop = controllerQuery("#attract-backdrop");
+    if (backdrop && backdrop.classList) {
+      backdrop.classList.toggle("dimmed", !attract.active);
+    }
+  }
+
+  function connectedGamepads() {
+    const nav = window.navigator;
+    if (!nav || typeof nav.getGamepads !== "function") return [];
+    try {
+      return Array.prototype.slice.call(nav.getGamepads() || []).filter(function(pad) {
+        return pad && pad.connected !== false;
+      });
+    } catch (_e) {
+      return [];
+    }
+  }
+
+  function vibrateGamepads(kind, intensity, durationMS) {
+    const pads = connectedGamepads();
+    if (!pads.length) return;
+    const duration = Math.max(20, Math.min(160, Math.floor(hubInputNumber(durationMS, 75))));
+    const strong = Math.max(0, Math.min(1, hubInputNumber(intensity, 0.25)));
+    let weak = Math.max(0.06, strong * 0.45);
+    if (kind === "block" || kind === "guard") weak = Math.min(0.8, strong * 0.85);
+    if (kind === "armor" || kind === "throw") weak = Math.min(0.7, strong * 0.55);
+    for (const pad of pads) {
+      const actuator = gamepadActuator(pad);
+      if (actuator && typeof actuator.playEffect === "function") {
+        try {
+          actuator.playEffect("dual-rumble", {
+            duration: duration,
+            strongMagnitude: strong,
+            weakMagnitude: weak,
+          });
+          continue;
+        } catch (_e) {
+        }
+      }
+      const pulse = pad && pad.hapticActuators && pad.hapticActuators[0];
+      if (pulse && typeof pulse.pulse === "function") {
+        try {
+          pulse.pulse(strong, duration);
+        } catch (_e) {}
+      }
+    }
+  }
+
+  function gamepadActuator(pad) {
+    if (!pad) return null;
+    if (pad.vibrationActuator) return pad.vibrationActuator;
+    if (pad.hapticActuators && pad.hapticActuators[0]) return pad.hapticActuators[0];
+    return null;
+  }
+
+  function gamepadMenuDirection(pad) {
+    let x = 0;
+    let y = 0;
+    const axes = Array.isArray(pad && pad.axes) ? pad.axes : [];
+    if (hubInputNumber(axes[0], 0) < -0.45) x = -1;
+    if (hubInputNumber(axes[0], 0) > 0.45) x = 1;
+    if (hubInputNumber(axes[1], 0) < -0.45) y = -1;
+    if (hubInputNumber(axes[1], 0) > 0.45) y = 1;
+    if (gamepadPressed(pad, 14)) x = -1;
+    if (gamepadPressed(pad, 15)) x = 1;
+    if (gamepadPressed(pad, 12)) y = -1;
+    if (gamepadPressed(pad, 13)) y = 1;
+    if (x < 0) return 7;
+    if (x > 0) return 3;
+    if (y < 0) return 1;
+    if (y > 0) return 5;
+    return 0;
+  }
+
+  function navigateManaged(url) {
+    if (window.__gosx_page_nav && typeof window.__gosx_page_nav.navigate === "function") {
+      window.__gosx_page_nav.navigate(url);
+      return;
+    }
+    window.location.href = url;
+  }
+
+  const arcadeAudioState = { context: null, active: [] };
+
+  function arcadeAudioContext() {
+    const Ctor = window.AudioContext || window.webkitAudioContext;
+    if (!Ctor) return null;
+    if (!arcadeAudioState.context) {
+      try {
+        arcadeAudioState.context = new Ctor();
+      } catch (_e) {
+        arcadeAudioState.context = null;
+      }
+    }
+    return arcadeAudioState.context;
+  }
+
+  function playArcadeSFX(kind) {
+    const audio = arcadeAudioContext();
+    if (!audio || typeof audio.createOscillator !== "function" || typeof audio.createGain !== "function") return;
+    if (typeof audio.resume === "function") audio.resume();
+    if (kind === "confirm") {
+      arcadeTone(audio, 220, 0.055, 0.08, "square");
+      arcadeTone(audio, 880, 0.09, 0.08, "square", 18);
+      return;
+    }
+    if (kind === "hit") {
+      arcadeTone(audio, 96, 0.045, 0.08, "square");
+      arcadeTone(audio, 640, 0.035, 0.06, "triangle", 8);
+      arcadeTone(audio, 1380, 0.025, 0.04, "square", 18);
+      return;
+    }
+    if (kind === "block") {
+      arcadeTone(audio, 150, 0.035, 0.055, "square");
+      arcadeTone(audio, 270, 0.04, 0.035, "triangle", 10);
+      return;
+    }
+    if (kind === "guard") {
+      arcadeTone(audio, 420, 0.04, 0.05, "triangle");
+      arcadeTone(audio, 980, 0.035, 0.045, "square", 14);
+      return;
+    }
+    if (kind === "armor") {
+      arcadeTone(audio, 72, 0.08, 0.075, "square");
+      arcadeTone(audio, 144, 0.06, 0.05, "sawtooth", 18);
+      return;
+    }
+    if (kind === "throw") {
+      arcadeTone(audio, 110, 0.065, 0.08, "square");
+      arcadeTone(audio, 520, 0.05, 0.055, "square", 12);
+      return;
+    }
+    arcadeTone(audio, 440, 0.035, 0.045, "square");
+    arcadeTone(audio, 660, 0.04, 0.035, "triangle", 12);
+  }
+
+  function arcadeTone(audio, freq, duration, volume, type, detuneMS) {
+    const now = audio.currentTime || 0;
+    const osc = audio.createOscillator();
+    const gain = audio.createGain();
+    osc.type = type || "square";
+    osc.frequency.value = freq;
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.exponentialRampToValueAtTime(Math.max(0.0001, volume), now + 0.006);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + duration + 0.04);
+    osc.connect(gain);
+    gain.connect(audio.destination);
+    const record = { source: osc, nodes: [osc, gain] };
+    arcadeAudioState.active.push(record);
+    osc.onended = function() {
+      releaseArcadeAudio(record, false);
+    };
+    while (arcadeAudioState.active.length > 16) {
+      releaseArcadeAudio(arcadeAudioState.active[0], true);
+    }
+    osc.start(now + Math.max(0, hubInputNumber(detuneMS, 0)) / 1000);
+    osc.stop(now + duration + 0.08 + Math.max(0, hubInputNumber(detuneMS, 0)) / 1000);
+  }
+
+  function releaseArcadeAudio(record, stop) {
+    if (!record) return;
+    const index = arcadeAudioState.active.indexOf(record);
+    if (index >= 0) arcadeAudioState.active.splice(index, 1);
+    if (record.source) {
+      record.source.onended = null;
+      if (stop && typeof record.source.stop === "function") {
+        try {
+          record.source.stop(0);
+        } catch (_e) {}
+      }
+    }
+    for (const node of record.nodes || []) {
+      if (node && typeof node.disconnect === "function") {
+        try {
+          node.disconnect();
+        } catch (_e) {}
+      }
+    }
+  }
+
+  function stopArcadeSFX() {
+    arcadeAudioState.active.slice().forEach(function(record) {
+      releaseArcadeAudio(record, true);
+    });
+  }
+
+  function hubInputNumber(value, fallback) {
+    const next = Number(value);
+    return Number.isFinite(next) ? next : fallback;
+  }
+
+  function gamepadPressed(pad, index) {
+    const button = pad && pad.buttons && pad.buttons[index];
+    return Boolean(button && (button.pressed || hubInputNumber(button.value, 0) > 0.55));
+  }
+
+  function hubInputCapturesKey(event) {
+    const code = String(event && event.code || "");
+    const key = String(event && event.key || "").toLowerCase();
+    return code === "KeyW" || code === "KeyA" || code === "KeyS" || code === "KeyD"
+      || code === "KeyU" || code === "KeyI" || code === "KeyJ" || code === "KeyK" || code === "KeyL"
+      || code === "ArrowUp" || code === "ArrowDown" || code === "ArrowLeft" || code === "ArrowRight"
+      || code === "Space"
+      || key === "w" || key === "a" || key === "s" || key === "d"
+      || key === "u" || key === "i" || key === "j" || key === "k" || key === "l"
+      || key === " ";
+  }
+
   function connectHub(entry) {
     if (!canConnectHub(entry)) return;
 
@@ -32968,25 +36154,25 @@ if (typeof window !== "undefined") {
   function attachHubSocketHandlers(record) {
     const entry = record.entry;
     const socket = record.socket;
+    record.inputController = createHubInputController(record);
     try {
       socket.binaryType = "arraybuffer";
     } catch (_e) {
     }
+    socket.onopen = function() {
+      if (record.inputController && typeof record.inputController.flush === "function") {
+        record.inputController.flush();
+      }
+    };
     socket.onmessage = function(evt) {
       const decoded = decodeHubMessage(entry, evt.data);
       if (decoded && typeof decoded.then === "function") {
         decoded.then(function(message) {
-          if (!message) return;
-          applyHubBindings(entry, message);
-          emitHubEvent(entry, message);
+          dispatchHubMessage(record, message);
         });
         return;
       }
-      const message = decoded;
-      if (!message) return;
-
-      applyHubBindings(entry, message);
-      emitHubEvent(entry, message);
+      dispatchHubMessage(record, decoded);
     };
 
     socket.onclose = function() {
@@ -32996,6 +36182,20 @@ if (typeof window !== "undefined") {
     socket.onerror = function(e) {
       console.error(`[gosx] hub connection error for ${entry.id}:`, e);
     };
+  }
+
+  function dispatchHubMessage(record, message) {
+    if (!message) return;
+    const entry = record.entry;
+    applyHubBindings(entry, message);
+    if (record.inputController && typeof record.inputController.onMessage === "function") {
+      try {
+        record.inputController.onMessage(message);
+      } catch (e) {
+        console.error(`[gosx] hub input message error for ${entry.id}:`, e);
+      }
+    }
+    emitHubEvent(entry, message);
   }
 
   function decodeHubMessage(entry, raw) {
@@ -33054,7 +36254,8 @@ if (typeof window !== "undefined") {
   }
 
   async function connectAllHubs(manifest) {
-    if (!manifest.hubs || manifest.hubs.length === 0) return;
+    initializeClientIdentity(manifest && manifest.clientIdentity);
+    if (!manifest || !manifest.hubs || manifest.hubs.length === 0) return;
     for (const entry of manifest.hubs) {
       connectHub(entry);
     }
@@ -33153,6 +36354,10 @@ if (typeof window !== "undefined") {
       clearTimeout(record.reconnectTimer);
       record.reconnectTimer = null;
     }
+    if (record.inputController && typeof record.inputController.dispose === "function") {
+      record.inputController.dispose();
+      record.inputController = null;
+    }
     if (record.socket && typeof record.socket.close === "function") {
       try {
         record.socket.close();
@@ -33185,6 +36390,20 @@ if (typeof window !== "undefined") {
     window.__gosx.ready = false;
   }
 
+  function entryRequiresAsyncWebGPUProbe(entry) {
+    const required = requiredCapabilityList(entry);
+    return required.some((capability) => capability.indexOf("webgpu:") === 0 || capability.indexOf("webgpu-feature:") === 0);
+  }
+
+  async function prepareRuntimeCapabilityProbe(entry) {
+    if (!entryRequiresAsyncWebGPUProbe(entry)) {
+      return;
+    }
+    if (typeof window !== "undefined" && typeof window.__gosx_scene3d_webgpu_probe_ready === "function") {
+      await window.__gosx_scene3d_webgpu_probe_ready();
+    }
+  }
+
   async function hydrateIsland(entry) {
     const root = islandRoot(entry);
     if (!root) return;
@@ -33199,6 +36418,7 @@ if (typeof window !== "undefined") {
 
   async function hydrateComputeIsland(entry) {
     if (!entry || entry.static) return;
+    await prepareRuntimeCapabilityProbe(entry);
     const capabilityStatus = runtimeCapabilityStatus(entry);
     if (!capabilityStatus.ok) {
       reportMissingComputeIslandCapabilities(entry, capabilityStatus);
@@ -33520,6 +36740,7 @@ if (typeof window !== "undefined") {
       refreshGosxDocumentState("ready");
       return;
     }
+    initializeClientIdentity(manifest.clientIdentity);
 
     pendingManifest = manifest;
     window.__gosx.ready = false;
@@ -33542,6 +36763,7 @@ if (typeof window !== "undefined") {
     return manifestHasEntries(manifest, "islands")
       || manifestHasEntries(manifest, "computeIslands")
       || manifestHasEntries(manifest, "hubs")
+      || Boolean(manifest && manifest.clientIdentity)
       || manifestNeedsVideoBridge(manifest)
       || manifestNeedsEngineInputBridge(manifest)
       || manifestNeedsSharedEngineRuntime(manifest);

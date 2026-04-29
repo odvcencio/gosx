@@ -160,10 +160,6 @@ func (r *Renderer) ensureHDR(width, height int) (gpu.TextureView, error) {
 	if r.hdrTex != nil && r.hdrWidth == width && r.hdrHeight == height {
 		return r.hdrView, nil
 	}
-	if r.hdrTex != nil {
-		r.hdrTex.Destroy()
-		r.hdrTex = nil
-	}
 	tex, err := r.device.CreateTexture(gpu.TextureDesc{
 		Width:  width,
 		Height: height,
@@ -174,16 +170,10 @@ func (r *Renderer) ensureHDR(width, height int) (gpu.TextureView, error) {
 	if err != nil {
 		return nil, fmt.Errorf("bundle.ensureHDR: %w", err)
 	}
-	r.hdrTex = tex
-	r.hdrView = tex.CreateView()
-	r.hdrWidth = width
-	r.hdrHeight = height
+	view := tex.CreateView()
 
 	// Allocate the GPU picking id buffer alongside HDR. R32Uint so a single
 	// readback yields an exact u32 pick ID with no alpha / unpacking.
-	if r.idBufferTex != nil {
-		r.idBufferTex.Destroy()
-	}
 	idTex, err := r.device.CreateTexture(gpu.TextureDesc{
 		Width:  width,
 		Height: height,
@@ -192,10 +182,23 @@ func (r *Renderer) ensureHDR(width, height int) (gpu.TextureView, error) {
 		Label:  "bundle.pickIdBuffer",
 	})
 	if err != nil {
+		tex.Destroy()
 		return nil, fmt.Errorf("bundle.ensureHDR (idBuffer): %w", err)
 	}
+	idView := idTex.CreateView()
+
+	if r.hdrTex != nil {
+		r.hdrTex.Destroy()
+	}
+	if r.idBufferTex != nil {
+		r.idBufferTex.Destroy()
+	}
+	r.hdrTex = tex
+	r.hdrView = view
+	r.hdrWidth = width
+	r.hdrHeight = height
 	r.idBufferTex = idTex
-	r.idBufferView = idTex.CreateView()
+	r.idBufferView = idView
 
 	// Rebuilding the present bind group happens in ensureBloom because the
 	// bind group references BOTH the HDR view and the bloom chain's view.
@@ -205,10 +208,6 @@ func (r *Renderer) ensureHDR(width, height int) (gpu.TextureView, error) {
 func (r *Renderer) ensurePostFX(width, height int) error {
 	if r.postFXTex != nil && r.postFXWidth == width && r.postFXHeight == height {
 		return nil
-	}
-	if r.postFXTex != nil {
-		r.postFXTex.Destroy()
-		r.postFXTex = nil
 	}
 	tex, err := r.device.CreateTexture(gpu.TextureDesc{
 		Width:  width,
@@ -220,22 +219,30 @@ func (r *Renderer) ensurePostFX(width, height int) error {
 	if err != nil {
 		return fmt.Errorf("bundle.ensurePostFX: %w", err)
 	}
-	r.postFXTex = tex
-	r.postFXView = tex.CreateView()
-	r.postFXWidth = width
-	r.postFXHeight = height
+	view := tex.CreateView()
 
 	bg, err := r.device.CreateBindGroup(gpu.BindGroupDesc{
 		Layout: r.fxaaBGLayout,
 		Entries: []gpu.BindGroupEntry{
-			{Binding: 0, TextureView: r.postFXView},
+			{Binding: 0, TextureView: view},
 			{Binding: 1, Sampler: r.presentSampler},
 		},
 		Label: "bundle.fxaa311.bg",
 	})
 	if err != nil {
+		tex.Destroy()
 		return fmt.Errorf("bundle.ensurePostFX (fxaa bg): %w", err)
 	}
+	if r.postFXTex != nil {
+		r.postFXTex.Destroy()
+	}
+	if r.fxaaBindGrp != nil {
+		r.fxaaBindGrp.Destroy()
+	}
+	r.postFXTex = tex
+	r.postFXView = view
+	r.postFXWidth = width
+	r.postFXHeight = height
 	r.fxaaBindGrp = bg
 	return nil
 }

@@ -3748,6 +3748,65 @@
     return clipVolume * requested * gosxAudioBusVolume(opts.bus || (clip && clip.bus) || "master");
   }
 
+  function gosxAudioVector3(raw) {
+    if (Array.isArray(raw)) {
+      return {
+        x: gosxNumber(raw[0], 0),
+        y: gosxNumber(raw[1], 0),
+        z: gosxNumber(raw[2], 0),
+      };
+    }
+    if (raw && typeof raw === "object") {
+      return {
+        x: gosxNumber(raw.x, 0),
+        y: gosxNumber(raw.y, 0),
+        z: gosxNumber(raw.z, 0),
+      };
+    }
+    return null;
+  }
+
+  function gosxAudioSetParam(param, value) {
+    if (param && typeof param.setValueAtTime === "function") {
+      param.setValueAtTime(value, 0);
+      return;
+    }
+    if (param && Object.prototype.hasOwnProperty.call(param, "value")) {
+      param.value = value;
+    }
+  }
+
+  function gosxAudioApplyPannerPosition(panner, position) {
+    if (!panner || !position) {
+      return;
+    }
+    if (typeof panner.setPosition === "function") {
+      panner.setPosition(position.x, position.y, position.z);
+      return;
+    }
+    gosxAudioSetParam(panner.positionX, position.x);
+    gosxAudioSetParam(panner.positionY, position.y);
+    gosxAudioSetParam(panner.positionZ, position.z);
+  }
+
+  function gosxAudioCreateSpatialPanner(audioContext, options) {
+    const position = gosxAudioVector3(options && options.position);
+    if (!position || !audioContext || typeof audioContext.createPanner !== "function") {
+      return null;
+    }
+    const panner = audioContext.createPanner();
+    if (!panner) {
+      return null;
+    }
+    panner.panningModel = String(options.panningModel || "HRTF");
+    panner.distanceModel = String(options.distanceModel || "inverse");
+    panner.refDistance = Math.max(0.001, gosxNumber(options.refDistance, 1));
+    panner.maxDistance = Math.max(panner.refDistance, gosxNumber(options.maxDistance, 10000));
+    panner.rolloffFactor = Math.max(0, gosxNumber(options.rolloffFactor, 1));
+    gosxAudioApplyPannerPosition(panner, position);
+    return panner;
+  }
+
   function gosxAudioLoadBuffer(clip) {
     if (!clip) {
       return Promise.resolve(null);
@@ -3792,7 +3851,11 @@
         gain.gain.value = gosxAudioPlaybackVolume(clip, options);
       }
       let tail = gain || source;
-      if (typeof audioContext.createStereoPanner === "function" && options && Object.prototype.hasOwnProperty.call(options, "pan")) {
+      const spatialPanner = gosxAudioCreateSpatialPanner(audioContext, options || {});
+      if (spatialPanner) {
+        tail.connect(spatialPanner);
+        tail = spatialPanner;
+      } else if (typeof audioContext.createStereoPanner === "function" && options && Object.prototype.hasOwnProperty.call(options, "pan")) {
         const panner = audioContext.createStereoPanner();
         panner.pan.value = Math.max(-1, Math.min(1, gosxNumber(options.pan, 0)));
         tail.connect(panner);
@@ -3800,7 +3863,7 @@
       }
       tail.connect(audioContext.destination);
       source.start(0);
-      gosxAudioState.handles.set(handleID, { kind: "webaudio", clip: clip.id, source, gain, options: Object.assign({}, options || {}) });
+      gosxAudioState.handles.set(handleID, { kind: "webaudio", clip: clip.id, source, gain, panner: spatialPanner, options: Object.assign({}, options || {}) });
       source.onended = function() {
         gosxAudioState.handles.delete(handleID);
       };

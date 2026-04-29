@@ -15,3 +15,4 @@
     const activateInputProviders = api.activateInputProviders;
     const releaseInputProviders = api.releaseInputProviders;
     const capabilityList = api.capabilityList;
+    const requiredCapabilityList = api.requiredCapabilityList;

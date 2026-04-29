@@ -324,7 +324,8 @@
     if (!name) {
       return true;
     }
-    if (Object.prototype.hasOwnProperty.call(browserCapabilityCache, name)) {
+    const dynamicWebGPUFeature = name.indexOf("webgpu:") === 0 || name.indexOf("webgpu-feature:") === 0;
+    if (!dynamicWebGPUFeature && Object.prototype.hasOwnProperty.call(browserCapabilityCache, name)) {
       return browserCapabilityCache[name];
     }
     let supported = false;
@@ -333,11 +334,32 @@
     } catch (_e) {
       supported = false;
     }
+    if (dynamicWebGPUFeature) {
+      return Boolean(supported);
+    }
     browserCapabilityCache[name] = Boolean(supported);
     return browserCapabilityCache[name];
   }
 
   function detectBrowserCapability(name) {
+    if (name.indexOf("webgpu:adapter-limit:") === 0) {
+      return detectWebGPULimitCapability(name.slice("webgpu:adapter-limit:".length), "adapter");
+    }
+    if (name.indexOf("webgpu:device-limit:") === 0) {
+      return detectWebGPULimitCapability(name.slice("webgpu:device-limit:".length), "device");
+    }
+    if (name.indexOf("webgpu:limit:") === 0) {
+      return detectWebGPULimitCapability(name.slice("webgpu:limit:".length), "device");
+    }
+    if (name.indexOf("webgpu-limit:") === 0) {
+      return detectWebGPULimitCapability(name.slice("webgpu-limit:".length), "device");
+    }
+    if (name.indexOf("webgpu:") === 0) {
+      return detectWebGPUFeatureCapability(name.slice("webgpu:".length));
+    }
+    if (name.indexOf("webgpu-feature:") === 0) {
+      return detectWebGPUFeatureCapability(name.slice("webgpu-feature:".length));
+    }
     switch (name) {
       case "animation":
         return typeof requestAnimationFrame === "function";
@@ -357,6 +379,13 @@
       case "keyboard":
       case "pointer":
         return Boolean(document && typeof document.addEventListener === "function");
+      case "pointer-lock":
+        return Boolean(
+          document &&
+          (typeof document.exitPointerLock === "function" || "pointerLockElement" in document) &&
+          typeof document.createElement === "function" &&
+          typeof document.createElement("canvas").requestPointerLock === "function"
+        );
       case "storage":
         return canUseLocalStorage();
       case "text-input":
@@ -379,6 +408,97 @@
       default:
         return false;
     }
+  }
+
+  function detectWebGPUFeatureCapability(feature) {
+    const normalized = normalizeCapabilityName(feature);
+    if (!normalized || !browserCapabilitySupported("webgpu")) {
+      return false;
+    }
+    const diagnostics = typeof window !== "undefined" && typeof window.__gosx_scene3d_webgpu_diagnostics === "function"
+      ? window.__gosx_scene3d_webgpu_diagnostics()
+      : null;
+    if (!diagnostics || diagnostics.ready !== true) {
+      return false;
+    }
+    const deviceFeatures = Array.isArray(diagnostics.deviceFeatures) ? diagnostics.deviceFeatures : [];
+    const requestedFeatures = Array.isArray(diagnostics.requestedFeatures) ? diagnostics.requestedFeatures : [];
+    return deviceFeatures.indexOf(normalized) >= 0 || requestedFeatures.indexOf(normalized) >= 0;
+  }
+
+  function detectWebGPULimitCapability(requirement, scope) {
+    if (!browserCapabilitySupported("webgpu")) {
+      return false;
+    }
+    const diagnostics = typeof window !== "undefined" && typeof window.__gosx_scene3d_webgpu_diagnostics === "function"
+      ? window.__gosx_scene3d_webgpu_diagnostics()
+      : null;
+    if (!diagnostics || diagnostics.ready !== true) {
+      return false;
+    }
+    const parsed = parseWebGPULimitRequirement(requirement);
+    if (!parsed) {
+      return false;
+    }
+    const primary = scope === "adapter" ? diagnostics.adapterLimits : diagnostics.deviceLimits;
+    const fallback = scope === "adapter" ? diagnostics.deviceLimits : diagnostics.adapterLimits;
+    let actual = lookupWebGPULimit(primary, parsed.name);
+    if (!Number.isFinite(actual)) {
+      actual = lookupWebGPULimit(fallback, parsed.name);
+    }
+    if (!Number.isFinite(actual)) {
+      return false;
+    }
+    switch (parsed.operator) {
+      case ">":
+        return actual > parsed.value;
+      case "<":
+        return actual < parsed.value;
+      case "<=":
+        return actual <= parsed.value;
+      case "=":
+      case "==":
+        return actual === parsed.value;
+      case ">=":
+      default:
+        return actual >= parsed.value;
+    }
+  }
+
+  function parseWebGPULimitRequirement(requirement) {
+    const text = String(requirement || "").trim();
+    const match = text.match(/^([a-z0-9_.:-]+)\s*(>=|<=|==|>|<|=|:)\s*([0-9]+(?:\.[0-9]+)?)$/i);
+    if (!match) {
+      return null;
+    }
+    const value = Number(match[3]);
+    if (!Number.isFinite(value)) {
+      return null;
+    }
+    return {
+      name: match[1],
+      operator: match[2] === ":" ? ">=" : match[2],
+      value,
+    };
+  }
+
+  function lookupWebGPULimit(limits, name) {
+    if (!limits || typeof limits !== "object") {
+      return NaN;
+    }
+    const wanted = normalizeWebGPULimitName(name);
+    for (const key of Object.keys(limits)) {
+      if (normalizeWebGPULimitName(key) !== wanted) {
+        continue;
+      }
+      const value = Number(limits[key]);
+      return Number.isFinite(value) ? value : NaN;
+    }
+    return NaN;
+  }
+
+  function normalizeWebGPULimitName(name) {
+    return String(name || "").trim().toLowerCase().replace(/[^a-z0-9]/g, "");
   }
 
   function canCreateElement(tagName) {
@@ -569,12 +689,17 @@
       const navigatorRef = window.navigator;
       if (navigatorRef && typeof navigatorRef.getGamepads === "function") {
         const pads = navigatorRef.getGamepads() || [];
-        const pad = pads[0];
-        if (pad) {
-          publishGamepadSignals(pad);
-        } else {
-          queueInputSignal("$input.gamepad0.connected", false);
+        let connected = 0;
+        for (let i = 0; i < 2; i++) {
+          const pad = pads[i];
+          if (pad && pad.connected !== false) {
+            connected += 1;
+            publishGamepadSignals(pad, i);
+          } else {
+            queueInputSignal("$input.gamepad" + i + ".connected", false);
+          }
         }
+        queueInputSignal("$input.gamepad.count", connected);
       }
       frameHandle = engineFrame(pollGamepad);
     }
@@ -815,15 +940,24 @@
     queueInputSignal("$input.pointer.buttons", 0);
   }
 
-  function publishGamepadSignals(pad) {
+  function publishGamepadSignals(pad, slot) {
+    const prefix = "$input.gamepad" + Math.max(0, Math.floor(sceneNumber(slot, 0)));
     const axes = Array.isArray(pad.axes) ? pad.axes : [];
-    queueInputSignal("$input.gamepad0.connected", true);
-    queueInputSignal("$input.gamepad0.leftX", sceneNumber(axes[0], 0));
-    queueInputSignal("$input.gamepad0.leftY", sceneNumber(axes[1], 0));
-    queueInputSignal("$input.gamepad0.rightX", sceneNumber(axes[2], 0));
-    queueInputSignal("$input.gamepad0.rightY", sceneNumber(axes[3], 0));
-    queueInputSignal("$input.gamepad0.buttonA", gamepadButtonPressed(pad, 0));
-    queueInputSignal("$input.gamepad0.buttonB", gamepadButtonPressed(pad, 1));
+    queueInputSignal(prefix + ".connected", true);
+    queueInputSignal(prefix + ".leftX", sceneNumber(axes[0], 0));
+    queueInputSignal(prefix + ".leftY", sceneNumber(axes[1], 0));
+    queueInputSignal(prefix + ".rightX", sceneNumber(axes[2], 0));
+    queueInputSignal(prefix + ".rightY", sceneNumber(axes[3], 0));
+    queueInputSignal(prefix + ".dpadUp", gamepadButtonPressed(pad, 12));
+    queueInputSignal(prefix + ".dpadDown", gamepadButtonPressed(pad, 13));
+    queueInputSignal(prefix + ".dpadLeft", gamepadButtonPressed(pad, 14));
+    queueInputSignal(prefix + ".dpadRight", gamepadButtonPressed(pad, 15));
+    queueInputSignal(prefix + ".buttonA", gamepadButtonPressed(pad, 0));
+    queueInputSignal(prefix + ".buttonB", gamepadButtonPressed(pad, 1));
+    queueInputSignal(prefix + ".buttonX", gamepadButtonPressed(pad, 2));
+    queueInputSignal(prefix + ".buttonY", gamepadButtonPressed(pad, 3));
+    queueInputSignal(prefix + ".buttonLB", gamepadButtonPressed(pad, 4));
+    queueInputSignal(prefix + ".buttonRB", gamepadButtonPressed(pad, 5));
   }
 
   function gamepadButtonPressed(pad, index) {
@@ -5765,6 +5899,12 @@
     return false;
   }
 
+  if (typeof window !== "undefined" && window.__gosx_runtime_api) {
+    window.__gosx_runtime_api.browserCapabilitySupported = browserCapabilitySupported;
+    window.__gosx_runtime_api.runtimeCapabilityStatus = runtimeCapabilityStatus;
+    window.__gosx_runtime_api.engineCapabilityStatus = engineCapabilityStatus;
+  }
+
   window.__gosx_scene3d_api = {
     appendSceneObjectToBundle,
     appendSceneSurfaceToBundle,
@@ -5819,6 +5959,10 @@
     sceneBool,
     sceneBoundsDepthMetrics,
     sceneBoundsViewCulled,
+    buildSceneWorldDrawPlan: typeof buildSceneWorldDrawPlan === "function" ? buildSceneWorldDrawPlan : undefined,
+    createSceneWorldDrawScratch: typeof createSceneWorldDrawScratch === "function" ? createSceneWorldDrawScratch : undefined,
+    createSceneThickLineScratch: typeof createSceneThickLineScratch === "function" ? createSceneThickLineScratch : undefined,
+    expandSceneThickLineIntoScratch: typeof expandSceneThickLineIntoScratch === "function" ? expandSceneThickLineIntoScratch : undefined,
     sceneBundleNeedsThickLines,
     sceneCameraEquivalent,
     sceneOrthographicBounds,
@@ -5853,6 +5997,7 @@
     scenePBRViewMatrix: typeof scenePBRViewMatrix === "function" ? scenePBRViewMatrix : undefined,
     sceneShadowLightSpaceMatrix: typeof sceneShadowLightSpaceMatrix === "function" ? sceneShadowLightSpaceMatrix : undefined,
     sceneShadowComputeBounds: typeof sceneShadowComputeBounds === "function" ? sceneShadowComputeBounds : undefined,
+    generateInstancedGeometry: typeof generateInstancedGeometry === "function" ? generateInstancedGeometry : undefined,
 
     resolvePostFXFactor: typeof resolvePostFXFactor === "function" ? resolvePostFXFactor : undefined,
     resolveShadowSize: typeof resolveShadowSize === "function" ? resolveShadowSize : undefined,
@@ -14796,6 +14941,159 @@ if (typeof window !== "undefined") {
   var _webgpuDeviceProbe = null;  // null = unprobed, false = unavailable, GPUDevice = ready
   var _webgpuAdapterReady = false;
   var _webgpuProbePromise = Promise.resolve(false);
+  var _webgpuSupportedFeatures = [];
+  var _webgpuRequestedFeatures = [];
+  var _webgpuAdapterLimits = {};
+  var _webgpuDeviceLimits = {};
+  var _webgpuAdapterInfo = {};
+  var _webgpuProbeError = "";
+  var _webgpuDeviceLostInfo = null;
+
+  var WEBGPU_OPTIONAL_FEATURES = [
+    "timestamp-query",
+    "indirect-first-instance",
+    "shader-f16",
+    "texture-compression-bc",
+    "texture-compression-bc-sliced-3d",
+    "texture-compression-etc2",
+    "texture-compression-astc",
+    "texture-compression-astc-sliced-3d",
+    "depth-clip-control",
+    "depth32float-stencil8",
+    "float32-filterable",
+    "float32-blendable",
+    "rg11b10ufloat-renderable",
+    "bgra8unorm-storage",
+    "clip-distances",
+    "dual-source-blending",
+    "subgroups",
+    "subgroups-f16",
+  ];
+
+  var WEBGPU_LIMIT_NAMES = [
+    "maxTextureDimension1D",
+    "maxTextureDimension2D",
+    "maxTextureDimension3D",
+    "maxTextureArrayLayers",
+    "maxBindGroups",
+    "maxBindGroupsPlusVertexBuffers",
+    "maxBindingsPerBindGroup",
+    "maxDynamicUniformBuffersPerPipelineLayout",
+    "maxDynamicStorageBuffersPerPipelineLayout",
+    "maxSampledTexturesPerShaderStage",
+    "maxSamplersPerShaderStage",
+    "maxStorageBuffersPerShaderStage",
+    "maxStorageTexturesPerShaderStage",
+    "maxUniformBuffersPerShaderStage",
+    "maxUniformBufferBindingSize",
+    "maxStorageBufferBindingSize",
+    "minUniformBufferOffsetAlignment",
+    "minStorageBufferOffsetAlignment",
+    "maxVertexBuffers",
+    "maxBufferSize",
+    "maxVertexAttributes",
+    "maxVertexBufferArrayStride",
+    "maxInterStageShaderComponents",
+    "maxInterStageShaderVariables",
+    "maxColorAttachments",
+    "maxColorAttachmentBytesPerSample",
+    "maxComputeWorkgroupStorageSize",
+    "maxComputeInvocationsPerWorkgroup",
+    "maxComputeWorkgroupSizeX",
+    "maxComputeWorkgroupSizeY",
+    "maxComputeWorkgroupSizeZ",
+    "maxComputeWorkgroupsPerDimension",
+  ];
+
+  function sceneWebGPUFeatureList(features) {
+    var out = [];
+    if (!features) return out;
+    if (typeof features.forEach === "function") {
+      features.forEach(function(value) {
+        if (typeof value === "string") out.push(value);
+      });
+    } else if (typeof features[Symbol.iterator] === "function") {
+      for (var entry of features) {
+        if (typeof entry === "string") out.push(entry);
+      }
+    } else if (Array.isArray(features)) {
+      out = features.filter(function(value) { return typeof value === "string"; });
+    }
+    out.sort();
+    return out.filter(function(value, index) { return index === 0 || out[index - 1] !== value; });
+  }
+
+  function sceneWebGPUFeatureSupported(adapter, feature) {
+    var features = adapter && adapter.features;
+    if (!features) return false;
+    if (typeof features.has === "function") {
+      return features.has(feature);
+    }
+    return sceneWebGPUFeatureList(features).indexOf(feature) >= 0;
+  }
+
+  function sceneWebGPURequestedFeatureList(adapter) {
+    var out = [];
+    for (var i = 0; i < WEBGPU_OPTIONAL_FEATURES.length; i++) {
+      var feature = WEBGPU_OPTIONAL_FEATURES[i];
+      if (!sceneWebGPUFeatureSupported(adapter, feature)) continue;
+      if (feature === "texture-compression-bc-sliced-3d" && !sceneWebGPUFeatureSupported(adapter, "texture-compression-bc")) continue;
+      if (feature === "texture-compression-astc-sliced-3d" && !sceneWebGPUFeatureSupported(adapter, "texture-compression-astc")) continue;
+      if (feature === "subgroups-f16" && (!sceneWebGPUFeatureSupported(adapter, "subgroups") || !sceneWebGPUFeatureSupported(adapter, "shader-f16"))) continue;
+      out.push(feature);
+    }
+    return out;
+  }
+
+  function sceneWebGPULimitsSnapshot(limits) {
+    var out = {};
+    if (!limits) return out;
+    for (var i = 0; i < WEBGPU_LIMIT_NAMES.length; i++) {
+      var name = WEBGPU_LIMIT_NAMES[i];
+      var value = limits[name];
+      if (Number.isFinite(Number(value))) {
+        out[name] = Number(value);
+      }
+    }
+    return out;
+  }
+
+  function sceneWebGPUAdapterInfoSnapshot(adapter) {
+    var info = adapter && adapter.info;
+    var out = {};
+    if (!info || typeof info !== "object") return out;
+    var keys = ["vendor", "architecture", "device", "description", "subgroupMinSize", "subgroupMaxSize"];
+    for (var i = 0; i < keys.length; i++) {
+      var key = keys[i];
+      var value = info[key];
+      if (typeof value === "string" && value) {
+        out[key] = value;
+      } else if (Number.isFinite(Number(value))) {
+        out[key] = Number(value);
+      }
+    }
+    return out;
+  }
+
+  function sceneWebGPUProbeSnapshot() {
+    return {
+      ready: !!_webgpuAdapterReady,
+      adapterAvailable: _webgpuAdapterProbe !== false && _webgpuAdapterProbe !== null,
+      deviceAvailable: _webgpuDeviceProbe !== false && _webgpuDeviceProbe !== null,
+      supportedFeatures: _webgpuSupportedFeatures.slice(),
+      requestedFeatures: _webgpuRequestedFeatures.slice(),
+      deviceFeatures: sceneWebGPUFeatureList(_webgpuDeviceProbe && _webgpuDeviceProbe.features),
+      adapterLimits: Object.assign({}, _webgpuAdapterLimits),
+      deviceLimits: Object.assign({}, _webgpuDeviceLimits),
+      adapterInfo: Object.assign({}, _webgpuAdapterInfo),
+      error: _webgpuProbeError,
+      lost: _webgpuDeviceLostInfo,
+    };
+  }
+
+  function sceneWebGPUDiagnostics() {
+    return sceneWebGPUProbeSnapshot();
+  }
 
   function _externalProbe() {
     if (typeof window !== "undefined" && typeof window.__gosx_scene3d_webgpu_probe === "function") {
@@ -14813,8 +15111,15 @@ if (typeof window !== "undefined") {
         adapter: _webgpuAdapterProbe,
         device: _webgpuDeviceProbe,
         ready: _webgpuAdapterReady,
+        supportedFeatures: _webgpuSupportedFeatures.slice(),
+        requestedFeatures: _webgpuRequestedFeatures.slice(),
+        limits: Object.assign({}, _webgpuAdapterLimits),
+        adapterInfo: Object.assign({}, _webgpuAdapterInfo),
+        error: _webgpuProbeError,
+        lost: _webgpuDeviceLostInfo,
       };
     };
+    window.__gosx_scene3d_webgpu_diagnostics = sceneWebGPUDiagnostics;
     window.__gosx_scene3d_webgpu_probe_ready = function() {
       return _webgpuProbePromise.then(function() {
         return _webgpuAdapterReady;
@@ -14827,32 +15132,47 @@ if (typeof window !== "undefined") {
   if (typeof navigator !== "undefined" && navigator.gpu && typeof navigator.gpu.requestAdapter === "function") {
     _webgpuProbePromise = navigator.gpu.requestAdapter().then(function(adapter) {
       if (!adapter) {
-        console.warn("[gosx] WebGPU probe: requestAdapter returned null");
+        _webgpuProbeError = "requestAdapter returned null";
+        console.warn("[gosx] WebGPU probe: " + _webgpuProbeError);
         _webgpuAdapterProbe = false;
         _webgpuDeviceProbe = false;
         return false;
       }
       _webgpuAdapterProbe = adapter;
-      return adapter.requestDevice();
+      _webgpuSupportedFeatures = sceneWebGPUFeatureList(adapter.features);
+      _webgpuRequestedFeatures = sceneWebGPURequestedFeatureList(adapter);
+      _webgpuAdapterLimits = sceneWebGPULimitsSnapshot(adapter.limits);
+      _webgpuAdapterInfo = sceneWebGPUAdapterInfoSnapshot(adapter);
+      var descriptor = _webgpuRequestedFeatures.length > 0
+        ? { requiredFeatures: _webgpuRequestedFeatures }
+        : {};
+      return adapter.requestDevice(descriptor);
     }).then(function(device) {
       if (device === false) {
         return;
       }
       if (!device) {
-        console.warn("[gosx] WebGPU probe: requestDevice returned null");
+        _webgpuProbeError = "requestDevice returned null";
+        console.warn("[gosx] WebGPU probe: " + _webgpuProbeError);
         _webgpuDeviceProbe = false;
         return;
       }
       _webgpuDeviceProbe = device;
+      _webgpuDeviceLimits = sceneWebGPULimitsSnapshot(device.limits);
       _webgpuAdapterReady = true;
       device.lost.then(function(info) {
+        _webgpuDeviceLostInfo = {
+          reason: info && info.reason || "",
+          message: info && info.message || "",
+        };
         console.warn("[gosx] WebGPU probe device lost:", info && info.message);
         _webgpuAdapterReady = false;
         _webgpuDeviceProbe = false;
       }).catch(function() {});
       return true;
     }).catch(function(err) {
-      console.warn("[gosx] WebGPU probe failed:", err && (err.message || err));
+      _webgpuProbeError = String(err && (err.message || err) || "unknown error");
+      console.warn("[gosx] WebGPU probe failed:", _webgpuProbeError);
       _webgpuAdapterProbe = false;
       _webgpuDeviceProbe = false;
       return false;
@@ -14873,11 +15193,11 @@ if (typeof window !== "undefined") {
         && typeof window.__gosx_scene3d_webgpu_api.createRenderer === "function");
   }
 
-  function createSceneWebGPURendererOrFallback(canvas) {
+  function createSceneWebGPURendererOrFallback(canvas, options) {
     if (!sceneWebGPUAvailable()) return null;
     if (!canvas || typeof canvas.getContext !== "function") return null;
     try {
-      var renderer = window.__gosx_scene3d_webgpu_api.createRenderer(canvas);
+      var renderer = window.__gosx_scene3d_webgpu_api.createRenderer(canvas, options || {});
       if (!renderer) {
         console.warn("[gosx] WebGPU factory returned null after probe success; canvas may be tainted");
       }
@@ -14894,10 +15214,15 @@ if (typeof window !== "undefined") {
       available: function() {
         return sceneWebGPUAvailable();
       },
-      create: function(canvas) {
-        return createSceneWebGPURendererOrFallback(canvas);
+      create: function(canvas, props, capability) {
+        var options = typeof sceneWebGPUOptions === "function" ? sceneWebGPUOptions(props, capability) : {};
+        return createSceneWebGPURendererOrFallback(canvas, options);
       },
     });
+  }
+
+  if (typeof window !== "undefined" && window.__gosx_scene3d_api) {
+    window.__gosx_scene3d_api.sceneWebGPUDiagnostics = sceneWebGPUDiagnostics;
   }
 
   var SCENE_DRAG_MIN_EXTENT_X = 0.6;
@@ -16423,6 +16748,85 @@ if (typeof window !== "undefined") {
     return sceneBool(props && props.requireWebGL, false);
   }
 
+  function sceneWebGPUOptions(props, capability) {
+    const caps = capability && typeof capability === "object" ? capability : {};
+    const requestedSamples = Math.max(0, Math.floor(sceneNumber(props && props.msaaSamples, 0)));
+    const tierAllowsMSAA = caps.tier === "full" && !caps.lowPower && !caps.reducedData;
+    const antialias = requestedSamples > 1
+      ? true
+      : sceneBool(props && props.antialias, tierAllowsMSAA);
+    return {
+      antialias,
+      msaaSamples: requestedSamples > 1 ? 4 : (antialias ? 4 : 1),
+    };
+  }
+
+  function sceneWebGPUUnsupportedLineStyle(entry) {
+    if (!entry || typeof entry !== "object") {
+      return false;
+    }
+    const material = entry.material && typeof entry.material === "object" ? entry.material : null;
+    const materialKind = String(entry.materialKind || entry.kind || material && material.kind || "").toLowerCase();
+    return entry.lineDash === true ||
+      material && material.lineDash === true ||
+      materialKind === "line-dashed" ||
+      materialKind === "dashed";
+  }
+
+  function sceneWebGPUUnsupportedLineCollection(list) {
+    if (!Array.isArray(list)) {
+      return false;
+    }
+    for (let i = 0; i < list.length; i += 1) {
+      const entry = list[i];
+      if (!entry || typeof entry !== "object") {
+        continue;
+      }
+      if (sceneWebGPUUnsupportedLineStyle(entry)) {
+        return true;
+      }
+      if (Array.isArray(entry.children) && sceneWebGPUUnsupportedLineCollection(entry.children)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function sceneWebGPUUnsupportedLineBundle(source) {
+    const dashes = source && source.worldLineDashes;
+    if (dashes && typeof dashes.length === "number") {
+      for (let i = 0; i < dashes.length; i += 1) {
+        if (dashes[i]) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  function sceneWebGPUFeatureGap(source) {
+    const root = source && typeof source === "object" ? source : {};
+    const scene = root.scene && typeof root.scene === "object" ? root.scene : null;
+    const candidates = scene ? [root, scene] : [root];
+    if (sceneWebGPUUnsupportedLineBundle(root)) {
+      return "line-styles";
+    }
+    for (let i = 0; i < candidates.length; i += 1) {
+      const item = candidates[i] || {};
+      if (
+        sceneWebGPUUnsupportedLineCollection(item.lines) ||
+        sceneWebGPUUnsupportedLineCollection(item.objects)
+      ) {
+        return "line-styles";
+      }
+    }
+    return "";
+  }
+
+  function sceneNeedsWebGLForWebGPUCoverage(source) {
+    return sceneWebGPUFeatureGap(source) !== "";
+  }
+
   function createSceneRenderer(canvas, props, capability) {
     const registryResult = createSceneRendererFromRegistry(canvas, props, capability);
     if (registryResult) {
@@ -16430,9 +16834,10 @@ if (typeof window !== "undefined") {
     }
 
     const webglPreference = sceneCapabilityWebGLPreference(props, capability);
+    const webgpuFeatureGap = sceneNeedsWebGLForWebGPUCoverage(props);
     if (webglPreference === "prefer" || webglPreference === "force") {
-      if (webglPreference !== "force" && typeof sceneWebGPUAvailable === "function" && sceneWebGPUAvailable()) {
-        var gpuRenderer = createSceneWebGPURendererOrFallback(canvas);
+      if (!webgpuFeatureGap && webglPreference !== "force" && typeof sceneWebGPUAvailable === "function" && sceneWebGPUAvailable()) {
+        var gpuRenderer = createSceneWebGPURendererOrFallback(canvas, sceneWebGPUOptions(props, capability));
         if (gpuRenderer) {
           return {
             renderer: gpuRenderer,
@@ -16453,7 +16858,7 @@ if (typeof window !== "undefined") {
           if (pbrRenderer) {
             return {
               renderer: pbrRenderer,
-              fallbackReason: "",
+              fallbackReason: webgpuFeatureGap ? "webgpu-feature-gap" : "",
             };
           }
         }
@@ -16465,7 +16870,7 @@ if (typeof window !== "undefined") {
       if (webglRenderer) {
         return {
           renderer: webglRenderer,
-          fallbackReason: "",
+          fallbackReason: webgpuFeatureGap ? "webgpu-feature-gap" : "",
         };
       }
     }
@@ -16488,14 +16893,15 @@ if (typeof window !== "undefined") {
     }
     const webglPreference = sceneCapabilityWebGLPreference(props, capability);
     const requireWebGL = sceneRequiresWebGL(props);
+    const webgpuFeatureGap = sceneNeedsWebGLForWebGPUCoverage(props);
     const request = {
       props,
       capability,
-      webgpu: webglPreference === "prefer",
+      webgpu: webglPreference === "prefer" && !webgpuFeatureGap,
       webgl: webglPreference === "prefer" || webglPreference === "force",
       webgl2: webglPreference === "prefer" || webglPreference === "force",
       canvas2d: !requireWebGL,
-      preferWebGPU: webglPreference === "prefer",
+      preferWebGPU: webglPreference === "prefer" && !webgpuFeatureGap,
       forceWebGL: webglPreference === "force",
     };
     const candidates = sceneBackendRegistry.candidates(request);
@@ -16509,7 +16915,7 @@ if (typeof window !== "undefined") {
           renderer,
           fallbackReason: entry.kind === "canvas2d" || renderer.kind === "canvas"
             ? sceneRendererFallbackReason(props, capability, "canvas")
-            : "",
+            : (webgpuFeatureGap && renderer.kind === "webgl" ? "webgpu-feature-gap" : ""),
         };
       }
     }
@@ -17266,6 +17672,9 @@ if (typeof window !== "undefined") {
     if (sceneCapabilityWebGLPreference(props, capability) !== "prefer") {
       return false;
     }
+    if (sceneNeedsWebGLForWebGPUCoverage(props)) {
+      return false;
+    }
     try {
       var api = await ensureWebGPUFeatureLoaded();
       if (!api) {
@@ -17896,6 +18305,17 @@ if (typeof window !== "undefined") {
     }
     setAttrValue(mount, "data-gosx-scene3d-renderer", renderer && renderer.kind ? renderer.kind : "");
     setAttrValue(mount, "data-gosx-scene3d-renderer-fallback", fallbackReason || "");
+    const webgpuDiagnostics = renderer && renderer.kind === "webgpu" && typeof renderer.diagnostics === "function"
+      ? renderer.diagnostics()
+      : null;
+    setAttrValue(mount, "data-gosx-scene3d-webgpu-features", webgpuDiagnostics && Array.isArray(webgpuDiagnostics.requestedFeatures) ? webgpuDiagnostics.requestedFeatures.join(",") : "");
+    setAttrValue(mount, "data-gosx-scene3d-webgpu-device-features", webgpuDiagnostics && Array.isArray(webgpuDiagnostics.deviceFeatures) ? webgpuDiagnostics.deviceFeatures.join(",") : "");
+    setAttrValue(mount, "data-gosx-scene3d-webgpu-sample-count", webgpuDiagnostics && webgpuDiagnostics.activeSampleCount > 0 ? webgpuDiagnostics.activeSampleCount : "");
+    setAttrValue(mount, "data-gosx-scene3d-webgpu-adapter", webgpuDiagnostics && webgpuDiagnostics.adapterInfo ? [
+      webgpuDiagnostics.adapterInfo.vendor || "",
+      webgpuDiagnostics.adapterInfo.architecture || "",
+      webgpuDiagnostics.adapterInfo.device || "",
+    ].filter(Boolean).join(" ") : "");
   }
 
   function showSceneRequiredRendererMessage(mount, props, reason) {
@@ -19029,6 +19449,54 @@ if (typeof window !== "undefined") {
     return Math.max(0.01, sceneNumber(props && props.controlMoveSpeed, 4));
   }
 
+  function scenePointerLockRequested(props) {
+    return sceneBool(props && props.pointerLock, false);
+  }
+
+  function scenePointerLockElement() {
+    if (typeof document === "undefined" || !document) {
+      return null;
+    }
+    return document.pointerLockElement ||
+      document.mozPointerLockElement ||
+      document.webkitPointerLockElement ||
+      null;
+  }
+
+  function scenePointerLockActive(canvas) {
+    return Boolean(canvas && scenePointerLockElement() === canvas);
+  }
+
+  function sceneRequestPointerLock(canvas) {
+    if (!canvas || typeof canvas.requestPointerLock !== "function") {
+      return false;
+    }
+    try {
+      canvas.requestPointerLock({ unadjustedMovement: true });
+      return true;
+    } catch (_unadjustedError) {
+      try {
+        canvas.requestPointerLock();
+        return true;
+      } catch (_error) {
+        return false;
+      }
+    }
+  }
+
+  function sceneExitPointerLock(canvas) {
+    if (!scenePointerLockActive(canvas)) {
+      return;
+    }
+    const exit = document.exitPointerLock || document.mozExitPointerLock || document.webkitExitPointerLock;
+    if (typeof exit !== "function") {
+      return;
+    }
+    try {
+      exit.call(document);
+    } catch (_error) {}
+  }
+
   function sceneWorldCameraPosition(camera) {
     const normalized = sceneRenderCamera(camera);
     return {
@@ -19162,6 +19630,8 @@ if (typeof window !== "undefined") {
       zoomSpeed: sceneControlsZoomSpeed(props),
       lookSpeed: sceneControlsLookSpeed(props),
       moveSpeed: sceneControlsMoveSpeed(props),
+      pointerLock: mode !== "orbit" && scenePointerLockRequested(props),
+      pointerLocked: false,
       orbit: null,
       fly: null,
       keys: new Set(),
@@ -19408,6 +19878,10 @@ if (typeof window !== "undefined") {
       canvas.focus({ preventScroll: true });
     }
     attachDocumentListeners();
+    if (controls.pointerLock) {
+      sceneRequestPointerLock(canvas);
+      controls.pointerLocked = scenePointerLockActive(canvas);
+    }
     if (typeof canvas.setPointerCapture === "function" && event.pointerId != null) {
       canvas.setPointerCapture(event.pointerId);
     }
@@ -19424,7 +19898,12 @@ if (typeof window !== "undefined") {
       return;
     }
     const metrics = sceneControlsMetrics(readViewport, props);
-    const sample = sceneLocalPointerSample(event, canvas, metrics.width, metrics.height, controls, "move");
+    const pointerLocked = controls.pointerLock && scenePointerLockActive(canvas);
+    controls.pointerLocked = pointerLocked;
+    const sample = pointerLocked ? {
+      deltaX: sceneNumber(event && event.movementX, 0),
+      deltaY: sceneNumber(event && event.movementY, 0),
+    } : sceneLocalPointerSample(event, canvas, metrics.width, metrics.height, controls, "move");
     const fly = sceneFlyEnsureState(controls, readSourceCamera);
     fly.yaw += (sample.deltaX / Math.max(metrics.width, 1)) * Math.PI * controls.lookSpeed;
     fly.pitch = sceneClamp(
@@ -19445,9 +19924,19 @@ if (typeof window !== "undefined") {
     if (!sceneDragMatchesActivePointer(controls, event)) {
       return;
     }
+    if (controls.pointerLock && scenePointerLockActive(canvas) && event && event.type !== "pointerlockchange") {
+      if (typeof event.preventDefault === "function") {
+        event.preventDefault();
+      }
+      if (typeof event.stopPropagation === "function") {
+        event.stopPropagation();
+      }
+      return;
+    }
     const pointerId = controls.pointerId;
     controls.active = false;
     controls.pointerId = null;
+    controls.pointerLocked = false;
     canvas.style.cursor = "crosshair";
     detachDocumentListeners();
     if (pointerId != null && typeof canvas.releasePointerCapture === "function") {
@@ -19561,6 +20050,17 @@ if (typeof window !== "undefined") {
       canvas.setAttribute("tabindex", "0");
     }
 
+    function onPointerLockChange(event) {
+      if (!flyMode || !controls.pointerLock) {
+        return;
+      }
+      const locked = scenePointerLockActive(canvas);
+      controls.pointerLocked = locked;
+      if (!locked && controls.active) {
+        sceneFlyFinishDrag(controls, canvas, detachDocumentListeners, event || { type: "pointerlockchange" });
+      }
+    }
+
     function attachDocumentListeners() {
       if (documentListenersAttached) {
         return;
@@ -19671,6 +20171,11 @@ if (typeof window !== "undefined") {
     if (flyMode) {
       document.addEventListener("keydown", onKeyDown);
       document.addEventListener("keyup", onKeyUp);
+      if (controls.pointerLock) {
+        document.addEventListener("pointerlockchange", onPointerLockChange);
+        document.addEventListener("mozpointerlockchange", onPointerLockChange);
+        document.addEventListener("webkitpointerlockchange", onPointerLockChange);
+      }
     }
 
     return {
@@ -19688,8 +20193,14 @@ if (typeof window !== "undefined") {
         canvas.removeEventListener("lostpointercapture", finishPointerDrag);
         canvas.removeEventListener("wheel", onWheel);
         if (flyMode) {
+          sceneExitPointerLock(canvas);
           document.removeEventListener("keydown", onKeyDown);
           document.removeEventListener("keyup", onKeyUp);
+          if (controls.pointerLock) {
+            document.removeEventListener("pointerlockchange", onPointerLockChange);
+            document.removeEventListener("mozpointerlockchange", onPointerLockChange);
+            document.removeEventListener("webkitpointerlockchange", onPointerLockChange);
+          }
         }
       },
     };
@@ -20036,8 +20547,29 @@ if (typeof window !== "undefined") {
       return swapRenderer(createSceneCanvasRenderer(ctx2d, canvas), reason || "webgl-unavailable");
     }
 
+    function ensureRendererCanCoverBundle(bundle) {
+      if (!renderer || !bundle) {
+        return true;
+      }
+      let feature = "";
+      if (typeof renderer.supportsBundle === "function" && renderer.supportsBundle(bundle) === false) {
+        feature = "backend-declared";
+      }
+      if (!feature) {
+        return true;
+      }
+      gosxSceneEmit("warn", "renderer-feature-gap", {
+        rendererKind: renderer.kind || "",
+        feature,
+      });
+      return fallbackSceneRenderer("webgpu-feature-gap");
+    }
+
     function renderLatestSceneBundle(reason) {
       if (disposed || !latestBundle || !renderer || typeof renderer.render !== "function" || !sceneCanRender()) {
+        return false;
+      }
+      if (!ensureRendererCanCoverBundle(latestBundle)) {
         return false;
       }
       recordScenePerfCounter("render:" + (reason || "restore"));
@@ -20531,6 +21063,10 @@ if (typeof window !== "undefined") {
             sceneCurrentControlCamera(sceneControlHandle.controller, runtimeBundle.camera || sceneState.camera, sceneState._scrollCamera),
           );
           latestBundle = effectiveBundle;
+          if (!ensureRendererCanCoverBundle(effectiveBundle)) {
+            scheduleNextAnimationFrame();
+            return;
+          }
           syncSceneNodeSentinels(effectiveBundle);
           renderer.render(effectiveBundle, viewport);
           renderSceneLabels(labelLayer, effectiveBundle, labelLayoutCache, labelElements, viewport.cssWidth, viewport.cssHeight);
@@ -20578,6 +21114,10 @@ if (typeof window !== "undefined") {
         performance.measure("scene3d-bundle", "scene3d-bundle-start", "scene3d-bundle-end");
         performance.clearMarks("scene3d-bundle-start");
         performance.clearMarks("scene3d-bundle-end");
+      }
+      if (!ensureRendererCanCoverBundle(latestBundle)) {
+        scheduleNextAnimationFrame();
+        return;
       }
       syncSceneNodeSentinels(latestBundle);
       renderer.render(latestBundle, viewport);

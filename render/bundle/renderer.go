@@ -106,6 +106,7 @@ type Renderer struct {
 	idBufferView gpu.TextureView
 	pickMu       sync.Mutex
 	pendingPick  *pickRequest
+	retiredPicks []*pickRequest
 
 	// Bloom chain (bright-pass + 2 blur passes → composited into present).
 	brightPipeline gpu.RenderPipeline
@@ -315,6 +316,14 @@ func (r *Renderer) Destroy() {
 	if r.postFXTex != nil {
 		r.postFXTex.Destroy()
 		r.postFXTex = nil
+	}
+	if r.presentBindGrp != nil {
+		r.presentBindGrp.Destroy()
+		r.presentBindGrp = nil
+	}
+	if r.fxaaBindGrp != nil {
+		r.fxaaBindGrp.Destroy()
+		r.fxaaBindGrp = nil
 	}
 	if r.idBufferTex != nil {
 		r.idBufferTex.Destroy()
@@ -1181,6 +1190,13 @@ func (r *Renderer) buildMaterialSampler() error {
 	return nil
 }
 
+func alphaBlendState() *gpu.BlendState {
+	return &gpu.BlendState{
+		Color: gpu.BlendComponent{SrcFactor: gpu.BlendSrcAlpha, DstFactor: gpu.BlendOneMinusSrcAlpha, Operation: gpu.BlendOpAdd},
+		Alpha: gpu.BlendComponent{SrcFactor: gpu.BlendOne, DstFactor: gpu.BlendOneMinusSrcAlpha, Operation: gpu.BlendOpAdd},
+	}
+}
+
 // buildLitPipeline is the directional-lit + shadowed pipeline used for
 // RenderInstancedMesh entries. 5 vertex buffers: positions, colors, normals,
 // uvs, per-instance mat4 (as 4 vec4 attributes).
@@ -1221,7 +1237,7 @@ func (r *Renderer) buildLitPipeline() error {
 			Module:     shader,
 			EntryPoint: "fs_main",
 			Targets: []gpu.ColorTargetState{
-				{Format: r.hdrFormat, WriteMask: gpu.ColorWriteAll},
+				{Format: r.hdrFormat, Blend: alphaBlendState(), WriteMask: gpu.ColorWriteAll},
 				{Format: gpu.FormatR32Uint, WriteMask: gpu.ColorWriteAll},
 			},
 		},
@@ -1300,7 +1316,7 @@ func (r *Renderer) buildSkinnedLitPipeline() error {
 			Module:     shader,
 			EntryPoint: "fs_main",
 			Targets: []gpu.ColorTargetState{
-				{Format: r.hdrFormat, WriteMask: gpu.ColorWriteAll},
+				{Format: r.hdrFormat, Blend: alphaBlendState(), WriteMask: gpu.ColorWriteAll},
 				{Format: gpu.FormatR32Uint, WriteMask: gpu.ColorWriteAll},
 			},
 		},

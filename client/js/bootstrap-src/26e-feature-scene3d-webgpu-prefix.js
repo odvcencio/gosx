@@ -45,6 +45,10 @@
   var sceneColorRGBA = sceneApi.sceneColorRGBA || function() { return [0, 0, 0, 1]; };
   var scenePointStyleCode = sceneApi.scenePointStyleCode || function() { return 0; };
   var sceneRenderCamera = sceneApi.sceneRenderCamera || function(c) { return c; };
+  var buildSceneWorldDrawPlan = sceneApi.buildSceneWorldDrawPlan;
+  var createSceneWorldDrawScratch = sceneApi.createSceneWorldDrawScratch;
+  var createSceneThickLineScratch = sceneApi.createSceneThickLineScratch;
+  var expandSceneThickLineIntoScratch = sceneApi.expandSceneThickLineIntoScratch;
   var scenePBRDepthSort = sceneApi.scenePBRDepthSort;
   var scenePBRObjectRenderPass = sceneApi.scenePBRObjectRenderPass;
   var prepareScene = sceneApi.prepareScene || function(ir) { return { ir: ir, pbrPasses: null }; };
@@ -55,6 +59,7 @@
   var scenePBRViewMatrix = sceneApi.scenePBRViewMatrix;
   var sceneShadowLightSpaceMatrix = sceneApi.sceneShadowLightSpaceMatrix;
   var sceneShadowComputeBounds = sceneApi.sceneShadowComputeBounds;
+  var generateInstancedGeometry = sceneApi.generateInstancedGeometry;
   var resolvePostFXFactor = sceneApi.resolvePostFXFactor || function() { return 1; };
   var resolveShadowSize = sceneApi.resolveShadowSize || function(s) { return s; };
   // createSceneParticleSystem + sceneComputeSystemSignature are defined
@@ -78,6 +83,25 @@
       return window.__gosx_scene3d_webgpu_probe();
     }
     return { adapter: null, device: null, ready: false };
+  }
+
+  function sceneWebGPUDiagnostics() {
+    if (typeof window.__gosx_scene3d_webgpu_diagnostics === "function") {
+      return window.__gosx_scene3d_webgpu_diagnostics();
+    }
+    var probe = _externalProbe();
+    return {
+      ready: !!(probe && probe.ready),
+      adapterAvailable: !!(probe && probe.adapter),
+      deviceAvailable: !!(probe && probe.device),
+      supportedFeatures: Array.isArray(probe && probe.supportedFeatures) ? probe.supportedFeatures.slice() : [],
+      requestedFeatures: Array.isArray(probe && probe.requestedFeatures) ? probe.requestedFeatures.slice() : [],
+      adapterLimits: probe && probe.limits || {},
+      deviceLimits: {},
+      adapterInfo: probe && probe.adapterInfo || {},
+      error: probe && probe.error || "",
+      lost: probe && probe.lost || null,
+    };
   }
 
   // --- file 16a (scene-webgpu.js) is concatenated next, followed by 16b.

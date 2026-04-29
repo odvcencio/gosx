@@ -108,6 +108,7 @@
     "    @location(2) uv: vec2f,",
     "    @location(3) tangent: vec3f,",
     "    @location(4) bitangent: vec3f,",
+    "    @location(5) instanceColor: vec4f,",
     "};",
     "",
     "@group(0) @binding(0) var<uniform> frame: FrameUniforms;",
@@ -121,7 +122,52 @@
     "    let N = out.normal;",
     "    out.tangent = T;",
     "    out.bitangent = cross(N, T) * in.tangent.w;",
+    "    out.instanceColor = vec4f(1.0, 1.0, 1.0, 1.0);",
     "    out.clipPos = frame.projMatrix * frame.viewMatrix * vec4f(in.position, 1.0);",
+    "    return out;",
+    "}",
+  ].join("\n");
+
+  var WGSL_PBR_INSTANCED_VERTEX = [
+    WGSL_FRAME_STRUCTS,
+    "",
+    "struct VertexInput {",
+    "    @location(0) position: vec3f,",
+    "    @location(1) normal: vec3f,",
+    "    @location(2) uv: vec2f,",
+    "    @location(3) tangent: vec4f,",
+    "    @location(4) instanceMatrix0: vec4f,",
+    "    @location(5) instanceMatrix1: vec4f,",
+    "    @location(6) instanceMatrix2: vec4f,",
+    "    @location(7) instanceMatrix3: vec4f,",
+    "    @location(8) instanceColor: vec4f,",
+    "};",
+    "",
+    "struct VertexOutput {",
+    "    @builtin(position) clipPos: vec4f,",
+    "    @location(0) worldPos: vec3f,",
+    "    @location(1) normal: vec3f,",
+    "    @location(2) uv: vec2f,",
+    "    @location(3) tangent: vec3f,",
+    "    @location(4) bitangent: vec3f,",
+    "    @location(5) instanceColor: vec4f,",
+    "};",
+    "",
+    "@group(0) @binding(0) var<uniform> frame: FrameUniforms;",
+    "",
+    "@vertex fn vertexMain(in: VertexInput) -> VertexOutput {",
+    "    var out: VertexOutput;",
+    "    let model = mat4x4f(in.instanceMatrix0, in.instanceMatrix1, in.instanceMatrix2, in.instanceMatrix3);",
+    "    let world = model * vec4f(in.position, 1.0);",
+    "    out.worldPos = world.xyz;",
+    "    out.normal = normalize((model * vec4f(in.normal, 0.0)).xyz);",
+    "    out.uv = in.uv;",
+    "    let T = normalize((model * vec4f(in.tangent.xyz, 0.0)).xyz);",
+    "    let N = out.normal;",
+    "    out.tangent = T;",
+    "    out.bitangent = cross(N, T) * in.tangent.w;",
+    "    out.instanceColor = in.instanceColor;",
+    "    out.clipPos = frame.projMatrix * frame.viewMatrix * world;",
     "    return out;",
     "}",
   ].join("\n");
@@ -144,6 +190,7 @@
     "    @location(2) uv: vec2f,",
     "    @location(3) tangent: vec3f,",
     "    @location(4) bitangent: vec3f,",
+    "    @location(5) instanceColor: vec4f,",
     "};",
     "",
     "// Group 0: per-frame",
@@ -258,6 +305,8 @@
     "        let texAlbedo = textureSample(albedoTex, albedoSamp, in.uv);",
     "        albedo = albedo * texAlbedo.rgb;",
     "    }",
+    "    albedo = albedo * in.instanceColor.rgb;",
+    "    let finalOpacity = material.opacity * clamp(in.instanceColor.a, 0.0, 1.0);",
     "",
     "    var roughness = material.roughness;",
     "    if (material.hasRoughnessMap != 0u) {",
@@ -280,7 +329,7 @@
     "    // Unlit path: output albedo directly.",
     "    if (material.unlit != 0u) {",
     "        let color = albedo + emissiveColor * emissiveStrength;",
-    "        return vec4f(color, material.opacity);",
+    "        return vec4f(color, finalOpacity);",
     "    }",
     "",
     "    // Resolve per-pixel normal via TBN matrix.",
@@ -384,7 +433,7 @@
     "        color = pow(color, vec3f(1.0 / 2.2));",
     "    }",
     "",
-    "    return vec4f(color, material.opacity);",
+    "    return vec4f(color, finalOpacity);",
     "}",
   ].join("\n");
 
@@ -404,9 +453,209 @@
     "}",
   ].join("\n");
 
+  var WGSL_SHADOW_INSTANCED_VERTEX = [
+    "struct ShadowFrameUniforms {",
+    "    lightViewProjection: mat4x4f,",
+    "};",
+    "",
+    "struct VertexInput {",
+    "    @location(0) position: vec3f,",
+    "    @location(4) instanceMatrix0: vec4f,",
+    "    @location(5) instanceMatrix1: vec4f,",
+    "    @location(6) instanceMatrix2: vec4f,",
+    "    @location(7) instanceMatrix3: vec4f,",
+    "};",
+    "",
+    "@group(0) @binding(0) var<uniform> shadowFrame: ShadowFrameUniforms;",
+    "",
+    "@vertex fn vertexMain(in: VertexInput) -> @builtin(position) vec4f {",
+    "    let model = mat4x4f(in.instanceMatrix0, in.instanceMatrix1, in.instanceMatrix2, in.instanceMatrix3);",
+    "    return shadowFrame.lightViewProjection * model * vec4f(in.position, 1.0);",
+    "}",
+  ].join("\n");
+
   // Shadow fragment shader is empty -- depth-only pass.
   var WGSL_SHADOW_FRAGMENT = [
     "@fragment fn fragmentMain() {}",
+  ].join("\n");
+
+  var WGSL_SCENE_COLOR_FRAGMENT = [
+    "struct ColorOutput {",
+    "    @builtin(position) clipPos: vec4f,",
+    "    @location(0) color: vec4f,",
+    "    @location(1) material: vec3f,",
+    "};",
+    "",
+    "@fragment fn fragmentMain(in: ColorOutput) -> @location(0) vec4f {",
+    "    var color = in.color;",
+    "    let kind = floor(in.material.x + 0.5);",
+    "    let emissive = max(in.material.y, 0.0);",
+    "    let tone = clamp(in.material.z, 0.0, 1.0);",
+    "    if (kind > 3.5) {",
+    "        color.rgb = color.rgb * mix(0.78, 1.0, tone);",
+    "    } else if (kind > 2.5) {",
+    "        color.rgb = color.rgb * (1.0 + emissive * 0.75);",
+    "    } else if (kind > 1.5) {",
+    "        color.rgb = mix(color.rgb, vec3f(0.92, 0.98, 1.0), 0.28 + tone * 0.16);",
+    "        color.a = color.a * 0.84;",
+    "    } else if (kind > 0.5) {",
+    "        color.rgb = mix(color.rgb, vec3f(0.84, 0.94, 1.0), 0.18 + tone * 0.12);",
+    "        color.a = color.a * 0.9;",
+    "    } else {",
+    "        color.rgb = color.rgb * mix(0.9, 1.0, tone);",
+    "    }",
+    "    return vec4f(clamp(color.rgb, vec3f(0.0), vec3f(1.0)), clamp(color.a, 0.0, 1.0));",
+    "}",
+  ].join("\n");
+
+  var WGSL_SCENE_WORLD_COLOR_VERTEX = [
+    WGSL_FRAME_STRUCTS,
+    "",
+    "struct ColorInput {",
+    "    @location(0) position: vec3f,",
+    "    @location(1) color: vec4f,",
+    "    @location(2) material: vec3f,",
+    "};",
+    "",
+    "struct ColorOutput {",
+    "    @builtin(position) clipPos: vec4f,",
+    "    @location(0) color: vec4f,",
+    "    @location(1) material: vec3f,",
+    "};",
+    "",
+    "@group(0) @binding(0) var<uniform> frame: FrameUniforms;",
+    "",
+    "@vertex fn vertexMain(in: ColorInput) -> ColorOutput {",
+    "    var out: ColorOutput;",
+    "    out.clipPos = frame.projMatrix * frame.viewMatrix * vec4f(in.position, 1.0);",
+    "    out.color = in.color;",
+    "    out.material = in.material;",
+    "    return out;",
+    "}",
+  ].join("\n");
+
+  var WGSL_SCENE_CLIP_COLOR_VERTEX = [
+    "struct ColorInput {",
+    "    @location(0) position: vec3f,",
+    "    @location(1) color: vec4f,",
+    "    @location(2) material: vec3f,",
+    "};",
+    "",
+    "struct ColorOutput {",
+    "    @builtin(position) clipPos: vec4f,",
+    "    @location(0) color: vec4f,",
+    "    @location(1) material: vec3f,",
+    "};",
+    "",
+    "@vertex fn vertexMain(in: ColorInput) -> ColorOutput {",
+    "    var out: ColorOutput;",
+    "    out.clipPos = vec4f(in.position.xy, in.position.z, 1.0);",
+    "    out.color = in.color;",
+    "    out.material = in.material;",
+    "    return out;",
+    "}",
+  ].join("\n");
+
+  var WGSL_SURFACE_VERTEX = [
+    WGSL_FRAME_STRUCTS,
+    "",
+    "struct SurfaceInput {",
+    "    @location(0) position: vec3f,",
+    "    @location(1) uv: vec2f,",
+    "};",
+    "",
+    "struct SurfaceOutput {",
+    "    @builtin(position) clipPos: vec4f,",
+    "    @location(0) uv: vec2f,",
+    "};",
+    "",
+    "@group(0) @binding(0) var<uniform> frame: FrameUniforms;",
+    "",
+    "@vertex fn vertexMain(in: SurfaceInput) -> SurfaceOutput {",
+    "    var out: SurfaceOutput;",
+    "    out.clipPos = frame.projMatrix * frame.viewMatrix * vec4f(in.position, 1.0);",
+    "    out.uv = in.uv;",
+    "    return out;",
+    "}",
+  ].join("\n");
+
+  var WGSL_SURFACE_FRAGMENT = [
+    WGSL_MATERIAL_STRUCT,
+    "",
+    "struct SurfaceOutput {",
+    "    @builtin(position) clipPos: vec4f,",
+    "    @location(0) uv: vec2f,",
+    "};",
+    "",
+    "@group(1) @binding(0) var<uniform> material: MaterialUniforms;",
+    "@group(1) @binding(1) var albedoTex: texture_2d<f32>;",
+    "@group(1) @binding(2) var albedoSamp: sampler;",
+    "",
+    "@fragment fn fragmentMain(in: SurfaceOutput) -> @location(0) vec4f {",
+    "    let sampleColor = textureSample(albedoTex, albedoSamp, in.uv);",
+    "    var rgb = sampleColor.rgb * material.albedo;",
+    "    rgb = rgb * (1.0 + max(material.emissive, 0.0) * 0.5);",
+    "    return vec4f(clamp(rgb, vec3f(0.0), vec3f(1.0)), clamp(sampleColor.a * material.opacity, 0.0, 1.0));",
+    "}",
+  ].join("\n");
+
+  var WGSL_THICK_LINE_VERTEX = [
+    WGSL_FRAME_STRUCTS,
+    "",
+    "struct ThickLineInput {",
+    "    @location(0) positionA: vec3f,",
+    "    @location(1) positionB: vec3f,",
+    "    @location(2) colorA: vec4f,",
+    "    @location(3) colorB: vec4f,",
+    "    @location(4) side: f32,",
+    "    @location(5) endpoint: f32,",
+    "    @location(6) width: f32,",
+    "};",
+    "",
+    "struct ThickLineOutput {",
+    "    @builtin(position) clipPos: vec4f,",
+    "    @location(0) color: vec4f,",
+    "};",
+    "",
+    "@group(0) @binding(0) var<uniform> frame: FrameUniforms;",
+    "",
+    "fn safeNDC(clip: vec4f) -> vec2f {",
+    "    return clip.xy / max(clip.w, 0.0001);",
+    "}",
+    "",
+    "@vertex fn vertexMain(in: ThickLineInput) -> ThickLineOutput {",
+    "    var out: ThickLineOutput;",
+    "    let clipA = frame.projMatrix * frame.viewMatrix * vec4f(in.positionA, 1.0);",
+    "    let clipB = frame.projMatrix * frame.viewMatrix * vec4f(in.positionB, 1.0);",
+    "    let base = mix(clipA, clipB, clamp(in.endpoint, 0.0, 1.0));",
+    "    let viewport = max(vec2f(frame.viewportWidth, frame.viewportHeight), vec2f(1.0));",
+    "    let screenA = safeNDC(clipA) * (viewport * 0.5);",
+    "    let screenB = safeNDC(clipB) * (viewport * 0.5);",
+    "    var dir = screenB - screenA;",
+    "    let len = length(dir);",
+    "    if (len < 0.0001) {",
+    "        dir = vec2f(1.0, 0.0);",
+    "    } else {",
+    "        dir = dir / len;",
+    "    }",
+    "    let normal = vec2f(-dir.y, dir.x);",
+    "    let pixelOffset = normal * (in.side * max(in.width, 1.0) * 0.5);",
+    "    let ndcOffset = pixelOffset / max(viewport * 0.5, vec2f(0.0001));",
+    "    out.clipPos = base + vec4f(ndcOffset * base.w, 0.0, 0.0);",
+    "    out.color = mix(in.colorA, in.colorB, clamp(in.endpoint, 0.0, 1.0));",
+    "    return out;",
+    "}",
+  ].join("\n");
+
+  var WGSL_THICK_LINE_FRAGMENT = [
+    "struct ThickLineOutput {",
+    "    @builtin(position) clipPos: vec4f,",
+    "    @location(0) color: vec4f,",
+    "};",
+    "",
+    "@fragment fn fragmentMain(in: ThickLineOutput) -> @location(0) vec4f {",
+    "    return vec4f(clamp(in.color.rgb, vec3f(0.0), vec3f(1.0)), clamp(in.color.a, 0.0, 1.0));",
+    "}",
   ].join("\n");
 
   // -----------------------------------------------------------------------
@@ -817,8 +1066,8 @@
   // -----------------------------------------------------------------------
 
   // Build a cache key from pipeline configuration parameters.
-  function wgpuPipelineKey(shaderVariant, blendMode, depthWrite, targetFormat, depthFormat) {
-    return shaderVariant + "|" + blendMode + "|" + (depthWrite ? "1" : "0") + "|" + targetFormat + "|" + (depthFormat || "");
+  function wgpuPipelineKey(shaderVariant, blendMode, depthWrite, targetFormat, depthFormat, sampleCount) {
+    return shaderVariant + "|" + blendMode + "|" + (depthWrite ? "1" : "0") + "|" + targetFormat + "|" + (depthFormat || "") + "|" + Math.max(1, Math.floor(sampleCount || 1));
   }
 
   // -----------------------------------------------------------------------
@@ -991,9 +1240,57 @@
     { arrayStride: 16, stepMode: "vertex", attributes: [{ format: "float32x4", offset: 0, shaderLocation: 3 }] },
   ];
 
+  var WGPU_PBR_INSTANCED_VERTEX_LAYOUT = WGPU_PBR_VERTEX_LAYOUT.concat([
+    {
+      arrayStride: 64,
+      stepMode: "instance",
+      attributes: [
+        { format: "float32x4", offset: 0,  shaderLocation: 4 },
+        { format: "float32x4", offset: 16, shaderLocation: 5 },
+        { format: "float32x4", offset: 32, shaderLocation: 6 },
+        { format: "float32x4", offset: 48, shaderLocation: 7 },
+      ],
+    },
+    { arrayStride: 16, stepMode: "instance", attributes: [{ format: "float32x4", offset: 0, shaderLocation: 8 }] },
+  ]);
+
   // Shadow vertex buffer layout (position only).
   var WGPU_SHADOW_VERTEX_LAYOUT = [
     { arrayStride: 12, stepMode: "vertex", attributes: [{ format: "float32x3", offset: 0, shaderLocation: 0 }] },
+  ];
+
+  var WGPU_SHADOW_INSTANCED_VERTEX_LAYOUT = WGPU_SHADOW_VERTEX_LAYOUT.concat([
+    {
+      arrayStride: 64,
+      stepMode: "instance",
+      attributes: [
+        { format: "float32x4", offset: 0,  shaderLocation: 4 },
+        { format: "float32x4", offset: 16, shaderLocation: 5 },
+        { format: "float32x4", offset: 32, shaderLocation: 6 },
+        { format: "float32x4", offset: 48, shaderLocation: 7 },
+      ],
+    },
+  ]);
+
+  var WGPU_SCENE_COLOR_VERTEX_LAYOUT = [
+    { arrayStride: 12, stepMode: "vertex", attributes: [{ format: "float32x3", offset: 0, shaderLocation: 0 }] },
+    { arrayStride: 16, stepMode: "vertex", attributes: [{ format: "float32x4", offset: 0, shaderLocation: 1 }] },
+    { arrayStride: 12, stepMode: "vertex", attributes: [{ format: "float32x3", offset: 0, shaderLocation: 2 }] },
+  ];
+
+  var WGPU_SURFACE_VERTEX_LAYOUT = [
+    { arrayStride: 12, stepMode: "vertex", attributes: [{ format: "float32x3", offset: 0, shaderLocation: 0 }] },
+    { arrayStride: 8, stepMode: "vertex", attributes: [{ format: "float32x2", offset: 0, shaderLocation: 1 }] },
+  ];
+
+  var WGPU_THICK_LINE_VERTEX_LAYOUT = [
+    { arrayStride: 12, stepMode: "vertex", attributes: [{ format: "float32x3", offset: 0, shaderLocation: 0 }] },
+    { arrayStride: 12, stepMode: "vertex", attributes: [{ format: "float32x3", offset: 0, shaderLocation: 1 }] },
+    { arrayStride: 16, stepMode: "vertex", attributes: [{ format: "float32x4", offset: 0, shaderLocation: 2 }] },
+    { arrayStride: 16, stepMode: "vertex", attributes: [{ format: "float32x4", offset: 0, shaderLocation: 3 }] },
+    { arrayStride: 4, stepMode: "vertex", attributes: [{ format: "float32", offset: 0, shaderLocation: 4 }] },
+    { arrayStride: 4, stepMode: "vertex", attributes: [{ format: "float32", offset: 0, shaderLocation: 5 }] },
+    { arrayStride: 4, stepMode: "vertex", attributes: [{ format: "float32", offset: 0, shaderLocation: 6 }] },
   ];
 
   function wgpuBlendState(mode) {
@@ -1012,7 +1309,7 @@
     return undefined; // opaque -- no blending
   }
 
-  function wgpuCreatePBRPipeline(device, pipelineLayout, vertexModule, fragmentModule, blendMode, depthWrite, targetFormat) {
+  function wgpuCreatePBRPipeline(device, pipelineLayout, vertexModule, fragmentModule, blendMode, depthWrite, targetFormat, sampleCount) {
     return device.createRenderPipeline({
       label: "gosx-pbr-" + blendMode,
       layout: pipelineLayout,
@@ -1030,6 +1327,34 @@
         }],
       },
       primitive: { topology: "triangle-list", cullMode: "back" },
+      multisample: { count: Math.max(1, Math.floor(sampleCount || 1)) },
+      depthStencil: {
+        format: "depth24plus",
+        depthWriteEnabled: depthWrite,
+        depthCompare: "less-equal",
+      },
+    });
+  }
+
+  function wgpuCreatePBRInstancedPipeline(device, pipelineLayout, vertexModule, fragmentModule, blendMode, depthWrite, targetFormat, sampleCount) {
+    return device.createRenderPipeline({
+      label: "gosx-pbr-instanced-" + blendMode,
+      layout: pipelineLayout,
+      vertex: {
+        module: vertexModule,
+        entryPoint: "vertexMain",
+        buffers: WGPU_PBR_INSTANCED_VERTEX_LAYOUT,
+      },
+      fragment: {
+        module: fragmentModule,
+        entryPoint: "fragmentMain",
+        targets: [{
+          format: targetFormat,
+          blend: wgpuBlendState(blendMode),
+        }],
+      },
+      primitive: { topology: "triangle-list", cullMode: "back" },
+      multisample: { count: Math.max(1, Math.floor(sampleCount || 1)) },
       depthStencil: {
         format: "depth24plus",
         depthWriteEnabled: depthWrite,
@@ -1056,7 +1381,106 @@
     });
   }
 
-  function wgpuCreatePointsPipeline(device, pipelineLayout, vertexModule, fragmentModule, blendMode, depthWrite, targetFormat) {
+  function wgpuCreateShadowInstancedPipeline(device, shadowLayout, vertexModule) {
+    return device.createRenderPipeline({
+      label: "gosx-shadow-instanced",
+      layout: device.createPipelineLayout({ bindGroupLayouts: [shadowLayout] }),
+      vertex: {
+        module: vertexModule,
+        entryPoint: "vertexMain",
+        buffers: WGPU_SHADOW_INSTANCED_VERTEX_LAYOUT,
+      },
+      primitive: { topology: "triangle-list", cullMode: "front" },
+      depthStencil: {
+        format: "depth24plus",
+        depthWriteEnabled: true,
+        depthCompare: "less-equal",
+      },
+    });
+  }
+
+  function wgpuCreateSceneColorPipeline(device, pipelineLayout, vertexModule, fragmentModule, topology, blendMode, depthWrite, targetFormat, sampleCount) {
+    return device.createRenderPipeline({
+      label: "gosx-scene-color-" + topology + "-" + blendMode,
+      layout: pipelineLayout,
+      vertex: {
+        module: vertexModule,
+        entryPoint: "vertexMain",
+        buffers: WGPU_SCENE_COLOR_VERTEX_LAYOUT,
+      },
+      fragment: {
+        module: fragmentModule,
+        entryPoint: "fragmentMain",
+        targets: [{
+          format: targetFormat,
+          blend: wgpuBlendState(blendMode),
+        }],
+      },
+      primitive: { topology: topology },
+      multisample: { count: Math.max(1, Math.floor(sampleCount || 1)) },
+      depthStencil: {
+        format: "depth24plus",
+        depthWriteEnabled: depthWrite,
+        depthCompare: "less-equal",
+      },
+    });
+  }
+
+  function wgpuCreateSurfacePipeline(device, pipelineLayout, vertexModule, fragmentModule, blendMode, depthWrite, targetFormat, sampleCount) {
+    return device.createRenderPipeline({
+      label: "gosx-surface-" + blendMode,
+      layout: pipelineLayout,
+      vertex: {
+        module: vertexModule,
+        entryPoint: "vertexMain",
+        buffers: WGPU_SURFACE_VERTEX_LAYOUT,
+      },
+      fragment: {
+        module: fragmentModule,
+        entryPoint: "fragmentMain",
+        targets: [{
+          format: targetFormat,
+          blend: wgpuBlendState(blendMode),
+        }],
+      },
+      primitive: { topology: "triangle-list", cullMode: "none" },
+      multisample: { count: Math.max(1, Math.floor(sampleCount || 1)) },
+      depthStencil: {
+        format: "depth24plus",
+        depthWriteEnabled: depthWrite,
+        depthCompare: "less-equal",
+      },
+    });
+  }
+
+  function wgpuCreateThickLinePipeline(device, pipelineLayout, vertexModule, fragmentModule, blendMode, depthWrite, targetFormat, sampleCount) {
+    return device.createRenderPipeline({
+      label: "gosx-thick-line-" + blendMode,
+      layout: pipelineLayout,
+      vertex: {
+        module: vertexModule,
+        entryPoint: "vertexMain",
+        buffers: WGPU_THICK_LINE_VERTEX_LAYOUT,
+      },
+      fragment: {
+        module: fragmentModule,
+        entryPoint: "fragmentMain",
+        targets: [{
+          format: targetFormat,
+          blend: wgpuBlendState(blendMode),
+        }],
+      },
+      primitive: { topology: "triangle-list", cullMode: "none" },
+      multisample: { count: Math.max(1, Math.floor(sampleCount || 1)) },
+      depthStencil: {
+        format: "depth24plus",
+        depthWriteEnabled: depthWrite,
+        depthCompare: "less-equal",
+      },
+    });
+  }
+
+  function wgpuCreatePointsPipeline(device, pipelineLayout, vertexModule, fragmentModule, blendMode, depthWrite, targetFormat, sampleCount) {
     return device.createRenderPipeline({
       label: "gosx-points-" + blendMode,
       layout: pipelineLayout,
@@ -1074,6 +1498,7 @@
         }],
       },
       primitive: { topology: "triangle-list" },
+      multisample: { count: Math.max(1, Math.floor(sampleCount || 1)) },
       depthStencil: {
         format: "depth24plus",
         depthWriteEnabled: depthWrite,
@@ -1416,7 +1841,7 @@
   // WebGPU Renderer
   // -----------------------------------------------------------------------
 
-  function createSceneWebGPURenderer(canvas) {
+  function createSceneWebGPURenderer(canvas, options) {
     if (typeof navigator === "undefined" || !navigator.gpu) return null;
     if (typeof canvas.getContext !== "function") return null;
 
@@ -1430,6 +1855,7 @@
     if (!probe || !probe.ready || !probe.adapter || !probe.device) return null;
     var adapter = probe.adapter;
     var device = probe.device;
+    var rendererOptions = options && typeof options === "object" ? options : {};
 
     // Only NOW taint the canvas with a WebGPU context. If any of the
     // checks above failed we never reached this line, so the canvas
@@ -1454,14 +1880,24 @@
     var pointsPipelineLayout = null;
 
     var pbrVertexModule = null;
+    var pbrInstancedVertexModule = null;
     var pbrFragmentModule = null;
     var shadowVertexModule = null;
+    var shadowInstancedVertexModule = null;
     var shadowFragmentModule = null;
+    var sceneWorldColorVertexModule = null;
+    var sceneClipColorVertexModule = null;
+    var sceneColorFragmentModule = null;
+    var surfaceVertexModule = null;
+    var surfaceFragmentModule = null;
+    var thickLineVertexModule = null;
+    var thickLineFragmentModule = null;
     var pointsVertexModule = null;
     var pointsFragmentModule = null;
 
     // Pipeline cache.
     var pipelineCache = {};
+    var activeSampleCount = 1;
 
     // Shadow resources.
     var shadowSlots = [null, null];
@@ -1472,11 +1908,16 @@
     var fogUniformBuffer = null;
     var envUniformBuffer = null;
     var shadowUniformBuffer = null;
-    var materialUniformBuffer = null;
     var positionBuffer = null;
     var normalBuffer = null;
     var uvBuffer = null;
     var tangentBuffer = null;
+    var defaultMaterialOwner = {};
+    var instancedGeometryCache = {};
+    var worldDrawScratch = typeof createSceneWorldDrawScratch === "function" ? createSceneWorldDrawScratch() : null;
+    var thickLineScratch = typeof createSceneThickLineScratch === "function" ? createSceneThickLineScratch() : null;
+    var thickLineOwner = {};
+    var screenLineOwner = {};
 
     // Points buffers.
     //
@@ -1507,6 +1948,12 @@
     var mainDepthView = null;
     var mainDepthWidth = 0;
     var mainDepthHeight = 0;
+    var mainDepthSampleCount = 1;
+    var mainMSAATexture = null;
+    var mainMSAAView = null;
+    var mainMSAAWidth = 0;
+    var mainMSAAHeight = 0;
+    var mainMSAASampleCount = 1;
 
     // 1x1 dummy depth texture for shadow map bind group when no shadows.
     var dummyShadowTex = null;
@@ -1754,9 +2201,18 @@
 
         // Compile shader modules.
         pbrVertexModule = device.createShaderModule({ label: "pbr-vert", code: WGSL_PBR_VERTEX });
+        pbrInstancedVertexModule = device.createShaderModule({ label: "pbr-instanced-vert", code: WGSL_PBR_INSTANCED_VERTEX });
         pbrFragmentModule = device.createShaderModule({ label: "pbr-frag", code: WGSL_PBR_FRAGMENT });
         shadowVertexModule = device.createShaderModule({ label: "shadow-vert", code: WGSL_SHADOW_VERTEX });
+        shadowInstancedVertexModule = device.createShaderModule({ label: "shadow-instanced-vert", code: WGSL_SHADOW_INSTANCED_VERTEX });
         shadowFragmentModule = device.createShaderModule({ label: "shadow-frag", code: WGSL_SHADOW_FRAGMENT });
+        sceneWorldColorVertexModule = device.createShaderModule({ label: "scene-world-color-vert", code: WGSL_SCENE_WORLD_COLOR_VERTEX });
+        sceneClipColorVertexModule = device.createShaderModule({ label: "scene-clip-color-vert", code: WGSL_SCENE_CLIP_COLOR_VERTEX });
+        sceneColorFragmentModule = device.createShaderModule({ label: "scene-color-frag", code: WGSL_SCENE_COLOR_FRAGMENT });
+        surfaceVertexModule = device.createShaderModule({ label: "surface-vert", code: WGSL_SURFACE_VERTEX });
+        surfaceFragmentModule = device.createShaderModule({ label: "surface-frag", code: WGSL_SURFACE_FRAGMENT });
+        thickLineVertexModule = device.createShaderModule({ label: "thick-line-vert", code: WGSL_THICK_LINE_VERTEX });
+        thickLineFragmentModule = device.createShaderModule({ label: "thick-line-frag", code: WGSL_THICK_LINE_FRAGMENT });
         pointsVertexModule = device.createShaderModule({ label: "points-vert", code: WGSL_POINTS_VERTEX });
         pointsFragmentModule = device.createShaderModule({ label: "points-frag", code: WGSL_POINTS_FRAGMENT });
 
@@ -1768,7 +2224,6 @@
         fogUniformBuffer = device.createBuffer({ size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
         envUniformBuffer = device.createBuffer({ size: 48, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
         shadowUniformBuffer = device.createBuffer({ size: 256, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
-        materialUniformBuffer = device.createBuffer({ size: 64, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
         shadowFrameBuffer = device.createBuffer({ size: 64, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
 
         // Create samplers.
@@ -1833,24 +2288,87 @@
     })();
 
     // Ensure main depth texture matches canvas size.
-    function ensureMainDepth(width, height) {
-      if (mainDepthTexture && mainDepthWidth === width && mainDepthHeight === height) return;
+    function ensureMainDepth(width, height, sampleCount) {
+      sampleCount = Math.max(1, Math.floor(sampleCount || 1));
+      if (mainDepthTexture && mainDepthWidth === width && mainDepthHeight === height && mainDepthSampleCount === sampleCount) return;
       if (mainDepthTexture) mainDepthTexture.destroy();
       mainDepthTexture = device.createTexture({
         size: [width, height, 1],
         format: "depth24plus",
+        sampleCount: sampleCount,
         usage: GPUTextureUsage.RENDER_ATTACHMENT,
       });
       mainDepthView = mainDepthTexture.createView();
       mainDepthWidth = width;
       mainDepthHeight = height;
+      mainDepthSampleCount = sampleCount;
+    }
+
+    function ensureMSAAColor(width, height, sampleCount) {
+      sampleCount = Math.max(1, Math.floor(sampleCount || 1));
+      if (sampleCount <= 1) return null;
+      if (
+        mainMSAATexture &&
+        mainMSAAWidth === width &&
+        mainMSAAHeight === height &&
+        mainMSAASampleCount === sampleCount
+      ) {
+        return mainMSAAView;
+      }
+      if (mainMSAATexture) mainMSAATexture.destroy();
+      mainMSAATexture = device.createTexture({
+        size: [width, height, 1],
+        format: targetFormat,
+        sampleCount: sampleCount,
+        usage: GPUTextureUsage.RENDER_ATTACHMENT,
+      });
+      mainMSAAView = mainMSAATexture.createView();
+      mainMSAAWidth = width;
+      mainMSAAHeight = height;
+      mainMSAASampleCount = sampleCount;
+      return mainMSAAView;
     }
 
     // Get or create a PBR pipeline for the given blend mode.
     function getPBRPipeline(blendMode, depthWrite) {
-      var key = wgpuPipelineKey("pbr", blendMode, depthWrite, targetFormat, "depth24plus");
+      var key = wgpuPipelineKey("pbr", blendMode, depthWrite, targetFormat, "depth24plus", activeSampleCount);
       if (pipelineCache[key]) return pipelineCache[key];
-      var pipeline = wgpuCreatePBRPipeline(device, pbrPipelineLayout, pbrVertexModule, pbrFragmentModule, blendMode, depthWrite, targetFormat);
+      var pipeline = wgpuCreatePBRPipeline(device, pbrPipelineLayout, pbrVertexModule, pbrFragmentModule, blendMode, depthWrite, targetFormat, activeSampleCount);
+      pipelineCache[key] = pipeline;
+      return pipeline;
+    }
+
+    function getPBRInstancedPipeline(blendMode, depthWrite) {
+      var key = wgpuPipelineKey("pbr-instanced", blendMode, depthWrite, targetFormat, "depth24plus", activeSampleCount);
+      if (pipelineCache[key]) return pipelineCache[key];
+      var pipeline = wgpuCreatePBRInstancedPipeline(device, pbrPipelineLayout, pbrInstancedVertexModule, pbrFragmentModule, blendMode, depthWrite, targetFormat, activeSampleCount);
+      pipelineCache[key] = pipeline;
+      return pipeline;
+    }
+
+    function getSceneColorPipeline(space, topology, blendMode, depthWrite) {
+      var normalizedSpace = space === "clip" ? "clip" : "world";
+      var normalizedTopology = topology === "triangle-list" ? "triangle-list" : "line-list";
+      var key = wgpuPipelineKey("scene-color-" + normalizedSpace + "-" + normalizedTopology, blendMode, depthWrite, targetFormat, "depth24plus", activeSampleCount);
+      if (pipelineCache[key]) return pipelineCache[key];
+      var vertexModule = normalizedSpace === "clip" ? sceneClipColorVertexModule : sceneWorldColorVertexModule;
+      var pipeline = wgpuCreateSceneColorPipeline(device, device.createPipelineLayout({ bindGroupLayouts: [frameBindGroupLayout] }), vertexModule, sceneColorFragmentModule, normalizedTopology, blendMode, depthWrite, targetFormat, activeSampleCount);
+      pipelineCache[key] = pipeline;
+      return pipeline;
+    }
+
+    function getSurfacePipeline(blendMode, depthWrite) {
+      var key = wgpuPipelineKey("surface", blendMode, depthWrite, targetFormat, "depth24plus", activeSampleCount);
+      if (pipelineCache[key]) return pipelineCache[key];
+      var pipeline = wgpuCreateSurfacePipeline(device, pbrPipelineLayout, surfaceVertexModule, surfaceFragmentModule, blendMode, depthWrite, targetFormat, activeSampleCount);
+      pipelineCache[key] = pipeline;
+      return pipeline;
+    }
+
+    function getThickLinePipeline(blendMode, depthWrite) {
+      var key = wgpuPipelineKey("thick-line", blendMode, depthWrite, targetFormat, "depth24plus", activeSampleCount);
+      if (pipelineCache[key]) return pipelineCache[key];
+      var pipeline = wgpuCreateThickLinePipeline(device, device.createPipelineLayout({ bindGroupLayouts: [frameBindGroupLayout] }), thickLineVertexModule, thickLineFragmentModule, blendMode, depthWrite, targetFormat, activeSampleCount);
       pipelineCache[key] = pipeline;
       return pipeline;
     }
@@ -1863,11 +2381,18 @@
       return shadowPipeline;
     }
 
+    var shadowInstancedPipeline = null;
+    function getShadowInstancedPipeline() {
+      if (shadowInstancedPipeline) return shadowInstancedPipeline;
+      shadowInstancedPipeline = wgpuCreateShadowInstancedPipeline(device, shadowBindGroupLayout, shadowInstancedVertexModule);
+      return shadowInstancedPipeline;
+    }
+
     // Get or create a points pipeline for the given blend mode.
     function getPointsPipeline(blendMode, depthWrite) {
-      var key = wgpuPipelineKey("points", blendMode, depthWrite, targetFormat, "depth24plus");
+      var key = wgpuPipelineKey("points", blendMode, depthWrite, targetFormat, "depth24plus", activeSampleCount);
       if (pipelineCache[key]) return pipelineCache[key];
-      var pipeline = wgpuCreatePointsPipeline(device, pointsPipelineLayout, pointsVertexModule, pointsFragmentModule, blendMode, depthWrite, targetFormat);
+      var pipeline = wgpuCreatePointsPipeline(device, pointsPipelineLayout, pointsVertexModule, pointsFragmentModule, blendMode, depthWrite, targetFormat, activeSampleCount);
       pipelineCache[key] = pipeline;
       return pipeline;
     }
@@ -2105,7 +2630,7 @@
       device.queue.writeBuffer(shadowUniformBuffer, 0, new Float32Array(data));
     }
 
-    function uploadMaterialUniforms(material) {
+    function materialUniformData(material, receiveShadow) {
       var mat = material || {};
       var albedoRGBA = sceneColorRGBA(mat.color, [0.8, 0.8, 0.8, 1]);
 
@@ -2121,31 +2646,16 @@
       f[6] = clamp01(sceneNumber(mat.opacity, 1));
       u[7] = mat.unlit ? 1 : 0;
 
-      // Texture presence flags -- filled in by createMaterialBindGroup.
-      // Left as 0 here, will be set when bind group is created.
-      // u[8..13] = has*Map flags
-      // u[14] = receiveShadow (set per-object)
-      // u[15] = pad
-
-      device.queue.writeBuffer(materialUniformBuffer, 0, new Float32Array(data));
+      u[13] = receiveShadow ? 1 : 0;
+      u[14] = 0;
+      u[15] = 0;
+      return { data: new Float32Array(data), u: u };
     }
 
-    function createMaterialBindGroup(material, receiveShadow) {
+    function createMaterialBindGroup(material, receiveShadow, cacheOwner) {
       var mat = material || {};
-      var albedoRGBA = sceneColorRGBA(mat.color, [0.8, 0.8, 0.8, 1]);
-
-      // Build material data buffer.
-      var data = new ArrayBuffer(64);
-      var f = new Float32Array(data);
-      var u = new Uint32Array(data);
-
-      f[0] = albedoRGBA[0]; f[1] = albedoRGBA[1]; f[2] = albedoRGBA[2];
-      f[3] = sceneNumber(mat.roughness, 0.5);
-      f[4] = sceneNumber(mat.metalness, 0);
-      f[5] = sceneNumber(mat.emissive, 0);
-      f[6] = clamp01(sceneNumber(mat.opacity, 1));
-      u[7] = mat.unlit ? 1 : 0;
-
+      var uniform = materialUniformData(mat, receiveShadow);
+      var u = uniform.u;
       // Texture records.
       var textureMaps = [
         { prop: "texture",      index: 8 },
@@ -2164,17 +2674,23 @@
         texViews.push(loaded ? record.view : placeholderView);
       }
 
-      u[13] = receiveShadow ? 1 : 0;
-      u[14] = 0;
-      u[15] = 0;
-
-      device.queue.writeBuffer(materialUniformBuffer, 0, new Float32Array(data));
+      var owner = (cacheOwner && typeof cacheOwner === "object")
+        ? cacheOwner
+        : ((material && typeof material === "object") ? material : defaultMaterialOwner);
+      var slot = receiveShadow ? "_gosxWGPUMaterialShadowUniform" : "_gosxWGPUMaterialUniform";
+      var materialBuffer = wgpuCachedTrackedBuffer(
+        owner,
+        slot,
+        uniform.data,
+        GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+        true
+      );
 
       // Create bind group with texture views and sampler.
       return device.createBindGroup({
         layout: materialBindGroupLayout,
         entries: [
-          { binding: 0, resource: { buffer: materialUniformBuffer } },
+          { binding: 0, resource: { buffer: materialBuffer } },
           { binding: 1, resource: texViews[0] },
           { binding: 2, resource: linearSampler },
           { binding: 3, resource: texViews[1] },
@@ -2283,6 +2799,7 @@
         pass.draw(obj.vertexCount);
       }
 
+      drawInstancedShadowMeshes(pass, bundle);
       pass.end();
     }
 
@@ -2302,7 +2819,7 @@
 
         // Recreate material bind group when material or receiveShadow changes.
         if (matIndex !== lastMaterialIndex || receiveShadow !== lastReceiveShadow) {
-          var matBG = createMaterialBindGroup(mat, receiveShadow);
+          var matBG = createMaterialBindGroup(mat, receiveShadow, mat || obj);
           pass.setBindGroup(1, matBG);
           lastMaterialIndex = matIndex;
           lastReceiveShadow = receiveShadow;
@@ -2351,6 +2868,582 @@
 
         pass.draw(count);
       }
+    }
+
+    function instancedMeshCount(mesh) {
+      if (!mesh) return 0;
+      return Math.max(0, Math.floor(sceneNumber(mesh.instanceCount, sceneNumber(mesh.count, 0))));
+    }
+
+    function instancedMeshMaterial(mesh, materials) {
+      var mat = materials[sceneNumber(mesh && mesh.materialIndex, 0)] || null;
+      if (mat) return mat;
+      return {
+        color: mesh && mesh.color || "#8de1ff",
+        roughness: sceneNumber(mesh && mesh.roughness, 0.5),
+        metalness: sceneNumber(mesh && mesh.metalness, 0),
+        emissive: sceneNumber(mesh && mesh.emissive, 0),
+        opacity: clamp01(sceneNumber(mesh && mesh.opacity, 1)),
+        unlit: mesh && mesh.materialKind === "flat",
+        renderPass: mesh && mesh.renderPass,
+      };
+    }
+
+    function instancedMeshTransformData(mesh, count) {
+      if (!mesh || count <= 0 || !mesh.transforms) return null;
+      if (!mesh._cachedTransforms) {
+        if (mesh.transforms instanceof Float32Array) {
+          mesh._cachedTransforms = mesh.transforms;
+        } else if (Array.isArray(mesh.transforms)) {
+          mesh._cachedTransforms = new Float32Array(mesh.transforms);
+        }
+      }
+      var data = mesh._cachedTransforms;
+      return data && data.length >= count * 16 ? data : null;
+    }
+
+    function instancedMeshColorData(mesh, count) {
+      if (!mesh || count <= 0) return null;
+      var rawColors = mesh.colors;
+      var source = rawColors || null;
+      if (
+        mesh._cachedWGPUInstanceColors &&
+        mesh._cachedWGPUInstanceColorCount === count &&
+        mesh._cachedWGPUInstanceColorSource === source
+      ) {
+        return mesh._cachedWGPUInstanceColors;
+      }
+
+      var data = null;
+      if (rawColors && typeof rawColors.length === "number" && rawColors.length > 0) {
+        if (Array.isArray(rawColors) && typeof rawColors[0] === "string") {
+          data = new Float32Array(count * 4);
+          for (var ci = 0; ci < count; ci++) {
+            var rgba = sceneColorRGBA(rawColors[ci] || rawColors[rawColors.length - 1], [1, 1, 1, 1]);
+            data[ci * 4] = rgba[0];
+            data[ci * 4 + 1] = rgba[1];
+            data[ci * 4 + 2] = rgba[2];
+            data[ci * 4 + 3] = rgba[3];
+          }
+        } else if (rawColors.length >= count * 4) {
+          data = rawColors instanceof Float32Array ? rawColors : new Float32Array(rawColors);
+        } else if (rawColors.length >= count * 3) {
+          data = new Float32Array(count * 4);
+          for (var ni = 0; ni < count; ni++) {
+            data[ni * 4] = rawColors[ni * 3];
+            data[ni * 4 + 1] = rawColors[ni * 3 + 1];
+            data[ni * 4 + 2] = rawColors[ni * 3 + 2];
+            data[ni * 4 + 3] = 1;
+          }
+        }
+      }
+
+      if (!data) {
+        data = new Float32Array(count * 4);
+        for (var di = 0; di < count; di++) {
+          data[di * 4] = 1;
+          data[di * 4 + 1] = 1;
+          data[di * 4 + 2] = 1;
+          data[di * 4 + 3] = 1;
+        }
+      }
+
+      mesh._cachedWGPUInstanceColors = data;
+      mesh._cachedWGPUInstanceColorCount = count;
+      mesh._cachedWGPUInstanceColorSource = source;
+      return data;
+    }
+
+    function getInstancedGeometry(mesh) {
+      if (typeof generateInstancedGeometry !== "function") return null;
+      var kind = typeof mesh.kind === "string" ? mesh.kind.toLowerCase() : "box";
+      var w = sceneNumber(mesh.width, 1);
+      var h = sceneNumber(mesh.height, 1);
+      var d = sceneNumber(mesh.depth, 1);
+      var r = sceneNumber(mesh.radius, 0.5);
+      var s = sceneNumber(mesh.segments, 16);
+      var key = kind + ":" + w + ":" + h + ":" + d + ":" + r + ":" + s;
+      if (instancedGeometryCache[key]) return instancedGeometryCache[key];
+      var geom = generateInstancedGeometry(kind, { width: w, height: h, depth: d, radius: r, segments: s });
+      instancedGeometryCache[key] = geom;
+      return geom;
+    }
+
+    function ensureInstancedGeometryGPUBuffer(geom, slot, data) {
+      return wgpuCachedTrackedBuffer(geom, slot, data, GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, false);
+    }
+
+    function ensureInstancedTransformGPUBuffer(mesh, data) {
+      return wgpuCachedTrackedBuffer(mesh, "_gosxWGPUInstanceTransformBuffer", data, GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, true);
+    }
+
+    function ensureInstancedColorGPUBuffer(mesh, data) {
+      return wgpuCachedTrackedBuffer(mesh, "_gosxWGPUInstanceColorBuffer", data, GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, true);
+    }
+
+    function buildInstancedDrawList(bundle, materials) {
+      var meshes = Array.isArray(bundle && bundle.instancedMeshes) ? bundle.instancedMeshes : [];
+      var opaque = [];
+      var alpha = [];
+      var additive = [];
+      for (var i = 0; i < meshes.length; i++) {
+        var mesh = meshes[i];
+        if (!mesh || mesh.viewCulled) continue;
+        if (instancedMeshCount(mesh) <= 0) continue;
+        if (!instancedMeshTransformData(mesh, instancedMeshCount(mesh))) continue;
+        var mat = instancedMeshMaterial(mesh, materials);
+        var pass = scenePBRObjectRenderPass(mesh, mat);
+        if (pass === "alpha") alpha.push(mesh);
+        else if (pass === "additive") additive.push(mesh);
+        else opaque.push(mesh);
+      }
+      alpha.sort(scenePBRDepthSort);
+      additive.sort(scenePBRDepthSort);
+      return { opaque: opaque, alpha: alpha, additive: additive };
+    }
+
+    function drawInstancedMeshes(pass, meshList, materials) {
+      for (var i = 0; i < meshList.length; i++) {
+        var mesh = meshList[i];
+        var instanceCount = instancedMeshCount(mesh);
+        var transformData = instancedMeshTransformData(mesh, instanceCount);
+        if (!transformData) continue;
+
+        var geom = getInstancedGeometry(mesh);
+        if (!geom || geom.vertexCount <= 0) continue;
+
+        var mat = instancedMeshMaterial(mesh, materials);
+        pass.setBindGroup(1, createMaterialBindGroup(mat, !!mesh.receiveShadow, mesh));
+
+        pass.setVertexBuffer(0, ensureInstancedGeometryGPUBuffer(geom, "_gosxWGPUInstancedPositionBuffer", geom.positions));
+        pass.setVertexBuffer(1, ensureInstancedGeometryGPUBuffer(geom, "_gosxWGPUInstancedNormalBuffer", geom.normals));
+        pass.setVertexBuffer(2, ensureInstancedGeometryGPUBuffer(geom, "_gosxWGPUInstancedUVBuffer", geom.uvs));
+        pass.setVertexBuffer(3, ensureInstancedGeometryGPUBuffer(geom, "_gosxWGPUInstancedTangentBuffer", geom.tangents));
+        pass.setVertexBuffer(4, ensureInstancedTransformGPUBuffer(mesh, transformData));
+        pass.setVertexBuffer(5, ensureInstancedColorGPUBuffer(mesh, instancedMeshColorData(mesh, instanceCount)));
+        pass.draw(geom.vertexCount, instanceCount);
+      }
+    }
+
+    function instancedLocalBounds(mesh) {
+      var kind = typeof mesh.kind === "string" ? mesh.kind.toLowerCase() : "box";
+      if (kind === "sphere") {
+        var radius = Math.max(0.0001, sceneNumber(mesh.radius, 0.5));
+        return { minX: -radius, minY: -radius, minZ: -radius, maxX: radius, maxY: radius, maxZ: radius };
+      }
+      var w = Math.max(0.0001, sceneNumber(mesh.width, 1));
+      var h = kind === "plane" ? 0 : Math.max(0.0001, sceneNumber(mesh.height, 1));
+      var d = Math.max(0.0001, sceneNumber(mesh.depth, 1));
+      return { minX: -w * 0.5, minY: -h * 0.5, minZ: -d * 0.5, maxX: w * 0.5, maxY: h * 0.5, maxZ: d * 0.5 };
+    }
+
+    function expandBoundsPoint(bounds, x, y, z) {
+      if (!bounds) return { minX: x, minY: y, minZ: z, maxX: x, maxY: y, maxZ: z };
+      if (x < bounds.minX) bounds.minX = x;
+      if (y < bounds.minY) bounds.minY = y;
+      if (z < bounds.minZ) bounds.minZ = z;
+      if (x > bounds.maxX) bounds.maxX = x;
+      if (y > bounds.maxY) bounds.maxY = y;
+      if (z > bounds.maxZ) bounds.maxZ = z;
+      return bounds;
+    }
+
+    function expandInstancedBounds(bounds, mesh, transformData, count) {
+      var b = instancedLocalBounds(mesh);
+      var xs = [b.minX, b.maxX];
+      var ys = [b.minY, b.maxY];
+      var zs = [b.minZ, b.maxZ];
+      for (var ii = 0; ii < count; ii++) {
+        var base = ii * 16;
+        for (var xi = 0; xi < 2; xi++) {
+          for (var yi = 0; yi < 2; yi++) {
+            for (var zi = 0; zi < 2; zi++) {
+              var x = xs[xi], y = ys[yi], z = zs[zi];
+              bounds = expandBoundsPoint(bounds,
+                transformData[base + 0] * x + transformData[base + 4] * y + transformData[base + 8] * z + transformData[base + 12],
+                transformData[base + 1] * x + transformData[base + 5] * y + transformData[base + 9] * z + transformData[base + 13],
+                transformData[base + 2] * x + transformData[base + 6] * y + transformData[base + 10] * z + transformData[base + 14]
+              );
+            }
+          }
+        }
+      }
+      return bounds;
+    }
+
+    function webGPUShadowComputeBounds(bundle) {
+      var bounds = typeof sceneShadowComputeBounds === "function" ? sceneShadowComputeBounds(bundle) : null;
+      var meshes = Array.isArray(bundle && bundle.instancedMeshes) ? bundle.instancedMeshes : [];
+      for (var i = 0; i < meshes.length; i++) {
+        var mesh = meshes[i];
+        if (!mesh || mesh.viewCulled) continue;
+        var count = instancedMeshCount(mesh);
+        var transforms = instancedMeshTransformData(mesh, count);
+        if (!transforms) continue;
+        bounds = expandInstancedBounds(bounds, mesh, transforms, count);
+      }
+      return bounds || { minX: -10, minY: -10, minZ: -10, maxX: 10, maxY: 10, maxZ: 10 };
+    }
+
+    function drawInstancedShadowMeshes(pass, bundle) {
+      var meshes = Array.isArray(bundle && bundle.instancedMeshes) ? bundle.instancedMeshes : [];
+      var drew = false;
+      for (var i = 0; i < meshes.length; i++) {
+        var mesh = meshes[i];
+        if (!mesh || mesh.viewCulled || !mesh.castShadow) continue;
+        var instanceCount = instancedMeshCount(mesh);
+        var transformData = instancedMeshTransformData(mesh, instanceCount);
+        if (!transformData) continue;
+        var geom = getInstancedGeometry(mesh);
+        if (!geom || geom.vertexCount <= 0) continue;
+        if (!drew) {
+          pass.setPipeline(getShadowInstancedPipeline());
+          drew = true;
+        }
+        pass.setVertexBuffer(0, ensureInstancedGeometryGPUBuffer(geom, "_gosxWGPUInstancedShadowPositionBuffer", geom.positions));
+        pass.setVertexBuffer(1, ensureInstancedTransformGPUBuffer(mesh, transformData));
+        pass.draw(geom.vertexCount, instanceCount);
+      }
+    }
+
+    function toSceneFloat32Array(values) {
+      if (values instanceof Float32Array) return values;
+      if (!values || typeof values.length !== "number") return new Float32Array(0);
+      return new Float32Array(values);
+    }
+
+    function webGPUUnsupportedLineStyles(bundle) {
+      var dashes = bundle && bundle.worldLineDashes;
+      if (dashes && typeof dashes.length === "number") {
+        for (var di = 0; di < dashes.length; di++) {
+          if (dashes[di]) return true;
+        }
+      }
+      var lines = Array.isArray(bundle && bundle.lines) ? bundle.lines : [];
+      for (var li = 0; li < lines.length; li++) {
+        var line = lines[li];
+        if (!line) continue;
+        if (line.lineDash) return true;
+        var material = line.material && typeof line.material === "object" ? line.material : null;
+        var materialKind = String(line.materialKind || line.kind || material && material.kind || "").toLowerCase();
+        if (material && material.lineDash) return true;
+        if (materialKind === "line-dashed" || materialKind === "dashed") return true;
+      }
+      return false;
+    }
+
+    function webGPUWorldLineSegmentCount(bundle) {
+      return Math.max(0, Math.floor(sceneNumber(bundle && bundle.worldVertexCount, 0) / 2));
+    }
+
+    function webGPUHasThickWorldLines(bundle) {
+      var widths = bundle && bundle.worldLineWidths;
+      if (widths && typeof widths.length === "number") {
+        for (var i = 0; i < widths.length; i++) {
+          if (sceneNumber(widths[i], 0) > 1) return true;
+        }
+      }
+      var lines = Array.isArray(bundle && bundle.lines) ? bundle.lines : [];
+      for (var li = 0; li < lines.length; li++) {
+        if (sceneNumber(lines[li] && lines[li].lineWidth, 0) > 1) return true;
+      }
+      return false;
+    }
+
+    function webGPUCanUseThickWorldLines(bundle) {
+      if (!webGPUHasThickWorldLines(bundle)) return true;
+      if (typeof createSceneThickLineScratch !== "function" || typeof expandSceneThickLineIntoScratch !== "function") return false;
+      var segmentCount = webGPUWorldLineSegmentCount(bundle);
+      return segmentCount > 0 && segmentCount <= 16384;
+    }
+
+    function hasWorldLineData(bundle) {
+      return Boolean(
+        bundle &&
+        !webGPUUnsupportedLineStyles(bundle) &&
+        webGPUCanUseThickWorldLines(bundle) &&
+        bundle.worldPositions &&
+        bundle.worldColors &&
+        Number(bundle.worldVertexCount || 0) > 0
+      );
+    }
+
+    function hasScreenLineData(bundle) {
+      return Boolean(
+        bundle &&
+        !hasWorldLineData(bundle) &&
+        !webGPUUnsupportedLineStyles(bundle) &&
+        bundle.positions &&
+        bundle.colors &&
+        Number(bundle.vertexCount || 0) > 0
+      );
+    }
+
+    function hasSurfaceData(bundle) {
+      var surfaces = Array.isArray(bundle && bundle.surfaces) ? bundle.surfaces : [];
+      for (var i = 0; i < surfaces.length; i++) {
+        var surface = surfaces[i];
+        if (surface && !surface.viewCulled && sceneNumber(surface.vertexCount, 0) > 0) return true;
+      }
+      return false;
+    }
+
+    function fallbackMaterialData(owner, vertexCount) {
+      var count = Math.max(0, Math.floor(sceneNumber(vertexCount, 0)));
+      if (
+        owner &&
+        owner._gosxWGPUFallbackMaterialData &&
+        owner._gosxWGPUFallbackMaterialCount === count
+      ) {
+        return owner._gosxWGPUFallbackMaterialData;
+      }
+      var data = new Float32Array(count * 3);
+      for (var i = 0; i < count; i++) {
+        data[i * 3] = 0;
+        data[i * 3 + 1] = 0;
+        data[i * 3 + 2] = 1;
+      }
+      if (owner) {
+        owner._gosxWGPUFallbackMaterialData = data;
+        owner._gosxWGPUFallbackMaterialCount = count;
+      }
+      return data;
+    }
+
+    function screenLinePositionData(bundle) {
+      var source = bundle && bundle.positions;
+      var count = Math.max(0, Math.floor(sceneNumber(bundle && bundle.vertexCount, 0)));
+      if (
+        bundle &&
+        bundle._gosxWGPUScreenLineSource === source &&
+        bundle._gosxWGPUScreenLineCount === count &&
+        bundle._gosxWGPUScreenLinePositions
+      ) {
+        return bundle._gosxWGPUScreenLinePositions;
+      }
+      var src = toSceneFloat32Array(source);
+      var data = new Float32Array(count * 3);
+      for (var i = 0; i < count; i++) {
+        data[i * 3] = src[i * 2] || 0;
+        data[i * 3 + 1] = src[i * 2 + 1] || 0;
+        data[i * 3 + 2] = 0;
+      }
+      if (bundle) {
+        bundle._gosxWGPUScreenLineSource = source;
+        bundle._gosxWGPUScreenLineCount = count;
+        bundle._gosxWGPUScreenLinePositions = data;
+      }
+      return data;
+    }
+
+    function primitiveVertexCount(positions, colors, materials, requested) {
+      var positionCount = Math.floor((positions && positions.length || 0) / 3);
+      var colorCount = Math.floor((colors && colors.length || 0) / 4);
+      var materialCount = Math.floor((materials && materials.length || 0) / 3);
+      var maxCount = Math.max(0, Math.min(positionCount, colorCount, materialCount));
+      var count = Math.max(0, Math.floor(sceneNumber(requested, maxCount)));
+      return Math.min(count, maxCount);
+    }
+
+    function linePassDepthWrite(blendMode) {
+      return blendMode !== "alpha" && blendMode !== "additive";
+    }
+
+    function colorPrimitiveOwner(name) {
+      if (!screenLineOwner[name]) screenLineOwner[name] = {};
+      return screenLineOwner[name];
+    }
+
+    function drawColorPrimitive(renderPass, entry, frameBindGroup) {
+      if (!entry || !entry.vertexCount) return false;
+      var owner = entry.owner || colorPrimitiveOwner(entry.name || "primitive");
+      var positions = toSceneFloat32Array(entry.positions);
+      var colors = toSceneFloat32Array(entry.colors);
+      var materials = entry.materials ? toSceneFloat32Array(entry.materials) : fallbackMaterialData(owner, entry.vertexCount);
+      var vertexCount = primitiveVertexCount(positions, colors, materials, entry.vertexCount);
+      if (vertexCount <= 0) return false;
+
+      var blend = entry.blend === "alpha" || entry.blend === "additive" ? entry.blend : "opaque";
+      var topology = entry.topology === "triangle-list" ? "triangle-list" : "line-list";
+      var depthWrite = typeof entry.depthWrite === "boolean" ? entry.depthWrite : linePassDepthWrite(blend);
+      renderPass.setPipeline(getSceneColorPipeline(entry.space === "clip" ? "clip" : "world", topology, blend, depthWrite));
+      renderPass.setBindGroup(0, frameBindGroup);
+      renderPass.setVertexBuffer(0, wgpuCachedTrackedBuffer(owner, "_gosxWGPUPrimitivePositions", positions, GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, true));
+      renderPass.setVertexBuffer(1, wgpuCachedTrackedBuffer(owner, "_gosxWGPUPrimitiveColors", colors, GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, true));
+      renderPass.setVertexBuffer(2, wgpuCachedTrackedBuffer(owner, "_gosxWGPUPrimitiveMaterials", materials, GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, true));
+      renderPass.draw(vertexCount);
+      return true;
+    }
+
+    function webGPUWorldLinePasses(bundle) {
+      if (!hasWorldLineData(bundle)) return [];
+      if (typeof buildSceneWorldDrawPlan === "function") {
+        if (!worldDrawScratch && typeof createSceneWorldDrawScratch === "function") {
+          worldDrawScratch = createSceneWorldDrawScratch();
+        }
+        var drawPlan = buildSceneWorldDrawPlan(bundle, worldDrawScratch);
+        if (drawPlan) {
+          return [
+            { name: "world-static-opaque", owner: drawPlan, positions: drawPlan.staticOpaquePositions, colors: drawPlan.staticOpaqueColors, materials: drawPlan.staticOpaqueMaterials, vertexCount: drawPlan.staticOpaqueVertexCount, blend: "opaque", space: "world", topology: "line-list" },
+            { name: "world-dynamic-opaque", owner: drawPlan, positions: drawPlan.dynamicOpaquePositions, colors: drawPlan.dynamicOpaqueColors, materials: drawPlan.dynamicOpaqueMaterials, vertexCount: drawPlan.dynamicOpaqueVertexCount, blend: "opaque", space: "world", topology: "line-list" },
+            { name: "world-alpha", owner: drawPlan.alphaPositions ? drawPlan : null, positions: drawPlan.alphaPositions, colors: drawPlan.alphaColors, materials: drawPlan.alphaMaterials, vertexCount: drawPlan.alphaVertexCount, blend: "alpha", space: "world", topology: "line-list", depthWrite: false },
+            { name: "world-additive", owner: drawPlan.additivePositions ? drawPlan : null, positions: drawPlan.additivePositions, colors: drawPlan.additiveColors, materials: drawPlan.additiveMaterials, vertexCount: drawPlan.additiveVertexCount, blend: "additive", space: "world", topology: "line-list", depthWrite: false },
+          ];
+        }
+      }
+      var vertexCount = Math.max(0, Math.floor(sceneNumber(bundle.worldVertexCount, 0)));
+      return [{
+        name: "world-fallback",
+        owner: bundle,
+        positions: bundle.worldPositions,
+        colors: bundle.worldColors,
+        materials: fallbackMaterialData(bundle, vertexCount),
+        vertexCount: vertexCount,
+        blend: "alpha",
+        space: "world",
+        topology: "line-list",
+        depthWrite: false,
+      }];
+    }
+
+    function drawWorldLineEntries(renderPass, entries, passName, frameBindGroup) {
+      var drew = false;
+      for (var i = 0; i < entries.length; i++) {
+        var entry = entries[i];
+        if (!entry || entry.blend !== passName) continue;
+        drew = drawColorPrimitive(renderPass, entry, frameBindGroup) || drew;
+      }
+      return drew;
+    }
+
+    function webGPUThickLineRecord(bundle) {
+      if (!webGPUHasThickWorldLines(bundle) || !webGPUCanUseThickWorldLines(bundle)) return null;
+      if (!bundle.worldPositions || !bundle.worldColors) return null;
+      if (!thickLineScratch && typeof createSceneThickLineScratch === "function") {
+        thickLineScratch = createSceneThickLineScratch();
+      }
+      if (!thickLineScratch || typeof expandSceneThickLineIntoScratch !== "function") return null;
+      var segmentCount = webGPUWorldLineSegmentCount(bundle);
+      if (segmentCount <= 0 || segmentCount > 16384) return null;
+      var usedSegments = expandSceneThickLineIntoScratch(
+        thickLineScratch,
+        bundle.worldPositions,
+        bundle.worldColors,
+        bundle.worldLineWidths,
+        bundle.worldLinePasses,
+        segmentCount
+      );
+      if (usedSegments <= 0) return null;
+      return {
+        scratch: thickLineScratch,
+        usedVerts: usedSegments * 4,
+        owner: thickLineOwner,
+      };
+    }
+
+    function thickLinePassIndexData(record, passName) {
+      var scratch = record && record.scratch;
+      if (!scratch) return null;
+      if (passName === "additive") {
+        return { slot: "_gosxWGPUThickLineAdditiveIndex", data: scratch.additiveIndices.subarray(0, scratch.additiveIndexCount), count: scratch.additiveIndexCount };
+      }
+      if (passName === "alpha") {
+        return { slot: "_gosxWGPUThickLineAlphaIndex", data: scratch.alphaIndices.subarray(0, scratch.alphaIndexCount), count: scratch.alphaIndexCount };
+      }
+      return { slot: "_gosxWGPUThickLineOpaqueIndex", data: scratch.opaqueIndices.subarray(0, scratch.opaqueIndexCount), count: scratch.opaqueIndexCount };
+    }
+
+    function drawThickWorldLineEntries(renderPass, record, passName, frameBindGroup) {
+      var scratch = record && record.scratch;
+      var usedVerts = record && record.usedVerts || 0;
+      if (!scratch || usedVerts <= 0) return false;
+      var indexData = thickLinePassIndexData(record, passName);
+      if (!indexData || indexData.count <= 0) return false;
+      var owner = record.owner || thickLineOwner;
+      var blend = passName === "alpha" || passName === "additive" ? passName : "opaque";
+      renderPass.setPipeline(getThickLinePipeline(blend, linePassDepthWrite(blend)));
+      renderPass.setBindGroup(0, frameBindGroup);
+      renderPass.setVertexBuffer(0, wgpuCachedTrackedBuffer(owner, "_gosxWGPUThickLinePositionA", scratch.positionsA.subarray(0, usedVerts * 3), GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, true));
+      renderPass.setVertexBuffer(1, wgpuCachedTrackedBuffer(owner, "_gosxWGPUThickLinePositionB", scratch.positionsB.subarray(0, usedVerts * 3), GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, true));
+      renderPass.setVertexBuffer(2, wgpuCachedTrackedBuffer(owner, "_gosxWGPUThickLineColorA", scratch.colorsA.subarray(0, usedVerts * 4), GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, true));
+      renderPass.setVertexBuffer(3, wgpuCachedTrackedBuffer(owner, "_gosxWGPUThickLineColorB", scratch.colorsB.subarray(0, usedVerts * 4), GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, true));
+      renderPass.setVertexBuffer(4, wgpuCachedTrackedBuffer(owner, "_gosxWGPUThickLineSide", scratch.sides.subarray(0, usedVerts), GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, true));
+      renderPass.setVertexBuffer(5, wgpuCachedTrackedBuffer(owner, "_gosxWGPUThickLineEndpoint", scratch.endpoints.subarray(0, usedVerts), GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, true));
+      renderPass.setVertexBuffer(6, wgpuCachedTrackedBuffer(owner, "_gosxWGPUThickLineWidth", scratch.widths.subarray(0, usedVerts), GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, true));
+      var indexBuffer = wgpuCachedTrackedBuffer(owner, indexData.slot, indexData.data, GPUBufferUsage.INDEX | GPUBufferUsage.COPY_DST, true);
+      renderPass.setIndexBuffer(indexBuffer, "uint16");
+      renderPass.drawIndexed(indexData.count);
+      return true;
+    }
+
+    function drawScreenLines(renderPass, bundle, frameBindGroup) {
+      if (!hasScreenLineData(bundle)) return false;
+      var vertexCount = Math.max(0, Math.floor(sceneNumber(bundle.vertexCount, 0)));
+      return drawColorPrimitive(renderPass, {
+        name: "screen-lines",
+        owner: bundle,
+        positions: screenLinePositionData(bundle),
+        colors: bundle.colors,
+        materials: fallbackMaterialData(bundle, vertexCount),
+        vertexCount: vertexCount,
+        blend: "alpha",
+        space: "clip",
+        topology: "line-list",
+        depthWrite: false,
+      }, frameBindGroup);
+    }
+
+    function surfaceEntries(bundle, renderPass) {
+      var surfaces = Array.isArray(bundle && bundle.surfaces) ? bundle.surfaces.slice() : [];
+      var filtered = [];
+      for (var i = 0; i < surfaces.length; i++) {
+        var surface = surfaces[i];
+        if (!surface || surface.viewCulled) continue;
+        if (Math.max(0, Math.floor(sceneNumber(surface.vertexCount, 0))) <= 0) continue;
+        if (String(surface.renderPass || "opaque") !== renderPass) continue;
+        filtered.push(surface);
+      }
+      if (renderPass !== "opaque") {
+        filtered.sort(function(left, right) {
+          var leftDepth = sceneNumber(left && left.depthCenter, 0);
+          var rightDepth = sceneNumber(right && right.depthCenter, 0);
+          if (leftDepth !== rightDepth) return rightDepth - leftDepth;
+          return String(left && left.id || "").localeCompare(String(right && right.id || ""));
+        });
+      }
+      return filtered;
+    }
+
+    function drawSurfaceEntries(renderPass, bundle, materials, passName, frameBindGroup) {
+      var entries = surfaceEntries(bundle, passName);
+      if (!entries.length) return false;
+      var blend = passName === "alpha" || passName === "additive" ? passName : "opaque";
+      renderPass.setPipeline(getSurfacePipeline(blend, blend === "opaque"));
+      renderPass.setBindGroup(0, frameBindGroup);
+      var drew = false;
+      for (var i = 0; i < entries.length; i++) {
+        var surface = entries[i];
+        var mat = materials[sceneNumber(surface.materialIndex, 0)] || null;
+        var positions = toSceneFloat32Array(surface.positions);
+        var uvs = toSceneFloat32Array(surface.uv);
+        var vertexCount = Math.min(Math.floor(positions.length / 3), Math.floor(uvs.length / 2), Math.max(0, Math.floor(sceneNumber(surface.vertexCount, 0))));
+        if (vertexCount <= 0) continue;
+        renderPass.setBindGroup(1, createMaterialBindGroup(mat, false, surface));
+        renderPass.setVertexBuffer(0, wgpuCachedTrackedBuffer(surface, "_gosxWGPUSurfacePositions", positions, GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, true));
+        renderPass.setVertexBuffer(1, wgpuCachedTrackedBuffer(surface, "_gosxWGPUSurfaceUVs", uvs, GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, true));
+        renderPass.draw(vertexCount);
+        drew = true;
+      }
+      return drew;
+    }
+
+    function resolveWebGPUSampleCount(bundle) {
+      var requested = sceneNumber(bundle && (bundle.msaaSamples != null ? bundle.msaaSamples : bundle.sampleCount), sceneNumber(rendererOptions.msaaSamples, 0));
+      if (requested <= 1 && (rendererOptions.antialias === true || sceneBool(bundle && bundle.antialias, false) || sceneBool(bundle && bundle.msaa, false))) {
+        requested = 4;
+      }
+      if (requested >= 4) return 4;
+      return 1;
     }
 
     // -----------------------------------------------------------------------
@@ -2585,7 +3678,11 @@
       );
       var hasPointsData = (Array.isArray(bundle.points) && bundle.points.length > 0) ||
         (Array.isArray(bundle.computeParticles) && bundle.computeParticles.length > 0);
-      if (!hasPBRData && !hasPointsData) return;
+      var hasInstancedData = Array.isArray(bundle.instancedMeshes) && bundle.instancedMeshes.length > 0;
+      var hasWorldLines = hasWorldLineData(bundle);
+      var hasScreenLines = hasScreenLineData(bundle);
+      var hasSurfaces = hasSurfaceData(bundle);
+      if (!hasPBRData && !hasPointsData && !hasInstancedData && !hasWorldLines && !hasScreenLines && !hasSurfaces) return;
       var preparedScene = typeof prepareScene === "function"
         ? prepareScene(bundle, bundle.camera, viewport, lastPreparedScene, {
           mount: canvas && canvas.parentNode || null,
@@ -2598,6 +3695,18 @@
         if (canvas && canvas.parentNode) {
           canvas.parentNode.__gosxScene3DCSSDynamic = Boolean(preparedScene.cssDynamic);
         }
+        hasPBRData = Boolean(
+          bundle.worldMeshPositions &&
+          bundle.worldMeshNormals &&
+          Array.isArray(bundle.meshObjects) &&
+          bundle.meshObjects.length > 0
+        );
+        hasPointsData = (Array.isArray(bundle.points) && bundle.points.length > 0) ||
+          (Array.isArray(bundle.computeParticles) && bundle.computeParticles.length > 0);
+        hasInstancedData = Array.isArray(bundle.instancedMeshes) && bundle.instancedMeshes.length > 0;
+        hasWorldLines = hasWorldLineData(bundle);
+        hasScreenLines = hasScreenLineData(bundle);
+        hasSurfaces = hasSurfaceData(bundle);
       }
 
       var width = canvas.width;
@@ -2631,6 +3740,8 @@
         : 1;
       var scaledW = Math.max(1, Math.floor(width * postfxFactor));
       var scaledH = Math.max(1, Math.floor(height * postfxFactor));
+      var sampleCount = resolveWebGPUSampleCount(bundle);
+      activeSampleCount = sampleCount;
 
       // Upload per-frame uniforms (use scaled dims so point sprites and
       // projection aspect match the actual render target, not the canvas).
@@ -2658,7 +3769,7 @@
         var kind = typeof light.kind === "string" ? light.kind.toLowerCase() : "";
         if (kind !== "directional") continue;
 
-        if (!sceneBounds) sceneBounds = sceneShadowComputeBounds(bundle);
+        if (!sceneBounds) sceneBounds = webGPUShadowComputeBounds(bundle);
 
         var slot = activeShadowCount;
         var shadowSize = sceneNumber(light.shadowSize, 1024);
@@ -2687,18 +3798,32 @@
 
       // --- Main Render Target ---
       var mainColorView;
+      var mainResolveView = null;
       var mainDepthTargetView;
       var postTarget = null;
 
       if (usePostProcessing) {
         if (!postProcessor) postProcessor = wgpuCreatePostProcessor(device, targetFormat);
         postTarget = postProcessor.getSceneTarget(scaledW, scaledH);
-        mainColorView = postTarget.colorView;
-        mainDepthTargetView = postTarget.depthView;
+        if (sampleCount > 1) {
+          mainColorView = ensureMSAAColor(scaledW, scaledH, sampleCount);
+          mainResolveView = postTarget.colorView;
+          ensureMainDepth(scaledW, scaledH, sampleCount);
+          mainDepthTargetView = mainDepthView;
+        } else {
+          mainColorView = postTarget.colorView;
+          mainDepthTargetView = postTarget.depthView;
+        }
       } else {
         var currentTexture = gpuCtx.getCurrentTexture();
-        mainColorView = currentTexture.createView();
-        ensureMainDepth(width, height);
+        var currentView = currentTexture.createView();
+        if (sampleCount > 1) {
+          mainColorView = ensureMSAAColor(width, height, sampleCount);
+          mainResolveView = currentView;
+        } else {
+          mainColorView = currentView;
+        }
+        ensureMainDepth(width, height, sampleCount);
         mainDepthTargetView = mainDepthView;
       }
 
@@ -2706,13 +3831,18 @@
       var bgStr = typeof bundle.background === "string" ? bundle.background.trim().toLowerCase() : "";
       var bg = bgStr === "transparent" ? [0, 0, 0, 0] : sceneColorRGBA(bundle.background, [0.03, 0.08, 0.12, 1]);
 
+      var mainColorAttachment = {
+        view: mainColorView,
+        loadOp: "clear",
+        storeOp: "store",
+        clearValue: { r: bg[0], g: bg[1], b: bg[2], a: bg[3] },
+      };
+      if (mainResolveView) {
+        mainColorAttachment.resolveTarget = mainResolveView;
+      }
+
       var mainPass = encoder.beginRenderPass({
-        colorAttachments: [{
-          view: mainColorView,
-          loadOp: "clear",
-          storeOp: "store",
-          clearValue: { r: bg[0], g: bg[1], b: bg[2], a: bg[3] },
-        }],
+        colorAttachments: [mainColorAttachment],
         depthStencilAttachment: {
           view: mainDepthTargetView,
           depthLoadOp: "clear",
@@ -2721,19 +3851,38 @@
         },
       });
 
-      // Draw PBR meshes.
-      if (hasPBRData) {
-        var drawList = preparedScene && preparedScene.pbrPasses
-          ? preparedScene.pbrPasses
-          : buildDrawList(bundle);
-        var materials = Array.isArray(bundle.materials) ? bundle.materials : [];
+      var materials = Array.isArray(bundle.materials) ? bundle.materials : [];
+      var instancedDrawList = hasInstancedData
+        ? buildInstancedDrawList(bundle, materials)
+        : { opaque: [], alpha: [], additive: [] };
+      var drawList = hasPBRData
+        ? (preparedScene && preparedScene.pbrPasses ? preparedScene.pbrPasses : buildDrawList(bundle))
+        : { opaque: [], alpha: [], additive: [] };
+      var thickLineRecord = hasWorldLines ? webGPUThickLineRecord(bundle) : null;
+      var worldLineEntries = hasWorldLines && !thickLineRecord ? webGPUWorldLinePasses(bundle) : [];
 
+      // Draw PBR meshes, WebGPU-native instanced meshes, world lines, and textured surfaces.
+      if (hasPBRData || hasInstancedData || hasWorldLines || hasSurfaces) {
         // Opaque pass.
         if (drawList.opaque.length > 0) {
           var opaquePipeline = getPBRPipeline("opaque", true);
           mainPass.setPipeline(opaquePipeline);
           mainPass.setBindGroup(0, frameBindGroup);
           drawPBRObjects(mainPass, drawList.opaque, bundle, materials, frameBindGroup);
+        }
+        if (instancedDrawList.opaque.length > 0) {
+          var opaqueInstancedPipeline = getPBRInstancedPipeline("opaque", true);
+          mainPass.setPipeline(opaqueInstancedPipeline);
+          mainPass.setBindGroup(0, frameBindGroup);
+          drawInstancedMeshes(mainPass, instancedDrawList.opaque, materials);
+        }
+        if (hasSurfaces) {
+          drawSurfaceEntries(mainPass, bundle, materials, "opaque", frameBindGroup);
+        }
+        if (thickLineRecord) {
+          drawThickWorldLineEntries(mainPass, thickLineRecord, "opaque", frameBindGroup);
+        } else if (worldLineEntries.length > 0) {
+          drawWorldLineEntries(mainPass, worldLineEntries, "opaque", frameBindGroup);
         }
 
         // Alpha pass.
@@ -2743,6 +3892,20 @@
           mainPass.setBindGroup(0, frameBindGroup);
           drawPBRObjects(mainPass, drawList.alpha, bundle, materials, frameBindGroup);
         }
+        if (instancedDrawList.alpha.length > 0) {
+          var alphaInstancedPipeline = getPBRInstancedPipeline("alpha", false);
+          mainPass.setPipeline(alphaInstancedPipeline);
+          mainPass.setBindGroup(0, frameBindGroup);
+          drawInstancedMeshes(mainPass, instancedDrawList.alpha, materials);
+        }
+        if (hasSurfaces) {
+          drawSurfaceEntries(mainPass, bundle, materials, "alpha", frameBindGroup);
+        }
+        if (thickLineRecord) {
+          drawThickWorldLineEntries(mainPass, thickLineRecord, "alpha", frameBindGroup);
+        } else if (worldLineEntries.length > 0) {
+          drawWorldLineEntries(mainPass, worldLineEntries, "alpha", frameBindGroup);
+        }
 
         // Additive pass.
         if (drawList.additive.length > 0) {
@@ -2751,13 +3914,31 @@
           mainPass.setBindGroup(0, frameBindGroup);
           drawPBRObjects(mainPass, drawList.additive, bundle, materials, frameBindGroup);
         }
+        if (instancedDrawList.additive.length > 0) {
+          var additiveInstancedPipeline = getPBRInstancedPipeline("additive", false);
+          mainPass.setPipeline(additiveInstancedPipeline);
+          mainPass.setBindGroup(0, frameBindGroup);
+          drawInstancedMeshes(mainPass, instancedDrawList.additive, materials);
+        }
+        if (hasSurfaces) {
+          drawSurfaceEntries(mainPass, bundle, materials, "additive", frameBindGroup);
+        }
+        if (thickLineRecord) {
+          drawThickWorldLineEntries(mainPass, thickLineRecord, "additive", frameBindGroup);
+        } else if (worldLineEntries.length > 0) {
+          drawWorldLineEntries(mainPass, worldLineEntries, "additive", frameBindGroup);
+        }
+      }
+
+      if (hasScreenLines) {
+        drawScreenLines(mainPass, bundle, frameBindGroup);
       }
 
       // Draw points.
       if (hasPointsData) {
         mainPass.setBindGroup(0, frameBindGroup);
         // Create a dummy material bind group for group 1 (points pipeline layout requires it).
-        var dummyMatBG = createMaterialBindGroup(null, false);
+        var dummyMatBG = createMaterialBindGroup(null, false, defaultMaterialOwner);
         mainPass.setBindGroup(1, dummyMatBG);
         drawPointsEntries(mainPass, bundle, cam, frameTimeSeconds);
         drawComputeParticleEntries(mainPass, computeParticleRecords, bundle.environment);
@@ -2793,7 +3974,6 @@
       if (fogUniformBuffer) fogUniformBuffer.destroy();
       if (envUniformBuffer) envUniformBuffer.destroy();
       if (shadowUniformBuffer) shadowUniformBuffer.destroy();
-      if (materialUniformBuffer) materialUniformBuffer.destroy();
       if (positionBuffer) positionBuffer.destroy();
       if (normalBuffer) normalBuffer.destroy();
       if (uvBuffer) uvBuffer.destroy();
@@ -2807,6 +3987,7 @@
       disposeComputeParticleSystems();
 
       if (mainDepthTexture) mainDepthTexture.destroy();
+      if (mainMSAATexture) mainMSAATexture.destroy();
       if (dummyShadowTex) dummyShadowTex.destroy();
       if (placeholderTex) placeholderTex.destroy();
 
@@ -2838,9 +4019,38 @@
     // before we're allowed to construct a renderer at all.
     if (initFailed) return null;
 
+    function supportsBundle(bundle) {
+      if (webGPUUnsupportedLineStyles(bundle)) {
+        return false;
+      }
+      if (!webGPUCanUseThickWorldLines(bundle)) {
+        return false;
+      }
+      return true;
+    }
+
+    function diagnostics() {
+      var base = typeof sceneWebGPUDiagnostics === "function"
+        ? sceneWebGPUDiagnostics()
+        : {};
+      var out = {};
+      for (var key in base) {
+        if (Object.prototype.hasOwnProperty.call(base, key)) {
+          out[key] = base[key];
+        }
+      }
+      out.renderer = "webgpu";
+      out.targetFormat = targetFormat;
+      out.activeSampleCount = activeSampleCount;
+      out.postProcessing = !!postProcessor;
+      return out;
+    }
+
     return {
       kind: "webgpu",
       type: "webgpu",
+      supportsBundle: supportsBundle,
+      diagnostics: diagnostics,
       render: render,
       dispose: dispose,
     };

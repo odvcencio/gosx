@@ -1,6 +1,8 @@
 package bundle
 
 import (
+	"fmt"
+
 	"github.com/odvcencio/gosx/render/gpu"
 )
 
@@ -20,6 +22,9 @@ type fakeDevice struct {
 	bindGroups       []*fakeBindGroup
 	encoders         []*fakeEncoder
 	surfaceViews     int
+	failTextureLabel string
+	failBufferLabel  string
+	failBindLabel    string
 
 	queue *fakeQueue
 }
@@ -54,12 +59,18 @@ func (d *fakeDevice) SupportsTextureFormat(format gpu.TextureFormat) bool {
 }
 
 func (d *fakeDevice) CreateBuffer(desc gpu.BufferDesc) (gpu.Buffer, error) {
+	if desc.Label == d.failBufferLabel {
+		return nil, fmt.Errorf("fake create buffer %s", desc.Label)
+	}
 	b := &fakeBuffer{size: desc.Size, usage: desc.Usage, label: desc.Label}
 	d.buffers = append(d.buffers, b)
 	return b, nil
 }
 
 func (d *fakeDevice) CreateTexture(desc gpu.TextureDesc) (gpu.Texture, error) {
+	if desc.Label == d.failTextureLabel {
+		return nil, fmt.Errorf("fake create texture %s", desc.Label)
+	}
 	t := &fakeTexture{desc: desc}
 	d.textures = append(d.textures, t)
 	return t, nil
@@ -84,6 +95,9 @@ func (d *fakeDevice) CreateRenderPipeline(desc gpu.RenderPipelineDesc) (gpu.Rend
 }
 
 func (d *fakeDevice) CreateBindGroup(desc gpu.BindGroupDesc) (gpu.BindGroup, error) {
+	if desc.Label == d.failBindLabel {
+		return nil, fmt.Errorf("fake create bind group %s", desc.Label)
+	}
 	bg := &fakeBindGroup{desc: desc}
 	d.bindGroups = append(d.bindGroups, bg)
 	return bg, nil
@@ -183,14 +197,15 @@ type textureWrite struct {
 
 // fakeBuffer is a zero-cost test Buffer.
 type fakeBuffer struct {
-	size  int
-	usage gpu.BufferUsage
-	label string
+	size      int
+	usage     gpu.BufferUsage
+	label     string
+	destroyed bool
 }
 
 func (b *fakeBuffer) Size() int              { return b.size }
 func (b *fakeBuffer) Usage() gpu.BufferUsage { return b.usage }
-func (b *fakeBuffer) Destroy()               {}
+func (b *fakeBuffer) Destroy()               { b.destroyed = true }
 func (b *fakeBuffer) ReadAsync(size int) ([]byte, error) {
 	return make([]byte, size), nil
 }
@@ -215,10 +230,11 @@ func (p *fakePipeline) Destroy()                                   {}
 type fakeBindGroupLayout struct{}
 
 type fakeBindGroup struct {
-	desc gpu.BindGroupDesc
+	desc      gpu.BindGroupDesc
+	destroyed bool
 }
 
-func (b *fakeBindGroup) Destroy() {}
+func (b *fakeBindGroup) Destroy() { b.destroyed = true }
 
 // fakeEncoder and fakeRenderPass record calls.
 type fakeEncoder struct {
@@ -302,7 +318,8 @@ type fakeTextureView struct {
 }
 
 type fakeTexture struct {
-	desc gpu.TextureDesc
+	desc      gpu.TextureDesc
+	destroyed bool
 }
 
 func (t *fakeTexture) Width() int                { return t.desc.Width }
@@ -321,7 +338,7 @@ func (t *fakeTexture) CreateLayerView(layer int) gpu.TextureView {
 		ArrayLayerCount: 1,
 	})
 }
-func (t *fakeTexture) Destroy() {}
+func (t *fakeTexture) Destroy() { t.destroyed = true }
 
 type fakeSampler struct {
 	desc gpu.SamplerDesc

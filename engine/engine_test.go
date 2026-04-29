@@ -108,7 +108,7 @@ func TestValidateCapabilities_TextInput(t *testing.T) {
 
 func TestValidateCapabilities(t *testing.T) {
 	// Valid
-	err := ValidateCapabilities([]Capability{CapVideo, CapCanvas, CapWebGL, CapWebGL2, CapWebGPU, CapCompute, CapWASM, CapPixelSurface, CapPointer, CapKeyboard, CapGamepad})
+	err := ValidateCapabilities([]Capability{CapVideo, CapCanvas, CapWebGL, CapWebGL2, CapWebGPU, CapCompute, CapWASM, CapPixelSurface, CapPointer, CapPointerLock, CapKeyboard, CapGamepad, CapWebGPUTimestampQuery, CapWebGPUShaderF16, CapWebGPUTextureCompressionBC, "webgpu:limit:maxTextureDimension2D>=4096", "webgpu:adapter-limit:maxBufferSize>=1048576"})
 	if err != nil {
 		t.Fatal(err)
 	}

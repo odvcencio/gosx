@@ -521,6 +521,7 @@ class FakeElement {
     this.playCalls = [];
     this.pauseCalls = [];
     this.fullscreenCalls = [];
+    this.pointerLockCalls = [];
     this.animateCalls = [];
     this._innerHTML = null;
     this.paused = true;
@@ -849,6 +850,15 @@ class FakeElement {
     return Promise.resolve();
   }
 
+  requestPointerLock(options) {
+    this.pointerLockCalls.push([options || null]);
+    if (this.ownerDocument) {
+      this.ownerDocument.pointerLockElement = this;
+      this.ownerDocument.dispatchEvent({ type: "pointerlockchange", target: this });
+    }
+    return undefined;
+  }
+
   cloneNode(deep) {
     const clone = new FakeElement(this.tagName.toLowerCase(), this.ownerDocument);
     for (const [name, value] of this.attributes.entries()) {
@@ -900,6 +910,7 @@ class FakeDocument {
     this.documentElement.appendChild(this.body);
     this.activeElement = this.body;
     this.fullscreenElement = null;
+    this.pointerLockElement = null;
     this.title = "";
     this.disableCanvas2D = false;
     this.createWebGLContext = null;
@@ -951,6 +962,11 @@ class FakeDocument {
     this.fullscreenElement = null;
     this.dispatchEvent({ type: "fullscreenchange", target: this });
     return Promise.resolve();
+  }
+
+  exitPointerLock() {
+    this.pointerLockElement = null;
+    this.dispatchEvent({ type: "pointerlockchange", target: this });
   }
 
   indexNode(node) {
@@ -1919,6 +1935,12 @@ function createContext(options) {
   }
   if (visualViewport) {
     context.visualViewport = visualViewport;
+  }
+  if (typeof options.AudioContext === "function") {
+    context.AudioContext = options.AudioContext;
+  }
+  if (typeof options.webkitAudioContext === "function") {
+    context.webkitAudioContext = options.webkitAudioContext;
   }
 
   if (typeof options.parseHTML === "function") {
@@ -4361,6 +4383,7 @@ test("bootstrap drives shared-runtime Scene3D first-person controls without auth
             background: "#08151f",
             autoRotate: false,
             controls: "first-person",
+            pointerLock: true,
             controlMoveSpeed: 6,
             controlLookSpeed: 1,
             camera: { x: 0, y: 1.6, z: 6, fov: 72, near: 0.05, far: 128 },
@@ -4456,6 +4479,8 @@ test("bootstrap drives shared-runtime Scene3D first-person controls without auth
     pointerId: 4,
     clientX: 390,
     clientY: 160,
+    movementX: 70,
+    movementY: -20,
     preventDefault() {},
     stopPropagation() {},
   });
@@ -4473,6 +4498,8 @@ test("bootstrap drives shared-runtime Scene3D first-person controls without auth
   const draggedRotation = gl.ops.filter((entry) => entry[0] === "uniform3f" && entry[1] === "u_camera_rotation").at(-1);
   assert.ok(draggedRotation);
   assert.notDeepEqual(draggedRotation, initialRotation);
+  assert.equal(canvas.pointerLockCalls.length, 1);
+  assert.equal(env.document.pointerLockElement, canvas);
 
   env.document.dispatchEvent({
     type: "keydown",
@@ -6323,13 +6350,23 @@ test("bootstrap bridges clamp01 into the WebGPU Scene3D sub-feature", () => {
   assert.match(prefix, /var SCENE_POST_COLOR_GRADE = sceneApi\.SCENE_POST_COLOR_GRADE/);
   assert.match(prefix, /var SCENE_POST_SSAO = sceneApi\.SCENE_POST_SSAO/);
   assert.match(prefix, /var SCENE_POST_DOF = sceneApi\.SCENE_POST_DOF/);
+  assert.match(prefix, /var generateInstancedGeometry = sceneApi\.generateInstancedGeometry/);
+  assert.match(prefix, /var buildSceneWorldDrawPlan = sceneApi\.buildSceneWorldDrawPlan/);
+  assert.match(prefix, /var createSceneWorldDrawScratch = sceneApi\.createSceneWorldDrawScratch/);
+  assert.match(prefix, /var createSceneThickLineScratch = sceneApi\.createSceneThickLineScratch/);
+  assert.match(prefix, /var expandSceneThickLineIntoScratch = sceneApi\.expandSceneThickLineIntoScratch/);
   assert.match(core, /\n    clamp01,\n/);
+  assert.match(core, /buildSceneWorldDrawPlan: typeof buildSceneWorldDrawPlan === "function"/);
+  assert.match(core, /createSceneWorldDrawScratch: typeof createSceneWorldDrawScratch === "function"/);
+  assert.match(core, /createSceneThickLineScratch: typeof createSceneThickLineScratch === "function"/);
+  assert.match(core, /expandSceneThickLineIntoScratch: typeof expandSceneThickLineIntoScratch === "function"/);
   assert.match(core, /\n    SCENE_POST_TONE_MAPPING: "toneMapping",\n/);
   assert.match(core, /\n    SCENE_POST_BLOOM: "bloom",\n/);
   assert.match(core, /\n    SCENE_POST_VIGNETTE: "vignette",\n/);
   assert.match(core, /\n    SCENE_POST_COLOR_GRADE: "colorGrade",\n/);
   assert.match(core, /\n    SCENE_POST_SSAO: "ssao",\n/);
   assert.match(core, /\n    SCENE_POST_DOF: "dof",\n/);
+  assert.match(core, /generateInstancedGeometry: typeof generateInstancedGeometry === "function"/);
 });
 
 test("Scene3D postfx tonemap modes are honored by WebGL and WebGPU", () => {
@@ -6345,6 +6382,149 @@ test("Scene3D postfx tonemap modes are honored by WebGL and WebGPU", () => {
   assert.match(webgpu, /mode == 2[\s\S]*reinhard\(color\)/);
   assert.match(webgpu, /mode == 3[\s\S]*filmic\(color\)/);
   assert.match(webgpu, /sceneWebGPUToneMapMode\(effect\.mode\)/);
+});
+
+test("Scene3D instanced meshes are WebGPU-native", () => {
+  const webgpu = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+  const mount = fs.readFileSync(path.join(__dirname, "bootstrap-src", "20-scene-mount.js"), "utf8");
+
+  assert.match(webgpu, /var WGSL_PBR_INSTANCED_VERTEX = \[/);
+  assert.match(webgpu, /var WGSL_SHADOW_INSTANCED_VERTEX = \[/);
+  assert.match(webgpu, /stepMode: "instance"[\s\S]*shaderLocation: 4[\s\S]*shaderLocation: 7/);
+  assert.match(webgpu, /shaderLocation: 8/);
+  assert.match(webgpu, /function wgpuCreatePBRInstancedPipeline/);
+  assert.match(webgpu, /function drawInstancedMeshes\(pass, meshList, materials\)/);
+  assert.match(webgpu, /pass\.draw\(geom\.vertexCount,\s*instanceCount\)/);
+  assert.match(webgpu, /function getShadowInstancedPipeline/);
+  assert.match(webgpu, /createMaterialBindGroup\(material, receiveShadow, cacheOwner\)/);
+  assert.doesNotMatch(webgpu, /bundle\.instancedMeshes[\s\S]{0,140}return false/);
+  assert.doesNotMatch(mount, /instanced-meshes/);
+});
+
+test("Scene3D world lines and textured surfaces are WebGPU-native", () => {
+  const webgpu = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+  const mount = fs.readFileSync(path.join(__dirname, "bootstrap-src", "20-scene-mount.js"), "utf8");
+
+  assert.match(webgpu, /var WGSL_SCENE_WORLD_COLOR_VERTEX = \[/);
+  assert.match(webgpu, /var WGSL_SCENE_CLIP_COLOR_VERTEX = \[/);
+  assert.match(webgpu, /var WGSL_SURFACE_VERTEX = \[/);
+  assert.match(webgpu, /var WGSL_THICK_LINE_VERTEX = \[/);
+  assert.match(webgpu, /function wgpuCreateSceneColorPipeline/);
+  assert.match(webgpu, /primitive: \{ topology: topology \}/);
+  assert.match(webgpu, /function wgpuCreateSurfacePipeline/);
+  assert.match(webgpu, /function wgpuCreateThickLinePipeline/);
+  assert.match(webgpu, /function drawWorldLineEntries\(renderPass, entries, passName, frameBindGroup\)/);
+  assert.match(webgpu, /function drawThickWorldLineEntries\(renderPass, record, passName, frameBindGroup\)/);
+  assert.match(webgpu, /function drawScreenLines\(renderPass, bundle, frameBindGroup\)/);
+  assert.match(webgpu, /function drawSurfaceEntries\(renderPass, bundle, materials, passName, frameBindGroup\)/);
+  assert.match(webgpu, /buildSceneWorldDrawPlan\(bundle, worldDrawScratch\)/);
+  assert.match(webgpu, /expandSceneThickLineIntoScratch\(/);
+  assert.match(webgpu, /setIndexBuffer\(indexBuffer, "uint16"\)/);
+  assert.match(webgpu, /getSceneColorPipeline\(entry\.space === "clip" \? "clip" : "world", topology, blend, depthWrite\)/);
+  assert.doesNotMatch(webgpu, /Array\.isArray\(bundle && bundle\.surfaces\)[\s\S]{0,120}return false/);
+  assert.doesNotMatch(webgpu, /Array\.isArray\(bundle && bundle\.lines\)[\s\S]{0,120}return false/);
+  assert.doesNotMatch(mount, /sceneNumber\(entry\.lineWidth/);
+  assert.doesNotMatch(mount, /source && source\.worldLineWidths/);
+  assert.doesNotMatch(mount, /return "surfaces"/);
+  assert.doesNotMatch(mount, /return "lines"/);
+  assert.match(mount, /return "line-styles"/);
+});
+
+test("Scene3D WebGPU supports tiered MSAA render targets", () => {
+  const webgpu = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+  const mount = fs.readFileSync(path.join(__dirname, "bootstrap-src", "20-scene-mount.js"), "utf8");
+  const probe = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16z-scene-webgpu-probe.js"), "utf8");
+
+  assert.match(webgpu, /function createSceneWebGPURenderer\(canvas, options\)/);
+  assert.match(webgpu, /function ensureMSAAColor\(width, height, sampleCount\)/);
+  assert.match(webgpu, /sampleCount: sampleCount/);
+  assert.match(webgpu, /multisample: \{ count: Math\.max\(1, Math\.floor\(sampleCount \|\| 1\)\) \}/);
+  assert.match(webgpu, /activeSampleCount = sampleCount/);
+  assert.match(webgpu, /mainColorAttachment\.resolveTarget = mainResolveView/);
+  assert.match(mount, /function sceneWebGPUOptions\(props, capability\)/);
+  assert.match(mount, /msaaSamples: requestedSamples > 1 \? 4 : \(antialias \? 4 : 1\)/);
+  assert.match(probe, /createRenderer\(canvas, options \|\| \{\}\)/);
+});
+
+test("Scene3D WebGPU probe negotiates optional features and exposes diagnostics", async () => {
+  let requestedDescriptor = null;
+  const deviceFeatures = new Set();
+  const adapterLimits = {
+    maxTextureDimension2D: 8192,
+    maxComputeWorkgroupSizeX: 256,
+    maxComputeWorkgroupsPerDimension: 65535,
+  };
+  const deviceLimits = {
+    maxTextureDimension2D: 4096,
+    maxComputeWorkgroupSizeX: 128,
+  };
+  const env = createContext({
+    enableWebGPU: true,
+    webgpuAdapter: {
+      features: new Set([
+        "timestamp-query",
+        "indirect-first-instance",
+        "shader-f16",
+        "texture-compression-bc",
+        "texture-compression-bc-sliced-3d",
+        "texture-compression-astc-sliced-3d",
+        "subgroups",
+        "subgroups-f16",
+      ]),
+      limits: adapterLimits,
+      info: {
+        vendor: "gosx-test",
+        architecture: "test-gpu",
+        subgroupMinSize: 4,
+        subgroupMaxSize: 32,
+      },
+      requestDevice: async (descriptor = {}) => {
+        requestedDescriptor = descriptor;
+        for (const feature of descriptor.requiredFeatures || []) {
+          deviceFeatures.add(feature);
+        }
+        return {
+          lost: new Promise(() => {}),
+          features: deviceFeatures,
+          limits: deviceLimits,
+        };
+      },
+    },
+  });
+
+  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+  runScript(bootstrapFeatureScene3DSource, env.context, "bootstrap-feature-scene3d.js");
+  await flushAsyncWork();
+  assert.equal(await env.context.__gosx_scene3d_webgpu_probe_ready(), true);
+
+  assert.deepEqual(Array.from(requestedDescriptor.requiredFeatures), [
+    "timestamp-query",
+    "indirect-first-instance",
+    "shader-f16",
+    "texture-compression-bc",
+    "texture-compression-bc-sliced-3d",
+    "subgroups",
+    "subgroups-f16",
+  ]);
+  const diagnostics = env.context.__gosx_scene3d_webgpu_diagnostics();
+  assert.equal(diagnostics.ready, true);
+  assert.equal(diagnostics.adapterAvailable, true);
+  assert.equal(diagnostics.deviceAvailable, true);
+  assert.ok(diagnostics.supportedFeatures.includes("texture-compression-astc-sliced-3d"));
+  assert.equal(diagnostics.requestedFeatures.includes("texture-compression-astc-sliced-3d"), false);
+  assert.ok(diagnostics.deviceFeatures.includes("timestamp-query"));
+  assert.equal(diagnostics.adapterLimits.maxTextureDimension2D, 8192);
+  assert.equal(diagnostics.deviceLimits.maxComputeWorkgroupSizeX, 128);
+  assert.equal(diagnostics.adapterInfo.vendor, "gosx-test");
+  assert.equal(diagnostics.adapterInfo.subgroupMaxSize, 32);
+  assert.equal(typeof env.context.__gosx_scene3d_api.sceneWebGPUDiagnostics, "function");
+  assert.equal(env.context.__gosx_runtime_api.browserCapabilitySupported("webgpu:timestamp-query"), true);
+  assert.equal(env.context.__gosx_runtime_api.browserCapabilitySupported("webgpu:texture-compression-astc-sliced-3d"), false);
+  assert.equal(env.context.__gosx_runtime_api.browserCapabilitySupported("webgpu:adapter-limit:maxTextureDimension2D>=8192"), true);
+  assert.equal(env.context.__gosx_runtime_api.browserCapabilitySupported("webgpu:device-limit:maxTextureDimension2D>=8192"), false);
+  assert.equal(env.context.__gosx_runtime_api.browserCapabilitySupported("webgpu:limit:maxComputeWorkgroupSizeX>=128"), true);
+  assert.equal(env.context.__gosx_runtime_api.browserCapabilitySupported("webgpu:limit:maxComputeWorkgroupSizeX>128"), false);
+  assert.equal(env.context.__gosx_runtime_api.browserCapabilitySupported("webgpu:missing-feature"), false);
 });
 
 test("bootstrap normalizes orthographic Scene3D cameras, LOD, lights, and custom line materials", async () => {
@@ -6846,6 +7026,14 @@ test("selective Scene3D bootstrap prefers WebGPU before first renderer selection
             createRenderer: function() {
               return {
                 kind: "webgpu",
+                diagnostics: function() {
+                  return {
+                    requestedFeatures: ["timestamp-query", "shader-f16"],
+                    deviceFeatures: ["timestamp-query"],
+                    activeSampleCount: 4,
+                    adapterInfo: { vendor: "gosx-test", architecture: "unit" }
+                  };
+                },
                 render: function() {},
                 dispose: function() {}
               };
@@ -6890,12 +7078,90 @@ test("selective Scene3D bootstrap prefers WebGPU before first renderer selection
     webgpuProbe: env.context.__gosx_scene3d_webgpu_probe && env.context.__gosx_scene3d_webgpu_probe(),
     backends: env.context.__gosx_scene3d_api.sceneBackendRegistry.list().map((entry) => entry.kind),
   }));
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-features"), "timestamp-query,shader-f16");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-device-features"), "timestamp-query");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-sample-count"), "4");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-adapter"), "gosx-test unit");
   assert.equal(mount.getAttribute("data-gosx-scene3d-renderer-fallback"), null);
   assert.equal(
     env.fetchCalls.some((call) => call.url === "/gosx/bootstrap-feature-scene3d-webgpu.js"),
     true,
   );
   assert.equal((mount.children[0].contextCalls || []).some((call) => call.kind === "webgl" || call.kind === "webgl2"), false);
+});
+
+test("selective Scene3D bootstrap uses WebGL when WebGPU cannot cover scene features", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-webgpu-feature-gap";
+  const env = createContext({
+    elements: [mount],
+    enableWebGPU: true,
+    enableWebGL2: true,
+    fetchRoutes: {
+      "/gosx/bootstrap-feature-engines.js": {
+        text: bootstrapFeatureEnginesSource,
+      },
+      "/gosx/bootstrap-feature-scene3d-webgpu.js": {
+        text: `
+          window.__gosx_scene3d_webgpu_api = {
+            createRenderer: function(canvas) {
+              canvas.getContext("webgpu");
+              return {
+                kind: "webgpu",
+                render: function() {},
+                dispose: function() {}
+              };
+            }
+          };
+          window.__gosx_scene3d_webgpu_loaded = true;
+        `,
+      },
+    },
+    manifest: {
+      runtime: { path: "/gosx/runtime.wasm" },
+      engines: [
+        {
+          id: "gosx-engine-webgpu-feature-gap",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-webgpu-feature-gap",
+          jsExport: "GoSXScene3D",
+          props: {
+            width: 360,
+            height: 220,
+            autoRotate: false,
+            scene: {
+              objects: [
+                {
+                  id: "wide-grid",
+                  kind: "lines",
+                  lineDash: true,
+                  points: [
+                    [0, 0, 0],
+                    [1, 0, 0],
+                  ],
+                  segments: [[0, 1]],
+                },
+              ],
+            },
+          },
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+  runScript(bootstrapFeatureScene3DSource, env.context, "bootstrap-feature-scene3d.js");
+  await flushAsyncWork();
+
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "webgl");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer-fallback"), "webgpu-feature-gap");
+  assert.equal(
+    env.fetchCalls.some((call) => call.url === "/gosx/bootstrap-feature-scene3d-webgpu.js"),
+    false,
+  );
+  assert.equal((mount.children[0].contextCalls || []).some((call) => call.kind === "webgpu"), false);
+  assert.equal((mount.children[0].contextCalls || []).some((call) => call.kind === "webgl" || call.kind === "webgl2"), true);
 });
 
 test("bootstrap releases replaced static point WebGL buffers on live updates", async () => {
@@ -9719,6 +9985,227 @@ test("bootstrap connects hubs and forwards events into shared signals", async ()
   assert.equal(env.consoleLogs.error.length, 0);
 });
 
+test("bootstrap hub input sends fighting game snapshots", async () => {
+  const sent = [];
+  function makeSocket(url) {
+    return {
+      url,
+      readyState: 1,
+      closeCalled: false,
+      send(raw) {
+        sent.push(JSON.parse(raw));
+      },
+      close() {
+        this.closeCalled = true;
+      },
+    };
+  }
+
+  const env = createContext({
+    createWebSocket: makeSocket,
+    getGamepads: () => [{
+      connected: true,
+      axes: [1, 0, 0, 0],
+      buttons: [{ pressed: true }, { pressed: false }, { pressed: false }, { pressed: false }],
+    }],
+    fetchRoutes: {
+      "/runtime.wasm": { bytes: [0, 97, 115, 109] },
+    },
+    manifest: {
+      runtime: { path: "/runtime.wasm" },
+      hubs: [
+        {
+          id: "gosx-hub-0",
+          name: "fight",
+          path: "/ws/fight/abc",
+          bindings: [],
+          input: {
+            mode: "fighting",
+            event: "input",
+            readyEvent: "ready",
+            signal: "$fightInput",
+            player: 1,
+            slotToken: "slot-one",
+            sendEveryMs: 16,
+          },
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  assert.equal(sent[0].event, "ready");
+  assert.deepEqual(sent[0].data, { player: 1, slotToken: "slot-one" });
+  const input = sent.find((message) => message.event === "input");
+  assert.ok(input, "expected an input message");
+  assert.equal(input.data.dir, 3);
+  assert.equal(input.data.btn, 1);
+  assert.equal(input.data.player, 1);
+  assert.equal(input.data.slotToken, "slot-one");
+  assert.ok(env.sharedSignalCalls.some((call) => call[0] === "$fightInput" && call[1].includes("GAMEPAD LINKED")));
+
+  env.context.__gosx_disconnect_hub("gosx-hub-0");
+  assert.equal(env.sockets[0].closeCalled, true);
+});
+
+test("bootstrap hub input turns fight events into bounded gamepad feedback", async () => {
+  const sent = [];
+  const effects = [];
+  const pad = {
+    connected: true,
+    axes: [0, 0, 0, 0],
+    buttons: Array.from({ length: 16 }, () => ({ pressed: false, value: 0 })),
+    vibrationActuator: {
+      playEffect(type, options) {
+        effects.push({ type, options });
+        return Promise.resolve();
+      },
+    },
+  };
+  function makeSocket(url) {
+    return {
+      url,
+      readyState: 1,
+      closeCalled: false,
+      send(raw) {
+        sent.push(JSON.parse(raw));
+      },
+      close() {
+        this.closeCalled = true;
+      },
+    };
+  }
+
+  const env = createContext({
+    createWebSocket: makeSocket,
+    getGamepads: () => [pad],
+    fetchRoutes: {
+      "/runtime.wasm": { bytes: [0, 97, 115, 109] },
+    },
+    manifest: {
+      runtime: { path: "/runtime.wasm" },
+      hubs: [
+        {
+          id: "gosx-hub-0",
+          name: "fight",
+          path: "/ws/fight/abc",
+          bindings: [],
+          input: {
+            mode: "fighting",
+            event: "input",
+            readyEvent: "ready",
+            signal: "$fightInput",
+            player: 1,
+            sendEveryMs: 16,
+          },
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  env.sockets[0].onmessage({
+    data: JSON.stringify({ event: "tick", data: { event: { seq: 1, kind: "hit", damage: 120, counter: true } } }),
+  });
+  await flushAsyncWork();
+
+  assert.equal(effects.length, 1);
+  assert.equal(effects[0].type, "dual-rumble");
+  assert.ok(effects[0].options.duration <= 160);
+  assert.ok(effects[0].options.strongMagnitude > effects[0].options.weakMagnitude);
+
+  env.sockets[0].onmessage({
+    data: JSON.stringify({ event: "tick", data: { event: { seq: 1, kind: "hit", damage: 120, counter: true } } }),
+  });
+  await flushAsyncWork();
+  assert.equal(effects.length, 1, "same server event seq should not replay haptics");
+
+  env.sockets[0].onmessage({
+    data: JSON.stringify({ event: "tick", data: { event: { seq: 2, kind: "block", damage: 0, blocked: true } } }),
+  });
+  await flushAsyncWork();
+  assert.equal(effects.length, 2);
+  assert.ok(effects[1].options.weakMagnitude >= effects[1].options.strongMagnitude * 0.8);
+
+  env.context.__gosx_disconnect_hub("gosx-hub-0");
+  assert.equal(env.sockets[0].closeCalled, true);
+});
+
+test("bootstrap hub arcade-select owns lobby identity and menu state", async () => {
+  const sent = [];
+  function makeSocket(url) {
+    return {
+      url,
+      readyState: 1,
+      closeCalled: false,
+      send(raw) {
+        sent.push(JSON.parse(raw));
+      },
+      close() {
+        this.closeCalled = true;
+      },
+    };
+  }
+
+  const env = createContext({
+    createWebSocket: makeSocket,
+    fetchRoutes: {
+      "/runtime.wasm": { bytes: [0, 97, 115, 109] },
+    },
+    manifest: {
+      runtime: { path: "/runtime.wasm" },
+      clientIdentity: {
+        storageKey: "feralsurge.clientId",
+        cookieName: "fs_client_id",
+        headerName: "X-Feral-Surge-Client-ID",
+        prefix: "fs-",
+      },
+      hubs: [
+        {
+          id: "gosx-hub-0",
+          name: "lobby",
+          path: "/ws/lobby",
+          bindings: [{ event: "lobby_state", signal: "$lobby" }],
+          input: {
+            mode: "arcade-select",
+            event: "queue",
+            readyEvent: "join",
+            trainingEvent: "dequeue",
+            signal: "$landing",
+            attractSignal: "$attract",
+            lobbySignal: "$lobby",
+            vsSignal: "$vs",
+            username: "Ada",
+            sendEveryMs: 90,
+          },
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  assert.equal(sent[0].event, "join");
+  assert.equal(sent[0].data.name, "Ada");
+  assert.match(sent[0].data.clientId, /^fs-/);
+  assert.equal(env.context.__gosx.identity.headerName, "X-Feral-Surge-Client-ID");
+  assert.ok(env.sharedSignalCalls.some((call) => call[0] === "$landing" && call[1].includes("PICK A FIGHTER")));
+  assert.ok(env.sharedSignalCalls.some((call) => call[0] === "$attract" && call[1].includes("title")));
+
+  env.sockets[0].onmessage({ data: JSON.stringify({ event: "queued", data: { queueSize: 2 } }) });
+  await flushAsyncWork();
+  assert.ok(env.sharedSignalCalls.some((call) => call[0] === "$landing" && call[1].includes("MATCHMAKING")));
+  assert.ok(env.sharedSignalCalls.some((call) => call[0] === "$lobby" && call[1].includes('"size":2')));
+
+  env.context.__gosx_disconnect_hub("gosx-hub-0");
+  assert.equal(env.sockets[0].closeCalled, true);
+});
+
 test("patch applier updates text nodes and treats setHTML as text", async () => {
   const wrapper = new FakeElement("div", null);
   const componentRoot = new FakeElement("div", null);
@@ -10983,9 +11470,68 @@ test("bootstrap mounts builtin video engines and bridges shared signals", async 
 test("bootstrap registers audio manifests and plays clips", async () => {
   const mount = new FakeElement("div", null);
   mount.id = "audio-root";
+  const audioGraph = { sources: [], gains: [], stereoPanners: [], panners: [], starts: 0 };
+  class FakeAudioNode {
+    constructor(kind) {
+      this.kind = kind;
+      this.connections = [];
+    }
+
+    connect(target) {
+      this.connections.push(target);
+      return target;
+    }
+  }
+  class FakeAudioContext {
+    constructor() {
+      this.destination = new FakeAudioNode("destination");
+    }
+
+    createBufferSource() {
+      const source = new FakeAudioNode("source");
+      source.playbackRate = { value: 1 };
+      source.start = () => {
+        audioGraph.starts++;
+      };
+      source.stop = () => {};
+      audioGraph.sources.push(source);
+      return source;
+    }
+
+    createGain() {
+      const gain = new FakeAudioNode("gain");
+      gain.gain = { value: 1 };
+      audioGraph.gains.push(gain);
+      return gain;
+    }
+
+    createStereoPanner() {
+      const panner = new FakeAudioNode("stereo");
+      panner.pan = { value: 0 };
+      audioGraph.stereoPanners.push(panner);
+      return panner;
+    }
+
+    createPanner() {
+      const panner = new FakeAudioNode("spatial");
+      panner.positionX = { value: 0 };
+      panner.positionY = { value: 0 };
+      panner.positionZ = { value: 0 };
+      audioGraph.panners.push(panner);
+      return panner;
+    }
+
+    async decodeAudioData(data) {
+      return { byteLength: data.byteLength };
+    }
+  }
 
   const env = createContext({
     elements: [mount],
+    AudioContext: FakeAudioContext,
+    fetchRoutes: {
+      "/audio/hit.ogg": { bytes: [1, 2, 3, 4] },
+    },
     engineFactories: {
       AudioProbe: () => ({}),
     },
@@ -11023,8 +11569,25 @@ test("bootstrap registers audio manifests and plays clips", async () => {
   assert.ok(snapshot.buses.some((bus) => bus.id === "master" && bus.volume === 0.5));
   assert.ok(snapshot.buses.some((bus) => bus.id === "sfx" && bus.volume === 0.8));
 
-  const handle = await audio.play("hit", { handle: "hit-1", volume: 0.5, pan: -0.25 });
+  const handle = await audio.play("hit", {
+    handle: "hit-1",
+    volume: 0.5,
+    position: { x: 2, y: 1.5, z: -4 },
+    refDistance: 2,
+    maxDistance: 64,
+    rolloffFactor: 0.75,
+  });
   assert.equal(handle, "hit-1");
+  assert.equal(audioGraph.starts, 1);
+  assert.ok(Math.abs(audioGraph.gains[0].gain.value - 0.15) < 0.000001);
+  assert.equal(audioGraph.stereoPanners.length, 0);
+  assert.equal(audioGraph.panners.length, 1);
+  assert.equal(audioGraph.panners[0].positionX.value, 2);
+  assert.equal(audioGraph.panners[0].positionY.value, 1.5);
+  assert.equal(audioGraph.panners[0].positionZ.value, -4);
+  assert.equal(audioGraph.panners[0].refDistance, 2);
+  assert.equal(audioGraph.panners[0].maxDistance, 64);
+  assert.equal(audioGraph.panners[0].rolloffFactor, 0.75);
   snapshot = audio.snapshot();
   assert.deepEqual(snapshot.handles, ["hit-1"]);
   assert.equal(audio.stop("hit"), true);
@@ -11517,6 +12080,55 @@ test("bootstrap exposes required capability status to mounted engines", async ()
   assert.deepEqual(Array.from(captured.capabilityStatus.required), ["webgl"]);
   assert.deepEqual(Array.from(captured.capabilityStatus.missing), []);
   assert.deepEqual(Array.from(env.context.__gosx.engines.get("gosx-engine-strict-ready").requiredCapabilities), ["webgl"]);
+});
+
+test("bootstrap gates engines on negotiated WebGPU feature capabilities", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "webgpu-feature-root";
+  const captured = {};
+  const env = createContext({
+    elements: [mount],
+    enableWebGPU: true,
+    webgpuAdapter: {
+      features: new Set(["timestamp-query", "shader-f16"]),
+      limits: {
+        maxTextureDimension2D: 8192,
+      },
+      requestDevice: async (descriptor = {}) => ({
+        lost: new Promise(() => {}),
+        features: new Set(descriptor.requiredFeatures || []),
+        limits: {
+          maxTextureDimension2D: 4096,
+        },
+      }),
+    },
+    engineFactories: {
+      WebGPUFeatureEngine(ctx) {
+        captured.status = ctx.capabilityStatus;
+        return { dispose() {} };
+      },
+    },
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-webgpu-feature",
+          component: "WebGPUFeatureEngine",
+          kind: "surface",
+          mountId: "webgpu-feature-root",
+          requiredCapabilities: ["webgpu", "webgpu:timestamp-query", "webgpu:limit:maxTextureDimension2D>=4096", "webgpu:adapter-limit:maxTextureDimension2D>=8192"],
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  assert.equal(env.context.__gosx.engines.size, 1);
+  assert.equal(mount.getAttribute("data-gosx-engine-capability-state"), "ready");
+  assert.equal(mount.getAttribute("data-gosx-engine-supported-capabilities"), "webgpu webgpu:timestamp-query webgpu:limit:maxtexturedimension2d>=4096 webgpu:adapter-limit:maxtexturedimension2d>=8192");
+  assert.deepEqual(Array.from(captured.status.required), ["webgpu", "webgpu:timestamp-query", "webgpu:limit:maxtexturedimension2d>=4096", "webgpu:adapter-limit:maxtexturedimension2d>=8192"]);
+  assert.deepEqual(Array.from(captured.status.missing), []);
 });
 
 test("selective runtime connects hubs without loading the shared wasm runtime", async () => {

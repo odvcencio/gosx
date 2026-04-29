@@ -31,6 +31,159 @@
   var _webgpuDeviceProbe = null;  // null = unprobed, false = unavailable, GPUDevice = ready
   var _webgpuAdapterReady = false;
   var _webgpuProbePromise = Promise.resolve(false);
+  var _webgpuSupportedFeatures = [];
+  var _webgpuRequestedFeatures = [];
+  var _webgpuAdapterLimits = {};
+  var _webgpuDeviceLimits = {};
+  var _webgpuAdapterInfo = {};
+  var _webgpuProbeError = "";
+  var _webgpuDeviceLostInfo = null;
+
+  var WEBGPU_OPTIONAL_FEATURES = [
+    "timestamp-query",
+    "indirect-first-instance",
+    "shader-f16",
+    "texture-compression-bc",
+    "texture-compression-bc-sliced-3d",
+    "texture-compression-etc2",
+    "texture-compression-astc",
+    "texture-compression-astc-sliced-3d",
+    "depth-clip-control",
+    "depth32float-stencil8",
+    "float32-filterable",
+    "float32-blendable",
+    "rg11b10ufloat-renderable",
+    "bgra8unorm-storage",
+    "clip-distances",
+    "dual-source-blending",
+    "subgroups",
+    "subgroups-f16",
+  ];
+
+  var WEBGPU_LIMIT_NAMES = [
+    "maxTextureDimension1D",
+    "maxTextureDimension2D",
+    "maxTextureDimension3D",
+    "maxTextureArrayLayers",
+    "maxBindGroups",
+    "maxBindGroupsPlusVertexBuffers",
+    "maxBindingsPerBindGroup",
+    "maxDynamicUniformBuffersPerPipelineLayout",
+    "maxDynamicStorageBuffersPerPipelineLayout",
+    "maxSampledTexturesPerShaderStage",
+    "maxSamplersPerShaderStage",
+    "maxStorageBuffersPerShaderStage",
+    "maxStorageTexturesPerShaderStage",
+    "maxUniformBuffersPerShaderStage",
+    "maxUniformBufferBindingSize",
+    "maxStorageBufferBindingSize",
+    "minUniformBufferOffsetAlignment",
+    "minStorageBufferOffsetAlignment",
+    "maxVertexBuffers",
+    "maxBufferSize",
+    "maxVertexAttributes",
+    "maxVertexBufferArrayStride",
+    "maxInterStageShaderComponents",
+    "maxInterStageShaderVariables",
+    "maxColorAttachments",
+    "maxColorAttachmentBytesPerSample",
+    "maxComputeWorkgroupStorageSize",
+    "maxComputeInvocationsPerWorkgroup",
+    "maxComputeWorkgroupSizeX",
+    "maxComputeWorkgroupSizeY",
+    "maxComputeWorkgroupSizeZ",
+    "maxComputeWorkgroupsPerDimension",
+  ];
+
+  function sceneWebGPUFeatureList(features) {
+    var out = [];
+    if (!features) return out;
+    if (typeof features.forEach === "function") {
+      features.forEach(function(value) {
+        if (typeof value === "string") out.push(value);
+      });
+    } else if (typeof features[Symbol.iterator] === "function") {
+      for (var entry of features) {
+        if (typeof entry === "string") out.push(entry);
+      }
+    } else if (Array.isArray(features)) {
+      out = features.filter(function(value) { return typeof value === "string"; });
+    }
+    out.sort();
+    return out.filter(function(value, index) { return index === 0 || out[index - 1] !== value; });
+  }
+
+  function sceneWebGPUFeatureSupported(adapter, feature) {
+    var features = adapter && adapter.features;
+    if (!features) return false;
+    if (typeof features.has === "function") {
+      return features.has(feature);
+    }
+    return sceneWebGPUFeatureList(features).indexOf(feature) >= 0;
+  }
+
+  function sceneWebGPURequestedFeatureList(adapter) {
+    var out = [];
+    for (var i = 0; i < WEBGPU_OPTIONAL_FEATURES.length; i++) {
+      var feature = WEBGPU_OPTIONAL_FEATURES[i];
+      if (!sceneWebGPUFeatureSupported(adapter, feature)) continue;
+      if (feature === "texture-compression-bc-sliced-3d" && !sceneWebGPUFeatureSupported(adapter, "texture-compression-bc")) continue;
+      if (feature === "texture-compression-astc-sliced-3d" && !sceneWebGPUFeatureSupported(adapter, "texture-compression-astc")) continue;
+      if (feature === "subgroups-f16" && (!sceneWebGPUFeatureSupported(adapter, "subgroups") || !sceneWebGPUFeatureSupported(adapter, "shader-f16"))) continue;
+      out.push(feature);
+    }
+    return out;
+  }
+
+  function sceneWebGPULimitsSnapshot(limits) {
+    var out = {};
+    if (!limits) return out;
+    for (var i = 0; i < WEBGPU_LIMIT_NAMES.length; i++) {
+      var name = WEBGPU_LIMIT_NAMES[i];
+      var value = limits[name];
+      if (Number.isFinite(Number(value))) {
+        out[name] = Number(value);
+      }
+    }
+    return out;
+  }
+
+  function sceneWebGPUAdapterInfoSnapshot(adapter) {
+    var info = adapter && adapter.info;
+    var out = {};
+    if (!info || typeof info !== "object") return out;
+    var keys = ["vendor", "architecture", "device", "description", "subgroupMinSize", "subgroupMaxSize"];
+    for (var i = 0; i < keys.length; i++) {
+      var key = keys[i];
+      var value = info[key];
+      if (typeof value === "string" && value) {
+        out[key] = value;
+      } else if (Number.isFinite(Number(value))) {
+        out[key] = Number(value);
+      }
+    }
+    return out;
+  }
+
+  function sceneWebGPUProbeSnapshot() {
+    return {
+      ready: !!_webgpuAdapterReady,
+      adapterAvailable: _webgpuAdapterProbe !== false && _webgpuAdapterProbe !== null,
+      deviceAvailable: _webgpuDeviceProbe !== false && _webgpuDeviceProbe !== null,
+      supportedFeatures: _webgpuSupportedFeatures.slice(),
+      requestedFeatures: _webgpuRequestedFeatures.slice(),
+      deviceFeatures: sceneWebGPUFeatureList(_webgpuDeviceProbe && _webgpuDeviceProbe.features),
+      adapterLimits: Object.assign({}, _webgpuAdapterLimits),
+      deviceLimits: Object.assign({}, _webgpuDeviceLimits),
+      adapterInfo: Object.assign({}, _webgpuAdapterInfo),
+      error: _webgpuProbeError,
+      lost: _webgpuDeviceLostInfo,
+    };
+  }
+
+  function sceneWebGPUDiagnostics() {
+    return sceneWebGPUProbeSnapshot();
+  }
 
   // Shared probe helper. Callers in 16a-scene-webgpu.js use this to read
   // the current probe state without re-running the async adapter/device
@@ -58,8 +211,15 @@
         adapter: _webgpuAdapterProbe,
         device: _webgpuDeviceProbe,
         ready: _webgpuAdapterReady,
+        supportedFeatures: _webgpuSupportedFeatures.slice(),
+        requestedFeatures: _webgpuRequestedFeatures.slice(),
+        limits: Object.assign({}, _webgpuAdapterLimits),
+        adapterInfo: Object.assign({}, _webgpuAdapterInfo),
+        error: _webgpuProbeError,
+        lost: _webgpuDeviceLostInfo,
       };
     };
+    window.__gosx_scene3d_webgpu_diagnostics = sceneWebGPUDiagnostics;
     window.__gosx_scene3d_webgpu_probe_ready = function() {
       return _webgpuProbePromise.then(function() {
         return _webgpuAdapterReady;
@@ -77,38 +237,53 @@
     // any working device is better than none.
     _webgpuProbePromise = navigator.gpu.requestAdapter().then(function(adapter) {
       if (!adapter) {
-        console.warn("[gosx] WebGPU probe: requestAdapter returned null");
+        _webgpuProbeError = "requestAdapter returned null";
+        console.warn("[gosx] WebGPU probe: " + _webgpuProbeError);
         _webgpuAdapterProbe = false;
         _webgpuDeviceProbe = false;
         return false;
       }
       _webgpuAdapterProbe = adapter;
+      _webgpuSupportedFeatures = sceneWebGPUFeatureList(adapter.features);
+      _webgpuRequestedFeatures = sceneWebGPURequestedFeatureList(adapter);
+      _webgpuAdapterLimits = sceneWebGPULimitsSnapshot(adapter.limits);
+      _webgpuAdapterInfo = sceneWebGPUAdapterInfoSnapshot(adapter);
       // Verify device creation actually succeeds — this is where
       // partial implementations (SwiftShader WebGPU, constrained
       // mobile GPUs, broken ANGLE backends) fail. We don't mark
       // WebGPU "ready" until the device itself is in hand.
-      return adapter.requestDevice();
+      var descriptor = _webgpuRequestedFeatures.length > 0
+        ? { requiredFeatures: _webgpuRequestedFeatures }
+        : {};
+      return adapter.requestDevice(descriptor);
     }).then(function(device) {
       if (device === false) {
         return;
       }
       if (!device) {
-        console.warn("[gosx] WebGPU probe: requestDevice returned null");
+        _webgpuProbeError = "requestDevice returned null";
+        console.warn("[gosx] WebGPU probe: " + _webgpuProbeError);
         _webgpuDeviceProbe = false;
         return;
       }
       _webgpuDeviceProbe = device;
+      _webgpuDeviceLimits = sceneWebGPULimitsSnapshot(device.limits);
       _webgpuAdapterReady = true;
       // Invalidate the probe if the device is ever lost post-probe —
       // consumers re-check sceneWebGPUAvailable() on each mount.
       device.lost.then(function(info) {
+        _webgpuDeviceLostInfo = {
+          reason: info && info.reason || "",
+          message: info && info.message || "",
+        };
         console.warn("[gosx] WebGPU probe device lost:", info && info.message);
         _webgpuAdapterReady = false;
         _webgpuDeviceProbe = false;
       }).catch(function() {});
       return true;
     }).catch(function(err) {
-      console.warn("[gosx] WebGPU probe failed:", err && (err.message || err));
+      _webgpuProbeError = String(err && (err.message || err) || "unknown error");
+      console.warn("[gosx] WebGPU probe failed:", _webgpuProbeError);
       _webgpuAdapterProbe = false;
       _webgpuDeviceProbe = false;
       return false;
@@ -142,11 +317,11 @@
   // sub-feature chunk ONLY when the probe confirmed both adapter + device
   // work. Returns null otherwise so the caller can fall through to
   // WebGL without having tainted the canvas.
-  function createSceneWebGPURendererOrFallback(canvas) {
+  function createSceneWebGPURendererOrFallback(canvas, options) {
     if (!sceneWebGPUAvailable()) return null;
     if (!canvas || typeof canvas.getContext !== "function") return null;
     try {
-      var renderer = window.__gosx_scene3d_webgpu_api.createRenderer(canvas);
+      var renderer = window.__gosx_scene3d_webgpu_api.createRenderer(canvas, options || {});
       // Defensive: the sub-feature factory may still return null if it
       // hits an internal error after getContext but before handing back
       // a renderer object. In that case the canvas is tainted — there's
@@ -167,8 +342,13 @@
       available: function() {
         return sceneWebGPUAvailable();
       },
-      create: function(canvas) {
-        return createSceneWebGPURendererOrFallback(canvas);
+      create: function(canvas, props, capability) {
+        var options = typeof sceneWebGPUOptions === "function" ? sceneWebGPUOptions(props, capability) : {};
+        return createSceneWebGPURendererOrFallback(canvas, options);
       },
     });
+  }
+
+  if (typeof window !== "undefined" && window.__gosx_scene3d_api) {
+    window.__gosx_scene3d_api.sceneWebGPUDiagnostics = sceneWebGPUDiagnostics;
   }
