@@ -1299,6 +1299,7 @@
       animationApi,
       mixer: null,
       animation: "",
+      animationSeq: "",
       poseDirty: false,
     };
     if (!Array.isArray(state._modelSkins)) {
@@ -1319,6 +1320,7 @@
         if (mixer.isPlaying(requestedAnimation)) {
           record.mixer = mixer;
           record.animation = requestedAnimation;
+          record.animationSeq = "";
           if (!Array.isArray(state._modelAnimations)) {
             state._modelAnimations = [];
           }
@@ -1422,20 +1424,24 @@
       return false;
     }
     const animation = typeof patch.animation === "string" ? patch.animation.trim() : "";
-    if (!animation || (record.animation === animation && record.mixer.isPlaying(animation))) {
+    const hasSeq = Object.prototype.hasOwnProperty.call(patch, "animationSeq");
+    const animationSeq = hasSeq ? String(patch.animationSeq == null ? "" : patch.animationSeq) : "";
+    const replay = Boolean(hasSeq && animationSeq && record.animation === animation && record.animationSeq !== animationSeq);
+    if (!animation || (record.animation === animation && record.mixer.isPlaying(animation) && !replay)) {
       return false;
     }
     if (record.animation && record.mixer.isPlaying(record.animation)) {
-      record.mixer.stop(record.animation, { fadeOut: 0.05 });
+      record.mixer.stop(record.animation, { fadeOut: replay ? 0 : 0.05 });
     }
     record.mixer.play(animation, {
       loop: Object.prototype.hasOwnProperty.call(patch, "loop") ? patch.loop !== false : true,
-      fadeIn: 0.04,
+      fadeIn: replay ? 0 : 0.04,
     });
     if (!record.mixer.isPlaying(animation)) {
       return false;
     }
     record.animation = animation;
+    record.animationSeq = animationSeq;
     record.poseDirty = true;
     return true;
   }

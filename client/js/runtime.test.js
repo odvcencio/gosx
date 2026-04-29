@@ -5101,6 +5101,84 @@ test("bootstrap starts Scene3D GLB model animation playback from model props", a
   assert.equal(env.consoleLogs.error.length, 0);
 });
 
+test("bootstrap replays Scene3D GLB model animations when live sequence changes", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-model-live-animation-root";
+
+  const env = createContext({
+    elements: [mount],
+    fetchRoutes: {
+      "/models/rig.glb": {
+        bytes: buildSkinnedGLBBytes(),
+      },
+    },
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-model-live-animation",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-model-live-animation-root",
+          props: {
+            width: 640,
+            height: 360,
+            autoRotate: false,
+            models: [
+              {
+                id: "rig",
+                src: "/models/rig.glb",
+                animation: "bend",
+                loop: true,
+                live: ["attack"],
+              },
+            ],
+          },
+        },
+      ],
+    },
+  });
+  installManualRAF(env.context);
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  const animationApi = env.context.__gosx_scene3d_animation_api;
+  const originalCreateMixer = animationApi.createMixer;
+  const calls = [];
+  animationApi.createMixer = function createObservedMixer(...args) {
+    const mixer = originalCreateMixer.apply(this, args);
+    const originalPlay = mixer.play.bind(mixer);
+    const originalStop = mixer.stop.bind(mixer);
+    mixer.play = function observedPlay(name, options) {
+      calls.push(["play", name, options && options.fadeIn]);
+      return originalPlay(name, options);
+    };
+    mixer.stop = function observedStop(name, options) {
+      calls.push(["stop", name, options && options.fadeOut]);
+      return originalStop(name, options);
+    };
+    return mixer;
+  };
+  await flushAsyncWork();
+
+  env.document.dispatchEvent(new env.context.CustomEvent("gosx:hub:event", {
+    detail: { event: "attack", data: { rig: { animation: "bend", animationSeq: "hit-1" } } },
+  }));
+  env.document.dispatchEvent(new env.context.CustomEvent("gosx:hub:event", {
+    detail: { event: "attack", data: { rig: { animation: "bend", animationSeq: "hit-1" } } },
+  }));
+  env.document.dispatchEvent(new env.context.CustomEvent("gosx:hub:event", {
+    detail: { event: "attack", data: { rig: { animation: "bend", animationSeq: "hit-2" } } },
+  }));
+
+  assert.deepEqual(calls, [
+    ["play", "bend", 0],
+    ["stop", "bend", 0],
+    ["play", "bend", 0],
+    ["stop", "bend", 0],
+    ["play", "bend", 0],
+  ]);
+  assert.equal(env.consoleLogs.error.length, 0);
+});
+
 test("bootstrap uploads skinned GLB joint matrices through WebGL PBR", async () => {
   const mount = new FakeElement("div", null);
   mount.id = "scene-model-skinned-webgl-root";
