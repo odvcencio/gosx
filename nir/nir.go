@@ -52,8 +52,8 @@ type PropField struct {
 	Type string `json:"type"`
 }
 
-// View is the sum type for view-tree nodes. Slot, Loop, and ComponentRef land
-// later as the corpus grows.
+// View is the sum type for view-tree nodes. Slot and Loop land later as the
+// corpus grows.
 type View interface {
 	isView()
 }
@@ -130,6 +130,33 @@ func (c *Conditional) UnmarshalJSON(data []byte) error {
 	}
 	c.Then = thenViews
 	c.Else = elseViews
+	return nil
+}
+
+type ComponentRef struct {
+	Name     string `json:"component"`
+	Props    []Attr `json:"props,omitempty"`
+	Children []View `json:"children,omitempty"`
+	Span     Span   `json:"span"`
+}
+
+func (*ComponentRef) isView() {}
+
+func (c *ComponentRef) UnmarshalJSON(data []byte) error {
+	type componentRefAlias ComponentRef
+	var raw struct {
+		*componentRefAlias
+		Children []json.RawMessage `json:"children"`
+	}
+	raw.componentRefAlias = (*componentRefAlias)(c)
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	children, err := decodeViews(raw.Children)
+	if err != nil {
+		return err
+	}
+	c.Children = children
 	return nil
 }
 
@@ -228,6 +255,7 @@ func decodeView(data []byte) (View, error) {
 		Value     *string         `json:"value"`
 		Expr      json.RawMessage `json:"expr"`
 		Condition json.RawMessage `json:"condition"`
+		Component *string         `json:"component"`
 	}
 	if err := json.Unmarshal(data, &probe); err != nil {
 		return nil, err
@@ -257,6 +285,12 @@ func decodeView(data []byte) (View, error) {
 			return nil, err
 		}
 		return &conditional, nil
+	case probe.Component != nil:
+		var ref ComponentRef
+		if err := json.Unmarshal(data, &ref); err != nil {
+			return nil, err
+		}
+		return &ref, nil
 	default:
 		return nil, fmt.Errorf("unknown view node: %s", string(data))
 	}

@@ -119,3 +119,33 @@ func TestConditionalViewRoundTrip(t *testing.T) {
 		t.Fatalf("conditional round-trip mismatch: %+v", conditional)
 	}
 }
+
+func TestComponentRefViewRoundTrip(t *testing.T) {
+	in := &Module{
+		Components: []*Component{{
+			Name: "Profile",
+			Body: &ComponentRef{
+				Name: "Badge",
+				Props: []Attr{{
+					Name:  "label",
+					Value: RxExpr{Kind: "ref", Ref: "props.name"},
+				}},
+			},
+		}},
+	}
+	data, err := json.Marshal(in)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var out Module
+	if err := json.Unmarshal(data, &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	ref, ok := out.Components[0].Body.(*ComponentRef)
+	if !ok {
+		t.Fatalf("body decoded as %T, want *ComponentRef", out.Components[0].Body)
+	}
+	if ref.Name != "Badge" || len(ref.Props) != 1 || ref.Props[0].Value.Ref != "props.name" {
+		t.Fatalf("component ref round-trip mismatch: %+v", ref)
+	}
+}
