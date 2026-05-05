@@ -4,6 +4,7 @@
 //
 //	gosx build [--offline|--msix|--sign] <dir>
 //	                              Build GoSX application
+//	gosx assets plan [path...]    Plan Scene3D asset optimization work
 //	gosx build-runtime [outdir]   Build TinyGo production WASM runtimes
 //	gosx dev <dir>               Start development server with hot reload
 //	gosx desktop [dev] <dir>     Start development server in a native desktop host
@@ -45,6 +46,8 @@ func main() {
 	cmd := os.Args[1]
 
 	switch cmd {
+	case "assets":
+		cmdAssets()
 	case "build":
 		cmdBuild()
 	case "build-runtime":
@@ -93,6 +96,7 @@ Usage:
 Commands:
   build [--offline|--msix|--sign] [--appinstaller <uri>] <dir>
                        Build GoSX application
+  assets plan [path...] Plan build-time optimization for Scene3D assets
   build-runtime [outdir]
                        Build TinyGo production WASM runtimes
   dev <dir>            Start development server with hot reload

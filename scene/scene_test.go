@@ -823,6 +823,7 @@ func TestPropsMarshalJSONOmitsEngineTransportFields(t *testing.T) {
 
 func TestPropsMarshalJSONCarriesWebGPUPresentationHints(t *testing.T) {
 	props := Props{
+		PreferWebGPU:          Bool(true),
 		WebGPUAlphaMode:       "opaque",
 		WebGPUColorSpace:      "display-p3",
 		WebGPUToneMapping:     "extended",
@@ -835,6 +836,7 @@ func TestPropsMarshalJSONCarriesWebGPUPresentationHints(t *testing.T) {
 	}
 	text := string(data)
 	for _, snippet := range []string{
+		`"preferWebGPU":true`,
 		`"webgpuAlphaMode":"opaque"`,
 		`"webgpuColorSpace":"display-p3"`,
 		`"webgpuToneMapping":"extended"`,
@@ -992,6 +994,7 @@ func TestPropsEngineConfigUsesBuiltInSceneContract(t *testing.T) {
 
 	wantCaps := []engine.Capability{
 		engine.CapCanvas,
+		engine.CapWebGPU,
 		engine.CapWebGL,
 		engine.CapAnimation,
 		engine.CapPointer,
@@ -1010,6 +1013,13 @@ func TestPropsEngineConfigUsesBuiltInSceneContract(t *testing.T) {
 	}
 	if contains(string(cfg.Props), "programRef") {
 		t.Fatalf("did not expect programRef in engine props, got %s", string(cfg.Props))
+	}
+}
+
+func TestPropsEngineCapabilitiesIncludeWebGPUByDefault(t *testing.T) {
+	cfg := (Props{}).EngineConfig()
+	if !slicesContainCapability(cfg.Capabilities, engine.CapWebGPU) {
+		t.Fatalf("expected webgpu capability by default, got %#v", cfg.Capabilities)
 	}
 }
 
@@ -1550,12 +1560,17 @@ func TestPropsSceneIRLowersModelAnimationFields(t *testing.T) {
 	props := Props{
 		Graph: NewGraph(
 			Model{
-				ID:        "dancer",
-				Src:       "/models/dancer.gosx3d.json",
-				Position:  Vec3(0, 0, 0),
-				Scale:     Vec3(1, 1, 1),
-				Animation: "idle",
-				Loop:      Bool(true),
+				ID:                 "dancer",
+				Src:                "/models/dancer.gosx3d.json",
+				Position:           Vec3(0, 0, 0),
+				Scale:              Vec3(1, 1, 1),
+				Animation:          "idle",
+				AnimationSeq:       "idle-boot",
+				AnimationSpeed:     Float(1.25),
+				AnimationWeight:    Float(0.8),
+				AnimationFadeInMS:  Int(120),
+				AnimationFadeOutMS: Int(80),
+				Loop:               Bool(true),
 			},
 		),
 	}
@@ -1570,6 +1585,21 @@ func TestPropsSceneIRLowersModelAnimationFields(t *testing.T) {
 	}
 	if model.Loop == nil || !*model.Loop {
 		t.Fatalf("expected loop true, got %v", model.Loop)
+	}
+	if model.AnimationSeq != "idle-boot" {
+		t.Fatalf("expected animation sequence 'idle-boot', got %q", model.AnimationSeq)
+	}
+	if model.AnimationSpeed == nil || *model.AnimationSpeed != 1.25 {
+		t.Fatalf("expected animation speed 1.25, got %v", model.AnimationSpeed)
+	}
+	if model.AnimationWeight == nil || *model.AnimationWeight != 0.8 {
+		t.Fatalf("expected animation weight 0.8, got %v", model.AnimationWeight)
+	}
+	if model.AnimationFadeInMS == nil || *model.AnimationFadeInMS != 120 {
+		t.Fatalf("expected animation fade-in 120ms, got %v", model.AnimationFadeInMS)
+	}
+	if model.AnimationFadeOutMS == nil || *model.AnimationFadeOutMS != 80 {
+		t.Fatalf("expected animation fade-out 80ms, got %v", model.AnimationFadeOutMS)
 	}
 
 	legacy := props.LegacyProps()
@@ -1586,6 +1616,58 @@ func TestPropsSceneIRLowersModelAnimationFields(t *testing.T) {
 	}
 	if got := models[0]["loop"]; got != true {
 		t.Fatalf("expected loop true in legacy model, got %#v", got)
+	}
+	if got := models[0]["animationSeq"]; got != "idle-boot" {
+		t.Fatalf("expected animation sequence in legacy model, got %#v", got)
+	}
+	if got := models[0]["animationSpeed"]; got != 1.25 {
+		t.Fatalf("expected animation speed in legacy model, got %#v", got)
+	}
+	if got := models[0]["animationWeight"]; got != 0.8 {
+		t.Fatalf("expected animation weight in legacy model, got %#v", got)
+	}
+	if got := models[0]["animationFadeInMS"]; got != 120 {
+		t.Fatalf("expected animation fade-in in legacy model, got %#v", got)
+	}
+	if got := models[0]["animationFadeOutMS"]; got != 80 {
+		t.Fatalf("expected animation fade-out in legacy model, got %#v", got)
+	}
+}
+
+func TestPropsSceneIRSanitizesModelAnimationControls(t *testing.T) {
+	props := Props{
+		Graph: NewGraph(
+			Model{
+				ID:                 "dancer",
+				Src:                "/models/dancer.gosx3d.json",
+				Animation:          "idle",
+				AnimationSpeed:     Float(-2),
+				AnimationWeight:    Float(math.Inf(1)),
+				AnimationFadeInMS:  Int(-120),
+				AnimationFadeOutMS: Int(-80),
+			},
+		),
+	}
+
+	ir := props.SceneIR()
+	if len(ir.Models) != 1 {
+		t.Fatalf("expected one model, got %d", len(ir.Models))
+	}
+	model := ir.Models[0]
+	if model.AnimationSpeed == nil || *model.AnimationSpeed != 0 {
+		t.Fatalf("expected negative animation speed to clamp to 0, got %v", model.AnimationSpeed)
+	}
+	if model.AnimationWeight != nil {
+		t.Fatalf("expected non-finite animation weight to be omitted, got %v", model.AnimationWeight)
+	}
+	if model.AnimationFadeInMS == nil || *model.AnimationFadeInMS != 0 {
+		t.Fatalf("expected negative animation fade-in to clamp to 0, got %v", model.AnimationFadeInMS)
+	}
+	if model.AnimationFadeOutMS == nil || *model.AnimationFadeOutMS != 0 {
+		t.Fatalf("expected negative animation fade-out to clamp to 0, got %v", model.AnimationFadeOutMS)
+	}
+	if _, err := json.Marshal(props); err != nil {
+		t.Fatalf("expected sanitized animation controls to marshal: %v", err)
 	}
 }
 

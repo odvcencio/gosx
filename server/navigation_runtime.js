@@ -963,6 +963,7 @@
           found.push({
             role: child.getAttribute(SCRIPT_ROLE),
             src: absolutizeURL(child.getAttribute("src"), baseURL),
+            load: child.getAttribute("data-gosx-script-load") || "",
           });
         }
         walk(child);
@@ -972,26 +973,62 @@
     return found;
   }
 
-  async function loadManagedScript(role, src) {
+  function findLoadedScript(src) {
+    const scripts = document.querySelectorAll("script[src]");
+    for (const script of scripts) {
+      if (absolutizeURL(script.getAttribute("src"), windowLocationHref()) === src) {
+        return script;
+      }
+    }
+    return null;
+  }
+
+  function loadManagedScriptTag(role, src) {
+    const existing = findLoadedScript(src);
+    if (existing) {
+      existing.setAttribute(SCRIPT_ROLE, existing.getAttribute(SCRIPT_ROLE) || role || "managed");
+      return Promise.resolve(false);
+    }
+    return new Promise(function(resolve, reject) {
+      const script = document.createElement("script");
+      script.src = src;
+      script.async = false;
+      script.setAttribute(SCRIPT_ROLE, role || "managed");
+      script.setAttribute("data-gosx-script-load", "dom");
+      script.onload = function() {
+        script.setAttribute("data-gosx-script-loaded", "true");
+        resolve(false);
+      };
+      script.onerror = function() {
+        reject(new Error("script load failed: " + src));
+      };
+      (document.head || document.documentElement).appendChild(script);
+    });
+  }
+
+  async function loadManagedScript(role, src, load) {
     if (!src) return false;
     if (role === "bootstrap" && typeof window.__gosx_bootstrap_page === "function") {
       return false;
     }
-    if (scriptCache.has(src)) {
-      await scriptCache.get(src);
+    const cacheKey = (load === "dom" ? "dom:" : "eval:") + src;
+    if (scriptCache.has(cacheKey)) {
+      await scriptCache.get(cacheKey);
       return false;
     }
 
-    const promise = (async function() {
-      const resp = await fetch(src);
-      if (!resp.ok) {
-        throw new Error("script fetch failed: " + src + " (" + resp.status + ")");
-      }
-      const source = await resp.text();
-      (0, eval)(String(source) + "\n//# sourceURL=" + src);
-    })();
+    const promise = load === "dom"
+      ? loadManagedScriptTag(role, src)
+      : (async function() {
+        const resp = await fetch(src);
+        if (!resp.ok) {
+          throw new Error("script fetch failed: " + src + " (" + resp.status + ")");
+        }
+        const source = await resp.text();
+        (0, eval)(String(source) + "\n//# sourceURL=" + src);
+      })();
 
-    scriptCache.set(src, promise);
+    scriptCache.set(cacheKey, promise);
     await promise;
     return role === "bootstrap";
   }
@@ -1007,7 +1044,7 @@
 
     let bootstrapLoadedNow = false;
     for (const script of scripts) {
-      if (await loadManagedScript(script.role, script.src)) {
+      if (await loadManagedScript(script.role, script.src, script.load)) {
         bootstrapLoadedNow = true;
       }
     }

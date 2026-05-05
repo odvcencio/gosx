@@ -159,6 +159,7 @@ func runtimeSizeAssets(manifest *buildmanifest.Manifest) []runtimeSizeAsset {
 		{name: "bootstrap-feature-scene3d-animation.js", file: rt.BootstrapFeatureScene3DAnimation.File, role: "scene3d animation chunk"},
 		{name: "patch.js", file: rt.Patch.File, role: "navigation patch"},
 		{name: "hls.min.js", file: rt.VideoHLS.File, role: "video hls chunk"},
+		{name: "stripe-bridge.js", file: rt.StripeBridge.File, role: "stripe bridge chunk"},
 	}
 }
 

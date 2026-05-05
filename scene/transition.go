@@ -196,21 +196,26 @@ type SpriteProps struct {
 
 // ModelProps is a partial model prop bag used for transition states.
 type ModelProps struct {
-	Src        *string
-	Position   *Vector3
-	Rotation   *Euler
-	Scale      *Vector3
-	Color      *string
-	Texture    *string
-	Opacity    *float64
-	Emissive   *float64
-	BlendMode  *MaterialBlendMode
-	RenderPass *MaterialRenderPass
-	Wireframe  *bool
-	Pickable   *bool
-	Static     *bool
-	Animation  *string
-	Loop       *bool
+	Src                *string
+	Position           *Vector3
+	Rotation           *Euler
+	Scale              *Vector3
+	Color              *string
+	Texture            *string
+	Opacity            *float64
+	Emissive           *float64
+	BlendMode          *MaterialBlendMode
+	RenderPass         *MaterialRenderPass
+	Wireframe          *bool
+	Pickable           *bool
+	Static             *bool
+	Animation          *string
+	AnimationSeq       *string
+	AnimationSpeed     *float64
+	AnimationWeight    *float64
+	AnimationFadeInMS  *int
+	AnimationFadeOutMS *int
+	Loop               *bool
 }
 
 // LightProps is a partial light prop bag used for transition states.
@@ -440,6 +445,11 @@ func (props *ModelProps) legacyProps() map[string]any {
 	setBoolPtr(record, "pickable", props.Pickable)
 	setBoolPtr(record, "static", props.Static)
 	setStringPtr(record, "animation", props.Animation)
+	setStringPtr(record, "animationSeq", props.AnimationSeq)
+	setNumericPtr(record, "animationSpeed", nonNegativeFloatPtr(props.AnimationSpeed))
+	setNumericPtr(record, "animationWeight", nonNegativeFloatPtr(props.AnimationWeight))
+	setIntPtr(record, "animationFadeInMS", nonNegativeIntPtr(props.AnimationFadeInMS))
+	setIntPtr(record, "animationFadeOutMS", nonNegativeIntPtr(props.AnimationFadeOutMS))
 	setBoolPtr(record, "loop", props.Loop)
 	return trimEmptyRecord(record)
 }

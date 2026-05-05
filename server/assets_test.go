@@ -84,6 +84,22 @@ func TestManagedScriptRendersRuntimeMetadata(t *testing.T) {
 	}
 }
 
+func TestManagedScriptCanRequestDOMLoading(t *testing.T) {
+	html := gosx.RenderHTML(ManagedScript("https://js.stripe.com/clover/stripe.js", ManagedScriptOptions{
+		Role: ManagedScriptRoleManaged,
+		Load: ManagedScriptLoadDOM,
+	}))
+	for _, snippet := range []string{
+		`src="https://js.stripe.com/clover/stripe.js"`,
+		`data-gosx-script="managed"`,
+		`data-gosx-script-load="dom"`,
+	} {
+		if !strings.Contains(html, snippet) {
+			t.Fatalf("expected %q in %q", snippet, html)
+		}
+	}
+}
+
 func TestLifecycleScriptDefaultsLifecycleRole(t *testing.T) {
 	html := gosx.RenderHTML(LifecycleScript("runtime/page.js"))
 	for _, snippet := range []string{

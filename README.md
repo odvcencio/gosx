@@ -2,7 +2,7 @@
 
 A Go-native web platform. Write components in `.gsx` — Go with embedded markup — compile through a real compiler pipeline, render on the server by default, hydrate interactive islands with WebAssembly. No JavaScript toolchain. No CGo. A deliberately small dependency budget.
 
-Current release: **v0.18.25**. Pre-1.0; breaking changes are documented in [CHANGELOG.md](./CHANGELOG.md).
+Current release: **v0.18.26**. Pre-1.0; breaking changes are documented in [CHANGELOG.md](./CHANGELOG.md).
 
 ## What if you never had to leave Go?
 
@@ -277,7 +277,7 @@ Kinds choose the mount model. Capabilities declare which browser APIs the engine
 
 ## Scene3D — 3D Engine
 
-The `scene` package is a full 3D engine authored in Go. You describe the scene as a typed Go struct tree; the runtime lowers it to a compact IR, streams it to the client, and renders it through two backends that reach the browser as part of the standard bootstrap bundle: a hand-written JS WebGL backend, and a pure-Go WebGPU pipeline (`render/gpu` + `render/bundle` with hand-written WGSL) compiled to WASM. Both backends consume the same SceneIR; the planner picks at runtime based on capability. There is no separate engine binary. There is no three.js. There is no JavaScript scene graph.
+The `scene` package is a full 3D engine authored in Go. You describe the scene as a typed Go struct tree; the runtime lowers it to a compact IR, streams it to the client, and renders it through two backends that reach the browser as part of the standard bootstrap bundle: a hand-written JS WebGL backend, and a pure-Go WebGPU pipeline (`render/gpu` + `render/bundle` with hand-written WGSL) compiled to WASM. Typed Scene3D surfaces declare WebGPU as a default capability, so capable browsers take the WebGPU path first and fall back through WebGL and canvas when the scene or device needs it. Both backends consume the same SceneIR; the planner picks at runtime based on capability. There is no separate engine binary. There is no three.js. There is no JavaScript scene graph.
 
 ```go
 scene.Props{
@@ -325,7 +325,13 @@ scene.Props{
         }},
         scene.AxesHelper{ID: "axes", Size: 2},
         scene.GridHelper{ID: "grid", Size: 8, Divisions: 8},
-        scene.Model{Src: "/assets/ship.glb", Animation: "idle"},
+        scene.Model{
+            Src:                "/assets/ship.glb",
+            Animation:          "idle",
+            AnimationSpeed:     scene.Float(1.1),
+            AnimationFadeInMS:  scene.Int(120),
+            AnimationFadeOutMS: scene.Int(80),
+        },
     ),
 }
 ```
@@ -338,7 +344,9 @@ scene.Props{
 - **Lights** — `AmbientLight`, `DirectionalLight`, `PointLight`, `SpotLight`, `HemisphereLight`, `RectAreaLight`, `LightProbe`; shadows on directional and spot with per-light `ShadowSize` and a scene-wide `Shadows.MaxPixels` cap
 - **Cameras** — perspective and orthographic cameras with orbit, first-person, fly, drag, pointer-lock, and transition hints plus picking and projection-aware sprites/labels
 - **glTF / GLB** — `scene.Model{Src: "/assets/thing.glb"}` loads binary or JSON glTF 2.0 through the in-runtime pure-JS loader (`19-scene-gltf.js`), including animations
-- **Animation** — `AnimationClip` / `AnimationChannel` for node-level keyframe animation, `Spin` convenience for auto-rotation, glTF animation playback; scene-level `autoRotate` is opt-in and static scenes do not keep a RAF loop alive by default
+- **Build-time asset planning** — `gosx assets plan public` and `gosx build` inventory GLB/glTF, KTX2, HDR/EXR, raster textures, audio, USDZ, and WGSL assets into a low-memory `scene-assets.json` contract, including KTX2 upload metadata, concrete variant targets, planned KTX2 transcodes, GGX IBL prefiltering, split-sum LUT generation, meshopt/Draco compression, LOD stacks, and TurboQuant vertex/animation stream compression
+- **Server-driven scene diffs** — `scene.DiffCommands(prev.SceneIR(), next.SceneIR())` emits the browser command protocol for live object, label, sprite, and light replacement, so a Go server can mutate typed scene state and stream compact Scene3D commands over a hub instead of shipping a new page payload
+- **Animation** — `AnimationClip` / `AnimationChannel` for node-level keyframe animation, `Spin` convenience for auto-rotation, glTF animation playback with loop, speed, blend weight, fade-in/fade-out, and replay-sequence controls; scene-level `autoRotate` is opt-in and static scenes do not keep a RAF loop alive by default
 - **Instancing** — `InstancedMesh` renders repeated geometry through WebGPU instance-rate vertex buffers and WebGL2 `drawArraysInstanced`, with per-instance transforms, colors, material passes, receive shadows, and WebGPU instanced shadow casters
 - **World primitives** — helper lines, thick world lines, wire overlays, grids, axes, clip-space guides, and textured plane surfaces render on WebGPU through dedicated color, screen-space line-expansion, and surface-texture pipelines; dashed line styles remain the explicit WebGL2 compatibility escape hatch
 - **Particles** — GPU-computed particle systems via `ComputeParticles` with emitter, forces, and material
@@ -456,6 +464,7 @@ gosx build --offline [app]            # Stage a versioned offline asset bundle
 gosx build --msix [app]               # Stage and package Windows MSIX output
 gosx build --sign --msix [app]        # Sign MSIX via signtool
 gosx build --appinstaller <uri> [app] # Emit AppInstaller update feed XML
+gosx assets plan [path...]            # Inspect 3D/game assets and planned build optimizations
 gosx export [app]                     # Pre-render static pages to dist/static/
 gosx compile [file.gsx]               # Compile .gsx to IR
 gosx check [file.gsx]                 # Parse and validate
@@ -689,7 +698,7 @@ The same compiler infrastructure powers [Arbiter](https://github.com/odvcencio/a
 
 ## Status
 
-GoSX is pre-1.0. The current release is **v0.18.25**. The five primitives (Server, Action, Island, Engine, Hub) are stable in shape — we do not expect their top-level API to change before 1.0. Subsystems like `scene`, `desktop`, `field`, `sim`, `workspace`, and `semantic` are still under active development and may take breaking changes; each such change is called out explicitly in [CHANGELOG.md](./CHANGELOG.md) with a migration path.
+GoSX is pre-1.0. The current release is **v0.18.26**. The five primitives (Server, Action, Island, Engine, Hub) are stable in shape — we do not expect their top-level API to change before 1.0. Subsystems like `scene`, `desktop`, `field`, `sim`, `workspace`, and `semantic` are still under active development and may take breaking changes; each such change is called out explicitly in [CHANGELOG.md](./CHANGELOG.md) with a migration path.
 
 If you're evaluating GoSX for production work, the server + island + route + engine + scene stack has been used in production. The semantic, workspace, and sim layers have production users but are newer.
 

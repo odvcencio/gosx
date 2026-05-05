@@ -5052,6 +5052,17 @@ test("bootstrap GLB loader extracts skin attributes and evaluates animation join
   const jointMatrices = animationApi.computeJointMatrices(scene.skins[0], nodeTransforms);
   assert.equal(jointMatrices.length, 32);
   assert.ok(Math.abs(jointMatrices[16 + 13] - 0.25) < 0.00001);
+
+  const fallbackJointMatrices = animationApi.computeJointMatrices({
+    joints: [0],
+    inverseBindMatrices: new Float32Array(0),
+  }, new env.context.Map());
+  assert.equal(fallbackJointMatrices.length, 16);
+  assert.equal(fallbackJointMatrices[0], 1);
+  assert.equal(fallbackJointMatrices[5], 1);
+  assert.equal(fallbackJointMatrices[10], 1);
+  assert.equal(fallbackJointMatrices[15], 1);
+  assert.equal(animationApi.computeJointMatrices(null, new env.context.Map()).length, 0);
   assert.equal(env.consoleLogs.error.length, 0);
 });
 
@@ -5082,6 +5093,10 @@ test("bootstrap starts Scene3D GLB model animation playback from model props", a
                 id: "rig",
                 src: "/models/rig.glb",
                 animation: "bend",
+                animationSeq: "boot",
+                animationSpeed: 1.5,
+                animationWeight: 0.75,
+                animationFadeInMS: 120,
                 loop: true,
               },
             ],
@@ -5093,11 +5108,31 @@ test("bootstrap starts Scene3D GLB model animation playback from model props", a
   const raf = installManualRAF(env.context);
 
   runScript(bootstrapSource, env.context, "bootstrap.js");
+  const animationApi = env.context.__gosx_scene3d_animation_api;
+  const originalCreateMixer = animationApi.createMixer;
+  const calls = [];
+  animationApi.createMixer = function createObservedMixer(...args) {
+    const mixer = originalCreateMixer.apply(this, args);
+    const originalPlay = mixer.play.bind(mixer);
+    mixer.play = function observedPlay(name, options) {
+      calls.push(["play", name, options && {
+        loop: options.loop,
+        speed: options.speed,
+        weight: options.weight,
+        fadeIn: options.fadeIn,
+      }]);
+      return originalPlay(name, options);
+    };
+    return mixer;
+  };
   await flushAsyncWork();
 
   assert.equal(env.fetchCalls.some((call) => call.url === "/models/rig.glb"), true);
   assert.equal(mount.getAttribute("data-gosx-scene3d-mounted"), "true");
   assert.equal(raf.count(), 1);
+  assert.deepEqual(calls, [
+    ["play", "bend", { loop: true, speed: 1.5, weight: 0.75, fadeIn: 0.12 }],
+  ]);
   assert.equal(env.consoleLogs.error.length, 0);
 });
 
@@ -5148,11 +5183,18 @@ test("bootstrap replays Scene3D GLB model animations when live sequence changes"
     const originalPlay = mixer.play.bind(mixer);
     const originalStop = mixer.stop.bind(mixer);
     mixer.play = function observedPlay(name, options) {
-      calls.push(["play", name, options && options.fadeIn]);
+      calls.push(["play", name, options && {
+        loop: options.loop,
+        speed: options.speed,
+        weight: options.weight,
+        fadeIn: options.fadeIn,
+      }]);
       return originalPlay(name, options);
     };
     mixer.stop = function observedStop(name, options) {
-      calls.push(["stop", name, options && options.fadeOut]);
+      calls.push(["stop", name, options && {
+        fadeOut: options.fadeOut,
+      }]);
       return originalStop(name, options);
     };
     return mixer;
@@ -5166,15 +5208,96 @@ test("bootstrap replays Scene3D GLB model animations when live sequence changes"
     detail: { event: "attack", data: { rig: { animation: "bend", animationSeq: "hit-1" } } },
   }));
   env.document.dispatchEvent(new env.context.CustomEvent("gosx:hub:event", {
-    detail: { event: "attack", data: { rig: { animation: "bend", animationSeq: "hit-2" } } },
+    detail: { event: "attack", data: { rig: {
+      animation: "bend",
+      animationSeq: "hit-2",
+      animationSpeed: 1.75,
+      animationWeight: 0.65,
+      animationFadeInMS: 80,
+      animationFadeOutMS: 60,
+    } } },
   }));
 
   assert.deepEqual(calls, [
-    ["play", "bend", 0],
-    ["stop", "bend", 0],
-    ["play", "bend", 0],
-    ["stop", "bend", 0],
-    ["play", "bend", 0],
+    ["play", "bend", { loop: true, speed: 1, weight: 1, fadeIn: 0 }],
+    ["stop", "bend", { fadeOut: 0 }],
+    ["play", "bend", { loop: true, speed: 1, weight: 1, fadeIn: 0 }],
+    ["stop", "bend", { fadeOut: 0.06 }],
+    ["play", "bend", { loop: true, speed: 1.75, weight: 0.65, fadeIn: 0.08 }],
+  ]);
+  assert.equal(env.consoleLogs.error.length, 0);
+});
+
+test("bootstrap starts rigged Scene3D GLB animation from a live event without initial playback", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-model-live-start-root";
+
+  const env = createContext({
+    elements: [mount],
+    fetchRoutes: {
+      "/models/rig.glb": {
+        bytes: buildSkinnedGLBBytes(),
+      },
+    },
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-model-live-start",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-model-live-start-root",
+          props: {
+            width: 640,
+            height: 360,
+            autoRotate: false,
+            models: [
+              {
+                id: "rig",
+                src: "/models/rig.glb",
+                loop: true,
+                live: ["attack"],
+              },
+            ],
+          },
+        },
+      ],
+    },
+  });
+  installManualRAF(env.context);
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  const animationApi = env.context.__gosx_scene3d_animation_api;
+  const originalCreateMixer = animationApi.createMixer;
+  const calls = [];
+  animationApi.createMixer = function createObservedMixer(...args) {
+    const mixer = originalCreateMixer.apply(this, args);
+    const originalPlay = mixer.play.bind(mixer);
+    mixer.play = function observedPlay(name, options) {
+      calls.push(["play", name, options && {
+        loop: options.loop,
+        speed: options.speed,
+        weight: options.weight,
+        fadeIn: options.fadeIn,
+      }]);
+      return originalPlay(name, options);
+    };
+    return mixer;
+  };
+  await flushAsyncWork();
+
+  assert.deepEqual(calls, []);
+  env.document.dispatchEvent(new env.context.CustomEvent("gosx:hub:event", {
+    detail: { event: "attack", data: { rig: {
+      animation: "bend",
+      animationSeq: "opening-hit",
+      animationSpeed: 1.4,
+      animationWeight: 0.7,
+      animationFadeInMS: 50,
+    } } },
+  }));
+
+  assert.deepEqual(calls, [
+    ["play", "bend", { loop: true, speed: 1.4, weight: 0.7, fadeIn: 0.05 }],
   ]);
   assert.equal(env.consoleLogs.error.length, 0);
 });
@@ -7317,6 +7440,87 @@ test("selective Scene3D bootstrap prefers WebGPU before first renderer selection
   assert.equal(env.context.__gosx_scene3d_webgpu_options.presentation.toneMappingMode, "extended");
   assert.equal(env.context.__gosx_scene3d_webgpu_options.powerPreference, "high-performance");
   assert.equal(requestedAdapterOptions.powerPreference, "high-performance");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer-fallback"), null);
+  assert.equal(
+    env.fetchCalls.some((call) => call.url === "/gosx/bootstrap-feature-scene3d-webgpu.js"),
+    true,
+  );
+  assert.equal((mount.children[0].contextCalls || []).some((call) => call.kind === "webgl" || call.kind === "webgl2"), false);
+});
+
+test("selective Scene3D bootstrap honors explicit WebGPU preference when WebGL is disabled", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-webgpu-explicit";
+  const env = createContext({
+    elements: [mount],
+    enableWebGPU: true,
+    createWebGLContext: () => new FakeWebGLContext({
+      vendor: "Mesa",
+      renderer: "llvmpipe (LLVM 18.1.0, 256 bits)",
+    }),
+    navigatorGPU: {
+      requestAdapter: async () => ({
+        requestDevice: async () => ({
+          lost: new Promise(() => {}),
+          features: new Set(),
+          limits: {},
+        }),
+      }),
+      getPreferredCanvasFormat: () => "rgba8unorm",
+    },
+    fetchRoutes: {
+      "/gosx/bootstrap-feature-engines.js": {
+        text: bootstrapFeatureEnginesSource,
+      },
+      "/gosx/bootstrap-feature-scene3d-webgpu.js": {
+        text: `
+          window.__gosx_scene3d_webgpu_api = {
+            createRenderer: function() {
+              return {
+                kind: "webgpu",
+                diagnostics: function() {
+                  return {};
+                },
+                render: function() {},
+                dispose: function() {}
+              };
+            }
+          };
+        `,
+      },
+    },
+    manifest: {
+      runtime: { path: "/gosx/runtime.wasm" },
+      engines: [
+        {
+          id: "gosx-engine-webgpu-explicit",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-webgpu-explicit",
+          jsExport: "GoSXScene3D",
+          props: {
+            width: 320,
+            height: 180,
+            preferWebGPU: true,
+            preferWebGL: false,
+            scene: {
+              objects: [
+                { kind: "box", width: 1, height: 1, depth: 1, color: "#8de1ff" },
+              ],
+            },
+          },
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+  runScript(bootstrapFeatureScene3DSource, env.context, "bootstrap-feature-scene3d.js");
+  await flushAsyncWork();
+
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgl-preference"), "disabled");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-preference"), "prefer");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "webgpu");
   assert.equal(mount.getAttribute("data-gosx-scene3d-renderer-fallback"), null);
   assert.equal(
     env.fetchCalls.some((call) => call.url === "/gosx/bootstrap-feature-scene3d-webgpu.js"),
@@ -10684,6 +10888,31 @@ test("patch applier updates text nodes and treats setHTML as text", async () => 
   assert.equal(counter.textContent, "1");
   assert.equal(htmlSink.textContent, "<strong>safe</strong>");
   assert.equal(htmlSink.children.length, 0);
+});
+
+test("patch applier recreates missing empty text targets", async () => {
+  const wrapper = new FakeElement("div", null);
+  const componentRoot = new FakeElement("div", null);
+  const chip = new FakeElement("div", null);
+
+  wrapper.id = "gosx-island-empty-text";
+  componentRoot.appendChild(chip);
+  wrapper.appendChild(componentRoot);
+
+  const env = createContext({
+    elements: [wrapper],
+  });
+
+  runScript(patchSource, env.context, "patch.js");
+  env.context.__gosx_apply_patches(
+    "gosx-island-empty-text",
+    JSON.stringify([{ kind: 0, path: "0/0", text: "THROW" }]),
+  );
+
+  assert.equal(chip.textContent, "THROW");
+  assert.equal(chip.childNodes.length, 1);
+  assert.equal(chip.childNodes[0].nodeType, TEXT_NODE);
+  assert.equal(env.consoleLogs.warn.length, 0);
 });
 
 test("bootstrap exposes page lifecycle hooks and can re-bootstrap after disposal", async () => {

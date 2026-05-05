@@ -176,20 +176,25 @@ func (o ObjectIR) MarshalJSON() ([]byte, error) {
 // ModelIR is the typed compatibility record for one scene model instance.
 type ModelIR struct {
 	ObjectIR
-	Src       string  `json:"src,omitempty"`
-	ScaleX    float64 `json:"scaleX,omitempty"`
-	ScaleY    float64 `json:"scaleY,omitempty"`
-	ScaleZ    float64 `json:"scaleZ,omitempty"`
-	Static    *bool   `json:"static,omitempty"`
-	Animation string  `json:"animation,omitempty"`
-	Loop      *bool   `json:"loop,omitempty"`
+	Src                string   `json:"src,omitempty"`
+	ScaleX             float64  `json:"scaleX,omitempty"`
+	ScaleY             float64  `json:"scaleY,omitempty"`
+	ScaleZ             float64  `json:"scaleZ,omitempty"`
+	Static             *bool    `json:"static,omitempty"`
+	Animation          string   `json:"animation,omitempty"`
+	AnimationSeq       string   `json:"animationSeq,omitempty"`
+	AnimationSpeed     *float64 `json:"animationSpeed,omitempty"`
+	AnimationWeight    *float64 `json:"animationWeight,omitempty"`
+	AnimationFadeInMS  *int     `json:"animationFadeInMS,omitempty"`
+	AnimationFadeOutMS *int     `json:"animationFadeOutMS,omitempty"`
+	Loop               *bool    `json:"loop,omitempty"`
 }
 
 // MarshalJSON emits both the embedded ObjectIR fields AND the ModelIR
 // local fields. Without this method, Go's method promotion would dispatch
 // json.Marshal(modelIR) to ObjectIR.MarshalJSON — which only emits the
-// ObjectIR half and silently drops src/scaleX/scaleY/scaleZ/static/
-// animation/loop. The symptom is a Scene3D typed-spread test that
+// ObjectIR half and silently drops src/scale/static/model animation fields.
+// The symptom is a Scene3D typed-spread test that
 // expects "src" in the runtime head missing it entirely.
 //
 // Uses the same type-alias trick as ObjectIR.MarshalJSON: alias ObjectIR
@@ -200,25 +205,35 @@ func (m ModelIR) MarshalJSON() ([]byte, error) {
 	type objectAlias ObjectIR
 	type modelWire struct {
 		objectAlias
-		Points    []linePointWire `json:"points,omitempty"`
-		Src       string          `json:"src,omitempty"`
-		ScaleX    float64         `json:"scaleX,omitempty"`
-		ScaleY    float64         `json:"scaleY,omitempty"`
-		ScaleZ    float64         `json:"scaleZ,omitempty"`
-		Static    *bool           `json:"static,omitempty"`
-		Animation string          `json:"animation,omitempty"`
-		Loop      *bool           `json:"loop,omitempty"`
+		Points             []linePointWire `json:"points,omitempty"`
+		Src                string          `json:"src,omitempty"`
+		ScaleX             float64         `json:"scaleX,omitempty"`
+		ScaleY             float64         `json:"scaleY,omitempty"`
+		ScaleZ             float64         `json:"scaleZ,omitempty"`
+		Static             *bool           `json:"static,omitempty"`
+		Animation          string          `json:"animation,omitempty"`
+		AnimationSeq       string          `json:"animationSeq,omitempty"`
+		AnimationSpeed     *float64        `json:"animationSpeed,omitempty"`
+		AnimationWeight    *float64        `json:"animationWeight,omitempty"`
+		AnimationFadeInMS  *int            `json:"animationFadeInMS,omitempty"`
+		AnimationFadeOutMS *int            `json:"animationFadeOutMS,omitempty"`
+		Loop               *bool           `json:"loop,omitempty"`
 	}
 	return json.Marshal(modelWire{
-		objectAlias: objectAlias(m.ObjectIR),
-		Points:      toLinePointsWire(m.Points),
-		Src:         m.Src,
-		ScaleX:      m.ScaleX,
-		ScaleY:      m.ScaleY,
-		ScaleZ:      m.ScaleZ,
-		Static:      m.Static,
-		Animation:   m.Animation,
-		Loop:        m.Loop,
+		objectAlias:        objectAlias(m.ObjectIR),
+		Points:             toLinePointsWire(m.Points),
+		Src:                m.Src,
+		ScaleX:             m.ScaleX,
+		ScaleY:             m.ScaleY,
+		ScaleZ:             m.ScaleZ,
+		Static:             m.Static,
+		Animation:          m.Animation,
+		AnimationSeq:       m.AnimationSeq,
+		AnimationSpeed:     nonNegativeFloatPtr(m.AnimationSpeed),
+		AnimationWeight:    nonNegativeFloatPtr(m.AnimationWeight),
+		AnimationFadeInMS:  nonNegativeIntPtr(m.AnimationFadeInMS),
+		AnimationFadeOutMS: nonNegativeIntPtr(m.AnimationFadeOutMS),
+		Loop:               m.Loop,
 	})
 }
 
@@ -800,6 +815,11 @@ func (item ModelIR) legacyProps() map[string]any {
 		record["pickable"] = *item.Pickable
 	}
 	setString(record, "animation", item.Animation)
+	setString(record, "animationSeq", item.AnimationSeq)
+	setNumericPtr(record, "animationSpeed", nonNegativeFloatPtr(item.AnimationSpeed))
+	setNumericPtr(record, "animationWeight", nonNegativeFloatPtr(item.AnimationWeight))
+	setIntPtr(record, "animationFadeInMS", nonNegativeIntPtr(item.AnimationFadeInMS))
+	setIntPtr(record, "animationFadeOutMS", nonNegativeIntPtr(item.AnimationFadeOutMS))
 	if item.Loop != nil {
 		record["loop"] = *item.Loop
 	}

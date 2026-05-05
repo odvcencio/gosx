@@ -1,0 +1,237 @@
+package assetpipe
+
+import (
+	"bytes"
+	"encoding/binary"
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/odvcencio/gosx/render/bundle/ktx2"
+)
+
+func TestPlanSceneAssetOptimizationSurface(t *testing.T) {
+	dir := t.TempDir()
+	mustWriteBytes(t, filepath.Join(dir, "public", "models", "hero.glb"), buildTestGLB(t, map[string]any{
+		"asset":              map[string]any{"version": "2.0"},
+		"extensionsUsed":     []string{"KHR_materials_clearcoat", "KHR_draco_mesh_compression"},
+		"extensionsRequired": []string{"KHR_materials_clearcoat"},
+		"meshes": []map[string]any{{
+			"primitives": []map[string]any{{
+				"attributes": map[string]any{"POSITION": 0},
+				"extensions": map[string]any{"KHR_draco_mesh_compression": map[string]any{"bufferView": 0}},
+			}},
+		}},
+		"materials": []map[string]any{{
+			"extensions": map[string]any{"KHR_materials_clearcoat": map[string]any{"clearcoatFactor": 1}},
+		}},
+		"images":     []map[string]any{{"uri": "albedo.png"}},
+		"textures":   []map[string]any{{"source": 0}},
+		"animations": []map[string]any{{"name": "idle"}},
+		"skins":      []map[string]any{{"joints": []int{0}}},
+		"nodes":      []map[string]any{{"mesh": 0}},
+	}))
+	mustWriteBytes(t, filepath.Join(dir, "public", "textures", "albedo.png"), []byte("png"))
+	mustWriteBytes(t, filepath.Join(dir, "public", "env", "studio.hdr"), []byte("#?RADIANCE\n"))
+	mustWriteBytes(t, filepath.Join(dir, "public", "audio", "hit.ogg"), []byte("ogg"))
+	mustWriteBytes(t, filepath.Join(dir, "public", "shaders", "spark.wgsl"), []byte("@compute @workgroup_size(1) fn main() {}\n"))
+	mustWriteBytes(t, filepath.Join(dir, "public", "textures", "cube.ktx2"), buildTestKTX2(ktx2.VkFormatBC7SRGBBlock, 8, 4, 1, 1, 1, [][]byte{make([]byte, 32)}))
+
+	report, err := Plan([]string{dir}, Options{TurboQuantBitWidth: 10, TurboQuantPreviewBits: 5})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.SchemaVersion != SchemaVersion {
+		t.Fatalf("schema version = %d, want %d", report.SchemaVersion, SchemaVersion)
+	}
+	if report.Totals.Assets != 6 || report.Totals.GLB != 1 || report.Totals.KTX2 != 1 ||
+		report.Totals.Texture != 1 || report.Totals.Environment != 1 || report.Totals.Audio != 1 || report.Totals.Shader != 1 {
+		t.Fatalf("unexpected totals: %+v", report.Totals)
+	}
+	if report.Totals.Variants == 0 {
+		t.Fatalf("expected planned variants in totals: %+v", report.Totals)
+	}
+
+	hero := findAsset(t, report, "public/models/hero.glb")
+	if hero.GLTF == nil || hero.GLTF.Primitives != 1 || hero.GLTF.Images != 1 || hero.GLTF.Animations != 1 || hero.GLTF.Skins != 1 {
+		t.Fatalf("unexpected gltf probe: %+v", hero.GLTF)
+	}
+	assertAction(t, hero, "turboquant-streams", "candidate")
+	assertActionTargetContains(t, hero, "turboquant-streams", "10-bit")
+	assertAction(t, hero, "draco-compress", "present")
+	assertAction(t, hero, "texture-transcode-ktx2", "candidate")
+	assertAction(t, hero, "preserve-pbr-extensions", "candidate")
+	assertAction(t, hero, "animation-stream-quantization", "candidate")
+	assertVariant(t, hero, "public/models/hero.meshopt.glb", "meshopt")
+	assertVariant(t, hero, "public/models/hero.tq.glb", "turboquant")
+	assertVariant(t, hero, "public/models/hero.textures.bc7.ktx2", "ktx2-bc7")
+
+	ktx := findAsset(t, report, "public/textures/cube.ktx2")
+	if ktx.KTX2 == nil || ktx.KTX2.FormatName != "BC7_SRGB_BLOCK" || !ktx.KTX2.Compressed {
+		t.Fatalf("unexpected ktx2 probe: %+v", ktx.KTX2)
+	}
+	assertAction(t, ktx, "webgpu-upload-ready", "ready")
+
+	env := findAsset(t, report, "public/env/studio.hdr")
+	assertAction(t, env, "prefilter-ibl-ggx", "candidate")
+	assertAction(t, env, "generate-split-sum-lut", "candidate")
+	assertVariant(t, env, "public/env/studio.ibl.ktx2", "ktx2")
+
+	audio := findAsset(t, report, "public/audio/hit.ogg")
+	assertAction(t, audio, "positional-audio-node", "planned")
+	assertVariant(t, audio, "public/audio/hit.opus", "opus")
+}
+
+func TestPlanLargeGLTFUsesFallbackWithoutReadingWholeFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "public", "models", "huge.gltf")
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Truncate(4096); err != nil {
+		_ = f.Close()
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	report, err := Plan([]string{dir}, Options{MaxProbeBytes: 16})
+	if err != nil {
+		t.Fatal(err)
+	}
+	asset := findAsset(t, report, "public/models/huge.gltf")
+	if len(asset.Warnings) == 0 || !strings.Contains(asset.Warnings[0], errProbeTooLarge.Error()) {
+		t.Fatalf("expected max probe warning, got %+v", asset.Warnings)
+	}
+	assertAction(t, asset, "inspect-gltf", "planned")
+	assertAction(t, asset, "turboquant-streams", "candidate")
+}
+
+func findAsset(t *testing.T, report Report, path string) Asset {
+	t.Helper()
+	for _, asset := range report.Assets {
+		if asset.Path == path {
+			return asset
+		}
+	}
+	t.Fatalf("asset %s not found in %+v", path, report.Assets)
+	return Asset{}
+}
+
+func assertAction(t *testing.T, asset Asset, name, status string) {
+	t.Helper()
+	for _, action := range asset.Actions {
+		if action.Name == name {
+			if action.Status != status {
+				t.Fatalf("%s action status = %q, want %q", name, action.Status, status)
+			}
+			return
+		}
+	}
+	t.Fatalf("action %s not found in %+v", name, asset.Actions)
+}
+
+func assertActionTargetContains(t *testing.T, asset Asset, name, want string) {
+	t.Helper()
+	for _, action := range asset.Actions {
+		if action.Name == name {
+			if !strings.Contains(action.Target, want) {
+				t.Fatalf("%s target = %q, want substring %q", name, action.Target, want)
+			}
+			return
+		}
+	}
+	t.Fatalf("action %s not found in %+v", name, asset.Actions)
+}
+
+func assertVariant(t *testing.T, asset Asset, uri, compression string) {
+	t.Helper()
+	for _, variant := range asset.Variants {
+		if variant.URI == uri {
+			if variant.Compression != compression {
+				t.Fatalf("%s compression = %q, want %q", uri, variant.Compression, compression)
+			}
+			return
+		}
+	}
+	t.Fatalf("variant %s not found in %+v", uri, asset.Variants)
+}
+
+func mustWriteBytes(t *testing.T, path string, data []byte) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func buildTestGLB(t *testing.T, doc map[string]any) []byte {
+	t.Helper()
+	jsonData, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for len(jsonData)%4 != 0 {
+		jsonData = append(jsonData, ' ')
+	}
+	total := 12 + 8 + len(jsonData)
+	var buf bytes.Buffer
+	buf.WriteString("glTF")
+	write32(&buf, 2)
+	write32(&buf, uint32(total))
+	write32(&buf, uint32(len(jsonData)))
+	write32(&buf, 0x4E4F534A)
+	buf.Write(jsonData)
+	return buf.Bytes()
+}
+
+func buildTestKTX2(vkFormat int, width, height, depth, layers, faces uint32, levelData [][]byte) []byte {
+	var buf bytes.Buffer
+	buf.Write([]byte{0xAB, 'K', 'T', 'X', ' ', '2', '0', 0xBB, 0x0D, 0x0A, 0x1A, 0x0A})
+
+	header := make([]byte, 68)
+	put32 := func(off int, v uint32) { binary.LittleEndian.PutUint32(header[off:], v) }
+	put64 := func(off int, v uint64) { binary.LittleEndian.PutUint64(header[off:], v) }
+	put32(0, uint32(vkFormat))
+	put32(4, 1)
+	put32(8, width)
+	put32(12, height)
+	put32(16, depth)
+	put32(20, layers)
+	put32(24, faces)
+	put32(28, uint32(len(levelData)))
+	put64(52, 0)
+	put64(60, 0)
+	buf.Write(header)
+
+	indexStart := buf.Len()
+	dataStart := indexStart + len(levelData)*24
+	index := make([]byte, len(levelData)*24)
+	running := uint64(dataStart)
+	for i, level := range levelData {
+		binary.LittleEndian.PutUint64(index[i*24+0:], running)
+		binary.LittleEndian.PutUint64(index[i*24+8:], uint64(len(level)))
+		binary.LittleEndian.PutUint64(index[i*24+16:], uint64(len(level)))
+		running += uint64(len(level))
+	}
+	buf.Write(index)
+	for _, level := range levelData {
+		buf.Write(level)
+	}
+	return buf.Bytes()
+}
+
+func write32(buf *bytes.Buffer, value uint32) {
+	var tmp [4]byte
+	binary.LittleEndian.PutUint32(tmp[:], value)
+	buf.Write(tmp[:])
+}

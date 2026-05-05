@@ -125,6 +125,8 @@ func exportRuntimeBuildPath(buildDir, ref string) (string, bool) {
 		return filepath.Join(buildDir, "patch.js"), true
 	case "/gosx/hls.min.js":
 		return filepath.Join(buildDir, "hls.min.js"), true
+	case "/gosx/stripe-bridge.js":
+		return filepath.Join(buildDir, "stripe-bridge.js"), true
 	}
 	if rel, ok := strings.CutPrefix(ref, "/gosx/islands/"); ok && rel != "" {
 		return filepath.Join(buildDir, "islands", filepath.FromSlash(rel)), true

@@ -10,9 +10,10 @@ import (
 
 // Manifest describes all build outputs for deployment.
 type Manifest struct {
-	Runtime RuntimeAssets `json:"runtime"`
-	Islands []IslandAsset `json:"islands"`
-	CSS     []CSSAsset    `json:"css"`
+	Runtime     RuntimeAssets       `json:"runtime"`
+	Islands     []IslandAsset       `json:"islands"`
+	CSS         []CSSAsset          `json:"css"`
+	SceneAssets *SceneAssetManifest `json:"sceneAssets,omitempty"`
 }
 
 type RuntimeAssets struct {
@@ -31,6 +32,7 @@ type RuntimeAssets struct {
 	BootstrapFeatureScene3DAnimation HashedAsset `json:"bootstrapFeatureScene3dAnimation,omitempty"`
 	Patch                            HashedAsset `json:"patch"`
 	VideoHLS                         HashedAsset `json:"videoHLS,omitempty"`
+	StripeBridge                     HashedAsset `json:"stripeBridge,omitempty"`
 }
 
 type IslandAsset struct {
@@ -51,6 +53,15 @@ type HashedAsset struct {
 	Size int64  `json:"size"`
 }
 
+// SceneAssetManifest points at the build-time Scene3D asset optimization report.
+type SceneAssetManifest struct {
+	File                string `json:"file"`
+	Count               int    `json:"count"`
+	Bytes               int64  `json:"bytes"`
+	OptimizationActions int    `json:"optimizationActions"`
+	Variants            int    `json:"variants,omitempty"`
+}
+
 type RuntimePaths struct {
 	WASM                             string
 	WASMIslands                      string
@@ -67,6 +78,7 @@ type RuntimePaths struct {
 	BootstrapFeatureScene3DAnimation string
 	Patch                            string
 	VideoHLS                         string
+	StripeBridge                     string
 }
 
 // Load reads a build manifest from disk.
@@ -101,6 +113,7 @@ func (m *Manifest) RuntimeURLs(assetBaseURL string) RuntimePaths {
 		BootstrapFeatureScene3DAnimation: AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapFeatureScene3DAnimation.File),
 		Patch:                            AssetURL(assetBaseURL, "runtime", m.Runtime.Patch.File),
 		VideoHLS:                         AssetURL(assetBaseURL, "runtime", m.Runtime.VideoHLS.File),
+		StripeBridge:                     AssetURL(assetBaseURL, "runtime", m.Runtime.StripeBridge.File),
 	}
 }
 

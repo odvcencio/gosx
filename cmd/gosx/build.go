@@ -481,6 +481,7 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 		{"bootstrap-feature-scene3d-animation", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-animation.js"), &manifest.Runtime.BootstrapFeatureScene3DAnimation},
 		{"patch", filepath.Join(gosxRoot, "client", "js", "patch.js"), &manifest.Runtime.Patch},
 		{"hls.min", filepath.Join(gosxRoot, "client", "js", "vendor", "hls.min.js"), &manifest.Runtime.VideoHLS},
+		{"stripe-bridge", filepath.Join(gosxRoot, "client", "js", "stripe-bridge.js"), &manifest.Runtime.StripeBridge},
 	} {
 		data, err := os.ReadFile(js.path)
 		if err != nil {
@@ -497,6 +498,24 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 				return fmt.Errorf("write %s source map: %w", js.name, err)
 			}
 		}
+	}
+
+	if assetReport, err := writeBuildSceneAssetPlan(dir, distDir); err != nil {
+		return fmt.Errorf("scene asset plan: %w", err)
+	} else if assetReport != nil {
+		manifest.SceneAssets = &buildmanifest.SceneAssetManifest{
+			File:                "scene-assets.json",
+			Count:               assetReport.Totals.Assets,
+			Bytes:               assetReport.Totals.Bytes,
+			OptimizationActions: assetReport.Totals.OptimizationActions,
+			Variants:            assetReport.Totals.Variants,
+		}
+		fmt.Printf("    Scene assets: %d files, %d variants, %d optimization actions → %s\n",
+			assetReport.Totals.Assets,
+			assetReport.Totals.Variants,
+			assetReport.Totals.OptimizationActions,
+			filepath.Join(distDir, "scene-assets.json"),
+		)
 	}
 
 	// ── Build manifest ──────────────────────────────────────────────────
@@ -832,6 +851,8 @@ func manifestRuntimeRefSourcePath(distDir string, manifest *BuildManifest, ref s
 		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.Patch.File)
 	case "/gosx/hls.min.js":
 		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.VideoHLS.File)
+	case "/gosx/stripe-bridge.js":
+		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.StripeBridge.File)
 	}
 	if rel, ok := strings.CutPrefix(ref, "/gosx/islands/"); ok && rel != "" {
 		name := filepath.Base(rel)

@@ -102,6 +102,16 @@
     return sceneBool(props && props.requireWebGL, false);
   }
 
+  function scenePrefersWebGPU(props) {
+    if (!props) {
+      return false;
+    }
+    const value = Object.prototype.hasOwnProperty.call(props, "preferWebGPU")
+      ? props.preferWebGPU
+      : props.preferWebgpu;
+    return sceneBool(value, false);
+  }
+
   function sceneWebGPUOptions(props, capability) {
     const caps = capability && typeof capability === "object" ? capability : {};
     const requestedSamples = Math.max(0, Math.floor(sceneNumber(props && props.msaaSamples, 0)));
@@ -233,18 +243,18 @@
     }
 
     const webglPreference = sceneCapabilityWebGLPreference(props, capability);
+    const webgpuPreference = sceneCapabilityWebGPUPreference(props, capability);
     const webgpuFeatureGap = sceneNeedsWebGLForWebGPUCoverage(props);
-    if (webglPreference === "prefer" || webglPreference === "force") {
-      // forceWebGL must stay on the WebGL stack instead of probing WebGPU first.
-      if (!webgpuFeatureGap && webglPreference !== "force" && typeof sceneWebGPUAvailable === "function" && sceneWebGPUAvailable()) {
-        var gpuRenderer = createSceneWebGPURendererOrFallback(canvas, sceneWebGPUOptions(props, capability));
-        if (gpuRenderer) {
-          return {
-            renderer: gpuRenderer,
-            fallbackReason: "",
-          };
-        }
+    if (webgpuPreference === "prefer" && !webgpuFeatureGap && typeof sceneWebGPUAvailable === "function" && sceneWebGPUAvailable()) {
+      var gpuRenderer = createSceneWebGPURendererOrFallback(canvas, sceneWebGPUOptions(props, capability));
+      if (gpuRenderer) {
+        return {
+          renderer: gpuRenderer,
+          fallbackReason: "",
+        };
       }
+    }
+    if (webglPreference === "prefer" || webglPreference === "force") {
       if (typeof createScenePBRRendererOrFallback === "function") {
         const useCanvasAlpha = sceneCanvasAlpha(props);
         const gl = typeof canvas.getContext === "function" ? canvas.getContext("webgl2", {
@@ -292,16 +302,18 @@
       return null;
     }
     const webglPreference = sceneCapabilityWebGLPreference(props, capability);
+    const webgpuPreference = sceneCapabilityWebGPUPreference(props, capability);
     const requireWebGL = sceneRequiresWebGL(props);
     const webgpuFeatureGap = sceneNeedsWebGLForWebGPUCoverage(props);
+    const preferWebGPU = webgpuPreference === "prefer" && !webgpuFeatureGap;
     const request = {
       props,
       capability,
-      webgpu: webglPreference === "prefer" && !webgpuFeatureGap,
+      webgpu: preferWebGPU,
       webgl: webglPreference === "prefer" || webglPreference === "force",
       webgl2: webglPreference === "prefer" || webglPreference === "force",
       canvas2d: !requireWebGL,
-      preferWebGPU: webglPreference === "prefer" && !webgpuFeatureGap,
+      preferWebGPU,
       forceWebGL: webglPreference === "force",
     };
     const candidates = sceneBackendRegistry.candidates(request);
@@ -1086,7 +1098,7 @@
   }
 
   async function ensurePreferredWebGPUBackend(props, capability) {
-    if (sceneCapabilityWebGLPreference(props, capability) !== "prefer") {
+    if (sceneCapabilityWebGPUPreference(props, capability) !== "prefer") {
       return false;
     }
     if (sceneNeedsWebGLForWebGPUCoverage(props)) {
@@ -1215,7 +1227,7 @@
 
   function sceneModelHasSkins(skins) {
     return Array.isArray(skins) && skins.some(function(skin) {
-      return Boolean(skin && skin.joints && skin.inverseBindMatrices);
+      return Boolean(skin && Array.isArray(skin.joints) && skin.joints.length > 0 && skin.inverseBindMatrices);
     });
   }
 
@@ -1270,6 +1282,79 @@
     }
   }
 
+  function sceneOwns(source, key) {
+    return Boolean(source && Object.prototype.hasOwnProperty.call(source, key));
+  }
+
+  function sceneAnimationNumber(source, key, fallback, min) {
+    if (!sceneOwns(source, key)) {
+      return fallback;
+    }
+    const value = sceneNumber(source[key], fallback);
+    return Number.isFinite(value) ? Math.max(min, value) : fallback;
+  }
+
+  function sceneAnimationMilliseconds(source, key, fallbackSeconds) {
+    if (!sceneOwns(source, key)) {
+      return fallbackSeconds;
+    }
+    const value = Number(source[key]);
+    return Number.isFinite(value) ? Math.max(0, value) / 1000 : fallbackSeconds;
+  }
+
+  function sceneModelAnimationPlayOptions(model, patch, defaults) {
+    const fallbackLoop = defaults && typeof defaults.loop === "boolean" ? defaults.loop : true;
+    const modelLoop = sceneOwns(model, "loop") ? model.loop !== false : fallbackLoop;
+    const loop = sceneOwns(patch, "loop") ? patch.loop !== false : modelLoop;
+    const modelSpeed = sceneAnimationNumber(model, "animationSpeed", defaults && defaults.speed !== undefined ? defaults.speed : 1, 0);
+    const modelWeight = sceneAnimationNumber(model, "animationWeight", defaults && defaults.weight !== undefined ? defaults.weight : 1, 0);
+    return {
+      loop,
+      speed: sceneAnimationNumber(patch, "animationSpeed", modelSpeed, 0),
+      weight: sceneAnimationNumber(patch, "animationWeight", modelWeight, 0),
+      fadeIn: sceneAnimationMilliseconds(
+        patch,
+        "animationFadeInMS",
+        sceneAnimationMilliseconds(model, "animationFadeInMS", defaults && defaults.fadeIn !== undefined ? defaults.fadeIn : 0),
+      ),
+    };
+  }
+
+  function sceneModelAnimationStopOptions(model, patch, defaults) {
+    return {
+      fadeOut: sceneAnimationMilliseconds(
+        patch,
+        "animationFadeOutMS",
+        sceneAnimationMilliseconds(model, "animationFadeOutMS", defaults && defaults.fadeOut !== undefined ? defaults.fadeOut : 0),
+      ),
+    };
+  }
+
+  function sceneApplyModelAnimationControls(record, patch) {
+    if (!record || !record.model || !sceneIsPlainObject(patch)) {
+      return;
+    }
+    const keys = ["loop", "animationSpeed", "animationWeight", "animationFadeInMS", "animationFadeOutMS"];
+    for (let index = 0; index < keys.length; index += 1) {
+      const key = keys[index];
+      if (sceneOwns(patch, key)) {
+        record.model[key] = patch[key];
+      }
+    }
+  }
+
+  function sceneRegisterModelAnimationRecord(state, record) {
+    if (!state || !record || !record.mixer) {
+      return;
+    }
+    if (!Array.isArray(state._modelAnimations)) {
+      state._modelAnimations = [];
+    }
+    if (state._modelAnimations.indexOf(record) < 0) {
+      state._modelAnimations.push(record);
+    }
+  }
+
   async function scenePrepareModelSkinPlayback(state, asset, model, skinInstances, objectIDs) {
     if (!sceneModelHasSkins(skinInstances) || !Array.isArray(asset.nodes) || !asset.nodes.length) {
       return;
@@ -1307,8 +1392,7 @@
     }
     state._modelSkins.push(record);
 
-    const requestedAnimation = typeof model.animation === "string" ? model.animation.trim() : "";
-    if (requestedAnimation && typeof animationApi.createMixer === "function") {
+    if (typeof animationApi.createMixer === "function") {
       const clips = sceneCloneModelAnimations(asset.animations);
       if (clips.length) {
         const mixer = animationApi.createMixer();
@@ -1316,15 +1400,15 @@
           const clip = clips[index];
           mixer.addClip(clip.name, clip);
         }
-        mixer.play(requestedAnimation, { loop: model.loop !== false, fadeIn: 0 });
-        if (mixer.isPlaying(requestedAnimation)) {
-          record.mixer = mixer;
-          record.animation = requestedAnimation;
-          record.animationSeq = "";
-          if (!Array.isArray(state._modelAnimations)) {
-            state._modelAnimations = [];
+        record.mixer = mixer;
+        sceneRegisterModelAnimationRecord(state, record);
+        const requestedAnimation = typeof model.animation === "string" ? model.animation.trim() : "";
+        if (requestedAnimation) {
+          mixer.play(requestedAnimation, sceneModelAnimationPlayOptions(model, null, { loop: true, speed: 1, weight: 1, fadeIn: 0 }));
+          if (mixer.isPlaying(requestedAnimation)) {
+            record.animation = requestedAnimation;
+            record.animationSeq = typeof model.animationSeq === "string" ? model.animationSeq : "";
           }
-          state._modelAnimations.push(record);
         }
       }
     }
@@ -1420,23 +1504,49 @@
   }
 
   function sceneApplyModelLiveAnimation(record, patch) {
-    if (!record || !record.mixer || !sceneIsPlainObject(patch) || !Object.prototype.hasOwnProperty.call(patch, "animation")) {
+    if (!record || !record.mixer || !sceneIsPlainObject(patch)) {
       return false;
     }
-    const animation = typeof patch.animation === "string" ? patch.animation.trim() : "";
-    const hasSeq = Object.prototype.hasOwnProperty.call(patch, "animationSeq");
+    const hasAnimation = sceneOwns(patch, "animation");
+    const hasControls = sceneOwns(patch, "loop")
+      || sceneOwns(patch, "animationSpeed")
+      || sceneOwns(patch, "animationWeight")
+      || sceneOwns(patch, "animationFadeInMS")
+      || sceneOwns(patch, "animationFadeOutMS");
+    if (!hasAnimation && !hasControls) {
+      return false;
+    }
+    const animation = hasAnimation
+      ? (typeof patch.animation === "string" ? patch.animation.trim() : "")
+      : record.animation;
+    const hasSeq = sceneOwns(patch, "animationSeq");
     const animationSeq = hasSeq ? String(patch.animationSeq == null ? "" : patch.animationSeq) : "";
     const replay = Boolean(hasSeq && animationSeq && record.animation === animation && record.animationSeq !== animationSeq);
-    if (!animation || (record.animation === animation && record.mixer.isPlaying(animation) && !replay)) {
+    sceneApplyModelAnimationControls(record, patch);
+    if (!animation) {
+      if (record.animation && record.mixer.isPlaying(record.animation)) {
+        const stopOptions = sceneModelAnimationStopOptions(record.model, patch, { fadeOut: 0.05 });
+        record.mixer.stop(record.animation, stopOptions);
+        if (stopOptions.fadeOut <= 0) {
+          record.animation = "";
+        }
+      }
+      record.animationSeq = animationSeq;
+      record.poseDirty = true;
+      return true;
+    }
+    if (record.animation === animation && record.mixer.isPlaying(animation) && !replay) {
+      if (hasControls) {
+        record.mixer.play(animation, sceneModelAnimationPlayOptions(record.model, patch, { loop: true, speed: 1, weight: 1, fadeIn: 0 }));
+        record.poseDirty = true;
+        return true;
+      }
       return false;
     }
     if (record.animation && record.mixer.isPlaying(record.animation)) {
-      record.mixer.stop(record.animation, { fadeOut: replay ? 0 : 0.05 });
+      record.mixer.stop(record.animation, sceneModelAnimationStopOptions(record.model, patch, { fadeOut: replay ? 0 : 0.05 }));
     }
-    record.mixer.play(animation, {
-      loop: Object.prototype.hasOwnProperty.call(patch, "loop") ? patch.loop !== false : true,
-      fadeIn: replay ? 0 : 0.04,
-    });
+    record.mixer.play(animation, sceneModelAnimationPlayOptions(record.model, patch, { loop: true, speed: 1, weight: 1, fadeIn: replay ? 0 : 0.04 }));
     if (!record.mixer.isPlaying(animation)) {
       return false;
     }
@@ -1672,9 +1782,22 @@
     return "prefer";
   }
 
+  function sceneCapabilityWebGPUPreference(props, capability) {
+    if (sceneRequiresWebGL(props) || sceneBool(props && props.forceWebGL, false) || sceneBool(props && props.preferCanvas, false)) {
+      return "disabled";
+    }
+    if (scenePrefersWebGPU(props)) {
+      return "prefer";
+    }
+    return sceneCapabilityWebGLPreference(props, capability) === "prefer" ? "prefer" : "avoid";
+  }
+
   function sceneRendererFallbackReason(props, capability, rendererKind) {
     if (rendererKind === "webgl") {
       return "";
+    }
+    if (sceneCapabilityWebGPUPreference(props, capability) === "prefer") {
+      return sceneNeedsWebGLForWebGPUCoverage(props) ? "webgpu-feature-gap" : "webgpu-unavailable";
     }
     switch (sceneCapabilityWebGLPreference(props, capability)) {
       case "disabled":
@@ -1735,6 +1858,7 @@
     setAttrValue(mount, "data-gosx-scene3d-require-webgl", sceneRequiresWebGL(props) ? "true" : "false");
     setAttrValue(mount, "data-gosx-scene3d-visual-viewport", capability.visualViewportActive ? "true" : "false");
     setAttrValue(mount, "data-gosx-scene3d-webgl-preference", sceneCapabilityWebGLPreference(props, capability));
+    setAttrValue(mount, "data-gosx-scene3d-webgpu-preference", sceneCapabilityWebGPUPreference(props, capability));
     setAttrValue(mount, "data-gosx-scene3d-device-memory", capability.deviceMemory > 0 ? capability.deviceMemory : "");
     setAttrValue(mount, "data-gosx-scene3d-hardware-concurrency", capability.hardwareConcurrency > 0 ? capability.hardwareConcurrency : "");
   }

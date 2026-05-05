@@ -69,7 +69,14 @@
   // Returns Float32Array(jointCount * 16) ready for GPU upload.
   // If skin._jointMatricesBuffer exists, it is reused to avoid allocation.
   function sceneAnimComputeJointMatrices(skin, nodeTransforms) {
-    var jointCount = skin.joints.length;
+    var joints = skin && Array.isArray(skin.joints) ? skin.joints : [];
+    var jointCount = joints.length;
+    if (jointCount <= 0) {
+      return new Float32Array(0);
+    }
+    var inverseBindMatrices = skin.inverseBindMatrices && typeof skin.inverseBindMatrices.length === "number"
+      ? skin.inverseBindMatrices
+      : null;
     var matrices = skin._jointMatricesBuffer;
     if (!matrices || matrices.length !== jointCount * 16) {
       matrices = new Float32Array(jointCount * 16);
@@ -77,10 +84,14 @@
     }
 
     for (var i = 0; i < jointCount; i++) {
-      var jointNodeIndex = skin.joints[i];
-      var worldTransform = nodeTransforms.get(jointNodeIndex) || SCENE_IDENTITY_MAT4;
+      var jointNodeIndex = joints[i];
+      var worldTransform = nodeTransforms && typeof nodeTransforms.get === "function"
+        ? (nodeTransforms.get(jointNodeIndex) || SCENE_IDENTITY_MAT4)
+        : SCENE_IDENTITY_MAT4;
       var inverseBindOffset = i * 16;
-      var inverseBind = skin.inverseBindMatrices.subarray(inverseBindOffset, inverseBindOffset + 16);
+      var inverseBind = inverseBindMatrices && inverseBindOffset + 16 <= inverseBindMatrices.length
+        ? inverseBindMatrices.subarray(inverseBindOffset, inverseBindOffset + 16)
+        : SCENE_IDENTITY_MAT4;
 
       sceneMat4MultiplyInto(_sceneMat4ScratchA, worldTransform, inverseBind);
       matrices.set(_sceneMat4ScratchA, i * 16);
@@ -333,6 +344,7 @@
       var existing = findActive(name);
       if (existing) {
         existing.speed = speed;
+        existing.loop = loop;
         existing.targetWeight = weight;
         if (!existing.stopping) {
           existing.weight = weight;

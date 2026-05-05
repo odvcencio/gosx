@@ -12,7 +12,7 @@ import (
 
 const DefaultEngineName = "GoSXScene3D"
 
-var defaultCapabilities = []string{"canvas", "webgl", "animation"}
+var defaultCapabilities = []string{"canvas", "webgpu", "webgl", "animation"}
 
 const (
 	// ControlOrbit enables pointer-drag orbit and wheel zoom around ControlTarget.
@@ -102,6 +102,7 @@ type Props struct {
 	AutoRotate            *bool        `json:"autoRotate,omitempty"`
 	Responsive            *bool        `json:"responsive,omitempty"`
 	FillHeight            *bool        `json:"fillHeight,omitempty"`
+	PreferWebGPU          *bool        `json:"preferWebGPU,omitempty"`
 	PreferWebGL           *bool        `json:"preferWebGL,omitempty"`
 	ForceWebGL            *bool        `json:"forceWebGL,omitempty"`
 	RequireWebGL          *bool        `json:"requireWebGL,omitempty"`
@@ -470,20 +471,25 @@ type Sprite struct {
 // Model instances a framework-owned scene model asset with a transform and
 // optional material/static overrides.
 type Model struct {
-	ID         string
-	Src        string
-	Position   Vector3
-	Rotation   Euler
-	Scale      Vector3
-	Material   Material
-	Pickable   *bool
-	Static     *bool
-	Animation  string
-	Loop       *bool
-	Transition Transition
-	InState    *ModelProps
-	OutState   *ModelProps
-	Live       []string
+	ID                 string
+	Src                string
+	Position           Vector3
+	Rotation           Euler
+	Scale              Vector3
+	Material           Material
+	Pickable           *bool
+	Static             *bool
+	Animation          string
+	AnimationSeq       string
+	AnimationSpeed     *float64
+	AnimationWeight    *float64
+	AnimationFadeInMS  *int
+	AnimationFadeOutMS *int
+	Loop               *bool
+	Transition         Transition
+	InState            *ModelProps
+	OutState           *ModelProps
+	Live               []string
 }
 
 // Decal projects a planar texture or color marker into the scene. The initial
@@ -1082,6 +1088,7 @@ func (p Props) legacyBaseProps() map[string]any {
 	setBool(out, "autoRotate", p.AutoRotate)
 	setBool(out, "responsive", p.Responsive)
 	setBool(out, "fillHeight", p.FillHeight)
+	setBool(out, "preferWebGPU", p.PreferWebGPU)
 	setBool(out, "preferWebGL", p.PreferWebGL)
 	setBool(out, "forceWebGL", p.ForceWebGL)
 	setBool(out, "requireWebGL", p.RequireWebGL)
@@ -2120,6 +2127,11 @@ func (l *graphLowerer) lowerModel(model Model, parent worldTransform) {
 	record.Static = model.Static
 	record.Pickable = model.Pickable
 	record.Animation = strings.TrimSpace(model.Animation)
+	record.AnimationSeq = strings.TrimSpace(model.AnimationSeq)
+	record.AnimationSpeed = nonNegativeFloatPtr(model.AnimationSpeed)
+	record.AnimationWeight = nonNegativeFloatPtr(model.AnimationWeight)
+	record.AnimationFadeInMS = nonNegativeIntPtr(model.AnimationFadeInMS)
+	record.AnimationFadeOutMS = nonNegativeIntPtr(model.AnimationFadeOutMS)
 	record.Loop = model.Loop
 	l.models = append(l.models, record)
 	l.anchors[id] = world
@@ -3233,6 +3245,28 @@ func setNumericPtr(target map[string]any, name string, value *float64) {
 		return
 	}
 	target[name] = *value
+}
+
+func nonNegativeFloatPtr(value *float64) *float64 {
+	if value == nil || math.IsNaN(*value) || math.IsInf(*value, 0) {
+		return nil
+	}
+	next := *value
+	if next < 0 {
+		next = 0
+	}
+	return &next
+}
+
+func nonNegativeIntPtr(value *int) *int {
+	if value == nil {
+		return nil
+	}
+	next := *value
+	if next < 0 {
+		next = 0
+	}
+	return &next
 }
 
 func mapFloat64(value any) float64 {

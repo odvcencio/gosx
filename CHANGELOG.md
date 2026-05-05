@@ -2,6 +2,48 @@
 
 ## Unreleased
 
+## v0.18.26
+
+Production Scene3D slice for browser-native modeling apps.
+
+This release turns the WebGPU Scene3D path into the default high-end route for
+typed scenes while keeping WebGL and canvas fallback behavior intact. Scene3D
+now declares WebGPU as a default capability and exposes `PreferWebGPU` for
+callers that want the renderer planner to try the WebGPU backend first. The PBR
+WebGPU shader no longer trips Chrome/Dawn's uniform-control-flow validation
+around shadow compares, which removes the warning Kiln hit while validating
+hardware WebGPU through Windows Chrome from WSL2.
+
+Model and animation authoring picked up the controls needed for serious editor
+work. `scene.Model` and lowered mesh IR now carry `AnimationSeq`,
+`AnimationSpeed`, `AnimationWeight`, `AnimationFadeInMS`,
+`AnimationFadeOutMS`, and loop updates all the way into the runtime. The client
+animation mixer handles option updates on active clips, clamps invalid numeric
+values, and tolerates missing skin/joint data without falling over. The README
+Scene3D section documents the expanded model controls.
+
+Scene3D also has a first server-driven mutation surface. `scene.DiffCommands`
+and `scene.DiffPropsCommands` produce the browser command protocol for object,
+label, sprite, and light create/remove/replace operations, so a Go hub can send
+compact live scene updates instead of replacing a whole page payload. The
+runtime tests now cover the command bridge, replay sequencing, animation fade
+behavior, and WebGPU/WebGL backend selection.
+
+The production build path now understands authored 3D assets. `gosx assets plan`
+and `gosx build` inventory GLB/glTF, KTX2, HDR/EXR, raster textures, audio,
+USDZ, and WGSL files into `scene-assets.json`, including KTX2 upload metadata,
+planned meshopt/Draco/TurboQuant variants, IBL prefilter targets, audio
+transcodes, and shader optimization actions. The build manifest exposes that
+report summary for deploy and tooling integration, and offline bundles carry the
+report when present.
+
+Runtime asset packaging gained a Stripe bridge and a safer managed-script
+loading mode for third-party browser boundaries. GoSX now ships
+`stripeui` server components, `client/js/stripe-bridge.js`, DOM-loaded managed
+scripts, static export/runtime asset mapping for `/gosx/stripe-bridge.js`, and
+hashed build-manifest entries so checkout surfaces can use Stripe.js directly
+without routing secure input through the Go app.
+
 ## v0.18.25
 
 Professional WebGPU and production-hardening release.

@@ -18,23 +18,28 @@ type Scene3DProps struct {
 }
 
 type MeshElementProps struct {
-	ID            string
-	MaterialIndex int
-	Transform     IRTransform
-	Kind          string
-	Src           string
-	Size          float64
-	Width         float64
-	Height        float64
-	Depth         float64
-	Radius        float64
-	Segments      int
-	CastShadow    bool
-	ReceiveShadow bool
-	Pickable      *bool
-	Static        *bool
-	Animation     string
-	Loop          *bool
+	ID                 string
+	MaterialIndex      int
+	Transform          IRTransform
+	Kind               string
+	Src                string
+	Size               float64
+	Width              float64
+	Height             float64
+	Depth              float64
+	Radius             float64
+	Segments           int
+	CastShadow         bool
+	ReceiveShadow      bool
+	Pickable           *bool
+	Static             *bool
+	Animation          string
+	AnimationSeq       string
+	AnimationSpeed     *float64
+	AnimationWeight    *float64
+	AnimationFadeInMS  *int
+	AnimationFadeOutMS *int
+	Loop               *bool
 }
 
 type PointsElementProps struct {
@@ -111,20 +116,25 @@ func LowerMesh(props MeshElementProps) IRNode {
 		MaterialIndex: props.MaterialIndex,
 		Transform:     props.Transform,
 		Mesh: &IRMeshNode{
-			Kind:          strings.TrimSpace(props.Kind),
-			Src:           strings.TrimSpace(props.Src),
-			Size:          props.Size,
-			Width:         props.Width,
-			Height:        props.Height,
-			Depth:         props.Depth,
-			Radius:        props.Radius,
-			Segments:      props.Segments,
-			CastShadow:    props.CastShadow,
-			ReceiveShadow: props.ReceiveShadow,
-			Pickable:      props.Pickable,
-			Static:        props.Static,
-			Animation:     strings.TrimSpace(props.Animation),
-			Loop:          props.Loop,
+			Kind:               strings.TrimSpace(props.Kind),
+			Src:                strings.TrimSpace(props.Src),
+			Size:               props.Size,
+			Width:              props.Width,
+			Height:             props.Height,
+			Depth:              props.Depth,
+			Radius:             props.Radius,
+			Segments:           props.Segments,
+			CastShadow:         props.CastShadow,
+			ReceiveShadow:      props.ReceiveShadow,
+			Pickable:           props.Pickable,
+			Static:             props.Static,
+			Animation:          strings.TrimSpace(props.Animation),
+			AnimationSeq:       strings.TrimSpace(props.AnimationSeq),
+			AnimationSpeed:     nonNegativeFloatPtr(props.AnimationSpeed),
+			AnimationWeight:    nonNegativeFloatPtr(props.AnimationWeight),
+			AnimationFadeInMS:  nonNegativeIntPtr(props.AnimationFadeInMS),
+			AnimationFadeOutMS: nonNegativeIntPtr(props.AnimationFadeOutMS),
+			Loop:               props.Loop,
 		},
 	}
 }

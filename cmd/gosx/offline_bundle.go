@@ -47,7 +47,7 @@ func stageOfflineAssetBundle(projectDir, distDir string) error {
 			return err
 		}
 	}
-	for _, name := range []string{"build.json", "export.json"} {
+	for _, name := range []string{"build.json", "export.json", "scene-assets.json"} {
 		if err := copyFileIfPresent(filepath.Join(distDir, name), filepath.Join(offlineDir, name)); err != nil {
 			return err
 		}

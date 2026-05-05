@@ -47,6 +47,12 @@
     "checked", "selected", "disabled",
   ]);
 
+  // Missing paths can happen briefly when a high-frequency signal races a DOM
+  // subtree replacement. The operation is already safe to skip; warn once per
+  // path/kind so live game loops do not flood the console.
+  var missingPatchPathWarnings = new Set();
+  var MAX_MISSING_PATCH_WARNINGS = 64;
+
   // ---------------------------------------------------------------------------
   // Entry point — called from WASM via the bridge
   // ---------------------------------------------------------------------------
@@ -131,6 +137,57 @@
   }
 
   /**
+   * Resolve the parent node and final child index for a slash-separated path.
+   *
+   * @param {Element} root
+   * @param {string} path
+   * @returns {{parent: Node, index: number}|null}
+   */
+  function resolveParentPath(root, path) {
+    if (!path || path === "") return null;
+
+    var parts = String(path).split("/");
+    var rawIndex = parts.pop();
+    var idx = parseInt(rawIndex, 10);
+    if (isNaN(idx) || idx < 0) return null;
+
+    var parentPath = parts.join("/");
+    var parent = resolvePath(root, parentPath);
+    if (!parent || parent.nodeType !== Node.ELEMENT_NODE) return null;
+
+    return { parent: parent, index: idx };
+  }
+
+  /**
+   * Browsers may omit empty text nodes that exist in the Go VDOM. If a SetText
+   * targets one of those paths, recreate the missing text node so high-frequency
+   * signal patches stay deterministic instead of becoming noisy no-ops.
+   *
+   * @param {Element} root
+   * @param {string} path
+   * @returns {Node|null}
+   */
+  function createMissingTextTarget(root, path) {
+    var resolved = resolveParentPath(root, path);
+    if (!resolved) return null;
+
+    var children = getEffectiveChildren(resolved.parent);
+    if (resolved.index > children.length) return null;
+
+    var doc = resolved.parent.ownerDocument ||
+      (typeof document !== "undefined" ? document : null);
+    if (!doc || typeof doc.createTextNode !== "function") return null;
+
+    var textNode = doc.createTextNode("");
+    if (resolved.index >= children.length) {
+      resolved.parent.appendChild(textNode);
+    } else {
+      resolved.parent.insertBefore(textNode, children[resolved.index]);
+    }
+    return textNode;
+  }
+
+  /**
    * If a node has exactly one element child and that child is an implicit
    * wrapper (TBODY, THEAD, etc.), skip into it.  This keeps Go-side indices
    * aligned with the browser DOM.
@@ -186,9 +243,18 @@
    */
   function applyPatch(root, op) {
     var target = resolvePath(root, op.path);
+    if (!target && op.kind === PATCH_SET_TEXT) {
+      target = createMissingTextTarget(root, op.path);
+    }
 
     if (!target) {
-      if (typeof console !== "undefined") {
+      var warnKey = String(op.path || "") + ":" + String(op.kind);
+      if (
+        typeof console !== "undefined" &&
+        !missingPatchPathWarnings.has(warnKey) &&
+        missingPatchPathWarnings.size < MAX_MISSING_PATCH_WARNINGS
+      ) {
+        missingPatchPathWarnings.add(warnKey);
         console.warn(
           "[gosx/patch] could not resolve path: " + op.path +
           " (kind=" + op.kind + ")"

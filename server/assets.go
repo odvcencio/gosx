@@ -47,12 +47,16 @@ const (
 	ManagedScriptRoleBootstrap = "bootstrap"
 	ManagedScriptRoleLifecycle = "lifecycle"
 	ManagedScriptRoleManaged   = "managed"
+
+	ManagedScriptLoadFetchEval = "fetch-eval"
+	ManagedScriptLoadDOM       = "dom"
 )
 
 // ManagedScriptOptions configures GoSX runtime metadata attached to an
 // externally loaded script asset.
 type ManagedScriptOptions struct {
 	Role string
+	Load string
 }
 
 // ManagedScript renders a script tag with GoSX runtime ownership metadata so
@@ -67,6 +71,9 @@ func ManagedScript(src string, opts ManagedScriptOptions, args ...any) gosx.Node
 			gosx.Attr("src", AssetURL(src)),
 			gosx.Attr("data-gosx-script", normalizeManagedScriptRole(opts.Role)),
 		),
+	}
+	if load := normalizeManagedScriptLoad(opts.Load); load != "" {
+		attrs = append(attrs, gosx.Attrs(gosx.Attr("data-gosx-script-load", load)))
 	}
 	attrs = append(attrs, args...)
 	return gosx.El("script", attrs...)
@@ -114,5 +121,16 @@ func normalizeManagedScriptRole(role string) string {
 		return ManagedScriptRoleManaged
 	default:
 		return ManagedScriptRoleManaged
+	}
+}
+
+func normalizeManagedScriptLoad(load string) string {
+	switch strings.TrimSpace(strings.ToLower(load)) {
+	case "", ManagedScriptLoadFetchEval:
+		return ""
+	case ManagedScriptLoadDOM:
+		return ManagedScriptLoadDOM
+	default:
+		return ""
 	}
 }

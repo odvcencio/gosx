@@ -1776,6 +1776,10 @@
     const scaleSource = current.scale && typeof current.scale === "object" ? current.scale : null;
     const hasStatic = Object.prototype.hasOwnProperty.call(current, "static");
     const hasPickable = Object.prototype.hasOwnProperty.call(current, "pickable");
+    const hasAnimationSpeed = Object.prototype.hasOwnProperty.call(current, "animationSpeed");
+    const hasAnimationWeight = Object.prototype.hasOwnProperty.call(current, "animationWeight");
+    const hasAnimationFadeInMS = Object.prototype.hasOwnProperty.call(current, "animationFadeInMS");
+    const hasAnimationFadeOutMS = Object.prototype.hasOwnProperty.call(current, "animationFadeOutMS");
     const override = {};
     const lifecycle = sceneNormalizeLifecycle(current, null);
     const materialKind = sceneObjectMaterialKindValue(current);
@@ -1814,7 +1818,7 @@
     if (sceneObjectMaterialHasValue(current, "wireframe")) {
       override.wireframe = sceneObjectMaterialValue(current, "wireframe");
     }
-    return {
+    const model = {
       id: typeof current.id === "string" && current.id.trim() ? current.id.trim() : ("scene-model-" + index),
       src: typeof current.src === "string" && current.src.trim() ? current.src.trim() : "",
       x: sceneNumber(current.x, 0),
@@ -1827,6 +1831,7 @@
       scaleY: sceneNumber(current.scaleY, sceneNumber(scaleSource && scaleSource.y, sceneNumber(current.scale, 1))),
       scaleZ: sceneNumber(current.scaleZ, sceneNumber(scaleSource && scaleSource.z, sceneNumber(current.scale, 1))),
       animation: typeof current.animation === "string" && current.animation.trim() ? current.animation.trim() : "",
+      animationSeq: typeof current.animationSeq === "string" ? current.animationSeq : "",
       loop: Object.prototype.hasOwnProperty.call(current, "loop") ? sceneBool(current.loop, true) : true,
       pickable: hasPickable ? sceneBool(current.pickable, false) : undefined,
       static: hasStatic ? sceneBool(current.static, false) : null,
@@ -1840,6 +1845,19 @@
       _outState: lifecycle.outState,
       _live: lifecycle.live,
     };
+    if (hasAnimationSpeed) {
+      model.animationSpeed = Math.max(0, sceneNumber(current.animationSpeed, 1));
+    }
+    if (hasAnimationWeight) {
+      model.animationWeight = Math.max(0, sceneNumber(current.animationWeight, 1));
+    }
+    if (hasAnimationFadeInMS) {
+      model.animationFadeInMS = Math.max(0, sceneNumber(current.animationFadeInMS, 0));
+    }
+    if (hasAnimationFadeOutMS) {
+      model.animationFadeOutMS = Math.max(0, sceneNumber(current.animationFadeOutMS, 0));
+    }
+    return model;
   }
 
   function sceneModels(props) {
