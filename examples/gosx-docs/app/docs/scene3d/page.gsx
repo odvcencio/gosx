@@ -155,13 +155,13 @@ func Page() Node {
 	Controls:           scene.ControlOrbit,
 	ControlRotateSpeed: 1.0,
 	ControlZoomSpeed:   1.2,
-
+	
 	// Swap to first-person for games and immersive walkthroughs:
 	// Controls:         scene.ControlFirstPerson,
 	// PointerLock:      scene.Bool(true),
 	// ControlLookSpeed: 0.9,
 	// ControlMoveSpeed: 6,
-
+	
 	// Scroll-driven camera (for parallax hero sections)
 	ScrollCameraStart: 0.0,  // camera position lerp start (0 = top of page)
 	ScrollCameraEnd:   1.0,  // lerp end (1 = bottom of page)`)}

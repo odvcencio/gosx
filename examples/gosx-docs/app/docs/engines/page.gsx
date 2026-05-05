@@ -145,9 +145,15 @@ func Page() Node {
 	        runWebGPUPath(ctx, gpu)
 	    },
 	})`)}
-				<p>
-					Capability negotiation happens at runtime, not at author time. The engine program receives whichever context the browser can provide. Writing a two-path program covers the full capability range without separate builds. WebGPU gates can also target optional device features and limits, such as <span class="inline-code">webgpu:timestamp-query</span> or <span class="inline-code">webgpu:adapter-limit:maxTextureDimension2D&gt;=8192</span>.
-				</p>
+			<p>
+				Capability negotiation happens at runtime, not at author time. The engine program receives whichever context the browser can provide. Writing a two-path program covers the full capability range without separate builds. WebGPU gates can also target optional device features and limits, such as
+				<span class="inline-code">webgpu:timestamp-query</span>
+				or
+				<span class="inline-code">
+					webgpu:adapter-limit:maxTextureDimension2D&gt;=8192
+				</span>
+				.
+			</p>
 			<section class="callout">
 				<strong>Ownership transfer</strong>
 				<p>
