@@ -16,7 +16,7 @@ import (
 )
 
 func BenchmarkRouterServeStatic(b *testing.B) {
-//line /home/draco/work/gosx/route/bench.dmj:16
+//line route/bench.dmj:16
 	handler := benchStaticRouter()
 	req := httptest.NewRequest("GET", "/about", nil)
 	b.ReportAllocs()
@@ -28,7 +28,7 @@ func BenchmarkRouterServeStatic(b *testing.B) {
 }
 
 func BenchmarkRouterServeParam(b *testing.B) {
-//line /home/draco/work/gosx/route/bench.dmj:28
+//line route/bench.dmj:28
 	handler := benchParamRouter()
 	req := httptest.NewRequest("GET", "/users/42/posts/hello-world", nil)
 	b.ReportAllocs()
@@ -40,7 +40,7 @@ func BenchmarkRouterServeParam(b *testing.B) {
 }
 
 func BenchmarkRouterServeNestedLayouts(b *testing.B) {
-//line /home/draco/work/gosx/route/bench.dmj:40
+//line route/bench.dmj:40
 	handler := benchNestedRouter()
 	req := httptest.NewRequest("GET", "/dashboard/settings", nil)
 	b.ReportAllocs()
@@ -52,7 +52,7 @@ func BenchmarkRouterServeNestedLayouts(b *testing.B) {
 }
 
 func BenchmarkPatternParamNames(b *testing.B) {
-//line /home/draco/work/gosx/route/bench.dmj:52
+//line route/bench.dmj:52
 	pattern := "/users/{userID}/posts/{slug}/comments/{commentID}"
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -73,7 +73,7 @@ func BenchmarkPatternParamNames(b *testing.B) {
 // optimization, this is the number to watch when refactoring the
 // scene package or the route engine-props canonicalization code.
 func BenchmarkEnginePropsSceneSpread(b *testing.B) {
-//line /home/draco/work/gosx/route/bench.dmj:73
+//line route/bench.dmj:73
 	props := benchScene3DProps()
 	spread := props.GoSXSpreadProps()
 	b.ReportAllocs()
@@ -87,7 +87,7 @@ func BenchmarkEnginePropsSceneSpread(b *testing.B) {
 // canonicalize + marshal), so the benchmark reflects the true
 // per-request cost of a Scene3D SSR render path end-to-end.
 func BenchmarkEnginePropsSceneEndToEnd(b *testing.B) {
-//line /home/draco/work/gosx/route/bench.dmj:87
+//line route/bench.dmj:87
 	props := benchScene3DProps()
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -101,7 +101,7 @@ func BenchmarkEnginePropsSceneEndToEnd(b *testing.B) {
 // lights. This is the closest thing the bench suite has to the
 // actual m31labs.dev homepage Scene3D cost per request.
 func BenchmarkEnginePropsGalaxyEndToEnd(b *testing.B) {
-//line /home/draco/work/gosx/route/bench.dmj:101
+//line route/bench.dmj:101
 	props := benchGalaxyScene3DProps()
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -115,7 +115,7 @@ func BenchmarkEnginePropsGalaxyEndToEnd(b *testing.B) {
 // Isolates the lowerer cost so bench drift can be attributed to the
 // graph walker vs. the downstream marshal/canonicalize steps.
 func BenchmarkSceneIrGalaxyLower(b *testing.B) {
-//line /home/draco/work/gosx/route/bench.dmj:115
+//line route/bench.dmj:115
 	props := benchGalaxyScene3DProps()
 	b.ReportAllocs()
 	b.ResetTimer()

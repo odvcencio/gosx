@@ -29,7 +29,7 @@ import (
 )
 
 func BenchmarkCounterFullCycle(b *testing.B) {
-//line /home/draco/work/gosx/island/bench.dmj:29
+//line island/bench.dmj:29
 	prog := program.CounterProgram()
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -40,7 +40,7 @@ func BenchmarkCounterFullCycle(b *testing.B) {
 }
 
 func BenchmarkCounterSsrRender(b *testing.B) {
-//line /home/draco/work/gosx/island/bench.dmj:41
+//line island/bench.dmj:41
 	prog := program.CounterProgram()
 	resolved := vm.ResolveInitialTree(prog, `{}`)
 	b.ReportAllocs()
@@ -51,7 +51,7 @@ func BenchmarkCounterSsrRender(b *testing.B) {
 }
 
 func BenchmarkFormFullCycle(b *testing.B) {
-//line /home/draco/work/gosx/island/bench.dmj:52
+//line island/bench.dmj:52
 	prog := program.FormProgram()
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -62,7 +62,7 @@ func BenchmarkFormFullCycle(b *testing.B) {
 }
 
 func BenchmarkFormSsrRender(b *testing.B) {
-//line /home/draco/work/gosx/island/bench.dmj:63
+//line island/bench.dmj:63
 	prog := program.FormProgram()
 	resolved := vm.ResolveInitialTree(prog, `{}`)
 	b.ReportAllocs()
@@ -73,7 +73,7 @@ func BenchmarkFormSsrRender(b *testing.B) {
 }
 
 func BenchmarkListSsrRender(b *testing.B) {
-//line /home/draco/work/gosx/island/bench.dmj:74
+//line island/bench.dmj:74
 	prog := program.ListProgram()
 	resolved := vm.ResolveInitialTree(prog, `{"items": ["apple", "banana", "cherry", "date", "elderberry"]}`)
 	b.ReportAllocs()
@@ -84,7 +84,7 @@ func BenchmarkListSsrRender(b *testing.B) {
 }
 
 func BenchmarkToggleFullCycle(b *testing.B) {
-//line /home/draco/work/gosx/island/bench.dmj:85
+//line island/bench.dmj:85
 	prog := program.ToggleProgram()
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -95,7 +95,7 @@ func BenchmarkToggleFullCycle(b *testing.B) {
 }
 
 func BenchmarkCounterTenDispatches(b *testing.B) {
-//line /home/draco/work/gosx/island/bench.dmj:96
+//line island/bench.dmj:96
 	prog := program.CounterProgram()
 	island := vm.NewIsland(prog, `{}`)
 	b.ReportAllocs()
@@ -111,7 +111,7 @@ func BenchmarkCounterTenDispatches(b *testing.B) {
 // coverage. Toggles exercise the conditional-render branch of the
 // resolved-node renderer (the one path that had no SSR bench).
 func BenchmarkToggleSsrRender(b *testing.B) {
-//line /home/draco/work/gosx/island/bench.dmj:112
+//line island/bench.dmj:112
 	prog := program.ToggleProgram()
 	resolved := vm.ResolveInitialTree(prog, `{}`)
 	b.ReportAllocs()
@@ -128,7 +128,7 @@ func BenchmarkToggleSsrRender(b *testing.B) {
 // hydration manifest registration, program lookup, initial prop
 // marshal), which would dominate a page with many small islands.
 func BenchmarkMultiIslandSsrRender(b *testing.B) {
-//line /home/draco/work/gosx/island/bench.dmj:129
+//line island/bench.dmj:129
 	prog := program.CounterProgram()
 	resolved := vm.ResolveInitialTree(prog, `{}`)
 	b.ReportAllocs()
@@ -145,7 +145,7 @@ func BenchmarkMultiIslandSsrRender(b *testing.B) {
 // the cumulative cost of a realistic interaction burst and reveals
 // per-dispatch overhead that isn't visible in a single-dispatch bench.
 func BenchmarkFormTypingBurst(b *testing.B) {
-//line /home/draco/work/gosx/island/bench.dmj:149
+//line island/bench.dmj:149
 	prog := program.FormProgram()
 	island := vm.NewIsland(prog, `{}`)
 	b.ReportAllocs()
@@ -164,7 +164,7 @@ func BenchmarkFormTypingBurst(b *testing.B) {
 // component. Each dispatch updates state, the second reconcile
 // should hit the steady-state path (no tree reallocation).
 func BenchmarkCounterHydrationRoundTrip(b *testing.B) {
-//line /home/draco/work/gosx/island/bench.dmj:168
+//line island/bench.dmj:168
 	prog := program.CounterProgram()
 	b.ReportAllocs()
 	b.ResetTimer()

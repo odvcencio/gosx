@@ -17,7 +17,7 @@ import (
 )
 
 func TestSessionCookieHardeningScenarios(t *testing.T) {
-//line /home/draco/work/gosx/session/security_scenarios.dmj:16
+//line session/security_scenarios.dmj:16
 	t.Parallel()
 	type CookieModeScenario struct {
 		name      interface{}
@@ -68,7 +68,7 @@ func TestSessionCookieHardeningScenarios(t *testing.T) {
 			if cookies := readRes.Result().Cookies(); len(cookies) > 0 {
 				refreshed = cookies[0]
 			}
-			//line /home/draco/work/gosx/session/security_scenarios.dmj:54
+			//line session/security_scenarios.dmj:54
 			t.Run("loads the signed payload", func(t *testing.T) {
 				if readRes.Code != http.StatusOK {
 					t.Fatalf("status = %d, want 200", readRes.Code)
@@ -77,14 +77,14 @@ func TestSessionCookieHardeningScenarios(t *testing.T) {
 					t.Fatalf("body = %q, want platform", readRes.Body.String())
 				}
 			})
-			//line /home/draco/work/gosx/session/security_scenarios.dmj:63
+			//line session/security_scenarios.dmj:63
 			t.Run("uses the expected cookie envelope", func(t *testing.T) {
 				gotV2 := strings.HasPrefix(refreshed.Value, "v2.")
 				if gotV2 != scenario.want_v2.(bool) {
 					t.Fatalf("v2 envelope = %v, want %v", gotV2, scenario.want_v2)
 				}
 			})
-			//line /home/draco/work/gosx/session/security_scenarios.dmj:70
+			//line session/security_scenarios.dmj:70
 			t.Run("rejects tampered values", func(t *testing.T) {
 				corrupted := strings.Replace(refreshed.Value, ".", "x.", 1)
 				if corrupted == refreshed.Value {

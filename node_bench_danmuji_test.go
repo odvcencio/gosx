@@ -13,7 +13,7 @@ package gosx
 import "testing"
 
 func BenchmarkRenderHtmlSimple(b *testing.B) {
-//line /home/draco/work/gosx/node_bench.dmj:13
+//line node_bench.dmj:13
 	node := El("div", Text("hello"))
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -23,7 +23,7 @@ func BenchmarkRenderHtmlSimple(b *testing.B) {
 }
 
 func BenchmarkRenderHtmlWithAttrs(b *testing.B) {
-//line /home/draco/work/gosx/node_bench.dmj:23
+//line node_bench.dmj:23
 	node := El("div",
 		Attrs(
 			Attr("id", "bench-element"),
@@ -43,7 +43,7 @@ func BenchmarkRenderHtmlWithAttrs(b *testing.B) {
 }
 
 func BenchmarkRenderHtmlNested(b *testing.B) {
-//line /home/draco/work/gosx/node_bench.dmj:43
+//line node_bench.dmj:43
 	link := func(href, label string) Node {
 		return El("a", Attrs(Attr("href", href), Attr("class", "nav__link")), Text(label))
 	}

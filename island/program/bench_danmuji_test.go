@@ -13,7 +13,7 @@ package program
 import "testing"
 
 func BenchmarkEncodeBinaryCounter(b *testing.B) {
-//line /home/draco/work/gosx/island/program/bench.dmj:13
+//line island/program/bench.dmj:13
 	prog := benchCounterProgram()
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -26,7 +26,7 @@ func BenchmarkEncodeBinaryCounter(b *testing.B) {
 }
 
 func BenchmarkEncodeBinaryForm(b *testing.B) {
-//line /home/draco/work/gosx/island/program/bench.dmj:26
+//line island/program/bench.dmj:26
 	prog := benchFormProgram()
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -39,7 +39,7 @@ func BenchmarkEncodeBinaryForm(b *testing.B) {
 }
 
 func BenchmarkEncodeJsonCounter(b *testing.B) {
-//line /home/draco/work/gosx/island/program/bench.dmj:39
+//line island/program/bench.dmj:39
 	prog := benchCounterProgram()
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -52,7 +52,7 @@ func BenchmarkEncodeJsonCounter(b *testing.B) {
 }
 
 func BenchmarkDecodeBinaryCounter(b *testing.B) {
-//line /home/draco/work/gosx/island/program/bench.dmj:52
+//line island/program/bench.dmj:52
 	prog := benchCounterProgram()
 	data, err := EncodeBinary(prog)
 	if err != nil {

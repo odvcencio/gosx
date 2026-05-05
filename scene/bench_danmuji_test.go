@@ -15,7 +15,7 @@ import (
 )
 
 func BenchmarkPropsSceneIr(b *testing.B) {
-//line /home/draco/work/gosx/scene/bench.dmj:15
+//line scene/bench.dmj:15
 	props := benchMixedScene()
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -25,7 +25,7 @@ func BenchmarkPropsSceneIr(b *testing.B) {
 }
 
 func BenchmarkPropsLegacyProps(b *testing.B) {
-//line /home/draco/work/gosx/scene/bench.dmj:25
+//line scene/bench.dmj:25
 	props := benchMixedScene()
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -35,7 +35,7 @@ func BenchmarkPropsLegacyProps(b *testing.B) {
 }
 
 func BenchmarkPropsMarshalJson(b *testing.B) {
-//line /home/draco/work/gosx/scene/bench.dmj:35
+//line scene/bench.dmj:35
 	props := benchMixedScene()
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -48,7 +48,7 @@ func BenchmarkPropsMarshalJson(b *testing.B) {
 }
 
 func BenchmarkObjectIrLegacyProps(b *testing.B) {
-//line /home/draco/work/gosx/scene/bench.dmj:48
+//line scene/bench.dmj:48
 	ir := ObjectIR{
 		ID:            "bench-object",
 		Kind:          "sphere",
@@ -78,7 +78,7 @@ func BenchmarkObjectIrLegacyProps(b *testing.B) {
 // JSON bytes as a json.RawMessage under the "scene" key without
 // touching the slower legacyProps() map tree.
 func BenchmarkPropsSpreadPropsFast(b *testing.B) {
-//line /home/draco/work/gosx/scene/bench.dmj:78
+//line scene/bench.dmj:78
 	props := benchMixedScene()
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -93,7 +93,7 @@ func BenchmarkPropsSpreadPropsFast(b *testing.B) {
 // on top of spreadPropsFast, so this is the end-to-end number a GoSX
 // SSR render of a Scene3D component actually pays per request.
 func BenchmarkPropsGosxSpreadProps(b *testing.B) {
-//line /home/draco/work/gosx/scene/bench.dmj:93
+//line scene/bench.dmj:93
 	props := benchMixedScene()
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -108,7 +108,7 @@ func BenchmarkPropsGosxSpreadProps(b *testing.B) {
 // measurement is equivalent to BenchmarkPropsMarshalJson with the
 // trailing wrap/trim step included.
 func BenchmarkPropsRawJson(b *testing.B) {
-//line /home/draco/work/gosx/scene/bench.dmj:108
+//line scene/bench.dmj:108
 	props := benchMixedScene()
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -122,7 +122,7 @@ func BenchmarkPropsRawJson(b *testing.B) {
 // scene. Alloc growth here is linear in mesh count — the point is
 // to catch accidental quadratic blowups during refactors.
 func BenchmarkPropsMarshalGalaxy(b *testing.B) {
-//line /home/draco/work/gosx/scene/bench.dmj:122
+//line scene/bench.dmj:122
 	props := benchGalaxyScene()
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -137,7 +137,7 @@ func BenchmarkPropsMarshalGalaxy(b *testing.B) {
 // Scene graph lowering in isolation — Graph → SceneIR — so bench
 // drift can be attributed to the lowerer vs. the downstream marshal.
 func BenchmarkSceneIrGalaxy(b *testing.B) {
-//line /home/draco/work/gosx/scene/bench.dmj:137
+//line scene/bench.dmj:137
 	props := benchGalaxyScene()
 	b.ReportAllocs()
 	b.ResetTimer()

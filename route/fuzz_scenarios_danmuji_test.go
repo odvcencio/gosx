@@ -19,7 +19,7 @@ import (
 )
 
 func TestRouterSpecificityDanmujiScenarios(t *testing.T) {
-//line /home/draco/work/gosx/route/fuzz_scenarios.dmj:19
+//line route/fuzz_scenarios.dmj:19
 	t.Parallel()
 	router := NewRouter()
 	router.Add(
@@ -64,7 +64,7 @@ func TestRouterSpecificityDanmujiScenarios(t *testing.T) {
 			req := httptest.NewRequest(http.MethodGet, scenario.path.(string), nil)
 			res := httptest.NewRecorder()
 			handler.ServeHTTP(res, req)
-			//line /home/draco/work/gosx/route/fuzz_scenarios.dmj:53
+			//line route/fuzz_scenarios.dmj:53
 			t.Run("returns the expected route body", func(t *testing.T) {
 				if res.Body.String() != scenario.body.(string) {
 					t.Fatalf("body = %q, want %q", res.Body.String(), scenario.body)

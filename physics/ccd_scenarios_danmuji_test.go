@@ -15,7 +15,7 @@ import (
 )
 
 func TestContinuousCollisionDynamicShapeScenarios(t *testing.T) {
-//line /home/draco/work/gosx/physics/ccd_scenarios.dmj:14
+//line physics/ccd_scenarios.dmj:14
 	t.Parallel()
 	type FastColliderScenario struct {
 		name     interface{}
@@ -65,13 +65,13 @@ func TestContinuousCollisionDynamicShapeScenarios(t *testing.T) {
 				})
 			}
 			world.Step(1.0 / 60.0)
-			//line /home/draco/work/gosx/physics/ccd_scenarios.dmj:44
+			//line physics/ccd_scenarios.dmj:44
 			t.Run("does not tunnel through the plane", func(t *testing.T) {
 				if body.Position.Y < scenario.min_y.(float64) {
 					t.Fatalf("body y = %v, want >= %v", body.Position.Y, scenario.min_y)
 				}
 			})
-			//line /home/draco/work/gosx/physics/ccd_scenarios.dmj:50
+			//line physics/ccd_scenarios.dmj:50
 			t.Run("removes inward velocity", func(t *testing.T) {
 				if body.Velocity.Y < -epsilon {
 					t.Fatalf("body velocity = %+v, want no inward velocity", body.Velocity)

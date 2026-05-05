@@ -294,7 +294,7 @@ func danmujiUnorderedEqualDetail(expected, actual interface{}) (bool, string) {
 	return true, ""
 }
 func TestPartitionedListConvergenceScenarios(t *testing.T) {
-//line /home/draco/work/gosx/crdt/convergence_scenarios.dmj:15
+//line crdt/convergence_scenarios.dmj:15
 	t.Parallel()
 	type PartitionSizeScenario struct {
 		name        interface{}
@@ -348,13 +348,13 @@ func TestPartitionedListConvergenceScenarios(t *testing.T) {
 			}
 			leftValues := listStrings(t, left, items)
 			rightValues := listStrings(t, right, items)
-			//line /home/draco/work/gosx/crdt/convergence_scenarios.dmj:59
+			//line crdt/convergence_scenarios.dmj:59
 			t.Run("converges to a deterministic order", func(t *testing.T) {
 				if strings.Join(leftValues, "|") != strings.Join(rightValues, "|") {
 					t.Fatalf("list order diverged: left=%#v right=%#v", leftValues, rightValues)
 				}
 			})
-			//line /home/draco/work/gosx/crdt/convergence_scenarios.dmj:65
+			//line crdt/convergence_scenarios.dmj:65
 			t.Run("keeps every concurrent insert", func(t *testing.T) {
 				want := scenario.left_count.(int) + scenario.right_count.(int)
 				if len(leftValues) != want {

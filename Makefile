@@ -3,6 +3,7 @@ GOFMT ?= gofmt
 GO_WASM_EXEC ?= $(shell $(GO) env GOROOT)/lib/wasm/go_js_wasm_exec
 NODE ?= node
 GZIP ?= gzip
+PERL ?= perl
 DANMUJI ?= danmuji
 CANOPY ?= canopy
 CANOPY_CACHE ?= .canopy/index.json
@@ -48,6 +49,8 @@ verify-danmuji:
 	done | sort > "$$before"; \
 	echo "$(DANMUJI) build ."; \
 	$(DANMUJI) build .; \
+	echo "$(PERL) -0pi -e 's{//line \\Q$(CURDIR)/\\E}{//line }g' $(DMJGOFILES)"; \
+	$(PERL) -0pi -e 's{//line \Q$(CURDIR)/\E}{//line }g' $(DMJGOFILES); \
 	echo "$(GOFMT) -w $(DMJGOFILES)"; \
 	$(GOFMT) -w $(DMJGOFILES); \
 	for f in $(DMJGOFILES); do \

@@ -13,7 +13,7 @@ package signal
 import "testing"
 
 func BenchmarkSignalSetNoSubscribers(b *testing.B) {
-//line /home/draco/work/gosx/signal/bench.dmj:13
+//line signal/bench.dmj:13
 	s := New(0)
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -23,7 +23,7 @@ func BenchmarkSignalSetNoSubscribers(b *testing.B) {
 }
 
 func BenchmarkSignalSetOneSubscriber(b *testing.B) {
-//line /home/draco/work/gosx/signal/bench.dmj:23
+//line signal/bench.dmj:23
 	s := New(0)
 	s.Subscribe(func() {})
 	b.ReportAllocs()
@@ -34,7 +34,7 @@ func BenchmarkSignalSetOneSubscriber(b *testing.B) {
 }
 
 func BenchmarkSignalSetFourSubscribers(b *testing.B) {
-//line /home/draco/work/gosx/signal/bench.dmj:34
+//line signal/bench.dmj:34
 	s := New(0)
 	s.Subscribe(func() {})
 	s.Subscribe(func() {})
@@ -48,7 +48,7 @@ func BenchmarkSignalSetFourSubscribers(b *testing.B) {
 }
 
 func BenchmarkSignalGet(b *testing.B) {
-//line /home/draco/work/gosx/signal/bench.dmj:48
+//line signal/bench.dmj:48
 	s := New(42)
 	b.ReportAllocs()
 	b.ResetTimer()

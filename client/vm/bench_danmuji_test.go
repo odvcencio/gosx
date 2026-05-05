@@ -17,7 +17,7 @@ import (
 )
 
 func BenchmarkResolveInitialTreeCounter(b *testing.B) {
-//line /home/draco/work/gosx/client/vm/bench.dmj:17
+//line client/vm/bench.dmj:17
 	prog := program.CounterProgram()
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -27,7 +27,7 @@ func BenchmarkResolveInitialTreeCounter(b *testing.B) {
 }
 
 func BenchmarkResolveInitialTreeForm(b *testing.B) {
-//line /home/draco/work/gosx/client/vm/bench.dmj:27
+//line client/vm/bench.dmj:27
 	prog := program.FormProgram()
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -37,7 +37,7 @@ func BenchmarkResolveInitialTreeForm(b *testing.B) {
 }
 
 func BenchmarkNewIslandCounter(b *testing.B) {
-//line /home/draco/work/gosx/client/vm/bench.dmj:37
+//line client/vm/bench.dmj:37
 	prog := program.CounterProgram()
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -47,7 +47,7 @@ func BenchmarkNewIslandCounter(b *testing.B) {
 }
 
 func BenchmarkDispatchIncrementCounter(b *testing.B) {
-//line /home/draco/work/gosx/client/vm/bench.dmj:47
+//line client/vm/bench.dmj:47
 	prog := program.CounterProgram()
 	island := NewIsland(prog, `{}`)
 	b.ReportAllocs()
@@ -58,7 +58,7 @@ func BenchmarkDispatchIncrementCounter(b *testing.B) {
 }
 
 func BenchmarkReconcileCounterAfterSet(b *testing.B) {
-//line /home/draco/work/gosx/client/vm/bench.dmj:58
+//line client/vm/bench.dmj:58
 	prog := program.CounterProgram()
 	island := NewIsland(prog, `{}`)
 	island.Dispatch("increment", "{}")
@@ -70,7 +70,7 @@ func BenchmarkReconcileCounterAfterSet(b *testing.B) {
 }
 
 func BenchmarkValueIntToString(b *testing.B) {
-//line /home/draco/work/gosx/client/vm/bench.dmj:70
+//line client/vm/bench.dmj:70
 	v := IntVal(42)
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -80,7 +80,7 @@ func BenchmarkValueIntToString(b *testing.B) {
 }
 
 func BenchmarkValueFloatToString(b *testing.B) {
-//line /home/draco/work/gosx/client/vm/bench.dmj:80
+//line client/vm/bench.dmj:80
 	v := FloatVal(3.14159)
 	b.ReportAllocs()
 	b.ResetTimer()

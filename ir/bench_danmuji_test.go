@@ -17,7 +17,7 @@ import (
 )
 
 func BenchmarkLowerCounter(b *testing.B) {
-//line /home/draco/work/gosx/ir/bench.dmj:17
+//line ir/bench.dmj:17
 	source := []byte(benchCounterSource)
 	tree, lang, err := gosx.Parse(source)
 	if err != nil {
@@ -35,7 +35,7 @@ func BenchmarkLowerCounter(b *testing.B) {
 }
 
 func BenchmarkLowerForm(b *testing.B) {
-//line /home/draco/work/gosx/ir/bench.dmj:35
+//line ir/bench.dmj:35
 	source := []byte(benchFormSource)
 	tree, lang, err := gosx.Parse(source)
 	if err != nil {
@@ -53,7 +53,7 @@ func BenchmarkLowerForm(b *testing.B) {
 }
 
 func BenchmarkLowerIslandCounter(b *testing.B) {
-//line /home/draco/work/gosx/ir/bench.dmj:53
+//line ir/bench.dmj:53
 	source := []byte(benchCounterSource)
 	tree, lang, err := gosx.Parse(source)
 	if err != nil {
@@ -74,7 +74,7 @@ func BenchmarkLowerIslandCounter(b *testing.B) {
 }
 
 func BenchmarkParseExprSimple(b *testing.B) {
-//line /home/draco/work/gosx/ir/bench.dmj:74
+//line ir/bench.dmj:74
 	src := "count + 1"
 	scope := benchExprScope()
 	b.ReportAllocs()
@@ -88,7 +88,7 @@ func BenchmarkParseExprSimple(b *testing.B) {
 }
 
 func BenchmarkParseExprComplex(b *testing.B) {
-//line /home/draco/work/gosx/ir/bench.dmj:88
+//line ir/bench.dmj:88
 	src := "user.name == \"alice\" && count > 10 ? items.length : 0"
 	scope := benchExprScope()
 	b.ReportAllocs()
