@@ -15,11 +15,12 @@ type Module struct {
 }
 
 type Component struct {
-	Name    string        `json:"name"`
-	Props   *Props        `json:"props,omitempty"`
-	Signals []*SignalDecl `json:"signals,omitempty"`
-	Body    View          `json:"body"`
-	Span    Span          `json:"span"`
+	Name      string          `json:"name"`
+	Props     *Props          `json:"props,omitempty"`
+	Signals   []*SignalDecl   `json:"signals,omitempty"`
+	Computeds []*ComputedDecl `json:"computeds,omitempty"`
+	Body      View            `json:"body"`
+	Span      Span            `json:"span"`
 }
 
 func (c *Component) UnmarshalJSON(data []byte) error {
@@ -154,6 +155,13 @@ type SignalDecl struct {
 	Name string  `json:"name"`
 	Type string  `json:"type"`
 	Init *RxExpr `json:"init"`
+	Span Span    `json:"span"`
+}
+
+type ComputedDecl struct {
+	Name string  `json:"name"`
+	Type string  `json:"type"`
+	Body *RxExpr `json:"body"`
 	Span Span    `json:"span"`
 }
 
