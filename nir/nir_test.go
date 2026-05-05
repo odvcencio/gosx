@@ -149,3 +149,33 @@ func TestComponentRefViewRoundTrip(t *testing.T) {
 		t.Fatalf("component ref round-trip mismatch: %+v", ref)
 	}
 }
+
+func TestLoopViewRoundTrip(t *testing.T) {
+	in := &Module{
+		Components: []*Component{{
+			Name: "Roster",
+			Body: &Loop{
+				Items:    RxExpr{Kind: "ref", Ref: "props.items"},
+				ItemName: "item",
+				Body: []View{
+					&Element{Tag: "text", Children: []View{&ExprHole{Expr: RxExpr{Kind: "ref", Ref: "item"}}}},
+				},
+			},
+		}},
+	}
+	data, err := json.Marshal(in)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var out Module
+	if err := json.Unmarshal(data, &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	loop, ok := out.Components[0].Body.(*Loop)
+	if !ok {
+		t.Fatalf("body decoded as %T, want *Loop", out.Components[0].Body)
+	}
+	if loop.Items.Ref != "props.items" || loop.ItemName != "item" || len(loop.Body) != 1 {
+		t.Fatalf("loop round-trip mismatch: %+v", loop)
+	}
+}

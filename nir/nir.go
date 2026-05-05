@@ -52,8 +52,8 @@ type PropField struct {
 	Type string `json:"type"`
 }
 
-// View is the sum type for view-tree nodes. Slot and Loop land later as the
-// corpus grows.
+// View is the sum type for view-tree nodes. Slot lands later as the corpus
+// grows.
 type View interface {
 	isView()
 }
@@ -160,6 +160,41 @@ func (c *ComponentRef) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+type Loop struct {
+	Items     RxExpr `json:"items"`
+	ItemName  string `json:"item"`
+	IndexName string `json:"index,omitempty"`
+	Body      []View `json:"body"`
+	Empty     []View `json:"empty,omitempty"`
+	Span      Span   `json:"span"`
+}
+
+func (*Loop) isView() {}
+
+func (l *Loop) UnmarshalJSON(data []byte) error {
+	type loopAlias Loop
+	var raw struct {
+		*loopAlias
+		Body  []json.RawMessage `json:"body"`
+		Empty []json.RawMessage `json:"empty"`
+	}
+	raw.loopAlias = (*loopAlias)(l)
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	body, err := decodeViews(raw.Body)
+	if err != nil {
+		return fmt.Errorf("body: %w", err)
+	}
+	empty, err := decodeViews(raw.Empty)
+	if err != nil {
+		return fmt.Errorf("empty: %w", err)
+	}
+	l.Body = body
+	l.Empty = empty
+	return nil
+}
+
 type Attr struct {
 	Name  string `json:"name"`
 	Value RxExpr `json:"value"`
@@ -256,6 +291,7 @@ func decodeView(data []byte) (View, error) {
 		Expr      json.RawMessage `json:"expr"`
 		Condition json.RawMessage `json:"condition"`
 		Component *string         `json:"component"`
+		Items     json.RawMessage `json:"items"`
 	}
 	if err := json.Unmarshal(data, &probe); err != nil {
 		return nil, err
@@ -291,6 +327,12 @@ func decodeView(data []byte) (View, error) {
 			return nil, err
 		}
 		return &ref, nil
+	case len(probe.Items) > 0:
+		var loop Loop
+		if err := json.Unmarshal(data, &loop); err != nil {
+			return nil, err
+		}
+		return &loop, nil
 	default:
 		return nil, fmt.Errorf("unknown view node: %s", string(data))
 	}
