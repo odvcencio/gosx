@@ -88,6 +88,28 @@ func TestComponentComputeds(t *testing.T) {
 	}
 }
 
+func TestConditionalExpressionRoundTrip(t *testing.T) {
+	in := RxExpr{
+		Kind: "cond",
+		Cond: &Cond{
+			Condition: RxExpr{Kind: "ref", Ref: "visible"},
+			Then:      RxExpr{Kind: "literal", Literal: &Literal{Type: "string", Value: "shown"}},
+			Else:      RxExpr{Kind: "literal", Literal: &Literal{Type: "string", Value: "hidden"}},
+		},
+	}
+	data, err := json.Marshal(in)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var out RxExpr
+	if err := json.Unmarshal(data, &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if out.Kind != "cond" || out.Cond == nil || out.Cond.Condition.Ref != "visible" || out.Cond.Then.Literal.Value != "shown" || out.Cond.Else.Literal.Value != "hidden" {
+		t.Fatalf("conditional expression round-trip mismatch: %+v", out)
+	}
+}
+
 func TestConditionalViewRoundTrip(t *testing.T) {
 	in := &Module{
 		Components: []*Component{{

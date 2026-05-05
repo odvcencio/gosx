@@ -214,6 +214,7 @@ type RxExpr struct {
 	Literal *Literal `json:"literal,omitempty"`
 	Ref     string   `json:"ref,omitempty"`
 	BinOp   *BinOp   `json:"binop,omitempty"`
+	Cond    *Cond    `json:"cond,omitempty"`
 	Call    *Call    `json:"call,omitempty"`
 	Span    Span     `json:"span"`
 }
@@ -227,6 +228,12 @@ type BinOp struct {
 	Op    string `json:"op"`
 	Left  RxExpr `json:"left"`
 	Right RxExpr `json:"right"`
+}
+
+type Cond struct {
+	Condition RxExpr `json:"condition"`
+	Then      RxExpr `json:"then"`
+	Else      RxExpr `json:"else"`
 }
 
 type Call struct {
