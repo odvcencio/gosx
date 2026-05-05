@@ -2,6 +2,8 @@ package perf
 
 import (
 	"context"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/chromedp/cdproto/runtime"
@@ -15,6 +17,7 @@ type Driver struct {
 	ctx         context.Context
 	timeout     time.Duration
 	headless    bool
+	noSandbox   bool
 }
 
 // Option configures a Driver before launch.
@@ -30,12 +33,18 @@ func WithTimeout(dur time.Duration) Option {
 	return func(d *Driver) { d.timeout = dur }
 }
 
+// WithNoSandbox disables Chrome's process sandbox for constrained CI runners.
+func WithNoSandbox(v bool) Option {
+	return func(d *Driver) { d.noSandbox = v }
+}
+
 // New launches a Chrome instance and returns a Driver.
 // Uses FindChrome to locate the binary.
 func New(opts ...Option) (*Driver, error) {
 	d := &Driver{
-		headless: true,
-		timeout:  30 * time.Second,
+		headless:  true,
+		timeout:   30 * time.Second,
+		noSandbox: envFlag("GOSX_CHROME_NO_SANDBOX"),
 	}
 	for _, o := range opts {
 		o(d)
@@ -59,6 +68,9 @@ func New(opts ...Option) (*Driver, error) {
 		// hard disable so the browser can try.
 		chromedp.Flag("enable-unsafe-webgpu", true),
 	)
+	if d.noSandbox {
+		allocOpts = append(allocOpts, chromedp.Flag("no-sandbox", true))
+	}
 
 	allocCtx, allocCancel := chromedp.NewExecAllocator(context.Background(), allocOpts...)
 
@@ -108,4 +120,13 @@ func (d *Driver) Evaluate(expr string, dst interface{}) error {
 // WaitReady waits for the page body to be present in the DOM.
 func (d *Driver) WaitReady() error {
 	return chromedp.Run(d.ctx, chromedp.WaitReady("body", chromedp.ByQuery))
+}
+
+func envFlag(name string) bool {
+	switch strings.ToLower(os.Getenv(name)) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
 }

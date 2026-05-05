@@ -51,4 +51,5 @@ fi
 # PERF_FLAGS and PERF_URLS intentionally split on shell words so callers can
 # pass the same flag and URL lists used by `make perf-budget`.
 # shellcheck disable=SC2086
-"$go_cmd" run ./cmd/gosx perf $flags --budget "$budget" --json $urls >"$out"
+GOSX_CHROME_NO_SANDBOX="${GOSX_CHROME_NO_SANDBOX:-1}" \
+	"$go_cmd" run ./cmd/gosx perf $flags --budget "$budget" --json $urls >"$out"
