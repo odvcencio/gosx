@@ -21,6 +21,10 @@ func RunBuildRuntime(outDir string) error {
 	if err := os.MkdirAll(outDir, 0755); err != nil {
 		return fmt.Errorf("create runtime build directory: %w", err)
 	}
+	outDir, err = filepath.Abs(outDir)
+	if err != nil {
+		return fmt.Errorf("resolve runtime build directory: %w", err)
+	}
 
 	_, tinygoPath, err := resolveWASMCompiler(BuildOptions{}, exec.LookPath)
 	if err != nil {
