@@ -52,9 +52,8 @@ type PropField struct {
 	Type string `json:"type"`
 }
 
-// View is the sum type for view-tree nodes. M1 ships only Element, Text, and
-// ExprHole. Slot/Fragment/Conditional/Loop/ComponentRef land later as the
-// corpus grows.
+// View is the sum type for view-tree nodes. Slot, Loop, and ComponentRef land
+// later as the corpus grows.
 type View interface {
 	isView()
 }
@@ -100,6 +99,39 @@ type ExprHole struct {
 }
 
 func (*ExprHole) isView() {}
+
+type Conditional struct {
+	Condition RxExpr `json:"condition"`
+	Then      []View `json:"then"`
+	Else      []View `json:"else,omitempty"`
+	Span      Span   `json:"span"`
+}
+
+func (*Conditional) isView() {}
+
+func (c *Conditional) UnmarshalJSON(data []byte) error {
+	type conditionalAlias Conditional
+	var raw struct {
+		*conditionalAlias
+		Then []json.RawMessage `json:"then"`
+		Else []json.RawMessage `json:"else"`
+	}
+	raw.conditionalAlias = (*conditionalAlias)(c)
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	thenViews, err := decodeViews(raw.Then)
+	if err != nil {
+		return fmt.Errorf("then: %w", err)
+	}
+	elseViews, err := decodeViews(raw.Else)
+	if err != nil {
+		return fmt.Errorf("else: %w", err)
+	}
+	c.Then = thenViews
+	c.Else = elseViews
+	return nil
+}
 
 type Attr struct {
 	Name  string `json:"name"`
@@ -192,9 +224,10 @@ func decodeViews(raw []json.RawMessage) ([]View, error) {
 
 func decodeView(data []byte) (View, error) {
 	var probe struct {
-		Tag   *string         `json:"tag"`
-		Value *string         `json:"value"`
-		Expr  json.RawMessage `json:"expr"`
+		Tag       *string         `json:"tag"`
+		Value     *string         `json:"value"`
+		Expr      json.RawMessage `json:"expr"`
+		Condition json.RawMessage `json:"condition"`
 	}
 	if err := json.Unmarshal(data, &probe); err != nil {
 		return nil, err
@@ -218,6 +251,12 @@ func decodeView(data []byte) (View, error) {
 			return nil, err
 		}
 		return &hole, nil
+	case len(probe.Condition) > 0:
+		var conditional Conditional
+		if err := json.Unmarshal(data, &conditional); err != nil {
+			return nil, err
+		}
+		return &conditional, nil
 	default:
 		return nil, fmt.Errorf("unknown view node: %s", string(data))
 	}

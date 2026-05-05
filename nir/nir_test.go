@@ -87,3 +87,35 @@ func TestComponentComputeds(t *testing.T) {
 		t.Fatalf("computed field broken: %+v", out.Components[0].Computeds[0])
 	}
 }
+
+func TestConditionalViewRoundTrip(t *testing.T) {
+	in := &Module{
+		Components: []*Component{{
+			Name: "Toggle",
+			Body: &Conditional{
+				Condition: RxExpr{Kind: "ref", Ref: "visible"},
+				Then: []View{
+					&Element{Tag: "text", Children: []View{&Text{Value: "visible"}}},
+				},
+				Else: []View{
+					&Element{Tag: "text", Children: []View{&Text{Value: "hidden"}}},
+				},
+			},
+		}},
+	}
+	data, err := json.Marshal(in)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var out Module
+	if err := json.Unmarshal(data, &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	conditional, ok := out.Components[0].Body.(*Conditional)
+	if !ok {
+		t.Fatalf("body decoded as %T, want *Conditional", out.Components[0].Body)
+	}
+	if conditional.Condition.Ref != "visible" || len(conditional.Then) != 1 || len(conditional.Else) != 1 {
+		t.Fatalf("conditional round-trip mismatch: %+v", conditional)
+	}
+}
