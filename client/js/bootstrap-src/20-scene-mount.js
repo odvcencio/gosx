@@ -3446,6 +3446,23 @@
     }
   }
 
+  function applySceneControlsCamera(controls, camera) {
+    if (!controls) {
+      return;
+    }
+    controls.active = false;
+    controls.touched = true;
+    controls.pointerId = null;
+    if (controls.keys && typeof controls.keys.clear === "function") {
+      controls.keys.clear();
+    }
+    if (controls.mode === "orbit") {
+      controls.orbit = sceneOrbitStateFromCamera(camera, controls.target);
+    } else if (controls.mode === "first-person" || controls.mode === "fly") {
+      controls.fly = sceneFlyStateFromCamera(camera);
+    }
+  }
+
   function sceneScrollViewportHeight() {
     const scrollingElement = document.scrollingElement || document.documentElement || document.body;
     const visualViewport = window.visualViewport;
@@ -4827,6 +4844,45 @@
     const sceneControlHandle = setupSceneBuiltInControls(canvas, props, function() {
       return viewport;
     }, readSceneSourceCamera, scheduleRender);
+
+    let lastPublishedCamera = null;
+
+    function currentMountedSceneCamera(sourceCamera) {
+      return sceneRenderCamera(sceneCurrentControlCamera(
+        sceneControlHandle.controller,
+        sourceCamera || readSceneSourceCamera(),
+        sceneState._scrollCamera,
+      ));
+    }
+
+    function publishMountedSceneCamera(camera, reason) {
+      const nextCamera = sceneRenderCamera(camera);
+      if (lastPublishedCamera && sceneCameraEquivalent(lastPublishedCamera, nextCamera)) {
+        return;
+      }
+      lastPublishedCamera = nextCamera;
+      ctx.emit("scene-camera", {
+        camera: nextCamera,
+        reason: reason || "render",
+      });
+    }
+
+    function applyMountedSceneCamera(camera, reason) {
+      if (!sceneIsPlainObject(camera)) {
+        return false;
+      }
+      const currentCamera = currentMountedSceneCamera();
+      const nextCamera = normalizeSceneCamera(camera, currentCamera);
+      if (sceneCameraEquivalent(currentCamera, nextCamera)) {
+        return false;
+      }
+      sceneState.camera = nextCamera;
+      applySceneControlsCamera(sceneControlHandle.controller, nextCamera);
+      scheduleRender(reason || "camera");
+      publishMountedSceneCamera(nextCamera, reason || "camera");
+      return true;
+    }
+
     const dragHandle = sceneControlHandle.controller
       ? { dispose() {} }
       : setupSceneDragInteractions(canvas, props, function() {
@@ -4846,6 +4902,9 @@
 
     function applySceneHubEvent(eventName, data, reason) {
       const cameraChanged = sceneApplyCameraLiveEvent(sceneState, data);
+      if (cameraChanged) {
+        applySceneControlsCamera(sceneControlHandle.controller, sceneState.camera);
+      }
       const modelChanged = sceneApplyModelLiveEvent(sceneState, eventName, data);
       const liveChanged = sceneApplyLiveEvent(sceneState, eventName, data, motion.reducedMotion, sceneNowMilliseconds());
       if (cameraChanged || modelChanged || liveChanged) {
@@ -4988,6 +5047,7 @@
             sceneCurrentControlCamera(sceneControlHandle.controller, runtimeBundle.camera || sceneState.camera, sceneState._scrollCamera),
           );
           latestBundle = effectiveBundle;
+          publishMountedSceneCamera(effectiveBundle.camera, reason || "render");
           if (!ensureRendererCanCoverBundle(effectiveBundle)) {
             scheduleNextAnimationFrame();
             return;
@@ -5020,11 +5080,12 @@
         }
       }
       if (perfEnabled) performance.mark("scene3d-bundle-start");
+      const activeCamera = sceneCurrentControlCamera(sceneControlHandle.controller, sceneState.camera, sceneState._scrollCamera);
       latestBundle = createSceneRenderBundle(
         viewport.cssWidth,
         viewport.cssHeight,
         sceneState.background,
-        sceneCurrentControlCamera(sceneControlHandle.controller, sceneState.camera, sceneState._scrollCamera),
+        activeCamera,
         sceneStateObjectsWithMaterials(sceneState),
         sceneStateLabels(sceneState),
         sceneStateSprites(sceneState),
@@ -5038,6 +5099,7 @@
         sceneState.postEffects,
         sceneState.postFXMaxPixels,
       );
+      publishMountedSceneCamera(latestBundle.camera, reason || "render");
       if (perfEnabled) {
         performance.mark("scene3d-bundle-end");
         performance.measure("scene3d-bundle", "scene3d-bundle-start", "scene3d-bundle-end");
@@ -5290,6 +5352,12 @@
       applyCommands(commands) {
         applySceneCommands(sceneState, commands);
         scheduleRender("commands");
+      },
+      getCamera() {
+        return currentMountedSceneCamera();
+      },
+      setCamera(camera) {
+        return applyMountedSceneCamera(camera, "handle-camera");
       },
       dispose() {
         disposed = true;

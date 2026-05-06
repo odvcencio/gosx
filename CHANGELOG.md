@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+## v0.18.28
+
+Scene3D collaborative camera handle release.
+
+Mounted `GoSXScene3D` engines now expose `getCamera()` and `setCamera(camera)`
+on their engine handle. The handle reports the active camera after built-in
+orbit/fly controls, scroll-camera offsets, and runtime camera overrides have
+been applied, and `setCamera` re-seeds built-in controls so editor shells can
+follow another collaborator's view without reaching into runtime internals.
+
+Scene3D also emits `gosx:engine:scene-camera` when the active camera changes.
+This gives applications a stable, declarative event stream for camera presence
+and multiplayer viewport following while preserving the existing `applyCommands`
+path for scene mutations.
+
 ## v0.18.27
 
 GSX typed component authoring release.

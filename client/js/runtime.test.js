@@ -4295,6 +4295,8 @@ test("bootstrap drives shared-runtime Scene3D orbit controls without authored JS
       objectCount: 1,
     }),
   });
+  const cameraEvents = [];
+  env.document.addEventListener("gosx:engine:scene-camera", (event) => cameraEvents.push(event.detail));
 
   runScript(bootstrapSource, env.context, "bootstrap.js");
   await flushAsyncWork();
@@ -4357,6 +4359,26 @@ test("bootstrap drives shared-runtime Scene3D orbit controls without authored JS
   assert.ok(zoomedCamera);
   assert.equal(zoomedCamera[5], 72);
   assert.notEqual(zoomedCamera[4], initialCamera[4]);
+
+  const mounted = env.context.__gosx.engines.get("gosx-engine-orbit");
+  assert.equal(typeof mounted.handle.getCamera, "function");
+  assert.equal(typeof mounted.handle.setCamera, "function");
+  assert.equal(Math.round(mounted.handle.getCamera().fov), 72);
+
+  const handled = mounted.handle.setCamera({ x: 1, y: 1.5, z: 8, fov: 60, near: 0.1, far: 256 });
+  assert.equal(handled, true);
+  await flushAsyncWork();
+
+  const handleCamera = mounted.handle.getCamera();
+  assert.ok(Math.abs(handleCamera.x - 1) < 0.001);
+  assert.ok(Math.abs(handleCamera.y - 1.5) < 0.001);
+  assert.ok(Math.abs(handleCamera.z - 8) < 0.001);
+  assert.equal(Math.round(handleCamera.fov), 60);
+  assert.equal(
+    cameraEvents.some((event) => event && event.detail && event.detail.reason === "handle-camera"),
+    true,
+  );
+
   assert.equal(mount.getAttribute("data-gosx-scene3d-controls"), "orbit");
   assert.equal(env.consoleLogs.warn.length, 0);
   assert.equal(env.consoleLogs.error.length, 0);
