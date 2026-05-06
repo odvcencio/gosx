@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+## v0.18.27
+
+GSX typed component authoring release.
+
+The transpiler now performs a prepass over `.gsx` files to discover local
+component prop parameter types before lowering markup. Local components that
+take a concrete props struct now receive keyed struct literals instead of
+`gosx.Props(...)`, while existing `gosx.AttrList` components keep the attr-list
+calling convention. Typed component spread attributes now fail with an explicit
+transpile error instead of producing invalid Go.
+
+Dotted GSX tags now lower as components when their final segment is exported,
+so tags like `<Demo.ThemeSwitcher />` no longer become literal
+`"Demo.ThemeSwitcher"` HTML elements. The same path recognizes imported
+`github.com/odvcencio/gosx/ui` tags and emits typed `ui.*Props` literals,
+including `BaseProps` and extra attrs, so apps can write `<ui.Button ...>` and
+`<ui.Stack ...>` directly in `.gsx` without local attr-list bridge wrappers.
+
 ## v0.18.26
 
 Production Scene3D slice for browser-native modeling apps.
