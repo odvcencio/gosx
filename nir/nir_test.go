@@ -172,6 +172,49 @@ func TestComponentRefViewRoundTrip(t *testing.T) {
 	}
 }
 
+func TestScene3DPayloadRoundTrip(t *testing.T) {
+	in := &Module{
+		Components: []*Component{{
+			Name: "SceneDemo",
+			Body: &Element{
+				Tag: "scene3d",
+				Attrs: []Attr{{
+					Name:  "width",
+					Value: RxExpr{Kind: "literal", Literal: &Literal{Type: "int", Value: "320"}},
+				}},
+				Scene3D: &Scene3DPayload{
+					Items: []Scene3DItem{{
+						Tag: "camera",
+						Attrs: []Attr{{
+							Name:  "position",
+							Value: RxExpr{Kind: "literal", Literal: &Literal{Type: "string", Value: "0,1,4"}},
+						}},
+					}},
+				},
+			},
+		}},
+	}
+	data, err := json.Marshal(in)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var out Module
+	if err := json.Unmarshal(data, &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	scene, ok := out.Components[0].Body.(*Element)
+	if !ok {
+		t.Fatalf("body decoded as %T, want *Element", out.Components[0].Body)
+	}
+	if scene.Tag != "scene3d" || scene.Scene3D == nil || len(scene.Scene3D.Items) != 1 {
+		t.Fatalf("scene3d payload round-trip mismatch: %+v", scene)
+	}
+	item := scene.Scene3D.Items[0]
+	if item.Tag != "camera" || len(item.Attrs) != 1 || item.Attrs[0].Value.Literal.Value != "0,1,4" {
+		t.Fatalf("scene3d item round-trip mismatch: %+v", item)
+	}
+}
+
 func TestLoopViewRoundTrip(t *testing.T) {
 	in := &Module{
 		Components: []*Component{{

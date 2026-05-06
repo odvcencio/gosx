@@ -59,11 +59,12 @@ type View interface {
 }
 
 type Element struct {
-	Tag      string    `json:"tag"`
-	Attrs    []Attr    `json:"attrs,omitempty"`
-	Handlers []Handler `json:"handlers,omitempty"`
-	Children []View    `json:"children,omitempty"`
-	Span     Span      `json:"span"`
+	Tag      string          `json:"tag"`
+	Attrs    []Attr          `json:"attrs,omitempty"`
+	Handlers []Handler       `json:"handlers,omitempty"`
+	Children []View          `json:"children,omitempty"`
+	Scene3D  *Scene3DPayload `json:"scene3d,omitempty"`
+	Span     Span            `json:"span"`
 }
 
 func (*Element) isView() {}
@@ -84,6 +85,16 @@ func (e *Element) UnmarshalJSON(data []byte) error {
 	}
 	e.Children = children
 	return nil
+}
+
+type Scene3DPayload struct {
+	Items []Scene3DItem `json:"items,omitempty"`
+}
+
+type Scene3DItem struct {
+	Tag   string `json:"tag"`
+	Attrs []Attr `json:"attrs,omitempty"`
+	Span  Span   `json:"span"`
 }
 
 type Text struct {
