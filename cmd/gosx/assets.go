@@ -35,6 +35,10 @@ func runAssetsCommand(args []string, stdout io.Writer) error {
 }
 
 func runAssetPlanCommand(args []string, stdout io.Writer) error {
+	if len(args) > 0 && isHelpArg(args[0]) {
+		assetPlanUsage(stdout)
+		return nil
+	}
 	fs := flag.NewFlagSet("gosx assets plan", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	jsonOut := fs.Bool("json", false, "emit JSON")
@@ -77,6 +81,15 @@ func runAssetPlanCommand(args []string, stdout io.Writer) error {
 	}
 	printAssetPlan(stdout, report)
 	return nil
+}
+
+func assetPlanUsage(w io.Writer) {
+	fmt.Fprintf(w, `gosx assets plan - Plan Scene3D asset optimization work
+
+Usage:
+  gosx assets plan [--json] [--write <path>] [path...]
+
+`)
 }
 
 func printAssetPlan(w io.Writer, report assetpipe.Report) {

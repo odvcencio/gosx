@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -46,7 +47,7 @@ type sizeReportFile struct {
 
 func cmdSizeReport() {
 	if len(os.Args) < 3 {
-		fmt.Fprintln(os.Stderr, "Usage: gosx size [--json] <dist|build.json>")
+		sizeUsage(os.Stderr)
 		os.Exit(1)
 	}
 	jsonOut := false
@@ -82,6 +83,15 @@ func cmdSizeReport() {
 		return
 	}
 	printSizeReport(report)
+}
+
+func sizeUsage(w io.Writer) {
+	fmt.Fprintf(w, `gosx size - Report runtime bundle sizes
+
+Usage:
+  gosx size [--json] <dist|build.json>
+
+`)
 }
 
 func buildSizeReport(target string) (sizeReport, error) {

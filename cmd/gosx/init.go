@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -39,6 +40,19 @@ func cmdInit() {
 	if err := RunInit(dir, module, template); err != nil {
 		fatal("init: %v", err)
 	}
+}
+
+func initUsage(w io.Writer) {
+	fmt.Fprintf(w, `gosx init - Scaffold a GoSX application or docs site
+
+Usage:
+  gosx init [dir] [--module <module>] [--template docs]
+
+Examples:
+  gosx init my-app
+  gosx init my-docs --template docs
+
+`)
 }
 
 func RunInit(dir string, module string, template string) error {

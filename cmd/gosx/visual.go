@@ -6,6 +6,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"time"
 
@@ -149,4 +150,22 @@ func effectiveBaselinePath(url, explicit string) string {
 		return explicit
 	}
 	return visual.DefaultBaselinePath(url)
+}
+
+func visualUsage(w io.Writer) {
+	fmt.Fprintf(w, `gosx visual - Pixel-level visual regression testing
+
+Usage:
+  gosx visual [flags] <url>
+
+Common flags:
+  --update              write captured screenshot to baseline
+  --baseline <path>     explicit baseline PNG path
+  --threshold <pct>     maximum allowed pixel diff percentage
+  -w <px> -h <px>       viewport width and height
+  --selector <css>      capture one element instead of the full viewport
+  --eval <javascript>   run JavaScript before capture
+  --json                emit JSON
+
+`)
 }

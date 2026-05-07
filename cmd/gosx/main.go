@@ -44,6 +44,11 @@ func main() {
 	}
 
 	cmd := os.Args[1]
+	if len(os.Args) > 2 && isHelpArg(os.Args[2]) {
+		if commandUsage(cmd, os.Stdout) {
+			return
+		}
+	}
 
 	switch cmd {
 	case "assets":
@@ -81,10 +86,128 @@ func main() {
 	case "version":
 		fmt.Printf("gosx v%s\n", gosx.Version)
 	case "help", "-h", "--help":
+		if len(os.Args) > 2 && commandUsage(os.Args[2], os.Stdout) {
+			return
+		}
 		usage()
 	default:
 		fatal("unknown command: %s\nrun 'gosx help' for usage", cmd)
 	}
+}
+
+func isHelpArg(arg string) bool {
+	switch arg {
+	case "help", "-h", "--help":
+		return true
+	default:
+		return false
+	}
+}
+
+func commandUsage(cmd string, w io.Writer) bool {
+	switch cmd {
+	case "assets":
+		assetsUsage(w)
+	case "build":
+		fmt.Fprintf(w, `gosx build - Build GoSX applications
+
+Usage:
+  gosx build [--dev|--prod|--offline|--msix|--sign] [--appinstaller <uri>] <dir>
+
+`)
+	case "build-runtime":
+		fmt.Fprintf(w, `gosx build-runtime - Build TinyGo production WASM runtimes
+
+Usage:
+  gosx build-runtime [outdir]
+
+`)
+	case "dev":
+		fmt.Fprintf(w, `gosx dev - Start development server with hot reload
+
+Usage:
+  gosx dev [dir]
+
+`)
+	case "desktop":
+		fmt.Fprintf(w, `gosx desktop - Run a GoSX app in a native desktop host
+
+Usage:
+  gosx desktop [flags] [dev [dir]]
+  gosx desktop --url <url>
+  gosx desktop --html <html>
+
+`)
+	case "export":
+		fmt.Fprintf(w, `gosx export - Pre-render static GoSX pages
+
+Usage:
+  gosx export [dir]
+
+`)
+	case "init":
+		initUsage(w)
+	case "compile":
+		fmt.Fprintf(w, `gosx compile - Compile .gsx source to Go
+
+Usage:
+  gosx compile <file.gsx>
+
+`)
+	case "check":
+		fmt.Fprintf(w, `gosx check - Parse and validate .gsx source
+
+Usage:
+  gosx check <file.gsx>
+
+`)
+	case "render":
+		fmt.Fprintf(w, `gosx render - Render component HTML to stdout
+
+Usage:
+  gosx render <file.gsx> [component]
+
+`)
+	case "fmt", "format":
+		fmtUsage(w)
+	case "lsp":
+		fmt.Fprintf(w, `gosx lsp - Start the GoSX language server over stdio
+
+Usage:
+  gosx lsp
+
+`)
+	case "perf":
+		fmt.Fprintf(w, `gosx perf - Profile browser runtime performance
+
+Usage:
+  gosx perf [flags] <url>
+  gosx perf compare <base.json> <next.json> [flags]
+  gosx perf budget <report.json> <budget.json>
+
+`)
+	case "size", "size-report":
+		sizeUsage(w)
+	case "visual":
+		visualUsage(w)
+	case "repl":
+		fmt.Fprintf(w, `gosx repl - Interactive browser runtime explorer
+
+Usage:
+  gosx repl [url]
+
+`)
+	case "version":
+		fmt.Fprintf(w, `gosx version - Print version
+
+Usage:
+  gosx version
+
+`)
+	default:
+		return false
+	}
+	return true
 }
 
 func usage() {
