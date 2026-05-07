@@ -4,6 +4,12 @@ A Go-native web platform. Write components in `.gsx` — Go with embedded markup
 
 Current release: **v0.18.28**. Pre-1.0; breaking changes are documented in [CHANGELOG.md](./CHANGELOG.md).
 
+## Agent Skills
+
+Agents helping someone use GoSX should start with the canonical M31 Labs skill: [using-gosx](https://github.com/odvcencio/m31labs-skills/blob/main/skills/using-gosx/SKILL.md).
+
+For native mobile, editor, admin, and CMS periphery, read: [using-gosx-ecosystem](https://github.com/odvcencio/m31labs-skills/blob/main/skills/using-gosx-ecosystem/SKILL.md).
+
 ## What if you never had to leave Go?
 
 GoSX starts from a simple premise: the browser is a render target, not a runtime. Server components are Go functions that return HTML. Interactive components compile to bytecode and run in a shared WASM VM. Everything between those two points — the parser, the compiler, the reconciler, the signal system, the 3D scene graph, the vector store, the collaborative document model — is pure Go.
