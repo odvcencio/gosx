@@ -5,6 +5,10 @@ its own `go.mod`. It ships the server-rendered editor shell, toolbar model,
 text operations, and the native browser assets used for live preview, autosave,
 outline, gallery, and metadata stats.
 
+## Agent Skill
+
+Agents working on GoSX editor integration should use the [using-gosx-ecosystem](https://github.com/odvcencio/m31labs-skills/blob/main/skills/using-gosx-ecosystem/SKILL.md) skill.
+
 Mount the assets only in apps that use the editor:
 
 ```go
