@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	sceneinspect "github.com/odvcencio/gosx/scene/inspect"
 )
 
 func TestStageDeploymentBundleCopiesRuntimeDirsAndWritesArtifacts(t *testing.T) {
@@ -47,6 +49,34 @@ func TestStageDeploymentBundleCopiesRuntimeDirsAndWritesArtifacts(t *testing.T) 
 	readme := readFile(t, filepath.Join(distDir, "README.md"))
 	if !strings.Contains(readme, "deployable GoSX bundle") {
 		t.Fatalf("unexpected dist README: %q", readme)
+	}
+}
+
+func TestEvaluateProjectSceneBudget(t *testing.T) {
+	projectDir := t.TempDir()
+	scenePath := filepath.Join(projectDir, "app", "scene.json")
+	budgetPath := filepath.Join(projectDir, "scene-budget.json")
+	mustWriteFile(t, scenePath, `{"objects":[{"id":"cube","kind":"cube"}]}`)
+	mustWriteFile(t, budgetPath, `{"scene3d":{"maxInitialGPUBytes":1,"maxDrawCalls":10}}`)
+
+	results, found, err := evaluateProjectSceneBudget(projectDir, budgetPath, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !found {
+		t.Fatal("expected scene files to be found")
+	}
+	if !sceneinspect.BudgetFailed(results, false) {
+		t.Fatalf("expected budget failure: %+v", results)
+	}
+
+	emptyDir := t.TempDir()
+	results, found, err = evaluateProjectSceneBudget(emptyDir, budgetPath, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if found || len(results) != 0 {
+		t.Fatalf("expected no scene files in empty project, found=%v results=%+v", found, results)
 	}
 }
 

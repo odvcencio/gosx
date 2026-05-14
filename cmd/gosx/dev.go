@@ -24,9 +24,19 @@ import (
 
 const defaultDevListenAddr = ":3000"
 
+type DevOptions struct {
+	SceneInspector bool
+}
+
 // RunDev stages local runtime assets, runs the target app on an internal port,
 // and fronts it with the GoSX dev proxy for live reload.
 func RunDev(dir string) error {
+	return RunDevWithOptions(dir, DevOptions{})
+}
+
+// RunDevWithOptions stages local runtime assets, runs the target app on an
+// internal port, and fronts it with the GoSX dev proxy for live reload.
+func RunDevWithOptions(dir string, options DevOptions) error {
 	absDir, err := filepath.Abs(dir)
 	if err != nil {
 		return fmt.Errorf("resolve %s: %w", dir, err)
@@ -74,9 +84,10 @@ func RunDev(dir string) error {
 	publicURL := displayListenURL(publicAddr)
 	buildDir := filepath.Join(absDir, "build")
 	devServer := &dev.Server{
-		Dir:         absDir,
-		BuildDir:    buildDir,
-		ProxyTarget: internalBaseURL,
+		Dir:            absDir,
+		BuildDir:       buildDir,
+		ProxyTarget:    internalBaseURL,
+		SceneInspector: options.SceneInspector,
 		Logf: func(format string, args ...any) {
 			fmt.Fprintf(os.Stderr, "gosx dev: "+format+"\n", args...)
 		},

@@ -8,6 +8,412 @@
     }
   }
 
+  const SCENE3D_DEBUG_SCHEMA = "gosx.scene3d.debug.v1";
+
+  function sceneDebugRegistry() {
+    if (typeof window === "undefined") {
+      return null;
+    }
+    let registry = window.__gosx_scene3d_debug_registry;
+    if (!registry) {
+      registry = new Map();
+      try {
+        Object.defineProperty(window, "__gosx_scene3d_debug_registry", {
+          configurable: true,
+          value: registry,
+        });
+      } catch (_err) {
+        window.__gosx_scene3d_debug_registry = registry;
+      }
+    }
+    if (!window.__gosx_scene3d_debug || window.__gosx_scene3d_debug.schema !== SCENE3D_DEBUG_SCHEMA) {
+      const api = {
+        schema: SCENE3D_DEBUG_SCHEMA,
+        listSurfaces() {
+          return sceneDebugSurfaceRecords(registry).map(function(record) {
+            return sceneDebugReadSnapshot(record, "summary");
+          }).filter(Boolean);
+        },
+        inspect(surfaceID) {
+          const record = sceneDebugFindSurface(registry, surfaceID);
+          return record ? sceneDebugReadSnapshot(record, "full") : null;
+        },
+        captureFrame(surfaceID) {
+          const record = sceneDebugFindSurface(registry, surfaceID);
+          if (!record || typeof record.captureFrame !== "function") {
+            return { surfaceID: String(surfaceID || ""), dataURL: null, reason: "surface-not-found" };
+          }
+          try {
+            return sceneDebugClone(record.captureFrame(), 4);
+          } catch (err) {
+            return {
+              surfaceID: String(surfaceID || ""),
+              dataURL: null,
+              reason: "capture-failed",
+              error: err && err.message ? String(err.message) : String(err || ""),
+            };
+          }
+        },
+        getDiagnostics(surfaceID) {
+          const snapshot = this.inspect(surfaceID);
+          return snapshot && Array.isArray(snapshot.diagnostics) ? snapshot.diagnostics : [];
+        },
+        getFeatureMatrix(surfaceID) {
+          const snapshot = this.inspect(surfaceID);
+          return snapshot && snapshot.features ? snapshot.features : {};
+        },
+        getGPUResources(surfaceID) {
+          const snapshot = this.inspect(surfaceID);
+          return snapshot && snapshot.gpuResources ? snapshot.gpuResources : {};
+        },
+        getLastPick(surfaceID) {
+          const snapshot = this.inspect(surfaceID);
+          return snapshot && snapshot.lastPick ? snapshot.lastPick : null;
+        },
+      };
+      try {
+        Object.defineProperty(window, "__gosx_scene3d_debug", {
+          configurable: true,
+          value: api,
+        });
+      } catch (_err) {
+        window.__gosx_scene3d_debug = api;
+      }
+    }
+    return registry;
+  }
+
+  function sceneDebugSurfaceRecords(registry) {
+    const records = [];
+    if (!registry || typeof registry.forEach !== "function") {
+      return records;
+    }
+    registry.forEach(function(record) {
+      if (record) {
+        records.push(record);
+      }
+    });
+    return records;
+  }
+
+  function sceneDebugFindSurface(registry, surfaceID) {
+    const records = sceneDebugSurfaceRecords(registry);
+    if (records.length === 0) {
+      return null;
+    }
+    if (surfaceID == null || String(surfaceID).trim() === "") {
+      return records.length === 1 ? records[0] : null;
+    }
+    const wanted = String(surfaceID);
+    for (let i = 0; i < records.length; i += 1) {
+      const record = records[i];
+      if (record.key === wanted || record.id === wanted || record.mountID === wanted || record.engineID === wanted) {
+        return record;
+      }
+    }
+    return null;
+  }
+
+  function sceneDebugReadSnapshot(record, mode) {
+    if (!record || typeof record.snapshot !== "function") {
+      return null;
+    }
+    try {
+      return sceneDebugClone(record.snapshot(mode || "full"), 6);
+    } catch (err) {
+      return {
+        schema: SCENE3D_DEBUG_SCHEMA,
+        id: record.id || "",
+        mountID: record.mountID || "",
+        engineID: record.engineID || "",
+        diagnostics: [{
+          severity: "error",
+          code: "scene.debug.snapshot_failed",
+          message: err && err.message ? String(err.message) : String(err || ""),
+        }],
+      };
+    }
+  }
+
+  function sceneDebugRegisterSurface(record) {
+    const registry = sceneDebugRegistry();
+    if (!registry || !record) {
+      return function() {};
+    }
+    const key = String(record.key || record.engineID || record.mountID || ("scene-" + registry.size));
+    record.key = key;
+    registry.set(key, record);
+    return function() {
+      registry.delete(key);
+    };
+  }
+
+  function sceneDebugClone(value, depth, seen) {
+    if (value == null || typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+      return value;
+    }
+    if (typeof value === "function") {
+      return undefined;
+    }
+    if (depth <= 0) {
+      return Array.isArray(value) ? [] : {};
+    }
+    seen = seen || [];
+    if (seen.indexOf(value) >= 0) {
+      return undefined;
+    }
+    seen.push(value);
+    if (Array.isArray(value)) {
+      const out = [];
+      for (let i = 0; i < value.length; i += 1) {
+        const next = sceneDebugClone(value[i], depth - 1, seen);
+        if (next !== undefined) {
+          out.push(next);
+        }
+      }
+      seen.pop();
+      return out;
+    }
+    if (typeof ArrayBuffer !== "undefined" && ArrayBuffer.isView && ArrayBuffer.isView(value)) {
+      const slice = Array.prototype.slice.call(value, 0, Math.min(value.length || 0, 64));
+      seen.pop();
+      return {
+        type: value.constructor && value.constructor.name ? value.constructor.name : "TypedArray",
+        length: value.length || 0,
+        preview: slice,
+      };
+    }
+    if (value && value.nodeType === 1) {
+      const node = {
+        tagName: value.tagName || "",
+        id: value.id || "",
+      };
+      seen.pop();
+      return node;
+    }
+    const out = {};
+    for (const key of Object.keys(value)) {
+      const next = sceneDebugClone(value[key], depth - 1, seen);
+      if (next !== undefined) {
+        out[key] = next;
+      }
+    }
+    seen.pop();
+    return out;
+  }
+
+  function sceneDebugMountID(mount, engineID) {
+    const mountID = mount && mount.id ? String(mount.id) : "";
+    return mountID || String(engineID || "");
+  }
+
+  function sceneDebugAttr(mount, name) {
+    if (!mount || typeof mount.getAttribute !== "function") {
+      return "";
+    }
+    const value = mount.getAttribute(name);
+    return value == null ? "" : String(value);
+  }
+
+  function sceneDebugAttrNumber(mount, name) {
+    const value = Number(sceneDebugAttr(mount, name));
+    return Number.isFinite(value) ? value : 0;
+  }
+
+  function sceneDebugAddFeature(features, name, count) {
+    const key = String(name || "").trim();
+    const n = Math.max(0, Math.floor(sceneNumber(count == null ? 1 : count, 0)));
+    if (!key || n <= 0) {
+      return;
+    }
+    features[key] = (features[key] || 0) + n;
+  }
+
+  function sceneDebugKindFeature(prefix, kind, fallback) {
+    const value = String(kind || fallback || "").trim().toLowerCase().replace(/[^a-z0-9]+/g, "");
+    return value ? prefix + "." + value : "";
+  }
+
+  function sceneDebugCollectionArray(value) {
+    if (Array.isArray(value)) {
+      return value;
+    }
+    if (value && typeof value.forEach === "function" && typeof value.size === "number") {
+      const out = [];
+      value.forEach(function(entry) {
+        out.push(entry);
+      });
+      return out;
+    }
+    return [];
+  }
+
+  function sceneDebugBundleCounts(bundle, state) {
+    const meshObjects = Array.isArray(bundle && bundle.meshObjects) ? bundle.meshObjects.length : 0;
+    const worldObjects = Array.isArray(bundle && bundle.objects) ? bundle.objects.length : 0;
+    const points = Array.isArray(bundle && bundle.points) ? bundle.points.length : 0;
+    const instancedMeshes = Array.isArray(bundle && bundle.instancedMeshes) ? bundle.instancedMeshes.length : 0;
+    const instancedGLBMeshes = Array.isArray(bundle && bundle.instancedGLBMeshes) ? bundle.instancedGLBMeshes.length : 0;
+    const computeParticles = Array.isArray(bundle && bundle.computeParticles) ? bundle.computeParticles.length : 0;
+    const surfaces = Array.isArray(bundle && bundle.surfaces) ? bundle.surfaces.length : 0;
+    const lines = Array.isArray(bundle && bundle.lines) ? bundle.lines.length : 0;
+    const labels = Array.isArray(bundle && bundle.labels) ? bundle.labels.length : sceneDebugCollectionArray(state && state.labels).length;
+    const sprites = Array.isArray(bundle && bundle.sprites) ? bundle.sprites.length : sceneDebugCollectionArray(state && state.sprites).length;
+    const html = Array.isArray(bundle && bundle.html) ? bundle.html.length : sceneDebugCollectionArray(state && state.html).length;
+    const lights = Array.isArray(bundle && bundle.lights) ? bundle.lights.length : sceneDebugCollectionArray(state && state.lights).length;
+    const postEffects = Array.isArray(bundle && bundle.postEffects) ? bundle.postEffects.length : (Array.isArray(state && state.postEffects) ? state.postEffects.length : 0);
+    const materials = Array.isArray(bundle && bundle.materials) ? bundle.materials.length : 0;
+    return {
+      meshObjects,
+      worldObjects,
+      points,
+      instancedMeshes,
+      instancedGLBMeshes,
+      computeParticles,
+      surfaces,
+      lines,
+      labels,
+      sprites,
+      html,
+      lights,
+      postEffects,
+      materials,
+      drawCalls: meshObjects + worldObjects + points + instancedMeshes + instancedGLBMeshes + computeParticles + surfaces + lines + postEffects,
+      worldVertexCount: Math.max(0, Math.floor(sceneNumber(bundle && bundle.worldVertexCount, 0))),
+      worldMeshVertexCount: Math.max(0, Math.floor(sceneNumber(bundle && bundle.worldMeshVertexCount, 0))),
+    };
+  }
+
+  function sceneDebugFeatureMatrix(bundle, state, rendererKind) {
+    const features = {};
+    sceneDebugAddFeature(features, sceneDebugKindFeature("backend", rendererKind, ""), 1);
+    const objects = []
+      .concat(Array.isArray(bundle && bundle.meshObjects) ? bundle.meshObjects : [])
+      .concat(sceneDebugCollectionArray(state && state.objects));
+    for (let i = 0; i < objects.length; i += 1) {
+      sceneDebugAddFeature(features, sceneDebugKindFeature("geometry", objects[i] && objects[i].kind, "mesh"), 1);
+    }
+    const instanced = Array.isArray(bundle && bundle.instancedMeshes) ? bundle.instancedMeshes : sceneDebugCollectionArray(state && state.instancedMeshes);
+    for (let i = 0; i < instanced.length; i += 1) {
+      sceneDebugAddFeature(features, "geometry.instancedMesh", 1);
+      sceneDebugAddFeature(features, sceneDebugKindFeature("geometry", instanced[i] && instanced[i].kind, "instanced"), 1);
+    }
+    sceneDebugAddFeature(features, "geometry.points", Array.isArray(bundle && bundle.points) ? bundle.points.length : 0);
+    sceneDebugAddFeature(features, "geometry.lines", Array.isArray(bundle && bundle.lines) ? bundle.lines.length : 0);
+    sceneDebugAddFeature(features, "geometry.surface", Array.isArray(bundle && bundle.surfaces) ? bundle.surfaces.length : 0);
+    sceneDebugAddFeature(features, "particles.compute", Array.isArray(bundle && bundle.computeParticles) ? bundle.computeParticles.length : 0);
+    const html = Array.isArray(bundle && bundle.html) ? bundle.html : sceneDebugCollectionArray(state && state.html);
+    for (let i = 0; i < html.length; i += 1) {
+      const mode = String(html[i] && html[i].mode || "dom").trim().toLowerCase() || "dom";
+      sceneDebugAddFeature(features, "html." + mode, 1);
+    }
+    const lights = Array.isArray(bundle && bundle.lights) ? bundle.lights : sceneDebugCollectionArray(state && state.lights);
+    for (let i = 0; i < lights.length; i += 1) {
+      sceneDebugAddFeature(features, sceneDebugKindFeature("lighting", lights[i] && lights[i].kind, "light"), 1);
+      if ((lights[i] && lights[i].castShadow) || sceneNumber(lights[i] && lights[i].shadowSize, 0) > 0) {
+        sceneDebugAddFeature(features, "lighting.shadows", 1);
+      }
+    }
+    const postEffects = Array.isArray(bundle && bundle.postEffects) ? bundle.postEffects : (Array.isArray(state && state.postEffects) ? state.postEffects : []);
+    for (let i = 0; i < postEffects.length; i += 1) {
+      sceneDebugAddFeature(features, sceneDebugKindFeature("postfx", postEffects[i] && (postEffects[i].kind || postEffects[i].type), "unknown"), 1);
+    }
+    return features;
+  }
+
+  function sceneDebugDiagnostics(mount, rendererKind, rendererDiagnostics) {
+    const diagnostics = [{
+      severity: "info",
+      code: "scene.backend.selected",
+      message: rendererKind ? "Scene3D renderer selected" : "Scene3D renderer not selected",
+      backend: rendererKind || "",
+    }];
+    const fallback = sceneDebugAttr(mount, "data-gosx-scene3d-renderer-fallback");
+    if (fallback) {
+      diagnostics.push({
+        severity: "warn",
+        code: "scene.backend.fallback",
+        message: "Scene3D renderer fallback is active",
+        backend: rendererKind || "",
+        data: { reason: fallback },
+      });
+    }
+    const webgpuError = sceneDebugAttr(mount, "data-gosx-scene3d-webgpu-last-error");
+    if (webgpuError) {
+      diagnostics.push({
+        severity: "error",
+        code: "scene.webgpu.render_error",
+        message: webgpuError,
+        backend: "webgpu",
+      });
+    }
+    const customFallback = sceneDebugAttr(mount, "data-gosx-scene3d-webgpu-custom-material-fallback-reason");
+    if (customFallback) {
+      diagnostics.push({
+        severity: "warn",
+        code: "scene.shader.compile_error",
+        message: "Custom material fell back to the standard WebGPU material path",
+        backend: "webgpu",
+        data: { reason: customFallback },
+      });
+    }
+    if (rendererDiagnostics && rendererDiagnostics.ready === false) {
+      diagnostics.push({
+        severity: "warn",
+        code: "scene.webgpu.not_ready",
+        message: "WebGPU diagnostics report the device is not ready",
+        backend: "webgpu",
+      });
+    }
+    return diagnostics;
+  }
+
+  function sceneDebugHTMLTextureStats(labelLayer) {
+    return {
+      count: sceneDebugAttrNumber(labelLayer, "data-gosx-scene-html-texture-count"),
+      ready: sceneDebugAttrNumber(labelLayer, "data-gosx-scene-html-texture-ready"),
+      bytes: sceneDebugAttrNumber(labelLayer, "data-gosx-scene-html-texture-bytes"),
+      capBytes: sceneDebugAttrNumber(labelLayer, "data-gosx-scene-html-texture-cap-bytes"),
+      overBudget: sceneDebugAttrNumber(labelLayer, "data-gosx-scene-html-texture-over-budget"),
+      dirty: sceneDebugAttrNumber(labelLayer, "data-gosx-scene-html-texture-dirty"),
+      dirtyBytes: sceneDebugAttrNumber(labelLayer, "data-gosx-scene-html-texture-dirty-bytes"),
+      pendingUploadBytes: sceneDebugAttrNumber(labelLayer, "data-gosx-scene-html-texture-upload-pending-bytes"),
+      disposed: sceneDebugAttrNumber(labelLayer, "data-gosx-scene-html-texture-disposed"),
+      disposedBytes: sceneDebugAttrNumber(labelLayer, "data-gosx-scene-html-texture-disposed-bytes"),
+      revision: sceneDebugAttrNumber(labelLayer, "data-gosx-scene-html-texture-revision"),
+    };
+  }
+
+  function sceneDebugGPUResources(mount, canvas, renderer, bundle, viewport, labelLayer, rendererDiagnostics) {
+    const counts = sceneDebugBundleCounts(bundle, null);
+    const htmlTextures = sceneDebugHTMLTextureStats(labelLayer);
+    const webgpuStats = mount && mount.__gosxScene3DWebGPUStats ? mount.__gosxScene3DWebGPUStats : null;
+    return {
+      backend: renderer && renderer.kind ? renderer.kind : "",
+      canvas: {
+        width: canvas && canvas.width ? canvas.width : 0,
+        height: canvas && canvas.height ? canvas.height : 0,
+        cssWidth: sceneNumber(viewport && viewport.cssWidth, 0),
+        cssHeight: sceneNumber(viewport && viewport.cssHeight, 0),
+        devicePixelRatio: sceneNumber(viewport && viewport.devicePixelRatio, 1),
+      },
+      drawCalls: counts.drawCalls,
+      materials: counts.materials,
+      meshObjects: counts.meshObjects,
+      worldObjects: counts.worldObjects,
+      points: counts.points,
+      instancedMeshes: counts.instancedMeshes,
+      surfaces: counts.surfaces,
+      lines: counts.lines,
+      postEffects: counts.postEffects,
+      htmlTextures,
+      webgpu: {
+        stats: sceneDebugClone(webgpuStats, 3),
+        diagnostics: sceneDebugClone(rendererDiagnostics, 3),
+      },
+    };
+  }
+
   function sceneReadWebGLRendererMetadata(gl) {
     if (!gl || typeof gl.getParameter !== "function") {
       return { vendor: "", renderer: "" };
@@ -2314,6 +2720,91 @@
     };
   }
 
+  function createSceneInspectorOverlay(mount, enabled, readSnapshot) {
+    if (!mount || !enabled || typeof document.createElement !== "function") {
+      return null;
+    }
+    const element = document.createElement("div");
+    element.setAttribute("data-gosx-scene3d-inspector", "true");
+    element.setAttribute("aria-hidden", "true");
+    element.style.position = "absolute";
+    element.style.right = "8px";
+    element.style.top = "8px";
+    element.style.zIndex = "9";
+    element.style.pointerEvents = "none";
+    element.style.font = "11px/1.35 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace";
+    element.style.color = "#edf8f2";
+    element.style.background = "rgba(3, 12, 10, 0.78)";
+    element.style.border = "1px solid rgba(139, 235, 190, 0.24)";
+    element.style.borderRadius = "6px";
+    element.style.padding = "7px 8px";
+    element.style.whiteSpace = "pre";
+    element.style.minWidth = "190px";
+    element.style.maxWidth = "280px";
+    element.style.backdropFilter = "blur(6px)";
+    mount.setAttribute("data-gosx-scene3d-inspector-enabled", "true");
+    mount.appendChild(element);
+
+    function update() {
+      const snapshot = typeof readSnapshot === "function" ? readSnapshot() : null;
+      if (!snapshot) {
+        element.textContent = "Scene3D\npending";
+        return;
+      }
+      const counts = snapshot.counts || {};
+      const viewport = snapshot.viewport || {};
+      const resources = snapshot.gpuResources || {};
+      const renderLoop = snapshot.renderLoop || {};
+      const htmlTextures = resources.htmlTextures || {};
+      const diagnostics = Array.isArray(snapshot.diagnostics) ? snapshot.diagnostics : [];
+      let warnCount = 0;
+      let errorCount = 0;
+      for (let i = 0; i < diagnostics.length; i += 1) {
+        const severity = String(diagnostics[i] && diagnostics[i].severity || "").toLowerCase();
+        if (severity === "warn" || severity === "warning") {
+          warnCount += 1;
+        } else if (severity === "error" || severity === "fatal") {
+          errorCount += 1;
+        }
+      }
+      const renderer = snapshot.renderer || "unknown";
+      const fallback = snapshot.fallbackReason ? " fallback " + snapshot.fallbackReason : "";
+      const lastPick = snapshot.lastPick || null;
+      const pickTarget = lastPick && (lastPick.targetID || lastPick.objectID || lastPick.hoverID || lastPick.downID || lastPick.id);
+      const pickType = lastPick && lastPick.type ? String(lastPick.type) : "pick";
+      const meshCount = sceneNumber(counts.meshObjects, 0) + sceneNumber(counts.worldObjects, 0);
+      const lines = [
+        "Scene3D",
+        "backend " + renderer + fallback,
+        "ready " + (snapshot.ready ? "yes" : "no") + "  active " + (snapshot.active ? "yes" : "no"),
+        "loop " + (renderLoop.active ? "active" : "stopped") + "  " + (renderLoop.reason || "unknown"),
+        "view " + Math.floor(sceneNumber(viewport.cssWidth, 0)) + "x" + Math.floor(sceneNumber(viewport.cssHeight, 0)) +
+          "  dpr " + sceneNumber(viewport.devicePixelRatio, 1).toFixed(2),
+        "draw " + Math.floor(sceneNumber(counts.drawCalls, 0)) + "  mat " + Math.floor(sceneNumber(counts.materials, 0)),
+        "mesh " + Math.floor(meshCount) + "  inst " + Math.floor(sceneNumber(counts.instancedMeshes, 0)),
+        "html " + Math.floor(sceneNumber(counts.html, 0)) + "  tex " +
+          Math.floor(sceneNumber(htmlTextures.ready, 0)) + "/" + Math.floor(sceneNumber(htmlTextures.count, 0)),
+        "diag " + diagnostics.length + "  warn " + warnCount + "  err " + errorCount,
+      ];
+      if (pickTarget) {
+        lines.push("pick " + pickType + " " + String(pickTarget));
+      }
+      element.textContent = lines.join("\n");
+    }
+
+    update();
+    return {
+      element,
+      update,
+      dispose() {
+        mount.removeAttribute("data-gosx-scene3d-inspector-enabled");
+        if (element.parentNode === mount) {
+          mount.removeChild(element);
+        }
+      },
+    };
+  }
+
   function sceneViewportDevicePixelRatio(props, maxDevicePixelRatio) {
     const environment = sceneEnvironmentState();
     const preferred = sceneNumber(
@@ -4434,34 +4925,50 @@
     let sceneCSSAnimationUntil = 0;
     let lastModelAnimationTimeSeconds = null;
 
-    function sceneShouldAnimate() {
+    function sceneAnimationState() {
       if (motion.reducedMotion) {
-        return false;
+        return { wants: false, reason: "reduced-motion" };
       }
       if (ctx.mount && ctx.mount.__gosxScene3DCSSDynamic && Date.now() < sceneCSSAnimationUntil) {
-        return true;
+        return { wants: true, reason: "css-transition" };
       }
       if (sceneHasActiveTransitions(sceneState)) {
-        return true;
+        return { wants: true, reason: "scene-transition" };
       }
-      if (runtimeScene || sceneBool(props.autoRotate, false)) {
-        return true;
+      if (runtimeScene) {
+        return { wants: true, reason: "runtime-program" };
+      }
+      if (sceneBool(props.autoRotate, false)) {
+        return { wants: true, reason: "auto-rotate" };
       }
       if (Array.isArray(sceneState.computeParticles) && sceneState.computeParticles.length > 0) {
-        return true;
+        return { wants: true, reason: "compute-particles" };
       }
       if (sceneHasActiveModelAnimations(sceneState)) {
-        return true;
+        return { wants: true, reason: "model-animation" };
       }
       if (Array.isArray(sceneState.points) && sceneState.points.some(function(p) {
         return sceneNumber(p.spinX, 0) !== 0 || sceneNumber(p.spinY, 0) !== 0 || sceneNumber(p.spinZ, 0) !== 0;
       })) {
-        return true;
+        return { wants: true, reason: "point-spin" };
       }
-      return sceneStateObjects(sceneState).some(sceneObjectAnimated) ||
-        sceneStateLabels(sceneState).some(sceneLabelAnimated) ||
-        sceneStateSprites(sceneState).some(sceneSpriteAnimated) ||
-        sceneStateHTML(sceneState).some(sceneHTMLAnimated);
+      if (sceneStateObjects(sceneState).some(sceneObjectAnimated)) {
+        return { wants: true, reason: "object-animation" };
+      }
+      if (sceneStateLabels(sceneState).some(sceneLabelAnimated)) {
+        return { wants: true, reason: "label-animation" };
+      }
+      if (sceneStateSprites(sceneState).some(sceneSpriteAnimated)) {
+        return { wants: true, reason: "sprite-animation" };
+      }
+      if (sceneStateHTML(sceneState).some(sceneHTMLAnimated)) {
+        return { wants: true, reason: "html-animation" };
+      }
+      return { wants: false, reason: "static" };
+    }
+
+    function sceneShouldAnimate() {
+      return sceneAnimationState().wants;
     }
 
     // Extract CSS var transition timing from materials/environment so the
@@ -4497,6 +5004,7 @@
     labelLayer.setAttribute("aria-hidden", "true");
     ctx.mount.appendChild(labelLayer);
     const statsOverlay = createSceneStatsOverlay(ctx.mount, sceneBool(props.stats, false));
+    let inspectorOverlay = null;
 
     const sentinelLayer = document.createElement("div");
     sentinelLayer.setAttribute("data-gosx-scene-node-layer", "true");
@@ -4638,6 +5146,8 @@
     let frameHandle = null;
     let scheduledRenderHandle = null;
     let disposed = false;
+    let lastScheduledRenderReason = "";
+    let lastRenderLoopReason = "initializing";
 
     // Do not voluntarily lose WebGL while the page is hidden/offscreen.
     // A canvas that has owned WebGL generally cannot switch to a 2D context,
@@ -4645,6 +5155,38 @@
     let idleContextTimer = null;
     let contextVoluntarilyLost = false;
     let voluntaryLoseContextExtension = null;
+
+    function sceneRenderLoopSnapshot(reason) {
+      const animation = sceneAnimationState();
+      let active = frameHandle != null || scheduledRenderHandle != null;
+      let loopReason = reason || lastRenderLoopReason || animation.reason || "unknown";
+      if (!sceneCanRender()) {
+        active = false;
+        loopReason = lifecycle.pageVisible ? "offscreen" : "page-hidden";
+      } else if (scheduledRenderHandle != null) {
+        loopReason = lastScheduledRenderReason || loopReason || "scheduled-render";
+      } else if (frameHandle != null) {
+        loopReason = animation.reason || loopReason || "animation";
+      } else if (!animation.wants) {
+        loopReason = animation.reason || "static";
+      }
+      return {
+        active,
+        wantsAnimation: animation.wants,
+        reason: loopReason,
+        scheduled: scheduledRenderHandle != null,
+        animationFrame: frameHandle != null,
+      };
+    }
+
+    function applySceneRenderLoopState(reason) {
+      const state = sceneRenderLoopSnapshot(reason);
+      lastRenderLoopReason = state.reason || "";
+      setAttrValue(ctx.mount, "data-gosx-scene3d-render-loop", state.active ? "active" : "stopped");
+      setAttrValue(ctx.mount, "data-gosx-scene3d-render-loop-reason", state.reason || "");
+      setAttrValue(ctx.mount, "data-gosx-scene3d-render-loop-wants-animation", state.wantsAnimation ? "true" : "false");
+      return state;
+    }
 
     function scheduleIdleContextRelease() {
       clearIdleContextRelease();
@@ -4776,11 +5318,16 @@
     function scheduleNextAnimationFrame() {
       if (disposed) return;
       if (frameHandle != null) return;
-      if (!sceneWantsAnimation()) return;
+      const animation = sceneAnimationState();
+      if (!animation.wants || !sceneCanRender()) {
+        applySceneRenderLoopState(animation.reason);
+        return;
+      }
       frameHandle = engineFrame(function(now) {
         frameHandle = null;
         renderFrame(now);
       });
+      applySceneRenderLoopState(animation.reason);
     }
 
     let sceneRendererRecentlySwapped = false;
@@ -4979,6 +5526,7 @@
         cancelEngineFrame(frameHandle);
         frameHandle = null;
       }
+      applySceneRenderLoopState("");
     }
 
     function cancelScheduledRender() {
@@ -4986,6 +5534,7 @@
         cancelEngineFrame(scheduledRenderHandle);
         scheduledRenderHandle = null;
       }
+      applySceneRenderLoopState("");
     }
 
     function recordScenePerfCounter(name) {
@@ -5002,9 +5551,11 @@
       if (disposed) {
         return;
       }
+      lastScheduledRenderReason = reason || "refresh";
       recordScenePerfCounter("schedule:" + (reason || "refresh"));
       if (scheduledRenderHandle != null) {
         recordScenePerfCounter("coalesced:" + (reason || "refresh"));
+        applySceneRenderLoopState(lastScheduledRenderReason);
         return;
       }
       // Defer the viewport read+write into the RAF callback. The old
@@ -5029,6 +5580,7 @@
         }
         if (!sceneCanRender()) {
           cancelFrame();
+          applySceneRenderLoopState("");
           return;
         }
         // Cancel any in-flight animation-chain rAF before calling
@@ -5044,6 +5596,7 @@
         cancelFrame();
         renderFrame(typeof now === "number" ? now : 0, reason || "refresh");
       });
+      applySceneRenderLoopState(lastScheduledRenderReason);
     }
 
     // Wraps scheduleRender so the caller can opt into marking the
@@ -5294,8 +5847,72 @@
     }, function() {
       return latestBundle;
     }, function(detail) {
+      latestScenePickDetail = detail ? sceneDebugClone(detail, 4) : null;
       dispatchSceneHTMLTexturePointer(latestBundle, htmlElements, detail);
       ctx.emit("scene-interaction", detail);
+    });
+    let latestScenePickDetail = null;
+    function buildSceneDebugSnapshot(mode) {
+      const rendererKind = renderer && renderer.kind ? renderer.kind : "";
+      const rendererDiagnostics = renderer && typeof renderer.diagnostics === "function" ? renderer.diagnostics() : null;
+      const surfaceID = sceneDebugMountID(ctx.mount, ctx.id);
+      const counts = sceneDebugBundleCounts(latestBundle, sceneState);
+      const features = sceneDebugFeatureMatrix(latestBundle, sceneState, rendererKind);
+      const snapshot = {
+        schema: SCENE3D_DEBUG_SCHEMA,
+        id: surfaceID,
+        mountID: ctx.mount && ctx.mount.id ? String(ctx.mount.id) : "",
+        engineID: String(ctx.id || ""),
+        component: String(ctx.component || ""),
+        renderer: rendererKind,
+        fallbackReason: sceneDebugAttr(ctx.mount, "data-gosx-scene3d-renderer-fallback"),
+        ready: sceneDebugAttr(ctx.mount, "data-gosx-scene3d-ready") === "true",
+        active: sceneDebugAttr(ctx.mount, "data-gosx-scene3d-active") !== "false",
+        renderLoop: sceneRenderLoopSnapshot(""),
+        controls: normalizeSceneControlsMode(props.controls),
+        viewport: {
+          cssWidth: sceneNumber(viewport && viewport.cssWidth, 0),
+          cssHeight: sceneNumber(viewport && viewport.cssHeight, 0),
+          devicePixelRatio: sceneNumber(viewport && viewport.devicePixelRatio, 1),
+        },
+        counts,
+        features,
+        diagnostics: sceneDebugDiagnostics(ctx.mount, rendererKind, rendererDiagnostics),
+        lastPick: latestScenePickDetail || (pickHandle && typeof pickHandle.getSnapshot === "function" ? pickHandle.getSnapshot() : null),
+      };
+      if (mode !== "summary") {
+        snapshot.camera = currentMountedSceneCamera();
+        snapshot.gpuResources = sceneDebugGPUResources(ctx.mount, canvas, renderer, latestBundle, viewport, labelLayer, rendererDiagnostics);
+        snapshot.webgpuStats = sceneDebugClone(ctx.mount && ctx.mount.__gosxScene3DWebGPUStats, 3);
+        snapshot.rendererDiagnostics = sceneDebugClone(rendererDiagnostics, 3);
+      }
+      return snapshot;
+    }
+    const releaseSceneDebugSurface = sceneDebugRegisterSurface({
+      id: sceneDebugMountID(ctx.mount, ctx.id),
+      mountID: ctx.mount && ctx.mount.id ? String(ctx.mount.id) : "",
+      engineID: String(ctx.id || ""),
+      component: String(ctx.component || ""),
+      mount: ctx.mount,
+      snapshot: buildSceneDebugSnapshot,
+      captureFrame() {
+        const surfaceID = sceneDebugMountID(ctx.mount, ctx.id);
+        if (!canvas || typeof canvas.toDataURL !== "function") {
+          return { surfaceID, dataURL: null, reason: "capture-unavailable" };
+        }
+        return {
+          surfaceID,
+          mimeType: "image/png",
+          dataURL: canvas.toDataURL("image/png"),
+        };
+      },
+    });
+    const inspectorEnabled = sceneBool(
+      props.inspector,
+      typeof window !== "undefined" && window.__gosx_scene3d_inspector === true,
+    );
+    inspectorOverlay = createSceneInspectorOverlay(ctx.mount, inspectorEnabled, function() {
+      return buildSceneDebugSnapshot("full");
     });
     let pendingMotionData = null;
     let pendingMotionHandle = null;
@@ -5462,6 +6079,9 @@
           if (statsOverlay) {
             statsOverlay.update(effectiveBundle, frameStart, renderer, viewport);
           }
+          if (inspectorOverlay) {
+            inspectorOverlay.update();
+          }
           if (sceneUpdateAdaptiveQuality(adaptiveQuality, ctx.mount, sceneState, viewport, frameStart)) {
             viewportDirty = true;
           }
@@ -5527,6 +6147,9 @@
       renderSceneHTML(labelLayer, latestBundle, htmlElements, viewport.cssWidth, viewport.cssHeight, htmlTextureState);
       if (statsOverlay) {
         statsOverlay.update(latestBundle, frameStart, renderer, viewport);
+      }
+      if (inspectorOverlay) {
+        inspectorOverlay.update();
       }
       if (sceneUpdateAdaptiveQuality(adaptiveQuality, ctx.mount, sceneState, viewport, frameStart)) {
         viewportDirty = true;
@@ -5793,6 +6416,7 @@
         releaseMotionObserver();
         releaseSceneCSSObserver();
         releaseTextLayoutListener();
+        releaseSceneDebugSurface();
         dragHandle.dispose();
         pickHandle.dispose();
         sceneControlHandle.dispose();
@@ -5815,6 +6439,9 @@
         }
         if (statsOverlay) {
           statsOverlay.dispose();
+        }
+        if (inspectorOverlay) {
+          inspectorOverlay.dispose();
         }
         if (sentinelLayer.parentNode === ctx.mount) {
           ctx.mount.removeChild(sentinelLayer);

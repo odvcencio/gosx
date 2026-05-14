@@ -139,6 +139,7 @@ type Props struct {
 	Camera                PerspectiveCamera
 	OrthographicCamera    *OrthographicCamera
 	Stats                 *bool `json:"stats,omitempty"`
+	Inspector             *bool `json:"inspector,omitempty"`
 	Environment           Environment
 	PostFX                PostFX
 	Shadows               Shadows
@@ -403,7 +404,7 @@ type ParticleEmitter struct {
 }
 
 type ParticleForce struct {
-	Kind      string // "gravity", "wind", "turbulence", "orbit", "drag"
+	Kind      string // "gravity", "wind", "turbulence", "orbit", "drag", "radial"/"eject"
 	Strength  float64
 	Direction Vector3
 	Frequency float64
@@ -486,6 +487,7 @@ type HTMLMode string
 const (
 	HTMLDOM     HTMLMode = "dom"
 	HTMLTexture HTMLMode = "texture"
+	HTMLPortal  HTMLMode = "portal"
 )
 
 // HTML lowers into a DOM-backed Scene3D overlay projected from world space.
@@ -530,6 +532,8 @@ type HTMLSurface struct {
 	Target           string
 	Markup           string
 	ClassName        string
+	Fallback         string
+	FallbackReason   string
 	Position         Vector3
 	SurfaceWidth     float64
 	SurfaceHeight    float64
@@ -1219,6 +1223,7 @@ func (p Props) legacyBaseProps() map[string]any {
 	setString(out, "webgpuToneMapping", p.WebGPUToneMapping)
 	setString(out, "webgpuPowerPreference", p.WebGPUPowerPreference)
 	setBool(out, "stats", p.Stats)
+	setBool(out, "inspector", p.Inspector)
 	if p.Compression != nil {
 		comp := map[string]any{"bitWidth": p.Compression.BitWidth}
 		if p.Compression.Progressive {
@@ -1684,8 +1689,8 @@ func htmlSurfaceFallback(surface HTMLSurface) HTML {
 		Mode:             HTMLTexture,
 		Markup:           surface.Markup,
 		ClassName:        surface.ClassName,
-		Fallback:         "dom-overlay",
-		FallbackReason:   "html-texture-manager-unavailable",
+		Fallback:         htmlSurfaceFallbackValue(surface),
+		FallbackReason:   htmlSurfaceFallbackReason(surface),
 		TextureKey:       strings.TrimSpace(surface.TextureKey),
 		TextureWidth:     textureWidth,
 		TextureHeight:    textureHeight,
@@ -1705,6 +1710,20 @@ func htmlSurfaceFallback(surface HTMLSurface) HTML {
 		Transition:       surface.Transition,
 		Live:             surface.Live,
 	}
+}
+
+func htmlSurfaceFallbackValue(surface HTMLSurface) string {
+	if fallback := strings.TrimSpace(surface.Fallback); fallback != "" {
+		return fallback
+	}
+	return "dom-overlay"
+}
+
+func htmlSurfaceFallbackReason(surface HTMLSurface) string {
+	if reason := strings.TrimSpace(surface.FallbackReason); reason != "" {
+		return reason
+	}
+	return "html-texture-manager-unavailable"
 }
 
 func htmlSurfaceTextureSize(surface HTMLSurface) (int, int) {

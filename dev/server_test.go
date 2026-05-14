@@ -42,6 +42,37 @@ func TestServerProxyInjectsReloadScriptIntoHTML(t *testing.T) {
 	}
 }
 
+func TestServerProxyInjectsSceneInspectorConfigWhenEnabled(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = io.WriteString(w, "<!doctype html><html><head><title>Scene</title></head><body><main>hello</main></body></html>")
+	}))
+	defer upstream.Close()
+
+	srv := &Server{
+		Dir:            t.TempDir(),
+		BuildDir:       t.TempDir(),
+		ProxyTarget:    upstream.URL,
+		SceneInspector: true,
+	}
+	srv.SetProxyTarget(upstream.URL)
+
+	req := httptest.NewRequest(http.MethodGet, "http://gosx.test/", nil)
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+
+	body := rec.Body.String()
+	if !strings.Contains(body, "data-gosx-dev-scene-inspector") {
+		t.Fatalf("expected scene inspector config script in body, got %q", body)
+	}
+	if !strings.Contains(body, "window.__gosx_scene3d_inspector=true") {
+		t.Fatalf("expected scene inspector global in body, got %q", body)
+	}
+	if !strings.Contains(body, "data-gosx-dev-reload") {
+		t.Fatalf("expected reload script to remain in body, got %q", body)
+	}
+}
+
 func TestServerProxySkipsReloadScriptForNavigationFetches(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")

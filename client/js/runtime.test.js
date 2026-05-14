@@ -6350,6 +6350,10 @@ test("bootstrap emits declarative Scene3D pick signals without authored JS", asy
   assert.equal(textureEvents[0].localX, 0);
   assert.equal(htmlSurface.getAttribute("data-gosx-scene-html-hit-target"), "shape");
   assert.equal(htmlSurface.getAttribute("data-gosx-scene-html-hit-uv-x"), "0");
+  const debugPick = env.context.__gosx_scene3d_debug.getLastPick("scene-pick-root");
+  assert.equal(debugPick.type, "hover");
+  assert.equal(debugPick.targetID, "shape");
+  assert.equal(debugPick.uvX, 0);
   const hoverEvent = JSON.parse(JSON.stringify(interactionEvents[0]));
   assert.ok(Math.abs(hoverEvent.detail.depth - 6.8) < 1e-6, "expected fallback event depth");
   hoverEvent.detail.depth = 6.8;
@@ -7815,6 +7819,28 @@ test("bootstrap registers Scene3D CPU particle force handlers through the shared
   assert.ok(system.positions[1] > 1.9, Array.from(system.positions).join(","));
   assert.equal(api.listSceneParticleForces().some((force) => force.kind === "lift" && force.handler), true);
   assert.equal(api.unregisterSceneParticleForce("lift"), true);
+});
+
+test("selective Scene3D bootstrap exposes CPU compute particles for WebGL", async () => {
+  const env = createContext({});
+  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+  runScript(bootstrapFeatureScene3DSource, env.context, "bootstrap-feature-scene3d.js");
+  await flushAsyncWork();
+
+  const api = env.context.__gosx_scene3d_api;
+  assert.equal(typeof api.sceneComputeSystemSignature, "function");
+  assert.equal(typeof api.createSceneParticleSystem, "function");
+
+  const system = api.createSceneParticleSystem(null, {
+    id: "selective-sparks",
+    count: 1,
+    emitter: { kind: "point", lifetime: 1 },
+    forces: [{ kind: "wind", x: 1, strength: 1 }],
+    material: {},
+  });
+  system.update(0.016, 0.016);
+
+  assert.equal(system.positions.length, 3);
 });
 
 test("bootstrap applies Scene3D live point buffers outside update tweens", async () => {
@@ -9635,6 +9661,103 @@ test("bootstrap renders mixed native Scene3D primitives", async () => {
   assert.ok(strokeCount >= 1);
   assert.equal(env.consoleLogs.warn.length, 0);
   assert.equal(env.consoleLogs.error.length, 0);
+});
+
+test("bootstrap exposes read-only Scene3D debug API for mounted surfaces", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-debug-root";
+
+  const env = createContext({
+    elements: [mount],
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-debug",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-debug-root",
+          jsExport: "GoSXScene3D",
+          props: {
+            width: 480,
+            height: 300,
+            autoRotate: false,
+            scene: {
+              objects: [
+                { id: "debug-cube", kind: "cube", size: 1, color: "#8de1ff" },
+              ],
+              html: [
+                {
+                  id: "debug-panel",
+                  target: "debug-cube",
+                  mode: "texture",
+                  html: "<p>Debug</p>",
+                  fallback: "Debug",
+                  textureWidth: 64,
+                  textureHeight: 64,
+                },
+              ],
+              lights: [
+                { id: "debug-sun", kind: "directional", intensity: 1 },
+              ],
+              postEffects: [
+                { kind: "bloom", threshold: 0.9 },
+              ],
+            },
+          },
+          capabilities: ["canvas", "animation"],
+        },
+      ],
+    },
+  });
+
+  env.context.__gosx_scene3d_inspector = true;
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+  await flushAsyncWork();
+
+  const api = env.context.__gosx_scene3d_debug;
+  assert.ok(api, "expected Scene3D debug API");
+  assert.equal(api.schema, "gosx.scene3d.debug.v1");
+
+  const surfaces = api.listSurfaces();
+  assert.equal(surfaces.length, 1);
+  assert.equal(surfaces[0].id, "scene-debug-root");
+  assert.equal(surfaces[0].engineID, "gosx-engine-debug");
+  assert.equal(surfaces[0].renderer, mount.getAttribute("data-gosx-scene3d-renderer"));
+  assert.equal(surfaces[0].ready, true);
+  assert.ok(surfaces[0].features["geometry.cube"] >= 1);
+  assert.equal(surfaces[0].features["html.texture"], 1);
+  assert.equal(surfaces[0].features["postfx.bloom"], 1);
+
+  const report = api.inspect("gosx-engine-debug");
+  assert.equal(report.mountID, "scene-debug-root");
+  assert.equal(report.counts.html, 1);
+  assert.equal(report.gpuResources.canvas.width, 480);
+  assert.equal(report.gpuResources.canvas.height, 300);
+  assert.equal(report.diagnostics[0].code, "scene.backend.selected");
+  assert.equal(report.renderLoop.active, false);
+  assert.equal(report.renderLoop.reason, "static");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-render-loop"), "stopped");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-render-loop-reason"), "static");
+
+  assert.deepEqual(api.getFeatureMatrix("scene-debug-root"), report.features);
+  assert.equal(api.getGPUResources("scene-debug-root").canvas.width, 480);
+  assert.equal(api.getDiagnostics("scene-debug-root")[0].code, "scene.backend.selected");
+  assert.equal(api.getLastPick("scene-debug-root"), null);
+  assert.equal(api.captureFrame("scene-debug-root").reason, "capture-unavailable");
+
+  const inspector = mount.children.find((child) => child.getAttribute("data-gosx-scene3d-inspector") === "true");
+  assert.ok(inspector, "expected opt-in Scene3D inspector overlay");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-inspector-enabled"), "true");
+  assert.match(inspector.textContent, /Scene3D/);
+  assert.match(inspector.textContent, /backend/);
+  assert.match(inspector.textContent, /loop stopped/);
+  assert.match(inspector.textContent, /draw/);
+  assert.match(inspector.textContent, /html 1/);
+
+  env.context.__gosx_dispose_engine("gosx-engine-debug");
+  assert.equal(api.listSurfaces().length, 0);
+  assert.equal(mount.children.some((child) => child.getAttribute("data-gosx-scene3d-inspector") === "true"), false);
 });
 
 test("bootstrap routes native Scene3D material profiles through WebGL pass planning", async () => {

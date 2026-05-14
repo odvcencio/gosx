@@ -1,4 +1,4 @@
-# Scene3D Native Dominance Spec
+# Scene3D Native WebGPU Spec
 
 Status: implementation spec + R1/R2 primitive contract implementation pass
 Target package family: `scene`, `engine`, `client/enginevm`, `client/wasm`, `render/gpu`, `render/bundle`, `client/js/bootstrap-src`
@@ -695,14 +695,14 @@ Started in follow-on passes:
 - Add accessibility fallback rendering.
 - Add dirty-region texture uploads.
 
-### R5: Material and post-FX dominance
+### R5: Material and post-FX coverage
 
 - Add native WebGPU SSAO and DOF passes.
 - Complete clearcoat/sheen/transmission/iridescence/anisotropy in WebGPU material path.
 - Add custom WGSL hooks with compile diagnostics.
 - Add material variants by capability tier.
 
-### R6: Asset/LOD/streaming dominance
+### R6: Asset/LOD/streaming coverage
 
 - Parameterized mesh cache.
 - HTML texture manifest inventory and upload-budget planning.
@@ -711,7 +711,7 @@ Started in follow-on passes:
 - HDR/IBL runtime integration.
 - Progressive asset streaming and upgrade.
 
-### R7: Editor/devtool dominance
+### R7: Editor/devtool coverage
 
 - Scene inspector.
 - Object picking overlay.
@@ -857,7 +857,7 @@ Remaining work:
 
 ## 26. Native WebGPU SSAO and DOF pass
 
-This pass starts the R5 post-FX dominance work with real WebGPU depth-backed effects:
+This pass starts the R5 post-FX work with real WebGPU depth-backed effects:
 
 - The WebGPU post processor now creates a sampleable depth attachment for post-FX scenes.
 - `SCENE_POST_SSAO` is handled as a depth-backed fullscreen post pass instead of being preserved but ignored.

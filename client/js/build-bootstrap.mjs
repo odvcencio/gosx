@@ -83,6 +83,7 @@ const outputs = [
       sourceFile("bootstrap-src/13-scene-material.js"),
       sourceFile("bootstrap-src/14-scene-lighting.js"),
       sourceFile("bootstrap-src/15-scene-ir-schema.js"),
+      sourceFile("bootstrap-src/15-scene-ir-schema-strict.js"),
       sourceFile("bootstrap-src/15-scene-draw-plan.js"),
       sourceFile("bootstrap-src/15b-scene-planner.js"),
       sourceFile("bootstrap-src/15c-scene-backend-registry.js"),
@@ -177,16 +178,19 @@ const outputs = [
       sourceFile("bootstrap-src/13-scene-material.js"),
       sourceFile("bootstrap-src/14-scene-lighting.js"),
       sourceFile("bootstrap-src/15-scene-ir-schema.js"),
+      sourceFile("bootstrap-src/15-scene-ir-schema-strict.js"),
       sourceFile("bootstrap-src/15-scene-draw-plan.js"),
       sourceFile("bootstrap-src/15b-scene-planner.js"),
       sourceFile("bootstrap-src/15c-scene-backend-registry.js"),
       sourceFile("bootstrap-src/15a-scene-postfx-shared.js"),
       sourceFile("bootstrap-src/16b-scene-hdr.js"),
+      sourceFile("bootstrap-src/16b-scene-compute.js"),
       sourceFile("bootstrap-src/16-scene-webgl.js"),
-      // 16a-scene-webgpu.js + 16b-scene-compute.js are NOT here — they
-      // moved to bootstrap-feature-scene3d-webgpu.js so WebGL-only pages
-      // (Safari, Firefox on most platforms, ForceWebGL) don't have to
-      // parse ~136 KB of WebGPU code they'll never run. 16z holds the
+      // 16a-scene-webgpu.js is NOT here — it moved to
+      // bootstrap-feature-scene3d-webgpu.js so WebGL-only pages (Safari,
+      // Firefox on most platforms, ForceWebGL) don't parse WebGPU code
+      // they'll never run. 16b-scene-compute.js stays in this chunk
+      // because WebGL uses its CPU particle-system path. 16z holds the
       // tiny stub + adapter probe so the WebGL mount path stays sync.
       sourceFile("bootstrap-src/16z-scene-webgpu-probe.js"),
       sourceFile("bootstrap-src/17-scene-input.js"),

@@ -1,0 +1,894 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gosx.dev/schema/scene3d-ir.v1.json",
+  "title": "GoSX Scene3D IR",
+  "type": "object",
+  "additionalProperties": true,
+  "properties": {
+    "schema": {
+      "type": "string",
+      "const": "gosx.scene3d.ir.v1"
+    },
+    "objects": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/object" }
+    },
+    "models": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/model" }
+    },
+    "points": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/points" }
+    },
+    "instancedMeshes": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/instancedMesh" }
+    },
+    "instancedGLBMeshes": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/instancedGLBMesh" }
+    },
+    "computeParticles": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/computeParticles" }
+    },
+    "animations": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/animation" }
+    },
+    "labels": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/label" }
+    },
+    "sprites": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/sprite" }
+    },
+    "html": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/html" }
+    },
+    "lights": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/light" }
+    },
+    "environment": { "$ref": "#/$defs/environment" },
+    "postEffects": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/postEffect" }
+    },
+    "postFXMaxPixels": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "shadowMaxPixels": {
+      "type": "integer",
+      "minimum": 0
+    }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "numberArray": {
+      "type": "array",
+      "items": { "type": "number" }
+    },
+    "stringArray": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "liveArray": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/id" }
+    },
+    "stateRecord": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "vector3": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "x": { "type": "number" },
+        "y": { "type": "number" },
+        "z": { "type": "number" }
+      }
+    },
+    "compressedArray": {
+      "type": "object",
+      "required": ["packed", "norm", "dim", "bitWidth", "count"],
+      "additionalProperties": true,
+      "properties": {
+        "packed": {
+          "oneOf": [
+            { "type": "string" },
+            {
+              "type": "array",
+              "items": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 255
+              }
+            }
+          ]
+        },
+        "norm": { "type": "number" },
+        "maxVal": { "type": "number" },
+        "dim": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "bitWidth": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "count": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "compressedArrayList": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/compressedArray" }
+    },
+    "transitionTiming": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "duration": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "easing": { "type": "string" }
+      }
+    },
+    "transition": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "in": { "$ref": "#/$defs/transitionTiming" },
+        "out": { "$ref": "#/$defs/transitionTiming" },
+        "update": { "$ref": "#/$defs/transitionTiming" }
+      }
+    },
+    "lifecycleFields": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "transition": { "$ref": "#/$defs/transition" },
+        "inState": { "$ref": "#/$defs/stateRecord" },
+        "outState": { "$ref": "#/$defs/stateRecord" },
+        "live": { "$ref": "#/$defs/liveArray" }
+      }
+    },
+    "transformFields": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "x": { "type": "number" },
+        "y": { "type": "number" },
+        "z": { "type": "number" },
+        "scaleX": { "type": "number" },
+        "scaleY": { "type": "number" },
+        "scaleZ": { "type": "number" },
+        "rotationX": { "type": "number" },
+        "rotationY": { "type": "number" },
+        "rotationZ": { "type": "number" },
+        "spinX": { "type": "number" },
+        "spinY": { "type": "number" },
+        "spinZ": { "type": "number" },
+        "shiftX": { "type": "number" },
+        "shiftY": { "type": "number" },
+        "shiftZ": { "type": "number" },
+        "driftSpeed": { "type": "number" },
+        "driftPhase": { "type": "number" }
+      }
+    },
+    "materialFields": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "materialKind": { "type": "string" },
+        "color": { "type": "string" },
+        "texture": { "type": "string" },
+        "opacity": { "type": "number" },
+        "emissive": { "type": "number" },
+        "blendMode": { "type": "string" },
+        "renderPass": { "type": "string" },
+        "wireframe": { "type": "boolean" },
+        "lineDash": { "type": "boolean" },
+        "dashSize": {
+          "type": "number",
+          "minimum": 0
+        },
+        "gapSize": {
+          "type": "number",
+          "minimum": 0
+        },
+        "customVertex": { "type": "string" },
+        "customFragment": { "type": "string" },
+        "customVertexWGSL": { "type": "string" },
+        "customFragmentWGSL": { "type": "string" },
+        "customUniforms": { "$ref": "#/$defs/stateRecord" },
+        "depthWrite": { "type": "boolean" },
+        "roughness": { "type": "number" },
+        "metalness": { "type": "number" },
+        "clearcoat": { "type": "number" },
+        "sheen": { "type": "number" },
+        "transmission": { "type": "number" },
+        "iridescence": { "type": "number" },
+        "anisotropy": { "type": "number" },
+        "normalMap": { "type": "string" },
+        "roughnessMap": { "type": "string" },
+        "metalnessMap": { "type": "string" },
+        "emissiveMap": { "type": "string" }
+      }
+    },
+    "primitiveParams": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "kind": { "$ref": "#/$defs/id" },
+        "size": {
+          "type": "number",
+          "minimum": 0
+        },
+        "width": {
+          "type": "number",
+          "minimum": 0
+        },
+        "height": {
+          "type": "number",
+          "minimum": 0
+        },
+        "depth": {
+          "type": "number",
+          "minimum": 0
+        },
+        "radius": {
+          "type": "number",
+          "minimum": 0
+        },
+        "radiusTop": {
+          "type": "number",
+          "minimum": 0
+        },
+        "radiusBottom": {
+          "type": "number",
+          "minimum": 0
+        },
+        "tube": {
+          "type": "number",
+          "minimum": 0
+        },
+        "segments": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "radialSegments": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "tubularSegments": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "object": {
+      "allOf": [
+        { "$ref": "#/$defs/primitiveParams" },
+        { "$ref": "#/$defs/materialFields" },
+        { "$ref": "#/$defs/transformFields" },
+        { "$ref": "#/$defs/lifecycleFields" },
+        {
+          "type": "object",
+          "required": ["id", "kind"],
+          "additionalProperties": true,
+          "properties": {
+            "id": { "$ref": "#/$defs/id" },
+            "points": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/vector3" }
+            },
+            "lineSegments": {
+              "type": "array",
+              "items": {
+                "type": "array",
+                "prefixItems": [
+                  {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                ],
+                "minItems": 2,
+                "maxItems": 2
+              }
+            },
+            "lineWidth": {
+              "type": "number",
+              "minimum": 0
+            },
+            "pickable": { "type": "boolean" },
+            "selected": { "type": "boolean" },
+            "outlineColor": { "type": "string" },
+            "outlineWidth": {
+              "type": "number",
+              "minimum": 0
+            },
+            "castShadow": { "type": "boolean" },
+            "receiveShadow": { "type": "boolean" },
+            "lodGroup": { "type": "string" },
+            "lodLevel": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "lodMinDistance": {
+              "type": "number",
+              "minimum": 0
+            },
+            "lodMaxDistance": {
+              "type": "number",
+              "minimum": 0
+            }
+          }
+        }
+      ]
+    },
+    "model": {
+      "allOf": [
+        { "$ref": "#/$defs/object" },
+        {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "src": {
+              "type": "string",
+              "minLength": 1
+            },
+            "scaleX": { "type": "number" },
+            "scaleY": { "type": "number" },
+            "scaleZ": { "type": "number" },
+            "static": { "type": "boolean" },
+            "animation": { "type": "string" },
+            "animationSeq": { "type": "string" },
+            "animationSpeed": {
+              "type": "number",
+              "minimum": 0
+            },
+            "animationWeight": {
+              "type": "number",
+              "minimum": 0
+            },
+            "animationFadeInMS": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "animationFadeOutMS": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "loop": { "type": "boolean" }
+          }
+        }
+      ]
+    },
+    "points": {
+      "allOf": [
+        { "$ref": "#/$defs/transformFields" },
+        { "$ref": "#/$defs/lifecycleFields" },
+        {
+          "type": "object",
+          "required": ["id", "count"],
+          "additionalProperties": true,
+          "properties": {
+            "id": { "$ref": "#/$defs/id" },
+            "count": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "positions": { "$ref": "#/$defs/numberArray" },
+            "sizes": { "$ref": "#/$defs/numberArray" },
+            "colors": { "$ref": "#/$defs/stringArray" },
+            "color": { "type": "string" },
+            "style": { "type": "string" },
+            "size": {
+              "type": "number",
+              "minimum": 0
+            },
+            "minPixelSize": {
+              "type": "number",
+              "minimum": 0
+            },
+            "maxPixelSize": {
+              "type": "number",
+              "minimum": 0
+            },
+            "opacity": { "type": "number" },
+            "blendMode": { "type": "string" },
+            "depthWrite": { "type": "boolean" },
+            "attenuation": { "type": "boolean" },
+            "compressedPositions": { "$ref": "#/$defs/compressedArrayList" },
+            "compressedSizes": { "$ref": "#/$defs/compressedArrayList" },
+            "previewPositions": { "$ref": "#/$defs/compressedArrayList" },
+            "previewSizes": { "$ref": "#/$defs/compressedArrayList" },
+            "positionStride": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        }
+      ]
+    },
+    "instancedMesh": {
+      "allOf": [
+        { "$ref": "#/$defs/primitiveParams" },
+        { "$ref": "#/$defs/lifecycleFields" },
+        {
+          "type": "object",
+          "required": ["id", "kind", "count", "transforms"],
+          "additionalProperties": true,
+          "properties": {
+            "id": { "$ref": "#/$defs/id" },
+            "count": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "materialKind": { "type": "string" },
+            "color": { "type": "string" },
+            "roughness": { "type": "number" },
+            "metalness": { "type": "number" },
+            "transforms": { "$ref": "#/$defs/numberArray" },
+            "colors": { "$ref": "#/$defs/stringArray" },
+            "attributes": {
+              "type": "object",
+              "additionalProperties": { "$ref": "#/$defs/numberArray" }
+            },
+            "castShadow": { "type": "boolean" },
+            "receiveShadow": { "type": "boolean" },
+            "compressedTransforms": { "$ref": "#/$defs/compressedArrayList" },
+            "previewTransforms": { "$ref": "#/$defs/compressedArrayList" }
+          }
+        }
+      ]
+    },
+    "instancedGLBMesh": {
+      "allOf": [
+        { "$ref": "#/$defs/materialFields" },
+        {
+          "type": "object",
+          "required": ["id", "src", "instances"],
+          "additionalProperties": true,
+          "properties": {
+            "id": { "$ref": "#/$defs/id" },
+            "src": {
+              "type": "string",
+              "minLength": 1
+            },
+            "roughness": { "type": "number" },
+            "metalness": { "type": "number" },
+            "instances": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/meshInstance" }
+            },
+            "pickable": { "type": "boolean" },
+            "static": { "type": "boolean" }
+          }
+        }
+      ]
+    },
+    "meshInstance": {
+      "allOf": [
+        { "$ref": "#/$defs/transformFields" },
+        {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "id": { "type": "string" }
+          }
+        }
+      ]
+    },
+    "computeParticles": {
+      "allOf": [
+        { "$ref": "#/$defs/lifecycleFields" },
+        {
+          "type": "object",
+          "required": ["id", "count", "emitter", "material"],
+          "additionalProperties": true,
+          "properties": {
+            "id": { "$ref": "#/$defs/id" },
+            "count": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "emitter": { "$ref": "#/$defs/particleEmitter" },
+            "forces": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/particleForce" }
+            },
+            "material": { "$ref": "#/$defs/particleMaterial" },
+            "bounds": {
+              "type": "number",
+              "minimum": 0
+            }
+          }
+        }
+      ]
+    },
+    "particleEmitter": {
+      "allOf": [
+        { "$ref": "#/$defs/transformFields" },
+        {
+          "type": "object",
+          "required": ["kind"],
+          "additionalProperties": true,
+          "properties": {
+            "kind": { "$ref": "#/$defs/id" },
+            "radius": {
+              "type": "number",
+              "minimum": 0
+            },
+            "rate": {
+              "type": "number",
+              "minimum": 0
+            },
+            "lifetime": {
+              "type": "number",
+              "minimum": 0
+            },
+            "arms": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "wind": { "type": "number" },
+            "scatter": {
+              "type": "number",
+              "minimum": 0
+            }
+          }
+        }
+      ]
+    },
+    "particleForce": {
+      "type": "object",
+      "required": ["kind"],
+      "additionalProperties": true,
+      "properties": {
+        "kind": { "$ref": "#/$defs/id" },
+        "strength": { "type": "number" },
+        "x": { "type": "number" },
+        "y": { "type": "number" },
+        "z": { "type": "number" },
+        "frequency": {
+          "type": "number",
+          "minimum": 0
+        }
+      }
+    },
+    "particleMaterial": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "color": { "type": "string" },
+        "colorEnd": { "type": "string" },
+        "style": { "type": "string" },
+        "size": {
+          "type": "number",
+          "minimum": 0
+        },
+        "sizeEnd": {
+          "type": "number",
+          "minimum": 0
+        },
+        "opacity": { "type": "number" },
+        "opacityEnd": { "type": "number" },
+        "blendMode": { "type": "string" },
+        "attenuation": { "type": "boolean" }
+      }
+    },
+    "animation": {
+      "type": "object",
+      "required": ["name", "duration", "channels"],
+      "additionalProperties": true,
+      "properties": {
+        "name": { "$ref": "#/$defs/id" },
+        "duration": {
+          "type": "number",
+          "minimum": 0
+        },
+        "channels": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/animationChannel" }
+        }
+      }
+    },
+    "animationChannel": {
+      "type": "object",
+      "required": ["targetNode", "property"],
+      "additionalProperties": true,
+      "properties": {
+        "targetNode": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "property": { "$ref": "#/$defs/id" },
+        "interpolation": { "type": "string" },
+        "times": { "$ref": "#/$defs/numberArray" },
+        "values": { "$ref": "#/$defs/numberArray" },
+        "compressedTimes": { "$ref": "#/$defs/compressedArrayList" },
+        "compressedValues": { "$ref": "#/$defs/compressedArrayList" },
+        "previewTimes": { "$ref": "#/$defs/compressedArrayList" },
+        "previewValues": { "$ref": "#/$defs/compressedArrayList" }
+      }
+    },
+    "label": {
+      "allOf": [
+        { "$ref": "#/$defs/transformFields" },
+        { "$ref": "#/$defs/lifecycleFields" },
+        {
+          "type": "object",
+          "required": ["id", "text"],
+          "additionalProperties": true,
+          "properties": {
+            "id": { "$ref": "#/$defs/id" },
+            "text": { "type": "string" },
+            "className": { "type": "string" },
+            "priority": { "type": "number" },
+            "maxWidth": {
+              "type": "number",
+              "minimum": 0
+            },
+            "maxLines": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "overflow": { "type": "string" },
+            "font": { "type": "string" },
+            "lineHeight": {
+              "type": "number",
+              "minimum": 0
+            },
+            "color": { "type": "string" },
+            "background": { "type": "string" },
+            "borderColor": { "type": "string" },
+            "offsetX": { "type": "number" },
+            "offsetY": { "type": "number" },
+            "anchorX": { "type": "number" },
+            "anchorY": { "type": "number" },
+            "collision": { "type": "string" },
+            "occlude": { "type": "boolean" },
+            "whiteSpace": { "type": "string" },
+            "textAlign": { "type": "string" }
+          }
+        }
+      ]
+    },
+    "sprite": {
+      "allOf": [
+        { "$ref": "#/$defs/transformFields" },
+        { "$ref": "#/$defs/lifecycleFields" },
+        {
+          "type": "object",
+          "required": ["id", "src"],
+          "additionalProperties": true,
+          "properties": {
+            "id": { "$ref": "#/$defs/id" },
+            "src": {
+              "type": "string",
+              "minLength": 1
+            },
+            "className": { "type": "string" },
+            "priority": { "type": "number" },
+            "width": {
+              "type": "number",
+              "minimum": 0
+            },
+            "height": {
+              "type": "number",
+              "minimum": 0
+            },
+            "scale": {
+              "type": "number",
+              "minimum": 0
+            },
+            "opacity": { "type": "number" },
+            "offsetX": { "type": "number" },
+            "offsetY": { "type": "number" },
+            "anchorX": { "type": "number" },
+            "anchorY": { "type": "number" },
+            "occlude": { "type": "boolean" },
+            "fit": { "type": "string" }
+          }
+        }
+      ]
+    },
+    "html": {
+      "allOf": [
+        { "$ref": "#/$defs/transformFields" },
+        { "$ref": "#/$defs/lifecycleFields" },
+        {
+          "type": "object",
+          "required": ["id", "html"],
+          "additionalProperties": true,
+          "properties": {
+            "id": { "$ref": "#/$defs/id" },
+            "target": { "type": "string" },
+            "mode": { "type": "string" },
+            "html": { "type": "string" },
+            "className": { "type": "string" },
+            "fallback": { "type": "string" },
+            "fallbackReason": { "type": "string" },
+            "textureKey": { "type": "string" },
+            "textureWidth": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "textureHeight": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "maxTexturePixels": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "surfaceWidth": {
+              "type": "number",
+              "minimum": 0
+            },
+            "surfaceHeight": {
+              "type": "number",
+              "minimum": 0
+            },
+            "priority": { "type": "number" },
+            "width": {
+              "type": "number",
+              "minimum": 0
+            },
+            "height": {
+              "type": "number",
+              "minimum": 0
+            },
+            "scale": {
+              "type": "number",
+              "minimum": 0
+            },
+            "opacity": { "type": "number" },
+            "offsetX": { "type": "number" },
+            "offsetY": { "type": "number" },
+            "anchorX": { "type": "number" },
+            "anchorY": { "type": "number" },
+            "occlude": { "type": "boolean" },
+            "pointerEvents": { "type": "string" }
+          }
+        }
+      ]
+    },
+    "light": {
+      "allOf": [
+        { "$ref": "#/$defs/lifecycleFields" },
+        {
+          "type": "object",
+          "required": ["id", "kind"],
+          "additionalProperties": true,
+          "properties": {
+            "id": { "$ref": "#/$defs/id" },
+            "kind": { "$ref": "#/$defs/id" },
+            "color": { "type": "string" },
+            "groundColor": { "type": "string" },
+            "intensity": { "type": "number" },
+            "x": { "type": "number" },
+            "y": { "type": "number" },
+            "z": { "type": "number" },
+            "directionX": { "type": "number" },
+            "directionY": { "type": "number" },
+            "directionZ": { "type": "number" },
+            "angle": { "type": "number" },
+            "penumbra": { "type": "number" },
+            "range": {
+              "type": "number",
+              "minimum": 0
+            },
+            "decay": { "type": "number" },
+            "width": {
+              "type": "number",
+              "minimum": 0
+            },
+            "height": {
+              "type": "number",
+              "minimum": 0
+            },
+            "coefficients": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/vector3" }
+            },
+            "castShadow": { "type": "boolean" },
+            "shadowBias": { "type": "number" },
+            "shadowSize": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "shadowCascades": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "shadowSoftness": {
+              "type": "number",
+              "minimum": 0
+            }
+          }
+        }
+      ]
+    },
+    "environment": {
+      "allOf": [
+        { "$ref": "#/$defs/lifecycleFields" },
+        {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "ambientColor": { "type": "string" },
+            "ambientIntensity": { "type": "number" },
+            "skyColor": { "type": "string" },
+            "skyIntensity": { "type": "number" },
+            "groundColor": { "type": "string" },
+            "groundIntensity": { "type": "number" },
+            "envMap": { "type": "string" },
+            "envIntensity": { "type": "number" },
+            "envRotation": { "type": "number" },
+            "exposure": { "type": "number" },
+            "toneMapping": { "type": "string" },
+            "fogColor": { "type": "string" },
+            "fogDensity": {
+              "type": "number",
+              "minimum": 0
+            }
+          }
+        }
+      ]
+    },
+    "postEffect": {
+      "type": "object",
+      "required": ["kind"],
+      "additionalProperties": true,
+      "properties": {
+        "kind": { "$ref": "#/$defs/id" },
+        "mode": { "type": "string" },
+        "exposure": { "type": "number" },
+        "threshold": { "type": "number" },
+        "intensity": { "type": "number" },
+        "radius": {
+          "type": "number",
+          "minimum": 0
+        },
+        "scale": {
+          "type": "number",
+          "minimum": 0
+        },
+        "contrast": { "type": "number" },
+        "saturation": { "type": "number" },
+        "bias": { "type": "number" },
+        "focusDistance": {
+          "type": "number",
+          "minimum": 0
+        },
+        "aperture": {
+          "type": "number",
+          "minimum": 0
+        },
+        "maxBlur": {
+          "type": "number",
+          "minimum": 0
+        }
+      }
+    }
+  }
+}

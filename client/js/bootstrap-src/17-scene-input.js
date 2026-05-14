@@ -1333,7 +1333,12 @@
     const pickNamespace = scenePickSignalNamespace(props);
     const eventNamespace = sceneEventSignalNamespace(props);
     if (!canvas || (!pickNamespace && !eventNamespace)) {
-      return { dispose() {} };
+      return {
+        getSnapshot() {
+          return null;
+        },
+        dispose() {},
+      };
     }
 
     const initialMetrics = sceneDragViewportMetrics(readViewport, sceneNumber(props.width, 720), sceneNumber(props.height, 420));
@@ -1448,6 +1453,9 @@
     publish();
 
     return {
+      getSnapshot() {
+        return sceneInteractionSnapshot(state);
+      },
       dispose() {
         canvas.removeEventListener("pointermove", onPointerMove);
         canvas.removeEventListener("pointerdown", onPointerDown);

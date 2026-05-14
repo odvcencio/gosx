@@ -866,6 +866,29 @@ func TestPropsMarshalJSONCarriesWebGPUPresentationHints(t *testing.T) {
 	}
 }
 
+func TestPropsLegacyPropsCarriesInspectorFlag(t *testing.T) {
+	props := Props{
+		Stats:     Bool(true),
+		Inspector: Bool(true),
+	}
+
+	legacy := props.LegacyProps()
+	if got := legacy["stats"]; got != true {
+		t.Fatalf("expected stats flag in legacy props, got %#v", got)
+	}
+	if got := legacy["inspector"]; got != true {
+		t.Fatalf("expected inspector flag in legacy props, got %#v", got)
+	}
+
+	data, err := json.Marshal(props)
+	if err != nil {
+		t.Fatalf("marshal props: %v", err)
+	}
+	if !contains(string(data), `"inspector":true`) {
+		t.Fatalf("expected inspector flag in props json: %s", string(data))
+	}
+}
+
 func TestPropsSceneIRLowersModelInstancesAndLineGeometry(t *testing.T) {
 	props := Props{
 		PickSignalNamespace: "$scene.pick",
@@ -1919,11 +1942,13 @@ func TestPropsSceneIRLowersHTMLOverlays(t *testing.T) {
 				PointerEvents: "auto",
 			},
 			HTMLSurface{
-				ID:     "panel",
-				Target: "hero",
-				Markup: `<div>Panel</div>`,
-				Width:  512,
-				Height: 320,
+				ID:             "panel",
+				Target:         "hero",
+				Markup:         `<div>Panel</div>`,
+				Fallback:       `<div>Panel fallback</div>`,
+				FallbackReason: "accessible-dom-fallback",
+				Width:          512,
+				Height:         320,
 			},
 		),
 	}
@@ -1948,7 +1973,7 @@ func TestPropsSceneIRLowersHTMLOverlays(t *testing.T) {
 	if ir.HTML[1].Mode != string(HTMLTexture) {
 		t.Fatalf("expected html surface texture mode marker, got %#v", ir.HTML[1].Mode)
 	}
-	if ir.HTML[1].Target != "hero" || ir.HTML[1].Fallback != "dom-overlay" || ir.HTML[1].FallbackReason == "" {
+	if ir.HTML[1].Target != "hero" || ir.HTML[1].Fallback != `<div>Panel fallback</div>` || ir.HTML[1].FallbackReason != "accessible-dom-fallback" {
 		t.Fatalf("expected html surface target and fallback metadata, got %#v", ir.HTML[1])
 	}
 	if ir.HTML[1].TextureWidth != 512 || ir.HTML[1].TextureHeight != 320 {
@@ -1976,7 +2001,7 @@ func TestPropsSceneIRLowersHTMLOverlays(t *testing.T) {
 	if got := html[1]["mode"]; got != string(HTMLTexture) {
 		t.Fatalf("expected texture mode in legacy props, got %#v", got)
 	}
-	if got := html[1]["fallback"]; got != "dom-overlay" {
+	if got := html[1]["fallback"]; got != `<div>Panel fallback</div>` {
 		t.Fatalf("expected html surface fallback metadata in legacy props, got %#v", got)
 	}
 	if got := html[1]["textureWidth"]; got != 512 {
@@ -1993,12 +2018,49 @@ func TestPropsSceneIRLowersHTMLOverlays(t *testing.T) {
 		if node.ID == "inspect-card" && node.HTML.Target != "hero" {
 			t.Fatalf("expected canonical html target preservation, got %#v", node.HTML)
 		}
-		if node.ID == "panel" && (node.HTML.Target != "hero" || node.HTML.Fallback != "dom-overlay" || node.HTML.TextureWidth != 512) {
+		if node.ID == "panel" && (node.HTML.Target != "hero" || node.HTML.Fallback != `<div>Panel fallback</div>` || node.HTML.TextureWidth != 512) {
 			t.Fatalf("expected canonical html surface fallback metadata, got %#v", node.HTML)
 		}
 	}
 	if htmlNodes != 2 {
 		t.Fatalf("expected two canonical html nodes, got %#v", canonical.Nodes)
+	}
+}
+
+func TestPropsSceneIRLowersHTMLPortalMode(t *testing.T) {
+	props := Props{
+		Graph: NewGraph(
+			HTML{
+				ID:            "portal",
+				Mode:          HTMLPortal,
+				Markup:        `<form><button>Apply</button></form>`,
+				PointerEvents: "auto",
+			},
+		),
+	}
+
+	ir := props.SceneIR()
+	if len(ir.HTML) != 1 {
+		t.Fatalf("expected one html portal, got %#v", ir.HTML)
+	}
+	if ir.HTML[0].Mode != string(HTMLPortal) {
+		t.Fatalf("expected portal mode, got %#v", ir.HTML[0].Mode)
+	}
+	if ir.HTML[0].PointerEvents != "auto" {
+		t.Fatalf("expected pointer-events to survive portal lowering, got %#v", ir.HTML[0].PointerEvents)
+	}
+
+	legacy := props.LegacyProps()
+	sceneValue, ok := legacy["scene"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected scene map, got %#v", legacy["scene"])
+	}
+	html, ok := sceneValue["html"].([]map[string]any)
+	if !ok || len(html) != 1 {
+		t.Fatalf("expected one legacy portal record, got %#v", sceneValue["html"])
+	}
+	if got := html[0]["mode"]; got != string(HTMLPortal) {
+		t.Fatalf("expected legacy portal mode, got %#v", got)
 	}
 }
 

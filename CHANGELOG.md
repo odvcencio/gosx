@@ -2,9 +2,40 @@
 
 ## Unreleased
 
+## v0.18.30
+
+Scene3D production inspection release.
+
+This release adds release-truth automation through `internal/version` and
+`gosx release check`, so README, changelog, CLI version output, and CI tag
+context can be checked against the same current-version source.
+
+Scene3D now has a machine-readable certification matrix in `scene/cert` plus
+`gosx scene certify`, including a strict gate for the current public feature
+floor. The new `scene/schema` validator and `gosx scene validate` command add
+strict SceneIR checks for duplicate IDs, primitive parameters, HTML texture
+fallbacks, texture budgets, target references, post-FX/shadow caps, and schema
+identity. `gosx scene inspect` reports feature use, diagnostics, fallback
+metadata, asset inventory, estimated GPU memory, and scene-budget results for
+SceneIR files and app directories.
+
+The browser runtime now exposes a read-only Scene3D debug API at
+`window.__gosx_scene3d_debug`, with surface listing, diagnostics, feature
+matrix, GPU-resource summaries, frame capture, and last-pick inspection. The
+typed scene surface gained `Inspector`, and `gosx dev --scene-inspector` enables
+the inspector overlay for all Scene3D mounts served by the dev proxy. The
+inspector reports backend state, render-loop status and reason, viewport,
+draw/material counts, HTML texture readiness, diagnostics, and pick targets.
+
+HTML surface authoring is more explicit: `HTMLDOM`, `HTMLTexture`, and
+`HTMLPortal` are formal modes, and `HTMLSurface` can carry custom fallback
+content and fallback reasons through SceneIR, legacy props, and canonical IR.
+Texture-backed HTML validation now keeps accessible fallback content and texture
+budgeting visible in tooling.
+
 ## v0.18.29
 
-Scene3D native dominance release.
+Scene3D native WebGPU release.
 
 This release makes the native Scene3D path substantially more complete across
 the shared IR, engine VM, browser runtime, WASM bridge, and Go WebGPU bundle

@@ -1,4 +1,6 @@
 package gosx
 
+import "github.com/odvcencio/gosx/internal/version"
+
 // Version is the current GoSX library release.
-const Version = "0.18.29"
+const Version = version.Number

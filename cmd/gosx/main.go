@@ -2,11 +2,12 @@
 //
 // Usage:
 //
-//	gosx build [--offline|--msix|--sign] <dir>
+//	gosx build [--offline|--msix|--sign|--scene-budget file] <dir>
 //	                              Build GoSX application
 //	gosx assets plan [path...]    Plan Scene3D asset optimization work
 //	gosx build-runtime [outdir]   Build TinyGo production WASM runtimes
-//	gosx dev <dir>               Start development server with hot reload
+//	gosx dev [--scene-inspector] <dir>
+//	                              Start development server with hot reload
 //	gosx desktop [dev] <dir>     Start development server in a native desktop host
 //	gosx export <dir>            Pre-render static GoSX pages
 //	gosx init [dir]              Scaffold a GoSX application or docs site
@@ -19,6 +20,10 @@
 //	                              Profile browser runtime performance
 //	gosx perf budget <report> <budget>
 //	                              Check saved perf output against budgets
+//	gosx release check           Check release metadata consistency
+//	gosx scene certify           Check Scene3D feature certification
+//	gosx scene inspect           Inspect Scene3D feature use and budgets
+//	gosx scene validate          Validate SceneIR JSON files
 //	gosx size [--json] <dist|build.json>
 //	                              Report runtime bundle sizes
 package main
@@ -83,6 +88,10 @@ func main() {
 		cmdVisual()
 	case "repl":
 		cmdRepl()
+	case "release":
+		cmdRelease()
+	case "scene":
+		cmdScene()
 	case "version":
 		fmt.Printf("gosx v%s\n", gosx.Version)
 	case "help", "-h", "--help":
@@ -112,7 +121,7 @@ func commandUsage(cmd string, w io.Writer) bool {
 		fmt.Fprintf(w, `gosx build - Build GoSX applications
 
 Usage:
-  gosx build [--dev|--prod|--offline|--msix|--sign] [--appinstaller <uri>] <dir>
+  gosx build [--dev|--prod|--offline|--msix|--sign] [--appinstaller <uri>] [--scene-budget file] <dir>
 
 `)
 	case "build-runtime":
@@ -126,7 +135,7 @@ Usage:
 		fmt.Fprintf(w, `gosx dev - Start development server with hot reload
 
 Usage:
-  gosx dev [dir]
+  gosx dev [--scene-inspector] [dir]
 
 `)
 	case "desktop":
@@ -196,7 +205,11 @@ Usage:
 Usage:
   gosx repl [url]
 
-`)
+	`)
+	case "release":
+		releaseUsage(w)
+	case "scene":
+		sceneUsage(w)
 	case "version":
 		fmt.Fprintf(w, `gosx version - Print version
 
@@ -222,7 +235,8 @@ Commands:
   assets plan [path...] Plan build-time optimization for Scene3D assets
   build-runtime [outdir]
                        Build TinyGo production WASM runtimes
-  dev <dir>            Start development server with hot reload
+  dev [--scene-inspector] <dir>
+                       Start development server with hot reload
   desktop [dev] <dir>  Start dev server in a native desktop host
   export <dir>         Pre-render static GoSX pages
   init [dir]           Scaffold a GoSX application or docs site
@@ -239,6 +253,10 @@ Commands:
                        Report runtime bundle sizes
   visual <url>         Pixel-level visual regression testing
   repl <url>           Interactive browser runtime explorer
+  release check        Check release metadata consistency
+  scene certify        Check Scene3D feature certification
+  scene inspect        Inspect Scene3D feature use and budgets
+  scene validate       Validate SceneIR JSON files
   version              Print version
 
 Init templates:
@@ -250,7 +268,7 @@ Init templates:
 
 func cmdBuild() {
 	if len(os.Args) < 3 {
-		fmt.Fprintln(os.Stderr, "Usage: gosx build [--dev|--prod|--offline|--msix|--sign] [--appinstaller <uri>] <dir>")
+		fmt.Fprintln(os.Stderr, "Usage: gosx build [--dev|--prod|--offline|--msix|--sign] [--appinstaller <uri>] [--scene-budget file] <dir>")
 		os.Exit(1)
 	}
 	opts := BuildOptions{Dev: true}
@@ -276,9 +294,22 @@ func cmdBuild() {
 				os.Exit(1)
 			}
 			opts.AppInstallerURI = os.Args[i]
+		case "--scene-budget":
+			i++
+			if i >= len(os.Args) {
+				fmt.Fprintln(os.Stderr, "build error: --scene-budget requires a file")
+				os.Exit(1)
+			}
+			opts.SceneBudgetPath = os.Args[i]
+		case "--scene-budget-strict":
+			opts.SceneBudgetStrict = true
 		default:
 			if strings.HasPrefix(arg, "--appinstaller=") {
 				opts.AppInstallerURI = strings.TrimPrefix(arg, "--appinstaller=")
+				continue
+			}
+			if strings.HasPrefix(arg, "--scene-budget=") {
+				opts.SceneBudgetPath = strings.TrimPrefix(arg, "--scene-budget=")
 				continue
 			}
 			if strings.HasPrefix(arg, "--") {
@@ -299,8 +330,22 @@ func cmdBuild() {
 }
 
 func cmdDev() {
-	dir := argOrDefault(2, ".")
-	if err := RunDev(dir); err != nil {
+	dir := "."
+	options := DevOptions{}
+	for i := 2; i < len(os.Args); i++ {
+		arg := os.Args[i]
+		switch arg {
+		case "--scene-inspector":
+			options.SceneInspector = true
+		default:
+			if strings.HasPrefix(arg, "-") {
+				fmt.Fprintf(os.Stderr, "gosx dev: unknown flag %s\n", arg)
+				os.Exit(1)
+			}
+			dir = arg
+		}
+	}
+	if err := RunDevWithOptions(dir, options); err != nil {
 		fmt.Fprintf(os.Stderr, "gosx dev: %v\n", err)
 		os.Exit(1)
 	}

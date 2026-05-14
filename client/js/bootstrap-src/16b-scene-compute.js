@@ -71,14 +71,14 @@
     "",
     "fn emitPoint(index: u32, p: SimParams) -> Particle {",
     "    var out: Particle;",
-    "    out.posX = p.emitterX;",
-    "    out.posY = p.emitterY;",
-    "    out.posZ = p.emitterZ;",
+    "    out.posX = 0.0;",
+    "    out.posY = 0.0;",
+    "    out.posZ = 0.0;",
     "    out.velX = (hash2(index, 0u) - 0.5) * 0.1;",
     "    out.velY = (hash2(index, 1u) - 0.5) * 0.1;",
     "    out.velZ = (hash2(index, 2u) - 0.5) * 0.1;",
     "    out.age = 0.0;",
-    "    out.lifetime = p.emitterLifetime;",
+    "    out.lifetime = particleLifetime(index, p);",
     "    return out;",
     "}",
     "",
@@ -87,12 +87,12 @@
     "    let theta = hash2(index, 10u) * 6.283185;",
     "    let phi = acos(2.0 * hash2(index, 11u) - 1.0);",
     "    let r = p.emitterRadius * pow(hash2(index, 12u), 0.333);",
-    "    out.posX = p.emitterX + r * sin(phi) * cos(theta);",
-    "    out.posY = p.emitterY + r * cos(phi);",
-    "    out.posZ = p.emitterZ + r * sin(phi) * sin(theta);",
+    "    out.posX = r * sin(phi) * cos(theta);",
+    "    out.posY = r * cos(phi);",
+    "    out.posZ = r * sin(phi) * sin(theta);",
     "    out.velX = 0.0; out.velY = 0.0; out.velZ = 0.0;",
     "    out.age = 0.0;",
-    "    out.lifetime = p.emitterLifetime;",
+    "    out.lifetime = particleLifetime(index, p);",
     "    return out;",
     "}",
     "",
@@ -100,12 +100,12 @@
     "    var out: Particle;",
     "    let angle = hash2(index, 20u) * 6.283185;",
     "    let r = p.emitterRadius * sqrt(hash2(index, 21u));",
-    "    out.posX = p.emitterX + r * cos(angle);",
-    "    out.posY = p.emitterY;",
-    "    out.posZ = p.emitterZ + r * sin(angle);",
+    "    out.posX = r * cos(angle);",
+    "    out.posY = 0.0;",
+    "    out.posZ = r * sin(angle);",
     "    out.velX = 0.0; out.velY = 0.0; out.velZ = 0.0;",
     "    out.age = 0.0;",
-    "    out.lifetime = p.emitterLifetime;",
+    "    out.lifetime = particleLifetime(index, p);",
     "    return out;",
     "}",
     "",
@@ -130,13 +130,12 @@
     "    let lx = cos(spiralAngle) * radius + scatter;",
     "    let ly = (hash2(index, 32u) - 0.5) * p.emitterRadius * 0.05;",
     "    let lz = sin(spiralAngle) * radius + (hash2(index, 33u) - 0.5) * radius * p.emitterScatter;",
-    "    let rotated = rotateEulerZYX(lx, ly, lz, p.emitterRotX, p.emitterRotY, p.emitterRotZ);",
-    "    out.posX = p.emitterX + rotated.x;",
-    "    out.posY = p.emitterY + rotated.y;",
-    "    out.posZ = p.emitterZ + rotated.z;",
+    "    out.posX = lx;",
+    "    out.posY = ly;",
+    "    out.posZ = lz;",
     "    out.velX = 0.0; out.velY = 0.0; out.velZ = 0.0;",
     "    out.age = 0.0;",
-    "    out.lifetime = p.emitterLifetime;",
+    "    out.lifetime = particleLifetime(index, p);",
     "    return out;",
     "}",
     "",
@@ -147,6 +146,40 @@
     "        case 3u: { return emitSpiral(index, p); }",
     "        default: { return emitPoint(index, p); }",
     "    }",
+    "}",
+    "",
+    "fn particleLifetime(index: u32, p: SimParams) -> f32 {",
+    "    let base = max(p.emitterLifetime, 0.001);",
+    "    return base * (0.72 + hash2(index, 44u) * 0.66);",
+    "}",
+    "",
+    "fn particleDelay(index: u32, p: SimParams) -> f32 {",
+    "    let base = max(p.emitterLifetime, 0.001);",
+    "    var window = base;",
+    "    if (p.emitterRate > 0.001) {",
+    "        window = max(base * 0.35, f32(p.count) / p.emitterRate);",
+    "    }",
+    "    let wave = floor(hash2(index, 46u) * 4.0) / 4.0;",
+    "    let jitter = hash2(index, 47u) * 0.22;",
+    "    return min(window, (wave + jitter) * window);",
+    "}",
+    "",
+    "fn makeDormant(index: u32, p: SimParams) -> Particle {",
+    "    var out: Particle;",
+    "    out.posX = 0.0; out.posY = 0.0; out.posZ = 0.0;",
+    "    out.velX = 0.0; out.velY = 0.0; out.velZ = 0.0;",
+    "    out.age = -particleDelay(index, p);",
+    "    out.lifetime = particleLifetime(index, p);",
+    "    return out;",
+    "}",
+    "",
+    "fn writeDormant(index: u32, p: Particle) {",
+    "    particles[index] = p;",
+    "    var rv: RenderVertex;",
+    "    rv.posX = 0.0; rv.posY = 0.0; rv.posZ = 0.0;",
+    "    rv.size = 0.0;",
+    "    rv.r = 1.0; rv.g = 1.0; rv.b = 1.0; rv.a = 0.0;",
+    "    renderData[index] = rv;",
     "}",
     "",
     "fn applyGravity(part: Particle, f: Force, dt: f32) -> vec3f {",
@@ -176,6 +209,17 @@
     "    return vec3f(-part.velX, -part.velY, -part.velZ) * f.strength * dt;",
     "}",
     "",
+    "fn applyRadial(part: Particle, f: Force, dt: f32) -> vec3f {",
+    "    var dir = vec3f(part.posX, part.posY, part.posZ);",
+    "    let bias = vec3f(f.dirX, f.dirY, f.dirZ);",
+    "    let biasLen = length(bias);",
+    "    if (biasLen > 0.001) {",
+    "        dir = dir + normalize(bias) * max(length(dir), 1.0) * 0.35;",
+    "    }",
+    "    let dist = max(length(dir), 0.001);",
+    "    return (dir / dist) * f.strength * dt;",
+    "}",
+    "",
     "@compute @workgroup_size(64)",
     "fn simulate(@builtin(global_invocation_id) id: vec3u) {",
     "    let i = id.x;",
@@ -184,12 +228,27 @@
     "    var p = particles[i];",
     "",
     "    if (p.age < 0.0) {",
-    "        p = emitParticle(i, params);",
+    "        if (p.lifetime <= 0.0) {",
+    "            p = emitParticle(i, params);",
+    "        } else {",
+    "            p.age += params.deltaTime;",
+    "            if (p.age < 0.0) {",
+    "                writeDormant(i, p);",
+    "                return;",
+    "            }",
+    "            p = emitParticle(i, params);",
+    "        }",
     "    }",
     "",
     "    p.age += params.deltaTime;",
     "",
     "    if (p.lifetime > 0.0 && p.age >= p.lifetime) {",
+    "        p = makeDormant(i, params);",
+    "        p.age += params.deltaTime;",
+    "        if (p.age < 0.0) {",
+    "            writeDormant(i, p);",
+    "            return;",
+    "        }",
     "        p = emitParticle(i, params);",
     "    }",
     "",
@@ -201,6 +260,7 @@
     "            case 2u: { let dv = applyTurbulence(p, f, params.deltaTime, params.totalTime); p.velX += dv.x; p.velY += dv.y; p.velZ += dv.z; }",
     "            case 3u: { let dv = applyOrbit(p, f, params.deltaTime); p.velX += dv.x; p.velY += dv.y; p.velZ += dv.z; }",
     "            case 4u: { let dv = applyDrag(p, f, params.deltaTime); p.velX += dv.x; p.velY += dv.y; p.velZ += dv.z; }",
+    "            case 5u: { let dv = applyRadial(p, f, params.deltaTime); p.velX += dv.x; p.velY += dv.y; p.velZ += dv.z; }",
     "            default: {}",
     "        }",
     "    }",
@@ -211,7 +271,7 @@
     "",
     "    particles[i] = p;",
     "",
-    "    let t = select(p.age / p.lifetime, 0.0, p.lifetime <= 0.0);",
+    "    let t = clamp(select(p.age / p.lifetime, 0.0, p.lifetime <= 0.0), 0.0, 1.0);",
     "    var rv: RenderVertex;",
     "    rv.posX = p.posX;",
     "    rv.posY = p.posY;",
@@ -225,7 +285,7 @@
     "}",
   ].join("\n");
 
-  var sceneParticleForceBuiltins = { gravity: 0, wind: 1, turbulence: 2, orbit: 3, drag: 4 };
+  var sceneParticleForceBuiltins = { gravity: 0, wind: 1, turbulence: 2, orbit: 3, drag: 4, radial: 5, eject: 5, outward: 5 };
   var sceneParticleForceAliases = Object.create(null);
   var sceneParticleForceHandlers = Object.create(null);
   var sceneParticleForceRegistryVersion = 0;
@@ -627,6 +687,42 @@
       return Array.isArray(entry && entry.forces) ? entry.forces : [];
     }
 
+    function particleLifetime(index, emitterConfig) {
+      var base = Math.max(sceneNumber(emitterConfig.lifetime, 0), 0.001);
+      return base * (0.72 + hash2(index, 44) * 0.66);
+    }
+
+    function particleDelay(index, emitterConfig) {
+      var base = Math.max(sceneNumber(emitterConfig.lifetime, 0), 0.001);
+      var rate = sceneNumber(entry && entry.emitter && entry.emitter.rate, 0);
+      var windowSeconds = base;
+      if (rate > 0.001) {
+        windowSeconds = Math.max(base * 0.35, count / rate);
+      }
+      var wave = Math.floor(hash2(index, 46) * 4) / 4;
+      var jitter = hash2(index, 47) * 0.22;
+      return Math.min(windowSeconds, (wave + jitter) * windowSeconds);
+    }
+
+    function makeDormant(index, base, emitterConfig) {
+      base[0] = 0; base[1] = 0; base[2] = 0;
+      base[3] = 0; base[4] = 0; base[5] = 0;
+      base[6] = -particleDelay(index, emitterConfig);
+      base[7] = particleLifetime(index, emitterConfig);
+    }
+
+    function writeDormantOutput(index) {
+      var pbase = index * 3;
+      positions[pbase] = 0;
+      positions[pbase + 1] = 0;
+      positions[pbase + 2] = 0;
+      sizes[index] = 0;
+      colors[pbase] = 1;
+      colors[pbase + 1] = 1;
+      colors[pbase + 2] = 1;
+      opacities[index] = 0;
+    }
+
     function emitParticle(index, base, emitterConfig) {
       // All emitters produce LOCAL coordinates (origin-centered). The render
       // pipeline applies the emitter's world position, rotation, and spin via
@@ -674,7 +770,7 @@
         }
       }
       base[6] = 0.0;              // age
-      base[7] = emitterConfig.lifetime;   // lifetime
+      base[7] = particleLifetime(index, emitterConfig);   // lifetime
     }
 
     return {
@@ -705,7 +801,16 @@
 
           // Initialize on first frame.
           if (age < 0) {
-            emitParticle(i, particles.subarray(base, base + 8), emitterConfig);
+            if (lifetime <= 0) {
+              emitParticle(i, particles.subarray(base, base + 8), emitterConfig);
+            } else {
+              particles[base + 6] += deltaTime;
+              if (particles[base + 6] < 0) {
+                writeDormantOutput(i);
+                continue;
+              }
+              emitParticle(i, particles.subarray(base, base + 8), emitterConfig);
+            }
             posX = particles[base];
             posY = particles[base + 1];
             posZ = particles[base + 2];
@@ -721,6 +826,12 @@
 
           // Respawn dead particles.
           if (lifetime > 0 && age >= lifetime) {
+            makeDormant(i, particles.subarray(base, base + 8), emitterConfig);
+            particles[base + 6] += deltaTime;
+            if (particles[base + 6] < 0) {
+              writeDormantOutput(i);
+              continue;
+            }
             emitParticle(i, particles.subarray(base, base + 8), emitterConfig);
             posX = particles[base];
             posY = particles[base + 1];
@@ -810,6 +921,23 @@
                 velZ += -velZ * str * deltaTime;
                 break;
               }
+              case 5: { // radial / eject
+                var rx = posX;
+                var ry = posY;
+                var rz = posZ;
+                var biasLen = Math.sqrt(fx * fx + fy * fy + fz * fz);
+                if (biasLen > 0.001) {
+                  var radialLen = Math.max(Math.sqrt(rx * rx + ry * ry + rz * rz), 1);
+                  rx += (fx / biasLen) * radialLen * 0.35;
+                  ry += (fy / biasLen) * radialLen * 0.35;
+                  rz += (fz / biasLen) * radialLen * 0.35;
+                }
+                var rdist = Math.max(Math.sqrt(rx * rx + ry * ry + rz * rz), 0.001);
+                velX += (rx / rdist) * str * deltaTime;
+                velY += (ry / rdist) * str * deltaTime;
+                velZ += (rz / rdist) * str * deltaTime;
+                break;
+              }
             }
           }
 
@@ -829,7 +957,7 @@
           particles[base + 7] = lifetime;
 
           // Compute interpolation t.
-          var t = lifetime > 0 ? age / lifetime : 0;
+          var t = lifetime > 0 ? Math.min(1, Math.max(0, age / lifetime)) : 0;
 
           // Write render output.
           positions[i * 3] = posX;

@@ -44,12 +44,13 @@ type sseEvent struct {
 // - proxies application traffic to ProxyTarget and injects the reload runtime
 // - watches Dir for source changes and triggers OnChange before notifying clients
 type Server struct {
-	Dir          string
-	BuildDir     string
-	ProxyTarget  string
-	OnChange     func() error
-	PollInterval time.Duration
-	Logf         func(format string, args ...any)
+	Dir            string
+	BuildDir       string
+	ProxyTarget    string
+	OnChange       func() error
+	PollInterval   time.Duration
+	SceneInspector bool
+	Logf           func(format string, args ...any)
 
 	mu          sync.RWMutex
 	clients     map[chan sseEvent]struct{}
@@ -279,7 +280,7 @@ func (s *Server) serveProxy(w http.ResponseWriter, r *http.Request) {
 		}
 		_ = resp.Body.Close()
 
-		injected := injectReloadScript(string(body))
+		injected := s.injectDevScripts(string(body))
 		resp.Body = io.NopCloser(strings.NewReader(injected))
 		resp.ContentLength = int64(len(injected))
 		resp.Header.Del("Content-Encoding")
@@ -326,6 +327,19 @@ func injectReloadScript(body string) string {
 		return body
 	}
 	snippet := `<script data-gosx-dev-reload="true">(function(){if(window.__gosxDevReload){return;}window.__gosxDevReload=true;var source=new EventSource("/gosx/dev/events");source.addEventListener("reload",function(){window.location.reload();});source.addEventListener("build-error",function(event){try{var payload=JSON.parse(event.data||"{}");console.error("[gosx dev] build failed:",payload.error||payload);}catch(_){console.error("[gosx dev] build failed");}});source.onerror=function(){console.warn("[gosx dev] reload connection lost");};})();</script>`
+	return injectDevScriptSnippet(body, snippet)
+}
+
+func (s *Server) injectDevScripts(body string) string {
+	body = injectReloadScript(body)
+	if !s.SceneInspector || strings.Contains(body, "data-gosx-dev-scene-inspector") {
+		return body
+	}
+	snippet := `<script data-gosx-dev-scene-inspector="true">window.__gosx_scene3d_inspector=true;</script>`
+	return injectDevScriptSnippet(body, snippet)
+}
+
+func injectDevScriptSnippet(body, snippet string) string {
 	if idx := strings.LastIndex(strings.ToLower(body), "</head>"); idx >= 0 {
 		return body[:idx] + snippet + "\n" + body[idx:]
 	}

@@ -21,6 +21,7 @@ import (
 	"github.com/odvcencio/gosx/buildmanifest"
 	"github.com/odvcencio/gosx/ir"
 	"github.com/odvcencio/gosx/island/program"
+	sceneinspect "github.com/odvcencio/gosx/scene/inspect"
 )
 
 // BuildManifest describes all build outputs for deployment.
@@ -33,11 +34,13 @@ type CSSAsset = buildmanifest.CSSAsset
 type HashedAsset = buildmanifest.HashedAsset
 
 type BuildOptions struct {
-	Dev             bool
-	Offline         bool
-	MSIX            bool
-	Sign            bool
-	AppInstallerURI string
+	Dev               bool
+	Offline           bool
+	MSIX              bool
+	Sign              bool
+	AppInstallerURI   string
+	SceneBudgetPath   string
+	SceneBudgetStrict bool
 }
 
 type wasmCompiler string
@@ -188,6 +191,21 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 
 	fmt.Printf("GoSX build (%s)\n", mode)
 	fmt.Println("─────────────────────────────────")
+	if strings.TrimSpace(opts.SceneBudgetPath) != "" {
+		strictSceneBudget := opts.SceneBudgetStrict || !opts.Dev
+		results, foundScenes, err := evaluateProjectSceneBudget(dir, opts.SceneBudgetPath, strictSceneBudget)
+		if err != nil {
+			return err
+		}
+		if !foundScenes {
+			fmt.Println("  Scene budget: skipped (no SceneIR JSON files found)")
+		} else {
+			printBuildSceneBudgetSummary(results)
+			if sceneinspect.BudgetFailed(results, strictSceneBudget) {
+				return errors.New("scene budget failed")
+			}
+		}
+	}
 
 	// ── Stage embedded grammar blob for instant cold starts ─────────────
 	grammarBlob := gosx.GrammarBlob()
@@ -695,6 +713,63 @@ func countNonEmpty(strs ...string) int {
 		}
 	}
 	return n
+}
+
+func evaluateProjectSceneBudget(projectDir, budgetPath string, strict bool) ([]sceneinspect.BudgetResult, bool, error) {
+	budget, err := readSceneBudgetFile(budgetPath)
+	if err != nil {
+		return nil, false, err
+	}
+	files, err := collectSceneJSONFiles([]string{projectDir})
+	if err != nil {
+		if errors.Is(err, errNoSceneJSONFiles) {
+			return nil, false, nil
+		}
+		return nil, false, err
+	}
+	results := []sceneinspect.BudgetResult{}
+	for _, file := range files {
+		data, err := os.ReadFile(file)
+		if err != nil {
+			return nil, true, err
+		}
+		report, err := sceneinspect.InspectJSON(file, data, sceneinspect.Options{Strict: strict})
+		if err != nil {
+			return nil, true, err
+		}
+		if !report.Validation.Valid {
+			return nil, true, fmt.Errorf("scene validation failed for %s", file)
+		}
+		results = append(results, sceneinspect.EvaluateBudget(report, budget, strict)...)
+	}
+	return results, true, nil
+}
+
+func printBuildSceneBudgetSummary(results []sceneinspect.BudgetResult) {
+	counts := map[sceneinspect.BudgetStatus]int{}
+	for _, result := range results {
+		counts[result.Status]++
+	}
+	fmt.Printf("  Scene budget: %d checks", len(results))
+	for _, status := range []sceneinspect.BudgetStatus{sceneinspect.BudgetPass, sceneinspect.BudgetWarn, sceneinspect.BudgetFail, sceneinspect.BudgetUnknown} {
+		if counts[status] > 0 {
+			fmt.Printf(", %s=%d", status, counts[status])
+		}
+	}
+	fmt.Println()
+	for _, result := range results {
+		if result.Status == sceneinspect.BudgetPass {
+			continue
+		}
+		fmt.Printf("    %s: %s", result.Category, result.Status)
+		if result.Limit > 0 {
+			fmt.Printf(" actual=%.0f limit=%.0f", result.Actual, result.Limit)
+		}
+		if result.Message != "" {
+			fmt.Printf(" (%s)", result.Message)
+		}
+		fmt.Println()
+	}
 }
 
 func cssAssetBaseName(relPath string) string {

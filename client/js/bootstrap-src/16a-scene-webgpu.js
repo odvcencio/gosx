@@ -4113,7 +4113,7 @@
       return stats;
     }
 
-    function drawComputeParticleEntries(pass, records, environment) {
+    function drawComputeParticleEntries(pass, records, environment, timeSeconds) {
       var stats = {
         computeParticleDrawEntries: 0,
         computeParticleDrawInstances: 0,
@@ -4126,6 +4126,9 @@
       var env = environment || {};
       var fogDensity = sceneNumber(env.fogDensity, 0);
       var fogColorRGBA = sceneColorRGBA(env.fogColor, [0.5, 0.5, 0.5, 1]);
+      var _computeModelMat = new Float32Array(16);
+      var _computeTilt = new Float32Array(16);
+      var _computeSpin = new Float32Array(16);
 
       for (var i = 0; i < records.length; i++) {
         var record = records[i];
@@ -4141,11 +4144,54 @@
 
         var entry = system.entry && typeof system.entry === "object" ? system.entry : {};
         var material = entry.material && typeof entry.material === "object" ? entry.material : {};
+        var emitter = entry.emitter && typeof entry.emitter === "object" ? entry.emitter : {};
+
+        var px = sceneNumber(emitter.x, 0);
+        var py = sceneNumber(emitter.y, 0);
+        var pz = sceneNumber(emitter.z, 0);
+        var hasSpin = sceneNumber(emitter.spinX, 0) !== 0 || sceneNumber(emitter.spinY, 0) !== 0 || sceneNumber(emitter.spinZ, 0) !== 0;
+
+        if (hasSpin) {
+          var spx = sceneNumber(emitter.spinX, 0) * timeSeconds;
+          var spy = sceneNumber(emitter.spinY, 0) * timeSeconds;
+          var spz = sceneNumber(emitter.spinZ, 0) * timeSeconds;
+          var csx = Math.cos(spx), ssx = Math.sin(spx);
+          var csy = Math.cos(spy), ssy = Math.sin(spy);
+          var csz = Math.cos(spz), ssz = Math.sin(spz);
+          _computeSpin[0] = csy*csz; _computeSpin[4] = ssx*ssy*csz-csx*ssz; _computeSpin[8]  = csx*ssy*csz+ssx*ssz; _computeSpin[12] = 0;
+          _computeSpin[1] = csy*ssz; _computeSpin[5] = ssx*ssy*ssz+csx*csz; _computeSpin[9]  = csx*ssy*ssz-ssx*csz; _computeSpin[13] = 0;
+          _computeSpin[2] = -ssy;    _computeSpin[6] = ssx*csy;             _computeSpin[10] = csx*csy;             _computeSpin[14] = 0;
+          _computeSpin[3] = 0;       _computeSpin[7] = 0;                   _computeSpin[11] = 0;                   _computeSpin[15] = 1;
+
+          var rx = sceneNumber(emitter.rotationX, 0);
+          var ry = sceneNumber(emitter.rotationY, 0);
+          var rz = sceneNumber(emitter.rotationZ, 0);
+          var cxr = Math.cos(rx), sxr = Math.sin(rx);
+          var cyr = Math.cos(ry), syr = Math.sin(ry);
+          var czr = Math.cos(rz), szr = Math.sin(rz);
+          _computeTilt[0] = cyr*czr; _computeTilt[4] = sxr*syr*czr-cxr*szr; _computeTilt[8]  = cxr*syr*czr+sxr*szr; _computeTilt[12] = px;
+          _computeTilt[1] = cyr*szr; _computeTilt[5] = sxr*syr*szr+cxr*czr; _computeTilt[9]  = cxr*syr*szr-sxr*czr; _computeTilt[13] = py;
+          _computeTilt[2] = -syr;    _computeTilt[6] = sxr*cyr;             _computeTilt[10] = cxr*cyr;             _computeTilt[14] = pz;
+          _computeTilt[3] = 0;       _computeTilt[7] = 0;                   _computeTilt[11] = 0;                   _computeTilt[15] = 1;
+
+          sceneMat4MultiplyInto(_computeModelMat, _computeTilt, _computeSpin);
+        } else {
+          var rx2 = sceneNumber(emitter.rotationX, 0);
+          var ry2 = sceneNumber(emitter.rotationY, 0);
+          var rz2 = sceneNumber(emitter.rotationZ, 0);
+          var cxr2 = Math.cos(rx2), sxr2 = Math.sin(rx2);
+          var cyr2 = Math.cos(ry2), syr2 = Math.sin(ry2);
+          var czr2 = Math.cos(rz2), szr2 = Math.sin(rz2);
+          _computeModelMat[0] = cyr2*czr2; _computeModelMat[4] = sxr2*syr2*czr2-cxr2*szr2; _computeModelMat[8]  = cxr2*syr2*czr2+sxr2*szr2; _computeModelMat[12] = px;
+          _computeModelMat[1] = cyr2*szr2; _computeModelMat[5] = sxr2*syr2*szr2+cxr2*czr2; _computeModelMat[9]  = cxr2*syr2*szr2-sxr2*czr2; _computeModelMat[13] = py;
+          _computeModelMat[2] = -syr2;     _computeModelMat[6] = sxr2*cyr2;                _computeModelMat[10] = cxr2*cyr2;                _computeModelMat[14] = pz;
+          _computeModelMat[3] = 0;         _computeModelMat[7] = 0;                        _computeModelMat[11] = 0;                        _computeModelMat[15] = 1;
+        }
 
         pointsUniformScratchF.fill(0);
         var puF = pointsUniformScratchF;
         var puU = pointsUniformScratchU;
-        puF.set(pointsIdentityMatrix, 0);
+        puF.set(_computeModelMat, 0);
 
         var defaultColorRGBA = sceneColorRGBA(material.color, [1, 1, 1, 1]);
         puF[16] = defaultColorRGBA[0];
@@ -4176,8 +4222,8 @@
         });
 
         var blendMode = typeof material.blendMode === "string" ? material.blendMode.toLowerCase() : "";
-        var depthWrite = entry.depthWrite !== false;
         var validBlend = blendMode === "additive" || blendMode === "alpha" ? blendMode : "opaque";
+        var depthWrite = entry.depthWrite === true || (validBlend === "opaque" && entry.depthWrite !== false);
         var pipeline = getPointsPipeline(validBlend, depthWrite);
 
         pass.setPipeline(pipeline);
@@ -4640,7 +4686,7 @@
         var dummyMatBG = createMaterialBindGroup(null, false, defaultMaterialOwner);
         mainPass.setBindGroup(1, dummyMatBG);
         Object.assign(frameStats, drawPointsEntries(mainPass, bundle, cam, frameTimeSeconds));
-        Object.assign(frameStats, drawComputeParticleEntries(mainPass, computeParticleRecords, bundle.environment));
+        Object.assign(frameStats, drawComputeParticleEntries(mainPass, computeParticleRecords, bundle.environment, frameTimeSeconds));
       }
 
       mainPass.end();
